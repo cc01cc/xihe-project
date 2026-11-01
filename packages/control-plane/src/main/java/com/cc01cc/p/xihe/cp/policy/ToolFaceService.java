@@ -156,8 +156,7 @@ public class ToolFaceService {
             return null;
         }
         if (requireOwner && workspaceId == null) {
-            throw new CpApiException(HttpStatus.UNAUTHORIZED, "AUTHORIZATION_REQUIRED",
-                    "Workspace context is required");
+            throw CpApiException.workspaceContextRequired();
         }
         if (requireOwner && !workspaceManager()) {
             throw new CpApiException(HttpStatus.FORBIDDEN, "FORBIDDEN",

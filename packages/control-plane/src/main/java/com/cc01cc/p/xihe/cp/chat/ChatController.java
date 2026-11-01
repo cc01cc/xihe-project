@@ -382,8 +382,7 @@ public class ChatController {
         String userId = TenantContext.getUserId();
         String workspaceId = TenantContext.getWorkspaceId();
         if (userId == null || workspaceId == null) {
-            throw new com.cc01cc.p.xihe.cp.config.CpApiException(
-                    HttpStatus.UNAUTHORIZED, "AUTHORIZATION_REQUIRED", "Workspace context is required");
+            throw CpApiException.workspaceContextRequired();
         }
         sessionService.requireCurrent(sessionId, userId, workspaceId);
         SseEmitter emitter = sseManager.createEmitter(sessionId);
@@ -404,7 +403,7 @@ public class ChatController {
         String userId = TenantContext.getUserId();
         String workspaceId = TenantContext.getWorkspaceId();
         if (userId == null || workspaceId == null) {
-            return ProblemDetailsHandler.problemResponse(HttpStatus.UNAUTHORIZED, "AUTHORIZATION_REQUIRED", "Workspace context is required");
+            return ProblemDetailsHandler.workspaceContextRequired();
         }
         String sessionId = (String) request.get("sessionId");
         if (sessionId == null || sessionId.isBlank()) {
@@ -617,7 +616,7 @@ public class ChatController {
         String userId = TenantContext.getUserId();
         String workspaceId = TenantContext.getWorkspaceId();
         if (userId == null || workspaceId == null) {
-            return ProblemDetailsHandler.problemResponse(HttpStatus.UNAUTHORIZED, "AUTHORIZATION_REQUIRED", "Workspace context is required");
+            return ProblemDetailsHandler.workspaceContextRequired();
         }
         UUID runUuid;
         try {
@@ -640,7 +639,7 @@ public class ChatController {
         String userId = TenantContext.getUserId();
         String workspaceId = TenantContext.getWorkspaceId();
         if (userId == null || workspaceId == null) {
-            return ProblemDetailsHandler.problemResponse(HttpStatus.UNAUTHORIZED, "AUTHORIZATION_REQUIRED", "Workspace context is required");
+            return ProblemDetailsHandler.workspaceContextRequired();
         }
         UUID runUuid;
         try {
@@ -672,8 +671,7 @@ public class ChatController {
         String userId = TenantContext.getUserId();
         String workspaceId = TenantContext.getWorkspaceId();
         if (userId == null || workspaceId == null) {
-            return ProblemDetailsHandler.problemResponse(HttpStatus.UNAUTHORIZED,
-                    "AUTHORIZATION_REQUIRED", "Workspace context is required");
+            return ProblemDetailsHandler.workspaceContextRequired();
         }
         Session session = sessionService.requireCurrent(sessionId, userId, workspaceId);
         int safePage = Math.max(page, 0);
@@ -690,8 +688,7 @@ public class ChatController {
         String userId = TenantContext.getUserId();
         String workspaceId = TenantContext.getWorkspaceId();
         if (userId == null || workspaceId == null) {
-            return ProblemDetailsHandler.problemResponse(HttpStatus.UNAUTHORIZED,
-                    "AUTHORIZATION_REQUIRED", "Workspace context is required");
+            return ProblemDetailsHandler.workspaceContextRequired();
         }
         try {
             Session session = sessionService.requireCurrent(sessionId, userId, workspaceId);
@@ -711,7 +708,7 @@ public class ChatController {
         String userId = TenantContext.getUserId();
         String workspaceId = TenantContext.getWorkspaceId();
         if (userId == null || workspaceId == null) {
-            return ProblemDetailsHandler.problemResponse(HttpStatus.UNAUTHORIZED, "AUTHORIZATION_REQUIRED", "Workspace context is required");
+            return ProblemDetailsHandler.workspaceContextRequired();
         }
 
         String reason = request != null ? (String) request.getOrDefault("reason", "user_requested") : "user_requested";

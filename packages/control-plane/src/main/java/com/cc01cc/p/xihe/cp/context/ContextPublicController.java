@@ -40,8 +40,7 @@ public class ContextPublicController {
         String workspaceId = TenantContext.getWorkspaceId();
         HttpStatus access = contextAccessService.checkPublicAccess(userId, workspaceId, sessionId);
         if (access == HttpStatus.UNAUTHORIZED) {
-            return ProblemDetailsHandler.problemResponse(
-                    HttpStatus.UNAUTHORIZED, "AUTHORIZATION_REQUIRED", "Workspace context is required");
+            return ProblemDetailsHandler.workspaceContextRequired();
         }
         if (access == HttpStatus.NOT_FOUND) {
             return ProblemDetailsHandler.problemResponse(

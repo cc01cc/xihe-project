@@ -428,8 +428,7 @@ public class SessionService {
     @Transactional(readOnly = true)
     public void requireWorkspace(String userId, String workspaceId) {
         if (userId == null || userId.isBlank() || workspaceId == null || workspaceId.isBlank()) {
-            throw new CpApiException(
-                    HttpStatus.UNAUTHORIZED, "AUTHORIZATION_REQUIRED", "Authenticated workspace context is required");
+            throw CpApiException.workspaceContextRequired();
         }
         workspaceService.requireAccessibleWorkspace(workspaceId, userId);
     }

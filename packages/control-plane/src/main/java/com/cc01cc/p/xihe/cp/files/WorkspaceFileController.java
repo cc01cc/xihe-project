@@ -103,8 +103,7 @@ public class WorkspaceFileController {
             String userId = TenantContext.getUserId();
             String wsId = TenantContext.getWorkspaceId();
             if (userId == null || wsId == null) {
-                return ProblemDetailsHandler.problemResponse(
-                        HttpStatus.UNAUTHORIZED, "AUTHORIZATION_REQUIRED", "Workspace context is required");
+                return ProblemDetailsHandler.workspaceContextRequired();
             }
             if (!workspaceService.isWorkspaceMember(wsId, userId)) {
                 return ProblemDetailsHandler.problemResponse(

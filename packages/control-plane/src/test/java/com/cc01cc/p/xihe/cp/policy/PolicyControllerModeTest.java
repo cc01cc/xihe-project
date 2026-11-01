@@ -84,13 +84,15 @@ class PolicyControllerModeTest {
     void modeRequiresWorkspaceContext() {
         TenantContext.setUserId("u1");
 
+        // BL-181: missing workspace context is a conflict with the account state (409), never 401 —
+        // the caller is authenticated, and a 401 makes the UI force a logout.
         ResponseEntity<?> get = controller.getMode("s1");
-        assertEquals(401, get.getStatusCode().value());
-        assertEquals("AUTHORIZATION_REQUIRED", ((Map<?, ?>) get.getBody()).get("code"));
+        assertEquals(409, get.getStatusCode().value());
+        assertEquals("WORKSPACE_CONTEXT_REQUIRED", ((Map<?, ?>) get.getBody()).get("code"));
 
         ResponseEntity<?> set = controller.setMode(Map.of("sessionId", "s1", "mode", "yolo"));
-        assertEquals(401, set.getStatusCode().value());
-        assertEquals("AUTHORIZATION_REQUIRED", ((Map<?, ?>) set.getBody()).get("code"));
+        assertEquals(409, set.getStatusCode().value());
+        assertEquals("WORKSPACE_CONTEXT_REQUIRED", ((Map<?, ?>) set.getBody()).get("code"));
 
         verify(sessionService, never()).requireCurrent(any(), any(), any());
     }

@@ -3,7 +3,6 @@ package com.cc01cc.p.xihe.cp.chat;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.config.ProblemDetailsHandler;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
-import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -34,8 +33,7 @@ class ChatRunContinuationController {
         String userId = TenantContext.getUserId();
         String workspaceId = TenantContext.getWorkspaceId();
         if (userId == null || workspaceId == null) {
-            return ProblemDetailsHandler.problemResponse(HttpStatus.UNAUTHORIZED,
-                    "AUTHORIZATION_REQUIRED", "Workspace context is required");
+            return ProblemDetailsHandler.workspaceContextRequired();
         }
 
         ChatRunContinuationRequest request;

@@ -43,7 +43,7 @@ public class ChatAttachmentController {
         String workspaceId = TenantContext.getWorkspaceId();
         if (userId == null || workspaceId == null) {
             logger.warn("Attachment upload rejected: missing tenant context session={}", sessionId);
-            return ProblemDetailsHandler.problemResponse(HttpStatus.UNAUTHORIZED, "AUTHORIZATION_REQUIRED", "Workspace context is required");
+            return ProblemDetailsHandler.workspaceContextRequired();
         }
         if (files == null || files.isEmpty()) {
             return ProblemDetailsHandler.problemResponse(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "No files provided");
@@ -69,7 +69,7 @@ public class ChatAttachmentController {
         String userId = TenantContext.getUserId();
         String workspaceId = TenantContext.getWorkspaceId();
         if (userId == null || workspaceId == null) {
-            return ProblemDetailsHandler.problemResponse(HttpStatus.UNAUTHORIZED, "AUTHORIZATION_REQUIRED", "Workspace context is required");
+            return ProblemDetailsHandler.workspaceContextRequired();
         }
         try {
             chatAttachmentService.delete(sessionId, fileId, userId, workspaceId);
@@ -91,7 +91,7 @@ public class ChatAttachmentController {
         String userId = TenantContext.getUserId();
         String workspaceId = TenantContext.getWorkspaceId();
         if (userId == null || workspaceId == null) {
-            return ProblemDetailsHandler.problemResponse(HttpStatus.UNAUTHORIZED, "AUTHORIZATION_REQUIRED", "Workspace context is required");
+            return ProblemDetailsHandler.workspaceContextRequired();
         }
         try {
             File file = chatAttachmentService.getMetadata(sessionId, fileId, userId, workspaceId);

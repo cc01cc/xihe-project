@@ -169,8 +169,7 @@ public class ConfigController {
         UUID workspaceId = null;
         if (wsId != null && !wsId.isBlank()) {
             if (userId == null) {
-                return ProblemDetailsHandler.problemResponse(
-                        HttpStatus.UNAUTHORIZED, "AUTHORIZATION_REQUIRED", "Workspace context is required");
+                return ProblemDetailsHandler.workspaceContextRequired();
             }
             workspaceService.requireAccessibleWorkspace(wsId, userId.toString());
             workspaceId = parseUuid(wsId);
@@ -383,8 +382,7 @@ public class ConfigController {
         UUID userId = currentUserId();
         String wsId = currentWorkspaceId(headerWorkspaceId, queryWorkspaceId);
         if (userId == null || wsId == null || wsId.isBlank()) {
-            return ProblemDetailsHandler.problemResponse(
-                    HttpStatus.UNAUTHORIZED, "AUTHORIZATION_REQUIRED", "Workspace context is required");
+            return ProblemDetailsHandler.workspaceContextRequired();
         }
         workspaceService.requireAccessibleWorkspace(wsId, userId.toString());
         return writeLayer("workspace", domain, body, "user", null, parseUuid(wsId));
@@ -563,8 +561,7 @@ public class ConfigController {
             @PathVariable("workspaceId") String wsId) {
         String userId = TenantContext.getUserId();
         if (userId == null) {
-            return ProblemDetailsHandler.problemResponse(
-                    HttpStatus.UNAUTHORIZED, "AUTHORIZATION_REQUIRED", "Workspace context is required");
+            return ProblemDetailsHandler.workspaceContextRequired();
         }
         workspaceService.requireAccessibleWorkspace(wsId, userId);
         try {
@@ -588,8 +585,7 @@ public class ConfigController {
             @RequestBody Map<String, Object> body) {
         String userId = TenantContext.getUserId();
         if (userId == null) {
-            return ProblemDetailsHandler.problemResponse(
-                    HttpStatus.UNAUTHORIZED, "AUTHORIZATION_REQUIRED", "Workspace context is required");
+            return ProblemDetailsHandler.workspaceContextRequired();
         }
         workspaceService.requireAccessibleWorkspace(wsId, userId);
 
@@ -703,8 +699,7 @@ public class ConfigController {
     public ResponseEntity<Map<String, Object>> getMcpConfig(@PathVariable("workspaceId") String wsId) {
         String userId = TenantContext.getUserId();
         if (userId == null) {
-            return ProblemDetailsHandler.problemResponse(
-                    HttpStatus.UNAUTHORIZED, "AUTHORIZATION_REQUIRED", "Workspace context is required");
+            return ProblemDetailsHandler.workspaceContextRequired();
         }
         workspaceService.requireAccessibleWorkspace(wsId, userId);
         return getMixedMcpConfig(wsId);
@@ -717,8 +712,7 @@ public class ConfigController {
             @RequestBody Map<String, Object> body) {
         String userId = TenantContext.getUserId();
         if (userId == null) {
-            return ProblemDetailsHandler.problemResponse(
-                    HttpStatus.UNAUTHORIZED, "AUTHORIZATION_REQUIRED", "Workspace context is required");
+            return ProblemDetailsHandler.workspaceContextRequired();
         }
         workspaceService.requireAccessibleWorkspace(wsId, userId);
         Object raw = body == null ? null : body.get("mcpServers");

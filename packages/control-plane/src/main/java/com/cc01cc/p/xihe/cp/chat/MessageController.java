@@ -44,8 +44,7 @@ public class MessageController {
         String userId = TenantContext.getUserId();
         String workspaceId = TenantContext.getWorkspaceId();
         if (userId == null || workspaceId == null) {
-            return ProblemDetailsHandler.problemResponse(
-                    HttpStatus.UNAUTHORIZED, "AUTHORIZATION_REQUIRED", "Workspace context is required");
+            return ProblemDetailsHandler.workspaceContextRequired();
         }
         try {
             sessionService.requireCurrent(sessionId, userId, workspaceId);
@@ -82,8 +81,7 @@ public class MessageController {
         String userId = TenantContext.getUserId();
         String workspaceId = TenantContext.getWorkspaceId();
         if (userId == null || workspaceId == null) {
-            return ProblemDetailsHandler.problemResponse(
-                    HttpStatus.UNAUTHORIZED, "AUTHORIZATION_REQUIRED", "Workspace context is required");
+            return ProblemDetailsHandler.workspaceContextRequired();
         }
         try {
             String deletedMessageId = messageDeletionService.delete(sessionId, messageId, userId, workspaceId);

@@ -48,8 +48,7 @@ public class RunTraceReadService {
     public TraceResponse getTrace(UUID runId, String userId, String workspaceId,
                                   String cursorValue, String limitValue) {
         if (userId == null || userId.isBlank() || workspaceId == null || workspaceId.isBlank()) {
-            throw new CpApiException(HttpStatus.UNAUTHORIZED, "AUTHORIZATION_REQUIRED",
-                    "Workspace context is required");
+            throw CpApiException.workspaceContextRequired();
         }
         int limit = parseLimit(limitValue);
         CursorState cursorState = cursorValue == null ? null : decodeCursor(cursorValue, runId);

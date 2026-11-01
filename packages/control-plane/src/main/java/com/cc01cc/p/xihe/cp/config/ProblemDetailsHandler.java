@@ -31,6 +31,23 @@ public class ProblemDetailsHandler {
         this.lockTimeoutMs = lockTimeoutMs;
     }
 
+    /**
+     * PLAN-0614 design ("workspaceId may be null; without a context still 400/409"): a missing
+     * <b>workspace context</b> is a conflict with the account's current state, not an authentication
+     * failure. The caller <i>is</i> authenticated — it simply has no active workspace yet (blank
+     * start) or has more than one and named none. Returning 401 here made the UI's auth interceptor
+     * treat it as "not logged in" and force a logout (BL-181).
+     *
+     * <p>Uses the pre-existing {@code WORKSPACE_CONTEXT_REQUIRED} code that
+     * {@code SessionCreationService} already answers for "multiple workspaces, none specified", so
+     * one semantic keeps one status/code pair. Genuine authentication failures stay 401 and are
+     * produced by the security filter chain / token authenticator, never here.</p>
+     */
+    public static ResponseEntity<Map<String, Object>> workspaceContextRequired() {
+        return problemResponse(HttpStatus.CONFLICT, "WORKSPACE_CONTEXT_REQUIRED",
+                "Workspace context is required");
+    }
+
     public static ResponseEntity<Map<String, Object>> problemResponse(HttpStatus status, String code, String detail) {
         return problemResponse(status, code, detail,
                 org.slf4j.MDC.get(com.cc01cc.p.xihe.cp.logging.RequestIdFilter.MDC_KEY));

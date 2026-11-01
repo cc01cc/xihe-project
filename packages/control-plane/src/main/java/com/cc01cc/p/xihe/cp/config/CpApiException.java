@@ -34,6 +34,15 @@ public class CpApiException extends IllegalArgumentException {
         return status;
     }
 
+    /**
+     * The service-layer twin of {@code ProblemDetailsHandler.workspaceContextRequired()}: 409
+     * {@code WORKSPACE_CONTEXT_REQUIRED} for "authenticated, but no workspace context was resolved".
+     */
+    public static CpApiException workspaceContextRequired() {
+        return new CpApiException(org.springframework.http.HttpStatus.CONFLICT,
+                "WORKSPACE_CONTEXT_REQUIRED", "Workspace context is required");
+    }
+
     public String getCode() {
         return code;
     }

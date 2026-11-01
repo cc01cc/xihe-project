@@ -29,8 +29,7 @@ public class ApprovalController {
         String userId = TenantContext.getUserId();
         String workspaceId = TenantContext.getWorkspaceId();
         if (userId == null || workspaceId == null) {
-            return ProblemDetailsHandler.problemResponse(
-                    HttpStatus.UNAUTHORIZED, "AUTHORIZATION_REQUIRED", "Workspace context is required");
+            return ProblemDetailsHandler.workspaceContextRequired();
         }
         try {
             return ResponseEntity.ok(approvalService.decide(requestId, userId, workspaceId, parseDecision(body)));

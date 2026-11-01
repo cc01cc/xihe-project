@@ -167,8 +167,7 @@ public class PolicyRuleService {
             }
             default -> {
                 if (requireOwner && workspaceId == null) {
-                    throw new CpApiException(HttpStatus.UNAUTHORIZED, "AUTHORIZATION_REQUIRED",
-                            "Workspace context is required");
+                    throw CpApiException.workspaceContextRequired();
                 }
                 yield workspaceId;
             }

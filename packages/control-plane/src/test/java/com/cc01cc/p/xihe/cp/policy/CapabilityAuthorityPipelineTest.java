@@ -85,8 +85,13 @@ class CapabilityAuthorityPipelineTest extends AbstractH2Test {
     @Test
     void plainAuthenticatedUserIsForbiddenButAuthenticated() {
         Session session = register("cap-user-" + UUID.randomUUID() + "@test.com");
-        assertEquals(HttpStatus.OK.value(), getSessions(session.token()),
-                "authenticated() still admits an ordinary user on /api/v1/**");
+        // The URL layer admits the authenticated user and the request reaches the endpoint: a fresh
+        // account has no workspace (PLAN-0614 blank start), so the endpoint answers 409
+        // WORKSPACE_CONTEXT_REQUIRED — proof of authentication, without the 401 that the UI reads as
+        // "you are logged out".
+        assertEquals(HttpStatus.CONFLICT.value(), getSessions(session.token()),
+                "authenticated() still admits an ordinary user on /api/v1/**; missing workspace"
+                        + " context is a 409, not an authentication failure");
         assertEquals(HttpStatus.FORBIDDEN.value(), postLogs(session.token()),
                 "the LOGS endpoint now requires cap:instance:admin");
         assertEquals(HttpStatus.UNAUTHORIZED.value(), getSessions(null),
@@ -112,7 +117,8 @@ class CapabilityAuthorityPipelineTest extends AbstractH2Test {
     @Test
     void tokenIsRejectedAfterTheEpochBump() {
         Session session = register("cap-epoch-" + UUID.randomUUID() + "@test.com");
-        assertEquals(HttpStatus.OK.value(), getSessions(session.token()));
+        assertEquals(HttpStatus.CONFLICT.value(), getSessions(session.token()),
+                "the fresh token authenticates (409 = reached the workspace-context guard)");
 
         User user = userRepository.findById(session.userId()).orElseThrow();
         user.bumpTokenVersion();
@@ -184,6 +190,16 @@ class CapabilityAuthorityPipelineTest extends AbstractH2Test {
         ResponseEntity<Map> response = restTemplate.exchange(baseUrl + "/api/v1/logs",
                 HttpMethod.POST, new HttpEntity<>(Map.of("entries", List.of()), headers), Map.class);
         return response.getStatusCode().value();
+    }
+
+    private Map<?, ?> sessionsBody(String token) {
+        HttpHeaders headers = new HttpHeaders();
+        if (token != null) {
+            headers.setBearerAuth(token);
+        }
+        ResponseEntity<Map> response = restTemplate.exchange(baseUrl + "/api/v1/sessions",
+                HttpMethod.GET, new HttpEntity<>(headers), Map.class);
+        return response.getBody();
     }
 
     private int getSessions(String token) {

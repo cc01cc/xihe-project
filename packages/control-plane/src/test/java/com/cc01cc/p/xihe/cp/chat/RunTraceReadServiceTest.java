@@ -59,7 +59,9 @@ class RunTraceReadServiceTest {
         CpApiException error = assertThrows(CpApiException.class,
                 () -> service.getTrace(runId, null, workspaceId, null, null));
 
-        assertEquals("AUTHORIZATION_REQUIRED", error.getCode());
+        // BL-181: authenticated but without a workspace context = 409, not an authentication failure.
+        assertEquals("WORKSPACE_CONTEXT_REQUIRED", error.getCode());
+        assertEquals(409, error.getStatus().value());
         verifyNoInteractions(sessionService, sourceRepository);
     }
 

@@ -31,8 +31,7 @@ public class SessionBranchController {
         String userId = TenantContext.getUserId();
         String workspaceId = TenantContext.getWorkspaceId();
         if (userId == null || workspaceId == null) {
-            return ProblemDetailsHandler.problemResponse(
-                    HttpStatus.UNAUTHORIZED, "AUTHORIZATION_REQUIRED", "Workspace context is required");
+            return ProblemDetailsHandler.workspaceContextRequired();
         }
         try {
             return ResponseEntity.ok(sessionBranchActionService.list(
@@ -50,8 +49,7 @@ public class SessionBranchController {
         String userId = TenantContext.getUserId();
         String workspaceId = TenantContext.getWorkspaceId();
         if (userId == null || workspaceId == null) {
-            return ProblemDetailsHandler.problemResponse(
-                    HttpStatus.UNAUTHORIZED, "AUTHORIZATION_REQUIRED", "Workspace context is required");
+            return ProblemDetailsHandler.workspaceContextRequired();
         }
         if (request == null || request.sourceBranchId() == null || request.sourceBranchId().isBlank()
                 || request.anchorMessageId() == null || request.anchorMessageId().isBlank()) {
