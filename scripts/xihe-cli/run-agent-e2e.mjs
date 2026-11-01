@@ -132,6 +132,28 @@ function codeOf(response, fallback) {
   return response.code ?? fallback;
 }
 
+/**
+ * CP requires an active SSE subscription per session before POST /chat
+ * (`ChatController` 409 `SSE_SUBSCRIPTION_REQUIRED`). Mirrors verify.mjs's openSse:
+ * open the stream and consume the first chunk ("connected") before sending chat.
+ */
+async function openSse({ apiBase, fetchImpl, token, workspaceId, sessionId }) {
+  try {
+    const response = await fetchImpl(`${apiBase}/api/v1/events?sessionId=${encodeURIComponent(sessionId)}`, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: 'text/event-stream',
+        'X-Workspace-Id': workspaceId,
+      },
+    });
+    if (!response.ok || !response.body) return null;
+    const reader = response.body.getReader();
+    try { await reader.read(); } catch { /* stream closed */ }
+    return { close: () => { try { reader.cancel(); } catch { /* already closed */ } } };
+  } catch {
+    return null;
+  }
+}
 export async function runAgentE2E({ env, fetchImpl = fetch, options }) {
   const apiBase = String(options['--cp'] ?? '').trim().replace(/\/$/, '');
   if (!apiBase) throw usageError('--cp <url> is required (e.g. --cp http://127.0.0.1:12631).');
@@ -264,6 +286,9 @@ export async function runAgentE2E({ env, fetchImpl = fetch, options }) {
       sessionId,
       branchId,
       chatTargets,
+      openSubscription: (chatTarget) => openSse({
+        apiBase, fetchImpl, token, workspaceId, sessionId: chatTarget.sessionId,
+      }),
     });
     step('A6 RESOURCE_EXHAUSTED 429', limit.status, limit.detail, limit.evidence
       ?? { code: limit.code ?? null, connectionId: resolved.binding.connectionId });
