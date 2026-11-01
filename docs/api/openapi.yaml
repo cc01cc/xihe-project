@@ -3117,10 +3117,10 @@ components:
           schema: { type: string, enum: [no-store] }
       content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } }
     ResourceExhausted:
-      description: 'RESOURCE_EXHAUSTED — the resource governor refused admission (connection/model concurrency, queue depth or window token budget). Fast refusal, never a queue wait and never a 503: the backend is healthy, the caller is over its limit. Retry after the Retry-After delay or use another connection.'
+      description: 'RESOURCE_EXHAUSTED — the resource governor refused admission (connection/model concurrency, queue depth or window token budget). Fast refusal, never a queue wait and never a 503: the backend is healthy, the caller is over its limit. Retry after the Retry-After delay or use another connection. The Retry-After header and body.retryAfterSeconds always carry the same value.'
       headers:
         Retry-After:
-          description: Seconds before the caller should retry
+          description: Seconds before the caller should retry (same value as body.retryAfterSeconds)
           schema: { type: integer, minimum: 1 }
         Cache-Control:
           description: Always no-store for a throttle response
@@ -4221,7 +4221,7 @@ components:
          maxQueue: { type: [integer, 'null'], minimum: 0, description: 'PLAN-0622: reserved queue depth; null clears it.' }
          windowTokenBudget: { type: [integer, 'null'], format: int64, minimum: 1, description: 'PLAN-0622: token budget per windowSeconds; null clears it.' }
          windowSeconds: { type: [integer, 'null'], minimum: 1 }
-         modelLimits: { type: array, items: { $ref: '#/components/schemas/ModelLimit' }, description: 'PLAN-0622: full replacement of the per-model overrides; an empty array clears them.' }
+         modelLimits: { type: array, items: { $ref: '#/components/schemas/ModelLimit' }, description: 'PLAN-0622 per-model overrides with FULL-REPLACEMENT semantics: omitting the field keeps the stored rows untouched, an empty array clears every model-level override, and a model entry that omits one of maxInflight/windowTokenBudget/windowSeconds inherits the connection-level value (null on the connection level = unlimited). Sending the field replaces the whole set, it never merges per key.' }
     ProviderConnectionVerifyResponse:
        type: object
        required: [connection, models]
