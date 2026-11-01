@@ -13,6 +13,12 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.context.request.async.AsyncRequestNotUsableException;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.HttpMediaTypeNotAcceptableException;
+import org.springframework.web.HttpMediaTypeNotSupportedException;
+import org.springframework.web.HttpRequestMethodNotSupportedException;
+import org.springframework.web.bind.MissingPathVariableException;
+import org.springframework.web.bind.MissingServletRequestParameterException;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
 
@@ -146,6 +152,54 @@ public class ProblemDetailsHandler {
             headers.forEach((name, value) -> builder.header(name, value));
         }
         return builder.body(body);
+    }
+
+    /**
+     * PLAN-0621 F-06（M3）：**框架级 4xx 必须显式映射**。
+     *
+     * <p>有头走查实测：对只支持 POST 的集合端点发 {@code GET /api/v1/workspaces/{id}/sessions} 得到
+     * {@code 500 INTERNAL_ERROR "Request failed"}。根因不是那条路由，而是本类末尾的
+     * {@code @ExceptionHandler(Exception.class)} 兜底：Spring MVC 在进入 controller 之前抛出的
+     * {@code HttpRequestMethodNotSupportedException} / {@code HttpMediaTypeNotSupportedException}
+     * 等没有更具体的处理器，就全部落进 500。</p>
+     *
+     * <p>这些异常**本身就是客户端错误**（405/415/406/400），显式映射回各自的 4xx：调用方能拿到可行动的
+     * code，监控里的 500 也只剩真正的服务端故障。<b>不动 {@code Exception} 兜底</b>——它仍需捕获真正
+     * 未预期的异常。</p>
+     */
+    @ExceptionHandler({HttpRequestMethodNotSupportedException.class,
+            HttpMediaTypeNotSupportedException.class,
+            HttpMediaTypeNotAcceptableException.class,
+            MethodArgumentTypeMismatchException.class,
+            MissingServletRequestParameterException.class,
+            MissingPathVariableException.class})
+    public ResponseEntity<Map<String, Object>> frameworkClientError(Exception exception, HttpServletRequest request) {
+        HttpStatus status;
+        String code;
+        String detail;
+        if (exception instanceof HttpRequestMethodNotSupportedException methodNotSupported) {
+            status = HttpStatus.METHOD_NOT_ALLOWED;
+            code = "METHOD_NOT_ALLOWED";
+            detail = "HTTP method " + String.valueOf(methodNotSupported.getMethod())
+                    + " is not supported for this resource";
+        } else if (exception instanceof HttpMediaTypeNotSupportedException mediaTypeNotSupported) {
+            status = HttpStatus.UNSUPPORTED_MEDIA_TYPE;
+            code = "UNSUPPORTED_MEDIA_TYPE";
+            detail = "Content type " + String.valueOf(mediaTypeNotSupported.getContentType())
+                    + " is not supported for this resource";
+        } else if (exception instanceof HttpMediaTypeNotAcceptableException) {
+            status = HttpStatus.NOT_ACCEPTABLE;
+            code = "NOT_ACCEPTABLE";
+            detail = "The requested response media type is not available";
+        } else {
+            // 参数类型不匹配 / 缺查询参数 / 缺路径变量：都是调用方把请求写错了。
+            status = HttpStatus.BAD_REQUEST;
+            code = "INVALID_REQUEST";
+            detail = "Request parameters are invalid";
+        }
+        logger.warn("Framework-level client error at {}: {} ({} {})", request.getRequestURI(),
+                exception.getClass().getSimpleName(), status.value(), code);
+        return problem(status, code, detail, request);
     }
 
     @ExceptionHandler({IllegalArgumentException.class, HttpMessageNotReadableException.class,
