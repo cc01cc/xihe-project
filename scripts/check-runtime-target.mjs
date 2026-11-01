@@ -121,19 +121,19 @@ function detectOwner(dir) {
   return { owner: 'unknown', evidence: 'no-fingerprint-or-depinfo-evidence' };
 }
 
-// one/.local/cargo-target：从当前仓库根向上找到包含 .local/cargo-target 的 workspace 根。
+// one/.tmp/cargo-target：从当前仓库根向上找到包含 .tmp/cargo-target 的 workspace 根（2026-11-01 起构建输出统一落 .tmp）。
 function findExternalRoot() {
   const override = process.env.CARGO_TARGET_DIR;
   if (override) {
     const resolved = resolve(override);
-    if (/\.[\\/]local[\\/]cargo-target[\\/][^\\/]+$/.test(resolved)) {
+    if (/\.[\\/]tmp[\\/]cargo-target[\\/][^\\/]+$/.test(resolved)) {
       return join(resolved, '..', '..');
     }
-    if (/\.[\\/]local[\\/]cargo-target$/.test(resolved)) return resolved;
+    if (/\.[\\/]tmp[\\/]cargo-target$/.test(resolved)) return resolved;
   }
   let current = root;
   for (let depth = 0; depth < 4; depth += 1) {
-    const candidate = join(current, '.local', 'cargo-target');
+    const candidate = join(current, '.tmp', 'cargo-target');
     try {
       if (statSync(candidate).isDirectory()) return candidate;
     } catch (error) {
@@ -146,10 +146,22 @@ function findExternalRoot() {
   return null;
 }
 
+// 2026-11-01 用户裁定：构建输出统一落 one/.tmp（cargo-target / venvs），.local 只放运行产物与证据。
+// 这里检测历史遗留的 `.local/cargo-target`，只报告不删除。
+function legacyLocalRoot(externalRoot) {
+  const base = externalRoot ? dirname(dirname(externalRoot)) : root;
+  const candidate = join(base, '.local', 'cargo-target');
+  try {
+    return statSync(candidate).isDirectory() ? candidate : null;
+  } catch (error) {
+    return null;
+  }
+}
+
 function scanExternalRoot() {
   const externalRoot = findExternalRoot();
   if (!externalRoot) {
-    return { path: null, exists: false, note: 'workspace .local/cargo-target not found' };
+    return { path: null, exists: false, note: 'workspace .tmp/cargo-target not found' };
   }
   let entries;
   try {
@@ -181,7 +193,15 @@ function scanExternalRoot() {
     dirs.push(item);
   }
   dirs.sort((a, b) => b.bytes - a.bytes);
-  return { path: externalRoot, exists: true, totalBytes, totalFiles, dirs };
+  const legacy = legacyLocalRoot(externalRoot);
+  return {
+    path: externalRoot,
+    exists: true,
+    totalBytes,
+    totalFiles,
+    dirs,
+    ...(legacy ? { legacyLocal: legacy } : {}),
+  };
 }
 
 function scanCargoTargetDir(externalRoot) {
@@ -191,7 +211,7 @@ function scanCargoTargetDir(externalRoot) {
   const stats = dirStats(resolved, true);
   const debug = profileStats(join(resolved, 'debug'));
   const release = profileStats(join(resolved, 'release'));
-  const insideExternalRoot = Boolean(externalRoot) && /[\\/]\.local[\\/]cargo-target[\\/]/.test(resolved);
+  const insideExternalRoot = Boolean(externalRoot) && /[\\/]\.tmp[\\/]cargo-target[\\/]/.test(resolved);
   return {
     set: true,
     path: resolved,
@@ -286,6 +306,9 @@ if (JSON_MODE) {
     `target=${fmt(inTree.bytes)} debug=${fmt(debugBytes)} release=${fmt(releaseBytes)} h_free=${free !== null ? fmt(free) : 'unknown'} verdict=${verdict}`,
   );
   console.log('water lines (DEV-002 §6): normal <=12G, watch >12G, warn >=15G, force >=20G, H free <5G = force');
+  if (externalRoot.legacyLocal) {
+    console.log('WARN legacy .local/cargo-target still exists: ' + externalRoot.legacyLocal + ' (build outputs must live under one/.tmp; see AGENTS.md)');
+  }
   console.log(
     `in-tree runtime target: ${relative(root, targetDir).split('\\').join('/')} exists=${inTree.exists} ` +
       `total=${fmt(inTree.bytes)} debug=${fmt(debugBytes)} release=${fmt(releaseBytes)} files=${inTree.files}`,

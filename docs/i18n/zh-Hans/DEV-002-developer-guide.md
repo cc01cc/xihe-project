@@ -411,7 +411,7 @@ Native 运行期的探针口径（运维注意）：native CP 的 `/actuator/hea
 
 水位线（`target/`）：正常 ≤12GB，12–15GB 观察，≥15GB 告警，≥20GB 强制；H 余量 <5GB 直接走强制。巡检入口：`mise run check:runtime-target`（输出占用与判定，exit 1 = 强制线、exit 2 = 检查不完整；脚本 `scripts/check-runtime-target.mjs`），双周先跑它、超线再按下面顺序清理。
 
-- **worktree 隔离（PLAN-0596，默认策略）**：每个 worktree 使用独立 `CARGO_TARGET_DIR`（若在 one workspace 内，按 one 侧 worktree 约定外置到 `one/.local/cargo-target/<name>`；单独 clone 时保持 in-tree 默认），不共享同一 target。2026-10-31 scratch 对照：同一源码/profile 的两个 checkout 共享 target 时，第二 checkout 冷构建 48.9s → 0.3s、磁盘从 2×2.606GB 降为 2.606GB；但真实并行 worktree 的分支/工具链/profile 常不同，且并发构建会串行、Windows 服务占用 exe 会让另一 worktree 构建失败，故不采纳共享，保留隔离。
+- **worktree 隔离（PLAN-0596，默认策略）**：每个 worktree 使用独立 `CARGO_TARGET_DIR`（若在 one workspace 内，按 one 侧 worktree 约定外置到 `one/.tmp/cargo-target/<name>`；单独 clone 时保持 in-tree 默认），不共享同一 target。2026-10-31 scratch 对照：同一源码/profile 的两个 checkout 共享 target 时，第二 checkout 冷构建 48.9s → 0.3s、磁盘从 2×2.606GB 降为 2.606GB；但真实并行 worktree 的分支/工具链/profile 常不同，且并发构建会串行、Windows 服务占用 exe 会让另一 worktree 构建失败，故不采纳共享，保留隔离。
 - **sweep 作用域**：`clean:runtime-sweep` 只作用于当前 `cargo metadata` 解析出的单个 target（普通 shell = in-tree；在 one workspace 内按 one 侧约定 dot-source 外置脚本后 = 该 worktree 的外置目录），不枚举 `.local/cargo-target` 下其他项目；`--maxsize 12GB` 无单位按 MiB 计（≈11.18 GiB）。
 - **永久删除入口**：`mise run clean` 执行 `rm -rf logs packages/*/target packages/*/dist packages/*/coverage`，**不进回收站、无二次确认**；先停服务/构建，并确认这些目录确属可重建产物。
 
