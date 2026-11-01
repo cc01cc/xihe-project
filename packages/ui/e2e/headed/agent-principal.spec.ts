@@ -120,8 +120,8 @@ const EXPECTED_TESTIDS: Array<{
     {
         id: "agent-disabled-badge-",
         scene: "S3",
-        status: "blocked",
-        note: "卡在 CP D27：WorkspaceAgentView 无 disabled 字段 ⇒ UI 的 v-if=agent.disabled 永不成立（POST 已 204 但徽标不渲染）",
+        status: "asserted",
+        note: "CP D27 合入后真机验证通过：disable 两次点击 → 徽标出现（2026-11-02 S3 PASS）",
     },
     {
         id: "message-resource-exhausted",
