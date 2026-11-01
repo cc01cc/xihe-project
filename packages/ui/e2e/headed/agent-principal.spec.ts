@@ -215,7 +215,7 @@ test.describe("PLAN-0622 M4 有头走查：PERSONAL agent 生命周期 + 429 提
         // scope 下拉只列有权限的档；PERSONAL 是 S1 的目标档（无权限时 UI fail-closed，直接失败）。
         const scopeSelect = page.getByTestId("agent-principal-scope");
         await expect(scopeSelect).toBeVisible({ timeout: 20000 });
-        await scopeSelect.selectOption("personal");
+        await scopeSelect.selectOption("PERSONAL");
 
         const name = `Headed Personal ${randomUUID().slice(0, 8)}`;
         await page.getByTestId("agent-principal-name").fill(name);

@@ -477,20 +477,21 @@ test.describe.serial("@host headed walkthrough — real user scenarios S1–S8",
             data: {
                 name: `S5 invite ws ${Date.now()}`,
                 storageMode: "direct_attach",
-                hostPath: (() => { const dir = `${process.env.XIHE_HEADED_EVIDENCE_ROOT ?? "H:/zeogit/one/.tmp/xh-headed-walkthrough"}/s5-ws-${Date.now()}`; mkdirSync(dir, { recursive: true }); return dir; })(),
+                hostPath: (() => {
+                    const dir = `${process.env.XIHE_HEADED_EVIDENCE_ROOT ?? "H:/zeogit/one/.tmp/xh-headed-walkthrough"}/s5-ws-${Date.now()}`;
+                    mkdirSync(dir, { recursive: true });
+                    return dir;
+                })(),
                 executionMode: "windows-host",
             },
         });
         expect([200, 201], await createdWs.text()).toContain(createdWs.status());
         const s5WorkspaceId = String(((await createdWs.json()) as { id?: string }).id ?? "");
         expect(s5WorkspaceId).toMatch(/^[0-9a-f-]{36}$/i);
-        const invited = await request.post(
-            `${CP_URL}/api/v1/workspaces/${s5WorkspaceId}/members`,
-            {
-                headers: { ...bearer(adminToken), "Content-Type": "application/json" },
-                data: { username: plainUsername, role: "EDITOR" },
-            },
-        );
+        const invited = await request.post(`${CP_URL}/api/v1/workspaces/${s5WorkspaceId}/members`, {
+            headers: { ...bearer(adminToken), "Content-Type": "application/json" },
+            data: { username: plainUsername, role: "EDITOR" },
+        });
         expect([200, 201], await invited.text()).toContain(invited.status());
 
         // 切回普通账号，并直接进入被邀请的工作区（真实用户路径：选择面 → 该工作区）。
@@ -501,64 +502,82 @@ test.describe.serial("@host headed walkthrough — real user scenarios S1–S8",
         await shot(page, "S5", "s5-plain-account-landing", "普通账号进入后的落点");
 
         const token = await tokenOf(page);
-        // D21：省略 scope 已按 WORKSPACE 处理，且需要显式工作区上下文。F-01 的语义不变：
-        // 普通账号（EDITOR，无 MANAGE_WORKSPACE_AGENTS）仍应被拒；409 仅表示"缺工作区上下文"，
-        // 与 403 同属拒绝，不允许把 201 放进接受集。
-        const apiAttempt = await request.post(`${CP_URL}/api/v1/agent-principals`, {
-            headers: { ...bearer(token), "X-Workspace-Id": s5WorkspaceId },
-            data: { scope: "WORKSPACE", name: `headed-f01-${Date.now()}` },
-        });
-        const f01Problem = (await apiAttempt.json().catch(() => ({}))) as { code?: string };
-        test.info().annotations.push({
-            type: "headed-f01-api",
-            description: `POST /agent-principals (scope=WORKSPACE) → ${apiAttempt.status()}${f01Problem.code ? ` ${f01Problem.code}` : ""}`,
-        });
-        expect([403, 409], `expected a denial, got ${apiAttempt.status()} ${f01Problem.code ?? ""}`).toContain(
-            apiAttempt.status(),
-        );
 
-        // UI 侧：打开 Agent 管理面板，记录"入口是否隐藏 / 有没有可操作提示 / 是否直显英文 403"。
+        // D8 后的 F-01 语义：普通账号默认拥有 CREATE_OWN_AGENT ⇒ 可以建 **PERSONAL**，
+        // 但不能建 WORKSPACE（无 MANAGE_WORKSPACE_AGENTS）/ INSTANCE（无 CREATE_ACCOUNT）。
+        // API 侧两条拒绝都要有可读 code；不允许用"任意状态码都接受"的万能断言。
+        const deniedScopes: Array<{ scope: string; status: number; code: string | null }> = [];
+        for (const scope of ["WORKSPACE", "INSTANCE"] as const) {
+            const denied = await request.post(`${CP_URL}/api/v1/agent-principals`, {
+                headers: { ...bearer(token), "X-Workspace-Id": s5WorkspaceId },
+                data: { scope, name: `headed-f01-${scope.toLowerCase()}-${Date.now()}` },
+            });
+            const problem = (await denied.json().catch(() => ({}))) as { code?: string };
+            deniedScopes.push({ scope, status: denied.status(), code: problem.code ?? null });
+            test.info().annotations.push({
+                type: `headed-f01-api-${scope.toLowerCase()}`,
+                description: `POST /agent-principals (scope=${scope}) → ${denied.status()}${problem.code ? ` ${problem.code}` : ""}`,
+            });
+            expect(
+                [403, 409],
+                `scope=${scope} must be denied, got ${denied.status()} ${problem.code ?? ""}`,
+            ).toContain(denied.status());
+        }
+
+        // UI 侧：打开 Agent 管理面板 —— 普通账号应能建 PERSONAL，且 scope 下拉只出现 PERSONAL。
         const toolbarVisible = await page
             .getByTestId("workspace-toolbar-agents")
             .isVisible()
             .catch(() => false);
-        let dialogText = "";
-        let createVisible = false;
-        if (toolbarVisible) {
-            await page.getByTestId("workspace-toolbar-agents").click();
-            await expect(page.getByTestId("workspace-agent-management-dialog")).toBeVisible({
-                timeout: 20000,
-            });
-            createVisible = await page
-                .getByTestId("agent-principal-create")
-                .isVisible()
-                .catch(() => false);
-            dialogText =
-                (await page.getByTestId("workspace-agent-management-dialog").innerText()) ?? "";
-            // F-01（M3 修后口径）：没有 CREATE_ACCOUNT 的账号在**点击之前**就该看到结果——
-            // 就地提示 + 指向 /settings/roles 的链接，且填好名字后按钮仍然禁用（不是"点了才 403"）。
-            await expect(page.getByTestId("agent-create-forbidden-hint")).toBeVisible({
-                timeout: 20000,
-            });
-            const grantLink = page.getByTestId("agent-grant-panel-link");
-            await expect(grantLink).toBeVisible();
-            await expect(grantLink).toHaveAttribute("href", "/settings/roles");
-            await page.getByTestId("agent-principal-name").fill(`headed-plain-${Date.now()}`);
-            await expect(page.getByTestId("agent-principal-create")).toBeDisabled();
-            await shot(page, "S5b", "s5b-agent-dialog-plain-account", "普通账号的 Agent 管理面板");
-        }
+        expect(toolbarVisible, "the invited member must see the Agent toolbar").toBe(true);
+        await page.getByTestId("workspace-toolbar-agents").click();
+        await expect(page.getByTestId("workspace-agent-management-dialog")).toBeVisible({
+            timeout: 20000,
+        });
+        const scopeSelect = page.getByTestId("agent-principal-scope");
+        await expect(scopeSelect).toBeVisible({ timeout: 20000 });
+        // 只出现 PERSONAL：WORKSPACE / INSTANCE 因缺少对应授权不渲染。
+        await expect
+            .poll(
+                async () =>
+                    scopeSelect
+                        .locator("option")
+                        .evaluateAll((options) => options.map((o) => o.getAttribute("value"))),
+                {
+                    timeout: 20000,
+                    intervals: [250, 500],
+                },
+            )
+            .toEqual(["PERSONAL"]);
+        await expect(page.getByTestId("agent-create-forbidden-hint")).toHaveCount(0);
+        await page.getByTestId("agent-principal-name").fill(`headed-plain-${Date.now()}`);
+        await expect(page.getByTestId("agent-principal-create")).toBeEnabled();
+        const personalCreateResponse = page.waitForResponse(
+            (response) =>
+                new URL(response.url()).pathname === "/api/v1/agent-principals" &&
+                response.request().method() === "POST",
+        );
+        await page.getByTestId("agent-principal-create").click();
+        const personalCreated = await personalCreateResponse;
+        expect(personalCreated.status(), await personalCreated.text()).toBe(201);
+        const personalBody = (await personalCreated.json()) as { scope?: string };
+        expect(personalBody.scope, "PERSONAL create must echo scope=PERSONAL").toBe("PERSONAL");
+        await shot(
+            page,
+            "S5b",
+            "s5b-agent-dialog-plain-account",
+            "普通账号只能建 PERSONAL：scope 仅 PERSONAL、创建可用、无 forbidden hint",
+        );
         test.info().annotations.push({
             type: "headed-f01-ui",
             description: JSON.stringify({
                 toolbarVisible,
-                createVisible,
-                dialogTextLength: dialogText.length,
-                // 该账号没有工作区时工具条不出现，UI 断言分支不会执行 —— 显式标注，避免被当成证据。
-                uiCoverage: toolbarVisible ? "covered" : "未覆盖（账号无工作区，工具条不可见）",
+                scopeOptions: ["PERSONAL"],
+                forbiddenHintCount: 0,
+                personalCreateStatus: personalCreated.status(),
+                deniedScopes,
             }),
         });
-        // 记录事实，不做产品判断（定性在 evidence/findings.md 的 F-01）。
-        expect(typeof dialogText).toBe("string");
     });
 
     // ── S6：建 Agent → 绑会话 → 发消息 → 首条回复 ───────────────────────────
