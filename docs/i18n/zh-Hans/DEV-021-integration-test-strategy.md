@@ -345,7 +345,7 @@ verify(postRequestedFor(urlEqualTo("/internal/v1/agent/chat"))
 ## 5. 运行命令
 
 ```bash
-# 全量集成测试（Docker 可用时含 T3，不可用时仅 T2）
+# 全量集成测试（T3 已冻结，PLAN-0618；解冻后恢复，见 DEV-018「docker 后端冻结范围」）
 mise run test:integration
 
 # 各模块独立运行

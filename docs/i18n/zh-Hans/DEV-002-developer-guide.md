@@ -190,7 +190,9 @@ node scripts/dev-stack.mjs stop --stack 4 --with-pg       # 显式停 PG 容器�
 
 ### 模式 B：Docker Compose 全栈（一次性基线）
 
-> 🧊 **已冻结（2026-10-07 用户裁定；2026-10-09 mise 已注释）**：XH 服务容器化与 docker 构建全部暂缓——只有 PostgreSQL 保留容器，其余全 host。本模式命令与 `mise run dev:full` / `dev:backend` 均停用，仅作历史参考；日常启动用 `dev:host`，隔离 E2E 用 `test:e2e:host`。解冻须用户明确裁定并同步 AGENTS/DEV-002/DEV-020。冻结只涉及服务容器化与镜像构建；工作区执行后端不变：`managed_import` 仍只允许 `docker`，`direct_attach` 仍只允许 `windows-mxc`/`windows-host`（见 DEV-031）。
+> 🧊 **已冻结（2026-10-07 用户裁定；2026-10-09 mise 已注释）**：XH 服务容器化与 docker 构建全部暂缓——只有 PostgreSQL 保留容器，其余全 host。本模式命令与 `mise run dev:full` / `dev:backend` 均停用，仅作历史参考；日常启动用 `dev:host`，隔离 E2E 用 `test:e2e:host`。解冻须用户明确裁定并同步 AGENTS/DEV-002/DEV-020。
+
+> ⚠️ **两件事别混**：本条冻结的是**服务容器化/镜像构建**；**工作区 docker 执行后端**是另一件事，且自 PLAN-0618（2026-11-01 用户裁定）起**也完全冻结**（产品面 + 测试面 + 默认值三面一起冻；新建工作区只有 `direct_attach` 可用）。工作区后端冻结范围与解冻步骤见 [DEV-018](DEV-018-known-issues.md)「docker 后端冻结范围」，加载项细节见 [DEV-031](DEV-031-sandbox-backend-contract.md)。
 
 > ⚠️ **拓扑限制（先读）**：当前 Compose 已挂载 Runtime 的 Docker Engine socket 并对齐 `XIHE_AGENT_API_TOKEN`/`XIHE_CP_API_TOKEN`（PLAN-0401 修复），但容器内 WorkspaceStorage 映射仍缺（runtime 挂载 `./logs/runtime:/logs` 与 `/var/run/docker.sock`，无宿主工作区目录映射）。因此 Compose 模式**仍不能替代 `dev:host` 主链路**，workspace/MCP/截图类验证必须在 host 模式执行，不得把 Compose 失败归因于 host v1。另：Agent 单 workspace MCP 绑定与“每 E2E 用例独立 workspace”冲突属架构级已知边界（见项目 AGENTS Known Issues）。
 

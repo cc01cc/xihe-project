@@ -357,8 +357,9 @@ const messages = {
             maturityExperimental: "实验性",
             maturityPreview: "预览",
             maturityStable: "稳定",
-            managedExecutionUnknown: "托管导入将在创建后由 Runtime 探测后端可用性",
-            dockerPostponed: "受管工作区固定使用 Docker 执行后端",
+            managedExecutionUnknown:
+                "托管副本的执行后端已冻结（PLAN-0618，完全冻结）：当前无法创建，解冻后由 Runtime 探测后端可用性",
+            dockerPostponed: "受管工作区固定使用 Docker 执行后端（该后端当前已冻结）",
             mxcUnavailableGuidance:
                 "MXC 当前不可用。你可以显式切换到不受沙盒限制的宿主执行后继续；系统不会自动切换。",
             switchToHostExecution: "切换到不受沙盒限制的宿主执行",
@@ -2298,8 +2299,9 @@ const messages = {
             maturityExperimental: "Experimental",
             maturityPreview: "Preview",
             maturityStable: "Stable",
-            managedExecutionUnknown: "Managed import probes backend availability after creation",
-            dockerPostponed: "Managed workspaces always use the Docker execution backend",
+            managedExecutionUnknown:
+                "The managed-copy execution backend is frozen (PLAN-0618 full freeze): creation is unavailable now; after unfreezing, Runtime probes backend availability",
+            dockerPostponed: "Managed workspaces always use the Docker execution backend (currently frozen)",
             mxcUnavailableGuidance:
                 "MXC is currently unavailable. You can explicitly switch to unrestricted host execution to continue; the system never switches automatically.",
             switchToHostExecution: "Switch to unrestricted host execution",

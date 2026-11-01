@@ -142,7 +142,7 @@ capabilities() -> { available, reason, diagnostics? }
 
 当前 backend 方向：`windows-mxc` 由 PLAN-0379 承接，成熟度通过 `maturity: "experimental"` 报告；`windows-host/unrestricted` 是用户显式选择的宿主执行兜底，不宣称 workspace 外写保护；`docker` 保持稳定 backend identity，但 Docker 卷/guard 线由 PLAN-0377/0380 后置。三者共用 `contractVersion: "v1"`，消费方按 `available/reason` 和 executionMode 分支，platform/provider version 只作 diagnostics，不按 backend 名称拼接传输细节。
 
-`docker` 没有退役：它仍是 `managed_import` 的唯一执行后端；服务容器化冻结只影响服务进程的部署形态与镜像构建，不影响工作区后端的可用性。用户侧入口（新建 direct-attach、挂载已有目录、MXC 与宿主的能力/风险差异、受管工作区不可转换）见 USER-001 §2.6。
+`docker` 没有退役，但**当前不可用**：它仍是 `managed_import` 的唯一执行后端（backend identity 保留、代码不删），按 PLAN-0618（2026-11-01 用户裁定）**完全冻结**——产品面（新建/执行/聊天）+ 测试面 + 默认值一起冻，CP 以 `503/409 BACKEND_DISABLED` fail-closed，不静默回退宿主。解冻后行为恢复（改 `XIHE_WORKSPACE_DOCKER_BACKEND` + 恢复冻结测试组，见 [DEV-018](DEV-018-known-issues.md)「docker 后端冻结范围」）。用户侧入口（新建 direct-attach、挂载已有目录、MXC 与宿主的能力/风险差异、受管工作区不可转换）见 USER-001 §2.6。
 
 ## 8. 变更规则
 

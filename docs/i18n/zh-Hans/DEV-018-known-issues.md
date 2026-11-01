@@ -126,7 +126,7 @@ updated: 2026-10-25
 - **WSL2 OOM**: 修改 vitest config 前应先在 one workspace 侧清理 WSL 资源（清理脚本属 one 工具，见 one 的 `docker` / `windows` skill 文档；本仓库不依赖它，单独 clone 可跳过）
 - **Container name**: `docker compose up -d` 前先 `docker rm -f xihe-*` 清理残留
 - **Native host boundary**: 日常 host 开发只允许 PostgreSQL 运行在 Docker；CP、Agent、Runtime、UI 必须由 mise 作为 Windows 原生任务启动。不要使用不带服务筛选的 `docker compose up -d`，否则会误启动后三个后端容器。
-- **工作区 Docker 后端已冻结（PLAN-0612 M4，2026-10-31 用户裁定）**：开关 `XIHE_WORKSPACE_DOCKER_BACKEND` 默认 `disabled` ⇒ **新建工作区必须 `direct_attach`**（`managed_import` 在创建时直接返回 `409 BACKEND_DISABLED`，先于任何行/execution spec 写入）；既有 docker 工作区的 materialize / Job 启动 / 上传 / imports 返回 `503 BACKEND_DISABLED`（fail-closed，不回退宿主），读面与 `PATCH …/execution-mode` 迁移出口保持可用。产品面（UI/CLI）在调用前必须显式提示不可用并指向 `direct_attach`，不得让用户走到容器创建才收到原始错误。契约见 [DEV-014](DEV-014-control-plane-architecture.md) §8b 与 [DEV-031](DEV-031-sandbox-backend-contract.md)；`test:e2e:host` 是唯一豁免（仍需该后端出证据）。
+- **工作区 Docker 后端已冻结（PLAN-0612 M4 起门禁；PLAN-0618 起完全冻结，2026-11-01 用户裁定）**：开关 `XIHE_WORKSPACE_DOCKER_BACKEND` 默认 `disabled` ⇒ **`storageMode` 必填且无默认值**（缺 → `400 INVALID_REQUEST`），显式 `managed_import` 在创建时直接返回 `409 BACKEND_DISABLED`（先于任何行/execution spec 写入）；既有 docker 工作区的 materialize / Job 启动 / 上传 / imports / **会话与聊天**返回 `503 BACKEND_DISABLED`（fail-closed，不回退宿主），读面与 `PATCH …/execution-mode` 迁移出口保持可用。产品面（UI/CLI）在调用前必须显式提示不可用并指向 `direct_attach`，不得让用户走到容器创建才收到原始错误。契约见 [DEV-014](DEV-014-control-plane-architecture.md) §8b 与 [DEV-031](DEV-031-sandbox-backend-contract.md)；**测试面与默认值同批冻结（不再有 `test:e2e:host` 豁免）**，三面范围与解冻步骤见下方「docker 后端冻结范围」节。
 - **Native host startup**: 使用 `mise run dev:host`；该任务先执行 `docker compose up -d --wait postgres`，再并行管理四个原生服务。`mise run dev:host:watch` 由 Node watcher 监督健康端点并在任务组故障后重启。
 - **Native host shutdown**: 在运行 `mise run dev:host` 的终端按 Ctrl+C 清理原生任务，再执行 `mise run dev:host:stop` 停止 PostgreSQL。不要依赖残留 PID 或手工猜测进程。
 - **Dev data reset**: 使用 `mise run dev:reset` 先查看 dry-run；确认本地数据可丢弃后才使用 `pwsh -File scripts/dev-reset.ps1 -Reset`。该命令会先备份数据库、重建项目卷并将 host workspace 目录送入回收站，不删除 Runtime device identity。
@@ -141,6 +141,29 @@ updated: 2026-10-25
 - **Runtime CWD 测试**: `dotenv_loader` 测试会临时切换 process CWD，测试 helper 已用 mutex 串行化；默认并行 `cargo test --lib` 可稳定运行。
 - **Runtime per-request exec 延迟（PLAN-235）**: Workspace 操作经 Docker exec 单次往返，M0 spike 手工实测均值约 136ms（不可复现锚点，仅供参考）；高频批量操作若不可接受，以纯性能优化另行评估 HTTP 通道，不改变 operation core。
 - **Runtime 后台 job 状态文件（PLAN-235）**: job 状态存于容器 `/tmp/xihe-jobs/<jobId>/`，容器重建即自然孤儿化；查询旧 jobId 返回 not found 属设计内行为，非数据丢失。
+
+## docker 后端冻结范围（PLAN-0618，2026-11-01 用户裁定：完全冻结）
+
+「完全冻结」= **产品面 + 测试面 + 默认值三面一起冻，解冻时一起解冻**（与此前 2026-10-31 的"产品面冻结、测试面豁免"不同，后者已 supersede）。
+
+| 面 | 冻结后的行为 | 依据 |
+|---|---|---|
+| **默认值** | `storageMode` **无默认值**：`POST /api/v1/workspaces` 缺该字段 → `400 INVALID_REQUEST`（指向 `direct_attach`）；DTO/实体/环境视图的兜底值统一为 `direct_attach`；枚举值 `managed_import` **保留**（解冻要用），只改默认 | PLAN-0618 M2 决策 #7/#8 |
+| **产品面** | 显式 `managed_import` 创建 → `409 BACKEND_DISABLED`（先于落库）；既有 docker 工作区的 materialize / Job / 上传 / imports → `503 BACKEND_DISABLED`；**chat 与 session 创建/发消息**同样 → `503 BACKEND_DISABLED`（BL-178）；UI 不提供"托管副本"入口、环境页显示冻结横幅；读面（environment、Job 列表/输出、import 查询、附件下载）与 `PATCH …/execution-mode` 迁移出口保持可用 | DEV-014 §8b、DEV-031 §7 |
+| **测试面** | CP：6 条真依赖容器的用例标 `@Tag("docker-frozen")`，Surefire `excludedGroups=docker-frozen` **默认排除**（报告里是 filtered，不是 skipped，也不会伪装通过）；E2E：受影响的 spec 从批次剔除，恢复用 `--include-docker-frozen` | `plans/PLAN-0618-XH-docker-freeze-complete/evidence/m3-frozen-tests.md`（清单 + 每条理由 + 解冻后要验证什么） |
+
+**解冻步骤**（按顺序执行，一处开关；文件与属性名写全，避免接手人再翻代码）：
+
+1. **恢复测试基类的后端开关**：把这 4 个文件里的 `XIHE_WORKSPACE_DOCKER_BACKEND` 从 `disabled`（或删除该属性）改回 `enabled`：
+   - `packages/control-plane/src/test/java/com/cc01cc/p/xihe/cp/AbstractH2Test.java:20`
+   - `packages/control-plane/src/test/java/com/cc01cc/p/xihe/cp/AbstractIntegrationTest.java:29`
+   - `packages/control-plane/src/test/java/com/cc01cc/p/xihe/cp/crossmodule/AbstractWireMockTest.java:32`
+   - `packages/control-plane/src/test/resources/application-test.properties:29`（test profile 兜底键）
+2. **放开冻结分组**：清空 `packages/control-plane/pom.xml` 里 `PLAN-0618 M3` 新增的属性 `<docker.frozen.excludedGroups>docker-frozen</docker.frozen.excludedGroups>`（Surefire 的 `<excludedGroups>${docker.frozen.excludedGroups}</excludedGroups>` 随之失效），或运行时覆盖：`mvn -o test "-Ddocker.frozen.excludedGroups="`。只想单独跑冻结组时用 `mvn -o test "-Ddocker.frozen.excludedGroups=" -Dgroups=docker-frozen`。
+3. **恢复 E2E 收集**：给受影响批次加 `--include-docker-frozen`（PLAN-0618 M3 的 runner 开关；口径以 `m3-frozen-tests.md` 定稿为准），并按该文件逐条核对应恢复全绿的 spec（冻结清单 6 条 CP 用例 + E2E spec 列表都在里面）。
+4. **产品面开关只用于解冻/取证**：`XIHE_WORKSPACE_DOCKER_BACKEND=enabled` 只在解冻验证或取证时注入，不写进 `.env.dev` 日常默认（见 `.env.example`）；恢复后 `POST /api/v1/workspaces` 才重新接受 `storageMode=managed_import`。
+
+> 冻结清单与理由只维护在 evidence（`m3-frozen-tests.md`），本文件不复制条目；新增/取消冻结必须同步该 evidence 与本节三面口径。
 
 ## host 车道全矩阵基建阻断（PLAN-0560 补跑发现，2026-10-28 登记；2026-10-29 PLAN-0578 定根因；PLAN-0579 修复；2026-10-29 PLAN-0564 P2 整批复跑收口）
 
