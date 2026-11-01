@@ -177,13 +177,20 @@ class ChatAttachmentIntegrationTest extends AbstractIntegrationTest {
         String fileId = (String) file.get("id");
         assertTrue(fileRepository.findById(UUID.fromString(fileId)).isPresent());
 
-        chatAttachmentService.deleteSessionAttachments(sessionId);
+        // deleteSessionAttachments takes the per-File pessimistic lock (same lock/order as an in-flight
+        // fork copy), so it must run inside a transaction; production only calls it from the
+        // session-delete transaction. The direct call here needs its own.
+        new org.springframework.transaction.support.TransactionTemplate(transactionManager)
+                .executeWithoutResult(status -> chatAttachmentService.deleteSessionAttachments(sessionId));
 
         assertFalse(fileRepository.findById(UUID.fromString(fileId)).isPresent());
     }
 
     @Autowired
     private ChatAttachmentService chatAttachmentService;
+
+    @Autowired
+    private org.springframework.transaction.PlatformTransactionManager transactionManager;
 
     private HttpHeaders authHeaders() {
         HttpHeaders h = new HttpHeaders();

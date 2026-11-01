@@ -123,8 +123,12 @@ class InboxFreshMigrationTest {
         try (Connection connection = connect(jdbcUrl)) {
             execute(connection, "INSERT INTO users (id, email, password_hash, username) VALUES ('" + userId
                     + "'::uuid, 'inbox-fresh-" + userId + "@test.local', 'hash', 'x' || left(md5(random()::text), 31))");
-            execute(connection, "INSERT INTO workspaces (id, name, owner_id) VALUES ('" + workspaceId
-                    + "'::uuid, 'inbox-fresh-ws', '" + userId + "'::uuid)");
+            // V89 dropped workspaces.owner_id: ownership is the WS_OWNER workspace-scope binding.
+            execute(connection, "INSERT INTO workspaces (id, name) VALUES ('" + workspaceId
+                    + "'::uuid, 'inbox-fresh-ws')");
+            execute(connection, "INSERT INTO role_bindings (id, role_id, subject_type, subject_id,"
+                    + " scope_type, scope_id) SELECT gen_random_uuid(), r.id, 'user', '" + userId
+                    + "'::uuid, 'workspace', '" + workspaceId + "'::uuid FROM roles r WHERE r.name = 'WS_OWNER'");
             execute(connection, "INSERT INTO sessions (id, workspace_id, user_id, title) VALUES ('"
                     + parentSessionId + "'::uuid, '" + workspaceId + "'::uuid, '" + userId
                     + "'::uuid, 'inbox-parent')");

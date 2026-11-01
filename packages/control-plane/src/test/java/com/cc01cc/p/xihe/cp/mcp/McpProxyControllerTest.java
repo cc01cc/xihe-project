@@ -68,11 +68,21 @@ class McpProxyControllerTest {
         assertEquals("tools/list", method);
     }
 
+    /**
+     * PLAN-0610 W1b-2a put {@code @PreAuthorize} on the controller methods, so the autowired bean is a
+     * CGLIB proxy. Spring builds that proxy without running the constructor, so every instance field
+     * on the proxy is null — reflecting a <i>private</i> method on it dereferences a null
+     * {@code objectMapper}. Private members belong to the target, so unwrap first.
+     */
+    private Object target() {
+        return org.springframework.test.util.AopTestUtils.getUltimateTargetObject(controller);
+    }
+
     private String invokeExtractToolName(String body) {
         try {
             var field = McpProxyController.class.getDeclaredMethod("extractToolName", String.class);
             field.setAccessible(true);
-            return (String) field.invoke(controller, body);
+            return (String) field.invoke(target(), body);
         } catch (Exception e) {
             throw new RuntimeException(e);
         }
@@ -100,7 +110,7 @@ class McpProxyControllerTest {
         try {
             var field = McpProxyController.class.getDeclaredMethod("extractMethod", String.class);
             field.setAccessible(true);
-            return (String) field.invoke(controller, body);
+            return (String) field.invoke(target(), body);
         } catch (Exception e) {
             throw new RuntimeException(e);
         }

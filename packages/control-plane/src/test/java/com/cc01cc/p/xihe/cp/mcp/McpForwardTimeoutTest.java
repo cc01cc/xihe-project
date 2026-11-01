@@ -19,7 +19,9 @@ class McpForwardTimeoutTest {
     private long forwardTimeout() throws Exception {
         Field f = McpProxyController.class.getDeclaredField("forwardTimeoutS");
         f.setAccessible(true);
-        return f.getLong(controller);
+        // PLAN-0610 method security proxies the controller (CGLIB, fields unset on the proxy);
+        // the @Value-bound field lives on the target instance.
+        return f.getLong(org.springframework.test.util.AopTestUtils.getUltimateTargetObject(controller));
     }
 
     @Test

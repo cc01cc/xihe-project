@@ -4,6 +4,7 @@ import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
 import com.cc01cc.p.xihe.cp.auth.AuthResponse;
 import com.cc01cc.p.xihe.cp.auth.RegisterRequest;
 import com.cc01cc.p.xihe.cp.integration.TestDataFactory;
+import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
 import com.cc01cc.p.xihe.cp.service.WorkspaceExecutionSpecService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -24,6 +25,9 @@ class RuntimeExecutionSpecIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired
     private WorkspaceExecutionSpecService executionSpecService;
+
+    @Autowired
+    private WorkspaceFixture workspaceFixture;
 
     @Test
     void runtimeHeartbeatRequiresBearerAndIsAccepted() {
@@ -57,7 +61,11 @@ class RuntimeExecutionSpecIntegrationTest extends AbstractIntegrationTest {
                 url("/api/v1/auth/register"),
                 new RegisterRequest(email, TestDataFactory.PASSWORD, "ExecutionSpec Test"),
                 AuthResponse.class);
-        String workspaceId = registration.getBody().getWorkspaceId();
+        // PLAN-0614 (blank start): registration no longer creates a workspace, so the fixture
+        // creates the caller's own before an execution spec can exist for it.
+        String workspaceId = workspaceFixture.ensureOwnedWorkspace(
+                java.util.UUID.fromString(registration.getBody().getUser().getId()),
+                "Execution spec workspace").getId().toString();
         assertNotNull(workspaceId);
 
         executionSpecService.createExecutionSpec(

@@ -104,7 +104,10 @@ class PolicyRuleServiceTest {
         CpApiException error = assertThrows(CpApiException.class,
                 () -> service.create("workspace", "u1", "ws1", false, input("read", "*", "allow", false)));
         assertEquals(HttpStatus.FORBIDDEN, error.getStatus());
+        assertEquals("FORBIDDEN", error.getCode());
 
+        // The gate admits workspace writers, so the success case must actually be a writer.
+        TenantContext.setWorkspaceRole("EDITOR");
         assertNotNull(service.create("workspace", "u1", "ws1", false, input("read", "*", "allow", false)));
 
         TenantContext.setWorkspaceRole("ADMIN");
