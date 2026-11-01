@@ -84,9 +84,13 @@ class WorkspaceAgentControllerContractTest extends AbstractIntegrationTest {
     void workspaceMemberCanReadButOnlyAuthorizedOperatorCanChangeBinding() throws Exception {
         fixture();
 
-        ResponseEntity<List> empty = request(HttpMethod.GET, path(), null);
+        // PLAN-0622 M1.2 froze the list envelope as `{agents:[…]}` (it used to be a bare array);
+        // the test must assert the envelope, not just "something parsed".
+        ResponseEntity<Map> empty = request(HttpMethod.GET, path(), null);
         assertEquals(HttpStatus.OK, empty.getStatusCode());
-        assertTrue(empty.getBody().isEmpty());
+        assertEquals(java.util.Set.of("agents"), empty.getBody().keySet(),
+                "the workspace agent list is an envelope, not a bare array");
+        assertTrue(agents(empty.getBody()).isEmpty());
 
         Map<String, Object> request = Map.of("permissions", List.of(Map.of("actionClass", "read")));
         ResponseEntity<Map> denied = request(HttpMethod.PUT, path() + "/" + principalId, request);
@@ -99,14 +103,26 @@ class WorkspaceAgentControllerContractTest extends AbstractIntegrationTest {
         assertEquals(workspaceId.toString(), bound.getBody().get("workspaceId"));
         assertTrue(bindingRepository.existsById(new WorkspaceAgentId(principalId, workspaceId)));
 
-        ResponseEntity<List> listed = request(HttpMethod.GET, path(), null);
+        ResponseEntity<Map> listed = request(HttpMethod.GET, path(), null);
         assertEquals(HttpStatus.OK, listed.getStatusCode());
-        Map<?, ?> view = (Map<?, ?>) listed.getBody().getFirst();
+        List<?> listedAgents = agents(listed.getBody());
+        assertEquals(1, listedAgents.size(), String.valueOf(listed.getBody()));
+        Map<?, ?> view = (Map<?, ?>) listedAgents.getFirst();
         assertEquals(principalId.toString(), view.get("principalId"));
         assertEquals("Research Agent", view.get("name"));
         assertEquals("template-1", view.get("templateId"));
         assertEquals("Research", view.get("templateName"));
-        assertNotNull(view.get("permissions"));
+        // PLAN-0622 M1.2 renamed `permissions` -> `permissionsSnapshot` and made `source` mandatory;
+        // D26/D27 added the `bound` / `disabled` projection the UI gates its buttons on.
+        assertNotNull(view.get("permissionsSnapshot"),
+                "M1.2: the cap is projected as permissionsSnapshot");
+        assertFalse(view.containsKey("permissions"),
+                "M1.2 removed the bare `permissions` key (a silent rename must fail here)");
+        assertEquals("workspace", view.get("source"),
+                "M1.2: a WORKSPACE-scope principal reports source=workspace");
+        assertEquals(Boolean.TRUE, view.get("bound"), "D26: a bound row projects bound=true");
+        assertEquals(Boolean.FALSE, view.get("disabled"),
+                "D27: a principal without disabledAt projects disabled=false");
         assertFalse(view.containsKey("systemPrompt"));
         assertFalse(view.containsKey("provider"));
         assertFalse(view.containsKey("secret"));
@@ -202,7 +218,15 @@ class WorkspaceAgentControllerContractTest extends AbstractIntegrationTest {
         HttpHeaders headers = new HttpHeaders();
         headers.setBearerAuth(token);
         headers.setContentType(MediaType.APPLICATION_JSON);
+        // PLAN-0622 M1.2: the list is an envelope object too, so only DELETE has no JSON body type.
         return restTemplate.exchange(url(path), method, new HttpEntity<>(body, headers), (Class<T>)
-                (method == HttpMethod.GET ? List.class : method == HttpMethod.DELETE ? Void.class : Map.class));
+                (method == HttpMethod.DELETE ? Void.class : Map.class));
+    }
+
+    /** The envelope payload of `GET /workspaces/{id}/agents` (M1.2 froze it as `{agents:[…]}`). */
+    private static List<?> agents(Map<?, ?> body) {
+        Object value = body == null ? null : body.get("agents");
+        assertNotNull(value, "the list envelope must carry an `agents` array");
+        return (List<?>) value;
     }
 }

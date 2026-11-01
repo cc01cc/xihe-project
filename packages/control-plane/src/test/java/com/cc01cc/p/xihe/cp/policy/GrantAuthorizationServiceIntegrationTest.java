@@ -9,6 +9,7 @@ import com.cc01cc.p.xihe.cp.entity.AuthorizationGrant;
 import com.cc01cc.p.xihe.cp.entity.ChatRun;
 import com.cc01cc.p.xihe.cp.entity.ConfigEntity;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
+import com.cc01cc.p.xihe.cp.config.TenantContext;
 import com.cc01cc.p.xihe.cp.entity.AccessRole;
 import com.cc01cc.p.xihe.cp.entity.AccessRoleBinding;
 import com.cc01cc.p.xihe.cp.entity.Session;
@@ -42,6 +43,7 @@ import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -459,7 +461,23 @@ class GrantAuthorizationServiceIntegrationTest extends AbstractIntegrationTest {
                 + "WHERE action = 'workspace_agent_unbound' AND workspace_id = ? AND resource_id = ?",
                 Integer.class, workspaceId, principalId.toString()));
 
-        assertTrue(agentPrincipalService.disablePrincipal(userId, principalId));
+        // PLAN-0622 D22: disabling a WORKSPACE-scope principal requires an explicit workspace
+        // context — the refusal is the contract (never a silent instance-wide disable), so assert
+        // it first, then prove the authorized path still works inside a real context.
+        CpApiException withoutContext = assertThrows(CpApiException.class,
+                () -> agentPrincipalService.disablePrincipal(userId, principalId));
+        assertEquals("WORKSPACE_CONTEXT_REQUIRED", withoutContext.getCode(),
+                "D22: without a workspace context the disable is refused");
+        assertNull(agentPrincipalRepository.findById(principalId).orElseThrow().getDisabledAt(),
+                "the refused call must not disable anything");
+        TenantContext.setUserId(userId);
+        TenantContext.setWorkspaceId(workspaceId.toString());
+        TenantContext.setWorkspaceSource("header");
+        try {
+            assertTrue(agentPrincipalService.disablePrincipal(userId, principalId));
+        } finally {
+            TenantContext.clear();
+        }
         AgentPrincipal disabled = agentPrincipalRepository.findById(principalId).orElseThrow();
         assertTrue(disabled.getDisabledAt() != null);
         assertEquals(1, jdbcTemplate.queryForObject("SELECT count(*) FROM audit_logs "
