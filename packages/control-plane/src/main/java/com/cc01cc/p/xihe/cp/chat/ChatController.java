@@ -99,6 +99,7 @@ public class ChatController {
     private final com.cc01cc.p.xihe.cp.service.ContextTemplateSourceService contextTemplateSourceService;
     private final ApplicationEventPublisher eventPublisher;
     private final ChatActiveRunRegistry activeRunRegistry;
+    private final com.cc01cc.p.xihe.cp.policy.ResourceGovernor governor;
 
     private static final java.time.Duration LEASE_TTL = java.time.Duration.ofMinutes(10);
     private static final String INSTANCE_ID = UUID.randomUUID().toString();
@@ -157,7 +158,8 @@ public class ChatController {
              com.cc01cc.p.xihe.cp.context.service.ContextSourceRefreshService contextSourceRefreshService,
               com.cc01cc.p.xihe.cp.usage.UsageCostMapper usageCostMapper,
               com.cc01cc.p.xihe.cp.service.ContextTemplateSourceService contextTemplateSourceService,
-              ApplicationEventPublisher eventPublisher) {
+              ApplicationEventPublisher eventPublisher,
+              com.cc01cc.p.xihe.cp.policy.ResourceGovernor governor) {
         this.agentHttpClient = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(10))
             .build();
@@ -171,6 +173,7 @@ public class ChatController {
         this.agentPrincipalService = agentPrincipalService;
         this.chatAttachmentService = chatAttachmentService;
         this.activeRunRegistry = activeRunRegistry;
+        this.governor = governor;
         this.healthMonitor = healthMonitor;
         this.requestQueue = requestQueue;
         this.credentialLeases = credentialLeases;
@@ -550,7 +553,19 @@ public class ChatController {
             return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
         }
 
+        // PLAN-0622 D28 (verify V7 / D14): borrow this run's governor slots on the **request
+        // thread**, before anything is persisted, so an over-limit POST /chat answers
+        // 429 RESOURCE_EXHAUSTED (Retry-After + resourceKind + scope) instead of 202 followed by
+        // an asynchronous RESOURCE_EXHAUSTED run failure (R2: a refusal leaves no row behind).
+        ProviderCredentialLeaseService.Admission admission = credentialLeases.admit(
+                session.getProviderConnectionId(), provider, model, null);
+        if (!admission.isEmpty()) {
+            governor.bindToRun(runId, admission.leases());
+        }
+
         if (!acquireRun(sessionId, runId)) {
+            // The session mutex refuses the run; the borrowed slots must not survive the 409.
+            governor.releaseRun(runId);
             logger.warn("[LIFECYCLE] service=cp event=chat_sse_rejected requestId={} sessionId={} runId={} errorCode=CHAT_IN_PROGRESS",
                     requestId, sessionId, runId);
             return ProblemDetailsHandler.problemResponse(HttpStatus.CONFLICT, "CHAT_IN_PROGRESS", "A chat run is already active for this session");
@@ -563,6 +578,19 @@ public class ChatController {
                     provider, model, toolMode, session.getProviderConnectionId(), session.getConnectionRevision(),
                     instanceId(), requestId, content, attachmentsJson, attachmentIds);
             ChatRun chatRun = submission.run();
+            if (!admission.isEmpty() && !admission.covers(chatRun.getProviderConnectionId(),
+                    chatRun.getProvider(), chatRun.getModel())) {
+                // The Session was re-bound between admission and persist, so the borrowed slots
+                // belong to a different connection/provider/model key: drop them and let the
+                // worker's issue() acquire for the key the run actually carries.
+                logger.warn("[LIFECYCLE] service=cp event=chat_admission_key_changed requestId={} sessionId={} runId={}"
+                                + " addressKey={}/{}/{} runKey={}/{}/{} action=release_admission_and_reacquire",
+                        requestId, sessionId, runId,
+                        admission.connectionId(), admission.providerId(), admission.model(),
+                        chatRun.getProviderConnectionId(), chatRun.getProvider(), chatRun.getModel());
+                governor.releaseRun(runId);
+                admission = ProviderCredentialLeaseService.Admission.none();
+            }
             Message userMessage = submission.userMessage();
 
             if (!attachmentIds.isEmpty()) {
@@ -580,6 +608,12 @@ public class ChatController {
                         sessionId, content, provider, model, toolMode, attachmentInfos,
                         userId, workspaceId, requestId, runId, perCallTimeouts.values());
                 if (queued) {
+                    // The run is parked for transport recovery: no run is executing, so the
+                    // admission slots must not stay borrowed (the queued dispatch acquires its own).
+                    governor.releaseRun(runId);
+                    // The slots are gone, so the worker must not treat itself as already admitted —
+                    // otherwise a flag would suppress the acquire and the ceiling would be bypassed.
+                    admission = ProviderCredentialLeaseService.Admission.none();
                     logger.info("[LIFECYCLE] service=cp event=chat_run_queued requestId={} sessionId={} runId={} reason=agent_down",
                             requestId, sessionId, runId);
                     handedOff = true;
@@ -595,8 +629,10 @@ public class ChatController {
                 chatSubmissionService.persistRunStatus(chatRun, "accepted");
             }
 
+            final ProviderCredentialLeaseService.Admission dispatchAdmission =
+                    admission == null ? ProviderCredentialLeaseService.Admission.none() : admission;
             execAsync(sessionId, content, provider, model, toolMode, perCallTimeouts.values(),
-                    attachmentInfos, userId, workspaceId, requestId, runId);
+                    attachmentInfos, userId, workspaceId, requestId, runId, dispatchAdmission, null);
             handedOff = true;
             return ResponseEntity.accepted().body(Map.of(
                 "status", "accepted",
@@ -607,6 +643,8 @@ public class ChatController {
             ));
         } finally {
             if (!handedOff) {
+                // D28: a run that never reached dispatch must not keep the admission slots.
+                governor.releaseRun(runId);
                 releaseRun(sessionId, runId, "chat_handoff_failed");
             }
         }
@@ -921,6 +959,16 @@ public class ChatController {
                            List<com.cc01cc.p.xihe.cp.files.dto.AttachmentInfo> attachments,
                            String userId, String workspaceId, String requestId, String runId,
                            ContinuationDispatchContext continuationContext) {
+        execAsync(sessionId, content, provider, model, toolMode, toolTimeouts, attachments,
+                userId, workspaceId, requestId, runId, null, continuationContext);
+    }
+
+    private void execAsync(String sessionId, String content, String provider, String model, String toolMode,
+                           Map<String, Integer> toolTimeouts,
+                           List<com.cc01cc.p.xihe.cp.files.dto.AttachmentInfo> attachments,
+                           String userId, String workspaceId, String requestId, String runId,
+                           ProviderCredentialLeaseService.Admission admission,
+                           ContinuationDispatchContext continuationContext) {
         Thread worker = new Thread(() -> {
             MDC.put("requestId", requestId);
             MDC.put("chatRunId", runId);
@@ -997,7 +1045,8 @@ public class ChatController {
                             persistedRun.connectionRevision(),
                             null,
                             leasePrincipalId,
-                            leasePrincipalId == null ? null : leaseSession.getAgentPermissionsSnapshot());
+                            leasePrincipalId == null ? null : leaseSession.getAgentPermissionsSnapshot(),
+                            continuationContext == null ? admission : null);
                 }
                 Map<String, Object> agentRequest = new java.util.LinkedHashMap<>();
                 agentRequest.put("sessionId", sessionId);

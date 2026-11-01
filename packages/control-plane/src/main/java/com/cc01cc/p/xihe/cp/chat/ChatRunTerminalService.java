@@ -145,6 +145,7 @@ public class ChatRunTerminalService {
     private final FollowUpQueueService followUpQueueService;
     private final ChatRunGuidanceService chatRunGuidanceService;
     private final ChatRunTransportService transportAttempts;
+    private final com.cc01cc.p.xihe.cp.policy.ResourceGovernor governor;
 
     public ChatRunTerminalService(
             DbLockTimeout dbLockTimeout,
@@ -162,7 +163,8 @@ public class ChatRunTerminalService {
             SseEmitterManager sseEmitters,
             FollowUpQueueService followUpQueueService,
     ChatRunGuidanceService chatRunGuidanceService,
-            ChatRunTransportService transportAttempts) {
+            ChatRunTransportService transportAttempts,
+            com.cc01cc.p.xihe.cp.policy.ResourceGovernor governor) {
         this.dbLockTimeout = dbLockTimeout;
         this.datasourceUrl = datasourceUrl;
         this.entityManager = entityManager;
@@ -179,6 +181,7 @@ public class ChatRunTerminalService {
         this.followUpQueueService = followUpQueueService;
         this.chatRunGuidanceService = chatRunGuidanceService;
         this.transportAttempts = transportAttempts;
+        this.governor = governor;
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
@@ -240,6 +243,11 @@ public class ChatRunTerminalService {
             return new TerminalResult(Outcome.LOST, run.getStatus());
         }
         entityManager.refresh(run);
+
+        // PLAN-0622 D28: the chat admission path borrows governor slots on the request thread; the
+        // terminal owner that wins this write releases them, whichever path produced the terminal
+        // state (stream end, cancellation, reconciliation, restart recovery).
+        releaseGovernorSlotsOnCommit(request.runId());
 
         approvalService.expirePendingForTerminalRun(runId.toString(), request.status());
 
@@ -418,6 +426,27 @@ public class ChatRunTerminalService {
                 }
             }
         });
+    }
+
+    /**
+     * PLAN-0622 D28: release the governor slots a chat admission borrowed for this run.
+     *
+     * <p>Registered after commit so a rolled-back transition never frees a slot that is still in
+     * use. {@code releaseRun} is idempotent, so a cancellation callback racing the stream terminal
+     * cannot drive the outstanding count negative (R3).</p>
+     */
+    private void releaseGovernorSlotsOnCommit(String runId) {
+        try {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    governor.releaseRun(runId);
+                }
+            });
+        } catch (RuntimeException error) {
+            logger.warn("[LIFECYCLE] service=cp event=governor_slot_release_registration_failed runId={} error={}",
+                    runId, error.getMessage());
+        }
     }
 
     /** PLAN-0407 T2.6b: one notice per (parent Session, child_terminal, child run), same transaction. */
