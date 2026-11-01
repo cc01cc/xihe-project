@@ -29,7 +29,7 @@ The MCP logical endpoint has **no protocol session**: CP neither issues nor acce
 ### 1.1 Workspace context (PLAN-0559)
 
 - Access tokens are **user-level**: new tokens carry no `workspace_id`; the workspace comes from `X-Workspace-Id` on each request.
-- Resolution: `X-Workspace-Id` -> legacy token claim (transition) -> caller default workspace. A present header never falls back to the claim.
+- Resolution: `X-Workspace-Id` -> legacy token claim (transition) -> the account's **first active workspace** (since 0614 no workspace is auto-created, so this may be empty). A present header never falls back to the claim.
 - Every request checks active + membership. Roles: OWNER (read/write/manage), EDITOR (read/write), VIEWER (read-only); legacy `ADMIN`/`MEMBER` map to EDITOR.
 - Errors: malformed header `400 INVALID_WORKSPACE_ID`; non-member/deleted `403 WORKSPACE_FORBIDDEN`; VIEWER write `403 WORKSPACE_READ_ONLY`.
 - Refresh never rebinds a workspace; the optional `X-Workspace-Id` only echoes `workspaceId`.

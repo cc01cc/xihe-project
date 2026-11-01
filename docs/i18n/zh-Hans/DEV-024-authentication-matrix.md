@@ -29,7 +29,7 @@ XH 有**两套**认证，不要混用：
 ### 1.1 工作区上下文（PLAN-0559）
 
 - access token 是**用户级**的：新 token 不含 `workspace_id`；工作区由逐请求 `X-Workspace-Id` 决定。
-- 解析优先级：`X-Workspace-Id` → 旧 token claim（过渡）→ 用户默认工作区；header 存在时绝不回落 claim。
+- 解析优先级：`X-Workspace-Id` → 旧 token claim（过渡）→ 该账号**第一个活跃工作区**（0614 起不再自动创建工作区，没有则为空）；header 存在时绝不回落 claim。
 - 逐请求校验 active + membership；角色矩阵 OWNER（读写+管理）/ EDITOR（读写）/ VIEWER（只读）。legacy `ADMIN`/`MEMBER` 映射为 EDITOR。
 - 失败：非法 header `400 INVALID_WORKSPACE_ID`；非成员/已删 `403 WORKSPACE_FORBIDDEN`；VIEWER 写 `403 WORKSPACE_READ_ONLY`。
 - refresh 不重绑工作区；可选 `X-Workspace-Id` 只回填响应 `workspaceId`。
