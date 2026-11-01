@@ -1,0 +1,169 @@
+package com.cc01cc.p.xihe.cp.chat;
+
+import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
+import com.cc01cc.p.xihe.cp.auth.AuthResponse;
+import com.cc01cc.p.xihe.cp.auth.RegisterRequest;
+import com.cc01cc.p.xihe.cp.integration.TestDataFactory;
+import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
+import com.cc01cc.p.xihe.cp.service.SessionService;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.time.Duration;
+import java.util.UUID;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+
+/**
+ * PLAN-0623 D23-13: the PRIMARY participant is part of creating a Session.
+ *
+ * <p>Before this test only the V92 backfill produced a PRIMARY, so on every newly created Session the
+ * invariant was vacuous: {@code DELETE .../participants/{PRIMARY}} could never be reached and the
+ * conversation had no main participant at all. The PRIMARY and its cursor row are written inside the
+ * session-creation transaction, and a principal-null placeholder deliberately gets neither.</p>
+ */
+class SessionPrimaryParticipantTest extends AbstractIntegrationTest {
+
+    @Autowired private WorkspaceFixture workspaceFixture;
+    @Autowired private ObjectMapper json;
+    @Autowired private SessionService sessionService;
+
+    private final HttpClient http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build();
+    private String ownerToken;
+    private String ownerId;
+    private String workspaceId;
+    private String principalId;
+
+    @BeforeEach
+    void fixture() {
+        AuthResponse owner = register("p623-primary");
+        ownerToken = owner.getAccessToken();
+        ownerId = owner.getUser().getId();
+        workspaceId = workspaceFixture.createOwnedWorkspace("P623 primary ws", ownerId).getId().toString();
+
+        JsonNode created = send(ownerToken, "POST", "/api/v1/agent-principals",
+                """
+                {"name":"Primary agent","scope":"PERSONAL"}""").body();
+        principalId = created.path("principalId").asText();
+        // Bind with an empty cap: the session only needs a binding, and the cap is intersected with
+        // the principal's grants, so an empty ceiling keeps the fixture free of grant seeding.
+        assertEquals(200, send(ownerToken, "PUT",
+                "/api/v1/workspaces/" + workspaceId + "/agents/" + principalId,
+                """
+                {"permissions":[]}""").status());
+    }
+
+    @Test
+    void creatingAnAgentSessionSeedsThePrimaryAndItsCursor() {
+        JsonNode session = send(ownerToken, "POST", "/api/v1/sessions",
+                """
+                {"agentPrincipalId":"%s"}""".formatted(principalId)).body();
+        String sessionId = session.path("id").asText();
+
+        JsonNode list = send(ownerToken, "GET", "/api/v1/sessions/" + sessionId + "/participants", null).body();
+        JsonNode participants = list.path("participants");
+        assertEquals(1, participants.size(), "exactly one PRIMARY, not one per bind: " + list);
+
+        JsonNode primary = participants.get(0);
+        assertEquals("PRIMARY", primary.path("role").asText());
+        assertEquals("AGENT", primary.path("principalKind").asText());
+        assertEquals(principalId, primary.path("principalId").asText());
+        assertEquals(10, primary.path("orderIndex").asInt(), "R4: the PRIMARY sits at 10");
+        assertEquals("ALL_MESSAGES", primary.path("wakePolicy").asText(), "R3 default");
+        assertEquals("ALWAYS", primary.path("respondPolicy").asText(), "R3 default");
+
+        // The cursor row is part of the seed: without it `readCursor` stays null forever and the
+        // unread/mention badges can never be verified on a real stack.
+        JsonNode cursor = primary.path("readCursor");
+        assertFalse(cursor.isNull(), "the PRIMARY must come with a cursor row: " + primary);
+        assertEquals(0, cursor.path("lastReadEventSeq").asLong());
+        assertEquals(0, cursor.path("mentionCount").asInt());
+    }
+
+    @Test
+    void thePrimaryIsNotRemovableAndNotTransferable() {
+        String sessionId = send(ownerToken, "POST", "/api/v1/sessions",
+                """
+                {"agentPrincipalId":"%s"}""".formatted(principalId)).body().path("id").asText();
+        String primaryRow = send(ownerToken, "GET",
+                "/api/v1/sessions/" + sessionId + "/participants", null).body()
+                .path("participants").get(0).path("participantId").asText();
+
+        Reply removed = send(ownerToken, "DELETE",
+                "/api/v1/sessions/" + sessionId + "/participants/" + primaryRow, null);
+        assertEquals(403, removed.status(), removed.body().toString());
+        assertEquals("PARTICIPANT_PRIMARY_IMMUTABLE", removed.body().path("code").asText());
+
+        JsonNode added = send(ownerToken, "POST", "/api/v1/sessions/" + sessionId + "/participants",
+                """
+                {"principalKind":"HUMAN","principalId":"%s","role":"MEMBER"}""".formatted(ownerId)).body();
+        Reply promoted = send(ownerToken, "PATCH",
+                "/api/v1/sessions/" + sessionId + "/participants/" + added.path("participantId").asText(),
+                """
+                {"role":"PRIMARY"}""");
+        assertEquals(409, promoted.status(), promoted.body().toString());
+        assertEquals("PARTICIPANT_PRIMARY_EXISTS", promoted.body().path("code").asText());
+    }
+
+    @Test
+    void aPrincipalNullPlaceholderGetsNoPrimary() {
+        String sessionId = UUID.randomUUID().toString();
+        sessionService.createWithId(sessionId, ownerId, workspaceId, "Placeholder", null, null);
+
+        JsonNode participants = send(ownerToken, "GET",
+                "/api/v1/sessions/" + sessionId + "/participants", null).body().path("participants");
+        assertEquals(0, participants.size(), "no principal yet means no PRIMARY — never a fake one");
+    }
+
+    @Test
+    void seedingsAreIdempotent() {
+        String sessionId = send(ownerToken, "POST", "/api/v1/sessions",
+                """
+                {"agentPrincipalId":"%s"}""".formatted(principalId)).body().path("id").asText();
+
+        // The bind path calls the same seeder; a second call must not add a row.
+        sessionService.createAgentSession(ownerId, workspaceId, "second", null, null, null, principalId);
+
+        JsonNode participants = send(ownerToken, "GET",
+                "/api/v1/sessions/" + sessionId + "/participants", null).body().path("participants");
+        assertEquals(1, participants.size(), "re-seeding is a no-op: " + participants);
+    }
+
+    private AuthResponse register(String label) {
+        var response = restTemplate.postForEntity(url("/api/v1/auth/register"),
+                new RegisterRequest(label + "-" + UUID.randomUUID() + "@test.com",
+                        TestDataFactory.PASSWORD, label), AuthResponse.class);
+        assertEquals(201, response.getStatusCode().value());
+        assertNotNull(response.getBody());
+        return response.getBody();
+    }
+
+    private Reply send(String token, String method, String path, String body) {
+        try {
+            HttpRequest request = HttpRequest.newBuilder(URI.create(url(path)))
+                    .header("Authorization", "Bearer " + token)
+                    .header("Content-Type", "application/json")
+                    .header("X-Workspace-Id", workspaceId)
+                    .method(method, body == null ? HttpRequest.BodyPublishers.noBody()
+                            : HttpRequest.BodyPublishers.ofString(body))
+                    .build();
+            HttpResponse<String> response = http.send(request, HttpResponse.BodyHandlers.ofString());
+            return new Reply(response.statusCode(), json.readTree(
+                    response.body() == null || response.body().isBlank() ? "{}" : response.body()));
+        } catch (java.io.IOException | InterruptedException e) {
+            throw new IllegalStateException("HTTP " + method + " " + path + " failed", e);
+        }
+    }
+
+    private record Reply(int status, JsonNode body) {
+    }
+}
