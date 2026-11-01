@@ -13,11 +13,11 @@ Frozen states (mirroring PLAN-0492 T2.1):
 import xihe_agent.app_state as app_state
 from xihe_agent.app_state import _resolve_loop_guard
 from xihe_agent.config_snapshot import process_config_snapshot
+from xihe_agent.context.loop_detection import BUILTIN_EXEMPT_TOOLS
 
 
 def _snapshot():
     return process_config_snapshot(app_state.config_client)
-from xihe_agent.context.loop_detection import BUILTIN_EXEMPT_TOOLS
 
 
 def test_loop_guard_defaults_when_nothing_configured(monkeypatch):

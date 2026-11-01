@@ -42,7 +42,11 @@ interface Identity {
     id: string;
     email: string;
     name: string;
-    capabilities: { isInstanceAdmin: boolean; isInstanceSuper: boolean; workspaceAdminOf: string[] };
+    capabilities: {
+        isInstanceAdmin: boolean;
+        isInstanceSuper: boolean;
+        workspaceAdminOf: string[];
+    };
 }
 
 function cpOrigin(): string {
@@ -119,7 +123,8 @@ async function loginAdmin(request: APIRequestContext, origin: string): Promise<A
         body.user.capabilities?.isInstanceAdmin,
         "the admin login must carry cap:instance:admin",
     ).toBe(true);
-    const workspaceId = body.workspaceId ?? (await firstWorkspace(request, origin, body.accessToken));
+    const workspaceId =
+        body.workspaceId ?? (await firstWorkspace(request, origin, body.accessToken));
     expect(workspaceId, "the admin login must resolve a workspace").not.toBe("");
     return {
         token: body.accessToken,
@@ -249,7 +254,9 @@ test.describe("@host PLAN-0610 W5c principal-grant retirement", () => {
         expect(retiredCalls, "the UI must not call the retired grant surface").toEqual([]);
     });
 
-    test("a non-admin bookmark still lands on the role surface's own 403 view", async ({ page }) => {
+    test("a non-admin bookmark still lands on the role surface's own 403 view", async ({
+        page,
+    }) => {
         seedContext(page, admin, false);
         await page.goto("/settings/principal-grants", { waitUntil: "load" });
 

@@ -68,11 +68,7 @@ export function removeUserGrantPermission(
 
 type SeedMode = "merge" | "replace" | "remove";
 
-function runRoleSeedSql(
-    userId: string,
-    permissions: Array<GrantPermission>,
-    mode: SeedMode,
-): void {
+function runRoleSeedSql(userId: string, permissions: Array<GrantPermission>, mode: SeedMode): void {
     const container = process.env.XIHE_E2E_PG_CONTAINER,
         database = process.env.XIHE_E2E_PG_DATABASE;
     const dbUser = process.env.XIHE_E2E_PG_USER;
@@ -95,9 +91,7 @@ function runRoleSeedSql(
                WHERE role_id = v_role
                  AND action_class = '${escapeSql(permissions[0].actionClass)}'
                  AND resource_pattern = '${escapeSql(permissions[0].resource || "*")}';`
-            : `${
-                  mode === "replace" ? "DELETE FROM role_permissions WHERE role_id = v_role;" : ""
-              }
+            : `${mode === "replace" ? "DELETE FROM role_permissions WHERE role_id = v_role;" : ""}
                INSERT INTO role_permissions (role_id, action_class, resource_pattern)
                SELECT v_role, entry.action, entry.resource
                FROM jsonb_to_recordset('${permissionJson}'::jsonb) AS entry(action TEXT, resource TEXT)
