@@ -2301,7 +2301,8 @@ const messages = {
             maturityStable: "Stable",
             managedExecutionUnknown:
                 "The managed-copy execution backend is frozen (PLAN-0618 full freeze): creation is unavailable now; after unfreezing, Runtime probes backend availability",
-            dockerPostponed: "Managed workspaces always use the Docker execution backend (currently frozen)",
+            dockerPostponed:
+                "Managed workspaces always use the Docker execution backend (currently frozen)",
             mxcUnavailableGuidance:
                 "MXC is currently unavailable. You can explicitly switch to unrestricted host execution to continue; the system never switches automatically.",
             switchToHostExecution: "Switch to unrestricted host execution",
