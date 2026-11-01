@@ -224,6 +224,17 @@ describe("MessageItem RESOURCE_EXHAUSTED hint (PLAN-0622)", () => {
         wrapper.unmount();
     });
 
+    // PLAN-0622：错误气泡上的重试按钮曾经直接回显 i18n key（`chat.retry`），真机截图抓到。
+    // 这条断言覆盖**所有**错误气泡，不只 429 —— 只要按钮文案是 key 就是缺陷。
+    it("renders localized retry wording, never a raw i18n key", async () => {
+        const wrapper = mountWithError({ resourceKind: "CONNECTION", retryAfterSeconds: 2 });
+        const retry = wrapper.get('[data-testid="message-retry-button"]');
+        expect(retry.text(), "a raw i18n key must never reach the user").not.toMatch(
+            /^[a-z]+\.[a-zA-Z]+$/,
+        );
+        expect(retry.text()).toMatch(/重试|retry/i);
+        wrapper.unmount();
+    });
     // D14：`resourceKind` 必须让用户看到**具体**是哪种资源不够；「资源」只在真的未知时才出现。
     it("renders the concrete CONNECTION wording instead of the unknown-resource fallback", async () => {
         const wrapper = mountWithError({ resourceKind: "CONNECTION", retryAfterSeconds: 2 });
