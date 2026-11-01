@@ -56,9 +56,22 @@ public class WorkspaceFixture {
      * Creates a workspace and binds its owner, replacing fixture code that relied on the retired
      * {@code workspaces.owner_id} column. Returns the persisted row.
      */
+    /**
+     * PLAN-0618: `Workspace.storageMode` now defaults to `direct_attach`, which the database only
+     * accepts together with a hostPath (`ck_workspaces_direct_attach_path`). Fixtures keep seeding the
+     * docker-shaped row they always seeded, explicitly, so their behaviour does not silently change;
+     * whether a given test may use the (frozen) docker backend is decided by the M3 freeze list.
+     */
+    private static Workspace dockerShaped(String name) {
+        Workspace workspace = new Workspace(name);
+        workspace.setStorageMode("managed_import");
+        workspace.setExecutionMode("docker");
+        return workspace;
+    }
+
     @Transactional
     public Workspace createOwnedWorkspace(String name, String ownerId) {
-        Workspace workspace = workspaces.save(new Workspace(name));
+        Workspace workspace = workspaces.save(dockerShaped(name));
         workspace.setStorageRef(workspace.getId().toString());
         Workspace saved = workspaces.saveAndFlush(workspace);
         bindWorkspaceRole(saved.getId(), UUID.fromString(ownerId), WorkspaceRole.OWNER);
@@ -98,7 +111,7 @@ public class WorkspaceFixture {
     /** Creates a workspace row without any membership (tests that seed their own bindings). */
     @Transactional
     public Workspace createWorkspace(String name) {
-        Workspace workspace = workspaces.save(new Workspace(name));
+        Workspace workspace = workspaces.save(dockerShaped(name));
         workspace.setStorageRef(workspace.getId().toString());
         return workspaces.saveAndFlush(workspace);
     }

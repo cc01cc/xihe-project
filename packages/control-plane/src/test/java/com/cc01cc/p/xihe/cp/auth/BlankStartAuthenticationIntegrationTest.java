@@ -30,6 +30,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 class BlankStartAuthenticationIntegrationTest extends AbstractH2Test {
 
+    @org.springframework.beans.factory.annotation.Autowired
+    private com.cc01cc.p.xihe.cp.integration.WorkspaceFixture workspaceFixture;
+
     @Autowired
     private WorkspaceService workspaceService;
 
@@ -79,7 +82,7 @@ class BlankStartAuthenticationIntegrationTest extends AbstractH2Test {
         assertEquals(HttpStatus.CREATED, registered.getStatusCode(), String.valueOf(registered.getBody()));
         String userId = ((Map<?, ?>) registered.getBody().get("user")).get("id").toString();
 
-        Workspace created = workspaceService.createWorkspace("First explicit workspace", null, userId);
+        Workspace created = workspaceFixture.createOwnedWorkspace("First explicit workspace", userId);
 
         ResponseEntity<Map> login = restTemplate.postForEntity(url("/api/v1/auth/login"),
                 new HttpEntity<>(Map.of("identifier", email, "password", "pw-12345678"), jsonHeaders()),

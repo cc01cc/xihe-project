@@ -11,6 +11,8 @@ import com.cc01cc.p.xihe.cp.entity.ChatRun;
 import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceAgent;
+
+import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceAgentId;
 import com.cc01cc.p.xihe.cp.mcp.McpProxyController;
 import com.cc01cc.p.xihe.cp.mcp.McpInvocationService;
@@ -59,6 +61,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * gate invocation — no mocked verdict anywhere in this class.</p>
  */
 class BareExecutionApprovalTest extends AbstractIntegrationTest {
+
+    @org.springframework.beans.factory.annotation.Autowired
+    private WorkspaceFixture workspaceFixture;
 
     private static final List<String> LIVE_APPROVAL_STATES =
             List.of("pending", "dispatching", "dispatch_unknown", "approved", "rejected", "expired");
@@ -280,7 +285,7 @@ class BareExecutionApprovalTest extends AbstractIntegrationTest {
         com.cc01cc.p.xihe.cp.entity.User user = authService.registerUser(new RegisterRequest(
                 "bare-execution-" + UUID.randomUUID() + "@test.com", "grant-test-password",
                 "Bare execution test"));
-        AuthResponse registered = authService.issueTokens(user, workspaceService.createWorkspace("Fixture Workspace", null, user.getId().toString()).getId().toString());
+        AuthResponse registered = authService.issueTokens(user, workspaceFixture.createOwnedWorkspace("Fixture Workspace", user.getId().toString()).getId().toString());
         userId = registered.getUser().getId();
         workspaceId = registered.getWorkspaceId();
 

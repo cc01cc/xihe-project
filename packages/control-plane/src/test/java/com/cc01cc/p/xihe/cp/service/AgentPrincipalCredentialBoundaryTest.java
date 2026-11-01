@@ -200,7 +200,7 @@ class AgentPrincipalCredentialBoundaryTest extends AbstractIntegrationTest {
         User user = authService.registerUser(new RegisterRequest(
                 "cred-boundary-" + UUID.randomUUID() + "@test.com",
                 "boundary-test-password", "Boundary Test"));
-        AuthResponse registered = authService.issueTokens(user, workspaceService.createWorkspace("Fixture Workspace", null, user.getId().toString()).getId().toString());
+        AuthResponse registered = authService.issueTokens(user, workspaceFixture.createOwnedWorkspace("Fixture Workspace", user.getId().toString()).getId().toString());
         creatorId = user.getId();
         workspaceId = registered.getWorkspaceId();
     }

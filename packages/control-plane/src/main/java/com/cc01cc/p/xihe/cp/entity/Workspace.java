@@ -35,7 +35,7 @@ public class Workspace {
     private String storageRef;
 
     @Column(name = "storage_mode", nullable = false, length = 32)
-    private String storageMode = "managed_import";
+    private String storageMode = "direct_attach";
 
     @Column(name = "host_path", columnDefinition = "TEXT")
     private String hostPath;

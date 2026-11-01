@@ -39,6 +39,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 class LookupAskGateTest extends AbstractIntegrationTest {
 
+    @org.springframework.beans.factory.annotation.Autowired
+    private com.cc01cc.p.xihe.cp.integration.WorkspaceFixture workspaceFixture;
+
     @Autowired
     private AuthService authService;
 
@@ -156,7 +159,7 @@ class LookupAskGateTest extends AbstractIntegrationTest {
         com.cc01cc.p.xihe.cp.entity.User user = authService.registerUser(new RegisterRequest(
                 "lookup-ask-" + UUID.randomUUID() + "@test.com", "gate-test-password",
                 "Lookup ask gate"));
-        AuthResponse registered = authService.issueTokens(user, workspaceService.createWorkspace("Fixture Workspace", null, user.getId().toString()).getId().toString());
+        AuthResponse registered = authService.issueTokens(user, workspaceFixture.createOwnedWorkspace("Fixture Workspace", user.getId().toString()).getId().toString());
         userId = registered.getUser().getId();
         workspaceId = registered.getWorkspaceId();
     }

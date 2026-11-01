@@ -153,7 +153,7 @@ class AgentTemplateCredentialValidationTest extends AbstractIntegrationTest {
         User user = authService.registerUser(new RegisterRequest(
                 "template-validation-" + UUID.randomUUID() + "@test.com",
                 "template-test-password", "Template Validation"));
-        AuthResponse registered = authService.issueTokens(user, workspaceService.createWorkspace("Fixture Workspace", null, user.getId().toString()).getId().toString());
+        AuthResponse registered = authService.issueTokens(user, workspaceFixture.createOwnedWorkspace("Fixture Workspace", user.getId().toString()).getId().toString());
         writerId = user.getId();
         workspaceId = registered.getWorkspaceId();
 

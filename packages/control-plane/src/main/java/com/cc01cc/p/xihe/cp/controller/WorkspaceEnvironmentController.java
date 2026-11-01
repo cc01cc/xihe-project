@@ -101,7 +101,7 @@ public class WorkspaceEnvironmentController {
         response.put("status", materializationStatus);
         response.put("storageBackend", valueOrDefault(workspace.getStorageBackend(), "host_directory"));
         response.put("storageRef", valueOrDefault(workspace.getStorageRef(), workspaceId));
-        response.put("storageMode", valueOrDefault(workspace.getStorageMode(), "managed_import"));
+        response.put("storageMode", valueOrDefault(workspace.getStorageMode(), "direct_attach"));
         response.put("hostPath", visibleHostPath(workspace,
                 workspaceService.ownerIdOf(workspace.getId()), userId, isAdmin));
         response.put("executionMode", valueOrDefault(workspace.getExecutionMode(), "docker"));

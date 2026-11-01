@@ -26,6 +26,9 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
  */
 class MePermissionsIntegrationTest extends AbstractIntegrationTest {
 
+    @org.springframework.beans.factory.annotation.Autowired
+    private com.cc01cc.p.xihe.cp.integration.WorkspaceFixture workspaceFixture;
+
     @Autowired
     private JdbcTemplate jdbc;
     @Autowired
@@ -52,7 +55,7 @@ class MePermissionsIntegrationTest extends AbstractIntegrationTest {
     void mePermissionsReturnsOwnInstanceAtomsAndWorkspaceScopes() throws Exception {
         AuthResponse registered = register("w3b-perms@test.com");
         // PLAN-0614: registration no longer creates a workspace; the fixture creates the caller's own.
-        workspaceService.createWorkspace("Me permissions workspace", registered.getUser().getId());
+        workspaceFixture.createOwnedWorkspace("Me permissions workspace", registered.getUser().getId());
         JsonNode body = getJson(registered.getAccessToken(), "/api/v1/me/permissions");
 
         assertEquals(registered.getUser().getId(), body.path("userId").asText());
@@ -84,7 +87,7 @@ class MePermissionsIntegrationTest extends AbstractIntegrationTest {
 
         // PLAN-0614: registration no longer creates a workspace; the fixture creates one so the
         // "instance admin administers every workspace" projection has a workspace to report.
-        workspaceService.createWorkspace("Me perms super workspace", registered.getUser().getId());
+        workspaceFixture.createOwnedWorkspace("Me perms super workspace", registered.getUser().getId());
         JsonNode me = getJson(registered.getAccessToken(), "/api/v1/auth/me");
         assertTrue(me.path("capabilities").path("isInstanceAdmin").asBoolean());
         assertTrue(me.path("capabilities").path("isInstanceSuper").asBoolean());

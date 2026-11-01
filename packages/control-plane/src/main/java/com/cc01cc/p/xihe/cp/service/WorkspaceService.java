@@ -53,7 +53,6 @@ public class WorkspaceService {
             java.util.Set.of("xihe/workspace:latest");
 
     private static final String DEFAULT_IMAGE = "xihe/workspace:latest";
-    private static final String DEFAULT_STORAGE_MODE = "managed_import";
     private static final String DEFAULT_EXECUTION_MODE = "docker";
 
     private final WorkspaceRepository workspaceRepository;
@@ -115,26 +114,6 @@ public class WorkspaceService {
             // Non-UUID subjects (legacy service token / tests) have no membership by definition.
             return Optional.empty();
         }
-    }
-
-    /** Creates an active workspace for a user; users may own multiple active workspaces. */
-    @Transactional
-    public Workspace createWorkspace(String name, String ownerId) {
-        return createWorkspace(name, null, ownerId, "coding", null);
-    }
-
-    @Transactional
-    public Workspace createWorkspace(String name, String description, String ownerId) {
-        return createWorkspace(name, description, ownerId, "coding", null);
-    }
-
-    @Transactional
-    public Workspace createWorkspace(String name, String description, String ownerId,
-            String profile, String image) {
-        requireNonBlank(ownerId, "ownerId");
-        return createWorkspaceLocked(name, description, ownerId,
-                normalizeProfile(profile), normalizeImage(image),
-                DEFAULT_STORAGE_MODE, null, DEFAULT_EXECUTION_MODE, null, null);
     }
 
     /**
@@ -509,8 +488,15 @@ public class WorkspaceService {
     }
 
     private String normalizeStorageMode(String storageMode) {
-        String normalized = storageMode == null || storageMode.isBlank()
-                ? DEFAULT_STORAGE_MODE : storageMode.trim().toLowerCase(java.util.Locale.ROOT);
+        if (storageMode == null || storageMode.isBlank()) {
+            throw new CpApiException(
+                    org.springframework.http.HttpStatus.BAD_REQUEST,
+                    "INVALID_REQUEST",
+                    "storageMode is required: the docker workspace backend is frozen, so a workspace must be"
+                            + " created explicitly as direct_attach with hostPath + executionMode"
+                            + " (windows-mxc|windows-host)");
+        }
+        String normalized = storageMode.trim().toLowerCase(java.util.Locale.ROOT);
         if (!Set.of("managed_import", "direct_attach").contains(normalized)) {
             throw new CpApiException(
                     org.springframework.http.HttpStatus.BAD_REQUEST,

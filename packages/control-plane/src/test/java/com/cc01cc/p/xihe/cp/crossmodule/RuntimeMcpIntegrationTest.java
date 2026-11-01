@@ -47,6 +47,9 @@ import java.util.UUID;
  */
 class RuntimeMcpIntegrationTest extends AbstractWireMockTest {
 
+    @org.springframework.beans.factory.annotation.Autowired
+    private com.cc01cc.p.xihe.cp.integration.WorkspaceFixture workspaceFixture;
+
     @Autowired
     private JwtTokenProvider jwtTokenProvider;
 
@@ -83,7 +86,7 @@ class RuntimeMcpIntegrationTest extends AbstractWireMockTest {
         token = registerAndLogin();
         String userId = jwtTokenProvider.getUserIdFromToken(token);
         // PLAN-0614: register no longer creates a workspace; the fixture creates the caller's own.
-        wsId = workspaceService.createWorkspace("Mcp runtime workspace", userId).getId().toString();
+        wsId = workspaceFixture.createOwnedWorkspace("Mcp runtime workspace", userId).getId().toString();
     }
 
     private HttpEntity<String> mcpEntity(String body) {

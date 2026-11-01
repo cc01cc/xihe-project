@@ -23,7 +23,7 @@ class WorkspaceServiceCustomPathTest {
     @Test
     void createWorkspace_persistsAndIsDiscoverable() {
         String userId = UUID.randomUUID().toString();
-        Workspace ws = workspaceService.createWorkspace("custom-path-test", userId);
+        Workspace ws = workspaceService.createWorkspace("custom-path-test", null, userId, "coding", null, "managed_import", null, "docker", null);
         assertNotNull(ws.getId());
         assertEquals("host_directory", ws.getStorageBackend());
         // storageRef is now the workspace id; host path is the Runtime's concern.

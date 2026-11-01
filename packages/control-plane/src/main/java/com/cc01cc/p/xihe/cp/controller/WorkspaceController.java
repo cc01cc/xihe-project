@@ -89,9 +89,13 @@ public class WorkspaceController {
             // stable 409 before any row/spec is written. A blank storageMode is the
             // historical default (managed_import → docker), so it is gated too.
             String requestedStorageMode = request == null ? null : request.storageMode();
-            boolean dockerRequested = requestedStorageMode == null || requestedStorageMode.isBlank()
-                    || "managed_import".equalsIgnoreCase(requestedStorageMode.trim());
-            if (dockerRequested) {
+            if (requestedStorageMode == null || requestedStorageMode.isBlank()) {
+                return ProblemDetailsHandler.problemResponse(HttpStatus.BAD_REQUEST, "INVALID_REQUEST",
+                        "storageMode is required: the docker workspace backend is frozen, so create"
+                                + " the workspace explicitly as direct_attach with hostPath + executionMode"
+                                + " (windows-mxc|windows-host)");
+            }
+            if ("managed_import".equalsIgnoreCase(requestedStorageMode.trim())) {
                 backendPolicy.requireCreationAllowed();
             }
             String name = request == null || request.name() == null ? "Default Workspace" : request.name();

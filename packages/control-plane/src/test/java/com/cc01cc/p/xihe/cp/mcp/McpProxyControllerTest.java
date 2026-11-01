@@ -29,6 +29,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 @DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_CLASS)
 class McpProxyControllerTest {
 
+    @org.springframework.beans.factory.annotation.Autowired
+    private com.cc01cc.p.xihe.cp.integration.WorkspaceFixture workspaceFixture;
+
     @Autowired
     private McpProxyController controller;
 
@@ -142,7 +145,7 @@ class McpProxyControllerTest {
     @Test
     void aliasRepository_roundTrip() {
         String owner = java.util.UUID.randomUUID().toString();
-        String wsId = workspaceService.createWorkspace("alias-test", owner).getId().toString();
+        String wsId = workspaceFixture.createOwnedWorkspace("alias-test", owner).getId().toString();
         java.util.UUID wsUuid = java.util.UUID.fromString(wsId);
 
         aliasRepository.save(new com.cc01cc.p.xihe.cp.entity.McpToolAlias(

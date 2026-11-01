@@ -166,7 +166,7 @@ class GrantDefaultBootstrapIntegrationTest extends AbstractIntegrationTest {
     /** PLAN-0470 #25: reproduces the AuthController register orchestration for fixtures. */
     private AuthResponse register(RegisterRequest request) {
         User user = authService.registerUser(request);
-        return authService.issueTokens(user, workspaceService.createWorkspace("Fixture Workspace", null, user.getId().toString()).getId().toString());
+        return authService.issueTokens(user, workspaceFixture.createOwnedWorkspace("Fixture Workspace", user.getId().toString()).getId().toString());
     }
 
     @Test

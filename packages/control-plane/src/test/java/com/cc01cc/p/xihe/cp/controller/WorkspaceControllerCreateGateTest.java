@@ -45,12 +45,14 @@ class WorkspaceControllerCreateGateTest {
     }
 
     @Test
-    void absentStorageModeDefaultsToManagedImportAndIsRefusedWith409() {
+    void absentStorageModeIsRejectedWith400BecauseThereIsNoDefaultAnyMore() {
+        // PLAN-0618 decision #8: the docker backend is frozen and direct_attach needs an explicit
+        // hostPath, so "absent" is a client error instead of an implicit managed_import default.
         ResponseEntity<?> response = controller.create(null, null);
 
-        assertEquals(HttpStatus.CONFLICT, response.getStatusCode());
+        assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode());
         assertNotNull(response.getBody());
-        assertEquals("BACKEND_DISABLED", ((Map<?, ?>) response.getBody()).get("code"));
+        assertEquals("INVALID_REQUEST", ((Map<?, ?>) response.getBody()).get("code"));
         verify(workspaceService, never()).createWorkspace(any(), any(), any(), any(), any(),
                 any(), any(), any(), any());
     }
