@@ -3572,3 +3572,110 @@ test('run-agent-e2e: usage 2, scope gate 3, and a full A5+A6 pass against a fake
   assert.equal(patches[0].maxInflight, 1);
   assert.equal(pass.data.steps.at(-1).name, 'cleanup second session');
 });
+test('session participants + chat send: contract shapes, code passthrough, and --as body', async () => {
+  const state = { lastChatBody: null, lastAddBody: null, lastPatchBody: null };
+  const view = (patch = {}) => ({
+    participantId: 'part-1', principalKind: 'AGENT', principalId: 'p-1', role: 'MEMBER',
+    orderIndex: 20, wakePolicy: 'MENTION', respondPolicy: 'WHEN_MENTIONED', source: 'workspace',
+    disabledAt: null, readCursor: null, ...patch,
+  });
+  const server = createServer(async (request, response) => {
+    const url = new URL(request.url, 'http://127.0.0.1');
+    if (url.pathname === '/api/v1/auth/login') { json(response, 200, { accessToken: 'p-token' }); return; }
+    const listMatch = url.pathname.match(/^\/api\/v1\/sessions\/([^/]+)\/participants$/);
+    if (listMatch && request.method === 'GET') {
+      json(response, 200, { participants: [view({ role: 'PRIMARY', orderIndex: 10 }), view()] });
+      return;
+    }
+    if (listMatch && request.method === 'POST') {
+      const body = await requestBody(request);
+      state.lastAddBody = body;
+      if (body.principalId === 'p-dup') { json(response, 409, { code: 'PARTICIPANT_ALREADY_EXISTS', detail: 'exists' }); return; }
+      if (body.role === 'PRIMARY') { json(response, 409, { code: 'PARTICIPANT_PRIMARY_EXISTS', detail: 'primary' }); return; }
+      json(response, 201, view({ principalId: body.principalId, principalKind: body.principalKind, wakePolicy: body.wakePolicy ?? 'MENTION' }));
+      return;
+    }
+    const oneMatch = url.pathname.match(/^\/api\/v1\/sessions\/([^/]+)\/participants\/([^/]+)$/);
+    if (oneMatch && request.method === 'PATCH') {
+      state.lastPatchBody = await requestBody(request);
+      json(response, 200, view({ participantId: oneMatch[2], ...state.lastPatchBody }));
+      return;
+    }
+    if (oneMatch && request.method === 'DELETE') {
+      if (oneMatch[2] === 'part-primary') { json(response, 409, { code: 'PARTICIPANT_PRIMARY_IMMUTABLE', detail: 'immutable' }); return; }
+      response.writeHead(204); response.end(); return;
+    }
+    if (url.pathname === '/api/v1/chat' && request.method === 'POST') {
+      state.lastChatBody = await requestBody(request);
+      if (state.lastChatBody.asParticipantId === 'part-forbidden') {
+        json(response, 403, { code: 'PARTICIPANT_CAP_DENIED', detail: 'not your participant' }); return;
+      }
+      json(response, 202, { runId: 'run-1', status: 'accepted', sessionId: state.lastChatBody.sessionId });
+      return;
+    }
+    json(response, 404, { code: 'NOT_FOUND' });
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const port = server.address().port;
+  const env = { XIHE_CP_PORT: String(port), XIHE_DEV_ADMIN_PASSWORD: TEST_PASSWORD };
+  const noPrompt = async () => { throw new Error('must not prompt'); };
+  const run = (argv) => runCommand(argv, { env, promptSecret: noPrompt, stdout: sink(), stderr: sink() });
+  try {
+    const list = await run(['session', 'participants', 'list', '--session', 's-1', '--json']);
+    assert.equal(list.exitCode, 0, JSON.stringify(list.error));
+    assert.equal(list.data.kind, 'session-participants');
+    assert.equal(list.data.participants.length, 2);
+    assert.equal(list.data.participants[0].role, 'PRIMARY');
+
+    const add = await run(['session', 'participants', 'add', '--session', 's-1', '--principal', 'p-1',
+      '--kind', 'agent', '--role', 'member', '--wake', 'all_messages', '--respond', 'always', '--json']);
+    assert.equal(add.exitCode, 0, JSON.stringify(add.error));
+    assert.equal(add.data.kind, 'session-participant');
+    assert.deepEqual(state.lastAddBody, {
+      principalKind: 'AGENT', principalId: 'p-1', role: 'MEMBER', wakePolicy: 'ALL_MESSAGES', respondPolicy: 'ALWAYS',
+    });
+
+    const duplicate = await run(['session', 'participants', 'add', '--session', 's-1', '--principal', 'p-dup', '--kind', 'AGENT', '--json']);
+    assert.equal(duplicate.exitCode, 1);
+    assert.equal(duplicate.error.code, 'PARTICIPANT_ALREADY_EXISTS');
+
+    const primaryRemove = await run(['session', 'participants', 'remove', '--session', 's-1', '--participant', 'part-primary', '--json']);
+    assert.equal(primaryRemove.exitCode, 1);
+    assert.equal(primaryRemove.error.code, 'PARTICIPANT_PRIMARY_IMMUTABLE');
+
+    const removed = await run(['session', 'participants', 'remove', '--session', 's-1', '--participant', 'part-1', '--json']);
+    assert.equal(removed.exitCode, 0);
+    assert.equal(removed.data.action, 'remove');
+
+    const policy = await run(['session', 'participants', 'policy', '--session', 's-1', '--participant', 'part-1',
+      '--wake', 'MENTION', '--respond', 'MUTED', '--json']);
+    assert.equal(policy.exitCode, 0);
+    assert.deepEqual(state.lastPatchBody, { wakePolicy: 'MENTION', respondPolicy: 'MUTED' });
+
+    const emptyPolicy = await run(['session', 'participants', 'policy', '--session', 's-1', '--participant', 'part-1', '--json']);
+    assert.equal(emptyPolicy.exitCode, 2);
+    assert.equal(emptyPolicy.error.code, 'INVALID_ARGUMENT');
+
+    const badKind = await run(['session', 'participants', 'add', '--session', 's-1', '--principal', 'p-1', '--kind', 'ROBOT', '--json']);
+    assert.equal(badKind.exitCode, 2);
+    assert.equal(badKind.error.code, 'INVALID_ARGUMENT');
+
+    const missingSession = await run(['session', 'participants', 'list', '--json']);
+    assert.equal(missingSession.exitCode, 2);
+
+    const sent = await run(['chat', 'send', '--session', 's-1', '--branch', 'b-1', '--content', 'hello', '--as', 'part-1', '--json']);
+    assert.equal(sent.exitCode, 0, JSON.stringify(sent.error));
+    assert.equal(sent.data.kind, 'chat-sent');
+    assert.equal(sent.data.runId, 'run-1');
+    assert.equal(state.lastChatBody.asParticipantId, 'part-1');
+
+    const forbidden = await run(['chat', 'send', '--session', 's-1', '--branch', 'b-1', '--content', 'hi', '--as', 'part-forbidden', '--json']);
+    assert.equal(forbidden.exitCode, 1);
+    assert.equal(forbidden.error.code, 'PARTICIPANT_CAP_DENIED');
+
+    const noContent = await run(['chat', 'send', '--session', 's-1', '--branch', 'b-1', '--content', ' ', '--json']);
+    assert.equal(noContent.exitCode, 2);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});

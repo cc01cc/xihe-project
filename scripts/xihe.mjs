@@ -47,6 +47,14 @@ import {
   unbindAgent,
 } from './xihe-cli/agent.mjs';
 import {
+  addParticipant,
+  listParticipants,
+  parseParticipantOptions,
+  removeParticipant,
+  sendChat,
+  updateParticipantPolicy,
+} from './xihe-cli/participants.mjs';
+import {
   collectStatus,
   runAuditList,
   runCheckpointList,
@@ -108,6 +116,11 @@ function helpText() {
     '  node scripts/xihe.mjs provider limit set --connection <c> [--max-inflight N] [--max-queue N] [--tokens N --window S] [--model <p>:<m> --max-inflight N ...]',
     '  node scripts/xihe.mjs provider limit show --connection <c>',
     '  node scripts/xihe.mjs provider list [--scope <USER|WORKSPACE>]',
+    '  node scripts/xihe.mjs session participants list --session <sessionId> [--workspace <wsId>]',
+    '  node scripts/xihe.mjs session participants add --session <sessionId> --principal <principalId> --kind AGENT|HUMAN [--role MEMBER|GUARD] [--wake ALL_MESSAGES|MENTION] [--respond ALWAYS|WHEN_MENTIONED|JUDGE|MUTED]',
+    '  node scripts/xihe.mjs session participants remove --session <sessionId> --participant <participantId>',
+    '  node scripts/xihe.mjs session participants policy --session <sessionId> --participant <participantId> [--wake …] [--respond …]',
+    '  node scripts/xihe.mjs chat send --session <sessionId> --branch <branchId> --content <text> [--as <participantId>]',
     '  node scripts/xihe.mjs provider verify <id>',
     '  node scripts/xihe.mjs provider delete <id> [--yes]',
     '  node scripts/xihe.mjs credential rotate [--batch-size <n>] [--max-batches <n>] [--dry-run]',
@@ -373,6 +386,48 @@ export async function runCommand(argv, dependencies = {}) {
         fsImpl: dependencies.fsImpl,
       });
       return { exitCode: 0, json, data };
+    }
+
+    if (group === 'session' && command === 'participants') {
+      const sub = rest[0];
+      const tail = rest.slice(1);
+      const apiBase = getApiBase(env);
+      let parsed;
+      if (sub === 'list') {
+        parsed = parseParticipantOptions(tail, ['--session', '--workspace', '--email']);
+      } else if (sub === 'add') {
+        parsed = parseParticipantOptions(tail, ['--session', '--principal', '--kind', '--role', '--wake', '--respond', '--workspace', '--email']);
+      } else if (sub === 'remove') {
+        parsed = parseParticipantOptions(tail, ['--session', '--participant', '--workspace', '--email']);
+      } else if (sub === 'policy') {
+        parsed = parseParticipantOptions(tail, ['--session', '--participant', '--wake', '--respond', '--workspace', '--email']);
+      } else {
+        throw new CliError('INVALID_ARGUMENT', 'Unknown session participants command; use list/add/remove/policy.', {}, 2);
+      }
+      if (parsed.positionals.length !== 0) {
+        throw new CliError('INVALID_ARGUMENT', `session participants ${sub} takes no positional arguments.`, {}, 2);
+      }
+      const token = await login({ apiBase, fetchImpl, env, options: parsed.values, promptSecret: prompt });
+      if (sub === 'list') {
+        return { exitCode: 0, json, data: await listParticipants({ apiBase, fetchImpl, token, options: parsed.values }) };
+      }
+      if (sub === 'add') {
+        return { exitCode: 0, json, data: await addParticipant({ apiBase, fetchImpl, token, options: parsed.values }) };
+      }
+      if (sub === 'remove') {
+        return { exitCode: 0, json, data: await removeParticipant({ apiBase, fetchImpl, token, options: parsed.values }) };
+      }
+      return { exitCode: 0, json, data: await updateParticipantPolicy({ apiBase, fetchImpl, token, options: parsed.values }) };
+    }
+
+    if (group === 'chat' && command === 'send') {
+      const parsed = parseParticipantOptions(rest, ['--session', '--branch', '--content', '--as', '--workspace', '--email']);
+      if (parsed.positionals.length !== 0) {
+        throw new CliError('INVALID_ARGUMENT', 'chat send takes no positional arguments.', {}, 2);
+      }
+      const apiBase = getApiBase(env);
+      const token = await login({ apiBase, fetchImpl, env, options: parsed.values, promptSecret: prompt });
+      return { exitCode: 0, json, data: await sendChat({ apiBase, fetchImpl, token, options: parsed.values }) };
     }
 
     if (group === 'agent') {
@@ -762,6 +817,32 @@ export function printResult(result) {
     return;
   }
   const out = process.stdout;
+  if (result.data?.kind === 'session-participants') {
+    const items = result.data.participants ?? [];
+    out.write(`participants: ${items.length}\n`);
+    for (const item of items) {
+      out.write(`${item.role ?? ''}  ${item.principalKind ?? ''}  ${item.principalId ?? ''}`
+        + `  order=${item.orderIndex ?? '?'}  wake=${item.wakePolicy ?? '?'}  respond=${item.respondPolicy ?? '?'}`
+        + `${item.disabledAt ? '  disabled' : ''}\n`);
+    }
+    return;
+  }
+  if (result.data?.kind === 'session-participant') {
+    if (result.data.action === 'remove') {
+      out.write(`removed: ${result.data.participantId}\n`);
+    } else {
+      const view = result.data.participant ?? {};
+      const id = view.participantId ?? result.data.participantId ?? '';
+      out.write(`${result.data.action === 'add' ? 'added' : 'updated'}: ${id}`
+        + `  role=${view.role ?? '?'}  wake=${view.wakePolicy ?? '?'}  respond=${view.respondPolicy ?? '?'}\n`);
+    }
+    return;
+  }
+  if (result.data?.kind === 'chat-sent') {
+    out.write(`run: ${result.data.runId ?? ''}  status: ${result.data.status ?? ''}`
+      + `${result.data.asParticipantId ? `  as=${result.data.asParticipantId}` : ''}\n`);
+    return;
+  }
   if (result.data?.kind === 'agent-created') {
     const id = result.data.principalId ?? result.data.principal?.principalId ?? '';
     out.write(`${result.data.created ? 'created' : 'existing'}: ${id}${result.data.idempotent ? ' (idempotent)' : ''}\n`);
