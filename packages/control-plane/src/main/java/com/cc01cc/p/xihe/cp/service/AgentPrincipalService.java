@@ -28,6 +28,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -116,9 +117,8 @@ public class AgentPrincipalService {
         UUID actorId = parseUuid(actorUserId, "INVALID_ACTOR");
         requireUser(actorId);
         UUID workspaceContext = currentWorkspaceContext();
-        boolean explicitScope = requestedScope != null && !requestedScope.isBlank();
         String scope = resolveCreationScope(requestedScope);
-        requireCreationAction(actorId, scope, workspaceContext, explicitScope);
+        requireCreationAction(actorId, scope, workspaceContext);
         AgentTemplateService.ResolvedTemplate resolved = agentTemplateService.resolveForCreation(
                 actorUserId, null, templateId);
         String resolvedTemplateId = optionalText(resolved.snapshot(), "templateId");
@@ -150,15 +150,12 @@ public class AgentPrincipalService {
         return normalized;
     }
 
-    private void requireCreationAction(UUID actorId, String scope, UUID workspaceContext,
-                                       boolean explicitScope) {
-        if (!explicitScope) {
-            // Pre-0622 body ({name[, templateId]}): the tier is now WORKSPACE, but the authorization
-            // stays the historical instance-level CREATE_ACCOUNT so no legacy caller gains or loses
-            // an authority it did not have before this milestone.
-            requireUserAction(actorId, ToolFaceRegistry.ACTION_CREATE_ACCOUNT, "*", null);
-            return;
-        }
+    /**
+     * D21 (Lead ruling 2026-11-02): an omitted {@code scope} is the WORKSPACE tier and takes the
+     * <b>same</b> authorization path as an explicit {@code scope=WORKSPACE}. There is deliberately no
+     * second, legacy {@code CREATE_ACCOUNT} path: one tier, one authority.
+     */
+    private void requireCreationAction(UUID actorId, String scope, UUID workspaceContext) {
         if (SCOPE_PERSONAL.equals(scope)) {
             requireUserAction(actorId, ToolFaceRegistry.ACTION_OWN_AGENT, "*", null);
             return;
@@ -438,6 +435,10 @@ public class AgentPrincipalService {
         return true;
     }
 
+    /**
+     * PLAN-0622 M1.2: every row carries {@code source}, derived from the principal's tier — the
+     * binding itself does not know which tier it points at, and a client must not have to guess.
+     */
     @Transactional(readOnly = true)
     public List<WorkspaceAgentView> listWorkspaceAgents(String actorUserId, UUID workspaceId) {
         UUID actorId = parseUuid(actorUserId, "INVALID_ACTOR");
@@ -449,10 +450,81 @@ public class AgentPrincipalService {
                 .map(binding -> agentPrincipalRepository.findById(binding.getId().getPrincipalId())
                         .map(principal -> new WorkspaceAgentView(principal.getId(), principal.getName(),
                                 principal.getTemplateId(), optionalText(principal.getTemplateSnapshot(), "templateName"),
-                                principal.getCreatedAt(), binding.getPermissionsSnapshot().deepCopy()))
+                                principal.getCreatedAt(), binding.getPermissionsSnapshot().deepCopy(),
+                                sourceOf(principal)))
                         .orElseThrow(() -> new CpApiException(HttpStatus.INTERNAL_SERVER_ERROR,
                                 "AGENT_PRINCIPAL_INCONSISTENT", "Workspace Agent binding has no principal")))
                 .toList();
+    }
+
+    /** Wire vocabulary of the list projection: {@code workspace|personal|instance}. */
+    private String sourceOf(AgentPrincipal principal) {
+        String scope = principal.getScope() == null ? SCOPE_WORKSPACE : principal.getScope();
+        return switch (scope) {
+            case SCOPE_PERSONAL -> "personal";
+            case SCOPE_INSTANCE -> "instance";
+            default -> "workspace";
+        };
+    }
+
+    /**
+     * PLAN-0622 M1.2 / O5: {@code GET /agent-principals?scope=…}.
+     *
+     * <ul>
+     *   <li>{@code PERSONAL} — only the caller's own principals (never somebody else's name or
+     *       template);</li>
+     *   <li>{@code INSTANCE} — visible instance-wide, so every authenticated caller sees them;</li>
+     *   <li>{@code WORKSPACE} — requires a workspace id and membership; returns the principals bound
+     *       in that workspace.</li>
+     * </ul>
+     */
+    @Transactional(readOnly = true)
+    public List<AgentPrincipalView> listPrincipals(String actorUserId, String scope, String workspaceIdValue) {
+        UUID actorId = parseUuid(actorUserId, "INVALID_ACTOR");
+        requireUser(actorId);
+        String requested = scope == null || scope.isBlank() ? null : scope.trim().toUpperCase(java.util.Locale.ROOT);
+        if (requested == null) {
+            List<AgentPrincipalView> all = new ArrayList<>();
+            agentPrincipalRepository.findByScopeAndOwnerUserId(SCOPE_PERSONAL, actorId)
+                    .forEach(principal -> all.add(toPrincipalView(principal)));
+            agentPrincipalRepository.findByScope(SCOPE_INSTANCE)
+                    .forEach(principal -> all.add(toPrincipalView(principal)));
+            return all;
+        }
+        if (SCOPE_PERSONAL.equals(requested)) {
+            return agentPrincipalRepository.findByScopeAndOwnerUserId(SCOPE_PERSONAL, actorId).stream()
+                    .map(this::toPrincipalView).toList();
+        }
+        if (SCOPE_INSTANCE.equals(requested)) {
+            return agentPrincipalRepository.findByScope(SCOPE_INSTANCE).stream()
+                    .map(this::toPrincipalView).toList();
+        }
+        if (!SCOPE_WORKSPACE.equals(requested)) {
+            throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_AGENT_SCOPE",
+                    "scope must be one of PERSONAL, WORKSPACE, INSTANCE");
+        }
+        if (workspaceIdValue == null || workspaceIdValue.isBlank()) {
+            throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST",
+                    "scope=WORKSPACE requires a workspaceId");
+        }
+        UUID workspaceId = parseUuid(workspaceIdValue, "INVALID_WORKSPACE_CONTEXT");
+        workspaceService.requireActiveWorkspace(workspaceId.toString());
+        requireWorkspaceMember(actorId, workspaceId);
+        return workspaceAgentRepository.findByIdWorkspaceId(workspaceId).stream()
+                .map(binding -> agentPrincipalRepository.findById(binding.getId().getPrincipalId()))
+                .flatMap(java.util.Optional::stream)
+                .filter(principal -> SCOPE_WORKSPACE.equals(principal.getScope()))
+                .map(this::toPrincipalView)
+                .toList();
+    }
+
+    private AgentPrincipalView toPrincipalView(AgentPrincipal principal) {
+        return new AgentPrincipalView(principal.getId(), principal.getName(), principal.getTemplateId(),
+                optionalText(principal.getTemplateSnapshot(), "templateName"), principal.getCreatedAt(),
+                principal.getScope(), principal.getOwnerUserId(), principal.getDefaultModelProvider(),
+                principal.getDefaultModelName(),
+                principal.getAllowedModels() == null ? null : principal.getAllowedModels().deepCopy(),
+                principal.getDisabledAt());
     }
 
     @Transactional(readOnly = true)
@@ -505,13 +577,26 @@ public class AgentPrincipalService {
 
     /** Global account disable; the caller must authorize the account-lifecycle operation. */
     @Transactional
+    /**
+     * PLAN-0622 M1.2 / O6: disable is tier-authorized, and a refusal is a {@code 403}, never a
+     * {@code 404} that pretends the row does not exist.
+     *
+     * <ul>
+     *   <li>{@code PERSONAL} — its owner, or instance administration;</li>
+     *   <li>{@code WORKSPACE} — {@code MANAGE_WORKSPACE_AGENTS} in the request workspace, or
+     *       instance administration;</li>
+     *   <li>{@code INSTANCE} — instance administration only.</li>
+     * </ul>
+     */
     public boolean disablePrincipal(String actorUserId, UUID principalId) {
         UUID actorId = parseUuid(actorUserId, "INVALID_ACTOR");
         requireUser(actorId);
         AgentPrincipal principal = agentPrincipalRepository.findById(principalId)
                 .orElseThrow(() -> new CpApiException(HttpStatus.NOT_FOUND,
                         "AGENT_PRINCIPAL_NOT_FOUND", "Agent principal not found"));
+        requireDisableAuthority(actorId, principal);
         if (principal.getDisabledAt() != null) {
+            // Idempotent: disabling twice is not an error, and it must not add a second audit row.
             return false;
         }
 
@@ -524,6 +609,32 @@ public class AgentPrincipalService {
         auditLogger.recordDurableChange(actorId.toString(), null,
                 "agent_principal_disabled", "agent_principal", principalId.toString(), detail.toString());
         return true;
+    }
+
+    private void requireDisableAuthority(UUID actorId, AgentPrincipal principal) {
+        boolean instanceAdmin = CapabilityAuthorities.isInstanceAdmin();
+        String scope = principal.getScope() == null ? SCOPE_WORKSPACE : principal.getScope();
+        if (SCOPE_PERSONAL.equals(scope)) {
+            if (instanceAdmin || actorId.equals(principal.getOwnerUserId())) {
+                return;
+            }
+            throw new CpApiException(HttpStatus.FORBIDDEN, "AGENT_PRINCIPAL_OWNER_MISMATCH",
+                    "Only the owner or instance administration may disable a PERSONAL agent principal");
+        }
+        if (instanceAdmin) {
+            return;
+        }
+        if (SCOPE_INSTANCE.equals(scope)) {
+            throw new CpApiException(HttpStatus.FORBIDDEN, "INSTANCE_ADMIN_REQUIRED",
+                    "An INSTANCE-scope agent principal may only be disabled by instance administration");
+        }
+        UUID workspaceContext = currentWorkspaceContext();
+        if (workspaceContext == null) {
+            throw new CpApiException(HttpStatus.CONFLICT, "WORKSPACE_CONTEXT_REQUIRED",
+                    "Disabling a WORKSPACE-scope agent principal requires a workspace context");
+        }
+        requireUserAction(actorId, ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_AGENTS,
+                workspaceContext.toString(), workspaceContext);
     }
 
     private void requireUser(UUID userId) {
@@ -696,8 +807,15 @@ public class AgentPrincipalService {
         }
     }
 
+    /** PLAN-0622 M1.2 wire projection of a principal (list route, not the workspace binding). */
+    public record AgentPrincipalView(UUID principalId, String name, String templateId, String templateName,
+                                     Instant createdAt, String scope, UUID ownerUserId,
+                                     String defaultModelProvider, String defaultModelName,
+                                     JsonNode allowedModels, Instant disabledAt) {}
+
     public record WorkspaceAgentView(UUID principalId, String name, String templateId,
-                                     String templateName, Instant createdAt, JsonNode permissions) {}
+                                     String templateName, Instant createdAt, JsonNode permissions,
+                                     String source) {}
 
     private record ActiveWorkspaceBinding(AgentPrincipal principal, WorkspaceAgent workspaceAgent) {}
 }

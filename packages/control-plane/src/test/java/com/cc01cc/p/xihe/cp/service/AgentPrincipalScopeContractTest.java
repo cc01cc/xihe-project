@@ -315,6 +315,41 @@ class AgentPrincipalScopeContractTest extends AbstractIntegrationTest {
                 new WorkspaceAgentId(instancePrincipal, workspace.getId())));
     }
 
+
+    // ---------------------------------------------------------------------------------------------
+    // D21 (Lead ruling, 2026-11-02): an omitted `scope` is the WORKSPACE tier and is authorized
+    // EXACTLY like an explicit `scope=WORKSPACE` — no second, legacy authorization path.
+    // ---------------------------------------------------------------------------------------------
+
+    @Test
+    void omittedScopeIsAuthorizedAsWorkspaceScopeNotAsCreateAccount() throws Exception {
+        User plain = newUser("omitted-scope-plain");
+        grantDefaultService.ensureUserDefault(plain);
+        int principalCount = principalRepository.findAll().size();
+
+        // No MANAGE_WORKSPACE_AGENTS: the legacy CREATE_ACCOUNT path must be gone, so this is 403.
+        ResponseEntity<Map> denied = create(globalToken(plain), Map.of("name", "Legacy body"));
+        assertEquals(HttpStatus.FORBIDDEN, denied.getStatusCode(),
+                "an omitted scope must not fall back to the pre-0622 CREATE_ACCOUNT path: "
+                        + String.valueOf(denied.getBody()));
+        assertEquals(principalCount, principalRepository.findAll().size());
+
+        User owner = newUser("omitted-scope-owner");
+        grantDefaultService.ensureUserDefault(owner);
+        Workspace workspace = workspaceFixture.createOwnedWorkspace("Omitted scope ws",
+                owner.getId().toString());
+        workspaces.add(workspace.getId());
+
+        ResponseEntity<Map> created = create(
+                workspaceToken(owner, workspace.getId(), WorkspaceRole.OWNER),
+                Map.of("name", "Legacy body with context"));
+        assertEquals(HttpStatus.CREATED, created.getStatusCode(), String.valueOf(created.getBody()));
+        UUID principalId = UUID.fromString((String) created.getBody().get("principalId"));
+        principals.add(principalId);
+        assertEquals("WORKSPACE", created.getBody().get("scope"));
+        assertEquals("WORKSPACE", principalRepository.findById(principalId).orElseThrow().getScope());
+        assertNull(created.getBody().get("ownerUserId"));
+    }
     // ---------------------------------------------------------------------------------------------
     // helpers
     // ---------------------------------------------------------------------------------------------

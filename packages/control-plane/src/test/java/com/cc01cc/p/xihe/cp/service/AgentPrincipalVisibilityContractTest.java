@@ -1,0 +1,310 @@
+package com.cc01cc.p.xihe.cp.service;
+
+import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
+import com.cc01cc.p.xihe.cp.entity.Workspace;
+import com.cc01cc.p.xihe.cp.policy.AccessScope;
+import com.cc01cc.p.xihe.cp.policy.GrantDefaultService;
+import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
+import com.cc01cc.p.xihe.cp.integration.TestDataFactory;
+import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
+import com.cc01cc.p.xihe.cp.entity.User;
+import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+
+import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpMethod;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
+import org.springframework.jdbc.core.JdbcTemplate;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+/**
+ * PLAN-0622 M1.2 red-first contract test: visibility of the three tiers, the {@code source}
+ * projection of {@code GET /workspaces/{ws}/agents}, and the disable route.
+ *
+ * <p>Written before the implementation on purpose (checklist G2): every assertion below fails on the
+ * M1.1 baseline because the route, the {@code source} field or the disable authorization do not
+ * exist yet.</p>
+ */
+class AgentPrincipalVisibilityContractTest extends AbstractIntegrationTest {
+
+
+    @Autowired
+    private AgentPrincipalService agentPrincipalService;
+    @Autowired
+    private GrantDefaultService grantDefaultService;
+    @Autowired
+    private WorkspaceFixture workspaceFixture;
+    @Autowired
+    private com.cc01cc.p.xihe.cp.repository.UserRepository userRepository;
+    @Autowired
+    private com.cc01cc.p.xihe.cp.repository.AgentPrincipalRepository principalRepository;
+    @Autowired
+    private com.cc01cc.p.xihe.cp.repository.WorkspaceRepository workspaceRepository;
+    @Autowired
+    private ObjectMapper objectMapper;
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
+    @Autowired
+    private com.cc01cc.p.xihe.cp.repository.WorkspaceAgentRepository bindingRepository;
+    @Autowired
+    private com.cc01cc.p.xihe.cp.repository.AccessRoleRepository accessRoleRepository;
+    @Autowired
+    private com.cc01cc.p.xihe.cp.repository.AccessRoleBindingRepository roleBindingRepository;
+
+    private final List<UUID> seededRoleBindingIds = new ArrayList<>();
+
+    private final List<UUID> users = new ArrayList<>();
+    private final List<UUID> workspaces = new ArrayList<>();
+    private final List<UUID> principals = new ArrayList<>();
+
+    @AfterEach
+    void cleanFixtures() {
+        for (UUID principalId : principals) {
+            // Bindings first: fk_workspace_agents_principal would otherwise block the delete.
+            bindingRepository.deleteAll(bindingRepository.findByIdPrincipalId(principalId));
+            jdbcTemplate.update("DELETE FROM audit_logs WHERE resource_type = 'agent_principal' "
+                    + "AND CAST(resource_id AS VARCHAR) = ?", principalId.toString());
+            principalRepository.deleteById(principalId);
+        }
+        principals.clear();
+        for (UUID workspaceId : workspaces) {
+            jdbcTemplate.update("DELETE FROM audit_logs WHERE CAST(workspace_id AS VARCHAR) = ?",
+                    workspaceId.toString());
+            workspaceRepository.deleteById(workspaceId);
+        }
+        workspaces.clear();
+        for (UUID userId : users) {
+            jdbcTemplate.update("DELETE FROM audit_logs WHERE user_id = CAST(? AS UUID)",
+                    userId.toString());
+            userRepository.deleteById(userId);
+        }
+        users.clear();
+    }
+
+    // -----------------------------------------------------------------------------------------
+    // O5: GET /agent-principals?scope=PERSONAL only ever returns the caller's own principals.
+    // -----------------------------------------------------------------------------------------
+
+    @Test
+    void personalListOnlyReturnsTheCallersOwnPrincipals() {
+        User alice = newUser("list-alice");
+        User bob = newUser("list-bob");
+        grantDefaultService.ensureUserDefault(alice);
+        grantDefaultService.ensureUserDefault(bob);
+        UUID alicePersonal = createPersonal(alice, "Alice private");
+        UUID bobPersonal = createPersonal(bob, "Bob private");
+
+        ResponseEntity<Map> response = exchange(HttpMethod.GET,
+                "/api/v1/agent-principals?scope=PERSONAL", globalToken(alice), null);
+        assertEquals(HttpStatus.OK, response.getStatusCode(), String.valueOf(response.getBody()));
+        List<Map<String, Object>> principals = (List<Map<String, Object>>) response.getBody().get("principals");
+        assertNotNull(principals);
+        List<String> ids = principals.stream().map(item -> String.valueOf(item.get("principalId"))).toList();
+        assertTrue(ids.contains(alicePersonal.toString()), ids.toString());
+        assertFalse(ids.contains(bobPersonal.toString()), "another user's PERSONAL principal leaked: " + ids);
+        // The response never carries someone else's template or name.
+        assertTrue(principals.stream().noneMatch(item -> "Bob private".equals(item.get("name"))));
+    }
+
+    // -----------------------------------------------------------------------------------------
+    // M1.2: GET /workspaces/{ws}/agents merges the three tiers and labels each row with `source`.
+    // -----------------------------------------------------------------------------------------
+
+    @Test
+    void workspaceAgentsMergeThreeSourcesWithSourceAndSnapshot() {
+        User owner = newUser("merge-owner");
+        grantDefaultService.ensureUserDefault(owner);
+        Workspace workspace = workspaceFixture.createOwnedWorkspace("Merge ws", owner.getId().toString());
+        workspaces.add(workspace.getId());
+
+        UUID workspaceScoped = createWithScope(workspaceToken(owner, workspace.getId(), WorkspaceRole.OWNER),
+                "Workspace scoped", "WORKSPACE");
+        UUID personalScoped = createPersonal(owner, "Owner personal");
+        UUID instanceScoped = createInstancePrincipal(owner);
+        // The three bindable ones are actually bound to the workspace. INSTANCE binding is instance
+        // administration only (M1.1), so a seeded admin performs that one binding.
+        bindViaApi(owner, workspace.getId(), workspaceScoped);
+        bindViaApi(owner, workspace.getId(), personalScoped);
+        User admin = newUser("merge-admin");
+        grantDefaultService.ensureUserDefault(admin);
+        makeInstanceAdmin(admin);
+        workspaceFixture.bindWorkspaceRole(workspace.getId(), admin.getId(), WorkspaceRole.OWNER);
+        bindViaApi(admin, workspace.getId(), instanceScoped);
+
+        ResponseEntity<Map> response = exchange(HttpMethod.GET,
+                "/api/v1/workspaces/" + workspace.getId() + "/agents",
+                workspaceToken(owner, workspace.getId(), WorkspaceRole.OWNER), null);
+        assertEquals(HttpStatus.OK, response.getStatusCode(), String.valueOf(response.getBody()));
+        List<Map<String, Object>> agents = (List<Map<String, Object>>) response.getBody().get("agents");
+        assertNotNull(agents, "the response must be the frozen {agents:[...]} envelope");
+        assertEquals(3, agents.size(), agents.toString());
+        assertEquals("workspace", sourceOf(agents, workspaceScoped));
+        assertEquals("personal", sourceOf(agents, personalScoped));
+        assertEquals("instance", sourceOf(agents, instanceScoped));
+        // `permissionsSnapshot` replaces the pre-0622 `permissions` field name.
+        assertTrue(agents.stream().allMatch(item -> item.containsKey("permissionsSnapshot")),
+                agents.toString());
+        assertTrue(agents.stream().noneMatch(item -> item.containsKey("permissions")));
+    }
+
+    // -----------------------------------------------------------------------------------------
+    // M1.2: disable answers 204 and leaves an `agent_principal_disabled` audit trail.
+    // -----------------------------------------------------------------------------------------
+
+    @Test
+    void disableAnswersNoContentAndWritesAudit() {
+        User owner = newUser("disable-owner");
+        grantDefaultService.ensureUserDefault(owner);
+        UUID personal = createPersonal(owner, "Disable me");
+
+        ResponseEntity<Map> response = exchange(HttpMethod.POST,
+                "/api/v1/agent-principals/" + personal + "/disable", globalToken(owner), null);
+        assertEquals(HttpStatus.NO_CONTENT, response.getStatusCode(), String.valueOf(response.getBody()));
+        assertNotNull(principalRepository.findById(personal).orElseThrow().getDisabledAt());
+        assertEquals(1, jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM audit_logs WHERE action = 'agent_principal_disabled' "
+                        + "AND CAST(resource_id AS VARCHAR) = ?", Integer.class, personal.toString()));
+    }
+
+    // -----------------------------------------------------------------------------------------
+    // O6: disable needs the tier's authority — a stranger cannot disable somebody else's agent.
+    // -----------------------------------------------------------------------------------------
+
+    @Test
+    void disableRequiresTheTierAuthority() {
+        User owner = newUser("disable-authority-owner");
+        User stranger = newUser("disable-authority-stranger");
+        grantDefaultService.ensureUserDefault(owner);
+        grantDefaultService.ensureUserDefault(stranger);
+        UUID personal = createPersonal(owner, "Owner only");
+
+        ResponseEntity<Map> denied = exchange(HttpMethod.POST,
+                "/api/v1/agent-principals/" + personal + "/disable", globalToken(stranger), null);
+        assertEquals(HttpStatus.FORBIDDEN, denied.getStatusCode(), String.valueOf(denied.getBody()));
+        assertNull(principalRepository.findById(personal).orElseThrow().getDisabledAt(),
+                "a denied disable must not touch the row");
+    }
+
+    // -----------------------------------------------------------------------------------------
+    // V15: disabling takes effect on the NEXT submission of an EXISTING session, not only for new
+    // sessions. The chat path resolves the cap through `resolveSessionCap`, which is the same gate
+    // `ChatSubmissionService` uses for every submission, so asserting it here proves the second
+    // submission fails without rebuilding the whole run fixture.
+    // -----------------------------------------------------------------------------------------
+
+    @Test
+    void disabledPrincipalBlocksTheNextSubmissionOfAnExistingSession() {
+        User owner = newUser("v15-owner");
+        grantDefaultService.ensureUserDefault(owner);
+        Workspace workspace = workspaceFixture.createOwnedWorkspace("V15 ws", owner.getId().toString());
+        workspaces.add(workspace.getId());
+        UUID personal = createPersonal(owner, "V15 agent");
+        bindViaApi(owner, workspace.getId(), personal);
+
+        // Before disabling the binding resolves (this is what the first submission already used).
+        assertNotNull(agentPrincipalService.resolveSessionCap(
+                personal.toString(), workspace.getId().toString()));
+
+        exchange(HttpMethod.POST, "/api/v1/agent-principals/" + personal + "/disable",
+                globalToken(owner), null);
+
+        var failure = assertThrows(com.cc01cc.p.xihe.cp.config.CpApiException.class,
+                () -> agentPrincipalService.resolveSessionCap(
+                        personal.toString(), workspace.getId().toString()));
+        assertEquals(HttpStatus.CONFLICT, failure.getStatus());
+        assertEquals("AGENT_PRINCIPAL_DISABLED", failure.getCode());
+    }
+
+    // -----------------------------------------------------------------------------------------
+    // helpers
+    // -----------------------------------------------------------------------------------------
+
+    /** Seeds a real instance ADMIN tier binding (capability authority reads bindings, not grants). */
+    private void makeInstanceAdmin(User user) {
+        var adminRole = accessRoleRepository.findByName("ADMIN")
+                .orElseThrow(() -> new IllegalStateException("ADMIN role missing (V87)"));
+        var binding = roleBindingRepository.save(new com.cc01cc.p.xihe.cp.entity.AccessRoleBinding(
+                adminRole.getId(), "user", user.getId(), AccessScope.INSTANCE, null, user.getId()));
+        seededRoleBindingIds.add(binding.getId());
+    }
+
+    private User newUser(String label) {
+        User user = userRepository.saveAndFlush(new User(
+                "plan0622-" + label + "-" + UUID.randomUUID() + "@test.com", "hash", label));
+        users.add(user.getId());
+        return user;
+    }
+
+    private String sourceOf(List<Map<String, Object>> agents, UUID principalId) {
+        return agents.stream()
+                .filter(item -> principalId.toString().equals(String.valueOf(item.get("principalId"))))
+                .map(item -> String.valueOf(item.get("source")))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("principal not listed: " + principalId));
+    }
+
+    private UUID createPersonal(User user, String name) {
+        return createWithScope(globalToken(user), name, "PERSONAL");
+    }
+
+    private UUID createWithScope(String token, String name, String scope) {
+        ResponseEntity<Map> response = exchange(HttpMethod.POST, "/api/v1/agent-principals", token,
+                Map.of("name", name, "scope", scope));
+        assertEquals(HttpStatus.CREATED, response.getStatusCode(), String.valueOf(response.getBody()));
+        UUID principalId = UUID.fromString((String) response.getBody().get("principalId"));
+        principals.add(principalId);
+        return principalId;
+    }
+
+    private UUID createInstancePrincipal(User creator) {
+        AgentPrincipal principal = new AgentPrincipal();
+        principal.setName("Instance shared agent");
+        principal.setScope("INSTANCE");
+        principal.setTemplateSnapshot(objectMapper.createObjectNode());
+        principal.setCreatedByUserId(creator.getId().toString());
+        UUID principalId = principalRepository.saveAndFlush(principal).getId();
+        principals.add(principalId);
+        return principalId;
+    }
+
+    private void bindViaApi(User actor, UUID workspaceId, UUID principalId) {
+        ResponseEntity<Map> response = exchange(HttpMethod.PUT,
+                "/api/v1/workspaces/" + workspaceId + "/agents/" + principalId,
+                workspaceToken(actor, workspaceId, WorkspaceRole.OWNER),
+                Map.of("permissions", List.of()));
+        assertEquals(HttpStatus.OK, response.getStatusCode(), String.valueOf(response.getBody()));
+    }
+
+    private String globalToken(User user) {
+        return TestDataFactory.createGlobalToken(user.getId().toString(), user.getEmail(), "USER", 0);
+    }
+
+    private String workspaceToken(User user, UUID workspaceId, WorkspaceRole role) {
+        return TestDataFactory.createWorkspaceToken(user.getId().toString(), user.getEmail(),
+                role.name(), workspaceId.toString(), 0);
+    }
+
+    private ResponseEntity<Map> exchange(HttpMethod method, String path, String token, Object body) {
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(token);
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        return restTemplate.exchange(url(path), method, new HttpEntity<>(body, headers), Map.class);
+    }
+}

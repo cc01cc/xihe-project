@@ -10,11 +10,16 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.UUID;
 import java.util.Map;
 
 @RestController
@@ -28,6 +33,31 @@ public class AgentPrincipalController {
     private static final java.util.Set<String> ALLOWED_BODY_KEYS = java.util.Set.of(
             "name", "templateId", "scope", "defaultModelProvider", "defaultModelName", "allowedModels");
 
+    private static Map<String, Object> toPrincipalView(AgentPrincipalService.AgentPrincipalView view) {
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("principalId", view.principalId());
+        result.put("name", view.name());
+        result.put("templateId", view.templateId());
+        result.put("templateName", view.templateName());
+        result.put("createdAt", view.createdAt() == null ? null : view.createdAt().toString());
+        result.put("scope", view.scope());
+        result.put("ownerUserId", view.ownerUserId() == null ? null : view.ownerUserId().toString());
+        result.put("defaultModelProvider", view.defaultModelProvider());
+        result.put("defaultModelName", view.defaultModelName());
+        result.put("allowedModels", view.allowedModels());
+        result.put("disabledAt", view.disabledAt() == null ? null : view.disabledAt().toString());
+        return result;
+    }
+
+    private static UUID parseUuid(String value) {
+        try {
+            return UUID.fromString(value);
+        } catch (IllegalArgumentException | NullPointerException e) {
+            throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST",
+                    "A valid UUID is required", e);
+        }
+    }
+
     private final AgentPrincipalService agentPrincipalService;
     private final ObjectMapper objectMapper;
 
@@ -35,6 +65,49 @@ public class AgentPrincipalController {
                                      ObjectMapper objectMapper) {
         this.agentPrincipalService = agentPrincipalService;
         this.objectMapper = objectMapper;
+    }
+
+    /**
+     * PLAN-0622 M1.2: `GET /api/v1/agent-principals?scope=&workspaceId=` → `{principals:[…]}`.
+     * The tier filter is mandatory-by-semantics: `PERSONAL` never leaks another account's rows,
+     * `WORKSPACE` requires a workspace id the caller is a member of.
+     */
+    @GetMapping("/api/v1/agent-principals")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<?> list(@RequestParam(required = false) String scope,
+                                  @RequestParam(required = false) String workspaceId) {
+        String actorUserId = TenantContext.getUserId();
+        if (actorUserId == null || actorUserId.isBlank()) {
+            return ProblemDetailsHandler.problemResponse(HttpStatus.UNAUTHORIZED,
+                    "AUTHORIZATION_REQUIRED", "Authentication required");
+        }
+        try {
+            List<Map<String, Object>> principals = agentPrincipalService
+                    .listPrincipals(actorUserId, scope, workspaceId).stream()
+                    .map(AgentPrincipalController::toPrincipalView).toList();
+            Map<String, Object> response = new LinkedHashMap<>();
+            response.put("principals", principals);
+            return ResponseEntity.ok(response);
+        } catch (CpApiException e) {
+            return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
+        }
+    }
+
+    /** PLAN-0622 M1.2: `POST /api/v1/agent-principals/{id}/disable` → `204` (idempotent). */
+    @PostMapping("/api/v1/agent-principals/{principalId}/disable")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<?> disable(@PathVariable String principalId) {
+        String actorUserId = TenantContext.getUserId();
+        if (actorUserId == null || actorUserId.isBlank()) {
+            return ProblemDetailsHandler.problemResponse(HttpStatus.UNAUTHORIZED,
+                    "AUTHORIZATION_REQUIRED", "Authentication required");
+        }
+        try {
+            agentPrincipalService.disablePrincipal(actorUserId, parseUuid(principalId));
+            return ResponseEntity.noContent().build();
+        } catch (CpApiException e) {
+            return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
+        }
     }
 
     @PostMapping("/api/v1/agent-principals")

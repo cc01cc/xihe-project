@@ -42,7 +42,10 @@ public class WorkspaceAgentController {
             List<Map<String, Object>> views = agentPrincipalService.listWorkspaceAgents(
                     requireActor(), parseUuid(workspaceId)).stream()
                     .map(WorkspaceAgentController::toView).toList();
-            return ResponseEntity.ok(views);
+            // PLAN-0622 M1.2 frozen envelope: `{agents:[…]}` (was a bare array before).
+            Map<String, Object> response = new LinkedHashMap<>();
+            response.put("agents", views);
+            return ResponseEntity.ok(response);
         } catch (CpApiException e) {
             return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
         }
@@ -92,7 +95,9 @@ public class WorkspaceAgentController {
         result.put("templateId", view.templateId());
         result.put("templateName", view.templateName());
         result.put("createdAt", view.createdAt().toString());
-        result.put("permissions", toValue(view.permissions()));
+        // PLAN-0622 M1.2: `permissions` -> `permissionsSnapshot`, plus the mandatory `source`.
+        result.put("permissionsSnapshot", toValue(view.permissions()));
+        result.put("source", view.source());
         return result;
     }
 

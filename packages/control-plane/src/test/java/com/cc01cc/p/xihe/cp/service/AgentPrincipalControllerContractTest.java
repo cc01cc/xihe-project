@@ -89,14 +89,20 @@ class AgentPrincipalControllerContractTest extends AbstractIntegrationTest {
         assertEquals(0, auditCount());
 
         addGrant("CREATE_ACCOUNT", "*");
-        ResponseEntity<Map> created = create(Map.of("name", "Bare Default Agent"));
-        assertEquals(HttpStatus.CREATED, created.getStatusCode());
+        // PLAN-0622 D21: the tier is explicit on the wire now; an INSTANCE principal still needs no
+        // workspace binding, which is exactly what this case pins.
+        ResponseEntity<Map> created = create(Map.of("name", "Bare Default Agent", "scope", "INSTANCE"));
+        assertEquals(HttpStatus.CREATED, created.getStatusCode(), String.valueOf(created.getBody()));
         Map<String, Object> body = created.getBody();
         assertNotNull(body);
         assertNotNull(body.get("principalId"));
         assertEquals(null, body.get("templateId"));
         assertEquals(null, body.get("templateName"));
         assertFalse(body.containsKey("permissions"));
+        assertEquals("INSTANCE", body.get("scope"));
+        assertEquals(null, body.get("ownerUserId"));
+        assertEquals("INSTANCE", body.get("scope"));
+        assertEquals(null, body.get("ownerUserId"));
         assertFalse(body.containsKey("systemPrompt"));
         assertFalse(body.containsKey("provider"));
 
