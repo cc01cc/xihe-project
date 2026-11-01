@@ -1,5 +1,7 @@
 package com.cc01cc.p.xihe.cp.policy;
 
+import com.cc01cc.p.xihe.cp.config.ProblemDetailsHandler;
+
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
 import com.cc01cc.p.xihe.cp.entity.PolicyRuleEntity;
@@ -160,8 +162,7 @@ public class PolicyRuleService {
             }
             case LAYER_USER -> {
                 if (requireOwner && userId == null) {
-                    throw new CpApiException(HttpStatus.UNAUTHORIZED, "AUTHORIZATION_REQUIRED",
-                            "User context is required");
+                    throw ProblemDetailsHandler.missingPrincipalException("User context is required");
                 }
                 yield userId;
             }

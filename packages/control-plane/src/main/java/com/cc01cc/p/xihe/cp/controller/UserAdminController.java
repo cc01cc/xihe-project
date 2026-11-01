@@ -2,6 +2,7 @@ package com.cc01cc.p.xihe.cp.controller;
 
 import com.cc01cc.p.xihe.cp.auth.UserAdminView;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
+import com.cc01cc.p.xihe.cp.config.TenantContext;
 import com.cc01cc.p.xihe.cp.entity.UserStatus;
 import com.cc01cc.p.xihe.cp.service.UserAdminService;
 import java.util.LinkedHashMap;
@@ -94,7 +95,7 @@ public class UserAdminController {
             throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "Request body is required");
         }
         UserAdminService.CreatedUser created = userAdminService.createUser(
-                InstanceOwnerController.callerId(), request.email(), request.username(),
+                callerId(), request.email(), request.username(),
                 request.password(), request.name());
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("user", created.view());
@@ -111,13 +112,13 @@ public class UserAdminController {
                                                      @RequestBody(required = false) StatusRequest request) {
         UserStatus status = parseStatusFilter(request == null ? null : request.status(), true);
         return ResponseEntity.ok(userAdminService.changeStatus(
-                InstanceOwnerController.callerId(), parseUserId(userId), status));
+                callerId(), parseUserId(userId), status));
     }
 
     @DeleteMapping("/{userId}")
     @PreAuthorize("hasAuthority('cap:instance:admin')")
     public ResponseEntity<Void> softDelete(@PathVariable String userId) {
-        userAdminService.softDelete(InstanceOwnerController.callerId(), parseUserId(userId));
+        userAdminService.softDelete(callerId(), parseUserId(userId));
         return ResponseEntity.noContent().build();
     }
 
@@ -125,10 +126,27 @@ public class UserAdminController {
     @PreAuthorize("hasAuthority('cap:instance:admin')")
     public ResponseEntity<Map<String, Object>> resetPassword(@PathVariable String userId) {
         String temporaryPassword = userAdminService.resetPassword(
-                InstanceOwnerController.callerId(), parseUserId(userId));
+                callerId(), parseUserId(userId));
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("temporaryPassword", temporaryPassword);
         return ResponseEntity.ok(body);
+    }
+
+    /**
+     * PLAN-0615 (BL-179 A3–A6): the acting administrator, read from {@link TenantContext} — the same
+     * source {@code InstanceOwnerController.callerId()} used. Reading it here removes the
+     * controller→controller dependency while keeping the identical fail-closed guard.
+     *
+     * <p>{@code @PreAuthorize} already guarantees a principal, so the throw is an invariant fuse, not
+     * a reachable branch.</p>
+     */
+    private static String callerId() {
+        String userId = TenantContext.getUserId();
+        if (userId == null || userId.isBlank()) {
+            throw new CpApiException(HttpStatus.UNAUTHORIZED, "AUTHORIZATION_REQUIRED",
+                    "Authorization required");
+        }
+        return userId;
     }
 
     private static UUID parseUserId(String raw) {

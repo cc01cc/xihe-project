@@ -8,12 +8,12 @@ import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceExecutionSpec;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceLifecycleOperation;
 import com.cc01cc.p.xihe.cp.operation.JobStateService;
-import com.cc01cc.p.xihe.cp.repository.WorkspaceLifecycleOperationRepository;
 import com.cc01cc.p.xihe.cp.runtime.RuntimeJobClient;
 import com.cc01cc.p.xihe.cp.runtime.RuntimeWorkspaceClient;
 import com.cc01cc.p.xihe.cp.runtime.RuntimeWorkspaceFileClient;
 import com.cc01cc.p.xihe.cp.service.WorkspaceBackendPolicy;
 import com.cc01cc.p.xihe.cp.service.WorkspaceExecutionSpecService;
+import com.cc01cc.p.xihe.cp.service.WorkspaceRuntimeReleaseService;
 import com.cc01cc.p.xihe.cp.service.WorkspaceService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -44,7 +44,7 @@ public class WorkspaceEnvironmentController {
     private final RuntimeJobClient runtimeJobClient;
     private final RuntimeWorkspaceClient runtimeWorkspaceClient;
     private final JobStateService jobStateService;
-    private final WorkspaceLifecycleOperationRepository lifecycleOperations;
+    private final WorkspaceRuntimeReleaseService releaseService;
 
     public WorkspaceEnvironmentController(
             WorkspaceService workspaceService,
@@ -54,7 +54,7 @@ public class WorkspaceEnvironmentController {
             RuntimeJobClient runtimeJobClient,
             RuntimeWorkspaceClient runtimeWorkspaceClient,
             JobStateService jobStateService,
-            WorkspaceLifecycleOperationRepository lifecycleOperations) {
+            WorkspaceRuntimeReleaseService releaseService) {
         this.workspaceService = workspaceService;
         this.backendPolicy = backendPolicy;
         this.executionSpecService = executionSpecService;
@@ -62,7 +62,7 @@ public class WorkspaceEnvironmentController {
         this.runtimeJobClient = runtimeJobClient;
         this.runtimeWorkspaceClient = runtimeWorkspaceClient;
         this.jobStateService = jobStateService;
-        this.lifecycleOperations = lifecycleOperations;
+        this.releaseService = releaseService;
     }
 
     @GetMapping("/api/v1/workspaces/{workspaceId}/environment")
@@ -134,7 +134,7 @@ public class WorkspaceEnvironmentController {
         runtimeView.put("activeJobCount", jobStateService.activeJobCount(workspaceId));
         java.util.UUID wsUuid = parseUuid(workspaceId);
         WorkspaceLifecycleOperation latestRelease = wsUuid == null ? null
-                : lifecycleOperations.findFirstByWorkspaceIdOrderByCreatedAtDesc(wsUuid).orElse(null);
+                : releaseService.latestForWorkspace(wsUuid).orElse(null);
         runtimeView.put("releaseOperationId",
                 latestRelease == null || latestRelease.getId() == null ? null : latestRelease.getId().toString());
         Object releaseReason = workspaceRuntime.get("reason");

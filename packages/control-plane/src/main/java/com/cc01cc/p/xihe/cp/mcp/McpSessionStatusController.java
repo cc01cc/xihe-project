@@ -55,8 +55,7 @@ public class McpSessionStatusController {
     public ResponseEntity<?> mcpServers(@PathVariable String wsId) {
         String userId = TenantContext.getUserId();
         if (userId == null) {
-            return ProblemDetailsHandler.problemResponse(
-                    HttpStatus.UNAUTHORIZED, "AUTHORIZATION_REQUIRED", "Authentication context is required");
+            return ProblemDetailsHandler.missingPrincipal("Authentication context is required");
         }
         try {
             workspaceService.requireAccessibleWorkspace(wsId, userId);

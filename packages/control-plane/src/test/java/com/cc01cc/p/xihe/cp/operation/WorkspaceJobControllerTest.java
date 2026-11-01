@@ -49,6 +49,19 @@ class WorkspaceJobControllerTest {
     }
 
     @Test
+    void missingPrincipalAnswersForbiddenInsteadOfUnauthorized() {
+        // PLAN-0615 (BL-182): with no principal in the tenant context the guard is an invariant fuse;
+        // it must answer 403 FORBIDDEN (the 401 made clients force a logout) and touch nothing else.
+        TenantContext.clear();
+
+        ResponseEntity<?> response = controller.list("workspace-1");
+
+        assertEquals(HttpStatus.FORBIDDEN, response.getStatusCode());
+        assertNotNull(response.getBody());
+        Mockito.verifyNoInteractions(jobStateService, workspaceService);
+    }
+
+    @Test
     void listsJobsAfterWorkspaceAccessCheck() {
         List<Map<String, Object>> jobs = List.of(Map.of(
                 "jobId", "f3b6f0c1-0000-4000-8000-000000000001",

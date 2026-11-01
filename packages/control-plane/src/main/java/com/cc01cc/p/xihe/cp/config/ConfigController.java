@@ -266,8 +266,7 @@ public class ConfigController {
         UUID userId = currentUserId();
         UUID workspaceId = null;
         if ("user".equals(layer) && userId == null) {
-            return ProblemDetailsHandler.problemResponse(
-                    HttpStatus.UNAUTHORIZED, "AUTHORIZATION_REQUIRED", "User context is required");
+            return ProblemDetailsHandler.missingPrincipal("User context is required");
         }
         if ("workspace".equals(layer)) {
             String wsId = currentWorkspaceId(headerWorkspaceId, queryWorkspaceId);
@@ -276,8 +275,7 @@ public class ConfigController {
                         HttpStatus.BAD_REQUEST, "INVALID_LAYER_CONTEXT", "Workspace context is required");
             }
             if (userId == null) {
-                return ProblemDetailsHandler.problemResponse(
-                        HttpStatus.UNAUTHORIZED, "AUTHORIZATION_REQUIRED", "User context is required");
+                return ProblemDetailsHandler.missingPrincipal("User context is required");
             }
             workspaceService.requireAccessibleWorkspace(wsId, userId.toString());
             workspaceId = parseUuid(wsId);
@@ -366,8 +364,7 @@ public class ConfigController {
             @RequestBody Map<String, String> body) {
         UUID userId = currentUserId();
         if (userId == null) {
-            return ProblemDetailsHandler.problemResponse(
-                    HttpStatus.UNAUTHORIZED, "AUTHORIZATION_REQUIRED", "User context is required");
+            return ProblemDetailsHandler.missingPrincipal("User context is required");
         }
         return writeLayer("user", domain, body, "user", userId, null);
     }
@@ -395,15 +392,13 @@ public class ConfigController {
             if ("agent-templates".equals(domain)) {
                 UUID actorId = currentUserId();
                 if (actorId == null) {
-                    return ProblemDetailsHandler.problemResponse(
-                            HttpStatus.UNAUTHORIZED, "AUTHORIZATION_REQUIRED", "User context is required");
+                    return ProblemDetailsHandler.missingPrincipal("User context is required");
                 }
                 agentTemplateService.putConfigLayer(actorId.toString(), layer, userId, workspaceId, body);
             } else if ("context-templates".equals(domain)) {
                 UUID actorId = currentUserId();
                 if (actorId == null) {
-                    return ProblemDetailsHandler.problemResponse(
-                            HttpStatus.UNAUTHORIZED, "AUTHORIZATION_REQUIRED", "User context is required");
+                    return ProblemDetailsHandler.missingPrincipal("User context is required");
                 }
                 contextTemplateService.putLayer(layer, body, actorId.toString(), userId, workspaceId);
             } else {
@@ -450,8 +445,7 @@ public class ConfigController {
         try {
             UUID actorId = currentUserId();
             if (actorId == null) {
-                return ProblemDetailsHandler.problemResponse(
-                        HttpStatus.UNAUTHORIZED, "AUTHORIZATION_REQUIRED", "User context is required");
+                return ProblemDetailsHandler.missingPrincipal("User context is required");
             }
             ConfigService.ImportReport report = agentTemplateService.importConfig(
                     actorId.toString(), jsoncContent);

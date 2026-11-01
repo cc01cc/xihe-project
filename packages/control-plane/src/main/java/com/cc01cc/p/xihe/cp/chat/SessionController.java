@@ -165,7 +165,7 @@ public class SessionController {
         String userId = TenantContext.getUserId();
         String workspaceId = TenantContext.getWorkspaceId();
         try {
-            return ResponseEntity.ok(toView(sessionService.requireCurrent(sessionId, userId, workspaceId)));
+            return ResponseEntity.ok(SessionViews.toView(sessionService.requireCurrent(sessionId, userId, workspaceId)));
         } catch (CpApiException e) {
             return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
         }
@@ -191,24 +191,16 @@ public class SessionController {
 
     @PostMapping
     @PreAuthorize("isAuthenticated()")
-    public ResponseEntity<?> create(@RequestBody(required = false) CreateSessionRequest request,
-                                    @RequestHeader(value = "X-Workspace-Id", required = false) String workspaceHeader) {
+    public ResponseEntity<?> create(
+            @RequestBody(required = false) SessionRequests.CreateSessionRequest request,
+            @RequestHeader(value = "X-Workspace-Id", required = false) String workspaceHeader) {
         try {
             Session session = sessionCreationService.create(TenantContext.getUserId(), null, workspaceHeader,
-                    paramsFrom(request));
-            return ResponseEntity.status(HttpStatus.CREATED).body(toView(session));
+                    SessionRequests.paramsFrom(request));
+            return ResponseEntity.status(HttpStatus.CREATED).body(SessionViews.toView(session));
         } catch (CpApiException e) {
             return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
         }
-    }
-
-    /** PLAN-0608: shared request mapping for both creation surfaces. */
-    static SessionCreationService.Params paramsFrom(CreateSessionRequest request) {
-        if (request == null) {
-            return new SessionCreationService.Params(null, null, null, null, null, null);
-        }
-        return new SessionCreationService.Params(request.title(), request.modelProvider(), request.modelName(),
-                request.providerConnectionId(), request.agentPrincipalId(), templateSelection(request));
     }
 
     @PatchMapping("/{sessionId}")
@@ -229,7 +221,7 @@ public class SessionController {
                     title, modelProvider, modelName, providerConnectionId,
                     request == null ? null : request.connectionRevision(), selection,
                     request != null && Boolean.TRUE.equals(request.confirmedTypeChange()));
-            return ResponseEntity.ok(toView(session));
+            return ResponseEntity.ok(SessionViews.toView(session));
         } catch (CpApiException e) {
             return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
         }
@@ -247,7 +239,7 @@ public class SessionController {
             }
             Session session = sessionService.updateApiTemplate(sessionId, TenantContext.getUserId(),
                     TenantContext.getWorkspaceId(), request.layer(), request.templateId(), request.version(), request.connectionRevision());
-            return ResponseEntity.ok(toView(session));
+            return ResponseEntity.ok(SessionViews.toView(session));
         } catch (CpApiException e) {
             return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
         }
@@ -295,27 +287,8 @@ public class SessionController {
         }
     }
 
-    static Map<String, Object> toView(Session session) {
-        Map<String, Object> view = new LinkedHashMap<>();
-        view.put("id", session.getId());
-        view.put("workspaceId", session.getWorkspaceId());
-        view.put("agentPrincipalId", session.getAgentPrincipalId());
-        view.put("title", session.getTitle());
-        view.put("modelProvider", session.getModelProvider());
-        view.put("modelName", session.getModelName());
-        view.put("providerConnectionId", session.getProviderConnectionId());
-        view.put("connectionRevision", session.getConnectionRevision());
-        view.put("contextTemplateLayer", session.getContextTemplateLayer());
-        view.put("contextTemplateId", session.getContextTemplateId());
-        view.put("contextTemplateVersion", session.getContextTemplateVersion());
-        view.put("archived", session.isArchived());
-        view.put("createdAt", session.getCreatedAt() == null ? null : session.getCreatedAt().toString());
-        view.put("updatedAt", session.getUpdatedAt() == null ? null : session.getUpdatedAt().toString());
-        return view;
-    }
-
     private static Map<String, Object> toForkView(Session session) {
-        Map<String, Object> view = toView(session);
+        Map<String, Object> view = SessionViews.toView(session);
         view.put("kind", session.getKind());
         view.put("spawnedFromSessionId", session.getSpawnedFromSessionId());
         view.put("spawnedFromRunId", session.getSpawnedFromRunId());
@@ -338,10 +311,6 @@ public class SessionController {
         return view;
     }
 
-    public record CreateSessionRequest(String title, String modelProvider, String modelName,
-                                       String providerConnectionId, String agentPrincipalId,
-                                       String contextTemplateLayer, String contextTemplateId,
-                                       Integer contextTemplateVersion) {}
     public record ContextTemplateBindingRequest(String layer, String templateId, Integer version, Long connectionRevision) {
         public ContextTemplateBindingRequest(String layer, String templateId, Integer version) {
             this(layer, templateId, version, null);
@@ -367,23 +336,6 @@ public class SessionController {
         return new ContextTemplateService.TemplateSelection(layer, id, version);
     }
 
-    private static ContextTemplateService.TemplateSelection templateSelection(CreateSessionRequest request) {
-        if (request == null) {
-            return null;
-        }
-        boolean any = request.contextTemplateLayer() != null || request.contextTemplateId() != null
-                || request.contextTemplateVersion() != null;
-        if (!any) {
-            return null;
-        }
-        if (request.contextTemplateLayer() == null || request.contextTemplateId() == null
-                || request.contextTemplateVersion() == null) {
-            throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST",
-                    "contextTemplateLayer, contextTemplateId and contextTemplateVersion must be provided together");
-        }
-        return new ContextTemplateService.TemplateSelection(request.contextTemplateLayer(),
-                request.contextTemplateId(), request.contextTemplateVersion());
-    }
 }
 
 
