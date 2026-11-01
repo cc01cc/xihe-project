@@ -173,11 +173,16 @@ class AgentPrincipalScopeMigrationTest {
         assertEquals(PermissionAtomCatalog.actionAtoms().size() + PermissionAtomCatalog.capabilityAtoms().size(),
                 roleAtomCount(SystemAccessRoleCatalog.SUPER_ADMIN_ID),
                 "SUPER_ADMIN carries every action atom plus the capability atoms");
-        assertEquals(10, roleAtomCount(SystemAccessRoleCatalog.ADMIN_ID),
-                "ADMIN keeps its nine action atoms (five base + three credential + CREATE_OWN_AGENT)"
-                        + " plus instance:admin");
-        assertEquals(6, roleAtomCount(SystemAccessRoleCatalog.USER_ID),
-                "USER is the five registration atoms plus CREATE_OWN_AGENT (D8)");
+        // The per-role counts are derived from the code-side seeds: V91 is the SQL mirror of
+        // SystemAccessRoleCatalog, so a hard-coded 10/6 would be the next thing to rot.
+        assertEquals(seedAtomCount(SystemAccessRoleCatalog.ADMIN),
+                roleAtomCount(SystemAccessRoleCatalog.ADMIN_ID),
+                "ADMIN seeds exactly the atoms of its code-side role definition "
+                        + "(nine action atoms incl. CREATE_OWN_AGENT, plus instance:admin)");
+        assertEquals(seedAtomCount(SystemAccessRoleCatalog.USER),
+                roleAtomCount(SystemAccessRoleCatalog.USER_ID),
+                "USER seeds exactly the atoms of its code-side role definition "
+                        + "(five registration atoms plus CREATE_OWN_AGENT)");
         for (UUID roleId : new UUID[] {SystemAccessRoleCatalog.SUPER_ADMIN_ID,
                 SystemAccessRoleCatalog.ADMIN_ID, SystemAccessRoleCatalog.USER_ID}) {
             assertEquals(1, scalarInt("SELECT count(*) FROM role_permissions WHERE role_id = '" + roleId
@@ -197,6 +202,15 @@ class AgentPrincipalScopeMigrationTest {
 
     private static int roleAtomCount(UUID roleId) throws SQLException {
         return scalarInt("SELECT count(*) FROM role_permissions WHERE role_id = '" + roleId + "'::uuid");
+    }
+
+    /** All atoms of one seeded system role, per the code-side catalog (V91 mirrors it). */
+    private static long seedAtomCount(String roleName) {
+        return SystemAccessRoleCatalog.roleSeeds().stream()
+                .filter(seed -> roleName.equals(seed.name()))
+                .findFirst()
+                .orElseThrow()
+                .atoms().size();
     }
 
     private static int scalarInt(String sql) throws SQLException {
