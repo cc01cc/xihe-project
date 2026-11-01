@@ -446,7 +446,8 @@ public class AgentPrincipalService {
         workspaceService.requireActiveWorkspace(workspaceId.toString());
         requireWorkspaceMember(actorId, workspaceId);
 
-        return workspaceAgentRepository.findByIdWorkspaceId(workspaceId).stream()
+        java.util.Map<UUID, WorkspaceAgentView> merged = new java.util.LinkedHashMap<>();
+        workspaceAgentRepository.findByIdWorkspaceId(workspaceId).stream()
                 .map(binding -> agentPrincipalRepository.findById(binding.getId().getPrincipalId())
                         .map(principal -> new WorkspaceAgentView(principal.getId(), principal.getName(),
                                 principal.getTemplateId(), optionalText(principal.getTemplateSnapshot(), "templateName"),
@@ -454,7 +455,38 @@ public class AgentPrincipalService {
                                 sourceOf(principal)))
                         .orElseThrow(() -> new CpApiException(HttpStatus.INTERNAL_SERVER_ERROR,
                                 "AGENT_PRINCIPAL_INCONSISTENT", "Workspace Agent binding has no principal")))
-                .toList();
+                .forEach(view -> merged.put(view.principalId(), view));
+        // V4: the list is the union of three sources, not the binding table. A PERSONAL or INSTANCE
+        // principal is usable without a binding, so it must be listed without one; putIfAbsent keeps
+        // one row per principal, and the bound row already carries the scope-derived source.
+        agentPrincipalRepository.findByScopeAndOwnerUserId(SCOPE_PERSONAL, actorId)
+                .forEach(principal -> merged.putIfAbsent(principal.getId(),
+                        unboundView(principal, principalOnlyCap(principal.getId()))));
+        agentPrincipalRepository.findByScope(SCOPE_INSTANCE)
+                .forEach(principal -> merged.putIfAbsent(principal.getId(),
+                        unboundView(principal, principalOnlyCap(principal.getId()))));
+        return merged.values().stream().sorted(WORKSPACE_AGENT_LIST_ORDER).toList();
+    }
+
+    /** Stable list order: workspace → personal → instance, then name, then id (D24). */
+    private static final java.util.Map<String, Integer> SOURCE_ORDER =
+            java.util.Map.of("workspace", 0, "personal", 1, "instance", 2);
+
+    static final java.util.Comparator<WorkspaceAgentView> WORKSPACE_AGENT_LIST_ORDER = java.util.Comparator
+            .comparingInt((WorkspaceAgentView view) -> SOURCE_ORDER.getOrDefault(view.source(), 9))
+            .thenComparing(view -> view.name() == null ? "" : view.name().toLowerCase(java.util.Locale.ROOT))
+            .thenComparing(view -> view.principalId().toString());
+
+    private WorkspaceAgentView unboundView(AgentPrincipal principal, JsonNode cap) {
+        return new WorkspaceAgentView(principal.getId(), principal.getName(), principal.getTemplateId(),
+                optionalText(principal.getTemplateSnapshot(), "templateName"), principal.getCreatedAt(), cap,
+                sourceOf(principal));
+    }
+
+    /** Without a binding there is no narrowing cap: the principal's own atoms are the whole cap. */
+    private JsonNode principalOnlyCap(UUID principalId) {
+        return toJson(evaluator.union(grantRepository.findBySubjectTypeAndSubjectId(
+                GrantPrincipalPathResolver.AGENT_PRINCIPAL, principalId)));
     }
 
     /** Wire vocabulary of the list projection: {@code workspace|personal|instance}. */
