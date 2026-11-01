@@ -19,7 +19,9 @@ function usageError(message) {
   return new CliError('INVALID_ARGUMENT', message, {}, 2);
 }
 
-// Authorization is never captured at all (evidence only carries response fields);\n// the pattern also drops any header-shaped key defensively.\nconst SENSITIVE_KEY = /token|secret|password|apikey|api_key|credential|authorization|bearer/i;
+// Authorization is never captured at all (evidence only carries response fields);
+// the pattern also drops any header-shaped key defensively.
+const SENSITIVE_KEY = /token|secret|password|apikey|api_key|credential|authorization|bearer/i;
 
 /** Evidence is quoted in plans: never leak tokens/keys, and bound long strings. */
 function sanitizeEvidence(value) {
