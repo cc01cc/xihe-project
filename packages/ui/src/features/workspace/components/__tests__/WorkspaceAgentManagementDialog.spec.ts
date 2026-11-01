@@ -332,6 +332,7 @@ describe("WorkspaceAgentManagementDialog PLAN-0622 list rows", () => {
         createdAt: "2026-11-02T00:00:00Z",
         permissionsSnapshot: [],
         bound: true,
+        disabled: false,
         source: "personal",
         ownerUserId: "99999999-9999-4999-8999-999999999999",
         defaultModelProvider: "openai",
@@ -398,6 +399,7 @@ describe("WorkspaceAgentManagementDialog list refresh after create", () => {
             source: "personal",
             permissionsSnapshot: [],
             bound: true,
+            disabled: false,
         };
         // 第一次读取（打开面板）还没有它；创建成功后重新读取才出现 —— 这正是真栈的行为。
         apiMock.getWorkspaceAgents.mockResolvedValueOnce([]).mockResolvedValueOnce([created]);
@@ -442,6 +444,7 @@ describe("WorkspaceAgentManagementDialog bind an existing agent row", () => {
         source: "personal",
         permissionsSnapshot: [],
         bound: true,
+        disabled: false,
     };
 
     it("offers a row-level bind that PUTs the workspace cap and refreshes the list", async () => {
@@ -492,8 +495,8 @@ describe("WorkspaceAgentManagementDialog unbound badge", () => {
                 createdAt: "2026-11-02T00:00:00Z",
                 source: "personal",
                 permissionsSnapshot: [],
-                bound: true,
                 bound: false,
+                disabled: false,
             },
             {
                 principalId: "dddddddd-4444-4444-8444-dddddddddddd",
@@ -504,7 +507,7 @@ describe("WorkspaceAgentManagementDialog unbound badge", () => {
                 source: "workspace",
                 permissionsSnapshot: [],
                 bound: true,
-                bound: true,
+                disabled: false,
             },
         ]);
         apiMock.getSelfPermissions.mockResolvedValue(WORKSPACE_ONLY);
@@ -521,6 +524,43 @@ describe("WorkspaceAgentManagementDialog unbound badge", () => {
                 .exists(),
             "a bound row must not carry the unbound badge",
         ).toBe(false);
+        wrapper.unmount();
+    });
+});
+
+// PLAN-0622 D27：`disabled` 现在有真实数据（CP 投影），确认「已禁用」徽标与禁用按钮同时生效。
+describe("WorkspaceAgentManagementDialog disabled row", () => {
+    it("shows the disabled badge and disables the disable button for a disabled agent", async () => {
+        apiMock.getWorkspaceAgents.mockResolvedValue([
+            {
+                principalId: "eeeeeeee-5555-4555-8555-eeeeeeeeeeee",
+                name: "Already disabled",
+                templateId: null,
+                templateName: null,
+                createdAt: "2026-11-02T00:00:00Z",
+                source: "personal",
+                permissionsSnapshot: [],
+                bound: true,
+                disabled: true,
+            },
+        ]);
+        apiMock.getSelfPermissions.mockResolvedValue(WORKSPACE_ONLY);
+        const wrapper = await mountOpenedDialog();
+
+        expect(
+            wrapper
+                .find('[data-testid="agent-disabled-badge-eeeeeeee-5555-4555-8555-eeeeeeeeeeee"]')
+                .exists(),
+            "a disabled agent must carry the disabled badge",
+        ).toBe(true);
+        expect(
+            wrapper
+                .find(
+                    '[data-testid="workspace-agent-disable-eeeeeeee-5555-4555-8555-eeeeeeeeeeee"]',
+                )
+                .attributes("disabled"),
+            "an already disabled agent must not offer the disable action again",
+        ).toBeDefined();
         wrapper.unmount();
     });
 });

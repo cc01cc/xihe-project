@@ -105,9 +105,13 @@ function handleWorkspaceCreated(id: string) {
 
 const routeSessionId = computed(() => (route.params.sessionId as string | undefined) ?? "");
 
-/** D26：只有已绑定的 agent 才能建会话。 */
+/**
+ * D26/D27：只有**已绑定且未禁用**的 agent 才能建会话 ——
+ * 未绑定 → CP 403「not bound」；已禁用 → CP 409 `AGENT_PRINCIPAL_DISABLED`。
+ * 把它们列出来等于把用户送进一个必然失败的点击。
+ */
 const boundWorkspaceAgents = computed(() =>
-    workspaceAgents.value.filter((agent) => agent.bound === true),
+    workspaceAgents.value.filter((agent) => agent.bound === true && agent.disabled !== true),
 );
 
 const sessionId = computed(() => {

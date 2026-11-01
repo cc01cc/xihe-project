@@ -427,14 +427,14 @@ export interface WorkspaceAgentBinding {
      * 未绑定的 PERSONAL/INSTANCE 也会出现，但它们**不能**用来建会话（CP 403 not bound）。
      */
     bound: boolean;
+    /** PLAN-0622 D27（CP `f6d66e0d`）：该主体是否已被禁用；禁用后不能建会话（409）。 */
+    disabled: boolean;
     scope?: AgentPrincipalScope;
     ownerUserId?: string | null;
     defaultModelProvider?: string | null;
     defaultModelName?: string | null;
     /** `null`/缺省 = 不限制可用模型集。 */
     allowedModels?: AgentModelRef[] | null;
-    /** PLAN-0622：被禁用后新会话不可选。 */
-    disabled?: boolean;
 }
 
 export interface AgentPrincipalCreateInput {

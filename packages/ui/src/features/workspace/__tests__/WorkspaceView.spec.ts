@@ -325,6 +325,7 @@ describe("WorkspaceView workbench layout (PLAN-0582 S2)", () => {
                 source: "workspace",
                 permissionsSnapshot: [],
                 bound: true,
+                disabled: false,
             },
         ]);
         mockedApi.createSession.mockResolvedValue({
@@ -368,6 +369,7 @@ describe("WorkspaceView workbench layout (PLAN-0582 S2)", () => {
                 source: "workspace",
                 permissionsSnapshot: [],
                 bound: true,
+                disabled: false,
             },
         ]);
         const wrapper = mountView();
@@ -415,8 +417,9 @@ describe("WorkspaceView workbench layout (PLAN-0582 S2)", () => {
     });
 });
 
-// PLAN-0622 D26：会话选择器只列**已绑定**的 agent（未绑定的选了必然 403）。
-it("lists only bound agents in the session selector", async () => {
+// PLAN-0622 D26/D27：会话选择器只列**已绑定且未禁用**的 agent
+// （未绑定 → CP 403 not bound；已禁用 → CP 409 AGENT_PRINCIPAL_DISABLED）。
+it("lists only bound and enabled agents in the session selector", async () => {
     mockedApi.getSessions.mockResolvedValue({ sessions: [] });
     mockedApi.getWorkspaceAgents.mockResolvedValue([
         {
@@ -428,7 +431,7 @@ it("lists only bound agents in the session selector", async () => {
             source: "personal",
             permissionsSnapshot: [],
             bound: true,
-            bound: true,
+            disabled: false,
         },
         {
             principalId: "agent-unbound",
@@ -438,8 +441,19 @@ it("lists only bound agents in the session selector", async () => {
             createdAt: new Date().toISOString(),
             source: "personal",
             permissionsSnapshot: [],
-            bound: true,
             bound: false,
+            disabled: false,
+        },
+        {
+            principalId: "agent-disabled",
+            name: "Disabled Agent",
+            templateId: null,
+            templateName: null,
+            createdAt: new Date().toISOString(),
+            source: "personal",
+            permissionsSnapshot: [],
+            bound: true,
+            disabled: true,
         },
     ]);
     const wrapper = mountView();
@@ -452,4 +466,5 @@ it("lists only bound agents in the session selector", async () => {
     const options = select.findAll("option").map((option) => option.attributes("value"));
     expect(options).toContain("agent-bound");
     expect(options, "an unbound agent must not be selectable").not.toContain("agent-unbound");
+    expect(options, "a disabled agent must not be selectable").not.toContain("agent-disabled");
 });

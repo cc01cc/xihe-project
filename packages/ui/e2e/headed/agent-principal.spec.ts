@@ -214,6 +214,12 @@ type StepRecord = {
 
 const steps: StepRecord[] = [];
 const notCovered: Array<{ id: string; reason: string }> = [];
+/**
+ * V11 归档口径：`serial` 模式下一条失败会让后续用例变 skipped，
+ * 所以"跳过"必须与"未覆盖"分开统计 —— 否则报告会把"从未执行"写成"未验证"。
+ */
+const failedTests: string[] = [];
+const skippedTests: string[] = [];
 const consoleLog: string[] = [];
 let shotSeq = 0;
 let workspaceId = "";
@@ -305,6 +311,14 @@ test.describe("PLAN-0622 M4 有头走查：PERSONAL agent 生命周期 + 429 提
         expect(GOLDPATH_PASSWORD, "the headed lane needs the bootstrap password").not.toBe("");
     });
 
+    test.afterEach(({}, testInfo) => {
+        if (testInfo.status === "failed" || testInfo.status === "timedOut") {
+            failedTests.push(`${testInfo.title} [${testInfo.status}]`);
+        } else if (testInfo.status === "skipped") {
+            skippedTests.push(testInfo.title);
+        }
+    });
+
     test.afterAll(() => {
         mkdirSync(RUN_DIR, { recursive: true });
         const pendingTestids = EXPECTED_TESTIDS.filter((item) => item.status !== "asserted");
@@ -324,6 +338,8 @@ test.describe("PLAN-0622 M4 有头走查：PERSONAL agent 生命周期 + 429 提
                     ],
                     steps,
                     notCovered,
+                    failedTests,
+                    skippedTests,
                     expectedTestIds: {
                         total: EXPECTED_TESTIDS.length,
                         asserted: EXPECTED_TESTIDS.filter((item) => item.status === "asserted")
@@ -333,7 +349,14 @@ test.describe("PLAN-0622 M4 有头走查：PERSONAL agent 生命周期 + 429 提
                         pendingVerification: pendingTestids.length,
                         items: EXPECTED_TESTIDS,
                     },
-                    status: notCovered.length === 0 ? "asserted" : "partial",
+                    // 三态：有失败 = failed；有跳过/未覆盖 = partial；否则 asserted。
+                    // 这样 S3 失败时不会再出现 status=asserted 的假绿报告。
+                    status:
+                        failedTests.length > 0
+                            ? "failed"
+                            : skippedTests.length > 0 || notCovered.length > 0
+                              ? "partial"
+                              : "asserted",
                 },
                 null,
                 2,
@@ -523,16 +546,12 @@ test.describe("PLAN-0622 M4 有头走查：PERSONAL agent 生命周期 + 429 提
         // 与 S2 同一真实入口（空态按钮只在没有任何会话时才渲染，S2 已建过会话）。
         await openAgentSessionSelector(page);
         const principalSelect = page.getByTestId("workspace-agent-principal-select");
-        const option = principalSelect.locator(`option[value="${principalId}"]`);
-        if ((await option.count()) === 0) {
-            // 直接不可选（从选项里移除）也是合法实现；两种都算"新会话不可选"。
-            await expect(
-                option,
-                "disabled agent must not be selectable in a new session",
-            ).toHaveCount(0);
-        } else {
-            await expect(option, "disabled agent must be greyed out").toBeDisabled();
-        }
+        // D26/D27 之后的唯一合法实现：选择器过滤为 `bound && !disabled`，
+        // 所以禁用的 agent **必须从选项里消失**（不是"灰掉"）。
+        await expect(
+            principalSelect.locator(`option[value="${principalId}"]`),
+            "a disabled agent must be absent from the new-session selector",
+        ).toHaveCount(0);
         await shot(page, {
             id: "S3b",
             name: "s3b-disabled-agent-not-selectable",
