@@ -1,5 +1,13 @@
 -- PLAN-0622 M0.3 (D8): the sixteenth action atom, CREATE_OWN_AGENT.
 --
+-- D24 (Lead-approved 2026-11-02, PLAN-0622 design §13): this migration was merged as part of M0 and
+-- is then amended in place instead of receiving a V92 follow-up. Rationale: the backfill could not
+-- run at all for a subject holding more than one instance-tier binding (the INSERT..SELECT produced
+-- one row per binding, violating uq_grants_role_atom), and a later migration cannot repair a script
+-- that fails first — Flyway is strictly ordered. Environments that already applied the previous
+-- V91 checksum need `flyway repair` (or a teardown/rebuild of the dev stack). This exception is
+-- specific to this script and does not license editing other merged migrations.
+--
 -- D8 ruling (user 2026-11-02, `spec/security/principal-workspace-scope.md` §3 + PLAN-0622
 -- design §9): an ordinary account may create its own PERSONAL agent principal, so the atom joins
 -- the USER default set (and therefore ADMIN/SUPER_ADMIN, which are supersets). It is deliberately
