@@ -240,16 +240,76 @@ public class ProviderConnectionController {
             Long expectedRevision,
             Map<String, Object> connectionDefaultTemplateRef,
             Boolean confirmedTypeChange,
-            String credentialId) {
+            String credentialId,
+            Integer maxInflight,
+            Integer maxQueue,
+            Long windowTokenBudget,
+            Integer windowSeconds,
+            JsonNode modelLimits) {
         public ConnectionRequest(String providerId, String label, String scope, String apiKey, String baseUrl,
                                   String modelDiscovery, List<String> manualModels, Boolean enabled,
                                   JsonNode connectionKey, JsonNode apiTypeId, JsonNode apiTypeVersion, JsonNode operation) {
             this(providerId, label, scope, apiKey, baseUrl, modelDiscovery, manualModels, enabled,
-                    connectionKey, apiTypeId, apiTypeVersion, operation, null, null, null, null);
+                    connectionKey, apiTypeId, apiTypeVersion, operation, null, null, null, null,
+                    null, null, null, null, null);
         }
 
         String typeId() {
             return apiTypeId == null ? null : apiTypeId.asText();
+        }
+
+        /**
+         * PLAN-0622 M1.5: {@code absent} keeps the rows, {@code null} and {@code []} clear them, any
+         * array replaces them wholesale. A malformed entry is a 400, never a silent skip.
+         */
+        private List<ProviderConnectionService.ModelLimitInput> parsedModelLimits() {
+            if (modelLimits == null) {
+                return null;
+            }
+            if (modelLimits.isNull()) {
+                return List.of();
+            }
+            if (!modelLimits.isArray()) {
+                throw new IllegalArgumentException("modelLimits must be an array");
+            }
+            List<ProviderConnectionService.ModelLimitInput> limits = new java.util.ArrayList<>();
+            for (JsonNode entry : modelLimits) {
+                if (!entry.isObject()) {
+                    throw new IllegalArgumentException("modelLimits entries must be objects");
+                }
+                limits.add(new ProviderConnectionService.ModelLimitInput(
+                        textOrNull(entry, "provider"), textOrNull(entry, "model"),
+                        intOrNull(entry, "maxInflight"), longOrNull(entry, "windowTokenBudget"),
+                        intOrNull(entry, "windowSeconds")));
+            }
+            return limits;
+        }
+
+        private static String textOrNull(JsonNode entry, String field) {
+            JsonNode value = entry.get(field);
+            return value == null || value.isNull() ? null : value.asText();
+        }
+
+        private static Integer intOrNull(JsonNode entry, String field) {
+            JsonNode value = entry.get(field);
+            if (value == null || value.isNull()) {
+                return null;
+            }
+            if (!value.canConvertToInt()) {
+                throw new IllegalArgumentException(field + " must be an integer");
+            }
+            return value.asInt();
+        }
+
+        private static Long longOrNull(JsonNode entry, String field) {
+            JsonNode value = entry.get(field);
+            if (value == null || value.isNull()) {
+                return null;
+            }
+            if (!value.isIntegralNumber()) {
+                throw new IllegalArgumentException(field + " must be an integer");
+            }
+            return value.asLong();
         }
 
         Integer typeVersion() {
@@ -270,7 +330,8 @@ public class ProviderConnectionController {
             }
             return new ProviderConnectionService.ConnectionInput(
                     providerId, label, scope, apiKey, baseUrl, modelDiscovery, manualModels,
-                    enabled, key, credentialId);
+                    enabled, key, credentialId, maxInflight, maxQueue, windowTokenBudget, windowSeconds,
+                    parsedModelLimits());
         }
     }
 }
