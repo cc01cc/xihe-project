@@ -355,12 +355,35 @@ describe("useChatStore", () => {
         expect(store.getMessages("s1").filter((m) => m.role === "assistant")).toEqual([]);
     });
 
-    it("removes an empty assistant when the stream fails", () => {
+    // PLAN-0622 D28：429 现在发生在**准入**（202 之前），此时气泡还没有任何内容。
+    // 旧规则"无内容就删气泡"会把错误信息一起删掉 ⇒ 用户点发送后界面什么都不显示。
+    it("keeps an admission-rejected bubble so the 429 hint can render", () => {
         const store = useChatStore();
         store.createStreamingMessage("s1");
         store.markStreamingError("s1", {
-            code: "LLM_CREDENTIALS_INVALID",
-            detail: "Provider credentials were rejected",
+            code: "RESOURCE_EXHAUSTED",
+            detail: "connection concurrency limit reached",
+            retryable: true,
+            outcome: "error",
+            retryAfterSeconds: 2,
+            resourceKind: "CONNECTION",
+        });
+
+        const messages = store.getMessages("s1");
+        expect(messages, "the rejected submission must stay visible").toHaveLength(1);
+        expect(messages[0].errorCode).toBe("RESOURCE_EXHAUSTED");
+        expect(messages[0].retryAfterSeconds).toBe(2);
+        expect(messages[0].resourceKind).toBe("CONNECTION");
+        expect(store.isStreaming("s1")).toBe(false);
+    });
+
+    // golden path 守卫：内部流错误（无内容）仍然走清理，别把这条规则整体废掉。
+    it("removes an empty assistant for an internal stream failure", () => {
+        const store = useChatStore();
+        store.createStreamingMessage("s1");
+        store.markStreamingError("s1", {
+            code: "AGENT_STREAM_FAILED",
+            detail: "Agent stream failed",
             retryable: true,
             outcome: "error",
         });

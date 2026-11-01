@@ -410,6 +410,17 @@ export const useChatStore = defineStore("chat", () => {
         setSessionRunState(sessionId, "idle");
     }
 
+    /**
+     * 这些 code 是"流本身断了"的内部哨兵：没有可渲染内容时删掉空气泡是正确清理。
+     * 其它 code 都是**可展示的业务错误**（含 429 准入拒绝），必须保留气泡。
+     */
+    const INTERNAL_STREAM_ERROR_CODES = new Set([
+        "AGENT_STREAM_FAILED",
+        "AGENT_STREAM_AMBIGUOUS",
+        "AGENT_STREAM_TIMEOUT",
+        "SSE_CONNECTION_FAILED",
+    ]);
+
     function markStreamingError(
         sessionId: string,
         error: {
@@ -437,7 +448,12 @@ export const useChatStore = defineStore("chat", () => {
                     ),
                 ),
                 hasRenderableContent = hasTextContent || Boolean(message.toolCalls?.length);
-            if (!hasRenderableContent) {
+            // PLAN-0622 D28：429 可能发生在**准入**（202 之前），此时气泡没有任何内容。
+            // "无内容就删气泡"是旧假设（错误总在内容之后到达），会把业务错误一起删掉，
+            // 用户点发送后界面什么都不显示。所以只有**内部流错误**才走清理：
+            // 业务错误（RESOURCE_EXHAUSTED / AGENT_PRINCIPAL_DISABLED / 凭证类 4xx …）
+            // 一律保留气泡并把错误字段写进去，交给 MessageItem 出本地化话术。
+            if (!hasRenderableContent && INTERNAL_STREAM_ERROR_CODES.has(error.code)) {
                 messages.value[sessionId] = messages.value[sessionId].filter(
                     (msg) => msg.id !== messageId,
                 );
