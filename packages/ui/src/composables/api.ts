@@ -79,7 +79,11 @@ import type {
     ScheduledTaskDisposeResult,
     ScheduledTaskListPage,
 } from "../types";
-import type { SessionParticipantView } from "../types/participant";
+import type {
+    SessionParticipantCapabilities,
+    SessionParticipantListResponse,
+    SessionParticipantView,
+} from "../types/participant";
 import { clearTabWorkspace, readTabWorkspaceId } from "../lib/workspaceContext";
 
 const API_BASE = "/api/v1";
@@ -1982,6 +1986,26 @@ async function checkedFetch(path: string, options?: RequestInit): Promise<Respon
     return res;
 }
 
+/**
+ * PLAN-0623 U2：解析 `capabilities` 块（`view`/`manage`/`mention`）。
+ *
+ * 缺失或类型不对一律 **fail-closed**（`manage`/`mention` = false），因为这三个键决定按钮
+ * 是否可点：宁可少给入口，也不能在本该没有权限时给出可点按钮。
+ * `view` 缺失时按 true？—— 不：缺失说明响应不合契约，读取也应当停下来，所以同样按 false，
+ * 由面板显示"不可查看"状态并带诊断信息。
+ */
+function parseParticipantCapabilities(
+    record: Record<string, unknown>,
+): SessionParticipantCapabilities {
+    const raw = record.capabilities;
+    if (!raw || typeof raw !== "object") {
+        return { view: false, manage: false, mention: false };
+    }
+    const caps = raw as Record<string, unknown>;
+    const flag = (key: string): boolean => caps[key] === true;
+    return { view: flag("view"), manage: flag("manage"), mention: flag("mention") };
+}
+
 export async function apiRaw(path: string, options?: RequestInit): Promise<Response> {
     return checkedFetch(path, options);
 }
@@ -2294,7 +2318,7 @@ export const api = {
      *
      * `{participants: []}` 是**合法**的（确实没有参与者），与"形状错误"是两件事。
      */
-    async getSessionParticipants(sessionId: string): Promise<SessionParticipantView[]> {
+    async getSessionParticipants(sessionId: string): Promise<SessionParticipantListResponse> {
         const raw = await request<unknown>(
             `/sessions/${encodeURIComponent(sessionId)}/participants`,
         );
@@ -2326,7 +2350,20 @@ export const api = {
                 `getSessionParticipants: "participants" is not an array (received ${participants === null ? "null" : typeof participants})`,
             );
         }
-        return participants as SessionParticipantView[];
+        return {
+            participants: participants as SessionParticipantView[],
+            capabilities: parseParticipantCapabilities(record),
+        };
+    },
+    /**
+     * PLAN-0623 D23-26：移除 = **soft disable**（CP 只置 `disabled_at`，行与游标保留）。
+     * 因此调用方在 204 之后必须重新拉列表，行仍会在（带 disabled 徽标），而不是消失。
+     */
+    async removeSessionParticipant(sessionId: string, participantId: string): Promise<void> {
+        await request<void>(
+            `/sessions/${encodeURIComponent(sessionId)}/participants/${encodeURIComponent(participantId)}`,
+            { method: "DELETE" },
+        );
     },
     async getWorkspaceAgents(workspaceId: string): Promise<WorkspaceAgentBinding[]> {
         const raw = await request<{ agents: WorkspaceAgentBinding[] }>(

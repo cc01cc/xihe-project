@@ -2126,18 +2126,51 @@ describe("getSessionParticipants strict envelope (PLAN-0623 D23-25)", () => {
         readCursor: null,
     };
 
-    it("returns the participants array for the documented envelope", async () => {
-        mockPayload({ participants: [PARTICIPANT] });
+    it("returns participants plus capabilities for the documented envelope", async () => {
+        mockPayload({
+            participants: [PARTICIPANT],
+            capabilities: { view: true, manage: true, mention: true },
+        });
 
-        await expect(api.getSessionParticipants(SESSION_ID)).resolves.toEqual([PARTICIPANT]);
+        await expect(api.getSessionParticipants(SESSION_ID)).resolves.toEqual({
+            participants: [PARTICIPANT],
+            capabilities: { view: true, manage: true, mention: true },
+        });
         expect(fetchSpy.mock.calls[0]?.[0]).toContain(
             `/api/v1/sessions/${SESSION_ID}/participants`,
         );
     });
 
     it("accepts an empty array as a real empty participant list", async () => {
-        mockPayload({ participants: [] });
-        await expect(api.getSessionParticipants(SESSION_ID)).resolves.toEqual([]);
+        mockPayload({
+            participants: [],
+            capabilities: { view: true, manage: true, mention: true },
+        });
+        const result = await api.getSessionParticipants(SESSION_ID);
+        expect(result.participants).toEqual([]);
+    });
+
+    // U2 fail-closed：capabilities 缺失或标志不是布尔时，manage/mention 一律 false ——
+    // 宁可少给入口，也不能在本该没有权限时给出可点按钮。
+    it("fails closed when the capabilities block is missing", async () => {
+        mockPayload({ participants: [PARTICIPANT] });
+        const result = await api.getSessionParticipants(SESSION_ID);
+        expect(result.capabilities).toEqual({ view: false, manage: false, mention: false });
+    });
+
+    it("treats non-boolean capability flags as false", async () => {
+        mockPayload({ participants: [], capabilities: { view: true, manage: "yes", mention: 1 } });
+        const result = await api.getSessionParticipants(SESSION_ID);
+        expect(result.capabilities).toEqual({ view: true, manage: false, mention: false });
+    });
+
+    it("removes a participant with a DELETE (soft disable on the server)", async () => {
+        fetchSpy.mockResolvedValueOnce({ ok: true, status: 204 } as unknown as Response);
+
+        await api.removeSessionParticipant(SESSION_ID, "participant-1");
+        const [url, init] = fetchSpy.mock.calls[0] ?? [];
+        expect(String(url)).toContain(`/api/v1/sessions/${SESSION_ID}/participants/participant-1`);
+        expect((init as RequestInit | undefined)?.method).toBe("DELETE");
     });
 
     it("rejects when the envelope key is missing and names the keys it did receive", async () => {
