@@ -85,7 +85,8 @@ class ChatControllerScheduledDispatchTest {
                 Mockito.mock(com.cc01cc.p.xihe.cp.context.service.ContextSourceRefreshService.class),
                 Mockito.mock(com.cc01cc.p.xihe.cp.usage.UsageCostMapper.class),
                 Mockito.mock(com.cc01cc.p.xihe.cp.service.ContextTemplateSourceService.class),
-                Mockito.mock(ApplicationEventPublisher.class));
+                Mockito.mock(ApplicationEventPublisher.class),
+                new com.cc01cc.p.xihe.cp.policy.ResourceGovernor());
     }
 
     private static ChatRunReadService.DispatchRun scheduledRun(String origin, String status) {

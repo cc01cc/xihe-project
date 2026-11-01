@@ -20,6 +20,7 @@ import java.security.MessageDigest;
 import java.security.SecureRandom;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
 import java.util.UUID;
@@ -141,6 +142,31 @@ public class ProviderCredentialLeaseService {
             Duration ttl,
             String agentPrincipalId,
             JsonNode agentCap) {
+        return issue(userId, workspaceId, sessionId, runId, providerConnectionId, providerId, model,
+                expectedRevision, ttl, agentPrincipalId, agentCap, null);
+    }
+
+    /**
+     * PLAN-0622 D28: the admission-carrying overload. {@code admission} non-null means the chat
+     * admission path already borrowed this run's governor slots on the request thread (so the
+     * refusal is an HTTP 429 before the 202); the slots are therefore <b>not</b> acquired a second
+     * time here — double counting would halve every configured limit. A null or non-matching
+     * admission keeps the pre-D28 behaviour byte-for-byte (acquire here, in the worker thread).
+     */
+    @Transactional
+    public IssuedLease issue(
+            String userId,
+            String workspaceId,
+            String sessionId,
+            String runId,
+            String providerConnectionId,
+            String providerId,
+            String model,
+            Long expectedRevision,
+            Duration ttl,
+            String agentPrincipalId,
+            JsonNode agentCap,
+            Admission admission) {
         ProviderConnection connection = requestTemplates.lockConnection(providerConnectionId);
         if (expectedRevision != null && connection.getRevision() != expectedRevision) {
             throw com.cc01cc.p.xihe.cp.service.ApiRequestTemplateService.conflict(
@@ -176,12 +202,17 @@ public class ProviderCredentialLeaseService {
         // request must not leave a lease row behind. The slot TTL is the credential lease's own
         // lifetime, so a lost terminal callback degrades to "the limit heals when the lease
         // expires" instead of a permanently exhausted ceiling (R5's documented bottom line).
-        LimitSpec connectionLimits = new LimitSpec(connection.getMaxInflight(), connection.getMaxQueue(),
-                connection.getWindowTokenBudget(), connection.getWindowSeconds());
+        //
+        // PLAN-0622 D28: when admission already borrowed the slots (request thread, so the caller
+        // saw a 429 before the 202) this block is skipped — acquiring again would double count and
+        // silently halve the configured ceiling.
+        LimitSpec connectionLimits = limitsOf(connection);
         Duration slotTtl = ttl == null ? DEFAULT_TTL : ttl;
-        governor.tryAcquire(ResourceKey.connection(connection.getId().toString()), connectionLimits, slotTtl);
-        governor.tryAcquire(ResourceKey.model(connection.getId().toString(), providerId, model),
-                modelLimits(connection.getId(), providerId, model, connectionLimits), slotTtl);
+        if (admission == null || !admission.covers(connection.getId().toString(), providerId, model)) {
+            governor.tryAcquire(ResourceKey.connection(connection.getId().toString()), connectionLimits, slotTtl);
+            governor.tryAcquire(ResourceKey.model(connection.getId().toString(), providerId, model),
+                    modelLimits(connection.getId(), providerId, model, connectionLimits), slotTtl);
+        }
         String token = "pl_" + randomToken();
         ProviderCredentialLease lease = new ProviderCredentialLease();
         lease.setId(UUID.randomUUID());
@@ -196,6 +227,79 @@ public class ProviderCredentialLeaseService {
         lease.setExpiresAt(Instant.now().plus(ttl == null ? DEFAULT_TTL : ttl));
         repository.save(lease);
         return new IssuedLease(token, lease.getExpiresAt());
+    }
+
+    /**
+     * PLAN-0622 D28: the slots one chat admission borrowed, indexed by the controller under the
+     * run id. {@link #covers} answers "these slots are for exactly this connection/provider/model",
+     * which keeps a stale admission (Session re-bound between admission and persist) from muting the
+     * ceiling of a different key.
+     */
+    public record Admission(String connectionId, String providerId, String model,
+                            List<ResourceGovernor.Lease> leases) {
+
+        private static final Admission NONE = new Admission(null, null, null, List.of());
+
+        public static Admission none() {
+            return NONE;
+        }
+
+        public boolean isEmpty() {
+            return leases == null || leases.isEmpty();
+        }
+
+        public boolean covers(String connection, String provider, String wantedModel) {
+            return !isEmpty()
+                    && java.util.Objects.equals(connectionId, connection)
+                    && java.util.Objects.equals(providerId, provider)
+                    && java.util.Objects.equals(model, wantedModel);
+        }
+    }
+
+    /**
+     * PLAN-0622 D28: borrow this run's governor slots on the request thread, <b>before</b> any row is
+     * written, so an over-limit {@code POST /chat} is refused with {@code 429 RESOURCE_EXHAUSTED}
+     * instead of {@code 202} followed by an asynchronous failure (verify V7 / D14).
+     *
+     * <p>Returns {@link Admission#none()} when the run would not borrow a slot at all (unbound
+     * Session, unknown connection, provider mismatch): the caller then dispatches exactly as before
+     * and the worker-thread {@code issue()} owns the acquire, so no behaviour changes on that path.
+     * Persists nothing (R2: a refused request must not leave a row behind).</p>
+     */
+    public Admission admit(String providerConnectionId, String providerId, String model, Duration ttl) {
+        if (providerConnectionId == null || providerId == null || model == null) {
+            return Admission.none();
+        }
+        ProviderConnection connection;
+        try {
+            connection = connectionRepository.findById(UUID.fromString(providerConnectionId)).orElse(null);
+        } catch (IllegalArgumentException notAnId) {
+            return Admission.none();
+        }
+        if (connection == null || !providerId.equals(connection.getProviderId())) {
+            return Admission.none();
+        }
+        Duration slotTtl = ttl == null || ttl.isNegative() || ttl.isZero() ? DEFAULT_TTL : ttl;
+        LimitSpec connectionLimits = limitsOf(connection);
+        List<ResourceGovernor.Lease> leases = new ArrayList<>(2);
+        leases.add(governor.tryAcquire(ResourceKey.connection(connection.getId().toString()),
+                connectionLimits, slotTtl));
+        try {
+            leases.add(governor.tryAcquire(
+                    ResourceKey.model(connection.getId().toString(), providerId, model),
+                    modelLimits(connection.getId(), providerId, model, connectionLimits), slotTtl));
+        } catch (RuntimeException refusal) {
+            // A model-slot refusal must not leak the connection slot it was paired with.
+            governor.release(leases.get(0));
+            throw refusal;
+        }
+        return new Admission(connection.getId().toString(), providerId, model, List.copyOf(leases));
+    }
+
+    /** The connection-level ceiling; model rows inherit every dimension they leave null. */
+    private LimitSpec limitsOf(ProviderConnection connection) {
+        return new LimitSpec(connection.getMaxInflight(), connection.getMaxQueue(),
+                connection.getWindowTokenBudget(), connection.getWindowSeconds());
     }
 
     @Transactional
