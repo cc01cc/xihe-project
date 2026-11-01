@@ -21,7 +21,10 @@
 - 日常 host 开发运行 `mise run dev:host`：仅 PostgreSQL 在 Docker 中，CP、Agent、Runtime、UI 由 mise 原生启动；该命令不导入配置或创建 Provider Connection。项目开发/运维命令见 DEV-002 与 `mise run xihe -- --help`。
 - 并行开发（PLAN-0533）：`mise run dev:stack -- --stack 2`（或 `XIHE_STACK_ID=stack-2 mise run dev:host`）起第二套栈；`stack-1` 端口/路径与单栈时逐项相同，stack-2 起使用独立段位、compose project、PG 库与 `.xihe-stacks/<n>/` 路径，详见 DEV-002「模式 D」。非法/未登记 `XIHE_STACK_ID` 启动即失败；`dev:host:stop`/`dev:reset` 只作用于当前栈。
 - **Runtime target 缓存（PLAN-0596）**：worktree 默认保持**独立** `CARGO_TARGET_DIR`（自行用环境变量外置；若你在 one workspace 内，one 侧另有 `worktree-env.ps1` 统一外置），不共享同一 target——并发构建会在 target 锁上串行，且 Windows 上服务进程占用 exe 会让另一 worktree 构建失败；共享仅在源码/工具链/profile 完全一致时有收益。`clean:runtime-sweep` 只作用当前 `cargo metadata` 的单个 target；`--maxsize 12GB` 无单位按 MiB（≈11.18 GiB）。`mise run clean` 是 `rm -rf` 的**永久删除**入口（不进回收站、无警告），执行前确认无构建/服务占用；缓存按「删除 + 重建」处理，不做跨盘搬运。
-- **docker 冻结（2026-10-07 用户裁定，2026-10-09 强化）**：XH 的 Docker 构建与服务容器化全部暂缓——只有 PostgreSQL 保留为容器，CP/Agent/Runtime/UI 全部 host。`mise run dev:full` / `dev:backend` / `test:e2e:compose` / `test:e2e` / `image:workspace:build` 已在 `mise.toml` 注释冻结（文件头有冻结说明与解冻条件），禁止误启；日常用 `mise run dev:host`，隔离 E2E 用 `mise run test:e2e:host`。**冻结范围仅指服务容器化与镜像构建**；**工作区 Docker 执行后端不受冻结影响**：`managed_import` 工作区仍以 `docker` 为唯一执行后端，默认新建工作区继续使用它。**2026-10-25 补充：Docker 执行后端的“代码内部”同样冻结**——可继续使用该后端，但当前阶段不在其内部做功能/修复；涉及 checkpoint、workspace、路径等改动只在外层（Runtime 非 Docker 模块/CP/scripts/UI）处理；若必须改 `backend.rs`/`container_runtime.rs`/`executor.rs` Docker 分支/`environment.rs`/`sandbox/`，descope 该子任务并另立计划，不强行完成。**2026-10-31 用户裁定（supersede 上面「工作区 Docker 执行后端不受冻结影响」一句）**：工作区 Docker 执行后端**同样按冻结/不可用对待**——产品面（UI、CLI）在调用前必须**显式提示不可用**（禁用/隐藏入口 + 明确原因 + 指向 `direct_attach`），不得让用户走到容器创建才收到原始错误；`test:e2e:host` 是本条唯一豁免（仍需该后端出证据）。因此 `xihe/workspace:latest` 的镜像供给不再是产品首用前置，仅测试车道需要。
+- **docker 冻结（2026-10-07 用户裁定，2026-10-09 强化；工作区后端面由 PLAN-0618 收口为完全冻结）**：
+  - **现状（2026-11-01 起，PLAN-0618 完全冻结）——工作区 docker 执行后端不可用**：产品面 + 测试面 + 默认值**三面一起冻，解冻时一起解冻**。默认 `storageMode` 是 **`direct_attach`**，且 `POST /api/v1/workspaces` 的 **`storageMode` 必填、无默认值**（缺 → `400 INVALID_REQUEST`，字段契约见 `docs/api/openapi.yaml` 的 `WorkspaceCreateRequest.required`）；显式 `managed_import` → `409 BACKEND_DISABLED`；既有 docker 工作区的执行/文件/环境/**会话/聊天** → `503 BACKEND_DISABLED`（fail-closed，不回退宿主）。产品面（UI、CLI）**必须**在调用前显式提示不可用并指向 `direct_attach`，不得让用户走到容器创建才收到原始错误。测试面用 `@Tag("docker-frozen")` + Surefire `excludedGroups` 默认排除、E2E 用 `--include-docker-frozen` 恢复；范围与解冻步骤见 [`DEV-018`](docs/i18n/zh-Hans/DEV-018-known-issues.md)「docker 后端冻结范围」。**不存在"唯一豁免车道"**。
+  - **服务容器化/镜像构建**（2026-10-07 裁定，2026-10-09 强化）：`mise run dev:full` / `dev:backend` / `test:e2e:compose` / `test:e2e` / `image:workspace:build` 已在 `mise.toml` 注释冻结（文件头有冻结说明与解冻条件），禁止误启；日常用 `mise run dev:host`，隔离 E2E 用 `mise run test:e2e:host`。
+  - **历史（已 supersede，勿作现状引用）**：2026-10-25「Docker 执行后端代码内部同样冻结——可继续使用但不做功能修复」；~~"工作区 Docker 执行后端不受冻结影响，`managed_import` 仍以 docker 为唯一执行后端，默认新建工作区继续使用它"~~ 与 ~~"`test:e2e:host` 是本条唯一豁免"~~ —— 两句均被 **2026-10-31 裁定**收紧、并被 **2026-11-01 PLAN-0618 完全冻结**取代。若必须改 `backend.rs`/`container_runtime.rs`/`executor.rs` Docker 分支/`environment.rs`/`sandbox/`，descope 该子任务并另立计划。因此 `xihe/workspace:latest` 的镜像供给不再是产品首用前置。
 - `mise run dev:reset` 默认 dry-run；显式重置前检查备份与数据范围。`reset-admin` 输出临时开发密码，不得写入脚本、源码或日志。
 
 ## Commands
@@ -88,7 +91,7 @@
 - 用户反馈文本中的 Vue `t()` placeholder 不得包含 `{...}`；UI 测试和封装规则见 `packages/ui/AGENTS.md`。
 - MCP 逻辑入口无协议会话：CP 不签发也不接受 `mcp-session-id`，入站一律 403 `MCP_SESSION_INVALID`（DEV-016/DEV-024）。
 - Chat 若显式要求 workspace tools 才初始化 MCP；纯 Chat 不因携带 workspaceId 自动发现工具，MCP context 不得跨 Workspace 复用（DEV-013）。
-- 工作区运行资源释放（PLAN-0391）的锁内 active-Job 门只覆盖 host/MXC（Job engine）；docker 模式（服务容器化冻结；工作区 Docker 后端仍受支持）下 Runtime 侧不感知容器 job，且 `cleanupFailed` 暂恒为 false。见 DEV-018。
+- 工作区运行资源释放（PLAN-0391）的锁内 active-Job 门只覆盖 host/MXC（Job engine）；docker 模式（服务容器化冻结；**工作区 Docker 后端同样已冻结，见 [DEV-018](docs/i18n/zh-Hans/DEV-018-known-issues.md)「docker 后端冻结范围」**）下 Runtime 侧不感知容器 job，且 `cleanupFailed` 暂恒为 false。见 DEV-018。
 
 ## Plan and Release Rules
 
