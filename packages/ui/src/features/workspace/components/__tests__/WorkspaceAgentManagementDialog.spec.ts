@@ -384,3 +384,44 @@ describe("WorkspaceAgentManagementDialog PLAN-0622 list rows", () => {
         expect(button.attributes("disabled")).toBeDefined();
     });
 });
+
+// ── 真栈 bug（Lead 2026-11-02）：创建成功后列表不刷新，用户要关掉重开面板才看到新 agent ──────
+describe("WorkspaceAgentManagementDialog list refresh after create", () => {
+    it("shows the newly created principal without reopening the dialog", async () => {
+        const created = {
+            principalId: "aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa",
+            name: "Fresh agent",
+            templateId: null,
+            templateName: null,
+            createdAt: "2026-11-02T00:00:00Z",
+            source: "personal",
+            permissionsSnapshot: [],
+        };
+        // 第一次读取（打开面板）还没有它；创建成功后重新读取才出现 —— 这正是真栈的行为。
+        apiMock.getWorkspaceAgents.mockResolvedValueOnce([]).mockResolvedValueOnce([created]);
+        apiMock.createAgentPrincipal.mockResolvedValue({
+            principalId: created.principalId,
+            templateId: null,
+            templateName: null,
+            createdAt: created.createdAt,
+            scope: "PERSONAL",
+            ownerUserId: "99999999-9999-4999-8999-999999999999",
+        });
+        const wrapper = await mountOpenedDialog();
+        expect(
+            wrapper.find(`[data-testid="agent-scope-badge-${created.principalId}"]`).exists(),
+        ).toBe(false);
+
+        await wrapper.find('[data-testid="agent-principal-name"]').setValue("Fresh agent");
+        await wrapper.find('[data-testid="agent-principal-create-form"]').trigger("submit");
+        await flushPromises();
+
+        const badge = wrapper.find(`[data-testid="agent-scope-badge-${created.principalId}"]`);
+        expect(badge.exists(), "the created principal must appear in the list immediately").toBe(
+            true,
+        );
+        expect(badge.attributes("data-agent-scope")).toBe("personal");
+        expect(apiMock.getWorkspaceAgents).toHaveBeenCalledTimes(2);
+        wrapper.unmount();
+    });
+});
