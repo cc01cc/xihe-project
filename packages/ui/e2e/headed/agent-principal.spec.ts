@@ -19,7 +19,10 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { test, expect } from "@playwright/test";
 import type { Page } from "@playwright/test";
-import { createWorkspaceSessionWithPrincipal } from "../real/helpers/agent-principal";
+import {
+    createWorkspaceSessionWithPrincipal,
+    openAgentSessionSelector,
+} from "../real/helpers/agent-principal";
 import { ensureWorkspace } from "../real/helpers/workspace";
 
 const RUN_ID = process.env.XIHE_E2E_RUN_ID || `headed-0622-${Date.now()}`;
@@ -334,20 +337,22 @@ test.describe("PLAN-0622 M4 有头走查：PERSONAL agent 生命周期 + 429 提
         await expect(page.getByTestId("workspace-toolbar-agents")).toBeVisible({ timeout: 45000 });
         await openAgentDialog(page);
 
-        // 两次确认：第一次点 disable 按钮，第二次在确认对话框里确认（与 M3 的二次确认一致）。
-        await page.getByTestId(`workspace-agent-disable-${principalId}`).click();
-        const confirmDialog = page.getByRole("alertdialog");
-        await expect(confirmDialog).toBeVisible({ timeout: 15000 });
+        // 真实 UI 的"两次确认"是**同一个按钮点两次**（第一次进入确认态、按钮文案变成确认文案；
+        // 第二次才发 POST），不是 alertdialog —— 旧 spec 假设了对话框，所以 15s 等不到元素。
+        const disableButton = page.getByTestId(`workspace-agent-disable-${principalId}`);
+        const idleLabel = (await disableButton.textContent()) ?? "";
+        await disableButton.click();
+        await expect(
+            disableButton,
+            "first click must switch the button into confirm state",
+        ).not.toHaveText(idleLabel, { timeout: 15000 });
         const disableResponse = page.waitForResponse(
             (response) =>
                 new URL(response.url()).pathname ===
                     `/api/v1/agent-principals/${principalId}/disable` &&
                 response.request().method() === "POST",
         );
-        await confirmDialog
-            .getByRole("button", { name: /禁用|Disable/i })
-            .last()
-            .click();
+        await disableButton.click();
         const disabled = await disableResponse;
         expect([200, 204], await disabled.text()).toContain(disabled.status());
 
@@ -364,9 +369,9 @@ test.describe("PLAN-0622 M4 有头走查：PERSONAL agent 生命周期 + 429 提
             timeout: 15000,
         });
 
-        await page.getByTestId("workspace-create-session").click();
+        // 与 S2 同一真实入口（空态按钮只在没有任何会话时才渲染，S2 已建过会话）。
+        await openAgentSessionSelector(page);
         const principalSelect = page.getByTestId("workspace-agent-principal-select");
-        await expect(principalSelect).toBeVisible({ timeout: 20000 });
         const option = principalSelect.locator(`option[value="${principalId}"]`);
         if ((await option.count()) === 0) {
             // 直接不可选（从选项里移除）也是合法实现；两种都算"新会话不可选"。

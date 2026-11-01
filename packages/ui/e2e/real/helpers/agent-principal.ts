@@ -143,10 +143,11 @@ async function describeSessionCreationState(page: Page): Promise<string> {
  * 而 `sessionId` 只要 store 里有当前会话就为真（`WorkspaceView.vue` 的 computed），此时按钮根本
  * 不渲染 —— S2 曾因此干等 180s 超时。
  */
-export async function createWorkspaceSessionWithPrincipal(
-    page: Page,
-    principalId: string,
-): Promise<string> {
+/**
+ * 打开「选择 Agent」选择器（真实入口：新建对话 → `?newChat=1` → WorkspaceView 自己 pop）。
+ * 幂等：选择器已经可见时什么都不做。
+ */
+export async function openAgentSessionSelector(page: Page): Promise<void> {
     const principalSelect = page.getByTestId("workspace-agent-principal-select");
     // `?newChat=1` 的 watcher 可能已经打开了选择器，此时不要再点入口（重复点击会重置已选值）。
     if (!(await isVisible(principalSelect))) {
@@ -165,6 +166,14 @@ export async function createWorkspaceSessionWithPrincipal(
     await expect(principalSelect, await describeSessionCreationState(page)).toBeVisible({
         timeout: 30000,
     });
+}
+
+export async function createWorkspaceSessionWithPrincipal(
+    page: Page,
+    principalId: string,
+): Promise<string> {
+    await openAgentSessionSelector(page);
+    const principalSelect = page.getByTestId("workspace-agent-principal-select");
     await principalSelect.selectOption(principalId);
 
     const responsePromise = page.waitForResponse((response) =>
