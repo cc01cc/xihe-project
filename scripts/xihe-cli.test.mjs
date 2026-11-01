@@ -3192,3 +3192,199 @@ test('verify probes: PERSONAL lifecycle and limit 429 are provisional until CP d
   assert.equal(limited.status, 'PASS', JSON.stringify(limited));
   assert.equal(trapCalls.length, 2, 'the probe restores maxInflight');
 });
+
+test('agent CLI: create/list/bind/unbind/disable + provider limit are idempotent and machine readable', async () => {
+  const state = {
+    principals: [],
+    bindings: new Map(),
+    connections: [{ id: 'conn-1', providerId: 'openai', label: 'primary' }],
+    createRequests: 0,
+    patchBodies: [],
+    disabled: new Set(),
+  };
+  const server = createServer(async (request, response) => {
+    const url = new URL(request.url, 'http://127.0.0.1');
+    if (url.pathname === '/actuator/health') { json(response, 200, { status: 'UP' }); return; }
+    if (url.pathname === '/api/v1/auth/login' && request.method === 'POST') {
+      json(response, 200, { accessToken: 'agent-cli-token', tokenType: 'Bearer', expiresIn: 900 });
+      return;
+    }
+    if (url.pathname === '/api/v1/agent-principals' && request.method === 'GET') {
+      const scope = url.searchParams.get('scope');
+      const principals = scope
+        ? state.principals.filter((item) => item.scope === scope)
+        : state.principals;
+      json(response, 200, { principals });
+      return;
+    }
+    if (url.pathname === '/api/v1/agent-principals' && request.method === 'POST') {
+      state.createRequests += 1;
+      const body = await requestBody(request);
+      const principal = { principalId: `p-${state.principals.length + 1}`, scope: 'WORKSPACE', ...body };
+      state.principals.push(principal);
+      json(response, 201, principal);
+      return;
+    }
+    if (url.pathname === '/api/v1/agent-principals/disabled-missing/disable' && request.method === 'POST') {
+      json(response, 404, { code: 'AGENT_PRINCIPAL_NOT_FOUND', detail: 'nope' });
+      return;
+    }
+    const disableMatch = url.pathname.match(/^\/api\/v1\/agent-principals\/([^/]+)\/disable$/);
+    if (disableMatch && request.method === 'POST') {
+      const principalId = decodeURIComponent(disableMatch[1]);
+      if (state.disabled.has(principalId)) {
+        json(response, 409, { code: 'AGENT_PRINCIPAL_ALREADY_DISABLED' });
+        return;
+      }
+      state.disabled.add(principalId);
+      response.writeHead(204);
+      response.end();
+      return;
+    }
+    const workspaceAgentsMatch = url.pathname.match(/^\/api\/v1\/workspaces\/([^/]+)\/agents$/);
+    if (workspaceAgentsMatch && request.method === 'GET') {
+      const workspaceId = decodeURIComponent(workspaceAgentsMatch[1]);
+      const agents = [...state.bindings.entries()]
+        .filter(([key]) => key.startsWith(`${workspaceId}:`))
+        .map(([, value]) => value);
+      json(response, 200, { agents });
+      return;
+    }
+    const bindMatch = url.pathname.match(/^\/api\/v1\/workspaces\/([^/]+)\/agents\/([^/]+)$/);
+    if (bindMatch && (request.method === 'PUT' || request.method === 'DELETE')) {
+      const workspaceId = decodeURIComponent(bindMatch[1]);
+      const principalId = decodeURIComponent(bindMatch[2]);
+      const key = `${workspaceId}:${principalId}`;
+      if (request.method === 'PUT') {
+        if (state.bindings.has(key)) {
+          json(response, 409, { code: 'WORKSPACE_AGENT_ALREADY_BOUND' });
+          return;
+        }
+        state.bindings.set(key, { principalId, name: 'cli-agent', source: 'personal' });
+        json(response, 200, { principalId });
+        return;
+      }
+      if (!state.bindings.has(key)) {
+        json(response, 404, { code: 'WORKSPACE_AGENT_NOT_BOUND' });
+        return;
+      }
+      state.bindings.delete(key);
+      response.writeHead(204);
+      response.end();
+      return;
+    }
+    if (url.pathname === '/api/v1/provider-connections' && request.method === 'GET') {
+      json(response, 200, { connections: state.connections });
+      return;
+    }
+    const patchMatch = url.pathname.match(/^\/api\/v1\/provider-connections\/([^/]+)$/);
+    if (patchMatch && request.method === 'PATCH') {
+      const body = await requestBody(request);
+      state.patchBodies.push(body);
+      const index = state.connections.findIndex((item) => item.id === decodeURIComponent(patchMatch[1]));
+      if (index === -1) { json(response, 404, { code: 'CONNECTION_NOT_FOUND' }); return; }
+      state.connections[index] = { ...state.connections[index], ...body, modelLimits: body.modelLimits ?? state.connections[index].modelLimits };
+      json(response, 200, { connection: state.connections[index] });
+      return;
+    }
+    json(response, 404, { code: 'NOT_FOUND' });
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const port = server.address().port;
+  const env = {
+    XIHE_CP_PORT: String(port),
+    XIHE_CP_URL: `http://127.0.0.1:${port}`,
+    XIHE_DEV_ADMIN_PASSWORD: TEST_PASSWORD,
+  };
+  const noPrompt = async () => { throw new Error('must not prompt'); };
+  const run = (argv) => runCommand(argv, { env, promptSecret: noPrompt, stdout: sink(), stderr: sink() });
+  try {
+    const created = await run(['agent', 'create', '--scope', 'personal', '--name', 'cli-agent',
+      '--template', 'tpl-1', '--default-model', 'openai:gpt-5', '--allow-model', 'openai:gpt-5',
+      '--allow-model', 'openai:gpt-5-mini', '--json']);
+    assert.equal(created.exitCode, 0);
+    assert.equal(created.data.kind, 'agent-created');
+    assert.equal(created.data.created, true);
+    assert.equal(created.data.principalId, 'p-1');
+    assert.equal(created.data.principal.scope, 'PERSONAL');
+    assert.deepEqual(created.data.principal.allowedModels, [
+      { provider: 'openai', model: 'gpt-5' },
+      { provider: 'openai', model: 'gpt-5-mini' },
+    ]);
+    assert.deepEqual(created.data.principal.defaultModelProvider, 'openai');
+    assert.equal(created.data.principal.defaultModelName, 'gpt-5');
+
+    const again = await run(['agent', 'create', '--scope', 'personal', '--name', 'cli-agent',
+      '--template', 'tpl-1', '--default-model', 'openai:gpt-5', '--allow-model', 'openai:gpt-5',
+      '--allow-model', 'openai:gpt-5-mini', '--json']);
+    assert.equal(again.exitCode, 0);
+    assert.equal(again.data.created, false);
+    assert.equal(again.data.idempotent, true);
+    assert.equal(again.data.principalId, 'p-1');
+    assert.equal(state.createRequests, 1, 'repeat create must not POST again');
+
+    const listed = await run(['agent', 'list', '--json']);
+    assert.equal(listed.exitCode, 0);
+    assert.equal(listed.data.kind, 'agent-list');
+    assert.equal(listed.data.items.length, 1);
+
+    const bound = await run(['agent', 'bind', '--principal', 'p-1', '--workspace', 'ws-1', '--json']);
+    assert.equal(bound.exitCode, 0);
+    assert.equal(bound.data.alreadyBound, false);
+    const rebound = await run(['agent', 'bind', '--principal', 'p-1', '--workspace', 'ws-1', '--json']);
+    assert.equal(rebound.exitCode, 0, 'repeat bind must be an idempotent success');
+    assert.equal(rebound.data.alreadyBound, true);
+
+    const wsAgents = await run(['agent', 'list', '--workspace', 'ws-1', '--json']);
+    assert.equal(wsAgents.exitCode, 0);
+    assert.equal(wsAgents.data.items.length, 1);
+    assert.equal(wsAgents.data.items[0].source, 'personal');
+
+    const unbound = await run(['agent', 'unbind', '--principal', 'p-1', '--workspace', 'ws-1', '--json']);
+    assert.equal(unbound.exitCode, 0);
+    const unboundAgain = await run(['agent', 'unbind', '--principal', 'p-1', '--workspace', 'ws-1', '--json']);
+    assert.equal(unboundAgain.exitCode, 0, 'repeat unbind must be an idempotent success');
+    assert.equal(unboundAgain.data.alreadyUnbound, true);
+
+    const disabled = await run(['agent', 'disable', '--principal', 'p-1', '--json']);
+    assert.equal(disabled.exitCode, 0);
+    assert.equal(disabled.data.alreadyDisabled, false);
+    const disabledAgain = await run(['agent', 'disable', '--principal', 'p-1', '--json']);
+    assert.equal(disabledAgain.exitCode, 0);
+    assert.equal(disabledAgain.data.alreadyDisabled, true);
+
+    const missing = await run(['agent', 'disable', '--principal', 'disabled-missing', '--json']);
+    assert.equal(missing.exitCode, 1, 'CP 4xx is a business failure');
+    assert.equal(missing.error.code, 'AGENT_PRINCIPAL_NOT_FOUND', 'CP code must pass through');
+
+    const usage = await run(['agent', 'create', '--scope', 'bogus', '--name', 'x', '--json']);
+    assert.equal(usage.exitCode, 2, 'usage errors exit 2');
+    assert.equal(usage.error.code, 'INVALID_ARGUMENT');
+
+    const quota = await run(['provider', 'limit', 'set', '--connection', 'conn-1', '--tokens', '100', '--json']);
+    assert.equal(quota.exitCode, 2, '--tokens without --window is a usage error');
+
+    const limits = await run(['provider', 'limit', 'set', '--connection', 'conn-1', '--max-inflight', '2',
+      '--tokens', '100', '--window', '60', '--model', 'openai:gpt-5', '--max-inflight', '1', '--json']);
+    assert.equal(limits.exitCode, 0);
+    assert.equal(limits.data.kind, 'provider-limits');
+    assert.deepEqual(state.patchBodies[0], {
+      maxInflight: 2,
+      windowTokenBudget: 100,
+      windowSeconds: 60,
+      modelLimits: [{ provider: 'openai', model: 'gpt-5', maxInflight: 1 }],
+    });
+
+    const shown = await run(['provider', 'limit', 'show', '--connection', 'conn-1', '--json']);
+    assert.equal(shown.exitCode, 0);
+    assert.equal(shown.data.limits.maxInflight, 2);
+    assert.equal(shown.data.limits.windowSeconds, 60);
+    assert.equal(shown.data.limits.modelLimits[0].maxInflight, 1);
+
+    const unknownConnection = await run(['provider', 'limit', 'show', '--connection', 'nope', '--json']);
+    assert.equal(unknownConnection.exitCode, 1);
+    assert.equal(unknownConnection.error.code, 'CONNECTION_NOT_FOUND');
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});

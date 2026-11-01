@@ -35,6 +35,18 @@ import {
 } from './xihe-cli/credential.mjs';
 import { runConfigExport } from './xihe-cli/config-export.mjs';
 import {
+  bindAgent,
+  createAgent,
+  disableAgent,
+  listAgents,
+  normalizeAgentScope,
+  parseAgentOptions,
+  parseLimitArgs,
+  setProviderLimits,
+  showProviderLimits,
+  unbindAgent,
+} from './xihe-cli/agent.mjs';
+import {
   collectStatus,
   runAuditList,
   runCheckpointList,
@@ -88,6 +100,13 @@ function helpText() {
     '  node scripts/xihe.mjs audit list [--type <type>] [--page <n>] [--size <n>]',
     '  node scripts/xihe.mjs provider add <id> --scope <USER|WORKSPACE> --label <label> [--models <id,id>] [--api-key-env <name>]',
     '  node scripts/xihe.mjs provider update <id> [--label <label>] [--base-url <url>] [--models <id,id>] [--api-key-env <name>]',
+    '  node scripts/xihe.mjs agent create --scope personal|workspace|instance --name <n> [--template <t>] [--default-model <p>:<m>] [--allow-model <p>:<m> ...]',
+    '  node scripts/xihe.mjs agent list [--workspace <wsId>] [--scope <scope>]',
+    '  node scripts/xihe.mjs agent bind --principal <p> --workspace <wsId>',
+    '  node scripts/xihe.mjs agent unbind --principal <p> --workspace <wsId>',
+    '  node scripts/xihe.mjs agent disable --principal <p>',
+    '  node scripts/xihe.mjs provider limit set --connection <c> [--max-inflight N] [--max-queue N] [--tokens N --window S] [--model <p>:<m> --max-inflight N ...]',
+    '  node scripts/xihe.mjs provider limit show --connection <c>',
     '  node scripts/xihe.mjs provider list [--scope <USER|WORKSPACE>]',
     '  node scripts/xihe.mjs provider verify <id>',
     '  node scripts/xihe.mjs provider delete <id> [--yes]',
@@ -354,6 +373,68 @@ export async function runCommand(argv, dependencies = {}) {
         fsImpl: dependencies.fsImpl,
       });
       return { exitCode: 0, json, data };
+    }
+
+    if (group === 'agent') {
+      const apiBase = getApiBase(env);
+      let parsed;
+      if (command === 'create') {
+        parsed = parseAgentOptions(rest, ['--scope', '--name', '--template', '--default-model', '--allow-model', '--email']);
+      } else if (command === 'list') {
+        parsed = parseAgentOptions(rest, ['--workspace', '--scope', '--email']);
+      } else if (command === 'bind' || command === 'unbind') {
+        parsed = parseAgentOptions(rest, ['--principal', '--workspace', '--email']);
+      } else if (command === 'disable') {
+        parsed = parseAgentOptions(rest, ['--principal', '--email']);
+      } else {
+        throw new CliError('INVALID_ARGUMENT', 'Unknown agent command; use create/list/bind/unbind/disable.', {}, 2);
+      }
+      if (parsed.positionals.length !== 0) {
+        throw new CliError('INVALID_ARGUMENT', `agent ${command} takes no positional arguments.`, {}, 2);
+      }
+      if (command === 'create') normalizeAgentScope(parsed.values['--scope']);
+      const token = await login({ apiBase, fetchImpl, env, options: parsed.values, promptSecret: prompt });
+      if (command === 'create') {
+        return {
+          exitCode: 0,
+          json,
+          data: await createAgent({ apiBase, fetchImpl, token, options: parsed.values }),
+        };
+      }
+      if (command === 'list') {
+        return {
+          exitCode: 0,
+          json,
+          data: await listAgents({ apiBase, fetchImpl, token, options: parsed.values }),
+        };
+      }
+      if (command === 'bind') {
+        return { exitCode: 0, json, data: await bindAgent({ apiBase, fetchImpl, token, options: parsed.values }) };
+      }
+      if (command === 'unbind') {
+        return { exitCode: 0, json, data: await unbindAgent({ apiBase, fetchImpl, token, options: parsed.values }) };
+      }
+      return { exitCode: 0, json, data: await disableAgent({ apiBase, fetchImpl, token, options: parsed.values }) };
+    }
+
+    if (group === 'provider' && command === 'limit') {
+      const apiBase = getApiBase(env);
+      const sub = rest[0];
+      if (sub !== 'set' && sub !== 'show') {
+        throw new CliError('INVALID_ARGUMENT', 'Unknown provider limit command; use set/show.', {}, 2);
+      }
+      const parsed = parseLimitArgs(rest.slice(1));
+      const token = await login({
+        apiBase,
+        fetchImpl,
+        env,
+        options: parsed.email ? { '--email': parsed.email } : {},
+        promptSecret: prompt,
+      });
+      if (sub === 'set') {
+        return { exitCode: 0, json, data: await setProviderLimits({ apiBase, fetchImpl, token, options: parsed }) };
+      }
+      return { exitCode: 0, json, data: await showProviderLimits({ apiBase, fetchImpl, token, options: parsed }) };
     }
 
     if (group === 'provider') {
@@ -681,6 +762,42 @@ export function printResult(result) {
     return;
   }
   const out = process.stdout;
+  if (result.data?.kind === 'agent-created') {
+    const id = result.data.principalId ?? result.data.principal?.principalId ?? '';
+    out.write(`${result.data.created ? 'created' : 'existing'}: ${id}${result.data.idempotent ? ' (idempotent)' : ''}\n`);
+    return;
+  }
+  if (result.data?.kind === 'agent-list') {
+    out.write(`agents: ${result.data.items.length}\n`);
+    for (const item of result.data.items) {
+      out.write(`${item.principalId ?? item.id ?? ''}  ${item.name ?? ''}  ${item.scope ?? item.source ?? ''}\n`);
+    }
+    return;
+  }
+  if (result.data?.kind === 'agent-binding') {
+    const verb = result.data.action === 'bind'
+      ? (result.data.alreadyBound ? 'already bound' : 'bound')
+      : (result.data.alreadyUnbound ? 'already unbound' : 'unbound');
+    out.write(`${verb}: ${result.data.principalId} -> ${result.data.workspaceId}\n`);
+    return;
+  }
+  if (result.data?.kind === 'agent-disabled') {
+    out.write(`${result.data.alreadyDisabled ? 'already disabled' : 'disabled'}: ${result.data.principalId}\n`);
+    return;
+  }
+  if (result.data?.kind === 'provider-limits') {
+    const limits = result.data.limits ?? {};
+    out.write(`connection: ${result.data.connectionId}\n`);
+    for (const key of ['maxInflight', 'maxQueue', 'windowTokenBudget', 'windowSeconds']) {
+      if (limits[key] !== undefined) out.write(`${key}: ${limits[key]}\n`);
+    }
+    if (Array.isArray(limits.modelLimits)) {
+      for (const item of limits.modelLimits) {
+        out.write(`model ${item.provider}:${item.model}  maxInflight=${item.maxInflight ?? '-'} maxQueue=${item.maxQueue ?? '-'}\n`);
+      }
+    }
+    return;
+  }
   const endpointLabel = (view) => view?.status === 'ok' ? 'ok' : `failed(${view?.code ?? `HTTP ${view?.httpStatus ?? '?'}`})`;
   if (result.data?.kind === 'status') {
     const e = result.data.endpoints;
