@@ -69,6 +69,7 @@ beforeEach(() => {
             createdAt: "2026-10-13T00:00:00Z",
             source: "workspace",
             permissionsSnapshot: [],
+            bound: true,
         },
     ]);
     mockedApi.bindCredential.mockResolvedValue({

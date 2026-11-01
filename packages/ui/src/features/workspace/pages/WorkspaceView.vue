@@ -105,6 +105,11 @@ function handleWorkspaceCreated(id: string) {
 
 const routeSessionId = computed(() => (route.params.sessionId as string | undefined) ?? "");
 
+/** D26：只有已绑定的 agent 才能建会话。 */
+const boundWorkspaceAgents = computed(() =>
+    workspaceAgents.value.filter((agent) => agent.bound === true),
+);
+
 const sessionId = computed(() => {
     const current = sessionStore.currentSession;
     if (routeSessionId.value) {
@@ -188,7 +193,9 @@ async function createSessionForWorkspace() {
     try {
         await auth.selectWorkspace(workspaceId.value);
         workspaceAgents.value = await api.getWorkspaceAgents(workspaceId.value);
-        if (workspaceAgents.value.length === 0) {
+        // PLAN-0622 D26：列表是三类并集，未绑定的主体不能建会话（CP 403 not bound），
+        // 所以选择器只列 bound=true，避免用户盲选后收到一个不可操作的失败。
+        if (boundWorkspaceAgents.value.length === 0) {
             toast.error(t("workspace.noBoundAgent"));
             return null;
         }
@@ -446,7 +453,7 @@ watch([workspaceId, routeSessionId], () => {
                 >
                     <option value="" disabled>{{ t("workspace.chooseAgentPlaceholder") }}</option>
                     <option
-                        v-for="agent in workspaceAgents"
+                        v-for="agent in boundWorkspaceAgents"
                         :key="agent.principalId"
                         :value="agent.principalId"
                     >

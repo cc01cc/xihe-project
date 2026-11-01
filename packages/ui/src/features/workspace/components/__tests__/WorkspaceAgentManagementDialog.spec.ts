@@ -331,6 +331,7 @@ describe("WorkspaceAgentManagementDialog PLAN-0622 list rows", () => {
         templateName: null,
         createdAt: "2026-11-02T00:00:00Z",
         permissionsSnapshot: [],
+        bound: true,
         source: "personal",
         ownerUserId: "99999999-9999-4999-8999-999999999999",
         defaultModelProvider: "openai",
@@ -396,6 +397,7 @@ describe("WorkspaceAgentManagementDialog list refresh after create", () => {
             createdAt: "2026-11-02T00:00:00Z",
             source: "personal",
             permissionsSnapshot: [],
+            bound: true,
         };
         // 第一次读取（打开面板）还没有它；创建成功后重新读取才出现 —— 这正是真栈的行为。
         apiMock.getWorkspaceAgents.mockResolvedValueOnce([]).mockResolvedValueOnce([created]);
@@ -439,6 +441,7 @@ describe("WorkspaceAgentManagementDialog bind an existing agent row", () => {
         createdAt: "2026-11-02T00:00:00Z",
         source: "personal",
         permissionsSnapshot: [],
+        bound: true,
     };
 
     it("offers a row-level bind that PUTs the workspace cap and refreshes the list", async () => {
@@ -473,6 +476,51 @@ describe("WorkspaceAgentManagementDialog bind an existing agent row", () => {
         const wrapper = await mountOpenedDialog();
         const bindRow = wrapper.find(`[data-testid="agent-bind-row-${existing.principalId}"]`);
         expect(bindRow.attributes("disabled")).toBeDefined();
+        wrapper.unmount();
+    });
+});
+
+// PLAN-0622 D26：未绑定的行要显式标「未绑定」，否则用户以为它已经能用。
+describe("WorkspaceAgentManagementDialog unbound badge", () => {
+    it("marks a row without a workspace binding", async () => {
+        apiMock.getWorkspaceAgents.mockResolvedValue([
+            {
+                principalId: "cccccccc-3333-4333-8333-cccccccccccc",
+                name: "Not bound yet",
+                templateId: null,
+                templateName: null,
+                createdAt: "2026-11-02T00:00:00Z",
+                source: "personal",
+                permissionsSnapshot: [],
+                bound: true,
+                bound: false,
+            },
+            {
+                principalId: "dddddddd-4444-4444-8444-dddddddddddd",
+                name: "Bound already",
+                templateId: null,
+                templateName: null,
+                createdAt: "2026-11-02T00:00:00Z",
+                source: "workspace",
+                permissionsSnapshot: [],
+                bound: true,
+                bound: true,
+            },
+        ]);
+        apiMock.getSelfPermissions.mockResolvedValue(WORKSPACE_ONLY);
+        const wrapper = await mountOpenedDialog();
+
+        const unboundBadge = wrapper.find(
+            '[data-testid="agent-unbound-badge-cccccccc-3333-4333-8333-cccccccccccc"]',
+        );
+        expect(unboundBadge.exists(), "an unbound row must say so").toBe(true);
+        expect(unboundBadge.text()).toMatch(/未绑定|Not bound/i);
+        expect(
+            wrapper
+                .find('[data-testid="agent-unbound-badge-dddddddd-4444-4444-8444-dddddddddddd"]')
+                .exists(),
+            "a bound row must not carry the unbound badge",
+        ).toBe(false);
         wrapper.unmount();
     });
 });

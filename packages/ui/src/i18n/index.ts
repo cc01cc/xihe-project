@@ -300,6 +300,7 @@ const messages = {
             agentSourcePersonal: "个人 agent",
             agentSourceInstance: "实例 agent",
             agentDisabledBadge: "已禁用",
+            agentUnboundBadge: "未绑定",
             disableAgent: "禁用",
             confirmAgentDisable: "再次点击确认禁用",
             agentDisableConsequence: "禁用后新会话不能再选择该 Agent，已存在的会话不受影响。",
@@ -2306,6 +2307,7 @@ const messages = {
             agentSourcePersonal: "Personal agent",
             agentSourceInstance: "Instance agent",
             agentDisabledBadge: "Disabled",
+            agentUnboundBadge: "Not bound",
             disableAgent: "Disable",
             confirmAgentDisable: "Click again to confirm disable",
             agentDisableConsequence:

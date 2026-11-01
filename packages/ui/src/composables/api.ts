@@ -422,6 +422,11 @@ export interface WorkspaceAgentBinding {
     /** PLAN-0622（CP `13e54cad`）：`permissions` 已改名 `permissionsSnapshot`，且 `source` 必填。 */
     permissionsSnapshot: Array<{ actionClass: string; resource?: string }>;
     source: WorkspaceAgentSource;
+    /**
+     * PLAN-0622 D26（CP `4dbd3e92`）：该行是否已绑定到本工作区。列表是"三类并集"，
+     * 未绑定的 PERSONAL/INSTANCE 也会出现，但它们**不能**用来建会话（CP 403 not bound）。
+     */
+    bound: boolean;
     scope?: AgentPrincipalScope;
     ownerUserId?: string | null;
     defaultModelProvider?: string | null;

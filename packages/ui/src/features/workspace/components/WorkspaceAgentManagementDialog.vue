@@ -796,6 +796,14 @@ async function unbind(agent: WorkspaceAgentBinding) {
                                 >
                                     {{ agentSourceLabel(agent) }}
                                 </span>
+                                <!-- PLAN-0622 D26：未绑定的行必须显式标注，否则用户以为它已经能用。 -->
+                                <span
+                                    v-if="agent.bound === false"
+                                    class="rounded border border-amber-500/40 px-1.5 py-0.5 text-[11px] text-amber-600"
+                                    :data-testid="`agent-unbound-badge-${agent.principalId}`"
+                                >
+                                    {{ t("workspace.agentUnboundBadge") }}
+                                </span>
                                 <span
                                     v-if="agent.disabled"
                                     class="rounded border border-destructive/40 px-1.5 py-0.5 text-[11px] text-destructive"

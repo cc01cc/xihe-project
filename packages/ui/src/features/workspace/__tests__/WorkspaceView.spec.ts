@@ -324,6 +324,7 @@ describe("WorkspaceView workbench layout (PLAN-0582 S2)", () => {
                 createdAt: new Date().toISOString(),
                 source: "workspace",
                 permissionsSnapshot: [],
+                bound: true,
             },
         ]);
         mockedApi.createSession.mockResolvedValue({
@@ -366,6 +367,7 @@ describe("WorkspaceView workbench layout (PLAN-0582 S2)", () => {
                 createdAt: new Date().toISOString(),
                 source: "workspace",
                 permissionsSnapshot: [],
+                bound: true,
             },
         ]);
         const wrapper = mountView();
@@ -411,4 +413,43 @@ describe("WorkspaceView workbench layout (PLAN-0582 S2)", () => {
                 .disabled,
         ).toBe(true);
     });
+});
+
+// PLAN-0622 D26：会话选择器只列**已绑定**的 agent（未绑定的选了必然 403）。
+it("lists only bound agents in the session selector", async () => {
+    mockedApi.getSessions.mockResolvedValue({ sessions: [] });
+    mockedApi.getWorkspaceAgents.mockResolvedValue([
+        {
+            principalId: "agent-bound",
+            name: "Bound Agent",
+            templateId: null,
+            templateName: null,
+            createdAt: new Date().toISOString(),
+            source: "personal",
+            permissionsSnapshot: [],
+            bound: true,
+            bound: true,
+        },
+        {
+            principalId: "agent-unbound",
+            name: "Unbound Agent",
+            templateId: null,
+            templateName: null,
+            createdAt: new Date().toISOString(),
+            source: "personal",
+            permissionsSnapshot: [],
+            bound: true,
+            bound: false,
+        },
+    ]);
+    const wrapper = mountView();
+    await flushPromises();
+    await wrapper.find('[data-testid="workspace-create-session"]').trigger("click");
+    await flushPromises();
+
+    const select = wrapper.find('[data-testid="workspace-agent-principal-select"]');
+    expect(select.exists()).toBe(true);
+    const options = select.findAll("option").map((option) => option.attributes("value"));
+    expect(options).toContain("agent-bound");
+    expect(options, "an unbound agent must not be selectable").not.toContain("agent-unbound");
 });
