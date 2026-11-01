@@ -978,7 +978,8 @@ export interface User {
     /** PLAN-0581: stable handle shown by the admin surface. */
     username?: string;
     name?: string;
-    workspaceId?: string;
+    /** PLAN-0614：账号可能没有任何工作区（注册不再自动创建），此时为 null。 */
+    workspaceId?: string | null;
     /** PLAN-0610: capability projection; absent on a cached pre-upgrade user until refreshed. */
     capabilities?: UserCapabilities;
 }

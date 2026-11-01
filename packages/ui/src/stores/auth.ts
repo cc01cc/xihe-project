@@ -13,6 +13,7 @@ import {
     readTabWorkspace,
     readTabWorkspaceId,
     writeTabWorkspace,
+    type TabWorkspace,
 } from "../lib/workspaceContext";
 import { broadcastLogout, onRemoteLogout } from "../services/authChannel";
 import { useSessionStore } from "./session";
@@ -145,12 +146,15 @@ export const useAuthStore = defineStore("auth", () => {
     function adoptGuardSession(
         accessToken: string,
         guardUser: User,
-        guardWorkspace: ApiWorkspace | null,
+        // PLAN-0614 决策 #5：守卫传进来的可能是"上次 tab 上下文"（只有 id/name/role），
+        // 未必是完整的 /workspaces 视图对象；store 这里与 `readWorkspace()` 一样按
+        // `ApiWorkspace` 视图使用，缺字段时由调用方/后续刷新补齐。
+        guardWorkspace: TabWorkspace | ApiWorkspace | null,
         guardRefreshToken?: string,
     ) {
         token.value = accessToken;
         user.value = guardUser;
-        workspace.value = guardWorkspace;
+        workspace.value = guardWorkspace as ApiWorkspace | null;
         localStorage.setItem("xihe-token", accessToken);
         localStorage.setItem("xihe-user", JSON.stringify(guardUser));
         if (guardRefreshToken) {

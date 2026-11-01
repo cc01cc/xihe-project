@@ -13,6 +13,7 @@ import { useI18n } from "vue-i18n";
 import { api, ApiError, type ApiWorkspace } from "../composables/api";
 import { clearTabWorkspace, readTabWorkspaceId, writeTabWorkspace } from "../lib/workspaceContext";
 import { logger } from "../lib/logger";
+import WorkspaceCreateDialog from "../features/workspace/components/WorkspaceCreateDialog.vue";
 
 const { t } = useI18n();
 const router = useRouter();
@@ -21,6 +22,8 @@ const workspaces = ref<ApiWorkspace[]>([]);
 const loading = ref(true);
 const error = ref<string | null>(null);
 const selecting = ref<string | null>(null);
+/** PLAN-0614 T2.1: 空态直接给"创建你的第一个工作区"入口（复用既有对话框，不新增页面/路由）。 */
+const createOpen = ref(false);
 
 async function openWorkspace(workspace: ApiWorkspace): Promise<void> {
     if (selecting.value) return;
@@ -35,6 +38,30 @@ async function openWorkspace(workspace: ApiWorkspace): Promise<void> {
     } finally {
         selecting.value = null;
     }
+}
+
+/** 重新拉取列表（空态建完后要让新工作区出现在列表里，再进入它）。 */
+async function refreshWorkspaces(): Promise<void> {
+    try {
+        workspaces.value = await api.listWorkspaces();
+    } catch (cause) {
+        const message = cause instanceof ApiError ? cause.message : "Failed to load workspaces";
+        logger.error("Load workspaces failed: " + message);
+        error.value = message;
+    }
+}
+
+/**
+ * PLAN-0614 T2.1：刚在工作区对话框里建成 → 刷新列表 → 直接进入新工作区。
+ * 进入失败（比如 CP 还不可用）时保留列表态，用户可以再点一次，而不是白屏。
+ */
+async function handleCreated(workspaceId: string): Promise<void> {
+    createOpen.value = false;
+    await refreshWorkspaces();
+    const created: ApiWorkspace =
+        workspaces.value.find((item) => item.id === workspaceId) ??
+        ({ id: workspaceId } as ApiWorkspace);
+    await openWorkspace(created);
 }
 
 onMounted(async () => {
@@ -61,11 +88,7 @@ onMounted(async () => {
         }
     }
     try {
-        workspaces.value = await api.listWorkspaces();
-    } catch (cause) {
-        const message = cause instanceof ApiError ? cause.message : "Failed to load workspaces";
-        logger.error("Load workspaces failed: " + message);
-        error.value = message;
+        await refreshWorkspaces();
     } finally {
         loading.value = false;
     }
@@ -83,9 +106,21 @@ onMounted(async () => {
             {{ t("workspacePicker.loading") }}
         </p>
         <p v-else-if="error" class="text-sm text-destructive" role="alert">{{ error }}</p>
-        <p v-else-if="workspaces.length === 0" class="text-sm text-muted-foreground">
-            {{ t("workspacePicker.empty") }}
-        </p>
+        <div
+            v-else-if="workspaces.length === 0"
+            class="flex flex-col items-start gap-3"
+            data-testid="workspace-picker-empty"
+        >
+            <p class="text-sm text-muted-foreground">{{ t("workspacePicker.empty") }}</p>
+            <button
+                type="button"
+                class="rounded-lg bg-primary px-4 py-2.5 text-sm font-semibold text-primary-foreground transition-opacity hover:opacity-90"
+                data-testid="workspace-picker-create"
+                @click="createOpen = true"
+            >
+                {{ t("workspacePicker.createFirst") }}
+            </button>
+        </div>
 
         <ul v-else class="flex flex-col gap-2">
             <li v-for="workspace in workspaces" :key="workspace.id">
@@ -108,5 +143,12 @@ onMounted(async () => {
                 </button>
             </li>
         </ul>
+
+        <!-- PLAN-0614 T2.1：空态入口复用既有创建对话框（不新增页面/路由）。 -->
+        <WorkspaceCreateDialog
+            :open="createOpen"
+            @close="createOpen = false"
+            @created="handleCreated"
+        />
     </div>
 </template>

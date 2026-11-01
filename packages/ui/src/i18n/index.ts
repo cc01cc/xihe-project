@@ -166,7 +166,8 @@ const messages = {
             title: "选择工作区",
             subtitle: "你的账号属于多个工作区。选择一个工作区开始工作。",
             loading: "正在加载工作区…",
-            empty: "你没有可用的工作区。",
+            empty: "你还没有工作区。创建第一个工作区即可开始。",
+            createFirst: "创建你的第一个工作区",
         },
         workspace: {
             panelCode: "代码",
@@ -2099,7 +2100,8 @@ const messages = {
             title: "Choose a workspace",
             subtitle: "Your account belongs to more than one workspace. Pick one to continue.",
             loading: "Loading workspaces…",
-            empty: "You have no workspaces yet.",
+            empty: "You do not have a workspace yet. Create the first one to get started.",
+            createFirst: "Create your first workspace",
         },
         workspace: {
             panelCode: "Code",
