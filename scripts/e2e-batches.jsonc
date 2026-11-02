@@ -19,6 +19,11 @@
       "llmMode": "mock",
       "specs": ["e2e/real"]
     },
+    "mock-lane": {
+      "description": "host lane e2e/mock suite: dock helper + dockMode pinned/floating coverage (mock LLM; previously had NO batch entry, so e2e/mock changes were unrunnable through the harness)",
+      "llmMode": "mock",
+      "specs": ["e2e/mock"]
+    },
     "real-full": {
       "description": "host lane full suite on the real provider (key-gated; 0372 baseline 42P/0F/31S)",
       "llmMode": "real",
