@@ -6,7 +6,7 @@
 
 **Xihe, who watched the sky to set the seasons and drove the sun to keep the order.** *(羲和，观天以授时，御日以成序。)* People and agents each play to their strengths.
 
-**A general-purpose agent collaboration platform** for multi-agent orchestration, tool access, sandboxed execution, and access control.
+**A general-purpose multi-agent collaboration platform** for orchestration, tool access, sandboxed execution, and access control.
 
 > Give agents the standing and boundaries of a human teammate.
 

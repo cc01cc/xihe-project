@@ -1,5 +1,5 @@
 ---
-title: "羲和 — 通用 Agent 协作平台"
+title: "羲和 — 通用 Agent 多主体协作平台"
 category: dev-guide
 sidebar_group: "项目概览"
 sidebar_order: 0
@@ -13,7 +13,7 @@ updated: 2026-11-02
 
 <!-- 同步约定：架构图、Quick Start 命令、端口、技术栈摘要与根 README.md 同步；功能状态表仅由中文版维护。 -->
 
-# 羲和 — 通用 Agent 协作平台
+# 羲和 — 通用 Agent 多主体协作平台
 
 **羲和，观天以授时，御日以成序。** 人与 Agent 各展所长，协力而行。
 
