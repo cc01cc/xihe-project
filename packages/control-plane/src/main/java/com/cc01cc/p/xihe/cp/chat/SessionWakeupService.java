@@ -131,6 +131,29 @@ public class SessionWakeupService {
     }
 
     /**
+     * PLAN-0624 M4 (D24-03/10): wake-triggered run attributed to a participant. Same
+     * admission path as the scheduled wakeup; responder attribution and the G-24
+     * trigger_source are stamped inside this transaction (the same dirty-checking
+     * boundary as PLAN-0623 M1b-1's user-submission responder write).
+     */
+    @org.springframework.transaction.annotation.Transactional
+    public WakeupResult wakeupAs(String sessionId, String userId, String workspaceId, String prompt,
+                                 String idempotencyKey, java.util.UUID asParticipantId,
+                                 String triggerSource) {
+        WakeupResult result = wakeup(sessionId, userId, workspaceId, prompt, idempotencyKey);
+        if (result.started() && asParticipantId != null) {
+            chatRunRepository.findById(result.runId()).ifPresent(run -> {
+                run.setAgentPrincipalId(asParticipantId);
+                if (triggerSource != null && !triggerSource.isBlank()) {
+                    run.setTriggerSource(triggerSource);
+                }
+                chatRunRepository.save(run);
+            });
+        }
+        return result;
+    }
+
+    /**
      * PLAN-0489 决策 #7: idle path — persist the scheduled ChatRun carrier through
      * the existing submission state machine, then hand off to the headless
      * dispatch chain via the same synchronous event pattern as spawn Runs

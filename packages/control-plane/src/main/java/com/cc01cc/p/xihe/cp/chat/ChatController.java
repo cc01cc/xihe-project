@@ -80,6 +80,7 @@ public class ChatController {
     private final SessionService sessionService;
     private final AgentPrincipalService agentPrincipalService;
     private final com.cc01cc.p.xihe.cp.service.SessionParticipantService sessionParticipantService;
+    private final WakeFanOutService wakeFanOutService;
     private final com.cc01cc.p.xihe.cp.service.ParticipantCapabilityService participantCapabilityService;
     /** PLAN-0623 M1b-③: runId → producing participant row id; absent = producer-less system event. */
     private final java.util.concurrent.ConcurrentHashMap<String, String> runParticipants =
@@ -145,6 +146,7 @@ public class ChatController {
             SessionService sessionService,
             AgentPrincipalService agentPrincipalService,
             com.cc01cc.p.xihe.cp.service.SessionParticipantService sessionParticipantService,
+            WakeFanOutService wakeFanOutService,
             com.cc01cc.p.xihe.cp.service.ParticipantCapabilityService participantCapabilityService,
             ChatAttachmentService chatAttachmentService,
             ChatActiveRunRegistry activeRunRegistry,
@@ -181,6 +183,7 @@ public class ChatController {
         this.sessionService = sessionService;
         this.agentPrincipalService = agentPrincipalService;
         this.sessionParticipantService = sessionParticipantService;
+        this.wakeFanOutService = wakeFanOutService;
         this.participantCapabilityService = participantCapabilityService;
         this.chatAttachmentService = chatAttachmentService;
         this.activeRunRegistry = activeRunRegistry;
@@ -669,6 +672,10 @@ public class ChatController {
                     admission == null ? ProviderCredentialLeaseService.Admission.none() : admission;
             execAsync(sessionId, content, provider, model, toolMode, perCallTimeouts.values(),
                     attachmentInfos, userId, workspaceId, requestId, runId, dispatchAdmission, null, responder);
+            // PLAN-0624 M4 (D24-10): mention fan-out rides the accepted submission — the
+            // recipients answer serially on the session executor, never on this thread.
+            wakeFanOutService.fanOut(UUID.fromString(sessionId), workspaceId, userId, runId,
+                    content, mentionRoster(userId, workspaceId, sessionId));
             handedOff = true;
             return ResponseEntity.accepted().body(runAcceptedBody(chatRun, "accepted", sessionId,
                 userMessage.getId(), runId, null));
@@ -678,6 +685,20 @@ public class ChatController {
                 governor.releaseRun(runId);
                 releaseRun(sessionId, runId, "chat_handoff_failed");
             }
+        }
+    }
+
+    /** PLAN-0624 M4: the current roster as parser entries (the list is already order_index-ordered). */
+    private List<MentionParser.RosterEntry> mentionRoster(String userId, String workspaceId,
+                                                          String sessionId) {
+        try {
+            return sessionParticipantService.list(userId, workspaceId, sessionId).participants().stream()
+                    .map(view -> new MentionParser.RosterEntry(
+                            view.participantId(), view.principalKind(), view.displayName(),
+                            view.role(), view.respondPolicy(), view.disabledAt()))
+                    .toList();
+        } catch (RuntimeException noRoster) {
+            return List.of();
         }
     }
 
