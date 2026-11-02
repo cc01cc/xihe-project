@@ -62,6 +62,7 @@ const i18n = createI18n({
                 panelCode: "Code",
                 panelChanges: "Changes",
                 panelMonitor: "Monitor",
+                panelContext: "Session settings",
                 chatHeader: "Workspace chat",
                 noSession: "No active session",
                 createSession: "New chat",
@@ -115,7 +116,15 @@ const i18n = createI18n({
 });
 
 const stubs = {
-    ChatPanel: { template: '<div data-testid="chat-panel-stub" />' },
+    ChatPanel: {
+        emits: ["open-context-panel"],
+        template:
+            '<div data-testid="chat-panel-stub"><button data-testid="chat-open-context" @click="$emit(\'open-context-panel\')" /></div>',
+    },
+    SessionContextPanel: {
+        props: { sessionId: { type: String, default: null } },
+        template: '<div data-testid="session-context-panel-stub" />',
+    },
     FileEditor: { template: '<div data-testid="file-editor-stub" />' },
     // S3a: the collapse control lives in the file-tree panel head, so the stub
     // exposes it with the same id the old toolbar button had.
@@ -261,6 +270,22 @@ describe("WorkspaceView workbench layout (PLAN-0582 S2)", () => {
         await wrapper.find('[data-testid="workspace-toolbar-monitor"]').trigger("click");
         expect(wrapper.find('[data-testid="workspace-aux-panel"]').exists()).toBe(true);
         expect(wrapper.find('[data-testid="session-monitor-stub"]').exists()).toBe(true);
+    });
+
+    it("opens the dock context panel when the chat asks for it (PLAN-0626 M2)", async () => {
+        useSessionStore().currentSessionId = SESSION_A;
+        const wrapper = mountView();
+        await settle();
+        await flushPromises();
+
+        await wrapper.find('[data-testid="chat-open-context"]').trigger("click");
+        await settle();
+
+        // ChatPanel → page → workbenchRef.openDockTab("context"): the dock opens on it.
+        expect(wrapper.find('[data-testid="dock-tab-context"]').attributes("aria-selected")).toBe(
+            "true",
+        );
+        expect(wrapper.find('[data-testid="session-context-panel-stub"]').exists()).toBe(true);
     });
 
     it("closes the dock from its own close action without dropping the tabs", async () => {

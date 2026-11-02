@@ -53,11 +53,11 @@ const TemplateStub = defineComponent({
     },
 });
 
-const PolicyStub = defineComponent({
-    setup: () => () => h("div", { "data-testid": "stub-policy-controls" }),
-});
-const ContextSourcesStub = defineComponent({
-    setup: () => () => h("div", { "data-testid": "stub-context-sources" }),
+// PLAN-0626 M2: the four partitions live in the dock panel; mobile hosts the same
+// component in place, so this spec only needs to see that it was rendered.
+const SessionContextPanelStub = defineComponent({
+    props: { sessionId: { type: String, default: null } },
+    setup: () => () => h("div", { "data-testid": "session-context-panel-stub" }),
 });
 
 function setPolicyMode(mode: "auto" | "manual" | null) {
@@ -85,21 +85,20 @@ function setSessionBinding(template: { id: string; version: number } | null) {
     ];
 }
 
-function mountPanel(overrides: { selectedBranchId?: string } = {}) {
+function mountPanel(overrides: { selectedBranchId?: string; isMobile?: boolean } = {}) {
     return mount(SessionSettingsPanel, {
         props: {
             sessionId: SESSION_ID,
             branchOptions,
             selectedBranchId: overrides.selectedBranchId ?? ROOT_BRANCH_ID,
             mainBranchId: ROOT_BRANCH_ID,
-            branchDisabled: false,
+            isMobile: overrides.isMobile ?? false,
         },
         global: {
             plugins: [i18n],
             stubs: {
-                SessionPolicyControls: PolicyStub,
+                SessionContextPanel: SessionContextPanelStub,
                 SessionContextTemplate: TemplateStub,
-                ContextSourcesU1: ContextSourcesStub,
             },
         },
     });
@@ -129,7 +128,10 @@ describe("SessionSettingsPanel collapsed summary", () => {
         await flushPromises();
 
         const summary = wrapper.get('[data-testid="session-settings-summary"]');
-        expect(summary.attributes("aria-expanded")).toBe("false");
+        // PLAN-0626 M2: on desktop the summary is an entry, not an expander, so it must
+        // not advertise `aria-expanded` (that would promise a disclosure it does not do).
+        expect(summary.attributes("aria-expanded")).toBeUndefined();
+        expect(summary.attributes("aria-label")).toBe("在侧栏打开会话设置");
         expect(summary.get('[data-testid="session-settings-summary-approval"]').text()).toContain(
             "手动审批",
         );
@@ -192,8 +194,22 @@ describe("SessionSettingsPanel collapsed summary", () => {
 });
 
 describe("SessionSettingsPanel expansion", () => {
-    it("expands into the two-level panel with the four partitions", async () => {
+    it("opens the dock panel on desktop instead of expanding in place (M2)", async () => {
+        // PLAN-0626 M2: the desktop summary row is an ENTRY to the dock's `context` panel.
         const wrapper = mountPanel();
+        await flushPromises();
+
+        await wrapper.get('[data-testid="session-settings-summary"]').trigger("click");
+
+        expect(wrapper.emitted("open-context-panel")).toHaveLength(1);
+        expect(
+            wrapper.get('[data-testid="session-settings-summary"]').attributes("aria-expanded"),
+        ).toBeUndefined();
+        wrapper.unmount();
+    });
+
+    it("keeps the in-place expansion on mobile by rendering the same panel there (Q1 = C)", async () => {
+        const wrapper = mountPanel({ isMobile: true });
         await flushPromises();
 
         await wrapper.get('[data-testid="session-settings-summary"]').trigger("click");
@@ -203,12 +219,11 @@ describe("SessionSettingsPanel expansion", () => {
         expect(
             wrapper.get('[data-testid="session-settings-summary"]').attributes("aria-expanded"),
         ).toBe("true");
-        for (const section of ["approval", "template", "context", "branch"]) {
-            expect(
-                wrapper.find(`[data-testid="session-settings-section-${section}"]`).exists(),
-            ).toBe(true);
-        }
-        expect(wrapper.get('[data-testid="session-branch-select"]').element).toBeTruthy();
+        // The four partitions live in SessionContextPanel only — mobile hosts the same
+        // component instead of a second copy (no duplicated DOM, single set of testids).
+        expect(expanded.find('[data-testid="session-context-panel-stub"]').exists()).toBe(true);
+        // Mobile must not ask for a dock panel it cannot show.
+        expect(wrapper.emitted("open-context-panel")).toBeUndefined();
 
         await wrapper.get('[data-testid="session-settings-summary"]').trigger("click");
         expect(
@@ -217,17 +232,6 @@ describe("SessionSettingsPanel expansion", () => {
         expect(
             wrapper.get('[data-testid="session-settings-expanded"]').attributes("style"),
         ).toContain("display: none");
-        wrapper.unmount();
-    });
-
-    it("emits the selected branch instead of owning branch state", async () => {
-        const wrapper = mountPanel();
-        await flushPromises();
-        await wrapper.get('[data-testid="session-settings-summary"]').trigger("click");
-
-        await wrapper.get('[data-testid="session-branch-select"]').setValue(CHILD_BRANCH_ID);
-
-        expect(wrapper.emitted("select-branch")?.at(-1)).toEqual([CHILD_BRANCH_ID]);
         wrapper.unmount();
     });
 

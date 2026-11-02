@@ -11,7 +11,15 @@ import {
 } from "../../../../services/apiRequestTemplates";
 import { useConfigStore } from "../../../../stores/config";
 import { useSessionStore } from "../../../../stores/session";
-const props = defineProps<{ sessionId: string }>();
+const props = defineProps<{
+    sessionId: string;
+    /**
+     * PLAN-0626 M2: the control itself moved to the dock's `context` panel. The chat
+     * summary keeps this component mounted with `summary-only`, so its "模板 + 版本 +
+     * 风险" projection keeps working without a second resolver.
+     */
+    summaryOnly?: boolean;
+}>();
 const emit = defineEmits<{
     "update:summary": [summary: { label: string | null; loading: boolean; failed: boolean }];
 }>();
@@ -159,7 +167,8 @@ async function handleChange(event: Event) {
 </script>
 
 <template>
-    <div class="min-w-0" data-testid="session-context-template">
+    <!-- `summary-only` = a data adapter for the chat summary row: resolve + emit only. -->
+    <div v-if="!summaryOnly" class="min-w-0" data-testid="session-context-template">
         <select
             :id="`session-context-template-${sessionId}`"
             data-testid="session-context-template-select"

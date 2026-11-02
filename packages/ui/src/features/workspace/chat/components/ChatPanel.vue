@@ -36,16 +36,25 @@ import GuidancePanel from "./GuidancePanel.vue";
 import RevertPreviewDialog from "./RevertPreviewDialog.vue";
 import RevertResultDialog from "./RevertResultDialog.vue";
 import BaseModal from "../../../../components/shared/BaseModal.vue";
+import { useSessionBranches } from "../composables/useSessionBranches";
 
 const props = withDefaults(
     defineProps<{
         sessionId: string;
         toolMode?: "none" | "workspace";
+        /** PLAN-0626 M2: mobile keeps the in-place settings expansion (no dock there). */
+        isMobile?: boolean;
     }>(),
     {
         toolMode: "none",
+        isMobile: false,
     },
 );
+
+const emit = defineEmits<{
+    /** PLAN-0626 M2: the chat summary row is the entry to the dock's `context` panel. */
+    "open-context-panel": [];
+}>();
 
 const { t } = useI18n();
 const chatStore = useChatStore(),
@@ -66,8 +75,11 @@ const isStreaming = computed(() => chatStore.isStreaming(props.sessionId));
 const currentSession = computed(() =>
     sessionStore.sessions.find((session) => session.id === props.sessionId),
 );
-const sessionBranches = computed(() => chatStore.getSessionBranches(props.sessionId));
-const selectedBranchId = computed(() => chatStore.getSelectedBranchId(props.sessionId) ?? "");
+// PLAN-0626 M2: the branch projection is shared with the dock's `context` panel (N10:
+// one resolver per semantic), so the depth-indented labels no longer live here.
+const { selectedBranchId, branchOptions, branchLabels, mainBranchId } = useSessionBranches(
+    () => props.sessionId,
+);
 const followUpQueue = ref<ApiFollowUpQueueSnapshot | null>(null),
     followUpQueueError = ref<string | null>(null);
 const followUpQueueSubmitting = ref(false),
@@ -77,34 +89,6 @@ const followUpQueueBusyItemId = ref<string | null>(null),
 let followUpQueueRequestId = 0,
     followUpQueueSubmitGeneration = 0,
     followUpQueueActionGeneration = 0;
-const branchOptions = computed(() => {
-    const byId = new Map(sessionBranches.value.map((branch) => [branch.branchId, branch]));
-    const depthOf = (branchId: string) => {
-        let depth = 0,
-            parentId = byId.get(branchId)?.parentBranchId ?? null;
-        while (parentId && byId.has(parentId) && depth < 8) {
-            depth += 1;
-            parentId = byId.get(parentId)?.parentBranchId ?? null;
-        }
-        return depth;
-    };
-    return sessionBranches.value.map((branch) => ({
-        branchId: branch.branchId,
-        label: `${"- ".repeat(depthOf(branch.branchId))}${
-            branch.parentBranchId === null
-                ? t("chat.branchMainPath")
-                : `${t("chat.branchPathOption")} ${branch.branchId.slice(0, 8)}`
-        }`,
-    }));
-});
-const branchLabels = computed(() =>
-    Object.fromEntries(
-        branchOptions.value.map((branch) => [branch.branchId, branch.label] as const),
-    ),
-);
-const mainBranchId = computed(
-    () => sessionBranches.value.find((branch) => branch.parentBranchId === null)?.branchId ?? null,
-);
 const followUpQueueMode = computed(
     () =>
         isStreaming.value ||
@@ -741,11 +725,6 @@ async function handleRetry(messageId: string) {
     await handleSend(userMessage.content, userMessage.attachments, userMessage.branchId);
 }
 
-function selectBranch(branchId: string) {
-    if (isStreaming.value || !branchId) return;
-    chatStore.selectBranch(props.sessionId, branchId);
-}
-
 async function handleCreateBranch(anchorMessageId: string) {
     const sessionId = props.sessionId,
         sourceBranchId = selectedBranchId.value;
@@ -957,16 +936,11 @@ watch(
     <div class="flex flex-col h-full min-h-0 overflow-hidden">
         <SessionSettingsPanel
             :session-id="sessionId"
+            :is-mobile="isMobile"
             :branch-options="branchOptions"
             :selected-branch-id="selectedBranchId"
             :main-branch-id="mainBranchId"
-            :branch-disabled="
-                isStreaming ||
-                branchOptions.length === 0 ||
-                creatingBranchForMessageId !== null ||
-                pendingSend !== null
-            "
-            @select-branch="selectBranch"
+            @open-context-panel="emit('open-context-panel')"
         />
 
         <div

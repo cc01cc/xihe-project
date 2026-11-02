@@ -37,6 +37,7 @@ import FileEditor from "./FileEditor.vue";
 import WorkspaceChangesPanel from "./WorkspaceChangesPanel.vue";
 import SessionMonitorPanel from "../monitor/SessionMonitorPanel.vue";
 import SessionParticipantsPanel from "./SessionParticipantsPanel.vue";
+import SessionContextPanel from "./SessionContextPanel.vue";
 import { DOCK_TAB_LABEL_KEYS, type DockTab } from "./workspaceDockTabs";
 
 /**
@@ -479,6 +480,14 @@ watch(
         openDockTab("code");
     },
 );
+
+/**
+ * PLAN-0626 M2: the chat column is rendered by the page (this component's `#center`
+ * slot), so the "open the settings panel" entry has to reach the dock from outside.
+ * The page calls this through a template ref — the same shape it already uses in the
+ * opposite direction (`ChatPanel` exposes `insertMention`).
+ */
+defineExpose({ openDockTab });
 </script>
 
 <template>
@@ -626,6 +635,10 @@ watch(
                         :session-id="sessionId ?? null"
                         @mention="emit('mention', $event)"
                     />
+                </template>
+                <template #context>
+                    <!-- PLAN-0626 M2：会话设置（粘性面板，无会话时面板自身给空态）。 -->
+                    <SessionContextPanel :session-id="sessionId ?? null" />
                 </template>
             </WorkspaceDock>
         </div>

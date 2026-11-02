@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { ChevronDown, Maximize2, Minimize2, Pin, PinOff, X } from "@lucide/vue";
 import {
@@ -91,6 +91,37 @@ const panelClass = computed(() => {
 const visibleTabs = computed(() => props.tabs.slice(0, props.maxVisibleTabs));
 const overflowTabs = computed(() => props.tabs.slice(props.maxVisibleTabs));
 const hasOverflow = computed(() => overflowTabs.value.length > 0);
+
+/**
+ * PLAN-0626 M2 (D26-07 A): sticky panels mount on first activation and are then only
+ * hidden, so form state survives a tab switch. The dock still renders the parent's
+ * `<template #id>` slots — the validation for "dynamic slot name + v-show" is the
+ * `WorkspaceDock` spec, so no component map / registry is introduced (D26-12).
+ * The mount policy lives here rather than in the layout composable: it is a rendering
+ * concern of this component, not persisted layout state.
+ */
+const stickyPanels = ref<string[]>([]),
+    stickyTabIds: ReadonlySet<string> = new Set(["context"]),
+    activeIsSticky = computed(() => stickyTabIds.has(props.activeTab));
+
+function rememberStickyPanel(id: string): void {
+    if (!stickyTabIds.has(id) || stickyPanels.value.includes(id)) return;
+    stickyPanels.value = [...stickyPanels.value, id];
+}
+
+watch(
+    () => props.activeTab,
+    (id) => rememberStickyPanel(id),
+    { immediate: true },
+);
+// A closed tab must not keep a hidden panel (and its watchers) alive.
+watch(
+    () => props.tabs.map((tab) => tab.id),
+    (ids) => {
+        const alive = stickyPanels.value.filter((id) => ids.includes(id));
+        if (alive.length !== stickyPanels.value.length) stickyPanels.value = alive;
+    },
+);
 
 function selectTab(id: string) {
     overflowOpen.value = false;
@@ -327,7 +358,24 @@ function handleResizeKeydown(event: KeyboardEvent) {
         </div>
 
         <div class="flex min-h-0 flex-1 flex-col overflow-hidden">
-            <slot :name="activeTab" />
+            <!-- Sticky panels: mounted on first activation, then hidden but alive. -->
+            <div
+                v-for="id in stickyPanels"
+                :key="id"
+                v-show="id === activeTab"
+                :data-testid="`dock-sticky-panel-${id}`"
+                class="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
+            >
+                <slot :name="id" />
+            </div>
+            <!-- Checkers: single active panel, unmounted while inactive (D26-07 A). -->
+            <div
+                v-if="!activeIsSticky"
+                data-testid="dock-active-panel"
+                class="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
+            >
+                <slot :name="activeTab" />
+            </div>
         </div>
     </aside>
 </template>

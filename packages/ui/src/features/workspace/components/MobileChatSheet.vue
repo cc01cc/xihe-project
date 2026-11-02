@@ -96,7 +96,14 @@ defineExpose({ toggle });
                     >
                 </SheetHeader>
                 <div class="flex-1 min-h-0 flex flex-col">
-                    <ChatPanel v-if="open" :session-id="sessionId" tool-mode="workspace" />
+                    <!-- PLAN-0626 M2: mobile has no dock, so the session settings keep
+                         expanding in place inside this sheet. -->
+                    <ChatPanel
+                        v-if="open"
+                        :session-id="sessionId"
+                        tool-mode="workspace"
+                        :is-mobile="true"
+                    />
                 </div>
             </SheetContent>
         </Sheet>
