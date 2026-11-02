@@ -26,6 +26,7 @@ Before running host-only tests:
 3. Build `xihe/workspace:latest` when a test creates a Sandbox container.
 4. Use an isolated E2E database or a controlled assignment set. The daily database accumulates assignments, and serial cold hydrate can keep `/ready` at `503` long enough to prevent Playwright from starting.
 5. Record profile, ports, assignment count, readiness result, test count, and cleanup result.
+6. **worktree 内跑 CP 测试要显式传 Python 环境**：worktree 没有 `.venv` 时 `ContextEventReadContractIntegrationTest` 会**失败（不是 skip）**，加 `-Dxihe.context.python=<主检出 .venv 的 python>` 即可；看到该测试红先确认此 property，别当回归排。
 
 ## Commands
 
