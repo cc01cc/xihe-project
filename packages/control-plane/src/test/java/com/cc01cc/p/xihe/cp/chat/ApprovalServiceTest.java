@@ -61,9 +61,11 @@ class ApprovalServiceTest {
     private final SessionApprovalMode sessionApprovalMode = mock(SessionApprovalMode.class);
     private final AnswererChain answererChain = new AnswererChain(
             List.of(new UserAnswerer(), new AutoReviewAnswerer()));
+    private final GuardAdviceService guardAdviceService = org.mockito.Mockito.mock(GuardAdviceService.class);
     private final ApprovalService service = new ApprovalService(approvals, runs, agent, new ObjectMapper(),
             historyWriter, grantWriter, audit, policySummary, pendingStore, sessionPolicyState,
-            sessionApprovalMode, policyRevision, workspaceRepository, answererChain);
+            sessionApprovalMode, policyRevision, workspaceRepository, answererChain,
+            guardAdviceService);
 
     private static final String TEST_RUN_ID = "11111111-1111-1111-1111-111111111111";
     private static final String TEST_REQUEST_ID = "22222222-2222-2222-2222-222222222222";
@@ -110,13 +112,15 @@ class ApprovalServiceTest {
         return new ApprovalService(approvals, runs, agent, new ObjectMapper(),
                 historyWriter, grantWriter, audit, summary,
                 new ApprovalPendingStore(approvals, new ObjectMapper(), summary), sessionPolicyState,
-                sessionApprovalMode, policyRevision, workspaceRepository, answererChain);
+                sessionApprovalMode, policyRevision, workspaceRepository, answererChain,
+                guardAdviceService);
     }
 
     private ApprovalService serviceWithAnswerers(ApprovalAnswerer... answerers) {
         return new ApprovalService(approvals, runs, agent, new ObjectMapper(),
                 historyWriter, grantWriter, audit, policySummary, pendingStore, sessionPolicyState,
-                sessionApprovalMode, policyRevision, workspaceRepository, new AnswererChain(List.of(answerers)));
+                sessionApprovalMode, policyRevision, workspaceRepository, new AnswererChain(List.of(answerers)),
+                guardAdviceService);
     }
 
     @Test

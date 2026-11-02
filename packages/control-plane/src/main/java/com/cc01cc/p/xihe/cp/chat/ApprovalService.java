@@ -70,6 +70,7 @@ public class ApprovalService {
     private final PolicyRevision policyRevision;
     private final WorkspaceRepository workspaceRepository;
     private final AnswererChain answererChain;
+    private final GuardAdviceService guardAdviceService;
 
     public ApprovalService(ChatApprovalRepository approvalRepository,
                            ChatRunRepository chatRunRepository,
@@ -84,7 +85,8 @@ public class ApprovalService {
                            SessionApprovalMode sessionApprovalMode,
                            PolicyRevision policyRevision,
                            WorkspaceRepository workspaceRepository,
-                           AnswererChain answererChain) {
+                           AnswererChain answererChain,
+                           GuardAdviceService guardAdviceService) {
         this.approvalRepository = approvalRepository;
         this.chatRunRepository = chatRunRepository;
         this.agentClient = agentClient;
@@ -101,6 +103,7 @@ public class ApprovalService {
         this.policyRevision = policyRevision;
         this.workspaceRepository = workspaceRepository;
         this.answererChain = answererChain;
+        this.guardAdviceService = guardAdviceService;
     }
 
     /**
@@ -230,6 +233,9 @@ public class ApprovalService {
         recordAnswererAudit(approval, resolution, null);
         logger.info("[LIFECYCLE] service=cp event=chat_approval_pending requestId={} sessionId={} runId={} answerer={}",
                 requestId, approval.getSessionId(), runId, resolution.answerer());
+        // PLAN-0625 G: advisory guard verdict, patched into the summary when ready.
+        // Fire-and-forget and fail-closed — the pending row is fully valid without it.
+        guardAdviceService.adviseAsync(saved == null ? approval : saved);
         return saved == null ? approval : saved;
     }
 
