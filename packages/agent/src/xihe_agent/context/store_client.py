@@ -51,6 +51,27 @@ class CPContextServiceClient:
         response.raise_for_status()
         return response.json()
 
+    async def resolve_nested_agents(
+        self,
+        session_id: str,
+        tool: str,
+        path: str,
+    ) -> dict[str, Any]:
+        """PLAN-0627 M1 (D27-06): resolve the ancestor AGENTS.md chain for a path.
+
+        CP owns the walk (workspace-root upper bound, root file excluded because
+        the eager L1 source already carries it, per-file read policy), so the
+        Agent never reads the workspace itself and never bypasses CP policy.
+        """
+        url = f"{self._base_url}/internal/v1/context/{session_id}/agents-md/resolve"
+        response = await self._client.post(
+            url,
+            json={"tool": tool, "path": path},
+            headers=self._headers(),
+        )
+        response.raise_for_status()
+        return response.json()
+
     def _headers(self) -> dict[str, str]:
         return {
             "Accept": "application/json",
