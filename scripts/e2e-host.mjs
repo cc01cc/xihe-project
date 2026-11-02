@@ -1459,6 +1459,20 @@ async function runPlaywright() {
     : ''
   const hasReporter = playwrightTestArgs.some((arg) => arg === '--reporter' || arg.startsWith('--reporter='))
   if (reportPath && !hasReporter) playwrightTestArgs = ['--reporter=list,json', ...playwrightTestArgs]
+  // PLAN-0631: 用户传的 --grep 必须与车道的 @host 门**合并成单个正则**，不能追加第二个
+  // --grep —— Playwright 多只取最后一个，会**静默覆盖**用户的过滤（实测：`--grep S6`
+  // 实际跑了全链 7 passed）。顺序无关：测试名里 S6 可能出现在 @host 前或后。
+  let userGrep = null
+  {
+    const merged = []
+    for (let i = 0; i < playwrightTestArgs.length; i += 1) {
+      const arg = playwrightTestArgs[i]
+      if (arg === '--grep') { userGrep = playwrightTestArgs[i + 1] ?? null; i += 1; continue }
+      if (arg.startsWith('--grep=')) { userGrep = arg.slice('--grep='.length); continue }
+      merged.push(arg)
+    }
+    playwrightTestArgs = merged
+  }
   if (reportPath) console.log(`[e2e-host] JSON report → ${reportPath}`)
   // PLAN-0579 R2: specs that restart the Runtime (journey-b B1) must spawn the
   // same binary the runner launched, resolved across an external CARGO_TARGET_DIR.
@@ -1526,8 +1540,8 @@ async function runPlaywright() {
     '--config',
     'e2e/playwright.config.ts',
     ...playwrightTestArgs,
-    '--grep',
-    '@host',
+    // 用户 --grep 已在上方与 @host 合并进单个正则；无用户 --grep 时维持车道门。
+    ...(userGrep ? [] : ['--grep', '@host']),
     '--workers',
     workerCount,
   ], {
