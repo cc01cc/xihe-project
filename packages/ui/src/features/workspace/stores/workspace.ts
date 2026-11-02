@@ -43,6 +43,28 @@ function isRuntimeArtifact(name: string): boolean {
     return name.startsWith(".xihe-") || /^container-runtime\.log(?:\..*)?$/.test(name);
 }
 
+/**
+ * PLAN-0557/BL-109: the file panel must name the cause in *visible* copy, not only
+ * in a tooltip. Failures are bucketed into the three causes the contract
+ * distinguishes; anything unmapped keeps the generic copy plus the raw detail.
+ */
+export type TreeErrorKind = "runtime" | "tool" | "other";
+
+export function classifyTreeErrorCode(code: string | undefined | null): TreeErrorKind {
+    switch ((code ?? "").trim()) {
+        case "RUNTIME_ERROR":
+        case "RUNTIME_UNAVAILABLE":
+        case "MCP_STREAM_UNAVAILABLE":
+        case "MCP_DISCONNECT_UNAVAILABLE":
+        case "CAPABILITY_UNAVAILABLE":
+            return "runtime";
+        case "UNKNOWN_TOOL":
+            return "tool";
+        default:
+            return "other";
+    }
+}
+
 export const useWorkspaceStore = defineStore("workspace", () => {
     const sessionStore = useSessionStore(),
         authStore = useAuthStore();
@@ -68,7 +90,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     /** PLAN-0559: VIEWER is read-only; CP remains authoritative. */
     function ensureWritable(): boolean {
         if (authStore.canWriteWorkspace) return true;
-        treeError.value = "当前工作区为只读（VIEWER），无法修改内容";
+        setTreeError("当前工作区为只读（VIEWER），无法修改内容");
         return false;
     }
 
@@ -76,7 +98,18 @@ export const useWorkspaceStore = defineStore("workspace", () => {
         expandedPaths = ref<Set<string>>(new Set()),
         loading = ref(false),
         treeError = ref<string | null>(null),
+        treeErrorKind = ref<TreeErrorKind>("other"),
         loadedWorkspaceId = ref<string | null>(null);
+
+    /**
+     * Single writer for `treeError` so the visible category can never drift from the
+     * message (PLAN-0557/BL-109). Defaults to `other`, which renders the generic copy
+     * plus the detail line; load failures pass the classified kind.
+     */
+    function setTreeError(message: string | null, kind: TreeErrorKind = "other") {
+        treeError.value = message;
+        treeErrorKind.value = message ? kind : "other";
+    }
     // PLAN-0365 (root cause C): bumped by refresh requests that arrive while a
     // load is in flight; the in-flight load re-runs itself instead of the
     // refresh being swallowed by the `loading` early-return.
@@ -176,7 +209,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
         if (loadedWorkspaceId.value === currentWorkspaceId) return;
 
         loading.value = true;
-        treeError.value = null;
+        setTreeError(null);
         try {
             // E2E seeding hook (mock profile only): lets Playwright inject a tree
             // without a live CP+MCP chain. Never set by production code.
@@ -200,8 +233,12 @@ export const useWorkspaceStore = defineStore("workspace", () => {
             loadedWorkspaceId.value = currentWorkspaceId;
         } catch (e) {
             // PLAN-0557/BL-109: route load failures through the stable-code mapping so a
-            // dependency outage is not rendered as the raw upstream detail.
-            treeError.value = humanizeFileError(e, "加载文件树失败");
+            // dependency outage is not rendered as the raw upstream detail, and keep the
+            // category so the panel can show cause-specific visible copy.
+            setTreeError(
+                humanizeFileError(e, "加载文件树失败"),
+                classifyTreeErrorCode(e instanceof ApiError ? e.problem.code : null),
+            );
         } finally {
             // PLAN-0365 (root cause C): refresh requests that arrive while a load is
             // in flight are counted by refreshAfterMutation; drain them here instead
@@ -218,7 +255,10 @@ export const useWorkspaceStore = defineStore("workspace", () => {
                     fileTree.value = nodes;
                     loadedWorkspaceId.value = targetId;
                 } catch (e) {
-                    treeError.value = humanizeFileError(e, "加载文件树失败");
+                    setTreeError(
+                        humanizeFileError(e, "加载文件树失败"),
+                        classifyTreeErrorCode(e instanceof ApiError ? e.problem.code : null),
+                    );
                 } finally {
                     loading.value = false;
                 }
@@ -314,7 +354,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
             openFiles.value.set(path, file);
             activeFilePath.value = path;
         } catch (e) {
-            treeError.value = `Failed to open ${path}: ${(e as Error).message}`;
+            setTreeError(`Failed to open ${path}: ${(e as Error).message}`);
         }
     }
 
@@ -351,7 +391,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
                 externalChange: undefined,
             });
         } catch (e) {
-            treeError.value = humanizeFileError(e, `保存 ${path} 失败`);
+            setTreeError(humanizeFileError(e, `保存 ${path} 失败`));
         }
     }
 
@@ -410,7 +450,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
             return true;
         } catch (e) {
             const message = humanizeFileError(e, "删除失败");
-            treeError.value = message;
+            setTreeError(message);
             logger.warn("Delete failed: " + message);
             return false;
         }
@@ -425,7 +465,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
             return true;
         } catch (e) {
             const message = humanizeFileError(e, "创建文件失败");
-            treeError.value = message;
+            setTreeError(message);
             logger.warn("Create file failed: " + message);
             return false;
         }
@@ -470,7 +510,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     async function renameNode(oldPath: string, newName: string): Promise<boolean> {
         const trimmed = newName.trim();
         if (!trimmed || trimmed.includes("/")) {
-            treeError.value = "Invalid name: must be non-empty and contain no path separators";
+            setTreeError("Invalid name: must be non-empty and contain no path separators");
             return false;
         }
         const slash = oldPath.lastIndexOf("/"),
@@ -492,7 +532,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
             return true;
         } catch (e) {
             const message = e instanceof Error ? e.message : String(e);
-            treeError.value = `Failed to rename: ${message}`;
+            setTreeError(`Failed to rename: ${message}`);
             logger.warn("Rename failed: " + message);
             return false;
         }
@@ -509,7 +549,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
             return true;
         } catch (e) {
             const message = e instanceof Error ? e.message : String(e);
-            treeError.value = `Failed to move: ${message}`;
+            setTreeError(`Failed to move: ${message}`);
             logger.warn("Move failed: " + message);
             return false;
         }
@@ -529,7 +569,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
             return true;
         } catch (e) {
             const message = e instanceof Error ? e.message : String(e);
-            treeError.value = `Failed to duplicate: ${message}`;
+            setTreeError(`Failed to duplicate: ${message}`);
             logger.warn("Duplicate failed: " + message);
             return false;
         }
@@ -538,8 +578,9 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     async function createDirectory(parentDir: string, name: string): Promise<boolean> {
         const trimmed = name.trim();
         if (!trimmed || trimmed.includes("/")) {
-            treeError.value =
-                "Invalid directory name: must be non-empty and contain no path separators";
+            setTreeError(
+                "Invalid directory name: must be non-empty and contain no path separators",
+            );
             return false;
         }
         const fullPath = parentDir ? `${parentDir}/${trimmed}` : trimmed;
@@ -549,7 +590,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
             return true;
         } catch (e) {
             const message = e instanceof Error ? e.message : String(e);
-            treeError.value = `Failed to create directory: ${message}`;
+            setTreeError(`Failed to create directory: ${message}`);
             logger.warn("Create directory failed: " + message);
             return false;
         }
@@ -693,8 +734,9 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     async function splitPdf(path: string) {
         // B-4 (PLAN-262 decision 17): the CP /api/v1/files/split-pdf route does not
         // exist (openapi drift). Fail closed instead of letting the request 404.
-        treeError.value =
-            "PDF splitting is temporarily unavailable: the backend endpoint is not deployed.";
+        setTreeError(
+            "PDF splitting is temporarily unavailable: the backend endpoint is not deployed.",
+        );
         logger.warn(
             "splitPdf requested but /api/v1/files/split-pdf has no CP implementation: " + path,
         );
@@ -710,7 +752,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
                 file.truncated = false;
             }
         } catch (e) {
-            treeError.value = `Failed to load full content: ${(e as Error).message}`;
+            setTreeError(`Failed to load full content: ${(e as Error).message}`);
         }
     }
 
@@ -724,7 +766,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
         openFiles.value = new Map();
         activeFilePath.value = null;
         expandedPaths.value = new Set();
-        treeError.value = null;
+        setTreeError(null);
         loadedWorkspaceId.value = null;
         // `loadTreePending` is intentionally kept: a request queued while the previous
         // workspace was loading is drained for whatever workspace is current then.
@@ -739,6 +781,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
         expandedPaths,
         loading,
         treeError,
+        treeErrorKind,
         openFiles,
         activeFilePath,
         activeFile,

@@ -453,7 +453,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-    <BaseModal :show="show" :title="t('chat.approvalRequired')" @close="handleClose">
+    <BaseModal :show="show" :title="t('chat.approvalRequired')" trap-focus @close="handleClose">
         <div
             ref="approvalContent"
             class="approval-content"

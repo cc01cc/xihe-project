@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { setActivePinia, createPinia } from "pinia";
-import { useWorkspaceStore } from "../stores/workspace";
+import { useWorkspaceStore, classifyTreeErrorCode } from "../stores/workspace";
 import { ApiError, api } from "../../../composables/api";
 import type * as apiModule from "../../../composables/api";
 import type * as fileServiceModule from "../composables/fileService";
@@ -396,5 +396,77 @@ describe("PLAN-0582 S3a audit P1-2: stale tree results", () => {
         // The stale payload must not be painted for the new workspace.
         expect(store.loadedWorkspaceId).toBeNull();
         expect(store.fileTree).toEqual([]);
+    });
+});
+
+describe("PLAN-0557/BL-109: tree failure category drives the visible copy", () => {
+    beforeEach(() => {
+        setActivePinia(createPinia());
+        vi.clearAllMocks();
+    });
+
+    it("classifies a runtime outage and keeps the mapped copy", async () => {
+        mockedApi.listDirectory.mockRejectedValueOnce(problemError(503, "RUNTIME_UNAVAILABLE"));
+        const store = useWorkspaceStore();
+        await store.loadTree();
+
+        expect(store.treeErrorKind).toBe("runtime");
+        expect(store.treeError).toContain("工作区运行时未就绪");
+    });
+
+    it("classifies a missing tool separately from a runtime outage", async () => {
+        mockedApi.listDirectory.mockRejectedValueOnce(problemError(400, "UNKNOWN_TOOL"));
+        const store = useWorkspaceStore();
+        await store.loadTree();
+
+        expect(store.treeErrorKind).toBe("tool");
+        expect(store.treeError).toContain("工具不存在");
+        expect(store.treeError).not.toContain("运行时");
+    });
+
+    it("falls back to other and keeps the raw detail for unmapped failures", async () => {
+        mockedApi.listDirectory.mockRejectedValueOnce(new Error("boom"));
+        const store = useWorkspaceStore();
+        await store.loadTree();
+
+        expect(store.treeErrorKind).toBe("other");
+        expect(store.treeError).toContain("boom");
+    });
+
+    it("resets the category once the load succeeds again", async () => {
+        mockedApi.listDirectory.mockRejectedValueOnce(problemError(503, "RUNTIME_UNAVAILABLE"));
+        const store = useWorkspaceStore();
+        await store.loadTree();
+        expect(store.treeErrorKind).toBe("runtime");
+
+        mockedApi.listDirectory.mockResolvedValueOnce({ entries: [] } as never);
+        await store.loadTree();
+
+        expect(store.treeError).toBeNull();
+        expect(store.treeErrorKind).toBe("other");
+    });
+});
+
+describe("classifyTreeErrorCode", () => {
+    it("maps the runtime family to runtime", () => {
+        for (const code of [
+            "RUNTIME_ERROR",
+            "RUNTIME_UNAVAILABLE",
+            "MCP_STREAM_UNAVAILABLE",
+            "MCP_DISCONNECT_UNAVAILABLE",
+            "CAPABILITY_UNAVAILABLE",
+        ]) {
+            expect(classifyTreeErrorCode(code)).toBe("runtime");
+        }
+    });
+
+    it("maps UNKNOWN_TOOL to tool", () => {
+        expect(classifyTreeErrorCode("UNKNOWN_TOOL")).toBe("tool");
+    });
+
+    it("maps unknown or empty codes to other", () => {
+        expect(classifyTreeErrorCode("SOMETHING_ELSE")).toBe("other");
+        expect(classifyTreeErrorCode(undefined)).toBe("other");
+        expect(classifyTreeErrorCode(null)).toBe("other");
     });
 });

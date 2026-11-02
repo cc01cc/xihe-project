@@ -45,6 +45,24 @@ const filteredTree = computed(() => {
 
 const isEmpty = computed(() => ws.fileTree.length === 0);
 
+/**
+ * PLAN-0557/BL-109: the visible line must name the cause; the tooltip is a
+ * supplement, never the only carrier. Unknown causes keep the generic copy and
+ * show the raw detail underneath instead of hiding it in `title`.
+ */
+const treeErrorHeadline = computed(() => {
+    switch (ws.treeErrorKind) {
+        case "runtime":
+            return t("workspace.treeLoadFailedRuntime");
+        case "tool":
+            return t("workspace.treeLoadFailedTool");
+        default:
+            return t("workspace.treeLoadFailed");
+    }
+});
+
+const showTreeErrorDetail = computed(() => ws.treeErrorKind === "other");
+
 function clearSearch() {
     searchQuery.value = "";
 }
@@ -191,9 +209,22 @@ function upload() {
             role="alert"
             class="mx-2 mt-2 flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/10 px-2 py-1.5 text-xs text-destructive"
         >
-            <span class="line-clamp-2 min-w-0 flex-1" :title="ws.treeError">
-                {{ t("workspace.treeLoadFailed") }}
-            </span>
+            <div class="min-w-0 flex-1">
+                <p
+                    data-testid="workspace-tree-error-message"
+                    class="line-clamp-2"
+                    :title="ws.treeError"
+                >
+                    {{ treeErrorHeadline }}
+                </p>
+                <p
+                    v-if="showTreeErrorDetail"
+                    data-testid="workspace-tree-error-detail"
+                    class="mt-0.5 line-clamp-2 break-words text-[11px] text-muted-foreground"
+                >
+                    {{ ws.treeError }}
+                </p>
+            </div>
             <button
                 type="button"
                 data-testid="workspace-tree-retry"

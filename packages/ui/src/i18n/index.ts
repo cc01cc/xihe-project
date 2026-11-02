@@ -223,6 +223,9 @@ const messages = {
             noFiles: "工作区暂无文件",
             retry: "重试",
             treeLoadFailed: "文件树加载失败，可重试或先继续使用聊天。",
+            treeLoadFailedRuntime:
+                "工作区运行时未就绪（Runtime 不可达），请确认服务已启动后重试；若持续失败请联系管理员",
+            treeLoadFailedTool: "工具不存在或未启用，请刷新工作区后重试",
             noActiveFile: "未选择文件",
             importSource: "导入工作区目录",
             expandFiles: "展开文件树",
@@ -2333,6 +2336,9 @@ const messages = {
             noFiles: "No files in this workspace",
             retry: "Retry",
             treeLoadFailed: "The file tree failed to load. Retry, or keep chatting meanwhile.",
+            treeLoadFailedRuntime:
+                "The workspace runtime is unreachable. Start the service and retry; contact an admin if it keeps failing.",
+            treeLoadFailedTool: "The tool is missing or disabled. Refresh the workspace and retry.",
             noActiveFile: "No file selected",
             importSource: "Import a workspace directory",
             expandFiles: "Expand the file tree",

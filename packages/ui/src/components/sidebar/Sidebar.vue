@@ -72,6 +72,18 @@ const { width: viewportWidth } = useWindowSize();
 const effectiveWidth = computed(() => clampNavWidthForViewport(props.width, viewportWidth.value));
 const isOpen = computed(() => Boolean(props.open) && !props.forceCollapsed);
 
+/**
+ * P-class fix: only the 56px rail survives a desktop collapse, so the re-open
+ * control has to live there. It must not appear while the panel is open (the
+ * panel head already owns the collapse control) nor while the shell yielded the
+ * panel automatically (`forceCollapsed`) — that is not a user choice to undo.
+ */
+const showRailExpand = computed(() => !props.isMobile && !isOpen.value && !props.forceCollapsed);
+
+function expandSidebar() {
+    emit("update:open", true);
+}
+
 const asideStyle = computed(() => {
     if (props.isMobile) {
         return { width: isOpen.value ? `min(${props.width}px, calc(100vw - 1rem))` : "0px" };
@@ -177,8 +189,9 @@ function handleLogout() {
         :class="{ 'shadow-lg': isMobile && open }"
         :style="asideStyle"
     >
-        <NavRail v-if="!isMobile" />
+        <NavRail v-if="!isMobile" :show-expand="showRailExpand" @expand="expandSidebar" />
         <div
+            id="sidebar-panel"
             data-testid="sidebar-panel"
             :aria-hidden="!isMobile && !open ? 'true' : undefined"
             :inert="!isMobile && !open ? true : undefined"

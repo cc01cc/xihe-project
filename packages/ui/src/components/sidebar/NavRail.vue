@@ -2,7 +2,7 @@
 import { computed } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
-import { LogOut, Settings, ShieldCheck } from "@lucide/vue";
+import { LogOut, PanelLeftOpen, Settings, ShieldCheck } from "@lucide/vue";
 import { useAuthStore } from "../../stores/auth";
 
 /**
@@ -10,7 +10,21 @@ import { useAuthStore } from "../../stores/auth";
  * It carries global modules only — the workspace entry (switch / new / import /
  * members) lives in the navigation panel head, and collapsing the navigation
  * panel is a panel-head control, not a rail control.
+ *
+ * P-class fix: collapsing used to leave no way back on desktop, because the
+ * collapse control sits in the very panel that becomes 0px + inert and the
+ * mobile re-open control is mobile-only. The rail survives every collapse, so it
+ * now also hosts the re-open control — shown only while the panel is collapsed,
+ * i.e. it never duplicates the panel-head collapse button.
  */
+defineProps<{
+    showExpand: boolean;
+}>();
+
+const emit = defineEmits<{
+    expand: [];
+}>();
+
 const router = useRouter(),
     route = useRoute();
 const { t } = useI18n();
@@ -62,6 +76,21 @@ function handleLogout() {
         >
             xh
         </span>
+
+        <button
+            v-if="showExpand"
+            type="button"
+            data-testid="nav-rail-expand"
+            :class="[itemClass, inactiveClass]"
+            aria-controls="sidebar-panel"
+            aria-expanded="false"
+            :aria-label="t('sidebar.expand')"
+            :title="t('sidebar.expand')"
+            @click="emit('expand')"
+        >
+            <PanelLeftOpen class="size-4" aria-hidden="true" />
+            <span class="sr-only">{{ t("sidebar.expand") }}</span>
+        </button>
 
         <button
             v-if="auth.isAdmin"
