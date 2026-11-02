@@ -48,6 +48,13 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * <p>Snapshot path (D28-35/D28-39): the fixture's {@code listing.items} are already in the frozen
  * snapshot shape, so {@link #theSnapshotPathRendersTheSameLinesAsTheLivePath()} proves the live
  * renderer and {@code renderFromSnapshot} cannot disagree about the same listing.</p>
+ *
+ * <p><b>Dirty data (PLAN-0628 M3b-②):</b> the {@code dirty-description-*} cases store values the
+ * previous import path could persist — surrounding whitespace, an empty description, and an
+ * embedded line break — and pin what {@code view(Listing)} must turn them into. Their
+ * {@code descriptionRendered} fields are written by hand (never generated from the renderer, which
+ * would make the contract a tautology), and {@link #everyRenderedItemIsOneLineWithoutEdgeWhitespace()}
+ * asserts the properties the Agent depends on rather than only the expected text.</p>
  */
 class SkillCatalogRenderFixtureTest {
 
@@ -129,19 +136,56 @@ class SkillCatalogRenderFixtureTest {
 
             // A rendered description must be joined by the pinned separator, never by an ad-hoc
             // dash: the Agent splits each line on exactly this string to build its ledger keys.
+            // `descriptionRendered` (PLAN-0628 M3b-②) lets a case state what a DIRTY stored
+            // description must render as — the expectation is written by hand in the fixture, so
+            // this check restates the contract instead of re-deriving it from the renderer.
             List<String> items = view.items();
-            List<String> descriptions = descriptionsOf(testCase.path("listing"));
-            if (testCase.path("listing").path("includeDescriptions").asBoolean(true)) {
-                for (int index = 0; index < items.size(); index++) {
-                    String description = descriptions.get(index);
-                    if (description == null) {
-                        assertFalse(items.get(index).contains(separator), name
-                                + ": a null description must render the display name alone");
-                    } else {
-                        assertTrue(items.get(index).endsWith(separator + description), name
-                                + ": item " + index + " is not `display + separator + description`");
-                    }
+            boolean includeDescriptions =
+                    testCase.path("listing").path("includeDescriptions").asBoolean(true);
+            for (int index = 0; index < items.size(); index++) {
+                String description = expectedRenderedDescription(
+                        testCase.path("listing").path("items").path(index), includeDescriptions);
+                if (description == null) {
+                    assertFalse(items.get(index).contains(separator), name
+                            + ": an item without a description must render the display name alone"
+                            + " (a dangling separator reads as a description that is missing)");
+                } else {
+                    assertTrue(items.get(index).endsWith(separator + description), name
+                            + ": item " + index + " is not `display + separator + description`");
                 }
+            }
+        }
+    }
+
+    /**
+     * PLAN-0628 M3b-② (裁定 A/B/C) — the <b>negative</b> half of the pin: whatever the stored
+     * description looked like, a rendered item is one line, carries no leading/trailing whitespace,
+     * and never ends with a dangling separator.
+     *
+     * <p>This is exactly what the Agent depends on. It {@code strip()}s every CP line before
+     * joining, so an item with edge whitespace is two different byte sequences on the two sides;
+     * and an item with an embedded line break is read by the model as <b>two</b> skills. Neither is
+     * a formatting preference, which is why both are asserted here rather than only implied by the
+     * fixture's expected text.</p>
+     */
+    @Test
+    void everyRenderedItemIsOneLineWithoutEdgeWhitespace() throws IOException {
+        JsonNode root = fixture();
+        String separator = root.path("separator").asText();
+
+        for (JsonNode testCase : cases(root)) {
+            String name = testCase.path("name").asText();
+            SkillCatalogSourceService.ComponentView view =
+                    SkillCatalogSourceService.view(listingOf(testCase.path("listing")));
+
+            for (String item : view.items()) {
+                assertEquals(item.strip(), item, name + ": item carries leading/trailing whitespace"
+                        + " — the Agent strips each line, so the two languages would disagree on"
+                        + " the same skill");
+                assertFalse(item.indexOf('\n') >= 0 || item.indexOf('\r') >= 0, name + ": item spans"
+                        + " more than one line — the model would read one skill as two");
+                assertFalse(item.endsWith(separator), name + ": item ends with a dangling"
+                        + " separator (a description that is absent must remove the separator too)");
             }
         }
     }
@@ -220,12 +264,14 @@ class SkillCatalogRenderFixtureTest {
         JsonNode root = fixture();
         Set<String> statuses = new LinkedHashSet<>();
         Set<String> diagnostics = new LinkedHashSet<>();
+        Set<String> names = new LinkedHashSet<>();
         boolean collision = false;
         boolean withoutDescriptions = false;
         boolean truncated = false;
 
         for (JsonNode testCase : cases(root)) {
             JsonNode listing = testCase.path("listing");
+            names.add(testCase.path("name").asText());
             statuses.add(listing.path("status").asText());
             diagnostics.addAll(texts(listing.path("diagnostics")));
             collision |= listing.path("collision").asBoolean(false);
@@ -249,6 +295,11 @@ class SkillCatalogRenderFixtureTest {
                 "no case reports the empty-listing diagnostic");
         assertTrue(diagnostics.contains(SkillCatalogSourceService.DIAG_RESOLVE_FAILED),
                 "no case reports the resolve-failure diagnostic");
+        // PLAN-0628 M3b-②: the three dirty-description shapes are the cross-language pin for
+        // rulings A/B/C. Dropping one re-opens the drift that produced them.
+        assertTrue(names.containsAll(Set.of("dirty-description-whitespace",
+                        "dirty-description-blank", "dirty-description-multiline")),
+                "the dirty-description cases (whitespace / blank / multiline) are missing: " + names);
     }
 
     // --- fixture mapping ----------------------------------------------------
@@ -302,13 +353,22 @@ class SkillCatalogRenderFixtureTest {
         return items;
     }
 
-    private static List<String> descriptionsOf(JsonNode listing) {
-        List<String> descriptions = new ArrayList<>();
-        for (JsonNode entry : listing.path("items")) {
-            JsonNode description = entry.path("description");
-            descriptions.add(description.isNull() ? null : description.asText());
+    /**
+     * The tail the fixture expects after the separator, read from the case's own stored
+     * description. {@code descriptionRendered} is the hand-written expectation for a <b>dirty</b>
+     * stored value (PLAN-0628 M3b-②); when absent the stored description is rendered verbatim, and
+     * when explicitly {@code null} the item must carry no separator at all.
+     */
+    private static String expectedRenderedDescription(JsonNode entry, boolean includeDescriptions) {
+        if (!includeDescriptions) {
+            return null;
         }
-        return descriptions;
+        if (entry.has("descriptionRendered")) {
+            JsonNode rendered = entry.path("descriptionRendered");
+            return rendered.isNull() ? null : rendered.asText();
+        }
+        JsonNode description = entry.path("description");
+        return description.isNull() ? null : description.asText();
     }
 
     private static List<String> texts(JsonNode array) {
