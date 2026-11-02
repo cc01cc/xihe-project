@@ -93,6 +93,59 @@ class OpenApiYamlContractTest {
         }
     }
 
+    /**
+     * PLAN-0628 M2a-③ (D28-42): the Run read face's replay field is contracted in the same wave as the
+     * projection, and the contract states the one decision a client cannot infer from the shape:
+     * {@code null} means "this Run captured no snapshot", not "this Run had no skills".
+     *
+     * <p>Why assert the description text and not just the key: the difference between {@code null} and
+     * an empty object is the whole point of the field (D28-40), and a client that reads {@code null} as
+     * "no skills" would render a capability set that never existed. A schema without that sentence
+     * documents the wrong semantics.
+     */
+    @Test
+    void openApiContractsTheRunReadFaceSkillsSnapshotReplay() throws Exception {
+        Path contract = Path.of("..", "..", "docs", "api", "openapi.yaml");
+        try (InputStream input = Files.newInputStream(contract)) {
+            Map<?, ?> document = (Map<?, ?>) new Yaml().load(input);
+            Map<?, ?> schemas = (Map<?, ?>) ((Map<?, ?>) document.get("components")).get("schemas");
+
+            Map<?, ?> status = (Map<?, ?>) schemas.get("ChatRunStatusResponse");
+            assertInstanceOf(Map.class, status, "ChatRunStatusResponse is contracted");
+            Map<?, ?> field = (Map<?, ?>) ((Map<?, ?>) status.get("properties")).get("skillsSnapshot");
+            assertInstanceOf(Map.class, field, "the read face carries skillsSnapshot");
+            assertTrue(String.valueOf(field.get("description")).contains("null"),
+                    "the null contract must be stated on the field: " + field.get("description"));
+            String cases = String.valueOf(field.get("oneOf"));
+            assertTrue(cases.contains("ChatRunSkillsSnapshot") && cases.contains("null"),
+                    "skillsSnapshot is the document or null, never an empty object: " + cases);
+
+            Map<?, ?> snapshot = (Map<?, ?>) schemas.get("ChatRunSkillsSnapshot");
+            assertInstanceOf(Map.class, snapshot, "ChatRunSkillsSnapshot is contracted");
+            Map<?, ?> snapshotProperties = (Map<?, ?>) snapshot.get("properties");
+            for (String name : List.of("version", "status", "source", "capturedAt", "snapshotSource",
+                    "maxSkills", "truncated", "diagnostics", "items")) {
+                assertTrue(snapshotProperties.containsKey(name),
+                        "ChatRunSkillsSnapshot must carry " + name);
+            }
+            String snapshotSource = String.valueOf(snapshotProperties.get("snapshotSource"));
+            assertTrue(snapshotSource.contains("frozen") && snapshotSource.contains("inherited"),
+                    "snapshotSource must name both origins (D28-39 ②): " + snapshotSource);
+
+            Map<?, ?> item = (Map<?, ?>) schemas.get("ChatRunSkillsSnapshotItem");
+            assertInstanceOf(Map.class, item, "ChatRunSkillsSnapshotItem is contracted");
+            Map<?, ?> itemProperties = (Map<?, ?>) item.get("properties");
+            for (String name : List.of("skillId", "qualifiedName", "name", "description", "version",
+                    "contentHash", "oversize", "tier")) {
+                assertTrue(itemProperties.containsKey(name), "the item must carry " + name);
+            }
+            assertFalse(itemProperties.containsKey("body"),
+                    "D28-35: the replay must not contract a skill body");
+            assertInstanceOf(Map.class, schemas.get("ChatRunSkillsSnapshotTier"),
+                    "ChatRunSkillsSnapshotTier is contracted");
+        }
+    }
+
     @SuppressWarnings("unchecked")
     private static void assertSourceEnumContains(Map<?, ?> schemas, String schemaName) {
         Map<?, ?> schema = (Map<?, ?>) schemas.get(schemaName);

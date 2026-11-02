@@ -4320,9 +4320,117 @@ components:
         terminalOutcome: { type: [string, 'null'], enum: [success, error, partial, ambiguous, cancelled] }
         leaseExpired: { type: boolean }
         pendingApprovals: { type: array, items: { $ref: '#/components/schemas/ChatApprovalRequest' } }
-    ChatApprovalDecisionResponse:
+        skillsSnapshot:
+          description: |
+            PLAN-0628 M2a-③ (D28-42): the skills listing this Run was admitted with, frozen into
+            `chat_runs.skills_snapshot` in the same transaction as `contextTemplateSnapshot`.
+            **Replay only**: the value participates in no decision, and the listing the model
+            sees is rendered from this same document at dispatch (D28-39) — so this is what the
+            model was shown, not a re-resolution against today's bindings. A binding added after
+            admission is therefore absent here *by design*, and a continuation Run reports the
+            parent's listing with `snapshotSource: inherited`.
+            `null` means the Run captured no snapshot (the column default `{}`, which every Run
+            admitted before M2a carries): its listing is resolved live from the current bindings
+            (D28-40), and that resolution is not replayable. `null` never means "this Run had no
+            skills" — that is `status: empty` inside the object.
+          oneOf:
+            - $ref: '#/components/schemas/ChatRunSkillsSnapshot'
+            - type: 'null'
+    ChatRunSkillsSnapshot:
       type: object
-      required: [status, requestId, approved]
+      additionalProperties: false
+      description: |
+        PLAN-0628 M2a-③: the skills listing a Run was admitted with (D28-35), replayed read-only.
+        It stores the listing itself — display names, descriptions, versions, content hashes — and
+        never a skill body: bodies are read on demand by the Agent, so freezing them would inflate
+        the row by ~100× without adding replayable truth. Storing the listing (rather than a
+        reference to the bindings) is what makes a Run reproducible: an edit during the Run cannot
+        change what its model saw.
+        A field added by a newer Control Plane is dropped by this projection; `version` tells a
+        reader which document shape it is looking at.
+      required: [version, status, source, snapshotSource, maxSkills, truncated, diagnostics, items]
+      properties:
+        version:
+          type: integer
+          minimum: 1
+          description: Snapshot document schema version.
+        status:
+          type: string
+          description: |
+            Listing outcome frozen at admission: `ready`, `truncated` (the `maxSkills` bound was
+            reached), `empty` (nothing resolvable was bound) or `failed` (resolution produced an
+            error record; the Run still ran — a listing problem never blocks a Run).
+            Free-form on purpose: a newer Control Plane may report a state this client does not
+            know, and a closed enum here would make a diagnostic unreadable.
+        source:
+          type: string
+          description: The live table the listing was projected from (`skill_bindings`).
+        capturedAt:
+          type: [string, 'null']
+          format: date-time
+          description: Admission instant of the freeze; `null` only for a malformed legacy document.
+        snapshotSource:
+          type: string
+          enum: [frozen, inherited]
+          description: |
+            `frozen` = computed at this Run's admission; `inherited` = copied verbatim from the
+            parent Run of a continuation (D28-39 ②), so a binding added while the parent ran is
+            absent from both.
+        maxSkills:
+          type: integer
+          minimum: 0
+          maximum: 200
+          description: The listing count bound this Run was admitted with (from the template component).
+        truncated:
+          type: boolean
+          description: True when `maxSkills` cut the listing; the model was told so separately.
+        diagnostics:
+          type: array
+          items: { type: string }
+          description: |
+            Admission-time codes that explain the frozen trade-offs, e.g.
+            `skill_catalog_max_skills_reached`, `skill_catalog_name_collision`,
+            `skill_catalog_empty`, `skill_catalog_resolve_failed`, `skill_snapshot_too_large`,
+            `skill_snapshot_multiple_components`.
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/ChatRunSkillsSnapshotItem' }
+    ChatRunSkillsSnapshotItem:
+      type: object
+      additionalProperties: false
+      description: |
+        One frozen listing entry. The body is deliberately absent (it is read on demand), and
+        `contentHash` is what lets a later comparison answer "was the skill I see now the skill this
+        Run was admitted with".
+      required: [name, version, oversize]
+      properties:
+        skillId: { type: [string, 'null'], format: uuid }
+        qualifiedName:
+          type: [string, 'null']
+          description: |
+            The three-segment `<subject>:<scope>:<definitionScope>:<name>` address (D28-31); it is
+            always the full form even when the rendered listing line used the bare name.
+        name: { type: string }
+        description: { type: [string, 'null'] }
+        version: { type: integer, minimum: 1 }
+        contentHash: { type: [string, 'null'] }
+        oversize:
+          type: boolean
+          description: The skill's own body exceeded its size bound at import time (D28-15).
+        tier:
+          oneOf:
+            - $ref: '#/components/schemas/ChatRunSkillsSnapshotTier'
+            - type: 'null'
+    ChatRunSkillsSnapshotTier:
+      type: object
+      additionalProperties: false
+      description: Which binding axis put this entry in the listing (D28-14's two axes).
+      required: [subjectType, scopeType, definitionScopeType]
+      properties:
+        subjectType: { type: string, enum: [agent_principal, user] }
+        scopeType: { type: string, enum: [instance, workspace] }
+        definitionScopeType: { type: string, enum: [instance, workspace] }
+
       properties:
         status: { type: string, enum: [accepted, already_decided] }
         requestId: { type: string, format: uuid }
