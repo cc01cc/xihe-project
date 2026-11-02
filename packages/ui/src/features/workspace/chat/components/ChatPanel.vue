@@ -1000,7 +1000,12 @@ watch(
 </script>
 
 <template>
-    <div class="flex flex-col h-full min-h-0 overflow-hidden">
+    <!-- `flex-1` takes the height left by the session head / banners instead of a hard
+         `h-full` of the column: the panel sits in a flex column with a 36px title row above
+         it, so 100% would overflow the column by exactly that row and push the composer (and
+         the dock's bottom edge) below the fold. `h-full` stays for hosts where the panel is
+         the only child and the parent is not a flex container. -->
+    <div class="flex flex-col h-full min-h-0 flex-1 overflow-hidden">
         <SessionSettingsPanel
             :session-id="sessionId"
             :is-mobile="isMobile"

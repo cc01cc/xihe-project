@@ -369,8 +369,16 @@ watch(isMobileViewport, (mobile) => {
             @mention="handleParticipantMention"
         >
             <template #center>
-                <!-- Conversation is the main column; the workbench renders it for desktop. -->
-                <div class="flex min-w-0 flex-1 flex-col" data-testid="workspace-conversation">
+                <!-- Conversation is the main column; the workbench renders it for desktop.
+                     `min-h-0` is load-bearing: as a flex item this column must be allowed to
+                     shrink to the row height. Without it `min-height:auto` makes it grow to the
+                     transcript's content height, `h-full` inside it resolves to that height
+                     instead of the viewport's, and the message scroller ends up as tall as all
+                     messages (60 of them ⇒ `scrollHeight == clientHeight`, nothing scrolls). -->
+                <div
+                    class="flex min-h-0 min-w-0 flex-1 flex-col"
+                    data-testid="workspace-conversation"
+                >
                     <div
                         class="h-9 shrink-0 border-b px-3 flex items-center gap-2 text-xs text-muted-foreground bg-muted/5"
                         :title="`workspace=${workspaceId}`"

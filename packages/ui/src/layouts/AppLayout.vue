@@ -184,13 +184,18 @@ onUnmounted(() => {
             <PanelLeftOpen class="size-4" />
         </button>
         <main
-            class="min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto bg-surface-content transition-[margin] duration-300"
+            class="min-h-0 min-w-0 flex-1 bg-surface-content transition-[margin] duration-300"
+            :class="
+                workspaceTabBarVisible
+                    ? 'flex flex-col overflow-hidden'
+                    : 'overflow-x-hidden overflow-y-auto'
+            "
             :style="{ marginLeft: mainMargin }"
         >
             <div
                 v-if="firstPendingOtherSession"
                 data-testid="global-pending-approval-banner"
-                class="sticky top-0 z-20 flex items-center justify-between gap-3 border-b border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm backdrop-blur-sm"
+                class="sticky top-0 z-20 flex shrink-0 items-center justify-between gap-3 border-b border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm backdrop-blur-sm"
                 role="status"
             >
                 <div class="min-w-0">
@@ -219,7 +224,24 @@ onUnmounted(() => {
                 :workspace-id="workspaceTabBarWorkspaceId"
                 :session-id="workspaceTabBarSessionId"
             />
-            <router-view />
+            <!--
+                The routed workspace page must own exactly the space **below** the tab bar.
+                A bare `<router-view />` as a sibling of the 36px bar made every workspace
+                page `h-full` = 100% of `main` while starting 36px lower, so the page (and the
+                workbench row inside it, and the dock pinned to that row's bottom edge) hung
+                36px past the fold — the "dock bottom clipped by 36px" defect. As a flex child
+                of a flex-column `main` the page now gets the remaining height; it keeps its
+                own scroll container for pages that are taller than the viewport
+                (`min-h-full` sections such as environment / scheduled tasks).
+            -->
+            <div
+                v-if="workspaceTabBarVisible"
+                class="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto"
+                data-testid="workspace-route-viewport"
+            >
+                <router-view />
+            </div>
+            <router-view v-else />
         </main>
     </div>
 </template>
