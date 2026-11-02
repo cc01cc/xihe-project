@@ -876,20 +876,20 @@ test.describe("PLAN-0623 有头走查：会话参与者 dock tab", () => {
             202,
         );
 
-        // fan-out 串行触发 run：mock LLM 会回。轮询（非固定 sleep）等 assistant 气泡出现。
-        const assistant = page.locator(
+        // fan-out 串行触发 run：mock LLM 会 echo "response to: <用户内容>"。
+        // 内容断言（hasText），不是 count>=1 —— S6 已让 PRIMARY 回过一个气泡，
+        // 纯计数在 S7 的第一 tick 就恒真（"借来的绿"）。
+        const s7Reply = page.locator(
             '[data-testid="message-item"][data-message-role="assistant"]',
+            { hasText: "S7 fan-out probe" },
         );
         await expect
-            .poll(async () => assistant.count(), {
+            .poll(async () => s7Reply.count(), {
                 timeout: 90000,
                 intervals: [1000, 2000, 5000],
             })
             .toBeGreaterThanOrEqual(1);
-        await expect(
-            assistant.first(),
-            "the agent reply bubble must render content",
-        ).not.toBeEmpty();
+        await expect(s7Reply.first(), "the agent reply bubble must render content").not.toBeEmpty();
 
         await shot(page, {
             id: "S7",
