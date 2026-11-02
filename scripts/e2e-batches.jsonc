@@ -19,11 +19,22 @@
       "llmMode": "mock",
       "specs": ["e2e/real"]
     },
-    "mock-lane": {
-      "description": "host lane e2e/mock suite: dock helper + dockMode pinned/floating coverage (mock LLM; previously had NO batch entry, so e2e/mock changes were unrunnable through the harness)",
-      "llmMode": "mock",
-      "specs": ["e2e/mock"]
-    },
+    // NOTE (2026-11-03): there is NO batch for `e2e/mock/**` and there cannot be one —
+    // the host runner appends `--grep @host` (playwright.config.ts:42) and **no mock spec
+    // carries that tag** (they stub every API via page.route, so they need no stack), so a
+    // batch would only ever report "No tests found". Run the mock lane standalone instead
+    // (Playwright starts its own `pnpm dev` webServer, no docker/CP required):
+    //
+    //   cd packages/ui && pnpm exec playwright test --config e2e/playwright.config.ts \
+    //       e2e/mock/approval.spec.ts                          # single spec
+    //
+    // `--config` is mandatory (the config is under e2e/, not the package root) — omitting it
+    // silently drops baseURL/webServer and every `page.goto("/…")` fails with
+    // "Cannot navigate to invalid URL".
+    //
+    // Known state at 2026-11-03 (first ever run of this lane): 20 passed / 4 failed. The 4
+    // failures are pre-existing (mock fixtures never return the policy mode, so the summary
+    // row renders "审批模式 未提供"): approval.spec.ts:499, :644, :664 + context-templates.spec.ts:63.
     "real-full": {
       "description": "host lane full suite on the real provider (key-gated; 0372 baseline 42P/0F/31S)",
       "llmMode": "real",
