@@ -120,7 +120,7 @@ public class ChatSubmissionService {
                              String content, String attachmentsJson, List<String> attachmentIds) {
         return create(runId, sessionId, userId, workspaceId, branchId, null, idempotencyKey, requestHash,
                 provider, model, toolMode, providerConnectionId, connectionRevision,
-                leaseOwner, requestId, content, attachmentsJson, attachmentIds);
+                leaseOwner, requestId, content, attachmentsJson, attachmentIds, null);
     }
 
     @Transactional
@@ -129,10 +129,31 @@ public class ChatSubmissionService {
                              String provider, String model, String toolMode, String providerConnectionId,
                              Long connectionRevision, String leaseOwner, String requestId,
                              String content, String attachmentsJson, List<String> attachmentIds) {
-        return persist(ChatRun.ORIGIN_USER_SUBMISSION, runId, sessionId, userId, workspaceId,
+        return create(runId, sessionId, userId, workspaceId, branchId, agentPrincipalId, idempotencyKey,
+                requestHash, provider, model, toolMode, providerConnectionId, connectionRevision,
+                leaseOwner, requestId, content, attachmentsJson, attachmentIds, null);
+    }
+
+    @Transactional
+    public Submission create(String runId, String sessionId, String userId, String workspaceId,
+            String branchId, String agentPrincipalId, String idempotencyKey, String requestHash,
+            String provider, String model, String toolMode, String providerConnectionId,
+            Long connectionRevision, String leaseOwner, String requestId,
+            String content, String attachmentsJson, List<String> attachmentIds,
+            String asParticipantId) {
+        Submission submission = persist(ChatRun.ORIGIN_USER_SUBMISSION, runId, sessionId, userId, workspaceId,
                 branchId, idempotencyKey, requestHash, provider, model, toolMode, providerConnectionId,
                 connectionRevision, leaseOwner, requestId, content, attachmentsJson, attachmentIds,
                 agentPrincipalId, false);
+        // R1 (PLAN-0623): record who answered. `asParticipantId` wins (already authorized by the
+        // controller); otherwise the PRIMARY participant answers; a Session with neither keeps NULL —
+        // the same "never invent a responder" rule the V92 backfill follows.
+        UUID responder = sessionParticipantService.responderPrincipalIdFor(
+                UUID.fromString(sessionId), asParticipantId);
+        if (responder != null) {
+            submission.run().setAgentPrincipalId(responder);
+        }
+        return submission;
     }
 
     /** Creates a queue child atomically without treating its own outstanding item as a normal Chat conflict. */

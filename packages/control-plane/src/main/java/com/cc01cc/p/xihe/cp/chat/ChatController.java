@@ -596,7 +596,7 @@ public class ChatController {
             ChatSubmissionService.Submission submission = chatSubmissionService.create(
                     runId, sessionId, userId, workspaceId, branchId, agentPrincipalId, idempotencyKey, requestHash,
                     provider, model, toolMode, session.getProviderConnectionId(), session.getConnectionRevision(),
-                    instanceId(), requestId, content, attachmentsJson, attachmentIds);
+                    instanceId(), requestId, content, attachmentsJson, attachmentIds, asParticipantId);
             ChatRun chatRun = submission.run();
             if (!admission.isEmpty() && !admission.covers(chatRun.getProviderConnectionId(),
                     chatRun.getProvider(), chatRun.getModel())) {
@@ -637,14 +637,8 @@ public class ChatController {
                     logger.info("[LIFECYCLE] service=cp event=chat_run_queued requestId={} sessionId={} runId={} reason=agent_down",
                             requestId, sessionId, runId);
                     handedOff = true;
-                    return ResponseEntity.accepted().body(Map.of(
-                        "status", "queued",
-                        "origin", chatRun.getOrigin(),
-                        "sessionId", sessionId,
-                        "messageId", userMessage.getId(),
-                        "runId", runId,
-                        "reason", "agent_down"
-                    ));
+                    return ResponseEntity.accepted().body(runAcceptedBody(chatRun, "queued", sessionId,
+                        userMessage.getId(), runId, "agent_down"));
                 }
                 chatSubmissionService.persistRunStatus(chatRun, "accepted");
             }
@@ -654,13 +648,8 @@ public class ChatController {
             execAsync(sessionId, content, provider, model, toolMode, perCallTimeouts.values(),
                     attachmentInfos, userId, workspaceId, requestId, runId, dispatchAdmission, null);
             handedOff = true;
-            return ResponseEntity.accepted().body(Map.of(
-                "status", "accepted",
-                "origin", chatRun.getOrigin(),
-                "sessionId", sessionId,
-                "messageId", userMessage.getId(),
-                "runId", runId
-            ));
+            return ResponseEntity.accepted().body(runAcceptedBody(chatRun, "accepted", sessionId,
+                userMessage.getId(), runId, null));
         } finally {
             if (!handedOff) {
                 // D28: a run that never reached dispatch must not keep the admission slots.
@@ -1736,6 +1725,26 @@ public class ChatController {
                 toolMode, attachmentIds, toolTimeouts, agentPrincipalId, branchId);
     }
 
+    /**
+     * R1 (PLAN-0623): the accepted/queued body carries the run's responder so a client that just spoke
+     * as somebody sees the attribution without a second read. null is a real value (a legacy Session
+     * without participants), hence a mutable map instead of Map.of.
+     */
+    private static Map<String, Object> runAcceptedBody(ChatRun run, String status, String sessionId,
+                                                       java.util.UUID messageId, String runId, String reason) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("status", status);
+        body.put("origin", run.getOrigin());
+        body.put("sessionId", sessionId);
+        body.put("messageId", messageId);
+        body.put("runId", runId);
+        if (reason != null) {
+            body.put("reason", reason);
+        }
+        body.put("agentPrincipalId", run.getAgentPrincipalId() == null
+                ? null : run.getAgentPrincipalId().toString());
+        return body;
+    }
     private Map<String, Object> runResponse(ChatSubmissionService.SubmissionReplay run) {
         Map<String, Object> response = new LinkedHashMap<>();
         response.put("status", run.status());
