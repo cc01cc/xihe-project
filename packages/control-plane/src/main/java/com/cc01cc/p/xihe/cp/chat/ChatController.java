@@ -81,6 +81,9 @@ public class ChatController {
     private final AgentPrincipalService agentPrincipalService;
     private final com.cc01cc.p.xihe.cp.service.SessionParticipantService sessionParticipantService;
     private final com.cc01cc.p.xihe.cp.service.ParticipantCapabilityService participantCapabilityService;
+    /** PLAN-0623 M1b-③: runId → producing participant row id; absent = producer-less system event. */
+    private final java.util.concurrent.ConcurrentHashMap<String, String> runParticipants =
+            new java.util.concurrent.ConcurrentHashMap<>();
     private final ChatAttachmentService chatAttachmentService;
     private final HealthMonitor healthMonitor;
     private final RequestQueue requestQueue;
@@ -385,7 +388,8 @@ public class ChatController {
 
     @PreAuthorize("isAuthenticated()")
     @GetMapping(path = "/api/v1/events", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-    public SseEmitter events(@RequestParam(name = "sessionId") String sessionId) {
+    public SseEmitter events(@RequestParam(name = "sessionId") String sessionId,
+                             @RequestParam(name = "asParticipantId", required = false) String asParticipantId) {
         if (sessionId == null || sessionId.isBlank()) {
             throw new com.cc01cc.p.xihe.cp.config.CpApiException(
                     HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "sessionId is required");
@@ -396,7 +400,13 @@ public class ChatController {
             throw CpApiException.workspaceContextRequired();
         }
         sessionService.requireCurrent(sessionId, userId, workspaceId);
-        SseEmitter emitter = sseManager.createEmitter(sessionId);
+        // PLAN-0623 M1b-③ / D23-08: a declared participant view must be one the caller is
+        // authorised to act for — same gate as chat --as; undeclared = observer (full stream).
+        String declaredView = asParticipantId == null || asParticipantId.isBlank() ? null : asParticipantId;
+        if (declaredView != null) {
+            sessionParticipantService.authorizeAsParticipant(userId, workspaceId, sessionId, declaredView);
+        }
+        SseEmitter emitter = sseManager.createEmitter(sessionId, declaredView);
         sseManager.send(sessionId, "connected", Map.of("sessionId", sessionId, "type", "connected"));
         for (Map<String, Object> approval : approvalService.replayPending(sessionId, userId, workspaceId)) {
             sseManager.send(sessionId, "approval_request", approval);
@@ -1008,6 +1018,10 @@ public class ChatController {
         Thread worker = new Thread(() -> {
             MDC.put("requestId", requestId);
             MDC.put("chatRunId", runId);
+            // M1b-③: attribute this run's SSE output to the Responder's participant row.
+            if (responder != null && responder.participantId() != null) {
+                runParticipants.put(runId, responder.participantId().toString());
+            }
             AtomicBoolean terminalSent = new AtomicBoolean(false);
             // Set inside relayAgentStream when an approval_request has been
             // relayed; read by the IO-interrupt catch below (PLAN-292 C1).
@@ -1359,6 +1373,7 @@ public class ChatController {
                 sendRunErrorAndDone(sessionId, requestId, runId, "CHAT_EXECUTION_FAILED", "Chat execution failed", "error", terminalSent);
             } finally {
                 releaseRun(sessionId, runId, "run_finished");
+                runParticipants.remove(runId);
                 MDC.remove("requestId");
                 MDC.remove("chatRunId");
             }
@@ -1520,14 +1535,19 @@ public class ChatController {
                 "detail", detail,
                 "retryable", isRetryableError(errorCode),
                 "outcome", outcome,
-                "type", "error"));
+                "type", "error"), participantIdFor(runId));
         sseManager.send(sessionId, "done", Map.of(
                 "type", "done",
                 "requestId", requestId,
                 "runId", runId,
                 "errorCode", errorCode,
                 "outcome", outcome,
-                "synthetic", true));
+                "synthetic", true), participantIdFor(runId));
+    }
+
+    /** PLAN-0623 M1b-③: the participant row that produced this run's output (null = system). */
+    private String participantIdFor(String runId) {
+        return runId == null ? null : runParticipants.get(runId);
     }
 
     /**
@@ -1850,7 +1870,7 @@ public class ChatController {
                         Object enriched = mapUsageCost(runId, usagePayload);
                         usageEnvelope = enriched instanceof Map<?, ?> map ? map : null;
                         if (usageEnvelope != null) {
-                            sseManager.send(sessionId, "usage", usageEnvelope);
+                            sseManager.send(sessionId, "usage", usageEnvelope, participantIdFor(runId));
                         }
                         Map<?, ?> usage = asMap(usagePayload).get("usage") instanceof Map<?, ?> u ? u : null;
                         if (usage != null) {
@@ -2199,7 +2219,7 @@ public class ChatController {
         }
 
         Object parsedPayload = parsePayload(eventName, payload);
-        sseManager.send(sessionId, eventName, parsedPayload);
+        sseManager.send(sessionId, eventName, parsedPayload, null);
     }
 
     private void dispatchRelayedEvent(String sessionId, String eventName, String payload,
@@ -2230,10 +2250,11 @@ public class ChatController {
             transitionRun(runId, List.of("running", "streaming"), "awaiting_approval", null, null, null, 0, 0);
 
             // Relay the durable canonical Approval row, not the stale Agent payload.
-            sseManager.send(sessionId, eventName, approvalService.payloadFor(storedApproval, false));
+            sseManager.send(sessionId, eventName, approvalService.payloadFor(storedApproval, false),
+                    participantIdFor(runId));
             return;
         }
-        sseManager.send(sessionId, eventName, parsedPayload);
+        sseManager.send(sessionId, eventName, parsedPayload, participantIdFor(runId));
     }
 
     private Object parsePayload(String eventName, String payload) {

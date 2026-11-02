@@ -39,11 +39,21 @@ public class SseEmitterManager implements CompactionNoticePort {
     private final Map<String, AtomicLong> generations = new ConcurrentHashMap<>();
 
     public SseEmitter createEmitter(String sessionId) {
+        return createEmitter(sessionId, null);
+    }
+
+    /**
+     * PLAN-0623 M1b-③: {@code asParticipantId} declares the subscriber's <b>participant view</b>
+     * (D23-28 observer semantics). Declared ⇒ only events produced by that participant plus
+     * producer-less system events; undeclared ⇒ the full stream. Filtering is by <b>producer</b>,
+     * never by visibility — system events are broadcast to every view.
+     */
+    public SseEmitter createEmitter(String sessionId, String asParticipantId) {
         SseEmitter emitter = new SseEmitter(0L);
         long generation = generations
                 .computeIfAbsent(sessionId, ignored -> new AtomicLong())
                 .incrementAndGet();
-        EmitterEntry entry = new EmitterEntry(sessionId, generation, emitter);
+        EmitterEntry entry = new EmitterEntry(sessionId, generation, emitter, asParticipantId);
 
         emitter.onCompletion(() -> removeIfCurrent(entry, "completion"));
         emitter.onTimeout(() -> removeIfCurrent(entry, "timeout"));
@@ -64,13 +74,30 @@ public class SseEmitterManager implements CompactionNoticePort {
         return emitter;
     }
 
+    /** Legacy shape: an event with no participant attribution (system event). */
     public boolean send(String sessionId, String eventName, Object data) {
+        return send(sessionId, eventName, data, null);
+    }
+
+    /**
+     * PLAN-0623 M1b-③: every event carries {@code participantId} — the participant row that
+     * produced this output, or {@code null} for producer-less system events (never invented).
+     * The payload is enriched with the field so undeclared (observer) consumers can still tell
+     * multi-subject streams apart. Delivery to a declared view is skipped (not an error) when
+     * the producer is another participant.
+     */
+    public boolean send(String sessionId, String eventName, Object data, String participantId) {
         EmitterEntry entry = emitters.get(sessionId);
         if (entry != null && !entry.closed.get()) {
+            if (!entry.accepts(participantId)) {
+                logger.debug("[LIFECYCLE] service=cp event=chat_sse_event_filtered sessionId={} connectionGeneration={} eventName={} view={} producer={}",
+                        sessionId, entry.generation, eventName, entry.asParticipantId, participantId);
+                return true;
+            }
             try {
                 entry.emitter.send(SseEmitter.event()
                     .name(eventName)
-                    .data(data));
+                    .data(enrichWithParticipantId(data, participantId)));
                 logger.debug("[LIFECYCLE] service=cp event=chat_sse_event_sent sessionId={} connectionGeneration={} eventName={}",
                         sessionId, entry.generation, eventName);
                 return true;
@@ -116,6 +143,26 @@ public class SseEmitterManager implements CompactionNoticePort {
         if (entry != null && removeIfCurrent(entry, "completed")) {
             entry.emitter.complete();
         }
+    }
+
+    /**
+     * Adds {@code participantId} to map/JSON-object payloads (null = producer-less system event,
+     * an explicit field so observers never guess). Non-structured payloads are left untouched —
+     * every current emit site sends a Map or a JSON object.
+     */
+    private static Object enrichWithParticipantId(Object data, String participantId) {
+        if (data instanceof Map<?, ?> map) {
+            java.util.LinkedHashMap<Object, Object> copy = new java.util.LinkedHashMap<>(map);
+            copy.put("participantId", participantId);
+            return copy;
+        }
+        if (data instanceof com.fasterxml.jackson.databind.JsonNode node && node.isObject()) {
+            if (participantId == null) {
+                return ((com.fasterxml.jackson.databind.node.ObjectNode) node).putNull("participantId");
+            }
+            return ((com.fasterxml.jackson.databind.node.ObjectNode) node).put("participantId", participantId);
+        }
+        return data;
     }
 
     public boolean complete(String sessionId, SseEmitter expectedEmitter) {
@@ -220,13 +267,20 @@ public class SseEmitterManager implements CompactionNoticePort {
         private final String sessionId;
         private final long generation;
         private final SseEmitter emitter;
+        private final String asParticipantId;
         private final AtomicBoolean closed = new AtomicBoolean(false);
         private volatile ScheduledFuture<?> heartbeat;
 
-        private EmitterEntry(String sessionId, long generation, SseEmitter emitter) {
+        private EmitterEntry(String sessionId, long generation, SseEmitter emitter, String asParticipantId) {
             this.sessionId = sessionId;
             this.generation = generation;
             this.emitter = emitter;
+            this.asParticipantId = asParticipantId;
+        }
+
+        /** Declared views receive their own producer plus producer-less system events. */
+        private boolean accepts(String participantId) {
+            return asParticipantId == null || participantId == null || asParticipantId.equals(participantId);
         }
     }
 
