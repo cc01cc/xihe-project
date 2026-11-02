@@ -34,6 +34,7 @@ from xihe_agent.app_state import (
     config_client,
     crash_recovery,
 )
+from xihe_agent.config_client import STARTUP_CONFIG_RETRIES, STARTUP_CONFIG_TIMEOUT_S
 from xihe_agent.config_snapshot import process_config_snapshot
 from xihe_agent.dotenv_loader import load_project_env, parse_cli_overrides
 from xihe_agent.llm.base import LLMConfig, create_llm
@@ -170,12 +171,34 @@ async def _poll_runtime_config() -> None:
 
 
 
+async def _sync_config(reason: str) -> SyncReport:
+    """The single place that decides the config-sync budget (PLAN-0632 D32-27 Step 1).
+
+    Startup gets an explicit small budget: a CP that is not up yet must not cost the user a
+    minute of black screen (measured 58.46 s with the shared defaults vs 0.025 s when the CP is
+    reachable). Periodic refresh keeps the shared defaults (3 s per domain, 3 attempts) so a
+    momentarily slow CP is retried instead of being declared dead — which is exactly why the
+    defaults are untouched and the budget is passed here.
+
+    Failure semantics are unchanged: this returns whatever report the client produced, and the
+    caller converges to `degraded` (fail-closed) rather than "up with empty config".
+    """
+    if reason == "startup":
+        # Separate entry point (not an optional kwarg on sync_with_retry) so the shared defaults
+        # cannot be quietly repurposed as the startup budget, and vice versa.
+        return await config_client.sync_with_retry_budget(
+            max_retries=STARTUP_CONFIG_RETRIES,
+            timeout=STARTUP_CONFIG_TIMEOUT_S,
+        )
+    return await config_client.sync_with_retry()
+
+
 async def reload_runtime_config(reason: str) -> SyncReport:
     """Refresh config-derived dependencies and swap their runtime snapshot atomically."""
     import xihe_agent.app_state as state
 
     async with _runtime_refresh_lock:
-        report = await config_client.sync_with_retry()
+        report = await _sync_config(reason)
         if report.get("refreshed"):
             staged_llm_config = LLMConfig.from_config_client(config_client)
             staged_image_manager = ProviderManager.from_env(config_client.get("llm-provider", "imageProvider"))

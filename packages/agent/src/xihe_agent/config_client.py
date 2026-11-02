@@ -22,6 +22,26 @@ CONFIG_DOMAINS = (
 # Domains required for the Agent to become llm-ready (fail-closed otherwise).
 REQUIRED_DOMAINS = ("llm-provider",)
 
+# PLAN-0632 D32-27 Step 1: the STARTUP-ONLY config-sync budget.
+#
+# Measured 2026-11-02 (PLAN-0632 T1, packaged Agent): with the CP reachable the startup sync
+# costs 0.025 s; with the CP absent the shared defaults (3 s per domain x 3 attempts, 1 s + 2 s
+# backoff) cost **58.46 s** before the Agent degrades — which the user experiences as a black
+# screen and "the program is hung".
+#
+# These constants are deliberately SEPARATE from those defaults. Raising the shared retry
+# behaviour to a small budget would turn "the CP was 1 s slow" into a permanent startup failure
+# on the periodic refresh path, so the startup caller passes them explicitly instead
+# (`main._sync_config`, called with reason="startup").
+#
+# Budget arithmetic: 2 attempts x 8 domains x 0.8 s + 1 s backoff = 13.8 s worst case, measured
+# 13.98 s on this host (tests/unit/test_config_startup_budget.py prints it). NOTE the reason the
+# old path cost so much: Windows needs ~2.03 s to report ECONNREFUSED on a localhost port
+# (measured 2026-11-02), so one attempt cost 8 x 2.03 s = 16.2 s and three attempts plus backoff
+# landed at the observed 58.46 s. The 3 s httpx timeout was never the binding constraint.
+STARTUP_CONFIG_TIMEOUT_S = 0.8
+STARTUP_CONFIG_RETRIES = 2
+
 
 class DomainSyncResult(TypedDict):
     status: str
@@ -44,6 +64,47 @@ class SyncReport(TypedDict):
     revision: str
     refreshed: bool
     degraded: list[str]
+
+
+def _classify_transport_error(exc: BaseException) -> str:
+    """Name a transport failure for the operator log (no secrets, no untrusted body).
+
+    Why classify the exception instead of the elapsed time: Windows takes ~2.03 s to answer
+    ECONNREFUSED on a localhost port (measured 2026-11-02), so with a sub-second startup budget
+    the wait is cancelled *before* the OS reports anything — "it returned quickly" cannot mean
+    "nothing is listening".
+    """
+    if isinstance(exc, TimeoutError):
+        return "budget-exhausted"
+    if isinstance(exc, (httpx.ConnectTimeout, httpx.ReadTimeout, httpx.WriteTimeout, httpx.PoolTimeout)):
+        return "connect-timeout"
+    text = str(exc).lower()
+    if "refused" in text or "10061" in text:
+        return "refused"
+    if isinstance(exc, httpx.ConnectError):
+        return "connect-failed"
+    return "transport-error"
+
+
+def _sync_failure_verdict(report: SyncReport, error_kind: str) -> str:
+    """Turn per-domain statuses + the last transport error kind into one operator-facing verdict."""
+    statuses = {entry["status"] for entry in report.get("domains", {}).values()}
+    if "unauthorized" in statuses:
+        return "cp-rejected-service-token"
+    if "invalid_response" in statuses:
+        return "cp-returned-invalid-payload"
+    if statuses == {"unreachable"}:
+        return {
+            "refused": "cp-not-listening",
+            "connect-timeout": "cp-slow-or-hung",
+            # A sub-second budget cannot see the OS error, so "not started" and "hung" share this
+            # verdict; the log line right before it carries the per-domain budget that was spent.
+            "budget-exhausted": "cp-no-accept-within-budget",
+            "connect-failed": "cp-unreachable",
+        }.get(error_kind, "cp-unreachable")
+    if not statuses:
+        return "no-domains-fetched"
+    return "partial-failure"
 
 
 class ProviderLeaseError(RuntimeError):
@@ -87,12 +148,22 @@ class ConfigClient:
             "refreshed": False,
             "degraded": [],
         }
+        # PLAN-0632 D32-27 Step 1: last transport failure kind, for the operator log only.
+        # Reset per sync attempt so a verdict never describes a previous attempt.
+        self._last_transport_error_kind = ""
 
-    async def sync(self) -> SyncReport:
+    async def sync(self, timeout_s: float | None = None) -> SyncReport:
+        """Refresh all effective domains.
+
+        `timeout_s` caps ONE domain fetch. It is only used by the startup path (PLAN-0632
+        D32-27 Step 1); the default `None` keeps the shared per-request `timeout=3` in
+        `_fetch_effective` for the periodic refresh.
+        """
         # CFG-2: seed the staged snapshot from the current cache so that a
         # transient failure of a non-required domain keeps its last known-good
         # values. The old code replaced the cache wholesale, silently dropping
         # (e.g.) rag/embedding/agent-runtime settings on a single blip.
+        self._last_transport_error_kind = ""
         staged: dict[str, dict[str, str]] = {domain: dict(entries) for domain, entries in self._effective_cache.items()}
         domain_results: dict[str, DomainSyncResult] = {}
         revisions: list[str] = []
@@ -103,11 +174,11 @@ class ConfigClient:
         async with httpx.AsyncClient(trust_env=False) as client:
             headers = {"Authorization": f"Bearer {self.api_token}"}
             for domain in CONFIG_DOMAINS:
-                status, data, revision, source = await self._fetch_effective(
+                status, data, revision, source = await self._fetch_domain(
                     client,
                     domain,
                     headers,
-                    workspace_id=self.workspace_id,
+                    timeout_s,
                 )
                 domain_results[domain] = {
                     "status": status,
@@ -172,6 +243,39 @@ class ConfigClient:
         self._last_sync_report = report
         return report
 
+    async def _fetch_domain(
+        self,
+        client: httpx.AsyncClient,
+        domain: str,
+        headers: dict[str, str],
+        timeout_s: float | None,
+    ) -> tuple[str, dict[str, str] | None, str, str]:
+        """One domain fetch, optionally capped by the startup budget.
+
+        Why wrap instead of changing the request timeout: `timeout=3` in `_fetch_effective` is
+        the right default for the periodic refresh (a CP that is one second slow must be
+        retried, not declared dead), while startup needs a much smaller budget so a missing CP
+        cannot cost the user a minute. Wrapping keeps both honest without touching the default.
+
+        A hit budget is reported exactly like a transport failure ("unreachable"), so the
+        fail-closed -> degraded path downstream is unchanged.
+        """
+        if timeout_s is None:
+            return await self._fetch_effective(client, domain, headers, workspace_id=self.workspace_id)
+        try:
+            return await asyncio.wait_for(
+                self._fetch_effective(client, domain, headers, workspace_id=self.workspace_id),
+                timeout=timeout_s,
+            )
+        except TimeoutError:
+            self._last_transport_error_kind = "budget-exhausted"
+            logger.warning(
+                "ConfigClient: startup fetch budget exhausted domain={} budget={}s (counted as unreachable)",
+                domain,
+                timeout_s,
+            )
+            return "unreachable", None, "", ""
+
     async def _fetch_effective(
         self,
         client: httpx.AsyncClient,
@@ -193,9 +297,11 @@ class ConfigClient:
                 timeout=3,
             )
         except Exception as exc:
+            self._last_transport_error_kind = _classify_transport_error(exc)
             logger.warning(
-                "ConfigClient: failed to fetch effective domain={} status=unreachable error={}",
+                "ConfigClient: failed to fetch effective domain={} status=unreachable kind={} error={}",
                 domain,
+                self._last_transport_error_kind,
                 exc,
             )
             return "unreachable", None, "", ""
@@ -268,25 +374,69 @@ class ConfigClient:
         return hashlib.sha256(payload).hexdigest()[:16]
 
     async def sync_with_retry(self, max_retries: int = 3) -> SyncReport:
+        """Retry `sync()` up to `max_retries` attempts with the shared per-domain timeout.
+
+        This is the periodic-refresh entry point and it keeps the shared defaults on purpose:
+        `max_retries = 3` and the `timeout=3` request budget mean a CP that is momentarily slow
+        is retried instead of being declared dead. The startup path uses a deliberately separate
+        entry point (`sync_with_retry_budget`) so neither budget can drift into the other.
+        """
+        return await self._sync_attempts(max_retries, None)
+
+    async def sync_with_retry_budget(self, max_retries: int, timeout: float) -> SyncReport:
+        """PLAN-0632 D32-27 Step 1: startup entry point with an explicit per-domain budget.
+
+        Measured 2026-11-02: with the shared defaults an absent CP cost 58.46 s before the Agent
+        degraded (Windows needs ~2.03 s per refused localhost connect; 8 domains x 3 attempts);
+        with STARTUP_CONFIG_TIMEOUT_S / STARTUP_CONFIG_RETRIES it costs 13.97 s.
+
+        Failure semantics are identical to `sync_with_retry` — the caller still converges to
+        `degraded` (fail-closed), never "up with empty config".
+        """
+        return await self._sync_attempts(max_retries, timeout)
+
+    async def _sync_attempts(self, max_retries: int, timeout: float | None) -> SyncReport:
+        """Shared retry loop: `timeout=None` keeps the shared `timeout=3` request budget.
+
+        Every failed attempt logs the attempt index, that attempt's budget and elapsed time, the
+        cumulative elapsed time, and a verdict that separates "CP is not listening" from "CP is
+        slow or hung" (both look identical in the domain status, so the transport error kind and
+        the timing are the only signals an operator has).
+        """
+        started = time.monotonic()
         last_report = self._last_sync_report
         for attempt in range(max_retries):
+            attempt_started = time.monotonic()
             try:
-                last_report = await self.sync()
+                last_report = await self.sync(timeout_s=timeout)
                 if last_report["ok"]:
                     return last_report
             except Exception as e:
                 logger.warning(
-                    "ConfigClient: sync attempt %d/%d failed: %s",
+                    "ConfigClient: sync attempt {}/{} raised: {}",
                     attempt + 1,
                     max_retries,
                     e,
                 )
+            attempt_elapsed = time.monotonic() - attempt_started
+            logger.warning(
+                "ConfigClient: sync attempt {}/{} failed in {:.2f}s domainBudget={} cumulative={:.2f}s verdict={} statuses={}",
+                attempt + 1,
+                max_retries,
+                attempt_elapsed,
+                f"{timeout:.2f}s" if timeout is not None else "3s (shared default)",
+                time.monotonic() - started,
+                _sync_failure_verdict(last_report, self._last_transport_error_kind),
+                {domain: entry["status"] for domain, entry in last_report["domains"].items()},
+            )
             if attempt < max_retries - 1:
                 await asyncio.sleep(2**attempt)
         last_llm_domain = last_report["domains"].get("llm-provider")
         logger.error(
-            "ConfigClient: failed to sync after {} retries status={}",
+            "ConfigClient: failed to sync after {} attempts in {:.2f}s domainBudget={} status={}",
             max_retries,
+            time.monotonic() - started,
+            f"{timeout:.2f}s" if timeout is not None else "3s (shared default)",
             last_llm_domain["status"] if last_llm_domain else "unknown",
         )
         return last_report
