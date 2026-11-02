@@ -872,14 +872,21 @@ defineExpose({ clearDraft, insertMention });
                             v-for="cmd in slashCommands"
                             :key="cmd.key"
                             class="text-xs"
-                            :class="cmd.disabled ? 'text-muted-foreground/60' : ''"
                             :data-testid="`slash-command-${cmd.key.slice(1)}`"
                         >
-                            <span class="font-medium">{{ cmd.key }}</span>
-                            <span class="ml-2 text-muted-foreground">{{
-                                t(cmd.descriptionKey)
+                            <span class="font-medium" :class="cmd.disabled ? 'opacity-60' : ''">{{
+                                cmd.key
                             }}</span>
-                            <span v-if="cmd.disabled" class="ml-2 text-destructive/80">
+                            <span
+                                class="ml-2 text-muted-foreground"
+                                :class="cmd.disabled ? 'opacity-60' : ''"
+                                >{{ t(cmd.descriptionKey) }}</span
+                            >
+                            <span
+                                v-if="cmd.disabled"
+                                class="ml-2 text-destructive/80"
+                                :data-testid="`slash-command-reason-${cmd.key.slice(1)}`"
+                            >
                                 {{ t(commandReasonKey(cmd.reason)) }}
                             </span>
                         </li>
