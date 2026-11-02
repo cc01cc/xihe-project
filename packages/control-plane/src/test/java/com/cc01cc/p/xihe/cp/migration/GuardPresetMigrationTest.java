@@ -120,6 +120,25 @@ class GuardPresetMigrationTest {
     }
 
     @Test
+    void builtinGuardTemplateCarriesItsHookSubscription() throws SQLException {
+        // task-92 (D25-09): the template is the declaration source — without the hooks document the
+        // preset guard subscribes to nothing and its advice chain is a dead end.
+        List<String[]> templateRows = query("SELECT config_value FROM config WHERE layer = 'instance'"
+                + " AND domain = 'agent-templates' AND config_key = 'templates'");
+        assertEquals(1, templateRows.size());
+        com.fasterxml.jackson.databind.JsonNode template = parseJson(templateRows.getFirst()[0]).get(0);
+        com.fasterxml.jackson.databind.JsonNode hooks = template.path("hooks");
+        assertEquals(1, hooks.path("advisors").size(), "V98 seeds exactly one subscription entry");
+        assertEquals("guard", hooks.path("advisors").get(0).path("kind").asText(),
+                "kind must match GuardHookAdvisor.KIND");
+        assertEquals("approval.ask", hooks.path("advisors").get(0).path("on").get(0).asText(),
+                "on must hit HookAdvisorRegistry.ALLOWED_ACTION_CLASSES");
+        assertEquals(com.cc01cc.p.xihe.cp.entity.AgentPrincipal.BUILTIN_GUARD_PRESET_TEMPLATE_ID,
+                template.path("id").asText(),
+                "the seeded subscription belongs to the guard template the entity constant names");
+    }
+
+    @Test
     void presetIndexExistsForPresetLookups() throws SQLException {
         List<String[]> rows = query("SELECT indexname FROM pg_indexes WHERE schemaname = 'public'"
                 + " AND tablename = 'agent_principals' AND indexname = 'idx_agent_principals_preset'");

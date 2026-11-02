@@ -56,6 +56,8 @@ public class AgentPrincipal {
     /** PLAN-0625 (V95): USER = human-created; SYSTEM_PRESET = builtin guard preset. */
     public static final String ORIGIN_USER = "USER";
     public static final String ORIGIN_SYSTEM_PRESET = "SYSTEM_PRESET";
+    /** PLAN-0625 task-92: the guard template seeded in the instance agent-templates config (V95/V98). */
+    public static final String BUILTIN_GUARD_PRESET_TEMPLATE_ID = "00000000-0000-4000-8000-0000000000a2";
 
     @jakarta.persistence.Column(name = "origin", nullable = false, length = 16)
     private String origin = ORIGIN_USER;
