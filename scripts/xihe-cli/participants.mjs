@@ -15,7 +15,7 @@ const DEFAULT_TIMEOUT_MS = 10_000;
 
 const PRINCIPAL_KINDS = new Set(['AGENT', 'HUMAN']);
 const ROLES = new Set(['MEMBER', 'GUARD']);
-const WAKE_POLICIES = new Set(['ALL_MESSAGES', 'MENTION']);
+const WAKE_POLICIES = new Set(['ALL_MESSAGES', 'MENTION', 'SCHEDULE']);
 const RESPOND_POLICIES = new Set(['ALWAYS', 'WHEN_MENTIONED', 'JUDGE', 'MUTED']);
 
 function usageError(message) {
@@ -146,6 +146,28 @@ export async function updateParticipantPolicy({ apiBase, fetchImpl, token, optio
   if (wake) body.wakePolicy = wake;
   const respond = normalizeEnum(options['--respond'], RESPOND_POLICIES, '--respond');
   if (respond) body.respondPolicy = respond;
+
+  // PLAN-0624 M5 (V94): wake=SCHEDULE carries wakeConfig; switching back clears it.
+  const interval = parsePositiveInt(options['--interval'], '--interval');
+  const jitter = parsePositiveInt(options['--jitter'], '--jitter');
+  const maxConcurrent = parsePositiveInt(options['--max-concurrent'], '--max-concurrent');
+  if (wake === 'SCHEDULE') {
+    if (interval === undefined) {
+      throw usageError('--wake SCHEDULE requires --interval <seconds>.');
+    }
+    body.wakeConfig = { intervalSeconds: interval };
+    if (jitter !== undefined) body.wakeConfig.jitterSeconds = jitter;
+    if (maxConcurrent !== undefined) body.wakeConfig.maxConcurrent = maxConcurrent;
+  } else if (wake != null) {
+    // 回普通策略：显式清掉 wake_config（null 是显式清除，不是省略）。
+    body.wakeConfig = null;
+    if (interval !== undefined || jitter !== undefined || maxConcurrent !== undefined) {
+      throw usageError('--interval/--jitter/--max-concurrent only apply with --wake SCHEDULE.');
+    }
+  } else if (interval !== undefined || jitter !== undefined || maxConcurrent !== undefined) {
+    throw usageError('Provide --wake SCHEDULE when using --interval/--jitter/--max-concurrent.');
+  }
+
   if (Object.keys(body).length === 0) {
     throw usageError('Provide at least one of --wake / --respond.');
   }
@@ -157,6 +179,15 @@ export async function updateParticipantPolicy({ apiBase, fetchImpl, token, optio
   });
   expectSuccess(response, 'session participant policy update');
   return { kind: 'session-participant', action: 'policy', sessionId, participantId, participant: response.body };
+}
+
+function parsePositiveInt(value, flag) {
+  if (value === undefined) return undefined;
+  const text = String(value).trim();
+  if (!/^\d+$/.test(text) || Number(text) <= 0) {
+    throw usageError(`${flag} must be a positive integer.`);
+  }
+  return Number(text);
 }
 
 /**

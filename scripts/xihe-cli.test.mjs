@@ -3650,7 +3650,8 @@ test('session participants + chat send: contract shapes, code passthrough, and -
     const policy = await run(['session', 'participants', 'policy', '--session', 's-1', '--participant', 'part-1',
       '--wake', 'MENTION', '--respond', 'MUTED', '--json']);
     assert.equal(policy.exitCode, 0);
-    assert.deepEqual(state.lastPatchBody, { wakePolicy: 'MENTION', respondPolicy: 'MUTED' });
+    // 0624 M5: 切回普通 wake 时显式清 wake_config（null = 显式清除）。
+    assert.deepEqual(state.lastPatchBody, { wakePolicy: 'MENTION', respondPolicy: 'MUTED', wakeConfig: null });
 
     const emptyPolicy = await run(['session', 'participants', 'policy', '--session', 's-1', '--participant', 'part-1', '--json']);
     assert.equal(emptyPolicy.exitCode, 2);
@@ -3673,6 +3674,37 @@ test('session participants + chat send: contract shapes, code passthrough, and -
     assert.equal(forbidden.exitCode, 1);
     assert.equal(forbidden.error.code, 'PARTICIPANT_CAP_DENIED');
 
+    // PLAN-0624 M5: wake=SCHEDULE + wake_config（V94）
+    const schedule = await run(['session', 'participants', 'policy', '--session', 's-1', '--participant', 'part-1',
+      '--wake', 'SCHEDULE', '--interval', '30', '--jitter', '5', '--max-concurrent', '2', '--json']);
+    assert.equal(schedule.exitCode, 0, JSON.stringify(schedule.error));
+    assert.deepEqual(state.lastPatchBody, {
+      wakePolicy: 'SCHEDULE',
+      wakeConfig: { intervalSeconds: 30, jitterSeconds: 5, maxConcurrent: 2 },
+    });
+
+    const scheduleMin = await run(['session', 'participants', 'policy', '--session', 's-1', '--participant', 'part-1',
+      '--wake', 'schedule', '--interval', '60', '--json']);
+    assert.equal(scheduleMin.exitCode, 0);
+    assert.deepEqual(state.lastPatchBody, { wakePolicy: 'SCHEDULE', wakeConfig: { intervalSeconds: 60 } });
+
+    const scheduleNoInterval = await run(['session', 'participants', 'policy', '--session', 's-1',
+      '--participant', 'part-1', '--wake', 'SCHEDULE', '--json']);
+    assert.equal(scheduleNoInterval.exitCode, 2);
+    assert.equal(scheduleNoInterval.error.code, 'INVALID_ARGUMENT');
+
+    const backToMention = await run(['session', 'participants', 'policy', '--session', 's-1',
+      '--participant', 'part-1', '--wake', 'MENTION', '--json']);
+    assert.equal(backToMention.exitCode, 0);
+    assert.deepEqual(state.lastPatchBody, { wakePolicy: 'MENTION', wakeConfig: null });
+
+    const intervalWithoutSchedule = await run(['session', 'participants', 'policy', '--session', 's-1',
+      '--participant', 'part-1', '--respond', 'ALWAYS', '--interval', '10', '--json']);
+    assert.equal(intervalWithoutSchedule.exitCode, 2);
+
+    const badInterval = await run(['session', 'participants', 'policy', '--session', 's-1',
+      '--participant', 'part-1', '--wake', 'SCHEDULE', '--interval', '0', '--json']);
+    assert.equal(badInterval.exitCode, 2);
     const noContent = await run(['chat', 'send', '--session', 's-1', '--branch', 'b-1', '--content', ' ', '--json']);
     assert.equal(noContent.exitCode, 2);
   } finally {
