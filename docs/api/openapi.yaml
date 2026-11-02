@@ -129,6 +129,27 @@ paths:
         '403': { $ref: '#/components/responses/Problem' }
         '404': { $ref: '#/components/responses/Problem' }
         '409': { $ref: '#/components/responses/Problem' }
+  /api/v1/workspaces/{workspaceId}/agents/{principalId}/memories:
+    get:
+      operationId: listWorkspaceAgentMemories
+      summary: List one agent's active memory in this workspace (PLAN-0629 M1-4)
+      description: |
+        PLAN-0629 M1-4 (C): the read-only memory tab of the workspace agent dialog. Returns the
+        subject's `status='active'` memory rows scoped to exactly this `(principal, workspace)` pair
+        (soft-deleted rows excluded, candidates never listed), newest/pinned first. Read-only by
+        design: writes belong to M1-5 and require `MEMORY_WRITE` plus the approval gate.
+        Authorization reuses the workspace agent list gate — a caller who cannot see the principal in
+        this workspace gets the same 404 as an unknown principal (no existence leak).
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: workspaceId, required: true, schema: { type: string, format: uuid } }
+        - { in: path, name: principalId, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: 'Active memory rows (frozen envelope {memories:[…]})', content: { application/json: { schema: { $ref: '#/components/schemas/WorkspaceAgentMemoryListResponse' } } } }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { description: 'AGENT_PRINCIPAL_NOT_FOUND (also for a principal the caller cannot see), content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
   /api/v1/workspaces/{workspaceId}/members:
     get:
       operationId: listWorkspaceMembers
@@ -3511,6 +3532,8 @@ components:
     WorkspaceAgentPermission: { type: object, additionalProperties: false, required: [actionClass], properties: { actionClass: { type: string }, resource: { type: string, default: '*' } } }
     WorkspaceAgentView: { type: object, required: [principalId, name, createdAt, source, permissionsSnapshot, bound, disabled], properties: { principalId: { type: string, format: uuid }, name: { type: string }, templateId: { type: [string, 'null'] }, templateName: { type: [string, 'null'] }, createdAt: { type: string, format: date-time }, source: { type: string, enum: [workspace, personal, instance], description: 'PLAN-0622: the sharing tier that makes this principal usable in this Workspace.' }, bound: { type: boolean, description: 'D26: whether the principal is bound to this Workspace. false = listed here (personal/instance are visible without a binding) but a Session still needs a binding before it is usable.' }, disabled: { type: boolean, description: 'D27: the principal is disabled (disabledAt set); the UI must block selection and show the disabled badge.' }, hooks: { type: [object, 'null'], description: 'PLAN-0625 V96/D25-09: the subscription document {advisors:[{kind,on:[actionClass]}]}, copied from the template at creation and mutable through PATCH /api/v1/agent-principals/{principalId}; null = no subscriptions (never an array — Gap I).' }, contextPolicy: { type: [object, 'null'], description: 'PLAN-0629 M1 (D29-21): the subject memory policy {memory:{enabled,writeMode,types}}; null = no policy (memory off). The workspace agent list carries it so the UI can show/manage memory.' }, permissionsSnapshot: { type: array, items: { $ref: '#/components/schemas/WorkspaceAgentPermission' }, description: 'Frozen cap stored on the Workspace binding; empty for personal/instance sources, whose cap resolves per run.' } } }
     WorkspaceAgentListResponse: { type: object, required: [agents], properties: { agents: { type: array, items: { $ref: '#/components/schemas/WorkspaceAgentView' } } } }
+    WorkspaceAgentMemoryView: { type: object, required: [id, type, pinned, updatedAt, content], properties: { id: { type: string, format: uuid }, type: { type: string, enum: [profile, fact] }, pinned: { type: boolean, description: 'Only the ui/cli channels can pin (V99 CHECK); pinned rows are injected first.' }, updatedAt: { type: string, format: date-time }, content: { type: string, description: 'Stored (normalized) content; the UI truncates for display.' } } }
+    WorkspaceAgentMemoryListResponse: { type: object, required: [memories], properties: { memories: { type: array, items: { $ref: '#/components/schemas/WorkspaceAgentMemoryView' } } } }
     AgentModelRef: { type: object, additionalProperties: false, required: [provider, model], properties: { provider: { type: string, minLength: 1 }, model: { type: string, minLength: 1 } } }
     AgentPrincipalCreateRequest: { type: object, additionalProperties: false, required: [name], properties: { name: { type: string, minLength: 1 }, templateId: { type: [string, 'null'], format: uuid }, scope: { type: string, enum: [PERSONAL, WORKSPACE, INSTANCE], default: WORKSPACE, description: 'PLAN-0622 tier; each tier has its own creation action (CREATE_OWN_AGENT / MANAGE_WORKSPACE_AGENTS / CREATE_ACCOUNT).' }, defaultModelProvider: { type: [string, 'null'], description: 'Model intent only; the principal never holds a provider connection.' }, defaultModelName: { type: [string, 'null'] }, allowedModels: { type: [array, 'null'], items: { $ref: '#/components/schemas/AgentModelRef' }, description: 'null = unrestricted.' }, hooks: { type: [object, 'null'], description: 'PLAN-0625 M2 (D25-12/14): hook subscriptions {advisors:[{kind,on:[actionClass]}]}; on must hit the frozen action-class whitelist (today: approval.ask) or the write is rejected 400. A preset guard (origin=SYSTEM_PRESET) refuses subscription changes with 403 GUARD_HOOKS_IMMUTABLE.' } } }
     AgentPrincipalCreateView: { type: object, required: [principalId, createdAt, scope, ownerUserId, defaultModelProvider, defaultModelName, allowedModels], properties: { principalId: { type: string, format: uuid }, templateId: { type: [string, 'null'], format: uuid }, templateName: { type: [string, 'null'] }, scope: { type: string, enum: [PERSONAL, WORKSPACE, INSTANCE] }, ownerUserId: { type: [string, 'null'], format: uuid, description: 'The PERSONAL owner; null for WORKSPACE/INSTANCE.' }, defaultModelProvider: { type: [string, 'null'] }, defaultModelName: { type: [string, 'null'] }, allowedModels: { type: [array, 'null'], items: { $ref: '#/components/schemas/AgentModelRef' } }, createdAt: { type: string, format: date-time }, hooks: { type: [object, 'null'], description: 'PLAN-0625 M2: the stored subscription document {advisors:[{kind,on:[actionClass]}]} (null = none) — serialised as plain JSON (Gap J).' }, contextPolicy: { type: [object, 'null'], description: 'PLAN-0629 M1 (D29-21): the memory policy of the new principal (null = off). A create never sets it — the subject starts with memory off — but the view carries it so the caller sees the state immediately.' } } }

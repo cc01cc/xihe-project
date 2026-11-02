@@ -33,6 +33,7 @@ spec/
 |-- security/            # 认证、授权、审批、能力策略、审计
 |-- workspace/           # 生命周期、Sandbox、Checkpoint、导入、事件
 |-- configuration/       # env/config 生效链和凭证
+|-- fixtures/            # 跨语言契约样例（PLAN-0629 M1-4 起）：被两侧测试共读的 JSON 样例表；**改 fixture = 改契约**，必须同批更新两侧测试与契约文档
 |-- protocol/            # HTTP、事件流、MCP、内部消息
 `-- data/                # 领域对象、事件、读模型、账本边界
 ```

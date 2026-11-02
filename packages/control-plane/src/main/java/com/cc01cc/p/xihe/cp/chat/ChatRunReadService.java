@@ -198,7 +198,9 @@ public class ChatRunReadService {
                         run.getConnectionRevision(), run.getUserMessageId(),
                         new ContextTemplateSourceService.RunContext(
                         run.getSessionId(), run.getWorkspaceId(), run.getUserId(),
-                        run.getContextTemplateSnapshot()), continuationDescriptor(run)));
+                        run.getContextTemplateSnapshot(),
+                        run.getAgentPrincipalId() == null ? null : run.getAgentPrincipalId().toString()),
+                        continuationDescriptor(run)));
     }
 
     record ExecutionRun(String provider, String model, String providerConnectionId, Long connectionRevision,

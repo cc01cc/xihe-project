@@ -17,6 +17,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 import java.util.regex.Pattern;
 
 /** Resolves bounded, path-only tree components from the admission-frozen template snapshot. */
@@ -30,13 +31,16 @@ public class ContextTemplateSourceService {
     private final RuntimeContextSourceClient runtimeClient;
     private final PolicyEngine policyEngine;
     private final ObjectMapper objectMapper;
+    private final AgentMemoryInjectionService agentMemoryInjectionService;
 
     public ContextTemplateSourceService(RuntimeContextSourceClient runtimeClient,
                                         PolicyEngine policyEngine,
-                                        ObjectMapper objectMapper) {
+                                        ObjectMapper objectMapper,
+                                        AgentMemoryInjectionService agentMemoryInjectionService) {
         this.runtimeClient = runtimeClient;
         this.policyEngine = policyEngine;
         this.objectMapper = objectMapper;
+        this.agentMemoryInjectionService = agentMemoryInjectionService;
     }
 
     public Map<String, Object> resolve(RunContext run, Session session) {
@@ -57,17 +61,55 @@ public class ContextTemplateSourceService {
         for (JsonNode component : components) {
             String type = component.path("type").asText();
             if (!component.path("enabled").asBoolean(false)
-                    || !("workspace_tree".equals(type) || "agents_md_tree".equals(type))) {
+                    || !("workspace_tree".equals(type) || "agents_md_tree".equals(type)
+                    || "agent_memory".equals(type))) {
                 continue;
             }
             String instanceId = component.path("instanceId").asText();
             if (instanceId.isBlank()) {
                 continue;
             }
+            if ("agent_memory".equals(type)) {
+                // PLAN-0629 M1-4: the memory snapshot is read per run and never cached across runs.
+                result.put(instanceId, resolveMemory(component.path("config"), run, validBinding));
+                continue;
+            }
             result.put(instanceId, resolveTree(
                     component.path("config"), type, run, session, validBinding, remainingRequests));
         }
         return result;
+    }
+
+    /**
+     * PLAN-0629 M1-4 (D29-20): the memory component's per-run source document.
+     *
+     * <p>Reads exactly one {@code (principal, workspace)} pair — never a union, never a fallback to
+     * "any workspace of this principal" — and reports failure explicitly instead of injecting an empty
+     * block that would look like "this subject has no memory".</p>
+     */
+    private Map<String, Object> resolveMemory(JsonNode config, RunContext run, boolean validBinding) {
+        int maxEntries = bounded(config.path("maxEntries").asInt(AgentMemoryInjectionService.DEFAULT_MAX_ENTRIES),
+                AgentMemoryInjectionService.MAX_ENTRIES_UPPER, AgentMemoryInjectionService.DEFAULT_MAX_ENTRIES);
+        int maxTokens = bounded(config.path("maxTokens").asInt(AgentMemoryInjectionService.DEFAULT_MAX_TOKENS),
+                AgentMemoryInjectionService.MAX_TOKENS_UPPER, AgentMemoryInjectionService.DEFAULT_MAX_TOKENS);
+        if (!validBinding) {
+            return AgentMemoryInjectionService.unavailable(maxEntries, maxTokens,
+                    "invalid_session_workspace_binding");
+        }
+        String principal = run.agentPrincipalId();
+        if (principal == null || principal.isBlank()) {
+            return AgentMemoryInjectionService.unavailable(maxEntries, maxTokens,
+                    AgentMemoryInjectionService.DIAGNOSTIC_MISSING_PRINCIPAL);
+        }
+        UUID principalId;
+        UUID workspaceId;
+        try {
+            principalId = UUID.fromString(principal);
+            workspaceId = UUID.fromString(run.workspaceId());
+        } catch (IllegalArgumentException e) {
+            return AgentMemoryInjectionService.unavailable(maxEntries, maxTokens, "invalid_agent_principal");
+        }
+        return agentMemoryInjectionService.snapshot(principalId, workspaceId, maxEntries, maxTokens);
     }
 
     private Map<String, Object> resolveTree(JsonNode config, String type, RunContext run, Session session,
@@ -268,8 +310,13 @@ public class ContextTemplateSourceService {
     }
 
     /** Immutable run identifiers and frozen snapshot; consumers must treat the JsonNode as read-only. */
+    /**
+     * @param agentPrincipalId the subject whose memory may be injected (null for runs without a bound
+     *     principal — the memory component then reports {@code missing_agent_principal} and injects
+     *     nothing rather than falling back to a wider scope)
+     */
     public record RunContext(String sessionId, String workspaceId, String userId,
-                             JsonNode contextTemplateSnapshot) {
+                             JsonNode contextTemplateSnapshot, String agentPrincipalId) {
     }
 
     private record Directory(String path, int depth) { }

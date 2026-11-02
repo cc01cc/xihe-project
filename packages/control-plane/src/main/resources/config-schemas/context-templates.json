@@ -50,7 +50,7 @@
           "enum": [
             "text", "system_prompt", "root_agents_md", "conversation_history",
             "tool_history", "tool_definitions", "workspace_tree", "agents_md_tree",
-            "runtime_environment"
+            "runtime_environment", "agent_memory"
           ]
         },
         "enabled": { "type": "boolean" },
@@ -65,8 +65,19 @@
         { "if": { "properties": { "type": { "const": "tool_definitions" } }, "required": ["type"] }, "then": { "properties": { "config": { "$ref": "#/$defs/toolDefinitionsConfig" } } } },
         { "if": { "properties": { "type": { "const": "workspace_tree" } }, "required": ["type"] }, "then": { "properties": { "config": { "$ref": "#/$defs/workspaceTreeConfig" } } } },
         { "if": { "properties": { "type": { "const": "agents_md_tree" } }, "required": ["type"] }, "then": { "properties": { "config": { "$ref": "#/$defs/agentsMdTreeConfig" } } } },
-        { "if": { "properties": { "type": { "const": "runtime_environment" } }, "required": ["type"] }, "then": { "properties": { "config": { "$ref": "#/$defs/runtimeEnvironmentConfig" } } } }
+        { "if": { "properties": { "type": { "const": "runtime_environment" } }, "required": ["type"] }, "then": { "properties": { "config": { "$ref": "#/$defs/runtimeEnvironmentConfig" } } } },
+        { "if": { "properties": { "type": { "const": "agent_memory" } }, "required": ["type"] }, "then": { "properties": { "config": { "$ref": "#/$defs/memoryConfig" } } } }
       ],
+      "additionalProperties": false
+    },
+    "memoryConfig": {
+      "description": "PLAN-0629 D29-20: the subject's active memory (pinned first, then profile, then freshest) as a system-slot block. maxEntries and maxTokens are both hard caps; the Agent additionally charges the run's injection ledger (0627 D27-22 memory floor 2% / cap 4%).",
+      "type": "object",
+      "required": ["maxEntries", "maxTokens"],
+      "properties": {
+        "maxEntries": { "type": "integer", "minimum": 1, "maximum": 500 },
+        "maxTokens": { "type": "integer", "minimum": 1, "maximum": 100000 }
+      },
       "additionalProperties": false
     },
     "textConfig": {

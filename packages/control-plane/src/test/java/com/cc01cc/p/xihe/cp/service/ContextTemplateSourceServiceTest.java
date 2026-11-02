@@ -38,6 +38,7 @@ class ContextTemplateSourceServiceTest {
     private final RuntimeContextSourceClient runtime = mock(RuntimeContextSourceClient.class);
     private final PolicyEngine policy = mock(PolicyEngine.class);
     private final ObjectMapper mapper = new ObjectMapper();
+    private final AgentMemoryInjectionService memoryInjection = mock(AgentMemoryInjectionService.class);
 
     @Test
     void listsOnlySafeFilteredPathsAndNeverFollowsSymlinks() throws Exception {
@@ -138,11 +139,11 @@ class ContextTemplateSourceServiceTest {
                 + "{\"instanceId\":\"" + secondId + "\",\"type\":\"workspace_tree\",\"enabled\":true,"
                 + "\"config\":{\"root\":\"session_workspace\",\"maxDepth\":2,\"includeFiles\":true,\"maxEntries\":2000}}]}}";
         ContextTemplateSourceService.RunContext run = new ContextTemplateSourceService.RunContext(
-                SESSION_ID, WORKSPACE, USER, mapper.readTree(snapshot));
+                SESSION_ID, WORKSPACE, USER, mapper.readTree(snapshot), null);
         Session session = new Session(WORKSPACE, USER, "bounded tree");
         session.setId(UUID.fromString(SESSION_ID));
 
-        Map<String, Object> sources = new ContextTemplateSourceService(runtime, policy, mapper).resolve(run, session);
+        Map<String, Object> sources = new ContextTemplateSourceService(runtime, policy, mapper, memoryInjection).resolve(run, session);
 
         assertEquals(2, sources.size());
         assertEquals("truncated", ((Map<?, ?>) sources.get(firstId)).get("status"));
@@ -154,10 +155,10 @@ class ContextTemplateSourceServiceTest {
         String snapshot = "{\"template\":{\"components\":[{\"instanceId\":\"component-1\","
                 + "\"type\":\"" + type + "\",\"enabled\":true,\"config\":" + config + "}]}}";
         ContextTemplateSourceService.RunContext run = new ContextTemplateSourceService.RunContext(
-                SESSION_ID, WORKSPACE, USER, mapper.readTree(snapshot));
+                SESSION_ID, WORKSPACE, USER, mapper.readTree(snapshot), null);
         Session session = new Session(WORKSPACE, USER, "tree test");
         session.setId(UUID.fromString(SESSION_ID));
-        return (Map<String, Object>) new ContextTemplateSourceService(runtime, policy, mapper)
+        return (Map<String, Object>) new ContextTemplateSourceService(runtime, policy, mapper, memoryInjection)
                 .resolve(run, session).get("component-1");
     }
 

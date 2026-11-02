@@ -48,6 +48,10 @@ class ChatRunContext:
     template_snapshot: dict[str, Any]
     agent_context: AgentContext
     component_sources: dict[str, Any] = field(default_factory=dict)
+    #: PLAN-0629 M1-4 / 0627 D27-22: the run-scoped injection ledger. One per ChatRun; the chat runner
+    #: may seed it with the real context window, otherwise `context/builder.py` creates it on demand so
+    #: every eager source (memory; skills next) and the JIT nested source charge the SAME pool.
+    injection_ledger: Any = None
 
     @classmethod
     def from_request(cls, data: dict[str, Any], agent_context: AgentContext) -> "ChatRunContext":

@@ -4,6 +4,8 @@ import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.config.ProblemDetailsHandler;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceAgent;
+import com.cc01cc.p.xihe.cp.entity.AgentMemory;
+import com.cc01cc.p.xihe.cp.service.AgentMemoryService;
 import com.cc01cc.p.xihe.cp.service.AgentPrincipalService;
 import com.cc01cc.p.xihe.cp.util.JacksonNodeExit;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -29,10 +31,14 @@ import java.util.UUID;
 public class WorkspaceAgentController {
 
     private final AgentPrincipalService agentPrincipalService;
+    private final AgentMemoryService agentMemoryService;
     private final ObjectMapper objectMapper;
 
-    public WorkspaceAgentController(AgentPrincipalService agentPrincipalService, ObjectMapper objectMapper) {
+    public WorkspaceAgentController(AgentPrincipalService agentPrincipalService,
+                                    AgentMemoryService agentMemoryService,
+                                    ObjectMapper objectMapper) {
         this.agentPrincipalService = agentPrincipalService;
+        this.agentMemoryService = agentMemoryService;
         this.objectMapper = objectMapper;
     }
 
@@ -50,6 +56,46 @@ public class WorkspaceAgentController {
         } catch (CpApiException e) {
             return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
         }
+    }
+
+    /**
+     * PLAN-0629 M1-4 (C): the read-only memory tab of the workspace agent dialog.
+     *
+     * <p>Authorization reuses the list gate: a caller who cannot see the principal in this workspace
+     * gets the same 404 as a principal that does not exist (no existence leak), and the read is scoped
+     * to exactly this {@code (principal, workspace)} pair. Read-only by design — writes belong to M1-5
+     * and go through the approval gate ({@code MEMORY_WRITE}).</p>
+     */
+    @PreAuthorize("isAuthenticated()")
+    @GetMapping("/{principalId}/memories")
+    public ResponseEntity<?> memories(@PathVariable String workspaceId, @PathVariable String principalId) {
+        try {
+            UUID workspace = parseUuid(workspaceId);
+            UUID principal = parseUuid(principalId);
+            boolean visible = agentPrincipalService.listWorkspaceAgents(requireActor(), workspace).stream()
+                    .anyMatch(view -> view.principalId().equals(principal));
+            if (!visible) {
+                return ProblemDetailsHandler.problemResponse(HttpStatus.NOT_FOUND,
+                        "AGENT_PRINCIPAL_NOT_FOUND", "Agent principal not found");
+            }
+            List<Map<String, Object>> rows = agentMemoryService.activeMemories(principal, workspace).stream()
+                    .map(this::toMemoryView).toList();
+            Map<String, Object> response = new LinkedHashMap<>();
+            response.put("memories", rows);
+            return ResponseEntity.ok(response);
+        } catch (CpApiException e) {
+            return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
+        }
+    }
+
+    private Map<String, Object> toMemoryView(AgentMemory memory) {
+        Map<String, Object> view = new LinkedHashMap<>();
+        view.put("id", memory.getId().toString());
+        view.put("type", memory.getType());
+        view.put("pinned", memory.isPinned());
+        view.put("updatedAt", memory.getUpdatedAt() == null ? null : memory.getUpdatedAt().toString());
+        view.put("content", memory.getContent());
+        return view;
     }
 
     @PreAuthorize("isAuthenticated()")

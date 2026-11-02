@@ -1,0 +1,16 @@
+{
+  "$comment": "PLAN-0629 M1-4 cross-language contract: the memory token estimate must be ONE rule on both sides. CP (AgentMemoryInjectionService.estimateTokens) decides how many entries fit into a component's maxTokens; the Agent (context/injection_budget.conservative_token_count) decides how much the run ledger will charge. If the two drift, CP hands over more text than the ledger can pay for. Both test suites read THIS file, so the rule is pinned by machine, not by comments.",
+  "rule": "tokens(text) = 0 if text == '' else max(1, floor(len(text) / 2)), where len(text) counts Unicode code points (Python: len(str); Java: String.codePointCount(0, length), because String.length() counts UTF-16 units and would double a non-BMP character). Integer division of a non-negative operand agrees between Python // and Java /.",
+  "cases": [
+    { "input": "", "tokens": 0 },
+    { "input": "a", "tokens": 1 },
+    { "input": "ab", "tokens": 1 },
+    { "input": "abc", "tokens": 1 },
+    { "input": "abcd", "tokens": 2 },
+    { "input": "abcde", "tokens": 2 },
+    { "input": "hello world", "tokens": 5 },
+    { "input": "记忆策略", "tokens": 2 },
+    { "input": "0123456789", "tokens": 5 },
+    { "input": "01234567890123456789012345678901234567890123456789", "tokens": 25 }
+  ]
+}
