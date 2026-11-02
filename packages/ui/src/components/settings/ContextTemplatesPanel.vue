@@ -39,6 +39,10 @@ const sourceInput = ref<HTMLTextAreaElement | null>(null);
 const palette = [
     "user_input",
     "agent_instructions",
+    // PLAN-0632 Gate G-0: model-visible context blocks. Empty until PLAN-0628 (skills listing)
+    // and PLAN-0629 (memory) produce content; seeding them here keeps authoring truthful.
+    "skill_catalog",
+    "agent_memory",
     "model",
     "conversation_history",
     "tools",

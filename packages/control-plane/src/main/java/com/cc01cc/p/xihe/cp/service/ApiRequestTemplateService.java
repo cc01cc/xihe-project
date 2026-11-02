@@ -129,9 +129,13 @@ public class ApiRequestTemplateService {
                 templates = visible;
             }
             for (JsonNode builtin : builtins()) {
+                // PLAN-0632 G-0: a built-in id now carries more than one immutable revision, so the
+                // "already present?" test must be per (id, version). Dedupe by id alone would hide the
+                // newer seed from the editor as soon as any client round-trips an older revision.
                 boolean exists = false;
                 for (JsonNode item : templates) {
-                    exists |= item.path("id").equals(builtin.path("id"));
+                    exists |= item.path("id").equals(builtin.path("id"))
+                            && item.path("version").asInt() == builtin.path("version").asInt();
                 }
                 if (!exists) {
                     templates.add(builtin);
@@ -680,6 +684,15 @@ public class ApiRequestTemplateService {
         return UUID.nameUUIDFromBytes((DOMAIN + ":" + type + "@" + version).getBytes(StandardCharsets.UTF_8));
     }
 
+    /**
+     * PLAN-0632 Gate G-0: one built-in seed per (chat apiType, revision). Revision 1 is FROZEN
+     * byte-for-byte — it is what every Session/connection pinned before G-0 resolves to, so changing
+     * it in place would silently rewrite a published revision (and break
+     * {@code API_REQUEST_TEMPLATE_REVISION_IMMUTABLE} equality checks against stored copies).
+     * Revision 2 is the current seed and carries the two context-block slots. Existing pins therefore
+     * keep working unchanged and simply do not carry the new blocks — upgrading does NOT retro-fit a
+     * slot into an already published template.
+     */
     public List<JsonNode> builtins() {
         List<JsonNode> result = new ArrayList<>();
         for (Map<String, Object> type : types.list()) {
@@ -688,19 +701,45 @@ public class ApiRequestTemplateService {
             }
             String id = type.get("apiTypeId").toString();
             int version = ((Number) type.get("version")).intValue();
-            String body;
-            if (id.equals("mimo-responses")) {
-                body = "{\"model\":\"${xh.model}\",\"input\":[\"${xh.conversation_history}\",{\"role\":\"user\",\"content\":\"${xh.user_input}\"}],\"instructions\":\"${xh.agent_instructions}\",\"tools\":[\"${xh.tools}\"],\"stream\":true}";
-            } else if (id.equals("anthropic-messages")) {
-                body = "{\"model\":\"${xh.model}\",\"system\":\"${xh.agent_instructions}\",\"messages\":[\"${xh.conversation_history}\",{\"role\":\"user\",\"content\":\"${xh.user_input}\"}],\"tools\":[\"${xh.tools}\"],\"max_tokens\":4096,\"stream\":true}";
-            } else {
-                body = "{\"model\":\"${xh.model}\",\"messages\":[{\"role\":\"system\",\"content\":\"${xh.agent_instructions}\"},\"${xh.conversation_history}\",{\"role\":\"user\",\"content\":\"${xh.user_input}\"}],\"tools\":[\"${xh.tools}\"],\"stream\":true}";
-            }
-            result.add(json.createObjectNode().put("id", builtinId(id, version).toString()).put("version", 1)
-                    .put("name", id + " default").put("description", "Built-in API Request Template")
-                    .put("apiTypeId", id).put("apiTypeVersion", version).put("bodySource", body).put("status", "published"));
+            result.add(builtin(id, version, 1, id + " default", legacyBody(id)));
+            result.add(builtin(id, version, 2, id + " default v2", contextBody(id)));
         }
         return List.copyOf(result);
+    }
+
+    /** Revision 1 (frozen): the pre-G-0 seed, no context-block slots. */
+    private String legacyBody(String id) {
+        if (id.equals("mimo-responses")) {
+            return "{\"model\":\"${xh.model}\",\"input\":[\"${xh.conversation_history}\",{\"role\":\"user\",\"content\":\"${xh.user_input}\"}],\"instructions\":\"${xh.agent_instructions}\",\"tools\":[\"${xh.tools}\"],\"stream\":true}";
+        } else if (id.equals("anthropic-messages")) {
+            return "{\"model\":\"${xh.model}\",\"system\":\"${xh.agent_instructions}\",\"messages\":[\"${xh.conversation_history}\",{\"role\":\"user\",\"content\":\"${xh.user_input}\"}],\"tools\":[\"${xh.tools}\"],\"max_tokens\":4096,\"stream\":true}";
+        } else {
+            return "{\"model\":\"${xh.model}\",\"messages\":[{\"role\":\"system\",\"content\":\"${xh.agent_instructions}\"},\"${xh.conversation_history}\",{\"role\":\"user\",\"content\":\"${xh.user_input}\"}],\"tools\":[\"${xh.tools}\"],\"stream\":true}";
+        }
+    }
+
+    /**
+     * Revision 2 (current seed): the same shapes with {@code ${xh.skill_catalog}} and
+     * {@code ${xh.agent_memory}} appended to the instruction block.
+     *
+     * They are JOINED into the existing instruction string rather than emitted as their own messages
+     * on purpose: both slots render empty until PLAN-0628/0629 land, and a provider message whose
+     * content is the empty string is rejected by some upstreams, while trailing newlines are harmless.
+     */
+    private String contextBody(String id) {
+        if (id.equals("mimo-responses")) {
+            return "{\"model\":\"${xh.model}\",\"input\":[\"${xh.conversation_history}\",{\"role\":\"user\",\"content\":\"${xh.user_input}\"}],\"instructions\":\"${xh.agent_instructions}\\n\\n${xh.skill_catalog}\\n\\n${xh.agent_memory}\",\"tools\":[\"${xh.tools}\"],\"stream\":true}";
+        } else if (id.equals("anthropic-messages")) {
+            return "{\"model\":\"${xh.model}\",\"system\":\"${xh.agent_instructions}\\n\\n${xh.skill_catalog}\\n\\n${xh.agent_memory}\",\"messages\":[\"${xh.conversation_history}\",{\"role\":\"user\",\"content\":\"${xh.user_input}\"}],\"tools\":[\"${xh.tools}\"],\"max_tokens\":4096,\"stream\":true}";
+        } else {
+            return "{\"model\":\"${xh.model}\",\"messages\":[{\"role\":\"system\",\"content\":\"${xh.agent_instructions}\\n\\n${xh.skill_catalog}\\n\\n${xh.agent_memory}\"},\"${xh.conversation_history}\",{\"role\":\"user\",\"content\":\"${xh.user_input}\"}],\"tools\":[\"${xh.tools}\"],\"stream\":true}";
+        }
+    }
+
+    private ObjectNode builtin(String id, int apiTypeVersion, int revision, String name, String body) {
+        return json.createObjectNode().put("id", builtinId(id, apiTypeVersion).toString()).put("version", revision)
+                .put("name", name).put("description", "Built-in API Request Template")
+                .put("apiTypeId", id).put("apiTypeVersion", apiTypeVersion).put("bodySource", body).put("status", "published");
     }
 
     private JsonNode parse(String value) {

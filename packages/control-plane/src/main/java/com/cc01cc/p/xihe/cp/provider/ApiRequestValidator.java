@@ -17,7 +17,20 @@ import java.util.regex.Pattern;
 /** Independent, non-mutating publish/pre-dispatch validation. */
 @Service
 public class ApiRequestValidator {
-    private static final Set<String> SCALARS = Set.of("user_input", "agent_instructions", "model");
+    /**
+     * PLAN-0632 Gate G-0: scalar slots usable anywhere except the tools array. This set mirrors the
+     * Agent registry ({@code xihe_agent.llm.api_request.VARIABLES}) and the shared contract fixture
+     * {@code spec/fixtures/xh-variables.json}; both sides test against that fixture, so adding a slot
+     * on one side only fails a suite instead of silently diverging.
+     *
+     * {@code skill_catalog} (PLAN-0628) and {@code agent_memory} (PLAN-0629) are declared before their
+     * producers exist: the Agent supplies an empty string until then, and a *missing* value still fails
+     * at render time. Declaring them here is what lets a template be authored and published at all.
+     */
+    // Package-private so ApiRequestXhVariableFixtureTest can assert set equality against the shared
+    // fixture; a CP-only slot must fail a test, not silently become authorable-but-unrenderable.
+    static final Set<String> SCALARS = Set.of(
+            "user_input", "agent_instructions", "skill_catalog", "agent_memory", "model");
     private final ObjectMapper strict = new ObjectMapper(JsonFactory.builder()
             .enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION).build());
     private final ApiInputTypeService types;

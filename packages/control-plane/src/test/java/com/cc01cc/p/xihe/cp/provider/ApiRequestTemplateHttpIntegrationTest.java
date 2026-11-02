@@ -45,6 +45,7 @@ class ApiRequestTemplateHttpIntegrationTest extends AbstractIntegrationTest {
     @Autowired private SessionRepository sessions;
     @Autowired private com.cc01cc.p.xihe.cp.repository.ProviderConnectionRepository connections;
     @Autowired private ApiRequestTemplateService templates;
+    @Autowired private ApiRequestValidator apiRequestValidator;
     @Autowired private ProviderCredentialLeaseService leases;
     @Autowired private org.springframework.jdbc.core.JdbcTemplate jdbc;
     @Autowired private ProviderCatalogService catalog;
@@ -94,12 +95,36 @@ class ApiRequestTemplateHttpIntegrationTest extends AbstractIntegrationTest {
         var builtin = send("GET", "/api/v1/config/api-request-templates?layer=instance", null);
         assertEquals(200, builtin.statusCode());
         JsonNode definitions = json.readTree(json.readTree(builtin.body()).path("templates").asText());
-        // No hard-coded total: ApiRequestTemplateService.builtins() emits one template per
-        // chat-operation entry of the SAME classpath registry the service loads — deriving
-        // the expectation from that file keeps this test green for the next apiType.
-        assertEquals(builtinChatApiTypeCount(), definitions.size());
+        // No hard-coded total: ApiRequestTemplateService.builtins() emits TWO immutable revisions per
+        // chat-operation entry of the SAME classpath registry the service loads — v1 is the frozen
+        // pre-PLAN-0632 seed (no context slots), v2 is the current seed carrying ${xh.skill_catalog}
+        // and ${xh.agent_memory}. Deriving the expectation from that file keeps this green for the
+        // next apiType.
+        assertEquals(builtinChatApiTypeCount() * 2, definitions.size());
         assertTrue(definitions.toString().contains("dashscope-generation"),
                 "every chat apiType (incl. PLAN-0624 dashscope-generation) ships a built-in template");
+        // PLAN-0632 G-0: v1 must stay slot-free, v2 must carry both slots, and every seeded body must
+        // pass the independent publish validator — a seed nobody can publish would only surface as a
+        // 400 for whoever pinned it.
+        java.util.Map<String, Integer> revisionsSeen = new java.util.HashMap<>();
+        for (JsonNode definition : definitions) {
+            String type = definition.path("apiTypeId").asText();
+            int apiTypeVersion = definition.path("apiTypeVersion").asInt();
+            int revision = definition.path("version").asInt();
+            String bodySource = definition.path("bodySource").asText();
+            revisionsSeen.merge(type, 1, Integer::sum);
+            assertTrue(apiRequestValidator.validate(type, apiTypeVersion, bodySource).valid(),
+                    "built-in seed must be publishable: " + type + "@" + apiTypeVersion + " v" + revision);
+            if (revision == 1) {
+                assertFalse(bodySource.contains("${xh.skill_catalog}") || bodySource.contains("${xh.agent_memory}"),
+                        "revision 1 is frozen: it must never gain the G-0 slots");
+            } else {
+                assertEquals(2, revision, "only revisions 1 and 2 exist for a built-in template");
+                assertTrue(bodySource.contains("${xh.skill_catalog}") && bodySource.contains("${xh.agent_memory}"),
+                        "revision 2 seeds both context-block slots");
+            }
+        }
+        revisionsSeen.values().forEach(count -> assertEquals(2, count, "each chat apiType ships v1 + v2"));
         String source = "{\n  \"model\":\"${xh.model}\", \"messages\":[{\"role\":\"user\",\"content\":\"${xh.user_input}\"}]\n}";
         String id = UUID.randomUUID().toString();
         var draft = json.createObjectNode().put("id", id).put("version", 1).put("name", "Raw source")
