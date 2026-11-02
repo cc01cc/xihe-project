@@ -404,7 +404,15 @@ describe("WorkspaceView workbench layout (PLAN-0582 S2)", () => {
         await wrapper.find('[data-testid="workspace-toolbar-agents"]').trigger("click");
         await flushPromises();
 
-        expect(wrapper.findComponent(WorkspaceAgentManagementDialog).props("open")).toBe(true);
+        // PLAN-0626 M3 (D26-05): the toolbar opens the dock's `agents` tab; the panel body
+        // exists exactly once and the mobile modal host is not mounted on desktop at all.
+        expect(wrapper.get('[data-testid="dock-tab-agents"]').attributes("aria-selected")).toBe(
+            "true",
+        );
+        expect(wrapper.findAll('[data-testid="workspace-agent-management-dialog"]')).toHaveLength(
+            1,
+        );
+        expect(wrapper.findComponent(WorkspaceAgentManagementDialog).exists()).toBe(false);
         expect(mockedApi.getWorkspaceAgents).toHaveBeenCalledWith("workspace-1");
     });
 

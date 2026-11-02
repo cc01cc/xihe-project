@@ -135,6 +135,20 @@ function handleOpenContextPanel(): void {
     workbenchRef.value?.openDockTab("context");
 }
 
+/**
+ * PLAN-0626 M3 (D26-05): the workspace Agent management surface is a dock panel. Every
+ * desktop entry (toolbar button, "no usable agent" hint) opens the `agents` tab; only
+ * mobile — which has no dock — falls back to the modal shell around the same panel body.
+ * There is deliberately no desktop path that mounts a second copy of the panel.
+ */
+function handleOpenAgentsPanel(): void {
+    if (isMobileViewport.value) {
+        showAgentManagementDialog.value = true;
+        return;
+    }
+    workbenchRef.value?.openDockTab("agents");
+}
+
 const sessionId = computed(() => {
     const current = sessionStore.currentSession;
     if (routeSessionId.value) {
@@ -304,6 +318,12 @@ onMounted(() => {
 watch([workspaceId, routeSessionId], () => {
     void selectSessionForWorkspace();
 });
+
+// The mobile modal is only a dock substitute: once the viewport is wide enough for the
+// dock, drop it so a resize can never leave two hosts eligible at the same time.
+watch(isMobileViewport, (mobile) => {
+    if (!mobile) showAgentManagementDialog.value = false;
+});
 </script>
 
 <template>
@@ -341,7 +361,7 @@ watch([workspaceId, routeSessionId], () => {
             :mobile-changes-open="showMobileChanges"
             :mobile-aux-tab="mobileAuxTab"
             @import-source="showSourceImportDialog = true"
-            @agents="showAgentManagementDialog = true"
+            @agents="handleOpenAgentsPanel"
             @add-workspace="showCreateDialog = true"
             @files="showMobileFiles = true"
             @mobile-toggle-changes="handleToggleChanges"
@@ -435,7 +455,7 @@ watch([workspaceId, routeSessionId], () => {
                             type="button"
                             class="rounded border border-amber-500/50 px-2 py-0.5"
                             data-testid="workspace-agent-unavailable-manage"
-                            @click="showAgentManagementDialog = true"
+                            @click="handleOpenAgentsPanel"
                         >
                             {{ t("workspace.openAgentManagement") }}
                         </button>
@@ -472,7 +492,13 @@ watch([workspaceId, routeSessionId], () => {
             "
         />
 
+        <!--
+            PLAN-0626 M3 (D26-05): mobile-only host. A <768 viewport has no dock, so the same
+            panel body is wrapped in a modal here; `v-if` guarantees a desktop page never holds
+            a second copy next to the dock's (duplicate-mount incident, 2026-11-02).
+        -->
         <WorkspaceAgentManagementDialog
+            v-if="isMobileViewport"
             :open="showAgentManagementDialog"
             :workspace-id="workspaceId"
             @close="showAgentManagementDialog = false"
