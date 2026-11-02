@@ -3,6 +3,7 @@ import { ref, computed, markRaw, nextTick, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { useSessionParticipantsStore } from "../../stores/sessionParticipants";
 import { useWorkspaceStore } from "../../stores/workspace";
+import { useChatStore } from "../stores/chat";
 import type { AttachmentFile, FileNode } from "../../../../types";
 import { toast } from "vue-sonner";
 import { Send, Square, LoaderCircle } from "@lucide/vue";
@@ -13,6 +14,8 @@ import VoiceInput from "../../../../components/multimodal/VoiceInput.vue";
 import ModelPopover from "./ModelPopover.vue";
 import InputToolbar, { type ToolbarAction } from "./InputToolbar.vue";
 import { uploadAttachments, validateAttachment } from "../../../../services/attachmentService";
+import { api } from "../../../../composables/api";
+import { logger } from "../../../../lib/logger";
 import {
     commandReasonKey,
     useSessionCommands,
@@ -76,6 +79,8 @@ const { t } = useI18n();
 const participantsStore = useSessionParticipantsStore();
 /** PLAN-0635 M2: already-loaded workspace tree feeds `@文件/目录` candidates (no request here). */
 const workspaceStore = useWorkspaceStore();
+/** PLAN-0635 M3: `/export` and `/compact` are branch-scoped — read the selected branch here. */
+const chatStore = useChatStore();
 const speakAsId = ref("");
 
 const speakAsOptions = computed(() => participantsStore.speakAsCandidates);
@@ -457,6 +462,82 @@ function closeTriggerMenu(): void {
 }
 
 /**
+ * `/export` filename: prefer the server's `Content-Disposition`, fall back to the stable session
+ * name. The server value is treated as untrusted text — only its basename is used.
+ */
+function exportFileName(contentDisposition: string | null): string {
+    const fallback = `session-${props.sessionId}.md`;
+    const match = contentDisposition?.match(/filename\*?=(?:UTF-8''|")?([^";]+)"?/i);
+    const raw = match?.[1]?.trim();
+    if (!raw) return fallback;
+    let decoded = raw;
+    try {
+        decoded = decodeURIComponent(raw);
+    } catch (error) {
+        logger.debug("Content-Disposition filename is not percent-encoded; using it verbatim", {
+            error: error instanceof Error ? error.message : String(error),
+        });
+    }
+    const base = decoded.split(/[\\/]/).pop()?.trim();
+    return base || fallback;
+}
+
+function logCommandFailure(context: { command: string; sessionId: string }, error: unknown): void {
+    logger.warn("Slash command failed", {
+        ...context,
+        error: error instanceof Error ? error.message : String(error),
+    });
+}
+
+/**
+ * PLAN-0635 M3: `/export` = a real download. The registry decides whether the command may run; the
+ * artifact itself comes from `GET /sessions/{id}/export?branchId=` as `text/markdown` + attachment.
+ */
+async function downloadSessionExport(): Promise<void> {
+    const branchId = chatStore.getSelectedBranchId(props.sessionId);
+    if (!branchId) {
+        toast.error(t("chat.commands.branchUnavailable"));
+        return;
+    }
+    let objectUrl: string | null = null;
+    try {
+        const response = await api.exportSession(props.sessionId, branchId);
+        const blob = await response.blob();
+        objectUrl = URL.createObjectURL(blob);
+        const anchor = document.createElement("a");
+        anchor.href = objectUrl;
+        anchor.download = exportFileName(response.headers.get("content-disposition"));
+        anchor.rel = "noopener";
+        document.body.appendChild(anchor);
+        anchor.click();
+        anchor.remove();
+    } catch (error) {
+        logCommandFailure({ command: "/export", sessionId: props.sessionId }, error);
+        toast.error(t("chat.commands.failed"));
+    } finally {
+        // The click has already handed the blob to the browser; a leaked object URL would pin the
+        // whole session export in memory.
+        if (objectUrl) URL.revokeObjectURL(objectUrl);
+    }
+}
+
+/** PLAN-0635 M3: `/compact` reuses the existing manual-compaction endpoint (body needs `branchId`). */
+async function compactSessionContext(): Promise<void> {
+    const branchId = chatStore.getSelectedBranchId(props.sessionId);
+    if (!branchId) {
+        toast.error(t("chat.commands.branchUnavailable"));
+        return;
+    }
+    try {
+        await api.compactSession(props.sessionId, branchId);
+        toast.success(t("chat.commands.compacted"));
+    } catch (error) {
+        logCommandFailure({ command: "/compact", sessionId: props.sessionId }, error);
+        toast.error(t("chat.commands.failed"));
+    }
+}
+
+/**
  * A slash command never becomes a chat message. Selecting one either runs a browser/server action
  * or opens the help panel; an unavailable command is refused with its localized reason (it is still
  * listed — hiding it would hide the capability itself).
@@ -478,7 +559,17 @@ async function executeSlash(cmd: SlashCommand): Promise<void> {
         clearDraft();
         return;
     }
-    // Server commands (`/export`, `/compact`, …) are dispatched in `executeServerCommand`.
+    if (cmd.key === "/export") {
+        await downloadSessionExport();
+        return;
+    }
+    if (cmd.key === "/compact") {
+        await compactSessionContext();
+        return;
+    }
+    // A command the registry knows but this UI does not implement yet: say so instead of doing
+    // nothing silently (or sending the literal text to the model).
+    toast.error(t("chat.commands.unknown"));
 }
 
 /**
@@ -765,7 +856,8 @@ defineExpose({ clearDraft, insertMention });
 
             <div class="relative">
                 <!--
-                    `/help` renders the command list locally (M1: no server command face yet).
+                    `/help` renders the merged registry locally (server rows + local-only commands).
+                    Unavailable rows stay visible, greyed, with their localized reason.
                     role=status so assistive tech announces it without stealing focus.
                 -->
                 <div
@@ -776,11 +868,20 @@ defineExpose({ clearDraft, insertMention });
                 >
                     <p class="mb-1 text-xs font-medium">{{ t("chat.input.helpTitle") }}</p>
                     <ul class="space-y-1">
-                        <li v-for="cmd in slashCommands" :key="cmd.key" class="text-xs">
+                        <li
+                            v-for="cmd in slashCommands"
+                            :key="cmd.key"
+                            class="text-xs"
+                            :class="cmd.disabled ? 'text-muted-foreground/60' : ''"
+                            :data-testid="`slash-command-${cmd.key.slice(1)}`"
+                        >
                             <span class="font-medium">{{ cmd.key }}</span>
                             <span class="ml-2 text-muted-foreground">{{
                                 t(cmd.descriptionKey)
                             }}</span>
+                            <span v-if="cmd.disabled" class="ml-2 text-destructive/80">
+                                {{ t(commandReasonKey(cmd.reason)) }}
+                            </span>
                         </li>
                     </ul>
                     <p class="mt-2 text-xs text-muted-foreground">{{ t("chat.input.helpHint") }}</p>
