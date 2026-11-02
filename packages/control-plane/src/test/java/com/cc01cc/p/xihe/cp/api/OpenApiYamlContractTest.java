@@ -597,6 +597,14 @@ class OpenApiYamlContractTest {
             assertTrue(raw.contains("writeMode judge is not implemented in v1")
                             || raw.contains("judge` is reserved for M2"),
                     "the v1-reserved writeMode value is documented");
+            // PLAN-0629 M1-6 (D29-26): the passive write mode is on the wire contract, and the document
+            // states the invariant that keeps it non-silent: a passive write only ever lands as a
+            // candidate.
+            assertTrue(raw.contains("`passive` is `off|summary|judge`")
+                            || raw.contains("passive: off|summary|judge"),
+                    "the passive write mode is documented on the policy surface");
+            assertTrue(raw.contains("status=candidate"),
+                    "the wire contract states that passive writes only land as candidates");
 
             // 2: the create request carries the frozen scope / model-intent fields.
             Map<?, ?> createProps = (Map<?, ?>) ((Map<?, ?>) schemas.get("AgentPrincipalCreateRequest"))

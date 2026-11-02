@@ -24,8 +24,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * {@code policy} package on purpose: the Agent side and the future UI backend are expected to reuse it,
  * so its contract must not depend on the HTTP surface.</p>
  *
- * <p>Two accepted shapes and eight refusals — the refusals are the user-facing contract, not
- * implementation details: everything that would store a policy the runtime cannot execute is a 400.</p>
+ * <p>Accepted forms and refusals — the refusals are the user-facing contract, not implementation
+ * details: everything that would store a policy the runtime cannot execute is a 400. PLAN-0629 M1-6
+ * (D29-26) adds the three {@code passive} values to the accepted set and its own refusal test.</p>
  */
 class ContextPolicyValidatorTest {
 
@@ -38,11 +39,11 @@ class ContextPolicyValidatorTest {
     @Test
     void keepsTheFrozenV1DocumentAndTreatsNullAsClear() throws Exception {
         JsonNode document = json("""
-                {"memory":{"enabled":true,"writeMode":"tool","types":["profile","fact"]}}
+                {"memory":{"enabled":true,"writeMode":"tool","passive":"judge","types":["profile","fact"]}}
                 """);
 
         assertEquals(document, ContextPolicyValidator.validate(document),
-                "the frozen v1 document must validate unchanged");
+                "the frozen document (incl. M1-6 passive) must validate unchanged");
 
         assertNull(ContextPolicyValidator.validate(null),
                 "null means 'clear the column', not 'invalid'");
@@ -53,13 +54,18 @@ class ContextPolicyValidatorTest {
     @Test
     void acceptsPartialDocumentsAndAnEmptyDocument() throws Exception {
         // Every memory field is optional: a document may switch memory on and leave the rest at the
-        // documented defaults (writeMode=off, types=[]), and an empty document is the "no policy" form.
+        // documented defaults (writeMode=off, passive=off, types=[]), and an empty document is the
+        // "no policy" form. PLAN-0629 M1-6 adds the three passive values to the accepted set.
         for (String accepted : List.of(
                 "{}",
                 "{\"memory\":{}}",
                 "{\"memory\":{\"enabled\":false}}",
                 "{\"memory\":{\"enabled\":true}}",
                 "{\"memory\":{\"writeMode\":\"off\"}}",
+                "{\"memory\":{\"passive\":\"off\"}}",
+                "{\"memory\":{\"passive\":\"summary\"}}",
+                "{\"memory\":{\"passive\":\"judge\"}}",
+                "{\"memory\":{\"enabled\":true,\"passive\":\"summary\",\"types\":[\"fact\"]}}",
                 "{\"memory\":{\"types\":[]}}")) {
             JsonNode document = json(accepted);
             assertEquals(document, ContextPolicyValidator.validate(document),
@@ -100,6 +106,17 @@ class ContextPolicyValidatorTest {
     void rejectsAnyWriteModeOutsideOffAndTool() {
         assertInvalid("{\"memory\":{\"writeMode\":\"auto\"}}", "writeMode must be \"off\" or \"tool\"");
         assertInvalid("{\"memory\":{\"writeMode\":42}}", "writeMode must be \"off\" or \"tool\"");
+    }
+
+    @Test
+    void rejectsAnyPassiveModeOutsideOffSummaryJudge() {
+        // D29-26: three values only. "auto"/"always" must not silently become a mode nobody runs.
+        assertInvalid("{\"memory\":{\"passive\":\"auto\"}}",
+                "passive must be \"off\", \"summary\" or \"judge\"");
+        assertInvalid("{\"memory\":{\"passive\":\"always\"}}",
+                "passive must be \"off\", \"summary\" or \"judge\"");
+        assertInvalid("{\"memory\":{\"passive\":true}}",
+                "passive must be \"off\", \"summary\" or \"judge\"");
     }
 
     @Test

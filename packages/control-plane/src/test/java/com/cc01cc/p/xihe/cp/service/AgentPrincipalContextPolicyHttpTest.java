@@ -53,13 +53,15 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  *
  * <p>Everything is asserted at the HTTP boundary against a real PostgreSQL (Testcontainers), because
  * the previous batches taught the lesson twice: a mock can hold a document that the JPA mapping or the
- * Jackson-3 wire cannot. The shape being pinned is the frozen v1 ruling (D29-25):</p>
+ * Jackson-3 wire cannot. The shape being pinned is the D29-25 ruling, extended by M1-6 / D29-26:</p>
  * <pre>{@code
- * { "memory": { "enabled": false, "writeMode": "off", "types": ["profile", "fact"] } }
+ * { "memory": { "enabled": false, "writeMode": "off", "passive": "off",
+ *               "types": ["profile", "fact"] } }
  * }</pre>
  *
- * <p>Deliberately not asserted here: any "automatically summarise and write memory" behaviour — D29-24
- * rejected it, and there is no {@code auto} value in the durable {@code origin} enum it belongs to.
+ * <p>Deliberately not asserted here: any automatic write that <i>takes effect</i> — D29-24 rejected it,
+ * and the M1-6 passive path can only produce {@code candidate} rows, whose assertions belong to the
+ * memory-write tests rather than to the policy wire test.
  * The hooks document has its own class ({@link AgentPrincipalHooksHttpTest}); this one owns the
  * context-policy document and the interplay of the two on the shared PATCH.</p>
  */
@@ -68,7 +70,8 @@ class AgentPrincipalContextPolicyHttpTest extends AbstractIntegrationTest {
     private static final String HOOKS_JSON =
             "{\"advisors\":[{\"kind\":\"guard\",\"on\":[\"approval.ask\"]}]}";
     private static final String POLICY_JSON =
-            "{\"memory\":{\"enabled\":true,\"writeMode\":\"tool\",\"types\":[\"profile\",\"fact\"]}}";
+            "{\"memory\":{\"enabled\":true,\"writeMode\":\"tool\",\"passive\":\"summary\","
+                    + "\"types\":[\"profile\",\"fact\"]}}";
 
     @Autowired private UserRepository userRepository;
     @Autowired private AgentPrincipalRepository principalRepository;
@@ -260,6 +263,8 @@ class AgentPrincipalContextPolicyHttpTest extends AbstractIntegrationTest {
                 "{\"memory\":{\"unknown\":true}}",                  // unknown memory key
                 "{\"memory\":{\"enabled\":\"yes\"}}",               // enabled not a boolean
                 "{\"memory\":{\"writeMode\":\"auto\"}}",            // mode outside off|tool
+                "{\"memory\":{\"passive\":\"auto\"}}",              // passive outside off|summary|judge
+                "{\"memory\":{\"passive\":\"always\"}}",            // no alias may silently mean summary
                 "{\"memory\":{\"types\":\"profile\"}}",             // types not an array
                 "{\"memory\":{\"types\":[\"secret\"]}}",            // type outside profile|fact
                 "{\"memory\":{\"types\":[1]}}"                      // non-string type
