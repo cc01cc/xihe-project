@@ -1343,6 +1343,7 @@ paths:
         * PLAN-0338/0339: the session channel also carries `run_checkpoint` — `{runId, sessionId, sliceRef?, capturedAt?, state, changedCount, unrollableReason?, revert?}` — after a slice capture, a degraded capture, or a completed restore (`revert` = `{state, at, counts, ref, attemptCount}`). The event only annotates lifecycle; the workspace slice list remains the durable source on reload.
         * PLAN-0508: bounded provider transport telemetry rides this same session channel as `transport_progress` (`{requestId,runId,attemptId,seq,stage,startedAt,elapsedMs}`; at most four stage transitions per attempt: `attempt_started`/`first_chunk`/`streaming`/`attempt_finished`) and `transport_attempt` (`{requestId,runId,attemptId,seq,startedAt,endedAt,durationMs,outcome,errorCode,firstChunkMs,chunkCount,uploadBytes,downloadBytes}`; exactly once per attempt, `outcome` ∈ `success|error|timeout|aborted`). CP persists the durable attempt row before relaying; ordering between telemetry and other events is not guaranteed and `GET /api/v1/chat/runs/{runId}/attempts` is the authoritative source. The events are diagnostic side-channel state and never change run semantics.
           * Event order per run is `connected` (once per SSE open) → `status`/`thinking` (optional) → `approval_request` (optional) → approval decision via the CP public route → `tool_result` (approval gate) → downstream `tool_call`/`tool_result` and `token` (only after approval) → `done` (exactly one, may carry `errorCode`/`synthetic`). Tool events carry `toolCallId` and `origin` (`local` or `mcp`) for canonical tool-call correlation and source attribution; `request_approval` itself is represented by the approval request and approval-history record and does not emit a duplicate tool event. Approval live/replay envelopes are built from the durable row only and include `state`, the durable creation `origin` (`cp_gate` for CP-gate rows, `agent_relay` for model-initiated `request_approval`, null for rows predating V25) plus `replayed=false/true`; at creation, the display-only `policy` summary is persisted when it can be captured: `effect`, `sourceLayer`, `matchedRule`, `reason`, `mode`, `actionClass`, and `shape`. The policy summary never contains raw tool arguments. After the atomic decision claim, `policy.modeAtGrant` records the effective session mode at that decision and is never rewritten by a retry; replay uses the stored snapshot, and descriptor failure omits only policy metadata without blocking delivery. On rejection/expiry, no downstream sensitive tool call is allowed and a terminal `error` + `done` is sent. The session SSE is retained unless the emitter itself is unwritable. PLAN-0510: tool result bodies and failure diagnostics do not cross the public SSE boundary; `tool_result.result` is a fixed CP-sanitized placeholder and no `diagnostics` field is sent. Structured diagnostics remain in the internal model/artifact channel only.
+        * PLAN-0623 M1b-3: every event payload carries `participantId` — the session participant row that produced this output (AGENT run → the run's responder participant; HUMAN echo → the speaker's row), or an explicit `null` for producer-less system events (never invented). Consumers must not render a multi-subject stream as a single subject. The `asParticipantId` query parameter selects a participant view (see above); undeclared observers receive everything and still see `participantId` on every event.
       security: [{ bearerAuth: [] }]
       parameters:
         - in: query
@@ -1350,6 +1351,18 @@ paths:
           required: true
           schema: { type: string }
           description: Session to subscribe to (must belong to current workspace/user)
+        - in: query
+          name: asParticipantId
+          required: false
+          schema: { type: string, format: uuid }
+          description: |
+            PLAN-0623 M1b-3 (D23-28): optional participant view. Declared => the stream is
+            filtered by producer — only events produced by that participant row plus
+            producer-less system events. Undeclared => the full stream (observer semantics,
+            which is what existing consumers keep using. Filtering is by producer, never by
+            visibility; @mention targeting ("sent to whom") is 0624 scope. The caller must be
+            authorised to act for the participant (D23-08 gate) — otherwise 403
+            `PARTICIPANT_CAP_DENIED`.
       responses:
         '200':
           description: 'SSE stream — one event per line `event: <name>` + `data: <json>`'
