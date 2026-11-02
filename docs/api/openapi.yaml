@@ -671,6 +671,63 @@ paths:
     delete: { operationId: deleteSession, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: sessionId, required: true, schema: { type: string } }], responses: { '204': { description: Deleted }, '409': { description: FORK_REQUEST_IN_PROGRESS while the source Session is being copied, content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } } } }
   /api/v1/sessions/{sessionId}/api-request-template:
     patch: { operationId: updateSessionApiRequestTemplate, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: sessionId, required: true, schema: { type: string } }], requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/ApiRequestTemplateBindingRequest' } } } }, responses: { '200': { description: Session with the updated pinned API request template binding, content: { application/json: { schema: { $ref: '#/components/schemas/Session' } } } }, '400': { $ref: '#/components/responses/Problem' }, '409': { description: 'API_TYPE_TEMPLATE_MISMATCH / API_TYPE_REBIND_REQUIRED / CONNECTION_REVISION_CHANGED', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }, '404': { description: API_REQUEST_TEMPLATE_NOT_FOUND for an unknown layer/revision, content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } } } }
+  /api/v1/sessions/{sessionId}/commands:
+    get:
+      operationId: listSessionCommands
+      description: |
+        PLAN-0635 M3 (D35-02 ruling A): the session command registry. Availability is decided on
+        the server by reusing the ordinary policy engine through an existing tool face; the
+        carrier name is never exposed on the wire. Each row is name/source/available/reason.
+        reason is null when available, otherwise one of approval_required, denied,
+        policy_unavailable, branch_locked. The browser renders this list plus its two local-only
+        commands (/clear and /help) and never filters availability itself.
+      security: [{ bearerAuth: [] }]
+      parameters: [{ in: path, name: sessionId, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200':
+          description: Command registry for this session
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [commands]
+                properties:
+                  commands:
+                    type: array
+                    items:
+                      type: object
+                      required: [name, source, available]
+                      properties:
+                        name: { type: string, description: 'Slash command including its leading slash, e.g. /export' }
+                        source: { type: string, enum: [builtin] }
+                        available: { type: boolean }
+                        reason: { type: string, nullable: true, enum: [approval_required, denied, policy_unavailable, branch_locked] }
+                      additionalProperties: false
+                additionalProperties: false
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+  /api/v1/sessions/{sessionId}/export:
+    get:
+      operationId: exportSessionMarkdown
+      description: |
+        PLAN-0635 M3: the real /export. Generates a Markdown document from the existing session
+        message read surface (no Agent, no provider, no run). Bounded: at most 2000 messages,
+        20000 characters per message and 2000000 characters per document; every cap is disclosed
+        in the document header via messagesTruncated and contentTruncated.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: sessionId, required: true, schema: { type: string, format: uuid } }
+        - { in: query, name: branchId, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Markdown export
+          content:
+            text/markdown:
+              schema: { type: string }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
   /api/v1/sessions/{sessionId}/derived-state:
     get:
       operationId: getSessionDerivedState

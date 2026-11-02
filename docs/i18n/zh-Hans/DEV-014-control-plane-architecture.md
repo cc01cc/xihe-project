@@ -306,3 +306,13 @@ PLAN-0416 Chat 消费：`ChatController` 仅在 admission snapshot 原始 native
 - **BL-181（缺上下文 = 409，不是 401）**：**已认证但解析不到工作区上下文**（空白起步尚无工作区，或多工作区且未用 `X-Workspace-Id`/路径指定）在**所有** workspace 作用域端点统一返回 **`409 WORKSPACE_CONTEXT_REQUIRED`**（沿用会话创建既有码，`detail` = "Workspace context is required"），由 `ProblemDetailsHandler.workspaceContextRequired()` 与 `CpApiException.workspaceContextRequired()` 两个入口统一产出；原先 35 处 `401 AUTHORIZATION_REQUIRED` 已全部收敛。**`401 AUTHORIZATION_REQUIRED` 只保留给凭据缺失/失效**（无 token、签名/过期、`token_version`/`session_version` 失效）。理由：`/api/v1/**` 在 URL 层已要求已认证人类主体，401 既不准确又会触发 UI 的强制登出（`api.ts` 401 → 刷新 → 重放仍 401 → `forceLogout()`），空白起步用户点一下会话列表就被踢下线。
 - **UI 口径（I6）**：登录不再把「登录响应里的工作区」写进 tab 上下文（那是回退值，不是用户选择）；无上下文时进入工作区选择页；创建会话走路径形式，`400/409` 时回到选择页而非只弹 toast。
 
+## 14. 会话命令注册表与 `/export`（PLAN-0635 M3）
+
+- **权威在服务端**（D35-02 裁定 A）：`GET /api/v1/sessions/{sessionId}/commands` 返回该会话**当前可用**命令；UI 只渲染，**不得自行过滤可用性**。响应纯标量 `{commands:[{name, source, available, reason}]}`，`source` 目前只有 `builtin`。
+- **可用性复用既有 policy，不新造权限词**：`SessionCommandCatalog` 为每条命令声明一个**载具**——一个**既有 tool face 名**（如 `/export` → `read_file`），经 `PolicyEngine.evaluateVerdict(...)` 取 `effect`；`ToolFaceRegistry.builtinActionClasses()` 仍是唯一词表。**载具名不出 wire**（它是机制而非语义，暴露会让读者困惑"为什么 /export 是 read_file"）；排障靠结构化日志 `event=command_availability sessionId/command/policyTool/verdict`。
+- **三档结果的呈现**：`ALLOW` ⇒ `available=true`；`ASK` ⇒ `available=false, reason=approval_required`（**不隐藏**——用户必须知道能力存在，UI 灰显 + 文案）；`DENY` ⇒ `reason=denied`；策略上下文读不出 ⇒ `reason=policy_unavailable`（fail-closed，不影响 run）。
+- **`/compact` 不用 policy 门**，改**镜像其端点前置条件**：`POST /api/v1/sessions/{sessionId}/compact` 在活动 run 时返回 `409 BRANCH_LOCK` ⇒ 注册表对应 `reason=branch_locked`。原则：**UI 不得提供必然失败的命令**。该命令本身不新造端点（PLAN-294 decision #15 的既有入口）。
+- **`/export` 是真产出**：`GET /api/v1/sessions/{sessionId}/export?branchId=` 由 `SessionExportService` 用既有消息读面（`MessageReadService.listVisibleMessages`）生成 Markdown，`text/markdown` + `Content-Disposition: attachment`；**不经 Agent、不调模型、不产生 run**（M1 桩的"发一句固定英文给模型"是反面）。有界：≤2000 条消息 / 单条 ≤20000 字符 / 整篇 ≤2000000 字符，截断在文档头以 `messagesTruncated`/`contentTruncated` 披露。
+- **v1 不含 skill 命令**：`/skill:<name>` 的候选必须来自 PLAN-0628 的 run 快照 listing（`skills_snapshot`）与按需正文（`skill_read`），两者在 0628 M2 前不落地（D35-07）；M3 只交付其形态设计。
+- **C1 门**：两条路由均返回**纯标量 / 纯文本**，不经 Jackson-2 `JsonNode`（无 `JacksonNodeExit` 调用即无泄露面）。
+
