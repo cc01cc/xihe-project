@@ -40,6 +40,27 @@ mvn -o -q test "-Dtest=CpArchitectureTest"
 
 `-Dtest=...` 替换为具体测试类（必要时加 `#method`）。完整 `mvn -o test` 只在测试波次或里程碑执行；不要把全量测试当作每次小改的默认门禁。
 
+### L2 全量的标准做法：2 shard（唯一允许的并行）
+
+单进程全量 **598 s**（2654 测试 / 362 类），2 shard 并行 **301–343 s**（**−49.6%**）。**一次只允许一个"会写 `target/` 且产生权威测量"的全量执行体** —— 两个并发 `mvn test` 会共享 `target/classes`、`target/test-classes`、`target/surefire-reports*`，Maven 无锁，结果是**静默互覆盖 → 假绿/假红**（2026-11-02 实测：shard 把报告写成 `surefire-reports-shard-a/b`，读默认目录者只看到半个套件）。需要两个**完整** `mvn test` 同树并行时用 `D32-26 T2`：`"-Dxihe.build.suffix=-b"`（PowerShell 必须加引号）。
+
+标准流程（在目标 worktree 内执行）：
+
+```powershell
+git -C <worktree> merge --ff-only develop           # 1. 钉住 HEAD
+mvn -o -q test-compile                              # 2. 只编译一次：两 shard 只跑 surefire:test
+node one/.tmp/plan-eff-l2/run-shard-parallel.mjs    # 3. XIHE_SHARD_ROOT=<worktree>
+```
+
+判据（缺一不可，全部在 `.tmp/plan-eff-l2/` 产物里）：
+
+1. `shard-coverage-check.json` 的 **`ok=true`** —— 期望类数 = A+B 实跑类数，`missing`/`unexpected`/`duplicates` 全空；覆盖口径是**源码声明的顶层类名**（不是文件名：`RuntimeAssignmentIntegrationTest.java` 里声明的是 `RuntimeExecutionSpecIntegrationTest`），并显式排除 abstract + 全方法 `docker-frozen` 的类。
+2. 同一文件的 **`headStable=true`**（`headBefore == headAfter`）—— 测量期间 develop 前进会让新增类被误报 `missing`。
+3. `shard-merged-failures.json` 与环境性基线白名单**差集 = 0**；每条失败带 shard 归属。
+4. `pythonInterpreter` 已自动注入 `-Dxihe.context.python`（worktree 无 `.venv` 时 `ContextEventReadContractIntegrationTest` **失败而非 skip**，极易误判为回归）。
+
+`shard-{a,b}-report-dir.txt` 指向原始 surefire XML 目录，可绕过汇总直接复核。
+
 PLAN-0584 的 Native Image 组件探针仅在 Windows x64 portable GraalVM 环境中运行：
 
 ```powershell
