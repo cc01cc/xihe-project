@@ -149,7 +149,7 @@ paths:
         '400': { $ref: '#/components/responses/Problem' }
         '401': { $ref: '#/components/responses/Problem' }
         '403': { $ref: '#/components/responses/Problem' }
-        '404': { description: 'AGENT_PRINCIPAL_NOT_FOUND (also for a principal the caller cannot see), content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '404': { description: 'AGENT_PRINCIPAL_NOT_FOUND (also for a principal the caller cannot see)', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
   /api/v1/workspaces/{workspaceId}/members:
     get:
       operationId: listWorkspaceMembers
