@@ -449,3 +449,69 @@ describe("MessageItem responder identity", () => {
         failed.unmount();
     });
 });
+
+// ── PLAN-0631 M1-C (D31-02) ────────────────────────────────────────────────
+describe("MessageItem terminal markers", () => {
+    function mountTerminal(message: Partial<Message>) {
+        return mount(MessageItem, {
+            props: {
+                message: {
+                    id: "message-terminal",
+                    sessionId: "session-1",
+                    role: "assistant",
+                    content: "whatever the run produced",
+                    timestamp: "2026-11-02T00:00:00Z",
+                    ...message,
+                },
+            },
+            global: { plugins: [i18n, createPinia()] },
+        });
+    }
+
+    it("marks a partial run at the row end, with label + title from the resolver", () => {
+        const wrapper = mountTerminal({ runStatus: "partial", terminalOutcome: "partial" });
+
+        const marker = wrapper.get('[data-testid="message-terminated"]');
+        expect(marker.attributes("data-run-outcome")).toBe("partial");
+        expect(marker.text()).toBe(i18n.global.t("chat.derivedStateOutcome.partial"));
+        // Screen reader + hover get the same sentence; the icon is the only colour cue.
+        expect(marker.attributes("aria-label")).toBe(marker.text());
+        expect(marker.attributes("title")).toBe(marker.text());
+        expect(marker.find("svg").exists()).toBe(true);
+        wrapper.unmount();
+    });
+
+    it("marks a cancelled run at the row end", () => {
+        const wrapper = mountTerminal({ runStatus: "cancelled", terminalOutcome: "cancelled" });
+
+        const marker = wrapper.get('[data-testid="message-terminated"]');
+        expect(marker.attributes("data-run-outcome")).toBe("cancelled");
+        expect(marker.text()).toBe(i18n.global.t("chat.followUpStatusCancelled"));
+        expect(marker.attributes("title")).toBe(marker.text());
+        wrapper.unmount();
+    });
+
+    it("stays silent for a succeeded run and defers to the error box for a failed one", () => {
+        const succeeded = mountTerminal({ runStatus: "succeeded", terminalOutcome: "success" });
+        expect(succeeded.find('[data-testid="message-terminated"]').exists()).toBe(false);
+        succeeded.unmount();
+
+        const failed = mountTerminal({
+            runStatus: "failed",
+            terminalOutcome: "error",
+            error: "provider failed",
+            errorCode: "AGENT_STREAM_FAILED",
+        });
+        expect(failed.find('[data-testid="message-terminated"]').exists()).toBe(false);
+        expect(failed.find('[data-testid="message-error"]').exists()).toBe(true);
+        failed.unmount();
+    });
+
+    it("renders no marker for a run that is still live or has no status", () => {
+        for (const runStatus of ["streaming", "awaiting_approval", undefined] as const) {
+            const wrapper = mountTerminal({ runStatus });
+            expect(wrapper.find('[data-testid="message-terminated"]').exists()).toBe(false);
+            wrapper.unmount();
+        }
+    });
+});

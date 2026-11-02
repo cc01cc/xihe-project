@@ -65,3 +65,12 @@ export function runStateTier(status: string | undefined | null): RunStateTier | 
 export function runStateLabelKey(status: string | undefined | null): string | null {
     return status && isKnownStatus(status) ? LABEL_KEYS[status] : null;
 }
+
+/**
+ * PLAN-0631 M1-C: is this run over? Derived from the same tier table, so a future status
+ * cannot become "terminal" in one place and stay active in another. Unknown/absent is
+ * **not** terminal — callers must not retire UI for a state they do not recognise.
+ */
+export function isTerminalRunStatus(status: string | undefined | null): boolean {
+    return runStateTier(status) === "terminal";
+}

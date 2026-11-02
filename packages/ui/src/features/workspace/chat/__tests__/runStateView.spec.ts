@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { i18n } from "../../../../i18n";
-import { runStateLabelKey, runStateTier } from "../runStateView";
+import { isTerminalRunStatus, runStateLabelKey, runStateTier } from "../runStateView";
 
 /**
  * PLAN-0631 D31-01: the resolver is the only place a wire status becomes a tier/label.
@@ -61,5 +61,43 @@ describe("runStateView", () => {
                 expect(text.length, `${locale}:${status}`).toBeGreaterThan(0);
             }
         }
+    });
+
+    // PLAN-0631 M1-C: the two end states that now get a visible row-end marker.
+    it.each([
+        ["zh-CN", "partial", "部分完成"],
+        ["zh-CN", "cancelled", "已取消"],
+        ["en-US", "partial", "Partial"],
+        ["en-US", "cancelled", "Cancelled"],
+    ])("renders %s wording for the %s marker", (locale, status, expected) => {
+        const key = runStateLabelKey(status);
+        expect(key).toBeTruthy();
+        expect(i18n.global.t(key!, {}, { locale })).toContain(expected);
+    });
+});
+
+describe("isTerminalRunStatus", () => {
+    it("treats exactly the five end states as terminal", () => {
+        for (const status of ["succeeded", "failed", "partial", "ambiguous", "cancelled"]) {
+            expect(isTerminalRunStatus(status), status).toBe(true);
+        }
+    });
+
+    it("never treats a live/known-unknown status as terminal", () => {
+        for (const status of [
+            "accepted",
+            "queued",
+            "dispatching",
+            "running",
+            "streaming",
+            "awaiting_approval",
+            "cancelling",
+        ]) {
+            expect(isTerminalRunStatus(status), status).toBe(false);
+        }
+        // Unknown is not "over": callers must not retire UI for a state they cannot read.
+        expect(isTerminalRunStatus(undefined)).toBe(false);
+        expect(isTerminalRunStatus(null)).toBe(false);
+        expect(isTerminalRunStatus("interrupted")).toBe(false);
     });
 });

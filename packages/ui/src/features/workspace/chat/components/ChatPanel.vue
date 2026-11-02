@@ -37,7 +37,7 @@ import RevertPreviewDialog from "./RevertPreviewDialog.vue";
 import RevertResultDialog from "./RevertResultDialog.vue";
 import BaseModal from "../../../../components/shared/BaseModal.vue";
 import { useSessionBranches } from "../composables/useSessionBranches";
-import { runStateLabelKey } from "../runStateView";
+import { isTerminalRunStatus, runStateLabelKey } from "../runStateView";
 import { Marker, MarkerContent, MarkerIcon } from "@/components/ui/marker";
 import { Clock, ShieldAlert } from "@lucide/vue";
 
@@ -156,12 +156,32 @@ const showApproval = computed(() => {
     if (approval.state === "dispatch_unknown") return true;
     return !dismissedRequestIds.value.has(approval.requestId);
 });
+/**
+ * PLAN-0631 M1-C: a decision that can no longer be taken must not keep asking for one.
+ *
+ * The reopen pill is a shortcut back into the modal; once the approval's Run has reached a
+ * terminal state (cancelled/failed/ambiguous/…, see `isTerminalRunStatus`) the decision is
+ * moot, so the pill is retired. The check reads the Run's own assistant message — the same
+ * local view the transcript renders — and never guesses: an unknown status is not terminal.
+ */
+const approvalRunIsTerminal = computed(() => {
+    const approval = pendingApproval.value;
+    if (!approval) return false;
+    return messages.value.some(
+        (message) =>
+            message.role === "assistant" &&
+            message.runId === approval.runId &&
+            (isTerminalRunStatus(message.runStatus) ||
+                isTerminalRunStatus(message.terminalOutcome)),
+    );
+});
 const showReopenPill = computed(() => {
     const approval = pendingApproval.value;
     return (
         approval !== null &&
         !showApproval.value &&
-        dismissedRequestIds.value.has(approval.requestId)
+        dismissedRequestIds.value.has(approval.requestId) &&
+        !approvalRunIsTerminal.value
     );
 });
 

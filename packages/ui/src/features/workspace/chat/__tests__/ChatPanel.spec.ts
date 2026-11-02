@@ -394,6 +394,60 @@ describe("ChatPanel approval dismiss and reopen pill (PLAN-0404)", () => {
         expect(vi.mocked(api.decideChatApproval)).not.toHaveBeenCalled();
     });
 
+    // PLAN-0631 M1-C: a decision that can no longer be taken must not keep asking for one.
+    it("retires the reopen pill once the approval's run is terminal", async () => {
+        const wrapper = mountPanel();
+        await flushPromises();
+
+        useChatStore().addMessage(SESSION_ID, {
+            id: "message-terminal",
+            sessionId: SESSION_ID,
+            role: "assistant",
+            content: "cancelled before deciding",
+            timestamp: "2026-11-02T00:00:00Z",
+            runId: RUN_ID,
+            runStatus: "cancelled",
+            terminalOutcome: "cancelled",
+        });
+        useAgentStore().addApprovalRequest(approval);
+        await nextTick();
+        await flushPromises();
+
+        const modal = wrapper.findComponent(ApprovalModal);
+        expect(modal.props("show")).toBe(true);
+        modal.vm.$emit("dismiss");
+        await nextTick();
+
+        // Dismissal still closes the modal (it never means reject) …
+        expect(modal.props("show")).toBe(false);
+        // … but there is no way back in: the Run is over, the decision is moot.
+        expect(wrapper.find('[data-testid="pending-approval-reopen-pill"]').exists()).toBe(false);
+    });
+
+    it("keeps the reopen pill while the approval's run is still live", async () => {
+        const wrapper = mountPanel();
+        await flushPromises();
+
+        useChatStore().addMessage(SESSION_ID, {
+            id: "message-live",
+            sessionId: SESSION_ID,
+            role: "assistant",
+            content: "waiting for a decision",
+            timestamp: "2026-11-02T00:00:00Z",
+            runId: RUN_ID,
+            runStatus: "awaiting_approval",
+        });
+        useAgentStore().addApprovalRequest(approval);
+        await nextTick();
+        await flushPromises();
+
+        wrapper.findComponent(ApprovalModal).vm.$emit("dismiss");
+        await nextTick();
+
+        // Unknown/live is never treated as terminal — the shortcut must stay.
+        expect(wrapper.find('[data-testid="pending-approval-reopen-pill"]').exists()).toBe(true);
+    });
+
     it("drops the local dismiss record once the pending approval disappears", async () => {
         const wrapper = mountPanel(),
             store = useAgentStore();
