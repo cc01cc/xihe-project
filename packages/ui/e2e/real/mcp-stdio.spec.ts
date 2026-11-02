@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { generateE2EPassword } from "./helpers/password";
 import { test, expect } from "@playwright/test";
 import { ensureWorkspace } from "./helpers/workspace";
@@ -6,16 +8,15 @@ import { dockerFrozenIncluded, dockerFrozenReason } from "./helpers/docker-froze
 const SHARED_PASSWORD = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword();
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`;
 
-const FIXTURE_SCRIPT = [
-    "const readline=require('readline');",
-    "const rl=readline.createInterface({input:process.stdin});",
-    "rl.on('line',(l)=>{let m;try{m=JSON.parse(l)}catch{return}",
-    "if(m.method==='initialize'){console.log(JSON.stringify({jsonrpc:'2.0',id:m.id,result:{protocolVersion:'2025-11-25',capabilities:{tools:{}},serverInfo:{name:'xihe-e2e',version:'0'}}}))}",
-    "else if(m.method==='notifications/initialized'){}",
-    "else if(m.method==='tools/list'){console.log(JSON.stringify({jsonrpc:'2.0',id:m.id,result:{tools:[{name:'e2e_echo',description:'echo',inputSchema:{type:'object',properties:{text:{type:'string'}}}}]}}))}",
-    "else if(m.method==='tools/call'){const t=(m.params&&m.params.arguments&&m.params.arguments.text)||'';console.log(JSON.stringify({jsonrpc:'2.0',id:m.id,result:{content:[{type:'text',text:'echo:'+t}]}}))}",
-    "else{console.log(JSON.stringify({jsonrpc:'2.0',id:m.id,error:{code:-32601,message:'method not found'}}))}});",
-].join("");
+// Single-source stdio fixture (e2e/fixtures/fake-stdio-mcp.mjs), consumed as
+// `node -e` source text: the Runtime spawns stdio servers from a workspace cwd,
+// where a repo-relative fixture path would not resolve. Mode "echo-arg" makes
+// tools/call echo the text argument back (the second inlined copy, plan0366,
+// uses mode "echo" for a constant answer).
+const FIXTURE_SCRIPT = readFileSync(
+    path.resolve(process.cwd(), "e2e/fixtures/fake-stdio-mcp.mjs"),
+    "utf8",
+);
 
 test.describe("@host MCP — stdio session (PLAN-0347)", () => {
     test("stdio tools/list is visible but public user calls fail closed", async ({ request }) => {
@@ -55,7 +56,9 @@ test.describe("@host MCP — stdio session (PLAN-0347)", () => {
             headers: userHeaders,
             data: {
                 generation,
-                servers: { "e2e-stdio": { command: "node", args: ["-e", FIXTURE_SCRIPT] } },
+                servers: {
+                    "e2e-stdio": { command: "node", args: ["-e", FIXTURE_SCRIPT, "echo-arg"] },
+                },
             },
         });
         expect(

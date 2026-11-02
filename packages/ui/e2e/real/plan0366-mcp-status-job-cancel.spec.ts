@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { generateE2EPassword } from "./helpers/password";
 import { ensureAgentWorkspaceBinding, getRootBranchId } from "./helpers/journey";
@@ -19,16 +19,15 @@ const EVIDENCE_DIR = path.resolve(process.cwd(), "../../.local/evidence/plan0366
 //   node scripts/e2e-host.mjs --retries=0 --llm-mode=job-cancel e2e/real/plan0366-mcp-status-job-cancel.spec.ts
 // 场景：S1 stdio 徽章（ready/failed/无记录）；S2 同 run 两个 job 取消其中之一
 // （run 继续、另一 job 不受影响、取消未确认反馈）；S4 越权 404；S5 审计事件。
-const STDIO_FIXTURE_SCRIPT = [
-    "const readline=require('readline');",
-    "const rl=readline.createInterface({input:process.stdin});",
-    "rl.on('line',(l)=>{let m;try{m=JSON.parse(l)}catch{return}",
-    "if(m.method==='initialize'){console.log(JSON.stringify({jsonrpc:'2.0',id:m.id,result:{protocolVersion:'2025-11-25',capabilities:{tools:{}},serverInfo:{name:'xihe-e2e',version:'0'}}}))}",
-    "else if(m.method==='notifications/initialized'){}",
-    "else if(m.method==='tools/list'){console.log(JSON.stringify({jsonrpc:'2.0',id:m.id,result:{tools:[{name:'e2e_echo',description:'echo',inputSchema:{type:'object',properties:{text:{type:'string'}}}}]}}))}",
-    "else if(m.method==='tools/call'){console.log(JSON.stringify({jsonrpc:'2.0',id:m.id,result:{content:[{type:'text',text:'echo'}]}}))}",
-    "else{console.log(JSON.stringify({jsonrpc:'2.0',id:m.id,error:{code:-32601,message:'method not found'}}))}});",
-].join("");
+// Single-source stdio fixture (e2e/fixtures/fake-stdio-mcp.mjs), consumed as
+// `node -e` source text: the Runtime spawns stdio servers from a workspace cwd,
+// where a repo-relative fixture path would not resolve. Mode "echo" answers
+// tools/call with the constant `echo` (mcp-stdio.spec.ts uses mode "echo-arg"
+// to echo the text argument back).
+const STDIO_FIXTURE_SCRIPT = readFileSync(
+    path.resolve(process.cwd(), "e2e/fixtures/fake-stdio-mcp.mjs"),
+    "utf8",
+);
 
 test.describe("@host PLAN-0366 MCP status + single job cancel", () => {
     test.describe.configure({ mode: "serial" });
@@ -341,7 +340,7 @@ test.describe("@host PLAN-0366 MCP status + single job cancel", () => {
         // A=可用 fixture；B=不存在的命令（重试预算耗尽后 failed）；C=无 command 的配置
         // （Runtime fetch 跳过无 command 项 → 永远没有会话 → 「无记录」行）。
         await putStdioServers(request, {
-            "e2e-stdio": { command: "node", args: ["-e", STDIO_FIXTURE_SCRIPT] },
+            "e2e-stdio": { command: "node", args: ["-e", STDIO_FIXTURE_SCRIPT, "echo"] },
             "e2e-broken": { command: "definitely-not-a-real-binary-0366", args: [] },
             "e2e-idle": {},
         });
