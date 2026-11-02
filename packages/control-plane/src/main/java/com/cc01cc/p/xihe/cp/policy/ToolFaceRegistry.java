@@ -49,10 +49,18 @@ public class ToolFaceRegistry {
     // an explicit grant. The UI/CLI channels do not consume this atom (they act as the user).
     public static final String ACTION_MEMORY_WRITE = "MEMORY_WRITE";
 
-    /** PLAN-0496 #2: the credential resource namespace ({@code credential:<uuid>} / {@code credential:*}). */
+    /** PLAN-0496 #2: the credential resource namespace ({@code credential:<uuid>} / {@code credential:*}).
+     */
     public static final String CREDENTIAL_ACTION_PREFIX = "credential_";
     public static final String CREDENTIAL_RESOURCE_PREFIX = "credential:";
     public static final String CREDENTIAL_RESOURCE_WILDCARD = "credential:*";
+
+    /**
+     * PLAN-0628 M2b (D28-36): the skill resource namespace, spelled like the credential one —
+     * {@code skill:<uuid>}. Only the spelling is new; {@code skill_read} keeps the existing {@code read}
+     * atom and {@code STRUCTURED} shape, so no seeder/UI/CLI vocabulary has to move.
+     */
+    public static final String SKILL_RESOURCE_PREFIX = "skill:";
 
     private static final Set<String> READ_TOOLS = Set.of(
             "read_file", "read_file_range", "list_directory", "glob", "grep",
