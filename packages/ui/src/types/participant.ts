@@ -41,6 +41,12 @@ export interface SessionParticipantView {
     source?: ParticipantSource | null;
     disabledAt?: string | null;
     readCursor?: ParticipantReadCursor | null;
+    /**
+     * 调用者是否**拥有**这个参与者（D23-27 / M1c，required）：
+     * HUMAN → principalId == 调用者；AGENT → PERSONAL 需 ownerUserId == 调用者，WORKSPACE/INSTANCE → true；
+     * 会话 owner 不是调用者、或该行已停用 ⇒ false（CP 侧已算好，UI 不重算）。
+     */
+    selfOwned?: boolean;
     /** PLAN-0623 M1a：仅 AGENT 非空；HUMAN 为 null（CP 联表 agent_principals 提供）。 */
     defaultModelProvider?: string | null;
     defaultModelName?: string | null;
@@ -57,6 +63,11 @@ export interface SessionParticipantCapabilities {
     view: boolean;
     manage: boolean;
     mention: boolean;
+    /**
+     * D23-27：能否以某个参与者身份发言（"代发"）。**与 `manage` 无关** —— 写参与者表要 manage，
+     * 代发要 owner + 自己/自己拥有的 AGENT。`false` 时 UI **不渲染**入口（不是禁用）。
+     */
+    speakAs: boolean;
 }
 
 export interface SessionParticipantListResponse {

@@ -2001,11 +2001,16 @@ function parseParticipantCapabilities(
 ): SessionParticipantCapabilities {
     const raw = record.capabilities;
     if (!raw || typeof raw !== "object") {
-        return { view: false, manage: false, mention: false };
+        return { view: false, manage: false, mention: false, speakAs: false };
     }
     const caps = raw as Record<string, unknown>;
     const flag = (key: string): boolean => caps[key] === true;
-    return { view: flag("view"), manage: flag("manage"), mention: flag("mention") };
+    return {
+        view: flag("view"),
+        manage: flag("manage"),
+        mention: flag("mention"),
+        speakAs: flag("speakAs"),
+    };
 }
 
 export async function apiRaw(path: string, options?: RequestInit): Promise<Response> {
