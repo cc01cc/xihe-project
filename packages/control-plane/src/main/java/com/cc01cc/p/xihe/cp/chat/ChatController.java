@@ -497,11 +497,11 @@ public class ChatController {
         }
         // PLAN-0623 M1b-②: cap 与 run 归属必须出自同一个 Responder —— 在请求线程解析一次并随
         // execAsync 链传到 lease 段；lease 段不得重新解析（否则"A 的 cap"可能驱动"B 的消息"）。
-        // responder == null（无显式 as 且无 PRIMARY 行）时 lease 段走 0622 C3 冻结语义（D23-31 双轨）。
+        // 解析必须无条件：responderFor(sessionId, null) 落 PRIMARY 行（缺省回答者）；
+        // 只在显式 as 时解析会让缺省 run 的 SSE 归属丢失（真栈 A/B 联验抓到）。
+        // responder == null（会话既无 PRIMARY 也无显式 as）时 lease 段走 0622 C3 冻结语义（D23-31 双轨）。
         SessionParticipantService.Responder responder =
-                asParticipantId != null && !asParticipantId.isBlank()
-                        ? sessionParticipantService.responderFor(UUID.fromString(sessionId), asParticipantId)
-                        : null;
+                sessionParticipantService.responderFor(UUID.fromString(sessionId), asParticipantId);
         String requestId = currentRequestId();
         String runId = UUID.randomUUID().toString();
         if (!sseManager.hasEmitter(sessionId)) {
