@@ -5,6 +5,7 @@ import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
 import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.entity.SessionParticipant;
 import com.cc01cc.p.xihe.cp.entity.SessionParticipantCursor;
+import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.policy.CapabilityAuthorities;
 import com.cc01cc.p.xihe.cp.policy.GrantAuthorizationService;
 import com.cc01cc.p.xihe.cp.policy.PolicyRequest;
@@ -53,6 +54,7 @@ public class SessionParticipantService {
     public static final String CAP_VIEW = "view";
     public static final String CAP_MANAGE = "manage";
     public static final String CAP_MENTION = "mention";
+    public static final String CAP_SPEAK_AS = "speakAs";
 
     private static final Set<String> KINDS = Set.of(SessionParticipant.KIND_HUMAN,
             SessionParticipant.KIND_AGENT);
@@ -100,15 +102,20 @@ public class SessionParticipantService {
             cursorRepository.findByParticipantIdIn(rows.stream().map(SessionParticipant::getId).toList())
                     .forEach(cursor -> cursors.put(cursor.getParticipantId(), cursor));
         }
+        Map<UUID, String> humanNames = humanDisplayNames(rows);
+        Map<UUID, AgentPrincipal> agents = agentPrincipals(rows);
         List<ParticipantView> views = new ArrayList<>(rows.size());
         for (SessionParticipant row : rows) {
-            views.add(toView(row, cursors.get(row.getId())));
+            views.add(toView(row, cursors.get(row.getId()), humanNames.get(row.getPrincipalId()),
+                    isSelfOwned(row, actorId, session, agents)));
         }
         // The three capability keys the UI gates its buttons on (never "click then 403").
         Map<String, Boolean> capabilities = new LinkedHashMap<>();
         capabilities.put(CAP_VIEW, true);
         capabilities.put(CAP_MANAGE, canManage(actorId, workspaceId, session));
         capabilities.put(CAP_MENTION, true);
+        // D23-27 single truth: the block is true exactly when some row is selfOwned.
+        capabilities.put(CAP_SPEAK_AS, views.stream().anyMatch(ParticipantView::selfOwned));
         return new ListView(views, capabilities);
     }
 
@@ -145,7 +152,8 @@ public class SessionParticipantService {
         // R7: every participant gets a cursor; history counts as read (same rule as the V92 backfill).
         cursorRepository.save(new SessionParticipantCursor(saved.getId(),
                 lastEventSequence(session.getId()), 0));
-        return toView(saved, null);
+        return toView(saved, null, humanDisplayName(saved),
+                isSelfOwned(saved, actorId, session, agentPrincipals(List.of(saved))));
     }
 
     /** D23-13: the PRIMARY row's fixed position — the V92 backfill and every creation path agree. */
@@ -215,7 +223,8 @@ public class SessionParticipantService {
             row.setDisabledAt(Boolean.TRUE.equals(request.disabled()) ? Instant.now() : null);
         }
         SessionParticipant saved = participantRepository.save(row);
-        return toView(saved, cursorRepository.findById(saved.getId()).orElse(null));
+        return toView(saved, cursorRepository.findById(saved.getId()).orElse(null), humanDisplayName(saved),
+                isSelfOwned(saved, actorId, session, agentPrincipals(List.of(saved))));
     }
 
     @Transactional
@@ -319,6 +328,51 @@ public class SessionParticipantService {
         }
     }
 
+    /** AGENT participants of a page, fetched once — displayName, source and selfOwned all read it. */
+    private Map<UUID, AgentPrincipal> agentPrincipals(List<SessionParticipant> rows) {
+        List<UUID> agentIds = rows.stream()
+                .filter(row -> SessionParticipant.KIND_AGENT.equals(row.getPrincipalKind()))
+                .map(SessionParticipant::getPrincipalId)
+                .filter(java.util.Objects::nonNull)
+                .distinct()
+                .toList();
+        if (agentIds.isEmpty()) {
+            return Map.of();
+        }
+        Map<UUID, AgentPrincipal> byId = new LinkedHashMap<>();
+        for (AgentPrincipal agent : agentPrincipalRepository.findAllById(agentIds)) {
+            byId.put(agent.getId(), agent);
+        }
+        return byId;
+    }
+
+    /**
+     * D23-27: can the caller send <b>as this row</b>? One predicate, two projections — the per-row
+     * {@code selfOwned} flag and the block-level {@code speakAs} (true when any row is selfOwned), so
+     * the two can never disagree.
+     *
+     * <p>Mirrors {@link #authorizeAsParticipant} exactly; that method stays the authority and this one
+     * only predicts it: speaking is the conversation owner's right (a workspace administrator is
+     * never allowed), a HUMAN may speak as themselves, a PERSONAL agent only by its owner, and a
+     * WORKSPACE/INSTANCE agent by the conversation owner (it has no single human owner).</p>
+     */
+    private boolean isSelfOwned(SessionParticipant row, String actorId, Session session,
+                                Map<UUID, AgentPrincipal> agents) {
+        if (actorId == null || session == null || !actorId.equals(session.getUserId())
+                || row.getDisabledAt() != null) {
+            return false;
+        }
+        UUID actor = UUID.fromString(actorId);
+        if (SessionParticipant.KIND_HUMAN.equals(row.getPrincipalKind())) {
+            return actor.equals(row.getPrincipalId());
+        }
+        AgentPrincipal agent = agents.get(row.getPrincipalId());
+        if (agent == null || agent.getDisabledAt() != null) {
+            return false;
+        }
+        return !"PERSONAL".equals(agent.getScope()) || actor.equals(agent.getOwnerUserId());
+    }
+
     private boolean canManage(String actorId, String workspaceId, Session session) {
         if (actorId == null) {
             return false;
@@ -356,7 +410,8 @@ public class SessionParticipantService {
         return 0L;
     }
 
-    private ParticipantView toView(SessionParticipant row, SessionParticipantCursor cursor) {
+    private ParticipantView toView(SessionParticipant row, SessionParticipantCursor cursor,
+                                     String humanDisplayName, boolean selfOwned) {
         AgentPrincipal principal = SessionParticipant.KIND_AGENT.equals(row.getPrincipalKind())
                 ? agentPrincipalRepository.findById(row.getPrincipalId()).orElse(null)
                 : null;
@@ -367,12 +422,70 @@ public class SessionParticipantService {
         return new ParticipantView(row.getId(), row.getPrincipalKind(), row.getPrincipalId(),
                 row.getRole(), row.getOrderIndex(), row.getWakePolicy(), row.getRespondPolicy(),
                 row.getCreatedAt(), row.getDisabledAt(),
-                // AGENT-only projection: displayName/model intent/source (UI row). HUMAN rows stay null — no fakes.
-                principal == null ? null : principal.getName(),
+                // displayName: AGENT → agent_principals.name; HUMAN → the user display name (a group chat
+                // must never show a raw UUID as "who said this"). null only when it cannot be resolved.
+                principal == null ? humanDisplayName : principal.getName(),
                 principal == null ? null : principal.getDefaultModelProvider(),
                 principal == null ? null : principal.getDefaultModelName(),
                 principal == null ? null : sourceOf(principal),
-                cursorView);
+                selfOwned, cursorView);
+    }
+
+    /**
+     * HUMAN rows: resolve the name in one batch so a long participant list does not do N+1 lookups.
+     * Only HUMAN rows are looked up; AGENT display names come from agent_principals.
+     */
+    private Map<UUID, String> humanDisplayNames(List<SessionParticipant> rows) {
+        List<UUID> humanIds = rows.stream()
+                .filter(row -> SessionParticipant.KIND_HUMAN.equals(row.getPrincipalKind()))
+                .map(SessionParticipant::getPrincipalId)
+                .filter(java.util.Objects::nonNull)
+                .distinct()
+                .toList();
+        if (humanIds.isEmpty()) {
+            return Map.of();
+        }
+        Map<UUID, String> names = new LinkedHashMap<>();
+        for (User user : userRepository.findAllById(humanIds)) {
+            String name = displayNameOf(user);
+            if (name != null) {
+                names.put(user.getId(), name);
+            }
+        }
+        return names;
+    }
+
+    private String humanDisplayName(SessionParticipant row) {
+        if (!SessionParticipant.KIND_HUMAN.equals(row.getPrincipalKind()) || row.getPrincipalId() == null) {
+            return null;
+        }
+        return userRepository.findById(row.getPrincipalId())
+                .map(SessionParticipantService::displayNameOf)
+                .orElse(null);
+    }
+
+    /**
+     * PLAN-0623: a human participant is shown by name — {@code name} → {@code username} → the email
+     * local part. Returning null here means "the user record is gone", which the UI renders as an
+     * unknown-user placeholder rather than a UUID.
+     */
+    static String displayNameOf(User user) {
+        if (user == null) {
+            return null;
+        }
+        if (user.getName() != null && !user.getName().isBlank()) {
+            return user.getName();
+        }
+        if (user.getUsername() != null && !user.getUsername().isBlank()) {
+            return user.getUsername();
+        }
+        String email = user.getEmail();
+        if (email == null || email.isBlank()) {
+            return null;
+        }
+        int at = email.indexOf('@');
+        String localPart = at > 0 ? email.substring(0, at) : email;
+        return localPart.isBlank() ? null : localPart;
     }
 
     private static String sourceOf(AgentPrincipal principal) {
@@ -449,7 +562,8 @@ public class SessionParticipantService {
                                   String role, Integer orderIndex, String wakePolicy,
                                   String respondPolicy, Instant createdAt, Instant disabledAt,
                                   String displayName, String defaultModelProvider,
-                                  String defaultModelName, String source, CursorView readCursor) {}
+                                  String defaultModelName, String source, boolean selfOwned,
+                                  CursorView readCursor) {}
 
     public record ListView(List<ParticipantView> participants, Map<String, Boolean> capabilities) {}
 }

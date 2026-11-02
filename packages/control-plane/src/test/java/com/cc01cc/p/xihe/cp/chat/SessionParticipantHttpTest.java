@@ -39,6 +39,7 @@ class SessionParticipantHttpTest extends AbstractIntegrationTest {
     @Autowired private WorkspaceFixture workspaceFixture;
     @Autowired private ObjectMapper json;
     @Autowired private com.cc01cc.p.xihe.cp.repository.SessionRepository sessions;
+    @Autowired private com.cc01cc.p.xihe.cp.repository.SessionParticipantRepository participantRepository;
     @Autowired private com.cc01cc.p.xihe.cp.repository.AgentPrincipalRepository principals;
 
     private final HttpClient http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build();
@@ -152,9 +153,69 @@ class SessionParticipantHttpTest extends AbstractIntegrationTest {
         return null;
     }
 
+    // -----------------------------------------------------------------------------------------
+    // D23-27 / displayName: a group chat shows "who", never a UUID.
+    // -----------------------------------------------------------------------------------------
+
+    @Test
+    void aHumanRowIsShownByNameNotByUuid() throws Exception {
+        AuthResponse named = register("P623 Named Human");
+        assertEquals(201, send(ownerToken, "POST", participantsPath(),
+                """
+                {"principalKind":"HUMAN","principalId":"%s","role":"MEMBER"}"""
+                        .formatted(named.getUser().getId())).status());
+
+        JsonNode list = send(ownerToken, "GET", participantsPath(), null).body();
+        JsonNode row = find(list.path("participants"), named.getUser().getId());
+
+        assertFalse(row.path("selfOwned").asBoolean(), "another account is not a legal speak-as target: " + row);
+        assertEquals("P623 Named Human", row.path("displayName").asText(),
+                "HUMAN rows carry the user display name; a UUID is not a person: " + row);
+    }
+
+    @Test
+    void anUnresolvableHumanIsNullInsteadOfAFakedName() throws Exception {
+        // The polymorphic participant has no FK (by design, R2): a row can outlive its user. Seed
+        // such a row directly; the projection must answer null so the UI shows "unknown user".
+        java.util.UUID ghost = java.util.UUID.randomUUID();
+        var row = new com.cc01cc.p.xihe.cp.entity.SessionParticipant(java.util.UUID.fromString(sessionId),
+                com.cc01cc.p.xihe.cp.entity.SessionParticipant.KIND_HUMAN, ghost,
+                com.cc01cc.p.xihe.cp.entity.SessionParticipant.ROLE_MEMBER, 30,
+                com.cc01cc.p.xihe.cp.entity.SessionParticipant.WAKE_MENTION,
+                com.cc01cc.p.xihe.cp.entity.SessionParticipant.RESPOND_WHEN_MENTIONED);
+        participantRepository.saveAndFlush(row);
+
+        JsonNode listed = find(send(ownerToken, "GET", participantsPath(), null).body().path("participants"),
+                ghost.toString());
+
+        assertNotNull(listed, "the orphan row is still listed");
+        assertTrue(listed.path("displayName").isNull(), "an unresolvable user is null, never invented: " + listed);
+    }
+
+    @Test
+    void speakAsIsTrueForTheOwnerAndFalseForEveryoneElse() throws Exception {
+        assertEquals(201, send(ownerToken, "POST", participantsPath(),
+                """
+                {"principalKind":"HUMAN","principalId":"%s","role":"MEMBER"}""".formatted(ownerId)).status());
+
+        JsonNode ownerView = send(ownerToken, "GET", participantsPath(), null).body();
+        assertTrue(ownerView.path("capabilities").path("speakAs").asBoolean(),
+                "the owner can speak as themselves");
+        assertTrue(find(ownerView.path("participants"), ownerId).path("selfOwned").asBoolean(),
+                "the owner's own HUMAN row is a legal speak-as target: " + ownerView);
+
+        // A workspace OWNER who does not own this conversation: manage may be true, speakAs is not.
+        AuthResponse other = register("P623 Other Owner");
+        workspaceFixture.bindWorkspaceRole(workspaceId, other.getUser().getId(), WorkspaceRole.OWNER);
+        JsonNode foreign = send(other.getAccessToken(), "GET", participantsPath(), null).body();
+        assertFalse(foreign.path("capabilities").path("speakAs").asBoolean(),
+                "speaking is the conversation owner's right, not a workspace role: " + foreign);
+    }
+
     private AuthResponse register(String label) {
         var response = restTemplate.postForEntity(url("/api/v1/auth/register"),
-                new RegisterRequest(label + "-" + UUID.randomUUID() + "@test.com",
+                new RegisterRequest(label.toLowerCase(java.util.Locale.ROOT).replaceAll("[^a-z0-9]", "")
+                        + "-" + UUID.randomUUID() + "@test.com",
                         TestDataFactory.PASSWORD, label), AuthResponse.class);
         assertEquals(201, response.getStatusCode().value());
         assertNotNull(response.getBody());

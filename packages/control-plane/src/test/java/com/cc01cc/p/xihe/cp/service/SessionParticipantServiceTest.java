@@ -21,6 +21,7 @@ import java.util.Optional;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -213,9 +214,13 @@ class SessionParticipantServiceTest {
 
         SessionParticipantService.ListView ownerView =
                 service.list(OWNER, WORKSPACE, SESSION_ID.toString());
-        assertEquals(Map.of("view", true, "manage", true, "mention", true),
+        // D23-27: the owner can speak as somebody only when a row is selfOwned; in this fixture the
+        // only participant is an AGENT whose owner is not the caller, so both projections are false.
+        assertEquals(Map.of("view", true, "manage", true, "mention", true, "speakAs", false),
                 ownerView.capabilities(),
-                "capability keys: view / manage / mention (the UI disables buttons on them)");
+                "capability keys: view / manage / mention / speakAs (the UI gates on them)");
+        assertFalse(ownerView.participants().get(0).selfOwned(),
+                "selfOwned and speakAs are the same predicate, projected twice");
         assertEquals(1, ownerView.participants().size());
     }
 
