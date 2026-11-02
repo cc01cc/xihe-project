@@ -465,6 +465,24 @@ export interface WorkspaceAgentBinding {
     hooks?: AgentPrincipalHooks | null;
 }
 
+/**
+ * PLAN-0629 M1-4 C：主体记忆（`GET /api/v1/workspaces/{ws}/agents/{pid}/memories`）。
+ *
+ * 字段**全部来自服务端**（`WorkspaceAgentMemoryView`）：`type` 是 CP 的枚举
+ * `profile | fact`，`pinned` 是 CP 的排序结果，UI 不推断默认值、不自行排序。
+ */
+export type WorkspaceAgentMemoryType = "profile" | "fact";
+
+export interface WorkspaceAgentMemory {
+    id: string;
+    type: WorkspaceAgentMemoryType;
+    pinned: boolean;
+    /** ISO-8601 instant（CP 写入时的时间戳，UI 只负责本地化显示）。 */
+    updatedAt: string;
+    /** 已归一化的存储文本；UI 只做展示截断/滚动，不改写内容。 */
+    content: string;
+}
+
 export interface AgentPrincipalCreateInput {
     name: string;
     templateId?: string;
@@ -601,6 +619,34 @@ function normalizePrincipalHooks(value: unknown): AgentPrincipalHooks | null {
         advisors.push({ kind: advisor.kind, on: on === undefined ? [] : [...(on as string[])] });
     }
     return { advisors };
+}
+/**
+ * PLAN-0629 M1-4 C：memory 行严格解析（与 hooks 同一条 fail-closed 纪律）。
+ * 契约要求 `{id,type,pinned,updatedAt,content}` 全在场；缺字段或 `type` 越界
+ * ⇒ **丢掉该行 + warn**：不猜 `pinned` 默认值，也不把未知 type 当 `fact` 显示。
+ */
+function normalizeWorkspaceAgentMemory(value: unknown): WorkspaceAgentMemory | null {
+    const record = asRecord(value);
+    if (
+        !record ||
+        typeof record.id !== "string" ||
+        record.id === "" ||
+        !(record.type === "profile" || record.type === "fact") ||
+        typeof record.pinned !== "boolean" ||
+        typeof record.updatedAt !== "string" ||
+        record.updatedAt === "" ||
+        typeof record.content !== "string"
+    ) {
+        console.warn("[agents] memory row malformed; skipped");
+        return null;
+    }
+    return {
+        id: record.id,
+        type: record.type,
+        pinned: record.pinned,
+        updatedAt: record.updatedAt,
+        content: record.content,
+    };
 }
 /**
  * PLAN-0625 G：policySummary 的 versioned `hooks` 段（守卫/顾问建议）。
@@ -2504,6 +2550,26 @@ export const api = {
                     hooks: normalizePrincipalHooks(agent.hooks),
                 }) as WorkspaceAgentBinding,
         );
+    },
+    /**
+     * PLAN-0629 M1-4 C：只读记忆列表。信封是 `{memories:[…]}`（与 `{agents:[…]}` 同风格），
+     * 不把裸数组当契约。`status='active'` 过滤、软删排除、pinned/profile 排序都在 CP；
+     * UI 不重排、不补字段。可见性门与 agents 列表一致（不可见与不存在同为 404）。
+     */
+    async getWorkspaceAgentMemories(
+        workspaceId: string,
+        principalId: string,
+    ): Promise<WorkspaceAgentMemory[]> {
+        const raw = await request<{ memories?: Array<Record<string, unknown>> }>(
+            `/workspaces/${encodeURIComponent(workspaceId)}/agents/${encodeURIComponent(principalId)}/memories`,
+        );
+        if (!Array.isArray(raw?.memories)) {
+            console.warn("[agents] memory envelope malformed; treated as empty");
+            return [];
+        }
+        return raw.memories
+            .map(normalizeWorkspaceAgentMemory)
+            .filter((row): row is WorkspaceAgentMemory => row !== null);
     },
     /**
      * PLAN-0621 F-01：`GET /api/v1/me/permissions` 是 CP 的**权威能力投影**

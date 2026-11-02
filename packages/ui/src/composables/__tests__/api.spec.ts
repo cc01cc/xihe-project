@@ -469,6 +469,89 @@ describe("Workspace Agent management API", () => {
         expect(agents[0].permissionsSnapshot).toEqual([]);
     });
 
+    it("reads one agent's memory with both path segments encoded (PLAN-0629 M1-4 C)", async () => {
+        fetchSpy.mockResolvedValueOnce({
+            ok: true,
+            json: () =>
+                Promise.resolve({
+                    memories: [
+                        {
+                            id: "memory-1",
+                            type: "profile",
+                            pinned: true,
+                            updatedAt: "2026-11-02T10:00:00Z",
+                            content: "Prefers Chinese answers",
+                        },
+                    ],
+                }),
+        } as Response);
+
+        const memories = await api.getWorkspaceAgentMemories("workspace/1", "principal 1");
+
+        expect(fetchSpy).toHaveBeenCalledWith(
+            "/api/v1/workspaces/workspace%2F1/agents/principal%201/memories",
+            expect.objectContaining({ headers: expect.any(Object) }),
+        );
+        // 信封解包：`{memories:[…]}`，字段原样（不推断 pinned、不重排）。
+        expect(memories).toEqual([
+            {
+                id: "memory-1",
+                type: "profile",
+                pinned: true,
+                updatedAt: "2026-11-02T10:00:00Z",
+                content: "Prefers Chinese answers",
+            },
+        ]);
+    });
+
+    it("drops malformed memory rows instead of guessing their fields", async () => {
+        // 契约是 `type ∈ {profile,fact}` 且 pinned 必填；越界/缺字段 ⇒ 丢行 + warn，
+        // 绝不把未知 type 当 fact、也不猜 pinned=false。
+        fetchSpy.mockResolvedValueOnce({
+            ok: true,
+            json: () =>
+                Promise.resolve({
+                    memories: [
+                        {
+                            id: "ok",
+                            type: "fact",
+                            pinned: false,
+                            updatedAt: "2026-11-02T10:00:00Z",
+                            content: "keep me",
+                        },
+                        {
+                            id: "bad-type",
+                            type: "candidate",
+                            pinned: false,
+                            updatedAt: "2026-11-02T10:00:00Z",
+                            content: "drop me",
+                        },
+                        {
+                            id: "missing-pinned",
+                            type: "fact",
+                            updatedAt: "2026-11-02T10:00:00Z",
+                            content: "drop me too",
+                        },
+                    ],
+                }),
+        } as Response);
+
+        const memories = await api.getWorkspaceAgentMemories("workspace-1", "principal-1");
+
+        expect(memories.map((memory) => memory.id)).toEqual(["ok"]);
+    });
+
+    it("treats a malformed memory envelope as empty instead of throwing", async () => {
+        fetchSpy.mockResolvedValueOnce({
+            ok: true,
+            json: () => Promise.resolve({}),
+        } as Response);
+
+        await expect(api.getWorkspaceAgentMemories("workspace-1", "principal-1")).resolves.toEqual(
+            [],
+        );
+    });
+
     it("disables a principal through the dedicated 204 route", async () => {
         fetchSpy.mockResolvedValueOnce({ ok: true, status: 204 } as Response);
 

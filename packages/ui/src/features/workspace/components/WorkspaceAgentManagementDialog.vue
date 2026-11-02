@@ -12,6 +12,7 @@ import {
     type AgentTemplateSummary,
     type SelfPermissionsView,
     type WorkspaceAgentBinding,
+    type WorkspaceAgentMemory,
     type WorkspaceAgentPermission,
 } from "../../../composables/api";
 
@@ -38,6 +39,16 @@ const saving = ref(false),
 const createdPrincipal = ref<AgentPrincipalCreateResponse | null>(null);
 const permissions = ref<WorkspaceAgentPermission[]>([]),
     editingPrincipalId = ref<string | null>(null);
+/**
+ * PLAN-0629 M1-4 C：只读「记忆」区。同一时刻只展开一个主体的记忆（一次一个请求），
+ * 展开状态与数据都留在本组件内——不新建 store、不做缓存，只读面按需拉取。
+ */
+const memoryPrincipalId = ref<string | null>(null);
+const memories = ref<WorkspaceAgentMemory[]>([]);
+const memoryState = ref<"idle" | "loading" | "ready" | "failed">("idle");
+const memoryError = ref("");
+/** 在途请求代号：切主体/收起/关弹窗后，旧响应必须被丢弃（不覆盖新状态）。 */
+let memoryRequestGeneration = 0;
 const unbindConfirmationId = ref<string | null>(null);
 const disableConfirmationId = ref<string | null>(null);
 /**
@@ -143,6 +154,8 @@ const createBlocked = computed(
 watch(
     () => props.open,
     (open) => {
+        // 每次开/关都丢弃记忆面板的展开态与在途请求，避免下次打开看到上一次的残影。
+        resetMemoryPanel();
         if (open) {
             void loadAgents();
             void loadTemplates();
@@ -245,6 +258,57 @@ async function loadAgents() {
     } finally {
         loading.value = false;
     }
+}
+
+/**
+ * PLAN-0629 M1-4 C：记忆只读区。
+ * - `type`/`pinned`/`updatedAt` 全部照服务端显示（CP 已按 pinned + profile 排序，UI 不重排）；
+ * - 404 `AGENT_PRINCIPAL_NOT_FOUND` = 不可见或不存在（CP 故意不区分）⇒ 给可读文案，不当作崩溃；
+ * - 收起 / 切主体 / 关弹窗都作废在途响应，避免旧数据回填。
+ */
+function resetMemoryPanel() {
+    memoryRequestGeneration += 1;
+    memoryPrincipalId.value = null;
+    memories.value = [];
+    memoryState.value = "idle";
+    memoryError.value = "";
+}
+
+function memoryTypeLabel(type: WorkspaceAgentMemory["type"]): string {
+    return type === "profile"
+        ? t("workspace.agentMemoryTypeProfile")
+        : t("workspace.agentMemoryTypeFact");
+}
+
+async function loadMemories(principalId: string) {
+    const generation = ++memoryRequestGeneration;
+    memoryState.value = "loading";
+    memoryError.value = "";
+    try {
+        const rows = await api.getWorkspaceAgentMemories(props.workspaceId, principalId);
+        if (generation !== memoryRequestGeneration) return;
+        memories.value = rows;
+        memoryState.value = "ready";
+    } catch (cause) {
+        if (generation !== memoryRequestGeneration) return;
+        memoryError.value =
+            cause instanceof ApiError && cause.problem.code === "AGENT_PRINCIPAL_NOT_FOUND"
+                ? t("workspace.agentMemoryNotFound")
+                : cause instanceof ApiError
+                  ? cause.message
+                  : t("workspace.agentMemoryLoadFailed");
+        memoryState.value = "failed";
+    }
+}
+
+function toggleMemories(agent: WorkspaceAgentBinding) {
+    if (memoryPrincipalId.value === agent.principalId) {
+        resetMemoryPanel();
+        return;
+    }
+    resetMemoryPanel();
+    memoryPrincipalId.value = agent.principalId;
+    void loadMemories(agent.principalId);
 }
 
 async function loadTemplates() {
@@ -986,6 +1050,107 @@ async function unbind(agent: WorkspaceAgentBinding) {
                             >
                                 {{ t("workspace.saveAgentCap") }}
                             </button>
+                        </div>
+                    </div>
+                    <!-- PLAN-0629 M1-4 C：只读记忆。写入（M1-5/M2）不在这里，故显式说明只读，
+                         否则用户会把它当"存不进去的 bug"。 -->
+                    <div class="border-t pt-3" data-testid="agent-memory-section">
+                        <button
+                            type="button"
+                            class="flex w-full items-center justify-between gap-2 rounded-md border px-2 py-1 text-xs disabled:opacity-50"
+                            :data-testid="`agent-memory-toggle-${agent.principalId}`"
+                            :aria-expanded="memoryPrincipalId === agent.principalId"
+                            :aria-controls="`agent-memory-panel-${agent.principalId}`"
+                            @click="toggleMemories(agent)"
+                        >
+                            <span>{{ t("workspace.agentMemoryTitle") }}</span>
+                            <span class="text-[11px] text-muted-foreground">{{
+                                t("workspace.agentMemoryReadonlyBadge")
+                            }}</span>
+                        </button>
+                        <div
+                            v-if="memoryPrincipalId === agent.principalId"
+                            :id="`agent-memory-panel-${agent.principalId}`"
+                            class="mt-2 space-y-2"
+                            :data-testid="`agent-memory-panel-${agent.principalId}`"
+                        >
+                            <p
+                                class="text-[11px] text-muted-foreground"
+                                data-testid="agent-memory-readonly-hint"
+                            >
+                                {{ t("workspace.agentMemoryReadonlyHint") }}
+                            </p>
+                            <p
+                                v-if="memoryState === 'loading'"
+                                role="status"
+                                class="text-xs text-muted-foreground"
+                                data-testid="agent-memory-loading"
+                            >
+                                {{ t("workspace.agentMemoryLoading") }}
+                            </p>
+                            <div
+                                v-else-if="memoryState === 'failed'"
+                                class="space-y-1"
+                                data-testid="agent-memory-failed"
+                            >
+                                <p role="alert" class="text-xs text-destructive">
+                                    {{ memoryError }}
+                                </p>
+                                <button
+                                    type="button"
+                                    class="rounded-md border px-2 py-1 text-xs"
+                                    :data-testid="`agent-memory-retry-${agent.principalId}`"
+                                    @click="loadMemories(agent.principalId)"
+                                >
+                                    {{ t("workspace.agentMemoryRetry") }}
+                                </button>
+                            </div>
+                            <p
+                                v-else-if="memories.length === 0"
+                                class="rounded-md border border-dashed p-3 text-xs text-muted-foreground"
+                                data-testid="agent-memory-empty"
+                            >
+                                {{ t("workspace.agentMemoryEmpty") }}
+                            </p>
+                            <ul v-else class="space-y-2" data-testid="agent-memory-list">
+                                <li
+                                    v-for="memory in memories"
+                                    :key="memory.id"
+                                    class="rounded-md border p-2"
+                                    :data-testid="`agent-memory-item-${memory.id}`"
+                                >
+                                    <div class="flex flex-wrap items-center gap-1.5 text-[11px]">
+                                        <span
+                                            class="rounded border px-1.5 py-0.5 text-muted-foreground"
+                                            :data-testid="`agent-memory-type-${memory.id}`"
+                                            :data-memory-type="memory.type"
+                                        >
+                                            {{ memoryTypeLabel(memory.type) }}
+                                        </span>
+                                        <!-- pinned 是 CP 的值，UI 只照显示（不猜默认、不重排）。 -->
+                                        <span
+                                            v-if="memory.pinned"
+                                            class="rounded border border-amber-500/40 px-1.5 py-0.5 text-amber-600"
+                                            :data-testid="`agent-memory-pinned-${memory.id}`"
+                                        >
+                                            {{ t("workspace.agentMemoryPinned") }}
+                                        </span>
+                                        <span
+                                            class="text-muted-foreground"
+                                            :data-testid="`agent-memory-updated-${memory.id}`"
+                                        >
+                                            {{ t("workspace.agentMemoryUpdatedAt") }}:
+                                            {{ new Date(memory.updatedAt).toLocaleString() }}
+                                        </span>
+                                    </div>
+                                    <p
+                                        class="mt-1 max-h-40 overflow-y-auto whitespace-pre-wrap break-words text-xs"
+                                        :data-testid="`agent-memory-content-${memory.id}`"
+                                    >
+                                        {{ memory.content }}
+                                    </p>
+                                </li>
+                            </ul>
                         </div>
                     </div>
                 </article>
