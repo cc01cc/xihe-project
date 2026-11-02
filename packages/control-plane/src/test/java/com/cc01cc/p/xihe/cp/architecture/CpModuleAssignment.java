@@ -73,6 +73,13 @@ final class CpModuleAssignment implements SliceAssignment {
         if (name.startsWith("Policy") || name.startsWith("ToolFace") || name.startsWith("AuthorizationGrant")) {
             return "policy";
         }
+        // PLAN-0625 M2 (D25-15): the hook seam — interface, registry, verdict and cache — lives in the
+        // policy package, so its implementations follow the family even when they sit in `service`.
+        // `GuardHookAdvisor` is the guard's `HookAdvisor`, not a module of its own (the session-facing
+        // advice trigger stays in chat: `chat.GuardAdviceService`).
+        if (name.startsWith("Hook") || name.equals("GuardHookAdvisor")) {
+            return "policy";
+        }
         // PLAN-0610: the dynamic RBAC slice (roles / role_permissions / role_bindings) is part of the
         // authorization surface, so its entities, repositories and admin services belong to "policy"
         // rather than growing a new module for one capability family. MemberView is the public
@@ -110,6 +117,15 @@ final class CpModuleAssignment implements SliceAssignment {
         }
         if (name.equals("UuidStringConverter")) {
             return "persistence";
+        }
+        // PLAN-0624: the wake chain is the conversation pipeline's wake path, so it belongs to the same
+        // slice as the chat-package `WakeChain*` / `WakeFanOut*` types; the judge family and the
+        // participant-level capability resolution are part of that same path — the judge decides
+        // whether a participant speaks in a wake round, and `judge_decisions` is only consumed by the
+        // wake dispatcher and the hook advisors. Session participants already resolve to chat through
+        // the `Session` prefix.
+        if (name.startsWith("Wake") || name.startsWith("Judge") || name.startsWith("Participant")) {
+            return "chat";
         }
         if (name.startsWith("Session") || name.startsWith("Chat") || name.startsWith("Approval")
                 || name.startsWith("Message") || name.startsWith("Inbox") || name.startsWith("Task")
