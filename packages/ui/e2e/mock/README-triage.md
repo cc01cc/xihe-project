@@ -45,6 +45,9 @@
 
 ## 4. 未修：P（产品，待裁定；只报不改）
 
+> 行号说明：§2/§3 用基线（修复前）行号；§4/§5 里仍失败的用例用**修复后**行号
+> （`session-agent-selection.spec.ts` 因补夹具整体下移：基线 `:90` → 现 `:101`，基线 `:203` → 现 `:252`）。
+
 | spec:line | 症状 | 证据 |
 |---|---|---|
 | `chat.spec.ts:201`、`run-budget-exhausted.spec.ts:16/61`、`sse-liveness.spec.ts:115` | SSE `error` 事件后**没有 `message-error` 气泡**；带 `errorAfterTokens` 时连已经流出的 token 也不可见 | 同一夹具去掉 `errorAfterTokens` 时 token 正常渲染（`chat.spec.ts:104` 绿）；`message-error` testid 仍在 `MessageItem.vue:415`，只是从不挂载。`ChatRunResponse`+`runId` 已按契约补齐后仍不出现 ⇒ 不是夹具形状问题 |
