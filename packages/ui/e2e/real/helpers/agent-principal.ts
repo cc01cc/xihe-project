@@ -102,13 +102,28 @@ export async function provisionWorkspaceAgentPrincipal(
     return principalId;
 }
 
+/**
+ * 建会话。
+ *
+ * **0623 起**：多工作区账号上无工作区上下文的 `POST /api/v1/sessions` 会 409
+ * `WORKSPACE_CONTEXT_REQUIRED`（产品刻意拒绝歧义，不猜"恰好第一个工作区"）。
+ *
+ * 传 `workspaceId` 时走**路径形式** `POST /api/v1/workspaces/{id}/sessions` 并同时带
+ * `X-Workspace-Id`（路径与头一致，双保险；UI 的 `createSessionForWorkspace` 也用路径形式）。
+ * 不传时保持旧行为，既有 0622 spec 不受影响。
+ */
 export async function createSessionWithPrincipal(
     request: APIRequestContext,
     auth: AgentAuth,
-    { principalId, title }: SessionOptions,
+    { principalId, title, workspaceId }: SessionOptions & { workspaceId?: string },
 ): Promise<string> {
-    const response = await request.post(`${CP_URL}/api/v1/sessions`, {
-        headers: { Authorization: `Bearer ${auth.accessToken}` },
+    const url = workspaceId
+        ? `${CP_URL}/api/v1/workspaces/${workspaceId}/sessions`
+        : `${CP_URL}/api/v1/sessions`;
+    const headers: Record<string, string> = { Authorization: `Bearer ${auth.accessToken}` };
+    if (workspaceId) headers["X-Workspace-Id"] = workspaceId;
+    const response = await request.post(url, {
+        headers,
         data: { title, agentPrincipalId: principalId },
     });
     expect(response.status(), await response.text()).toBe(201);

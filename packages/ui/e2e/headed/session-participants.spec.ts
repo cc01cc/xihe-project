@@ -4,8 +4,8 @@ import { randomUUID } from "node:crypto";
 import { test, expect } from "@playwright/test";
 import type { Page } from "@playwright/test";
 import {
-    provisionWorkspaceAgentPrincipal,
     createSessionWithPrincipal,
+    provisionWorkspaceAgentPrincipal,
 } from "../real/helpers/agent-principal";
 import { createDirectAttachWorkspace } from "../real/helpers/workspace";
 import { CP_URL } from "../real/helpers/journey";
@@ -393,12 +393,16 @@ test.describe("PLAN-0623 有头走查：会话参与者 dock tab", () => {
             { name: `Headed Participants ${randomUUID().slice(0, 8)}`, actions: ["read"] },
         );
 
+        // 建会话**必须带工作区上下文**：本 spec 自建了工作区 ⇒ 账号变多工作区 ⇒ 无上下文的
+        // `POST /api/v1/sessions` 会 409 `WORKSPACE_CONTEXT_REQUIRED`（产品拒绝歧义，不猜第一个）。
+        // helper 收到 `workspaceId` 时走路径形式 + `X-Workspace-Id`（不传时行为不变，旧 spec 不受影响）。
         sessionId = await createSessionWithPrincipal(
             request,
             { accessToken: token, workspaceId },
             {
                 principalId: agentParticipantId,
                 title: "Participants walkthrough",
+                workspaceId,
             },
         );
 
