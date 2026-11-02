@@ -36,6 +36,12 @@ public class AgentPrincipalController {
             // PLAN-0625 M2 (D25-14): hook subscriptions ride the create surface — no new endpoint.
             "hooks");
 
+    /**
+     * PLAN-0625 D25-14 + PLAN-0629 D29-21: the PATCH body carries the subject-level documents. Both
+     * keys are optional, at least one is required, and any other key is a 400 (additionalProperties:false).
+     */
+    private static final java.util.Set<String> PATCH_BODY_KEYS = java.util.Set.of("hooks", "contextPolicy");
+
     private Map<String, Object> toPrincipalView(AgentPrincipalService.AgentPrincipalView view) {
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("principalId", view.principalId());
@@ -50,6 +56,8 @@ public class AgentPrincipalController {
         result.put("allowedModels", toDocument(view.allowedModels()));
         result.put("disabledAt", view.disabledAt() == null ? null : view.disabledAt().toString());
         result.put("hooks", toDocument(view.hooks()));
+        // PLAN-0629 M1 (D29-21): the subject's memory policy is part of the principal view.
+        result.put("contextPolicy", toDocument(view.contextPolicy()));
         return result;
     }
 
@@ -127,20 +135,24 @@ public class AgentPrincipalController {
 
     /**
      * PLAN-0625 M2 (D25-14, Gap K): the subscription update surface. Ruling: no separate
-     * {@code /hooks} sub-resource — the principal's own update face accepts the document, so the
-     * existing tier authority (and the {@code GUARD_HOOKS_IMMUTABLE} refusal) is reused verbatim.
+     * {@code /hooks} or {@code /context-policy} sub-resource — the principal's own update face accepts
+     * the documents, so the existing tier authority (and the {@code GUARD_HOOKS_IMMUTABLE} refusal) is
+     * reused verbatim.
      *
-     * <p>The body is exactly {@code {"hooks": <object|null>}} ({@code additionalProperties:false}):
-     * any other key is a 400 {@code INVALID_REQUEST}, and {@code hooks: null} clears every
-     * subscription. Validation lives in the service (single write-side gate).</p>
+     * <p>The body is {@code {"hooks"?: <object|null>, "contextPolicy"?: <object|null>}}
+     * ({@code additionalProperties:false}): at least one key is required, any other key is a 400
+     * {@code INVALID_REQUEST}, and an explicit {@code null} clears that document. Validation lives in
+     * the service (single write-side gate). The response echoes the persisted documents.</p>
      */
     @PatchMapping("/api/v1/agent-principals/{principalId}")
     @PreAuthorize("isAuthenticated()")
-    public ResponseEntity<?> updateHooks(@PathVariable String principalId,
-                                         @RequestBody(required = false) Map<String, Object> body) {
-        if (body == null || body.size() != 1 || !body.containsKey("hooks")) {
+    public ResponseEntity<?> updateDocuments(@PathVariable String principalId,
+                                             @RequestBody(required = false) Map<String, Object> body) {
+        if (body == null || body.isEmpty()
+                || body.keySet().stream().anyMatch(key -> !PATCH_BODY_KEYS.contains(key))) {
             return ProblemDetailsHandler.problemResponse(HttpStatus.BAD_REQUEST,
-                    "INVALID_REQUEST", "Body must contain only a hooks document (object or null)");
+                    "INVALID_REQUEST",
+                    "Body must contain hooks and/or contextPolicy (object or null)");
         }
         String actorUserId = TenantContext.getUserId();
         if (actorUserId == null || actorUserId.isBlank()) {
@@ -148,14 +160,19 @@ public class AgentPrincipalController {
                     "AUTHORIZATION_REQUIRED", "Authentication required");
         }
         try {
-            Object raw = body.get("hooks");
-            JsonNode hooks = raw == null ? null : objectMapper.valueToTree(raw);
-            JsonNode stored = agentPrincipalService.updatePrincipalHooks(
-                    actorUserId, parseUuid(principalId), hooks);
+            var patch = new AgentPrincipalService.PrincipalSettingsPatch(
+                    body.get("hooks") == null ? null : objectMapper.valueToTree(body.get("hooks")),
+                    body.containsKey("hooks"),
+                    body.get("contextPolicy") == null
+                            ? null : objectMapper.valueToTree(body.get("contextPolicy")),
+                    body.containsKey("contextPolicy"));
+            AgentPrincipalService.PrincipalSettings stored = agentPrincipalService
+                    .applyPrincipalSettings(actorUserId, parseUuid(principalId), patch);
             Map<String, Object> response = new LinkedHashMap<>();
             response.put("principalId", principalId);
-            // Echo the persisted document (null = cleared), never the caller's raw input.
-            response.put("hooks", toDocument(stored));
+            // Echo the persisted documents (null = cleared), never the caller's raw input.
+            response.put("hooks", toDocument(stored.hooks()));
+            response.put("contextPolicy", toDocument(stored.contextPolicy()));
             return ResponseEntity.ok(response);
         } catch (CpApiException e) {
             return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());

@@ -515,19 +515,33 @@ class OpenApiYamlContractTest {
             Map<?, ?> disableResponses = (Map<?, ?>) ((Map<?, ?>) disable.get("post")).get("responses");
             assertTrue(disableResponses.containsKey("204"), "disable answers 204");
 
-            // 1b (PLAN-0625 M2 / Gap K): the hook-subscription update surface is contracted — no
-            // /hooks sub-resource, the principal's own PATCH carries the document.
+            // 1b (PLAN-0625 M2 / Gap K + PLAN-0629 M1 / D29-21): the subject-document update surface
+            // is contracted — no /hooks or /context-policy sub-resource, the principal's own PATCH
+            // carries both documents.
             Map<?, ?> principalUpdate = (Map<?, ?>) paths.get("/api/v1/agent-principals/{principalId}");
             assertInstanceOf(Map.class, principalUpdate, "the principal update surface is contracted");
             assertInstanceOf(Map.class, principalUpdate.get("patch"),
-                    "PATCH /api/v1/agent-principals/{principalId} carries the subscription document");
-            Map<?, ?> hooksUpdateBody = (Map<?, ?>) schemas.get("AgentPrincipalHooksUpdateRequest");
-            assertInstanceOf(Map.class, hooksUpdateBody, "AgentPrincipalHooksUpdateRequest is contracted");
-            assertEquals(Boolean.FALSE, hooksUpdateBody.get("additionalProperties"),
-                    "D25-14: the update body is exactly {hooks}; any other key is a 400");
-            assertEquals(List.of("hooks"), hooksUpdateBody.get("required"));
+                    "PATCH /api/v1/agent-principals/{principalId} carries the subject documents");
+            Map<?, ?> updateBody = (Map<?, ?>) schemas.get("AgentPrincipalUpdateRequest");
+            assertInstanceOf(Map.class, updateBody, "AgentPrincipalUpdateRequest is contracted");
+            assertEquals(Boolean.FALSE, updateBody.get("additionalProperties"),
+                    "D25-14/D29-21: only hooks/contextPolicy are accepted; any other key is a 400");
+            assertEquals(1, updateBody.get("minProperties"),
+                    "at least one document must be named (an empty PATCH body is a 400)");
+            Map<?, ?> documentProps = (Map<?, ?>) updateBody.get("properties");
+            for (String field : List.of("hooks", "contextPolicy")) {
+                assertTrue(documentProps.containsKey(field), "the update body must carry " + field);
+            }
+            Map<?, ?> updateViewProps = (Map<?, ?>) ((Map<?, ?>) schemas.get("AgentPrincipalUpdateView"))
+                    .get("properties");
+            for (String field : List.of("principalId", "hooks", "contextPolicy")) {
+                assertTrue(updateViewProps.containsKey(field), "the update view must echo " + field);
+            }
             assertTrue(raw.contains("GUARD_HOOKS_IMMUTABLE"),
                     "the preset-guard refusal code is named on the wire contract");
+            assertTrue(raw.contains("writeMode judge is not implemented in v1")
+                            || raw.contains("judge` is reserved for M2"),
+                    "the v1-reserved writeMode value is documented");
 
             // 2: the create request carries the frozen scope / model-intent fields.
             Map<?, ?> createProps = (Map<?, ?>) ((Map<?, ?>) schemas.get("AgentPrincipalCreateRequest"))

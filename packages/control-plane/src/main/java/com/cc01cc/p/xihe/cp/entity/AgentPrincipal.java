@@ -71,6 +71,19 @@ public class AgentPrincipal {
     @jakarta.persistence.Column(name = "hooks", columnDefinition = "jsonb")
     private com.fasterxml.jackson.databind.JsonNode hooks;
 
+    /**
+     * PLAN-0629 M1 (D29-21 / D23-20): the subject's memory policy document
+     * {@code {"memory":{"enabled":false,"writeMode":"off","types":["profile","fact"]}}}.
+     *
+     * <p>D23-20 keeps this on the subject instead of the {@code context-policy} config domain, and V92
+     * created the nullable {@code jsonb} column — this field is its first writer and first reader.
+     * {@code null} = no policy (memory off). Shape validation has a single write-side gate:
+     * {@code policy.ContextPolicyValidator}.</p>
+     */
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "context_policy", columnDefinition = "jsonb")
+    private JsonNode contextPolicy;
+
     /** Only ever set for {@code PERSONAL}; the DB CHECK constraint keeps the two in sync. */
     @Column(name = "owner_user_id", columnDefinition = "uuid")
     private UUID ownerUserId;
@@ -127,6 +140,8 @@ public class AgentPrincipal {
     public void setPresetId(String presetId) { this.presetId = presetId; }
     public com.fasterxml.jackson.databind.JsonNode getHooks() { return hooks; }
     public void setHooks(com.fasterxml.jackson.databind.JsonNode hooks) { this.hooks = hooks; }
+    public JsonNode getContextPolicy() { return contextPolicy; }
+    public void setContextPolicy(JsonNode contextPolicy) { this.contextPolicy = contextPolicy; }
     public void setScope(String scope) { this.scope = scope; }
 
     public UUID getOwnerUserId() { return ownerUserId; }

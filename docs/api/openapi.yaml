@@ -280,29 +280,45 @@ paths:
         '409': { $ref: '#/components/responses/Problem' }
   /api/v1/agent-principals/{principalId}:
     patch:
-      operationId: updateAgentPrincipalHooks
-      summary: Replace an Agent principal's hook subscriptions
+      operationId: updateAgentPrincipalDocuments
+      summary: Replace an Agent principal's hook subscriptions and/or memory policy
       description: |
-        PLAN-0625 M2 (D25-14): there is no separate `/hooks` sub-resource — the
-        principal's own update surface accepts the subscription document, so the tier
-        authority that guards `disable` is reused verbatim (PERSONAL=owner,
-        WORKSPACE=`MANAGE_WORKSPACE_AGENTS` on the bound Workspace, INSTANCE=instance
-        administration). The body is exactly `{hooks}` (`additionalProperties:false`):
-        `hooks` is the document `{advisors:[{kind,on:[actionClass]}]}`, and `hooks:null`
-        clears every subscription. Shape violations answer 400 `INVALID_REQUEST`
+        PLAN-0625 M2 (D25-14) + PLAN-0629 M1 (D29-21): there is no separate `/hooks` or
+        `/context-policy` sub-resource — the principal's own update surface accepts the
+        subject-level documents, so the tier authority that guards `disable` is reused
+        verbatim (PERSONAL=owner, WORKSPACE=`MANAGE_WORKSPACE_AGENTS` on the bound
+        Workspace, INSTANCE=instance administration).
+
+        The body is `{hooks?, contextPolicy?}` with `additionalProperties:false`: at least
+        one key is required, any other key is a 400 `INVALID_REQUEST`, and an explicit
+        `null` clears that document (the column is written NULL). An absent key is left
+        untouched; the response echoes the persisted documents, never the caller's raw input.
+
+        `hooks` is `{advisors:[{kind,on:[actionClass]}]}`; shape violations answer 400
         (D25-12: `on` must hit the frozen action-class whitelist — today `approval.ask`).
-        A preset guard (`origin=SYSTEM_PRESET`) owns its subscriptions through the
-        template and refuses with 403 `GUARD_HOOKS_IMMUTABLE`, deliberately distinct
-        from `GUARD_CAP_IMMUTABLE`. Written mutations are audited as
-        `agent_principal_hooks_updated`.
+        A preset guard (`origin=SYSTEM_PRESET`) owns its subscriptions through the template
+        and refuses with 403 `GUARD_HOOKS_IMMUTABLE`, deliberately distinct from
+        `GUARD_CAP_IMMUTABLE`; that refusal is hooks-only, the memory policy stays writable.
+
+        `contextPolicy` is the frozen v1 memory document from D29-25:
+        `{memory:{enabled?,writeMode?,types?}}` where `enabled` is a boolean (default
+        false — a new subject has no memory until the user switches it on), `writeMode` is
+        `off|tool` (`judge` is reserved for M2 and is refused with an explicit 400 detail),
+        and `types` is a subset of `profile|fact` (an empty array means no type, i.e.
+        memory effectively off). There is deliberately no `auto` write channel: D29-24
+        rejected auto-summarising writes, and the durable `origin` enum of the memory rows
+        is `tool|ui|cli`.
+
+        Written mutations are audited per surface as `agent_principal_hooks_updated` and
+        `agent_principal_context_policy_updated`.
       security: [{ bearerAuth: [] }]
       parameters: [{ in: path, name: principalId, required: true, schema: { type: string, format: uuid } }]
       requestBody:
         required: true
-        content: { application/json: { schema: { $ref: '#/components/schemas/AgentPrincipalHooksUpdateRequest' } } }
+        content: { application/json: { schema: { $ref: '#/components/schemas/AgentPrincipalUpdateRequest' } } }
       responses:
-        '200': { description: The stored subscription document, content: { application/json: { schema: { $ref: '#/components/schemas/AgentPrincipalHooksUpdateView' } } } }
-        '400': { description: 'INVALID_REQUEST — body carries a key other than hooks, or the document fails the D25-12 shape/whitelist validation', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '200': { description: The persisted subject documents, content: { application/json: { schema: { $ref: '#/components/schemas/AgentPrincipalUpdateView' } } } }
+        '400': { description: 'INVALID_REQUEST — body carries a key outside hooks/contextPolicy, names neither document, or a document fails its shape validation (hooks D25-12 whitelist; contextPolicy D29-25 shape/`writeMode` values)', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
         '401': { $ref: '#/components/responses/Problem' }
         '403': { description: 'FORBIDDEN — the caller lacks the tier authority; or GUARD_HOOKS_IMMUTABLE — a preset guard owns its subscriptions through the template, not the API', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
         '404': { description: AGENT_PRINCIPAL_NOT_FOUND, content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
@@ -3453,10 +3469,10 @@ components:
     AgentModelRef: { type: object, additionalProperties: false, required: [provider, model], properties: { provider: { type: string, minLength: 1 }, model: { type: string, minLength: 1 } } }
     AgentPrincipalCreateRequest: { type: object, additionalProperties: false, required: [name], properties: { name: { type: string, minLength: 1 }, templateId: { type: [string, 'null'], format: uuid }, scope: { type: string, enum: [PERSONAL, WORKSPACE, INSTANCE], default: WORKSPACE, description: 'PLAN-0622 tier; each tier has its own creation action (CREATE_OWN_AGENT / MANAGE_WORKSPACE_AGENTS / CREATE_ACCOUNT).' }, defaultModelProvider: { type: [string, 'null'], description: 'Model intent only; the principal never holds a provider connection.' }, defaultModelName: { type: [string, 'null'] }, allowedModels: { type: [array, 'null'], items: { $ref: '#/components/schemas/AgentModelRef' }, description: 'null = unrestricted.' }, hooks: { type: [object, 'null'], description: 'PLAN-0625 M2 (D25-12/14): hook subscriptions {advisors:[{kind,on:[actionClass]}]}; on must hit the frozen action-class whitelist (today: approval.ask) or the write is rejected 400. A preset guard (origin=SYSTEM_PRESET) refuses subscription changes with 403 GUARD_HOOKS_IMMUTABLE.' } } }
     AgentPrincipalCreateView: { type: object, required: [principalId, createdAt, scope, ownerUserId, defaultModelProvider, defaultModelName, allowedModels], properties: { principalId: { type: string, format: uuid }, templateId: { type: [string, 'null'], format: uuid }, templateName: { type: [string, 'null'] }, scope: { type: string, enum: [PERSONAL, WORKSPACE, INSTANCE] }, ownerUserId: { type: [string, 'null'], format: uuid, description: 'The PERSONAL owner; null for WORKSPACE/INSTANCE.' }, defaultModelProvider: { type: [string, 'null'] }, defaultModelName: { type: [string, 'null'] }, allowedModels: { type: [array, 'null'], items: { $ref: '#/components/schemas/AgentModelRef' } }, createdAt: { type: string, format: date-time }, hooks: { type: [object, 'null'], description: 'PLAN-0625 M2: the stored subscription document {advisors:[{kind,on:[actionClass]}]} (null = none) — serialised as plain JSON (Gap J).' } } }
-    AgentPrincipalView: { type: object, required: [principalId, name, createdAt, scope, ownerUserId, defaultModelProvider, defaultModelName, allowedModels], properties: { principalId: { type: string, format: uuid }, name: { type: string }, templateId: { type: [string, 'null'], format: uuid }, templateName: { type: [string, 'null'] }, scope: { type: string, enum: [PERSONAL, WORKSPACE, INSTANCE] }, ownerUserId: { type: [string, 'null'], format: uuid }, defaultModelProvider: { type: [string, 'null'] }, defaultModelName: { type: [string, 'null'] }, allowedModels: { type: [array, 'null'], items: { $ref: '#/components/schemas/AgentModelRef' } }, createdAt: { type: string, format: date-time }, disabledAt: { type: [string, 'null'], format: date-time }, hooks: { type: [object, 'null'], description: 'PLAN-0625 V96/D25-09: the subscription document {advisors:[{kind,on:[actionClass]}]} — copied from the template at creation, mutable via PATCH /api/v1/agent-principals/{principalId}; null = no subscriptions. The runtime single-read surface for the approval gate.' } } }
+    AgentPrincipalView: { type: object, required: [principalId, name, createdAt, scope, ownerUserId, defaultModelProvider, defaultModelName, allowedModels], properties: { principalId: { type: string, format: uuid }, name: { type: string }, templateId: { type: [string, 'null'], format: uuid }, templateName: { type: [string, 'null'] }, scope: { type: string, enum: [PERSONAL, WORKSPACE, INSTANCE] }, ownerUserId: { type: [string, 'null'], format: uuid }, defaultModelProvider: { type: [string, 'null'] }, defaultModelName: { type: [string, 'null'] }, allowedModels: { type: [array, 'null'], items: { $ref: '#/components/schemas/AgentModelRef' } }, createdAt: { type: string, format: date-time }, disabledAt: { type: [string, 'null'], format: date-time }, hooks: { type: [object, 'null'], description: 'PLAN-0625 V96/D25-09: the subscription document {advisors:[{kind,on:[actionClass]}]} — copied from the template at creation, mutable via PATCH /api/v1/agent-principals/{principalId}; null = no subscriptions. The runtime single-read surface for the approval gate.' }, contextPolicy: { type: [object, 'null'], description: 'PLAN-0629 M1 (D29-21/D29-25): the subject memory policy {memory:{enabled,writeMode,types}} stored in agent_principals.context_policy; null = no policy (memory off). See the PATCH /api/v1/agent-principals/{principalId} description for the frozen v1 shape and value rules.' } } }
     AgentPrincipalListResponse: { type: object, required: [principals], properties: { principals: { type: array, items: { $ref: '#/components/schemas/AgentPrincipalView' } } } }
-    AgentPrincipalHooksUpdateRequest: { type: object, additionalProperties: false, required: [hooks], description: 'PLAN-0625 M2 (D25-14): the subscription update body is exactly one key. hooks is {advisors:[{kind,on:[actionClass]}]} or null (null clears every subscription).', properties: { hooks: { type: [object, 'null'], description: 'D25-12: each advisors[].kind is a non-blank open string (implementing HookAdvisor is the plugin contract) and each advisors[].on value must hit the frozen action-class whitelist (today approval.ask) — otherwise the write is rejected 400 INVALID_REQUEST instead of storing a subscription that can never fire.' } } }
-    AgentPrincipalHooksUpdateView: { type: object, required: [principalId, hooks], description: 'PLAN-0625 M2: the persisted document is echoed, never the caller raw input (validated/normalised by the single write-side gate).', properties: { principalId: { type: string, format: uuid }, hooks: { type: [object, 'null'], description: 'The stored subscription document; null after a clear.' } } }
+    AgentPrincipalUpdateRequest: { type: object, additionalProperties: false, minProperties: 1, description: 'PLAN-0625 M2 (D25-14) + PLAN-0629 M1 (D29-21): the subject-document update body. Both keys are optional, at least one is required, and an explicit null clears that document while an absent key leaves it untouched.', properties: { hooks: { type: [object, 'null'], description: 'D25-12: {advisors:[{kind,on:[actionClass]}]} or null (clears every subscription). Each advisors[].kind is a non-blank open string (implementing HookAdvisor is the plugin contract) and each advisors[].on value must hit the frozen action-class whitelist (today approval.ask) — otherwise the write is rejected 400 INVALID_REQUEST instead of storing a subscription that can never fire.' }, contextPolicy: { type: [object, 'null'], description: 'PLAN-0629 D29-25 frozen v1 memory policy {memory:{enabled?,writeMode?,types?}} or null (clears the column). enabled: boolean (default false = no memory until the user switches it on). writeMode: off|tool; judge is reserved for M2 and answers 400 with an explicit detail. types: subset of profile|fact (empty array = no type, i.e. memory effectively off). Unknown keys at either level are 400 (additionalProperties:false). There is no auto write channel: D29-24 rejected auto-summarising writes and the durable origin enum is tool|ui|cli.' } } }
+    AgentPrincipalUpdateView: { type: object, required: [principalId, hooks, contextPolicy], description: 'PLAN-0625 M2 + PLAN-0629 M1: both persisted documents are echoed (read back from the row), never the caller raw input. An untouched document reports its stored value, not a stale null.', properties: { principalId: { type: string, format: uuid }, hooks: { type: [object, 'null'], description: 'The stored subscription document; null when none / after a clear.' }, contextPolicy: { type: [object, 'null'], description: 'The stored memory policy; null when none / after a clear.' } } }
     ModelLimit: { type: object, additionalProperties: false, required: [provider, model], properties: { provider: { type: string, minLength: 1 }, model: { type: string, minLength: 1 }, maxInflight: { type: [integer, 'null'], minimum: 1, description: 'null = inherit the connection limit.' }, windowTokenBudget: { type: [integer, 'null'], format: int64, minimum: 1 }, windowSeconds: { type: [integer, 'null'], minimum: 1 } } }
     ResourceExhaustedProblem: { type: object, allOf: [{ $ref: '#/components/schemas/ProblemDetails' }, { type: object, required: [code, retryAfterSeconds], properties: { code: { type: string, enum: [RESOURCE_EXHAUSTED] }, retryAfterSeconds: { type: integer, minimum: 1, description: 'Mirrors the Retry-After header.' }, resourceKind: { type: string, enum: [CONNECTION, MODEL, FILE_WRITE, PROCESS, JOB, MCP], description: 'PLAN-0622: which resource class refused admission.' }, scope: { type: string, description: 'Resource key scope (for example connection:<uuid> or workspace:<uuid>/server:<id>).' } } }] }
     WorkspaceAgentCapView: { type: object, required: [principalId, workspaceId, permissions], properties: { principalId: { type: string, format: uuid }, workspaceId: { type: string, format: uuid }, permissions: { type: array, items: { $ref: '#/components/schemas/WorkspaceAgentPermission' } } } }

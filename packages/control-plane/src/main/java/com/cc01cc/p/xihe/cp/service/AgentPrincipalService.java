@@ -9,6 +9,7 @@ import com.cc01cc.p.xihe.cp.entity.WorkspaceAgent;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceAgentId;
 import com.cc01cc.p.xihe.cp.policy.AuthzContext;
 import com.cc01cc.p.xihe.cp.policy.CapabilityAuthorities;
+import com.cc01cc.p.xihe.cp.policy.ContextPolicyValidator;
 import com.cc01cc.p.xihe.cp.policy.PolicyRequest;
 import com.cc01cc.p.xihe.cp.policy.ToolFaceRegistry;
 import com.cc01cc.p.xihe.cp.policy.ToolShape;
@@ -630,7 +631,8 @@ public class AgentPrincipalService {
                 principal.getDefaultModelName(),
                 principal.getAllowedModels() == null ? null : principal.getAllowedModels().deepCopy(),
                 principal.getDisabledAt(),
-                principal.getHooks() == null ? null : principal.getHooks().deepCopy());
+                principal.getHooks() == null ? null : principal.getHooks().deepCopy(),
+                principal.getContextPolicy() == null ? null : principal.getContextPolicy().deepCopy());
     }
 
     /**
@@ -867,23 +869,76 @@ public class AgentPrincipalService {
      */
     @Transactional
     public JsonNode updatePrincipalHooks(String actorUserId, UUID principalId, JsonNode hooks) {
+        return applyPrincipalSettings(actorUserId, principalId,
+                new PrincipalSettingsPatch(hooks, true, null, false)).hooks();
+    }
+
+    /**
+     * PLAN-0629 M1 (D29-21): one PATCH may carry either or both subject-level documents —
+     * {@code hooks} (PLAN-0625 D25-14) and {@code contextPolicy} (the memory policy of V92's
+     * {@code agent_principals.context_policy}). Both are validated here, in one write-side gate, before
+     * the row is even looked up; the caller's presence flags decide what gets overwritten, so
+     * "absent" and "explicit null (= clear)" stay distinguishable.
+     *
+     * <p>Authority is the same tier matrix as {@code disable}. The guard refusal
+     * ({@code GUARD_HOOKS_IMMUTABLE}) is intentionally hooks-only: D25-14 fixes a preset guard's
+     * <i>subscriptions</i> as template data, while the memory policy is not a capability — a guard with
+     * memory enabled is still constrained by this validator and by the (future) memory table.</p>
+     *
+     * @return the documents now stored, read back from the row, so the wire echoes persisted state
+     *     (never the caller's raw input, and never a stale {@code null} for an untouched field)
+     */
+    @Transactional
+    public PrincipalSettings applyPrincipalSettings(String actorUserId, UUID principalId,
+                                                    PrincipalSettingsPatch patch) {
         UUID actorId = parseUuid(actorUserId, "INVALID_ACTOR");
         requireUser(actorId);
-        JsonNode checkedHooks = HookAdvisorRegistry.validateSubscriptions(hooks);
+        // Validate before the lookup: a malformed document must never need a row to be rejected
+        // (the pre-0629 contract asserted by AgentPrincipalHooksServiceTest).
+        JsonNode checkedHooks = patch.hooksPresent()
+                ? HookAdvisorRegistry.validateSubscriptions(patch.hooks()) : null;
+        JsonNode checkedPolicy = patch.contextPolicyPresent()
+                ? ContextPolicyValidator.validate(patch.contextPolicy()) : null;
         AgentPrincipal principal = agentPrincipalRepository.findById(principalId)
                 .orElseThrow(() -> new CpApiException(HttpStatus.NOT_FOUND,
                         "AGENT_PRINCIPAL_NOT_FOUND", "Agent principal not found"));
-        requireMutableHooks(principal);
+        if (patch.hooksPresent()) {
+            requireMutableHooks(principal);
+        }
         requireDisableAuthority(actorId, principal);
-        principal.setHooks(checkedHooks);
+        if (patch.hooksPresent()) {
+            principal.setHooks(checkedHooks);
+        }
+        if (patch.contextPolicyPresent()) {
+            principal.setContextPolicy(checkedPolicy);
+        }
         agentPrincipalRepository.saveAndFlush(principal);
-        ObjectNode detail = objectMapper.createObjectNode();
-        detail.put("hooks", checkedHooks == null ? "null" : checkedHooks.toString());
-        auditLogger.recordDurableChange(actorId.toString(), null,
-                "agent_principal_hooks_updated", "agent_principal", principalId.toString(),
-                detail.toString());
-        return checkedHooks;
+        if (patch.hooksPresent()) {
+            ObjectNode detail = objectMapper.createObjectNode();
+            detail.put("hooks", checkedHooks == null ? "null" : checkedHooks.toString());
+            auditLogger.recordDurableChange(actorId.toString(), null,
+                    "agent_principal_hooks_updated", "agent_principal", principalId.toString(),
+                    detail.toString());
+        }
+        if (patch.contextPolicyPresent()) {
+            ObjectNode detail = objectMapper.createObjectNode();
+            detail.put("contextPolicy", checkedPolicy == null ? "null" : checkedPolicy.toString());
+            auditLogger.recordDurableChange(actorId.toString(), null,
+                    "agent_principal_context_policy_updated", "agent_principal", principalId.toString(),
+                    detail.toString());
+        }
+        return new PrincipalSettings(principal.getHooks(), principal.getContextPolicy());
     }
+
+    /**
+     * One PATCH's parsed documents. The presence flags exist because a present-but-null document means
+     * "clear the column" while an absent one means "leave it alone" — {@code JsonNode} alone cannot say both.
+     */
+    public record PrincipalSettingsPatch(JsonNode hooks, boolean hooksPresent,
+                                         JsonNode contextPolicy, boolean contextPolicyPresent) {}
+
+    /** The subject-level documents after a write, both read back from the persisted row. */
+    public record PrincipalSettings(JsonNode hooks, JsonNode contextPolicy) {}
 
     /** D25-14: a preset guard's hook subscriptions are fixed at the write side, like its cap. */
     private void requireMutableHooks(AgentPrincipal principal) {
@@ -997,7 +1052,8 @@ public class AgentPrincipalService {
     public record AgentPrincipalView(UUID principalId, String name, String templateId, String templateName,
                                      Instant createdAt, String scope, UUID ownerUserId,
                                      String defaultModelProvider, String defaultModelName,
-                                     JsonNode allowedModels, Instant disabledAt, JsonNode hooks) {}
+                                     JsonNode allowedModels, Instant disabledAt, JsonNode hooks,
+                                     JsonNode contextPolicy) {}
 
     public record WorkspaceAgentView(UUID principalId, String name, String templateId,
                                      String templateName, Instant createdAt, JsonNode permissions,

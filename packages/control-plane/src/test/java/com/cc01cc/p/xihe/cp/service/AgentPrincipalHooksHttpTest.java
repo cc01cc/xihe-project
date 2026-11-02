@@ -360,13 +360,13 @@ class AgentPrincipalHooksHttpTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void patchRejectsAnythingButAHooksDocument() {
+    void patchRejectsUnknownKeysAndUnknownActionClasses() {
         fixture();
         UUID principalId = createPrincipal("Body shape agent", HOOKS_JSON);
 
         Map<String, Object> extraKey = hooksBody(plainJson(HOOKS_JSON));
         extraKey.put("name", "renamed");
-        assertBadRequest(principalId, extraKey, "additionalProperties:false — no other key is accepted");
+        assertBadRequest(principalId, extraKey, "additionalProperties:false — no key outside hooks/contextPolicy is accepted");
 
         assertBadRequest(principalId, new LinkedHashMap<>(), "an empty body is not a hooks document");
 
