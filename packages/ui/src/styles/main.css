@@ -23,6 +23,8 @@
     --color-surface-canvas: var(--surface-canvas);
     --color-surface-content: var(--surface-content);
     --color-border-subtle: var(--border-subtle);
+    /* PLAN-0631 M0：hover 加深档（--border-strong），仅"可点行/卡片 hover"语义用。 */
+    --color-border-strong: var(--border-strong);
     --color-brand: var(--brand);
     --color-brand-foreground: var(--brand-foreground);
     --color-card: var(--card);
@@ -62,6 +64,14 @@
     --radius-md: calc(var(--radius) - 2px);
     --radius-lg: var(--radius);
     --radius-xl: calc(var(--radius) + 4px);
+    /* PLAN-0631 M0 圆角三档（语义变量；组件 M1 逐面翻，M0 只立变量+规则注释）：
+       control = 按钮/输入/小控件（6-8px 语义）；card = 卡片/面板（10-12）；
+       overlay = 弹层/dropdown（12-16，允许比 card 大以分层）。 */
+    --radius-control: 0.5rem;
+    --radius-card: var(--radius);
+    --radius-overlay: calc(var(--radius) + 0.25rem);
+    /* PLAN-0631 M0：tinted 弹层阴影（hue 取自 accent 264），仅弹层语义（M1 起 dropdown/popover 用）。 */
+    --shadow-popover: 0 10px 30px oklch(0.25 0.03 264 / 0.14), 0 2px 8px oklch(0.25 0.03 264 / 0.1);
 }
 
 @layer base {
@@ -79,6 +89,20 @@
     }
     * {
         @apply border-border outline-ring/50;
+    }
+
+    /*
+     * PLAN-0631 M0：滚动条基线（Tailwind 4.3 scrollbar 家族的 token 层采纳；组件级
+     * utility（scrollbar-thin/scrollbar-gutter-*）M1 逐面翻）。thin = 不占布局宽度；
+     * gutter stable = 预留滚动槽，治"消息列表出现/消失滚动条时的布局抖动"。
+     */
+    html {
+        scrollbar-gutter: stable;
+    }
+
+    * {
+        scrollbar-width: thin;
+        scrollbar-color: var(--border-strong) transparent;
     }
 }
 
@@ -148,8 +172,13 @@
     --card-foreground: oklch(0.145 0 0);
     --popover: oklch(1 0 0);
     --popover-foreground: oklch(0.145 0 0);
-    --primary: oklch(0.205 0 0);
-    --primary-foreground: oklch(0.985 0 0);
+    /*
+     * PLAN-0631 M0：accent 进 --primary。取值 = 既有「新建对话」蓝（--brand），
+     * 不新造颜色：饱和度 77%（<80% 红线），与 --primary-foreground 对比度 9.27（WCAG AA✓）。
+     * --brand 保留为同源别名（既有 bg-brand 消费点不动）；M1 起新组件一律 bg-primary。
+     */
+    --primary: var(--brand);
+    --primary-foreground: var(--brand-foreground);
     --secondary: oklch(0.97 0 0);
     --secondary-foreground: oklch(0.205 0 0);
     --muted: oklch(0.97 0 0);
@@ -157,7 +186,14 @@
     --accent: oklch(0.97 0 0);
     --accent-foreground: oklch(0.205 0 0);
     --destructive: oklch(0.577 0.245 27.325);
+    /*
+     * PLAN-0631 M0 边框三级（使用规则）：
+     *   --border        默认 1px 分隔（组件不感知层级时的唯一选择）；
+     *   --border-strong hover/聚焦加深档（可点行、卡片 hover 边框）——不得用于静态装饰；
+     *   --border-subtle 两级表面之间的 1px 分隔（分组列表内行间），最弱。
+     */
     --border: var(--border-subtle);
+    --border-strong: #d4d4d8;
     --input: var(--border-subtle);
     --ring: var(--brand);
     --chart-1: oklch(0.87 0 0);
@@ -188,8 +224,10 @@
     --card-foreground: oklch(0.985 0 0);
     --popover: oklch(0.205 0 0);
     --popover-foreground: oklch(0.985 0 0);
-    --primary: oklch(0.922 0 0);
-    --primary-foreground: oklch(0.205 0 0);
+    /* PLAN-0631 M0 dark：accent 进 --primary（同源 --brand）。对比度 6.92（WCAG AA✓）、
+       饱和度 73%（<80%）。--primary-foreground 维持近白。 */
+    --primary: var(--brand);
+    --primary-foreground: oklch(0.985 0 0);
     --secondary: oklch(0.269 0 0);
     --secondary-foreground: oklch(0.985 0 0);
     --muted: oklch(0.269 0 0);
@@ -198,6 +236,7 @@
     --accent-foreground: oklch(0.985 0 0);
     --destructive: oklch(0.704 0.191 22.216);
     --border: var(--border-subtle);
+    --border-strong: oklch(1 0 0 / 22%);
     --input: oklch(1 0 0 / 15%);
     --ring: var(--brand);
     --chart-1: oklch(0.87 0 0);
