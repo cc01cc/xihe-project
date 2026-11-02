@@ -593,9 +593,22 @@ function isWithin(child, parent) {
   return childPath === parentPath || childPath.startsWith(`${parentPath}/`)
 }
 
+// PLAN-0631: argv 数组语义在 cmd 拼接层会丢 —— 含 cmd 元字符（| & < > ^ ( ) % ! " 空格）的
+// arg 必须加 cmd 安全引号（双引号包裹 + 内部 " 转义为 \"），否则 `|` 会被当成管道符
+// （实测：合并 grep 正则里的 `|` 把 argv 切成两半，管道另一端垃圾 ⇒ EPIPE）。
+// 无特殊字符的 arg 原样不动：现状行为不变，爆炸半径最小。
+const CMD_SPECIAL = /[\s|&<>^()%!"]/
+function cmdQuoteArg(arg) {
+  if (!CMD_SPECIAL.test(arg)) return arg
+  return `"${arg.replace(/"/g, '\\"')}"`
+}
+
 function spawnCommand(program, args, options) {
   if (process.platform === 'win32' && /\.(cmd|bat)$/i.test(program)) {
-    return spawn(process.env.ComSpec ?? 'cmd.exe', ['/d', '/s', '/c', program, ...args], options)
+    // 只按 arg 加引号，不再整行外包：node 的 spawn 会自行处理含空格参数的引用，
+    // 整行外包会与它叠加成双重引号（实测 `""node --version""` → cmd 报找不到路径）。
+    const quoted = [program, ...args].map(cmdQuoteArg).join(' ')
+    return spawn(process.env.ComSpec ?? 'cmd.exe', ['/d', '/s', '/c', quoted], options)
   }
   return spawn(program, args, options)
 }
@@ -1536,9 +1549,22 @@ async function runPlaywright() {
     agentRestartEnv.XIHE_E2E_PROFILE = 'host'
     agentRestartEnv.XIHE_E2E_CHECKPOINT_RESUME = '1'
   }
-  return run(pnpmCommand, [
-    'exec',
-    'playwright',
+  // PLAN-0631: 不再经 pnpm.cmd → cmd.exe 转发（argv 数组语义在 cmd 拼接层会丢：
+  // 含 `|` 的合并 grep 正则曾被当成管道符 ⇒ EPIPE；且 cmd 对引号/管道组合的解析
+  // 有实测不可收敛的怪癖——同类 shape 一个清一个浊）。直接 node 跑 playwright CLI，
+  // spawn 保持 argv 语义，正则/空格/引号类参数全都不再经过 shell 解析。
+  const cliCandidates = [
+    join(uiDir, 'node_modules', 'playwright', 'cli.js'),
+    // pnpm 布局兜底：node_modules/playwright 是指向 .pnpm 虚拟店的 symlink，
+    // 个别工具链（junction 链上的 realpath）解不开时走 .pnpm 直链。
+    join(uiDir, 'node_modules', '.pnpm', 'node_modules', 'playwright', 'cli.js'),
+  ]
+  const playwrightCli = cliCandidates.find((candidate) => existsSync(candidate))
+  if (!playwrightCli) {
+    throw new Error(`[e2e-host] playwright CLI not found (tried: ${cliCandidates.join(', ')})`)
+  }
+  return run(nodeCommand, [
+    playwrightCli,
     'test',
     '--config',
     'e2e/playwright.config.ts',
