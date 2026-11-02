@@ -279,6 +279,76 @@
         </plugins>
     </build>
     <profiles>
+        <!-- PLAN-eff/task-13 M1：2-shard 切分（按 M0 实测的包级秒数装箱，两半各 ≈480 s）。
+             用法：两个进程并行，各自一个 JVM / 一个单例容器：
+                 mvn -o test -Pl2-shard-a
+                 mvn -o test -Pl2-shard-b
+             A 用 includes 列出它的包；B 用 excludes 排除同一批包来表达"其余" ⇒
+             新增测试类只要不在 A 的包里就自动落 B，**不会静默漏跑**（有专门的并集校验）。
+             两 shard 的报告分别落 target/surefire-reports-shard-{a,b}，由调用方合并失败集。
+             注意：单进程仍用默认 profile（不带 -Pl2-shard-*），行为与改动前一致。 -->
+        <profile>
+            <id>l2-shard-a</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-surefire-plugin</artifactId>
+                        <configuration>
+                            <reportsDirectory>${project.build.directory}/surefire-reports-shard-a</reportsDirectory>
+                            <includes>
+                                <include>**/chat/**/*Test.java</include>
+                                <include>**/auth/**/*Test.java</include>
+                                <include>**/operation/**/*Test.java</include>
+                                <include>**/crossmodule/**/*Test.java</include>
+                                <include>**/audit/**/*Test.java</include>
+                                <include>**/mcp/**/*Test.java</include>
+                                <include>**/oauth/**/*Test.java</include>
+                                <include>**/repository/**/*Test.java</include>
+                                <include>**/integration/**/*Test.java</include>
+                                <include>**/telemetry/**/*Test.java</include>
+                                <include>**/api/**/*Test.java</include>
+                                <include>**/checkpoint/**/*Test.java</include>
+                            </includes>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+        <profile>
+            <id>l2-shard-b</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-surefire-plugin</artifactId>
+                        <configuration>
+                            <reportsDirectory>${project.build.directory}/surefire-reports-shard-b</reportsDirectory>
+                            <includes>
+                                <include>**/Test*.java</include>
+                                <include>**/*Test.java</include>
+                                <include>**/*Tests.java</include>
+                                <include>**/*TestCase.java</include>
+                            </includes>
+                            <excludes>
+                                <exclude>**/chat/**/*Test.java</exclude>
+                                <exclude>**/auth/**/*Test.java</exclude>
+                                <exclude>**/operation/**/*Test.java</exclude>
+                                <exclude>**/crossmodule/**/*Test.java</exclude>
+                                <exclude>**/audit/**/*Test.java</exclude>
+                                <exclude>**/mcp/**/*Test.java</exclude>
+                                <exclude>**/oauth/**/*Test.java</exclude>
+                                <exclude>**/repository/**/*Test.java</exclude>
+                                <exclude>**/integration/**/*Test.java</exclude>
+                                <exclude>**/telemetry/**/*Test.java</exclude>
+                                <exclude>**/api/**/*Test.java</exclude>
+                                <exclude>**/checkpoint/**/*Test.java</exclude>
+                            </excludes>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
         <profile>
             <id>native-build</id>
             <build>
