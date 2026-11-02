@@ -105,7 +105,11 @@ public class ConfigService {
             // instance-only (tier-1 thresholds stay user/workspace tunable —
             // raising them only delays a gentle hint).
             "loopRepeatEscalateCeiling", "loopErrorRunEscalateCeiling",
-            "loopStaleResultEscalateCeiling", "loopWindowSizeCeiling"));
+            "loopStaleResultEscalateCeiling", "loopWindowSizeCeiling",
+            // PLAN-0630 M1: the wake-chain depth is a platform-level threshold — it is resolved
+            // with (userId=null, workspaceId=null) in WakeChainService.maxDepth(), so a user/
+            // workspace value would be writable but never read (a silent no-op). Instance only.
+            "wakeChainMaxDepth"));
 
     /**
      * PLAN-0343 decision #11: pricing is the single cost authority and is an
@@ -192,7 +196,10 @@ public class ConfigService {
             Map.entry("loopRepeatEscalateCeiling", "10"),
             Map.entry("loopErrorRunEscalateCeiling", "10"),
             Map.entry("loopStaleResultEscalateCeiling", "10"),
-            Map.entry("loopWindowSizeCeiling", "50")));
+            Map.entry("loopWindowSizeCeiling", "50"),
+            // PLAN-0630 M1: PLAN-0624 M3's constant, surfaced as a code default so the resolved/
+            // effective views and the execution path share one value instead of two sources.
+            Map.entry("wakeChainMaxDepth", "3")));
 
     @Autowired
     private ConfigJpaRepository repo;

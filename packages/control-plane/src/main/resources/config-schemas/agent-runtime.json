@@ -25,6 +25,7 @@
     "loopErrorRunEscalateCeiling": { "type": ["integer", "string"], "minimum": 0, "pattern": "^(0|[1-9][0-9]*)$" },
     "loopStaleResultEscalateCeiling": { "type": ["integer", "string"], "minimum": 0, "pattern": "^(0|[1-9][0-9]*)$" },
     "loopWindowSizeCeiling": { "type": ["integer", "string"], "minimum": 0, "pattern": "^(0|[1-9][0-9]*)$" },
+    "wakeChainMaxDepth": { "type": ["integer", "string"], "minimum": 1, "maximum": 10, "pattern": "^([1-9]|10)$" },
     "loopExemptTools": {
       "type": "array",
       "items": {
