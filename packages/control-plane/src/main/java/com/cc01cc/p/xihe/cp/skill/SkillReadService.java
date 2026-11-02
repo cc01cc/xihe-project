@@ -2,7 +2,6 @@ package com.cc01cc.p.xihe.cp.skill;
 
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.entity.ChatRun;
-import com.cc01cc.p.xihe.cp.policy.ToolFaceRegistry;
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
 import com.fasterxml.jackson.databind.JsonNode;
 import org.slf4j.Logger;
@@ -83,10 +82,6 @@ public class SkillReadService {
     /** Design §5: oversize is not approval-gated, but it must warn the model (D28-15). */
     public static final String NOTICE_OVERSIZE = "这次读取可能占用显著上下文预算";
 
-    private static final String RESOURCE_PREFIX = ToolFaceRegistry.SKILL_RESOURCE_PREFIX;
-
-    private static final int QUALIFIED_NAME_SEPARATORS = 3;
-
     private static final Logger logger = LoggerFactory.getLogger(SkillReadService.class);
 
     private final ChatRunRepository chatRunRepository;
@@ -144,12 +139,30 @@ public class SkillReadService {
         }
     }
 
-    /** A uuid or a three-segment-qualified name — the two address forms design §2 accepts. */
-    private record Target(UUID skillId, String qualifiedName) {
+    /**
+     * The only address form the tool accepts: the canonical uuid shown as {@code skillId} in the
+     * run's listing.
+     *
+     * <p>Qualified names are refused <b>before dispatch</b> rather than resolved here. The policy
+     * layer binds rules to {@code skill:<uuid>}; accepting a second spelling would let a caller
+     * address the same skill without matching a rule written against its uuid.</p>
+     *
+     * <p>A <b>bare name</b> is also refused rather than resolved because V101's 双存 allows the same
+     * name in the instance library and in several workspaces: picking one would be picking a
+     * permission the caller may not have (D28-31). The listing's {@code skillId} is the only
+     * unambiguous address the model already holds.</p>
+     */
+    public static UUID requireSkillIdArgument(String rawArgument) {
+        String candidate = rawArgument == null ? "" : rawArgument.trim();
+        UUID parsed = canonicalUuid(candidate);
+        if (parsed == null) {
+            throw invalidArgument();
+        }
+        return parsed;
     }
 
     public Result read(Query query) {
-        Target target = parseArgument(query.rawArgument());
+        UUID target = requireSkillIdArgument(query.rawArgument());
         ChatRun run = chatRunRepository.findById(query.runId())
                 .orElseThrow(() -> new CpApiException(HttpStatus.NOT_FOUND, RUN_NOT_FOUND,
                         "chat run not found"));
@@ -202,7 +215,7 @@ public class SkillReadService {
      * rules), so the fallback cannot disagree with what the listing would have shown.</p>
      */
     private SkillCatalogSourceService.Item resolveLegacy(ChatRun run, UUID agentPrincipalId,
-                                                         Target target) {
+                                                         UUID target) {
         SkillCatalogSourceService.Request request = SkillCatalogSourceService.Request.of(
                 agentPrincipalId, uuidOrNull(run.getUserId()), uuidOrNull(run.getWorkspaceId()));
         SkillCatalogSourceService.Listing listing = catalog.resolveListing(request);
@@ -214,45 +227,13 @@ public class SkillReadService {
     }
 
     private static SkillCatalogSourceService.Item match(List<SkillCatalogSourceService.Item> items,
-                                                        Target target) {
+                                                        UUID target) {
         for (SkillCatalogSourceService.Item item : items) {
-            if (target.skillId() != null && target.skillId().equals(item.skillId())) {
-                return item;
-            }
-            if (target.qualifiedName() != null && target.qualifiedName().equals(item.qualifiedName())) {
+            if (target.equals(item.skillId())) {
                 return item;
             }
         }
         return null;
-    }
-
-    /**
-     * Parses the {@code skill} argument: canonical uuid first, three-segment qualified name second,
-     * everything else rejected.
-     *
-     * <p>A <b>bare name</b> is refused rather than resolved because V101's 双存 allows the same name
-     * in the instance library and in several workspaces: picking one would be picking a permission
-     * the caller may not have, and the qualified name only exists to make that choice explicit
-     * (D28-31). The {@code skill:<uuid>} resource spelling used by the policy layer is accepted too,
-     * mirroring {@code acquire_credential}'s tolerance for its own canonical prefix.</p>
-     */
-    private static Target parseArgument(String rawArgument) {
-        String candidate = rawArgument == null ? "" : rawArgument.trim();
-        if (candidate.regionMatches(true, 0, RESOURCE_PREFIX, 0, RESOURCE_PREFIX.length())) {
-            candidate = candidate.substring(RESOURCE_PREFIX.length()).trim();
-        }
-        if (candidate.isEmpty()) {
-            throw invalidArgument();
-        }
-        UUID parsed = canonicalUuid(candidate);
-        if (parsed != null) {
-            return new Target(parsed, null);
-        }
-        long separators = candidate.chars().filter(character -> character == ':').count();
-        if (separators >= QUALIFIED_NAME_SEPARATORS && candidate.indexOf(' ') < 0) {
-            return new Target(null, candidate);
-        }
-        throw invalidArgument();
     }
 
     /** Strict uuid: {@link UUID#fromString} alone accepts short groups ("1-1-1-1-1"). */
@@ -318,8 +299,7 @@ public class SkillReadService {
 
     private static CpApiException invalidArgument() {
         return new CpApiException(HttpStatus.BAD_REQUEST, INVALID_ARGUMENTS,
-                "skill_read requires the skill's id (uuid) or its qualified name "
-                        + "(subject:scope:definitionScope:name); a bare name is ambiguous and "
-                        + "is rejected");
+                "skill_read requires the skill's uuid — use the skillId shown for this run's "
+                        + "skill listing; qualified names and bare names are not accepted");
     }
 }

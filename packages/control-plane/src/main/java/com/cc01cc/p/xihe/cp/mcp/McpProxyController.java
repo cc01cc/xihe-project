@@ -36,6 +36,7 @@ import com.cc01cc.p.xihe.cp.policy.PolicyVerdict;
 import com.cc01cc.p.xihe.cp.policy.ToolFaceRegistry;
 import com.cc01cc.p.xihe.cp.service.WorkspaceService;
 import com.cc01cc.p.xihe.cp.service.SessionService;
+import com.cc01cc.p.xihe.cp.skill.SkillReadService;
 import com.cc01cc.p.xihe.cp.status.BuildVersion;
 import com.cc01cc.p.xihe.cp.policy.SafePolicySummary;
 import com.cc01cc.p.xihe.cp.operation.JobStateService;
@@ -692,7 +693,9 @@ public class McpProxyController {
                         "properties", Map.of("skill", Map.of(
                                 "type", "string",
                                 "minLength", 1,
-                                "description", "The skill's id (preferred) or its qualified name")),
+                                "description", "The skill's uuid, exactly the skillId shown in "
+                                        + "this run's skill listing. Qualified names and bare "
+                                        + "names are rejected.")),
                         "required", List.of("skill"),
                         "additionalProperties", false));
     }
@@ -931,11 +934,22 @@ public class McpProxyController {
         }
 
         if (cpOwnedSkillRead) {
+            // PLAN-0628 M2b 收尾 A: validate the address form here, not inside the dispatch
+            // handler. An invalid form must not open a dispatch attempt or touch the Run/service —
+            // otherwise "qualified name" would still enter the dispatch path and be distinguishable
+            // from the handler's own rejections.
+            String skillId;
+            try {
+                skillId = extractSkillArgument(body);
+            } catch (CpApiException e) {
+                audit.record(sessionId, SKILL_READ_TOOL, "tool_error", e.getCode());
+                return mcpJsonResponse(cpSkillReadErrorResult(body, e));
+            }
             // PLAN-0628 M2b: the gates above already evaluated the `read` face (and skipped the
             // lineage reservation, which only applies to mutations) — the handler now resolves the
             // Run's frozen listing and returns current content.
             return dispatchCpOwnedSkillRead(body, headers, sessionId, access, policySummary,
-                    lineageReservation);
+                    lineageReservation, skillId);
         }
 
         // PLAN-0308 M1（spec S1/S2）：预算由 CP 唯一计算并下发；出站头只由 CP 写入，
@@ -1205,7 +1219,7 @@ public class McpProxyController {
      */
     private ResponseEntity<String> dispatchCpOwnedSkillRead(
             String body, HttpHeaders headers, String sessionId, AccessContext access, String policySummary,
-            LineageInvocationService.Reservation lineageReservation) {
+            LineageInvocationService.Reservation lineageReservation, String skillId) {
         McpDispatch dispatch = startMcpDispatch(body, headers, sessionId, access, lineageReservation);
         attachPolicySummary(dispatch, policySummary);
         String responseBody;
@@ -1220,10 +1234,10 @@ public class McpProxyController {
             String principalId = sessionService.requireCurrent(
                     access.applicationSessionId(), access.userId(), access.workspaceId())
                     .getAgentPrincipalId();
-            com.cc01cc.p.xihe.cp.skill.SkillReadService.Result read = skillReadService.read(
-                    new com.cc01cc.p.xihe.cp.skill.SkillReadService.Query(
+            SkillReadService.Result read = skillReadService.read(
+                    new SkillReadService.Query(
                             UUID.fromString(runId), access.applicationSessionId(),
-                            uuidOrNull(principalId), extractSkillArgument(body)));
+                            uuidOrNull(principalId), skillId));
             responseBody = cpToolResult(body, read.toMap(), null);
             // Identifiers and a version only — the body never enters the audit stream.
             audit.record(sessionId, SKILL_READ_TOOL, "allow",
@@ -1244,22 +1258,34 @@ public class McpProxyController {
         return mcpJsonResponse(responseBody);
     }
 
-    /** PLAN-0628 M2b: {@code params.arguments.skill} must be a non-blank id or qualified name. */
+    /**
+     * PLAN-0628 M2b 收尾 A: {@code params.arguments.skill} must be the canonical uuid shown as
+     * {@code skillId} in this run's listing.
+     *
+     * <p>This validation lives at the tool boundary, before {@code dispatchCpOwnedSkillRead}, so a
+     * qualified name cannot become a second address form that bypasses a policy rule written
+     * against {@code skill:<uuid>}. The listing already carries the id, so the model never has to
+     * guess one.</p>
+     */
     private String extractSkillArgument(String body) {
         try {
             JsonNode root = objectMapper.readTree(body);
             JsonNode skill = root.path("params").path("arguments").path("skill");
             if (!skill.isTextual() || skill.textValue().isBlank()) {
-                throw new CpApiException(HttpStatus.BAD_REQUEST,
-                        com.cc01cc.p.xihe.cp.skill.SkillReadService.INVALID_ARGUMENTS,
-                        "skill_read requires a skill argument (uuid or qualified name)");
+                throw invalidSkillArgument();
             }
-            return skill.textValue().trim();
+            return SkillReadService.requireSkillIdArgument(skill.textValue()).toString();
         } catch (JsonProcessingException e) {
             throw new CpApiException(HttpStatus.BAD_REQUEST,
-                    com.cc01cc.p.xihe.cp.skill.SkillReadService.INVALID_ARGUMENTS,
+                    SkillReadService.INVALID_ARGUMENTS,
                     "Tool arguments must be valid JSON", e);
         }
+    }
+
+    private static CpApiException invalidSkillArgument() {
+        return new CpApiException(HttpStatus.BAD_REQUEST, SkillReadService.INVALID_ARGUMENTS,
+                "skill_read requires the skill's uuid — use the skillId shown for this run's "
+                        + "skill listing; qualified names and bare names are not accepted");
     }
 
     /**

@@ -260,7 +260,7 @@ class SkillReadToolTest {
         when(skillRepository.findById(alphaId))
                 .thenReturn(Optional.of(skill(alphaId, "alpha", 3, "hash-v3", "alpha body v3")));
 
-        ResponseEntity<String> response = callSkillRead(BOUND_QUALIFIED);
+        ResponseEntity<String> response = callSkillRead(alphaId.toString());
         JsonNode structured = structured(response);
 
         // Current content wins; the snapshot only supplies the comparison baseline (§4).
@@ -275,7 +275,7 @@ class SkillReadToolTest {
     }
 
     @Test
-    void qualifiedNameAddressesTheSameEntryAsTheUuid() throws Exception {
+    void qualifiedNameIsRejectedAtTheBoundaryBeforeDispatch() throws Exception {
         UUID alphaId = UUID.randomUUID();
         seedRun(snapshotWith(snapshotItem(alphaId, BOUND_QUALIFIED, "alpha", 1, "hash-v1")));
         when(skillRepository.findById(alphaId))
@@ -283,8 +283,27 @@ class SkillReadToolTest {
 
         JsonNode structured = structured(callSkillRead(BOUND_QUALIFIED));
 
-        assertEquals(alphaId.toString(), structured.path("skillId").asText());
-        assertEquals(BOUND_QUALIFIED, structured.path("qualifiedName").asText());
+        assertEquals("INVALID_ARGUMENTS", structured.path("code").asText());
+        assertTrue(structured.path("detail").asText().contains("skillId"),
+                "the model must be pointed at the listing's skillId, not asked to guess");
+        // 收尾 A: a qualified name is a second address form for the same skill. Accepting it
+        // would address the skill without matching a rule written against skill:<uuid>, so it
+        // must be refused before dispatchCpOwnedSkillRead ever runs.
+        verify(chatRunRepository, never()).findById(any());
+        verify(mcpInvocationService, never()).findAgentInvocation(any(), any());
+        verify(skillRepository, never()).findById(any());
+    }
+
+    @Test
+    void resourceSpellingIsNotAnAcceptedAddressFormEither() throws Exception {
+        UUID alphaId = UUID.randomUUID();
+        seedRun(snapshotWith(snapshotItem(alphaId, BOUND_QUALIFIED, "alpha", 1, "hash-v1")));
+
+        JsonNode structured = structured(callSkillRead("skill:" + alphaId));
+
+        assertEquals("INVALID_ARGUMENTS", structured.path("code").asText());
+        verify(chatRunRepository, never()).findById(any());
+        verify(mcpInvocationService, never()).findAgentInvocation(any(), any());
     }
 
     @Test
@@ -294,7 +313,9 @@ class SkillReadToolTest {
         JsonNode structured = structured(callSkillRead("alpha"));
 
         assertEquals("INVALID_ARGUMENTS", structured.path("code").asText());
-        assertTrue(structured.path("detail").asText().contains("qualified name"));
+        assertTrue(structured.path("detail").asText().contains("skillId"));
+        verify(chatRunRepository, never()).findById(any());
+        verify(mcpInvocationService, never()).findAgentInvocation(any(), any());
         verify(skillRepository, never()).findById(any());
     }
 
