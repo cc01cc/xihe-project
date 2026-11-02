@@ -19,6 +19,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -210,8 +211,104 @@ class AgentMemoryServiceTest extends AbstractIntegrationTest {
     }
 
     // ---------------------------------------------------------------------------------------
+    // PLAN-0629 M1-6: the passive path can only produce candidates (D29-26/27)
+    // ---------------------------------------------------------------------------------------
+
+    @Test
+    void aPassiveWriteLandsAsACandidateThatIsNeverInjected() {
+        fixture();
+
+        Optional<AgentMemory> written = memoryService.rememberPassive(passive("fact",
+                "Deploys happen on Fridays", AgentMemory.ORIGIN_PASSIVE_SUMMARY,
+                "passive.summary:sess-1:7"));
+
+        assertTrue(written.isPresent(), "a clean passive write must land");
+        AgentMemory candidate = written.get();
+        assertEquals(AgentMemory.STATUS_CANDIDATE, candidate.getStatus(),
+                "the passive path writes candidates only");
+        assertEquals(AgentMemory.ORIGIN_PASSIVE_SUMMARY, candidate.getOrigin(),
+                "the origin records WHICH passive producer wrote it (audit/UI distinction)");
+        assertFalse(candidate.isPinned(), "a passive write can never pin (V99: pinned ⇒ active)");
+        assertTrue(memoryService.activeMemories(principalId, workspaceId).isEmpty(),
+                "a candidate is invisible to the injection read");
+        assertEquals(1, memories.count());
+        assertEquals(1, auditCount(AgentMemoryService.AUDIT_CREATED));
+        assertEquals(0, auditCount(AgentMemoryService.AUDIT_DEDUPE_HIT));
+    }
+
+    @Test
+    void theDatabaseItselfRefusesAPassiveRowThatIsNotACandidate() {
+        fixture();
+        // Proof that "passive ⇒ candidate" is a database invariant, not service discipline: this insert
+        // bypasses the service entirely and must be rejected by V99's CHECK pair.
+        assertThrows(org.springframework.dao.DataAccessException.class, () -> jdbcTemplate.update(
+                "INSERT INTO agent_memories (principal_id, workspace_id, type, content, content_sha256,"
+                        + " origin, source_ref, status) VALUES (CAST(? AS UUID), CAST(? AS UUID), 'fact',"
+                        + " 'active by hand', ?, 'passive.summary', 'hand-written', 'active')",
+                principalId.toString(), workspaceId.toString(),
+                "0".repeat(64)));
+        assertEquals(0, memories.count(), "the rejected row must not be there");
+    }
+
+    @Test
+    void anExplicitWritePromotesTheCandidateAndOnlyThenDoesItCount() {
+        fixture();
+        memoryService.rememberPassive(passive("fact", "Prefers concise answers",
+                AgentMemory.ORIGIN_PASSIVE_SUMMARY, "passive.summary:sess-2:9"));
+        assertTrue(memoryService.activeMemories(principalId, workspaceId).isEmpty(),
+                "before promotion the assertion is invisible");
+
+        AgentMemory promoted = memoryService.remember(
+                write("fact", "Prefers concise answers", AgentMemory.ORIGIN_UI, "user-9", false));
+
+        assertEquals(AgentMemory.STATUS_ACTIVE, promoted.getStatus(),
+                "only an explicit channel write promotes a candidate");
+        assertEquals(AgentMemory.ORIGIN_UI, promoted.getOrigin(),
+                "the explicit channel takes over the provenance (a passive origin may not be active)");
+        assertEquals("user-9", promoted.getSourceRef());
+        assertEquals(1, memories.count(), "promotion updates the row instead of adding a second one");
+        assertEquals(List.of(promoted.getId()), memoryService.activeMemories(principalId, workspaceId)
+                .stream().map(AgentMemory::getId).toList());
+        assertEquals(1, auditCount(AgentMemoryService.AUDIT_PROMOTED));
+    }
+
+    @Test
+    void aPassiveWriteNeverTouchesAnActiveRow() {
+        fixture();
+        AgentMemory active = memoryService.remember(
+                write("fact", "Already in effect", AgentMemory.ORIGIN_UI, "user-1", false));
+        var updatedAtBefore = memories.findById(active.getId()).orElseThrow().getUpdatedAt();
+
+        Optional<AgentMemory> passiveHit = memoryService.rememberPassive(passive("fact",
+                "Already in effect", AgentMemory.ORIGIN_PASSIVE_JUDGE, "passive.judge:sess-3:1"));
+
+        assertTrue(passiveHit.isEmpty(),
+                "a passive write of an already-active assertion is a no-op, not an update");
+        assertEquals(1, memories.count());
+        assertEquals(updatedAtBefore, memories.findById(active.getId()).orElseThrow().getUpdatedAt(),
+                "a passive path must not reorder injection by refreshing an active row's updated_at");
+    }
+
+    @Test
+    void thePassiveEntryRefusesExplicitOrigins() {
+        fixture();
+        CpApiException explicit = assertThrows(CpApiException.class, () -> memoryService.rememberPassive(
+                passive("fact", "Not a passive channel", AgentMemory.ORIGIN_UI, "src-1")));
+        assertEquals(HttpStatus.BAD_REQUEST, explicit.getStatus());
+        assertTrue(explicit.getMessage().contains("passive memory origin must be one of"),
+                "the two entry points may not be mixed: " + explicit.getMessage());
+        assertEquals(0, memories.count());
+    }
+
+    // ---------------------------------------------------------------------------------------
     // fixtures / helpers
     // ---------------------------------------------------------------------------------------
+
+    private AgentMemoryService.PassiveWrite passive(String type, String content, String origin,
+                                                    String sourceRef) {
+        return new AgentMemoryService.PassiveWrite(principalId, workspaceId, type, content, origin,
+                sourceRef, userId.toString());
+    }
 
     private AgentMemoryService.MemoryWrite write(String type, String content, String origin,
                                                  String sourceRef, boolean pinned) {
