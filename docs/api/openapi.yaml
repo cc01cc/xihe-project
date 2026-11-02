@@ -1693,12 +1693,12 @@ paths:
           content: { application/json: { schema: { $ref: '#/components/schemas/ProviderConnection' } } }
         '400':
           description: 'PROVIDER_CONNECTION_INVALID / PROVIDER_CONNECTION_KEY_INVALID / PROVIDER_API_TYPE_UNSUPPORTED. PLAN-0555/0563: label errors carry field=label; the label is trimmed, limited to 40 code points, and must not contain control characters.'
-          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+          content: { application/problem+json: { schema: { $ref: '#/components/responses/Problem' } } }
         '401': { $ref: '#/components/responses/Problem' }
         '403': { $ref: '#/components/responses/Problem' }
         '409':
           description: 'PROVIDER_CONNECTION_KEY_CONFLICT, or PROVIDER_CONNECTION_LABEL_CONFLICT (field=label) when another connection for the same owner and provider already uses the label (case-insensitive, trimmed).'
-          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+          content: { application/problem+json: { schema: { $ref: '#/components/responses/Problem' } } }
   /api/v1/provider-connections/{connectionId}:
     parameters: [{ in: path, name: connectionId, required: true, schema: { type: string, format: uuid } }]
     patch:
@@ -1714,12 +1714,12 @@ paths:
           content: { application/json: { schema: { $ref: '#/components/schemas/ProviderConnection' } } }
         '400':
           description: 'PROVIDER_CONNECTION_INVALID / PROVIDER_CONNECTION_KEY_INVALID / PROVIDER_API_TYPE_UNSUPPORTED. PLAN-0555/0563: label errors carry field=label; the label is trimmed, limited to 40 code points, and must not contain control characters.'
-          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+          content: { application/problem+json: { schema: { $ref: '#/components/responses/Problem' } } }
         '403': { $ref: '#/components/responses/Problem' }
         '404': { $ref: '#/components/responses/Problem' }
         '409':
           description: 'PROVIDER_CONNECTION_KEY_IMMUTABLE, CONNECTION_REVISION_CHANGED, or PROVIDER_CONNECTION_LABEL_CONFLICT (field=label; label uniqueness is per owner + provider, case-insensitive and trimmed).'
-          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+          content: { application/problem+json: { schema: { $ref: '#/components/responses/Problem' } } }
     delete:
       operationId: deleteProviderConnection
       summary: Disable and remove a provider connection
@@ -2894,7 +2894,7 @@ paths:
         - { in: query, name: stream, schema: { type: string, enum: [stdout, stderr], default: stdout } }
         - { in: query, name: offset, schema: { type: integer, minimum: 0, default: 0, description: Byte cursor; pass the nextOffset returned by the previous read } }
         - { in: query, name: limit, schema: { type: integer, minimum: 1, maximum: 1048576, default: 65536 } }
-      responses: { '200': { description: Job output chunk, content: { application/json: { schema: { $ref: '#/components/schemas/JobOutputChunk' } } } }, '400': { $ref: '#/components/responses/Problem' }, '404': { description: JOB_ARCHIVE_NOT_FOUND or WORKSPACE_NOT_FOUND, content: { application/json: { schema: { $ref: '#/components/schemas/Problem' } } } }, '409': { description: JOB_OUTPUT_LOST (job non-terminal but output gone) or JOB_OUTPUT_EXPIRED (terminal job output cleaned after TTL), content: { application/json: { schema: { $ref: '#/components/schemas/Problem' } } } }, '502': { description: RUNTIME_UNAVAILABLE, content: { application/json: { schema: { $ref: '#/components/schemas/Problem' } } } } }
+      responses: { '200': { description: Job output chunk, content: { application/json: { schema: { $ref: '#/components/schemas/JobOutputChunk' } } } }, '400': { $ref: '#/components/responses/Problem' }, '404': { description: JOB_ARCHIVE_NOT_FOUND or WORKSPACE_NOT_FOUND, content: { application/json: { schema: { $ref: '#/components/responses/Problem' } } } }, '409': { description: JOB_OUTPUT_LOST (job non-terminal but output gone) or JOB_OUTPUT_EXPIRED (terminal job output cleaned after TTL), content: { application/json: { schema: { $ref: '#/components/responses/Problem' } } } }, '502': { description: RUNTIME_UNAVAILABLE, content: { application/json: { schema: { $ref: '#/components/responses/Problem' } } } } }
   /api/v1/workspaces/{workspaceId}/jobs/{jobId}/cancel:
     post:
       operationId: cancelWorkspaceJob
@@ -3365,6 +3365,102 @@ paths:
         '404': { $ref: '#/components/responses/Problem' }
         '409': { $ref: '#/components/responses/Problem' }
         '503': { $ref: '#/components/responses/Problem' }
+  /api/v1/skills/import:
+    post:
+      operationId: importSkills
+      summary: Import skill definitions (PLAN-0628 D28-17)
+      description: 'Manual import, the only writer of skill definitions. Every bookkeeping field is server-computed and never read from the body: contentHash (sha256 over name/description/body/canonical attachments), bodyTokensEst (codePointCount//2, mirrored by the Agent), oversize (D28-15: above 5000 tokens is MARKED, never rejected and never truncated) and version (bumped only when the content changes). Idempotent by the qualified identity (name + definitionScope): re-importing identical content answers action=unchanged with no write and no version bump, which is what makes "re-import the whole directory" cheap. Item-level problems appear in rejected[] with a stable code and the rest of the batch still applies; only a batch larger than 64 items, or a caller without write rights, fails the whole request. Gates: definitionScope.type=instance requires instance administration, type=workspace requires workspace manage rights or instance administration; trusted=true may only be imported by an instance administrator (D28-09 rule 1) and is otherwise reported as SKILL_TRUSTED_FORBIDDEN.'
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/SkillImportRequest' } } }
+      responses:
+        '200': { description: 'Per-skill outcomes, the rejected rows, and a summary', content: { application/json: { schema: { $ref: '#/components/schemas/SkillImportResponse' } } } }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+        '503': { $ref: '#/components/responses/Problem' }
+  /api/v1/skills:
+    get:
+      operationId: listSkills
+      summary: List the skill definitions the caller may see (PLAN-0628)
+      description: 'Instance-scope definitions are visible to every authenticated caller; a workspace-scope definition is visible only to callers who can see that workspace. The body is never included here (see GET /api/v1/skills/{skillId}?includeBody=true).'
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: query, name: definitionScope, required: false, schema: { type: string, enum: [instance, workspace] } }
+        - { in: query, name: workspaceId, required: false, schema: { type: string, format: uuid }, description: 'Required when definitionScope=workspace' }
+      responses:
+        '200': { description: 'Visible definitions', content: { application/json: { schema: { $ref: '#/components/schemas/SkillListResponse' } } } }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+  /api/v1/skills/{skillId}:
+    get:
+      operationId: getSkill
+      summary: Read one skill definition (PLAN-0628)
+      description: 'The body is omitted by default because it is the largest column; ?includeBody=true returns it. A workspace-scope definition is answered 404 rather than 403 to a caller who cannot see that workspace, so the endpoint does not become an existence probe.'
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: skillId, required: true, schema: { type: string, format: uuid } }
+        - { in: query, name: includeBody, required: false, schema: { type: boolean, default: false } }
+      responses:
+        '200': { description: 'The definition', content: { application/json: { schema: { $ref: '#/components/schemas/SkillView' } } } }
+        '401': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+    delete:
+      operationId: deleteSkill
+      summary: Delete a skill definition and its bindings (PLAN-0628)
+      description: 'Removes the definition; its bindings cascade (V101 ON DELETE CASCADE). Same write gate as importing into that definition scope. Deleting a definition that is still bound is allowed on purpose: the bindings are the subject of the change, not an obstacle.'
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: skillId, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '204': { description: 'Deleted' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+  /api/v1/skills/{skillId}/bindings:
+    get:
+      operationId: listSkillBindings
+      summary: List the bindings of one skill (PLAN-0628)
+      description: 'Returns the 2×2 rows (subjectType × scopeType) of one definition. Same visibility rule as reading the definition itself.'
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: skillId, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: 'Bindings of that definition', content: { application/json: { schema: { $ref: '#/components/schemas/SkillBindingListResponse' } } } }
+        '401': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+  /api/v1/skill-bindings:
+    post:
+      operationId: createSkillBinding
+      summary: Bind a skill to a subject at a scope (PLAN-0628 D28-14)
+      description: 'Two independent axes: subject (user | agent_principal) × scope (instance | workspace). subjectId is always required — v1 has no "shared with everyone" tier, because role_bindings has the same shape (V87 subject_id NOT NULL). Validation order is fixed and deliberate: existence (404 SKILL_NOT_FOUND) → shape (400 SKILL_BINDING_SCOPE_INVALID) → definition visibility (400 SKILL_DEFINITION_OUT_OF_SCOPE: a workspace-private definition may only be bound inside its own workspace, otherwise it would leak through the binding) → authorization (403 SKILL_BINDING_FORBIDDEN) → subject validity (400 SKILL_BINDING_SUBJECT_INVALID) → duplicate (409 SKILL_BINDING_EXISTS). Authorization deliberately precedes subject validity: otherwise an unauthorized caller could probe whether a user or principal exists (or is disabled) from the difference between two error codes. Gates: instance scope requires instance administration; workspace scope requires workspace manage rights or instance administration; binding another user requires instance administration (binding yourself does not).'
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/SkillBindingCreateRequest' } } }
+      responses:
+        '201': { description: 'Created binding', content: { application/json: { schema: { $ref: '#/components/schemas/SkillBindingView' } } } }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+  /api/v1/skill-bindings/{bindingId}:
+    delete:
+      operationId: deleteSkillBinding
+      summary: Remove one binding (PLAN-0628)
+      description: 'Same gate as creating a binding at that row''s scope. Missing rows answer 404 SKILL_BINDING_NOT_FOUND.'
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: bindingId, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '204': { description: 'Removed' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
 components:
   securitySchemes:
     bearerAuth: { type: http, scheme: bearer }
@@ -5115,6 +5211,145 @@ components:
     PublishWorkspaceEventRequest: { type: object, required: [kind, source], properties: { kind: { type: string, enum: [file_changed, snapshot_required] }, path: { type: string, description: Workspace-relative POSIX path }, changeType: { type: string, enum: [created, modified, deleted] }, source: { type: string, enum: [runtime] }, reason: { type: string, enum: [overflow] } } }
     WorkspaceEventAccepted: { type: object, required: [accepted, workspaceId, sequence], properties: { accepted: { type: boolean }, workspaceId: { type: string }, sequence: { type: integer, format: int64 } } }
     RuntimeHeartbeatRequest: { type: object, required: [deviceId, status], properties: { deviceId: { type: string }, status: { type: string, enum: [ready, blocked] } } }
+    SkillAttachment:
+      type: object
+      description: 'PLAN-0628 D28-21: a manifest entry only — bytes stay in the source tree.'
+      required: [path, sizeBytes, sha256]
+      properties:
+        path: { type: string, maxLength: 512, description: 'Relative path inside the skill directory (no "..", no absolute path, no drive prefix)' }
+        sizeBytes: { type: integer, minimum: 0 }
+        sha256: { type: string, pattern: '^[0-9a-f]{64}$' }
+        kind: { type: string, enum: [reference, script, asset] }
+      additionalProperties: false
+    SkillDefinitionScope:
+      type: object
+      description: 'Where a definition is imported INTO. Two rows may share a name across scopes (README frozen #4 "双存"); within one scope the name is unique.'
+      required: [type]
+      properties:
+        type: { type: string, enum: [instance, workspace] }
+        workspaceId: { type: string, format: uuid, description: 'Required when type=workspace' }
+      additionalProperties: false
+    SkillImportItem:
+      type: object
+      required: [name, description, body, sourcePath]
+      properties:
+        name:
+          type: string
+          maxLength: 64
+          description: 'Frontmatter name: lowercase kebab-case matching ^[a-z0-9][a-z0-9._-]{0,63}$ and equal to the source directory name. ":" is reserved as the qualifier separator of the listing display name.'
+        description: { type: string, maxLength: 1024 }
+        body: { type: string, maxLength: 262144, description: 'SKILL.md body with the frontmatter block removed; stored verbatim.' }
+        sourcePath: { type: string, maxLength: 512, description: 'Workspace-relative path of the source file, compared against the definition directory name' }
+        attachments:
+          type: array
+          items: { $ref: '#/components/schemas/SkillAttachment' }
+        trusted: { type: boolean, default: false, description: 'D28-09 rule 1: only an instance administrator may set this to true' }
+      additionalProperties: false
+    SkillImportRequest:
+      type: object
+      required: [definitionScope, skills]
+      properties:
+        definitionScope: { $ref: '#/components/schemas/SkillDefinitionScope' }
+        skills:
+          type: array
+          maxItems: 64
+          items: { $ref: '#/components/schemas/SkillImportItem' }
+      additionalProperties: false
+    SkillImportResult:
+      type: object
+      required: [skillId, name, action, version, bodyTokensEst, oversize]
+      properties:
+        skillId: { type: string, format: uuid }
+        name: { type: string }
+        action: { type: string, enum: [created, updated, unchanged] }
+        version: { type: integer, minimum: 1 }
+        bodyTokensEst: { type: integer, minimum: 0 }
+        oversize: { type: boolean, description: 'D28-15: marked only — the definition stays available' }
+    SkillImportRejection:
+      type: object
+      required: [code]
+      properties:
+        sourcePath: { type: string, nullable: true }
+        code:
+          type: string
+          enum: [SKILL_NAME_INVALID, SKILL_DESCRIPTION_REQUIRED, SKILL_DESCRIPTION_TOO_LONG, SKILL_BODY_EMPTY, SKILL_BODY_TOO_LARGE, SKILL_ATTACHMENT_INVALID, SKILL_SOURCE_PATH_INVALID, SKILL_TRUSTED_FORBIDDEN]
+        detail: { type: string }
+    SkillImportSummary:
+      type: object
+      required: [created, updated, unchanged, rejected, oversize]
+      properties:
+        created: { type: integer, minimum: 0 }
+        updated: { type: integer, minimum: 0 }
+        unchanged: { type: integer, minimum: 0 }
+        rejected: { type: integer, minimum: 0 }
+        oversize: { type: integer, minimum: 0 }
+    SkillImportResponse:
+      type: object
+      required: [results, rejected, summary]
+      properties:
+        results:
+          type: array
+          items: { $ref: '#/components/schemas/SkillImportResult' }
+        rejected:
+          type: array
+          items: { $ref: '#/components/schemas/SkillImportRejection' }
+        summary: { $ref: '#/components/schemas/SkillImportSummary' }
+    SkillView:
+      type: object
+      required: [skillId, name, definitionScope, description, bodyTokensEst, oversize, trusted, sourcePath, contentHash, version, attachments, createdAt, updatedAt]
+      properties:
+        skillId: { type: string, format: uuid }
+        name: { type: string }
+        definitionScope: { $ref: '#/components/schemas/SkillDefinitionScope' }
+        description: { type: string }
+        bodyTokensEst: { type: integer, minimum: 0 }
+        oversize: { type: boolean }
+        trusted: { type: boolean }
+        sourcePath: { type: string }
+        contentHash: { type: string, pattern: '^[0-9a-f]{64}$' }
+        version: { type: integer, minimum: 1 }
+        attachments:
+          type: array
+          items: { $ref: '#/components/schemas/SkillAttachment' }
+        body: { type: string, description: 'Only present when ?includeBody=true' }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    SkillListResponse:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/SkillView' }
+    SkillBindingCreateRequest:
+      type: object
+      required: [skillId, subjectType, subjectId, scopeType]
+      properties:
+        skillId: { type: string, format: uuid }
+        subjectType: { type: string, enum: [user, agent_principal] }
+        subjectId: { type: string, format: uuid, description: 'Always required: v1 has no instance-wide shared tier (D28-14)' }
+        scopeType: { type: string, enum: [instance, workspace] }
+        scopeId: { type: string, format: uuid, description: 'Present exactly when scopeType=workspace' }
+      additionalProperties: false
+    SkillBindingView:
+      type: object
+      required: [bindingId, skillId, subjectType, subjectId, scopeType, createdAt]
+      properties:
+        bindingId: { type: string, format: uuid }
+        skillId: { type: string, format: uuid }
+        subjectType: { type: string, enum: [user, agent_principal] }
+        subjectId: { type: string, format: uuid }
+        scopeType: { type: string, enum: [instance, workspace] }
+        scopeId: { type: string, format: uuid, nullable: true }
+        createdByUserId: { type: string, format: uuid }
+        createdAt: { type: string, format: date-time }
+    SkillBindingListResponse:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/SkillBindingView' }
     ProblemDetails:
       type: object
       required: [type, title, status, code, requestId]
