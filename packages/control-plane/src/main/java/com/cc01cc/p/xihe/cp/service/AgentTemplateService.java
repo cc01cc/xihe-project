@@ -693,6 +693,15 @@ public class AgentTemplateService {
         copyTextIfPresent(template, snapshot, "provider");
         copyTextIfPresent(template, snapshot, "model");
         snapshot.set("permissions", role.get("permissions").deepCopy());
+        // PLAN-0625 D25-09 (Gap H): hooks are part of the capability face, and the template is the
+        // declaration source of the preset guard's subscriptions. Without this copy the snapshot
+        // dropped them and `AgentPrincipalService.createPrincipalFromTemplate` read a missing node
+        // for ever, so a guard created from the builtin template landed with `hooks = NULL`.
+        // `null`/absent stays absent (no node), which the create path reads as "no subscriptions".
+        JsonNode hooks = template.get("hooks");
+        if (hooks != null && !hooks.isNull()) {
+            snapshot.set("hooks", hooks.deepCopy());
+        }
         return snapshot;
     }
 

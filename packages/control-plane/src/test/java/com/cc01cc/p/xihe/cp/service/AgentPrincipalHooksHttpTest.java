@@ -3,6 +3,7 @@ package com.cc01cc.p.xihe.cp.service;
 import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
 import com.cc01cc.p.xihe.cp.entity.AccessRole;
 import com.cc01cc.p.xihe.cp.entity.AccessRoleBinding;
+import com.cc01cc.p.xihe.cp.entity.ConfigEntity;
 import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.integration.TestDataFactory;
@@ -14,11 +15,14 @@ import com.cc01cc.p.xihe.cp.repository.AccessRoleBindingRepository;
 import com.cc01cc.p.xihe.cp.repository.AccessRoleRepository;
 import com.cc01cc.p.xihe.cp.repository.AgentPrincipalRepository;
 import com.cc01cc.p.xihe.cp.repository.AuthorizationGrantRepository;
+import com.cc01cc.p.xihe.cp.repository.ConfigJpaRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceAgentRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -67,6 +71,8 @@ class AgentPrincipalHooksHttpTest extends AbstractIntegrationTest {
     @Autowired private RoleGrantMaterializer materializer;
     @Autowired private GrantDefaultService grantDefaultService;
     @Autowired private WorkspaceFixture workspaceFixture;
+    @Autowired private AgentTemplateService agentTemplateService;
+    @Autowired private ConfigJpaRepository configJpaRepository;
     @Autowired private ObjectMapper objectMapper;
     @Autowired private JdbcTemplate jdbcTemplate;
 
@@ -74,6 +80,7 @@ class AgentPrincipalHooksHttpTest extends AbstractIntegrationTest {
     private UUID workspaceId;
     private final List<UUID> seededRoleBindingIds = new ArrayList<>();
     private final List<UUID> principalIds = new ArrayList<>();
+    private final List<UUID> configIds = new ArrayList<>();
 
     @AfterEach
     void cleanFixtures() {
@@ -86,6 +93,8 @@ class AgentPrincipalHooksHttpTest extends AbstractIntegrationTest {
             principalRepository.deleteById(principalId);
         }
         principalIds.clear();
+        configJpaRepository.deleteAllById(configIds);
+        configIds.clear();
         if (workspaceId != null) {
             jdbcTemplate.update("DELETE FROM audit_logs WHERE CAST(workspace_id AS VARCHAR) = ?",
                     workspaceId.toString());
@@ -185,6 +194,62 @@ class AgentPrincipalHooksHttpTest extends AbstractIntegrationTest {
     }
 
     // ---------------------------------------------------------------------------------------
+    // Gap H: the template's subscriptions must reach the principal, through the REAL resolver
+    // ---------------------------------------------------------------------------------------
+
+    /**
+     * The walkthrough's chain, without any mock: a template stored in the config domain declares
+     * {@code hooks} → {@link AgentTemplateService#resolveForCreation} (the production resolver) must
+     * carry them into the snapshot → the created principal must land them in
+     * {@code agent_principals.hooks}.
+     *
+     * <p>Boundary, stated on purpose so nobody later reads it as a missing migration: this fixes the
+     * create path only. A {@code SYSTEM_PRESET} row created <b>before</b> the fix keeps
+     * {@code hooks = NULL}; no V99 backfill is written because XH has no deployment surface and the
+     * only affected rows are local stack artefacts of the walkthrough.</p>
+     */
+    @Test
+    void templateHooksReachTheDatabaseThroughTheRealResolver() {
+        fixture();
+        UUID roleId = UUID.randomUUID();
+        UUID templateId = UUID.randomUUID();
+        saveConfigLayer("roles", rolesArray(roleId, "guard", "read"));
+        saveConfigLayer("templates", templatesArray(templateId, "Frozen guard", roleId, HOOKS_JSON));
+
+        AgentTemplateService.ResolvedTemplate resolved = agentTemplateService.resolveForCreation(
+                adminUserId.toString(), null, templateId.toString());
+        assertEquals("user", resolved.sourceLayer());
+        assertEquals(readJson(HOOKS_JSON), resolved.snapshot().path("hooks"),
+                "Gap H: the real resolver dropped the template's hooks — the snapshot is what the "
+                        + "create path reads its default subscription from");
+
+        UUID created = createPrincipal("Template hooked agent", null, templateId.toString());
+
+        JsonNode stored = principalRepository.findById(created).orElseThrow().getHooks();
+        assertNotNull(stored, "Gap H: a guard created from a template with hooks must not land NULL");
+        assertEquals(readJson(HOOKS_JSON), stored);
+    }
+
+    @Test
+    void templateWithoutHooksLeavesThePrincipalWithoutSubscriptions() {
+        fixture();
+        UUID roleId = UUID.randomUUID();
+        UUID templateId = UUID.randomUUID();
+        saveConfigLayer("roles", rolesArray(roleId, "plain", "read"));
+        saveConfigLayer("templates", templatesArray(templateId, "Plain template", roleId, null));
+
+        AgentTemplateService.ResolvedTemplate resolved = agentTemplateService.resolveForCreation(
+                adminUserId.toString(), null, templateId.toString());
+        assertTrue(resolved.snapshot().path("hooks").isMissingNode(),
+                "no declaration ⇒ no hooks node at all (the create path reads absent as 'none')");
+
+        UUID created = createPrincipal("Plain agent", null, templateId.toString());
+
+        assertNull(principalRepository.findById(created).orElseThrow().getHooks(),
+                "a template without hooks must still create a principal without subscriptions");
+    }
+
+    // ---------------------------------------------------------------------------------------
     // fixtures / helpers
     // ---------------------------------------------------------------------------------------
 
@@ -208,6 +273,47 @@ class AgentPrincipalHooksHttpTest extends AbstractIntegrationTest {
 
     private UUID createPrincipal(String name, String hooksJson) {
         return createPrincipal(name, hooksJson, null);
+    }
+
+    /** One user-layer config row (the assembled document shape: one row per document key). */
+    private void saveConfigLayer(String configKey, JsonNode value) {
+        ConfigEntity entity = new ConfigEntity();
+        entity.setLayer("user");
+        entity.setUserId(adminUserId);
+        entity.setDomain("agent-templates");
+        entity.setConfigKey(configKey);
+        entity.setConfigValue(value.toString());
+        entity.setUpdatedBy("test-fixture");
+        configIds.add(configJpaRepository.saveAndFlush(entity).getId());
+    }
+
+    private JsonNode rolesArray(UUID roleId, String name, String... actionClasses) {
+        ObjectNode role = objectMapper.createObjectNode();
+        role.put("id", roleId.toString());
+        role.put("name", name);
+        ArrayNode permissions = role.putArray("permissions");
+        for (String actionClass : actionClasses) {
+            permissions.addObject().put("actionClass", actionClass).put("resource", "*");
+        }
+        ArrayNode roles = objectMapper.createArrayNode();
+        roles.add(role);
+        return roles;
+    }
+
+    private JsonNode templatesArray(UUID templateId, String name, UUID roleId, String hooksJson) {
+        ObjectNode template = objectMapper.createObjectNode();
+        template.put("id", templateId.toString());
+        template.put("name", name);
+        template.put("description", name + " description");
+        template.put("systemPrompt", "You are a fixture agent.");
+        template.put("toolMode", "none");
+        template.put("roleId", roleId.toString());
+        if (hooksJson != null) {
+            template.set("hooks", readJson(hooksJson));
+        }
+        ArrayNode templates = objectMapper.createArrayNode();
+        templates.add(template);
+        return templates;
     }
 
     /**
