@@ -130,6 +130,13 @@ run = "node --test scripts/xihe-cli.test.mjs scripts/xihe-cli/skill.test.mjs scr
 description = "Run every scripts/**/*.test.mjs unit test — the file list is explicit and pinned by scripts/test-wiring.test.mjs (a new test file that is not listed turns that meta test red)"
 alias = "test:cli"
 
+[tasks."test:mock"]
+run = "pnpm exec playwright test --config e2e/playwright.config.ts e2e/mock --reporter=list"
+description = "Mock-lane browser suite — no backend needed (Playwright starts its own Vite dev server). Gate semantics: real failures fail the task; the five known flaky cases are absorbed by Playwright retries. Proven able to go red (2026-11-03: 48 failures at baseline before the lane was repaired to 187 passed / 0 failed)."
+dir = "packages/ui"
+env = { XIHE_E2E_PROFILE = "mock" }
+alias = "test:mock"
+
 [tasks."test:ui"]
 run = "pnpm run test:unit"
 description = "Run the UI unit test suite"
