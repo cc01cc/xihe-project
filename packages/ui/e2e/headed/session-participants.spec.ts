@@ -122,6 +122,18 @@ const RECORDED_TESTIDS: Array<{ id: string; scene: string; status: TestIdStatus;
         note: "InputArea.vue:159（工具栏按钮描述符里的 data-testid；发送动作入口）",
     },
     {
+        id: "message-item",
+        scene: "S7",
+        status: "asserted",
+        note: "packages/ui/src/features/workspace/chat/components/MessageItem.vue:195（带 data-message-role 属性，可区分 user/assistant）",
+    },
+    {
+        id: "participant-mention-badge-*",
+        scene: "S6",
+        status: "asserted",
+        note: "packages/ui/src/features/workspace/components/ParticipantRow.vue:163（mentionCount>0 才渲染）",
+    },
+    {
         id: "participants-forbidden",
         scene: "—",
         status: "blocked",
@@ -159,6 +171,8 @@ let shotSeq = 0;
 let workspaceId = "";
 let sessionId = "";
 let agentParticipantId = "";
+let agentRowParticipantId = "";
+let agentDisplayName = "";
 let humanParticipantId = "";
 let humanDisplayName = "";
 
@@ -491,6 +505,8 @@ test.describe("PLAN-0623 有头走查：会话参与者 dock tab", () => {
         const agent = body.participants.find((item) => item.principalKind === "AGENT");
         expect(human, "the session must contain the HUMAN member we just added").toBeTruthy();
         expect(agent, "the session must contain the AGENT primary").toBeTruthy();
+        agentRowParticipantId = agent!.participantId;
+        agentDisplayName = agent!.displayName ?? "";
         humanParticipantId = human!.participantId;
         humanDisplayName = human!.displayName ?? "";
 
@@ -656,6 +672,125 @@ test.describe("PLAN-0623 有头走查：会话参与者 dock tab", () => {
             name: "s5-speak-as-request-body",
             assertion:
                 "speakAs=true 才渲染入口；option 数=候选数；选中的 participantId 出现在 POST /api/v1/chat 的 body.asParticipantId",
+        });
+    });
+    test("S6@host @提及 HUMAN → 发送 → 该成员行出现未读 @N 徽标", async ({ page }) => {
+        expect(humanParticipantId, "S6 depends on S2").not.toBe("");
+        expect(humanDisplayName, "S6 needs the HUMAN display name from S2").not.toBe("");
+        await loginViaForm(page, GOLDPATH_EMAIL, GOLDPATH_PASSWORD);
+        await page.goto(`/workspace/${workspaceId}/chat/${sessionId}`, { waitUntil: "load" });
+        await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: 45000 });
+
+        // 用既有提及按钮插入（格式已由 S3 验证），再补一段可辨识文本。
+        await page.getByTestId("workspace-toolbar-members").click();
+        await page
+            .getByTestId("session-participants-panel")
+            .waitFor({ state: "visible", timeout: 20000 });
+        await page.getByTestId(`participant-mention-${humanParticipantId}`).click();
+        const input = page.getByTestId("chat-input");
+        await expect(input).toHaveValue(
+            new RegExp(`@${humanDisplayName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`),
+        );
+        await input.fill(`@${humanDisplayName} S6 mention probe`);
+        expect(await input.inputValue(), "mention must be in the draft before send").toContain("@");
+
+        const chatResponse = page.waitForResponse(
+            (response) =>
+                new URL(response.url()).pathname === "/api/v1/chat" &&
+                response.request().method() === "POST",
+            { timeout: 30000 },
+        );
+        await page.getByTestId("chat-send-button").click();
+        const answered = await chatResponse;
+        expect(answered.status(), `mention send must be accepted (${await answered.text()})`).toBe(
+            202,
+        );
+
+        // 面板的数据在打开那一刻加载 —— 发送后先关再开，让它重新拉取拿到新游标。
+        await page.getByTestId("workspace-toolbar-members").click();
+        await expect(page.getByTestId("session-participants-panel")).toBeHidden({ timeout: 20000 });
+        await page.getByTestId("workspace-toolbar-members").click();
+        await expect(page.getByTestId("session-participants-panel")).toBeVisible({
+            timeout: 20000,
+        });
+
+        // 0624 的核心可见效果：服务端推进 mention_count ⇒ 未读徽标出现（只有 >0 才渲染）。
+        const badge = page.getByTestId(`participant-mention-badge-${humanParticipantId}`);
+        await expect
+            .poll(
+                async () => {
+                    const count = await badge.count();
+                    if (count === 0) return { count, text: "" };
+                    return { count, text: (await badge.textContent()) ?? "" };
+                },
+                { timeout: 30000, intervals: [500, 1000] },
+            )
+            .toEqual({ count: 1, text: expect.stringMatching(/^@/) });
+        const text = await badge.textContent();
+        const parsed = Number((text ?? "").replace("@", ""));
+        expect(
+            Number.isInteger(parsed) && parsed > 0,
+            `badge must carry a positive count, got "${text}"`,
+        ).toBe(true);
+
+        await shot(page, {
+            id: "S6",
+            name: "s6-mention-badge-after-send",
+            assertion:
+                "@HUMAN 发出后重开面板：成员行出现 @N 未读徽标（服务端推进 cursor 的 UI 证据）",
+        });
+    });
+
+    test("S7@host @提及 AGENT(respond=ALWAYS) → 发送 → agent 回复气泡出现", async ({ page }) => {
+        expect(agentRowParticipantId, "S7 depends on S2").not.toBe("");
+        expect(agentDisplayName, "S7 needs the AGENT display name from S2").not.toBe("");
+        await loginViaForm(page, GOLDPATH_EMAIL, GOLDPATH_PASSWORD);
+        await page.goto(`/workspace/${workspaceId}/chat/${sessionId}`, { waitUntil: "load" });
+        await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: 45000 });
+
+        await page.getByTestId("workspace-toolbar-members").click();
+        await page
+            .getByTestId("session-participants-panel")
+            .waitFor({ state: "visible", timeout: 20000 });
+        await page.getByTestId(`participant-mention-${agentRowParticipantId}`).click();
+        const input = page.getByTestId("chat-input");
+        await expect(input).toHaveValue(
+            new RegExp(`@${agentDisplayName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`),
+        );
+        await input.fill(`@${agentDisplayName} S7 fan-out probe`);
+
+        const chatResponse = page.waitForResponse(
+            (response) =>
+                new URL(response.url()).pathname === "/api/v1/chat" &&
+                response.request().method() === "POST",
+            { timeout: 30000 },
+        );
+        await page.getByTestId("chat-send-button").click();
+        const answered = await chatResponse;
+        expect(answered.status(), `mention send must be accepted (${await answered.text()})`).toBe(
+            202,
+        );
+
+        // fan-out 串行触发 run：mock LLM 会回。轮询（非固定 sleep）等 assistant 气泡出现。
+        const assistant = page.locator(
+            '[data-testid="message-item"][data-message-role="assistant"]',
+        );
+        await expect
+            .poll(async () => assistant.count(), {
+                timeout: 90000,
+                intervals: [1000, 2000, 5000],
+            })
+            .toBeGreaterThanOrEqual(1);
+        await expect(
+            assistant.first(),
+            "the agent reply bubble must render content",
+        ).not.toBeEmpty();
+
+        await shot(page, {
+            id: "S7",
+            name: "s7-agent-reply-bubble",
+            assertion:
+                "@AGENT(respond=ALWAYS) 发出后轮询到 assistant 气泡出现（串行 fan-out 触发 run 的证据）",
         });
     });
     test("S4@host 移除 = 两次点击 + soft disable：行仍在并带「已停用」", async ({ page }) => {

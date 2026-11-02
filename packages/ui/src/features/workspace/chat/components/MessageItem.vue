@@ -188,7 +188,13 @@ onUnmounted(() => {
         </MarkerContent>
     </Marker>
 
-    <MessageRoot v-else :align="isUser ? 'end' : 'start'" class="px-3 py-1.5">
+    <MessageRoot
+        v-else
+        :align="isUser ? 'end' : 'start'"
+        class="px-3 py-1.5"
+        data-testid="message-item"
+        :data-message-role="message.role"
+    >
         <MessageAvatar v-if="!isUser">
             <div class="flex size-8 items-center justify-center rounded-full bg-primary/10">
                 <Bot class="size-4 text-primary" />
