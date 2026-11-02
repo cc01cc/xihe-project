@@ -5,6 +5,7 @@ import com.cc01cc.p.xihe.cp.config.ProblemDetailsHandler;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceAgent;
 import com.cc01cc.p.xihe.cp.service.AgentPrincipalService;
+import com.cc01cc.p.xihe.cp.util.JacksonNodeExit;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.http.HttpStatus;
@@ -104,25 +105,17 @@ public class WorkspaceAgentController {
         // PLAN-0625 Gap I: hooks are an *object* document ({advisors:[…]}), not the permissions
         // array — the array projection below silently answered `[]` for every row, so the UI could
         // never render the subscription.
-        result.put("hooks", toDocument(view.hooks()));
+        result.put("hooks", JacksonNodeExit.toDocument(objectMapper, view.hooks()));
         // PLAN-0629 M1 (Lead ruling 2026-11-02): the workspace agent list carries the subject's memory
         // policy too, or the UI cannot show/manage it.
-        result.put("contextPolicy", toDocument(view.contextPolicy()));
+        result.put("contextPolicy", JacksonNodeExit.toDocument(objectMapper, view.contextPolicy()));
         // D27: `disabledAt` is projected as a boolean — the UI gates badges/buttons on it.
         result.put("disabled", view.disabled());
         return result;
     }
 
-    /**
-     * PLAN-0625 Gap I/J: a Jackson-2 {@link JsonNode} must never reach a response map — Boot 4
-     * serialises with Jackson 3, which introspects a Jackson-2 node as a plain bean and answers
-     * {@code {"array":false,…,"nodeType":"OBJECT"}} instead of the document. Convert it to plain
-     * {@code Map}/{@code List}/scalars on the way out; {@code null} stays {@code null}
-     * (no subscriptions).
-     */
-    private Object toDocument(JsonNode node) {
-        return node == null || node.isNull() ? null : objectMapper.convertValue(node, Object.class);
-    }
+    // PLAN-0625 Gap I/J / PLAN-0633 C1: Jackson-2 nodes leave through JacksonNodeExit only — the rule
+    // and its rationale live there (single source), and two mechanical gates enforce it.
 
     private static List<Map<String, String>> toValue(JsonNode permissions) {
         List<Map<String, String>> result = new java.util.ArrayList<>();

@@ -58,6 +58,45 @@ class WorkspaceEnvironmentControllerTest {
                 "contractVersion must be v1: " + fileOps);
     }
 
+    /**
+     * PLAN-0633 C1-1: the Runtime capability's {@code fileOperations} document must reach the
+     * response as plain {@code Map}/{@code List}/scalars. Before the fix this branch put the
+     * Jackson-2 node itself into the map, so Jackson 3 answered the node's bean properties
+     * ({@code {"array":false,…,"nodeType":"OBJECT",…}}) instead of the document.
+     *
+     * <p>This case exists because the fixtures above never carried a {@code fileOperations} key —
+     * the leaking branch was untested even though {@code passesThroughRuntimeCapability…} looks
+     * like it covers the field (it only ever hit the fallback Map).
+     */
+    @Test
+    void fileOperationsDocumentIsLoweredToPlainJsonValues() {
+        Map<String, Object> view = WorkspaceEnvironmentController.jobCapabilityView(
+                "windows-host",
+                capability("{\"backendKind\":\"windows-host\",\"canStart\":true,\"available\":true,"
+                        + "\"fileOperations\":{\"contractVersion\":\"v1\",\"executionMode\":\"windows-host\","
+                        + "\"operations\":{\"read_file\":{\"available\":true}}}}"));
+
+        Object fileOperations = view.get("fileOperations");
+        assertTrue(fileOperations instanceof Map, "fileOperations must be a plain Map: " + fileOperations);
+        @SuppressWarnings("unchecked")
+        Map<String, Object> document = (Map<String, Object>) fileOperations;
+        assertEquals("v1", document.get("contractVersion"));
+        assertNoJackson2Node(view, "$");
+    }
+
+    /** Recursively asserts no Jackson-2 node survives anywhere in the response view. */
+    private static void assertNoJackson2Node(Object value, String path) {
+        assertFalse(value instanceof com.fasterxml.jackson.databind.JsonNode,
+                "Jackson-2 node leaked into the response at " + path + ": " + value);
+        if (value instanceof Map<?, ?> map) {
+            map.forEach((key, nested) -> assertNoJackson2Node(nested, path + "." + key));
+        } else if (value instanceof java.util.List<?> list) {
+            for (int index = 0; index < list.size(); index++) {
+                assertNoJackson2Node(list.get(index), path + "[" + index + "]");
+            }
+        }
+    }
+
     @Test
     void hostCapabilityCarriesTheUnrestrictedMarker() {
         Map<String, Object> view = WorkspaceEnvironmentController.jobCapabilityView(

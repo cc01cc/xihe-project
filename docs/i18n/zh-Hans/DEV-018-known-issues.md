@@ -238,6 +238,7 @@ updated: 2026-10-25
 ## Code
 
 - **Jackson 2/3 混用**: CP 同时依赖 Jackson2（`com.fasterxml.jackson.databind`，如 `McpProxyController` 仍用 `fieldNames()`）与 Jackson3（`tools.jackson`）。3.x 新增 `propertyNames()`（返回 `Collection<String>`）；按所在模块的依赖对齐选用，禁跨版本混调
+- **Jackson-2 `JsonNode` 不得出 wire**（PLAN-0633 C1，2026-11-02）：Boot 4 用 Jackson 3 序列化 HTTP，把 Jackson-2 节点直接放进响应 Map 或从 handler `return`，Jackson 3 会把它当普通 bean 内省，客户端收到 `{"array":false,…,"nodeType":"OBJECT",…}` 而不是文档本身（三处实证：`a1219a21` agent-principal 创建/列表、`a3e8d90a` 工作区 agents 列表、C1-1 `WorkspaceEnvironmentController` 的 `fileOperations`）。**唯一出口** = `cp/util/JacksonNodeExit.toDocument(...)`（或显式标量投影如 `path(...).asText()`）。两道门：静态 `Jackson2NodeWireScanTest`（含 `// jackson2-wire-ok: <理由>` 豁免，豁免会逐条打印且受预算约束）+ 运行时 `Jackson2NodeWireInterceptor`（挂在三个真 HTTP 测试基类的 `RestTemplate` 上，指纹判据 = 同时出现 `nodeType` 与 `array|containerNode|missingNode|valueNode`）
 - **JSONB @JdbcTypeCode**: JPA 实体含 `columnDefinition = "jsonb"` 的 String 字段必须加 `@JdbcTypeCode(SqlTypes.JSON)`，否则 PG 报类型不匹配
 - **ConfigClient URL 路径**（Agent `config_client.py`、Runtime `config_client.rs`）：CP 内部端点路径为 `/internal/v1/config/{layer}/{domain}`（注意是 `/internal/v1` 前缀；PLAN-049 T3 测试暴露过误用公开前缀拼接内部路径的 bug）。新增模块调用时确认路径为 `/internal/v1/config/...`
 

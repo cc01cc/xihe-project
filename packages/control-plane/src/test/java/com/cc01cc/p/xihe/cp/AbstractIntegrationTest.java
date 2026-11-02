@@ -1,6 +1,8 @@
 package com.cc01cc.p.xihe.cp;
 
 import com.cc01cc.p.xihe.cp.integration.TestDatabaseProvider;
+import com.cc01cc.p.xihe.cp.support.Jackson2NodeWireInterceptor;
+import com.cc01cc.p.xihe.cp.integration.TestDataFactory;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.TestInfo;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -79,6 +81,7 @@ public abstract class AbstractIntegrationTest {
         }
         baseUrl = "http://localhost:" + port;
         restTemplate = new RestTemplate();
+        restTemplate.getInterceptors().add(Jackson2NodeWireInterceptor.INSTANCE);
         restTemplate.setErrorHandler(new DefaultResponseErrorHandler() {
             @Override
             public boolean hasError(ClientHttpResponse response) throws IOException {
