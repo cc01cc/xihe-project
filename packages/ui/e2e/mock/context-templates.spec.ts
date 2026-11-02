@@ -67,6 +67,29 @@ test.describe("Context templates (PLAN-0414)", () => {
             sessions: [{ id: SESSION_ID, title: "Binding session" }],
         });
 
+        // The pinned binding, as the CP would persist it. The Session projection must
+        // reflect this after the PATCH: `SessionContextTemplate` applies the PATCH response
+        // (OpenAPI: `updateSessionApiRequestTemplate` → `Session`) to the store, and the chat
+        // summary row — a second instance of the resolver (PLAN-0626 M2-3) — re-reads the
+        // session. A GET stub that keeps answering "unbound" forever models a server losing
+        // writes, which is what made the summary assert stay red while the pin had succeeded.
+        let bound: {
+            layer: string;
+            templateId: string;
+            version: number;
+            connectionRevision: number;
+        } | null = null;
+        const sessionProjection = () => ({
+            id: SESSION_ID,
+            workspaceId: "workspace-1",
+            title: "Binding session",
+            archived: false,
+            providerConnectionId: CONNECTION_ID,
+            contextTemplateLayer: bound?.layer ?? null,
+            contextTemplateId: bound?.templateId ?? null,
+            contextTemplateVersion: bound?.version ?? null,
+        });
+
         // The session must carry a provider connection so the panel can scope
         // the visible templates to that connection's api type (PLAN-0523 T3.5).
         await page.route(`**/api/v1/sessions/${SESSION_ID}`, async (route) => {
@@ -74,16 +97,7 @@ test.describe("Context templates (PLAN-0414)", () => {
             await route.fulfill({
                 status: 200,
                 contentType: "application/json",
-                body: JSON.stringify({
-                    id: SESSION_ID,
-                    workspaceId: "workspace-1",
-                    title: "Binding session",
-                    archived: false,
-                    providerConnectionId: CONNECTION_ID,
-                    contextTemplateLayer: null,
-                    contextTemplateId: null,
-                    contextTemplateVersion: null,
-                }),
+                body: JSON.stringify(sessionProjection()),
             });
         });
 
@@ -108,12 +122,6 @@ test.describe("Context templates (PLAN-0414)", () => {
         // `listVisibleTemplates` reads instance + user + workspace layers; only
         // the user layer publishes a template here, so the selector offers
         // exactly one rebind target.
-        let bound: {
-            layer: string;
-            templateId: string;
-            version: number;
-            connectionRevision: number;
-        } | null = null;
         await page.route("**/api/v1/config/api-request-templates**", async (route) => {
             const layer = new URL(route.request().url()).searchParams.get("layer");
             const entries =
@@ -132,16 +140,7 @@ test.describe("Context templates (PLAN-0414)", () => {
             await route.fulfill({
                 status: 200,
                 contentType: "application/json",
-                body: JSON.stringify({
-                    id: SESSION_ID,
-                    workspaceId: "workspace-1",
-                    title: "Binding session",
-                    archived: false,
-                    providerConnectionId: CONNECTION_ID,
-                    contextTemplateLayer: bound?.layer,
-                    contextTemplateId: bound?.templateId,
-                    contextTemplateVersion: bound?.version,
-                }),
+                body: JSON.stringify(sessionProjection()),
             });
         });
 

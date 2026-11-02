@@ -117,6 +117,22 @@ watch(
     },
 );
 
+/**
+ * PLAN-0626 M2-3 moved the mode *control* into the dock, which also moved the only
+ * `policyStore.load()` caller (`SessionPolicyControls`) out of the chat column. The
+ * summary row still owns the mode value and the auto-approval safety banner, so it must
+ * load the projection itself — otherwise both read "未提供" / disappear until the dock is
+ * opened (2026-11-03 mock-lane 实测：`GET /api/v1/policy/mode` 一次都没发出，因为 dock
+ * 默认关闭、面板从未挂载)。`load()` 自身按 `loaded` / 在途 promise 去重，与面板实例并存无副作用。
+ */
+watch(
+    () => props.sessionId,
+    (sessionId) => {
+        if (sessionId) void policyStore.load(sessionId);
+    },
+    { immediate: true },
+);
+
 function handleTemplateSummary(summary: TemplateSummary) {
     templateSummary.value = summary;
 }

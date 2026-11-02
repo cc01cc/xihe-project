@@ -32,9 +32,23 @@
     // silently drops baseURL/webServer and every `page.goto("/…")` fails with
     // "Cannot navigate to invalid URL".
     //
-    // Known state at 2026-11-03 (first ever run of this lane): 20 passed / 4 failed. The 4
-    // failures are pre-existing (mock fixtures never return the policy mode, so the summary
-    // row renders "审批模式 未提供"): approval.spec.ts:499, :644, :664 + context-templates.spec.ts:63.
+    // Known state at 2026-11-03 (whole lane, `playwright test --config e2e/playwright.config.ts e2e/mock`):
+    // 136 passed / 49 failed. The four cases this lane first surfaced are fixed; their root
+    // causes were **not** one missing fixture (corrected after trace-level diagnosis):
+    //   - approval.spec.ts "shows auto mode warning…" / "workspace chat keeps the auto warning…"
+    //     → product regression from PLAN-0626 M2-3 (`e0086773`): the only `policyStore.load()`
+    //       caller moved into the dock, which is closed by default, so `GET /policy/mode` was
+    //       never sent and the summary row read "未提供". Fixed in `SessionSettingsPanel.vue`.
+    //   - context-templates.spec.ts "chat binding selector…" → the summary row is a second
+    //     resolver instance and a successful rebind never reached the Session projection; the
+    //     stub's session GET also never reflected the PATCH. Fixed in `SessionContextTemplate.vue`
+    //     (+ `sessionStore.applySessionRecord`) and in the spec's session stub.
+    //   - approval.spec.ts "switching away from an awaiting session…" → fixture gap: the session
+    //     fixture dropped `agentPrincipalId`, so every send detoured into principal binding and no
+    //     `/chat` POST happened. Fixed in `e2e/mock/helpers/auth.ts` + the approval fixture.
+    // The remaining 49 failures are pre-existing and unrelated (config-settings, model-popover,
+    // policy-management, sse-liveness, workspace-* …); `screenshots.spec.ts` order-dependent
+    // "0 console errors" cases as well (settings-monitoring fails 3/3 in isolation on develop).
     "real-full": {
       "description": "host lane full suite on the real provider (key-gated; 0372 baseline 42P/0F/31S)",
       "llmMode": "real",
