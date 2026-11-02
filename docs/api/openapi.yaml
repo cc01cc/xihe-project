@@ -5123,13 +5123,32 @@ components:
       additionalProperties: false
     ContextComponentSource:
       type: object
-      required: [status, source, items, truncated, diagnostics]
+      required: [status, source, truncated, diagnostics]
+      description: 'One per-run component source document, keyed by template instanceId. Two shapes share this schema, discriminated by `source`: the listing variant (runtime_workspace / agents_md_tree / skill_bindings) carries `items`; the memory variant (agent_memory, PLAN-0629 M1-4/M1-5) carries `entries` plus the bounds CP applied. The Agent renders `${xh.skill_catalog}` from the first and `${xh.agent_memory}` from the second.'
       properties:
         status: { type: string, enum: [ready, empty, missing, unavailable, unknown, truncated, failed, approval_required] }
-        source: { type: string, description: Source-kind identifier; e.g. runtime_workspace. }
-        items: { type: array, items: { type: string }, description: Workspace-relative paths only; no file contents. }
+        source: { type: string, description: 'Source-kind identifier: runtime_workspace | agents_md_tree | skill_bindings | agent_memory.' }
+        items: { type: array, items: { type: string }, description: 'Listing variant only: workspace-relative paths (tree) or already-rendered listing lines (skills); no file contents.' }
+        entries:
+          type: array
+          description: 'Memory variant only (source=agent_memory): the active rows CP selected for exactly this (principal, workspace) pair, already ordered pinned -> profile -> freshest. `candidate` and soft-deleted rows never appear.'
+          items: { $ref: '#/components/schemas/AgentMemoryComponentEntry' }
+        maxEntries: { type: integer, minimum: 1, description: 'Memory variant: entry cap CP applied to this document.' }
+        maxTokens: { type: integer, minimum: 1, description: 'Memory variant: token cap CP applied, using the shared chars/2 estimate.' }
+        usedTokens: { type: integer, minimum: 0, description: 'Memory variant: tokens CP counted for the returned entries.' }
         truncated: { type: boolean }
         diagnostics: { type: array, items: { type: string } }
+      additionalProperties: false
+    AgentMemoryComponentEntry:
+      type: object
+      required: [type, pinned, updatedAt, content, tokens]
+      description: 'One memory row inside a component source document (PLAN-0629). Selection/ordering is CP-owned; the Agent only renders and charges it.'
+      properties:
+        type: { type: string, enum: [profile, fact] }
+        pinned: { type: boolean }
+        updatedAt: { type: string, description: 'ISO-8601 instant as stored by CP.' }
+        content: { type: string, description: 'Normalized stored text (<= 8000 chars by DB CHECK); rendering/truncation is the Agent renderer''s job.' }
+        tokens: { type: integer, minimum: 0, description: 'CP estimate (chars/2) so both sides charge the same number.' }
       additionalProperties: false
     AgentSummarizeRequest:
       type: object
