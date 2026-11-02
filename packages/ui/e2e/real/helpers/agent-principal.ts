@@ -17,7 +17,24 @@ type PrincipalOptions = {
     defaultModelProvider?: string;
     defaultModelName?: string;
 };
-type SessionOptions = { principalId: string; title: string };
+type SessionOptions = {
+    principalId: string;
+    title: string;
+    /**
+     * PLAN-0601 显式绑定（可选）：POST /api/v1/sessions 的 binding 字段，满足
+     * `ApiRequestTemplateService.admissionSnapshot` —— 不传则**裸会话**，agent dispatch 会
+     * 409 `API_TYPE_REBIND_REQUIRED`。字段名即 wire 名（providerConnectionId/modelProvider/modelName/
+     * contextTemplateLayer/Id/Version）。
+     */
+    binding?: {
+        providerConnectionId: string;
+        modelProvider: string;
+        modelName: string;
+        contextTemplateLayer: string;
+        contextTemplateId: string;
+        contextTemplateVersion: number;
+    };
+};
 
 const DEFAULT_SYSTEM_PROMPT = "Use only the Workspace tools provided by CP.";
 
@@ -139,7 +156,7 @@ export async function provisionWorkspaceAgentPrincipal(
 export async function createSessionWithPrincipal(
     request: APIRequestContext,
     auth: AgentAuth,
-    { principalId, title, workspaceId }: SessionOptions & { workspaceId?: string },
+    { principalId, title, workspaceId, binding }: SessionOptions & { workspaceId?: string },
 ): Promise<string> {
     const url = workspaceId
         ? `${CP_URL}/api/v1/workspaces/${workspaceId}/sessions`
@@ -148,7 +165,12 @@ export async function createSessionWithPrincipal(
     if (workspaceId) headers["X-Workspace-Id"] = workspaceId;
     const response = await request.post(url, {
         headers,
-        data: { title, agentPrincipalId: principalId },
+        data: {
+            title,
+            agentPrincipalId: principalId,
+            // 有绑定才带（不传 ⇒ 与旧行为逐字节一致）。
+            ...(binding ? binding : {}),
+        },
     });
     expect(response.status(), await response.text()).toBe(201);
     const body = (await response.json()) as { id?: string; sessionId?: string },

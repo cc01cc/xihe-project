@@ -9,6 +9,12 @@ import {
 } from "../real/helpers/agent-principal";
 import { createDirectAttachWorkspace } from "../real/helpers/workspace";
 import { CP_URL } from "../real/helpers/journey";
+import {
+    parseTemplateCatalog,
+    pickChatConnection,
+    pickModelName,
+    publishedTemplates,
+} from "../../../../scripts/xihe-cli/session-binding.mjs";
 
 const RUN_ID = process.env.XIHE_E2E_RUN_ID || `headed-0623-${Date.now()}`;
 const RUN_DIR = path.resolve(process.cwd(), "../../.tmp/xh-headed-0623/runs", RUN_ID);
@@ -261,6 +267,79 @@ async function loginViaForm(page: Page, identifier: string, password: string): P
         .toBe(true);
 }
 
+/**
+ * PLAN-0601 显式绑定：API 裸建会话（`POST /workspaces/{id}/sessions` 只带 agentPrincipalId）
+ * 的 providerConnectionId/contextTemplate* 全为 null ⇒ agent dispatch 直接 409
+ * `API_TYPE_REBIND_REQUIRED`（`ApiRequestTemplateService.admissionSnapshot` 刻意 fail-closed）。
+ *
+ * 这里复用 CLI 的**纯挑选函数**（不猜 id）：READY 的 chat 连接 + 已发布且与连接 apiType 兼容的
+ * 模板（user→workspace→instance 顺序）+ 连接暴露的 chat 模型。与 `xihe verify` 同一套口径。
+ */
+async function resolveHeadedSessionBinding(
+    request: {
+        get: (
+            url: string,
+            options?: { headers: Record<string, string> },
+        ) => Promise<{
+            status: () => number;
+            json: () => Promise<unknown>;
+            text: () => Promise<string>;
+        }>;
+    },
+    token: string,
+): Promise<{
+    providerConnectionId: string;
+    modelProvider: string;
+    modelName: string;
+    contextTemplateLayer: string;
+    contextTemplateId: string;
+    contextTemplateVersion: number;
+}> {
+    const headers = { Authorization: `Bearer ${token}`, "X-Workspace-Id": workspaceId };
+    const connectionsResponse = await request.get(`${CP_URL}/api/v1/provider-connections`, {
+        headers,
+    });
+    expect(connectionsResponse.status(), await connectionsResponse.text()).toBe(200);
+    const connection = pickChatConnection(
+        ((await connectionsResponse.json()) as { connections?: unknown[] }).connections ?? [],
+    );
+    expect(connection, "a READY chat provider connection must exist on this stack").toBeTruthy();
+
+    let template: { id: string; version: number } | null = null,
+        templateLayer = "";
+    for (const layer of ["user", "workspace", "instance"]) {
+        const catalog = await request.get(
+            `${CP_URL}/api/v1/config/api-request-templates?layer=${encodeURIComponent(layer)}`,
+            { headers },
+        );
+        if (catalog.status() !== 200) continue;
+        const candidates = publishedTemplates(parseTemplateCatalog(await catalog.json()), {
+            apiTypeId: connection.apiTypeId,
+            apiTypeVersion: connection.apiTypeVersion,
+        });
+        if (candidates.length > 0) {
+            template = candidates[0]!;
+            templateLayer = layer;
+            break;
+        }
+    }
+    expect(template, "a published api-request template must exist on this stack").toBeTruthy();
+
+    const modelsResponse = await request.get(`${CP_URL}/api/v1/models`, { headers });
+    const models =
+        modelsResponse.status() === 200
+            ? (((await modelsResponse.json()) as { models?: unknown[] }).models ?? [])
+            : [];
+
+    return {
+        providerConnectionId: connection.id,
+        modelProvider: connection.providerId ?? "custom-openai-compatible",
+        modelName: pickModelName(connection, models) ?? "",
+        contextTemplateLayer: templateLayer,
+        contextTemplateId: template!.id,
+        contextTemplateVersion: template!.version,
+    };
+}
 /** 诊断：面板没出现时，把"现在页面是什么状态"写进报错，而不是只报一句超时。 */
 async function participantsDiagnostics(page: Page): Promise<string> {
     const count = async (testId: string) => page.getByTestId(testId).count();
@@ -437,6 +516,10 @@ test.describe("PLAN-0623 有头走查：会话参与者 dock tab", () => {
         // 建会话**必须带工作区上下文**：本 spec 自建了工作区 ⇒ 账号变多工作区 ⇒ 无上下文的
         // `POST /api/v1/sessions` 会 409 `WORKSPACE_CONTEXT_REQUIRED`（产品拒绝歧义，不猜第一个）。
         // helper 收到 `workspaceId` 时走路径形式 + `X-Workspace-Id`（不传时行为不变，旧 spec 不受影响）。
+        // PLAN-0601：API 裸建会话没有显式绑定 ⇒ agent dispatch 会 409 API_TYPE_REBIND_REQUIRED
+        // （S5 的 HUMAN 路径不走 admission 所以没炸；S6/S7 是第一次触发 agent dispatch）。
+        // 绑定来源复用 CLI 的挑选口径（真实数据，不从配置猜）。
+        const binding = await resolveHeadedSessionBinding(request, token);
         sessionId = await createSessionWithPrincipal(
             request,
             { accessToken: token, workspaceId },
@@ -444,6 +527,7 @@ test.describe("PLAN-0623 有头走查：会话参与者 dock tab", () => {
                 principalId: agentParticipantId,
                 title: "Participants walkthrough",
                 workspaceId,
+                binding,
             },
         );
 
