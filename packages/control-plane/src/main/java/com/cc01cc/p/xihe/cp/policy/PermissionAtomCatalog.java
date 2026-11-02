@@ -14,7 +14,7 @@ import java.util.Set;
  * <p>Two kinds of atom exist and they are <b>not</b> interchangeable:</p>
  *
  * <ul>
- *   <li><b>Action atoms (16)</b> — the {@link ToolFaceRegistry#builtinActionClasses() built-in
+ *   <li><b>Action atoms (17)</b> — the {@link ToolFaceRegistry#builtinActionClasses() built-in
  *       action classes}. They are the only atoms that may be materialized into
  *       {@code grants.permissions}; {@code GrantIntersectionEvaluator.PermissionAtom} throws for
  *       anything else, so a non-action atom inside a grant would fail every evaluation closed.</li>
@@ -87,7 +87,13 @@ public final class PermissionAtomCatalog {
             ToolFaceRegistry.ACTION_MANAGE_SCHEDULED_TASK,
             ToolFaceRegistry.ACTION_MANAGE_ROLES,
             // PLAN-0622 D8: user tier — create one's own PERSONAL agent principal.
-            ToolFaceRegistry.ACTION_OWN_AGENT);
+            ToolFaceRegistry.ACTION_OWN_AGENT,
+            // PLAN-0629 D29-24/34: the agent tool channel writing subject memory. Stored as an atom
+            // and deliberately seeded into NO default role, which is the mechanical form of
+            // "tool writes are denied by default". Scope class stays `both`: memory is isolated by
+            // (principal, workspace), so a workspace-scoped grant is meaningful (an instance-scoped
+            // one means "in every workspace", the same shape as workspace:admin).
+            ToolFaceRegistry.ACTION_MEMORY_WRITE);
 
     private static final List<String> CAPABILITY_ATOM_NAMES = List.of(
             CAP_INSTANCE_SUPER, CAP_INSTANCE_ADMIN, CAP_WORKSPACE_ADMIN);
@@ -133,7 +139,7 @@ public final class PermissionAtomCatalog {
                 : WILDCARD;
     }
 
-    /** The 16 action atoms, in canonical order. */
+    /** The 17 action atoms, in canonical order. */
     public static List<String> actionAtoms() {
         return ACTION_ATOM_NAMES;
     }

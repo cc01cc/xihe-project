@@ -206,13 +206,13 @@ class DefaultSetMatrixTest extends AbstractIntegrationTest {
                 "spec §2.1: even the full-allow ADMIN set denies SPAWN_AGENT (无 grant 在 approval 之前拒绝)");
     }
 
-    /** PLAN-0610 W1b T1.9: the bootstrap admin holds SUPER_ADMIN (all 16 action atoms). */
+    /** PLAN-0610 W1b T1.9: the bootstrap admin holds SUPER_ADMIN (all action atoms). */
     @Test
     void seededAdminIsSuperAdminWithEveryActionAtom() {
         User admin = userRepository.findByEmail("admin@xihe.local").orElseThrow();
         assertEquals(new LinkedHashSet<>(PermissionAtomCatalog.actionAtoms()),
                 materializedAtoms("user", admin.getId()),
-                "SUPER_ADMIN materializes all 16 action atoms");
+                "SUPER_ADMIN materializes all action atoms (17 since PLAN-0629 MEMORY_WRITE)");
         assertTrue(authzContext.isInstanceSuper(admin.getId()),
                 "and resolves cap:instance:super from the seeded binding");
     }

@@ -43,6 +43,11 @@ public class ToolFaceRegistry {
     // ordinary account create its own PERSONAL agent principal. It is never alias-merged with
     // CREATE_ACCOUNT (instance tier) or MANAGE_WORKSPACE_AGENTS (workspace tier).
     public static final String ACTION_OWN_AGENT = "CREATE_OWN_AGENT";
+    // PLAN-0629 M1 (D29-24/34): the seventeenth action atom — writing an agent subject's memory
+    // through the agent tool channel. Default-deny by construction: it is stored in the catalog
+    // but seeded into NO default role (USER/ADMIN included), so an account can only use it after
+    // an explicit grant. The UI/CLI channels do not consume this atom (they act as the user).
+    public static final String ACTION_MEMORY_WRITE = "MEMORY_WRITE";
 
     /** PLAN-0496 #2: the credential resource namespace ({@code credential:<uuid>} / {@code credential:*}). */
     public static final String CREDENTIAL_ACTION_PREFIX = "credential_";
@@ -109,7 +114,7 @@ public class ToolFaceRegistry {
                 ACTION_CREDENTIAL_USE, ACTION_CREDENTIAL_REVEAL, ACTION_CREDENTIAL_MANAGE,
                 ACTION_CREATE_ACCOUNT, ACTION_CREATE_TEMPLATE, ACTION_MANAGE_WORKSPACE_AGENTS, ACTION_SPAWN_AGENT,
                 ACTION_CREATE_SCHEDULED_TASK, ACTION_MANAGE_SCHEDULED_TASK, ACTION_MANAGE_ROLES,
-                ACTION_OWN_AGENT);
+                ACTION_OWN_AGENT, ACTION_MEMORY_WRITE);
     }
 
     /** PLAN-0496 #2: credential-namespace action classes (the three atoms share resource rules). */
