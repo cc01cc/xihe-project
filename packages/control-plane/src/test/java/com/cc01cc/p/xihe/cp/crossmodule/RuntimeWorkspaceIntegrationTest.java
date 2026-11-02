@@ -29,6 +29,7 @@ import com.cc01cc.p.xihe.cp.entity.WorkspaceJobHistory;
 import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.event.WorkspaceEventManager;
 import com.cc01cc.p.xihe.cp.integration.TestDataFactory;
+import com.cc01cc.p.xihe.cp.support.Jackson2NodeWire;
 import com.cc01cc.p.xihe.cp.operation.JobStateService;
 import com.cc01cc.p.xihe.cp.repository.AuditLogRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
@@ -678,6 +679,28 @@ class RuntimeWorkspaceIntegrationTest extends AbstractWireMockTest {
         assertEquals(200, response.getStatusCode().value());
         assertEquals("unbound", response.getBody().get("status"));
         assertEquals("unbound", ((java.util.Map<?, ?>) response.getBody().get("runtime")).get("status"));
+
+        // PLAN-0633 C1-5 gold-path anchor: when the Runtime capability carries a fileOperations
+        // document, the environment response must deliver it as plain JSON. Before C1-1 this branch
+        // handed a Jackson-2 node to Jackson 3, whose introspection answered
+        // {"array":false,…,"nodeType":"OBJECT",…} instead of the document (Gap I/J shape, 3rd site).
+        wireMock.stubFor(post(urlEqualTo("/internal/v1/runtime/workspaces/" + workspaceId + "/jobs/capabilities"))
+                .willReturn(aResponse().withStatus(200)
+                        .withHeader("Content-Type", "application/json")
+                        .withBody("{\"backendKind\":\"windows-host\",\"available\":true,"
+                                + "\"fileOperations\":{\"contractVersion\":\"v1\","
+                                + "\"executionMode\":\"windows-host\","
+                                + "\"operations\":{\"read_file\":{\"available\":true}}}}")));
+
+        org.springframework.http.ResponseEntity<String> raw = restTemplate.exchange(
+                url("/api/v1/workspaces/" + workspaceId + "/environment"),
+                org.springframework.http.HttpMethod.GET,
+                new org.springframework.http.HttpEntity<>(userHeaders),
+                String.class);
+        assertEquals(200, raw.getStatusCode().value());
+        Jackson2NodeWire.assertClean(raw.getBody(), "GET /api/v1/workspaces/{id}/environment");
+        assertTrue(raw.getBody().contains("\"fileOperations\":{\"contractVersion\":\"v1\""),
+                "fileOperations must reach the wire as a plain document: " + raw.getBody());
     }
 
     @Autowired

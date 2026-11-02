@@ -75,6 +75,7 @@ Compiler、Checkstyle 和架构规则用途互补。PMD 候选已实际试跑，
 - CP→Runtime/Agent 调用保持显式超时与错误结果，禁止 host fallback 或静默降级。
 - 禁止新增固定 `sleep`、`Thread.sleep` 或无诊断的等待循环；超时、就绪与清理规则见 [`command-execution-strategies`](../../../.agents/skills/command-execution-strategies/SKILL.md)。
 - 跨协议/跨服务改动先按 [`xc-cross-cutting-checklist`](../../../.agents/skills/xc-cross-cutting-checklist/SKILL.md) 定契约，再落地代码、测试与证据。
+- **Jackson-2 `JsonNode` 不得出 wire**（PLAN-0633 C1）：Boot 4 用 Jackson 3 序列化 HTTP，Jackson-2 节点直接进响应 Map 或从 handler `return` 会被 Jackson 3 当普通 bean 内省，客户端收到 `{"array":false,…,"nodeType":"OBJECT",…}` 而非文档。唯一出口 `cp/util/JacksonNodeExit.toDocument(...)`（或显式标量投影）；门 = `Jackson2NodeWireScanTest`（静态；豁免注释 `// jackson2-wire-ok: <理由>` 必须在测试报告里逐条列出）+ `Jackson2NodeWireInterceptor`（运行时，挂在三个真 HTTP 测试基类的 `RestTemplate`）。详见 DEV-018 §Code。
 
 ## 验证与权限
 
