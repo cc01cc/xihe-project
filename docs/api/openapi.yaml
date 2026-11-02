@@ -2390,6 +2390,51 @@ paths:
     get: { operationId: latestContextSequence, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: sessionId, required: true, schema: { type: string } }], responses: { '200': { description: Sequence } } }
   /internal/v1/context/{sessionId}/refresh-sources:
     post: { operationId: refreshContextSources, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: sessionId, required: true, schema: { type: string } }], responses: { '200': { description: 'status: created|updated|unchanged|failed' } } }
+  /internal/v1/context/{sessionId}/agents-md/resolve:
+    post:
+      operationId: resolveNestedAgentsMd
+      description: |
+        PLAN-0627 M1: internal (Agent-only) resolution of the ancestor AGENTS.md chain for one
+        touched path. The chain starts at the touched path's directory, walks up to the workspace
+        root and stops there (never the git root); the workspace-root AGENTS.md is excluded because
+        the eager `root_agents_md` source already injects it (D27-21). Each candidate file passes
+        the ordinary `read_file` policy: a grant denial / ASK / DENY only skips that file and never
+        raises an approval prompt (injection is system-initiated, D27-10). A Runtime transport or
+        contract failure fails the whole resolution closed with no entries. No body content is
+        exposed on any public surface.
+      security: [{ bearerAuth: [] }]
+      parameters: [{ in: path, name: sessionId, required: true, schema: { type: string } }]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                path: { type: string, description: 'workspace-relative touched path; absolute paths, .. segments, drive letters and NUL are rejected' }
+                tool: { type: string, description: 'list_directory means the path is the directory itself; any other value treats it as a file' }
+      responses:
+        '200':
+          description: Resolved chain (empty entries are legal)
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status, entries, diagnostics]
+                properties:
+                  status: { type: string, enum: [ready, truncated, failed, unavailable] }
+                  entries:
+                    type: array
+                    items:
+                      type: object
+                      required: [path, content, truncated]
+                      properties:
+                        path: { type: string }
+                        content: { type: string }
+                        truncated: { type: boolean }
+                  diagnostics: { type: array, items: { type: string } }
+                additionalProperties: false
+        '400': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
   /api/v1/context/{sessionId}/sources:
     get: { operationId: getContextSources, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: sessionId, required: true, schema: { type: string } }], responses: { '200': { description: 'U1 metadata only (sourceKey/status/hashPrefix/envBranch/envHead); never body' }, '404': { $ref: '#/components/responses/Problem' } } }
   /internal/v1/context/{sessionId}/replay:

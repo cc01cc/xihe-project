@@ -71,6 +71,9 @@ public class RuntimeContextSourceClient {
      */
     private static final int MAX_ATTEMPTS = 2;
 
+    /** Frozen single-file source path for the workspace-root AGENTS.md (PLAN-0340). */
+    static final String AGENTS_FILE_PATH = "AGENTS.md";
+
     private final RestTemplate restTemplate;
     private final String runtimeUrl;
     private final String serviceToken;
@@ -84,12 +87,26 @@ public class RuntimeContextSourceClient {
     }
 
     public SourceRead readAgents(String workspaceId) {
+        return readFile(workspaceId, AGENTS_FILE_PATH);
+    }
+
+    /**
+     * PLAN-0627 M1: generalized bounded workspace-relative text read.
+     *
+     * <p>Same three-state wire contract and retry policy as {@link #readAgents}
+     * (it is the same Runtime route, only the path is parameterized). The nested
+     * AGENTS.md resolver calls it once per ancestor candidate, so callers must
+     * pass an already validated workspace-relative path (no absolute paths, no
+     * {@code ..} segment, no drive letter).
+     */
+    public SourceRead readFile(String workspaceId, String relativePath) {
+        String path = relativePath == null || relativePath.isBlank() ? AGENTS_FILE_PATH : relativePath;
         for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
             try {
                 HttpHeaders headers = new HttpHeaders();
                 headers.setContentType(MediaType.APPLICATION_JSON);
                 headers.setBearerAuth(serviceToken);
-                Map<String, Object> body = Map.of("path", "AGENTS.md");
+                Map<String, Object> body = Map.of("path", path);
                 ResponseEntity<Map<String, Object>> response = restTemplate.exchange(
                         runtimeUrl + "/internal/v1/runtime/workspaces/" + workspaceId + "/files/read",
                         org.springframework.http.HttpMethod.POST,
@@ -98,7 +115,8 @@ public class RuntimeContextSourceClient {
                 if (!response.getStatusCode().is2xxSuccessful()) {
                     int code = response.getStatusCode().value();
                     if (code >= 500 && attempt < MAX_ATTEMPTS) {
-                        logger.warn("Runtime AGENTS.md read 5xx, retrying workspaceId={} status={}", workspaceId, code);
+                        logger.warn("Runtime file read 5xx, retrying workspaceId={} path={} status={}",
+                                workspaceId, path, code);
                         continue;
                     }
                     return SourceRead.error(code);
@@ -126,17 +144,18 @@ public class RuntimeContextSourceClient {
             } catch (HttpStatusCodeException httpError) {
                 int code = httpError.getStatusCode().value();
                 if (code >= 500 && attempt < MAX_ATTEMPTS) {
-                    logger.warn("Runtime AGENTS.md read 5xx, retrying workspaceId={} status={}", workspaceId, code);
+                    logger.warn("Runtime file read 5xx, retrying workspaceId={} path={} status={}",
+                            workspaceId, path, code);
                     continue;
                 }
                 return SourceRead.error(code);
             } catch (Exception e) {
                 if (attempt < MAX_ATTEMPTS) {
-                    logger.warn("Runtime AGENTS.md read transport error, retrying workspaceId={}: {}",
-                            workspaceId, e.getMessage());
+                    logger.warn("Runtime file read transport error, retrying workspaceId={} path={}: {}",
+                            workspaceId, path, e.getMessage());
                     continue;
                 }
-                logger.warn("Runtime AGENTS.md read failed workspaceId={}: {}", workspaceId, e.getMessage());
+                logger.warn("Runtime file read failed workspaceId={} path={}: {}", workspaceId, path, e.getMessage());
                 return SourceRead.error(null);
             }
         }
