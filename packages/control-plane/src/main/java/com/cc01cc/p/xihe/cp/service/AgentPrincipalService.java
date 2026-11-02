@@ -1021,7 +1021,12 @@ public class AgentPrincipalService {
      * own limits are inert while it acts as a subagent). Shape validation belongs to the caller's single
      * parser — {@code policy.DelegationPolicyValidator} — so this stays a pure read.</p>
      */
-    @org.springframework.transaction.annotation.Transactional(readOnly = true)
+    // Deliberately NOT @Transactional: this read is called from inside the spawn transaction, and a
+    // participating (readOnly) transaction that throws would mark the CALLER's transaction
+    // rollback-only. The gate catches "principal row missing" on purpose (see DelegationBudgetService),
+    // so annotation-induced rollback-only state would poison every spawn that follows a missing row —
+    // observed as "Transaction silently rolled back because it has been marked as rollback-only" in
+    // SpawnLifecycleTest. A single repository read needs no surrounding transaction.
     public JsonNode readDelegationPolicy(String principalIdValue) {
         return agentPrincipalRepository.findById(parseUuid(principalIdValue, "INVALID_AGENT_PRINCIPAL"))
                 .map(AgentPrincipal::getDelegationPolicy)

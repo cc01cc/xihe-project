@@ -9,6 +9,7 @@ import com.cc01cc.p.xihe.cp.policy.DelegationPolicyValidator.DelegationLimits;
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.service.AgentPrincipalService;
+import com.fasterxml.jackson.databind.JsonNode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
@@ -146,15 +147,23 @@ public class DelegationBudgetService {
 
     private DelegationLimits effectiveLimits(String rootPrincipalId,
                                              DelegationRefusedException.DelegationAuditContext audit) {
-        DelegationLimits raw;
+        JsonNode stored;
         try {
-            raw = DelegationPolicyValidator.limits(
-                    agentPrincipalService.readDelegationPolicy(rootPrincipalId),
-                    DEFAULT_MAX_COUNT, DEFAULT_MAX_DEPTH);
-        } catch (CpApiException invalid) {
-            // Fail closed: a stored-but-unreadable policy is an operator error, never a silent default.
-            throw DelegationRefusedException.policyInvalid("policy_invalid", audit, invalid.getMessage());
+            stored = agentPrincipalService.readDelegationPolicy(rootPrincipalId);
+        } catch (CpApiException missing) {
+            if (!"AGENT_PRINCIPAL_NOT_FOUND".equals(missing.getCode())) {
+                throw DelegationRefusedException.policyInvalid("policy_unreadable", audit, missing.getMessage());
+            }
+            // The FK (agent_principals, ON DELETE RESTRICT) makes a missing root principal unreachable in
+            // production; only hand-built fixtures and hard-deleted rows get here. The budget gate must
+            // not invent a new spawn outage for a state the rest of the spawn path tolerates (the child
+            // cap is derived from the parent's snapshot, not from this row), so it degrades to "no
+            // budget configured" and says so out loud.
+            logger.warn("[LIFECYCLE] service=cp event=delegation_root_principal_missing rootPrincipalId={} "
+                    + "rootSessionId={} fallback=code_defaults", rootPrincipalId, audit.rootSessionId());
+            stored = null;
         }
+        DelegationLimits raw = DelegationPolicyValidator.limits(stored, DEFAULT_MAX_COUNT, DEFAULT_MAX_DEPTH);
         int countCeiling = ceiling(CEILING_MAX_COUNT);
         int depthCeiling = ceiling(CEILING_MAX_DEPTH);
         int maxCount = countCeiling > 0 ? Math.min(raw.maxCount(), countCeiling) : raw.maxCount();
