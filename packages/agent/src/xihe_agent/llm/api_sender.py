@@ -140,6 +140,22 @@ def parse_response(data: Any, api_type: ChatApiType) -> NativeResponse:
             if cached is not None:
                 result.provider_usage["cache_read_input_tokens"] = cached
         result.usage = _langchain_usage(result.provider_usage)
+    elif api_type.id == "dashscope-generation":
+        # PLAN-0624 D24-04 native shape: output.choices[0].message.content + usage.
+        output = _object(data.get("output"))
+        choices = _array(output.get("choices"))
+        if len(choices) != 1:
+            raise ApiRequestError("LLM_PROVIDER_INVALID_RESPONSE", 502)
+        choice = _object(choices[0])
+        message = _object(choice.get("message"))
+        result.records = [copy.deepcopy(message)]
+        result.text = _text(message.get("content"))
+        usage = _object(data.get("usage") or {})
+        result.provider_usage = _reported(
+            usage,
+            (("input_tokens", "input_tokens"), ("output_tokens", "output_tokens")),
+        )
+        result.usage = _langchain_usage(result.provider_usage)
     elif api_type.id == "anthropic-messages":
         blocks = _array(data.get("content"))
         if data.get("role") != "assistant" or not data.get("stop_reason"):

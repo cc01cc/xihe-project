@@ -43,4 +43,16 @@
     "responseShape": "output.embeddings, usage, requestId",
     "streamShape": "none"
   }
+,
+  {
+    "apiTypeId": "dashscope-generation",
+    "version": 1,
+    "operation": "chat",
+    "method": "POST",
+    "path": "/services/aigc/text-generation/generation",
+    "requiredBaseSuffix": "/api/v1",
+    "requestShape": "model, input.messages, parameters",
+    "responseShape": "output.choices, usage, request_id",
+    "streamShape": "none"
+  }
 ]

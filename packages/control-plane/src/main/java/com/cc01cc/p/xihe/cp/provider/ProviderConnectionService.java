@@ -584,7 +584,7 @@ public class ProviderConnectionService {
             // host (probe evidence: the workspace endpoint rejected the key).
             // This is a type-contract pin, not a generic policy — other types
             // keep legitimate custom endpoints.
-            if ("dashscope-multimodal-embedding".equals(apiTypeId)) {
+            if ("dashscope-multimodal-embedding".equals(apiTypeId) || "dashscope-generation".equals(apiTypeId)) {
                 String host = uri.getHost();
                 if (host == null || !host.equalsIgnoreCase("dashscope.aliyuncs.com")) {
                     throw new IllegalArgumentException(

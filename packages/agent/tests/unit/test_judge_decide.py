@@ -107,3 +107,48 @@ def _clock():
         return next(ticks)
 
     return clock
+
+def test_run_judge_builds_native_dashscope_body():
+    from xihe_agent.llm.api_request import CHAT_TYPES
+
+    sender = _FakeSender(
+        [("text", "", NativeResponse(text="{\"speak\": false}", usage={"input_tokens": 9, "output_tokens": 2, "total_tokens": 11}, provider_usage={"input_tokens": 9, "output_tokens": 2}))]
+    )
+
+    async def scenario():
+        native_grant = dict(_grant(), apiTypeId="dashscope-generation", apiTypeVersion=1)
+        return await _run_judge(
+            native_grant, "decision-model-preview", "p", "req-4",
+            sender_factory=lambda grant: sender,
+            clock=_clock(),
+        )
+
+    result = asyncio.run(scenario())
+    # D24-04 native shape: model + input.messages + parameters (no top-level messages/max_tokens).
+    assert sender.seen_body["model"] == "decision-model-preview"
+    assert sender.seen_body["input"]["messages"] == [{"role": "user", "content": "p"}]
+    assert sender.seen_body["parameters"] == {"max_tokens": 400, "temperature": 0}
+    assert "messages" not in sender.seen_body
+    assert CHAT_TYPES["dashscope-generation"].path == "/services/aigc/text-generation/generation"
+
+
+def test_parse_response_understands_native_dashscope_shape():
+    from xihe_agent.llm.api_request import CHAT_TYPES
+    from xihe_agent.llm.api_sender import parse_response
+
+    native = {
+        "output": {
+            "choices": [
+                {
+                    "message": {"role": "assistant", "content": "{\"speak\": true}"},
+                    "finish_reason": "stop",
+                }
+            ]
+        },
+        "usage": {"input_tokens": 3180, "output_tokens": 12, "total_tokens": 3192},
+        "request_id": "req-native-1",
+    }
+    parsed = parse_response(native, CHAT_TYPES["dashscope-generation"])
+    assert parsed.text == "{\"speak\": true}"
+    assert parsed.provider_usage == {"input_tokens": 3180, "output_tokens": 12}
+    assert parsed.usage["total_tokens"] == 3192

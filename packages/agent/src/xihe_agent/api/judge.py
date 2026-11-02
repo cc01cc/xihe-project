@@ -67,17 +67,28 @@ async def _run_judge(
     Provider counters the response did not carry stay ``None`` (PLAN-0416 T2.3: unknown,
     never synthesized as 0).
     """
-    api_type = CHAT_TYPES[JUDGE_API_TYPE_ID]
+    # The lease is bound to the connection's apiType; the wire shape follows it.
+    # Fallback keeps the pre-dashscope behavior for grants that predate the field.
+    api_type = CHAT_TYPES.get(str(grant.get("apiTypeId") or "")) or CHAT_TYPES[JUDGE_API_TYPE_ID]
     factory = sender_factory or (
         lambda g: ApiSender(api_type, g, request_id, JUDGE_TIMEOUT_SECONDS)
     )
     sender = factory(grant)
-    body = {
-        "model": model_name,
-        "messages": [{"role": "user", "content": prompt}],
-        "max_tokens": JUDGE_MAX_COMPLETION_TOKENS,
-        "temperature": 0,
-    }
+    body: dict[str, Any]
+    if api_type.id == "dashscope-generation":
+        # PLAN-0624 D24-04 native shape (decision-model-preview): input.messages + parameters.
+        body = {
+            "model": model_name,
+            "input": {"messages": [{"role": "user", "content": prompt}]},
+            "parameters": {"max_tokens": JUDGE_MAX_COMPLETION_TOKENS, "temperature": 0},
+        }
+    else:
+        body = {
+            "model": model_name,
+            "messages": [{"role": "user", "content": prompt}],
+            "max_tokens": JUDGE_MAX_COMPLETION_TOKENS,
+            "temperature": 0,
+        }
     started = clock()
     last: NativeResponse | None = None
     async for _kind, _text, response in sender.stream(body):

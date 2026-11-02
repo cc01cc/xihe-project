@@ -53,6 +53,10 @@ CHAT_TYPES = {
     "openai-chat-completions": ChatApiType("openai-chat-completions", "/chat/completions", "messages"),
     "anthropic-messages": ChatApiType("anthropic-messages", "/messages", "messages"),
     "mimo-responses": ChatApiType("mimo-responses", "/responses", "input"),
+    # PLAN-0624 D24-04: DashScope native text-generation (decision-model-preview only
+    # speaks this shape — Q6 probe). input_field stays "messages"; validate_body special-cases
+    # the native input.messages nesting below.
+    "dashscope-generation": ChatApiType("dashscope-generation", "/services/aigc/text-generation/generation", "messages"),
 }
 VARIABLES = {
     "user_input": str,
@@ -249,6 +253,25 @@ def render_request(source: str, api_type: ChatApiType, values: dict[str, Any]) -
 
 
 def validate_body(body: dict[str, Any], api_type: ChatApiType) -> None:
+    if api_type.id == "dashscope-generation":
+        # Native shape: model + input.messages + parameters (see api-input-types.json).
+        if not isinstance(body.get("model"), str) or not body["model"]:
+            raise ApiRequestError("INVALID_REQUEST_SHAPE")
+        nested = body.get("input")
+        if not isinstance(nested, dict) or not isinstance(nested.get("messages"), list) or not nested["messages"]:
+            raise ApiRequestError("INVALID_REQUEST_SHAPE")
+        if "parameters" in body and not isinstance(body["parameters"], dict):
+            raise ApiRequestError("INVALID_REQUEST_SHAPE")
+        if body.get("n", 1) != 1:
+            raise ApiRequestError("INVALID_REQUEST_SHAPE")
+        for record in nested["messages"]:
+            if not isinstance(record, dict):
+                raise ApiRequestError("INVALID_REQUEST_SHAPE")
+            if record.get("role") not in {"user", "assistant", "system"}:
+                raise ApiRequestError("INVALID_REQUEST_SHAPE")
+            if not isinstance(record.get("content"), (str, list)):
+                raise ApiRequestError("INVALID_REQUEST_SHAPE")
+        return
     if not isinstance(body.get("model"), str) or not body["model"]:
         raise ApiRequestError("INVALID_REQUEST_SHAPE")
     if not isinstance(body.get(api_type.input_field), list) or not body[api_type.input_field]:

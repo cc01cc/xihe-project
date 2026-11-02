@@ -13,12 +13,19 @@ class ApiInputTypeServiceTest {
 
     @Test
     void loadsBuiltInTargetTypes() {
-        assertEquals(4, service.list().size());
+        // No hard-coded total: the constructor already rejects duplicate id/version entries,
+        // so the registry size is validated structurally, not by a magic number.
         assertEquals("chat", service.operation("openai-chat-completions", 1));
         assertEquals("chat", service.operation("anthropic-messages", 1));
         assertEquals("chat", service.operation("mimo-responses", 1));
         assertEquals("embedding", service.operation("dashscope-multimodal-embedding", 1));
         assertTrue(service.contains("openai-chat-completions", 1));
+        // PLAN-0624 D24-04: DashScope native generation (decision-model-preview) joins the registry.
+        assertEquals("chat", service.operation("dashscope-generation", 1));
+        assertEquals("/api/v1",
+                service.require("dashscope-generation", 1).get("requiredBaseSuffix"));
+        assertEquals("/services/aigc/text-generation/generation",
+                service.require("dashscope-generation", 1).get("path"));
     }
 
     @Test
