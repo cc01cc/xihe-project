@@ -25,12 +25,21 @@ CREATE TABLE skills (
     -- scopes (frozen #4 "双存"); within one scope the name is unique.
     definition_scope_type VARCHAR(16) NOT NULL,
     definition_scope_id   UUID        REFERENCES workspaces (id) ON DELETE CASCADE,
+    -- Blank-ness is enforced HERE too, not only in the CP import validator (D28-29): a
+    -- "DDL accepts / validator refuses" split would let any direct insert or future import path
+    -- persist whitespace-only data.
+    --
+    -- NOTE the explicit trim set: PostgreSQL's one-argument `btrim(text)` removes **spaces only**,
+    -- so `btrim(E'\n\t ')` = E'\n\t' and a whitespace-only description would still pass. Both
+    -- checks below therefore spell the set out (space, tab, newline, CR, FF, VT) — this is the
+    -- same trap class as "the derived query renders `= null`": the obvious spelling is wrong.
     description           TEXT        NOT NULL
-                          CHECK (char_length(description) BETWEEN 1 AND 1024),
+                          CHECK (char_length(btrim(description, E' \t\n\r\f\v')) BETWEEN 1 AND 1024),
     -- SKILL.md body WITHOUT the frontmatter block (M2 injects it verbatim; keeping the
     -- frontmatter would double-count tokens and could leak metadata into the prompt).
     body                  TEXT        NOT NULL
-                          CHECK (length(btrim(body)) > 0 AND octet_length(body) <= 262144),
+                          CHECK (length(btrim(body, E' \t\n\r\f\v')) > 0
+                                 AND octet_length(body) <= 262144),
     -- server-computed, codePointCount//2 conservative estimate (mirrors
     -- injection_budget.conservative_token_count, Python len//2 on code points).
     body_tokens_est       INTEGER     NOT NULL CHECK (body_tokens_est >= 0),

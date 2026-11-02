@@ -233,9 +233,12 @@ class SkillCatalogMigrationTest {
                 .description("d".repeat(1025)).insert());
         assertThrows(SQLException.class, () -> skill("empty-desc", "instance", null)
                 .description("").insert());
-        // Body: btrim non-empty and <= 262144 octets.
+        // Body: trimmed non-empty and <= 262144 octets. The tab/newline case is the one a plain
+        // `btrim(body)` would let through (one-arg btrim removes spaces only).
         assertThrows(SQLException.class, () -> skill("blank-body", "instance", null)
                 .body("   ").insert());
+        assertThrows(SQLException.class, () -> skill("blank-body-2", "instance", null)
+                .body("\n\t\r ").insert());
         assertThrows(SQLException.class, () -> skill("huge-body", "instance", null)
                 .body("x".repeat(262_145)).insert());
         // Boundary is inclusive.
@@ -243,16 +246,18 @@ class SkillCatalogMigrationTest {
     }
 
     /**
-     * NOTE (differs from the taskbook's test list, deliberately): the DDL checks
-     * {@code char_length(description) BETWEEN 1 AND 1024}, so a <b>whitespace-only</b> description is
-     * accepted here. Blankness is enforced by {@code SkillImportValidator}
-     * ({@code SKILL_DESCRIPTION_REQUIRED}) — the single CP write seam — and this test records that
-     * split instead of pretending the DDL rejects it.
+     * D28-29 (user ruling 2026-11-02): the DDL itself rejects a <b>whitespace-only</b> description.
+     * A "stored by the DDL, refused by the validator" split would let any direct insert or future
+     * import path bypass the seam. {@code SkillImportValidator} refuses it too — see
+     * {@code SkillImportValidatorTest} (dual protection, not either/or).
      */
     @Test
-    void whitespaceOnlyDescriptionIsAcceptedByTheDdlButRejectedByTheValidator() throws SQLException {
-        skill("blank-ish", "instance", null).description("   ").insert();
-        assertEquals(1, scalarInt("SELECT count(*) FROM skills WHERE name = 'blank-ish'"));
+    void blankDescriptionIsRejectedByTheDdl() throws SQLException {
+        assertThrows(SQLException.class, () -> skill("blank-ish", "instance", null)
+                .description("   ").insert());
+        assertThrows(SQLException.class, () -> skill("blank-ish-2", "instance", null)
+                .description("\n\t ").insert());
+        assertEquals(0, scalarInt("SELECT count(*) FROM skills"));
     }
 
     @Test
