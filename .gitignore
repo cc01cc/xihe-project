@@ -1,5 +1,7 @@
 # Rust
 **/target/
+# D32-26 T2: mvn -Dxihe.build.suffix=-b builds into 	arget-b/; keep every per-runner build dir ignored.
+**/target-*/
 **/Cargo.lock
 **/*.rs.bk
 

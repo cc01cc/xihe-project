@@ -27,6 +27,25 @@
         <testcontainers.version>2.0.5</testcontainers.version>
         <testcontainers-junit.version>1.21.4</testcontainers-junit.version>
         <xihe.native.test.outputDirectory>${project.build.directory}/test-classes</xihe.native.test.outputDirectory>
+        <!--
+          PLAN-0632 D32-26 T2: per-runner build directory suffix.
+
+          Why: two concurrent `mvn test` runs on the SAME tree would otherwise share
+          `target/classes`, `target/test-classes` and `target/surefire-reports*`. Maven has no
+          locking there, so the two runs silently overwrite each other's outputs — the failure mode
+          is a false green / false red, not an error (2026-11-02: a shard run wrote its reports into
+          `surefire-reports-shard-a/b` and anything reading the default directory read half the
+          suite). The already-sanctioned 2-shard lane (profiles `l2-shard-a/b`) avoids this by
+          compiling ONCE and forking only `surefire:test` with distinct report dirs; this property
+          is for the other case: two full independent `mvn test` runs.
+
+          Usage: `mvn -Dxihe.build.suffix=-b test` builds into `target-b/`. Default is empty, so
+          every existing command, CI script and IDE keeps using plain `target/`.
+          PowerShell caveat: quote it (`"-Dxihe.build.suffix=-b"`), otherwise the leading dash of the
+          value is parsed as another flag and Maven reports `LifecyclePhaseNotFoundException`.
+          `.gitignore` must keep ignoring `target*/`.
+        -->
+        <xihe.build.suffix></xihe.build.suffix>
     </properties>
     
     <dependencies>
@@ -219,6 +238,8 @@
     </dependencies>
     
     <build>
+        <!-- D32-26 T2: parameterised build directory (default `target`, `-Dxihe.build.suffix=-b` ⇒ `target-b`). -->
+        <directory>${project.basedir}/target${xihe.build.suffix}</directory>
         <testOutputDirectory>${xihe.native.test.outputDirectory}</testOutputDirectory>
         <!-- PLAN-0534: pom.properties is the runtime projection of <version>.
              Filter only this file; all other resources are copied verbatim. -->
