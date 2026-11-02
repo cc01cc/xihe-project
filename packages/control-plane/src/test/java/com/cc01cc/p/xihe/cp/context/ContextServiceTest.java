@@ -13,22 +13,28 @@ import java.util.Map;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * L2 Phase 3 (2026-11-03): this class keeps its OWN @DirtiesContext while the annotation is gone from
- * {@code AbstractH2Test}. Reason is measured, not guessed: with a shared H2 context three tests failed —
+ * L2 Phase 3 (2026-11-03) — KEEP THIS NOTE, DROP THE ANNOTATION.
+ *
+ * <p>While the base {@code @DirtiesContext} was temporarily removed (that experiment was rolled back,
+ * see {@code .local/xh-d28/l2-phase3-report.md} §10), this class needed its OWN
+ * {@code @DirtiesContext(BEFORE_CLASS)}: with a shared H2 context three tests failed —
  * {@code forkCreatesNewSessionWithForkedEvent} expected sequence 3,
  * {@code compactAppendsCompactionEventAndClearsMessages} expected sequence 4, and
  * {@code replayReturnsSnapshotAndEvents} expected exactly 2 events. The cause is visible right below: the
- * class uses FIXED session ids, and the in-memory schema is shared with the sibling classes in the same
- * JVM, so a sibling's events shift this class's sequence numbers.
+ * class uses FIXED session ids, so a sibling class writing to the same ids in a shared in-memory schema
+ * shifts this class's sequence numbers.</p>
  *
- * <p><b>BEFORE_CLASS, not AFTER_CLASS</b> (measured): an AFTER_CLASS dirty on this class was NOT enough —
- * the poisoning happens in the context it *inherits*, so closing it afterwards changes nothing and the
- * same three tests still failed. Only {@code BEFORE_CLASS} guarantees this class starts on a context (and
- * therefore a schema) nobody has written to. The clean fix is per-class unique session ids (then no
- * dirties at all); that is a test rewrite and is deliberately not bundled into a perf change.</p>
+ * <p><b>The BEFORE_CLASS / AFTER_CLASS distinction (a real finding, worth remembering):</b> an
+ * AFTER_CLASS dirty on this class was NOT enough — the poisoning happens in the context it *inherits*, so
+ * closing it afterwards changes nothing; only BEFORE_CLASS guarantees a class starts on a schema nobody
+ * has written to. Rule of thumb: <b>AFTER_CLASS is "close when done" (cleanup), BEFORE_CLASS is "give me
+ * an untouched start" (isolation)</b> — an isolation need cannot be satisfied by AFTER_CLASS.</p>
+ *
+ * <p><b>Why no annotation now:</b> the base dirties is back, so every class already gets a fresh context
+ * and a fresh H2 schema; adding BEFORE_CLASS here would only cost an extra context. The structural fix,
+ * if this lane is ever made context-sharing, is to replace these fixed ids with random ones — that is a
+ * test rewrite and is deliberately not bundled into a perf change.</p>
  */
-@org.springframework.test.annotation.DirtiesContext(
-        classMode = org.springframework.test.annotation.DirtiesContext.ClassMode.BEFORE_CLASS)
 class ContextServiceTest extends AbstractH2Test {
 
     private static final String TEST_SESSION_A = "aaaaaaa1-0000-0000-0000-000000000000";
