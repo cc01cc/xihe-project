@@ -2,7 +2,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { test, expect } from "@playwright/test";
-import type { Page } from "@playwright/test";
+import type { APIRequestContext, Page } from "@playwright/test";
 import {
     createSessionWithPrincipal,
     provisionWorkspaceAgentPrincipal,
@@ -341,6 +341,145 @@ async function resolveHeadedSessionBinding(
         contextTemplateVersion: template!.version,
     };
 }
+/**
+ * task-85 链变格：S2 的长准备链抽成可复用 helper —— 各场景**缺啥补啥**（幂等），
+ * 而不是把 S2 当隐式 setup。`--grep S6` 单跑时模块状态为空，helper 会自建全套前置；
+ * 全链跑时前置已就位，helper 直接短路返回（"自建"这一性质由幂等断言保证）。
+ */
+let connectionPrepared = false;
+
+/** 缺工作区 ⇒ 自建（可验证：新 id 不在创建前的列表里）。 */
+async function ensureWorkspace(request: APIRequestContext, token: string): Promise<void> {
+    if (workspaceId) return;
+    const before = await request.get(`${CP_URL}/api/v1/workspaces`, {
+        headers: { Authorization: `Bearer ${token}` },
+    });
+    expect(before.status(), await before.text()).toBe(200);
+    const beforeIds = ((await before.json()) as Array<{ id: string }>).map((item) => item.id);
+    workspaceId = await createDirectAttachWorkspace(request, token);
+    expect(
+        beforeIds,
+        "the spec must run in a workspace it created, not a leftover one",
+    ).not.toContain(workspaceId);
+}
+
+/** 缺 agent principal ⇒ 在专属工作区里自建（模型意图显式给 mock/gpt-5，名字不带空格）。 */
+async function ensureAgentPrincipal(request: APIRequestContext, token: string): Promise<void> {
+    if (agentParticipantId) return;
+    agentParticipantId = await provisionWorkspaceAgentPrincipal(
+        request,
+        { accessToken: token, workspaceId },
+        {
+            name: `Headed-Participants-${randomUUID().slice(0, 8)}`,
+            actions: ["read"],
+            defaultModelProvider: "mock",
+            defaultModelName: "gpt-5",
+        },
+    );
+}
+
+/** 缺 READY chat connection ⇒ 用 CLI 准备函数补齐（幂等断言：已有则复用不新建）。 */
+async function ensureConnectionReady(token: string): Promise<void> {
+    if (connectionPrepared) return;
+    const prepareOptions = {
+        "--cp": `http://127.0.0.1:${process.env.XIHE_CP_PORT ?? "12631"}`,
+        "--workspace": workspaceId,
+        "--fake-llm-port": process.env.XIHE_FAKE_LLM_PORT ?? "",
+        "--email": GOLDPATH_EMAIL,
+        "--password-env": "XIHE_E2E_GOLDPATH_PASSWORD",
+    };
+    const prepared = await prepareConnection({ env: process.env, options: prepareOptions });
+    expect(prepared.status, "the prepared connection must be READY").toBe("READY");
+    const again = await prepareConnection({ env: process.env, options: prepareOptions });
+    expect(
+        again.created,
+        "prepareConnection must reuse an existing READY connection instead of creating a new one",
+    ).toBe(false);
+    connectionPrepared = true;
+}
+
+/** 缺两成员会话 ⇒ 自建：绑定 → 建会话（工作区路径）→ 归属/PRIMARY 播种断言 → 加 HUMAN。 */
+async function ensureTwoMemberSession(request: APIRequestContext, token: string): Promise<void> {
+    await ensureWorkspace(request, token);
+    await ensureAgentPrincipal(request, token);
+    await ensureConnectionReady(token);
+    if (sessionId && humanParticipantId) return;
+
+    // PLAN-0601：API 裸建会话没有显式绑定 ⇒ agent dispatch 会 409 API_TYPE_REBIND_REQUIRED。
+    // 绑定来源复用 CLI 的挑选口径（真实数据，不从配置猜）。
+    const binding = await resolveHeadedSessionBinding(request, token);
+    sessionId = await createSessionWithPrincipal(
+        request,
+        { accessToken: token, workspaceId },
+        {
+            principalId: agentParticipantId,
+            title: "Participants walkthrough",
+            workspaceId,
+            binding,
+        },
+    );
+
+    // 归属断言：会话必须落在本次自建的工作区里，而不是别处。
+    const createdSession = await request.get(`${CP_URL}/api/v1/sessions/${sessionId}`, {
+        headers: { Authorization: `Bearer ${token}`, "X-Workspace-Id": workspaceId },
+    });
+    expect(createdSession.status(), await createdSession.text()).toBe(200);
+    expect(
+        ((await createdSession.json()) as { workspaceId?: string }).workspaceId,
+        "the session must live in the workspace this run created",
+    ).toBe(workspaceId);
+
+    // CP 不变式（D23-13）：会话创建事务内必须播种**恰好一行** role=PRIMARY。
+    // 失败信息必须指向 CP（控制面缺陷，不是 UI）。
+    const seeded = await request.get(`${CP_URL}/api/v1/sessions/${sessionId}/participants`, {
+        headers: { Authorization: `Bearer ${token}`, "X-Workspace-Id": workspaceId },
+    });
+    expect(seeded.status(), await seeded.text()).toBe(200);
+    const seededBody = (await seeded.json()) as {
+        participants: Array<{ role: string; principalKind: string }>;
+    };
+    const seededPrimary = seededBody.participants.filter((item) => item.role === "PRIMARY");
+    expect(
+        seededPrimary.length,
+        `PRIMARY seeding missing: session ${sessionId} has ${seededBody.participants.length} participant(s) ` +
+            `and ${seededPrimary.length} role=PRIMARY. CP must insert exactly one PRIMARY row inside the ` +
+            `session-creation transaction (D23-13) — this is a control-plane defect, not a UI one.`,
+    ).toBe(1);
+
+    if (!humanParticipantId) {
+        // 用例自造状态：把当前用户作为 HUMAN MEMBER 加入会话（幂等：重复入口不再加）。
+        const me = await request.get(`${CP_URL}/api/v1/auth/me`, {
+            headers: { Authorization: `Bearer ${token}` },
+        });
+        expect(me.ok(), await me.text()).toBe(true);
+        const { id: userId } = (await me.json()) as { id: string };
+        const added = await request.post(`${CP_URL}/api/v1/sessions/${sessionId}/participants`, {
+            headers: { Authorization: `Bearer ${token}`, "X-Workspace-Id": workspaceId },
+            data: { principalKind: "HUMAN", principalId: userId, role: "MEMBER" },
+        });
+        expect(added.status(), await added.text()).toBe(201);
+    }
+
+    const roster = await request.get(`${CP_URL}/api/v1/sessions/${sessionId}/participants`, {
+        headers: { Authorization: `Bearer ${token}`, "X-Workspace-Id": workspaceId },
+    });
+    expect(roster.status(), await roster.text()).toBe(200);
+    const rosterBody = (await roster.json()) as {
+        participants: Array<{
+            participantId: string;
+            principalKind: string;
+            displayName?: string;
+        }>;
+    };
+    const human = rosterBody.participants.find((item) => item.principalKind === "HUMAN");
+    const agent = rosterBody.participants.find((item) => item.principalKind === "AGENT");
+    expect(human, "the session must contain the HUMAN member").toBeTruthy();
+    expect(agent, "the session must contain the AGENT primary").toBeTruthy();
+    agentRowParticipantId = agent!.participantId;
+    agentDisplayName = agent!.displayName ?? "";
+    humanParticipantId = human!.participantId;
+    humanDisplayName = human!.displayName ?? "";
+}
 /** 诊断：面板没出现时，把"现在页面是什么状态"写进报错，而不是只报一句超时。 */
 async function participantsDiagnostics(page: Page): Promise<string> {
     const count = async (testId: string) => page.getByTestId(testId).count();
@@ -492,128 +631,10 @@ test.describe("PLAN-0623 有头走查：会话参与者 dock tab", () => {
     });
 
     test("S2@host 行渲染：AGENT 有来源+模型段，HUMAN 无模型段", async ({ page, request }) => {
-        expect(workspaceId, "S2 depends on S1").not.toBe("");
-        // 每个 test 有独立的 browser context（Playwright 默认隔离）⇒ 必须重新登录，
-        // 否则 storageState 里没有 xihe-token（0622 的有头 spec 也是每场重新登录）。
-        await loginViaForm(page, GOLDPATH_EMAIL, GOLDPATH_PASSWORD);
-        const token = await tokenOf(page);
-
-        // 专属工作区里现建 agent principal（S1 只验证 dock tab 与无会话空态）。
-        // 模型意图必须**显式给**：参与者视图的 defaultModelProvider/Name 直接取自 principal，
-        // 不给值 ⇒ UI 正确地不渲染模型段（那是"不伪造"语义，不是缺陷）。
-        // 取值用 Lead 在干净栈(cp=27457)实测通过的一对：mock / gpt-5（principal → 视图 → UI 全链路已证）。
-        // 名字**不带空格**：S3 会用 displayName 拼 `@name`，空格会让断言与真实输入都变脆。
-        agentParticipantId = await provisionWorkspaceAgentPrincipal(
-            request,
-            { accessToken: token, workspaceId },
-            {
-                name: `Headed-Participants-${randomUUID().slice(0, 8)}`,
-                actions: ["read"],
-                defaultModelProvider: "mock",
-                defaultModelName: "gpt-5",
-            },
-        );
-
-        // 建会话**必须带工作区上下文**：本 spec 自建了工作区 ⇒ 账号变多工作区 ⇒ 无上下文的
-        // `POST /api/v1/sessions` 会 409 `WORKSPACE_CONTEXT_REQUIRED`（产品拒绝歧义，不猜第一个）。
-        // helper 收到 `workspaceId` 时走路径形式 + `X-Workspace-Id`（不传时行为不变，旧 spec 不受影响）。
-        // 新栈默认没有 READY 的 chat connection（首跑引导不置 READY）⇒ 先复用 CLI 的准备函数。
-        // 幂等性断言：第二次调用必须**复用**而非新建（不清别人建的东西，N-环境纪律）。
-        const prepareOptions = {
-            "--cp": `http://127.0.0.1:${process.env.XIHE_CP_PORT ?? "12631"}`,
-            "--workspace": workspaceId,
-            "--fake-llm-port": process.env.XIHE_FAKE_LLM_PORT ?? "",
-            "--email": GOLDPATH_EMAIL,
-            "--password-env": "XIHE_E2E_GOLDPATH_PASSWORD",
-        };
-        const prepared = await prepareConnection({ env: process.env, options: prepareOptions });
-        expect(prepared.status, "the prepared connection must be READY").toBe("READY");
-        const preparedAgain = await prepareConnection({
-            env: process.env,
-            options: prepareOptions,
-        });
-        expect(
-            preparedAgain.created,
-            "prepareConnection must reuse an existing READY connection instead of creating a new one",
-        ).toBe(false);
-
-        // PLAN-0601：API 裸建会话没有显式绑定 ⇒ agent dispatch 会 409 API_TYPE_REBIND_REQUIRED
-        // （S5 的 HUMAN 路径不走 admission 所以没炸；S6/S7 是第一次触发 agent dispatch）。
-        // 绑定来源复用 CLI 的挑选口径（真实数据，不从配置猜）。
-        const binding = await resolveHeadedSessionBinding(request, token);
-        sessionId = await createSessionWithPrincipal(
-            request,
-            { accessToken: token, workspaceId },
-            {
-                principalId: agentParticipantId,
-                title: "Participants walkthrough",
-                workspaceId,
-                binding,
-            },
-        );
-
-        // 归属断言：会话必须落在本次自建的工作区里，而不是别处。
-        const createdSession = await request.get(`${CP_URL}/api/v1/sessions/${sessionId}`, {
-            headers: { Authorization: `Bearer ${token}`, "X-Workspace-Id": workspaceId },
-        });
-        expect(createdSession.status(), await createdSession.text()).toBe(200);
-        expect(
-            ((await createdSession.json()) as { workspaceId?: string }).workspaceId,
-            "the session must live in the workspace this run created",
-        ).toBe(workspaceId);
-
-        // CP 不变式（D23-13）：会话创建事务内必须播种**恰好一行** role=PRIMARY。
-        // 这条断言先行，是为了让"CP 少播种 PRIMARY"在**这里**失败并说明原因，
-        // 而不是让 S2 在后面渲染层莫名失败（2026-11-02 实测过这个缺口）。
-        const seeded = await request.get(`${CP_URL}/api/v1/sessions/${sessionId}/participants`, {
-            headers: { Authorization: `Bearer ${token}`, "X-Workspace-Id": workspaceId },
-        });
-        expect(seeded.status(), await seeded.text()).toBe(200);
-        const seededBody = (await seeded.json()) as {
-            participants: Array<{ role: string; principalKind: string }>;
-        };
-        const seededPrimary = seededBody.participants.filter((item) => item.role === "PRIMARY");
-        expect(
-            seededPrimary.length,
-            `PRIMARY seeding missing: session ${sessionId} has ${seededBody.participants.length} participant(s) ` +
-                `and ${seededPrimary.length} role=PRIMARY. CP must insert exactly one PRIMARY row inside the ` +
-                `session-creation transaction (D23-13) — this is a control-plane defect, not a UI one.`,
-        ).toBe(1);
-        agentParticipantId = seededBody.participants[0]
-            ? String(agentParticipantId)
-            : agentParticipantId;
-
-        // 用例自造状态：把当前用户作为 HUMAN MEMBER 加入会话（会话已有 AGENT PRIMARY）。
-        const me = await request.get(`${CP_URL}/api/v1/auth/me`, {
-            headers: { Authorization: `Bearer ${token}` },
-        });
-        expect(me.ok(), await me.text()).toBe(true);
-        const { id: userId } = (await me.json()) as { id: string };
-        const added = await request.post(`${CP_URL}/api/v1/sessions/${sessionId}/participants`, {
-            headers: { Authorization: `Bearer ${token}`, "X-Workspace-Id": workspaceId },
-            data: { principalKind: "HUMAN", principalId: userId, role: "MEMBER" },
-        });
-        expect(added.status(), await added.text()).toBe(201);
-
-        const list = await request.get(`${CP_URL}/api/v1/sessions/${sessionId}/participants`, {
-            headers: { Authorization: `Bearer ${token}`, "X-Workspace-Id": workspaceId },
-        });
-        expect(list.status(), await list.text()).toBe(200);
-        const body = (await list.json()) as {
-            participants: Array<{
-                participantId: string;
-                principalKind: string;
-                displayName?: string;
-            }>;
-        };
-        const human = body.participants.find((item) => item.principalKind === "HUMAN");
-        const agent = body.participants.find((item) => item.principalKind === "AGENT");
-        expect(human, "the session must contain the HUMAN member we just added").toBeTruthy();
-        expect(agent, "the session must contain the AGENT primary").toBeTruthy();
-        agentRowParticipantId = agent!.participantId;
-        agentDisplayName = agent!.displayName ?? "";
-        humanParticipantId = human!.participantId;
-        humanDisplayName = human!.displayName ?? "";
+        // task-85 链变格：S2 的长准备链（专属工作区 → agent principal → READY 连接 →
+        // 显式绑定 → 建会话 → PRIMARY 播种断言 → 加 HUMAN → 捕获 id/displayName）
+        // 已抽成 ensureTwoMemberSession（缺啥补啥、幂等）；S2 本体只负责渲染断言。
+        await ensureTwoMemberSession(request, token);
 
         await page.goto(`/workspace/${workspaceId}/chat/${sessionId}`, { waitUntil: "load" });
         await expect(page.getByTestId("workspace-toolbar-members")).toBeVisible({ timeout: 45000 });
@@ -623,17 +644,17 @@ test.describe("PLAN-0623 有头走查：会话参与者 dock tab", () => {
         const panel = page.getByTestId("session-participants-panel");
         await expect(panel, await participantsDiagnostics(page)).toBeVisible({ timeout: 20000 });
 
-        const agentRow = page.locator(rowOf(agent!.participantId));
+        const agentRow = page.locator(rowOf(agentRowParticipantId));
         const humanRow = page.locator(rowOf(humanParticipantId));
         await expect(agentRow).toBeVisible({ timeout: 20000 });
         await expect(humanRow).toBeVisible({ timeout: 20000 });
 
         // 主体类型徽标 / 会话角色徽标（源码：ParticipantRow.vue 的 data-* 属性）
         await expect(
-            agentRow.getByTestId(`participant-kind-badge-${agent!.participantId}`),
+            agentRow.getByTestId(`participant-kind-badge-${agentRowParticipantId}`),
         ).toHaveAttribute("data-participant-kind", "AGENT");
         await expect(
-            agentRow.getByTestId(`participant-role-badge-${agent!.participantId}`),
+            agentRow.getByTestId(`participant-role-badge-${agentRowParticipantId}`),
         ).toHaveAttribute("data-session-role", "PRIMARY");
         await expect(
             humanRow.getByTestId(`participant-kind-badge-${humanParticipantId}`),
@@ -644,7 +665,7 @@ test.describe("PLAN-0623 有头走查：会话参与者 dock tab", () => {
 
         // 首字母头像非空（ParticipantRow.vue 的 initials computed）
         await expect(
-            agentRow.getByTestId(`participant-initials-${agent!.participantId}`),
+            agentRow.getByTestId(`participant-initials-${agentRowParticipantId}`),
         ).not.toBeEmpty();
         await expect(
             humanRow.getByTestId(`participant-initials-${humanParticipantId}`),
@@ -652,11 +673,11 @@ test.describe("PLAN-0623 有头走查：会话参与者 dock tab", () => {
 
         // AGENT：来源徽标 + 模型段；HUMAN：两者都不该有。
         await expect(
-            agentRow.getByTestId(`participant-source-badge-${agent!.participantId}`),
+            agentRow.getByTestId(`participant-source-badge-${agentRowParticipantId}`),
         ).toBeVisible();
         // 有值时**必须**渲染，且文本是"provider / model"（ParticipantRow.vue 的 modelIntent）：
         // 这条同时证明 ① 模型意图能存 ② 经 participants 视图传到 UI ③ 格式正确。
-        await expect(agentRow.getByTestId(`participant-model-${agent!.participantId}`)).toHaveText(
+        await expect(agentRow.getByTestId(`participant-model-${agentRowParticipantId}`)).toHaveText(
             /mock\s*\/\s*gpt-5/,
         );
         expect(
@@ -675,9 +696,9 @@ test.describe("PLAN-0623 有头走查：会话参与者 dock tab", () => {
         });
     });
 
-    test("S3@host 提及：输入框出现 @displayName，且没有发出 chat", async ({ page }) => {
-        expect(humanParticipantId, "S3 depends on S2").not.toBe("");
+    test("S3@host 提及：输入框出现 @displayName，且没有发出 chat", async ({ page, request }) => {
         await loginViaForm(page, GOLDPATH_EMAIL, GOLDPATH_PASSWORD);
+        await ensureTwoMemberSession(request, await tokenOf(page));
         await page.goto(`/workspace/${workspaceId}/chat/${sessionId}`, { waitUntil: "load" });
         await expect(page.getByTestId("workspace-toolbar-members")).toBeVisible({ timeout: 45000 });
         if ((await page.getByTestId("dock-tab-members").count()) === 0) {
@@ -712,8 +733,8 @@ test.describe("PLAN-0623 有头走查：会话参与者 dock tab", () => {
     });
 
     test("S5@host 代发：选候选发送 → 请求体带 asParticipantId", async ({ page, request }) => {
-        expect(sessionId, "S5 depends on S2").not.toBe("");
         await loginViaForm(page, GOLDPATH_EMAIL, GOLDPATH_PASSWORD);
+        await ensureTwoMemberSession(request, await tokenOf(page));
 
         // 期望候选 = API 的归约结果（selfOwned 且未停用）；不猜 UI 自己算。
         const token = await tokenOf(page);
@@ -779,10 +800,9 @@ test.describe("PLAN-0623 有头走查：会话参与者 dock tab", () => {
                 "speakAs=true 才渲染入口；option 数=候选数；选中的 participantId 出现在 POST /api/v1/chat 的 body.asParticipantId",
         });
     });
-    test("S6@host @提及 HUMAN → 发送 → 该成员行出现未读 @N 徽标", async ({ page }) => {
-        expect(humanParticipantId, "S6 depends on S2").not.toBe("");
-        expect(humanDisplayName, "S6 needs the HUMAN display name from S2").not.toBe("");
+    test("S6@host @提及 HUMAN → 发送 → 该成员行出现未读 @N 徽标", async ({ page, request }) => {
         await loginViaForm(page, GOLDPATH_EMAIL, GOLDPATH_PASSWORD);
+        await ensureTwoMemberSession(request, await tokenOf(page));
         await page.goto(`/workspace/${workspaceId}/chat/${sessionId}`, { waitUntil: "load" });
         await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: 45000 });
 
@@ -846,10 +866,12 @@ test.describe("PLAN-0623 有头走查：会话参与者 dock tab", () => {
         });
     });
 
-    test("S7@host @提及 AGENT(respond=ALWAYS) → 发送 → agent 回复气泡出现", async ({ page }) => {
-        expect(agentRowParticipantId, "S7 depends on S2").not.toBe("");
-        expect(agentDisplayName, "S7 needs the AGENT display name from S2").not.toBe("");
+    test("S7@host @提及 AGENT(respond=ALWAYS) → 发送 → agent 回复气泡出现", async ({
+        page,
+        request,
+    }) => {
         await loginViaForm(page, GOLDPATH_EMAIL, GOLDPATH_PASSWORD);
+        await ensureTwoMemberSession(request, await tokenOf(page));
         await page.goto(`/workspace/${workspaceId}/chat/${sessionId}`, { waitUntil: "load" });
         await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: 45000 });
 
@@ -898,9 +920,12 @@ test.describe("PLAN-0623 有头走查：会话参与者 dock tab", () => {
                 "@AGENT(respond=ALWAYS) 发出后轮询到 assistant 气泡出现（串行 fan-out 触发 run 的证据）",
         });
     });
-    test("S4@host 移除 = 两次点击 + soft disable：行仍在并带「已停用」", async ({ page }) => {
-        expect(humanParticipantId, "S4 depends on S2").not.toBe("");
+    test("S4@host 移除 = 两次点击 + soft disable：行仍在并带「已停用」", async ({
+        page,
+        request,
+    }) => {
         await loginViaForm(page, GOLDPATH_EMAIL, GOLDPATH_PASSWORD);
+        await ensureTwoMemberSession(request, await tokenOf(page));
         await page.goto(`/workspace/${workspaceId}/chat/${sessionId}`, { waitUntil: "load" });
         await expect(page.getByTestId("workspace-toolbar-members")).toBeVisible({ timeout: 45000 });
         if ((await page.getByTestId("dock-tab-members").count()) === 0) {
