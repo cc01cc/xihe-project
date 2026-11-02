@@ -15,6 +15,7 @@ import {
     pickModelName,
     publishedTemplates,
 } from "../../../../scripts/xihe-cli/session-binding.mjs";
+import { prepareConnection } from "../../../../scripts/xihe-cli/prepare-agent-e2e-connection.mjs";
 
 const RUN_ID = process.env.XIHE_E2E_RUN_ID || `headed-0623-${Date.now()}`;
 const RUN_DIR = path.resolve(process.cwd(), "../../.tmp/xh-headed-0623/runs", RUN_ID);
@@ -516,6 +517,26 @@ test.describe("PLAN-0623 有头走查：会话参与者 dock tab", () => {
         // 建会话**必须带工作区上下文**：本 spec 自建了工作区 ⇒ 账号变多工作区 ⇒ 无上下文的
         // `POST /api/v1/sessions` 会 409 `WORKSPACE_CONTEXT_REQUIRED`（产品拒绝歧义，不猜第一个）。
         // helper 收到 `workspaceId` 时走路径形式 + `X-Workspace-Id`（不传时行为不变，旧 spec 不受影响）。
+        // 新栈默认没有 READY 的 chat connection（首跑引导不置 READY）⇒ 先复用 CLI 的准备函数。
+        // 幂等性断言：第二次调用必须**复用**而非新建（不清别人建的东西，N-环境纪律）。
+        const prepareOptions = {
+            "--cp": `http://127.0.0.1:${process.env.XIHE_CP_PORT ?? "12631"}`,
+            "--workspace": workspaceId,
+            "--fake-llm-port": process.env.XIHE_FAKE_LLM_PORT ?? "",
+            "--email": GOLDPATH_EMAIL,
+            "--password-env": "XIHE_E2E_GOLDPATH_PASSWORD",
+        };
+        const prepared = await prepareConnection({ env: process.env, options: prepareOptions });
+        expect(prepared.status, "the prepared connection must be READY").toBe("READY");
+        const preparedAgain = await prepareConnection({
+            env: process.env,
+            options: prepareOptions,
+        });
+        expect(
+            preparedAgain.created,
+            "prepareConnection must reuse an existing READY connection instead of creating a new one",
+        ).toBe(false);
+
         // PLAN-0601：API 裸建会话没有显式绑定 ⇒ agent dispatch 会 409 API_TYPE_REBIND_REQUIRED
         // （S5 的 HUMAN 路径不走 admission 所以没炸；S6/S7 是第一次触发 agent dispatch）。
         // 绑定来源复用 CLI 的挑选口径（真实数据，不从配置猜）。
