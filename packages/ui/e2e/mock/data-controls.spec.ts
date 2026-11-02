@@ -5,7 +5,11 @@ test.describe("Data Controls", () => {
     test.beforeEach(async ({ page }) => {
         await page.addInitScript(() => {
             localStorage.setItem("xihe-token", "mock-token");
-            localStorage.setItem("xihe-language", "en");
+            // PLAN-0602: `xihe-language` persists as a RAW string and is applied on boot
+            // (`initLanguage` → `applyLocale`), so `"en"` really does render English. The
+            // assertions below read the zh-Hans copy, so the fixture must request zh-CN; seeding
+            // a locale other than the copy under test is what made this spec red.
+            localStorage.setItem("xihe-language", "zh-CN");
         });
     });
 

@@ -43,6 +43,8 @@ export interface MockSessionOptions {
 }
 
 const MOCK_ROOT_BRANCH_ID = "00000000-0000-4000-8000-000000000001";
+/** Default bound Agent principal for fixture Sessions (see `setupMockSessions`). */
+const MOCK_BOUND_PRINCIPAL_ID = "00000000-0000-4000-8000-0000000000a1";
 type MockBranch = {
     branchId: string;
     parentBranchId: string | null;
@@ -93,6 +95,8 @@ export async function setupMockAuth(page: Page, options: MockAuthOptions = {}) {
                 let streamReady = false,
                     streamEmitted = false,
                     shouldFail = Boolean(errorAfterTokens);
+                /** `runId` of the latest `202 ChatRunResponse`, used to correlate SSE events. */
+                let currentRunId: string | undefined;
 
                 const encode = (value: string) => new TextEncoder().encode(value);
                 const event = (name: string, data: unknown) =>
@@ -110,7 +114,17 @@ export async function setupMockAuth(page: Page, options: MockAuthOptions = {}) {
                             streamController.enqueue(encode(event("token", { content: token })));
                         }
                         if (shouldFail && errorAfterTokens) {
-                            streamController.enqueue(encode(event("error", errorAfterTokens)));
+                            // The stream is correlated by `runId` (the one the `202` ChatRunResponse
+                            // handed back). An `error` event without it cannot be attached to the
+                            // assistant message, so no `message-error` banner is rendered.
+                            streamController.enqueue(
+                                encode(
+                                    event("error", {
+                                        ...errorAfterTokens,
+                                        ...(currentRunId ? { runId: currentRunId } : {}),
+                                    }),
+                                ),
+                            );
                             shouldFail = false;
                             streamEmitted = false;
                             return;
@@ -163,6 +177,11 @@ export async function setupMockAuth(page: Page, options: MockAuthOptions = {}) {
                             "POST"
                     ) {
                         const response = await originalFetch(input, init);
+                        currentRunId = await response
+                            .clone()
+                            .json()
+                            .then((payload: { runId?: string }) => payload?.runId)
+                            .catch(() => undefined);
                         streamReady = true;
                         void emit();
                         return response;
@@ -193,7 +212,10 @@ export async function setupMockAuth(page: Page, options: MockAuthOptions = {}) {
     }
 
     await page.route("**/api/v1/chat", async (route) => {
-        const body = route.request().postDataJSON() as { branchId?: string } | null;
+        const body = route.request().postDataJSON() as {
+            branchId?: string;
+            sessionId?: string;
+        } | null;
         if (!body?.branchId) {
             await route.fulfill({
                 status: 400,
@@ -202,7 +224,22 @@ export async function setupMockAuth(page: Page, options: MockAuthOptions = {}) {
             });
             return;
         }
-        await route.fulfill({ status: 202, body: JSON.stringify({ status: "accepted" }) });
+        // `POST /api/v1/chat` answers `202` with the full `ChatRunResponse`
+        // (`origin`/`status`/`sessionId`/`runId` are required by the OpenAPI schema). The old
+        // `{status:"accepted"}` body carried no `runId`, so the composer never recorded the run:
+        // the assistant bubble could not be correlated with the SSE stream, and an `error` event
+        // had nothing to attach to — the `message-error` banner never appeared.
+        await route.fulfill({
+            status: 202,
+            contentType: "application/json",
+            body: JSON.stringify({
+                origin: "user_submission",
+                status: "accepted",
+                sessionId: body.sessionId ?? "mock-session",
+                runId: randomUUID(),
+                messageId: randomUUID(),
+            }),
+        });
     });
 
     await page.route("**/api/v1/models", async (route) => {
@@ -234,7 +271,17 @@ export async function setupMockAuth(page: Page, options: MockAuthOptions = {}) {
             });
             return;
         }
-        if (url.includes("/api/v1/events") || url.includes("/chat") || url.includes("/models")) {
+        // Only the endpoints that have their own route above may fall through; matching on
+        // "contains /chat" also swallowed every `/api/v1/chat/runs/{id}/…` sub-resource
+        // (guidance, recovery, cancel) and let it escape to the dev proxy, which answers
+        // ECONNREFUSED — the run then looked broken for reasons that had nothing to do with
+        // the code under test.
+        const pathname = new URL(url).pathname;
+        if (
+            pathname === "/api/v1/events" ||
+            pathname === "/api/v1/chat" ||
+            pathname === "/api/v1/models"
+        ) {
             return route.fallback();
         }
         const branchRoute = url.match(/\/api\/v1\/sessions\/([^/?]+)\/branches(?:\?|$)/);
@@ -374,6 +421,10 @@ export async function setupMockAuth(page: Page, options: MockAuthOptions = {}) {
                     createdAt: new Date().toISOString(),
                     updatedAt: new Date().toISOString(),
                     archived: false,
+                    // Same reason as `setupMockSessions`: a real Session is created bound to an
+                    // Agent principal, and a null one routes the composer into the binding
+                    // dialog instead of sending.
+                    agentPrincipalId: MOCK_BOUND_PRINCIPAL_ID,
                 }),
             });
             return;
@@ -419,7 +470,18 @@ export async function setupMockSessions(page: Page, options: MockSessionOptions 
         // send into the principal-binding dialog and no `/chat` POST was ever made
         // (2026-11-03 mock-lane: approval `switching away…` could never see the stop button).
         // A bound principal is the normal state: `POST /sessions` requires it.
-        agentPrincipalId: session.agentPrincipalId ?? null,
+        //
+        // Default (not just pass-through): a Session that already has a bound Agent is the
+        // *normal* server state — `POST /sessions` rejects a principal-null Session, and the
+        // only principal-null Session is the pre-first-send placeholder that opens the binding
+        // dialog (ChatPanel.handleSend → `workspace-agent-principal-select`). A fixture that
+        // omitted the field therefore never reached the send path it was testing: no `/chat`
+        // POST, no user bubble, no stop button. Callers that really want the placeholder
+        // (binding-dialog flows) pass `agentPrincipalId: null` explicitly.
+        agentPrincipalId:
+            "agentPrincipalId" in session
+                ? (session.agentPrincipalId ?? null)
+                : MOCK_BOUND_PRINCIPAL_ID,
     }));
     const createRootBranch = (createdAt: string): MockBranch[] => [
         {

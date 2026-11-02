@@ -26,7 +26,19 @@ test.describe("Config Settings (three layers)", () => {
             localStorage.setItem("xihe-token", "mock-token");
             localStorage.setItem(
                 "xihe-user",
-                JSON.stringify({ id: "u1", email: "admin@xihe.local", role: "ADMIN" }),
+                JSON.stringify({
+                    id: "u1",
+                    email: "admin@xihe.local",
+                    // PLAN-0610 W3-2b decision #22: `authStore.isAdmin` reads the capability
+                    // projection (`user.capabilities.isInstanceAdmin`), not the retired `role`
+                    // string. Without it the page renders as a plain user — no instance tab, no
+                    // import/export block — which is what every assertion below depends on.
+                    capabilities: {
+                        isInstanceAdmin: true,
+                        isInstanceSuper: true,
+                        workspaceAdminOf: ["ws-1"],
+                    },
+                }),
             );
             localStorage.setItem(
                 "xihe-workspace",
