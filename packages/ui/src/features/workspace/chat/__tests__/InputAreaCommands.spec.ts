@@ -5,6 +5,7 @@ import { createI18n } from "vue-i18n";
 import { createPinia, setActivePinia } from "pinia";
 import InputArea from "../components/InputArea.vue";
 import { useSessionCommands } from "../composables/useSessionCommands";
+import { useChatStore } from "../stores/chat";
 import type { SessionParticipantView } from "../../../../types/participant";
 
 /**
@@ -42,6 +43,17 @@ vi.mock("../../../../services/attachmentService", () => ({
     uploadAttachments: vi.fn<() => Promise<{ success: never[]; failed: never[] }>>(),
     validateAttachment: () => ({ valid: true }),
 }));
+
+/**
+ * The `/compact` cases assert the **toast copy**, so the sonner surface is replaced by a recorder:
+ * `toast.error` renders nothing in jsdom and its message would be unreachable.
+ */
+const toastState = vi.hoisted(() => ({
+    error: vi.fn<(message: string) => void>(),
+    success: vi.fn<(message: string) => void>(),
+}));
+
+vi.mock("vue-sonner", () => ({ toast: { error: toastState.error, success: toastState.success } }));
 
 const messages = {
     en: {
@@ -141,6 +153,8 @@ beforeEach(() => {
     storeState.speakAsCandidates = [];
     storeState.ensureLoaded.mockReset();
     fetchMock.mockReset();
+    toastState.error.mockReset();
+    toastState.success.mockReset();
     vi.stubGlobal("fetch", fetchMock);
 });
 
@@ -219,4 +233,74 @@ describe("InputArea command registry (PLAN-0635 M3)", () => {
         const help = await openHelp(wrapper);
         await vi.waitFor(() => expect(help.text()).toContain("/export"));
     });
+});
+
+/**
+ * PLAN-0635 M3: `/compact` is **branch-scoped** — the wire body carries `branchId`. When the store
+ * has no selected branch there is nothing to compact, so the endpoint must not be called at all
+ * (a request that comes back 400 is a different, worse behaviour: it burns a round-trip and shows
+ * the generic failure copy) and the user gets the dedicated localized "no usable branch" message.
+ */
+describe("InputArea /compact without a selected branch (PLAN-0635 M3)", () => {
+    const NO_BRANCH_COPY = "This session has no usable branch yet; the command was not run";
+
+    /** Only counts compaction calls — the registry read at mount also goes through `fetch`. */
+    function compactCalls(): number {
+        return fetchMock.mock.calls.filter(([input]) => String(input).includes("/compact")).length;
+    }
+
+    async function submitCompact(wrapper: ReturnType<typeof mountInput>) {
+        const textarea = wrapper.find("textarea");
+        await typeText(textarea, "/compact");
+        // Readiness: the menu row only exists once the registry merge has landed. Without this
+        // wait the run could race the registry and assert on a composer that never knew `/compact`.
+        await vi.waitFor(() =>
+            expect(wrapper.find('[data-testid="chat-input-trigger-menu"]').exists()).toBe(true),
+        );
+        await textarea.trigger("keydown", { key: "Enter" });
+        await flushPromises();
+        return textarea;
+    }
+
+    beforeEach(() => {
+        fetchMock.mockResolvedValue(
+            registryResponse({
+                commands: [{ name: "/compact", source: "builtin", available: true, reason: null }],
+            }),
+        );
+    });
+
+    for (const missing of [undefined, null] as const) {
+        const label = missing === null ? "null" : "undefined";
+        it(`sends no request and toasts the localized copy when the branch is ${label}`, async () => {
+            const chatStore = useChatStore();
+            // `null` is outside the declared `string | undefined` return type, but the guard is
+            // `!branchId` on purpose — pin the falsy contract for both shapes the wire can hand in.
+            vi.spyOn(chatStore, "getSelectedBranchId").mockReturnValue(
+                missing as unknown as undefined,
+            );
+
+            const wrapper = mountInput();
+            await flushPromises();
+            const callsBefore = fetchMock.mock.calls.length;
+            const textarea = await submitCompact(wrapper);
+
+            expect(compactCalls()).toBe(0);
+            expect(fetchMock.mock.calls.length).toBe(callsBefore);
+            expect(toastState.error).toHaveBeenCalledTimes(1);
+            expect(toastState.error).toHaveBeenCalledWith(NO_BRANCH_COPY);
+            expect(toastState.success).not.toHaveBeenCalled();
+
+            // Not stuck in a loading/busy state: no upload spinner, the composer is still editable
+            // and the send button re-enables as soon as there is text again.
+            expect(wrapper.find('[data-testid="attachment-uploading-indicator"]').exists()).toBe(
+                false,
+            );
+            expect(textarea.attributes("disabled")).toBeUndefined();
+            await typeText(textarea, "still usable");
+            expect(
+                wrapper.get('[data-testid="chat-send-button"]').attributes("disabled"),
+            ).toBeUndefined();
+        });
+    }
 });
