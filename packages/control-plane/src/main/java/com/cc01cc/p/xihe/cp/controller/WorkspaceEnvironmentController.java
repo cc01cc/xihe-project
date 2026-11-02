@@ -240,8 +240,9 @@ public class WorkspaceEnvironmentController {
                 // PLAN-0633 C1-1 (D33-09): fileOperations is a nested document from the Runtime
                 // capability. Putting the Jackson-2 node straight into the response map makes
                 // Jackson 3 introspect it as a bean ({"array":false,…,"nodeType":"OBJECT",…}) — the
-                // PLAN-0625 Gap I/J shape. Lower it to Map/List/scalars first.
-                // jackson2-wire-ok: lowered by JacksonNodeExit (the single sanctioned exit)
+                // PLAN-0625 Gap I/J shape. Lower it to Map/List/scalars first; the static gate
+                // (Jackson2NodeWireScanTest) recognises JacksonNodeExit as the sanctioned exit, so no
+                // exemption marker is needed here.
                 view.put("fileOperations", JacksonNodeExit.toDocument(node.get("fileOperations")));
             } else {
                 view.put("fileOperations", unavailableFileOperations(executionMode,
