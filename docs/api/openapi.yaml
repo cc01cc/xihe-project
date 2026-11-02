@@ -3316,8 +3316,7 @@ components:
       properties:
         id: { type: string, format: uuid }
         name: { type: string }
-        displayName: { type: string, description: 'PLAN-0623: AGENT → agent_principals.name; HUMAN → the user display name (name → username → email local part); null only when the subject cannot be resolved — the UI then shows an unknown-user placeholder, never a UUID.' }
-        selfOwned: { type: boolean, description: 'PLAN-0623 D23-27: the caller may send as this row (mirrors the asParticipantId gate), so the UI can list only legal targets. HUMAN = principalId is the caller; AGENT = PERSONAL owned by the caller, or WORKSPACE/INSTANCE (spoken for by the conversation owner). false for every row when the caller does not own the conversation.' }
+        displayName: { type: string }
         description: { type: string, nullable: true }
         system: { type: boolean, description: 'Seeded by V87; only the display name is editable' }
         atoms: { type: array, items: { $ref: '#/components/schemas/RoleAtomView' } }
@@ -3335,7 +3334,7 @@ components:
       description: 'Every field is optional; null/absent means unchanged. On a system role only displayName may be present.'
       properties:
         name: { type: string }
-        displayName: { type: string, description: 'PLAN-0623: AGENT → agent_principals.name; HUMAN → the user display name (name → username → email local part); null only when the subject cannot be resolved — the UI then shows an unknown-user placeholder, never a UUID.' }
+        displayName: { type: string }
         description: { type: string, nullable: true }
         atoms: { type: array, minItems: 1, items: { type: string } }
     BindingView:
@@ -3633,20 +3632,22 @@ components:
     # participant snapshot would be a second source of truth (Lead ruling 2026-11-02).
     SessionParticipantView:
       type: object
-      required: [participantId, principalKind, principalId, role, orderIndex, wakePolicy, respondPolicy, source]
+      required: [participantId, principalKind, principalId, role, orderIndex, wakePolicy, respondPolicy, source, selfOwned]
       properties:
         participantId: { type: string, format: uuid }
         principalKind: { type: string, enum: [HUMAN, AGENT] }
         principalId: { type: string, format: uuid, description: Polymorphic reference — no FK by design (R2) }
-        displayName: { type: string, description: 'PLAN-0623: AGENT → agent_principals.name; HUMAN → the user display name (name → username → email local part); null only when the subject cannot be resolved — the UI then shows an unknown-user placeholder, never a UUID.' }
+        displayName: { type: string }
         role: { type: string, enum: [PRIMARY, MEMBER, GUARD] }
         orderIndex: { type: integer, description: 'R4: 10, 20, 30 …; deletes leave gaps and never renumber' }
         wakePolicy: { type: string, enum: [ALL_MESSAGES, MENTION] }
         respondPolicy: { type: string, enum: [ALWAYS, WHEN_MENTIONED, JUDGE, MUTED] }
         source: { type: string, enum: [workspace, personal, instance] }
         disabledAt: { type: [string, 'null'], format: date-time }
+        displayName: { type: string, description: 'PLAN-0623: AGENT → agent_principals.name; HUMAN → the user display name (name → username → email local part); null only when the subject cannot be resolved — the UI then shows an unknown-user placeholder, never a UUID.' }
         defaultModelProvider: { type: [string, 'null'], description: 'AGENT participants only: the participant agent model intent; null for HUMAN.' }
         defaultModelName: { type: [string, 'null'], description: 'AGENT participants only: the participant agent model intent; null for HUMAN.' }
+        selfOwned: { type: boolean, description: 'PLAN-0623 D23-27: the caller may send as this row (mirrors the asParticipantId gate), so the UI can list only legal targets. HUMAN = principalId is the caller; AGENT = PERSONAL owned by the caller, or WORKSPACE/INSTANCE (spoken for by the conversation owner). false for every row when the caller does not own the conversation.' }
         readCursor:
           type: [object, 'null']
           description: 'R7 — read-only in 0623; advanced by the server off the event stream. null when the participant has no cursor row yet — the UI relies on null rather than an empty object.'
@@ -4245,7 +4246,7 @@ components:
        required: [id, displayName, adapter, modelDiscovery, credential, supports, supportedApiTypes, defaultApiType]
        properties:
          id: { type: string, pattern: '^[a-z0-9][a-z0-9._:-]{1,127}$' }
-         displayName: { type: string, description: 'PLAN-0623: AGENT → agent_principals.name; HUMAN → the user display name (name → username → email local part); null only when the subject cannot be resolved — the UI then shows an unknown-user placeholder, never a UUID.' }
+         displayName: { type: string }
          category: { type: string, enum: [recommended, other, custom] }
          adapter: { type: string, enum: [native-litellm, openai-compatible, manual-model] }
          litellmProvider: { type: [string, 'null'] }
@@ -4396,7 +4397,7 @@ components:
          apiTypeVersion: { type: integer, minimum: 1 }
          operation: { type: string, enum: [chat, embedding] }
          scope: { type: string, enum: [USER, WORKSPACE, SYSTEM] }
-         displayName: { type: string, description: 'PLAN-0623: AGENT → agent_principals.name; HUMAN → the user display name (name → username → email local part); null only when the subject cannot be resolved — the UI then shows an unknown-user placeholder, never a UUID.' }
+         displayName: { type: string }
          connectionStatus: { type: string, enum: [unverified, verifying, ready, invalid_credentials, unreachable, disabled] }
          reasonCode: { type: [string, 'null'] }
          verifiedAt: { type: [string, 'null'], format: date-time }
@@ -4609,7 +4610,7 @@ components:
          apiTypeVersion: { type: integer, minimum: 1 }
          operation: { type: string, enum: [chat, embedding] }
          scope: { type: string, enum: [USER, WORKSPACE, SYSTEM] }
-         displayName: { type: string, description: 'PLAN-0623: AGENT → agent_principals.name; HUMAN → the user display name (name → username → email local part); null only when the subject cannot be resolved — the UI then shows an unknown-user placeholder, never a UUID.' }
+         displayName: { type: string }
          connectionRevision: { type: integer, minimum: 1 }
     AgentChatRequest:
       type: object
