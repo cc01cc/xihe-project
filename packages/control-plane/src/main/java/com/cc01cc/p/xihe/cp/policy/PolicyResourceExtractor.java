@@ -4,6 +4,8 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
+import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -14,7 +16,9 @@ import org.slf4j.LoggerFactory;
  *
  * <p>Best effort and conservative: keys outside the known set (and nested objects) are ignored, and
  * when nothing is recognized the wildcard {@code "*"} is returned so evaluation keeps its previous
- * behavior. Argument contents are never logged.</p>
+ * behavior. Argument contents are never logged. Resource-valued identifiers are normalized into
+ * their canonical namespace ({@code credential:<uuid>}, {@code skill:<uuid>}); a value that is not
+ * a uuid never becomes a namespace resource.</p>
  */
 public final class PolicyResourceExtractor {
 
@@ -53,6 +57,18 @@ public final class PolicyResourceExtractor {
                         ? raw
                         : ToolFaceRegistry.CREDENTIAL_RESOURCE_PREFIX + raw;
                 add(resources, MAPPER.valueToTree(canonical));
+            }
+        }
+        // PLAN-0628 M2b 收尾 A: skill_read carries the skill id. Only the canonical uuid
+        // spelling is accepted at the tool boundary, so a qualified/bare name must not
+        // fabricate a skill:<garbage> scope. A non-uuid produces no resource at all (the
+        // same best-effort fallback as an unknown key), which keeps the wildcard semantics
+        // for every caller that predates this key.
+        JsonNode skillId = arguments.get("skill");
+        if (skillId != null && skillId.isTextual()) {
+            String raw = skillId.textValue().trim();
+            if (isCanonicalUuid(raw)) {
+                add(resources, MAPPER.valueToTree(ToolFaceRegistry.SKILL_RESOURCE_PREFIX + raw));
             }
         }
         for (String key : SCALAR_KEYS) {
@@ -102,5 +118,18 @@ public final class PolicyResourceExtractor {
             return;
         }
         resources.add(value);
+    }
+
+    /**
+     * Strict canonical uuid, matching the tool boundary: {@link UUID#fromString} alone accepts
+     * short groups ("1-1-1-1-1"), which are not a listing id. Hex case is normalized by the
+     * comparison, exactly like {@code SkillReadService}'s parser.
+     */
+    private static boolean isCanonicalUuid(String value) {
+        try {
+            return UUID.fromString(value).toString().equals(value.toLowerCase(Locale.ROOT));
+        } catch (IllegalArgumentException notAnId) {
+            return false;
+        }
     }
 }

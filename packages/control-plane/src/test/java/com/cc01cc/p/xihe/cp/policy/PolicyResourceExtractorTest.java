@@ -32,6 +32,30 @@ class PolicyResourceExtractorTest {
     }
 
     @Test
+    void extractsSkillIdIntoTheSkillNamespace() {
+        String id = "d9a22f34-7a60-4f0e-a036-60e7a9c6cf9b";
+        String body = "{\"params\":{\"name\":\"skill_read\","
+                + "\"arguments\":{\"skill\":\"  " + id + "  \"}}}";
+
+        assertEquals(List.of("skill:" + id), PolicyResourceExtractor.extract(body),
+                "PLAN-0628 M2b 收尾 A: the skill id must reach the policy layer in the same "
+                        + "canonical spelling as credential:<uuid>");
+    }
+
+    @Test
+    void nonUuidSkillArgumentsProduceNoSkillResource() {
+        String id = "d9a22f34-7a60-4f0e-a036-60e7a9c6cf9b";
+        for (String argument : List.of(
+                "user:instance:instance:alpha", "alpha", "skill:" + id, "1-1-1-1-1", "not-a-uuid")) {
+            String body = "{\"params\":{\"name\":\"skill_read\","
+                    + "\"arguments\":{\"skill\":\"" + argument + "\"}}}";
+
+            assertEquals(List.of("*"), PolicyResourceExtractor.extract(body),
+                    "a non-uuid must never fabricate a skill scope: " + argument);
+        }
+    }
+
+    @Test
     void extractsCommandKey() {
         String body = "{\"params\":{\"arguments\":{\"command\":\"git status\",\"timeout\":30}}}";
 
