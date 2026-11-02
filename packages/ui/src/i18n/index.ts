@@ -678,6 +678,18 @@ const messages = {
         chat: {
             send: "发送",
             placeholder: "输入消息，Enter 发送，Shift+Enter 换行...",
+            // PLAN-0635 M1：`/` 命令与 `@` 提及的输入面文案（两者共用一个候选面）。
+            input: {
+                commandsTitle: "命令",
+                mentionsTitle: "会话成员",
+                mentionAll: "所有人",
+                mentionAgent: "智能体",
+                mentionHuman: "人类成员",
+                commandClear: "清空输入草稿（不发送）",
+                commandHelp: "显示可用命令",
+                helpTitle: "可用命令",
+                helpHint: "↑↓ 选择，Enter 插入，Esc 关闭",
+            },
             branchSelectorLabel: "对话分支",
             branchMainPath: "主路径",
             branchPathOption: "分支",
@@ -2750,6 +2762,18 @@ const messages = {
         chat: {
             send: "Send",
             placeholder: "Type a message, Enter to send, Shift+Enter for new line...",
+            // PLAN-0635 M1: input-surface copy for `/` commands and `@` mentions (one shared menu).
+            input: {
+                commandsTitle: "Commands",
+                mentionsTitle: "Session members",
+                mentionAll: "Everyone",
+                mentionAgent: "Agent",
+                mentionHuman: "Human",
+                commandClear: "Clear the draft (does not send)",
+                commandHelp: "Show available commands",
+                helpTitle: "Available commands",
+                helpHint: "↑↓ to select, Enter to insert, Esc to close",
+            },
             branchSelectorLabel: "Conversation branch",
             branchMainPath: "Main path",
             branchPathOption: "Branch",

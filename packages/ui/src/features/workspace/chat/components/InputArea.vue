@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, markRaw, watch } from "vue";
+import { ref, computed, markRaw, nextTick, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { useSessionParticipantsStore } from "../../stores/sessionParticipants";
 import { toast } from "vue-sonner";
@@ -15,9 +15,16 @@ import type { AttachmentFile } from "../../../../types";
 
 interface SlashCommand {
     key: string;
+    /** i18n key of the one-line hint (never user-supplied text). */
+    descriptionKey: string;
+}
+
+/** One row of the unified trigger menu (`/` command or `@` mention). */
+interface TriggerItem {
+    /** Unique per menu — the textarea's `aria-activedescendant` points at it. */
+    id: string;
     label: string;
-    description: string;
-    action: () => string;
+    hint: string;
 }
 
 const URL = window.URL;
@@ -79,33 +86,99 @@ const input = ref(""),
     isComposing = ref(false),
     attachments = ref<File[]>([]);
 let uploadedByFile = new WeakMap<File, Map<string, AttachmentFile>>();
-const attachmentErrors = ref<Record<string, string>>({}),
-    showSlashMenu = ref(false),
-    slashFilter = ref("");
-const selectedSlashIndex = ref(0),
+const attachmentErrors = ref<Record<string, string>>({});
+
+/**
+ * PLAN-0635 M1（D35-01）：`/` 命令与 `@` 提及共用**一个**输入触发器模型 —— 同一份候选渲染、
+ * 同一套键盘（↑↓ / Enter / Tab / Esc）、同一套 aria。两套实现必然漂移，故不各写一份。
+ */
+type TriggerKind = "slash" | "mention";
+const TRIGGER_MENU_ID = "chat-input-trigger-menu",
+    triggerKind = ref<TriggerKind | null>(null),
+    triggerFilter = ref(""),
+    triggerIndex = ref(0),
+    /** Index of the `@` that opened the mention menu (the replace range on insert). */
+    mentionAnchor = ref(-1),
+    showHelpPanel = ref(false),
+    textareaRef = ref<HTMLTextAreaElement | null>(null),
     isUploading = ref(false);
 
+/**
+ * PLAN-0635 M1（D35-04）：M1 只保留**真的会生效**的本地命令。
+ *
+ * `/search` 与 `/export` 已删除 —— 它们不是"未实现"，而是**假命令**：`/export` 的 action 返回一句
+ * 固定英文串，被 `handleSendText` 当用户消息发给模型；`/search` 的 action 返回空串，什么都不做。
+ * 保留假命令比没有命令更糟（用户以为在导出）。服务端命令面在 M3（`GET .../sessions/{id}/commands`）。
+ */
 const slashCommands: SlashCommand[] = [
-    { key: "/search", label: "/search", description: "Search messages", action: () => "" },
-    { key: "/clear", label: "/clear", description: "Clear conversation", action: () => "" },
-    {
-        key: "/export",
-        label: "/export",
-        description: "Export chat history",
-        action: () => "Export the current conversation as JSON",
-    },
-    {
-        key: "/help",
-        label: "/help",
-        description: "Show available commands",
-        action: () => "Available commands: /search, /clear, /export, /help",
-    },
+    { key: "/clear", descriptionKey: "chat.input.commandClear" },
+    { key: "/help", descriptionKey: "chat.input.commandHelp" },
 ];
 
-const filteredCommands = computed(() => {
-    if (!slashFilter.value) return slashCommands;
-    return slashCommands.filter((c) => c.key.includes(slashFilter.value.toLowerCase()));
+function isWordStart(value: string, index: number): boolean {
+    return index === 0 || /\s/.test(value[index - 1] ?? "");
+}
+
+/**
+ * Anchor of the `@` that should open the mention menu, or -1 when there is none.
+ *
+ * Boundary rule mirrors `MentionParser` (a `@` glued to a preceding word, e.g. an email address,
+ * is not a token), and a whitespace after `@` ends the token — so `@al ice` never opens a menu.
+ */
+function findMentionAnchor(value: string, caret: number): number {
+    const upto = value.slice(0, caret),
+        at = upto.lastIndexOf("@");
+    if (at < 0 || !isWordStart(upto, at)) return -1;
+    return /\s/.test(upto.slice(at + 1)) ? -1 : at;
+}
+
+const slashItems = computed<TriggerItem[]>(() => {
+    const filter = triggerFilter.value.toLowerCase();
+    return slashCommands
+        .filter((cmd) => cmd.key.includes(filter))
+        .map((cmd) => ({
+            id: `xihe-slash-${cmd.key.slice(1)}`,
+            label: cmd.key,
+            hint: t(cmd.descriptionKey),
+        }));
 });
+
+/**
+ * Candidates come from the **existing** participant store (same single source as the members
+ * panel and the speak-as dropdown) — M1 adds no endpoint and no second fetch.
+ * Disabled participants are invisible here for the same reason `MentionParser` skips them.
+ */
+const mentionItems = computed<TriggerItem[]>(() => {
+    const filter = triggerFilter.value.toLowerCase();
+    const items: TriggerItem[] = [];
+    if ("all".startsWith(filter)) {
+        items.push({ id: "xihe-mention-all", label: "@all", hint: t("chat.input.mentionAll") });
+    }
+    for (const participant of participantsStore.participants ?? []) {
+        const name = participant.displayName ?? "";
+        if (!name || participant.disabledAt) continue;
+        if (!name.toLowerCase().includes(filter)) continue;
+        items.push({
+            id: `xihe-mention-${participant.participantId}`,
+            label: `@${name}`,
+            hint:
+                participant.principalKind === "AGENT"
+                    ? t("chat.input.mentionAgent")
+                    : t("chat.input.mentionHuman"),
+        });
+    }
+    return items;
+});
+
+const activeItems = computed<TriggerItem[]>(() => {
+    if (triggerKind.value === "slash") return slashItems.value;
+    if (triggerKind.value === "mention") return mentionItems.value;
+    return [];
+});
+
+const menuOpen = computed(() => triggerKind.value !== null && activeItems.value.length > 0);
+
+const activeItemId = computed(() => activeItems.value[triggerIndex.value]?.id ?? "");
 
 const sendDisabled = computed(() => {
     if (props.queueMode) {
@@ -167,6 +240,13 @@ const toolbarActions = computed<ToolbarAction[]>(() => [
 
 async function handleSend() {
     const text = input.value.trim();
+    // A local command submitted as text (menu already closed, e.g. a trailing space) must still run
+    // locally — otherwise the literal "/help" would be emitted as the user's message.
+    const localCommand = slashCommands.find((cmd) => cmd.key === text);
+    if (localCommand) {
+        executeSlash(localCommand);
+        return;
+    }
     if (sendDisabled.value || isUploading.value || props.queueSubmitting || props.queueActionBusy)
         return;
     const uploadSessionId = props.sessionId;
@@ -247,51 +327,102 @@ function stopInput() {
     emit("stop");
 }
 
-function executeSlash(cmd: SlashCommand) {
-    const result = cmd.action();
-    showSlashMenu.value = false;
-    if (result) {
-        handleSendText(result);
-        return;
-    }
-    if (cmd.key === "/clear") {
-        input.value = "";
-        showSlashMenu.value = false;
-    }
+function closeTriggerMenu(): void {
+    triggerKind.value = null;
+    triggerFilter.value = "";
+    triggerIndex.value = 0;
+    mentionAnchor.value = -1;
 }
 
-function handleSendText(text: string) {
-    if (props.queueMode) emit("queue", text, undefined, activeSpeakAsId.value);
-    else emit("send", text, undefined, activeSpeakAsId.value);
+/**
+ * `/` is **local-only** in M1 — neither branch produces a chat send.
+ *
+ * Before PLAN-0635 `/help` and `/export` returned a hardcoded English sentence that was emitted as
+ * the user's message, so "selecting a command" silently asked the model to export a conversation.
+ */
+function executeSlash(cmd: SlashCommand): void {
+    closeTriggerMenu();
+    showHelpPanel.value = false;
+    if (cmd.key === "/help") {
+        input.value = "";
+        showHelpPanel.value = true;
+        return;
+    }
+    // `/clear` = clear the draft (input + pending attachments) and send nothing.
+    clearDraft();
+}
+
+/**
+ * Insert `@displayName ` at the trigger anchor.
+ *
+ * The trailing space is a **wire contract**, not cosmetics: `MentionParser` requires a whitespace
+ * (or end-of-text) boundary after the name, otherwise the token stays literal and the participant
+ * is never woken. Same format as the members-panel `insertMention` click path.
+ */
+function insertMentionToken(name: string): void {
+    const element = textareaRef.value,
+        caret = element?.selectionStart ?? input.value.length,
+        anchor = mentionAnchor.value >= 0 ? mentionAnchor.value : caret,
+        before = input.value.slice(0, anchor),
+        after = input.value.slice(caret),
+        inserted = `@${name} `;
+    input.value = `${before}${inserted}${after}`;
+    closeTriggerMenu();
+    void nextTick(() => {
+        const position = before.length + inserted.length;
+        element?.setSelectionRange(position, position);
+        element?.focus();
+    });
+}
+
+function selectActiveItem(): void {
+    const item = activeItems.value[triggerIndex.value];
+    if (!item) return;
+    if (triggerKind.value === "slash") {
+        const command = slashCommands.find((cmd) => cmd.key === item.label);
+        if (command) executeSlash(command);
+        return;
+    }
+    insertMentionToken(item.label.slice(1));
+}
+
+function pickItem(index: number): void {
+    triggerIndex.value = index;
+    selectActiveItem();
 }
 
 function handleKeydown(e: KeyboardEvent) {
-    if (showSlashMenu.value) {
+    // IME composition owns Enter/arrow keys — never steal them or an IME confirm fires a command.
+    if (isComposing.value) return;
+
+    if (menuOpen.value) {
+        const count = activeItems.value.length;
         if (e.key === "ArrowDown") {
             e.preventDefault();
-            selectedSlashIndex.value =
-                (selectedSlashIndex.value + 1) % filteredCommands.value.length;
+            triggerIndex.value = (triggerIndex.value + 1) % count;
             return;
         }
         if (e.key === "ArrowUp") {
             e.preventDefault();
-            selectedSlashIndex.value =
-                selectedSlashIndex.value > 0
-                    ? selectedSlashIndex.value - 1
-                    : filteredCommands.value.length - 1;
+            triggerIndex.value = triggerIndex.value > 0 ? triggerIndex.value - 1 : count - 1;
             return;
         }
         if (e.key === "Enter" || e.key === "Tab") {
             e.preventDefault();
-            if (filteredCommands.value[selectedSlashIndex.value]) {
-                executeSlash(filteredCommands.value[selectedSlashIndex.value]);
-            }
+            selectActiveItem();
             return;
         }
         if (e.key === "Escape") {
-            showSlashMenu.value = false;
+            e.preventDefault();
+            closeTriggerMenu();
             return;
         }
+    }
+
+    if (e.key === "Escape" && showHelpPanel.value) {
+        e.preventDefault();
+        showHelpPanel.value = false;
+        return;
     }
 
     if (e.key === "Enter" && !e.shiftKey && !isComposing.value) {
@@ -307,18 +438,30 @@ function handleKeydown(e: KeyboardEvent) {
 }
 
 function handleInput() {
-    const val = input.value;
-    if (val === "/") {
-        showSlashMenu.value = true;
-        slashFilter.value = "";
-        selectedSlashIndex.value = 0;
-    } else if (val.startsWith("/") && !val.includes(" ")) {
-        showSlashMenu.value = true;
-        slashFilter.value = val.slice(1);
-        selectedSlashIndex.value = 0;
-    } else if (val.includes(" ")) {
-        showSlashMenu.value = false;
+    if (isComposing.value) return;
+    showHelpPanel.value = false;
+    const element = textareaRef.value,
+        caret = element?.selectionStart ?? input.value.length,
+        value = input.value;
+
+    const at = findMentionAnchor(value, caret);
+    if (at >= 0) {
+        triggerKind.value = "mention";
+        mentionAnchor.value = at;
+        triggerFilter.value = value.slice(at + 1, caret);
+        triggerIndex.value = 0;
+        return;
     }
+
+    if (value === "/" || (value.startsWith("/") && !value.includes(" "))) {
+        triggerKind.value = "slash";
+        triggerFilter.value = value.slice(1);
+        mentionAnchor.value = -1;
+        triggerIndex.value = 0;
+        return;
+    }
+
+    closeTriggerMenu();
 }
 
 function addAttachment(files: File[]) {
@@ -492,22 +635,63 @@ defineExpose({ clearDraft, insertMention });
             </div>
 
             <div class="relative">
+                <!--
+                    `/help` renders the command list locally (M1: no server command face yet).
+                    role=status so assistive tech announces it without stealing focus.
+                -->
                 <div
-                    v-if="showSlashMenu && filteredCommands.length"
-                    class="absolute bottom-full left-0 mb-2 w-56 rounded-lg border bg-popover shadow-lg overflow-hidden"
+                    v-if="showHelpPanel"
+                    class="absolute bottom-full left-0 mb-2 w-full overflow-hidden rounded-lg border bg-popover p-3 shadow-lg"
+                    role="status"
+                    data-testid="chat-input-help"
                 >
-                    <div class="px-2 py-1 text-xs text-muted-foreground border-b">Commands</div>
+                    <p class="mb-1 text-xs font-medium">{{ t("chat.input.helpTitle") }}</p>
+                    <ul class="space-y-1">
+                        <li v-for="cmd in slashCommands" :key="cmd.key" class="text-xs">
+                            <span class="font-medium">{{ cmd.key }}</span>
+                            <span class="ml-2 text-muted-foreground">{{
+                                t(cmd.descriptionKey)
+                            }}</span>
+                        </li>
+                    </ul>
+                    <p class="mt-2 text-xs text-muted-foreground">{{ t("chat.input.helpHint") }}</p>
+                </div>
+                <!--
+                    PLAN-0635 M1: one candidate surface for both `/` and `@` (D35-01) — a single
+                    listbox means the keyboard/aria contract cannot drift between the two.
+                -->
+                <div
+                    v-if="menuOpen"
+                    :id="TRIGGER_MENU_ID"
+                    class="absolute bottom-full left-0 mb-2 w-56 overflow-hidden rounded-lg border bg-popover shadow-lg"
+                    role="listbox"
+                    :aria-label="
+                        triggerKind === 'mention'
+                            ? t('chat.input.mentionsTitle')
+                            : t('chat.input.commandsTitle')
+                    "
+                    data-testid="chat-input-trigger-menu"
+                >
+                    <div class="border-b px-2 py-1 text-xs text-muted-foreground">
+                        {{
+                            triggerKind === "mention"
+                                ? t("chat.input.mentionsTitle")
+                                : t("chat.input.commandsTitle")
+                        }}
+                    </div>
                     <button
-                        v-for="(cmd, i) in filteredCommands"
-                        :key="cmd.key"
-                        class="w-full flex items-center gap-2 px-3 py-2 text-left text-sm hover:bg-accent transition-colors"
-                        :class="i === selectedSlashIndex ? 'bg-accent' : ''"
-                        @click="executeSlash(cmd)"
+                        v-for="(item, i) in activeItems"
+                        :id="item.id"
+                        :key="item.id"
+                        role="option"
+                        :aria-selected="i === triggerIndex"
+                        class="flex w-full items-center gap-2 px-3 py-2 text-left text-sm transition-colors hover:bg-accent"
+                        :class="i === triggerIndex ? 'bg-accent' : ''"
+                        @mousedown.prevent
+                        @click="pickItem(i)"
                     >
-                        <span class="font-medium">{{ cmd.key }}</span>
-                        <span class="text-xs text-muted-foreground ml-auto">{{
-                            cmd.description
-                        }}</span>
+                        <span class="font-medium">{{ item.label }}</span>
+                        <span class="ml-auto text-xs text-muted-foreground">{{ item.hint }}</span>
                     </button>
                 </div>
             </div>
@@ -516,12 +700,17 @@ defineExpose({ clearDraft, insertMention });
                 class="rounded-2xl border bg-card p-2 shadow-sm transition-shadow focus-within:ring-2 focus-within:ring-ring"
             >
                 <textarea
+                    ref="textareaRef"
                     v-model="input"
                     data-testid="chat-input"
                     class="w-full min-h-[44px] max-h-[200px] px-2 py-2 bg-transparent resize-none text-sm placeholder:text-muted-foreground focus:outline-none field-sizing-content"
                     :placeholder="queueMode ? t('chat.followUpPlaceholder') : t('chat.placeholder')"
                     rows="1"
                     :style="{ fieldSizing: 'content' }"
+                    :aria-expanded="menuOpen"
+                    :aria-controls="menuOpen ? TRIGGER_MENU_ID : undefined"
+                    :aria-activedescendant="menuOpen && activeItemId ? activeItemId : undefined"
+                    :aria-autocomplete="menuOpen ? 'list' : undefined"
                     @compositionstart="isComposing = true"
                     @compositionend="isComposing = false"
                     @keydown="handleKeydown"
