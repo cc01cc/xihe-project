@@ -76,6 +76,41 @@ class AgentTemplateHooksSchemaTest {
         assertEquals(List.of(), schema.validate("agent-templates", document));
     }
 
+    /**
+     * PLAN-0633 D33-01 batch A2 (json-schema-validator 3.0.7 → 3.0.8) nullable probe.
+     *
+     * <p>The upgrade is a patch release, so the only real risk is <b>validation semantics</b> drifting:
+     * {@code ConfigDomainSchema} runs all 14 config-domain schemas through this library, and
+     * {@code hooks} is declared as the union {@code ["object", "null"]}. Two drifts would hurt and both
+     * are invisible to a single happy-path test:</p>
+     * <ul>
+     *   <li>a validator that starts <b>rejecting {@code null}</b> bricks the V98 rollback shape and the
+     *       instance-layer read path (409 for the whole domain);</li>
+     *   <li>a validator that starts treating the union as <b>"any type goes"</b> silently weakens every
+     *       domain schema in the repository.</li>
+     * </ul>
+     *
+     * <p>{@code templateWithNullHooksPassesSchemaValidation} documents the rollback shape; this probe
+     * pins the boundary around it — null and absent stay accepted, the object form stays accepted, and a
+     * wrong non-null type is still rejected. If this ever fails after a dependency bump, report the
+     * behaviour change and its blast radius instead of loosening the schema to match the library.</p>
+     */
+    @Test
+    void nullableHooksProbeKeepsNullAcceptedWithoutLooseningTheTypeUnion() throws Exception {
+        assertEquals(List.of(), schema.validate("agent-templates", guardDocument("null")),
+                "hooks:null is the V98 rollback shape — [object,null] must still accept it");
+        assertEquals(List.of(), schema.validate("agent-templates", guardDocument(null)),
+                "an absent hooks document stays valid (no declaration)");
+        assertEquals(List.of(), schema.validate("agent-templates",
+                        guardDocument("{ \"advisors\": [ { \"kind\": \"guard\", \"on\": [\"approval.ask\"] } ] }")),
+                "the declared object form stays valid");
+
+        assertFalse(schema.validate("agent-templates", guardDocument("\"guard\"")).isEmpty(),
+                "[object,null] must not degrade into 'any type accepted' after the validator upgrade");
+        assertFalse(schema.validate("agent-templates", guardDocument("42")).isEmpty(),
+                "a number is not in the [object,null] union either");
+    }
+
     /** D25-10: advisor kind is an open string, and per-advisor parameters may grow later. */
     @Test
     void unknownAdvisorKindAndExtraAdvisorKeysStayAccepted() throws Exception {

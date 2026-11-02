@@ -138,7 +138,12 @@
         <dependency>
             <groupId>com.networknt</groupId>
             <artifactId>json-schema-validator</artifactId>
-            <version>3.0.7</version>
+            <!-- PLAN-0633 D33-01 batch A2: 3.0.7 -> 3.0.8. Explicit pin (no BOM manages it). The
+                 batch's real risk is validation semantics, not the API: ConfigDomainSchema validates
+                 every config-schemas/*.json domain with this library, and `hooks: null` is a supported
+                 document shape (V98 rollback), so `AgentTemplateHooksSchemaTest` carries an explicit
+                 nullable probe. -->
+            <version>3.0.8</version>
         </dependency>
 
         <!-- PDFBox (PDF splitting) -->
