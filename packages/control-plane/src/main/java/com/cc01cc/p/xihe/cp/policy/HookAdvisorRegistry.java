@@ -44,6 +44,14 @@ public class HookAdvisorRegistry {
         return advisors;
     }
 
+    /** All registered advisors of one kind (unfiltered by subscription). */
+    public List<HookAdvisor> byKind(String kind) {
+        if (kind == null) {
+            return List.of();
+        }
+        return advisors.stream().filter(advisor -> kind.equals(advisor.kind())).toList();
+    }
+
     /**
      * Advisors the given principal subscribed for this action class: an advisor is returned when
      * its {@link HookAdvisor#kind()} appears in {@code hooks.advisors[]} with {@code actionClass}

@@ -3,14 +3,18 @@ package com.cc01cc.p.xihe.cp.chat;
 import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
 import com.cc01cc.p.xihe.cp.entity.ChatApproval;
 import com.cc01cc.p.xihe.cp.entity.SessionParticipant;
+import com.cc01cc.p.xihe.cp.policy.HookAdvisorRegistry;
+import com.cc01cc.p.xihe.cp.policy.HookVerdictCache;
 import com.cc01cc.p.xihe.cp.repository.AgentPrincipalRepository;
 import com.cc01cc.p.xihe.cp.repository.ChatApprovalRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionParticipantRepository;
+import com.cc01cc.p.xihe.cp.service.GuardHookAdvisor;
 import com.cc01cc.p.xihe.cp.service.JudgeDecisionService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.springframework.beans.factory.ObjectProvider;
 
 import java.util.List;
 import java.util.Optional;
@@ -49,7 +53,13 @@ class GuardAdviceServiceTest {
         participants = mock(SessionParticipantRepository.class);
         agents = mock(AgentPrincipalRepository.class);
         judge = mock(JudgeDecisionService.class);
-        service = new GuardAdviceService(approvals, participants, agents, judge,
+        // G parity: the guard advisor is the registry's only advisor in this fixture.
+        HookAdvisorRegistry registry = new HookAdvisorRegistry(List.of(
+                new GuardHookAdvisor(judge, new HookVerdictCache(), new ObjectMapper())));
+        @SuppressWarnings("unchecked")
+        ObjectProvider<HookAdvisorRegistry> provider = mock(ObjectProvider.class);
+        when(provider.getIfAvailable()).thenReturn(registry);
+        service = new GuardAdviceService(approvals, participants, agents, provider,
                 new ObjectMapper());
 
         approval = new ChatApproval(REQUEST_ID, "run-1", SESSION_ID,
