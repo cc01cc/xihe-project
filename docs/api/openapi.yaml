@@ -2430,7 +2430,7 @@ paths:
   /internal/v1/agent/embedding-models:
     get: { operationId: agentEmbeddingModels, security: [{ bearerAuth: [] }], responses: { '200': { description: Embedding models } } }
   /internal/v1/agent/health:
-    get: { operationId: agentHealth, responses: { '200': { description: Agent health, content: { application/json: { schema: { type: object, required: [status], properties: { status: { type: string }, mcpInitialized: { type: boolean }, toolsCount: { type: integer } }, additionalProperties: true } } } } } }
+    get: { operationId: agentHealth, responses: { '200': { description: Agent health, content: { application/json: { schema: { type: object, required: [status, configState], properties: { status: { type: string }, configState: { type: string, enum: [pending, loading, ready, failed], description: 'PLAN-0632 D32-27: process config readiness. Only `ready` means process config is usable; pending/loading/failed make chat fail closed with CONFIG_UNAVAILABLE. A probe never triggers a load.' }, mcpInitialized: { type: boolean }, toolsCount: { type: integer } }, additionalProperties: true } } } } } }
   /internal/v1/agent/tools:
     get: { operationId: agentTools, security: [{ bearerAuth: [] }], responses: { '200': { description: Agent tools, content: { application/json: { schema: { type: object, required: [tools], properties: { tools: { type: array, items: { type: object } }, customTools: { type: array, items: { type: object } } } } } } }, '401': { $ref: '#/components/responses/Problem' } } }
   /internal/v1/agent/approval/respond:
