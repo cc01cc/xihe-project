@@ -123,6 +123,55 @@ describe("WorkspaceDock (PLAN-0582 S2)", () => {
         expect(wrapper.find('[data-testid="dock-overflow-trigger"]').exists()).toBe(false);
     });
 
+    it("keeps the tab and its close affordance as two sibling buttons (no nested interactive)", () => {
+        // PLAN-0626 D26-10: the old markup put a `role=button` span inside `role=tab`,
+        // i.e. a focusable control nested in another control, with hand-rolled
+        // Enter/Space handlers. Both must be real siblings now, so keyboard
+        // activation is the browser's own button behaviour.
+        const wrapper = mountDock(),
+            tab = wrapper.get('[data-testid="dock-tab-code"]'),
+            close = wrapper.get('[data-testid="dock-tab-close-code"]');
+
+        expect(tab.element.tagName).toBe("BUTTON");
+        expect(close.element.tagName).toBe("BUTTON");
+        // The close affordance is not inside the tab element at all.
+        expect(tab.element.contains(close.element)).toBe(false);
+        expect(tab.element.querySelector("button")).toBeNull();
+        expect(tab.element.querySelector('[role="button"]')).toBeNull();
+        // Both live in the same chip, and the tab keeps its single-select semantics.
+        expect(tab.element.parentElement).toBe(close.element.parentElement);
+        expect(tab.attributes("role")).toBe("tab");
+    });
+
+    it("keeps the overflow row's select and close affordances as sibling buttons too", async () => {
+        const tabs = [
+                { id: "code", label: "Code" },
+                { id: "changes", label: "Changes" },
+                { id: "monitor", label: "Monitor" },
+                { id: "alpha", label: "Alpha" },
+            ],
+            wrapper = mountDock({ tabs, activeTab: "code", maxVisibleTabs: 3 });
+
+        await wrapper.get('[data-testid="dock-overflow-trigger"]').trigger("click");
+
+        // Queried inline: any new `const` after the await trips the file's one-var style rule.
+        expect(wrapper.get('[data-testid="dock-overflow-item-alpha"]').element.tagName).toBe(
+            "BUTTON",
+        );
+        expect(wrapper.get('[data-testid="dock-overflow-close-alpha"]').element.tagName).toBe(
+            "BUTTON",
+        );
+        expect(
+            wrapper
+                .get('[data-testid="dock-overflow-item-alpha"]')
+                .element.contains(wrapper.get('[data-testid="dock-overflow-close-alpha"]').element),
+        ).toBe(false);
+
+        await wrapper.get('[data-testid="dock-overflow-close-alpha"]').trigger("click");
+        expect(wrapper.emitted("close-tab")?.at(-1)).toEqual(["alpha"]);
+        expect(wrapper.emitted("update:activeTab")).toBeUndefined();
+    });
+
     it("resizes with the pointer and clamps into the 320-480 range", async () => {
         const wrapper = mountDock({ width: 360 });
         const resizer = wrapper.get('[data-testid="dock-resizer"]');

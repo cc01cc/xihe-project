@@ -23,6 +23,11 @@ import type { DockTab } from "./workspaceDockTabs";
  *
  * Floating is deliberately **not** a modal: no backdrop (it would block the main
  * column the user is editing), only a shadow, Esc and click-outside to dismiss.
+ *
+ * PLAN-0626 D26-10: every tab chip is a wrapper holding two sibling controls (the
+ * `role=tab` button and its close button). Nothing interactive is nested inside a
+ * tab any more, so Enter/Space work through native button semantics instead of
+ * hand-rolled keydown handlers (a11y spec §基线 1, `spec/ui/accessibility.md:11-15`).
  */
 const props = withDefaults(
     defineProps<{
@@ -165,38 +170,47 @@ function handleResizeKeydown(event: KeyboardEvent) {
                 :aria-label="t('workspace.dockTabs')"
                 class="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto"
             >
-                <button
+                <!--
+                    PLAN-0626 D26-10: the chip is a wrapper because a tab and its close
+                    affordance are two sibling controls. Nesting a `role=button` span (or a
+                    second `<button>`) inside `role=tab` produced a nested-interactive element
+                    with hand-rolled Enter/Space handlers; the same shape already exists in
+                    `WorkspaceTabBar.vue`, so this is a reuse, not a new pattern.
+                -->
+                <div
                     v-for="tab in visibleTabs"
                     :key="tab.id"
-                    type="button"
-                    role="tab"
-                    :data-testid="`dock-tab-${tab.id}`"
-                    :aria-selected="tab.id === activeTab"
-                    class="inline-flex shrink-0 items-center gap-1 rounded px-2 py-1 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    class="inline-flex shrink-0 items-center rounded transition-colors"
                     :class="
                         tab.id === activeTab
-                            ? 'bg-accent font-medium text-foreground'
+                            ? 'bg-accent text-foreground'
                             : 'text-muted-foreground hover:bg-accent'
                     "
-                    @click="selectTab(tab.id)"
-                    @auxclick="handleTabAuxClick($event, tab.id)"
                 >
-                    <span class="max-w-28 truncate">{{ tab.label }}</span>
-                    <span
+                    <button
+                        type="button"
+                        role="tab"
+                        :data-testid="`dock-tab-${tab.id}`"
+                        :aria-selected="tab.id === activeTab"
+                        class="inline-flex min-w-0 items-center gap-1 rounded px-2 py-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        :class="tab.id === activeTab ? 'font-medium' : ''"
+                        @click="selectTab(tab.id)"
+                        @auxclick="handleTabAuxClick($event, tab.id)"
+                    >
+                        <span class="max-w-28 truncate">{{ tab.label }}</span>
+                    </button>
+                    <button
                         v-if="tab.id === activeTab"
-                        role="button"
-                        tabindex="0"
+                        type="button"
                         :data-testid="`dock-tab-close-${tab.id}`"
                         :aria-label="t('workspace.dockCloseTab')"
                         :title="t('workspace.dockCloseTab')"
-                        class="rounded p-0.5 text-muted-foreground hover:bg-background/60 hover:text-foreground"
+                        class="mr-0.5 shrink-0 rounded p-0.5 text-muted-foreground transition-colors hover:bg-background/60 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                         @click.stop="closeTab(tab.id)"
-                        @keydown.enter.stop="closeTab(tab.id)"
-                        @keydown.space.stop.prevent="closeTab(tab.id)"
                     >
                         <X class="size-3" aria-hidden="true" />
-                    </span>
-                </button>
+                    </button>
+                </div>
             </div>
 
             <div v-if="hasOverflow" class="relative shrink-0">
@@ -217,27 +231,30 @@ function handleResizeKeydown(event: KeyboardEvent) {
                     data-testid="dock-overflow-menu"
                     class="absolute right-0 top-full z-50 mt-1 w-44 rounded-md border bg-popover p-1 text-sm shadow-md"
                 >
-                    <button
+                    <div
                         v-for="tab in overflowTabs"
                         :key="tab.id"
-                        type="button"
-                        :data-testid="`dock-overflow-item-${tab.id}`"
-                        class="flex w-full items-center justify-between gap-2 rounded px-2 py-1.5 text-left hover:bg-accent"
-                        @click="selectTab(tab.id)"
+                        class="flex w-full items-center justify-between gap-1 rounded hover:bg-accent"
                     >
-                        <span class="truncate">{{ tab.label }}</span>
-                        <span
-                            role="button"
-                            tabindex="0"
+                        <button
+                            type="button"
+                            :data-testid="`dock-overflow-item-${tab.id}`"
+                            class="min-w-0 flex-1 truncate rounded px-2 py-1.5 text-left text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                            @click="selectTab(tab.id)"
+                        >
+                            {{ tab.label }}
+                        </button>
+                        <button
+                            type="button"
+                            :data-testid="`dock-overflow-close-${tab.id}`"
                             :aria-label="t('workspace.dockCloseTab')"
                             :title="t('workspace.dockCloseTab')"
-                            class="rounded p-0.5 text-muted-foreground hover:text-foreground"
+                            class="mr-1 shrink-0 rounded p-0.5 text-muted-foreground transition-colors hover:bg-background/60 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                             @click.stop="closeTab(tab.id)"
-                            @keydown.enter.stop="closeTab(tab.id)"
                         >
                             <X class="size-3" aria-hidden="true" />
-                        </span>
-                    </button>
+                        </button>
+                    </div>
                 </div>
             </div>
 
