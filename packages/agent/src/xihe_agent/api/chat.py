@@ -52,6 +52,7 @@ from xihe_agent.context.path_mentions import (
     parse_path_mentions,
     render_for_context,
 )
+from xihe_agent.context.skill_catalog import render_from_component_sources
 from xihe_agent.interfaces.agent_runner import AgentEvent, RunnerConfig
 from xihe_agent.interfaces.chat_run_context import ContextBuildError
 from xihe_agent.interfaces.event import Event
@@ -183,27 +184,24 @@ def _rag_config_defaults() -> dict[str, Any]:
     }
 
 
-def xh_context_slots() -> dict[str, str]:
+def xh_context_slots(skill_catalog: str = "", agent_memory: str = "") -> dict[str, str]:
     """PLAN-0632 Gate G-0: the single producer seam for the two context-block slots.
 
     `skill_catalog` and `agent_memory` are model-visible slots declared in
     ``llm.api_request.VARIABLES`` (mirrored by CP ``ApiRequestValidator.SCALARS`` and pinned
-    by ``spec/fixtures/xh-variables.json``). Their *content* belongs to the skills listing
-    (PLAN-0628) and memory (PLAN-0629) components, which do not exist yet, so both are empty
-    strings today: an empty block renders as nothing, which is the honest current value.
+    by ``spec/fixtures/xh-variables.json``). The skills listing is filled in by PLAN-0628
+    (``context.skill_catalog.render_from_component_sources``); memory by PLAN-0629.
 
     Two rules keep this from becoming a silent hole:
 
     * the keys are ALWAYS present, so a template that references a slot can never fall through
-      to ``MISSING_VARIABLE`` just because a producer is unfinished; and
+      to ``MISSING_VARIABLE`` just because a producer is unfinished — a run with no skills
+      passes ``""``, which renders as nothing; and
     * a slot that is genuinely missing from the map still raises ``MISSING_VARIABLE`` in
       ``render_request`` - emptiness here is declared, not inferred from an absent key.
-
-    When PLAN-0628/0629 land they replace the values in this one function; no other call site
-    or template needs to change.
     """
 
-    return {"skill_catalog": "", "agent_memory": ""}
+    return {"skill_catalog": skill_catalog, "agent_memory": agent_memory}
 
 
 async def _close_guidance_consumer(consumer: GuidanceConsumer | None) -> None:
@@ -640,6 +638,23 @@ async def chat(request: Request):
                         len(path_mention_diagnostics["truncated"]),
                     )
 
+                # PLAN-0628 M1 (G-0 seam): fill ${xh.skill_catalog} from the CP component source.
+                # It goes into the SLOT, never into `messages`: in template mode only the slots are
+                # rendered into the provider body (same finding as PLAN-0635 M2 for path mentions).
+                skill_catalog_content, skill_catalog_diagnostics = render_from_component_sources(
+                    context, data.get("componentSources")
+                )
+                if skill_catalog_diagnostics["components"]:
+                    context.runtime_state["skillCatalogDiagnostics"] = skill_catalog_diagnostics
+                    logger.info(
+                        "skill catalog components={} items={} status={} charged={} truncated={}",
+                        skill_catalog_diagnostics["components"],
+                        skill_catalog_diagnostics["items"],
+                        skill_catalog_diagnostics["status"],
+                        skill_catalog_diagnostics["charged"],
+                        skill_catalog_diagnostics["truncated"],
+                    )
+
                 model = ApiChatModel(
                     api_type=api_type,
                     grant=grant,
@@ -653,7 +668,7 @@ async def chat(request: Request):
                             [] if continuation is not None else native_history(context.messages, api_type)
                         ),
                         "tools": native_tools(all_tools, api_type),
-                        **xh_context_slots(),
+                        **xh_context_slots(skill_catalog=skill_catalog_content),
                     },
                     request_id=request_id,
                     timeout=request_config.timeout,
