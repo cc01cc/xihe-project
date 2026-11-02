@@ -1,5 +1,9 @@
 //! PLAN-0347 T1.3 真容器会话测试（需 Docker + `xihe/workspace` 镜像）。
 //! 运行：cargo test --test mcp_session_test -- --nocapture
+//! PLAN-0618 addendum（工作区 docker 后端完全冻结，2026-11-01）：本测试需要 Docker +
+//! `xihe/workspace` 镜像，冻结期默认跳过——仅当 `XIHE_DOCKER_TESTS=1` 时才执行，保证
+//! `cargo test` 全量不因此变红（Rust 侧没有 CP 那套 `docker-frozen` JUnit 排除组）。
+//! PLAN-0618 解冻时移除该门、恢复无条件执行。
 
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -97,8 +101,21 @@ async fn wait_session_state(
     false
 }
 
+fn docker_tests_enabled() -> bool {
+    std::env::var("XIHE_DOCKER_TESTS")
+        .map(|value| value == "1")
+        .unwrap_or(false)
+}
+
 #[tokio::test]
 async fn session_request_self_heals_and_cleans_up() {
+    if !docker_tests_enabled() {
+        eprintln!(
+            "skipping session_request_self_heals_and_cleans_up: set XIHE_DOCKER_TESTS=1 \
+             (workspace docker backend frozen by PLAN-0618; image xihe/workspace not built)"
+        );
+        return;
+    }
     let docker = Docker::connect_with_local_defaults().expect("docker connect");
     docker.version().await.expect("docker must be available");
 
