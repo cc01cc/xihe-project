@@ -198,6 +198,8 @@ async function handleSend(
         attachments?: string[];
         toolMode?: "none" | "workspace";
         agentPrincipalId?: string;
+        /** D23-27："代发" —— 以该参与者身份发言（`speakAs` 能力 + 契约字段 `asParticipantId`）。 */
+        asParticipantId?: string;
     },
 ): Promise<ChatRunResponse | null> {
     const sessionId = props.sessionId;
@@ -229,6 +231,7 @@ async function handleSend(
         sessionId,
         attachments: options?.attachments,
         agentPrincipalId: options?.agentPrincipalId,
+        asParticipantId: options?.asParticipantId,
     });
     if (props.sessionId !== sessionId) return null;
     if (result) {

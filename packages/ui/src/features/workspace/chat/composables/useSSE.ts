@@ -1,5 +1,6 @@
 import { ref, onUnmounted, getCurrentInstance, toValue, type MaybeRefOrGetter } from "vue";
 import { getActivePinia } from "pinia";
+import { i18n } from "../../../../i18n";
 import { useAgentStore } from "../../../../stores/agent";
 import { useCheckpointStore } from "../../../../stores/checkpoint";
 import { useChatStore } from "../stores/chat.ts";
@@ -86,6 +87,8 @@ export interface SendMessageOptions {
     model?: string;
     sessionId?: string;
     agentPrincipalId?: string;
+    /** D23-27：以某个参与者身份发言。仅 `capabilities.speakAs` 为真时才应由 UI 传入。 */
+    asParticipantId?: string;
     provider?: string;
     toolMode?: "none" | "workspace";
     idempotencyKey?: string;
@@ -196,6 +199,20 @@ export function useSSE(sessionId: MaybeRefOrGetter<string>) {
             retryable: true,
             outcome: "error",
         };
+    }
+
+    /**
+     * D23-27：代发被拒的两个业务码必须给**本地化**提示（不直显 CP 英文 detail），
+     * 且因为发送已失败，不会留下乐观消息（`sendMessage` 返回 null，调用方不写 user 消息）。
+     */
+    function sendErrorMessage(payload: SSEErrorPayload): string {
+        if (payload.code === "PARTICIPANT_CAP_DENIED") {
+            return i18n.global.t("workspace.speakAsCapDenied");
+        }
+        if (payload.code === "PARTICIPANT_DISABLED") {
+            return i18n.global.t("workspace.speakAsDisabled");
+        }
+        return errorText(payload);
     }
 
     function errorText(error: SSEErrorPayload): string {
@@ -610,6 +627,7 @@ export function useSSE(sessionId: MaybeRefOrGetter<string>) {
         idempotencyKey,
         sessionId: overrideSid,
         agentPrincipalId,
+        asParticipantId,
     }: SendMessageOptions): Promise<ChatRunResponse | null> {
         const generation = connectionGeneration;
         error.value = null;
@@ -625,6 +643,8 @@ export function useSSE(sessionId: MaybeRefOrGetter<string>) {
                 stream: true,
             };
             if (agentPrincipalId) body.agentPrincipalId = agentPrincipalId;
+            // D23-27：代发。服务端再校验（owner + 自己/自己拥有的 AGENT + 未停用），UI 只做入口门禁。
+            if (asParticipantId) body.asParticipantId = asParticipantId;
             if (model) {
                 body.model = model;
             }
@@ -658,7 +678,7 @@ export function useSSE(sessionId: MaybeRefOrGetter<string>) {
                 return null;
             const payload = asErrorPayload(err);
             logger.error("Failed to send message via SSE: " + errorText(payload));
-            error.value = errorText(payload);
+            error.value = sendErrorMessage(payload);
             isStreaming.value = false;
             currentCallbacks.onError?.(payload);
             return null;

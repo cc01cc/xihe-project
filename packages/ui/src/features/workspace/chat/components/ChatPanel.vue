@@ -457,6 +457,7 @@ async function handleSend(
     content: string,
     attachments?: AttachmentFile[],
     branchIdOverride?: string,
+    speakAsParticipantId?: string,
 ) {
     const id = props.sessionId;
     if (!id) return;
@@ -484,6 +485,7 @@ async function handleSend(
             attachments,
             agentPrincipalId: selectedPrincipal,
             branchId,
+            asParticipantId: speakAsParticipantId,
         });
         return;
     }
@@ -655,13 +657,28 @@ async function continueFollowUpQueue() {
     }
 }
 
+/**
+ * 输入框的 `send` 事件现在带第三个参数（`asParticipantId`，D23-27 代发）。
+ * `handleSend` 的第三个位置是 `branchIdOverride`（队列流程在用），所以这里显式转接，
+ * 避免"代发 id 被当成 branchId"这种静默错位。
+ */
+function onInputSend(
+    content: string,
+    attachments?: AttachmentFile[],
+    asParticipantId?: string,
+): Promise<void> {
+    return handleSend(content, attachments, undefined, asParticipantId);
+}
+
 async function submitMessage(input: {
     content: string;
     attachments?: AttachmentFile[];
     agentPrincipalId: string;
     branchId: string;
+    /** D23-27：以某个参与者身份发言（"代发"）。仅当 `capabilities.speakAs` 为真时才会有值。 */
+    asParticipantId?: string;
 }) {
-    const { content, attachments, agentPrincipalId, branchId } = input;
+    const { content, attachments, agentPrincipalId, branchId, asParticipantId } = input;
     if (!authStore.canWriteWorkspace) {
         toast.error(t("workspace.viewerReadOnly"));
         return;
@@ -676,6 +693,7 @@ async function submitMessage(input: {
         attachments: fileIds,
         toolMode: props.toolMode,
         agentPrincipalId,
+        asParticipantId,
     });
     if (!result) return;
 
@@ -1049,7 +1067,7 @@ watch(
             :queue-paused="followUpQueue?.queueState === 'paused'"
             :queue-submitting="followUpQueueSubmitting"
             :queue-action-busy="followUpQueueBusyItemId !== null || followUpQueueContinuing"
-            @send="handleSend"
+            @send="onInputSend"
             @queue="handleFollowUpQueue"
             @stop="stopStreaming"
         />

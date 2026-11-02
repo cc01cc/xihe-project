@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { ref, computed, markRaw } from "vue";
+import { ref, computed, markRaw, watch } from "vue";
 import { useI18n } from "vue-i18n";
+import { useSessionParticipantsStore } from "../../stores/sessionParticipants";
 import { toast } from "vue-sonner";
 import { Send, Square, LoaderCircle } from "@lucide/vue";
 import ImageUpload from "../../../../components/multimodal/ImageUpload.vue";
@@ -32,12 +33,48 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{
-    send: [content: string, attachments?: AttachmentFile[]];
-    queue: [content: string, attachments?: AttachmentFile[]];
+    send: [content: string, attachments?: AttachmentFile[], asParticipantId?: string];
+    queue: [content: string, attachments?: AttachmentFile[], asParticipantId?: string];
     stop: [];
 }>();
 
 const { t } = useI18n();
+
+/**
+ * D23-27「代发」：以某个参与者身份发言。
+ * - 入口由 `capabilities.speakAs`（同一响应里的归约）决定**显不显示**，false 时**不渲染**（不是禁用）；
+ * - 候选 = store 的 `speakAsCandidates`（`selfOwned === true` 且未停用）；
+ * - 默认选自己（HUMAN 行），没有则选第一个 —— 绝不默认代别人发言。
+ */
+const participantsStore = useSessionParticipantsStore();
+const speakAsId = ref("");
+
+const speakAsOptions = computed(() => participantsStore.speakAsCandidates);
+
+const showSpeakAs = computed(() => participantsStore.canSpeakAs && speakAsOptions.value.length > 0);
+
+/** 只有真的选了候选才带 `asParticipantId`：空串不发，避免把"以某人身份"误当默认行为。 */
+const activeSpeakAsId = computed(() =>
+    showSpeakAs.value && speakAsOptions.value.some((item) => item.participantId === speakAsId.value)
+        ? speakAsId.value
+        : "",
+);
+
+watch(
+    () => props.sessionId,
+    (id) => void participantsStore.ensureLoaded(id ?? null),
+    { immediate: true },
+);
+
+watch(
+    speakAsOptions,
+    (options) => {
+        if (options.some((item) => item.participantId === speakAsId.value)) return;
+        const own = options.find((item) => item.principalKind === "HUMAN") ?? options[0];
+        speakAsId.value = own?.participantId ?? "";
+    },
+    { immediate: true },
+);
 const input = ref(""),
     isComposing = ref(false),
     attachments = ref<File[]>([]);
@@ -191,8 +228,19 @@ async function handleSend() {
     if (props.queueMode && uploadFailed) return;
     if (attachments.value.length > 0 && uploadedForSubmit.length === 0) return;
     if (props.queueMode)
-        emit("queue", text, uploadedForSubmit.length > 0 ? uploadedForSubmit : undefined);
-    else emit("send", text, uploadedForSubmit.length > 0 ? uploadedForSubmit : undefined);
+        emit(
+            "queue",
+            text,
+            uploadedForSubmit.length > 0 ? uploadedForSubmit : undefined,
+            activeSpeakAsId.value,
+        );
+    else
+        emit(
+            "send",
+            text,
+            uploadedForSubmit.length > 0 ? uploadedForSubmit : undefined,
+            activeSpeakAsId.value,
+        );
 }
 
 function stopInput() {
@@ -213,8 +261,8 @@ function executeSlash(cmd: SlashCommand) {
 }
 
 function handleSendText(text: string) {
-    if (props.queueMode) emit("queue", text);
-    else emit("send", text);
+    if (props.queueMode) emit("queue", text, undefined, activeSpeakAsId.value);
+    else emit("send", text, undefined, activeSpeakAsId.value);
 }
 
 function handleKeydown(e: KeyboardEvent) {
@@ -344,6 +392,30 @@ defineExpose({ clearDraft, insertMention });
 <template>
     <div class="min-w-0 border-t bg-background px-4 py-3">
         <div class="mx-auto w-full max-w-4xl space-y-2">
+            <!--
+                D23-27「代发」：只有 capabilities.speakAs 为真才**渲染**（false 时不渲染，不是禁用）。
+                候选只含我拥有的、未停用的参与者（selfOwned 由 CP 归约）。
+            -->
+            <div v-if="showSpeakAs" class="flex items-center gap-2 px-2" data-testid="speak-as-bar">
+                <label class="text-[11px] text-muted-foreground" :for="'speak-as-select'">{{
+                    t("workspace.speakAsLabel")
+                }}</label>
+                <select
+                    id="speak-as-select"
+                    v-model="speakAsId"
+                    class="rounded border bg-background px-1.5 py-0.5 text-[11px]"
+                    data-testid="speak-as-select"
+                >
+                    <option
+                        v-for="option in speakAsOptions"
+                        :key="option.participantId"
+                        :value="option.participantId"
+                        :data-participant-id="option.participantId"
+                    >
+                        {{ option.displayName ?? t("workspace.participantUnknownName") }}
+                    </option>
+                </select>
+            </div>
             <p
                 v-if="queueMode"
                 class="px-2 text-[11px] text-muted-foreground"

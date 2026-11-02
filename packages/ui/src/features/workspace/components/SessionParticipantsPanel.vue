@@ -22,10 +22,10 @@ import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { ApiError, api } from "../../../composables/api";
 import ParticipantRow from "./ParticipantRow.vue";
+import { useSessionParticipantsStore } from "../stores/sessionParticipants";
 import type {
     ParticipantRespondPolicy,
     ParticipantWakePolicy,
-    SessionParticipantCapabilities,
     SessionParticipantView,
 } from "../../../types/participant";
 
@@ -36,18 +36,22 @@ const props = defineProps<{
 
 const { t } = useI18n();
 
-const participants = ref<SessionParticipantView[] | null>(null);
-const capabilities = ref<SessionParticipantCapabilities>({
-    view: false,
-    manage: false,
-    mention: false,
-});
-const loading = ref(false);
-/** T3.7：403 单独成态（不渲染行、不显示空态文案）。 */
-const forbidden = ref(false);
-const error = ref("");
+/**
+ * 单一数据源：dock 面板与 composer 的「代发」下拉共用 `useSessionParticipantsStore`，
+ * 避免两份 `GET` 各自过期（症状：面板有某行、下拉里没有它）。
+ */
+const store = useSessionParticipantsStore();
+const participants = computed(() => store.participants);
+const capabilities = computed(() => store.capabilities);
+const loading = computed(() => store.loading);
+const forbidden = computed(() => store.forbidden);
+const error = computed(() => store.error);
+
 /** 改策略/移除的失败：留在列表内提示，不摧毁列表。 */
 const policyError = ref("");
+
+/** store 的 load 由 sessionId 变化驱动（面板与 composer 共用同一份数据）。 */
+watch(() => props.sessionId, load, { immediate: true });
 const removingId = ref<string | null>(null);
 const savingId = ref<string | null>(null);
 
@@ -59,34 +63,8 @@ const emit = defineEmits<{
 const canView = computed(() => capabilities.value.view);
 
 async function load(): Promise<void> {
-    if (!props.sessionId) {
-        participants.value = null;
-        loading.value = false;
-        error.value = "";
-        return;
-    }
-    loading.value = true;
-    error.value = "";
-    forbidden.value = false;
-    try {
-        const response = await api.getSessionParticipants(props.sessionId);
-        participants.value = response.participants;
-        capabilities.value = response.capabilities;
-    } catch (cause) {
-        // 契约破了 / 网络断了都必须显式失败；不要用空列表掩盖。
-        participants.value = null;
-        capabilities.value = { view: false, manage: false, mention: false };
-        // T3.7：`403` 是"没有权限"，必须与"空列表"和"加载失败"分开呈现。
-        forbidden.value = cause instanceof ApiError && cause.problem.status === 403;
-        // 403 只进 forbidden 态：不能再落 error，否则会被错误页盖住。
-        if (!forbidden.value)
-            error.value = cause instanceof ApiError ? cause.message : String(cause);
-    } finally {
-        loading.value = false;
-    }
+    await store.load(props.sessionId);
 }
-
-watch(() => props.sessionId, load, { immediate: true });
 
 /** 改策略：只带变更字段；失败时**不改本地值**（旧值保留），并显示本地化提示。 */
 async function updatePolicy(
@@ -98,7 +76,7 @@ async function updatePolicy(
     policyError.value = "";
     try {
         await api.updateSessionParticipant(props.sessionId, participant.participantId, change);
-        await load();
+        await store.reload();
     } catch (cause) {
         // PRIMARY 不可改 / 其它 4xx：显示本地化提示，行内下拉仍显示旧值（props 未变）。
         policyError.value = policyErrorMessage(cause);
@@ -123,12 +101,13 @@ function policyErrorMessage(cause: unknown): string {
 async function removeParticipant(participant: SessionParticipantView): Promise<void> {
     if (!props.sessionId || !capabilities.value.manage || removingId.value) return;
     removingId.value = participant.participantId;
-    error.value = "";
+    policyError.value = "";
     try {
         await api.removeSessionParticipant(props.sessionId, participant.participantId);
-        await load();
+        await store.reload();
     } catch (cause) {
-        error.value = cause instanceof ApiError ? cause.message : String(cause);
+        // 移除失败同样留在列表里提示，不把列表换成错误页。
+        policyError.value = cause instanceof ApiError ? cause.message : String(cause);
     } finally {
         removingId.value = null;
     }
