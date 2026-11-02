@@ -5,13 +5,13 @@ import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
 import { FolderTree, GripVertical } from "@lucide/vue";
 import {
-    DOCK_MAX_TABS,
     DOCK_WIDTH_DEFAULT,
     TREE_COLLAPSED_WIDTH,
     TREE_WIDTH_DEFAULT,
     TREE_WIDTH_KEYBOARD_STEP,
     TREE_WIDTH_MAX,
     TREE_WIDTH_MIN,
+    canOpenDockTab,
     clampDockWidth,
     clampTreeWidth,
     WORKSPACE_LAYOUT_KEY,
@@ -342,7 +342,11 @@ function toggleTree(): void {
 function openDockTab(id: DockTabId): void {
     const tabs = layout.value.dockTabs;
     if (!tabs.includes(id)) {
-        if (tabs.length >= DOCK_MAX_TABS) return;
+        // PLAN-0626 D26-06: the cap is a visible refusal, never a silent no-op.
+        if (!canOpenDockTab(tabs.length)) {
+            toast.warning(t("workspace.dockTabsFull"));
+            return;
+        }
         layout.value.dockTabs = [...tabs, id];
     }
     layout.value.activeDockTab = id;
@@ -364,12 +368,24 @@ function setActiveDockTab(id: string): void {
     layout.value.dockCollapsed = false;
 }
 
-/** Closing the last tab collapses the dock (ruling: closing the last one rolls it up). */
+/**
+ * Closing the last tab collapses the dock (ruling: closing the last one rolls it up).
+ *
+ * PLAN-0626 D26-13: closing the *active* tab activates its **nearest neighbour** (right
+ * first, then left) — the browser-tab convention. Falling back to the first tab made
+ * "close the 5th of 6" snap the dock back to the far left of the strip.
+ */
 function closeDockTab(id: string): void {
-    const remaining = layout.value.dockTabs.filter((tab) => tab !== id);
+    const tabs = layout.value.dockTabs,
+        // An unknown id stays a no-op (the dock renders string-generic ids).
+        closingIndex = isDockTabId(id) ? tabs.indexOf(id) : -1;
+    if (closingIndex < 0) return;
+    const remaining = tabs.filter((tab) => tab !== id);
     layout.value.dockTabs = remaining;
     if (layout.value.activeDockTab === id) {
-        layout.value.activeDockTab = remaining[0] ?? null;
+        // After the filter `remaining[closingIndex]` is the tab that used to sit on the
+        // right of the closed one; it is absent only when the closed tab was last.
+        layout.value.activeDockTab = remaining[closingIndex] ?? remaining[closingIndex - 1] ?? null;
     }
     if (remaining.length === 0) layout.value.dockCollapsed = true;
 }

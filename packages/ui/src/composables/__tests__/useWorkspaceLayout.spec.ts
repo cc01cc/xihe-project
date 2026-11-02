@@ -18,6 +18,7 @@ import {
     TREE_WIDTH_MAX,
     TREE_WIDTH_MIN,
     WORKSPACE_LAYOUT_STORAGE_PREFIX,
+    canOpenDockTab,
     clampDockWidth,
     clampNavWidth,
     clampNavWidthForViewport,
@@ -182,6 +183,16 @@ describe("per-workspace dock layout storage (PLAN-0582 S2)", () => {
         });
         // Workspace-scoped: another workspace is untouched.
         expect(readWorkspaceLayout("ws-2")).toEqual(defaultWorkspaceLayout());
+    });
+
+    it("refuses the next dock tab once DOCK_MAX_TABS is reached (D26-06)", () => {
+        // Only known ids are allowed, so the cap is exercised through the pure predicate.
+        expect(canOpenDockTab(0)).toBe(true);
+        expect(canOpenDockTab(DOCK_MAX_TABS - 1)).toBe(true);
+        expect(canOpenDockTab(DOCK_MAX_TABS)).toBe(false);
+        expect(canOpenDockTab(DOCK_MAX_TABS + 1)).toBe(false);
+        // A corrupt count cannot describe an open set: fail open, like the other readers.
+        expect(canOpenDockTab(Number.NaN)).toBe(true);
     });
 
     it("sanitizes unknown, duplicate, over-limit tabs and a foreign active tab", () => {

@@ -197,6 +197,38 @@ describe("WorkspaceWorkbench skeleton (PLAN-0582 S2)", () => {
         });
     });
 
+    it("activates the neighbouring tab when the active tab closes (right first, then left)", async () => {
+        // PLAN-0626 D26-13: browser-tab convention instead of "always jump to the first tab".
+        const wrapper = mountWorkbench();
+        await flushPromises();
+
+        // Strip order: code, changes, monitor.
+        await wrapper.get('[data-testid="workspace-toolbar-code"]').trigger("click");
+        await wrapper.get('[data-testid="workspace-toolbar-changes"]').trigger("click");
+        await wrapper.get('[data-testid="workspace-toolbar-monitor"]').trigger("click");
+        expect(wrapper.findAll('[role="tab"]')).toHaveLength(3);
+
+        // Close the middle tab while it is active: its right neighbour takes over.
+        await wrapper.get('[data-testid="dock-tab-changes"]').trigger("click");
+        expect(wrapper.get('[data-testid="dock-tab-changes"]').attributes("aria-selected")).toBe(
+            "true",
+        );
+        await wrapper.get('[data-testid="dock-tab-close-changes"]').trigger("click");
+        expect(wrapper.get('[data-testid="dock-tab-monitor"]').attributes("aria-selected")).toBe(
+            "true",
+        );
+        expect(wrapper.get('[data-testid="dock-tab-code"]').attributes("aria-selected")).toBe(
+            "false",
+        );
+
+        // The rightmost active tab has no right neighbour, so the left one wins.
+        await wrapper.get('[data-testid="dock-tab-close-monitor"]').trigger("click");
+        expect(wrapper.get('[data-testid="dock-tab-code"]').attributes("aria-selected")).toBe(
+            "true",
+        );
+        expect(wrapper.findAll('[role="tab"]')).toHaveLength(1);
+    });
+
     it("keeps width and collapsed state independent (collapse then re-open restores the width)", async () => {
         const wrapper = mountWorkbench();
         await flushPromises();

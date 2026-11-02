@@ -111,6 +111,19 @@ export function isDockTabId(value: unknown): value is DockTabId {
 }
 
 /**
+ * PLAN-0626 D26-06: the dock has a hard tab cap (`DOCK_MAX_TABS`). Opening one more
+ * must be a **visible refusal** instead of the previous silent `return` (a click that
+ * does nothing reads like a broken button — the N12 "silent failure" pattern). Kept as
+ * a pure predicate so the threshold is unit-testable without a DOM.
+ */
+export function canOpenDockTab(openTabCount: number): boolean {
+    // NaN/Infinity cannot describe an open set, so treat them as "room left" (fail-open
+    // on a corrupt count, matching the reader's degrade-to-defaults stance).
+
+    return !Number.isFinite(openTabCount) || openTabCount < DOCK_MAX_TABS;
+}
+
+/**
  * P1-4 (S2 audit): the navigation panel width is clamped per breakpoint for
  * rendering only — the user's stored value is never rewritten, so going back to a
  * wide window restores it (spec §1.5 A).
@@ -328,7 +341,6 @@ export function readWorkspaceLayout(workspaceId: string): WorkspaceLayoutState {
                 typeof parsed.dockModeManual === "boolean"
                     ? parsed.dockModeManual
                     : defaults.dockModeManual,
-
             openTabs: readOpenTabs(parsed),
         };
     } catch (cause) {
