@@ -151,7 +151,7 @@ describe("ScheduledTasksView list rendering", () => {
         expect(wrapper.get('[data-testid="scheduled-task-missed-count"]').text()).toContain("×2");
         expect(wrapper.get('[data-testid="scheduled-task-reason"]').text()).toContain("宽限期");
         expect(creators[0]?.text()).toBe("human");
-        expect(creators[1]?.text()).toBe("agent");
+        expect(creators[1]?.text()).toBe("智能体");
         // scheduled row shows the cron expression and timezone under next fire.
         expect(wrapper.text()).toContain("0 9 * * *");
         expect(wrapper.text()).toContain("UTC");

@@ -227,22 +227,22 @@ describe("WorkspaceAgentManagementDialog PLAN-0622 scope visibility (4 states)",
         apiMock.getSelfPermissions.mockResolvedValue(PERSONAL_ONLY);
         const wrapper = await mountOpenedDialog();
         expect(scopeOptions(wrapper)).toEqual(["PERSONAL"]);
-        // 术语对账：文案必须带 agent 限定，不能与"连接作用域"撞词。
-        expect(wrapper.text()).toContain("个人 agent");
+        // 术语对账：文案必须带「智能体」限定，不能与"连接作用域"撞词。
+        expect(wrapper.text()).toContain("个人智能体");
     });
 
     it("offers only WORKSPACE when MANAGE_WORKSPACE_AGENTS is granted for this Workspace", async () => {
         apiMock.getSelfPermissions.mockResolvedValue(WORKSPACE_ONLY);
         const wrapper = await mountOpenedDialog();
         expect(scopeOptions(wrapper)).toEqual(["WORKSPACE"]);
-        expect(wrapper.text()).toContain("工作区 agent");
+        expect(wrapper.text()).toContain("工作区智能体");
     });
 
     it("offers only INSTANCE when the projection grants CREATE_ACCOUNT", async () => {
         apiMock.getSelfPermissions.mockResolvedValue(INSTANCE_ONLY);
         const wrapper = await mountOpenedDialog();
         expect(scopeOptions(wrapper)).toEqual(["INSTANCE"]);
-        expect(wrapper.text()).toContain("实例 agent");
+        expect(wrapper.text()).toContain("实例智能体");
     });
 
     it("offers nothing and keeps creation disabled when no atom is granted (fail-closed)", async () => {
@@ -348,7 +348,7 @@ describe("WorkspaceAgentManagementDialog PLAN-0622 list rows", () => {
         );
         expect(badge.exists()).toBe(true);
         expect(badge.attributes("data-agent-scope")).toBe("personal");
-        expect(badge.text()).toBe("个人 agent");
+        expect(badge.text()).toBe("个人智能体");
         expect(
             wrapper
                 .find('[data-testid="agent-default-model-77777777-7777-4777-8777-777777777777"]')
@@ -364,7 +364,7 @@ describe("WorkspaceAgentManagementDialog PLAN-0622 list rows", () => {
         const button = wrapper.find(
             '[data-testid="workspace-agent-disable-77777777-7777-4777-8777-777777777777"]',
         );
-        expect(wrapper.text()).toContain("禁用后新会话不能再选择该 Agent");
+        expect(wrapper.text()).toContain("禁用后新会话不能再选择该智能体");
 
         await button.trigger("click");
         expect(apiMock.disableAgentPrincipal).not.toHaveBeenCalled();
