@@ -126,6 +126,11 @@ public class SkillCatalogSourceService {
         }
     }
 
+    /** A failed view for callers that refuse to resolve at all (bad binding, bad ids). */
+    public static ComponentView failed(String diagnostic) {
+        return new ComponentView(STATUS_FAILED, SOURCE, List.of(), false, List.of(diagnostic));
+    }
+
     private ComponentView resolveRows(Request request) {
         List<Object[]> rows = bindingRepository.findResolvable(
                 request.agentPrincipalId(), request.userId(), request.workspaceId());

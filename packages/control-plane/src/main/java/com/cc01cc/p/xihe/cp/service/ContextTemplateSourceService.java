@@ -5,6 +5,7 @@ import com.cc01cc.p.xihe.cp.policy.PolicyEffect;
 import com.cc01cc.p.xihe.cp.policy.PolicyEngine;
 import com.cc01cc.p.xihe.cp.policy.PolicyContext;
 import com.cc01cc.p.xihe.cp.runtime.RuntimeContextSourceClient;
+import com.cc01cc.p.xihe.cp.skill.SkillCatalogSourceService;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.stereotype.Service;
@@ -26,21 +27,26 @@ public class ContextTemplateSourceService {
     private static final int HARD_REQUEST_LIMIT = 512;
     private static final int DEFAULT_MAX_DEPTH = 8;
     private static final int DEFAULT_MAX_ENTRIES = 2000;
+    /** Matches {@code context-templates.json#skillCatalogConfig.maxSkills}: the config bound wins. */
+    private static final int MAX_SKILLS_UPPER = 200;
     private static final List<String> DEFAULT_AGENTS_FILES = List.of("AGENTS.md");
 
     private final RuntimeContextSourceClient runtimeClient;
     private final PolicyEngine policyEngine;
     private final ObjectMapper objectMapper;
     private final AgentMemoryInjectionService agentMemoryInjectionService;
+    private final SkillCatalogSourceService skillCatalogSourceService;
 
     public ContextTemplateSourceService(RuntimeContextSourceClient runtimeClient,
                                         PolicyEngine policyEngine,
                                         ObjectMapper objectMapper,
-                                        AgentMemoryInjectionService agentMemoryInjectionService) {
+                                        AgentMemoryInjectionService agentMemoryInjectionService,
+                                        SkillCatalogSourceService skillCatalogSourceService) {
         this.runtimeClient = runtimeClient;
         this.policyEngine = policyEngine;
         this.objectMapper = objectMapper;
         this.agentMemoryInjectionService = agentMemoryInjectionService;
+        this.skillCatalogSourceService = skillCatalogSourceService;
     }
 
     public Map<String, Object> resolve(RunContext run, Session session) {
@@ -62,7 +68,7 @@ public class ContextTemplateSourceService {
             String type = component.path("type").asText();
             if (!component.path("enabled").asBoolean(false)
                     || !("workspace_tree".equals(type) || "agents_md_tree".equals(type)
-                    || "agent_memory".equals(type))) {
+                    || "agent_memory".equals(type) || "skill_catalog".equals(type))) {
                 continue;
             }
             String instanceId = component.path("instanceId").asText();
@@ -72,6 +78,12 @@ public class ContextTemplateSourceService {
             if ("agent_memory".equals(type)) {
                 // PLAN-0629 M1-4: the memory snapshot is read per run and never cached across runs.
                 result.put(instanceId, resolveMemory(component.path("config"), run, validBinding));
+                continue;
+            }
+            if ("skill_catalog".equals(type)) {
+                // PLAN-0628 M1: the listing subset — a count bound here, the token budget in Agent.
+                result.put(instanceId,
+                        resolveSkillCatalog(component.path("config"), run, validBinding));
                 continue;
             }
             result.put(instanceId, resolveTree(
@@ -110,6 +122,41 @@ public class ContextTemplateSourceService {
             return AgentMemoryInjectionService.unavailable(maxEntries, maxTokens, "invalid_agent_principal");
         }
         return agentMemoryInjectionService.snapshot(principalId, workspaceId, maxEntries, maxTokens);
+    }
+
+    /**
+     * PLAN-0628 M1 (D28-16): the skills listing component's per-run source document.
+     *
+     * <p>A skill listing is subject-scoped, so the same {@code validBinding} guard the memory
+     * component uses applies: an invalid session/workspace binding must not resolve anyone's library.
+     * CP passes {@code maxSkills} (a count) and never a token number — the budget belongs to the
+     * Agent's ledger.</p>
+     */
+    private Map<String, Object> resolveSkillCatalog(JsonNode config, RunContext run,
+                                                    boolean validBinding) {
+        int maxSkills = bounded(config.path("maxSkills").asInt(SkillCatalogSourceService.DEFAULT_MAX_SKILLS),
+                MAX_SKILLS_UPPER, SkillCatalogSourceService.DEFAULT_MAX_SKILLS);
+        boolean includeDescriptions = !config.has("includeDescriptions")
+                || config.path("includeDescriptions").asBoolean(true);
+        String sort = config.path("sort").asText(SkillCatalogSourceService.SORT_BINDING);
+        if (!validBinding) {
+            return SkillCatalogSourceService.failed("invalid_session_workspace_binding").toMap();
+        }
+        UUID userId;
+        UUID workspaceId;
+        UUID principalId = null;
+        try {
+            userId = UUID.fromString(run.userId());
+            workspaceId = UUID.fromString(run.workspaceId());
+            String principal = run.agentPrincipalId();
+            if (principal != null && !principal.isBlank()) {
+                principalId = UUID.fromString(principal);
+            }
+        } catch (IllegalArgumentException invalidId) {
+            return SkillCatalogSourceService.failed("invalid_agent_principal").toMap();
+        }
+        return skillCatalogSourceService.resolve(new SkillCatalogSourceService.Request(
+                principalId, userId, workspaceId, maxSkills, includeDescriptions, sort)).toMap();
     }
 
     private Map<String, Object> resolveTree(JsonNode config, String type, RunContext run, Session session,

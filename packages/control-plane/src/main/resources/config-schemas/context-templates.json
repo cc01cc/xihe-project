@@ -50,7 +50,7 @@
           "enum": [
             "text", "system_prompt", "root_agents_md", "conversation_history",
             "tool_history", "tool_definitions", "workspace_tree", "agents_md_tree",
-            "runtime_environment", "agent_memory"
+            "runtime_environment", "agent_memory", "skill_catalog"
           ]
         },
         "enabled": { "type": "boolean" },
@@ -66,8 +66,21 @@
         { "if": { "properties": { "type": { "const": "workspace_tree" } }, "required": ["type"] }, "then": { "properties": { "config": { "$ref": "#/$defs/workspaceTreeConfig" } } } },
         { "if": { "properties": { "type": { "const": "agents_md_tree" } }, "required": ["type"] }, "then": { "properties": { "config": { "$ref": "#/$defs/agentsMdTreeConfig" } } } },
         { "if": { "properties": { "type": { "const": "runtime_environment" } }, "required": ["type"] }, "then": { "properties": { "config": { "$ref": "#/$defs/runtimeEnvironmentConfig" } } } },
-        { "if": { "properties": { "type": { "const": "agent_memory" } }, "required": ["type"] }, "then": { "properties": { "config": { "$ref": "#/$defs/memoryConfig" } } } }
+        { "if": { "properties": { "type": { "const": "agent_memory" } }, "required": ["type"] }, "then": { "properties": { "config": { "$ref": "#/$defs/memoryConfig" } } } },
+        { "if": { "properties": { "type": { "const": "skill_catalog" } }, "required": ["type"] }, "then": { "properties": { "config": { "$ref": "#/$defs/skillCatalogConfig" } } } }
       ],
+      "additionalProperties": false
+    },
+    "skillCatalogConfig": {
+      "description": "PLAN-0628 D28-16: the bound skills listing as its own system-slot block (${xh.skill_catalog}). maxSkills is a COUNT bound decided in CP; maxTokens is an optional component-level tighten that the Agent applies before charging the run ledger (0627 D27-22 skills floor 512 / cap 1%). CP never estimates tokens.",
+      "type": "object",
+      "required": ["maxSkills", "includeDescriptions", "sort"],
+      "properties": {
+        "maxSkills": { "type": "integer", "minimum": 1, "maximum": 200 },
+        "includeDescriptions": { "type": "boolean" },
+        "sort": { "enum": ["binding"] },
+        "maxTokens": { "type": "integer", "minimum": 1, "maximum": 100000 }
+      },
       "additionalProperties": false
     },
     "memoryConfig": {

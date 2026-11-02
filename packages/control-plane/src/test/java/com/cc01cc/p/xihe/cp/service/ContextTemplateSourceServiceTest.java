@@ -7,8 +7,10 @@ import com.cc01cc.p.xihe.cp.policy.PolicyEngine;
 import com.cc01cc.p.xihe.cp.policy.PolicyVerdict;
 import com.cc01cc.p.xihe.cp.policy.PolicyLayer;
 import com.cc01cc.p.xihe.cp.runtime.RuntimeContextSourceClient;
+import com.cc01cc.p.xihe.cp.skill.SkillCatalogSourceService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 
 import java.util.List;
 import java.util.Map;
@@ -39,6 +41,8 @@ class ContextTemplateSourceServiceTest {
     private final PolicyEngine policy = mock(PolicyEngine.class);
     private final ObjectMapper mapper = new ObjectMapper();
     private final AgentMemoryInjectionService memoryInjection = mock(AgentMemoryInjectionService.class);
+    /** PLAN-0628: only the delegation is asserted here; the listing logic has its own test. */
+    private final SkillCatalogSourceService skillCatalog = mock(SkillCatalogSourceService.class);
 
     @Test
     void listsOnlySafeFilteredPathsAndNeverFollowsSymlinks() throws Exception {
@@ -143,12 +147,36 @@ class ContextTemplateSourceServiceTest {
         Session session = new Session(WORKSPACE, USER, "bounded tree");
         session.setId(UUID.fromString(SESSION_ID));
 
-        Map<String, Object> sources = new ContextTemplateSourceService(runtime, policy, mapper, memoryInjection).resolve(run, session);
+        Map<String, Object> sources = new ContextTemplateSourceService(runtime, policy, mapper,
+                memoryInjection, skillCatalog).resolve(run, session);
 
         assertEquals(2, sources.size());
         assertEquals("truncated", ((Map<?, ?>) sources.get(firstId)).get("status"));
         assertEquals("truncated", ((Map<?, ?>) sources.get(secondId)).get("status"));
         verify(runtime, times(512)).listDirectory(eq(WORKSPACE), anyString());
+    }
+
+    @Test
+    void skillCatalogComponentDelegatesWithACountBoundAndEchoesTheView() throws Exception {
+        SkillCatalogSourceService.ComponentView view = new SkillCatalogSourceService.ComponentView(
+                SkillCatalogSourceService.STATUS_READY, SkillCatalogSourceService.SOURCE,
+                List.of("alpha — a"), false, List.of());
+        when(skillCatalog.resolve(any())).thenReturn(view);
+
+        Map<String, Object> source = resolve("skill_catalog",
+                "{\"maxSkills\":7,\"includeDescriptions\":false,\"sort\":\"binding\"}");
+
+        assertEquals(SkillCatalogSourceService.SOURCE, source.get("source"));
+        assertEquals(List.of("alpha — a"), source.get("items"));
+        ArgumentCaptor<SkillCatalogSourceService.Request> captor =
+                ArgumentCaptor.forClass(SkillCatalogSourceService.Request.class);
+        verify(skillCatalog).resolve(captor.capture());
+        // CP hands over a COUNT; it must never hand over a token budget (that is the Agent's ledger).
+        assertEquals(7, captor.getValue().maxSkills());
+        assertTrue(!captor.getValue().includeDescriptions());
+        assertEquals(SkillCatalogSourceService.SORT_BINDING, captor.getValue().sort());
+        assertEquals(UUID.fromString(USER), captor.getValue().userId());
+        assertEquals(UUID.fromString(WORKSPACE), captor.getValue().workspaceId());
     }
 
     private Map<String, Object> resolve(String type, String config) throws Exception {
@@ -158,7 +186,8 @@ class ContextTemplateSourceServiceTest {
                 SESSION_ID, WORKSPACE, USER, mapper.readTree(snapshot), null);
         Session session = new Session(WORKSPACE, USER, "tree test");
         session.setId(UUID.fromString(SESSION_ID));
-        return (Map<String, Object>) new ContextTemplateSourceService(runtime, policy, mapper, memoryInjection)
+        return (Map<String, Object>) new ContextTemplateSourceService(runtime, policy, mapper,
+                memoryInjection, skillCatalog)
                 .resolve(run, session).get("component-1");
     }
 
