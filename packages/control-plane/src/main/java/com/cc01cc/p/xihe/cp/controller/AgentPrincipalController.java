@@ -11,6 +11,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -119,6 +120,43 @@ public class AgentPrincipalController {
         try {
             agentPrincipalService.disablePrincipal(actorUserId, parseUuid(principalId));
             return ResponseEntity.noContent().build();
+        } catch (CpApiException e) {
+            return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
+        }
+    }
+
+    /**
+     * PLAN-0625 M2 (D25-14, Gap K): the subscription update surface. Ruling: no separate
+     * {@code /hooks} sub-resource — the principal's own update face accepts the document, so the
+     * existing tier authority (and the {@code GUARD_HOOKS_IMMUTABLE} refusal) is reused verbatim.
+     *
+     * <p>The body is exactly {@code {"hooks": <object|null>}} ({@code additionalProperties:false}):
+     * any other key is a 400 {@code INVALID_REQUEST}, and {@code hooks: null} clears every
+     * subscription. Validation lives in the service (single write-side gate).</p>
+     */
+    @PatchMapping("/api/v1/agent-principals/{principalId}")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<?> updateHooks(@PathVariable String principalId,
+                                         @RequestBody(required = false) Map<String, Object> body) {
+        if (body == null || body.size() != 1 || !body.containsKey("hooks")) {
+            return ProblemDetailsHandler.problemResponse(HttpStatus.BAD_REQUEST,
+                    "INVALID_REQUEST", "Body must contain only a hooks document (object or null)");
+        }
+        String actorUserId = TenantContext.getUserId();
+        if (actorUserId == null || actorUserId.isBlank()) {
+            return ProblemDetailsHandler.problemResponse(HttpStatus.UNAUTHORIZED,
+                    "AUTHORIZATION_REQUIRED", "Authentication required");
+        }
+        try {
+            Object raw = body.get("hooks");
+            JsonNode hooks = raw == null ? null : objectMapper.valueToTree(raw);
+            JsonNode stored = agentPrincipalService.updatePrincipalHooks(
+                    actorUserId, parseUuid(principalId), hooks);
+            Map<String, Object> response = new LinkedHashMap<>();
+            response.put("principalId", principalId);
+            // Echo the persisted document (null = cleared), never the caller's raw input.
+            response.put("hooks", toDocument(stored));
+            return ResponseEntity.ok(response);
         } catch (CpApiException e) {
             return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
         }

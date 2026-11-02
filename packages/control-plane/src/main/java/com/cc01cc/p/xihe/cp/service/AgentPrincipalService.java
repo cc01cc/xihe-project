@@ -861,9 +861,12 @@ public class AgentPrincipalService {
      * WORKSPACE, instance administration for INSTANCE. A preset guard's subscriptions are
      * template-owned data and refuse with their own code (kept distinct from GUARD_CAP_IMMUTABLE:
      * one code carrying two semantics is more expensive than a second code).
+     *
+     * @return the validated document that was stored ({@code null} = every subscription cleared), so
+     *     the wire can echo exactly what was persisted instead of the caller's raw input
      */
     @Transactional
-    public void updatePrincipalHooks(String actorUserId, UUID principalId, JsonNode hooks) {
+    public JsonNode updatePrincipalHooks(String actorUserId, UUID principalId, JsonNode hooks) {
         UUID actorId = parseUuid(actorUserId, "INVALID_ACTOR");
         requireUser(actorId);
         JsonNode checkedHooks = HookAdvisorRegistry.validateSubscriptions(hooks);
@@ -879,6 +882,7 @@ public class AgentPrincipalService {
         auditLogger.recordDurableChange(actorId.toString(), null,
                 "agent_principal_hooks_updated", "agent_principal", principalId.toString(),
                 detail.toString());
+        return checkedHooks;
     }
 
     /** D25-14: a preset guard's hook subscriptions are fixed at the write side, like its cap. */

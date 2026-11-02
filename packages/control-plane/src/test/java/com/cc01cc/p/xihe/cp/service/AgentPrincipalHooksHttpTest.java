@@ -3,6 +3,7 @@ package com.cc01cc.p.xihe.cp.service;
 import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
 import com.cc01cc.p.xihe.cp.entity.AccessRole;
 import com.cc01cc.p.xihe.cp.entity.AccessRoleBinding;
+import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
 import com.cc01cc.p.xihe.cp.entity.ConfigEntity;
 import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
@@ -24,6 +25,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpEntity;
@@ -32,7 +34,11 @@ import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.client.ClientHttpResponse;
+import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.web.client.DefaultResponseErrorHandler;
+import org.springframework.web.client.RestTemplate;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -71,16 +77,32 @@ class AgentPrincipalHooksHttpTest extends AbstractIntegrationTest {
     @Autowired private RoleGrantMaterializer materializer;
     @Autowired private GrantDefaultService grantDefaultService;
     @Autowired private WorkspaceFixture workspaceFixture;
+    @Autowired private AgentPrincipalService agentPrincipalService;
     @Autowired private AgentTemplateService agentTemplateService;
     @Autowired private ConfigJpaRepository configJpaRepository;
     @Autowired private ObjectMapper objectMapper;
     @Autowired private JdbcTemplate jdbcTemplate;
 
+    private RestTemplate patchClient;
     private UUID adminUserId;
+    private UUID strangerUserId;
     private UUID workspaceId;
     private final List<UUID> seededRoleBindingIds = new ArrayList<>();
     private final List<UUID> principalIds = new ArrayList<>();
     private final List<UUID> configIds = new ArrayList<>();
+
+    @BeforeEach
+    void initPatchClient() {
+        // PATCH is not supported by HttpURLConnection (the shared RestTemplate's default factory).
+        patchClient = new RestTemplate(new JdkClientHttpRequestFactory());
+        patchClient.setErrorHandler(new DefaultResponseErrorHandler() {
+            @Override
+            public boolean hasError(ClientHttpResponse response) {
+                // Every non-2xx is an assertion input here, never an exception.
+                return false;
+            }
+        });
+    }
 
     @AfterEach
     void cleanFixtures() {
@@ -106,16 +128,21 @@ class AgentPrincipalHooksHttpTest extends AbstractIntegrationTest {
             roleBindingRepository.deleteById(roleBindingId);
         }
         seededRoleBindingIds.clear();
-        if (adminUserId != null) {
-            jdbcTemplate.update("DELETE FROM audit_logs WHERE user_id = CAST(? AS UUID)",
-                    adminUserId.toString());
-            grantRepository.deleteAll(
-                    grantRepository.findBySubjectTypeAndSubjectId("user", adminUserId));
-            roleBindingRepository.deleteAll(
-                    roleBindingRepository.findBySubjectTypeAndSubjectId("user", adminUserId));
-            userRepository.deleteById(adminUserId);
-            adminUserId = null;
+        deleteUser(adminUserId);
+        adminUserId = null;
+        deleteUser(strangerUserId);
+        strangerUserId = null;
+    }
+
+    private void deleteUser(UUID userId) {
+        if (userId == null) {
+            return;
         }
+        jdbcTemplate.update("DELETE FROM audit_logs WHERE user_id = CAST(? AS UUID)", userId.toString());
+        grantRepository.deleteAll(grantRepository.findBySubjectTypeAndSubjectId("user", userId));
+        roleBindingRepository.deleteAll(
+                roleBindingRepository.findBySubjectTypeAndSubjectId("user", userId));
+        userRepository.deleteById(userId);
     }
 
     // ---------------------------------------------------------------------------------------
@@ -250,6 +277,110 @@ class AgentPrincipalHooksHttpTest extends AbstractIntegrationTest {
     }
 
     // ---------------------------------------------------------------------------------------
+    // Gap K: PATCH /api/v1/agent-principals/{principalId} — body is exactly {hooks}
+    // ---------------------------------------------------------------------------------------
+
+    @Test
+    void patchReplacesSubscriptionsAndWritesTheAuditTrail() {
+        fixture();
+        UUID principalId = createPrincipal("Mutable agent", null);
+
+        ResponseEntity<Map> response = patch(principalId, hooksBody(plainJson(HOOKS_JSON)),
+                globalToken());
+
+        assertEquals(HttpStatus.OK, response.getStatusCode(), String.valueOf(response.getBody()));
+        assertEquals(principalId.toString(), response.getBody().get("principalId"));
+        assertNoJacksonBeanMetadata(response.getBody());
+        assertEquals(Map.of("advisors", List.of(Map.of("kind", "guard",
+                        "on", List.of("approval.ask")))), response.getBody().get("hooks"),
+                "the response echoes the stored document: " + response.getBody());
+        assertEquals(readJson(HOOKS_JSON),
+                principalRepository.findById(principalId).orElseThrow().getHooks());
+        assertEquals(1, jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM audit_logs WHERE action = 'agent_principal_hooks_updated' "
+                        + "AND CAST(resource_id AS VARCHAR) = ?",
+                Integer.class, principalId.toString()), "the mutation is durable-audited");
+    }
+
+    @Test
+    void patchClearsSubscriptionsWithNull() {
+        fixture();
+        UUID principalId = createPrincipal("Clearable agent", HOOKS_JSON);
+
+        ResponseEntity<Map> response = patch(principalId, hooksBody(null), globalToken());
+
+        assertEquals(HttpStatus.OK, response.getStatusCode(), String.valueOf(response.getBody()));
+        assertTrue(response.getBody().containsKey("hooks"), String.valueOf(response.getBody()));
+        assertNull(response.getBody().get("hooks"), "null = every subscription cleared");
+        assertNull(principalRepository.findById(principalId).orElseThrow().getHooks());
+        assertEquals(1, jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM audit_logs WHERE action = 'agent_principal_hooks_updated' "
+                        + "AND CAST(resource_id AS VARCHAR) = ?",
+                Integer.class, principalId.toString()));
+    }
+
+    /**
+     * D25-14: a preset guard's subscriptions come from the template, so the API refuses with its own
+     * code. The row is seeded through the production write path (origin + preset_id are what
+     * {@code createPrincipalFromTemplate} writes for the builtin template); only the HTTP client is
+     * the boundary under test.
+     */
+    @Test
+    void patchRefusesPresetGuardsWithTheirOwnCode() {
+        fixture();
+        UUID guardId = seedPresetGuard("Preset guard");
+
+        ResponseEntity<Map> response = patch(guardId, hooksBody(plainJson(HOOKS_JSON)), globalToken());
+
+        assertEquals(HttpStatus.FORBIDDEN, response.getStatusCode(), String.valueOf(response.getBody()));
+        assertEquals("GUARD_HOOKS_IMMUTABLE", response.getBody().get("code"),
+                "the refusal keeps its own code, distinct from GUARD_CAP_IMMUTABLE");
+        assertNull(principalRepository.findById(guardId).orElseThrow().getHooks(),
+                "a refused write must not touch the row");
+        assertEquals(0, jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM audit_logs WHERE action = 'agent_principal_hooks_updated' "
+                        + "AND CAST(resource_id AS VARCHAR) = ?",
+                Integer.class, guardId.toString()), "a refused write must not be audited as applied");
+    }
+
+    @Test
+    void patchRequiresTheTierAuthority() {
+        fixture();
+        UUID principalId = createPrincipal("Owner only agent", HOOKS_JSON);
+
+        ResponseEntity<Map> response = patch(principalId, hooksBody(plainJson(HOOKS_JSON)),
+                tokenOf(strangerUserId));
+
+        assertEquals(HttpStatus.FORBIDDEN, response.getStatusCode(), String.valueOf(response.getBody()));
+        assertEquals("AGENT_PRINCIPAL_OWNER_MISMATCH", response.getBody().get("code"),
+                "the tier authority reuses the disable-path code for a foreign PERSONAL principal");
+        assertEquals(readJson(HOOKS_JSON),
+                principalRepository.findById(principalId).orElseThrow().getHooks(),
+                "a stranger must not rewrite somebody else's subscriptions");
+    }
+
+    @Test
+    void patchRejectsAnythingButAHooksDocument() {
+        fixture();
+        UUID principalId = createPrincipal("Body shape agent", HOOKS_JSON);
+
+        Map<String, Object> extraKey = hooksBody(plainJson(HOOKS_JSON));
+        extraKey.put("name", "renamed");
+        assertBadRequest(principalId, extraKey, "additionalProperties:false — no other key is accepted");
+
+        assertBadRequest(principalId, new LinkedHashMap<>(), "an empty body is not a hooks document");
+
+        assertBadRequest(principalId, hooksBody(plainJson(
+                        "{\"advisors\":[{\"kind\":\"guard\",\"on\":[\"approval.deny\"]}]}")),
+                "an action class outside the frozen whitelist (D25-12) must answer 400, not store a "
+                        + "subscription that can never fire");
+
+        assertEquals(readJson(HOOKS_JSON),
+                principalRepository.findById(principalId).orElseThrow().getHooks(),
+                "none of the rejected bodies may change the stored document");
+    }
+
+    // ---------------------------------------------------------------------------------------
     // fixtures / helpers
     // ---------------------------------------------------------------------------------------
 
@@ -269,10 +400,52 @@ class AgentPrincipalHooksHttpTest extends AbstractIntegrationTest {
         // The list is workspace-scoped: the caller must be a member of an active workspace.
         Workspace workspace = workspaceFixture.createOwnedWorkspace("Hooks ws", adminUserId.toString());
         workspaceId = workspace.getId();
+        User stranger = userRepository.saveAndFlush(new User(
+                "hooks-http-stranger-" + UUID.randomUUID() + "@test.com", "hash", "Hooks HTTP stranger"));
+        strangerUserId = stranger.getId();
+        grantDefaultService.ensureUserDefault(stranger);
     }
 
     private UUID createPrincipal(String name, String hooksJson) {
         return createPrincipal(name, hooksJson, null);
+    }
+
+    /** Seeds the exact provenance a builtin-template create writes (V95 CHECK: both halves). */
+    private UUID seedPresetGuard(String name) {
+        ObjectNode snapshot = objectMapper.createObjectNode();
+        snapshot.putNull("templateId");
+        snapshot.put("templateName", "守卫 Guard");
+        snapshot.putArray("permissions");
+        AgentPrincipal guard = agentPrincipalService.createPrincipal(
+                adminUserId.toString(), name, null, snapshot, "PERSONAL", adminUserId,
+                null, null, null, null,
+                AgentPrincipal.ORIGIN_SYSTEM_PRESET, "00000000-0000-4000-8000-0000000000a2");
+        principalIds.add(guard.getId());
+        return guard.getId();
+    }
+
+    /** The frozen body shape: exactly one key, {@code hooks}, which may be null (clear). */
+    private Map<String, Object> hooksBody(Object hooks) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("hooks", hooks);
+        return body;
+    }
+
+    private ResponseEntity<Map> patch(UUID principalId, Map<String, Object> body, String token) {
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(token);
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        // PATCH needs an HTTP client that supports the method; the shared RestTemplate uses
+        // HttpURLConnection, which does not.
+        return patchClient.exchange(url("/api/v1/agent-principals/" + principalId),
+                HttpMethod.PATCH, new HttpEntity<>(body, headers), Map.class);
+    }
+
+    private void assertBadRequest(UUID principalId, Map<String, Object> body, String why) {
+        ResponseEntity<Map> response = patch(principalId, body, globalToken());
+        assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode(),
+                why + " — " + response.getBody());
+        assertEquals("INVALID_REQUEST", response.getBody().get("code"), why);
     }
 
     /** One user-layer config row (the assembled document shape: one row per document key). */
@@ -390,16 +563,20 @@ class AgentPrincipalHooksHttpTest extends AbstractIntegrationTest {
     }
 
     private String globalToken() {
-        return TestDataFactory.createGlobalToken(adminUserId.toString(), emailOfAdmin(), "USER", 0);
+        return tokenOf(adminUserId);
     }
 
     private String workspaceToken() {
-        return TestDataFactory.createWorkspaceToken(adminUserId.toString(), emailOfAdmin(), "USER",
+        return TestDataFactory.createWorkspaceToken(adminUserId.toString(), emailOf(adminUserId), "USER",
                 workspaceId.toString(), 0);
     }
 
-    private String emailOfAdmin() {
-        return userRepository.findById(adminUserId).orElseThrow().getEmail();
+    private String tokenOf(UUID userId) {
+        return TestDataFactory.createGlobalToken(userId.toString(), emailOf(userId), "USER", 0);
+    }
+
+    private String emailOf(UUID userId) {
+        return userRepository.findById(userId).orElseThrow().getEmail();
     }
 
     private ResponseEntity<Map> exchange(HttpMethod method, String path, String token, Object body) {

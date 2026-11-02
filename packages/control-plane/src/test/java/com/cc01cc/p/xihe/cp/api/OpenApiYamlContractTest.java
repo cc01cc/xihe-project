@@ -515,6 +515,20 @@ class OpenApiYamlContractTest {
             Map<?, ?> disableResponses = (Map<?, ?>) ((Map<?, ?>) disable.get("post")).get("responses");
             assertTrue(disableResponses.containsKey("204"), "disable answers 204");
 
+            // 1b (PLAN-0625 M2 / Gap K): the hook-subscription update surface is contracted — no
+            // /hooks sub-resource, the principal's own PATCH carries the document.
+            Map<?, ?> principalUpdate = (Map<?, ?>) paths.get("/api/v1/agent-principals/{principalId}");
+            assertInstanceOf(Map.class, principalUpdate, "the principal update surface is contracted");
+            assertInstanceOf(Map.class, principalUpdate.get("patch"),
+                    "PATCH /api/v1/agent-principals/{principalId} carries the subscription document");
+            Map<?, ?> hooksUpdateBody = (Map<?, ?>) schemas.get("AgentPrincipalHooksUpdateRequest");
+            assertInstanceOf(Map.class, hooksUpdateBody, "AgentPrincipalHooksUpdateRequest is contracted");
+            assertEquals(Boolean.FALSE, hooksUpdateBody.get("additionalProperties"),
+                    "D25-14: the update body is exactly {hooks}; any other key is a 400");
+            assertEquals(List.of("hooks"), hooksUpdateBody.get("required"));
+            assertTrue(raw.contains("GUARD_HOOKS_IMMUTABLE"),
+                    "the preset-guard refusal code is named on the wire contract");
+
             // 2: the create request carries the frozen scope / model-intent fields.
             Map<?, ?> createProps = (Map<?, ?>) ((Map<?, ?>) schemas.get("AgentPrincipalCreateRequest"))
                     .get("properties");
