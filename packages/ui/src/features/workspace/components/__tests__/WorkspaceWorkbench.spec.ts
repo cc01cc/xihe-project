@@ -49,6 +49,9 @@ const i18n = createI18n({
                 dockOverflow: "More panels",
                 dockCloseTab: "Close this panel",
                 dockResize: "Resize the panel",
+                dockFocusExpand: "Expand panel",
+                dockFocusRestore: "Restore layout",
+                dockFocusHint: "Fill the workspace with this panel",
                 expandFiles: "Expand the file tree",
                 collapseFiles: "Collapse the file tree",
                 toggleCode: "Toggle code",
@@ -194,6 +197,117 @@ describe("WorkspaceWorkbench skeleton (PLAN-0582 S2)", () => {
         await expectStored(() => {
             expect(storedLayout().dockTabs).toEqual([]);
             expect(storedLayout().dockCollapsed).toBe(true);
+        });
+    });
+
+    it("activates the neighbouring tab when the active tab closes (right first, then left)", async () => {
+        // PLAN-0626 D26-13: browser-tab convention instead of "always jump to the first tab".
+        const wrapper = mountWorkbench();
+        await flushPromises();
+
+        // Strip order: code, changes, monitor.
+        await wrapper.get('[data-testid="workspace-toolbar-code"]').trigger("click");
+        await wrapper.get('[data-testid="workspace-toolbar-changes"]').trigger("click");
+        await wrapper.get('[data-testid="workspace-toolbar-monitor"]').trigger("click");
+        expect(wrapper.findAll('[role="tab"]')).toHaveLength(3);
+
+        // Close the middle tab while it is active: its right neighbour takes over.
+        await wrapper.get('[data-testid="dock-tab-changes"]').trigger("click");
+        expect(wrapper.get('[data-testid="dock-tab-changes"]').attributes("aria-selected")).toBe(
+            "true",
+        );
+        await wrapper.get('[data-testid="dock-tab-close-changes"]').trigger("click");
+        expect(wrapper.get('[data-testid="dock-tab-monitor"]').attributes("aria-selected")).toBe(
+            "true",
+        );
+        expect(wrapper.get('[data-testid="dock-tab-code"]').attributes("aria-selected")).toBe(
+            "false",
+        );
+
+        // The rightmost active tab has no right neighbour, so the left one wins.
+        await wrapper.get('[data-testid="dock-tab-close-monitor"]').trigger("click");
+        expect(wrapper.get('[data-testid="dock-tab-code"]').attributes("aria-selected")).toBe(
+            "true",
+        );
+        expect(wrapper.findAll('[role="tab"]')).toHaveLength(1);
+    });
+
+    it("expands the dock across the main column without unmounting it (D26-04)", async () => {
+        const wrapper = mountWorkbench(),
+            // Queried before focusing: the element survives a v-show toggle, so holding
+            // the reference also proves the column was not remounted.
+            center = wrapper.get("[data-main-hidden]");
+        await flushPromises();
+        await wrapper.get('[data-testid="workspace-toolbar-code"]').trigger("click");
+
+        await wrapper.get('[data-testid="dock-focus-toggle"]').trigger("click");
+
+        // The main column is only hidden: unmounting it would drop the chat SSE.
+        expect(center.attributes("data-main-hidden")).toBe("true");
+        expect(center.isVisible()).toBe(false);
+        expect((center.element as HTMLElement).style.display).toBe("none");
+        // The dock is the growing flex child and its resizer is gone.
+        expect(wrapper.get('[data-testid="workspace-aux-panel"]').classes()).toContain("flex-1");
+        expect(wrapper.find('[data-testid="dock-resizer"]').exists()).toBe(false);
+        // Focus is persisted and never reports a forced-floating fallback.
+        await expectStored(() => expect(storedLayout().dockFocus).toBe(true));
+        expect(toastWarning).not.toHaveBeenCalled();
+    });
+
+    it("restores the previous mode and width when focus ends (D26-04)", async () => {
+        const wrapper = mountWorkbench();
+        await flushPromises();
+        await wrapper.get('[data-testid="workspace-toolbar-code"]').trigger("click");
+        await wrapper.get('[data-testid="dock-resizer"]').trigger("keydown", { key: "End" });
+
+        await wrapper.get('[data-testid="dock-focus-toggle"]').trigger("click");
+        expect(
+            wrapper.get('[data-testid="workspace-aux-panel"]').attributes("style"),
+        ).toBeUndefined();
+
+        await wrapper.get('[data-testid="dock-focus-toggle"]').trigger("click");
+
+        // Back to the stored (non-focus) geometry: width 480, resizer available again.
+        expect(wrapper.get('[data-testid="workspace-aux-panel"]').attributes("style")).toContain(
+            "width: 480px",
+        );
+        expect(wrapper.find('[data-testid="dock-resizer"]').exists()).toBe(true);
+        expect(wrapper.get("[data-main-hidden]").isVisible()).toBe(true);
+        await expectStored(() => expect(storedLayout().dockFocus).toBe(false));
+    });
+
+    it("leaves focus on Escape without rolling the dock up (D26-04)", async () => {
+        const wrapper = mountWorkbench();
+        await flushPromises();
+        await wrapper.get('[data-testid="workspace-toolbar-code"]').trigger("click");
+        await wrapper.get('[data-testid="dock-focus-toggle"]').trigger("click");
+
+        window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+        await flushPromises();
+
+        // Focused docks are flex children, so the floating-only Escape rule must not
+        // apply; Escape restores the layout instead of closing the panel.
+        expect(wrapper.find('[data-testid="workspace-aux-panel"]').exists()).toBe(true);
+        expect(
+            wrapper.get('[data-testid="workspace-aux-panel"]').attributes("data-dock-focus"),
+        ).toBe("false");
+        expect(wrapper.get("[data-main-hidden]").isVisible()).toBe(true);
+    });
+
+    it("clears focus when the dock collapses (D26-05)", async () => {
+        const wrapper = mountWorkbench();
+        await flushPromises();
+        await wrapper.get('[data-testid="workspace-toolbar-code"]').trigger("click");
+        await wrapper.get('[data-testid="dock-focus-toggle"]').trigger("click");
+
+        await wrapper.get('[data-testid="workspace-aux-close"]').trigger("click");
+
+        expect(wrapper.find('[data-testid="workspace-aux-panel"]').exists()).toBe(false);
+        // The main column comes back and the stored flag is cleared with the collapse.
+        expect(wrapper.get("[data-main-hidden]").isVisible()).toBe(true);
+        await expectStored(() => {
+            expect(storedLayout().dockCollapsed).toBe(true);
+            expect(storedLayout().dockFocus).toBe(false);
         });
     });
 

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
 import { useI18n } from "vue-i18n";
-import { ChevronDown, Pin, PinOff, X } from "@lucide/vue";
+import { ChevronDown, Maximize2, Minimize2, Pin, PinOff, X } from "@lucide/vue";
 import {
     DOCK_WIDTH_DEFAULT,
     DOCK_WIDTH_KEYBOARD_STEP,
@@ -23,6 +23,11 @@ import type { DockTab } from "./workspaceDockTabs";
  *
  * Floating is deliberately **not** a modal: no backdrop (it would block the main
  * column the user is editing), only a shadow, Esc and click-outside to dismiss.
+ *
+ * PLAN-0626 D26-10: every tab chip is a wrapper holding two sibling controls (the
+ * `role=tab` button and its close button). Nothing interactive is nested inside a
+ * tab any more, so Enter/Space work through native button semantics instead of
+ * hand-rolled keydown handlers (a11y spec §基线 1, `spec/ui/accessibility.md:11-15`).
  */
 const props = withDefaults(
     defineProps<{
@@ -35,8 +40,14 @@ const props = withDefaults(
         defaultWidth?: number;
         /** Tabs rendered in the strip before they move into the overflow menu. */
         maxVisibleTabs?: number;
+        /**
+         * PLAN-0626 D26-04: focus mode renders the dock as the whole workbench row
+         * (the main column is hidden by the workbench). It is a rendering projection
+         * only: `mode`/`width` keep their user values and reappear on restore.
+         */
+        focus?: boolean;
     }>(),
-    { maxVisibleTabs: 3, mode: "floating", defaultWidth: DOCK_WIDTH_DEFAULT },
+    { maxVisibleTabs: 3, mode: "floating", defaultWidth: DOCK_WIDTH_DEFAULT, focus: false },
 );
 
 const emit = defineEmits<{
@@ -45,6 +56,7 @@ const emit = defineEmits<{
     close: [];
     "update:width": [width: number];
     "toggle-mode": [];
+    "toggle-focus": [];
 }>();
 
 const { t } = useI18n();
@@ -52,14 +64,29 @@ const overflowOpen = ref(false);
 /** Live width shown in the drag bubble; never persisted (the write is throttled). */
 const resizingWidth = ref<number | null>(null);
 
-const isPinned = computed(() => props.mode === "pinned");
-const modeLabel = computed(() =>
-    isPinned.value ? t("workspace.dockModePinned") : t("workspace.dockModeFloating"),
-);
-const panelClass = computed(() => [
-    "flex h-full shrink-0 flex-col border-l border-border-subtle bg-surface-canvas",
-    isPinned.value ? "relative z-auto shadow-none" : "absolute inset-y-0 right-0 z-20 shadow-xl",
-]);
+const isPinned = computed(() => props.mode === "pinned"),
+    modeLabel = computed(() =>
+        isPinned.value ? t("workspace.dockModePinned") : t("workspace.dockModeFloating"),
+    ),
+    focusLabel = computed(() =>
+        props.focus ? t("workspace.dockFocusRestore") : t("workspace.dockFocusExpand"),
+    );
+const panelClass = computed(() => {
+    // Focus outranks the pinned/floating split: the row has no main column left to
+    // overlay or to be pinned beside, so it becomes the only flex child that grows.
+    if (props.focus) {
+        return [
+            "flex h-full min-w-0 flex-1 flex-col border-l border-border-subtle bg-surface-canvas",
+            "relative z-auto shadow-none",
+        ];
+    }
+    return [
+        "flex h-full shrink-0 flex-col border-l border-border-subtle bg-surface-canvas",
+        isPinned.value
+            ? "relative z-auto shadow-none"
+            : "absolute inset-y-0 right-0 z-20 shadow-xl",
+    ];
+});
 
 const visibleTabs = computed(() => props.tabs.slice(0, props.maxVisibleTabs));
 const overflowTabs = computed(() => props.tabs.slice(props.maxVisibleTabs));
@@ -129,12 +156,15 @@ function handleResizeKeydown(event: KeyboardEvent) {
 <template>
     <aside
         data-testid="workspace-aux-panel"
-        :data-dock-mode="mode"
+        :data-dock-mode="focus ? 'focus' : mode"
+        :data-dock-focus="focus ? 'true' : 'false'"
         :aria-label="t('workspace.dockTabs')"
         :class="panelClass"
-        :style="{ width: `${width}px` }"
+        :style="focus ? undefined : { width: `${width}px` }"
     >
+        <!-- Focus fills the row, so a resize handle (and its width) has no meaning. -->
         <div
+            v-if="!focus"
             role="separator"
             aria-orientation="vertical"
             :aria-label="t('workspace.dockResize')"
@@ -165,38 +195,47 @@ function handleResizeKeydown(event: KeyboardEvent) {
                 :aria-label="t('workspace.dockTabs')"
                 class="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto"
             >
-                <button
+                <!--
+                    PLAN-0626 D26-10: the chip is a wrapper because a tab and its close
+                    affordance are two sibling controls. Nesting a `role=button` span (or a
+                    second `<button>`) inside `role=tab` produced a nested-interactive element
+                    with hand-rolled Enter/Space handlers; the same shape already exists in
+                    `WorkspaceTabBar.vue`, so this is a reuse, not a new pattern.
+                -->
+                <div
                     v-for="tab in visibleTabs"
                     :key="tab.id"
-                    type="button"
-                    role="tab"
-                    :data-testid="`dock-tab-${tab.id}`"
-                    :aria-selected="tab.id === activeTab"
-                    class="inline-flex shrink-0 items-center gap-1 rounded px-2 py-1 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    class="inline-flex shrink-0 items-center rounded transition-colors"
                     :class="
                         tab.id === activeTab
-                            ? 'bg-accent font-medium text-foreground'
+                            ? 'bg-accent text-foreground'
                             : 'text-muted-foreground hover:bg-accent'
                     "
-                    @click="selectTab(tab.id)"
-                    @auxclick="handleTabAuxClick($event, tab.id)"
                 >
-                    <span class="max-w-28 truncate">{{ tab.label }}</span>
-                    <span
+                    <button
+                        type="button"
+                        role="tab"
+                        :data-testid="`dock-tab-${tab.id}`"
+                        :aria-selected="tab.id === activeTab"
+                        class="inline-flex min-w-0 items-center gap-1 rounded px-2 py-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        :class="tab.id === activeTab ? 'font-medium' : ''"
+                        @click="selectTab(tab.id)"
+                        @auxclick="handleTabAuxClick($event, tab.id)"
+                    >
+                        <span class="max-w-28 truncate">{{ tab.label }}</span>
+                    </button>
+                    <button
                         v-if="tab.id === activeTab"
-                        role="button"
-                        tabindex="0"
+                        type="button"
                         :data-testid="`dock-tab-close-${tab.id}`"
                         :aria-label="t('workspace.dockCloseTab')"
                         :title="t('workspace.dockCloseTab')"
-                        class="rounded p-0.5 text-muted-foreground hover:bg-background/60 hover:text-foreground"
+                        class="mr-0.5 shrink-0 rounded p-0.5 text-muted-foreground transition-colors hover:bg-background/60 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                         @click.stop="closeTab(tab.id)"
-                        @keydown.enter.stop="closeTab(tab.id)"
-                        @keydown.space.stop.prevent="closeTab(tab.id)"
                     >
                         <X class="size-3" aria-hidden="true" />
-                    </span>
-                </button>
+                    </button>
+                </div>
             </div>
 
             <div v-if="hasOverflow" class="relative shrink-0">
@@ -217,27 +256,30 @@ function handleResizeKeydown(event: KeyboardEvent) {
                     data-testid="dock-overflow-menu"
                     class="absolute right-0 top-full z-50 mt-1 w-44 rounded-md border bg-popover p-1 text-sm shadow-md"
                 >
-                    <button
+                    <div
                         v-for="tab in overflowTabs"
                         :key="tab.id"
-                        type="button"
-                        :data-testid="`dock-overflow-item-${tab.id}`"
-                        class="flex w-full items-center justify-between gap-2 rounded px-2 py-1.5 text-left hover:bg-accent"
-                        @click="selectTab(tab.id)"
+                        class="flex w-full items-center justify-between gap-1 rounded hover:bg-accent"
                     >
-                        <span class="truncate">{{ tab.label }}</span>
-                        <span
-                            role="button"
-                            tabindex="0"
+                        <button
+                            type="button"
+                            :data-testid="`dock-overflow-item-${tab.id}`"
+                            class="min-w-0 flex-1 truncate rounded px-2 py-1.5 text-left text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                            @click="selectTab(tab.id)"
+                        >
+                            {{ tab.label }}
+                        </button>
+                        <button
+                            type="button"
+                            :data-testid="`dock-overflow-close-${tab.id}`"
                             :aria-label="t('workspace.dockCloseTab')"
                             :title="t('workspace.dockCloseTab')"
-                            class="rounded p-0.5 text-muted-foreground hover:text-foreground"
+                            class="mr-1 shrink-0 rounded p-0.5 text-muted-foreground transition-colors hover:bg-background/60 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                             @click.stop="closeTab(tab.id)"
-                            @keydown.enter.stop="closeTab(tab.id)"
                         >
                             <X class="size-3" aria-hidden="true" />
-                        </span>
-                    </button>
+                        </button>
+                    </div>
                 </div>
             </div>
 
@@ -253,6 +295,24 @@ function handleResizeKeydown(event: KeyboardEvent) {
             >
                 <Pin v-if="isPinned" class="size-3.5" aria-hidden="true" />
                 <PinOff v-else class="size-3.5" aria-hidden="true" />
+            </button>
+            <!--
+                PLAN-0626 D26-04: expand/restore. Kept beside the pin toggle because the two
+                are independent axes (pin = dock vs overlay, focus = occupy the whole row);
+                restoring brings back the pinned/floating choice and the stored width.
+            -->
+            <button
+                type="button"
+                data-testid="dock-focus-toggle"
+                class="shrink-0 rounded p-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                :class="focus ? 'text-brand' : ''"
+                :aria-pressed="focus"
+                :aria-label="focusLabel"
+                :title="`${focusLabel} · ${t('workspace.dockFocusHint')}`"
+                @click="emit('toggle-focus')"
+            >
+                <Minimize2 v-if="focus" class="size-3.5" aria-hidden="true" />
+                <Maximize2 v-else class="size-3.5" aria-hidden="true" />
             </button>
             <button
                 type="button"

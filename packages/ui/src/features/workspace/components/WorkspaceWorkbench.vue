@@ -5,13 +5,13 @@ import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
 import { FolderTree, GripVertical } from "@lucide/vue";
 import {
-    DOCK_MAX_TABS,
     DOCK_WIDTH_DEFAULT,
     TREE_COLLAPSED_WIDTH,
     TREE_WIDTH_DEFAULT,
     TREE_WIDTH_KEYBOARD_STEP,
     TREE_WIDTH_MAX,
     TREE_WIDTH_MIN,
+    canOpenDockTab,
     clampDockWidth,
     clampTreeWidth,
     WORKSPACE_LAYOUT_KEY,
@@ -187,26 +187,40 @@ const treeCollapsedForSqueeze = computed(() =>
  */
 const layoutOwner = inject(WORKSPACE_LAYOUT_KEY, null);
 
-const demand = computed<WorkbenchSqueezeDemand>(() => ({
-    treeWidth: layout.value.treeWidth,
-    treeCollapsed: treeCollapsedForSqueeze.value,
-    dockWidth: layout.value.dockWidth,
-    dockOpen: dockOpen.value,
-    dockMode: dockMode.value,
-    // A manual expansion is an explicit choice: no automatic yielding, the dock
-    // goes floating instead (the hard floor still overrides if that is not enough).
-    allowTreeYield: !treeExpandedManually.value,
-}));
+/**
+ * PLAN-0626 D26-04: in focus mode the main column is not laid out at all (it stays
+ * mounted but hidden), so there is nothing to protect. Publishing a demand would let
+ * the anti-squeeze rules collapse the tree or force the dock back to floating for a
+ * column nobody can see; `null` means "this workbench needs no width arbitration".
+ */
+const demand = computed<WorkbenchSqueezeDemand | null>(() => {
+    if (layout.value.dockFocus && dockOpen.value) return null;
+    return {
+        treeWidth: layout.value.treeWidth,
+        treeCollapsed: treeCollapsedForSqueeze.value,
+        dockWidth: layout.value.dockWidth,
+        dockOpen: dockOpen.value,
+        dockMode: dockMode.value,
+        // A manual expansion is an explicit choice: no automatic yielding, the dock
+        // goes floating instead (the hard floor still overrides if that is not enough).
+        allowTreeYield: !treeExpandedManually.value,
+    };
+});
 
 watch(demand, (value) => layoutOwner?.setWorkbenchDemand(value), { immediate: true });
 onBeforeUnmount(() => layoutOwner?.setWorkbenchDemand(null));
 
 const squeeze = computed<WorkbenchSqueezeResult>(() => {
     if (layoutOwner) return layoutOwner.squeeze.value;
-    const offset = viewportWidth.value || 0;
+    const offset = viewportWidth.value || 0,
+        currentDemand = demand.value;
+    if (!currentDemand) {
+        // Focus: nothing to squeeze (mirrors the owner's "no demand" result).
+        return { mainWidth: offset, treeYielded: false, navYielded: false, forceFloating: false };
+    }
     return computeWorkbenchSqueeze({
         workbenchWidth: offset,
-        ...demand.value,
+        ...currentDemand,
         navPanelWidth: 0,
     });
 });
@@ -217,8 +231,14 @@ const renderedDockMode = computed<DockMode>(() =>
 );
 /** True when the pinned choice is being overruled so the UI can say why. */
 const dockModeOverruled = computed(
-    () => squeeze.value.forceFloating && dockMode.value === "pinned",
-);
+        () => squeeze.value.forceFloating && dockMode.value === "pinned",
+    ),
+    /**
+     * D26-04: the render projection of the focus flag. It only holds while the dock is
+     * actually rendered — a stored `dockFocus` without an open dock cannot hide the main
+     * column (that would be an empty workbench).
+     */
+    dockFocus = computed(() => dockOpen.value && layout.value.dockFocus);
 
 const effectiveTreeCollapsed = computed(
     () => treeCollapsedForSqueeze.value || squeeze.value.treeYielded,
@@ -307,13 +327,20 @@ function isTextEntryTarget(target: EventTarget | null): boolean {
 // or by clicking the main column instead.
 function handleWindowKeydown(event: KeyboardEvent): void {
     if (event.key !== "Escape" || event.defaultPrevented) return;
-    // A pinned panel is a deliberate layout choice: Escape must not close it, and a
-    // squeeze-forced floating panel keeps the same body of behaviour (rendered mode).
-    if (!dockOpen.value || renderedDockMode.value !== "floating") return;
     // An open dialog closes itself on Escape; do not also collapse the dock behind it.
     if (document.querySelector('[data-testid="modal-backdrop"]')) return;
     // Escape in a text field cancels that field's interaction, not the dock.
     if (isTextEntryTarget(event.target)) return;
+    // PLAN-0626 D26-04: focus fills the row, so it needs a keyboard exit even though it
+    // is laid out as a flex child (the floating-only rule below would ignore it).
+    // Esc restores the previous layout instead of rolling the dock up.
+    if (dockFocus.value) {
+        exitDockFocus();
+        return;
+    }
+    // A pinned panel is a deliberate layout choice: Escape must not close it, and a
+    // squeeze-forced floating panel keeps the same body of behaviour (rendered mode).
+    if (!dockOpen.value || renderedDockMode.value !== "floating") return;
     collapseDock();
 }
 
@@ -342,7 +369,11 @@ function toggleTree(): void {
 function openDockTab(id: DockTabId): void {
     const tabs = layout.value.dockTabs;
     if (!tabs.includes(id)) {
-        if (tabs.length >= DOCK_MAX_TABS) return;
+        // PLAN-0626 D26-06: the cap is a visible refusal, never a silent no-op.
+        if (!canOpenDockTab(tabs.length)) {
+            toast.warning(t("workspace.dockTabsFull"));
+            return;
+        }
         layout.value.dockTabs = [...tabs, id];
     }
     layout.value.activeDockTab = id;
@@ -364,14 +395,29 @@ function setActiveDockTab(id: string): void {
     layout.value.dockCollapsed = false;
 }
 
-/** Closing the last tab collapses the dock (ruling: closing the last one rolls it up). */
+/**
+ * Closing the last tab collapses the dock (ruling: closing the last one rolls it up).
+ *
+ * PLAN-0626 D26-13: closing the *active* tab activates its **nearest neighbour** (right
+ * first, then left) — the browser-tab convention. Falling back to the first tab made
+ * "close the 5th of 6" snap the dock back to the far left of the strip.
+ */
 function closeDockTab(id: string): void {
-    const remaining = layout.value.dockTabs.filter((tab) => tab !== id);
+    const tabs = layout.value.dockTabs,
+        // An unknown id stays a no-op (the dock renders string-generic ids).
+        closingIndex = isDockTabId(id) ? tabs.indexOf(id) : -1,
+        remaining = tabs.filter((tab) => tab !== id);
+    if (closingIndex < 0) return;
     layout.value.dockTabs = remaining;
     if (layout.value.activeDockTab === id) {
-        layout.value.activeDockTab = remaining[0] ?? null;
+        // After the filter `remaining[closingIndex]` is the tab that used to sit on the
+        // right of the closed one; it is absent only when the closed tab was last.
+        layout.value.activeDockTab = remaining[closingIndex] ?? remaining[closingIndex - 1] ?? null;
     }
-    if (remaining.length === 0) layout.value.dockCollapsed = true;
+    if (remaining.length === 0) {
+        layout.value.dockCollapsed = true;
+        layout.value.dockFocus = false;
+    }
 }
 
 /** Collapse keeps the tab set and the width: collapse and width are independent. */
@@ -379,6 +425,24 @@ function collapseDock(): void {
     // Collapsing is itself the stored truth: `initialLayout` only applies the
     // "≥1800 opens the monitor" default while no geometry exists (S3b P1-1).
     layout.value.dockCollapsed = true;
+    // D26-05/D26-04: collapsing the dock also leaves focus — one action, never a
+    // half state where "focused" survives a hidden panel.
+    layout.value.dockFocus = false;
+}
+
+/**
+ * PLAN-0626 D26-04: expand/restore the dock across the whole workbench row.
+ * Orthogonal to pinned/floating and to the width: both keep their values and simply
+ * become visible again on restore.
+ */
+function toggleDockFocus(): void {
+    if (!dockOpen.value) return;
+    layout.value.dockFocus = !layout.value.dockFocus;
+}
+
+/** Esc/restore path: leaves focus only (never collapses the dock). */
+function exitDockFocus(): void {
+    layout.value.dockFocus = false;
 }
 
 function setDockWidth(width: number): void {
@@ -509,9 +573,17 @@ watch(
                 </div>
             </div>
 
-            <!-- Center: the routed main content (chat / environment / settings). -->
+            <!--
+                Center: the routed main content (chat / environment / settings).
+                D26-04: focus hides this column with `v-show` (never `v-if`) — unmounting
+                ChatPanel would drop its SSE subscription and the streaming state mid-run
+                (`useSSE.ts:555-557`), so the column stays mounted and merely stops taking
+                layout space.
+            -->
             <div
+                v-show="!dockFocus"
                 class="flex min-w-0 flex-1 flex-col bg-surface-content"
+                :data-main-hidden="dockFocus ? 'true' : 'false'"
                 @mousedown="handleMainColumnPointerDown"
             >
                 <slot name="center" />
@@ -524,11 +596,13 @@ watch(
                 :width="layout.dockWidth"
                 :mode="renderedDockMode"
                 :default-width="DOCK_WIDTH_DEFAULT"
+                :focus="dockFocus"
                 @update:active-tab="setActiveDockTab"
                 @close-tab="closeDockTab"
                 @close="collapseDock"
                 @update:width="setDockWidth"
                 @toggle-mode="toggleDockMode"
+                @toggle-focus="toggleDockFocus"
             >
                 <template #code>
                     <FileEditor />

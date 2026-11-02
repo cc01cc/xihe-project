@@ -75,6 +75,14 @@ export interface WorkspaceLayoutState {
     dockMode: DockMode;
     /** S3b: `true` once the user toggled the mode; the derivation then backs off. */
     dockModeManual: boolean;
+    /**
+     * PLAN-0626 D26-04: "expand the panel" — the dock fills the whole workbench row and
+     * the main column is hidden (rendering only: the column stays mounted, so its SSE and
+     * streaming state survive). Deliberately **orthogonal** to `dockMode`/`dockWidth`, the
+     * same way `dockCollapsed` is: leaving focus restores the previous mode and width with
+     * no "remember what it was" field, which a third `dockMode` value would have required.
+     */
+    dockFocus: boolean;
     /** Route tabs opened by the user (the chat tab is implicit and not stored). */
     openTabs: WorkspaceTabId[];
 }
@@ -108,6 +116,19 @@ export function isDockMode(value: unknown): value is DockMode {
 
 export function isDockTabId(value: unknown): value is DockTabId {
     return typeof value === "string" && (DOCK_TAB_IDS as readonly string[]).includes(value);
+}
+
+/**
+ * PLAN-0626 D26-06: the dock has a hard tab cap (`DOCK_MAX_TABS`). Opening one more
+ * must be a **visible refusal** instead of the previous silent `return` (a click that
+ * does nothing reads like a broken button — the N12 "silent failure" pattern). Kept as
+ * a pure predicate so the threshold is unit-testable without a DOM.
+ */
+export function canOpenDockTab(openTabCount: number): boolean {
+    // NaN/Infinity cannot describe an open set, so treat them as "room left" (fail-open
+    // on a corrupt count, matching the reader's degrade-to-defaults stance).
+
+    return !Number.isFinite(openTabCount) || openTabCount < DOCK_MAX_TABS;
 }
 
 /**
@@ -222,6 +243,7 @@ export function defaultWorkspaceLayout(): WorkspaceLayoutState {
         activeDockTab: null,
         dockMode: "floating",
         dockModeManual: false,
+        dockFocus: false,
         openTabs: defaultOpenTabs(),
     };
 }
@@ -301,9 +323,13 @@ export function readWorkspaceLayout(workspaceId: string): WorkspaceLayoutState {
             }
         }
         const active =
-            isDockTabId(parsed.activeDockTab) && tabs.includes(parsed.activeDockTab)
-                ? parsed.activeDockTab
-                : (tabs[0] ?? null);
+                isDockTabId(parsed.activeDockTab) && tabs.includes(parsed.activeDockTab)
+                    ? parsed.activeDockTab
+                    : (tabs[0] ?? null),
+            dockCollapsed =
+                typeof parsed.dockCollapsed === "boolean"
+                    ? parsed.dockCollapsed
+                    : defaults.dockCollapsed;
         return {
             treeCollapsed:
                 typeof parsed.treeCollapsed === "boolean"
@@ -313,10 +339,7 @@ export function readWorkspaceLayout(workspaceId: string): WorkspaceLayoutState {
                 typeof parsed.treeWidth === "number"
                     ? clampTreeWidth(parsed.treeWidth)
                     : defaults.treeWidth,
-            dockCollapsed:
-                typeof parsed.dockCollapsed === "boolean"
-                    ? parsed.dockCollapsed
-                    : defaults.dockCollapsed,
+            dockCollapsed,
             dockWidth:
                 typeof parsed.dockWidth === "number"
                     ? clampDockWidth(parsed.dockWidth)
@@ -328,7 +351,10 @@ export function readWorkspaceLayout(workspaceId: string): WorkspaceLayoutState {
                 typeof parsed.dockModeManual === "boolean"
                     ? parsed.dockModeManual
                     : defaults.dockModeManual,
-
+            // D26-04: focus is meaningless without a rendered panel, so a payload that says
+            // "focused" while the dock is collapsed (or has no tabs) degrades to false
+            // instead of storing a state the UI cannot honour.
+            dockFocus: parsed.dockFocus === true && !dockCollapsed && tabs.length > 0,
             openTabs: readOpenTabs(parsed),
         };
     } catch (cause) {
@@ -361,6 +387,9 @@ export function writeWorkspaceLayout(workspaceId: string, state: WorkspaceLayout
                 activeDockTab: active,
                 dockMode: isDockMode(state.dockMode) ? state.dockMode : "floating",
                 dockModeManual: state.dockModeManual,
+                // Mirrors the read-side normalization: never persist "focused" for a dock
+                // that cannot render (collapsed or tabless).
+                dockFocus: state.dockFocus === true && !state.dockCollapsed && tabs.length > 0,
                 openTabs: state.openTabs.filter(isWorkspaceTabId),
             }),
         );
