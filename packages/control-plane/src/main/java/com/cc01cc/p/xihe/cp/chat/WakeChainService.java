@@ -67,6 +67,11 @@ public class WakeChainService {
             views = participantService.list(sessionOwner(sessionId), workspaceOf(sessionId),
                     sessionId).participants();
         } catch (RuntimeException noRoster) {
+            // The run must still settle (a wake failure may never fail the run), but the old silent
+            // return made "empty roster" and "roster read failed" indistinguishable — PLAN-0630 M1
+            // fixed the empty-roster half at the source (spawn children now get their PRIMARY).
+            logger.warn("[LIFECYCLE] service=cp event=wake_roster_unreadable sessionId={} runId={} failureType={}",
+                    sessionId, runId, noRoster.getClass().getSimpleName());
             return;
         }
         List<MentionParser.RosterEntry> roster = views.stream()
@@ -126,13 +131,32 @@ public class WakeChainService {
                 + "reason={} depth={}", sessionId, link.participantId(), reason, child.depth());
     }
 
+    /**
+     * PLAN-0630 M1: the depth is instance-level config ({@code agent-runtime.wakeChainMaxDepth},
+     * instance only) resolved without user/workspace context — the same layer the config schema and
+     * {@code ConfigService.INSTANCE_ONLY_KEYS} declare. Invalid or unreadable values fall back to the
+     * strictest default (3) and are logged: a silent fallback hides a misconfiguration, and a silent
+     * catch violates the exception-audit rule.
+     */
     private int maxDepth() {
         try {
             String configured = configService == null ? null
                     : configService.resolve("agent-runtime", "wakeChainMaxDepth", null, null);
-            return configured == null ? DEFAULT_MAX_DEPTH
-                    : Math.max(1, Integer.parseInt(configured.trim()));
+            if (configured == null) {
+                return DEFAULT_MAX_DEPTH;
+            }
+            int parsed = Integer.parseInt(configured.trim());
+            if (parsed < 1) {
+                // 0 (or a negative) is not "unlimited" here: the schema forbids it, and clamping it to
+                // 1 would silently allow exactly one wake hop. Fall back to the default instead.
+                logger.warn("[LIFECYCLE] service=cp event=wake_chain_depth_invalid configured={} fallback={}",
+                        configured, DEFAULT_MAX_DEPTH);
+                return DEFAULT_MAX_DEPTH;
+            }
+            return parsed;
         } catch (RuntimeException unreadable) {
+            logger.warn("[LIFECYCLE] service=cp event=wake_chain_depth_unreadable failureType={} fallback={}",
+                    unreadable.getClass().getSimpleName(), DEFAULT_MAX_DEPTH);
             return DEFAULT_MAX_DEPTH;
         }
     }
