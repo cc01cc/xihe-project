@@ -43,6 +43,14 @@ final class CpModuleAssignment implements SliceAssignment {
         if (name.startsWith("Agent")) {
             return "principal";
         }
+        // PLAN-0629 M1-6: the passive-write seam (`PassiveMemoryJudge`) lives in `cp.service` but
+        // belongs to the agent-memory feature, whose whole family (`AgentMemory*`) resolves to the
+        // `principal` slice above — the judge only decides whether an already-produced summary is
+        // worth remembering, and both its caller (`AgentMemoryPassiveWriter`) and its consumer are
+        // memory types. Leaving it unassigned made `CpArchitectureTest` error out (L2, 2026-11-03).
+        if (name.equals("PassiveMemoryJudge")) {
+            return "principal";
+        }
         if (name.startsWith("ContextTemplate")) {
             return "context";
         }
