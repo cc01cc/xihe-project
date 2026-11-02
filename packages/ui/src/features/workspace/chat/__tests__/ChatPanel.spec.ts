@@ -705,3 +705,51 @@ describe("ChatPanel parked run", () => {
         );
     });
 });
+
+// ── PLAN-0631 M1-B (D31-03 / D31-05) ───────────────────────────────────────
+describe("ChatPanel approval waiting surface", () => {
+    it("keeps a readable status region after the modal is dismissed, wording shared with the pill", async () => {
+        const wrapper = mountPanel();
+        useAgentStore().addApprovalRequest(approval);
+        await nextTick();
+        await flushPromises();
+
+        const row = wrapper.get('[data-testid="chat-approval-waiting"]');
+        expect(row.attributes("role")).toBe("status");
+        expect(row.attributes("aria-live")).toBe("polite");
+        expect(row.text()).toContain(i18n.global.t("chat.runState.awaitingApproval"));
+        expect(row.text()).toContain("write_file");
+
+        wrapper.findComponent(ApprovalModal).vm.$emit("dismiss");
+        await nextTick();
+
+        // One resolver labelKey ⇒ the pill and the status row cannot drift apart.
+        const pill = wrapper.get('[data-testid="pending-approval-reopen-pill"]');
+        expect(pill.text()).toContain(i18n.global.t("chat.runState.awaitingApproval"));
+        // The status row is not dismissible: it follows CP's pending state only.
+        expect(wrapper.find('[data-testid="chat-approval-waiting"]').exists()).toBe(true);
+    });
+
+    it("upgrades the recovery banner to alert only for a failed state", async () => {
+        const wrapper = mountPanel();
+        const store = useChatStore();
+
+        store.runRecovery[SESSION_ID] = {
+            state: "resumed",
+            runId: RUN_ID,
+            message: "still running",
+        };
+        await nextTick();
+        expect(wrapper.get('[data-testid="run-recovery-banner"]').attributes("role")).toBe(
+            "status",
+        );
+
+        store.runRecovery[SESSION_ID] = {
+            state: "failed",
+            runId: RUN_ID,
+            message: "guard stopped the run",
+        };
+        await nextTick();
+        expect(wrapper.get('[data-testid="run-recovery-banner"]').attributes("role")).toBe("alert");
+    });
+});

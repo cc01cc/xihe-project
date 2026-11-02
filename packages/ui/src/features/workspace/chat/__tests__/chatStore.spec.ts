@@ -856,4 +856,24 @@ describe("PLAN-0631 run state view", () => {
                 .filter((m) => m.marker === "status" && m.status !== "interrupted"),
         ).toHaveLength(0);
     });
+
+    it("stamps the live assistant message with the attributed responder exactly once", () => {
+        const store = useChatStore();
+        store.createStreamingMessage(SID, "run-1");
+        store.setStreamingMessageResponder(SID, "participant-a");
+        // The attribution is constant per run: a later event must not overwrite it.
+        store.setStreamingMessageResponder(SID, "participant-b");
+
+        const live = store.getMessages(SID).find((m) => m.id === store.getStreamingMessageId(SID));
+        expect(live?.participantId).toBe("participant-a");
+    });
+
+    it("leaves attribution unknown when CP sends none (never back-fills a participant)", () => {
+        const store = useChatStore();
+        store.createStreamingMessage(SID, "run-1");
+        store.setStreamingMessageResponder(SID, null);
+
+        const live = store.getMessages(SID).find((m) => m.id === store.getStreamingMessageId(SID));
+        expect(live?.participantId).toBeUndefined();
+    });
 });

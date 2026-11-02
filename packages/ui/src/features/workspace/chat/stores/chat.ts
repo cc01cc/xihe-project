@@ -278,6 +278,18 @@ export const useChatStore = defineStore("chat", () => {
         return messages.value[sessionId]?.find((msg) => msg.id === messageId);
     }
 
+    /**
+     * PLAN-0631 D31-08: stamp the **live** assistant message with the responder CP
+     * attributed through the SSE envelope (`participantId`). The value is constant per
+     * run, so the first known one wins; a null/absent attribution is left alone — no
+     * PRIMARY back-fill (DEV-032) and no client-side guessing.
+     */
+    function setStreamingMessageResponder(sessionId: string, participantId: string | null) {
+        if (participantId === null) return;
+        const message = findStreamingMessage(sessionId);
+        if (message && message.participantId === undefined) message.participantId = participantId;
+    }
+
     function messageHasRenderableContent(message: Message): boolean {
         return Boolean(
             message.content ||
@@ -850,6 +862,7 @@ export const useChatStore = defineStore("chat", () => {
         addMarker,
         upsertRunStatusMarker,
         removeRunStatusMarker,
+        setStreamingMessageResponder,
         createStreamingMessage,
         upsertToolCall,
         appendToParts,

@@ -37,12 +37,19 @@ const { isConnected, isStreaming, connect, sendMessage, disconnect } = useSSE(
     computed(() => props.sessionId),
 );
 let activeRunId: string | undefined, activeBranchId: string | undefined;
+/**
+ * PLAN-0631 D31-08: the run's responder as CP attributed it (SSE envelope `participantId`).
+ * Constant for a run, so it is remembered once and stamped onto the live message — the
+ * citation is never derived from `role` or the session's PRIMARY participant.
+ */
+let activeResponderId: string | null = null;
 
 watch(
     () => props.sessionId,
     (id) => {
         activeRunId = undefined;
         activeBranchId = undefined;
+        activeResponderId = null;
         if (id) {
             connectSession(id);
         }
@@ -61,10 +68,20 @@ function connectSession(id: string) {
         onDerivedStateChanged: () => {
             if (isCurrentSession()) emit("derivedStateRefresh");
         },
+        onParticipant: (participantId: string | null) => {
+            if (!isCurrentSession() || participantId === null) return;
+            activeResponderId = participantId;
+            chatStore.setStreamingMessageResponder(id, participantId);
+        },
         onStart: () => {
             if (!isCurrentSession()) return;
             parser.reset();
             chatStore.createStreamingMessage(id, activeRunId, activeBranchId);
+            // The attribution usually arrives on the very first event of the run, i.e.
+            // before this callback — stamp it now that the live message exists.
+            if (activeResponderId !== null) {
+                chatStore.setStreamingMessageResponder(id, activeResponderId);
+            }
         },
         onToken: (token: string, hint?) => {
             if (!isCurrentSession()) return;
@@ -127,6 +144,7 @@ function connectSession(id: string) {
             chatStore.setSessionRunState(id, "idle");
             activeRunId = undefined;
             activeBranchId = undefined;
+            activeResponderId = null;
         },
         onError: (payload: SSEErrorPayload) => {
             if (!isCurrentSession()) return;
@@ -135,6 +153,7 @@ function connectSession(id: string) {
             agentStore.setStatus("error");
             chatStore.setSessionRunState(id, "error", activeRunId);
             activeRunId = undefined;
+            activeResponderId = null;
             toast.error(chatErrorToastText(payload.code, payload.detail));
         },
         onApprovalRequest: (data) => {

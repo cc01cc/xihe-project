@@ -789,13 +789,14 @@ const messages = {
             },
             /*
              * PLAN-0631 D31-04/07：Run 状态的**可见语言**。文案刻意沿用 `toolStatus`/`followUpStatus`
-             * 已建立的既有词汇（排队中/执行中/运行中），不新造近义词；M2 sweep 会把这些散在的
-             * 状态词收敛到一个 resolver（D31-01），此处只补「排队（已受理但未执行）」这一格。
+             * 已建立的既有词汇（排队中/执行中/运行中），不新造近义词；状态→文案的唯一映射在
+             * `chat/runStateView.ts`（D31-01），这里只补 chat 栏位原本缺的两格。
              */
             runState: {
                 queued: "排队中",
                 queuedHint: "已受理，等待执行",
                 reasonAgentDown: "Agent 暂不可用；恢复后会自动执行，也可以停止这一次",
+                awaitingApproval: "等待审批",
             },
             toolDiagnosticsTitle: "诊断",
             toolDiagnosticsSummary: "共 {total} 条，已回灌前 {shown} 条",
@@ -2880,6 +2881,7 @@ const messages = {
                 queuedHint: "Accepted — waiting to start",
                 reasonAgentDown:
                     "The Agent is unavailable right now; this will start once it recovers — you can also stop it",
+                awaitingApproval: "Waiting for approval",
             },
             toolDiagnosticsTitle: "Diagnostics",
             toolDiagnosticsSummary: "{total} total, first {shown} fed back",
