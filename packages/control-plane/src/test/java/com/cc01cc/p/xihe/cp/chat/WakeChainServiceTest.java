@@ -166,4 +166,47 @@ class WakeChainServiceTest {
         assertTrue(body.path("error").asText().contains(reason),
                 "refusal reason recorded: " + reason);
     }
+
+    /**
+     * PLAN-0630 M1 (taskbook §3.4-②): a spawn child now owns a PRIMARY, so its roster is non-empty —
+     * the regression to pin is that an ordinary reply <b>without</b> {@code @} wakes nobody. Before the
+     * PRIMARY fix this held trivially (empty roster); after it, "no mention" must still mean "no wake",
+     * otherwise every sub-conversation turn would fan out.
+     */
+    @Test
+    void replyWithoutMentionWakesNobody() {
+        stubChainRuns();
+        chain.onAssistantContent(SESSION_ID, "root-run", "我处理完了，没有提到任何人。");
+        verify(dispatch, never()).fire(any(), anyString(), anyString(),
+                eq(UUID.fromString(SESSION_ID)));
+        verify(eventStore, never()).append(any(), any(), any(), eq("wake_dispatch"), any());
+    }
+
+    /**
+     * PLAN-0630 M1 (taskbook §3.4-② second half): with a PRIMARY present, an agent that prints its own
+     * display name mentions itself. The chain must terminate with a visible refusal instead of looping —
+     * either the cycle guard (same participant on the same path) or the depth gate stops it.
+     */
+    @Test
+    void selfMentionTerminatesWithAVisibleRefusal() {
+        UUID self = UUID.randomUUID();
+        when(participantService.list(any(), any(), any())).thenReturn(rosterOf(entry(self, "Bee")));
+        when(dispatch.fire(any(), eq("chain"), anyString(), eq(UUID.fromString(SESSION_ID))))
+                .thenReturn(new WakeDispatchService.WakeFireResult(true, RUN_B, "submitted"));
+
+        chain.onAssistantContent(SESSION_ID, "root-run", "@Bee 我继续");
+        chain.onAssistantContent(SESSION_ID, RUN_B.toString(), "@Bee 我继续");
+        chain.onAssistantContent(SESSION_ID, RUN_B.toString(), "@Bee 我继续");
+
+        // One wake happened; every further self-mention is refused, so the chain cannot loop.
+        verify(dispatch, times(1)).fire(eq(self), eq("chain"), anyString(),
+                eq(UUID.fromString(SESSION_ID)));
+        ArgumentCaptor<Object> payload = ArgumentCaptor.forClass(Object.class);
+        verify(eventStore, times(2)).append(eq(SESSION_ID), eq("ws-1"), eq("owner-1"),
+                eq("wake_dispatch"), payload.capture());
+        for (Object body : payload.getAllValues()) {
+            assertEquals("chain_refused",
+                    ((com.fasterxml.jackson.databind.node.ObjectNode) body).path("outcome").asText());
+        }
+    }
 }

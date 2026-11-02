@@ -163,7 +163,15 @@ public class DelegationBudgetService {
                     + "rootSessionId={} fallback=code_defaults", rootPrincipalId, audit.rootSessionId());
             stored = null;
         }
-        DelegationLimits raw = DelegationPolicyValidator.limits(stored, DEFAULT_MAX_COUNT, DEFAULT_MAX_DEPTH);
+        DelegationLimits raw;
+        try {
+            raw = DelegationPolicyValidator.limits(stored, DEFAULT_MAX_COUNT, DEFAULT_MAX_DEPTH);
+        } catch (CpApiException invalid) {
+            // Fail closed AND keep the audit shape: the validator already answers 409
+            // DELEGATION_POLICY_INVALID, but the refusal must also reach the durable agent_spawn_refused
+            // line, and only DelegationRefusedException carries the audit context out of the transaction.
+            throw DelegationRefusedException.policyInvalid("policy_invalid", audit, invalid.getMessage());
+        }
         int countCeiling = ceiling(CEILING_MAX_COUNT);
         int depthCeiling = ceiling(CEILING_MAX_DEPTH);
         int maxCount = countCeiling > 0 ? Math.min(raw.maxCount(), countCeiling) : raw.maxCount();

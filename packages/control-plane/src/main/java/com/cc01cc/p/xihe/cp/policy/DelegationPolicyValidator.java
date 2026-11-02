@@ -74,8 +74,8 @@ public final class DelegationPolicyValidator {
      */
     public static DelegationLimits limits(JsonNode policy, int defaultMaxCount, int defaultMaxDepth) {
         parse(policy, HttpStatus.CONFLICT, "DELEGATION_POLICY_INVALID");
-        int maxCount = readInt(policy, KEY_MAX_COUNT, defaultMaxCount, HttpStatus.CONFLICT);
-        int maxDepth = readInt(policy, KEY_MAX_DEPTH, defaultMaxDepth, HttpStatus.CONFLICT);
+        int maxCount = readInt(policy, KEY_MAX_COUNT, defaultMaxCount);
+        int maxDepth = readInt(policy, KEY_MAX_DEPTH, defaultMaxDepth);
         return new DelegationLimits(Math.min(maxCount, HARD_MAX_COUNT), Math.min(maxDepth, HARD_MAX_DEPTH));
     }
 
@@ -114,19 +114,24 @@ public final class DelegationPolicyValidator {
             throw invalid(status, code, "delegationPolicy." + key + " must be >= 1 (0 is not \"unlimited\"; "
                     + "withdraw the SPAWN_AGENT authorisation instead)");
         }
+        // Refuse (rather than clamp) on the write face: silently storing a value that every read will
+        // clamp is exactly the "writable but never effective" no-op this plan set out to remove.
+        if (value.asInt() > hardRail(key)) {
+            throw invalid(status, code, "delegationPolicy." + key + " must not exceed the hard ceiling "
+                    + hardRail(key));
+        }
     }
 
-    private static int readInt(JsonNode policy, String key, int fallback, HttpStatus status) {
+    private static int hardRail(String key) {
+        return KEY_MAX_COUNT.equals(key) ? HARD_MAX_COUNT : HARD_MAX_DEPTH;
+    }
+
+    private static int readInt(JsonNode policy, String key, int fallback) {
         JsonNode value = policy == null ? null : policy.get(key);
-        if (value == null || value.isNull()) {
-            return fallback;
-        }
-        int raw = value.asInt();
-        if (raw > (KEY_MAX_COUNT.equals(key) ? HARD_MAX_COUNT : HARD_MAX_DEPTH)) {
-            throw invalid(status, "DELEGATION_POLICY_INVALID", "delegationPolicy." + key
-                    + " must not exceed the hard ceiling " + HARD_MAX_COUNT + "/" + HARD_MAX_DEPTH);
-        }
-        return raw;
+        // parse() above has already applied the hard rail (and refused above-rail values on BOTH exits):
+        // the write face answers 400, the read gate answers 409. V100 ships with no backfill, so an
+        // above-rail document can never legitimately exist - refusing beats a silent clamp.
+        return value == null || value.isNull() ? fallback : value.asInt();
     }
 
     private static CpApiException invalid(HttpStatus status, String code, String detail) {
