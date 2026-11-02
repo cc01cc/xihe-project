@@ -417,3 +417,29 @@ describe("soft-disabled row affordances (PLAN-0623, Lead screenshot review)", ()
         expect(wrapper.get('[data-testid="participant-row-p-human"]').exists()).toBe(true);
     });
 });
+
+describe("GUARD role badge (PLAN-0625 M3, icon not color)", () => {
+    it("marks the GUARD row with a shield icon inside the existing badge (no new color)", async () => {
+        getParticipants.mockResolvedValueOnce({
+            participants: [
+                { ...HUMAN, participantId: "p-guard", role: "GUARD", displayName: "Guardian" },
+            ],
+            capabilities: ALL_CAPS,
+        });
+        const wrapper = mountPanel();
+        await flushPromises();
+
+        const badge = wrapper.get('[data-testid="participant-role-badge-p-guard"]');
+        expect(badge.attributes("data-session-role")).toBe("GUARD");
+        // 区分度 = icon（Shield），不是新色：徽标仍是同一个中性边框底色。
+        expect(badge.find("svg").exists()).toBe(true);
+        expect(badge.classes().join(" ")).not.toMatch(/destructive|amber|red/);
+        // 非 GUARD 行不该有 icon。
+        getParticipants.mockResolvedValueOnce({ participants: [HUMAN], capabilities: ALL_CAPS });
+        const plain = mountPanel();
+        await flushPromises();
+        expect(
+            plain.get('[data-testid="participant-role-badge-p-human"]').find("svg").exists(),
+        ).toBe(false);
+    });
+});

@@ -2209,3 +2209,66 @@ describe("getSessionParticipants strict envelope (PLAN-0623 D23-25)", () => {
         await expect(api.getSessionParticipants(SESSION_ID)).rejects.toThrow(/payload/i);
     });
 });
+
+describe("normalizeApprovalRequest hooks section (PLAN-0625 G, strict version gate)", () => {
+    const advisor = {
+        kind: "guard",
+        verdict: "deny" as const,
+        reason: "too broad",
+        at: "2026-11-02T03:00:00Z",
+    };
+
+    function payloadWith(hooks: unknown) {
+        return {
+            requestId: APPROVAL_ID,
+            sessionId: SESSION_ID,
+            tool: "write_file",
+            action: "write file",
+            details: "/test.txt",
+            state: "pending" as const,
+            policy: {
+                effect: "ask" as const,
+                sourceLayer: "workspace" as const,
+                matchedRule: null,
+                reason: "no rule",
+                mode: "manual" as const,
+                modeAtGrant: null,
+                actionClass: "write",
+                shape: "structured" as const,
+                hooks,
+            },
+        };
+    }
+
+    it("keeps a version-1 hooks section with well-formed advisors", () => {
+        const approval = normalizeApprovalRequest(payloadWith({ version: 1, advisors: [advisor] }));
+        expect(approval?.policy?.hooks).toEqual({ version: 1, advisors: [advisor] });
+    });
+
+    it("drops and warns on an unknown hooks version (fail-closed, D23-25 same source)", () => {
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+        try {
+            const approval = normalizeApprovalRequest(
+                payloadWith({ version: 99, advisors: [advisor] }),
+            );
+            expect(approval?.policy?.hooks).toBeUndefined();
+            expect(warn).toHaveBeenCalledWith(
+                expect.stringContaining("unknown policySummary hooks version"),
+            );
+        } finally {
+            warn.mockRestore();
+        }
+    });
+
+    it("drops a version-1 section whose advisors are malformed", () => {
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+        try {
+            const approval = normalizeApprovalRequest(
+                payloadWith({ version: 1, advisors: [{ kind: "guard", verdict: "maybe" }] }),
+            );
+            expect(approval?.policy?.hooks).toBeUndefined();
+        } finally {
+            warn.mockRestore();
+        }
+    });
+});

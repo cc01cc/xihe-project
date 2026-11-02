@@ -12,6 +12,7 @@
  * 模型意图（`defaultModelProvider/Name`）契约里还没有，行内暂不显示；等 M1a 联表补字段。
  */
 import { computed, ref } from "vue";
+import { Shield } from "@lucide/vue";
 import { useI18n } from "vue-i18n";
 import type {
     ParticipantRespondPolicy,
@@ -173,11 +174,17 @@ const disabled = computed(() => Boolean(props.participant.disabledAt));
                     >{{ kindLabel }}</span
                 >
                 <span
-                    class="rounded border px-1.5 py-0.5 text-[10px]"
+                    class="flex items-center gap-1 rounded border px-1.5 py-0.5 text-[10px]"
                     :data-testid="`participant-role-badge-${participant.participantId}`"
                     :data-session-role="participant.role"
-                    >{{ roleLabel }}</span
                 >
+                    <!--
+                        PLAN-0625 M3：GUARD 的区分度用 **icon 不用新色**（色彩系统不为徽标破例，
+                        D25 纪律）；与 PRIMARY/MEMBER 同一徽标底色。
+                    -->
+                    <Shield v-if="participant.role === 'GUARD'" class="size-3" aria-hidden="true" />
+                    {{ roleLabel }}
+                </span>
                 <span
                     v-if="sourceLabel"
                     class="rounded border px-1.5 py-0.5 text-[10px]"

@@ -104,6 +104,9 @@ const i18n = createI18n({
                 approvalClassifyBack: "Back",
                 approvalClassifySubmit: "Confirm classification and allow once",
                 approvalClassifyFailed: "Classification failed",
+                approvalGuardAdvice: "Guard advice",
+                approvalGuardVerdictApprove: "Suggests approving",
+                approvalGuardVerdictDeny: "Suggests rejecting",
                 approvalClassifyRequiresOnce: "Unclassified tools can only be allowed once.",
             },
             common: { saving: "Saving..." },
@@ -866,5 +869,60 @@ describe("ApprovalModal unclassified classification (PLAN-0328 T1.14)", () => {
         await wrapper.find('[data-testid="approval-approve"]').trigger("click");
 
         expect(wrapper.emitted("approve")).toEqual([[{ decision: "once", requestId: REQUEST_ID }]]);
+    });
+});
+
+describe("ApprovalModal guard advice (PLAN-0625 G, D25-04)", () => {
+    const hooks = {
+        version: 1,
+        advisors: [
+            {
+                kind: "guard",
+                verdict: "deny" as const,
+                reason: "Guard flags destructive scope",
+                at: "2026-11-02T03:00:00Z",
+            },
+        ],
+    };
+
+    it("renders the guard advice block in amber (not red) when hooks are present", () => {
+        const wrapper = mountModal({
+            approval: { ...baseApproval, state: "pending", policy: { ...policy, hooks } },
+            show: true,
+        });
+
+        const block = wrapper.get('[data-testid="approval-guard-advice"]');
+        // D25-04：建议不是拒绝 —— deny 也必须是琥珀色，不能落入"红色=拒绝"的语义。
+        expect(block.classes().join(" ")).toContain("amber");
+        expect(block.classes().join(" ")).not.toMatch(/\bdestructive\b/);
+        expect(block.get('[data-testid="approval-guard-verdict"]').text()).toBe(
+            "Suggests rejecting",
+        );
+        expect(block.get('[data-testid="approval-guard-reason"]').text()).toContain(
+            "Guard flags destructive scope",
+        );
+        expect(block.get('[data-guard-kind="guard"]').exists()).toBe(true);
+    });
+
+    it("renders nothing when the policy has no hooks section (legacy payloads unchanged)", () => {
+        const wrapper = mountModal({
+            approval: { ...baseApproval, state: "pending", policy },
+            show: true,
+        });
+
+        expect(wrapper.find('[data-testid="approval-guard-advice"]').exists()).toBe(false);
+    });
+
+    it("renders nothing when the hooks section carries no advisors", () => {
+        const wrapper = mountModal({
+            approval: {
+                ...baseApproval,
+                state: "pending",
+                policy: { ...policy, hooks: { version: 1, advisors: [] } },
+            },
+            show: true,
+        });
+
+        expect(wrapper.find('[data-testid="approval-guard-advice"]').exists()).toBe(false);
     });
 });

@@ -1,6 +1,8 @@
 import type {
     ApprovalDecision,
     ApprovalDecisionKind,
+    ApprovalGuardAdvisor,
+    ApprovalHooksSection,
     ApprovalPolicy,
     ApprovalPolicyEffect,
     ApprovalPolicyMode,
@@ -546,6 +548,47 @@ function asRecord(value: unknown): JsonRecord | null {
     return typeof value === "object" && value !== null ? (value as JsonRecord) : null;
 }
 
+/**
+ * PLAN-0625 G：policySummary 的 versioned `hooks` 段（守卫/顾问建议）。
+ * 严格带版本（D23-25 同源）：`version === 1` 才读；无 version / 未知版本 / 形状不符
+ * ⇒ **整段丢弃** + console.warn（fail-closed：宁可少显示，不显示猜测的形状）。
+ */
+function normalizeApprovalHooks(value: unknown): ApprovalHooksSection | undefined {
+    const record = asRecord(value);
+    if (!record) return undefined;
+    if (record.version !== 1) {
+        // 未知版本 = 契约前进了而 UI 没跟上：显式告警，不渲染猜测的形状。
+        console.warn(`[approval] unknown policySummary hooks version: ${String(record.version)}`);
+        return undefined;
+    }
+    if (!Array.isArray(record.advisors)) {
+        console.warn("[approval] policySummary hooks section malformed: advisors missing");
+        return undefined;
+    }
+    const advisors: ApprovalGuardAdvisor[] = [];
+    for (const entry of record.advisors) {
+        const advisor = asRecord(entry);
+        if (
+            !advisor ||
+            typeof advisor.kind !== "string" ||
+            advisor.kind === "" ||
+            !(advisor.verdict === "approve" || advisor.verdict === "deny") ||
+            typeof advisor.reason !== "string" ||
+            typeof advisor.at !== "string" ||
+            advisor.at === ""
+        ) {
+            console.warn("[approval] policySummary hooks advisor malformed; dropping the section");
+            return undefined;
+        }
+        advisors.push({
+            kind: advisor.kind,
+            verdict: advisor.verdict,
+            reason: advisor.reason,
+            at: advisor.at,
+        });
+    }
+    return { version: 1, advisors };
+}
 function normalizeApprovalPolicy(value: unknown): ApprovalPolicy | undefined {
     const record = asRecord(value);
     if (
@@ -577,6 +620,9 @@ function normalizeApprovalPolicy(value: unknown): ApprovalPolicy | undefined {
             : {}),
         actionClass: record.actionClass,
         shape: record.shape as ApprovalPolicyShape,
+        ...(normalizeApprovalHooks(record.hooks)
+            ? { hooks: normalizeApprovalHooks(record.hooks)! }
+            : {}),
     };
 }
 
@@ -1520,6 +1566,9 @@ function normalizePolicyToolFace(value: unknown): PolicyToolFaceView {
         tool: record.tool,
         actionClass: record.actionClass,
         shape: record.shape as ApprovalPolicyShape,
+        ...(normalizeApprovalHooks(record.hooks)
+            ? { hooks: normalizeApprovalHooks(record.hooks)! }
+            : {}),
     };
 }
 

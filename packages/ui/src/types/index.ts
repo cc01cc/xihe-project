@@ -398,6 +398,23 @@ export type ApprovalPolicyMode = "manual" | "auto" | null;
 export type SessionPolicyMode = Exclude<ApprovalPolicyMode, null>;
 export type ApprovalPolicyShape = "structured" | "interpreter" | "opaque";
 
+/**
+ * PLAN-0625 G/D25-10：policySummary 的 versioned `hooks` 段（顾问建议，含守卫）。
+ * 顾问是**建议**不是裁决（D25-04"守卫不执行"）：verdict 只有 approve/deny 两种措辞，
+ * UI 不得把它渲染成最终拒绝。
+ */
+export interface ApprovalGuardAdvisor {
+    kind: string;
+    verdict: "approve" | "deny";
+    reason: string;
+    at: string;
+}
+
+export interface ApprovalHooksSection {
+    version: number;
+    advisors: ApprovalGuardAdvisor[];
+}
+
 export interface ApprovalPolicy {
     effect: ApprovalPolicyEffect;
     sourceLayer: ApprovalPolicySourceLayer;
@@ -407,6 +424,8 @@ export interface ApprovalPolicy {
     modeAtGrant?: ApprovalPolicyMode;
     actionClass: string;
     shape: ApprovalPolicyShape;
+    /** versioned hooks 段；version≠1 或形状不符时**整段缺失**（fail-closed，不猜）。 */
+    hooks?: ApprovalHooksSection;
 }
 
 export type ApprovalRequestState =
@@ -535,6 +554,8 @@ export interface PolicyToolFaceView {
     tool: string;
     actionClass: string;
     shape: ApprovalPolicyShape;
+    /** versioned hooks 段；version≠1 或形状不符时**整段缺失**（fail-closed，不猜）。 */
+    hooks?: ApprovalHooksSection;
 }
 
 export interface AttachmentFile {

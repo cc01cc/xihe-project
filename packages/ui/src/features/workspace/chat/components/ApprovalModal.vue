@@ -14,7 +14,7 @@ import type {
     ApprovalRequest,
     ApprovalRequestOrigin,
 } from "../../../../types";
-import { Bot, LoaderCircle, ShieldCheck } from "@lucide/vue";
+import { Bot, LoaderCircle, ShieldAlert, ShieldCheck } from "@lucide/vue";
 
 const props = withDefaults(
     defineProps<{
@@ -128,6 +128,14 @@ const isUnclassifiedPolicy = computed(() => props.approval?.policy?.actionClass 
 const policyShape = computed(() => props.approval?.policy?.shape);
 /** Delete action class is the one structured domain the server caps at `once`. */
 const isDeleteActionClass = computed(() => props.approval?.policy?.actionClass === "delete");
+
+/**
+ * PLAN-0625 G（D25-04"守卫不执行"）：守卫建议是**审批的输入**，不是裁决。
+ * - 只在 `policy.hooks` 通过严格版本解析（version===1）后才有内容；
+ * - **deny 建议用琥珀色，不用红色** —— 红色在本卡语义里 = 拒绝，建议不能越权；
+ * - 无 hooks / 版本未知 ⇒ 区块不渲染（normalize 层已 fail-closed）。
+ */
+const guardAdvisors = computed(() => props.approval?.policy?.hooks?.advisors ?? []);
 /**
  * Decision tiers the server accepts for this tool shape (CP ReusePolicy.allowedTiers):
  * structured → once/session/saved; structured+delete and opaque/unclassified → once only;
@@ -508,6 +516,50 @@ onBeforeUnmount(() => {
                     </div>
                 </section>
 
+                <!--
+                    PLAN-0625 G：守卫建议区块。琥珀色 = "建议拒绝"（D25-04：守卫不执行，
+                    建议不是拒绝 —— 红色在本卡是"已拒绝"的语义，不能给建议用）。
+                -->
+                <section
+                    v-if="guardAdvisors.length > 0"
+                    data-testid="approval-guard-advice"
+                    class="mb-4 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3"
+                >
+                    <h3 class="mb-2 flex items-center gap-1.5 text-sm font-semibold">
+                        <ShieldAlert class="size-4 text-amber-600 dark:text-amber-400" />
+                        {{ t("chat.approvalGuardAdvice") }}
+                    </h3>
+                    <ul class="space-y-2 text-xs">
+                        <li
+                            v-for="advisor in guardAdvisors"
+                            :key="`${advisor.kind}-${advisor.at}`"
+                            class="rounded border border-amber-500/30 bg-background/60 p-2"
+                            :data-guard-kind="advisor.kind"
+                            :data-guard-verdict="advisor.verdict"
+                        >
+                            <p class="flex items-center gap-1.5">
+                                <span
+                                    class="rounded border border-amber-500/40 px-1.5 py-0.5 text-[10px] font-medium text-amber-600 dark:text-amber-400"
+                                    data-testid="approval-guard-verdict"
+                                >
+                                    {{
+                                        advisor.verdict === "deny"
+                                            ? t("chat.approvalGuardVerdictDeny")
+                                            : t("chat.approvalGuardVerdictApprove")
+                                    }}
+                                </span>
+                                <span class="text-muted-foreground">{{ advisor.at }}</span>
+                            </p>
+                            <p
+                                v-if="advisor.reason"
+                                class="mt-1 whitespace-pre-wrap"
+                                data-testid="approval-guard-reason"
+                            >
+                                {{ advisor.reason }}
+                            </p>
+                        </li>
+                    </ul>
+                </section>
                 <section
                     data-testid="approval-evidence-section"
                     class="mb-4 rounded-lg border bg-muted/20 p-3"
