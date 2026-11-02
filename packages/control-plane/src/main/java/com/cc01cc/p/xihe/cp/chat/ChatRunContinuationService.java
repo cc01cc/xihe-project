@@ -135,6 +135,12 @@ class ChatRunContinuationService {
         child.setOrigin(ChatRun.ORIGIN_USER_SUBMISSION);
         child.setBranchId(branchId);
         child.setContextTemplateSnapshot(source.getContextTemplateSnapshot());
+        // PLAN-0628 M2a (D28-39 ②): the child inherits the parent listing verbatim instead of
+        // re-resolving it — a binding added while the parent ran must NOT appear here, otherwise the
+        // continuation would see a different capability set than the Run it continues. The marker
+        // `snapshotSource=inherited` records that provenance.
+        child.setSkillsSnapshot(
+                com.cc01cc.p.xihe.cp.skill.SkillCatalogSnapshotService.inherited(source.getSkillsSnapshot()));
         child.setProviderConnectionId(source.getProviderConnectionId());
         child.setConnectionRevision(source.getConnectionRevision());
         child.setContinuationSourceRunId(source.getId().toString());

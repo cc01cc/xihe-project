@@ -197,8 +197,11 @@ public class ChatRunReadService {
                 .map(run -> new ExecutionRun(run.getProvider(), run.getModel(), run.getProviderConnectionId(),
                         run.getConnectionRevision(), run.getUserMessageId(),
                         new ContextTemplateSourceService.RunContext(
-                        run.getSessionId(), run.getWorkspaceId(), run.getUserId(),
+                        run.getId().toString(), run.getSessionId(), run.getWorkspaceId(), run.getUserId(),
                         run.getContextTemplateSnapshot(),
+                        // PLAN-0628 M2a (D28-39): dispatch renders the listing from this frozen
+                        // document, never from the live bindings.
+                        run.getSkillsSnapshot(),
                         run.getAgentPrincipalId() == null ? null : run.getAgentPrincipalId().toString()),
                         continuationDescriptor(run)));
     }

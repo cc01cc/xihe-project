@@ -141,6 +141,34 @@ def test_truncation_is_said_in_model_visible_text_not_only_in_diagnostics() -> N
     assert block.content.endswith(TRUNCATION_NOTE)
 
 
+def test_cp_truncated_listing_is_announced_to_the_model() -> None:
+    """PLAN-0628 M2a (D28-39 → D28-31): CP's ``maxSkills`` cap cuts the listing *before* it reaches
+    the Agent, so the Agent's own budget can be perfectly happy with what it received. That is the
+    dangerous case: a short listing would read as the complete set. The in-band sentence must still
+    be emitted, and through the reserved-budget path (charged before the lines)."""
+    ledger = InjectionLedger.create(128_000)
+
+    block = render_skill_catalog(_lines(5), ledger=ledger, cp_truncated=True)
+
+    assert block.truncated
+    assert block.status == STATUS_TRUNCATED
+    assert block.content.endswith(TRUNCATION_NOTE)
+    assert ledger.by_source["skills"] == block.charged
+
+
+def test_cp_truncation_flag_is_forwarded_from_the_component_source() -> None:
+    source = _source(_lines(5))
+    source["status"] = STATUS_TRUNCATED
+    source["truncated"] = True
+
+    content, diagnostics = render_from_component_sources(
+        _RunContext(), {"11111111-1111-4111-8111-111111111111": source}
+    )
+
+    assert diagnostics["cpTruncated"] is True
+    assert content.endswith(TRUNCATION_NOTE)
+
+
 class _RunContext:
     """Minimal stand-in for the run context (only ``metadata`` is needed by the ledger)."""
 

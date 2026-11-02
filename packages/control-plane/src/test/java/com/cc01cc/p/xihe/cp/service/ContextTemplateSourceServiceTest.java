@@ -7,7 +7,9 @@ import com.cc01cc.p.xihe.cp.policy.PolicyEngine;
 import com.cc01cc.p.xihe.cp.policy.PolicyVerdict;
 import com.cc01cc.p.xihe.cp.policy.PolicyLayer;
 import com.cc01cc.p.xihe.cp.runtime.RuntimeContextSourceClient;
+import com.cc01cc.p.xihe.cp.skill.SkillCatalogSnapshotService;
 import com.cc01cc.p.xihe.cp.skill.SkillCatalogSourceService;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -143,7 +145,7 @@ class ContextTemplateSourceServiceTest {
                 + "{\"instanceId\":\"" + secondId + "\",\"type\":\"workspace_tree\",\"enabled\":true,"
                 + "\"config\":{\"root\":\"session_workspace\",\"maxDepth\":2,\"includeFiles\":true,\"maxEntries\":2000}}]}}";
         ContextTemplateSourceService.RunContext run = new ContextTemplateSourceService.RunContext(
-                SESSION_ID, WORKSPACE, USER, mapper.readTree(snapshot), null);
+                RUN_ID, SESSION_ID, WORKSPACE, USER, mapper.readTree(snapshot), null, null);
         Session session = new Session(WORKSPACE, USER, "bounded tree");
         session.setId(UUID.fromString(SESSION_ID));
 
@@ -179,11 +181,75 @@ class ContextTemplateSourceServiceTest {
         assertEquals(UUID.fromString(WORKSPACE), captor.getValue().workspaceId());
     }
 
+    /**
+     * D28-39, asserted the strong way: with a snapshot present the live resolver is <b>never</b>
+     * called. "The row did not change" would be too weak — the invariant is about the rendered block.
+     */
+    @Test
+    void aFrozenSnapshotIsTheOnlyReadSourceAndLiveBindingsAreNeverConsulted() throws Exception {
+        JsonNode frozen = mapper.readTree("{\"status\":\"ready\",\"source\":\"skill_bindings\","
+                + "\"maxSkills\":40,\"snapshotSource\":\"frozen\",\"truncated\":false,"
+                + "\"diagnostics\":[],\"items\":[{\"skillId\":" + "\"" + UUID.randomUUID() + "\","
+                + "\"qualifiedName\":\"user:instance:instance:alpha\",\"name\":\"alpha\","
+                + "\"description\":\"from the snapshot\",\"version\":3,\"contentHash\":\"h\","
+                + "\"oversize\":false,\"tier\":{\"subjectType\":\"user\",\"scopeType\":\"instance\","
+                + "\"definitionScopeType\":\"instance\"}}]}");
+
+        Map<String, Object> source = resolve("skill_catalog",
+                "{\"maxSkills\":40,\"includeDescriptions\":true,\"sort\":\"binding\"}", frozen);
+
+        assertEquals(List.of("alpha — from the snapshot"), source.get("items"));
+        assertEquals("ready", source.get("status"));
+        assertEquals(SkillCatalogSourceService.SOURCE, source.get("source"));
+        verifyNoInteractions(skillCatalog);
+    }
+
+    /** D28-40: a pre-M2a Run still resolves live, but the view and the log must say it did. */
+    @Test
+    void aLegacyRunWithoutASnapshotFallsBackToLiveAndSaysSo() throws Exception {
+        when(skillCatalog.resolve(any())).thenReturn(new SkillCatalogSourceService.ComponentView(
+                SkillCatalogSourceService.STATUS_READY, SkillCatalogSourceService.SOURCE,
+                List.of("alpha — live"), false, List.of()));
+
+        Map<String, Object> source = resolve("skill_catalog",
+                "{\"maxSkills\":40,\"includeDescriptions\":true,\"sort\":\"binding\"}",
+                mapper.createObjectNode());
+
+        assertEquals(List.of("alpha — live"), source.get("items"));
+        assertTrue(((List<?>) source.get("diagnostics"))
+                .contains(SkillCatalogSnapshotService.DIAG_ABSENT), "fallback must be visible");
+        verify(skillCatalog).resolve(any());
+    }
+
+    /**
+     * A CP-side cut (maxSkills) happens before the Agent's budget sees the listing, so the flag has to
+     * survive the snapshot path — otherwise the model reads a partial listing as the complete set.
+     */
+    @Test
+    void aTruncatedSnapshotKeepsTheFlagTheAgentAnnounces() throws Exception {
+        JsonNode frozen = mapper.readTree("{\"status\":\"truncated\",\"source\":\"skill_bindings\","
+                + "\"maxSkills\":1,\"truncated\":true,"
+                + "\"diagnostics\":[\"skill_catalog_max_skills_reached\"],\"items\":[{\"name\":\"alpha\","
+                + "\"qualifiedName\":\"user:instance:instance:alpha\",\"description\":\"d\"}]}");
+
+        Map<String, Object> source = resolve("skill_catalog",
+                "{\"maxSkills\":1,\"includeDescriptions\":true,\"sort\":\"binding\"}", frozen);
+
+        assertEquals("truncated", source.get("status"));
+        assertEquals(Boolean.TRUE, source.get("truncated"));
+        assertEquals(List.of("alpha — d"), source.get("items"));
+        verifyNoInteractions(skillCatalog);
+    }
+
     private Map<String, Object> resolve(String type, String config) throws Exception {
+        return resolve(type, config, null);
+    }
+
+    private Map<String, Object> resolve(String type, String config, JsonNode skillsSnapshot) throws Exception {
         String snapshot = "{\"template\":{\"components\":[{\"instanceId\":\"component-1\","
                 + "\"type\":\"" + type + "\",\"enabled\":true,\"config\":" + config + "}]}}";
         ContextTemplateSourceService.RunContext run = new ContextTemplateSourceService.RunContext(
-                SESSION_ID, WORKSPACE, USER, mapper.readTree(snapshot), null);
+                RUN_ID, SESSION_ID, WORKSPACE, USER, mapper.readTree(snapshot), skillsSnapshot, null);
         Session session = new Session(WORKSPACE, USER, "tree test");
         session.setId(UUID.fromString(SESSION_ID));
         return (Map<String, Object>) new ContextTemplateSourceService(runtime, policy, mapper,
