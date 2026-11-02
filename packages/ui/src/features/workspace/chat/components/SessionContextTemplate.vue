@@ -144,17 +144,27 @@ async function handleChange(event: Event) {
     busy.value = true;
     error.value = null;
     try {
-        await request("/sessions/" + encodeURIComponent(sessionId) + "/api-request-template", {
-            method: "PATCH",
-            body: JSON.stringify({
-                layer: option.layer,
-                templateId: option.templateId,
-                version: option.version,
-                connectionRevision: revision,
-            }),
-        });
+        const updated = await request<ApiSession>(
+            "/sessions/" + encodeURIComponent(sessionId) + "/api-request-template",
+            {
+                method: "PATCH",
+                body: JSON.stringify({
+                    layer: option.layer,
+                    templateId: option.templateId,
+                    version: option.version,
+                    connectionRevision: revision,
+                }),
+            },
+        );
         if (generation !== currentGeneration || props.sessionId !== sessionId) return;
         binding.value = option;
+        // PLAN-0626 M2-3 made the summary row a *second* instance of this resolver
+        // (`summary-only`), so the pin must land in the shared Session projection —
+        // otherwise the summary keeps rendering the pre-pin value and its risk badge
+        // keeps claiming "模板未绑定" after a successful pin. The PATCH response *is* the
+        // updated Session (OpenAPI: `updateSessionApiRequestTemplate` → `Session`), so
+        // apply it instead of issuing another GET.
+        sessionStore.applySessionRecord(updated);
         toast.success(t("chat.contextTemplateLabel") + ": " + option.name + " v" + option.version);
     } catch (cause) {
         if (generation === currentGeneration && props.sessionId === sessionId)

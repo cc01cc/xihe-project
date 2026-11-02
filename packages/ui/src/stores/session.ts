@@ -169,8 +169,16 @@ export const useSessionStore = defineStore("session", () => {
     }
 
     async function loadSession(id: string): Promise<Session> {
-        const response = await api.getSession(id),
-            session = toSession(response);
+        return applySessionRecord(await api.getSession(id));
+    }
+
+    /**
+     * Apply a Session payload the caller already holds (e.g. a `PATCH …/api-request-template`
+     * response, which returns the updated Session) into the projection, so every consumer
+     * re-reads the new binding instead of a stale copy — no extra GET.
+     */
+    function applySessionRecord(record: ApiSession): Session {
+        const session = toSession(record);
         upsertSession(session);
         return session;
     }
@@ -311,6 +319,7 @@ export const useSessionStore = defineStore("session", () => {
         groupedSessions,
         loadSessions,
         loadSession,
+        applySessionRecord,
         createSession,
         ensureSession,
         deleteSession,
