@@ -111,7 +111,7 @@ Per-feature status, progress markers, and the current boundary of each capabilit
 
 - Memory bound to agent principals — tables and services landed; the model-visible slot is not wired, so memories do not reach the model yet.
 - Skills platform — frozen design, no code yet.
-- Subagent delegation — the delegation budget gate is in; delegation edges and the session-tree UI are still under way.
+- Subagent delegation — spawned child sessions gain a PRIMARY participant and the wake-chain depth is configurable; the delegation budget gate is still on a branch awaiting its test matrix, and delegation edges plus the session-tree UI are not in place yet.
 - Native packaging / MVP distribution — CP native image, Agent PyInstaller, bundled pgvector, and the launcher are spiked; **no downloadable installer yet**.
 
 **Frozen**
