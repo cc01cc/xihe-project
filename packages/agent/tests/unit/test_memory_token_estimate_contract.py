@@ -30,7 +30,7 @@ def _cases() -> list[dict[str, object]]:
     return json.loads(_fixture_path().read_text(encoding="utf-8"))["cases"]
 
 
-def test_agentEstimateMatchesTheSharedContract() -> None:
+def test_agent_estimate_matches_the_shared_contract() -> None:
     cases = _cases()
     assert cases, "the shared contract needs at least one case"
     for case in cases:
@@ -42,7 +42,7 @@ def test_agentEstimateMatchesTheSharedContract() -> None:
         )
 
 
-def test_contractCoversTheEdgeCasesTheCallersRelyOn() -> None:
+def test_contract_covers_the_edge_cases_the_callers_rely_on() -> None:
     """Guard rails for the fixture itself: empty must stay 0 and a single char must stay 1."""
     by_length = {len(str(case["input"])): int(case["tokens"]) for case in _cases()}
     assert by_length.get(0) == 0

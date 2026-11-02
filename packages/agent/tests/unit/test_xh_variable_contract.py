@@ -51,7 +51,7 @@ def test_agent_registry_matches_shared_fixture() -> None:
     """The declared slot set and the Python types must match the fixture exactly."""
 
     expected = {name: (str if slot["type"] == "str" else list) for name, slot in SLOTS.items()}
-    assert VARIABLES == expected
+    assert expected == VARIABLES
 
 
 def test_new_slots_are_declared_scalars() -> None:
