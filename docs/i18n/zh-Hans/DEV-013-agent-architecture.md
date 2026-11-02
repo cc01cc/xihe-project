@@ -269,6 +269,7 @@ if recover_ids:
 
 - Agent liveness 与 LLM readiness 分离；`unknown`、missing、invalid、unreachable 和 model unavailable 均不放行新 Chat。
 - 配置 refresh 以 revision 为边界原子替换 runtime snapshot；provider model catalog 记录 status、reasonCode、capabilities 和 verifiedAt，不返回 key/base URL。
+- **启动期配置同步预算（PLAN-0632 D32-27 Step 1/1.5）**：启动路径走专用入口 `sync_with_retry_budget(max_retries=2, timeout=0.8 s)`（`main._sync_config` 按 `reason="startup"` 选择），周期刷新仍走 `sync_with_retry()` 的共享默认（`timeout=3`、3 次）——**共享默认不得当启动值用**（否则"CP 慢 1 秒"会被判成永久失败）。实测 2026-11-02 CP 不可达：58.46 s → 13.97 s（串行）→ **2.65 s**（Step 1.5：8 个域 `asyncio.gather` 并行，逐域 status 与串行版逐项一致）。**58.46 s 的成因不是 httpx `timeout=3`**：Windows 对 localhost 已关闭端口要约 **2.03 s** 才回 `ECONNREFUSED`，故串行单轮 = 8 × 2.03 s，三轮 + backoff ≈ 58 s。子秒预算会在 OS 报错前 cancel，因此失败分类按**传输异常类型**（`refused` / `connect-timeout` / `budget-exhausted` / `unauthorized` / `invalid_response`）判定而非耗时；失败语义不变（fail-closed → degraded）。
 - `toolMode=none` 不调用 `_get_mcp_tools()`，也不注入 approval/image/MCP tools；只有 `toolMode=workspace` 才按请求 workspace 懒加载 MCP。MCP manager 发现结果不得跨 workspace 复用。
 
 ### 5.4 LLM 路由与工具能力（PLAN-0364）

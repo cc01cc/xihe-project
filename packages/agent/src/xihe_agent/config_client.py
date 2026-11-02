@@ -34,11 +34,12 @@ REQUIRED_DOMAINS = ("llm-provider",)
 # on the periodic refresh path, so the startup caller passes them explicitly instead
 # (`main._sync_config`, called with reason="startup").
 #
-# Budget arithmetic: 2 attempts x 8 domains x 0.8 s + 1 s backoff = 13.8 s worst case, measured
-# 13.98 s on this host (tests/unit/test_config_startup_budget.py prints it). NOTE the reason the
-# old path cost so much: Windows needs ~2.03 s to report ECONNREFUSED on a localhost port
-# (measured 2026-11-02), so one attempt cost 8 x 2.03 s = 16.2 s and three attempts plus backoff
-# landed at the observed 58.46 s. The 3 s httpx timeout was never the binding constraint.
+# Budget arithmetic: 2 rounds of one per-domain budget + 1 s backoff. Measured on this host
+# (2026-11-02): 13.97 s while the domains were fetched serially, **2.65 s** after Step 1.5 made
+# them concurrent (tests/unit/test_config_startup_budget.py prints both). NOTE why the old path
+# cost 58.46 s: Windows needs ~2.03 s to report ECONNREFUSED on a localhost port (measured), so
+# one serial attempt cost 8 x 2.03 s = 16.2 s and three attempts plus backoff landed at 58.46 s.
+# The 3 s httpx timeout was never the binding constraint.
 STARTUP_CONFIG_TIMEOUT_S = 0.8
 STARTUP_CONFIG_RETRIES = 2
 
@@ -86,22 +87,30 @@ def _classify_transport_error(exc: BaseException) -> str:
     return "transport-error"
 
 
-def _sync_failure_verdict(report: SyncReport, error_kind: str) -> str:
-    """Turn per-domain statuses + the last transport error kind into one operator-facing verdict."""
+def _sync_failure_verdict(report: SyncReport, error_kinds: set[str]) -> str:
+    """Turn per-domain statuses + the transport errors observed into one operator-facing verdict.
+
+    `error_kinds` is a set because the domains are fetched concurrently (PLAN-0632 D32-27
+    Step 1.5), so one attempt can observe several kinds. Precedence goes from the most specific
+    OS-level cause to the most generic, so the verdict keeps naming the real reason.
+    """
     statuses = {entry["status"] for entry in report.get("domains", {}).values()}
     if "unauthorized" in statuses:
         return "cp-rejected-service-token"
     if "invalid_response" in statuses:
         return "cp-returned-invalid-payload"
     if statuses == {"unreachable"}:
-        return {
-            "refused": "cp-not-listening",
-            "connect-timeout": "cp-slow-or-hung",
+        for kind, verdict in (
+            ("refused", "cp-not-listening"),
+            ("connect-timeout", "cp-slow-or-hung"),
             # A sub-second budget cannot see the OS error, so "not started" and "hung" share this
-            # verdict; the log line right before it carries the per-domain budget that was spent.
-            "budget-exhausted": "cp-no-accept-within-budget",
-            "connect-failed": "cp-unreachable",
-        }.get(error_kind, "cp-unreachable")
+            # verdict; the attempt log line right before it carries the per-domain budget spent.
+            ("budget-exhausted", "cp-no-accept-within-budget"),
+            ("connect-failed", "cp-unreachable"),
+        ):
+            if kind in error_kinds:
+                return verdict
+        return "cp-unreachable"
     if not statuses:
         return "no-domains-fetched"
     return "partial-failure"
@@ -148,9 +157,10 @@ class ConfigClient:
             "refreshed": False,
             "degraded": [],
         }
-        # PLAN-0632 D32-27 Step 1: last transport failure kind, for the operator log only.
-        # Reset per sync attempt so a verdict never describes a previous attempt.
-        self._last_transport_error_kind = ""
+        # PLAN-0632 D32-27 Step 1: transport failure kinds observed in the current attempt, for the
+        # operator log only. A set (not a single value) because Step 1.5 fetches all eight domains
+        # concurrently, so several fetches record a kind at once. Cleared per sync attempt.
+        self._last_transport_error_kinds: set[str] = set()
 
     async def sync(self, timeout_s: float | None = None) -> SyncReport:
         """Refresh all effective domains.
@@ -163,7 +173,7 @@ class ConfigClient:
         # transient failure of a non-required domain keeps its last known-good
         # values. The old code replaced the cache wholesale, silently dropping
         # (e.g.) rag/embedding/agent-runtime settings on a single blip.
-        self._last_transport_error_kind = ""
+        self._last_transport_error_kinds.clear()
         staged: dict[str, dict[str, str]] = {domain: dict(entries) for domain, entries in self._effective_cache.items()}
         domain_results: dict[str, DomainSyncResult] = {}
         revisions: list[str] = []
@@ -173,13 +183,39 @@ class ConfigClient:
         # parses NO_PROXY entries and a malformed one aborts construction.
         async with httpx.AsyncClient(trust_env=False) as client:
             headers = {"Authorization": f"Bearer {self.api_token}"}
-            for domain in CONFIG_DOMAINS:
-                status, data, revision, source = await self._fetch_domain(
-                    client,
-                    domain,
-                    headers,
-                    timeout_s,
-                )
+            # PLAN-0632 D32-27 Step 1.5: the eight domains are independent reads against the same
+            # CP, so fetch them concurrently instead of one after another. This is what turns the
+            # startup cost from `rounds x 8 x budget` (13.97 s) into `rounds x budget` (~2.6 s):
+            # the 2.03 s Windows connect-refusal latency is paid once per round, in parallel.
+            #
+            # Why nothing here needs a serial slot: no domain's *fetch* consumes another domain's
+            # result. `llm-provider` matters only for the fail-closed decision, which is evaluated
+            # after the batch from `domain_results` (see REQUIRED_DOMAINS below), and the revision
+            # is computed from everything at the end. If a future domain needs another's value to
+            # build its request, keep it out of this gather and document why at that call site.
+            #
+            # `return_exceptions=True`: one broken domain must not cancel the other seven. An
+            # exception is folded into exactly the transport-failure shape, so the downstream
+            # fail-closed/degraded path is byte-for-byte the same as the serial version.
+            outcomes = await asyncio.gather(
+                *(self._fetch_domain(client, domain, headers, timeout_s) for domain in CONFIG_DOMAINS),
+                return_exceptions=True,
+            )
+            # `zip(..., strict=True)` + gather's input-order results keep `domain_results`,
+            # `staged`, `degraded` and `revisions` in CONFIG_DOMAINS order, i.e. identical to the
+            # serial version (asserted by tests/unit/test_config_startup_budget.py).
+            for domain, outcome in zip(CONFIG_DOMAINS, outcomes, strict=True):
+                if isinstance(outcome, BaseException):
+                    logger.warning(
+                        "ConfigClient: domain fetch raised domain={} kind={} error={}",
+                        domain,
+                        _classify_transport_error(outcome),
+                        outcome,
+                    )
+                    self._last_transport_error_kinds.add(_classify_transport_error(outcome))
+                    status, data, revision, source = "unreachable", None, "", ""
+                else:
+                    status, data, revision, source = outcome
                 domain_results[domain] = {
                     "status": status,
                     "revision": revision,
@@ -268,7 +304,7 @@ class ConfigClient:
                 timeout=timeout_s,
             )
         except TimeoutError:
-            self._last_transport_error_kind = "budget-exhausted"
+            self._last_transport_error_kinds.add("budget-exhausted")
             logger.warning(
                 "ConfigClient: startup fetch budget exhausted domain={} budget={}s (counted as unreachable)",
                 domain,
@@ -297,11 +333,12 @@ class ConfigClient:
                 timeout=3,
             )
         except Exception as exc:
-            self._last_transport_error_kind = _classify_transport_error(exc)
+            kind = _classify_transport_error(exc)
+            self._last_transport_error_kinds.add(kind)
             logger.warning(
                 "ConfigClient: failed to fetch effective domain={} status=unreachable kind={} error={}",
                 domain,
-                self._last_transport_error_kind,
+                kind,
                 exc,
             )
             return "unreachable", None, "", ""
@@ -426,7 +463,7 @@ class ConfigClient:
                 attempt_elapsed,
                 f"{timeout:.2f}s" if timeout is not None else "3s (shared default)",
                 time.monotonic() - started,
-                _sync_failure_verdict(last_report, self._last_transport_error_kind),
+                _sync_failure_verdict(last_report, set(self._last_transport_error_kinds)),
                 {domain: entry["status"] for domain, entry in last_report["domains"].items()},
             )
             if attempt < max_retries - 1:
