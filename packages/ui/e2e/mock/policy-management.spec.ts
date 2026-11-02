@@ -500,8 +500,15 @@ test.describe("Policy management (mobile)", () => {
         const actionClass = dialog.locator('[data-testid="approval-classify-action-class"]');
         await expect(actionClass).toBeVisible();
         await actionClass.click();
+        await expect(actionClass).toBeFocused();
+        // Real keystrokes, not `fill`: the regression this pins is focus ownership. The
+        // chat sheet is a modal dialog with a trapped focus scope, and while the approval
+        // modal was teleported out of that scope the sheet's trap reclaimed focus on
+        // every focusin, so every character was swallowed and the field stayed empty.
         await actionClass.pressSequentially("exec");
+        await expect(actionClass).toBeFocused();
         await expect(actionClass).toHaveValue("exec");
+
         await expect(dialog.locator('[data-testid="approval-classify-submit"]')).toBeEnabled();
         await dialog.locator('[data-testid="approval-classify-submit"]').click();
 
