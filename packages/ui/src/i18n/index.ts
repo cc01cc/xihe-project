@@ -787,6 +787,16 @@ const messages = {
                 failed: "执行失败",
                 cancelled: "已取消",
             },
+            /*
+             * PLAN-0631 D31-04/07：Run 状态的**可见语言**。文案刻意沿用 `toolStatus`/`followUpStatus`
+             * 已建立的既有词汇（排队中/执行中/运行中），不新造近义词；M2 sweep 会把这些散在的
+             * 状态词收敛到一个 resolver（D31-01），此处只补「排队（已受理但未执行）」这一格。
+             */
+            runState: {
+                queued: "排队中",
+                queuedHint: "已受理，等待执行",
+                reasonAgentDown: "Agent 暂不可用；恢复后会自动执行，也可以停止这一次",
+            },
             toolDiagnosticsTitle: "诊断",
             toolDiagnosticsSummary: "共 {total} 条，已回灌前 {shown} 条",
             toolDiagnosticsMore: "另有 {count} 条",
@@ -2863,6 +2873,13 @@ const messages = {
                 completed: "Completed",
                 failed: "Failed",
                 cancelled: "Cancelled",
+            },
+            /* PLAN-0631 D31-04/07: visible language for a Run's state (see the zh block note). */
+            runState: {
+                queued: "Queued",
+                queuedHint: "Accepted — waiting to start",
+                reasonAgentDown:
+                    "The Agent is unavailable right now; this will start once it recovers — you can also stop it",
             },
             toolDiagnosticsTitle: "Diagnostics",
             toolDiagnosticsSummary: "{total} total, first {shown} fed back",

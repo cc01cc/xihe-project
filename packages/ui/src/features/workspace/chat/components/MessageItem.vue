@@ -78,6 +78,27 @@ const statusIcon = computed(() => {
     }
 });
 
+/**
+ * PLAN-0631 D31-07: the live status line is user-visible copy, so it must come from
+ * i18n. It was hardcoded English ("Thinking..."/"Executing task...") while
+ * `chat.thinking` already existed in both locales; `executing` reuses the existing
+ * `chat.toolStatus.running` wording instead of inventing a fourth synonym.
+ */
+const markerLabel = computed(() =>
+    props.message.status === "executing" ? t("chat.toolStatus.running") : t("chat.thinking"),
+);
+
+/**
+ * PLAN-0631 D31-12: `isStreaming` alone must not create a Bubble.
+ *
+ * A tool-first run receives `tool_call` before any token, so the live assistant
+ * message had no content yet and rendered an **empty bubble** above the tool card.
+ * The live status line already covers the "nothing yet" window.
+ */
+const hasBubbleContent = computed(
+    () => Boolean(props.message.content) || Boolean(props.message.parts?.length),
+);
+
 function isImage(type: string) {
     return type.startsWith("image/");
 }
@@ -184,7 +205,7 @@ onUnmounted(() => {
             <component :is="statusIcon" class="size-4" />
         </MarkerIcon>
         <MarkerContent>
-            {{ message.status === "executing" ? "Executing task..." : "Thinking..." }}
+            {{ markerLabel }}
         </MarkerContent>
     </Marker>
 
@@ -239,7 +260,7 @@ onUnmounted(() => {
                 </Attachment>
             </AttachmentGroup>
 
-            <Bubble v-if="message.content || isStreaming || message.parts" :variant="bubbleVariant">
+            <Bubble v-if="hasBubbleContent" :variant="bubbleVariant">
                 <BubbleContent>
                     <template v-if="message.parts && message.parts.length > 0">
                         <template v-for="(part, idx) in message.parts" :key="idx">

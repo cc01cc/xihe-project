@@ -270,3 +270,49 @@ describe("MessageItem RESOURCE_EXHAUSTED hint (PLAN-0622)", () => {
         wrapper.unmount();
     });
 });
+
+// ── PLAN-0631 M1 (D31-07 / D31-12) ─────────────────────────────────────────
+describe("MessageItem live status line and empty content", () => {
+    function mountLive(overrides: Record<string, unknown> = {}, isStreaming = true) {
+        return mount(MessageItem, {
+            props: {
+                isStreaming,
+                message: {
+                    id: "message-live",
+                    sessionId: "session-1",
+                    role: "assistant",
+                    content: "",
+                    timestamp: "2026-11-02T00:00:00Z",
+                    ...overrides,
+                },
+            },
+            global: { plugins: [i18n, createPinia()] },
+        });
+    }
+
+    it("localizes the live status line instead of hardcoding English", () => {
+        const thinking = mountLive({ marker: "status", status: "thinking" }, false);
+        expect(thinking.text()).toContain(i18n.global.t("chat.thinking"));
+        expect(thinking.text()).not.toContain("Thinking...");
+        thinking.unmount();
+
+        const executing = mountLive({ marker: "status", status: "executing" }, false);
+        expect(executing.text()).toContain(i18n.global.t("chat.toolStatus.running"));
+        expect(executing.text()).not.toContain("Executing task...");
+        executing.unmount();
+    });
+
+    it("does not render an empty bubble while a tool-first run has no text yet", () => {
+        // tool_call arrives before any token: no content and no parts.
+        const wrapper = mountLive({ toolCalls: [] }, true);
+        expect(wrapper.find('[data-slot="bubble"]').exists()).toBe(false);
+        wrapper.unmount();
+    });
+
+    it("renders the bubble as soon as there is content to show", () => {
+        const wrapper = mountLive({ parts: [{ type: "text", content: "partial" }] }, true);
+        expect(wrapper.find('[data-slot="bubble"]').exists()).toBe(true);
+        expect(wrapper.text()).toContain("partial");
+        wrapper.unmount();
+    });
+});

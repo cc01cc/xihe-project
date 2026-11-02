@@ -682,6 +682,14 @@ export interface ChatRunResponse {
     messageId?: string;
     outcome?: "success" | "error" | "partial" | "ambiguous";
     errorCode?: string;
+    /**
+     * PLAN-0631 D31-04: why a run is parked instead of dispatched. CP answers
+     * `202 {status:"queued", reason:"agent_down"}` when the Agent is down but the
+     * LLM is ready (ChatController `persistRunStatus(chatRun,"queued")` path); the
+     * Run is then held for transport recovery and **nothing is executing**.
+     * Wire field: `docs/api/openapi.yaml` → `ChatRunResponse.reason`.
+     */
+    reason?: string;
 }
 
 /**

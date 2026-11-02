@@ -36,6 +36,8 @@ import GuidancePanel from "./GuidancePanel.vue";
 import RevertPreviewDialog from "./RevertPreviewDialog.vue";
 import RevertResultDialog from "./RevertResultDialog.vue";
 import BaseModal from "../../../../components/shared/BaseModal.vue";
+import { Marker, MarkerContent, MarkerIcon } from "@/components/ui/marker";
+import { Clock } from "@lucide/vue";
 
 const props = withDefaults(
     defineProps<{
@@ -379,6 +381,23 @@ function handleDerivedStateRefresh() {
 const guidancePanelRef = ref<InstanceType<typeof GuidancePanel> | null>(null);
 const currentRunId = computed(() => chatStore.getSessionRunId(props.sessionId));
 const currentRunStatus = computed(() => chatStore.getSessionRunState(props.sessionId).status);
+
+/**
+ * PLAN-0631 D31-04: CP parks a Run (`status:"queued"`) instead of dispatching it when
+ * the Agent is down but the LLM is ready. Nothing executes until recovery, so the
+ * view must say so — the previous behaviour was an unexplained stop/queue mode.
+ * The copy is a *consequence* of the wire fact; the state itself is never inferred.
+ */
+const runQueued = computed(() => chatStore.getRunQueued(props.sessionId));
+/** Only `agent_down` exists on the wire today; an unknown reason gets the generic hint. */
+const QUEUED_REASON_KEYS: Record<string, string> = {
+    agent_down: "chat.runState.reasonAgentDown",
+};
+const runQueuedHint = computed(() => {
+    const reason = runQueued.value?.reason;
+    return t((reason ? QUEUED_REASON_KEYS[reason] : undefined) ?? "chat.runState.queuedHint");
+});
+
 // Keep the last run so its Guidance list remains readable after the run goes terminal;
 // only the input is gated by the active status.
 const lastRunId = ref<string | undefined>(undefined);
@@ -993,6 +1012,23 @@ watch(
             :error="derivedStateError"
             @retry="handleDerivedStateRefresh"
         />
+
+        <!-- PLAN-0631 D31-04: parked Run — say what is happening instead of a silent spinner. -->
+        <Marker
+            v-if="runQueued"
+            data-testid="chat-run-queued"
+            role="status"
+            aria-live="polite"
+            class="mx-4 mt-2 rounded-lg border border-border bg-surface-content px-3 py-2"
+        >
+            <MarkerIcon>
+                <Clock class="size-3.5" aria-hidden="true" />
+            </MarkerIcon>
+            <MarkerContent>
+                <span class="font-medium text-foreground">{{ t("chat.runState.queued") }}</span>
+                <span class="ml-2">{{ runQueuedHint }}</span>
+            </MarkerContent>
+        </Marker>
 
         <MessageList
             v-if="messages.length > 0"

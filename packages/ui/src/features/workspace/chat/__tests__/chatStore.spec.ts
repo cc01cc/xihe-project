@@ -778,3 +778,82 @@ describe("refreshRunRecovery tri-state (PLAN-292 M3 C2/C3)", () => {
         expect(store.runRecovery[SESSION_ID]).toBeUndefined();
     });
 });
+
+// ── PLAN-0631 M1 (D31-04 / D31-07) ─────────────────────────────────────────
+describe("PLAN-0631 run state view", () => {
+    const SID = "session-0631";
+
+    it("keeps a parked run visible until it actually starts, then clears it", () => {
+        const store = useChatStore();
+        expect(store.getRunQueued(SID)).toBeNull();
+
+        store.setRunQueued(SID, { runId: "run-q", reason: "agent_down" });
+        expect(store.getRunQueued(SID)).toEqual({ runId: "run-q", reason: "agent_down" });
+
+        // First token / tool call creates the live message → the run is no longer parked.
+        store.createStreamingMessage(SID, "run-q");
+        expect(store.getRunQueued(SID)).toBeNull();
+    });
+
+    it("clears the parked view when a parked run terminates without ever starting", () => {
+        const store = useChatStore();
+        store.setRunQueued(SID, { runId: "run-q" });
+        store.finalizeStreaming(SID); // no streaming message → CP never dispatched it
+        expect(store.getRunQueued(SID)).toBeNull();
+    });
+
+    it("clears the parked view on a terminal error and on session reset", () => {
+        const store = useChatStore();
+        store.setRunQueued(SID, { runId: "run-q", reason: "agent_down" });
+        store.markStreamingError(SID, { code: "RESOURCE_EXHAUSTED", detail: "quota" });
+        expect(store.getRunQueued(SID)).toBeNull();
+
+        store.setRunQueued(SID, { runId: "run-q" });
+        store.clearSession(SID);
+        expect(store.getRunQueued(SID)).toBeNull();
+    });
+
+    it("keeps one live status line per run and drops it at the terminal transition", () => {
+        const store = useChatStore();
+        store.upsertRunStatusMarker(SID, "thinking", "run-1");
+        store.upsertRunStatusMarker(SID, "executing", "run-1");
+        store.upsertRunStatusMarker(SID, "thinking", "run-1");
+
+        const markers = () =>
+            store
+                .getMessages(SID)
+                .filter((m) => m.marker === "status" && m.status !== "interrupted");
+        expect(markers()).toHaveLength(1);
+        expect(markers()[0].status).toBe("thinking");
+        expect(markers()[0].runId).toBe("run-1");
+
+        store.upsertRunStatusMarker(SID, "thinking", "run-2");
+        expect(markers()).toHaveLength(2);
+
+        store.createStreamingMessage(SID, "run-2");
+        store.finalizeStreaming(SID);
+        expect(markers()).toHaveLength(0);
+    });
+
+    it("never removes the interrupted marker: that one is history, not a live status", () => {
+        const store = useChatStore();
+        store.createStreamingMessage(SID, "run-1");
+        store.appendToParts(SID, { type: "text", content: "partial answer" });
+        store.upsertRunStatusMarker(SID, "executing", "run-1");
+        // Overflow retry: the attempt is folded as `interrupted` (semantic history) …
+        store.interruptForOverflowRetry(SID);
+        // … and the retry attempt reaches a terminal state, which drops live status lines.
+        store.createStreamingMessage(SID, "run-2");
+        store.finalizeStreaming(SID);
+
+        const interrupted = store
+            .getMessages(SID)
+            .filter((m) => m.marker === "status" && m.status === "interrupted");
+        expect(interrupted).toHaveLength(1);
+        expect(
+            store
+                .getMessages(SID)
+                .filter((m) => m.marker === "status" && m.status !== "interrupted"),
+        ).toHaveLength(0);
+    });
+});

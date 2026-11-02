@@ -665,3 +665,43 @@ describe("ChatPanel Follow-up queue", () => {
         expect(calls[0]?.[2]).toBe(calls[1]?.[2]);
     });
 });
+
+// ── PLAN-0631 M1 (D31-04) ──────────────────────────────────────────────────
+describe("ChatPanel parked run", () => {
+    it("explains a parked run with the CP reason instead of staying silent", async () => {
+        const wrapper = mountPanel();
+        useChatStore().setRunQueued(SESSION_ID, { runId: RUN_ID, reason: "agent_down" });
+        await nextTick();
+
+        const row = wrapper.find('[data-testid="chat-run-queued"]');
+        expect(row.exists()).toBe(true);
+        // Readable status region, not a colour-only signal (spec/ui/accessibility.md:16).
+        expect(row.attributes("role")).toBe("status");
+        expect(row.attributes("aria-live")).toBe("polite");
+        expect(row.text()).toContain(i18n.global.t("chat.runState.queued"));
+        expect(row.text()).toContain(i18n.global.t("chat.runState.reasonAgentDown"));
+
+        // The parked view lives exactly as long as the wire fact does.
+        useChatStore().createStreamingMessage(SESSION_ID, RUN_ID);
+        await nextTick();
+        expect(wrapper.find('[data-testid="chat-run-queued"]').exists()).toBe(false);
+    });
+
+    it("falls back to the generic hint when CP gives no reason or an unknown one", async () => {
+        const wrapper = mountPanel();
+        useChatStore().setRunQueued(SESSION_ID, { runId: RUN_ID });
+        await nextTick();
+        expect(wrapper.find('[data-testid="chat-run-queued"]').text()).toContain(
+            i18n.global.t("chat.runState.queuedHint"),
+        );
+
+        useChatStore().setRunQueued(SESSION_ID, { runId: RUN_ID, reason: "something_new" });
+        await nextTick();
+        expect(wrapper.find('[data-testid="chat-run-queued"]').text()).toContain(
+            i18n.global.t("chat.runState.queuedHint"),
+        );
+        expect(wrapper.find('[data-testid="chat-run-queued"]').text()).not.toContain(
+            i18n.global.t("chat.runState.reasonAgentDown"),
+        );
+    });
+});
