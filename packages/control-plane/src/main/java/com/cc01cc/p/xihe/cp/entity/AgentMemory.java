@@ -1,0 +1,165 @@
+package com.cc01cc.p.xihe.cp.entity;
+
+import jakarta.persistence.Column;
+import jakarta.persistence.Entity;
+import jakarta.persistence.Id;
+import jakarta.persistence.PrePersist;
+import jakarta.persistence.PreUpdate;
+import jakarta.persistence.Table;
+
+import java.time.Instant;
+import java.util.List;
+import java.util.UUID;
+
+/**
+ * PLAN-0629 M1 (V99): one durable memory assertion of an agent subject.
+ *
+ * <p>Strictly isolated by {@code (principal_id, workspace_id)}: a row belongs to exactly one subject
+ * in exactly one workspace (D29-34), so a memory can never leak across workspaces and the profile of
+ * one principal can never be read by another.</p>
+ *
+ * <p>Why this entity carries so many constants: the v1 vocabulary is frozen (D29-25 / D29-31..34) and
+ * the database enforces it too (V99 CHECKs). Keeping the names here means the service, the tests and a
+ * future API all cite one place instead of scattering string literals that could drift from the DDL.</p>
+ *
+ * <p>Not modelled on purpose: {@code content_sha256} is written by {@code AgentMemoryService} from
+ * {@code AgentMemoryNormalizer} — no caller may supply it; {@code status} pairs mechanically with
+ * {@code origin} (active ⇔ non-passive); {@code pinned_by} can only be {@code ui}/{@code cli}.</p>
+ */
+@Entity
+@Table(name = "agent_memories")
+public class AgentMemory {
+
+    /** v1 memory types (user ruling 2026-11-02: profile + fact only). */
+    public static final String TYPE_PROFILE = "profile";
+    public static final String TYPE_FACT = "fact";
+    public static final List<String> TYPES = List.of(TYPE_PROFILE, TYPE_FACT);
+
+    /** The three v1 write channels. There is deliberately no {@code auto} value (D29-24). */
+    public static final String ORIGIN_TOOL = "tool";
+    public static final String ORIGIN_UI = "ui";
+    public static final String ORIGIN_CLI = "cli";
+    /** Pre-declared for D29-26/27; v1 never writes them (the service refuses them). */
+    public static final String ORIGIN_PASSIVE_SUMMARY = "passive.summary";
+    public static final String ORIGIN_PASSIVE_JUDGE = "passive.judge";
+    public static final List<String> V1_WRITE_ORIGINS = List.of(ORIGIN_TOOL, ORIGIN_UI, ORIGIN_CLI);
+
+    public static final String STATUS_ACTIVE = "active";
+    public static final String STATUS_CANDIDATE = "candidate";
+
+    /** D29-33: bounded content (limits the injection surface and the token cost). */
+    public static final int MAX_CONTENT_LENGTH = 8000;
+    /** D29-19: the provenance reference (runId / userId / command digest). */
+    public static final int MAX_SOURCE_REF_LENGTH = 256;
+
+    @Id
+    @Column(name = "id", columnDefinition = "uuid")
+    private UUID id;
+
+    @Column(name = "principal_id", nullable = false, columnDefinition = "uuid")
+    private UUID principalId;
+
+    @Column(name = "workspace_id", nullable = false, columnDefinition = "uuid")
+    private UUID workspaceId;
+
+    @Column(name = "type", nullable = false, length = 16)
+    private String type;
+
+    /** Normalised content (single normalizer); the DDL enforces 1..8000 characters. */
+    @Column(name = "content", nullable = false, columnDefinition = "TEXT")
+    private String content;
+
+    /** lowercase hex SHA-256 of the normalised content — server-computed, never from a client. */
+    @Column(name = "content_sha256", nullable = false, length = 64)
+    private String contentSha256;
+
+    @Column(name = "origin", nullable = false, length = 32)
+    private String origin;
+
+    @Column(name = "source_ref", nullable = false, length = 256)
+    private String sourceRef;
+
+    @Column(name = "status", nullable = false, length = 16)
+    private String status = STATUS_ACTIVE;
+
+    @Column(name = "pinned", nullable = false)
+    private boolean pinned;
+
+    /** {@code ui} or {@code cli} only; null exactly when {@code pinned} is false (V99 CHECK). */
+    @Column(name = "pinned_by", length = 16)
+    private String pinnedBy;
+
+    @Column(name = "created_at", nullable = false, updatable = false)
+    private Instant createdAt;
+
+    @Column(name = "updated_at", nullable = false)
+    private Instant updatedAt;
+
+    /** Soft delete (B1 ruling): "forget" hides the row, audit keeps the trace. */
+    @Column(name = "deleted_at")
+    private Instant deletedAt;
+
+    public AgentMemory() {}
+
+    @PrePersist
+    protected void onCreate() {
+        if (id == null) {
+            id = UUID.randomUUID();
+        }
+        Instant now = Instant.now();
+        if (createdAt == null) {
+            createdAt = now;
+        }
+        if (updatedAt == null) {
+            updatedAt = now;
+        }
+    }
+
+    /** A dedupe hit only refreshes {@code updated_at}; provenance stays at the original write. */
+    @PreUpdate
+    protected void onUpdate() {
+        updatedAt = Instant.now();
+    }
+
+    public UUID getId() { return id; }
+    public void setId(UUID id) { this.id = id; }
+
+    public UUID getPrincipalId() { return principalId; }
+    public void setPrincipalId(UUID principalId) { this.principalId = principalId; }
+
+    public UUID getWorkspaceId() { return workspaceId; }
+    public void setWorkspaceId(UUID workspaceId) { this.workspaceId = workspaceId; }
+
+    public String getType() { return type; }
+    public void setType(String type) { this.type = type; }
+
+    public String getContent() { return content; }
+    public void setContent(String content) { this.content = content; }
+
+    public String getContentSha256() { return contentSha256; }
+    public void setContentSha256(String contentSha256) { this.contentSha256 = contentSha256; }
+
+    public String getOrigin() { return origin; }
+    public void setOrigin(String origin) { this.origin = origin; }
+
+    public String getSourceRef() { return sourceRef; }
+    public void setSourceRef(String sourceRef) { this.sourceRef = sourceRef; }
+
+    public String getStatus() { return status; }
+    public void setStatus(String status) { this.status = status; }
+
+    public boolean isPinned() { return pinned; }
+    public void setPinned(boolean pinned) { this.pinned = pinned; }
+
+    public String getPinnedBy() { return pinnedBy; }
+    public void setPinnedBy(String pinnedBy) { this.pinnedBy = pinnedBy; }
+
+    public Instant getCreatedAt() { return createdAt; }
+    public void setCreatedAt(Instant createdAt) { this.createdAt = createdAt; }
+
+    public Instant getUpdatedAt() { return updatedAt; }
+    public void setUpdatedAt(Instant updatedAt) { this.updatedAt = updatedAt; }
+
+    public Instant getDeletedAt() { return deletedAt; }
+    public void setDeletedAt(Instant deletedAt) { this.deletedAt = deletedAt; }
+}

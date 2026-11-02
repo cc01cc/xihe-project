@@ -144,7 +144,7 @@ class GrantScopeIsolationIntegrationTest extends AbstractH2Test {
     @Test
     void superAdminInstanceBindingMaterializesAllActionAtomsButNoCapabilityAtoms() {
         Fixture fixture = fixture("capability");
-        // Decision #27: SUPER_ADMIN is an instance role and all 16 action atoms are bindable in
+        // Decision #27: SUPER_ADMIN is an instance role and all action atoms are bindable in
         // the instance scope (only the 3 capability atoms are filtered out of the materialization).
         UUID superRoleId = accessRoleRepository.findByName(SystemAccessRoleCatalog.SUPER_ADMIN)
                 .orElseThrow().getId();

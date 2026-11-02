@@ -2,6 +2,7 @@ package com.cc01cc.p.xihe.cp.service;
 
 import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
 import com.cc01cc.p.xihe.cp.entity.AccessRole;
+import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
 import com.cc01cc.p.xihe.cp.entity.AccessRoleBinding;
 import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
@@ -79,6 +80,7 @@ class AgentPrincipalContextPolicyHttpTest extends AbstractIntegrationTest {
     @Autowired private RoleGrantMaterializer materializer;
     @Autowired private GrantDefaultService grantDefaultService;
     @Autowired private WorkspaceFixture workspaceFixture;
+    @Autowired private AgentPrincipalService agentPrincipalService;
     @Autowired private ObjectMapper objectMapper;
     @Autowired private JdbcTemplate jdbcTemplate;
 
@@ -295,6 +297,60 @@ class AgentPrincipalContextPolicyHttpTest extends AbstractIntegrationTest {
     }
 
     // ---------------------------------------------------------------------------------------
+    // Guard lock (Lead ruling 2026-11-02) + the two projections the UI needs
+    // ---------------------------------------------------------------------------------------
+
+    @Test
+    void patchRefusesToWriteAPresetGuardsMemoryPolicy() {
+        fixture();
+        UUID guardId = seedPresetGuard("Preset guard memory");
+
+        ResponseEntity<Map> policy = patch(guardId, body("contextPolicy", plainJson(POLICY_JSON)),
+                globalToken());
+        assertEquals(HttpStatus.FORBIDDEN, policy.getStatusCode(), String.valueOf(policy.getBody()));
+        assertEquals("GUARD_CONTEXT_POLICY_IMMUTABLE", policy.getBody().get("code"),
+                "a guard is a system asset: its memory policy must refuse with its own code");
+
+        ResponseEntity<Map> hooks = patch(guardId, body("hooks", plainJson(HOOKS_JSON)), globalToken());
+        assertEquals(HttpStatus.FORBIDDEN, hooks.getStatusCode(), String.valueOf(hooks.getBody()));
+        assertEquals("GUARD_HOOKS_IMMUTABLE", hooks.getBody().get("code"),
+                "the two guard refusals must stay distinguishable on the wire");
+
+        assertNull(principalRepository.findById(guardId).orElseThrow().getContextPolicy(),
+                "a refused write must not touch the row");
+        assertEquals(0, auditCount(guardId, "agent_principal_context_policy_updated"),
+                "a refused write must not be audited as applied");
+    }
+
+    @Test
+    void workspaceAgentListProjectsTheMemoryPolicy() {
+        fixture();
+        UUID principalId = createPrincipal("Listed memory agent");
+        assertEquals(HttpStatus.OK, patch(principalId, body("contextPolicy", plainJson(POLICY_JSON)),
+                globalToken()).getStatusCode());
+
+        Map<String, Object> row = listAgents().stream()
+                .filter(item -> principalId.toString().equals(String.valueOf(item.get("principalId"))))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("principal not listed in the workspace agent list"));
+
+        assertTrue(row.containsKey("contextPolicy"), "every row carries the key: " + row);
+        assertEquals(plainJson(POLICY_JSON), row.get("contextPolicy"),
+                "the workspace agent list must project the memory policy, or the UI cannot manage it");
+    }
+
+    @Test
+    void createResponseReportsThatMemoryIsOff() {
+        fixture();
+        Map<String, Object> created = createPrincipalResponse("Fresh memory agent");
+
+        assertTrue(created.containsKey("contextPolicy"),
+                "the create view must state the memory policy: " + created);
+        assertNull(created.get("contextPolicy"),
+                "a new subject starts with memory off (null = no policy)");
+    }
+
+    // ---------------------------------------------------------------------------------------
     // fixtures / helpers
     // ---------------------------------------------------------------------------------------
 
@@ -318,15 +374,41 @@ class AgentPrincipalContextPolicyHttpTest extends AbstractIntegrationTest {
     }
 
     private UUID createPrincipal(String name) {
+        return UUID.fromString(String.valueOf(createPrincipalResponse(name).get("principalId")));
+    }
+
+    private Map<String, Object> createPrincipalResponse(String name) {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("name", name);
         body.put("scope", "PERSONAL");
         ResponseEntity<Map> response = exchange(HttpMethod.POST, "/api/v1/agent-principals",
                 globalToken(), body);
         assertEquals(HttpStatus.CREATED, response.getStatusCode(), String.valueOf(response.getBody()));
-        UUID principalId = UUID.fromString(String.valueOf(response.getBody().get("principalId")));
-        principalIds.add(principalId);
-        return principalId;
+        principalIds.add(UUID.fromString(String.valueOf(response.getBody().get("principalId"))));
+        return response.getBody();
+    }
+
+    /** Seeds the exact provenance a builtin-template create writes (V95 CHECK: both halves). */
+    private UUID seedPresetGuard(String name) {
+        var snapshot = objectMapper.createObjectNode();
+        snapshot.putNull("templateId");
+        snapshot.put("templateName", "守卫 Guard");
+        snapshot.putArray("permissions");
+        AgentPrincipal guard = agentPrincipalService.createPrincipal(
+                adminUserId.toString(), name, null, snapshot, "PERSONAL", adminUserId,
+                null, null, null, null,
+                AgentPrincipal.ORIGIN_SYSTEM_PRESET, "00000000-0000-4000-8000-0000000000a2");
+        principalIds.add(guard.getId());
+        return guard.getId();
+    }
+
+    private List<Map<String, Object>> listAgents() {
+        ResponseEntity<Map> response = exchange(HttpMethod.GET,
+                "/api/v1/workspaces/" + workspaceId + "/agents", workspaceToken(), null);
+        assertEquals(HttpStatus.OK, response.getStatusCode(), String.valueOf(response.getBody()));
+        List<Map<String, Object>> agents = (List<Map<String, Object>>) response.getBody().get("agents");
+        assertNotNull(agents, "the frozen {agents:[...]} envelope: " + response.getBody());
+        return agents;
     }
 
     private Map<String, Object> body(String key, Object value) {
@@ -371,6 +453,11 @@ class AgentPrincipalContextPolicyHttpTest extends AbstractIntegrationTest {
 
     private String globalToken() {
         return tokenOf(adminUserId);
+    }
+
+    private String workspaceToken() {
+        return TestDataFactory.createWorkspaceToken(adminUserId.toString(), emailOf(adminUserId), "USER",
+                workspaceId.toString(), 0);
     }
 
     private String tokenOf(UUID userId) {

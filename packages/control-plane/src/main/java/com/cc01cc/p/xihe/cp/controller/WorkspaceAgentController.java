@@ -105,6 +105,9 @@ public class WorkspaceAgentController {
         // array — the array projection below silently answered `[]` for every row, so the UI could
         // never render the subscription.
         result.put("hooks", toDocument(view.hooks()));
+        // PLAN-0629 M1 (Lead ruling 2026-11-02): the workspace agent list carries the subject's memory
+        // policy too, or the UI cannot show/manage it.
+        result.put("contextPolicy", toDocument(view.contextPolicy()));
         // D27: `disabledAt` is projected as a boolean — the UI gates badges/buttons on it.
         result.put("disabled", view.disabled());
         return result;
