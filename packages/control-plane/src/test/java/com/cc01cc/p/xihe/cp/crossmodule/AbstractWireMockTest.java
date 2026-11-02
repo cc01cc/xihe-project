@@ -1,5 +1,6 @@
 package com.cc01cc.p.xihe.cp.crossmodule;
 
+import com.cc01cc.p.xihe.cp.support.Jackson2NodeWireInterceptor;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.github.tomakehurst.wiremock.WireMockServer;
 import com.cc01cc.p.xihe.cp.integration.TestDataFactory;
@@ -63,6 +64,7 @@ public abstract class AbstractWireMockTest {
     void setUp() {
         baseUrl = "http://localhost:" + cpPort;
         restTemplate = new RestTemplate();
+        restTemplate.getInterceptors().add(Jackson2NodeWireInterceptor.INSTANCE);
         restTemplate.setErrorHandler(new DefaultResponseErrorHandler() {
             @Override
             public boolean hasError(HttpStatusCode statusCode) {

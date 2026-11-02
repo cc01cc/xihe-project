@@ -1,5 +1,6 @@
 package com.cc01cc.p.xihe.cp;
 
+import com.cc01cc.p.xihe.cp.support.Jackson2NodeWireInterceptor;
 import org.junit.jupiter.api.BeforeEach;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalServerPort;
@@ -37,6 +38,7 @@ public abstract class AbstractH2Test {
     void setUp() {
         this.baseUrl = "http://localhost:" + port;
         this.restTemplate = new RestTemplate();
+        restTemplate.getInterceptors().add(Jackson2NodeWireInterceptor.INSTANCE);
         // 不抛出 4xx 错误，让测试断言自行处理
         this.restTemplate.setErrorHandler(new DefaultResponseErrorHandler() {
             @Override
