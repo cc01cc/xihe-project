@@ -462,7 +462,8 @@ public class AgentPrincipalService {
                         .map(principal -> new WorkspaceAgentView(principal.getId(), principal.getName(),
                                 principal.getTemplateId(), optionalText(principal.getTemplateSnapshot(), "templateName"),
                                 principal.getCreatedAt(), binding.getPermissionsSnapshot().deepCopy(),
-                                sourceOf(principal), true, principal.getDisabledAt() != null))
+                                sourceOf(principal), true, principal.getDisabledAt() != null,
+                                principal.getHooks() == null ? null : principal.getHooks().deepCopy()))
                         .orElseThrow(() -> new CpApiException(HttpStatus.INTERNAL_SERVER_ERROR,
                                 "AGENT_PRINCIPAL_INCONSISTENT", "Workspace Agent binding has no principal")))
                 .forEach(view -> merged.put(view.principalId(), view));
@@ -490,7 +491,8 @@ public class AgentPrincipalService {
     private WorkspaceAgentView unboundView(AgentPrincipal principal, JsonNode cap) {
         return new WorkspaceAgentView(principal.getId(), principal.getName(), principal.getTemplateId(),
                 optionalText(principal.getTemplateSnapshot(), "templateName"), principal.getCreatedAt(), cap,
-                sourceOf(principal), false, principal.getDisabledAt() != null);
+                sourceOf(principal), false, principal.getDisabledAt() != null,
+                principal.getHooks() == null ? null : principal.getHooks().deepCopy());
     }
 
     /** Without a binding there is no narrowing cap: the principal's own atoms are the whole cap. */
@@ -900,7 +902,7 @@ public class AgentPrincipalService {
 
     public record WorkspaceAgentView(UUID principalId, String name, String templateId,
                                      String templateName, Instant createdAt, JsonNode permissions,
-                                     String source, boolean bound, boolean disabled) {}
+                                     String source, boolean bound, boolean disabled, JsonNode hooks) {}
 
     private record ActiveWorkspaceBinding(AgentPrincipal principal, WorkspaceAgent workspaceAgent) {}
 }
