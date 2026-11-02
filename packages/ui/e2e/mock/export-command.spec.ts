@@ -111,6 +111,21 @@ async function setupExportChat(
     return probe;
 }
 
+/**
+ * `/export` is branch-scoped and refuses to run while the selected branch is unknown
+ * (`InputArea.downloadSessionExport` toasts `branchUnavailable` and returns). The command registry
+ * row — the thing `runExportCommand` waits for — is a *separate* async load, so "row visible" does
+ * not imply "branch resolved". Waiting for the branch projection is the ordering guarantee; relying
+ * on the row alone is what made this spec flaky under a loaded lane.
+ */
+function branchProjectionLoaded(page: Page): Promise<unknown> {
+    return page.waitForResponse(
+        (response) =>
+            response.url().includes(`/api/v1/sessions/${SESSION_ID}/branches`) &&
+            response.status() === 200,
+    );
+}
+
 /** Submits `/export` through the real composer (menu row + Enter), not through the API layer. */
 async function runExportCommand(page: Page): Promise<void> {
     const input = page.getByTestId("chat-input");
@@ -141,9 +156,11 @@ test("`/export` downloads the artifact and takes the filename from Content-Dispo
     });
 
     const probe = await setupExportChat(page, `attachment; filename="${HEADER_FILENAME}"`);
+    const branchesReady = branchProjectionLoaded(page);
     await page.goto(`/workspace/${WORKSPACE_ID}/chat/${SESSION_ID}`, {
         waitUntil: "domcontentloaded",
     });
+    await branchesReady;
 
     // Explicit short timeout: a missing download should read as "no download event", not as a
     // generic 30 s test timeout.
@@ -170,9 +187,11 @@ test("`/export` falls back to `session-<sessionId>.md` when the response has no 
     page,
 }) => {
     const probe = await setupExportChat(page, null);
+    const branchesReady = branchProjectionLoaded(page);
     await page.goto(`/workspace/${WORKSPACE_ID}/chat/${SESSION_ID}`, {
         waitUntil: "domcontentloaded",
     });
+    await branchesReady;
 
     const downloadPromise = page.waitForEvent("download", { timeout: 10_000 });
     await runExportCommand(page);

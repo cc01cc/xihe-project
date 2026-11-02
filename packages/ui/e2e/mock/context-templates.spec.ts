@@ -148,17 +148,22 @@ test.describe("Context templates (PLAN-0414)", () => {
 
         // Mobile viewport renders the workspace files view first and keeps
         // ChatPanel behind the "Open chat" drawer trigger; desktop shows it inline.
-        const openChat = page.getByRole("button", { name: "Open chat" });
-        if (await openChat.count()) {
-            await openChat.click();
+        // The viewport decides this, not a `count()` probe: probing made the outcome depend on
+        // whether the trigger had already rendered (flaky when the lane was loaded).
+        if ((page.viewportSize()?.width ?? 1920) < 768) {
+            await page.getByRole("button", { name: "Open chat" }).click();
         }
 
         // PLAN-0582 S4 / PLAN-0626 M2: collapsed by default. The unbound state is a
         // risk badge in the summary row; the selector itself now lives in the dock
         // `context` tab, which the summary row opens (desktop entry, not an accordion).
+        // The badge is the *resolved* state of the summary-only resolver (Session + template
+        // catalog + provider connections), so wait for that state with an explicit budget instead
+        // of the 5 s default — under a loaded lane the three loads outlived the default.
         const settingsSummary = page.getByTestId("session-settings-summary");
         await expect(settingsSummary.getByTestId("session-settings-risk-template")).toContainText(
             "模板未绑定",
+            { timeout: 15000 },
         );
         await expect(page.getByTestId("session-settings-expanded")).toBeHidden();
         await shoot(page, "04-chat-binding-default.png");
@@ -182,11 +187,22 @@ test.describe("Context templates (PLAN-0414)", () => {
             connectionRevision: CONNECTION_REVISION,
         });
 
+        // `applySessionRecord(updated)` changes `updatedAt`, which re-runs this component's
+        // watcher: the selector is emptied and disabled, then re-fetches the Session and the
+        // template catalog before it can show the pinned revision. Waiting for that settled state
+        // (instead of asserting within the default 5 s budget) is what keeps the summary assertion
+        // below from racing the reload on a loaded lane.
+        await expect(select).toBeEnabled({ timeout: 15000 });
+        await expect(select).toHaveValue(`user:${TEMPLATE_ID}:1`, { timeout: 15000 });
+
         // Visible result: the summary reflects the pinned revision.
         await expect(page.getByTestId("session-context-template-current")).toContainText(
             "User Bound Template v1",
+            { timeout: 15000 },
         );
-        await expect(page.getByTestId("session-settings-risk-template")).toHaveCount(0);
+        await expect(page.getByTestId("session-settings-risk-template")).toHaveCount(0, {
+            timeout: 15000,
+        });
         await shoot(page, "05-chat-binding-user-template.png");
     });
 });

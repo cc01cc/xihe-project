@@ -131,7 +131,9 @@ test.describe("Config Settings (three layers)", () => {
         await mockConfigAPIs(page);
         await page.goto("/settings/config", { waitUntil: "load" });
 
-        await expect(page.getByTestId("config-tab-instance")).toBeVisible();
+        // The tabs render after `loadLayerDomains` settles; give that state wait a lane-sized
+        // budget instead of the 5 s default (the element simply had not mounted yet under load).
+        await expect(page.getByTestId("config-tab-instance")).toBeVisible({ timeout: 15000 });
         // PLAN-0560: the workspace layer moved to each workspace's settings page.
         await expect(page.getByTestId("config-tab-workspace")).toHaveCount(0);
         await expect(page.getByTestId("config-tab-user")).toBeVisible();
