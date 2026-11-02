@@ -18,11 +18,18 @@ test.describe("Model Popover", () => {
                         deepseek: ["deepseek-chat", "deepseek-reasoner"],
                         openai: ["gpt-4o"],
                     },
-                    // PLAN-0307: the popover groups come from the provider catalog
-                    // (`providers`), which is grounded in provider connections.
+                    // PLAN-0438/0523: catalogs are keyed by **ProviderConnection id** (the
+                    // `connectionId`), not by provider id, and `ModelPopover.providerGroups`
+                    // keeps only catalogs whose key is an enabled + READY + `operation=chat`
+                    // connection. A provider-keyed catalog with no connections (the previous
+                    // fixture) produced zero groups, so the popover opened empty.
                     providers: {
-                        deepseek: {
+                        "conn-deepseek": {
+                            providerId: "deepseek",
+                            displayName: "DeepSeek",
                             status: "ready",
+                            connectionId: "conn-deepseek",
+                            connectionRevision: 1,
                             models: [
                                 {
                                     name: "deepseek-chat",
@@ -34,8 +41,12 @@ test.describe("Model Popover", () => {
                                 },
                             ],
                         },
-                        openai: {
+                        "conn-openai": {
+                            providerId: "openai",
+                            displayName: "OpenAI",
                             status: "ready",
+                            connectionId: "conn-openai",
+                            connectionRevision: 1,
                             models: [
                                 {
                                     name: "gpt-4o",
@@ -44,6 +55,42 @@ test.describe("Model Popover", () => {
                             ],
                         },
                     },
+                }),
+            });
+        });
+
+        // The connection list is the authority the popover gates catalogs on, so it must
+        // describe the same two connections the catalog is keyed by (PLAN-0523 T3.5).
+        await page.route("**/api/v1/provider-connections**", async (route) => {
+            const connection = (
+                id: string,
+                providerId: string,
+                connectionKey: string,
+                label: string,
+            ) => ({
+                id,
+                providerId,
+                connectionKey,
+                apiTypeId: "openai-chat-completions",
+                apiTypeVersion: 1,
+                operation: "chat",
+                label,
+                scope: "USER",
+                modelDiscovery: "curated",
+                manualModels: [],
+                hasKey: true,
+                enabled: true,
+                status: "READY",
+                revision: 1,
+            });
+            await route.fulfill({
+                status: 200,
+                contentType: "application/json",
+                body: JSON.stringify({
+                    connections: [
+                        connection("conn-deepseek", "deepseek", "default", "DeepSeek 默认"),
+                        connection("conn-openai", "openai", "default", "OpenAI 默认"),
+                    ],
                 }),
             });
         });
@@ -89,7 +136,15 @@ test.describe("Model Popover", () => {
         const stored = await page.evaluate(() => localStorage.getItem("xihe-session-models"));
         expect(stored).toBeTruthy();
         const parsed = JSON.parse(stored!);
-        expect(parsed["sid-1"]).toEqual({ provider: "deepseek", model: "deepseek-chat" });
+        // PLAN-0438 scoped bindings: a selection now persists the concrete connection and its
+        // revision next to provider/model, because dispatch is connection-scoped. Asserting the
+        // full new shape (not a subset) keeps this exact-match check as strict as before.
+        expect(parsed["sid-1"]).toEqual({
+            provider: "deepseek",
+            model: "deepseek-chat",
+            connectionId: "conn-deepseek",
+            connectionRevision: 1,
+        });
     });
 
     test("search filters models", async ({ page }) => {

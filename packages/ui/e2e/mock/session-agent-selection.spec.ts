@@ -9,16 +9,27 @@ test("new Workspace Session is created only after selecting a bound Agent", asyn
         await route.fulfill({
             status: 200,
             contentType: "application/json",
-            body: JSON.stringify([
-                {
-                    principalId: "agent-1",
-                    name: "Research Agent",
-                    templateId: null,
-                    templateName: "Research",
-                    createdAt: new Date().toISOString(),
-                    permissions: [{ actionClass: "read" }],
-                },
-            ]),
+            // PLAN-0622 M1.2 contract: the list is `{agents:[…]}` and each row carries `bound`
+            // (visible but not yet bound to this workspace) / `disabled` (D26/D27). A bare array
+            // with no `bound` made `api.getWorkspaceAgents` throw on `raw.agents.map` and left
+            // `boundWorkspaceAgents` empty, so the picker could never offer this Agent.
+            body: JSON.stringify({
+                agents: [
+                    {
+                        principalId: "agent-1",
+                        name: "Research Agent",
+                        templateId: null,
+                        templateName: "Research",
+                        createdAt: new Date().toISOString(),
+                        source: "workspace",
+                        bound: true,
+                        disabled: false,
+                        permissions: [{ actionClass: "read" }],
+                        hooks: null,
+                        contextPolicy: null,
+                    },
+                ],
+            }),
         });
     });
 
@@ -93,6 +104,32 @@ test("creates a principal separately, binds an explicit cap, and confirms unbind
     await setupMockAuth(page);
     await setupMockSessions(page, { sessions: [] });
 
+    // PLAN-0621 F-01: the create button stays disabled (fail-closed) until the authoritative
+    // capability projection says a scope is writable. The `{}` catch-all left
+    // `availableScopes` empty, so `agent-principal-create` was permanently disabled and the
+    // click timed out. This caller may create Workspace Agents.
+    await page.route("**/api/v1/me/permissions", (route) =>
+        route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify({
+                userId: "user-1",
+                instanceCapabilities: [],
+                instancePermissions: [],
+                workspaces: [
+                    {
+                        workspaceId: "workspace-1",
+                        workspaceRole: "OWNER",
+                        workspaceAdmin: true,
+                        permissions: [
+                            { actionClass: "MANAGE_WORKSPACE_AGENTS", resource: "workspace-1" },
+                        ],
+                    },
+                ],
+            }),
+        }),
+    );
+
     const bindings: Array<Record<string, unknown>> = [];
     await page.route("**/api/v1/workspaces/workspace-1/agents**", async (route) => {
         const request = route.request();
@@ -100,7 +137,9 @@ test("creates a principal separately, binds an explicit cap, and confirms unbind
             await route.fulfill({
                 status: 200,
                 contentType: "application/json",
-                body: JSON.stringify(bindings),
+                // PLAN-0622 M1.2: the list envelope is `{agents:[…]}` — a bare array throws in
+                // `api.getWorkspaceAgents` (`raw.agents.map`), which reads as "no agents".
+                body: JSON.stringify({ agents: bindings }),
             });
             return;
         }
@@ -114,7 +153,12 @@ test("creates a principal separately, binds an explicit cap, and confirms unbind
                 templateId: null,
                 templateName: null,
                 createdAt: new Date().toISOString(),
+                source: "workspace",
+                bound: true,
+                disabled: false,
                 permissions: body.permissions,
+                hooks: null,
+                contextPolicy: null,
             };
             const existingIndex = bindings.findIndex(
                 (binding) => binding.principalId === "agent-1",
@@ -171,7 +215,12 @@ test("creates a principal separately, binds an explicit cap, and confirms unbind
     const binding = page.getByTestId("workspace-agent-agent-1");
     await expect(binding).toContainText("Research Agent");
     await expect(binding).toContainText("src/*");
-    expect(createBody).toEqual({ name: "Research Agent" });
+    expect(createBody).toEqual({
+        name: "Research Agent",
+        // PLAN-0622 M1: the create request carries the Agent scope, and the panel always sends
+        // the scope it resolved from the capability projection (default WORKSPACE).
+        scope: "WORKSPACE",
+    });
 
     await binding.getByTestId("workspace-agent-edit-cap-agent-1").click();
     await page.getByTestId("agent-cap-write").check();
