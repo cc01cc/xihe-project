@@ -84,3 +84,21 @@
 - `e2e/mock/model-popover.spec.ts`：连接键目录 + `provider-connections` stub；1 处 localStorage 形状断言补齐 scoped binding 字段。
 - `e2e/mock/session-agent-selection.spec.ts`：`{agents:[…]}` 信封 + `bound`；补 `/me/permissions`；create body 断言补 `scope`。
 - `e2e/mock/screenshots.spec.ts`：补 `/version`。
+
+---
+
+## 更新（2026-11-03 06:10，T 类重写 + F 补齐 + flaky 稳定化已合并 `37d1b65f`）
+
+| 指标 | 基线 | 现在 |
+|---|---|---|
+| passed / failed / flaky | 165 / 23 / 1 | **176 / 13 / 0**（连跑三次失败集完全相同） |
+| 失败文件数 | 14 | 见下（全为 P 类） |
+
+**剩余 13 条全部是 P 类产品缺陷**（无一条是用例或夹具问题）：
+`chat-scroll:10`、`chat-scroll:60`、`chat:223`（SSE error 气泡）、`diagnostics:14`、`journey-d-overflow:14`、`plan-0557:84/93/104`、`policy-management:487`（移动端 classify 输入框 value 恒 ""，原记 `:501`）、`run-budget-exhausted:16/61`、`session-agent-selection:101`（bind 后 agents 列表 loading 不复位）、`sse-liveness:115`。
+
+**T 类处置（10 条，未删例）**：`/settings/policy` 4 条改为断言**重定向 + 落点能力 + 零 `/policy` 请求**；`chat:130` 改用 `openContextPanel`；`workspace-files:131` 改断言 hostPath/executionMode/提示；`workspace-management:65` 走 `WorkspacePicker` + `direct_attach` 全流程；`session-management:51` 收敛 testid + 折叠真实语义（0px + inert + 保留 56px rail）；`checkpoint-rollback:299` 390 视口先开 chat sheet；`session-agent-selection:252` 改为**点前禁用 + 指向授权页 + 零请求**。
+
+**判定"功能已退役"的 6 项（附证据）**：`/settings/policy` 页与 `PolicyRulesView`（redirect + 无路由 import + 导航无入口）｜「暂无工作区」空态面板（被 `WorkspacePicker` 取代）｜「系统文件操作直访」文案（`src` 内已不存在）｜`managed_import` 创建路径（PLAN-0618 冻结）｜"点了绑定才吃 403"前提（PLAN-0621 F-01 改为点前禁用）｜"折叠后 sidebar 缩到 1px"的旧布局（PLAN-0582 S2 改为保留 56px rail）。
+
+**新增 P 类（本次发现，未修产品）**：**桌面折叠侧栏后没有任何再展开入口** —— 折叠控件在被 `0px + inert` 的面板内，唯一再展开控件 `mobile-sidebar-toggle` 只在 `isMobile` 渲染（`AppLayout.vue:175-185`），`useWorkspaceLayout.toggleNav()` **无 UI 调用方**。用例目前只断言到"已折叠"的可见态，并在注释里标明原因（**没有把缺陷写成断言**）。
