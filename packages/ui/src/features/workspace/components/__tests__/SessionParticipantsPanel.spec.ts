@@ -348,3 +348,42 @@ describe("SessionParticipantsPanel T3.6/T3.7 and policy editing (PLAN-0623)", ()
         expect(wrapper.emitted("mention")).toBeUndefined();
     });
 });
+
+describe("ParticipantRow without a display name (PLAN-0623 human-display fix)", () => {
+    const NAMELESS: SessionParticipantView = { ...HUMAN, displayName: null };
+
+    it("shows a localized placeholder instead of leaking a UUID", async () => {
+        getParticipants.mockResolvedValueOnce({ participants: [NAMELESS], capabilities: ALL_CAPS });
+        const wrapper = mountPanel();
+        await flushPromises();
+
+        const row = wrapper.get('[data-testid="participant-row-p-human"]');
+        // 行内**任何**位置都不得出现 UUID 片段（UUID 不是名字）。
+        expect(row.text()).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}/i);
+        expect(row.text()).toContain(i18n.global.t("workspace.participantUnknownName"));
+    });
+
+    it("derives the initials from the placeholder, not from the principal id", async () => {
+        getParticipants.mockResolvedValueOnce({ participants: [NAMELESS], capabilities: ALL_CAPS });
+        const wrapper = mountPanel();
+        await flushPromises();
+
+        const initials = wrapper.get('[data-testid="participant-initials-p-human"]').text();
+        // 旧兜底会得到 principalId 前两位（fixture 是 `5a2b…` ⇒ "5A"）。
+        expect(initials).not.toBe("5A");
+        expect(initials.length).toBeGreaterThan(0);
+        expect(initials).not.toMatch(/\d/);
+    });
+
+    it("disables mention when there is no real name to insert", async () => {
+        getParticipants.mockResolvedValueOnce({ participants: [NAMELESS], capabilities: ALL_CAPS });
+        const wrapper = mountPanel();
+        await flushPromises();
+
+        expect(
+            wrapper.get('[data-testid="participant-mention-p-human"]').attributes("disabled"),
+        ).toBeDefined();
+        await wrapper.get('[data-testid="participant-mention-p-human"]').trigger("click");
+        expect(wrapper.emitted("mention")).toBeUndefined();
+    });
+});
