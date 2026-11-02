@@ -86,7 +86,7 @@ class WakeChainServiceTest {
     private static SessionParticipantService.ParticipantView entry(UUID id, String name) {
         return new SessionParticipantService.ParticipantView(id, "AGENT", UUID.randomUUID(),
                 "MEMBER", 10, "MENTION", "ALWAYS", Instant.now(), null, name, null, null,
-                null, false, null);
+                null, false, null, null);
     }
 
     private static SessionParticipantService.ListView rosterOf(
@@ -147,7 +147,7 @@ class WakeChainServiceTest {
         when(participantService.list(any(), any(), any())).thenReturn(rosterOf(
                 new SessionParticipantService.ParticipantView(humanId, "HUMAN",
                         UUID.randomUUID(), "MEMBER", 10, "MENTION", "ALWAYS", Instant.now(),
-                        null, "Han", null, null, null, false, null)));
+                        null, "Han", null, null, null, false, null, null)));
         stubChainRuns();
         chain.onAssistantContent(SESSION_ID, "root-run", "@Han 看一下");
         // The chain still routes the mention to dispatch — 人=通知 is dispatch's branch,
