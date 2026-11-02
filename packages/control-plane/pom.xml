@@ -56,7 +56,10 @@
         <dependency>
             <groupId>org.postgresql</groupId>
             <artifactId>postgresql</artifactId>
-        <version>42.7.13</version>
+            <!-- PLAN-0633 D33-01 batch A1: Spring Boot 4.0.6's BOM still manages pgjdbc at 42.7.10, so
+                 this explicit pin is the override that carries the two-CVE fix (42.7.13 -> 42.7.14).
+                 Remove the pin once the BOM itself manages >= 42.7.14. -->
+            <version>42.7.14</version>
             <scope>runtime</scope>
         </dependency>
         
