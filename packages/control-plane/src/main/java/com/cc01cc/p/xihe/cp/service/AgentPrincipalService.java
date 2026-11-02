@@ -566,7 +566,8 @@ public class AgentPrincipalService {
                 principal.getScope(), principal.getOwnerUserId(), principal.getDefaultModelProvider(),
                 principal.getDefaultModelName(),
                 principal.getAllowedModels() == null ? null : principal.getAllowedModels().deepCopy(),
-                principal.getDisabledAt());
+                principal.getDisabledAt(),
+                principal.getHooks() == null ? null : principal.getHooks().deepCopy());
     }
 
     /**
@@ -895,7 +896,7 @@ public class AgentPrincipalService {
     public record AgentPrincipalView(UUID principalId, String name, String templateId, String templateName,
                                      Instant createdAt, String scope, UUID ownerUserId,
                                      String defaultModelProvider, String defaultModelName,
-                                     JsonNode allowedModels, Instant disabledAt) {}
+                                     JsonNode allowedModels, Instant disabledAt, JsonNode hooks) {}
 
     public record WorkspaceAgentView(UUID principalId, String name, String templateId,
                                      String templateName, Instant createdAt, JsonNode permissions,
