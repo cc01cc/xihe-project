@@ -3,7 +3,7 @@ import { ref, computed, markRaw, nextTick, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { useSessionParticipantsStore } from "../../stores/sessionParticipants";
 import { useWorkspaceStore } from "../../stores/workspace";
-import type { FileNode } from "../../../../types";
+import type { AttachmentFile, FileNode } from "../../../../types";
 import { toast } from "vue-sonner";
 import { Send, Square, LoaderCircle } from "@lucide/vue";
 import ImageUpload from "../../../../components/multimodal/ImageUpload.vue";
@@ -13,7 +13,6 @@ import VoiceInput from "../../../../components/multimodal/VoiceInput.vue";
 import ModelPopover from "./ModelPopover.vue";
 import InputToolbar, { type ToolbarAction } from "./InputToolbar.vue";
 import { uploadAttachments, validateAttachment } from "../../../../services/attachmentService";
-import type { AttachmentFile } from "../../../../types";
 
 interface SlashCommand {
     key: string;
