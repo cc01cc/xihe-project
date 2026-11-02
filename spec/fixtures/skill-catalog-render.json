@@ -1,0 +1,454 @@
+{
+  "$comment": "PLAN-0628 M3 cross-language contract: the skills listing CP renders and the block the Agent puts into ${xh.skill_catalog} must agree byte-for-byte. CP's SkillCatalogSourceService.view(Listing) produces `componentView` from `listing`; the Agent's context/skill_catalog.render_from_component_sources turns that same `componentView` into `agent.expectedContent`. Both suites read THIS file: packages/control-plane/src/test/java/com/cc01cc/p/xihe/cp/skill/SkillCatalogRenderFixtureTest.java and packages/agent/tests/unit/test_skill_catalog_render_contract.py. Listing items carry only the fields the renderers read (skillId, qualifiedName, name, description, tier); version/contentHash/oversize never reach a rendered line. Changing a case means changing the contract.",
+  "rule": "CP renders one line per item: display + ' — ' + description, where display = name unless a name collision forces the qualifiedName; CP never truncates a line, never adds framing and never adds the truncation sentence (D28-41: reserved budget belongs to the final renderer). The Agent prepends `header`, keeps a prefix of CP's lines within the skills cap, and appends `truncationNote` whenever the listing is incomplete - either because its own budget cut it or because CP already reported truncated=true.",
+  "header": "Available skills (name — description); load full text by name when relevant:",
+  "separator": " — ",
+  "truncationNote": "（上面只是部分可用 skill；需要其他 skill 时请按名称直接尝试，不要据此断言它不存在。）",
+  "cases": [
+    {
+      "name": "ready-multi",
+      "note": "三个不同名的 skill：CP 用裸名，描述以 ' — ' 相连；Agent 只加一行 header。",
+      "listing": {
+        "status": "ready",
+        "items": [
+          {
+            "skillId": "00000000-0000-4000-8000-000000000001",
+            "qualifiedName": "user:instance:instance:alpha",
+            "name": "alpha",
+            "description": "Summarize a document and keep its headings intact",
+            "tier": {
+              "subjectType": "user",
+              "scopeType": "instance",
+              "definitionScopeType": "instance"
+            }
+          },
+          {
+            "skillId": "00000000-0000-4000-8000-000000000002",
+            "qualifiedName": "user:instance:instance:beta",
+            "name": "beta",
+            "description": "Turn a bug report into a reproduction checklist",
+            "tier": {
+              "subjectType": "user",
+              "scopeType": "instance",
+              "definitionScopeType": "instance"
+            }
+          },
+          {
+            "skillId": "00000000-0000-4000-8000-000000000003",
+            "qualifiedName": "agent:primary:instance:instance:gamma",
+            "name": "gamma",
+            "description": "Extract action items from a meeting transcript",
+            "tier": {
+              "subjectType": "agent:primary",
+              "scopeType": "instance",
+              "definitionScopeType": "instance"
+            }
+          }
+        ],
+        "truncated": false,
+        "diagnostics": [],
+        "maxSkills": 40,
+        "includeDescriptions": true,
+        "collision": false
+      },
+      "componentView": {
+        "status": "ready",
+        "source": "skill_bindings",
+        "items": [
+          "alpha — Summarize a document and keep its headings intact",
+          "beta — Turn a bug report into a reproduction checklist",
+          "gamma — Extract action items from a meeting transcript"
+        ],
+        "truncated": false,
+        "diagnostics": []
+      },
+      "agent": {
+        "windowTokens": 128000,
+        "assembledTokens": 0,
+        "maxTokens": null,
+        "expectedContent": "Available skills (name — description); load full text by name when relevant:\nalpha — Summarize a document and keep its headings intact\nbeta — Turn a bug report into a reproduction checklist\ngamma — Extract action items from a meeting transcript",
+        "expectedStatus": "ready",
+        "expectedTruncated": false,
+        "expectedDiagnostics": [],
+        "cpDiagnostics": [],
+        "items": 3
+      }
+    },
+    {
+      "name": "ready-qualified-collision",
+      "note": "同名双存（README #4）：CP 改渲染 qualifiedName 三段式并报 collision；Agent 逐字保留该行。",
+      "listing": {
+        "status": "ready",
+        "items": [
+          {
+            "skillId": "00000000-0000-4000-8000-000000000004",
+            "qualifiedName": "user:instance:instance:writing",
+            "name": "writing",
+            "description": "Edit prose for clarity",
+            "tier": {
+              "subjectType": "user",
+              "scopeType": "instance",
+              "definitionScopeType": "instance"
+            }
+          },
+          {
+            "skillId": "00000000-0000-4000-8000-000000000005",
+            "qualifiedName": "user:workspace:ws-scope:ws:ws-one:writing",
+            "name": "writing",
+            "description": "Shared team writing guide",
+            "tier": {
+              "subjectType": "user",
+              "scopeType": "workspace",
+              "definitionScopeType": "workspace"
+            }
+          }
+        ],
+        "truncated": false,
+        "diagnostics": [
+          "skill_catalog_name_collision"
+        ],
+        "maxSkills": 40,
+        "includeDescriptions": true,
+        "collision": true
+      },
+      "componentView": {
+        "status": "ready",
+        "source": "skill_bindings",
+        "items": [
+          "user:instance:instance:writing — Edit prose for clarity",
+          "user:workspace:ws-scope:ws:ws-one:writing — Shared team writing guide"
+        ],
+        "truncated": false,
+        "diagnostics": [
+          "skill_catalog_name_collision"
+        ]
+      },
+      "agent": {
+        "windowTokens": 128000,
+        "assembledTokens": 0,
+        "maxTokens": null,
+        "expectedContent": "Available skills (name — description); load full text by name when relevant:\nuser:instance:instance:writing — Edit prose for clarity\nuser:workspace:ws-scope:ws:ws-one:writing — Shared team writing guide",
+        "expectedStatus": "ready",
+        "expectedTruncated": false,
+        "expectedDiagnostics": [],
+        "cpDiagnostics": [
+          "skill_catalog_name_collision"
+        ],
+        "items": 2
+      }
+    },
+    {
+      "name": "cp-truncated",
+      "note": "CP 侧 maxSkills 截断：Agent 预算充裕，仍必须按 cp_truncated 在带内说明清单不全。",
+      "listing": {
+        "status": "truncated",
+        "items": [
+          {
+            "skillId": "00000000-0000-4000-8000-000000000006",
+            "qualifiedName": "user:instance:instance:alpha",
+            "name": "alpha",
+            "description": "First skill kept before the cut",
+            "tier": {
+              "subjectType": "user",
+              "scopeType": "instance",
+              "definitionScopeType": "instance"
+            }
+          },
+          {
+            "skillId": "00000000-0000-4000-8000-000000000007",
+            "qualifiedName": "user:instance:instance:beta",
+            "name": "beta",
+            "description": "Second skill kept before the cut",
+            "tier": {
+              "subjectType": "user",
+              "scopeType": "instance",
+              "definitionScopeType": "instance"
+            }
+          }
+        ],
+        "truncated": true,
+        "diagnostics": [
+          "skill_catalog_max_skills_reached"
+        ],
+        "maxSkills": 2,
+        "includeDescriptions": true,
+        "collision": false
+      },
+      "componentView": {
+        "status": "truncated",
+        "source": "skill_bindings",
+        "items": [
+          "alpha — First skill kept before the cut",
+          "beta — Second skill kept before the cut"
+        ],
+        "truncated": true,
+        "diagnostics": [
+          "skill_catalog_max_skills_reached"
+        ]
+      },
+      "agent": {
+        "windowTokens": 128000,
+        "assembledTokens": 0,
+        "maxTokens": null,
+        "expectedContent": "Available skills (name — description); load full text by name when relevant:\nalpha — First skill kept before the cut\nbeta — Second skill kept before the cut\n（上面只是部分可用 skill；需要其他 skill 时请按名称直接尝试，不要据此断言它不存在。）",
+        "expectedStatus": "truncated",
+        "expectedTruncated": true,
+        "expectedDiagnostics": [
+          "skill_catalog_budget_truncated"
+        ],
+        "cpDiagnostics": [
+          "skill_catalog_max_skills_reached"
+        ],
+        "items": 2
+      }
+    },
+    {
+      "name": "empty",
+      "note": "空清单：CP 报 empty + 诊断，Agent 产出空串（槽存在但不渲染）。",
+      "listing": {
+        "status": "empty",
+        "items": [],
+        "truncated": false,
+        "diagnostics": [
+          "skill_catalog_empty"
+        ],
+        "maxSkills": 40,
+        "includeDescriptions": true,
+        "collision": false
+      },
+      "componentView": {
+        "status": "empty",
+        "source": "skill_bindings",
+        "items": [],
+        "truncated": false,
+        "diagnostics": [
+          "skill_catalog_empty"
+        ]
+      },
+      "agent": {
+        "windowTokens": 128000,
+        "assembledTokens": 0,
+        "maxTokens": null,
+        "expectedContent": "",
+        "expectedStatus": "empty",
+        "expectedTruncated": false,
+        "expectedDiagnostics": [
+          "skill_catalog_empty"
+        ],
+        "cpDiagnostics": [
+          "skill_catalog_empty"
+        ],
+        "items": 0
+      }
+    },
+    {
+      "name": "long-line-budget-cut",
+      "note": "超长名 + 小窗口（8000 ⇒ skills cap 512）：line 0 是三段式超长名（collision 下 CP 不截名字），Agent 因预算整行丢弃后续条目并追加提示（提示预算先预留）。",
+      "listing": {
+        "status": "ready",
+        "items": [
+          {
+            "skillId": "00000000-0000-4000-8000-000000000008",
+            "qualifiedName": "user:workspace:ws-long:ws:workspace-long-name-used-to-stretch-the-qualified-name-segment-beyond-a-screen:writing-with-a-name-near-the-validator-ceiling-for-budget",
+            "name": "writing-with-a-name-near-the-validator-ceiling-for-budget",
+            "description": "Rewrite a long document while preserving every heading, list marker, table alignment, and inline code span, then report which sections changed and why, and keep a short diff-friendly summary for the reviewer who asked for the rewrite in the first place. Keep the original voice unless the caller explicitly asks for a tone change, quote the sentence that forced each structural edit, and never renumber headings that other documents link to; when a section cannot be rewritten without losing meaning, leave it untouched and explain the blocker instead of inventing content",
+            "tier": {
+              "subjectType": "user",
+              "scopeType": "workspace",
+              "definitionScopeType": "workspace"
+            }
+          },
+          {
+            "skillId": "00000000-0000-4000-8000-000000000009",
+            "qualifiedName": "user:instance:instance:beta",
+            "name": "beta",
+            "description": "Turn a bug report into a reproduction checklist that names the failing request, the expected response, the observed response, and the smallest workspace state that reproduces it, without asking the reporter to read source code",
+            "tier": {
+              "subjectType": "user",
+              "scopeType": "instance",
+              "definitionScopeType": "instance"
+            }
+          },
+          {
+            "skillId": "00000000-0000-4000-8000-000000000010",
+            "qualifiedName": "user:instance:instance:gamma",
+            "name": "gamma",
+            "description": "Extract action items from a meeting transcript",
+            "tier": {
+              "subjectType": "user",
+              "scopeType": "instance",
+              "definitionScopeType": "instance"
+            }
+          },
+          {
+            "skillId": "00000000-0000-4000-8000-000000000011",
+            "qualifiedName": "user:instance:instance:delta",
+            "name": "delta",
+            "description": "Draft a changelog section from merged pull requests",
+            "tier": {
+              "subjectType": "user",
+              "scopeType": "instance",
+              "definitionScopeType": "instance"
+            }
+          },
+          {
+            "skillId": "00000000-0000-4000-8000-000000000012",
+            "qualifiedName": "user:instance:instance:epsilon",
+            "name": "epsilon",
+            "description": "Check a commit message against the repository conventions",
+            "tier": {
+              "subjectType": "user",
+              "scopeType": "instance",
+              "definitionScopeType": "instance"
+            }
+          }
+        ],
+        "truncated": false,
+        "diagnostics": [
+          "skill_catalog_name_collision"
+        ],
+        "maxSkills": 40,
+        "includeDescriptions": true,
+        "collision": true
+      },
+      "componentView": {
+        "status": "ready",
+        "source": "skill_bindings",
+        "items": [
+          "user:workspace:ws-long:ws:workspace-long-name-used-to-stretch-the-qualified-name-segment-beyond-a-screen:writing-with-a-name-near-the-validator-ceiling-for-budget — Rewrite a long document while preserving every heading, list marker, table alignment, and inline code span, then report which sections changed and why, and keep a short diff-friendly summary for the reviewer who asked for the rewrite in the first place. Keep the original voice unless the caller explicitly asks for a tone change, quote the sentence that forced each structural edit, and never renumber headings that other documents link to; when a section cannot be rewritten without losing meaning, leave it untouched and explain the blocker instead of inventing content",
+          "user:instance:instance:beta — Turn a bug report into a reproduction checklist that names the failing request, the expected response, the observed response, and the smallest workspace state that reproduces it, without asking the reporter to read source code",
+          "user:instance:instance:gamma — Extract action items from a meeting transcript",
+          "user:instance:instance:delta — Draft a changelog section from merged pull requests",
+          "user:instance:instance:epsilon — Check a commit message against the repository conventions"
+        ],
+        "truncated": false,
+        "diagnostics": [
+          "skill_catalog_name_collision"
+        ]
+      },
+      "agent": {
+        "windowTokens": 8000,
+        "assembledTokens": 0,
+        "maxTokens": null,
+        "expectedContent": "Available skills (name — description); load full text by name when relevant:\nuser:workspace:ws-long:ws:workspace-long-name-used-to-stretch-the-qualified-name-segment-beyond-a-screen:writing-with-a-name-near-the-validator-ceiling-for-budget — Rewrite a long document while preserving every heading, list marker, table alignment, and inline code span, then report which sections changed and why, and keep a short diff-friendly summary for the reviewer who asked for the rewrite in the first place. Keep the original voice unless the caller explicitly asks for a tone change, quote the sentence that forced each structural edit, and never renumber headings that other documents link to; when a section cannot be rewritten without losing meaning, leave it untouched and explain the blocker instead of inventing content\n（上面只是部分可用 skill；需要其他 skill 时请按名称直接尝试，不要据此断言它不存在。）",
+        "expectedStatus": "truncated",
+        "expectedTruncated": true,
+        "expectedDiagnostics": [
+          "skill_catalog_budget_truncated"
+        ],
+        "cpDiagnostics": [
+          "skill_catalog_name_collision"
+        ],
+        "items": 5
+      }
+    },
+    {
+      "name": "failed",
+      "note": "CP 解析失败（fail-soft）：不写 items；Agent 当前把空 items 当空清单处理（无带内说明，仅诊断）。",
+      "listing": {
+        "status": "failed",
+        "items": [],
+        "truncated": false,
+        "diagnostics": [
+          "skill_catalog_resolve_failed"
+        ],
+        "maxSkills": 40,
+        "includeDescriptions": true,
+        "collision": false
+      },
+      "componentView": {
+        "status": "failed",
+        "source": "skill_bindings",
+        "items": [],
+        "truncated": false,
+        "diagnostics": [
+          "skill_catalog_resolve_failed"
+        ]
+      },
+      "agent": {
+        "windowTokens": 128000,
+        "assembledTokens": 0,
+        "maxTokens": null,
+        "expectedContent": "",
+        "expectedStatus": "empty",
+        "expectedTruncated": false,
+        "expectedDiagnostics": [
+          "skill_catalog_empty"
+        ],
+        "cpDiagnostics": [
+          "skill_catalog_resolve_failed"
+        ],
+        "items": 0
+      }
+    },
+    {
+      "name": "no-descriptions",
+      "note": "includeDescriptions=false：两侧都只渲染名字，不能留下悬空的分隔符。",
+      "listing": {
+        "status": "ready",
+        "items": [
+          {
+            "skillId": "00000000-0000-4000-8000-000000000013",
+            "qualifiedName": "user:instance:instance:alpha",
+            "name": "alpha",
+            "description": "Summarize a document",
+            "tier": {
+              "subjectType": "user",
+              "scopeType": "instance",
+              "definitionScopeType": "instance"
+            }
+          },
+          {
+            "skillId": "00000000-0000-4000-8000-000000000014",
+            "qualifiedName": "user:instance:instance:beta",
+            "name": "beta",
+            "description": "Turn a bug report into a checklist",
+            "tier": {
+              "subjectType": "user",
+              "scopeType": "instance",
+              "definitionScopeType": "instance"
+            }
+          },
+          {
+            "skillId": "00000000-0000-4000-8000-000000000015",
+            "qualifiedName": "user:instance:instance:gamma",
+            "name": "gamma",
+            "description": "Extract action items",
+            "tier": {
+              "subjectType": "user",
+              "scopeType": "instance",
+              "definitionScopeType": "instance"
+            }
+          }
+        ],
+        "truncated": false,
+        "diagnostics": [],
+        "maxSkills": 40,
+        "includeDescriptions": false,
+        "collision": false
+      },
+      "componentView": {
+        "status": "ready",
+        "source": "skill_bindings",
+        "items": [
+          "alpha",
+          "beta",
+          "gamma"
+        ],
+        "truncated": false,
+        "diagnostics": []
+      },
+      "agent": {
+        "windowTokens": 128000,
+        "assembledTokens": 0,
+        "maxTokens": null,
+        "expectedContent": "Available skills (name — description); load full text by name when relevant:\nalpha\nbeta\ngamma",
+        "expectedStatus": "ready",
+        "expectedTruncated": false,
+        "expectedDiagnostics": [],
+        "cpDiagnostics": [],
+        "items": 3
+      }
+    }
+  ]
+}
