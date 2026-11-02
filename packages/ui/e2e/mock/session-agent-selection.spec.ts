@@ -249,16 +249,51 @@ test("creates a principal separately, binds an explicit cap, and confirms unbind
     });
 });
 
-test("keeps a created principal visible when the caller lacks Workspace binding permission", async ({
+/**
+ * PLAN-0621 F-01 retired the old premise of this case ("click bind, then eat a 403"): the panel
+ * now gates every write on the authoritative capability projection (`GET /me/permissions`) and
+ * disables the entry **before** the click, together with an F-02 hint that points at the grant
+ * page. The caller here may create a PERSONAL agent but holds no `MANAGE_WORKSPACE_AGENTS` for
+ * this workspace, so the created principal must stay visible while binding stays disabled.
+ */
+test("a created principal stays visible while binding is disabled up front with a grant hint", async ({
     page,
 }) => {
     await setupMockAuth(page);
     await setupMockSessions(page, { sessions: [] });
+    await page.route("**/api/v1/me/permissions", (route) =>
+        route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify({
+                userId: "user-1",
+                instanceCapabilities: [],
+                // PERSONAL scope needs the user-level atom; binding/editing needs the workspace one.
+                instancePermissions: [{ actionClass: "CREATE_OWN_AGENT", resource: "*" }],
+                workspaces: [
+                    {
+                        workspaceId: "workspace-1",
+                        workspaceRole: "EDITOR",
+                        workspaceAdmin: false,
+                        permissions: [],
+                    },
+                ],
+            }),
+        }),
+    );
+
+    const bindCalls: Array<Record<string, unknown>> = [];
     await page.route("**/api/v1/workspaces/workspace-1/agents**", async (route) => {
         if (route.request().method() === "GET") {
-            await route.fulfill({ status: 200, contentType: "application/json", body: "[]" });
+            await route.fulfill({
+                status: 200,
+                contentType: "application/json",
+                // PLAN-0622 M1.2 envelope: a bare array makes the API throw and reads as "no agents".
+                body: JSON.stringify({ agents: [] }),
+            });
             return;
         }
+        bindCalls.push((route.request().postDataJSON() as Record<string, unknown>) ?? {});
         await route.fulfill({
             status: 403,
             contentType: "application/problem+json",
@@ -271,8 +306,8 @@ test("keeps a created principal visible when the caller lacks Workspace binding 
             }),
         });
     });
-    await page.route("**/api/v1/agent-principals", async (route) => {
-        await route.fulfill({
+    await page.route("**/api/v1/agent-principals", (route) =>
+        route.fulfill({
             status: 201,
             contentType: "application/json",
             body: JSON.stringify({
@@ -281,8 +316,8 @@ test("keeps a created principal visible when the caller lacks Workspace binding 
                 templateName: null,
                 createdAt: new Date().toISOString(),
             }),
-        });
-    });
+        }),
+    );
 
     await page.goto("/workspace/workspace-1");
     const managementButton =
@@ -290,14 +325,23 @@ test("keeps a created principal visible when the caller lacks Workspace binding 
             ? page.getByTestId("workspace-toolbar-agents-mobile")
             : page.getByTestId("workspace-toolbar-agents");
     await managementButton.click();
+
+    // The scope select only offers what the projection allows: PERSONAL, never WORKSPACE.
+    const scope = page.getByTestId("agent-principal-scope");
+    await expect(scope).toHaveValue("PERSONAL");
+    await expect(scope.locator("option")).toHaveCount(1);
+
     await page.getByTestId("agent-principal-name").fill("Created without manage grant");
     await page.getByTestId("agent-principal-create").click();
     await expect(page.getByTestId("unbound-agent-principal")).toContainText("agent-created");
-    await page.getByTestId("agent-principal-bind").click();
 
-    await expect(page.getByRole("alert")).toContainText(
-        "MANAGE_WORKSPACE_AGENTS permission is required",
-    );
-    await expect(page.getByTestId("unbound-agent-principal")).toContainText("agent-created");
-    await expect(page.getByTestId("workspace-agent-agent-created")).toHaveCount(0);
+    // F-01/F-02: the bind entry is disabled before the user can click it, the hint names the grant
+    // page, and no request is fired — the body never leaves the browser.
+    const bind = page.getByTestId("agent-principal-bind");
+    await expect(bind).toBeDisabled();
+    await expect(page.getByTestId("agent-bind-forbidden-hint")).toContainText("角色与绑定");
+    expect(bindCalls).toEqual([]);
+
+    // The principal is created but not bound: the bound list still shows the empty state.
+    await expect(page.getByText("此工作区尚未绑定智能体")).toBeVisible();
 });

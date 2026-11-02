@@ -201,6 +201,12 @@ async function installCheckpointRoutes(page: Page, state: MockState) {
 
 async function openChat(page: Page) {
     await page.goto(`/workspace/${WORKSPACE_ID}/chat/${SESSION_ID}`);
+    // At mobile width the chat column lives inside `MobileChatSheet` and the composer is not in
+    // the DOM until the sheet is opened; the entry point is the「Open chat」trigger (same flow as
+    // `policy-management.spec.ts`'s mobile approval case). Desktop renders the composer inline.
+    if ((page.viewportSize()?.width ?? 1920) < 768) {
+        await page.getByRole("button", { name: "Open chat" }).click();
+    }
     await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: 15000 });
 }
 

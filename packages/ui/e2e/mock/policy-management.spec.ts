@@ -95,6 +95,8 @@ function installPolicyApi(page: Page) {
         deletedRules: [] as string[],
         classifications: [] as Array<Record<string, unknown>>,
         conflictsRequested: [] as string[],
+        /** Every `/policy/**` call the page made (used to prove the retired route reads nothing). */
+        policyRequests: [] as string[],
     };
 
     // Registered after setupMockAuth on purpose: Playwright routes are LIFO, so these
@@ -103,6 +105,7 @@ function installPolicyApi(page: Page) {
         const request = route.request(),
             url = new URL(request.url()),
             method = request.method();
+        state.policyRequests.push(`${method} ${url.pathname}`);
         const layer = url.searchParams.get("layer") ?? "";
         const json = (status: number, body: unknown) =>
             route.fulfill({
@@ -315,80 +318,62 @@ test.describe("Policy management (desktop)", () => {
         await setupMockSessions(page, { sessions: [{ id: SESSION_ID, title: "Policy Session" }] });
     });
 
-    test("shows domains with the effective layer, a conflicted rule, and creates plus deletes a rule", async ({
+    // The policy-rule editor is retired from the product: `router/index.ts:84-87` redirects
+    // `/settings/policy` to `settings-config`, no route imports `PolicyRulesView.vue` (only its own
+    // unit test does), and `SettingsNav` no longer links `/settings/policy`. The four cases below
+    // keep their original intent — where a user who asks for policy management ends up, and who may
+    // see the admin-only layer — but assert the current behaviour instead of the removed editor.
+    test("the retired /settings/policy route lands on the config page and issues no policy reads", async ({
         page,
     }) => {
         const state = installPolicyApi(page);
         await page.goto("/settings/policy");
 
-        await expect(page.getByTestId("settings-policy-heading")).toBeVisible({ timeout: 10000 });
-        await expect(page.getByTestId("settings-policy-domain-effective-exec")).toContainText(
-            "工作区层",
-        );
-        await expect(page.getByTestId("settings-policy-domain-effective-read")).toContainText(
-            "内置层",
-        );
-
-        await page.getByTestId("settings-policy-layer-workspace").click();
-        const conflictRow = page.getByTestId(`settings-policy-rule-conflict-${CONFLICT_ID}`);
-        await expect(conflictRow).toBeVisible();
-        await expect(conflictRow).toContainText("更具体的 deny");
-        await expect(page.getByTestId("settings-policy-conflict-summary")).toContainText("冲突");
-        expect(state.conflictsRequested).toContain("workspace");
-
-        await page.getByTestId("settings-policy-create-action-class").fill("read");
-        await page.getByTestId("settings-policy-create-resource").fill("docs/**");
-        await page.getByTestId("settings-policy-create-effect").selectOption("allow");
-        await page.getByTestId("settings-policy-create-submit").click();
-        await expect.poll(() => state.createdRules.length).toBe(1);
-        expect(state.createdRules[0]).toEqual({
-            layer: "workspace",
-            actionClass: "read",
-            resource: "docs/**",
-            effect: "allow",
-            priority: 0,
-            locked: false,
-        });
-        await expect(page.getByTestId("settings-policy-rule-created-1")).toBeVisible();
-
-        await page.getByTestId(`settings-policy-rule-delete-${CONFLICT_ID}`).click();
-        const confirm = page.getByTestId("settings-policy-delete-confirm");
-        await expect(confirm).toBeVisible();
-        expect(state.deletedRules).toHaveLength(0);
-        await confirm.click();
-        await expect.poll(() => state.deletedRules).toEqual([CONFLICT_ID]);
-        await expect(page.getByTestId(`settings-policy-rule-${CONFLICT_ID}`)).toHaveCount(0);
+        await expect(page).toHaveURL(/\/settings\/config$/);
+        await expect(page.getByTestId("settings-config-heading")).toBeVisible({ timeout: 10000 });
+        await expect(page.getByTestId("config-tab-user")).toBeVisible();
+        // Retirement, stated as behaviour: the old URL must not read or write any policy surface.
+        expect(state.policyRequests).toEqual([]);
     });
 
-    test("keeps the locked control admin-only with the server reason in copy", async ({ page }) => {
+    test("a caller without the admin capability lands on the user-layer config page only", async ({
+        page,
+    }) => {
         installPolicyApi(page);
         await page.goto("/settings/policy");
-        await expect(page.getByTestId("settings-policy-heading")).toBeVisible();
 
-        await expect(page.getByTestId("settings-policy-layer-instance")).toHaveCount(0);
-        await expect(page.getByTestId("settings-policy-create-locked")).toHaveCount(0);
-        await expect(page.getByTestId("settings-policy-layer-workspace")).toBeVisible();
+        await expect(page).toHaveURL(/\/settings\/config$/);
+        await expect(page.getByTestId("settings-config-heading")).toBeVisible({ timeout: 10000 });
+        // Capability gating still holds on the page the redirect lands on: instance-layer tab and
+        // the instance import/export block stay admin-only.
+        await expect(page.getByTestId("config-tab-user")).toBeVisible();
+        await expect(page.getByTestId("config-tab-instance")).toHaveCount(0);
+        await expect(page.getByTestId("config-import-export")).toHaveCount(0);
     });
 
-    test("offers the locked control to instance admins and shows locked rows read-only", async ({
+    test("an instance admin landing on the retired URL keeps the admin-only config surfaces", async ({
         page,
     }) => {
         await page.addInitScript(() => {
+            // `authStore.isAdmin` reads the capability projection (PLAN-0610 W3-2b #22).
             localStorage.setItem(
                 "xihe-user",
-                JSON.stringify({ id: "user-1", email: "test@xihe.local", role: "ADMIN" }),
+                JSON.stringify({
+                    id: "user-1",
+                    email: "test@xihe.local",
+                    capabilities: { isInstanceAdmin: true, isInstanceSuper: true },
+                }),
             );
         });
         installPolicyApi(page);
         await page.goto("/settings/policy");
-        await expect(page.getByTestId("settings-policy-heading")).toBeVisible();
 
-        await expect(page.getByTestId("settings-policy-layer-instance")).toBeVisible();
-        await expect(page.getByTestId("settings-policy-create-locked")).toBeVisible();
-        await page.getByTestId("settings-policy-layer-workspace").click();
-        await expect(
-            page.getByTestId(`settings-policy-rule-locked-${workspaceDeny.id}`),
-        ).toContainText("已锁定");
+        await expect(page).toHaveURL(/\/settings\/config$/);
+        await expect(page.getByTestId("config-tab-instance")).toBeVisible();
+        await expect(page.getByTestId("config-tab-user")).toBeVisible();
+        // The instance layer is the default tab for admins, and its import/export block is the
+        // admin-gated affordance that replaced the retired locked-rule control.
+        await expect(page.getByTestId("config-import-export")).toBeVisible();
     });
 
     test("lists tool faces, highlights unclassified tools, and classifies as workspace owner", async ({
@@ -480,17 +465,18 @@ test.describe("Policy management (mobile)", () => {
         await setupMockSessions(page, { sessions: [{ id: SESSION_ID, title: "Policy Session" }] });
     });
 
-    test("renders rules and unclassified tool faces on a small viewport", async ({ page }) => {
+    test("renders the retired policy URL as config and keeps the tool-face classifier on a small viewport", async ({
+        page,
+    }) => {
         installPolicyApi(page);
         await page.goto("/settings/policy");
 
-        await expect(page.getByTestId("settings-policy-heading")).toBeVisible({ timeout: 10000 });
-        await page.getByTestId("settings-policy-layer-workspace").click();
-        await expect(page.getByTestId(`settings-policy-rule-${CONFLICT_ID}`)).toBeVisible();
-        await expect(
-            page.getByTestId(`settings-policy-rule-conflict-${CONFLICT_ID}`),
-        ).toBeVisible();
+        // Same retirement as the desktop cases, at 390 px: the old URL resolves to config.
+        await expect(page).toHaveURL(/\/settings\/config$/);
+        await expect(page.getByTestId("settings-config-heading")).toBeVisible({ timeout: 10000 });
 
+        // `/settings/tool-faces` is the policy surface that survived the retirement; the
+        // unclassified-tool affordance must stay reachable and readable on a small viewport.
         await page.goto("/settings/tool-faces");
         await expect(page.getByTestId("settings-tool-faces-heading")).toBeVisible();
         await expect(

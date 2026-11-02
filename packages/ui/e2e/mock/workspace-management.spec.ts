@@ -62,37 +62,81 @@ test.describe("Workspace management dialogs (PLAN-262 M2)", () => {
         });
     });
 
-    test("empty state offers creation; managed create posts storage without execution mode", async ({
+    test("empty picker offers creation; direct-attach create posts the host binding and execution mode", async ({
         page,
     }) => {
-        // No workspace in storage -> empty state (PLAN-262 decision 11).
-        // setupMockAuth seeds per-tab sessionStorage too (PLAN-0560), so clear both.
-        // PLAN-0577: the real empty-state entry is /workspace; "/workspace/new"
-        // resolves as workspaceId="new" and makes the fixture mock a workspace.
+        // PLAN-0608 C′: `/workspace` with no tab context renders `WorkspacePicker` (not the old
+        // 「暂无工作区」panel), and its empty branch is the current creation entry (PLAN-0614 T2.1).
+        // setupMockAuth seeds the per-tab context too (PLAN-0560), so clear both storages.
         await page.addInitScript(() => {
             localStorage.removeItem("xihe-workspace");
             sessionStorage.removeItem("xihe-workspace");
         });
+
+        // Current creation flow is direct-attach only: Runtime-visible source browser, then a real
+        // capability preflight for both Windows execution modes (PLAN-0384 T1.1/T1.3).
+        await page.route("**/api/v1/workspaces/import-sources**", (route) =>
+            route.fulfill({
+                status: 200,
+                contentType: "application/json",
+                body: JSON.stringify({
+                    path: "H:/src/demo",
+                    entries: [{ name: "demo", kind: "directory", readable: true, size: 0 }],
+                }),
+            }),
+        );
+        await page.route("**/api/v1/workspaces/capabilities/preflight", async (route) => {
+            const body = route.request().postDataJSON() as { executionMode?: string };
+            await route.fulfill({
+                status: 200,
+                contentType: "application/json",
+                body: JSON.stringify({
+                    storageMode: "direct_attach",
+                    executionMode: body.executionMode ?? "windows-mxc",
+                    available: true,
+                    maturity: "stable",
+                    reason: null,
+                }),
+            });
+        });
+
         await page.goto("/workspace");
-        await expect(page.getByText("暂无工作区")).toBeVisible();
-        await page.getByRole("button", { name: "创建工作区" }).click();
+        await expect(page.getByTestId("workspace-picker")).toBeVisible({ timeout: 15000 });
+        await expect(page.getByTestId("workspace-picker-empty")).toContainText("你还没有工作区");
+        await page.getByTestId("workspace-picker-create").click();
 
         const dialog = page.getByTestId("workspace-create-dialog");
         await expect(dialog).toBeVisible();
-        // Managed import keeps the server default docker backend and therefore
-        // skips the execution-mode step entirely (no explicit executionMode).
-        await dialog.getByTestId("workspace-storage-managed").click();
+        // `managed_import` is frozen (PLAN-0618 complete freeze): the card is gone and only the
+        // explanatory frozen note remains, so `direct_attach` is the one selectable storage mode.
+        await expect(dialog.getByTestId("workspace-storage-managed")).toHaveCount(0);
+        await expect(dialog.getByTestId("workspace-storage-managed-frozen")).toContainText(
+            "执行后端已冻结",
+        );
+        await dialog.getByTestId("workspace-storage-direct").click();
+
+        await dialog.getByTestId("workspace-source-path").fill("H:/src/demo");
+        await dialog.getByTestId("workspace-source-read").click();
+        await expect(dialog.getByTestId("workspace-source-browser")).toContainText("demo");
+        await dialog.getByTestId("workspace-source-use").click();
+
+        // Preflight reports both modes available; MXC stays the recommended default.
+        await expect(dialog.getByTestId("workspace-execution-mxc-status")).toContainText("可用");
+        await dialog.getByTestId("workspace-execution-next").click();
+
         await dialog.getByTestId("workspace-create-name").fill("E2E Workspace");
         await dialog.getByTestId("workspace-create-submit").click();
 
         await expect(page).toHaveURL(/\/workspace\/ws-new/);
+        // The direct-attach request must carry the host binding and the execution mode; the
+        // retired `profile` field and the frozen `managed_import` mode must not appear.
         expect(createPayload).toMatchObject({
             name: "E2E Workspace",
-            storageMode: "managed_import",
+            storageMode: "direct_attach",
+            executionMode: "windows-mxc",
+            hostPath: "H:/src/demo",
         });
-        expect(createPayload?.executionMode).toBeUndefined();
         expect(createPayload?.profile).toBeUndefined();
-        expect(createPayload?.hostPath).toBeUndefined();
     });
 
     test("workspace settings page saves rename and enforces exact-name delete guard", async ({

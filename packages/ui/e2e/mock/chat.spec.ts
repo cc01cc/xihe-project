@@ -1,5 +1,6 @@
 import { test, expect } from "@playwright/test";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
+import { contextPanel, openContextPanel } from "../helpers/context-panel";
 import { expectPlatformScreenshot } from "../helpers/visual";
 
 function markdownResponseTokens(): string[] {
@@ -29,7 +30,9 @@ test.describe("Chat", () => {
 
     test("empty chat page renders correctly", async ({ page }) => {
         await page.goto("/workspace/workspace-1/chat/test-session");
-        await expect(page.locator("textarea")).toBeVisible({ timeout: 5000 });
+        // Explicit lane budget: the composer mounts after the session/branch projections resolve,
+        // and the default 5 s expect timeout loses that race when the lane runs many browsers.
+        await expect(page.locator("textarea")).toBeVisible({ timeout: 15000 });
         await expectPlatformScreenshot(page, "chat-empty.png");
     });
 
@@ -57,10 +60,21 @@ test.describe("Chat", () => {
             },
         });
 
+        // Readiness by event, not by clock: the panel renders the projection only after the
+        // branch-scoped `GET …/messages` has answered, and that load competes with every other
+        // browser in a full-lane run. Waiting for the response (armed before `goto`) removes the
+        // "assert 5 s after navigation and hope the lane is not busy" assumption.
+        const messagesLoaded = page.waitForResponse(
+            (response) =>
+                response.url().includes("/api/v1/sessions/test-session/messages") &&
+                response.status() === 200,
+        );
+
         await page.goto("/workspace/workspace-1/chat/test-session");
-        await expect(page.locator("text=What is TypeScript?")).toBeVisible({ timeout: 5000 });
+        await messagesLoaded;
+        await expect(page.locator("text=What is TypeScript?")).toBeVisible({ timeout: 10000 });
         await expect(page.locator("text=TypeScript is a typed superset of JavaScript")).toBeVisible(
-            { timeout: 5000 },
+            { timeout: 10000 },
         );
         await expectPlatformScreenshot(page, "chat-with-messages.png");
     });
@@ -145,11 +159,19 @@ test.describe("Chat", () => {
         );
 
         await page.goto("/workspace/workspace-1/chat/context-session");
-        await expect(page.getByTestId("u1-toggle")).toBeVisible();
-        await page.getByTestId("u1-toggle").click();
-        await expect(page.getByTestId("u1-source-line")).toContainText("AGENTS.md");
-        await expect(page.getByTestId("u1-source-line")).toContainText("abc12345");
-        await expect(page.getByTestId("u1-body")).not.toContainText("Be concise.");
+        // PLAN-0626 M2: the context-sources block lives in the dock `context` tab
+        // (`SessionContextPanel` → `SessionSettingsPanel` → `ContextSourcesU1`) and is not mounted
+        // in the chat column, so the panel has to be opened before the block exists at all.
+        // Asserting visibility is the user-visible behaviour; "exists but hidden" would not be.
+        await openContextPanel(page);
+        const panel = contextPanel(page);
+        const toggle = panel.getByTestId("u1-toggle");
+        await expect(toggle).toHaveCount(1);
+        await expect(toggle).toBeVisible();
+        await toggle.click();
+        await expect(panel.getByTestId("u1-source-line")).toContainText("AGENTS.md");
+        await expect(panel.getByTestId("u1-source-line")).toContainText("abc12345");
+        await expect(panel.getByTestId("u1-body")).not.toContainText("Be concise.");
     });
 
     test("renders usage tokens, cost, and source from a deterministic SSE event", async ({

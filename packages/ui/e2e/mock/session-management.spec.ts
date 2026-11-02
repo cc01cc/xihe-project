@@ -48,17 +48,35 @@ test.describe("Session Management", () => {
         await expectPlatformScreenshot(page, "session-time-groups.png");
     });
 
-    test("sidebar toggle hides sidebar", async ({ page }) => {
+    test("sidebar collapse hides the navigation panel and keeps the icon rail", async ({
+        page,
+    }) => {
         await page.goto("/workspace/workspace-1/chat/sid-1");
 
-        const sidebar = page.locator("aside");
-        await expect(sidebar).toBeVisible();
+        // `aside` alone is ambiguous: the workspace dock (`workspace-aux-panel`, PLAN-0582) is an
+        // <aside> too, so the shell's navigation panel must be addressed by its stable testid.
+        const sidebar = page.getByTestId("sidebar"),
+            panel = page.getByTestId("sidebar-panel");
+        await expect(sidebar).toHaveCount(1);
+        await expect(panel).toBeVisible();
+        const expandedWidth = await panel.evaluate((element) => parseFloat(element.style.width));
+        expect(expandedWidth).toBeGreaterThan(0);
 
-        const toggleBtn = sidebar.locator("button").first();
-        await toggleBtn.click();
+        // The collapse control lives in the panel head (S2 ruling #1); the first `<button>` inside
+        // the shell is a rail item, so it must be addressed by testid as well.
+        await page.getByTestId("sidebar-collapse").click();
 
-        // width lands at 1px due to border; check it's effectively hidden
-        const width = await sidebar.evaluate((el) => parseFloat(el.style.width));
-        expect(width).toBeLessThan(2);
+        // Collapsed state as the user sees it: the panel takes 0 px and is inert, while the 56 px
+        // icon rail stays — the shell no longer shrinks to a 1 px border.
+        await expect(panel).toHaveAttribute("style", /width: 0px/);
+        await expect(panel).toHaveAttribute("aria-hidden", "true");
+        await expect(sidebar).toHaveAttribute("style", /width: 56px/);
+        await expect(page.getByTestId("nav-rail")).toBeVisible();
+
+        // NOTE (reported, not asserted): re-expanding is impossible on desktop today — the collapse
+        // control lives inside the now-0-px inert panel, and the only other re-open control
+        // (`mobile-sidebar-toggle`) is rendered for `isMobile` only (`AppLayout.vue:175-185`).
+        // `useWorkspaceLayout.toggleNav()` exists but has no UI caller. That is a product gap
+        // (P-class), so this case stops at the observable collapsed state instead of encoding it.
     });
 });

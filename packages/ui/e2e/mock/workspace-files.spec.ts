@@ -128,20 +128,55 @@ test.describe("Workspace file operations (PLAN-262 M3)", () => {
         });
     });
 
-    test("environment page shows five-state pill, storage access and refresh", async ({ page }) => {
+    test("environment page shows the ready pill, the direct-attach storage binding and refresh", async ({
+        page,
+    }) => {
+        // The retired copy「系统文件操作直访」no longer exists in `src/`: the page now renders the
+        // execution-configuration projection (`storageMode` / `executionMode` / disclosed host
+        // path). Fixture carries that projection so the assertions below describe what a user
+        // actually sees on a direct-attach workspace.
+        let environmentCalls = 0;
+        await page.route("**/api/v1/workspaces/*/environment", async (route) => {
+            environmentCalls += 1;
+            await route.fulfill({
+                status: 200,
+                contentType: "application/json",
+                body: JSON.stringify({
+                    workspaceId: "workspace-1",
+                    status: "ready",
+                    storageBackend: "host_directory",
+                    storageMode: "direct_attach",
+                    storageRef: "workspace-1",
+                    hostPath: "H:/mock/workspace-1",
+                    executionMode: "windows-mxc",
+                    executionSpec: { status: "assigned", generation: 1, sandboxSpecHash: "abc" },
+                    runtime: { status: "observed", deviceId: "dev-1", lastHeartbeatAt: "now" },
+                }),
+            });
+        });
+
         await page.goto("/workspace/workspace-1/environment");
         await expect(page.getByTestId("workspace-environment-heading")).toBeVisible();
         await expect(page.getByTestId("workspace-environment-status")).toContainText("ready");
         await expect(page.getByTestId("workspace-environment-recovery")).not.toBeEmpty();
-        await expect(page.getByText("系统文件操作直访")).toBeVisible();
+        // Storage access, as the current page expresses it: the disclosed host directory.
+        await expect(page.getByTestId("workspace-host-path")).toContainText("/mock/workspace-1");
+        // Execution configuration is switchable for direct-attach and explains what the switch does.
+        await expect(page.getByTestId("workspace-execution-mode")).toHaveValue("windows-mxc");
+        await expect(page.getByTestId("workspace-execution-mode-hint")).not.toBeEmpty();
+
+        // Refresh re-reads the projection (user-visible: same pill, one more request).
+        const before = environmentCalls;
+        await page.getByRole("button", { name: "刷新" }).click();
+        await expect.poll(() => environmentCalls).toBeGreaterThan(before);
+        await expect(page.getByTestId("workspace-environment-status")).toContainText("ready");
     });
 
     test("blocked environment shows recovery guidance and prepare card states", async ({
         page,
     }) => {
-        // First load reports blocked; after materialize starts the poll sees a
-        // materializing status (otherwise the poll stops on `blocked` and resets
-        // the button state before the assertion can observe `Preparing`).
+        // First load reports blocked; every later read reports materializing, so the post-POST poll
+        // can observe progress instead of re-reading `blocked` forever.
         let environmentCalls = 0;
         await page.route("**/api/v1/workspaces/*/environment", async (route) => {
             environmentCalls += 1;
@@ -159,17 +194,40 @@ test.describe("Workspace file operations (PLAN-262 M3)", () => {
                 }),
             });
         });
+        // The in-flight label (`Preparing…`) lives exactly as long as the POST is in flight:
+        // `handlePrepare` clears `preparing` through `startPolling() → stopPolling()` the moment the
+        // 202 lands. Asserting the label after a plain click therefore races the response — the
+        // flake was the assertion losing that race, not a missing UI state. Hold the response,
+        // observe the in-flight state, then release and let the poll move the pill.
+        const materializeGate: { release: (() => void) | null } = { release: null };
         await page.route("**/api/v1/workspaces/*/materialize", async (route) => {
+            await new Promise<void>((resolve) => {
+                materializeGate.release = resolve;
+            });
             await route.fulfill({
                 status: 202,
                 contentType: "application/json",
                 body: JSON.stringify({ status: "materializing" }),
             });
         });
+
         await page.goto("/workspace/workspace-1/environment");
         await expect(page.getByTestId("workspace-environment-status")).toContainText("blocked");
         await expect(page.getByTestId("workspace-prepare-card")).toBeVisible();
-        await page.getByTestId("workspace-prepare-button").click();
-        await expect(page.getByTestId("workspace-prepare-button")).toContainText("Preparing");
+        const prepareButton = page.getByTestId("workspace-prepare-button");
+        await prepareButton.click();
+        await expect(prepareButton).toContainText("Preparing");
+        await expect(prepareButton).toBeDisabled();
+
+        await expect.poll(() => typeof materializeGate.release).toBe("function");
+        materializeGate.release?.();
+
+        // Readiness by poll, not by clock: the 3 s poll re-reads the projection and the pill leaves
+        // `blocked` on its own (the prepare card disappears with it).
+        await expect(page.getByTestId("workspace-environment-status")).toContainText(
+            "materializing",
+            { timeout: 15000 },
+        );
+        expect(environmentCalls).toBeGreaterThan(1);
     });
 });
