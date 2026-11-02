@@ -48,7 +48,21 @@ async function mockConfig(page: import("@playwright/test").Page, role: "ADMIN" |
         localStorage.setItem("xihe-token", "mock-token");
         localStorage.setItem(
             "xihe-user",
-            JSON.stringify({ id: "user-1", email: "test@xihe.local", name: "Test", role }),
+            JSON.stringify({
+                id: "user-1",
+                email: "test@xihe.local",
+                name: "Test",
+                // PLAN-0610 W3-2b decision #22: authority comes from the capability projection,
+                // never from the retired `role` string — `authStore.isAdmin` reads
+                // `user.capabilities.isInstanceAdmin`. A fixture that only carries `role` models a
+                // pre-upgrade cached user, so the instance layer this spec is about is unreachable
+                // (the page silently falls back to the user layer and every source reads "user").
+                capabilities: {
+                    isInstanceAdmin: role === "ADMIN",
+                    isInstanceSuper: role === "ADMIN",
+                    workspaceAdminOf: role === "ADMIN" ? ["workspace-1"] : [],
+                },
+            }),
         );
         localStorage.setItem(
             "xihe-workspace",

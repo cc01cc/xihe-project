@@ -112,6 +112,29 @@ for (const route of allRoutes) {
                 });
                 return;
             }
+            // `GET /api/v1/version` returns `VersionInfo`, whose `modules: {cp, agent, runtime}`
+            // is required and rendered by MonitoringView (`versionInfo.modules.cp.version`). The
+            // `{}` catch-all below therefore threw `Cannot read properties of undefined
+            // (reading 'cp')` — a fixture gap, not a UI error, and this spec asserts 0 console
+            // errors per route.
+            if (requestUrl.pathname.endsWith("/version")) {
+                await route2.fulfill({
+                    status: 200,
+                    contentType: "application/json",
+                    body: JSON.stringify({
+                        stackId: "stack-1",
+                        releaseChannel: "dev",
+                        startedAt: new Date().toISOString(),
+                        commit: null,
+                        modules: {
+                            cp: { version: "0.0.0-mock", commit: null },
+                            agent: { version: "0.0.0-mock", commit: null },
+                            runtime: { version: "0.0.0-mock", commit: null },
+                        },
+                    }),
+                });
+                return;
+            }
             await route2.fulfill({
                 status: 200,
                 contentType: "application/json",
