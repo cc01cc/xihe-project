@@ -62,6 +62,20 @@ class ApiRequestTemplateHttpIntegrationTest extends AbstractIntegrationTest {
     private String workspaceId;
     private String userId;
 
+    /** The same registry the service loads — one built-in template per chat-operation entry. */
+    private int builtinChatApiTypeCount() throws Exception {
+        try (var input = new org.springframework.core.io.ClassPathResource(
+                "api-input-types/api-input-types.json").getInputStream()) {
+            int count = 0;
+            for (JsonNode entry : json.readTree(input)) {
+                if ("chat".equals(entry.path("operation").asText())) {
+                    count++;
+                }
+            }
+            return count;
+        }
+    }
+
     @BeforeEach
     void register() {
         var response = restTemplate.postForEntity(url("/api/v1/auth/register"),
@@ -80,7 +94,12 @@ class ApiRequestTemplateHttpIntegrationTest extends AbstractIntegrationTest {
         var builtin = send("GET", "/api/v1/config/api-request-templates?layer=instance", null);
         assertEquals(200, builtin.statusCode());
         JsonNode definitions = json.readTree(json.readTree(builtin.body()).path("templates").asText());
-        assertEquals(3, definitions.size());
+        // No hard-coded total: ApiRequestTemplateService.builtins() emits one template per
+        // chat-operation entry of the SAME classpath registry the service loads — deriving
+        // the expectation from that file keeps this test green for the next apiType.
+        assertEquals(builtinChatApiTypeCount(), definitions.size());
+        assertTrue(definitions.toString().contains("dashscope-generation"),
+                "every chat apiType (incl. PLAN-0624 dashscope-generation) ships a built-in template");
         String source = "{\n  \"model\":\"${xh.model}\", \"messages\":[{\"role\":\"user\",\"content\":\"${xh.user_input}\"}]\n}";
         String id = UUID.randomUUID().toString();
         var draft = json.createObjectNode().put("id", id).put("version", 1).put("name", "Raw source")
