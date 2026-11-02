@@ -83,6 +83,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.timeout;
@@ -326,7 +327,7 @@ class ChatControllerTest extends AbstractH2Test {
         assertEquals(0, calls.get());
         assertEquals(1, jdbcTemplate.queryForObject(
                 "SELECT count(*) FROM chat_run_history WHERE run_id = CAST(? AS UUID)", Integer.class, runId));
-        verify(sseEmitterManager, timeout(5000)).send(eq(sessionId), eq("error"), any());
+        verify(sseEmitterManager, timeout(5000)).send(eq(sessionId), eq("error"), any(), isNull());
     }
 
     @Test
@@ -1400,7 +1401,7 @@ class ChatControllerTest extends AbstractH2Test {
         assertEquals(HttpStatus.ACCEPTED, response.getStatusCode());
 
         ArgumentCaptor<Object> payload = ArgumentCaptor.forClass(Object.class);
-        verify(sseEmitterManager, timeout(5000)).send(eq(sessionId), eq("approval_request"), payload.capture());
+        verify(sseEmitterManager, timeout(5000)).send(eq(sessionId), eq("approval_request"), payload.capture(), isNull());
         Map<String, Object> event = (Map<String, Object>) payload.getValue();
         Map<String, Object> policy = (Map<String, Object>) event.get("policy");
         assertEquals(requestId, event.get("requestId"));
@@ -1467,8 +1468,8 @@ class ChatControllerTest extends AbstractH2Test {
                 eq(requestId), eq(false), eq("reject"), eq("denied by review"));
         // ...and the relay keeps going: the probe event is processed after the approval
         // event on the same relay thread, so the park decision has already been made.
-        verify(sseEmitterManager, timeout(5000)).send(eq(sessionId), eq("probe"), any());
-        verify(sseEmitterManager, never()).send(eq(sessionId), eq("approval_request"), any());
+        verify(sseEmitterManager, timeout(5000)).send(eq(sessionId), eq("probe"), any(), isNull());
+        verify(sseEmitterManager, never()).send(eq(sessionId), eq("approval_request"), any(), any());
 
         ChatRun run = chatRunRepository.findById(UUID.fromString((String) response.getBody().get("runId")))
                 .orElseThrow();
@@ -1761,8 +1762,8 @@ class ChatControllerTest extends AbstractH2Test {
                 assertEquals("awaiting_approval",
                         chatRunRepository.findById(UUID.fromString(runId)).orElseThrow().getStatus());
             });
-            verify(sseEmitterManager, timeout(5000).atLeastOnce()).send(eq(sessionId), eq("token"), any());
-            verify(sseEmitterManager, timeout(5000)).send(eq(sessionId), eq("approval_request"), any());
+            verify(sseEmitterManager, timeout(5000).atLeastOnce()).send(eq(sessionId), eq("token"), any(), isNull());
+            verify(sseEmitterManager, timeout(5000)).send(eq(sessionId), eq("approval_request"), any(), isNull());
 
             String approvalRequestId = approvalService.findActiveForRun(runId, userId, workspaceId).stream()
                     .map(row -> (String) row.get("requestId"))
@@ -1829,7 +1830,7 @@ class ChatControllerTest extends AbstractH2Test {
         String runId = (String) response.getBody().get("runId");
         assertNull(response.getBody().get("operationId"), "PLAN-0464 T1.1: no operationId on the wire");
 
-        verify(sseEmitterManager, timeout(5000)).send(eq(sessionId), eq("approval_request"), any());
+        verify(sseEmitterManager, timeout(5000)).send(eq(sessionId), eq("approval_request"), any(), isNull());
         org.awaitility.Awaitility.await().atMost(java.time.Duration.ofSeconds(5)).untilAsserted(() -> {
             assertEquals("succeeded",
                     chatRunRepository.findById(UUID.fromString(runId)).orElseThrow().getStatus());
@@ -1902,8 +1903,8 @@ class ChatControllerTest extends AbstractH2Test {
             assertEquals("failed", run.getStatus());
             assertEquals("RAG_QUERY_FAILED", run.getErrorCode());
         });
-        verify(sseEmitterManager, timeout(5000)).send(eq(sessionId), eq("error"), any());
-        verify(sseEmitterManager, timeout(5000)).send(eq(sessionId), eq("done"), any());
+        verify(sseEmitterManager, timeout(5000)).send(eq(sessionId), eq("error"), any(), isNull());
+        verify(sseEmitterManager, timeout(5000)).send(eq(sessionId), eq("done"), any(), isNull());
     }
 
     // PLAN-0591 M3: the capability gate code must survive the CP safeErrorCode
