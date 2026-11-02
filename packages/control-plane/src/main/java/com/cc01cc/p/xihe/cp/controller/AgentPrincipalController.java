@@ -5,6 +5,7 @@ import com.cc01cc.p.xihe.cp.config.ProblemDetailsHandler;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
 import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
 import com.cc01cc.p.xihe.cp.service.AgentPrincipalService;
+import com.cc01cc.p.xihe.cp.util.JacksonNodeExit;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.http.HttpStatus;
@@ -53,24 +54,16 @@ public class AgentPrincipalController {
         result.put("ownerUserId", view.ownerUserId() == null ? null : view.ownerUserId().toString());
         result.put("defaultModelProvider", view.defaultModelProvider());
         result.put("defaultModelName", view.defaultModelName());
-        result.put("allowedModels", toDocument(view.allowedModels()));
+        result.put("allowedModels", JacksonNodeExit.toDocument(objectMapper, view.allowedModels()));
         result.put("disabledAt", view.disabledAt() == null ? null : view.disabledAt().toString());
-        result.put("hooks", toDocument(view.hooks()));
+        result.put("hooks", JacksonNodeExit.toDocument(objectMapper, view.hooks()));
         // PLAN-0629 M1 (D29-21): the subject's memory policy is part of the principal view.
-        result.put("contextPolicy", toDocument(view.contextPolicy()));
+        result.put("contextPolicy", JacksonNodeExit.toDocument(objectMapper, view.contextPolicy()));
         return result;
     }
 
-    /**
-     * PLAN-0625 Gap J: a Jackson-2 {@link JsonNode} must never be put into a response map. Boot 4
-     * serialises with Jackson 3, which introspects the Jackson-2 node as an ordinary bean and answers
-     * its property names — the walkthrough saw
-     * {@code "hooks":{"array":false,…,"nodeType":"OBJECT",…}} instead of the subscription document.
-     * Lower the tree to plain {@code Map}/{@code List}/scalars first; {@code null} stays {@code null}.
-     */
-    private Object toDocument(JsonNode node) {
-        return node == null || node.isNull() ? null : objectMapper.convertValue(node, Object.class);
-    }
+    // PLAN-0625 Gap J / PLAN-0633 C1: Jackson-2 nodes leave through JacksonNodeExit only — the rule
+    // and its rationale live there (single source), and two mechanical gates enforce it.
 
     private static UUID parseUuid(String value) {
         try {
@@ -171,8 +164,8 @@ public class AgentPrincipalController {
             Map<String, Object> response = new LinkedHashMap<>();
             response.put("principalId", principalId);
             // Echo the persisted documents (null = cleared), never the caller's raw input.
-            response.put("hooks", toDocument(stored.hooks()));
-            response.put("contextPolicy", toDocument(stored.contextPolicy()));
+            response.put("hooks", JacksonNodeExit.toDocument(objectMapper, stored.hooks()));
+            response.put("contextPolicy", JacksonNodeExit.toDocument(objectMapper, stored.contextPolicy()));
             return ResponseEntity.ok(response);
         } catch (CpApiException e) {
             return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
@@ -237,9 +230,9 @@ public class AgentPrincipalController {
                     principal.getOwnerUserId() == null ? null : principal.getOwnerUserId().toString());
             response.put("defaultModelProvider", principal.getDefaultModelProvider());
             response.put("defaultModelName", principal.getDefaultModelName());
-            response.put("allowedModels", toDocument(principal.getAllowedModels()));
+            response.put("allowedModels", JacksonNodeExit.toDocument(objectMapper, principal.getAllowedModels()));
             // PLAN-0625 M2: the subscription surface round-trips like the rest of the capability view.
-            response.put("hooks", toDocument(principal.getHooks()));
+            response.put("hooks", JacksonNodeExit.toDocument(objectMapper, principal.getHooks()));
             return ResponseEntity.status(HttpStatus.CREATED).body(response);
         } catch (CpApiException e) {
             return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
