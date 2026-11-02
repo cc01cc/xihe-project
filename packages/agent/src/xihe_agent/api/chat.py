@@ -48,6 +48,9 @@ from xihe_agent.app_state import (
 from xihe_agent.config_client import ProviderLeaseError
 from xihe_agent.config_snapshot import ConfigSnapshotUnavailableError, RunConfigSnapshot
 from xihe_agent.config_state import ConfigUnavailableError, ensure_config_ready
+from xihe_agent.context.agent_memory import (
+    render_from_component_sources as render_memory_from_component_sources,
+)
 from xihe_agent.context.path_mentions import (
     append_to_user_input,
     parse_path_mentions,
@@ -677,6 +680,25 @@ async def chat(request: Request):
                         skill_catalog_diagnostics["truncated"],
                     )
 
+                # PLAN-0629 M1-5: the same seam for ${xh.agent_memory}. CP already selected and
+                # ordered the rows (one (principal, workspace) pair, active only); this only renders
+                # them into the slot and charges the run's memory budget. Never into `messages`:
+                # in template mode only the slots reach the provider body.
+                memory_content, memory_diagnostics = render_memory_from_component_sources(
+                    context, data.get("componentSources")
+                )
+                if memory_diagnostics["components"]:
+                    context.runtime_state["agentMemoryDiagnostics"] = memory_diagnostics
+                    logger.info(
+                        "agent memory components={} entries={} status={} charged={} truncated={} unavailable={}",
+                        memory_diagnostics["components"],
+                        memory_diagnostics["entries"],
+                        memory_diagnostics["status"],
+                        memory_diagnostics["charged"],
+                        memory_diagnostics["truncated"],
+                        memory_diagnostics["unavailable"],
+                    )
+
                 model = ApiChatModel(
                     api_type=api_type,
                     grant=grant,
@@ -690,7 +712,9 @@ async def chat(request: Request):
                             [] if continuation is not None else native_history(context.messages, api_type)
                         ),
                         "tools": native_tools(all_tools, api_type),
-                        **xh_context_slots(skill_catalog=skill_catalog_content),
+                        **xh_context_slots(
+                            skill_catalog=skill_catalog_content, agent_memory=memory_content
+                        ),
                     },
                     request_id=request_id,
                     timeout=request_config.timeout,
