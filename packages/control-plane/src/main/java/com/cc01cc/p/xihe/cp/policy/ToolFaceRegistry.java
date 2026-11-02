@@ -57,7 +57,12 @@ public class ToolFaceRegistry {
     private static final Set<String> READ_TOOLS = Set.of(
             "read_file", "read_file_range", "list_directory", "glob", "grep",
             "get_file_info", "watch_directory", "extract_pdf_text",
-            "read_command_output", "list_background_processes", "get_background_process");
+            "read_command_output", "list_background_processes", "get_background_process",
+            // PLAN-0628 M2b: reading one bound skill's body is the same action as reading a file —
+            // a bounded, named target. It goes into READ_TOOLS instead of getting a new atom: the
+            // atom table already carries 17 entries, and adding one costs a seeder plus UI and CLI
+            // word lists. Paying that for a read is not warranted (README D28-36).
+            "skill_read");
 
     private static final Set<String> WRITE_TOOLS = Set.of(
             "write_file", "edit_file", "delete_file", "delete_directory",

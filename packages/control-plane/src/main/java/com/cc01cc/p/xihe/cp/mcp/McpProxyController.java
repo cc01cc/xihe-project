@@ -80,6 +80,8 @@ public class McpProxyController {
     private static final String SPAWN_AGENT_TOOL = ChatSubmissionService.SPAWN_TOOL_NAME;
     /** PLAN-0497 M0 冻结：CP-owned credential delivery tool（face=credential_use）。 */
     private static final String ACQUIRE_CREDENTIAL_TOOL = "acquire_credential";
+    /** PLAN-0628 M2b: read one bound skill's body — the third CP-owned tool (face=read). */
+    private static final String SKILL_READ_TOOL = "skill_read";
     private static final Set<String> USER_WORKSPACE_FILE_TOOLS = Set.of(
             "list_directory", "read_file", "read_file_range", "write_file", "delete_file",
             "move_file", "copy_file", "mkdir");
@@ -529,6 +531,9 @@ public class McpProxyController {
             // PLAN-0497 T2.1: the credential delivery tool shares the CP-owned surface.
             mapping.put(ACQUIRE_CREDENTIAL_TOOL, CP_MCP_SERVER_ID);
             result.add(acquireCredentialToolDefinition());
+            // PLAN-0628 M2b: skill body reader shares the same CP-owned surface.
+            mapping.put(SKILL_READ_TOOL, CP_MCP_SERVER_ID);
+            result.add(skillReadToolDefinition());
         }
         String listBody = TOOLS_LIST_PROBE_BODY;
         ResponseEntity<String> sysResp = forwardToRuntime(
@@ -554,7 +559,8 @@ public class McpProxyController {
         }
         for (Map<String, Object> tool : sysTools) {
             String name = (String) tool.get("name");
-            if (SPAWN_AGENT_TOOL.equals(name) || ACQUIRE_CREDENTIAL_TOOL.equals(name)) {
+            if (SPAWN_AGENT_TOOL.equals(name) || ACQUIRE_CREDENTIAL_TOOL.equals(name)
+                    || SKILL_READ_TOOL.equals(name)) {
                 logger.warn("Runtime tool name '{}' is reserved by the CP-owned tool surface", name);
             } else if (name != null) {
                 mapping.put(name, "__system__");
@@ -660,6 +666,31 @@ public class McpProxyController {
                                 "type", "string",
                                 "description", "The id of the credential to acquire")),
                         "required", List.of("credentialId"),
+                        "additionalProperties", false));
+    }
+
+    /**
+     * PLAN-0628 M2b: read one bound skill's body.
+     *
+     * <p>The listing injected at admission only carries name/description; the body is the full
+     * definition and is a different permission level — hence the tool checks that the caller is
+     * <b>bound</b> to the skill, not merely that it exists (README D28-36/D28-38, design §2.5).</p>
+     */
+    private static Map<String, Object> skillReadToolDefinition() {
+        return Map.of(
+                "name", SKILL_READ_TOOL,
+                "description", "Read the body of a skill bound to this run. Returns the current "
+                        + "content plus its version and content hash; when the run's frozen listing "
+                        + "recorded a different hash, the response says the skill changed. A skill "
+                        + "that is invisible to the caller and one that does not exist are reported "
+                        + "identically.",
+                "inputSchema", Map.of(
+                        "type", "object",
+                        "properties", Map.of("skill", Map.of(
+                                "type", "string",
+                                "minLength", 1,
+                                "description", "The skill's id (preferred) or its qualified name")),
+                        "required", List.of("skill"),
                         "additionalProperties", false));
     }
 
