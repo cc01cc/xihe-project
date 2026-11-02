@@ -20,6 +20,14 @@ import com.fasterxml.jackson.databind.ObjectMapper;
  */
 public final class JacksonNodeExit {
 
+    /**
+     * Mapper used by the single-argument overload. Lowering a node tree to {@code Map}/{@code List}/
+     * scalars reads only the tree, never a mapper feature (no date binding, no unknown-property
+     * policy), so this mapper cannot diverge from a caller's configured one — asserted by
+     * {@code JacksonNodeExitTest}.
+     */
+    private static final ObjectMapper LOWERING = new ObjectMapper();
+
     private JacksonNodeExit() {}
 
     /**
@@ -32,5 +40,16 @@ public final class JacksonNodeExit {
      */
     public static Object toDocument(ObjectMapper mapper, JsonNode node) {
         return node == null || node.isNull() ? null : mapper.convertValue(node, Object.class);
+    }
+
+    /**
+     * Same rule, for call sites that hold no mapper — notably static helpers reached from tests
+     * without a Spring context (e.g. {@code WorkspaceEnvironmentController.jobCapabilityView}).
+     *
+     * @param node the node to lower; {@code null} and JSON {@code null} both map to {@code null}
+     * @return a {@code Map}/{@code List}/scalar tree safe for Jackson-3 serialisation
+     */
+    public static Object toDocument(JsonNode node) {
+        return toDocument(LOWERING, node);
     }
 }

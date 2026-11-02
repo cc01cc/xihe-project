@@ -15,6 +15,7 @@ import com.cc01cc.p.xihe.cp.service.WorkspaceBackendPolicy;
 import com.cc01cc.p.xihe.cp.service.WorkspaceExecutionSpecService;
 import com.cc01cc.p.xihe.cp.service.WorkspaceRuntimeReleaseService;
 import com.cc01cc.p.xihe.cp.service.WorkspaceService;
+import com.cc01cc.p.xihe.cp.util.JacksonNodeExit;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
@@ -236,7 +237,12 @@ public class WorkspaceEnvironmentController {
             String reason = node.path("unavailableReason").asText(null);
             view.put("unavailableReason", reason == null || reason.isBlank() ? null : reason);
             if (node.has("fileOperations")) {
-                view.put("fileOperations", node.get("fileOperations"));
+                // PLAN-0633 C1-1 (D33-09): fileOperations is a nested document from the Runtime
+                // capability. Putting the Jackson-2 node straight into the response map makes
+                // Jackson 3 introspect it as a bean ({"array":false,…,"nodeType":"OBJECT",…}) — the
+                // PLAN-0625 Gap I/J shape. Lower it to Map/List/scalars first.
+                // jackson2-wire-ok: lowered by JacksonNodeExit (the single sanctioned exit)
+                view.put("fileOperations", JacksonNodeExit.toDocument(node.get("fileOperations")));
             } else {
                 view.put("fileOperations", unavailableFileOperations(executionMode,
                         available ? "FILE_CAPABILITY_MISSING" : "FILE_CAPABILITY_UNAVAILABLE"));
