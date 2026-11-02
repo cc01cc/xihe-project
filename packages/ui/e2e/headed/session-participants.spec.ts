@@ -3,10 +3,7 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { test, expect } from "@playwright/test";
 import type { Page } from "@playwright/test";
-import {
-    provisionWorkspaceAgentPrincipal,
-    createSessionWithPrincipal,
-} from "../real/helpers/agent-principal";
+import { provisionWorkspaceAgentPrincipal } from "../real/helpers/agent-principal";
 import { createDirectAttachWorkspace } from "../real/helpers/workspace";
 import { CP_URL } from "../real/helpers/journey";
 
@@ -393,14 +390,26 @@ test.describe("PLAN-0623 有头走查：会话参与者 dock tab", () => {
             { name: `Headed Participants ${randomUUID().slice(0, 8)}`, actions: ["read"] },
         );
 
-        sessionId = await createSessionWithPrincipal(
-            request,
-            { accessToken: token, workspaceId },
+        // 建会话走**工作区路径形式**：0623 起无工作区上下文的 `POST /api/v1/sessions` 在
+        // "多工作区账号"上会 409 `WORKSPACE_CONTEXT_REQUIRED`（产品刻意拒绝歧义，不猜第一个工作区）。
+        const createdSessionResponse = await request.post(
+            `${CP_URL}/api/v1/workspaces/${workspaceId}/sessions`,
             {
-                principalId: agentParticipantId,
-                title: "Participants walkthrough",
+                headers: {
+                    Authorization: `Bearer ${token}`,
+                    "X-Workspace-Id": workspaceId,
+                    "Idempotency-Key": randomUUID(),
+                },
+                data: { title: "Participants walkthrough", agentPrincipalId: agentParticipantId },
             },
         );
+        expect(createdSessionResponse.status(), await createdSessionResponse.text()).toBe(201);
+        const createdSessionBody = (await createdSessionResponse.json()) as {
+            id?: string;
+            sessionId?: string;
+        };
+        sessionId = createdSessionBody.id ?? createdSessionBody.sessionId ?? "";
+        expect(sessionId, "the workspace-scoped create must return a session id").toBeTruthy();
 
         // 归属断言：会话必须落在本次自建的工作区里，而不是别处。
         const createdSession = await request.get(`${CP_URL}/api/v1/sessions/${sessionId}`, {
