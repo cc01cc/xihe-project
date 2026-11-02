@@ -463,6 +463,13 @@ async def chat(request: Request):
                         "sessionId": session_id,
                         "workspaceId": workspace_id,
                         "branchId": context.branch_id,
+                        # PLAN-0627 D27-21: the injection-budget denominator. Same
+                        # resolver as the `usage` event below (one number feeds both the
+                        # ledger and the CP compaction gate); without it the ledger
+                        # degrades to the absolute pool and the window clamp never engages.
+                        "windowTokens": _model_window_tokens(
+                            request_config.model, config_snapshot, user_overrides, workspace_overrides
+                        ),
                     }
                 )
 
