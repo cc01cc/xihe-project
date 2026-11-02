@@ -259,21 +259,42 @@ public class SessionParticipantService {
      */
     @Transactional(readOnly = true)
     public UUID responderPrincipalIdFor(UUID sessionId, String asParticipantId) {
+        Responder responder = responderFor(sessionId, asParticipantId);
+        return responder == null ? null : responder.principalId();
+    }
+
+    /**
+     * PLAN-0623 M1b-②: the responder as a <b>single value object</b>.
+     *
+     * <p>Same resolution as {@link #responderPrincipalIdFor} (explicit {@code asParticipantId} wins,
+     * otherwise the PRIMARY; a session without either keeps {@code null}), but it also carries the
+     * {@code principalKind}. Callers must derive <b>both</b> the run attribution
+     * ({@code chat_runs.agent_principal_id}) and the run's capability from this one object — never
+     * re-resolve either side on its own, otherwise "A's cap" can end up driving "B's" message.</p>
+     */
+    @Transactional(readOnly = true)
+    public Responder responderFor(UUID sessionId, String asParticipantId) {
         if (sessionId == null) {
             return null;
         }
+        SessionParticipant row;
         if (asParticipantId != null && !asParticipantId.isBlank()) {
-            return participantRepository
+            row = participantRepository
                     .findByIdAndSessionId(parseUuid(asParticipantId, "PARTICIPANT_NOT_FOUND"), sessionId)
-                    .map(SessionParticipant::getPrincipalId)
                     .orElseThrow(SessionParticipantService::participantNotFound);
+        } else {
+            row = participantRepository.findBySessionIdOrderByOrderIndexAsc(sessionId).stream()
+                    .filter(participant -> SessionParticipant.ROLE_PRIMARY.equals(participant.getRole()))
+                    .findFirst()
+                    .orElse(null);
         }
-        return participantRepository.findBySessionIdOrderByOrderIndexAsc(sessionId).stream()
-                .filter(row -> SessionParticipant.ROLE_PRIMARY.equals(row.getRole()))
-                .map(SessionParticipant::getPrincipalId)
-                .findFirst()
-                .orElse(null);
+        return row == null ? null : new Responder(row.getId(), row.getPrincipalKind(),
+                row.getPrincipalId());
     }
+
+    /** The responder triple: participant, its kind, and the principal that actually answers. */
+    public record Responder(UUID participantId, String principalKind, UUID principalId) {}
+
 /**
      * Authorization for {@code POST /api/v1/chat} with {@code asParticipantId}.
      *
