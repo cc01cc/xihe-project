@@ -116,9 +116,18 @@ class GrantAuthorizationServiceIntegrationTest extends AbstractIntegrationTest {
     private final List<UUID> grantIds = new ArrayList<>();
     private final List<WorkspaceAgentId> workspaceAgentIds = new ArrayList<>();
     private final List<UUID> configIds = new ArrayList<>();
+    /** Seeded config rows this fixture merged into: id -> the document to put back in {@code @AfterEach}. */
+    private final java.util.Map<UUID, String> mergedConfigOriginals = new java.util.LinkedHashMap<>();
 
     @AfterEach
     void cleanFixtures() {
+        // PLAN-0625: the instance agent-templates rows are product seeds (V97/V98). The fixture appends
+        // to them, so the shared rows are restored byte-identical before the fixture's own rows go.
+        mergedConfigOriginals.forEach((id, originalValue) -> configJpaRepository.findById(id).ifPresent(row -> {
+            row.setConfigValue(originalValue);
+            configJpaRepository.saveAndFlush(row);
+        }));
+        mergedConfigOriginals.clear();
         configJpaRepository.deleteAllById(configIds);
         grantRepository.deleteAllById(grantIds);
         if (parentRunId != null) {
@@ -714,6 +723,16 @@ class GrantAuthorizationServiceIntegrationTest extends AbstractIntegrationTest {
 
     private ConfigEntity saveTemplateConfig(String layer, UUID ownerUserId, UUID ownerWorkspaceId,
                                             String key, String value) {
+        if ("instance".equals(layer)) {
+            // PLAN-0625 (V97/V98) seeds the instance layer with the guard role + template, and
+            // uq_config_instance_scope allows exactly one (domain, config_key) row per layer — a blind
+            // insert therefore dies on the product seed. Merge the fixture's entries into the existing
+            // document instead of assuming an empty layer (0566 precedent), and restore it afterwards.
+            var seeded = configJpaRepository.findByLayerAndDomainAndConfigKey(layer, "agent-templates", key);
+            if (seeded.isPresent()) {
+                return mergeIntoSeededConfig(seeded.get(), value);
+            }
+        }
         ConfigEntity entity = new ConfigEntity();
         entity.setLayer(layer);
         entity.setUserId(ownerUserId);
@@ -725,6 +744,35 @@ class GrantAuthorizationServiceIntegrationTest extends AbstractIntegrationTest {
         ConfigEntity saved = configJpaRepository.saveAndFlush(entity);
         configIds.add(saved.getId());
         return saved;
+    }
+
+    /**
+     * Appends the fixture entries whose {@code id} is not already present. Idempotent on purpose: the
+     * fixture must not depend on how many entries a future seed ships.
+     */
+    private ConfigEntity mergeIntoSeededConfig(ConfigEntity seeded, String fixtureDocument) {
+        try {
+            var merged = (ArrayNode) objectMapper.readTree(seeded.getConfigValue());
+            for (var addition : (ArrayNode) objectMapper.readTree(fixtureDocument)) {
+                boolean present = false;
+                for (var existing : merged) {
+                    if (existing.path("id").asText().equals(addition.path("id").asText())) {
+                        present = true;
+                        break;
+                    }
+                }
+                if (!present) {
+                    merged.add(addition);
+                }
+            }
+            mergedConfigOriginals.putIfAbsent(seeded.getId(), seeded.getConfigValue());
+            seeded.setConfigValue(merged.toString());
+            seeded.setUpdatedBy("test-fixture");
+            return configJpaRepository.saveAndFlush(seeded);
+        } catch (com.fasterxml.jackson.core.JsonProcessingException | ClassCastException cause) {
+            throw new IllegalStateException(
+                    "Seeded agent-templates document is not a JSON array: id=" + seeded.getId(), cause);
+        }
     }
 
     private UUID addGrant(String subjectType, UUID subjectId, String source,
