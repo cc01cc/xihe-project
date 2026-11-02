@@ -1,0 +1,21 @@
+{
+    "compilerOptions": {
+        "target": "ES2023",
+        "module": "ESNext",
+        "moduleResolution": "bundler",
+        "lib": ["ES2023", "DOM", "DOM.Iterable"],
+        "types": ["node", "vite/client"],
+        "strict": true,
+        "skipLibCheck": true,
+        "noEmit": true,
+        "noUnusedLocals": true,
+        "noUnusedParameters": true,
+        "isolatedModules": true,
+        "moduleDetection": "force",
+        "forceConsistentCasingInFileNames": true,
+        "allowImportingTsExtensions": true,
+        "ignoreDeprecations": "6.0"
+    },
+    "include": ["e2e/**/*.ts"],
+    "exclude": ["e2e/**/*-snapshots/**"]
+}

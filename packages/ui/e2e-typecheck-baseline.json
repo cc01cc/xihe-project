@@ -1,0 +1,85 @@
+{
+    "note": "e2e 类型门存量基线 —— 只允许缩小：修好一条删一条。",
+    "files": {
+        "e2e/headed/session-participants.spec.ts": {
+            "TS6133": 1,
+            "TS7016": 2
+        },
+        "e2e/headed/walkthrough.spec.ts": {
+            "TS6133": 4
+        },
+        "e2e/mock/approval.spec.ts": {
+            "TS2339": 1,
+            "TS2349": 1
+        },
+        "e2e/mock/audit.spec.ts": {
+            "TS2345": 11,
+            "TS2349": 3
+        },
+        "e2e/mock/coding-loop.spec.ts": {
+            "TS2339": 1,
+            "TS2349": 2
+        },
+        "e2e/mock/helpers/auth.ts": {
+            "TS2339": 1,
+            "TS2345": 1
+        },
+        "e2e/mock/helpers/context-events.ts": {
+            "TS2339": 1,
+            "TS2349": 1
+        },
+        "e2e/mock/login.spec.ts": {
+            "TS2322": 1
+        },
+        "e2e/mock/policy-management.spec.ts": {
+            "TS2339": 1,
+            "TS2349": 1
+        },
+        "e2e/mock/screenshots.spec.ts": {
+            "TS2322": 1
+        },
+        "e2e/mock/sse-liveness.spec.ts": {
+            "TS2339": 1,
+            "TS2349": 1
+        },
+        "e2e/mock/task-continuity.spec.ts": {
+            "TS2322": 1,
+            "TS2339": 1,
+            "TS2349": 1
+        },
+        "e2e/page-objects/ChatPage.ts": {
+            "TS2345": 1
+        },
+        "e2e/real/agent-spawn-caller.spec.ts": {
+            "TS18048": 1
+        },
+        "e2e/real/approval-reuse.spec.ts": {
+            "TS2454": 10
+        },
+        "e2e/real/audit.spec.ts": {
+            "TS2339": 1
+        },
+        "e2e/real/auth-login.spec.ts": {
+            "TS6133": 1
+        },
+        "e2e/real/auth-rate-limit.spec.ts": {
+            "TS2349": 2,
+            "TS2740": 1
+        },
+        "e2e/real/cross-module-chat.spec.ts": {
+            "TS2552": 2
+        },
+        "e2e/real/goldpath-first-run.spec.ts": {
+            "TS2552": 1
+        },
+        "e2e/real/loop-guard.spec.ts": {
+            "TS2322": 1
+        },
+        "e2e/real/pdf-viewer-perf.spec.ts": {
+            "TS18046": 2
+        },
+        "e2e/real/run-budget-exhaustion.spec.ts": {
+            "TS2322": 1
+        }
+    }
+}

@@ -7,6 +7,7 @@
         "dev": "vite --mode dev",
         "build": "vue-tsc -b && vite build",
         "typecheck": "vue-tsc --noEmit",
+        "typecheck:e2e": "node scripts/typecheck-e2e.mjs",
         "lint": "oxfmt --check . && oxlint .",
         "lint:oxlint": "oxlint .",
         "lint:oxfmt": "oxfmt --check .",

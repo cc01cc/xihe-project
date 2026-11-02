@@ -2,7 +2,7 @@ import { test, expect } from "@playwright/test";
 import type { Page } from "@playwright/test";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
 import { expectPlatformScreenshot } from "../helpers/visual";
-import { openContextPanel } from "../helpers/context-panel";
+import { contextPanel, openContextPanel } from "../helpers/context-panel";
 
 const SESSION_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
     SECOND_SESSION_ID = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
@@ -684,5 +684,50 @@ test.describe("Chat approval flow", () => {
         await expect(page.locator('[data-testid="chat-input"]')).toBeVisible({ timeout: 10000 });
         await expect(page.locator('[data-testid="chat-stop-button"]')).toBeHidden();
         expect(cancelCalls).toHaveLength(0);
+    });
+
+    /**
+     * PLAN-0626 M2 的 dock 帮助器 `openContextPanel` 声称"pinned 与 floating 两种 dockMode 都适用"，
+     * 但此前只有代码阅读、没有机器证明（5 个改用帮助器的 spec 都跑在默认 1920 = pinned）。
+     * 这里用同一份已稳定的 mock 会话夹具把两种模式的**关闭语义**也钉死：
+     * - floating（< `DOCK_INLINE_MIN_VIEWPORT` 1800）：不是模态、没有遮罩，`Esc` 关闭；
+     * - pinned（≥1800）：用户刻意选择的布局，`Esc` **不得**关闭，否则等于偷偷降级。
+     */
+    test.describe("PLAN-0626 M2 — context 面板在两种 dockMode 下都能开", () => {
+        test.describe("floating（viewport 1440 < 1800）", () => {
+            test.use({ viewport: { width: 1440, height: 900 } });
+
+            test("opens in floating, has no backdrop, and Esc dismisses it", async ({ page }) => {
+                await openApprovalChat(page);
+                await openContextPanel(page);
+                await expect(contextPanel(page)).toBeVisible();
+                await expect(page.getByTestId("dock-mode-toggle")).toHaveAttribute("title", /浮动/);
+                // 非模态：没有遮罩层挡主列（Lead 2026-10-31 裁定）
+                await expect(page.locator('[data-testid="modal-content"]')).toHaveCount(0);
+                await page.keyboard.press("Escape");
+                await expect(contextPanel(page)).toBeHidden();
+                // 帮助器可重入：dock 已被 Esc 关掉 ⇒ 这次走摘要行入口再开一次
+                await openContextPanel(page);
+                await expect(contextPanel(page)).toBeVisible();
+            });
+        });
+
+        test.describe("pinned（viewport 1920 ≥ 1800）", () => {
+            test.use({ viewport: { width: 1920, height: 1080 } });
+
+            test("opens pinned and Esc must not close a deliberate layout choice", async ({
+                page,
+            }) => {
+                await openApprovalChat(page);
+                await openContextPanel(page);
+                await expect(contextPanel(page)).toBeVisible();
+                await expect(page.getByTestId("dock-mode-toggle")).toHaveAttribute(
+                    "title",
+                    /已固定/,
+                );
+                await page.keyboard.press("Escape");
+                await expect(contextPanel(page)).toBeVisible();
+            });
+        });
     });
 });
