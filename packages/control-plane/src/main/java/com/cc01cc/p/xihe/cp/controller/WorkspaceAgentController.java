@@ -41,7 +41,7 @@ public class WorkspaceAgentController {
         try {
             List<Map<String, Object>> views = agentPrincipalService.listWorkspaceAgents(
                     requireActor(), parseUuid(workspaceId)).stream()
-                    .map(WorkspaceAgentController::toView).toList();
+                    .map(this::toView).toList();
             // PLAN-0622 M1.2 frozen envelope: `{agents:[…]}` (was a bare array before).
             Map<String, Object> response = new LinkedHashMap<>();
             response.put("agents", views);
@@ -88,7 +88,7 @@ public class WorkspaceAgentController {
         }
     }
 
-    private static Map<String, Object> toView(AgentPrincipalService.WorkspaceAgentView view) {
+    private Map<String, Object> toView(AgentPrincipalService.WorkspaceAgentView view) {
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("principalId", view.principalId());
         result.put("name", view.name());
@@ -101,10 +101,24 @@ public class WorkspaceAgentController {
         // D26: whether this row is bound to the workspace (visible-without-binding rows are false).
         result.put("bound", view.bound());
         // task-83 Gap D: hook subscriptions — the subscription row must light up on the wire.
-        result.put("hooks", toValue(view.hooks()));
+        // PLAN-0625 Gap I: hooks are an *object* document ({advisors:[…]}), not the permissions
+        // array — the array projection below silently answered `[]` for every row, so the UI could
+        // never render the subscription.
+        result.put("hooks", toDocument(view.hooks()));
         // D27: `disabledAt` is projected as a boolean — the UI gates badges/buttons on it.
         result.put("disabled", view.disabled());
         return result;
+    }
+
+    /**
+     * PLAN-0625 Gap I/J: a Jackson-2 {@link JsonNode} must never reach a response map — Boot 4
+     * serialises with Jackson 3, which introspects a Jackson-2 node as a plain bean and answers
+     * {@code {"array":false,…,"nodeType":"OBJECT"}} instead of the document. Convert it to plain
+     * {@code Map}/{@code List}/scalars on the way out; {@code null} stays {@code null}
+     * (no subscriptions).
+     */
+    private Object toDocument(JsonNode node) {
+        return node == null || node.isNull() ? null : objectMapper.convertValue(node, Object.class);
     }
 
     private static List<Map<String, String>> toValue(JsonNode permissions) {
