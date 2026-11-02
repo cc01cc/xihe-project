@@ -99,9 +99,12 @@ const hasOverflow = computed(() => overflowTabs.value.length > 0);
  * `WorkspaceDock` spec, so no component map / registry is introduced (D26-12).
  * The mount policy lives here rather than in the layout composable: it is a rendering
  * concern of this component, not persisted layout state.
+ *
+ * PLAN-0626 M3: `agents` joins `context` as a sticky panel — it owns a create form (the
+ * same reason `context` is sticky), so switching to another tab must not discard it.
  */
 const stickyPanels = ref<string[]>([]),
-    stickyTabIds: ReadonlySet<string> = new Set(["context"]),
+    stickyTabIds: ReadonlySet<string> = new Set(["context", "agents"]),
     activeIsSticky = computed(() => stickyTabIds.has(props.activeTab));
 
 function rememberStickyPanel(id: string): void {

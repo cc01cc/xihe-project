@@ -140,11 +140,13 @@ describe("principal-grant retirement (PLAN-0610 W5c)", () => {
     });
 
     it("points the F-02 agent guidance link at the role surface", () => {
-        const dialogSource = readFileSync(
-            resolve(UI_SRC, "features/workspace/components/WorkspaceAgentManagementDialog.vue"),
+        // PLAN-0626 M3: the guidance link lives in the panel body that the dock's `agents`
+        // tab renders (`WorkspaceAgentsPanel.vue`); the dialog file is only a mobile shell.
+        const panelSource = readFileSync(
+            resolve(UI_SRC, "features/workspace/components/WorkspaceAgentsPanel.vue"),
             "utf8",
         );
-        expect(dialogSource).not.toContain("/settings/principal-grants");
-        expect(dialogSource).toContain('to="/settings/roles"');
+        expect(panelSource).not.toContain("/settings/principal-grants");
+        expect(panelSource).toContain('to="/settings/roles"');
     });
 });

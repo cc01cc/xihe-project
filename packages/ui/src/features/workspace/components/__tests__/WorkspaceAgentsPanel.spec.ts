@@ -53,27 +53,30 @@ vi.mock("../../../../stores/auth", () => ({
 }));
 
 import { ApiError } from "../../../../composables/api";
+import WorkspaceAgentsPanel from "../WorkspaceAgentsPanel.vue";
 import WorkspaceAgentManagementDialog from "../WorkspaceAgentManagementDialog.vue";
 
-/** 真实用法：组件常驻、`:open` 由 false → true 触发能力加载（watch 非 immediate），测试照此复现。 */
-async function mountOpenedDialog() {
-    const wrapper = mount(WorkspaceAgentManagementDialog, {
+/**
+ * PLAN-0626 M3：面板没有 `open` 开关 —— 挂载即打开（dock 标签激活 / 移动端弹窗），
+ * 加载时机是 `onMounted`。测试照这个生命周期挂载，不再用 `setProps({ open: true })`。
+ */
+async function mountOpenedPanel() {
+    const wrapper = mount(WorkspaceAgentsPanel, {
         attachTo: document.body,
-        props: { open: false, workspaceId: WORKSPACE_ID },
+        props: { workspaceId: WORKSPACE_ID },
         global: {
             plugins: [i18n],
             stubs: { RouterLink: { props: ["to"], template: '<a :href="to"><slot /></a>' } },
         },
     });
-    await wrapper.setProps({ open: true });
     await flushPromises();
     return wrapper;
 }
 
-function mountDialog() {
-    return mount(WorkspaceAgentManagementDialog, {
+function mountPanel() {
+    return mount(WorkspaceAgentsPanel, {
         attachTo: document.body,
-        props: { open: true, workspaceId: WORKSPACE_ID },
+        props: { workspaceId: WORKSPACE_ID },
         global: {
             plugins: [i18n],
             stubs: { RouterLink: { props: ["to"], template: '<a :href="to"><slot /></a>' } },
@@ -100,9 +103,9 @@ afterEach(() => {
     document.body.innerHTML = "";
 });
 
-describe("WorkspaceAgentManagementDialog F-02 grant hint (PLAN-0585 M2 / PLAN-0610 W5c)", () => {
+describe("WorkspaceAgentsPanel F-02 grant hint (PLAN-0585 M2 / PLAN-0610 W5c)", () => {
     it("shows a localized actionable hint plus a link to the role surface for admins", async () => {
-        const wrapper = mountDialog();
+        const wrapper = mountPanel();
         await flushPromises();
 
         const link = wrapper.find('[data-testid="agent-grant-panel-link"]');
@@ -116,7 +119,7 @@ describe("WorkspaceAgentManagementDialog F-02 grant hint (PLAN-0585 M2 / PLAN-06
     it("replaces a 403 create failure with the localized hint, never the CP English detail", async () => {
         const ErrorCtor = ApiError as unknown as new (code: string) => Error;
         apiMock.createAgentPrincipal.mockRejectedValue(new ErrorCtor("FORBIDDEN"));
-        const wrapper = await mountOpenedDialog();
+        const wrapper = await mountOpenedPanel();
 
         await wrapper.find('[data-testid="agent-principal-name"]').setValue("Research Agent");
         await wrapper.find('[data-testid="agent-principal-create-form"]').trigger("submit");
@@ -130,7 +133,7 @@ describe("WorkspaceAgentManagementDialog F-02 grant hint (PLAN-0585 M2 / PLAN-06
 
     it("hides the grant-panel link from non-admins but keeps the actionable note", async () => {
         admin.value = false;
-        const wrapper = mountDialog();
+        const wrapper = mountPanel();
         await flushPromises();
 
         expect(wrapper.find('[data-testid="agent-grant-panel-link"]').exists()).toBe(false);
@@ -139,11 +142,11 @@ describe("WorkspaceAgentManagementDialog F-02 grant hint (PLAN-0585 M2 / PLAN-06
 });
 
 // PLAN-0621 F-01：没有 CREATE_ACCOUNT 的用户在**点击之前**就该知道结果。
-describe("WorkspaceAgentManagementDialog F-01 create gating (PLAN-0621)", () => {
+describe("WorkspaceAgentsPanel F-01 create gating (PLAN-0621)", () => {
     it("disables creation and points at the role surface when the CP projection lacks CREATE_ACCOUNT", async () => {
         admin.value = false;
         apiMock.getSelfPermissions.mockResolvedValue(CREATE_ACCOUNT_MISSING);
-        const wrapper = await mountOpenedDialog();
+        const wrapper = await mountOpenedPanel();
         await flushPromises();
 
         const button = wrapper.find('[data-testid="agent-principal-create"]');
@@ -167,7 +170,7 @@ describe("WorkspaceAgentManagementDialog F-01 create gating (PLAN-0621)", () => 
             templateName: null,
             createdAt: "2026-11-02T00:00:00Z",
         });
-        const wrapper = await mountOpenedDialog();
+        const wrapper = await mountOpenedPanel();
 
         await wrapper.find('[data-testid="agent-principal-name"]').setValue("delegate");
         const button = wrapper.find('[data-testid="agent-principal-create"]');
@@ -178,7 +181,7 @@ describe("WorkspaceAgentManagementDialog F-01 create gating (PLAN-0621)", () => 
     it("fails closed when the projection cannot be loaded, without inventing a permission", async () => {
         admin.value = false;
         apiMock.getSelfPermissions.mockRejectedValue(new ApiError("FORBIDDEN"));
-        const wrapper = await mountOpenedDialog();
+        const wrapper = await mountOpenedPanel();
         await flushPromises();
 
         expect(
@@ -219,16 +222,16 @@ const NOTHING = {
     workspaces: [],
 };
 
-function scopeOptions(wrapper: Awaited<ReturnType<typeof mountOpenedDialog>>): string[] {
+function scopeOptions(wrapper: Awaited<ReturnType<typeof mountOpenedPanel>>): string[] {
     const select = wrapper.find('[data-testid="agent-principal-scope"]');
     if (!select.exists()) return [];
     return select.findAll("option").map((option) => option.attributes("value") ?? "");
 }
 
-describe("WorkspaceAgentManagementDialog PLAN-0622 scope visibility (4 states)", () => {
+describe("WorkspaceAgentsPanel PLAN-0622 scope visibility (4 states)", () => {
     it("offers only PERSONAL when the projection grants just CREATE_OWN_AGENT", async () => {
         apiMock.getSelfPermissions.mockResolvedValue(PERSONAL_ONLY);
-        const wrapper = await mountOpenedDialog();
+        const wrapper = await mountOpenedPanel();
         expect(scopeOptions(wrapper)).toEqual(["PERSONAL"]);
         // 术语对账：文案必须带「智能体」限定，不能与"连接作用域"撞词。
         expect(wrapper.text()).toContain("个人智能体");
@@ -236,14 +239,14 @@ describe("WorkspaceAgentManagementDialog PLAN-0622 scope visibility (4 states)",
 
     it("offers only WORKSPACE when MANAGE_WORKSPACE_AGENTS is granted for this Workspace", async () => {
         apiMock.getSelfPermissions.mockResolvedValue(WORKSPACE_ONLY);
-        const wrapper = await mountOpenedDialog();
+        const wrapper = await mountOpenedPanel();
         expect(scopeOptions(wrapper)).toEqual(["WORKSPACE"]);
         expect(wrapper.text()).toContain("工作区智能体");
     });
 
     it("offers only INSTANCE when the projection grants CREATE_ACCOUNT", async () => {
         apiMock.getSelfPermissions.mockResolvedValue(INSTANCE_ONLY);
-        const wrapper = await mountOpenedDialog();
+        const wrapper = await mountOpenedPanel();
         expect(scopeOptions(wrapper)).toEqual(["INSTANCE"]);
         expect(wrapper.text()).toContain("实例智能体");
     });
@@ -251,7 +254,7 @@ describe("WorkspaceAgentManagementDialog PLAN-0622 scope visibility (4 states)",
     it("offers nothing and keeps creation disabled when no atom is granted (fail-closed)", async () => {
         admin.value = false;
         apiMock.getSelfPermissions.mockResolvedValue(NOTHING);
-        const wrapper = await mountOpenedDialog();
+        const wrapper = await mountOpenedPanel();
         expect(wrapper.find('[data-testid="agent-principal-scope"]').exists()).toBe(false);
         expect(wrapper.find('[data-testid="agent-scope-unavailable"]').exists()).toBe(true);
         expect(
@@ -260,10 +263,10 @@ describe("WorkspaceAgentManagementDialog PLAN-0622 scope visibility (4 states)",
     });
 });
 
-describe("WorkspaceAgentManagementDialog PLAN-0622 model intent", () => {
+describe("WorkspaceAgentsPanel PLAN-0622 model intent", () => {
     it("blocks creation until an allowed-model row has both provider and model", async () => {
         apiMock.getSelfPermissions.mockResolvedValue(PERSONAL_ONLY);
-        const wrapper = await mountOpenedDialog();
+        const wrapper = await mountOpenedPanel();
         await wrapper.find('[data-testid="agent-principal-name"]').setValue("delegate");
         expect(
             wrapper.find('[data-testid="agent-principal-create"]').attributes("disabled"),
@@ -285,7 +288,7 @@ describe("WorkspaceAgentManagementDialog PLAN-0622 model intent", () => {
 
     it("rejects duplicate provider+model pairs", async () => {
         apiMock.getSelfPermissions.mockResolvedValue(PERSONAL_ONLY);
-        const wrapper = await mountOpenedDialog();
+        const wrapper = await mountOpenedPanel();
         await wrapper.find('[data-testid="agent-principal-name"]').setValue("delegate");
         for (const [index, provider, model] of [
             [0, "openai", "gpt-4o-mini"],
@@ -308,7 +311,7 @@ describe("WorkspaceAgentManagementDialog PLAN-0622 model intent", () => {
             templateName: null,
             createdAt: "2026-11-02T00:00:00Z",
         });
-        const wrapper = await mountOpenedDialog();
+        const wrapper = await mountOpenedPanel();
         await wrapper.find('[data-testid="agent-principal-name"]').setValue("delegate");
         await wrapper.find('[data-testid="agent-default-model-provider"]').setValue("openai");
         expect(wrapper.find('[data-testid="agent-default-model-error"]').exists()).toBe(true);
@@ -326,7 +329,7 @@ describe("WorkspaceAgentManagementDialog PLAN-0622 model intent", () => {
     });
 });
 
-describe("WorkspaceAgentManagementDialog PLAN-0622 list rows", () => {
+describe("WorkspaceAgentsPanel PLAN-0622 list rows", () => {
     const boundAgent = {
         principalId: "77777777-7777-4777-8777-777777777777",
         name: "helper",
@@ -345,7 +348,7 @@ describe("WorkspaceAgentManagementDialog PLAN-0622 list rows", () => {
 
     it("shows the source badge and the default model for each row", async () => {
         apiMock.getWorkspaceAgents.mockResolvedValue([boundAgent]);
-        const wrapper = await mountOpenedDialog();
+        const wrapper = await mountOpenedPanel();
         const badge = wrapper.find(
             '[data-testid="agent-scope-badge-77777777-7777-4777-8777-777777777777"]',
         );
@@ -363,7 +366,7 @@ describe("WorkspaceAgentManagementDialog PLAN-0622 list rows", () => {
         apiMock.getWorkspaceAgents.mockResolvedValue([boundAgent]);
         apiMock.getSelfPermissions.mockResolvedValue(WORKSPACE_ONLY);
         apiMock.disableAgentPrincipal.mockResolvedValue(undefined);
-        const wrapper = await mountOpenedDialog();
+        const wrapper = await mountOpenedPanel();
         const button = wrapper.find(
             '[data-testid="workspace-agent-disable-77777777-7777-4777-8777-777777777777"]',
         );
@@ -382,7 +385,7 @@ describe("WorkspaceAgentManagementDialog PLAN-0622 list rows", () => {
         apiMock.getWorkspaceAgents.mockResolvedValue([boundAgent]);
         admin.value = false;
         apiMock.getSelfPermissions.mockResolvedValue(NOTHING);
-        const wrapper = await mountOpenedDialog();
+        const wrapper = await mountOpenedPanel();
         const button = wrapper.find(
             '[data-testid="workspace-agent-disable-77777777-7777-4777-8777-777777777777"]',
         );
@@ -391,7 +394,7 @@ describe("WorkspaceAgentManagementDialog PLAN-0622 list rows", () => {
 });
 
 // ── 真栈 bug（Lead 2026-11-02）：创建成功后列表不刷新，用户要关掉重开面板才看到新 agent ──────
-describe("WorkspaceAgentManagementDialog list refresh after create", () => {
+describe("WorkspaceAgentsPanel list refresh after create", () => {
     it("shows the newly created principal without reopening the dialog", async () => {
         const created = {
             principalId: "aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa",
@@ -414,7 +417,7 @@ describe("WorkspaceAgentManagementDialog list refresh after create", () => {
             scope: "PERSONAL",
             ownerUserId: "99999999-9999-4999-8999-999999999999",
         });
-        const wrapper = await mountOpenedDialog();
+        const wrapper = await mountOpenedPanel();
         expect(
             wrapper.find(`[data-testid="agent-scope-badge-${created.principalId}"]`).exists(),
         ).toBe(false);
@@ -437,7 +440,7 @@ describe("WorkspaceAgentManagementDialog list refresh after create", () => {
 // CP 的 GET /workspaces/{ws}/agents 现在会返回调用者自己的 PERSONAL/INSTANCE 主体（V4），
 // 但它们**未绑定**时无法建会话（403 not bound）；而 UI 只在"刚创建"的区块里给 bind 按钮，
 // 关掉重开后就没有入口了 —— 用户视角是死路。
-describe("WorkspaceAgentManagementDialog bind an existing agent row", () => {
+describe("WorkspaceAgentsPanel bind an existing agent row", () => {
     const existing = {
         principalId: "bbbbbbbb-2222-4222-8222-bbbbbbbbbbbb",
         name: "Existing personal",
@@ -454,7 +457,7 @@ describe("WorkspaceAgentManagementDialog bind an existing agent row", () => {
         apiMock.getWorkspaceAgents.mockResolvedValue([existing]);
         apiMock.getSelfPermissions.mockResolvedValue(WORKSPACE_ONLY);
         apiMock.updateWorkspaceAgentCap.mockResolvedValue({});
-        const wrapper = await mountOpenedDialog();
+        const wrapper = await mountOpenedPanel();
 
         const bindRow = wrapper.find(`[data-testid="agent-bind-row-${existing.principalId}"]`);
         expect(
@@ -479,7 +482,7 @@ describe("WorkspaceAgentManagementDialog bind an existing agent row", () => {
         admin.value = false;
         apiMock.getWorkspaceAgents.mockResolvedValue([existing]);
         apiMock.getSelfPermissions.mockResolvedValue(PERSONAL_ONLY);
-        const wrapper = await mountOpenedDialog();
+        const wrapper = await mountOpenedPanel();
         const bindRow = wrapper.find(`[data-testid="agent-bind-row-${existing.principalId}"]`);
         expect(bindRow.attributes("disabled")).toBeDefined();
         wrapper.unmount();
@@ -487,7 +490,7 @@ describe("WorkspaceAgentManagementDialog bind an existing agent row", () => {
 });
 
 // PLAN-0622 D26：未绑定的行要显式标「未绑定」，否则用户以为它已经能用。
-describe("WorkspaceAgentManagementDialog unbound badge", () => {
+describe("WorkspaceAgentsPanel unbound badge", () => {
     it("marks a row without a workspace binding", async () => {
         apiMock.getWorkspaceAgents.mockResolvedValue([
             {
@@ -514,7 +517,7 @@ describe("WorkspaceAgentManagementDialog unbound badge", () => {
             },
         ]);
         apiMock.getSelfPermissions.mockResolvedValue(WORKSPACE_ONLY);
-        const wrapper = await mountOpenedDialog();
+        const wrapper = await mountOpenedPanel();
 
         const unboundBadge = wrapper.find(
             '[data-testid="agent-unbound-badge-cccccccc-3333-4333-8333-cccccccccccc"]',
@@ -532,7 +535,7 @@ describe("WorkspaceAgentManagementDialog unbound badge", () => {
 });
 
 // PLAN-0622 D27：`disabled` 现在有真实数据（CP 投影），确认「已禁用」徽标与禁用按钮同时生效。
-describe("WorkspaceAgentManagementDialog disabled row", () => {
+describe("WorkspaceAgentsPanel disabled row", () => {
     it("shows the disabled badge and disables the disable button for a disabled agent", async () => {
         apiMock.getWorkspaceAgents.mockResolvedValue([
             {
@@ -548,7 +551,7 @@ describe("WorkspaceAgentManagementDialog disabled row", () => {
             },
         ]);
         apiMock.getSelfPermissions.mockResolvedValue(WORKSPACE_ONLY);
-        const wrapper = await mountOpenedDialog();
+        const wrapper = await mountOpenedPanel();
 
         expect(
             wrapper
@@ -568,7 +571,7 @@ describe("WorkspaceAgentManagementDialog disabled row", () => {
     });
 });
 
-describe("WorkspaceAgentManagementDialog hook subscriptions (PLAN-0625 M3, read-only)", () => {
+describe("WorkspaceAgentsPanel hook subscriptions (PLAN-0625 M3, read-only)", () => {
     // The document below is the wire shape (`advisors[].on`), i.e. exactly what
     // `api.getWorkspaceAgents` hands the component — no second shape is invented here.
     const guardAgent = {
@@ -586,7 +589,7 @@ describe("WorkspaceAgentManagementDialog hook subscriptions (PLAN-0625 M3, read-
 
     it("renders the advisor kinds and the action classes from advisors[].on", async () => {
         apiMock.getWorkspaceAgents.mockResolvedValue([guardAgent]);
-        const wrapper = await mountOpenedDialog();
+        const wrapper = await mountOpenedPanel();
 
         const line = wrapper.get(
             '[data-testid="agent-hooks-88888888-8888-4888-8888-888888888888"]',
@@ -609,7 +612,7 @@ describe("WorkspaceAgentManagementDialog hook subscriptions (PLAN-0625 M3, read-
                 },
             },
         ]);
-        const wrapper = await mountOpenedDialog();
+        const wrapper = await mountOpenedPanel();
 
         const line = wrapper.get(
             '[data-testid="agent-hooks-88888888-8888-4888-8888-888888888888"]',
@@ -620,21 +623,21 @@ describe("WorkspaceAgentManagementDialog hook subscriptions (PLAN-0625 M3, read-
 
     it("renders no hooks line when the principal carries null subscriptions", async () => {
         apiMock.getWorkspaceAgents.mockResolvedValue([{ ...guardAgent, hooks: null }]);
-        const wrapper = await mountOpenedDialog();
+        const wrapper = await mountOpenedPanel();
 
         expect(wrapper.find('[data-testid^="agent-hooks-"]').exists()).toBe(false);
     });
 
     it("renders no hooks line when the ancestors carry no advisors", async () => {
         apiMock.getWorkspaceAgents.mockResolvedValue([{ ...guardAgent, hooks: { advisors: [] } }]);
-        const wrapper = await mountOpenedDialog();
+        const wrapper = await mountOpenedPanel();
 
         expect(wrapper.find('[data-testid^="agent-hooks-"]').exists()).toBe(false);
     });
 });
 
 // ── PLAN-0629 M1-4 C：只读「记忆」区（四态 + 404 不当崩溃 + 无写入控件） ────────────────
-describe("WorkspaceAgentManagementDialog PLAN-0629 read-only memory", () => {
+describe("WorkspaceAgentsPanel PLAN-0629 read-only memory", () => {
     const PRINCIPAL_ID = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
     const agentWithMemory = {
         principalId: PRINCIPAL_ID,
@@ -668,7 +671,7 @@ describe("WorkspaceAgentManagementDialog PLAN-0629 read-only memory", () => {
                 content: "项目使用 Vue 3",
             },
         ]);
-        const wrapper = await mountOpenedDialog();
+        const wrapper = await mountOpenedPanel();
 
         await wrapper.get(toggle).trigger("click");
         await flushPromises();
@@ -705,7 +708,7 @@ describe("WorkspaceAgentManagementDialog PLAN-0629 read-only memory", () => {
     it("shows the explicit empty-state copy instead of a blank area", async () => {
         apiMock.getWorkspaceAgents.mockResolvedValue([agentWithMemory]);
         apiMock.getWorkspaceAgentMemories.mockResolvedValue([]);
-        const wrapper = await mountOpenedDialog();
+        const wrapper = await mountOpenedPanel();
 
         await wrapper.get(toggle).trigger("click");
         await flushPromises();
@@ -724,7 +727,7 @@ describe("WorkspaceAgentManagementDialog PLAN-0629 read-only memory", () => {
                 resolve = done;
             }),
         );
-        const wrapper = await mountOpenedDialog();
+        const wrapper = await mountOpenedPanel();
 
         await wrapper.get(toggle).trigger("click");
         await flushPromises();
@@ -743,7 +746,7 @@ describe("WorkspaceAgentManagementDialog PLAN-0629 read-only memory", () => {
         apiMock.getWorkspaceAgentMemories.mockRejectedValueOnce(
             new ApiError("AGENT_PRINCIPAL_NOT_FOUND"),
         );
-        const wrapper = await mountOpenedDialog();
+        const wrapper = await mountOpenedPanel();
 
         await wrapper.get(toggle).trigger("click");
         await flushPromises();
@@ -780,7 +783,7 @@ describe("WorkspaceAgentManagementDialog PLAN-0629 read-only memory", () => {
                 content: "x",
             },
         ]);
-        const wrapper = await mountOpenedDialog();
+        const wrapper = await mountOpenedPanel();
 
         await wrapper.get(toggle).trigger("click");
         await flushPromises();
@@ -794,5 +797,52 @@ describe("WorkspaceAgentManagementDialog PLAN-0629 read-only memory", () => {
             false,
         );
         expect(wrapper.find('[data-testid^="agent-memory-item-"]').exists()).toBe(false);
+    });
+});
+
+// ── PLAN-0626 M3：生命周期 + 单一宿主（dock 标签 / 移动端弹窗） ────────────────────────
+describe("WorkspaceAgentsPanel PLAN-0626 M3 lifecycle", () => {
+    it("loads the list and the capability projection once per mount", async () => {
+        // 迁移后没有 `open` prop：挂载即打开，加载必须在 onMounted 发生（否则标签打开后是空壳）。
+        await mountOpenedPanel();
+
+        expect(apiMock.getWorkspaceAgents).toHaveBeenCalledTimes(1);
+        expect(apiMock.getSelfPermissions).toHaveBeenCalledTimes(1);
+    });
+});
+
+describe("WorkspaceAgentManagementDialog mobile shell (PLAN-0626 M3)", () => {
+    function mountShell(open: boolean) {
+        return mount(WorkspaceAgentManagementDialog, {
+            attachTo: document.body,
+            props: { open, workspaceId: WORKSPACE_ID },
+            global: {
+                plugins: [i18n],
+                stubs: { RouterLink: { props: ["to"], template: '<a :href="to"><slot /></a>' } },
+            },
+        });
+    }
+
+    it("renders the same panel body exactly once inside the modal", async () => {
+        const wrapper = mountShell(true);
+        await flushPromises();
+
+        expect(
+            document.querySelectorAll('[data-testid="workspace-agent-management-dialog"]'),
+        ).toHaveLength(1);
+        expect(wrapper.find('[data-testid="modal-backdrop"]').exists()).toBe(true);
+        wrapper.unmount();
+    });
+
+    it("mounts no panel while closed — a closed shell is not a hidden copy", async () => {
+        // 2026-11-03 的教训：`v-show` 式"存在但隐藏"的副本会让同一 testid 命中两次。
+        const wrapper = mountShell(false);
+        await flushPromises();
+
+        expect(
+            document.querySelectorAll('[data-testid="workspace-agent-management-dialog"]'),
+        ).toHaveLength(0);
+        expect(apiMock.getWorkspaceAgents).not.toHaveBeenCalled();
+        wrapper.unmount();
     });
 });

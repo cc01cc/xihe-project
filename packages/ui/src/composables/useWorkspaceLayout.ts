@@ -49,8 +49,12 @@ export const DOCK_INLINE_MIN_VIEWPORT = 1800;
  * first activation and kept alive afterwards, because it holds form state the user is
  * editing (the mount policy lives with the dock, `WorkspaceDock.vue`). `approval` stays
  * a reserved name: approvals keep the modal (D26-14).
+ *
+ * PLAN-0626 M3 (D26-05): `agents` (工作区 Agent 管理) extends the same value domain — no
+ * second tab array, no second tab-id type. Its panel is sticky too (it owns a create form);
+ * the whole-page routes and `openTabs` are untouched, so existing deep links keep working.
  */
-export const DOCK_TAB_IDS = ["code", "changes", "monitor", "members", "context"] as const;
+export const DOCK_TAB_IDS = ["code", "changes", "monitor", "members", "context", "agents"] as const;
 export type DockTabId = (typeof DOCK_TAB_IDS)[number];
 
 /**

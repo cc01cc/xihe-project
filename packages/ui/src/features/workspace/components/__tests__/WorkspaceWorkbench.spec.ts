@@ -45,6 +45,7 @@ const i18n = createI18n({
                 panelChanges: "Changes",
                 panelMonitor: "Monitor",
                 panelContext: "Session settings",
+                panelAgents: "Agents",
                 closePanel: "Close the auxiliary panel",
                 dockTabs: "Workbench panels",
                 dockOverflow: "More panels",
@@ -80,6 +81,10 @@ const stubs = {
     SessionContextPanel: {
         props: { sessionId: { type: String, default: null } },
         template: '<div data-testid="session-context-panel-stub" />',
+    },
+    WorkspaceAgentsPanel: {
+        props: { workspaceId: { type: String, default: "" } },
+        template: '<div data-testid="agents-panel-stub" />',
     },
 };
 
@@ -330,6 +335,23 @@ describe("WorkspaceWorkbench skeleton (PLAN-0582 S2)", () => {
         expect(wrapper.find('[data-testid="session-context-panel-stub"]').exists()).toBe(true);
         // Sticky panel wrapper proves it is mounted through the dock's slot path.
         expect(wrapper.find('[data-testid="dock-sticky-panel-context"]').exists()).toBe(true);
+    });
+
+    it("opens the agents panel through openDockTab and mounts exactly one copy (PLAN-0626 M3)", async () => {
+        // M3 entry point: the toolbar's "Agent management" reaches the dock through the
+        // same `openDockTab` hop M2 uses for `context`. One mount is the whole point of the
+        // normalisation — two would put two elements behind every panel testid.
+        const wrapper = mountWorkbench();
+        await flushPromises();
+
+        (wrapper.vm as unknown as { openDockTab: (id: string) => void }).openDockTab("agents");
+        await flushPromises();
+
+        expect(wrapper.get('[data-testid="dock-tab-agents"]').attributes("aria-selected")).toBe(
+            "true",
+        );
+        expect(wrapper.findAll('[data-testid="agents-panel-stub"]')).toHaveLength(1);
+        expect(wrapper.find('[data-testid="dock-sticky-panel-agents"]').exists()).toBe(true);
     });
 
     it("keeps width and collapsed state independent (collapse then re-open restores the width)", async () => {

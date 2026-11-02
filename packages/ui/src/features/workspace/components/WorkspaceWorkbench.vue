@@ -38,6 +38,7 @@ import WorkspaceChangesPanel from "./WorkspaceChangesPanel.vue";
 import SessionMonitorPanel from "../monitor/SessionMonitorPanel.vue";
 import SessionParticipantsPanel from "./SessionParticipantsPanel.vue";
 import SessionContextPanel from "./SessionContextPanel.vue";
+import WorkspaceAgentsPanel from "./WorkspaceAgentsPanel.vue";
 import { DOCK_TAB_LABEL_KEYS, type DockTab } from "./workspaceDockTabs";
 
 /**
@@ -639,6 +640,14 @@ defineExpose({ openDockTab });
                 <template #context>
                     <!-- PLAN-0626 M2：会话设置（粘性面板，无会话时面板自身给空态）。 -->
                     <SessionContextPanel :session-id="sessionId ?? null" />
+                </template>
+                <template #agents>
+                    <!--
+                        PLAN-0626 M3 (D26-05)：工作区 Agent 管理。`key` forces a remount when the
+                        workspace changes, so the list/capability projection is never carried over
+                        (the old dialog reloaded on every open).
+                    -->
+                    <WorkspaceAgentsPanel :key="workspaceId" :workspace-id="workspaceId" />
                 </template>
             </WorkspaceDock>
         </div>

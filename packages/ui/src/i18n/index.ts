@@ -175,6 +175,7 @@ const messages = {
             panelMonitor: "监控",
             panelMembers: "成员",
             panelContext: "会话设置",
+            panelAgents: "智能体",
             diffTabTimeline: "切片时间线",
             diffTabPending: "待提交",
             diffDifferenceNote: "两个列表可能不一致：切片变更与待提交状态来源不同，二者不会合并。",
@@ -2280,6 +2281,7 @@ const messages = {
             panelMonitor: "Monitor",
             panelMembers: "Members",
             panelContext: "Session settings",
+            panelAgents: "Agents",
             diffTabTimeline: "Slice timeline",
             diffTabPending: "Pending commit",
             diffDifferenceNote:
