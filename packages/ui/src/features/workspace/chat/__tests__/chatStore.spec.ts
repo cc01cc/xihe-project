@@ -237,6 +237,147 @@ describe("useChatStore", () => {
         expect(store.isStreaming("s1")).toBe(true);
     });
 
+    it("retains a run's live transcript while the projection has not caught up with it", () => {
+        const store = useChatStore(),
+            sessionId = "s-live",
+            runId = "run-live",
+            timestamp = "2026-11-03T00:00:00Z";
+
+        vi.mocked(api.getChatRunStatus).mockResolvedValue({
+            runId,
+            sessionId,
+            origin: "user_submission",
+            status: "failed",
+            terminalOutcome: "partial",
+            leaseExpired: false,
+            pendingApprovals: [],
+        });
+        store.addMessage(sessionId, {
+            id: "client-user",
+            sessionId,
+            role: "user",
+            content: "try again",
+            timestamp,
+            runStatus: "accepted",
+        });
+        store.markClientOwned(sessionId, "client-user");
+        // The reply's first token beat the `202` body, so it has no run id yet.
+        store.createStreamingMessage(sessionId);
+        store.appendToParts(sessionId, { type: "text", content: "partial response" });
+        store.adoptRunId(sessionId, runId);
+        store.markStreamingError(sessionId, {
+            code: "PROVIDER_TEMPORARY",
+            detail: "Provider temporarily unavailable",
+            runId,
+            retryable: true,
+        });
+
+        // The durable projection lags the terminal event and does not carry the run yet.
+        store.loadMessages(sessionId, []);
+
+        const retained = store.getMessages(sessionId);
+        expect(retained).toHaveLength(2);
+        expect(retained[0].content).toBe("try again");
+        expect(retained[0].runId).toBe(runId);
+        expect(retained[1].content).toBe("partial response");
+        expect(retained[1].runId).toBe(runId);
+        expect(retained[1].errorCode).toBe("PROVIDER_TEMPORARY");
+        expect(retained[1].terminalOutcome).toBe("partial");
+    });
+
+    it("hands the transcript back to the projection once it carries the run", () => {
+        const store = useChatStore(),
+            sessionId = "s-live",
+            runId = "run-live",
+            timestamp = "2026-11-03T00:00:00Z";
+
+        vi.mocked(api.getChatRunStatus).mockResolvedValue({
+            runId,
+            sessionId,
+            origin: "user_submission",
+            status: "failed",
+            terminalOutcome: "partial",
+            leaseExpired: false,
+            pendingApprovals: [],
+        });
+        store.addMessage(sessionId, {
+            id: "client-user",
+            sessionId,
+            role: "user",
+            content: "try again",
+            timestamp,
+        });
+        store.markClientOwned(sessionId, "client-user");
+        store.createStreamingMessage(sessionId);
+        store.appendToParts(sessionId, { type: "text", content: "partial response" });
+        store.adoptRunId(sessionId, runId);
+        store.markStreamingError(sessionId, {
+            code: "PROVIDER_TEMPORARY",
+            detail: "Provider temporarily unavailable",
+            runId,
+        });
+        store.loadMessages(sessionId, []);
+        expect(store.getMessages(sessionId)).toHaveLength(2);
+
+        store.loadMessages(sessionId, [
+            {
+                id: "client-user",
+                sessionId,
+                role: "user",
+                content: "try again",
+                timestamp,
+                runId,
+            },
+            {
+                id: "server-assistant",
+                sessionId,
+                role: "assistant",
+                content: "partial response",
+                timestamp,
+                runId,
+                runStatus: "failed",
+                errorCode: "PROVIDER_TEMPORARY",
+            },
+        ]);
+        expect(store.getMessages(sessionId).map((message) => message.id)).toEqual([
+            "client-user",
+            "server-assistant",
+        ]);
+
+        // Later refreshes stay authoritative: the client copy is gone for good.
+        store.loadMessages(sessionId, [
+            {
+                id: "server-assistant",
+                sessionId,
+                role: "assistant",
+                content: "partial response",
+                timestamp,
+                runId,
+            },
+        ]);
+        expect(store.getMessages(sessionId).map((message) => message.id)).toEqual([
+            "server-assistant",
+        ]);
+    });
+
+    it("does not retain local messages of a run it never started", () => {
+        const store = useChatStore(),
+            sessionId = "s-other";
+
+        store.addMessage(sessionId, {
+            id: "stale-local",
+            sessionId,
+            role: "assistant",
+            content: "stale",
+            timestamp: "2026-11-03T00:00:00Z",
+            runId: "run-unrelated",
+        });
+
+        store.loadMessages(sessionId, []);
+
+        expect(store.getMessages(sessionId)).toEqual([]);
+    });
+
     it("detaches a live session so a later history load can replace it", () => {
         const store = useChatStore();
         store.createStreamingMessage("s1", "run-1");

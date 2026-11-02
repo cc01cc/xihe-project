@@ -738,8 +738,17 @@ async function submitMessage(input: {
 
     sessionStore.setSessionAgentPrincipal(id, agentPrincipalId);
 
+    // Keep this run's client-side transcript through the post-terminal history refresh: the
+    // durable message projection can lag the terminal SSE event (see chat store
+    // `unprojectedRuns`), and replacing the transcript in that window silently dropped the
+    // user's prompt, the streamed tokens, and the error box. `adoptRunId` also binds the run
+    // id to a live reply whose first token beat this `202` body.
+    chatStore.adoptRunId(id, result.runId);
+
+    const userMessageId = result.messageId ?? crypto.randomUUID();
+    chatStore.markClientOwned(id, userMessageId);
     chatStore.addMessage(id, {
-        id: result.messageId ?? crypto.randomUUID(),
+        id: userMessageId,
         sessionId: id,
         role: "user",
         content,

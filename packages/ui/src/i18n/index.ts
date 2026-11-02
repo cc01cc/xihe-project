@@ -983,6 +983,7 @@ const messages = {
             budgetExhaustedTokens: "本次运行已达到 Token 上限",
             budgetExhaustedHint: "可在下方输入框继续发送，接续本次会话",
             noProgressReason: "检测到重复或无进展动作，运行已停止",
+            streamErrorGeneric: "本次运行未能完成，请重试；若持续失败请查看监控日志",
             resourceExhausted: "{kind}并发已满，约 {seconds} 秒后重试",
             resourceExhaustedNoWait: "{kind}并发已满，请稍后重试",
             resourceExhaustedHint: "也可以在上方模型/连接选择器里换一个连接后再试。",
@@ -3134,6 +3135,8 @@ const messages = {
             budgetExhaustedTokens: "This run reached its token limit",
             budgetExhaustedHint: "Continue in the input below to resume this session",
             noProgressReason: "Repeated or no-progress actions detected; the run was stopped",
+            streamErrorGeneric:
+                "This run did not finish. Retry; if it keeps failing, check the monitor logs.",
             resourceExhausted: "{kind} capacity is full; retry in about {seconds}s",
             resourceExhaustedNoWait: "{kind} capacity is full; try again shortly",
             resourceExhaustedHint:

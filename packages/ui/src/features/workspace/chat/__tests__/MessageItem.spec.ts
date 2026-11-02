@@ -114,11 +114,16 @@ describe("MessageItem budget exhaustion (PLAN-0492)", () => {
         tokens.unmount();
     });
 
-    it("keeps the raw code/detail rendering for non-budget errors", () => {
+    it("localizes non-budget errors instead of rendering the CP detail", () => {
         const wrapper = mountBudgetMessage(null, "AGENT_STREAM_FAILED");
 
         const error = wrapper.get('[data-testid="message-error"]');
-        expect(error.text()).toContain("AGENT_STREAM_FAILED: upstream failed");
+        // The stable code stays visible (support/debug), the sentence is the localized
+        // mapping — the CP's raw English `detail` must not reach the visible surface.
+        expect(error.text()).toContain("AGENT_STREAM_FAILED");
+        expect(error.text()).toContain("对话流中断，请重试");
+        expect(error.text()).not.toContain("upstream failed");
+        expect(error.get("span").attributes("title")).toBe("upstream failed");
         expect(wrapper.find('[data-testid="message-budget-exhausted-hint"]').exists()).toBe(false);
         wrapper.unmount();
     });
@@ -181,11 +186,13 @@ describe("MessageItem no-progress terminal (PLAN-0493)", () => {
         wrapper.unmount();
     });
 
-    it("keeps the raw rendering for other error codes", () => {
-        const wrapper = mountNoProgressMessage("AGENT_STREAM_FAILED");
+    it("falls back to generic localized copy for other error codes", () => {
+        const wrapper = mountNoProgressMessage("PROVIDER_TEMPORARY");
 
         const error = wrapper.get('[data-testid="message-error"]');
-        expect(error.text()).toContain("AGENT_STREAM_FAILED: No progress detected (repeat)");
+        expect(error.text()).toContain("PROVIDER_TEMPORARY");
+        expect(error.text()).toContain(i18n.global.t("chat.streamErrorGeneric"));
+        expect(error.text()).not.toContain("No progress detected (repeat)");
         expect(wrapper.find('[data-testid="message-no-progress-hint"]').exists()).toBe(false);
         wrapper.unmount();
     });

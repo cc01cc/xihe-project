@@ -4,6 +4,7 @@ import { useI18n } from "vue-i18n";
 import type { AttachmentFile, Message } from "../../../../types";
 import type { SessionParticipantRole, SessionParticipantView } from "../../../../types/participant";
 import { participantDisplayName, participantInitials } from "../../components/participantInitials";
+import { mappedErrorCopy } from "../../../../lib/errorMessages";
 import { runStateLabelKey } from "../runStateView";
 import TextPart from "./parts/TextPart.vue";
 import ReasoningPart from "./parts/ReasoningPart.vue";
@@ -253,6 +254,20 @@ const noProgressReason = computed(() =>
 );
 
 /**
+ * The visible headline of a failure that has no dedicated branch above.
+ *
+ * CP's `detail` is English operator text ("Provider temporarily unavailable"); it must not
+ * be the user-facing sentence (DEV-011「不得直显 CP 英文 detail」). The stable code stays
+ * visible so the user can quote it to support, the mapped/localized copy carries the
+ * meaning, and the raw detail survives only as the hover title for diagnostics.
+ */
+const streamErrorCopy = computed(() => {
+    const code = props.message.errorCode?.trim() ?? "";
+    const copy = mappedErrorCopy(code) ?? t("chat.streamErrorGeneric");
+    return code ? `${code}: ${copy}` : copy;
+});
+
+/**
  * PLAN-0622 Resource Governor：`429 RESOURCE_EXHAUSTED` 不显示 CP 英文 detail，
  * 而是按 `resourceKind` + `retryAfterSeconds` 给本地化、可操作的说明。
  */
@@ -443,10 +458,7 @@ onUnmounted(() => {
                     </span>
                 </template>
                 <template v-else>
-                    <span
-                        >{{ message.errorCode ? `${message.errorCode}: ` : ""
-                        }}{{ message.error }}</span
-                    >
+                    <span :title="message.error">{{ streamErrorCopy }}</span>
                 </template>
                 <button
                     v-if="canRetry"

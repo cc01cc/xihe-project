@@ -43,6 +43,14 @@ let activeRunId: string | undefined, activeBranchId: string | undefined;
  * citation is never derived from `role` or the session's PRIMARY participant.
  */
 let activeResponderId: string | null = null;
+/**
+ * Bumped on **every** run-terminal event. The `202 ChatRunResponse` is processed on a
+ * different connection (the POST) than the run's events (the session SSE), and nothing
+ * orders the two: a terminal event can reach this client before the POST body does. The
+ * counter lets `handleSend` notice that the run it just submitted has already ended, so
+ * the late bookkeeping cannot resurrect it (see `handleSend`).
+ */
+let terminalEpoch = 0;
 
 watch(
     () => props.sessionId,
@@ -75,6 +83,10 @@ function connectSession(id: string) {
         },
         onStart: () => {
             if (!isCurrentSession()) return;
+            // A new run owns its own terminal state: a `terminalError` remembered from the
+            // previous turn must never be replayed onto this one (it would relabel a healthy
+            // reply as failed, or duplicate the old error bubble at its `done`).
+            terminalError = null;
             parser.reset();
             chatStore.createStreamingMessage(id, activeRunId, activeBranchId);
             // The attribution usually arrives on the very first event of the run, i.e.
@@ -120,23 +132,26 @@ function connectSession(id: string) {
             if (parser.parts.value.length > 0) {
                 chatStore.replaceStreamingParts(id, parser.parts.value);
             }
-            if (outcome === "error" || outcome === "partial" || outcome === "ambiguous") {
-                chatStore.markStreamingError(
-                    id,
-                    terminalError ?? {
-                        code:
-                            outcome === "ambiguous"
-                                ? "AGENT_STREAM_AMBIGUOUS"
-                                : "AGENT_STREAM_FAILED",
-                        detail:
-                            outcome === "ambiguous"
-                                ? "The provider result is uncertain; retry requires confirmation"
-                                : "Agent stream failed",
-                        runId: activeRunId,
-                        retryable: outcome !== "ambiguous",
-                        outcome,
-                    },
-                );
+            const terminal =
+                outcome === "error" || outcome === "partial" || outcome === "ambiguous";
+            if (terminalError) {
+                // The `error` event already produced this run's terminal surface (error box,
+                // partial content, retry affordance). Applying it a second time at `done`
+                // only spawns a second, contentless error bubble — and calling
+                // `finalizeStreaming` here would flip the failed run to `succeeded`.
+                terminalError = null;
+            } else if (terminal) {
+                chatStore.markStreamingError(id, {
+                    code:
+                        outcome === "ambiguous" ? "AGENT_STREAM_AMBIGUOUS" : "AGENT_STREAM_FAILED",
+                    detail:
+                        outcome === "ambiguous"
+                            ? "The provider result is uncertain; retry requires confirmation"
+                            : "Agent stream failed",
+                    runId: activeRunId,
+                    retryable: outcome !== "ambiguous",
+                    outcome,
+                });
             } else {
                 chatStore.finalizeStreaming(id);
             }
@@ -145,6 +160,7 @@ function connectSession(id: string) {
             activeRunId = undefined;
             activeBranchId = undefined;
             activeResponderId = null;
+            terminalEpoch += 1;
         },
         onError: (payload: SSEErrorPayload) => {
             if (!isCurrentSession()) return;
@@ -154,6 +170,7 @@ function connectSession(id: string) {
             chatStore.setSessionRunState(id, "error", activeRunId);
             activeRunId = undefined;
             activeResponderId = null;
+            terminalEpoch += 1;
             toast.error(chatErrorToastText(payload.code, payload.detail));
         },
         onApprovalRequest: (data) => {
@@ -237,6 +254,7 @@ async function handleSend(
 
     const binding = configStore.getEffectiveModel(sessionId),
         model = binding?.model ?? "";
+    const epochBeforeSend = terminalEpoch;
     const result = await sendMessage({
         content,
         branchId: options.branchId,
@@ -251,6 +269,16 @@ async function handleSend(
     });
     if (props.sessionId !== sessionId) return null;
     if (result) {
+        if (terminalEpoch !== epochBeforeSend) {
+            // This run's terminal event (success, error, timeout) already reached the client
+            // while the `202` body was still in flight. Recording the run now would flip the
+            // composer back to "thinking" after the run had finished — a phantom active run
+            // that never ends (no further events for it), which made `ChatPanel.handleSend`
+            // swallow the user's next message. The caller still needs the response: it carries
+            // the persisted user `messageId`/`runId`.
+            activeBranchId = undefined;
+            return result;
+        }
         activeRunId = result.runId;
         // The run exists and keeps the composer in stop/queue mode — that part is true.
         chatStore.setSessionRunState(sessionId, "thinking", result.runId);

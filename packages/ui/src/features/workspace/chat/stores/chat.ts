@@ -59,7 +59,22 @@ export const useChatStore = defineStore("chat", () => {
         sessionBranches = ref<Record<string, ApiSessionBranch[]>>({}),
         selectedBranchIds = ref<Record<string, string>>({}),
         branchVersions = new Map<string, number>(),
-        branchLoadPromises = new Map<string, Promise<ApiSessionBranch[]>>();
+        branchLoadPromises = new Map<string, Promise<ApiSessionBranch[]>>(),
+        /**
+         * Runs this view has started but whose durable projection it has not seen yet, and
+         * the ids of the messages this view created for them.
+         *
+         * CP persists the run's assistant Message, but `GET /sessions/{id}/messages` is a
+         * read projection that can lag the terminal SSE event by a round trip — a token can
+         * even reach this client before the `202` body, so the live bubble may not know its
+         * `runId` yet. The history refresh that runs when a stream goes terminal used to
+         * replace the transcript with that projection; in the lag window it no longer
+         * contained the run, so the tokens the user had already seen and the whole error box
+         * vanished (`message-error` never mounted). Client-owned messages are retained until
+         * the projection carries their run (id or `runId` match).
+         */
+        unprojectedRuns = new Map<string, Set<string>>(),
+        clientOwnedMessageIds = new Map<string, Set<string>>();
 
     function getMessages(sessionId: string): Message[] {
         return messages.value[sessionId] ?? [];
@@ -189,7 +204,83 @@ export const useChatStore = defineStore("chat", () => {
         // An in-flight response is owned by the live SSE stream. Do not let a
         // slower history request replace its optimistic user/assistant messages.
         if (isStreaming(sessionId)) return;
-        messages.value[sessionId] = sessionMessages;
+        const owned = clientOwnedMessageIds.get(sessionId);
+        if (!owned || owned.size === 0) {
+            messages.value[sessionId] = sessionMessages;
+            return;
+        }
+        const pending = unprojectedRuns.get(sessionId),
+            projectedIds = new Set(sessionMessages.map((message) => message.id)),
+            projectedRuns = new Set(
+                sessionMessages
+                    .map((message) => message.runId)
+                    .filter((runId): runId is string => Boolean(runId)),
+            );
+        // The projection is authoritative for everything it carries now; drop those messages
+        // (and their runs) from the client-owned set so they can never be resurrected later.
+        for (const id of projectedIds) owned.delete(id);
+        // Deleting the current entry during Set iteration is safe.
+        for (const runId of pending ?? []) {
+            if (projectedRuns.has(runId)) pending?.delete(runId);
+        }
+        const previous = messages.value[sessionId] ?? [],
+            selectedBranch = selectedBranchIds.value[sessionId];
+        for (const message of previous) {
+            if (message.runId !== undefined && projectedRuns.has(message.runId)) {
+                owned.delete(message.id);
+            }
+        }
+        // Keep what this view recorded and the projection does not carry yet — the run's
+        // prompt, its live/terminal reply, the error box, its status markers. Ownership comes
+        // from creation (see `markClientOwned`), never from a positional guess: a token can
+        // beat the `202` body, so a live reply may still carry no `runId` here.
+        // Scoped to the selected branch so switching branches cannot resurrect the other
+        // branch's live messages.
+        const retained = previous.filter(
+            (message) =>
+                owned.has(message.id) &&
+                !projectedIds.has(message.id) &&
+                (message.branchId === undefined ||
+                    selectedBranch === undefined ||
+                    message.branchId === selectedBranch),
+        );
+        messages.value[sessionId] =
+            retained.length > 0 ? [...sessionMessages, ...retained] : sessionMessages;
+    }
+
+    /** Mark a message as created by this view (never observed in a projection snapshot). */
+    function markClientOwned(sessionId: string, messageId: string | undefined) {
+        if (!messageId) return;
+        const ids = clientOwnedMessageIds.get(sessionId) ?? new Set<string>();
+        ids.add(messageId);
+        clientOwnedMessageIds.set(sessionId, ids);
+    }
+
+    /**
+     * Bind a run id to the client-owned messages this view recorded before the `202` body
+     * reached it (a stream token can win that race). Without the id the live reply can
+     * neither be reconciled with the projection once it lands nor be told apart from an
+     * unrelated transcript entry.
+     */
+    function adoptRunId(sessionId: string, runId: string | undefined) {
+        if (!runId) return;
+        trackUnprojectedRun(sessionId, runId);
+        const owned = clientOwnedMessageIds.get(sessionId);
+        if (!owned) return;
+        for (const message of messages.value[sessionId] ?? []) {
+            if (owned.has(message.id) && message.runId === undefined) message.runId = runId;
+        }
+    }
+
+    /**
+     * Remember that this view started `runId`; its messages stay visible across history
+     * refreshes until the durable projection contains the run (see `unprojectedRuns`).
+     */
+    function trackUnprojectedRun(sessionId: string, runId: string | undefined) {
+        if (!runId) return;
+        const runs = unprojectedRuns.get(sessionId) ?? new Set<string>();
+        runs.add(runId);
+        unprojectedRuns.set(sessionId, runs);
     }
 
     function detachLiveSession(sessionId: string) {
@@ -198,6 +289,7 @@ export const useChatStore = defineStore("chat", () => {
             messages.value[sessionId] = (messages.value[sessionId] ?? []).filter(
                 (message) => message.id !== messageId,
             );
+            clientOwnedMessageIds.get(sessionId)?.delete(messageId);
         }
         streamingMessageId.value[sessionId] = null;
         delete sessionRunStates.value[sessionId];
@@ -212,11 +304,9 @@ export const useChatStore = defineStore("chat", () => {
     }
 
     function addMarker(sessionId: string, marker: Omit<Message, "id" | "sessionId">) {
-        addMessage(sessionId, {
-            id: crypto.randomUUID(),
-            sessionId,
-            ...marker,
-        });
+        const id = crypto.randomUUID();
+        markClientOwned(sessionId, id);
+        addMessage(sessionId, { id, sessionId, ...marker });
     }
 
     /** A status marker is the client-only "…is running" line; `interrupted` is a semantic entry. */
@@ -301,6 +391,7 @@ export const useChatStore = defineStore("chat", () => {
     function createStreamingMessage(sessionId: string, runId?: string, branchId?: string): string {
         // PLAN-0631 D31-04: the run actually started — the parked view must go.
         clearRunQueued(sessionId);
+        trackUnprojectedRun(sessionId, runId);
         // Tool-first runs create the live assistant message from `upsertToolCall`
         // before any token arrives; reuse it instead of spawning a second bubble.
         const existing = findStreamingMessage(sessionId);
@@ -321,6 +412,7 @@ export const useChatStore = defineStore("chat", () => {
                 branchId,
                 runStatus: "streaming",
             };
+        markClientOwned(sessionId, id);
         addMessage(sessionId, message);
         streamingMessageId.value[sessionId] = id;
         setSessionRunState(sessionId, "thinking", runId);
@@ -517,6 +609,10 @@ export const useChatStore = defineStore("chat", () => {
                     timestamp: new Date().toISOString(),
                     marker: "status",
                     status: "interrupted",
+                    // Attribute the marker to the folded run so it is retained with that
+                    // run until the projection carries it (see `unprojectedRuns`), instead
+                    // of being dropped by the very next history refresh.
+                    ...(message.runId !== undefined ? { runId: message.runId } : {}),
                 });
             }
         }
@@ -554,8 +650,10 @@ export const useChatStore = defineStore("chat", () => {
             // **准入**（202 之前），不会产生任何 SSE 事件 ⇒ 原来的 `return` 会把整条错误静默丢掉，
             // 用户点发送后界面什么都不显示。业务错误必须有自己的气泡。
             if (!INTERNAL_STREAM_ERROR_CODES.has(error.code)) {
+                const errorMessageId = crypto.randomUUID();
+                markClientOwned(sessionId, errorMessageId);
                 addMessage(sessionId, {
-                    id: crypto.randomUUID(),
+                    id: errorMessageId,
                     sessionId,
                     role: "assistant",
                     content: "",
@@ -781,6 +879,8 @@ export const useChatStore = defineStore("chat", () => {
         delete sessionRunStates.value[sessionId];
         delete sessionRunQueued.value[sessionId];
         delete runRecovery.value[sessionId];
+        unprojectedRuns.delete(sessionId);
+        clientOwnedMessageIds.delete(sessionId);
         recoveryGenerations.delete(sessionId);
         recoveryRunIds.delete(sessionId);
     }
@@ -809,6 +909,8 @@ export const useChatStore = defineStore("chat", () => {
         sessionRunQueued.value = {};
         sessionLastUsage.value = {};
         runRecovery.value = {};
+        unprojectedRuns.clear();
+        clientOwnedMessageIds.clear();
         recoveryGeneration += 1;
         recoveryGenerations.clear();
         recoveryRunIds.clear();
@@ -827,6 +929,8 @@ export const useChatStore = defineStore("chat", () => {
         sessionRunQueued.value = {};
         sessionLastUsage.value = {};
         runRecovery.value = {};
+        unprojectedRuns.clear();
+        clientOwnedMessageIds.clear();
         recoveryGeneration += 1;
         recoveryGenerations.clear();
         recoveryRunIds.clear();
@@ -857,6 +961,9 @@ export const useChatStore = defineStore("chat", () => {
         isStreaming,
         addMessage,
         loadMessages,
+        trackUnprojectedRun,
+        markClientOwned,
+        adoptRunId,
         detachLiveSession,
         deleteMessage,
         addMarker,

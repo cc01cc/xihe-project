@@ -4,7 +4,7 @@ import { createPinia, setActivePinia } from "pinia";
 import { api } from "../../../../composables/api";
 import { i18n } from "../../../../i18n";
 import { useChatStore } from "../stores/chat.ts";
-import type { chatTransport } from "@/services/chatTransport";
+import { chatTransport } from "@/services/chatTransport";
 import SSEStream from "../components/SSEStream.vue";
 
 vi.mock("@/services/chatTransport", () => ({
@@ -91,6 +91,150 @@ describe("SSEStream session ownership", () => {
 
         expect(cancel).toHaveBeenCalledWith("run-a");
         expect(refreshRunRecovery).toHaveBeenCalledWith("session-a", "run-a");
+        wrapper.unmount();
+    });
+});
+
+describe("SSEStream terminal error scoping", () => {
+    type StreamHandlers = {
+        onmessage?: (event: { event: string; data: string; id?: string }) => void | Promise<void>;
+    };
+
+    async function mountStream(sessionId = "session-terminal") {
+        let handlers: StreamHandlers = {};
+        vi.mocked(chatTransport.sendMessages).mockImplementation(async (_sessionId, options) => {
+            handlers = options as StreamHandlers;
+            await options.onopen?.(new Response(null, { status: 200 }));
+        });
+        const wrapper = mount(SSEStream, {
+            props: { sessionId, active: true },
+            global: { plugins: [i18n] },
+        });
+        await flushPromises();
+        return {
+            wrapper,
+            async push(event: string, data: unknown) {
+                await handlers.onmessage?.({ event, data: JSON.stringify(data) });
+                await flushPromises();
+            },
+        };
+    }
+
+    it("keeps the failed run's surfaced error and does not relabel it at done", async () => {
+        const { wrapper, push } = await mountStream(),
+            chatStore = useChatStore();
+
+        await push("token", { content: "partial response" });
+        await push("error", {
+            code: "PROVIDER_TEMPORARY",
+            detail: "Provider temporarily unavailable",
+            retryable: true,
+        });
+        await push("done", { outcome: "partial" });
+
+        const assistants = chatStore
+            .getMessages("session-terminal")
+            .filter((message) => message.role === "assistant");
+        // One bubble: the terminal error already delivered the failure surface, so `done`
+        // must not spawn a second, contentless error message.
+        expect(assistants).toHaveLength(1);
+        expect(assistants[0].content).toBe("partial response");
+        expect(assistants[0].errorCode).toBe("PROVIDER_TEMPORARY");
+        // A failed/partial run is never reported as a normal completion.
+        expect(assistants[0].runStatus).not.toBe("succeeded");
+        expect(assistants[0].terminalOutcome).toBe("partial");
+        wrapper.unmount();
+    });
+
+    it("does not resurrect a finished run when the 202 body lands after its terminal event", async () => {
+        const sessionId = "session-race";
+        let resolvePost: ((response: Response) => void) | undefined;
+        let handlers: StreamHandlers = {};
+        vi.mocked(chatTransport.sendMessages).mockImplementation(async (_sid, options) => {
+            handlers = options as StreamHandlers;
+            await options.onopen?.(new Response(null, { status: 200 }));
+        });
+        // The POST response is held back on purpose: the run's events travel on a different
+        // connection, and nothing orders them against this body.
+        vi.stubGlobal(
+            "fetch",
+            vi.fn<typeof fetch>().mockImplementation(
+                () =>
+                    new Promise<Response>((resolve) => {
+                        resolvePost = resolve;
+                    }),
+            ),
+        );
+        const wrapper = mount(SSEStream, {
+            props: { sessionId, active: true },
+            global: { plugins: [i18n] },
+        });
+        await flushPromises();
+
+        const sending = (
+            wrapper.vm as unknown as {
+                sendMessage: (content: string, options: { branchId: string }) => Promise<unknown>;
+            }
+        ).sendMessage("hi", { branchId: "branch-a" });
+        await flushPromises();
+
+        await handlers.onmessage?.({
+            event: "token",
+            data: JSON.stringify({ content: "partial" }),
+        });
+        await handlers.onmessage?.({
+            event: "error",
+            data: JSON.stringify({
+                code: "PROVIDER_TEMPORARY",
+                detail: "Provider temporarily unavailable",
+                retryable: true,
+            }),
+        });
+        await flushPromises();
+        expect(useChatStore().isStreaming(sessionId)).toBe(false);
+
+        resolvePost?.({
+            ok: true,
+            status: 202,
+            json: async () => ({ status: "accepted", sessionId, runId: "run-race" }),
+        } as Response);
+        await sending;
+        await flushPromises();
+
+        const chatStore = useChatStore();
+        // The run already ended; late `202` bookkeeping must not put the composer back into
+        // "thinking" (a phantom active run that never terminates and swallows the next send).
+        expect(chatStore.isStreaming(sessionId)).toBe(false);
+        const assistants = chatStore
+            .getMessages(sessionId)
+            .filter((message) => message.role === "assistant");
+        expect(assistants).toHaveLength(1);
+        expect(assistants[0].errorCode).toBe("PROVIDER_TEMPORARY");
+        wrapper.unmount();
+    });
+
+    it("does not replay the previous run's error onto the next run", async () => {
+        const { wrapper, push } = await mountStream(),
+            chatStore = useChatStore();
+
+        await push("token", { content: "first attempt" });
+        await push("error", { code: "PROVIDER_TEMPORARY", detail: "boom", retryable: true });
+
+        // Retry: a new run on the same connection streams a healthy reply.
+        await push("token", { content: "recovered response" });
+        await push("done", {});
+
+        const assistants = chatStore
+            .getMessages("session-terminal")
+            .filter((message) => message.role === "assistant");
+        expect(assistants).toHaveLength(2);
+        expect(assistants[0].errorCode).toBe("PROVIDER_TEMPORARY");
+
+        const recovered = assistants[1];
+        expect(recovered.content).toBe("recovered response");
+        expect(recovered.errorCode).toBeUndefined();
+        expect(recovered.runStatus).toBe("succeeded");
+        expect(recovered.terminalOutcome).toBe("success");
         wrapper.unmount();
     });
 });

@@ -200,6 +200,8 @@ export function useSSE(sessionId: MaybeRefOrGetter<string>) {
         connectionErrorReported = false,
         activeSessionId: string | null = null,
         contentStarted = false,
+        /** `runId` of the run whose assistant bubble this connection is currently feeding. */
+        scopeRunId: string | undefined,
         connectionGeneration = 0,
         activeApprovalEpoch: string | null = null;
 
@@ -266,6 +268,7 @@ export function useSSE(sessionId: MaybeRefOrGetter<string>) {
                 error.value = errorText(timeoutError);
                 currentCallbacks.onError?.(timeoutError);
                 currentCallbacks.onDone?.(timeoutError.outcome);
+                endRunScope();
             }
         }, STREAM_TIMEOUT_MS);
     }
@@ -275,6 +278,35 @@ export function useSSE(sessionId: MaybeRefOrGetter<string>) {
             clearTimeout(streamTimeout);
             streamTimeout = null;
         }
+    }
+
+    /**
+     * Run scope: which run's assistant bubble this *connection* is currently feeding.
+     *
+     * The session SSE is persistent — `done` terminates a **run**, not the stream, and the
+     * same connection carries several `POST /api/v1/chat` turns (`openapi.yaml:1466-1467`,
+     * the `token` examples carry `runId`). `contentStarted` therefore must not be a
+     * connection-lifetime latch: when it stayed `true` after a run ended, the next turn's
+     * first `token` never called `onStart`, so no live bubble was created and every token of
+     * that turn was dropped by `appendToParts` (no streaming message id). The retry after
+     * `context_overflow_retry` is exactly that shape — the CP retries the run in place, no
+     * new POST is made, so the recovered reply never rendered.
+     */
+    function openRunScope(runId: string | undefined) {
+        contentStarted = true;
+        if (runId !== undefined) scopeRunId = runId;
+        isStreaming.value = true;
+        currentCallbacks.onStart?.();
+    }
+
+    /**
+     * Close the current run scope. A terminal event that belongs to a **different** run
+     * (a stale `done`/`error` racing a newer turn) must not clear the live scope.
+     */
+    function endRunScope(runId?: string) {
+        if (runId !== undefined && scopeRunId !== undefined && runId !== scopeRunId) return;
+        contentStarted = false;
+        scopeRunId = undefined;
     }
 
     function handleMessage(msg: EventSourceMessage) {
@@ -293,18 +325,28 @@ export function useSSE(sessionId: MaybeRefOrGetter<string>) {
         switch (msg.event) {
             case "token":
                 try {
-                    const data = JSON.parse(msg.data) as { content?: unknown; hint?: string },
+                    const data = JSON.parse(msg.data) as {
+                            content?: unknown;
+                            hint?: string;
+                            runId?: string;
+                        },
                         content = normalizeTokenContent(data.content),
                         hint =
                             data.hint === "reasoning" || data.hint === "text"
                                 ? data.hint
+                                : undefined,
+                        tokenRunId =
+                            typeof data.runId === "string" && data.runId !== ""
+                                ? data.runId
                                 : undefined;
+                    // A token for a **different** run than the one this connection is feeding
+                    // is the start of a new turn's bubble (persistent SSE, see `openRunScope`).
+                    const newRun =
+                        tokenRunId !== undefined &&
+                        scopeRunId !== undefined &&
+                        tokenRunId !== scopeRunId;
                     if (content) {
-                        if (!contentStarted) {
-                            contentStarted = true;
-                            isStreaming.value = true;
-                            currentCallbacks.onStart?.();
-                        }
+                        if (!contentStarted || newRun) openRunScope(tokenRunId);
                         resetStreamTimeout();
                         currentCallbacks.onToken?.(content, hint);
                     }
@@ -498,6 +540,7 @@ export function useSSE(sessionId: MaybeRefOrGetter<string>) {
                             outcome: data.outcome ?? (contentStarted ? "partial" : "error"),
                         };
                     error.value = errorText(payload);
+                    endRunScope(payload.runId);
                     currentCallbacks.onError?.(payload);
                 } catch {
                     logger.warn("Failed to parse SSE error event payload");
@@ -508,6 +551,7 @@ export function useSSE(sessionId: MaybeRefOrGetter<string>) {
                         outcome: contentStarted ? "partial" : "error",
                     };
                     error.value = errorText(payload);
+                    endRunScope();
                     currentCallbacks.onError?.(payload);
                 }
                 notifySessionEvent(activeSessionId ?? toValue(sessionId));
@@ -517,11 +561,15 @@ export function useSSE(sessionId: MaybeRefOrGetter<string>) {
                 isStreaming.value = false;
                 clearStreamTimeout();
                 try {
-                    const data = msg.data ? (JSON.parse(msg.data) as { outcome?: string }) : {};
+                    const data = msg.data
+                        ? (JSON.parse(msg.data) as { outcome?: string; runId?: string })
+                        : {};
                     currentCallbacks.onDone?.(data.outcome);
+                    endRunScope(data.runId);
                 } catch {
                     logger.warn("Failed to parse SSE done event payload");
                     currentCallbacks.onDone?.();
+                    endRunScope();
                 }
                 notifySessionEvent(activeSessionId ?? toValue(sessionId));
                 break;
@@ -560,6 +608,10 @@ export function useSSE(sessionId: MaybeRefOrGetter<string>) {
                         requestId?: string;
                         message?: string;
                     };
+                    // The retry is a **new attempt** of the same run: the folded attempt's
+                    // bubble is finalized by the callback below, so the retry's first token
+                    // must open a fresh bubble instead of appending to the folded one.
+                    endRunScope();
                     currentCallbacks.onContextOverflowRetry?.(data);
                 } catch {
                     logger.warn("Failed to parse context_overflow_retry payload");
@@ -589,6 +641,7 @@ export function useSSE(sessionId: MaybeRefOrGetter<string>) {
         const generation = ++connectionGeneration;
         currentCallbacks = callbacks;
         contentStarted = false;
+        scopeRunId = undefined;
 
         const currentSessionId = toValue(sessionId);
         activeSessionId = currentSessionId;
@@ -646,6 +699,7 @@ export function useSSE(sessionId: MaybeRefOrGetter<string>) {
         isConnected.value = false;
         isStreaming.value = false;
         contentStarted = false;
+        scopeRunId = undefined;
         clearStreamTimeout();
     }
 
@@ -664,6 +718,7 @@ export function useSSE(sessionId: MaybeRefOrGetter<string>) {
         const generation = connectionGeneration;
         error.value = null;
         contentStarted = false;
+        scopeRunId = undefined;
         const sid = overrideSid ?? toValue(sessionId),
             approvalEpoch = agentStore?.getApprovalEpoch(sid) ?? null;
 

@@ -1,5 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { chatErrorToastText, humanizeErrorCode } from "../errorMessages";
+import { chatErrorToastText, humanizeErrorCode, mappedErrorCopy } from "../errorMessages";
+
+describe("mappedErrorCopy", () => {
+    it("returns dedicated copy only for codes it actually maps", () => {
+        expect(mappedErrorCopy("AGENT_TIMEOUT")).toContain("超时");
+        expect(mappedErrorCopy("RUN_BUDGET_EXHAUSTED")).toBeNull();
+        expect(mappedErrorCopy("PROVIDER_TEMPORARY")).toBeNull();
+        expect(mappedErrorCopy(undefined)).toBeNull();
+    });
+});
 
 describe("humanizeErrorCode", () => {
     it("maps runtime unavailable to human copy without assuming Docker", () => {

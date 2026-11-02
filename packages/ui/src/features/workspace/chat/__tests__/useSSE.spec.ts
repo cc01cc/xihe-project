@@ -776,6 +776,95 @@ describe("useSSE transport telemetry (PLAN-0508)", () => {
     });
 });
 
+// ── Run scope on the persistent session stream ─────────────────────────────
+describe("useSSE run scope", () => {
+    it("opens a new assistant bubble for the next turn on the same connection", async () => {
+        const transport = createTransportController(),
+            onStart = vi.fn<NonNullable<useSSEModule.SSECallbacks["onStart"]>>(),
+            onToken = vi.fn<NonNullable<useSSEModule.SSECallbacks["onToken"]>>(),
+            { connect } = useSSE(SESSION_ID);
+        connect({ onStart, onToken });
+        await flushPromises();
+        await transport.simulateOpen();
+
+        await transport.simulateMessage("token", JSON.stringify({ content: "first " }));
+        await transport.simulateMessage("token", JSON.stringify({ content: "reply" }));
+        expect(onStart).toHaveBeenCalledTimes(1);
+
+        // `done` terminates the run, not the connection (openapi.yaml:1466-1467).
+        await transport.simulateMessage("done", JSON.stringify({}));
+        await transport.simulateMessage("token", JSON.stringify({ content: "second reply" }));
+
+        expect(onStart).toHaveBeenCalledTimes(2);
+        expect(onToken).toHaveBeenLastCalledWith("second reply", undefined);
+    });
+
+    it("opens a fresh bubble for a token of a different run on the same stream", async () => {
+        const transport = createTransportController(),
+            onStart = vi.fn<NonNullable<useSSEModule.SSECallbacks["onStart"]>>(),
+            { connect } = useSSE(SESSION_ID);
+        connect({ onStart });
+        await flushPromises();
+        await transport.simulateOpen();
+
+        await transport.simulateMessage("token", JSON.stringify({ content: "a", runId: RUN_ID }));
+        await transport.simulateMessage("token", JSON.stringify({ content: "b", runId: RUN_ID }));
+        expect(onStart).toHaveBeenCalledTimes(1);
+
+        // Tokens carry the producing run (openapi.yaml:1505-1509); a different run id is
+        // the next turn's bubble even if this connection never saw its terminal event.
+        await transport.simulateMessage(
+            "token",
+            JSON.stringify({ content: "c", runId: REQUEST_ID }),
+        );
+        expect(onStart).toHaveBeenCalledTimes(2);
+    });
+
+    it("reopens the run scope after context_overflow_retry so the retry renders", async () => {
+        const transport = createTransportController(),
+            onStart = vi.fn<NonNullable<useSSEModule.SSECallbacks["onStart"]>>(),
+            onToken = vi.fn<NonNullable<useSSEModule.SSECallbacks["onToken"]>>(),
+            { connect } = useSSE(SESSION_ID);
+        connect({ onStart, onToken });
+        await flushPromises();
+        await transport.simulateOpen();
+
+        await transport.simulateMessage("token", JSON.stringify({ content: "folded" }));
+        expect(onStart).toHaveBeenCalledTimes(1);
+
+        // The CP retries the run in place: no new POST, same connection.
+        await transport.simulateMessage(
+            "context_overflow_retry",
+            JSON.stringify({ runId: RUN_ID, message: "retrying" }),
+        );
+        await transport.simulateMessage("token", JSON.stringify({ content: "retried reply" }));
+
+        expect(onStart).toHaveBeenCalledTimes(2);
+        expect(onToken).toHaveBeenLastCalledWith("retried reply", undefined);
+    });
+
+    it("does not let a late done from another run close the live scope", async () => {
+        const transport = createTransportController(),
+            onStart = vi.fn<NonNullable<useSSEModule.SSECallbacks["onStart"]>>(),
+            { connect } = useSSE(SESSION_ID);
+        connect({ onStart });
+        await flushPromises();
+        await transport.simulateOpen();
+
+        await transport.simulateMessage(
+            "token",
+            JSON.stringify({ content: "live", runId: RUN_ID }),
+        );
+        await transport.simulateMessage("done", JSON.stringify({ runId: REQUEST_ID }));
+        await transport.simulateMessage(
+            "token",
+            JSON.stringify({ content: "more", runId: RUN_ID }),
+        );
+
+        expect(onStart).toHaveBeenCalledTimes(1);
+    });
+});
+
 // ── PLAN-0631 M1-B (D31-08) ────────────────────────────────────────────────
 describe("parseParticipantEnvelope", () => {
     it("returns the attributed participant id when CP stamped one", () => {

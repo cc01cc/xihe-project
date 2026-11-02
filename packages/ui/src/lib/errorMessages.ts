@@ -1,5 +1,10 @@
-/** Human-readable copy for stable Problem/SSE error codes (PLAN-290 A6/B1). */
-export function humanizeErrorCode(code: string | undefined | null, detail?: string | null): string {
+/**
+ * Localized copy for a stable Problem/SSE error code (PLAN-290 A6/B1).
+ *
+ * `null` means "this code has no dedicated copy" — callers then choose their own wording
+ * instead of surfacing the CP's raw English `detail` to the user.
+ */
+export function mappedErrorCopy(code: string | undefined | null): string | null {
     const key = (code ?? "").trim();
     switch (key) {
         case "RUNTIME_ERROR":
@@ -57,6 +62,14 @@ export function humanizeErrorCode(code: string | undefined | null, detail?: stri
         default:
             break;
     }
+    return null;
+}
+
+/** Human-readable copy for stable Problem/SSE error codes (PLAN-290 A6/B1). */
+export function humanizeErrorCode(code: string | undefined | null, detail?: string | null): string {
+    const mapped = mappedErrorCopy(code);
+    if (mapped !== null) return mapped;
+    const key = (code ?? "").trim();
     // Prefer mapped Chinese; keep raw detail as secondary for debugging.
     return detail ? `${key}: ${detail}` : key || "操作失败";
 }
