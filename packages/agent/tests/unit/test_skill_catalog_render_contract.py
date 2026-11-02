@@ -21,6 +21,13 @@ D28-41 is asserted structurally, not by comment: the truncation sentence is rese
 renderer (``cp_truncated`` covers the CP-side cut; the reserved note covers this side's budget cut),
 so every case whose ``componentView.truncated`` is true must end with that sentence even when the
 budget here would have been happy with the listing it received.
+
+Dirty data (PLAN-0628 M3b-②, rulings A/B/C): the ``dirty-description-*`` cases store descriptions
+the previous import path could persist — surrounding whitespace, an empty string, and an embedded
+line break — and pin the model-visible result. This side is **not** changed to fix them (its
+``strip()`` stays: CP is the rendering authority and normalises the stored value first); what is
+added here is the negative half of the pin: no rendered line may be a *fragment* of a CP item, so
+"one listing item = one prompt line" is asserted rather than assumed.
 """
 
 from __future__ import annotations
@@ -153,9 +160,58 @@ def test_the_agent_only_drops_lines_it_never_rewrites_them() -> None:
             )
 
 
+def test_a_listing_item_never_spans_two_lines() -> None:
+    """PLAN-0628 M3b-② (裁定 C): one listing item is one prompt line.
+
+    Why this is a semantic assertion and not a cosmetic one: the model reads the block as a list of
+    ``name — description`` lines, so a description that contains a break puts half of it on the next
+    line where that half looks like **another skill** (with a name it may then try to load). One
+    binding would silently become two.
+
+    ``\\n`` is defined precisely here: the block consists of exactly three kinds of line — the
+    header, one line per *whole* item CP handed over, and (only when the block is partial) one line
+    of truncation note. So the newline count must be ``#item lines + (0|1)``, every body line must
+    be *equal* to a CP item (never a fragment of one), and no item may carry a break itself.
+    """
+    fixture = _fixture()
+    header = fixture["header"]
+    note = fixture["truncationNote"]
+
+    for case in _cases():
+        name = case["name"]
+        items = case["componentView"]["items"]
+        content, _ = _render(case)
+
+        assert all("\n" not in item and "\r" not in item for item in items), (
+            f"{name}: CP handed over an item that already spans a line; the fixture must not pin a"
+            " multi-line item"
+        )
+
+        if content == "":
+            assert items == [], f"{name}: an empty slot is only legal for an empty listing"
+            continue
+
+        lines = content.split("\n")
+        assert lines[0] == header, f"{name}: the first model-visible line must be the header"
+        body = lines[1:]
+        if body and body[-1] == note:
+            body = body[:-1]
+
+        assert len(body) <= len(items), f"{name}: more lines than CP items"
+        assert all(line in items for line in body), (
+            f"{name}: a rendered line is not one whole CP item — an item was split across lines"
+        )
+        expected_breaks = len(body) + (1 if content.endswith(note) else 0)
+        assert content.count("\n") == expected_breaks, (
+            f"{name}: a newline appeared somewhere other than between whole lines"
+        )
+        assert all("\n" not in line and "\r" not in line for line in body), name
+
+
 def test_the_contract_covers_the_scenarios_the_design_needs() -> None:
     cases = _cases()
     statuses = {case["listing"]["status"] for case in cases}
+    names = {case["name"] for case in cases}
 
     assert {"ready", "truncated", "empty", "failed"} <= statuses, statuses
     assert any(case["listing"]["truncated"] for case in cases), "no CP-side maxSkills cut"
@@ -169,3 +225,10 @@ def test_the_contract_covers_the_scenarios_the_design_needs() -> None:
     assert any(
         len(line) > 500 for case in cases for line in case["componentView"]["items"]
     ), "no over-long line: CP must prove it does not chop a name or a description"
+    # PLAN-0628 M3b-②: the three dirty-description shapes are the cross-language pin for rulings
+    # A/B/C; dropping one re-opens the drift that produced them.
+    assert {
+        "dirty-description-whitespace",
+        "dirty-description-blank",
+        "dirty-description-multiline",
+    } <= names, names

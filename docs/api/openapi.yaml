@@ -5370,7 +5370,7 @@ components:
           type: string
           maxLength: 64
           description: 'Frontmatter name: lowercase kebab-case matching ^[a-z0-9][a-z0-9._-]{0,63}$ and equal to the source directory name. ":" is reserved as the qualifier separator of the listing display name.'
-        description: { type: string, maxLength: 1024 }
+        description: { type: string, maxLength: 1024, description: 'One line, no leading/trailing whitespace; line breaks and control characters are refused (one listing item must stay one prompt line).' }
         body: { type: string, maxLength: 262144, description: 'SKILL.md body with the frontmatter block removed; stored verbatim.' }
         sourcePath: { type: string, maxLength: 512, description: 'Workspace-relative path of the source file, compared against the definition directory name' }
         attachments:
@@ -5405,7 +5405,7 @@ components:
         sourcePath: { type: string, nullable: true }
         code:
           type: string
-          enum: [SKILL_NAME_INVALID, SKILL_DESCRIPTION_REQUIRED, SKILL_DESCRIPTION_TOO_LONG, SKILL_BODY_EMPTY, SKILL_BODY_TOO_LARGE, SKILL_ATTACHMENT_INVALID, SKILL_SOURCE_PATH_INVALID, SKILL_TRUSTED_FORBIDDEN]
+          enum: [SKILL_NAME_INVALID, SKILL_DESCRIPTION_REQUIRED, SKILL_DESCRIPTION_TOO_LONG, SKILL_DESCRIPTION_EDGE_WHITESPACE, SKILL_DESCRIPTION_CONTROL_CHARACTER, SKILL_BODY_EMPTY, SKILL_BODY_TOO_LARGE, SKILL_ATTACHMENT_INVALID, SKILL_SOURCE_PATH_INVALID, SKILL_TRUSTED_FORBIDDEN]
         detail: { type: string }
     SkillImportSummary:
       type: object

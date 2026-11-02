@@ -1,5 +1,5 @@
 {
-  "$comment": "PLAN-0628 M3 cross-language contract: the skills listing CP renders and the block the Agent puts into ${xh.skill_catalog} must agree byte-for-byte. CP's SkillCatalogSourceService.view(Listing) produces `componentView` from `listing`; the Agent's context/skill_catalog.render_from_component_sources turns that same `componentView` into `agent.expectedContent`. Both suites read THIS file: packages/control-plane/src/test/java/com/cc01cc/p/xihe/cp/skill/SkillCatalogRenderFixtureTest.java and packages/agent/tests/unit/test_skill_catalog_render_contract.py. Listing items carry only the fields the renderers read (skillId, qualifiedName, name, description, tier); version/contentHash/oversize never reach a rendered line. Changing a case means changing the contract.",
+  "$comment": "PLAN-0628 M3 cross-language contract: the skills listing CP renders and the block the Agent puts into ${xh.skill_catalog} must agree byte-for-byte. CP's SkillCatalogSourceService.view(Listing) produces `componentView` from `listing`; the Agent's context/skill_catalog.render_from_component_sources turns that same `componentView` into `agent.expectedContent`. Both suites read THIS file: packages/control-plane/src/test/java/com/cc01cc/p/xihe/cp/skill/SkillCatalogRenderFixtureTest.java and packages/agent/tests/unit/test_skill_catalog_render_contract.py. Listing items carry only the fields the renderers read (skillId, qualifiedName, name, description, tier); version/contentHash/oversize never reach a rendered line. `listing.items[].descriptionRendered` (optional) is the hand-written expectation for a DIRTY stored description (surrounding whitespace / empty / embedded line break) after CP's render-time normalisation; absent means \"rendered verbatim\", explicit null means \"treated as no description, no separator\". The three dirty-description-* cases pin the M3b rulings A/B/C; their expectations are written by hand, never generated from the implementation. Changing a case means changing the contract.",
   "rule": "CP renders one line per item: display + ' — ' + description, where display = name unless a name collision forces the qualifiedName; CP never truncates a line, never adds framing and never adds the truncation sentence (D28-41: reserved budget belongs to the final renderer). The Agent prepends `header`, keeps a prefix of CP's lines within the skills cap, and appends `truncationNote` whenever the listing is incomplete - either because its own budget cut it or because CP already reported truncated=true.",
   "header": "Available skills (name — description); load full text by name when relevant:",
   "separator": " — ",
@@ -448,6 +448,180 @@
         "expectedDiagnostics": [],
         "cpDiagnostics": [],
         "items": 3
+      }
+    },
+    {
+      "name": "dirty-description-whitespace",
+      "note": "脏数据 A：描述首尾带空格。V101 的 CHECK 只约束「trim 后长度 1..1024」，所以历史行里确实可以存在这种值（上一轮 API import 已落库）。CP 渲染前 strip()，两侧因此同字节；descriptionRendered 是手写的渲染期望（不是从实现生成的）。",
+      "listing": {
+        "status": "ready",
+        "items": [
+          {
+            "skillId": "00000000-0000-4000-8000-000000000016",
+            "qualifiedName": "user:instance:instance:alpha",
+            "name": "alpha",
+            "description": "Summarize a document and keep its headings intact",
+            "tier": {
+              "subjectType": "user",
+              "scopeType": "instance",
+              "definitionScopeType": "instance"
+            }
+          },
+          {
+            "skillId": "00000000-0000-4000-8000-000000000017",
+            "qualifiedName": "user:instance:instance:gamma",
+            "name": "gamma",
+            "description": "  Extract action items from a meeting transcript  ",
+            "descriptionRendered": "Extract action items from a meeting transcript",
+            "tier": {
+              "subjectType": "user",
+              "scopeType": "instance",
+              "definitionScopeType": "instance"
+            }
+          }
+        ],
+        "truncated": false,
+        "diagnostics": [],
+        "maxSkills": 40,
+        "includeDescriptions": true,
+        "collision": false
+      },
+      "componentView": {
+        "status": "ready",
+        "source": "skill_bindings",
+        "items": [
+          "alpha — Summarize a document and keep its headings intact",
+          "gamma — Extract action items from a meeting transcript"
+        ],
+        "truncated": false,
+        "diagnostics": []
+      },
+      "agent": {
+        "windowTokens": 128000,
+        "assembledTokens": 0,
+        "maxTokens": null,
+        "expectedContent": "Available skills (name — description); load full text by name when relevant:\nalpha — Summarize a document and keep its headings intact\ngamma — Extract action items from a meeting transcript",
+        "expectedStatus": "ready",
+        "expectedTruncated": false,
+        "expectedDiagnostics": [],
+        "cpDiagnostics": [],
+        "items": 2
+      }
+    },
+    {
+      "name": "dirty-description-blank",
+      "note": "脏数据 B：描述是空串。旧行为 CP 判 description != null 就拼分隔符，于是输出悬空的 gamma — ，而 Agent strip() 后是 gamma — ——两侧既不同字节，又都留着一条没有描述的悬空分隔符。渲染期 strip() 后再判非空即视为无描述，item 只剩名字（descriptionRendered=null 显式表达这一点）。",
+      "listing": {
+        "status": "ready",
+        "items": [
+          {
+            "skillId": "00000000-0000-4000-8000-000000000018",
+            "qualifiedName": "user:instance:instance:alpha",
+            "name": "alpha",
+            "description": "Summarize a document and keep its headings intact",
+            "tier": {
+              "subjectType": "user",
+              "scopeType": "instance",
+              "definitionScopeType": "instance"
+            }
+          },
+          {
+            "skillId": "00000000-0000-4000-8000-000000000019",
+            "qualifiedName": "user:instance:instance:gamma",
+            "name": "gamma",
+            "description": "",
+            "descriptionRendered": null,
+            "tier": {
+              "subjectType": "user",
+              "scopeType": "instance",
+              "definitionScopeType": "instance"
+            }
+          }
+        ],
+        "truncated": false,
+        "diagnostics": [],
+        "maxSkills": 40,
+        "includeDescriptions": true,
+        "collision": false
+      },
+      "componentView": {
+        "status": "ready",
+        "source": "skill_bindings",
+        "items": [
+          "alpha — Summarize a document and keep its headings intact",
+          "gamma"
+        ],
+        "truncated": false,
+        "diagnostics": []
+      },
+      "agent": {
+        "windowTokens": 128000,
+        "assembledTokens": 0,
+        "maxTokens": null,
+        "expectedContent": "Available skills (name — description); load full text by name when relevant:\nalpha — Summarize a document and keep its headings intact\ngamma",
+        "expectedStatus": "ready",
+        "expectedTruncated": false,
+        "expectedDiagnostics": [],
+        "cpDiagnostics": [],
+        "items": 2
+      }
+    },
+    {
+      "name": "dirty-description-multiline",
+      "note": "脏数据 C：描述内含 CRLF + 空行。两侧字节本来一致，但这种值让一条 item 在提示词里跨两行，模型会把一个绑定读成两个 skill（第二个名字它还能拿去 skill_read）。所以 CP 渲染期把任意行尾序列折叠成一个空格，导入期同时拒绝换行；Agent 侧的否定断言要求 item 里不再有任何换行。",
+      "listing": {
+        "status": "ready",
+        "items": [
+          {
+            "skillId": "00000000-0000-4000-8000-000000000020",
+            "qualifiedName": "user:instance:instance:alpha",
+            "name": "alpha",
+            "description": "Summarize a document and keep its headings intact",
+            "tier": {
+              "subjectType": "user",
+              "scopeType": "instance",
+              "definitionScopeType": "instance"
+            }
+          },
+          {
+            "skillId": "00000000-0000-4000-8000-000000000021",
+            "qualifiedName": "user:instance:instance:gamma",
+            "name": "gamma",
+            "description": "Extract action items\r\n\r\nfrom a meeting transcript",
+            "descriptionRendered": "Extract action items from a meeting transcript",
+            "tier": {
+              "subjectType": "user",
+              "scopeType": "instance",
+              "definitionScopeType": "instance"
+            }
+          }
+        ],
+        "truncated": false,
+        "diagnostics": [],
+        "maxSkills": 40,
+        "includeDescriptions": true,
+        "collision": false
+      },
+      "componentView": {
+        "status": "ready",
+        "source": "skill_bindings",
+        "items": [
+          "alpha — Summarize a document and keep its headings intact",
+          "gamma — Extract action items from a meeting transcript"
+        ],
+        "truncated": false,
+        "diagnostics": []
+      },
+      "agent": {
+        "windowTokens": 128000,
+        "assembledTokens": 0,
+        "maxTokens": null,
+        "expectedContent": "Available skills (name — description); load full text by name when relevant:\nalpha — Summarize a document and keep its headings intact\ngamma — Extract action items from a meeting transcript",
+        "expectedStatus": "ready",
+        "expectedTruncated": false,
+        "expectedDiagnostics": [],
+        "cpDiagnostics": [],
+        "items": 2
       }
     }
   ]

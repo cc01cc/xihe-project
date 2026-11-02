@@ -57,6 +57,49 @@ class SkillImportValidatorTest {
                                 List.of(), false), false)));
     }
 
+    /**
+     * PLAN-0628 M3-② (裁定 A): surrounding whitespace is <b>refused</b>, never trimmed — the stored
+     * value must equal the submitted value (and the description is part of {@code content_hash},
+     * which a silent trim would change behind the caller's back).
+     */
+    @Test
+    void surroundingWhitespaceIsRefusedInsteadOfTrimmed() {
+        // Non-control whitespace only: a tab would be refused as a control character instead, and
+        // that ordering is itself part of the contract (see the next test).
+        for (String dirty : List.of(" padded", "padded ", " padded ", "\u3000padded")) {
+            assertEquals(SkillImportValidator.SKILL_DESCRIPTION_EDGE_WHITESPACE,
+                    code(SkillImportValidator.validate(
+                            item("dirty-desc", dirty, "body",
+                                    ".agents/skills/dirty-desc/SKILL.md", List.of(), false), false)),
+                    "[" + dirty + "]");
+        }
+        // Interior whitespace is untouched by the renderer, so it stays legal: this seam refuses
+        // only what the listing would not survive byte-for-byte.
+        assertTrue(SkillImportValidator.validate(
+                item("inner-space", "two  spaces inside", "body",
+                        ".agents/skills/inner-space/SKILL.md", List.of(), false), false).isEmpty());
+    }
+
+    /**
+     * PLAN-0628 M3-② (裁定 C): a line break (or any control character) is refused. One listing item
+     * is one prompt line — a break inside a description makes the model read one binding as two
+     * skills, which is a semantic corruption rather than a formatting nit.
+     */
+    @Test
+    void descriptionsMustStayOnOneLine() {
+        for (String dirty : List.of("one\ntwo", "one\r\ntwo", "one\rtwo", "one\u2028two",
+                "one\u2029two", "tab\tinside", "bell\u0007", "nul\u0000")) {
+            assertEquals(SkillImportValidator.SKILL_DESCRIPTION_CONTROL_CHARACTER,
+                    code(SkillImportValidator.validate(
+                            item("multi-line", dirty, "body",
+                                    ".agents/skills/multi-line/SKILL.md", List.of(), false), false)),
+                    dirty.replace("\n", "\\n").replace("\r", "\\r"));
+        }
+        assertTrue(SkillImportValidator.validate(
+                item("one-line", "Extract action items from a meeting transcript", "body",
+                        ".agents/skills/one-line/SKILL.md", List.of(), false), false).isEmpty());
+    }
+
     @Test
     void descriptionLengthIsCountedInCodePoints() {
         assertEquals(SkillImportValidator.SKILL_DESCRIPTION_TOO_LONG,
