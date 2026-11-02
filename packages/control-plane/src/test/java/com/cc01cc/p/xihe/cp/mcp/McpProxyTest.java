@@ -211,6 +211,7 @@ class McpProxyTest {
                 lineageInvocationService,
                 toolTimeoutService,
                 mock(com.cc01cc.p.xihe.cp.credentials.CredentialLeaseService.class),
+                mock(com.cc01cc.p.xihe.cp.skill.SkillReadService.class),
                 new com.cc01cc.p.xihe.cp.status.BuildVersion()
         );
         ReflectionTestUtils.setField(controller, "runtimeBaseUrl", "http://localhost:9091");

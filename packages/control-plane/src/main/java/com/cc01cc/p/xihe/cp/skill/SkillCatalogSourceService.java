@@ -195,6 +195,29 @@ public class SkillCatalogSourceService {
      * snapshot exists to prevent.</p>
      */
     public static ComponentView renderFromSnapshot(JsonNode snapshot, Request request) {
+        List<Item> items = itemsFromSnapshot(snapshot);
+        List<String> diagnostics = diagnosticsFromSnapshot(snapshot);
+        boolean includeDescriptions = request == null || request.includeDescriptions();
+        return view(new Listing(
+                snapshot.path("status").asText(STATUS_EMPTY),
+                items,
+                snapshot.path("truncated").asBoolean(false),
+                diagnostics,
+                snapshot.path("maxSkills").asInt(DEFAULT_MAX_SKILLS),
+                includeDescriptions,
+                diagnostics.contains(DIAG_COLLISION)));
+    }
+
+    /**
+     * PLAN-0628 M2b: the frozen entries <b>as data</b>, not as rendered lines.
+     *
+     * <p>{@code skill_read} needs the entry (id, version, hash) to decide whether the caller holds a
+     * read credential and whether the content moved; the rendered line has already dropped all of
+     * that. Extracted from {@link #renderFromSnapshot} so the two readers cannot drift apart — a
+     * second copy of this parsing loop is exactly how the listing and the reader would start
+     * disagreeing about what a snapshot says.</p>
+     */
+    public static List<Item> itemsFromSnapshot(JsonNode snapshot) {
         List<Item> items = new ArrayList<>();
         for (JsonNode item : snapshot.path("items")) {
             items.add(new Item(
@@ -209,21 +232,17 @@ public class SkillCatalogSourceService {
                     item.path("tier").path("scopeType").asText(""),
                     item.path("tier").path("definitionScopeType").asText("")));
         }
+        return List.copyOf(items);
+    }
+
+    private static List<String> diagnosticsFromSnapshot(JsonNode snapshot) {
         List<String> diagnostics = new ArrayList<>();
         for (JsonNode diagnostic : snapshot.path("diagnostics")) {
             if (diagnostic.isTextual()) {
                 diagnostics.add(diagnostic.asText());
             }
         }
-        boolean includeDescriptions = request == null || request.includeDescriptions();
-        return view(new Listing(
-                snapshot.path("status").asText(STATUS_EMPTY),
-                List.copyOf(items),
-                snapshot.path("truncated").asBoolean(false),
-                List.copyOf(diagnostics),
-                snapshot.path("maxSkills").asInt(DEFAULT_MAX_SKILLS),
-                includeDescriptions,
-                diagnostics.contains(DIAG_COLLISION)));
+        return List.copyOf(diagnostics);
     }
 
     /**

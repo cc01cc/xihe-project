@@ -186,6 +186,7 @@ public class McpProxyController {
     private final McpInvocationService mcpInvocationService;
     private final LineageInvocationService lineageInvocationService;
     private final CredentialLeaseService credentialLeaseService;
+    private final com.cc01cc.p.xihe.cp.skill.SkillReadService skillReadService;
     private final BuildVersion buildVersion;
 
     public McpProxyController(
@@ -207,6 +208,7 @@ public class McpProxyController {
             LineageInvocationService lineageInvocationService,
             McpToolTimeoutService toolTimeoutService,
             CredentialLeaseService credentialLeaseService,
+            com.cc01cc.p.xihe.cp.skill.SkillReadService skillReadService,
             BuildVersion buildVersion) {
         this.httpClient = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(10))
@@ -229,6 +231,7 @@ public class McpProxyController {
         this.lineageInvocationService = lineageInvocationService;
         this.toolTimeoutService = toolTimeoutService;
         this.credentialLeaseService = credentialLeaseService;
+        this.skillReadService = skillReadService;
         this.buildVersion = buildVersion;
     }
 
@@ -741,6 +744,16 @@ public class McpProxyController {
             serverId = CP_MCP_SERVER_ID;
         }
 
+        // PLAN-0628 M2b: the third CP-owned tool. Same shape as the two above — the route and its
+        // handler are one edit on purpose: a routable tool without a handler reports "broken tool",
+        // which is worse than a tool nobody can call (handoff-m2b §1).
+        if (SKILL_READ_TOOL.equals(toolName)) {
+            if (!access.internalService()) {
+                return problem(HttpStatus.FORBIDDEN, "FORBIDDEN", "This MCP tool is available only to Agent services");
+            }
+            serverId = CP_MCP_SERVER_ID;
+        }
+
         if (serverId == null) {
             if (refreshed != null && refreshed.failure() != null) {
                 DependencyFailure failure = refreshed.failure();
@@ -795,6 +808,7 @@ public class McpProxyController {
         }
         boolean cpOwnedSpawn = CP_MCP_SERVER_ID.equals(serverId) && SPAWN_AGENT_TOOL.equals(toolName);
         boolean cpOwnedAcquire = CP_MCP_SERVER_ID.equals(serverId) && ACQUIRE_CREDENTIAL_TOOL.equals(toolName);
+        boolean cpOwnedSkillRead = CP_MCP_SERVER_ID.equals(serverId) && SKILL_READ_TOOL.equals(toolName);
         ChatSubmissionService.SpawnInvocation spawnInvocation = null;
         if (cpOwnedSpawn) {
             try {
@@ -914,6 +928,14 @@ public class McpProxyController {
         if (cpOwnedSpawn) {
             return dispatchCpOwnedSpawn(body, headers, sessionId, access, spawnInvocation,
                     deferredApprovalGrantId, policySummary, lineageReservation);
+        }
+
+        if (cpOwnedSkillRead) {
+            // PLAN-0628 M2b: the gates above already evaluated the `read` face (and skipped the
+            // lineage reservation, which only applies to mutations) — the handler now resolves the
+            // Run's frozen listing and returns current content.
+            return dispatchCpOwnedSkillRead(body, headers, sessionId, access, policySummary,
+                    lineageReservation);
         }
 
         // PLAN-0308 M1（spec S1/S2）：预算由 CP 唯一计算并下发；出站头只由 CP 写入，
@@ -1163,6 +1185,107 @@ public class McpProxyController {
             throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_ARGUMENTS",
                     "Tool arguments must be valid JSON", e);
         }
+    }
+
+    /**
+     * PLAN-0628 M2b: CP-owned dispatch for {@code skill_read}.
+     *
+     * <p>The whole authorization decision is delegated: {@link com.cc01cc.p.xihe.cp.skill.SkillReadService}
+     * treats the Run's frozen {@code skills_snapshot} as the read credential (a Run may read exactly
+     * the skills it was admitted with) and then returns <b>current</b> content plus the difference
+     * between the two facts. Keeping the decision there rather than here is what stops the MCP tool
+     * and the public skill API from growing two different ideas of "visible".</p>
+     *
+     * <p><b>No {@code TenantContext} is fabricated anywhere in this path.</b> The MCP logical entry
+     * point has no HTTP request context (DEV-016), so {@code SkillAccessGuard}/{@code SkillLibraryService}
+     * are deliberately not used: they resolve the caller from {@code TenantContext}, and populating
+     * it here would be forging an authorization input. The legacy fallback instead calls the same
+     * scope resolution with explicit principal/user/workspace arguments — reuse through arguments,
+     * not through a faked request.</p>
+     */
+    private ResponseEntity<String> dispatchCpOwnedSkillRead(
+            String body, HttpHeaders headers, String sessionId, AccessContext access, String policySummary,
+            LineageInvocationService.Reservation lineageReservation) {
+        McpDispatch dispatch = startMcpDispatch(body, headers, sessionId, access, lineageReservation);
+        attachPolicySummary(dispatch, policySummary);
+        String responseBody;
+        try {
+            String runId = headers.getFirst("X-Chat-Run-Id");
+            if (runId == null || runId.isBlank()) {
+                throw new CpApiException(HttpStatus.BAD_REQUEST, "RUN_CONTEXT_REQUIRED",
+                        "skill_read requires a chat run context");
+            }
+            // D28-43: capture used the Session's Agent principal, so the legacy fallback (D28-40)
+            // must use the same identity — not the responder's, and not TenantContext's.
+            String principalId = sessionService.requireCurrent(
+                    access.applicationSessionId(), access.userId(), access.workspaceId())
+                    .getAgentPrincipalId();
+            com.cc01cc.p.xihe.cp.skill.SkillReadService.Result read = skillReadService.read(
+                    new com.cc01cc.p.xihe.cp.skill.SkillReadService.Query(
+                            UUID.fromString(runId), access.applicationSessionId(),
+                            uuidOrNull(principalId), extractSkillArgument(body)));
+            responseBody = cpToolResult(body, read.toMap(), null);
+            // Identifiers and a version only — the body never enters the audit stream.
+            audit.record(sessionId, SKILL_READ_TOOL, "allow",
+                    "skillId=" + read.skillId() + " version=" + read.version()
+                            + " snapshotAbsent=" + read.snapshotAbsent());
+        } catch (CpApiException e) {
+            responseBody = cpSkillReadErrorResult(body, e);
+            audit.record(sessionId, SKILL_READ_TOOL, "tool_error", e.getCode());
+        } catch (RuntimeException e) {
+            logger.error("[LIFECYCLE] service=cp event=skill_read_dispatch_failed sessionId={} failureType={}",
+                    sessionId, e.getClass().getSimpleName(), e);
+            audit.record(sessionId, SKILL_READ_TOOL, "tool_error", "SKILL_READ_FAILED");
+            responseBody = cpSkillReadErrorResult(body, new CpApiException(
+                    HttpStatus.INTERNAL_SERVER_ERROR, "SKILL_READ_FAILED",
+                    "skill_read could not complete; retry or report to the administrator"));
+        }
+        finishMcpDispatchAttempt(dispatch, 200, null, responseBody);
+        return mcpJsonResponse(responseBody);
+    }
+
+    /** PLAN-0628 M2b: {@code params.arguments.skill} must be a non-blank id or qualified name. */
+    private String extractSkillArgument(String body) {
+        try {
+            JsonNode root = objectMapper.readTree(body);
+            JsonNode skill = root.path("params").path("arguments").path("skill");
+            if (!skill.isTextual() || skill.textValue().isBlank()) {
+                throw new CpApiException(HttpStatus.BAD_REQUEST,
+                        com.cc01cc.p.xihe.cp.skill.SkillReadService.INVALID_ARGUMENTS,
+                        "skill_read requires a skill argument (uuid or qualified name)");
+            }
+            return skill.textValue().trim();
+        } catch (JsonProcessingException e) {
+            throw new CpApiException(HttpStatus.BAD_REQUEST,
+                    com.cc01cc.p.xihe.cp.skill.SkillReadService.INVALID_ARGUMENTS,
+                    "Tool arguments must be valid JSON", e);
+        }
+    }
+
+    /**
+     * PLAN-0628 M2b: the tool-error envelope for {@code skill_read}.
+     *
+     * <p>Deliberately richer than {@link #cpToolResult}'s {@code "Tool error: <code>"}: the three
+     * absence paths (invisible / not bound to this Run / nonexistent) must be <b>byte-identical</b>,
+     * and {@code code} alone is not enough — a differing {@code detail} would re-open the existence
+     * oracle the shared code closed (design §2.5, Lead 2026-11-03). Carrying code, detail and the
+     * model-visible text in one shape makes that identity something a test can actually assert.</p>
+     */
+    private String cpSkillReadErrorResult(String requestBody, CpApiException failure) {
+        ObjectNode response = objectMapper.createObjectNode();
+        response.put("jsonrpc", "2.0");
+        response.set("id", objectMapper.valueToTree(readJsonRpcId(requestBody)));
+        ObjectNode result = response.putObject("result");
+        result.put("resultType", "complete");
+        result.put("isError", true);
+        ObjectNode structured = result.putObject("structuredContent");
+        structured.put("code", failure.getCode());
+        structured.put("detail", failure.getMessage());
+        structured.put("status", failure.getStatus().value());
+        ObjectNode text = result.putArray("content").addObject();
+        text.put("type", "text");
+        text.put("text", failure.getMessage());
+        return response.toString();
     }
 
     private String cpToolResult(String requestBody, Map<String, Object> output, String errorCode) {
