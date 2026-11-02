@@ -1,6 +1,7 @@
 import { test, expect } from "@playwright/test";
 import type { Page } from "@playwright/test";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
+import { openContextPanel } from "../helpers/context-panel";
 import path from "node:path";
 import fs from "node:fs";
 
@@ -153,16 +154,20 @@ test.describe("Context templates (PLAN-0414)", () => {
             await openChat.click();
         }
 
-        // PLAN-0582 S4: collapsed by default. The unbound state is a risk badge in
-        // the summary row; the selector itself only exists in the expanded panel.
+        // PLAN-0582 S4 / PLAN-0626 M2: collapsed by default. The unbound state is a
+        // risk badge in the summary row; the selector itself now lives in the dock
+        // `context` tab, which the summary row opens (desktop entry, not an accordion).
         const settingsSummary = page.getByTestId("session-settings-summary");
-        await expect(page.getByTestId("session-settings-risk-template")).toContainText(
+        await expect(settingsSummary.getByTestId("session-settings-risk-template")).toContainText(
             "模板未绑定",
         );
         await expect(page.getByTestId("session-settings-expanded")).toBeHidden();
         await shoot(page, "04-chat-binding-default.png");
 
-        await settingsSummary.click();
+        // The helper asserts the panel is visible before returning, so the old
+        // "click the summary then hope the accordion collapsed/expanded in time"
+        // sequence is gone (no fixed waits).
+        await openContextPanel(page);
         const select = page.getByTestId("session-context-template-select");
         await expect(select).toBeVisible();
 

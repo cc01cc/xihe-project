@@ -1,6 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { test, expect, type Page } from "@playwright/test";
+import { openContextPanel } from "../helpers/context-panel";
 import {
     CP_URL,
     awaitOperationCompletedForRun,
@@ -18,16 +19,19 @@ import { bindToolCapableChat } from "./helpers/tool-capable-chat";
 test.describe.configure({ mode: "serial", retries: 0, timeout: 90000 });
 
 /**
- * The branch selector lives inside the collapsible Session settings panel
- * (`session-settings-summary` toggles `aria-expanded`). It is collapsed by
- * default, and `selectOption` requires a visible element, so expand it first.
+ * PLAN-0626 M2: the branch selector moved out of the chat column's accordion into
+ * the dock `context` tab (`SessionContextPanel`). On desktop the summary row is only
+ * the entry point — it emits `open-context-panel` — so the panel has to be opened
+ * explicitly; `selectOption` then sees a visible element. `openContextPanel` works
+ * in both dock modes (pinned ≥1800 / floating below) and asserts visibility before
+ * returning, which replaces the previous "click summary, then check aria-expanded".
+ *
+ * Mobile has no dock: the summary row still expands in place inside the chat sheet,
+ * handled inline further down (see `mobileChatSheet`), which is why this helper is
+ * desktop-only.
  */
 async function expandSessionSettings(page: Page): Promise<void> {
-    const summary = page.getByTestId("session-settings-summary");
-    await summary.waitFor({ state: "visible", timeout: 15000 });
-    if ((await summary.getAttribute("aria-expanded")) !== "true") {
-        await summary.click();
-    }
+    await openContextPanel(page);
     await expect(page.getByTestId("session-branch-select")).toBeVisible({ timeout: 15000 });
 }
 

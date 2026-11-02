@@ -1,5 +1,6 @@
 import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
 import { generateE2EPassword } from "./helpers/password";
+import { openContextPanel } from "../helpers/context-panel";
 import { ensureWorkspace } from "./helpers/workspace";
 import {
     createSessionWithPrincipal,
@@ -188,6 +189,9 @@ test("@host PLAN-0337 Session approval mode is persisted and reflected by the ch
 
     await page.goto(`/workspace/${auth.workspaceId}/chat/${sessionId}`, { waitUntil: "load" });
     await expect(page.locator('[data-testid="chat-input"]')).toBeVisible({ timeout: 15000 });
+    // PLAN-0626 M2：模式选择器迁进右侧 dock 的 `context` 标签，聊天列摘要行只是入口；
+    // 帮助器返回时面板已可见，不再需要点完再等。
+    await openContextPanel(page);
     // 模式控件是 <select>：断言选中值（文本是各选项标签拼接，不能整段比对）。
     await expect(page.getByTestId("session-policy-mode")).toHaveValue("auto");
     await expect(page.getByTestId("session-policy-auto-banner")).toBeVisible();
@@ -204,6 +208,7 @@ test("@host PLAN-0337 Session approval mode is persisted and reflected by the ch
 
     await page.reload({ waitUntil: "load" });
     await expect(page.locator('[data-testid="chat-input"]')).toBeVisible({ timeout: 15000 });
+    await openContextPanel(page);
     await expect(page.getByTestId("session-policy-mode")).toHaveValue("manual");
     await expect(page.getByTestId("session-policy-auto-banner")).toHaveCount(0);
 

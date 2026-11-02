@@ -13,6 +13,7 @@ import {
     createWorkspaceSessionWithPrincipal,
     provisionWorkspaceAgentPrincipal,
 } from "./helpers/agent-principal";
+import { openContextPanel } from "../helpers/context-panel";
 
 const RUNTIME_URL = `http://localhost:${process.env.XIHE_RUNTIME_PORT || "12633"}`;
 const SERVICE_TOKEN = process.env.XIHE_CP_API_TOKEN ?? "dev-token-not-secure";
@@ -73,6 +74,9 @@ test.describe("@host PLAN-0340 U1/U2 context sources", () => {
         // First run: refresh runs before Agent dispatch → U2 toast for created AGENTS.
         await sendChat(page, "Hello for plan-0340 context sources U1.");
 
+        // PLAN-0626 M2: `ContextSourcesU1` moved into the dock `context` tab, so the
+        // U1 toggle only exists once the panel is open (summary row = entry point).
+        await openContextPanel(page);
         const toggle = page.locator('[data-testid="u1-toggle"]');
         await expect(toggle, "U1 toggle visible").toBeVisible({ timeout: 15000 });
         await page.screenshot({
