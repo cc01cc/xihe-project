@@ -5,7 +5,18 @@ import { seedUserGrantPermissions, standardWorkspaceUserPermissions } from "./us
 
 type AgentAuth = { accessToken: string; workspaceId: string };
 type ToolAction = "read" | "write";
-type PrincipalOptions = { name: string; actions?: ToolAction[]; systemPrompt?: string };
+type PrincipalOptions = {
+    name: string;
+    actions?: ToolAction[];
+    systemPrompt?: string;
+    /**
+     * PLAN-0623：模型意图。**可选** —— 不传时请求体与改动前完全一致（既有 24 个调用点
+     * 行为不变）。参与者视图的 `defaultModelProvider/Name` 直接取自 principal，所以需要
+     * "AGENT 行有模型段"的场景必须显式给值；不给值时 UI 会（正确地）不渲染模型段。
+     */
+    defaultModelProvider?: string;
+    defaultModelName?: string;
+};
 type SessionOptions = { principalId: string; title: string };
 
 const DEFAULT_SYSTEM_PROMPT = "Use only the Workspace tools provided by CP.";
@@ -38,7 +49,13 @@ export function isSessionCreateRequest(url: string, method: string): boolean {
 export async function provisionWorkspaceAgentPrincipal(
     request: APIRequestContext,
     auth: AgentAuth,
-    { name, actions = ["read"], systemPrompt = DEFAULT_SYSTEM_PROMPT }: PrincipalOptions,
+    {
+        name,
+        actions = ["read"],
+        systemPrompt = DEFAULT_SYSTEM_PROMPT,
+        defaultModelProvider,
+        defaultModelName,
+    }: PrincipalOptions,
 ): Promise<string> {
     const headers = {
         Authorization: `Bearer ${auth.accessToken}`,
@@ -86,7 +103,14 @@ export async function provisionWorkspaceAgentPrincipal(
 
     const created = await request.post(`${CP_URL}/api/v1/agent-principals`, {
         headers,
-        data: { name, templateId, scope: "WORKSPACE" },
+        data: {
+            name,
+            templateId,
+            scope: "WORKSPACE",
+            // 只在调用方显式给了模型意图时才带上这两个键（不传 ⇒ 体与旧行为一致）。
+            ...(defaultModelProvider ? { defaultModelProvider } : {}),
+            ...(defaultModelName ? { defaultModelName } : {}),
+        },
     });
     expect(created.status(), await created.text()).toBe(201);
     const { principalId } = (await created.json()) as { principalId: string };

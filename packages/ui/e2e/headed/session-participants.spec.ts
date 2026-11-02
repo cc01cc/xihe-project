@@ -387,10 +387,18 @@ test.describe("PLAN-0623 有头走查：会话参与者 dock tab", () => {
         const token = await tokenOf(page);
 
         // 专属工作区里现建 agent principal（S1 只验证 dock tab 与无会话空态）。
+        // 模型意图必须**显式给**：参与者视图的 defaultModelProvider/Name 直接取自 principal，
+        // 不给值 ⇒ UI 正确地不渲染模型段（那是"不伪造"语义，不是缺陷）。
+        // 取值与 helper 的模板一致（provider=openai / model=fake-openai），本栈的 mock LLM 就认这对。
         agentParticipantId = await provisionWorkspaceAgentPrincipal(
             request,
             { accessToken: token, workspaceId },
-            { name: `Headed Participants ${randomUUID().slice(0, 8)}`, actions: ["read"] },
+            {
+                name: `Headed Participants ${randomUUID().slice(0, 8)}`,
+                actions: ["read"],
+                defaultModelProvider: "openai",
+                defaultModelName: "fake-openai",
+            },
         );
 
         // 建会话**必须带工作区上下文**：本 spec 自建了工作区 ⇒ 账号变多工作区 ⇒ 无上下文的
@@ -506,9 +514,11 @@ test.describe("PLAN-0623 有头走查：会话参与者 dock tab", () => {
         await expect(
             agentRow.getByTestId(`participant-source-badge-${agent!.participantId}`),
         ).toBeVisible();
-        await expect(
-            agentRow.getByTestId(`participant-model-${agent!.participantId}`),
-        ).toContainText("/");
+        // 有值时**必须**渲染，且文本是"provider / model"（ParticipantRow.vue 的 modelIntent）：
+        // 这条同时证明 ① 模型意图能存 ② 经 participants 视图传到 UI ③ 格式正确。
+        await expect(agentRow.getByTestId(`participant-model-${agent!.participantId}`)).toHaveText(
+            /openai\s*\/\s*fake-openai/,
+        );
         expect(
             await humanRow.getByTestId(`participant-model-${humanParticipantId}`).count(),
             "a HUMAN participant has no model intent",
