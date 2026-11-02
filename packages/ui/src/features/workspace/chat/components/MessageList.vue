@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { ref, computed, nextTick, watch } from "vue";
 import type { Message } from "../../../../types";
+import type { SessionParticipantView } from "../../../../types/participant";
+import { useSessionParticipantsStore } from "../../stores/sessionParticipants";
 import MessageItem from "./MessageItem.vue";
 import MessageSearch from "./MessageSearch.vue";
 import { Search } from "@lucide/vue";
@@ -18,6 +20,23 @@ const props = defineProps<{
     messages: Message[];
     branchBusy?: boolean;
 }>();
+
+/**
+ * PLAN-0631 D31-08/09: the message identity row is driven by the **server** attribution
+ * (`Message.participantId`, stamped from the SSE envelope), resolved against the session's
+ * participant roster that the composer already loads (`ensureLoaded`). A message without
+ * attribution resolves to `undefined` and renders **no** identity row — the rosters is the
+ * only lookup, PRIMARY is never assumed.
+ */
+const participantsStore = useSessionParticipantsStore();
+const responderById = computed(() => {
+    const byId = new Map<string, SessionParticipantView>();
+    for (const row of participantsStore.participants ?? []) byId.set(row.participantId, row);
+    return byId;
+});
+function responderFor(message: Message): SessionParticipantView | undefined {
+    return message.participantId ? responderById.value.get(message.participantId) : undefined;
+}
 
 const emit = defineEmits<{
     approve: [id: string];
@@ -100,6 +119,7 @@ const entries = computed(() => {
                             >
                                 <MessageItem
                                     :message="entry.msg"
+                                    :responder="responderFor(entry.msg)"
                                     :is-streaming="entry.msg.isStreaming"
                                     :branch-busy="branchBusy"
                                     @approve="emit('approve', $event)"

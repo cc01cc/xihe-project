@@ -26,13 +26,32 @@ export interface RunRecovery {
     message: string;
 }
 
+/**
+ * PLAN-0631 D31-04: a run CP **parked** instead of dispatching.
+ *
+ * CP answers `202 {status:"queued", reason:"agent_down"}` when the Agent is down
+ * but the LLM was ready; the Run is queued for transport recovery and **nothing
+ * is executing**. Before this, the UI unconditionally entered "thinking", so the
+ * user watched a spinner forever. This is a local view of a real wire fact — the
+ * CP keeps deciding when it actually starts.
+ */
+export interface RunQueuedInfo {
+    runId?: string;
+    /** CP `ChatRunResponse.reason` (only `agent_down` today); absent = unknown. */
+    reason?: string;
+}
+
 export const useChatStore = defineStore("chat", () => {
     // Messages are not business data we should resurrect from localStorage.
     // The server is the canonical source via /api/v1/sessions/{id}/messages,
     // and the session store + chat store are cleared on user switch / logout.
     const messages = ref<Record<string, Message[]>>({}),
         streamingMessageId = ref<Record<string, string | null>>({}),
-        sessionRunStates = ref<Record<string, ChatSessionRunState>>({});
+        sessionRunStates = ref<Record<string, ChatSessionRunState>>({}),
+        // PLAN-0631 D31-04: parked (queued) runs are a separate view: they are not
+        // "thinking" and they own no streaming message. Cleared as soon as the run
+        // actually starts, terminates, or the session is detached/reset.
+        sessionRunQueued = ref<Record<string, RunQueuedInfo>>({});
     // PLAN-0343: last run-terminal usage snapshot per session (CP relays the
     // mapped usage event once per run). Not persisted across reloads — the
     // llm.usage ContextEvent is durable; the header line is live-run visibility.
@@ -105,6 +124,22 @@ export const useChatStore = defineStore("chat", () => {
         return sessionRunStates.value[sessionId] ?? { status: "idle" };
     }
 
+    /**
+     * PLAN-0631 D31-04: the parked-run view. `null` = CP never told us this run is
+     * queued (also the state after the run starts or ends) — never inferred.
+     */
+    function getRunQueued(sessionId: string): RunQueuedInfo | null {
+        return sessionRunQueued.value[sessionId] ?? null;
+    }
+
+    function setRunQueued(sessionId: string, info: RunQueuedInfo) {
+        sessionRunQueued.value[sessionId] = { ...info };
+    }
+
+    function clearRunQueued(sessionId: string) {
+        delete sessionRunQueued.value[sessionId];
+    }
+
     function getSessionLastUsage(sessionId: string): ChatRunUsage | null {
         return sessionLastUsage.value[sessionId] ?? null;
     }
@@ -166,6 +201,8 @@ export const useChatStore = defineStore("chat", () => {
         }
         streamingMessageId.value[sessionId] = null;
         delete sessionRunStates.value[sessionId];
+        clearRunQueued(sessionId);
+        removeRunStatusMarker(sessionId);
     }
 
     function deleteMessage(sessionId: string, messageId: string) {
@@ -182,10 +219,75 @@ export const useChatStore = defineStore("chat", () => {
         });
     }
 
+    /** A status marker is the client-only "…is running" line; `interrupted` is a semantic entry. */
+    function isStatusMarker(message: Message): boolean {
+        return message.marker === "status" && message.status !== "interrupted";
+    }
+
+    /**
+     * PLAN-0631 D31-07: the live status line is a **singleton per run**.
+     *
+     * SSE `status` events fire on every thinking/executing transition. Pushing a
+     * new client-only marker each time left a trail of "Thinking.../Executing
+     * task..." rows in the transcript (one run could leave a dozen). Update the
+     * run's single marker in place instead; `removeRunStatusMarker` drops it at the
+     * terminal transition, because a finished run is not a status.
+     *
+     * Never touches the `interrupted` marker (that one is history the user needs).
+     */
+    function upsertRunStatusMarker(sessionId: string, status: string, runId?: string) {
+        const list = messages.value[sessionId] ?? [];
+        const existing = [...list]
+            .reverse()
+            .find(
+                (message) =>
+                    isStatusMarker(message) &&
+                    (runId === undefined || message.runId === undefined || message.runId === runId),
+            );
+        if (existing) {
+            existing.status = status;
+            if (existing.runId === undefined && runId !== undefined) existing.runId = runId;
+            return;
+        }
+        addMarker(sessionId, {
+            role: "system",
+            content: status,
+            timestamp: new Date().toISOString(),
+            marker: "status",
+            status,
+            ...(runId !== undefined ? { runId } : {}),
+        });
+    }
+
+    function removeRunStatusMarker(sessionId: string, runId?: string) {
+        const list = messages.value[sessionId];
+        if (!list) return;
+        const kept = list.filter(
+            (message) =>
+                !(
+                    isStatusMarker(message) &&
+                    (runId === undefined || message.runId === undefined || message.runId === runId)
+                ),
+        );
+        if (kept.length !== list.length) messages.value[sessionId] = kept;
+    }
+
     function findStreamingMessage(sessionId: string): Message | undefined {
         const messageId = streamingMessageId.value[sessionId];
         if (!messageId) return undefined;
         return messages.value[sessionId]?.find((msg) => msg.id === messageId);
+    }
+
+    /**
+     * PLAN-0631 D31-08: stamp the **live** assistant message with the responder CP
+     * attributed through the SSE envelope (`participantId`). The value is constant per
+     * run, so the first known one wins; a null/absent attribution is left alone — no
+     * PRIMARY back-fill (DEV-032) and no client-side guessing.
+     */
+    function setStreamingMessageResponder(sessionId: string, participantId: string | null) {
+        if (participantId === null) return;
+        const message = findStreamingMessage(sessionId);
+        if (message && message.participantId === undefined) message.participantId = participantId;
     }
 
     function messageHasRenderableContent(message: Message): boolean {
@@ -197,6 +299,8 @@ export const useChatStore = defineStore("chat", () => {
     }
 
     function createStreamingMessage(sessionId: string, runId?: string, branchId?: string): string {
+        // PLAN-0631 D31-04: the run actually started — the parked view must go.
+        clearRunQueued(sessionId);
         // Tool-first runs create the live assistant message from `upsertToolCall`
         // before any token arrives; reuse it instead of spawning a second bubble.
         const existing = findStreamingMessage(sessionId);
@@ -320,6 +424,8 @@ export const useChatStore = defineStore("chat", () => {
         const messageId = streamingMessageId.value[sessionId];
         if (!messageId) {
             setSessionRunState(sessionId, "idle");
+            clearRunQueued(sessionId);
+            removeRunStatusMarker(sessionId);
             return;
         }
 
@@ -338,6 +444,9 @@ export const useChatStore = defineStore("chat", () => {
 
         streamingMessageId.value[sessionId] = null;
         setSessionRunState(sessionId, "idle");
+        // PLAN-0631 D31-04/07: terminal — no parked view, no live status line.
+        clearRunQueued(sessionId);
+        removeRunStatusMarker(sessionId);
     }
 
     function cancelStreaming(sessionId: string, runId: string) {
@@ -368,6 +477,11 @@ export const useChatStore = defineStore("chat", () => {
         }
         streamingMessageId.value[sessionId] = null;
         setSessionRunState(sessionId, "idle");
+        // PLAN-0631 D31-04/07: the run is no longer active from the view's side.
+        clearRunQueued(sessionId);
+        // The `interrupted` marker added just above is semantic history and survives
+        // `removeRunStatusMarker` (it only removes live "…is running" lines).
+        removeRunStatusMarker(sessionId);
     }
 
     /**
@@ -457,6 +571,10 @@ export const useChatStore = defineStore("chat", () => {
                 });
                 setSessionRunState(sessionId, "error", error.runId);
             }
+            // PLAN-0631 D31-04/07: the run is over; drop the parked view and the
+            // live status line (the error box is the terminal surface).
+            clearRunQueued(sessionId);
+            removeRunStatusMarker(sessionId);
             return;
         }
 
@@ -482,6 +600,8 @@ export const useChatStore = defineStore("chat", () => {
                 );
                 streamingMessageId.value[sessionId] = null;
                 setSessionRunState(sessionId, "idle");
+                clearRunQueued(sessionId);
+                removeRunStatusMarker(sessionId);
                 if (error.runId) void refreshRunRecovery(sessionId, error.runId);
                 return;
             }
@@ -507,6 +627,8 @@ export const useChatStore = defineStore("chat", () => {
 
         streamingMessageId.value[sessionId] = null;
         setSessionRunState(sessionId, "idle");
+        clearRunQueued(sessionId);
+        removeRunStatusMarker(sessionId);
         if (error.runId) void refreshRunRecovery(sessionId, error.runId);
     }
 
@@ -525,6 +647,9 @@ export const useChatStore = defineStore("chat", () => {
         try {
             const res = await api.getChatRunStatus(runId);
             if (!isCurrent() || res.sessionId !== sessionId || res.runId !== runId) return;
+            // PLAN-0631 D31-04: CP status is authoritative. The local parked view
+            // only survives while CP still says `queued`; any other reading clears it.
+            if (res.status !== "queued") clearRunQueued(sessionId);
             const agentStore = useAgentStore();
             if (
                 res.status === "awaiting_approval" ||
@@ -654,6 +779,7 @@ export const useChatStore = defineStore("chat", () => {
         clearSessionBranches(sessionId);
         delete streamingMessageId.value[sessionId];
         delete sessionRunStates.value[sessionId];
+        delete sessionRunQueued.value[sessionId];
         delete runRecovery.value[sessionId];
         recoveryGenerations.delete(sessionId);
         recoveryRunIds.delete(sessionId);
@@ -680,6 +806,7 @@ export const useChatStore = defineStore("chat", () => {
         branchLoadPromises.clear();
         streamingMessageId.value = {};
         sessionRunStates.value = {};
+        sessionRunQueued.value = {};
         sessionLastUsage.value = {};
         runRecovery.value = {};
         recoveryGeneration += 1;
@@ -697,6 +824,7 @@ export const useChatStore = defineStore("chat", () => {
         branchLoadPromises.clear();
         streamingMessageId.value = {};
         sessionRunStates.value = {};
+        sessionRunQueued.value = {};
         sessionLastUsage.value = {};
         runRecovery.value = {};
         recoveryGeneration += 1;
@@ -708,6 +836,7 @@ export const useChatStore = defineStore("chat", () => {
         messages,
         streamingMessageId,
         sessionRunStates,
+        sessionRunQueued,
         runRecovery,
         getMessages,
         getSessionBranches,
@@ -720,6 +849,9 @@ export const useChatStore = defineStore("chat", () => {
         getSessionRunState,
         getSessionRunId,
         setSessionRunState,
+        getRunQueued,
+        setRunQueued,
+        clearRunQueued,
         getSessionLastUsage,
         setSessionLastUsage,
         isStreaming,
@@ -728,6 +860,9 @@ export const useChatStore = defineStore("chat", () => {
         detachLiveSession,
         deleteMessage,
         addMarker,
+        upsertRunStatusMarker,
+        removeRunStatusMarker,
+        setStreamingMessageResponder,
         createStreamingMessage,
         upsertToolCall,
         appendToParts,

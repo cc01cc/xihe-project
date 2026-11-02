@@ -2,6 +2,8 @@
 import { computed, onUnmounted } from "vue";
 import { useI18n } from "vue-i18n";
 import type { AttachmentFile, Message } from "../../../../types";
+import type { SessionParticipantRole, SessionParticipantView } from "../../../../types/participant";
+import { participantDisplayName, participantInitials } from "../../components/participantInitials";
 import TextPart from "./parts/TextPart.vue";
 import ReasoningPart from "./parts/ReasoningPart.vue";
 import ArtifactPart from "./parts/ArtifactPart.vue";
@@ -20,14 +22,35 @@ import {
     AttachmentTitle,
 } from "@/components/ui/attachment";
 import { Bubble, BubbleContent } from "@/components/ui/bubble";
-import { Download, Brain, LoaderCircle, Clock, Bot, User, Trash2, GitBranch } from "@lucide/vue";
-import { Message as MessageRoot, MessageAvatar, MessageContent } from "@/components/ui/message";
+import {
+    Download,
+    Brain,
+    LoaderCircle,
+    Clock,
+    Bot,
+    User,
+    Trash2,
+    GitBranch,
+    Shield,
+} from "@lucide/vue";
+import {
+    Message as MessageRoot,
+    MessageAvatar,
+    MessageContent,
+    MessageHeader,
+} from "@/components/ui/message";
 import { Marker, MarkerIcon, MarkerContent } from "@/components/ui/marker";
 
 const props = defineProps<{
     message: Message;
     isStreaming?: boolean;
     branchBusy?: boolean;
+    /**
+     * PLAN-0631 D31-09: the session participant CP attributed this message to, resolved by
+     * the list from the roster. `undefined` = no attribution (history has none, BL-197)
+     * and then **no** identity row is rendered — PRIMARY is never assumed.
+     */
+    responder?: SessionParticipantView;
 }>();
 const { t } = useI18n();
 
@@ -44,13 +67,47 @@ const isUser = computed(() => props.message.role === "user");
 const isSystem = computed(() => props.message.role === "system");
 const isMarker = computed(() => props.message.marker !== undefined);
 
+/**
+ * PLAN-0631 D31-09: alignment follows **ownership**, not `role`.
+ *
+ * A `speakAs` message is `role=user` but was not written by the caller, so it must not sit
+ * on the right pretending to be "me". Ownership comes from the roster: a HUMAN row with
+ * `selfOwned` is the caller (`types/participant.ts:44-49`); every other responder — other
+ * humans and all agents — renders on the left with an identity row.
+ */
+const isOwnMessage = computed(() => {
+    const responder = props.responder;
+    if (responder) return responder.principalKind === "HUMAN" && responder.selfOwned === true;
+    return isUser.value;
+});
+const showResponder = computed(() => Boolean(props.responder) && !isOwnMessage.value);
+const responderName = computed(() =>
+    props.responder
+        ? participantDisplayName(props.responder.displayName, t("workspace.participantUnknownName"))
+        : "",
+);
+const responderInitials = computed(() =>
+    props.responder
+        ? participantInitials(props.responder.displayName, t("workspace.participantUnknownName"))
+        : "",
+);
+
+const ROLE_KEYS: Record<SessionParticipantRole, string> = {
+    PRIMARY: "workspace.participantRolePrimary",
+    MEMBER: "workspace.participantRoleMember",
+    GUARD: "workspace.participantRoleGuard",
+};
+const responderRoleLabel = computed(() =>
+    props.responder ? t(ROLE_KEYS[props.responder.role]) : "",
+);
+
 const timestamp = computed(() => {
     const d = new Date(props.message.timestamp);
     return d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
 });
 
 const bubbleVariant = computed(() => {
-    if (isUser.value) {
+    if (isOwnMessage.value) {
         return "default";
     }
     if (isSystem.value) {
@@ -77,6 +134,27 @@ const statusIcon = computed(() => {
             return Clock;
     }
 });
+
+/**
+ * PLAN-0631 D31-07: the live status line is user-visible copy, so it must come from
+ * i18n. It was hardcoded English ("Thinking..."/"Executing task...") while
+ * `chat.thinking` already existed in both locales; `executing` reuses the existing
+ * `chat.toolStatus.running` wording instead of inventing a fourth synonym.
+ */
+const markerLabel = computed(() =>
+    props.message.status === "executing" ? t("chat.toolStatus.running") : t("chat.thinking"),
+);
+
+/**
+ * PLAN-0631 D31-12: `isStreaming` alone must not create a Bubble.
+ *
+ * A tool-first run receives `tool_call` before any token, so the live assistant
+ * message had no content yet and rendered an **empty bubble** above the tool card.
+ * The live status line already covers the "nothing yet" window.
+ */
+const hasBubbleContent = computed(
+    () => Boolean(props.message.content) || Boolean(props.message.parts?.length),
+);
 
 function isImage(type: string) {
     return type.startsWith("image/");
@@ -105,7 +183,16 @@ function handleDelete() {
 }
 
 const canDelete = computed(() => !isMarker.value && props.message.role !== "system");
-const canRetry = computed(() => Boolean(props.message.error && props.message.retryable));
+/**
+ * PLAN-0631 D31-05: an `ambiguous` terminal must never offer a direct retry — the provider
+ * may have applied the work, so re-running would duplicate side effects
+ * (`spec/ui/interaction-model.md:57`). The guard is unconditional on purpose: a future wire
+ * that sets `retryable:true` on an ambiguous outcome must not re-open the button.
+ */
+const canRetry = computed(() => {
+    if (props.message.terminalOutcome === "ambiguous") return false;
+    return Boolean(props.message.error && props.message.retryable);
+});
 const canCreateBranch = computed(
     () =>
         (props.message.role === "user" || props.message.role === "assistant") &&
@@ -184,30 +271,61 @@ onUnmounted(() => {
             <component :is="statusIcon" class="size-4" />
         </MarkerIcon>
         <MarkerContent>
-            {{ message.status === "executing" ? "Executing task..." : "Thinking..." }}
+            {{ markerLabel }}
         </MarkerContent>
     </Marker>
 
     <MessageRoot
         v-else
-        :align="isUser ? 'end' : 'start'"
+        :align="isOwnMessage ? 'end' : 'start'"
         class="px-3 py-1.5"
         data-testid="message-item"
         :data-message-role="message.role"
     >
-        <MessageAvatar v-if="!isUser">
-            <div class="flex size-8 items-center justify-center rounded-full bg-primary/10">
+        <MessageAvatar v-if="!isOwnMessage">
+            <!-- PLAN-0631 D31-10: initials identify the responder; no per-participant color. -->
+            <div
+                v-if="showResponder"
+                class="flex size-8 items-center justify-center rounded-full border bg-muted text-[11px] font-medium text-foreground"
+                data-testid="message-responder-initials"
+                aria-hidden="true"
+            >
+                {{ responderInitials }}
+            </div>
+            <div v-else class="flex size-8 items-center justify-center rounded-full bg-primary/10">
                 <Bot class="size-4 text-primary" />
             </div>
         </MessageAvatar>
 
-        <MessageAvatar v-if="isUser">
+        <MessageAvatar v-if="isOwnMessage">
             <div class="flex size-8 items-center justify-center rounded-full bg-secondary">
                 <User class="size-4 text-secondary-foreground" />
             </div>
         </MessageAvatar>
 
         <MessageContent class="max-w-[85%] min-w-0 md:max-w-[75%]">
+            <!--
+                PLAN-0631 D31-09: identity row, reusing the shipped-but-unused MessageHeader.
+                Only rendered for a **server-attributed** responder that is not the caller;
+                no attribution ⇒ nothing (never PRIMARY).
+            -->
+            <MessageHeader
+                v-if="showResponder"
+                class="mb-1 gap-1.5 px-0.5"
+                data-testid="message-responder"
+                :data-participant-id="responder?.participantId"
+            >
+                <span class="truncate text-foreground">{{ responderName }}</span>
+                <span
+                    class="flex shrink-0 items-center gap-1 rounded border border-border px-1.5 py-0.5 text-[10px] font-normal text-muted-foreground"
+                    data-testid="message-responder-role"
+                    :data-session-role="responder?.role"
+                >
+                    <!-- Same discipline as ParticipantRow (D25): GUARD differs by icon, not color. -->
+                    <Shield v-if="responder?.role === 'GUARD'" class="size-3" aria-hidden="true" />
+                    {{ responderRoleLabel }}
+                </span>
+            </MessageHeader>
             <AttachmentGroup v-if="message.attachments?.length">
                 <Attachment
                     v-for="attachment in message.attachments"
@@ -239,7 +357,7 @@ onUnmounted(() => {
                 </Attachment>
             </AttachmentGroup>
 
-            <Bubble v-if="message.content || isStreaming || message.parts" :variant="bubbleVariant">
+            <Bubble v-if="hasBubbleContent" :variant="bubbleVariant">
                 <BubbleContent>
                     <template v-if="message.parts && message.parts.length > 0">
                         <template v-for="(part, idx) in message.parts" :key="idx">
