@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import JSONResponse
 from loguru import logger
 
-from xihe_agent import app_state
+from xihe_agent import app_state, config_state
 from xihe_agent.api.shared import problem_details, verify_api_token
 from xihe_agent.app_state import (
     CP_URL,
@@ -255,11 +255,20 @@ async def health():
     tool_count = len(registry.aggregate_tool_names())
     from xihe_agent.app_state import _agent_status, _instance_id, _llm_ready, _runtime_config_revision
 
+    # PLAN-0632 D32-27 Step 2: config readiness is its own state, not "the process is up".
+    # `pending`/`loading`/`failed` all mean the same thing for callers: config is not usable yet,
+    # and chat fails closed with CONFIG_UNAVAILABLE. Reading it here must never trigger a load —
+    # a probe doing work would hide exactly the failure this field exists to expose.
+    config_state_view = config_state.snapshot()
+
     return {
         "status": _agent_status,
         "liveness": "up" if _agent_status != "starting" else "starting",
         "instanceId": _instance_id,
         "llmReady": _llm_ready,
+        "configState": config_state_view["state"],
+        "configStateError": config_state_view["lastError"],
+        "configStateLoads": config_state_view["loads"],
         "configRevision": _runtime_config_revision,
         "configSync": config_client.last_sync_report,
         "llm": llm_status,

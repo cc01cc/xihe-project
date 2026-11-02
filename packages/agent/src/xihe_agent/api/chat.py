@@ -47,6 +47,7 @@ from xihe_agent.app_state import (
 )
 from xihe_agent.config_client import ProviderLeaseError
 from xihe_agent.config_snapshot import ConfigSnapshotUnavailableError, RunConfigSnapshot
+from xihe_agent.config_state import ConfigUnavailableError, ensure_config_ready
 from xihe_agent.context.path_mentions import (
     append_to_user_input,
     parse_path_mentions,
@@ -314,6 +315,27 @@ async def chat(request: Request):
             )
     user_overrides = _normalize_run_overrides(raw_user_overrides)
     workspace_overrides = _normalize_run_overrides(raw_workspace_overrides)
+
+    # PLAN-0632 D32-27 Step 2: this is the first point in a chat request that genuinely needs
+    # the process-level config (provider/model/catalog), so it is where a pending process gets
+    # its single-flight load. Concurrent chats share ONE load (config_state), the wait is bounded,
+    # and a failure is fail-closed as CONFIG_UNAVAILABLE — never a request that runs on
+    # half-loaded config and never a `None` that surfaces later as a confusing TypeError.
+    try:
+        await ensure_config_ready(trigger="chat")
+    except ConfigUnavailableError as exc:
+        logger.error(
+            "[LIFECYCLE] service=agent event=config_unavailable requestId={} runId={} trigger=chat detail={}",
+            request_id,
+            run_id,
+            exc.detail,
+        )
+        return problem_details(
+            request_id,
+            503,
+            "CONFIG_UNAVAILABLE",
+            "Agent configuration is not available",
+        )
 
     # PLAN-0590 (spec §1/§3, I1/I2): resolve ONE frozen config snapshot for this
     # run from the CP-supplied identity; never from the process workspace binding.

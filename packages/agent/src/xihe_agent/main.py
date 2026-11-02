@@ -22,6 +22,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from loguru import logger
 
+from xihe_agent import config_state
 from xihe_agent.app_state import (
     AGENT_HOST,
     AGENT_PORT,
@@ -174,16 +175,17 @@ async def _poll_runtime_config() -> None:
 async def _sync_config(reason: str) -> SyncReport:
     """The single place that decides the config-sync budget (PLAN-0632 D32-27 Step 1).
 
-    Startup gets an explicit small budget: a CP that is not up yet must not cost the user a
-    minute of black screen (measured 58.46 s with the shared defaults vs 0.025 s when the CP is
-    reachable). Periodic refresh keeps the shared defaults (3 s per domain, 3 attempts) so a
-    momentarily slow CP is retried instead of being declared dead — which is exactly why the
-    defaults are untouched and the budget is passed here.
+    Two reasons use the bounded startup budget (`STARTUP_CONFIG_*`): `startup` and `lazy` (the
+    single-flight load triggered by the first request that needs config, Step 2). Both must be
+    cheap because a user is waiting on them: measured 58.46 s with the shared defaults vs 2.65 s
+    now. Periodic refresh keeps the shared defaults (3 s per domain, 3 attempts) so a momentarily
+    slow CP is retried instead of being declared dead — which is exactly why those defaults are
+    untouched and the budget is passed here.
 
     Failure semantics are unchanged: this returns whatever report the client produced, and the
     caller converges to `degraded` (fail-closed) rather than "up with empty config".
     """
-    if reason == "startup":
+    if reason in {"startup", "lazy"}:
         # Separate entry point (not an optional kwarg on sync_with_retry) so the shared defaults
         # cannot be quietly repurposed as the startup budget, and vice versa.
         return await config_client.sync_with_retry_budget(
@@ -260,6 +262,10 @@ async def reload_runtime_config(reason: str) -> SyncReport:
         return report
 
 
+# PLAN-0632 D32-27 Step 2: the single-flight lazy loader IS the runtime-snapshot refresh, so a
+# lazy load applies exactly the same atomic swap as startup/periodic — one code path, no second
+# notion of "config applied". `reason="lazy"` selects the bounded budget in `_sync_config`.
+config_state.set_loader(lambda: reload_runtime_config(reason="lazy"))
 
 
 @asynccontextmanager
@@ -273,11 +279,24 @@ async def lifespan(app: FastAPI):
         CP_URL,
     )
 
-    # Config sync, provider preflight, and readiness form one atomic startup path.
+    # PLAN-0632 D32-27 Step 2 — startup is NOT atomic any more, and that is the contract.
+    #
+    # Invariant (see `xihe_agent/config_state.py`): the process is allowed to accept traffic
+    # before its business config is usable. Startup makes ONE bounded attempt (2.65 s, see
+    # `_sync_config`); success leaves the machine READY, failure leaves it PENDING so that the
+    # first request which actually needs config triggers a single-flight load. Requests that
+    # arrive while config is unusable fail closed with `CONFIG_UNAVAILABLE` — they never run on
+    # half-loaded config, and the health face reports `configState` instead of pretending ready.
+    #
+    # Do not "restore atomicity" by awaiting the load here behind a hard failure: that is what
+    # produced the 58 s black screen, and it makes a CP restart permanently fatal to this process
+    # instead of a recoverable PENDING -> READY transition.
     try:
-        await reload_runtime_config(reason="startup")
+        startup_report = await reload_runtime_config(reason="startup")
+        config_state.note_startup_result(startup_report)
     except Exception as e:
         state._agent_status = "degraded"
+        config_state.note_startup_exception(e)
         logger.error(
             "[LIFECYCLE] service=agent event=config_sync_failed error={}",
             e,
