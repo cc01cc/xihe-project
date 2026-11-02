@@ -25,7 +25,9 @@ public final class EventTypeTaxonomy {
             "context.env_updated",
             "epoch.started",
             "epoch.replaced",
-            "session.forked");
+            "session.forked",
+            // PLAN-0624 M4 (D24-14): per-recipient wake fan-out audit — the D24-05 event.
+            "wake_dispatch");
 
     /** field-matrix §4 row 2 — {@code correlation_id = ChatRun.id}. */
     private static final Set<String> RUN_SCOPED = Set.of(

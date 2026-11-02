@@ -139,6 +139,7 @@ public class SessionParticipantService {
                     "The session already has a PRIMARY participant; PRIMARY is never added or transferred");
         }
         requirePrincipalExists(kind, principalId);
+        requireDisplayNameNotReserved(kind, principalId);
         if (participantRepository.existsBySessionIdAndPrincipalKindAndPrincipalId(
                 session.getId(), kind, principalId)) {
             throw new CpApiException(HttpStatus.CONFLICT, "PARTICIPANT_ALREADY_EXISTS",
@@ -367,6 +368,22 @@ public class SessionParticipantService {
                     "Only the session owner or an invited participant may read the participant list");
         }
         return session;
+    }
+
+    /** D24-12: "all" is the reserved @all token; no participant may claim it as a display name. */
+    private void requireDisplayNameNotReserved(String kind, UUID principalId) {
+        String displayName = null;
+        if (SessionParticipant.KIND_AGENT.equals(kind)) {
+            displayName = agentPrincipalRepository.findById(principalId)
+                    .map(com.cc01cc.p.xihe.cp.entity.AgentPrincipal::getName).orElse(null);
+        } else {
+            displayName = userRepository.findById(principalId)
+                    .map(com.cc01cc.p.xihe.cp.entity.User::getName).orElse(null);
+        }
+        if (com.cc01cc.p.xihe.cp.chat.MentionParser.isReservedDisplayName(displayName)) {
+            throw new CpApiException(HttpStatus.BAD_REQUEST, "PARTICIPANT_RESERVED_DISPLAY_NAME",
+                    "The display name 'all' is reserved for @all");
+        }
     }
 
     private void requireManage(String actorId, String workspaceId, Session session) {

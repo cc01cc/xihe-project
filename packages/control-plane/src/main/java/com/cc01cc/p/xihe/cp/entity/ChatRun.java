@@ -34,6 +34,10 @@ public class ChatRun {
     /** R1 (PLAN-0623): the responder of this run — the participant who answered (V92 column). */
     @Column(name = "agent_principal_id", columnDefinition = "uuid")
     private UUID agentPrincipalId;
+
+    /** PLAN-0624 V93 G-24: who triggered this run; DB default 'user' for legacy rows. */
+    @jakarta.persistence.Column(name = "trigger_source", nullable = false)
+    private String triggerSource = "user";
     @Column(name = "session_id", nullable = false, length = 36)
     @Convert(converter = UuidStringConverter.class)
     private String sessionId;
@@ -176,6 +180,8 @@ public class ChatRun {
 
     public UUID getAgentPrincipalId() { return agentPrincipalId; }
     public void setAgentPrincipalId(UUID agentPrincipalId) { this.agentPrincipalId = agentPrincipalId; }
+    public String getTriggerSource() { return triggerSource; }
+    public void setTriggerSource(String triggerSource) { this.triggerSource = triggerSource; }
     @PrePersist
     protected void onCreate() {
         ensureContextTemplateSnapshot();
