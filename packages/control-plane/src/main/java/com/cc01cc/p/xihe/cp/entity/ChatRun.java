@@ -85,6 +85,17 @@ public class ChatRun {
     @Column(name = "context_template_snapshot", nullable = false, columnDefinition = "jsonb")
     private JsonNode contextTemplateSnapshot = JsonNodeFactory.instance.objectNode();
 
+    /**
+     * PLAN-0628 M2a (D28-35): the skills listing frozen when this run was admitted.
+     *
+     * <p>An empty object means <b>not captured</b> (a run created before M2a, D28-40), not "no
+     * skills" — the latter is {@code {"status":"empty"}}. Dispatch renders from this column only
+     * (D28-39), so mutating bindings later cannot change what this run's model sees.</p>
+     */
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "skills_snapshot", nullable = false, columnDefinition = "jsonb")
+    private JsonNode skillsSnapshot = JsonNodeFactory.instance.objectNode();
+
     @Column(name = "user_message_id", length = 36)
     @Convert(converter = UuidStringConverter.class)
     private String userMessageId;
@@ -185,6 +196,7 @@ public class ChatRun {
     @PrePersist
     protected void onCreate() {
         ensureContextTemplateSnapshot();
+        ensureSkillsSnapshot();
         Instant now = Instant.now();
         createdAt = now;
         updatedAt = now;
@@ -198,12 +210,19 @@ public class ChatRun {
         // Defensive: detached-merge re-saves must never null the snapshot
         // (column is NOT NULL DEFAULT '{}'; merge copies detached nulls).
         ensureContextTemplateSnapshot();
+        ensureSkillsSnapshot();
         updatedAt = Instant.now();
     }
 
     private void ensureContextTemplateSnapshot() {
         if (contextTemplateSnapshot == null) {
             contextTemplateSnapshot = JsonNodeFactory.instance.objectNode();
+        }
+    }
+
+    private void ensureSkillsSnapshot() {
+        if (skillsSnapshot == null) {
+            skillsSnapshot = JsonNodeFactory.instance.objectNode();
         }
     }
 
@@ -238,6 +257,11 @@ public class ChatRun {
     public void setContextTemplateSnapshot(JsonNode contextTemplateSnapshot) {
         this.contextTemplateSnapshot = contextTemplateSnapshot == null
                 ? JsonNodeFactory.instance.objectNode() : contextTemplateSnapshot.deepCopy();
+    }
+    public JsonNode getSkillsSnapshot() { return skillsSnapshot; }
+    public void setSkillsSnapshot(JsonNode skillsSnapshot) {
+        this.skillsSnapshot = skillsSnapshot == null
+                ? JsonNodeFactory.instance.objectNode() : skillsSnapshot.deepCopy();
     }
     public String getUserMessageId() { return userMessageId; }
     public void setUserMessageId(String userMessageId) { this.userMessageId = userMessageId; }
