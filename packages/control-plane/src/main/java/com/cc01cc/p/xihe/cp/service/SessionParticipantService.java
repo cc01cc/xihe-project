@@ -73,6 +73,7 @@ public class SessionParticipantService {
     private final UserRepository userRepository;
     private final WorkspaceService workspaceService;
     private final GrantAuthorizationService grantAuthorizationService;
+    private final com.cc01cc.p.xihe.cp.scheduled.WakeScheduleProjectionService wakeScheduleProjectionService;
 
     public SessionParticipantService(SessionParticipantRepository participantRepository,
                                      SessionParticipantCursorRepository cursorRepository,
@@ -80,7 +81,9 @@ public class SessionParticipantService {
                                      AgentPrincipalRepository agentPrincipalRepository,
                                      UserRepository userRepository,
                                      WorkspaceService workspaceService,
-                                     GrantAuthorizationService grantAuthorizationService) {
+                                     GrantAuthorizationService grantAuthorizationService,
+                com.cc01cc.p.xihe.cp.scheduled.WakeScheduleProjectionService wakeScheduleProjectionService) {
+        this.wakeScheduleProjectionService = wakeScheduleProjectionService;
         this.participantRepository = participantRepository;
         this.cursorRepository = cursorRepository;
         this.sessionRepository = sessionRepository;
@@ -246,6 +249,7 @@ public class SessionParticipantService {
             row.setDisabledAt(Instant.now());
             participantRepository.save(row);
         }
+        wakeScheduleProjectionService.cancelProjection(row);
         // Idempotent: a second DELETE on an already-disabled row is a no-op 204, never a 500.
     }
 

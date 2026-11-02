@@ -44,15 +44,24 @@ public class ScheduledTaskDispatcher {
     private final SessionWakeupService sessionWakeupService;
     private final WorkspaceJobStartService workspaceJobStartService;
     private final WorkspaceService workspaceService;
+    private final com.cc01cc.p.xihe.cp.repository.SessionParticipantRepository sessionParticipantRepository;
+    private final com.cc01cc.p.xihe.cp.service.WakeDispatchService wakeDispatchService;
+    private final com.cc01cc.p.xihe.cp.policy.ResourceGovernor resourceGovernor;
 
     public ScheduledTaskDispatcher(ScheduledTaskRepository scheduledTaskRepository,
                                    SessionWakeupService sessionWakeupService,
                                    WorkspaceJobStartService workspaceJobStartService,
-                                   WorkspaceService workspaceService) {
+                                   WorkspaceService workspaceService,
+                                   com.cc01cc.p.xihe.cp.repository.SessionParticipantRepository sessionParticipantRepository,
+                                   com.cc01cc.p.xihe.cp.service.WakeDispatchService wakeDispatchService,
+                                   com.cc01cc.p.xihe.cp.policy.ResourceGovernor resourceGovernor) {
         this.scheduledTaskRepository = scheduledTaskRepository;
         this.sessionWakeupService = sessionWakeupService;
         this.workspaceJobStartService = workspaceJobStartService;
         this.workspaceService = workspaceService;
+        this.sessionParticipantRepository = sessionParticipantRepository;
+        this.wakeDispatchService = wakeDispatchService;
+        this.resourceGovernor = resourceGovernor;
     }
 
     /** 分派结果（日志/单测断言用）。 */
@@ -92,6 +101,7 @@ public class ScheduledTaskDispatcher {
             return switch (task.getTargetKind()) {
                 case ScheduledTask.TARGET_SESSION_WAKEUP -> dispatchSessionWakeup(task, idempotencyKey);
                 case ScheduledTask.TARGET_JOB_DISPATCH -> dispatchJob(task, idempotencyKey);
+                case ScheduledTask.TARGET_PARTICIPANT_WAKE -> dispatchParticipantWake(task, idempotencyKey);
                 default -> settleMissed(task, ScheduledTask.REASON_DISPATCH_FAILED,
                         "unknown target kind: " + task.getTargetKind());
             };
@@ -139,6 +149,73 @@ public class ScheduledTaskDispatcher {
             return settleExecuted(task, result.runId(), DispatchOutcome.DEFERRED);
         }
         return settleExecuted(task, null, DispatchOutcome.DEFERRED);
+    }
+
+    /**
+     * PLAN-0624 M2 (D24-06/08/09/11): fire one participant wake. Governor JOB ceiling first
+     * (BL-184 production call site); M4 fills WakeDispatchService. The wake_round id doubles
+     * as the judge dedupe key (D24-02).
+     */
+    private DispatchOutcome dispatchParticipantWake(ScheduledTask task, String idempotencyKey) {
+        JsonNode payload = task.getPayload();
+        UUID participantId = payload == null || !payload.isObject() ? null
+                : uuidOrNull(payload.get("participantId"));
+        if (task.getTargetSessionId() == null || participantId == null) {
+            return settleMissed(task, ScheduledTask.REASON_TARGET_GONE,
+                    "wake projection lost its session or participant");
+        }
+        var participant = sessionParticipantRepository
+                .findByIdAndSessionId(participantId, task.getTargetSessionId())
+                .orElse(null);
+        // D24-11: a disabled/unscheduled/gone participant must not fire (TOCTOU backstop;
+        // the sync point normally cancels the projection row before the scanner sees it).
+        if (participant == null || participant.getDisabledAt() != null
+                || !com.cc01cc.p.xihe.cp.entity.SessionParticipant.WAKE_SCHEDULE.equals(
+                        participant.getWakePolicy())) {
+            return settleMissed(task, ScheduledTask.REASON_TARGET_GONE,
+                    "participant is gone, disabled or no longer SCHEDULE");
+        }
+        com.cc01cc.p.xihe.cp.policy.ResourceGovernor.Lease lease;
+        try {
+            lease = resourceGovernor.tryAcquire(
+                    com.cc01cc.p.xihe.cp.policy.ResourceKey.job(
+                            "wake:" + task.getWorkspaceId()),
+                    new com.cc01cc.p.xihe.cp.policy.LimitSpec(
+                            com.cc01cc.p.xihe.cp.scheduled.WakeScheduleProjectionService
+                                    .maxConcurrentOrDefault(payload),
+                            null, null, null),
+                    java.time.Duration.ofMinutes(5));
+        } catch (com.cc01cc.p.xihe.cp.config.ResourceExhaustedException limit) {
+            logger.warn("[LIFECYCLE] service=cp event=scheduled_task_wake_limit taskId={} "
+                    + "participantId={}", task.getId(), participantId);
+            return settleMissed(task, ScheduledTask.REASON_DISPATCH_FAILED,
+                    "wake concurrency limit reached");
+        }
+        try {
+            wakeDispatchService.fire(participantId, "schedule", idempotencyKey);
+        } catch (RuntimeException e) {
+            logger.error("[LIFECYCLE] service=cp event=scheduled_task_wake_failed taskId={} "
+                    + "participantId={} failureType={}", task.getId(), participantId,
+                    e.getClass().getSimpleName(), e);
+            resourceGovernor.release(lease);
+            return settleMissed(task, ScheduledTask.REASON_DISPATCH_FAILED,
+                    "wake dispatch raised " + e.getClass().getSimpleName());
+        }
+        resourceGovernor.release(lease);
+        logger.info("[LIFECYCLE] service=cp event=scheduled_task_wake_fired taskId={} "
+                + "participantId={}", task.getId(), participantId);
+        return settleExecuted(task, null, DispatchOutcome.DEFERRED);
+    }
+
+    private static UUID uuidOrNull(JsonNode value) {
+        if (value == null || value.isNull()) {
+            return null;
+        }
+        try {
+            return UUID.fromString(value.asText());
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
     }
 
     private DispatchOutcome dispatchJob(ScheduledTask task, String idempotencyKey) {
@@ -206,6 +283,23 @@ public class ScheduledTaskDispatcher {
      * 无新载体时返回 {@code noRunOutcome}（wakeup 顺延=deferred；job replay=已执行）。
      */
     private DispatchOutcome settleExecuted(ScheduledTask task, UUID runId, DispatchOutcome noRunOutcome) {
+        if (ScheduledTask.TRIGGER_INTERVAL.equals(task.getTriggerKind())) {
+            // D24-08 catch-up once: base is NOW, never prev+interval — a long outage must not
+            // storm. The repository method name says "cron"; its mechanism (firing→scheduled
+            // with a new next_fire_at, CAS-guarded) is trigger-agnostic.
+            JsonNode payload = task.getPayload();
+            Integer jitter = payload == null ? null : longOrNull(payload, "jitterSeconds") == null
+                    ? null : longOrNull(payload, "jitterSeconds").intValue();
+            Instant next = com.cc01cc.p.xihe.cp.scheduled.WakeScheduleProjectionService.nextFireAfter(
+                    task.getIntervalSeconds(), jitter, Instant.now());
+            int updated = scheduledTaskRepository.rescheduleCronFromFiring(task.getId(), next);
+            if (updated == 0) {
+                logger.warn("[LIFECYCLE] service=cp event=scheduled_task_settle_lost taskId={} "
+                        + "target=scheduled reason=not_firing", task.getId());
+                return DispatchOutcome.ALREADY_EXECUTED;
+            }
+            return runId == null ? noRunOutcome : DispatchOutcome.DISPATCHED;
+        }
         if (ScheduledTask.TRIGGER_CRON.equals(task.getTriggerKind())) {
             Instant next = CronExpressions.nextUtcInstant(
                     task.getCronExpr(), task.getTimezone(), Instant.now());

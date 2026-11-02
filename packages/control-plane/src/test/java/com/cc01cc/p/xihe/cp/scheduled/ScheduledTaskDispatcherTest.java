@@ -50,7 +50,10 @@ class ScheduledTaskDispatcherTest {
         workspaceJobStartService = Mockito.mock(WorkspaceJobStartService.class);
         workspaceService = Mockito.mock(WorkspaceService.class);
         dispatcher = new ScheduledTaskDispatcher(
-                repository, sessionWakeupService, workspaceJobStartService, workspaceService);
+                repository, sessionWakeupService, workspaceJobStartService, workspaceService,
+                Mockito.mock(com.cc01cc.p.xihe.cp.repository.SessionParticipantRepository.class),
+                Mockito.mock(com.cc01cc.p.xihe.cp.service.WakeDispatchService.class),
+                new com.cc01cc.p.xihe.cp.policy.ResourceGovernor());
         when(repository.markMissed(any(), anyCollection(), anyString(), any())).thenReturn(1);
         when(repository.rescheduleCronFromFiring(any(), any())).thenReturn(1);
         when(repository.rescheduleCronFromFiringWithRun(any(), any(), any())).thenReturn(1);

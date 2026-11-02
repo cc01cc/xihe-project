@@ -39,6 +39,11 @@ public class ScheduledTask {
     public static final String REASON_TARGET_GONE = "target_gone";
     public static final String REASON_DISPATCH_FAILED = "dispatch_failed";
     public static final String REASON_OVERDUE_GRACE = "overdue_grace";
+    // PLAN-0624 M2 (D24-05..11): the wake-schedule projection vocabulary.
+    public static final String TRIGGER_INTERVAL = "interval";
+    public static final String TARGET_PARTICIPANT_WAKE = "participant_wake";
+    public static final String ORIGIN_USER = "user";
+    public static final String ORIGIN_SYSTEM = "system";
 
     @Id
     @Column(name = "id", columnDefinition = "uuid")
@@ -56,8 +61,14 @@ public class ScheduledTask {
     @Column(name = "trigger_kind", nullable = false, length = 16)
     private String triggerKind;
 
+    @Column(name = "origin", nullable = false, length = 16)
+    private String origin = ORIGIN_USER;
+
     @Column(name = "cron_expr", length = 120)
     private String cronExpr;
+
+    @Column(name = "interval_seconds")
+    private Integer intervalSeconds;
 
     @Column(nullable = false, length = 64)
     private String timezone;
@@ -123,6 +134,11 @@ public class ScheduledTask {
     protected void onUpdate() {
         updatedAt = Instant.now();
     }
+
+    public Integer getIntervalSeconds() { return intervalSeconds; }
+    public void setIntervalSeconds(Integer intervalSeconds) { this.intervalSeconds = intervalSeconds; }
+    public String getOrigin() { return origin; }
+    public void setOrigin(String origin) { this.origin = origin; }
 
     public UUID getId() { return id; }
     public void setId(UUID id) { this.id = id; }

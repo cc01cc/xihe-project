@@ -37,6 +37,8 @@ public class SessionParticipant {
 
     public static final String WAKE_ALL_MESSAGES = "ALL_MESSAGES";
     public static final String WAKE_MENTION = "MENTION";
+    // PLAN-0624 M2 (V93 widened the CHECK; the constant arrives with the scheduler).
+    public static final String WAKE_SCHEDULE = "SCHEDULE";
 
     public static final String RESPOND_ALWAYS = "ALWAYS";
     public static final String RESPOND_WHEN_MENTIONED = "WHEN_MENTIONED";
@@ -66,6 +68,11 @@ public class SessionParticipant {
 
     @Column(name = "respond_policy", nullable = false)
     private String respondPolicy;
+
+    /** PLAN-0624 M2 (V93): per-participant schedule parameters; required when wake=SCHEDULE. */
+    @org.hibernate.annotations.JdbcTypeCode(org.hibernate.type.SqlTypes.JSON)
+    @jakarta.persistence.Column(name = "wake_config", columnDefinition = "jsonb")
+    private com.fasterxml.jackson.databind.JsonNode wakeConfig;
 
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
@@ -123,6 +130,8 @@ public class SessionParticipant {
     public void setWakePolicy(String wakePolicy) { this.wakePolicy = wakePolicy; }
 
     public String getRespondPolicy() { return respondPolicy; }
+    public com.fasterxml.jackson.databind.JsonNode getWakeConfig() { return wakeConfig; }
+    public void setWakeConfig(com.fasterxml.jackson.databind.JsonNode wakeConfig) { this.wakeConfig = wakeConfig; }
     public void setRespondPolicy(String respondPolicy) { this.respondPolicy = respondPolicy; }
 
     public Instant getCreatedAt() { return createdAt; }

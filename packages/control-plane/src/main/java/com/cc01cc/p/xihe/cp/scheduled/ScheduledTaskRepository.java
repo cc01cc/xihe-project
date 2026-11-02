@@ -23,6 +23,9 @@ import java.util.UUID;
  */
 public interface ScheduledTaskRepository extends JpaRepository<ScheduledTask, UUID> {
 
+    /** PLAN-0624 M2: system wake projections, looked up per participant at sync points. */
+    java.util.List<ScheduledTask> findByTargetKindAndOrigin(String targetKind, String origin);
+
     List<ScheduledTask> findByStatusAndNextFireAtBeforeOrderByNextFireAtAsc(
             String status, Instant before);
 

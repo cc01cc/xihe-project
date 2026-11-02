@@ -36,6 +36,11 @@ public record ResourceKey(Kind kind, String scope) {
         return new ResourceKey(Kind.CONNECTION, "connection:" + connectionId);
     }
 
+    /** PLAN-0624 M2: JOB-class concurrency ceiling (BL-184 first production call site). */
+    public static ResourceKey job(String scope) {
+        return new ResourceKey(Kind.JOB, "job:" + scope);
+    }
+
     public static ResourceKey model(String connectionId, String provider, String model) {
         return new ResourceKey(Kind.MODEL, "connection:" + connectionId + "/" + provider + "/" + model);
     }
