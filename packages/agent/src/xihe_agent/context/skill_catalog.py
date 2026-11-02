@@ -76,6 +76,7 @@ def render_skill_catalog(
     ledger: InjectionLedger,
     max_tokens: int | None = None,
     count_tokens: Callable[[str], int] = conservative_token_count,
+    cp_truncated: bool = False,
 ) -> SkillCatalogBlock:
     """Fit the CP-provided listing into the run's skills budget.
 
@@ -88,6 +89,11 @@ def render_skill_catalog(
             uses (``nested_injection.ledger_for_context``), tests may create one directly.
         max_tokens: the component's own ``maxTokens``; it can only *tighten* the ledger cap.
         count_tokens: injected so a provider tokenizer could replace the conservative estimate.
+        cp_truncated: PLAN-0628 M2a (D28-39): CP reported the listing as cut by its own count bound
+            (``maxSkills``) *before* it reached us. The budget below may be perfectly happy with what
+            it received — which is precisely the danger: the model would read a partial listing as the
+            complete set. So a CP-side cut must also produce the in-band sentence, through the same
+            reserved-budget path (a note charged after the lines would be dropped exactly then).
     """
     lines = [item.strip() for item in items if item and item.strip()]
     if not lines:
@@ -124,7 +130,7 @@ def render_skill_catalog(
     #    arithmetic on the ledger's own cap — not a second budget computation.
     note_tokens = count_tokens(TRUNCATION_NOTE + "\n")
     room = ledger.limits.caps["skills"] - ledger.by_source["skills"]
-    may_truncate = sum(tokens for _, tokens in pairs) > room
+    may_truncate = cp_truncated or sum(tokens for _, tokens in pairs) > room
     reserved_note = False
     if may_truncate:
         reserved_note = ledger.try_charge("skills", TRUNCATION_NOTE_KEY, note_tokens, priority=True)
@@ -153,7 +159,7 @@ def render_skill_catalog(
     charged_tokens = (note_tokens if reserved_note else 0) + header_tokens + sum(
         tokens for key, tokens in pairs if key in charged_keys and key != HEADER_KEY
     )
-    truncated = len(kept_lines) < len(lines)
+    truncated = cp_truncated or len(kept_lines) < len(lines)
     if (charge.skills_truncated or truncated) and DIAG_BUDGET_TRUNCATED not in diagnostics:
         diagnostics.append(DIAG_BUDGET_TRUNCATED)
 
@@ -198,14 +204,21 @@ def render_from_component_sources(
             matched.append(entry)
 
     items: list[str] = []
+    cp_truncated = False
     for entry in matched:
         raw = entry.get("items")
         if isinstance(raw, list):
             items.extend(item for item in raw if isinstance(item, str))
+        if entry.get("truncated") is True or str(entry.get("status")) == STATUS_TRUNCATED:
+            cp_truncated = True
 
     ledger = ledger_for_context(context)
     block = render_skill_catalog(
-        items, ledger=ledger, max_tokens=max_tokens, count_tokens=count_tokens
+        items,
+        ledger=ledger,
+        max_tokens=max_tokens,
+        count_tokens=count_tokens,
+        cp_truncated=cp_truncated,
     )
     diagnostics: dict[str, Any] = {
         "components": len(matched),
@@ -216,6 +229,7 @@ def render_from_component_sources(
             for diagnostic in (entry.get("diagnostics") or [])
             if isinstance(diagnostic, str)
         ],
+        "cpTruncated": cp_truncated,
         "items": len(items),
         "status": block.status,
         "charged": block.charged,

@@ -5,9 +5,12 @@ import com.cc01cc.p.xihe.cp.policy.PolicyEffect;
 import com.cc01cc.p.xihe.cp.policy.PolicyEngine;
 import com.cc01cc.p.xihe.cp.policy.PolicyContext;
 import com.cc01cc.p.xihe.cp.runtime.RuntimeContextSourceClient;
+import com.cc01cc.p.xihe.cp.skill.SkillCatalogSnapshotService;
 import com.cc01cc.p.xihe.cp.skill.SkillCatalogSourceService;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayDeque;
@@ -24,11 +27,10 @@ import java.util.regex.Pattern;
 /** Resolves bounded, path-only tree components from the admission-frozen template snapshot. */
 @Service
 public class ContextTemplateSourceService {
+    private static final Logger logger = LoggerFactory.getLogger(ContextTemplateSourceService.class);
     private static final int HARD_REQUEST_LIMIT = 512;
     private static final int DEFAULT_MAX_DEPTH = 8;
     private static final int DEFAULT_MAX_ENTRIES = 2000;
-    /** Matches {@code context-templates.json#skillCatalogConfig.maxSkills}: the config bound wins. */
-    private static final int MAX_SKILLS_UPPER = 200;
     private static final List<String> DEFAULT_AGENTS_FILES = List.of("AGENTS.md");
 
     private final RuntimeContextSourceClient runtimeClient;
@@ -131,14 +133,16 @@ public class ContextTemplateSourceService {
      * component uses applies: an invalid session/workspace binding must not resolve anyone's library.
      * CP passes {@code maxSkills} (a count) and never a token number — the budget belongs to the
      * Agent's ledger.</p>
+     *
+     * <p><b>PLAN-0628 M2a (D28-39): the Run's snapshot is the only read source.</b> When the Run was
+     * admitted with a captured listing, this method renders from {@code chat_runs.skills_snapshot}
+     * and never consults {@code skill_bindings} — so a binding added or removed after admission
+     * cannot change what this Run's model sees. Only a pre-M2a Run ({@code {}} = "not captured",
+     * D28-40) falls back to live resolution, and it says so in the view's diagnostics and in the log:
+     * a historical Run must not silently look like "this was always the listing".</p>
      */
     private Map<String, Object> resolveSkillCatalog(JsonNode config, RunContext run,
                                                     boolean validBinding) {
-        int maxSkills = bounded(config.path("maxSkills").asInt(SkillCatalogSourceService.DEFAULT_MAX_SKILLS),
-                MAX_SKILLS_UPPER, SkillCatalogSourceService.DEFAULT_MAX_SKILLS);
-        boolean includeDescriptions = !config.has("includeDescriptions")
-                || config.path("includeDescriptions").asBoolean(true);
-        String sort = config.path("sort").asText(SkillCatalogSourceService.SORT_BINDING);
         if (!validBinding) {
             return SkillCatalogSourceService.failed("invalid_session_workspace_binding").toMap();
         }
@@ -155,8 +159,37 @@ public class ContextTemplateSourceService {
         } catch (IllegalArgumentException invalidId) {
             return SkillCatalogSourceService.failed("invalid_agent_principal").toMap();
         }
-        return skillCatalogSourceService.resolve(new SkillCatalogSourceService.Request(
-                principalId, userId, workspaceId, maxSkills, includeDescriptions, sort)).toMap();
+        SkillCatalogSourceService.Request request =
+                SkillCatalogSourceService.requestFrom(config, principalId, userId, workspaceId);
+        if (!SkillCatalogSnapshotService.isAbsent(run.skillsSnapshot())) {
+            return SkillCatalogSourceService
+                    .renderFromSnapshot(run.skillsSnapshot(), request).toMap();
+        }
+        // D28-40 legacy fallback: the Run predates M2a, so nothing was captured. Resolve live (an
+        // empty listing would make the capability set vanish overnight), mark the view, log the
+        // reason — and never write the result back: a fabricated capture is worse than a missing one.
+        Map<String, Object> fallback = skillCatalogSourceService.resolve(request).toMap();
+        logger.warn("[LIFECYCLE] service=cp event=skill_snapshot_absent runId={} reason={} fallback=live",
+                run.runId(), SkillCatalogSnapshotService.DIAG_ABSENT);
+        return withDiagnostic(fallback, SkillCatalogSnapshotService.DIAG_ABSENT);
+    }
+
+    /** Adds a diagnostic to a component view without mutating (or trusting) the producer's map. */
+    private static Map<String, Object> withDiagnostic(Map<String, Object> view, String diagnostic) {
+        List<String> diagnostics = new ArrayList<>();
+        if (view.get("diagnostics") instanceof List<?> existing) {
+            for (Object entry : existing) {
+                if (entry instanceof String text) {
+                    diagnostics.add(text);
+                }
+            }
+        }
+        if (!diagnostics.contains(diagnostic)) {
+            diagnostics.add(diagnostic);
+        }
+        Map<String, Object> marked = new LinkedHashMap<>(view);
+        marked.put("diagnostics", List.copyOf(diagnostics));
+        return marked;
     }
 
     private Map<String, Object> resolveTree(JsonNode config, String type, RunContext run, Session session,
@@ -356,14 +389,19 @@ public class ContextTemplateSourceService {
         return value.replace('\\', '/').toLowerCase(Locale.ROOT);
     }
 
-    /** Immutable run identifiers and frozen snapshot; consumers must treat the JsonNode as read-only. */
+    /** Immutable run identifiers and frozen snapshots; consumers must treat the JsonNodes as read-only. */
     /**
+     * @param runId the Run this resolution belongs to — carried for the D28-40 legacy-fallback log
+     *     line, so "this Run had no snapshot" can be traced to the Run that rendered it
+     * @param skillsSnapshot PLAN-0628 M2a: the listing frozen at admission; {@code {}} means "not
+     *     captured" (D28-40), which is the only case that still resolves live
      * @param agentPrincipalId the subject whose memory may be injected (null for runs without a bound
      *     principal — the memory component then reports {@code missing_agent_principal} and injects
      *     nothing rather than falling back to a wider scope)
      */
-    public record RunContext(String sessionId, String workspaceId, String userId,
-                             JsonNode contextTemplateSnapshot, String agentPrincipalId) {
+    public record RunContext(String runId, String sessionId, String workspaceId, String userId,
+                             JsonNode contextTemplateSnapshot, JsonNode skillsSnapshot,
+                             String agentPrincipalId) {
     }
 
     private record Directory(String path, int depth) { }

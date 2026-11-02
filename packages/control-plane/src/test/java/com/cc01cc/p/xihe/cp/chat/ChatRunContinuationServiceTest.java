@@ -81,6 +81,30 @@ class ChatRunContinuationServiceTest {
                 new ObjectMapper(), eventPublisher);
     }
 
+    /**
+     * PLAN-0628 M2a (D28-39 ②): the child inherits the parent's frozen listing instead of resolving a
+     * fresh one — a binding added while the parent ran must not appear in the continuation, and the
+     * record says so via {@code snapshotSource=inherited}.
+     */
+    @Test
+    void childInheritsTheParentSkillsSnapshotInsteadOfResolvingAFreshOne() throws Exception {
+        stubNewChildCreation();
+        source.setSkillsSnapshot(new ObjectMapper().readTree(
+                "{\"version\":1,\"status\":\"ready\",\"source\":\"skill_bindings\","
+                        + "\"snapshotSource\":\"frozen\",\"maxSkills\":40,\"truncated\":false,"
+                        + "\"diagnostics\":[],\"items\":[{\"name\":\"alpha\"}]}"));
+
+        service.continueRun(SOURCE_RUN_ID, USER_ID, WORKSPACE_ID, "continuation-key",
+                new ChatRunContinuationRequest(ChatRunContinuationRequest.RESUME_PENDING, null));
+
+        ChatRun child = savedChild();
+        assertEquals("inherited", child.getSkillsSnapshot().path("snapshotSource").asText());
+        assertEquals(source.getSkillsSnapshot().path("items"), child.getSkillsSnapshot().path("items"));
+        assertEquals("alpha", child.getSkillsSnapshot().path("items").get(0).path("name").asText());
+        assertEquals("frozen", source.getSkillsSnapshot().path("snapshotSource").asText(),
+                "inheritance must not rewrite the parent record");
+    }
+
     @Test
     void resumePendingCreatesProvenancedChildAndLeavesSourceTerminal() {
         stubNewChildCreation();

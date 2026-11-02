@@ -76,6 +76,8 @@ public class ChatSubmissionService {
     private final com.cc01cc.p.xihe.cp.files.ChatAttachmentService chatAttachmentService;
     private final ObjectProvider<WakeChainService> wakeChainService;
     private final ToolCallSnapshotService toolCallSnapshotService;
+    // PLAN-0628 M2a (D28-35): the skills listing frozen in the same admission transaction.
+    private final com.cc01cc.p.xihe.cp.skill.SkillCatalogSnapshotService skillCatalogSnapshots;
 
     public ChatSubmissionService(ChatRunRepository chatRunRepository,
                                  InboxRepository inboxRepository,
@@ -96,7 +98,8 @@ public class ChatSubmissionService {
                                  ObjectProvider<WakeChainService> wakeChainService,
                                  ToolCallSnapshotService toolCallSnapshotService,
                                  com.cc01cc.p.xihe.cp.service.SessionParticipantService sessionParticipantService,
-                                 DelegationBudgetService delegationBudgetService) {
+                                 DelegationBudgetService delegationBudgetService,
+                                 com.cc01cc.p.xihe.cp.skill.SkillCatalogSnapshotService skillCatalogSnapshots) {
         this.chatRunRepository = chatRunRepository;
         this.inboxRepository = inboxRepository;
         this.messageRepository = messageRepository;
@@ -121,6 +124,7 @@ public class ChatSubmissionService {
         // cycle without any proxy: the bean resolves on first use, from the context.
         this.wakeChainService = wakeChainService;
         this.toolCallSnapshotService = toolCallSnapshotService;
+        this.skillCatalogSnapshots = skillCatalogSnapshots;
     }
 
     @Transactional
@@ -627,6 +631,12 @@ public class ChatSubmissionService {
         // PLAN-0414 T1.4: admission fixes one atomic Context Template snapshot
         // from the Session binding; template edits cannot mutate a live Run.
         chatRun.setContextTemplateSnapshot(requestSnapshot);
+        // PLAN-0628 M2a (D28-35/D28-39): the skills listing is frozen in the SAME transaction as
+        // the template snapshot, so "which template" and "which capability set" belong to one
+        // admission. The listing is scoped to the Session's bound Agent principal (the AGENT tier
+        // of D28-14) — the same identity this Run's instructions are resolved from at dispatch.
+        // A capture failure is recorded inside the document and never blocks the Run.
+        chatRun.setSkillsSnapshot(freezeSkillsListing(requestSnapshot, session, userId, workspaceId));
         chatRun.setLeaseOwner(leaseOwner);
         chatRun.setLeaseExpiresAt(Instant.now().plus(LEASE_TTL));
         chatRun.setProviderConnectionId(providerConnectionId);
@@ -658,6 +668,33 @@ public class ChatSubmissionService {
                     sessionId, runId, claimedNotices);
         }
         return new Submission(chatRun, userMessage);
+    }
+
+    /**
+     * PLAN-0628 M2a: the frozen listing document, or {@code null} when this template carries no
+     * enabled listing component (the column then keeps its {@code {}} "not captured" default).
+     */
+    private com.fasterxml.jackson.databind.JsonNode freezeSkillsListing(
+            com.fasterxml.jackson.databind.JsonNode requestSnapshot, Session session,
+            String userId, String workspaceId) {
+        return skillCatalogSnapshots.capture(requestSnapshot,
+                optionalUuid(session.getAgentPrincipalId()), optionalUuid(userId),
+                optionalUuid(workspaceId));
+    }
+
+    /**
+     * A malformed identifier leaves the corresponding listing tier out instead of failing the Run:
+     * this is a recording step, and admission has already validated the identifiers it cares about.
+     */
+    private static UUID optionalUuid(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return null;
+        }
+        try {
+            return UUID.fromString(raw);
+        } catch (IllegalArgumentException notAnId) {
+            return null;
+        }
     }
 
     /** Unique-index admission conflicts are 409s, never 500s (V2 equivalence). */
