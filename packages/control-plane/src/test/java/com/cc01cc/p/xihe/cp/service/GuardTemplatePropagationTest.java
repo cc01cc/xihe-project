@@ -23,7 +23,20 @@ import static org.mockito.Mockito.when;
 /**
  * PLAN-0625 task-92 (D25-09): the builtin guard template is the declaration source — creating a
  * principal from it must carry the template's hook subscriptions AND its provenance
- * (origin=SYSTEM_PRESET + preset_id). Walkthrough-found gap: the create path dropped both.
+ * (origin=SYSTEM_PRESET + preset_id).
+ *
+ * <p><b>What this class does and does not prove.</b> It hands {@code AgentPrincipalService} a
+ * <i>given</i> snapshot ({@code resolveForCreation} is mocked), so it covers the consumer side: "if a
+ * resolved snapshot already carries hooks, the create path copies them and marks provenance". It
+ * cannot see the resolver, because the snapshot here is written by the test itself.</p>
+ *
+ * <p>The walkthrough's Gap H was exactly that blind spot: the real
+ * {@code AgentTemplateService.snapshotFromTemplate} never copied {@code hooks}, so the mocked snapshot
+ * "passing" proved nothing. The real chain (config-domain template → resolver → snapshot → create →
+ * {@code agent_principals.hooks} row) is asserted in
+ * {@link AgentPrincipalHooksHttpTest#templateHooksReachTheDatabaseThroughTheRealResolver}; the create
+ * <i>response</i> shape is asserted in {@link AgentPrincipalHooksHttpTest} too. Do not cite this class
+ * as evidence that template propagation works end to end.</p>
  */
 class GuardTemplatePropagationTest {
 
@@ -86,7 +99,7 @@ class GuardTemplatePropagationTest {
     }
 
     @Test
-    void creatingFromTheBuiltinGuardTemplateCarriesSubscriptionsAndProvenance() {
+    void givenAResolvedSnapshotTheCreatePathKeepsTheSubscriptionsAndMarksProvenance() {
         when(templates.resolveForCreation(any(), any(), any()))
                 .thenReturn(new AgentTemplateService.ResolvedTemplate("instance", guardSnapshot(true)));
         String actor = UUID.randomUUID().toString();
@@ -104,7 +117,7 @@ class GuardTemplatePropagationTest {
     }
 
     @Test
-    void callerHooksOverrideTheTemplateSubscription() throws Exception {
+    void givenAResolvedSnapshotTheCallersHooksOverrideTheTemplateSubscription() throws Exception {
         when(templates.resolveForCreation(any(), any(), any()))
                 .thenReturn(new AgentTemplateService.ResolvedTemplate("instance", guardSnapshot(true)));
         String actor = UUID.randomUUID().toString();
@@ -120,7 +133,7 @@ class GuardTemplatePropagationTest {
     }
 
     @Test
-    void workspaceAgentListProjectsTheSubscription() throws Exception {
+    void givenAStoredRowTheServiceListViewCarriesTheSubscription() throws Exception {
         // Read surface (task-92 item 3): the UI subscription row lights up only if the list projection
         // carries the subscription, so the projection is asserted on a real principal row.
         UUID workspaceId = UUID.randomUUID();

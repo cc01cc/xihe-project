@@ -23,8 +23,15 @@ import static org.mockito.Mockito.when;
 /**
  * PLAN-0625 M2 (D25-14): hooks ride the principal create/update surface — validated in the one
  * write-side gate, mutable for ordinary principals, refused for preset guards with their own code.
+ *
+ * <p><b>Scope, stated because the old name overclaimed it</b> ("Wire" while every call went straight
+ * to {@code env.service()}): this class pins the <i>service</i> contract — validation order, the
+ * persistence call, and that refusals never write. It proves nothing about the route, the response
+ * document or the list projection; those live at the HTTP boundary in
+ * {@link AgentPrincipalHooksHttpTest} (real Spring context, {@code restTemplate}, JSON body + DB
+ * assertions), which is where the walkthrough's Gaps I/J/K are pinned.</p>
  */
-class AgentPrincipalHooksWireTest {
+class AgentPrincipalHooksServiceTest {
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
     private static final UUID ACTOR = UUID.randomUUID();
