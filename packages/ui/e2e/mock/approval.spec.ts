@@ -9,6 +9,8 @@ const SESSION_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
 const WORKSPACE_ID = "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
     RUN_ID = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
 const REQUEST_ID = "11111111-1111-4111-8111-111111111111";
+/** Bound Agent principal on the mock Sessions (see the fixture note in `beforeEach`). */
+const AGENT_PRINCIPAL_ID = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
 
 const approvalEvent = (
     requestId: string,
@@ -192,8 +194,16 @@ test.describe("Chat approval flow", () => {
         await setupMockAuth(page);
         await setupMockSessions(page, {
             sessions: [
-                { id: SESSION_ID, title: "Approval Flow" },
-                { id: SECOND_SESSION_ID, title: "Second Session" },
+                // A real Session always carries its bound Agent principal (`POST /sessions`
+                // requires one). Without it every send detours into the principal-binding
+                // dialog, which is what made "…cannot expose or cancel its run" unable to
+                // ever see `chat-stop-button` (2026-11-03 mock-lane 实测：无 `/chat` POST).
+                { id: SESSION_ID, title: "Approval Flow", agentPrincipalId: AGENT_PRINCIPAL_ID },
+                {
+                    id: SECOND_SESSION_ID,
+                    title: "Second Session",
+                    agentPrincipalId: AGENT_PRINCIPAL_ID,
+                },
             ],
             workspaceId: WORKSPACE_ID,
         });

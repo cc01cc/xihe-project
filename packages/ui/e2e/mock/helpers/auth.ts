@@ -414,6 +414,12 @@ export async function setupMockSessions(page: Page, options: MockSessionOptions 
         modelProvider: null,
         modelName: null,
         archived: false,
+        // `MockSessionRecord.agentPrincipalId` used to be dropped here, so a fixture could
+        // not model a Session that already has a bound Agent — the UI then detoured every
+        // send into the principal-binding dialog and no `/chat` POST was ever made
+        // (2026-11-03 mock-lane: approval `switching away…` could never see the stop button).
+        // A bound principal is the normal state: `POST /sessions` requires it.
+        agentPrincipalId: session.agentPrincipalId ?? null,
     }));
     const createRootBranch = (createdAt: string): MockBranch[] => [
         {
