@@ -42,8 +42,15 @@ export const DOCK_MAX_TABS = 6;
 /** The dock only joins the flex layout from this width up; below it, it overlays. */
 export const DOCK_INLINE_MIN_VIEWPORT = 1800;
 
-/** Dock tabs that have a panel implementation today (S3 adds `context`/`approval`). */
-export const DOCK_TAB_IDS = ["code", "changes", "monitor", "members"] as const;
+/**
+ * Dock tabs that have a panel implementation today (S3 adds `context`/`approval`).
+ *
+ * PLAN-0626 M2: `context` (会话设置) landed as the first *sticky* panel — mounted on
+ * first activation and kept alive afterwards, because it holds form state the user is
+ * editing (the mount policy lives with the dock, `WorkspaceDock.vue`). `approval` stays
+ * a reserved name: approvals keep the modal (D26-14).
+ */
+export const DOCK_TAB_IDS = ["code", "changes", "monitor", "members", "context"] as const;
 export type DockTabId = (typeof DOCK_TAB_IDS)[number];
 
 /**

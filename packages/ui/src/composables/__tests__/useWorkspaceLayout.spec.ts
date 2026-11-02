@@ -746,3 +746,31 @@ describe("PLAN-0623 members dock tab", () => {
         expect(defaultWorkspaceLayout().activeDockTab).toBeNull();
     });
 });
+
+// PLAN-0626 M2：context 是第一个"粘性"面板（切走不卸载，策略在 WorkspaceDock）。
+describe("PLAN-0626 context dock tab", () => {
+    it("knows the context tab id without treating reserved names as tabs", () => {
+        expect(DOCK_TAB_IDS).toContain("context");
+        expect(isDockTabId("context")).toBe(true);
+        // Reserved name, no panel yet (approvals stay a modal, D26-14).
+        expect(isDockTabId("approval")).toBe(false);
+        // The tab set stays inside the hard cap.
+        expect(DOCK_TAB_IDS.length).toBeLessThanOrEqual(DOCK_MAX_TABS);
+    });
+
+    it("keeps a pre-M2 payload (four ids) valid without injecting context", () => {
+        localStorage.setItem(
+            `${WORKSPACE_LAYOUT_STORAGE_PREFIX}ws-pre-context`,
+            JSON.stringify({
+                dockCollapsed: false,
+                dockTabs: ["code", "changes", "monitor", "members"],
+                activeDockTab: "monitor",
+            }),
+        );
+
+        const stored = readWorkspaceLayout("ws-pre-context");
+        expect(stored.dockTabs).toEqual(["code", "changes", "monitor", "members"]);
+        expect(stored.activeDockTab).toBe("monitor");
+        expect(defaultWorkspaceLayout().dockTabs).toEqual([]);
+    });
+});
