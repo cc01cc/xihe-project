@@ -67,6 +67,11 @@ public class WakeChainService {
             views = participantService.list(sessionOwner(sessionId), workspaceOf(sessionId),
                     sessionId).participants();
         } catch (RuntimeException noRoster) {
+            // The run must still settle (a wake failure may never fail the run), but the old silent
+            // return made "empty roster" and "roster read failed" indistinguishable — PLAN-0630 M1
+            // fixed the empty-roster half at the source (spawn children now get their PRIMARY).
+            logger.warn("[LIFECYCLE] service=cp event=wake_roster_unreadable sessionId={} runId={} failureType={}",
+                    sessionId, runId, noRoster.getClass().getSimpleName());
             return;
         }
         List<MentionParser.RosterEntry> roster = views.stream()

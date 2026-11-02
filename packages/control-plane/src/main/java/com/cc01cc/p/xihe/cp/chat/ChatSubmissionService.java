@@ -406,6 +406,15 @@ public class ChatSubmissionService {
         childSession.setContextTemplateId(parentSession.getContextTemplateId());
         childSession.setContextTemplateVersion(parentSession.getContextTemplateVersion());
         sessionRepository.save(childSession);
+        // PLAN-0630 M1 (BL-192 / D23-13): a spawn child is a standard Session (README frozen ruling
+        // #1), so it must own exactly one PRIMARY — the same rule as create (SessionService.java:139)
+        // and fork (SessionService.java:173). Without it the child's roster is empty, so the 0624
+        // mention/wake chain silently no-ops inside the sub-conversation (the agent there could never
+        // wake anyone, and there was no "primary speaker" row either).
+        // Existing spawn children are deliberately NOT backfilled: XH has no deployment surface
+        // (0625 D25-19 precedent), so the fix covers new children only.
+        sessionParticipantService.ensurePrimaryParticipant(childSession.getId(),
+                childSession.getAgentPrincipalId());
 
         String requestId = UUID.randomUUID().toString();
         String childRunId = UUID.randomUUID().toString();
