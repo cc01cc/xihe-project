@@ -3653,7 +3653,8 @@ components:
         displayName: { type: string }
         role: { type: string, enum: [PRIMARY, MEMBER, GUARD] }
         orderIndex: { type: integer, description: 'R4: 10, 20, 30 …; deletes leave gaps and never renumber' }
-        wakePolicy: { type: string, enum: [ALL_MESSAGES, MENTION] }
+        wakePolicy: { type: string, enum: [ALL_MESSAGES, MENTION, SCHEDULE] }
+        wakeConfig: { type: [object, 'null'], description: 'PLAN-0624 Q4: per-participant schedule parameters, required when wakePolicy=SCHEDULE; jitterSeconds defaults to [0, interval*0.1), maxConcurrent defaults to the governor JOB ceiling', properties: { intervalSeconds: { type: integer }, jitterSeconds: { type: integer }, maxConcurrent: { type: integer } } }
         respondPolicy: { type: string, enum: [ALWAYS, WHEN_MENTIONED, JUDGE, MUTED] }
         source: { type: string, enum: [workspace, personal, instance] }
         disabledAt: { type: [string, 'null'], format: date-time }
@@ -3693,16 +3694,17 @@ components:
         principalKind: { type: string, enum: [HUMAN, AGENT] }
         principalId: { type: string, format: uuid }
         role: { type: string, enum: [MEMBER, GUARD], default: MEMBER, description: PRIMARY is created with the session (D23-13) }
-        wakePolicy: { type: string, enum: [ALL_MESSAGES, MENTION], default: MENTION }
+        wakePolicy: { type: string, enum: [ALL_MESSAGES, MENTION, SCHEDULE], default: MENTION, description: 'SCHEDULE requires wakeConfig' }
         respondPolicy: { type: string, enum: [ALWAYS, WHEN_MENTIONED, JUDGE, MUTED], default: WHEN_MENTIONED }
     SessionParticipantUpdateRequest:
       type: object
       minProperties: 1
       properties:
-        wakePolicy: { type: string, enum: [ALL_MESSAGES, MENTION] }
+        wakePolicy: { type: string, enum: [ALL_MESSAGES, MENTION, SCHEDULE] }
+        wakeConfig: { type: [object, 'null'], description: 'PLAN-0624 Q4: per-participant schedule parameters, required when wakePolicy=SCHEDULE; jitterSeconds defaults to [0, interval*0.1), maxConcurrent defaults to the governor JOB ceiling', properties: { intervalSeconds: { type: integer }, jitterSeconds: { type: integer }, maxConcurrent: { type: integer } } }
         respondPolicy: { type: string, enum: [ALWAYS, WHEN_MENTIONED, JUDGE, MUTED] }
         disabled: { type: boolean, description: Soft disable keeps the row and its cursor for audit/history }
-    ChatRunResponse: { type: object, required: [status, origin, sessionId, runId], properties: { agentPrincipalId: { type: [string, 'null'], readOnly: true, description: 'PLAN-0623 R1: the agent principal that responded in this run; null on runs admitted before V92' }, status: { type: string, enum: [accepted, queued, running, streaming, awaiting_approval, dispatching, cancelling, succeeded, failed, partial, ambiguous, cancelled] }, origin: { type: string, enum: [user_submission], readOnly: true, description: Public POST /chat only returns user_submission; spawn is visible through GET run status }, sessionId: { type: string }, messageId: { type: string }, runId: { type: string }, providerConnectionId: { type: [string, 'null'], readOnly: true }, connectionRevision: { type: [integer, 'null'], readOnly: true }, outcome: { type: string, enum: [success, error, partial, ambiguous] }, errorCode: { type: string }, reason: { type: string } } }
+    ChatRunResponse: { type: object, required: [status, origin, sessionId, runId], properties: { agentPrincipalId: { type: [string, 'null'], readOnly: true, description: 'PLAN-0623 R1: the agent principal that responded in this run; null on runs admitted before V92' }, triggerSource: { type: string, readOnly: true, enum: [user, mention, schedule, judge, guard, chain], default: user, description: 'PLAN-0624 G-24: who triggered this run; runs admitted before V93 read as user' }, status: { type: string, enum: [accepted, queued, running, streaming, awaiting_approval, dispatching, cancelling, succeeded, failed, partial, ambiguous, cancelled] }, origin: { type: string, enum: [user_submission], readOnly: true, description: Public POST /chat only returns user_submission; spawn is visible through GET run status }, sessionId: { type: string }, messageId: { type: string }, runId: { type: string }, providerConnectionId: { type: [string, 'null'], readOnly: true }, connectionRevision: { type: [integer, 'null'], readOnly: true }, outcome: { type: string, enum: [success, error, partial, ambiguous] }, errorCode: { type: string }, reason: { type: string } } }
     SessionRunSummary:
       type: object
       additionalProperties: false
