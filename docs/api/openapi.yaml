@@ -3388,7 +3388,7 @@ paths:
       description: 'Instance-scope definitions are visible to every authenticated caller; a workspace-scope definition is visible only to callers who can see that workspace. The body is never included here (see GET /api/v1/skills/{skillId}?includeBody=true).'
       security: [{ bearerAuth: [] }]
       parameters:
-        - { in: query, name: definitionScope, required: false, schema: { type: string, enum: [instance, workspace] } }
+        - { in: query, name: definitionScope, required: false, schema: { type: string, enum: [instance, workspace], default: instance }, description: 'Defaults to the instance library. A workspace listing requires workspaceId and answers an empty set (not 403) when the caller is not a member, so the endpoint is not an existence probe.' }
         - { in: query, name: workspaceId, required: false, schema: { type: string, format: uuid }, description: 'Required when definitionScope=workspace' }
       responses:
         '200': { description: 'Visible definitions', content: { application/json: { schema: { $ref: '#/components/schemas/SkillListResponse' } } } }

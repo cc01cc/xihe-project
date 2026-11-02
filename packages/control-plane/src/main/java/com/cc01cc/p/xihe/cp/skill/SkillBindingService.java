@@ -101,6 +101,28 @@ public class SkillBindingService {
         bindingRepository.delete(binding);
     }
 
+    /**
+     * Unbind, resolving the caller's workspace right <b>from the row's own scope</b>.
+     *
+     * <p>This overload exists so a controller cannot supply a blanket "manages every workspace"
+     * flag: the row is loaded first and the guard is asked about that row's workspace. (The first
+     * controller draft did exactly that — it would have let any authenticated caller delete any
+     * workspace-scoped binding.)</p>
+     */
+    @Transactional
+    public void unbind(UUID bindingId, SkillAccessGuard guard) {
+        SkillBinding binding = bindingRepository.findById(bindingId)
+                .orElseThrow(() -> new CpApiException(HttpStatus.NOT_FOUND, ERR_BINDING_NOT_FOUND,
+                        "binding not found"));
+        boolean managesThatWorkspace = SkillBinding.SCOPE_WORKSPACE.equals(binding.getScopeType())
+                && guard.canManageWorkspace(binding.getScopeId());
+        Caller caller = new Caller(UUID.fromString(guard.requireActor()), guard.isInstanceAdmin(),
+                managesThatWorkspace);
+        requireAuthorized(new BindCommand(binding.getSkillId(), binding.getSubjectType(),
+                binding.getSubjectId(), binding.getScopeType(), binding.getScopeId()), caller);
+        bindingRepository.delete(binding);
+    }
+
     public List<SkillBinding> listForSkill(UUID skillId) {
         return bindingRepository.findBySkillIdOrderByCreatedAtAsc(skillId);
     }
