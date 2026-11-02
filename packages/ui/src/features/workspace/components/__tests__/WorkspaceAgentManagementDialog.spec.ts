@@ -14,6 +14,8 @@ const apiMock = vi.hoisted(() => ({
     disableAgentPrincipal: vi.fn<(principalId: string) => Promise<void>>(),
     // PLAN-0621 F-01：权威能力投影（CP `GET /me/permissions`）。
     getSelfPermissions: vi.fn<() => Promise<unknown>>(),
+    // PLAN-0629 M1-4 C：只读记忆列表。
+    getWorkspaceAgentMemories: vi.fn<() => Promise<unknown[]>>(),
 }));
 
 const CREATE_ACCOUNT_GRANTED = {
@@ -90,6 +92,7 @@ beforeEach(() => {
     apiMock.updateWorkspaceAgentCap.mockResolvedValue({});
     apiMock.deleteWorkspaceAgent.mockResolvedValue(undefined);
     apiMock.getSelfPermissions.mockResolvedValue(CREATE_ACCOUNT_GRANTED);
+    apiMock.getWorkspaceAgentMemories.mockResolvedValue([]);
 });
 
 afterEach(() => {
@@ -627,5 +630,169 @@ describe("WorkspaceAgentManagementDialog hook subscriptions (PLAN-0625 M3, read-
         const wrapper = await mountOpenedDialog();
 
         expect(wrapper.find('[data-testid^="agent-hooks-"]').exists()).toBe(false);
+    });
+});
+
+// ── PLAN-0629 M1-4 C：只读「记忆」区（四态 + 404 不当崩溃 + 无写入控件） ────────────────
+describe("WorkspaceAgentManagementDialog PLAN-0629 read-only memory", () => {
+    const PRINCIPAL_ID = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+    const agentWithMemory = {
+        principalId: PRINCIPAL_ID,
+        name: "memo agent",
+        templateId: null,
+        templateName: null,
+        createdAt: "2026-11-02T00:00:00Z",
+        permissionsSnapshot: [],
+        bound: true,
+        disabled: false,
+        source: "personal",
+        ownerUserId: "99999999-9999-4999-8999-999999999999",
+    };
+    const toggle = `[data-testid="agent-memory-toggle-${PRINCIPAL_ID}"]`;
+
+    it("lists the rows the server returned, including type / pinned / updatedAt", async () => {
+        apiMock.getWorkspaceAgents.mockResolvedValue([agentWithMemory]);
+        apiMock.getWorkspaceAgentMemories.mockResolvedValue([
+            {
+                id: "memory-1",
+                type: "profile",
+                pinned: true,
+                updatedAt: "2026-11-02T10:00:00Z",
+                content: "偏好中文回答",
+            },
+            {
+                id: "memory-2",
+                type: "fact",
+                pinned: false,
+                updatedAt: "2026-11-02T11:00:00Z",
+                content: "项目使用 Vue 3",
+            },
+        ]);
+        const wrapper = await mountOpenedDialog();
+
+        await wrapper.get(toggle).trigger("click");
+        await flushPromises();
+
+        expect(apiMock.getWorkspaceAgentMemories).toHaveBeenCalledWith(WORKSPACE_ID, PRINCIPAL_ID);
+        const items = wrapper.findAll('[data-testid^="agent-memory-item-"]');
+        expect(items).toHaveLength(2);
+        // 字段照服务端显示：type 走枚举标签，pinned 只在为真时出现。
+        expect(wrapper.get('[data-testid="agent-memory-type-memory-1"]').text()).toBe("画像");
+        expect(wrapper.get('[data-testid="agent-memory-type-memory-2"]').text()).toBe("事实");
+        expect(
+            wrapper
+                .get('[data-testid="agent-memory-type-memory-1"]')
+                .attributes("data-memory-type"),
+        ).toBe("profile");
+        expect(wrapper.find('[data-testid="agent-memory-pinned-memory-1"]').exists()).toBe(true);
+        expect(wrapper.find('[data-testid="agent-memory-pinned-memory-2"]').exists()).toBe(false);
+        expect(wrapper.get('[data-testid="agent-memory-updated-memory-1"]').text()).toContain(
+            "更新于",
+        );
+        expect(wrapper.get('[data-testid="agent-memory-content-memory-2"]').text()).toContain(
+            "项目使用 Vue 3",
+        );
+        // 只读语义必须在 UI 上说清，否则会被当成"存不进去的 bug"。
+        expect(wrapper.get('[data-testid="agent-memory-readonly-hint"]').text()).toContain(
+            "记忆写入在后续版本开放",
+        );
+        // 只读：记忆区内没有任何写入/编辑控件，只有一个重试按钮的容身处也不该出现。
+        const panel = wrapper.get(`[data-testid="agent-memory-panel-${PRINCIPAL_ID}"]`);
+        expect(panel.find("input, textarea, select").exists()).toBe(false);
+        expect(panel.find('[data-testid^="agent-memory-retry-"]').exists()).toBe(false);
+    });
+
+    it("shows the explicit empty-state copy instead of a blank area", async () => {
+        apiMock.getWorkspaceAgents.mockResolvedValue([agentWithMemory]);
+        apiMock.getWorkspaceAgentMemories.mockResolvedValue([]);
+        const wrapper = await mountOpenedDialog();
+
+        await wrapper.get(toggle).trigger("click");
+        await flushPromises();
+
+        expect(wrapper.get('[data-testid="agent-memory-empty"]').text()).toBe(
+            "该主体暂无记忆（记忆写入需 MEMORY_WRITE 授权）",
+        );
+        expect(wrapper.find('[data-testid="agent-memory-list"]').exists()).toBe(false);
+    });
+
+    it("shows the loading state while the request is in flight", async () => {
+        apiMock.getWorkspaceAgents.mockResolvedValue([agentWithMemory]);
+        let resolve!: (rows: unknown[]) => void;
+        apiMock.getWorkspaceAgentMemories.mockReturnValue(
+            new Promise((done) => {
+                resolve = done;
+            }),
+        );
+        const wrapper = await mountOpenedDialog();
+
+        await wrapper.get(toggle).trigger("click");
+        await flushPromises();
+
+        expect(wrapper.find('[data-testid="agent-memory-loading"]').exists()).toBe(true);
+        expect(wrapper.find('[data-testid="agent-memory-empty"]').exists()).toBe(false);
+
+        resolve([]);
+        await flushPromises();
+        expect(wrapper.find('[data-testid="agent-memory-loading"]').exists()).toBe(false);
+        expect(wrapper.find('[data-testid="agent-memory-empty"]').exists()).toBe(true);
+    });
+
+    it("treats 404 as 'no permission or not found' and offers a retry", async () => {
+        apiMock.getWorkspaceAgents.mockResolvedValue([agentWithMemory]);
+        apiMock.getWorkspaceAgentMemories.mockRejectedValueOnce(
+            new ApiError("AGENT_PRINCIPAL_NOT_FOUND"),
+        );
+        const wrapper = await mountOpenedDialog();
+
+        await wrapper.get(toggle).trigger("click");
+        await flushPromises();
+
+        const failed = wrapper.get('[data-testid="agent-memory-failed"]');
+        expect(failed.text()).toContain("无权限查看该主体的记忆，或该主体不存在");
+        expect(wrapper.find('[role="alert"]').text()).toContain("无权限");
+
+        // 重试走同一路径，成功后回到列表态（失败不是死路）。
+        apiMock.getWorkspaceAgentMemories.mockResolvedValueOnce([
+            {
+                id: "memory-3",
+                type: "fact",
+                pinned: false,
+                updatedAt: "2026-11-02T12:00:00Z",
+                content: "retry worked",
+            },
+        ]);
+        await wrapper.get(`[data-testid="agent-memory-retry-${PRINCIPAL_ID}"]`).trigger("click");
+        await flushPromises();
+
+        expect(wrapper.find('[data-testid="agent-memory-failed"]').exists()).toBe(false);
+        expect(wrapper.find('[data-testid="agent-memory-item-memory-3"]').exists()).toBe(true);
+    });
+
+    it("closes the panel on the second click and drops stale rows", async () => {
+        apiMock.getWorkspaceAgents.mockResolvedValue([agentWithMemory]);
+        apiMock.getWorkspaceAgentMemories.mockResolvedValue([
+            {
+                id: "memory-1",
+                type: "profile",
+                pinned: false,
+                updatedAt: "2026-11-02T10:00:00Z",
+                content: "x",
+            },
+        ]);
+        const wrapper = await mountOpenedDialog();
+
+        await wrapper.get(toggle).trigger("click");
+        await flushPromises();
+        expect(wrapper.get(toggle).attributes("aria-expanded")).toBe("true");
+
+        await wrapper.get(toggle).trigger("click");
+        await flushPromises();
+
+        expect(wrapper.get(toggle).attributes("aria-expanded")).toBe("false");
+        expect(wrapper.find(`[data-testid="agent-memory-panel-${PRINCIPAL_ID}"]`).exists()).toBe(
+            false,
+        );
+        expect(wrapper.find('[data-testid^="agent-memory-item-"]').exists()).toBe(false);
     });
 });

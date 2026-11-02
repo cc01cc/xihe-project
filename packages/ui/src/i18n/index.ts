@@ -346,6 +346,20 @@ const messages = {
             disableAgent: "禁用",
             confirmAgentDisable: "再次点击确认禁用",
             agentDisableConsequence: "禁用后新会话不能再选择该智能体，已存在的会话不受影响。",
+            // PLAN-0629 M1-4 C：只读记忆面（写入属 M1-5/M2，文案必须说明"只有查看"）。
+            agentMemoryTitle: "记忆",
+            agentMemoryReadonlyBadge: "只读",
+            agentMemoryReadonlyHint:
+                "当前只有查看；记忆写入在后续版本开放（写入需 MEMORY_WRITE 授权）。",
+            agentMemoryLoading: "正在加载记忆…",
+            agentMemoryEmpty: "该主体暂无记忆（记忆写入需 MEMORY_WRITE 授权）",
+            agentMemoryLoadFailed: "记忆加载失败",
+            agentMemoryNotFound: "无权限查看该主体的记忆，或该主体不存在",
+            agentMemoryRetry: "重试",
+            agentMemoryTypeProfile: "画像",
+            agentMemoryTypeFact: "事实",
+            agentMemoryPinned: "置顶",
+            agentMemoryUpdatedAt: "更新于",
             agentDisabledSuccess: "智能体已禁用",
             agentDisableForbidden:
                 "缺少禁用权限：请让管理员为本工作区授予 MANAGE_WORKSPACE_AGENTS，或由该个人智能体的属主操作。",
@@ -2428,6 +2442,21 @@ const messages = {
             confirmAgentDisable: "Click again to confirm disable",
             agentDisableConsequence:
                 "After disabling, new sessions cannot select this Agent; existing sessions are unaffected.",
+            // PLAN-0629 M1-4 C: read-only memory surface (writes land in M1-5/M2).
+            agentMemoryTitle: "Memory",
+            agentMemoryReadonlyBadge: "Read-only",
+            agentMemoryReadonlyHint:
+                "View only for now; writing memory arrives in a later version (writes require MEMORY_WRITE).",
+            agentMemoryLoading: "Loading memory…",
+            agentMemoryEmpty:
+                "This agent has no memory yet (writing memory requires MEMORY_WRITE).",
+            agentMemoryLoadFailed: "Failed to load memory",
+            agentMemoryNotFound: "You cannot view this agent's memory, or the agent does not exist",
+            agentMemoryRetry: "Retry",
+            agentMemoryTypeProfile: "Profile",
+            agentMemoryTypeFact: "Fact",
+            agentMemoryPinned: "Pinned",
+            agentMemoryUpdatedAt: "Updated",
             agentDisabledSuccess: "Agent disabled",
             agentDisableForbidden:
                 "Missing permission: ask an administrator to grant MANAGE_WORKSPACE_AGENTS here, or let the Personal Agent's owner do it.",
