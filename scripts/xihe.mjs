@@ -232,7 +232,10 @@ export async function runCommand(argv, dependencies = {}) {
         return { exitCode: 0, json, data: await listSkills({ apiBase, fetchImpl, token, options: parsed.values }) };
       }
       if (command === 'show') {
-        const parsed = parseCommandOptions(rest, ['--include-body', '--email'], []);
+        // `--include-body` is a flag, not a valued option: declared as a value option it either
+        // demanded an argument or recorded the string "true", and `=== true` below never matched
+        // (PLAN-0628 M3 found this with the runCommand-level test).
+        const parsed = parseCommandOptions(rest, ['--email'], ['--include-body']);
         if (parsed.positionals.length !== 1) throw new CliError('INVALID_ARGUMENT', 'skill show requires one skill ID.');
         const apiBase = getApiBase(env);
         const token = await login({ apiBase, fetchImpl, env, options: parsed.values, promptSecret: prompt });

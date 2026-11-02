@@ -3711,3 +3711,276 @@ test('session participants + chat send: contract shapes, code passthrough, and -
     await new Promise((resolve) => server.close(resolve));
   }
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PLAN-0628 M3: the `skill` command at the runCommand layer
+//
+// The domain module has its own suite (scripts/xihe-cli/skill.test.mjs), and that suite cannot see
+// the three places the command breaks without touching the domain: the `if (group === 'skill')`
+// registration branch, the `helpText()` entries, and the `printResult` rendering branches. Broken
+// there, every domain test stays green and a human only sees `Command completed.` — so these cases
+// are asserted end to end: real HTTP mock → `runCommand` → the text a user reads.
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function startSkillCpMock() {
+  const state = { requests: [], importBody: null };
+  const skills = [
+    { skillId: 's-1', name: 'writing', version: 3, definitionScope: { type: 'instance' } },
+    {
+      skillId: 's-2',
+      name: 'notes',
+      version: 1,
+      definitionScope: { type: 'workspace', workspaceId: 'ws-1' },
+      oversize: true,
+      trusted: true,
+    },
+  ];
+  const server = createServer(async (request, response) => {
+    const url = new URL(request.url, 'http://127.0.0.1');
+    const body = await requestBody(request).catch(() => undefined);
+    state.requests.push({
+      method: request.method,
+      pathname: url.pathname,
+      search: url.search,
+      authorization: request.headers.authorization ?? null,
+      body,
+    });
+
+    if (url.pathname === '/api/v1/auth/login' && request.method === 'POST') {
+      if (body?.identifier !== 'admin@xihe.local' || body?.password !== TEST_PASSWORD) {
+        json(response, 401, { code: 'AUTHENTICATION_FAILED', detail: 'must not be printed' });
+        return;
+      }
+      json(response, 200, { accessToken: 'skill-token' });
+      return;
+    }
+    if (url.pathname === '/api/v1/skills' && request.method === 'GET') {
+      json(response, 200, { items: skills });
+      return;
+    }
+    if (url.pathname === '/api/v1/skills/import' && request.method === 'POST') {
+      state.importBody = body;
+      json(response, 200, {
+        results: [{ skillId: 's-1', action: 'created' }],
+        rejected: [{
+          code: 'SKILL_NAME_INVALID',
+          sourcePath: 'bad/SKILL.md',
+          detail: 'name must be lowercase',
+        }],
+        summary: { created: 1, updated: 0, unchanged: 0, rejected: 1, oversize: 0 },
+      });
+      return;
+    }
+    const bindingsMatch = url.pathname.match(/^\/api\/v1\/skills\/([^/]+)\/bindings$/);
+    if (bindingsMatch && request.method === 'GET') {
+      json(response, 200, {
+        items: [
+          { bindingId: 'b-1', subjectType: 'user', subjectId: 'u-1', scopeType: 'instance' },
+          {
+            bindingId: 'b-2',
+            subjectType: 'agent_principal',
+            subjectId: 'p-1',
+            scopeType: 'workspace',
+            scopeId: 'ws-1',
+          },
+        ],
+      });
+      return;
+    }
+    const skillMatch = url.pathname.match(/^\/api\/v1\/skills\/([^/]+)$/);
+    if (skillMatch && request.method === 'GET') {
+      json(response, 200, {
+        skillId: skillMatch[1],
+        name: 'writing',
+        version: 3,
+        bodyTokensEst: 812,
+        oversize: true,
+      });
+      return;
+    }
+    if (skillMatch && request.method === 'DELETE') {
+      response.writeHead(204);
+      response.end();
+      return;
+    }
+    if (url.pathname === '/api/v1/skill-bindings' && request.method === 'POST') {
+      json(response, 200, { bindingId: 'b-9', skillId: body?.skillId });
+      return;
+    }
+    const bindingMatch = url.pathname.match(/^\/api\/v1\/skill-bindings\/([^/]+)$/);
+    if (bindingMatch && request.method === 'DELETE') {
+      response.writeHead(204);
+      response.end();
+      return;
+    }
+    json(response, 404, { code: 'NOT_FOUND', detail: 'unknown endpoint' });
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  return {
+    server,
+    state,
+    env: { XIHE_CP_PORT: String(server.address().port), XIHE_DEV_ADMIN_PASSWORD: TEST_PASSWORD },
+    close: () => new Promise((resolve, reject) => {
+      server.close((error) => (error ? reject(error) : resolve()));
+    }),
+  };
+}
+
+/** Like `captureStdout`, but both streams: the import rendering writes rejections to stderr. */
+function captureOutput(fn) {
+  const stdout = [];
+  const stderr = [];
+  const originalOut = process.stdout.write;
+  const originalErr = process.stderr.write;
+  process.stdout.write = (chunk) => { stdout.push(String(chunk)); return true; };
+  process.stderr.write = (chunk) => { stderr.push(String(chunk)); return true; };
+  try {
+    fn();
+  } finally {
+    process.stdout.write = originalOut;
+    process.stderr.write = originalErr;
+  }
+  return { stdout: stdout.join(''), stderr: stderr.join('') };
+}
+
+test('skill list is registered at runCommand and renders the rows', async (t) => {
+  const cp = await startSkillCpMock();
+  t.after(cp.close);
+
+  const result = await runCommand(['skill', 'list'], {
+    env: cp.env, promptSecret: noPrompt, stdout: sink(), stderr: sink(),
+  });
+
+  // Registration: without the `if (group === 'skill')` branch this returns
+  // INVALID_ARGUMENT "Unknown XH command" and never touches CP.
+  assert.equal(result.error, undefined, JSON.stringify(result.error));
+  assert.equal(result.exitCode, 0);
+  const listRequests = cp.state.requests.filter((call) => call.pathname === '/api/v1/skills');
+  assert.equal(listRequests.length, 1, 'skill list must reach listSkills');
+  assert.equal(listRequests[0].search, '?definitionScope=instance');
+  assert.equal(listRequests[0].authorization, 'Bearer skill-token');
+
+  // Rendering: without the `Array.isArray(result.data?.skills)` branch this prints
+  // `Command completed.` instead of the rows a user can act on.
+  assert.equal(
+    captureStdout(() => printResult(result)),
+    's-1  writing  instance  v3\n'
+    + 's-2  notes  workspace:ws-1  v1  OVERSIZE  trusted\n',
+  );
+});
+
+test('skill list and skill bindings say so when there is nothing to show', () => {
+  assert.equal(
+    captureStdout(() => printResult({ exitCode: 0, json: false, data: { skills: [] } })),
+    'No visible skills.\n',
+  );
+  assert.equal(
+    captureStdout(() => printResult({ exitCode: 0, json: false, data: { bindings: [] } })),
+    'No bindings.\n',
+  );
+});
+
+test('skill show renders the version, the token estimate and the oversize flag', async (t) => {
+  const cp = await startSkillCpMock();
+  t.after(cp.close);
+
+  const result = await runCommand(['skill', 'show', 's-1', '--include-body'], {
+    env: cp.env, promptSecret: noPrompt, stdout: sink(), stderr: sink(),
+  });
+
+  assert.equal(result.exitCode, 0, JSON.stringify(result.error));
+  const showRequest = cp.state.requests.find((call) => call.pathname === '/api/v1/skills/s-1');
+  assert.equal(showRequest.search, '?includeBody=true');
+  assert.equal(
+    captureStdout(() => printResult(result)),
+    's-1  writing  v3  812 tok  OVERSIZE\n',
+  );
+});
+
+test('skill bindings renders one line per binding', async (t) => {
+  const cp = await startSkillCpMock();
+  t.after(cp.close);
+
+  const result = await runCommand(['skill', 'bindings', 's-1'], {
+    env: cp.env, promptSecret: noPrompt, stdout: sink(), stderr: sink(),
+  });
+
+  assert.equal(result.exitCode, 0, JSON.stringify(result.error));
+  assert.equal(
+    captureStdout(() => printResult(result)),
+    'b-1  user:u-1  instance\n'
+    + 'b-2  agent_principal:p-1  workspace:ws-1\n',
+  );
+});
+
+test('skill bind posts the binding and confirms with the id the server returned', async (t) => {
+  const cp = await startSkillCpMock();
+  t.after(cp.close);
+
+  const result = await runCommand(['skill', 'bind', '--skill', 's-1', '--subject-id', 'u-1'], {
+    env: cp.env, promptSecret: noPrompt, stdout: sink(), stderr: sink(),
+  });
+
+  assert.equal(result.exitCode, 0, JSON.stringify(result.error));
+  const bindRequest = cp.state.requests.find((call) => call.pathname === '/api/v1/skill-bindings');
+  assert.deepEqual(bindRequest.body, {
+    skillId: 's-1', subjectType: 'user', subjectId: 'u-1', scopeType: 'instance',
+  });
+  assert.equal(captureStdout(() => printResult(result)), 'bound b-9\n');
+});
+
+test('skill delete --yes deletes through CP and reports the removed id', async (t) => {
+  const cp = await startSkillCpMock();
+  t.after(cp.close);
+
+  const result = await runCommand(['skill', 'delete', 's-1', '--yes'], {
+    env: cp.env, promptSecret: noPrompt, stdout: sink(), stderr: sink(),
+  });
+
+  assert.equal(result.exitCode, 0, JSON.stringify(result.error));
+  const deletes = cp.state.requests.filter((call) => call.method === 'DELETE');
+  assert.equal(deletes.length, 1);
+  assert.equal(deletes[0].pathname, '/api/v1/skills/s-1');
+  assert.equal(captureStdout(() => printResult(result)), 'removed s-1\n');
+});
+
+test('skill import prints the summary and every rejected row', async (t) => {
+  const cp = await startSkillCpMock();
+  t.after(cp.close);
+  const directory = fs.mkdtempSync(path.join(tmpdir(), 'xihe-skill-import-'));
+  const file = path.join(directory, 'request.json');
+  const request = { definitionScope: { type: 'instance' }, skills: [{ name: 'writing' }] };
+  fs.writeFileSync(file, JSON.stringify(request));
+
+  const result = await runCommand(['skill', 'import', '--file', file], {
+    env: cp.env, promptSecret: noPrompt, stdout: sink(), stderr: sink(),
+  });
+
+  assert.equal(result.exitCode, 0, JSON.stringify(result.error));
+  assert.deepEqual(cp.state.importBody, request);
+  const printed = captureOutput(() => printResult(result));
+  assert.equal(printed.stdout, 'created=1 updated=0 unchanged=0 rejected=1 oversize=0\n');
+  assert.equal(
+    printed.stderr,
+    '[SKILL_NAME_INVALID] bad/SKILL.md: name must be lowercase\n',
+  );
+});
+
+test('help lists every skill command form', async () => {
+  const result = await runCommand(['help'], { env: {}, promptSecret: noPrompt });
+
+  assert.equal(result.exitCode, 0);
+  for (const form of [
+    'skill list', 'skill show', 'skill import', 'skill bind', 'skill unbind', 'skill delete',
+  ]) {
+    assert.ok(result.data.help.includes(form), `help is missing: ${form}`);
+  }
+});
+
+test('an unknown skill subcommand is refused instead of completing silently', async () => {
+  const result = await runCommand(['skill', 'frobnicate'], { env: {}, promptSecret: noPrompt });
+
+  assert.equal(result.exitCode, 1);
+  assert.equal(result.error.code, 'INVALID_ARGUMENT');
+  assert.match(result.error.message, /Unknown skill command/);
+});
