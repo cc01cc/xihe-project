@@ -77,6 +77,10 @@ public class ChatRunReadService {
         body.put("errorCode", run.getErrorCode());
         body.put("leaseExpired", leaseExpired);
         body.put("pendingApprovals", pendingApprovals);
+        // PLAN-0628 M2a-③ (D28-42): the admission-frozen skills listing, replay-only. The stored
+        // document is a Jackson-2 node, so it leaves through a typed projection (C1); `null` means
+        // "this Run captured no snapshot" ({}) and never "this Run had no skills" (D28-40).
+        body.put("skillsSnapshot", com.cc01cc.p.xihe.cp.skill.SkillSnapshotView.of(run.getSkillsSnapshot()));
         return body;
     }
 

@@ -33,6 +33,10 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpMethod;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 
 import java.util.List;
@@ -42,6 +46,7 @@ import java.util.UUID;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.clearInvocations;
@@ -118,6 +123,10 @@ class SkillSnapshotFreezeIntegrationTest extends AbstractIntegrationTest {
      */
     @MockitoSpyBean
     private SkillCatalogSourceService skillCatalog;
+
+    /** Mints the Run owner's access token so the read face is exercised over real HTTP (see below). */
+    @Autowired
+    private com.cc01cc.p.xihe.cp.config.JwtTokenProvider jwtTokenProvider;
 
     /** The class shares one cloned database, so seeded libraries are cleared between tests. */
     @BeforeEach
@@ -261,6 +270,85 @@ class SkillSnapshotFreezeIntegrationTest extends AbstractIntegrationTest {
         assertEquals(0, run.getSkillsSnapshot().path("items").size());
         assertEquals("accepted", run.getStatus(),
                 "the snapshot is a record: it must never block the Run it describes");
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // D28-42 (M2a-③): the read face replays the snapshot, over real HTTP
+    // ---------------------------------------------------------------------------------------------
+
+    /**
+     * The replay is asserted on the wire rather than on the projection object, because the failure this
+     * guards against is a serialisation one: a Jackson-2 {@code JsonNode} handed to Jackson 3 arrives as
+     * {@code {"nodeType":"OBJECT",…}} instead of the document (PLAN-0633 C1). Going through
+     * {@code restTemplate} also puts the response through {@code Jackson2NodeWireInterceptor}, the
+     * runtime gate, so this test is the read face's C1 evidence and not just a shape check.
+     */
+    @Test
+    @SuppressWarnings("unchecked")
+    void theRunReadFaceReplaysTheFrozenListing() {
+        Fixture fixture = fixture("read-face");
+        bind(fixture, insertSkill(fixture, "alpha", "desc of alpha"));
+        String runId = submit(fixture, "read face message");
+
+        ResponseEntity<Map<String, Object>> response = restTemplate.exchange(
+                baseUrl + "/api/v1/chat/runs/" + runId, HttpMethod.GET,
+                new HttpEntity<>(authorization(fixture)), new org.springframework.core.ParameterizedTypeReference<>() { });
+        assertEquals(HttpStatus.OK, response.getStatusCode());
+
+        Map<String, Object> snapshot = (Map<String, Object>) response.getBody().get("skillsSnapshot");
+        assertNotNull(snapshot, "a Run admitted with a captured listing must replay it");
+        assertEquals(SkillCatalogSnapshotService.VERSION, snapshot.get("version"));
+        assertEquals("ready", snapshot.get("status"));
+        assertEquals(SkillCatalogSourceService.SOURCE, snapshot.get("source"));
+        assertEquals(SkillCatalogSnapshotService.SNAPSHOT_SOURCE_FROZEN, snapshot.get("snapshotSource"));
+        assertEquals(40, snapshot.get("maxSkills"));
+        assertEquals(Boolean.FALSE, snapshot.get("truncated"));
+        assertNotNull(snapshot.get("capturedAt"));
+        assertTrue(((List<?>) snapshot.get("items")).size() == 1);
+
+        Map<String, Object> item = (Map<String, Object>) ((List<?>) snapshot.get("items")).getFirst();
+        assertEquals("alpha", item.get("name"));
+        assertEquals("desc of alpha", item.get("description"));
+        assertEquals("e".repeat(64), item.get("contentHash"));
+        assertFalse(item.containsKey("body"), "D28-35: the replay never carries the skill body");
+        assertEquals(Map.of("subjectType", "user", "scopeType", "instance",
+                "definitionScopeType", "instance"), item.get("tier"));
+    }
+
+    /**
+     * D28-40's contract decision: a Run that captured nothing ({@code {}}) reads back as {@code null},
+     * never as an empty listing — "not captured" and "had no skills" are different statements, and the
+     * legacy Run's listing is resolved live at dispatch, which no replay can represent.
+     */
+    @Test
+    void aPreM2aRunReadsBackWithANullSnapshot() {
+        Fixture fixture = fixture("read-face-absent");
+        ChatRun legacy = new ChatRun(UUID.randomUUID().toString(),
+                fixture.session().getId().toString(), fixture.user().getId().toString(),
+                fixture.workspace().getId().toString(), "legacy-key", "legacy-hash",
+                "provider", "model", "none", "succeeded");
+        legacy.setBranchId(branchPathService.ensureRootBranchId(fixture.session().getId().toString()));
+        chatRuns.saveAndFlush(legacy);
+        assertTrue(SkillCatalogSnapshotService.isAbsent(legacy.getSkillsSnapshot()),
+                "the column default {} is the pre-M2a state this test describes");
+
+        ResponseEntity<Map> response = restTemplate.exchange(
+                baseUrl + "/api/v1/chat/runs/" + legacy.getId(), HttpMethod.GET,
+                new HttpEntity<>(authorization(fixture)), Map.class);
+
+        assertEquals(HttpStatus.OK, response.getStatusCode(),
+                "a Run without a snapshot must stay readable, not become a 500");
+        assertTrue(response.getBody().containsKey("skillsSnapshot"),
+                "the key is present with a null value: 'not captured' is an answer, not a missing field");
+        assertNull(response.getBody().get("skillsSnapshot"));
+    }
+
+    private org.springframework.http.HttpHeaders authorization(Fixture fixture) {
+        org.springframework.http.HttpHeaders headers = new org.springframework.http.HttpHeaders();
+        headers.setBearerAuth(jwtTokenProvider.createAccessToken(
+                fixture.user().getId().toString(), fixture.user().getEmail(), "USER",
+                fixture.workspace().getId().toString(), 0));
+        return headers;
     }
 
     // ---------------------------------------------------------------------------------------------
