@@ -398,8 +398,13 @@ async function ensureAgentPrincipal(request: APIRequestContext, token: string): 
     );
 }
 
-/** 缺 READY chat connection ⇒ 用 CLI 准备函数补齐（幂等断言：已有则复用不新建）。 */
-async function ensureConnectionReady(token: string): Promise<void> {
+/**
+ * 缺 READY chat connection ⇒ 用 CLI 准备函数补齐（幂等断言：已有则复用不新建）。
+ *
+ * 第一个参数是历史遗留：CLI 用 `--email`/`--password-env` 自己取凭据，不需要页面 token，
+ * 因此形参保留位置但不使用（`_token`，调用方无需改动）。
+ */
+async function ensureConnectionReady(_token: string): Promise<void> {
     if (connectionPrepared) return;
     const prepareOptions = {
         "--cp": `http://127.0.0.1:${process.env.XIHE_CP_PORT ?? "12631"}`,
@@ -531,10 +536,11 @@ test.describe("PLAN-0623 有头走查：会话参与者 dock tab", () => {
         attachPageDiagnostics(page);
     });
 
-    // Playwright 要求 afterEach 的第一个参数是**解构模式**（fixtures），不能是普通标识符；
-    // oxlint 的 no-empty-pattern 不理解这个 API 契约，所以对下一行显式豁免。
-    // eslint-disable-next-line no-empty-pattern
-    test.afterEach(({}, testInfo) => {
+    // Playwright 把 fixtures 对象作为**第一个位置参数**传入；本 hook 不用任何 fixture，所以用
+    // `_fixtures` 占位（下划线前缀是 no-unused-vars 认可的"有意不用"）。
+    // 这里原先写成 `({})` + `eslint-disable-next-line no-empty-pattern`：空解构并非 Playwright 的
+    // 要求（它只是普通形参），换普通标识符即可，不需要抑制注释。
+    test.afterEach((_fixtures, testInfo) => {
         if (testInfo.status === "failed" || testInfo.status === "timedOut") {
             failedTests.push(`${testInfo.title} [${testInfo.status}]`);
         } else if (testInfo.status === "skipped") {

@@ -308,7 +308,9 @@ test.describe("PLAN-0622 M4 有头走查：PERSONAL agent 生命周期 + 429 提
         expect(GOLDPATH_PASSWORD, "the headed lane needs the bootstrap password").not.toBe("");
     });
 
-    test.afterEach(({}, testInfo) => {
+    // Playwright 把 fixtures 对象作为**第一个位置参数**传入；本 hook 不用任何 fixture，所以用
+    // `_fixtures` 占位（下划线前缀是 no-unused-vars 认可的"有意不用"，不需要 eslint-disable）。
+    test.afterEach((_fixtures, testInfo) => {
         if (testInfo.status === "failed" || testInfo.status === "timedOut") {
             failedTests.push(`${testInfo.title} [${testInfo.status}]`);
         } else if (testInfo.status === "skipped") {

@@ -2,11 +2,7 @@
     "note": "e2e 类型门存量基线 —— 只允许缩小：修好一条删一条。",
     "files": {
         "e2e/headed/session-participants.spec.ts": {
-            "TS6133": 1,
             "TS7016": 2
-        },
-        "e2e/headed/walkthrough.spec.ts": {
-            "TS6133": 4
         },
         "e2e/mock/approval.spec.ts": {
             "TS2339": 1,

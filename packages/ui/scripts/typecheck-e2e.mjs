@@ -76,7 +76,9 @@ function toBaselineObject(map) {
 }
 
 if (writeBaseline) {
-    writeFileSync(BASELINE, `${JSON.stringify(toBaselineObject(counts), null, 2)}\n`, "utf8");
+    // 4 空格缩进 + 尾随换行：与仓库的 oxfmt 输出一致，`--write-baseline` 之后不需要再手动格式化
+    // （否则 `pnpm run lint` 会在 oxfmt 阶段红，2 空格缩进那次就是这么踩到的）。
+    writeFileSync(BASELINE, `${JSON.stringify(toBaselineObject(counts), null, 4)}\n`, "utf8");
     console.log(
         `[typecheck:e2e] 已写入基线：${counts.size} 个 (文件, TS 码) 组合，共 ${errorLines.length} 条存量错误。`,
     );

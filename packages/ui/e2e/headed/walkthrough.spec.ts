@@ -39,8 +39,8 @@ type StepRecord = {
 };
 
 const steps: StepRecord[] = [];
-/** S6 → S7 之间传递"上一轮对话页 URL"（serial 里每个 test 是新 page，不能靠 page.reload 续接）。 */
-let lastChatUrl = "";
+// 注意：S6 → S7 原计划用 `lastChatUrl` 在 serial 的 test 之间传递"上一轮对话页 URL"，
+// 但 S7 已并入 S6（同一浏览器上下文内验证刷新），该变量从未被读写过 —— 已删除。
 const consoleLog: string[] = [];
 let shotSeq = 0;
 
@@ -113,7 +113,11 @@ function validUsername(seed: string): string {
     return /^[a-z]/.test(trimmed) ? trimmed : `h${trimmed}`;
 }
 
-async function registerViaForm(page: Page, email: string, name: string): Promise<void> {
+/**
+ * 表单注册：用户名按邮箱派生（`validUsername`），第三个参数是历史遗留的显示名，
+ * 注册表单并不消费它 ⇒ 用 `_name` 保留位置，调用方无需改动。
+ */
+async function registerViaForm(page: Page, email: string, _name: string): Promise<void> {
     await page.goto("/register", { waitUntil: "load" });
     await page.locator("#email").fill(email);
     const username = page.locator("#username");
@@ -303,24 +307,8 @@ async function bindToolCapableConnection(
 ): Promise<void> {
     await bindToolCapableChat(request, { authToken, workspaceId }, sessionId, FAKE_LLM_MODEL);
 }
-/** 从 CP 取该工作区最新的会话 id（本布局里会话是内联对话，URL 不带 /chat/<id>）。 */
-async function latestSessionId(page: Page, workspaceId: string): Promise<string> {
-    const token = await page.evaluate(() => localStorage.getItem("xihe-token") ?? "");
-    // 会话列表的真实端点：`GET /api/v1/sessions` + `X-Workspace-Id`（不是 /workspaces/{id}/sessions）
-    const response = await page.request.get(`${CP_URL}/api/v1/sessions`, {
-        headers: { ...bearer(token), "X-Workspace-Id": workspaceId },
-    });
-    expect(response.ok(), await response.text()).toBeTruthy();
-    const body = (await response.json()) as
-        | Array<{ id?: string }>
-        | { sessions?: Array<{ id?: string }> };
-    const list = Array.isArray(body) ? body : (body.sessions ?? []);
-    const id = list.at(0)?.id ?? "";
-    expect(id, "a session must exist before binding a provider connection").toMatch(
-        /^[0-9a-f-]{36}$/i,
-    );
-    return id;
-}
+// 原来的 `latestSessionId(page, workspaceId)` 已删除：S6/S7 合并后没有任何调用点（oxlint
+// 报未使用函数）。会话 id 现在由 `bindToolCapableChat` 或各用例自己的 API 调用取得。
 test.describe.serial("@host headed walkthrough — real user scenarios S1–S8", () => {
     test.beforeAll(() => {
         mkdirSync(SHOTS_DIR, { recursive: true });
@@ -498,7 +486,10 @@ test.describe.serial("@host headed walkthrough — real user scenarios S1–S8",
         await page.evaluate(() => localStorage.clear());
         await loginViaForm(page, plainEmail, SHARED_PASSWORD);
         await page.goto(`/workspace/${s5WorkspaceId}`, { waitUntil: "load" });
-        const landing = await landOnWorkspacePicker(page);
+        // `landOnWorkspacePicker` 的返回值（picker-empty / picker / workspace 三态）在 S5 里
+        // 只用于"等到落点确定"，断言交给下面的截图与后续 API 行为 ⇒ 不绑定变量
+        // （原本的 `const landing = …` 从未被读取，oxlint 报未使用变量）。
+        await landOnWorkspacePicker(page);
         await shot(page, "S5", "s5-plain-account-landing", "普通账号进入后的落点");
 
         const token = await tokenOf(page);
