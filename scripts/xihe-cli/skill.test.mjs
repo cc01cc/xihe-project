@@ -1,9 +1,13 @@
 // PLAN-0628 M1: the `skill` CLI domain.
 //
-// The module takes an injected `fetchImpl`, so these tests need no HTTP server and no auth/login
-// mock — the token is an argument here. (The login mock in xihe-cli.test.mjs belongs to the
-// runCommand-level tests, where a real token has to be obtained; keeping that split means this file
-// stays readable and my addition cannot destabilise the 171 KB suite.)
+// SCOPE: this file covers the **domain module only**. The `runCommand`-level wiring — the
+// `if (group === 'skill')` registration branch, the `helpText()` entries and the `printResult`
+// rendering branches — lives in xihe-cli.test.mjs together with the /api/v1/auth/login mock,
+// because that layer needs a real token while this layer takes one as an argument. Read both,
+// otherwise the registration branch looks untested.
+//
+// The module takes an injected `fetchImpl`, so no HTTP server and no auth mock are needed here;
+// keeping the layers apart is also what stops this addition from destabilising the 171 KB suite.
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
