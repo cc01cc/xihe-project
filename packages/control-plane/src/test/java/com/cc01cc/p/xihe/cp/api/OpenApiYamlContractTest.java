@@ -539,6 +539,8 @@ class OpenApiYamlContractTest {
             }
             assertTrue(raw.contains("GUARD_HOOKS_IMMUTABLE"),
                     "the preset-guard refusal code is named on the wire contract");
+            assertTrue(raw.contains("GUARD_CONTEXT_POLICY_IMMUTABLE"),
+                    "the guard's memory-policy refusal keeps its own code (distinct semantics, D25-14)");
             assertTrue(raw.contains("writeMode judge is not implemented in v1")
                             || raw.contains("judge` is reserved for M2"),
                     "the v1-reserved writeMode value is documented");
@@ -551,13 +553,14 @@ class OpenApiYamlContractTest {
                 assertTrue(createProps.containsKey(field), "create request must carry " + field);
             }
 
-            // 3: both principal views carry scope/owner/model intent with the three-tier enum.
+            // 3: both principal views carry scope/owner/model intent with the three-tier enum, plus the
+            // PLAN-0629 memory policy (a create answers it too, so the caller sees "memory off" at once).
             for (String schemaName : List.of("AgentPrincipalCreateView", "AgentPrincipalView")) {
                 Map<?, ?> view = (Map<?, ?>) schemas.get(schemaName);
                 assertInstanceOf(Map.class, view, schemaName + " is contracted");
                 Map<?, ?> properties = (Map<?, ?>) view.get("properties");
                 for (String field : List.of("principalId", "scope", "ownerUserId", "defaultModelProvider",
-                        "defaultModelName", "allowedModels")) {
+                        "defaultModelName", "allowedModels", "contextPolicy")) {
                     assertTrue(properties.containsKey(field), schemaName + " must carry " + field);
                 }
                 String scope = String.valueOf(properties.get("scope"));
@@ -572,7 +575,7 @@ class OpenApiYamlContractTest {
                     "the list is delivered as {agents:[...]}");
             Map<?, ?> agentProps = (Map<?, ?>) ((Map<?, ?>) schemas.get("WorkspaceAgentView")).get("properties");
             for (String field : List.of("principalId", "name", "templateId", "templateName", "createdAt",
-                    "source", "permissionsSnapshot")) {
+                    "source", "permissionsSnapshot", "hooks", "contextPolicy")) {
                 assertTrue(agentProps.containsKey(field), "WorkspaceAgentView must carry " + field);
             }
             String source = String.valueOf(agentProps.get("source"));

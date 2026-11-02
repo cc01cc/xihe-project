@@ -525,7 +525,9 @@ public class AgentPrincipalService {
                                 principal.getTemplateId(), optionalText(principal.getTemplateSnapshot(), "templateName"),
                                 principal.getCreatedAt(), binding.getPermissionsSnapshot().deepCopy(),
                                 sourceOf(principal), true, principal.getDisabledAt() != null,
-                                principal.getHooks() == null ? null : principal.getHooks().deepCopy()))
+                                principal.getHooks() == null ? null : principal.getHooks().deepCopy(),
+                                principal.getContextPolicy() == null
+                                        ? null : principal.getContextPolicy().deepCopy()))
                         .orElseThrow(() -> new CpApiException(HttpStatus.INTERNAL_SERVER_ERROR,
                                 "AGENT_PRINCIPAL_INCONSISTENT", "Workspace Agent binding has no principal")))
                 .forEach(view -> merged.put(view.principalId(), view));
@@ -554,7 +556,8 @@ public class AgentPrincipalService {
         return new WorkspaceAgentView(principal.getId(), principal.getName(), principal.getTemplateId(),
                 optionalText(principal.getTemplateSnapshot(), "templateName"), principal.getCreatedAt(), cap,
                 sourceOf(principal), false, principal.getDisabledAt() != null,
-                principal.getHooks() == null ? null : principal.getHooks().deepCopy());
+                principal.getHooks() == null ? null : principal.getHooks().deepCopy(),
+                principal.getContextPolicy() == null ? null : principal.getContextPolicy().deepCopy());
     }
 
     /** Without a binding there is no narrowing cap: the principal's own atoms are the whole cap. */
@@ -880,10 +883,14 @@ public class AgentPrincipalService {
      * the row is even looked up; the caller's presence flags decide what gets overwritten, so
      * "absent" and "explicit null (= clear)" stay distinguishable.
      *
-     * <p>Authority is the same tier matrix as {@code disable}. The guard refusal
-     * ({@code GUARD_HOOKS_IMMUTABLE}) is intentionally hooks-only: D25-14 fixes a preset guard's
-     * <i>subscriptions</i> as template data, while the memory policy is not a capability — a guard with
-     * memory enabled is still constrained by this validator and by the (future) memory table.</p>
+     * <p>Authority is the same tier matrix as {@code disable}. A preset guard is a system asset (the
+     * same ground as D25-03), so <b>both</b> of its subject documents are preset-owned at the write
+     * side: subscriptions refuse with {@code GUARD_HOOKS_IMMUTABLE} and the memory policy refuses with
+     * {@code GUARD_CONTEXT_POLICY_IMMUTABLE} (Lead ruling 2026-11-02). The codes stay distinct because
+     * the semantics differ — one says "subscriptions come from the template", the other says "a
+     * guard's memory policy is not a user setting"; letting the API write it would be a bypass that can
+     * pollute the guard's adjudication independence (D25-14: an ambiguous reuse is more expensive than
+     * a second code).</p>
      *
      * @return the documents now stored, read back from the row, so the wire echoes persisted state
      *     (never the caller's raw input, and never a stale {@code null} for an untouched field)
@@ -904,6 +911,9 @@ public class AgentPrincipalService {
                         "AGENT_PRINCIPAL_NOT_FOUND", "Agent principal not found"));
         if (patch.hooksPresent()) {
             requireMutableHooks(principal);
+        }
+        if (patch.contextPolicyPresent()) {
+            requireMutableContextPolicy(principal);
         }
         requireDisableAuthority(actorId, principal);
         if (patch.hooksPresent()) {
@@ -945,6 +955,27 @@ public class AgentPrincipalService {
         if (AgentPrincipal.ORIGIN_SYSTEM_PRESET.equals(principal.getOrigin())) {
             throw new CpApiException(HttpStatus.FORBIDDEN, "GUARD_HOOKS_IMMUTABLE",
                     "A preset guard's hook subscriptions are fixed; they come from the template, not the API");
+        }
+    }
+
+    /**
+     * PLAN-0629 M1 (Lead ruling 2026-11-02): a preset guard's memory policy is preset-owned too.
+     *
+     * <p><b>Why a guard is locked here</b> (do not read this as a copy-paste of the hooks refusal): a
+     * preset guard is a <b>system asset</b> — the same ground as D25-03 — so its behaviour must be
+     * decided by its template, not by whoever holds the API token. Letting the API write its memory
+     * would be a <b>bypass path</b>: memory is exactly what the guard "knows" when it judges, so
+     * unvetted memory written through this surface can pollute the guard's adjudication independence
+     * (an injected fact/profile can steer the verdict that feeds the approval policy summary). The
+     * refusal therefore gets its own code — {@code GUARD_CONTEXT_POLICY_IMMUTABLE} — instead of
+     * borrowing {@code GUARD_HOOKS_IMMUTABLE}, because the two say different things (D25-14: an
+     * ambiguous reuse is more expensive than a new code).</p>
+     */
+    private void requireMutableContextPolicy(AgentPrincipal principal) {
+        if (AgentPrincipal.ORIGIN_SYSTEM_PRESET.equals(principal.getOrigin())) {
+            throw new CpApiException(HttpStatus.FORBIDDEN, "GUARD_CONTEXT_POLICY_IMMUTABLE",
+                    "A preset guard's memory policy is fixed; a guard is a system asset, "
+                            + "so its context policy is not a user setting");
         }
     }
 
@@ -1057,7 +1088,8 @@ public class AgentPrincipalService {
 
     public record WorkspaceAgentView(UUID principalId, String name, String templateId,
                                      String templateName, Instant createdAt, JsonNode permissions,
-                                     String source, boolean bound, boolean disabled, JsonNode hooks) {}
+                                     String source, boolean bound, boolean disabled, JsonNode hooks,
+                                     JsonNode contextPolicy) {}
 
     private record ActiveWorkspaceBinding(AgentPrincipal principal, WorkspaceAgent workspaceAgent) {}
 }

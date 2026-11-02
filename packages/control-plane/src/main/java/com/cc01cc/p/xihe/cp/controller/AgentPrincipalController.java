@@ -240,6 +240,9 @@ public class AgentPrincipalController {
             response.put("allowedModels", toDocument(principal.getAllowedModels()));
             // PLAN-0625 M2: the subscription surface round-trips like the rest of the capability view.
             response.put("hooks", toDocument(principal.getHooks()));
+            // PLAN-0629 M1 (Lead ruling 2026-11-02): a create always answers with the memory policy too
+            // (null = off), so the caller learns immediately whether memory is on for the new subject.
+            response.put("contextPolicy", toDocument(principal.getContextPolicy()));
             return ResponseEntity.status(HttpStatus.CREATED).body(response);
         } catch (CpApiException e) {
             return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
