@@ -28,10 +28,18 @@ const props = defineProps<{
     selectedBranchId: string;
     mainBranchId: string | null;
     branchDisabled: boolean;
+    /**
+     * PLAN-0626 M2 (Q1 = C, Lead ruling 2026-11-02): the desktop summary row is an
+     * **entry** to the dock's `context` panel; mobile has no dock, so it keeps the
+     * in-place expansion. The two interaction paradigms are deliberately different.
+     */
+    isMobile?: boolean;
 }>();
 
 const emit = defineEmits<{
     "select-branch": [branchId: string];
+    /** Desktop only: ask the page to open the dock's `context` panel. */
+    "open-context-panel": [];
 }>();
 
 const { t } = useI18n();
@@ -116,6 +124,18 @@ function handleTemplateSummary(summary: TemplateSummary) {
     templateSummary.value = summary;
 }
 
+/**
+ * PLAN-0626 M2: desktop opens the dock `context` panel (the settings live there now);
+ * mobile keeps the in-place expansion because a 390px sheet has no dock to open.
+ */
+function handleSummaryClick(): void {
+    if (props.isMobile) {
+        open.value = !open.value;
+        return;
+    }
+    emit("open-context-panel");
+}
+
 async function closeAutoApproval() {
     const sessionId = props.sessionId;
     if (!sessionId || closingAuto.value) return;
@@ -152,7 +172,7 @@ async function closeAutoApproval() {
             :aria-expanded="open"
             :aria-controls="panelId"
             :title="summaryText"
-            @click="open = !open"
+            @click="handleSummaryClick"
         >
             <ChevronDown
                 class="size-3.5 shrink-0 transition-transform"

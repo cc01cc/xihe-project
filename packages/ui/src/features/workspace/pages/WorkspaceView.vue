@@ -124,6 +124,17 @@ function handleParticipantMention(name: string): void {
     chatPanelRef.value?.insertMention?.(name);
 }
 
+/**
+ * PLAN-0626 M2: the chat summary row is the entry to the dock's `context` panel.
+ * The chat column is this page's slot content, so its event lands here; the dock is
+ * owned by `WorkspaceWorkbench`, which exposes `openDockTab` for exactly this hop.
+ */
+const workbenchRef = ref<InstanceType<typeof WorkspaceWorkbench> | null>(null);
+
+function handleOpenContextPanel(): void {
+    workbenchRef.value?.openDockTab("context");
+}
+
 const sessionId = computed(() => {
     const current = sessionStore.currentSession;
     if (routeSessionId.value) {
@@ -322,6 +333,7 @@ watch([workspaceId, routeSessionId], () => {
     </div>
     <div v-else class="flex h-full min-w-0">
         <WorkspaceWorkbench
+            ref="workbenchRef"
             :workspace-id="workspaceId"
             :session-id="sessionId"
             :agent-principal-id="activeAgentPrincipalId"
@@ -433,6 +445,7 @@ watch([workspaceId, routeSessionId], () => {
                         ref="chatPanelRef"
                         :session-id="sessionId"
                         tool-mode="workspace"
+                        @open-context-panel="handleOpenContextPanel"
                     />
                     <div v-else class="flex flex-1 flex-col items-center justify-center gap-2">
                         <p class="text-sm text-muted-foreground">{{ t("workspace.noSession") }}</p>

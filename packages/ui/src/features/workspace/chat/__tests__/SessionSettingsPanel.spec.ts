@@ -85,7 +85,7 @@ function setSessionBinding(template: { id: string; version: number } | null) {
     ];
 }
 
-function mountPanel(overrides: { selectedBranchId?: string } = {}) {
+function mountPanel(overrides: { selectedBranchId?: string; isMobile?: boolean } = {}) {
     return mount(SessionSettingsPanel, {
         props: {
             sessionId: SESSION_ID,
@@ -93,6 +93,7 @@ function mountPanel(overrides: { selectedBranchId?: string } = {}) {
             selectedBranchId: overrides.selectedBranchId ?? ROOT_BRANCH_ID,
             mainBranchId: ROOT_BRANCH_ID,
             branchDisabled: false,
+            isMobile: overrides.isMobile ?? false,
         },
         global: {
             plugins: [i18n],
@@ -192,8 +193,22 @@ describe("SessionSettingsPanel collapsed summary", () => {
 });
 
 describe("SessionSettingsPanel expansion", () => {
-    it("expands into the two-level panel with the four partitions", async () => {
+    it("opens the dock panel on desktop instead of expanding in place (M2)", async () => {
+        // PLAN-0626 M2: the desktop summary row is an ENTRY to the dock's `context` panel.
         const wrapper = mountPanel();
+        await flushPromises();
+
+        await wrapper.get('[data-testid="session-settings-summary"]').trigger("click");
+
+        expect(wrapper.emitted("open-context-panel")).toHaveLength(1);
+        expect(
+            wrapper.get('[data-testid="session-settings-summary"]').attributes("aria-expanded"),
+        ).toBe("false");
+        wrapper.unmount();
+    });
+
+    it("keeps the in-place two-level panel on mobile (Q1 = C, no dock there)", async () => {
+        const wrapper = mountPanel({ isMobile: true });
         await flushPromises();
 
         await wrapper.get('[data-testid="session-settings-summary"]').trigger("click");
@@ -209,6 +224,8 @@ describe("SessionSettingsPanel expansion", () => {
             ).toBe(true);
         }
         expect(wrapper.get('[data-testid="session-branch-select"]').element).toBeTruthy();
+        // Mobile must not ask for a dock panel it cannot show.
+        expect(wrapper.emitted("open-context-panel")).toBeUndefined();
 
         await wrapper.get('[data-testid="session-settings-summary"]').trigger("click");
         expect(
@@ -221,7 +238,7 @@ describe("SessionSettingsPanel expansion", () => {
     });
 
     it("emits the selected branch instead of owning branch state", async () => {
-        const wrapper = mountPanel();
+        const wrapper = mountPanel({ isMobile: true });
         await flushPromises();
         await wrapper.get('[data-testid="session-settings-summary"]').trigger("click");
 
