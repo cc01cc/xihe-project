@@ -74,7 +74,7 @@ public class SessionParticipantController {
                     workspaceId, sessionId, new SessionParticipantService.AddRequest(
                             text(body.get("principalKind")), text(body.get("principalId")),
                             text(body.get("role")), text(body.get("wakePolicy")),
-                            text(body.get("respondPolicy"))));
+                            text(body.get("respondPolicy")), configMap(body.get("wakeConfig"))));
             return ResponseEntity.status(HttpStatus.CREATED).body(created);
         } catch (CpApiException e) {
             return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
@@ -100,7 +100,8 @@ public class SessionParticipantController {
                     workspaceId, sessionId, participantId,
                     new SessionParticipantService.UpdateRequest(text(body.get("role")),
                             text(body.get("wakePolicy")), text(body.get("respondPolicy")),
-                            body.get("disabled") instanceof Boolean disabled ? disabled : null));
+                            body.get("disabled") instanceof Boolean disabled ? disabled : null,
+                            configMap(body.get("wakeConfig"))));
             return ResponseEntity.ok(updated);
         } catch (CpApiException e) {
             return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
@@ -122,6 +123,12 @@ public class SessionParticipantController {
         } catch (CpApiException e) {
             return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
         }
+    }
+
+    @SuppressWarnings("unchecked")
+    private static java.util.Map<String, Object> configMap(Object value) {
+        return value instanceof java.util.Map<?, ?> map
+                ? (java.util.Map<String, Object>) map : null;
     }
 
     private static String text(Object value) {

@@ -61,7 +61,7 @@ public class SessionParticipantService {
     private static final Set<String> ROLES = Set.of(SessionParticipant.ROLE_PRIMARY,
             SessionParticipant.ROLE_MEMBER, SessionParticipant.ROLE_GUARD);
     private static final Set<String> WAKES = Set.of(SessionParticipant.WAKE_ALL_MESSAGES,
-            SessionParticipant.WAKE_MENTION);
+            SessionParticipant.WAKE_MENTION, SessionParticipant.WAKE_SCHEDULE);
     private static final Set<String> RESPONDS = Set.of(SessionParticipant.RESPOND_ALWAYS,
             SessionParticipant.RESPOND_WHEN_MENTIONED, SessionParticipant.RESPOND_JUDGE,
             SessionParticipant.RESPOND_MUTED);
@@ -147,12 +147,16 @@ public class SessionParticipantService {
         }
         String wake = request.wakePolicy() == null || request.wakePolicy().isBlank()
                 ? SessionParticipant.WAKE_MENTION : requireWake(request.wakePolicy());
+        com.fasterxml.jackson.databind.JsonNode wakeConfig =
+                requireValidWakeConfig(wake, request.wakeConfig());
         String respond = request.respondPolicy() == null || request.respondPolicy().isBlank()
                 ? SessionParticipant.RESPOND_WHEN_MENTIONED : requireRespond(request.respondPolicy());
         int orderIndex = participantRepository.maxOrderIndex(session.getId()) + 10;
 
-        SessionParticipant saved = participantRepository.save(new SessionParticipant(
-                session.getId(), kind, principalId, role, orderIndex, wake, respond));
+        SessionParticipant toSave = new SessionParticipant(
+                session.getId(), kind, principalId, role, orderIndex, wake, respond);
+        toSave.setWakeConfig(wakeConfig);
+        SessionParticipant saved = participantRepository.save(toSave);
         // R7: every participant gets a cursor; history counts as read (same rule as the V92 backfill).
         cursorRepository.save(new SessionParticipantCursor(saved.getId(),
                 lastEventSequence(session.getId()), 0));
@@ -218,6 +222,15 @@ public class SessionParticipantService {
         }
         if (request.respondPolicy() != null && !request.respondPolicy().isBlank()) {
             row.setRespondPolicy(requireRespond(request.respondPolicy()));
+        }
+        if (request.wakePolicy() != null && !request.wakePolicy().isBlank()) {
+            String wake = requireWake(request.wakePolicy());
+            // D24/CLI 语义：非 SCHEDULE ⇒ config 显式清空，绝不残留旧调度参数。
+            row.setWakePolicy(wake);
+            row.setWakeConfig(requireValidWakeConfig(wake, request.wakeConfig()));
+        } else if (request.wakeConfig() != null) {
+            // 策略未动、只改 config：按现有策略重新校验并落库（M2 投影联动随 syncParticipant 发生）。
+            row.setWakeConfig(requireValidWakeConfig(row.getWakePolicy(), request.wakeConfig()));
         }
         if (request.disabled() != null) {
             if (row.isPrimary() && Boolean.TRUE.equals(request.disabled())) {
@@ -493,7 +506,7 @@ public class SessionParticipantService {
                 principal == null ? null : principal.getDefaultModelProvider(),
                 principal == null ? null : principal.getDefaultModelName(),
                 principal == null ? null : sourceOf(principal),
-                selfOwned, cursorView);
+                selfOwned, row.getWakeConfig(), cursorView);
     }
 
     /**
@@ -574,6 +587,44 @@ public class SessionParticipantService {
         return value;
     }
 
+    /**
+     * PLAN-0624 task-74 (wire 补丁): SCHEDULE 必须带合法 wake_config——intervalSeconds 必填
+     * 且 ≥60（对齐 M2 的 30s tick 与 V94 CHECK）；jitterSeconds/maxConcurrent 可选。
+     * 非 SCHEDULE ⇒ config 必须为 null（显式清除语义，与 CLI 一致）；传了就是 400。
+     */
+    static com.fasterxml.jackson.databind.JsonNode requireValidWakeConfig(
+            String wakePolicy, java.util.Map<String, Object> wakeConfig) {
+        boolean schedule = SessionParticipant.WAKE_SCHEDULE.equals(wakePolicy);
+        if (!schedule) {
+            if (wakeConfig != null && !wakeConfig.isEmpty()) {
+                throw new CpApiException(HttpStatus.BAD_REQUEST, "PARTICIPANT_INVALID_WAKE_CONFIG",
+                        "wakeConfig is only valid when wakePolicy is SCHEDULE; it must be omitted otherwise");
+            }
+            return null;
+        }
+        if (wakeConfig == null || wakeConfig.isEmpty()) {
+            throw new CpApiException(HttpStatus.BAD_REQUEST, "PARTICIPANT_INVALID_WAKE_CONFIG",
+                    "wakeConfig with intervalSeconds is required when wakePolicy is SCHEDULE");
+        }
+        Object rawInterval = wakeConfig.get("intervalSeconds");
+        if (!(rawInterval instanceof Number interval) || interval.intValue() < 60) {
+            throw new CpApiException(HttpStatus.BAD_REQUEST, "PARTICIPANT_INVALID_WAKE_CONFIG",
+                    "wakeConfig.intervalSeconds is required and must be >= 60");
+        }
+        Object jitter = wakeConfig.get("jitterSeconds");
+        if (jitter != null && (!(jitter instanceof Number) || ((Number) jitter).intValue() < 0)) {
+            throw new CpApiException(HttpStatus.BAD_REQUEST, "PARTICIPANT_INVALID_WAKE_CONFIG",
+                    "wakeConfig.jitterSeconds must be a non-negative integer");
+        }
+        Object maxConcurrent = wakeConfig.get("maxConcurrent");
+        if (maxConcurrent != null && (!(maxConcurrent instanceof Number)
+                || ((Number) maxConcurrent).intValue() < 1)) {
+            throw new CpApiException(HttpStatus.BAD_REQUEST, "PARTICIPANT_INVALID_WAKE_CONFIG",
+                    "wakeConfig.maxConcurrent must be a positive integer");
+        }
+        return new com.fasterxml.jackson.databind.ObjectMapper().valueToTree(wakeConfig);
+    }
+
     private static String requireWake(String value) {
         if (!WAKES.contains(value)) {
             throw new CpApiException(HttpStatus.BAD_REQUEST, "PARTICIPANT_INVALID_WAKE_POLICY",
@@ -616,10 +667,12 @@ public class SessionParticipantService {
     // ------------------------------------------------------------------ views
 
     public record AddRequest(String principalKind, String principalId, String role,
-                             String wakePolicy, String respondPolicy) {}
+                             String wakePolicy, String respondPolicy,
+                             java.util.Map<String, Object> wakeConfig) {}
 
     public record UpdateRequest(String role, String wakePolicy, String respondPolicy,
-                                Boolean disabled) {}
+                                Boolean disabled,
+                                java.util.Map<String, Object> wakeConfig) {}
 
     public record CursorView(Long lastReadEventSeq, Integer mentionCount, Instant updatedAt) {}
 
@@ -628,6 +681,7 @@ public class SessionParticipantService {
                                   String respondPolicy, Instant createdAt, Instant disabledAt,
                                   String displayName, String defaultModelProvider,
                                   String defaultModelName, String source, boolean selfOwned,
+                                  com.fasterxml.jackson.databind.JsonNode wakeConfig,
                                   CursorView readCursor) {}
 
     public record ListView(List<ParticipantView> participants, Map<String, Boolean> capabilities) {}

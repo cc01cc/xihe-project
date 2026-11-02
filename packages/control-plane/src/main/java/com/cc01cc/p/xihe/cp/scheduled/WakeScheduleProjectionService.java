@@ -92,12 +92,18 @@ public class WakeScheduleProjectionService {
             return;
         }
         for (ScheduledTask row : projections) {
+            boolean intervalChanged = !java.util.Objects.equals(row.getIntervalSeconds(), interval);
             row.setIntervalSeconds(interval);
             ((ObjectNode) row.getPayload()).put("maxConcurrent", maxConcurrent);
             if (jitter != null) {
                 ((ObjectNode) row.getPayload()).put("jitterSeconds", jitter);
             } else {
                 ((ObjectNode) row.getPayload()).remove("jitterSeconds");
+            }
+            if (intervalChanged && ScheduledTask.STATUS_SCHEDULED.equals(row.getStatus())) {
+                // task-74: an interval change re-arms the next fire (catch-up-once: base =
+                // now, never prev+interval — a shortened period must not fire immediately).
+                row.setNextFireAt(nextFireAfter(interval, jitter, Instant.now()));
             }
             scheduledTaskRepository.save(row);
         }

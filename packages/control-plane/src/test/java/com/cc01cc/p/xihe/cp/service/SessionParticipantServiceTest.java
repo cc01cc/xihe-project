@@ -121,7 +121,7 @@ class SessionParticipantServiceTest {
     void aSecondPrimaryIsRefusedWithABusinessCode() {
         CpApiException refused = assertThrows(CpApiException.class, () -> service.add(OWNER,
                 WORKSPACE, SESSION_ID.toString(), new SessionParticipantService.AddRequest(
-                        "AGENT", AGENT_ID.toString(), "PRIMARY", null, null)));
+                        "AGENT", AGENT_ID.toString(), "PRIMARY", null, null, null)));
         assertEquals("PARTICIPANT_PRIMARY_EXISTS", refused.getCode(),
                 "D23-13: a second PRIMARY is a conflict, never a 500");
         assertEquals(HttpStatus.CONFLICT, refused.getStatus());
@@ -144,7 +144,7 @@ class SessionParticipantServiceTest {
         CpApiException downgraded = assertThrows(CpApiException.class,
                 () -> service.update(OWNER, WORKSPACE, SESSION_ID.toString(),
                         primary.getId().toString(),
-                        new SessionParticipantService.UpdateRequest("MEMBER", null, null, null)));
+                        new SessionParticipantService.UpdateRequest("MEMBER", null, null, null, null)));
         assertEquals("PARTICIPANT_PRIMARY_IMMUTABLE", downgraded.getCode(),
                 "D23-13: PRIMARY is not transferable");
     }
@@ -159,7 +159,7 @@ class SessionParticipantServiceTest {
         CpApiException refused = assertThrows(CpApiException.class,
                 () -> service.update(OWNER, WORKSPACE, SESSION_ID.toString(),
                         member.getId().toString(),
-                        new SessionParticipantService.UpdateRequest("PRIMARY", null, null, null)));
+                        new SessionParticipantService.UpdateRequest("PRIMARY", null, null, null, null)));
         assertEquals("PARTICIPANT_PRIMARY_EXISTS", refused.getCode());
     }
 
@@ -331,6 +331,6 @@ class SessionParticipantServiceTest {
         verify(cursors).findByParticipantIdIn(any());
     }
     private static SessionParticipantService.AddRequest humanRequest() {
-        return new SessionParticipantService.AddRequest("HUMAN", HUMAN_ID.toString(), null, null, null);
+        return new SessionParticipantService.AddRequest("HUMAN", HUMAN_ID.toString(), null, null, null, null);
     }
 }
