@@ -4,6 +4,7 @@ import com.cc01cc.p.xihe.cp.config.CpApiException;
 import org.springframework.http.HttpStatus;
 
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.regex.Pattern;
@@ -189,25 +190,41 @@ public final class SkillImportValidator {
      * The path rule family shared with {@code NestedAgentsMdResolver.normalizeTouchedPath}
      * (deliberately duplicated, see class javadoc).
      *
-     * @return the normalised relative path, or {@code null} when the input is unsafe
+     * <p><b>Kept behaviourally identical, and parity-tested</b>
+     * ({@code cp.context.service.PathRuleParityTest}): the same normalisation (strip, backslashes to
+     * slashes, drop empty and {@code .} segments) and the same refusals (NUL, absolute, UNC, drive
+     * prefix, {@code ..}). "Local spelling" is only allowed to differ in <i>placement</i>, not in
+     * meaning — that test is the tripwire for the day it drifts.</p>
+     *
+     * <p>One intentional convention difference: where the nested resolver returns {@code ""} for
+     * "nothing was given" (it has an optional input), this returns {@code null}, because a skill's
+     * {@code sourcePath} is required — both callers see "no usable path".</p>
+     *
+     * @return the normalised relative path, or {@code null} when the input is unsafe or empty
      */
-    static String normalizePath(String raw) {
-        if (raw == null) {
+    public static String normalizePath(String raw) {
+        if (raw == null || raw.isBlank()) {
             return null;
         }
-        String path = raw.replace('\\', '/').trim();
-        if (path.isEmpty() || path.indexOf('\0') >= 0) {
+        String path = raw.strip().replace('\\', '/');
+        if (path.indexOf('\u0000') >= 0 || path.startsWith("/") || path.startsWith("//")) {
             return null;
         }
-        if (path.startsWith("/") || DRIVE_PREFIX.matcher(path).matches() || path.startsWith("//")) {
+        if (DRIVE_PREFIX.matcher(path).matches()) {
             return null;
         }
-        for (String segment : path.split("/")) {
-            if ("..".equals(segment)) {
+        List<String> parts = new ArrayList<>();
+        for (String part : path.split("/+")) {
+            if (part.isEmpty() || ".".equals(part)) {
+                continue;
+            }
+            if ("..".equals(part)) {
                 return null;
             }
+            parts.add(part);
         }
-        return path;
+        String joined = String.join("/", parts);
+        return joined.isEmpty() ? null : joined;
     }
 
     private static Rejection rejection(SkillImportItem item, String code, String detail) {
