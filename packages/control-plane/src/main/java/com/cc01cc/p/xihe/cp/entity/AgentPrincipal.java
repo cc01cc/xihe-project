@@ -64,6 +64,11 @@ public class AgentPrincipal {
     @jakarta.persistence.Column(name = "preset_id")
     private String presetId;
 
+    /** PLAN-0625 (V96): hook subscriptions — runtime single-read surface for the approval gate. */
+    @org.hibernate.annotations.JdbcTypeCode(org.hibernate.type.SqlTypes.JSON)
+    @jakarta.persistence.Column(name = "hooks", columnDefinition = "jsonb")
+    private com.fasterxml.jackson.databind.JsonNode hooks;
+
     /** Only ever set for {@code PERSONAL}; the DB CHECK constraint keeps the two in sync. */
     @Column(name = "owner_user_id", columnDefinition = "uuid")
     private UUID ownerUserId;
@@ -118,6 +123,8 @@ public class AgentPrincipal {
     public void setOrigin(String origin) { this.origin = origin; }
     public String getPresetId() { return presetId; }
     public void setPresetId(String presetId) { this.presetId = presetId; }
+    public com.fasterxml.jackson.databind.JsonNode getHooks() { return hooks; }
+    public void setHooks(com.fasterxml.jackson.databind.JsonNode hooks) { this.hooks = hooks; }
     public void setScope(String scope) { this.scope = scope; }
 
     public UUID getOwnerUserId() { return ownerUserId; }

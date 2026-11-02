@@ -99,6 +99,21 @@ class GuardPresetMigrationTest {
     }
 
     @Test
+    void hooksColumnExistsWithNullDefault() throws SQLException {
+        List<String[]> rows = query("SELECT data_type, is_nullable, column_default"
+                + " FROM information_schema.columns WHERE table_schema = 'public'"
+                + " AND table_name = 'agent_principals' AND column_name = 'hooks'");
+        assertEquals(1, rows.size(), "V96 adds the hook subscription surface");
+        assertEquals("jsonb", rows.getFirst()[0]);
+        assertEquals("YES", rows.getFirst()[1], "NULL means no subscriptions — no backfill");
+        execute("UPDATE agent_principals SET hooks = '{\"advisors\":[{\"kind\":\"guard-v1\"}]}'::jsonb"
+                + " WHERE id = '" + LEGACY_PRINCIPAL_ID + "'");
+        List<String[]> updated = query("SELECT hooks -> 'advisors' -> 0 ->> 'kind'"
+                + " FROM agent_principals WHERE id = '" + LEGACY_PRINCIPAL_ID + "'");
+        assertEquals("guard-v1", updated.getFirst()[0], "kind is an open string — no registry (D25-10)");
+    }
+
+    @Test
     void presetIndexExistsForPresetLookups() throws SQLException {
         List<String[]> rows = query("SELECT indexname FROM pg_indexes WHERE schemaname = 'public'"
                 + " AND tablename = 'agent_principals' AND indexname = 'idx_agent_principals_preset'");

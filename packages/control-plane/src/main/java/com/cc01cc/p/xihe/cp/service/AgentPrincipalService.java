@@ -367,8 +367,13 @@ public class AgentPrincipalService {
         requireUser(actorId);
         workspaceService.requireActiveWorkspace(workspaceId.toString());
         requireWorkspaceMember(actorId, workspaceId);
-        requireWorkspaceAgentManagement(actorId, workspaceId);
         AgentPrincipal principal = requireActivePrincipal(principalId);
+        // D25-02: a preset guard cap is fixed at the input side — the write side refuses.
+        // Placed before the management check: the immutability is a property of the
+        // TARGET principal, not of the actor's rights (origin is already member-visible).
+        // resolveCapFor stays the single entry, untouched.
+        requireMutableCap(principal);
+        requireWorkspaceAgentManagement(actorId, workspaceId);
         requireBindingAuthorityForScope(actorId, principal);
 
         Set<GrantIntersectionEvaluator.PermissionAtom> cap = parsePermissions(requestedPermissions);
@@ -783,6 +788,14 @@ public class AgentPrincipalService {
                 grantRepository.findScopedGrants(GrantPrincipalPathResolver.USER, actorId,
                         GrantSources.EVALUATION_SOURCES, workspaceId))))) {
             throw new CpApiException(HttpStatus.FORBIDDEN, "FORBIDDEN", actionClass + " permission is required");
+        }
+    }
+
+    /** D25-02/D25-08: preset guards (and any future hook-only preset) never get their cap rewritten. */
+    private void requireMutableCap(AgentPrincipal principal) {
+        if (com.cc01cc.p.xihe.cp.entity.AgentPrincipal.ORIGIN_SYSTEM_PRESET.equals(principal.getOrigin())) {
+            throw new CpApiException(org.springframework.http.HttpStatus.FORBIDDEN, "GUARD_CAP_IMMUTABLE",
+                    "A preset guard's capability is fixed; it cannot be narrowed or widened through a binding");
         }
     }
 
