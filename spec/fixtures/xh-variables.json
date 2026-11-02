@@ -1,0 +1,201 @@
+{
+  "contract": "xh-variables",
+  "version": 2,
+  "plan": "PLAN-0632 Gate G-0",
+  "purpose": "Single machine-readable source for the ${xh.*} request-template slot set and its substitution/validation semantics. Both sides read THIS file in their tests: Agent (packages/agent/.../llm/api_request.py VARIABLES + render_request) and Control Plane (ApiRequestValidator SCALARS + publish validation). Adding, renaming or re-classifying a slot on one side only turns both suites red.",
+  "owners": {
+    "agent": "packages/agent/src/xihe_agent/llm/api_request.py",
+    "agentValues": "packages/agent/src/xihe_agent/api/chat.py",
+    "controlPlane": "packages/control-plane/src/main/java/com/cc01cc/p/xihe/cp/provider/ApiRequestValidator.java",
+    "defaultTemplates": "packages/control-plane/src/main/java/com/cc01cc/p/xihe/cp/service/ApiRequestTemplateService.java",
+    "uiPalette": "packages/ui/src/components/settings/ContextTemplatesPanel.vue"
+  },
+  "substitution": {
+    "singlePass": true,
+    "singlePassNote": "Replacement values are never re-scanned: a value containing ${xh.*} is emitted verbatim. Both sides must honour this.",
+    "escapePrefix": "$${",
+    "escapeNote": "$${xh.name} emits the literal text ${xh.name} and does NOT reference the slot.",
+    "tokenRegex": "\\$\\{xh\\.[a-z_]+\\}",
+    "objectKeysForbidden": true,
+    "errorCodes": {
+      "unknownVariable": "UNKNOWN_VARIABLE",
+      "malformedXhToken": "MALFORMED_XH_TOKEN",
+      "variableInObjectKey": "VARIABLE_IN_OBJECT_KEY",
+      "missingValue": "MISSING_VARIABLE",
+      "wrongVariableLocation": "WRONG_VARIABLE_LOCATION",
+      "wrongVariableType": "WRONG_VARIABLE_TYPE",
+      "runtimeFieldConflict": "RUNTIME_FIELD_CONFLICT",
+      "cpInvalidVariablePosition": "INVALID_VARIABLE_POSITION",
+      "cpInvalidVariableToken": "INVALID_VARIABLE_TOKEN"
+    }
+  },
+  "slots": [
+    {
+      "name": "user_input",
+      "type": "str",
+      "cpClass": "scalar",
+      "sampleValue": "hi",
+      "description": "Current user turn content."
+    },
+    {
+      "name": "agent_instructions",
+      "type": "str",
+      "cpClass": "scalar",
+      "sampleValue": "SYS",
+      "description": "Agent instructions / system prompt."
+    },
+    {
+      "name": "skill_catalog",
+      "type": "str",
+      "cpClass": "scalar",
+      "producerPlan": "0628",
+      "agentDefault": "",
+      "sampleValue": "SKILLS",
+      "description": "Model-visible skill catalog block. Content is produced by the skills listing component (PLAN-0628); until that producer lands the Agent supplies an empty string, which renders as an empty block. An empty block means 'no catalog available', it is never a licence to silently drop the slot."
+    },
+    {
+      "name": "agent_memory",
+      "type": "str",
+      "cpClass": "scalar",
+      "producerPlan": "0629",
+      "agentDefault": "",
+      "sampleValue": "MEMORY",
+      "description": "Model-visible agent memory block. Content is produced by the memory component (PLAN-0629); until that producer lands the Agent supplies an empty string (same rule as skill_catalog)."
+    },
+    {
+      "name": "model",
+      "type": "str",
+      "cpClass": "scalar",
+      "exactSlot": "$.model",
+      "runtimeOwned": true,
+      "sampleValue": "test-model",
+      "description": "Read-only model slot; only the exact token at $.model is legal."
+    },
+    {
+      "name": "rag_context",
+      "type": "str",
+      "cpClass": "rag",
+      "sampleValue": "RAG",
+      "position": "RAG data-role content / tool_result only (PLAN-0416 whitelist)",
+      "description": "Retrieved context; placement is restricted to the frozen RAG path whitelist."
+    },
+    {
+      "name": "tools",
+      "type": "list",
+      "cpClass": "tools",
+      "position": "$.tools[*] as the exact token only",
+      "sampleValue": [{ "type": "function", "function": { "name": "t1" } }],
+      "description": "Authorized tools; structured splice only in the tools array."
+    },
+    {
+      "name": "conversation_history",
+      "type": "list",
+      "cpClass": "history",
+      "position": "$.messages[*] as the exact token only",
+      "sampleValue": [{ "role": "user", "content": "HIST" }],
+      "description": "Structured history splice; only an exact token element of the messages/input array."
+    }
+  ],
+  "cases": [
+    {
+      "id": "new-slots-render",
+      "apiType": "openai-chat-completions",
+      "source": "{\"model\":\"${xh.model}\",\"messages\":[{\"role\":\"system\",\"content\":\"${xh.skill_catalog}\"},{\"role\":\"user\",\"content\":\"${xh.agent_memory}\"}],\"tools\":[\"${xh.tools}\"]}",
+      "cpValid": true,
+      "agent": "render",
+      "expectMessages": [
+        { "role": "system", "content": "SKILLS" },
+        { "role": "user", "content": "MEMORY" }
+      ],
+      "note": "G-0 core: both new slots reach the model wire as plain scalars."
+    },
+    {
+      "id": "joined-system-block",
+      "apiType": "anthropic-messages",
+      "source": "{\"model\":\"${xh.model}\",\"system\":\"${xh.agent_instructions}\\n\\n${xh.skill_catalog}\\n\\n${xh.agent_memory}\",\"messages\":[\"${xh.conversation_history}\",{\"role\":\"user\",\"content\":\"${xh.user_input}\"}],\"max_tokens\":8}",
+      "cpValid": true,
+      "agent": "render",
+      "expectSystem": "SYS\n\nSKILLS\n\nMEMORY",
+      "note": "The seeded v2 default template shape: one joined system string, so empty producers leave trailing newlines only (never an empty provider message)."
+    },
+    {
+      "id": "escaped-slot-is-literal",
+      "apiType": "openai-chat-completions",
+      "source": "{\"model\":\"${xh.model}\",\"messages\":[{\"role\":\"user\",\"content\":\"$${xh.skill_catalog}\"}]}",
+      "cpValid": true,
+      "agent": "render",
+      "expectMessages": [{ "role": "user", "content": "${xh.skill_catalog}" }],
+      "note": "$${...} is an escape, not a slot reference, on both sides."
+    },
+    {
+      "id": "single-pass-value-not-rescanned",
+      "apiType": "openai-chat-completions",
+      "source": "{\"model\":\"${xh.model}\",\"messages\":[{\"role\":\"user\",\"content\":\"${xh.user_input}\"}]}",
+      "cpValid": true,
+      "agent": "render",
+      "valueOverride": { "user_input": "${xh.agent_memory}" },
+      "expectMessages": [{ "role": "user", "content": "${xh.agent_memory}" }],
+      "note": "Values are never re-scanned: the substituted text stays literal even when it looks like a token."
+    },
+    {
+      "id": "unknown-slot-rejected",
+      "apiType": "openai-chat-completions",
+      "source": "{\"model\":\"${xh.model}\",\"messages\":[{\"role\":\"user\",\"content\":\"${xh.undeclared_slot}\"}]}",
+      "cpValid": false,
+      "cpCode": "INVALID_VARIABLE_POSITION",
+      "agent": "error",
+      "agentCode": "UNKNOWN_VARIABLE",
+      "note": "Hard constraint: an undeclared variable must fail loudly on both sides, never render empty."
+    },
+    {
+      "id": "malformed-slot-rejected",
+      "apiType": "openai-chat-completions",
+      "source": "{\"model\":\"${xh.model}\",\"messages\":[{\"role\":\"user\",\"content\":\"${xh.skill-catalog}\"}]}",
+      "cpValid": false,
+      "cpCode": "INVALID_VARIABLE_TOKEN",
+      "agent": "error",
+      "agentCode": "MALFORMED_XH_TOKEN",
+      "note": "Slot names are lower_snake only; the two new slots must not introduce a laxer pattern."
+    },
+    {
+      "id": "slot-in-object-key-rejected",
+      "apiType": "openai-chat-completions",
+      "source": "{\"model\":\"${xh.model}\",\"messages\":[{\"role\":\"user\",\"content\":\"x\",\"${xh.skill_catalog}\":true}]}",
+      "cpValid": false,
+      "cpCode": "INVALID_VARIABLE_POSITION",
+      "agent": "error",
+      "agentCode": "VARIABLE_IN_OBJECT_KEY",
+      "note": "Variables may never form object keys (authority-shape protection)."
+    },
+    {
+      "id": "model-literal-rejected",
+      "apiType": "openai-chat-completions",
+      "source": "{\"model\":\"gpt-literal\",\"messages\":[{\"role\":\"user\",\"content\":\"${xh.user_input}\"}]}",
+      "cpValid": false,
+      "cpCode": "RUNTIME_FIELD_CONFLICT",
+      "agent": "error",
+      "agentCode": "RUNTIME_FIELD_CONFLICT",
+      "note": "Runtime-owned fields stay runtime-owned; G-0 adds no new runtime-owned field."
+    },
+    {
+      "id": "history-must-be-structural",
+      "apiType": "openai-chat-completions",
+      "source": "{\"model\":\"${xh.model}\",\"messages\":[{\"role\":\"user\",\"content\":\"prefix ${xh.conversation_history}\"}]}",
+      "cpValid": false,
+      "cpCode": "INVALID_VARIABLE_POSITION",
+      "agent": "error",
+      "agentCode": "WRONG_VARIABLE_LOCATION",
+      "note": "List slots remain structured-splice only; adding scalar slots must not loosen this."
+    },
+    {
+      "id": "cp-valid-but-no-value",
+      "apiType": "openai-chat-completions",
+      "source": "{\"model\":\"${xh.model}\",\"messages\":[{\"role\":\"user\",\"content\":\"${xh.skill_catalog}\"}]}",
+      "cpValid": true,
+      "agent": "error",
+      "agentCode": "MISSING_VARIABLE",
+      "omitValue": ["skill_catalog"],
+      "note": "Publish-time (CP) validity and render-time (Agent) value presence are different gates: a declared slot with no supplied value must fail at render, never fall back to empty."
+    }
+  ]
+}

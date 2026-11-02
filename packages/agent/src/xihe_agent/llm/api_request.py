@@ -58,9 +58,19 @@ CHAT_TYPES = {
     # the native input.messages nesting below.
     "dashscope-generation": ChatApiType("dashscope-generation", "/services/aigc/text-generation/generation", "messages"),
 }
+# PLAN-0632 Gate G-0: the model-visible surface of a chat run is exactly the slots in this
+# registry. Adding a context component elsewhere (builder.py) does NOT reach the model; a new
+# piece of context needs a slot here, the mirror entry in CP (ApiRequestValidator.SCALARS) and
+# an entry in spec/fixtures/xh-variables.json - both sides test against that fixture.
+# `skill_catalog` (PLAN-0628) and `agent_memory` (PLAN-0629) are declared ahead of their
+# producers: the values are supplied per run by ``_xh_context_slots`` in api/chat.py, which
+# returns "" until those components land. Declared-but-empty is legal; a *missing* value is
+# still MISSING_VARIABLE (never silently blank).
 VARIABLES = {
     "user_input": str,
     "agent_instructions": str,
+    "skill_catalog": str,
+    "agent_memory": str,
     "rag_context": str,
     "model": str,
     "tools": list,

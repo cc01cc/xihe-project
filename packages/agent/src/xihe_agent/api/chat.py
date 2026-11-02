@@ -183,6 +183,29 @@ def _rag_config_defaults() -> dict[str, Any]:
     }
 
 
+def xh_context_slots() -> dict[str, str]:
+    """PLAN-0632 Gate G-0: the single producer seam for the two context-block slots.
+
+    `skill_catalog` and `agent_memory` are model-visible slots declared in
+    ``llm.api_request.VARIABLES`` (mirrored by CP ``ApiRequestValidator.SCALARS`` and pinned
+    by ``spec/fixtures/xh-variables.json``). Their *content* belongs to the skills listing
+    (PLAN-0628) and memory (PLAN-0629) components, which do not exist yet, so both are empty
+    strings today: an empty block renders as nothing, which is the honest current value.
+
+    Two rules keep this from becoming a silent hole:
+
+    * the keys are ALWAYS present, so a template that references a slot can never fall through
+      to ``MISSING_VARIABLE`` just because a producer is unfinished; and
+    * a slot that is genuinely missing from the map still raises ``MISSING_VARIABLE`` in
+      ``render_request`` - emptiness here is declared, not inferred from an absent key.
+
+    When PLAN-0628/0629 land they replace the values in this one function; no other call site
+    or template needs to change.
+    """
+
+    return {"skill_catalog": "", "agent_memory": ""}
+
+
 async def _close_guidance_consumer(consumer: GuidanceConsumer | None) -> None:
     if consumer is None:
         return
@@ -337,6 +360,7 @@ async def chat(request: Request):
                 "rag_context": "",
                 "conversation_history": [{"role": "user", "content": ""}],
                 "tools": [],
+                **xh_context_slots(),
             },
         )
         grant = await config_client.redeem_provider_lease(
@@ -629,6 +653,7 @@ async def chat(request: Request):
                             [] if continuation is not None else native_history(context.messages, api_type)
                         ),
                         "tools": native_tools(all_tools, api_type),
+                        **xh_context_slots(),
                     },
                     request_id=request_id,
                     timeout=request_config.timeout,
