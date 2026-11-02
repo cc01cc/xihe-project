@@ -35,7 +35,7 @@ public class AgentPrincipalController {
             // PLAN-0625 M2 (D25-14): hook subscriptions ride the create surface — no new endpoint.
             "hooks");
 
-    private static Map<String, Object> toPrincipalView(AgentPrincipalService.AgentPrincipalView view) {
+    private Map<String, Object> toPrincipalView(AgentPrincipalService.AgentPrincipalView view) {
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("principalId", view.principalId());
         result.put("name", view.name());
@@ -46,10 +46,21 @@ public class AgentPrincipalController {
         result.put("ownerUserId", view.ownerUserId() == null ? null : view.ownerUserId().toString());
         result.put("defaultModelProvider", view.defaultModelProvider());
         result.put("defaultModelName", view.defaultModelName());
-        result.put("allowedModels", view.allowedModels());
+        result.put("allowedModels", toDocument(view.allowedModels()));
         result.put("disabledAt", view.disabledAt() == null ? null : view.disabledAt().toString());
-        result.put("hooks", view.hooks());
+        result.put("hooks", toDocument(view.hooks()));
         return result;
+    }
+
+    /**
+     * PLAN-0625 Gap J: a Jackson-2 {@link JsonNode} must never be put into a response map. Boot 4
+     * serialises with Jackson 3, which introspects the Jackson-2 node as an ordinary bean and answers
+     * its property names — the walkthrough saw
+     * {@code "hooks":{"array":false,…,"nodeType":"OBJECT",…}} instead of the subscription document.
+     * Lower the tree to plain {@code Map}/{@code List}/scalars first; {@code null} stays {@code null}.
+     */
+    private Object toDocument(JsonNode node) {
+        return node == null || node.isNull() ? null : objectMapper.convertValue(node, Object.class);
     }
 
     private static UUID parseUuid(String value) {
@@ -87,7 +98,7 @@ public class AgentPrincipalController {
         try {
             List<Map<String, Object>> principals = agentPrincipalService
                     .listPrincipals(actorUserId, scope, workspaceId).stream()
-                    .map(AgentPrincipalController::toPrincipalView).toList();
+                    .map(this::toPrincipalView).toList();
             Map<String, Object> response = new LinkedHashMap<>();
             response.put("principals", principals);
             return ResponseEntity.ok(response);
@@ -171,9 +182,9 @@ public class AgentPrincipalController {
                     principal.getOwnerUserId() == null ? null : principal.getOwnerUserId().toString());
             response.put("defaultModelProvider", principal.getDefaultModelProvider());
             response.put("defaultModelName", principal.getDefaultModelName());
-            response.put("allowedModels", principal.getAllowedModels());
+            response.put("allowedModels", toDocument(principal.getAllowedModels()));
             // PLAN-0625 M2: the subscription surface round-trips like the rest of the capability view.
-            response.put("hooks", principal.getHooks());
+            response.put("hooks", toDocument(principal.getHooks()));
             return ResponseEntity.status(HttpStatus.CREATED).body(response);
         } catch (CpApiException e) {
             return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());

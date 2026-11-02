@@ -134,6 +134,57 @@ class AgentPrincipalHooksHttpTest extends AbstractIntegrationTest {
     }
 
     // ---------------------------------------------------------------------------------------
+    // Gap J: the create/list responses must carry plain JSON documents, not Jackson bean metadata
+    // ---------------------------------------------------------------------------------------
+
+    @Test
+    void createResponseCarriesHooksAndAllowedModelsAsDocuments() {
+        fixture();
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("name", "Explicit hooks agent");
+        body.put("scope", "PERSONAL");
+        body.put("hooks", plainJson(HOOKS_JSON));
+        body.put("allowedModels", List.of(Map.of("provider", "openai", "model", "gpt-4.1")));
+
+        ResponseEntity<Map> response = exchange(HttpMethod.POST, "/api/v1/agent-principals",
+                globalToken(), body);
+
+        assertEquals(HttpStatus.CREATED, response.getStatusCode(), String.valueOf(response.getBody()));
+        Map<String, Object> created = response.getBody();
+        assertNotNull(created);
+        assertNoJacksonBeanMetadata(created);
+        assertEquals(Map.of("advisors", List.of(Map.of("kind", "guard",
+                        "on", List.of("approval.ask")))), created.get("hooks"),
+                "Gap J: the response must carry the subscription document: " + created);
+        assertEquals(List.of(Map.of("provider", "openai", "model", "gpt-4.1")),
+                created.get("allowedModels"),
+                "Gap J sibling: allowedModels is a Jackson-2 node too and must not be bean metadata");
+        principalIds.add(UUID.fromString(String.valueOf(created.get("principalId"))));
+    }
+
+    @Test
+    void principalListCarriesHooksAsADocument() {
+        fixture();
+        UUID hooked = createPrincipal("Listed hooks agent", HOOKS_JSON);
+
+        ResponseEntity<Map> response = exchange(HttpMethod.GET,
+                "/api/v1/agent-principals?scope=PERSONAL", globalToken(), null);
+
+        assertEquals(HttpStatus.OK, response.getStatusCode(), String.valueOf(response.getBody()));
+        List<Map<String, Object>> principals =
+                (List<Map<String, Object>>) response.getBody().get("principals");
+        assertNotNull(principals, String.valueOf(response.getBody()));
+        Map<String, Object> row = principals.stream()
+                .filter(item -> hooked.toString().equals(String.valueOf(item.get("principalId"))))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("principal not listed: " + principals));
+        assertNoJacksonBeanMetadata(row);
+        assertEquals(Map.of("advisors", List.of(Map.of("kind", "guard",
+                        "on", List.of("approval.ask")))), row.get("hooks"),
+                "the scoped list is the same projection and had the same defect: " + row);
+    }
+
+    // ---------------------------------------------------------------------------------------
     // fixtures / helpers
     // ---------------------------------------------------------------------------------------
 
@@ -207,6 +258,23 @@ class AgentPrincipalHooksHttpTest extends AbstractIntegrationTest {
             return objectMapper.readTree(json);
         } catch (Exception e) {
             throw new IllegalStateException("fixture JSON is invalid: " + json, e);
+        }
+    }
+
+    /**
+     * Negative assertion for Gap J: a Jackson-2 node that reached the response would serialise as its
+     * bean properties ({@code array}, {@code containerNode}, {@code nodeType}, {@code missingNode}…),
+     * so any of those keys anywhere in the body means the document never made it onto the wire.
+     */
+    private void assertNoJacksonBeanMetadata(Object value) {
+        if (value instanceof Map<?, ?> map) {
+            for (String forbidden : List.of("nodeType", "containerNode", "missingNode", "valueNode")) {
+                assertTrue(!map.containsKey(forbidden),
+                        "response carries Jackson bean metadata ('" + forbidden + "'): " + map);
+            }
+            map.values().forEach(this::assertNoJacksonBeanMetadata);
+        } else if (value instanceof List<?> list) {
+            list.forEach(this::assertNoJacksonBeanMetadata);
         }
     }
 
