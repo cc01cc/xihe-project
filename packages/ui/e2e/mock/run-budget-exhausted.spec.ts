@@ -53,7 +53,8 @@ test.describe("Run budget exhaustion surface", () => {
         await input.fill("resume after the budget");
         await input.press("Enter");
         await expect(page.locator("text=resume after the budget")).toBeVisible({ timeout: 5000 });
-        await expect(page.locator("text=Working on it...").first()).toBeVisible({ timeout: 10000 });
+        // 渲染器用的是单字符省略号 U+2026（`…`），不是 ASCII `...`；断言必须对齐真实渲染文本。
+        await expect(page.locator("text=Working on it…").first()).toBeVisible({ timeout: 10000 });
 
         await page.screenshot({ path: "test-results/run-budget-exhausted.png", fullPage: true });
     });
@@ -78,6 +79,11 @@ test.describe("Run budget exhaustion surface", () => {
         });
 
         await page.goto(`/workspace/workspace-1/chat/${SESSION_ID}`);
+        // 390 视口下聊天在 `MobileChatSheet` 内：必须先点「Open chat」触发器，否则输入框根本不在可见层
+        // （与 `checkpoint-rollback.spec.ts` / `approval.spec.ts` 的移动端写法一致）。
+        if ((page.viewportSize()?.width ?? 1920) < 768) {
+            await page.getByRole("button", { name: "Open chat" }).click();
+        }
         const input = page.locator('[data-testid="chat-input"]');
         await expect(input).toBeVisible({ timeout: 5000 });
         await input.fill("long running task");
