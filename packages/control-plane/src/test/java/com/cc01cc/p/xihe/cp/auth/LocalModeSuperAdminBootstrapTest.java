@@ -114,6 +114,12 @@ class LocalModeSuperAdminBootstrapTest extends AbstractH2Test {
         clearSuperAdminHolders();
         User admin = freshAdmin("downgraded@test.local");
         makeOwner(admin);
+        // PRECONDITION: ensureInstanceSuperAdmin requires the instance-owner singleton to exist
+        // (makeOwner above). Without it the grant silently does nothing and the caller keeps
+        // getting a *correct-looking* 403 — an operation that fails without reporting it, which is
+        // worse than a crash. PLAN-0628 M1 hit exactly this while building a two-way permission
+        // matrix (SkillControllerContractTest). Tracked: the service should fail loudly or create
+        // the singleton instead of returning quietly.
         grantDefaultService.ensureInstanceSuperAdmin(admin);
         assertTrue(authzContext.isInstanceSuper(admin.getId()), "precondition: it was SUPER_ADMIN");
 
