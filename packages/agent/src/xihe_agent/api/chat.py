@@ -671,13 +671,27 @@ async def chat(request: Request):
                 )
                 if skill_catalog_diagnostics["components"]:
                     context.runtime_state["skillCatalogDiagnostics"] = skill_catalog_diagnostics
+                    # PLAN-0627 收尾③: the listing is charged through `charge_assembly` on the run
+                    # ledger (`context/injection_budget.py`), and this line is what makes the charge
+                    # observable: `charged` alone is a renderer number, `usedTokens`/`poolTokens`
+                    # are the ledger's own reading next to the run id.
+                    skill_ledger = skill_catalog_diagnostics.get("ledger") or {}
                     logger.info(
-                        "skill catalog components={} items={} status={} charged={} truncated={}",
+                        "[LIFECYCLE] service=agent event=skill_catalog_charge requestId={} runId={}"
+                        " components={} items={} status={} charged={} truncated={}"
+                        " codes={} windowTokens={} poolTokens={} usedTokens={} skillsCapTokens={}",
+                        request_id,
+                        run_id,
                         skill_catalog_diagnostics["components"],
                         skill_catalog_diagnostics["items"],
                         skill_catalog_diagnostics["status"],
                         skill_catalog_diagnostics["charged"],
                         skill_catalog_diagnostics["truncated"],
+                        ",".join(skill_catalog_diagnostics["diagnostics"]) or "-",
+                        skill_ledger.get("windowTokens"),
+                        skill_ledger.get("total"),
+                        (skill_ledger.get("bySource") or {}).get("skills"),
+                        (skill_ledger.get("caps") or {}).get("skills"),
                     )
 
                 # PLAN-0629 M1-5: the same seam for ${xh.agent_memory}. CP already selected and

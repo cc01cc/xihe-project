@@ -163,6 +163,13 @@ class InjectionLedger:
         ``priority=True`` reserves the source's *floor* even when the pool is
         already tight; above the floor the pool guard still applies. The frozen
         invariant ``used <= total`` is asserted after every accepted charge.
+
+        Not idempotent: charging the same ``(source, key)`` twice spends the pool
+        twice. A consumer that may render one source more than once per run must
+        skip keys already in :meth:`charged_keys` before charging
+        (``charge_nested_for_touch`` and the 0628 listing both do); the ledger
+        deliberately does not guess, because only the source knows whether a
+        repeated key means "same text again" or "new text under a reused key".
         """
         if source not in SOURCES:
             raise ValueError(f"unknown injection source: {source}")

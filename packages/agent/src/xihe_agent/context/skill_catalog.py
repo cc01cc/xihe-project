@@ -100,6 +100,12 @@ def render_skill_catalog(
         return SkillCatalogBlock(diagnostics=(DIAG_EMPTY,))
 
     diagnostics: list[str] = []
+    # Tokens already booked on this ledger for `skills`. A second render in the same run (a retry
+    # that re-enters the seam) must not charge the same entry twice: `try_charge` is not idempotent,
+    # so skipping booked keys is the caller's job — the rule `charge_nested_for_touch` already
+    # follows for the JIT chain.
+    before = ledger.by_source["skills"]
+    already = ledger.charged_keys("skills")
     header_tokens = count_tokens(HEADER + "\n")
     pairs: list[tuple[str, int]] = [(HEADER_KEY, header_tokens)]
     pairs.extend((_line_key(line), count_tokens(line + "\n")) for line in lines)
@@ -131,21 +137,26 @@ def render_skill_catalog(
     note_tokens = count_tokens(TRUNCATION_NOTE + "\n")
     room = ledger.limits.caps["skills"] - ledger.by_source["skills"]
     may_truncate = cp_truncated or sum(tokens for _, tokens in pairs) > room
+    note_booked = TRUNCATION_NOTE_KEY in already
     reserved_note = False
-    if may_truncate:
+    if may_truncate and not note_booked:
         reserved_note = ledger.try_charge("skills", TRUNCATION_NOTE_KEY, note_tokens, priority=True)
 
-    charge = charge_assembly(ledger, skills=pairs)
-    charged_keys = list(charge.skills)
+    # 4) Charge only the entries this call has not booked yet, then address the block by the union:
+    #    a re-render re-uses the booked lines instead of paying for the same text twice.
+    charge = charge_assembly(ledger, skills=[(key, tokens) for key, tokens in pairs if key not in already])
+    charged_keys = set(charge.skills) | already
+    note_paid = reserved_note or note_booked
 
-    # 4) The header must fit first: without it the lines are a mystery list.
+    # 5) The header must fit first: without it the lines are a mystery list.
     if HEADER_KEY not in charged_keys:
         diagnostics.append(DIAG_BUDGET_TRUNCATED)
-        content = TRUNCATION_NOTE if reserved_note else ""
+        content = TRUNCATION_NOTE if note_paid else ""
         return SkillCatalogBlock(
             content=content,
             status=STATUS_TRUNCATED,
-            charged=note_tokens if reserved_note else 0,
+            # A ledger reading, never a second sum: this call's delta is what it actually booked.
+            charged=ledger.by_source["skills"] - before,
             truncated=True,
             diagnostics=tuple(diagnostics),
         )
@@ -156,20 +167,18 @@ def render_skill_catalog(
             break
         kept_lines.append(line)
 
-    charged_tokens = (note_tokens if reserved_note else 0) + header_tokens + sum(
-        tokens for key, tokens in pairs if key in charged_keys and key != HEADER_KEY
-    )
+    charged_tokens = ledger.by_source["skills"] - before
     truncated = cp_truncated or len(kept_lines) < len(lines)
     if (charge.skills_truncated or truncated) and DIAG_BUDGET_TRUNCATED not in diagnostics:
         diagnostics.append(DIAG_BUDGET_TRUNCATED)
 
     content = HEADER if not kept_lines else HEADER + "\n" + "\n".join(kept_lines)
 
-    # 5) Truncation must be VISIBLE TO THE MODEL, not only in `diagnostics` (D28-31 follow-up).
+    # 6) Truncation must be VISIBLE TO THE MODEL, not only in `diagnostics` (D28-31 follow-up).
     #    A structured diagnostic is read by operators; the model only sees this text. Without an
     #    in-band sentence a cut listing reads as "the complete set of skills" and the model will
     #    confidently deny that a skill it cannot see exists — the exact failure this line removes.
-    if truncated and reserved_note:
+    if truncated and note_paid:
         content = content + "\n" + TRUNCATION_NOTE
 
     return SkillCatalogBlock(
@@ -235,5 +244,9 @@ def render_from_component_sources(
         "charged": block.charged,
         "truncated": block.truncated,
         "diagnostics": list(block.diagnostics),
+        # Operator view of the ledger after this charge (no injected text): what the
+        # ``event=skill_catalog_charge`` line in ``api/chat.py`` prints, and what a test can assert
+        # without reaching into ``context.metadata``.
+        "ledger": ledger.snapshot(),
     }
     return block.content, diagnostics
