@@ -19,17 +19,27 @@ import java.util.UUID;
 /**
  * PLAN-0629 M1 (V99): the memory write/read service — dedupe, soft delete and provenance.
  *
- * <p>Scope of this class: the durable rules only. There is <b>no</b> API and no UI yet (M1-3), and
- * there is deliberately <b>no automatic write path</b> (D29-24 rejected "summarise on session end /
- * every N rounds"): the only callers are the three explicit channels, and each one hands over the
- * channel ({@code origin}) plus that channel's own provenance ({@code sourceRef}).</p>
+ * <p>Scope of this class: the durable rules only. There is <b>no</b> API and no UI yet (M1-3). Two
+ * families of writers exist and they never share an entry point:</p>
+ * <ul>
+ *   <li>{@link #remember(MemoryWrite)} — the three <b>explicit</b> channels ({@code tool|ui|cli}), whose
+ *       write takes effect immediately ({@code status=active});</li>
+ *   <li>{@link #rememberPassive(PassiveWrite)} — the M1-6 <b>system-side</b> channels
+ *       ({@code passive.summary|passive.judge}), which can only ever produce
+ *       {@code status=candidate} (D29-26/27). A candidate is invisible to injection and listing until
+ *       an explicit channel writes the same assertion, which is the only promotion path.</li>
+ * </ul>
+ * <p>There is deliberately still no "silently effective" auto write: D29-24 rejected writes that take
+ * effect on their own, and the DB pairs {@code origin LIKE 'passive.%'} with {@code status='candidate'}
+ * so neither service nor future caller can bypass the pairing.</p>
  *
  * <p>Three mechanical guarantees, in order of authority:</p>
  * <ol>
  *   <li><b>Database</b> (V99): {@code active ⇔ non-passive origin}, {@code pinned_by ∈ ui|cli},
  *       {@code pinned ⇒ active}, the dedupe unique index and the content bound;</li>
- *   <li><b>This service</b>: v1 refuses passive origins entirely, refuses to let the tool channel pin,
- *       computes {@code content_sha256} from the normalised text and never takes a hash from a caller;</li>
+ *   <li><b>This service</b>: the explicit path refuses passive origins and the passive path refuses
+ *       explicit ones, the tool channel can never pin, {@code content_sha256} is computed from the
+ *       normalised text and never taken from a caller;</li>
  *   <li><b>API layer (M1-3)</b>: {@code MEMORY_WRITE} authorization + approval gate, and the
  *       {@code source_ref} injection (run id / user id / command digest).</li>
  * </ol>
@@ -44,6 +54,8 @@ public class AgentMemoryService {
     /** Audited actions (durable, resource type {@code agent_memory}). */
     public static final String AUDIT_CREATED = "memory_created";
     public static final String AUDIT_DEDUPE_HIT = "memory_dedupe_hit";
+    /** M1-6: the only candidate → active transition, and it is driven by an explicit channel. */
+    public static final String AUDIT_PROMOTED = "memory_promoted";
     public static final String AUDIT_DELETED = "memory_deleted";
     public static final String RESOURCE_TYPE = "agent_memory";
 
@@ -77,12 +89,33 @@ public class AgentMemoryService {
                               String origin, String sourceRef, boolean pinned, String actorId) {}
 
     /**
+     * One write from a <b>system-side</b> (passive) producer, PLAN-0629 M1-6 / D29-26.
+     *
+     * @param origin {@code passive.summary} or {@code passive.judge} only; the explicit channels have
+     *     their own entry point ({@link #remember(MemoryWrite)}) so a caller cannot pick a channel
+     * @param sourceRef the natural idempotency key of the producer
+     *     ({@code passive.<mode>:<sessionId>:<compaction cursor>})
+     * @param actorId the durable audit actor — a <b>user</b> id (the session owner whose session produced
+     *     the write), because {@code audit_logs.user_id} is a user foreign key. The subject is not the
+     *     actor of a system-side write, and its id would not satisfy the FK.
+     */
+    public record PassiveWrite(UUID principalId, UUID workspaceId, String type, String content,
+                               String origin, String sourceRef, String actorId) {}
+
+    /**
      * Stores (or dedupe-hits) one assertion.
      *
      * <p>Dedupe semantics (Lead ruling 2026-11-02): a hit only refreshes {@code updated_at}. The stored
      * {@code source_ref} and {@code created_at} keep the <b>original</b> provenance — the same content
      * hash means the assertion did not change, and rewriting its origin would lose the real source. The
      * hit itself is still recorded durably ({@code memory_dedupe_hit} with the hitting channel).</p>
+     *
+     * <p>PLAN-0629 M1-6 adds the one exception, and it is not a passive path: when the hit row is a
+     * <b>candidate</b>, an explicit channel writing the same assertion <b>promotes</b> it (status →
+     * active, origin/source_ref → the explicit channel, audited as {@code memory_promoted}). Leaving it
+     * a candidate would make an explicit write silently ineffective — the caller would get success while
+     * the assertion never becomes visible. The candidate → active transition therefore exists, and this
+     * is the only place it happens.</p>
      */
     @Transactional
     public AgentMemory remember(MemoryWrite write) {
@@ -112,6 +145,9 @@ public class AgentMemoryService {
                         write.principalId(), write.workspaceId(), type, hash);
         if (existing.isPresent()) {
             AgentMemory row = existing.get();
+            if (AgentMemory.STATUS_CANDIDATE.equals(row.getStatus())) {
+                return promote(row, write, origin, sourceRef, normalized, pinned);
+            }
             // Keep created_at and source_ref: the assertion did not change (see the method Javadoc).
             row.setUpdatedAt(Instant.now());
             AgentMemory saved = memories.saveAndFlush(row);
@@ -136,6 +172,102 @@ public class AgentMemoryService {
         }
         AgentMemory saved = memories.saveAndFlush(memory);
         audit(AUDIT_CREATED, saved, write.actorId(), origin, sourceRef);
+        return saved;
+    }
+
+    /**
+     * Stores one <b>passive</b> assertion, PLAN-0629 M1-6 / D29-26/27: always a
+     * {@code status=candidate}, never pinned, never injected.
+     *
+     * <p>Three outcomes, and only the first two are normal:</p>
+     * <ul>
+     *   <li>no live row with this content ⇒ a candidate is written ({@code memory_created});</li>
+     *   <li>a candidate with this content exists ⇒ dedupe hit ({@code updated_at} refreshed only);</li>
+     *   <li>an <b>active</b> row with this content exists ⇒ {@link Optional#empty()}: the assertion is
+     *       already in effect, and a passive path must not touch an active row (not even its
+     *       {@code updated_at}, which would reorder injection behind the user's back). The caller logs
+     *       this as {@code skipped}/{@code already_active}.</li>
+     * </ul>
+     *
+     * <p>Idempotency of "one write per session end" is <b>not</b> this method's job — the natural key is
+     * {@code source_ref}, which the producer owns (see {@link #passiveAlreadyWritten}). The dedupe probe
+     * here is the D29-32 content rule and stays as the second line of defence.</p>
+     */
+    @Transactional
+    public Optional<AgentMemory> rememberPassive(PassiveWrite write) {
+        Objects.requireNonNull(write, "write");
+        requireScope(write.principalId(), write.workspaceId());
+        String type = requireType(write.type());
+        String origin = requirePassiveOrigin(write.origin());
+        String sourceRef = requireSourceRef(write.sourceRef());
+        String normalized = AgentMemoryNormalizer.normalize(write.content());
+        if (normalized.isEmpty()) {
+            throw invalid("memory content must contain at least one visible character");
+        }
+        if (normalized.length() > AgentMemory.MAX_CONTENT_LENGTH) {
+            throw new CpApiException(HttpStatus.BAD_REQUEST, "MEMORY_CONTENT_TOO_LONG",
+                    "memory content must be at most " + AgentMemory.MAX_CONTENT_LENGTH
+                            + " characters after normalisation");
+        }
+        String hash = AgentMemoryNormalizer.sha256Hex(normalized);
+
+        Optional<AgentMemory> existing = memories
+                .findByPrincipalIdAndWorkspaceIdAndTypeAndContentSha256AndDeletedAtIsNull(
+                        write.principalId(), write.workspaceId(), type, hash);
+        if (existing.isPresent()) {
+            AgentMemory row = existing.get();
+            if (AgentMemory.STATUS_ACTIVE.equals(row.getStatus())) {
+                return Optional.empty();
+            }
+            row.setUpdatedAt(Instant.now());
+            AgentMemory saved = memories.saveAndFlush(row);
+            audit(AUDIT_DEDUPE_HIT, saved, write.actorId(), origin, sourceRef);
+            return Optional.of(saved);
+        }
+
+        AgentMemory memory = new AgentMemory();
+        memory.setPrincipalId(write.principalId());
+        memory.setWorkspaceId(write.workspaceId());
+        memory.setType(type);
+        memory.setContent(normalized);
+        memory.setContentSha256(hash);
+        memory.setOrigin(origin);
+        memory.setSourceRef(sourceRef);
+        // D29-26/27: the passive path can only ever produce a candidate. The DDL enforces the pairing
+        // (a passive origin with status='active' is rejected), so this line cannot drift alone.
+        memory.setStatus(AgentMemory.STATUS_CANDIDATE);
+        memory.setPinned(false);
+        AgentMemory saved = memories.saveAndFlush(memory);
+        audit(AUDIT_CREATED, saved, write.actorId(), origin, sourceRef);
+        return Optional.of(saved);
+    }
+
+    /**
+     * Has this passive write already landed? The natural key is {@code source_ref}
+     * ({@code passive.<mode>:<sessionId>:<compaction cursor>}), so one session end writes at most once
+     * even if the summary text differs between attempts.
+     */
+    @Transactional(readOnly = true)
+    public boolean passiveAlreadyWritten(UUID principalId, UUID workspaceId, String sourceRef) {
+        requireScope(principalId, workspaceId);
+        return memories.existsByPrincipalIdAndWorkspaceIdAndSourceRefAndDeletedAtIsNull(
+                principalId, workspaceId, requireSourceRef(sourceRef));
+    }
+
+    /** The only candidate → active transition: an explicit channel wrote the same assertion. */
+    private AgentMemory promote(AgentMemory row, MemoryWrite write, String origin, String sourceRef,
+                                String normalized, boolean pinned) {
+        row.setStatus(AgentMemory.STATUS_ACTIVE);
+        row.setContent(normalized);
+        // The explicit channel now owns the provenance: a passive origin may never carry 'active'
+        // (V99 CHECK), and the user's write is what makes the assertion true from now on.
+        row.setOrigin(origin);
+        row.setSourceRef(sourceRef);
+        row.setPinned(pinned);
+        row.setPinnedBy(pinned ? origin : null);
+        row.setUpdatedAt(Instant.now());
+        AgentMemory saved = memories.saveAndFlush(row);
+        audit(AUDIT_PROMOTED, saved, write.actorId(), origin, sourceRef);
         return saved;
     }
 
@@ -200,9 +332,18 @@ public class AgentMemoryService {
 
     private static String requireV1Origin(String origin) {
         if (origin == null || !AgentMemory.V1_WRITE_ORIGINS.contains(origin)) {
-            // The passive values exist in the DDL for D29-26/27, but v1 has no passive producer.
+            // The passive values exist in the DDL for D29-26/27, but they have their own entry point
+            // (rememberPassive) so the explicit write path can never be used to land a candidate.
             throw invalid("memory origin must be one of " + AgentMemory.V1_WRITE_ORIGINS
                     + "; passive memory writes are not available in v1");
+        }
+        return origin;
+    }
+
+    private static String requirePassiveOrigin(String origin) {
+        if (origin == null || !AgentMemory.PASSIVE_WRITE_ORIGINS.contains(origin)) {
+            throw invalid("passive memory origin must be one of " + AgentMemory.PASSIVE_WRITE_ORIGINS
+                    + "; explicit channels use the explicit write path");
         }
         return origin;
     }

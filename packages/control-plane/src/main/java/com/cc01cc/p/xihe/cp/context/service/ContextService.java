@@ -32,6 +32,7 @@ public class ContextService {
     private final UsageCostMapper usageCostMapper;
     private final ConstraintExtractor constraintExtractor;
     private final com.cc01cc.p.xihe.cp.service.BranchPathService branchPathService;
+    private final com.cc01cc.p.xihe.cp.service.AgentMemoryPassiveWriter passiveMemoryWriter;
 
     public ContextService(EventStoreService eventStoreService,
                           ContextProjectionService projectionService,
@@ -40,7 +41,8 @@ public class ContextService {
                           SummaryProvider summaryProvider,
                           UsageCostMapper usageCostMapper,
                           ConstraintExtractor constraintExtractor,
-                          com.cc01cc.p.xihe.cp.service.BranchPathService branchPathService) {
+                          com.cc01cc.p.xihe.cp.service.BranchPathService branchPathService,
+                          com.cc01cc.p.xihe.cp.service.AgentMemoryPassiveWriter passiveMemoryWriter) {
         this.eventStoreService = eventStoreService;
         this.objectMapper = objectMapper;
         this.projectionService = projectionService;
@@ -49,6 +51,7 @@ public class ContextService {
         this.usageCostMapper = usageCostMapper;
         this.constraintExtractor = constraintExtractor;
         this.branchPathService = branchPathService;
+        this.passiveMemoryWriter = passiveMemoryWriter;
     }
 
     /**
@@ -395,7 +398,30 @@ public class ContextService {
         // PLAN-0341 T1.3 recovery band (I3): residual must fall below
         // recoveryBand × window, else pause auto compaction (event, no table).
         applyRecoveryBand(sessionId, workspaceId, userId, context, effectiveTrigger, scope);
+        writePassiveMemory(sessionId, workspaceId, effectiveTrigger, effectiveUpTo, summary);
         return applied;
+    }
+
+    /**
+     * PLAN-0629 M1-6 (D29-26): attach the passive memory producer to the compaction that just landed.
+     *
+     * <p>The summary above is the artifact this reuses — no second summarisation call is made. The write
+     * itself is candidate-only and idempotent (see {@code AgentMemoryPassiveWriter}); this call site only
+     * guarantees the last rule: <b>a passive write can never fail a compaction</b>. The writer already
+     * swallows its own failures, so this catch is the belt for a programming error inside it —
+     * compaction returns its event either way, exactly like the injection path's "missing ≠ failed".</p>
+     */
+    private void writePassiveMemory(String sessionId, String workspaceId, String trigger, long cursor,
+                                    String summary) {
+        try {
+            passiveMemoryWriter.onCompaction(new com.cc01cc.p.xihe.cp.service.AgentMemoryPassiveWriter
+                    .CompactionEnd(sessionId, workspaceId, trigger, cursor, summary));
+        } catch (Exception passiveFailure) {
+            logger.warn("[LIFECYCLE] service=cp event={} outcome=failed reason={} sessionId={} trigger={} "
+                            + "error={}", com.cc01cc.p.xihe.cp.service.AgentMemoryPassiveWriter.EVENT,
+                    com.cc01cc.p.xihe.cp.service.AgentMemoryPassiveWriter.REASON_UNEXPECTED, sessionId,
+                    trigger, passiveFailure.getClass().getSimpleName());
+        }
     }
 
     /**

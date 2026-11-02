@@ -39,10 +39,12 @@ public class AgentMemory {
     public static final String ORIGIN_TOOL = "tool";
     public static final String ORIGIN_UI = "ui";
     public static final String ORIGIN_CLI = "cli";
-    /** Pre-declared for D29-26/27; v1 never writes them (the service refuses them). */
+    /** PLAN-0629 M1-6 (D29-26/27): the two system-side channels; they may only ever be candidates. */
     public static final String ORIGIN_PASSIVE_SUMMARY = "passive.summary";
     public static final String ORIGIN_PASSIVE_JUDGE = "passive.judge";
     public static final List<String> V1_WRITE_ORIGINS = List.of(ORIGIN_TOOL, ORIGIN_UI, ORIGIN_CLI);
+    public static final List<String> PASSIVE_WRITE_ORIGINS =
+            List.of(ORIGIN_PASSIVE_SUMMARY, ORIGIN_PASSIVE_JUDGE);
 
     public static final String STATUS_ACTIVE = "active";
     public static final String STATUS_CANDIDATE = "candidate";
