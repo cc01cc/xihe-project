@@ -1,5 +1,6 @@
 """Build ordered provider-neutral messages from a frozen template snapshot."""
 
+import contextlib
 import json
 import re
 import uuid
@@ -7,16 +8,16 @@ from dataclasses import replace
 from pathlib import PurePosixPath
 from typing import Any
 
+from xihe_agent.context.injection_budget import (
+    InjectionLedger,
+    charge_assembly,
+    conservative_token_count,
+)
 from xihe_agent.interfaces.chat_run_context import (
     BuildContext,
     ChatRunContext,
     ComponentResult,
     ContextBuildError,
-)
-from xihe_agent.context.injection_budget import (
-    InjectionLedger,
-    charge_assembly,
-    conservative_token_count,
 )
 from xihe_agent.interfaces.message import TextMessage
 
@@ -386,10 +387,12 @@ def _injection_ledger(run: ChatRunContext) -> InjectionLedger:
     if isinstance(ledger, InjectionLedger):
         return ledger
     created = InjectionLedger.create()
-    try:
-        run.injection_ledger = created
-    except AttributeError:  # frozen/attached context: fall back to a per-assembly ledger
-        pass
+    # frozen/attached context: fall back to a per-assembly ledger.
+    # `setattr` rather than a static assignment only to satisfy the type checker: the property is
+    # read-only on ChatRunContext, so the write raises AttributeError at runtime (suppressed here
+    # by design) and mypy rejects it statically. Runtime semantics are identical.
+    with contextlib.suppress(AttributeError):
+        setattr(run, "injection_ledger", created)
     return created
 
 
