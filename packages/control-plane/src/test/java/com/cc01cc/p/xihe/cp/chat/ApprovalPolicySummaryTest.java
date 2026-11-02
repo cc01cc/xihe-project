@@ -126,4 +126,34 @@ class ApprovalPolicySummaryTest {
                         + "\"unexpected\":\"value\"}").isEmpty());
         verifyNoInteractions(engine);
     }
+
+    @Test
+    void storedSummaryWithVersionedHooksAdviceParsesAndKeepsTheAdvice() {
+        PolicyEngine engine = mock(PolicyEngine.class);
+        ApprovalPolicySummary summary = new ApprovalPolicySummary(engine);
+
+        String stored = "{\"effect\":\"ask\",\"sourceLayer\":\"builtin\",\"matchedRule\":null,"
+                + "\"reason\":\"requires approval\",\"mode\":null,\"actionClass\":\"write\","
+                + "\"shape\":\"structured\",\"hooks\":{\"version\":1,\"advisors\":[{\"kind\":\"guard\","
+                + "\"verdict\":\"deny\",\"reason\":\"touches prod config\"}]}}";
+        var parsed = summary.readStored(stored);
+        assertTrue(parsed.isPresent(), "advice must not poison the policy parse (task-83 Gap A)");
+        assertEquals("ask", parsed.get().get("effect"));
+        assertEquals("deny", ((java.util.Map<?, ?>) parsed.get().get("hooks"))
+                .get("advisors") instanceof java.util.List<?> advisors
+                ? ((java.util.Map<?, ?>) advisors.get(0)).get("verdict") : null);
+    }
+
+    @Test
+    void malformedHooksSectionIsDroppedButPolicySurvives() {
+        PolicyEngine engine = mock(PolicyEngine.class);
+        ApprovalPolicySummary summary = new ApprovalPolicySummary(engine);
+
+        String badHooks = "{\"effect\":\"ask\",\"sourceLayer\":\"builtin\",\"matchedRule\":null,"
+                + "\"reason\":\"requires approval\",\"mode\":null,\"actionClass\":\"write\","
+                + "\"shape\":\"structured\",\"hooks\":{\"advisors\":\"not-an-array\"}}";
+        var parsed = summary.readStored(badHooks);
+        assertTrue(parsed.isPresent(), "bad advice is dropped, the policy still reads");
+        org.junit.jupiter.api.Assertions.assertFalse(parsed.get().containsKey("hooks"));
+    }
 }

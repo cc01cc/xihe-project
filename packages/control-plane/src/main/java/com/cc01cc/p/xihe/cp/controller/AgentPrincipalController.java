@@ -46,6 +46,7 @@ public class AgentPrincipalController {
         result.put("defaultModelName", view.defaultModelName());
         result.put("allowedModels", view.allowedModels());
         result.put("disabledAt", view.disabledAt() == null ? null : view.disabledAt().toString());
+        result.put("hooks", view.hooks());
         return result;
     }
 

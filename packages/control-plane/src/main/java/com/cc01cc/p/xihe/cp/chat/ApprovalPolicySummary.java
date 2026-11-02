@@ -101,7 +101,15 @@ public class ApprovalPolicySummary {
             JsonNode root = objectMapper.reader()
                     .with(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
                     .readTree(serialized);
-            if (root == null || !root.isObject() || !keysOf(root).equals(POLICY_KEYS)) {
+            if (root == null || !root.isObject()) {
+                return Optional.empty();
+            }
+            // PLAN-0625 G/task-83: the stored summary may carry the versioned "hooks" advice
+            // section (GuardAdviceService). Extra keys beyond POLICY_KEYS+hooks still fail;
+            // a malformed hooks section is DROPPED, never poisons the policy parse.
+            Set<String> keys = keysOf(root);
+            boolean hasHooks = keys.remove("hooks");
+            if (!keys.equals(POLICY_KEYS)) {
                 return Optional.empty();
             }
 
@@ -125,6 +133,12 @@ public class ApprovalPolicySummary {
             summary.put("mode", mode);
             summary.put("actionClass", actionClass);
             summary.put("shape", shape);
+            if (hasHooks) {
+                JsonNode hooks = sanitizeHooks(root.get("hooks"));
+                if (hooks != null) {
+                    summary.put("hooks", objectMapper.convertValue(hooks, Map.class));
+                }
+            }
             return Optional.of(summary);
         } catch (Exception e) {
             logger.debug("[POLICY] approval_summary_parse_failed failureType={}", e.getClass().getName());
@@ -142,6 +156,24 @@ public class ApprovalPolicySummary {
         }
         return mode == null || mode.isBlank()
                 ? LayeredPolicyResolver.MODE_MANUAL : mode.toLowerCase(Locale.ROOT);
+    }
+
+    /**
+     * task-83: a hooks section is advice-shaped ({version:int>=1, advisors:[{kind,verdict,…}]}).
+     * Anything else is dropped (null) so the policy parse still succeeds.
+     */
+    private static JsonNode sanitizeHooks(JsonNode hooks) {
+        if (hooks == null || !hooks.isObject() || !hooks.path("version").isInt()
+                || hooks.path("version").asInt() < 1 || !hooks.path("advisors").isArray()) {
+            return null;
+        }
+        for (JsonNode advisor : hooks.path("advisors")) {
+            if (!advisor.isObject() || !advisor.path("kind").isTextual()
+                    || !advisor.path("verdict").isTextual()) {
+                return null;
+            }
+        }
+        return hooks;
     }
 
     private static Set<String> keysOf(JsonNode root) {
