@@ -2,9 +2,11 @@
 
 <!-- Sync with docs/i18n/zh-Hans/README.md: architecture diagram, Quick Start commands, port, and stack summary. Feature status is maintained in the Chinese README. -->
 
-# xihe
+# Xihe (羲和)
 
-**A general-purpose agent runtime platform** for multi-agent orchestration, tool access, sandboxed execution, and access control.
+**Xihe, who watched the sky to set the seasons and drove the sun to keep the order.** *(羲和，观天以授时，御日以成序。)* People and agents each play to their strengths.
+
+**A general-purpose agent collaboration platform** for multi-agent orchestration, tool access, sandboxed execution, and access control.
 
 > Give agents the standing and boundaries of a human teammate.
 
@@ -122,7 +124,19 @@ Per-feature status, progress markers, and the current boundary of each capabilit
 
 - A downloadable installer. The fastest way to run XH today is local dev mode: mise + Docker for PostgreSQL only + four native processes.
 
-## 5. Documentation
+## 5. Testing
+
+```bash
+mise run validate        # lint + typecheck + build + test
+mise run validate:full   # adds integration and E2E (needs Docker); compose E2E itself is frozen
+mise run test:e2e:host   # host E2E: stop dev:host first (DEV-002 §5); each round uses an isolated environment
+```
+
+Strategy: DEV-020/021/022/023. Environment cleanup and host-run requirements: [DEV-002](docs/i18n/zh-Hans/DEV-002-developer-guide.md).
+
+Reference scale (2026-11-02): Control Plane **2654** tests and UI **1256** unit tests run on every milestone gate; a full Control Plane L2 pass takes **~5 min** in a 2-shard split (single-process baseline was 598 s).
+
+## 6. Documentation
 
 | Entry | Use |
 |---|---|
@@ -136,10 +150,10 @@ Per-feature status, progress markers, and the current boundary of each capabilit
 
 The Chinese and English documentation indexes are maintained separately; use the index for the language you need.
 
-## 6. Philosophy
+## 7. Philosophy
 
 An agent is a role on the team, not merely a tool. People and agents are treated as operating entities with defined responsibilities and access boundaries. The Control Plane applies shared policy and audit, while Runtime provides the constrained space in which agents can act.
 
-## 7. License
+## 8. License
 
 Apache-2.0
