@@ -8,6 +8,27 @@ Budget rules are **not** re-derived here: the numbers live in
 :mod:`xihe_agent.context.injection_budget` (D27-22) and this module calls :func:`charge_assembly`,
 so skills are charged before memory on the *same* run-scoped ledger PLAN-0627's nested injection
 uses. Adding a second percentage or a second ledger is the thing this module exists to prevent.
+
+Where the listing sits in the frozen budget (D27-22「三 PLAN 合并预算」)
+----------------------------------------------------------------------
+* **This source**: floor ``512`` tokens, cap ``max(512, 1% * window)`` (``2000`` when the window is
+  unknown). The 1% figure is PLAN-0628's frozen wording (「注入池 ≈ 窗口 1%」, D28-16), not re-derived
+  here; the numbers themselves stay in ``injection_budget.py``.
+* **Shared pool**: ``min(15% of the headroom below the 70% compaction trigger, 8% of the window)``,
+  never below the sum of the guaranteed floors (skills 512 + memory 2%). Assembly charges skills
+  first, then memory; the JIT nested chain spends what is left. Charging order and degradation
+  order are two different things and both are frozen.
+* **Who is cut first**: ``nested -> memory (above its floor) -> skills (above its floor)``. Nested
+  ancestor rules are the only source whose absence loses no capability (the root AGENTS.md is still
+  injected eagerly by ``root_agents_md``), so it is denied first. The skills listing *is* capability
+  discovery, so it is the last source evicted and only ever above its floor. Inside this block the
+  **tail** goes first, because CP's order is the priority order (AGENT before USER, workspace before
+  instance, then name) — "keep the head" == "keep the highest-priority skills".
+* **Truncation budget (D28-41)**: this module is the final renderer, so *it* pays for
+  ``TRUNCATION_NOTE`` **before** the lines. Charging the sentence afterwards drops it exactly when
+  the cap is already full — i.e. exactly when the model needs to be told. The reservation is
+  computed against the same room the ledger will grant (min of the skills cap and the shared pool,
+  floor included); computing it from the cap alone misses pool-driven cuts.
 """
 
 from __future__ import annotations
@@ -133,9 +154,18 @@ def render_skill_catalog(
     #    This is the subtle one: if the note were charged after the listing, it would fail exactly
     #    when it is most needed (the cap is already full because the listing was cut). Reserving it
     #    up front means the model always learns that the list is partial. The reservation is
-    #    arithmetic on the ledger's own cap — not a second budget computation.
+    #    arithmetic on the ledger's own limits — not a second budget computation.
+    #
+    #    `room` must be the room `charge_assembly` will actually grant, not just the skills cap: a
+    #    listing can fit the 1% cap and still be cut by the shared pool (memory already holds its
+    #    floor). Computing this from `caps["skills"]` alone let that cut through without the
+    #    sentence — "cut but not told", the exact state D28-41 forbids.
     note_tokens = count_tokens(TRUNCATION_NOTE + "\n")
-    room = ledger.limits.caps["skills"] - ledger.by_source["skills"]
+    cap_room = ledger.limits.caps["skills"] - ledger.by_source["skills"]
+    floor_room = max(0, ledger.limits.floors["skills"] - ledger.by_source["skills"])
+    # `priority=True` may borrow the floor even when the pool is exhausted (same rule as try_charge).
+    pool_room = max(ledger.remaining(), floor_room)
+    room = max(0, min(cap_room, pool_room))
     may_truncate = cp_truncated or sum(tokens for _, tokens in pairs) > room
     note_booked = TRUNCATION_NOTE_KEY in already
     reserved_note = False
