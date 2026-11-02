@@ -21,8 +21,26 @@ const storeState = vi.hoisted(() => ({
     ensureLoaded: vi.fn<(id: string | null) => Promise<void>>(),
 }));
 
+/**
+ * PLAN-0635 M2: `@文件` candidates read the **already-loaded** `workspace.fileTree`.
+ * A replaceable object (not a vi.fn) keeps the assertions about "candidates come from the tree"
+ * honest: the component never issues a request of its own.
+ */
+const workspaceState = vi.hoisted(() => ({
+    fileTree: [] as {
+        name: string;
+        path: string;
+        type: "file" | "directory";
+        children?: unknown[];
+    }[],
+}));
+
 vi.mock("../../stores/sessionParticipants", () => ({
     useSessionParticipantsStore: () => storeState,
+}));
+
+vi.mock("../../stores/workspace", () => ({
+    useWorkspaceStore: () => workspaceState,
 }));
 
 vi.mock("../../../../services/attachmentService", () => ({
@@ -39,9 +57,12 @@ const messages = {
             input: {
                 commandsTitle: "Commands",
                 mentionsTitle: "Session members",
+                filesTitle: "Files and folders",
                 mentionAll: "Everyone",
                 mentionAgent: "Agent",
                 mentionHuman: "Human",
+                mentionFile: "File",
+                mentionDirectory: "Folder",
                 commandClear: "Clear the draft (does not send)",
                 commandHelp: "Show available commands",
                 helpTitle: "Available commands",
@@ -112,6 +133,7 @@ beforeEach(() => {
     storeState.canSpeakAs = false;
     storeState.speakAsCandidates = [];
     storeState.ensureLoaded.mockReset();
+    workspaceState.fileTree = [];
 });
 
 describe("InputArea @ mention candidates (PLAN-0635 M1)", () => {
@@ -261,5 +283,128 @@ describe("InputArea @ mention candidates (PLAN-0635 M1)", () => {
         expect(textarea.attributes("aria-expanded")).toBe("true");
         expect(textarea.attributes("aria-controls")).toBe("chat-input-trigger-menu");
         expect(textarea.attributes("aria-activedescendant")).toBe(options[0]!.attributes("id"));
+    });
+});
+
+/**
+ * PLAN-0635 M2 ③：`@文件/目录`。
+ *
+ * Candidates read the **already-loaded** `workspace.fileTree`, and both groups render inside the
+ * same listbox (group headings, not a second menu). Selection inserts `@path ` — the same trailing
+ * space contract as members, because CP parses the token off the raw text.
+ */
+function fileNode(
+    path: string,
+    type: "file" | "directory" = "file",
+    children?: unknown[],
+): { name: string; path: string; type: "file" | "directory"; children?: unknown[] } {
+    return { name: path.split("/").pop() ?? path, path, type, children };
+}
+
+describe("InputArea @ file mention candidates (PLAN-0635 M2)", () => {
+    it("lists nothing from the file tree while the filter is empty (members only)", async () => {
+        storeState.participants = [participant({})];
+        workspaceState.fileTree = [fileNode("src/app.ts")];
+        const wrapper = mountInput();
+        await typeText(wrapper.find("textarea"), "@");
+
+        expect(wrapper.find('[data-testid="chat-input-group-file"]').exists()).toBe(false);
+        expect(wrapper.find('[data-testid="chat-input-group-member"]').exists()).toBe(true);
+    });
+
+    it("offers file candidates matching the typed filter", async () => {
+        workspaceState.fileTree = [fileNode("src/app.ts"), fileNode("docs/guide.md")];
+        const wrapper = mountInput();
+        await typeText(wrapper.find("textarea"), "@app");
+
+        expect(wrapper.find('[data-testid="chat-input-group-file"]').exists()).toBe(true);
+        expect(wrapper.text()).toContain("@src/app.ts");
+        expect(wrapper.text()).not.toContain("@docs/guide.md");
+    });
+
+    it("renders both groups in one listbox (member heading + file heading)", async () => {
+        storeState.participants = [participant({ displayName: "Ada Lovelace" })];
+        workspaceState.fileTree = [fileNode("src/ada-notes.md")];
+        const wrapper = mountInput();
+        await typeText(wrapper.find("textarea"), "@ada");
+
+        // One listbox, two headings — not two menus.
+        expect(wrapper.findAll('[role="listbox"]')).toHaveLength(1);
+        const memberHeading = wrapper.find('[data-testid="chat-input-group-member"]');
+        const fileHeading = wrapper.find('[data-testid="chat-input-group-file"]');
+        expect(memberHeading.exists()).toBe(true);
+        expect(fileHeading.exists()).toBe(true);
+        expect(memberHeading.text()).toBe("Session members");
+        expect(fileHeading.text()).toBe("Files and folders");
+    });
+
+    it("walks nested directory children (tree is already loaded, no request)", async () => {
+        workspaceState.fileTree = [
+            fileNode("src", "directory", [fileNode("src/chat/InputArea.vue")]),
+        ];
+        const wrapper = mountInput();
+        await typeText(wrapper.find("textarea"), "@InputArea");
+
+        expect(wrapper.text()).toContain("@src/chat/InputArea.vue");
+    });
+
+    it("marks directories with a folder hint", async () => {
+        workspaceState.fileTree = [fileNode("src/chat", "directory")];
+        const wrapper = mountInput();
+        await typeText(wrapper.find("textarea"), "@chat");
+
+        const options = wrapper.findAll('[role="option"]').map((item) => item.text());
+        expect(options.some((text) => text.includes("Folder"))).toBe(true);
+    });
+
+    it("inserts `@path ` with the trailing space (same wire contract as members)", async () => {
+        workspaceState.fileTree = [fileNode("docs/guide.md")];
+        const wrapper = mountInput();
+        const textarea = wrapper.find("textarea");
+        await typeText(textarea, "@guide");
+
+        await textarea.trigger("keydown", { key: "Enter" });
+        await flushPromises();
+
+        expect((wrapper.find("textarea").element as HTMLTextAreaElement).value).toBe(
+            "@docs/guide.md ",
+        );
+        expect(wrapper.emitted("send")).toBeFalsy();
+    });
+
+    it("ranks basename matches before deeper path matches", async () => {
+        workspaceState.fileTree = [
+            fileNode("vendor/input-adapter/index.ts"),
+            fileNode("src/input.ts"),
+        ];
+        const wrapper = mountInput();
+        await typeText(wrapper.find("textarea"), "@input");
+
+        const options = wrapper.findAll('[role="option"]').map((item) => item.text());
+        expect(options[0]).toContain("@src/input.ts");
+        expect(options[1]).toContain("@vendor/input-adapter/index.ts");
+    });
+
+    it("still opens a member-only menu when the workspace tree is empty", async () => {
+        storeState.participants = [participant({})];
+        workspaceState.fileTree = [];
+        const wrapper = mountInput();
+        await typeText(wrapper.find("textarea"), "@ad");
+
+        expect(wrapper.find('[data-testid="chat-input-group-member"]').exists()).toBe(true);
+        expect(wrapper.find('[data-testid="chat-input-group-file"]').exists()).toBe(false);
+    });
+
+    it("sends nothing and closes when a file token matches no candidate", async () => {
+        workspaceState.fileTree = [fileNode("docs/guide.md")];
+        const wrapper = mountInput();
+        const textarea = wrapper.find("textarea");
+        await typeText(textarea, "@zzzz");
+
+        expect(menu(wrapper).exists()).toBe(false);
+        await textarea.trigger("keydown", { key: "Enter" });
+        await flushPromises();
+        // Plain text path: the literal token is sent as the message, no local command handling.
+        expect(wrapper.emitted("send")).toBeTruthy();
     });
 });

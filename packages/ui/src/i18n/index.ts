@@ -683,10 +683,14 @@ const messages = {
             input: {
                 commandsTitle: "命令",
                 mentionsTitle: "会话成员",
+                filesTitle: "文件与目录",
                 mentionAll: "所有人",
                 mentionAgent: "智能体",
                 mentionHuman: "人类成员",
-                commandClear: "清空输入草稿（不发送）",
+                mentionFile: "文件",
+                mentionDirectory: "目录",
+                // M2 会在此下面加 filesTitle 等；本轮先把 /clear 的真实范围写进文案。
+                commandClear: "清空输入草稿（含待发附件，不发送）",
                 commandHelp: "显示可用命令",
                 helpTitle: "可用命令",
                 helpHint: "↑↓ 选择，Enter 插入，Esc 关闭",
@@ -2780,10 +2784,14 @@ const messages = {
             input: {
                 commandsTitle: "Commands",
                 mentionsTitle: "Session members",
+                filesTitle: "Files and folders",
                 mentionAll: "Everyone",
                 mentionAgent: "Agent",
                 mentionHuman: "Human",
-                commandClear: "Clear the draft (does not send)",
+                mentionFile: "File",
+                mentionDirectory: "Folder",
+                // M2 adds filesTitle etc. below; this round only makes /clear's real scope explicit.
+                commandClear: "Clear the draft and pending attachments (does not send)",
                 commandHelp: "Show available commands",
                 helpTitle: "Available commands",
                 helpHint: "↑↓ to select, Enter to insert, Esc to close",

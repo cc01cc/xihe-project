@@ -25,6 +25,11 @@ vi.mock("../../stores/sessionParticipants", () => ({
     useSessionParticipantsStore: () => storeState,
 }));
 
+// PLAN-0635 M2: the component also reads the workspace tree for `@文件`; `/` never uses it.
+vi.mock("../../stores/workspace", () => ({
+    useWorkspaceStore: () => ({ fileTree: [] }),
+}));
+
 vi.mock("../../../../services/attachmentService", () => ({
     uploadAttachments: vi.fn<() => Promise<{ success: never[]; failed: never[] }>>(),
     validateAttachment: () => ({ valid: true }),
@@ -39,9 +44,12 @@ const messages = {
             input: {
                 commandsTitle: "Commands",
                 mentionsTitle: "Session members",
+                filesTitle: "Files and folders",
                 mentionAll: "Everyone",
                 mentionAgent: "Agent",
                 mentionHuman: "Human",
+                mentionFile: "File",
+                mentionDirectory: "Folder",
                 commandClear: "Clear the draft (does not send)",
                 commandHelp: "Show available commands",
                 helpTitle: "Available commands",

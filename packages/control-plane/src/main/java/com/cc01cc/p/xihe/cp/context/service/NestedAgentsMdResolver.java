@@ -219,7 +219,14 @@ public class NestedAgentsMdResolver {
         return nearestFirst;
     }
 
-    private static String cutToBytes(String text, int maxBytes) {
+    /**
+     * Byte-bounded UTF-8 cut on a code-point boundary.
+     *
+     * <p>Package-private (NOT public) so PLAN-0635's {@code MentionPathResolver} reuses it instead
+     * of copying a second truncation implementation. The public surface of this resolver is
+     * unchanged.</p>
+     */
+    static String cutToBytes(String text, int maxBytes) {
         byte[] raw = text.getBytes(StandardCharsets.UTF_8);
         if (raw.length <= maxBytes) {
             return text;

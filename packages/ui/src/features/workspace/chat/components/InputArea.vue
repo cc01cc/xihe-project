@@ -2,6 +2,8 @@
 import { ref, computed, markRaw, nextTick, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { useSessionParticipantsStore } from "../../stores/sessionParticipants";
+import { useWorkspaceStore } from "../../stores/workspace";
+import type { FileNode } from "../../../../types";
 import { toast } from "vue-sonner";
 import { Send, Square, LoaderCircle } from "@lucide/vue";
 import ImageUpload from "../../../../components/multimodal/ImageUpload.vue";
@@ -19,13 +21,31 @@ interface SlashCommand {
     descriptionKey: string;
 }
 
-/** One row of the unified trigger menu (`/` command or `@` mention). */
+/**
+ * PLAN-0635 M2: the `@` menu carries **two groups in one listbox** (D35-01/03) — session
+ * members and workspace files/directories. Two separate menus would duplicate the keyboard and
+ * aria contract, so the grouping lives in the data (`group`) and is only a rendering concern.
+ */
+type TriggerGroup = "command" | "member" | "file";
+
+/** One row of the unified trigger menu (`/` command, `@` member or `@` file). */
 interface TriggerItem {
     /** Unique per menu — the textarea's `aria-activedescendant` points at it. */
     id: string;
     label: string;
     hint: string;
+    group: TriggerGroup;
 }
+
+/** A rendered group: a heading plus its options carrying their flat index in the menu. */
+interface MenuGroup {
+    id: TriggerGroup;
+    titleKey: string;
+    items: (TriggerItem & { flatIndex: number })[];
+}
+
+/** Upper bound on file candidates in the menu — path matching is cheap but the list is long. */
+const MAX_FILE_CANDIDATES = 8;
 
 const URL = window.URL;
 
@@ -54,6 +74,8 @@ const { t } = useI18n();
  * - 默认选自己（HUMAN 行），没有则选第一个 —— 绝不默认代别人发言。
  */
 const participantsStore = useSessionParticipantsStore();
+/** PLAN-0635 M2: already-loaded workspace tree feeds `@文件/目录` candidates (no request here). */
+const workspaceStore = useWorkspaceStore();
 const speakAsId = ref("");
 
 const speakAsOptions = computed(() => participantsStore.speakAsCandidates);
@@ -140,19 +162,25 @@ const slashItems = computed<TriggerItem[]>(() => {
             id: `xihe-slash-${cmd.key.slice(1)}`,
             label: cmd.key,
             hint: t(cmd.descriptionKey),
+            group: "command" as const,
         }));
 });
 
 /**
  * Candidates come from the **existing** participant store (same single source as the members
- * panel and the speak-as dropdown) — M1 adds no endpoint and no second fetch.
+ * panel and the speak-as dropdown) — no endpoint, no second fetch.
  * Disabled participants are invisible here for the same reason `MentionParser` skips them.
  */
-const mentionItems = computed<TriggerItem[]>(() => {
+const memberItems = computed<TriggerItem[]>(() => {
     const filter = triggerFilter.value.toLowerCase();
     const items: TriggerItem[] = [];
     if ("all".startsWith(filter)) {
-        items.push({ id: "xihe-mention-all", label: "@all", hint: t("chat.input.mentionAll") });
+        items.push({
+            id: "xihe-mention-all",
+            label: "@all",
+            hint: t("chat.input.mentionAll"),
+            group: "member",
+        });
     }
     for (const participant of participantsStore.participants ?? []) {
         const name = participant.displayName ?? "";
@@ -165,15 +193,102 @@ const mentionItems = computed<TriggerItem[]>(() => {
                 participant.principalKind === "AGENT"
                     ? t("chat.input.mentionAgent")
                     : t("chat.input.mentionHuman"),
+            group: "member",
         });
     }
     return items;
 });
 
+/** Depth-first walk of the already-loaded workspace tree (no request is made here). */
+function flattenFileTree(nodes: FileNode[], out: FileNode[] = []): FileNode[] {
+    for (const node of nodes) {
+        out.push(node);
+        if (node.children?.length) flattenFileTree(node.children, out);
+    }
+    return out;
+}
+
+/**
+ * PLAN-0635 M2: `@文件/目录` candidates come from the **already-loaded** `workspace.fileTree`
+ * (filled by the view through `api.listDirectory`) — no new endpoint, no extra fetch (D35-03).
+ *
+ * Two deliberate rules:
+ * <ul>
+ *   <li>an <b>empty</b> filter lists nothing: otherwise every file in the workspace would flood
+ *       the menu the moment the user types `@` and bury the member candidates;</li>
+ *   <li>basename matches rank before deeper path matches, so typing `@input` offers
+ *       `chat/components/InputArea.vue` instead of an arbitrary deep path containing "input".</li>
+ * </ul>
+ */
+const fileItems = computed<TriggerItem[]>(() => {
+    const filter = triggerFilter.value.toLowerCase();
+    if (!filter) return [];
+    const matched = flattenFileTree(workspaceStore.fileTree ?? []).filter((node) =>
+        node.path.toLowerCase().includes(filter),
+    );
+    matched.sort((left, right) => {
+        const leftName = left.name.toLowerCase().includes(filter) ? 0 : 1,
+            rightName = right.name.toLowerCase().includes(filter) ? 0 : 1;
+        if (leftName !== rightName) return leftName - rightName;
+        return left.path.length - right.path.length;
+    });
+    return matched.slice(0, MAX_FILE_CANDIDATES).map((node, index) => ({
+        // Index-based id keeps `aria-activedescendant` valid: a raw path can contain characters
+        // that are not allowed in an IDREF.
+        id: `xihe-file-${index}`,
+        label: `@${node.path}`,
+        hint:
+            node.type === "directory"
+                ? t("chat.input.mentionDirectory")
+                : t("chat.input.mentionFile"),
+        group: "file",
+    }));
+});
+
+/** Member group first (existing behaviour), file group second — one listbox, two headings. */
+const mentionGroups = computed<{ id: TriggerGroup; titleKey: string; items: TriggerItem[] }[]>(
+    () => {
+        const groups: { id: TriggerGroup; titleKey: string; items: TriggerItem[] }[] = [];
+        if (memberItems.value.length) {
+            groups.push({
+                id: "member",
+                titleKey: "chat.input.mentionsTitle",
+                items: memberItems.value,
+            });
+        }
+        if (fileItems.value.length) {
+            groups.push({ id: "file", titleKey: "chat.input.filesTitle", items: fileItems.value });
+        }
+        return groups;
+    },
+);
+
 const activeItems = computed<TriggerItem[]>(() => {
     if (triggerKind.value === "slash") return slashItems.value;
-    if (triggerKind.value === "mention") return mentionItems.value;
+    if (triggerKind.value === "mention") return mentionGroups.value.flatMap((group) => group.items);
     return [];
+});
+
+/** What the template renders: headings + options with their flat index for `aria`/keyboard. */
+const menuGroups = computed<MenuGroup[]>(() => {
+    if (triggerKind.value === "slash") {
+        return slashItems.value.length
+            ? [
+                  {
+                      id: "command",
+                      titleKey: "chat.input.commandsTitle",
+                      items: slashItems.value.map((item, flatIndex) => ({ ...item, flatIndex })),
+                  },
+              ]
+            : [];
+    }
+    if (triggerKind.value !== "mention") return [];
+    let flatIndex = 0;
+    return mentionGroups.value.map((group) => ({
+        id: group.id,
+        titleKey: group.titleKey,
+        items: group.items.map((item) => ({ ...item, flatIndex: flatIndex++ })),
+    }));
 });
 
 const menuOpen = computed(() => triggerKind.value !== null && activeItems.value.length > 0);
@@ -657,13 +772,14 @@ defineExpose({ clearDraft, insertMention });
                     <p class="mt-2 text-xs text-muted-foreground">{{ t("chat.input.helpHint") }}</p>
                 </div>
                 <!--
-                    PLAN-0635 M1: one candidate surface for both `/` and `@` (D35-01) — a single
-                    listbox means the keyboard/aria contract cannot drift between the two.
+                    PLAN-0635 M1/M2: one candidate surface for `/`, `@` member and `@` file
+                    (D35-01) — a single listbox means the keyboard/aria contract cannot drift.
+                    M2 adds the file group **inside** this listbox (group headings only).
                 -->
                 <div
                     v-if="menuOpen"
                     :id="TRIGGER_MENU_ID"
-                    class="absolute bottom-full left-0 mb-2 w-56 overflow-hidden rounded-lg border bg-popover shadow-lg"
+                    class="absolute bottom-full left-0 mb-2 max-h-72 w-72 overflow-y-auto rounded-lg border bg-popover shadow-lg"
                     role="listbox"
                     :aria-label="
                         triggerKind === 'mention'
@@ -672,27 +788,31 @@ defineExpose({ clearDraft, insertMention });
                     "
                     data-testid="chat-input-trigger-menu"
                 >
-                    <div class="border-b px-2 py-1 text-xs text-muted-foreground">
-                        {{
-                            triggerKind === "mention"
-                                ? t("chat.input.mentionsTitle")
-                                : t("chat.input.commandsTitle")
-                        }}
-                    </div>
-                    <button
-                        v-for="(item, i) in activeItems"
-                        :id="item.id"
-                        :key="item.id"
-                        role="option"
-                        :aria-selected="i === triggerIndex"
-                        class="flex w-full items-center gap-2 px-3 py-2 text-left text-sm transition-colors hover:bg-accent"
-                        :class="i === triggerIndex ? 'bg-accent' : ''"
-                        @mousedown.prevent
-                        @click="pickItem(i)"
-                    >
-                        <span class="font-medium">{{ item.label }}</span>
-                        <span class="ml-auto text-xs text-muted-foreground">{{ item.hint }}</span>
-                    </button>
+                    <template v-for="group in menuGroups" :key="group.id">
+                        <div
+                            class="border-b bg-muted/40 px-2 py-1 text-xs font-medium text-muted-foreground"
+                            role="presentation"
+                            :data-testid="`chat-input-group-${group.id}`"
+                        >
+                            {{ t(group.titleKey) }}
+                        </div>
+                        <button
+                            v-for="item in group.items"
+                            :id="item.id"
+                            :key="item.id"
+                            role="option"
+                            :aria-selected="item.flatIndex === triggerIndex"
+                            class="flex w-full items-center gap-2 px-3 py-2 text-left text-sm transition-colors hover:bg-accent"
+                            :class="item.flatIndex === triggerIndex ? 'bg-accent' : ''"
+                            @mousedown.prevent
+                            @click="pickItem(item.flatIndex)"
+                        >
+                            <span class="truncate font-medium">{{ item.label }}</span>
+                            <span class="ml-auto shrink-0 text-xs text-muted-foreground">{{
+                                item.hint
+                            }}</span>
+                        </button>
+                    </template>
                 </div>
             </div>
 

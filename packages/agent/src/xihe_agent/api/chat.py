@@ -47,6 +47,11 @@ from xihe_agent.app_state import (
 )
 from xihe_agent.config_client import ProviderLeaseError
 from xihe_agent.config_snapshot import ConfigSnapshotUnavailableError, RunConfigSnapshot
+from xihe_agent.context.path_mentions import (
+    append_to_user_input,
+    parse_path_mentions,
+    render_for_context,
+)
 from xihe_agent.interfaces.agent_runner import AgentEvent, RunnerConfig
 from xihe_agent.interfaces.chat_run_context import ContextBuildError
 from xihe_agent.interfaces.event import Event
@@ -258,6 +263,11 @@ async def chat(request: Request):
     # 本模块不改值、不计算，仅在工具调用时附带入站头 X-Xihe-Tool-Timeout-Per-Call。
     tool_timeouts = _normalize_tool_timeouts(data.get("toolTimeouts"))
 
+    # PLAN-0635 M2: CP-resolved `@文件/目录` targets. Additive and optional — malformed rows are
+    # dropped by the parser so a bad row can never break a chat turn; diagnostics below keep a
+    # silent drop from happening.
+    path_mentions = parse_path_mentions(data.get("pathMentions"))
+
     # PLAN-0307 T2.7 (decision #3=#3a): CP-resolved per-run layer overrides.
     raw_user_overrides = data.get("userOverrides")
     raw_workspace_overrides = data.get("workspaceOverrides")
@@ -456,6 +466,9 @@ async def chat(request: Request):
                 context.runtime_state["toolWaitOrigins"] = tool_wait_origins
                 context.runtime_state["systemToolWait"] = system_tool_wait
                 context.runtime_state["toolTimeouts"] = tool_timeouts
+                # PLAN-0635 M2: keep the raw rows for diagnostics/replay; charging happens just
+                # before the provider body is built (the ledger needs the window denominator).
+                context.runtime_state["pathMentions"] = path_mentions
                 context.metadata.update(
                     {
                         "requestId": request_id,
@@ -586,13 +599,30 @@ async def chat(request: Request):
                         workspace_id=workspace_id,
                     )
 
+                # PLAN-0635 M2 (D35-01): render `@文件/目录` into the template `user_input` slot.
+                # Deliberately NOT into `messages`: in template mode only `user_input` reaches the
+                # provider body, so `messages` would miss the model and double-count tokens.
+                path_mention_block, path_mention_diagnostics = render_for_context(
+                    context, path_mentions
+                )
+                if path_mention_diagnostics["requested"]:
+                    context.runtime_state["pathMentionDiagnostics"] = path_mention_diagnostics
+                    logger.info(
+                        "path mentions requested={} inlined={} pathOnly={} denied={} truncated={}",
+                        path_mention_diagnostics["requested"],
+                        path_mention_diagnostics["inlined"],
+                        len(path_mention_diagnostics["pathOnly"]),
+                        len(path_mention_diagnostics["denied"]),
+                        len(path_mention_diagnostics["truncated"]),
+                    )
+
                 model = ApiChatModel(
                     api_type=api_type,
                     grant=grant,
                     body_source=template_snapshot["template"]["bodySource"],
                     values={
                         "model": str(model_override),
-                        "user_input": content,
+                        "user_input": append_to_user_input(content, path_mention_block),
                         "agent_instructions": instructions,
                         "rag_context": rag_context,
                         "conversation_history": (

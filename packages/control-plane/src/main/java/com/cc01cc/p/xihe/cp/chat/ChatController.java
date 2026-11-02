@@ -91,6 +91,8 @@ public class ChatController {
     private final ProviderCredentialLeaseService credentialLeases;
     private final EmbeddingProfileService embeddingProfiles;
     private final ApiRequestValidator requestValidator;
+    /** PLAN-0635 M2: resolves `@文件/目录` tokens into injectable entries for the Agent. */
+    private final com.cc01cc.p.xihe.cp.context.service.MentionPathResolver mentionPathResolver;
     private final ConfigService configService;
     private final com.cc01cc.p.xihe.cp.mcp.McpRelayToolRecorder mcpRelayToolRecorder;
     private final com.cc01cc.p.xihe.cp.mcp.McpToolTimeoutService mcpToolTimeoutService;
@@ -170,7 +172,9 @@ public class ChatController {
               com.cc01cc.p.xihe.cp.usage.UsageCostMapper usageCostMapper,
               com.cc01cc.p.xihe.cp.service.ContextTemplateSourceService contextTemplateSourceService,
               ApplicationEventPublisher eventPublisher,
-              com.cc01cc.p.xihe.cp.policy.ResourceGovernor governor) {
+              com.cc01cc.p.xihe.cp.policy.ResourceGovernor governor,
+              // PLAN-0635 M2: appended last so the many positional constructions stay stable.
+              com.cc01cc.p.xihe.cp.context.service.MentionPathResolver mentionPathResolver) {
         this.agentHttpClient = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(10))
             .build();
@@ -193,6 +197,7 @@ public class ChatController {
         this.credentialLeases = credentialLeases;
         this.embeddingProfiles = embeddingProfiles;
         this.requestValidator = requestValidator;
+        this.mentionPathResolver = mentionPathResolver;
         this.configService = configService;
         this.mcpRelayToolRecorder = mcpRelayToolRecorder;
         this.mcpToolTimeoutService = mcpToolTimeoutService;
@@ -700,6 +705,43 @@ public class ChatController {
         } catch (RuntimeException noRoster) {
             return List.of();
         }
+    }
+
+    /**
+     * PLAN-0635 M2 (D35-03): hand `@文件/目录` targets to the Agent as an **additive optional** field.
+     *
+     * <p><b>Participant-first</b>: a token the roster already resolves is never treated as a path,
+     * so M1 mention semantics are unchanged when a display name happens to look like a path. The
+     * roster match itself is delegated to {@link MentionParser} — there is no second matching rule
+     * in this class.</p>
+     *
+     * <p>Token counting is deliberately NOT done here: the Agent owns the run-scoped
+     * {@code InjectionLedger} (same split as PLAN-0627 nested and PLAN-0629 memory).</p>
+     */
+    private void attachPathMentions(Map<String, Object> agentRequest, String sessionId,
+                                    String userId, String workspaceId, String content) {
+        if (content == null || !content.contains("@")) {
+            return;
+        }
+        List<MentionParser.RosterEntry> roster = mentionRoster(userId, workspaceId, sessionId);
+        com.cc01cc.p.xihe.cp.context.service.MentionPathResolver.Resolution resolution =
+                mentionPathResolver.resolve(sessionId, userId, workspaceId, content,
+                        token -> !MentionParser.parse("@" + token, roster).mentions().isEmpty());
+        // Defensive: unit tests build this controller with a bare mock (resolve → null).
+        if (resolution == null || resolution.entries().isEmpty()) {
+            return;
+        }
+        List<Map<String, Object>> payload = new ArrayList<>();
+        for (com.cc01cc.p.xihe.cp.context.service.MentionPathResolver.Entry entry
+                : resolution.entries()) {
+            Map<String, Object> item = new java.util.LinkedHashMap<>();
+            item.put("path", entry.path());
+            item.put("kind", entry.kind());
+            item.put("content", entry.content());
+            item.put("truncated", entry.truncated());
+            payload.add(item);
+        }
+        agentRequest.put("pathMentions", payload);
     }
 
     // ── PLAN-292 M3 (C2): run status recovery ──────────────────────────────
@@ -1218,6 +1260,8 @@ public class ChatController {
                     }
                     agentRequest.put("attachments", agentAttachments);
                 }
+                // PLAN-0635 M2: additive, optional — absent when the message mentions no path.
+                attachPathMentions(agentRequest, sessionId, userId, workspaceId, content);
 
                 String agentRequestBody = objectMapper.writeValueAsString(agentRequest);
 

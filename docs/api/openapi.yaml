@@ -4748,6 +4748,28 @@ components:
         runId: { type: string, format: uuid }
         sessionId: { type: string }
         content: { type: string }
+        pathMentions:
+          type: array
+          description: |
+            PLAN-0635 M2: additive and OPTIONAL — absent when the user message `@`-mentions no
+            workspace path. CP resolves `@文件/目录` tokens (participant-first: a token the session
+            roster already resolves is never a path; path rules reuse PLAN-0627's normalizer, and
+            reads reuse the ordinary read_file/list_directory policy) and hands the Agent the
+            targets. The Agent owns token counting and the run-scoped injection ledger; CP only
+            bounds each read at 64 KiB and flags `truncated` so the model is told the body is
+            partial. `kind=directory` carries bounded top-level entry names, not a file body.
+          items:
+            type: object
+            required: [path, kind]
+            properties:
+              path: { type: string, description: 'Workspace-relative normalized path.' }
+              kind: { type: string, enum: [file, directory] }
+              content:
+                type: string
+                description: 'Bounded body (file) or newline-joined entry names (directory).'
+              truncated:
+                type: boolean
+                description: 'CP cut the read at 64 KiB or the listing at its entry cap.'
         instructions: { type: string, minLength: 1, description: 'CP-authorized nonempty Agent baseline only. Missing/blank/non-string values fail before lease redemption or Chat provider dispatch with BASELINE_UNAUTHORIZED; no process-level fallback. AgentPrincipal IDs and permission snapshots are forbidden on this wire.' }
         contextTemplateSnapshot: { $ref: '#/components/schemas/ContextTemplateSnapshot' }
         embeddingProfile:
