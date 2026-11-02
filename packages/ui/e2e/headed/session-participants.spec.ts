@@ -881,7 +881,7 @@ test.describe("PLAN-0623 有头走查：会话参与者 dock tab", () => {
         // 纯计数在 S7 的第一 tick 就恒真（"借来的绿"）。
         const s7Reply = page.locator(
             '[data-testid="message-item"][data-message-role="assistant"]',
-            { hasText: "S7 fan-out probe" },
+            { hasText: "S7 fan-out" }, // mock echo 尾部截断（"probe"→"prob"），用截断稳定的前段
         );
         await expect
             .poll(async () => s7Reply.count(), {
