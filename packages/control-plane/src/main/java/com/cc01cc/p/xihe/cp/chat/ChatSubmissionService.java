@@ -72,6 +72,7 @@ public class ChatSubmissionService {
     // PLAN-0470 (decision #23): the attachment->Message link write is owned
     // by Files (ChatAttachmentService); this service no longer holds FileRepository.
     private final com.cc01cc.p.xihe.cp.files.ChatAttachmentService chatAttachmentService;
+    private final WakeChainService wakeChainService;
     private final ToolCallSnapshotService toolCallSnapshotService;
 
     public ChatSubmissionService(ChatRunRepository chatRunRepository,
@@ -90,6 +91,7 @@ public class ChatSubmissionService {
                                  McpInvocationService mcpInvocationService,
                                  EventStoreService eventStoreService,
                                  com.cc01cc.p.xihe.cp.files.ChatAttachmentService chatAttachmentService,
+                                 @org.springframework.context.annotation.Lazy WakeChainService wakeChainService,
                                  ToolCallSnapshotService toolCallSnapshotService,
                                  com.cc01cc.p.xihe.cp.service.SessionParticipantService sessionParticipantService) {
         this.chatRunRepository = chatRunRepository;
@@ -109,6 +111,7 @@ public class ChatSubmissionService {
         this.mcpInvocationService = mcpInvocationService;
         this.eventStoreService = eventStoreService;
         this.chatAttachmentService = chatAttachmentService;
+        this.wakeChainService = wakeChainService;
         this.toolCallSnapshotService = toolCallSnapshotService;
     }
 
@@ -215,6 +218,10 @@ public class ChatSubmissionService {
             run.setAssistantMessageId(assistantMessage.getId().toString());
             chatRunRepository.save(run);
         });
+        // PLAN-0624 M3: agent 产出里的提及开链（深度/环检查在 WakeChainService）。
+        // @Lazy on the constructor: WakeChainService → WakeDispatchService →
+        // SessionWakeupService → this service is a cycle; the proxy breaks it.
+        wakeChainService.onAssistantContent(sessionId, runId, content);
         return assistantMessage.getId().toString();
     }
 
