@@ -5,7 +5,11 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.HashSet;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.Set;
 
@@ -15,6 +19,21 @@ public final class ContextEventPayloadSafety {
             "Tool result withheld from durable history because no checkpoint-safe output schema is registered.";
     public static final String CREDENTIAL_RESULT_PLACEHOLDER =
             "<credential value delivered in-memory; single-use lease, five minute TTL>";
+
+    /** PLAN-0628 M2b: the CP-owned tool whose result carries a skill body. */
+    public static final String SKILL_READ_TOOL = "skill_read";
+
+    /**
+     * PLAN-0628 M2b: how much of a withheld skill body may appear as a durable preview.
+     *
+     * <p><b>This is a new convention introduced here — it is not inherited.</b> This layer holds no
+     * preview constant to follow: the {@code head}/{@code tail} previews and the
+     * {@code artifact_ref}/{@code size_bytes}/{@code truncated} metadata are produced on the artifact
+     * side, and this class only decides what survives. 256 characters is therefore this tool's own
+     * bound, sized so the durable record still answers "what was read, how big, and did it look
+     * sane" while staying a record rather than a second copy of workspace-private content.</p>
+     */
+    public static final int SKILL_BODY_PREVIEW_CHARS = 256;
 
     private static final Set<String> NATIVE_API_TYPES = Set.of(
             "openai-chat-completions", "anthropic-messages", "mimo-responses");
@@ -53,9 +72,90 @@ public final class ContextEventPayloadSafety {
             safe.put("status", status);
         }
         String name = source.path("toolName").asText(source.path("tool_name").asText(""));
+        if (SKILL_READ_TOOL.equals(name)) {
+            // PLAN-0628 M2b (design §2, "payload 安全"): a skill body is workspace-private content
+            // and can be hundreds of kilobytes, and the event table is a long-lived asset. Keep
+            // hash + length + bounded preview; the body itself never enters durable history.
+            safe.set("result", skillBodyMetadata(skillBodyDigest(source.get("result")), mapper));
+            return safe;
+        }
         safe.put("result", "acquire_credential".equals(name)
                 ? CREDENTIAL_RESULT_PLACEHOLDER : UNSAFE_TOOL_RESULT_PLACEHOLDER);
         return safe;
+    }
+
+    /**
+     * PLAN-0628 M2b: the same ceiling for tool-role messages, where {@code content} is a string.
+     *
+     * <p>Both the assistant-response and the fork-seed paths route tool-role messages through
+     * {@link #sanitizeMessage}; one helper keeps the three call sites from drifting into three
+     * different notions of "how much of a body may survive".</p>
+     */
+    private static String skillBodyContent(JsonNode rawContent) {
+        SkillBodyDigest digest = skillBodyDigest(rawContent);
+        return "[skill_read] body withheld from durable history; contentHash=" + digest.contentHash()
+                + " sizeBytes=" + digest.sizeBytes()
+                + " preview=" + digest.preview();
+    }
+
+    private static ObjectNode skillBodyMetadata(SkillBodyDigest digest, ObjectMapper mapper) {
+        ObjectNode metadata = mapper.createObjectNode();
+        metadata.put("contentHash", digest.contentHash());
+        metadata.put("sizeBytes", digest.sizeBytes());
+        metadata.put("preview", digest.preview());
+        metadata.put("truncated", digest.truncated());
+        return metadata;
+    }
+
+    /**
+     * The body text a raw result carries, whatever shape it arrives in: the CP-owned tool's
+     * {@code structuredContent} object, a plain string, or the current Agent presentation form
+     * (which already withholds the body — hashing the placeholder is the honest answer there).
+     */
+    private static String rawSkillBody(JsonNode result) {
+        if (result == null || result.isNull()) {
+            return "";
+        }
+        if (result.isTextual()) {
+            return result.asText();
+        }
+        if (result.isObject()) {
+            for (String field : List.of("body", "content", "preview", "text")) {
+                JsonNode value = result.get(field);
+                if (value != null && value.isTextual()) {
+                    return value.asText();
+                }
+            }
+        }
+        return result.toString();
+    }
+
+    private static SkillBodyDigest skillBodyDigest(JsonNode result) {
+        String text = rawSkillBody(result);
+        boolean wireTruncated = result != null && result.isObject()
+                && result.path("truncated").asBoolean(false);
+        int codePoints = text.codePointCount(0, text.length());
+        boolean truncated = wireTruncated || codePoints > SKILL_BODY_PREVIEW_CHARS;
+        String preview = codePoints <= SKILL_BODY_PREVIEW_CHARS
+                ? text
+                // Cut on a code-point boundary: half an emoji is not a preview of anything.
+                : text.substring(0, text.offsetByCodePoints(0, SKILL_BODY_PREVIEW_CHARS));
+        return new SkillBodyDigest(sha256Hex(text),
+                text.getBytes(StandardCharsets.UTF_8).length, preview, truncated);
+    }
+
+    private static String sha256Hex(String data) {
+        try {
+            byte[] hash = MessageDigest.getInstance("SHA-256").digest(data.getBytes(StandardCharsets.UTF_8));
+            return HexFormat.of().formatHex(hash);
+        } catch (NoSuchAlgorithmException impossible) {
+            // SHA-256 is mandatory for every JRE; a missing one is a broken runtime, not a data case.
+            throw new IllegalStateException("SHA-256 is unavailable", impossible);
+        }
+    }
+
+    /** A body reduced to the four facts durable history is allowed to keep. */
+    private record SkillBodyDigest(String contentHash, int sizeBytes, String preview, boolean truncated) {
     }
 
     private static ObjectNode sanitizePrune(ObjectNode source, ObjectMapper mapper) {
@@ -138,8 +238,14 @@ public final class ContextEventPayloadSafety {
                     source.path("apiTypeId").asText(""), source.get("nativeRecords"), mapper));
         } else if ("tool".equals(source.path("role").asText(""))) {
             String name = source.path("tool_name").asText("");
-            safe.put("content", "acquire_credential".equals(name)
-                    ? CREDENTIAL_RESULT_PLACEHOLDER : UNSAFE_TOOL_RESULT_PLACEHOLDER);
+            // PLAN-0628 M2b: the durable copy of a skill body keeps the same bounded metadata as
+            // the tool.result path — never the body itself.
+            if (SKILL_READ_TOOL.equals(name)) {
+                safe.put("content", skillBodyContent(source.get("content")));
+            } else {
+                safe.put("content", "acquire_credential".equals(name)
+                        ? CREDENTIAL_RESULT_PLACEHOLDER : UNSAFE_TOOL_RESULT_PLACEHOLDER);
+            }
             removeToolPreviewMetadata(safe);
         }
         return safe;
@@ -149,8 +255,14 @@ public final class ContextEventPayloadSafety {
         ObjectNode safe = source.deepCopy();
         if ("tool".equals(source.path("role").asText(""))) {
             String name = source.path("tool_name").asText("");
-            safe.put("content", "acquire_credential".equals(name)
-                    ? CREDENTIAL_RESULT_PLACEHOLDER : UNSAFE_TOOL_RESULT_PLACEHOLDER);
+            // PLAN-0628 M2b: the durable copy of a skill body keeps the same bounded metadata as
+            // the tool.result path — never the body itself.
+            if (SKILL_READ_TOOL.equals(name)) {
+                safe.put("content", skillBodyContent(source.get("content")));
+            } else {
+                safe.put("content", "acquire_credential".equals(name)
+                        ? CREDENTIAL_RESULT_PLACEHOLDER : UNSAFE_TOOL_RESULT_PLACEHOLDER);
+            }
             removeToolPreviewMetadata(safe);
         }
         if (source.has("nativeRecords")) {

@@ -552,6 +552,15 @@ public class ContextProjectionService {
      * JSON + legacy marker. An empty string is a legitimate result and is
      * still projected (V12) — it is never dropped.
      */
+    /**
+     * PLAN-0628 M2b note: this is the second place a tool result could reach durable history
+     * ({@code acquire_credential} is handled the same way on both sides). Unlike that tool, a
+     * {@code skill_read} body needs <b>no branch here</b>: the projection withholds every result
+     * unconditionally, so the body cannot appear in the projected context at all — a strictly
+     * tighter ceiling than the hash/length/preview record
+     * {@code ContextEventPayloadSafety} keeps for the event payload. Adding a preview branch here
+     * would only widen it.
+     */
     private void putResultContent(ObjectNode message, JsonNode result) {
         message.put("content", UNSAFE_TOOL_RESULT_PLACEHOLDER);
     }
