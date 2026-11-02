@@ -39,6 +39,8 @@ if (!LOG && !REPORT_DIR) {
 const STORED = /Storing ApplicationContext \[(.+?)\] in cache under key \[(.+)\]$/;
 const CLOSED_DIRTY = /Closing ApplicationContext .*since it is marked as .*dirty/i;
 const STATS = /Spring test ApplicationContext cache statistics: (.*)$/;
+// The framework's own counter: one line per test event, `missCount` is exactly the creation count.
+const CACHE_SUMMARY = /DefaultContextCache@[0-9a-f]+ size = (\d+), maxSize = \d+, contextUsageCount = \d+, parentContextCount = \d+, hitCount = (\d+), missCount = (\d+), failureCount = \d+/;
 const STARTED = /Started \w+ in ([\d.]+) seconds/;
 
 /** A cache key's readable identity: profile + webEnvironment + the count of customizers. */
@@ -62,6 +64,11 @@ let dirtyCloses = 0;
 const keyCounts = new Map();
 const startedSeconds = [];
 let statsLine = null;
+// The framework's own summary is the AUTHORITATIVE count: one line per test event, and its
+// `missCount` is exactly the number of context creations. Spring Test logs it at DEBUG for the cache
+// logger (`Spring test ApplicationContext cache statistics: [DefaultContextCache@… size = N, …,
+// hitCount = H, missCount = M, …]`). `STORED` lines are optional extra detail (per-key attribution).
+let cacheSummary = null;
 
 if (LOG) {
   const lines = readFileSync(LOG, 'utf8').split(/\r?\n/);
@@ -77,6 +84,16 @@ if (LOG) {
       dirtyCloses += 1;
       continue;
     }
+    const summaryMatch = CACHE_SUMMARY.exec(line);
+    if (summaryMatch) {
+      // Keep the LAST occurrence: the counter is cumulative for the JVM.
+      cacheSummary = {
+        size: Number(summaryMatch[1]),
+        hitCount: Number(summaryMatch[2]),
+        missCount: Number(summaryMatch[3]),
+      };
+      continue;
+    }
     const stats = STATS.exec(line);
     if (stats) {
       statsLine = stats[1].trim();
@@ -88,6 +105,9 @@ if (LOG) {
     }
   }
 }
+
+// Prefer the framework summary; fall back to counting "Storing …" lines when the logger was not enabled.
+const creationsAuthoritative = cacheSummary ? cacheSummary.missCount : creations;
 
 // ------------------------------------------------------------ surefire parsing
 
@@ -131,7 +151,9 @@ const report = {
   log: LOG ? resolve(LOG) : null,
   reportDir: REPORT_DIR ? resolve(REPORT_DIR) : null,
   contexts: {
-    creations,
+    creations: creationsAuthoritative,
+    creationsFromStoredLines: creations,
+    cacheSummary,
     dirtyCloses,
     distinctKeys: keyCounts.size,
     keys: [...keyCounts.entries()]
@@ -169,7 +191,7 @@ console.log('# Context timings (dynamic)');
 if (LOG) {
   console.log('');
   console.log(`log ........................ ${report.log}`);
-  console.log(`context CREATIONS .......... ${creations}   <-- the number Phase 3 must move`);
+  console.log(`context CREATIONS .......... ${report.contexts.creations}   <-- framework missCount: the number Phase 3 must move`);
   console.log(`dirty closes ............... ${dirtyCloses}`);
   console.log(`distinct cache keys ........ ${keyCounts.size}`);
   console.log(`spring 'Started ... in' .... ${report.contexts.springStartedSeconds.samples} samples, `

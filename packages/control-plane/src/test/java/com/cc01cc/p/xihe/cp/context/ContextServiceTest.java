@@ -12,6 +12,19 @@ import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+/**
+ * L2 Phase 3 (2026-11-03): this class keeps its OWN AFTER_CLASS @DirtiesContext while the annotation is
+ * gone from {@code AbstractH2Test}. Reason is measured, not guessed: with a shared H2 context three tests
+ * failed — {@code forkCreatesNewSessionWithForkedEvent} expected sequence 3,
+ * {@code compactAppendsCompactionEventAndClearsMessages} expected sequence 4, and
+ * {@code replayReturnsSnapshotAndEvents} expected exactly 2 events. The cause is visible right below: the
+ * class uses FIXED session ids, and the in-memory schema is shared with the sibling classes in the same
+ * JVM, so a sibling's events shift this class's sequence numbers. A fresh context gives a fresh schema.
+ * The clean fix is per-class unique session ids (then no dirties at all) — that is a test rewrite and is
+ * deliberately not bundled into a perf change.
+ */
+@org.springframework.test.context.DirtiesContext(
+        classMode = org.springframework.test.context.DirtiesContext.ClassMode.AFTER_CLASS)
 class ContextServiceTest extends AbstractH2Test {
 
     private static final String TEST_SESSION_A = "aaaaaaa1-0000-0000-0000-000000000000";
