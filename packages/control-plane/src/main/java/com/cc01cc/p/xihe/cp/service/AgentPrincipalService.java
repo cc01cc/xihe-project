@@ -14,6 +14,7 @@ import com.cc01cc.p.xihe.cp.policy.ToolFaceRegistry;
 import com.cc01cc.p.xihe.cp.policy.ToolShape;
 import com.cc01cc.p.xihe.cp.policy.GrantIntersectionEvaluator;
 import com.cc01cc.p.xihe.cp.policy.GrantPrincipalPathResolver;
+import com.cc01cc.p.xihe.cp.policy.HookAdvisorRegistry;
 import com.cc01cc.p.xihe.cp.policy.GrantSources;
 import com.cc01cc.p.xihe.cp.policy.GrantDefaultService;
 import com.cc01cc.p.xihe.cp.repository.AgentPrincipalRepository;
@@ -114,6 +115,14 @@ public class AgentPrincipalService {
     public AgentPrincipal createPrincipalFromTemplate(String actorUserId, String name, String templateId,
                                                       String requestedScope, String defaultModelProvider,
                                                       String defaultModelName, JsonNode allowedModels) {
+        return createPrincipalFromTemplate(actorUserId, name, templateId, requestedScope,
+                defaultModelProvider, defaultModelName, allowedModels, null);
+    }
+
+    public AgentPrincipal createPrincipalFromTemplate(String actorUserId, String name, String templateId,
+                                                      String requestedScope, String defaultModelProvider,
+                                                      String defaultModelName, JsonNode allowedModels, JsonNode hooks) {
+        JsonNode checkedHooks = HookAdvisorRegistry.validateSubscriptions(hooks);
         UUID actorId = parseUuid(actorUserId, "INVALID_ACTOR");
         requireUser(actorId);
         UUID workspaceContext = currentWorkspaceContext();
@@ -124,7 +133,7 @@ public class AgentPrincipalService {
         String resolvedTemplateId = optionalText(resolved.snapshot(), "templateId");
         return createPrincipal(actorUserId, name, resolvedTemplateId, resolved.snapshot(), scope,
                 "PERSONAL".equals(scope) ? actorId : null,
-                defaultModelProvider, defaultModelName, allowedModels);
+                defaultModelProvider, defaultModelName, allowedModels, hooks);
     }
 
     /** Legacy signature kept for the pre-0622 callers; same semantics as an omitted scope. */
@@ -279,6 +288,16 @@ public class AgentPrincipalService {
                                           JsonNode templateSnapshot, String scope, UUID ownerUserId,
                                           String defaultModelProvider, String defaultModelName,
                                           JsonNode allowedModels) {
+        return createPrincipal(actorUserId, name, templateId, templateSnapshot, scope, ownerUserId,
+                defaultModelProvider, defaultModelName, allowedModels, null);
+    }
+
+    /** PLAN-0625 M2: hooks variant — validation happens in this one write-side gate. */
+    public AgentPrincipal createPrincipal(String actorUserId, String name, String templateId,
+                                          JsonNode templateSnapshot, String scope, UUID ownerUserId,
+                                          String defaultModelProvider, String defaultModelName,
+                                          JsonNode allowedModels, JsonNode hooks) {
+        JsonNode checkedHooks = HookAdvisorRegistry.validateSubscriptions(hooks);
         UUID actorId = parseUuid(actorUserId, "INVALID_ACTOR");
         if (!authService.userExists(actorId)) {
             throw new CpApiException(
@@ -332,6 +351,8 @@ public class AgentPrincipalService {
         principal.setDefaultModelProvider(defaultModelProvider);
         principal.setDefaultModelName(defaultModelName);
         principal.setAllowedModels(modelIntent);
+        // PLAN-0625 M2: the runtime subscription surface (templates stay the declaration source).
+        principal.setHooks(checkedHooks);
         AgentPrincipal savedPrincipal = agentPrincipalRepository.saveAndFlush(principal);
 
         // PLAN-0470 #22: the grant write itself is Policy-owned.
@@ -791,6 +812,40 @@ public class AgentPrincipalService {
                 grantRepository.findScopedGrants(GrantPrincipalPathResolver.USER, actorId,
                         GrantSources.EVALUATION_SOURCES, workspaceId))))) {
             throw new CpApiException(HttpStatus.FORBIDDEN, "FORBIDDEN", actionClass + " permission is required");
+        }
+    }
+
+    /**
+     * PLAN-0625 M2 (D25-14): re-subscribing a principal's hooks is a principal-lifecycle mutation
+     * with the same tier authority as disable — owner for PERSONAL, workspace management for
+     * WORKSPACE, instance administration for INSTANCE. A preset guard's subscriptions are
+     * template-owned data and refuse with their own code (kept distinct from GUARD_CAP_IMMUTABLE:
+     * one code carrying two semantics is more expensive than a second code).
+     */
+    @Transactional
+    public void updatePrincipalHooks(String actorUserId, UUID principalId, JsonNode hooks) {
+        UUID actorId = parseUuid(actorUserId, "INVALID_ACTOR");
+        requireUser(actorId);
+        JsonNode checkedHooks = HookAdvisorRegistry.validateSubscriptions(hooks);
+        AgentPrincipal principal = agentPrincipalRepository.findById(principalId)
+                .orElseThrow(() -> new CpApiException(HttpStatus.NOT_FOUND,
+                        "AGENT_PRINCIPAL_NOT_FOUND", "Agent principal not found"));
+        requireMutableHooks(principal);
+        requireDisableAuthority(actorId, principal);
+        principal.setHooks(checkedHooks);
+        agentPrincipalRepository.saveAndFlush(principal);
+        ObjectNode detail = objectMapper.createObjectNode();
+        detail.put("hooks", checkedHooks == null ? "null" : checkedHooks.toString());
+        auditLogger.recordDurableChange(actorId.toString(), null,
+                "agent_principal_hooks_updated", "agent_principal", principalId.toString(),
+                detail.toString());
+    }
+
+    /** D25-14: a preset guard's hook subscriptions are fixed at the write side, like its cap. */
+    private void requireMutableHooks(AgentPrincipal principal) {
+        if (AgentPrincipal.ORIGIN_SYSTEM_PRESET.equals(principal.getOrigin())) {
+            throw new CpApiException(HttpStatus.FORBIDDEN, "GUARD_HOOKS_IMMUTABLE",
+                    "A preset guard's hook subscriptions are fixed; they come from the template, not the API");
         }
     }
 

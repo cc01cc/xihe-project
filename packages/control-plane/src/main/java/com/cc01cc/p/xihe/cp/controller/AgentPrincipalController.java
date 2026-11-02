@@ -31,7 +31,9 @@ public class AgentPrincipalController {
      * principal "for somebody else" (O1/O3).
      */
     private static final java.util.Set<String> ALLOWED_BODY_KEYS = java.util.Set.of(
-            "name", "templateId", "scope", "defaultModelProvider", "defaultModelName", "allowedModels");
+            "name", "templateId", "scope", "defaultModelProvider", "defaultModelName", "allowedModels",
+            // PLAN-0625 M2 (D25-14): hook subscriptions ride the create surface — no new endpoint.
+            "hooks");
 
     private static Map<String, Object> toPrincipalView(AgentPrincipalService.AgentPrincipalView view) {
         Map<String, Object> result = new LinkedHashMap<>();
@@ -128,7 +130,7 @@ public class AgentPrincipalController {
                 && !(body.get("defaultModelName") instanceof String))) {
             return ProblemDetailsHandler.problemResponse(HttpStatus.BAD_REQUEST,
                     "INVALID_REQUEST", "Body must contain name plus optional templateId, scope, "
-                            + "defaultModelProvider, defaultModelName and allowedModels only");
+                            + "defaultModelProvider, defaultModelName, allowedModels and hooks only");
         }
         String actorUserId = TenantContext.getUserId();
         if (actorUserId == null || actorUserId.isBlank()) {
@@ -150,9 +152,13 @@ public class AgentPrincipalController {
             }
         }
         try {
+            // PLAN-0625 M2: shape validation lives in the service (single write-side gate);
+            // here we only tree-ify the wire value.
+            JsonNode hooks = body.get("hooks") == null ? null
+                    : objectMapper.valueToTree(body.get("hooks"));
             AgentPrincipal principal = agentPrincipalService.createPrincipalFromTemplate(
                     actorUserId, name, templateId, scope, defaultModelProvider, defaultModelName,
-                    allowedModels);
+                    allowedModels, hooks);
             Map<String, Object> response = new LinkedHashMap<>();
             response.put("principalId", principal.getId());
             response.put("templateId", principal.getTemplateId());
@@ -166,6 +172,8 @@ public class AgentPrincipalController {
             response.put("defaultModelProvider", principal.getDefaultModelProvider());
             response.put("defaultModelName", principal.getDefaultModelName());
             response.put("allowedModels", principal.getAllowedModels());
+            // PLAN-0625 M2: the subscription surface round-trips like the rest of the capability view.
+            response.put("hooks", principal.getHooks());
             return ResponseEntity.status(HttpStatus.CREATED).body(response);
         } catch (CpApiException e) {
             return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
