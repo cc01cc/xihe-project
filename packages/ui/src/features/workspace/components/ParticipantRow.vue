@@ -54,8 +54,9 @@ const confirmingRemove = ref(false);
 
 /** 提及：只把 `@displayName` 交给父级插入草稿 —— 面板**不发送**任何消息。 */
 function requestMention(): void {
-    if (!props.canMention) return;
-    emit("mention", displayName.value);
+    // 没有真名就没法 `@`：不要把一个占位词插进草稿（那会变成真的"@未知用户"）。
+    if (!props.canMention || !realName.value) return;
+    emit("mention", realName.value);
 }
 
 function requestRemove(): void {
@@ -79,19 +80,22 @@ const modelIntent = computed(() => {
 const { t } = useI18n();
 
 /** 首字母头像：取 displayName 的前两个词首字母；缺名时退回 principalId 前两位（不上屏假名）。 */
+/** 真名（可能为 null/空白）。**不要**用 `principalId` 兜底：UUID 不是身份，是噪声。 */
+const realName = computed(() => props.participant.displayName?.trim() ?? "");
+
+/** 没有名字时用本地化占位，而不是把 UUID 摆给用户看。 */
+const displayName = computed(() => realName.value || t("workspace.participantUnknownName"));
+
 const initials = computed(() => {
-    const name = props.participant.displayName?.trim();
+    const name = realName.value;
     if (name) {
         const words = name.split(/\s+/).filter(Boolean);
         const letters = words.slice(0, 2).map((word) => word[0] ?? "");
         return letters.join("").toUpperCase();
     }
-    return props.participant.principalId.slice(0, 2).toUpperCase();
+    // 占位文案的首字（zh「未知用户」→「未」；en "Unknown user" → "U"）。
+    return Array.from(t("workspace.participantUnknownName"))[0]?.toUpperCase() ?? "?";
 });
-
-const displayName = computed(
-    () => props.participant.displayName?.trim() || props.participant.principalId,
-);
 
 const kindLabel = computed(() =>
     t(
@@ -249,11 +253,13 @@ const disabled = computed(() => Boolean(props.participant.disabledAt));
                 type="button"
                 class="rounded border px-1.5 py-0.5 text-[10px] disabled:opacity-50"
                 :data-testid="`participant-mention-${participant.participantId}`"
-                :disabled="!canMention || disabled"
+                :disabled="!canMention || disabled || !realName"
                 :title="
-                    canMention
-                        ? t('workspace.participantMentionAction')
-                        : t('workspace.participantMentionDenied')
+                    !realName
+                        ? t('workspace.participantMentionNoName')
+                        : canMention
+                          ? t('workspace.participantMentionAction')
+                          : t('workspace.participantMentionDenied')
                 "
                 @click="requestMention"
             >
