@@ -347,6 +347,26 @@ async function resolveHeadedSessionBinding(
  * 全链跑时前置已就位，helper 直接短路返回（"自建"这一性质由幂等断言保证）。
  */
 let connectionPrepared = false;
+let headedToken = "";
+
+/**
+ * task-85-A：自足场景的 API 凭证**helper 内部自取**（不依赖任何场景先跑）。
+ * 用 bootstrap 账号走 API login（response.accessToken），run 级缓存；
+ * UI 场景仍各自 loginViaForm（那是页面状态，不是 API 凭证）。
+ */
+async function headedApiToken(): Promise<string> {
+    if (headedToken) return headedToken;
+    const response = await fetch(`${CP_URL}/api/v1/auth/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ identifier: GOLDPATH_EMAIL, password: GOLDPATH_PASSWORD }),
+    });
+    expect(response.ok, `API login failed: ${response.status}`).toBe(true);
+    const body = (await response.json()) as { accessToken?: string };
+    headedToken = body.accessToken ?? "";
+    expect(headedToken, "API login must return accessToken").not.toBe("");
+    return headedToken;
+}
 
 /** 缺工作区 ⇒ 自建（可验证：新 id 不在创建前的列表里）。 */
 async function ensureWorkspace(request: APIRequestContext, token: string): Promise<void> {
@@ -399,7 +419,8 @@ async function ensureConnectionReady(token: string): Promise<void> {
 }
 
 /** 缺两成员会话 ⇒ 自建：绑定 → 建会话（工作区路径）→ 归属/PRIMARY 播种断言 → 加 HUMAN。 */
-async function ensureTwoMemberSession(request: APIRequestContext, token: string): Promise<void> {
+async function ensureTwoMemberSession(request: APIRequestContext): Promise<void> {
+    const token = await headedApiToken();
     await ensureWorkspace(request, token);
     await ensureAgentPrincipal(request, token);
     await ensureConnectionReady(token);
@@ -634,7 +655,8 @@ test.describe("PLAN-0623 有头走查：会话参与者 dock tab", () => {
         // task-85 链变格：S2 的长准备链（专属工作区 → agent principal → READY 连接 →
         // 显式绑定 → 建会话 → PRIMARY 播种断言 → 加 HUMAN → 捕获 id/displayName）
         // 已抽成 ensureTwoMemberSession（缺啥补啥、幂等）；S2 本体只负责渲染断言。
-        await ensureTwoMemberSession(request, token);
+        await loginViaForm(page, GOLDPATH_EMAIL, GOLDPATH_PASSWORD);
+        await ensureTwoMemberSession(request);
 
         await page.goto(`/workspace/${workspaceId}/chat/${sessionId}`, { waitUntil: "load" });
         await expect(page.getByTestId("workspace-toolbar-members")).toBeVisible({ timeout: 45000 });
@@ -698,7 +720,7 @@ test.describe("PLAN-0623 有头走查：会话参与者 dock tab", () => {
 
     test("S3@host 提及：输入框出现 @displayName，且没有发出 chat", async ({ page, request }) => {
         await loginViaForm(page, GOLDPATH_EMAIL, GOLDPATH_PASSWORD);
-        await ensureTwoMemberSession(request, await tokenOf(page));
+        await ensureTwoMemberSession(request);
         await page.goto(`/workspace/${workspaceId}/chat/${sessionId}`, { waitUntil: "load" });
         await expect(page.getByTestId("workspace-toolbar-members")).toBeVisible({ timeout: 45000 });
         if ((await page.getByTestId("dock-tab-members").count()) === 0) {
@@ -734,10 +756,10 @@ test.describe("PLAN-0623 有头走查：会话参与者 dock tab", () => {
 
     test("S5@host 代发：选候选发送 → 请求体带 asParticipantId", async ({ page, request }) => {
         await loginViaForm(page, GOLDPATH_EMAIL, GOLDPATH_PASSWORD);
-        await ensureTwoMemberSession(request, await tokenOf(page));
+        await ensureTwoMemberSession(request);
 
         // 期望候选 = API 的归约结果（selfOwned 且未停用）；不猜 UI 自己算。
-        const token = await tokenOf(page);
+        const token = await headedApiToken();
         const listed = await request.get(`${CP_URL}/api/v1/sessions/${sessionId}/participants`, {
             headers: { Authorization: `Bearer ${token}`, "X-Workspace-Id": workspaceId },
         });
@@ -802,7 +824,7 @@ test.describe("PLAN-0623 有头走查：会话参与者 dock tab", () => {
     });
     test("S6@host @提及 HUMAN → 发送 → 该成员行出现未读 @N 徽标", async ({ page, request }) => {
         await loginViaForm(page, GOLDPATH_EMAIL, GOLDPATH_PASSWORD);
-        await ensureTwoMemberSession(request, await tokenOf(page));
+        await ensureTwoMemberSession(request);
         await page.goto(`/workspace/${workspaceId}/chat/${sessionId}`, { waitUntil: "load" });
         await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: 45000 });
 
@@ -871,7 +893,7 @@ test.describe("PLAN-0623 有头走查：会话参与者 dock tab", () => {
         request,
     }) => {
         await loginViaForm(page, GOLDPATH_EMAIL, GOLDPATH_PASSWORD);
-        await ensureTwoMemberSession(request, await tokenOf(page));
+        await ensureTwoMemberSession(request);
         await page.goto(`/workspace/${workspaceId}/chat/${sessionId}`, { waitUntil: "load" });
         await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: 45000 });
 
@@ -925,7 +947,7 @@ test.describe("PLAN-0623 有头走查：会话参与者 dock tab", () => {
         request,
     }) => {
         await loginViaForm(page, GOLDPATH_EMAIL, GOLDPATH_PASSWORD);
-        await ensureTwoMemberSession(request, await tokenOf(page));
+        await ensureTwoMemberSession(request);
         await page.goto(`/workspace/${workspaceId}/chat/${sessionId}`, { waitUntil: "load" });
         await expect(page.getByTestId("workspace-toolbar-members")).toBeVisible({ timeout: 45000 });
         if ((await page.getByTestId("dock-tab-members").count()) === 0) {
