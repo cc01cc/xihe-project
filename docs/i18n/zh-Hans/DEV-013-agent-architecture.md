@@ -258,8 +258,9 @@ if recover_ids:
 
 `agent/supervisor.py` 与 `registry/registry.py` 的 public API 已迁移到 `BaseAgentTool`：
 
-- 内部经 `_adapt_tools()` / `LCToolAdapter` 继续使用 LangGraph 编排。
+- 内部经 `adapt_agent_tools()` / `LCToolAdapter` 继续使用 LangGraph 编排。
 - 这是当前编排实现的合理依赖，已被隔离在 public API 之后。
+- **Supervisor 图自持（PLAN-0633 批次 E）**：不再依赖 `langgraph-supervisor`（上游 README 劝退、11.5 个月零发布）。supervisor 图改由本模块用 `StateGraph` + 共享 `graph_builder.build_react_graph` 组装：supervisor 与每个 worker 都是 `create_agent` 图，路由靠工具式交接（`transfer_to_<id>` 工具返回 `Command(goto=<id>, graph=Command.PARENT)`），worker 结束后回到 supervisor。**v1 不挂 checkpointer**（`checkpoint_saver.SAFE_REACT_NODE_NAMES` 只覆盖单 agent 的 `model`/`tools` 节点）；`/chat` 的 supervisor 分支仍不可达（`ApprovalExecutorUnsupportedError` 先于建图，见 `spec/agent/agent-module-boundaries.md`）。
 
 ### 5.2 MCPClientManager
 
