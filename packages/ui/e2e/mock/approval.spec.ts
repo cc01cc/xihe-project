@@ -2,6 +2,7 @@ import { test, expect } from "@playwright/test";
 import type { Page } from "@playwright/test";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
 import { expectPlatformScreenshot } from "../helpers/visual";
+import { openContextPanel } from "../helpers/context-panel";
 
 const SESSION_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
     SECOND_SESSION_ID = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
@@ -518,7 +519,7 @@ test.describe("Chat approval flow", () => {
         await openApprovalChat(page);
 
         // PLAN-0582 S4: the collapsed summary shows the current mode; the auto
-        // warning + its remediation stay visible without expanding the panel.
+        // warning + its remediation stay visible without opening the panel.
         const settingsSummary = page.getByTestId("session-settings-summary");
         await expect(settingsSummary).toContainText("自动放行");
         const autoBanner = page.locator('[data-testid="session-policy-auto-banner"]');
@@ -526,7 +527,10 @@ test.describe("Chat approval flow", () => {
         await autoBanner.locator('[data-testid="session-policy-auto-close"]').click();
         await expect(autoBanner).toBeHidden();
         await expect(settingsSummary).toContainText("手动审批");
-        await settingsSummary.click();
+        // PLAN-0626 M2: the mode select moved into the dock `context` tab; the
+        // summary row is only the entry, so open the panel explicitly (the helper
+        // asserts visibility — no waitForTimeout after the click).
+        await openContextPanel(page);
         await expect(page.locator('[data-testid="session-policy-mode"]')).toHaveValue("manual");
         expect(postResponse).toEqual({ sessionId: SESSION_ID, mode: "manual", scope: "session" });
     });
