@@ -1,5 +1,6 @@
 package com.cc01cc.p.xihe.cp.chat;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
@@ -12,6 +13,7 @@ import com.cc01cc.p.xihe.cp.entity.ChatRunTransportAttempt;
 import com.cc01cc.p.xihe.cp.entity.Message;
 import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.service.SessionService;
+import com.cc01cc.p.xihe.cp.service.SessionParticipantService;
 import com.cc01cc.p.xihe.cp.service.AgentPrincipalService;
 import com.cc01cc.p.xihe.cp.status.HealthMonitor;
 import com.cc01cc.p.xihe.cp.status.RequestQueue;
@@ -78,6 +80,7 @@ public class ChatController {
     private final SessionService sessionService;
     private final AgentPrincipalService agentPrincipalService;
     private final com.cc01cc.p.xihe.cp.service.SessionParticipantService sessionParticipantService;
+    private final com.cc01cc.p.xihe.cp.service.ParticipantCapabilityService participantCapabilityService;
     private final ChatAttachmentService chatAttachmentService;
     private final HealthMonitor healthMonitor;
     private final RequestQueue requestQueue;
@@ -139,6 +142,7 @@ public class ChatController {
             SessionService sessionService,
             AgentPrincipalService agentPrincipalService,
             com.cc01cc.p.xihe.cp.service.SessionParticipantService sessionParticipantService,
+            com.cc01cc.p.xihe.cp.service.ParticipantCapabilityService participantCapabilityService,
             ChatAttachmentService chatAttachmentService,
             ChatActiveRunRegistry activeRunRegistry,
             HealthMonitor healthMonitor,
@@ -174,6 +178,7 @@ public class ChatController {
         this.sessionService = sessionService;
         this.agentPrincipalService = agentPrincipalService;
         this.sessionParticipantService = sessionParticipantService;
+        this.participantCapabilityService = participantCapabilityService;
         this.chatAttachmentService = chatAttachmentService;
         this.activeRunRegistry = activeRunRegistry;
         this.governor = governor;
@@ -215,7 +220,7 @@ public class ChatController {
                             requestId, req.sessionId(), runId);
                     execAsync(req.sessionId(), req.content(), req.provider(), req.model(), req.toolMode(),
                             req.toolTimeouts(), req.attachments(),
-                            req.userId(), req.workspaceId(), requestId, runId);
+                            req.userId(), req.workspaceId(), requestId, runId, null);
                 }, req -> markQueuedRequestFailed(
                         req,
                         nonBlankOrGenerated(req.requestId()),
@@ -351,7 +356,7 @@ public class ChatController {
                     event.sessionId(), runId, event.queueItemId(), attachments.size());
             execAsync(event.sessionId(), message.content(), run.provider(), run.model(), run.toolMode(),
                     event.toolTimeouts(), attachments, run.userId(), run.workspaceId(),
-                    UUID.randomUUID().toString(), runId);
+                    UUID.randomUUID().toString(), runId, null);
         } catch (Exception e) {
             logger.error("[LIFECYCLE] service=cp event=follow_up_child_dispatch_failed sessionId={} runId={} failureType={}",
                     event.sessionId(), runId, e.getClass().getSimpleName(), e);
@@ -480,6 +485,13 @@ public class ChatController {
                 return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
             }
         }
+        // PLAN-0623 M1b-②: cap 与 run 归属必须出自同一个 Responder —— 在请求线程解析一次并随
+        // execAsync 链传到 lease 段；lease 段不得重新解析（否则"A 的 cap"可能驱动"B 的消息"）。
+        // responder == null（无显式 as 且无 PRIMARY 行）时 lease 段走 0622 C3 冻结语义（D23-31 双轨）。
+        SessionParticipantService.Responder responder =
+                asParticipantId != null && !asParticipantId.isBlank()
+                        ? sessionParticipantService.responderFor(UUID.fromString(sessionId), asParticipantId)
+                        : null;
         String requestId = currentRequestId();
         String runId = UUID.randomUUID().toString();
         if (!sseManager.hasEmitter(sessionId)) {
@@ -646,7 +658,7 @@ public class ChatController {
             final ProviderCredentialLeaseService.Admission dispatchAdmission =
                     admission == null ? ProviderCredentialLeaseService.Admission.none() : admission;
             execAsync(sessionId, content, provider, model, toolMode, perCallTimeouts.values(),
-                    attachmentInfos, userId, workspaceId, requestId, runId, dispatchAdmission, null);
+                    attachmentInfos, userId, workspaceId, requestId, runId, dispatchAdmission, null, responder);
             handedOff = true;
             return ResponseEntity.accepted().body(runAcceptedBody(chatRun, "accepted", sessionId,
                 userMessage.getId(), runId, null));
@@ -854,7 +866,7 @@ public class ChatController {
                     run.continuation(), event.completedToolCallIds());
             execAsync(sessionId, userMessage == null ? "" : userMessage.content(),
                     run.provider(), run.model(), run.toolMode(), Map.of(), List.of(),
-                    run.userId(), run.workspaceId(), run.id(), run.id(), continuation);
+                    run.userId(), run.workspaceId(), run.id(), run.id(), continuation, null);
             return true;
         } catch (RuntimeException e) {
             releaseRun(sessionId, run.id(), "continuation_dispatch_handoff_failed");
@@ -895,7 +907,7 @@ public class ChatController {
         }
         try {
             execAsync(sessionId, userMessage.content(), run.provider(), run.model(), run.toolMode(),
-                    Map.of(), List.of(), run.userId(), run.workspaceId(), runId, runId);
+                    Map.of(), List.of(), run.userId(), run.workspaceId(), runId, runId, null);
             return true;
         } catch (RuntimeException e) {
             releaseRun(sessionId, runId, "spawn_dispatch_handoff_failed");
@@ -947,7 +959,7 @@ public class ChatController {
         }
         try {
             execAsync(sessionId, userMessage.content(), run.provider(), run.model(), run.toolMode(),
-                    Map.of(), List.of(), run.userId(), run.workspaceId(), runId, runId);
+                    Map.of(), List.of(), run.userId(), run.workspaceId(), runId, runId, null);
             return true;
         } catch (RuntimeException e) {
             releaseRun(sessionId, runId, "scheduled_dispatch_handoff_failed");
@@ -955,21 +967,35 @@ public class ChatController {
         }
     }
 
-    private void execAsync(String sessionId, String content, String provider, String model, String toolMode,
-                           Map<String, Integer> toolTimeouts,
-                           List<com.cc01cc.p.xihe.cp.files.dto.AttachmentInfo> attachments,
-                           String userId, String workspaceId, String requestId, String runId) {
-        execAsync(sessionId, content, provider, model, toolMode, toolTimeouts, attachments,
-                userId, workspaceId, requestId, runId, null);
+    /**
+     * PLAN-0623 M1b-②: the lease cap for this run, derived from the ONE Responder resolved in the
+     * request thread (never re-resolved here). {@code responder == null} keeps the frozen 0622 C3
+     * semantics: the Session's stored {@code agent_permissions_snapshot} (D23-31 dual track).
+     */
+    JsonNode leaseCapFor(SessionParticipantService.Responder responder, String leasePrincipalId,
+                         Session leaseSession, String workspaceId) {
+        return responder != null
+                ? participantCapabilityService.resolveParticipantCap(responder, UUID.fromString(workspaceId))
+                : (leasePrincipalId == null ? null : leaseSession.getAgentPermissionsSnapshot());
     }
 
     private void execAsync(String sessionId, String content, String provider, String model, String toolMode,
                            Map<String, Integer> toolTimeouts,
                            List<com.cc01cc.p.xihe.cp.files.dto.AttachmentInfo> attachments,
                            String userId, String workspaceId, String requestId, String runId,
-                           ContinuationDispatchContext continuationContext) {
+                           SessionParticipantService.Responder responder) {
         execAsync(sessionId, content, provider, model, toolMode, toolTimeouts, attachments,
-                userId, workspaceId, requestId, runId, null, continuationContext);
+                userId, workspaceId, requestId, runId, null, responder);
+    }
+
+    private void execAsync(String sessionId, String content, String provider, String model, String toolMode,
+                           Map<String, Integer> toolTimeouts,
+                           List<com.cc01cc.p.xihe.cp.files.dto.AttachmentInfo> attachments,
+                           String userId, String workspaceId, String requestId, String runId,
+                           ContinuationDispatchContext continuationContext,
+                           SessionParticipantService.Responder responder) {
+        execAsync(sessionId, content, provider, model, toolMode, toolTimeouts, attachments,
+                userId, workspaceId, requestId, runId, null, continuationContext, responder);
     }
 
     private void execAsync(String sessionId, String content, String provider, String model, String toolMode,
@@ -977,7 +1003,8 @@ public class ChatController {
                            List<com.cc01cc.p.xihe.cp.files.dto.AttachmentInfo> attachments,
                            String userId, String workspaceId, String requestId, String runId,
                            ProviderCredentialLeaseService.Admission admission,
-                           ContinuationDispatchContext continuationContext) {
+                           ContinuationDispatchContext continuationContext,
+                           SessionParticipantService.Responder responder) {
         Thread worker = new Thread(() -> {
             MDC.put("requestId", requestId);
             MDC.put("chatRunId", runId);
@@ -1054,7 +1081,10 @@ public class ChatController {
                             persistedRun.connectionRevision(),
                             null,
                             leasePrincipalId,
-                            leasePrincipalId == null ? null : leaseSession.getAgentPermissionsSnapshot(),
+                            // PLAN-0623 M1b-②: single-source cap — the same Responder resolved in
+                            // the request thread drives the lease; null keeps the frozen 0622 C3
+                            // snapshot path byte-equivalent (D23-31 dual track).
+                            leaseCapFor(responder, leasePrincipalId, leaseSession, workspaceId),
                             continuationContext == null ? admission : null);
                 }
                 Map<String, Object> agentRequest = new java.util.LinkedHashMap<>();
