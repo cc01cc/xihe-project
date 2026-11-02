@@ -385,6 +385,14 @@ class AgentTemplateSnapshotIntegrationTest extends AbstractIntegrationTest {
         String adminToken = TestDataFactory.createGlobalToken(adminUserId.toString(), adminEmail(), "ADMIN", 0);
         String memberToken = TestDataFactory.createGlobalToken(memberUserId.toString(), memberEmail(), "USER", 0);
 
+        // PLAN-0625 V97: the instance layer now ships builtin agent-templates seeds
+        // (the guard preset). This fixture predates them and assumes an empty instance
+        // layer — make that assumption explicit instead of colliding on uq_config_instance_scope.
+        for (ConfigEntity seeded : configJpaRepository.findByLayerAndDomain("instance", "agent-templates")) {
+            configJpaRepository.delete(seeded);
+        }
+        configJpaRepository.flush();
+
         UUID instanceRoleId = UUID.randomUUID();
         UUID instanceWriteTemplateId = UUID.randomUUID();
         ResponseEntity<Map> instanceWrite = putConfig("instance", null, null, Map.of(
@@ -525,6 +533,14 @@ class AgentTemplateSnapshotIntegrationTest extends AbstractIntegrationTest {
         // PLAN-0610 W4b: the member is a plain EDITOR. WS_OWNER materializes
         // MANAGE_WORKSPACE_AGENTS/workspace:admin by design, which would mask the gate under test.
         workspaceFixture.bindWorkspaceRole(workspaceId.toString(), memberUserId.toString(), WorkspaceRole.EDITOR);
+
+        // PLAN-0625 V97: the instance layer now ships builtin agent-templates seeds
+        // (the guard preset). This fixture predates them and assumes an empty instance
+        // layer — make that assumption explicit instead of colliding on uq_config_instance_scope.
+        for (ConfigEntity seeded : configJpaRepository.findByLayerAndDomain("instance", "agent-templates")) {
+            configJpaRepository.delete(seeded);
+        }
+        configJpaRepository.flush();
 
         UUID instanceRoleId = UUID.randomUUID();
         instanceTemplateId = UUID.randomUUID();

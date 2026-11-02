@@ -81,17 +81,23 @@ class GuardPresetMigrationTest {
     }
 
     @Test
-    void builtinGuardTemplateIsSeededInTheConfigDomain() throws SQLException {
-        List<String[]> rows = query("SELECT config_value FROM config WHERE layer = 'instance'"
-                + " AND layer = 'instance' AND domain = 'agent-templates'"
-                + " AND config_key = 'agent-templates'");
-        assertEquals(1, rows.size(), "exactly one builtin agent-templates row at the instance layer");
-        com.fasterxml.jackson.databind.JsonNode root = parseJson(rows.getFirst()[0]);
-        com.fasterxml.jackson.databind.JsonNode template = root.path("templates").get(0);
+    void builtinGuardTemplateIsSeededViaTheInnerKeyConvention() throws SQLException {
+        // Gap E/task-91: domain docs assemble from INNER keys — the V95 seed keyed the row with
+        // the domain name and every read died on the schema. V97 reseeds roles/templates rows.
+        assertEquals(0, query("SELECT id FROM config WHERE layer = 'instance'"
+                + " AND domain = 'agent-templates' AND config_key = 'agent-templates'").size(),
+                "the mis-keyed V95 row must be gone");
+        List<String[]> templateRows = query("SELECT config_value FROM config WHERE layer = 'instance'"
+                + " AND domain = 'agent-templates' AND config_key = 'templates'");
+        assertEquals(1, templateRows.size(), "exactly one builtin templates row at the instance layer");
+        com.fasterxml.jackson.databind.JsonNode template = parseJson(templateRows.getFirst()[0]).get(0);
         assertEquals("00000000-0000-4000-8000-0000000000a2", template.path("id").asText());
         assertEquals("none", template.path("toolMode").asText(),
                 "the guard holds no workspace tools of its own — verdicts reach approvals via the policy summary");
-        com.fasterxml.jackson.databind.JsonNode role = root.path("roles").get(0);
+        List<String[]> roleRows = query("SELECT config_value FROM config WHERE layer = 'instance'"
+                + " AND domain = 'agent-templates' AND config_key = 'roles'");
+        assertEquals(1, roleRows.size());
+        com.fasterxml.jackson.databind.JsonNode role = parseJson(roleRows.getFirst()[0]).get(0);
         assertEquals(template.path("roleId").asText(), role.path("id").asText());
         assertEquals(1, role.path("permissions").size());
         assertEquals("read", role.path("permissions").get(0).path("actionClass").asText(),
