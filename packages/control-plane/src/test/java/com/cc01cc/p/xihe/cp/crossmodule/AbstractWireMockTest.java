@@ -31,7 +31,13 @@ import static com.github.tomakehurst.wiremock.core.WireMockConfiguration.wireMoc
 // is asserted by WorkspaceBackendPolicyTest).
 @org.springframework.test.context.TestPropertySource(
         properties = "XIHE_WORKSPACE_DOCKER_BACKEND=disabled")
-@DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_CLASS)
+// L2 Phase 3 (2026-11-03): the AFTER_CLASS @DirtiesContext that used to sit here is gone.
+// It never isolated the database - it only threw away the Spring beans, while the schema, the
+// Flyway template DB and every row stayed shared. What actually isolates these classes is per-class
+// fixture setup with random ids plus the @AfterEach teardown; the WireMock stubs are reset per class
+// by each subclass's @BeforeEach. Keeping it cost one full context startup (~1.5 s) per class for
+// every subclass. If a subclass turns out to need a fresh context, add the annotation back ON THAT
+// CLASS with a written reason - not on the base.
 public abstract class AbstractWireMockTest {
 
     protected static final WireMockServer wireMock = new WireMockServer(wireMockConfig().dynamicPort());

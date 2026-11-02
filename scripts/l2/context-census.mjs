@@ -121,7 +121,10 @@ function classInfo(file) {
     activeProfiles: collectArgs(text, 'ActiveProfiles'),
     imports: collectArgs(text, 'Import'),
     testConfigurations: (text.match(/@TestConfiguration\b/g) || []).length,
-    dynamicPropertySource: text.includes('@DynamicPropertySource'),
+    // Spring keys DynamicPropertiesContextCustomizer by the DECLARING class, so a per-class
+    // @DynamicPropertySource is a per-class cache key - a boolean would hide exactly the biggest
+    // splitter in this suite (32 classes declare their own).
+    dynamicDeclarer: text.includes('@DynamicPropertySource') ? null : undefined,
     mocks: mockedTypes(text),
     dirties,
   };
@@ -152,10 +155,9 @@ function resolveInherited(info, seen = new Set()) {
     testPropertySources: info.testPropertySources.length ? info.testPropertySources : resolvedBase.testPropertySources,
     activeProfiles: info.activeProfiles.length ? info.activeProfiles : resolvedBase.activeProfiles,
     imports: info.imports.length ? info.imports : resolvedBase.imports,
-    // @DynamicPropertySource is keyed by the declaring class: inheriting one via a base means every
-    // sibling shares that base's declarer, so this is an OR rather than an override.
-    dynamicPropertySource: info.dynamicPropertySource || resolvedBase.dynamicPropertySource,
-    baseDynamicPropertySource: resolvedBase.dynamicPropertySource,
+    // Declared here -> this class owns the key; otherwise inherit the base's declarer name so every
+    // sibling that shares the base's dynamic source also shares its cache key.
+    dynamicDeclarer: info.dynamicDeclarer === null ? info.name : resolvedBase.dynamicDeclarer,
   };
 }
 
@@ -168,7 +170,7 @@ function contextKey(info) {
     profiles: sortedList(info.activeProfiles),
     imports: sortedList(info.imports),
     testConfigs: info.testConfigurations,
-    dynamic: info.dynamicPropertySource,
+    dynamic: info.dynamicDeclarer ?? null,
     mocks: sortedList(info.mocks),
   });
 }
