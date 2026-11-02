@@ -1473,6 +1473,9 @@ async function runPlaywright() {
     }
     playwrightTestArgs = merged
   }
+  if (userGrep) {
+    playwrightTestArgs.push('--grep', `(?:${userGrep})[\\s\\S]*@host|@host[\\s\\S]*(?:${userGrep})`)
+  }
   if (reportPath) console.log(`[e2e-host] JSON report → ${reportPath}`)
   // PLAN-0579 R2: specs that restart the Runtime (journey-b B1) must spawn the
   // same binary the runner launched, resolved across an external CARGO_TARGET_DIR.
