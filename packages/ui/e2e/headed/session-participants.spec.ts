@@ -104,6 +104,24 @@ const RECORDED_TESTIDS: Array<{ id: string; scene: string; status: TestIdStatus;
         note: "ParticipantRow.vue:196（D23-26 soft disable 后行仍在）",
     },
     {
+        id: "speak-as-bar",
+        scene: "S5",
+        status: "asserted",
+        note: "packages/ui/src/features/workspace/chat/components/InputArea.vue:399（speakAs=true 才渲染；false 时整块不渲染）",
+    },
+    {
+        id: "speak-as-select",
+        scene: "S5",
+        status: "asserted",
+        note: "InputArea.vue:407（候选 = selfOwned && !disabledAt，option 数 === API 归约结果）",
+    },
+    {
+        id: "chat-send-button",
+        scene: "S5",
+        status: "asserted",
+        note: "InputArea.vue:159（工具栏按钮描述符里的 data-testid；发送动作入口）",
+    },
+    {
         id: "participants-forbidden",
         scene: "—",
         status: "blocked",
@@ -572,6 +590,74 @@ test.describe("PLAN-0623 有头走查：会话参与者 dock tab", () => {
         });
     });
 
+    test("S5@host 代发：选候选发送 → 请求体带 asParticipantId", async ({ page, request }) => {
+        expect(sessionId, "S5 depends on S2").not.toBe("");
+        await loginViaForm(page, GOLDPATH_EMAIL, GOLDPATH_PASSWORD);
+
+        // 期望候选 = API 的归约结果（selfOwned 且未停用）；不猜 UI 自己算。
+        const token = await tokenOf(page);
+        const listed = await request.get(`${CP_URL}/api/v1/sessions/${sessionId}/participants`, {
+            headers: { Authorization: `Bearer ${token}`, "X-Workspace-Id": workspaceId },
+        });
+        expect(listed.status(), await listed.text()).toBe(200);
+        const listedBody = (await listed.json()) as {
+            participants: Array<{
+                participantId: string;
+                selfOwned?: boolean;
+                disabledAt?: string | null;
+            }>;
+            capabilities: { speakAs?: boolean };
+        };
+        const expectedCandidates = listedBody.participants.filter(
+            (item) => item.selfOwned === true && !item.disabledAt,
+        );
+        expect(
+            expectedCandidates.length,
+            "speakAs needs at least one self-owned, enabled participant (owner adds themselves in S2)",
+        ).toBeGreaterThan(0);
+        expect(listedBody.capabilities.speakAs, "owner must carry capabilities.speakAs").toBe(true);
+
+        await page.goto(`/workspace/${workspaceId}/chat/${sessionId}`, { waitUntil: "load" });
+        await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: 45000 });
+
+        // 入口：speakAs=true ⇒ 渲染；option 数 === 候选数。
+        const bar = page.getByTestId("speak-as-bar");
+        await expect(bar, "speak-as entry must render when the capability is on").toBeVisible({
+            timeout: 20000,
+        });
+        const select = page.getByTestId("speak-as-select");
+        const options = select.locator("option");
+        expect(
+            await options.count(),
+            "the select must offer exactly the self-owned, enabled participants",
+        ).toBe(expectedCandidates.length);
+
+        // 选**最后一个**候选（证明不是"默认自己"碰巧通过），断言它就是请求体里的 id。
+        const target = expectedCandidates[expectedCandidates.length - 1];
+        await select.selectOption(target.participantId);
+        await expect(select).toHaveValue(target.participantId);
+
+        await page.getByTestId("chat-input").fill("headed speak-as probe");
+        const chatRequest = page.waitForRequest(
+            (req) => new URL(req.url()).pathname === "/api/v1/chat" && req.method() === "POST",
+            { timeout: 30000 },
+        );
+        await page.getByTestId("chat-send-button").click();
+        const sent = await chatRequest;
+        const body = sent.postDataJSON() as { asParticipantId?: string; content?: string };
+        expect(
+            body.asParticipantId,
+            "the selected participant must travel as asParticipantId",
+        ).toBe(target.participantId);
+        expect(body.content).toBe("headed speak-as probe");
+
+        await shot(page, {
+            id: "S5",
+            name: "s5-speak-as-request-body",
+            assertion:
+                "speakAs=true 才渲染入口；option 数=候选数；选中的 participantId 出现在 POST /api/v1/chat 的 body.asParticipantId",
+        });
+    });
     test("S4@host 移除 = 两次点击 + soft disable：行仍在并带「已停用」", async ({ page }) => {
         expect(humanParticipantId, "S4 depends on S2").not.toBe("");
         await loginViaForm(page, GOLDPATH_EMAIL, GOLDPATH_PASSWORD);
@@ -616,7 +702,7 @@ test.describe("PLAN-0623 有头走查：会话参与者 dock tab", () => {
         });
     });
 
-    test("not-covered 登记：403 态与「参与者为空」会话", () => {
+    test("not-covered 登记：403 态、「参与者为空」会话、代发被拒", () => {
         recordNotCovered(
             "participants-forbidden",
             "需要「无 view 权限」的第二个账号；headed 车道只有 bootstrap 账号，不假造账号 ⇒ 该态仅组件测试覆盖",
@@ -624,6 +710,13 @@ test.describe("PLAN-0623 有头走查：会话参与者 dock tab", () => {
         recordNotCovered(
             "participants-empty-none",
             "会话创建时必定带 PRIMARY（D23-13），无法造出「参与者为空」的会话 ⇒ 该态仅组件测试覆盖",
+        );
+        // D23-27 的拒绝分支：需要"owner 但不 selfOwned"或越权场景，单账号造不出；
+        // UI 侧映射（PARTICIPANT_CAP_DENIED / PARTICIPANT_DISABLED → 本地化）由组件测试覆盖。
+        recordNotCovered(
+            "speakAs-denied-403",
+            "PARTICIPANT_CAP_DENIED 需要越权/非 selfOwned 的会话场景，单 bootstrap 账号造不出；" +
+                "不假造账号 ⇒ 本地化映射仅组件测试覆盖，服务端判定由 CP 单测覆盖",
         );
     });
 });
