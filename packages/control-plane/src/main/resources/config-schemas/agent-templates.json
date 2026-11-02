@@ -67,9 +67,35 @@
         "toolMode": { "enum": ["none", "workspace"] },
         "provider": { "type": "string", "minLength": 1 },
         "model": { "type": "string", "minLength": 1 },
-        "roleId": { "$ref": "#/$defs/uuid" }
+        "roleId": { "$ref": "#/$defs/uuid" },
+        "hooks": { "$ref": "#/$defs/hookSubscriptions" }
       },
       "additionalProperties": false
+    },
+    "hookSubscriptions": {
+      "description": "PLAN-0625 D25-09: hook subscriptions declared by a template; copied to the principal at creation as its DEFAULT. Null = no subscriptions (the V98 corrective is reversible to jsonb null, and AgentPrincipalService treats null as absent).",
+      "type": ["object", "null"],
+      "required": ["advisors"],
+      "properties": {
+        "advisors": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/hookAdvisor" }
+        }
+      }
+    },
+    "hookAdvisor": {
+      "description": "D25-10: `kind` stays an open string (implementing HookAdvisor is the whole plugin contract, so new kinds appear without a schema change); the entry itself stays open to future per-advisor parameters so an added key can never 409 the read path again.",
+      "type": "object",
+      "required": ["kind", "on"],
+      "properties": {
+        "kind": { "type": "string", "minLength": 1 },
+        "on": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 }
+        }
+      }
     }
   }
 }
