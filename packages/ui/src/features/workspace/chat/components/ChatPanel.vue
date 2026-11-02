@@ -725,11 +725,6 @@ async function handleRetry(messageId: string) {
     await handleSend(userMessage.content, userMessage.attachments, userMessage.branchId);
 }
 
-function selectBranch(branchId: string) {
-    if (isStreaming.value || !branchId) return;
-    chatStore.selectBranch(props.sessionId, branchId);
-}
-
 async function handleCreateBranch(anchorMessageId: string) {
     const sessionId = props.sessionId,
         sourceBranchId = selectedBranchId.value;
@@ -945,13 +940,6 @@ watch(
             :branch-options="branchOptions"
             :selected-branch-id="selectedBranchId"
             :main-branch-id="mainBranchId"
-            :branch-disabled="
-                isStreaming ||
-                branchOptions.length === 0 ||
-                creatingBranchForMessageId !== null ||
-                pendingSend !== null
-            "
-            @select-branch="selectBranch"
             @open-context-panel="emit('open-context-panel')"
         />
 
