@@ -63,6 +63,40 @@ public class ToolFaceRegistry {
 
     private static final Set<String> NETWORK_TOOLS = Set.of("web_fetch");
 
+    /**
+     * PLAN-0627 D27-20 (Q2 = C′): file names whose mutation is always approval-gated,
+     * whatever the session mode is. Agents read these files as project conventions, so a
+     * silent rewrite would let a run rewrite its own rules.
+     *
+     * <p>Path patterns are matched with {@link LayeredPolicyResolver#matches} under
+     * {@link ToolShape#STRUCTURED} semantics (that is the existing path vocabulary), and the
+     * comparison is case-insensitive because the workspace may live on a case-insensitive
+     * filesystem.
+     */
+    public static final Set<String> PROTECTED_WRITE_FILENAMES = Set.of("AGENTS.md");
+
+    private static final java.util.List<String> PROTECTED_WRITE_PATTERNS = java.util.List.of(
+            "agents.md", "**/agents.md");
+
+    /** True when any extracted resource mutates a protected file name at any depth. */
+    public static boolean mutatesProtectedFile(java.util.List<String> resources) {
+        if (resources == null || resources.isEmpty()) {
+            return false;
+        }
+        for (String resource : resources) {
+            if (resource == null || resource.isBlank()) {
+                continue;
+            }
+            String normalized = resource.replace('\\', '/').toLowerCase(java.util.Locale.ROOT);
+            for (String pattern : PROTECTED_WRITE_PATTERNS) {
+                if (LayeredPolicyResolver.matches(pattern, normalized, ToolShape.STRUCTURED)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
     private final Map<String, Face> faces;
 
     public ToolFaceRegistry() {

@@ -129,17 +129,6 @@ def wrap_untrusted_tool_output(text: str) -> str:
     return f"{UNTRUSTED_OPEN}{escaped}{UNTRUSTED_CLOSE}"
 
 
-_JIT_FILE_TOOLS = frozenset(
-    {
-        "read_file",
-        "write_file",
-        "read_file_range",
-        "apply_patch",
-        "list_directory",
-    }
-)
-
-
 def _normalize_touched_path(path: str) -> str | None:
     if not path or not isinstance(path, str):
         return None
@@ -151,34 +140,52 @@ def _normalize_touched_path(path: str) -> str | None:
     return p
 
 
-def _jit_rules_for_input(tool_name: str, kwargs: dict[str, Any], context: AgentContext) -> str:
-    """PLAN-0340 M2: derive dirname from file tools; emit trusted block outside envelope.
+def _nested_agents_client() -> Any:
+    """Lazy CP client for the nested AGENTS.md resolver (PLAN-0627 M1).
 
-    Full ancestor AGENTS.md loading is CP-side in later slices; this emits a
-    lightweight trusted marker listing dirs so the contract is wired end-to-end.
+    Deferred import: ``app_state`` builds the whole runtime snapshot at import
+    time and must not be imported from a context helper at module load.
     """
-    if tool_name not in _JIT_FILE_TOOLS:
-        return ""
-    raw = kwargs.get("path") or kwargs.get("file_path") or ""
-    path = _normalize_touched_path(str(raw))
+    from xihe_agent import app_state
+
+    return app_state.cp_context_service_client
+
+
+async def _nested_agents_rules(tool_name: str, kwargs: dict[str, Any], context: AgentContext) -> str:
+    """PLAN-0627 M1 / D27-19 B′: append path-local AGENTS.md rules to the tool tail.
+
+    The returned block is concatenated **outside** the untrusted-tool-output
+    envelope (see the call site) because the existing envelope's fixed text tells
+    the model not to follow directives inside it — nesting project conventions
+    there would neutralize them. The durable ``tool.result`` payload keeps the
+    tool's own output only; injection text is model-wire only.
+
+    Reads go through CP, which applies the ordinary read policy per file: a grant
+    denial / ASK / DENY skips that ancestor silently instead of pulling the user
+    into an approval dialog for a system-initiated read (confirmed ruling — the
+    read path must never raise approvals).
+    """
+    from xihe_agent.context.nested_injection import resolve_and_render
+
+    path = _normalize_touched_path(str(kwargs.get("path") or kwargs.get("file_path") or ""))
+    if not path and tool_name == "list_directory":
+        path = "."
     if not path:
         return ""
-    directory = path if "/" not in path.rstrip("/") or path.endswith("/") else path.rsplit("/", 1)[0]
-    if not directory or directory == path and "/" not in path:
-        # file at root → dir is "."
-        directory = "."
-    ledger = context.metadata.setdefault("jit_ledger", [])
-    key = {"workspace_id": context.metadata.get("workspace_id"), "dir": directory}
-    if key not in ledger:
-        ledger.append(key)
-        return (
-            "<system-reminder>\n"
-            "Path-local rules (trusted, outside tool data). Directory: "
-            f"{directory}\n"
-            "No nested AGENTS.md was loaded yet; project root rules still apply.\n"
-            "</system-reminder>"
+    try:
+        return await resolve_and_render(
+            client=_nested_agents_client(),
+            context=context,
+            tool_name=tool_name,
+            path=path,
         )
-    return ""
+    except Exception as error:  # injection must never break the tool call
+        logger.warning(
+            "nested AGENTS.md injection failed; continuing without path-local rules tool={} errorType={}",
+            tool_name,
+            type(error).__name__,
+        )
+        return ""
 
 
 def _command_text(kwargs: dict[str, Any]) -> str | None:
@@ -666,8 +673,12 @@ class LCToolAdapter(BaseTool):
                 block = format_diagnostics_block(diagnostics["items"], diagnostics["total"])
                 body = f"{body}\n{block}"
             wrapped = wrap_untrusted_tool_output(body)
-            jit = _jit_rules_for_input(self._tool.spec.name, kwargs, self._context)
-            text = f"{wrapped}\n{jit}" if jit else wrapped
+            # PLAN-0627 M1 (D27-19 B′): path-local AGENTS.md rules ride the tool
+            # result **tail**, outside the untrusted-tool-output envelope. The
+            # durable tool.result payload appended above uses `durable_preview`
+            # (raw tool output) and therefore never contains this block.
+            nested_rules = await _nested_agents_rules(self._tool.spec.name, kwargs, self._context)
+            text = f"{wrapped}\n{nested_rules}" if nested_rules else wrapped
             if pre_message:
                 # PLAN-0493 T2.1 tier-1 warn: the hint rides along with the
                 # executed result (the call runs; only the text is added).
@@ -717,7 +728,13 @@ class LCToolAdapter(BaseTool):
                 )
             if safe_output_rejected:
                 return safe_output_rejected_text, None
-            if safe_schema is not None and safe_output is not None and not jit and not diagnostics and not pre_message:
+            if (
+                safe_schema is not None
+                and safe_output is not None
+                and not nested_rules
+                and not diagnostics
+                and not pre_message
+            ):
                 assert isinstance(originating_tool_call_id, str)
                 return (
                     ToolMessage(

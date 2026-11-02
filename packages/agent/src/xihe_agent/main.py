@@ -325,9 +325,9 @@ app = FastAPI(title="xihe-agent", version=agent_version(), lifespan=lifespan)
 
 from xihe_agent.api.approval import router as approval_router  # noqa: E402
 from xihe_agent.api.chat import router as chat_router  # noqa: E402
+from xihe_agent.api.judge import router as judge_router  # noqa: E402
 from xihe_agent.api.misc import router as misc_router  # noqa: E402
 from xihe_agent.api.rag import router as rag_router  # noqa: E402
-from xihe_agent.api.judge import router as judge_router  # noqa: E402
 from xihe_agent.api.registry import router as registry_router  # noqa: E402
 from xihe_agent.llm.models import router as models_router  # noqa: E402
 

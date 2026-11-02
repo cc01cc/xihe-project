@@ -254,6 +254,24 @@ public class PolicyEngine {
 
         PolicyVerdict verdict = approvalVerdict(face, context, effectiveMode, modeLayer);
 
+        // PLAN-0627 D27-20 (Q2 = C′): path-conditional tier for protected files, expressed
+        // with the existing vocabulary instead of a new enum:
+        //   deny  -> owned upstream by the grant gate + hard guard (this branch never denies);
+        //   ask   -> default for a mutation of a protected file name (AGENTS.md), and
+        //            `auto` mode deliberately does NOT bypass it;
+        //   allow -> every other path keeps its existing verdict. A "trusted editor"
+        //            principal is expressed as an ordinary `write` grant scoped to
+        //            `**/AGENTS.md`; the grant gate already evaluated it, and the write still
+        //            asks here (D27-20 ③: the dedicated principal remains approval-gated).
+        // The browser write path (WorkspaceFileController -> Runtime) never runs this engine,
+        // so a user editing their own AGENTS.md in the UI is unaffected by this branch.
+        if (verdict.effect() == PolicyEffect.ALLOW
+                && ToolFaceRegistry.ACTION_WRITE.equals(face.actionClass())
+                && ToolFaceRegistry.mutatesProtectedFile(request.resources())) {
+            verdict = PolicyVerdict.of(PolicyEffect.ASK, null, PolicyLayer.BUILTIN, effectiveMode,
+                    "protected file requires approval: " + ToolFaceRegistry.PROTECTED_WRITE_FILENAMES);
+        }
+
         String legacyDetail = verdict.effect() == PolicyEffect.ALLOW ? "auto_allow" : "require_approval";
         audit.record(sessionId, toolName, "policy_check", legacyDetail);
         audit.record(sessionId, toolName, "policy_verdict",

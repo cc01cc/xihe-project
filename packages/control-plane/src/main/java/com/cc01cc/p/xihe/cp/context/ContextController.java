@@ -5,6 +5,7 @@ import com.cc01cc.p.xihe.cp.context.service.ContextAccessService;
 import com.cc01cc.p.xihe.cp.context.service.ContextService;
 import com.cc01cc.p.xihe.cp.context.service.ContextSourceRefreshService;
 import com.cc01cc.p.xihe.cp.context.service.EventStoreService;
+import com.cc01cc.p.xihe.cp.context.service.NestedAgentsMdResolver;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -33,15 +34,18 @@ public class ContextController {
     private final ContextSourceRefreshService sourceRefreshService;
     private final ContextAccessService accessService;
     private final ContextEventResponseMapper responseMapper;
+    private final NestedAgentsMdResolver nestedAgentsMdResolver;
 
     public ContextController(ContextService contextService,
                              ContextSourceRefreshService sourceRefreshService,
                              ContextAccessService accessService,
-                             ContextEventResponseMapper responseMapper) {
+                             ContextEventResponseMapper responseMapper,
+                             NestedAgentsMdResolver nestedAgentsMdResolver) {
         this.contextService = contextService;
         this.sourceRefreshService = sourceRefreshService;
         this.accessService = accessService;
         this.responseMapper = responseMapper;
+        this.nestedAgentsMdResolver = nestedAgentsMdResolver;
     }
 
     @PreAuthorize("hasRole('INTERNAL_SERVICE')")
@@ -160,6 +164,48 @@ public class ContextController {
         return ResponseEntity.ok(Map.of(
                 "status", status,
                 "sourceKey", "AGENTS.md"));
+    }
+
+    /**
+     * PLAN-0627 M1 (D27-06): resolve the ancestor AGENTS.md chain for one touched path.
+     *
+     * <p>This is the single internal (Agent-only) route for nested AGENTS.md; no public
+     * surface is added and no body content is ever exposed to the browser. The response is
+     * path + content only — rendering, dedupe and the injection budget stay on the Agent
+     * side ({@code context/nested_injection.py}, {@code context/injection_budget.py}).
+     *
+     * <p>Body: {@code {"path": "<workspace-relative touched path>", "tool": "<tool name>"}}.
+     * {@code tool=list_directory} means the path is the directory itself; any other tool
+     * treats it as a file and the chain starts at its parent directory.
+     */
+    @PreAuthorize("hasRole('INTERNAL_SERVICE')")
+    @PostMapping("/{sessionId}/agents-md/resolve")
+    public ResponseEntity<?> resolveNestedAgentsMd(
+            @PathVariable String sessionId,
+            @RequestBody Map<String, Object> body) {
+        if (!verifyAccess(sessionId)) {
+            return forbidden();
+        }
+        Object rawPath = body.get("path");
+        Object rawTool = body.get("tool");
+        if (rawPath != null && !(rawPath instanceof String)) {
+            return ProblemDetailsHandler.problemResponse(
+                    HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "path must be a string");
+        }
+        String tool = rawTool instanceof String value ? value : "";
+        String path = rawPath instanceof String value ? value : "";
+        NestedAgentsMdResolver.Resolution resolution = nestedAgentsMdResolver.resolve(
+                sessionId, resolveUserId(sessionId), resolveWorkspaceId(sessionId), tool, path);
+        List<Map<String, Object>> entries = resolution.entries().stream()
+                .map(entry -> Map.<String, Object>of(
+                        "path", entry.path(),
+                        "content", entry.content(),
+                        "truncated", entry.truncated()))
+                .toList();
+        return ResponseEntity.ok(Map.of(
+                "status", resolution.status(),
+                "entries", entries,
+                "diagnostics", resolution.diagnostics()));
     }
 
     @PreAuthorize("hasRole('INTERNAL_SERVICE')")
