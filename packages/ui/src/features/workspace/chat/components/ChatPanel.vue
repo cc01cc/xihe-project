@@ -36,16 +36,28 @@ import GuidancePanel from "./GuidancePanel.vue";
 import RevertPreviewDialog from "./RevertPreviewDialog.vue";
 import RevertResultDialog from "./RevertResultDialog.vue";
 import BaseModal from "../../../../components/shared/BaseModal.vue";
+import { useSessionBranches } from "../composables/useSessionBranches";
+import { runStateLabelKey } from "../runStateView";
+import { Marker, MarkerContent, MarkerIcon } from "@/components/ui/marker";
+import { Clock, ShieldAlert } from "@lucide/vue";
 
 const props = withDefaults(
     defineProps<{
         sessionId: string;
         toolMode?: "none" | "workspace";
+        /** PLAN-0626 M2: mobile keeps the in-place settings expansion (no dock there). */
+        isMobile?: boolean;
     }>(),
     {
         toolMode: "none",
+        isMobile: false,
     },
 );
+
+const emit = defineEmits<{
+    /** PLAN-0626 M2: the chat summary row is the entry to the dock's `context` panel. */
+    "open-context-panel": [];
+}>();
 
 const { t } = useI18n();
 const chatStore = useChatStore(),
@@ -66,8 +78,11 @@ const isStreaming = computed(() => chatStore.isStreaming(props.sessionId));
 const currentSession = computed(() =>
     sessionStore.sessions.find((session) => session.id === props.sessionId),
 );
-const sessionBranches = computed(() => chatStore.getSessionBranches(props.sessionId));
-const selectedBranchId = computed(() => chatStore.getSelectedBranchId(props.sessionId) ?? "");
+// PLAN-0626 M2: the branch projection is shared with the dock's `context` panel (N10:
+// one resolver per semantic), so the depth-indented labels no longer live here.
+const { selectedBranchId, branchOptions, branchLabels, mainBranchId } = useSessionBranches(
+    () => props.sessionId,
+);
 const followUpQueue = ref<ApiFollowUpQueueSnapshot | null>(null),
     followUpQueueError = ref<string | null>(null);
 const followUpQueueSubmitting = ref(false),
@@ -77,34 +92,6 @@ const followUpQueueBusyItemId = ref<string | null>(null),
 let followUpQueueRequestId = 0,
     followUpQueueSubmitGeneration = 0,
     followUpQueueActionGeneration = 0;
-const branchOptions = computed(() => {
-    const byId = new Map(sessionBranches.value.map((branch) => [branch.branchId, branch]));
-    const depthOf = (branchId: string) => {
-        let depth = 0,
-            parentId = byId.get(branchId)?.parentBranchId ?? null;
-        while (parentId && byId.has(parentId) && depth < 8) {
-            depth += 1;
-            parentId = byId.get(parentId)?.parentBranchId ?? null;
-        }
-        return depth;
-    };
-    return sessionBranches.value.map((branch) => ({
-        branchId: branch.branchId,
-        label: `${"- ".repeat(depthOf(branch.branchId))}${
-            branch.parentBranchId === null
-                ? t("chat.branchMainPath")
-                : `${t("chat.branchPathOption")} ${branch.branchId.slice(0, 8)}`
-        }`,
-    }));
-});
-const branchLabels = computed(() =>
-    Object.fromEntries(
-        branchOptions.value.map((branch) => [branch.branchId, branch.label] as const),
-    ),
-);
-const mainBranchId = computed(
-    () => sessionBranches.value.find((branch) => branch.parentBranchId === null)?.branchId ?? null,
-);
 const followUpQueueMode = computed(
     () =>
         isStreaming.value ||
@@ -379,6 +366,38 @@ function handleDerivedStateRefresh() {
 const guidancePanelRef = ref<InstanceType<typeof GuidancePanel> | null>(null);
 const currentRunId = computed(() => chatStore.getSessionRunId(props.sessionId));
 const currentRunStatus = computed(() => chatStore.getSessionRunState(props.sessionId).status);
+
+/**
+ * PLAN-0631 D31-04: CP parks a Run (`status:"queued"`) instead of dispatching it when
+ * the Agent is down but the LLM is ready. Nothing executes until recovery, so the
+ * view must say so — the previous behaviour was an unexplained stop/queue mode.
+ * The copy is a *consequence* of the wire fact; the state itself is never inferred.
+ */
+const runQueued = computed(() => chatStore.getRunQueued(props.sessionId));
+/** Only `agent_down` exists on the wire today; an unknown reason gets the generic hint. */
+const QUEUED_REASON_KEYS: Record<string, string> = {
+    agent_down: "chat.runState.reasonAgentDown",
+};
+const runQueuedHint = computed(() => {
+    const reason = runQueued.value?.reason;
+    return t((reason ? QUEUED_REASON_KEYS[reason] : undefined) ?? "chat.runState.queuedHint");
+});
+
+/**
+ * PLAN-0631 D31-03/D31-01: the waiting-for-approval wording comes from the single
+ * `runStateView` resolver, so the in-stream status row and the composer pill can never
+ * drift into two different sentences ("等待审批" vs "等待确认"). Both surfaces read the
+ * same `pendingApproval` computed; only the wording source is shared with the resolver.
+ */
+const approvalWaitingLabel = computed(() => {
+    const key = runStateLabelKey("awaiting_approval");
+    return key ? t(key) : t("chat.runState.awaitingApproval");
+});
+/** A failed/uncertain recovery needs alert semantics; a plain "resumed" is a status. */
+const recoveryBannerRole = computed(() =>
+    runRecovery.value?.state === "failed" ? "alert" : "status",
+);
+
 // Keep the last run so its Guidance list remains readable after the run goes terminal;
 // only the input is gated by the active status.
 const lastRunId = ref<string | undefined>(undefined);
@@ -709,6 +728,9 @@ async function submitMessage(input: {
         attachments,
         runId: result.runId,
         runStatus: result.status,
+        // PLAN-0631 D31-08: a `speakAs` message is attributed to the participant whose
+        // identity the caller chose (CP validates it). Absent = the caller's own words.
+        ...(asParticipantId ? { participantId: asParticipantId } : {}),
     });
     inputComponent.value?.clearDraft();
 }
@@ -739,11 +761,6 @@ async function handleRetry(messageId: string) {
     }
     if (!userMessage) return;
     await handleSend(userMessage.content, userMessage.attachments, userMessage.branchId);
-}
-
-function selectBranch(branchId: string) {
-    if (isStreaming.value || !branchId) return;
-    chatStore.selectBranch(props.sessionId, branchId);
 }
 
 async function handleCreateBranch(anchorMessageId: string) {
@@ -957,16 +974,11 @@ watch(
     <div class="flex flex-col h-full min-h-0 overflow-hidden">
         <SessionSettingsPanel
             :session-id="sessionId"
+            :is-mobile="isMobile"
             :branch-options="branchOptions"
             :selected-branch-id="selectedBranchId"
             :main-branch-id="mainBranchId"
-            :branch-disabled="
-                isStreaming ||
-                branchOptions.length === 0 ||
-                creatingBranchForMessageId !== null ||
-                pendingSend !== null
-            "
-            @select-branch="selectBranch"
+            @open-context-panel="emit('open-context-panel')"
         />
 
         <div
@@ -974,7 +986,7 @@ watch(
             data-testid="run-recovery-banner"
             class="flex items-center justify-between gap-3 mx-4 mt-3 px-3 py-2 rounded-lg border text-sm"
             :class="recoveryBannerClass"
-            role="status"
+            :role="recoveryBannerRole"
         >
             <span>{{ runRecovery.message }}</span>
             <button
@@ -993,6 +1005,41 @@ watch(
             :error="derivedStateError"
             @retry="handleDerivedStateRefresh"
         />
+
+        <!-- PLAN-0631 D31-04: parked Run — say what is happening instead of a silent spinner. -->
+        <Marker
+            v-if="runQueued"
+            data-testid="chat-run-queued"
+            role="status"
+            aria-live="polite"
+            class="mx-4 mt-2 rounded-lg border border-border bg-surface-content px-3 py-2"
+        >
+            <MarkerIcon>
+                <Clock class="size-3.5" aria-hidden="true" />
+            </MarkerIcon>
+            <MarkerContent>
+                <span class="font-medium text-foreground">{{ t("chat.runState.queued") }}</span>
+                <span class="ml-2">{{ runQueuedHint }}</span>
+            </MarkerContent>
+        </Marker>
+
+        <!-- PLAN-0631 D31-03: approval pending must be a readable status region even when
+             the decision modal is dismissed; it is not dismissible and not clickable. -->
+        <Marker
+            v-if="pendingApproval"
+            data-testid="chat-approval-waiting"
+            role="status"
+            aria-live="polite"
+            class="mx-4 mt-2 rounded-lg border border-border bg-surface-content px-3 py-2"
+        >
+            <MarkerIcon>
+                <ShieldAlert class="size-3.5" aria-hidden="true" />
+            </MarkerIcon>
+            <MarkerContent>
+                <span class="font-medium text-foreground">{{ approvalWaitingLabel }}</span>
+                <span class="ml-2">{{ pendingApproval.tool }}</span>
+            </MarkerContent>
+        </Marker>
 
         <MessageList
             v-if="messages.length > 0"
@@ -1050,7 +1097,7 @@ watch(
             @click="reopenApproval"
         >
             <span class="flex min-w-0 items-center gap-2">
-                <span class="shrink-0 font-medium">{{ t("chat.pendingApprovalReopenLabel") }}</span>
+                <span class="shrink-0 font-medium">{{ approvalWaitingLabel }}</span>
                 <span class="truncate text-muted-foreground">{{ pendingApproval?.tool }}</span>
             </span>
             <span class="shrink-0 font-medium text-primary">{{

@@ -23,6 +23,30 @@ interface LangChainTextBlock {
     text?: string;
 }
 
+/**
+ * PLAN-0631 D31-08: read the responder attribution off the SSE envelope.
+ *
+ * Three outcomes, deliberately distinct:
+ *  - a string ⇒ that session participant produced this event;
+ *  - `null` ⇒ the event is explicitly producer-less (CP writes `participantId: null`);
+ *  - `undefined` ⇒ the key is absent (older CP / non-object payload) ⇒ **unknown**.
+ * Unknown must never be turned into PRIMARY (DEV-032), so callers only stamp on a string.
+ *
+ * The `includes` fast path keeps this off the hot path: token payloads usually have no
+ * attribution key, so the common case costs one scan instead of a second `JSON.parse`
+ * per token (D31-12: no new per-token work).
+ */
+export function parseParticipantEnvelope(raw: string): string | null | undefined {
+    if (!raw.includes('"participantId"')) return undefined;
+    try {
+        const data = JSON.parse(raw) as { participantId?: unknown } | null;
+        if (!data || typeof data !== "object") return undefined;
+        return typeof data.participantId === "string" ? data.participantId : null;
+    } catch {
+        return undefined;
+    }
+}
+
 function normalizeTokenContent(content: unknown): string {
     if (typeof content === "string") {
         return content;
@@ -51,6 +75,8 @@ export interface SSECallbacks {
     onToolResult?: (data: Record<string, unknown>) => void;
     onApprovalRequest?: (data: Record<string, unknown>) => void;
     onStatus?: (status: string) => void;
+    /** PLAN-0631 D31-08: the session participant CP attributed this event to. */
+    onParticipant?: (participantId: string | null) => void;
     onContextSourcesChanged?: (data: { sourceKey?: string; status?: string }) => void;
     /** PLAN-0341 U3: overflow compacted + one retry dispatched. */
     onContextOverflowRetry?: (data: {
@@ -258,6 +284,12 @@ export function useSSE(sessionId: MaybeRefOrGetter<string>) {
             !agentStore?.isApprovalEpochCurrent(activeSessionId, activeApprovalEpoch)
         )
             return;
+        // PLAN-0631 D31-08: CP stamps **every** event envelope with the producing
+        // participant (`openapi.yaml:1374`; a producer-less event carries an explicit
+        // null). Parse it once here — before the switch — so consumers get the run's
+        // responder without each case re-deriving it. Absent key ⇒ unknown, untouched.
+        const envelope = parseParticipantEnvelope(msg.data);
+        if (envelope !== undefined) currentCallbacks.onParticipant?.(envelope);
         switch (msg.event) {
             case "token":
                 try {

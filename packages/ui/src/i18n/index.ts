@@ -174,6 +174,7 @@ const messages = {
             panelChanges: "变更",
             panelMonitor: "监控",
             panelMembers: "成员",
+            panelContext: "会话设置",
             diffTabTimeline: "切片时间线",
             diffTabPending: "待提交",
             diffDifferenceNote: "两个列表可能不一致：切片变更与待提交状态来源不同，二者不会合并。",
@@ -798,6 +799,17 @@ const messages = {
                 completed: "已完成",
                 failed: "执行失败",
                 cancelled: "已取消",
+            },
+            /*
+             * PLAN-0631 D31-04/07：Run 状态的**可见语言**。文案刻意沿用 `toolStatus`/`followUpStatus`
+             * 已建立的既有词汇（排队中/执行中/运行中），不新造近义词；状态→文案的唯一映射在
+             * `chat/runStateView.ts`（D31-01），这里只补 chat 栏位原本缺的两格。
+             */
+            runState: {
+                queued: "排队中",
+                queuedHint: "已受理，等待执行",
+                reasonAgentDown: "Agent 暂不可用；恢复后会自动执行，也可以停止这一次",
+                awaitingApproval: "等待审批",
             },
             toolDiagnosticsTitle: "诊断",
             toolDiagnosticsSummary: "共 {total} 条，已回灌前 {shown} 条",
@@ -2048,6 +2060,7 @@ const messages = {
             title: "会话设置",
             expand: "展开会话设置",
             collapse: "收起会话设置",
+            openInPanel: "在侧栏打开会话设置",
             templateUnbound: "模板未绑定",
             templateLoadFailed: "模板加载失败",
             templateSelectPlaceholder: "选择请求模板",
@@ -2229,6 +2242,7 @@ const messages = {
             panelChanges: "Changes",
             panelMonitor: "Monitor",
             panelMembers: "Members",
+            panelContext: "Session settings",
             diffTabTimeline: "Slice timeline",
             diffTabPending: "Pending commit",
             diffDifferenceNote:
@@ -2887,6 +2901,14 @@ const messages = {
                 completed: "Completed",
                 failed: "Failed",
                 cancelled: "Cancelled",
+            },
+            /* PLAN-0631 D31-04/07: visible language for a Run's state (see the zh block note). */
+            runState: {
+                queued: "Queued",
+                queuedHint: "Accepted — waiting to start",
+                reasonAgentDown:
+                    "The Agent is unavailable right now; this will start once it recovers — you can also stop it",
+                awaitingApproval: "Waiting for approval",
             },
             toolDiagnosticsTitle: "Diagnostics",
             toolDiagnosticsSummary: "{total} total, first {shown} fed back",
@@ -4208,6 +4230,7 @@ const messages = {
             title: "Session settings",
             expand: "Expand session settings",
             collapse: "Collapse session settings",
+            openInPanel: "Open session settings in the side panel",
             templateUnbound: "Template not bound",
             templateLoadFailed: "Template failed to load",
             templateSelectPlaceholder: "Select a request template",

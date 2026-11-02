@@ -69,6 +69,11 @@ onUnmounted(() => {
 </script>
 
 <template>
+    <!--
+        PLAN-0631 D31-12: `scrollbar-gutter: stable` on **this** scroller (M0 only set it on
+        `html`). Without it the scrollbar appearing/disappearing re-wraps the transcript and
+        the list jumps horizontally during streaming.
+    -->
     <div
         ref="viewportEl"
         data-slot="message-scroller-viewport"
@@ -76,7 +81,7 @@ onUnmounted(() => {
         role="region"
         aria-label="Messages"
         tabindex="0"
-        class="min-h-0 min-w-0 w-full flex-1 scroll-fade-b overflow-y-auto overscroll-contain contain-content"
+        class="min-h-0 min-w-0 w-full flex-1 [scrollbar-gutter:stable] scroll-fade-b overflow-y-auto overscroll-contain contain-content"
         @scroll="handleScroll"
         @wheel="handleWheel"
         @touchmove="handleTouchMove"

@@ -7,9 +7,8 @@ import { logger } from "../../../../lib/logger";
 import { usePolicyStore } from "../../../../stores/policy";
 import { useSessionStore } from "../../../../stores/session";
 import type { SessionPolicyMode } from "../../../../types";
-import ContextSourcesU1 from "./ContextSourcesU1.vue";
 import SessionContextTemplate from "./SessionContextTemplate.vue";
-import SessionPolicyControls from "./SessionPolicyControls.vue";
+import SessionContextPanel from "../../components/SessionContextPanel.vue";
 
 export interface SettingsBranchOption {
     branchId: string;
@@ -27,11 +26,17 @@ const props = defineProps<{
     branchOptions: SettingsBranchOption[];
     selectedBranchId: string;
     mainBranchId: string | null;
-    branchDisabled: boolean;
+    /**
+     * PLAN-0626 M2 (Q1 = C, Lead ruling 2026-11-02): the desktop summary row is an
+     * **entry** to the dock's `context` panel; mobile has no dock, so it keeps the
+     * in-place expansion. The two interaction paradigms are deliberately different.
+     */
+    isMobile?: boolean;
 }>();
 
 const emit = defineEmits<{
-    "select-branch": [branchId: string];
+    /** Desktop only: ask the page to open the dock's `context` panel. */
+    "open-context-panel": [];
 }>();
 
 const { t } = useI18n();
@@ -116,6 +121,18 @@ function handleTemplateSummary(summary: TemplateSummary) {
     templateSummary.value = summary;
 }
 
+/**
+ * PLAN-0626 M2: desktop opens the dock `context` panel (the settings live there now);
+ * mobile keeps the in-place expansion because a 390px sheet has no dock to open.
+ */
+function handleSummaryClick(): void {
+    if (props.isMobile) {
+        open.value = !open.value;
+        return;
+    }
+    emit("open-context-panel");
+}
+
 async function closeAutoApproval() {
     const sessionId = props.sessionId;
     if (!sessionId || closingAuto.value) return;
@@ -149,10 +166,11 @@ async function closeAutoApproval() {
             type="button"
             data-testid="session-settings-summary"
             class="flex h-9 w-full min-w-0 items-center gap-2 px-3 text-left text-xs text-muted-foreground transition-colors hover:bg-accent/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-            :aria-expanded="open"
-            :aria-controls="panelId"
-            :title="summaryText"
-            @click="open = !open"
+            :aria-expanded="isMobile ? open : undefined"
+            :aria-controls="isMobile ? panelId : undefined"
+            :aria-label="isMobile ? undefined : t('sessionSettings.openInPanel')"
+            :title="isMobile ? summaryText : t('sessionSettings.openInPanel')"
+            @click="handleSummaryClick"
         >
             <ChevronDown
                 class="size-3.5 shrink-0 transition-transform"
@@ -160,7 +178,11 @@ async function closeAutoApproval() {
                 aria-hidden="true"
             />
             <span class="sr-only">{{
-                open ? t("sessionSettings.collapse") : t("sessionSettings.expand")
+                isMobile
+                    ? open
+                        ? t("sessionSettings.collapse")
+                        : t("sessionSettings.expand")
+                    : t("sessionSettings.openInPanel")
             }}</span>
             <span class="flex min-w-0 flex-1 items-center gap-1 overflow-hidden whitespace-nowrap">
                 <span class="shrink-0" data-testid="session-settings-summary-approval">
@@ -229,67 +251,30 @@ async function closeAutoApproval() {
             </button>
         </div>
 
+        <!--
+            The template projection must exist even when the controls live in the dock:
+            this invisible adapter keeps the summary row's "模板 + 版本 + 风险" honest
+            (M2 首版不做 composable 抽象 — Lead 纪律 1).
+        -->
+        <SessionContextTemplate
+            :session-id="sessionId"
+            summary-only
+            class="sr-only"
+            @update:summary="handleTemplateSummary"
+        />
+
+        <!--
+            Mobile only: there is no dock on a 390px sheet, so the same panel component is
+            rendered in place instead of a second copy of the four partitions.
+        -->
         <div
             v-show="open"
             :id="panelId"
             :inert="!open"
             data-testid="session-settings-expanded"
-            class="divide-y divide-border border-t"
+            class="max-h-[60vh] overflow-y-auto border-t"
         >
-            <div
-                class="flex min-w-0 items-center gap-2 px-3 py-1.5"
-                data-testid="session-settings-section-approval"
-            >
-                <span class="w-16 shrink-0 truncate text-xs text-muted-foreground">{{
-                    t("chat.approvalModeLabel")
-                }}</span>
-                <div class="min-w-0 flex-1">
-                    <SessionPolicyControls :session-id="sessionId" />
-                </div>
-            </div>
-            <div
-                class="flex min-w-0 items-center gap-2 px-3 py-1.5"
-                data-testid="session-settings-section-template"
-            >
-                <span class="w-16 shrink-0 truncate text-xs text-muted-foreground">{{
-                    t("chat.contextTemplateLabel")
-                }}</span>
-                <div class="min-w-0 flex-1">
-                    <SessionContextTemplate
-                        :session-id="sessionId"
-                        @update:summary="handleTemplateSummary"
-                    />
-                </div>
-            </div>
-            <div class="min-w-0 px-3 py-1.5" data-testid="session-settings-section-context">
-                <ContextSourcesU1 :session-id="sessionId" />
-            </div>
-            <div
-                class="flex min-w-0 items-center gap-2 px-3 py-1.5"
-                data-testid="session-settings-section-branch"
-            >
-                <span class="w-16 shrink-0 truncate text-xs text-muted-foreground">{{
-                    t("chat.branchSelectorLabel")
-                }}</span>
-                <select
-                    :id="`session-branch-${sessionId}`"
-                    data-testid="session-branch-select"
-                    class="w-full min-w-0 truncate rounded-md border bg-background px-2 py-1 text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-60"
-                    :value="selectedBranchId"
-                    :disabled="branchDisabled || branchOptions.length === 0"
-                    :aria-label="t('chat.branchSelectorLabel')"
-                    :title="branchLabel"
-                    @change="emit('select-branch', ($event.target as HTMLSelectElement).value)"
-                >
-                    <option
-                        v-for="branch in branchOptions"
-                        :key="branch.branchId"
-                        :value="branch.branchId"
-                    >
-                        {{ branch.label }}
-                    </option>
-                </select>
-            </div>
+            <SessionContextPanel :session-id="sessionId" />
         </div>
     </section>
 </template>

@@ -14,6 +14,7 @@
 import { computed, ref } from "vue";
 import { Shield } from "@lucide/vue";
 import { useI18n } from "vue-i18n";
+import { participantDisplayName, participantInitials } from "./participantInitials";
 import type {
     ParticipantRespondPolicy,
     ParticipantWakePolicy,
@@ -80,23 +81,21 @@ const modelIntent = computed(() => {
 
 const { t } = useI18n();
 
-/** 首字母头像：取 displayName 的前两个词首字母；缺名时退回 principalId 前两位（不上屏假名）。 */
-/** 真名（可能为 null/空白）。**不要**用 `principalId` 兜底：UUID 不是身份，是噪声。 */
+/**
+ * 首字母头像：取 displayName 的前两个词首字母；缺名时用「未知用户」的首字。
+ * **不要**用 `principalId` 兜底：UUID 不是身份，是噪声。
+ * PLAN-0631 D31-10：实现抽到 `participantInitials.ts`，与消息身份行共用同一份。
+ */
 const realName = computed(() => props.participant.displayName?.trim() ?? "");
 
 /** 没有名字时用本地化占位，而不是把 UUID 摆给用户看。 */
-const displayName = computed(() => realName.value || t("workspace.participantUnknownName"));
+const displayName = computed(() =>
+    participantDisplayName(realName.value, t("workspace.participantUnknownName")),
+);
 
-const initials = computed(() => {
-    const name = realName.value;
-    if (name) {
-        const words = name.split(/\s+/).filter(Boolean);
-        const letters = words.slice(0, 2).map((word) => word[0] ?? "");
-        return letters.join("").toUpperCase();
-    }
-    // 占位文案的首字（zh「未知用户」→「未」；en "Unknown user" → "U"）。
-    return Array.from(t("workspace.participantUnknownName"))[0]?.toUpperCase() ?? "?";
-});
+const initials = computed(() =>
+    participantInitials(realName.value, t("workspace.participantUnknownName")),
+);
 
 const kindLabel = computed(() =>
     t(

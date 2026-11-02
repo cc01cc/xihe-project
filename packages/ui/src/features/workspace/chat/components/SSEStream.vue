@@ -37,12 +37,19 @@ const { isConnected, isStreaming, connect, sendMessage, disconnect } = useSSE(
     computed(() => props.sessionId),
 );
 let activeRunId: string | undefined, activeBranchId: string | undefined;
+/**
+ * PLAN-0631 D31-08: the run's responder as CP attributed it (SSE envelope `participantId`).
+ * Constant for a run, so it is remembered once and stamped onto the live message — the
+ * citation is never derived from `role` or the session's PRIMARY participant.
+ */
+let activeResponderId: string | null = null;
 
 watch(
     () => props.sessionId,
     (id) => {
         activeRunId = undefined;
         activeBranchId = undefined;
+        activeResponderId = null;
         if (id) {
             connectSession(id);
         }
@@ -61,10 +68,20 @@ function connectSession(id: string) {
         onDerivedStateChanged: () => {
             if (isCurrentSession()) emit("derivedStateRefresh");
         },
+        onParticipant: (participantId: string | null) => {
+            if (!isCurrentSession() || participantId === null) return;
+            activeResponderId = participantId;
+            chatStore.setStreamingMessageResponder(id, participantId);
+        },
         onStart: () => {
             if (!isCurrentSession()) return;
             parser.reset();
             chatStore.createStreamingMessage(id, activeRunId, activeBranchId);
+            // The attribution usually arrives on the very first event of the run, i.e.
+            // before this callback — stamp it now that the live message exists.
+            if (activeResponderId !== null) {
+                chatStore.setStreamingMessageResponder(id, activeResponderId);
+            }
         },
         onToken: (token: string, hint?) => {
             if (!isCurrentSession()) return;
@@ -91,13 +108,10 @@ function connectSession(id: string) {
             chatStore.setSessionRunState(id, nextStatus, activeRunId);
             agentStore.setStatus(nextStatus);
             if (status === "thinking" || status === "executing") {
-                chatStore.addMarker(id, {
-                    role: "system",
-                    content: status,
-                    timestamp: new Date().toISOString(),
-                    marker: "status",
-                    status,
-                });
+                // PLAN-0631 D31-07: one live status line per run, updated in place —
+                // a status event per transition used to append a permanent marker each
+                // time (a long run left a dozen "Thinking/Executing" rows behind).
+                chatStore.upsertRunStatusMarker(id, status, activeRunId);
             }
         },
         onDone: (outcome?: string) => {
@@ -130,6 +144,7 @@ function connectSession(id: string) {
             chatStore.setSessionRunState(id, "idle");
             activeRunId = undefined;
             activeBranchId = undefined;
+            activeResponderId = null;
         },
         onError: (payload: SSEErrorPayload) => {
             if (!isCurrentSession()) return;
@@ -138,6 +153,7 @@ function connectSession(id: string) {
             agentStore.setStatus("error");
             chatStore.setSessionRunState(id, "error", activeRunId);
             activeRunId = undefined;
+            activeResponderId = null;
             toast.error(chatErrorToastText(payload.code, payload.detail));
         },
         onApprovalRequest: (data) => {
@@ -236,8 +252,20 @@ async function handleSend(
     if (props.sessionId !== sessionId) return null;
     if (result) {
         activeRunId = result.runId;
+        // The run exists and keeps the composer in stop/queue mode — that part is true.
         chatStore.setSessionRunState(sessionId, "thinking", result.runId);
         agentStore.setStatus("thinking");
+        // PLAN-0631 D31-04 (P0): CP parks the Run instead of dispatching it when the
+        // Agent is down but the LLM is ready — `202 {status:"queued", reason:"agent_down"}`
+        // (ChatController persistRunStatus("queued")). Nothing executes and no SSE will
+        // arrive until recovery, so the user used to sit in "stop/queue mode" forever
+        // with no explanation. Record the parked view so the chat explains itself;
+        // `createStreamingMessage` clears it the moment real work starts.
+        if (result.status === "queued") {
+            chatStore.setRunQueued(sessionId, { runId: result.runId, reason: result.reason });
+        } else {
+            chatStore.clearRunQueued(sessionId);
+        }
     } else {
         activeBranchId = undefined;
     }

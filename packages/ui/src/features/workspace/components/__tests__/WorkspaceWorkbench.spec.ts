@@ -44,6 +44,7 @@ const i18n = createI18n({
                 panelCode: "Code",
                 panelChanges: "Changes",
                 panelMonitor: "Monitor",
+                panelContext: "Session settings",
                 closePanel: "Close the auxiliary panel",
                 dockTabs: "Workbench panels",
                 dockOverflow: "More panels",
@@ -76,6 +77,10 @@ const stubs = {
     FileEditor: { template: '<div data-testid="file-editor-stub" />' },
     WorkspaceChangesPanel: { template: '<div data-testid="changes-panel-stub" />' },
     SessionMonitorPanel: { template: '<div data-testid="session-monitor-stub" />' },
+    SessionContextPanel: {
+        props: { sessionId: { type: String, default: null } },
+        template: '<div data-testid="session-context-panel-stub" />',
+    },
 };
 
 function mountWorkbench(
@@ -309,6 +314,22 @@ describe("WorkspaceWorkbench skeleton (PLAN-0582 S2)", () => {
             expect(storedLayout().dockCollapsed).toBe(true);
             expect(storedLayout().dockFocus).toBe(false);
         });
+    });
+
+    it("opens the context panel through the exposed openDockTab (PLAN-0626 M2)", async () => {
+        // The chat column is the page's slot content, so the page reaches the dock here.
+        const wrapper = mountWorkbench();
+        await flushPromises();
+
+        (wrapper.vm as unknown as { openDockTab: (id: string) => void }).openDockTab("context");
+        await flushPromises();
+
+        expect(wrapper.get('[data-testid="dock-tab-context"]').attributes("aria-selected")).toBe(
+            "true",
+        );
+        expect(wrapper.find('[data-testid="session-context-panel-stub"]').exists()).toBe(true);
+        // Sticky panel wrapper proves it is mounted through the dock's slot path.
+        expect(wrapper.find('[data-testid="dock-sticky-panel-context"]').exists()).toBe(true);
     });
 
     it("keeps width and collapsed state independent (collapse then re-open restores the width)", async () => {

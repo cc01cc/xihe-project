@@ -603,6 +603,14 @@ export interface Message {
     resourceKind?: string;
     /** PLAN-0341 U3 case B: prior attempt content kept but marked abandoned. */
     interrupted?: boolean;
+    /**
+     * PLAN-0631 D31-08: the session participant CP attributed this message to — the
+     * SSE envelope's `participantId` for live runs (openapi.yaml:1374), or the
+     * `asParticipantId` the caller asked to speak as. **Local view only**: the history
+     * DTO carries no attribution yet (BL-197), so `undefined` means "unknown" and the
+     * UI must not fill it in from `role` or the session's PRIMARY participant.
+     */
+    participantId?: string | null;
 }
 
 export interface ProviderConfig {
@@ -682,6 +690,14 @@ export interface ChatRunResponse {
     messageId?: string;
     outcome?: "success" | "error" | "partial" | "ambiguous";
     errorCode?: string;
+    /**
+     * PLAN-0631 D31-04: why a run is parked instead of dispatched. CP answers
+     * `202 {status:"queued", reason:"agent_down"}` when the Agent is down but the
+     * LLM is ready (ChatController `persistRunStatus(chatRun,"queued")` path); the
+     * Run is then held for transport recovery and **nothing is executing**.
+     * Wire field: `docs/api/openapi.yaml` → `ChatRunResponse.reason`.
+     */
+    reason?: string;
 }
 
 /**

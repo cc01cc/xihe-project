@@ -2,6 +2,8 @@ import { mount } from "@vue/test-utils";
 import { describe, expect, it } from "vitest";
 import { createPinia } from "pinia";
 import { i18n } from "../../../../i18n";
+import type { Message } from "../../../../types";
+import type { SessionParticipantView } from "../../../../types/participant";
 import MessageItem from "../components/MessageItem.vue";
 
 describe("MessageItem branch action", () => {
@@ -268,5 +270,182 @@ describe("MessageItem RESOURCE_EXHAUSTED hint (PLAN-0622)", () => {
         expect(text).toContain("连接");
         expect(text).not.toContain("秒");
         wrapper.unmount();
+    });
+});
+
+// ── PLAN-0631 M1 (D31-07 / D31-12) ─────────────────────────────────────────
+describe("MessageItem live status line and empty content", () => {
+    function mountLive(overrides: Record<string, unknown> = {}, isStreaming = true) {
+        return mount(MessageItem, {
+            props: {
+                isStreaming,
+                message: {
+                    id: "message-live",
+                    sessionId: "session-1",
+                    role: "assistant",
+                    content: "",
+                    timestamp: "2026-11-02T00:00:00Z",
+                    ...overrides,
+                },
+            },
+            global: { plugins: [i18n, createPinia()] },
+        });
+    }
+
+    it("localizes the live status line instead of hardcoding English", () => {
+        const thinking = mountLive({ marker: "status", status: "thinking" }, false);
+        expect(thinking.text()).toContain(i18n.global.t("chat.thinking"));
+        expect(thinking.text()).not.toContain("Thinking...");
+        thinking.unmount();
+
+        const executing = mountLive({ marker: "status", status: "executing" }, false);
+        expect(executing.text()).toContain(i18n.global.t("chat.toolStatus.running"));
+        expect(executing.text()).not.toContain("Executing task...");
+        executing.unmount();
+    });
+
+    it("does not render an empty bubble while a tool-first run has no text yet", () => {
+        // tool_call arrives before any token: no content and no parts.
+        const wrapper = mountLive({ toolCalls: [] }, true);
+        expect(wrapper.find('[data-slot="bubble"]').exists()).toBe(false);
+        wrapper.unmount();
+    });
+
+    it("renders the bubble as soon as there is content to show", () => {
+        const wrapper = mountLive({ parts: [{ type: "text", content: "partial" }] }, true);
+        expect(wrapper.find('[data-slot="bubble"]').exists()).toBe(true);
+        expect(wrapper.text()).toContain("partial");
+        wrapper.unmount();
+    });
+});
+
+// ── PLAN-0631 M1-B (D31-05 / D31-08 / D31-09) ──────────────────────────────
+describe("MessageItem responder identity", () => {
+    function participant(overrides: Partial<SessionParticipantView> = {}): SessionParticipantView {
+        return {
+            participantId: "participant-member",
+            principalKind: "AGENT",
+            principalId: "principal-member",
+            displayName: "Review Bot",
+            role: "MEMBER",
+            orderIndex: 20,
+            wakePolicy: "MENTION",
+            respondPolicy: "WHEN_MENTIONED",
+            source: "workspace",
+            ...overrides,
+        };
+    }
+
+    function mountMessage(message: Partial<Message> = {}, responder?: SessionParticipantView) {
+        return mount(MessageItem, {
+            props: {
+                message: {
+                    id: "message-1",
+                    sessionId: "session-1",
+                    role: "assistant",
+                    content: "answer",
+                    timestamp: "2026-11-02T00:00:00Z",
+                    ...message,
+                },
+                ...(responder ? { responder } : {}),
+            },
+            global: { plugins: [i18n, createPinia()] },
+        });
+    }
+
+    it("shows who answered for an agent responder: name, role badge and initials", () => {
+        const wrapper = mountMessage({ participantId: "participant-member" }, participant());
+
+        const row = wrapper.get('[data-testid="message-responder"]');
+        expect(row.attributes("data-participant-id")).toBe("participant-member");
+        expect(row.text()).toContain("Review Bot");
+        expect(row.text()).not.toContain("participant-member"); // never a UUID
+        expect(
+            wrapper.get('[data-testid="message-responder-role"]').attributes("data-session-role"),
+        ).toBe("MEMBER");
+        expect(wrapper.get('[data-testid="message-responder-initials"]').text()).toBe("RB");
+        wrapper.unmount();
+    });
+
+    it("marks GUARD by icon, not by a new color (same discipline as ParticipantRow)", () => {
+        const wrapper = mountMessage(
+            { participantId: "participant-guard" },
+            participant({
+                participantId: "participant-guard",
+                displayName: "Guard",
+                role: "GUARD",
+            }),
+        );
+        const badge = wrapper.get('[data-testid="message-responder-role"]');
+        expect(badge.attributes("data-session-role")).toBe("GUARD");
+        expect(badge.find("svg").exists()).toBe(true);
+        wrapper.unmount();
+    });
+
+    it("treats a speakAs message as somebody else's: left side, with an identity row", () => {
+        // role=user but attributed to another HUMAN participant ⇒ not mine.
+        const wrapper = mountMessage(
+            { role: "user", participantId: "participant-other", content: "spoken for" },
+            participant({
+                participantId: "participant-other",
+                principalKind: "HUMAN",
+                principalId: "other-user",
+                displayName: "Other Human",
+                selfOwned: false,
+                source: null,
+            }),
+        );
+        expect(wrapper.get('[data-slot="message"]').attributes("data-align")).toBe("start");
+        expect(wrapper.find('[data-testid="message-responder"]').exists()).toBe(true);
+        wrapper.unmount();
+    });
+
+    it("keeps the caller's own message on the right with no identity row", () => {
+        const wrapper = mountMessage(
+            { role: "user", participantId: "participant-self", content: "mine" },
+            participant({
+                participantId: "participant-self",
+                principalKind: "HUMAN",
+                principalId: "me",
+                displayName: "Me",
+                selfOwned: true,
+                source: null,
+            }),
+        );
+        expect(wrapper.get('[data-slot="message"]').attributes("data-align")).toBe("end");
+        expect(wrapper.find('[data-testid="message-responder"]').exists()).toBe(false);
+        wrapper.unmount();
+    });
+
+    it("renders no identity row for a message without attribution (never back-fills PRIMARY)", () => {
+        const wrapper = mountMessage({ participantId: undefined });
+        expect(wrapper.find('[data-testid="message-responder"]').exists()).toBe(false);
+        expect(wrapper.get('[data-slot="message"]').attributes("data-align")).toBe("start");
+        wrapper.unmount();
+    });
+
+    it("never offers a direct retry for an ambiguous outcome, even if the wire says retryable", () => {
+        const wrapper = mountMessage({
+            role: "assistant",
+            content: "half done",
+            error: "provider uncertain",
+            errorCode: "AGENT_STREAM_AMBIGUOUS",
+            retryable: true,
+            terminalOutcome: "ambiguous",
+            runStatus: "ambiguous",
+        });
+        expect(wrapper.find('[data-testid="message-retry-button"]').exists()).toBe(false);
+
+        const failed = mountMessage({
+            role: "assistant",
+            content: "boom",
+            error: "provider failed",
+            retryable: true,
+            terminalOutcome: "error",
+            runStatus: "failed",
+        });
+        expect(failed.find('[data-testid="message-retry-button"]').exists()).toBe(true);
+        wrapper.unmount();
+        failed.unmount();
     });
 });

@@ -107,3 +107,21 @@ describe("Session template identity", () => {
         wrapper.unmount();
     });
 });
+
+// PLAN-0626 M2: the chat summary keeps this component as a data adapter after the
+// control itself moved into the dock panel.
+describe("Session template summary adapter (M2)", () => {
+    it("resolves and emits the projection without rendering the select", async () => {
+        const wrapper = mount(Panel, { props: { sessionId: "a", summaryOnly: true } });
+        await flushPromises();
+
+        expect(wrapper.find('[data-testid="session-context-template-select"]').exists()).toBe(
+            false,
+        );
+        const summaries = wrapper.emitted("update:summary") ?? [],
+            last = summaries.at(-1)?.[0] as { label: string | null; failed: boolean } | undefined;
+        expect(last?.label).toContain("Template");
+        expect(last?.failed).toBe(false);
+        wrapper.unmount();
+    });
+});

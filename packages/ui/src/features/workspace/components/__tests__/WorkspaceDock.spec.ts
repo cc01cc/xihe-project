@@ -50,6 +50,7 @@ function mountDock(
             code: '<div data-testid="dock-code-content" />',
             changes: '<div data-testid="dock-changes-content" />',
             monitor: '<div data-testid="dock-monitor-content" />',
+            context: '<div data-testid="dock-context-content" />',
             alpha: '<div data-testid="dock-alpha-content" />',
             beta: '<div data-testid="dock-beta-content" />',
         },
@@ -257,6 +258,67 @@ describe("WorkspaceDock (PLAN-0582 S2)", () => {
         const wrapper = mountDock({ width: 460, defaultWidth: 360 });
         await wrapper.get('[data-testid="dock-resizer"]').trigger("dblclick");
         expect(wrapper.emitted("update:width")?.at(-1)).toEqual([360]);
+    });
+
+    it("keeps a sticky panel mounted across tab switches (D26-07 A)", async () => {
+        // M2 spike outcome: a dynamic `<slot :name>` inside a `v-show` wrapper keeps the
+        // form panel — and its editing state — alive while another tab is active.
+        const tabs = [
+                { id: "context", label: "Session settings" },
+                { id: "monitor", label: "Monitor" },
+            ],
+            wrapper = mountDock({ tabs, activeTab: "context" });
+
+        expect(wrapper.find('[data-testid="dock-context-content"]').exists()).toBe(true);
+        expect(wrapper.find('[data-testid="dock-sticky-panel-context"]').exists()).toBe(true);
+
+        await wrapper.setProps({ activeTab: "monitor" });
+
+        // Still mounted, merely hidden — and the checker panel is the active one.
+        // `v-show` is asserted through the inline style (`display: none`): that is the
+        // exact mechanism, and it stays deterministic in jsdom.
+        expect(wrapper.find('[data-testid="dock-context-content"]').exists()).toBe(true);
+        expect(
+            wrapper.get('[data-testid="dock-sticky-panel-context"]').attributes("style"),
+        ).toContain("display: none");
+        expect(wrapper.find('[data-testid="dock-monitor-content"]').exists()).toBe(true);
+        expect(wrapper.find('[data-testid="dock-active-panel"]').exists()).toBe(true);
+
+        await wrapper.setProps({ activeTab: "context" });
+        expect(
+            wrapper.get('[data-testid="dock-sticky-panel-context"]').attributes("style") ?? "",
+        ).not.toContain("display: none");
+        // The checker unmounted again (no sticky memory for it).
+        expect(wrapper.find('[data-testid="dock-monitor-content"]').exists()).toBe(false);
+    });
+
+    it("unmounts an inactive checker panel instead of keeping it sticky", async () => {
+        const wrapper = mountDock({ activeTab: "code" });
+
+        await wrapper.setProps({ activeTab: "monitor" });
+
+        expect(wrapper.find('[data-testid="dock-code-content"]').exists()).toBe(false);
+        expect(wrapper.find('[data-testid="dock-monitor-content"]').exists()).toBe(true);
+        // Sticky bookkeeping stays empty: no hidden panel was created for a checker.
+        expect(wrapper.find('[data-testid="dock-sticky-panel-context"]').exists()).toBe(false);
+    });
+
+    it("drops a sticky panel from memory once its tab is closed", async () => {
+        const tabs = [
+                { id: "context", label: "Session settings" },
+                { id: "monitor", label: "Monitor" },
+            ],
+            wrapper = mountDock({ tabs, activeTab: "context" });
+        expect(wrapper.find('[data-testid="dock-sticky-panel-context"]').exists()).toBe(true);
+
+        // Closing the tab must not leave a hidden context panel (and its watchers) alive.
+        await wrapper.setProps({
+            tabs: [{ id: "monitor", label: "Monitor" }],
+            activeTab: "monitor",
+        });
+
+        expect(wrapper.find('[data-testid="dock-sticky-panel-context"]').exists()).toBe(false);
+        expect(wrapper.find('[data-testid="dock-context-content"]').exists()).toBe(false);
     });
 
     it("keeps the configured width as an inline style so widths are independent of mode", () => {

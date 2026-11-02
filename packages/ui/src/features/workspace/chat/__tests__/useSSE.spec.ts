@@ -4,7 +4,7 @@ import { flushPromises } from "@vue/test-utils";
 import { chatTransport } from "@/services/chatTransport";
 import type { ChatTransportState } from "@/services/chatTransport";
 import type * as useSSEModule from "../composables/useSSE.ts";
-import { useSSE } from "../composables/useSSE.ts";
+import { useSSE, parseParticipantEnvelope } from "../composables/useSSE.ts";
 import { useAgentStore } from "../../../../stores/agent";
 import { useAuthStore } from "../../../../stores/auth";
 import { useChatStore } from "../stores/chat.ts";
@@ -773,5 +773,22 @@ describe("useSSE transport telemetry (PLAN-0508)", () => {
         expect(liveRunAttempts(SESSION_ID, RUN_ID)).toHaveLength(0);
         expect(seen).not.toHaveBeenCalled();
         unsubscribe();
+    });
+});
+
+// ── PLAN-0631 M1-B (D31-08) ────────────────────────────────────────────────
+describe("parseParticipantEnvelope", () => {
+    it("returns the attributed participant id when CP stamped one", () => {
+        expect(parseParticipantEnvelope('{"content":"hi","participantId":"p-1"}')).toBe("p-1");
+    });
+
+    it("returns null for an explicitly producer-less event", () => {
+        expect(parseParticipantEnvelope('{"status":"done","participantId":null}')).toBeNull();
+    });
+
+    it("returns undefined when the envelope carries no attribution at all", () => {
+        // Unknown must stay unknown: callers skip the fast path and never fill in PRIMARY.
+        expect(parseParticipantEnvelope('{"content":"hi"}')).toBeUndefined();
+        expect(parseParticipantEnvelope("not json")).toBeUndefined();
     });
 });
