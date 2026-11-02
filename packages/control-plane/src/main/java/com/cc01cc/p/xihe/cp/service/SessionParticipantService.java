@@ -251,7 +251,30 @@ public class SessionParticipantService {
 
     // ------------------------------------------------------------------ D23-08
 
-    /**
+        /**
+     * R1 (PLAN-0623): the principal this run speaks as. {@code asParticipantId} wins (the caller was
+     * already authorized by {@code authorizeAsParticipant}); otherwise the PRIMARY participant answers
+     * for the conversation. null when the Session has neither — a legacy/placeholder run keeps NULL,
+     * exactly like the V92 backfill which never invents a responder.
+     */
+    @Transactional(readOnly = true)
+    public UUID responderPrincipalIdFor(UUID sessionId, String asParticipantId) {
+        if (sessionId == null) {
+            return null;
+        }
+        if (asParticipantId != null && !asParticipantId.isBlank()) {
+            return participantRepository
+                    .findByIdAndSessionId(parseUuid(asParticipantId, "PARTICIPANT_NOT_FOUND"), sessionId)
+                    .map(SessionParticipant::getPrincipalId)
+                    .orElseThrow(SessionParticipantService::participantNotFound);
+        }
+        return participantRepository.findBySessionIdOrderByOrderIndexAsc(sessionId).stream()
+                .filter(row -> SessionParticipant.ROLE_PRIMARY.equals(row.getRole()))
+                .map(SessionParticipant::getPrincipalId)
+                .findFirst()
+                .orElse(null);
+    }
+/**
      * Authorization for {@code POST /api/v1/chat} with {@code asParticipantId}.
      *
      * <p>Adds nothing to the run yet — writing {@code chat_runs.agent_principal_id} is M1b; this

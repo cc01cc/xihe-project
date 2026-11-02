@@ -31,6 +31,9 @@ public class ChatRun {
     @Column(name = "id", columnDefinition = "uuid")
     private UUID id;
 
+    /** R1 (PLAN-0623): the responder of this run — the participant who answered (V92 column). */
+    @Column(name = "agent_principal_id", columnDefinition = "uuid")
+    private UUID agentPrincipalId;
     @Column(name = "session_id", nullable = false, length = 36)
     @Convert(converter = UuidStringConverter.class)
     private String sessionId;
@@ -171,6 +174,8 @@ public class ChatRun {
         this.status = status;
     }
 
+    public UUID getAgentPrincipalId() { return agentPrincipalId; }
+    public void setAgentPrincipalId(UUID agentPrincipalId) { this.agentPrincipalId = agentPrincipalId; }
     @PrePersist
     protected void onCreate() {
         ensureContextTemplateSnapshot();

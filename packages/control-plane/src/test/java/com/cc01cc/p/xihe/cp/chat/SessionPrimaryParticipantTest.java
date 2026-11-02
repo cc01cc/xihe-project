@@ -36,6 +36,11 @@ class SessionPrimaryParticipantTest extends AbstractIntegrationTest {
     @Autowired private WorkspaceFixture workspaceFixture;
     @Autowired private ObjectMapper json;
     @Autowired private SessionService sessionService;
+    @Autowired private com.cc01cc.p.xihe.cp.chat.ChatSubmissionService chatSubmissionService;
+    @Autowired private com.cc01cc.p.xihe.cp.service.BranchPathService branchPathService;
+    @Autowired private com.cc01cc.p.xihe.cp.repository.ProviderConnectionRepository providerConnections;
+    @Autowired private com.cc01cc.p.xihe.cp.repository.SessionParticipantRepository participants;
+    @Autowired private com.cc01cc.p.xihe.cp.repository.ChatRunRepository chatRuns;
 
     private final HttpClient http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build();
     private String ownerToken;
@@ -138,6 +143,40 @@ class SessionPrimaryParticipantTest extends AbstractIntegrationTest {
         assertEquals(1, participants.size(), "re-seeding is a no-op: " + participants);
     }
 
+    // -----------------------------------------------------------------------------------------
+    // R1: a run records the responder it spoke as (the attribution M1b builds on).
+    // -----------------------------------------------------------------------------------------
+
+    @Test
+    void aRunRecordsItsResponderAndTwoRespondersDiffer() {
+        com.cc01cc.p.xihe.cp.entity.ProviderConnection connection =
+                com.cc01cc.p.xihe.cp.chat.ChatBindingTestSupport.ensureChatConnection(providerConnections,
+                        "USER", ownerId, "r1-" + UUID.randomUUID().toString().substring(0, 8));
+        var session = sessionService.createAgentSession(ownerId, workspaceId, "R1 session",
+                connection.getProviderId(), "gpt-test", connection.getId().toString(), principalId);
+        var human = participants.saveAndFlush(new com.cc01cc.p.xihe.cp.entity.SessionParticipant(session.getId(),
+                com.cc01cc.p.xihe.cp.entity.SessionParticipant.KIND_HUMAN, UUID.fromString(ownerId),
+                com.cc01cc.p.xihe.cp.entity.SessionParticipant.ROLE_MEMBER, 20,
+                com.cc01cc.p.xihe.cp.entity.SessionParticipant.WAKE_MENTION,
+                com.cc01cc.p.xihe.cp.entity.SessionParticipant.RESPOND_WHEN_MENTIONED));
+        String branchId = branchPathService.ensureRootBranchId(session.getId().toString());
+
+        var primaryAnswered = chatSubmissionService.create(UUID.randomUUID().toString(), session.getId().toString(), ownerId,
+                workspaceId, branchId, principalId, "idem-r1-a", "a".repeat(64), connection.getProviderId(), "gpt-test",
+                "none", connection.getId().toString(), connection.getRevision(), "lease-r1", "req-r1-a",
+                "hi", null, java.util.List.of(), null);
+        primaryAnswered.run().setStatus("succeeded");
+        chatRuns.saveAndFlush(primaryAnswered.run());
+        var humanAnswered = chatSubmissionService.create(UUID.randomUUID().toString(), session.getId().toString(), ownerId,
+                workspaceId, branchId, principalId, "idem-r1-b", "b".repeat(64), connection.getProviderId(), "gpt-test",
+                "none", connection.getId().toString(), connection.getRevision(), "lease-r1", "req-r1-b",
+                "hi", null, java.util.List.of(), human.getId().toString());
+
+        assertEquals(principalId, primaryAnswered.run().getAgentPrincipalId().toString(),
+                "without asParticipantId the PRIMARY answers");
+        assertEquals(ownerId, humanAnswered.run().getAgentPrincipalId().toString(),
+                "with asParticipantId the run is attributed to that participant's principal");
+    }
     private AuthResponse register(String label) {
         var response = restTemplate.postForEntity(url("/api/v1/auth/register"),
                 new RegisterRequest(label + "-" + UUID.randomUUID() + "@test.com",
