@@ -210,6 +210,12 @@ test.describe("@host Session branch path", () => {
         await awaitOperationCompletedForRun(request, workspaceHeaders, rootChat.runId);
 
         const rootBranchId = await getRootBranchId(request, sessionId, workspaceHeaders);
+        // The selector lives in the dock `context` tab, so the panel must be opened
+        // explicitly (`expandSessionSettings`). Previously this assertion passed only
+        // because the chat sheet kept a hidden copy of the panel mounted — that duplicate
+        // instance was a real defect (every panel testid resolved to 2 elements) and was
+        // removed on 2026-11-03. Tests now interact with the visible panel like a user.
+        await expandSessionSettings(page);
         const branchSelect = page.getByTestId("session-branch-select");
         await expect(branchSelect).toHaveValue(rootBranchId);
 

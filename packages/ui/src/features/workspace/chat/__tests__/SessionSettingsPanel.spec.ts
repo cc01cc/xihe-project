@@ -142,7 +142,10 @@ describe("SessionSettingsPanel collapsed summary", () => {
             "主路径",
         );
         // Collapsed by default: the four legacy always-on rows are gone.
-        expect(wrapper.get('[data-testid="session-settings-expanded"]').isVisible()).toBe(false);
+        // 2026-11-03: on desktop the panel is now NOT MOUNTED at all (the dock owns it);
+        // asserting "exists but hidden" would have kept the duplicate-instance bug alive —
+        // 真机 e2e 曾因桌面端多挂一份隐藏面板导致所有内部 testid 命中 2 个元素。
+        expect(wrapper.find('[data-testid="session-settings-expanded"]').exists()).toBe(false);
         wrapper.unmount();
     });
 
@@ -152,7 +155,7 @@ describe("SessionSettingsPanel collapsed summary", () => {
         const wrapper = mountPanel({ selectedBranchId: CHILD_BRANCH_ID });
         await flushPromises();
 
-        expect(wrapper.get('[data-testid="session-settings-expanded"]').isVisible()).toBe(false);
+        expect(wrapper.find('[data-testid="session-settings-expanded"]').exists()).toBe(false);
         // 1) auto approval warning + one-click remediation stay visible.
         const autoBanner = wrapper.get('[data-testid="session-policy-auto-banner"]');
         expect(autoBanner.isVisible()).toBe(true);

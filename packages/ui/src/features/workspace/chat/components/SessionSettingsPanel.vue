@@ -266,15 +266,24 @@ async function closeAutoApproval() {
         <!--
             Mobile only: there is no dock on a 390px sheet, so the same panel component is
             rendered in place instead of a second copy of the four partitions.
+
+            2026-11-03 (真机 e2e 实测): this must be `v-if="isMobile"`, not only `v-show="open"`.
+            With `v-show` the desktop layout still mounted a hidden copy of the whole panel
+            alongside the dock's copy, so every testid inside it resolved to 2 elements
+            (`session-context-panel`, `session-policy-mode`, `u1-toggle`, `session-branch-select` …)
+            and Playwright strict mode failed the specs. Mounting it only for the mobile sheet
+            keeps one instance in the DOM at any viewport.
         -->
-        <div
-            v-show="open"
-            :id="panelId"
-            :inert="!open"
-            data-testid="session-settings-expanded"
-            class="max-h-[60vh] overflow-y-auto border-t"
-        >
-            <SessionContextPanel :session-id="sessionId" />
-        </div>
+        <template v-if="isMobile">
+            <div
+                v-show="open"
+                :id="panelId"
+                :inert="!open"
+                data-testid="session-settings-expanded"
+                class="max-h-[60vh] overflow-y-auto border-t"
+            >
+                <SessionContextPanel :session-id="sessionId" />
+            </div>
+        </template>
     </section>
 </template>

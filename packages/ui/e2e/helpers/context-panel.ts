@@ -20,9 +20,17 @@ import { expect, type Locator, type Page } from "@playwright/test";
 /** `useWorkspaceLayout.ts` 的 `DOCK_INLINE_MIN_VIEWPORT`：≥ 该宽度 dock 才 inline（pinned）。 */
 export const DOCK_PINNED_MIN_VIEWPORT = 1800;
 
-/** 面板本体（`SessionContextPanel.vue`，四个分区与既有 testid 都在里面）。 */
+/**
+ * 面板本体（`SessionContextPanel.vue`，四个分区与既有 testid 都在里面）。
+ *
+ * **必须只取可见的那个**：`session-context-panel` 这个 testid 在页面上可能出现
+ * 两份（dock 内的面板 + 移动端 sheet 里就地展开的同一份组件），直接用
+ * `getByTestId` 会触发 strict mode violation（"resolved to 2 elements"）。
+ * 2026-11-03 真机 e2e 实测：`approval-policy` / `context-sources` 三例因此误报
+ * "面板不可见"，实际是被隐藏副本卡住解析 —— 不是面板没打开。
+ */
 export function contextPanel(page: Page): Locator {
-    return page.getByTestId("session-context-panel");
+    return page.locator('[data-testid="session-context-panel"]').filter({ visible: true });
 }
 
 /** dock 标签芯片（`WorkspaceDock.vue` 的 `dock-tab-${tab.id}` 通用规则）。 */
