@@ -387,3 +387,33 @@ describe("ParticipantRow without a display name (PLAN-0623 human-display fix)", 
         expect(wrapper.emitted("mention")).toBeUndefined();
     });
 });
+
+describe("soft-disabled row affordances (PLAN-0623, Lead screenshot review)", () => {
+    const DISABLED: SessionParticipantView = { ...HUMAN, disabledAt: "2026-11-02T02:00:00Z" };
+
+    it("disables mention and remove on a disabled participant, even with every capability", async () => {
+        getParticipants.mockResolvedValueOnce({ participants: [DISABLED], capabilities: ALL_CAPS });
+        const wrapper = mountPanel();
+        await flushPromises();
+
+        expect(
+            wrapper.get('[data-testid="participant-mention-p-human"]').attributes("disabled"),
+        ).toBeDefined();
+        expect(
+            wrapper.get('[data-testid="participant-remove-p-human"]').attributes("disabled"),
+        ).toBeDefined();
+    });
+
+    it("keeps the disabled row visible and emits nothing when its actions are clicked", async () => {
+        getParticipants.mockResolvedValueOnce({ participants: [DISABLED], capabilities: ALL_CAPS });
+        const wrapper = mountPanel();
+        await flushPromises();
+
+        await wrapper.get('[data-testid="participant-mention-p-human"]').trigger("click");
+        await wrapper.get('[data-testid="participant-remove-p-human"]').trigger("click");
+
+        expect(wrapper.emitted("mention")).toBeUndefined();
+        expect(removeParticipant).not.toHaveBeenCalled();
+        expect(wrapper.get('[data-testid="participant-row-p-human"]').exists()).toBe(true);
+    });
+});
