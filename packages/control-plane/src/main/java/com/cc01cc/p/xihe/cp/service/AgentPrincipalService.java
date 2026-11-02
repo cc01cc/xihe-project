@@ -116,13 +116,23 @@ public class AgentPrincipalService {
                                                       String requestedScope, String defaultModelProvider,
                                                       String defaultModelName, JsonNode allowedModels) {
         return createPrincipalFromTemplate(actorUserId, name, templateId, requestedScope,
-                defaultModelProvider, defaultModelName, allowedModels, null);
+                defaultModelProvider, defaultModelName, allowedModels, null,
+                AgentPrincipal.ORIGIN_USER, null);
+    }
+
+    /** PLAN-0625 M2: caller-supplied subscriptions; provenance still derives from the template. */
+    public AgentPrincipal createPrincipalFromTemplate(String actorUserId, String name, String templateId,
+                                                      String requestedScope, String defaultModelProvider,
+                                                      String defaultModelName, JsonNode allowedModels, JsonNode hooks) {
+        return createPrincipalFromTemplate(actorUserId, name, templateId, requestedScope,
+                defaultModelProvider, defaultModelName, allowedModels, hooks,
+                AgentPrincipal.ORIGIN_USER, null);
     }
 
     public AgentPrincipal createPrincipalFromTemplate(String actorUserId, String name, String templateId,
                                                       String requestedScope, String defaultModelProvider,
-                                                      String defaultModelName, JsonNode allowedModels, JsonNode hooks) {
-        JsonNode checkedHooks = HookAdvisorRegistry.validateSubscriptions(hooks);
+                                                      String defaultModelName, JsonNode allowedModels, JsonNode hooks,
+                                                      String origin, String presetId) {
         UUID actorId = parseUuid(actorUserId, "INVALID_ACTOR");
         requireUser(actorId);
         UUID workspaceContext = currentWorkspaceContext();
@@ -131,9 +141,20 @@ public class AgentPrincipalService {
         AgentTemplateService.ResolvedTemplate resolved = agentTemplateService.resolveForCreation(
                 actorUserId, null, templateId);
         String resolvedTemplateId = optionalText(resolved.snapshot(), "templateId");
+        // PLAN-0625 task-92 (D25-09): creating from the builtin preset template is what makes a row a
+        // preset guard (origin + preset_id), and the template's own hooks document is the DEFAULT
+        // subscription — the caller may override it per request.
+        boolean builtinPreset = "instance".equals(resolved.sourceLayer())
+                && AgentPrincipal.BUILTIN_GUARD_PRESET_TEMPLATE_ID.equals(resolvedTemplateId);
+        JsonNode templateHooks = resolved.snapshot().path("hooks");
+        JsonNode effectiveHooks = hooks != null ? hooks
+                : (templateHooks.isMissingNode() || templateHooks.isNull()) ? null : templateHooks.deepCopy();
         return createPrincipal(actorUserId, name, resolvedTemplateId, resolved.snapshot(), scope,
                 "PERSONAL".equals(scope) ? actorId : null,
-                defaultModelProvider, defaultModelName, allowedModels, hooks);
+                defaultModelProvider, defaultModelName, allowedModels, effectiveHooks,
+                builtinPreset ? AgentPrincipal.ORIGIN_SYSTEM_PRESET
+                        : (origin == null || origin.isBlank() ? AgentPrincipal.ORIGIN_USER : origin),
+                builtinPreset ? resolvedTemplateId : presetId);
     }
 
     /** Legacy signature kept for the pre-0622 callers; same semantics as an omitted scope. */
@@ -297,6 +318,21 @@ public class AgentPrincipalService {
                                           JsonNode templateSnapshot, String scope, UUID ownerUserId,
                                           String defaultModelProvider, String defaultModelName,
                                           JsonNode allowedModels, JsonNode hooks) {
+        return createPrincipal(actorUserId, name, templateId, templateSnapshot, scope, ownerUserId,
+                defaultModelProvider, defaultModelName, allowedModels, hooks,
+                AgentPrincipal.ORIGIN_USER, null);
+    }
+
+    /**
+     * PLAN-0625 task-92: the full write path carries template provenance — {@code origin} +
+     * {@code presetId} come from the resolved template (builtin preset ⇒ SYSTEM_PRESET + preset_id,
+     * everything else USER + null), matching the V95 CHECK contract.
+     */
+    public AgentPrincipal createPrincipal(String actorUserId, String name, String templateId,
+                                          JsonNode templateSnapshot, String scope, UUID ownerUserId,
+                                          String defaultModelProvider, String defaultModelName,
+                                          JsonNode allowedModels, JsonNode hooks,
+                                          String origin, String presetId) {
         JsonNode checkedHooks = HookAdvisorRegistry.validateSubscriptions(hooks);
         UUID actorId = parseUuid(actorUserId, "INVALID_ACTOR");
         if (!authService.userExists(actorId)) {
@@ -353,6 +389,10 @@ public class AgentPrincipalService {
         principal.setAllowedModels(modelIntent);
         // PLAN-0625 M2: the runtime subscription surface (templates stay the declaration source).
         principal.setHooks(checkedHooks);
+        // PLAN-0625 task-92: template provenance — the builtin preset template makes the row a
+        // preset guard (SYSTEM_PRESET + preset_id); everything else stays a USER principal.
+        principal.setOrigin(origin == null || origin.isBlank() ? AgentPrincipal.ORIGIN_USER : origin);
+        principal.setPresetId(presetId);
         AgentPrincipal savedPrincipal = agentPrincipalRepository.saveAndFlush(principal);
 
         // PLAN-0470 #22: the grant write itself is Policy-owned.
