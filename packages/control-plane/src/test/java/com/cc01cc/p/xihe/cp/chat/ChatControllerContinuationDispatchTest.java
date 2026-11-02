@@ -55,6 +55,7 @@ class ChatControllerContinuationDispatchTest {
                 sessionService,
                 Mockito.mock(com.cc01cc.p.xihe.cp.service.AgentPrincipalService.class),
                 Mockito.mock(com.cc01cc.p.xihe.cp.service.SessionParticipantService.class),
+                Mockito.mock(com.cc01cc.p.xihe.cp.service.ParticipantCapabilityService.class),
                 Mockito.mock(com.cc01cc.p.xihe.cp.files.ChatAttachmentService.class),
                 activeRunRegistry,
                 healthMonitor,
