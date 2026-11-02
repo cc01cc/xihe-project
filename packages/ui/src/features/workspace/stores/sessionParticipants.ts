@@ -42,9 +42,7 @@ export const useSessionParticipantsStore = defineStore("sessionParticipants", ()
      * （服务端会 403 `PARTICIPANT_DISABLED`，那是"根本不接受"，不该做成可点入口）。
      */
     const speakAsCandidates = computed(() =>
-        (participants.value ?? []).filter(
-            (item) => item.selfOwned === true && !item.disabledAt,
-        ),
+        (participants.value ?? []).filter((item) => item.selfOwned === true && !item.disabledAt),
     );
 
     /** `speakAs` 是**同一个响应**里的归约结果，与 `speakAsCandidates` 必须一致。 */
@@ -74,7 +72,8 @@ export const useSessionParticipantsStore = defineStore("sessionParticipants", ()
             capabilities.value = { ...FALLBACK_CAPABILITIES };
             // T3.7：403 是"没有权限"，与"空列表"和"加载失败"分开呈现。
             forbidden.value = cause instanceof ApiError && cause.problem.status === 403;
-            if (!forbidden.value) error.value = cause instanceof ApiError ? cause.message : String(cause);
+            if (!forbidden.value)
+                error.value = cause instanceof ApiError ? cause.message : String(cause);
         } finally {
             loading.value = false;
         }
