@@ -3,6 +3,7 @@ import { ref, computed, markRaw, nextTick, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { useSessionParticipantsStore } from "../../stores/sessionParticipants";
 import { useWorkspaceStore } from "../../stores/workspace";
+import { useChatStore } from "../stores/chat";
 import type { AttachmentFile, FileNode } from "../../../../types";
 import { toast } from "vue-sonner";
 import { Send, Square, LoaderCircle } from "@lucide/vue";
@@ -13,12 +14,13 @@ import VoiceInput from "../../../../components/multimodal/VoiceInput.vue";
 import ModelPopover from "./ModelPopover.vue";
 import InputToolbar, { type ToolbarAction } from "./InputToolbar.vue";
 import { uploadAttachments, validateAttachment } from "../../../../services/attachmentService";
-
-interface SlashCommand {
-    key: string;
-    /** i18n key of the one-line hint (never user-supplied text). */
-    descriptionKey: string;
-}
+import { api } from "../../../../composables/api";
+import { logger } from "../../../../lib/logger";
+import {
+    commandReasonKey,
+    useSessionCommands,
+    type SlashCommand,
+} from "../composables/useSessionCommands";
 
 /**
  * PLAN-0635 M2: the `@` menu carries **two groups in one listbox** (D35-01/03) — session
@@ -34,6 +36,8 @@ interface TriggerItem {
     label: string;
     hint: string;
     group: TriggerGroup;
+    /** Slash options only: server says the command may not run (kept visible, greyed out). */
+    disabled?: boolean;
 }
 
 /** A rendered group: a heading plus its options carrying their flat index in the menu. */
@@ -75,6 +79,8 @@ const { t } = useI18n();
 const participantsStore = useSessionParticipantsStore();
 /** PLAN-0635 M2: already-loaded workspace tree feeds `@文件/目录` candidates (no request here). */
 const workspaceStore = useWorkspaceStore();
+/** PLAN-0635 M3: `/export` and `/compact` are branch-scoped — read the selected branch here. */
+const chatStore = useChatStore();
 const speakAsId = ref("");
 
 const speakAsOptions = computed(() => participantsStore.speakAsCandidates);
@@ -125,16 +131,13 @@ const TRIGGER_MENU_ID = "chat-input-trigger-menu",
     isUploading = ref(false);
 
 /**
- * PLAN-0635 M1（D35-04）：M1 只保留**真的会生效**的本地命令。
+ * PLAN-0635 M3（D35-02）：菜单 = 服务端注册表 ∪ 本地表。
  *
- * `/search` 与 `/export` 已删除 —— 它们不是"未实现"，而是**假命令**：`/export` 的 action 返回一句
- * 固定英文串，被 `handleSendText` 当用户消息发给模型；`/search` 的 action 返回空串，什么都不做。
- * 保留假命令比没有命令更糟（用户以为在导出）。服务端命令面在 M3（`GET .../sessions/{id}/commands`）。
+ * 合并、按 name 去重、失败兜底都在 `useSessionCommands` 里（服务端优先、本地独有保留、请求失败
+ * 仍有本地表）。这里只消费结果，不再维护第二套命令列表 —— `/clear` 与 `/help` 是纯浏览器动作，
+ * 永远保留。
  */
-const slashCommands: SlashCommand[] = [
-    { key: "/clear", descriptionKey: "chat.input.commandClear" },
-    { key: "/help", descriptionKey: "chat.input.commandHelp" },
-];
+const { commands: slashCommands } = useSessionCommands(computed(() => props.sessionId));
 
 function isWordStart(value: string, index: number): boolean {
     return index === 0 || /\s/.test(value[index - 1] ?? "");
@@ -155,14 +158,23 @@ function findMentionAnchor(value: string, caret: number): number {
 
 const slashItems = computed<TriggerItem[]>(() => {
     const filter = triggerFilter.value.toLowerCase();
-    return slashCommands
-        .filter((cmd) => cmd.key.includes(filter))
-        .map((cmd) => ({
-            id: `xihe-slash-${cmd.key.slice(1)}`,
-            label: cmd.key,
-            hint: t(cmd.descriptionKey),
-            group: "command" as const,
-        }));
+    // One row per command name: aria ids and keyboard indices are derived from this list, so a
+    // duplicate name would make two options share an id. (The composable already merges; this is
+    // the menu's own guarantee.)
+    const byName = new Map<string, SlashCommand>();
+    for (const cmd of slashCommands.value) {
+        if (filter && !cmd.key.toLowerCase().includes(filter)) continue;
+        if (!byName.has(cmd.key)) byName.set(cmd.key, cmd);
+    }
+    return [...byName.values()].map((cmd) => ({
+        id: `xihe-slash-${cmd.key.slice(1)}`,
+        label: cmd.key,
+        hint: cmd.disabled
+            ? `${t(cmd.descriptionKey)} · ${t(commandReasonKey(cmd.reason))}`
+            : t(cmd.descriptionKey),
+        group: "command" as const,
+        disabled: cmd.disabled,
+    }));
 });
 
 /**
@@ -354,11 +366,12 @@ const toolbarActions = computed<ToolbarAction[]>(() => [
 
 async function handleSend() {
     const text = input.value.trim();
-    // A local command submitted as text (menu already closed, e.g. a trailing space) must still run
-    // locally — otherwise the literal "/help" would be emitted as the user's message.
-    const localCommand = slashCommands.find((cmd) => cmd.key === text);
-    if (localCommand) {
-        executeSlash(localCommand);
+    // A registered command submitted as text (menu already closed, e.g. a trailing space) must
+    // still run through the command path — otherwise the literal "/help" would be emitted as the
+    // user's message.
+    const command = slashCommands.value.find((cmd) => cmd.key === text);
+    if (command) {
+        await executeSlash(command);
         return;
     }
     if (sendDisabled.value || isUploading.value || props.queueSubmitting || props.queueActionBusy)
@@ -449,21 +462,114 @@ function closeTriggerMenu(): void {
 }
 
 /**
- * `/` is **local-only** in M1 — neither branch produces a chat send.
- *
- * Before PLAN-0635 `/help` and `/export` returned a hardcoded English sentence that was emitted as
- * the user's message, so "selecting a command" silently asked the model to export a conversation.
+ * `/export` filename: prefer the server's `Content-Disposition`, fall back to the stable session
+ * name. The server value is treated as untrusted text — only its basename is used.
  */
-function executeSlash(cmd: SlashCommand): void {
+function exportFileName(contentDisposition: string | null): string {
+    const fallback = `session-${props.sessionId}.md`;
+    const match = contentDisposition?.match(/filename\*?=(?:UTF-8''|")?([^";]+)"?/i);
+    const raw = match?.[1]?.trim();
+    if (!raw) return fallback;
+    let decoded = raw;
+    try {
+        decoded = decodeURIComponent(raw);
+    } catch (error) {
+        logger.debug("Content-Disposition filename is not percent-encoded; using it verbatim", {
+            error: error instanceof Error ? error.message : String(error),
+        });
+    }
+    const base = decoded.split(/[\\/]/).pop()?.trim();
+    return base || fallback;
+}
+
+function logCommandFailure(context: { command: string; sessionId: string }, error: unknown): void {
+    logger.warn("Slash command failed", {
+        ...context,
+        error: error instanceof Error ? error.message : String(error),
+    });
+}
+
+/**
+ * PLAN-0635 M3: `/export` = a real download. The registry decides whether the command may run; the
+ * artifact itself comes from `GET /sessions/{id}/export?branchId=` as `text/markdown` + attachment.
+ */
+async function downloadSessionExport(): Promise<void> {
+    const branchId = chatStore.getSelectedBranchId(props.sessionId);
+    if (!branchId) {
+        toast.error(t("chat.commands.branchUnavailable"));
+        return;
+    }
+    let objectUrl: string | null = null;
+    try {
+        const response = await api.exportSession(props.sessionId, branchId);
+        const blob = await response.blob();
+        objectUrl = URL.createObjectURL(blob);
+        const anchor = document.createElement("a");
+        anchor.href = objectUrl;
+        anchor.download = exportFileName(response.headers.get("content-disposition"));
+        anchor.rel = "noopener";
+        document.body.appendChild(anchor);
+        anchor.click();
+        anchor.remove();
+    } catch (error) {
+        logCommandFailure({ command: "/export", sessionId: props.sessionId }, error);
+        toast.error(t("chat.commands.failed"));
+    } finally {
+        // The click has already handed the blob to the browser; a leaked object URL would pin the
+        // whole session export in memory.
+        if (objectUrl) URL.revokeObjectURL(objectUrl);
+    }
+}
+
+/** PLAN-0635 M3: `/compact` reuses the existing manual-compaction endpoint (body needs `branchId`). */
+async function compactSessionContext(): Promise<void> {
+    const branchId = chatStore.getSelectedBranchId(props.sessionId);
+    if (!branchId) {
+        toast.error(t("chat.commands.branchUnavailable"));
+        return;
+    }
+    try {
+        await api.compactSession(props.sessionId, branchId);
+        toast.success(t("chat.commands.compacted"));
+    } catch (error) {
+        logCommandFailure({ command: "/compact", sessionId: props.sessionId }, error);
+        toast.error(t("chat.commands.failed"));
+    }
+}
+
+/**
+ * A slash command never becomes a chat message. Selecting one either runs a browser/server action
+ * or opens the help panel; an unavailable command is refused with its localized reason (it is still
+ * listed — hiding it would hide the capability itself).
+ */
+async function executeSlash(cmd: SlashCommand): Promise<void> {
     closeTriggerMenu();
     showHelpPanel.value = false;
+    input.value = "";
+    if (cmd.disabled) {
+        toast.error(t(commandReasonKey(cmd.reason)));
+        return;
+    }
     if (cmd.key === "/help") {
-        input.value = "";
         showHelpPanel.value = true;
         return;
     }
     // `/clear` = clear the draft (input + pending attachments) and send nothing.
-    clearDraft();
+    if (cmd.key === "/clear") {
+        clearDraft();
+        return;
+    }
+    if (cmd.key === "/export") {
+        await downloadSessionExport();
+        return;
+    }
+    if (cmd.key === "/compact") {
+        await compactSessionContext();
+        return;
+    }
+    // A command the registry knows but this UI does not implement yet: say so instead of doing
+    // nothing silently (or sending the literal text to the model).
+    toast.error(t("chat.commands.unknown"));
 }
 
 /**
@@ -493,8 +599,8 @@ function selectActiveItem(): void {
     const item = activeItems.value[triggerIndex.value];
     if (!item) return;
     if (triggerKind.value === "slash") {
-        const command = slashCommands.find((cmd) => cmd.key === item.label);
-        if (command) executeSlash(command);
+        const command = slashCommands.value.find((cmd) => cmd.key === item.label);
+        if (command) void executeSlash(command);
         return;
     }
     insertMentionToken(item.label.slice(1));
@@ -750,7 +856,8 @@ defineExpose({ clearDraft, insertMention });
 
             <div class="relative">
                 <!--
-                    `/help` renders the command list locally (M1: no server command face yet).
+                    `/help` renders the merged registry locally (server rows + local-only commands).
+                    Unavailable rows stay visible, greyed, with their localized reason.
                     role=status so assistive tech announces it without stealing focus.
                 -->
                 <div
@@ -761,11 +868,27 @@ defineExpose({ clearDraft, insertMention });
                 >
                     <p class="mb-1 text-xs font-medium">{{ t("chat.input.helpTitle") }}</p>
                     <ul class="space-y-1">
-                        <li v-for="cmd in slashCommands" :key="cmd.key" class="text-xs">
-                            <span class="font-medium">{{ cmd.key }}</span>
-                            <span class="ml-2 text-muted-foreground">{{
-                                t(cmd.descriptionKey)
+                        <li
+                            v-for="cmd in slashCommands"
+                            :key="cmd.key"
+                            class="text-xs"
+                            :data-testid="`slash-command-${cmd.key.slice(1)}`"
+                        >
+                            <span class="font-medium" :class="cmd.disabled ? 'opacity-60' : ''">{{
+                                cmd.key
                             }}</span>
+                            <span
+                                class="ml-2 text-muted-foreground"
+                                :class="cmd.disabled ? 'opacity-60' : ''"
+                                >{{ t(cmd.descriptionKey) }}</span
+                            >
+                            <span
+                                v-if="cmd.disabled"
+                                class="ml-2 text-destructive/80"
+                                :data-testid="`slash-command-reason-${cmd.key.slice(1)}`"
+                            >
+                                {{ t(commandReasonKey(cmd.reason)) }}
+                            </span>
                         </li>
                     </ul>
                     <p class="mt-2 text-xs text-muted-foreground">{{ t("chat.input.helpHint") }}</p>
@@ -801,8 +924,12 @@ defineExpose({ clearDraft, insertMention });
                             :key="item.id"
                             role="option"
                             :aria-selected="item.flatIndex === triggerIndex"
+                            :aria-disabled="item.disabled ? 'true' : undefined"
                             class="flex w-full items-center gap-2 px-3 py-2 text-left text-sm transition-colors hover:bg-accent"
-                            :class="item.flatIndex === triggerIndex ? 'bg-accent' : ''"
+                            :class="[
+                                item.flatIndex === triggerIndex ? 'bg-accent' : '',
+                                item.disabled ? 'opacity-50' : '',
+                            ]"
                             @mousedown.prevent
                             @click="pickItem(item.flatIndex)"
                         >

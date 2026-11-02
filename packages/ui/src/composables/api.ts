@@ -270,6 +270,31 @@ export interface ApiSessionBranch {
     createdAt: string;
 }
 
+/**
+ * PLAN-0635 M3: one row of `GET /api/v1/sessions/{sessionId}/commands`.
+ *
+ * `reason` is deliberately a plain `string`: availability is decided by CP and a new reason value
+ * must not break an older UI. The known values are mapped to localized copy (with a fallback key)
+ * in `features/workspace/chat/composables/useSessionCommands.ts`.
+ */
+export interface SessionCommandView {
+    name: string;
+    source: "builtin";
+    available: boolean;
+    reason: string | null;
+}
+
+export interface SessionCommandListResponse {
+    commands: SessionCommandView[];
+}
+
+/** PLAN-0635 M3: `POST /sessions/{sessionId}/compact` response (manual compaction event). */
+export interface SessionCompactResponse {
+    sequence: number;
+    eventType: string;
+    createdAt: string;
+}
+
 export interface ApiFollowUpAttachment {
     id: string;
     name: string;
@@ -2387,6 +2412,42 @@ export const api = {
     getSessionDerivedState(sessionId: string): Promise<SessionDerivedStateResponse> {
         return request<SessionDerivedStateResponse>(
             `/sessions/${encodeURIComponent(sessionId)}/derived-state`,
+        );
+    },
+    /**
+     * PLAN-0635 M3: server-owned command registry. The server decides availability
+     * (`available` + `reason`); the UI only renders it and merges the local table.
+     */
+    async listSessionCommands(
+        sessionId: string,
+        options: { signal?: AbortSignal } = {},
+    ): Promise<SessionCommandListResponse> {
+        const payload = await request<unknown>(
+            `/sessions/${encodeURIComponent(sessionId)}/commands`,
+            { signal: options.signal },
+        );
+        const root = asRecord(payload);
+        if (!root || !Array.isArray(root.commands)) {
+            throw new Error(
+                "listSessionCommands: unexpected payload (expected an object with a commands array)",
+            );
+        }
+        return { commands: root.commands as SessionCommandView[] };
+    },
+    /**
+     * PLAN-0635 M3: `/export` artifact (`text/markdown` + `Content-Disposition`). Returns the raw
+     * response because the caller needs both the blob body and the filename header.
+     */
+    exportSession(sessionId: string, branchId: string): Promise<Response> {
+        return apiRaw(
+            `/sessions/${encodeURIComponent(sessionId)}/export?branchId=${encodeURIComponent(branchId)}`,
+        );
+    },
+    /** PLAN-0635 M3: `/compact` reuses the existing manual-compaction endpoint (branch-scoped). */
+    compactSession(sessionId: string, branchId: string): Promise<SessionCompactResponse> {
+        return request<SessionCompactResponse>(
+            `/sessions/${encodeURIComponent(sessionId)}/compact`,
+            { method: "POST", body: JSON.stringify({ branchId }) },
         );
     },
     /**

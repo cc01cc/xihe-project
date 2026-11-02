@@ -709,6 +709,25 @@ const messages = {
                 helpTitle: "可用命令",
                 helpHint: "↑↓ 选择，Enter 插入，Esc 关闭",
             },
+            // PLAN-0635 M3: 服务端命令注册表的文案（可用性原因 + 服务端独有命令的说明）。
+            commands: {
+                description: {
+                    export: "导出当前会话为 Markdown 文件",
+                    compact: "压缩上下文，保留摘要",
+                    unknown: "服务端注册的命令（当前界面尚未实现）",
+                },
+                reason: {
+                    approvalRequired: "需要审批后才能使用",
+                    denied: "策略已拒绝该命令",
+                    policyUnavailable: "策略暂不可用，无法确认权限",
+                    branchLocked: "当前有运行中的对话，请稍后再试",
+                    unknown: "该命令当前不可用",
+                },
+                branchUnavailable: "当前会话还没有可用分支，命令未执行",
+                compacted: "上下文已压缩",
+                failed: "命令执行失败，请稍后再试",
+                unknown: "该命令尚未在当前界面实现",
+            },
             branchSelectorLabel: "对话分支",
             branchMainPath: "主路径",
             branchPathOption: "分支",
@@ -2824,6 +2843,25 @@ const messages = {
                 commandHelp: "Show available commands",
                 helpTitle: "Available commands",
                 helpHint: "↑↓ to select, Enter to insert, Esc to close",
+            },
+            // PLAN-0635 M3: server command registry copy (availability reasons + server-only hints).
+            commands: {
+                description: {
+                    export: "Export this conversation as a Markdown file",
+                    compact: "Compact the context and keep a summary",
+                    unknown: "Command registered by the server (not implemented in this UI yet)",
+                },
+                reason: {
+                    approvalRequired: "Approval is required before this command can run",
+                    denied: "Policy denied this command",
+                    policyUnavailable: "Policy is unavailable, so permission cannot be confirmed",
+                    branchLocked: "A chat run is active; try again when it finishes",
+                    unknown: "This command is currently unavailable",
+                },
+                branchUnavailable: "This session has no usable branch yet; the command was not run",
+                compacted: "Context compacted",
+                failed: "Command failed; please try again",
+                unknown: "This command is not implemented in the current UI yet",
             },
             branchSelectorLabel: "Conversation branch",
             branchMainPath: "Main path",
