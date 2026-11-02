@@ -29,7 +29,7 @@ MCP（Model Context Protocol）请求从 Agent 发出的到工具执行的完整
 2. **Runtime Gateway** — per-workspace 分发
 3. **stdio 会话（PLAN-0347）** — 宿主 `exec attach` 直连容器内 MCP server 进程（无容器内 HTTP bridge；会话 = 状态机 + 预算 + FIFO 单飞）
 
-> **协议版本说明**：当前采用 MCP `Protocol-Version: 2026-07-28`（rmcp 3.1.4，SEP-2567），Runtime 侧按该协议全程**无会话（stateless）**。因此 CP 转发 `tools/list` / `tools/call` 到 Runtime 时必须携带 `Mcp-Method` 与 `Mcp-Name` HTTP 头（见提交 `a9923e3`）；缺失会导致系统工具列表为空、`UNKNOWN_TOOL`。CP 不签发也不接受 `mcp-session-id`：入站该头一律 403 `MCP_SESSION_INVALID`（PLAN-0537），二者不冲突。
+> **协议版本说明**：当前采用 MCP `Protocol-Version: 2026-07-28`（rmcp 3.7.0，SEP-2567），Runtime 侧按该协议全程**无会话（stateless）**。因此 CP 转发 `tools/list` / `tools/call` 到 Runtime 时必须携带 `Mcp-Method` 与 `Mcp-Name` HTTP 头（见提交 `a9923e3`）；缺失会导致系统工具列表为空、`UNKNOWN_TOOL`。CP 不签发也不接受 `mcp-session-id`：入站该头一律 403 `MCP_SESSION_INVALID`（PLAN-0537），二者不冲突。
 
 ## 2. 架构图
 

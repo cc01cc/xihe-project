@@ -16,12 +16,12 @@ name = "xihe-stdio-fixture"
 path = "src/stdio_fixture.rs"
 
 [dependencies]
-rmcp = { version = "3.1.4", features = ["server", "transport-streamable-http-server", "schemars", "request-state"] }
-tokio = { version = "1.52.3", features = ["full"] }
-tokio-util = "0.7.18"
+rmcp = { version = "3.7.0", features = ["server", "transport-streamable-http-server", "schemars", "request-state"] }
+tokio = { version = "1.54.1", features = ["full"] }
+tokio-util = "0.7.20"
 axum = "0.8.9"
-serde = { version = "1.0.228", features = ["derive"] }
-serde_json = "1.0.150"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json", "registry"] }
 tracing-appender = "0.2.5"
@@ -30,7 +30,7 @@ anyhow = "1.0.102"
 # === NEW: File system & tools ===
 ignore = "0.4.26"
 walkdir = "2.5.0"
-globset = "0.4.18"
+globset = "0.4.21"
 tempfile = "3.27.0"
 
 # === NEW: Async & streaming ===
@@ -38,17 +38,17 @@ tokio-stream = "0.1.18"
 tower-http = { version = "0.6.11", features = ["cors"] }
 
 # === NEW: Error handling ===
-thiserror = "2.0.18"
+thiserror = "2.0.21"
 
 # === NEW: ID & time ===
-uuid = { version = "1.23.3", features = ["v4", "v7"] }
+uuid = { version = "1.29.0", features = ["v4", "v7"] }
 chrono = "0.4.45"
 
 # === NEW: Regex for grep ===
 regex = "1.12.4"
 
 # === NEW: File watching ===
-notify = "8.2.0"
+notify = "8.2.1"
 
 # === NEW: Dotenv loading ===
 dotenvy = "0.15"
