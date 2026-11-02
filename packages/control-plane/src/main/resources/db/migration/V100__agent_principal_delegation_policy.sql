@@ -1,0 +1,26 @@
+-- PLAN-0630 M1: the delegation budget policy of an agent subject.
+--
+-- Contract sources (frozen): PLAN-0630 README frozen ruling #2 — `limits = {maxCount, maxDepth}`,
+-- effective in the main session and user-tunable; a sub-agent's own limits are inert while it acts as
+-- a subagent (they only decrement the ROOT session's budget, see DelegationBudgetService).
+--
+-- Why a COLUMN on the subject and not a config key: D23-20 precedent (`agent_principals.context_policy`,
+-- V92:30). The budget is a property of the subject, so the instance/user/workspace config layering must
+-- stay untouched. Instance-level safety rails are the `agent-runtime` ceiling keys, not a second copy of
+-- the policy.
+--
+-- Shape (validated by DelegationPolicyValidator, NOT by the database — V92/V96 precedent keeps principal
+-- JSONB documents unchecked at the DB layer so there is exactly ONE parser):
+--   {"maxCount": <int >= 1>, "maxDepth": <int >= 1>}   |   NULL = code defaults (8 / 3)
+--
+-- Deliberately NOT here: `sessions.parent_session_id` / `chat_runs.parent_run_id` / `child_session_id`.
+-- The delegation edge already exists as `sessions.{kind, spawned_from_session_id, spawned_from_run_id,
+-- spawned_at}` + `chat_runs.{waiting_on_run_id, waiting_tool_call_id}` (V37/V40). Four synonym columns
+-- would be a second source of truth (D30-01). This migration adds exactly ONE column and no index: the
+-- read path walks the existing partial index `idx_sessions_spawned_from_session` (V37:12-14).
+--
+-- Reversible: ALTER TABLE agent_principals DROP COLUMN delegation_policy;
+-- No backfill: NULL means "code defaults"; XH has no deployment artifact, so existing subjects are not
+-- rewritten (PLAN-0625 D25-19 precedent).
+
+ALTER TABLE agent_principals ADD COLUMN delegation_policy JSONB;
