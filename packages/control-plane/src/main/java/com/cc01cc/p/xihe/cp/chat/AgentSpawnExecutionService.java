@@ -1,5 +1,6 @@
 package com.cc01cc.p.xihe.cp.chat;
 
+import com.cc01cc.p.xihe.cp.audit.AuditLogger;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import org.springframework.context.ApplicationEventPublisher;
 import org.slf4j.Logger;
@@ -17,11 +18,14 @@ public class AgentSpawnExecutionService {
 
     private final ChatSubmissionService submissions;
     private final ApplicationEventPublisher eventPublisher;
+    private final AuditLogger auditLogger;
 
     public AgentSpawnExecutionService(ChatSubmissionService submissions,
-                                      ApplicationEventPublisher eventPublisher) {
+                                      ApplicationEventPublisher eventPublisher,
+                                      AuditLogger auditLogger) {
         this.submissions = submissions;
         this.eventPublisher = eventPublisher;
+        this.auditLogger = auditLogger;
     }
 
     public ChatSubmissionService.SpawnInvocation prepareMcpInvocation(
@@ -48,8 +52,21 @@ public class AgentSpawnExecutionService {
     public ChatSubmissionService.SpawnResult execute(
             ChatSubmissionService.SpawnInvocation invocation,
             ChatSubmissionService.SpawnAuthorization authorization) {
-        ChatSubmissionService.SpawnResult result = submissions.createSpawnFromParent(
-                invocation.parentRunId(), invocation.toolCallId(), authorization);
+        ChatSubmissionService.SpawnResult result;
+        try {
+            result = submissions.createSpawnFromParent(
+                    invocation.parentRunId(), invocation.toolCallId(), authorization);
+        } catch (DelegationRefusedException refused) {
+            // PLAN-0630 M1 (INV-7): the refusal is thrown inside createSpawnFromParent's transaction, so
+            // an audit row written there would roll back with it. This catch is the first point outside
+            // that transaction — both spawn entries (the internal HTTP route and the CP-owned MCP tool)
+            // pass through here, so this is the single place the refused attempt becomes durable.
+            // The detail carries no prompt and no tool arguments.
+            auditLogger.recordDurableChange(invocation.userId(), invocation.workspaceId(),
+                    "agent_spawn_refused", "chat_session", invocation.parentSessionId(),
+                    refused.auditDetail());
+            throw refused;
+        }
         try {
             eventPublisher.publishEvent(new SpawnRunDispatchRequestedEvent(
                     invocation.parentRunId(), result.runId()));

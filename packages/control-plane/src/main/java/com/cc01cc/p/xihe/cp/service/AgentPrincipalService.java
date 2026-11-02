@@ -10,6 +10,7 @@ import com.cc01cc.p.xihe.cp.entity.WorkspaceAgentId;
 import com.cc01cc.p.xihe.cp.policy.AuthzContext;
 import com.cc01cc.p.xihe.cp.policy.CapabilityAuthorities;
 import com.cc01cc.p.xihe.cp.policy.ContextPolicyValidator;
+import com.cc01cc.p.xihe.cp.policy.DelegationPolicyValidator;
 import com.cc01cc.p.xihe.cp.policy.PolicyRequest;
 import com.cc01cc.p.xihe.cp.policy.ToolFaceRegistry;
 import com.cc01cc.p.xihe.cp.policy.ToolShape;
@@ -873,7 +874,7 @@ public class AgentPrincipalService {
     @Transactional
     public JsonNode updatePrincipalHooks(String actorUserId, UUID principalId, JsonNode hooks) {
         return applyPrincipalSettings(actorUserId, principalId,
-                new PrincipalSettingsPatch(hooks, true, null, false)).hooks();
+                new PrincipalSettingsPatch(hooks, true, null, false, null, false)).hooks();
     }
 
     /**
@@ -906,6 +907,8 @@ public class AgentPrincipalService {
                 ? HookAdvisorRegistry.validateSubscriptions(patch.hooks()) : null;
         JsonNode checkedPolicy = patch.contextPolicyPresent()
                 ? ContextPolicyValidator.validate(patch.contextPolicy()) : null;
+        JsonNode checkedDelegation = patch.delegationPolicyPresent()
+                ? DelegationPolicyValidator.validate(patch.delegationPolicy()) : null;
         AgentPrincipal principal = agentPrincipalRepository.findById(principalId)
                 .orElseThrow(() -> new CpApiException(HttpStatus.NOT_FOUND,
                         "AGENT_PRINCIPAL_NOT_FOUND", "Agent principal not found"));
@@ -915,12 +918,18 @@ public class AgentPrincipalService {
         if (patch.contextPolicyPresent()) {
             requireMutableContextPolicy(principal);
         }
+        if (patch.delegationPolicyPresent()) {
+            requireMutableDelegationPolicy(principal);
+        }
         requireDisableAuthority(actorId, principal);
         if (patch.hooksPresent()) {
             principal.setHooks(checkedHooks);
         }
         if (patch.contextPolicyPresent()) {
             principal.setContextPolicy(checkedPolicy);
+        }
+        if (patch.delegationPolicyPresent()) {
+            principal.setDelegationPolicy(checkedDelegation);
         }
         agentPrincipalRepository.saveAndFlush(principal);
         if (patch.hooksPresent()) {
@@ -937,7 +946,15 @@ public class AgentPrincipalService {
                     "agent_principal_context_policy_updated", "agent_principal", principalId.toString(),
                     detail.toString());
         }
-        return new PrincipalSettings(principal.getHooks(), principal.getContextPolicy());
+        if (patch.delegationPolicyPresent()) {
+            ObjectNode detail = objectMapper.createObjectNode();
+            detail.put("delegationPolicy", checkedDelegation == null ? "null" : checkedDelegation.toString());
+            auditLogger.recordDurableChange(actorId.toString(), null,
+                    "agent_principal_delegation_policy_updated", "agent_principal", principalId.toString(),
+                    detail.toString());
+        }
+        return new PrincipalSettings(principal.getHooks(), principal.getContextPolicy(),
+                principal.getDelegationPolicy());
     }
 
     /**
@@ -945,10 +962,11 @@ public class AgentPrincipalService {
      * "clear the column" while an absent one means "leave it alone" — {@code JsonNode} alone cannot say both.
      */
     public record PrincipalSettingsPatch(JsonNode hooks, boolean hooksPresent,
-                                         JsonNode contextPolicy, boolean contextPolicyPresent) {}
+                                         JsonNode contextPolicy, boolean contextPolicyPresent,
+                                         JsonNode delegationPolicy, boolean delegationPolicyPresent) {}
 
-    /** The subject-level documents after a write, both read back from the persisted row. */
-    public record PrincipalSettings(JsonNode hooks, JsonNode contextPolicy) {}
+    /** The subject-level documents after a write, all read back from the persisted row. */
+    public record PrincipalSettings(JsonNode hooks, JsonNode contextPolicy, JsonNode delegationPolicy) {}
 
     /** D25-14: a preset guard's hook subscriptions are fixed at the write side, like its cap. */
     private void requireMutableHooks(AgentPrincipal principal) {
@@ -979,6 +997,37 @@ public class AgentPrincipalService {
         }
     }
 
+    /**
+     * PLAN-0630 M1: a preset guard's delegation budget is preset-owned too.
+     *
+     * <p>Ground: the same D25-03 "a guard is a system asset" reasoning as its cap / hooks / memory
+     * policy. A delegation budget decides how many further agents the subject may create, so letting the
+     * API rewrite it would let anyone holding the token fan out from a guard identity. The code is its
+     * own value ({@code GUARD_DELEGATION_POLICY_IMMUTABLE}) rather than a reuse of the two siblings'
+     * codes, for the D25-14 reason: the three refusals say different things.</p>
+     */
+    private void requireMutableDelegationPolicy(AgentPrincipal principal) {
+        if (AgentPrincipal.ORIGIN_SYSTEM_PRESET.equals(principal.getOrigin())) {
+            throw new CpApiException(HttpStatus.FORBIDDEN, "GUARD_DELEGATION_POLICY_IMMUTABLE",
+                    "A preset guard's delegation budget is fixed; a guard is a system asset, "
+                            + "so its delegation policy is not a user setting");
+        }
+    }
+
+    /**
+     * PLAN-0630 M1: the subject's delegation budget document (raw, unvalidated).
+     *
+     * <p>Only the <b>root</b> subject of a delegation tree is ever read (frozen ruling #2: a sub-agent's
+     * own limits are inert while it acts as a subagent). Shape validation belongs to the caller's single
+     * parser — {@code policy.DelegationPolicyValidator} — so this stays a pure read.</p>
+     */
+    @org.springframework.transaction.annotation.Transactional(readOnly = true)
+    public JsonNode readDelegationPolicy(String principalIdValue) {
+        return agentPrincipalRepository.findById(parseUuid(principalIdValue, "INVALID_AGENT_PRINCIPAL"))
+                .map(AgentPrincipal::getDelegationPolicy)
+                .orElseThrow(() -> new CpApiException(HttpStatus.NOT_FOUND,
+                        "AGENT_PRINCIPAL_NOT_FOUND", "Agent principal not found"));
+    }
     /** D25-02/D25-08: preset guards (and any future hook-only preset) never get their cap rewritten. */
     private void requireMutableCap(AgentPrincipal principal) {
         if (com.cc01cc.p.xihe.cp.entity.AgentPrincipal.ORIGIN_SYSTEM_PRESET.equals(principal.getOrigin())) {

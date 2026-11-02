@@ -65,6 +65,7 @@ public class ChatSubmissionService {
     private final com.cc01cc.p.xihe.cp.service.BranchPathService branchPathService;
     private final EntityManager entityManager;
     private final ApprovalService approvalService;
+    private final DelegationBudgetService delegationBudgetService;
     private final AuditLogger auditLogger;
     // PLAN-0470 (decision #16): cross-domain admission reads go through the
     // MCP/Context owner services inside this transaction — no direct repos.
@@ -94,7 +95,8 @@ public class ChatSubmissionService {
                                  com.cc01cc.p.xihe.cp.files.ChatAttachmentService chatAttachmentService,
                                  ObjectProvider<WakeChainService> wakeChainService,
                                  ToolCallSnapshotService toolCallSnapshotService,
-                                 com.cc01cc.p.xihe.cp.service.SessionParticipantService sessionParticipantService) {
+                                 com.cc01cc.p.xihe.cp.service.SessionParticipantService sessionParticipantService,
+                                 DelegationBudgetService delegationBudgetService) {
         this.chatRunRepository = chatRunRepository;
         this.inboxRepository = inboxRepository;
         this.messageRepository = messageRepository;
@@ -108,6 +110,7 @@ public class ChatSubmissionService {
         this.branchPathService = branchPathService;
         this.entityManager = entityManager;
         this.approvalService = approvalService;
+        this.delegationBudgetService = delegationBudgetService;
         this.auditLogger = auditLogger;
         this.mcpInvocationService = mcpInvocationService;
         this.eventStoreService = eventStoreService;
@@ -376,6 +379,16 @@ public class ChatSubmissionService {
         if (parentSession.getAgentPrincipalId() == null || parentSession.getAgentPermissionsSnapshot() == null) {
             throw agentSessionForbidden();
         }
+
+        // PLAN-0630 M1: the delegation budget gate. Position is load-bearing (INV-8 + INV-1) and must
+        // stay between the idempotency replay above and consumeApprovedGrant below:
+        //   - BEFORE the replay: a retry of the SAME tool call would be refused by the budget, because
+        //     the child it already created is the slot that makes the tree look full — the idempotency
+        //     contract ("same toolCallId replays the existing run") would break.
+        //   - AFTER consumeApprovedGrant: a refusal would burn the user's one-shot approval.
+        // It also has to sit inside the parent Session+Run row locks (lockSpawnParent above), otherwise
+        // two concurrent spawns both read a snapshot without each other and overshoot.
+        delegationBudgetService.requireWithinBudget(parentSession, parentRun, toolCallId);
 
         JsonNode childPermissions = agentPrincipalService.deriveSpawnChildCap(
                 parentSession.getAgentPermissionsSnapshot(), parentSession.getAgentPrincipalId(),

@@ -41,7 +41,9 @@ public class AgentPrincipalController {
      * PLAN-0625 D25-14 + PLAN-0629 D29-21: the PATCH body carries the subject-level documents. Both
      * keys are optional, at least one is required, and any other key is a 400 (additionalProperties:false).
      */
-    private static final java.util.Set<String> PATCH_BODY_KEYS = java.util.Set.of("hooks", "contextPolicy");
+    private static final java.util.Set<String> PATCH_BODY_KEYS = java.util.Set.of("hooks", "contextPolicy",
+            // PLAN-0630 M1: the delegation budget rides the same PATCH (subject column, D23-20).
+            "delegationPolicy");
 
     private Map<String, Object> toPrincipalView(AgentPrincipalService.AgentPrincipalView view) {
         Map<String, Object> result = new LinkedHashMap<>();
@@ -145,7 +147,7 @@ public class AgentPrincipalController {
                 || body.keySet().stream().anyMatch(key -> !PATCH_BODY_KEYS.contains(key))) {
             return ProblemDetailsHandler.problemResponse(HttpStatus.BAD_REQUEST,
                     "INVALID_REQUEST",
-                    "Body must contain hooks and/or contextPolicy (object or null)");
+                    "Body must contain hooks, contextPolicy and/or delegationPolicy (object or null)");
         }
         String actorUserId = TenantContext.getUserId();
         if (actorUserId == null || actorUserId.isBlank()) {
@@ -158,7 +160,10 @@ public class AgentPrincipalController {
                     body.containsKey("hooks"),
                     body.get("contextPolicy") == null
                             ? null : objectMapper.valueToTree(body.get("contextPolicy")),
-                    body.containsKey("contextPolicy"));
+                    body.containsKey("contextPolicy"),
+                    body.get("delegationPolicy") == null
+                            ? null : objectMapper.valueToTree(body.get("delegationPolicy")),
+                    body.containsKey("delegationPolicy"));
             AgentPrincipalService.PrincipalSettings stored = agentPrincipalService
                     .applyPrincipalSettings(actorUserId, parseUuid(principalId), patch);
             Map<String, Object> response = new LinkedHashMap<>();
@@ -166,6 +171,8 @@ public class AgentPrincipalController {
             // Echo the persisted documents (null = cleared), never the caller's raw input.
             response.put("hooks", JacksonNodeExit.toDocument(objectMapper, stored.hooks()));
             response.put("contextPolicy", JacksonNodeExit.toDocument(objectMapper, stored.contextPolicy()));
+            response.put("delegationPolicy",
+                    JacksonNodeExit.toDocument(objectMapper, stored.delegationPolicy()));
             return ResponseEntity.ok(response);
         } catch (CpApiException e) {
             return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());

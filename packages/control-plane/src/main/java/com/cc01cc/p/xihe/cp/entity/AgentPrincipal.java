@@ -84,6 +84,19 @@ public class AgentPrincipal {
     @Column(name = "context_policy", columnDefinition = "jsonb")
     private JsonNode contextPolicy;
 
+    /**
+     * PLAN-0630 M1: the subject's delegation budget {@code {"maxCount":8,"maxDepth":3}} (V100).
+     *
+     * <p>Same shape decision as {@link #contextPolicy} (D23-20): the budget is a property of the
+     * subject, so it is a column here rather than a key in a config domain. {@code null} = code
+     * defaults, and only the <b>root</b> subject's document is read (a sub-agent's own limits are inert
+     * while it acts as a subagent). Shape validation has a single gate:
+     * {@code policy.DelegationPolicyValidator}.</p>
+     */
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "delegation_policy", columnDefinition = "jsonb")
+    private JsonNode delegationPolicy;
+
     /** Only ever set for {@code PERSONAL}; the DB CHECK constraint keeps the two in sync. */
     @Column(name = "owner_user_id", columnDefinition = "uuid")
     private UUID ownerUserId;
@@ -142,6 +155,8 @@ public class AgentPrincipal {
     public void setHooks(com.fasterxml.jackson.databind.JsonNode hooks) { this.hooks = hooks; }
     public JsonNode getContextPolicy() { return contextPolicy; }
     public void setContextPolicy(JsonNode contextPolicy) { this.contextPolicy = contextPolicy; }
+    public JsonNode getDelegationPolicy() { return delegationPolicy; }
+    public void setDelegationPolicy(JsonNode delegationPolicy) { this.delegationPolicy = delegationPolicy; }
     public void setScope(String scope) { this.scope = scope; }
 
     public UUID getOwnerUserId() { return ownerUserId; }
