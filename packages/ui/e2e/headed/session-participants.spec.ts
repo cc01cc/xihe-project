@@ -7,7 +7,7 @@ import {
     provisionWorkspaceAgentPrincipal,
     createSessionWithPrincipal,
 } from "../real/helpers/agent-principal";
-import { ensureWorkspace } from "../real/helpers/workspace";
+import { createDirectAttachWorkspace } from "../real/helpers/workspace";
 import { CP_URL } from "../real/helpers/journey";
 
 const RUN_ID = process.env.XIHE_E2E_RUN_ID || `headed-0623-${Date.now()}`;
@@ -299,20 +299,34 @@ test.describe("PLAN-0623 有头走查：会话参与者 dock tab", () => {
     }) => {
         await loginViaForm(page, GOLDPATH_EMAIL, GOLDPATH_PASSWORD);
         const token = await tokenOf(page);
-        workspaceId = await ensureWorkspace(request, token);
+        // 用例**自建专属工作区**：不复用 workspaces[0]（共享栈上那里可能有别人留下的工作区
+        // 和活动会话，会让"无会话空态"的前提不成立 —— 2026-11-02 真机实测过）。
+        const before = await request.get(`${CP_URL}/api/v1/workspaces`, {
+            headers: { Authorization: `Bearer ${token}` },
+        });
+        expect(before.status(), await before.text()).toBe(200);
+        const beforeIds = ((await before.json()) as Array<{ id: string }>).map((item) => item.id);
 
-        // 用例自造状态：先把 agent 与环境准备好（S2 需要 agnet 行）。
-        agentParticipantId = await provisionWorkspaceAgentPrincipal(
-            request,
-            {
-                accessToken: token,
-                workspaceId,
-            },
-            { name: `Headed Participants ${randomUUID().slice(0, 8)}`, actions: ["read"] },
-        );
+        workspaceId = await createDirectAttachWorkspace(request, token);
+        // 可验证的"确实自造"：新 id 不在创建前的列表里（声明与实现之间要有断言）。
+        expect(
+            beforeIds,
+            "the spec must run in a workspace it created, not a leftover one",
+        ).not.toContain(workspaceId);
 
         await page.goto(`/workspace/${workspaceId}`, { waitUntil: "load" });
         await expect(page.getByTestId("workspace-toolbar-members")).toBeVisible({ timeout: 45000 });
+
+        // 前提：自建工作区里**没有会话**（否则面板走"有会话"分支，无会话空态断言不成立）。
+        // `workspace-create-session` 只在空态渲染（WorkspaceView.vue 的 v-else 分支）。
+        await expect(
+            page.getByTestId("workspace-create-session"),
+            "a freshly created workspace must start with no open session",
+        ).toBeVisible({ timeout: 45000 });
+        expect(
+            await page.getByTestId("chat-input").count(),
+            "a freshly created workspace must not render a chat composer",
+        ).toBe(0);
 
         // 默认未选中：持久化里没有 members（SSOT = xihe-layout-ws:<id>.dockTabs）
         const stored = await page.evaluate(
@@ -347,6 +361,14 @@ test.describe("PLAN-0623 有头走查：会话参与者 dock tab", () => {
     test("S2@host 行渲染：AGENT 有来源+模型段，HUMAN 无模型段", async ({ page, request }) => {
         expect(workspaceId, "S2 depends on S1").not.toBe("");
         const token = await tokenOf(page);
+
+        // 专属工作区里现建 agent principal（S1 只验证 dock tab 与无会话空态）。
+        agentParticipantId = await provisionWorkspaceAgentPrincipal(
+            request,
+            { accessToken: token, workspaceId },
+            { name: `Headed Participants ${randomUUID().slice(0, 8)}`, actions: ["read"] },
+        );
+
         sessionId = await createSessionWithPrincipal(
             request,
             { accessToken: token, workspaceId },
@@ -355,6 +377,16 @@ test.describe("PLAN-0623 有头走查：会话参与者 dock tab", () => {
                 title: "Participants walkthrough",
             },
         );
+
+        // 归属断言：会话必须落在本次自建的工作区里，而不是别处。
+        const createdSession = await request.get(`${CP_URL}/api/v1/sessions/${sessionId}`, {
+            headers: { Authorization: `Bearer ${token}`, "X-Workspace-Id": workspaceId },
+        });
+        expect(createdSession.status(), await createdSession.text()).toBe(200);
+        expect(
+            ((await createdSession.json()) as { workspaceId?: string }).workspaceId,
+            "the session must live in the workspace this run created",
+        ).toBe(workspaceId);
 
         // CP 不变式（D23-13）：会话创建事务内必须播种**恰好一行** role=PRIMARY。
         // 这条断言先行，是为了让"CP 少播种 PRIMARY"在**这里**失败并说明原因，
