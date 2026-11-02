@@ -26,6 +26,8 @@ mise run dev:host
 mise run xihe -- --help
 ```
 
+**Requirements (there is no installer yet):** a Windows host with mise for the pinned toolchain, plus Docker — Docker runs **only PostgreSQL**; the Control Plane, Agent, Runtime, and UI run as four native processes started by mise. Native packaging (PLAN-0632) is still in progress, so a single clone plus `dev:host` is the fastest path today and nothing is double-click-to-run yet.
+
 The UI uses port `12630` by default (stack-1; parallel stacks shift the whole block, see "模式 D" in DEV-002). `dev:host` does not import config or create a provider connection; use the explicit `mise run dev:host:import-config` / `mise run dev:host:provider-init` tasks when needed. See [DEV-002](docs/i18n/zh-Hans/DEV-002-developer-guide.md). `mise run dev:full` is **frozen (2026-10-07: only PostgreSQL remains in Docker; services run on host)** and commented out in `mise.toml` — use `dev:host`.
 
 **This repository runs from a single clone** — no parent ONE workspace required: `mise run check:standalone` (`mise.toml:395`) verifies "no dependency on the one root". Port defaults are **sourced from this repository** (`scripts/lib/stack-ports.mjs`); the ONE-side `config/ports.mjs` is only a mirror for orchestration — change one side and you must change the other in the same batch, with `mise run check:ports` (`mise.toml:401`) asserting parity (it skips explicitly when ONE is absent).
@@ -89,7 +91,38 @@ The UI chat request and event stream use separate HTTP directions. The Agent cal
 
 Dependency details are maintained in the [UI manifest](packages/ui/package.json), [Agent project](packages/agent/pyproject.toml), [Control Plane build](packages/control-plane/pom.xml), and [Runtime manifest and lockfile](packages/runtime/Cargo.toml). Each module also owns its version in that manifest; `GET /api/v1/version`, Agent health, Runtime `/ready`, and MCP `clientInfo` derive from it, and the bump checklist is in [DEV-002 §7](docs/i18n/en/DEV-002-developer-guide.md). Tool versions are managed in [mise.toml](mise.toml); the Rust toolchain is pinned in [rust-toolchain.toml](packages/runtime/rust-toolchain.toml), and container builds use `cargo build --locked`.
 
-## 4. Documentation
+## 4. Status and Roadmap
+
+Per-feature status, progress markers, and the current boundary of each capability are maintained in the **[Chinese feature status table](docs/i18n/zh-Hans/README.md)** — this English facade does not duplicate that table. The buckets below are the short version.
+
+**Implemented**
+
+- Four-module platform: UI, Control Plane, Agent, and Runtime on PostgreSQL 17 + pgvector.
+- Multi-participant sessions: `PRIMARY` / `MEMBER` / `GUARD` roles, `@` mentions (including `@all`), wake policies `ALL_MESSAGES` / `MENTION` / `SCHEDULE`, respond policies `ALWAYS` / `WHEN_MENTIONED` / `JUDGE` / `MUTED`.
+- Agent principals as first-class subjects: three scopes (`PERSONAL` / `WORKSPACE` / `INSTANCE`), separate create/bind/use authorizations, model intent without pinning a credential connection, connection/model resource limits, and preset guard principals with hook subscriptions (`advisors[{kind,on}]`).
+- Write approval gate: allow / ask / deny, approval history, checkpoints and revert.
+- Judge decisions: an independent decision model decides whether a participant should speak, audited in `judge_decisions` including failed invocations.
+- Nested AGENTS.md injection: ancestor-chain JIT loading, an `untrusted-repo-instructions` envelope, and one shared injection-budget ledger.
+- Workspace dock tabs (multi-tab plus a focus mode) with local layout persistence.
+- The `xihe` CLI command family (`mise run xihe -- --help`) for development and operations.
+- Local mode: loopback-only, password-less first user, behind a startup fail-fast gate.
+
+**In progress**
+
+- Memory bound to agent principals — tables and services landed; the model-visible slot is not wired, so memories do not reach the model yet.
+- Skills platform — frozen design, no code yet.
+- Subagent delegation — the delegation budget gate is in; delegation edges and the session-tree UI are still under way.
+- Native packaging / MVP distribution — CP native image, Agent PyInstaller, bundled pgvector, and the launcher are spiked; **no downloadable installer yet**.
+
+**Frozen**
+
+- The docker workspace execution backend. `storageMode` is required with no default and the only usable value is `direct_attach`; `managed_import` returns `409 BACKEND_DISABLED`; execution, files, environment, sessions, and chat on existing docker workspaces return `503 BACKEND_DISABLED` (fail-closed, no host fallback). Scope and thaw steps: [DEV-018](docs/i18n/zh-Hans/DEV-018-known-issues.md).
+
+**Not yet available**
+
+- A downloadable installer. The fastest way to run XH today is local dev mode: mise + Docker for PostgreSQL only + four native processes.
+
+## 5. Documentation
 
 | Entry | Use |
 |---|---|
@@ -103,10 +136,10 @@ Dependency details are maintained in the [UI manifest](packages/ui/package.json)
 
 The Chinese and English documentation indexes are maintained separately; use the index for the language you need.
 
-## 5. Philosophy
+## 6. Philosophy
 
 An agent is a role on the team, not merely a tool. People and agents are treated as operating entities with defined responsibilities and access boundaries. The Control Plane applies shared policy and audit, while Runtime provides the constrained space in which agents can act.
 
-## 6. License
+## 7. License
 
 Apache-2.0

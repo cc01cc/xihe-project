@@ -6,7 +6,7 @@ sidebar_order: 0
 lang: zh-Hans
 status: active
 created: 2026-05-28
-updated: 2026-10-16
+updated: 2026-11-02
 ---
 
 [English](https://github.com/cc01cc/xihe-project#readme)
@@ -33,6 +33,8 @@ mise run dev:host
 # 查看开发/运维 CLI；配置导入与 Provider 初始化需显式执行
 mise run xihe -- --help
 ```
+
+**当前门槛（还没有安装包）**：需要 Windows 宿主机上的 mise 固定工具链，以及 Docker —— Docker 里**只有 PostgreSQL**，Control Plane、Agent、Runtime、UI 四个服务由 mise 作为原生进程启动。原生打包（PLAN-0632）仍在进行中，**暂无下载安装包**，所以现在不能双击即用；最短路径就是本节的四条命令。首跑判据见 [DEV-033](DEV-033-first-run-gold-path.md)。
 
 `.env` 与 `.env.dev` 已作为安全基线入库，无需复制或覆盖；个人凭据写入 gitignored 的 `.env.local`，不得提交或写入日志。日常开发中 PostgreSQL 使用 Docker，其余服务由 mise 在宿主机启动。`dev:host` 不会导入配置或创建 Provider Connection；需要时运行 `mise run dev:host:import-config` 和 `mise run dev:host:provider-init`。UI 默认端口为 `12630`（stack-1；并行多栈见 [DEV-002](DEV-002-developer-guide.md)「模式 D」）。`mise run dev:full` **已冻结禁用（2026-10-07：仅 PostgreSQL 保留容器，服务全 host；mise.toml 已注释）**，日常走 `dev:host`；环境说明见 [DEV-002](DEV-002-developer-guide.md)。
 
@@ -101,25 +103,43 @@ flowchart LR
 
 ## 4. 功能状态
 
-| 功能 | 状态 | 当前边界 |
-|---|---|---|
-| 多会话管理 | ✅ | 创建、切换、删除、重命名与搜索 |
-| 聊天消息组件 | ✅ | MessageScroller 与消息列表、时间线组件分工 |
-| Markdown 渲染 | ⚠️ 部分 | Shiki 高亮与 KaTeX 公式；当前未集成 Mermaid |
-| SSE 流式 | ✅ | 会话级持久连接与增量 MessagePart 渲染（PLAN-230） |
-| MCP 反向代理 | ✅ | CP 路由到 Runtime，并执行工具名与权限检查 |
-| 多用户认证 | ✅ | JWT 注册/登录与 BCrypt 密码哈希 |
-| PostgreSQL 持久化 | ✅ | Flyway 管理 schema；H2 仅用于模块测试 |
-| 工作区执行 | ✅ | 后端与模式不同，安全边界见 DEV-031；host 模式不是进程沙盒 |
-| 图片上传 | ⚠️ 部分 | 拖拽/选择，Canvas 压缩至 2048px；粘贴未实现 |
-| 语音 I/O | ✅ | 浏览器支持 Web Speech API 时提供 STT/TTS |
-| PDF 处理 | ⚠️ 部分 | pdfjs-dist 预览与文本提取；当前提取路径不含 OCR |
-| 主题系统 | ✅ | dark、light、system |
-| 国际化 | ⚠️ 部分 | locale 为 zh-CN / en-US；用户切换 UI 未实现 |
-| 知识库（RAG） | ✅ | 文档分块、Embedding 与 pgvector；嵌入 profile 按 Workspace/User 整组配置（固定百炼 Multimodal-Embedding 模型、768 维），向量行按连接与 profile 分区 |
-| API 请求模板 | ✅ | 按 ProviderConnection 的 API Type 编辑原生请求体；解析顺序 Model override → Connection default → 类型内置默认；发布修订不可变（PLAN-0439） |
+本表是**唯一维护点**（英文 README 只留一句指向这里）。进度只有三态：`✅ 已实现` / `🔄 进行中` / `⏸ 冻结`；确有边界的能力标 `✅（有限制）`，具体限制写在「当前边界」列。
 
-未配置 embedding profile 时，`/api/v1/rag/*` 返回 `409 EMBEDDING_PROFILE_REQUIRED`；配置与运行态边界见 [DEV-018](DEV-018-known-issues.md)。
+| 功能 | 进度 | 当前边界 |
+|---|---|---|
+| 多会话管理 | ✅ 已实现 | 创建、切换、删除、重命名与搜索 |
+| 聊天消息组件 | ✅ 已实现 | MessageScroller 与消息列表、时间线组件分工；多主体消息按 run 的真实回应者归因（头像 + 身份行） |
+| Markdown 渲染 | ✅（有限制） | Shiki 高亮与 KaTeX 公式；未集成 Mermaid |
+| SSE 流式 | ✅ 已实现 | 会话级持久连接与增量 MessagePart 渲染（PLAN-230） |
+| MCP 反向代理 | ✅ 已实现 | CP 路由到 Runtime，并执行工具名与权限检查；CP 不签发也不接受 `mcp-session-id`，入站一律 403 `MCP_SESSION_INVALID` |
+| 多用户认证 | ✅ 已实现 | JWT 注册/登录与 BCrypt 密码哈希 |
+| PostgreSQL 持久化 | ✅ 已实现 | Flyway 管理 schema；H2 仅用于模块测试 |
+| 工作区执行 | ⏸ 冻结 | docker 执行后端完全冻结（2026-11-01，PLAN-0618）：`storageMode` 必填、无默认值（缺 → `400 INVALID_REQUEST`），唯一可用值是 `direct_attach`；显式 `managed_import` → `409 BACKEND_DISABLED`；既有 docker 工作区的执行/文件/环境/会话/聊天 → `503 BACKEND_DISABLED`（fail-closed，不回退宿主）。产品面、测试面、默认值三面一起冻，范围与解冻步骤见 [DEV-018](DEV-018-known-issues.md)「docker 后端冻结范围」。host 模式不是进程沙盒，安全边界见 DEV-031 |
+| 图片上传 | ✅（有限制） | 拖拽/选择上传，Canvas 压缩至 2048px；粘贴上传未实现 |
+| 语音 I/O | ✅ 已实现 | 浏览器支持 Web Speech API 时提供 STT/TTS |
+| PDF 处理 | ✅（有限制） | pdfjs-dist 预览与文本提取；提取路径不含 OCR |
+| 主题系统 | ✅ 已实现 | dark、light、system |
+| 国际化 | ✅ 已实现 | zh-CN / en-US；`src/i18n/locale.ts#applyLocale` 是统一入口，切换后持久化并同步 `<html lang>`（PLAN-0602） |
+| 知识库（RAG） | ✅（有限制） | 文档分块、Embedding 与 pgvector；嵌入 profile 按 Workspace/User 整组配置（固定百炼 Multimodal-Embedding 模型、768 维），向量行按连接与 profile 分区；未配置 embedding profile 时 `/api/v1/rag/*` → `409 EMBEDDING_PROFILE_REQUIRED` |
+| API 请求模板 | ✅ 已实现 | 按 ProviderConnection 的 API Type 编辑原生请求体；解析顺序 Model override → Connection default → 类型内置默认；发布修订不可变（PLAN-0439） |
+| 多主体会话参与者 | ✅ 已实现 | `session_participants` 用多态引用存 HUMAN / AGENT，会话角色 PRIMARY / MEMBER / GUARD，`order_index` 单调递增（删除留空洞、不重排）；`@` 提及（含 `@all`）在提交时按当前 roster 最长匹配解析，歧义/未命中 fail-closed 并记 `unresolvedTokens`；唤醒策略 `ALL_MESSAGES` / `MENTION` / `SCHEDULE`，回应策略 `ALWAYS` / `WHEN_MENTIONED` / `JUDGE` / `MUTED`；`@all` 默认只 PRIMARY 回应；会话并发上限只作 UX 提示，真实并发由资源治理控制 |
+| Agent 主体与权限 | ✅ 已实现 | `agent_principals` 三档 scope（PERSONAL / WORKSPACE / INSTANCE）+ `owner_user_id`；创建、绑定、使用是三段独立授权（默认 deny，不得合并为一个动作）；cap 走单一入口 `resolveCapFor` + grants；主体只携带模型意图（`default_model_*` / `allowed_models`），不绑死连接；connection / model 级并发与配额，超限 `429` + `Retry-After`。守卫 = 预置主体（`origin=SYSTEM_PRESET` + `presetId`），cap 只读固定、不可物理删、不可绑定工作区，经会话参与者 `role=GUARD` 进入；hooks 订阅形态 `advisors[{kind,on}]`（首个事件类 `approval.ask`，精确等值匹配），裁决只作审批输入，放行仍由 approval gate 执行 |
+| 写操作审批门 | ✅ 已实现 | 结论沿用 policy 词汇 allow / ask / deny（不新造枚举）；审批历史落 `approval_history`，checkpoint 与 revert 走 `run_checkpoints`（Runtime 侧 shadow git）；AGENTS.md 类受保护文件按路径条件默认 ask，`auto` 不绕过；浏览器写文件不经 Agent policy；revert 延迟在冷缓存下仍超 PLAN-0328 冻结阈值（见 DEV-018） |
+| Judge 决策 | ✅ 已实现 | 独立决策模型（`dashscope` 原生 apiType）判「该不该发言」，与发言 run 分开计量；失败或超时 fail-closed 不发言；`judge_decisions` 每次调用一行（含失败行），只写不读、无查询端点；agent→agent 唤醒链深度默认 3，超限/成环显式失败并审计 |
+| 嵌套 AGENTS.md 注入 | ✅（有限制） | 子目录 AGENTS.md 随 read/list 工具按祖先链 JIT 加载（上界 workspace root；根级仍走既有 eager 注入），nearest-first + 去重；内容作为仓库数据注入专用信封 `untrusted-repo-instructions`，durable `tool.result` 不落注入正文；与 skills / memory 共用 `context/injection_budget.py` 预算账本，超限丢最远祖先；真栈走查与 `apply_patch` / `list_directory` 的行为面目前只有单测与干跑证据 |
+| 工作区多标签 dock 与布局持久化 | ✅（有限制） | 右侧栏多标签（可同时开多个、上限 6）、放大态 `dockFocus`、关闭后激活相邻标签、满额有可见提示；布局按 workspace 存 localStorage（`xihe-layout-ws:<id>`），无服务端布局持久化；Agent 管理面板迁入标签（M3）未完成 |
+| CLI（`xihe` 命令族） | ✅ 已实现 | `mise run xihe -- <command>`（`scripts/xihe.mjs`）：dev / config / verify / version / status / workspace / job / checkpoint / scheduled-task / audit / provider / agent / session participants / chat send / credential；`scripts/xihe-cli.test.mjs` 101 项测试；覆盖面是开发与运维动作，不是终端用户入口 |
+| 本地模式 | ✅ 已实现 | `XIHE_LOCAL_MODE=true` + CP 绑定回环 + `XIHE_ENV` 非 prod，三个条件缺一个 CP 启动即拒绝（fail-fast）；仅回环来源且 `Origin`/`Host` 回环时可用，签发对象必须是唯一可登录用户（否则 404/409），本地模式跳过默认 admin seed |
+| 记忆（memory） | 🔄 进行中 | 已落 `agent_memories`（V99）+ CP 服务层 + `MEMORY_WRITE` 原子（默认不授予任何角色）；注入快照仍停在「数据就绪层」——api-request 模板的模型可见槽位尚未上线，所以记忆还不会进模型上下文；episodic、向量检索、`judge` 写入模式均未实现 |
+| Skills 平台 | 🔄 规划中（未开工） | 只有冻结设计与 M1 任务书，无表、无代码；模型可见的 listing 槽位与 memory 合并成一次跨层变更，同样未上线 |
+| Subagent 委派 | 🔄 进行中 | subagent = 正常 session（有自己的参与者/PRIMARY/run 归属），预算制 `{maxCount, maxDepth}` 只递减 root session 预算；委派预算门与子会话 PRIMARY 已落，委托边、`DELEGATE` 原子与会话树 UI 仍在实施，跨会话委派链路尚不可用 |
+| 原生打包 / MVP 分发 | 🔄 进行中 | 目标是双击安装包 → 服务自启 → 浏览器访问 localhost；CP native image、Agent PyInstaller（实测 onedir 优于 onefile）、随包 pgvector 与 launcher 都已 spike 过，**暂无安装包可下载**，当前最快路径仍是本地 dev 模式 |
+
+**Known boundaries**
+
+1. **docker 执行后端冻结**：产品面、测试面、默认值三面一起冻，解冻时一起解冻；范围与解冻步骤见 [DEV-018](DEV-018-known-issues.md)「docker 后端冻结范围」。
+2. **memory / skills 尚未接入模型可见面**：memory 已有表、服务层与注入快照（数据就绪层），skills 还未开工；两者都还不会出现在模型上下文里。
+3. **暂不提供下载安装包**：原生打包进行中，当前最快路径是本地 dev 模式（mise + Docker 仅跑 PostgreSQL + 四个原生进程），不能双击即用。
 
 ## 5. 测试
 
