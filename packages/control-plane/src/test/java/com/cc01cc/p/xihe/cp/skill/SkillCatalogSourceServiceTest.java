@@ -172,6 +172,47 @@ class SkillCatalogSourceServiceTest {
         assertEquals(List.of("alpha"), view.items());
     }
 
+    /**
+     * PLAN-0628 M3-② (裁定 A+B+C): the renderer is the rendering authority, so it normalises the
+     * dirty shapes a historical row can still hold — surrounding whitespace, an empty/blank
+     * description (no dangling separator), and embedded line breaks (one item stays one line).
+     *
+     * <p>These rows cannot be imported any more ({@code SkillImportValidator} refuses them), which
+     * is exactly why the renderer must handle them <i>without</i> a backfill.</p>
+     */
+    @Test
+    void dirtyDescriptionsAreNormalisedAtRenderTime() {
+        Skill padded = skill("alpha", Skill.DEFINITION_SCOPE_INSTANCE, null, "  padded description  ");
+        Skill empty = skill("beta", Skill.DEFINITION_SCOPE_INSTANCE, null, "");
+        Skill blank = skill("delta", Skill.DEFINITION_SCOPE_INSTANCE, null, "   ");
+        Skill multiline = skill("gamma", Skill.DEFINITION_SCOPE_INSTANCE, null,
+                "Extract action items\r\n\r\nfrom a meeting transcript");
+        Skill nullDescription = skill("epsilon", Skill.DEFINITION_SCOPE_INSTANCE, null, null);
+        when(bindings.findResolvable(any(), any(), any())).thenReturn(Arrays.asList(
+                row(binding(padded, SkillBinding.SUBJECT_USER, USER_ID, SkillBinding.SCOPE_INSTANCE, null), padded),
+                row(binding(empty, SkillBinding.SUBJECT_USER, USER_ID, SkillBinding.SCOPE_INSTANCE, null), empty),
+                row(binding(blank, SkillBinding.SUBJECT_USER, USER_ID, SkillBinding.SCOPE_INSTANCE, null), blank),
+                row(binding(multiline, SkillBinding.SUBJECT_USER, USER_ID, SkillBinding.SCOPE_INSTANCE, null), multiline),
+                row(binding(nullDescription, SkillBinding.SUBJECT_USER, USER_ID, SkillBinding.SCOPE_INSTANCE, null), nullDescription)));
+
+        SkillCatalogSourceService.ComponentView view = service.resolve(request(40));
+
+        assertEquals(List.of(
+                "alpha — padded description",
+                "beta",
+                "delta",
+                "gamma — Extract action items from a meeting transcript",
+                "epsilon"), view.items());
+        // The invariant the Agent relies on: no rendered item spans a line, and none carries edge
+        // whitespace (its own `strip()` would then change CP's bytes).
+        for (String item : view.items()) {
+            assertEquals(item.strip(), item, "an item carries edge whitespace: [" + item + "]");
+            assertFalse(item.chars().anyMatch(ch -> ch == '\n' || ch == '\r'),
+                    "an item spans a line: [" + item + "]");
+            assertFalse(item.endsWith(" — "), "a dangling separator survived: [" + item + "]");
+        }
+    }
+
     @Test
     void noBindingsIsEmptyNotAnError() {
         when(bindings.findResolvable(any(), any(), any())).thenReturn(Arrays.asList());

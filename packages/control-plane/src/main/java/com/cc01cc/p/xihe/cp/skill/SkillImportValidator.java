@@ -31,6 +31,12 @@ public final class SkillImportValidator {
 
     /** Mirrors {@code skills.name} CHECK and the {@code ':'} qualifier rule. */
     public static final Pattern NAME_PATTERN = Pattern.compile("^[a-z0-9][a-z0-9._-]{0,63}$");
+    /**
+     * PLAN-0628 M3-②: {@code Cc} = every control character (CR, LF, tab, NUL, BEL, ESC…);
+     * {@code Zl}/{@code Zp} = the Unicode line and paragraph separators, which break a line without
+     * being control characters.
+     */
+    private static final Pattern DESCRIPTION_CONTROL = Pattern.compile("[\\p{Cc}\\p{Zl}\\p{Zp}]");
     /** D28-16: one request carries at most this many skills (whole-batch refusal). */
     public static final int MAX_SKILLS_PER_REQUEST = 64;
     public static final int MAX_SOURCE_PATH_LENGTH = 512;
@@ -40,6 +46,12 @@ public final class SkillImportValidator {
     public static final String SKILL_NAME_INVALID = "SKILL_NAME_INVALID";
     public static final String SKILL_DESCRIPTION_REQUIRED = "SKILL_DESCRIPTION_REQUIRED";
     public static final String SKILL_DESCRIPTION_TOO_LONG = "SKILL_DESCRIPTION_TOO_LONG";
+    /** PLAN-0628 M3-②: a description whose edges {@code strip()} would change. */
+    public static final String SKILL_DESCRIPTION_EDGE_WHITESPACE =
+            "SKILL_DESCRIPTION_EDGE_WHITESPACE";
+    /** PLAN-0628 M3-②: a description that is not on one line (line break / control character). */
+    public static final String SKILL_DESCRIPTION_CONTROL_CHARACTER =
+            "SKILL_DESCRIPTION_CONTROL_CHARACTER";
     public static final String SKILL_BODY_EMPTY = "SKILL_BODY_EMPTY";
     public static final String SKILL_BODY_TOO_LARGE = "SKILL_BODY_TOO_LARGE";
     public static final String SKILL_ATTACHMENT_INVALID = "SKILL_ATTACHMENT_INVALID";
@@ -133,6 +145,27 @@ public final class SkillImportValidator {
         return null;
     }
 
+    /**
+     * PLAN-0628 M3-②: the description must be exactly what the listing will render, one item per
+     * line.
+     *
+     * <p><b>Reject, do not trim</b> (the deliberate choice, second option of the裁定): silently
+     * trimming would make "what the importer stored" differ from "what the caller sent", and the
+     * caller has no way to see that — the next {@code unchanged}/{@code updated} answer would then
+     * describe a document they never wrote. The listing renderer still normalises
+     * ({@link SkillCatalogSourceService} — historical rows exist), but a <i>new</i> write must be
+     * clean rather than quietly corrected. Note also that {@code content_hash} covers the
+     * description: a silent trim would change the hash of a document the caller believes is
+     * byte-identical.</p>
+     *
+     * <p><b>Why a line break is a refusal and not a formatting nit:</b> one listing item is one
+     * prompt line. The Agent joins rendered items with {@code "\n"}, so a description containing a
+     * break puts half of it on the next line, where the model reads it as <b>a second skill</b>
+     * (with a name it can try to load). Splitting one binding into two hallucinated ones is a
+     * semantic corruption of the listing, so CR/LF and every other control character (NUL/BEL/ESC
+     * also reach logs and the prompt) are refused outright. The V101 CHECK only bounds the trimmed
+     * <i>length</i>; it cannot express this rule, hence the second layer lives in the seam.</p>
+     */
     private static Rejection validateDescription(SkillImportItem item) {
         String description = item.description();
         if (description == null || description.isBlank()) {
@@ -142,6 +175,16 @@ public final class SkillImportValidator {
         if (codePoints > Skill.MAX_DESCRIPTION_LENGTH) {
             return rejection(item, SKILL_DESCRIPTION_TOO_LONG,
                     "description must be at most " + Skill.MAX_DESCRIPTION_LENGTH + " characters");
+        }
+        if (DESCRIPTION_CONTROL.matcher(description).find()) {
+            return rejection(item, SKILL_DESCRIPTION_CONTROL_CHARACTER,
+                    "description must be on one line: line breaks and control characters are"
+                            + " refused because one listing item must stay one prompt line");
+        }
+        if (!description.equals(description.strip())) {
+            return rejection(item, SKILL_DESCRIPTION_EDGE_WHITESPACE,
+                    "description must not begin or end with whitespace (it is not trimmed for"
+                            + " you: the stored value must equal the submitted value)");
         }
         return null;
     }

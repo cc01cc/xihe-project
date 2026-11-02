@@ -18,6 +18,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.regex.Pattern;
 
 /**
  * PLAN-0628 M1 (§6.2): resolves the <b>listing subset</b> a run may see — the CP half of D28-16.
@@ -63,6 +64,14 @@ public class SkillCatalogSourceService {
     public static final String DIAG_RESOLVE_FAILED = "skill_catalog_resolve_failed";
 
     private static final String SEPARATOR = " — ";
+
+    /**
+     * One run of line breaks — CRLF, CR, LF, and the rest of the Unicode line-break family — folded
+     * into a single space. {@code \R} is a superset of the {@code \r\n|\r|\n} the wire contract
+     * names; the extra members (VT, FF, NEL, LS, PS) break a line for a model in exactly the same
+     * way, so they must not survive either.
+     */
+    private static final Pattern LINE_BREAK_RUN = Pattern.compile("\\R+");
 
     private final SkillBindingRepository bindingRepository;
     private final AgentPrincipalRepository principalRepository;
@@ -172,17 +181,52 @@ public class SkillCatalogSourceService {
      * <p>{@code collision} decides whether the qualified or the bare name leads the line (M1's
      * behaviour, preserved): unique names stay bare so the listing reads naturally, and only a real
      * collision pays the qualified-name tax.</p>
+     *
+     * <p><b>Why the description is normalised here and not at import (PLAN-0628 M3-②):</b> this
+     * renderer is the rendering authority (D28-19) — the Agent only budget-cuts what it is handed
+     * and re-<i>strips</i> each line defensively. Import-time validation now refuses dirty
+     * descriptions, but rows written by the previous import path (and by a direct insert that the
+     * V101 CHECK still allows: it bounds the trimmed length, it does not forbid surrounding spaces
+     * or an embedded newline) already exist. Normalising at render is what makes the two sides
+     * agree for <b>historical</b> data as well, so the fix does not depend on a backfill.</p>
      */
     public static ComponentView view(Listing listing) {
         List<String> lines = new ArrayList<>();
         for (Item item : listing.items()) {
             String display = listing.collision() ? item.qualifiedName() : item.name();
-            lines.add(listing.includeDescriptions() && item.description() != null
-                    ? display + SEPARATOR + item.description()
-                    : display);
+            String description = listing.includeDescriptions()
+                    ? renderableDescription(item.description())
+                    : null;
+            lines.add(description == null ? display : display + SEPARATOR + description);
         }
         return new ComponentView(listing.status(), SOURCE, List.copyOf(lines), listing.truncated(),
                 listing.diagnostics());
+    }
+
+    /**
+     * The description as it may appear in a listing line: <b>one</b> line, no leading/trailing
+     * whitespace, or {@code null} for "this item has no description".
+     *
+     * <p>Two dirty-data shapes are structurally identical across languages only after this step:</p>
+     * <ul>
+     *   <li><b>surrounding whitespace / an empty description</b> — the Agent {@code strip()}s every
+     *       rendered line (it must, because CP's lines are just {@code str} on the wire), so
+     *       {@code "gamma — "} on this side and {@code "gamma —"} over there were two different
+     *       byte sequences for the same skill; stripping here and then treating "" as "no
+     *       description" removes the separator too, instead of leaving a dangling {@code " — "};</li>
+     *   <li><b>an embedded line break</b> — the listing contract is one item per line, and the
+     *       Agent joins items with {@code "\n"}, so a two-line description makes the model read one
+     *       binding as <b>two</b> skills. That is a semantic break, not cosmetics, which is why the
+     *       break is folded away here <i>and</i> refused at import
+     *       ({@code SkillImportValidator.validateDescription}).</li>
+     * </ul>
+     */
+    private static String renderableDescription(String description) {
+        if (description == null) {
+            return null;
+        }
+        String folded = LINE_BREAK_RUN.matcher(description).replaceAll(" ").strip();
+        return folded.isEmpty() ? null : folded;
     }
 
     /**
