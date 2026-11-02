@@ -83,6 +83,18 @@ class AgentMemoryInjectionTest extends AbstractIntegrationTest {
     }
 
     @Test
+    void viewIsSelfDescribingForTheAgentSlot() {
+        // PLAN-0629 M1-5: the Agent fills ${xh.agent_memory} by matching this tag, exactly like
+        // ${xh.skill_catalog} matches SkillCatalogSourceService.SOURCE. Losing it would make the
+        // slot silently empty while CP thinks it handed memory over.
+        fixture();
+        assertEquals(AgentMemoryInjectionService.SOURCE,
+                injection.snapshot(principalId, workspaceId, 24, 4_000).get("source"));
+        assertEquals(AgentMemoryInjectionService.SOURCE,
+                AgentMemoryInjectionService.unavailable(24, 4_000, "missing_agent_principal").get("source"));
+    }
+
+    @Test
     void candidateRowsAreNeverInjected() {
         fixture();
         // A passive write may only land as a candidate (V99 CHECK); v1 must not inject it.

@@ -52,6 +52,15 @@ public class AgentMemoryInjectionService {
     public static final String STATUS_TRUNCATED = "truncated";
     public static final String STATUS_FAILED = "failed";
 
+    /**
+     * PLAN-0629 M1-5: the {@code source} discriminator of this component view, mirroring
+     * {@code SkillCatalogSourceService.SOURCE} ({@code "skill_bindings"}). The Agent fills the
+     * {@code ${xh.agent_memory}} slot by matching this tag, so a component source must be
+     * self-describing instead of recognised by its shape (two views with the same keys would
+     * otherwise be indistinguishable).
+     */
+    public static final String SOURCE = "agent_memory";
+
     public static final String DIAGNOSTIC_MISSING_PRINCIPAL = "missing_agent_principal";
     public static final String DIAGNOSTIC_ENTRY_CAP = "memory_entry_cap";
     public static final String DIAGNOSTIC_TOKEN_CAP = "memory_token_cap";
@@ -147,6 +156,7 @@ public class AgentMemoryInjectionService {
                                             boolean truncated, List<String> diagnostics,
                                             int maxEntries, int maxTokens, int usedTokens) {
         Map<String, Object> view = new LinkedHashMap<>();
+        view.put("source", SOURCE);
         view.put("status", status);
         view.put("entries", entries);
         view.put("truncated", truncated);
