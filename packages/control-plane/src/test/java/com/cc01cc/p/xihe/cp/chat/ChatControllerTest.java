@@ -277,7 +277,11 @@ class ChatControllerTest extends AbstractH2Test {
 
     @AfterEach
     void tearDown() throws IOException {
-        String basePath = System.getProperty("java.io.tmpdir") + "/xihe-test/attachments";
+        // PLAN-eff/task-13 M1: 与 application-test.properties 的
+        // `cp.attachments-base-path=...attachments-${surefire.forkNumber:0}` 保持同一表达式，
+        // 否则 2-shard 时会去清一个不存在的目录（并漏清本 fork 的现场）。
+        String basePath = System.getProperty("java.io.tmpdir") + "/xihe-test/attachments-"
+                + System.getProperty("surefire.forkNumber", "0");
         Path root = Path.of(basePath);
         if (Files.exists(root)) {
             Files.walk(root).sorted((a, b) -> -a.compareTo(b)).forEach(p -> {
