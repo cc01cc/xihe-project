@@ -12,10 +12,12 @@ uses. Adding a second percentage or a second ledger is the thing this module exi
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
+from typing import Any
 
 from .injection_budget import InjectionLedger, charge_assembly, conservative_token_count
+from .nested_injection import ledger_for_context
 
 #: One line of framing, charged like any other entry (otherwise the block could exceed its cap).
 HEADER = "Available skills (name — description); load full text by name when relevant:"
@@ -26,6 +28,13 @@ HEADER_KEY = "skill_catalog:header"
 #: Separator CP uses between the qualified name and the description.
 NAME_SEPARATOR = " — "
 
+#: In-band sentence appended when the listing was cut. The model must be told, because a short
+#: listing otherwise reads as the complete set and the model will deny that unseen skills exist.
+TRUNCATION_NOTE = (
+    "（上面只是部分可用 skill；需要其他 skill 时请按名称直接尝试，不要据此断言它不存在。）"
+)
+TRUNCATION_NOTE_KEY = "skill_catalog:truncation_note"
+
 DIAG_EMPTY = "skill_catalog_empty"
 DIAG_COMPONENT_MAX_TOKENS = "skill_catalog_component_max_tokens_reached"
 DIAG_BUDGET_TRUNCATED = "skill_catalog_budget_truncated"
@@ -34,6 +43,9 @@ DIAG_WINDOW_UNKNOWN = "skill_catalog_budget_window_unknown"
 STATUS_READY = "ready"
 STATUS_TRUNCATED = "truncated"
 STATUS_EMPTY = "empty"
+
+#: The CP component {@code source} value this module consumes; anything else is not ours.
+SOURCE_SKILL_BINDINGS = "skill_bindings"
 
 
 @dataclass(frozen=True)
@@ -105,16 +117,29 @@ def render_skill_catalog(
     if ledger.limits.window_tokens <= 0:
         diagnostics.append(DIAG_WINDOW_UNKNOWN)
 
+    # 3) Reserve the truncation sentence BEFORE the lines are charged.
+    #    This is the subtle one: if the note were charged after the listing, it would fail exactly
+    #    when it is most needed (the cap is already full because the listing was cut). Reserving it
+    #    up front means the model always learns that the list is partial. The reservation is
+    #    arithmetic on the ledger's own cap — not a second budget computation.
+    note_tokens = count_tokens(TRUNCATION_NOTE + "\n")
+    room = ledger.limits.caps["skills"] - ledger.by_source["skills"]
+    may_truncate = sum(tokens for _, tokens in pairs) > room
+    reserved_note = False
+    if may_truncate:
+        reserved_note = ledger.try_charge("skills", TRUNCATION_NOTE_KEY, note_tokens, priority=True)
+
     charge = charge_assembly(ledger, skills=pairs)
     charged_keys = list(charge.skills)
 
-    # 3) The header must fit first: without it the lines are a mystery list.
+    # 4) The header must fit first: without it the lines are a mystery list.
     if HEADER_KEY not in charged_keys:
         diagnostics.append(DIAG_BUDGET_TRUNCATED)
+        content = TRUNCATION_NOTE if reserved_note else ""
         return SkillCatalogBlock(
-            content="",
+            content=content,
             status=STATUS_TRUNCATED,
-            charged=0,
+            charged=note_tokens if reserved_note else 0,
             truncated=True,
             diagnostics=tuple(diagnostics),
         )
@@ -125,7 +150,7 @@ def render_skill_catalog(
             break
         kept_lines.append(line)
 
-    charged_tokens = header_tokens + sum(
+    charged_tokens = (note_tokens if reserved_note else 0) + header_tokens + sum(
         tokens for key, tokens in pairs if key in charged_keys and key != HEADER_KEY
     )
     truncated = len(kept_lines) < len(lines)
@@ -133,6 +158,14 @@ def render_skill_catalog(
         diagnostics.append(DIAG_BUDGET_TRUNCATED)
 
     content = HEADER if not kept_lines else HEADER + "\n" + "\n".join(kept_lines)
+
+    # 5) Truncation must be VISIBLE TO THE MODEL, not only in `diagnostics` (D28-31 follow-up).
+    #    A structured diagnostic is read by operators; the model only sees this text. Without an
+    #    in-band sentence a cut listing reads as "the complete set of skills" and the model will
+    #    confidently deny that a skill it cannot see exists — the exact failure this line removes.
+    if truncated and reserved_note:
+        content = content + "\n" + TRUNCATION_NOTE
+
     return SkillCatalogBlock(
         content=content,
         status=STATUS_TRUNCATED if truncated else STATUS_READY,
@@ -140,3 +173,53 @@ def render_skill_catalog(
         truncated=truncated,
         diagnostics=tuple(diagnostics),
     )
+
+
+def render_from_component_sources(
+    context: Any,
+    component_sources: Mapping[str, Any] | None,
+    *,
+    max_tokens: int | None = None,
+    count_tokens: Callable[[str], int] = conservative_token_count,
+) -> tuple[str, dict[str, Any]]:
+    """Produce the ``${xh.skill_catalog}`` slot value from CP's component sources.
+
+    This is the only place the slot is filled (G-0's single producer seam,
+    ``api/chat.py#xh_context_slots``). Returns ``(content, diagnostics)``; ``content`` is ``""``
+    when the run has no listing, which is what keeps the slot from becoming ``MISSING_VARIABLE``.
+
+    The ledger is the run-scoped one (``ledger_for_context``), so the listing shares its budget with
+    PLAN-0627's nested injection and PLAN-0629's memory instead of getting a second budget.
+    """
+    sources = component_sources if isinstance(component_sources, Mapping) else {}
+    matched: list[dict[str, Any]] = []
+    for entry in sources.values():
+        if isinstance(entry, dict) and entry.get("source") == SOURCE_SKILL_BINDINGS:
+            matched.append(entry)
+
+    items: list[str] = []
+    for entry in matched:
+        raw = entry.get("items")
+        if isinstance(raw, list):
+            items.extend(item for item in raw if isinstance(item, str))
+
+    ledger = ledger_for_context(context)
+    block = render_skill_catalog(
+        items, ledger=ledger, max_tokens=max_tokens, count_tokens=count_tokens
+    )
+    diagnostics: dict[str, Any] = {
+        "components": len(matched),
+        "componentStatuses": [str(entry.get("status")) for entry in matched],
+        "cpDiagnostics": [
+            diagnostic
+            for entry in matched
+            for diagnostic in (entry.get("diagnostics") or [])
+            if isinstance(diagnostic, str)
+        ],
+        "items": len(items),
+        "status": block.status,
+        "charged": block.charged,
+        "truncated": block.truncated,
+        "diagnostics": list(block.diagnostics),
+    }
+    return block.content, diagnostics

@@ -14,9 +14,12 @@ from xihe_agent.context.skill_catalog import (
     DIAG_EMPTY,
     DIAG_WINDOW_UNKNOWN,
     HEADER,
+    SOURCE_SKILL_BINDINGS,
     STATUS_EMPTY,
     STATUS_READY,
     STATUS_TRUNCATED,
+    TRUNCATION_NOTE,
+    render_from_component_sources,
     render_skill_catalog,
 )
 
@@ -121,3 +124,75 @@ def test_shares_one_ledger_with_nested_injection() -> None:
     # Nested injection spends its own source; it must not silently re-charge skills.
     assert ledger.by_source["skills"] == skills_after_listing
     assert ledger.by_source["nested"] > 0
+
+
+def test_truncation_is_said_in_model_visible_text_not_only_in_diagnostics() -> None:
+    """A structured diagnostic is for operators; the model only reads ``content``.
+
+    Without the in-band sentence a cut listing reads as the complete set of skills and the model
+    will confidently deny that a skill it cannot see exists.
+    """
+    ledger = InjectionLedger.create(8_000)  # 512-token floor ⇒ the listing must be cut
+
+    block = render_skill_catalog(_lines(40), ledger=ledger)
+
+    assert block.truncated
+    assert TRUNCATION_NOTE in block.content
+    assert block.content.endswith(TRUNCATION_NOTE)
+
+
+class _RunContext:
+    """Minimal stand-in for the run context (only ``metadata`` is needed by the ledger)."""
+
+    def __init__(self) -> None:
+        self.metadata: dict[str, object] = {"windowTokens": 128_000, "assembledTokens": 0}
+
+
+def _source(items: list[str]) -> dict[str, object]:
+    return {
+        "status": "ready",
+        "source": SOURCE_SKILL_BINDINGS,
+        "items": items,
+        "truncated": False,
+        "diagnostics": [],
+    }
+
+
+def test_slot_value_is_rendered_from_component_sources() -> None:
+    content, diagnostics = render_from_component_sources(
+        _RunContext(), {"11111111-1111-4111-8111-111111111111": _source(["alpha — a", "beta — b"])}
+    )
+
+    assert content.startswith(HEADER)
+    assert "alpha — a" in content and "beta — b" in content
+    assert diagnostics["components"] == 1
+    assert diagnostics["items"] == 2
+    assert diagnostics["status"] == STATUS_READY
+    assert diagnostics["charged"] > 0
+
+
+def test_foreign_sources_are_ignored() -> None:
+    content, diagnostics = render_from_component_sources(
+        _RunContext(),
+        {
+            "11111111-1111-4111-8111-111111111111": {
+                "status": "ready",
+                "source": "workspace_tree",
+                "items": ["not a skill"],
+                "truncated": False,
+                "diagnostics": [],
+            }
+        },
+    )
+
+    assert content == ""
+    assert diagnostics["components"] == 0
+
+
+def test_no_skills_yields_an_empty_slot_not_a_missing_variable() -> None:
+    """G-0 fixture semantics: the slot exists and is empty, so a template never hits MISSING_VARIABLE."""
+    for sources in (None, {}, {"11111111-1111-4111-8111-111111111111": _source([])}):
+        content, diagnostics = render_from_component_sources(_RunContext(), sources)
+        assert content == ""
+        assert diagnostics["items"] == 0
+        assert diagnostics["status"] == STATUS_EMPTY
