@@ -182,10 +182,31 @@ function attachPageDiagnostics(page: Page): void {
     });
 }
 
+/**
+ * 读 token：**优先用 storageState**，不在页面上 `evaluate(localStorage)`。
+ *
+ * 原因：`page.evaluate` 访问 `localStorage` 要求当前文档是合法 origin；在 S2–S4 里
+ * 新测试拿到的 `page` 还停在 `about:blank`（本测试尚未导航），直接 evaluate 会抛
+ * `SecurityError: Access is denied for this document`（2026-11-02 真机实测）。
+ * storageState 由浏览器侧导出，不依赖当前文档。
+ */
 async function tokenOf(page: Page): Promise<string> {
-    const token = await page.evaluate(() => localStorage.getItem("xihe-token"));
-    expect(token, "the UI must have persisted a token").toBeTruthy();
-    return token!;
+    const state = await page.context().storageState();
+    for (const origin of state.origins ?? []) {
+        const entry = origin.localStorage?.find((item) => item.name === "xihe-token");
+        if (entry?.value) return entry.value;
+    }
+    // 兜底：只有在文档已经是 http(s) origin 时才 evaluate（否则同一 SecurityError）。
+    const url = page.url();
+    if (url.startsWith("http://") || url.startsWith("https://")) {
+        const token = await page.evaluate(() => localStorage.getItem("xihe-token"));
+        expect(token, "the UI must have persisted a token").toBeTruthy();
+        return token!;
+    }
+    throw new Error(
+        `no persisted xihe-token for this browser context (current url: ${url}); ` +
+            "the login step must run before a scene on a fresh page",
+    );
 }
 
 async function loginViaForm(page: Page, identifier: string, password: string): Promise<void> {
@@ -360,6 +381,9 @@ test.describe("PLAN-0623 有头走查：会话参与者 dock tab", () => {
 
     test("S2@host 行渲染：AGENT 有来源+模型段，HUMAN 无模型段", async ({ page, request }) => {
         expect(workspaceId, "S2 depends on S1").not.toBe("");
+        // 每个 test 有独立的 browser context（Playwright 默认隔离）⇒ 必须重新登录，
+        // 否则 storageState 里没有 xihe-token（0622 的有头 spec 也是每场重新登录）。
+        await loginViaForm(page, GOLDPATH_EMAIL, GOLDPATH_PASSWORD);
         const token = await tokenOf(page);
 
         // 专属工作区里现建 agent principal（S1 只验证 dock tab 与无会话空态）。
@@ -499,6 +523,7 @@ test.describe("PLAN-0623 有头走查：会话参与者 dock tab", () => {
 
     test("S3@host 提及：输入框出现 @displayName，且没有发出 chat", async ({ page }) => {
         expect(humanParticipantId, "S3 depends on S2").not.toBe("");
+        await loginViaForm(page, GOLDPATH_EMAIL, GOLDPATH_PASSWORD);
         await page.goto(`/workspace/${workspaceId}/chat/${sessionId}`, { waitUntil: "load" });
         await expect(page.getByTestId("workspace-toolbar-members")).toBeVisible({ timeout: 45000 });
         if ((await page.getByTestId("dock-tab-members").count()) === 0) {
@@ -534,6 +559,7 @@ test.describe("PLAN-0623 有头走查：会话参与者 dock tab", () => {
 
     test("S4@host 移除 = 两次点击 + soft disable：行仍在并带「已停用」", async ({ page }) => {
         expect(humanParticipantId, "S4 depends on S2").not.toBe("");
+        await loginViaForm(page, GOLDPATH_EMAIL, GOLDPATH_PASSWORD);
         await page.goto(`/workspace/${workspaceId}/chat/${sessionId}`, { waitUntil: "load" });
         await expect(page.getByTestId("workspace-toolbar-members")).toBeVisible({ timeout: 45000 });
         if ((await page.getByTestId("dock-tab-members").count()) === 0) {
