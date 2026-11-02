@@ -1,11 +1,9 @@
 package com.cc01cc.p.xihe.cp.migration;
 
+import com.cc01cc.p.xihe.cp.integration.TestDatabaseProvider;
 import org.flywaydb.core.Flyway;
 import org.flywaydb.core.api.MigrationVersion;
 import org.junit.jupiter.api.Test;
-import org.testcontainers.containers.PostgreSQLContainer;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -33,12 +31,9 @@ import static org.junit.jupiter.api.Assertions.assertNotEquals;
  * - in scope: config rows with domain='context-templates' + Session template pins;
  * - out of scope: chat_runs.context_template_snapshot and other config domains.
  */
-@Testcontainers
 class ContextTemplateResetScopeTest {
-
-    @Container
-    static final PostgreSQLContainer<?> POSTGRES =
-            new PostgreSQLContainer<>("pgvector/pgvector:pg17");
+    /** PLAN-eff/task-13 M1（A1）：空库由 JVM 单例容器下发；本类仍自行 Flyway 到目标版本。 */
+    static TestDatabaseProvider.DatabaseRef postgres = TestDatabaseProvider.emptyDatabase("context_templa");
 
     // Parent identities are shared; scoped values are seeded only in the source DB.
     private static final UUID USER_ID = UUID.fromString("11111111-1111-4111-8111-111111111111");
@@ -59,16 +54,16 @@ class ContextTemplateResetScopeTest {
 
     @Test
     void scopedTemplateConfigAndSessionPinsExportRestoreRoundTrip() throws SQLException {
-        String adminUrl = POSTGRES.getJdbcUrl();
+        String adminUrl = postgres.jdbcUrl();
         migrate(adminUrl);
 
         String restoreDb = "xihe_cp_t02_restore";
         try (Connection admin = DriverManager.getConnection(
-                adminUrl, POSTGRES.getUsername(), POSTGRES.getPassword());
+                adminUrl, postgres.username(), postgres.password());
              Statement statement = admin.createStatement()) {
             statement.executeUpdate("CREATE DATABASE " + restoreDb);
         }
-        String restoreUrl = adminUrl.replace("/" + POSTGRES.getDatabaseName(), "/" + restoreDb);
+        String restoreUrl = adminUrl.replace("/" + postgres.databaseName(), "/" + restoreDb);
         migrate(restoreUrl);
 
         try (Connection original = connect(adminUrl);
@@ -135,7 +130,7 @@ class ContextTemplateResetScopeTest {
 
     private static void migrate(String jdbcUrl) {
         Flyway.configure()
-                .dataSource(jdbcUrl, POSTGRES.getUsername(), POSTGRES.getPassword())
+                .dataSource(jdbcUrl, postgres.username(), postgres.password())
                 .locations("classpath:db/migration")
                 .target(MigrationVersion.fromVersion("57"))
                 .load()
@@ -143,7 +138,7 @@ class ContextTemplateResetScopeTest {
     }
 
     private static Connection connect(String jdbcUrl) throws SQLException {
-        return DriverManager.getConnection(jdbcUrl, POSTGRES.getUsername(), POSTGRES.getPassword());
+        return DriverManager.getConnection(jdbcUrl, postgres.username(), postgres.password());
     }
 
     private static void seedParents(Connection c, String runSnapshot) throws SQLException {

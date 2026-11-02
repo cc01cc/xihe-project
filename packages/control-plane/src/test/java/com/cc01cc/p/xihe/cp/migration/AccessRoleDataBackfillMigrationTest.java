@@ -1,12 +1,10 @@
 package com.cc01cc.p.xihe.cp.migration;
 
+import com.cc01cc.p.xihe.cp.integration.TestDatabaseProvider;
 import org.flywaydb.core.Flyway;
 import org.flywaydb.core.api.MigrationVersion;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
-import org.testcontainers.containers.PostgreSQLContainer;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
 
 import java.sql.Connection;
 import java.sql.DriverManager;
@@ -30,14 +28,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * {@code ck_grants_source} and drops the V38/V65 fences. Runs on real PostgreSQL (Testcontainers);
  * the H2 unit profile never runs Flyway (application-h2.properties).</p>
  */
-@Testcontainers
 class AccessRoleDataBackfillMigrationTest {
-
-    @Container
-    static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("pgvector/pgvector:pg17")
-            .withDatabaseName("xihe_cp_v88")
-            .withUsername("test")
-            .withPassword("test");
+    /** PLAN-eff/task-13 M1（A1）：空库由 JVM 单例容器下发；本类仍自行 Flyway 到目标版本。 */
+    static TestDatabaseProvider.DatabaseRef postgres = TestDatabaseProvider.emptyDatabase("access_role_da");
 
     private static final UUID ROLE_ADMIN = UUID.fromString("00000000-0000-4000-8000-000000000002");
     private static final UUID ROLE_USER = UUID.fromString("00000000-0000-4000-8000-000000000003");
@@ -68,13 +61,13 @@ class AccessRoleDataBackfillMigrationTest {
     @BeforeAll
     static void migrateToV87AndSeedLegacyRows() throws SQLException {
         Flyway.configure()
-                .dataSource(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword())
+                .dataSource(postgres.jdbcUrl(), postgres.username(), postgres.password())
                 .locations("classpath:db/migration")
                 .target(MigrationVersion.fromVersion("87"))
                 .load()
                 .migrate();
         connection = DriverManager.getConnection(
-                postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
+                postgres.jdbcUrl(), postgres.username(), postgres.password());
 
         adminUser = createUser("ADMIN");
         plainUser = createUser("USER");
@@ -141,7 +134,7 @@ class AccessRoleDataBackfillMigrationTest {
         // switch to the V88 window — this class asserts what V88 leaves behind for V89, so it must
         // not run the destructive V89 step (the schema tests cover that).
         Flyway.configure()
-                .dataSource(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword())
+                .dataSource(postgres.jdbcUrl(), postgres.username(), postgres.password())
                 .locations("classpath:db/migration")
                 .target(MigrationVersion.fromVersion("88"))
                 .load()
@@ -346,36 +339,30 @@ class AccessRoleDataBackfillMigrationTest {
 
     @Test
     void v88OnAnEmptyDatabaseIsANoOp() throws SQLException {
-        PostgreSQLContainer<?> empty = new PostgreSQLContainer<>("pgvector/pgvector:pg17")
-                .withDatabaseName("xihe_cp_v88_fresh")
-                .withUsername("test")
-                .withPassword("test");
-        empty.start();
-        try {
-            Flyway.configure()
-                    .dataSource(empty.getJdbcUrl(), empty.getUsername(), empty.getPassword())
-                    .locations("classpath:db/migration")
-                    .load()
-                    .migrate();
-            try (Connection fresh = DriverManager.getConnection(
-                    empty.getJdbcUrl(), empty.getUsername(), empty.getPassword());
-                 Statement statement = fresh.createStatement()) {
-                try (ResultSet rs = statement.executeQuery(
-                        "SELECT count(*) FROM flyway_schema_history WHERE version = '88' AND success = true")) {
-                    rs.next();
-                    assertEquals(1, rs.getInt(1), "V88 applies cleanly to a fresh database");
-                }
-                try (ResultSet rs = statement.executeQuery("SELECT count(*) FROM grants")) {
-                    rs.next();
-                    assertEquals(0, rs.getInt(1), "no legacy rows means no copied rows");
-                }
-                try (ResultSet rs = statement.executeQuery("SELECT count(*) FROM role_bindings")) {
-                    rs.next();
-                    assertEquals(0, rs.getInt(1), "no users means no bindings");
-                }
+        // PLAN-eff/task-13 M1（A1）：空库来自 JVM 单例容器（不再自起第二个容器，也不再负责停止它）；
+        // 现场保留到 JVM 退出，便于失败后进库排查。
+        TestDatabaseProvider.DatabaseRef empty = TestDatabaseProvider.emptyDatabase("access_role_empty");
+        Flyway.configure()
+                .dataSource(empty.jdbcUrl(), empty.username(), empty.password())
+                .locations("classpath:db/migration")
+                .load()
+                .migrate();
+        try (Connection fresh = DriverManager.getConnection(
+                empty.jdbcUrl(), empty.username(), empty.password());
+             Statement statement = fresh.createStatement()) {
+            try (ResultSet rs = statement.executeQuery(
+                    "SELECT count(*) FROM flyway_schema_history WHERE version = '88' AND success = true")) {
+                rs.next();
+                assertEquals(1, rs.getInt(1), "V88 applies cleanly to a fresh database");
             }
-        } finally {
-            empty.stop();
+            try (ResultSet rs = statement.executeQuery("SELECT count(*) FROM grants")) {
+                rs.next();
+                assertEquals(0, rs.getInt(1), "no legacy rows means no copied rows");
+            }
+            try (ResultSet rs = statement.executeQuery("SELECT count(*) FROM role_bindings")) {
+                rs.next();
+                assertEquals(0, rs.getInt(1), "no users means no bindings");
+            }
         }
     }
 }

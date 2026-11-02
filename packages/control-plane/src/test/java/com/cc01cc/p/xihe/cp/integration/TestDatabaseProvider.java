@@ -84,6 +84,10 @@ public final class TestDatabaseProvider {
 
     private static DatabaseRef allocate(String label, boolean fromTemplate) {
         ensureStarted();
+        if (fromTemplate) {
+            // 只有"需要已迁移库"的类才值得付模板迁移的 1.2 s；迁移重放类只领空库。
+            ensureTemplate();
+        }
         String databaseName = databaseName(label);
         try (Connection connection = connect(BOOT_DATABASE);
              Statement statement = connection.createStatement()) {
@@ -108,10 +112,17 @@ public final class TestDatabaseProvider {
                 started.start();
                 container = started;
             }
-            if (!templateReady) {
-                prepareTemplate();
-                templateReady = true;
+        }
+    }
+
+    /** 模板库只在第一次需要"已迁移库"时才建（避免纯迁移重放 shard 白付一次 Flyway）。 */
+    private static void ensureTemplate() {
+        synchronized (LOCK) {
+            if (templateReady) {
+                return;
             }
+            prepareTemplate();
+            templateReady = true;
         }
     }
 

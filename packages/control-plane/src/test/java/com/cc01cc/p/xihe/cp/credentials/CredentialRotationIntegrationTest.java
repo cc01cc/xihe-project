@@ -1,5 +1,6 @@
 package com.cc01cc.p.xihe.cp.credentials;
 
+import com.cc01cc.p.xihe.cp.integration.TestDatabaseProvider;
 import com.cc01cc.p.xihe.cp.crypto.EnvelopeEncryptionService;
 import com.cc01cc.p.xihe.cp.entity.Credential;
 import com.cc01cc.p.xihe.cp.repository.CredentialEventRepository;
@@ -25,9 +26,6 @@ import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.web.client.DefaultResponseErrorHandler;
 import org.springframework.web.client.RestTemplate;
-import org.testcontainers.containers.PostgreSQLContainer;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -51,7 +49,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * deliverability after migration.
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
-@Testcontainers
 @ActiveProfiles("test")
 @DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_CLASS)
 class CredentialRotationIntegrationTest {
@@ -60,18 +57,14 @@ class CredentialRotationIntegrationTest {
             "0123456789abcdef0123456789abcdef".getBytes(StandardCharsets.US_ASCII);
     private static final byte[] KEY_V2 =
             "fedcba9876543210fedcba9876543210".getBytes(StandardCharsets.US_ASCII);
-
-    @Container
-    static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("pgvector/pgvector:pg17")
-            .withDatabaseName("xihe_cp_rotation")
-            .withUsername("test")
-            .withPassword("test");
+    /** PLAN-eff/task-13 M1（A1）：空库由 JVM 单例容器下发；本类仍自行 Flyway 到目标版本。 */
+    static TestDatabaseProvider.DatabaseRef postgres = TestDatabaseProvider.emptyDatabase("credential_rot");
 
     @DynamicPropertySource
     static void configureProperties(DynamicPropertyRegistry registry) {
-        registry.add("spring.datasource.url", postgres::getJdbcUrl);
-        registry.add("spring.datasource.username", postgres::getUsername);
-        registry.add("spring.datasource.password", postgres::getPassword);
+        registry.add("spring.datasource.url", postgres::jdbcUrl);
+        registry.add("spring.datasource.username", postgres::username);
+        registry.add("spring.datasource.password", postgres::password);
         registry.add("spring.datasource.driver-class-name", () -> "org.postgresql.Driver");
         registry.add("cp.credentials.encryption-key", () -> "");
         registry.add("cp.credentials.key-ring", () -> "{\"v1\":\""
