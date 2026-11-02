@@ -2296,16 +2296,15 @@ describe("getWorkspaceAgents principal hooks (PLAN-0625 M3, fail-closed)", () =>
         } as Response;
     }
 
-    it("parses a subscribed principal's advisors and on-triggers", async () => {
+    it("parses the wire `advisors[].on` into the normalized subscription document", async () => {
         fetchSpy.mockResolvedValueOnce(
-            envelope({ advisors: [{ kind: "guard-v1" }], on: ["approval.ask"] }),
+            envelope({ advisors: [{ kind: "guard", on: ["approval.ask"] }] }),
         );
 
         const agents = await api.getWorkspaceAgents("workspace-1");
 
         expect(agents[0]?.hooks).toEqual({
-            advisors: [{ kind: "guard-v1" }],
-            on: ["approval.ask"],
+            advisors: [{ kind: "guard", on: ["approval.ask"] }],
         });
     });
 
@@ -2315,6 +2314,20 @@ describe("getWorkspaceAgents principal hooks (PLAN-0625 M3, fail-closed)", () =>
         const agents = await api.getWorkspaceAgents("workspace-1");
 
         expect(agents[0]?.hooks).toBeNull();
+    });
+
+    it("treats the legacy `[]` projection as no subscriptions without warning", async () => {
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+        try {
+            fetchSpy.mockResolvedValueOnce(envelope([]));
+
+            const agents = await api.getWorkspaceAgents("workspace-1");
+
+            expect(agents[0]?.hooks).toBeNull();
+            expect(warn).not.toHaveBeenCalled();
+        } finally {
+            warn.mockRestore();
+        }
     });
 
     it("drops malformed hooks with a warning instead of guessing a shape", async () => {
@@ -2329,5 +2342,29 @@ describe("getWorkspaceAgents principal hooks (PLAN-0625 M3, fail-closed)", () =>
         } finally {
             warn.mockRestore();
         }
+    });
+
+    it("drops an advisor whose `on` is not a string array (fail-closed)", async () => {
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+        try {
+            fetchSpy.mockResolvedValueOnce(
+                envelope({ advisors: [{ kind: "guard", on: "approval.ask" }] }),
+            );
+
+            const agents = await api.getWorkspaceAgents("workspace-1");
+
+            expect(agents[0]?.hooks).toBeNull();
+            expect(warn).toHaveBeenCalledWith(expect.stringContaining("'on' malformed"));
+        } finally {
+            warn.mockRestore();
+        }
+    });
+
+    it("keeps a kind-only advisor with an empty trigger list", async () => {
+        fetchSpy.mockResolvedValueOnce(envelope({ advisors: [{ kind: "guard" }] }));
+
+        const agents = await api.getWorkspaceAgents("workspace-1");
+
+        expect(agents[0]?.hooks).toEqual({ advisors: [{ kind: "guard", on: [] }] });
     });
 });

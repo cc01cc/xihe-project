@@ -566,6 +566,8 @@ describe("WorkspaceAgentManagementDialog disabled row", () => {
 });
 
 describe("WorkspaceAgentManagementDialog hook subscriptions (PLAN-0625 M3, read-only)", () => {
+    // The document below is the wire shape (`advisors[].on`), i.e. exactly what
+    // `api.getWorkspaceAgents` hands the component — no second shape is invented here.
     const guardAgent = {
         principalId: "88888888-8888-4888-8888-888888888888",
         name: "guardian",
@@ -576,24 +578,52 @@ describe("WorkspaceAgentManagementDialog hook subscriptions (PLAN-0625 M3, read-
         bound: true,
         disabled: false,
         source: "workspace",
-        hooks: { advisors: [{ kind: "guard-v1" }], on: ["approval.ask"] },
+        hooks: { advisors: [{ kind: "guard", on: ["approval.ask"] }] },
     };
 
-    it("renders the advisor kinds and the on-triggers for a subscribed agent", async () => {
+    it("renders the advisor kinds and the action classes from advisors[].on", async () => {
         apiMock.getWorkspaceAgents.mockResolvedValue([guardAgent]);
         const wrapper = await mountOpenedDialog();
 
         const line = wrapper.get(
             '[data-testid="agent-hooks-88888888-8888-4888-8888-888888888888"]',
         );
-        expect(line.text()).toContain("guard-v1");
+        expect(line.text()).toContain("guard");
         expect(line.text()).toContain("approval.ask");
         // 只读：该行没有任何可编辑控件。
         expect(line.find("input, select, button").exists()).toBe(false);
     });
 
+    it("merges the action classes of several advisors without repeating them", async () => {
+        apiMock.getWorkspaceAgents.mockResolvedValue([
+            {
+                ...guardAgent,
+                hooks: {
+                    advisors: [
+                        { kind: "guard", on: ["approval.ask"] },
+                        { kind: "lint", on: ["approval.ask"] },
+                    ],
+                },
+            },
+        ]);
+        const wrapper = await mountOpenedDialog();
+
+        const line = wrapper.get(
+            '[data-testid="agent-hooks-88888888-8888-4888-8888-888888888888"]',
+        );
+        expect(line.text()).toContain("guard、lint");
+        expect(line.text().match(/approval\.ask/g)?.length).toBe(1);
+    });
+
     it("renders no hooks line when the principal carries null subscriptions", async () => {
         apiMock.getWorkspaceAgents.mockResolvedValue([{ ...guardAgent, hooks: null }]);
+        const wrapper = await mountOpenedDialog();
+
+        expect(wrapper.find('[data-testid^="agent-hooks-"]').exists()).toBe(false);
+    });
+
+    it("renders no hooks line when the ancestors carry no advisors", async () => {
+        apiMock.getWorkspaceAgents.mockResolvedValue([{ ...guardAgent, hooks: { advisors: [] } }]);
         const wrapper = await mountOpenedDialog();
 
         expect(wrapper.find('[data-testid^="agent-hooks-"]').exists()).toBe(false);

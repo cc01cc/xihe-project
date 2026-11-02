@@ -417,18 +417,21 @@ export type AgentPrincipalScope = "PERSONAL" | "WORKSPACE" | "INSTANCE";
 export type WorkspaceAgentSource = "workspace" | "personal" | "instance";
 
 /**
- * PLAN-0625 M3：agent 主体的 hook 订阅（V96 `agent_principals.hooks`）。
- * 形状见 V96 注释：`{"advisors":[{"kind": "<开放串，无注册表 D25-10>", ...config}], "on": [...]}`。
- * 只读消费：kind 之外的 config 字段 UI 不解释（M2 设计全量落地前不锁形状）。
+ * PLAN-0625 M2（D25-09/14）：agent 主体的 hook 订阅（V96 `agent_principals.hooks`）。
+ *
+ * **wire 形状（单一事实源：CP `HookAdvisorRegistry`）**：
+ * `{"advisors":[{"kind":"<开放串>","on":["approval.ask"]}]}` —— 动作类在**每个 advisor 的 `on`** 里，
+ * 顶层没有 `on` 字段（Gap：UI 曾经读顶层 `on`，因此订阅行永远只有 kind）。
+ * `null` = 无订阅。kind 之外的 config 字段 UI 只读透传，不解释（D25-10 插件缝）。
  */
 export interface AgentPrincipalHookAdvisor {
     kind: string;
+    /** 该 advisor 订阅的动作类（CP 精确等值匹配；白名单今天只有 `approval.ask`）。 */
+    on: string[];
 }
 
 export interface AgentPrincipalHooks {
     advisors: AgentPrincipalHookAdvisor[];
-    /** 触发面（如 "approval.ask"）；契约草案字段，缺省不渲染。 */
-    on?: string[];
 }
 /** agent 只声明模型**意图**（provider + model），不绑死具体连接（凭证运行时解析）。 */
 export interface AgentModelRef {
@@ -565,14 +568,16 @@ function asRecord(value: unknown): JsonRecord | null {
 }
 
 /**
- * PLAN-0625 M3：principal hooks 订阅的 fail-closed 解析。
- * wire 形状：`null` = 无订阅；对象含 `advisors`（kind 开放串）与可选 `on`。
- * 非对象 / advisors 非数组 / kind 非串 ⇒ 视为**无订阅** + warn（只读展示不渲染猜测的形状）。
+ * PLAN-0625 M3：principal hooks 订阅的 fail-closed 解析（**唯一**归一处：组件不得再解析形状）。
+ * wire 形状：`null` = 无订阅；对象含 `advisors[]`，每项 `{kind, on}` —— 动作类在 **advisor 的 `on`**
+ * 里（不是顶层）。畸形 → 告警并视为无订阅（只读展示不渲染猜测的形状）。
  */
 function normalizePrincipalHooks(value: unknown): AgentPrincipalHooks | null {
     if (value === null || value === undefined) return null;
+    // Gap I 的旧 CP 投影把 hooks 降级成 `[]`：语义就是“无订阅”，不告警也不渲染。
+    if (Array.isArray(value) && value.length === 0) return null;
     const record = asRecord(value);
-    if (!record || !Array.isArray(record.advisors)) {
+    if (!record || Array.isArray(record) || !Array.isArray(record.advisors)) {
         console.warn("[agents] principal hooks malformed; treated as no subscriptions");
         return null;
     }
@@ -583,12 +588,19 @@ function normalizePrincipalHooks(value: unknown): AgentPrincipalHooks | null {
             console.warn("[agents] principal hooks advisor malformed; treated as no subscriptions");
             return null;
         }
-        advisors.push({ kind: advisor.kind });
+        const on = advisor.on;
+        if (
+            on !== undefined &&
+            (!Array.isArray(on) || on.some((item) => typeof item !== "string"))
+        ) {
+            console.warn(
+                "[agents] principal hooks advisor 'on' malformed; treated as no subscriptions",
+            );
+            return null;
+        }
+        advisors.push({ kind: advisor.kind, on: on === undefined ? [] : [...(on as string[])] });
     }
-    const on = Array.isArray(record.on)
-        ? record.on.filter((item): item is string => typeof item === "string")
-        : undefined;
-    return { advisors, ...(on && on.length > 0 ? { on } : {}) };
+    return { advisors };
 }
 /**
  * PLAN-0625 G：policySummary 的 versioned `hooks` 段（守卫/顾问建议）。

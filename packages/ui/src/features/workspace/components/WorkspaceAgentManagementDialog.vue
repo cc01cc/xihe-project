@@ -202,9 +202,23 @@ function canDisable(agent: WorkspaceAgentBinding): boolean {
     return Boolean(agent.ownerUserId) && agent.ownerUserId === authStore.user?.id;
 }
 
-/** 只读展示 hook 订阅：advisor kind 列表（kind 是开放串，UI 不解释 config）。 */
+/**
+ * 只读展示 hook 订阅：advisor kind 列表（kind 是开放串，UI 不解释 config）。
+ * 形状解析只在 `api.ts#normalizePrincipalHooks`；这里只做展示聚合。
+ */
 function hookKinds(agent: WorkspaceAgentBinding): string[] {
     return (agent.hooks?.advisors ?? []).map((advisor) => advisor.kind);
+}
+
+/** 订阅的动作类并集（跨 advisor 去重保序）——wire 里在 `advisors[].on`，不在顶层。 */
+function hookActionClasses(agent: WorkspaceAgentBinding): string[] {
+    const seen = new Set<string>();
+    for (const advisor of agent.hooks?.advisors ?? []) {
+        for (const actionClass of advisor.on) {
+            if (actionClass !== "") seen.add(actionClass);
+        }
+    }
+    return [...seen];
 }
 function addAllowedModel() {
     allowedModels.value = [...allowedModels.value, { provider: "", model: "" }];
@@ -832,8 +846,8 @@ async function unbind(agent: WorkspaceAgentBinding) {
                             >
                                 {{ t("workspace.agentHooksLabel") }}:
                                 {{ hookKinds(agent).join("、") }}
-                                <template v-if="agent.hooks?.on?.length">
-                                    · {{ agent.hooks.on.join(", ") }}
+                                <template v-if="hookActionClasses(agent).length">
+                                    · {{ hookActionClasses(agent).join(", ") }}
                                 </template>
                             </p>
                             <p class="mt-1 break-all font-mono text-[11px] text-muted-foreground">
