@@ -389,15 +389,16 @@ test.describe("PLAN-0623 有头走查：会话参与者 dock tab", () => {
         // 专属工作区里现建 agent principal（S1 只验证 dock tab 与无会话空态）。
         // 模型意图必须**显式给**：参与者视图的 defaultModelProvider/Name 直接取自 principal，
         // 不给值 ⇒ UI 正确地不渲染模型段（那是"不伪造"语义，不是缺陷）。
-        // 取值与 helper 的模板一致（provider=openai / model=fake-openai），本栈的 mock LLM 就认这对。
+        // 取值用 Lead 在干净栈(cp=27457)实测通过的一对：mock / gpt-5（principal → 视图 → UI 全链路已证）。
+        // 名字**不带空格**：S3 会用 displayName 拼 `@name`，空格会让断言与真实输入都变脆。
         agentParticipantId = await provisionWorkspaceAgentPrincipal(
             request,
             { accessToken: token, workspaceId },
             {
-                name: `Headed Participants ${randomUUID().slice(0, 8)}`,
+                name: `Headed-Participants-${randomUUID().slice(0, 8)}`,
                 actions: ["read"],
-                defaultModelProvider: "openai",
-                defaultModelName: "fake-openai",
+                defaultModelProvider: "mock",
+                defaultModelName: "gpt-5",
             },
         );
 
@@ -517,7 +518,7 @@ test.describe("PLAN-0623 有头走查：会话参与者 dock tab", () => {
         // 有值时**必须**渲染，且文本是"provider / model"（ParticipantRow.vue 的 modelIntent）：
         // 这条同时证明 ① 模型意图能存 ② 经 participants 视图传到 UI ③ 格式正确。
         await expect(agentRow.getByTestId(`participant-model-${agent!.participantId}`)).toHaveText(
-            /openai\s*\/\s*fake-openai/,
+            /mock\s*\/\s*gpt-5/,
         );
         expect(
             await humanRow.getByTestId(`participant-model-${humanParticipantId}`).count(),
