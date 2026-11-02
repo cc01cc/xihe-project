@@ -135,6 +135,132 @@ for (const route of allRoutes) {
                 });
                 return;
             }
+            // A page that renders "with 0 console errors" only proves something if the chat
+            // projections answer with their real shapes. The `{}` catch-all below made the chat
+            // surfaces read `undefined.find` / `.filter` / `.map` (messages array, follow-up queue
+            // `items`, derived-state `activeChildren`) and the monitor read `history.recent`, i.e.
+            // the route "rendered" only because the failure landed after the assertion.
+            const sessionPath = (suffix: string) =>
+                requestUrl.pathname.endsWith(`/sessions/test-session/${suffix}`);
+            if (sessionPath("messages")) {
+                await route2.fulfill({
+                    status: 200,
+                    contentType: "application/json",
+                    body: JSON.stringify([]),
+                });
+                return;
+            }
+            if (sessionPath("derived-state")) {
+                await route2.fulfill({
+                    status: 200,
+                    contentType: "application/json",
+                    body: JSON.stringify({
+                        sessionId: "test-session",
+                        activeChildren: [],
+                        terminalNotices: [],
+                    }),
+                });
+                return;
+            }
+            if (sessionPath("follow-ups")) {
+                await route2.fulfill({
+                    status: 200,
+                    contentType: "application/json",
+                    body: JSON.stringify({
+                        sessionId: "test-session",
+                        queueState: "empty",
+                        outstandingCount: 0,
+                        capacityLimit: 5,
+                        pauseReason: null,
+                        items: [],
+                    }),
+                });
+                return;
+            }
+            if (sessionPath("participants")) {
+                await route2.fulfill({
+                    status: 200,
+                    contentType: "application/json",
+                    body: JSON.stringify({ participants: [] }),
+                });
+                return;
+            }
+            if (sessionPath("branches")) {
+                await route2.fulfill({
+                    status: 200,
+                    contentType: "application/json",
+                    body: JSON.stringify({
+                        sessionId: "test-session",
+                        items: [
+                            {
+                                branchId: "00000000-0000-4000-8000-000000000001",
+                                parentBranchId: null,
+                                forkPointMessageId: null,
+                                forkPointRunId: null,
+                                createdAt: new Date().toISOString(),
+                            },
+                        ],
+                    }),
+                });
+                return;
+            }
+            if (sessionPath("commands")) {
+                await route2.fulfill({
+                    status: 200,
+                    contentType: "application/json",
+                    body: JSON.stringify({ commands: [] }),
+                });
+                return;
+            }
+            // `GET /chat/sessions/{id}/monitor` → `SessionMonitorResponse`. `history` and
+            // `readiness` are required projections (`SessionMonitorPanel` renders
+            // `data.history.recent`), so `{}` threw "reading 'recent'".
+            if (
+                requestUrl.pathname.includes("/chat/sessions/") &&
+                requestUrl.pathname.endsWith("/monitor")
+            ) {
+                await route2.fulfill({
+                    status: 200,
+                    contentType: "application/json",
+                    body: JSON.stringify({
+                        generatedAt: new Date().toISOString(),
+                        session: {
+                            id: "test-session",
+                            title: "Test Session",
+                            agentPrincipalId: null,
+                            modelProvider: null,
+                            modelName: null,
+                            providerConnectionId: null,
+                            connectionRevision: null,
+                            createdAt: new Date().toISOString(),
+                            updatedAt: new Date().toISOString(),
+                        },
+                        activity: [],
+                        history: { windowSize: 20, counts: {}, recent: [] },
+                        readiness: {
+                            connection: null,
+                            agent: {
+                                status: "unknown",
+                                llmReady: "unknown",
+                                verifiedAt: null,
+                                configRevision: "0",
+                            },
+                            lastObservedRun: null,
+                        },
+                        transport: { attemptCount: 0, failedCount: 0, partialCount: 0 },
+                    }),
+                });
+                return;
+            }
+            if (requestUrl.pathname.endsWith("/agents")) {
+                // PLAN-0622 M1.2 envelope; `raw.agents.map` throws on a bare array.
+                await route2.fulfill({
+                    status: 200,
+                    contentType: "application/json",
+                    body: JSON.stringify({ agents: [] }),
+                });
+                return;
+            }
             await route2.fulfill({
                 status: 200,
                 contentType: "application/json",
@@ -145,6 +271,12 @@ for (const route of allRoutes) {
         const resp = await page.goto(route.path, { waitUntil: "load", timeout: 15000 });
         expect(resp?.status()).toBe(200);
         await expect(page.locator("#app")).toBeVisible();
+        if (route.name === "workspace-chat-session") {
+            // Readiness, not a clock: the chat surface mounts its composer only after the session
+            // projection has been applied, and the assertions below must cover the projections
+            // resolving — the `{}` catch-all used to fail *after* this test had already passed.
+            await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: 15000 });
+        }
 
         await expectPlatformScreenshot(page, route.name + ".png");
         expect(errors).toEqual([]);
