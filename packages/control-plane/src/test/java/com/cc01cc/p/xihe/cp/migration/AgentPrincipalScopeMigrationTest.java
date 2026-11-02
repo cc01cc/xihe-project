@@ -1,12 +1,10 @@
 package com.cc01cc.p.xihe.cp.migration;
 
+import com.cc01cc.p.xihe.cp.integration.TestDatabaseProvider;
 import org.flywaydb.core.Flyway;
 import org.flywaydb.core.api.MigrationVersion;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
-import org.testcontainers.containers.PostgreSQLContainer;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
 
 import com.cc01cc.p.xihe.cp.policy.PermissionAtomCatalog;
 import com.cc01cc.p.xihe.cp.policy.SystemAccessRoleCatalog;
@@ -34,14 +32,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * contract the service layer relies on — {@code PERSONAL} without an owner and a non-personal
  * scope with an owner must both be rejected by the database, not only by Java.</p>
  */
-@Testcontainers
 class AgentPrincipalScopeMigrationTest {
-
-    @Container
-    static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("pgvector/pgvector:pg17")
-            .withDatabaseName("xihe_cp_v90")
-            .withUsername("test")
-            .withPassword("test");
+    /** PLAN-eff/task-13 M1（A1）：空库由 JVM 单例容器下发；本类仍自行 Flyway 到目标版本。 */
+    static TestDatabaseProvider.DatabaseRef postgres = TestDatabaseProvider.emptyDatabase("agent_principa");
 
     private static final UUID LEGACY_PRINCIPAL_ID = UUID.randomUUID();
     private static final UUID LEGACY_USER_ID = UUID.randomUUID();
@@ -50,14 +43,14 @@ class AgentPrincipalScopeMigrationTest {
 
     @BeforeAll
     static void backfillProvesTheOneShotScopeMigration() throws SQLException {
-        String url = postgres.getJdbcUrl();
+        String url = postgres.jdbcUrl();
         Flyway.configure()
-                .dataSource(url, postgres.getUsername(), postgres.getPassword())
+                .dataSource(url, postgres.username(), postgres.password())
                 .locations("classpath:db/migration")
                 .target(MigrationVersion.fromVersion("89"))
                 .load()
                 .migrate();
-        connection = DriverManager.getConnection(url, postgres.getUsername(), postgres.getPassword());
+        connection = DriverManager.getConnection(url, postgres.username(), postgres.password());
         // V89 shape: users.role is gone, agent_principals has no scope yet.
         execute("INSERT INTO users (id, email, password_hash, username) VALUES ('" + LEGACY_USER_ID
                 + "', 'legacy-" + LEGACY_USER_ID + "@test.local', 'x', 'legacy" + LEGACY_USER_ID.toString().substring(0, 8)
@@ -72,7 +65,7 @@ class AgentPrincipalScopeMigrationTest {
                 + "', 'instance', NULL, '" + LEGACY_USER_ID + "')");
 
         Flyway.configure()
-                .dataSource(url, postgres.getUsername(), postgres.getPassword())
+                .dataSource(url, postgres.username(), postgres.password())
                 .locations("classpath:db/migration")
                 .load()
                 .migrate();

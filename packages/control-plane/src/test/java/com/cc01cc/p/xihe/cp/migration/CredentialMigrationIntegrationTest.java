@@ -1,11 +1,9 @@
 package com.cc01cc.p.xihe.cp.migration;
 
+import com.cc01cc.p.xihe.cp.integration.TestDatabaseProvider;
 import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
-import org.testcontainers.containers.PostgreSQLContainer;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
 
 import java.sql.Connection;
 import java.sql.DriverManager;
@@ -24,26 +22,21 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * 关键 CHECK 正反例（owner_type / kind / delivery_tier / status / revision /
  * event_type）、三条索引与 events→credentials FK（ON DELETE CASCADE）断言。
  */
-@Testcontainers
 class CredentialMigrationIntegrationTest {
-
-    @Container
-    static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("pgvector/pgvector:pg17")
-            .withDatabaseName("xihe_cp_credentials")
-            .withUsername("test")
-            .withPassword("test");
+    /** PLAN-eff/task-13 M1（A1）：空库由 JVM 单例容器下发；本类仍自行 Flyway 到目标版本。 */
+    static TestDatabaseProvider.DatabaseRef postgres = TestDatabaseProvider.emptyDatabase("credential_mig");
 
     private static Connection connection;
 
     @BeforeAll
     static void applyMigrationsOnFreshDatabase() throws SQLException {
         Flyway.configure()
-                .dataSource(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword())
+                .dataSource(postgres.jdbcUrl(), postgres.username(), postgres.password())
                 .locations("classpath:db/migration")
                 .load()
                 .migrate();
         connection = DriverManager.getConnection(
-                postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
+                postgres.jdbcUrl(), postgres.username(), postgres.password());
     }
 
     @Test

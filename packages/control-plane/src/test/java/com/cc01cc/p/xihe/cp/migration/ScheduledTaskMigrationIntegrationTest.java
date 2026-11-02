@@ -1,11 +1,9 @@
 package com.cc01cc.p.xihe.cp.migration;
 
+import com.cc01cc.p.xihe.cp.integration.TestDatabaseProvider;
 import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
-import org.testcontainers.containers.PostgreSQLContainer;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
 
 import java.sql.Connection;
 import java.sql.DriverManager;
@@ -24,14 +22,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * prompt / status）与两条（+quota 共三条）索引断言；V60 创建者归属列
  * {@code agent_principal_id}（FK SET NULL + 部分索引 + 删除降级）同批断言。
  */
-@Testcontainers
 class ScheduledTaskMigrationIntegrationTest {
-
-    @Container
-    static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("pgvector/pgvector:pg17")
-            .withDatabaseName("xihe_cp_scheduled")
-            .withUsername("test")
-            .withPassword("test");
+    /** PLAN-eff/task-13 M1（A1）：空库由 JVM 单例容器下发；本类仍自行 Flyway 到目标版本。 */
+    static TestDatabaseProvider.DatabaseRef postgres = TestDatabaseProvider.emptyDatabase("scheduled_task");
 
     private static Connection connection;
     private static UUID userId;
@@ -41,12 +34,12 @@ class ScheduledTaskMigrationIntegrationTest {
     @BeforeAll
     static void applyMigrationsOnFreshDatabase() throws SQLException {
         Flyway.configure()
-                .dataSource(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword())
+                .dataSource(postgres.jdbcUrl(), postgres.username(), postgres.password())
                 .locations("classpath:db/migration")
                 .load()
                 .migrate();
         connection = DriverManager.getConnection(
-                postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
+                postgres.jdbcUrl(), postgres.username(), postgres.password());
         userId = UUID.randomUUID();
         workspaceId = UUID.randomUUID();
         sessionId = UUID.randomUUID();

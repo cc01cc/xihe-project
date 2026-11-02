@@ -1,12 +1,10 @@
 package com.cc01cc.p.xihe.cp.migration;
 
+import com.cc01cc.p.xihe.cp.integration.TestDatabaseProvider;
 import org.flywaydb.core.Flyway;
 import org.flywaydb.core.api.MigrationVersion;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
-import org.testcontainers.containers.PostgreSQLContainer;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
 
 import java.sql.Connection;
 import java.sql.DriverManager;
@@ -24,26 +22,21 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-@Testcontainers
 class DomainSchemaMigrationTest {
-
-    @Container
-    static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("pgvector/pgvector:pg17")
-            .withDatabaseName("xihe_cp_fresh")
-            .withUsername("test")
-            .withPassword("test");
+    /** PLAN-eff/task-13 M1（A1）：空库由 JVM 单例容器下发；本类仍自行 Flyway 到目标版本。 */
+    static TestDatabaseProvider.DatabaseRef postgres = TestDatabaseProvider.emptyDatabase("domain_schema");
 
     private static Connection connection;
 
     @BeforeAll
     static void applyMigrationsOnFreshDatabase() throws SQLException {
         Flyway.configure()
-                .dataSource(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword())
+                .dataSource(postgres.jdbcUrl(), postgres.username(), postgres.password())
                 .locations("classpath:db/migration")
                 .load()
                 .migrate();
         connection = DriverManager.getConnection(
-                postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
+                postgres.jdbcUrl(), postgres.username(), postgres.password());
     }
 
     private static int scalarInt(String sql) throws SQLException {
@@ -504,17 +497,17 @@ class DomainSchemaMigrationTest {
     @Test
     void v57AddsApiKeyAndResetsConflictingDevelopmentConnectionData() throws SQLException {
         String upgradeDb = "xihe_cp_upgrade_v57";
-        String adminUrl = postgres.getJdbcUrl();
+        String adminUrl = postgres.jdbcUrl();
         try (Connection admin = DriverManager.getConnection(
-                adminUrl, postgres.getUsername(), postgres.getPassword());
+                adminUrl, postgres.username(), postgres.password());
              Statement statement = admin.createStatement()) {
             statement.executeUpdate("DROP DATABASE IF EXISTS " + upgradeDb);
             statement.executeUpdate("CREATE DATABASE " + upgradeDb);
         }
-        String upgradeUrl = adminUrl.replace("/" + postgres.getDatabaseName(), "/" + upgradeDb);
+        String upgradeUrl = adminUrl.replace("/" + postgres.databaseName(), "/" + upgradeDb);
 
         Flyway.configure()
-                .dataSource(upgradeUrl, postgres.getUsername(), postgres.getPassword())
+                .dataSource(upgradeUrl, postgres.username(), postgres.password())
                 .locations("classpath:db/migration")
                 .target(MigrationVersion.fromVersion("56"))
                 .load()
@@ -527,7 +520,7 @@ class DomainSchemaMigrationTest {
         UUID branchId = UUID.randomUUID();
         UUID connectionId = UUID.randomUUID();
         try (Connection c = DriverManager.getConnection(
-                upgradeUrl, postgres.getUsername(), postgres.getPassword())) {
+                upgradeUrl, postgres.username(), postgres.password())) {
             executeUpdate(c, "INSERT INTO users (id, email, password_hash) VALUES ('" + userId
                     + "'::uuid, 'v57-" + userId + "@test.local', 'hash')");
             // V57 schema: owner_id is still NOT NULL here.
@@ -558,14 +551,14 @@ class DomainSchemaMigrationTest {
         }
 
         Flyway.configure()
-                .dataSource(upgradeUrl, postgres.getUsername(), postgres.getPassword())
+                .dataSource(upgradeUrl, postgres.username(), postgres.password())
                 .locations("classpath:db/migration")
                 .target(MigrationVersion.fromVersion("57"))
                 .load()
                 .migrate();
 
         try (Connection c = DriverManager.getConnection(
-                upgradeUrl, postgres.getUsername(), postgres.getPassword())) {
+                upgradeUrl, postgres.username(), postgres.password())) {
             assertEquals(1, scalarInt(c, "SELECT count(*) FROM flyway_schema_history "
                     + "WHERE version = '57' AND success = true"), "V57 must be applied");
             assertEquals(0, scalarInt(c, "SELECT count(*) FROM provider_connections"),
@@ -601,16 +594,16 @@ class DomainSchemaMigrationTest {
     @Test
     void v57FailureRollsBackAndForwardRetrySucceedsAfterRepair() throws Exception {
         String retryDb = "xihe_cp_upgrade_v57_retry";
-        String adminUrl = postgres.getJdbcUrl();
+        String adminUrl = postgres.jdbcUrl();
         try (Connection admin = DriverManager.getConnection(
-                adminUrl, postgres.getUsername(), postgres.getPassword());
+                adminUrl, postgres.username(), postgres.password());
              Statement statement = admin.createStatement()) {
             statement.executeUpdate("DROP DATABASE IF EXISTS " + retryDb);
             statement.executeUpdate("CREATE DATABASE " + retryDb);
         }
-        String retryUrl = adminUrl.replace("/" + postgres.getDatabaseName(), "/" + retryDb);
+        String retryUrl = adminUrl.replace("/" + postgres.databaseName(), "/" + retryDb);
         Flyway.configure()
-                .dataSource(retryUrl, postgres.getUsername(), postgres.getPassword())
+                .dataSource(retryUrl, postgres.username(), postgres.password())
                 .locations("classpath:db/migration")
                 .target(MigrationVersion.fromVersion("56"))
                 .load()
@@ -619,7 +612,7 @@ class DomainSchemaMigrationTest {
         UUID userId = UUID.randomUUID();
         UUID connectionId = UUID.randomUUID();
         try (Connection c = DriverManager.getConnection(
-                retryUrl, postgres.getUsername(), postgres.getPassword())) {
+                retryUrl, postgres.username(), postgres.password())) {
             executeUpdate(c, "INSERT INTO users (id, email, password_hash) VALUES ('" + userId
                     + "'::uuid, 'v57retry-" + userId + "@test.local', 'hash')");
             executeUpdate(c, "INSERT INTO provider_connections (id, owner_type, owner_id, provider_id, "
@@ -632,14 +625,14 @@ class DomainSchemaMigrationTest {
         }
 
         Flyway failing = Flyway.configure()
-                .dataSource(retryUrl, postgres.getUsername(), postgres.getPassword())
+                .dataSource(retryUrl, postgres.username(), postgres.password())
                 .locations("classpath:db/migration")
                 .target(MigrationVersion.fromVersion("57"))
                 .load();
         assertThrows(Exception.class, failing::migrate);
 
         try (Connection c = DriverManager.getConnection(
-                retryUrl, postgres.getUsername(), postgres.getPassword())) {
+                retryUrl, postgres.username(), postgres.password())) {
             assertEquals(1, scalarInt(c, "SELECT count(*) FROM provider_connections"),
                     "failed V57 must roll back its DELETE");
             assertEquals(1, scalarInt(c, "SELECT count(*) FROM pg_constraint WHERE conname = "
@@ -659,7 +652,7 @@ class DomainSchemaMigrationTest {
 
         // The schema conflict still exists, so a forward retry cannot silently succeed yet.
         Flyway blocked = Flyway.configure()
-                .dataSource(retryUrl, postgres.getUsername(), postgres.getPassword())
+                .dataSource(retryUrl, postgres.username(), postgres.password())
                 .locations("classpath:db/migration")
                 .target(MigrationVersion.fromVersion("57"))
                 .load();
@@ -669,11 +662,11 @@ class DomainSchemaMigrationTest {
                 "retry must still fail on the unresolved column conflict: " + blockedError.getMessage());
 
         try (Connection c = DriverManager.getConnection(
-                retryUrl, postgres.getUsername(), postgres.getPassword())) {
+                retryUrl, postgres.username(), postgres.password())) {
             executeUpdate(c, "ALTER TABLE provider_connections DROP COLUMN connection_key");
         }
         Flyway retry = Flyway.configure()
-                .dataSource(retryUrl, postgres.getUsername(), postgres.getPassword())
+                .dataSource(retryUrl, postgres.username(), postgres.password())
                 .locations("classpath:db/migration")
                 .target(MigrationVersion.fromVersion("57"))
                 .load();
@@ -681,7 +674,7 @@ class DomainSchemaMigrationTest {
         retry.migrate();
 
         try (Connection c = DriverManager.getConnection(
-                retryUrl, postgres.getUsername(), postgres.getPassword())) {
+                retryUrl, postgres.username(), postgres.password())) {
             assertEquals(0, scalarInt(c, "SELECT count(*) FROM provider_connections"),
                     "forward retry applies the scoped reset");
             assertEquals(1, scalarInt(c, "SELECT count(*) FROM flyway_schema_history "
@@ -699,19 +692,19 @@ class DomainSchemaMigrationTest {
     void v57ScopedResetHasBackupAndRestoreRoundTrip() throws Exception {
         String backupDb = "xihe_cp_v57_backup_src";
         String restoreDb = "xihe_cp_v57_backup_restore";
-        String adminUrl = postgres.getJdbcUrl();
+        String adminUrl = postgres.jdbcUrl();
         for (String name : new String[]{backupDb, restoreDb}) {
             try (Connection admin = DriverManager.getConnection(
-                    adminUrl, postgres.getUsername(), postgres.getPassword());
+                    adminUrl, postgres.username(), postgres.password());
                  Statement statement = admin.createStatement()) {
                 statement.executeUpdate("DROP DATABASE IF EXISTS " + name);
                 statement.executeUpdate("CREATE DATABASE " + name);
             }
         }
-        String backupUrl = adminUrl.replace("/" + postgres.getDatabaseName(), "/" + backupDb);
-        String restoreUrl = adminUrl.replace("/" + postgres.getDatabaseName(), "/" + restoreDb);
+        String backupUrl = adminUrl.replace("/" + postgres.databaseName(), "/" + backupDb);
+        String restoreUrl = adminUrl.replace("/" + postgres.databaseName(), "/" + restoreDb);
         Flyway.configure()
-                .dataSource(backupUrl, postgres.getUsername(), postgres.getPassword())
+                .dataSource(backupUrl, postgres.username(), postgres.password())
                 .locations("classpath:db/migration")
                 .target(MigrationVersion.fromVersion("56"))
                 .load()
@@ -726,7 +719,7 @@ class DomainSchemaMigrationTest {
         String backupCiphertext = "v1:backup-ciphertext-not-a-real-secret";
         String backupLeaseHash = "lease-hash-backup-not-a-real-token";
         try (Connection c = DriverManager.getConnection(
-                backupUrl, postgres.getUsername(), postgres.getPassword())) {
+                backupUrl, postgres.username(), postgres.password())) {
             executeUpdate(c, "INSERT INTO users (id, email, password_hash) VALUES ('" + userId
                     + "'::uuid, 'v57backup-" + userId + "@test.local', 'hash')");
             // V57 schema: owner_id is still NOT NULL here.
@@ -770,7 +763,7 @@ class DomainSchemaMigrationTest {
         String backupCipherHash;
         String backupLeaseHashRow;
         try (Connection c = DriverManager.getConnection(
-                backupUrl, postgres.getUsername(), postgres.getPassword())) {
+                backupUrl, postgres.username(), postgres.password())) {
             backupConnections = scalarInt(c, "SELECT count(*) FROM provider_connections");
             backupAudits = scalarInt(c, "SELECT count(*) FROM provider_connection_audit");
             backupLeases = scalarInt(c, "SELECT count(*) FROM provider_credential_leases");
@@ -788,14 +781,14 @@ class DomainSchemaMigrationTest {
         assertEquals(backupLeaseHash, backupLeaseHashRow);
 
         Flyway.configure()
-                .dataSource(backupUrl, postgres.getUsername(), postgres.getPassword())
+                .dataSource(backupUrl, postgres.username(), postgres.password())
                 .locations("classpath:db/migration")
                 .target(MigrationVersion.fromVersion("57"))
                 .load()
                 .migrate();
 
         try (Connection c = DriverManager.getConnection(
-                backupUrl, postgres.getUsername(), postgres.getPassword())) {
+                backupUrl, postgres.username(), postgres.password())) {
             assertEquals(0, scalarInt(c, "SELECT count(*) FROM provider_connections"));
             assertEquals(0, scalarInt(c, "SELECT count(*) FROM provider_connection_audit"));
             assertEquals(0, scalarInt(c, "SELECT count(*) FROM provider_credential_leases"));
@@ -809,13 +802,13 @@ class DomainSchemaMigrationTest {
 
         // Restore the scoped backup into an independent V56 database; ciphertext stays encrypted.
         Flyway.configure()
-                .dataSource(restoreUrl, postgres.getUsername(), postgres.getPassword())
+                .dataSource(restoreUrl, postgres.username(), postgres.password())
                 .locations("classpath:db/migration")
                 .target(MigrationVersion.fromVersion("56"))
                 .load()
                 .migrate();
         try (Connection c = DriverManager.getConnection(
-                restoreUrl, postgres.getUsername(), postgres.getPassword())) {
+                restoreUrl, postgres.username(), postgres.password())) {
             executeUpdate(c, "INSERT INTO users (id, email, password_hash) VALUES ('" + userId
                     + "'::uuid, 'v57backup-" + userId + "@test.local', 'hash')");
             // V56 schema: owner_id is still NOT NULL here.
@@ -882,17 +875,17 @@ class DomainSchemaMigrationTest {
         // Seed pre-origin ChatRun data at V33; V39/V40/V41 backfill current run,
         // Session-kind, and default-grant state while preserving operation extensions.
         String upgradeDb = "xihe_cp_upgrade_v41";
-        String adminUrl = postgres.getJdbcUrl();
+        String adminUrl = postgres.jdbcUrl();
         try (Connection admin = DriverManager.getConnection(
-                adminUrl, postgres.getUsername(), postgres.getPassword());
+                adminUrl, postgres.username(), postgres.password());
              Statement statement = admin.createStatement()) {
             statement.executeUpdate("DROP DATABASE IF EXISTS " + upgradeDb);
             statement.executeUpdate("CREATE DATABASE " + upgradeDb);
         }
-        String upgradeUrl = adminUrl.replace("/" + postgres.getDatabaseName(), "/" + upgradeDb);
+        String upgradeUrl = adminUrl.replace("/" + postgres.databaseName(), "/" + upgradeDb);
 
         Flyway.configure()
-                .dataSource(upgradeUrl, postgres.getUsername(), postgres.getPassword())
+                .dataSource(upgradeUrl, postgres.username(), postgres.password())
                 .locations("classpath:db/migration")
                 .target(MigrationVersion.fromVersion("33"))
                 .load()
@@ -906,7 +899,7 @@ class DomainSchemaMigrationTest {
         UUID operationId = UUID.randomUUID();
         UUID itemId = UUID.randomUUID();
         try (Connection c = DriverManager.getConnection(
-                upgradeUrl, postgres.getUsername(), postgres.getPassword())) {
+                upgradeUrl, postgres.username(), postgres.password())) {
             executeUpdate(c, "INSERT INTO users (id, email, password_hash) VALUES ('" + userId
                     + "'::uuid, 'upgrade-" + userId + "@test.local', 'hash')");
             // V33 schema: the legacy columns/table still exist here (V89 drops them later).
@@ -936,14 +929,14 @@ class DomainSchemaMigrationTest {
         }
 
         Flyway.configure()
-                .dataSource(upgradeUrl, postgres.getUsername(), postgres.getPassword())
+                .dataSource(upgradeUrl, postgres.username(), postgres.password())
                 .locations("classpath:db/migration")
                 .target(MigrationVersion.fromVersion("54"))
                 .load()
                 .migrate();
 
         try (Connection c = DriverManager.getConnection(
-                upgradeUrl, postgres.getUsername(), postgres.getPassword())) {
+                upgradeUrl, postgres.username(), postgres.password())) {
             assertEquals(1, scalarInt(c, "SELECT count(*) FROM flyway_schema_history "
                     + "WHERE version = '41' AND success = true"), "V41 must be applied on upgrade");
             assertEquals(1, scalarInt(c, "SELECT count(*) FROM flyway_schema_history "
@@ -1166,17 +1159,17 @@ class DomainSchemaMigrationTest {
     @Test
     void v43ToV44UpgradeAddsDeltaColumnsWithoutRebuildingV42() throws SQLException {
         String upgradeDb = "xihe_cp_upgrade_v44";
-        String adminUrl = postgres.getJdbcUrl();
+        String adminUrl = postgres.jdbcUrl();
         try (Connection admin = DriverManager.getConnection(
-                adminUrl, postgres.getUsername(), postgres.getPassword());
+                adminUrl, postgres.username(), postgres.password());
              Statement statement = admin.createStatement()) {
             statement.executeUpdate("DROP DATABASE IF EXISTS " + upgradeDb);
             statement.executeUpdate("CREATE DATABASE " + upgradeDb);
         }
-        String upgradeUrl = adminUrl.replace("/" + postgres.getDatabaseName(), "/" + upgradeDb);
+        String upgradeUrl = adminUrl.replace("/" + postgres.databaseName(), "/" + upgradeDb);
 
         Flyway.configure()
-                .dataSource(upgradeUrl, postgres.getUsername(), postgres.getPassword())
+                .dataSource(upgradeUrl, postgres.username(), postgres.password())
                 .locations("classpath:db/migration")
                 .target(MigrationVersion.fromVersion("43"))
                 .load()
@@ -1187,7 +1180,7 @@ class DomainSchemaMigrationTest {
         UUID operationId = UUID.randomUUID();
         UUID itemId = UUID.randomUUID();
         try (Connection c = DriverManager.getConnection(
-                upgradeUrl, postgres.getUsername(), postgres.getPassword())) {
+                upgradeUrl, postgres.username(), postgres.password())) {
             assertEquals(0, scalarInt(c, "SELECT count(*) FROM information_schema.columns "
                             + "WHERE table_schema = 'public' AND table_name = 'operation_items' "
                             + "AND column_name = 'waiting_on_run_id'"),
@@ -1210,14 +1203,14 @@ class DomainSchemaMigrationTest {
         }
 
         Flyway.configure()
-                .dataSource(upgradeUrl, postgres.getUsername(), postgres.getPassword())
+                .dataSource(upgradeUrl, postgres.username(), postgres.password())
                 .locations("classpath:db/migration")
                 .target(MigrationVersion.fromVersion("44"))
                 .load()
                 .migrate();
 
         try (Connection c = DriverManager.getConnection(
-                upgradeUrl, postgres.getUsername(), postgres.getPassword())) {
+                upgradeUrl, postgres.username(), postgres.password())) {
             assertEquals(1, scalarInt(c, "SELECT count(*) FROM flyway_schema_history "
                             + "WHERE version = '44' AND success = true"),
                     "V44 must be recorded as applied on the upgrade chain");
@@ -1255,17 +1248,17 @@ class DomainSchemaMigrationTest {
     @Test
     void v64RewritesTheRetiredCredentialWordOnUpgrade() throws SQLException {
         String upgradeDb = "xihe_cp_upgrade_v63";
-        String adminUrl = postgres.getJdbcUrl();
+        String adminUrl = postgres.jdbcUrl();
         try (Connection admin = DriverManager.getConnection(
-                adminUrl, postgres.getUsername(), postgres.getPassword());
+                adminUrl, postgres.username(), postgres.password());
              Statement statement = admin.createStatement()) {
             statement.executeUpdate("DROP DATABASE IF EXISTS " + upgradeDb);
             statement.executeUpdate("CREATE DATABASE " + upgradeDb);
         }
-        String upgradeUrl = adminUrl.replace("/" + postgres.getDatabaseName(), "/" + upgradeDb);
+        String upgradeUrl = adminUrl.replace("/" + postgres.databaseName(), "/" + upgradeDb);
 
         Flyway.configure()
-                .dataSource(upgradeUrl, postgres.getUsername(), postgres.getPassword())
+                .dataSource(upgradeUrl, postgres.username(), postgres.password())
                 .locations("classpath:db/migration")
                 .target(MigrationVersion.fromVersion("33"))
                 .load()
@@ -1274,7 +1267,7 @@ class DomainSchemaMigrationTest {
         UUID adminId = UUID.randomUUID();
         UUID workspaceId = UUID.randomUUID();
         try (Connection c = DriverManager.getConnection(
-                upgradeUrl, postgres.getUsername(), postgres.getPassword())) {
+                upgradeUrl, postgres.username(), postgres.password())) {
             // Pre-V41 schema: legacy columns/table are still part of the shape being upgraded.
             executeUpdate(c, "INSERT INTO users (id, email, password_hash, role) VALUES ('" + adminId
                     + "'::uuid, 'v63-upgrade-admin-" + adminId + "@test.local', 'hash', 'ADMIN')");
@@ -1285,14 +1278,14 @@ class DomainSchemaMigrationTest {
         }
 
         Flyway.configure()
-                .dataSource(upgradeUrl, postgres.getUsername(), postgres.getPassword())
+                .dataSource(upgradeUrl, postgres.username(), postgres.password())
                 .locations("classpath:db/migration")
                 .target(MigrationVersion.fromVersion("41"))
                 .load()
                 .migrate();
 
         try (Connection c = DriverManager.getConnection(
-                upgradeUrl, postgres.getUsername(), postgres.getPassword())) {
+                upgradeUrl, postgres.username(), postgres.password())) {
             assertEquals(1, scalarInt(c, "SELECT count(*) FROM grants WHERE source = 'default' "
                     + "AND subject_type = 'user' AND subject_id = '" + adminId + "'::uuid "
                     + "AND permissions @> '[{\"actionClass\":\"credential\"}]'::jsonb"),
@@ -1300,13 +1293,13 @@ class DomainSchemaMigrationTest {
         }
 
         Flyway.configure()
-                .dataSource(upgradeUrl, postgres.getUsername(), postgres.getPassword())
+                .dataSource(upgradeUrl, postgres.username(), postgres.password())
                 .locations("classpath:db/migration")
                 .load()
                 .migrate();
 
         try (Connection c = DriverManager.getConnection(
-                upgradeUrl, postgres.getUsername(), postgres.getPassword())) {
+                upgradeUrl, postgres.username(), postgres.password())) {
             assertEquals(1, scalarInt(c, "SELECT count(*) FROM flyway_schema_history "
                     + "WHERE version = '64' AND success = true"), "V64 must run on the upgrade chain");
             assertEquals(0, scalarInt(c, "SELECT count(*) FROM grants "

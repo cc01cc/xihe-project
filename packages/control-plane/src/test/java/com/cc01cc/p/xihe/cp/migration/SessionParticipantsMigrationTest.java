@@ -1,12 +1,10 @@
 package com.cc01cc.p.xihe.cp.migration;
 
+import com.cc01cc.p.xihe.cp.integration.TestDatabaseProvider;
 import org.flywaydb.core.Flyway;
 import org.flywaydb.core.api.MigrationVersion;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
-import org.testcontainers.containers.PostgreSQLContainer;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
 
 import java.sql.Connection;
 import java.sql.DriverManager;
@@ -47,14 +45,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * a principal (gets a PRIMARY participant) and one unbound (must stay empty: the migration never
  * invents a responder).</p>
  */
-@Testcontainers
 class SessionParticipantsMigrationTest {
-
-    @Container
-    static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("pgvector/pgvector:pg17")
-            .withDatabaseName("xihe_cp_v92")
-            .withUsername("test")
-            .withPassword("test");
+    /** PLAN-eff/task-13 M1（A1）：空库由 JVM 单例容器下发；本类仍自行 Flyway 到目标版本。 */
+    static TestDatabaseProvider.DatabaseRef postgres = TestDatabaseProvider.emptyDatabase("session_partic");
 
     private static final UUID USER_ID = UUID.randomUUID();
     private static final UUID PRINCIPAL_ID = UUID.randomUUID();
@@ -66,9 +59,9 @@ class SessionParticipantsMigrationTest {
 
     @BeforeAll
     static void seedLegacyShapeThenMigrateToHead() throws SQLException {
-        String url = postgres.getJdbcUrl();
+        String url = postgres.jdbcUrl();
         migrate(url, "91");
-        connection = DriverManager.getConnection(url, postgres.getUsername(), postgres.getPassword());
+        connection = DriverManager.getConnection(url, postgres.username(), postgres.password());
         execute("INSERT INTO users (id, email, password_hash, username) VALUES ('" + USER_ID
                 + "', 'plan0623-participants@test.local', 'x', 'plan0623part')");
         // V89 dropped workspaces.owner_id (ownership now lives in role_bindings), so the V91 shape
@@ -222,7 +215,7 @@ class SessionParticipantsMigrationTest {
 
     private static void migrate(String url, String target) {
         var configuration = Flyway.configure()
-                .dataSource(url, postgres.getUsername(), postgres.getPassword())
+                .dataSource(url, postgres.username(), postgres.password())
                 .locations("classpath:db/migration");
         if (target != null) {
             configuration.target(MigrationVersion.fromVersion(target));

@@ -1,12 +1,10 @@
 package com.cc01cc.p.xihe.cp.session;
 
+import com.cc01cc.p.xihe.cp.integration.TestDatabaseProvider;
 import org.flywaydb.core.Flyway;
 import org.flywaydb.core.api.FlywayException;
 import org.flywaydb.core.api.MigrationVersion;
 import org.junit.jupiter.api.Test;
-import org.testcontainers.containers.PostgreSQLContainer;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
 
 import java.sql.Connection;
 import java.sql.DriverManager;
@@ -35,14 +33,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * separate classes, commands and evidence files; neither stands in for the
  * other (PLAN-0408 tasks T1.1 "V45 migration evidence separation").
  */
-@Testcontainers
 class InboxV44UpgradeMigrationTest {
-
-    @Container
-    static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("pgvector/pgvector:pg17")
-            .withDatabaseName("xihe_cp_inbox_v44_upgrade")
-            .withUsername("test")
-            .withPassword("test");
+    /** PLAN-eff/task-13 M1（A1）：空库由 JVM 单例容器下发；本类仍自行 Flyway 到目标版本。 */
+    static TestDatabaseProvider.DatabaseRef postgres = TestDatabaseProvider.emptyDatabase("inbox_v44_upgr");
 
     @Test
     void v44ToV45UpgradeCreatesInboxWithoutTouchingPreV45Data() throws SQLException {
@@ -193,16 +186,16 @@ class InboxV44UpgradeMigrationTest {
 
     private static String createDatabase(String databaseName) throws SQLException {
         String uniqueName = databaseName + "_" + UUID.randomUUID().toString().replace("-", "");
-        try (Connection admin = connect(postgres.getJdbcUrl());
+        try (Connection admin = connect(postgres.jdbcUrl());
              Statement statement = admin.createStatement()) {
             statement.executeUpdate("CREATE DATABASE " + uniqueName);
         }
-        return postgres.getJdbcUrl().replace("/" + postgres.getDatabaseName(), "/" + uniqueName);
+        return postgres.jdbcUrl().replace("/" + postgres.databaseName(), "/" + uniqueName);
     }
 
     private static void migrateToVersion(String jdbcUrl, String version) {
         Flyway.configure()
-                .dataSource(jdbcUrl, postgres.getUsername(), postgres.getPassword())
+                .dataSource(jdbcUrl, postgres.username(), postgres.password())
                 .locations("classpath:db/migration")
                 .target(MigrationVersion.fromVersion(version))
                 .load()
@@ -211,7 +204,7 @@ class InboxV44UpgradeMigrationTest {
 
     private static void migrateToV45(String jdbcUrl) {
         Flyway.configure()
-                .dataSource(jdbcUrl, postgres.getUsername(), postgres.getPassword())
+                .dataSource(jdbcUrl, postgres.username(), postgres.password())
                 .locations("classpath:db/migration")
                 .target(MigrationVersion.fromVersion("45"))
                 .load()
@@ -225,7 +218,7 @@ class InboxV44UpgradeMigrationTest {
     }
 
     private static Connection connect(String jdbcUrl) throws SQLException {
-        return DriverManager.getConnection(jdbcUrl, postgres.getUsername(), postgres.getPassword());
+        return DriverManager.getConnection(jdbcUrl, postgres.username(), postgres.password());
     }
 
     private static String scalarString(Connection connection, String sql) throws SQLException {

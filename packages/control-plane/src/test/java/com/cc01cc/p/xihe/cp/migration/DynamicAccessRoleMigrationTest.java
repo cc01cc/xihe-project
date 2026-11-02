@@ -1,13 +1,11 @@
 package com.cc01cc.p.xihe.cp.migration;
 
+import com.cc01cc.p.xihe.cp.integration.TestDatabaseProvider;
 import com.cc01cc.p.xihe.cp.policy.SystemAccessRoleCatalog;
 import org.flywaydb.core.Flyway;
 import org.flywaydb.core.api.MigrationVersion;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
-import org.testcontainers.containers.PostgreSQLContainer;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
 
 import java.sql.Connection;
 import java.sql.DriverManager;
@@ -34,14 +32,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * {@code agent_default} (P1-1), the scope CHECK + workspace cascade + per-source uniqueness
  * (P1-2) and the 18/9/5/6/4/1 atom counts of the seeded catalog (P1-3).</p>
  */
-@Testcontainers
 class DynamicAccessRoleMigrationTest {
-
-    @Container
-    static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("pgvector/pgvector:pg17")
-            .withDatabaseName("xihe_cp_v87")
-            .withUsername("test")
-            .withPassword("test");
+    /** PLAN-eff/task-13 M1（A1）：空库由 JVM 单例容器下发；本类仍自行 Flyway 到目标版本。 */
+    static TestDatabaseProvider.DatabaseRef postgres = TestDatabaseProvider.emptyDatabase("dynamic_access");
 
     private static Connection connection;
 
@@ -52,13 +45,13 @@ class DynamicAccessRoleMigrationTest {
         // Pin this class to the V87 target; V88's end-state is asserted by
         // AccessRoleDataBackfillMigrationTest.
         Flyway.configure()
-                .dataSource(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword())
+                .dataSource(postgres.jdbcUrl(), postgres.username(), postgres.password())
                 .locations("classpath:db/migration")
                 .target(MigrationVersion.fromVersion("87"))
                 .load()
                 .migrate();
         connection = DriverManager.getConnection(
-                postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
+                postgres.jdbcUrl(), postgres.username(), postgres.password());
     }
 
     // ---------------------------------------------------------------------
