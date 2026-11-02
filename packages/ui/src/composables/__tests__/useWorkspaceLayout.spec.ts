@@ -134,6 +134,7 @@ describe("per-workspace dock layout storage (PLAN-0582 S2)", () => {
             activeDockTab: null,
             dockMode: "floating",
             dockModeManual: false,
+            dockFocus: false,
             openTabs: ["environment", "scheduled-tasks", "settings"],
         });
         expect(readWorkspaceLayout("ws-1")).toEqual(defaultWorkspaceLayout());
@@ -156,6 +157,7 @@ describe("per-workspace dock layout storage (PLAN-0582 S2)", () => {
             activeDockTab: "monitor",
             dockMode: "pinned",
             dockModeManual: true,
+            dockFocus: true,
             openTabs: ["environment", "settings"],
         });
 
@@ -168,6 +170,7 @@ describe("per-workspace dock layout storage (PLAN-0582 S2)", () => {
             activeDockTab: "monitor",
             dockMode: "pinned",
             dockModeManual: true,
+            dockFocus: true,
             openTabs: ["environment", "settings"],
         });
         expect(readWorkspaceLayout("ws-1")).toEqual({
@@ -179,10 +182,45 @@ describe("per-workspace dock layout storage (PLAN-0582 S2)", () => {
             activeDockTab: "monitor",
             dockMode: "pinned",
             dockModeManual: true,
+            dockFocus: true,
             openTabs: ["environment", "settings"],
         });
         // Workspace-scoped: another workspace is untouched.
         expect(readWorkspaceLayout("ws-2")).toEqual(defaultWorkspaceLayout());
+    });
+
+    it("only honours a stored focus while the dock can actually render", () => {
+        // PLAN-0626 D26-04: "focused" without a rendered panel would hide the main column
+        // and leave an empty workbench, so the reader normalizes it away.
+        localStorage.setItem(
+            `${WORKSPACE_LAYOUT_STORAGE_PREFIX}ws-collapsed`,
+            JSON.stringify({ dockCollapsed: true, dockFocus: true }),
+        );
+        localStorage.setItem(
+            `${WORKSPACE_LAYOUT_STORAGE_PREFIX}ws-tabless`,
+            JSON.stringify({ dockCollapsed: false, dockTabs: [], dockFocus: true }),
+        );
+
+        expect(readWorkspaceLayout("ws-collapsed").dockFocus).toBe(false);
+        expect(readWorkspaceLayout("ws-tabless").dockFocus).toBe(false);
+    });
+
+    it("never persists a focus the dock cannot render", () => {
+        writeWorkspaceLayout("ws-1", { ...defaultWorkspaceLayout(), dockFocus: true });
+
+        // Default layout is collapsed with no tabs, so the flag is dropped on write.
+        expect(readStoredWorkspace("ws-1").dockFocus).toBe(false);
+    });
+
+    it("treats a payload without dockFocus (pre-0626) as not focused", () => {
+        localStorage.setItem(
+            `${WORKSPACE_LAYOUT_STORAGE_PREFIX}ws-legacy-focus`,
+            JSON.stringify({ dockCollapsed: false, dockTabs: ["code"], activeDockTab: "code" }),
+        );
+
+        expect(readWorkspaceLayout("ws-legacy-focus").dockFocus).toBe(false);
+        // Nothing else about the legacy payload is reset.
+        expect(readWorkspaceLayout("ws-legacy-focus").dockTabs).toEqual(["code"]);
     });
 
     it("refuses the next dock tab once DOCK_MAX_TABS is reached (D26-06)", () => {

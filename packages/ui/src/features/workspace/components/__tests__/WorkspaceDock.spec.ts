@@ -17,6 +17,9 @@ const i18n = createI18n({
                 dockModePinned: "Pinned",
                 dockModeFloating: "Floating",
                 dockModeToggleHint: "Toggle pinned/floating for this panel",
+                dockFocusExpand: "Expand panel",
+                dockFocusRestore: "Restore layout",
+                dockFocusHint: "Fill the workspace with this panel",
                 dockResizeBubble: "Width",
             },
         },
@@ -37,6 +40,7 @@ function mountDock(
         maxVisibleTabs: number;
         mode: "pinned" | "floating";
         defaultWidth: number;
+        focus: boolean;
     }> = {},
 ) {
     return mount(WorkspaceDock, {
@@ -261,5 +265,40 @@ describe("WorkspaceDock (PLAN-0582 S2)", () => {
         expect(wrapper.get('[data-testid="workspace-aux-panel"]').attributes("style")).toContain(
             "width: 420px",
         );
+    });
+
+    it("fills the workbench row in focus mode and drops the width plus its resizer", () => {
+        // PLAN-0626 D26-04: focus outranks pinned/floating; width stays stored but is
+        // not applied (a full-row panel has nothing to resize against).
+        const wrapper = mountDock({ focus: true }),
+            panel = wrapper.get('[data-testid="workspace-aux-panel"]');
+
+        expect(panel.attributes("data-dock-focus")).toBe("true");
+        expect(panel.attributes("data-dock-mode")).toBe("focus");
+        expect(panel.attributes("style")).toBeUndefined();
+        expect(panel.classes()).toContain("flex-1");
+        expect(panel.classes()).not.toContain("absolute");
+        expect(panel.classes()).not.toContain("shadow-xl");
+        expect(wrapper.find('[data-testid="dock-resizer"]').exists()).toBe(false);
+        // The tab strip stays fully usable: focus only changes geometry.
+        expect(wrapper.findAll('[role="tab"]')).toHaveLength(3);
+        expect(wrapper.get('[data-testid="dock-focus-toggle"]').attributes("aria-label")).toBe(
+            "Restore layout",
+        );
+    });
+
+    it("emits the focus toggle from the header and reflects its pressed state", async () => {
+        const wrapper = mountDock(),
+            toggle = wrapper.get('[data-testid="dock-focus-toggle"]');
+
+        expect(toggle.attributes("aria-pressed")).toBe("false");
+        expect(toggle.attributes("aria-label")).toBe("Expand panel");
+        await toggle.trigger("click");
+        expect(wrapper.emitted("toggle-focus")).toHaveLength(1);
+
+        const focused = mountDock({ focus: true }),
+            pressed = focused.get('[data-testid="dock-focus-toggle"]');
+        expect(pressed.attributes("aria-pressed")).toBe("true");
+        expect(pressed.attributes("aria-label")).toBe("Restore layout");
     });
 });

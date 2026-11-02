@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
 import { useI18n } from "vue-i18n";
-import { ChevronDown, Pin, PinOff, X } from "@lucide/vue";
+import { ChevronDown, Maximize2, Minimize2, Pin, PinOff, X } from "@lucide/vue";
 import {
     DOCK_WIDTH_DEFAULT,
     DOCK_WIDTH_KEYBOARD_STEP,
@@ -40,8 +40,14 @@ const props = withDefaults(
         defaultWidth?: number;
         /** Tabs rendered in the strip before they move into the overflow menu. */
         maxVisibleTabs?: number;
+        /**
+         * PLAN-0626 D26-04: focus mode renders the dock as the whole workbench row
+         * (the main column is hidden by the workbench). It is a rendering projection
+         * only: `mode`/`width` keep their user values and reappear on restore.
+         */
+        focus?: boolean;
     }>(),
-    { maxVisibleTabs: 3, mode: "floating", defaultWidth: DOCK_WIDTH_DEFAULT },
+    { maxVisibleTabs: 3, mode: "floating", defaultWidth: DOCK_WIDTH_DEFAULT, focus: false },
 );
 
 const emit = defineEmits<{
@@ -50,6 +56,7 @@ const emit = defineEmits<{
     close: [];
     "update:width": [width: number];
     "toggle-mode": [];
+    "toggle-focus": [];
 }>();
 
 const { t } = useI18n();
@@ -57,14 +64,29 @@ const overflowOpen = ref(false);
 /** Live width shown in the drag bubble; never persisted (the write is throttled). */
 const resizingWidth = ref<number | null>(null);
 
-const isPinned = computed(() => props.mode === "pinned");
-const modeLabel = computed(() =>
-    isPinned.value ? t("workspace.dockModePinned") : t("workspace.dockModeFloating"),
-);
-const panelClass = computed(() => [
-    "flex h-full shrink-0 flex-col border-l border-border-subtle bg-surface-canvas",
-    isPinned.value ? "relative z-auto shadow-none" : "absolute inset-y-0 right-0 z-20 shadow-xl",
-]);
+const isPinned = computed(() => props.mode === "pinned"),
+    modeLabel = computed(() =>
+        isPinned.value ? t("workspace.dockModePinned") : t("workspace.dockModeFloating"),
+    ),
+    focusLabel = computed(() =>
+        props.focus ? t("workspace.dockFocusRestore") : t("workspace.dockFocusExpand"),
+    );
+const panelClass = computed(() => {
+    // Focus outranks the pinned/floating split: the row has no main column left to
+    // overlay or to be pinned beside, so it becomes the only flex child that grows.
+    if (props.focus) {
+        return [
+            "flex h-full min-w-0 flex-1 flex-col border-l border-border-subtle bg-surface-canvas",
+            "relative z-auto shadow-none",
+        ];
+    }
+    return [
+        "flex h-full shrink-0 flex-col border-l border-border-subtle bg-surface-canvas",
+        isPinned.value
+            ? "relative z-auto shadow-none"
+            : "absolute inset-y-0 right-0 z-20 shadow-xl",
+    ];
+});
 
 const visibleTabs = computed(() => props.tabs.slice(0, props.maxVisibleTabs));
 const overflowTabs = computed(() => props.tabs.slice(props.maxVisibleTabs));
@@ -134,12 +156,15 @@ function handleResizeKeydown(event: KeyboardEvent) {
 <template>
     <aside
         data-testid="workspace-aux-panel"
-        :data-dock-mode="mode"
+        :data-dock-mode="focus ? 'focus' : mode"
+        :data-dock-focus="focus ? 'true' : 'false'"
         :aria-label="t('workspace.dockTabs')"
         :class="panelClass"
-        :style="{ width: `${width}px` }"
+        :style="focus ? undefined : { width: `${width}px` }"
     >
+        <!-- Focus fills the row, so a resize handle (and its width) has no meaning. -->
         <div
+            v-if="!focus"
             role="separator"
             aria-orientation="vertical"
             :aria-label="t('workspace.dockResize')"
@@ -270,6 +295,24 @@ function handleResizeKeydown(event: KeyboardEvent) {
             >
                 <Pin v-if="isPinned" class="size-3.5" aria-hidden="true" />
                 <PinOff v-else class="size-3.5" aria-hidden="true" />
+            </button>
+            <!--
+                PLAN-0626 D26-04: expand/restore. Kept beside the pin toggle because the two
+                are independent axes (pin = dock vs overlay, focus = occupy the whole row);
+                restoring brings back the pinned/floating choice and the stored width.
+            -->
+            <button
+                type="button"
+                data-testid="dock-focus-toggle"
+                class="shrink-0 rounded p-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                :class="focus ? 'text-brand' : ''"
+                :aria-pressed="focus"
+                :aria-label="focusLabel"
+                :title="`${focusLabel} · ${t('workspace.dockFocusHint')}`"
+                @click="emit('toggle-focus')"
+            >
+                <Minimize2 v-if="focus" class="size-3.5" aria-hidden="true" />
+                <Maximize2 v-else class="size-3.5" aria-hidden="true" />
             </button>
             <button
                 type="button"

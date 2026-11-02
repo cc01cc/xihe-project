@@ -49,6 +49,9 @@ const i18n = createI18n({
                 dockOverflow: "More panels",
                 dockCloseTab: "Close this panel",
                 dockResize: "Resize the panel",
+                dockFocusExpand: "Expand panel",
+                dockFocusRestore: "Restore layout",
+                dockFocusHint: "Fill the workspace with this panel",
                 expandFiles: "Expand the file tree",
                 collapseFiles: "Collapse the file tree",
                 toggleCode: "Toggle code",
@@ -227,6 +230,85 @@ describe("WorkspaceWorkbench skeleton (PLAN-0582 S2)", () => {
             "true",
         );
         expect(wrapper.findAll('[role="tab"]')).toHaveLength(1);
+    });
+
+    it("expands the dock across the main column without unmounting it (D26-04)", async () => {
+        const wrapper = mountWorkbench(),
+            // Queried before focusing: the element survives a v-show toggle, so holding
+            // the reference also proves the column was not remounted.
+            center = wrapper.get("[data-main-hidden]");
+        await flushPromises();
+        await wrapper.get('[data-testid="workspace-toolbar-code"]').trigger("click");
+
+        await wrapper.get('[data-testid="dock-focus-toggle"]').trigger("click");
+
+        // The main column is only hidden: unmounting it would drop the chat SSE.
+        expect(center.attributes("data-main-hidden")).toBe("true");
+        expect(center.isVisible()).toBe(false);
+        expect((center.element as HTMLElement).style.display).toBe("none");
+        // The dock is the growing flex child and its resizer is gone.
+        expect(wrapper.get('[data-testid="workspace-aux-panel"]').classes()).toContain("flex-1");
+        expect(wrapper.find('[data-testid="dock-resizer"]').exists()).toBe(false);
+        // Focus is persisted and never reports a forced-floating fallback.
+        await expectStored(() => expect(storedLayout().dockFocus).toBe(true));
+        expect(toastWarning).not.toHaveBeenCalled();
+    });
+
+    it("restores the previous mode and width when focus ends (D26-04)", async () => {
+        const wrapper = mountWorkbench();
+        await flushPromises();
+        await wrapper.get('[data-testid="workspace-toolbar-code"]').trigger("click");
+        await wrapper.get('[data-testid="dock-resizer"]').trigger("keydown", { key: "End" });
+
+        await wrapper.get('[data-testid="dock-focus-toggle"]').trigger("click");
+        expect(
+            wrapper.get('[data-testid="workspace-aux-panel"]').attributes("style"),
+        ).toBeUndefined();
+
+        await wrapper.get('[data-testid="dock-focus-toggle"]').trigger("click");
+
+        // Back to the stored (non-focus) geometry: width 480, resizer available again.
+        expect(wrapper.get('[data-testid="workspace-aux-panel"]').attributes("style")).toContain(
+            "width: 480px",
+        );
+        expect(wrapper.find('[data-testid="dock-resizer"]').exists()).toBe(true);
+        expect(wrapper.get("[data-main-hidden]").isVisible()).toBe(true);
+        await expectStored(() => expect(storedLayout().dockFocus).toBe(false));
+    });
+
+    it("leaves focus on Escape without rolling the dock up (D26-04)", async () => {
+        const wrapper = mountWorkbench();
+        await flushPromises();
+        await wrapper.get('[data-testid="workspace-toolbar-code"]').trigger("click");
+        await wrapper.get('[data-testid="dock-focus-toggle"]').trigger("click");
+
+        window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+        await flushPromises();
+
+        // Focused docks are flex children, so the floating-only Escape rule must not
+        // apply; Escape restores the layout instead of closing the panel.
+        expect(wrapper.find('[data-testid="workspace-aux-panel"]').exists()).toBe(true);
+        expect(
+            wrapper.get('[data-testid="workspace-aux-panel"]').attributes("data-dock-focus"),
+        ).toBe("false");
+        expect(wrapper.get("[data-main-hidden]").isVisible()).toBe(true);
+    });
+
+    it("clears focus when the dock collapses (D26-05)", async () => {
+        const wrapper = mountWorkbench();
+        await flushPromises();
+        await wrapper.get('[data-testid="workspace-toolbar-code"]').trigger("click");
+        await wrapper.get('[data-testid="dock-focus-toggle"]').trigger("click");
+
+        await wrapper.get('[data-testid="workspace-aux-close"]').trigger("click");
+
+        expect(wrapper.find('[data-testid="workspace-aux-panel"]').exists()).toBe(false);
+        // The main column comes back and the stored flag is cleared with the collapse.
+        expect(wrapper.get("[data-main-hidden]").isVisible()).toBe(true);
+        await expectStored(() => {
+            expect(storedLayout().dockCollapsed).toBe(true);
+            expect(storedLayout().dockFocus).toBe(false);
+        });
     });
 
     it("keeps width and collapsed state independent (collapse then re-open restores the width)", async () => {
