@@ -300,7 +300,9 @@ class ContextTemplateIntegrationTest extends AbstractWireMockTest {
         Map<String, Object> builtin = createSession("Builtin default", "custom-openai-compatible", "builtin-model");
         assertEquals("instance", builtin.get("contextTemplateLayer"));
         assertEquals(builtinTemplateId, String.valueOf(builtin.get("contextTemplateId")));
-        assertEquals(1, builtin.get("contextTemplateVersion"));
+        // PLAN-0632 Gate G-0: a newly created Session pins the CURRENT built-in revision (v2, the one
+        // carrying ${xh.skill_catalog}/${xh.agent_memory}), not the frozen pre-G-0 revision.
+        assertEquals(2, builtin.get("contextTemplateVersion"));
 
         // 4) an already-created Session never drifts when defaults change afterwards.
         String pinnedSessionId = (String) builtin.get("id");
@@ -313,6 +315,17 @@ class ContextTemplateIntegrationTest extends AbstractWireMockTest {
         assertEquals(HttpStatus.OK, reread.getStatusCode());
         assertEquals("instance", reread.getBody().get("contextTemplateLayer"));
         assertEquals(builtinTemplateId, String.valueOf(reread.getBody().get("contextTemplateId")));
+
+        // 5) PLAN-0632 Gate G-0, the other direction: revision 1 stays a published, resolvable
+        // revision. An explicit v1 pin (an already-pinned Session, or a connection that chose it)
+        // must still resolve — upgrading never rewrites a published revision in place.
+        assertEquals(HttpStatus.OK, putUserTemplateConfig(Map.of(
+                "connectionDefaultTemplates", "{\"" + connectionId + "\":{\"layer\":\"instance\","
+                        + "\"templateId\":\"" + builtinTemplateId + "\",\"version\":1}}}")).getStatusCode());
+        Map<String, Object> legacyPin = createSession("Builtin v1 pin", "custom-openai-compatible", "default-model");
+        assertEquals("instance", legacyPin.get("contextTemplateLayer"));
+        assertEquals(builtinTemplateId, String.valueOf(legacyPin.get("contextTemplateId")));
+        assertEquals(1, legacyPin.get("contextTemplateVersion"));
     }
 
     @Test
@@ -325,7 +338,8 @@ class ContextTemplateIntegrationTest extends AbstractWireMockTest {
                 .builtinRef(CHAT_TYPE_ID, CHAT_TYPE_VERSION).path("templateId").asText();
         assertEquals("instance", created.get("contextTemplateLayer"));
         assertEquals(builtinTemplateId, String.valueOf(created.get("contextTemplateId")));
-        assertEquals(1, created.get("contextTemplateVersion"));
+        // PLAN-0632 Gate G-0: new Sessions pin built-in revision 2 (with the context-block slots).
+        assertEquals(2, created.get("contextTemplateVersion"));
 
         assertEquals(HttpStatus.OK, putUserTemplates("[" + publishedFragment(1, "用户模板 v1") + "]").getStatusCode());
 

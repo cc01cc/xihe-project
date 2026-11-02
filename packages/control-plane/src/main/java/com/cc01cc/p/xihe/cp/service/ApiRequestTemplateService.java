@@ -465,9 +465,16 @@ public class ApiRequestTemplateService {
         }
     }
 
+    /**
+     * The default pin for a connection that never chose a template: the CURRENT built-in revision,
+     * i.e. revision 2 since PLAN-0632 Gate G-0 (it carries the {@code ${xh.skill_catalog}} /
+     * {@code ${xh.agent_memory}} blocks). Revision 1 stays published and resolvable for Sessions and
+     * connections that already pinned it — a published revision is never rewritten in place, so an
+     * existing pin does not silently gain the new slots; only newly created Sessions get them.
+     */
     public ObjectNode builtinRef(String type, int version) {
         types.require(type, version);
-        return json.createObjectNode().put("layer", "instance").put("templateId", builtinId(type, version).toString()).put("version", 1);
+        return json.createObjectNode().put("layer", "instance").put("templateId", builtinId(type, version).toString()).put("version", 2);
     }
 
     @Transactional
