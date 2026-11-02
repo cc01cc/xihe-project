@@ -53,6 +53,17 @@ public class AgentPrincipal {
     @Column(name = "scope", nullable = false, length = 16)
     private String scope = "WORKSPACE";
 
+    /** PLAN-0625 (V95): USER = human-created; SYSTEM_PRESET = builtin guard preset. */
+    public static final String ORIGIN_USER = "USER";
+    public static final String ORIGIN_SYSTEM_PRESET = "SYSTEM_PRESET";
+
+    @jakarta.persistence.Column(name = "origin", nullable = false, length = 16)
+    private String origin = ORIGIN_USER;
+
+    /** PLAN-0625 (V95): the agent-templates preset id; null for user principals. */
+    @jakarta.persistence.Column(name = "preset_id")
+    private String presetId;
+
     /** Only ever set for {@code PERSONAL}; the DB CHECK constraint keeps the two in sync. */
     @Column(name = "owner_user_id", columnDefinition = "uuid")
     private UUID ownerUserId;
@@ -103,6 +114,10 @@ public class AgentPrincipal {
     public void setDisabledAt(Instant disabledAt) { this.disabledAt = disabledAt; }
 
     public String getScope() { return scope; }
+    public String getOrigin() { return origin; }
+    public void setOrigin(String origin) { this.origin = origin; }
+    public String getPresetId() { return presetId; }
+    public void setPresetId(String presetId) { this.presetId = presetId; }
     public void setScope(String scope) { this.scope = scope; }
 
     public UUID getOwnerUserId() { return ownerUserId; }
