@@ -564,3 +564,38 @@ describe("WorkspaceAgentManagementDialog disabled row", () => {
         wrapper.unmount();
     });
 });
+
+describe("WorkspaceAgentManagementDialog hook subscriptions (PLAN-0625 M3, read-only)", () => {
+    const guardAgent = {
+        principalId: "88888888-8888-4888-8888-888888888888",
+        name: "guardian",
+        templateId: null,
+        templateName: null,
+        createdAt: "2026-11-02T00:00:00Z",
+        permissionsSnapshot: [],
+        bound: true,
+        disabled: false,
+        source: "workspace",
+        hooks: { advisors: [{ kind: "guard-v1" }], on: ["approval.ask"] },
+    };
+
+    it("renders the advisor kinds and the on-triggers for a subscribed agent", async () => {
+        apiMock.getWorkspaceAgents.mockResolvedValue([guardAgent]);
+        const wrapper = await mountOpenedDialog();
+
+        const line = wrapper.get(
+            '[data-testid="agent-hooks-88888888-8888-4888-8888-888888888888"]',
+        );
+        expect(line.text()).toContain("guard-v1");
+        expect(line.text()).toContain("approval.ask");
+        // 只读：该行没有任何可编辑控件。
+        expect(line.find("input, select, button").exists()).toBe(false);
+    });
+
+    it("renders no hooks line when the principal carries null subscriptions", async () => {
+        apiMock.getWorkspaceAgents.mockResolvedValue([{ ...guardAgent, hooks: null }]);
+        const wrapper = await mountOpenedDialog();
+
+        expect(wrapper.find('[data-testid^="agent-hooks-"]').exists()).toBe(false);
+    });
+});

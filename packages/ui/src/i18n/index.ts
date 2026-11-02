@@ -323,6 +323,7 @@ const messages = {
             agentModelProviderPlaceholder: "例如 openai",
             agentModelNamePlaceholder: "例如 gpt-4o-mini",
             agentDefaultModelLabel: "默认模型",
+            agentHooksLabel: "订阅",
             agentDefaultModelIncomplete: "默认模型需要 provider 与模型名同时填写（或都留空）",
             agentAllowedModels: "允许使用的模型集",
             agentAllowedModelsHint: "留空表示不限制；填写后该智能体只能在这些模型间选择。",
@@ -2367,6 +2368,7 @@ const messages = {
             agentModelProviderPlaceholder: "e.g. openai",
             agentModelNamePlaceholder: "e.g. gpt-4o-mini",
             agentDefaultModelLabel: "Default model",
+            agentHooksLabel: "Subscriptions",
             agentDefaultModelIncomplete:
                 "Set both the provider and the model name (or leave both empty)",
             agentAllowedModels: "Allowed models",

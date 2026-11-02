@@ -202,6 +202,10 @@ function canDisable(agent: WorkspaceAgentBinding): boolean {
     return Boolean(agent.ownerUserId) && agent.ownerUserId === authStore.user?.id;
 }
 
+/** 只读展示 hook 订阅：advisor kind 列表（kind 是开放串，UI 不解释 config）。 */
+function hookKinds(agent: WorkspaceAgentBinding): string[] {
+    return (agent.hooks?.advisors ?? []).map((advisor) => advisor.kind);
+}
 function addAllowedModel() {
     allowedModels.value = [...allowedModels.value, { provider: "", model: "" }];
 }
@@ -819,6 +823,18 @@ async function unbind(agent: WorkspaceAgentBinding) {
                             >
                                 {{ t("workspace.agentDefaultModelLabel") }}:
                                 {{ agentDefaultModel(agent) }}
+                            </p>
+                            <!-- PLAN-0625 M3：hook 订阅只读展示（null/无订阅 ⇒ 整行不渲染）。 -->
+                            <p
+                                v-if="hookKinds(agent).length > 0"
+                                class="mt-1 text-xs text-muted-foreground"
+                                :data-testid="`agent-hooks-${agent.principalId}`"
+                            >
+                                {{ t("workspace.agentHooksLabel") }}:
+                                {{ hookKinds(agent).join("、") }}
+                                <template v-if="agent.hooks?.on?.length">
+                                    · {{ agent.hooks.on.join(", ") }}
+                                </template>
                             </p>
                             <p class="mt-1 break-all font-mono text-[11px] text-muted-foreground">
                                 {{ agent.principalId }}

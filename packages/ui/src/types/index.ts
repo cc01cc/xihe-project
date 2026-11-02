@@ -554,8 +554,6 @@ export interface PolicyToolFaceView {
     tool: string;
     actionClass: string;
     shape: ApprovalPolicyShape;
-    /** versioned hooks 段；version≠1 或形状不符时**整段缺失**（fail-closed，不猜）。 */
-    hooks?: ApprovalHooksSection;
 }
 
 export interface AttachmentFile {

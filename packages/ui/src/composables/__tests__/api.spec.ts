@@ -2272,3 +2272,62 @@ describe("normalizeApprovalRequest hooks section (PLAN-0625 G, strict version ga
         }
     });
 });
+
+describe("getWorkspaceAgents principal hooks (PLAN-0625 M3, fail-closed)", () => {
+    function envelope(hooks: unknown) {
+        return {
+            ok: true,
+            json: () =>
+                Promise.resolve({
+                    agents: [
+                        {
+                            principalId: "principal-1",
+                            name: "guardian",
+                            templateId: null,
+                            templateName: null,
+                            createdAt: "2026-11-02T00:00:00Z",
+                            source: "workspace",
+                            permissionsSnapshot: [],
+                            bound: true,
+                            hooks,
+                        },
+                    ],
+                }),
+        } as Response;
+    }
+
+    it("parses a subscribed principal's advisors and on-triggers", async () => {
+        fetchSpy.mockResolvedValueOnce(
+            envelope({ advisors: [{ kind: "guard-v1" }], on: ["approval.ask"] }),
+        );
+
+        const agents = await api.getWorkspaceAgents("workspace-1");
+
+        expect(agents[0]?.hooks).toEqual({
+            advisors: [{ kind: "guard-v1" }],
+            on: ["approval.ask"],
+        });
+    });
+
+    it("treats null hooks as no subscriptions", async () => {
+        fetchSpy.mockResolvedValueOnce(envelope(null));
+
+        const agents = await api.getWorkspaceAgents("workspace-1");
+
+        expect(agents[0]?.hooks).toBeNull();
+    });
+
+    it("drops malformed hooks with a warning instead of guessing a shape", async () => {
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+        try {
+            fetchSpy.mockResolvedValueOnce(envelope({ advisors: "nope" }));
+
+            const agents = await api.getWorkspaceAgents("workspace-1");
+
+            expect(agents[0]?.hooks).toBeNull();
+            expect(warn).toHaveBeenCalledWith(expect.stringContaining("principal hooks malformed"));
+        } finally {
+            warn.mockRestore();
+        }
+    });
+});

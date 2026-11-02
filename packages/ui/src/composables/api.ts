@@ -416,6 +416,20 @@ export type AgentPrincipalScope = "PERSONAL" | "WORKSPACE" | "INSTANCE";
 /** 列表行上的来源标签：这条绑定是"本工作区/个人/实例"的 agent。 */
 export type WorkspaceAgentSource = "workspace" | "personal" | "instance";
 
+/**
+ * PLAN-0625 M3：agent 主体的 hook 订阅（V96 `agent_principals.hooks`）。
+ * 形状见 V96 注释：`{"advisors":[{"kind": "<开放串，无注册表 D25-10>", ...config}], "on": [...]}`。
+ * 只读消费：kind 之外的 config 字段 UI 不解释（M2 设计全量落地前不锁形状）。
+ */
+export interface AgentPrincipalHookAdvisor {
+    kind: string;
+}
+
+export interface AgentPrincipalHooks {
+    advisors: AgentPrincipalHookAdvisor[];
+    /** 触发面（如 "approval.ask"）；契约草案字段，缺省不渲染。 */
+    on?: string[];
+}
 /** agent 只声明模型**意图**（provider + model），不绑死具体连接（凭证运行时解析）。 */
 export interface AgentModelRef {
     provider: string;
@@ -444,6 +458,8 @@ export interface WorkspaceAgentBinding {
     defaultModelName?: string | null;
     /** `null`/缺省 = 不限制可用模型集。 */
     allowedModels?: AgentModelRef[] | null;
+    /** PLAN-0625 M3（V96）：hook 订阅；`null`/缺省 = 无订阅（不渲染订阅行）。 */
+    hooks?: AgentPrincipalHooks | null;
 }
 
 export interface AgentPrincipalCreateInput {
@@ -548,6 +564,32 @@ function asRecord(value: unknown): JsonRecord | null {
     return typeof value === "object" && value !== null ? (value as JsonRecord) : null;
 }
 
+/**
+ * PLAN-0625 M3：principal hooks 订阅的 fail-closed 解析。
+ * wire 形状：`null` = 无订阅；对象含 `advisors`（kind 开放串）与可选 `on`。
+ * 非对象 / advisors 非数组 / kind 非串 ⇒ 视为**无订阅** + warn（只读展示不渲染猜测的形状）。
+ */
+function normalizePrincipalHooks(value: unknown): AgentPrincipalHooks | null {
+    if (value === null || value === undefined) return null;
+    const record = asRecord(value);
+    if (!record || !Array.isArray(record.advisors)) {
+        console.warn("[agents] principal hooks malformed; treated as no subscriptions");
+        return null;
+    }
+    const advisors: AgentPrincipalHookAdvisor[] = [];
+    for (const entry of record.advisors) {
+        const advisor = asRecord(entry);
+        if (!advisor || typeof advisor.kind !== "string" || advisor.kind === "") {
+            console.warn("[agents] principal hooks advisor malformed; treated as no subscriptions");
+            return null;
+        }
+        advisors.push({ kind: advisor.kind });
+    }
+    const on = Array.isArray(record.on)
+        ? record.on.filter((item): item is string => typeof item === "string")
+        : undefined;
+    return { advisors, ...(on && on.length > 0 ? { on } : {}) };
+}
 /**
  * PLAN-0625 G：policySummary 的 versioned `hooks` 段（守卫/顾问建议）。
  * 严格带版本（D23-25 同源）：`version === 1` 才读；无 version / 未知版本 / 形状不符
@@ -1566,9 +1608,6 @@ function normalizePolicyToolFace(value: unknown): PolicyToolFaceView {
         tool: record.tool,
         actionClass: record.actionClass,
         shape: record.shape as ApprovalPolicyShape,
-        ...(normalizeApprovalHooks(record.hooks)
-            ? { hooks: normalizeApprovalHooks(record.hooks)! }
-            : {}),
     };
 }
 
@@ -2442,10 +2481,17 @@ export const api = {
         );
     },
     async getWorkspaceAgents(workspaceId: string): Promise<WorkspaceAgentBinding[]> {
-        const raw = await request<{ agents: WorkspaceAgentBinding[] }>(
+        const raw = await request<{ agents: Array<Record<string, unknown>> }>(
             `/workspaces/${encodeURIComponent(workspaceId)}/agents`,
         );
-        return raw.agents;
+        // hooks 经 fail-closed 解析（V96：null=无订阅；畸形=视为无订阅 + warn）。
+        return raw.agents.map(
+            (agent) =>
+                ({
+                    ...(agent as unknown as WorkspaceAgentBinding),
+                    hooks: normalizePrincipalHooks(agent.hooks),
+                }) as WorkspaceAgentBinding,
+        );
     },
     /**
      * PLAN-0621 F-01：`GET /api/v1/me/permissions` 是 CP 的**权威能力投影**
