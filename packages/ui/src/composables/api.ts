@@ -2604,13 +2604,24 @@ export const api = {
             `/workspaces/${encodeURIComponent(workspaceId)}/agents`,
         );
         // hooks 经 fail-closed 解析（V96：null=无订阅；畸形=视为无订阅 + warn）。
-        return raw.agents.map(
-            (agent) =>
-                ({
-                    ...(agent as unknown as WorkspaceAgentBinding),
-                    hooks: normalizePrincipalHooks(agent.hooks),
-                }) as WorkspaceAgentBinding,
-        );
+        //
+        // `permissionsSnapshot` 在 `WorkspaceAgentView` 里是 required，但**单行**畸形不能让
+        // 整张列表失去更新：面板的能力列表读 `.length`，一旦是 undefined，渲染函数抛错 ⇒ Vue
+        // 放弃本次更新，DOM 停在上一个「正在加载智能体…」帧，加载结束也永远看不出来。这里把
+        // 缺字段降级为「没有冻结上限」并留 warn，让加载终态与失败原因都能被用户看到。
+        return raw.agents.map((agent) => {
+            const snapshot = agent.permissionsSnapshot;
+            if (!Array.isArray(snapshot)) {
+                console.warn("[agents] permissionsSnapshot missing; treated as empty");
+            }
+            return {
+                ...(agent as unknown as WorkspaceAgentBinding),
+                permissionsSnapshot: Array.isArray(snapshot)
+                    ? (snapshot as WorkspaceAgentBinding["permissionsSnapshot"])
+                    : [],
+                hooks: normalizePrincipalHooks(agent.hooks),
+            } as WorkspaceAgentBinding;
+        });
     },
     /**
      * PLAN-0629 M1-4 C：只读记忆列表。信封是 `{memories:[…]}`（与 `{agents:[…]}` 同风格），

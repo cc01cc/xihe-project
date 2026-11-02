@@ -469,6 +469,35 @@ describe("Workspace Agent management API", () => {
         expect(agents[0].permissionsSnapshot).toEqual([]);
     });
 
+    it("degrades a row without permissionsSnapshot instead of handing the panel a crash", async () => {
+        // `permissionsSnapshot` is required by `WorkspaceAgentView`, but one malformed row used to
+        // abort the panel render (`permissionsSnapshot.length`), which froze the list on its previous
+        // "loading" frame. The mapper keeps the failure observable and the row usable.
+        fetchSpy.mockResolvedValueOnce({
+            ok: true,
+            json: () =>
+                Promise.resolve({
+                    agents: [
+                        {
+                            principalId: "principal-bad",
+                            name: "Legacy agent",
+                            templateId: null,
+                            templateName: null,
+                            createdAt: "2026-11-02T00:00:00Z",
+                            source: "workspace",
+                            bound: true,
+                            disabled: false,
+                        },
+                    ],
+                }),
+        } as Response);
+
+        const agents = await api.getWorkspaceAgents("workspace-1");
+
+        expect(agents).toHaveLength(1);
+        expect(agents[0].permissionsSnapshot).toEqual([]);
+    });
+
     it("reads one agent's memory with both path segments encoded (PLAN-0629 M1-4 C)", async () => {
         fetchSpy.mockResolvedValueOnce({
             ok: true,

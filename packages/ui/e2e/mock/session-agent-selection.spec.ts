@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import type { Page } from "@playwright/test";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
 
 test("new Workspace Session is created only after selecting a bound Agent", async ({ page }) => {
@@ -147,7 +148,13 @@ test("creates a principal separately, binds an explicit cap, and confirms unbind
             const body = request.postDataJSON() as {
                 permissions: Array<{ actionClass: string; resource?: string }>;
             };
-            const updated = {
+            // `GET /agents` answers with the full `WorkspaceAgentView`, whose
+            // `permissionsSnapshot` is **required** (OpenAPI), while CP's PUT answers the
+            // narrower `{principalId, workspaceId, permissions}` echo. Storing the echo in
+            // the list produced a contract-violating row: the panel's cap list reads
+            // `permissionsSnapshot.length`, the render aborted, and the DOM stayed on the
+            // previous frame ("正在加载智能体…") — the freeze this case used to report.
+            const bindingRow = {
                 principalId: "agent-1",
                 name: "Research Agent",
                 templateId: null,
@@ -156,19 +163,23 @@ test("creates a principal separately, binds an explicit cap, and confirms unbind
                 source: "workspace",
                 bound: true,
                 disabled: false,
-                permissions: body.permissions,
+                permissionsSnapshot: body.permissions,
                 hooks: null,
                 contextPolicy: null,
             };
             const existingIndex = bindings.findIndex(
                 (binding) => binding.principalId === "agent-1",
             );
-            if (existingIndex < 0) bindings.push(updated);
-            else bindings[existingIndex] = updated;
+            if (existingIndex < 0) bindings.push(bindingRow);
+            else bindings[existingIndex] = bindingRow;
             await route.fulfill({
                 status: 200,
                 contentType: "application/json",
-                body: JSON.stringify(updated),
+                body: JSON.stringify({
+                    principalId: "agent-1",
+                    workspaceId: "workspace-1",
+                    permissions: body.permissions,
+                }),
             });
             return;
         }
@@ -239,7 +250,7 @@ test("creates a principal separately, binds an explicit cap, and confirms unbind
     await unbind.click();
     await expect(unbind).toHaveText("再次点击确认解绑");
     await unbind.click();
-    await expect(page.getByText("此工作区尚未绑定 Agent")).toBeVisible();
+    await expect(page.getByText("此工作区尚未绑定智能体")).toBeVisible();
     await page.screenshot({
         path: test
             .info()
@@ -344,4 +355,145 @@ test("a created principal stays visible while binding is disabled up front with 
 
     // The principal is created but not bound: the bound list still shows the empty state.
     await expect(page.getByText("此工作区尚未绑定智能体")).toBeVisible();
+});
+
+/** OWNER projection, so the panel opens in its normal (writable) shape. */
+async function stubOwnerPermissions(page: Page): Promise<void> {
+    await page.route("**/api/v1/me/permissions", (route) =>
+        route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify({
+                userId: "user-1",
+                instanceCapabilities: [],
+                instancePermissions: [],
+                workspaces: [
+                    {
+                        workspaceId: "workspace-1",
+                        workspaceRole: "OWNER",
+                        workspaceAdmin: true,
+                        permissions: [
+                            { actionClass: "MANAGE_WORKSPACE_AGENTS", resource: "workspace-1" },
+                        ],
+                    },
+                ],
+            }),
+        }),
+    );
+}
+
+/** `GET /agent-templates` per layer; the `{}` catch-all breaks `result.templates.map`. */
+async function stubAgentTemplates(page: Page): Promise<void> {
+    await page.route("**/api/v1/agent-templates**", (route) => {
+        const layer = new URL(route.request().url()).searchParams.get("layer") ?? "user";
+        return route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify({ layer, workspaceId: null, templates: [] }),
+        });
+    });
+}
+
+/** `WorkspaceAgentView` row (PLAN-0622 M1.2 shape, `permissionsSnapshot` required). */
+function agentViewRow(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+    return {
+        principalId: "agent-1",
+        name: "Research Agent",
+        templateId: null,
+        templateName: null,
+        createdAt: new Date().toISOString(),
+        source: "workspace",
+        bound: true,
+        disabled: false,
+        permissionsSnapshot: [{ actionClass: "read", resource: "src/*" }],
+        hooks: null,
+        contextPolicy: null,
+        ...overrides,
+    };
+}
+
+async function openAgentsPanel(page: Page): Promise<void> {
+    await page.goto("/workspace/workspace-1");
+    await page.getByTestId("workspace-toolbar-agents").click();
+    await expect(page.getByRole("heading", { name: "已绑定智能体" })).toBeVisible({
+        timeout: 10000,
+    });
+}
+
+test("a failed agent list resets the loading state, names the failure, and retry recovers", async ({
+    page,
+}) => {
+    await setupMockAuth(page);
+    await setupMockSessions(page, { sessions: [] });
+    await stubOwnerPermissions(page);
+    await stubAgentTemplates(page);
+
+    let failing = true;
+    await page.route("**/api/v1/workspaces/workspace-1/agents", async (route) => {
+        if (failing) {
+            await route.fulfill({
+                status: 500,
+                contentType: "application/problem+json",
+                body: JSON.stringify({
+                    type: "about:blank",
+                    title: "Internal Server Error",
+                    status: 500,
+                    code: "INTERNAL_ERROR",
+                    detail: "agents unavailable",
+                    requestId: "req-agents-500",
+                }),
+            });
+            return;
+        }
+        await route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify({ agents: [agentViewRow()] }),
+        });
+    });
+
+    await page.goto("/workspace/workspace-1");
+    await page.getByTestId("workspace-toolbar-agents").click();
+
+    // Failure is a terminal state: the spinner must not survive it, and the reason must be visible
+    // (a stuck "正在加载智能体…" is exactly what hid this outcome before).
+    await expect(page.getByTestId("agent-error")).toBeVisible({ timeout: 10000 });
+    await expect(page.getByTestId("agent-error")).toContainText("agents unavailable");
+    await expect(page.getByText("正在加载智能体…")).toHaveCount(0);
+    await expect(page.getByTestId("workspace-agent-refresh")).toBeEnabled();
+
+    failing = false;
+    await page.getByTestId("workspace-agent-refresh").click();
+    await expect(page.getByTestId("workspace-agent-agent-1")).toContainText("Research Agent");
+    await expect(page.getByTestId("agent-error")).toHaveCount(0);
+});
+
+test("one contract-violating row degrades instead of freezing the whole list", async ({ page }) => {
+    const pageErrors: string[] = [];
+    page.on("pageerror", (error) => pageErrors.push(error.message));
+
+    await setupMockAuth(page);
+    await setupMockSessions(page, { sessions: [] });
+    await stubOwnerPermissions(page);
+    await stubAgentTemplates(page);
+    await page.route("**/api/v1/workspaces/workspace-1/agents", (route) =>
+        route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify({
+                // `permissionsSnapshot` is required by `WorkspaceAgentView`; a row that lost it must
+                // not abort the render (the cap list reads `.length`), otherwise the panel keeps the
+                // previous "loading" frame forever and the next click reads as a dead button.
+                agents: [{ ...agentViewRow(), permissionsSnapshot: undefined }],
+            }),
+        }),
+    );
+
+    await openAgentsPanel(page);
+
+    const row = page.getByTestId("workspace-agent-agent-1");
+    await expect(row).toContainText("Research Agent");
+    await expect(row).toContainText("无工具权限");
+    await expect(page.getByText("正在加载智能体…")).toHaveCount(0);
+    expect(pageErrors).toEqual([]);
 });
