@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import path from 'node:path';
+import { readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import {
@@ -19,6 +20,15 @@ import {
   updateProvider,
   verifyConnection,
 } from './xihe-cli/provider.mjs';
+import {
+  bindSkill,
+  deleteSkill,
+  importSkills,
+  listSkillBindings,
+  listSkills,
+  showSkill,
+  unbindSkill,
+} from './xihe-cli/skill.mjs';
 import { checkDevelopmentEnvironment, runConfigImport, runRealTest } from './xihe-cli/host.mjs';
 import {
   formatCredentialResult,
@@ -96,6 +106,12 @@ function helpText() {
     '  node scripts/xihe.mjs config export [--layer instance] [--include-secrets] [--out <file>] [--force]',
     '  node scripts/xihe.mjs verify --stack <n> --email <account> --workspace <wsId> [--wait-seconds <n>] [--yes]',
     '  node scripts/xihe.mjs version [--check]',
+    '  node scripts/xihe.mjs skill list [--scope instance|workspace] [--workspace <wsId>]',
+    '  node scripts/xihe.mjs skill show <skillId> [--include-body]',
+    '  node scripts/xihe.mjs skill import --file <request.json>',
+    '  node scripts/xihe.mjs skill bind --skill <id> --subject <user|agent_principal> --subject-id <id> [--scope instance|workspace --workspace <wsId>]',
+    '  node scripts/xihe.mjs skill unbind <bindingId> [--yes]',
+    '  node scripts/xihe.mjs skill delete <skillId> [--yes]',
     '  node scripts/xihe.mjs status',
     '  node scripts/xihe.mjs workspace list',
     '  node scripts/xihe.mjs workspace get <wsId>',
@@ -205,6 +221,87 @@ export async function runCommand(argv, dependencies = {}) {
       const token = await login({ apiBase, fetchImpl, env, options: parsed.values, promptSecret: prompt });
       const data = await collectStatus({ apiBase, fetchImpl, token });
       return { exitCode: 0, json, data };
+    }
+
+    if (group === 'skill') {
+      if (command === 'list') {
+        const parsed = parseCommandOptions(rest, ['--scope', '--workspace', '--email'], []);
+        if (parsed.positionals.length !== 0) throw new CliError('INVALID_ARGUMENT', 'skill list takes no positional arguments.');
+        const apiBase = getApiBase(env);
+        const token = await login({ apiBase, fetchImpl, env, options: parsed.values, promptSecret: prompt });
+        return { exitCode: 0, json, data: await listSkills({ apiBase, fetchImpl, token, options: parsed.values }) };
+      }
+      if (command === 'show') {
+        const parsed = parseCommandOptions(rest, ['--include-body', '--email'], []);
+        if (parsed.positionals.length !== 1) throw new CliError('INVALID_ARGUMENT', 'skill show requires one skill ID.');
+        const apiBase = getApiBase(env);
+        const token = await login({ apiBase, fetchImpl, env, options: parsed.values, promptSecret: prompt });
+        return {
+          exitCode: 0,
+          json,
+          data: await showSkill({
+            apiBase, fetchImpl, token,
+            skillId: parsed.positionals[0],
+            includeBody: parsed.values['--include-body'] === true,
+          }),
+        };
+      }
+      if (command === 'bindings') {
+        const parsed = parseCommandOptions(rest, ['--email'], []);
+        if (parsed.positionals.length !== 1) throw new CliError('INVALID_ARGUMENT', 'skill bindings requires one skill ID.');
+        const apiBase = getApiBase(env);
+        const token = await login({ apiBase, fetchImpl, env, options: parsed.values, promptSecret: prompt });
+        return { exitCode: 0, json, data: await listSkillBindings({ apiBase, fetchImpl, token, skillId: parsed.positionals[0] }) };
+      }
+      if (command === 'import') {
+        const parsed = parseCommandOptions(rest, ['--file', '--email'], []);
+        if (parsed.positionals.length !== 0) throw new CliError('INVALID_ARGUMENT', 'skill import takes no positional arguments; use --file.');
+        const file = requireOption(parsed.values, '--file');
+        const request = JSON.parse(readFileSync(file, 'utf8'));
+        const apiBase = getApiBase(env);
+        const token = await login({ apiBase, fetchImpl, env, options: parsed.values, promptSecret: prompt });
+        return { exitCode: 0, json, data: await importSkills({ apiBase, fetchImpl, token, request }) };
+      }
+      if (command === 'bind') {
+        const parsed = parseCommandOptions(rest, ['--skill', '--subject', '--subject-id', '--scope', '--workspace', '--email'], []);
+        if (parsed.positionals.length !== 0) throw new CliError('INVALID_ARGUMENT', 'skill bind takes no positional arguments.');
+        const apiBase = getApiBase(env);
+        const token = await login({ apiBase, fetchImpl, env, options: parsed.values, promptSecret: prompt });
+        return { exitCode: 0, json, data: await bindSkill({ apiBase, fetchImpl, token, options: parsed.values }) };
+      }
+      if (command === 'unbind') {
+        const parsed = parseCommandOptions(rest, ['--email'], ['--yes']);
+        if (parsed.positionals.length !== 1) throw new CliError('INVALID_ARGUMENT', 'skill unbind requires one binding ID.');
+        const apiBase = getApiBase(env);
+        const token = await login({ apiBase, fetchImpl, env, options: parsed.values, promptSecret: prompt });
+        return {
+          exitCode: 0,
+          json,
+          data: await unbindSkill({
+            apiBase, fetchImpl, token,
+            bindingId: parsed.positionals[0],
+            assumeYes: parsed.values['--yes'] === true,
+            stdin: dependencies.stdin,
+          }),
+        };
+      }
+      if (command === 'delete') {
+        const parsed = parseCommandOptions(rest, ['--email'], ['--yes']);
+        if (parsed.positionals.length !== 1) throw new CliError('INVALID_ARGUMENT', 'skill delete requires one skill ID.');
+        const apiBase = getApiBase(env);
+        const token = await login({ apiBase, fetchImpl, env, options: parsed.values, promptSecret: prompt });
+        return {
+          exitCode: 0,
+          json,
+          data: await deleteSkill({
+            apiBase, fetchImpl, token,
+            skillId: parsed.positionals[0],
+            assumeYes: parsed.values['--yes'] === true,
+            stdin: dependencies.stdin,
+          }),
+        };
+      }
+      throw new CliError('INVALID_ARGUMENT', 'Unknown skill command; use list|show|bindings|import|bind|unbind|delete.');
     }
 
     if (group === 'workspace') {
@@ -957,6 +1054,46 @@ export function printResult(result) {
       process.stdout.write(`${check.name}: ${check.status}${detail}\n`);
     }
     process.stdout.write(`Preflight: ${result.data.ok ? 'ready' : 'needs attention'}\n`);
+    return;
+  }
+  if (Array.isArray(result.data?.skills)) {
+    for (const skill of result.data.skills) {
+      const scope = skill.definitionScope?.type === 'workspace'
+        ? `workspace:${skill.definitionScope.workspaceId}`
+        : 'instance';
+      process.stdout.write(`${skill.skillId}  ${skill.name}  ${scope}  v${skill.version}`
+        + `${skill.oversize ? '  OVERSIZE' : ''}${skill.trusted ? '  trusted' : ''}\n`);
+    }
+    if (result.data.skills.length === 0) process.stdout.write('No visible skills.\n');
+    return;
+  }
+  if (Array.isArray(result.data?.bindings)) {
+    for (const binding of result.data.bindings) {
+      const scope = binding.scopeType === 'workspace' ? `workspace:${binding.scopeId}` : 'instance';
+      process.stdout.write(`${binding.bindingId}  ${binding.subjectType}:${binding.subjectId}  ${scope}\n`);
+    }
+    if (result.data.bindings.length === 0) process.stdout.write('No bindings.\n');
+    return;
+  }
+  if (result.data?.summary && Array.isArray(result.data?.results)) {
+    const { summary } = result.data;
+    process.stdout.write(`created=${summary.created} updated=${summary.updated} unchanged=${summary.unchanged} rejected=${summary.rejected} oversize=${summary.oversize}\n`);
+    for (const rejected of result.data.rejected) {
+      process.stderr.write(`[${rejected.code}] ${rejected.sourcePath ?? '<unknown>'}: ${rejected.detail ?? ''}\n`);
+    }
+    return;
+  }
+  if (result.data?.skill) {
+    const skill = result.data.skill;
+    process.stdout.write(`${skill.skillId}  ${skill.name}  v${skill.version}  ${skill.bodyTokensEst} tok${skill.oversize ? '  OVERSIZE' : ''}\n`);
+    return;
+  }
+  if (result.data?.binding) {
+    process.stdout.write(`bound ${result.data.binding.bindingId}\n`);
+    return;
+  }
+  if (typeof result.data?.removed === 'string') {
+    process.stdout.write(`removed ${result.data.removed}\n`);
     return;
   }
   if (Array.isArray(result.data?.connections)) {
