@@ -59,6 +59,7 @@
 - Service 层保留纯函数边界：配置由所属调用方解析并注入；要改变 ConfigClient 依赖方向时，先核对该模块的当前 DEV/调用者。
 - 配置 key 变更须同步 schema、导入模板、UI 表单和 store 域白名单；env/DB 冲突必须显式呈现，禁止静默合并，详见 DEV-003。
 - 文件操作不得静默失败或绕过 `apply_patch` best-effort rollback；仍须经过正常授权/审批 gate。
+- **权限面先定能力原子**：可见性 / 投递受众 / 操作面在 `PermissionAtomCatalog` 能力层求值，**禁止** `isInstanceAdmin()` 之类角色名特判；新增面须同批定义默认授予集（`instance:admin` 属固定权限集，默认显式列入）与命中来源审计，名单结果落快照。细则见 workspace `.agents/skills/plan-mode` §权限面设计。
 - 跨协议改动涉及 route、SSE/AgentEvent、durable record、OpenAPI、Flyway、env 或多个模块时，按 `../.agents/skills/xc-cross-cutting-checklist/SKILL.md` 先定契约、同批同步消费者并验证真实链路。
 
 ## Environment and Secrets
