@@ -121,6 +121,21 @@ pub fn blob_path(store_root: &Path, hash: &str) -> PathBuf {
         .join(hash)
 }
 
+/// Pick the v1 codec for a candidate compression result. This is also the
+/// writer-side invariant that keeps us from producing a blob our reader would
+/// reject: when the zlib result exceeds the reader's 4096x ratio guard we fall
+/// back to raw instead of writing an unreadable object.
+fn select_codec(raw_len: usize, compressed_len: usize) -> u8 {
+    if raw_len < RAW_STORE_THRESHOLD
+        || compressed_len >= raw_len
+        || raw_len as u64 > (compressed_len as u64).saturating_mul(MAX_DECOMPRESSION_RATIO)
+    {
+        CODEC_RAW
+    } else {
+        CODEC_ZLIB
+    }
+}
+
 /// Encode `raw` using the cheapest v1 codec: raw for small/incompressible
 /// content, zlib otherwise. The returned bytes are exactly the on-disk blob
 /// file content.
@@ -132,12 +147,12 @@ pub fn encode_blob(raw: &[u8]) -> Result<Vec<u8>, BlobError> {
         });
     }
     let compressed = zlib_compress(raw)?;
-    let (codec, payload): (u8, &[u8]) =
-        if raw.len() < RAW_STORE_THRESHOLD || compressed.len() >= raw.len() {
-            (CODEC_RAW, raw)
-        } else {
-            (CODEC_ZLIB, compressed.as_slice())
-        };
+    let codec = select_codec(raw.len(), compressed.len());
+    let payload: &[u8] = if codec == CODEC_RAW {
+        raw
+    } else {
+        compressed.as_slice()
+    };
 
     let mut encoded = Vec::with_capacity(HEADER_LEN + payload.len());
     encoded.extend_from_slice(&BLOB_MAGIC);
@@ -433,6 +448,41 @@ mod tests {
             }
         );
         assert_eq!(count_files(&root.join("objects")), 1);
+    }
+
+    #[test]
+    fn writer_falls_back_to_raw_when_ratio_exceeds_reader_guard() {
+        // 1 MiB / 255 B is >4096x, so choosing zlib would create a blob that
+        // the reader's ratio guard rejects. The writer must pick raw.
+        assert_eq!(select_codec(1_048_576, 255), CODEC_RAW);
+        // Exactly 4096x is allowed (the reader rejects only `raw_len > ...`).
+        assert_eq!(select_codec(1_048_576, 256), CODEC_ZLIB);
+        // Existing rules still apply: <64 B and no-gain stores stay raw.
+        assert_eq!(select_codec(63, 8), CODEC_RAW);
+        assert_eq!(select_codec(100, 100), CODEC_RAW);
+        assert_eq!(select_codec(64, 8), CODEC_ZLIB);
+    }
+
+    #[test]
+    fn one_mib_zero_blob_roundtrips_within_ratio_limit() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = dir.path();
+        let raw = vec![0u8; 1024 * 1024];
+        let encoded = encode_blob(&raw).expect("encode");
+        let payload_len = encoded.len() - HEADER_LEN;
+        // Deflate's maximum ratio is ~1032x (measured: 1 MiB zeros -> ~1039 B,
+        // ~1009x), so a real flate2 stream can never trip the 4096x reader
+        // guard. Assert that fact instead of forcing a worse raw encoding.
+        assert!(raw.len() as u64 <= payload_len as u64 * MAX_DECOMPRESSION_RATIO);
+        assert_eq!(
+            encoded[4], CODEC_ZLIB,
+            "1 MiB zeros compress ~1000x, well below the 4096x guard"
+        );
+
+        let outcome = write_blob(root, &raw).expect("write");
+        assert!(!outcome.deduped);
+        let decoded = read_blob(root, &outcome.hash).expect("read back");
+        assert_eq!(decoded, raw);
     }
 
     #[test]

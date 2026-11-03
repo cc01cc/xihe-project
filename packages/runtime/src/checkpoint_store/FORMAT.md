@@ -44,6 +44,8 @@ offset 13  payload        codec 编码后的字节
 - **去重**：目标路径已存在即跳过（不重写、不重新压缩、不校验内容——由 fsck 兜底）。
 - **原子写**：tmp → fsync 文件 → rename；capture 路径每个新 blob fsync（后续允许批量 fsync，但**slice 提交前所有引用 blob 必须已落盘**）。
 - **读取三重校验**：codec 合法且受支持；解码长度 == `raw_len`；`SHA-256(payload 解码结果)` == 文件名。任一不符 ⇒ 拒绝（`BLOB_CORRUPT`，错误携带路径与期望哈希）。
+- **读侧压缩比门**：`raw_len > payload_len * 4096` ⇒ 拒绝（`CompressionRatioTooHigh`），在创建解码器/分配内存之前判定。
+- **写侧不变式**：writer 不得产出 reader 会拒收的 blob；zlib 结果若 `raw_len > compressed_len * 4096`，强制回落 raw（与 `<64 B` / 压缩无收益同一判定）。
 
 ## 4. manifest 文件
 
@@ -180,3 +182,4 @@ canonical JSON（无多余空白，键序固定：`v`、`entries`、`merkle_root
 ## 12. changelog
 
 - **2026-11-04 v1 冻结**（PLAN-0653 M0）：blob/manifest/slice/stat cache/VERSION/GC journal 字段与校验规则定稿。后续变更必须新增条目并说明向后兼容策略；禁止原地修改已发布格式。
+- **2026-11-04 v1 校验补充**（PLAN-0653 T1.2）：读侧新增 4096× 压缩比门，写侧同条件回落 raw；字节布局与 `VERSION` 不变。合法 flate2 输出最大压缩比约 1032×，因此既有 blob 不会被新增的门拒收。
