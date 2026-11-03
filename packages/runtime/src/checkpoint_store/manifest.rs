@@ -785,6 +785,8 @@ mod tests {
         }
     }
 
+    /// Environment-dependent parity check: requires a `git` executable.
+    /// Skips (does not fail) when git is unavailable, e.g. a minimal CI image.
     #[test]
     fn diff_matches_git_no_index_fixture_without_renames() {
         let dir = tempfile::tempdir().expect("tempdir");

@@ -1,6 +1,6 @@
 {
   "source": "packages/runtime/src/checkpoint_store/FORMAT.md §4 (PLAN-0653 T0.2/T1.4)",
-  "generated_by": "Node 24 crypto, independent of the Rust implementation: leaf = SHA-256(0x00 || path_utf8 || 0x00 || mode_ascii || 0x00 || decimal_size_ascii || 0x00 || blob_hash_hex); internal = SHA-256(0x01 || left32 || right32); odd nodes promoted; empty root = 64 zero chars",
+  "generated_by": "tests/fixtures/checkpoint-store/generate-merkle-vectors.mjs (Node 24 crypto), independent of the Rust implementation: leaf = SHA-256(0x00 || path_utf8 || 0x00 || mode_ascii || 0x00 || decimal_size_ascii || 0x00 || blob_hash_hex); internal = SHA-256(0x01 || left32 || right32); odd nodes promoted; empty root = 64 zero chars",
   "vectors": [
     {
       "name": "empty",
