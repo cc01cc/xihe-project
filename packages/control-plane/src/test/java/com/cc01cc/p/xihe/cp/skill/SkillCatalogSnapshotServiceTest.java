@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -12,6 +13,7 @@ import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -81,14 +83,47 @@ class SkillCatalogSnapshotServiceTest {
                 WORKSPACE_ID);
     }
 
+    /**
+     * skill-wiring ruling 2026-11-04: the template's {@code skill_catalog} component only tunes the
+     * listing; the skill <b>set</b> always comes from {@code skill_bindings}. A template without the
+     * component (the built-in api template is exactly that) must therefore still freeze what the model
+     * will be shown — the previous "no component ⇒ capture nothing" behaviour made every bound skill
+     * invisible in {@code skills_snapshot}.
+     */
     @Test
-    void aTemplateWithoutAListingComponentCapturesNothing() throws Exception {
-        // No component ⇒ nothing was listed ⇒ the column keeps its '{}' "not captured" default.
-        assertNull(service.capture(MAPPER.readTree("{\"template\":{\"components\":[]}}"),
-                PRINCIPAL_ID, USER_ID, WORKSPACE_ID));
-        assertNull(service.capture(MAPPER.readTree("{}"), PRINCIPAL_ID, USER_ID, WORKSPACE_ID));
-        assertNull(service.capture(null, PRINCIPAL_ID, USER_ID, WORKSPACE_ID));
+    void aTemplateWithoutAListingComponentStillResolvesFromTheBindings() throws Exception {
+        when(catalog.resolveListing(any()))
+                .thenReturn(listing(1, "desc of alpha", "ready", false, List.of()));
+
+        JsonNode document = service.capture(MAPPER.readTree("{\"bodySource\":\"{} template\"}"),
+                PRINCIPAL_ID, USER_ID, WORKSPACE_ID);
+
+        assertNotNull(document, "the bindings are the source, not the template");
+        assertEquals(SkillCatalogSourceService.STATUS_READY, document.path("status").asText());
+        assertEquals(1, document.path("items").size());
+        assertEquals(SkillCatalogSourceService.DEFAULT_MAX_SKILLS, document.path("maxSkills").asInt(),
+                "without a component the frozen defaults apply");
+        assertEquals(SkillCatalogSourceService.SOURCE, document.path("source").asText());
+        // The resolver really was asked, with the agent tier of the Session.
+        ArgumentCaptor<SkillCatalogSourceService.Request> request =
+                ArgumentCaptor.forClass(SkillCatalogSourceService.Request.class);
+        verify(catalog).resolveListing(request.capture());
+        assertEquals(PRINCIPAL_ID, request.getValue().agentPrincipalId());
+        assertEquals(SkillCatalogSourceService.SORT_BINDING, request.getValue().sort());
+    }
+
+    @Test
+    void noSubjectOrNoBindingKeepsTheColumnAbsent() throws Exception {
+        // No subject at all: no binding could match, so nothing was listed.
+        assertNull(service.capture(MAPPER.readTree("{}"), null, null, WORKSPACE_ID),
+                "a Run without a subject has no listing to record");
         verify(catalog, never()).resolveListing(any());
+
+        // A subject with no live binding: '{}' stays '{}' — never an invented "empty capture".
+        when(catalog.resolveListing(any()))
+                .thenReturn(listing(0, "", SkillCatalogSourceService.STATUS_EMPTY, false,
+                        List.of(SkillCatalogSourceService.DIAG_EMPTY)));
+        assertNull(service.capture(MAPPER.readTree("{}"), PRINCIPAL_ID, USER_ID, WORKSPACE_ID));
     }
 
     @Test
