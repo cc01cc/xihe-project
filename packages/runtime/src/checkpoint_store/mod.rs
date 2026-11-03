@@ -6,6 +6,7 @@
 
 pub mod blob;
 pub mod capture;
+pub mod fsck;
 pub mod manifest;
 pub mod store;
 pub mod walk;

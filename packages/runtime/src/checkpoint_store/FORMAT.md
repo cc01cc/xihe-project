@@ -121,6 +121,13 @@ canonical JSON（无多余空白，键序固定：`v`、`entries`、`merkle_root
 - 判活期间任何读取/解析失败 ⇒ **中止 GC**（保留 journal，`state=aborted`），宁泄漏不误删。
 - restore 租约：`.xhs-restore-inprogress`（JSON：`{pid, slice_id, started_at_ms}`）存在时，该 slice 全部对象视为可达。
 
+### 8.1 fsck 修复日志
+
+- fsck 默认**只读**；`--repair`（API `repair=true`）先写 `gc/<epochMs>-fsck.json`（`{"v":1,"state":"planned","planned":[...]}`），再执行可自动修复项。
+- 自动修复仅限：未被任何有效 manifest 引用的 orphan blob、未引用且校验失败的 blob、stat cache stale entry；**绝不删除被 manifest/slice 引用的对象**。
+- 存在 corrupt manifest 时，blob 删除降级为 report-only（无法证明未引用）。
+- planned journal 保留供崩溃后重放；cache 重写无持久性契约，崩溃最多导致全量重哈希。
+
 ## 9. 与 spike 格式的差异（产品化改动）
 
 | 项 | spike（2026-11-03） | v1 产品 | 原因 |
@@ -188,3 +195,4 @@ canonical JSON（无多余空白，键序固定：`v`、`entries`、`merkle_root
 - **2026-11-04 v1 冻结**（PLAN-0653 M0）：blob/manifest/slice/stat cache/VERSION/GC journal 字段与校验规则定稿。后续变更必须新增条目并说明向后兼容策略；禁止原地修改已发布格式。
 - **2026-11-04 v1 校验补充**（PLAN-0653 T1.2）：读侧新增 4096× 压缩比门，写侧同条件回落 raw；字节布局与 `VERSION` 不变。合法 flate2 输出最大压缩比约 1032×，因此既有 blob 不会被新增的门拒收。
 - **2026-11-04 stat cache 可选 `file_id`**（PLAN-0653 T1.7）：entries 增加可选 `file_id` 字符串；缺省解析为 `None`，旧 cache 仍可读但视为不命中，不影响 VERSION/其他格式。用于收紧同 size+mtime 替换盲区；取不到身份的降级路径已在上文标注。
+- **2026-11-04 fsck 分类与修复日志**（PLAN-0653 T1.8）：新增只读分类（orphan-blob/missing-blob/truncated-blob/orphan-slice/cache-stale/corrupt-manifest/corrupt-slice）与 `gc/<epochMs>-fsck.json` planned journal；不改变 blob/manifest/slice/stat cache 布局。
