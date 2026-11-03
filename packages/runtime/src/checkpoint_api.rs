@@ -24,10 +24,11 @@ use serde::Serialize;
 use tracing::{info, warn};
 
 use crate::checkpoint::{
-    CaptureOutcome, CheckpointError, CleanupOutcome, DEFAULT_RETENTION_MAX_SLICES,
-    DEFAULT_RETENTION_TTL_DAYS, NestedRepoPolicy, SHADOW_DIR_NAME, ShadowGit, validate_run_id,
-    validate_workspace_id,
+    CaptureOutcome, CheckpointError, CheckpointStorageMode, CleanupOutcome,
+    DEFAULT_RETENTION_MAX_SLICES, DEFAULT_RETENTION_TTL_DAYS, NestedRepoPolicy, SHADOW_DIR_NAME,
+    ShadowGit, validate_run_id, validate_workspace_id,
 };
+use crate::checkpoint_store::store::StoreError;
 
 /// Reserved capture id of the workspace materialization baseline (C0).
 ///
@@ -75,6 +76,12 @@ pub struct CheckpointDiagnostics {
     pub active_restore_locks: usize,
     /// Nested-repository policy token (`opaque` | `reject`).
     pub nested_repo_policy: &'static str,
+    /// `git` (default) or `dual`; `self` is reserved for T2.
+    pub checkpoint_storage: &'static str,
+    /// Number of dual-write store attempts that failed since process start.
+    pub store_failures: u64,
+    /// Configured store root; absent for `git` mode.
+    pub store_root: Option<String>,
 }
 
 /// `capture` failure mapped to the frozen HTTP statuses (400/503).
@@ -168,6 +175,17 @@ impl CheckpointService {
     pub fn with_nested_repo_policy(mut self, policy: NestedRepoPolicy) -> Self {
         self.engine = self.engine.with_nested_repo_policy(policy);
         self
+    }
+
+    /// Configure P1 dual-write. `Store::init` runs now so a bad path/VERSION
+    /// fails startup rather than surfacing only on the first capture.
+    pub fn with_checkpoint_storage(
+        mut self,
+        mode: CheckpointStorageMode,
+        store_root: impl AsRef<std::path::Path>,
+    ) -> Result<Self, StoreError> {
+        self.engine.configure_checkpoint_storage(mode, store_root)?;
+        Ok(self)
     }
 
     pub fn engine(&self) -> &ShadowGit {
@@ -375,6 +393,12 @@ impl CheckpointService {
             active_capture_locks: self.engine.active_capture_locks(),
             active_restore_locks: self.engine.active_restore_locks(),
             nested_repo_policy: self.engine.nested_repo_policy().as_str(),
+            checkpoint_storage: self.engine.checkpoint_storage().as_str(),
+            store_failures: self.engine.store_failures(),
+            store_root: self
+                .engine
+                .store_root()
+                .map(|root| root.to_string_lossy().replace('\\', "/")),
         }
     }
 
@@ -549,5 +573,24 @@ mod tests {
         let primary = capture_key("ws-a", "ws-a", "run-1");
         let secondary = capture_key("ws-a", "root-b", "run-1");
         assert_ne!(primary, secondary);
+    }
+
+    #[tokio::test]
+    async fn diagnostics_exposes_storage_and_store_failure_counter() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let git = CheckpointService::new(temp.path());
+        let git_diagnostics = git.diagnostics().await;
+        assert_eq!(git_diagnostics.checkpoint_storage, "git");
+        assert_eq!(git_diagnostics.store_failures, 0);
+        assert!(git_diagnostics.store_root.is_none());
+
+        let store_root = temp.path().join(".xihe-store");
+        let dual = CheckpointService::new(temp.path())
+            .with_checkpoint_storage(CheckpointStorageMode::Dual, &store_root)
+            .expect("dual store");
+        let dual_diagnostics = dual.diagnostics().await;
+        assert_eq!(dual_diagnostics.checkpoint_storage, "dual");
+        assert_eq!(dual_diagnostics.store_failures, 0);
+        assert!(dual_diagnostics.store_root.is_some());
     }
 }

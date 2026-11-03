@@ -36,6 +36,7 @@ use crate::import_job::{ImportManager, ImportRequest, list_source_directory};
 use tokio::sync::Mutex;
 use workspace_events::WorkspaceEventWatchers;
 use xihe_runtime::backend::{DockerBackend, SandboxBackend, SandboxHandle};
+use xihe_runtime::checkpoint::CheckpointStorageMode;
 use xihe_runtime::checkpoint::NestedRepoPolicy;
 use xihe_runtime::checkpoint::WorkspaceGitFacts;
 use xihe_runtime::checkpoint_api::{
@@ -3103,6 +3104,24 @@ fn runtime_checkpoint_host_root() -> PathBuf {
     }
 }
 
+/// P1 dual-write configuration. `git` is the default and must not create a
+/// store; `dual` requires a valid store and fails startup on bad VERSION.
+fn runtime_checkpoint_storage(
+    host_root: &std::path::Path,
+) -> anyhow::Result<(CheckpointStorageMode, PathBuf)> {
+    let raw = std::env::var("XIHE_CHECKPOINT_STORAGE").unwrap_or_else(|_| "git".to_string());
+    let mode = CheckpointStorageMode::parse(&raw)
+        .map_err(|error| anyhow::anyhow!("invalid XIHE_CHECKPOINT_STORAGE: {error}"))?;
+    if mode == CheckpointStorageMode::Self_ {
+        anyhow::bail!("XIHE_CHECKPOINT_STORAGE=self is reserved for T2 and is not implemented");
+    }
+    let store_root = match std::env::var("XIHE_CHECKPOINT_STORE_PATH") {
+        Ok(value) if !value.trim().is_empty() => PathBuf::from(value),
+        _ => host_root.join(".xihe-store"),
+    };
+    Ok((mode, store_root))
+}
+
 /// Nested-repository capture policy (PLAN-0361). Default `flatten` (L1): nested
 /// repositories are captured file-by-file and restorable. `opaque` restores the
 /// legacy PLAN-0338 gitlink behavior; `reject` refuses such captures with an
@@ -3435,6 +3454,12 @@ async fn run() -> anyhow::Result<()> {
             "PLAN-0393: reclaimed orphan job output directories"
         );
     }
+    let checkpoint_host_root = runtime_checkpoint_host_root();
+    let (checkpoint_storage, checkpoint_store_path) =
+        runtime_checkpoint_storage(&checkpoint_host_root)?;
+    let checkpoint_service = CheckpointService::new(checkpoint_host_root)
+        .with_nested_repo_policy(runtime_checkpoint_nested_repo_policy())
+        .with_checkpoint_storage(checkpoint_storage, checkpoint_store_path)?;
     let app_state = Arc::new(AppState {
         registry: registry.clone(),
         manager: manager.clone(),
@@ -3446,10 +3471,7 @@ async fn run() -> anyhow::Result<()> {
         mcp_sessions: mcp_sessions.clone(),
         sandbox_backend: sandbox_backend.clone(),
         lifecycle: lifecycle.clone(),
-        checkpoints: Arc::new(
-            CheckpointService::new(runtime_checkpoint_host_root())
-                .with_nested_repo_policy(runtime_checkpoint_nested_repo_policy()),
-        ),
+        checkpoints: Arc::new(checkpoint_service),
         ready: readiness.clone(),
         imports: Arc::new(ImportManager::new()),
         workspace_event_watchers: WorkspaceEventWatchers::default(),

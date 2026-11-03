@@ -517,6 +517,15 @@ fn discover_nested_roots(
     Ok(found.into_iter().collect())
 }
 
+/// Capture behavior for store callers. `exclude_opaque_nested` is used by the
+/// P1 dual-write path: git `Opaque` records only a gitlink, so the store must
+/// not add nested contents to entries; nested roots remain in slice metadata.
+#[derive(Debug, Clone, Default)]
+pub struct CaptureOptions {
+    pub declared_roots: Vec<String>,
+    pub exclude_opaque_nested: bool,
+}
+
 /// Capture one root into the store. The caller decides which roots exist; this
 /// function never combines roots into one slice.
 pub fn capture_root(
@@ -526,7 +535,14 @@ pub fn capture_root(
     run_id: Option<&str>,
     principal_id: Option<&str>,
 ) -> Result<CaptureResult, CaptureError> {
-    capture_root_with_declared_roots(store, root, root_id, run_id, principal_id, &[])
+    capture_root_with_options(
+        store,
+        root,
+        root_id,
+        run_id,
+        principal_id,
+        &CaptureOptions::default(),
+    )
 }
 
 /// Capture one root, excluding workspace-declared roots from `nested_roots`
@@ -539,6 +555,27 @@ pub fn capture_root_with_declared_roots(
     principal_id: Option<&str>,
     declared_roots: &[String],
 ) -> Result<CaptureResult, CaptureError> {
+    capture_root_with_options(
+        store,
+        root,
+        root_id,
+        run_id,
+        principal_id,
+        &CaptureOptions {
+            declared_roots: declared_roots.to_vec(),
+            exclude_opaque_nested: false,
+        },
+    )
+}
+
+pub fn capture_root_with_options(
+    store: &Store,
+    root: &Path,
+    root_id: &str,
+    run_id: Option<&str>,
+    principal_id: Option<&str>,
+    options: &CaptureOptions,
+) -> Result<CaptureResult, CaptureError> {
     let started = Instant::now();
     let _lock = store.lock()?;
     let walk_started = Instant::now();
@@ -547,11 +584,28 @@ pub fn capture_root_with_declared_roots(
     if !walk.issues.is_empty() {
         return Err(CaptureError::WalkIssues(walk.issues));
     }
+    let nested_roots = discover_nested_roots(root, &options.declared_roots)?;
+    let walk_entries: Vec<WalkEntry> = if options.exclude_opaque_nested {
+        walk.entries
+            .into_iter()
+            .filter(|entry| {
+                let under_nested = nested_roots.iter().any(|nested| {
+                    entry.path == *nested || entry.path.starts_with(&format!("{nested}/"))
+                });
+                let under_declared = options.declared_roots.iter().any(|declared| {
+                    entry.path == *declared || entry.path.starts_with(&format!("{declared}/"))
+                });
+                !under_nested && !under_declared
+            })
+            .collect()
+    } else {
+        walk.entries
+    };
     let cache = read_cache(store, root_id)?;
     let tail = tail_slice(store, root_id)?;
 
     if let Some(tail) = &tail
-        && let Some(hits) = fast_no_change(store, tail, &walk.entries, &cache)?
+        && let Some(hits) = fast_no_change(store, tail, &walk_entries, &cache)?
     {
         let manifest = read_tail_manifest(store, tail)?;
         return Ok(CaptureResult {
@@ -566,14 +620,13 @@ pub fn capture_root_with_declared_roots(
             walk_ms,
             blob_write_ms: 0,
             manifest_ms: 0,
-            nested_roots: Vec::new(),
+            nested_roots,
             ..CaptureResult::default()
         });
     }
 
-    let nested_roots = discover_nested_roots(root, declared_roots)?;
-    let mut entries = Vec::with_capacity(walk.entries.len());
-    let mut next_cache = HashMap::with_capacity(walk.entries.len());
+    let mut entries = Vec::with_capacity(walk_entries.len());
+    let mut next_cache = HashMap::with_capacity(walk_entries.len());
     let mut blobs_new = 0;
     let mut blobs_dedup = 0;
     let mut cache_hits = 0;
@@ -581,7 +634,7 @@ pub fn capture_root_with_declared_roots(
     let mut total_bytes = 0u64;
     let mut blob_write_ms = 0u64;
 
-    for walk_entry in &walk.entries {
+    for walk_entry in &walk_entries {
         match walk_entry.kind {
             WalkEntryKind::File => {
                 let metadata = file_metadata(&walk_entry.absolute_path)?;
@@ -704,7 +757,7 @@ pub fn capture_root_with_declared_roots(
     let slice_path = store.slice_dir(root_id).join(format!("{slice_id}.json"));
     let (patterns, gitignore_files) = exclusion_patterns(root);
     let stats = serde_json::json!({
-        "scanned_files": walk.entries.len(),
+        "scanned_files": walk_entries.len(),
         "hashed_files": hashed_files,
         "hashed_bytes": manifest.total_bytes,
         "cache_hits": cache_hits,
@@ -1001,6 +1054,46 @@ mod tests {
         )
         .expect("capture");
         assert!(result.nested_roots.is_empty(), "{:?}", result.nested_roots);
+    }
+
+    #[test]
+    fn opaque_nested_contents_are_excluded_but_metadata_is_kept() {
+        let workspace = workspace();
+        write_file(workspace.path(), "root.txt", b"root");
+        write_file(workspace.path(), "nested/file.txt", b"nested");
+        fs::create_dir_all(workspace.path().join("nested/.git")).expect("nested git dir");
+        let (_store_dir, store) = store();
+
+        let result = capture_root_with_options(
+            &store,
+            workspace.path(),
+            "ws-1",
+            None,
+            None,
+            &CaptureOptions {
+                declared_roots: Vec::new(),
+                exclude_opaque_nested: true,
+            },
+        )
+        .expect("dual opaque capture");
+        assert_eq!(result.nested_roots, vec!["nested"]);
+        assert_eq!(result.entry_count, 1);
+        let manifest = read_tail_manifest(
+            &store,
+            &TailSlice {
+                id: result.slice_id.clone(),
+                manifest: result.manifest_id.clone(),
+            },
+        )
+        .expect("tail manifest");
+        assert_eq!(manifest.entries.len(), 1);
+        assert_eq!(manifest.entries[0].path, "root.txt");
+        assert!(
+            manifest
+                .entries
+                .iter()
+                .all(|entry| !entry.path.starts_with("nested/"))
+        );
     }
 
     #[test]

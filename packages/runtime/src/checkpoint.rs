@@ -23,7 +23,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::{ExitStatus, Stdio};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex as StdMutex, PoisonError};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -32,7 +32,9 @@ use thiserror::Error;
 use tokio::process::Command;
 use tracing::{debug, info, warn};
 
-use crate::checkpoint_store::manifest::FileMode;
+use crate::checkpoint_store::capture::{CaptureOptions, CaptureResult, capture_root_with_options};
+use crate::checkpoint_store::manifest::{FileMode, Manifest};
+use crate::checkpoint_store::store::{Store, StoreError};
 use crate::checkpoint_store::walk::{WalkEntryKind, walk_workspace};
 use crate::error::RuntimeError;
 use crate::storage;
@@ -54,6 +56,49 @@ pub const DEFAULT_RETENTION_TTL_DAYS: u64 = 30;
 
 /// Default size cap for untracked files entering the snapshot (decision #14).
 pub const DEFAULT_MAX_UNTRACKED_FILE_BYTES: u64 = 10 * 1024 * 1024;
+
+/// P1 checkpoint storage selector (D53-05). `Git` is the default and performs
+/// no store access; `Dual` writes the store after the authoritative git slice.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CheckpointStorageMode {
+    #[default]
+    Git,
+    Dual,
+    Self_,
+}
+
+impl CheckpointStorageMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Git => "git",
+            Self::Dual => "dual",
+            Self::Self_ => "self",
+        }
+    }
+
+    pub fn parse(value: &str) -> std::result::Result<Self, String> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "git" => Ok(Self::Git),
+            "dual" => Ok(Self::Dual),
+            "self" => Ok(Self::Self_),
+            other => Err(format!(
+                "invalid checkpoint storage {other:?}; expected git|dual|self"
+            )),
+        }
+    }
+}
+
+/// Capture context shared by the dual-write and consistency helpers.
+struct DualWriteContext<'a> {
+    workspace_id: &'a str,
+    root_id: &'a str,
+    run_id: &'a str,
+    actor: &'a str,
+    work_tree: &'a Path,
+    git_tree: &'a str,
+    env: &'a [(String, String)],
+    git_ms: u64,
+}
 
 /// Explicit exclusion patterns beyond the workspace `.gitignore` (decision #14).
 ///
@@ -350,6 +395,9 @@ pub struct ShadowGit {
     probe_cache: StdMutex<ProbeCache>,
     max_untracked_file_bytes: u64,
     nested_repo_policy: NestedRepoPolicy,
+    checkpoint_storage: CheckpointStorageMode,
+    store: Option<Store>,
+    store_failures: Arc<AtomicU64>,
     pub(crate) call_timeout: Duration,
 }
 
@@ -367,6 +415,9 @@ impl ShadowGit {
             probe_cache: StdMutex::new(ProbeCache::default()),
             max_untracked_file_bytes: DEFAULT_MAX_UNTRACKED_FILE_BYTES,
             nested_repo_policy: NestedRepoPolicy::Flatten,
+            checkpoint_storage: CheckpointStorageMode::Git,
+            store: None,
+            store_failures: Arc::new(AtomicU64::new(0)),
             call_timeout: GIT_CALL_TIMEOUT,
         }
     }
@@ -388,6 +439,37 @@ impl ShadowGit {
 
     pub fn nested_repo_policy(&self) -> NestedRepoPolicy {
         self.nested_repo_policy
+    }
+
+    pub fn checkpoint_storage(&self) -> CheckpointStorageMode {
+        self.checkpoint_storage
+    }
+
+    pub fn store_failures(&self) -> u64 {
+        self.store_failures.load(Ordering::SeqCst)
+    }
+
+    pub fn store_root(&self) -> Option<&Path> {
+        self.store.as_ref().map(Store::root)
+    }
+
+    /// Configure P1 dual-write. `Git` never opens/creates a store; `Dual`/`Self_`
+    /// initialize the store now so a bad path or VERSION fails at startup.
+    pub fn configure_checkpoint_storage(
+        &mut self,
+        mode: CheckpointStorageMode,
+        store_root: impl AsRef<Path>,
+    ) -> std::result::Result<(), StoreError> {
+        self.checkpoint_storage = mode;
+        match mode {
+            CheckpointStorageMode::Git => {
+                self.store = None;
+            }
+            CheckpointStorageMode::Dual | CheckpointStorageMode::Self_ => {
+                self.store = Some(Store::init(store_root)?);
+            }
+        }
+        Ok(())
     }
 
     pub fn with_call_timeout(mut self, timeout: Duration) -> Self {
@@ -648,6 +730,268 @@ impl ShadowGit {
     /// shadow repo. Without it the parent's `add -A` would flatten/overwrite the
     /// child's content, and the two chains would disagree about who owns those
     /// files.
+    /// P1 shadow write: git is authoritative, store failure only increments
+    /// `store_failures` and logs. `Opaque` dual mirrors git's gitlink by
+    /// excluding nested contents from store entries while keeping metadata.
+    async fn dual_write_store(&self, context: DualWriteContext<'_>) -> Option<CaptureResult> {
+        let workspace_id = context.workspace_id;
+        let root_id = context.root_id;
+        let run_id = context.run_id;
+        let actor = context.actor;
+        let work_tree = context.work_tree;
+        let git_ms = context.git_ms;
+        if self.checkpoint_storage != CheckpointStorageMode::Dual {
+            return None;
+        }
+        let Some(store) = self.store.clone() else {
+            self.store_failures.fetch_add(1, Ordering::SeqCst);
+            warn!(
+                workspace_id,
+                root_id,
+                run_id,
+                store_error = "store_not_configured",
+                "checkpoint dual-write skipped"
+            );
+            return None;
+        };
+        let store_for_check = store.clone();
+        let declared_roots = self
+            .declared_roots(workspace_id)
+            .into_iter()
+            .map(|(root, _)| root)
+            .collect();
+        let options = CaptureOptions {
+            declared_roots,
+            exclude_opaque_nested: self.nested_repo_policy == NestedRepoPolicy::Opaque,
+        };
+        let root_id_owned = root_id.to_owned();
+        let run_id_owned = run_id.to_owned();
+        let actor_owned = actor.to_owned();
+        let work_tree = work_tree.to_path_buf();
+        let started = Instant::now();
+        let outcome = tokio::task::spawn_blocking(move || {
+            capture_root_with_options(
+                &store,
+                &work_tree,
+                &root_id_owned,
+                Some(&run_id_owned),
+                Some(&actor_owned),
+                &options,
+            )
+        })
+        .await;
+        let store_ms = started.elapsed().as_millis() as u64;
+        match outcome {
+            Ok(Ok(result)) => {
+                info!(
+                    workspace_id,
+                    root_id,
+                    run_id,
+                    git_ms,
+                    store_ms,
+                    store_slice = %result.slice_id,
+                    store_entries = result.entry_count,
+                    blobs_new = result.blobs_new,
+                    blobs_dedup = result.blobs_dedup,
+                    store_error = "none",
+                    "checkpoint dual-write completed"
+                );
+                self.check_store_git_consistency(&context, &store_for_check, &result)
+                    .await;
+                Some(result)
+            }
+            Ok(Err(error)) => {
+                self.store_failures.fetch_add(1, Ordering::SeqCst);
+                warn!(
+                    workspace_id,
+                    root_id,
+                    run_id,
+                    git_ms,
+                    store_ms,
+                    store_error = "capture_failed",
+                    "checkpoint dual-write failed; git slice remains authoritative"
+                );
+                debug!(%error, "checkpoint dual-write error detail");
+                None
+            }
+            Err(error) => {
+                self.store_failures.fetch_add(1, Ordering::SeqCst);
+                warn!(
+                    workspace_id,
+                    root_id,
+                    run_id,
+                    git_ms,
+                    store_ms,
+                    store_error = "join_failed",
+                    "checkpoint dual-write task failed; git slice remains authoritative"
+                );
+                debug!(%error, "checkpoint dual-write join error");
+                None
+            }
+        }
+    }
+
+    async fn check_store_git_consistency(
+        &self,
+        context: &DualWriteContext<'_>,
+        store: &Store,
+        result: &CaptureResult,
+    ) {
+        let workspace_id = context.workspace_id;
+        let root_id = context.root_id;
+        let run_id = context.run_id;
+        let git_tree = context.git_tree;
+        let env = context.env;
+        let manifest_path = store.manifest_path(&result.manifest_id);
+        let store_manifest = match std::fs::read(&manifest_path)
+            .ok()
+            .map(|bytes| Manifest::parse(&bytes))
+        {
+            Some(Ok(manifest)) => manifest,
+            _ => {
+                warn!(
+                    workspace_id,
+                    root_id,
+                    run_id,
+                    kind = "path_set",
+                    path = "<manifest>",
+                    expected = "readable store manifest",
+                    actual = "unreadable",
+                    "store-git-mismatch"
+                );
+                return;
+            }
+        };
+        let output = match self
+            .run_git_checked(
+                &["ls-tree", "-r", "-l", "-z", git_tree],
+                env,
+                None,
+                self.call_timeout,
+            )
+            .await
+        {
+            Ok(output) => output,
+            Err(error) => {
+                debug!(%error, "store-git consistency check skipped: ls-tree failed");
+                return;
+            }
+        };
+        let mut git_entries: HashMap<String, (String, u64)> = HashMap::new();
+        for record in output.split(|byte| *byte == 0) {
+            if record.is_empty() {
+                continue;
+            }
+            let Some(tab) = record.iter().position(|byte| *byte == b'\t') else {
+                continue;
+            };
+            let header = String::from_utf8_lossy(&record[..tab]);
+            let path = String::from_utf8_lossy(&record[tab + 1..]).replace('\\', "/");
+            let mut fields = header.split_whitespace();
+            let mode = fields.next().unwrap_or_default();
+            let kind = fields.next().unwrap_or_default();
+            let _oid = fields.next();
+            let size = fields.next().unwrap_or("-");
+            if kind != "blob" {
+                continue;
+            }
+            if result.nested_roots.contains(&path) {
+                continue;
+            }
+            let Ok(size) = size.parse::<u64>() else {
+                continue;
+            };
+            git_entries.insert(path, (mode.to_owned(), size));
+        }
+
+        if git_entries.len() != store_manifest.entries.len() {
+            let path = git_entries
+                .keys()
+                .find(|path| {
+                    !store_manifest
+                        .entries
+                        .iter()
+                        .any(|entry| entry.path == **path)
+                })
+                .cloned()
+                .unwrap_or_else(|| "<set>".to_owned());
+            warn!(
+                workspace_id,
+                root_id,
+                run_id,
+                kind = "count",
+                path = %path,
+                expected = git_entries.len(),
+                actual = store_manifest.entries.len(),
+                "store-git-mismatch"
+            );
+        }
+
+        for entry in &store_manifest.entries {
+            let expected_mode = match entry.mode {
+                FileMode::Regular => "100644",
+                FileMode::Executable => "100755",
+                FileMode::Symlink => "120000",
+            };
+            match git_entries.get(&entry.path) {
+                Some((mode, size)) => {
+                    if mode != expected_mode {
+                        warn!(
+                            workspace_id,
+                            root_id,
+                            run_id,
+                            kind = "path_set",
+                            path = %entry.path,
+                            expected = expected_mode,
+                            actual = %mode,
+                            "store-git-mismatch"
+                        );
+                    }
+                    if *size != entry.size {
+                        warn!(
+                            workspace_id,
+                            root_id,
+                            run_id,
+                            kind = "size",
+                            path = %entry.path,
+                            expected = *size,
+                            actual = entry.size,
+                            "store-git-mismatch"
+                        );
+                    }
+                }
+                None => warn!(
+                    workspace_id,
+                    root_id,
+                    run_id,
+                    kind = "path_set",
+                    path = %entry.path,
+                    expected = "present in git tree",
+                    actual = "missing",
+                    "store-git-mismatch"
+                ),
+            }
+        }
+        for path in git_entries.keys() {
+            if !store_manifest
+                .entries
+                .iter()
+                .any(|entry| entry.path == *path)
+            {
+                warn!(
+                    workspace_id,
+                    root_id,
+                    run_id,
+                    kind = "path_set",
+                    path = %path,
+                    expected = "present in store manifest",
+                    actual = "missing",
+                    "store-git-mismatch"
+                );
+            }
+        }
+    }
+
     pub async fn capture_for_root(
         &self,
         workspace_id: &str,
@@ -657,6 +1001,7 @@ impl ShadowGit {
         call_id: &str,
         abnormal: bool,
     ) -> Result<CaptureOutcome> {
+        let capture_started = Instant::now();
         validate_run_id(run_id)?;
         validate_workspace_id(root_id)?;
         // PLAN-0639 M8: only the primary root and registered declared roots are
@@ -715,6 +1060,18 @@ impl ShadowGit {
                 excluded_roots = excluded_prefixes.len(),
                 "shadow checkpoint capture found no change; no slice written"
             );
+            let git_ms = capture_started.elapsed().as_millis() as u64;
+            self.dual_write_store(DualWriteContext {
+                workspace_id,
+                root_id,
+                run_id,
+                actor,
+                work_tree: &work_tree,
+                git_tree: &tree,
+                env: &env,
+                git_ms,
+            })
+            .await;
             return Ok(CaptureOutcome {
                 run_id: run_id.to_string(),
                 root_id: root_id.to_string(),
@@ -748,6 +1105,18 @@ impl ShadowGit {
             state,
             "shadow checkpoint slice captured"
         );
+        let git_ms = capture_started.elapsed().as_millis() as u64;
+        self.dual_write_store(DualWriteContext {
+            workspace_id,
+            root_id,
+            run_id,
+            actor,
+            work_tree: &work_tree,
+            git_tree: &tree,
+            env: &env,
+            git_ms,
+        })
+        .await;
         Ok(CaptureOutcome {
             run_id: run_id.to_string(),
             root_id: root_id.to_string(),
@@ -2629,5 +2998,92 @@ mod tests {
             .await
             .expect_err("missing workspace must fail explicitly");
         assert!(matches!(error, CheckpointError::WorkspaceMissing(_)));
+    }
+
+    #[tokio::test]
+    async fn checkpoint_dual_write_covers_no_change_and_git_mode_creates_no_store() {
+        let temp = TempDir::new().expect("tempdir");
+        let workspace = temp.path().join("ws1");
+        std::fs::create_dir_all(&workspace).expect("workspace");
+        std::fs::write(workspace.join("a.txt"), "alpha\n").expect("file");
+        let store_root = temp.path().join(".xihe-store");
+        let mut engine = ShadowGit::new(temp.path());
+        if !require_git(&engine).await {
+            return;
+        }
+
+        let first = engine
+            .capture("ws1", "run-git", "tester", "call-git", false)
+            .await
+            .expect("git capture");
+        assert!(!first.no_change);
+        assert!(!store_root.exists(), "git mode must not create a store");
+        assert!(engine.store_root().is_none());
+        assert_eq!(engine.store_failures(), 0);
+
+        engine
+            .configure_checkpoint_storage(CheckpointStorageMode::Dual, &store_root)
+            .expect("configure dual store");
+        let store = Store::open(&store_root).expect("open store");
+        let second = engine
+            .capture("ws1", "run-dual", "tester", "call-dual", false)
+            .await
+            .expect("dual capture");
+        assert!(
+            second.no_change,
+            "git no-change still needs the first store slice"
+        );
+        let slices: Vec<_> = std::fs::read_dir(store.slice_dir("ws1"))
+            .expect("slice dir")
+            .flatten()
+            .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "json"))
+            .collect();
+        assert_eq!(
+            slices.len(),
+            1,
+            "first dual capture must write one store slice"
+        );
+        assert_eq!(engine.store_failures(), 0);
+    }
+
+    #[tokio::test]
+    async fn checkpoint_dual_store_failure_does_not_fail_git_capture() {
+        let temp = TempDir::new().expect("tempdir");
+        let workspace = temp.path().join("ws1");
+        std::fs::create_dir_all(&workspace).expect("workspace");
+        std::fs::write(workspace.join("a.txt"), "alpha\n").expect("file");
+        let store_root = temp.path().join(".xihe-store");
+        let mut engine = ShadowGit::new(temp.path());
+        if !require_git(&engine).await {
+            return;
+        }
+        engine
+            .configure_checkpoint_storage(CheckpointStorageMode::Dual, &store_root)
+            .expect("configure dual");
+        let store = Store::open(&store_root).expect("open store");
+        let guard = store.lock().expect("hold store lock");
+
+        let outcome = engine
+            .capture("ws1", "run-locked", "tester", "call-locked", false)
+            .await
+            .expect("git capture must remain authoritative");
+        assert!(!outcome.no_change);
+        assert_eq!(
+            engine.store_failures(),
+            1,
+            "locked store must count one failure"
+        );
+        drop(guard);
+
+        let retry = engine
+            .capture("ws1", "run-retry", "tester", "call-retry", false)
+            .await
+            .expect("retry capture");
+        assert!(retry.no_change);
+        assert_eq!(engine.store_failures(), 1);
+        let slices = std::fs::read_dir(store.slice_dir("ws1"))
+            .expect("slice dir")
+            .count();
+        assert_eq!(slices, 1, "next capture backfills the store slice");
     }
 }

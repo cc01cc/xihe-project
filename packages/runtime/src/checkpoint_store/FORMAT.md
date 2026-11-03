@@ -82,11 +82,12 @@ canonical JSON（无多余空白，键序固定：`v`、`entries`、`merkle_root
 | `entry_count` / `total_bytes` | int | 条目数与原始总字节 |
 | `exclusion_patterns` | string[] | 生效的静态模式 + `gitignore:.gitignore` 形式条目 |
 | `gitignore_files` | string[] | 实际生效的 `.gitignore` 相对路径 |
-| `nested_roots` | object[] | `{path, head, branch, dirty, git_dir_kind}`；直接解析 `.git`（不调 git） |
+| `nested_roots` | string[] | 当前 v1 实现为相对 path 列表；`{path, head, branch, dirty, git_dir_kind}` 富对象尚未实现（T1.10 前补） |
 | `stats` | object | `{scanned_files, hashed_files, hashed_bytes, cache_hits, blobs_new, blobs_dedup, reparse_skipped, non_utf8_skipped, suspects, warnings, duration_ms}` |
 | `state` | string | `captured` \| `migrated` |
 | `migrated_from` | string \| null | 迁移来源 ref 名（`refs/xihe/slices/<id>`） |
 
+- **P1 dual 镜像口径**：`checkpointStorage=dual` 且 active `NestedRepoPolicy::Opaque` 时，store capture **不展开** nested root 内容（`entries` 与 git tree 对齐），但 `nested_roots` 仍记录该路径；`Flatten` 正常展开。T1.10 的 path 对拍必须按 mode 分支，不能假设 dual/self 恒等；`self` 的 nested 语义尚未定义。
 - **提交语义**：content 完整写入 + rename 完成后才算可见；`no_change` 时**不写 slice**，直接返回 tail id。
 - **读取**：按 id 升序；校验 `manifest` 存在、merkle 与 manifest 一致、`entry_count/total_bytes` 与 manifest 相符；不符 ⇒ `SLICE_CORRUPT`。
 - **迁移记录**：`state=migrated` 时缺失字段一律 null（不伪造 runId/principalId/nestedRoots）。
@@ -196,3 +197,4 @@ canonical JSON（无多余空白，键序固定：`v`、`entries`、`merkle_root
 - **2026-11-04 v1 校验补充**（PLAN-0653 T1.2）：读侧新增 4096× 压缩比门，写侧同条件回落 raw；字节布局与 `VERSION` 不变。合法 flate2 输出最大压缩比约 1032×，因此既有 blob 不会被新增的门拒收。
 - **2026-11-04 stat cache 可选 `file_id`**（PLAN-0653 T1.7）：entries 增加可选 `file_id` 字符串；缺省解析为 `None`，旧 cache 仍可读但视为不命中，不影响 VERSION/其他格式。用于收紧同 size+mtime 替换盲区；取不到身份的降级路径已在上文标注。
 - **2026-11-04 fsck 分类与修复日志**（PLAN-0653 T1.8）：新增只读分类（orphan-blob/missing-blob/truncated-blob/orphan-slice/cache-stale/corrupt-manifest/corrupt-slice）与 `gc/<epochMs>-fsck.json` planned journal；不改变 blob/manifest/slice/stat cache 布局。
+- **2026-11-04 P1 dual 镜像**（PLAN-0653 T1.9）：`Opaque` 下 store entries 不展开 nested 内容但保留 `nested_roots`；当前 v1 `nested_roots` 为 path 字符串数组（富对象元数据待补）。`self` 语义未定，T1.10 对拍须按 mode 分支。

@@ -105,6 +105,7 @@ sequenceDiagram
 - 用户可感动作：**capture（存）→ preview（看）→ restore（回滚）→ cleanup（清）**。
 - Runtime 在 `<hostRoot>/.xihe-shadow/<workspaceId>.git` 维护影子库；位于 workspace 外、不 bind 进 Sandbox。`hostRoot` 是**进程级基目录**（managed 路径 = `hostRoot/storageRef`；direct_attach 内容路径在 `hostPath`），启动时解析为绝对路径，所有 `GIT_DIR/GIT_WORK_TREE/GIT_INDEX_FILE` 均为绝对路径；未知 workspace、Git 不可用或版本不足 → 显式 `CHECKPOINT_UNAVAILABLE`，不回退到宿主任意目录。
 - 嵌套仓库默认按 **L1 文件级展开**（`flatten`，PLAN-0361）：Runtime 自研 stage 决策层跳过子仓 `.git`（目录或 gitdir 指针），子仓文件（含未提交改动）作为**普通 blob 进父切片**，**可按文件恢复**；`opaqueNestedRepos[]` 在 L1 下为空。策略由 `XIHE_CHECKPOINT_NESTED_POLICY` 选择（`flatten` 默认 / `opaque` 旧 gitlink 行为 / `reject`）；`reject`（或 `XIHE_CHECKPOINT_REJECT_NESTED_REPOS=1`）时拒绝捕获并给 `NESTED_REPO_LIMIT` 降级原因。capture reason 词表为 `GIT_UNAVAILABLE/GIT_TOO_OLD/GIT_FAILED/WORKSPACE_UNKNOWN/NESTED_REPO_LIMIT`；CP 只在 `UNAVAILABLE` outcome 透传为 durable reason，未知/transport 归一 `UNAVAILABLE`；`EXPIRED`/`TOO_LARGE` 属 gate/blob，不在 capture 白名单。
+- **P1 dual-write（T1.9）**：`XIHE_CHECKPOINT_STORAGE=git|dual`（默认 `git`），store 路径 `XIHE_CHECKPOINT_STORE_PATH`（默认 `<hostRoot>/.xihe-store`）。`git` 模式**不创建/不打开** store；`dual` 启动时校验 store/VERSION，配置错误 fail-fast。capture 仍以 git 为权威，store 写失败只告警并累加 `storeFailures`（diagnostics 可读），不阻断、不 retry、不自动切回 git。`dual` + `Opaque` 时 store entries 镜像 git（nested 内容不展开），但 slice `nested_roots` 仍记录；`Flatten` 正常展开。读路径仍走 git，`self` 留给 T2。
 - `apply_patch` 为 Gateway-public 工具之一，走正常审批；捕获只在 Run 终止 / 异常补拍 / C0，不由派发前置触发；UI 回滚只经 CP public workspace route。
 
 ### 6.2 对象模型（Git 本体）
