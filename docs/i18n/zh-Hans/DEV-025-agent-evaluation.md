@@ -5,7 +5,7 @@ sidebar_order: 25
 lang: zh-Hans
 sidebar_group: "开发指南"
 created: 2026-10-22
-updated: 2026-10-22
+updated: 2026-11-03
 tags: [evaluation, testing, llm, determinism, gate]
 description: XH 评测套件的 dataset/report/gate 契约，以及 invariant/behavior 分层、N 次统计与命名规则。
 ---
@@ -39,7 +39,9 @@ uv run python -m xihe_agent.evaluation gate --report invariant.json --report beh
 
 `run` 必填 `--lane invariant|behavior`（一次只跑一层，避免一份报告混两类任务）与 `--token`（或 `XIHE_EVAL_TOKEN`）；`--dataset` 缺省时用 `datasets/v2.jsonl`，`--cp-url` 缺省 `http://127.0.0.1:12631`（多栈用 `XIHE_EVAL_CP_URL` 覆盖）。`--attempts` 只对 behavior lane 生效，对 invariant lane 传入会直接报错。`gate` 缺省读 `evaluation/gate-v2.json`，`--report` 可重复（每个 lane 一次），`--baseline` 只接受单份报告。`mise run gate:agent-quality` 是 `gate` 的封装，退出码 `0/1/2/3` = `PASS/FAIL/NOT_EVALUATED/GATE_ERROR`，仅 PASS 为 0。gate 目前**未接 CI**，本地 lane 运行。
 
-凭据与原始数据：token 只从参数/env 读入内存，不写入报告与日志；`--output-dir` 的 raw 响应落 `.local`（gitignored），报告只保留 content-free facts；确定性 lane 的假 LLM 不需要真实凭据（setup 创建 connection 时不写 apiKey），真实 lane 的 provider key 只从 env 读取，禁止写入报告、日志或 argv。
+凭据与原始数据：token 只从参数/env 读入内存，不写入报告与日志；`--output-dir` 的 raw 响应落 `.local`（gitignored），报告只保留 content-free facts；真实 lane 的 provider key 只从 env 读取，禁止写入报告、日志或 argv。
+
+**确定性 lane 的假 LLM 不需要真实凭据，但 connection 必须持有一条非密假凭据**：PLAN-0553 起 `provider_connections` 只存 `credential_id`（`V78__provider_connection_credential_ref.sql:1-6` 硬切，无 ciphertext/双读回退），运行期租约必须从 `credentials` 域解密一条凭据，缺行即 `ProviderCredentialAccess.java:140` 抛 `CredentialNotFoundException` → run 终态 `CHAT_EXECUTION_FAILED`（`chat_run_transport_attempts` 0 行、假 LLM 收不到请求，即还没走到 Agent/传输）。假 key 取 `XIHE_EVAL_LLM_API_KEY`，默认 `eval-fake-llm-not-a-secret`（`lane-setup.mjs:79`），fixture server 忽略 `Authorization`；它仍按「不进 argv / 不进报告 / 不进日志」处理——理由是**不给后人留下「报告里可以出现凭据字段」的先例**。
 
 ## 3. 契约一：dataset
 
@@ -104,7 +106,7 @@ assertion `expected` 键映射（evaluator 同时接受两种）：
 
 报告记录：`schema_version`、`eval_run_id`、`created_at`、`commit`、`dataset_version`、`dataset_hash`、`scorer_version`、`mode`、`provider`、`model`、`prompt_version`、`lane`（v2 新增）。
 
-gate 对**每份**报告实际校验：`schema_version`、`dataset_version`、`dataset_hash`、`scorer_version`、`mode`、`lane` 合法性、时间戳可解析与新鲜度（`max_age`）；所有候选报告的 `commit` 必须一致且等于 `--target-commit`（缺省当前 git HEAD）。基线报告执行同一套身份校验，错误码加 `baseline_` 前缀（如 `baseline_dataset_hash_mismatch`）。`provider`/`model`/`prompt_version` 是追溯字段，不参与身份判定——两个 lane 的 provider 本就不同。报告 `lane` 必须与其任务类别一致（invariant lane 只含 invariant 任务），否则 `GATE_ERROR(lane_class_mismatch:<task_id>)`。
+gate 对**每份**报告实际校验：`schema_version`、`dataset_version`、`dataset_hash`、`scorer_version`、`mode`、`lane` 合法性、时间戳可解析与新鲜度（`max_age`）；所有候选报告的 `commit` 必须一致且等于 `--target-commit`（缺省当前 git HEAD）。基线报告执行同一套身份校验，错误码加 `baseline_` 前缀（如 `baseline_dataset_hash_mismatch`）。`provider`/`model`/`prompt_version` 是追溯字段，不参与身份判定——两个 lane 的 provider 本就不同，同一 lane 的 `provider` 还会随 connection 的 apiType 变化（如确定性 lane 的 `custom-openai-compatible` → `openai`）。报告 `lane` 必须与其任务类别一致（invariant lane 只含 invariant 任务），否则 `GATE_ERROR(lane_class_mismatch:<task_id>)`。
 
 ### 4.2 任务结果（v2）
 
@@ -243,22 +245,26 @@ gate 对**每份**报告实际校验：`schema_version`、`dataset_version`、`d
 | 前置 | 说明 |
 |---|---|
 | 活栈 | CP / Agent / Runtime / PG 已启动 |
+| 首个 workspace | **目标库必须已有至少一个 workspace**：PLAN-0614 空白起步后认证路径不再建 workspace（`AuthController.java:261`），空库登录返回 `workspaceId=null`，fixture 直接报 `login workspace is not a UUID: null` |
 | MCP fixture | 暴露 `always_failing`，`tool_faces` 分类为 `read` |
 | 假 LLM | OpenAI 兼容 SSE，脚本「调 `always_failing` → isError → 再调」 |
-| Provider Connection | WORKSPACE scope、`custom-openai-compatible` / `openai-chat-completions`、verify READY |
+| Provider Connection | WORKSPACE scope、`openai` / `openai-chat-completions` v1、verify READY。**不能用 `custom-openai-compatible`**：该 provider 的 `openai-chat-completions` v1 是 `capability.tools=false`（`provider-catalog/providers.json:328`），工具类任务在传输前即 `LLM_TOOL_ROUTE_UNSUPPORTED` |
 | instance profile | `llm-provider` 指向该 connection（`eval-fake-llm` / `eval-fake-model`；否则 Agent `llmReady=missing_credentials`） |
 | workspace 预算 | `agent-runtime.runMaxTurns=2`（否则 180s 内跑不出刹车码） |
+| workspace 上下文 | WORKSPACE-scope 写（建 agent principal、写 workspace 层配置）**必须显式带 `X-Workspace-Id`**，否则 `409 WORKSPACE_CONTEXT_REQUIRED`（PLAN-0622）：写路径不猜 workspace，CP 的「首个活跃成员」回退只用于读（`AgentPrincipalService.java:196-211`） |
+| 授权来源 | `grants.source='direct'` 已被 V88 / PLAN-0610 T1.6 退役——`ck_grants_source` 现值 `('role','spawn','template','credential_binding','agent_default')`，直接种 direct grant 会被约束拒绝，且 `direct` 不在 `GrantSources.EVALUATION_SOURCES`（`GrantSources.java:41-42`）⇒ 即使插入也不参与授权判定。授权应靠角色物化 `source='role'` + workspace agent cap |
 | token | `--token` 或 `XIHE_EVAL_TOKEN` |
 
 真实 lane 的前置（0540 实测）：
 
 | 前置 | 说明 |
 |---|---|
-| 真实 Provider Connection | WORKSPACE scope、`xiaomi` / `mimo-responses`、verify READY，`connectionKey=default` |
+| 真实 Provider Connection | WORKSPACE scope、`xiaomi` / `openai-chat-completions` v1、verify READY，`connectionKey=default`。**不要用 `mimo-responses` v1**：该 apiType 的 `capability.tools=false`（`provider-catalog/providers.json:53`），而 `xiaomi.defaultApiType` 恰好指向它（`:54`）⇒ 工具类任务在传输前被 `LLM_TOOL_ROUTE_UNSUPPORTED` 拒绝；`openai-chat-completions` v1 为 `tools=true` |
 | instance profile | `llm-provider` 指向该 connection（`xiaomi` / `default` / `mimo-v2.6-flash`） |
+| 工具面 | **behavior lane 必须显式传 `--tool-surface`**：否则 required 的 `failure_budget.attempt_rate.v2` 恒 `not_evaluated(no_tool_surface)`（`attempts=0`）⇒ gate 只能 `NOT_EVALUATED(2)`，且 `not_evaluated=3 > baseline=2` 会顺带触发 `coverage_shrunk` |
 | API key | `XIHE_XIAOMI_API_KEY` 仅在 `behavior-setup` 需要新建连接时从 env 读取 |
 
-`gate` 读取的 Provider/model 仅作追溯；lane 的真实性由 setup 脚本与报告 `provider` 字段共同证明：确定性 lane 报告为 `custom-openai-compatible`，behavior lane 运行需显式传 `--provider xiaomi --model mimo-v2.6-flash`。
+`gate` 读取的 Provider/model 仅作追溯；lane 的真实性由 setup 脚本与报告 `provider` 字段共同证明：确定性 lane 报告为 `openai`（历史轮次为 `custom-openai-compatible`——该字段随假 connection 的 apiType 变化，不构成 lane 身份），behavior lane 运行需显式传 `--provider xiaomi --model mimo-v2.6-flash`。
 
 ### 6.2 setup / teardown
 
@@ -266,7 +272,7 @@ gate 对**每份**报告实际校验：`schema_version`、`dataset_version`、`d
 
 1. `setup`：创建/复用 eval workspace 与 principal，起假 LLM（`XIHE_EVAL_LLM_PORT`，默认 12762，避开 stack 段位 12630–12634/12640–12644）与 MCP fixture（默认 12761），创建假 Provider Connection 并 verify，把 instance `llm-provider` 切到假 provider，校验 workspace `runMaxTurns=2`，输出 session 绑定所需 id。
 2. `behavior-setup`：复用上述 workspace/principal，若不存在同 `connectionKey` 的真实 connection 则用 `XIHE_XIAOMI_API_KEY` 新建并 verify，然后把 profile 切到真实 provider；记录该 connection 是否由本次 setup 创建。
-3. `run`：按 `--lane` 跑指定轮次（`--rounds`）与尝试数（`--attempts`）；behavior lane 需显式传 `--provider xiaomi --model mimo-v2.6-flash`。
+3. `run`：按 `--lane` 跑指定轮次（`--rounds`）与尝试数（`--attempts`）；behavior lane 需显式传 `--provider xiaomi --model mimo-v2.6-flash`。`--tool-surface` 的默认值语义是**按 lane 猜**：不给 flag 时只在 `lane === "invariant"` 打开（`lane-setup.mjs:1401`），behavior lane 一律关闭。要不要开**由 required 任务决定**，不由 lane 决定——`gate-v2.json:13` 的 required behavior 任务就是工具调用率（`failure_budget.attempt_rate.v2` 的 B1 断言「至少一次工具调用」），所以默认跑法下这条 gate 永远只能 `NOT_EVALUATED(2)`，且 `not_evaluated` 数超过 baseline 还会触发 `coverage_shrunk`。需要评估工具面的 lane 必须显式传 `--tool-surface`（反向用 `--no-tool-surface` 显式关闭）。
 4. `status`：打印 lane 状态与 id（含 `realConnectionId`、`profileIsReal`）。
 5. `teardown`：删除本 lane 创建的 eval session/run 与 connection（含真实 connection，若为 setup 创建）、清空 profile、恢复 `runMaxTurns` 原值、停 fixtures。
 
