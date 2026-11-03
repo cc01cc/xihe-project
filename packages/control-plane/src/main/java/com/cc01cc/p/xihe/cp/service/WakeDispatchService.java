@@ -7,6 +7,7 @@ import com.cc01cc.p.xihe.cp.config.DbLockTimeout;
 import com.cc01cc.p.xihe.cp.context.service.EventStoreService;
 import com.cc01cc.p.xihe.cp.entity.ChatRun;
 import com.cc01cc.p.xihe.cp.entity.Session;
+import com.cc01cc.p.xihe.cp.logging.LogRedactor;
 import com.cc01cc.p.xihe.cp.entity.SessionParticipant;
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionParticipantCursorRepository;
@@ -46,6 +47,9 @@ import java.util.UUID;
 public class WakeDispatchService {
 
     private static final Logger logger = LoggerFactory.getLogger(WakeDispatchService.class);
+
+    /** PLAN-0648 task-31: how much of the triggering message rides the wake prompt. */
+    static final int WAKE_EXCERPT_LIMIT = 600;
     static final String EVENT_WAKE_DISPATCH = "wake_dispatch";
 
     private final SessionParticipantRepository participantRepository;
@@ -93,9 +97,25 @@ public class WakeDispatchService {
      *                    guard refuses a participant this parent already woke, so two concurrent
      *                    hops from the same parent run can never each admit a run (T2.8/T2.9).
      */
+    /** Backwards-compatible entry: a caller with no triggering text gets the reference-only prompt. */
     @Transactional
     public WakeFireResult fire(UUID participantId, String triggerSource, String wakeRoundId,
                                UUID sessionId, String parentRunId) {
+        return fire(participantId, triggerSource, wakeRoundId, sessionId, parentRunId, null);
+    }
+
+    /**
+     * PLAN-0648 task-31 (P0): the woken participant needs the message that woke it. A reference-only
+     * prompt ("[mention wake …] respond to the conversation.") made every @-woken agent answer
+     * "I received a wake signal but there is no content", which is worse than not waking at all —
+     * the real-stack reply on session b6d227f3 was exactly that.
+     *
+     * @param triggeringContent the message body that caused this wake; {@code null} for triggers
+     *                          that carry no user text (schedule ticks, chain hops without one)
+     */
+    @Transactional
+    public WakeFireResult fire(UUID participantId, String triggerSource, String wakeRoundId,
+                               UUID sessionId, String parentRunId, String triggeringContent) {
         SessionParticipant participant = participantRepository.findById(participantId).orElse(null);
         if (participant == null || participant.getDisabledAt() != null) {
             audit(sessionId, participantId, triggerSource, wakeRoundId, "refused",
@@ -155,7 +175,7 @@ public class WakeDispatchService {
             return new WakeFireResult(false, null, "judged_no");
         }
 
-        String prompt = "[" + triggerSource + " wake " + wakeRoundId + "] respond to the conversation.";
+        String prompt = buildWakePrompt(triggerSource, wakeRoundId, sessionId, triggeringContent);
         // The responder stamped on the run is the participant's PRINCIPAL id — chat_runs.agent_principal_id
         // carries an FK to agent_principals (V92 R1); the D23-08 gate above has just verified the row.
         SessionWakeupService.WakeupResult result = sessionWakeupService.wakeupAs(
@@ -170,6 +190,56 @@ public class WakeDispatchService {
                 result.started() ? "submitted" : "deferred");
     }
 
+    /**
+     * The prompt handed to the woken participant. It must carry what the participant needs to
+     * answer: the triggering message body (sanitised, truncated, never empty when there was text)
+     * plus the session id for a self-reference. The {@code [<trigger> wake <round>]} prefix stays —
+     * operators and the audit stream grep it.
+     */
+    String buildWakePrompt(String triggerSource, String wakeRoundId, UUID sessionId, String triggeringContent) {
+        StringBuilder prompt = new StringBuilder("[")
+                .append(triggerSource).append(" wake ").append(wakeRoundId).append("] session=").append(sessionId);
+        String excerpt = wakeExcerpt(triggeringContent);
+        if (excerpt.isEmpty()) {
+            prompt.append(" respond to the conversation.");
+            return prompt.toString();
+        }
+        prompt.append(nl()).append(nl())
+                .append("Triggering message").append(truncationNote(triggeringContent)).append(':')
+                .append(nl()).append(nl()).append(excerpt).append(nl()).append(nl())
+                .append("Answer that message as your own turn. Do not describe the wake signal.");
+        return prompt.toString();
+    }
+
+    /**
+     * Sanitised, whitespace-collapsed excerpt. {@link LogRedactor} owns the "never leak a secret"
+     * rule; it only replaces secret-looking spans, so the message keeps its meaning. Truncation
+     * keeps the first {@link #WAKE_EXCERPT_LIMIT} characters — the beginning of a message carries
+     * the ask far more often than its tail.
+     */
+    String wakeExcerpt(String triggeringContent) {
+        if (triggeringContent == null || triggeringContent.isBlank()) {
+            return "";
+        }
+        String sanitised = LogRedactor.redact(triggeringContent).strip();
+        if (sanitised.length() <= WAKE_EXCERPT_LIMIT) {
+            return sanitised;
+        }
+        int cut = sanitised.offsetByCodePoints(0, WAKE_EXCERPT_LIMIT);
+        return sanitised.substring(0, cut);
+    }
+
+    private String truncationNote(String triggeringContent) {
+        if (triggeringContent == null || triggeringContent.isBlank()) {
+            return "";
+        }
+        return wakeExcerpt(triggeringContent).length() < LogRedactor.redact(triggeringContent).strip().length()
+                ? " (truncated)" : "";
+    }
+
+    private static String nl() {
+        return "\n";
+    }
     /** JUDGE branch (D24-02 dedupe is inside JudgeDecisionService, keyed by participant+round). */
     private boolean judgeSaysSpeak(Session session, SessionParticipant participant,
                                    String triggerSource, String wakeRoundId) {

@@ -124,7 +124,7 @@ public class WakeFanOutService {
         }
         String wakeRoundId = "wake:mention:" + rootRunId;
         executorFor(sessionId).submit(() -> runSerial(sessionId, workspaceId, userId, wakeRoundId, recipients,
-                parsed.unresolvedTokens(), ccObservers));
+                parsed.unresolvedTokens(), ccObservers, content));
     }
 
     /**
@@ -173,7 +173,8 @@ public class WakeFanOutService {
     private void runSerial(UUID sessionId, String workspaceId, String userId, String wakeRoundId,
                            List<MentionParser.RosterEntry> recipients,
                            List<String> unresolvedTokens,
-                           List<MentionParser.RosterEntry> ccObservers) {
+                           List<MentionParser.RosterEntry> ccObservers,
+                           String triggeringContent) {
         for (String token : unresolvedTokens) {
             logger.info("[LIFECYCLE] service=cp event=wake_mention_unresolved sessionId={} "
                     + "token={} round={}", sessionId, token, wakeRoundId);
@@ -181,8 +182,9 @@ public class WakeFanOutService {
         for (MentionParser.RosterEntry recipient : recipients) {
             WakeDispatchService.WakeFireResult result;
             try {
+                // PLAN-0648 task-31 (P0): the woken agent needs the message that woke it.
                 result = wakeDispatchService.fire(recipient.participantId(), "mention",
-                        wakeRoundId, sessionId, null);
+                        wakeRoundId, sessionId, null, triggeringContent);
             } catch (RuntimeException failure) {
                 // Q3: one recipient's failure never aborts the round.
                 logger.error("[LIFECYCLE] service=cp event=wake_recipient_failed sessionId={} "

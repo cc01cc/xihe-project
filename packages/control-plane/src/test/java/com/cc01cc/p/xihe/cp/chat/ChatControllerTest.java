@@ -2000,12 +2000,19 @@ class ChatControllerTest extends AbstractH2Test {
     }
 
     private ResponseEntity<Map> postChat(String content) {
+        return postChat(content, null);
+    }
+
+    private ResponseEntity<Map> postChat(String content, String asParticipantId) {
         Map<String, Object> request = new java.util.LinkedHashMap<>();
         request.put("sessionId", sessionId);
         request.put("content", content);
         request.put("workspaceId", workspaceId);
         request.put("userId", userId);
         request.put("branchId", branchId);
+        if (asParticipantId != null) {
+            request.put("asParticipantId", asParticipantId);
+        }
         HttpHeaders headers = new HttpHeaders();
         headers.setBearerAuth(authToken);
         headers.setContentType(MediaType.APPLICATION_JSON);
@@ -2078,5 +2085,50 @@ class ChatControllerTest extends AbstractH2Test {
                         "SELECT terminal_outcome FROM chat_runs WHERE CAST(id AS VARCHAR) = ?",
                         String.class, runId),
                 "the Run must keep its normal, non-suppressed lifecycle");
+    }
+    // ── PLAN-0648 decision v15: the UI default as=PRIMARY must not disable @ ─────
+
+    @Test
+    void chat_withAsPrimaryAndMentionOfAnother_stillSuppressesThePrimary() {
+        AgentPrincipal primary = primaryPrincipal();
+        String primaryParticipantId = seedAgentParticipant(primary, SessionParticipant.ROLE_PRIMARY,
+                SessionParticipant.RESPOND_ALWAYS, 0);
+        AgentPrincipal member = seedMentionablePrincipal("Mention Target D");
+        seedAgentParticipant(member, SessionParticipant.ROLE_MEMBER,
+                SessionParticipant.RESPOND_WHEN_MENTIONED, 1);
+        Mockito.doNothing().when(wakeFanOutService).fanOut(Mockito.any(), Mockito.anyString(),
+                Mockito.anyString(), Mockito.anyString(), Mockito.anyString(), Mockito.any(),
+                Mockito.any());
+
+        // The UI posts every ordinary message with asParticipantId = PRIMARY; that is the default
+        // shape, not an explicit re-targeting, so an @ of the member must still win.
+        ResponseEntity<Map> response = postChat("@Mention Target D 你来答这个", primaryParticipantId);
+
+        assertEquals(HttpStatus.ACCEPTED, response.getStatusCode());
+        Map body = response.getBody();
+        java.util.Objects.requireNonNull(body);
+        assertEquals(ChatController.SUPPRESSED_NO_RESPONDER, body.get("terminalOutcome"),
+                "as=PRIMARY is the default form and must not disable the mention suppression");
+    }
+
+    @Test
+    void chat_withAsAnotherParticipant_isAnExplicitAnswerAndIsNotSuppressed() {
+        seedAgentParticipant(primaryPrincipal(), SessionParticipant.ROLE_PRIMARY,
+                SessionParticipant.RESPOND_ALWAYS, 0);
+        AgentPrincipal member = seedMentionablePrincipal("Mention Target E");
+        String memberParticipantId = seedAgentParticipant(member, SessionParticipant.ROLE_MEMBER,
+                SessionParticipant.RESPOND_WHEN_MENTIONED, 1);
+        Mockito.doNothing().when(wakeFanOutService).fanOut(Mockito.any(), Mockito.anyString(),
+                Mockito.anyString(), Mockito.anyString(), Mockito.anyString(), Mockito.any(),
+                Mockito.any());
+
+        // Answering *as* that member is an explicit targeting: the mention must not suppress it.
+        ResponseEntity<Map> response = postChat("@Mention Target E 你来答这个", memberParticipantId);
+
+        assertEquals(HttpStatus.ACCEPTED, response.getStatusCode());
+        Map body = response.getBody();
+        java.util.Objects.requireNonNull(body);
+        assertNull(body.get("terminalOutcome"),
+                "as=<member> is an explicit answer and keeps the normal lifecycle");
     }
 }
