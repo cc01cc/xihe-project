@@ -1,5 +1,6 @@
 /**
- * PLAN-0631 M2：视觉语言候选（A 克制 / B 密集 / C 现状+）的**真实截图 + 质量门**。
+ * PLAN-0631 M2：视觉语言（**默认 = B 密集**；A 克制 / C 现状+ 只是 opt-in 覆盖）的
+ * **真实截图 + 质量门**。
  *
  * 为什么是 spec 而不是 `scripts/shoot-*.mjs`：截图必须跑在"应用真的被 Vite 服务起来"
  * 的前提下，而 `e2e/playwright.config.ts` 已经带 baseURL + webServer（`pnpm dev`）。
@@ -17,15 +18,19 @@
  *       e2e/mock/plan-0631-variants.spec.ts --reporter=list
  *
  * 这个 spec 同时是**质量门**，不是"截图完事"：
- * - 0 console error / 0 pageerror（三个候选 × 两个页面，各自断言）；
- * - 候选真的生效：`data-xh-variant` 属性 + 真实计算样式（字号/行高/圆角）逐项断言，
- *   否则"截图不同"可能只是缓存或根本没切过去（假绿的典型形态）；
+ * - 0 console error / 0 pageerror（默认态 + A/C × 两个页面，各自断言）；
+ * - **默认 = B**：无 `?variant=` 时断言无属性，且关键 token 等于 B —— 正文 13px/行高 1.45、
+ *   圆角主档 4px、`--spacing` = 0.875 步进（0.21875rem）、强调色 `#2450c8`。
+ *   **用 `getComputedStyle` 断言，不做截图比对**（Windows 上截图断言会被跳过，
+ *   截图只作为报告产物）；
+ * - A/C 仍可覆盖：`?variant=a` / `?variant=c` 的属性与实测值逐项断言；
+ * - 旧持久化值迁移：预置 localStorage `xihe-visual-variant = "c"` 后刷新，键必须被清除、
+ *   渲染必须回到默认 B；`?variant=b` 是默认的别名（不投影属性）；
  * - 对比度**实测**：正文/次级文字/强调色上的文字 ≥ 4.5:1，焦点环 ≥ 3:1（WCAG 1.4.11）；
- * - 焦点环可见：键盘 Tab 聚焦真实控件后读 `outline` / `box-shadow`，并截局部图；
- * - **默认不变**：没有 `?variant=` 时断言无属性、正文 14/20、控件圆角 10px、间距 0.25rem。
+ * - 焦点环可见：键盘 Tab 聚焦真实控件后读 `outline` / `box-shadow`，并截局部图。
  *
  * 产物落在 git 之外（默认 `<repo>/../.local/xh-d28/shots/0631/`，可用 env 覆盖），
- * 每张图旁边有 `measure/<V>-<page>.json`，对比表里的数字全部来自这些文件。
+ * 每张图旁边有 `measure/<name>.json`，对比表里的数字全部来自这些文件。
  */
 import { test, expect, type Page } from "@playwright/test";
 import { mkdirSync, writeFileSync } from "node:fs";
@@ -55,9 +60,27 @@ interface VariantCase {
     controlRadiusPx: number;
 }
 
+/** 默认视觉语言 = B（密集，用户 2026-11-03 圈选）。无参数时量到的必须是这些值。 */
+const DEFAULT_B = {
+    name: "密集",
+    bodyFontPx: 13,
+    lineHeightPx: 18.85,
+    controlRadiusPx: 4,
+    /** 0.25rem × 0.875 = 3.5px 步进。 */
+    spacing: "0.21875rem",
+    radius: "0.25rem",
+    textSm: "0.8125rem",
+    brand: "#2450c8",
+    foreground: "#1b1e24",
+    mutedForeground: "#4f5661",
+} as const;
+
+/**
+ * A/C **仅用于对比与回归，非发布默认**：只在 `?variant=a|c` 下生效。
+ * B 不再作为候选 case —— 它就是无参数时的默认，由下面的 `default = B` 用例断言。
+ */
 const VARIANTS: VariantCase[] = [
     { id: "A", param: "a", name: "克制", bodyFontPx: 14, lineHeightPx: 23.8, controlRadiusPx: 8 },
-    { id: "B", param: "b", name: "密集", bodyFontPx: 13, lineHeightPx: 18.85, controlRadiusPx: 4 },
     { id: "C", param: "c", name: "现状+", bodyFontPx: 14, lineHeightPx: 21, controlRadiusPx: 8 },
 ];
 
@@ -237,7 +260,7 @@ async function mockConfigApis(page: Page): Promise<void> {
 }
 
 /**
- * 三个候选都必须 0 console error / 0 pageerror —— 收集器在导航前挂上。
+ * 默认态与两个 opt-in 覆盖都必须 0 console error / 0 pageerror —— 收集器在导航前挂上。
  *
  * 同时收集 `4xx/5xx` 响应作为**诊断**（不进断言）：Chrome 的
  * "Failed to load resource: … 404" 不带 URL，只凭它无法判断是 fixture 缺口还是 UI 缺陷。
@@ -597,7 +620,7 @@ test.use({ viewport: { width: 1920, height: 1080 }, deviceScaleFactor: 1 });
 
 test.describe("PLAN-0631 M2 visual variants", () => {
     for (const variant of VARIANTS) {
-        test(`candidate ${variant.id} (${variant.name}) — workspace chat with context dock`, async ({
+        test(`opt-in ${variant.id} (${variant.name}) — workspace chat with context dock`, async ({
             page,
         }) => {
             await page.emulateMedia({ reducedMotion: "reduce" });
@@ -655,7 +678,7 @@ test.describe("PLAN-0631 M2 visual variants", () => {
                 result.control.background,
             ]);
 
-            expect(result.variant, "候选属性必须真的投影到 <html>").toBe(variant.param);
+            expect(result.variant, "opt-in 属性必须真的投影到 <html>").toBe(variant.param);
             expect(result.text.fontSizePx).toBeCloseTo(variant.bodyFontPx, 0);
             expect(result.text.lineHeightPx).toBeCloseTo(variant.lineHeightPx, 0);
             expect(result.control.borderRadiusPx).toBeCloseTo(variant.controlRadiusPx, 0);
@@ -699,7 +722,7 @@ test.describe("PLAN-0631 M2 visual variants", () => {
             expect(errors, `4xx/5xx 响应：\n${http.join("\n")}`).toEqual([]);
         });
 
-        test(`candidate ${variant.id} (${variant.name}) — settings forms and lists`, async ({
+        test(`opt-in ${variant.id} (${variant.name}) — settings forms and lists`, async ({
             page,
         }) => {
             await page.emulateMedia({ reducedMotion: "reduce" });
@@ -709,7 +732,7 @@ test.describe("PLAN-0631 M2 visual variants", () => {
 
             await page.goto(`/settings/config?variant=${variant.param}`, { waitUntil: "load" });
             await expect(page.getByTestId("config-tab-instance")).toBeVisible({ timeout: 20000 });
-            // 展开两个域，让表单与列表同时出现在一屏里（同一数据，三个候选都展开同样的域）。
+            // 展开两个域，让表单与列表同时出现在一屏里（同一数据，默认态与 A/C 都展开同样的域）。
             const fields: Record<string, string> = {
                 rag: "config-field-rag-chunkSize",
                 logging: "config-field-logging-logLevel",
@@ -718,7 +741,7 @@ test.describe("PLAN-0631 M2 visual variants", () => {
                 await page.getByTestId(`config-domain-${domain}`).locator("button").first().click();
                 await expect(page.getByTestId(fields[domain])).toBeVisible({ timeout: 15000 });
             }
-            // 点击域会把页面滚到被点元素；三个候选的密度不同 ⇒ 落点不同 ⇒ 截图不可比。
+            // 点击域会把页面滚到被点元素；默认与 A/C 的密度不同 ⇒ 落点不同 ⇒ 截图不可比。
             // 统一回到顶部（全局路由由 `main` 自身滚动），让三张图从同一个位置开始。
             await page.evaluate(() => {
                 document.scrollingElement?.scrollTo(0, 0);
@@ -764,12 +787,12 @@ test.describe("PLAN-0631 M2 visual variants", () => {
         });
     }
 
-    test("no variant attribute = unchanged default (the current look)", async ({ page }) => {
+    test("default = B (密集) — workspace chat, no ?variant", async ({ page }) => {
         await page.emulateMedia({ reducedMotion: "reduce" });
         const { errors, http } = collectErrors(page);
         await prepareAuth(page);
         await setupMockSessions(page, {
-            sessions: [{ id: SESSION_ID, title: "默认外观" }],
+            sessions: [{ id: SESSION_ID, title: "默认视觉语言 B" }],
             messages: MESSAGES,
         });
         await mockSessionProjections(page, SESSION_ID);
@@ -780,21 +803,221 @@ test.describe("PLAN-0631 M2 visual variants", () => {
         await expect(page.locator('[data-testid="message-item"]').first()).toBeVisible({
             timeout: 20000,
         });
+        await page.getByTestId("chat-input").fill(DRAFT);
+        await openContextPanel(page);
+        await expect(page.getByTestId("session-settings-expanded")).toBeVisible();
+
+        // 键盘 Tab：从 composer 走到下一个可交互控件，读它的焦点指示。
+        await page.getByTestId("chat-input").focus();
+        await page.keyboard.press("Tab");
+
+        const shot = await shoot(page, "default-chat.png");
+        const focusShot = await shootFocus(page, "focus/default-chat-focus.png");
 
         const result = await measure(
             page,
             '[data-testid="message-item"] p, [data-testid="message-item"] .paragraph-node',
             '[data-testid="chat-send-button"]',
             null,
+            true,
+        );
+        test.info().annotations.push({
+            type: "focus-target",
+            description: `${result.focus?.tag ?? "?"} ${result.focus?.testId ?? ""} ${
+                result.focus?.label ?? ""
+            }`.trim(),
+        });
+
+        const bodyContrast = contrastRatio(result.text.color, result.text.backgrounds);
+        const mutedContrast = contrastRatio(result.tokens.mutedForeground, [
+            result.tokens.background,
+        ]);
+        const brandContrast = contrastRatio(result.tokens.brandForeground, [
+            result.tokens.brand,
+        ]);
+        const sendButtonContrast = contrastRatio(result.control.color, [
+            result.control.background,
+        ]);
+
+        // 默认态的关键 token 必须 **等于 B**（用户 2026-11-03 圈选）。这条替代了旧的
+        // "默认与改动前逐像素一致" —— 默认现在就应该长成 B，而不是维持旧外观。
+        expect(result.variant, "默认不得投影任何 variant 属性").toBeNull();
+        expect(result.text.fontSizePx, "B 正文 13px").toBeCloseTo(DEFAULT_B.bodyFontPx, 1);
+        expect(result.text.lineHeightPx, "B 正文行高 1.45").toBeCloseTo(
+            DEFAULT_B.lineHeightPx,
+            1,
+        );
+        expect(result.control.borderRadiusPx, "B 主档圆角 4px").toBeCloseTo(
+            DEFAULT_B.controlRadiusPx,
+            1,
+        );
+        expect(result.tokens.spacing, "B 间距 0.875 步进（3.5px）").toBe(DEFAULT_B.spacing);
+        expect(result.tokens.radius, "B --radius = 4px").toBe(DEFAULT_B.radius);
+        expect(result.tokens.textSm, "B 正文阶梯 13px").toBe(DEFAULT_B.textSm);
+        expect(result.tokens.brand, "B 唯一强调色 #2450c8").toBe(DEFAULT_B.brand);
+        expect(result.tokens.foreground, "B 正文色").toBe(DEFAULT_B.foreground);
+        expect(result.tokens.mutedForeground, "B 次级文字色").toBe(DEFAULT_B.mutedForeground);
+
+        expect(bodyContrast, "正文 ≥ 4.5:1").toBeGreaterThanOrEqual(4.5);
+        expect(mutedContrast, "次级文字 ≥ 4.5:1").toBeGreaterThanOrEqual(4.5);
+        expect(brandContrast, "强调色上的文字 ≥ 4.5:1").toBeGreaterThanOrEqual(4.5);
+        expect(sendButtonContrast, "发送按钮文字 ≥ 4.5:1").toBeGreaterThanOrEqual(4.5);
+
+        // 焦点环：键盘可达 + 可见（outline 或 ring 阴影二者其一），且与底色 ≥ 3:1。
+        expect(result.focus, "Tab 后必须有聚焦元素").not.toBeNull();
+        const focus = result.focus!;
+        const hasOutline = focus.outlineStyle !== "none" && focus.outlineWidthPx >= 2;
+        const hasRing = focus.boxShadow !== "none" && focus.boxShadow.length > 0;
+        expect(hasOutline || hasRing, "焦点指示必须可见（outline 或 ring）").toBe(true);
+        const focusColor = firstColorIn(hasOutline ? focus.outlineColor : focus.boxShadow);
+        expect(
+            focusColor,
+            `焦点环颜色必须可解析（focus=${JSON.stringify(focus)}）`,
+        ).not.toBeNull();
+        const focusContrast = contrastRatio(focusColor!, focus.backgrounds);
+        expect(
+            focusContrast,
+            `焦点环与背景 ≥ 3:1（WCAG 1.4.11，focus=${JSON.stringify(focus)}）`,
+        ).toBeGreaterThanOrEqual(3);
+
+        writeMeasure("default-chat", {
+            variant: "B",
+            param: null,
+            page: "chat",
+            shot,
+            focusShot,
+            contrast: {
+                body: bodyContrast,
+                muted: mutedContrast,
+                brand: brandContrast,
+                sendButton: sendButtonContrast,
+                focusRing: focusContrast,
+            },
+            measurement: result,
+        });
+        expect(errors, `4xx/5xx 响应：\n${http.join("\n")}`).toEqual([]);
+    });
+
+    test("default = B (密集) — settings forms and lists, no ?variant", async ({ page }) => {
+        await page.emulateMedia({ reducedMotion: "reduce" });
+        const { errors, http } = collectErrors(page);
+        await prepareAuth(page);
+        await mockConfigApis(page);
+
+        await page.goto("/settings/config", { waitUntil: "load" });
+        await expect(page.getByTestId("config-tab-instance")).toBeVisible({ timeout: 20000 });
+        const fields: Record<string, string> = {
+            rag: "config-field-rag-chunkSize",
+            logging: "config-field-logging-logLevel",
+        };
+        for (const domain of ["rag", "logging"]) {
+            await page.getByTestId(`config-domain-${domain}`).locator("button").first().click();
+            await expect(page.getByTestId(fields[domain])).toBeVisible({ timeout: 15000 });
+        }
+        await page.evaluate(() => {
+            document.scrollingElement?.scrollTo(0, 0);
+            for (const element of document.querySelectorAll("main")) element.scrollTo(0, 0);
+        });
+
+        const shot = await shoot(page, "default-settings.png");
+        const result = await measure(
+            page,
+            '[data-testid="config-domain-logging"] > button',
+            '[data-testid="config-domain-logging"]',
+            '[data-testid="config-domain-logging"] > button',
             false,
         );
-        // 没有 `?variant=` 时必须与改动前逐项一致：无属性、正文 14/20、控件圆角 10（`--radius`）、
-        // 间距 0.25rem。任何一项变化都说明"候选泄漏进了默认主题"。
-        expect(result.variant).toBeNull();
-        expect(result.text.fontSizePx).toBeCloseTo(14, 0);
-        expect(result.text.lineHeightPx).toBeCloseTo(20, 0);
-        expect(result.control.borderRadiusPx).toBeCloseTo(10, 0);
-        expect(result.tokens.spacing).toBe("0.25rem");
+
+        const bodyContrast = contrastRatio(result.text.color, result.text.backgrounds);
+        const mutedContrast = contrastRatio(result.tokens.mutedForeground, [
+            result.tokens.background,
+        ]);
+        const brandContrast = contrastRatio(result.tokens.brandForeground, [
+            result.tokens.brand,
+        ]);
+
+        expect(result.variant, "默认不得投影任何 variant 属性").toBeNull();
+        expect(result.text.fontSizePx, "B 正文 13px").toBeCloseTo(DEFAULT_B.bodyFontPx, 1);
+        expect(result.text.lineHeightPx, "B 正文行高 1.45").toBeCloseTo(
+            DEFAULT_B.lineHeightPx,
+            1,
+        );
+        expect(result.control.borderRadiusPx, "B 主档圆角 4px").toBeCloseTo(
+            DEFAULT_B.controlRadiusPx,
+            1,
+        );
+        expect(result.tokens.spacing, "B 间距 0.875 步进（3.5px）").toBe(DEFAULT_B.spacing);
+        expect(result.tokens.brand, "B 唯一强调色 #2450c8").toBe(DEFAULT_B.brand);
+        expect(bodyContrast, "正文 ≥ 4.5:1").toBeGreaterThanOrEqual(4.5);
+        expect(mutedContrast, "次级文字 ≥ 4.5:1").toBeGreaterThanOrEqual(4.5);
+        expect(brandContrast, "强调色上的文字 ≥ 4.5:1").toBeGreaterThanOrEqual(4.5);
+
+        writeMeasure("default-settings", {
+            variant: "B",
+            param: null,
+            page: "settings",
+            shot,
+            contrast: { body: bodyContrast, muted: mutedContrast, brand: brandContrast },
+            measurement: result,
+        });
+        expect(errors, `4xx/5xx 响应：\n${http.join("\n")}`).toEqual([]);
+    });
+
+    test("legacy stored variant is cleared and ?variant=b aliases the default B", async ({
+        page,
+    }) => {
+        await page.emulateMedia({ reducedMotion: "reduce" });
+        const { errors, http } = collectErrors(page);
+        await prepareAuth(page);
+        await setupMockSessions(page, {
+            sessions: [{ id: SESSION_ID, title: "旧持久化迁移" }],
+            messages: MESSAGES,
+        });
+        await mockSessionProjections(page, SESSION_ID);
+
+        await page.goto(`/workspace/workspace-1/chat/${SESSION_ID}`, { waitUntil: "load" });
+        await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: 20000 });
+
+        // 模拟对比期残留：旧版把 C 的选择写进了 localStorage。
+        await page.evaluate(() => localStorage.setItem("xihe-visual-variant", "c"));
+        await page.reload({ waitUntil: "load" });
+        await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: 20000 });
+        await expect(page.locator('[data-testid="message-item"]').first()).toBeVisible({
+            timeout: 20000,
+        });
+
+        const stored = await page.evaluate(() => localStorage.getItem("xihe-visual-variant"));
+        expect(stored, "旧持久化键必须被清除，否则会回落到已废弃的默认外观").toBeNull();
+
+        const migrated = await measure(
+            page,
+            '[data-testid="message-item"] p, [data-testid="message-item"] .paragraph-node',
+            '[data-testid="chat-send-button"]',
+            null,
+            false,
+        );
+        expect(migrated.variant, "迁移后不投影属性 = 默认 B").toBeNull();
+        expect(migrated.text.fontSizePx).toBeCloseTo(DEFAULT_B.bodyFontPx, 1);
+        expect(migrated.tokens.brand).toBe(DEFAULT_B.brand);
+
+        // `?variant=b` 是「默认」的别名：不投影属性，渲染仍是 B。
+        await page.goto(`/workspace/workspace-1/chat/${SESSION_ID}?variant=b`, {
+            waitUntil: "load",
+        });
+        await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: 20000 });
+        await expect(page.locator('[data-testid="message-item"]').first()).toBeVisible({
+            timeout: 20000,
+        });
+        const alias = await measure(
+            page,
+            '[data-testid="message-item"] p, [data-testid="message-item"] .paragraph-node',
+            '[data-testid="chat-send-button"]',
+            null,
+            false,
+        );
+        expect(alias.variant, "?variant=b 不投影属性").toBeNull();
+        expect(alias.text.fontSizePx).toBeCloseTo(DEFAULT_B.bodyFontPx, 1);
+        expect(alias.tokens.spacing).toBe(DEFAULT_B.spacing);
         expect(errors, `4xx/5xx 响应：\n${http.join("\n")}`).toEqual([]);
     });
 });
