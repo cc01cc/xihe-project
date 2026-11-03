@@ -4532,15 +4532,21 @@ components:
           description: |
             PLAN-0628 M2a-③ (D28-42): the skills listing this Run was admitted with, frozen into
             `chat_runs.skills_snapshot` in the same transaction as `contextTemplateSnapshot`.
+            **Source of the listing** (skill-wiring ruling 2026-11-04): `skill_bindings` — resolved for
+            the Session's main Agent principal (and its owner), with `maxSkills`/`includeDescriptions`/
+            `sort` taken from the template's `skill_catalog` component when it has one and from the
+            frozen defaults otherwise. A template without that component (the built-in api-request
+            template) is therefore the *normal* case, not "no listing".
             **Replay only**: the value participates in no decision, and the listing the model
             sees is rendered from this same document at dispatch (D28-39) — so this is what the
             model was shown, not a re-resolution against today's bindings. A binding added after
             admission is therefore absent here *by design*, and a continuation Run reports the
             parent's listing with `snapshotSource: inherited`.
-            `null` means the Run captured no snapshot (the column default `{}`, which every Run
-            admitted before M2a carries): its listing is resolved live from the current bindings
-            (D28-40), and that resolution is not replayable. `null` never means "this Run had no
-            skills" — that is `status: empty` inside the object.
+            `null` means the Run captured nothing: a Run admitted before M2a, a Run without a
+            resolvable subject, or a Run whose subject had no live binding at admission (the column
+            keeps its `{}` default rather than forging an "empty capture"). Its listing is resolved
+            live from the current bindings (D28-40), and that resolution is not replayable. `null`
+            never means "this Run had no skills" — that is `status: empty` inside the object.
           oneOf:
             - $ref: '#/components/schemas/ChatRunSkillsSnapshot'
             - type: 'null'
