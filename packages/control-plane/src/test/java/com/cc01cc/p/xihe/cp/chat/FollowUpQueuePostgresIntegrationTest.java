@@ -877,15 +877,20 @@ class FollowUpQueuePostgresIntegrationTest extends AbstractIntegrationTest {
         chatRunRepository.saveAndFlush(childOne);
         queueService.settleTerminal(fixture.sessionId(), childOneId.toString(), "succeeded");
 
-        // Immediately admit the tail while child one's dispatch reservation is still
-        // held: the ChildAdmitted listener takes the not-owned branch, which is the
-        // contract's pre-dispatch Agent-unreachable path ("child commit后、Agent dispatch
-        // 前→收敛 ambiguous、queue 暂停、不重放"). This test runs first (@Order(1)) so the
-        // Agent circuit breaker is cold and child one's async failure cannot free the
-        // slot inside this sub-millisecond window.
+        // PLAN-0645: the former trigger ("the Session still has an in-flight run, so the child
+        // cannot own the dispatch slot") no longer exists — a Session may now run several Runs, so
+        // the tail is dispatched instead of being failed. The contract under test is unchanged
+        // ("child commit 后、Agent dispatch 前失败 ⇒ 收敛 ambiguous、queue 暂停、不重放"); it is now
+        // driven by an unreadable attachment reference, which fails BEFORE the dispatch starts.
         UUID childTwoId = UUID.randomUUID();
-        var second = queueService.admitHead(fixture.sessionId(),
-                context -> childAdmission(fixture, childTwoId, context));
+        var second = queueService.admitHead(fixture.sessionId(), context -> {
+            FollowUpQueueService.ChildAdmission admission = childAdmission(fixture, childTwoId, context);
+            com.cc01cc.p.xihe.cp.entity.Message childMessage =
+                    messageRepository.findById(admission.messageId()).orElseThrow();
+            childMessage.setAttachments("not-a-json-array-of-attachment-refs");
+            messageRepository.saveAndFlush(childMessage);
+            return admission;
+        });
         assertTrue(second.admitted());
 
         ChatRun childTwo = chatRunRepository.findById(childTwoId).orElseThrow();

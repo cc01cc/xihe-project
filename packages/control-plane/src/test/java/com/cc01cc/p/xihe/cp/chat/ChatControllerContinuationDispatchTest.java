@@ -95,7 +95,7 @@ class ChatControllerContinuationDispatchTest {
         when(chatRunReadService.findContinuationDispatchRun(RUN_ID)).thenReturn(Optional.of(run));
         when(sessionService.requireCurrent(SESSION_ID, USER_ID, WORKSPACE_ID))
                 .thenReturn(new Session(WORKSPACE_ID, USER_ID, "target"));
-        when(activeRunRegistry.putIfAbsent(SESSION_ID, RUN_ID)).thenReturn("already-active-run");
+        when(activeRunRegistry.claim(SESSION_ID, RUN_ID)).thenReturn(false);
 
         assertFalse(controller.dispatchContinuationRun(
                 new ContinuationRunDispatchRequestedEvent(SOURCE_RUN_ID, RUN_ID, List.of("tool-call"))));
@@ -118,6 +118,6 @@ class ChatControllerContinuationDispatchTest {
                 new ContinuationRunDispatchRequestedEvent(SOURCE_RUN_ID, RUN_ID, List.of("tool-call"))));
 
         verify(sessionService, never()).requireCurrent(anyString(), anyString(), anyString());
-        verify(activeRunRegistry, never()).putIfAbsent(anyString(), anyString());
+        verify(activeRunRegistry, never()).claim(anyString(), anyString());
     }
 }

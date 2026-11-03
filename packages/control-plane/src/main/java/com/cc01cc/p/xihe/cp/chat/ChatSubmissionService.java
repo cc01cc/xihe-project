@@ -78,6 +78,8 @@ public class ChatSubmissionService {
     private final ToolCallSnapshotService toolCallSnapshotService;
     // PLAN-0628 M2a (D28-35): the skills listing frozen in the same admission transaction.
     private final com.cc01cc.p.xihe.cp.skill.SkillCatalogSnapshotService skillCatalogSnapshots;
+    // PLAN-0645 D45-01: the Session's bounded-concurrency admission gate (replaces single-flight).
+    private final SessionRunConcurrencyGate runConcurrencyGate;
 
     public ChatSubmissionService(ChatRunRepository chatRunRepository,
                                  InboxRepository inboxRepository,
@@ -99,7 +101,8 @@ public class ChatSubmissionService {
                                  ToolCallSnapshotService toolCallSnapshotService,
                                  com.cc01cc.p.xihe.cp.service.SessionParticipantService sessionParticipantService,
                                  DelegationBudgetService delegationBudgetService,
-                                 com.cc01cc.p.xihe.cp.skill.SkillCatalogSnapshotService skillCatalogSnapshots) {
+                                 com.cc01cc.p.xihe.cp.skill.SkillCatalogSnapshotService skillCatalogSnapshots,
+                                 SessionRunConcurrencyGate runConcurrencyGate) {
         this.chatRunRepository = chatRunRepository;
         this.inboxRepository = inboxRepository;
         this.messageRepository = messageRepository;
@@ -125,6 +128,7 @@ public class ChatSubmissionService {
         this.wakeChainService = wakeChainService;
         this.toolCallSnapshotService = toolCallSnapshotService;
         this.skillCatalogSnapshots = skillCatalogSnapshots;
+        this.runConcurrencyGate = runConcurrencyGate;
     }
 
     @Transactional
@@ -615,7 +619,7 @@ public class ChatSubmissionService {
             throw new CpApiException(HttpStatus.CONFLICT, "FOLLOW_UP_QUEUE_NOT_EMPTY",
                     "Follow-up queue must be drained before sending a normal Chat message");
         }
-        rejectConcurrentSubmission(sessionId, userId, idempotencyKey, followUpAdmission);
+        rejectConcurrentSubmission(sessionId, userId, idempotencyKey);
         if (requestedBranchId == null || requestedBranchId.isBlank()) {
             throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "branchId is required");
         }
@@ -710,33 +714,25 @@ public class ChatSubmissionService {
     }
 
     /**
-     * 锁内纵深防御（Session 行锁已由 {@link #bindOrValidateAgentSession} 持有）：
-     * ChatController 的 {@code activeRuns} 只是 JVM 内单飞守卫，绕过 controller 的
-     * 调用方（未来 caller、多实例）仍可能重复建 run。在插入 ChatRun 之前复查
-     * 幂等键与在途（非终态）run，命中都按 CHAT_IN_PROGRESS 409 拒绝——幂等键
-     * 命中时让重试方下一次在 controller 层拿到 replay，而不是撞唯一约束 500。
+     * 锁内准入判定（Session 行锁已由 {@link #bindOrValidateAgentSession} 持有）：
+     * 在插入 ChatRun 之前复查幂等键与在途 run 计数。幂等键命中时按 CHAT_IN_PROGRESS
+     * 拒绝，让重试方下一次在 controller 层拿到 replay，而不是撞唯一约束 500。
+     *
+     * <p>PLAN-0645 D45-01：原来的"每会话最多一条非终态 run"（单飞）改成
+     * "非终态 run 计数 &lt; cap"（{@link SessionRunConcurrencyGate}）。判定仍在
+     * Session 行锁内，因此跨请求/跨实例原子，且不需要 DB 约束（SQL 唯一索引无法表达
+     * "≤N"）。{@code cap=1} 逐项复现冻结的单飞行为，即回滚开关。</p>
+     *
+     * <p>PLAN-0442 的"上一 run 仍在释放租约"检查已删除：它补偿的是 cap=1 下
+     * "终态→releaseLease"的毫秒窗口；cap≥2 后它只会把并发重新堵回单飞。</p>
      */
-    private void rejectConcurrentSubmission(String sessionId, String userId, String idempotencyKey,
-                                            boolean followUpAdmission) {
+    private void rejectConcurrentSubmission(String sessionId, String userId, String idempotencyKey) {
         if (idempotencyKey != null && chatRunRepository
                 .findByUserIdAndSessionIdAndIdempotencyKey(userId, sessionId, idempotencyKey).isPresent()) {
             throw new CpApiException(HttpStatus.CONFLICT, "CHAT_IN_PROGRESS",
                     "Idempotency-Key already has a run for this session");
         }
-        if (chatRunRepository.existsBySessionIdAndStatusIn(
-                sessionId, ChatRunCancellationService.NON_TERMINAL_STATUSES)) {
-            throw new CpApiException(HttpStatus.CONFLICT, "CHAT_IN_PROGRESS",
-                    "A chat run is already active for this session");
-        }
-        // PLAN-0442 合规收窄（A类）：契约 §85 要求 Follow-up dispatcher 在 admission 前
-        // 确认“DB 无活动 Run/未过期 Run lease”；普通 Chat 的冻结基线（M0/design #6）只有
-        // 非终态单飞拒绝——terminal 后等待 releaseRun 清 lease 的毫秒窗口不构成“并发”，
-        // 把它一并拒绝会收紧普通 Chat 语义并打破既有 terminalize→二次 create 流程。
-        if (followUpAdmission && chatRunRepository
-                .existsBySessionIdAndLeaseOwnerIsNotNullAndLeaseExpiresAtAfter(sessionId, Instant.now())) {
-            throw new CpApiException(HttpStatus.CONFLICT, "CHAT_IN_PROGRESS",
-                    "The previous chat run is still releasing its session lease");
-        }
+        runConcurrencyGate.requireSlot(sessionId);
     }
 
     private Session bindOrValidateAgentSession(String sessionId, String userId, String workspaceId,

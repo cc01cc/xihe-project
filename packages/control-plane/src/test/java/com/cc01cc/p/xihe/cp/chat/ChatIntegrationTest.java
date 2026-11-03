@@ -19,6 +19,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
 import com.cc01cc.p.xihe.cp.auth.AuthResponse;
 import com.cc01cc.p.xihe.cp.auth.RegisterRequest;
+import com.cc01cc.p.xihe.cp.config.ConfigService;
 import com.cc01cc.p.xihe.cp.config.JwtTokenProvider;
 import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
 import com.cc01cc.p.xihe.cp.entity.ChatRun;
@@ -159,6 +160,10 @@ class ChatIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired
     private SseEmitterManager sseEmitterManager;
+
+    /** PLAN-0645: the per-Session run cap is instance config; cap=1 is the rollback valve. */
+    @Autowired
+    private ConfigService configService;
 
     private String authToken;
     private String userId;
@@ -647,12 +652,12 @@ class ChatIntegrationTest extends AbstractIntegrationTest {
     }
 
     /**
-     * 守卫绕过反向验证（HTTP 并发）：同 session、不同 key+content 的两个并发 POST
-     * 必须恰好一个 202、一个 409（code=CHAT_IN_PROGRESS），DB 该 session 只有一行
-     * ChatRun。假 Agent 在 HOLD 模式持有在飞 run，判定点稳定落在并发窗口内。
+     * PLAN-0645 V1（HTTP 并发）：默认 cap=2 时，同 session、不同 key+content 的两个并发 POST
+     * 必须**都被接纳**，且两条 run 同时在非终态。假 Agent 在 HOLD 模式持有在飞 run，
+     * 判定点稳定落在并发窗口内。
      */
     @Test
-    void concurrentPostChatWithDifferentKeysAdmitsExactlyOneRun() throws Exception {
+    void concurrentPostChatAdmitsTwoRunsUnderTheDefaultCap() throws Exception {
         String sessionId = UUID.randomUUID().toString();
         createSession(sessionId);
         openSse(sessionId);
@@ -661,23 +666,65 @@ class ChatIntegrationTest extends AbstractIntegrationTest {
         try {
             List<ResponseEntity<Map>> responses = postChatConcurrently(sessionId,
                     List.of("concurrent content A", "concurrent content B"),
-                    List.of("conc-diff-key-a", "conc-diff-key-b"));
+                    List.of("conc-cap2-a", "conc-cap2-b"));
 
-            assertEquals(1, countByStatus(responses, HttpStatus.ACCEPTED),
-                    "exactly one submission must be admitted: " + describeStatuses(responses));
-            assertEquals(1, countByStatus(responses, HttpStatus.CONFLICT),
-                    "exactly one submission must conflict: " + describeStatuses(responses));
-            ResponseEntity<Map> conflict = responses.stream()
-                    .filter(response -> response.getStatusCode() == HttpStatus.CONFLICT)
-                    .findFirst()
-                    .orElseThrow();
-            assertEquals("CHAT_IN_PROGRESS", conflict.getBody().get("code"));
-            assertEquals(1, countRunRows(sessionId));
-            assertEquals(1, messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId).stream()
+            assertEquals(2, countByStatus(responses, HttpStatus.ACCEPTED),
+                    "both submissions must be admitted under cap=2: " + describeStatuses(responses));
+            assertEquals(0, countByStatus(responses, HttpStatus.CONFLICT),
+                    "no submission may conflict while a slot is free: " + describeStatuses(responses));
+            assertEquals(2, countRunRows(sessionId));
+            assertEquals(2, messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId).stream()
                     .filter(message -> message.getRole() == MessageRole.USER).count());
+            assertEquals(2, jdbcTemplate.queryForObject(
+                    "SELECT count(*) FROM chat_runs WHERE CAST(session_id AS VARCHAR) = ? "
+                            + "AND status IN ('accepted','queued','running','streaming',"
+                            + "'awaiting_approval','dispatching','cancelling')",
+                    Integer.class, sessionId),
+                    "both runs stay in flight while the fake agent holds the streams");
         } finally {
             HOLD_CHAT_STREAM.set(false);
             cancelSignal.countDown();
+        }
+    }
+
+    /**
+     * PLAN-0645 V3（cap=1 逐项等价冻结单飞）：把回滚开关切到 cap=1 后，同 session 的两个
+     * 并发 POST 必须回到「恰好一个 202、一个 409 CHAT_IN_PROGRESS、DB 一行」。
+     */
+    @Test
+    void concurrentPostChatUnderCapOneAdmitsExactlyOneRun() throws Exception {
+        configService.putLayer("instance", "agent-runtime",
+                Map.of("maxConcurrentRunsPerSession", "1"), "test", null, null);
+        String sessionId = UUID.randomUUID().toString();
+        try {
+            createSession(sessionId);
+            openSse(sessionId);
+            HOLD_CHAT_STREAM.set(true);
+            cancelSignal = new java.util.concurrent.CountDownLatch(1);
+            try {
+                List<ResponseEntity<Map>> responses = postChatConcurrently(sessionId,
+                        List.of("concurrent content A", "concurrent content B"),
+                        List.of("conc-diff-key-a", "conc-diff-key-b"));
+
+                assertEquals(1, countByStatus(responses, HttpStatus.ACCEPTED),
+                        "exactly one submission must be admitted: " + describeStatuses(responses));
+                assertEquals(1, countByStatus(responses, HttpStatus.CONFLICT),
+                        "exactly one submission must conflict: " + describeStatuses(responses));
+                ResponseEntity<Map> conflict = responses.stream()
+                        .filter(response -> response.getStatusCode() == HttpStatus.CONFLICT)
+                        .findFirst()
+                        .orElseThrow();
+                assertEquals("CHAT_IN_PROGRESS", conflict.getBody().get("code"));
+                assertEquals(1, countRunRows(sessionId));
+                assertEquals(1, messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId).stream()
+                        .filter(message -> message.getRole() == MessageRole.USER).count());
+            } finally {
+                HOLD_CHAT_STREAM.set(false);
+                cancelSignal.countDown();
+            }
+        } finally {
+            configService.deleteKey("instance", "agent-runtime",
+                    "maxConcurrentRunsPerSession", "test", null, null);
         }
     }
 

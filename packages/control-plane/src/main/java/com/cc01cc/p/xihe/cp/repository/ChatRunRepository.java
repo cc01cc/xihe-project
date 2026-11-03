@@ -22,6 +22,9 @@ public interface ChatRunRepository extends JpaRepository<ChatRun, UUID> {
 
     boolean existsBySessionIdAndStatusIn(String sessionId, Collection<String> statuses);
 
+    /** PLAN-0645 D45-01: bounded-concurrency admission counts non-terminal Runs under the Session row lock. */
+    long countBySessionIdAndStatusIn(String sessionId, Collection<String> statuses);
+
     boolean existsByWorkspaceIdAndStatusIn(String workspaceId, Collection<String> statuses);
 
     boolean existsBySessionIdAndLeaseOwnerIsNotNullAndLeaseExpiresAtAfter(String sessionId, Instant after);

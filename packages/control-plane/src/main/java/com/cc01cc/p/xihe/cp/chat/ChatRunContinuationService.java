@@ -41,6 +41,8 @@ class ChatRunContinuationService {
     private final EntityManager entityManager;
     private final ObjectMapper objectMapper;
     private final ApplicationEventPublisher eventPublisher;
+    /** PLAN-0645 D45-01: the continuation child is one more in-flight run for the Session. */
+    private final SessionRunConcurrencyGate runConcurrencyGate;
 
     ChatRunContinuationService(ChatRunRepository runs,
                                SessionRepository sessions,
@@ -51,7 +53,8 @@ class ChatRunContinuationService {
                                DbLockTimeout dbLockTimeout,
                                EntityManager entityManager,
                                ObjectMapper objectMapper,
-                               ApplicationEventPublisher eventPublisher) {
+                               ApplicationEventPublisher eventPublisher,
+                               SessionRunConcurrencyGate runConcurrencyGate) {
         this.runs = runs;
         this.sessions = sessions;
         this.messages = messages;
@@ -62,6 +65,7 @@ class ChatRunContinuationService {
         this.entityManager = entityManager;
         this.objectMapper = objectMapper;
         this.eventPublisher = eventPublisher;
+        this.runConcurrencyGate = runConcurrencyGate;
     }
 
     @Transactional
@@ -102,10 +106,10 @@ class ChatRunContinuationService {
             throw new CpApiException(HttpStatus.CONFLICT, "CONTINUATION_SOURCE_INELIGIBLE",
                     "Only a CP_RESTARTED ambiguous source Run can be continued");
         }
-        if (runs.existsBySessionIdAndStatusIn(source.getSessionId(), ChatRunCancellationService.NON_TERMINAL_STATUSES)) {
-            throw new CpApiException(HttpStatus.CONFLICT, "CHAT_IN_PROGRESS",
-                    "A chat run is already active for this Session");
-        }
+        // PLAN-0645 D45-01: bounded concurrency replaces the single-flight check — the
+        // continuation child is one more in-flight run, so it only needs a free slot
+        // (evaluated under the Session row lock taken above), not an idle Session.
+        runConcurrencyGate.requireSlot(source.getSessionId());
 
         AgentGraphCheckpointService.ContinuationCheckpointView checkpoint =
                 checkpoints.findLatestSafeCheckpointForSourceRun(source.getId().toString(),

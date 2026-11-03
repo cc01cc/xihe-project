@@ -118,7 +118,7 @@ public class SessionCommandCatalog {
     }
 
     private CommandView compactCommand(String sessionId) {
-        boolean runActive = activeRunRegistry.activeRunId(sessionId) != null;
+        boolean runActive = activeRunRegistry.hasActive(sessionId);
         String verdict = runActive ? REASON_BRANCH_LOCKED : VERDICT_ALLOW;
         logAvailability(sessionId, COMMAND_COMPACT, "session.compact", verdict);
         return new CommandView(COMMAND_COMPACT, SOURCE_BUILTIN, !runActive,

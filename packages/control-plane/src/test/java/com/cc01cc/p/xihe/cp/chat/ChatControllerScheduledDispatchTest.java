@@ -51,6 +51,8 @@ class ChatControllerScheduledDispatchTest {
         messageReadService = Mockito.mock(MessageReadService.class);
         sessionService = Mockito.mock(SessionService.class);
         activeRunRegistry = Mockito.mock(ChatActiveRunRegistry.class);
+        // PLAN-0645: the registry claim is idempotent per run; the success path needs it to win.
+        when(activeRunRegistry.claim(anyString(), anyString())).thenReturn(true);
         chatRunLifecycleService = Mockito.mock(ChatRunLifecycleService.class);
         ChatRunCancellationService cancellationService = Mockito.mock(ChatRunCancellationService.class);
         HealthMonitor healthMonitor = Mockito.mock(HealthMonitor.class);
@@ -114,7 +116,7 @@ class ChatControllerScheduledDispatchTest {
 
         assertTrue(controller.dispatchScheduledRun(RUN_ID));
 
-        verify(activeRunRegistry).putIfAbsent(SESSION_ID, RUN_ID);
+        verify(activeRunRegistry).claim(SESSION_ID, RUN_ID);
         verify(chatRunLifecycleService).tryAcquireLease(eq(UUID.fromString(RUN_ID)), anyString(),
                 any(java.time.Instant.class), any(java.time.Instant.class));
     }
@@ -127,7 +129,7 @@ class ChatControllerScheduledDispatchTest {
 
         assertTrue(controller.dispatchScheduledRun(RUN_ID));
 
-        verify(activeRunRegistry).putIfAbsent(SESSION_ID, RUN_ID);
+        verify(activeRunRegistry).claim(SESSION_ID, RUN_ID);
         verify(chatRunLifecycleService).tryAcquireLease(eq(UUID.fromString(RUN_ID)), anyString(),
                 any(java.time.Instant.class), any(java.time.Instant.class));
     }
@@ -139,7 +141,7 @@ class ChatControllerScheduledDispatchTest {
 
         assertFalse(controller.dispatchScheduledRun(RUN_ID));
 
-        verify(activeRunRegistry, never()).putIfAbsent(anyString(), anyString());
+        verify(activeRunRegistry, never()).claim(anyString(), anyString());
         verify(sessionService, never()).requireCurrent(anyString(), anyString(), anyString());
     }
 
@@ -150,7 +152,7 @@ class ChatControllerScheduledDispatchTest {
 
         assertFalse(controller.dispatchScheduledRun(RUN_ID));
 
-        verify(activeRunRegistry, never()).putIfAbsent(anyString(), anyString());
+        verify(activeRunRegistry, never()).claim(anyString(), anyString());
     }
 
     @Test
@@ -159,7 +161,7 @@ class ChatControllerScheduledDispatchTest {
 
         assertFalse(controller.dispatchScheduledRun(RUN_ID));
 
-        verify(activeRunRegistry, never()).putIfAbsent(anyString(), anyString());
+        verify(activeRunRegistry, never()).claim(anyString(), anyString());
     }
 
     @Test
@@ -172,6 +174,6 @@ class ChatControllerScheduledDispatchTest {
 
         assertThrows(IllegalStateException.class, () -> controller.dispatchScheduledRun(RUN_ID));
 
-        verify(activeRunRegistry, never()).putIfAbsent(anyString(), anyString());
+        verify(activeRunRegistry, never()).claim(anyString(), anyString());
     }
 }
