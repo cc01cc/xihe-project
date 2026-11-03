@@ -75,8 +75,11 @@ public final class TestClasspathGuard {
                   * not-yet-loaded class / inner class              ->  NoClassDefFoundError
 
                 Failures from this point are measurement artifacts, not regressions. Rerun with one
-                Maven build per target directory (separate worktree, or -Dxihe.build.suffix=-b for a
-                second concurrent build). See packages/control-plane/AGENTS.md, L2 section.
+                Maven build per output directory (separate worktree), or give each lane its own
+                directory on the same checkout:
+                  -Dxihe.target.dir=<abs-path>     (absolute, any volume; preferred)
+                  -Dxihe.build.suffix=-b           (relative: target-b/)
+                See packages/control-plane/AGENTS.md, L2 section.
                 ================================================================================
                 """.formatted(expected.files(), expected.bytes(), expected.newestMillis(),
                 current.files(), current.bytes(), current.newestMillis());

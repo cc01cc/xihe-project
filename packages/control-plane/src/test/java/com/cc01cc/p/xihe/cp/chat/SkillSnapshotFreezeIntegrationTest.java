@@ -135,6 +135,50 @@ class SkillSnapshotFreezeIntegrationTest extends AbstractIntegrationTest {
         skills.deleteAll();
     }
 
+    /**
+     * skill-wiring ruling 2026-11-04: the <b>production</b> shape is a template without a
+     * {@code skill_catalog} component (the built-in api-request template carries only
+     * {@code bodySource}), and the skill set always comes from {@code skill_bindings}. Before the fix
+     * this Run froze {@code {}} — the binding was accepted by every layer and silently never reached
+     * the model. The binding here is on the AGENT tier on purpose: it proves the snapshot is resolved
+     * for the Session's main Agent principal ({@code session.getAgentPrincipalId()}), which is the
+     * identity this milestone wires.
+     */
+    @Test
+    void aBoundSkillIsFrozenEvenWhenTheTemplateCarriesNoListingComponent() {
+        Fixture fixture = fixtureWithoutListingComponent("no-component");
+        UUID alpha = insertSkill(fixture, "alpha", "desc of alpha");
+        bindToPrincipal(fixture, alpha);
+        String runId = submit(fixture, "no component message");
+
+        JsonNode snapshot = chatRuns.findById(UUID.fromString(runId)).orElseThrow().getSkillsSnapshot();
+        assertFalse(SkillCatalogSnapshotService.isAbsent(snapshot),
+                "a bound skill must freeze a real listing, not the '{}' default: " + snapshot);
+        assertEquals(SkillCatalogSnapshotService.VERSION, snapshot.path("version").asInt());
+        assertEquals(SkillCatalogSourceService.STATUS_READY, snapshot.path("status").asText());
+        assertEquals(SkillCatalogSnapshotService.SNAPSHOT_SOURCE_FROZEN,
+                snapshot.path("snapshotSource").asText());
+        assertEquals(SkillCatalogSourceService.DEFAULT_MAX_SKILLS, snapshot.path("maxSkills").asInt(),
+                "no component means the frozen defaults, not 'no listing'");
+        assertEquals(1, snapshot.path("items").size(), snapshot.toString());
+        assertEquals("alpha", snapshot.path("items").get(0).path("name").asText());
+        assertEquals(40, snapshot.path("maxSkills").asInt());
+    }
+
+    /**
+     * The other half of the ruling: no binding must keep {@code {}} — the column must not start
+     * claiming "a listing was captured" for every Run.
+     */
+    @Test
+    void aRunWithoutBindingsStillCapturesNothing() {
+        Fixture fixture = fixtureWithoutListingComponent("no-binding");
+        String runId = submit(fixture, "nothing bound");
+
+        JsonNode snapshot = chatRuns.findById(UUID.fromString(runId)).orElseThrow().getSkillsSnapshot();
+        assertTrue(SkillCatalogSnapshotService.isAbsent(snapshot),
+                "no binding means no capture: " + snapshot);
+    }
+
     // ---------------------------------------------------------------------------------------------
     // D28-39: the snapshot is the read source
     // ---------------------------------------------------------------------------------------------
@@ -362,7 +406,16 @@ class SkillSnapshotFreezeIntegrationTest extends AbstractIntegrationTest {
         return fixture(prefix, 40);
     }
 
+    /** A Session whose context template carries no {@code components} array (production shape). */
+    private Fixture fixtureWithoutListingComponent(String prefix) {
+        return fixture(prefix, 40, false);
+    }
+
     private Fixture fixture(String prefix, int maxSkills) {
+        return fixture(prefix, maxSkills, true);
+    }
+
+    private Fixture fixture(String prefix, int maxSkills, boolean withListingComponent) {
         User user = users.save(new User(prefix + "-" + UUID.randomUUID() + "@skill-snapshot.test",
                 "hash", "Skill snapshot"));
         Workspace workspace = workspaceFixture.createOwnedWorkspace(prefix + " Workspace",
@@ -383,7 +436,7 @@ class SkillSnapshotFreezeIntegrationTest extends AbstractIntegrationTest {
         // A published api-request-template revision that carries the listing component: the admission
         // snapshot copies `template.components` verbatim, which is what the listing component reads.
         String templateId = UUID.randomUUID().toString();
-        publishUserTemplate(user, templateId, maxSkills);
+        publishUserTemplate(user, templateId, maxSkills, withListingComponent);
         session.setContextTemplateLayer("user");
         session.setContextTemplateId(UUID.fromString(templateId));
         session.setContextTemplateVersion(1);
@@ -391,7 +444,8 @@ class SkillSnapshotFreezeIntegrationTest extends AbstractIntegrationTest {
         return new Fixture(user, workspace, persisted, principal);
     }
 
-    private void publishUserTemplate(User user, String templateId, int maxSkills) {
+    private void publishUserTemplate(User user, String templateId, int maxSkills,
+                                     boolean withListingComponent) {
         ObjectNode template = objectMapper.createObjectNode();
         template.put("id", templateId);
         template.put("version", 1);
@@ -404,12 +458,14 @@ class SkillSnapshotFreezeIntegrationTest extends AbstractIntegrationTest {
                 + "\"messages\":[{\"role\":\"system\",\"content\":\"${xh.agent_instructions}\"},"
                 + "\"${xh.conversation_history}\",{\"role\":\"user\",\"content\":\"${xh.user_input}\"}],"
                 + "\"tools\":[\"${xh.tools}\"],\"stream\":true}");
-        ObjectNode component = template.putArray("components").addObject();
-        component.put("instanceId", COMPONENT_ID);
-        component.put("type", "skill_catalog");
-        component.put("enabled", true);
-        component.putObject("config").put("maxSkills", maxSkills).put("includeDescriptions", true)
-                .put("sort", "binding");
+        if (withListingComponent) {
+            ObjectNode component = template.putArray("components").addObject();
+            component.put("instanceId", COMPONENT_ID);
+            component.put("type", "skill_catalog");
+            component.put("enabled", true);
+            component.putObject("config").put("maxSkills", maxSkills).put("includeDescriptions", true)
+                    .put("sort", "binding");
+        }
 
         try {
             String templatesJson = objectMapper.writeValueAsString(
@@ -455,6 +511,17 @@ class SkillSnapshotFreezeIntegrationTest extends AbstractIntegrationTest {
         binding.setSkillId(skillId);
         binding.setSubjectType(SkillBinding.SUBJECT_USER);
         binding.setSubjectId(fixture.user().getId());
+        binding.setScopeType(SkillBinding.SCOPE_INSTANCE);
+        binding.setCreatedByUserId(fixture.user().getId());
+        bindings.saveAndFlush(binding);
+    }
+
+    /** AGENT-tier binding: the tier the Session's main Agent principal resolves (skill-wiring). */
+    private void bindToPrincipal(Fixture fixture, UUID skillId) {
+        SkillBinding binding = new SkillBinding();
+        binding.setSkillId(skillId);
+        binding.setSubjectType(SkillBinding.SUBJECT_AGENT_PRINCIPAL);
+        binding.setSubjectId(fixture.principal().getId());
         binding.setScopeType(SkillBinding.SCOPE_INSTANCE);
         binding.setCreatedByUserId(fixture.user().getId());
         bindings.saveAndFlush(binding);

@@ -353,6 +353,7 @@ XIHE_VERIFY_PASSWORD=<admin 密码> mise run xihe -- verify \
 - CP 静态检查：`mise run lint:cp` 对 `checkstyle.xml` **全部规则**按 error 阻断（基线 0 违规；规则与项目约定对齐后风格告警已清零，详见 PLAN-0458 evidence），不得回退为 warning 或全局抑制。
 - Agent 静态检查：`mise run lint:agent` 的 mypy 对 `src/` 真实阻断（`pyproject.toml` 已移除全局 `ignore_errors`，当前 0 error）；发现类型错误必须修复，不得以全局/整模块 ignore 换取绿灯。
 - 集成：`mise run test:integration`（T2；T3 需 Docker）。
+- CP 并行构建（task-8，2026-11-04）：**同一 checkout 内两条 lane 并行时，各给一个独立输出目录即可，无需另建 worktree**。`mvn -o -q "-Dxihe.target.dir=<绝对路径>" test-compile`（`test -Dtest=…` 同样适用，surefire 报告也落在该目录；例如 `H:\zeotmp\cp-build-a`，跨卷如 `C:/xihe-cp-build-a` 更快 —— H: 卷小文件写入约 120–200 ms/文件）。属性默认 `${project.basedir}/target`，**不传时行为完全不变**；`-Dxihe.build.suffix=-b`（`target-b/`）仍可用，两者同时给时 `xihe.target.dir` 优先。**一个输出目录仍只能有一个写者**：同目录并发 `test-compile` 两次都 exit 0 且无告警（`TestClasspathGuard` 只在测试期打印横幅，编译期竞态无护栏），所以并行的正确形态是不同目录；细则见 [`packages/control-plane/AGENTS.md`](../../../packages/control-plane/AGENTS.md) §同 checkout 的两条 lane 并行。
 - E2E：`mise run test:e2e:compose`（**已冻结 2026-10-07，mise 已注释，勿用**；旧名 `test:e2e` 一并冻结）；`mise run test:e2e:host` 由 `scripts/e2e-host.mjs` 自举每轮隔离 PostgreSQL 与 CP/Agent/Runtime/UI host 服务、独立 DB/host root，并在成功/失败/中断时收尾。自举 E2E 前先停止日常 `dev:host`，避免 Runtime 可执行文件被占用；复用栈需显式使用 `--persistent` / `XIHE_E2E_EXTERNAL_SERVER=1`。PLAN-0584 Native Image lane 用 `--jar-mode=native`，不会静默退回 Jar/Maven。新手首跑车道用 `--batch=goldpath` / `goldpath-closed` / `goldpath-first-run`（含义与跳过原因见 [DEV-033](DEV-033-first-run-gold-path.md) §5.4）。
 
 - 全量：`mise run validate:full`。策略详见 DEV-020/021/022/023。

@@ -53,6 +53,23 @@ mvn -o -q test "-Dtest=CpArchitectureTest"
 
 兜底是 `TestClasspathGuard`（由 `TestFixtureContextCustomizer` 在每次上下文创建时调用）：比对 `target/test-classes` 的指纹（文件数/字节数/最新 mtime），检测到重写就打印**一次**写明 cause 的横幅，而不是留给后人猜一串 bean/classloader 错误。同一个 customizer 还把 `WorkspaceFixture` 以 `workspaceFixture` 定义在**配置类解析之前**注册进上下文（扫描器判为兼容并跳过），因此扫描窗口不再能让该 fixture 消失。
 
+### 同 checkout 的两条 lane 并行（task-8，2026-11-04）
+
+不必为并行另建 worktree：给每条 lane 一个**独立输出目录**即可。
+
+```powershell
+# lane A / lane B 同时跑（绝对路径，任意卷；两条 lane 目录必须不同）
+mvn -o -q "-Dxihe.target.dir=H:\zeotmp\cp-build-a" test-compile
+mvn -o -q "-Dxihe.target.dir=H:\zeotmp\cp-build-b" test-compile
+# 定向测试同样适用（surefire 报告也落在该目录）
+mvn -o "-Dxihe.target.dir=H:\zeotmp\cp-build-a" test -Dtest=ApprovalServiceTest
+```
+
+- 属性默认值 `${project.basedir}/target`，**不传该属性时行为与之前完全一致**（`target/`）；`-Dxihe.build.suffix=-b`（`target-b/`，D32-26 T2）仍可用；两者同时给时 `xihe.target.dir` 优先（绝对形式）。
+- 实现：`pom.xml` 的 `<build><directory>${xihe.target.dir}</directory>`，`TestClasspathGuard` 从 `WorkspaceFixture` 的 `CodeSource` 取实际输出根，所以覆盖后护栏仍然监视**正确目录**。
+- **规则不变：一个输出目录仍然只能有一个写者。** 同目录并发`test-compile` 实测两次都 exit 0、无任何告警（编译期竞态护栏看不见；`TestClasspathGuard` 只在测试期打印横幅）——所以"并行"的正确形态是**不同目录**，不是同目录硬扛。另一条 lane 若用默认 `target/`，你的覆盖目录就是安全的边界。
+- 跨卷可用（如 `C:/xihe-cp-build-x`）：H: 卷小文件写入约 120–200 ms/文件，是冷构建的主要成本，换卷能显著缩短冷编译。
+
 
 标准流程（在目标 worktree 内执行）：
 

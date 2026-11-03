@@ -45,7 +45,11 @@ public final class AgentPrincipalTestSupport {
                     mock(WorkspaceAgentRepository.class), evaluator,
                     mock(com.cc01cc.p.xihe.cp.audit.AuditLogger.class),
                     new ObjectMapper(), mock(AgentTemplateService.class),
-                    mock(com.cc01cc.p.xihe.cp.policy.AuthzContext.class));
+                    mock(com.cc01cc.p.xihe.cp.policy.AuthzContext.class),
+                    // PLAN-0629: role bindings are the permission source, not the scope field.
+                    mock(com.cc01cc.p.xihe.cp.repository.AccessRoleBindingRepository.class),
+                    mock(com.cc01cc.p.xihe.cp.repository.AccessRoleRepository.class),
+                    mock(com.cc01cc.p.xihe.cp.policy.RoleGrantMaterializer.class));
         }
     }
 

@@ -70,7 +70,11 @@ class GuardTemplatePropagationTest {
                 bindings, evaluator,
                 mock(com.cc01cc.p.xihe.cp.audit.AuditLogger.class),
                 new ObjectMapper(), templates,
-                mock(com.cc01cc.p.xihe.cp.policy.AuthzContext.class));
+                mock(com.cc01cc.p.xihe.cp.policy.AuthzContext.class),
+                // PLAN-0629: role bindings are the permission source, not the scope field.
+                mock(com.cc01cc.p.xihe.cp.repository.AccessRoleBindingRepository.class),
+                mock(com.cc01cc.p.xihe.cp.repository.AccessRoleRepository.class),
+                mock(com.cc01cc.p.xihe.cp.policy.RoleGrantMaterializer.class));
 
         when(principals.saveAndFlush(any())).thenAnswer(invocation -> {
             AgentPrincipal saved = invocation.getArgument(0);
