@@ -661,9 +661,12 @@ public class ChatController {
             return ProblemDetailsHandler.problemResponse(HttpStatus.CONFLICT, "CHAT_IN_PROGRESS", "A chat run is already active for this session");
         }
 
-        // PLAN-0648 D1: only an owner-authored message can be re-targeted by mentions; an explicit
-        // `as` answer is already addressed to that participant.
-        boolean explicitAsParticipant = asParticipantId != null && !asParticipantId.isBlank();
+        // PLAN-0648 D1 + decision v15 (2026-11-04): an explicit `as` only counts as a targeted answer
+        // when it points at a NON-PRIMARY participant. The UI sends `asParticipantId = PRIMARY` on
+        // every ordinary submission, so treating that as "explicit" would silently disable `@` for
+        // the default form — which is exactly the case the suppression exists for.
+        boolean explicitAsParticipant = asParticipantId != null && !asParticipantId.isBlank()
+                && !asParticipantId.equalsIgnoreCase(primaryParticipantId(userId, workspaceId, sessionId));
         boolean handedOff = false;
         try {
             ChatSubmissionService.Submission submission = chatSubmissionService.create(
@@ -766,6 +769,19 @@ public class ChatController {
         }
     }
 
+    /**
+     * Decision v15: the PRIMARY participant row id, or {@code null} when the Session has no PRIMARY.
+     * Used only to tell "the UI defaulted the field" apart from "the owner is answering as a member".
+     */
+    private String primaryParticipantId(String userId, String workspaceId, String sessionId) {
+        try {
+            SessionParticipantService.Responder primary =
+                    sessionParticipantService.responderFor(UUID.fromString(sessionId), null);
+            return primary == null ? null : primary.participantId().toString();
+        } catch (RuntimeException noPrimary) {
+            return null;
+        }
+    }
     /** PLAN-0624 M4: the current roster as parser entries (the list is already order_index-ordered). */
     private List<MentionParser.RosterEntry> mentionRoster(String userId, String workspaceId,
                                                           String sessionId) {
