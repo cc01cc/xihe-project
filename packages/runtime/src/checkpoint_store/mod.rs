@@ -8,6 +8,7 @@ pub mod audit;
 pub mod blob;
 pub mod capture;
 pub mod fsck;
+pub mod gc;
 pub mod manifest;
 pub mod preflight;
 pub mod reads;
