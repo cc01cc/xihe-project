@@ -5,7 +5,6 @@ import com.tngtech.archunit.core.domain.JavaClasses;
 import com.tngtech.archunit.base.DescribedPredicate;
 import com.tngtech.archunit.core.domain.JavaClass;
 import com.tngtech.archunit.core.importer.ClassFileImporter;
-import com.tngtech.archunit.core.importer.ImportOption;
 import com.tngtech.archunit.lang.ArchRule;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -32,7 +31,15 @@ class CpArchitectureTest {
 
     @BeforeAll
     static void importProductionAndWriteBaseline() throws IOException {
-        production = new ClassFileImporter().withImportOption(new ImportOption.DoNotIncludeTests())
+        // ArchUnit 1.5.1's `DoNotIncludeTests` is a hardcoded `.*/target/test-classes/.*` pattern, so it
+        // stops filtering as soon as the build output lives elsewhere — e.g. the opt-in
+        // `-Dxihe.target.dir=C:/xihe-build/<lane>` isolation (packages/control-plane/AGENTS.md
+        // §同 checkout 的两条 lane 并行) puts test classes under `<dir>/test-classes`. Importing them
+        // makes this self-check (`assertFalse(production.contain(CpArchitectureTest.class))`) fail and
+        // would also feed test fixtures into the rule baseline. Filter by path fragment instead: that
+        // is build-dir agnostic and still excludes every test class.
+        production = new ClassFileImporter()
+                .withImportOption(location -> !location.contains("test-classes"))
                 .importPackages("com.cc01cc.p.xihe.cp");
         assertTrue(production.contain("com.cc01cc.p.xihe.cp.context.ContextController"));
         assertTrue(production.contain("com.cc01cc.p.xihe.cp.chat.ChatRunTerminalService"));

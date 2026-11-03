@@ -377,7 +377,20 @@ class ChatIntegrationTest extends AbstractIntegrationTest {
         assertEquals(HttpStatus.ACCEPTED, response.getStatusCode());
         Session bound = sessionRepository.findById(UUID.fromString(sessionId)).orElseThrow();
         assertEquals(principalId, bound.getAgentPrincipalId());
-        assertEquals(principalPermissions, bound.getAgentPermissionsSnapshot());
+        // 2026-11-04 (PLAN-0629 scope→roles + 非人类主体禁绑实例管理角色裁定): the Session cap is
+        // `resolveCapFor` = binding cap ∩ principal grant-derived atoms, so byte equality against the
+        // fixture's template snapshot no longer holds (it used to). Assert the rule instead of a
+        // literal: never wider than the binding, never an instance-management atom, and the execution
+        // atoms the fixture granted must survive the intersection.
+        java.util.Set<String> fixtureAtoms = actionClasses(principalPermissions);
+        java.util.Set<String> snapshotAtoms = actionClasses(bound.getAgentPermissionsSnapshot());
+        assertTrue(fixtureAtoms.containsAll(snapshotAtoms),
+                "the Session cap must never exceed the binding cap: " + snapshotAtoms + " vs " + fixtureAtoms);
+        assertFalse(snapshotAtoms.contains("MANAGE_WORKSPACE_AGENTS"),
+                "an agent principal may never hold an instance-management atom: " + snapshotAtoms);
+        assertTrue(snapshotAtoms.containsAll(java.util.Set.of("read", "write", "exec")),
+                "the execution atoms granted by the fixture must survive the intersection: " + snapshotAtoms);
+        assertFalse(snapshotAtoms.isEmpty(), "a bound Session must carry a non-empty cap");
         assertTrue(chatRunRepository.existsBySessionId(sessionId));
         assertEquals(1, messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId).stream()
                 .filter(message -> message.getRole() == MessageRole.USER).count());
@@ -1064,5 +1077,14 @@ class ChatIntegrationTest extends AbstractIntegrationTest {
             }
         }
         fail("Expected at least " + expected + " messages");
+    }
+
+    /** The atom names of a cap/snapshot document ({@code [{"actionClass":"read"}, …]}). */
+    private static java.util.Set<String> actionClasses(com.fasterxml.jackson.databind.JsonNode permissions) {
+        java.util.Set<String> atoms = new java.util.TreeSet<>();
+        if (permissions != null) {
+            permissions.forEach(atom -> atoms.add(atom.path("actionClass").asText("")));
+        }
+        return atoms;
     }
 }
