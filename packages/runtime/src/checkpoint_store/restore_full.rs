@@ -859,7 +859,7 @@ mod tests {
         let store = Store::init(workspace.path().join("store")).expect("store");
         let first = capture_root(&store, &root, "ws-1", None, None).expect("first");
         write(&root.join("b.txt"), "two");
-        capture_root(&store, &root, "ws-1", None, None).expect("second");
+        let second = capture_root(&store, &root, "ws-1", None, None).expect("second");
         let error = restore_full(
             &store,
             "ws-1",
@@ -884,6 +884,49 @@ mod tests {
             }
         }
         assert_eq!(recovered.as_deref(), Some("two"));
+        let status = restore_status(&root).expect("status");
+        assert!(status.incomplete);
+        assert_eq!(
+            status.marker.as_ref().expect("marker").target_slice,
+            first.slice_id
+        );
+        assert!(
+            status
+                .message
+                .as_deref()
+                .is_some_and(|message| message.contains("quarantined"))
+        );
+        let blocked = restore_full(
+            &store,
+            "ws-1",
+            &second.slice_id,
+            &root,
+            &FullRestoreOptions {
+                resume_same_target: true,
+                ..FullRestoreOptions::default()
+            },
+        )
+        .expect_err("different target must not resume");
+        assert!(
+            matches!(blocked, FullRestoreError::RestoreIncomplete(_)),
+            "{blocked:?}"
+        );
+        assert!(root.join(RESTORE_MARKER).exists());
+        let resumed = restore_full(
+            &store,
+            "ws-1",
+            &first.slice_id,
+            &root,
+            &FullRestoreOptions {
+                resume_same_target: true,
+                ..FullRestoreOptions::default()
+            },
+        )
+        .expect("resume same target");
+        assert_eq!(resumed.restored, 1);
+        assert!(!root.join(RESTORE_MARKER).exists());
+        assert!(!root.join(RESTORE_TRASH).exists());
+        assert!(!restore_status(&root).expect("status").incomplete);
     }
 
     #[test]
