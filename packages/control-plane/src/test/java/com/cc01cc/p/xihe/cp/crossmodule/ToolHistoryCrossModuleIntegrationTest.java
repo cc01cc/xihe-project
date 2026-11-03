@@ -3,9 +3,11 @@ package com.cc01cc.p.xihe.cp.crossmodule;
 import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.cc01cc.p.xihe.cp.config.JwtTokenProvider;
+import com.cc01cc.p.xihe.cp.context.service.ContextEventPayloadSafety;
 import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
@@ -135,11 +137,19 @@ class ToolHistoryCrossModuleIntegrationTest extends AbstractWireMockTest {
         // V2：同一 toolCallId 配对，不靠邻接猜测。
         assertEquals("tc-http-1", messages.get(0).path("tool_calls").get(0).path("call_id").asText());
         assertEquals("tc-http-1", messages.get(1).path("tool_call_id").asText());
-        // V5/V15：bounded preview 原样穿透，snapshot 无超限正文。
-        assertEquals(preview, messages.get(1).path("content").asText());
-        assertTrue(messages.get(1).path("content").asText().length() <= 4096);
-        assertTrue(messages.get(1).path("truncated").asBoolean(false));
-        assertEquals("art-http-1", messages.get(1).path("artifact_ref").asText());
+        // PLAN-0649 M4（T4.3）：「有界 preview 穿透」是 PLAN-0381 的旧口径，已被 PLAN-0510
+        // 决策 #6 的消毒闸取代——工具正文（含 preview/artifactRef/sizeBytes）不再进入 durable
+        // history，也不进入模型投影，投影里恒为 CP 占位符。有界性仍须以「没有超限正文」成立，
+        // 配对/状态等元数据不受影响（正文被 withhold ≠ 记录被删除）。
+        assertEquals(ContextEventPayloadSafety.UNSAFE_TOOL_RESULT_PLACEHOLDER,
+                messages.get(1).path("content").asText(),
+                "the projection carries the CP placeholder, not the tool body");
+        assertFalse(messages.get(1).path("content").asText().contains("no retained copy"),
+                "no fragment of the tool body may survive into the projection");
+        assertTrue(messages.get(1).path("content").asText().length() < 4096);
+        assertTrue(messages.get(1).path("truncated").isMissingNode(),
+                "body-derived metadata is withheld together with the body");
+        assertTrue(messages.get(1).path("artifact_ref").isMissingNode());
         assertEquals("completed", messages.get(1).path("status").asText());
 
         // V15: read DTO payload is an object even though the persistence column is JSON text.
@@ -151,7 +161,13 @@ class ToolHistoryCrossModuleIntegrationTest extends AbstractWireMockTest {
         assertEquals("tool.result", events.get(1).path("type").asText());
         JsonNode storedPayload = events.get(1).path("payload");
         assertTrue(storedPayload.isObject(), "read DTO payload must not be double-encoded JSON");
-        assertEquals(preview, storedPayload.path("result").path("preview").asText());
+        // PLAN-0649 M4（T4.3）：durable payload 落的是占位符字符串，原 preview 对象不再存在。
+        assertTrue(storedPayload.path("result").isTextual(),
+                "the durable result is the CP placeholder string");
+        assertEquals(ContextEventPayloadSafety.UNSAFE_TOOL_RESULT_PLACEHOLDER,
+                storedPayload.path("result").asText(),
+                "the durable payload keeps the CP placeholder, not the tool body");
+        assertFalse(storedPayload.toString().contains("no retained copy"));
 
         // V10：下一轮恢复 = 再取 snapshot 得到等价序列，且无新增事件（不重执行、不重复注入）。
         JsonNode round2 = getSnapshot(sessionId);
@@ -181,9 +197,99 @@ class ToolHistoryCrossModuleIntegrationTest extends AbstractWireMockTest {
         assertEquals(2, messages.size());
         assertEquals("tc-legacy-1", messages.get(0).path("tool_calls").get(0).path("call_id").asText());
         assertEquals("tc-legacy-1", messages.get(1).path("tool_call_id").asText());
-        assertEquals("legacy bounded output", messages.get(1).path("content").asText());
+        // PLAN-0649 M4（T4.3）：legacy payload 的正文同样被消毒闸 withhold（旧断言按 PLAN-0381
+        // 期望原文穿透）。配对与缺省状态不受影响——正文不落库不等于记录丢失。
+        assertEquals(ContextEventPayloadSafety.UNSAFE_TOOL_RESULT_PLACEHOLDER,
+                messages.get(1).path("content").asText());
+        assertFalse(messages.get(1).path("content").asText().contains("legacy bounded output"));
         // legacy 缺 status → 读者缺省 completed（不得伪造失败）。
         assertEquals("completed", messages.get(1).path("status").asText());
+    }
+
+    /**
+     * PLAN-0649 M4（T4.3 新增，正反两面）：
+     *
+     * <p><b>正向</b>：形状合规的 {@code refusalCode} 必须穿透三个承载面（写入后 durable payload →
+     * 事件读 DTO → 投影/快照），且 {@code status=failed} 随之保留；<b>反向</b>：同一事件的正文
+     * （{@code result}）不得穿透——任何一面出现工具正文都算失败。这条正是 PLAN-0649 的端到端
+     * 主张：码是元数据可以走，正文是内容一步也不许走。</p>
+     */
+    @Test
+    void refusalCodePenetratesWhileTheToolBodyStaysWithheld() throws Exception {
+        String sessionId = newSession();
+        String refusalCode = "DELEGATION_LIMIT_EXCEEDED";
+        String body = "REFUSAL-BODY-PRIVATE " + "z".repeat(5_000);
+
+        postEvent(sessionId, "tool.called", Map.of(
+                "schemaVersion", 2,
+                "toolCallId", "tc-refused-1",
+                "toolName", "spawn_agent",
+                "arguments", Map.of("prompt", "child task")
+        ));
+        postEvent(sessionId, "tool.result", Map.of(
+                "schemaVersion", 2,
+                "toolCallId", "tc-refused-1",
+                "toolName", "spawn_agent",
+                "status", "failed",
+                "refusalCode", refusalCode,
+                "result", Map.of("preview", body, "truncated", true, "artifactRef", "art-refused-1")
+        ));
+
+        // 正向：码与失败状态在 durable payload 与投影里都在。
+        ResponseEntity<String> eventsResponse = restTemplate.exchange(
+                url("/internal/v1/context/" + sessionId + "/events?afterSequence=0"),
+                HttpMethod.GET, entityWithAuth(null, SERVICE_TOKEN), String.class);
+        assertEquals(HttpStatus.OK, eventsResponse.getStatusCode());
+        JsonNode storedPayload = objectMapper.readTree(eventsResponse.getBody()).get(1).path("payload");
+        assertEquals(refusalCode, storedPayload.path("refusalCode").asText(),
+                "a shape-valid refusal code must survive the durable sanitizer");
+        assertEquals("failed", storedPayload.path("status").asText());
+
+        JsonNode messages = getSnapshot(sessionId).get("messages");
+        assertEquals(2, messages.size());
+        assertEquals("tc-refused-1", messages.get(1).path("tool_call_id").asText(),
+                "pairing still holds for a refused call");
+        assertEquals("failed", messages.get(1).path("status").asText(),
+                "the authoritative status reaches the projection");
+
+        // 反向：正文在两面都不得出现（连 preview/artifactRef 这类正文派生元数据也不行）。
+        for (JsonNode carrier : java.util.List.of(storedPayload, messages)) {
+            String text = carrier.toString();
+            assertFalse(text.contains("REFUSAL-BODY-PRIVATE"), "tool body leaked into a carrier");
+            assertFalse(text.contains("z".repeat(64)), "no run of tool output may survive");
+        }
+        assertTrue(messages.get(1).path("artifact_ref").isMissingNode(),
+                "body-derived metadata is withheld with the body");
+        assertEquals(ContextEventPayloadSafety.UNSAFE_TOOL_RESULT_PLACEHOLDER,
+                messages.get(1).path("content").asText());
+    }
+
+    /** PLAN-0649 M4（T4.3 新增，反例）：不合形状的码在入口就被丢弃，连字符串都不留。 */
+    @Test
+    void malformedRefusalCodeIsDroppedAtIngressInsteadOfBeingPersisted() throws Exception {
+        for (String malformed : java.util.List.of(
+                "DELEGATION LIMIT EXCEEDED", "DELEGATION:LIMIT", "拒绝", "delegation_limit", "A".repeat(65))) {
+            String sessionId = newSession();
+            postEvent(sessionId, "tool.result", Map.of(
+                    "schemaVersion", 2,
+                    "toolCallId", "tc-bad-code",
+                    "toolName", "spawn_agent",
+                    "status", "failed",
+                    "refusalCode", malformed,
+                    "result", "placeholder"
+            ));
+
+            ResponseEntity<String> eventsResponse = restTemplate.exchange(
+                    url("/internal/v1/context/" + sessionId + "/events?afterSequence=0"),
+                    HttpMethod.GET, entityWithAuth(null, SERVICE_TOKEN), String.class);
+            JsonNode payload = objectMapper.readTree(eventsResponse.getBody()).get(0).path("payload");
+            assertFalse(payload.has("refusalCode"),
+                    "a malformed code must not be persisted: " + malformed);
+            assertFalse(payload.toString().contains(malformed),
+                    "not even the rejected string may be stored: " + malformed);
+            assertEquals("failed", payload.path("status").asText(),
+                    "the failure itself is still recorded — only the code is dropped");
+        }
     }
 
     @Test
