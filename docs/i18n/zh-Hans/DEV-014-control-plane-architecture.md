@@ -316,3 +316,15 @@ PLAN-0416 Chat 消费：`ChatController` 仅在 admission snapshot 原始 native
 - **v1 不含 skill 命令**：`/skill:<name>` 的候选必须来自 PLAN-0628 的 run 快照 listing（`skills_snapshot`）与按需正文（`skill_read`），两者在 0628 M2 前不落地（D35-07）；M3 只交付其形态设计。
 - **C1 门**：两条路由均返回**纯标量 / 纯文本**，不经 Jackson-2 `JsonNode`（无 `JacksonNodeExit` 调用即无泄露面）。
 
+## 15. 同源 UI 静伺服（`cp.ui.static-root`，PLAN-0632 D32-06 / M2-3）
+
+- **默认关闭，语义只有一条开关**：`cp.ui.static-root`（env `XIHE_UI_STATIC_ROOT`）为空 ⇒ `UiStaticServingFilter` 是纯 pass-through，请求原样进原链路；dev/host 两条车道仍由 Vite dev server 代理 UI，**行为零变化**（`UiStaticServingFilterTest` 第 1 组断言钉住这一点）。指向一个目录（安装版由 launcher 设为 `<install>\ui`）才启用。
+- **为什么是 filter 而不是资源处理器/兜底 Controller**：SPA 外壳必须在登录前可读（UI 自身渲染登录页），而 `SecurityConfig` 以 `anyRequest().authenticated()` 收尾；`@RequestMapping("/{*path}")` 这类兜底还会抢在 actuator 的 handler mapping 之前。filter 挂在安全链之前（`HIGHEST_PRECEDENCE + 100`），把改动**只**关在"配置了静态根"这一情形里。
+- **不吞 API**：`/api`、`/internal`、`/actuator`、`/v3/api-docs`、`/swagger-ui`、`/swagger-ui.html`、`/error` 按**段边界**匹配后原样回原链路 ⇒ 401 仍 401、404 仍 404，绝不返回 `index.html`。（安装版实测：`GET /` → 200 且是 SPA；`GET /api/v1/workspaces` 无 token → **401**；`GET /api/v1/does-not-exist` 无 token → **401**——未认证先于路由解析，带 token 的未知路由才是 404。）
+- **SPA fallback 只给"无扩展名"的路径**：`/workspaces/abc/sessions/def` → `index.html`；`/assets/missing.js` → **404**。若把缺失资源答成 index.html，浏览器会拿到 `text/html` 当 JS 执行，把"少打包一个文件"伪装成运行期语法错误。
+- **路径穿越**：请求路径解码一次后拒绝 `\0` 与 `\`，任一段为 `..` 即 400，且结果必须仍在 canonical 静态根内（符号链接解析后再比对）——读不到安装目录之外。四类编码变体（`/../`、`%2e%2e`、`%2E%2E`、`%5c`）都有断言。
+- **缓存策略**：`index.html` `no-store`（否则升级后仍引用旧 hash 资源名），其余静态资源 `public, max-age=31536000, immutable`；`X-Content-Type-Options: nosniff`。
+- **配置了但目录不可用 = 保持 inert**（warn 日志），不做"半个启用"：启动器的 `ui` 阶段会以"CP 未返回 `/`"失败并给出提示，比 CP 对所有路由答 404 好排查。
+- **验证**：`mvn -o test -Dtest=UiStaticServingFilterTest`（27 条，覆盖未启用/启用/API 前缀/穿越/HEAD/缓存头）+ 安装版真机 `curl` 与 Playwright（M2-3 证据见 `plans/PLAN-0632-.../verify.md`）。
+
+
