@@ -9,6 +9,7 @@ import path from 'node:path';
 import { tmpdir } from 'node:os';
 import { printResult, runCommand } from './xihe.mjs';
 import { promptSecret } from './xihe-cli/provider.mjs';
+import { clearToken } from './xihe-cli/token-store.mjs';
 import { applySetToEnv, applyUrlSyncToEnv, parseStackSetArgs } from './lib/stack-set.mjs';
 
 const TEST_KEY = 'test-provider-secret-value';
@@ -4172,6 +4173,31 @@ test('PLAN-0643 T1.1: credential reveal and /internal targets are forbidden', as
   assert.equal(internal.error.code, 'API_TARGET_INVALID');
 });
 
+// V51 (PLAN-0643 audit R1): Node/undici normalise dot segments client-side, so a
+// raw-string gate would let `/api/v1/x/%2e%2e/mcp` go out as `/api/v1/mcp`. Every
+// non-canonical form must be refused *before* any request is sent.
+test('PLAN-0643 V51: percent-encoded / dot-segment targets can never bypass the api gates', async (t) => {
+  const cp = await startApiEscapeMock();
+  t.after(cp.close);
+
+  const attempts = [
+    ['POST', '/api/v1/x/%2e%2e/mcp', '--yes'], // tool-execution gate (needs --allow-dangerous)
+    ['GET', '/api/v1/config/x/%2e%2e/export', ''], // includeSecrets=false force
+    ['POST', '/api/v1/credentials/c-1/x/%2e%2e/reveal', '--yes'], // reveal prohibition
+    ['GET', '/api/v1/%2e%2e/%2e%2e/internal/v1/agent/health', ''], // service surface
+    ['GET', '/api/v1/x/../mcp', ''], // plain dot segment
+    ['GET', '/api/v1//status', ''], // empty segment
+  ];
+
+  for (const [method, target, extra] of attempts) {
+    const args = ['api', method, target, ...(extra === '' ? [] : [extra]), '--json'];
+    const result = await runCommand(args, { env: cp.env, promptSecret: noPrompt, stderr: sink() });
+    assert.equal(result.exitCode, 2, `${method} ${target} -> ${JSON.stringify(result)}`);
+    assert.equal(result.error.code, 'API_TARGET_INVALID', `${method} ${target}`);
+  }
+  assert.equal(cp.state.requests.length, 0, 'no rejected target may reach the CP');
+});
+
 test('PLAN-0643 T1.1: config/export is forced to includeSecrets=false', async (t) => {
   const cp = await startApiEscapeMock();
   t.after(cp.close);
@@ -4517,4 +4543,70 @@ test('PLAN-0643 T1.5: concurrent logins converge on one valid entry (last writer
   const store = readTokenFile(token.file);
   assert.equal(Object.keys(store.tokens).length, 1);
   assert.deepEqual(fs.readdirSync(token.directory), ['cli-token.json']);
+});
+
+// V14b (PLAN-0643 audit R2): a partial logout rewrites the file for the remaining
+// base URLs. That rewrite must tighten the ACL again — the previous no-op runner
+// left the new file on the inherited directory ACL and exposed every other stack's
+// access token to any local account that inherits it.
+test('PLAN-0643 V14b: a partial logout re-tightens the ACL of the rewritten token file', () => {
+  const token = tempTokenFile();
+  const a = 'http://127.0.0.1:12631';
+  const b = 'http://127.0.0.1:12641';
+  fs.writeFileSync(token.file, JSON.stringify({
+    version: 1,
+    tokens: {
+      [a]: { token: 'token-a', email: null, expiresAt: '2099-01-01T00:00:00.000Z', obtainedAt: '2026-01-01T00:00:00.000Z' },
+      [b]: { token: 'token-b', email: null, expiresAt: '2099-01-01T00:00:00.000Z', obtainedAt: '2026-01-01T00:00:00.000Z' },
+    },
+  }));
+  const env = { XIHE_CLI_TOKEN_FILE: token.file };
+  const aclCalls = [];
+  try {
+    const cleared = clearToken(env, {
+      baseUrl: a,
+      platform: 'linux',
+      aclRunner: (filePath) => {
+        aclCalls.push(filePath);
+        return { ok: true };
+      },
+    });
+
+    assert.equal(cleared.ok, true, JSON.stringify(cleared));
+    assert.equal(aclCalls.length, 1, 'the rewritten file must go through the ACL runner exactly once');
+    assert.match(path.basename(aclCalls[0]), /^\.cli-token\..*\.tmp$/, 'the ACL is tightened on the tmp file before the rename');
+    const store = readTokenFile(token.file);
+    assert.deepEqual(Object.keys(store.tokens), [b], 'the other base URL survives');
+    assert.deepEqual(fs.readdirSync(token.directory), ['cli-token.json'], 'no tmp file is left behind');
+  } finally {
+    token.cleanup();
+  }
+});
+
+test('PLAN-0643 V14b: an ACL failure during a partial logout keeps the old file intact', () => {
+  const token = tempTokenFile();
+  const a = 'http://127.0.0.1:12631';
+  const b = 'http://127.0.0.1:12641';
+  const original = JSON.stringify({
+    version: 1,
+    tokens: {
+      [a]: { token: 'token-a', email: null, expiresAt: '2099-01-01T00:00:00.000Z', obtainedAt: '2026-01-01T00:00:00.000Z' },
+      [b]: { token: 'token-b', email: null, expiresAt: '2099-01-01T00:00:00.000Z', obtainedAt: '2026-01-01T00:00:00.000Z' },
+    },
+  });
+  fs.writeFileSync(token.file, original);
+  try {
+    const cleared = clearToken({ XIHE_CLI_TOKEN_FILE: token.file }, {
+      baseUrl: a,
+      platform: 'linux',
+      aclRunner: () => ({ ok: false, code: 'TOKEN_ACL_FAILED', message: 'simulated' }),
+    });
+
+    assert.equal(cleared.ok, false);
+    assert.equal(cleared.code, 'TOKEN_ACL_FAILED');
+    assert.equal(fs.readFileSync(token.file, 'utf8'), original, 'the old file must survive a failed rewrite');
+    assert.deepEqual(fs.readdirSync(token.directory), ['cli-token.json'], 'the failed tmp file is cleaned up');
+  } finally {
+    token.cleanup();
+  }
 });
