@@ -128,7 +128,10 @@ paths:
         remain readable (diff/preview) but execute-revert → 409 ROOT_DELETED.
         Re-adding the same path creates a new rootId unconnected to old
         history. If any non-terminal run has slices attributed to this root,
-        → 409 ROOT_IN_USE with reason (run ids).
+        → 409 ROOT_IN_USE with reason (run ids). The primary root
+        (rootId == workspaceId, position 0) cannot be deleted → 409
+        PRIMARY_ROOT_IMMUTABLE: it equals the workspace itself, and every
+        capture keeps it first (task-17 ruling).
       security: [{ bearerAuth: [] }]
       parameters:
         - { in: path, name: workspaceId, required: true, schema: { type: string, format: uuid } }

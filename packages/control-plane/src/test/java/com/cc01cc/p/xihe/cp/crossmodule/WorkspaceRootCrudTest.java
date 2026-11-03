@@ -174,8 +174,9 @@ class WorkspaceRootCrudTest extends AbstractWireMockTest {
     void createAllowsNestedRoots() throws IOException {
         String parent = tempPath("parent");
         // D39-5b: a fully-contained nested root is allowed (own shadow repo, deepest-root
-        // attribution); only partial overlap is refused.
-        ResponseEntity<String> created = createWorkspace(List.of(parent, parent + "/nested"));
+        // attribution); only partial overlap is refused. Windows roots keep `\`, so the
+        // component-boundary check must normalise separators before comparing.
+        ResponseEntity<String> created = createWorkspace(List.of(parent, parent + "\\nested"));
         assertEquals(HttpStatus.CREATED, created.getStatusCode(), String.valueOf(created.getBody()));
 
         JsonNode roots = getWorkspace(idOf(created.getBody())).path("roots");
@@ -220,7 +221,35 @@ class WorkspaceRootCrudTest extends AbstractWireMockTest {
         assertEquals("ROOT_PATH_CONFLICT", problemCode(duplicate.getBody()));
     }
 
-    // ── patch ───────────────────────────────────────────────────────────────
+    @Test
+    void addRootRejectsPartialOverlapWithPrimaryRoot() {
+        String primary = tempPath("primary-overlap");
+        String workspaceId = createWorkspaceOrFail(primary);
+
+        // `…-primary-overlap-2` shares a textual prefix with the primary root but is neither
+        // equal nor nested — creation would answer 400 and POST /roots must agree.
+        ResponseEntity<String> overlapping = restTemplate.exchange(
+                url("/api/v1/workspaces/" + workspaceId + "/roots"), HttpMethod.POST,
+                entityWithAuth(Map.of("path", primary + "-2"), token), String.class);
+
+        assertEquals(HttpStatus.BAD_REQUEST, overlapping.getStatusCode(),
+                String.valueOf(overlapping.getBody()));
+        assertEquals("INVALID_ROOT_OVERLAP", problemCode(overlapping.getBody()));
+    }
+
+    @Test
+    void addRootAllowsFullyNestedRoot() throws IOException {
+        String primary = tempPath("primary-nested");
+        String workspaceId = createWorkspaceOrFail(primary);
+
+        // D39-5b: fully nested is allowed (own shadow repo, deepest-root attribution).
+        ResponseEntity<String> nested = restTemplate.exchange(
+                url("/api/v1/workspaces/" + workspaceId + "/roots"), HttpMethod.POST,
+                entityWithAuth(Map.of("path", primary + "\\nested"), token), String.class);
+
+        assertEquals(HttpStatus.CREATED, nested.getStatusCode(), String.valueOf(nested.getBody()));
+        assertEquals(2, getWorkspace(workspaceId).path("roots").size());
+    }
 
     @Test
     void patchRootUpdatesAliasAndReordersPositions() throws IOException {
@@ -276,5 +305,26 @@ class WorkspaceRootCrudTest extends AbstractWireMockTest {
 
         assertEquals(HttpStatus.NOT_FOUND, missing.getStatusCode(), String.valueOf(missing.getBody()));
         assertEquals("ROOT_NOT_FOUND", problemCode(missing.getBody()));
+    }
+
+    @Test
+    void deletePrimaryRootIsRefusedAndKeepsTheProjection() throws IOException {
+        String primary = tempPath("primary-immutable");
+        String workspaceId = createWorkspaceOrFail(primary);
+
+        // task-17 ruling: root[0] == workspace itself, so DELETE must not be able to remove it
+        // (captureRoots always puts it first; a deletable primary would contradict that).
+        ResponseEntity<String> refused = restTemplate.exchange(
+                url("/api/v1/workspaces/" + workspaceId + "/roots/" + workspaceId), HttpMethod.DELETE,
+                new HttpEntity<>(authHeaders()), String.class);
+
+        assertEquals(HttpStatus.CONFLICT, refused.getStatusCode(), String.valueOf(refused.getBody()));
+        assertEquals("PRIMARY_ROOT_IMMUTABLE", problemCode(refused.getBody()));
+
+        JsonNode roots = getWorkspace(workspaceId).path("roots");
+        assertEquals(1, roots.size(), "the primary root stays in the projection");
+        assertEquals(workspaceId, roots.get(0).path("id").asText());
+        WorkspaceRoot row = workspaceRootRepository.findById(UUID.fromString(workspaceId)).orElseThrow();
+        assertEquals(null, row.getDeletedAt(), "no soft-delete marker is written for the primary root");
     }
 }
