@@ -716,9 +716,15 @@ class LCToolAdapter(BaseTool):
                 build_tool_event_result(durable_preview, durable_meta),
                 diagnostics=diagnostics if credential_tool or safe_schema is not None else None,
                 # PLAN-0649 M1 (spec §1): a refusal is a tool-level outcome, not a
-                # Run failure (I4). Only a refusal or a schema rejection flips the
-                # durable status, so every pre-existing payload keeps its shape.
-                status="failed" if (safe_output_rejected or refusal_code) else "completed",
+                # Run failure (I4).
+                # PLAN-0649 M2 (Lead 2026-11-03): the widening from "refusal only"
+                # to **every** `is_error` — a failed tool call is failed whether or
+                # not CP attached a code, so durable history and the card status stop
+                # disagreeing. `refusalCode` stays the narrower signal (CP-decided
+                # only). The pre-0649 payload set is a subset of today's: `status`
+                # appears for plain errors too (legacy gate OFF writes it only when
+                # it is not `completed`, which is exactly this case).
+                status="failed" if (safe_output_rejected or tool_error or refusal_code) else "completed",
                 refusal_code=refusal_code,
             )
             if isinstance(window, LoopObservationWindow):
