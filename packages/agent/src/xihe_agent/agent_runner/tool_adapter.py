@@ -51,9 +51,12 @@ from xihe_agent.interfaces.tool import (
     CHECKPOINT_SAFE_OUTPUT_SUFFIX,
     CREDENTIAL_DELIVERED_PLACEHOLDER,
     CREDENTIAL_HANDOFF_REQUIRED_KEY,
+    TOOL_RESULT_REFUSAL_CODE_KEY,
+    TOOL_RESULT_STATUS_KEY,
     UNSAFE_DURABLE_TOOL_RESULT_PLACEHOLDER,
     BaseAgentTool,
     ToolSpec,
+    normalize_tool_refusal_code,
     strict_json_loads,
 )
 
@@ -258,8 +261,14 @@ def _tool_event_payload(
     result: Any = None,
     include_status: bool,
     status: str = "completed",
+    refusal_code: str | None = None,
 ) -> dict[str, Any]:
-    """Contract §2: dual payload shapes behind the writer gate."""
+    """Contract §2: dual payload shapes behind the writer gate.
+
+    PLAN-0649 M1 (spec §1): `refusalCode` is additive and present only when CP
+    actually short-circuited the call, so every payload that exists today keeps
+    its byte-identical shape.
+    """
     if not event_writer_v2_enabled():
         # Legacy mode: exact pre-gate field set AND insertion order (§1).
         legacy: dict[str, Any] = {"call_id": call_id, "tool_name": tool_name}
@@ -271,6 +280,8 @@ def _tool_event_payload(
             # status（failed 显式落账；completed 保持 pre-gate 字段集逐字节）。
             if status != "completed":
                 legacy["status"] = status
+        if refusal_code:
+            legacy["refusalCode"] = refusal_code
         return legacy
     payload: dict[str, Any] = {
         "schemaVersion": 2,
@@ -286,6 +297,8 @@ def _tool_event_payload(
         # PLAN-0381 T3.2：status 参数化（completed/failed/…），gate ON 恒写。
         payload["status"] = status
         payload["result"] = result
+    if refusal_code:
+        payload["refusalCode"] = refusal_code
     return payload
 
 
@@ -601,6 +614,13 @@ class LCToolAdapter(BaseTool):
             content = result.get("content", result)
             if not isinstance(content, str):
                 content = str(content)
+            # PLAN-0649 M1 (spec §1/§2): the tool reports the protocol `is_error`
+            # flag and CP's shape-checked `refusal_code`. Neither is derived from
+            # the result text, and neither widens the body channel.
+            tool_error = bool(result.get("is_error")) if isinstance(result, dict) else False
+            refusal_code = normalize_tool_refusal_code(
+                result.get("refusal_code") if isinstance(result, dict) else None
+            )
 
             parsed = extract_command_result(content)
             if credential_tool or safe_schema is not None:
@@ -694,7 +714,11 @@ class LCToolAdapter(BaseTool):
                 call_id,
                 build_tool_event_result(durable_preview, durable_meta),
                 diagnostics=diagnostics if credential_tool or safe_schema is not None else None,
-                status="failed" if safe_output_rejected else "completed",
+                # PLAN-0649 M1 (spec §1): a refusal is a tool-level outcome, not a
+                # Run failure (I4). Only a refusal or a schema rejection flips the
+                # durable status, so every pre-existing payload keeps its shape.
+                status="failed" if (safe_output_rejected or refusal_code) else "completed",
+                refusal_code=refusal_code,
             )
             if isinstance(window, LoopObservationWindow):
                 # Keep sensitive acquisition results out of even in-memory
@@ -749,6 +773,26 @@ class LCToolAdapter(BaseTool):
                         status="success",
                     ),
                     None,
+                )
+            if (tool_error or refusal_code) and isinstance(originating_tool_call_id, str):
+                # PLAN-0649 M1 (spec §1): `on_tool_end` only ever sees this
+                # ToolMessage's `additional_kwargs` once the body is replaced by
+                # the placeholder, so the authoritative status and the refusal
+                # code ride here. `content` is the same `text` the string path
+                # would return, so the model wire stays byte-identical (I1).
+                tool_metadata: dict[str, Any] = {
+                    TOOL_RESULT_STATUS_KEY: "failed" if (tool_error or refusal_code) else "completed"
+                }
+                if refusal_code:
+                    tool_metadata[TOOL_RESULT_REFUSAL_CODE_KEY] = refusal_code
+                return (
+                    ToolMessage(
+                        content=text,
+                        tool_call_id=originating_tool_call_id,
+                        name=tool_spec.name,
+                        additional_kwargs=tool_metadata,
+                    ),
+                    artifact,
                 )
             return text, artifact
         finally:
@@ -840,6 +884,8 @@ class LCToolAdapter(BaseTool):
         diagnostics: dict[str, Any] | None = None,
         # PLAN-0381 T3.2：completed 缺省；失败闭合路径传 "failed"。
         status: str = "completed",
+        # PLAN-0649 M1：CP 裁决码（形状已校验），仅拒绝时出现。
+        refusal_code: str | None = None,
     ) -> None:
         if self._event_store is None:
             return
@@ -851,6 +897,7 @@ class LCToolAdapter(BaseTool):
             result=result,
             include_status=True,
             status=status,
+            refusal_code=refusal_code,
         )
         # PLAN-0342 T1.2: only a real bundle widens the durable payload.
         if diagnostics is not None:
