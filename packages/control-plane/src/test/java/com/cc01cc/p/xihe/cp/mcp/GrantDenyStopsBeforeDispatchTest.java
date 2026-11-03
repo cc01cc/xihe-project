@@ -149,10 +149,17 @@ class GrantDenyStopsBeforeDispatchTest {
                 controller, "handleToolsCall", TEST_WS_UUID, body, headers, "sess-1",
                 accessContext(TEST_WS_UUID, "u-1", "sess-1"));
 
-        assertEquals(HttpStatus.FORBIDDEN, response.getStatusCode());
+        // PLAN-0649 follow-up (2026-11-04): the deny answers with the tool-result envelope — HTTP 200,
+        // isError, and a machine-readable code — so the model gets "Tool error: TOOL_GRANT_DENIED"
+        // instead of the SDK's opaque "Server returned an error response".
+        assertEquals(HttpStatus.OK, response.getStatusCode());
         assertNotNull(response.getBody());
-        assertTrue(response.getBody().contains("Tool execution is not permitted"),
-                "the deny is the authorization answer, got: " + response.getBody());
+        assertTrue(response.getBody().contains("\"isError\":true"),
+                "a refused call is still an error result, got: " + response.getBody());
+        assertTrue(response.getBody().contains("\"code\":\"TOOL_GRANT_DENIED\""),
+                "the refusal code must reach the wire, got: " + response.getBody());
+        assertTrue(response.getBody().contains("Tool error: TOOL_GRANT_DENIED"),
+                "the model-visible text stays 'Tool error: CODE', got: " + response.getBody());
 
         assertEquals(0, runtimeHits.get(),
                 "capability/execution plane must never be reached after an authorization deny");

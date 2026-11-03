@@ -36,6 +36,19 @@ public final class ToolRefusalCodes {
     /** Credential acquisition failed — the call never landed. */
     public static final String ACQUIRE_EXECUTION_FAILED = "ACQUIRE_EXECUTION_FAILED";
 
+    /**
+     * Pre-dispatch refusal: the caller holds no authorization grant for the tool, or the policy
+     * verdict is {@code DENY}. Distinct from the codes above because nothing was dispatched at all.
+     *
+     * <p>Added 2026-11-04 (user ruling): this refusal used to answer with a bare
+     * {@code 403 FORBIDDEN} problem. A bare HTTP error reaches the model as the SDK's generic
+     * "Server returned an error response", so the card showed a failed tool call with no reason and
+     * no code — exactly the opacity PLAN-0649 exists to remove. The audit action stays
+     * {@code authorization_grant_denied} / {@code deny} (internal semantics); only the wire gains
+     * this code.</p>
+     */
+    public static final String TOOL_GRANT_DENIED = "TOOL_GRANT_DENIED";
+
     private ToolRefusalCodes() {
     }
 }

@@ -279,7 +279,11 @@ class McpProxyTest {
                 controller, "handleToolsCall", TEST_WS_UUID, body, new HttpHeaders(), "mcp-init",
                 accessContext(TEST_WS_UUID, "u-1"));
 
-        assertEquals(HttpStatus.FORBIDDEN, response.getStatusCode());
+        // PLAN-0649 follow-up: the grant deny also answers with the coded envelope.
+        assertEquals(HttpStatus.OK, response.getStatusCode());
+        assertNotNull(response.getBody());
+        assertTrue(response.getBody().contains("\"code\":\"TOOL_GRANT_DENIED\""),
+                "the refusal code must reach the wire, got: " + response.getBody());
         verify(policyEngine).allowsByGrant(any(PolicyContext.class), eq("list_directory"), eq(body),
                 eq("mcp-init"), eq("u-1"), eq(TEST_WS_UUID), eq(true));
         verify(policyEngine, never()).evaluateVerdict(any(), anyString(), anyString(), anyString(), any(), any(), any());
@@ -786,7 +790,15 @@ class McpProxyTest {
                 controller, "handleToolsCall", TEST_WS_UUID, body,
                 new HttpHeaders(), "sess-1", accessContext(TEST_WS_UUID, "u-1"));
 
-        assertEquals(HttpStatus.FORBIDDEN, response.getStatusCode());
+        // PLAN-0649 follow-up (2026-11-04): the authorization deny answers with the tool-result
+        // envelope (HTTP 200 + isError + code), not a bare 403 — the SDK turns a bare HTTP error into
+        // the generic "Server returned an error response", which leaves the card without a code.
+        assertEquals(HttpStatus.OK, response.getStatusCode());
+        assertNotNull(response.getBody());
+        assertTrue(response.getBody().contains("\"code\":\"TOOL_GRANT_DENIED\""),
+                "the refusal code must reach the wire, got: " + response.getBody());
+        assertTrue(response.getBody().contains("Tool error: TOOL_GRANT_DENIED"),
+                "the model-visible text stays 'Tool error: CODE', got: " + response.getBody());
         verify(policyEngine, never()).evaluateVerdict(any(PolicyContext.class), anyString(), anyString(),
                 anyString(), any(), any(), any());
         verify(approvalService, never()).recordGatePending(any(), any(), any(), any(), any(), any(), any());
@@ -973,7 +985,12 @@ class McpProxyTest {
                 controller, "handleToolsCall", TEST_WS_UUID, body, headers, "sess-1",
                 internalAccessContext(TEST_WS_UUID, "u-1", "sess-1"));
 
-        assertEquals(HttpStatus.FORBIDDEN, response.getStatusCode());
+        // PLAN-0649 follow-up: a policy DENY answers with the coded tool-result envelope, not a bare
+        // 403 (the SDK would turn that into an opaque "Server returned an error response").
+        assertEquals(HttpStatus.OK, response.getStatusCode());
+        assertNotNull(response.getBody());
+        assertTrue(response.getBody().contains("Tool error: TOOL_GRANT_DENIED"),
+                "a policy deny must be coded, got: " + response.getBody());
         // A blocked call has no dispatch, so it must not create an invocation attempt or snapshot.
         verifyNoInteractions(mcpInvocationService);
         verify(sseEmitterManager).send(eq("sess-1"), eq("tool_exec_denied"), any());

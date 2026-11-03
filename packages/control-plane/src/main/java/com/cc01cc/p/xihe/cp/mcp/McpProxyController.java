@@ -844,7 +844,11 @@ public class McpProxyController {
                 access.userId(), wsId, userPrincipalOnly)) {
             sse.send(sessionId, "tool_exec_denied", Map.of("tool", toolName, "reason", "authorization grant denied"));
             audit.record(sessionId, toolName, "authorization_grant_denied", "no matching grant or workspace membership");
-            return problem(HttpStatus.FORBIDDEN, "FORBIDDEN", "Tool execution is not permitted");
+            // PLAN-0649 follow-up (2026-11-04): a pre-dispatch refusal must still answer with the
+            // tool-result envelope. A bare 403 is turned by the MCP SDK into the generic
+            // "Server returned an error response", so the model cannot classify the refusal and the
+            // card carries no `refusalCode` — the opaque-failure shape 0649 exists to remove.
+            return cpToolErrorResponse(body, ToolRefusalCodes.TOOL_GRANT_DENIED);
         }
         PolicyVerdict verdict = policy.evaluateVerdict(policyContext, toolName, rewritten, sessionId, null,
                 access.userId(), wsId);
@@ -854,7 +858,9 @@ public class McpProxyController {
             sse.send(sessionId, "tool_exec_denied",
                 Map.of("tool", toolName, "reason", verdict.reason()));
             audit.record(sessionId, toolName, "deny", verdict.reason());
-            return problem(HttpStatus.FORBIDDEN, "FORBIDDEN", "Tool execution is not permitted");
+            // Same envelope rule as the authorization deny above: a policy DENY is a CP decision, so
+            // the model gets a coded tool result instead of an HTTP error.
+            return cpToolErrorResponse(body, ToolRefusalCodes.TOOL_GRANT_DENIED);
         }
 
         boolean reusedSessionGrant = false;
