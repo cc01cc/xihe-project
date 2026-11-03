@@ -103,8 +103,7 @@ public class McpRelayToolRecorder {
     }
 
     private void finishToolResult(String toolCallId, Map<?, ?> payload, RunState state) {
-        Object rawResult = payload.get("result");
-        boolean failed = rawResult != null && String.valueOf(rawResult).startsWith("Tool error:");
+        boolean failed = toolResultFailed(payload);
         UUID invocationId = state.invocationsByToolCallId().remove(toolCallId);
         UUID attemptId = state.attemptsByToolCallId().remove(toolCallId);
         if (invocationId == null || attemptId == null) {
@@ -118,6 +117,21 @@ public class McpRelayToolRecorder {
             logger.error("[LIFECYCLE] service=cp event=mcp_agent_tool_attempt_finish_failed toolCallId={} failureType={}",
                     toolCallId, e.getClass().getName(), e);
         }
+    }
+
+    /**
+     * PLAN-0649 M2 (T2.3, design decision #9): the Agent's authoritative {@code status} decides the
+     * attempt outcome. The legacy {@code "Tool error: "} text prefix is only a fallback for events
+     * that predate the field (old Agent ↔ new CP must keep the previous accounting); deriving the
+     * outcome from a body that CP itself replaces with a placeholder was the bug being fixed.
+     */
+    static boolean toolResultFailed(Map<?, ?> payload) {
+        Object status = payload.get("status");
+        if (status != null) {
+            return "failed".equals(String.valueOf(status));
+        }
+        Object rawResult = payload.get("result");
+        return rawResult != null && String.valueOf(rawResult).startsWith("Tool error:");
     }
 
     private UUID openInvocation(String runId, String toolCallId, String toolName,

@@ -168,7 +168,7 @@ PLAN-0509 Run Trace 将耐久 `prompt.admitted` 独立投影为不含消息正�
 
 | 层 | 事件 |
 |----|------|
-| SSE 协议 `AgentEvent` | `token` / `tool_call` / `tool_result` / `status` / `error` / `done`；工具事件携带 `toolCallId` + `origin`（`local`/`mcp`）供 CP 按通道事实记账，`request_approval` 工具事件抑制、以审批事件为正规记录 |
+| SSE 协议 `AgentEvent` | `token` / `tool_call` / `tool_result` / `status` / `error` / `done`；工具事件携带 `toolCallId` + `origin`（`local`/`mcp`）供 CP 按通道事实记账，`request_approval` 工具事件抑制、以审批事件为正规记录。**PLAN-0649**：`tool_result` 另带权威 `status`（`completed`/`failed`，由 Agent 判定，不再由正文推断）与可选 `refusalCode`（仅当 CP 在 tool error 信封的 `structuredContent.code` 给出形状合规的码；Agent 不解析 `Tool error:` 文本，缺省不加键）。durable `tool.result` 同口径：**所有 `is_error` 均为 `failed`**（M2 裁定），正文仍恒为占位符 |
 | 持久化域 `Event` | 见 §3.2 事件表 |
 
 ### 3.3 AgentContext 读模型
