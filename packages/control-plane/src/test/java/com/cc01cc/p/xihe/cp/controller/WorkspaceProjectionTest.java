@@ -15,7 +15,7 @@ class WorkspaceProjectionTest {
         Workspace workspace = workspace();
 
         Map<String, Object> view = WorkspaceController.toMap(workspace, "owner-1", "member-1", false,
-                "EDITOR");
+                "EDITOR", null);
 
         assertNull(view.get("hostPath"));
     }
@@ -26,9 +26,9 @@ class WorkspaceProjectionTest {
 
         // PLAN-0610 W4b: the owner id is derived from the WS_OWNER binding and passed in.
         assertEquals("C:/work/repo", WorkspaceController
-                .toMap(workspace, "owner-1", "owner-1", false, "OWNER").get("hostPath"));
+                .toMap(workspace, "owner-1", "owner-1", false, "OWNER", null).get("hostPath"));
         assertEquals("C:/work/repo", WorkspaceController
-                .toMap(workspace, "owner-1", "member-1", true, "EDITOR").get("hostPath"));
+                .toMap(workspace, "owner-1", "member-1", true, "EDITOR", null).get("hostPath"));
         assertNull(WorkspaceEnvironmentController.visibleHostPath(workspace, "owner-1", "member-1", false));
         assertEquals("C:/work/repo",
                 WorkspaceEnvironmentController.visibleHostPath(workspace, "owner-1", "owner-1", false));
