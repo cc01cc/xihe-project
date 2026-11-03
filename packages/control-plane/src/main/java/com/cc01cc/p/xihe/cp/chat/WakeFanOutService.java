@@ -39,7 +39,12 @@ import java.util.concurrent.TimeUnit;
 public class WakeFanOutService {
 
     private static final Logger logger = LoggerFactory.getLogger(WakeFanOutService.class);
-    static final long DEFAULT_WAIT_SECONDS = 600;
+    /**
+     * PLAN-0648 task-34: the awaiter now has a completion source (the terminal choke point publishes
+     * ChatRunTerminalizedEvent), so the bound is a safety net instead of the only exit. It used to be
+     * 600 s — ten minutes of a blocked per-session dispatch thread.
+     */
+    static final long DEFAULT_WAIT_SECONDS = 60;
     /**
      * Same durable event name WakeDispatchService audits wake outcomes under (its constant is
      * package-private in {@code service}); a cc notify deliberately reuses the envelope —

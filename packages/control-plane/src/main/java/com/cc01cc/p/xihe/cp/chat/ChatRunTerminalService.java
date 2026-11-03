@@ -146,6 +146,7 @@ public class ChatRunTerminalService {
     private final ChatRunGuidanceService chatRunGuidanceService;
     private final ChatRunTransportService transportAttempts;
     private final com.cc01cc.p.xihe.cp.policy.ResourceGovernor governor;
+    private final org.springframework.context.ApplicationEventPublisher eventPublisher;
 
     public ChatRunTerminalService(
             DbLockTimeout dbLockTimeout,
@@ -164,7 +165,12 @@ public class ChatRunTerminalService {
             FollowUpQueueService followUpQueueService,
     ChatRunGuidanceService chatRunGuidanceService,
             ChatRunTransportService transportAttempts,
-            com.cc01cc.p.xihe.cp.policy.ResourceGovernor governor) {
+            com.cc01cc.p.xihe.cp.policy.ResourceGovernor governor,
+            // PLAN-0648 task-34: the terminal choke point also signals run termination to the wake
+            // fan-out (`ChatRunTerminalizedEvent`); until now nothing published it, so every awaiter
+            // sat until its timeout and starved later rounds on the per-session executor.
+            @org.springframework.beans.factory.annotation.Autowired(required = false)
+            org.springframework.context.ApplicationEventPublisher eventPublisher) {
         this.dbLockTimeout = dbLockTimeout;
         this.datasourceUrl = datasourceUrl;
         this.entityManager = entityManager;
@@ -182,6 +188,7 @@ public class ChatRunTerminalService {
         this.chatRunGuidanceService = chatRunGuidanceService;
         this.transportAttempts = transportAttempts;
         this.governor = governor;
+        this.eventPublisher = eventPublisher;
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
@@ -278,7 +285,42 @@ public class ChatRunTerminalService {
         requestRunScopeClosureAfterCommit(runId.toString());
         settleStrandedInvocationsAfterCommit(runId.toString(), request);
         reconcileTransportAttemptsAfterCommit(runId.toString(), terminalAt);
+        publishRunTerminalizedAfterCommit(sessionId, runId, request.status(), request.terminalOutcome());
         return new TerminalResult(Outcome.COMMITTED, request.status());
+    }
+
+    /**
+     * PLAN-0648 task-34: the run-terminated signal every waiter listens for. Publishing here (the
+     * single terminal choke point) is what makes "wait for the woken run" terminate at all; a
+     * consumer that missed the event (registered late) still reconciles from the row state.
+     */
+    private void publishRunTerminalizedAfterCommit(UUID sessionId, UUID runId, String status,
+                                                   String terminalOutcome) {
+        if (eventPublisher == null) {
+            return;
+        }
+        Runnable publish = () -> {
+            try {
+                eventPublisher.publishEvent(new ChatRunTerminalizedEvent(sessionId.toString(),
+                        runId.toString(), status, terminalOutcome));
+            } catch (RuntimeException publishFailed) {
+                logger.warn("[LIFECYCLE] service=cp event=run_terminalized_publish_failed runId={} "
+                        + "failureType={}", runId, publishFailed.getClass().getSimpleName());
+            }
+        };
+        if (org.springframework.transaction.support.TransactionSynchronizationManager
+                .isSynchronizationActive()) {
+            org.springframework.transaction.support.TransactionSynchronizationManager
+                    .registerSynchronization(
+                            new org.springframework.transaction.support.TransactionSynchronization() {
+                                @Override
+                                public void afterCommit() {
+                                    publish.run();
+                                }
+                            });
+        } else {
+            publish.run();
+        }
     }
 
     /**
