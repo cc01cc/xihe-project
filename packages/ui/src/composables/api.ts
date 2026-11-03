@@ -1944,6 +1944,12 @@ export function normalizeWorkspaceEvent(
         source,
         reason: typeof record.reason === "string" ? record.reason : undefined,
         status: typeof record.status === "string" ? record.status : undefined,
+        // PLAN-0639 M2: root attribution rides the event envelope (D39-6); absent on
+        // legacy single-root events, where the primary root is implied.
+        rootId:
+            typeof record.rootId === "string" && record.rootId.length > 0
+                ? record.rootId
+                : undefined,
     };
 }
 
@@ -3136,7 +3142,12 @@ export const api = {
             ),
         );
     },
-    async listDirectory(path: string, workspaceId: string) {
+    /**
+     * PLAN-0639 M2: `rootId` scopes the listing to one declared root of a multi-root
+     * workspace (design §5 candidate ①). Omitting it keeps the legacy primary-root
+     * behavior; the argument is forwarded as a tool argument for the Runtime to honor.
+     */
+    async listDirectory(path: string, workspaceId: string, rootId?: string) {
         const raw = await callRuntimeTool<{
                 entries?: Array<{
                     name: string;
@@ -3146,7 +3157,7 @@ export const api = {
                     size?: number;
                     modified?: string;
                 }>;
-            }>("list_directory", { path }, workspaceId),
+            }>("list_directory", rootId ? { path, rootId } : { path }, workspaceId),
             entries = (raw?.entries ?? []).map((e) => ({
                 name: e.name,
                 path: e.path,
@@ -3156,14 +3167,28 @@ export const api = {
             }));
         return { entries };
     },
-    async readFile(path: string, workspaceId: string) {
-        const content = await callRuntimeTool<string>("read_file", { path }, workspaceId);
+    // PLAN-0639 M2: every file operation accepts an optional `rootId` that scopes the
+    // path to one declared root of a multi-root workspace; omitted = primary root
+    // (legacy behavior). The Runtime resolves the root, the UI never builds absolute
+    // host paths (design §5, D39-5 hard boundary).
+    async readFile(path: string, workspaceId: string, rootId?: string) {
+        const content = await callRuntimeTool<string>(
+            "read_file",
+            rootId ? { path, rootId } : { path },
+            workspaceId,
+        );
         return { content: typeof content === "string" ? content : String(content) };
     },
     // PLAN-292 T6: binary-safe read — the tool returns {content, total_lines,
     // is_binary} where content is base64 when is_binary is true.
-    async readFileRange(path: string, workspaceId: string, offset?: number, limit?: number) {
-        const args: Record<string, unknown> = { path };
+    async readFileRange(
+        path: string,
+        workspaceId: string,
+        offset?: number,
+        limit?: number,
+        rootId?: string,
+    ) {
+        const args: Record<string, unknown> = rootId ? { path, rootId } : { path };
         if (offset !== undefined) args.offset = offset;
         if (limit !== undefined) args.limit = limit;
         return callRuntimeTool<{ content: string; total_lines: number; is_binary: boolean }>(
@@ -3172,24 +3197,40 @@ export const api = {
             workspaceId,
         );
     },
-    async writeFile(path: string, content: string, workspaceId: string) {
-        await callRuntimeTool<string>("write_file", { path, content }, workspaceId);
+    async writeFile(path: string, content: string, workspaceId: string, rootId?: string) {
+        await callRuntimeTool<string>(
+            "write_file",
+            rootId ? { path, content, rootId } : { path, content },
+            workspaceId,
+        );
         return { success: true };
     },
-    async deleteFile(path: string, workspaceId: string) {
-        await callRuntimeTool<string>("delete_file", { path }, workspaceId);
+    async deleteFile(path: string, workspaceId: string, rootId?: string) {
+        await callRuntimeTool<string>(
+            "delete_file",
+            rootId ? { path, rootId } : { path },
+            workspaceId,
+        );
         return { success: true };
     },
-    async moveFile(from: string, to: string, workspaceId: string) {
-        await callRuntimeTool<string>("move_file", { from, to }, workspaceId);
+    async moveFile(from: string, to: string, workspaceId: string, rootId?: string) {
+        await callRuntimeTool<string>(
+            "move_file",
+            rootId ? { from, to, rootId } : { from, to },
+            workspaceId,
+        );
         return { success: true };
     },
-    async copyFile(from: string, to: string, workspaceId: string) {
-        await callRuntimeTool<string>("copy_file", { from, to }, workspaceId);
+    async copyFile(from: string, to: string, workspaceId: string, rootId?: string) {
+        await callRuntimeTool<string>(
+            "copy_file",
+            rootId ? { from, to, rootId } : { from, to },
+            workspaceId,
+        );
         return { success: true };
     },
-    async createDirectory(path: string, workspaceId: string) {
-        await callRuntimeTool<string>("mkdir", { path }, workspaceId);
+    async createDirectory(path: string, workspaceId: string, rootId?: string) {
+        await callRuntimeTool<string>("mkdir", rootId ? { path, rootId } : { path }, workspaceId);
         return { success: true };
     },
     getMcpConfig(wsId: string) {

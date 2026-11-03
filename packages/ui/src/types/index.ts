@@ -1215,6 +1215,12 @@ export interface WorkspaceEvent {
     source: string;
     reason?: string;
     status?: string;
+    /**
+     * PLAN-0639 M2: the declared root that owns `path` (Runtime event attribution,
+     * design D39-6). Absent on legacy single-root events; the primary root
+     * (root[0].id == workspace.id) is implied then.
+     */
+    rootId?: string;
 }
 
 export interface OpenFile {

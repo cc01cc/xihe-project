@@ -3,6 +3,7 @@ import { ref, computed } from "vue";
 import { useSessionStore } from "../../../stores/session";
 import { useAuthStore } from "../../../stores/auth";
 import { api, apiPost, ApiError } from "../../../composables/api";
+import type { ApiWorkspaceRoot } from "../../../composables/api";
 import { readFilePreview } from "../composables/fileService";
 import { humanizeErrorCode } from "../../../lib/errorMessages";
 import { logger } from "../../../lib/logger";
@@ -65,6 +66,22 @@ export function classifyTreeErrorCode(code: string | undefined | null): TreeErro
     }
 }
 
+/**
+ * PLAN-0639 M2 (design §5 candidate ①): per-root lazy tree state for secondary roots
+ * of a multi-root workspace. The primary root keeps living in `fileTree` with the
+ * pre-M2 load/refresh machinery; secondary roots are loaded on selection only.
+ */
+export interface RootTreeState {
+    nodes: FileNode[];
+    loaded: boolean;
+    loading: boolean;
+    error: string | null;
+}
+
+function emptyRootTreeState(): RootTreeState {
+    return { nodes: [], loaded: false, loading: false, error: null };
+}
+
 export const useWorkspaceStore = defineStore("workspace", () => {
     const sessionStore = useSessionStore(),
         authStore = useAuthStore();
@@ -102,6 +119,33 @@ export const useWorkspaceStore = defineStore("workspace", () => {
         loadedWorkspaceId = ref<string | null>(null);
 
     /**
+     * PLAN-0639 M2: multi-root grouping state. `expandedRootIds` holds root groups the
+     * user selected (selection gates expansion — design §5 候选①); `collapsedRootIds`
+     * records an explicit collapse of the auto-expanded primary group. `rootTrees`
+     * carries the lazily loaded secondary root trees keyed by rootId.
+     */
+    const expandedRootIds = ref<Set<string>>(new Set()),
+        collapsedRootIds = ref<Set<string>>(new Set()),
+        rootTrees = ref<Map<string, RootTreeState>>(new Map());
+
+    /**
+     * Ordered root projection of the current workspace (wire contract PLAN-0639 M1:
+     * [{id, alias, position}], Root[0].id == workspace.id). Empty for legacy
+     * single-root workspaces that predate the projection — those render exactly as
+     * before (no grouping).
+     */
+    const workspaceRoots = computed<ApiWorkspaceRoot[]>(() => {
+        const roots = authStore.workspace?.roots;
+        if (!roots || roots.length === 0) return [];
+        return [...roots].sort((a, b) => a.position - b.position);
+    });
+
+    const isMultiRoot = computed(() => workspaceRoots.value.length > 1),
+        primaryRootId = computed(() => workspaceRoots.value[0]?.id ?? null),
+        /** Owner-only disclosed host path of the primary root (group header fallback). */
+        primaryRootPath = computed(() => authStore.workspace?.hostPath ?? null);
+
+    /**
      * Single writer for `treeError` so the visible category can never drift from the
      * message (PLAN-0557/BL-109). Defaults to `other`, which renders the generic copy
      * plus the detail line; load failures pass the classified kind.
@@ -130,9 +174,14 @@ export const useWorkspaceStore = defineStore("workspace", () => {
         return Array.from(openFiles.value.values());
     });
 
-    async function fetchDirectoryTree(dirPath: string): Promise<FileNode[]> {
+    /**
+     * PLAN-0639 M2: `rootId` scopes the recursive listing to one declared root of a
+     * multi-root workspace (omitted = primary root, the pre-M2 behavior). Paths stay
+     * root-relative in both cases — the Runtime resolves the root, never the UI.
+     */
+    async function fetchDirectoryTree(dirPath: string, rootId?: string): Promise<FileNode[]> {
         const nodes: FileNode[] = [];
-        const res = await api.listDirectory(dirPath, requireWorkspaceId());
+        const res = await api.listDirectory(dirPath, requireWorkspaceId(), rootId);
         const entries = (res?.entries ?? []).filter((entry: any) => !isRuntimeArtifact(entry.name));
         const dirs = entries
                 .filter((e: any) => e.type === "directory")
@@ -142,7 +191,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
                 .sort((a: any, b: any) => a.name.localeCompare(b.name));
         for (const dir of dirs) {
             const childPath = dirPath ? `${dirPath}/${dir.name}` : dir.name,
-                children = await fetchDirectoryTree(childPath);
+                children = await fetchDirectoryTree(childPath, rootId);
             if (dir.name === "logs" && children.length === 0) continue;
             nodes.push({
                 name: dir.name,
@@ -270,6 +319,9 @@ export const useWorkspaceStore = defineStore("workspace", () => {
         expandedPaths.value = new Set();
         loadedWorkspaceId.value = null;
         await loadTree();
+        // PLAN-0639 M2: the panel-head refresh covers every loaded root group, not
+        // just the primary one (unloaded secondary groups stay lazy).
+        for (const rootId of Array.from(rootTrees.value.keys())) await refreshRootTree(rootId);
     }
 
     function toggleExpand(path: string) {
@@ -277,6 +329,134 @@ export const useWorkspaceStore = defineStore("workspace", () => {
         if (next.has(path)) next.delete(path);
         else next.add(path);
         expandedPaths.value = next;
+    }
+
+    // ------------------------------------------------------------------
+    // PLAN-0639 M2: per-root grouping (design §5 candidate ①)
+    // ------------------------------------------------------------------
+
+    /**
+     * The primary root group auto-expands in multi-root mode (its tree already loads
+     * with the panel head refresh semantics); any explicit user collapse wins.
+     */
+    function isRootExpanded(rootId: string): boolean {
+        if (collapsedRootIds.value.has(rootId)) return false;
+        if (expandedRootIds.value.has(rootId)) return true;
+        return isMultiRoot.value && rootId === primaryRootId.value;
+    }
+
+    /** Selection gates expansion: selecting a root group loads its tree on first use. */
+    function toggleRoot(rootId: string) {
+        const expanded = isRootExpanded(rootId);
+        const nextExpanded = new Set(expandedRootIds.value),
+            nextCollapsed = new Set(collapsedRootIds.value);
+        if (expanded) {
+            nextExpanded.delete(rootId);
+            nextCollapsed.add(rootId);
+        } else {
+            nextExpanded.add(rootId);
+            nextCollapsed.delete(rootId);
+        }
+        expandedRootIds.value = nextExpanded;
+        collapsedRootIds.value = nextCollapsed;
+        if (!expanded) {
+            if (rootId === primaryRootId.value) {
+                if (loadedWorkspaceId.value !== workspaceId.value) void loadTree();
+            } else {
+                const state = rootTrees.value.get(rootId);
+                if (!state || (!state.loaded && !state.loading)) void loadRootTree(rootId);
+            }
+        }
+    }
+
+    /**
+     * Load (or reload) one root group's tree. The primary root reuses the pre-M2
+     * `loadTree`; secondary roots are listed root-scoped and cached in `rootTrees`.
+     * Depends on the Runtime honoring `rootId` on `list_directory` (design §5
+     * runtime fs row) — until that lands, real-chain secondary listings fall back
+     * to the primary root.
+     */
+    async function loadRootTree(rootId: string) {
+        if (rootId === primaryRootId.value) {
+            await loadTree();
+            return;
+        }
+        const current = rootTrees.value.get(rootId) ?? emptyRootTreeState();
+        if (current.loading) return;
+        const pending: RootTreeState = { ...current, loading: true, error: null };
+        rootTrees.value = new Map(rootTrees.value).set(rootId, pending);
+        try {
+            // E2E seeding hook (mock profile only): per-root trees without a live
+            // CP+MCP chain. Never set by production code.
+            if (typeof localStorage !== "undefined") {
+                try {
+                    const seed = localStorage.getItem("xihe-mock-filetree-roots");
+                    if (seed) {
+                        const parsed = JSON.parse(seed) as Record<string, FileNode[]>;
+                        if (Array.isArray(parsed?.[rootId])) {
+                            rootTrees.value = new Map(rootTrees.value).set(rootId, {
+                                nodes: parsed[rootId],
+                                loaded: true,
+                                loading: false,
+                                error: null,
+                            });
+                            return;
+                        }
+                    }
+                } catch {
+                    // fall through to the real chain
+                }
+            }
+            const currentWorkspaceId = workspaceId.value;
+            const nodes = await fetchDirectoryTree("", rootId);
+            // Same stale-workspace rule as loadTree: a result fetched for workspace A
+            // must never paint under workspace B's root groups.
+            if (workspaceId.value !== currentWorkspaceId) return;
+            rootTrees.value = new Map(rootTrees.value).set(rootId, {
+                nodes,
+                loaded: true,
+                loading: false,
+                error: null,
+            });
+        } catch (e) {
+            rootTrees.value = new Map(rootTrees.value).set(rootId, {
+                ...pending,
+                loading: false,
+                error: humanizeFileError(e, "加载根文件列表失败"),
+            });
+        }
+    }
+
+    /** Re-list a secondary root in place (event refresh keeps group expansion). */
+    async function refreshRootTree(rootId: string) {
+        const current = rootTrees.value.get(rootId);
+        if (!current || !current.loaded) return;
+        await loadRootTree(rootId);
+    }
+
+    function rootTreeState(rootId: string): RootTreeState {
+        return rootTrees.value.get(rootId) ?? emptyRootTreeState();
+    }
+
+    /**
+     * Resolve the owning root for a tree path: primary-root paths return undefined
+     * (legacy call shape), secondary-root paths return their rootId. Walks loaded
+     * trees only — unloaded groups have no clickable nodes by construction.
+     */
+    function rootIdOf(path: string): string | undefined {
+        if (!path) return undefined;
+        const walk = (nodes: FileNode[]): boolean => {
+            for (const n of nodes) {
+                if (n.path === path) return true;
+                if (n.children && walk(n.children)) return true;
+            }
+            return false;
+        };
+        if (walk(fileTree.value)) return undefined;
+        for (const [rootId, state] of rootTrees.value.entries()) {
+            if (state.loaded && walk(state.nodes)) return rootId;
+        }
+        return undefined;
     }
 
     function findFileSize(path: string): number | undefined {
@@ -293,11 +473,22 @@ export const useWorkspaceStore = defineStore("workspace", () => {
         return walk(fileTree.value);
     }
 
-    async function openFile(path: string) {
+    /**
+     * PLAN-0639 M2: `rootId` scopes the read to the owning declared root of a
+     * multi-root workspace; omitted resolves via the loaded trees. Primary-root
+     * paths keep the legacy unscoped call shape — the argument is left off, not
+     * passed as undefined, so single-root traffic is byte-identical to pre-M2.
+     */
+    async function openFile(path: string, rootId?: string) {
         if (openFiles.value.has(path)) {
             activeFilePath.value = path;
             return;
         }
+        const owningRootId = rootId ?? rootIdOf(path),
+            preview = (size: number | undefined) =>
+                owningRootId
+                    ? readFilePreview(path, size, requireWorkspaceId(), owningRootId)
+                    : readFilePreview(path, size, requireWorkspaceId());
         try {
             const size = findFileSize(path),
                 name = path.split("/").pop() || path,
@@ -306,7 +497,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
             // branch is reachable. svg is text — read via the guarded text path and
             // wrap as a utf8 data URL; raster images use the binary-safe tool.
             if (ext === "svg") {
-                const res = await readFilePreview(path, size, requireWorkspaceId()),
+                const res = await preview(size),
                     svg: OpenFile = {
                         path,
                         name,
@@ -322,7 +513,15 @@ export const useWorkspaceStore = defineStore("workspace", () => {
                 return;
             }
             if (IMAGE_PREVIEW_EXTENSIONS.has(ext)) {
-                const binary = await api.readFileRange(path, requireWorkspaceId());
+                const binary = owningRootId
+                    ? await api.readFileRange(
+                          path,
+                          requireWorkspaceId(),
+                          undefined,
+                          undefined,
+                          owningRootId,
+                      )
+                    : await api.readFileRange(path, requireWorkspaceId());
                 if (!binary.is_binary) {
                     throw new Error("not a binary file");
                 }
@@ -340,7 +539,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
                 activeFilePath.value = path;
                 return;
             }
-            const res = await readFilePreview(path, size, requireWorkspaceId()),
+            const res = await preview(size),
                 file: OpenFile = {
                     path,
                     name,
@@ -382,8 +581,11 @@ export const useWorkspaceStore = defineStore("workspace", () => {
         if (!ensureWritable()) return;
         const file = openFiles.value.get(path);
         if (!file || !file.modified) return;
+        const owningRootId = rootIdOf(path);
         try {
-            await api.writeFile(path, file.content, requireWorkspaceId());
+            await (owningRootId
+                ? api.writeFile(path, file.content, requireWorkspaceId(), owningRootId)
+                : api.writeFile(path, file.content, requireWorkspaceId()));
             openFiles.value.set(path, {
                 ...file,
                 originalContent: file.content,
@@ -420,6 +622,9 @@ export const useWorkspaceStore = defineStore("workspace", () => {
         if (event.kind === "snapshot_required") {
             await refreshAfterMutation();
             await reloadUnmodifiedOpenFiles();
+            // PLAN-0639 M2: a snapshot covers every declared root — refresh the loaded
+            // secondary root groups too (unloaded groups stay lazy).
+            for (const rootId of Array.from(rootTrees.value.keys())) await refreshRootTree(rootId);
             return;
         }
         if (event.kind !== "file_changed" || !event.path) return;
@@ -436,14 +641,30 @@ export const useWorkspaceStore = defineStore("workspace", () => {
         } else if (file) {
             await reloadOpenFile(event.path);
         }
-        const slash = event.path.lastIndexOf("/");
-        await refreshAfterMutation(slash >= 0 ? event.path.substring(0, slash) : "");
+        const slash = event.path.lastIndexOf("/"),
+            parentDir = slash >= 0 ? event.path.substring(0, slash) : "";
+        // PLAN-0639 M2: route the refresh to the owning root group (design §5 — 事件按
+        // rootId 路由到对应分组刷新). Events without rootId (legacy single-root chain)
+        // keep the pre-M2 primary-root refresh.
+        if (
+            event.rootId &&
+            event.rootId !== primaryRootId.value &&
+            rootTrees.value.has(event.rootId)
+        ) {
+            expandPathDirs(parentDir);
+            await refreshRootTree(event.rootId);
+            return;
+        }
+        await refreshAfterMutation(parentDir);
     }
 
     async function deleteNode(path: string): Promise<boolean> {
         if (!ensureWritable()) return false;
+        const owningRootId = rootIdOf(path);
         try {
-            await api.deleteFile(path, requireWorkspaceId());
+            await (owningRootId
+                ? api.deleteFile(path, requireWorkspaceId(), owningRootId)
+                : api.deleteFile(path, requireWorkspaceId()));
             closeFile(path);
             const slash = path.lastIndexOf("/");
             await refreshAfterMutation(slash >= 0 ? path.substring(0, slash) : "");
@@ -458,9 +679,12 @@ export const useWorkspaceStore = defineStore("workspace", () => {
 
     async function createFile(parentDir: string, name: string): Promise<boolean> {
         if (!ensureWritable()) return false;
-        const fullPath = parentDir ? `${parentDir}/${name}` : name;
+        const fullPath = parentDir ? `${parentDir}/${name}` : name,
+            owningRootId = rootIdOf(parentDir);
         try {
-            await api.writeFile(fullPath, "", requireWorkspaceId());
+            await (owningRootId
+                ? api.writeFile(fullPath, "", requireWorkspaceId(), owningRootId)
+                : api.writeFile(fullPath, "", requireWorkspaceId()));
             await refreshAfterMutation(parentDir);
             return true;
         } catch (e) {
@@ -481,19 +705,23 @@ export const useWorkspaceStore = defineStore("workspace", () => {
         return `${fallback}: ${e instanceof Error ? e.message : String(e)}`;
     }
 
+    /** Expand every ancestor directory of `dir` so a fresh/changed file is visible. */
+    function expandPathDirs(dir: string) {
+        if (!dir) return;
+        const next = new Set(expandedPaths.value),
+            parts = dir.split("/");
+        let current = "";
+        for (const part of parts) {
+            if (!part) continue;
+            current = current ? `${current}/${part}` : part;
+            next.add(current);
+        }
+        expandedPaths.value = next;
+    }
+
     /** Reload the tree while keeping the current expansion state (M3 task 3.4). */
     async function refreshAfterMutation(keepExpandedDir?: string) {
-        if (keepExpandedDir) {
-            const next = new Set(expandedPaths.value),
-                parts = keepExpandedDir.split("/");
-            let current = "";
-            for (const part of parts) {
-                if (!part) continue;
-                current = current ? `${current}/${part}` : part;
-                next.add(current);
-            }
-            expandedPaths.value = next;
-        }
+        expandPathDirs(keepExpandedDir ?? "");
         // PLAN-0365 (root cause C): if a load is already running, its result is
         // stale by definition (the mutation just landed). Register a pending
         // reload so the in-flight loadTree re-runs instead of the refresh being
@@ -516,8 +744,11 @@ export const useWorkspaceStore = defineStore("workspace", () => {
         const slash = oldPath.lastIndexOf("/"),
             newPath = slash >= 0 ? `${oldPath.substring(0, slash + 1)}${trimmed}` : trimmed;
         if (newPath === oldPath) return true;
+        const owningRootId = rootIdOf(oldPath);
         try {
-            await api.moveFile(oldPath, newPath, requireWorkspaceId());
+            await (owningRootId
+                ? api.moveFile(oldPath, newPath, requireWorkspaceId(), owningRootId)
+                : api.moveFile(oldPath, newPath, requireWorkspaceId()));
             if (activeFilePath.value === oldPath) {
                 const file = openFiles.value.get(oldPath);
                 openFiles.value.delete(oldPath);
@@ -542,8 +773,11 @@ export const useWorkspaceStore = defineStore("workspace", () => {
         const name = from.split("/").pop() || from,
             to = toDir ? `${toDir}/${name}` : name;
         if (to === from) return true;
+        const owningRootId = rootIdOf(from);
         try {
-            await api.moveFile(from, to, requireWorkspaceId());
+            await (owningRootId
+                ? api.moveFile(from, to, requireWorkspaceId(), owningRootId)
+                : api.moveFile(from, to, requireWorkspaceId()));
             closeFile(from);
             await refreshAfterMutation(toDir);
             return true;
@@ -563,8 +797,11 @@ export const useWorkspaceStore = defineStore("workspace", () => {
             copyName =
                 dot > 0 ? `${base.substring(0, dot)}-copy${base.substring(dot)}` : `${base}-copy`,
             to = dir ? `${dir}/${copyName}` : copyName;
+        const owningRootId = rootIdOf(path);
         try {
-            await api.copyFile(path, to, requireWorkspaceId());
+            await (owningRootId
+                ? api.copyFile(path, to, requireWorkspaceId(), owningRootId)
+                : api.copyFile(path, to, requireWorkspaceId()));
             await refreshAfterMutation(dir);
             return true;
         } catch (e) {
@@ -583,9 +820,12 @@ export const useWorkspaceStore = defineStore("workspace", () => {
             );
             return false;
         }
-        const fullPath = parentDir ? `${parentDir}/${trimmed}` : trimmed;
+        const fullPath = parentDir ? `${parentDir}/${trimmed}` : trimmed,
+            owningRootId = rootIdOf(parentDir);
         try {
-            await api.createDirectory(fullPath, requireWorkspaceId());
+            await (owningRootId
+                ? api.createDirectory(fullPath, requireWorkspaceId(), owningRootId)
+                : api.createDirectory(fullPath, requireWorkspaceId()));
             await refreshAfterMutation(parentDir);
             return true;
         } catch (e) {
@@ -694,6 +934,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
 
     async function executeUpload(targetDir: string, splitPreference?: boolean) {
         if (!ensureWritable()) return;
+        const owningRootId = rootIdOf(targetDir);
         for (const item of uploadQueue.value) {
             if (item.status === "cancelled") continue;
             if (item.size > MAX_WORKSPACE_FILE_BYTES) {
@@ -713,7 +954,9 @@ export const useWorkspaceStore = defineStore("workspace", () => {
                 } else if (isTextualFile(item.file)) {
                     const text = await item.file.text(),
                         fullPath = targetDir ? `${targetDir}/${item.name}` : item.name;
-                    await api.writeFile(fullPath, text, requireWorkspaceId());
+                    await (owningRootId
+                        ? api.writeFile(fullPath, text, requireWorkspaceId(), owningRootId)
+                        : api.writeFile(fullPath, text, requireWorkspaceId()));
                 } else {
                     // Binary files must preserve raw bytes: route through the CP upload
                     // proxy (POST /api/v1/files/upload), which forwards the body to the
@@ -743,8 +986,11 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     }
 
     async function loadFullContent(path: string) {
+        const owningRootId = rootIdOf(path);
         try {
-            const res = await api.readFile(path, requireWorkspaceId()),
+            const res = owningRootId
+                    ? await api.readFile(path, requireWorkspaceId(), owningRootId)
+                    : await api.readFile(path, requireWorkspaceId()),
                 file = openFiles.value.get(path);
             if (file) {
                 file.content = res.content;
@@ -768,6 +1014,11 @@ export const useWorkspaceStore = defineStore("workspace", () => {
         expandedPaths.value = new Set();
         setTreeError(null);
         loadedWorkspaceId.value = null;
+        // PLAN-0639 M2: root grouping is workspace-scoped too — a stale secondary root
+        // tree must not leak into the next workspace's groups.
+        expandedRootIds.value = new Set();
+        collapsedRootIds.value = new Set();
+        rootTrees.value = new Map();
         // `loadTreePending` is intentionally kept: a request queued while the previous
         // workspace was loading is drained for whatever workspace is current then.
     }
@@ -782,6 +1033,18 @@ export const useWorkspaceStore = defineStore("workspace", () => {
         loading,
         treeError,
         treeErrorKind,
+        workspaceRoots,
+        isMultiRoot,
+        primaryRootId,
+        primaryRootPath,
+        expandedRootIds,
+        collapsedRootIds,
+        rootTrees,
+        isRootExpanded,
+        toggleRoot,
+        loadRootTree,
+        refreshRootTree,
+        rootTreeState,
         openFiles,
         activeFilePath,
         activeFile,

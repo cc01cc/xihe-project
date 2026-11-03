@@ -9,19 +9,21 @@ export interface ReadFilePreviewResult {
 async function runtimeReadFile(
     path: string,
     workspaceId: string,
-    opts?: { max_bytes?: number },
+    opts?: { max_bytes?: number; rootId?: string },
 ): Promise<ReadFilePreviewResult> {
-    const { content } = await api.readFile(path, workspaceId),
+    const { content } = await api.readFile(path, workspaceId, opts?.rootId),
         maxBytes = opts?.max_bytes;
     return maxBytes !== undefined && content.length > maxBytes
         ? { content: content.slice(0, maxBytes), truncated: true }
         : { content, truncated: false };
 }
 
+/** PLAN-0639 M2: `rootId` scopes the read to one declared root of a multi-root workspace. */
 export async function readFilePreview(
     path: string,
     size: number | undefined,
     workspaceId: string,
+    rootId?: string,
 ): Promise<ReadFilePreviewResult> {
     const decision = decideReadMode(size);
     switch (decision.action) {
@@ -30,9 +32,10 @@ export async function readFilePreview(
         case "truncate":
             return runtimeReadFile(path, workspaceId, {
                 max_bytes: FILE_SIZE_THRESHOLDS.TRUNCATE_BYTES,
+                rootId,
             });
         case "full":
         default:
-            return runtimeReadFile(path, workspaceId);
+            return runtimeReadFile(path, workspaceId, { rootId });
     }
 }

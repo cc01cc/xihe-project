@@ -8,9 +8,18 @@ import TreeNodeList from "./TreeNodeList.vue";
 const props = withDefaults(
     defineProps<{
         searchQuery?: string;
+        /**
+         * PLAN-0639 M2: nodes of one root group of a multi-root workspace. Omitting
+         * `nodes` renders the primary root tree (legacy single-root behavior);
+         * `rootId` scopes file opens to the owning declared root.
+         */
+        nodes?: FileNode[];
+        rootId?: string;
     }>(),
     {
         searchQuery: "",
+        nodes: undefined,
+        rootId: undefined,
     },
 );
 
@@ -36,7 +45,9 @@ function hideRuntimeArtifacts(nodes: FileNode[]): FileNode[] {
     });
 }
 
-const userTree = computed(() => hideRuntimeArtifacts(ws.fileTree));
+// NOTE(PLAN-0639 M2): expansion state is a path Set shared across root groups, so two
+// roots that contain the same relative directory share expansion — cosmetic only.
+const userTree = computed(() => hideRuntimeArtifacts(props.nodes ?? ws.fileTree));
 
 /** Frontend filter over the loaded tree (M3 task 3.5): matches name substring,
  *  keeps ancestors of matches, and auto-expands them. Empty query = full tree. */
@@ -83,6 +94,11 @@ const searchExpanded = computed(() => {
             }
         "
     >
-        <TreeNodeList :nodes="displayTree" :level="0" :search-query="searchQuery" />
+        <TreeNodeList
+            :nodes="displayTree"
+            :level="0"
+            :search-query="searchQuery"
+            :root-id="rootId"
+        />
     </Tree>
 </template>
