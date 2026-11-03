@@ -24,6 +24,7 @@ import {
 } from './xihe-cli/provider.mjs';
 import { runApiEscape } from './xihe-cli/api.mjs';
 import { runAuthCommand } from './xihe-cli/auth.mjs';
+import { attachAuthRefresh } from './xihe-cli/auth-refresh.mjs';
 import {
   bindSkill,
   deleteSkill,
@@ -227,7 +228,7 @@ export async function runCommand(argv, dependencies = {}) {
   // before any consumer reads XIHE_DEV_ADMIN_PASSWORD. OS env and test-injected bags win;
   // called here (entry) not at module top so unit tests with injected env bags are unaffected.
   if (!dependencies.env) loadEnvFileChain({ env: baseEnv });
-  const fetchImpl = dependencies.fetchImpl ?? fetch;
+  const rawFetch = dependencies.fetchImpl ?? fetch;
   const spawnSyncImpl = dependencies.spawnSyncImpl;
   const spawnImpl = dependencies.spawnImpl;
   const prompt = dependencies.promptSecret ?? ((label) => promptSecret(label));
@@ -243,6 +244,17 @@ export async function runCommand(argv, dependencies = {}) {
   // real %LOCALAPPDATA%\Xihe token cache. The cache stays inert unless the caller
   // points XIHE_CLI_TOKEN_FILE at an isolated path.
   if (dependencies.env !== undefined && env.XIHE_CLI_TOKEN_FILE === undefined) env.XIHE_CLI_TOKEN_CACHE = 'off';
+  // PLAN-0643 R5: a 401 on a cached token refreshes once (single-flight across
+  // processes) and replays the request; 403 / non-CP origins are untouched.
+  const fetchImpl = attachAuthRefresh({
+    fetchImpl: rawFetch,
+    env,
+    promptSecret: prompt,
+    fsImpl: dependencies.fsImpl,
+    platform: dependencies.platform,
+    waitMs: dependencies.authRefreshWaitMs,
+    pollMs: dependencies.authRefreshPollMs,
+  });
   const [group, command, ...rest] = args;
 
   try {
