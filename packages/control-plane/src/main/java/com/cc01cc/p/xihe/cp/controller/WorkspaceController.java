@@ -47,7 +47,10 @@ public class WorkspaceController {
                     HttpStatus.UNAUTHORIZED, "AUTHORIZATION_REQUIRED", "Authentication required");
         }
         return workspaceService.findCurrentWorkspace(userId)
-                .<ResponseEntity<?>>map(workspace -> toView(workspace, userId, isAdmin()))
+                .<ResponseEntity<?>>map(workspace -> ResponseEntity.ok(toMap(workspace,
+                        workspaceService.ownerIdOf(workspace.getId()),
+                        userId, isAdmin(), roleFor(workspace, userId),
+                        workspaceService.listRoots(workspace.getId().toString()))))
                 .orElseGet(() -> ProblemDetailsHandler.problemResponse(
                         HttpStatus.NOT_FOUND, "WORKSPACE_NOT_FOUND", "Workspace not found"));
     }
@@ -62,7 +65,8 @@ public class WorkspaceController {
         }
         return ResponseEntity.ok(workspaceService.getWorkspacesByUser(userId).stream()
                 .map(workspace -> toMap(workspace, workspaceService.ownerIdOf(workspace.getId()),
-                        userId, isAdmin(), roleFor(workspace, userId))).toList());
+                        userId, isAdmin(), roleFor(workspace, userId),
+                        workspaceService.listRoots(workspace.getId().toString()))).toList());
     }
 
     @GetMapping("/{workspaceId}")
@@ -117,7 +121,8 @@ public class WorkspaceController {
             // PLAN-0610 W4b: the creator is the owner through the WS_OWNER binding written by the service.
         return ResponseEntity.status(HttpStatus.CREATED).body(toMap(workspace,
                 workspaceService.ownerIdOf(workspace.getId()), userId, isAdmin(),
-                WorkspaceRole.OWNER.name()));
+                WorkspaceRole.OWNER.name(),
+                workspaceService.listRoots(workspace.getId().toString())));
         } catch (CpApiException e) {
             return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
         }
@@ -213,7 +218,8 @@ public class WorkspaceController {
 
     private ResponseEntity<Map<String, Object>> toView(Workspace workspace, String userId, boolean admin) {
         return ResponseEntity.ok(toMap(workspace, workspaceService.ownerIdOf(workspace.getId()),
-                userId, admin, roleFor(workspace, userId)));
+                userId, admin, roleFor(workspace, userId),
+                workspaceService.listRoots(workspace.getId().toString())));
     }
 
     private String roleFor(Workspace workspace, String userId) {
@@ -221,7 +227,7 @@ public class WorkspaceController {
     }
 
     static Map<String, Object> toMap(Workspace workspace, String ownerId, String userId,
-            boolean admin, String workspaceRole) {
+            boolean admin, String workspaceRole, java.util.List<WorkspaceRoot> roots) {
         Map<String, Object> view = new LinkedHashMap<>();
         view.put("id", workspace.getId());
         view.put("name", workspace.getName());
@@ -233,6 +239,9 @@ public class WorkspaceController {
         view.put("storageMode", workspace.getStorageMode());
         view.put("hostPath", admin || (userId != null && userId.equals(ownerId))
                 ? workspace.getHostPath() : null);
+        // PLAN-0639 M1: ordered root projection [{id, alias, position}].
+        view.put("roots", roots == null ? java.util.List.of() : roots.stream()
+                .map(WorkspaceController::rootToMap).toList());
         view.put("executionMode", workspace.getExecutionMode());
         view.put("generation", workspace.getGeneration());
         view.put("workspaceRole", workspaceRole);

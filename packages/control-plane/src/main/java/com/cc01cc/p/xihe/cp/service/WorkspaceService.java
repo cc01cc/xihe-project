@@ -676,6 +676,19 @@ public class WorkspaceService {
         List<WorkspaceRoot> validated = normalizeRoots(List.of(entry), workspace.getStorageMode());
 
         WorkspaceRoot root = validated.get(0);
+
+        // PLAN-0639 M1: pre-check against active roots to map DB unique-key violations to 409.
+        String canonical = root.getHostPath().toLowerCase(java.util.Locale.ROOT);
+        boolean duplicatePath = existing.stream()
+                .anyMatch(r -> r.getHostPath() != null
+                        && r.getHostPath().toLowerCase(java.util.Locale.ROOT).equals(canonical));
+        if (duplicatePath) {
+            throw new CpApiException(
+                    org.springframework.http.HttpStatus.CONFLICT,
+                    "ROOT_PATH_CONFLICT",
+                    "An active root already exists at path: " + canonical);
+        }
+
         root.setId(UUID.randomUUID());
         root.setWorkspaceId(UUID.fromString(workspaceId));
         root.setPosition(nextPosition);
