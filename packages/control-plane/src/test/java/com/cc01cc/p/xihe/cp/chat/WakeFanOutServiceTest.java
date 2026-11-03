@@ -18,6 +18,8 @@ import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.timeout;
 import static org.mockito.Mockito.verify;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.when;
 
 /**
@@ -83,7 +85,7 @@ class WakeFanOutServiceTest {
     }
 
     @Test
-    void terminalEventUnblocksTheSerialLoop() {
+    void recipientsDispatchWithoutWaitingForThePreviousRun() {
         UUID firstRun = UUID.randomUUID();
         when(dispatch.fire(eq(ANN), eq("mention"), anyString(), eq(SESSION_ID), isNull(), anyString()))
                 .thenReturn(new WakeDispatchService.WakeFireResult(true, firstRun, "submitted"));
@@ -91,33 +93,128 @@ class WakeFanOutServiceTest {
                 .thenReturn(new WakeDispatchService.WakeFireResult(false, null, "skipped_muted"));
 
         fanOut.fanOut(SESSION_ID, "ws-1", "owner-1", ROOT_RUN.toString(), "@Ann @John", roster());
-        // Serial invariant: John cannot have fired while Ann's run is still in flight.
-        org.mockito.Mockito.verify(dispatch, org.mockito.Mockito.times(0))
-                .fire(eq(JOHN), eq("mention"), anyString(), eq(SESSION_ID), isNull(), anyString());
-        long deadline = System.currentTimeMillis() + 2000;
-        while (!fanOut.isAwaiting(firstRun.toString()) && System.currentTimeMillis() < deadline) {
-            Thread.yield();
-        }
-        fanOut.onRunTerminalized(new ChatRunTerminalizedEvent(SESSION_ID.toString(),
-                firstRun.toString(), "succeeded", "success"));
-        verify(dispatch, timeout(2000)).fire(eq(JOHN), eq("mention"),
-                eq("wake:mention:" + ROOT_RUN), eq(SESSION_ID), isNull(), anyString());
+
+        // PLAN-0648 task-34: dispatching never waits for the previous recipient's run — the wait is an
+        // observation on its own thread, so both recipients fire even though the first run is slow.
+        verify(dispatch, timeout(2000)).fire(eq(ANN), eq("mention"), anyString(), eq(SESSION_ID),
+                isNull(), anyString());
+        verify(dispatch, timeout(2000)).fire(eq(JOHN), eq("mention"), anyString(), eq(SESSION_ID),
+                isNull(), anyString());
     }
 
     @Test
-    void timedOutWaitStillContinuesToTheNextRecipient() {
+    void aSlowRunDoesNotDelayTheRoundOrTheNextOne() {
         when(config.resolve(eq("agent-runtime"), eq("wakeDispatchWaitSeconds"), any(), any()))
-                .thenReturn("1");
+                .thenReturn("30");
         UUID hangingRun = UUID.randomUUID();
         when(dispatch.fire(eq(ANN), eq("mention"), anyString(), eq(SESSION_ID), isNull(), anyString()))
                 .thenReturn(new WakeDispatchService.WakeFireResult(true, hangingRun, "submitted"));
         when(dispatch.fire(eq(JOHN), eq("mention"), anyString(), eq(SESSION_ID), isNull(), anyString()))
-                .thenReturn(new WakeDispatchService.WakeFireResult(false, null, "skipped_muted"));
+                .thenReturn(new WakeDispatchService.WakeFireResult(true, UUID.randomUUID(), "submitted"));
 
+        long startedAt = System.currentTimeMillis();
         fanOut.fanOut(SESSION_ID, "ws-1", "owner-1", ROOT_RUN.toString(), "@Ann @John", roster());
+        UUID nextRoot = UUID.randomUUID();
+        fanOut.fanOut(SESSION_ID, "ws-1", "owner-1", nextRoot.toString(), "@John next round", roster());
 
-        // Q3: the round survives the timeout — John still fires after Ann's run never settles.
-        verify(dispatch, timeout(10_000)).fire(eq(JOHN), eq("mention"),
-                eq("wake:mention:" + ROOT_RUN), eq(SESSION_ID), isNull(), anyString());
+        verify(dispatch, timeout(2000)).fire(eq(JOHN), eq("mention"),
+                eq("wake:mention:" + nextRoot), eq(SESSION_ID), isNull(), anyString());
+        assertTrue(System.currentTimeMillis() - startedAt < 10_000,
+                "neither the round nor the next one may wait on a slow run");
+    }
+
+    @Test
+    void roundStatsBalanceEnqueuedAgainstStartedDeferredAndDropped() {
+        UUID startedRun = UUID.randomUUID();
+        when(dispatch.fire(eq(JOHN), eq("mention"), anyString(), eq(SESSION_ID), isNull(), anyString()))
+                .thenReturn(new WakeDispatchService.WakeFireResult(true, startedRun, "submitted"));
+        when(dispatch.fire(eq(ANN), eq("mention"), anyString(), eq(SESSION_ID), isNull(), anyString()))
+                .thenThrow(new IllegalStateException("dispatch exploded"));
+
+        fanOut.fanOut(SESSION_ID, "ws-1", "owner-1", ROOT_RUN.toString(), "@Ann @John look", roster());
+
+        org.awaitility.Awaitility.await().atMost(java.time.Duration.ofSeconds(5))
+                .until(() -> fanOut.lastRoundStats() != null);
+        WakeFanOutService.WakeRoundStats stats = fanOut.lastRoundStats();
+        assertTrue(stats.balanced(), "enqueued == started + deferred + dropped: " + stats);
+        assertEquals(2, stats.recipients());
+        assertEquals(1, stats.started());
+        assertEquals(1, stats.dropped());
+        assertEquals(0, stats.deferred());
+    }
+    // ── PLAN-0648 task-34: every enqueued round must reach a terminal outcome ─────────────
+
+    @Test
+    void consecutiveRoundsDrainIndependentlyEvenWhenTheFirstRunNeverFinishes() {
+        // Round 1 keeps its awaiter busy for the whole wait window; round 2 must not queue behind it.
+        UUID hangingRun = UUID.randomUUID();
+        UUID secondRoundRun = UUID.randomUUID();
+        when(config.resolve(eq("agent-runtime"), eq("wakeDispatchWaitSeconds"), any(), any()))
+                .thenReturn("20");
+        when(dispatch.fire(eq(ANN), eq("mention"), anyString(), eq(SESSION_ID), isNull(), anyString()))
+                .thenReturn(new WakeDispatchService.WakeFireResult(true, hangingRun, "submitted"));
+        when(dispatch.fire(eq(JOHN), eq("mention"), anyString(), eq(SESSION_ID), isNull(), anyString()))
+                .thenReturn(new WakeDispatchService.WakeFireResult(true, secondRoundRun, "submitted"));
+
+        long firstEnqueue = System.currentTimeMillis();
+        fanOut.fanOut(SESSION_ID, "ws-1", "owner-1", ROOT_RUN.toString(), "@Ann 第一条", roster());
+        verify(dispatch, timeout(2000)).fire(eq(ANN), eq("mention"), anyString(), eq(SESSION_ID),
+                isNull(), anyString());
+
+        UUID secondRootRun = UUID.randomUUID();
+        fanOut.fanOut(SESSION_ID, "ws-1", "owner-1", secondRootRun.toString(), "@John 第二条", roster());
+
+        // The proof of no head-of-line blocking: round 2 fires while round 1 is still awaiting.
+        verify(dispatch, timeout(2000)).fire(eq(JOHN), eq("mention"),
+                eq("wake:mention:" + secondRootRun), eq(SESSION_ID), isNull(), anyString());
+        long elapsedMs = System.currentTimeMillis() - firstEnqueue;
+        assertTrue(elapsedMs < 15_000,
+                "round 2 must not wait for round 1's wait window (elapsed=" + elapsedMs + "ms)");
+        // Round 1's observation is still outstanding on the observer thread; round 2 already ran.
+        org.awaitility.Awaitility.await().atMost(java.time.Duration.ofSeconds(5))
+                .until(() -> fanOut.isAwaiting(hangingRun.toString()));
+    }
+
+    @Test
+    void aRunThatIsAlreadyTerminalDoesNotBurnTheWaitWindow() {
+        UUID quickRun = UUID.randomUUID();
+        when(config.resolve(eq("agent-runtime"), eq("wakeDispatchWaitSeconds"), any(), any()))
+                .thenReturn("30");
+        when(dispatch.fire(eq(ANN), eq("mention"), anyString(), eq(SESSION_ID), isNull(), anyString()))
+                .thenReturn(new WakeDispatchService.WakeFireResult(true, quickRun, "submitted"));
+        WakeFanOutService spyFanOut = org.mockito.Mockito.spy(fanOut);
+        ChatRunStatusReadService status = mock(ChatRunStatusReadService.class);
+        when(status.findById(quickRun)).thenReturn(java.util.Optional.of(
+                new ChatRunStatusReadService.ChatRunStatusView(quickRun, "succeeded",
+                        SESSION_ID.toString(), "owner-1", "ws-1", null, null)));
+        org.springframework.test.util.ReflectionTestUtils.setField(spyFanOut, "chatRunStatus", status);
+
+        long startedAt = System.currentTimeMillis();
+        spyFanOut.fanOut(SESSION_ID, "ws-1", "owner-1", ROOT_RUN.toString(), "@Ann 秒回", roster());
+
+        verify(dispatch, timeout(2000)).fire(eq(ANN), eq("mention"), anyString(), eq(SESSION_ID),
+                isNull(), anyString());
+        org.awaitility.Awaitility.await().atMost(java.time.Duration.ofSeconds(5))
+                .until(() -> !spyFanOut.isAwaiting(quickRun.toString()));
+        long elapsedMs = System.currentTimeMillis() - startedAt;
+        assertTrue(elapsedMs < 5_000,
+                "an already-terminal run must not occupy the 30s wait (elapsed=" + elapsedMs + "ms)");
+    }
+
+    @Test
+    void aFailingRecipientStillLetsTheRoundFinishAndTheNextRoundDrain() {
+        UUID secondRun = UUID.randomUUID();
+        when(dispatch.fire(eq(ANN), eq("mention"), anyString(), eq(SESSION_ID), isNull(), anyString()))
+                .thenThrow(new IllegalStateException("dispatch exploded"));
+        when(dispatch.fire(eq(JOHN), eq("mention"), anyString(), eq(SESSION_ID), isNull(), anyString()))
+                .thenReturn(new WakeDispatchService.WakeFireResult(true, secondRun, "submitted"));
+
+        fanOut.fanOut(SESSION_ID, "ws-1", "owner-1", ROOT_RUN.toString(), "@Ann 炸了", roster());
+
+        // The drop is recorded (wake_handoff_dropped) and the round still ends, so later rounds run.
+        UUID nextRoot = UUID.randomUUID();
+        fanOut.fanOut(SESSION_ID, "ws-1", "owner-1", nextRoot.toString(), "@John 后一轮", roster());
+        verify(dispatch, timeout(2000)).fire(eq(JOHN), eq("mention"),
+                eq("wake:mention:" + nextRoot), eq(SESSION_ID), isNull(), anyString());
     }
 }
