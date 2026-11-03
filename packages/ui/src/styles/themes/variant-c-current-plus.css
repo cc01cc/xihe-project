@@ -1,8 +1,10 @@
 /*
  * PLAN-0631 M2 视觉语言候选 C —— 现状+（current plus / consistency only）。
  *
- * 激活方式：`?variant=c` 或 localStorage `xihe-visual-variant = "c"`（见
- * `src/lib/visualVariant.ts`）。未设置时本文件不匹配任何元素，**默认主题不受影响**。
+ * **仅用于对比与回归，非发布默认**：默认视觉语言是 B（密集，token 在
+ * `src/styles/main.css` 的 `:root`）。本文件只在 `?variant=c` 时覆盖默认值，
+ * 用于同一份数据上的并排对比与旧候选回归；不再经 localStorage 持久化
+ * （旧键启动时清除，见 `src/lib/visualVariant.ts`）。
  *
  * 这个方案在改什么（只做一致性收敛，不做气质改造）
  * - 字号阶梯显式化：xs 12 / sm 14 / base 16，行高统一到 1.5 / 1.5 / 1.6

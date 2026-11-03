@@ -18,9 +18,9 @@ const app = createApp(App);
 app.use(pinia);
 // PLAN-0602: apply the persisted language before the first paint so English never flashes zh-CN.
 useSettingsStore().initLanguage();
-// PLAN-0631 M2: project the visual-language candidate (`?variant=` / localStorage) onto
-// `<html data-xh-variant>` before mount, so the first paint is already the chosen variant.
-// No attribute = the current look; the variant token sets only match when it is present.
+// PLAN-0631 M2（D31-M2 = B 密集）：默认语言就是 B（token 在 styles/main.css 的 :root）；
+// 这里只把 opt-in 覆盖 `?variant=a|c` 投影到 `<html data-xh-variant>`（仅对比/回归用），
+// 并清掉旧版持久化的 `xihe-visual-variant` 键，保证"无参数 = B"。
 initVisualVariant();
 app.use(router);
 app.use(i18n);

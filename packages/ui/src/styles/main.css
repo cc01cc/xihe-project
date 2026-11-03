@@ -9,15 +9,14 @@
 @import "./typeset.css";
 
 /*
- * PLAN-0631 M2 视觉语言候选（A 克制 / B 密集 / C 现状+）。
+ * PLAN-0631 M2（D31-M2-视觉语言 = B 密集）：默认视觉语言 = B，token 直接落
+ * 下文 `:root`（基础层），组件只消费 `var(--…)`，不散落新色值。
  *
- * 三个候选都是**独立变量集**，只在 `<html data-xh-variant="a|b|c">` 下生效
- * （开关见 `src/lib/visualVariant.ts`：`?variant=` 或 localStorage
- * `xihe-visual-variant`）。没有该属性时三份文件一个选择器都不匹配，默认主题
- * 与改动前逐像素一致 —— 用户圈选后由后续任务落地，这里只做选项。
+ * A（克制）/ C（现状+）只保留为 **opt-in 覆盖**（`?variant=a` / `?variant=c`，
+ * 见 `src/lib/visualVariant.ts`），**仅用于对比与回归，非发布默认**。
+ * 没有 `data-xh-variant` 属性时渲染的就是 B —— 不存在"候选层"了。
  */
 @import "./themes/variant-a-restrained.css";
-@import "./themes/variant-b-dense.css";
 @import "./themes/variant-c-current-plus.css";
 
 /* Keep chat bubbles compact; markstream's document paragraph spacing is too large for messages. */
@@ -77,11 +76,12 @@
     --radius-lg: var(--radius);
     --radius-xl: calc(var(--radius) + 4px);
     /* PLAN-0631 M0 圆角三档（语义变量；组件 M1 逐面翻，M0 只立变量+规则注释）：
-       control = 按钮/输入/小控件（6-8px 语义）；card = 卡片/面板（10-12）；
-       overlay = 弹层/dropdown（12-16，允许比 card 大以分层）。 */
-    --radius-control: 0.5rem;
+       control = 按钮/输入/小控件；card = 卡片/面板；overlay = 弹层/dropdown。
+       PLAN-0631 M2（D31-M2 = B 密集）：三档默认都收进 `--radius`（4px）；
+       A/C 需要分层时在各自变量集里覆盖（见 variant-a / variant-c）。 */
+    --radius-control: var(--radius);
     --radius-card: var(--radius);
-    --radius-overlay: calc(var(--radius) + 0.25rem);
+    --radius-overlay: var(--radius);
     /* PLAN-0631 M0：tinted 弹层阴影（hue 取自 accent 264），仅弹层语义（M1 起 dropdown/popover 用）。 */
     --shadow-popover: 0 10px 30px oklch(0.25 0.03 264 / 0.14), 0 2px 8px oklch(0.25 0.03 264 / 0.1);
 }
@@ -157,71 +157,99 @@
 }
 
 /*
- * PLAN-0582 S2 visual tokens (review P0-2 / P2-1 / P2-3).
+ * PLAN-0631 M2 默认视觉语言 = B（密集，用户 2026-11-03 圈选；决策 D31-M2）。
  *
- * Surfaces — exactly two layers, no shadows:
- *   --surface-canvas   rail / navigation panel / dock / file tree
- *   --surface-content  main content, cards, inputs
- *   --border-subtle    1px separation between the two layers (never double lines)
+ * 下面这些数值是用户圈选的 B，**不要改数值**；改语言 = 改这一层，组件不写死色值/字号。
+ * - 密度：间距 3.5px 步进（`--spacing` = 0.25rem × 0.875）、正文 13px/行高 1.45、
+ *   表格行 32px（见文件下方 `tr` 规则）。
+ * - 圆角：主档 4px（`rounded-sm` 档收到 0，小控件方正）、消息气泡 8px
+ *   （`--radius-3xl`，`rounded-3xl` 的消费点是 `BubbleContent`）。
+ * - 强调色：**只有一个** `#2450c8`，只出现在 CTA / 焦点环 / 当前项；`--accent`
+ *   仍是 shadcn 的 hover 底，品牌色走 `--brand`（同源别名，`--primary`/`--ring` 指向它），
+ *   error/danger 继续用 `--destructive`。
+ * - 对比度（实测见 `.local/xh-d28/0631-variants.md`）：正文 16.70:1、次级 7.40:1、
+ *   强调色上的白字 6.87:1、焦点环 6.87:1（阈值分别为 4.5 / 4.5 / 4.5 / 3）。
  *
- * Accent — a single saturated colour, allowed in only four places:
- *   primary CTA · current nav item (aria-current) · focus ring · error/danger.
- *   NOTE: `--accent` is the existing shadcn hover surface (`hover:bg-accent`), so the
- *   brand accent is mapped to `--brand` instead of redefining `--accent`; the focus
- *   ring reuses it through `--ring` and errors keep `--destructive`.
- *
- * Type scale (P2-3): panel/section title 16/600, body 14/400, auxiliary 12/400.
+ * 几何（密度/圆角/字号）在明暗两种模式**同时生效**；`.dark` 段只换调色板，不改几何。
+ * A/C 是 opt-in 覆盖（`?variant=a|c`），仅用于对比与回归，非发布默认。
  */
 :root {
-    --background: oklch(1 0 0);
-    --foreground: oklch(0.145 0 0);
-    --surface-canvas: #f7f7f8;
+    --background: #ffffff;
+    --foreground: #1b1e24;
+    --surface-canvas: #f3f4f6;
     --surface-content: #ffffff;
-    --border-subtle: #e5e7eb;
-    --brand: oklch(0.55 0.2 263);
-    --brand-foreground: oklch(0.985 0 0);
-    --card: oklch(1 0 0);
-    --card-foreground: oklch(0.145 0 0);
-    --popover: oklch(1 0 0);
-    --popover-foreground: oklch(0.145 0 0);
+    --border-subtle: #d5d9e0;
+    --brand: #2450c8;
+    --brand-foreground: #ffffff;
+    --card: #ffffff;
+    --card-foreground: #1b1e24;
+    --popover: #ffffff;
+    --popover-foreground: #1b1e24;
     /*
-     * PLAN-0631 M0：accent 进 --primary。取值 = 既有「新建对话」蓝（--brand），
-     * 不新造颜色：饱和度 77%（<80% 红线），与 --primary-foreground 对比度 9.27（WCAG AA✓）。
-     * --brand 保留为同源别名（既有 bg-brand 消费点不动）；M1 起新组件一律 bg-primary。
+     * PLAN-0631 M0：accent 进 --primary。M2（B）：唯一强调色 #2450c8，
+     * 白字压其上实测 6.87:1（WCAG AA✓）。--brand 保留为同源别名
+     * （既有 bg-brand 消费点不动）；新组件一律 bg-primary。
      */
     --primary: var(--brand);
     --primary-foreground: var(--brand-foreground);
-    --secondary: oklch(0.97 0 0);
-    --secondary-foreground: oklch(0.205 0 0);
-    --muted: oklch(0.97 0 0);
-    --muted-foreground: oklch(0.556 0 0);
-    --accent: oklch(0.97 0 0);
-    --accent-foreground: oklch(0.205 0 0);
+    --secondary: #eef0f3;
+    --secondary-foreground: #1b1e24;
+    --muted: #eef0f3;
+    --muted-foreground: #4f5661;
+    --accent: #e9ecf0;
+    --accent-foreground: #1b1e24;
     --destructive: oklch(0.577 0.245 27.325);
     /*
      * PLAN-0631 M0 边框三级（使用规则）：
      *   --border        默认 1px 分隔（组件不感知层级时的唯一选择）；
      *   --border-strong hover/聚焦加深档（可点行、卡片 hover 边框）——不得用于静态装饰；
      *   --border-subtle 两级表面之间的 1px 分隔（分组列表内行间），最弱。
+     * M2（B）：边框显式一档（#d5d9e0），静态分隔也看得见 —— 分隔靠线而不只靠留白。
      */
     --border: var(--border-subtle);
-    --border-strong: #d4d4d8;
-    --input: var(--border-subtle);
+    --border-strong: #b0b7c2;
+    --input: #cdd3dc;
     --ring: var(--brand);
     --chart-1: oklch(0.87 0 0);
     --chart-2: oklch(0.556 0 0);
     --chart-3: oklch(0.439 0 0);
     --chart-4: oklch(0.371 0 0);
     --chart-5: oklch(0.269 0 0);
-    --radius: 0.625rem;
+    /* B 主档 4px；`rounded-sm` 档（calc(radius - 4px)）因此收到 0，小控件方正。 */
+    --radius: 0.25rem;
+    /* 消息气泡（BubbleContent 的 rounded-3xl）：B = 8px，不做胶囊。 */
+    --radius-3xl: 0.5rem;
+    /*
+     * B 的密度：3.5px 步进（0.25rem × 0.875）。Tailwind 的 `p-*` / `gap-*` 都从
+     * `--spacing` 派生，所以改这一处即可整体收紧；正文 13px / 行高 1.45。
+     */
+    --spacing: 0.21875rem;
+    --text-xs: 0.75rem;
+    --text-xs--line-height: 1.4;
+    --text-sm: 0.8125rem;
+    --text-sm--line-height: 1.45;
+    --text-base: 0.9375rem;
+    --text-base--line-height: 1.5;
+    /* 气泡正文用 `leading-relaxed`（`--tw-leading` 优先于 `--text-sm--line-height`）。 */
+    --leading-relaxed: 1.45;
     --sidebar: var(--surface-canvas);
-    --sidebar-foreground: oklch(0.145 0 0);
+    --sidebar-foreground: #1b1e24;
     --sidebar-primary: oklch(0.205 0 0);
     --sidebar-primary-foreground: oklch(0.985 0 0);
-    --sidebar-accent: oklch(0.97 0 0);
-    --sidebar-accent-foreground: oklch(0.205 0 0);
-    --sidebar-border: var(--border-subtle);
+    --sidebar-accent: #e9ecf0;
+    --sidebar-accent-foreground: #1b1e24;
+    --sidebar-border: #d5d9e0;
     --sidebar-ring: var(--brand);
+}
+
+/*
+ * B 密集：表格行压到 32px。`height` 在表格布局里是**下限**，内容更高的行不会被裁切；
+ * 只作用于 `<tr>`（真正的表格行），表单行与列表卡片由 `--spacing` / `--text-sm` 统一压缩。
+ * 用「无 `data-xh-variant`」选择器而不是裸 `tr`：A/C 是 opt-in 覆盖，选中它们时表格
+ * 保持各自原有的行高（A/C 的数值不改，也不被 B 的几何顺带改掉）。
+ */
+html:not([data-xh-variant]) tr {
+    height: 32px;
 }
 
 .dark {

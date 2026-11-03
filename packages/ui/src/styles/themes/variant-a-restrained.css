@@ -1,8 +1,10 @@
 /*
  * PLAN-0631 M2 视觉语言候选 A —— 克制（restrained）。
  *
- * 激活方式：`?variant=a` 或 localStorage `xihe-visual-variant = "a"`（见
- * `src/lib/visualVariant.ts`）。未设置时本文件不匹配任何元素，**默认主题不受影响**。
+ * **仅用于对比与回归，非发布默认**：默认视觉语言是 B（密集，token 在
+ * `src/styles/main.css` 的 `:root`）。本文件只在 `?variant=a` 时覆盖默认值，
+ * 用于同一份数据上的并排对比与旧候选回归；不再经 localStorage 持久化
+ * （旧键启动时清除，见 `src/lib/visualVariant.ts`）。
  *
  * 这个方案在改什么
  * - 表面：两层都压到近白（画布 #fafafa / 内容 #ffffff），分隔线降到近透明，

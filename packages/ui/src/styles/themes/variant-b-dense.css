@@ -1,91 +1,13 @@
 /*
  * PLAN-0631 M2 视觉语言候选 B —— 密集（dense / information-tool）。
  *
- * 激活方式：`?variant=b` 或 localStorage `xihe-visual-variant = "b"`（见
- * `src/lib/visualVariant.ts`）。未设置时本文件不匹配任何元素，**默认主题不受影响**。
+ * **已提升为默认视觉语言（D31-M2，用户 2026-11-03 圈选）**，token 已落进
+ * `src/styles/main.css` 的 `:root`（基础层）；本文件不再定义任何变量，也不再被
+ * `main.css` 导入 —— 保留文件只为让"B 曾是一个候选"有可追溯的落点。
  *
- * 这个方案在改什么
- * - 密度：正文 13px / 行高 1.45；间距栅格 3.5px（−12.5%），表格/列表行高被压到
- *   约 32px（实测值见对比表）。这是"一屏看到更多行"的工具型取舍。
- * - 边框：显式、偏冷灰（#d5d9e0），分隔靠线而不是靠留白 —— 与 A 相反。
- * - 圆角：主档 4px（`rounded-sm` 档位收到 0，即小控件方正）。
- * - 强调色：仍然只有一个（深蓝 #2450c8），只出现在 CTA / 焦点环 / 当前项。
+ * 现行语义：
+ * - 无 `data-xh-variant` 属性（无参数、`?variant=b`、`default`/`off`/`none`）→ 就是 B；
+ * - `?variant=a` / `?variant=c` → A/C 覆盖，**仅用于对比与回归，非发布默认**。
  *
- * 这个方案不改什么
- * - 不改任何组件代码：差异全部来自 CSS 变量。
- * - 不改布局骨架、栏宽、信息架构；不引入新的色相或第二强调色。
- * - 不改深色主题：`:not(.dark)` 限定，深色下惰性。
- *
- * 可访问性（实测值见 `.local/xh-d28/0631-variants.md`）
- * - 正文 #1b1e24 on #ffffff ≈ 16.9:1；次级文字 #4f5661 on #ffffff ≈ 7.6:1。
- * - 强调色 #2450c8 上的白字 ≈ 6.9:1；焦点环同色，≥3:1。
- * - 禁用态：`disabled:opacity-*` 沿用组件现值；13px 下仍保持 ≥4.5:1 的正文对比
- *   （禁用态按 WCAG 属"非活动控件"，不强制 4.5:1，但仍可辨）。
+ * 改 B 的数值请改 `main.css` 的 `:root`，不要在这里重建第二份变量集（会漂）。
  */
-html[data-xh-variant="b"]:not(.dark) {
-    /* —— 表面：画布略深一档，让显式边框有依托 —— */
-    --background: #ffffff;
-    --surface-canvas: #f3f4f6;
-    --surface-content: #ffffff;
-    --card: #ffffff;
-    --card-foreground: #1b1e24;
-    --popover: #ffffff;
-    --popover-foreground: #1b1e24;
-
-    /* —— 文字 —— */
-    --foreground: #1b1e24;
-    --muted-foreground: #4f5661;
-    --secondary-foreground: #1b1e24;
-    --accent-foreground: #1b1e24;
-    --sidebar-foreground: #1b1e24;
-    --sidebar-accent-foreground: #1b1e24;
-
-    /* —— 唯一强调色 —— */
-    --brand: #2450c8;
-    --brand-foreground: #ffffff;
-    --primary: var(--brand);
-    --primary-foreground: var(--brand-foreground);
-    --ring: var(--brand);
-    --sidebar-ring: var(--brand);
-
-    /* —— 边框：显式一档，静态分隔也看得见 —— */
-    --border-subtle: #d5d9e0;
-    --border: #d5d9e0;
-    --border-strong: #b0b7c2;
-    --input: #cdd3dc;
-    --sidebar-border: #d5d9e0;
-
-    /* —— 中性交互底 —— */
-    --secondary: #eef0f3;
-    --muted: #eef0f3;
-    --accent: #e9ecf0;
-    --sidebar-accent: #e9ecf0;
-    --sidebar: var(--surface-canvas);
-
-    /* —— 圆角：主档 4px；消息气泡同样收成 8px（不做胶囊，工具感） —— */
-    --radius: 0.25rem;
-    --radius-control: 0.25rem;
-    --radius-card: 0.25rem;
-    --radius-overlay: 0.25rem;
-    --radius-3xl: 0.5rem;
-
-    /* —— 密度：正文 13 / 1.45，间距 3.5px 栅格 —— */
-    --spacing: 0.21875rem;
-    --text-xs: 0.75rem;
-    --text-xs--line-height: 1.4;
-    --text-sm: 0.8125rem;
-    --text-sm--line-height: 1.45;
-    --text-base: 0.9375rem;
-    --text-base--line-height: 1.5;
-    /* 气泡正文用 `leading-relaxed`（`--tw-leading` 优先于 `--text-sm--line-height`）。 */
-    --leading-relaxed: 1.45;
-}
-
-/*
- * 表格行：brief 的 32px 目标。只作用于 `<tr>`（真正的表格行），不碰表单行与列表卡片 ——
- * 后者由上面的 `--spacing` / `--text-sm` 统一压缩。`height` 在表格布局里是下限，
- * 内容更高的行不会被裁切。
- */
-html[data-xh-variant="b"]:not(.dark) tr {
-    height: 32px;
-}
