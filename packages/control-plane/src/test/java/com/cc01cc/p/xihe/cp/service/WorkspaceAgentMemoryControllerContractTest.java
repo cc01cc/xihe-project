@@ -351,6 +351,68 @@ class WorkspaceAgentMemoryControllerContractTest extends AbstractIntegrationTest
                 Integer.class, action, workspaceId.toString());
     }
 
+    // ── V107: the subject-level route ────────────────────────────────────────────────────
+
+    private String subjectBasePath() {
+        return "/api/v1/agent-principals/" + principalId + "/memories";
+    }
+
+    @Test
+    void subjectLevelRouteReadsTheSameRowsAndCarriesNoWorkspaceField() throws Exception {
+        fixture();
+        addGrant("MEMORY_WRITE", "*");
+        String id = createdId(createMemory(principalId.toString(), Map.of("content", "Shared across workspaces")));
+
+        ResponseEntity<Map> oldPath = exchange(HttpMethod.GET, basePath(principalId.toString()) + "?status=active", null);
+        assertEquals(HttpStatus.OK, oldPath.getStatusCode(), String.valueOf(oldPath.getBody()));
+        ResponseEntity<Map> newPath = exchange(HttpMethod.GET,
+                subjectBasePath() + "?workspaceId=" + workspaceId + "&status=active", null);
+        assertEquals(HttpStatus.OK, newPath.getStatusCode(), String.valueOf(newPath.getBody()));
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> rows = (List<Map<String, Object>>) newPath.getBody().get("memories");
+        assertEquals(1, rows.size(), String.valueOf(newPath.getBody()));
+        assertEquals(id, rows.get(0).get("id"), "the subject route returns the same row as the alias");
+        assertFalse(rows.get(0).containsKey("workspaceId"),
+                "V107: a memory row is not owned by a workspace, so the view must not carry one");
+    }
+
+    @Test
+    void subjectLevelRouteRejectsAMissingAuthorizationWorkspace() throws Exception {
+        fixture();
+        addGrant("MEMORY_WRITE", "*");
+
+        // The workspace is the authorization context, so omitting it is a malformed request, not an
+        // implicit "no workspace needed" read: Spring rejects the required query parameter with the
+        // project's standard 400 envelope before any lookup happens.
+        ResponseEntity<Map> missing = exchange(HttpMethod.GET, subjectBasePath(), null);
+        assertEquals(HttpStatus.BAD_REQUEST, missing.getStatusCode(), String.valueOf(missing.getBody()));
+        assertEquals("INVALID_REQUEST", missing.getBody().get("code"));
+
+        // With a workspace present the read face uses the visibility gate (the same one the nested
+        // alias used), not MEMORY_WRITE: an empty set is the answer, not a 403.
+        ResponseEntity<Map> listed = exchange(HttpMethod.GET, subjectBasePath() + "?workspaceId=" + workspaceId, null);
+        assertEquals(HttpStatus.OK, listed.getStatusCode(), String.valueOf(listed.getBody()));
+        assertEquals(List.of(), listed.getBody().get("memories"));
+    }
+
+    @Test
+    void subjectLevelWriteKeepsTheAtomGateBeforeExistence() throws Exception {
+        fixture();
+
+        // No atom yet: 403 even for a principal id that does not exist (no existence oracle).
+        ResponseEntity<Map> denied = exchange(HttpMethod.POST,
+                subjectBasePath() + "?workspaceId=" + workspaceId, Map.of("content", "x"));
+        assertEquals(HttpStatus.FORBIDDEN, denied.getStatusCode(), String.valueOf(denied.getBody()));
+
+        addGrant("MEMORY_WRITE", "*");
+        ResponseEntity<Map> created = exchange(HttpMethod.POST,
+                subjectBasePath() + "?workspaceId=" + workspaceId, Map.of("content", "Written subject-level"));
+        assertEquals(HttpStatus.CREATED, created.getStatusCode(), String.valueOf(created.getBody()));
+        Map<?, ?> view = (Map<?, ?>) created.getBody().get("memory");
+        assertEquals("Written subject-level", view.get("content"));
+        assertEquals("manual", view.get("origin"));
+        assertFalse(view.containsKey("workspaceId"), "no workspace semantics on the wire (V107)");
+    }
     @SuppressWarnings("unchecked")
     private <T> ResponseEntity<T> exchange(HttpMethod method, String path, Object body) {
         HttpHeaders headers = new HttpHeaders();

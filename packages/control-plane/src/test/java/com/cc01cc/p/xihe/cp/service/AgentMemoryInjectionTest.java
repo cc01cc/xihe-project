@@ -142,12 +142,15 @@ class AgentMemoryInjectionTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void anotherWorkspaceOfTheSamePrincipalIsNotInjected() {
+    void anotherWorkspaceOfTheSamePrincipalIsInjectedToo() {
         fixture();
-        saveMemoryIn("only in the other workspace", otherWorkspaceId, 1);
+        saveMemoryIn("written while working in the other workspace", otherWorkspaceId, 1);
+        // V107 (user ruling 2026-11-04): memory belongs to the agent subject, so the same row is
+        // injected no matter which workspace the caller is currently working in.
         Map<String, Object> view = injection.snapshot(principalId, workspaceId, 24, 4_000);
-        assertEquals(AgentMemoryInjectionService.STATUS_EMPTY, view.get("status"),
-                "memory is isolated by (principal, workspace), never by principal alone");
+        assertEquals(AgentMemoryInjectionService.STATUS_READY, view.get("status"),
+                "an agent keeps one memory set across every workspace it is bound to");
+        assertEquals(1, entries(view).size());
         assertEquals(1, entries(injection.snapshot(principalId, otherWorkspaceId, 24, 4_000)).size());
     }
 
@@ -213,7 +216,6 @@ class AgentMemoryInjectionTest extends AbstractIntegrationTest {
                             int ageMinutes, Instant deletedAt, UUID workspace) {
         AgentMemory memory = new AgentMemory();
         memory.setPrincipalId(principalId);
-        memory.setWorkspaceId(workspace);
         memory.setContent(content);
         memory.setContentSha256(AgentMemoryNormalizer.sha256Hex(AgentMemoryNormalizer.normalize(content)));
         memory.setOrigin(origin);

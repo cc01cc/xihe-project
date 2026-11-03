@@ -12,11 +12,13 @@ import java.util.List;
 import java.util.UUID;
 
 /**
- * PLAN-0629 M1 (V99): one durable memory assertion of an agent subject.
+ * PLAN-0629 M1 (V99) + user ruling 2026-11-04 (V107): one durable memory assertion of an agent
+ * subject.
  *
- * <p>Strictly isolated by {@code (principal_id, workspace_id)}: a row belongs to exactly one subject
- * in exactly one workspace (D29-34), so a memory can never leak across workspaces and the profile of
- * one principal can never be read by another.</p>
+ * <p>Scoped to the <b>subject</b> ({@code principal_id}) only: the same agent principal shares one
+ * memory set across every workspace it is bound to, so a memory can never leak to another principal
+ * but is deliberately not partitioned per workspace. The workspace survives in the API as the
+ * <b>authorization context</b> of a write/read request, never as a column here.</p>
  *
  * <p>Why this entity carries so many constants: the v1 vocabulary is frozen (D29-25 / D29-31..34) and
  * the database enforces it too (V99 CHECKs). Keeping the names here means the service, the tests and a
@@ -62,9 +64,6 @@ public class AgentMemory {
 
     @Column(name = "principal_id", nullable = false, columnDefinition = "uuid")
     private UUID principalId;
-
-    @Column(name = "workspace_id", nullable = false, columnDefinition = "uuid")
-    private UUID workspaceId;
 
     /** Normalised content (single normalizer); the DDL enforces 1..8000 characters. */
     @Column(name = "content", nullable = false, columnDefinition = "TEXT")
@@ -127,9 +126,6 @@ public class AgentMemory {
 
     public UUID getPrincipalId() { return principalId; }
     public void setPrincipalId(UUID principalId) { this.principalId = principalId; }
-
-    public UUID getWorkspaceId() { return workspaceId; }
-    public void setWorkspaceId(UUID workspaceId) { this.workspaceId = workspaceId; }
 
     public String getContent() { return content; }
     public void setContent(String content) { this.content = content; }

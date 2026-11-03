@@ -89,16 +89,16 @@ public class AgentMemoryInjectionService {
      * @return the component source document for this instance (plain JSON)
      */
     @Transactional(readOnly = true)
-    public Map<String, Object> snapshot(UUID principalId, UUID workspaceId, int maxEntries, int maxTokens) {
+    public Map<String, Object> snapshot(UUID principalId, UUID authzWorkspaceId, int maxEntries, int maxTokens) {
         Map<String, Object> view = new LinkedHashMap<>();
         List<String> diagnostics = new ArrayList<>();
-        if (principalId == null || workspaceId == null) {
+        if (principalId == null || authzWorkspaceId == null) {
             diagnostics.add(DIAGNOSTIC_MISSING_PRINCIPAL);
             return view(STATUS_FAILED, List.of(), false, diagnostics, maxEntries, maxTokens, 0);
         }
         List<AgentMemory> rows = memories
-                .findByPrincipalIdAndWorkspaceIdAndStatusAndDeletedAtIsNullOrderByPinnedDescUpdatedAtDesc(
-                        principalId, workspaceId, AgentMemory.STATUS_ACTIVE);
+                .findByPrincipalIdAndStatusAndDeletedAtIsNullOrderByPinnedDescUpdatedAtDesc(
+                        principalId, AgentMemory.STATUS_ACTIVE);
         if (rows.isEmpty()) {
             return view(STATUS_EMPTY, List.of(), false, diagnostics, maxEntries, maxTokens, 0);
         }

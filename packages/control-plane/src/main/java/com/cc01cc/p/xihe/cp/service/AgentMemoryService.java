@@ -47,6 +47,12 @@ import java.util.UUID;
  * <p>Not done here on purpose: the principal/workspace existence checks and the authorization of the
  * actor. They belong to the API layer, which is the only place that knows "who is asking, and in which
  * run"; the FK constraints still make a dangling write fail loudly instead of silently succeeding.</p>
+ *
+ * <p>User ruling 2026-11-04 (V107): memory is <b>subject-scoped</b>. A {@code workspaceId} still travels
+ * with every call, but only as the <b>authorization and audit context</b> ("which workspace's grant
+ * allowed this call, and where the audit row is filed") — it is no longer part of any storage key.
+ * Hence the parameter name {@code authzWorkspaceId}: reading it as "the memory's workspace" is exactly
+ * the bug this ruling removed.</p>
  */
 @Service
 public class AgentMemoryService {
@@ -86,8 +92,10 @@ public class AgentMemoryService {
      *     and never let a model supply it through tool arguments
      * @param pinned only honoured for the {@code ui}/{@code cli} channels
      * @param actorId the audit actor (the agent principal for {@code tool}, the user otherwise)
+     * @param authzWorkspaceId the workspace whose grant authorized this write; audit and authorization
+     *     context only — the row itself is subject-scoped (V107)
      */
-    public record MemoryWrite(UUID principalId, UUID workspaceId, String content,
+    public record MemoryWrite(UUID principalId, UUID authzWorkspaceId, String content,
                               String origin, String sourceRef, boolean pinned, String actorId) {}
 
     /**
@@ -100,8 +108,9 @@ public class AgentMemoryService {
      * @param actorId the durable audit actor — a <b>user</b> id (the session owner whose session produced
      *     the write), because {@code audit_logs.user_id} is a user foreign key. The subject is not the
      *     actor of a system-side write, and its id would not satisfy the FK.
+     * @param authzWorkspaceId the workspace whose context produced the write; audit context only (V107)
      */
-    public record PassiveWrite(UUID principalId, UUID workspaceId, String content,
+    public record PassiveWrite(UUID principalId, UUID authzWorkspaceId, String content,
                                String origin, String sourceRef, String actorId) {}
 
     /**
@@ -122,7 +131,7 @@ public class AgentMemoryService {
     @Transactional
     public AgentMemory remember(MemoryWrite write) {
         Objects.requireNonNull(write, "write");
-        requireScope(write.principalId(), write.workspaceId());
+        requireAuthzContext(write.principalId(), write.authzWorkspaceId());
         String origin = requireV1Origin(write.origin());
         String sourceRef = requireSourceRef(write.sourceRef());
         boolean pinned = write.pinned();
@@ -142,8 +151,7 @@ public class AgentMemoryService {
         String hash = AgentMemoryNormalizer.sha256Hex(normalized);
 
         Optional<AgentMemory> existing = memories
-                .findByPrincipalIdAndWorkspaceIdAndContentSha256AndDeletedAtIsNull(
-                        write.principalId(), write.workspaceId(), hash);
+                .findByPrincipalIdAndContentSha256AndDeletedAtIsNull(write.principalId(), hash);
         if (existing.isPresent()) {
             AgentMemory row = existing.get();
             if (AgentMemory.STATUS_CANDIDATE.equals(row.getStatus())) {
@@ -152,13 +160,12 @@ public class AgentMemoryService {
             // Keep created_at and source_ref: the assertion did not change (see the method Javadoc).
             row.setUpdatedAt(Instant.now());
             AgentMemory saved = memories.saveAndFlush(row);
-            audit(AUDIT_DEDUPE_HIT, saved, write.actorId(), origin, sourceRef);
+            audit(AUDIT_DEDUPE_HIT, saved, write.actorId(), write.authzWorkspaceId(), origin, sourceRef);
             return saved;
         }
 
         AgentMemory memory = new AgentMemory();
         memory.setPrincipalId(write.principalId());
-        memory.setWorkspaceId(write.workspaceId());
         memory.setContent(normalized);
         memory.setContentSha256(hash);
         memory.setOrigin(origin);
@@ -171,7 +178,7 @@ public class AgentMemoryService {
             memory.setPinnedBy(origin);
         }
         AgentMemory saved = memories.saveAndFlush(memory);
-        audit(AUDIT_CREATED, saved, write.actorId(), origin, sourceRef);
+        audit(AUDIT_CREATED, saved, write.actorId(), write.authzWorkspaceId(), origin, sourceRef);
         return saved;
     }
 
@@ -196,7 +203,7 @@ public class AgentMemoryService {
     @Transactional
     public Optional<AgentMemory> rememberPassive(PassiveWrite write) {
         Objects.requireNonNull(write, "write");
-        requireScope(write.principalId(), write.workspaceId());
+        requireAuthzContext(write.principalId(), write.authzWorkspaceId());
         String origin = requirePassiveOrigin(write.origin());
         String sourceRef = requireSourceRef(write.sourceRef());
         String normalized = AgentMemoryNormalizer.normalize(write.content());
@@ -211,8 +218,7 @@ public class AgentMemoryService {
         String hash = AgentMemoryNormalizer.sha256Hex(normalized);
 
         Optional<AgentMemory> existing = memories
-                .findByPrincipalIdAndWorkspaceIdAndContentSha256AndDeletedAtIsNull(
-                        write.principalId(), write.workspaceId(), hash);
+                .findByPrincipalIdAndContentSha256AndDeletedAtIsNull(write.principalId(), hash);
         if (existing.isPresent()) {
             AgentMemory row = existing.get();
             if (AgentMemory.STATUS_ACTIVE.equals(row.getStatus())) {
@@ -220,13 +226,12 @@ public class AgentMemoryService {
             }
             row.setUpdatedAt(Instant.now());
             AgentMemory saved = memories.saveAndFlush(row);
-            audit(AUDIT_DEDUPE_HIT, saved, write.actorId(), origin, sourceRef);
+            audit(AUDIT_DEDUPE_HIT, saved, write.actorId(), write.authzWorkspaceId(), origin, sourceRef);
             return Optional.of(saved);
         }
 
         AgentMemory memory = new AgentMemory();
         memory.setPrincipalId(write.principalId());
-        memory.setWorkspaceId(write.workspaceId());
         memory.setContent(normalized);
         memory.setContentSha256(hash);
         memory.setOrigin(origin);
@@ -236,7 +241,7 @@ public class AgentMemoryService {
         memory.setStatus(AgentMemory.STATUS_CANDIDATE);
         memory.setPinned(false);
         AgentMemory saved = memories.saveAndFlush(memory);
-        audit(AUDIT_CREATED, saved, write.actorId(), origin, sourceRef);
+        audit(AUDIT_CREATED, saved, write.actorId(), write.authzWorkspaceId(), origin, sourceRef);
         return Optional.of(saved);
     }
 
@@ -244,12 +249,17 @@ public class AgentMemoryService {
      * Has this passive write already landed? The natural key is {@code source_ref}
      * ({@code passive.<mode>:<sessionId>:<compaction cursor>}), so one session end writes at most once
      * even if the summary text differs between attempts.
+     *
+     * <p>Subject-level since V107: the same producer cursor cannot land twice regardless of which
+     * workspace the session belonged to, so no workspace is needed here.</p>
      */
     @Transactional(readOnly = true)
-    public boolean passiveAlreadyWritten(UUID principalId, UUID workspaceId, String sourceRef) {
-        requireScope(principalId, workspaceId);
-        return memories.existsByPrincipalIdAndWorkspaceIdAndSourceRefAndDeletedAtIsNull(
-                principalId, workspaceId, requireSourceRef(sourceRef));
+    public boolean passiveAlreadyWritten(UUID principalId, String sourceRef) {
+        if (principalId == null) {
+            throw invalid("memory subject (principalId) is required");
+        }
+        return memories.existsByPrincipalIdAndSourceRefAndDeletedAtIsNull(
+                principalId, requireSourceRef(sourceRef));
     }
 
     /** The only candidate → active transition: an explicit channel wrote the same assertion. */
@@ -265,7 +275,7 @@ public class AgentMemoryService {
         row.setPinnedBy(pinned ? origin : null);
         row.setUpdatedAt(Instant.now());
         AgentMemory saved = memories.saveAndFlush(row);
-        audit(AUDIT_PROMOTED, saved, write.actorId(), origin, sourceRef);
+        audit(AUDIT_PROMOTED, saved, write.actorId(), write.authzWorkspaceId(), origin, sourceRef);
         return saved;
     }
 
@@ -273,22 +283,23 @@ public class AgentMemoryService {
      * Soft-deletes one assertion ("forget"). The row stays for the audit trail, the dedupe key stops
      * matching ({@code WHERE deleted_at IS NULL}), so the same content may be written again later.
      *
-     * @throws CpApiException 404 {@code MEMORY_NOT_FOUND} when the id does not belong to this
-     *     {@code (principal, workspace)} pair — a foreign id must be indistinguishable from a missing one
+     * @param authzWorkspaceId the workspace whose grant authorized the call; audit context only (V107)
+     * @throws CpApiException 404 {@code MEMORY_NOT_FOUND} when the id does not belong to this subject
+     *     — a foreign id must be indistinguishable from a missing one
      */
     @Transactional
-    public void forget(UUID principalId, UUID workspaceId, UUID memoryId, String actorId) {
-        requireScope(principalId, workspaceId);
+    public void forget(UUID principalId, UUID authzWorkspaceId, UUID memoryId, String actorId) {
+        requireAuthzContext(principalId, authzWorkspaceId);
         Objects.requireNonNull(memoryId, "memoryId");
         AgentMemory memory = memories
-                .findByIdAndPrincipalIdAndWorkspaceIdAndDeletedAtIsNull(memoryId, principalId, workspaceId)
+                .findByIdAndPrincipalIdAndDeletedAtIsNull(memoryId, principalId)
                 .orElseThrow(() -> new CpApiException(HttpStatus.NOT_FOUND, "MEMORY_NOT_FOUND",
                         "Memory entry not found"));
         memory.setDeletedAt(Instant.now());
         AgentMemory saved = memories.saveAndFlush(memory);
         ObjectNode detail = objectMapper.createObjectNode();
         detail.put("contentSha256", saved.getContentSha256());
-        auditLogger.recordDurableChange(actorId, workspaceId.toString(), AUDIT_DELETED, RESOURCE_TYPE,
+        auditLogger.recordDurableChange(actorId, authzWorkspaceId.toString(), AUDIT_DELETED, RESOURCE_TYPE,
                 saved.getId().toString(), detail.toString());
     }
 
@@ -318,13 +329,12 @@ public class AgentMemoryService {
     @Transactional
     public AgentMemory update(MemoryUpdate update) {
         Objects.requireNonNull(update, "update");
-        requireScope(update.principalId(), update.workspaceId());
+        requireAuthzContext(update.principalId(), update.authzWorkspaceId());
         Objects.requireNonNull(update.memoryId(), "memoryId");
         if (update.content() == null && update.pinned() == null) {
             throw invalid("memory update must change content, pinned, or both");
         }
-        AgentMemory memory = requireEditable(update.principalId(), update.workspaceId(),
-                update.memoryId());
+        AgentMemory memory = requireEditable(update.principalId(), update.memoryId());
         if (update.content() != null) {
             String normalized = AgentMemoryNormalizer.normalize(update.content());
             if (normalized.isEmpty()) {
@@ -337,11 +347,10 @@ public class AgentMemoryService {
             }
             String hash = AgentMemoryNormalizer.sha256Hex(normalized);
             if (!hash.equals(memory.getContentSha256())) {
-                // Same rule as remember(): the dedupe key is (principal, workspace, content_sha256)
-                // since V106 dropped the type column — one sentence is one assertion.
+                // Same rule as remember(): the dedupe key is (principal, content_sha256) since V107
+                // (and V106 before it dropped the type column) — one sentence is one assertion.
                 Optional<AgentMemory> collision = memories
-                        .findByPrincipalIdAndWorkspaceIdAndContentSha256AndDeletedAtIsNull(
-                                update.principalId(), update.workspaceId(), hash);
+                        .findByPrincipalIdAndContentSha256AndDeletedAtIsNull(update.principalId(), hash);
                 if (collision.isPresent() && !collision.get().getId().equals(memory.getId())) {
                     throw new CpApiException(HttpStatus.CONFLICT, "MEMORY_DUPLICATE",
                             "An identical memory assertion already exists for this agent");
@@ -356,18 +365,18 @@ public class AgentMemoryService {
             memory.setPinnedBy(update.pinned() ? AgentMemory.ORIGIN_UI : null);
         }
         AgentMemory saved = memories.saveAndFlush(memory);
-        auditUpdate(saved, update.actorId());
+        auditUpdate(saved, update.authzWorkspaceId(), update.actorId());
         return saved;
     }
 
     /** One edit from one channel; both fields nullable so a pin flip cannot rewrite the content. */
-    public record MemoryUpdate(UUID principalId, UUID workspaceId, UUID memoryId, String content,
+    public record MemoryUpdate(UUID principalId, UUID authzWorkspaceId, UUID memoryId, String content,
                                Boolean pinned, String actorId) {}
 
     /** Live + active, or the same 404 a missing id gets. */
-    private AgentMemory requireEditable(UUID principalId, UUID workspaceId, UUID memoryId) {
+    private AgentMemory requireEditable(UUID principalId, UUID memoryId) {
         AgentMemory memory = memories
-                .findByIdAndPrincipalIdAndWorkspaceIdAndDeletedAtIsNull(memoryId, principalId, workspaceId)
+                .findByIdAndPrincipalIdAndDeletedAtIsNull(memoryId, principalId)
                 .orElseThrow(AgentMemoryService::memoryNotFound);
         if (!AgentMemory.STATUS_ACTIVE.equals(memory.getStatus())) {
             throw memoryNotFound();
@@ -379,22 +388,29 @@ public class AgentMemoryService {
         return new CpApiException(HttpStatus.NOT_FOUND, "MEMORY_NOT_FOUND", "Memory entry not found");
     }
 
-    private void auditUpdate(AgentMemory memory, String actorId) {
+    private void auditUpdate(AgentMemory memory, UUID authzWorkspaceId, String actorId) {
         // Same rule as every other memory audit record: hash + routing facts, never the text.
         ObjectNode detail = objectMapper.createObjectNode();
         detail.put("contentSha256", memory.getContentSha256());
         detail.put("pinned", memory.isPinned());
-        auditLogger.recordDurableChange(actorId, memory.getWorkspaceId().toString(), AUDIT_UPDATED,
+        auditLogger.recordDurableChange(actorId, authzWorkspaceId.toString(), AUDIT_UPDATED,
                 RESOURCE_TYPE, memory.getId().toString(), detail.toString());
     }
 
-    /** D29-34 injection read: active, live rows of one subject in one workspace, pinned first. */
+    /**
+     * D29-34 injection read: active, live rows of one <b>subject</b>, pinned first.
+     *
+     * <p>No workspace parameter on purpose (V107): an agent's memory is one set across every workspace
+     * it is bound to, so an injection read that took a workspace could silently reintroduce the
+     * partitioning this ruling removed.</p>
+     */
     @Transactional(readOnly = true)
-    public List<AgentMemory> activeMemories(UUID principalId, UUID workspaceId) {
-        requireScope(principalId, workspaceId);
-        return memories
-                .findByPrincipalIdAndWorkspaceIdAndStatusAndDeletedAtIsNullOrderByPinnedDescUpdatedAtDesc(
-                        principalId, workspaceId, AgentMemory.STATUS_ACTIVE);
+    public List<AgentMemory> activeMemories(UUID principalId) {
+        if (principalId == null) {
+            throw invalid("memory subject (principalId) is required");
+        }
+        return memories.findByPrincipalIdAndStatusAndDeletedAtIsNullOrderByPinnedDescUpdatedAtDesc(
+                principalId, AgentMemory.STATUS_ACTIVE);
     }
 
     /**
@@ -407,15 +423,20 @@ public class AgentMemoryService {
      *
      * <p>Candidates are never listed in either mode: D29-26/27 makes them invisible until an explicit
      * channel promotes them, and a hidden-but-listed row would be a second, accidental write path.</p>
+     *
+     * <p>Subject-level since V107: the caller passes the workspace only for authorization, and it is
+     * not consulted here — the listing is the same memory set in every workspace.</p>
      */
     @Transactional(readOnly = true)
-    public List<AgentMemory> listMemories(UUID principalId, UUID workspaceId, MemoryStatus status) {
-        requireScope(principalId, workspaceId);
+    public List<AgentMemory> listMemories(UUID principalId, MemoryStatus status) {
+        if (principalId == null) {
+            throw invalid("memory subject (principalId) is required");
+        }
         List<AgentMemory> rows = status == MemoryStatus.ACTIVE
-                ? memories.findByPrincipalIdAndWorkspaceIdAndStatusAndDeletedAtIsNullOrderByPinnedDescUpdatedAtDesc(
-                        principalId, workspaceId, AgentMemory.STATUS_ACTIVE)
-                : memories.findByPrincipalIdAndWorkspaceIdAndStatusOrderByPinnedDescUpdatedAtDesc(
-                        principalId, workspaceId, AgentMemory.STATUS_ACTIVE);
+                ? memories.findByPrincipalIdAndStatusAndDeletedAtIsNullOrderByPinnedDescUpdatedAtDesc(
+                        principalId, AgentMemory.STATUS_ACTIVE)
+                : memories.findByPrincipalIdAndStatusOrderByPinnedDescUpdatedAtDesc(
+                        principalId, AgentMemory.STATUS_ACTIVE);
         if (status == MemoryStatus.ALL) {
             return rows;
         }
@@ -423,7 +444,7 @@ public class AgentMemoryService {
             return rows;
         }
         // RETIRED: the archived (soft-deleted) rows only. Filtered here rather than in a third finder —
-        // the result set is already bounded by (subject, workspace), and one predicate keeps the
+        // the result set is already bounded by the subject, and one predicate keeps the
         // "archived == deleted_at IS NOT NULL" rule in exactly one place.
         return rows.stream().filter(row -> row.getDeletedAt() != null).toList();
     }
@@ -440,21 +461,27 @@ public class AgentMemoryService {
         ACTIVE, RETIRED, ALL
     }
 
-    private void audit(String action, AgentMemory memory, String actorId, String origin,
-                       String sourceRef) {
+    private void audit(String action, AgentMemory memory, String actorId, UUID authzWorkspaceId,
+                       String origin, String sourceRef) {
         // Never log the raw assertion: audit keeps the hash + the routing facts, matching the
         // project-wide rule that untrusted content does not enter durable audit records.
         ObjectNode detail = objectMapper.createObjectNode();
         detail.put("contentSha256", memory.getContentSha256());
         detail.put("origin", origin);
         detail.put("sourceRef", sourceRef);
-        auditLogger.recordDurableChange(actorId, memory.getWorkspaceId().toString(), action,
+        auditLogger.recordDurableChange(actorId, authzWorkspaceId.toString(), action,
                 RESOURCE_TYPE, memory.getId().toString(), detail.toString());
     }
 
-    private static void requireScope(UUID principalId, UUID workspaceId) {
-        if (principalId == null || workspaceId == null) {
-            throw invalid("memory is isolated by (principal, workspace); both ids are required");
+    /**
+     * The subject is the data key (V107); the workspace is only the authorization context of the call.
+     * Both are still required, because the audit row is filed against the workspace whose grant allowed
+     * the change — dropping it would leave memory audits unattributable.
+     */
+    private static void requireAuthzContext(UUID principalId, UUID authzWorkspaceId) {
+        if (principalId == null || authzWorkspaceId == null) {
+            throw invalid("memory is subject-scoped; the subject and the authorization workspace "
+                    + "are both required");
         }
     }
 

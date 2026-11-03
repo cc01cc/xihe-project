@@ -84,7 +84,13 @@ public class WorkspaceAgentController {
      * rows, {@code status=all} is both — every row carries {@code archived}/{@code deletedAt} so the UI
      * can label 归档 rather than 删除. An unknown value is a 400, never a silent fallback. Candidates
      * are never listed in any mode.</p>
+     *
+     * @deprecated V107 (user ruling 2026-11-04): memory is subject-scoped, so the canonical route is
+     *     {@code GET /api/v1/agent-principals/{principalId}/memories?workspaceId=…}. This nested route is
+     *     kept as a forwarding alias for the in-flight UI; the workspace here authorizes the call and no
+     *     longer partitions the data.
      */
+    @Deprecated
     @PreAuthorize("isAuthenticated()")
     @GetMapping("/{principalId}/memories")
     public ResponseEntity<?> memories(@PathVariable String workspaceId, @PathVariable String principalId,
@@ -93,7 +99,6 @@ public class WorkspaceAgentController {
         try {
             UUID workspace = parseUuid(workspaceId);
             UUID principal = parseUuid(principalId);
-            AgentMemoryService.MemoryStatus filter = memoryStatus(status);
             boolean visible = agentPrincipalService.listWorkspaceAgents(requireActor(), workspace).stream()
                     .anyMatch(view -> view.principalId().equals(principal));
             if (!visible) {
@@ -101,8 +106,8 @@ public class WorkspaceAgentController {
                         "AGENT_PRINCIPAL_NOT_FOUND", "Agent principal not found");
             }
             List<Map<String, Object>> rows = agentMemoryService
-                    .listMemories(principal, workspace, filter).stream()
-                    .map(this::toMemoryView).toList();
+                    .listMemories(principal, AgentMemoryWire.status(status)).stream()
+                    .map(AgentMemoryWire::toView).toList();
             Map<String, Object> response = new LinkedHashMap<>();
             response.put("memories", rows);
             return ResponseEntity.ok(response);
@@ -124,7 +129,12 @@ public class WorkspaceAgentController {
      * <p>Channel and provenance are injected here, never taken from the body: {@code origin=ui} and
      * {@code sourceRef=<userId>} are the UI channel's frozen values (D29-19), which is also what makes
      * {@code pinned} legal (only {@code ui}/{@code cli} may pin — V99 CHECK).</p>
+     *
+     * @deprecated V107 (user ruling 2026-11-04): canonical route is
+     *     {@code POST /api/v1/agent-principals/{principalId}/memories?workspaceId=…}; this alias stays for
+     *     the in-flight UI and forwards the same semantics (the row is subject-scoped).
      */
+    @Deprecated
     @PreAuthorize("isAuthenticated()")
     @PostMapping("/{principalId}/memories")
     public ResponseEntity<?> createMemory(@PathVariable String workspaceId,
@@ -136,23 +146,25 @@ public class WorkspaceAgentController {
             String actor = requireActor();
             requireMemoryWrite(workspace, principal);
             if (body == null || !MEMORY_CREATE_KEYS.containsAll(body.keySet())) {
-                return invalidRequest("Body must contain only content and pinned");
+                return AgentMemoryWire.invalidRequest("Body must contain only content and pinned");
             }
             if (!(body.get("content") instanceof String content)) {
-                return invalidRequest("content is required and must be a string");
+                return AgentMemoryWire.invalidRequest("content is required and must be a string");
             }
             if (body.containsKey("pinned") && !(body.get("pinned") instanceof Boolean)) {
-                return invalidRequest("pinned must be a boolean");
+                return AgentMemoryWire.invalidRequest("pinned must be a boolean");
             }
             boolean pinned = Boolean.TRUE.equals(body.get("pinned"));
             AgentMemory saved = agentMemoryService.remember(new AgentMemoryService.MemoryWrite(
                     principal, workspace, content, AgentMemory.ORIGIN_UI, actor, pinned, actor));
-            return ResponseEntity.status(HttpStatus.CREATED).body(memoryEnvelope(saved));
+            return ResponseEntity.status(HttpStatus.CREATED).body(AgentMemoryWire.envelope(saved));
         } catch (CpApiException e) {
             return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
         }
     }
 
+    /** @deprecated V107: canonical route is {@code PATCH /api/v1/agent-principals/{principalId}/memories/{memoryId}?workspaceId=…}. */
+    @Deprecated
     @PreAuthorize("isAuthenticated()")
     @PatchMapping("/{principalId}/memories/{memoryId}")
     public ResponseEntity<?> updateMemory(@PathVariable String workspaceId,
@@ -166,19 +178,19 @@ public class WorkspaceAgentController {
             String actor = requireActor();
             requireMemoryWrite(workspace, principal);
             if (body == null || body.isEmpty() || !MEMORY_UPDATE_KEYS.containsAll(body.keySet())) {
-                return invalidRequest("Body must contain only content and/or pinned");
+                return AgentMemoryWire.invalidRequest("Body must contain only content and/or pinned");
             }
             if (body.containsKey("content") && !(body.get("content") instanceof String)) {
-                return invalidRequest("content must be a string");
+                return AgentMemoryWire.invalidRequest("content must be a string");
             }
             if (body.containsKey("pinned") && !(body.get("pinned") instanceof Boolean)) {
-                return invalidRequest("pinned must be a boolean");
+                return AgentMemoryWire.invalidRequest("pinned must be a boolean");
             }
             String content = body.get("content") instanceof String value ? value : null;
             Boolean pinned = body.get("pinned") instanceof Boolean value ? value : null;
             AgentMemory saved = agentMemoryService.update(new AgentMemoryService.MemoryUpdate(
                     principal, workspace, memory, content, pinned, actor));
-            return ResponseEntity.ok(memoryEnvelope(saved));
+            return ResponseEntity.ok(AgentMemoryWire.envelope(saved));
         } catch (CpApiException e) {
             return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
         }
@@ -192,7 +204,11 @@ public class WorkspaceAgentController {
      * injection and the default listing stop returning it and the dedupe key is freed. Reading it back
      * is an explicit opt-in ({@code GET …?includeArchived=true}), so "归档" stays recoverable and
      * distinguishable from "never existed".</p>
+     *
+     * @deprecated V107: canonical route is
+     *     {@code DELETE /api/v1/agent-principals/{principalId}/memories/{memoryId}?workspaceId=…}.
      */
+    @Deprecated
     @PreAuthorize("isAuthenticated()")
     @DeleteMapping("/{principalId}/memories/{memoryId}")
     public ResponseEntity<?> forgetMemory(@PathVariable String workspaceId,
@@ -228,62 +244,6 @@ public class WorkspaceAgentController {
             throw new CpApiException(HttpStatus.NOT_FOUND, "AGENT_PRINCIPAL_NOT_FOUND",
                     "Agent principal not found");
         }
-    }
-
-    private Map<String, Object> memoryEnvelope(AgentMemory memory) {
-        Map<String, Object> response = new LinkedHashMap<>();
-        response.put("memory", toMemoryView(memory));
-        return response;
-    }
-
-    private static ResponseEntity<Map<String, Object>> invalidRequest(String detail) {
-        return ProblemDetailsHandler.problemResponse(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", detail);
-    }
-
-    private Map<String, Object> toMemoryView(AgentMemory memory) {
-        Map<String, Object> view = new LinkedHashMap<>();
-        view.put("id", memory.getId().toString());
-        view.put("origin", memoryOrigin(memory.getOrigin()));
-        view.put("pinned", memory.isPinned());
-        view.put("createdAt", memory.getCreatedAt() == null ? null : memory.getCreatedAt().toString());
-        view.put("updatedAt", memory.getUpdatedAt() == null ? null : memory.getUpdatedAt().toString());
-        // Lead ruling 2026-11-03: "deleted" is an archive. Both keys are always present so the UI does
-        // not have to guess from absence; a live row reports archived=false / deletedAt=null.
-        view.put("archived", memory.getDeletedAt() != null);
-        view.put("deletedAt", memory.getDeletedAt() == null ? null : memory.getDeletedAt().toString());
-        view.put("content", memory.getContent());
-        return view;
-    }
-
-    /**
-     * UI vocabulary for "where did this memory come from" (Lead ruling 2026-11-03): the stored
-     * {@code origin} stays the durable channel list ({@code tool|ui|cli|passive.*}); the wire exposes
-     * the two buckets the UI can explain — {@code manual} (a person wrote it: {@code ui}/{@code cli})
-     * and {@code run} (an agent run produced it: {@code tool}/{@code passive.*}). The mapping lives here
-     * so the bucket has exactly one definition.
-     */
-    private static String memoryOrigin(String origin) {
-        if (origin == null) {
-            return "run";
-        }
-        return switch (origin) {
-            case AgentMemory.ORIGIN_UI, AgentMemory.ORIGIN_CLI -> "manual";
-            default -> "run";
-        };
-    }
-
-    /** {@code status=active|retired|all} (default {@code active}); an unknown value is a 400, not a fallback. */
-    private static AgentMemoryService.MemoryStatus memoryStatus(String raw) {
-        if (raw == null || raw.isBlank()) {
-            return AgentMemoryService.MemoryStatus.ACTIVE;
-        }
-        return switch (raw.trim().toLowerCase(java.util.Locale.ROOT)) {
-            case "active" -> AgentMemoryService.MemoryStatus.ACTIVE;
-            case "retired" -> AgentMemoryService.MemoryStatus.RETIRED;
-            case "all" -> AgentMemoryService.MemoryStatus.ALL;
-            default -> throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST",
-                    "status must be one of active|retired|all");
-        };
     }
 
     @PreAuthorize("isAuthenticated()")

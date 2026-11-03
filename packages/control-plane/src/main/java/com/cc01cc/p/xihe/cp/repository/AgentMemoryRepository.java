@@ -9,8 +9,13 @@ import java.util.Optional;
 import java.util.UUID;
 
 /**
- * PLAN-0629 M1 (V99): memory rows are always read through the {@code (principal, workspace)} pair —
- * every finder below carries both, so a query cannot accidentally cross the isolation boundary.
+ * PLAN-0629 M1 (V99) + user ruling 2026-11-04 (V107): memory rows are read through the
+ * <b>subject</b> ({@code principal_id}) alone — the workspace is no longer part of any key, so the
+ * same agent principal sees one memory set everywhere it is bound.
+ *
+ * <p>Every finder below carries the principal, so a query cannot accidentally cross the subject
+ * boundary; authorization (which workspace context allowed the call) is decided by the caller before
+ * the repository is reached.</p>
  */
 @Repository
 public interface AgentMemoryRepository extends JpaRepository<AgentMemory, UUID> {
@@ -18,11 +23,11 @@ public interface AgentMemoryRepository extends JpaRepository<AgentMemory, UUID> 
     /**
      * D29-32 dedupe probe: live rows only (a soft-deleted row must not block a re-write).
      *
-     * <p>PLAN-0629 M1-5 (V106): the key is {@code (principal, workspace, content_sha256)} — the
-     * {@code type} column is gone, so the same sentence is the same assertion regardless of channel.
+     * <p>Key is {@code (principal, content_sha256)}: the same sentence is the same assertion
+     * regardless of channel or of the workspace the write came from.
      */
-    Optional<AgentMemory> findByPrincipalIdAndWorkspaceIdAndContentSha256AndDeletedAtIsNull(
-            UUID principalId, UUID workspaceId, String contentSha256);
+    Optional<AgentMemory> findByPrincipalIdAndContentSha256AndDeletedAtIsNull(
+            UUID principalId, String contentSha256);
 
     /**
      * PLAN-0629 M1-6 idempotency probe: has this exact passive write already landed? The natural key is
@@ -30,22 +35,20 @@ public interface AgentMemoryRepository extends JpaRepository<AgentMemory, UUID> 
      * session end cannot write twice even when the summary text differs between attempts. Live rows
      * only — a rejected (soft-deleted) candidate must not block a later write.
      */
-    boolean existsByPrincipalIdAndWorkspaceIdAndSourceRefAndDeletedAtIsNull(
-            UUID principalId, UUID workspaceId, String sourceRef);
+    boolean existsByPrincipalIdAndSourceRefAndDeletedAtIsNull(UUID principalId, String sourceRef);
 
     /** D29-34 injection read: pinned first, then freshest; only the requested status. */
-    List<AgentMemory> findByPrincipalIdAndWorkspaceIdAndStatusAndDeletedAtIsNullOrderByPinnedDescUpdatedAtDesc(
-            UUID principalId, UUID workspaceId, String status);
+    List<AgentMemory> findByPrincipalIdAndStatusAndDeletedAtIsNullOrderByPinnedDescUpdatedAtDesc(
+            UUID principalId, String status);
 
     /**
      * PLAN-0629 M1-5 "归档" view: the same ordering but <b>including</b> soft-deleted rows, so the API
      * can show what was archived (and only the API: injection keeps using the live-only finder above).
      * Candidates stay excluded by the status filter — they are invisible to every listing.
      */
-    List<AgentMemory> findByPrincipalIdAndWorkspaceIdAndStatusOrderByPinnedDescUpdatedAtDesc(
-            UUID principalId, UUID workspaceId, String status);
+    List<AgentMemory> findByPrincipalIdAndStatusOrderByPinnedDescUpdatedAtDesc(
+            UUID principalId, String status);
 
-    /** Scope-checked lookup for "forget" — an id from another workspace must not be reachable. */
-    Optional<AgentMemory> findByIdAndPrincipalIdAndWorkspaceIdAndDeletedAtIsNull(
-            UUID id, UUID principalId, UUID workspaceId);
+    /** Subject-checked lookup for "forget"/"update" — an id of another principal is unreachable. */
+    Optional<AgentMemory> findByIdAndPrincipalIdAndDeletedAtIsNull(UUID id, UUID principalId);
 }
