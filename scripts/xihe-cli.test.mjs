@@ -3,7 +3,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
 import { createServer } from 'node:http';
-import { PassThrough } from 'node:stream';
+import { PassThrough, Readable } from 'node:stream';
 import { test } from 'node:test';
 import path from 'node:path';
 import { tmpdir } from 'node:os';
@@ -3980,9 +3980,28 @@ test('help lists every skill command form', async () => {
 test('an unknown skill subcommand is refused instead of completing silently', async () => {
   const result = await runCommand(['skill', 'frobnicate'], { env: {}, promptSecret: noPrompt });
 
-  assert.equal(result.exitCode, 1);
+  // PLAN-0643 T3.6: INVALID_ARGUMENT is a usage error and answers 2 (was 1 before the frozen table).
+  assert.equal(result.exitCode, 2);
   assert.equal(result.error.code, 'INVALID_ARGUMENT');
   assert.match(result.error.message, /Unknown skill command/);
+});
+
+test('PLAN-0643 T3.6: usage errors answer 2 and XIHE_CLI_LEGACY_EXIT_CODES=1 restores 1', async () => {
+  const strict = await runCommand(['nosuchgroup'], { env: {}, promptSecret: noPrompt });
+  assert.equal(strict.exitCode, 2);
+  assert.equal(strict.error.code, 'INVALID_ARGUMENT');
+
+  const legacy = await runCommand(['nosuchgroup'], { env: { XIHE_CLI_LEGACY_EXIT_CODES: '1' }, promptSecret: noPrompt });
+  assert.equal(legacy.exitCode, 1);
+  assert.equal(legacy.error.code, 'INVALID_ARGUMENT');
+});
+
+test('PLAN-0643 T3.6: help documents the exit-code table', async () => {
+  const result = await runCommand(['help'], { env: {}, promptSecret: noPrompt });
+
+  assert.equal(result.exitCode, 0);
+  assert.match(result.data.help, /Exit codes: 0 = success; 1 = business\/runtime failure; 2 = usage error/);
+  assert.match(result.data.help, /XIHE_CLI_LEGACY_EXIT_CODES=1/);
 });
 
 test('PLAN-0643 T1.7: XIHE_CP_URL selects the endpoint when XIHE_CP_PORT is absent', async (t) => {
@@ -4016,7 +4035,8 @@ test('PLAN-0643 T1.7: an invalid --base-url fails closed as a usage error', asyn
     promptSecret: noPrompt,
   });
 
-  assert.equal(result.exitCode, 1);
+  // T3.6: INVALID_BASE_URL is in the usage-error table.
+  assert.equal(result.exitCode, 2);
   assert.equal(result.error.code, 'INVALID_BASE_URL');
 });
 
@@ -4030,4 +4050,213 @@ test('PLAN-0643 T1.7: global --workspace is accepted before the group and forwar
   });
 
   assert.notEqual(result.error?.code, 'INVALID_ARGUMENT');
+});
+
+// ── PLAN-0643 T1.1/T1.6/T1.8: escape hatch ────────────────────────────────
+
+async function startApiEscapeMock({ responseType = 'json', status = 200 } = {}) {
+  const state = { requests: [], lastQuery: null, lastMethod: null, lastBody: null, lastHeaders: null };
+  const server = createServer(async (request, response) => {
+    const url = new URL(request.url, 'http://127.0.0.1');
+    state.requests.push(`${request.method} ${url.pathname}${url.search}`);
+    state.lastQuery = url.searchParams;
+    state.lastMethod = request.method;
+    state.lastHeaders = request.headers;
+    state.lastBody = await requestBody(request);
+    if (url.pathname === '/api/v1/auth/login') {
+      json(response, 200, { accessToken: 'test-token' });
+      return;
+    }
+    if (responseType === 'sse') {
+      response.writeHead(200, { 'Content-Type': 'text/event-stream' });
+      response.end('data: {}\n\n');
+      return;
+    }
+    if (responseType === 'text') {
+      response.writeHead(200, { 'Content-Type': 'text/plain' });
+      response.end('plain body');
+      return;
+    }
+    if (url.pathname === '/api/v1/status') {
+      json(response, 200, { status: 'ok', instance: 'xihe' });
+      return;
+    }
+    if (url.pathname === '/api/v1/config/export') {
+      json(response, 200, { domains: { 'llm-provider': {} } });
+      return;
+    }
+    json(response, status, status >= 400 ? { code: 'NOT_FOUND', detail: 'nope' } : { ok: true });
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  return {
+    state,
+    env: { XIHE_CP_PORT: String(server.address().port), XIHE_DEV_ADMIN_PASSWORD: TEST_PASSWORD },
+    close: () => new Promise((resolve, reject) => server.close((error) => (error ? reject(error) : resolve()))),
+  };
+}
+
+test('PLAN-0643 T1.1: xihe api forwards a GET and returns the {ok,status,body} envelope', async (t) => {
+  const cp = await startApiEscapeMock();
+  t.after(cp.close);
+
+  const result = await runCommand(['api', 'GET', '/api/v1/status', '--json'], {
+    env: cp.env,
+    promptSecret: noPrompt,
+    stderr: sink(),
+  });
+
+  assert.equal(result.exitCode, 0, JSON.stringify(result.error));
+  assert.deepEqual(result.envelope, { ok: true, status: 200, body: { status: 'ok', instance: 'xihe' } });
+  assert.equal(cp.state.lastHeaders.authorization, 'Bearer test-token');
+});
+
+test('PLAN-0643 T1.6: non-2xx answers keep status in the envelope', async (t) => {
+  const cp = await startApiEscapeMock({ status: 404 });
+  t.after(cp.close);
+
+  const result = await runCommand(['api', 'GET', '/api/v1/nope', '--json'], {
+    env: cp.env,
+    promptSecret: noPrompt,
+    stderr: sink(),
+  });
+
+  assert.equal(result.exitCode, 1);
+  assert.equal(result.envelope.ok, false);
+  assert.equal(result.envelope.status, 404);
+  assert.equal(result.envelope.body.code, 'NOT_FOUND');
+});
+
+test('PLAN-0643 T1.1: /api/v1/mcp is denied unless --allow-dangerous is passed', async (t) => {
+  const cp = await startApiEscapeMock();
+  t.after(cp.close);
+
+  const denied = await runCommand(['api', 'POST', '/api/v1/mcp', '--yes', '--json'], {
+    env: cp.env, promptSecret: noPrompt, stderr: sink(),
+  });
+  assert.equal(denied.exitCode, 2);
+  assert.equal(denied.error.code, 'API_DANGEROUS_REQUIRES_ALLOW');
+
+  const allowed = await runCommand(['api', 'POST', '/api/v1/mcp', '--yes', '--allow-dangerous', '--json'], {
+    env: cp.env, promptSecret: noPrompt, stderr: sink(),
+  });
+  assert.equal(allowed.exitCode, 0, JSON.stringify(allowed.error));
+  assert.equal(cp.state.lastQuery.get('includeSecrets'), null);
+});
+
+test('PLAN-0643 T1.1: the audit line is printed on stderr for every dangerous call', async (t) => {
+  const cp = await startApiEscapeMock();
+  t.after(cp.close);
+  const stderr = sink();
+
+  await runCommand(['api', 'POST', '/api/v1/mcp', '--yes', '--allow-dangerous', '--json'], {
+    env: cp.env, promptSecret: noPrompt, stderr,
+  });
+
+  assert.match(stderr.text(), /audit: --allow-dangerous/);
+});
+
+test('PLAN-0643 T1.1: credential reveal and /internal targets are forbidden', async (t) => {
+  const cp = await startApiEscapeMock();
+  t.after(cp.close);
+
+  const reveal = await runCommand(['api', 'POST', '/api/v1/credentials/c-1/reveal', '--yes', '--json'], {
+    env: cp.env, promptSecret: noPrompt, stderr: sink(),
+  });
+  assert.equal(reveal.exitCode, 2);
+  assert.equal(reveal.error.code, 'API_TARGET_INVALID');
+
+  const internal = await runCommand(['api', 'GET', '/internal/v1/status', '--json'], {
+    env: cp.env, promptSecret: noPrompt, stderr: sink(),
+  });
+  assert.equal(internal.exitCode, 2);
+  assert.equal(internal.error.code, 'API_TARGET_INVALID');
+});
+
+test('PLAN-0643 T1.1: config/export is forced to includeSecrets=false', async (t) => {
+  const cp = await startApiEscapeMock();
+  t.after(cp.close);
+
+  const result = await runCommand(['api', 'GET', '/api/v1/config/export', '--json'], {
+    env: cp.env, promptSecret: noPrompt, stderr: sink(),
+  });
+
+  assert.equal(result.exitCode, 0, JSON.stringify(result.error));
+  assert.equal(cp.state.lastQuery.get('includeSecrets'), 'false');
+});
+
+test('PLAN-0643 T1.1: mutating methods require --yes and --body never exists', async (t) => {
+  const cp = await startApiEscapeMock();
+  t.after(cp.close);
+
+  const deleteDenied = await runCommand(['api', 'DELETE', '/api/v1/provider-connections/c-1', '--json'], {
+    env: cp.env, promptSecret: noPrompt, stderr: sink(),
+  });
+  assert.equal(deleteDenied.exitCode, 2);
+  assert.equal(deleteDenied.error.code, 'API_METHOD_REQUIRES_YES');
+
+  const bodyFlag = await runCommand(['api', 'POST', '/api/v1/whatever', '--yes', '--body', '{"a":1}', '--json'], {
+    env: cp.env, promptSecret: noPrompt, stderr: sink(),
+  });
+  assert.equal(bodyFlag.exitCode, 2);
+  assert.equal(bodyFlag.error.code, 'INVALID_ARGUMENT');
+});
+
+test('PLAN-0643 T1.1: the request body comes from stdin', async (t) => {
+  const cp = await startApiEscapeMock();
+  t.after(cp.close);
+
+  const result = await runCommand(['api', 'POST', '/api/v1/whatever', '--yes', '--stdin', '--json'], {
+    env: cp.env,
+    promptSecret: noPrompt,
+    stderr: sink(),
+    stdin: Readable.from(['{"hello":"world"}']),
+  });
+
+  assert.equal(result.exitCode, 0, JSON.stringify(result.error));
+  assert.deepEqual(cp.state.lastBody, { hello: 'world' });
+  assert.equal(cp.state.lastHeaders['content-type'], 'application/json');
+});
+
+test('PLAN-0643 T1.6: SSE is refused with a pointer to events tail', async (t) => {
+  const cp = await startApiEscapeMock({ responseType: 'sse' });
+  t.after(cp.close);
+
+  const result = await runCommand(['api', 'GET', '/api/v1/events', '--json'], {
+    env: cp.env, promptSecret: noPrompt, stderr: sink(),
+  });
+
+  assert.equal(result.exitCode, 2);
+  assert.equal(result.error.code, 'API_RESPONSE_UNSUPPORTED');
+  assert.match(result.error.message, /events tail/);
+});
+
+test('PLAN-0643 T1.6: non-JSON needs --raw', async (t) => {
+  const cp = await startApiEscapeMock({ responseType: 'text' });
+  t.after(cp.close);
+
+  const refused = await runCommand(['api', 'GET', '/api/v1/whatever', '--json'], {
+    env: cp.env, promptSecret: noPrompt, stderr: sink(),
+  });
+  assert.equal(refused.exitCode, 2);
+  assert.equal(refused.error.code, 'API_RESPONSE_NOT_JSON');
+
+  const raw = await runCommand(['api', 'GET', '/api/v1/whatever', '--raw', '--json'], {
+    env: cp.env, promptSecret: noPrompt, stderr: sink(),
+  });
+  assert.equal(raw.exitCode, 0);
+  assert.equal(raw.envelope.body, 'plain body');
+});
+
+test('PLAN-0643 T1.8: XIHE_CLI_DISABLE_API_ESCAPE=1 disables the escape hatch', async (t) => {
+  const cp = await startApiEscapeMock();
+  t.after(cp.close);
+
+  const result = await runCommand(['api', 'GET', '/api/v1/status', '--json'], {
+    env: { ...cp.env, XIHE_CLI_DISABLE_API_ESCAPE: '1' },
+    promptSecret: noPrompt,
+    stderr: sink(),
+  });
+
+  assert.equal(result.exitCode, 2);
+  assert.equal(result.error.code, 'API_ESCAPE_DISABLED');
 });

@@ -15,6 +15,37 @@ export class CliError extends Error {
   }
 }
 
+// PLAN-0643 T3.6 (design D7/D8, spec/cli-contract.md §3): one exit-code source.
+// 0 = success, 1 = business/runtime failure, 2 = usage error. Before this mapping the
+// same class of failure answered 1 or 2 depending on which call site threw it.
+const USAGE_ERROR_CODES = new Set([
+  'INVALID_ARGUMENT',
+  'INVALID_CP_PORT',
+  'INVALID_CP_URL',
+  'INVALID_BASE_URL',
+  'API_TARGET_INVALID',
+  'API_METHOD_REQUIRES_YES',
+  'API_DANGEROUS_REQUIRES_ALLOW',
+  'API_BODY_INVALID',
+  'API_RESPONSE_NOT_JSON',
+  'API_RESPONSE_UNSUPPORTED',
+  'API_ESCAPE_DISABLED',
+  'EXIT_USAGE',
+]);
+
+export const LEGACY_EXIT_CODES_ENV = 'XIHE_CLI_LEGACY_EXIT_CODES';
+
+function legacyExitCodes(env = {}) {
+  const value = String(env[LEGACY_EXIT_CODES_ENV] ?? '').trim().toLowerCase();
+  return value === '1' || value === 'true' || value === 'yes' || value === 'on';
+}
+
+/** Map a CLI error code to the frozen exit-code table (design D7), with a one-batch legacy switch (D8). */
+export function exitCodeFor(code, env = {}) {
+  if (legacyExitCodes(env)) return 1;
+  return typeof code === 'string' && USAGE_ERROR_CODES.has(code) ? 2 : 1;
+}
+
 export function parseOptions(args, valueOptions, booleanOptions = []) {
   const values = {};
   const positionals = [];

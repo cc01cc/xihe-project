@@ -9,6 +9,7 @@ import {
   addProvider,
   confirmAction,
   deleteProvider,
+  exitCodeFor,
   getApiBase,
   resolveBaseUrl,
   initProvider,
@@ -21,6 +22,7 @@ import {
   updateProvider,
   verifyConnection,
 } from './xihe-cli/provider.mjs';
+import { runApiEscape } from './xihe-cli/api.mjs';
 import {
   bindSkill,
   deleteSkill,
@@ -199,6 +201,13 @@ function helpText() {
     '  node scripts/xihe.mjs credential unbind <id> --workspace <wsId> --agent <principalId[,principalId...]>',
     '  node scripts/xihe.mjs credential reveal <id> --workspace <wsId> (--password-env <NAME> | TTY) [--out <file> [--force]]',
     '  node scripts/xihe.mjs test real <e2e/real/spec.spec.ts> [--route <native|openai-compat>]',
+    '  node scripts/xihe.mjs api [METHOD] <path> [--yes] [--allow-dangerous] [--body-file <file> | --stdin] [--raw] [--timeout <ms>] [--max-bytes <n>]',
+    '',
+    'Global options: --json (machine envelope), --base-url <url>, --workspace <wsId>, --help.',
+    'Exit codes: 0 = success; 1 = business/runtime failure; 2 = usage error (unknown command/option, missing argument, forbidden api target).',
+    'Set XIHE_CLI_LEGACY_EXIT_CODES=1 to restore the pre-0643 codes for one batch.',
+    'xihe api only forwards /api/v1/**; /api/v1/mcp and --include-secrets need --allow-dangerous;',
+    'mutating methods need --yes; request bodies come from stdin or --body-file (never argv).',
     '',
     'Secrets are read from environment variables or a no-echo TTY prompt; never pass secret values as arguments.',
     'credential rotate authenticates with XIHE_CP_API_TOKEN (CP service Bearer) and never prints credential values.',
@@ -870,6 +879,28 @@ export async function runCommand(argv, dependencies = {}) {
       );
     }
 
+    if (group === 'api') {
+      // PLAN-0643 T1.1/T1.6/T1.8: the escape hatch. Gates live in xihe-cli/api.mjs so the
+      // dispatch layer stays thin; the envelope is printed verbatim in --json mode.
+      const apiResult = await runApiEscape({
+        args: [command, ...rest].filter((value) => value !== undefined),
+        env,
+        fetchImpl,
+        apiBase: getApiBase(env),
+        promptSecret: prompt,
+        stdin: dependencies.stdin ?? process.stdin,
+        stderr: dependencies.stderr ?? process.stderr,
+        fsImpl: dependencies.fsImpl,
+        confirm: dependencies.confirmAction ?? confirmAction,
+      });
+      return {
+        exitCode: apiResult.exitCode,
+        json,
+        envelope: apiResult.envelope,
+        data: { kind: 'api-response', bodyText: apiResult.bodyText },
+      };
+    }
+
     if (group === 'test' && command === 'real') {
       const data = await runRealTest({
         args: rest,
@@ -888,7 +919,7 @@ export async function runCommand(argv, dependencies = {}) {
       ? error
       : new CliError('UNEXPECTED_ERROR', 'The command failed unexpectedly; sensitive details were not printed.');
     return {
-      exitCode: cliError.exitCode ?? 1,
+      exitCode: cliError.exitCode ?? exitCodeFor(cliError.code, env),
       json,
       error: {
         code: cliError.code,
@@ -901,9 +932,10 @@ export async function runCommand(argv, dependencies = {}) {
 
 export function printResult(result) {
   if (result.json) {
-    const value = result.error
-      ? { ok: false, error: result.error }
-      : { ok: result.exitCode === 0, data: result.data };
+    const value = result.envelope
+      ?? (result.error
+        ? { ok: false, error: result.error }
+        : { ok: result.exitCode === 0, data: result.data });
     process.stdout.write(`${JSON.stringify(value, null, 2)}\n`);
     return;
   }
@@ -912,6 +944,11 @@ export function printResult(result) {
     if (result.error.details?.connection?.id) {
       process.stderr.write(`Connection ID: ${result.error.details.connection.id}\n`);
     }
+    return;
+  }
+  if (result.data?.kind === 'api-response' && typeof result.data.bodyText === 'string') {
+    const text = result.data.bodyText;
+    process.stdout.write(text.endsWith('\n') ? text : `${text}\n`);
     return;
   }
   if (result.data?.help) {
@@ -1197,5 +1234,7 @@ const isMain = process.argv[1]
 if (isMain) {
   const result = await runCommand(process.argv.slice(2));
   printResult(result);
-  process.exitCode = result.exitCode;
+  // spec §3 row 0: a success that reports `partial: true` is not a full success.
+  const partial = result.exitCode === 0 && result.data?.partial === true;
+  process.exitCode = partial ? 1 : result.exitCode;
 }
