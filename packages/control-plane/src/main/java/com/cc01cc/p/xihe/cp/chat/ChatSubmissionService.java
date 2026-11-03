@@ -576,7 +576,7 @@ public class ChatSubmissionService {
     }
 
     private static CpApiException invalidSpawnArguments() {
-        return new CpApiException(HttpStatus.BAD_REQUEST, "SPAWN_ARGUMENTS_INVALID",
+        return new CpApiException(HttpStatus.BAD_REQUEST, ToolRefusalCodes.SPAWN_ARGUMENTS_INVALID,
                 "Durable spawn arguments must be a complete prompt-only object below the preview limit");
     }
 

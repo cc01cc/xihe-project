@@ -26,6 +26,7 @@ import com.cc01cc.p.xihe.cp.chat.ApprovalService;
 import com.cc01cc.p.xihe.cp.chat.AgentSpawnExecutionService;
 import com.cc01cc.p.xihe.cp.chat.ChatSubmissionService;
 import com.cc01cc.p.xihe.cp.chat.SseEmitterManager;
+import com.cc01cc.p.xihe.cp.chat.ToolRefusalCodes;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
 import com.cc01cc.p.xihe.cp.entity.ChatApproval;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
@@ -1121,8 +1122,8 @@ public class McpProxyController {
             logger.error("[LIFECYCLE] service=cp event=spawn_mcp_dispatch_failed sessionId={} runId={} invocationId={} failureType={}",
                     sessionId, invocation.parentRunId(), invocation.mcpInvocationId(),
                     e.getClass().getSimpleName(), e);
-            responseBody = cpToolResult(body, null, "SPAWN_EXECUTION_FAILED");
-            audit.record(sessionId, SPAWN_AGENT_TOOL, "tool_error", "SPAWN_EXECUTION_FAILED");
+            responseBody = cpToolResult(body, null, ToolRefusalCodes.SPAWN_EXECUTION_FAILED);
+            audit.record(sessionId, SPAWN_AGENT_TOOL, "tool_error", ToolRefusalCodes.SPAWN_EXECUTION_FAILED);
         }
 
         finishMcpDispatchAttempt(dispatch, 200, null, responseBody);
@@ -1179,8 +1180,8 @@ public class McpProxyController {
         } catch (RuntimeException e) {
             logger.error("[LIFECYCLE] service=cp event=credential_acquire_failed sessionId={} failureType={}",
                     sessionId, e.getClass().getSimpleName(), e);
-            responseBody = cpToolResult(body, null, "ACQUIRE_EXECUTION_FAILED");
-            audit.record(sessionId, ACQUIRE_CREDENTIAL_TOOL, "tool_error", "ACQUIRE_EXECUTION_FAILED");
+            responseBody = cpToolResult(body, null, ToolRefusalCodes.ACQUIRE_EXECUTION_FAILED);
+            audit.record(sessionId, ACQUIRE_CREDENTIAL_TOOL, "tool_error", ToolRefusalCodes.ACQUIRE_EXECUTION_FAILED);
         }
         finishMcpDispatchAttempt(dispatch, 200, null, responseBody);
         return mcpJsonResponse(responseBody);

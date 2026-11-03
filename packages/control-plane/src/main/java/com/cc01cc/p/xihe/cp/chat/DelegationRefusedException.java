@@ -61,14 +61,14 @@ public class DelegationRefusedException extends CpApiException {
                     + " >= maxCount " + maxCount + ")";
             default -> "Delegation refused: " + reason;
         };
-        return new DelegationRefusedException("DELEGATION_LIMIT_EXCEEDED", detail,
+        return new DelegationRefusedException(ToolRefusalCodes.DELEGATION_LIMIT_EXCEEDED, detail,
                 context.toAuditDetail(reason, depth, maxDepth, current, maxCount));
     }
 
     /** Fail-closed refusal for a broken/absent tree or an unreadable stored policy. */
     public static DelegationRefusedException policyInvalid(String reason, DelegationAuditContext context,
                                                            String detail) {
-        return new DelegationRefusedException("DELEGATION_POLICY_INVALID",
+        return new DelegationRefusedException(ToolRefusalCodes.DELEGATION_POLICY_INVALID,
                 "Delegation policy is invalid (" + reason + "): " + detail,
                 context.toAuditDetail(reason, -1, -1, -1, -1));
     }
