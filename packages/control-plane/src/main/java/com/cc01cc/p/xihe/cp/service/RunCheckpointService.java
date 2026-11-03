@@ -267,8 +267,18 @@ public class RunCheckpointService {
             };
         } catch (Exception e) {
             logger.warn("[LIFECYCLE] service=cp event=run_checkpoint_capture_root_failed runId={} "
-                            + "workspaceId={} rootId={} failureType={}",
-                    runId, workspaceId, rootId, e.getClass().getName());
+                            + "workspaceId={} rootId={} failureType={} detail={}",
+                    runId, workspaceId, rootId, e.getClass().getName(), e.getMessage());
+            // A thrown capture for this root is still a capture failure for this root:
+            // record the degraded attribution instead of leaving the root silently
+            // missing from the projection, then let the caller continue with the rest.
+            try {
+                persistDegraded(run, rootId, REASON_UNAVAILABLE, e.getClass().getName());
+            } catch (Exception persistError) {
+                logger.warn("[LIFECYCLE] service=cp event=run_checkpoint_capture_root_degrade_failed "
+                                + "runId={} rootId={} failureType={}",
+                        runId, rootId, persistError.getClass().getName());
+            }
             return false;
         }
     }
@@ -279,8 +289,15 @@ public class RunCheckpointService {
      * active declared roots sorted by root id so the capture order is stable
      * across runs and processes.
      *
-     * <p>A missing/unknown root set degrades to the single primary root, which is
-     * exactly the pre-M8 behaviour for legacy and unmaterialized workspaces.</p>
+     * <p>A workspace with no declared-root rows degrades to the single primary root,
+     * which is exactly the pre-M8 behaviour for legacy and unmaterialized
+     * workspaces.</p>
+     *
+     * <p>A **read failure is not degraded**: if the root set cannot be read we cannot
+     * know which roots this Run owns, and capturing only the primary root would
+     * silently leave the other roots without a slice. The exception propagates to
+     * {@link #captureCheckpoint}'s outer catch, which aborts this capture and leaves
+     * the Run for the next terminal/sweep attempt (fail-closed, pre-M8 shape).</p>
      */
     private List<String> captureRoots(String workspaceId) {
         if (isBlank(workspaceId)) {
@@ -288,36 +305,35 @@ public class RunCheckpointService {
         }
         LinkedHashSet<String> ordered = new LinkedHashSet<>();
         ordered.add(workspaceId);
-        try {
-            List<WorkspaceRoot> roots =
-                    workspaceRoots.findByWorkspaceIdAndDeletedAtIsNullOrderByPositionAsc(
-                            UUID.fromString(workspaceId));
-            roots.stream()
-                    .map(root -> root.getId() == null ? null : root.getId().toString())
-                    .filter(Objects::nonNull)
-                    .filter(rootId -> !rootId.equals(workspaceId))
-                    .sorted()
-                    .forEach(ordered::add);
-        } catch (Exception e) {
-            logger.warn("[LIFECYCLE] service=cp event=run_checkpoint_roots_unavailable workspaceId={} "
-                            + "failureType={}", workspaceId, e.getClass().getName());
-        }
+        List<WorkspaceRoot> roots =
+                workspaceRoots.findByWorkspaceIdAndDeletedAtIsNullOrderByPositionAsc(
+                        UUID.fromString(workspaceId));
+        roots.stream()
+                .map(root -> root.getId() == null ? null : root.getId().toString())
+                .filter(Objects::nonNull)
+                .filter(rootId -> !rootId.equals(workspaceId))
+                .sorted()
+                .forEach(ordered::add);
         return List.copyOf(ordered);
     }
 
-    /** Roots of this Run that already hold a captured row (per-root idempotency). */
+    /**
+     * Roots of this Run that already hold a captured row (per-root idempotency).
+     *
+     * <p>A row without {@code root_id} is read as the primary root: the database has
+     * enforced {@code NOT NULL} since V76 and backfilled every legacy row from
+     * {@code workspace_id}, so a null here can only come from an unmigrated dev
+     * database or an in-memory fixture — treating it as "unknown root" would
+     * re-capture a root that already has a slice.</p>
+     *
+     * <p>A read failure propagates for the same reason as {@link #captureRoots}:
+     * without the idempotency view a capture could duplicate an existing row.</p>
+     */
     private Set<String> capturedRoots(String runId, String workspaceId) {
-        try {
-            return checkpoints.findBySourceRunIdAndWorkspaceId(runId, workspaceId).stream()
-                    .filter(row -> isCapturedState(row.getState()))
-                    .map(RunCheckpoint::getRootId)
-                    .filter(Objects::nonNull)
-                    .collect(java.util.stream.Collectors.toSet());
-        } catch (Exception e) {
-            logger.warn("[LIFECYCLE] service=cp event=run_checkpoint_captured_roots_unreadable runId={} "
-                            + "failureType={}", runId, e.getClass().getName());
-            return Set.of();
-        }
+        return checkpoints.findBySourceRunIdAndWorkspaceId(runId, workspaceId).stream()
+                .filter(row -> isCapturedState(row.getState()))
+                .map(row -> isBlank(row.getRootId()) ? workspaceId : row.getRootId())
+                .collect(java.util.stream.Collectors.toSet());
     }
 
     /**
@@ -490,8 +506,12 @@ public class RunCheckpointService {
             return new PreviewOutcome(verdict.gate(), verdict.reason(), null, Map.of());
         }
         RunCheckpoint capturedRow = Objects.requireNonNull(row);
-        RuntimeCheckpointClient.RevertPreview preview =
-                runtime.previewRevert(workspaceId, wireRootId(capturedRow), sliceRef);
+        // PLAN-0639 M8: the primary root keeps the pre-M8 call shape (and wire body);
+        // only a declared non-primary root switches to the root-routed overload.
+        String previewRoot = wireRootId(capturedRow);
+        RuntimeCheckpointClient.RevertPreview preview = previewRoot == null
+                ? runtime.previewRevert(workspaceId, sliceRef)
+                : runtime.previewRevert(workspaceId, previewRoot, sliceRef);
         return switch (preview.outcome()) {
             case OK -> {
                 Map<String, Object> details = new LinkedHashMap<>();
@@ -528,8 +548,10 @@ public class RunCheckpointService {
             return new RevertOutcome(verdict.gate(), verdict.reason(), null, Map.of());
         }
         RunCheckpoint capturedRow = Objects.requireNonNull(row);
-        RuntimeCheckpointClient.RevertResult result =
-                runtime.revert(workspaceId, wireRootId(capturedRow), sliceRef, acknowledgeTypeChanges);
+        String revertRoot = wireRootId(capturedRow);
+        RuntimeCheckpointClient.RevertResult result = revertRoot == null
+                ? runtime.revert(workspaceId, sliceRef, acknowledgeTypeChanges)
+                : runtime.revert(workspaceId, revertRoot, sliceRef, acknowledgeTypeChanges);
         return switch (result.outcome()) {
             case OK -> {
                 recordRevert(capturedRow, result);
@@ -560,8 +582,10 @@ public class RunCheckpointService {
         if (verdict != null) {
             return new FileOutcome(verdict.gate(), verdict.reason(), null, null, Map.of());
         }
-        RuntimeCheckpointClient.BlobResult blob =
-                runtime.checkpointBlob(workspaceId, wireRootId(row), sliceRef, path);
+        String blobRoot = wireRootId(row);
+        RuntimeCheckpointClient.BlobResult blob = blobRoot == null
+                ? runtime.checkpointBlob(workspaceId, sliceRef, path)
+                : runtime.checkpointBlob(workspaceId, blobRoot, sliceRef, path);
         return switch (blob.outcome()) {
             case OK -> new FileOutcome(Gate.OK, null, blob.content(), blob.path(), Map.of());
             case INVALID_REQUEST -> new FileOutcome(Gate.INVALID_REQUEST, REASON_INVALID_REQUEST,
