@@ -29,6 +29,12 @@ pub const CODEC_ZLIB: u8 = 1;
 /// allocation. Raise it together with the streaming decoder work (T2.8).
 pub const MAX_BLOB_RAW_BYTES: u64 = 1024 * 1024 * 1024;
 
+/// Reject a zlib stream whose declared output is more than this multiple of
+/// its compressed payload *before* allocating memory to decode it. This is the
+/// v1 zip-bomb guard; the streaming decoder (T2.8) can relax it once output is
+/// written incrementally instead of buffered in memory.
+pub const MAX_DECOMPRESSION_RATIO: u64 = 4096;
+
 /// Content below this size is stored raw even if it happens to compress.
 const RAW_STORE_THRESHOLD: usize = 64;
 
@@ -66,6 +72,15 @@ pub enum BlobError {
     },
     #[error("blob at {path:?} is corrupt: {reason}")]
     Corrupt { path: PathBuf, reason: String },
+    #[error(
+        "blob at {path:?} declares raw_len={raw_len} from only {payload_len} compressed bytes (ratio limit {limit}x)"
+    )]
+    CompressionRatioTooHigh {
+        path: PathBuf,
+        raw_len: u64,
+        payload_len: u64,
+        limit: u64,
+    },
     #[error("blob hash {hash:?} is not 64 lowercase hex characters")]
     InvalidHash { hash: String },
     #[error("blob content is {actual_len} bytes, above the {limit}-byte limit")]
@@ -181,6 +196,15 @@ fn parse_header<'a>(bytes: &'a [u8], path: &Path) -> Result<(u8, u64, &'a [u8]),
 /// [`decode_blob_verified`] for bytes read by hash from a store.
 pub fn decode_blob(bytes: &[u8], path: &Path) -> Result<Vec<u8>, BlobError> {
     let (codec, raw_len, payload) = parse_header(bytes, path)?;
+    let payload_len = payload.len() as u64;
+    if codec == CODEC_ZLIB && raw_len > payload_len.saturating_mul(MAX_DECOMPRESSION_RATIO) {
+        return Err(BlobError::CompressionRatioTooHigh {
+            path: path.to_path_buf(),
+            raw_len,
+            payload_len,
+            limit: MAX_DECOMPRESSION_RATIO,
+        });
+    }
     match codec {
         CODEC_RAW => {
             let actual_len = payload.len() as u64;
@@ -259,10 +283,19 @@ pub fn read_blob(store_root: &Path, hash: &str) -> Result<Vec<u8>, BlobError> {
     decode_blob_verified(&bytes, &path, hash)
 }
 
+/// Result of [`write_blob`]. `deduped` tells the caller whether the content
+/// was already present, so capture stats can count `blobs_new` vs
+/// `blobs_dedup` without re-statting the object path.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BlobWriteOutcome {
+    pub hash: String,
+    pub deduped: bool,
+}
+
 /// Write a blob atomically and return its SHA-256. Existing content is left
 /// untouched (content-addressed dedup). The temporary file lives under
 /// `<store>/tmp/`, is fsynced, and only then renamed into `objects/`.
-pub fn write_blob(store_root: &Path, raw: &[u8]) -> Result<String, BlobError> {
+pub fn write_blob(store_root: &Path, raw: &[u8]) -> Result<BlobWriteOutcome, BlobError> {
     if raw.len() as u64 > MAX_BLOB_RAW_BYTES {
         return Err(BlobError::RawContentTooLarge {
             actual_len: raw.len() as u64,
@@ -272,7 +305,10 @@ pub fn write_blob(store_root: &Path, raw: &[u8]) -> Result<String, BlobError> {
     let hash = blob_hash(raw);
     let final_path = blob_path(store_root, &hash);
     if final_path.is_file() {
-        return Ok(hash);
+        return Ok(BlobWriteOutcome {
+            hash,
+            deduped: true,
+        });
     }
 
     let encoded = encode_blob(raw)?;
@@ -293,15 +329,46 @@ pub fn write_blob(store_root: &Path, raw: &[u8]) -> Result<String, BlobError> {
         .map_err(|source| io_error(tmp.path(), source))?;
     tmp.persist(&final_path)
         .map_err(|error| io_error(&final_path, error.error))?;
-    Ok(hash)
+    Ok(BlobWriteOutcome {
+        hash,
+        deduped: false,
+    })
 }
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashSet;
+
     use super::*;
 
     fn memory_path() -> PathBuf {
         PathBuf::from("<memory>")
+    }
+
+    fn count_files(root: &Path) -> usize {
+        let mut count = 0;
+        let mut stack = vec![root.to_path_buf()];
+        while let Some(dir) = stack.pop() {
+            let Ok(entries) = fs::read_dir(&dir) else {
+                continue;
+            };
+            for entry in entries {
+                let entry = entry.expect("dir entry");
+                let path = entry.path();
+                if entry.file_type().expect("file type").is_dir() {
+                    stack.push(path);
+                } else {
+                    count += 1;
+                }
+            }
+        }
+        count
+    }
+
+    fn rewrite_raw_len(path: &Path, raw_len: u64) {
+        let mut bytes = fs::read(path).expect("read blob");
+        bytes[5..13].copy_from_slice(&raw_len.to_le_bytes());
+        fs::write(path, bytes).expect("rewrite blob");
     }
 
     #[test]
@@ -339,7 +406,9 @@ mod tests {
         let root = dir.path();
         let raw = vec![b'x'; 1024];
 
-        let hash = write_blob(root, &raw).expect("write");
+        let first = write_blob(root, &raw).expect("write");
+        assert!(!first.deduped, "first write must miss the object cache");
+        let hash = first.hash;
         assert!(is_valid_blob_hash(&hash));
         let path = blob_path(root, &hash);
         assert!(path.is_file());
@@ -353,9 +422,146 @@ mod tests {
 
         let leftover = fs::read_dir(root.join("tmp")).expect("tmp dir").count();
         assert_eq!(leftover, 0, "temporary files must not remain");
+        assert_eq!(count_files(&root.join("objects")), 1);
 
         let again = write_blob(root, &raw).expect("dedup write");
-        assert_eq!(again, hash);
+        assert_eq!(
+            again,
+            BlobWriteOutcome {
+                hash: hash.clone(),
+                deduped: true,
+            }
+        );
+        assert_eq!(count_files(&root.join("objects")), 1);
+    }
+
+    #[test]
+    fn dedup_writes_two_objects_for_six_files() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = dir.path();
+        let same = vec![b's'; 2048];
+        let unique = vec![b'u'; 2048];
+
+        let mut hits = 0;
+        let mut misses = 0;
+        let mut hashes = HashSet::new();
+        for _ in 0..5 {
+            let outcome = write_blob(root, &same).expect("write repeated content");
+            if outcome.deduped {
+                hits += 1;
+            } else {
+                misses += 1;
+            }
+            hashes.insert(outcome.hash);
+        }
+        let outcome = write_blob(root, &unique).expect("write unique content");
+        if outcome.deduped {
+            hits += 1;
+        } else {
+            misses += 1;
+        }
+        hashes.insert(outcome.hash);
+
+        assert_eq!(hashes.len(), 2, "only two distinct contents exist");
+        assert_eq!(misses, 2, "one miss for each distinct content");
+        assert_eq!(hits, 4, "the other four writes must be dedup hits");
+        assert_eq!(count_files(&root.join("objects")), 2);
+    }
+
+    #[test]
+    fn corrupting_one_byte_is_rejected_with_path_and_hashes() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = dir.path();
+        let raw = b"corruption probe";
+        let outcome = write_blob(root, raw).expect("write");
+        let hash = outcome.hash;
+        let path = blob_path(root, &hash);
+
+        let mut bytes = fs::read(&path).expect("read blob");
+        let last = bytes.len() - 1;
+        bytes[last] ^= 0xff;
+        fs::write(&path, bytes).expect("corrupt blob");
+
+        let error = read_blob(root, &hash).expect_err("corrupted blob must be rejected");
+        match error {
+            BlobError::HashMismatch {
+                path: error_path,
+                expected,
+                actual,
+            } => {
+                assert_eq!(error_path, path, "error must name the object path");
+                assert_eq!(expected, hash);
+                assert_ne!(actual, hash);
+            }
+            other => panic!("expected HashMismatch, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn zip_bomb_forged_raw_len_is_rejected_before_decode() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = dir.path();
+        let raw = vec![0u8; 1024 * 1024];
+        let outcome = write_blob(root, &raw).expect("write");
+        let hash = outcome.hash;
+        let path = blob_path(root, &hash);
+
+        rewrite_raw_len(&path, MAX_BLOB_RAW_BYTES + 1);
+        let error = read_blob(root, &hash).expect_err("forged raw_len must be rejected");
+        assert!(matches!(
+            error,
+            BlobError::RawLenTooLarge { raw_len, limit, .. }
+                if raw_len == MAX_BLOB_RAW_BYTES + 1 && limit == MAX_BLOB_RAW_BYTES
+        ));
+    }
+
+    #[test]
+    fn zip_bomb_compression_ratio_is_rejected_before_decode() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = dir.path();
+        let raw = vec![0u8; 1024 * 1024];
+        let outcome = write_blob(root, &raw).expect("write");
+        let hash = outcome.hash;
+        let path = blob_path(root, &hash);
+
+        rewrite_raw_len(&path, MAX_BLOB_RAW_BYTES);
+        let error = read_blob(root, &hash).expect_err("ratio bomb must be rejected");
+        match error {
+            BlobError::CompressionRatioTooHigh {
+                raw_len,
+                payload_len,
+                limit,
+                ..
+            } => {
+                assert_eq!(raw_len, MAX_BLOB_RAW_BYTES);
+                assert!(payload_len < raw_len);
+                assert_eq!(limit, MAX_DECOMPRESSION_RATIO);
+                // The check runs before the zlib decoder is created, so no
+                // buffer is allocated from the forged declared length.
+            }
+            other => panic!("expected CompressionRatioTooHigh, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn zip_bomb_output_length_mismatch_is_rejected() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = dir.path();
+        let raw = vec![0u8; 1024 * 1024];
+        let outcome = write_blob(root, &raw).expect("write");
+        let hash = outcome.hash;
+        let path = blob_path(root, &hash);
+
+        rewrite_raw_len(&path, 1024);
+        let error = read_blob(root, &hash).expect_err("length mismatch must be rejected");
+        assert!(matches!(
+            error,
+            BlobError::LengthMismatch {
+                expected_len: 1024,
+                actual_len,
+                ..
+            } if actual_len > 1024
+        ));
     }
 
     #[test]
