@@ -97,7 +97,16 @@ function describeTarget(target, derived, hostRoot) {
 
 const targets = {
   pg: () => ({ command: "docker", args: ["compose", "up", "-d", "--wait", "postgres"], cwd: projectRoot }),
-  cp: () => ({ command: "mvn", args: ["spring-boot:run"], cwd: join(projectRoot, "packages", "control-plane") }),
+  cp: () => ({
+    command: "mvn",
+    // XIHE_CP_TARGET_DIR：把 CP 的构建输出（target/）放到快卷上（默认不设 = 行为不变）。
+    // 背景：H: 是 ReFS，每文件写 56-170ms，CP 冷编译在 H: 上要 ~8 分钟；C: 上 ~15s。
+    args: [
+      "spring-boot:run",
+      ...(process.env.XIHE_CP_TARGET_DIR ? ["-Dxihe.target.dir=" + process.env.XIHE_CP_TARGET_DIR] : []),
+    ],
+    cwd: join(projectRoot, "packages", "control-plane"),
+  }),
   agent: () => ({ command: "uv", args: ["run", "python", "-m", "xihe_agent.main"], cwd: join(projectRoot, "packages", "agent") }),
   runtime: () => ({ command: "cargo", args: ["run", "--bin", "xihe-runtime"], cwd: join(projectRoot, "packages", "runtime") }),
   ui: () => ({

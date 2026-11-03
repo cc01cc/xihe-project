@@ -341,7 +341,7 @@ alias = "dev:host:start:pg"
 run = "node ../../scripts/stack-run.mjs cp"
 description = "Start Control Plane (port from XIHE_STACK_ID)"
 dir = "packages/control-plane"
-env = { XIHE_ENV = "dev" }
+env = { XIHE_ENV = "dev", XIHE_CP_TARGET_DIR = "C:/xihe-build/dev-host" }
 alias = "dev:host:start:cp"
 
 [tasks."dev:host:start:agent"]
