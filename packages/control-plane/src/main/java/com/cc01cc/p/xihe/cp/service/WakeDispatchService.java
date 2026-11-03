@@ -1,10 +1,14 @@
 package com.cc01cc.p.xihe.cp.service;
 
+import com.cc01cc.p.xihe.cp.chat.DelegationChainWalker;
 import com.cc01cc.p.xihe.cp.chat.SessionWakeupService;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
+import com.cc01cc.p.xihe.cp.config.DbLockTimeout;
 import com.cc01cc.p.xihe.cp.context.service.EventStoreService;
+import com.cc01cc.p.xihe.cp.entity.ChatRun;
 import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.entity.SessionParticipant;
+import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionParticipantCursorRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionParticipantRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
@@ -52,6 +56,9 @@ public class WakeDispatchService {
     private final EventStoreService eventStoreService;
     private final SessionParticipantCursorRepository cursorRepository;
     private final ObjectMapper objectMapper;
+    private final ChatRunRepository chatRunRepository;
+    private final DbLockTimeout dbLockTimeout;
+    private final DelegationChainWalker chainWalker;
 
     public WakeDispatchService(SessionParticipantRepository participantRepository,
                                SessionRepository sessionRepository,
@@ -60,7 +67,9 @@ public class WakeDispatchService {
                                JudgeDecisionService judgeDecisionService,
                                EventStoreService eventStoreService,
                                SessionParticipantCursorRepository cursorRepository,
-                               ObjectMapper objectMapper) {
+                               ObjectMapper objectMapper,
+                               ChatRunRepository chatRunRepository,
+                               DbLockTimeout dbLockTimeout) {
         this.participantRepository = participantRepository;
         this.sessionRepository = sessionRepository;
         this.participantService = participantService;
@@ -69,15 +78,24 @@ public class WakeDispatchService {
         this.eventStoreService = eventStoreService;
         this.cursorRepository = cursorRepository;
         this.objectMapper = objectMapper;
+        this.chatRunRepository = chatRunRepository;
+        this.dbLockTimeout = dbLockTimeout;
+        this.chainWalker = new DelegationChainWalker(sessionRepository, chatRunRepository);
     }
 
     /**
      * Fires one participant wake. Never throws for refuse/skip outcomes — those are audit
      * events; only infrastructure failures propagate.
+     *
+     * @param parentRunId PLAN-0630 M2: the durable chain parent — non-null only for chain/judge
+     *                    hops. Inside the parent run row lock the chain is walked (a missing
+     *                    ancestor refuses with {@code ancestor_missing}) and the duplicate-hop
+     *                    guard refuses a participant this parent already woke, so two concurrent
+     *                    hops from the same parent run can never each admit a run (T2.8/T2.9).
      */
     @Transactional
     public WakeFireResult fire(UUID participantId, String triggerSource, String wakeRoundId,
-                               UUID sessionId) {
+                               UUID sessionId, String parentRunId) {
         SessionParticipant participant = participantRepository.findById(participantId).orElse(null);
         if (participant == null || participant.getDisabledAt() != null) {
             audit(sessionId, participantId, triggerSource, wakeRoundId, "refused",
@@ -111,6 +129,27 @@ public class WakeDispatchService {
                     null, null);
             return new WakeFireResult(false, null, "skipped_muted");
         }
+        UUID chainParentRunId = null;
+        if (parentRunId != null) {
+            // T2.8/T2.9: durable chain admission — inside the parent run row lock, same serialization
+            // the spawn gate uses. Broken chain (missing ancestor) and duplicate hops refuse here,
+            // before any wake run exists.
+            try {
+                chainParentRunId = UUID.fromString(parentRunId);
+            } catch (IllegalArgumentException notUuid) {
+                logger.warn("[LIFECYCLE] service=cp event=wake_chain_parent_invalid sessionId={} "
+                        + "parentRunId={} failureType={}", sessionId, parentRunId,
+                        notUuid.getClass().getSimpleName());
+                return chainRefused(sessionId, participantId, triggerSource, wakeRoundId,
+                        "ancestor_missing");
+            }
+            WakeFireResult chainRefused = refuseBrokenChain(
+                    sessionId, participantId, participant.getPrincipalId(),
+                    triggerSource, wakeRoundId, chainParentRunId);
+            if (chainRefused != null) {
+                return chainRefused;
+            }
+        }
         if (SessionParticipant.RESPOND_JUDGE.equals(policy)
                 && !judgeSaysSpeak(session, participant, triggerSource, wakeRoundId)) {
             audit(sessionId, participantId, triggerSource, wakeRoundId, "judged_no",
@@ -119,9 +158,11 @@ public class WakeDispatchService {
         }
 
         String prompt = "[" + triggerSource + " wake " + wakeRoundId + "] respond to the conversation.";
+        // The responder stamped on the run is the participant's PRINCIPAL id — chat_runs.agent_principal_id
+        // carries an FK to agent_principals (V92 R1); the D23-08 gate above has just verified the row.
         SessionWakeupService.WakeupResult result = sessionWakeupService.wakeupAs(
                 sessionId.toString(), session.getUserId(), session.getWorkspaceId(), prompt,
-                wakeRoundId, participantId, triggerSource);
+                wakeRoundId, participant.getPrincipalId(), triggerSource, chainParentRunId);
         audit(sessionId, participantId, triggerSource, wakeRoundId,
                 result.started() ? "submitted" : "deferred", null, result.runId());
         return new WakeFireResult(result.started(), result.runId(),
@@ -150,6 +191,51 @@ public class WakeDispatchService {
                     judgeFailed.getClass().getSimpleName());
             return false;
         }
+    }
+
+    /**
+     * PLAN-0630 M2 (T2.8/T2.9): durable chain admission for a wake hop, running inside the parent
+     * run row lock (the same {@code findByIdForUpdate} serialization the spawn gate uses, so two
+     * concurrent hops from the same parent run serialize and the second one sees the first one's
+     * committed child). Returns {@code null} when the hop may proceed.
+     *
+     * <ul>
+     *   <li>missing parent run or a broken ancestor walk (session physically deleted) →
+     *       {@code chain_refused} with {@code ancestor_missing} — the same shared
+     *       {@link DelegationChainWalker} determination the spawn budget gate consumes;</li>
+     *   <li>this parent run already woke the same responder principal → {@code chain_refused} as a
+     *       {@code cycle}: the path-scoped reading, made durable, so a duplicate hop can never
+     *       admit a second run.</li>
+     * </ul>
+     */
+    private WakeFireResult refuseBrokenChain(UUID sessionId, UUID participantId, UUID responderPrincipalId,
+                                             String triggerSource, String wakeRoundId, UUID parentRunId) {
+        dbLockTimeout.apply();
+        ChatRun parentRun = chatRunRepository.findByIdForUpdate(parentRunId).orElse(null);
+        if (parentRun == null) {
+            return chainRefused(sessionId, participantId, triggerSource, wakeRoundId, "ancestor_missing");
+        }
+        try {
+            chainWalker.walkFromRun(parentRun);
+        } catch (DelegationChainWalker.AncestorMissingException missing) {
+            logger.warn("[LIFECYCLE] service=cp event=wake_chain_ancestor_missing sessionId={} "
+                    + "parentRunId={} reason={} detail={}", sessionId, parentRunId,
+                    missing.reason(), missing.getMessage());
+            return chainRefused(sessionId, participantId, triggerSource, wakeRoundId, "ancestor_missing");
+        }
+        if (chatRunRepository.existsByParentRunIdAndAgentPrincipalId(
+                parentRunId.toString(), responderPrincipalId)) {
+            logger.info("[LIFECYCLE] service=cp event=wake_chain_duplicate_refused sessionId={} "
+                    + "parentRunId={} responderPrincipalId={}", sessionId, parentRunId, responderPrincipalId);
+            return chainRefused(sessionId, participantId, triggerSource, wakeRoundId, "cycle");
+        }
+        return null;
+    }
+
+    private WakeFireResult chainRefused(UUID sessionId, UUID participantId, String triggerSource,
+                                        String wakeRoundId, String reason) {
+        audit(sessionId, participantId, triggerSource, wakeRoundId, "chain_refused", reason, null);
+        return new WakeFireResult(false, null, "chain_refused");
     }
 
     /** 人=通知：wake_dispatch notify event (SSE = the v1 站内 channel) + mention_count advance. */

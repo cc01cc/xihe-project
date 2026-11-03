@@ -135,17 +135,32 @@ public class SessionWakeupService {
      * admission path as the scheduled wakeup; responder attribution and the G-24
      * trigger_source are stamped inside this transaction (the same dirty-checking
      * boundary as PLAN-0623 M1b-1's user-submission responder write).
+     *
+     * <p>The responder stamped on the run is the answering agent's <b>principal</b> id — the
+     * {@code chat_runs.agent_principal_id} column carries an FK to {@code agent_principals}
+     * (V92 R1), and the dispatch-side authorization gate has already verified that row.</p>
+     *
+     * <p>PLAN-0630 M2 (T2.6, design §4): {@code parentRunId} is the durable wake edge — the run
+     * whose output woke this one. It is stamped only for {@code trigger_source ∈ {chain, judge}}
+     * (chain hops and judge-gated hops have a causal parent); schedule/user wakes pass {@code null}
+     * and stay roots, and spawn rows never reach this method (their parent lives on
+     * {@code waiting_on_run_id}). The edge lands in the SAME transaction as the run row, so the
+     * durable walk can never observe a run without its parent.</p>
      */
     @org.springframework.transaction.annotation.Transactional
     public WakeupResult wakeupAs(String sessionId, String userId, String workspaceId, String prompt,
-                                 String idempotencyKey, java.util.UUID asParticipantId,
-                                 String triggerSource) {
+                                 String idempotencyKey, java.util.UUID asResponderPrincipalId,
+                                 String triggerSource, java.util.UUID parentRunId) {
         WakeupResult result = wakeup(sessionId, userId, workspaceId, prompt, idempotencyKey);
-        if (result.started() && asParticipantId != null) {
+        if (result.started() && asResponderPrincipalId != null) {
             chatRunRepository.findById(result.runId()).ifPresent(run -> {
-                run.setAgentPrincipalId(asParticipantId);
+                run.setAgentPrincipalId(asResponderPrincipalId);
                 if (triggerSource != null && !triggerSource.isBlank()) {
                     run.setTriggerSource(triggerSource);
+                }
+                if (parentRunId != null
+                        && ("chain".equals(triggerSource) || "judge".equals(triggerSource))) {
+                    run.setParentRunId(parentRunId.toString());
                 }
                 chatRunRepository.save(run);
             });

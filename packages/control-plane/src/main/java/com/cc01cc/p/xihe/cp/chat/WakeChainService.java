@@ -105,8 +105,10 @@ public class WakeChainService {
             return;
         }
         String childRoundId = "wake:chain:" + parentRunId + ":" + link.participantId();
+        // PLAN-0630 M2: the durable chain parent rides along — dispatch walks the durable edges and
+        // serializes duplicate hops on the parent run row lock before any wake run exists.
         WakeDispatchService.WakeFireResult result = wakeDispatchService.fire(
-                link.participantId(), "chain", childRoundId, UUID.fromString(sessionId));
+                link.participantId(), "chain", childRoundId, UUID.fromString(sessionId), parentRunId);
         if (result.dispatched() && result.runId() != null) {
             registry.register(result.runId().toString(), child);
             logger.info("[LIFECYCLE] service=cp event=wake_chain_link parentRunId={} childRunId={} "

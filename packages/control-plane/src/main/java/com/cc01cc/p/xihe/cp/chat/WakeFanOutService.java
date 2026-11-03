@@ -95,7 +95,7 @@ public class WakeFanOutService {
             WakeDispatchService.WakeFireResult result;
             try {
                 result = wakeDispatchService.fire(recipient.participantId(), "mention",
-                        wakeRoundId, sessionId);
+                        wakeRoundId, sessionId, null);
             } catch (RuntimeException failure) {
                 // Q3: one recipient's failure never aborts the round.
                 logger.error("[LIFECYCLE] service=cp event=wake_recipient_failed sessionId={} "

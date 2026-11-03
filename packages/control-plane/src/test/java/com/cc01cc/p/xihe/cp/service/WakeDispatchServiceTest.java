@@ -2,10 +2,12 @@ package com.cc01cc.p.xihe.cp.service;
 
 import com.cc01cc.p.xihe.cp.chat.SessionWakeupService;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
+import com.cc01cc.p.xihe.cp.config.DbLockTimeout;
 import com.cc01cc.p.xihe.cp.context.service.EventStoreService;
 import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.entity.SessionParticipant;
 import com.cc01cc.p.xihe.cp.entity.SessionParticipantCursor;
+import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionParticipantCursorRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionParticipantRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
@@ -24,6 +26,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -46,6 +49,8 @@ class WakeDispatchServiceTest {
     private JudgeDecisionService judgeService;
     private EventStoreService eventStore;
     private SessionParticipantCursorRepository cursors;
+    private ChatRunRepository chatRuns;
+    private DbLockTimeout dbLockTimeout;
     private WakeDispatchService service;
 
     private Session session;
@@ -60,8 +65,10 @@ class WakeDispatchServiceTest {
         judgeService = mock(JudgeDecisionService.class);
         eventStore = mock(EventStoreService.class);
         cursors = mock(SessionParticipantCursorRepository.class);
+        chatRuns = mock(ChatRunRepository.class);
+        dbLockTimeout = mock(DbLockTimeout.class);
         service = new WakeDispatchService(participants, sessions, participantService, wakeupService,
-                judgeService, eventStore, cursors, new ObjectMapper());
+                judgeService, eventStore, cursors, new ObjectMapper(), chatRuns, dbLockTimeout);
 
         session = mock(Session.class);
         when(session.getUserId()).thenReturn("owner-1");
@@ -76,11 +83,11 @@ class WakeDispatchServiceTest {
     void disabledParticipantIsRefusedAndAudited() {
         agent.setDisabledAt(java.time.Instant.now());
 
-        WakeDispatchService.WakeFireResult result = service.fire(PARTICIPANT_ID, "mention", ROUND, SESSION_ID);
+        WakeDispatchService.WakeFireResult result = service.fire(PARTICIPANT_ID, "mention", ROUND, SESSION_ID, null);
 
         assertEquals("refused", result.outcome());
         verify(wakeupService, never()).wakeupAs(anyString(), anyString(), anyString(), anyString(),
-                anyString(), any(), anyString());
+                anyString(), any(), anyString(), any());
         assertAuditOutcome("refused");
     }
 
@@ -91,11 +98,11 @@ class WakeDispatchServiceTest {
                 .when(participantService).authorizeAsParticipant(anyString(), anyString(), anyString(),
                         anyString());
 
-        WakeDispatchService.WakeFireResult result = service.fire(PARTICIPANT_ID, "schedule", ROUND, SESSION_ID);
+        WakeDispatchService.WakeFireResult result = service.fire(PARTICIPANT_ID, "schedule", ROUND, SESSION_ID, null);
 
         assertEquals("refused", result.outcome(), "D23-08: a wake never bypasses --as authorization");
         verify(wakeupService, never()).wakeupAs(anyString(), anyString(), anyString(), anyString(),
-                anyString(), any(), anyString());
+                anyString(), any(), anyString(), any());
         assertAuditOutcome("refused");
     }
 
@@ -108,13 +115,13 @@ class WakeDispatchServiceTest {
         SessionParticipantCursor cursor = new SessionParticipantCursor(PARTICIPANT_ID, 5L, 2);
         when(cursors.findById(PARTICIPANT_ID)).thenReturn(Optional.of(cursor));
 
-        WakeDispatchService.WakeFireResult result = service.fire(PARTICIPANT_ID, "mention", ROUND, SESSION_ID);
+        WakeDispatchService.WakeFireResult result = service.fire(PARTICIPANT_ID, "mention", ROUND, SESSION_ID, null);
 
         assertEquals("notify", result.outcome());
         assertFalse(result.dispatched(), "人=通知：a HUMAN recipient never gets a run");
         assertEquals(3, cursor.getMentionCount(), "the cursor advances server-side (R7)");
         verify(wakeupService, never()).wakeupAs(anyString(), anyString(), anyString(), anyString(),
-                anyString(), any(), anyString());
+                anyString(), any(), anyString(), any());
         assertAuditOutcome("notify");
     }
 
@@ -122,11 +129,11 @@ class WakeDispatchServiceTest {
     void mutedParticipantIsSkippedWithAudit() {
         agent.setRespondPolicy(SessionParticipant.RESPOND_MUTED);
 
-        WakeDispatchService.WakeFireResult result = service.fire(PARTICIPANT_ID, "mention", ROUND, SESSION_ID);
+        WakeDispatchService.WakeFireResult result = service.fire(PARTICIPANT_ID, "mention", ROUND, SESSION_ID, null);
 
         assertEquals("skipped_muted", result.outcome());
         verify(wakeupService, never()).wakeupAs(anyString(), anyString(), anyString(), anyString(),
-                anyString(), any(), anyString());
+                anyString(), any(), anyString(), any());
         assertAuditOutcome("skipped_muted");
     }
 
@@ -136,11 +143,11 @@ class WakeDispatchServiceTest {
         when(judgeService.decide(any())).thenReturn(
                 new JudgeDecisionService.JudgeOutcome(true, "{\"speak\":false}", "succeeded", null));
 
-        WakeDispatchService.WakeFireResult result = service.fire(PARTICIPANT_ID, "mention", ROUND, SESSION_ID);
+        WakeDispatchService.WakeFireResult result = service.fire(PARTICIPANT_ID, "mention", ROUND, SESSION_ID, null);
 
         assertEquals("judged_no", result.outcome());
         verify(wakeupService, never()).wakeupAs(anyString(), anyString(), anyString(), anyString(),
-                anyString(), any(), anyString());
+                anyString(), any(), anyString(), any());
     }
 
     @Test
@@ -149,26 +156,26 @@ class WakeDispatchServiceTest {
         when(judgeService.decide(any())).thenReturn(
                 new JudgeDecisionService.JudgeOutcome(true, "{\"speak\":true}", "succeeded", null));
         when(wakeupService.wakeupAs(anyString(), anyString(), anyString(), anyString(), anyString(),
-                eq(PARTICIPANT_ID), eq("mention")))
+                any(), eq("mention"), any()))
                 .thenReturn(SessionWakeupService.WakeupResult.started(RUN_ID));
 
-        WakeDispatchService.WakeFireResult result = service.fire(PARTICIPANT_ID, "mention", ROUND, SESSION_ID);
+        WakeDispatchService.WakeFireResult result = service.fire(PARTICIPANT_ID, "mention", ROUND, SESSION_ID, null);
 
         assertTrue(result.dispatched());
         assertEquals(RUN_ID, result.runId());
         assertEquals("submitted", result.outcome());
         verify(wakeupService).wakeupAs(eq(SESSION_ID.toString()), eq("owner-1"), eq("ws-1"), anyString(),
-                eq(ROUND), eq(PARTICIPANT_ID), eq("mention"));
+                eq(ROUND), eq(agent.getPrincipalId()), eq("mention"), isNull());
         assertAuditOutcome("submitted");
     }
 
     @Test
     void alwaysPolicySubmitsDirectly() {
         when(wakeupService.wakeupAs(anyString(), anyString(), anyString(), anyString(), anyString(),
-                eq(PARTICIPANT_ID), eq("schedule")))
+                any(), eq("schedule"), any()))
                 .thenReturn(SessionWakeupService.WakeupResult.started(RUN_ID));
 
-        WakeDispatchService.WakeFireResult result = service.fire(PARTICIPANT_ID, "schedule", ROUND, SESSION_ID);
+        WakeDispatchService.WakeFireResult result = service.fire(PARTICIPANT_ID, "schedule", ROUND, SESSION_ID, null);
 
         assertTrue(result.dispatched());
         verify(participantService).authorizeAsParticipant(eq("owner-1"), eq("ws-1"),

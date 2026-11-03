@@ -192,7 +192,8 @@ public class ScheduledTaskDispatcher {
                     "wake concurrency limit reached");
         }
         try {
-            wakeDispatchService.fire(participantId, "schedule", idempotencyKey, task.getTargetSessionId());
+            wakeDispatchService.fire(participantId, "schedule", idempotencyKey, task.getTargetSessionId(),
+                    null);
         } catch (RuntimeException e) {
             logger.error("[LIFECYCLE] service=cp event=scheduled_task_wake_failed taskId={} "
                     + "participantId={} failureType={}", task.getId(), participantId,

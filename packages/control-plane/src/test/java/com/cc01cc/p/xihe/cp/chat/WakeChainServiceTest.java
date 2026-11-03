@@ -75,7 +75,7 @@ class WakeChainServiceTest {
 
     private void stubChainRuns() {
         Map<UUID, UUID> runByParticipant = new HashMap<>(Map.of(B, RUN_B, C, RUN_C, D, RUN_D));
-        when(dispatch.fire(any(), eq("chain"), anyString(), eq(UUID.fromString(SESSION_ID))))
+        when(dispatch.fire(any(), eq("chain"), anyString(), eq(UUID.fromString(SESSION_ID)), anyString()))
                 .thenAnswer(invocation -> {
                     UUID participant = invocation.getArgument(0);
                     return new WakeDispatchService.WakeFireResult(true,
@@ -100,12 +100,12 @@ class WakeChainServiceTest {
         stubChainRuns();
         chain.onAssistantContent(SESSION_ID, "root-run", "@Bee 请继续");
         verify(dispatch).fire(eq(B), eq("chain"), contains("root-run"),
-                eq(UUID.fromString(SESSION_ID)));
+                eq(UUID.fromString(SESSION_ID)), anyString());
         chain.onAssistantContent(SESSION_ID, RUN_B.toString(), "@Cee 接力");
         verify(dispatch).fire(eq(C), eq("chain"), contains(RUN_B.toString()),
-                eq(UUID.fromString(SESSION_ID)));
+                eq(UUID.fromString(SESSION_ID)), anyString());
         chain.onAssistantContent(SESSION_ID, RUN_C.toString(), "@Dee 收尾");
-        verify(dispatch).fire(eq(D), eq("chain"), anyString(), eq(UUID.fromString(SESSION_ID)));
+        verify(dispatch).fire(eq(D), eq("chain"), anyString(), eq(UUID.fromString(SESSION_ID)), anyString());
     }
 
     @Test
@@ -117,7 +117,7 @@ class WakeChainServiceTest {
         // depth would be 3 > 2 → refused, D never fired.
         chain.onAssistantContent(SESSION_ID, RUN_C.toString(), "@Dee");
         verify(dispatch, never()).fire(eq(D), eq("chain"), anyString(),
-                eq(UUID.fromString(SESSION_ID)));
+                eq(UUID.fromString(SESSION_ID)), anyString());
         assertRefusedAudit("depth_exceeded");
     }
 
@@ -128,7 +128,7 @@ class WakeChainServiceTest {
         chain.onAssistantContent(SESSION_ID, RUN_B.toString(), "@Cee");    // B → C (depth 2)
         chain.onAssistantContent(SESSION_ID, RUN_C.toString(), "@Bee");    // C → B = cycle
         verify(dispatch, times(1)).fire(eq(B), eq("chain"), anyString(),
-                eq(UUID.fromString(SESSION_ID)));
+                eq(UUID.fromString(SESSION_ID)), anyString());
         assertRefusedAudit("cycle");
     }
 
@@ -138,7 +138,7 @@ class WakeChainServiceTest {
         chain.onAssistantContent(SESSION_ID, "root-1", "@Bee");
         chain.onAssistantContent(SESSION_ID, "root-2", "@Bee");
         verify(dispatch, times(2)).fire(eq(B), eq("chain"), anyString(),
-                eq(UUID.fromString(SESSION_ID)));
+                eq(UUID.fromString(SESSION_ID)), anyString());
     }
 
     @Test
@@ -153,7 +153,7 @@ class WakeChainServiceTest {
         // The chain still routes the mention to dispatch — 人=通知 is dispatch's branch,
         // the chain service never decides "humans cannot be mentioned".
         verify(dispatch, times(1)).fire(eq(humanId), eq("chain"), anyString(),
-                eq(UUID.fromString(SESSION_ID)));
+                eq(UUID.fromString(SESSION_ID)), anyString());
     }
 
     private void assertRefusedAudit(String reason) {
@@ -178,7 +178,7 @@ class WakeChainServiceTest {
         stubChainRuns();
         chain.onAssistantContent(SESSION_ID, "root-run", "我处理完了，没有提到任何人。");
         verify(dispatch, never()).fire(any(), anyString(), anyString(),
-                eq(UUID.fromString(SESSION_ID)));
+                eq(UUID.fromString(SESSION_ID)), anyString());
         verify(eventStore, never()).append(any(), any(), any(), eq("wake_dispatch"), any());
     }
 
@@ -191,7 +191,7 @@ class WakeChainServiceTest {
     void selfMentionTerminatesWithAVisibleRefusal() {
         UUID self = UUID.randomUUID();
         when(participantService.list(any(), any(), any())).thenReturn(rosterOf(entry(self, "Bee")));
-        when(dispatch.fire(any(), eq("chain"), anyString(), eq(UUID.fromString(SESSION_ID))))
+        when(dispatch.fire(any(), eq("chain"), anyString(), eq(UUID.fromString(SESSION_ID)), anyString()))
                 .thenReturn(new WakeDispatchService.WakeFireResult(true, RUN_B, "submitted"));
 
         chain.onAssistantContent(SESSION_ID, "root-run", "@Bee 我继续");
@@ -200,7 +200,7 @@ class WakeChainServiceTest {
 
         // One wake happened; every further self-mention is refused, so the chain cannot loop.
         verify(dispatch, times(1)).fire(eq(self), eq("chain"), anyString(),
-                eq(UUID.fromString(SESSION_ID)));
+                eq(UUID.fromString(SESSION_ID)), anyString());
         ArgumentCaptor<Object> payload = ArgumentCaptor.forClass(Object.class);
         verify(eventStore, times(2)).append(eq(SESSION_ID), eq("ws-1"), eq("owner-1"),
                 eq("wake_dispatch"), payload.capture());

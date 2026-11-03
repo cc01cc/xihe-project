@@ -59,7 +59,7 @@ public class DelegationBudgetService {
     private static final Logger logger = LoggerFactory.getLogger(DelegationBudgetService.class);
 
     /** Anti-footgun rails: applied regardless of what the stored policy says. */
-    static final int MAX_TRAVERSAL_NODES = 512;
+    static final int MAX_TRAVERSAL_NODES = DelegationChainWalker.MAX_TRAVERSAL_NODES;
     /** Lead ruling 2026-11-02 (Q-B): no in-repo precedent for the count; 3 mirrors the wake chain. */
     static final int DEFAULT_MAX_COUNT = 8;
     static final int DEFAULT_MAX_DEPTH = 3;
@@ -72,6 +72,7 @@ public class DelegationBudgetService {
     private final ChatRunRepository chatRunRepository;
     private final AgentPrincipalService agentPrincipalService;
     private final ConfigService configService;
+    private final DelegationChainWalker chainWalker;
 
     public DelegationBudgetService(SessionRepository sessionRepository,
                                    ChatRunRepository chatRunRepository,
@@ -81,6 +82,9 @@ public class DelegationBudgetService {
         this.chatRunRepository = chatRunRepository;
         this.agentPrincipalService = agentPrincipalService;
         this.configService = configService;
+        // Stateless walk component; constructed in place so the service's constructor contract (and
+        // every existing unit test wiring) stays unchanged.
+        this.chainWalker = new DelegationChainWalker(sessionRepository, chatRunRepository);
     }
 
     /**
@@ -125,24 +129,33 @@ public class DelegationBudgetService {
     /** Root + depth of the parent session (root depth = 0). */
     private record Walk(Session root, int depth) {}
 
+    /**
+     * T2.7: the walk itself now lives in {@link DelegationChainWalker} (shared with the wake chain).
+     * Behavior is unchanged — same root, same depth, same 512-node cap. T2.8: a missing ancestor row
+     * now refuses with {@code reason=ancestor_missing} (the shared determination) instead of the
+     * generic {@code tree_broken}; a structurally broken link keeps the historical {@code tree_broken}
+     * audit value.
+     */
     private Walk walkToRoot(Session parentSession) {
-        Session current = parentSession;
-        int depth = 0;
-        int hops = 0;
-        while (Session.KIND_SPAWN.equals(current.getKind())) {
-            if (++hops > MAX_TRAVERSAL_NODES) {
-                throw treeBroken(current);
-            }
-            UUID up = current.getSpawnedFromSessionId();
-            if (up == null) {
-                // V40's CHECK makes this unreachable, but fail closed instead of inventing a root.
-                throw treeBroken(current);
-            }
-            final Session child = current;
-            current = sessionRepository.findById(up).orElseThrow(() -> treeBroken(child));
-            depth++;
+        DelegationChainWalker.ChainWalk walk;
+        try {
+            walk = chainWalker.walkFromSession(parentSession);
+        } catch (DelegationChainWalker.AncestorMissingException missing) {
+            throw ancestorRefused(missing, parentSession);
         }
-        return new Walk(current, depth);
+        Session root = sessionRepository.findById(walk.hops().getLast().nodeId())
+                .orElseThrow(() -> treeBroken(parentSession));
+        return new Walk(root, walk.spawnHops());
+    }
+
+    private static DelegationRefusedException ancestorRefused(
+            DelegationChainWalker.AncestorMissingException missing, Session parentSession) {
+        logger.warn("[LIFECYCLE] service=cp event=delegation_chain_broken reason={} detail={}",
+                missing.reason(), missing.getMessage());
+        return DelegationRefusedException.raw(HttpStatus.CONFLICT, "DELEGATION_POLICY_INVALID",
+                "Delegation ancestor is missing: " + missing.getMessage(),
+                "{\"reason\":\"" + missing.reason() + "\",\"parentSessionId\":\""
+                        + parentSession.getId() + "\"}");
     }
 
     private DelegationLimits effectiveLimits(String rootPrincipalId,

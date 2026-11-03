@@ -194,7 +194,8 @@ class SkillSnapshotPrincipalContrastTest extends AbstractIntegrationTest {
         SessionWakeupService.WakeupResult result = wakeupService.wakeupAs(
                 fixture.session().getId().toString(), fixture.user().getId().toString(),
                 fixture.workspace().getId().toString(), "wake as the mentioned participant",
-                "wakeup-principal-" + UUID.randomUUID(), fixture.responderPrincipal().getId(), "mention");
+                "wakeup-principal-" + UUID.randomUUID(), fixture.responderPrincipal().getId(), "mention",
+                null);
         assertTrue(result.started(), "the idle Session admits the wake-up Run");
         assertNotNull(result.runId());
 

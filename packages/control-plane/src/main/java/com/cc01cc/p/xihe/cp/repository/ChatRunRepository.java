@@ -61,6 +61,13 @@ public interface ChatRunRepository extends JpaRepository<ChatRun, UUID> {
     /** PLAN-0407 T3.1 Tier-1 status query：会话最新 run（createdAt 降序，id 兜底定序）。 */
     Optional<ChatRun> findFirstBySessionIdOrderByCreatedAtDescIdDesc(String sessionId);
 
+    /**
+     * PLAN-0630 M2 (T2.9): the duplicate-hop guard — a chain parent run that already woke this
+     * participant has exactly one child run carrying the (parent_run_id, responder) pair. The walk
+     * runs inside the parent run row lock, so the second concurrent hop sees the first commit.
+     */
+    boolean existsByParentRunIdAndAgentPrincipalId(String parentRunId, UUID agentPrincipalId);
+
     /** PLAN-0507: monitor activity block — non-terminal runs (terminal complement), newest first. */
     List<ChatRun> findBySessionIdAndStatusNotInOrderByCreatedAtDescIdDesc(
             String sessionId, Collection<String> statuses);

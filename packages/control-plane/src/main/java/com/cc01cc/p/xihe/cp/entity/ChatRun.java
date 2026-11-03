@@ -144,6 +144,16 @@ public class ChatRun {
     @Convert(converter = UuidStringConverter.class)
     private String waitingToolCallId;
 
+    /**
+     * PLAN-0630 M2 (V105): the durable wake edge — which run's output woke this run.
+     * Written only for {@code trigger_source ∈ {chain, judge}} wake runs (same transaction as the
+     * run row); NULL = root. Spawn rows never write it — their parent already lives on
+     * {@link #waitingOnRunId} (D30-01: one fact, one column), and user/schedule wakes are roots.
+     */
+    @Column(name = "parent_run_id", columnDefinition = "uuid")
+    @Convert(converter = UuidStringConverter.class)
+    private String parentRunId;
+
     /** PLAN-0510: controlled continuation provenance; null on ordinary Runs. */
     @Column(name = "continuation_source_run_id", columnDefinition = "uuid")
     @Convert(converter = UuidStringConverter.class)
@@ -289,6 +299,8 @@ public class ChatRun {
     public void setWaitingOnRunId(String waitingOnRunId) { this.waitingOnRunId = waitingOnRunId; }
     public String getWaitingToolCallId() { return waitingToolCallId; }
     public void setWaitingToolCallId(String waitingToolCallId) { this.waitingToolCallId = waitingToolCallId; }
+    public String getParentRunId() { return parentRunId; }
+    public void setParentRunId(String parentRunId) { this.parentRunId = parentRunId; }
     public String getContinuationSourceRunId() { return continuationSourceRunId; }
     public void setContinuationSourceRunId(String continuationSourceRunId) {
         this.continuationSourceRunId = continuationSourceRunId;
