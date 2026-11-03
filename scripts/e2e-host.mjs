@@ -2167,6 +2167,17 @@ async function main() {
         }
       })(),
       (async () => {
+        // The Agent's startup config sync only retries ~3 attempts over a
+        // couple of seconds before marking startup_sync_failed; under
+        // `mvn spring-boot:run` CP routinely needs 15–30 s (Flyway + devtools),
+        // so launching the Agent concurrently makes the race lose almost every
+        // time on a loaded machine (2026-11-03 headed runs failed twice on
+        // `ConfigClient: required effective refresh failed statuses=['unreachable']`).
+        // Production ordering (launcher) always starts CP before the Agent, so
+        // gate the Agent on CP health here too — "config sync self-heals" only
+        // covers first-request laziness, not the startup health probe the lane
+        // asserts against.
+        await waitForHttp('cp-before-agent', `http://127.0.0.1:${cpPort}/actuator/health`, readinessTimeoutMs, {})
         // Agent waits for the fake fixtures only when it needs their LLM
         // endpoints; config sync self-heals otherwise.
         await launchNativeService({
