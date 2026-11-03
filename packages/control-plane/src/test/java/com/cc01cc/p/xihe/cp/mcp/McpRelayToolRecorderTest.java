@@ -148,6 +148,69 @@ class McpRelayToolRecorderTest {
     }
 
     @Test
+    void toolResult_authoritativeFailedStatusDecidesEvenWhenThePlaceholderIsTheWholeResult() {
+        stubRunLookup("running");
+        UUID invocationId = UUID.randomUUID();
+        UUID attemptId = UUID.randomUUID();
+        McpRelayToolRecorder.RunState state = newState();
+        state.invocationsByToolCallId().put(DERIVED_TOOL_CALL_ID, invocationId);
+        state.attemptsByToolCallId().put(DERIVED_TOOL_CALL_ID, attemptId);
+        Map<String, Object> payload = toolResultPayload("spawn_agent",
+                "Tool result withheld from durable history because no checkpoint-safe output schema is registered.");
+        payload.put("status", "failed");
+        payload.put("refusalCode", "DELEGATION_LIMIT_EXCEEDED");
+
+        recorder.record("tool_result", payload, TEST_RUN_ID, null, state);
+
+        verify(mcpInvocationService).finishAgentToolAttempt(invocationId, attemptId, true);
+    }
+
+    @Test
+    void toolResult_completedStatusIgnoresAnErrorLookingBody() {
+        // Authority check: once `status` is present it decides, so a body that merely *looks* like
+        // an error (e.g. a legacy relay or a tool echoing that text) cannot flip the ledger.
+        stubRunLookup("running");
+        UUID invocationId = UUID.randomUUID();
+        UUID attemptId = UUID.randomUUID();
+        McpRelayToolRecorder.RunState state = newState();
+        state.invocationsByToolCallId().put(DERIVED_TOOL_CALL_ID, invocationId);
+        state.attemptsByToolCallId().put(DERIVED_TOOL_CALL_ID, attemptId);
+        Map<String, Object> payload = toolResultPayload("write_file", "Tool error: contained in tool output");
+        payload.put("status", "completed");
+
+        recorder.record("tool_result", payload, TEST_RUN_ID, null, state);
+
+        verify(mcpInvocationService).finishAgentToolAttempt(invocationId, attemptId, false);
+    }
+
+    @Test
+    void toolResult_legacyEventWithoutStatusKeepsTheTextPrefixFallback() {
+        // An Agent from before PLAN-0649 never sends `status`; the ledger must keep its old answer.
+        stubRunLookup("running");
+        UUID failedInvocation = UUID.randomUUID();
+        UUID failedAttempt = UUID.randomUUID();
+        McpRelayToolRecorder.RunState failedState = newState();
+        failedState.invocationsByToolCallId().put(DERIVED_TOOL_CALL_ID, failedInvocation);
+        failedState.attemptsByToolCallId().put(DERIVED_TOOL_CALL_ID, failedAttempt);
+
+        recorder.record("tool_result", toolResultPayload("write_file", "Tool error: denied"),
+                TEST_RUN_ID, null, failedState);
+
+        verify(mcpInvocationService).finishAgentToolAttempt(failedInvocation, failedAttempt, true);
+
+        UUID okInvocation = UUID.randomUUID();
+        UUID okAttempt = UUID.randomUUID();
+        McpRelayToolRecorder.RunState okState = newState();
+        okState.invocationsByToolCallId().put(DERIVED_TOOL_CALL_ID, okInvocation);
+        okState.attemptsByToolCallId().put(DERIVED_TOOL_CALL_ID, okAttempt);
+
+        recorder.record("tool_result", toolResultPayload("write_file", "{\"ok\":true}"),
+                TEST_RUN_ID, null, okState);
+
+        verify(mcpInvocationService).finishAgentToolAttempt(okInvocation, okAttempt, false);
+    }
+
+    @Test
     void toolResult_unmatched_noHeuristicFallback_reconcileOwnsRecovery() {
         stubRunLookup("running");
         McpRelayToolRecorder.RunState state = newState();

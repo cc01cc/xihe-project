@@ -522,6 +522,60 @@ class ChatSubmissionServiceIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
+    void refusalCodeSurvivesTheDurableSanitizerSnapshotAndTheMessageListing() {
+        // PLAN-0649 M2 (T2.2/T2.4): the code is metadata, so it must survive the three carriers on
+        // one path — sanitized durable event → assistant Message snapshot → GET /messages DTO —
+        // while the body stays the CP placeholder at every hop.
+        ChatFixture fixture = createChatFixture("tool-refusal");
+        String runId = UUID.randomUUID().toString();
+        ChatSubmissionService.Submission submission = submit(runId, fixture.session(), fixture.user(),
+                fixture.workspace(), "prompt", fixture.principal().getId().toString());
+        String branchId = submission.run().getBranchId();
+        String callId = UUID.randomUUID().toString();
+
+        appendToolEvent(fixture, runId, branchId, "tool.called", Map.of(
+                "schemaVersion", 2,
+                "toolCallId", callId,
+                "toolName", "spawn_agent",
+                "runId", runId,
+                "arguments", Map.of("prompt", "do the subtask")));
+        appendToolEvent(fixture, runId, branchId, "tool.result", Map.of(
+                "schemaVersion", 2,
+                "toolCallId", callId,
+                "toolName", "spawn_agent",
+                "runId", runId,
+                "status", "failed",
+                "refusalCode", "DELEGATION_LIMIT_EXCEEDED",
+                "result", "WORKSPACE-PRIVATE-TOOL-BODY"));
+
+        String messageId = submissionService.persistAssistantResponse(
+                fixture.session().getId().toString(), runId, "");
+        Message stored = messageRepository.findById(UUID.fromString(messageId)).orElseThrow();
+        assertTrue(stored.getToolCalls().contains("DELEGATION_LIMIT_EXCEEDED"));
+        assertFalse(stored.getToolCalls().contains("WORKSPACE-PRIVATE-TOOL-BODY"),
+                "the body must never reach the persisted snapshot");
+
+        BranchPathService.BranchVisibility visibility = branchPathService.resolveVisibility(
+                fixture.session().getId().toString(), branchId);
+        String rootBranchId = branchPathService.resolvePath(fixture.session().getId().toString(), branchId);
+        List<Map<String, Object>> messages = messageReadService.listVisibleMessages(
+                fixture.session().getId().toString(), fixture.workspace().getId().toString(),
+                rootBranchId, visibility);
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> cards = (List<Map<String, Object>>) messages.stream()
+                .filter(message -> messageId.equals(String.valueOf(message.get("id"))))
+                .findFirst()
+                .orElseThrow()
+                .get("toolCalls");
+
+        assertNotNull(cards);
+        assertEquals(1, cards.size());
+        assertEquals("failed", cards.get(0).get("status"));
+        assertEquals("DELEGATION_LIMIT_EXCEEDED", cards.get(0).get("refusalCode"));
+        assertFalse(String.valueOf(cards.get(0).get("result")).contains("WORKSPACE-PRIVATE-TOOL-BODY"));
+    }
+
+    @Test
     void persistsLegacySnapshotAndFiltersApprovalTool() throws Exception {
         ChatFixture fixture = createChatFixture("tool-legacy");
         String runId = UUID.randomUUID().toString();

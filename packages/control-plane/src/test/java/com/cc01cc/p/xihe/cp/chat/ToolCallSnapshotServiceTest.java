@@ -187,6 +187,68 @@ class ToolCallSnapshotServiceTest {
         assertNull(service.snapshotJson(SESSION_ID, " "));
     }
 
+    @Test
+    void carriesShapeValidRefusalCodeIntoTheCard() throws Exception {
+        stub(
+                event("tool.called", start, """
+                        {"schemaVersion":2,"toolCallId":"c1","toolName":"spawn_agent",
+                         "runId":"%s","arguments":{"prompt":"do it"}}""".formatted(RUN_ID)),
+                event("tool.result", start.plusSeconds(1), """
+                        {"schemaVersion":2,"toolCallId":"c1","toolName":"spawn_agent",
+                         "runId":"%s","status":"failed","refusalCode":"DELEGATION_LIMIT_EXCEEDED",
+                         "result":"placeholder"}""".formatted(RUN_ID)));
+
+        JsonNode call = objectMapper.readTree(service.snapshotJson(SESSION_ID, RUN_ID)).path("calls").get(0);
+        assertEquals("failed", call.path("status").asText());
+        assertEquals("DELEGATION_LIMIT_EXCEEDED", call.path("refusalCode").asText());
+        assertEquals("placeholder", call.path("result").asText());
+    }
+
+    @Test
+    void dropsMalformedRefusalCodeInsteadOfStoringIt() throws Exception {
+        for (String malformed : List.of("DELEGATION LIMIT", "DELEGATION:LIMIT", "delegation_limit",
+                "DELEGATION_LIMIT_中", "A".repeat(65))) {
+            stub(
+                    event("tool.called", start, """
+                            {"call_id":"c1","tool_name":"spawn_agent","tool_input":{}}"""),
+                    event("tool.result", start.plusSeconds(1), objectMapper.writeValueAsString(
+                            java.util.Map.of("call_id", "c1", "tool_name", "spawn_agent",
+                                    "status", "failed", "refusalCode", malformed,
+                                    "result", "placeholder"))));
+
+            JsonNode call = objectMapper.readTree(service.snapshotJson(SESSION_ID, RUN_ID)).path("calls").get(0);
+            assertEquals("failed", call.path("status").asText());
+            assertFalse(call.has("refusalCode"), "malformed code must not be stored: " + malformed);
+        }
+    }
+
+    @Test
+    void keepsRefusalCodeWhenTheMessageBudgetShrinksArguments() throws Exception {
+        List<ContextEvent> events = new ArrayList<>();
+        String huge = "y".repeat(4000);
+        events.add(event("tool.called", start, objectMapper.writeValueAsString(
+                java.util.Map.of("call_id", "c0", "tool_name", "spawn_agent",
+                        "tool_input", java.util.Map.of("blob", huge)))));
+        events.add(event("tool.result", start.plusMillis(1), objectMapper.writeValueAsString(
+                java.util.Map.of("call_id", "c0", "tool_name", "spawn_agent",
+                        "status", "failed", "refusalCode", "DELEGATION_LIMIT_EXCEEDED",
+                        "result", "placeholder"))));
+        for (int i = 1; i < 30; i++) {
+            events.add(event("tool.called", start.plusMillis(i + 1), objectMapper.writeValueAsString(
+                    java.util.Map.of("call_id", "c" + i, "tool_name", "read_file",
+                            "tool_input", java.util.Map.of("blob", huge)))));
+        }
+        stub(events.toArray(ContextEvent[]::new));
+
+        String json = service.snapshotJson(SESSION_ID, RUN_ID);
+        assertTrue(json.getBytes(java.nio.charset.StandardCharsets.UTF_8).length
+                <= ToolCallSnapshotService.MESSAGE_BUDGET_BYTES);
+        JsonNode first = objectMapper.readTree(json).path("calls").get(0);
+        assertTrue(first.path("truncated").asBoolean(), "the arguments were shrunk by the budget path");
+        assertEquals("DELEGATION_LIMIT_EXCEEDED", first.path("refusalCode").asText(),
+                "PLAN-0649 M2: the budget shrink must only touch arguments, never the refusal code");
+    }
+
     private void stub(ContextEvent... events) {
         when(repository.findBySessionIdAndCorrelationIdAndEventTypeInOrderByCreatedAtAscIdAsc(eq(SESSION_ID), eq(RUN_ID), any()))
                 .thenReturn(List.of(events));
