@@ -336,9 +336,11 @@ public final class Launcher {
     /**
      * Extract the PostgreSQL payload on first run.
      *
-     * <p>The payload ships as the zonky `.txz` (24.08 MiB -> 104.18 MiB, 1.4 s) because Windows
-     * ships bsdtar and it extracts `.txz` natively (`tar.exe -xJf`, measured PLAN-0632 T2). Payload
-     * extraction is idempotent: an existing `pgsql/bin/postgres.exe` wins.
+     * <p>The payload ships as the zonky `.txz`, share-trimmed at packaging time (PLAN-0632 裁剪③,
+     * explicit keep/remove rules in build-installer.mjs PG_SHARE_TRIM; ~19 MiB -> ~75 MiB, 1.4 s
+     * measured on the untrimmed payload, PLAN-0632 T2) because Windows ships bsdtar and it
+     * extracts `.txz` natively (`tar.exe -xJf`). Payload extraction is idempotent: an existing
+     * `pgsql/bin/postgres.exe` wins.
      */
     private void ensurePostgresPayload() throws IOException, InterruptedException {
         Path pgsqlDir = payloadDir.resolve("pgsql");
@@ -353,7 +355,7 @@ public final class Launcher {
                     "安装包不完整（payload/pgsql.txz 缺失），重新安装");
         }
         log("first-run: extracting " + archive.getFileName() + " (" + Files.size(archive) / (1024 * 1024)
-                + " MiB -> ~104 MiB, measured 1.4 s)");
+                + " MiB -> ~75 MiB share-trimmed, PLAN-0632③)");
         Files.createDirectories(pgsqlDir);
         int code = runProcess(List.of("tar.exe", "-xJf", archive.toString(), "-C", pgsqlDir.toString()),
                 pgsqlDir, "tar").exitCode;
