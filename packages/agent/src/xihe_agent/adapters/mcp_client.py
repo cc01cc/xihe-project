@@ -2,7 +2,7 @@ import asyncio
 import json
 import os
 import warnings
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from datetime import datetime
 from typing import Any, NamedTuple
 
@@ -24,7 +24,12 @@ from xihe_agent.adapters.approval_tool import (
     parse_approval_expiry,
 )
 from xihe_agent.interfaces.context import AgentContext
-from xihe_agent.interfaces.tool import BaseAgentTool, CheckpointSafeToolSchema, ToolSpec
+from xihe_agent.interfaces.tool import (
+    BaseAgentTool,
+    CheckpointSafeToolSchema,
+    ToolSpec,
+    normalize_tool_refusal_code,
+)
 
 # PLAN-0308 M2（决策 #34）：客户端栈迁移到 `langchain[mcp]`（fastmcp 4.x + mcp 2.x）。
 # `langchain.mcp` 处于 beta（导入时发一次 LangChainBetaWarning），本模块按路线 C
@@ -381,6 +386,23 @@ def _result_text(result: Any) -> str:
     return text
 
 
+def _result_refusal_code(result: Any) -> str | None:
+    """PLAN-0649 M1: CP's structured short-circuit code — never parsed from text.
+
+    CP answers a refusal as ``Tool error: <CODE>`` text **and** (PLAN-0649 M2) as
+    the same code under ``structuredContent.code``. Only the structured field is
+    authoritative here: the text path is shared with this module's own exception
+    messages, so guessing a code from it could promote an unrelated error to a
+    refusal (spec §2 I2).
+    """
+    if not getattr(result, "is_error", False):
+        return None
+    structured = getattr(result, "structured_content", None)
+    if not isinstance(structured, Mapping):
+        return None
+    return normalize_tool_refusal_code(structured.get("code"))
+
+
 class MCPAgentTool(BaseAgentTool):
     """A discovered MCP tool; executes through a per-call fastmcp `Client`.
 
@@ -426,6 +448,8 @@ class MCPAgentTool(BaseAgentTool):
             result = await self._dispatch(payload, headers, context, wait)
             elapsed_ms = int((asyncio.get_running_loop().time() - started) * 1000)
             content = _result_text(result)
+            refusal_code = _result_refusal_code(result)
+            is_error = bool(getattr(result, "is_error", False))
             wait = _resolve_tool_wait(self._tool.name, context)
             # 下游（CP/Runtime）返回的错误以 "Tool error:" 前缀透传（与 CP 台账同一约定）：
             # 该跳未到界，只转发下游结论 → origin=downstream（spec S5.1 规则 2）。
@@ -438,7 +462,17 @@ class MCPAgentTool(BaseAgentTool):
                 "error" if downstream_error else "ok",
                 "downstream" if downstream_error else "-",
             )
-            return {"content": content}
+            # PLAN-0649 M1 (spec §1): `is_error` is the protocol field, not a text
+            # heuristic — the adapter turns it into the authoritative card status;
+            # `refusal_code` is the shape-checked CP verdict. Both are additive
+            # keys; `content` (the withheld/withheld-plus-text wire form) is
+            # unchanged.
+            outcome: dict[str, Any] = {"content": content}
+            if is_error:
+                outcome["is_error"] = True
+            if refusal_code is not None:
+                outcome["refusal_code"] = refusal_code
+            return outcome
         except ApprovalTerminalError:
             raise
         except TimeoutError:
@@ -454,11 +488,14 @@ class MCPAgentTool(BaseAgentTool):
                 "content": (
                     f"Tool error: MCP tool '{self._tool.name}' timed out after "
                     f"{timed_out.seconds:.0f}s ({timed_out.timeout_signature()})."
-                )
+                ),
+                # PLAN-0649 M1: a local failure is still a failed call, but it is
+                # never a CP refusal — no `refusal_code` (spec §2 I2).
+                "is_error": True,
             }
         except Exception as e:
             logger.warning("MCP tool {} failed: {}", self._tool.name, e)
-            return {"content": f"Tool error: {e}"}
+            return {"content": f"Tool error: {e}", "is_error": True}
 
     async def _dispatch(
         self,
