@@ -215,7 +215,7 @@ class ChatRunLeaseIntegrationTest extends AbstractIntegrationTest {
 
         ChatRun restored = chatRunRepository.findById(run.getId()).orElseThrow();
         assertEquals("awaiting_approval", restored.getStatus());
-        assertEquals(run.getId().toString(), activeRunRegistry.activeRunId(sessionId));
+        assertTrue(activeRunRegistry.isRunActiveLocally(run.getId().toString()));
         assertEquals("dispatch_unknown", approvalRepository.findById(unknown.getRequestId()).orElseThrow().getState());
         verify(approvalAgentClient, never()).respond(anyString(), anyBoolean(), anyString(), any());
     }
@@ -276,7 +276,7 @@ class ChatRunLeaseIntegrationTest extends AbstractIntegrationTest {
         ChatRun marked = chatRunRepository.findById(run.getId()).orElseThrow();
         assertEquals("ambiguous", marked.getStatus());
         assertEquals("CP_RESTARTED", marked.getErrorCode());
-        assertNull(activeRunRegistry.activeRunId(sessionId));
+        assertFalse(activeRunRegistry.hasActive(sessionId));
         assertEquals("expired", approvalRepository.findById(expired.getRequestId()).orElseThrow().getState());
     }
 
@@ -319,7 +319,7 @@ class ChatRunLeaseIntegrationTest extends AbstractIntegrationTest {
     @Test
     void locallyActiveRunIsNotReconciled() {
         ChatRun run = runWithLease("running", null, null);
-        activeRunRegistry.restoreActiveRun(sessionId, run.getId().toString());
+        activeRunRegistry.restore(sessionId, run.getId().toString());
 
         staleRunReconciler().reconcileStaleRuns();
 

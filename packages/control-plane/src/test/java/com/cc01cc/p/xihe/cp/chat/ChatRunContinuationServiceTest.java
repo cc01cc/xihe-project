@@ -29,7 +29,6 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -55,6 +54,8 @@ class ChatRunContinuationServiceTest {
     @Mock private DbLockTimeout dbLockTimeout;
     @Mock private EntityManager entityManager;
     @Mock private ApplicationEventPublisher eventPublisher;
+    /** PLAN-0645 D45-01: the bounded-concurrency gate (void requireSlot is a no-op on a mock). */
+    @Mock private SessionRunConcurrencyGate runConcurrencyGate;
 
     private ChatRun source;
     private Session session;
@@ -78,7 +79,7 @@ class ChatRunContinuationServiceTest {
 
         service = new ChatRunContinuationService(runs, sessions, messages, checkpoints,
                 lineageInvocations, runtimeJobGate, dbLockTimeout, entityManager,
-                new ObjectMapper(), eventPublisher);
+                new ObjectMapper(), eventPublisher, runConcurrencyGate);
     }
 
     /**
@@ -281,7 +282,8 @@ class ChatRunContinuationServiceTest {
     }
 
     private void stubNewChildCreation() {
-        when(runs.existsBySessionIdAndStatusIn(eq(SESSION_ID), anyCollection())).thenReturn(false);
+        // PLAN-0645: the former "Session has no in-flight run" read is replaced by the gate's
+        // requireSlot (a no-op on the mock), so there is no read-model stub left to set up here.
         stubFreshCheckpoint();
         when(lineageInvocations.requireContinuationEligible(SOURCE_RUN_ID, LINEAGE_ID))
                 .thenReturn(new LineageInvocationService.ContinuationAdmission(

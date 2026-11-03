@@ -111,7 +111,7 @@ class ChatRunRecoveryServiceTest {
         service.reconcileOnStartup();
 
         assertEquals("awaiting_approval", active.getStatus());
-        verify(activeRunRegistry).restoreActiveRun(SESSION_ID, RUN_ID);
+        verify(activeRunRegistry).restore(SESSION_ID, RUN_ID);
     }
 
     @Test

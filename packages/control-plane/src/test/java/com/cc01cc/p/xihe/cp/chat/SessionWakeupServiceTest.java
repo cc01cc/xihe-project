@@ -71,8 +71,6 @@ class SessionWakeupServiceTest {
         service = new SessionWakeupService(sessionService, chatRunRepository,
                 followUpItemRepository, followUpQueueService, branchPathService,
                 chatSubmissionService, eventPublisher, new ObjectMapper());
-        when(chatRunRepository.existsBySessionIdAndStatusIn(anyString(), anyCollection()))
-                .thenReturn(false);
         when(followUpItemRepository.countBySessionIdAndStatusIn(anyString(), anyCollection()))
                 .thenReturn(0L);
     }
@@ -136,43 +134,54 @@ class SessionWakeupServiceTest {
     }
 
     @Test
-    void free_session_start_rejection_propagates_for_dispatcher_classification() {
+    void free_session_cap_reached_defers_into_the_follow_up_queue() {
+        // PLAN-0645 D45-06: a full per-Session run cap keeps the frozen "deferred = 顺延入队"
+        // semantics — the wake itself must never fail because the Session is busy.
         Session session = new Session(WORKSPACE_ID, USER_ID, "wakeup target");
         when(sessionService.requireCurrent(SESSION_ID, USER_ID, WORKSPACE_ID)).thenReturn(session);
         when(branchPathService.ensureRootBranchId(SESSION_ID)).thenReturn(BRANCH_ID);
         when(chatSubmissionService.createScheduled(anyString(), anyString(), anyString(), anyString(),
                 anyString(), anyString(), anyString(), any(), any(), any(), any(), any(), any(),
                 anyString(), anyString(), anyString(), any(), any()))
-                .thenThrow(new CpApiException(HttpStatus.CONFLICT, "CHAT_IN_PROGRESS", "active run"));
+                .thenThrow(new CpApiException(HttpStatus.CONFLICT, "CHAT_IN_PROGRESS", "cap reached"));
 
-        CpApiException error = assertThrows(CpApiException.class,
-                () -> service.wakeup(SESSION_ID, USER_ID, WORKSPACE_ID, "hi", "sched-wakeup-1"));
-        assertEquals("CHAT_IN_PROGRESS", error.getCode());
+        SessionWakeupService.WakeupResult result =
+                service.wakeup(SESSION_ID, USER_ID, WORKSPACE_ID, "hi", "sched-wakeup-1");
+
+        assertFalse(result.started());
+        verify(followUpQueueService).enqueue(eq(SESSION_ID), eq(USER_ID), eq(WORKSPACE_ID),
+                eq("sched-wakeup-1"), any(FollowUpCreateRequest.class));
         verify(eventPublisher, never()).publishEvent(any(ScheduledRunDispatchRequestedEvent.class));
+        assertNull(TenantContext.getUserId(), "tenant context must be cleared after enqueue");
     }
 
     @Test
-    void active_run_defers_through_follow_up_enqueue() {
-        when(chatRunRepository.existsBySessionIdAndStatusIn(eq(SESSION_ID), anyCollection()))
-                .thenReturn(true);
+    void a_run_in_flight_no_longer_defers_the_wake() {
+        // PLAN-0645 D45-06: the old "busy" precheck called existsBySessionIdAndStatusIn and deferred
+        // every wake of a Session whose root run was still streaming (PLAN-0630 T5b.4 step 3). The
+        // cap is now enforced inside admission, so the wake starts and never probes that read model.
+        Session session = new Session(WORKSPACE_ID, USER_ID, "wakeup target");
+        when(sessionService.requireCurrent(SESSION_ID, USER_ID, WORKSPACE_ID)).thenReturn(session);
         when(branchPathService.ensureRootBranchId(SESSION_ID)).thenReturn(BRANCH_ID);
+        when(chatSubmissionService.createScheduled(anyString(), anyString(), anyString(), anyString(),
+                anyString(), anyString(), anyString(), any(), any(), eq("none"), any(), any(),
+                any(), anyString(), eq("wake up"), eq("[]"), eq(List.of()), any()))
+                .thenAnswer(invocation -> {
+                    String runId = invocation.getArgument(0);
+                    ChatRun scheduledRun = new ChatRun(runId, SESSION_ID, USER_ID, WORKSPACE_ID,
+                            "sched-wakeup-1", "hash", null, null, "none", "accepted");
+                    scheduledRun.setOrigin(ChatRun.ORIGIN_SCHEDULED);
+                    Message userMessage = new Message(SESSION_ID, MessageRole.USER, "wake up");
+                    return new ChatSubmissionService.Submission(scheduledRun, userMessage);
+                });
 
         SessionWakeupService.WakeupResult result =
                 service.wakeup(SESSION_ID, USER_ID, WORKSPACE_ID, "wake up", "sched-wakeup-1");
 
-        assertFalse(result.started());
-        ArgumentCaptor<FollowUpCreateRequest> request =
-                ArgumentCaptor.forClass(FollowUpCreateRequest.class);
-        verify(followUpQueueService).enqueue(eq(SESSION_ID), eq(USER_ID), eq(WORKSPACE_ID),
-                eq("sched-wakeup-1"), request.capture());
-        assertEquals("wake up", request.getValue().content());
-        assertEquals(BRANCH_ID, request.getValue().branchId());
-        assertEquals("none", request.getValue().toolMode());
-        assertEquals(List.of(), request.getValue().attachments());
-        assertNull(TenantContext.getUserId(), "tenant context must be cleared after enqueue");
-        verify(chatSubmissionService, never()).createScheduled(anyString(), anyString(), anyString(),
-                anyString(), anyString(), anyString(), anyString(), any(), any(), any(), any(), any(),
-                any(), anyString(), anyString(), anyString(), any(), any());
+        assertTrue(result.started());
+        verify(chatRunRepository, never()).existsBySessionIdAndStatusIn(anyString(), anyCollection());
+        verify(followUpQueueService, never()).enqueue(anyString(), anyString(), anyString(),
+                anyString(), any());
     }
 
     @Test
@@ -191,8 +200,8 @@ class SessionWakeupServiceTest {
 
     @Test
     void enqueue_receives_task_identity_as_tenant_context_during_call() {
-        when(chatRunRepository.existsBySessionIdAndStatusIn(eq(SESSION_ID), anyCollection()))
-                .thenReturn(true);
+        when(followUpItemRepository.countBySessionIdAndStatusIn(eq(SESSION_ID), anyCollection()))
+                .thenReturn(1L);
         when(branchPathService.ensureRootBranchId(SESSION_ID)).thenReturn(BRANCH_ID);
         AtomicReference<String> seenUser = new AtomicReference<>();
         AtomicReference<String> seenWorkspace = new AtomicReference<>();
@@ -211,8 +220,8 @@ class SessionWakeupServiceTest {
 
     @Test
     void enqueue_conflict_propagates_for_dispatcher_classification() {
-        when(chatRunRepository.existsBySessionIdAndStatusIn(eq(SESSION_ID), anyCollection()))
-                .thenReturn(true);
+        when(followUpItemRepository.countBySessionIdAndStatusIn(eq(SESSION_ID), anyCollection()))
+                .thenReturn(1L);
         when(branchPathService.ensureRootBranchId(SESSION_ID)).thenReturn(BRANCH_ID);
         when(followUpQueueService.enqueue(anyString(), anyString(), anyString(), anyString(), any()))
                 .thenThrow(new CpApiException(HttpStatus.CONFLICT, "FOLLOW_UP_QUEUE_FULL", "full"));

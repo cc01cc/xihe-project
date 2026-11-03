@@ -53,7 +53,7 @@ class SessionCommandCatalogTest {
     @Test
     void allowsExportWhenPolicyAllows() {
         verdictIs(PolicyEffect.ALLOW);
-        when(activeRuns.activeRunId(SESSION)).thenReturn(null);
+        when(activeRuns.hasActive(SESSION)).thenReturn(false);
         SessionCommandCatalog.CommandView export = view(catalog.list(SESSION, USER, WORKSPACE).commands(), "/export");
         assertEquals("builtin", export.source());
         assertTrue(export.available());
@@ -64,7 +64,7 @@ class SessionCommandCatalogTest {
     void offersAskingExportButMarksItUnavailableWithAReason() {
         // Ruling A: an ask is never hidden — the user must learn the command exists.
         verdictIs(PolicyEffect.ASK);
-        when(activeRuns.activeRunId(SESSION)).thenReturn(null);
+        when(activeRuns.hasActive(SESSION)).thenReturn(false);
         SessionCommandCatalog.CommandView export = view(catalog.list(SESSION, USER, WORKSPACE).commands(), "/export");
         assertFalse(export.available());
         assertEquals("approval_required", export.reason());
@@ -73,7 +73,7 @@ class SessionCommandCatalogTest {
     @Test
     void marksExportDeniedWhenPolicyDenies() {
         verdictIs(PolicyEffect.DENY);
-        when(activeRuns.activeRunId(SESSION)).thenReturn(null);
+        when(activeRuns.hasActive(SESSION)).thenReturn(false);
         SessionCommandCatalog.CommandView export = view(catalog.list(SESSION, USER, WORKSPACE).commands(), "/export");
         assertFalse(export.available());
         assertEquals("denied", export.reason());
@@ -82,7 +82,7 @@ class SessionCommandCatalogTest {
     @Test
     void failsClosedWhenThePolicyContextCannotBeRead() {
         when(policy.loadContext(USER, WORKSPACE, SESSION)).thenThrow(new IllegalStateException("config unavailable"));
-        when(activeRuns.activeRunId(SESSION)).thenReturn(null);
+        when(activeRuns.hasActive(SESSION)).thenReturn(false);
         SessionCommandCatalog.CommandView export = view(catalog.list(SESSION, USER, WORKSPACE).commands(), "/export");
         assertFalse(export.available());
         assertEquals("policy_unavailable", export.reason());
@@ -91,7 +91,7 @@ class SessionCommandCatalogTest {
     @Test
     void mirrorsCompactPreconditionWhileARunIsActive() {
         verdictIs(PolicyEffect.ALLOW);
-        when(activeRuns.activeRunId(SESSION)).thenReturn(UUID.randomUUID().toString());
+        when(activeRuns.hasActive(SESSION)).thenReturn(true);
         SessionCommandCatalog.CommandView compact = view(catalog.list(SESSION, USER, WORKSPACE).commands(), "/compact");
         assertFalse(compact.available());
         assertEquals("branch_locked", compact.reason());
@@ -100,7 +100,7 @@ class SessionCommandCatalogTest {
     @Test
     void offersCompactWhenNoRunIsActive() {
         verdictIs(PolicyEffect.ALLOW);
-        when(activeRuns.activeRunId(SESSION)).thenReturn(null);
+        when(activeRuns.hasActive(SESSION)).thenReturn(false);
         SessionCommandCatalog.CommandView compact = view(catalog.list(SESSION, USER, WORKSPACE).commands(), "/compact");
         assertTrue(compact.available());
         assertNull(compact.reason());
@@ -119,7 +119,7 @@ class SessionCommandCatalogTest {
     @Test
     void listsBothBuiltinCommandsInStableOrder() {
         verdictIs(PolicyEffect.ALLOW);
-        when(activeRuns.activeRunId(SESSION)).thenReturn(null);
+        when(activeRuns.hasActive(SESSION)).thenReturn(false);
         List<String> names = catalog.list(SESSION, USER, WORKSPACE).commands().stream()
                 .map(SessionCommandCatalog.CommandView::name)
                 .toList();
@@ -131,16 +131,16 @@ class SessionCommandCatalogTest {
         // D35-10: /compact carries no policy gate; its availability must mirror the existing
         // endpoint preconditions exactly. The compact endpoint (SessionController#compact,
         // POST /api/v1/sessions/{id}/compact) returns 409 BRANCH_LOCK when
-        // `activeRunRegistry.activeRunId(sessionId) != null`; the registry therefore has to read
+        // `activeRunRegistry.hasActive(sessionId)`; the registry therefore has to read
         // the *same* registry instance and report `branch_locked`. If that precondition ever
         // changes, this test is the tripwire asking for the registry row to change with it.
         verdictIs(PolicyEffect.ALLOW);
-        when(activeRuns.activeRunId(SESSION)).thenReturn(UUID.randomUUID().toString());
+        when(activeRuns.hasActive(SESSION)).thenReturn(true);
 
         SessionCommandCatalog.CommandView compact =
                 view(catalog.list(SESSION, USER, WORKSPACE).commands(), "/compact");
 
-        verify(activeRuns).activeRunId(SESSION);
+        verify(activeRuns).hasActive(SESSION);
         assertFalse(compact.available());
         // Wire reason `branch_locked` is the snake_case rename of the endpoint's 409
         // `BRANCH_LOCK`; asserted literally on both sides of the pair so a rename in either place
