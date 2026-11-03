@@ -506,10 +506,10 @@ describe("Workspace Agent management API", () => {
                     memories: [
                         {
                             id: "memory-1",
-                            type: "profile",
                             pinned: true,
                             updatedAt: "2026-11-02T10:00:00Z",
                             content: "Prefers Chinese answers",
+                            origin: "manual",
                         },
                     ],
                 }),
@@ -521,21 +521,35 @@ describe("Workspace Agent management API", () => {
             "/api/v1/workspaces/workspace%2F1/agents/principal%201/memories",
             expect.objectContaining({ headers: expect.any(Object) }),
         );
-        // 信封解包：`{memories:[…]}`，字段原样（不推断 pinned、不重排）。
+        // 信封解包：`{memories:[…]}`，字段原样（不推断 pinned、不重排、不造 type/origin）。
         expect(memories).toEqual([
             {
                 id: "memory-1",
-                type: "profile",
                 pinned: true,
                 updatedAt: "2026-11-02T10:00:00Z",
                 content: "Prefers Chinese answers",
+                origin: "manual",
             },
         ]);
     });
 
+    it("passes the archive filter only when asked for it (PLAN-0629 M1-5)", async () => {
+        fetchSpy.mockResolvedValueOnce({
+            ok: true,
+            json: () => Promise.resolve({ memories: [] }),
+        } as Response);
+
+        await api.getWorkspaceAgentMemories("workspace-1", "principal-1", "all");
+
+        expect(fetchSpy).toHaveBeenCalledWith(
+            "/api/v1/workspaces/workspace-1/agents/principal-1/memories?status=all",
+            expect.objectContaining({ headers: expect.any(Object) }),
+        );
+    });
+
     it("drops malformed memory rows instead of guessing their fields", async () => {
-        // 契约是 `type ∈ {profile,fact}` 且 pinned 必填；越界/缺字段 ⇒ 丢行 + warn，
-        // 绝不把未知 type 当 fact、也不猜 pinned=false。
+        // v2 裁定：`type` 随 CP 删列，不再是必填（仍要求 id/pinned/updatedAt/content）；
+        // 缺 `pinned` 等核心字段 ⇒ 丢行 + warn，绝不猜默认值。
         fetchSpy.mockResolvedValueOnce({
             ok: true,
             json: () =>
@@ -543,21 +557,19 @@ describe("Workspace Agent management API", () => {
                     memories: [
                         {
                             id: "ok",
-                            type: "fact",
                             pinned: false,
                             updatedAt: "2026-11-02T10:00:00Z",
                             content: "keep me",
                         },
                         {
-                            id: "bad-type",
-                            type: "candidate",
-                            pinned: false,
+                            id: "unknown-origin",
+                            pinned: true,
                             updatedAt: "2026-11-02T10:00:00Z",
-                            content: "drop me",
+                            content: "keep but no origin chip",
+                            origin: "candidate",
                         },
                         {
                             id: "missing-pinned",
-                            type: "fact",
                             updatedAt: "2026-11-02T10:00:00Z",
                             content: "drop me too",
                         },
@@ -567,7 +579,9 @@ describe("Workspace Agent management API", () => {
 
         const memories = await api.getWorkspaceAgentMemories("workspace-1", "principal-1");
 
-        expect(memories.map((memory) => memory.id)).toEqual(["ok"]);
+        expect(memories.map((memory) => memory.id)).toEqual(["ok", "unknown-origin"]);
+        // 不受支持的 origin 不渲染 → 解析结果里不带该字段。
+        expect(memories[1]).not.toHaveProperty("origin");
     });
 
     it("treats a malformed memory envelope as empty instead of throwing", async () => {

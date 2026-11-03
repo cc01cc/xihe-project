@@ -496,25 +496,51 @@ export interface WorkspaceAgentBinding {
     allowedModels?: AgentModelRef[] | null;
     /** PLAN-0625 M3（V96）：hook 订阅；`null`/缺省 = 无订阅（不渲染订阅行）。 */
     hooks?: AgentPrincipalHooks | null;
+    /**
+     * 主体 `contextPolicy`（CP `AgentPrincipalView`）。UI 只为「启用记忆」开关读写它的
+     * `memory.enabled`：PATCH 是**整对象替换**，所以必须与这里的现值合并后再发。
+     */
+    contextPolicy?: Record<string, unknown> | null;
 }
 
 /**
- * PLAN-0629 M1-4 C：主体记忆（`GET /api/v1/workspaces/{ws}/agents/{pid}/memories`）。
+ * 主体记忆（`GET /api/v1/workspaces/{ws}/agents/{pid}/memories`）。
  *
- * 字段**全部来自服务端**（`WorkspaceAgentMemoryView`）：`type` 是 CP 的枚举
- * `profile | fact`，`pinned` 是 CP 的排序结果，UI 不推断默认值、不自行排序。
+ * 用户裁定（2026-11-03）：CP 正在迁移**删除 `type` 列**，UI 不再有 profile/fact 分类；
+ * 条目只呈现内容 / 置顶 / 更新时间 / 来源。`origin`（`manual|run`）由 CP 补进 view 后才出现，
+ * **字段缺即不渲染**（不回落到默认值、不猜）。
  */
 export type WorkspaceAgentMemoryType = "profile" | "fact";
 
 export interface WorkspaceAgentMemory {
     id: string;
-    type: WorkspaceAgentMemoryType;
     pinned: boolean;
     /** ISO-8601 instant（CP 写入时的时间戳，UI 只负责本地化显示）。 */
     updatedAt: string;
     /** 已归一化的存储文本；UI 只做展示截断/滚动，不改写内容。 */
     content: string;
+    /**
+     * 来源：`manual`（用户手动维护）/ `run`（运行过程产生）。
+     * CP 尚未透出时缺省；未知取值同样不渲染（fail-closed，不猜）。
+     */
+    origin?: WorkspaceAgentMemoryOrigin;
 }
+
+export type WorkspaceAgentMemoryOrigin = "manual" | "run";
+
+/**
+ * 记忆写入入参（`{content, pinned}`；`type` 随 CP 删列一并去掉）。
+ *
+ * 写成功与否**不看响应体**：成功后调用方重新 GET 列表（权威源是 CP 的读取面），
+ * 因此 CP 若换返回体信封，UI 不会因解析失败而误报成功/失败。
+ */
+export interface WorkspaceAgentMemoryInput {
+    content: string;
+    pinned: boolean;
+}
+
+/** 归档视图过滤（`?status=`）：`active` 默认，`retired` 已归档，`all` 两者。 */
+export type WorkspaceAgentMemoryStatus = "active" | "retired" | "all";
 
 export interface AgentPrincipalCreateInput {
     name: string;
@@ -654,9 +680,9 @@ function normalizePrincipalHooks(value: unknown): AgentPrincipalHooks | null {
     return { advisors };
 }
 /**
- * PLAN-0629 M1-4 C：memory 行严格解析（与 hooks 同一条 fail-closed 纪律）。
- * 契约要求 `{id,type,pinned,updatedAt,content}` 全在场；缺字段或 `type` 越界
- * ⇒ **丢掉该行 + warn**：不猜 `pinned` 默认值，也不把未知 type 当 `fact` 显示。
+ * 记忆行严格解析（与 hooks 同一条 fail-closed 纪律），但**不再要求 `type`**：
+ * CP 正在删该列，仍要求它就是"契约前进了而 UI 没跟上"。
+ * `origin` 只在取值受支持时保留，未知/缺失一律不渲染。
  */
 function normalizeWorkspaceAgentMemory(value: unknown): WorkspaceAgentMemory | null {
     const record = asRecord(value);
@@ -664,7 +690,6 @@ function normalizeWorkspaceAgentMemory(value: unknown): WorkspaceAgentMemory | n
         !record ||
         typeof record.id !== "string" ||
         record.id === "" ||
-        !(record.type === "profile" || record.type === "fact") ||
         typeof record.pinned !== "boolean" ||
         typeof record.updatedAt !== "string" ||
         record.updatedAt === "" ||
@@ -673,12 +698,14 @@ function normalizeWorkspaceAgentMemory(value: unknown): WorkspaceAgentMemory | n
         console.warn("[agents] memory row malformed; skipped");
         return null;
     }
+    const origin =
+        record.origin === "manual" || record.origin === "run" ? record.origin : undefined;
     return {
         id: record.id,
-        type: record.type,
         pinned: record.pinned,
         updatedAt: record.updatedAt,
         content: record.content,
+        ...(origin ? { origin } : {}),
     };
 }
 /**
@@ -2634,6 +2661,8 @@ export const api = {
                     ? (snapshot as WorkspaceAgentBinding["permissionsSnapshot"])
                     : [],
                 hooks: normalizePrincipalHooks(agent.hooks),
+                // 「启用记忆」开关要读现值并整对象回写，故这里原样保留 CP 的 contextPolicy。
+                contextPolicy: asRecord(agent.contextPolicy) ?? null,
             } as WorkspaceAgentBinding;
         });
     },
@@ -2642,12 +2671,20 @@ export const api = {
      * 不把裸数组当契约。`status='active'` 过滤、软删排除、pinned/profile 排序都在 CP；
      * UI 不重排、不补字段。可见性门与 agents 列表一致（不可见与不存在同为 404）。
      */
+    /**
+     * 记忆列表。信封是 `{memories:[…]}`（与 `{agents:[…]}` 同风格），不把裸数组当契约。
+     *
+     * `status` 只在调用方显式要归档视图时透传（CP 本轮新增 `?status=active|retired|all`）；
+     * 不传时**完全保持原请求**（无该参数 = 兼容未升级的 CP，读到的就是 active 列表）。
+     */
     async getWorkspaceAgentMemories(
         workspaceId: string,
         principalId: string,
+        status?: WorkspaceAgentMemoryStatus,
     ): Promise<WorkspaceAgentMemory[]> {
+        const query = status ? `?status=${encodeURIComponent(status)}` : "";
         const raw = await request<{ memories?: Array<Record<string, unknown>> }>(
-            `/workspaces/${encodeURIComponent(workspaceId)}/agents/${encodeURIComponent(principalId)}/memories`,
+            `/workspaces/${encodeURIComponent(workspaceId)}/agents/${encodeURIComponent(principalId)}/memories${query}`,
         );
         if (!Array.isArray(raw?.memories)) {
             console.warn("[agents] memory envelope malformed; treated as empty");
@@ -2656,6 +2693,74 @@ export const api = {
         return raw.memories
             .map(normalizeWorkspaceAgentMemory)
             .filter((row): row is WorkspaceAgentMemory => row !== null);
+    },
+    /**
+     * 记忆写入三条（PLAN-0629 M1-5 UI 侧）。
+     *
+     * 契约来源：CP `WorkspaceAgentController` 的 memories 子资源，**写入路由与请求体以 CP lane
+     * 定稿为准**；本实现按 `{content, type, pinned}` 处理，三处需要跟 CP 对齐的只有下面的
+     * `method` 与路径段：
+     * - 新增 `POST   /workspaces/{ws}/agents/{pid}/memories`（body: WorkspaceAgentMemoryInput）
+     * - 更新 `PATCH  /workspaces/{ws}/agents/{pid}/memories/{memoryId}`（body 同上字段子集）
+     * - 删除 `DELETE /workspaces/{ws}/agents/{pid}/memories/{memoryId}`
+     *
+     * 返回 `void`：调用方成功后重读列表（见 `WorkspaceAgentMemoryInput` 的说明），
+     * 因此 CP 的 201/200 返回体形状不构成契约耦合。
+     */
+    async createAgentMemory(
+        workspaceId: string,
+        principalId: string,
+        input: WorkspaceAgentMemoryInput,
+    ): Promise<void> {
+        await request<void>(
+            `/workspaces/${encodeURIComponent(workspaceId)}/agents/${encodeURIComponent(principalId)}/memories`,
+            {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(input),
+            },
+        );
+    },
+    async updateAgentMemory(
+        workspaceId: string,
+        principalId: string,
+        memoryId: string,
+        input: WorkspaceAgentMemoryInput,
+    ): Promise<void> {
+        await request<void>(
+            `/workspaces/${encodeURIComponent(workspaceId)}/agents/${encodeURIComponent(principalId)}/memories/${encodeURIComponent(memoryId)}`,
+            {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(input),
+            },
+        );
+    },
+    async deleteAgentMemory(
+        workspaceId: string,
+        principalId: string,
+        memoryId: string,
+    ): Promise<void> {
+        await request<void>(
+            `/workspaces/${encodeURIComponent(workspaceId)}/agents/${encodeURIComponent(principalId)}/memories/${encodeURIComponent(memoryId)}`,
+            { method: "DELETE" },
+        );
+    },
+    /**
+     * 主体级能力开关（目前只用于「启用记忆」）。`PATCH /api/v1/agent-principals/{id}`
+     * 的 `contextPolicy` 是**整对象替换**（CP 侧 `PATCH_BODY_KEYS` 只认
+     * `hooks`/`contextPolicy`/`delegationPolicy`，且 null 表示清空），
+     * 因此调用方必须传入合并后的完整对象，不能只发 `{memory}`。
+     */
+    async updateAgentPrincipalContextPolicy(
+        principalId: string,
+        contextPolicy: Record<string, unknown> | null,
+    ): Promise<void> {
+        await request<void>(`/agent-principals/${encodeURIComponent(principalId)}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ contextPolicy }),
+        });
     },
     /**
      * PLAN-0621 F-01：`GET /api/v1/me/permissions` 是 CP 的**权威能力投影**

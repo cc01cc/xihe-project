@@ -16,6 +16,11 @@ const apiMock = vi.hoisted(() => ({
     getSelfPermissions: vi.fn<() => Promise<unknown>>(),
     // PLAN-0629 M1-4 C：只读记忆列表。
     getWorkspaceAgentMemories: vi.fn<() => Promise<unknown[]>>(),
+    // PLAN-0629 M1-5：记忆写入面（v2 裁定：无 type、归档软删、启用开关走 contextPolicy）。
+    createAgentMemory: vi.fn<() => Promise<void>>(),
+    updateAgentMemory: vi.fn<() => Promise<void>>(),
+    deleteAgentMemory: vi.fn<() => Promise<void>>(),
+    updateAgentPrincipalContextPolicy: vi.fn<() => Promise<void>>(),
 }));
 
 const CREATE_ACCOUNT_GRANTED = {
@@ -653,19 +658,17 @@ describe("WorkspaceAgentsPanel PLAN-0629 read-only memory", () => {
     };
     const toggle = `[data-testid="agent-memory-toggle-${PRINCIPAL_ID}"]`;
 
-    it("lists the rows the server returned, including type / pinned / updatedAt", async () => {
+    it("lists the rows the server returned (pinned / updatedAt / content; no type badge)", async () => {
         apiMock.getWorkspaceAgents.mockResolvedValue([agentWithMemory]);
         apiMock.getWorkspaceAgentMemories.mockResolvedValue([
             {
                 id: "memory-1",
-                type: "profile",
                 pinned: true,
                 updatedAt: "2026-11-02T10:00:00Z",
                 content: "偏好中文回答",
             },
             {
                 id: "memory-2",
-                type: "fact",
                 pinned: false,
                 updatedAt: "2026-11-02T11:00:00Z",
                 content: "项目使用 Vue 3",
@@ -679,14 +682,8 @@ describe("WorkspaceAgentsPanel PLAN-0629 read-only memory", () => {
         expect(apiMock.getWorkspaceAgentMemories).toHaveBeenCalledWith(WORKSPACE_ID, PRINCIPAL_ID);
         const items = wrapper.findAll('[data-testid^="agent-memory-item-"]');
         expect(items).toHaveLength(2);
-        // 字段照服务端显示：type 走枚举标签，pinned 只在为真时出现。
-        expect(wrapper.get('[data-testid="agent-memory-type-memory-1"]').text()).toBe("画像");
-        expect(wrapper.get('[data-testid="agent-memory-type-memory-2"]').text()).toBe("事实");
-        expect(
-            wrapper
-                .get('[data-testid="agent-memory-type-memory-1"]')
-                .attributes("data-memory-type"),
-        ).toBe("profile");
+        // 用户裁定 v2：CP 删 type 列 ⇒ UI 不再有 profile/fact 徽标。
+        expect(wrapper.find('[data-testid^="agent-memory-type-"]').exists()).toBe(false);
         expect(wrapper.find('[data-testid="agent-memory-pinned-memory-1"]').exists()).toBe(true);
         expect(wrapper.find('[data-testid="agent-memory-pinned-memory-2"]').exists()).toBe(false);
         expect(wrapper.get('[data-testid="agent-memory-updated-memory-1"]').text()).toContain(
@@ -844,5 +841,156 @@ describe("WorkspaceAgentManagementDialog mobile shell (PLAN-0626 M3)", () => {
         ).toHaveLength(0);
         expect(apiMock.getWorkspaceAgents).not.toHaveBeenCalled();
         wrapper.unmount();
+    });
+});
+
+// ── PLAN-0629 M1-5：记忆写入面（v2 裁定）──────────────────────────────────────────
+describe("WorkspaceAgentsPanel memory write surface", () => {
+    const PRINCIPAL_ID = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+    const MEMORY_WRITE_GRANTED = {
+        userId: "99999999-9999-4999-8999-999999999999",
+        instanceCapabilities: [],
+        instancePermissions: [],
+        workspaces: [
+            {
+                workspaceId: WORKSPACE_ID,
+                workspaceAdmin: false,
+                permissions: [{ actionClass: "MEMORY_WRITE", resource: WORKSPACE_ID }],
+            },
+        ],
+    };
+    const agentWithWritableMemory = {
+        principalId: PRINCIPAL_ID,
+        name: "writable agent",
+        templateId: null,
+        templateName: null,
+        createdAt: "2026-11-02T00:00:00Z",
+        permissionsSnapshot: [],
+        bound: true,
+        disabled: false,
+        source: "workspace",
+        ownerUserId: null,
+        // 「启用记忆」开关必须与现值合并且不丢其它 key。
+        contextPolicy: { window: 5, memory: { policyVersion: 1 } },
+    };
+    const toggle = `[data-testid="agent-memory-toggle-${PRINCIPAL_ID}"]`;
+
+    async function mountWithMemory() {
+        apiMock.getSelfPermissions.mockResolvedValue(MEMORY_WRITE_GRANTED);
+        apiMock.getWorkspaceAgents.mockResolvedValue([agentWithWritableMemory]);
+        apiMock.getWorkspaceAgentMemories.mockResolvedValue([
+            {
+                id: "memory-1",
+                pinned: false,
+                updatedAt: "2026-11-03T10:00:00Z",
+                content: "偏好中文回答",
+                origin: "manual",
+            },
+            {
+                id: "memory-2",
+                pinned: true,
+                updatedAt: "2026-11-03T11:00:00Z",
+                content: "项目使用 Vue 3",
+            },
+        ]);
+        const wrapper = await mountOpenedPanel();
+        await wrapper.get(toggle).trigger("click");
+        await flushPromises();
+        return wrapper;
+    }
+
+    it("creates a memory without a type field and re-reads the list", async () => {
+        const wrapper = await mountWithMemory();
+        apiMock.createAgentMemory.mockResolvedValue(undefined);
+
+        await wrapper
+            .get(`[data-testid="agent-memory-create-open-${PRINCIPAL_ID}"]`)
+            .trigger("click");
+        await wrapper
+            .get(`[data-testid="agent-memory-create-content-${PRINCIPAL_ID}"]`)
+            .setValue("本仓库使用 pnpm");
+        await wrapper
+            .get(`[data-testid="agent-memory-create-save-${PRINCIPAL_ID}"]`)
+            .trigger("click");
+        await flushPromises();
+
+        expect(apiMock.createAgentMemory).toHaveBeenCalledWith(WORKSPACE_ID, PRINCIPAL_ID, {
+            content: "本仓库使用 pnpm",
+            pinned: false,
+        });
+        expect(apiMock.getWorkspaceAgentMemories).toHaveBeenCalledTimes(2);
+    });
+
+    it("archives through the confirmation and re-reads the list", async () => {
+        const wrapper = await mountWithMemory();
+        apiMock.deleteAgentMemory.mockResolvedValue(undefined);
+
+        await wrapper.get('[data-testid="agent-memory-archive-memory-1"]').trigger("click");
+        expect(
+            wrapper.get('[data-testid="agent-memory-archive-confirm-memory-1"]').text(),
+        ).toContain("显示已归档");
+        await wrapper
+            .get('[data-testid="agent-memory-archive-confirm-button-memory-1"]')
+            .trigger("click");
+        await flushPromises();
+
+        expect(apiMock.deleteAgentMemory).toHaveBeenCalledWith(
+            WORKSPACE_ID,
+            PRINCIPAL_ID,
+            "memory-1",
+        );
+        expect(apiMock.getWorkspaceAgentMemories).toHaveBeenCalledTimes(2);
+    });
+
+    it("surfaces a write failure instead of pretending success", async () => {
+        const wrapper = await mountWithMemory();
+        apiMock.createAgentMemory.mockRejectedValue(new Error("boom"));
+
+        await wrapper
+            .get(`[data-testid="agent-memory-create-open-${PRINCIPAL_ID}"]`)
+            .trigger("click");
+        await wrapper
+            .get(`[data-testid="agent-memory-create-content-${PRINCIPAL_ID}"]`)
+            .setValue("会失败的写入");
+        await wrapper
+            .get(`[data-testid="agent-memory-create-save-${PRINCIPAL_ID}"]`)
+            .trigger("click");
+        await flushPromises();
+
+        expect(wrapper.get('[data-testid="agent-memory-action-error"]').exists()).toBe(true);
+    });
+
+    it("toggles memory off through the shared Switch and merges the existing contextPolicy", async () => {
+        const wrapper = await mountWithMemory();
+        apiMock.updateAgentPrincipalContextPolicy.mockResolvedValue(undefined);
+
+        await wrapper.get(`[data-testid="agent-memory-enabled-${PRINCIPAL_ID}"]`).trigger("click");
+        await flushPromises();
+
+        expect(apiMock.updateAgentPrincipalContextPolicy).toHaveBeenCalledWith(PRINCIPAL_ID, {
+            window: 5,
+            memory: { policyVersion: 1, enabled: false },
+        });
+    });
+
+    it("requests the archived view when 显示已归档 is on, and renders origin only when present", async () => {
+        const wrapper = await mountWithMemory();
+
+        // origin chip：有 origin 的行渲染，缺字段的行不渲染（不上默认值）。
+        expect(wrapper.get('[data-testid="agent-memory-origin-memory-1"]').text()).toContain(
+            "手动",
+        );
+        expect(wrapper.find('[data-testid="agent-memory-origin-memory-2"]').exists()).toBe(false);
+
+        await wrapper
+            .get(`[data-testid="agent-memory-show-archived-${PRINCIPAL_ID}"]`)
+            .trigger("click");
+        await flushPromises();
+
+        expect(apiMock.getWorkspaceAgentMemories).toHaveBeenLastCalledWith(
+            WORKSPACE_ID,
+            PRINCIPAL_ID,
+            "all",
+        );
     });
 });

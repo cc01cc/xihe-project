@@ -99,7 +99,7 @@ const responderInitials = computed(() =>
 const ROLE_KEYS: Record<SessionParticipantRole, string> = {
     PRIMARY: "workspace.participantRolePrimary",
     MEMBER: "workspace.participantRoleMember",
-    GUARD: "workspace.participantRoleGuard",
+    GUARD: "workspace.participantRoleGuardBuiltin",
 };
 const responderRoleLabel = computed(() =>
     props.responder ? t(ROLE_KEYS[props.responder.role]) : "",

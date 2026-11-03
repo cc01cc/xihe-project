@@ -260,6 +260,9 @@ const messages = {
             participantRolePrimary: "主智能体",
             participantRoleMember: "成员",
             participantRoleGuard: "守卫",
+            // 用户裁定（2026-11-03）：面向用户的守卫角色徽标显示「内置」，不出现 guard 字样。
+            // 新增专用 key，避免改到仍按"守卫"显示的其它入口。
+            participantRoleGuardBuiltin: "内置",
             participantWakeLabel: "唤醒",
             participantWakeAllMessages: "每条消息",
             participantWakeMention: "仅被提及时",
@@ -368,6 +371,27 @@ const messages = {
             agentMemoryTypeFact: "事实",
             agentMemoryPinned: "置顶",
             agentMemoryUpdatedAt: "更新于",
+            // PLAN-0629 M1-5：写入面（v2 裁定：无 profile/fact 分类、删除=归档、二态用 Switch）。
+            agentMemoryWritableBadge: "可编辑",
+            agentMemoryCreateOpen: "＋ 新增记忆",
+            agentMemoryContentLabel: "内容",
+            agentMemoryPinnedToggle: "置顶",
+            agentMemorySave: "保存",
+            agentMemoryEdit: "编辑",
+            agentMemoryArchive: "归档",
+            agentMemoryArchiveConfirm:
+                "归档这条记忆？归档后不再注入上下文，可在「显示已归档」里找回。",
+            agentMemoryArchiveConfirmAction: "确认归档",
+            agentMemoryOriginManual: "来源：手动",
+            agentMemoryOriginRun: "来源：运行",
+            agentMemoryEnabledToggle: "启用记忆",
+            agentMemoryDisabledHint: "已关闭：记忆不再注入上下文；内容保留，重新打开立即恢复。",
+            agentMemoryShowArchived: "显示已归档",
+            agentMemoryArchivedUnsupported: "后端暂未提供归档查询，暂只能查看生效中的记忆。",
+            agentMemoryEmptyCta: "＋ 新增第一条记忆",
+            agentMemoryToggleFailed: "开关保存失败：已保持原状态，请重试",
+            agentMemoryWriteForbidden: "操作失败：当前账号没有记忆写入权限（MEMORY_WRITE）",
+            agentMemoryWriteFailed: "记忆写入失败，请重试",
             agentDisabledSuccess: "智能体已禁用",
             agentDisableForbidden:
                 "缺少禁用权限：请让管理员为本工作区授予 MANAGE_WORKSPACE_AGENTS，或由该个人智能体的属主操作。",
@@ -2397,6 +2421,7 @@ const messages = {
             participantRolePrimary: "Primary agent",
             participantRoleMember: "Member",
             participantRoleGuard: "Guard",
+            participantRoleGuardBuiltin: "Built-in",
             participantWakeLabel: "Wake",
             participantWakeAllMessages: "Every message",
             participantWakeMention: "Mention only",
@@ -2513,6 +2538,30 @@ const messages = {
             agentMemoryTypeFact: "Fact",
             agentMemoryPinned: "Pinned",
             agentMemoryUpdatedAt: "Updated",
+            // PLAN-0629 M1-5: write surface (v2: no profile/fact, delete = archive, Switch for booleans).
+            agentMemoryWritableBadge: "Editable",
+            agentMemoryCreateOpen: "+ New memory",
+            agentMemoryContentLabel: "Content",
+            agentMemoryPinnedToggle: "Pinned",
+            agentMemorySave: "Save",
+            agentMemoryEdit: "Edit",
+            agentMemoryArchive: "Archive",
+            agentMemoryArchiveConfirm:
+                "Archive this memory? Archived memories are no longer injected into context; you can find them under “Show archived”.",
+            agentMemoryArchiveConfirmAction: "Archive",
+            agentMemoryOriginManual: "Source: manual",
+            agentMemoryOriginRun: "Source: run",
+            agentMemoryEnabledToggle: "Memory on",
+            agentMemoryDisabledHint:
+                "Turned off: memory is no longer injected into context. Content is kept and comes back when you turn it on.",
+            agentMemoryShowArchived: "Show archived",
+            agentMemoryArchivedUnsupported:
+                "The backend does not expose an archived filter yet, so only active memories are listed.",
+            agentMemoryEmptyCta: "+ Add the first memory",
+            agentMemoryToggleFailed: "Saving the switch failed; it stayed as it was — try again",
+            agentMemoryWriteForbidden:
+                "Action failed: this account lacks the memory write permission (MEMORY_WRITE)",
+            agentMemoryWriteFailed: "Writing memory failed; try again",
             agentDisabledSuccess: "Agent disabled",
             agentDisableForbidden:
                 "Missing permission: ask an administrator to grant MANAGE_WORKSPACE_AGENTS here, or let the Personal Agent's owner do it.",
