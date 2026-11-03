@@ -69,9 +69,11 @@ const PINS = Object.freeze({
 });
 
 /**
- * jlink module set. `java.desktop` is not optional: Spring's bean introspection needs
- * `java.beans`, which lives there. Kept deliberately narrow (51.7 MiB measured) — every module
- * added here is paid for twice (installer + installed disk).
+ * jlink module set. `java.desktop` is not optional: Spring Boot's environment preparation loads
+ * `java.beans.PropertyEditorSupport` (measured 2026-11-03: the CP dies during
+ * `environmentPrepared` with ClassNotFoundException without it — the 0632 trim attempt ② that
+ * removed it was rolled back on exactly this evidence). Kept deliberately narrow (51.8 MiB
+ * measured) — every module added here is paid for twice (installer + installed disk).
  */
 const JLINK_MODULES = [
   'java.base',
@@ -529,9 +531,9 @@ function stage(inputs, capabilities) {
     // download() is async; this function is called from the async main, see ensurePgPayload().
     throw new Error('PostgreSQL jar cache is missing or has the wrong sha256 (should have been ensured before staging)');
   }
-  const txz = ensurePgTxz(pgJar);
+  const txz = trimPgShareTxz(ensurePgTxz(pgJar));
   copyTree(txz, join(STAGE, 'payload', 'pgsql.txz'));
-  log(`payload/pgsql.txz: ${human(statSync(txz).size)} (extracts to ~104 MiB on first run)`);
+  log(`payload/pgsql.txz: ${human(statSync(txz).size)} (share-trimmed, extracts to ~75 MiB on first run)`);
 
   const pgvector = resolvePgvector();
   mkdirSync(join(STAGE, 'payload', 'pgvector', 'lib'), { recursive: true });
@@ -563,6 +565,133 @@ function ensurePgTxz(jar) {
   }
   if (extracted !== txz) writeFileSync(txz, readFileSync(extracted));
   return txz;
+}
+
+/**
+ * PG payload trim (PLAN-0632 体积裁剪③, 2026-11-03): the zonky server-only payload ships ~1350
+ * share/ files the product never touches. The installer ships the .txz as-is (already xz, the
+ * NSIS LZMA pass compresses it ~r=1.0), so trimming happens HERE, at packaging time, with
+ * explicit keep/remove rules — never "trim by size".
+ *
+ * HARD KEEPS (removing any of these breaks the product — do not widen the remove lists without
+ * a first-run proof):
+ *   - share/timezone/**  — TIMESTAMPTZ storage/reading resolves zone names against these files;
+ *                          a wrong trim shifts stored times by hours (user ruling, 0632③).
+ *   - share/extension/plpgsql.* — initdb installs the default PL into template1 FROM these files.
+ *   - share/{postgres.bki,system_views.sql,system_functions.sql,system_constraints.sql,
+ *     information_schema.sql,snowball_create.sql} — initdb/server bootstrap catalog SQL.
+ *   - share/tsearch_data/**, share/timezonesets/** — tiny (0.1 MiB); FTS configs and custom
+ *     timezone abbreviation sets reference them; not worth any risk.
+ *   - share root *.sample / errcodes.txt / sql_features.txt — config templates and docs the
+ *     server opens on demand; tiny.
+ *   - bin/** untouched; lib DLLs NOT named after a removed contrib module (encoding converters,
+ *     pgoutput, libpqwalreceiver are server-core adjacent and kept by default).
+ *   - `vector` is NOT in the txz at all: pgvector arrives via payload/pgvector (D32-13).
+ *
+ * EXPLICIT REMOVES (product evidence: the only extension the CP ever creates is Flyway V1's
+ * `CREATE EXTENSION IF NOT EXISTS vector`; there is no psql in this payload, so locale message
+ * catalogs and contrib docs are dead weight):
+ *   - share/locale/**           — NLS message catalogs (.mo); without them PG falls back to
+ *                                 English messages. 21.8 MiB raw, the bulk of the saving.
+ *   - share/doc/**              — contrib example scripts.
+ *   - share/extension/**        — every contrib module EXCEPT plpgsql (80+ modules: dblink,
+ *     pgcrypto, pg_trgm, uuid-ossp, ...), by explicit keep-set, not by name-matching heuristics.
+ *   - lib/<module>.dll          — object code of exactly those removed contrib modules (matched
+ *                                 by the removed <module>.control names; SQL-only modules simply
+ *                                 have no DLL and are skipped).
+ *   - lib/*.lib                 — MSVC import libraries, link-time only, useless in a runtime
+ *                                 payload.
+ *
+ * Measured on the pinned 17.11.0 payload (2026-11-03): txz 22.70 -> 19.09 MiB (-3.6 MiB,
+ * installer-side), extracted 98.6 -> ~74.9 MiB. Every remove is verified again after repack by
+ * assertTrimmedPg(), and the installed product is first-run verified (extension vector 0.8.7
+ * verified + SELECT 1 = 1 + TIMESTAMPTZ smoke) before this trim ships.
+ */
+const PG_SHARE_TRIM_VERSION = 'pgshare-trim-v1';
+const PG_EXTENSION_KEEP = new Set(['plpgsql.control', 'plpgsql--1.0.sql']);
+
+function trimPgShareTxz(txz) {
+  const stamp = createHash('sha256').update(readFileSync(txz)).digest('hex').slice(0, 16)
+    + `|${PG_SHARE_TRIM_VERSION}`;
+  const outDir = join(CACHE, 'pg', 'trimmed');
+  const outTxz = join(outDir, PINS.pg.txzName);
+  const stampFile = join(outDir, '.trim-stamp');
+  if (existsSync(outTxz) && existsSync(stampFile) && readFileSync(stampFile, 'utf8').trim() === stamp) {
+    log(`pg: reusing trimmed payload (${relative(REPO, outTxz)})`);
+    return outTxz;
+  }
+  const tree = join(WORK, 'pg-trim-tree');
+  rmSync(tree, { recursive: true, force: true });
+  mkdirSync(tree, { recursive: true });
+  rmSync(outDir, { recursive: true, force: true });
+  mkdirSync(outDir, { recursive: true });
+
+  log('pg: extracting payload for share trim');
+  run('tar.exe', ['-xJf', txz, '-C', tree], { timeout: 240_000 });
+  const before = dirStats(tree);
+  log(`pg: extracted ${human(before.bytes)} before trim`);
+
+  // 1. Whole-directory removes (rules in the block comment above).
+  for (const dir of ['share/locale', 'share/doc']) {
+    rmSync(join(tree, ...dir.split('/')), { recursive: true, force: true });
+  }
+
+  // 2. share/extension: keep-set only (plpgsql), and collect removed module names for the
+  //    matching lib/ DLL remove below.
+  const extDir = join(tree, 'share', 'extension');
+  if (!existsSync(extDir)) fail('PG payload drift: share/extension missing — pin changed?', 're-measure the payload before trimming');
+  const removedModules = [];
+  for (const entry of readdirSync(extDir)) {
+    if (PG_EXTENSION_KEEP.has(entry)) continue;
+    if (entry.endsWith('.control')) removedModules.push(entry.replace(/\.control$/, ''));
+    rmSync(join(extDir, entry), { force: true });
+  }
+  for (const kept of PG_EXTENSION_KEEP) {
+    if (!existsSync(join(extDir, kept))) {
+      fail(`PG payload drift: share/extension/${kept} missing — the plpgsql keep-set no longer matches the pin`);
+    }
+  }
+
+  // 3. lib/: import libs (link-time only) and the DLLs of exactly the removed contrib modules.
+  const libDir = join(tree, 'lib');
+  for (const entry of readdirSync(libDir)) {
+    if (entry.endsWith('.lib') || removedModules.includes(entry.replace(/\.dll$/, ''))) {
+      rmSync(join(libDir, entry), { force: true });
+    }
+  }
+
+  assertTrimmedPg(tree);
+
+  const after = dirStats(tree);
+  log(`pg: trimmed ${human(before.bytes)} -> ${human(after.bytes)} (removed ${human(before.bytes - after.bytes)})`);
+  run('tar.exe', ['-cJf', outTxz, '-C', tree, 'bin', 'lib', 'share'], { timeout: 600_000 });
+  if (!existsSync(outTxz)) fail('trimmed PG payload was not created by tar');
+  writeFileSync(stampFile, `${stamp}\n`, 'utf8');
+  log(`pg: trimmed txz ${human(statSync(outTxz).size)} (was ${human(statSync(txz).size)})`);
+  return outTxz;
+}
+
+/** Post-trim invariants. A failure here means the payload pin drifted: STOP, do not ship. */
+function assertTrimmedPg(tree) {
+  const required = [
+    'bin/postgres.exe',
+    'bin/initdb.exe',
+    'share/postgres.bki',
+    'share/system_views.sql',
+    'share/system_functions.sql',
+    'share/information_schema.sql',
+    'share/snowball_create.sql',
+    'share/extension/plpgsql.control',
+  ];
+  for (const rel of required) {
+    if (!existsSync(join(tree, ...rel.split('/')))) {
+      fail(`trimmed PG payload is missing ${rel} — pin drifted; re-measure before trimming`);
+    }
+  }
+  const timezoneFiles = dirStats(join(tree, 'share', 'timezone')).files;
+  if (timezoneFiles < 500) {
+    fail(`trimmed PG payload has only ${timezoneFiles} share/timezone files — TIMESTAMPTZ would break; refusing to ship`);
+  }
 }
 
 function versionFromUiPackage() {

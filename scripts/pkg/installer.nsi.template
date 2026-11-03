@@ -34,7 +34,11 @@ InstallDir "$LOCALAPPDATA\Programs\Xihe"
 InstallDirRegKey HKCU "${APP_REGKEY}" "InstallLocation"
 RequestExecutionLevel user
 SetCompressor /SOLID lzma
-SetCompressorDictSize 64
+; Dictionary 64 -> 96 (PLAN-0632 体积裁剪①, measured 2026-11-03). 256/128 both abort makensis
+; with internal compiler error #12345 (deflateInit failed, NSIS 3.13); 96 is the largest safe
+; value measured. Saving on the unchanged stage: 235.15 -> 234.56 MiB (-0.61 MiB). This only
+; raises the LZMA lookup window (a bit more build/install memory), never functionality.
+SetCompressorDictSize 96
 ShowInstDetails show
 ShowUninstDetails show
 
