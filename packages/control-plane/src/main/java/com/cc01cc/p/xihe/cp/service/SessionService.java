@@ -6,6 +6,7 @@ import com.cc01cc.p.xihe.cp.config.DbLockTimeout;
 import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.entity.SessionForkRequest;
 import com.cc01cc.p.xihe.cp.entity.ProviderConnection;
+import com.cc01cc.p.xihe.cp.chat.SessionProviderDefaults;
 import com.cc01cc.p.xihe.cp.context.service.ContextService;
 import com.cc01cc.p.xihe.cp.files.ChatAttachmentService;
 import com.cc01cc.p.xihe.cp.mcp.McpInvocationService;
@@ -16,6 +17,8 @@ import com.cc01cc.p.xihe.cp.repository.MessageRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionBranchRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionForkRequestRepository;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -28,8 +31,13 @@ import java.util.UUID;
 @Service
 public class SessionService {
 
+    private static final Logger logger = LoggerFactory.getLogger(SessionService.class);
+
     @org.springframework.beans.factory.annotation.Autowired
     private ApiRequestTemplateService apiRequestTemplates;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    private SessionProviderDefaults sessionProviderDefaults;
 
     private final SessionRepository sessionRepository;
     private final SessionParticipantService sessionParticipantService;
@@ -130,6 +138,19 @@ public class SessionService {
         session.setId(UUID.randomUUID());
         session.setAgentPrincipalId(agentPrincipalId);
         session.setAgentPermissionsSnapshot(cap);
+        // 2026-11-04 P0（task-24）：显式传值优先；只有三件套全空时才按权威顺序补默认
+        // （agent 主体默认 → 生效 llm-provider profile）。补不到 ⇒ 400 PROVIDER_REQUIRED，
+        // 裸会话从此是不允许落地的状态。
+        if (isBlank(providerConnectionId) && isBlank(modelProvider) && isBlank(modelName)) {
+            SessionProviderDefaults.Defaults defaults =
+                    sessionProviderDefaults.resolve(userId, workspaceId, agentPrincipalId);
+            modelProvider = defaults.modelProvider();
+            modelName = defaults.modelName();
+            providerConnectionId = defaults.providerConnectionId();
+            logger.info("[LIFECYCLE] service=cp event=session_provider_defaults_applied "
+                    + "agentPrincipalId={} source={} provider={} model={}",
+                    agentPrincipalId, defaults.source(), modelProvider, modelName);
+        }
         session.setModelProvider(modelProvider);
         session.setModelName(modelName);
         bindProviderConnection(session, userId, workspaceId, providerConnectionId, modelProvider);
@@ -138,6 +159,42 @@ public class SessionService {
         // D23-13: the PRIMARY is part of creating a Session, not of the first message — same transaction.
         sessionParticipantService.ensurePrimaryParticipant(saved.getId(), agentPrincipalId);
         return saved;
+    }
+
+    /**
+     * 2026-11-04 P0（task-24）：老数据补救——把已存在的"裸会话"按默认绑定重绑。
+     *
+     * <p>幂等：已完整绑定 ⇒ 原样返回；只有连接、缺模板 ⇒ 只补模板快照；完全裸 ⇒ 按
+     * {@link com.cc01cc.p.xihe.cp.chat.SessionProviderDefaults} 补齐 connection/model/template。</p>
+     *
+     * <p>刻意<b>不</b>放宽 {@code admissionSnapshot} 的 gate，也不改
+     * {@code ChatSubmissionService} 用 session 行覆盖 body 的语义 —— 老会话必须被真正写回绑定，
+     * 而不是让投递路径替它猜。</p>
+     */
+    @Transactional
+    public Session rebindDefaultBinding(String sessionId, String userId, String workspaceId) {
+        Session session = requireCurrent(sessionId, userId, workspaceId);
+        boolean hasConnection = !isBlank(session.getProviderConnectionId());
+        boolean hasTemplate = session.getContextTemplateLayer() != null
+                && session.getContextTemplateId() != null
+                && session.getContextTemplateVersion() != null;
+        if (hasConnection && hasTemplate) {
+            return session;
+        }
+        if (hasConnection) {
+            bindApiTemplate(session, null);
+            return sessionRepository.save(session);
+        }
+        SessionProviderDefaults.Defaults defaults =
+                sessionProviderDefaults.resolve(userId, workspaceId, session.getAgentPrincipalId());
+        session.setModelProvider(defaults.modelProvider());
+        session.setModelName(defaults.modelName());
+        bindProviderConnection(session, userId, workspaceId, defaults.providerConnectionId(),
+                defaults.modelProvider());
+        bindApiTemplate(session, null);
+        logger.info("[LIFECYCLE] service=cp event=session_provider_rebound sessionId={} source={}",
+                sessionId, defaults.source());
+        return sessionRepository.save(session);
     }
 
     @Transactional
@@ -369,6 +426,10 @@ public class SessionService {
         session.setContextTemplateVersion(snapshot.path("version").asInt());
     }
 
+    private static boolean isBlank(String value) {
+        return value == null || value.isBlank();
+    }
+
     private void bindProviderConnection(
             Session session,
             String userId,
@@ -380,8 +441,21 @@ public class SessionService {
                 return;
             }
             var candidates = apiRequestTemplates.effectiveConnections(userId, workspaceId, requestedProvider);
-            if (candidates.size() != 1) {
-                throw ApiRequestTemplateService.invalid("Select an explicit usable Connection and Model");
+            if (candidates.isEmpty()) {
+                // 2026-11-04 P0（task-24）：默认补齐解析不到可用连接 ⇒ 400 且原因可读。
+                throw new CpApiException(HttpStatus.BAD_REQUEST, "PROVIDER_REQUIRED",
+                        "No usable chat connection for provider '" + requestedProvider
+                                + "'; configure a ready provider connection first");
+            }
+            if (candidates.size() > 1) {
+                String available = candidates.stream()
+                        .map(connection -> connection.getProviderId() + "/" + connection.getConnectionKey())
+                        .limit(5)
+                        .reduce((left, right) -> left + ", " + right)
+                        .orElse("");
+                throw new CpApiException(HttpStatus.BAD_REQUEST, "PROVIDER_CONNECTION_AMBIGUOUS",
+                        "Multiple usable chat connections (" + candidates.size()
+                                + "); pass providerConnectionId explicitly. Candidates: " + available);
             }
             providerConnectionId = candidates.getFirst().getId().toString();
         }

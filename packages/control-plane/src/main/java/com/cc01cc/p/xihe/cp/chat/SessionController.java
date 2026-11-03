@@ -245,6 +245,22 @@ public class SessionController {
         }
     }
 
+    /**
+     * 2026-11-04 P0（task-24）：把已存在的"裸会话"按默认绑定重绑（老数据补救路径）。
+     * 幂等：已绑定则原样返回；无可用默认配置 ⇒ 400 PROVIDER_REQUIRED。
+     */
+    @PostMapping("/{sessionId}/bind-defaults")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<?> bindDefaults(@PathVariable String sessionId) {
+        try {
+            Session session = sessionService.rebindDefaultBinding(sessionId,
+                    TenantContext.getUserId(), TenantContext.getWorkspaceId());
+            return ResponseEntity.ok(SessionViews.toView(session));
+        } catch (CpApiException e) {
+            return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
+        }
+    }
+
     @DeleteMapping("/{sessionId}")
     @PreAuthorize("isAuthenticated()")
     public ResponseEntity<?> delete(@PathVariable String sessionId) {
