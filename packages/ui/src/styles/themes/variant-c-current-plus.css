@@ -1,0 +1,55 @@
+/*
+ * PLAN-0631 M2 视觉语言候选 C —— 现状+（current plus / consistency only）。
+ *
+ * 激活方式：`?variant=c` 或 localStorage `xihe-visual-variant = "c"`（见
+ * `src/lib/visualVariant.ts`）。未设置时本文件不匹配任何元素，**默认主题不受影响**。
+ *
+ * 这个方案在改什么（只做一致性收敛，不做气质改造）
+ * - 字号阶梯显式化：xs 12 / sm 14 / base 16，行高统一到 1.5 / 1.5 / 1.6
+ *   （现状 `--text-sm--line-height` 是 calc(1.25/0.875)=1.4286 这种推导值）。
+ * - 间距：显式钉死 4px 栅格（`--spacing: 0.25rem`），不跟随上游默认值漂移。
+ * - 圆角二值化：控件/卡片 8px、弹层 12px。现状 `rounded`(4px) / `rounded-sm`(2px)
+ *   / `rounded-md`(6px) / `rounded-lg`(10px) / `rounded-xl`(14px) 五档并存，这里把
+ *   `rounded` / `rounded-sm` / `rounded-md` 三档收进 8px，只留两档。
+ *
+ * 这个方案不改什么
+ * - **不加新色相**：一个颜色 token 都不覆盖，全部沿用 `:root` 现值（浅色）。
+ * - 不改布局骨架、栏宽、信息架构、密度（正文仍是 14px，留白与现状一致）。
+ * - 不改深色主题：`:not(.dark)` 限定，深色下惰性。
+ *
+ * 已知边界（诚实记录，避免过度宣称）
+ * - 半档 utility（`py-0.5` / `gap-1.5` 这类 2px/6px）仍在，纯变量手段无法收回；
+ *   真正落地 4px 栅格需要组件级收敛（后续任务）。
+ * - `rounded` 覆盖用类选择器而非 token：Tailwind 把 `rounded` 编成静态 4px，没有
+ *   变量可覆盖。仓库实测长手组合只有 `rounded-b/t-xl`（card/dialog footer），
+ *   与 sm/md 档不冲突，故覆盖是安全的（新增 `rounded-t-md` 之类组合时需复查）。
+ */
+html[data-xh-variant="c"]:not(.dark) {
+    /* —— 圆角：两档（8 / 12），主档 = 8px；气泡保持现状 24px —— */
+    --radius: 0.5rem;
+    --radius-control: 0.5rem;
+    --radius-card: 0.5rem;
+    --radius-overlay: 0.75rem;
+    --radius-3xl: 1.5rem;
+
+    /* —— 字号阶梯：同一阶梯，行高显式 —— */
+    --text-xs: 0.75rem;
+    --text-xs--line-height: 1.5;
+    --text-sm: 0.875rem;
+    --text-sm--line-height: 1.5;
+    --text-base: 1rem;
+    --text-base--line-height: 1.6;
+    /* 气泡正文用 `leading-relaxed`（现状 1.625，与 `--text-sm` 的 1.4286 各说各话）；
+       这里统一到 1.5，与正文行高一致。 */
+    --leading-relaxed: 1.5;
+
+    /* —— 间距：4px 栅格显式声明 —— */
+    --spacing: 0.25rem;
+}
+
+/* 圆角二值化：把 `rounded` / `rounded-sm` / `rounded-md` 三档收进控件档 8px。 */
+html[data-xh-variant="c"]:not(.dark) .rounded,
+html[data-xh-variant="c"]:not(.dark) .rounded-sm,
+html[data-xh-variant="c"]:not(.dark) .rounded-md {
+    border-radius: var(--radius-control);
+}

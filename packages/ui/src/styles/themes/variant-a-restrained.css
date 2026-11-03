@@ -1,0 +1,82 @@
+/*
+ * PLAN-0631 M2 视觉语言候选 A —— 克制（restrained）。
+ *
+ * 激活方式：`?variant=a` 或 localStorage `xihe-visual-variant = "a"`（见
+ * `src/lib/visualVariant.ts`）。未设置时本文件不匹配任何元素，**默认主题不受影响**。
+ *
+ * 这个方案在改什么
+ * - 表面：两层都压到近白（画布 #fafafa / 内容 #ffffff），分隔线降到近透明，
+ *   卡片靠留白分层而不是靠边框；输入框描边单独保留（可辨识性 > 极简）。
+ * - 强调色：全局只有一个（深蓝 #1f4ed8），CTA / 焦点环同源；不引入第二色相。
+ * - 圆角：主档 8px（控件 8 / 卡片 8 / 弹层 12）。
+ * - 密度：正文 14px / 行高 1.7；间距栅格 4.5px（+12.5%），整体更松。
+ *
+ * 这个方案不改什么
+ * - 不改任何组件代码：所有差异都来自 CSS 变量（`--spacing` / `--text-*` /
+ *   `--radius` / 颜色 token），组件里的 Tailwind utility 通过 `var()` 自动跟随。
+ * - 不改布局骨架与栏宽（`useWorkspaceLayout.ts` 的 JS 常量），不改信息架构。
+ * - 不改深色主题：本文件用 `:not(.dark)` 限定，深色下完全惰性（候选只做浅色）。
+ *
+ * 可访问性（实测值见 `.local/xh-d28/0631-variants.md`）
+ * - 正文 #16181d on #ffffff ≈ 17.9:1；次级文字 #5c626b on #ffffff ≈ 6.1:1。
+ * - 强调色 #1f4ed8 上的白字 ≈ 6.7:1；焦点环同色，≥3:1（非文本对比）。
+ */
+html[data-xh-variant="a"]:not(.dark) {
+    /* —— 表面：近白两层 —— */
+    --background: #ffffff;
+    --surface-canvas: #fafafa;
+    --surface-content: #ffffff;
+    --card: #ffffff;
+    --card-foreground: #16181d;
+    --popover: #ffffff;
+    --popover-foreground: #16181d;
+
+    /* —— 文字 —— */
+    --foreground: #16181d;
+    --muted-foreground: #5c626b;
+    --secondary-foreground: #1c1f26;
+    --accent-foreground: #1c1f26;
+    --sidebar-foreground: #16181d;
+    --sidebar-accent-foreground: #1c1f26;
+
+    /* —— 唯一强调色 —— */
+    --brand: #1f4ed8;
+    --brand-foreground: #ffffff;
+    --primary: var(--brand);
+    --primary-foreground: var(--brand-foreground);
+    --ring: var(--brand);
+    --sidebar-ring: var(--brand);
+
+    /* —— 边框：静态分隔近白，hover/输入保留可见档 —— */
+    --border-subtle: #f1f2f4;
+    --border: #eef0f3;
+    --border-strong: #dfe3e9;
+    --input: #dfe3e9;
+    --sidebar-border: #f1f2f4;
+
+    /* —— 中性交互底（不引入第二色相） —— */
+    --secondary: #f5f6f8;
+    --muted: #f5f6f8;
+    --accent: #f4f5f7;
+    --sidebar-accent: #f4f5f7;
+    --sidebar: var(--surface-canvas);
+
+    /* —— 圆角：主档 8px；消息气泡用弹层档 12px（不做胶囊） —— */
+    --radius: 0.5rem;
+    --radius-control: 0.5rem;
+    --radius-card: 0.5rem;
+    --radius-overlay: 0.75rem;
+    --radius-3xl: 0.75rem;
+
+    /* —— 密度：正文 14 / 1.7，间距 4.5px 栅格 —— */
+    --spacing: 0.28125rem;
+    --text-xs: 0.75rem;
+    --text-xs--line-height: 1.6;
+    --text-sm: 0.875rem;
+    --text-sm--line-height: 1.7;
+    --text-base: 1rem;
+    --text-base--line-height: 1.7;
+    /* 气泡正文用 `leading-relaxed`（`--tw-leading` 优先于 `--text-sm--line-height`），
+       两处必须同值，否则"正文行高"在两处不一致。 */
+    --leading-relaxed: 1.7;
+}

@@ -8,6 +8,18 @@
 @import "./shimmer.css";
 @import "./typeset.css";
 
+/*
+ * PLAN-0631 M2 视觉语言候选（A 克制 / B 密集 / C 现状+）。
+ *
+ * 三个候选都是**独立变量集**，只在 `<html data-xh-variant="a|b|c">` 下生效
+ * （开关见 `src/lib/visualVariant.ts`：`?variant=` 或 localStorage
+ * `xihe-visual-variant`）。没有该属性时三份文件一个选择器都不匹配，默认主题
+ * 与改动前逐像素一致 —— 用户圈选后由后续任务落地，这里只做选项。
+ */
+@import "./themes/variant-a-restrained.css";
+@import "./themes/variant-b-dense.css";
+@import "./themes/variant-c-current-plus.css";
+
 /* Keep chat bubbles compact; markstream's document paragraph spacing is too large for messages. */
 .xihe-chat-markdown p,
 .xihe-chat-markdown .paragraph-node {

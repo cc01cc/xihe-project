@@ -6,6 +6,7 @@ import router from "./router";
 import { i18n } from "./i18n";
 import { useSettingsStore } from "./stores/settings";
 import { installGlobalErrorTelemetry, logger } from "./lib/logger";
+import { initVisualVariant } from "./lib/visualVariant";
 import { setCustomComponents, setKaTeXWorker } from "markstream-vue";
 import MarkstreamCodeBlockAdapter from "./features/workspace/chat/components/MarkstreamCodeBlockAdapter.vue";
 import "./styles/main.css";
@@ -17,6 +18,10 @@ const app = createApp(App);
 app.use(pinia);
 // PLAN-0602: apply the persisted language before the first paint so English never flashes zh-CN.
 useSettingsStore().initLanguage();
+// PLAN-0631 M2: project the visual-language candidate (`?variant=` / localStorage) onto
+// `<html data-xh-variant>` before mount, so the first paint is already the chosen variant.
+// No attribute = the current look; the variant token sets only match when it is present.
+initVisualVariant();
 app.use(router);
 app.use(i18n);
 app.mount("#app");
