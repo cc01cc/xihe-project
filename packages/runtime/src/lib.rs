@@ -5,6 +5,7 @@ pub mod checkpoint;
 pub mod checkpoint_api;
 pub mod checkpoint_revert;
 pub mod checkpoint_revert_api;
+pub mod checkpoint_store;
 pub mod device;
 pub mod dotenv_loader;
 pub mod environment;

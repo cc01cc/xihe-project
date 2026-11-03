@@ -3561,6 +3561,7 @@ dependencies = [
  "bytes",
  "chrono",
  "dotenvy",
+ "flate2",
  "fs2",
  "futures-util",
  "globset",
