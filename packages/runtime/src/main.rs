@@ -2778,6 +2778,9 @@ fn restore_failure_response(failure: RestoreFailure) -> Response {
 struct RestorePreviewRequest {
     #[serde(rename = "sliceRef")]
     slice_ref: String,
+    /// PLAN-0639 M8: slice of one declared root; absent = primary root.
+    #[serde(default, rename = "rootId")]
+    root_id: Option<String>,
 }
 
 async fn restore_preview_handler(
@@ -2788,7 +2791,7 @@ async fn restore_preview_handler(
     app.refresh_checkpoint_work_tree(&ws_id).await;
     match app
         .checkpoints
-        .restore_preview(&ws_id, &request.slice_ref)
+        .restore_preview_for_root(&ws_id, request.root_id.as_deref(), &request.slice_ref)
         .await
     {
         Ok(outcome) => AxumJson(outcome).into_response(),
@@ -2802,6 +2805,9 @@ struct RestoreExecuteRequest {
     slice_ref: String,
     #[serde(rename = "acknowledgeTypeChanges", default)]
     acknowledge_type_changes: Vec<String>,
+    /// PLAN-0639 M8: slice of one declared root; absent = primary root.
+    #[serde(default, rename = "rootId")]
+    root_id: Option<String>,
 }
 
 async fn restore_execute_handler(
@@ -2812,8 +2818,9 @@ async fn restore_execute_handler(
     app.refresh_checkpoint_work_tree(&ws_id).await;
     match app
         .checkpoints
-        .restore_execute(
+        .restore_execute_for_root(
             &ws_id,
+            request.root_id.as_deref(),
             &request.slice_ref,
             &request.acknowledge_type_changes,
         )
@@ -2829,6 +2836,9 @@ struct CheckpointBlobQuery {
     #[serde(rename = "sliceRef")]
     slice_ref: String,
     path: String,
+    /// PLAN-0639 M8: slice of one declared root; absent = primary root.
+    #[serde(default, rename = "rootId")]
+    root_id: Option<String>,
 }
 
 fn blob_failure_response(failure: BlobFailure) -> Response {
@@ -2883,7 +2893,12 @@ async fn checkpoint_blob_handler(
     app.refresh_checkpoint_work_tree(&ws_id).await;
     match app
         .checkpoints
-        .slice_blob(&ws_id, &query.slice_ref, &query.path)
+        .slice_blob_for_root(
+            &ws_id,
+            query.root_id.as_deref(),
+            &query.slice_ref,
+            &query.path,
+        )
         .await
     {
         Ok(blob) => {

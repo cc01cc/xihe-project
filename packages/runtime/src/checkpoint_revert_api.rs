@@ -162,9 +162,21 @@ impl CheckpointService {
         workspace_id: &str,
         slice_ref: &str,
     ) -> Result<RestorePreviewOutcome, RestoreFailure> {
+        self.restore_preview_for_root(workspace_id, None, slice_ref)
+            .await
+    }
+
+    /// PLAN-0639 M8: preview the restore of a slice that belongs to **one declared
+    /// root** (`rootId` absent = primary root, pre-M8 wire).
+    pub async fn restore_preview_for_root(
+        &self,
+        workspace_id: &str,
+        root_id: Option<&str>,
+        slice_ref: &str,
+    ) -> Result<RestorePreviewOutcome, RestoreFailure> {
         let preview = self
             .engine()
-            .restore_preview(workspace_id, slice_ref)
+            .restore_preview_for_root(workspace_id, root_id, slice_ref)
             .await
             .map_err(restore_failure)?;
         Ok(project_preview(preview))
@@ -180,9 +192,22 @@ impl CheckpointService {
         slice_ref: &str,
         acknowledge_type_changes: &[String],
     ) -> Result<RestoreExecuteOutcome, RestoreFailure> {
+        self.restore_execute_for_root(workspace_id, None, slice_ref, acknowledge_type_changes)
+            .await
+    }
+
+    /// PLAN-0639 M8: execute the restore of a slice of **one declared root**, so the
+    /// shadow repo and work tree come from that root instead of the primary root.
+    pub async fn restore_execute_for_root(
+        &self,
+        workspace_id: &str,
+        root_id: Option<&str>,
+        slice_ref: &str,
+        acknowledge_type_changes: &[String],
+    ) -> Result<RestoreExecuteOutcome, RestoreFailure> {
         let result = self
             .engine()
-            .restore_execute(workspace_id, slice_ref, acknowledge_type_changes)
+            .restore_execute_for_root(workspace_id, root_id, slice_ref, acknowledge_type_changes)
             .await
             .map_err(restore_failure)?;
         info!(
@@ -204,9 +229,21 @@ impl CheckpointService {
         slice_ref: &str,
         path: &str,
     ) -> Result<BlobOutcome, BlobFailure> {
+        self.slice_blob_for_root(workspace_id, None, slice_ref, path)
+            .await
+    }
+
+    /// PLAN-0639 M8: read one file out of a slice of **one declared root**.
+    pub async fn slice_blob_for_root(
+        &self,
+        workspace_id: &str,
+        root_id: Option<&str>,
+        slice_ref: &str,
+        path: &str,
+    ) -> Result<BlobOutcome, BlobFailure> {
         let blob = self
             .engine()
-            .slice_blob(workspace_id, slice_ref, path, MAX_BLOB_BYTES)
+            .slice_blob_for_root(workspace_id, root_id, slice_ref, path, MAX_BLOB_BYTES)
             .await
             .map_err(blob_failure)?;
         Ok(BlobOutcome {
