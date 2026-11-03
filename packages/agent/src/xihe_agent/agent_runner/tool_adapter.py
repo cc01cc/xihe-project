@@ -616,8 +616,9 @@ class LCToolAdapter(BaseTool):
                 content = str(content)
             # PLAN-0649 M1 (spec §1/§2): the tool reports the protocol `is_error`
             # flag and CP's shape-checked `refusal_code`. Neither is derived from
-            # the result text, and neither widens the body channel.
-            tool_error = bool(result.get("is_error")) if isinstance(result, dict) else False
+            # the result text, and neither widens the body channel. `is True`
+            # keeps a truthy string from being read as a failure flag.
+            tool_error = isinstance(result, dict) and result.get("is_error") is True
             refusal_code = normalize_tool_refusal_code(
                 result.get("refusal_code") if isinstance(result, dict) else None
             )
