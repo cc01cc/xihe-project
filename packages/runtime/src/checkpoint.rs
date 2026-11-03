@@ -100,8 +100,59 @@ struct DualWriteContext<'a> {
     work_tree: &'a Path,
     git_tree: &'a str,
     previous_tree: Option<&'a str>,
+    changed_paths: Option<&'a HashSet<String>>,
     env: &'a [(String, String)],
     git_ms: u64,
+}
+
+#[derive(Debug, Clone)]
+struct CachedGitTree {
+    tree: String,
+    entries: Vec<GitTreeEntry>,
+    nested_roots: Vec<String>,
+}
+
+fn parse_git_tree_output(output: &[u8]) -> (Vec<GitTreeEntry>, Vec<String>) {
+    let mut entries = Vec::new();
+    let mut nested_roots = Vec::new();
+    for record in output.split(|byte| *byte == 0) {
+        if record.is_empty() {
+            continue;
+        }
+        let Some(tab) = record.iter().position(|byte| *byte == b'\t') else {
+            continue;
+        };
+        let header = String::from_utf8_lossy(&record[..tab]);
+        let path = String::from_utf8_lossy(&record[tab + 1..]).replace('\\', "/");
+        let mut fields = header.split_whitespace();
+        let mode = fields.next().unwrap_or_default();
+        let kind = fields.next().unwrap_or_default();
+        let oid = fields.next().unwrap_or_default().to_owned();
+        let size = fields.next().unwrap_or_default();
+        if kind == "commit" {
+            nested_roots.push(path);
+            continue;
+        }
+        if kind != "blob" {
+            continue;
+        }
+        let mode = match mode {
+            "100644" => FileMode::Regular,
+            "100755" => FileMode::Executable,
+            "120000" => FileMode::Symlink,
+            _ => continue,
+        };
+        let Ok(size) = size.parse::<u64>() else {
+            continue;
+        };
+        entries.push(GitTreeEntry {
+            path,
+            mode,
+            size,
+            oid,
+        });
+    }
+    (entries, nested_roots)
 }
 
 /// Explicit exclusion patterns beyond the workspace `.gitignore` (decision #14).
@@ -394,6 +445,7 @@ pub struct ShadowGit {
     /// root's slice from flattening/overwriting a nested declared root, which is
     /// captured by its own shadow repo (D39-5b①).
     declared_roots: StdMutex<HashMap<String, Vec<(String, String)>>>,
+    git_tree_cache: StdMutex<HashMap<String, CachedGitTree>>,
     active_capture_locks: Arc<AtomicUsize>,
     active_restore_locks: Arc<AtomicUsize>,
     probe_cache: StdMutex<ProbeCache>,
@@ -414,6 +466,7 @@ impl ShadowGit {
             locks: StdMutex::new(HashMap::new()),
             work_tree_overrides: StdMutex::new(HashMap::new()),
             declared_roots: StdMutex::new(HashMap::new()),
+            git_tree_cache: StdMutex::new(HashMap::new()),
             active_capture_locks: Arc::new(AtomicUsize::new(0)),
             active_restore_locks: Arc::new(AtomicUsize::new(0)),
             probe_cache: StdMutex::new(ProbeCache::default()),
@@ -750,46 +803,112 @@ impl ShadowGit {
                 self.call_timeout,
             )
             .await?;
-        let mut entries = Vec::new();
-        let mut nested_roots = Vec::new();
-        for record in output.split(|byte| *byte == 0) {
-            if record.is_empty() {
-                continue;
-            }
-            let Some(tab) = record.iter().position(|byte| *byte == b'\t') else {
-                continue;
-            };
-            let header = String::from_utf8_lossy(&record[..tab]);
-            let path = String::from_utf8_lossy(&record[tab + 1..]).replace('\\', "/");
-            let mut fields = header.split_whitespace();
-            let mode = fields.next().unwrap_or_default();
-            let kind = fields.next().unwrap_or_default();
-            let oid = fields.next().unwrap_or_default().to_owned();
-            let size = fields.next().unwrap_or_default();
-            if kind == "commit" {
-                nested_roots.push(path);
-                continue;
-            }
-            if kind != "blob" {
-                continue;
-            }
-            let mode = match mode {
-                "100644" => FileMode::Regular,
-                "100755" => FileMode::Executable,
-                "120000" => FileMode::Symlink,
-                _ => continue,
-            };
-            let Ok(size) = size.parse::<u64>() else {
-                continue;
-            };
-            entries.push(GitTreeEntry {
-                path,
-                mode,
-                size,
-                oid,
-            });
-        }
+        let (mut entries, mut nested_roots) = parse_git_tree_output(&output);
+        entries.sort_by(|left, right| left.path.cmp(&right.path));
         nested_roots.sort();
+        Ok((entries, nested_roots))
+    }
+
+    async fn git_tree_paths(
+        &self,
+        env: &[(String, String)],
+        tree: &str,
+        paths: &HashSet<String>,
+    ) -> Result<HashMap<String, GitTreeEntry>> {
+        let mut out = HashMap::new();
+        for path in paths {
+            let output = self
+                .run_git_checked(
+                    &["ls-tree", "-r", "-l", "-z", tree, "--", path.as_str()],
+                    env,
+                    None,
+                    self.call_timeout,
+                )
+                .await?;
+            let (entries, _) = parse_git_tree_output(&output);
+            if let Some(entry) = entries.into_iter().next() {
+                out.insert(entry.path.clone(), entry);
+            }
+        }
+        Ok(out)
+    }
+
+    async fn git_fed_entries(
+        &self,
+        context: &DualWriteContext<'_>,
+    ) -> Result<(Vec<GitTreeEntry>, Vec<String>)> {
+        let cached = self
+            .git_tree_cache
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(context.root_id)
+            .cloned();
+        if let Some(cached) = &cached
+            && cached.tree == context.git_tree
+        {
+            return Ok((cached.entries.clone(), cached.nested_roots.clone()));
+        }
+        let can_increment = context
+            .changed_paths
+            .is_some_and(|paths| paths.len() <= 256)
+            && context.previous_tree.is_some();
+        if can_increment
+            && let (Some(changed), Some(previous_tree), Some(cached)) =
+                (context.changed_paths, context.previous_tree, &cached)
+            && cached.tree == previous_tree
+            && !changed.iter().any(|path| {
+                cached
+                    .nested_roots
+                    .iter()
+                    .any(|nested| path == nested || path.starts_with(&format!("{nested}/")))
+            })
+        {
+            let mut entries: HashMap<String, GitTreeEntry> = cached
+                .entries
+                .iter()
+                .cloned()
+                .map(|entry| (entry.path.clone(), entry))
+                .collect();
+            let refreshed = self
+                .git_tree_paths(context.env, context.git_tree, changed)
+                .await?;
+            for path in changed {
+                if let Some(entry) = refreshed.get(path) {
+                    entries.insert(path.clone(), entry.clone());
+                } else {
+                    entries.remove(path);
+                }
+            }
+            let mut entries: Vec<GitTreeEntry> = entries.into_values().collect();
+            entries.sort_by(|left, right| left.path.cmp(&right.path));
+            let nested_roots = cached.nested_roots.clone();
+            self.git_tree_cache
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .insert(
+                    context.root_id.to_owned(),
+                    CachedGitTree {
+                        tree: context.git_tree.to_owned(),
+                        entries: entries.clone(),
+                        nested_roots: nested_roots.clone(),
+                    },
+                );
+            return Ok((entries, nested_roots));
+        }
+        let (entries, nested_roots) = self
+            .git_tree_snapshot(context.env, context.git_tree)
+            .await?;
+        self.git_tree_cache
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(
+                context.root_id.to_owned(),
+                CachedGitTree {
+                    tree: context.git_tree.to_owned(),
+                    entries: entries.clone(),
+                    nested_roots: nested_roots.clone(),
+                },
+            );
         Ok((entries, nested_roots))
     }
 
@@ -846,17 +965,19 @@ impl ShadowGit {
     }
 
     async fn git_fed_capture(&self, context: &DualWriteContext<'_>) -> Result<CaptureResult> {
-        let (entries, nested_roots) = self
-            .git_tree_snapshot(context.env, context.git_tree)
-            .await?;
-        let changed = self
-            .git_changed_paths(
-                context.env,
-                context.previous_tree,
-                context.git_tree,
-                &entries,
-            )
-            .await?;
+        let (entries, nested_roots) = self.git_fed_entries(context).await?;
+        let changed = match context.changed_paths {
+            Some(paths) => paths.clone(),
+            None => {
+                self.git_changed_paths(
+                    context.env,
+                    context.previous_tree,
+                    context.git_tree,
+                    &entries,
+                )
+                .await?
+            }
+        };
         let mut changed_blobs = HashMap::new();
         for entry in &entries {
             if changed.contains(&entry.path) {
@@ -1234,6 +1355,7 @@ impl ShadowGit {
                 work_tree: &work_tree,
                 git_tree: &tree,
                 previous_tree: tail_tree.as_deref(),
+                changed_paths: None,
                 env: &env,
                 git_ms,
             })
@@ -1272,6 +1394,9 @@ impl ShadowGit {
             "shadow checkpoint slice captured"
         );
         let git_ms = capture_started.elapsed().as_millis() as u64;
+        let changed_paths: Option<HashSet<String>> = tail_tree
+            .as_ref()
+            .map(|_| changed_files.iter().map(|file| file.path.clone()).collect());
         self.dual_write_store(DualWriteContext {
             workspace_id,
             root_id,
@@ -1280,6 +1405,7 @@ impl ShadowGit {
             work_tree: &work_tree,
             git_tree: &tree,
             previous_tree: tail_tree.as_deref(),
+            changed_paths: changed_paths.as_ref(),
             env: &env,
             git_ms,
         })
@@ -3332,6 +3458,44 @@ mod tests {
         );
         assert_eq!(walker.nested_roots, vec!["nested".to_string()]);
         assert_eq!(slice["nested_roots"], serde_json::json!(["nested"]));
+
+        // Second capture exercises the incremental git-tree cache.
+        std::fs::write(workspace.join("root.txt"), "root-2\n").expect("root change");
+        engine
+            .capture("ws1", "run-gitfed-2", "tester", "call-gitfed-2", false)
+            .await
+            .expect("incremental git-fed capture");
+        let mut slices: Vec<_> = std::fs::read_dir(store.slice_dir("ws1"))
+            .expect("slice dir")
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|path| path.extension().is_some_and(|ext| ext == "json"))
+            .collect();
+        slices.sort();
+        let slice: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(slices.last().expect("second store slice")).expect("slice bytes"),
+        )
+        .expect("slice json");
+        let gitfed_manifest = slice["manifest"].as_str().expect("manifest id").to_owned();
+        let gitfed_bytes = std::fs::read(store.manifest_path(&gitfed_manifest)).expect("manifest");
+        let walker = capture_root_with_options(
+            &walker_store,
+            &workspace,
+            "ws1",
+            None,
+            None,
+            &CaptureOptions {
+                declared_roots: Vec::new(),
+                exclude_opaque_nested: true,
+            },
+        )
+        .expect("second walker capture");
+        let walker_bytes = std::fs::read(walker_store.manifest_path(&walker.manifest_id))
+            .expect("second walker manifest");
+        assert_eq!(
+            gitfed_bytes, walker_bytes,
+            "incremental git-fed and walker manifests must be byte-identical"
+        );
     }
 
     #[tokio::test]
