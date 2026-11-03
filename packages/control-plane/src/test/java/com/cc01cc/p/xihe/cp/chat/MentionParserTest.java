@@ -114,4 +114,51 @@ class MentionParserTest {
         assertFalse(MentionParser.isReservedDisplayName("Allison"));
         assertFalse(MentionParser.isReservedDisplayName(null));
     }
+
+    // ── PLAN-0648 D1: "an explicit @ of someone else outranks the PRIMARY's default answer" ──
+
+    @Test
+    void mentionOfAnotherParticipantSuppressesThePrimary() {
+        MentionParser.ParseResult parsed = MentionParser.parse("@Ann 你来答这个", ROSTER);
+
+        assertTrue(MentionParser.suppressesPrimary(parsed, JOHN, false));
+    }
+
+    @Test
+    void mentionThatIncludesThePrimaryNeverSuppresses() {
+        MentionParser.ParseResult parsed = MentionParser.parse("@Ann @John 一起看", ROSTER);
+
+        assertFalse(MentionParser.suppressesPrimary(parsed, JOHN, false));
+    }
+
+    @Test
+    void mentionAllNeverSuppresses() {
+        MentionParser.ParseResult parsed = MentionParser.parse("@all 大家看一下", ROSTER);
+
+        assertFalse(MentionParser.suppressesPrimary(parsed, JOHN, false));
+    }
+
+    @Test
+    void unresolvedTypoNeverSuppresses() {
+        // A misspelt name must not leave the message unanswered (interim ruling, D1).
+        MentionParser.ParseResult parsed = MentionParser.parse("@An 你来", ROSTER);
+
+        assertTrue(parsed.mentions().isEmpty());
+        assertFalse(MentionParser.suppressesPrimary(parsed, JOHN, false));
+    }
+
+    @Test
+    void explicitAsIsNeverSuppressedByMentions() {
+        MentionParser.ParseResult parsed = MentionParser.parse("@Ann 你来答这个", ROSTER);
+
+        assertFalse(MentionParser.suppressesPrimary(parsed, JOHN, true));
+    }
+
+    @Test
+    void sessionWithoutPrimaryNeverSuppresses() {
+        MentionParser.ParseResult parsed = MentionParser.parse("@Ann 你来答这个", ROSTER);
+
+        assertFalse(MentionParser.suppressesPrimary(parsed, null, false));
+    }
+
 }

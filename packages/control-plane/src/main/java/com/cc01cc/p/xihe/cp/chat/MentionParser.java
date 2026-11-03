@@ -98,6 +98,37 @@ public final class MentionParser {
     }
 
     /**
+     * PLAN-0648 D1 (interim ruling, 2026-11-04): an explicit {@code @} of a non-PRIMARY participant
+     * outranks the PRIMARY participant's default respond policy — "pointing at someone" is a
+     * stronger signal than "the bound agent answers by default", otherwise {@code @} would not mean
+     * anything. Two deliberate non-suppressing cases:
+     *
+     * <ul>
+     *   <li>{@code @all} always includes the PRIMARY, so it never suppresses;</li>
+     *   <li>a message whose only {@code @} tokens are unresolved (a typo) keeps the default policy —
+     *       a misspelt name must not leave the message unanswered.</li>
+     * </ul>
+     *
+     * <p>An explicit {@code asParticipantId} (the owner speaking as a member) is already a targeted
+     * answer and is never suppressed by mentions.</p>
+     *
+     * @param parsed                the parse of the submitted content against the current roster
+     * @param primaryParticipantId  the PRIMARY participant row, or {@code null} when the Session has none
+     * @param explicitAs            whether the submission carries an explicit {@code asParticipantId}
+     */
+    public static boolean suppressesPrimary(ParseResult parsed, UUID primaryParticipantId,
+                                            boolean explicitAs) {
+        if (parsed == null || primaryParticipantId == null || explicitAs) {
+            return false;
+        }
+        if (parsed.all() || parsed.mentions().isEmpty()) {
+            return false;
+        }
+        return parsed.mentions().stream()
+                .noneMatch(mention -> primaryParticipantId.equals(mention.participantId()));
+    }
+
+    /**
      * Longest enabled-roster display name that prefixes the text at {@code from} with a
      * boundary after it. Ties are ambiguity: two enabled participants sharing the longest
      * matching name fail closed (returns {@code null}).

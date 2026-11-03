@@ -655,6 +655,9 @@ public class ChatController {
             return ProblemDetailsHandler.problemResponse(HttpStatus.CONFLICT, "CHAT_IN_PROGRESS", "A chat run is already active for this session");
         }
 
+        // PLAN-0648 D1: only an owner-authored message can be re-targeted by mentions; an explicit
+        // `as` answer is already addressed to that participant.
+        boolean explicitAsParticipant = asParticipantId != null && !asParticipantId.isBlank();
         boolean handedOff = false;
         try {
             ChatSubmissionService.Submission submission = chatSubmissionService.create(
@@ -707,6 +710,30 @@ public class ChatController {
                 chatSubmissionService.persistRunStatus(chatRun, "accepted");
             }
 
+            // PLAN-0648 D1 (interim ruling): an explicit @ of another participant outranks the
+            // PRIMARY's default answer. The Run still exists as the mention-wake anchor and the
+            // user Message stays in the conversation, but the PRIMARY must not answer: the Run is
+            // terminalized with an explicit outcome instead of being dispatched, so "who replied"
+            // stays observable (a silent non-dispatch would look like a stuck Run).
+            List<MentionParser.RosterEntry> roster = mentionRoster(userId, workspaceId, sessionId);
+            MentionParser.ParseResult mentions = MentionParser.parse(content, roster);
+            boolean suppressPrimary = MentionParser.suppressesPrimary(mentions,
+                    responder == null ? null : responder.participantId(), explicitAsParticipant);
+            if (suppressPrimary) {
+                List<String> mentionedNames = mentions.mentions().stream().map(MentionParser.Mention::displayName)
+                        .toList();
+                chatRunLifecycleService.transition(runId, List.of("accepted"), "succeeded",
+                        "suppressed_no_responder", null, null, 0, 0, null);
+                logger.info("[LIFECYCLE] service=cp event=chat_primary_suppressed requestId={} sessionId={} "
+                                + "runId={} mentioned={} cause=explicit_mention_of_other",
+                        requestId, sessionId, runId, mentionedNames);
+                wakeFanOutService.fanOut(UUID.fromString(sessionId), workspaceId, userId, runId,
+                        content, roster, ccParticipantIds);
+                handedOff = true;
+                return ResponseEntity.accepted().body(runAcceptedBody(chatRun, "succeeded", sessionId,
+                        userMessage.getId(), runId, "primary_suppressed"));
+            }
+
             final ProviderCredentialLeaseService.Admission dispatchAdmission =
                     admission == null ? ProviderCredentialLeaseService.Admission.none() : admission;
             execAsync(sessionId, content, provider, model, toolMode, perCallTimeouts.values(),
@@ -716,7 +743,7 @@ public class ChatController {
             // PLAN-0630 M5b (D30-14): the composer's cc observer list rides the same round —
             // observers get a notify signal only, never a run of their own.
             wakeFanOutService.fanOut(UUID.fromString(sessionId), workspaceId, userId, runId,
-                    content, mentionRoster(userId, workspaceId, sessionId), ccParticipantIds);
+                    content, roster, ccParticipantIds);
             handedOff = true;
             return ResponseEntity.accepted().body(runAcceptedBody(chatRun, "accepted", sessionId,
                 userMessage.getId(), runId, null));
