@@ -154,7 +154,7 @@ onMounted(() => {
                         class="min-h-10 rounded-lg border px-3 py-2 text-sm transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                         :class="
                             activeScope === scope
-                                ? 'border-primary bg-primary/10 font-medium'
+                                ? 'border-brand bg-brand/10 font-medium'
                                 : 'border-transparent hover:bg-accent'
                         "
                         :aria-pressed="activeScope === scope"
@@ -371,7 +371,7 @@ onMounted(() => {
                             <button
                                 type="submit"
                                 :data-testid="`settings-tool-face-classify-submit-${face.tool}`"
-                                class="inline-flex min-h-10 items-center justify-center rounded-lg bg-primary px-3 py-2 text-sm font-medium text-primary-foreground transition hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+                                class="inline-flex min-h-10 items-center justify-center rounded-lg bg-action px-3 py-2 text-sm font-medium text-action-foreground transition hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
                                 :disabled="policyAdmin.classifyingTool"
                             >
                                 <LoaderCircle

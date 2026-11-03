@@ -341,7 +341,7 @@ watch(isMobileViewport, (mobile) => {
             上一个工作区已删除。创建一个新的工作区开始使用文件、终端与 Agent 工具。
         </p>
         <button
-            class="px-4 py-2 text-sm rounded bg-primary text-primary-foreground hover:opacity-90"
+            class="px-4 py-2 text-sm rounded bg-action text-action-foreground hover:opacity-90"
             @click="showCreateDialog = true"
         >
             创建工作区
@@ -478,7 +478,7 @@ watch(isMobileViewport, (mobile) => {
                     <div v-else class="flex flex-1 flex-col items-center justify-center gap-2">
                         <p class="text-sm text-muted-foreground">{{ t("workspace.noSession") }}</p>
                         <button
-                            class="px-3 py-1.5 text-xs rounded bg-primary text-primary-foreground hover:opacity-90"
+                            class="px-3 py-1.5 text-xs rounded bg-action text-action-foreground hover:opacity-90"
                             data-testid="workspace-create-session"
                             @click="createSessionForWorkspace()"
                         >
@@ -565,7 +565,7 @@ watch(isMobileViewport, (mobile) => {
                     <button
                         type="button"
                         data-testid="workspace-create-agent-session"
-                        class="rounded-md bg-primary px-3 py-2 text-sm text-primary-foreground disabled:opacity-50"
+                        class="rounded-md bg-action px-3 py-2 text-sm text-action-foreground disabled:opacity-50"
                         :disabled="!selectedAgentPrincipalId || creatingAgentSession"
                         @click="confirmCreateAgentSession"
                     >

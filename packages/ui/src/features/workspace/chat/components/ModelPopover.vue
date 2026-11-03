@@ -417,7 +417,7 @@ onMounted(() => {
                 </button>
                 <button
                     type="button"
-                    class="rounded bg-primary px-3 py-2 text-sm text-primary-foreground"
+                    class="rounded bg-action px-3 py-2 text-sm text-action-foreground"
                     :disabled="switching || !selectedTemplate"
                     @click="confirmSwitch"
                 >
@@ -501,7 +501,7 @@ onMounted(() => {
                             {{ t("chat.providersNoModels") }}
                         </div>
                         <button
-                            class="text-xs text-primary underline hover:text-primary/80"
+                            class="text-xs text-link underline hover:opacity-80"
                             @click="configStore.fetchModels()"
                         >
                             {{ t("chat.retryFetchModels") }}

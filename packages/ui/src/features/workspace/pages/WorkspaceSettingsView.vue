@@ -277,7 +277,7 @@ onMounted(() => {
                         class="px-4 py-2 text-sm border-b-2 transition-colors"
                         :class="
                             activeTab === tab.key
-                                ? 'border-primary text-foreground font-medium'
+                                ? 'border-brand text-foreground font-medium'
                                 : 'border-transparent text-muted-foreground hover:text-foreground'
                         "
                         @click="switchTab(tab.key)"
@@ -339,7 +339,7 @@ onMounted(() => {
                                 <span class="flex items-center gap-2">
                                     {{ auth.workspace?.executionMode || "—" }}
                                     <RouterLink
-                                        class="text-xs text-primary underline"
+                                        class="text-xs text-link underline"
                                         :to="{
                                             name: 'workspace-environment',
                                             params: { workspaceId },

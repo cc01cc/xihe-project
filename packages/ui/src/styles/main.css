@@ -15,9 +15,17 @@
  * A（克制）/ C（现状+）只保留为 **opt-in 覆盖**（`?variant=a` / `?variant=c`，
  * 见 `src/lib/visualVariant.ts`），**仅用于对比与回归，非发布默认**。
  * 没有 `data-xh-variant` 属性时渲染的就是 B —— 不存在"候选层"了。
+ *
+ * PLAN-0631 色彩方案（用户 2026-11-03「色彩不够克制 / 大块按钮一定要蓝色吗」）：
+ * C1/C2/C3 是**第三层 opt-in 覆盖**（`?color=c1|c2|c3`，见 `src/lib/colorScheme.ts`），
+ * 只改颜色语义 token；密度/圆角/字号沿用 B。没有 `data-xh-color` 属性时默认主题
+ * 逐像素不变；三份文件的选择器都带 `:not(.dark)`，深色下惰性。
  */
 @import "./themes/variant-a-restrained.css";
 @import "./themes/variant-c-current-plus.css";
+@import "./themes/color-c1-neutral.css";
+@import "./themes/color-c2-hairline.css";
+@import "./themes/color-c3-muted.css";
 
 /* Keep chat bubbles compact; markstream's document paragraph spacing is too large for messages. */
 .xihe-chat-markdown p,
@@ -44,6 +52,18 @@
     --color-popover-foreground: var(--popover-foreground);
     --color-primary: var(--primary);
     --color-primary-foreground: var(--primary-foreground);
+    /*
+     * PLAN-0631 色彩方案：把"动作填充 / 链接 / 徽标"从 --primary 里拆出来，
+     * 默认值等价于改前渲染（action=primary、link=brand、badge=secondary）。
+     * 只有这样 C2（白底描边主按钮 + 蓝色小元素）能在纯 token 覆盖下成立。
+     */
+    --color-action: var(--action);
+    --color-action-foreground: var(--action-foreground);
+    --color-action-border: var(--action-border);
+    --color-link: var(--link);
+    --color-badge: var(--badge);
+    --color-badge-foreground: var(--badge-foreground);
+    --color-badge-border: var(--badge-border);
     --color-secondary: var(--secondary);
     --color-secondary-foreground: var(--secondary-foreground);
     --color-muted: var(--muted);
@@ -192,6 +212,23 @@
      */
     --primary: var(--brand);
     --primary-foreground: var(--brand-foreground);
+    /*
+     * PLAN-0631 色彩方案（C1/C2/C3）的语义角色。默认值 = 改前渲染，三者都是既有
+     * token 的别名（不是新颜色）：
+     *   action = 主操作填充（按钮 / CTA）        → var(--primary)
+     *   link   = 文本链接与文本强调               → var(--brand)
+     *   badge  = 中性徽标（底 / 字 / 边）         → var(--secondary)
+     * 候选只覆盖这两组 + 既有 primary/brand/ring/destructive，不碰密度/圆角/字号。
+     * （var() 在"使用处"才代入，所以 .dark 只改 primary/brand 时这三组自动跟随。）
+     */
+    --action: var(--primary);
+    --action-foreground: var(--primary-foreground);
+    /* C2 用 1px 内描边表达"白底按钮的边框"；默认透明 = 不改变现状。 */
+    --action-border: transparent;
+    --link: var(--brand);
+    --badge: var(--secondary);
+    --badge-foreground: var(--secondary-foreground);
+    --badge-border: transparent;
     --secondary: #eef0f3;
     --secondary-foreground: #1b1e24;
     --muted: #eef0f3;

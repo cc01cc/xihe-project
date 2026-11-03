@@ -109,7 +109,7 @@ function handleCancel() {
                     {{ t("common.cancel") }}
                 </button>
                 <button
-                    class="px-3 py-1.5 rounded text-xs bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
+                    class="px-3 py-1.5 rounded text-xs bg-action text-action-foreground hover:bg-action/90 transition-colors"
                     @click="handleConfirm"
                 >
                     {{ t("common.confirm") }}

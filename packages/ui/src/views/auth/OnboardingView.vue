@@ -97,10 +97,10 @@ async function handleSubmit() {
 
                 <button
                     type="submit"
-                    class="w-full py-2 px-4 rounded-md font-medium text-primary-foreground transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                    class="w-full py-2 px-4 rounded-md font-medium text-action-foreground transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                     :class="
                         canSubmit()
-                            ? 'bg-primary hover:bg-primary/90'
+                            ? 'bg-action hover:bg-action/90'
                             : 'bg-muted-foreground/30 text-muted-foreground'
                     "
                     :disabled="!canSubmit()"

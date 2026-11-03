@@ -82,9 +82,7 @@ async function removeDoc(id: string) {
         >
             <AlertCircle class="size-6" aria-hidden="true" />
             <p>{{ loadError }}</p>
-            <button class="text-xs text-primary hover:underline" @click="loadDocuments">
-                Retry
-            </button>
+            <button class="text-xs text-link hover:underline" @click="loadDocuments">Retry</button>
         </div>
 
         <div v-else>
@@ -113,13 +111,13 @@ async function removeDoc(id: string) {
                     />
                 </svg>
                 <p class="text-sm text-muted-foreground">
-                    拖拽文件到此处或 <span class="text-primary underline">浏览</span>
+                    拖拽文件到此处或 <span class="text-link underline">浏览</span>
                 </p>
                 <p class="text-xs text-muted-foreground mt-1">支持 PDF / TXT / Markdown</p>
             </div>
             <button
                 v-if="files.length"
-                class="w-full px-3 py-2 rounded bg-primary text-primary-foreground text-sm font-medium disabled:opacity-50"
+                class="w-full px-3 py-2 rounded bg-action text-action-foreground text-sm font-medium disabled:opacity-50"
                 :disabled="uploading"
                 @click="handleUpload"
             >

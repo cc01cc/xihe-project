@@ -153,7 +153,7 @@ function handleLoadFullContent() {
             <div class="flex items-center justify-between px-3 py-1 border-b bg-muted/20 shrink-0">
                 <span class="text-xs text-muted-foreground">{{ activeFile.path }}</span>
                 <button
-                    class="px-2 py-0.5 text-xs rounded bg-primary text-primary-foreground hover:opacity-90 disabled:opacity-30"
+                    class="px-2 py-0.5 text-xs rounded bg-action text-action-foreground hover:opacity-90 disabled:opacity-30"
                     :disabled="!activeFile.modified || !canWrite"
                     @click="handleSave"
                 >
@@ -196,7 +196,7 @@ function handleLoadFullContent() {
                         {{ diffMode ? t("workspace.editorEdit") : t("workspace.editorDiff") }}
                     </button>
                     <button
-                        class="px-2 py-0.5 text-xs rounded bg-primary text-primary-foreground hover:opacity-90 disabled:opacity-30"
+                        class="px-2 py-0.5 text-xs rounded bg-action text-action-foreground hover:opacity-90 disabled:opacity-30"
                         :disabled="!activeFile.modified || !canWrite"
                         @click="handleSave"
                     >

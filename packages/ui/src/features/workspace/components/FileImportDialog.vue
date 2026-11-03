@@ -150,7 +150,7 @@ function handleCancel() {
                         取消
                     </button>
                     <button
-                        class="px-3 py-1.5 text-sm rounded bg-primary text-primary-foreground hover:opacity-90 disabled:opacity-50"
+                        class="px-3 py-1.5 text-sm rounded bg-action text-action-foreground hover:opacity-90 disabled:opacity-50"
                         :disabled="ws.uploadQueue.length === 0"
                         @click="handleImport"
                     >

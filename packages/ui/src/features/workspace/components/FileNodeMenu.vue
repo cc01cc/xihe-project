@@ -237,7 +237,7 @@ function copyPath() {
                 Cancel
             </button>
             <button
-                class="px-3 py-1.5 text-sm rounded bg-primary text-primary-foreground hover:opacity-90 disabled:opacity-50"
+                class="px-3 py-1.5 text-sm rounded bg-action text-action-foreground hover:opacity-90 disabled:opacity-50"
                 :disabled="!nameInput.trim() || opLoading"
                 @click="() => void confirmRename()"
             >
@@ -265,7 +265,7 @@ function copyPath() {
                 Cancel
             </button>
             <button
-                class="px-3 py-1.5 text-sm rounded bg-primary text-primary-foreground hover:opacity-90 disabled:opacity-50"
+                class="px-3 py-1.5 text-sm rounded bg-action text-action-foreground hover:opacity-90 disabled:opacity-50"
                 :disabled="opLoading"
                 @click="() => void confirmMove()"
             >
@@ -291,7 +291,7 @@ function copyPath() {
                 Cancel
             </button>
             <button
-                class="px-3 py-1.5 text-sm rounded bg-primary text-primary-foreground hover:opacity-90 disabled:opacity-50"
+                class="px-3 py-1.5 text-sm rounded bg-action text-action-foreground hover:opacity-90 disabled:opacity-50"
                 :disabled="!nameInput.trim() || opLoading"
                 @click="() => void confirmNewFile()"
             >
@@ -317,7 +317,7 @@ function copyPath() {
                 Cancel
             </button>
             <button
-                class="px-3 py-1.5 text-sm rounded bg-primary text-primary-foreground hover:opacity-90 disabled:opacity-50"
+                class="px-3 py-1.5 text-sm rounded bg-action text-action-foreground hover:opacity-90 disabled:opacity-50"
                 :disabled="!nameInput.trim() || opLoading"
                 @click="() => void confirmNewDir()"
             >

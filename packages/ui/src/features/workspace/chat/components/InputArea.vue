@@ -353,7 +353,7 @@ const toolbarActions = computed<ToolbarAction[]>(() => [
         position: "right",
         component: "button",
         props: {
-            class: "shrink-0 size-8 flex items-center justify-center rounded-lg bg-brand text-brand-foreground hover:opacity-90 disabled:opacity-50 transition-opacity",
+            class: "shrink-0 size-8 flex items-center justify-center rounded-lg bg-action text-action-foreground hover:opacity-90 disabled:opacity-50 transition-opacity",
             disabled: props.isStreaming ? false : sendDisabled.value,
             "data-testid": props.isStreaming ? "chat-stop-button" : "chat-send-button",
             "aria-label": props.isStreaming ? t("chat.stop") : t("chat.send"),
@@ -981,7 +981,7 @@ defineExpose({ clearDraft, insertMention });
                         :class="
                             queuePaused
                                 ? 'border border-border bg-background text-foreground hover:bg-accent'
-                                : 'bg-brand text-brand-foreground hover:opacity-90'
+                                : 'bg-action text-action-foreground hover:opacity-90'
                         "
                         @click="handleSend"
                     >

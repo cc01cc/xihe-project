@@ -123,7 +123,7 @@ function pauseMessage(): string {
                 v-if="snapshot.queueState === 'paused'"
                 type="button"
                 data-testid="follow-up-continue-button"
-                class="min-h-11 shrink-0 rounded-lg bg-primary px-3 text-xs font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+                class="min-h-11 shrink-0 rounded-lg bg-action px-3 text-xs font-medium text-action-foreground transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
                 :disabled="continuing || busyItemId !== null"
                 @click="emit('continue')"
             >

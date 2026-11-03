@@ -468,7 +468,7 @@ async function loadJobOutput(reset: boolean) {
 
             <div v-if="toolCall.status === 'pending'" class="flex gap-2 pt-1">
                 <button
-                    class="rounded bg-primary px-3 py-1 text-xs text-primary-foreground hover:opacity-90"
+                    class="rounded bg-action px-3 py-1 text-xs text-action-foreground hover:opacity-90"
                     @click="emit('approve', toolCall.id)"
                 >
                     {{ t("chat.approve") }}

@@ -1,0 +1,47 @@
+/*
+ * PLAN-0631 色彩方案 C3 —— 降饱和 + 收面积（保守派）。
+ *
+ * 激活方式：`?color=c3` 或 localStorage `xihe-color-scheme = "c3"`（见
+ * `src/lib/colorScheme.ts`）。没有 `data-xh-color` 属性时本文件不匹配任何元素，
+ * **默认主题不受影响**。
+ *
+ * 这个方案在改什么（只有颜色 token）
+ * - 蓝整体降饱和：主操作填充 `--action` 从 #2450c8（chroma .23）换成 #4a68a4
+ *   （更浅、更灰一档），白字 5.52:1 仍高于 4.5。
+ * - `--primary/--brand/--ring` 同步换成同族 muted 蓝，彩色"亮度/纯度"都退一步。
+ * - 徽标 `--badge` 去底色改描边：透明底 + #b9c6df 1px 边 + #2f4a8c 字（7.74:1）。
+ * - 链接用深一档 #2f4a8c（8.47:1），避免"降饱和后正文链接变浅"。
+ * - 危险操作保持语义红（红字 5.58:1、白字 6.57:1）。
+ *
+ * 这个方案不改什么
+ * - 密度/字号/行高/圆角/间距：一个都不声明，全部沿用 B。
+ * - 表面/灰阶边框：沿用 B（只动彩色相的饱和度，不动中性色）。
+ * - 深色主题：`:not(.dark)` 限定，深色下惰性。
+ *
+ * 与 brief 的差异（如实记录）：brief 还提到"更小内边距"，但内边距属几何；
+ * 本任务是"只改色不改密度/圆角"，所以只用"更浅的填充 + 降饱和 + 徽标描边"表达克制。
+ */
+html[data-xh-color="c3"]:not(.dark) {
+    /* —— 主操作：降饱和的实心蓝，填充更浅一档 —— */
+    --action: #4a68a4;
+    --action-foreground: #ffffff;
+    --action-border: transparent;
+
+    --primary: #4a68a4;
+    --primary-foreground: #ffffff;
+
+    --brand: #4a68a4;
+    --brand-foreground: #ffffff;
+    --link: #2f4a8c;
+    --ring: #4a68a4;
+    --sidebar-ring: #4a68a4;
+
+    /* —— 徽标：去底色，改 1px 描边 —— */
+    --badge: transparent;
+    --badge-foreground: #2f4a8c;
+    --badge-border: #b9c6df;
+
+    /* —— 危险操作：保持红色语义（WCAG：红字 5.58:1 / 白字 6.57:1） —— */
+    --destructive: #b42318;
+    --destructive-foreground: #ffffff;
+}

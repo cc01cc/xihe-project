@@ -1224,7 +1224,7 @@ watch(
                     <button
                         type="button"
                         data-testid="chat-bind-agent-and-send"
-                        class="rounded-md bg-primary px-3 py-2 text-sm text-primary-foreground disabled:opacity-50"
+                        class="rounded-md bg-action px-3 py-2 text-sm text-action-foreground disabled:opacity-50"
                         :disabled="!selectedPrincipalId"
                         @click="confirmPrincipalBinding"
                     >

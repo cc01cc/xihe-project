@@ -61,7 +61,7 @@ defineExpose({ toggle });
 <template>
     <div class="md:hidden">
         <button
-            class="fixed bottom-4 right-4 z-30 size-12 rounded-full bg-primary text-primary-foreground shadow-lg flex items-center justify-center"
+            class="fixed bottom-4 right-4 z-30 size-12 rounded-full bg-action text-action-foreground shadow-lg flex items-center justify-center"
             title="Chat"
             aria-label="Open chat"
             @click="toggle"

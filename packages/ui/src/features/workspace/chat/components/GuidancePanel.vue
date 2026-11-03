@@ -167,7 +167,7 @@ defineExpose({ refetch: handleRefetch });
             <button
                 type="button"
                 :disabled="!canSubmit"
-                class="shrink-0 rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed max-sm:w-full"
+                class="shrink-0 rounded-md bg-action px-3 py-2 text-sm font-medium text-action-foreground hover:bg-action/90 disabled:opacity-50 disabled:cursor-not-allowed max-sm:w-full"
                 data-testid="guidance-submit"
                 @click="handleSubmit"
             >

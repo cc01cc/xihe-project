@@ -46,7 +46,7 @@ const tabs = computed(() => {
             class="px-3 py-2 text-sm border-b-2 transition-colors"
             :class="
                 route?.name === tab.name
-                    ? 'border-primary text-foreground font-medium'
+                    ? 'border-brand text-foreground font-medium'
                     : 'border-transparent text-muted-foreground hover:text-foreground'
             "
         >

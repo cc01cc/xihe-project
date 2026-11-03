@@ -34,7 +34,7 @@ async function download() {
         </p>
         <div class="flex gap-2 mt-2">
             <button
-                class="px-3 py-1.5 text-xs rounded bg-primary text-primary-foreground hover:opacity-90 flex items-center gap-1"
+                class="px-3 py-1.5 text-xs rounded bg-action text-action-foreground hover:opacity-90 flex items-center gap-1"
                 @click="download"
             >
                 <Download class="size-3.5" aria-hidden="true" />

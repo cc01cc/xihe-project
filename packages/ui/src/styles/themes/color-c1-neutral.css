@@ -1,0 +1,46 @@
+/*
+ * PLAN-0631 色彩方案 C1 —— 中性优先（大面积不用彩色）。
+ *
+ * 激活方式：`?color=c1` 或 localStorage `xihe-color-scheme = "c1"`（见
+ * `src/lib/colorScheme.ts`）。没有 `data-xh-color` 属性时本文件不匹配任何元素，
+ * **默认主题不受影响**。
+ *
+ * 这个方案在改什么（只有颜色 token）
+ * - 主操作填充 `--action` = #1a1a1a + 白字（17.40:1）：发送、新建、确认等 CTA 一律近黑。
+ * - `--primary`（勾选/开关/进度/浅色 chip 等小控件）同步中性化，不再有大块蓝。
+ * - 蓝色 `--brand/--link/--ring` 只留给**三处**：文本链接、焦点环、当前选中项指示。
+ * - 中性徽标 `--badge` = #eef0f3 + 深字（14.62:1），强调面不铺色。
+ * - 危险操作**不参与去色**：`--destructive` 固定语义红 #b42318，10% 红底上的红字
+ *   5.58:1、白字 6.57:1。
+ *
+ * 这个方案不改什么
+ * - 密度/字号/行高/圆角/间距：一个都不声明，全部沿用 B（默认视觉语言）。
+ * - 表面/边框/次级文字：沿用 B 的值（本方案只换"强调用量"，不换灰阶）。
+ * - 深色主题：`:not(.dark)` 限定，深色下惰性。
+ */
+html[data-xh-color="c1"]:not(.dark) {
+    /* —— 主操作：近黑实心 —— */
+    --action: #1a1a1a;
+    --action-foreground: #ffffff;
+    --action-border: transparent;
+
+    /* —— 小尺寸状态控件：同样中性 —— */
+    --primary: #1a1a1a;
+    --primary-foreground: #ffffff;
+
+    /* —— 蓝只在这三处出现：链接 / 焦点环 / 当前选中项 —— */
+    --brand: #2450c8;
+    --brand-foreground: #ffffff;
+    --link: #2450c8;
+    --ring: #2450c8;
+    --sidebar-ring: #2450c8;
+
+    /* —— 徽标：浅灰底 + 深字，不铺强调色 —— */
+    --badge: #eef0f3;
+    --badge-foreground: #1b1e24;
+    --badge-border: transparent;
+
+    /* —— 危险操作：保持红色语义（WCAG：红字 5.58:1 / 白字 6.57:1） —— */
+    --destructive: #b42318;
+    --destructive-foreground: #ffffff;
+}

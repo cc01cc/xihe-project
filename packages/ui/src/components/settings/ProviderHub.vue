@@ -1011,7 +1011,7 @@ onMounted(() => {
                 <button
                     v-if="!props.readonly"
                     data-testid="provider-hub-connect"
-                    class="shrink-0 rounded-lg bg-primary px-4 py-2.5 text-sm font-semibold text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
+                    class="shrink-0 rounded-lg bg-action px-4 py-2.5 text-sm font-semibold text-action-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
                     :disabled="providers.length === 0"
                     @click="openPicker"
                 >
@@ -1087,7 +1087,7 @@ onMounted(() => {
                             data-testid="provider-default-connection"
                             class="min-w-0 rounded-lg border bg-background p-3"
                             :class="{
-                                'border-primary': activeConnection?.id === defaultConnection.id,
+                                'border-brand': activeConnection?.id === defaultConnection.id,
                             }"
                             :data-connection-key="defaultConnection.connectionKey"
                         >
@@ -1169,7 +1169,7 @@ onMounted(() => {
                                 :key="connection.id"
                                 class="min-w-0 rounded-lg border bg-background p-3"
                                 :class="{
-                                    'border-primary': activeConnection?.id === connection.id,
+                                    'border-brand': activeConnection?.id === connection.id,
                                 }"
                                 :data-testid="`provider-connection-${connection.providerId}`"
                                 :data-connection-key="connection.connectionKey"
@@ -2154,7 +2154,7 @@ onMounted(() => {
                     </button>
                     <button
                         type="submit"
-                        class="rounded-md bg-primary px-3.5 py-2 text-xs font-semibold text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
+                        class="rounded-md bg-action px-3.5 py-2 text-xs font-semibold text-action-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
                         :disabled="saving"
                     >
                         {{

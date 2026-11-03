@@ -320,7 +320,7 @@ onMounted(() => {
                         class="min-h-9 rounded-md border px-3 py-1.5 text-sm transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                         :class="
                             activeLayer === layer
-                                ? 'border-primary bg-primary/10 font-medium'
+                                ? 'border-brand bg-brand/10 font-medium'
                                 : 'border-transparent hover:bg-accent'
                         "
                         :aria-pressed="activeLayer === layer"
@@ -601,7 +601,7 @@ onMounted(() => {
                     <button
                         type="submit"
                         data-testid="settings-policy-create-submit"
-                        class="inline-flex min-h-10 items-center justify-center rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+                        class="inline-flex min-h-10 items-center justify-center rounded-lg bg-action px-4 py-2 text-sm font-medium text-action-foreground transition hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
                         :disabled="!canSubmitCreate"
                     >
                         <LoaderCircle

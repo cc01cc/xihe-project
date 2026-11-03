@@ -7,6 +7,7 @@ import { i18n } from "./i18n";
 import { useSettingsStore } from "./stores/settings";
 import { installGlobalErrorTelemetry, logger } from "./lib/logger";
 import { initVisualVariant } from "./lib/visualVariant";
+import { initColorScheme } from "./lib/colorScheme";
 import { setCustomComponents, setKaTeXWorker } from "markstream-vue";
 import MarkstreamCodeBlockAdapter from "./features/workspace/chat/components/MarkstreamCodeBlockAdapter.vue";
 import "./styles/main.css";
@@ -22,6 +23,9 @@ useSettingsStore().initLanguage();
 // 这里只把 opt-in 覆盖 `?variant=a|c` 投影到 `<html data-xh-variant>`（仅对比/回归用），
 // 并清掉旧版持久化的 `xihe-visual-variant` 键，保证"无参数 = B"。
 initVisualVariant();
+// PLAN-0631 色彩方案：`?color=c1|c2|c3` 投影到 `<html data-xh-color>`（仅对比/预览用）。
+// 无参数 = 不设属性 = 默认主题；色彩与视觉语言是两条正交的轴，互不覆盖。
+initColorScheme();
 app.use(router);
 app.use(i18n);
 app.mount("#app");

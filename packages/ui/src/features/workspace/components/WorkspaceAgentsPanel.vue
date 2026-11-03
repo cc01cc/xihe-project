@@ -577,7 +577,7 @@ async function unbind(agent: WorkspaceAgentBinding) {
                     v-if="authStore.isAdmin || canCreatePrincipal === false"
                     to="/settings/roles"
                     data-testid="agent-grant-panel-link"
-                    class="mt-1 inline-block text-xs text-primary underline"
+                    class="mt-1 inline-block text-xs text-link underline"
                 >
                     {{ t("workspace.agentGrantPanelLink") }}
                 </router-link>
@@ -760,7 +760,7 @@ async function unbind(agent: WorkspaceAgentBinding) {
             <button
                 type="submit"
                 data-testid="agent-principal-create"
-                class="rounded-md bg-primary px-3 py-2 text-sm text-primary-foreground disabled:opacity-50"
+                class="rounded-md bg-action px-3 py-2 text-sm text-action-foreground disabled:opacity-50"
                 :disabled="createBlocked"
             >
                 {{ t("workspace.createAgentPrincipal") }}
@@ -827,7 +827,7 @@ async function unbind(agent: WorkspaceAgentBinding) {
             <button
                 type="button"
                 data-testid="agent-principal-bind"
-                class="rounded-md bg-primary px-3 py-2 text-sm text-primary-foreground disabled:opacity-50"
+                class="rounded-md bg-action px-3 py-2 text-sm text-action-foreground disabled:opacity-50"
                 :disabled="saving || canManageWorkspaceAgents !== true"
                 @click="bindCreatedPrincipal"
             >
@@ -1049,7 +1049,7 @@ async function unbind(agent: WorkspaceAgentBinding) {
                         <button
                             type="button"
                             :data-testid="`workspace-agent-save-cap-${agent.principalId}`"
-                            class="rounded-md bg-primary px-2 py-1 text-xs text-primary-foreground"
+                            class="rounded-md bg-action px-2 py-1 text-xs text-action-foreground"
                             :disabled="saving || canManageWorkspaceAgents !== true"
                             @click="saveCap(agent)"
                         >

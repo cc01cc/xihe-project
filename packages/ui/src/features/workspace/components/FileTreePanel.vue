@@ -245,7 +245,7 @@ function upload() {
             <button
                 type="button"
                 data-testid="workspace-empty-create-file"
-                class="inline-flex items-center gap-1 rounded-md bg-brand px-2.5 py-1.5 text-xs font-medium text-brand-foreground transition-colors hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                class="inline-flex items-center gap-1 rounded-md bg-action px-2.5 py-1.5 text-xs font-medium text-action-foreground transition-colors hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 @click="startCreateFile"
             >
                 {{ t("workspace.createFile") }}

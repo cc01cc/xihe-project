@@ -712,7 +712,7 @@ onBeforeUnmount(() => {
                             ref="onceButton"
                             data-testid="approval-approve"
                             type="button"
-                            class="order-first inline-flex min-h-10 items-center justify-center rounded-lg bg-primary px-3 py-2 text-sm font-medium text-primary-foreground transition hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+                            class="order-first inline-flex min-h-10 items-center justify-center rounded-lg bg-action px-3 py-2 text-sm font-medium text-action-foreground transition hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
                             :disabled="!canSubmit"
                             @click="submitAllow('once')"
                         >
@@ -876,7 +876,7 @@ onBeforeUnmount(() => {
                             <button
                                 type="button"
                                 data-testid="approval-classify-submit"
-                                class="inline-flex min-h-10 items-center justify-center rounded-lg bg-primary px-3 py-2 text-sm font-medium text-primary-foreground transition hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+                                class="inline-flex min-h-10 items-center justify-center rounded-lg bg-action px-3 py-2 text-sm font-medium text-action-foreground transition hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
                                 :disabled="!canSubmitClassify"
                                 @click="submitClassification"
                             >
@@ -1031,7 +1031,7 @@ onBeforeUnmount(() => {
                                 ref="saveConfirmButton"
                                 type="button"
                                 data-testid="approval-save-confirm-button"
-                                class="inline-flex min-h-10 items-center justify-center rounded-lg bg-primary px-3 py-2 text-sm font-medium text-primary-foreground transition hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+                                class="inline-flex min-h-10 items-center justify-center rounded-lg bg-action px-3 py-2 text-sm font-medium text-action-foreground transition hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
                                 :disabled="!canSubmitSaved"
                                 @click="submitSaved"
                             >

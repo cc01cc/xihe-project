@@ -243,7 +243,7 @@ onMounted(async () => {
                 </p>
                 <div v-if="!readonly" class="flex gap-2">
                     <button
-                        class="px-3 py-1 text-xs bg-primary text-primary-foreground rounded hover:opacity-90 disabled:opacity-50"
+                        class="px-3 py-1 text-xs bg-action text-action-foreground rounded hover:opacity-90 disabled:opacity-50"
                         :disabled="mcpSaving"
                         @click="saveMcpConfig"
                     >

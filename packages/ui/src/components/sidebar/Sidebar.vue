@@ -231,7 +231,7 @@ function handleLogout() {
             <div class="px-3 pb-2">
                 <button
                     data-testid="sidebar-new-chat"
-                    class="w-full flex items-center gap-2 px-3 py-2 rounded-lg bg-brand text-sm font-medium text-brand-foreground transition-colors hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    class="w-full flex items-center gap-2 px-3 py-2 rounded-lg bg-action text-sm font-medium text-action-foreground transition-colors hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                     @click="startNewChat"
                 >
                     <Plus class="size-4" aria-hidden="true" />

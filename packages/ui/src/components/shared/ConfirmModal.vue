@@ -70,7 +70,7 @@ function onClose() {
                 :class="
                     destructive
                         ? 'bg-destructive text-destructive-foreground hover:opacity-90'
-                        : 'bg-primary text-primary-foreground hover:opacity-90'
+                        : 'bg-action text-action-foreground hover:opacity-90'
                 "
                 :disabled="loading"
                 @click="onConfirm"

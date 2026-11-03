@@ -114,7 +114,7 @@ onMounted(async () => {
             <p class="text-sm text-muted-foreground">{{ t("workspacePicker.empty") }}</p>
             <button
                 type="button"
-                class="rounded-lg bg-primary px-4 py-2.5 text-sm font-semibold text-primary-foreground transition-opacity hover:opacity-90"
+                class="rounded-lg bg-action px-4 py-2.5 text-sm font-semibold text-action-foreground transition-opacity hover:opacity-90"
                 data-testid="workspace-picker-create"
                 @click="createOpen = true"
             >
