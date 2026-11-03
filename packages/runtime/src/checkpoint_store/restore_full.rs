@@ -27,9 +27,51 @@ pub struct FullRestoreOptions {
     pub force_modified_deletions: bool,
     /// Resume a marker left by an interrupted restore of the same target.
     pub resume_same_target: bool,
+    /// T2.2 subtree scope: `None` = full workspace; `Some("dir")` = that path
+    /// and its children (literal path semantics, no wildcard).
+    pub path_prefix: Option<String>,
     /// Test-only fault injection after the destructive deletion phase.
     #[cfg(test)]
     pub fail_after_deletes: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum FullRestoreAction {
+    Restore,
+    Delete,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum FullRestoreState {
+    Execute,
+    SkippedModified,
+    AlreadyAbsent,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FullRestorePreviewEntry {
+    pub path: String,
+    pub action: FullRestoreAction,
+    pub state: FullRestoreState,
+    pub detail: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct FullRestorePreview {
+    pub entries: Vec<FullRestorePreviewEntry>,
+    pub restore: usize,
+    pub delete: usize,
+    pub skipped_modified: Vec<String>,
+    pub already_absent: usize,
+    pub bytes: u64,
+}
+
+struct FullRestorePlan {
+    tail_slice: Option<TailSlice>,
+    writes: Vec<super::manifest::ManifestEntry>,
+    deletions: Vec<super::manifest::ManifestEntry>,
+    skipped_modified: Vec<String>,
+    already_absent: usize,
 }
 
 #[derive(Debug, Clone, serde::Deserialize, serde::Serialize, PartialEq, Eq)]
@@ -460,20 +502,28 @@ fn remove_trash(trash_root: &Path) -> Result<(), FullRestoreError> {
     Ok(())
 }
 
-/// Full restore of one slice into `work_tree`.
-pub fn restore_full(
+fn in_scope(path: &str, prefix: Option<&str>) -> bool {
+    match prefix {
+        None => true,
+        Some(prefix) => path == prefix || path.starts_with(&format!("{prefix}/")),
+    }
+}
+
+fn build_plan(
     store: &Store,
     root_id: &str,
     slice_id: &str,
     work_tree: &Path,
     options: &FullRestoreOptions,
-) -> Result<FullRestoreStats, FullRestoreError> {
-    let started = Instant::now();
+) -> Result<FullRestorePlan, FullRestoreError> {
     if !work_tree.is_dir() {
         return Err(FullRestoreError::TypeConflict {
             path: work_tree.display().to_string(),
             detail: "work tree is not a directory".into(),
         });
+    }
+    if let Some(prefix) = options.path_prefix.as_deref() {
+        validate_path(prefix)?;
     }
     let (target, _manifest_id) = read_target_manifest(store, root_id, slice_id)?;
     let tail_slice = tail_slice(store, root_id).map_err(|error| {
@@ -486,28 +536,21 @@ pub fn restore_full(
         None => None,
     };
     preflight(store, &target, tail_manifest.as_ref())?;
-
+    let prefix = options.path_prefix.as_deref();
     let target_paths: BTreeSet<&str> = target
         .entries
         .iter()
+        .filter(|entry| in_scope(&entry.path, prefix))
         .map(|entry| entry.path.as_str())
         .collect();
-    let mut deletion_candidates = Vec::new();
-    if let Some(tail) = &tail_manifest {
-        for entry in &tail.entries {
-            if !target_paths.contains(entry.path.as_str()) {
-                deletion_candidates.push(entry);
-            }
-        }
-    }
-
-    // Preflight type conflicts and deletion safety before creating a marker or
-    // mutating any path.
+    let mut writes = Vec::new();
     for entry in &target.entries {
+        if !in_scope(&entry.path, prefix) {
+            continue;
+        }
         check_ancestors(work_tree, &entry.path)?;
-        if let Ok(metadata) = fs::symlink_metadata(
-            work_tree.join(entry.path.replace('/', std::path::MAIN_SEPARATOR_STR)),
-        ) {
+        let destination = safe_join(work_tree, &entry.path)?;
+        if let Ok(metadata) = fs::symlink_metadata(&destination) {
             if is_reparse(&metadata) {
                 return Err(FullRestoreError::UnsafePath(entry.path.clone()));
             }
@@ -518,7 +561,131 @@ pub fn restore_full(
                 });
             }
         }
+        writes.push(entry.clone());
     }
+    let mut deletions = Vec::new();
+    let mut skipped_modified = Vec::new();
+    let mut already_absent = 0usize;
+    if let Some(tail) = &tail_manifest {
+        for entry in &tail.entries {
+            if target_paths.contains(entry.path.as_str()) || !in_scope(&entry.path, prefix) {
+                continue;
+            }
+            validate_path(&entry.path)?;
+            check_ancestors(work_tree, &entry.path)?;
+            let current = safe_join(work_tree, &entry.path)?;
+            let metadata = match fs::symlink_metadata(&current) {
+                Ok(metadata) => metadata,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    already_absent += 1;
+                    continue;
+                }
+                Err(error) => return Err(io_error(&current, error)),
+            };
+            if is_reparse(&metadata) || metadata.is_dir() {
+                skipped_modified.push(entry.path.clone());
+                continue;
+            }
+            let raw = fs::read(&current).map_err(|error| io_error(&current, error))?;
+            let modified = raw.len() as u64 != entry.size
+                || blob_hash(&raw) != entry.blob_hash
+                || !mode_matches(entry, &metadata);
+            if modified && !options.force_modified_deletions {
+                skipped_modified.push(entry.path.clone());
+            } else {
+                deletions.push(entry.clone());
+            }
+        }
+    }
+    Ok(FullRestorePlan {
+        tail_slice,
+        writes,
+        deletions,
+        skipped_modified,
+        already_absent,
+    })
+}
+
+/// Preview the same plan that [`restore_full`] executes. Read-only.
+pub fn preview_full(
+    store: &Store,
+    root_id: &str,
+    slice_id: &str,
+    work_tree: &Path,
+    options: &FullRestoreOptions,
+) -> Result<FullRestorePreview, FullRestoreError> {
+    let plan = build_plan(store, root_id, slice_id, work_tree, options)?;
+    let mut preview = FullRestorePreview::default();
+    for entry in &plan.writes {
+        preview.restore += 1;
+        preview.bytes = preview.bytes.saturating_add(entry.size);
+        preview.entries.push(FullRestorePreviewEntry {
+            path: entry.path.clone(),
+            action: FullRestoreAction::Restore,
+            state: FullRestoreState::Execute,
+            detail: None,
+        });
+    }
+    for entry in &plan.deletions {
+        preview.delete += 1;
+        preview.entries.push(FullRestorePreviewEntry {
+            path: entry.path.clone(),
+            action: FullRestoreAction::Delete,
+            state: FullRestoreState::Execute,
+            detail: None,
+        });
+    }
+    // The plan also carries skipped/missing decisions; recompute their labels
+    // from the same tail/worktree inputs without another mutation pass.
+    if let Some(prefix) = options.path_prefix.as_deref() {
+        preview
+            .entries
+            .retain(|entry| in_scope(&entry.path, Some(prefix)));
+    }
+    for path in &plan.skipped_modified {
+        preview.skipped_modified.push(path.clone());
+        preview.entries.push(FullRestorePreviewEntry {
+            path: path.clone(),
+            action: FullRestoreAction::Delete,
+            state: FullRestoreState::SkippedModified,
+            detail: Some("modified since capture; preserved by default".into()),
+        });
+    }
+    preview.already_absent = plan.already_absent;
+    preview.entries.sort_by(|left, right| {
+        left.path
+            .cmp(&right.path)
+            .then_with(|| left.action.cmp(&right.action))
+    });
+    Ok(preview)
+}
+
+/// T2.2 single-path/subtree restore; reuses the full plan and safety rules.
+pub fn restore_path(
+    store: &Store,
+    root_id: &str,
+    slice_id: &str,
+    work_tree: &Path,
+    path: &str,
+    options: &FullRestoreOptions,
+) -> Result<FullRestoreStats, FullRestoreError> {
+    validate_path(path)?;
+    let mut scoped = options.clone();
+    scoped.path_prefix = Some(path.to_owned());
+    restore_full(store, root_id, slice_id, work_tree, &scoped)
+}
+
+/// Full restore of one slice into `work_tree`.
+pub fn restore_full(
+    store: &Store,
+    root_id: &str,
+    slice_id: &str,
+    work_tree: &Path,
+    options: &FullRestoreOptions,
+) -> Result<FullRestoreStats, FullRestoreError> {
+    let started = Instant::now();
+    let plan = build_plan(store, root_id, slice_id, work_tree, options)?;
+    let tail_slice = plan.tail_slice.clone();
 
     let trash_base = ensure_trash_base(work_tree)?;
     let marker_path = work_tree.join(RESTORE_MARKER);
@@ -546,10 +713,14 @@ pub fn restore_full(
         }
     };
     let trash_root = trash_base.join(&restore_id);
-    let mut stats = FullRestoreStats::default();
+    let mut stats = FullRestoreStats {
+        skipped_already_absent: plan.already_absent,
+        skipped_modified_deletions: plan.skipped_modified.clone(),
+        ..FullRestoreStats::default()
+    };
     let result = (|| -> Result<(), FullRestoreError> {
         fs::create_dir_all(&trash_root).map_err(|error| io_error(&trash_root, error))?;
-        for entry in deletion_candidates {
+        for entry in &plan.deletions {
             validate_path(&entry.path)?;
             check_ancestors(work_tree, &entry.path)?;
             let current = safe_join(work_tree, &entry.path)?;
@@ -602,7 +773,7 @@ pub fn restore_full(
             });
         }
 
-        for entry in &target.entries {
+        for entry in &plan.writes {
             validate_path(&entry.path)?;
             check_ancestors(work_tree, &entry.path)?;
             let destination = safe_join(work_tree, &entry.path)?;
@@ -927,6 +1098,155 @@ mod tests {
         assert!(!root.join(RESTORE_MARKER).exists());
         assert!(!root.join(RESTORE_TRASH).exists());
         assert!(!restore_status(&root).expect("status").incomplete);
+    }
+
+    #[test]
+    fn preview_and_restore_share_the_same_plan() {
+        let workspace = workspace();
+        let root = workspace.path().join("ws");
+        fs::create_dir_all(&root).expect("root");
+        write(&root.join("a.txt"), "one");
+        let store = Store::init(workspace.path().join("store")).expect("store");
+        let first = capture_root(&store, &root, "ws-1", None, None).expect("first");
+        write(&root.join("b.txt"), "two");
+        capture_root(&store, &root, "ws-1", None, None).expect("second");
+        write(&root.join("b.txt"), "modified");
+
+        let preview = preview_full(
+            &store,
+            "ws-1",
+            &first.slice_id,
+            &root,
+            &FullRestoreOptions::default(),
+        )
+        .expect("preview");
+        assert_eq!(preview.restore, 1, "a.txt");
+        assert_eq!(preview.delete, 0, "b.txt is modified and preserved");
+        assert_eq!(preview.skipped_modified, vec!["b.txt"]);
+
+        let stats = restore_full(
+            &store,
+            "ws-1",
+            &first.slice_id,
+            &root,
+            &FullRestoreOptions::default(),
+        )
+        .expect("restore");
+        assert_eq!(preview.restore, stats.restored);
+        assert_eq!(preview.delete, stats.deleted);
+        assert_eq!(preview.skipped_modified, stats.skipped_modified_deletions);
+
+        let preview_force = preview_full(
+            &store,
+            "ws-1",
+            &first.slice_id,
+            &root,
+            &FullRestoreOptions {
+                force_modified_deletions: true,
+                ..FullRestoreOptions::default()
+            },
+        )
+        .expect("preview force");
+        assert_eq!(preview_force.delete, 1);
+        let force = restore_full(
+            &store,
+            "ws-1",
+            &first.slice_id,
+            &root,
+            &FullRestoreOptions {
+                force_modified_deletions: true,
+                ..FullRestoreOptions::default()
+            },
+        )
+        .expect("force restore");
+        assert_eq!(preview_force.delete, force.deleted);
+    }
+
+    #[test]
+    fn single_restore_reuses_safety_and_rejects_escape() {
+        let workspace = workspace();
+        let root = workspace.path().join("ws");
+        fs::create_dir_all(&root).expect("root");
+        write(&root.join("a.txt"), "one");
+        let store = Store::init(workspace.path().join("store")).expect("store");
+        let first = capture_root(&store, &root, "ws-1", None, None).expect("first");
+        write(&root.join("b.txt"), "two");
+        capture_root(&store, &root, "ws-1", None, None).expect("second");
+        write(&root.join("b.txt"), "modified");
+
+        let scoped = restore_path(
+            &store,
+            "ws-1",
+            &first.slice_id,
+            &root,
+            "b.txt",
+            &FullRestoreOptions::default(),
+        )
+        .expect("single restore");
+        assert_eq!(scoped.skipped_modified_deletions, vec!["b.txt"]);
+        assert_eq!(
+            fs::read_to_string(root.join("b.txt")).expect("b"),
+            "modified"
+        );
+        assert_eq!(fs::read_to_string(root.join("a.txt")).expect("a"), "one");
+
+        let forced = restore_path(
+            &store,
+            "ws-1",
+            &first.slice_id,
+            &root,
+            "b.txt",
+            &FullRestoreOptions {
+                force_modified_deletions: true,
+                ..FullRestoreOptions::default()
+            },
+        )
+        .expect("single force");
+        assert_eq!(forced.deleted, 1);
+        assert!(!root.join("b.txt").exists());
+
+        write(&root.join("b.txt"), "quarantine-me");
+        let failure = restore_path(
+            &store,
+            "ws-1",
+            &first.slice_id,
+            &root,
+            "b.txt",
+            &FullRestoreOptions {
+                force_modified_deletions: true,
+                fail_after_deletes: true,
+                ..FullRestoreOptions::default()
+            },
+        )
+        .expect_err("injected failure");
+        assert!(
+            matches!(failure, FullRestoreError::Io { .. }),
+            "{failure:?}"
+        );
+        assert!(!root.join("b.txt").exists());
+        assert!(root.join(RESTORE_MARKER).exists());
+        assert!(
+            trash_entries(&root)
+                .iter()
+                .any(|path| path.ends_with("b.txt"))
+        );
+        fs::remove_file(root.join(RESTORE_MARKER)).expect("clear recovered marker");
+        fs::remove_dir_all(root.join(RESTORE_TRASH)).expect("clear recovered trash");
+
+        let escape = restore_path(
+            &store,
+            "ws-1",
+            &first.slice_id,
+            &root,
+            "../escape",
+            &FullRestoreOptions::default(),
+        )
+        .expect_err("escape must fail");
+        assert!(
+            matches!(escape, FullRestoreError::UnsafePath(_)),
+            "{escape:?}"
+        );
+        assert!(!root.join(RESTORE_MARKER).exists());
     }
 
     #[test]

@@ -10,6 +10,7 @@ pub mod capture;
 pub mod fsck;
 pub mod manifest;
 pub mod preflight;
+pub mod reads;
 pub mod refs;
 pub mod restore;
 pub mod restore_full;

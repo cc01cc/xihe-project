@@ -82,15 +82,6 @@ pub fn run_preflight(
         }
     }
 
-    if options.enforce_read_paths {
-        report.blockers.push(PreflightBlocker {
-            code: "SELF_READ_PATH_INCOMPLETE",
-            root_id: String::new(),
-            detail: "P2.2 read adapters are not complete; preflight is dry-run only".into(),
-            paths: Vec::new(),
-        });
-    }
-
     for root_id in &options.roots {
         let root_report = preflight_root(store, root_id, options, &mut report)?;
         report.roots.push(root_report);
@@ -586,5 +577,40 @@ mod tests {
         .expect("preflight");
         assert!(overridden.ok, "{overridden:?}");
         assert!(overridden.roots[0].restricted);
+    }
+
+    #[test]
+    fn enforce_read_paths_passes_after_p22_adapters() {
+        let temp = workspace();
+        let root = temp.path().join("ws");
+        fs::create_dir_all(&root).expect("root");
+        fs::write(root.join("a.txt"), "a").expect("a");
+        let store = Store::init(temp.path().join("store")).expect("store");
+        let first = capture_root(&store, &root, "ws-1", None, None).expect("capture");
+        write_done(
+            &store,
+            "ws-1",
+            "run-enforce",
+            "refs/xihe/slices/enforce",
+            &first.slice_id,
+            &first.manifest_id,
+            "4444444444444444444444444444444444444444",
+        );
+        let report = run_preflight(
+            &store,
+            &PreflightOptions {
+                roots: vec!["ws-1".into()],
+                enforce_read_paths: true,
+                ..PreflightOptions::default()
+            },
+        )
+        .expect("preflight");
+        assert!(report.ok, "{report:?}");
+        assert!(
+            !report
+                .blockers
+                .iter()
+                .any(|blocker| blocker.code == "SELF_READ_PATH_INCOMPLETE")
+        );
     }
 }
