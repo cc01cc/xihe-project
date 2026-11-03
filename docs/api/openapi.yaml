@@ -3724,13 +3724,14 @@ components:
     CheckpointSlice:
        type: object
        additionalProperties: false
-       required: [id, sliceRef, capturedAt, sourceRunId, sourceSessionId, predecessorRef, changedFiles, changedCount, opaqueNestedRepos, state, unrollableReason, revert]
+       required: [id, sliceRef, capturedAt, sourceRunId, sourceSessionId, actorPrincipalId, predecessorRef, changedFiles, changedCount, opaqueNestedRepos, state, unrollableReason, revert]
        properties:
          id: { type: string, format: uuid }
          sliceRef: { type: [string, 'null'], description: Null only for a degraded capture record without a slice }
          capturedAt: { type: [string, 'null'], format: date-time }
          sourceRunId: { type: [string, 'null'] }
          sourceSessionId: { type: [string, 'null'] }
+         actorPrincipalId: { type: [string, 'null'], format: uuid, description: Responder principal of the source run (chat_runs.agent_principal_id); null on legacy rows captured before principal attribution }
          predecessorRef: { type: [string, 'null'] }
          changedFiles: { type: array, items: { $ref: '#/components/schemas/CheckpointChangedFile' } }
          changedCount: { type: integer, minimum: 0 }
@@ -3763,13 +3764,21 @@ components:
     CheckpointRevertPreviewResponse:
        type: object
        additionalProperties: false
-       required: [sliceRef, counts, entries, truncated, opaqueNestedRepos]
+       required: [sliceRef, counts, entries, truncated, opaqueNestedRepos, descendantsAffected]
        properties:
          sliceRef: { type: string }
          counts: { type: object, required: [restore, delete, typeConflict], properties: { restore: { type: integer }, delete: { type: integer }, typeConflict: { type: integer } } }
          entries: { type: array, items: { $ref: '#/components/schemas/CheckpointRevertPreviewEntry' } }
          truncated: { type: boolean }
          opaqueNestedRepos: { type: array, items: { type: string } }
+         descendantsAffected: { type: array, items: { $ref: '#/components/schemas/CheckpointDescendantImpact' }, description: Spawn-descendant sessions whose work after the target slice overlaps the rollback paths; informational only, never blocks the restore }
+    CheckpointDescendantImpact:
+       type: object
+       additionalProperties: false
+       required: [sessionId, overlappingPaths]
+       properties:
+         sessionId: { type: string, format: uuid }
+         overlappingPaths: { type: array, items: { type: string } }
     CheckpointRevertEntry:
        type: object
        additionalProperties: false
@@ -3781,13 +3790,14 @@ components:
     CheckpointRevertResponse:
        type: object
        additionalProperties: false
-       required: [sliceRef, counts, entries, durationMs, suspects]
+       required: [sliceRef, counts, entries, durationMs, suspects, descendantsAffected]
        properties:
          sliceRef: { type: string }
          counts: { type: object, required: [restored, deleted, failed], properties: { restored: { type: integer }, deleted: { type: integer }, failed: { type: integer } } }
          entries: { type: array, items: { $ref: '#/components/schemas/CheckpointRevertEntry' } }
          durationMs: { type: integer, minimum: 0 }
          suspects: { type: array, items: { type: string } }
+         descendantsAffected: { type: array, items: { $ref: '#/components/schemas/CheckpointDescendantImpact' }, description: Spawn-descendant sessions whose work after the target slice overlaps the rollback paths; informational only, never blocks the restore }
     CheckpointCleanupRequest:
        type: object
        additionalProperties: false
