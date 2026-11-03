@@ -7,6 +7,8 @@ import { rm } from 'node:fs/promises'
 import { createServer as createTcpServer, connect as connectTcp } from 'node:net'
 import { createServer as createHttpServer } from 'node:http'
 import { waitForAgentLlmReady } from './lib/agent-readiness.mjs'
+import { llmEnv } from './lib/llm-env.mjs'
+import { decideCpBoot } from './lib/cp-boot-plan.mjs'
 
 const projectDir = dirname(import.meta.dirname)
 const uiDir = join(projectDir, 'packages', 'ui')
@@ -379,10 +381,12 @@ function resolveCpJarState() {
   return { cpDir, jar, newestSource }
 }
 
-// R2 decision table (--jar-mode): auto = fresh jar or rebuild-then-use, falling
-// back to `mvn spring-boot:run` when the rebuild cannot produce a fresh jar;
-// use = always boot the existing jar; rebuild = always rebuild first; run =
-// never boot a jar. A stale jar must never be used silently.
+// R2 decision table (--jar-mode): auto = fresh jar, else build-then-use (a MISSING jar
+// is built once and reused instead of falling into `mvn spring-boot:run`, which never
+// produces a jar — BL-205 ②); use = always boot the existing jar; rebuild = always
+// rebuild first; run = never boot a jar. A stale jar must never be used silently.
+// The decision itself is `lib/cp-boot-plan.mjs` (pure, unit-tested); this function only
+// performs the side effects (warn, build, re-inspect, fall back).
 async function resolveCpBootPlan() {
   if (jarMode === 'native') {
     const state = resolveCpJarState()
@@ -401,34 +405,34 @@ async function resolveCpBootPlan() {
       reason: 'forced native executable',
     }
   }
-  if (jarMode === 'run') return { mode: 'run', jar: null, reason: '--jar-mode=run' }
   const state = resolveCpJarState()
-  if (!state.jar) return { mode: 'run', jar: null, reason: 'no CP jar in target/ (mvn spring-boot:run)' }
-  const stale = state.newestSource.mtimeMs > state.jar.mtimeMs
-  if (jarMode === 'use') {
+  const stale = state.jar ? state.newestSource.mtimeMs > state.jar.mtimeMs : false
+  const plan = decideCpBoot({ jarMode, hasJar: Boolean(state.jar), stale })
+  if (plan.action === 'run') return { mode: 'run', jar: null, reason: plan.reason }
+  if (plan.action === 'use') {
     if (stale) console.warn(`[e2e-host] CP jar ${state.jar.name} is STALE but --jar-mode=use; booting it as-is`)
-    return { mode: 'jar', jar: state.jar, reason: stale ? 'stale, forced by --jar-mode=use' : 'fresh (forced use)' }
+    return { mode: 'jar', jar: state.jar, reason: plan.reason }
   }
-  if (jarMode === 'rebuild' || stale) {
-    if (stale) {
-      console.log(`[e2e-host] CP jar ${state.jar.name} is stale vs ${state.newestSource.path} by ${fmtAge(state.newestSource.mtimeMs - state.jar.mtimeMs)}; rebuilding (mvn -q -DskipTests package)`)
-    } else {
-      console.log(`[e2e-host] --jar-mode=rebuild: rebuilding CP jar (mvn -q -DskipTests package)`)
-    }
-    const rebuild = await run(mvnCommand, ['-q', '-DskipTests', 'package'], { cwd: state.cpDir, stdio: 'inherit' })
-    if (rebuild.code !== 0) {
-      console.warn(`[e2e-host] CP jar rebuild failed (exit=${rebuild.code}); falling back to mvn spring-boot:run`)
-      return { mode: 'run', jar: null, reason: 'rebuild failed' }
-    }
-    const after = resolveCpJarState()
-    if (!after.jar || after.newestSource.mtimeMs > after.jar.mtimeMs) {
-      console.warn('[e2e-host] CP jar still stale after rebuild; falling back to mvn spring-boot:run')
-      return { mode: 'run', jar: null, reason: 'still stale after rebuild' }
-    }
-    console.log(`[e2e-host] CP jar rebuilt: ${after.jar.name} (${fmtAge(Date.now() - after.jar.mtimeMs)} old)`)
-    return { mode: 'jar', jar: after.jar, reason: 'rebuilt' }
+  // plan.action === 'build-then-use': missing jar, stale jar, or a forced rebuild.
+  if (!state.jar) {
+    console.log('[e2e-host] no CP jar in target/: building one once (mvn -q -DskipTests package) so later runs reuse it')
+  } else if (stale) {
+    console.log(`[e2e-host] CP jar ${state.jar.name} is stale vs ${state.newestSource.path} by ${fmtAge(state.newestSource.mtimeMs - state.jar.mtimeMs)}; rebuilding (mvn -q -DskipTests package)`)
+  } else {
+    console.log(`[e2e-host] --jar-mode=rebuild: rebuilding CP jar (mvn -q -DskipTests package)`)
   }
-  return { mode: 'jar', jar: state.jar, reason: `fresh (${fmtAge(Date.now() - state.jar.mtimeMs)} old)` }
+  const rebuild = await run(mvnCommand, ['-q', '-DskipTests', 'package'], { cwd: state.cpDir, stdio: 'inherit' })
+  if (rebuild.code !== 0) {
+    console.warn(`[e2e-host] CP jar rebuild failed (exit=${rebuild.code}); falling back to mvn spring-boot:run`)
+    return { mode: 'run', jar: null, reason: 'rebuild failed' }
+  }
+  const after = resolveCpJarState()
+  if (!after.jar || after.newestSource.mtimeMs > after.jar.mtimeMs) {
+    console.warn('[e2e-host] CP jar still stale after rebuild; falling back to mvn spring-boot:run')
+    return { mode: 'run', jar: null, reason: 'still stale after rebuild' }
+  }
+  console.log(`[e2e-host] CP jar rebuilt: ${after.jar.name} (${fmtAge(Date.now() - after.jar.mtimeMs)} old)`)
+  return { mode: 'jar', jar: after.jar, reason: 'rebuilt' }
 }
 
 function printRunnerHelp() {
@@ -1507,34 +1511,19 @@ async function runPlaywright() {
   // -> XIHE_XIAOMI_API_KEY, `openai-compat` -> XIHE_OPENAI_API_KEY). The key
   // value is the same one the runner already passes down the process tree (env
   // inheritance); it stays in memory only and is never logged.
-  const agentRestartEnv = realXiaomiKey
-    ? realRoute === 'openai-compat'
-      ? {
-          XIHE_LLM_PROVIDER: 'openai',
-          XIHE_OPENAI_API_KEY: realXiaomiKey,
-        }
-      : {
-          XIHE_LLM_PROVIDER: 'xiaomi',
-          XIHE_XIAOMI_API_KEY: realXiaomiKey,
-        }
-    : {
-        XIHE_LLM_PROVIDER: llmMode === 'mock' ? 'mock' : 'openai',
-        // PLAN-0504 decision #9: the offline fallback registry resolves its
-        // endpoint from XIHE_API_BASE; without it the env-keyed providers would
-        // hit the real vendor endpoints and the lane would report
-        // invalid_credentials (config no longer carries base URLs). The fake
-        // LLM routes per-provider under /openai/v1 (as the old config keys
-        // did), so the base carries the openai prefix.
-        ...(llmMode === 'missing' || llmMode === 'mock'
-          ? {}
-          : { XIHE_API_BASE: `http://127.0.0.1:${fakeLlmPort}/openai/v1` }),
-        ...(llmMode === 'missing' || llmMode === 'mock'
-          ? {}
-          : {
-              XIHE_OPENAI_API_KEY: llmMode === 'invalid' ? 'sk-fake-invalid-key' : 'sk-fake-openai-key',
-              XIHE_DEEPSEEK_API_KEY: 'fake-deepseek-key',
-            }),
-      }
+  //
+  // PLAN-0650 B-1: the LLM portion now comes from `lib/llm-env.mjs` — the SAME
+  // function the initial launch uses. Two hand-maintained copies had drifted (the
+  // fake lane learned to set XIHE_API_BASE, the real lane never did), and the real
+  // `openai-compat` route fell through to api.openai.com. One function removes that
+  // class of bug; both real routes now pin XIHE_API_BASE explicitly.
+  const agentRestartEnv = llmEnv({
+    realKey: realXiaomiKey,
+    realRoute,
+    llmMode,
+    fakeLlmPort,
+    realApiBase: process.env.XIHE_E2E_REAL_API_BASE,
+  })
   // PLAN-0588 T4.2a (M4 gate passed 2026-10-31): one Agent process keeps a
   // per-workspace MCP shard, so a spec no longer needs a process restart to
   // switch workspace. `disabled` turns journey.ensureAgentWorkspaceBinding into
@@ -2188,30 +2177,18 @@ async function main() {
           extraEnv: {
             XIHE_AGENT_PORT: agentPort,
             XIHE_CP_URL: `http://127.0.0.1:${cpPort}`,
-            XIHE_LLM_PROVIDER: realXiaomiKey
-              ? realRoute === 'openai-compat'
-                ? 'openai'
-                : 'xiaomi'
-              : llmMode === 'mock'
-                ? 'mock'
-                : 'openai',
             // PLAN-0307 decision #21/#37 (BYOK): fake/real credentials travel
             // through the Agent env fallback, never through config layers.
-            ...(realXiaomiKey
-              ? realRoute === 'openai-compat'
-                ? { XIHE_OPENAI_API_KEY: realXiaomiKey }
-                : { XIHE_XIAOMI_API_KEY: realXiaomiKey }
-              : llmMode === 'missing' || llmMode === 'mock'
-                ? {}
-                : {
-                    XIHE_OPENAI_API_KEY: llmMode === 'invalid' ? 'sk-fake-invalid-key' : 'sk-fake-openai-key',
-                    XIHE_DEEPSEEK_API_KEY: 'fake-deepseek-key',
-                    // PLAN-0504 decision #9: env-only endpoint for the fallback
-                    // registry (per-provider prefix as the old config keys did);
-                    // without this the env-keyed providers would hit the real
-                    // vendors and the lane would report invalid_credentials.
-                    XIHE_API_BASE: `http://127.0.0.1:${fakeLlmPort}/openai/v1`,
-                  }),
+            // PLAN-0650 B-1: provider / provider key / XIHE_API_BASE come from the
+            // same `lib/llm-env.mjs` the restart contract uses — no second copy to
+            // drift (real lanes pin the endpoint on both routes, see that module).
+            ...llmEnv({
+              realKey: realXiaomiKey,
+              realRoute,
+              llmMode,
+              fakeLlmPort,
+              realApiBase: process.env.XIHE_E2E_REAL_API_BASE,
+            }),
           },
           healthUrl: `http://127.0.0.1:${agentPort}/internal/v1/agent/health`,
         })
