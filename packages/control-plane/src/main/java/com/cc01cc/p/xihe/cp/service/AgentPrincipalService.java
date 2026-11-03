@@ -774,6 +774,19 @@ public class AgentPrincipalService {
         return toJson(retainCovered(bindingPermissions, principalPermissions));
     }
 
+    /** 2026-11-04 P0（task-24）：主体的默认模型身份；未设置时两个字段都为 null。 */
+    public record DefaultModel(String provider, String model) {}
+
+    /**
+     * 会话创建/重绑的默认值来源之一（唯一入口 {@code chat.SessionProviderDefaults}）：
+     * 先按既有可见性规则校验主体在本工作区可用，再返回它自己的默认模型。
+     */
+    @Transactional(readOnly = true)
+    public DefaultModel defaultModel(UUID principalId, UUID workspaceId) {
+        AgentPrincipal principal = requireActiveWorkspaceBinding(principalId, workspaceId).principal();
+        return new DefaultModel(principal.getDefaultModelProvider(), principal.getDefaultModelName());
+    }
+
     /** String adapter for wire-facing callers; parsing only, one computation (C1). */
     @Transactional(readOnly = true)
     public JsonNode resolveCapFor(String principalIdValue, String workspaceIdValue) {

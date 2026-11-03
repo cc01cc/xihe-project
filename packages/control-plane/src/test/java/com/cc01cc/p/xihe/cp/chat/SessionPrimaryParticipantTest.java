@@ -47,6 +47,9 @@ class SessionPrimaryParticipantTest extends AbstractIntegrationTest {
     private String ownerId;
     private String workspaceId;
     private String principalId;
+    /** 2026-11-04 P0（task-24）：裸会话不再允许存在，HTTP 建会话必须带显式绑定。 */
+    private com.cc01cc.p.xihe.cp.entity.ProviderConnection binding;
+    private String bindingFields;
 
     @BeforeEach
     void fixture() {
@@ -65,13 +68,18 @@ class SessionPrimaryParticipantTest extends AbstractIntegrationTest {
                 "/api/v1/workspaces/" + workspaceId + "/agents/" + principalId,
                 """
                 {"permissions":[]}""").status());
+
+        binding = ChatBindingTestSupport.ensureChatConnection(providerConnections, "USER", ownerId,
+                "p623-primary-" + UUID.randomUUID().toString().substring(0, 8));
+        bindingFields = ",\"modelProvider\":\"%s\",\"modelName\":\"gpt-test\",\"providerConnectionId\":\"%s\""
+                .formatted(binding.getProviderId(), binding.getId());
     }
 
     @Test
     void creatingAnAgentSessionSeedsThePrimaryAndItsCursor() {
         JsonNode session = send(ownerToken, "POST", "/api/v1/sessions",
                 """
-                {"agentPrincipalId":"%s"}""".formatted(principalId)).body();
+                {"agentPrincipalId":"%s"%s}""".formatted(principalId, bindingFields)).body();
         String sessionId = session.path("id").asText();
 
         JsonNode list = send(ownerToken, "GET", "/api/v1/sessions/" + sessionId + "/participants", null).body();
@@ -98,7 +106,7 @@ class SessionPrimaryParticipantTest extends AbstractIntegrationTest {
     void thePrimaryIsNotRemovableAndNotTransferable() {
         String sessionId = send(ownerToken, "POST", "/api/v1/sessions",
                 """
-                {"agentPrincipalId":"%s"}""".formatted(principalId)).body().path("id").asText();
+                {"agentPrincipalId":"%s"%s}""".formatted(principalId, bindingFields)).body().path("id").asText();
         String primaryRow = send(ownerToken, "GET",
                 "/api/v1/sessions/" + sessionId + "/participants", null).body()
                 .path("participants").get(0).path("participantId").asText();
@@ -133,10 +141,11 @@ class SessionPrimaryParticipantTest extends AbstractIntegrationTest {
     void seedingsAreIdempotent() {
         String sessionId = send(ownerToken, "POST", "/api/v1/sessions",
                 """
-                {"agentPrincipalId":"%s"}""".formatted(principalId)).body().path("id").asText();
+                {"agentPrincipalId":"%s"%s}""".formatted(principalId, bindingFields)).body().path("id").asText();
 
         // The bind path calls the same seeder; a second call must not add a row.
-        sessionService.createAgentSession(ownerId, workspaceId, "second", null, null, null, principalId);
+        sessionService.createAgentSession(ownerId, workspaceId, "second", binding.getProviderId(), "gpt-test",
+                binding.getId().toString(), principalId);
 
         JsonNode participants = send(ownerToken, "GET",
                 "/api/v1/sessions/" + sessionId + "/participants", null).body().path("participants");
