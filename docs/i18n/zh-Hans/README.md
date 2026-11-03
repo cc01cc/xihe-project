@@ -61,7 +61,7 @@ exit code 契约：`0` 成功、`1` 业务/运行失败（含 `partial`）、`2`
 
 **当前门槛（还没有安装包）**：需要 Windows 宿主机上的 mise 固定工具链，以及 Docker —— Docker 里**只有 PostgreSQL**，Control Plane、Agent、Runtime、UI 四个服务由 mise 作为原生进程启动。原生打包（PLAN-0632）仍在进行中，**暂无下载安装包**，所以现在不能双击即用；最短路径就是本节的四条命令。首跑判据见 [DEV-033](DEV-033-first-run-gold-path.md)。
 
-`.env` 与 `.env.dev` 已作为安全基线入库，无需复制或覆盖；个人凭据写入 gitignored 的 `.env.local`，不得提交或写入日志。日常开发中 PostgreSQL 使用 Docker，其余服务由 mise 在宿主机启动。`dev:host` 不会导入配置或创建 Provider Connection；需要时运行 `mise run dev:host:import-config` 和 `mise run dev:host:provider-init`。UI 默认端口为 `12630`（stack-1；并行多栈见 [DEV-002](DEV-002-developer-guide.md)「模式 D」）。`mise run dev:full` **已冻结禁用（2026-10-07：仅 PostgreSQL 保留容器，服务全 host；mise.toml 已注释）**，日常走 `dev:host`；环境说明见 [DEV-002](DEV-002-developer-guide.md)。
+`.env` 与 `.env.dev` 已作为安全基线入库，无需复制或覆盖；个人凭据写入 gitignored 的 `.env.local`，不得提交或写入日志。日常开发中 PostgreSQL 使用 Docker，其余服务由 mise 在宿主机启动。`dev:host` 不会导入配置或创建 Provider Connection；启动前会先跑一次 `mise run check:runtime-target`（watch 只打印，FORCE 线 ≥20GB 或 H 余量 <5GB 会阻止启动）；需要配置时运行 `mise run dev:host:import-config` 和 `mise run dev:host:provider-init`。UI 默认端口为 `12630`（stack-1；并行多栈见 [DEV-002](DEV-002-developer-guide.md)「模式 D」）。`mise run dev:full` **已冻结禁用（2026-10-07：仅 PostgreSQL 保留容器，服务全 host；mise.toml 已注释）**，日常走 `dev:host`；环境说明见 [DEV-002](DEV-002-developer-guide.md)。
 
 **本仓库可单独 clone 运行**，不依赖上层 ONE 工作区：`mise run check:standalone`（`mise.toml:395`）自检「不依赖 one 根」。端口默认值的**事实源在本仓库** `scripts/lib/stack-ports.mjs`；ONE 侧的 `config/ports.mjs` 只是编排镜像，改任一侧须同批改另一侧，并由 `mise run check:ports`（`mise.toml:401`）做 parity 校验（ONE 不存在时显式 skip）。
 

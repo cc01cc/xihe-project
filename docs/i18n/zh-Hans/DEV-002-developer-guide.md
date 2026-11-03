@@ -86,6 +86,7 @@ sequenceDiagram
 要点（锚点：`mise.toml: dev:host` + `scripts/dev-host-watch.mjs`）：
 
 - PostgreSQL 跑在 Docker，其余 CP/Agent/Runtime/UI 由 mise 原生并行管理。
+- 启动前先跑一次 `mise run check:runtime-target`（runtime target 水位；watch 只打印，FORCE 线 ≥20GB 或 H 余量 <5GB 会阻止启动）。
 - 默认启动**不导入配置，也不创建/更新 Provider Connection**。
 - 需要配置时，CP ready 后显式运行 `mise run dev:host:import-config`；该命令只导入非密钥 JSONC。
 - **`mise run dev:host` 不加载 `.env.dev`**：内部服务 token 需自行注入，否则回落到 dev 占位值。正解：`scripts/dev-host.ps1 -Start`（自动生成内部 token）或显式注入 env；后者脚本的 `Start-Process` 在非 TTY 调用下会因句柄继承挂住调用方（服务实际已起），自动化场景改用可追踪后台进程逐服务启动（端口 12631/12632/12633 做 ready 探针）。模块认证与密钥清单见 [DEV-024](DEV-024-authentication-matrix.md)。
