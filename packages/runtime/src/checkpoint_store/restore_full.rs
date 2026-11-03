@@ -71,7 +71,7 @@ struct FullRestorePlan {
     writes: Vec<super::manifest::ManifestEntry>,
     deletions: Vec<super::manifest::ManifestEntry>,
     skipped_modified: Vec<String>,
-    already_absent: usize,
+    already_absent: Vec<String>,
 }
 
 #[derive(Debug, Clone, serde::Deserialize, serde::Serialize, PartialEq, Eq)]
@@ -565,7 +565,7 @@ fn build_plan(
     }
     let mut deletions = Vec::new();
     let mut skipped_modified = Vec::new();
-    let mut already_absent = 0usize;
+    let mut already_absent = Vec::new();
     if let Some(tail) = &tail_manifest {
         for entry in &tail.entries {
             if target_paths.contains(entry.path.as_str()) || !in_scope(&entry.path, prefix) {
@@ -577,7 +577,7 @@ fn build_plan(
             let metadata = match fs::symlink_metadata(&current) {
                 Ok(metadata) => metadata,
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                    already_absent += 1;
+                    already_absent.push(entry.path.clone());
                     continue;
                 }
                 Err(error) => return Err(io_error(&current, error)),
@@ -651,7 +651,15 @@ pub fn preview_full(
             detail: Some("modified since capture; preserved by default".into()),
         });
     }
-    preview.already_absent = plan.already_absent;
+    preview.already_absent = plan.already_absent.len();
+    for path in &plan.already_absent {
+        preview.entries.push(FullRestorePreviewEntry {
+            path: path.clone(),
+            action: FullRestoreAction::Delete,
+            state: FullRestoreState::AlreadyAbsent,
+            detail: Some("already absent".into()),
+        });
+    }
     preview.entries.sort_by(|left, right| {
         left.path
             .cmp(&right.path)
@@ -714,7 +722,7 @@ pub fn restore_full(
     };
     let trash_root = trash_base.join(&restore_id);
     let mut stats = FullRestoreStats {
-        skipped_already_absent: plan.already_absent,
+        skipped_already_absent: plan.already_absent.len(),
         skipped_modified_deletions: plan.skipped_modified.clone(),
         ..FullRestoreStats::default()
     };
