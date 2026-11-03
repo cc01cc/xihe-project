@@ -23,6 +23,7 @@ import {
   verifyConnection,
 } from './xihe-cli/provider.mjs';
 import { runApiEscape } from './xihe-cli/api.mjs';
+import { runAuthCommand } from './xihe-cli/auth.mjs';
 import {
   bindSkill,
   deleteSkill,
@@ -201,6 +202,9 @@ function helpText() {
     '  node scripts/xihe.mjs credential unbind <id> --workspace <wsId> --agent <principalId[,principalId...]>',
     '  node scripts/xihe.mjs credential reveal <id> --workspace <wsId> (--password-env <NAME> | TTY) [--out <file> [--force]]',
     '  node scripts/xihe.mjs test real <e2e/real/spec.spec.ts> [--route <native|openai-compat>]',
+    '  node scripts/xihe.mjs auth login [--email <account>] [--force] [--no-cache]',
+    '  node scripts/xihe.mjs auth status',
+    '  node scripts/xihe.mjs auth logout [--force]',
     '  node scripts/xihe.mjs api [METHOD] <path> [--yes] [--allow-dangerous] [--body-file <file> | --stdin] [--raw] [--timeout <ms>] [--max-bytes <n>]',
     '',
     'Global options: --json (machine envelope), --base-url <url>, --workspace <wsId>, --help.',
@@ -235,6 +239,10 @@ export async function runCommand(argv, dependencies = {}) {
   const env = { ...baseEnv };
   if (globals.baseUrl !== undefined) env.XIHE_CP_URL = globals.baseUrl;
   if (globals.workspace !== undefined) env.XIHE_WORKSPACE_ID = globals.workspace;
+  // PLAN-0643 T1.2: test-injected env bags must never read or write the developer's
+  // real %LOCALAPPDATA%\Xihe token cache. The cache stays inert unless the caller
+  // points XIHE_CLI_TOKEN_FILE at an isolated path.
+  if (dependencies.env !== undefined && env.XIHE_CLI_TOKEN_FILE === undefined) env.XIHE_CLI_TOKEN_CACHE = 'off';
   const [group, command, ...rest] = args;
 
   try {
@@ -879,6 +887,25 @@ export async function runCommand(argv, dependencies = {}) {
       );
     }
 
+    if (group === 'auth') {
+      // PLAN-0643 T1.2–T1.5: token cache surface (login/status/logout).
+      const authResult = await runAuthCommand({
+        command,
+        rest,
+        env,
+        fetchImpl,
+        apiBase: getApiBase(env),
+        promptSecret: prompt,
+        stdin: dependencies.stdin ?? process.stdin,
+        stderr: dependencies.stderr ?? process.stderr,
+        fsImpl: dependencies.fsImpl,
+        aclRunner: dependencies.aclRunner,
+        platform: dependencies.platform,
+        now: dependencies.now,
+      });
+      return { exitCode: 0, json, data: authResult };
+    }
+
     if (group === 'api') {
       // PLAN-0643 T1.1/T1.6/T1.8: the escape hatch. Gates live in xihe-cli/api.mjs so the
       // dispatch layer stays thin; the envelope is printed verbatim in --json mode.
@@ -949,6 +976,31 @@ export function printResult(result) {
   if (result.data?.kind === 'api-response' && typeof result.data.bodyText === 'string') {
     const text = result.data.bodyText;
     process.stdout.write(text.endsWith('\n') ? text : `${text}\n`);
+    return;
+  }
+  if (result.data?.kind === 'auth-status') {
+    const data = result.data;
+    // Metadata only: never the token value, never a fragment of it.
+    process.stdout.write(`base URL       : ${data.baseUrl ?? ''}\n`);
+    process.stdout.write(`source         : ${data.source}\n`);
+    process.stdout.write(`token          : ${data.hasToken ? `present (${data.charCount} chars)` : 'absent'}\n`);
+    process.stdout.write(`expiresAt      : ${data.expiresAt ?? 'n/a'}${data.expired === true ? ' (expired)' : ''}\n`);
+    process.stdout.write(`cache file     : ${data.path} [${data.fileState}${data.reason ? `: ${data.reason}` : ''}]\n`);
+    process.stdout.write(`cache disabled : ${data.cacheDisabled ? 'yes' : 'no'}\n`);
+    process.stdout.write(`acl tightened  : ${data.acl.tightened === null ? 'unknown' : data.acl.tightened ? 'yes' : 'NO'} (${data.acl.detail})\n`);
+    if (data.verification) {
+      process.stdout.write(`verification   : ${data.verification}${data.entryDropped ? ' (cached entry dropped)' : ''}\n`);
+    }
+    return;
+  }
+  if (result.data?.kind === 'auth-login') {
+    process.stdout.write(`Logged in: ${result.data.baseUrl}\n`);
+    process.stdout.write(`token cache: ${result.data.persisted ? `written to ${result.data.path}` : `not written (${result.data.reason})`}\n`);
+    if (result.data.verified) process.stdout.write(`verification: ${result.data.verified}\n`);
+    return;
+  }
+  if (result.data?.kind === 'auth-logout') {
+    process.stdout.write(`Logged out: ${result.data.baseUrl} (${result.data.removed ? (result.data.fileDeleted ? 'token file deleted' : 'entry removed') : 'no cached entry'})\n`);
     return;
   }
   if (result.data?.help) {
