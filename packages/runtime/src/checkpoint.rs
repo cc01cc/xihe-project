@@ -384,13 +384,18 @@ impl ShadowGit {
         &self.host_root
     }
 
-    /// `<hostRoot>/.xihe-shadow/<workspaceId>.git`.
-    pub fn shadow_git_dir(&self, workspace_id: &str) -> Result<PathBuf> {
-        validate_workspace_id(workspace_id)?;
+    /// `<hostRoot>/.xihe-shadow/<rootId>.git`.
+    ///
+    /// PLAN-0639 M1: the parameter is a **root id** (not a workspace id).  For the primary
+    /// root the root id equals the workspace id, so the legacy single-root shadow path
+    /// `<hostRoot>/.xihe-shadow/<workspaceId>.git` is byte-for-byte unchanged.  Additional
+    /// roots get their own shadow repo under the same directory.
+    pub fn shadow_git_dir(&self, root_id: &str) -> Result<PathBuf> {
+        validate_workspace_id(root_id)?;
         Ok(self
             .host_root
             .join(SHADOW_DIR_NAME)
-            .join(format!("{workspace_id}.git")))
+            .join(format!("{root_id}.git")))
     }
 
     /// Effective workspace work tree: the validated ExecutionSpec/materialized
@@ -426,6 +431,32 @@ impl ShadowGit {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .remove(workspace_id);
+    }
+
+    /// PLAN-0639 M1: the effective work tree for one **root** of a multi-root workspace.
+    /// Falls back to the workspace-wide override, then to the legacy
+    /// `<hostRoot>/<rootId>` layout.
+    pub fn work_tree_for_root(&self, root_id: &str) -> Result<PathBuf> {
+        validate_workspace_id(root_id)?;
+        let overrides = self
+            .work_tree_overrides
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if let Some(path) = overrides.get(root_id) {
+            return Ok(path.clone());
+        }
+        Ok(self.host_root.join(root_id))
+    }
+
+    /// PLAN-0639 M1: registers the effective work tree for one root.
+    pub fn set_work_tree_override_for_root(&self, root_id: &str, path: PathBuf) {
+        if validate_workspace_id(root_id).is_err() {
+            return;
+        }
+        self.work_tree_overrides
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(root_id.to_string(), path);
     }
 
     /// Cached host-git probe (`git --version` ≥ 2.20). Failures are retried after a
