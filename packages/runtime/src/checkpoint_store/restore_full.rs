@@ -1833,4 +1833,59 @@ mod tests {
         }
         findings
     }
+
+    #[test]
+    #[ignore = "V5: 1000-file restore must have zero content differences"]
+    fn v5_1000_file_restore_zero_diff() {
+        let workspace = workspace();
+        let root = workspace.path().join("v5-ws");
+        fs::create_dir_all(&root).expect("root");
+        let mut expected = std::collections::BTreeMap::new();
+        for index in 0..1000usize {
+            let relative = format!("dir{:02}/file{index:04}.bin", index % 10);
+            let parent = root.join(&relative);
+            if let Some(parent) = parent.parent() {
+                fs::create_dir_all(parent).expect("parent");
+            }
+            let size = (index * 37 % 4096) + 1;
+            let content = (0..size)
+                .map(|offset| (index + offset) as u8)
+                .collect::<Vec<_>>();
+            fs::write(&parent, &content).expect("file");
+            expected.insert(relative, content);
+        }
+        let store = Store::init(workspace.path().join("v5-store")).expect("store");
+        let capture = capture_root(&store, &root, "v5", None, None).expect("capture");
+        for (index, relative) in expected.keys().enumerate() {
+            let path = root.join(relative);
+            if index % 7 == 3 {
+                fs::remove_file(&path).expect("remove for restore");
+            } else {
+                fs::write(&path, format!("mutated-{index}")).expect("mutate");
+            }
+        }
+        let started = std::time::Instant::now();
+        let stats = restore_full(
+            &store,
+            "v5",
+            &capture.slice_id,
+            &root,
+            &FullRestoreOptions::default(),
+        )
+        .expect("v5 restore");
+        let elapsed_ms = started.elapsed().as_millis();
+        assert_eq!(stats.restored, 1000);
+        let mut mismatches = 0usize;
+        for (relative, content) in &expected {
+            let actual = fs::read(root.join(relative)).expect("restored file");
+            if &actual != content {
+                mismatches += 1;
+            }
+        }
+        assert_eq!(mismatches, 0, "V5 zero-diff violated");
+        eprintln!(
+            "V5_1000 restored={} mismatches={mismatches} elapsed_ms={elapsed_ms} bytes={}",
+            stats.restored, stats.bytes
+        );
+    }
 }
