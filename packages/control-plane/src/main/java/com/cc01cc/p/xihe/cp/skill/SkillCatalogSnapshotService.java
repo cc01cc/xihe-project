@@ -78,22 +78,46 @@ public class SkillCatalogSnapshotService {
      * @param userId the owning user (the USER tier)
      * @param workspaceId the Run's workspace scope
      */
+    /**
+     * Captures this Run's listing for the boundary it was admitted with.
+     *
+     * <p><b>Where the listing comes from</b> (skill-wiring ruling 2026-11-04): {@code skill_bindings} is
+     * the authoritative source (D28-37), and it always has been — a template's {@code skill_catalog}
+     * component only <i>tunes</i> the listing ({@code maxSkills}, {@code includeDescriptions},
+     * {@code sort}); it never supplies the skill set. The previous implementation read the component and
+     * returned {@code null} when the template had none, which is the production shape (the built-in
+     * api-request template carries only {@code bodySource}) — so a bound skill froze as {@code {}} and
+     * the model never saw it. This method therefore resolves from the bindings in <b>both</b> cases:
+     * with the component's config when it exists, with the frozen defaults otherwise.</p>
+     *
+     * <p>Returns {@code null} — the column then keeps its {@code {}} "not captured" default — when
+     * there is no subject to resolve for ({@code agentPrincipalId} and {@code userId} both absent) or
+     * when the subject has no live binding. An empty listing is not frozen as {@code status: empty}:
+     * the requirement is "no bindings ⇒ {@code {}}", and forging an "empty capture" for every Run would
+     * blur the pre-M2a meaning of the column.</p>
+     *
+     * @param templateSnapshot the very snapshot written to {@code chat_runs.context_template_snapshot}
+     *     in the same transaction, so the frozen listing and the frozen template belong to one admission
+     * @param agentPrincipalId the Session's Agent principal (the AGENT tier); may be null
+     * @param userId the owning user (the USER tier)
+     * @param workspaceId the Run's workspace scope
+     */
     public JsonNode capture(JsonNode templateSnapshot, UUID agentPrincipalId, UUID userId,
                             UUID workspaceId) {
+        if (agentPrincipalId == null && userId == null) {
+            // No subject means no binding could ever match: nothing was listed, so record nothing.
+            return null;
+        }
         JsonNode components = templateSnapshot == null ? null
                 : templateSnapshot.path("template").path("components");
-        if (components == null || !components.isArray()) {
-            return null;
-        }
         List<JsonNode> configs = new ArrayList<>();
-        for (JsonNode component : components) {
-            if (COMPONENT_TYPE.equals(component.path("type").asText())
-                    && component.path("enabled").asBoolean(false)) {
-                configs.add(component.path("config"));
+        if (components != null && components.isArray()) {
+            for (JsonNode component : components) {
+                if (COMPONENT_TYPE.equals(component.path("type").asText())
+                        && component.path("enabled").asBoolean(false)) {
+                    configs.add(component.path("config"));
+                }
             }
-        }
-        if (configs.isEmpty()) {
-            return null;
         }
         if (configs.size() > 1) {
             // Two listing components would render two different listings from one frozen document;
@@ -101,9 +125,17 @@ public class SkillCatalogSnapshotService {
             return failedDocument(DIAG_MULTIPLE_COMPONENTS);
         }
         try {
-            SkillCatalogSourceService.Request request = SkillCatalogSourceService.requestFrom(
-                    configs.getFirst(), agentPrincipalId, userId, workspaceId);
-            return document(catalog.resolveListing(request), Instant.now());
+            SkillCatalogSourceService.Request request = configs.isEmpty()
+                    ? SkillCatalogSourceService.Request.of(agentPrincipalId, userId, workspaceId)
+                    : SkillCatalogSourceService.requestFrom(configs.getFirst(), agentPrincipalId, userId,
+                            workspaceId);
+            SkillCatalogSourceService.Listing listing = catalog.resolveListing(request);
+            if (listing.items().isEmpty()) {
+                // No live binding for this subject/workspace: keep '{}' rather than inventing a
+                // listing the model was never shown (the same rule as "no subject" above).
+                return null;
+            }
+            return document(listing, Instant.now());
         } catch (RuntimeException resolveFailure) {
             // Includes the reserved/unknown sort values requestFrom can surface: the Run still runs.
             return failedDocument(SkillCatalogSourceService.DIAG_RESOLVE_FAILED);
