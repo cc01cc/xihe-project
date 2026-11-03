@@ -311,6 +311,11 @@ pub struct BlobWriteOutcome {
 /// untouched (content-addressed dedup). The temporary file lives under
 /// `<store>/tmp/`, is fsynced, and only then renamed into `objects/`.
 pub fn write_blob(store_root: &Path, raw: &[u8]) -> Result<BlobWriteOutcome, BlobError> {
+    #[cfg(test)]
+    use std::time::Instant;
+
+    #[cfg(test)]
+    let started = Instant::now();
     if raw.len() as u64 > MAX_BLOB_RAW_BYTES {
         return Err(BlobError::RawContentTooLarge {
             actual_len: raw.len() as u64,
@@ -318,6 +323,8 @@ pub fn write_blob(store_root: &Path, raw: &[u8]) -> Result<BlobWriteOutcome, Blo
         });
     }
     let hash = blob_hash(raw);
+    #[cfg(test)]
+    record_blob_timing(0, started);
     let final_path = blob_path(store_root, &hash);
     if final_path.is_file() {
         return Ok(BlobWriteOutcome {
@@ -326,6 +333,8 @@ pub fn write_blob(store_root: &Path, raw: &[u8]) -> Result<BlobWriteOutcome, Blo
         });
     }
 
+    #[cfg(test)]
+    let started = Instant::now();
     let encoded = encode_blob(raw)?;
     let tmp_dir = store_root.join("tmp");
     fs::create_dir_all(&tmp_dir).map_err(|source| io_error(&tmp_dir, source))?;
@@ -339,15 +348,50 @@ pub fn write_blob(store_root: &Path, raw: &[u8]) -> Result<BlobWriteOutcome, Blo
         .map_err(|source| io_error(&tmp_dir, source))?;
     tmp.write_all(&encoded)
         .map_err(|source| io_error(tmp.path(), source))?;
+    #[cfg(test)]
+    record_blob_timing(1, started);
+
+    #[cfg(test)]
+    let started = Instant::now();
     tmp.as_file()
         .sync_all()
         .map_err(|source| io_error(tmp.path(), source))?;
+    #[cfg(test)]
+    record_blob_timing(2, started);
+
+    #[cfg(test)]
+    let started = Instant::now();
     tmp.persist(&final_path)
         .map_err(|error| io_error(&final_path, error.error))?;
+    #[cfg(test)]
+    record_blob_timing(3, started);
     Ok(BlobWriteOutcome {
         hash,
         deduped: false,
     })
+}
+
+#[cfg(test)]
+static BLOB_WRITE_TIMING: [std::sync::atomic::AtomicU64; 4] = [
+    std::sync::atomic::AtomicU64::new(0),
+    std::sync::atomic::AtomicU64::new(0),
+    std::sync::atomic::AtomicU64::new(0),
+    std::sync::atomic::AtomicU64::new(0),
+];
+
+#[cfg(test)]
+fn record_blob_timing(index: usize, started: std::time::Instant) {
+    BLOB_WRITE_TIMING[index].fetch_add(
+        started.elapsed().as_micros() as u64,
+        std::sync::atomic::Ordering::Relaxed,
+    );
+}
+
+#[cfg(test)]
+fn reset_blob_timing() {
+    for counter in &BLOB_WRITE_TIMING {
+        counter.store(0, std::sync::atomic::Ordering::Relaxed);
+    }
 }
 
 #[cfg(test)]
@@ -635,5 +679,26 @@ mod tests {
             decode_blob(&encoded, &path),
             Err(BlobError::UnsupportedCodec { codec: 2, .. })
         ));
+    }
+
+    #[test]
+    #[ignore = "manual 10k blob timing diagnostic; run with --ignored --nocapture"]
+    fn diagnose_write_blob_10k() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        reset_blob_timing();
+        let started = std::time::Instant::now();
+        for index in 0..10_000 {
+            let raw = format!("payload-{index}");
+            write_blob(dir.path(), raw.as_bytes()).expect("write blob");
+        }
+        let total_ms = started.elapsed().as_millis();
+        let timing: Vec<u64> = BLOB_WRITE_TIMING
+            .iter()
+            .map(|counter| counter.load(std::sync::atomic::Ordering::Relaxed) / 1_000)
+            .collect();
+        eprintln!(
+            "blob_write_10k total_ms={total_ms} hash_ms={} write_ms={} fsync_ms={} rename_ms={}",
+            timing[0], timing[1], timing[2], timing[3]
+        );
     }
 }
