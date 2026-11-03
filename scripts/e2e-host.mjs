@@ -9,6 +9,19 @@ import { createServer as createHttpServer } from 'node:http'
 import { waitForAgentLlmReady } from './lib/agent-readiness.mjs'
 import { llmEnv } from './lib/llm-env.mjs'
 import { decideCpBoot } from './lib/cp-boot-plan.mjs'
+import {
+  buildBlankDatabaseResetSql,
+  buildDatabaseExistsQuery,
+  buildDatabaseTablesQuery,
+  buildDumpRestoreCommands,
+  buildSeedTableQuery,
+  buildTemplateResetSql,
+  buildTruncateSql,
+  chooseRoundResetStrategy,
+  decideRetryRounds,
+  roundRunId,
+  selectTablesToTruncate,
+} from './lib/e2e-rounds.mjs'
 
 const projectDir = dirname(import.meta.dirname)
 const uiDir = join(projectDir, 'packages', 'ui')
@@ -458,6 +471,11 @@ runner flags:
   --teardown            stop the persistent stack recorded by --persistent, then exit
   --keep                keep isolated resources for debugging
   --help, -h            this text
+
+retry rounds (PLAN-0650 M5; a failed round resets state and replays without rebooting the stack):
+  XIHE_E2E_RETRY_ROUNDS=<n>          rounds incl. the first (default 2 = one in-process retry; max 5)
+  XIHE_E2E_REBUILD_ON_RETRY=1        legacy shape: one attempt per process (a re-run rebuilds the stack)
+  XIHE_E2E_ROUND_RESET=<strategy>    truncate (default) | template | dump-restore — see lib/e2e-rounds.mjs
 
 stack reuse (iteration; boot once, run many):
   1) node scripts/e2e-host.mjs --persistent --llm-mode=mock
@@ -939,6 +957,159 @@ async function waitForChildExit(child, timeoutMs = 15_000) {
       resolve()
     })
   })
+}
+
+// PLAN-0650 M5 (T5.1/T5.2): between-round state reset without rebuilding the stack.
+//
+// What a retry actually needs is *fresh application state*, not a fresh container. The expensive
+// parts of a rebuild (postgres container + initdb + full Flyway + CP/Agent cold starts + a CP
+// artifact build) are all state-independent, so a failed round resets the data plane and replays:
+//   - `truncate` (default): delete every table that was empty before the first spec ran, keep the
+//     boot-time seed rows (owner account, roles, imported config). No service restart at all, which
+//     is the only variant that can meet "round-2 startup <= 50% of round-1".
+//   - `template`: stop CP/Agent, drop the round DB and recreate it from a schema-only template DB,
+//     restart them. Slower, but immune to a table whose rows the specs must not keep.
+//   - `dump-restore`: same shape with a per-round `pg_dump --schema-only` + `psql -f`.
+// The SQL/argv for all three lives in `lib/e2e-rounds.mjs` (pure, unit-tested); this section only
+// executes it and logs what happened.
+
+/** Tables that were already non-empty right after boot: the reset's protected set. */
+let seedTablesSnapshot = null;
+
+/** Round-1 stack boot duration (ms), the denominator of the M5 warm-start ratio. */
+let stackBootElapsedMs = null;
+
+/** Between-round reset duration (ms) of the most recent retry, the numerator of that ratio. */
+let lastRoundResetMs = null;
+
+async function stopRunnerService(name) {
+  const child = nativeServiceChildren.get(name);
+  if (!child) return;
+  try {
+    await stopProcess(child);
+    await waitForChildExit(child);
+  } catch (error) {
+    // Already gone is the good case; anything else is logged and the reset decides what to do.
+    console.warn(`[e2e-host] round reset: stopping ${name} reported ${error instanceof Error ? error.message : String(error)}`);
+  }
+  for (let index = dockerProcesses.length - 1; index >= 0; index -= 1) {
+    if (dockerProcesses[index].child === child) dockerProcesses.splice(index, 1);
+  }
+  nativeServiceChildren.delete(name);
+}
+
+async function startRunnerService(name) {
+  const config = nativeServiceConfigs.get(name);
+  if (!config) throw new Error(`round reset: ${name} is not runner-owned`);
+  return launchNativeService(config);
+}
+
+/** Run one statement with psql inside the isolated PostgreSQL container and return stdout. */
+async function psqlCapture(database, sqlText) {
+  const outcome = await runCapture(dockerCommand, [
+    'exec', `${pgProjectName}-postgres-1`,
+    'psql', '-v', 'ON_ERROR_STOP=1', '-U', pgUser, '-d', database, '-tA', '-c', sqlText,
+  ]);
+  if (outcome.code !== 0) {
+    throw new Error(`psql failed (exit=${outcome.code}) on ${database}: ${(outcome.stderr ?? '').slice(0, 500)}`);
+  }
+  return outcome.stdout ?? '';
+}
+
+function splitPsqlLines(stdout) {
+  return stdout.split(/\r?\n/).map((line) => line.trim()).filter((line) => line.length > 0);
+}
+
+/** Snapshot the protected table set once, after boot and before the first spec runs. */
+async function captureSeedTables() {
+  const rows = splitPsqlLines(await psqlCapture(pgDatabase, buildSeedTableQuery()));
+  if (rows.length === 0) {
+    console.warn('[e2e-host] round reset: seed-table snapshot is empty — in-process retry will refuse to truncate');
+  } else {
+    console.log(`[e2e-host] round reset: protecting ${rows.length} seeded table(s)`);
+  }
+  return rows;
+}
+
+async function runDatabaseReset({ strategy, round }) {
+  if (strategy === 'truncate') {
+    const tables = splitPsqlLines(await psqlCapture(pgDatabase, buildDatabaseTablesQuery()));
+    const plan = selectTablesToTruncate({ tables, seedTables: seedTablesSnapshot ?? [] });
+    if (plan.refused) throw new Error(plan.refused);
+    if (plan.truncate.length === 0) {
+      console.warn('[e2e-host] round reset: no test-data tables to truncate (fresh database?)');
+      return;
+    }
+    await psqlCapture(pgDatabase, buildTruncateSql({ tables: plan.truncate }));
+    console.log(`[e2e-host] round reset: truncated ${plan.truncate.length} table(s), kept ${plan.kept.length} seeded`);
+    return;
+  }
+  // `template` and `dump-restore` drop the database, so the services must be out of the way first.
+  const container = `${pgProjectName}-postgres-1`;
+  const dumpPath = `/tmp/xihe-round-${round}-schema.sql`;
+  const commands = buildDumpRestoreCommands({ container, database: pgDatabase, user: pgUser, dumpPath });
+  const dump = await run(commands.dump.program, commands.dump.args, { stdio: 'inherit' });
+  if (dump.code !== 0) throw new Error(`pg_dump --schema-only failed (exit=${dump.code})`);
+
+  if (strategy === 'template') {
+    const template = `${pgDatabase}_tpl`;
+    const exists = (await psqlCapture('postgres', buildDatabaseExistsQuery(template))).trim() === '1';
+    if (!exists) {
+      await psqlCapture('postgres', buildBlankDatabaseResetSql({ database: template })[1]);
+      const load = buildDumpRestoreCommands({ container, database: template, user: pgUser, dumpPath }).restore;
+      const loaded = await run(load.program, load.args, { stdio: 'inherit' });
+      if (loaded.code !== 0) throw new Error(`template schema load failed (exit=${loaded.code})`);
+      console.log(`[e2e-host] round reset: template database ${template} prepared once`);
+    }
+    for (const statement of buildTemplateResetSql({ database: pgDatabase, template })) {
+      await psqlCapture('postgres', statement);
+    }
+    console.log(`[e2e-host] round reset: recreated ${pgDatabase} from template ${template}`);
+    return;
+  }
+  for (const statement of buildBlankDatabaseResetSql({ database: pgDatabase })) {
+    await psqlCapture('postgres', statement);
+  }
+  const restore = await run(commands.restore.program, commands.restore.args, { stdio: 'inherit' });
+  if (restore.code !== 0) throw new Error(`schema restore failed (exit=${restore.code})`);
+  console.log(`[e2e-host] round reset: recreated ${pgDatabase} from pg_dump --schema-only`);
+}
+
+async function resetRoundState({ round, strategy }) {
+  const began = Date.now();
+  const restartServices = strategy !== 'truncate';
+  try {
+    if (restartServices) {
+      await stopRunnerService('agent');
+      await stopRunnerService('control-plane');
+    }
+    await runDatabaseReset({ strategy, round });
+    if (restartServices) {
+      // Same ordering the boot path enforces: the Agent's startup config sync fails closed
+      // without a healthy CP.
+      await startRunnerService('control-plane');
+      await waitForHttp('cp-after-round-reset', `http://127.0.0.1:${cpPort}/actuator/health`, readinessTimeoutMs, {});
+      await startRunnerService('agent');
+      await waitForHttp('agent-after-round-reset', `http://127.0.0.1:${agentPort}/internal/v1/agent/health`, readinessTimeoutMs, {});
+    }
+    // Identity and config from the failed round are stale by construction: re-bootstrap and
+    // re-import exactly like the boot path does, then re-arm the readiness gate.
+    goldpathAccount = null;
+    await configureFakeLlm();
+    await waitForAgentLlmReady({
+      healthUrl: `http://127.0.0.1:${agentPort}/internal/v1/agent/health`,
+      expectReady: llmMode !== 'missing',
+      timeoutMs: readinessTimeoutMs,
+    });
+    const elapsedMs = Date.now() - began;
+    lastRoundResetMs = elapsedMs;
+    console.log(`[e2e-host] round ${round}: state reset in ${(elapsedMs / 1000).toFixed(2)}s (strategy=${strategy})`);
+    return { ok: true, elapsedMs };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`[e2e-host] round ${round}: in-process reset failed, not retrying — ${message}`);
+    return { ok: false, message };
+  }
 }
 
 async function restartNativeService(name) {
@@ -1670,6 +1841,11 @@ async function collectIsolatedResources(preserveRunDir = false) {
     }
 
     // 3. Destroy the isolated PostgreSQL project and volume.
+    //    PLAN-0650 M5 (T5.5) zero-residue note: the between-round reset leaves exactly two kinds of
+    //    residue, and both live inside this project/volume — the template database
+    //    (`<roundDb>_tpl`) and the schema dump in the container's /tmp. `down --volumes` below
+    //    removes the volume that holds the template DB and destroys the container that holds the
+    //    dump, so there is nothing extra to clean up on the host and no .gitignore entry to add.
     try {
       const down = await dockerCompose(['down', '--volumes', '--remove-orphans'], { stdio: 'inherit' })
       if (down.code !== 0) failures.push(`compose down exit=${down.code}`)
@@ -2106,6 +2282,10 @@ async function main() {
     else if (useCpNative) console.log(`[e2e-host] CP boot via native executable ${cpBootPlan.executable.name} (${cpBootPlan.reason})`)
     else console.log(`[e2e-host] CP boot via mvn spring-boot:run (${cpBootPlan?.reason ?? 'external decision'})`)
 
+    // PLAN-0650 M5 (T5.3/T5.4): the criterion compares a second round against the first, so both
+    // numbers have to be on the record. `boot` is the whole stack; each retry logs its own reset.
+    const bootBegan = Date.now()
+
     const bootTasks = [
       // PostgreSQL first (CP datasource needs it), but everything else in
       // parallel with it.
@@ -2237,6 +2417,9 @@ async function main() {
       launchUIVite(),
     ]
     await Promise.all(bootTasks)
+    const bootElapsedMs = Date.now() - bootBegan
+    stackBootElapsedMs = bootElapsedMs
+    console.log(`[e2e-host] stack boot completed in ${(bootElapsedMs / 1000).toFixed(2)}s (baseline for the round-retry ratio)`)
   }
   if (isPersistent) {
     // Boot-only mode: record the stack and exit 0 without running tests or
@@ -2275,7 +2458,55 @@ async function main() {
   }
   await writeArtifactsManifest(cpBootPlan)
   if (exactCheckpointHostProbeRequested) await startCheckpointProbeControl()
-  result = await runPlaywright()
+  // PLAN-0650 M5: retries are in-process by default. A failed round resets the data plane and
+  // replays, instead of tearing the stack down and paying the whole boot again (BL-205 ③).
+  const retryPolicy = decideRetryRounds({
+    rounds: process.env.XIHE_E2E_RETRY_ROUNDS,
+    rebuildOnRetry: process.env.XIHE_E2E_REBUILD_ON_RETRY === '1',
+    // The reuse lane (XIHE_E2E_EXTERNAL_SERVER=1) runs against a stack it does not own: resetting
+    // it would silently destroy another run's state.
+    stackOwned: !externalServer,
+  })
+  const resetChoice = chooseRoundResetStrategy({ requested: process.env.XIHE_E2E_ROUND_RESET })
+  console.log(`[e2e-host] rounds: ${retryPolicy.rounds} — ${retryPolicy.reason}`)
+  console.log(`[e2e-host] between-round reset: ${resetChoice.strategy} — ${resetChoice.reason}`)
+  // Captured before the first spec runs: those tables are the stack's own seed state and must
+  // survive a `truncate` reset (see lib/e2e-rounds.mjs#selectTablesToTruncate). The reuse lane is
+  // excluded on purpose — its PG container belongs to the run that created the stack, not to this
+  // process's `pgProjectName`, and that lane never resets anything anyway (rounds = 1).
+  seedTablesSnapshot = externalServer ? [] : await captureSeedTables()
+  const baseRunIdForTests = runIdForTests
+  for (let round = 1; round <= retryPolicy.rounds; round += 1) {
+    if (round > 1) {
+      const reset = await resetRoundState({ round, strategy: resetChoice.strategy })
+      if (!reset.ok) {
+        // Fail closed: no retry with unknown stack state. The previous round's exit code stands.
+        console.error('[e2e-host] in-process retry abandoned; keeping the failed round result')
+        break
+      }
+    }
+    // A fresh id per round is what makes round N unable to see round N-1's host-root artifacts.
+    runIdForTests = roundRunId(baseRunIdForTests, round)
+    if (retryPolicy.rounds > 1) {
+      console.log(`[e2e-host] round ${round}/${retryPolicy.rounds}: XIHE_E2E_RUN_ID=${runIdForTests}`)
+    }
+    result = await runPlaywright()
+    if (result.code === 0) break
+    if (round < retryPolicy.rounds) {
+      console.warn(`[e2e-host] round ${round}/${retryPolicy.rounds} failed (exit=${result.code}); resetting state and retrying in-process`)
+    }
+  }
+  // PLAN-0650 M5 (T5.4): print the number the acceptance criterion is about, and say plainly when
+  // it is missed — a warm-start claim that is never measured is exactly what M5 replaced.
+  if (lastRoundResetMs !== null && stackBootElapsedMs) {
+    const ratio = lastRoundResetMs / stackBootElapsedMs;
+    const line = `warm-start: round-2 reset ${(lastRoundResetMs / 1000).toFixed(2)}s vs round-1 boot `
+      + `${(stackBootElapsedMs / 1000).toFixed(2)}s → ${(ratio * 100).toFixed(1)}% (criterion: <= 50%)`;
+    console.log(`[e2e-host] ${line}`);
+    if (ratio > 0.5) {
+      console.warn('[e2e-host] warm-start criterion NOT met for this run; record the two numbers in verify.md V10');
+    }
+  }
   const teardown = await cleanup()
   if (!teardown.ok) {
     console.error('[e2e-host] teardown reported residual resources:')
