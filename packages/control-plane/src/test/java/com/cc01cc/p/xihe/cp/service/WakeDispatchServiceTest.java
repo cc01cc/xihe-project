@@ -14,6 +14,7 @@ import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import com.cc01cc.p.xihe.cp.logging.LogRedactor;
 import org.mockito.ArgumentCaptor;
 import org.springframework.http.HttpStatus;
 
@@ -189,5 +190,76 @@ class WakeDispatchServiceTest {
         com.fasterxml.jackson.databind.node.ObjectNode body = (com.fasterxml.jackson.databind.node.ObjectNode) payload.getValue();
         assertEquals(outcome, body.path("outcome").asText());
         assertEquals(ROUND, body.path("wakeRoundId").asText());
+    }
+    // ── PLAN-0648 task-31 (P0): the wake prompt must carry the triggering message ──────────
+
+    @Test
+    void wakePromptCarriesTheTriggeringMessageBody() {
+        stubAgentWake();
+
+        service.fire(PARTICIPANT_ID, "mention", ROUND, SESSION_ID, null,
+                "@Ann 帮我看一下 packages/ui 的构建为什么失败");
+
+        String prompt = capturedPrompt();
+        assertTrue(prompt.contains("[mention wake " + ROUND + "]"),
+                "the operator/audit marker stays: " + prompt);
+        assertTrue(prompt.contains("帮我看一下 packages/ui 的构建为什么失败"),
+                "the woken agent must see the ask, not just the wake reference: " + prompt);
+        assertTrue(prompt.contains("session=" + SESSION_ID),
+                "the prompt self-references the session: " + prompt);
+    }
+
+    @Test
+    void wakePromptTruncatesLongContentButKeepsTheOpening() {
+        stubAgentWake();
+        String body = "起点标记".repeat(400) + "结尾标记";
+
+        service.fire(PARTICIPANT_ID, "mention", ROUND, SESSION_ID, null, body);
+
+        String prompt = capturedPrompt();
+        assertTrue(prompt.contains("(truncated)"), "a cut must be visible to the reader: " + prompt);
+        assertTrue(prompt.contains("起点标记"), "the opening survives truncation");
+        assertTrue(!prompt.contains("结尾标记"), "the tail is what gets dropped");
+        assertTrue(prompt.length() < body.length(),
+                "the prompt is shorter than the original message");
+    }
+
+    @Test
+    void wakePromptWithoutContentKeepsTheLegacyReferenceOnlyForm() {
+        stubAgentWake();
+
+        service.fire(PARTICIPANT_ID, "schedule", ROUND, SESSION_ID, null, null);
+
+        String prompt = capturedPrompt();
+        assertEquals("[schedule wake " + ROUND + "] session=" + SESSION_ID
+                + " respond to the conversation.", prompt);
+    }
+
+    @Test
+    void wakeExcerptUsesTheExistingLogRedactionWithoutErasingTheAsk() {
+        stubAgentWake();
+
+        // LogRedactor's documented scope is structured secrets (JSON values, Bearer/JWT/private key),
+        // so the assertion uses one of those shapes: the secret goes, the ask stays.
+        service.fire(PARTICIPANT_ID, "mention", ROUND, SESSION_ID, null,
+                "把 {\"api_key\":\"sk-live-abc\"} 换掉，然后重跑测试");
+
+        String prompt = capturedPrompt();
+        assertTrue(prompt.contains("换掉，然后重跑测试"), "the ask survives redaction: " + prompt);
+        assertTrue(!prompt.contains("sk-live-abc"), "a structured secret must never ride the prompt: " + prompt);
+        assertTrue(prompt.contains(LogRedactor.REDACTED), "the redaction marker is visible: " + prompt);
+    }
+
+    private void stubAgentWake() {
+        when(wakeupService.wakeupAs(anyString(), anyString(), anyString(), anyString(), anyString(),
+                any(), anyString(), any())).thenReturn(
+                SessionWakeupService.WakeupResult.started(RUN_ID));
+    }
+
+    private String capturedPrompt() {
+        ArgumentCaptor<String> prompt = ArgumentCaptor.forClass(String.class);
+        verify(wakeupService).wakeupAs(anyString(), anyString(), anyString(), prompt.capture(),
+                anyString(), any(), anyString(), any());
+        return prompt.getValue();
     }
 }

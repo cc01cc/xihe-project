@@ -55,45 +55,45 @@ class WakeFanOutServiceTest {
 
     @Test
     void mentionsFireInRosterOrderSerially() {
-        when(dispatch.fire(eq(ANN), eq("mention"), anyString(), eq(SESSION_ID), isNull()))
+        when(dispatch.fire(eq(ANN), eq("mention"), anyString(), eq(SESSION_ID), isNull(), anyString()))
                 .thenReturn(new WakeDispatchService.WakeFireResult(false, null, "skipped_muted"));
-        when(dispatch.fire(eq(JOHN), eq("mention"), anyString(), eq(SESSION_ID), isNull()))
+        when(dispatch.fire(eq(JOHN), eq("mention"), anyString(), eq(SESSION_ID), isNull(), anyString()))
                 .thenReturn(new WakeDispatchService.WakeFireResult(false, null, "skipped_muted"));
 
         fanOut.fanOut(SESSION_ID, "ws-1", "owner-1", ROOT_RUN.toString(), "@John @Ann 看看", roster());
 
         InOrder order = inOrder(dispatch);
         order.verify(dispatch, timeout(2000)).fire(eq(JOHN), eq("mention"),
-                eq("wake:mention:" + ROOT_RUN), eq(SESSION_ID), isNull());
+                eq("wake:mention:" + ROOT_RUN), eq(SESSION_ID), isNull(), anyString());
         order.verify(dispatch, timeout(2000)).fire(eq(ANN), eq("mention"),
-                eq("wake:mention:" + ROOT_RUN), eq(SESSION_ID), isNull());
+                eq("wake:mention:" + ROOT_RUN), eq(SESSION_ID), isNull(), anyString());
     }
 
     @Test
     void allExpandsToEnabledParticipantsOnly() {
-        when(dispatch.fire(any(), eq("mention"), anyString(), eq(SESSION_ID), isNull()))
+        when(dispatch.fire(any(), eq("mention"), anyString(), eq(SESSION_ID), isNull(), anyString()))
                 .thenReturn(new WakeDispatchService.WakeFireResult(false, null, "skipped_muted"));
 
         fanOut.fanOut(SESSION_ID, "ws-1", "owner-1", ROOT_RUN.toString(), "@ALL 大家看", roster());
 
-        verify(dispatch, timeout(2000)).fire(eq(ANN), eq("mention"), anyString(), eq(SESSION_ID), isNull());
-        verify(dispatch, timeout(2000)).fire(eq(JOHN), eq("mention"), anyString(), eq(SESSION_ID), isNull());
+        verify(dispatch, timeout(2000)).fire(eq(ANN), eq("mention"), anyString(), eq(SESSION_ID), isNull(), anyString());
+        verify(dispatch, timeout(2000)).fire(eq(JOHN), eq("mention"), anyString(), eq(SESSION_ID), isNull(), anyString());
         org.mockito.Mockito.verify(dispatch, org.mockito.Mockito.times(2))
-                .fire(any(), eq("mention"), anyString(), eq(SESSION_ID), isNull());
+                .fire(any(), eq("mention"), anyString(), eq(SESSION_ID), isNull(), anyString());
     }
 
     @Test
     void terminalEventUnblocksTheSerialLoop() {
         UUID firstRun = UUID.randomUUID();
-        when(dispatch.fire(eq(ANN), eq("mention"), anyString(), eq(SESSION_ID), isNull()))
+        when(dispatch.fire(eq(ANN), eq("mention"), anyString(), eq(SESSION_ID), isNull(), anyString()))
                 .thenReturn(new WakeDispatchService.WakeFireResult(true, firstRun, "submitted"));
-        when(dispatch.fire(eq(JOHN), eq("mention"), anyString(), eq(SESSION_ID), isNull()))
+        when(dispatch.fire(eq(JOHN), eq("mention"), anyString(), eq(SESSION_ID), isNull(), anyString()))
                 .thenReturn(new WakeDispatchService.WakeFireResult(false, null, "skipped_muted"));
 
         fanOut.fanOut(SESSION_ID, "ws-1", "owner-1", ROOT_RUN.toString(), "@Ann @John", roster());
         // Serial invariant: John cannot have fired while Ann's run is still in flight.
         org.mockito.Mockito.verify(dispatch, org.mockito.Mockito.times(0))
-                .fire(eq(JOHN), eq("mention"), anyString(), eq(SESSION_ID), isNull());
+                .fire(eq(JOHN), eq("mention"), anyString(), eq(SESSION_ID), isNull(), anyString());
         long deadline = System.currentTimeMillis() + 2000;
         while (!fanOut.isAwaiting(firstRun.toString()) && System.currentTimeMillis() < deadline) {
             Thread.yield();
@@ -101,7 +101,7 @@ class WakeFanOutServiceTest {
         fanOut.onRunTerminalized(new ChatRunTerminalizedEvent(SESSION_ID.toString(),
                 firstRun.toString(), "succeeded", "success"));
         verify(dispatch, timeout(2000)).fire(eq(JOHN), eq("mention"),
-                eq("wake:mention:" + ROOT_RUN), eq(SESSION_ID), isNull());
+                eq("wake:mention:" + ROOT_RUN), eq(SESSION_ID), isNull(), anyString());
     }
 
     @Test
@@ -109,15 +109,15 @@ class WakeFanOutServiceTest {
         when(config.resolve(eq("agent-runtime"), eq("wakeDispatchWaitSeconds"), any(), any()))
                 .thenReturn("1");
         UUID hangingRun = UUID.randomUUID();
-        when(dispatch.fire(eq(ANN), eq("mention"), anyString(), eq(SESSION_ID), isNull()))
+        when(dispatch.fire(eq(ANN), eq("mention"), anyString(), eq(SESSION_ID), isNull(), anyString()))
                 .thenReturn(new WakeDispatchService.WakeFireResult(true, hangingRun, "submitted"));
-        when(dispatch.fire(eq(JOHN), eq("mention"), anyString(), eq(SESSION_ID), isNull()))
+        when(dispatch.fire(eq(JOHN), eq("mention"), anyString(), eq(SESSION_ID), isNull(), anyString()))
                 .thenReturn(new WakeDispatchService.WakeFireResult(false, null, "skipped_muted"));
 
         fanOut.fanOut(SESSION_ID, "ws-1", "owner-1", ROOT_RUN.toString(), "@Ann @John", roster());
 
         // Q3: the round survives the timeout — John still fires after Ann's run never settles.
         verify(dispatch, timeout(10_000)).fire(eq(JOHN), eq("mention"),
-                eq("wake:mention:" + ROOT_RUN), eq(SESSION_ID), isNull());
+                eq("wake:mention:" + ROOT_RUN), eq(SESSION_ID), isNull(), anyString());
     }
 }
