@@ -336,3 +336,11 @@ PLAN-0416 Chat 消费：`ChatController` 仅在 admission snapshot 原始 native
 - **配置了但目录不可用 = 保持 inert**（warn 日志），不做"半个启用"：启动器的 `ui` 阶段会以"CP 未返回 `/`"失败并给出提示，比 CP 对所有路由答 404 好排查。
 - **验证**：`mvn -o test -Dtest=UiStaticServingFilterTest`（27 条，覆盖未启用/启用/API 前缀/穿越/HEAD/缓存头）+ 安装版真机 `curl` 与 Playwright（M2-3 证据见 `plans/PLAN-0632-.../verify.md`）。
 
+
+### 上下文闸拒绝也走工具结果信封（HTTP 200，2026-11-04）
+
+`McpProxyController` 上下文闸（`hasCurrentAgentToolCall` 为 false：durable Session/Run/Invocation/ToolCall 不匹配）**不是**返回 HTTP 403，而是与授权闸/策略闸一致，返回 **HTTP 200 + 工具结果信封**：`isError:true`、`content:"Tool error: TOOL_CONTEXT_MISMATCH"`、`structuredContent.code="TOOL_CONTEXT_MISMATCH"`；同时保留审计 `agent_tool_call_context_rejected` 与 `[POLICY] … fail_closed` 日志。
+
+**判据不变**：拒绝发生在 dispatch 之前 —— 不建 invocation、不起 attempt、不建 approval、不向 Runtime 转发。
+
+> 排查提示：若测试或客户端出现"预期 403 却是 200"，先确认是不是这条（自 `92aa7ebd` 起形态变更）。
