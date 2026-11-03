@@ -132,7 +132,7 @@ public class SessionController {
         // PLAN-294 D.4-8 (decision #15/#18): a manual compaction must not
         // tear context out from under an active run (appendix E.4 "no tools
         // in flight during compaction").
-        if (activeRunRegistry.activeRunId(sessionId) != null) {
+        if (activeRunRegistry.hasActive(sessionId)) {
             return ProblemDetailsHandler.problemResponse(
                     HttpStatus.CONFLICT, "BRANCH_LOCK",
                     "A chat run is already active for this session; compaction is deferred until it finishes");

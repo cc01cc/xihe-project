@@ -76,7 +76,9 @@ public class ChatRunRecoveryService {
                             ChatRunHistory.SOURCE_RECOVERY, "system",
                             run.getId(), UUID.fromString(run.getSessionId()), fromStatus,
                             "awaiting_approval", null, null, null);
-                    activeRunRegistry.restoreActiveRun(run.getSessionId(), run.getId().toString());
+                    // PLAN-0645: the registry keeps a set per Session, so every recovered run is
+                    // restored (a Session may legitimately have several in-flight runs).
+                    activeRunRegistry.restore(run.getSessionId(), run.getId().toString());
                     restored++;
                     logger.info("[LIFECYCLE] service=cp event=chat_run_recovered runId={} sessionId={} status=awaiting_approval reason=live_approval",
                             run.getId(), run.getSessionId());

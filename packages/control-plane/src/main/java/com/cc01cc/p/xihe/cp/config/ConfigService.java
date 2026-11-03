@@ -110,6 +110,10 @@ public class ConfigService {
             // with (userId=null, workspaceId=null) in WakeChainService.maxDepth(), so a user/
             // workspace value would be writable but never read (a silent no-op). Instance only.
             "wakeChainMaxDepth",
+            // PLAN-0645 D45-01: the per-Session in-flight run cap is a resource-admission valve
+            // resolved without user/workspace context (SessionRunConcurrencyGate), so it is
+            // instance-only for the same reason wakeChainMaxDepth is.
+            "maxConcurrentRunsPerSession",
             // PLAN-0630 M1: delegation budget ceilings (0 = no clamp), same shape as runMaxTurnsCeiling.
             "delegationMaxCountCeiling", "delegationMaxDepthCeiling"));
 
@@ -202,6 +206,10 @@ public class ConfigService {
             // PLAN-0630 M1: PLAN-0624 M3's constant, surfaced as a code default so the resolved/
             // effective views and the execution path share one value instead of two sources.
             Map.entry("wakeChainMaxDepth", "3"),
+            // PLAN-0645 D45-01: default per-Session in-flight run cap (2 = the frozen single-flight
+            // plus one parallel run); cap=1 restores exactly the pre-0645 behaviour, which is the
+            // rollback valve — no code switch, one config write.
+            Map.entry("maxConcurrentRunsPerSession", "2"),
             // PLAN-0630 M1: delegation budget ceilings; 0 = no clamp (the resolved value is used as-is).
             Map.entry("delegationMaxCountCeiling", "0"),
             Map.entry("delegationMaxDepthCeiling", "0")));

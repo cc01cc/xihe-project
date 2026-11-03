@@ -70,7 +70,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public class ChatController {
 
     private static final Logger logger = LoggerFactory.getLogger(ChatController.class);
-    private static final String FOLLOW_UP_DISPATCH_RESERVATION_PREFIX = "follow-up-dispatch:";
+    private static final String FOLLOW_UP_QUEUE_RESERVATION_PREFIX = "follow-up-queue:";
 
     private final HttpClient agentHttpClient;
     private final ObjectMapper objectMapper;
@@ -260,9 +260,12 @@ public class ChatController {
 
     @EventListener
     void onFollowUpQueueWakeup(FollowUpQueueWakeupEvent event) {
-        // Reserve the local single-flight slot across the Session-locked DB admission.
-        String reservationId = FOLLOW_UP_DISPATCH_RESERVATION_PREFIX + UUID.randomUUID();
-        if (activeRunRegistry.putIfAbsent(event.sessionId(), reservationId) != null) {
+        // PLAN-0645 D45-06: the queue admission keeps its own local serialization token instead of
+        // borrowing the Session's (former) single run slot — with several runs per Session an
+        // unrelated in-flight run must never block the queue drain.
+        String queueReservationKey = FOLLOW_UP_QUEUE_RESERVATION_PREFIX + event.sessionId();
+        String reservationId = UUID.randomUUID().toString();
+        if (!activeRunRegistry.tryReserve(queueReservationKey, reservationId)) {
             return;
         }
         boolean retryAdmission = false;
@@ -311,7 +314,7 @@ public class ChatController {
                     event.sessionId(), event.retryAttempt(), e.getClass().getSimpleName(), e);
             retryAdmission = true;
         } finally {
-            activeRunRegistry.remove(event.sessionId(), reservationId);
+            activeRunRegistry.releaseReservation(queueReservationKey, reservationId);
         }
         if (retryAdmission) {
             followUpQueueService.scheduleAdmissionRetry(event);
@@ -354,15 +357,12 @@ public class ChatController {
                     .orElseThrow(() -> new IllegalStateException("Admitted Follow-up Message is missing"));
             List<com.cc01cc.p.xihe.cp.files.dto.AttachmentInfo> attachments =
                     resolveAdmittedAttachments(message.attachments());
-            String localRun = activeRunRegistry.get(event.sessionId());
-            boolean ownsReservation = localRun != null
-                    && localRun.startsWith(FOLLOW_UP_DISPATCH_RESERVATION_PREFIX)
-                    && activeRunRegistry.replace(event.sessionId(), localRun, runId);
-            if (!ownsReservation && runId.equals(localRun)) {
-                return;
-            }
-            if (!ownsReservation && !acquireRun(event.sessionId(), runId)) {
-                failFollowUpDispatch(event.sessionId(), runId);
+            // PLAN-0645: the admitted child claims its own run id. There is no per-Session run slot
+            // to hand over any more; a duplicate claim means another path already dispatches it.
+            if (!activeRunRegistry.claim(event.sessionId(), runId)) {
+                logger.info("[LIFECYCLE] service=cp event=follow_up_child_dispatch_skipped "
+                                + "sessionId={} runId={} reason=already_claimed",
+                        event.sessionId(), runId);
                 return;
             }
             logger.info("[LIFECYCLE] service=cp event=follow_up_child_dispatch_started sessionId={} runId={} queueItemId={} attachments={}",
@@ -646,7 +646,9 @@ public class ChatController {
         }
 
         if (!acquireRun(sessionId, runId)) {
-            // The session mutex refuses the run; the borrowed slots must not survive the 409.
+            // PLAN-0645: only a duplicate dispatch of the same run id reaches this branch; the
+            // Session's run-count limit is enforced inside admission (Session row lock) and answers
+            // 409 CHAT_IN_PROGRESS from ChatSubmissionService. Borrowed slots must not survive.
             governor.releaseRun(runId);
             logger.warn("[LIFECYCLE] service=cp event=chat_sse_rejected requestId={} sessionId={} runId={} errorCode=CHAT_IN_PROGRESS",
                     requestId, sessionId, runId);
@@ -961,11 +963,11 @@ public class ChatController {
         }
 
         String sessionId = run.sessionId();
-        if (activeRunRegistry.putIfAbsent(sessionId, run.id()) != null) {
+        if (!activeRunRegistry.claim(sessionId, run.id())) {
             return false;
         }
         if (!acquireLeaseForExistingRun(run.id())) {
-            activeRunRegistry.remove(sessionId, run.id());
+            activeRunRegistry.release(sessionId, run.id());
             return false;
         }
         try {
@@ -1005,11 +1007,11 @@ public class ChatController {
         }
 
         String sessionId = run.sessionId();
-        if (activeRunRegistry.putIfAbsent(sessionId, runId) != null) {
+        if (!activeRunRegistry.claim(sessionId, runId)) {
             return false;
         }
         if (!acquireLeaseForExistingRun(runId)) {
-            activeRunRegistry.remove(sessionId, runId);
+            activeRunRegistry.release(sessionId, runId);
             return false;
         }
         try {
@@ -1057,11 +1059,11 @@ public class ChatController {
         }
 
         String sessionId = run.sessionId();
-        if (activeRunRegistry.putIfAbsent(sessionId, runId) != null) {
+        if (!activeRunRegistry.claim(sessionId, runId)) {
             return false;
         }
         if (!acquireLeaseForExistingRun(runId)) {
-            activeRunRegistry.remove(sessionId, runId);
+            activeRunRegistry.release(sessionId, runId);
             return false;
         }
         try {
@@ -1124,10 +1126,12 @@ public class ChatController {
             // relayed; read by the IO-interrupt catch below (PLAN-292 C1).
             AtomicBoolean approvalInFlight = new AtomicBoolean(false);
             try {
-                // PLAN-294 M3 (decisions #4/#18): pre-run compaction gate —
-                // inside the session serialization scope (activeRunRegistry), the
-                // gate compresses history before the run consumes it. Context
-                // service owns the cooldown/anti-thrash rules.
+                // PLAN-294 M3 (decisions #4/#18): pre-run compaction gate — the gate
+                // compresses history before the run consumes it. Context service owns the
+                // cooldown/anti-thrash rules. PLAN-0645 removed the implicit "one run per
+                // Session" serialization this comment used to rely on: two runs of the same
+                // Session can both pass the gate, and per-Session compaction mutual exclusion
+                // is a PLAN-0645 backlog item, not an invariant.
                 try {
                     // PLAN-0410 T2.2: the gate resolves THIS Run's branch path —
                     // sibling Run usage/summary/circuit never drive the decision.
@@ -1781,13 +1785,14 @@ public class ChatController {
                         "runId", runId));
     }
 
+    /**
+     * PLAN-0645 D45-01: the local claim is no longer the admission decision — the Session's
+     * bounded-concurrency gate ({@link SessionRunConcurrencyGate}, under the Session row lock)
+     * owns that. This returns {@code false} only when the <b>same</b> run id is already claimed,
+     * i.e. a duplicate dispatch of one run; other in-flight runs of the Session are untouched.
+     */
     private boolean acquireRun(String sessionId, String runId) {
-        String current = activeRunRegistry.get(sessionId);
-        if (current != null && !current.equals(runId)) {
-            return false;
-        }
-        activeRunRegistry.put(sessionId, runId);
-        return true;
+        return activeRunRegistry.claim(sessionId, runId);
     }
 
     private boolean acquireLeaseForExistingRun(String runId) {
@@ -1800,7 +1805,7 @@ public class ChatController {
 
     private void releaseRun(String sessionId, String runId, String reason) {
         boolean dbReleased = chatRunLifecycleService.releaseLease(UUID.fromString(runId), instanceId()) > 0;
-        boolean memoryReleased = activeRunRegistry.remove(sessionId, runId);
+        boolean memoryReleased = activeRunRegistry.release(sessionId, runId);
         eventPublisher.publishEvent(new FollowUpQueueWakeupEvent(sessionId));
         // PLAN-0352 T1.2：唤醒会话删除路径的 release 等待位（终态投递在此之后已完成）。
         chatRunCancellationService.onRunReleased(runId);

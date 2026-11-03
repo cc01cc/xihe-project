@@ -98,14 +98,26 @@ public class SessionWakeupService {
             throw e;
         }
 
-        // busy 预检 = ChatSubmissionService 两个 admission 门的只读镜像
-        // （CHAT_IN_PROGRESS：非终态 Run；FOLLOW_UP_QUEUE_NOT_EMPTY：未清空队列）。
-        boolean activeRun = chatRunRepository.existsBySessionIdAndStatusIn(
-                sessionId, ChatRunRepository.ACTIVE_LEASE_STATUSES);
+        // PLAN-0645 D45-06: "busy" no longer means "a run is in flight" — a Session may now run
+        // up to {@code maxConcurrentRunsPerSession} runs, so a wake starts immediately unless the
+        // cap is already full. This is exactly what unblocks PLAN-0630 T5b.4 step 3: before 0645
+        // every mention wake of a Session whose root run was still streaming was deferred into the
+        // follow-up queue, so the woken agent's run only ever appeared after the root run ended.
+        // A full cap (409 CHAT_IN_PROGRESS from the Session-locked admission) keeps the frozen
+        // "deferred = 顺延入队, 不计 missed" semantics, and an outstanding queue keeps deferring
+        // because normal Chat admission would otherwise reject with FOLLOW_UP_QUEUE_NOT_EMPTY.
         boolean queueOutstanding = followUpItemRepository.countBySessionIdAndStatusIn(
                 sessionId, SessionFollowUpItemRepository.OUTSTANDING_STATUSES) > 0;
-        if (!activeRun && !queueOutstanding) {
-            return startScheduledRun(session, sessionId, userId, workspaceId, prompt, idempotencyKey);
+        if (!queueOutstanding) {
+            try {
+                return startScheduledRun(session, sessionId, userId, workspaceId, prompt, idempotencyKey);
+            } catch (CpApiException runCapReached) {
+                if (!"CHAT_IN_PROGRESS".equals(runCapReached.getCode())) {
+                    throw runCapReached;
+                }
+                logger.info("[LIFECYCLE] service=cp event=session_wakeup_deferred sessionId={} "
+                        + "reason=run_cap_reached", sessionId);
+            }
         }
 
         String branchId = branchPathService.ensureRootBranchId(sessionId);
@@ -125,7 +137,7 @@ public class SessionWakeupService {
         } finally {
             TenantContext.clear();
         }
-        logger.info("[LIFECYCLE] service=cp event=session_wakeup_deferred sessionId={} reason=busy",
+        logger.info("[LIFECYCLE] service=cp event=session_wakeup_deferred sessionId={} reason=queue_or_cap",
                 sessionId);
         return WakeupResult.deferred();
     }
