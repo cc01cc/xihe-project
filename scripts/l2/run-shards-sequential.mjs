@@ -122,7 +122,25 @@ for (const shard of ['a', 'b']) {
 
 const { computeExpectedTestClasses } = await import('file:///H:/zeogit/one/.tmp/plan-eff-l2/lib/test-class-set.mjs');
 const expected = computeExpectedTestClasses({ repoRoot: ROOT });
-const expectedSet = new Set(expected.classes ?? expected);
+// `computeExpectedTestClasses` 的返回形状随 helper 演进而变：现在是
+// `{ repoRoot, sourceFileCount, expected: [...classNames], excludedAbstract, ... }`，
+// 早期版本直接返回数组 / Set。这里按优先级依次取 `classes` → `expected` → 自身，
+// 再归一成名字数组：形状变化不得把 coverage 判定打成
+// `TypeError: object is not iterable`（2026-11-03 实测：helper 一变，L2 测量完好但判定整段丢失，
+// 且 `Object.keys()` 兜底会把 `repoRoot`/`sourceFileCount` 当成测试类 —— 兜底必须拒绝这种误判）。
+const expectedNames = (() => {
+  const candidates = [expected?.classes, expected?.expected, expected];
+  for (const value of candidates) {
+    if (Array.isArray(value)) return value;
+    if (value instanceof Set) return [...value];
+  }
+  throw new Error(
+    'run-shards-sequential: cannot derive expected test-class names from '
+      + `computeExpectedTestClasses() (keys: ${Object.keys(expected ?? {}).join(',')}); `
+      + 'refusing to guess — a wrong guess would silently corrupt the coverage judgement',
+  );
+})();
+const expectedSet = new Set(expectedNames);
 const ran = shards.flatMap((shard) => shard.suites.map((suite) => suite.simpleClass));
 const ranSet = new Set(ran);
 const duplicates = ran.filter((name, index) => ran.indexOf(name) !== index);
