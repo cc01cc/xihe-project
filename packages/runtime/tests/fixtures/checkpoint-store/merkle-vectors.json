@@ -1,0 +1,41 @@
+{
+  "source": "packages/runtime/src/checkpoint_store/FORMAT.md §4 (PLAN-0653 T0.2/T1.4)",
+  "generated_by": "tests/fixtures/checkpoint-store/generate-merkle-vectors.mjs (Node 24 crypto), independent of the Rust implementation: leaf = SHA-256(0x00 || path_utf8 || 0x00 || mode_ascii || 0x00 || decimal_size_ascii || 0x00 || blob_hash_hex); internal = SHA-256(0x01 || left32 || right32); odd nodes promoted; empty root = 64 zero chars",
+  "vectors": [
+    {
+      "name": "empty",
+      "entries": [],
+      "merkle_root": "0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    {
+      "name": "single",
+      "entries": [
+        {
+          "path": "a.txt",
+          "mode": "100644",
+          "size": 1,
+          "blob_hash": "ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb"
+        }
+      ],
+      "merkle_root": "a3a1ce32e2c936cba92e8d7132f939d413bca457205baca9316223750916b872"
+    },
+    {
+      "name": "pair",
+      "entries": [
+        {
+          "path": "a.txt",
+          "mode": "100644",
+          "size": 1,
+          "blob_hash": "ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb"
+        },
+        {
+          "path": "b.txt",
+          "mode": "100755",
+          "size": 2,
+          "blob_hash": "3b64db95cb55c763391c707108489ae18b4112d783300de38e033b4c98c3deaf"
+        }
+      ],
+      "merkle_root": "bb634f455803b72d807031a617194f74d2dffe825d25dec1c4f225969a8bebc4"
+    }
+  ]
+}

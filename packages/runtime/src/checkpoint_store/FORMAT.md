@@ -27,7 +27,7 @@
   tmp/                              临时文件；只从这里 rename 出去
 ```
 
-- `rootId` 目录名：仅当 rootId 匹配 `[A-Za-z0-9._-]{1,64}` 时用原名；否则用 `h-<SHA-256(rootId) 前 16 位>`（记录内部仍保存原值）。
+- `rootId` 目录名：仅当 rootId 匹配 `[A-Za-z0-9._-]{1,64}` 时用原名；否则用 `h-<SHA-256(rootId) 前 16 位>`（记录内部仍保存原值）。安全例外：rootId 为 `.` 或 `..` 时即使匹配字符集也强制走 hashed 形式，避免路径逃逸。
 - 分片规则：`objects/<hash[0..2]>/<hash[2..4]>/<hash>`；manifest 同理。
 
 ## 3. blob 文件
@@ -46,6 +46,7 @@ offset 13  payload        codec 编码后的字节
 - **读取三重校验**：codec 合法且受支持；解码长度 == `raw_len`；`SHA-256(payload 解码结果)` == 文件名。任一不符 ⇒ 拒绝（`BLOB_CORRUPT`，错误携带路径与期望哈希）。
 - **读侧压缩比门**：`raw_len > payload_len * 4096` ⇒ 拒绝（`CompressionRatioTooHigh`），在创建解码器/分配内存之前判定。
 - **写侧不变式**：writer 不得产出 reader 会拒收的 blob；zlib 结果若 `raw_len > compressed_len * 4096`，强制回落 raw（与 `<64 B` / 压缩无收益同一判定）。
+- **说明**：合法 flate2/deflate 输出压缩比上限约 1032×，因此 4096× 回落是面向未来 codec/后端的防御门，不是当前 writer 的常规分支（当前 writer 不会产出会被读侧拒收的 blob）。
 
 ## 4. manifest 文件
 
@@ -56,9 +57,11 @@ canonical JSON（无多余空白，键序固定：`v`、`entries`、`merkle_root
 ```
 
 - `entries` 元素：`[path, mode, size, blob_hash]`；按 `path` 的 **UTF-8 字节序严格升序**且唯一。
+- **rename 语义（v1）**：**不做 rename 检测**；文件改名按 delete + add 表示。与 git 输出对拍时必须传 `--no-renames`，否则 git 的 `R100` 会造成假红。
 - `path`：`/` 分隔、无空段、无 `..`、无 `\`、不以 `/` 开头；非 UTF-8 文件名由 walker 跳过并计入 warnings（不伪造）。
 - `mode` ∈ {`100644`（普通）, `100755`（可执行）, `120000`（符号链接，blob 内容为 link target）}。
-- `size`：原始字节数（symlink 为 target 字符串长度）。
+- `size`：普通/可执行文件的原始内容字节数；**symlink 的 `size` = link target 路径字符串的 UTF-8 字节长度，`blob_hash` = 该 target 字符串的 SHA-256**（不是目标文件内容长度）。
+- **symlink 读取**：symlink entry 的 blob 内容就是 target 路径字符串本身；读 symlink 时**不解析、不跟随**目标文件（不得读取目标内容来补 size/hash）。
 - `manifest_id = SHA-256(canonical bytes)`；相同内容 ⇒ 相同 id（跨时间/跨 root 复用）。
 - **merkle**：叶子 `SHA-256(0x00 || path || 0x00 || mode || 0x00 || size_decimal || 0x00 || blob_hash_hex)`；内部 `SHA-256(0x01 || left || right)`（32 字节二进制拼接）；奇数节点上提；空 manifest root = 64 个 `0`。
 - **读取严格校验**（任一失败即拒绝，**绝不按空 manifest 处理**）：JSON 可解析、`v==1`、entries 有序唯一、path/mode/size/hash 合法、`total_bytes == Σsize`、merkle 复算一致、文件字节 SHA-256 == manifest_id。
@@ -98,7 +101,7 @@ canonical JSON（无多余空白，键序固定：`v`、`entries`、`merkle_root
 
 ## 7. 锁与并发
 
-- `<store>/lock`：跨进程独占（Windows `share_mode=0`；Unix `flock`）；进程崩溃由 OS 自动释放，无 stale lock。
+- `<store>/lock`：跨进程独占（Windows `share_mode=0`；Unix `flock`）；进程崩溃由 OS 自动释放。lock 文件内容为 JSON `{pid, created_at_ms, process_start_token}`，**仅用于诊断**；OS 锁是唯一权威。判断 PID 复用必须比较 `process_start_token`（Windows=进程创建 FILETIME ticks；Linux=`/proc/<pid>/stat` starttime），不能只看 `pid`。
 - v1：store 级锁串行化 capture/restore/GC/fsck；第二进程立即失败（`STORE_BUSY`，exit 4），**不排队不阻塞**。
 - P2/P3 目标（本文件不冻结实现）：per-root 锁 + GC 全局锁，固定获取顺序 **root → global** 防死锁。
 
