@@ -3845,6 +3845,59 @@ mod tests {
         );
     }
 
+    #[test]
+    #[ignore = "P2.4 real store orphan GC dry-run; env-driven"]
+    fn p24_real_gc_orphan_dry_run() {
+        use crate::checkpoint_store::blob::{blob_path, write_blob};
+        use crate::checkpoint_store::gc::{GcOptions, gc};
+
+        let store_path = std::env::var("P24_STORE").expect("P24_STORE");
+        let store = Store::open(&store_path).expect("open store");
+        let content = format!(
+            "p24-unreferenced-orphan-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        );
+        let orphan = write_blob(store.root(), content.as_bytes()).expect("write orphan");
+        let orphan_path = blob_path(store.root(), &orphan.hash);
+        let report = gc(
+            &store,
+            &GcOptions {
+                repair: false,
+                grace_seconds: 0,
+                ..GcOptions::default()
+            },
+        )
+        .expect("gc dry run");
+        assert!(report.dry_run);
+        assert!(report.candidates >= 1, "{report:?}");
+        assert!(report.candidate_bytes > 0, "{report:?}");
+        assert!(orphan_path.exists(), "dry-run must not delete the orphan");
+        // Remove only the orphan this test created; never run repair on the
+        // real store from this harness.
+        std::fs::remove_file(&orphan_path).expect("cleanup seeded orphan");
+        let payload = serde_json::json!({
+            "orphanHash": orphan.hash,
+            "orphanBytes": content.len(),
+            "orphanRemovedAfterEvidence": true,
+            "gc": report,
+            "atUtc": std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|duration| duration.as_millis())
+                .unwrap_or(0),
+        });
+        if let Ok(out) = std::env::var("P24_OUT") {
+            std::fs::write(&out, serde_json::to_vec_pretty(&payload).expect("json"))
+                .expect("write P24_OUT");
+        }
+        eprintln!(
+            "P24_ORPHAN {}",
+            serde_json::to_string(&payload).expect("payload")
+        );
+    }
+
     #[tokio::test]
     #[ignore = "V6: three self->git->self rounds; every store slice restores"]
     async fn v6_three_rounds_self_git_self_restore_history() {
