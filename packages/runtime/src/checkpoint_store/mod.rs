@@ -5,6 +5,7 @@
 //! with the blob codec/atomic write path and the manifest codec.
 
 pub mod blob;
+pub mod capture;
 pub mod manifest;
 pub mod store;
 pub mod walk;

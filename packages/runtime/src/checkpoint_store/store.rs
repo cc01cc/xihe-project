@@ -244,6 +244,31 @@ impl Store {
     pub fn lock(&self) -> Result<StoreLock, StoreError> {
         StoreLock::acquire(self)
     }
+
+    /// Write an immutable object atomically through `<store>/tmp` (manifest,
+    /// slice record, stat cache). Existing files are left untouched.
+    pub fn write_atomic(&self, final_path: &Path, bytes: &[u8]) -> Result<(), StoreError> {
+        if final_path.is_file() {
+            return Ok(());
+        }
+        if let Some(parent) = final_path.parent() {
+            fs::create_dir_all(parent).map_err(|source| io_error(parent, source))?;
+        }
+        let tmp_dir = self.root.join("tmp");
+        fs::create_dir_all(&tmp_dir).map_err(|source| io_error(&tmp_dir, source))?;
+        let mut tmp = tempfile::Builder::new()
+            .prefix(".store-")
+            .tempfile_in(&tmp_dir)
+            .map_err(|source| io_error(&tmp_dir, source))?;
+        tmp.write_all(bytes)
+            .map_err(|source| io_error(tmp.path(), source))?;
+        tmp.as_file()
+            .sync_all()
+            .map_err(|source| io_error(tmp.path(), source))?;
+        tmp.persist(final_path)
+            .map_err(|error| io_error(final_path, error.error))?;
+        Ok(())
+    }
 }
 
 /// Exclusive store lock. Dropping it releases the OS lock; a process crash
