@@ -163,7 +163,7 @@ public class ChatSubmissionService {
         Submission submission = persist(ChatRun.ORIGIN_USER_SUBMISSION, runId, sessionId, userId, workspaceId,
                 branchId, idempotencyKey, requestHash, provider, model, toolMode, providerConnectionId,
                 connectionRevision, leaseOwner, requestId, content, attachmentsJson, attachmentIds,
-                agentPrincipalId, false);
+                agentPrincipalId, false, Message.VISIBILITY_USER);
         // R1 (PLAN-0623): record who answered. `asParticipantId` wins (already authorized by the
         // controller); otherwise the PRIMARY participant answers; a Session with neither keeps NULL —
         // the same "never invent a responder" rule the V92 backfill follows.
@@ -186,7 +186,7 @@ public class ChatSubmissionService {
         return persist(ChatRun.ORIGIN_USER_SUBMISSION, runId, sessionId, userId, workspaceId,
                 branchId, idempotencyKey, requestHash, provider, model, toolMode, providerConnectionId,
                 connectionRevision, leaseOwner, requestId, content, attachmentsJson, attachmentIds,
-                agentPrincipalId, true);
+                agentPrincipalId, true, Message.VISIBILITY_USER);
     }
 
     /**
@@ -203,10 +203,27 @@ public class ChatSubmissionService {
                                       Long connectionRevision, String leaseOwner, String requestId,
                                       String content, String attachmentsJson, List<String> attachmentIds,
                                       String agentPrincipalId) {
+        return createScheduled(runId, sessionId, userId, workspaceId, branchId, idempotencyKey, requestHash,
+                provider, model, toolMode, providerConnectionId, connectionRevision, leaseOwner, requestId,
+                content, attachmentsJson, attachmentIds, agentPrincipalId, Message.VISIBILITY_USER);
+    }
+
+    /**
+     * PLAN-0630 M5b / D3: the wake path persists its instruction with
+     * {@link Message#VISIBILITY_INTERNAL}, so the prompt reaches the model without ever rendering
+     * as a user turn in the conversation.
+     */
+    @Transactional
+    public Submission createScheduled(String runId, String sessionId, String userId, String workspaceId,
+                                      String branchId, String idempotencyKey, String requestHash, String provider,
+                                      String model, String toolMode, String providerConnectionId,
+                                      Long connectionRevision, String leaseOwner, String requestId,
+                                      String content, String attachmentsJson, List<String> attachmentIds,
+                                      String agentPrincipalId, String messageVisibility) {
         return persist(ChatRun.ORIGIN_SCHEDULED, runId, sessionId, userId, workspaceId,
                 branchId, idempotencyKey, requestHash, provider, model, toolMode, providerConnectionId,
                 connectionRevision, leaseOwner, requestId, content, attachmentsJson, attachmentIds,
-                agentPrincipalId, false);
+                agentPrincipalId, false, messageVisibility);
     }
 
     /**
@@ -445,7 +462,7 @@ public class ChatSubmissionService {
                 requestHash,
                 parentRun.getProvider(), parentRun.getModel(), parentRun.getToolMode(),
                 parentRun.getProviderConnectionId(), parentRun.getConnectionRevision(), null, requestId,
-                content, "[]", List.of(), childSession.getAgentPrincipalId(), false);
+                content, "[]", List.of(), childSession.getAgentPrincipalId(), false, Message.VISIBILITY_USER);
         // PLAN-0464 T2.1: the waiting link lives on the child run row itself.
         ChatRun childRun = created.run();
         childRun.setWaitingOnRunId(parentRun.getId().toString());
@@ -603,7 +620,7 @@ public class ChatSubmissionService {
                                 String toolMode, String providerConnectionId, Long connectionRevision,
                                 String leaseOwner, String requestId, String content, String attachmentsJson,
                                 List<String> attachmentIds, String requestedPrincipalId,
-                                boolean followUpAdmission) {
+                                boolean followUpAdmission, String messageVisibility) {
         Session session = bindOrValidateAgentSession(sessionId, userId, workspaceId, requestedPrincipalId);
         var requestSnapshot = apiRequestTemplates.admissionSnapshot(session);
         provider = session.getModelProvider();
@@ -655,6 +672,8 @@ public class ChatSubmissionService {
         }
 
         Message userMessage = new Message(sessionId, MessageRole.USER, content);
+        // PLAN-0630 M5b / D3: the wake instruction is model input, not a user-facing turn.
+        userMessage.setVisibility(messageVisibility == null ? Message.VISIBILITY_USER : messageVisibility);
         userMessage.setRunId(runId);
         userMessage.setBranchId(branchId);
         userMessage.setAttachments(attachmentsJson);

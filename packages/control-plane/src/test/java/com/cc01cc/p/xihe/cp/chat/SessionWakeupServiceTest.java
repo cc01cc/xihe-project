@@ -106,7 +106,7 @@ class SessionWakeupServiceTest {
         when(branchPathService.ensureRootBranchId(SESSION_ID)).thenReturn(BRANCH_ID);
         when(chatSubmissionService.createScheduled(anyString(), anyString(), anyString(), anyString(),
                 anyString(), anyString(), anyString(), any(), any(), eq("none"), any(), any(),
-                any(), anyString(), eq("hi"), eq("[]"), eq(List.of()), any()))
+                any(), anyString(), eq("hi"), eq("[]"), eq(List.of()), any(), eq(com.cc01cc.p.xihe.cp.entity.Message.VISIBILITY_INTERNAL)))
                 .thenAnswer(invocation -> {
                     String runId = invocation.getArgument(0);
                     ChatRun scheduledRun = new ChatRun(runId, SESSION_ID, USER_ID, WORKSPACE_ID,
@@ -123,7 +123,7 @@ class SessionWakeupServiceTest {
         ArgumentCaptor<String> runIdCaptor = ArgumentCaptor.forClass(String.class);
         verify(chatSubmissionService).createScheduled(runIdCaptor.capture(), eq(SESSION_ID), eq(USER_ID),
                 eq(WORKSPACE_ID), eq(BRANCH_ID), eq("sched-wakeup-1"), anyString(), any(), any(),
-                eq("none"), any(), any(), isNull(), anyString(), eq("hi"), eq("[]"), eq(List.of()), any());
+                eq("none"), any(), any(), isNull(), anyString(), eq("hi"), eq("[]"), eq(List.of()), any(), eq(com.cc01cc.p.xihe.cp.entity.Message.VISIBILITY_INTERNAL));
         assertEquals(runIdCaptor.getValue(), result.runId().toString(),
                 "started runId must be the persisted scheduled carrier");
         verify(eventPublisher).publishEvent(new ScheduledRunDispatchRequestedEvent(SESSION_ID,
@@ -142,7 +142,7 @@ class SessionWakeupServiceTest {
         when(branchPathService.ensureRootBranchId(SESSION_ID)).thenReturn(BRANCH_ID);
         when(chatSubmissionService.createScheduled(anyString(), anyString(), anyString(), anyString(),
                 anyString(), anyString(), anyString(), any(), any(), any(), any(), any(), any(),
-                anyString(), anyString(), anyString(), any(), any()))
+                anyString(), anyString(), anyString(), any(), any(), any()))
                 .thenThrow(new CpApiException(HttpStatus.CONFLICT, "CHAT_IN_PROGRESS", "cap reached"));
 
         SessionWakeupService.WakeupResult result =
@@ -165,7 +165,7 @@ class SessionWakeupServiceTest {
         when(branchPathService.ensureRootBranchId(SESSION_ID)).thenReturn(BRANCH_ID);
         when(chatSubmissionService.createScheduled(anyString(), anyString(), anyString(), anyString(),
                 anyString(), anyString(), anyString(), any(), any(), eq("none"), any(), any(),
-                any(), anyString(), eq("wake up"), eq("[]"), eq(List.of()), any()))
+                any(), anyString(), eq("wake up"), eq("[]"), eq(List.of()), any(), eq(com.cc01cc.p.xihe.cp.entity.Message.VISIBILITY_INTERNAL)))
                 .thenAnswer(invocation -> {
                     String runId = invocation.getArgument(0);
                     ChatRun scheduledRun = new ChatRun(runId, SESSION_ID, USER_ID, WORKSPACE_ID,

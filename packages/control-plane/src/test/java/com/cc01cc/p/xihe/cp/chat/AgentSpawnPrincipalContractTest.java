@@ -199,8 +199,8 @@ class AgentSpawnPrincipalContractTest extends AbstractIntegrationTest {
             assertEquals(1, jdbcTemplate.queryForObject(
                     "SELECT count(*) FROM audit_logs WHERE action = 'agent_spawn_created' AND resource_id = ?",
                     Integer.class, committedChild.getSessionId()), "dispatch must observe the committed audit row");
-            return true;
-        }).when(chatController).dispatchSpawnRun(anyString());
+            return ChatController.DispatchOutcome.ok();
+        }).when(chatController).dispatchSpawnRunDetailed(anyString());
 
         ResponseEntity<Map> response = spawnRequest(parent.parentRunId, parent.toolCallId, SERVICE_TOKEN);
 
@@ -244,7 +244,7 @@ class AgentSpawnPrincipalContractTest extends AbstractIntegrationTest {
         assertEquals(sessionsBefore + 1, sessionCount());
         assertEquals(runsBefore + 1, runCount());
         assertEquals(grantsBefore, grantCount());
-        verify(chatController).dispatchSpawnRun(spawnRun.getId().toString());
+        verify(chatController).dispatchSpawnRunDetailed(spawnRun.getId().toString());
     }
 
     @Test

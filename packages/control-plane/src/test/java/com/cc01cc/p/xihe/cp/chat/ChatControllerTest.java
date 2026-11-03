@@ -37,6 +37,7 @@ import com.cc01cc.p.xihe.cp.entity.ChatRun;
 import com.cc01cc.p.xihe.cp.entity.Message;
 import com.cc01cc.p.xihe.cp.entity.MessageRole;
 import com.cc01cc.p.xihe.cp.entity.Session;
+import com.cc01cc.p.xihe.cp.entity.SessionParticipant;
 import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceAgent;
@@ -188,6 +189,16 @@ class ChatControllerTest extends AbstractH2Test {
     /** PLAN-0338: terminal transitions must request a Run slice capture. */
     @MockitoSpyBean
     private com.cc01cc.p.xihe.cp.service.RunCheckpointService runCheckpointService;
+
+    /** PLAN-0648 D1: the suppression branch must still fan out the mention wake. */
+    @MockitoSpyBean
+    private WakeFanOutService wakeFanOutService;
+
+    @Autowired
+    private com.cc01cc.p.xihe.cp.repository.SessionParticipantRepository sessionParticipantRepository;
+
+    @Autowired
+    private com.cc01cc.p.xihe.cp.repository.AgentPrincipalRepository agentPrincipalRepository;
 
     @LocalServerPort
     private int serverPort;
@@ -1963,5 +1974,109 @@ class ChatControllerTest extends AbstractH2Test {
         assertEquals("cancel_accepted", response.getBody().get("status"));
         assertEquals("cancelled", chatRunRepository.findById(run.getId()).orElseThrow().getStatus());
         verify(runCheckpointService, timeout(5000)).requestCapture(run.getId().toString());
+    }
+    // ── PLAN-0648 D1: mention semantics on the submission path (branch level) ─────────────
+
+    private String seedAgentParticipant(AgentPrincipal principal, String role, String respondPolicy, int order) {
+        SessionParticipant row = new SessionParticipant(UUID.fromString(sessionId),
+                SessionParticipant.KIND_AGENT, principal.getId(), role, order,
+                SessionParticipant.WAKE_ALL_MESSAGES, respondPolicy);
+        sessionParticipantRepository.saveAndFlush(row);
+        return row.getId().toString();
+    }
+
+    private AgentPrincipal primaryPrincipal() {
+        Session session = sessionRepository.findById(UUID.fromString(sessionId)).orElseThrow();
+        return agentPrincipalRepository.findById(UUID.fromString(session.getAgentPrincipalId())).orElseThrow();
+    }
+
+    private AgentPrincipal seedMentionablePrincipal(String name) {
+        AgentPrincipal template = primaryPrincipal();
+        AgentPrincipal member = agentPrincipalService.createPrincipal(
+                userId, name, null, template.getTemplateSnapshot());
+        workspaceAgentRepository.saveAndFlush(new WorkspaceAgent(member.getId().toString(), workspaceId,
+                template.getTemplateSnapshot().get("permissions").deepCopy()));
+        return member;
+    }
+
+    private ResponseEntity<Map> postChat(String content) {
+        Map<String, Object> request = new java.util.LinkedHashMap<>();
+        request.put("sessionId", sessionId);
+        request.put("content", content);
+        request.put("workspaceId", workspaceId);
+        request.put("userId", userId);
+        request.put("branchId", branchId);
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(authToken);
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        return restTemplate.exchange(baseUrl + "/api/v1/chat", HttpMethod.POST,
+                chatEntity(request, headers), Map.class);
+    }
+
+    @Test
+    void chat_mentioningAnotherParticipant_suppressesPrimaryAndCarriesTheOutcomeEverywhere() {
+        AgentPrincipal primary = primaryPrincipal();
+        seedAgentParticipant(primary, SessionParticipant.ROLE_PRIMARY,
+                SessionParticipant.RESPOND_ALWAYS, 0);
+        AgentPrincipal member = seedMentionablePrincipal("Mention Target B");
+        seedAgentParticipant(member, SessionParticipant.ROLE_MEMBER,
+                SessionParticipant.RESPOND_WHEN_MENTIONED, 1);
+        // The fan-out itself is covered by WakeFanOutServiceTest; here we assert the branch calls it.
+        Mockito.doNothing().when(wakeFanOutService).fanOut(Mockito.any(), Mockito.anyString(),
+                Mockito.anyString(), Mockito.anyString(), Mockito.anyString(), Mockito.any(),
+                Mockito.any());
+
+        ResponseEntity<Map> response = postChat("@Mention Target B 你来答这个");
+
+        assertEquals(HttpStatus.ACCEPTED, response.getStatusCode());
+        Map body = response.getBody();
+        java.util.Objects.requireNonNull(body);
+        assertEquals("succeeded", body.get("status"));
+        assertEquals(ChatController.SUPPRESSED_NO_RESPONDER, body.get("terminalOutcome"),
+                "the wire body must expose the same token as the durable row");
+        assertEquals("primary_suppressed", body.get("reason"));
+
+        String runId = (String) body.get("runId");
+        assertEquals(ChatController.SUPPRESSED_NO_RESPONDER, jdbcTemplate.queryForObject(
+                        "SELECT terminal_outcome FROM chat_runs WHERE CAST(id AS VARCHAR) = ?",
+                        String.class, runId),
+                "the durable Run row must carry the same outcome");
+        assertEquals(0, jdbcTemplate.queryForObject(
+                        "SELECT count(*) FROM messages WHERE CAST(run_id AS VARCHAR) = ? AND role = 'ASSISTANT'",
+                        Integer.class, runId),
+                "the PRIMARY must not produce an assistant Message");
+        assertEquals(0, jdbcTemplate.queryForObject(
+                        "SELECT count(*) FROM chat_run_transport_attempts WHERE CAST(run_id AS VARCHAR) = ?",
+                        Integer.class, runId),
+                "a suppressed submission never reaches the transport");
+
+        Mockito.verify(wakeFanOutService).fanOut(Mockito.eq(UUID.fromString(sessionId)),
+                Mockito.eq(workspaceId), Mockito.eq(userId), Mockito.eq(runId),
+                Mockito.contains("@Mention Target B"), Mockito.any(), Mockito.any());
+    }
+
+    @Test
+    void chat_mentioningOnlyThePrimary_doesNotSuppress() {
+        AgentPrincipal primary = primaryPrincipal();
+        seedAgentParticipant(primary, SessionParticipant.ROLE_PRIMARY,
+                SessionParticipant.RESPOND_ALWAYS, 0);
+        AgentPrincipal member = seedMentionablePrincipal("Mention Target C");
+        seedAgentParticipant(member, SessionParticipant.ROLE_MEMBER,
+                SessionParticipant.RESPOND_WHEN_MENTIONED, 1);
+        Mockito.doNothing().when(wakeFanOutService).fanOut(Mockito.any(), Mockito.anyString(),
+                Mockito.anyString(), Mockito.anyString(), Mockito.anyString(), Mockito.any(),
+                Mockito.any());
+
+        ResponseEntity<Map> response = postChat("@Chat controller test principal 你来说");
+
+        assertEquals(HttpStatus.ACCEPTED, response.getStatusCode());
+        Map body = response.getBody();
+        java.util.Objects.requireNonNull(body);
+        assertNull(body.get("terminalOutcome"), "an answer addressed to the PRIMARY is not suppressed");
+        String runId = (String) body.get("runId");
+        assertNull(jdbcTemplate.queryForObject(
+                        "SELECT terminal_outcome FROM chat_runs WHERE CAST(id AS VARCHAR) = ?",
+                        String.class, runId),
+                "the Run must keep its normal, non-suppressed lifecycle");
     }
 }
