@@ -280,7 +280,9 @@ description = "Run full validation + integration (Compose E2E frozen — see fil
 alias = "validate:full"
 
 [tasks."dev:host"]
-depends = ["dev:host:start:pg"]
+# task-16: 启动前检查 in-tree runtime target 水位（12/15/20GB；watch 只打印，<1s），
+# 防止 `packages/runtime/target` 再次长到 GB 级。护栏实现见 scripts/check-runtime-target.mjs。
+depends = ["dev:host:start:pg", "check:runtime-target"]
 run = [
   { tasks = ["dev:host:start:cp", "dev:host:start:agent", "dev:host:start:runtime", "dev:host:start:ui"] }
 ]
