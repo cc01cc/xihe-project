@@ -237,9 +237,11 @@ test.describe("PLAN-269 full UI acceptance: routes and auth", () => {
         await expect(result).toBeVisible();
         await result.scrollIntoViewIfNeeded();
         await expect(result).toBeInViewport();
+        // `pt-12` 从 `--spacing` 派生：默认视觉语言 B（D31-M2）是 3.5px 步进，
+        // 12 × 3.5 = 42px（旧默认 4px 步进时为 48px）。
         await expect(page.locator('[data-slot="message-scroller-content"]')).toHaveCSS(
             "padding-top",
-            "48px",
+            "42px",
         );
         await result
             .locator("..")
