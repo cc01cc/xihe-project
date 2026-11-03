@@ -17,14 +17,16 @@
  * 没有 `data-xh-variant` 属性时渲染的就是 B —— 不存在"候选层"了。
  *
  * PLAN-0631 色彩方案（用户 2026-11-03「色彩不够克制 / 大块按钮一定要蓝色吗」）：
- * C1/C2/C3 是**第三层 opt-in 覆盖**（`?color=c1|c2|c3`，见 `src/lib/colorScheme.ts`），
- * 只改颜色语义 token；密度/圆角/字号沿用 B。没有 `data-xh-color` 属性时默认主题
- * 逐像素不变；三份文件的选择器都带 `:not(.dark)`，深色下惰性。
+ * **默认 = C2′（蓝仅小面积，用户 2026-11-03 圈选）**，token 直接落在下文 `:root`；
+ * C1/C3 保留为 **opt-in 覆盖**（`?color=c1|c3`，见 `src/lib/colorScheme.ts`），
+ * **仅对比用**。只改颜色语义 token；密度/圆角/字号沿用 B。
+ * C2′ 的三条用户反馈（2026-11-03）：①主操作描边由 #8b93a1 弱化为 #c9cfd6；
+ * ②「新建工作区」降级为中性 ghost（低频/可逆/位置固定，注意力预算 L2）；
+ * ③自己的气泡保持品牌蓝实心（--bubble，不描边、不中性化）。
  */
 @import "./themes/variant-a-restrained.css";
 @import "./themes/variant-c-current-plus.css";
 @import "./themes/color-c1-neutral.css";
-@import "./themes/color-c2-hairline.css";
 @import "./themes/color-c3-muted.css";
 
 /* Keep chat bubbles compact; markstream's document paragraph spacing is too large for messages. */
@@ -53,13 +55,16 @@
     --color-primary: var(--primary);
     --color-primary-foreground: var(--primary-foreground);
     /*
-     * PLAN-0631 色彩方案：把"动作填充 / 链接 / 徽标"从 --primary 里拆出来，
-     * 默认值等价于改前渲染（action=primary、link=brand、badge=secondary）。
-     * 只有这样 C2（白底描边主按钮 + 蓝色小元素）能在纯 token 覆盖下成立。
+     * PLAN-0631 色彩方案：把"动作填充 / 链接 / 徽标 / 气泡"从 --primary 里拆出来。
+     * 默认 = C2′：action = 白底描边、bubble = 品牌蓝实心（用户反馈①③）；
+     * C1/C3 在各自文件里覆盖这些 token（仅对比用）。
      */
     --color-action: var(--action);
     --color-action-foreground: var(--action-foreground);
     --color-action-border: var(--action-border);
+    --color-action-hover: var(--action-hover);
+    --color-bubble: var(--bubble);
+    --color-bubble-foreground: var(--bubble-foreground);
     --color-link: var(--link);
     --color-badge: var(--badge);
     --color-badge-foreground: var(--badge-foreground);
@@ -213,18 +218,21 @@
     --primary: var(--brand);
     --primary-foreground: var(--brand-foreground);
     /*
-     * PLAN-0631 色彩方案（C1/C2/C3）的语义角色。默认值 = 改前渲染，三者都是既有
-     * token 的别名（不是新颜色）：
-     *   action = 主操作填充（按钮 / CTA）        → var(--primary)
+     * PLAN-0631 色彩方案语义角色。默认 = C2′（用户 2026-11-03 圈选，反馈①②③）：
+     *   action = 主操作填充（按钮 / CTA）        → 白底 #ffffff + 深字 + 1px 弱化描边
+     *   bubble = 自己的消息气泡                  → 品牌蓝实心（不跟随 action，反馈③）
      *   link   = 文本链接与文本强调               → var(--brand)
      *   badge  = 中性徽标（底 / 字 / 边）         → var(--secondary)
-     * 候选只覆盖这两组 + 既有 primary/brand/ring/destructive，不碰密度/圆角/字号。
-     * （var() 在"使用处"才代入，所以 .dark 只改 primary/brand 时这三组自动跟随。）
+     * C1/C3 只覆盖这些 + 既有 primary/brand/ring/destructive（仅对比用）。
+     * 描边 #c9cfd6：对白色底 1.57:1（旧 C2 的 #8b93a1 是 3.09:1）——用户反馈①
+     * 要求"弱化而非消失"；白底按钮另有 13px 深字（16.70:1）承担可识别性。
      */
-    --action: var(--primary);
-    --action-foreground: var(--primary-foreground);
-    /* C2 用 1px 内描边表达"白底按钮的边框"；默认透明 = 不改变现状。 */
-    --action-border: transparent;
+    --action: #ffffff;
+    --action-foreground: #1b1e24;
+    --action-border: #c9cfd6;
+    --action-hover: #f3f4f6;
+    --bubble: var(--brand);
+    --bubble-foreground: var(--brand-foreground);
     --link: var(--brand);
     --badge: var(--secondary);
     --badge-foreground: var(--secondary-foreground);
@@ -289,6 +297,25 @@ html:not([data-xh-variant]) tr {
     height: 32px;
 }
 
+/*
+ * C2′（默认色彩 = 蓝仅小面积）：`Button` 组件有 `border-action-border` 通道，但业务里
+ * 还有直接写 `<button class="bg-action">` 的 CTA（发送、审批、各处确认），它们没有
+ * border token 消费点。这里用 `outline` 补 1px 内描边（不参与布局），
+ * `:not(:focus-visible)` 保证键盘焦点时让位给全局 2px 焦点环；hover 只上浅灰底。
+ * 选择器带 `html:not([data-xh-color])`：C1/C3 是 opt-in 覆盖，它们的按钮外观由
+ * 各自文件全权决定（这两条的描边/hover 只在默认 C2′ 下生效）。
+ * 消息气泡**不在这两条规则里**：它走 --bubble（品牌蓝实心），用户 2026-11-03
+ * 反馈③明确"气泡不要描边、不要中性化"。
+ */
+html:not([data-xh-color]) :is(button, a)[class*="bg-action"]:not(:focus-visible) {
+    outline: 1px solid var(--action-border);
+    outline-offset: -1px;
+}
+
+html:not([data-xh-color]) :is(button, a)[class*="bg-action"]:hover {
+    background-color: var(--action-hover);
+}
+
 .dark {
     --background: oklch(0.145 0 0);
     --foreground: oklch(0.985 0 0);
@@ -305,6 +332,15 @@ html:not([data-xh-variant]) tr {
        饱和度 73%（<80%）。--primary-foreground 维持近白。 */
     --primary: var(--brand);
     --primary-foreground: oklch(0.985 0 0);
+    /*
+     * C2′ 的 action/bubble 在浅色 :root 里是字面值（白底描边），深色下必须显式回落：
+     * action 跟随 --primary（深色主按钮维持品牌蓝实心，描边透明），
+     * bubble 用 var() 在"使用处"代入，自动跟随深色 --brand，无需重复声明。
+     */
+    --action: var(--primary);
+    --action-foreground: var(--primary-foreground);
+    --action-border: transparent;
+    --action-hover: oklch(0.269 0 0);
     --secondary: oklch(0.269 0 0);
     --secondary-foreground: oklch(0.985 0 0);
     --muted: oklch(0.269 0 0);

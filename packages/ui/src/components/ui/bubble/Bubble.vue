@@ -8,8 +8,10 @@ const bubbleVariants = cva(
     {
         variants: {
             variant: {
+                /* PLAN-0631 反馈③：自己的气泡 = 品牌蓝实心（--bubble），不跟随 --action
+                 * （默认 C2′ 的主操作是白底描边），也不描边、不中性化。 */
                 default:
-                    "*:data-[slot=bubble-content]:bg-action *:data-[slot=bubble-content]:text-action-foreground [&>[data-slot=bubble-content]:is(button,a):hover]:bg-action/80",
+                    "*:data-[slot=bubble-content]:bg-bubble *:data-[slot=bubble-content]:text-bubble-foreground [&>[data-slot=bubble-content]:is(button,a):hover]:bg-bubble/80",
                 secondary:
                     "*:data-[slot=bubble-content]:bg-secondary *:data-[slot=bubble-content]:text-secondary-foreground [&>[data-slot=bubble-content]:is(button,a):hover]:bg-[color-mix(in_oklch,var(--secondary),var(--foreground)_5%)]",
                 muted: "*:data-[slot=bubble-content]:bg-muted [&>[data-slot=bubble-content]:is(button,a):hover]:bg-[color-mix(in_oklch,var(--muted),var(--foreground)_5%)]",

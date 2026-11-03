@@ -1,9 +1,9 @@
 /*
- * PLAN-0631 色彩方案 C1 —— 中性优先（大面积不用彩色）。
+ * PLAN-0631 色彩方案 C1 —— 中性优先（大面积不用彩色）。**仅对比用**。
  *
- * 激活方式：`?color=c1` 或 localStorage `xihe-color-scheme = "c1"`（见
- * `src/lib/colorScheme.ts`）。没有 `data-xh-color` 属性时本文件不匹配任何元素，
- * **默认主题不受影响**。
+ * 默认已是 C2′（见 styles/main.css 的 :root）；本文件只在用户显式 `?color=c1`
+ * 时生效（见 `src/lib/colorScheme.ts`），用于与默认对比，**非发布候选**。
+ * 没有 `data-xh-color` 属性时本文件不匹配任何元素。
  *
  * 这个方案在改什么（只有颜色 token）
  * - 主操作填充 `--action` = #1a1a1a + 白字（17.40:1）：发送、新建、确认等 CTA 一律近黑。
@@ -23,6 +23,10 @@ html[data-xh-color="c1"]:not(.dark) {
     --action: #1a1a1a;
     --action-foreground: #ffffff;
     --action-border: transparent;
+
+    /* —— 自己的气泡跟随近黑（C1 的"零填充蓝"立场对气泡同样成立） —— */
+    --bubble: #1a1a1a;
+    --bubble-foreground: #ffffff;
 
     /* —— 小尺寸状态控件：同样中性 —— */
     --primary: #1a1a1a;

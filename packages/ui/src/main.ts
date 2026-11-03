@@ -23,8 +23,9 @@ useSettingsStore().initLanguage();
 // 这里只把 opt-in 覆盖 `?variant=a|c` 投影到 `<html data-xh-variant>`（仅对比/回归用），
 // 并清掉旧版持久化的 `xihe-visual-variant` 键，保证"无参数 = B"。
 initVisualVariant();
-// PLAN-0631 色彩方案：`?color=c1|c2|c3` 投影到 `<html data-xh-color>`（仅对比/预览用）。
-// 无参数 = 不设属性 = 默认主题；色彩与视觉语言是两条正交的轴，互不覆盖。
+// PLAN-0631 色彩方案：**默认 = C2′**（token 在 styles/main.css :root）；这里只把
+// opt-in 覆盖 `?color=c1|c3`（仅对比用）投影到 `<html data-xh-color>`，并清掉旧版
+// 持久化的 `xihe-color-scheme` 键，保证"无参数 = C2′"。色彩与视觉语言正交。
 initColorScheme();
 app.use(router);
 app.use(i18n);
