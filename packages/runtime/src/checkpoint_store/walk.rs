@@ -418,6 +418,7 @@ mod tests {
             ".xihe-container-runtime.pid",
             ".xihe-bridge-*.pid",
             ".xihe-shadow/",
+            ".xihe-store/",
             ".xhs-restore-inprogress",
             ".xhs-restore-trash/",
         ];
