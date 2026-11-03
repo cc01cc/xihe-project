@@ -35,6 +35,8 @@ public class SystemAccessRoleCatalog {
     public static final UUID WS_OWNER_ID = UUID.fromString("00000000-0000-4000-8000-000000000004");
     public static final UUID WS_EDITOR_ID = UUID.fromString("00000000-0000-4000-8000-000000000005");
     public static final UUID WS_VIEWER_ID = UUID.fromString("00000000-0000-4000-8000-000000000006");
+    /** 2026-11-04 ruling (task-25): the non-administrative delegation role for agent principals. */
+    public static final UUID AGENT_DELEGATOR_ID = UUID.fromString("00000000-0000-4000-8000-000000000007");
 
     public static final String SUPER_ADMIN = "SUPER_ADMIN";
     public static final String ADMIN = "ADMIN";
@@ -42,6 +44,7 @@ public class SystemAccessRoleCatalog {
     public static final String WS_OWNER = "WS_OWNER";
     public static final String WS_EDITOR = "WS_EDITOR";
     public static final String WS_VIEWER = "WS_VIEWER";
+    public static final String AGENT_DELEGATOR = "AGENT_DELEGATOR";
 
     /** The three instance-level system roles, used to keep one tier binding per user. */
     public static final List<String> INSTANCE_TIER_ROLES = List.of(SUPER_ADMIN, ADMIN, USER);
@@ -123,7 +126,16 @@ public class SystemAccessRoleCatalog {
                                 AtomRef.wildcard(ToolFaceRegistry.ACTION_EXEC))),
                 new RoleSeed(WS_VIEWER_ID, WS_VIEWER, "Workspace Viewer",
                         "Workspace scope: read only.",
-                        List.of(AtomRef.wildcard(ToolFaceRegistry.ACTION_READ))));
+                        List.of(AtomRef.wildcard(ToolFaceRegistry.ACTION_READ))),
+                // 2026-11-04 ruling (task-25): SPAWN_AGENT is a workspace-scoped action atom, so a
+                // non-administrative role can carry it and an agent principal may be bound to it.
+                // Single atom on purpose: delegation grants nothing else (no MANAGE_* atoms, no
+                // instance capability), and it is never granted by default — a workspace owner or
+                // instance admin hands it out explicitly.
+                new RoleSeed(AGENT_DELEGATOR_ID, AGENT_DELEGATOR, "Agent Delegator",
+                        "Workspace scope: delegate by creating child Sessions/Runs inside the same "
+                                + "workspace. Intended for agent principals; bound explicitly.",
+                        List.of(AtomRef.wildcard(ToolFaceRegistry.ACTION_SPAWN_AGENT))));
     }
 
     private static List<AtomRef> superAdminAtoms() {
