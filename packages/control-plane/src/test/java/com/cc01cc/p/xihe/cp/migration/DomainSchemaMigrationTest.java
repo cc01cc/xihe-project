@@ -372,11 +372,18 @@ class DomainSchemaMigrationTest {
         assertTrue(duplicate.getMessage().contains("uq_run_checkpoints_workspace_slice"),
                 duplicate.getMessage());
 
+        // PLAN-0639 V103: unique key extended to (workspace_id, root_id, source_run_id).
+        // Same source_run_id with a DIFFERENT root_id no longer collides (multi-root run slices);
+        // same (workspace, root, source_run) still rejects.
+        executeUpdate("INSERT INTO run_checkpoints (id, workspace_id, root_id, slice_ref, source_run_id, state) "
+                + "VALUES ('" + UUID.randomUUID() + "'::uuid, '" + workspaceId + "'::uuid, 'root-" + UUID.randomUUID() + "', "
+                + "'refs/xihe/slices/1-different', '" + runId + "'::uuid, 'captured')");
+
         SQLException duplicateSourceRun = assertThrows(SQLException.class,
                 () -> executeUpdate("INSERT INTO run_checkpoints (id, workspace_id, root_id, slice_ref, source_run_id, state) "
-                        + "VALUES ('" + UUID.randomUUID() + "'::uuid, '" + workspaceId + "'::uuid, 'root-" + UUID.randomUUID() + "', "
-                        + "'refs/xihe/slices/1-different', '" + runId + "'::uuid, 'captured')"));
-        assertTrue(duplicateSourceRun.getMessage().contains("uq_run_checkpoints_workspace_source_run"),
+                        + "VALUES ('" + UUID.randomUUID() + "'::uuid, '" + workspaceId + "'::uuid, '" + runId + "', "
+                        + "'refs/xihe/slices/1-other', '" + runId + "'::uuid, 'captured')"));
+        assertTrue(duplicateSourceRun.getMessage().contains("uq_run_checkpoints_workspace_root_source_run"),
                 duplicateSourceRun.getMessage());
 
         SQLException badState = assertThrows(SQLException.class,
