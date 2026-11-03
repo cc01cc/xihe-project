@@ -10,5 +10,6 @@ pub mod capture;
 pub mod fsck;
 pub mod manifest;
 pub mod restore;
+pub mod restore_full;
 pub mod store;
 pub mod walk;

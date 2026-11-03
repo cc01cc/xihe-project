@@ -180,6 +180,8 @@ pub const STATIC_EXCLUDE_PATTERNS: &[&str] = &[
     ".xihe-container-runtime.pid",
     ".xihe-bridge-*.pid",
     ".xihe-shadow/",
+    ".xhs-restore-inprogress",
+    ".xhs-restore-trash/",
 ];
 
 const BOOTSTRAP_MARKER: &str = ".xihe-bootstrapped";

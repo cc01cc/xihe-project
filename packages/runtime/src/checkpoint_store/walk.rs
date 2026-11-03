@@ -418,6 +418,8 @@ mod tests {
             ".xihe-container-runtime.pid",
             ".xihe-bridge-*.pid",
             ".xihe-shadow/",
+            ".xhs-restore-inprogress",
+            ".xhs-restore-trash/",
         ];
         assert_eq!(crate::checkpoint::STATIC_EXCLUDE_PATTERNS, expected);
     }

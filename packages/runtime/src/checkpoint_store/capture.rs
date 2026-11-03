@@ -102,9 +102,9 @@ struct StatCacheFile {
 }
 
 #[derive(Debug, Clone)]
-struct TailSlice {
-    id: String,
-    manifest: String,
+pub(crate) struct TailSlice {
+    pub(crate) id: String,
+    pub(crate) manifest: String,
 }
 
 fn now_ms() -> u64 {
@@ -266,7 +266,7 @@ fn write_cache(
     Ok(())
 }
 
-fn tail_slice(store: &Store, root_id: &str) -> Result<Option<TailSlice>, CaptureError> {
+pub(crate) fn tail_slice(store: &Store, root_id: &str) -> Result<Option<TailSlice>, CaptureError> {
     let dir = store.slice_dir(root_id);
     let entries = match fs::read_dir(&dir) {
         Ok(entries) => entries,
@@ -315,7 +315,10 @@ fn tail_slice(store: &Store, root_id: &str) -> Result<Option<TailSlice>, Capture
     Ok(Some(TailSlice { id, manifest }))
 }
 
-fn read_tail_manifest(store: &Store, tail: &TailSlice) -> Result<Manifest, CaptureError> {
+pub(crate) fn read_tail_manifest(
+    store: &Store,
+    tail: &TailSlice,
+) -> Result<Manifest, CaptureError> {
     let path = store.manifest_path(&tail.manifest);
     let bytes = fs::read(&path).map_err(|source| CaptureError::Read {
         path: path.clone(),
