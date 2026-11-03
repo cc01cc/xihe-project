@@ -83,17 +83,39 @@ def _expected(expected: dict[str, Any], snake_key: str, camel_key: str) -> Any:
 
 
 def _eval_tool_invocation_count(facts: RunFacts, expected: dict[str, Any]) -> tuple[bool, str]:
+    """Total or per-tool invocation count against equals / at_least / at_most bounds.
+
+    PLAN-0630 M4 (delegation_budget_no_retry): ``expected.tool`` restricts the
+    observation to a single tool name and ``at_most`` caps it, expressing the
+    frozen no-retry invariant (at most one spawn_agent invocation per run);
+    without ``tool`` the total invocation count is compared as before.
+    ``equals`` wins when several bounds are present so a pinned exact count
+    cannot be loosened by a stray bound.
+    """
+    if "tool" in expected:
+        tool = expected["tool"]
+        if not isinstance(tool, str) or not tool:
+            return False, "tool_invocation_count assertion tool must be a non-empty string"
+        observed = facts.tool_invocation_counts.get(tool, 0)
+        label = f"tool_invocation_count[{tool}]"
+    else:
+        observed = facts.tool_invocation_count
+        label = "tool_invocation_count"
     if "equals" in expected:
         want = expected["equals"]
-        if facts.tool_invocation_count != want:
-            return False, f"tool_invocation_count={facts.tool_invocation_count}, expected {want}"
-        return True, "tool invocation count matches"
-    if "at_least" in expected:
-        want = expected["at_least"]
-        if facts.tool_invocation_count < want:
-            return False, f"tool_invocation_count={facts.tool_invocation_count}, expected at least {want}"
-        return True, "tool invocation count meets the lower bound"
-    return False, "tool_invocation_count assertion needs equals or at_least"
+        if observed != want:
+            return False, f"{label}={observed}, expected {want}"
+        return True, f"{label} matches"
+    violations: list[str] = []
+    if "at_most" in expected and observed > expected["at_most"]:
+        violations.append(f"at most {expected['at_most']}")
+    if "at_least" in expected and observed < expected["at_least"]:
+        violations.append(f"at least {expected['at_least']}")
+    if not violations:
+        if "at_most" in expected or "at_least" in expected:
+            return True, f"{label} within bounds"
+        return False, "tool_invocation_count assertion needs equals, at_least or at_most"
+    return False, f"{label}={observed}, expected " + " and ".join(violations)
 
 
 def _eval_fact_match(facts: RunFacts, expected: dict[str, Any]) -> tuple[bool, str]:

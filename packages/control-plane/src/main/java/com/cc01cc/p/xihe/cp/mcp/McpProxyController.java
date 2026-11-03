@@ -645,10 +645,17 @@ public class McpProxyController {
         };
     }
 
+    /**
+     * PLAN-0630 M4 T4.1: the description carries two stable phrases (frozen wording, mirrored by
+     * {@code McpProxyControllerTest}'s schema snapshot) so the consumer model learns that the
+     * delegation budget is enforced by CP and that a refused spawn must not be retried verbatim.
+     */
     private static Map<String, Object> spawnAgentToolDefinition() {
         return Map.of(
                 "name", SPAWN_AGENT_TOOL,
-                "description", "Create a child Agent Session in the current Workspace. The child inherits a narrowed permission snapshot.",
+                "description", "Create a child Agent Session in the current Workspace. The child inherits a "
+                        + "narrowed permission snapshot. 预算由 CP 强制（delegation budget enforced by CP）；"
+                        + "被拒后不要原样重试同一子任务（do not retry the same subtask after a budget refusal）",
                 "inputSchema", Map.of(
                         "type", "object",
                         "properties", Map.of("prompt", Map.of(

@@ -33,7 +33,7 @@ def test_v1_file_still_loads_with_camel_aliases() -> None:
 
 def test_v2_file_parses_as_v2_tasks() -> None:
     tasks = load_dataset(V2_PATH)
-    assert len(tasks) == 5
+    assert len(tasks) == 6
     assert all(isinstance(task, EvalTaskV2) for task in tasks)
     by_id = {task.task_id: task for task in tasks}
     assert by_id["instruction_following.format_and_scope.v1"].assertion_class == "behavior"
@@ -45,6 +45,25 @@ def test_v2_file_parses_as_v2_tasks() -> None:
     assert by_id["failure_budget.no_repeat.v2"].attempts == 1
     assert by_id["failure_budget.attempt_rate.v2"].assertion_class == "behavior"
     assert by_id["failure_budget.attempt_rate.v2"].attempts == 5
+
+
+def test_v2_delegation_budget_no_retry_is_an_invariant_with_a_per_tool_cap() -> None:
+    """PLAN-0630 M4 T4.4: the delegation-budget no-retry invariant freezes its consumer face."""
+    task = next(
+        t
+        for t in load_dataset(V2_PATH)
+        if t.task_id == "tool_authorization.delegation_budget_no_retry.v1"
+    )
+    assert task.assertion_class == "invariant"
+    assert task.attempts == 1
+    assert task.judge_rubric_id is None
+    assert task.data_class == "synthetic"
+    # The tested tool stays callable; only unrelated mutations are denied.
+    assert task.allowed_tools == ["spawn_agent"]
+    assert "spawn_agent" not in task.denied_tools
+    assertion = task.hard_assertions[0]
+    assert assertion.kind == "tool_invocation_count"
+    assert assertion.expected == {"tool": "spawn_agent", "at_most": 1}
 
 
 def test_v2_assertion_expected_keys_are_snake_case() -> None:

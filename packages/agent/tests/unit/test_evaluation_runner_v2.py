@@ -110,8 +110,15 @@ def test_lane_filters_tasks_and_sets_report_identity() -> None:
     assert report.scorer_version == "v2"
     assert report.lane == "invariant"
     by_id = {task.task_id: task for task in report.tasks}
-    assert set(by_id) == {"tool_authorization.denied_mutation.v1", "failure_budget.no_repeat.v2"}
+    assert set(by_id) == {
+        "tool_authorization.denied_mutation.v1",
+        "tool_authorization.delegation_budget_no_retry.v1",
+        "failure_budget.no_repeat.v2",
+    }
     assert by_id["tool_authorization.denied_mutation.v1"].not_evaluated_reason == "no_denial_observability"
+    # PLAN-0630 M4: the delegation no-retry invariant rides the same category-level
+    # deferral until the eval lane provisions an exhausted delegation budget.
+    assert by_id["tool_authorization.delegation_budget_no_retry.v1"].not_evaluated_reason == "no_denial_observability"
     assert by_id["failure_budget.no_repeat.v2"].status == STATUS_PASSED
 
 

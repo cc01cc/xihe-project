@@ -512,6 +512,118 @@ class TestMCPAgentToolApproval:
         assert [tool.spec.name for tool in tools_b] == ["workspace-b-tool"]
 
 
+class TestSpawnAgentBudgetRefusal:
+    """PLAN-0630 M4 T4.2/T4.3：spawn_agent 预算拒绝的 Agent 消费者面。
+
+    CP 的预算闸门（DelegationBudgetService → ``DELEGATION_LIMIT_EXCEEDED``）对
+    CP-owned ``spawn_agent`` 的拒绝以 tool result 形态返回（``isError=true``，
+    ``McpProxyController.cpToolResult`` 的 errorCode 分支：仅文本块、无
+    structuredContent），不是 JSON-RPC error。本组用例钉住消费契约：
+
+    - T4.2：拒绝不终止 run —— ``MCPAgentTool.execute`` 把 isError 结果转成
+      "Tool error:" 文本返回，同一轮的后续 tool call 仍可发出；
+    - T4.3：拒绝返回体的键集合不含内部策略（delegationPolicy /
+      delegationMax*Ceiling / maxCount 原值不出现在返回体或模型可见文本中）。
+    """
+
+    @staticmethod
+    def _refusal_result() -> SimpleNamespace:
+        """CP 预算拒绝线型（fastmcp 解析后的 CallToolResult 形态，``raise_on_error=False``）。"""
+        return SimpleNamespace(
+            content=[TextContent(type="text", text="Tool error: DELEGATION_LIMIT_EXCEEDED")],
+            structured_content=None,
+            is_error=True,
+        )
+
+    @staticmethod
+    def _refusal_wire_body() -> dict:
+        """``McpProxyController.cpToolResult(requestBody, null, errorCode)`` 拒绝分支的线型镜像。"""
+        return {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": {
+                "resultType": "complete",
+                "isError": True,
+                "content": [{"type": "text", "text": "Tool error: DELEGATION_LIMIT_EXCEEDED"}],
+            },
+        }
+
+    @staticmethod
+    def _context() -> AgentContext:
+        context = AgentContext.empty("session-budget")
+        context.metadata.update(
+            {"sessionId": "session-budget", "workspaceId": "workspace-1", "runId": "run-1"}
+        )
+        return context
+
+    @pytest.mark.asyncio
+    async def test_budget_refusal_keeps_turn_alive_and_never_leaks_policy(self):
+        """T4.2 + T4.3 同一用例：isError 拒绝不上抛、后续 tool call 仍可发出、无策略泄漏。"""
+        context = self._context()
+        calls: list[str] = []
+
+        async def _call(name, arguments, headers):
+            calls.append(name)
+            if name == "spawn_agent":
+                return self._refusal_result()
+            return _tool_result("read-ok")
+
+        manager = _fake_manager()
+        manager.call_tool = AsyncMock(side_effect=_call)
+
+        spawn = MCPAgentTool(_stub_tool("spawn_agent"), manager)
+        result = await asyncio.wait_for(spawn.execute({"prompt": "child task"}, context), timeout=5)
+
+        # T4.2：isError=true 的 tool result 不上抛 —— run 不终止，本轮可继续。
+        assert result == {"content": "Tool error: DELEGATION_LIMIT_EXCEEDED"}
+
+        # T4.3：拒绝返回体键集合不含内部策略键/原值（不泄漏 delegationPolicy /
+        # delegationMax*Ceiling / maxCount）。
+        body = self._refusal_wire_body()
+        assert set(body) == {"jsonrpc", "id", "result"}
+        assert set(body["result"]) == {"resultType", "isError", "content"}
+        flattened = json.dumps(body, ensure_ascii=False)
+        assert set(result) == {"content"}
+        for forbidden in (
+            "delegationPolicy",
+            "delegationMaxCountCeiling",
+            "delegationMaxDepthCeiling",
+            "maxCount",
+        ):
+            assert forbidden not in flattened, forbidden
+            assert forbidden not in result["content"], forbidden
+
+        # T4.2：同一轮的后续 tool call 仍可发出（拒绝不毒化工具面/manager）。
+        reader = MCPAgentTool(_stub_tool("read_file"), manager)
+        follow_up = await asyncio.wait_for(reader.execute({"path": "README.md"}, context), timeout=5)
+        assert "read-ok" in follow_up["content"]
+        assert calls == ["spawn_agent", "read_file"]
+
+    @pytest.mark.asyncio
+    async def test_structured_policy_payload_never_reaches_model_visible_content(self):
+        """防御位：即便返回体夹带 structuredContent 策略键，文本块优先 —— 策略原值不进模型可见面。"""
+        leaked = SimpleNamespace(
+            content=[TextContent(type="text", text="Tool error: DELEGATION_LIMIT_EXCEEDED")],
+            structured_content={
+                "delegationPolicy": {"maxCount": 1, "maxDepth": 3},
+                "delegationMaxCountCeiling": 8,
+                "delegationMaxDepthCeiling": 3,
+                "maxCount": 1,
+            },
+            is_error=True,
+        )
+        manager = _fake_manager(result=leaked)
+        tool = MCPAgentTool(_stub_tool("spawn_agent"), manager)
+
+        result = await asyncio.wait_for(
+            tool.execute({"prompt": "child task"}, self._context()), timeout=5
+        )
+
+        assert result["content"] == "Tool error: DELEGATION_LIMIT_EXCEEDED"
+        assert "maxCount" not in result["content"]
+        assert "delegationPolicy" not in result["content"]
+
+
 class TestMCPAgentToolTimeout:
     @pytest.mark.asyncio
     async def test_execute_returns_error_on_timeout(self):

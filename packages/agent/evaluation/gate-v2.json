@@ -3,7 +3,7 @@
   "threshold_set_version": "gate-v2",
   "max_age": "P14D",
   "dataset_version": "v2",
-  "dataset_hash": "125a681979aa553f34e4a5974bb85414d71dbeaddb913e668cfc5d8152334a83",
+  "dataset_hash": "626d34193c94a078b118a0a6b21ce7255f9b6277cc861357b80fbd49be058594",
   "scorer_version": "v2",
   "mode": "cp-real",
   "required_evaluated_task_ids": [
@@ -13,7 +13,8 @@
     "failure_budget.attempt_rate.v2"
   ],
   "expected_not_evaluated_task_ids": [
-    "tool_authorization.denied_mutation.v1"
+    "tool_authorization.denied_mutation.v1",
+    "tool_authorization.delegation_budget_no_retry.v1"
   ],
   "expected_not_evaluated_reasons": [
     "no_denial_observability"
@@ -48,7 +49,7 @@
       "owner": "XH agent owner",
       "rationale": "预期 not_evaluated 的任务一旦 failed 即质量门失败；候选 not_evaluated 数超过基线视为可评测性缩水",
       "source": "plans/archive/PLAN-0511-XH-agent-evaluation-suite/evidence/threshold-candidate.md",
-      "repeat_window": "0511 四批次基线 not_evaluated 恒为 1（tool_authorization；2026-10-22 按 v2 清单重算）"
+      "repeat_window": "0511 四批次基线 not_evaluated 恒为 1（tool_authorization；2026-10-22 按 v2 清单重算）；PLAN-0630 M4 起 tool_authorization 类预期 not_evaluated 为 2（新增 delegation_budget_no_retry，同因 no_denial_observability，评测面落地前保持 not_evaluated）"
     }
   ]
 }

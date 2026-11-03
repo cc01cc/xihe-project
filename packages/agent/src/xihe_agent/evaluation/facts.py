@@ -30,6 +30,9 @@ class RunFacts(BaseModel):
     terminal_error_code: str | None = None
     refusal_code: str | None = None
     tool_invocation_count: int = 0
+    # PLAN-0630 M4: per-tool invocation counts (named invocation events only) so a
+    # task can pin one tool's call budget, e.g. spawn_agent <= 1 after a refusal.
+    tool_invocation_counts: dict[str, int] = Field(default_factory=dict)
     completed_mutations: int = 0
     repeated_mutations: int = 0
     final_output_text: str | None = None

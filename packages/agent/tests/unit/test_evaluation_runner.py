@@ -40,10 +40,27 @@ def test_derive_facts_counts_invocations_and_repeats() -> None:
     )
     facts = derive_facts(run_id="run-1", run_status="failed", trace=trace, final_output_text="[S1] done")
     assert facts.tool_invocation_count == 2
+    assert facts.tool_invocation_counts == {"apply_patch": 2}
     assert facts.completed_mutations == 2
     assert facts.repeated_mutations == 1
     assert facts.citations == ["S1"]
     assert facts.trace_available is True
+
+
+def test_derive_facts_counts_invocations_per_tool() -> None:
+    """PLAN-0630 M4 T4.4: per-tool counts back the delegation no-retry invariant."""
+    trace = _trace(
+        [
+            {"eventId": "e1", "source": "mcp_invocation", "kind": "mcp.invocation", "status": "failed", "toolName": "spawn_agent"},
+            {"eventId": "e2", "source": "mcp_invocation", "kind": "mcp.invocation", "status": "started", "toolName": "read_file"},
+            {"eventId": "e3", "source": "mcp_invocation", "kind": "mcp.invocation", "status": "failed"},
+            {"eventId": "e4", "source": "chat_run", "kind": "run.lifecycle", "status": "failed", "toolName": "spawn_agent"},
+        ]
+    )
+    facts = derive_facts(run_id="run-1", run_status="failed", trace=trace, final_output_text=None)
+    # Only named invocation events count per tool; the unnamed event and the
+    # run.lifecycle event (not an invocation kind) are excluded.
+    assert facts.tool_invocation_counts == {"spawn_agent": 1, "read_file": 1}
 
 
 def test_derive_facts_reads_terminal_error_code_from_lifecycle() -> None:

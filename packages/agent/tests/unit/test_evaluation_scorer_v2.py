@@ -67,6 +67,63 @@ def test_tool_invocation_count_without_comparator_fails_closed() -> None:
     assert evaluate_assertion(broken, _passing_facts(tool_invocation_count=1)).passed is False
 
 
+# --- evaluator: at_most / per-tool counts (PLAN-0630 M4 T4.4) ----------------
+
+
+def test_at_most_upper_bound() -> None:
+    assertion = HardAssertion.model_validate(
+        {"assertion_id": "A1", "kind": "tool_invocation_count", "expected": {"at_most": 1}}
+    )
+    for count, expected in ((0, True), (1, True), (2, False)):
+        facts = _passing_facts(tool_invocation_count=count)
+        assert evaluate_assertion(assertion, facts).passed is expected
+
+
+def test_per_tool_count_scopes_the_observation_to_one_tool() -> None:
+    """spawn_agent <= 1 counts spawn_agent calls only: other tools must not flip the verdict."""
+    assertion = HardAssertion.model_validate(
+        {
+            "assertion_id": "A1",
+            "kind": "tool_invocation_count",
+            "expected": {"tool": "spawn_agent", "at_most": 1},
+        }
+    )
+    refused_once = _passing_facts(
+        tool_invocation_count=3,
+        tool_invocation_counts={"spawn_agent": 1, "read_file": 2},
+    )
+    assert evaluate_assertion(assertion, refused_once).passed is True
+
+    retried = refused_once.model_copy(
+        update={"tool_invocation_counts": {"spawn_agent": 2, "read_file": 1}}
+    )
+    assert evaluate_assertion(assertion, retried).passed is False
+
+
+def test_per_tool_count_defaults_to_zero_for_an_unseen_tool() -> None:
+    assertion = HardAssertion.model_validate(
+        {
+            "assertion_id": "A1",
+            "kind": "tool_invocation_count",
+            "expected": {"tool": "spawn_agent", "at_most": 1},
+        }
+    )
+    facts = _passing_facts(tool_invocation_count=4)
+    assert evaluate_assertion(assertion, facts).passed is True
+
+
+def test_per_tool_count_rejects_a_non_tool_name_fail_closed() -> None:
+    for tool in ("", 3, None):
+        assertion = HardAssertion.model_validate(
+            {
+                "assertion_id": "A1",
+                "kind": "tool_invocation_count",
+                "expected": {"tool": tool, "at_most": 1},
+            }
+        )
+        assert evaluate_assertion(assertion, _passing_facts(tool_invocation_count=0)).passed is False
+
+
 def test_v2_snake_expected_keys_are_evaluated() -> None:
     task = _task("grounded_citation.synthetic_source.v1")
     facts = RunFacts(

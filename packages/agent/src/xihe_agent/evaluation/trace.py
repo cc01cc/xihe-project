@@ -68,6 +68,19 @@ def _count_invocations(events: list[TraceEvent]) -> int:
     )
 
 
+def _count_invocations_per_tool(events: list[TraceEvent]) -> dict[str, int]:
+    """Per-tool invocation counts (named invocation events only; PLAN-0630 M4)."""
+    counts: dict[str, int] = {}
+    for e in events:
+        if (
+            e.kind in INVOCATION_KINDS
+            and e.status in _EFFECTIVE_INVOCATION_STATUSES
+            and e.tool_name
+        ):
+            counts[e.tool_name] = counts.get(e.tool_name, 0) + 1
+    return counts
+
+
 def _count_repeated_mutations(events: list[TraceEvent]) -> int:
     """Count succeeded mutations beyond the first occurrence of the same tool."""
     seen: dict[str, int] = {}
@@ -111,6 +124,7 @@ def derive_facts(
         terminal_error_code=terminal_code,
         refusal_code=refusal_code,
         tool_invocation_count=_count_invocations(events),
+        tool_invocation_counts=_count_invocations_per_tool(events),
         completed_mutations=sum(
             1 for e in events if e.kind in INVOCATION_KINDS and e.status == "succeeded"
         ),

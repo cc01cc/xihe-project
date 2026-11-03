@@ -195,4 +195,39 @@ class McpProxyControllerTest {
         assertEquals(1, allTools.size());
         assertEquals("a_new", allTools.get(0).get("name"));
     }
+
+    // ── PLAN-0630 M4 T4.1：CP-owned spawn_agent 工具 schema 快照 ─────────────
+
+    /**
+     * PLAN-0630 M4 T4.1: the CP-owned {@code spawn_agent} tool definition is a frozen wire contract
+     * with the Agent consumer face. The two stable description phrases (delegation budget enforced
+     * by CP; do not retry the same subtask after a budget refusal) are part of that contract — any
+     * wording or shape change must update this snapshot deliberately, not silently.
+     */
+    @Test
+    @SuppressWarnings("unchecked")
+    void spawnAgentToolDefinition_schemaSnapshotMatchesTheFrozenWireShape() throws Exception {
+        var method = McpProxyController.class.getDeclaredMethod("spawnAgentToolDefinition");
+        method.setAccessible(true);
+        Map<String, Object> tool = (Map<String, Object>) method.invoke(null);
+
+        assertEquals(Set.of("name", "description", "inputSchema"), tool.keySet());
+        assertEquals("spawn_agent", tool.get("name"));
+        assertEquals("Create a child Agent Session in the current Workspace. The child inherits a "
+                        + "narrowed permission snapshot. 预算由 CP 强制（delegation budget enforced by CP）；"
+                        + "被拒后不要原样重试同一子任务（do not retry the same subtask after a budget refusal）",
+                tool.get("description"));
+
+        Map<String, Object> schema = (Map<String, Object>) tool.get("inputSchema");
+        assertEquals(Set.of("type", "properties", "required", "additionalProperties"), schema.keySet());
+        assertEquals("object", schema.get("type"));
+        assertEquals(Boolean.FALSE, schema.get("additionalProperties"));
+        assertEquals(List.of("prompt"), schema.get("required"));
+        Map<String, Object> prompt =
+                (Map<String, Object>) ((Map<String, Object>) schema.get("properties")).get("prompt");
+        assertEquals(Map.of(
+                "type", "string",
+                "minLength", 1,
+                "description", "The task for the child Agent"), prompt);
+    }
 }
