@@ -2224,4 +2224,39 @@ class ChatControllerTest extends AbstractH2Test {
         assertNull(body.get("terminalOutcome"),
                 "a hand-off that could not be enqueued must not suppress the answer");
     }
+    // ── PLAN-0648 task-34: every enqueued hand-off must drain (no "enqueued then nothing") ──
+
+    @Test
+    void chat_twoBackToBackMentions_bothHandoffsDrainAndTheMentionedAgentAnswersTwice() {
+        String[] pair = seedMentionPair("Mention Target I");
+        String memberPrincipalId = pair[2];
+        stubAgentSuccessReply();
+
+        ResponseEntity<Map> first = postChat("@Mention Target I 第一条");
+        assertEquals(HttpStatus.ACCEPTED, first.getStatusCode());
+        ResponseEntity<Map> second = postChat("@Mention Target I 第二条");
+        assertEquals(HttpStatus.ACCEPTED, second.getStatusCode());
+
+        // Both submissions are suppressed (the hand-off owns the turn) and both hand-offs must end in
+        // a wake run that actually answers: "enqueued then nothing" is the defect this guards.
+        assertEquals(ChatController.SUPPRESSED_NO_RESPONDER, first.getBody().get("terminalOutcome"));
+        assertEquals(ChatController.SUPPRESSED_NO_RESPONDER, second.getBody().get("terminalOutcome"));
+
+        org.awaitility.Awaitility.await().atMost(java.time.Duration.ofSeconds(30))
+                .untilAsserted(() -> {
+                    Integer wakeRuns = jdbcTemplate.queryForObject(
+                            "SELECT count(*) FROM chat_runs WHERE origin = 'scheduled' "
+                                    + "AND CAST(session_id AS VARCHAR) = ? "
+                                    + "AND CAST(agent_principal_id AS VARCHAR) = ?",
+                            Integer.class, sessionId, memberPrincipalId);
+                    assertEquals(2, wakeRuns, "both rounds must own a scheduled wake run");
+                    Integer replies = jdbcTemplate.queryForObject(
+                            "SELECT count(*) FROM messages WHERE role = 'ASSISTANT' "
+                                    + "AND CAST(run_id AS VARCHAR) IN (SELECT CAST(id AS VARCHAR) FROM chat_runs "
+                                    + "WHERE origin = 'scheduled' AND CAST(session_id AS VARCHAR) = ? "
+                                    + "AND CAST(agent_principal_id AS VARCHAR) = ?)",
+                            Integer.class, sessionId, memberPrincipalId);
+                    assertEquals(2, replies, "the mentioned agent must answer both rounds");
+                });
+    }
 }

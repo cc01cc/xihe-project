@@ -19,8 +19,6 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -39,11 +37,6 @@ import java.util.concurrent.TimeUnit;
 public class WakeFanOutService {
 
     private static final Logger logger = LoggerFactory.getLogger(WakeFanOutService.class);
-    /**
-     * PLAN-0648 task-34: the awaiter now has a completion source (the terminal choke point publishes
-     * ChatRunTerminalizedEvent), so the bound is a safety net instead of the only exit. It used to be
-     * 600 s — ten minutes of a blocked per-session dispatch thread.
-     */
     static final long DEFAULT_WAIT_SECONDS = 60;
     /**
      * Same durable event name WakeDispatchService audits wake outcomes under (its constant is
@@ -58,7 +51,29 @@ public class WakeFanOutService {
     private final EventStoreService eventStoreService;
     private final SessionParticipantCursorRepository cursorRepository;
     private final Map<String, CompletableFuture<Void>> terminalAwaiters = new ConcurrentHashMap<>();
-    private final Map<UUID, ExecutorService> sessionExecutors = new ConcurrentHashMap<>();
+    /** PLAN-0648 task-34: shared dispatch pool (replaces the per-session single thread). */
+    private static final java.util.concurrent.ExecutorService WAKE_POOL =
+            java.util.concurrent.Executors.newFixedThreadPool(4, runnable -> {
+                Thread thread = new Thread(runnable, "wake-fanout");
+                thread.setDaemon(true);
+                return thread;
+            });
+    /**
+     * Observability-only workers: each wake-run observation gets its own thread, so one slow run can
+     * never delay the observation (or the log line) of another. These threads never dispatch.
+     */
+    private static final java.util.concurrent.ExecutorService OBSERVER =
+            java.util.concurrent.Executors.newCachedThreadPool(runnable -> {
+                Thread thread = new Thread(runnable, "wake-observer");
+                thread.setDaemon(true);
+                return thread;
+            });
+    /** A round that waited longer than this in the pool is worth a log line (never silent). */
+    private static final long QUEUE_WAIT_LOG_THRESHOLD_MS = 200;
+
+    /** Optional: lets the awaiter see a run that already finished (tests may leave it null). */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private ChatRunStatusReadService chatRunStatus;
 
     /** Legacy test seam (WakeFanOutServiceTest builds with dispatch + config only). */
     public WakeFanOutService(WakeDispatchService wakeDispatchService, ConfigService configService) {
@@ -139,8 +154,20 @@ public class WakeFanOutService {
                     content == null ? 0 : content.length());
             return WakeHandoff.skipped("no_recipients");
         }
-        executorFor(sessionId).submit(() -> runSerial(sessionId, workspaceId, userId, wakeRoundId, recipients,
-                parsed.unresolvedTokens(), ccObservers, content));
+        // PLAN-0648 task-34: rounds are independent messages, so a slow round must never starve the
+        // next one. The per-session single-thread executor used to serialize *rounds* (and then
+        // blocked inside the round on a terminal wait), which is exactly how three hand-offs ended
+        // with one drain. Ordering stays inside the round (runSerial fires recipients in order).
+        long enqueuedAt = System.currentTimeMillis();
+        wakePool().submit(() -> {
+            long waitedMs = System.currentTimeMillis() - enqueuedAt;
+            if (waitedMs > QUEUE_WAIT_LOG_THRESHOLD_MS) {
+                logger.warn("[LIFECYCLE] service=cp event=wake_handoff_queued sessionId={} round={} waitMs={}",
+                        sessionId, wakeRoundId, waitedMs);
+            }
+            runSerial(sessionId, workspaceId, userId, wakeRoundId, recipients,
+                    parsed.unresolvedTokens(), ccObservers, content);
+        });
         logger.info("[LIFECYCLE] service=cp event=wake_handoff_enqueued sessionId={} round={} "
                         + "recipients={} ccObservers={} unresolved={}",
                 sessionId, wakeRoundId, recipients.size(), ccObservers.size(),
@@ -216,6 +243,9 @@ public class WakeFanOutService {
             logger.info("[LIFECYCLE] service=cp event=wake_mention_unresolved sessionId={} "
                     + "token={} round={}", sessionId, token, wakeRoundId);
         }
+        int started = 0;
+        int deferred = 0;
+        int dropped = 0;
         for (MentionParser.RosterEntry recipient : recipients) {
             WakeDispatchService.WakeFireResult result;
             try {
@@ -223,17 +253,34 @@ public class WakeFanOutService {
                 result = wakeDispatchService.fire(recipient.participantId(), "mention",
                         wakeRoundId, sessionId, null, triggeringContent);
             } catch (RuntimeException failure) {
-                // Q3: one recipient's failure never aborts the round.
-                logger.error("[LIFECYCLE] service=cp event=wake_recipient_failed sessionId={} "
-                        + "participantId={} round={} failureType={}", sessionId,
-                        recipient.participantId(), wakeRoundId, failure.getClass().getSimpleName(),
-                        failure);
+                // Q3: one recipient's failure never aborts the round — but it is never silent either:
+                // every hand-off must end as started / deferred / dropped (task-34 invariant).
+                dropped++;
+                logger.error("[LIFECYCLE] service=cp event=wake_handoff_dropped sessionId={} "
+                        + "participantId={} round={} reason={}", sessionId, recipient.participantId(),
+                        wakeRoundId, failure.getClass().getSimpleName(), failure);
                 continue;
             }
             if (result.dispatched() && result.runId() != null) {
-                awaitTerminal(result.runId().toString(), waitSeconds());
+                started++;
+                // PLAN-0648 task-34: dispatching and waiting are different jobs. `runSerial` fires
+                // the next recipient immediately; the terminal observation runs on its own thread and
+                // only produces log lines. Blocking here (600 s default, completion source that never
+                // fired) is what starved every later round of the session.
+                observeTerminalAsync(result.runId().toString(), waitSeconds());
+            } else {
+                deferred++;
+                logger.info("[LIFECYCLE] service=cp event=wake_handoff_deferred sessionId={} "
+                                + "participantId={} round={} reason={}", sessionId,
+                        recipient.participantId(), wakeRoundId, result.outcome());
             }
         }
+        lastRound = new WakeRoundStats(wakeRoundId, recipients.size(), recipients.size(), started,
+                deferred, dropped, unresolvedTokens.size(), ccObservers.size());
+        logger.info("[LIFECYCLE] service=cp event=wake_handoff_completed sessionId={} round={} "
+                        + "recipients={} started={} deferred={} dropped={} unresolved={} cc={}",
+                sessionId, wakeRoundId, recipients.size(), started, deferred, dropped,
+                unresolvedTokens.size(), ccObservers.size());
         for (MentionParser.RosterEntry observer : ccObservers) {
             try {
                 notifyObserver(sessionId, workspaceId, userId, wakeRoundId, observer);
@@ -275,18 +322,84 @@ public class WakeFanOutService {
                 sessionId, observer.participantId(), wakeRoundId);
     }
 
-    /** Bounded wait for the run's terminal event; a timeout just logs (Q3 续行 already done). */
+    /**
+     * PLAN-0648 task-34: the run may already be terminal when we start waiting (a fast answer, or the
+     * terminal event published before this registration). Reading the row first turns that race into
+     * a no-op instead of a full timeout — the timeout itself is only observability now, never the
+     * ordering mechanism.
+     */
+    private boolean alreadyTerminal(String runId) {
+        if (chatRunStatus == null) {
+            return false;
+        }
+        try {
+            return chatRunStatus.findById(UUID.fromString(runId))
+                    .map(view -> isTerminalStatus(view.status()))
+                    .orElse(false);
+        } catch (RuntimeException unreadable) {
+            return false;
+        }
+    }
+
+    private static boolean isTerminalStatus(String status) {
+        return status != null && (status.equals("succeeded") || status.equals("failed")
+                || status.equals("partial") || status.equals("ambiguous") || status.equals("cancelled"));
+    }
+
+    /** Last finished round's counters: enqueued == started + deferred + dropped (task-34 invariant). */
+    record WakeRoundStats(String roundId, int enqueued, int recipients, int started, int deferred,
+                          int dropped, int unresolved, int ccObservers) {
+        boolean balanced() {
+            return enqueued == started + deferred + dropped;
+        }
+    }
+
+    private volatile WakeRoundStats lastRound;
+
+    /** Package-private read seam for the invariant assertion (no production caller). */
+    WakeRoundStats lastRoundStats() {
+        return lastRound;
+    }
+
+    /**
+     * PLAN-0648 task-34: observation only. A single observer thread per process drains these waits,
+     * so a slow run can never occupy a fan-out thread; each wait logs its own outcome, including the
+     * structured timeout line, so "did the woken run ever finish" is answerable from logs alone.
+     */
+    private void observeTerminalAsync(String runId, long waitSeconds) {
+        OBSERVER.submit(() -> {
+            try {
+                awaitTerminal(runId, waitSeconds);
+            } catch (RuntimeException observerFailed) {
+                logger.warn("[LIFECYCLE] service=cp event=wake_observe_failed runId={} reason={}",
+                        runId, observerFailed.getClass().getSimpleName());
+            }
+        });
+    }
+
+    /** Bounded wait for the run's terminal event; a timeout only logs (dispatching already happened). */
     private void awaitTerminal(String runId, long waitSeconds) {
+        if (alreadyTerminal(runId)) {
+            logger.info("[LIFECYCLE] service=cp event=wake_await_already_terminal runId={}", runId);
+            return;
+        }
         CompletableFuture<Void> awaiter = new CompletableFuture<>();
         terminalAwaiters.put(runId, awaiter);
+        // Close the register/finish race: an event published between fire() and the put above would
+        // otherwise be missed and we would block for the whole timeout.
+        if (alreadyTerminal(runId)) {
+            terminalAwaiters.remove(runId, awaiter);
+            logger.info("[LIFECYCLE] service=cp event=wake_await_raced_terminal runId={}", runId);
+            return;
+        }
         try {
             awaiter.get(waitSeconds, TimeUnit.SECONDS);
         } catch (InterruptedException interrupted) {
             Thread.currentThread().interrupt();
             logger.warn("[LIFECYCLE] service=cp event=wake_await_interrupted runId={}", runId);
         } catch (Exception timedOut) {
-            logger.warn("[LIFECYCLE] service=cp event=wake_await_timeout runId={} waitSeconds={}",
-                    runId, waitSeconds);
+            logger.warn("[LIFECYCLE] service=cp event=wake_await_timeout runId={} waitSeconds={} "
+                    + "reason=no_terminal_event", runId, waitSeconds);
         } finally {
             terminalAwaiters.remove(runId, awaiter);
         }
@@ -303,12 +416,13 @@ public class WakeFanOutService {
         }
     }
 
-    private ExecutorService executorFor(UUID sessionId) {
-        return sessionExecutors.computeIfAbsent(sessionId,
-                key -> Executors.newSingleThreadExecutor(runnable -> {
-                    Thread thread = new Thread(runnable, "wake-fanout-" + key);
-                    thread.setDaemon(true);
-                    return thread;
-                }));
+    /**
+     * PLAN-0648 task-34: one shared pool for every round. Rounds are independent (each carries its
+     * own message), so they must not queue behind each other; ordering inside a round is kept by the
+     * sequential loop in runSerial. Bounded so a wedged round cannot spawn threads without limit,
+     * and daemon so shutdown never waits on an in-flight wake.
+     */
+    private static java.util.concurrent.ExecutorService wakePool() {
+        return WAKE_POOL;
     }
 }
