@@ -49,6 +49,19 @@ public final class ToolRefusalCodes {
      */
     public static final String TOOL_GRANT_DENIED = "TOOL_GRANT_DENIED";
 
+    /**
+     * Pre-dispatch refusal: the call's context does not match anything durable — no current
+     * Session/Run/Invocation/ToolCall for this caller, tool and tool-call id.
+     *
+     * <p>Deliberately a separate code from {@link #TOOL_GRANT_DENIED}: the actionable advice for the
+     * caller differs. {@code TOOL_GRANT_DENIED} means "you are not allowed to do this — ask for the
+     * permission", while this one means "retrying will not help; the run/session/tool-call context is
+     * wrong, repair it first" (e.g. a stale run id, a replayed tool-call id, or a call issued outside
+     * the run it claims to belong to). Same wire shape as the others (added 2026-11-04, user ruling);
+     * the durable audit action stays {@code agent_tool_call_context_rejected}.</p>
+     */
+    public static final String TOOL_CONTEXT_MISMATCH = "TOOL_CONTEXT_MISMATCH";
+
     private ToolRefusalCodes() {
     }
 }

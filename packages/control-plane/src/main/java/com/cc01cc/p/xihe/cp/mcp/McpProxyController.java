@@ -815,7 +815,11 @@ public class McpProxyController {
                 canonicalToolCallId(headers, body), toolName)) {
             audit.record(sessionId, toolName, "agent_tool_call_context_rejected",
                     "durable Session/Run/Invocation/ToolCall mismatch");
-            return problem(HttpStatus.FORBIDDEN, "FORBIDDEN", "Tool execution is not permitted");
+            // Pre-dispatch refusal → tool-result envelope, same rule as the authorization/policy
+            // gates below. Deliberately its own code: a context mismatch is not a permission problem
+            // (retrying with the same run/tool-call ids cannot succeed — the context must be fixed),
+            // so the caller must not be told to go ask for a grant.
+            return cpToolErrorResponse(body, ToolRefusalCodes.TOOL_CONTEXT_MISMATCH);
         }
         boolean cpOwnedSpawn = CP_MCP_SERVER_ID.equals(serverId) && SPAWN_AGENT_TOOL.equals(toolName);
         boolean cpOwnedAcquire = CP_MCP_SERVER_ID.equals(serverId) && ACQUIRE_CREDENTIAL_TOOL.equals(toolName);

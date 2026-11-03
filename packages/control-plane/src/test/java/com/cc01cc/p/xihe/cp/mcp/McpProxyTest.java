@@ -343,10 +343,25 @@ class McpProxyTest {
                 controller, "handleToolsCall", TEST_WS_UUID, body, headers, "sess-1",
                 internalAccessContext(TEST_WS_UUID, "u-1", "sess-1"));
 
-        assertEquals(HttpStatus.FORBIDDEN, response.getStatusCode());
+        // 2026-11-04: a pre-dispatch refusal answers with the coded tool-result envelope. This one is
+        // TOOL_CONTEXT_MISMATCH (not TOOL_GRANT_DENIED): the call context is wrong, so retrying the
+        // same run/tool-call ids cannot succeed and the caller must not be told to ask for a grant.
+        assertEquals(HttpStatus.OK, response.getStatusCode());
+        assertNotNull(response.getBody());
+        assertTrue(response.getBody().contains("\"isError\":true"),
+                "a refused call is still an error result, got: " + response.getBody());
+        assertTrue(response.getBody().contains("\"code\":\"TOOL_CONTEXT_MISMATCH\""),
+                "the context-mismatch code must reach the wire, got: " + response.getBody());
+        assertTrue(response.getBody().contains("Tool error: TOOL_CONTEXT_MISMATCH"),
+                "the model-visible text stays 'Tool error: CODE', got: " + response.getBody());
+        // Pre-dispatch invariant: the invocation row is opened *before* the gate by design (it is what
+        // the gate validates against), but nothing downstream of it may be touched — no lineage
+        // reservation, no grant evaluation, no approval row, no dispatch.
+        verifyNoInteractions(lineageInvocationService);
         verify(policyEngine, never()).allowsByGrant(any(), anyString(), anyString(), anyString(),
                 anyString(), anyString(), anyBoolean());
         verifyNoInteractions(mcpServerRepository, approvalService);
+        // The internal audit action keeps its own name (the wire code is a separate concern).
         verify(auditLogger).record(eq("sess-1"), eq("read_file"),
                 eq("agent_tool_call_context_rejected"), anyString());
     }
