@@ -23,7 +23,6 @@ import java.util.Set;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -212,6 +211,29 @@ class WakeChainServiceTest {
                 eq(SESSION_UUID), anyString());
     }
 
+    /**
+     * V6 diamond (design §3.2 path-scoped cycle detection): A→B→D and A→C→D both end at D, and D's
+     * principal is on <b>neither</b> path. The key is the walked path, not the whole tree: D is not a
+     * cycle, so both paths admit a run. A visited-set keyed on the tree would refuse the second leg —
+     * this is the regression the verify gate asks for.
+     */
+    @Test
+    void diamondEndingAtAFreshPrincipalIsAllowedOnBothPaths() {
+        stubChainRuns();
+        String root = rootRun();
+        chain.onAssistantContent(SESSION_ID, root, "@Bee @Cee 两条路径");   // A → B, A → C
+        chain.onAssistantContent(SESSION_ID, RUN_B.toString(), "@Dee 走 B"); // A→B→D
+        chain.onAssistantContent(SESSION_ID, RUN_C.toString(), "@Dee 走 C"); // A→C→D
+
+        verify(dispatch).fire(eq(D), eq("chain"), anyString(), eq(SESSION_UUID),
+                eq(RUN_B.toString()));
+        verify(dispatch).fire(eq(D), eq("chain"), anyString(), eq(SESSION_UUID),
+                eq(RUN_C.toString()));
+        verify(dispatch, times(2)).fire(eq(D), eq("chain"), anyString(),
+                eq(SESSION_UUID), anyString());
+        verify(eventStore, never()).append(any(), any(), any(), eq("wake_dispatch"), any());
+    }
+
     @Test
     void humanMentionsRouteThroughDispatchWhichNotifies() {
         UUID humanId = UUID.randomUUID();
@@ -305,7 +327,7 @@ class WakeChainServiceTest {
 
         assertRefusedAudit("depth_exceeded");
         com.fasterxml.jackson.databind.node.ObjectNode body = lastRefusedPayload();
-        assertFalse(body.path("error").asText().contains("delegation_limit_exceeded"),
+        assertEquals("depth_exceeded", body.path("reason").asText(),
                 "the wake-depth refusal wins; the spawn gate is never consulted: " + body);
         verify(budget, never()).maxSpawnDepth(any(), any(), any());
         verify(dispatch, never()).fire(eq(D), eq("chain"), anyString(), any(), anyString());
@@ -391,8 +413,8 @@ class WakeChainServiceTest {
         com.fasterxml.jackson.databind.node.ObjectNode body =
                 (com.fasterxml.jackson.databind.node.ObjectNode) payload.getValue();
         assertEquals("chain_refused", body.path("outcome").asText());
-        assertTrue(body.path("error").asText().contains(reason),
-                "refusal reason recorded: " + reason);
+        assertEquals(reason, body.path("reason").asText(),
+                "refusal reason recorded as the frozen `reason` token: " + reason);
     }
 
     private com.fasterxml.jackson.databind.node.ObjectNode lastRefusedPayload() {

@@ -51,9 +51,12 @@ import java.util.UUID;
  *       {@code ancestor_missing}/{@code tree_broken} — an orphan is never read as a depth-0 root
  *       (D30-08, shared with the spawn gate).</li>
  *   <li><b>refusals never create a run</b> — they are {@code wake_dispatch} events
- *       ({@code outcome=chain_refused}), the M4 audit surface. Zero new event names (T3.5):
- *       the payload only gains {@code parentRunId}/{@code rootRunId}/{@code wakeDepth}/
- *       {@code spawnDepth} fields.</li>
+ *       ({@code outcome=chain_refused}) plus one {@code wake_chain_refused} line, the M4 audit
+ *       surface. Zero new event names (T3.5, design §7.1): every refusal cause rides the single
+ *       frozen event name in its {@code reason} field —
+ *       {@code cycle|depth_exceeded|ancestor_missing|tree_broken|delegation_limit_exceeded|
+ *       root_principal_missing|policy_unreadable} — and the payload gains
+ *       {@code parentRunId}/{@code rootRunId}/{@code wakeDepth}/{@code spawnDepth} fields only.</li>
  * </ul>
  */
 @Service
@@ -134,22 +137,23 @@ public class WakeChainService {
         try {
             parentRunUuid = UUID.fromString(parentRunId);
         } catch (IllegalArgumentException notUuid) {
-            auditRefused(sessionId, link, parentRunId, null, -1, -1, "ancestor_missing");
+            auditRefused(sessionId, link, parentRunId, null, -1, -1, "ancestor_missing",
+                    "failureType=" + notUuid.getClass().getSimpleName());
             return;
         }
         ChatRun parentRun = chatRunRepository.findById(parentRunUuid).orElse(null);
         if (parentRun == null) {
-            auditRefused(sessionId, link, parentRunId, null, -1, -1, "ancestor_missing");
+            auditRefused(sessionId, link, parentRunId, null, -1, -1, "ancestor_missing", null);
             return;
         }
         DelegationChainWalker.ChainWalk walk;
         try {
             walk = chainWalker.walkFromRun(parentRun);
         } catch (DelegationChainWalker.AncestorMissingException broken) {
-            logger.warn("[LIFECYCLE] service=cp event=wake_chain_ancestor_missing sessionId={} "
-                    + "parentRunId={} reason={} detail={}", sessionId, parentRunId,
-                    broken.reason(), broken.getMessage());
-            auditRefused(sessionId, link, parentRunId, null, -1, -1, broken.reason());
+            // No separate event name: the walker's reason (ancestor_missing|tree_broken) is the one
+            // frozen wake_chain_refused reason field (design §7.1).
+            auditRefused(sessionId, link, parentRunId, null, -1, -1, broken.reason(),
+                    broken.getMessage());
             return;
         }
         // The would-be child: a root run is a single-node path, so hops == the child's wake depth
@@ -163,24 +167,25 @@ public class WakeChainService {
         UUID linkPrincipalId = principalByParticipant.get(link.participantId());
         String cycleKey = linkPrincipalId == null ? null : linkPrincipalId.toString();
         if (cycleKey != null && walk.principalPath().contains(cycleKey)) {
-            auditRefused(sessionId, link, parentRunId, rootRunId, wakeDepth, spawnDepth, "cycle");
+            auditRefused(sessionId, link, parentRunId, rootRunId, wakeDepth, spawnDepth, "cycle",
+                    null);
             return;
         }
         // T3.4: two readings, two ceilings, both fail-closed; the chain's own depth gate first.
         if (wakeDepth > maxDepth()) {
             auditRefused(sessionId, link, parentRunId, rootRunId, wakeDepth, spawnDepth,
-                    "depth_exceeded");
+                    "depth_exceeded", null);
             return;
         }
-        Integer maxSpawnDepth = resolveMaxSpawnDepth(walk, rootRunId);
-        if (maxSpawnDepth == null) {
+        SpawnLimit limit = resolveMaxSpawnDepth(walk, rootRunId);
+        if (limit.maxSpawnDepth() == null) {
             auditRefused(sessionId, link, parentRunId, rootRunId, wakeDepth, spawnDepth,
-                    "delegation_policy_invalid");
+                    limit.refusalReason(), limit.detail());
             return;
         }
-        if (spawnDepth > maxSpawnDepth) {
+        if (spawnDepth > limit.maxSpawnDepth()) {
             auditRefused(sessionId, link, parentRunId, rootRunId, wakeDepth, spawnDepth,
-                    "delegation_limit_exceeded");
+                    "delegation_limit_exceeded", null);
             return;
         }
 
@@ -199,30 +204,32 @@ public class WakeChainService {
 
     /**
      * T3.4: the spawn-depth ceiling comes from the SAME resolver the spawn gate uses
-     * ({@link DelegationBudgetService#maxSpawnDepth}), rooted at the walked chain root. Returns
-     * {@code null} when the limit is unresolvable (root without a principal, unreadable/invalid
-     * stored policy) — the caller refuses the link fail-closed, mirroring the spawn gate.
+     * ({@link DelegationBudgetService#maxSpawnDepth}), rooted at the walked chain root. An
+     * unresolvable limit (root without a principal, unreadable/invalid stored policy) comes back as
+     * a refusal carrying its own reason token — the caller refuses the link fail-closed, mirroring
+     * the spawn gate. Both causes ride the one {@code wake_chain_refused} event name; the reason
+     * vocabulary ({@code root_principal_missing} / {@code policy_unreadable}) matches the spawn
+     * gate's audit detail rather than inventing a second event.
      */
-    private Integer resolveMaxSpawnDepth(DelegationChainWalker.ChainWalk walk, String rootRunId) {
+    private SpawnLimit resolveMaxSpawnDepth(DelegationChainWalker.ChainWalk walk, String rootRunId) {
         String rootPrincipalId = walk.principalPath().getLast();
         if (rootPrincipalId == null) {
-            logger.warn("[LIFECYCLE] service=cp event=wake_chain_root_principal_missing rootRunId={}",
-                    rootRunId);
-            return null;
+            return new SpawnLimit(null, "root_principal_missing", "rootRunId=" + rootRunId);
         }
         try {
-            return delegationBudgetService.maxSpawnDepth(rootPrincipalId,
-                    walk.hops().getLast().sessionId().toString(), rootRunId);
+            return new SpawnLimit(delegationBudgetService.maxSpawnDepth(rootPrincipalId,
+                    walk.hops().getLast().sessionId().toString(), rootRunId), null, null);
         } catch (CpApiException policyBroken) {
-            logger.warn("[LIFECYCLE] service=cp event=wake_chain_policy_unreadable rootRunId={} "
-                    + "rootPrincipalId={} code={}", rootRunId, rootPrincipalId,
-                    policyBroken.getCode());
-            return null;
+            return new SpawnLimit(null, "policy_unreadable", "code=" + policyBroken.getCode());
         }
     }
 
+    /** A resolved ceiling, or the refusal token + diagnostic detail when it cannot be resolved. */
+    private record SpawnLimit(Integer maxSpawnDepth, String refusalReason, String detail) {}
+
     private void auditRefused(String sessionId, MentionParser.Mention link, String parentRunId,
-                              String rootRunId, int wakeDepth, int spawnDepth, String reason) {
+                              String rootRunId, int wakeDepth, int spawnDepth, String reason,
+                              String detail) {
         Session session = sessionRepository.findById(UUID.fromString(sessionId)).orElse(null);
         ObjectNode payload = objectMapper.createObjectNode();
         // The root round string the M2 registry used to carry: "wake:chain:" + the ROOT run id,
@@ -232,23 +239,22 @@ public class WakeChainService {
         payload.put("triggerSource", "chain");
         payload.put("outcome", "chain_refused");
         payload.put("parentRunId", parentRunId);
+        // The refusal token itself — the verify contract reads `reason`, the same key the spawn gate's
+        // audit detail and the docs use (a prose "error" string was the M3 drift).
+        payload.put("reason", reason);
         if (rootRunId != null) {
             // T3.5 observability fields — same wake_dispatch event, more context, no new name.
             payload.put("rootRunId", rootRunId);
             payload.put("wakeDepth", wakeDepth);
             payload.put("spawnDepth", spawnDepth);
-            payload.put("error", reason + " at wakeDepth " + wakeDepth
-                    + " spawnDepth " + spawnDepth);
-        } else {
-            payload.put("error", reason);
         }
         eventStoreService.append(sessionId, session == null ? null : session.getWorkspaceId(),
                 session == null || session.getUserId() == null ? "" : session.getUserId(),
                 EVENT_WAKE_DISPATCH, payload);
-        logger.info("[LIFECYCLE] service=cp event=wake_chain_refused sessionId={} participantId={} "
-                + "reason={} parentRunId={} rootRunId={} wakeDepth={} spawnDepth={}",
+        logger.warn("[LIFECYCLE] service=cp event=wake_chain_refused sessionId={} participantId={} "
+                        + "reason={} parentRunId={} rootRunId={} wakeDepth={} spawnDepth={} detail={}",
                 sessionId, link.participantId(), reason, parentRunId, rootRunId,
-                wakeDepth, spawnDepth);
+                wakeDepth, spawnDepth, detail);
     }
 
     /**

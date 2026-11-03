@@ -137,11 +137,9 @@ public class WakeDispatchService {
             try {
                 chainParentRunId = UUID.fromString(parentRunId);
             } catch (IllegalArgumentException notUuid) {
-                logger.warn("[LIFECYCLE] service=cp event=wake_chain_parent_invalid sessionId={} "
-                        + "parentRunId={} failureType={}", sessionId, parentRunId,
-                        notUuid.getClass().getSimpleName());
                 return chainRefused(sessionId, participantId, triggerSource, wakeRoundId,
-                        "ancestor_missing", parentRunId);
+                        "parent_invalid", parentRunId,
+                        "failureType=" + notUuid.getClass().getSimpleName());
             }
             WakeFireResult chainRefused = refuseBrokenChain(
                     sessionId, participantId, participant.getPrincipalId(),
@@ -203,9 +201,9 @@ public class WakeDispatchService {
      *   <li>missing parent run or a broken ancestor walk (session physically deleted) →
      *       {@code chain_refused} with {@code ancestor_missing} — the same shared
      *       {@link DelegationChainWalker} determination the spawn budget gate consumes;</li>
-     *   <li>this parent run already woke the same responder principal → {@code chain_refused} as a
-     *       {@code cycle}: the path-scoped reading, made durable, so a duplicate hop can never
-     *       admit a second run.</li>
+     *   <li>this parent run already woke the same responder principal → {@code chain_refused} with
+     *       {@code reason=duplicate}: the path-scoped reading, made durable, so a duplicate hop can
+     *       never admit a second run.</li>
      * </ul>
      */
     private WakeFireResult refuseBrokenChain(UUID sessionId, UUID participantId, UUID responderPrincipalId,
@@ -215,29 +213,38 @@ public class WakeDispatchService {
         ChatRun parentRun = chatRunRepository.findByIdForUpdate(parentRunId).orElse(null);
         if (parentRun == null) {
             return chainRefused(sessionId, participantId, triggerSource, wakeRoundId,
-                    "ancestor_missing", parentRunIdRaw);
+                    "ancestor_missing", parentRunIdRaw, null);
         }
         try {
             chainWalker.walkFromRun(parentRun);
         } catch (DelegationChainWalker.AncestorMissingException missing) {
-            logger.warn("[LIFECYCLE] service=cp event=wake_chain_ancestor_missing sessionId={} "
-                    + "parentRunId={} reason={} detail={}", sessionId, parentRunId,
-                    missing.reason(), missing.getMessage());
+            // The walker's own reason rides along as detail: the frozen audit token stays
+            // ancestor_missing (design §7.1 / D30-08), the structurally-broken variant is diagnostic.
             return chainRefused(sessionId, participantId, triggerSource, wakeRoundId,
-                    "ancestor_missing", parentRunIdRaw);
+                    "ancestor_missing", parentRunIdRaw,
+                    "walkReason=" + missing.reason() + " detail=" + missing.getMessage());
         }
         if (chatRunRepository.existsByParentRunIdAndAgentPrincipalId(
                 parentRunId.toString(), responderPrincipalId)) {
-            logger.info("[LIFECYCLE] service=cp event=wake_chain_duplicate_refused sessionId={} "
-                    + "parentRunId={} responderPrincipalId={}", sessionId, parentRunId, responderPrincipalId);
             return chainRefused(sessionId, participantId, triggerSource, wakeRoundId,
-                    "cycle", parentRunIdRaw);
+                    "duplicate", parentRunIdRaw,
+                    "responderPrincipalId=" + responderPrincipalId);
         }
         return null;
     }
 
+    /**
+     * The one refusal funnel for every chain-admission rejection. Event names are the query/alert
+     * contract surface, so this never invents one: the single pre-existing {@code wake_chain_refused}
+     * line carries the cause in {@code reason}, and {@link #audit} writes the durable
+     * {@code wake_dispatch{outcome=chain_refused, reason=…}} row (design §7.1/§7.2).
+     */
     private WakeFireResult chainRefused(UUID sessionId, UUID participantId, String triggerSource,
-                                        String wakeRoundId, String reason, String parentRunId) {
+                                        String wakeRoundId, String reason, String parentRunId,
+                                        String detail) {
+        logger.warn("[LIFECYCLE] service=cp event=wake_chain_refused sessionId={} participantId={} "
+                        + "reason={} parentRunId={} detail={}",
+                sessionId, participantId, reason, parentRunId, detail);
         audit(sessionId, participantId, triggerSource, wakeRoundId, "chain_refused", reason, null,
                 parentRunId);
         return new WakeFireResult(false, null, "chain_refused");
@@ -254,8 +261,13 @@ public class WakeDispatchService {
         });
     }
 
+    /**
+     * The durable {@code wake_dispatch} audit row. The failure cause rides the {@code reason} field —
+     * the same key the spawn gate's audit detail and the docs use (design §7.1 froze the vocabulary
+     * under ONE event name; {@code error} was the M3 drift).
+     */
     private void audit(UUID sessionId, UUID participantId, String triggerSource,
-                       String wakeRoundId, String outcome, String error, UUID auditRunId,
+                       String wakeRoundId, String outcome, String reason, UUID auditRunId,
                        String parentRunId) {
         Session session = sessionId == null ? null : sessionRepository.findById(sessionId).orElse(null);
         ObjectNode payload = objectMapper.createObjectNode();
@@ -263,8 +275,8 @@ public class WakeDispatchService {
         payload.put("participantId", participantId == null ? "" : participantId.toString());
         payload.put("triggerSource", triggerSource == null ? "" : triggerSource);
         payload.put("outcome", outcome);
-        if (error != null) {
-            payload.put("error", error);
+        if (reason != null) {
+            payload.put("reason", reason);
         }
         if (auditRunId != null) {
             payload.put("runId", auditRunId.toString());

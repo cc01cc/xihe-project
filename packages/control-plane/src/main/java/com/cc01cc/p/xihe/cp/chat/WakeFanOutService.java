@@ -154,13 +154,15 @@ public class WakeFanOutService {
             }
             MentionParser.RosterEntry entry = byId.get(participantId);
             if (entry == null) {
-                logger.warn("[LIFECYCLE] service=cp event=wake_cc_ignored sessionId={} participantId={} "
-                        + "reason=not_in_roster", sessionId, participantId);
+                logger.warn("[LIFECYCLE] service=cp event=wake_dispatch triggerSource=cc "
+                                + "outcome=ignored reason=not_in_roster sessionId={} participantId={}",
+                        sessionId, participantId);
                 continue;
             }
             if (!entry.enabled()) {
-                logger.info("[LIFECYCLE] service=cp event=wake_cc_ignored sessionId={} participantId={} "
-                        + "reason=disabled", sessionId, participantId);
+                logger.info("[LIFECYCLE] service=cp event=wake_dispatch triggerSource=cc "
+                                + "outcome=ignored reason=disabled sessionId={} participantId={}",
+                        sessionId, participantId);
                 continue;
             }
             observers.add(entry);
@@ -197,11 +199,12 @@ public class WakeFanOutService {
             try {
                 notifyObserver(sessionId, workspaceId, userId, wakeRoundId, observer);
             } catch (RuntimeException failure) {
-                // Q3: a failed notification never aborts the round either.
-                logger.error("[LIFECYCLE] service=cp event=wake_cc_failed sessionId={} "
-                        + "participantId={} round={} failureType={}", sessionId,
-                        observer.participantId(), wakeRoundId, failure.getClass().getSimpleName(),
-                        failure);
+                // Q3: a failed notification never aborts the round either. Same frozen event name as
+                // every other cc outcome; the failure is the `failed` outcome, not a new event.
+                logger.error("[LIFECYCLE] service=cp event=wake_dispatch triggerSource=cc "
+                                + "outcome=failed sessionId={} participantId={} round={} failureType={}",
+                        sessionId, observer.participantId(), wakeRoundId,
+                        failure.getClass().getSimpleName(), failure);
             }
         }
     }
@@ -228,7 +231,8 @@ public class WakeFanOutService {
                 cursorRepository.save(cursor);
             });
         }
-        logger.info("[LIFECYCLE] service=cp event=wake_cc_notify sessionId={} participantId={} round={}",
+        logger.info("[LIFECYCLE] service=cp event=wake_dispatch triggerSource=cc outcome=notify "
+                        + "sessionId={} participantId={} round={}",
                 sessionId, observer.participantId(), wakeRoundId);
     }
 

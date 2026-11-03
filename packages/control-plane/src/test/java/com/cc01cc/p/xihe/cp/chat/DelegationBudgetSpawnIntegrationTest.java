@@ -2,6 +2,7 @@ package com.cc01cc.p.xihe.cp.chat;
 
 import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
 import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
+import com.cc01cc.p.xihe.cp.entity.ChatApproval;
 import com.cc01cc.p.xihe.cp.entity.ChatRun;
 import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.entity.User;
@@ -10,7 +11,9 @@ import com.cc01cc.p.xihe.cp.entity.WorkspaceAgent;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceAgentId;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
 import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
+import com.cc01cc.p.xihe.cp.policy.PolicyRevision;
 import com.cc01cc.p.xihe.cp.repository.AgentPrincipalRepository;
+import com.cc01cc.p.xihe.cp.repository.ChatApprovalRepository;
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
 import com.cc01cc.p.xihe.cp.repository.McpInvocationRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
@@ -24,9 +27,12 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
 
+import java.sql.Timestamp;
+import java.time.Instant;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -94,6 +100,15 @@ class DelegationBudgetSpawnIntegrationTest extends AbstractIntegrationTest {
     @Autowired
     private JdbcTemplate jdbcTemplate;
 
+    @Autowired
+    private ApprovalService approvalService;
+
+    @Autowired
+    private ChatApprovalRepository approvalRepository;
+
+    @Autowired
+    private PolicyRevision policyRevision;
+
     private String userId;
     private String workspaceId;
     private UUID principalId;
@@ -142,6 +157,50 @@ class DelegationBudgetSpawnIntegrationTest extends AbstractIntegrationTest {
         ChatSubmissionService.SpawnResult replay = spawnDirect(parent);
         assertEquals(first.runId(), replay.runId(), "a retry must replay the existing child run");
         assertEquals(first.sessionId(), replay.sessionId(), "and the existing child session");
+    }
+
+    // ------------------------------------------- V3: a refusal never burns a grant
+
+    /**
+     * PLAN-0630 verify V3 (顺序不变式, second half): the budget gate sits <b>before</b>
+     * {@code consumeApprovedGrant}, so a refusal must not burn the user's one-shot approval. The test
+     * is built so it goes red if {@code requireWithinBudget} is moved after the consume call: the
+     * grant is a genuinely consumable manual-mode one-shot for exactly this invocation (proven at the
+     * end), and the refusal is a pure budget refusal ({@code count_exceeded}).
+     */
+    @Test
+    void aBudgetRefusalDoesNotConsumeTheOneShotApproval() {
+        limitTo("{\"maxCount\":1,\"maxDepth\":3}");
+        ParentFixture parent = fixture();
+        spawnDirect(parent); // fills the single slot: the tree is at maxCount
+
+        String secondToolCallId = UUID.randomUUID().toString();
+        SpawnTestSupport.seedAgentInvocation(mcpInvocationRepository,
+                parent.parentSessionId(), parent.parentRunId(), workspaceId, userId,
+                secondToolCallId, "spawn_agent", "{\"prompt\":\"approval\"}");
+        UUID grantId = oneShotSpawnGrant(parent, "{\"prompt\":\"approval\"}");
+        ChatSubmissionService.SpawnInvocation invocation =
+                submissionService.prepareSpawnInvocation(parent.parentRunId(), secondToolCallId);
+        int sessionsBefore = sessionCount();
+        int runsBefore = runCount();
+
+        DelegationRefusedException refused = assertThrows(DelegationRefusedException.class,
+                () -> spawnService.execute(invocation,
+                        new ChatSubmissionService.SpawnAuthorization(invocation.authorizationBody(),
+                                grantId.toString(), null)));
+
+        assertEquals("DELEGATION_LIMIT_EXCEEDED", refused.getCode());
+        assertTrue(refused.auditDetail().contains("\"reason\":\"count_exceeded\""),
+                refused.auditDetail());
+        assertEquals(sessionsBefore, sessionCount(), "a refusal creates no child Session");
+        assertEquals(runsBefore, runCount(), "a refusal creates no child ChatRun");
+        assertNull(grantConsumedAt(grantId),
+                "the budget gate is BEFORE consumeApprovedGrant: a refusal must never burn the grant");
+        // The NULL above only proves the ordering if the grant was consumable at all — consume it now.
+        assertTrue(approvalService.consumeApprovedGrant(grantId.toString(), userId, workspaceId,
+                        parent.parentSessionId(), ChatSubmissionService.SPAWN_TOOL_NAME,
+                        invocation.authorizationBody()),
+                "the refused attempt left the one-shot grant untouched and still usable");
     }
 
     // ------------------------------------------------- INV-1 + INV-7 (audit)
@@ -259,6 +318,43 @@ class DelegationBudgetSpawnIntegrationTest extends AbstractIntegrationTest {
                 submissionService.prepareSpawnInvocation(parent.parentRunId(), parent.toolCallId());
         return spawnService.execute(invocation,
                 new ChatSubmissionService.SpawnAuthorization(invocation.authorizationBody(), null, null));
+    }
+
+    /**
+     * V3 fixture: a live manual-mode one-shot SPAWN_AGENT grant for exactly one invocation. Mirrors the
+     * row the CP gate writes — {@code details} is the {@code {tool, arguments}} preview
+     * {@code consumeApprovedGrant} matches against — and stamps the decision-time columns
+     * (policy revision, sandbox generation, mode, reuse scope) so the grant passes every T1.7 check.
+     */
+    private UUID oneShotSpawnGrant(ParentFixture parent, String argumentsPreview) {
+        UUID grantId = UUID.randomUUID();
+        var details = objectMapper.createObjectNode();
+        details.put("tool", ChatSubmissionService.SPAWN_TOOL_NAME);
+        try {
+            details.set("arguments", objectMapper.readTree(argumentsPreview));
+        } catch (Exception error) {
+            throw new AssertionError("bad grant fixture: " + argumentsPreview, error);
+        }
+        ChatApproval approval = new ChatApproval(grantId.toString(), parent.parentRunId(),
+                parent.parentSessionId(), userId, workspaceId, ChatSubmissionService.SPAWN_TOOL_NAME,
+                "Execute " + ChatSubmissionService.SPAWN_TOOL_NAME, details.toString(), "approved",
+                Instant.now().plusSeconds(300));
+        approval.setApproved(true);
+        approval.setDecisionKind("once");
+        approval.setReuseScope("once");
+        approval.setModeAtGrant("manual");
+        approval.setPolicyRevision(policyRevision.current());
+        Workspace workspace = workspaceRepository.findById(UUID.fromString(workspaceId)).orElseThrow();
+        approval.setSandboxGeneration(workspace.getGeneration() == null ? 0 : workspace.getGeneration());
+        approvalRepository.saveAndFlush(approval);
+        return grantId;
+    }
+
+    /** Null = the one-shot approval was never consumed (the V3 assertion). */
+    private Timestamp grantConsumedAt(UUID grantId) {
+        return jdbcTemplate.queryForObject(
+                "SELECT grant_consumed_at FROM approval_requests WHERE request_id = ?",
+                Timestamp.class, grantId);
     }
 
     private String saveRun(Session session) {
