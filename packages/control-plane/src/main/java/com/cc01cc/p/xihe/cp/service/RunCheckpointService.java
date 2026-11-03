@@ -287,10 +287,14 @@ public class RunCheckpointService {
      */
     public record DescendantImpact(String sessionId, List<String> overlappingPaths) {}
 
-    /** Public workspace slice projection. Expired rows are omitted by {@link #list}. */
+    /**
+     * Public workspace slice projection. Expired rows are omitted by {@link #list}.
+     * {@code actorPrincipalId} mirrors {@code chat_runs.agent_principal_id}
+     * (PLAN-0623 V92); it stays null on legacy rows — no backfill, no migration.
+     */
     public record View(UUID id, String sliceRef, Instant capturedAt, String sourceRunId,
-                       String sourceSessionId, String predecessorRef, String state,
-                       String unrollableReason, int changedCount,
+                       String sourceSessionId, String actorPrincipalId, String predecessorRef,
+                       String state, String unrollableReason, int changedCount,
                        List<RuntimeCheckpointClient.ChangedFile> changedFiles,
                        boolean truncated, List<String> opaqueNestedRepos, RevertView revert) {}
 
@@ -317,23 +321,57 @@ public class RunCheckpointService {
 
     /** Lists all non-expired checkpoint slices for a workspace. */
     public List<View> list(String workspaceId) {
-        return checkpoints.findByWorkspaceIdAndStateNotOrderByCapturedAtDesc(
+        List<RunCheckpoint> rows = checkpoints.findByWorkspaceIdAndStateNotOrderByCapturedAtDesc(
                         workspaceId, RunCheckpoint.STATE_EXPIRED)
                 .stream()
                 .sorted(Comparator.comparing(RunCheckpoint::getCapturedAt,
                         Comparator.nullsLast(Comparator.reverseOrder())))
-                .map(this::toView)
                 .toList();
+        Map<String, String> principals = actorPrincipalsByRunId(rows);
+        return rows.stream().map(row -> toView(row, principals)).toList();
     }
 
-    private View toView(RunCheckpoint row) {
+    /**
+     * PLAN-0640 T2: one batch lookup of {@code chat_runs.agent_principal_id} for the
+     * whole projection (JOIN via {@code findAllById}), keeping the run table the single
+     * source of truth instead of a second durable column.
+     */
+    private Map<String, String> actorPrincipalsByRunId(List<RunCheckpoint> rows) {
+        List<UUID> runIds = rows.stream()
+                .map(RunCheckpoint::getSourceRunId)
+                .filter(Objects::nonNull)
+                .filter(RunCheckpointService::isUuid)
+                .distinct()
+                .map(UUID::fromString)
+                .toList();
+        if (runIds.isEmpty()) {
+            return Map.of();
+        }
+        Map<String, String> principals = new LinkedHashMap<>();
+        for (ChatRun run : chatRuns.findAllById(runIds)) {
+            principals.put(run.getId().toString(),
+                    run.getAgentPrincipalId() == null ? null : run.getAgentPrincipalId().toString());
+        }
+        return principals;
+    }
+
+    private static boolean isUuid(String value) {
+        try {
+            UUID.fromString(value);
+            return true;
+        } catch (IllegalArgumentException e) {
+            return false;
+        }
+    }
+
+    private View toView(RunCheckpoint row, Map<String, String> principals) {
         List<RuntimeCheckpointClient.ChangedFile> changed = parseChangedFiles(row.getChangedFiles());
         List<RuntimeCheckpointClient.ChangedFile> capped = changed.size() > MAX_VIEW_FILES
                 ? List.copyOf(changed.subList(0, MAX_VIEW_FILES))
                 : changed;
         return new View(row.getId(), row.getSliceRef(), row.getCapturedAt(), row.getSourceRunId(),
-                row.getSourceSessionId(), row.getPredecessorRef(), row.getState(),
-                row.getUnrollableReason(), changed.size(), capped,
+                row.getSourceSessionId(), principals.get(row.getSourceRunId()), row.getPredecessorRef(),
+                row.getState(), row.getUnrollableReason(), changed.size(), capped,
                 changed.size() > MAX_VIEW_FILES, parseStringList(row.getOpaqueNestedRepos()), revertView(row));
     }
 
