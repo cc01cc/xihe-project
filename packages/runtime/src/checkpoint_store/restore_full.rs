@@ -25,9 +25,31 @@ pub struct FullRestoreOptions {
     /// Explicitly allow deleting a path whose current content differs from the
     /// tail manifest. Default is to preserve it and report it.
     pub force_modified_deletions: bool,
+    /// Resume a marker left by an interrupted restore of the same target.
+    pub resume_same_target: bool,
     /// Test-only fault injection after the destructive deletion phase.
     #[cfg(test)]
     pub fail_after_deletes: bool,
+}
+
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize, PartialEq, Eq)]
+pub struct RestoreMarker {
+    pub v: u32,
+    pub restore_id: String,
+    pub root_id: String,
+    pub target_slice: String,
+    pub tail_slice: Option<String>,
+    pub pid: u32,
+    pub started_at_ms: u64,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RestoreStatus {
+    pub incomplete: bool,
+    pub marker: Option<RestoreMarker>,
+    pub marker_path: PathBuf,
+    pub trash_entries: Vec<String>,
+    pub message: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -63,6 +85,8 @@ pub enum FullRestoreError {
     TypeConflict { path: String, detail: String },
     #[error("another restore is incomplete; marker exists at {0:?}")]
     RestoreIncomplete(PathBuf),
+    #[error("restore marker is corrupt: {0}")]
+    MarkerCorrupt(String),
     #[error("modified since capture (tail {expected:?}, current {actual:?}): {path:?}")]
     ModifiedDeletion {
         path: String,
@@ -327,6 +351,82 @@ fn clear_marker(path: &Path) -> Result<(), FullRestoreError> {
     }
 }
 
+fn read_marker(work_tree: &Path) -> Result<Option<RestoreMarker>, FullRestoreError> {
+    let path = work_tree.join(RESTORE_MARKER);
+    let bytes = match fs::read(&path) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(io_error(&path, error)),
+    };
+    serde_json::from_slice(&bytes)
+        .map(Some)
+        .map_err(|error| FullRestoreError::MarkerCorrupt(error.to_string()))
+}
+
+fn trash_entries(work_tree: &Path) -> Vec<String> {
+    fn walk(root: &Path, current: &Path, out: &mut Vec<String>) {
+        let Ok(entries) = fs::read_dir(current) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let Ok(metadata) = fs::symlink_metadata(&path) else {
+                continue;
+            };
+            if metadata.is_dir() && !is_reparse(&metadata) {
+                walk(root, &path, out);
+            } else if metadata.is_file() {
+                out.push(
+                    path.strip_prefix(root)
+                        .unwrap_or(&path)
+                        .to_string_lossy()
+                        .replace('\\', "/"),
+                );
+            }
+        }
+    }
+    let base = work_tree.join(RESTORE_TRASH);
+    let mut out = Vec::new();
+    walk(&base, &base, &mut out);
+    out.sort();
+    out
+}
+
+/// Report whether an interrupted restore left a marker/trash. This is the
+/// T2.3 status primitive consumed by the runtime/CP projection later.
+pub fn restore_status(work_tree: &Path) -> Result<RestoreStatus, FullRestoreError> {
+    let marker_path = work_tree.join(RESTORE_MARKER);
+    let trash_entries = trash_entries(work_tree);
+    match read_marker(work_tree) {
+        Ok(Some(marker)) => Ok(RestoreStatus {
+            incomplete: true,
+            message: Some(format!(
+                "restore {} for slice {} was interrupted; rerun the same target with resume_same_target=true; quarantined files: {}",
+                marker.restore_id,
+                marker.target_slice,
+                trash_entries.len()
+            )),
+            marker: Some(marker),
+            marker_path,
+            trash_entries,
+        }),
+        Ok(None) => Ok(RestoreStatus {
+            incomplete: false,
+            marker: None,
+            marker_path,
+            trash_entries,
+            message: None,
+        }),
+        Err(error) => Ok(RestoreStatus {
+            incomplete: true,
+            marker: None,
+            marker_path,
+            trash_entries,
+            message: Some(format!("restore marker cannot be parsed: {error}")),
+        }),
+    }
+}
+
 fn ensure_trash_base(work_tree: &Path) -> Result<PathBuf, FullRestoreError> {
     let base = work_tree.join(RESTORE_TRASH);
     match fs::symlink_metadata(&base) {
@@ -420,15 +520,31 @@ pub fn restore_full(
         }
     }
 
-    let restore_id = format!("{}-{}", std::process::id(), now_ms());
     let trash_base = ensure_trash_base(work_tree)?;
-    let marker = mark_incomplete(
-        work_tree,
-        root_id,
-        slice_id,
-        &restore_id,
-        tail_slice.as_ref(),
-    )?;
+    let marker_path = work_tree.join(RESTORE_MARKER);
+    let existing = read_marker(work_tree)?;
+    let (marker, restore_id) = match existing {
+        Some(marker) => {
+            if !options.resume_same_target
+                || marker.root_id != root_id
+                || marker.target_slice != slice_id
+            {
+                return Err(FullRestoreError::RestoreIncomplete(marker_path));
+            }
+            (marker_path, marker.restore_id)
+        }
+        None => {
+            let restore_id = format!("{}-{}", std::process::id(), now_ms());
+            let marker = mark_incomplete(
+                work_tree,
+                root_id,
+                slice_id,
+                &restore_id,
+                tail_slice.as_ref(),
+            )?;
+            (marker, restore_id)
+        }
+    };
     let trash_root = trash_base.join(&restore_id);
     let mut stats = FullRestoreStats::default();
     let result = (|| -> Result<(), FullRestoreError> {
@@ -801,9 +917,22 @@ mod tests {
         let root = workspace.path().join("ws");
         fs::create_dir_all(&root).expect("root");
         write(&root.join("a.txt"), "one");
-        fs::write(root.join(RESTORE_MARKER), "{}").expect("marker");
         let store = Store::init(workspace.path().join("store")).expect("store");
         let first = capture_root(&store, &root, "ws-1", None, None).expect("capture");
+        fs::write(
+            root.join(RESTORE_MARKER),
+            serde_json::to_vec(&serde_json::json!({
+                "v": 1,
+                "restore_id": "stale",
+                "root_id": "ws-1",
+                "target_slice": first.slice_id,
+                "tail_slice": null,
+                "pid": 1,
+                "started_at_ms": 0,
+            }))
+            .expect("marker json"),
+        )
+        .expect("marker");
         let error = restore_full(
             &store,
             "ws-1",
@@ -817,6 +946,30 @@ mod tests {
             "{error:?}"
         );
         assert_eq!(fs::read_to_string(root.join("a.txt")).expect("a"), "one");
+
+        let status = restore_status(&root).expect("status");
+        assert!(status.incomplete);
+        assert!(status.marker.is_some());
+        assert!(
+            status
+                .message
+                .as_deref()
+                .is_some_and(|message| message.contains("interrupted"))
+        );
+        let resumed = restore_full(
+            &store,
+            "ws-1",
+            &first.slice_id,
+            &root,
+            &FullRestoreOptions {
+                resume_same_target: true,
+                ..FullRestoreOptions::default()
+            },
+        )
+        .expect("resume");
+        assert_eq!(resumed.restored, 1);
+        assert!(!root.join(RESTORE_MARKER).exists());
+        assert!(!restore_status(&root).expect("status").incomplete);
     }
 
     #[test]
