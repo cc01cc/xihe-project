@@ -73,10 +73,14 @@ const CFG = {
     model: envValue("XIHE_EVAL_LLM_MODEL", "eval-fake-model"),
     llmBaseUrl: `http://127.0.0.1:${Number(envValue("XIHE_EVAL_LLM_PORT", "12762"))}/v1`,
     connectionKey: envValue("XIHE_EVAL_CONNECTION_KEY", "eval-fake-llm"),
+    // PLAN-0553: a connection without a credential cannot issue a run lease any more,
+    // so the fake provider connection is created with a throwaway key (the fixture
+    // server ignores Authorization). Not a real secret.
+    llmApiKey: envValue("XIHE_EVAL_LLM_API_KEY", "eval-fake-llm-not-a-secret"),
     principalName: envValue("XIHE_EVAL_PRINCIPAL_NAME", "eval0540-agent"),
     runMaxTurns: Number(envValue("XIHE_EVAL_RUN_MAX_TURNS", "2")),
     stateFile: envValue("XIHE_EVAL_STATE_FILE", DEFAULT_STATE_FILE),
-    providerId: "custom-openai-compatible",
+    providerId: envValue("XIHE_EVAL_LLM_PROVIDER", "openai"),
     apiTypeId: "openai-chat-completions",
     apiTypeVersion: 1,
     mcpServerId: "11111111-1111-4111-8111-111111111111",
@@ -172,10 +176,15 @@ function saveState(state) {
 
 // ── HTTP ─────────────────────────────────────────────────────────────────
 
-async function http(method, path, { token, body, timeoutMs = 20000, redirect = "follow" } = {}) {
+async function http(method, path, { token, body, timeoutMs = 20000, redirect = "follow", workspaceId } = {}) {
     const url = path.startsWith("http") ? path : `${CFG.cpUrl}${path}`;
     const headers = { Accept: "application/json" };
     if (token) headers.Authorization = `Bearer ${token}`;
+    // PLAN-0622: a WORKSPACE-scope write (agent-principal create, workspace-layer
+    // config write) must name the workspace explicitly; the CP's "first active
+    // membership" fallback is a read convenience only and answers 409
+    // WORKSPACE_CONTEXT_REQUIRED on writes.
+    if (workspaceId) headers["X-Workspace-Id"] = workspaceId;
     if (body !== undefined) headers["Content-Type"] = "application/json";
     const response = await fetch(url, {
         method,
@@ -233,7 +242,7 @@ async function login({ retries = 45, delayMs = 2000 } = {}) {
     throw new Error(`CP ${CFG.cpUrl} not reachable for login after ${retries * delayMs}ms (last: ${last})`);
 }
 
-const cp = (session, method, path, options = {}) => http(method, path, { ...options, token: session.token });
+const cp = (session, method, path, options = {}) => http(method, path, { ...options, token: session.token, workspaceId: session.workspaceId });
 
 // ── fixtures ─────────────────────────────────────────────────────────────
 
@@ -424,7 +433,46 @@ const PRINCIPAL_TOOL_ATOMS = [
     { actionClass: "write", resource: "*" },
 ];
 
+/**
+ * PLAN-0610 T1.6 (V87/V88) retired `grants.source='direct'`: the narrowed
+ * `ck_grants_source` rejects the insert and `GrantSources.EVALUATION_SOURCES`
+ * no longer evaluates that source, so a seeded row would be inert even if the
+ * DB accepted it. On such a schema the lane's authorization comes from the
+ * subject's role bindings (materialized as `source='role'` by
+ * RoleGrantMaterializer) plus the Workspace agent cap written by
+ * `ensurePrincipalBinding` — the two seeds below would only be a second
+ * mechanism that no longer participates in a decision.
+ */
+function directGrantSeedingSupported() {
+    let definition = "";
+    try {
+        definition = psql(
+            "SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conname='ck_grants_source';",
+        );
+    } catch {
+        // No readable constraint (legacy schema): keep the historical seeding.
+        return true;
+    }
+    if (!definition) return true;
+    return definition.includes("'direct'");
+}
+
+let directGrantSeeding = null;
+function grantSeedingEnabled() {
+    if (directGrantSeeding === null) {
+        directGrantSeeding = directGrantSeedingSupported();
+        if (!directGrantSeeding) {
+            log(
+                "grants.source='direct' is retired by V88 (PLAN-0610 T1.6); skipping the direct grant seeds " +
+                    "(role materialization + workspace agent cap cover this lane)",
+            );
+        }
+    }
+    return directGrantSeeding;
+}
+
 function ensureGrant(state, slot, subjectType, subjectId, atoms) {
+    if (!grantSeedingEnabled()) return;
     if (state.grants[slot]) {
         const row = psql(
             `SELECT id FROM grants WHERE id=${sqlLiteral(state.grants[slot].id)} AND source='direct' LIMIT 1;`,
@@ -605,6 +653,18 @@ async function ensureConnection(state, session) {
         state.connection = { id: existing.id, key: CFG.connectionKey, createdBySetup: false };
         saveState(state);
         log(`connection adopted ${existing.id} (pre-existing, kept on teardown)`);
+        // PLAN-0553/0585 moved provider keys into the credentials domain: a connection
+        // row without a credential can no longer issue a run lease (`CredentialNotFoundException`
+        // -> CHAT_EXECUTION_FAILED). The fake LLM ignores the key, but the row must hold one.
+        if (existing.hasKey !== true) {
+            check(
+                await cp(session, "PATCH", `/api/v1/provider-connections/${existing.id}`, {
+                    body: { apiKey: CFG.llmApiKey },
+                }),
+                "attach the lane credential to the adopted connection",
+            );
+            log(`attached lane credential to adopted connection ${existing.id} (fake key)`);
+        }
         if (existing.status !== "READY") await verifyConnection(state, session);
         return;
     }
@@ -616,6 +676,9 @@ async function ensureConnection(state, session) {
                 label: `PLAN-0540 eval fake LLM (${CFG.stackId})`,
                 scope: "WORKSPACE",
                 baseUrl: CFG.llmBaseUrl,
+                // PLAN-0553: the run lease reads the credentials domain, so even the
+                // loopback fake LLM needs a (throwaway) key stored with the connection.
+                apiKey: CFG.llmApiKey,
                 modelDiscovery: "manual",
                 manualModels: [CFG.model],
                 enabled: true,
@@ -928,7 +991,7 @@ async function setup() {
     state.workspaceId = assertUuid(loginResult.workspaceId, "login workspace");
     state.adminUserId = assertUuid(loginResult.userId, "login user");
     saveState(state);
-    const session = { token: loginResult.token };
+    const session = { token: loginResult.token, workspaceId: state.workspaceId };
     log(`logged in workspace=${state.workspaceId}`);
 
     await ensureFixtures(state);
@@ -986,7 +1049,7 @@ async function behaviorSetup() {
             `login workspace ${loginResult.workspaceId} does not match lane workspace ${state.workspaceId}`,
         );
     }
-    const session = { token: loginResult.token };
+    const session = { token: loginResult.token, workspaceId: state.workspaceId };
 
     await ensureFixtures(state);
     await ensureRealConnection(state, session);
@@ -1041,7 +1104,7 @@ async function teardown() {
         state.workspaceId = state.workspaceId ?? loginResult.workspaceId;
         state.adminUserId = state.adminUserId ?? loginResult.userId;
         saveState(state);
-        session = { token: loginResult.token };
+        session = { token: loginResult.token, workspaceId: state.workspaceId };
     } catch (error) {
         log(`warning: cannot reach CP for restore (${error.message}); stopping fixtures only`);
         problems.push(`cp restore skipped: ${error.message}`);
@@ -1254,7 +1317,7 @@ async function status() {
     if (process.env.XIHE_DEV_ADMIN_PASSWORD && state) {
         try {
             const loginResult = await login({ retries: 2, delayMs: 1000 });
-            const session = { token: loginResult.token };
+            const session = { token: loginResult.token, workspaceId: state.workspaceId };
             const statusBody = check(await cp(session, "GET", "/api/v1/status"), "read status").json;
             const agent = statusBody?.services?.find((service) => service.key === "agent");
             const profile = (await readLayer(session, "instance", "llm-provider")).profile ?? null;
