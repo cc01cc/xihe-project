@@ -16,8 +16,9 @@ import java.util.UUID;
  *
  * <p>One walk, two readings, both fail-closed (design §3.1): the path yields every hop
  * ({@code hops}), the spawn-edge count ({@code spawnHops}, the delegation depth the budget gate
- * consumes), and the principal of every session on the path ({@code principalPath}, nearest-first,
- * the M3 cycle key). The walk never persists anything — each derivation computes it fresh
+ * consumes), and the principal of every hop on the path ({@code principalPath}, nearest-first,
+ * the M3 cycle key — run responder first, session principal as fallback). The walk never persists
+ * anything — each derivation computes it fresh
  * (&le; 10 hops, one primary-key read per hop).</p>
  *
  * <p><b>Edge semantics</b> (design §2.1/§3.3): a spawn run carries its parent on
@@ -63,8 +64,10 @@ public final class DelegationChainWalker {
 
     /**
      * The walked path: every hop nearest-first, the number of spawn edges on it (the delegation
-     * depth), and the principal id of every hop's session in the same order (null entries mark
-     * sessions without an agent principal).
+     * depth), and — nearest-first, the M3 cycle key — the principal of the agent that <b>ran</b>
+     * each hop ({@code chat_runs.agent_principal_id}, the responder stamp), falling back to the
+     * hop session's {@code agent_principal_id} when the run carries no responder (pre-V92 rows,
+     * human turns). Null entries mark hops where neither principal exists.
      */
     public record ChainWalk(List<Hop> hops, int spawnHops, List<String> principalPath) {}
 
@@ -142,7 +145,15 @@ public final class DelegationChainWalker {
             UUID sessionId = UUID.fromString(current.getSessionId());
             Session session = sessionRepository.findById(sessionId)
                     .orElseThrow(() -> missing("run session " + sessionId));
-            String principalId = session.getAgentPrincipalId();
+            // T3.3: the cycle key is WHO RAN the hop, not the session PRIMARY. A session keeps its
+            // PRIMARY principal while its wake runs carry each responder's stamp, so the session
+            // reading alone would let two non-primary participants ping-pong forever (A→B→C→B is
+            // invisible when every hop reads the same session principal). The responder fallback
+            // keeps the M2 reading for runs without a stamp.
+            UUID runPrincipalId = current.getAgentPrincipalId();
+            String principalId = runPrincipalId == null
+                    ? session.getAgentPrincipalId()
+                    : runPrincipalId.toString();
             hops.add(new Hop(current.getId(), sessionId, edge, principalId));
             principalPath.add(principalId);
             String parentRunId;

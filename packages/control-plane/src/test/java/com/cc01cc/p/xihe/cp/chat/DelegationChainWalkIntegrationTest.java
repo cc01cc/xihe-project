@@ -1,6 +1,8 @@
 package com.cc01cc.p.xihe.cp.chat;
 
 import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
+import com.cc01cc.p.xihe.cp.config.ConfigService;
+import com.cc01cc.p.xihe.cp.context.service.EventStoreService;
 import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
 import com.cc01cc.p.xihe.cp.entity.ChatRun;
 import com.cc01cc.p.xihe.cp.entity.Session;
@@ -18,6 +20,7 @@ import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceAgentRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
 import com.cc01cc.p.xihe.cp.service.ApiRequestTemplateService;
+import com.cc01cc.p.xihe.cp.service.SessionParticipantService;
 import com.cc01cc.p.xihe.cp.service.SessionService;
 import com.cc01cc.p.xihe.cp.service.WakeDispatchService;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -26,6 +29,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
 
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
@@ -108,14 +112,29 @@ class DelegationChainWalkIntegrationTest extends AbstractIntegrationTest {
     @Autowired
     private JdbcTemplate jdbcTemplate;
 
+    @Autowired
+    private ConfigService configService;
+
+    @Autowired
+    private EventStoreService eventStoreService;
+
+    @Autowired
+    private SessionParticipantService participantService;
+
+    @Autowired
+    private DelegationBudgetService delegationBudgetService;
+
     private String userId;
     private String workspaceId;
     private UUID principalId;
     /** A second agent principal so a woken participant never collides with the session PRIMARY. */
     private UUID wokenPrincipalId;
+    /** A third principal: a mention target that never appears on the walked path (T3.6). */
+    private UUID restartTargetPrincipalId;
 
     @AfterEach
     void cleanFixtures() {
+        configService.deleteKey("instance", "agent-runtime", "wakeChainMaxDepth", "test", null, null);
         if (workspaceId != null) {
             SpawnTestSupport.clearForWorkspace(mcpInvocationRepository, jdbcTemplate, workspaceId);
             // context_events carries a plain FK to sessions (no cascade): clear it first, otherwise
@@ -141,6 +160,18 @@ class DelegationChainWalkIntegrationTest extends AbstractIntegrationTest {
         }
         if (wokenPrincipalId != null) {
             agentPrincipalRepository.deleteById(wokenPrincipalId);
+        }
+        if (restartTargetPrincipalId != null && workspaceId != null
+                && workspaceAgentRepository.existsById(
+                        new com.cc01cc.p.xihe.cp.entity.WorkspaceAgentId(restartTargetPrincipalId,
+                                UUID.fromString(workspaceId)))) {
+            workspaceAgentRepository.deleteById(
+                    new com.cc01cc.p.xihe.cp.entity.WorkspaceAgentId(restartTargetPrincipalId,
+                            UUID.fromString(workspaceId)));
+        }
+        if (restartTargetPrincipalId != null) {
+            agentPrincipalRepository.deleteById(restartTargetPrincipalId);
+            restartTargetPrincipalId = null;
         }
         if (workspaceId != null) {
             workspaceRepository.deleteById(UUID.fromString(workspaceId));
@@ -282,6 +313,73 @@ class DelegationChainWalkIntegrationTest extends AbstractIntegrationTest {
                 failure.set(t);
             }
         });
+    }
+
+    // ------------------------------------------------------------------ T3.6
+
+    /**
+     * T3.6 (design §2.2 scenario 1): restart equivalence. The deleted {@code WakeChainRegistry} was
+     * the ONLY instance state, so a brand-new {@link WakeChainService} over the same beans and the
+     * same database is exactly what a fresh {@code ApplicationContext} wires after a CP restart.
+     * The durable depth walk means the new instance refuses the hop the old chain would have
+     * refused — the depth never resets to "unknown run = depth 1".
+     */
+    @Test
+    void aFreshServiceInstanceContinuesTheChainWithoutResettingDepth() {
+        ensureWorkspace();
+        Session session = agentSession("restart equivalence");
+        SessionParticipant bee = agentParticipant(session.getId());
+        restartTargetPrincipalId = extraPrincipal("Restartcee");
+        // order 30: next to the session PRIMARY (10) and the woken participant (20).
+        participantRepository.saveAndFlush(new SessionParticipant(session.getId(), "AGENT",
+                restartTargetPrincipalId, "MEMBER", 30, "MENTION", "ALWAYS"));
+        String rootRunId = saveRun(session, "succeeded");
+
+        WakeDispatchService.WakeFireResult first = wakeDispatchService.fire(bee.getId(), "chain",
+                "wake:chain:" + rootRunId + ":" + bee.getId(), session.getId(), rootRunId);
+        assertTrue(first.dispatched(), "the depth-1 link commits durably before the 'restart'");
+
+        // Tighten the wake ceiling to 1 AFTER the depth-1 link exists: the next hop would be depth 2.
+        configService.putLayer("instance", "agent-runtime",
+                Map.of("wakeChainMaxDepth", "1"), "test", null, null);
+        try {
+            WakeChainService restarted = new WakeChainService(sessionRepository, participantService,
+                    wakeDispatchService, eventStoreService, configService, objectMapper,
+                    chatRunRepository, delegationBudgetService);
+
+            int runsBefore = runCount();
+            restarted.onAssistantContent(session.getId().toString(), first.runId().toString(),
+                    "@Restartcee 请继续");
+
+            assertEquals(runsBefore, runCount(),
+                    "a restarted instance must not reset the depth and re-admit the hop");
+            String payload = jdbcTemplate.queryForObject(
+                    "SELECT payload::text FROM context_events "
+                            + "WHERE CAST(session_id AS VARCHAR) = ? AND event_type = 'wake_dispatch' "
+                            + "ORDER BY sequence DESC LIMIT 1", String.class, session.getId().toString());
+            assertTrue(payload.contains("chain_refused"), payload);
+            assertTrue(payload.contains("depth_exceeded"),
+                    "the durable walk still sees depth 2 after the restart: " + payload);
+            // jsonb normalizes spacing in its text form — match the values, not the wire shape.
+            assertTrue(payload.contains("\"rootRunId\": \"" + rootRunId + "\""),
+                    "the walked root survives the restart: " + payload);
+        } finally {
+            configService.deleteKey("instance", "agent-runtime", "wakeChainMaxDepth", "test", null, null);
+        }
+    }
+
+    /** A workspace-bound agent principal with a single-token name so {@code @Name} parses. */
+    private UUID extraPrincipal(String name) {
+        AgentPrincipal extra = new AgentPrincipal();
+        extra.setName(name);
+        extra.setCreatedByUserId(userId);
+        var snapshot = objectMapper.createObjectNode();
+        snapshot.set("permissions", objectMapper.createArrayNode());
+        extra.setTemplateSnapshot(snapshot);
+        extra = agentPrincipalRepository.saveAndFlush(extra);
+        workspaceAgentRepository.saveAndFlush(new WorkspaceAgent(extra.getId().toString(), workspaceId,
+                objectMapper.createArrayNode()));
+        return extra.getId();
     }
 
     // ------------------------------------------------------------------ fixtures

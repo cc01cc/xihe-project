@@ -99,13 +99,13 @@ public class WakeDispatchService {
         SessionParticipant participant = participantRepository.findById(participantId).orElse(null);
         if (participant == null || participant.getDisabledAt() != null) {
             audit(sessionId, participantId, triggerSource, wakeRoundId, "refused",
-                    "participant is gone or disabled", null);
+                    "participant is gone or disabled", null, parentRunId);
             return new WakeFireResult(false, null, "refused");
         }
         Session session = sessionRepository.findById(sessionId).orElse(null);
         if (session == null) {
             audit(sessionId, participantId, triggerSource, wakeRoundId, "refused",
-                    "session is gone", null);
+                    "session is gone", null, parentRunId);
             return new WakeFireResult(false, null, "refused");
         }
         // D23-08: the wake path carries the SAME authorization as the owner's --as.
@@ -114,19 +114,19 @@ public class WakeDispatchService {
                     sessionId.toString(), participantId.toString());
         } catch (CpApiException denied) {
             audit(sessionId, participantId, triggerSource, wakeRoundId, "refused",
-                    "authorization: " + denied.getCode(), null);
+                    "authorization: " + denied.getCode(), null, parentRunId);
             return new WakeFireResult(false, null, "refused");
         }
 
         if (SessionParticipant.KIND_HUMAN.equals(participant.getPrincipalKind())) {
-            notifyHuman(sessionId, participant, triggerSource, wakeRoundId);
+            notifyHuman(sessionId, participant, triggerSource, wakeRoundId, parentRunId);
             return new WakeFireResult(false, null, "notify");
         }
         String policy = participant.getRespondPolicy() == null
                 ? SessionParticipant.RESPOND_WHEN_MENTIONED : participant.getRespondPolicy();
         if (SessionParticipant.RESPOND_MUTED.equals(policy)) {
             audit(sessionId, participantId, triggerSource, wakeRoundId, "skipped_muted",
-                    null, null);
+                    null, null, parentRunId);
             return new WakeFireResult(false, null, "skipped_muted");
         }
         UUID chainParentRunId = null;
@@ -141,11 +141,11 @@ public class WakeDispatchService {
                         + "parentRunId={} failureType={}", sessionId, parentRunId,
                         notUuid.getClass().getSimpleName());
                 return chainRefused(sessionId, participantId, triggerSource, wakeRoundId,
-                        "ancestor_missing");
+                        "ancestor_missing", parentRunId);
             }
             WakeFireResult chainRefused = refuseBrokenChain(
                     sessionId, participantId, participant.getPrincipalId(),
-                    triggerSource, wakeRoundId, chainParentRunId);
+                    triggerSource, wakeRoundId, chainParentRunId, parentRunId);
             if (chainRefused != null) {
                 return chainRefused;
             }
@@ -153,7 +153,7 @@ public class WakeDispatchService {
         if (SessionParticipant.RESPOND_JUDGE.equals(policy)
                 && !judgeSaysSpeak(session, participant, triggerSource, wakeRoundId)) {
             audit(sessionId, participantId, triggerSource, wakeRoundId, "judged_no",
-                    null, null);
+                    null, null, parentRunId);
             return new WakeFireResult(false, null, "judged_no");
         }
 
@@ -164,7 +164,7 @@ public class WakeDispatchService {
                 sessionId.toString(), session.getUserId(), session.getWorkspaceId(), prompt,
                 wakeRoundId, participant.getPrincipalId(), triggerSource, chainParentRunId);
         audit(sessionId, participantId, triggerSource, wakeRoundId,
-                result.started() ? "submitted" : "deferred", null, result.runId());
+                result.started() ? "submitted" : "deferred", null, result.runId(), parentRunId);
         return new WakeFireResult(result.started(), result.runId(),
                 result.started() ? "submitted" : "deferred");
     }
@@ -209,11 +209,13 @@ public class WakeDispatchService {
      * </ul>
      */
     private WakeFireResult refuseBrokenChain(UUID sessionId, UUID participantId, UUID responderPrincipalId,
-                                             String triggerSource, String wakeRoundId, UUID parentRunId) {
+                                             String triggerSource, String wakeRoundId, UUID parentRunId,
+                                             String parentRunIdRaw) {
         dbLockTimeout.apply();
         ChatRun parentRun = chatRunRepository.findByIdForUpdate(parentRunId).orElse(null);
         if (parentRun == null) {
-            return chainRefused(sessionId, participantId, triggerSource, wakeRoundId, "ancestor_missing");
+            return chainRefused(sessionId, participantId, triggerSource, wakeRoundId,
+                    "ancestor_missing", parentRunIdRaw);
         }
         try {
             chainWalker.walkFromRun(parentRun);
@@ -221,28 +223,31 @@ public class WakeDispatchService {
             logger.warn("[LIFECYCLE] service=cp event=wake_chain_ancestor_missing sessionId={} "
                     + "parentRunId={} reason={} detail={}", sessionId, parentRunId,
                     missing.reason(), missing.getMessage());
-            return chainRefused(sessionId, participantId, triggerSource, wakeRoundId, "ancestor_missing");
+            return chainRefused(sessionId, participantId, triggerSource, wakeRoundId,
+                    "ancestor_missing", parentRunIdRaw);
         }
         if (chatRunRepository.existsByParentRunIdAndAgentPrincipalId(
                 parentRunId.toString(), responderPrincipalId)) {
             logger.info("[LIFECYCLE] service=cp event=wake_chain_duplicate_refused sessionId={} "
                     + "parentRunId={} responderPrincipalId={}", sessionId, parentRunId, responderPrincipalId);
-            return chainRefused(sessionId, participantId, triggerSource, wakeRoundId, "cycle");
+            return chainRefused(sessionId, participantId, triggerSource, wakeRoundId,
+                    "cycle", parentRunIdRaw);
         }
         return null;
     }
 
     private WakeFireResult chainRefused(UUID sessionId, UUID participantId, String triggerSource,
-                                        String wakeRoundId, String reason) {
-        audit(sessionId, participantId, triggerSource, wakeRoundId, "chain_refused", reason, null);
+                                        String wakeRoundId, String reason, String parentRunId) {
+        audit(sessionId, participantId, triggerSource, wakeRoundId, "chain_refused", reason, null,
+                parentRunId);
         return new WakeFireResult(false, null, "chain_refused");
     }
 
     /** 人=通知：wake_dispatch notify event (SSE = the v1 站内 channel) + mention_count advance. */
     private void notifyHuman(UUID sessionId, SessionParticipant participant,
-                             String triggerSource, String wakeRoundId) {
+                             String triggerSource, String wakeRoundId, String parentRunId) {
         audit(sessionId, participant.getId(), triggerSource, wakeRoundId, "notify",
-                null, null);
+                null, null, parentRunId);
         cursorRepository.findById(participant.getId()).ifPresent(cursor -> {
             cursor.setMentionCount((cursor.getMentionCount() == null ? 0 : cursor.getMentionCount()) + 1);
             cursorRepository.save(cursor);
@@ -250,7 +255,8 @@ public class WakeDispatchService {
     }
 
     private void audit(UUID sessionId, UUID participantId, String triggerSource,
-                       String wakeRoundId, String outcome, String error, UUID auditRunId) {
+                       String wakeRoundId, String outcome, String error, UUID auditRunId,
+                       String parentRunId) {
         Session session = sessionId == null ? null : sessionRepository.findById(sessionId).orElse(null);
         ObjectNode payload = objectMapper.createObjectNode();
         payload.put("wakeRoundId", wakeRoundId == null ? "" : wakeRoundId);
@@ -262,6 +268,11 @@ public class WakeDispatchService {
         }
         if (auditRunId != null) {
             payload.put("runId", auditRunId.toString());
+        }
+        // PLAN-0630 M3 (T3.5): the durable chain parent on every wake_dispatch row — a field on the
+        // existing event, not a new event name (design §7.2). Non-chain triggers stay without it.
+        if (parentRunId != null) {
+            payload.put("parentRunId", parentRunId);
         }
         String workspaceId = session == null ? null : session.getWorkspaceId();
         String userId = session == null || session.getUserId() == null ? "" : session.getUserId();

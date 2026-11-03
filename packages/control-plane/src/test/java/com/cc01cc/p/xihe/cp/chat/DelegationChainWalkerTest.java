@@ -292,4 +292,78 @@ class DelegationChainWalkerTest {
         assertEquals(DelegationChainWalker.REASON_TREE_BROKEN, thrown.reason(),
                 "a parent_run_id cycle is a broken tree, capped without unbounded recursion");
     }
+
+    // ------------------------------------------------------------------ T3.3 the principal cycle key
+
+    /**
+     * T3.3: the cycle key is the principal of the agent that RAN each hop — the responder stamp on
+     * {@code chat_runs.agent_principal_id}, not the session PRIMARY. A session keeps its PRIMARY
+     * while its wake runs carry each responder's stamp, so the session reading alone would let two
+     * non-primary participants ping-pong forever (A→B→C→B is invisible when every hop reads the
+     * same session principal).
+     */
+    @Test
+    void wokenRunResponderPrincipalIsTheCycleKey() {
+        UUID s1 = UUID.randomUUID();
+        UUID r1 = UUID.randomUUID();
+        UUID rb = UUID.randomUUID();
+        UUID rc = UUID.randomUUID();
+        session(s1, null, null, null, "P1");
+        run(r1, s1, ChatRun.ORIGIN_USER_SUBMISSION, null, null);
+        ChatRun bRun = run(rb, s1, "chain", null, r1.toString());
+        bRun.setAgentPrincipalId(UUID.fromString("00000000-0000-0000-0000-0000000000b0"));
+        ChatRun cRun = run(rc, s1, "chain", null, rb.toString());
+        cRun.setAgentPrincipalId(UUID.fromString("00000000-0000-0000-0000-0000000000c0"));
+
+        DelegationChainWalker.ChainWalk walk = walker.walkFromRun(runById.get(rc));
+
+        assertEquals(List.of("00000000-0000-0000-0000-0000000000c0",
+                        "00000000-0000-0000-0000-0000000000b0", "P1"),
+                walk.principalPath(),
+                "each hop reads WHO RAN it — the durable material for the C→B refusal");
+    }
+
+    /**
+     * T3.3: the case the participantId key could never see (design §3.2) — the SAME principal on two
+     * sessions of the path. A spawn child inherits the parent's principal, so a wake run inside the
+     * child session reads the parent's principal again: the walk surfaces the duplicate, and the
+     * wake-chain consumer refuses it.
+     */
+    @Test
+    void samePrincipalAcrossSpawnedSessionsIsVisibleOnThePath() {
+        UUID s1 = UUID.randomUUID();
+        UUID s2 = UUID.randomUUID();
+        UUID r1 = UUID.randomUUID();
+        UUID r2 = UUID.randomUUID();
+        UUID sharedPrincipal = UUID.randomUUID();
+        session(s1, null, null, null, sharedPrincipal.toString());
+        // The spawn child session inherits the parent's principal (design §5.1: same subject).
+        session(s2, Session.KIND_SPAWN, s1, r1, sharedPrincipal.toString());
+        ChatRun rootRun = run(r1, s1, ChatRun.ORIGIN_USER_SUBMISSION, null, null);
+        rootRun.setAgentPrincipalId(sharedPrincipal);
+        ChatRun childRun = run(r2, s2, ChatRun.ORIGIN_SPAWN, r1.toString(), null);
+        childRun.setAgentPrincipalId(sharedPrincipal);
+
+        DelegationChainWalker.ChainWalk walk = walker.walkFromRun(runById.get(r2));
+
+        assertEquals(List.of(sharedPrincipal.toString(), sharedPrincipal.toString()),
+                walk.principalPath(),
+                "the same principal on both sessions of the path — the consumer refuses this hop");
+    }
+
+    /** T3.3 fallback rail: a run without a responder stamp (pre-V92 row, human turn) reads its session. */
+    @Test
+    void runWithoutResponderPrincipalFallsBackToTheSessionPrincipal() {
+        UUID s1 = UUID.randomUUID();
+        UUID r1 = UUID.randomUUID();
+        UUID r2 = UUID.randomUUID();
+        session(s1, null, null, null, "P1");
+        run(r1, s1, ChatRun.ORIGIN_USER_SUBMISSION, null, null);
+        ChatRun woken = run(r2, s1, "chain", null, r1.toString());
+
+        DelegationChainWalker.ChainWalk walk = walker.walkFromRun(woken);
+
+        assertEquals(List.of("P1", "P1"), walk.principalPath(),
+                "no responder stamp → the session principal, exactly the M2 reading");
+    }
 }

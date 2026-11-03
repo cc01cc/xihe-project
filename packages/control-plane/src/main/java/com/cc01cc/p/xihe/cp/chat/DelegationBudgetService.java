@@ -126,6 +126,23 @@ public class DelegationBudgetService {
         return limits;
     }
 
+    /**
+     * T3.4: the wake chain's spawn-depth ceiling — the SAME effective {@code maxDepth} this gate
+     * enforces on a spawn (root principal's {@code delegation_policy} ∩ instance ceiling), so
+     * "委托深度" has exactly one definition on both gates. The wake path reads only maxDepth; the
+     * count budget stays spawn-only.
+     *
+     * <p>Throws {@link DelegationRefusedException} exactly like {@link #requireWithinBudget} does
+     * for an unreadable/invalid stored policy — the wake chain catches it and refuses the link
+     * fail-closed, mirroring the spawn gate's DELEGATION_POLICY_INVALID. The audit context is
+     * best-effort (a wake hop has no tool call).</p>
+     */
+    public int maxSpawnDepth(String rootPrincipalId, String rootSessionId, String rootRunId) {
+        DelegationRefusedException.DelegationAuditContext audit = new DelegationRefusedException
+                .DelegationAuditContext(rootSessionId, rootSessionId, rootRunId, null, rootPrincipalId);
+        return effectiveLimits(rootPrincipalId, audit).maxDepth();
+    }
+
     /** Root + depth of the parent session (root depth = 0). */
     private record Walk(Session root, int depth) {}
 
@@ -150,7 +167,10 @@ public class DelegationBudgetService {
 
     private static DelegationRefusedException ancestorRefused(
             DelegationChainWalker.AncestorMissingException missing, Session parentSession) {
-        logger.warn("[LIFECYCLE] service=cp event=delegation_chain_broken reason={} detail={}",
+        // M3 (T3.5): design §7.1 fixes this line to the pre-existing delegation_tree_broken name —
+        // the M2 introduction of delegation_chain_broken was event-name drift, and event names are
+        // the query/alert contract surface (零新事件名).
+        logger.warn("[LIFECYCLE] service=cp event=delegation_tree_broken reason={} detail={}",
                 missing.reason(), missing.getMessage());
         return DelegationRefusedException.raw(HttpStatus.CONFLICT, "DELEGATION_POLICY_INVALID",
                 "Delegation ancestor is missing: " + missing.getMessage(),
