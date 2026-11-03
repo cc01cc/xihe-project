@@ -9,6 +9,7 @@ import {
     DOCK_WIDTH_MIN,
     clampDockWidth,
 } from "../../../composables/useWorkspaceLayout";
+import { useLiveResize } from "../../../composables/useLiveResize";
 import type { DockTab } from "./workspaceDockTabs";
 
 /**
@@ -61,8 +62,21 @@ const emit = defineEmits<{
 
 const { t } = useI18n();
 const overflowOpen = ref(false);
-/** Live width shown in the drag bubble; never persisted (the write is throttled). */
-const resizingWidth = ref<number | null>(null);
+const panelRef = ref<HTMLElement | null>(null);
+const bubbleRef = ref<HTMLElement | null>(null);
+/**
+ * Drag the width without touching Vue: the element width and the bubble text are
+ * written imperatively, and `update:width` is emitted once on release (PLAN-0626 P2-9
+ * coalescing still owns persistence; it no longer owns the visual update).
+ */
+const { resizingWidth, start: handleResizeStart } = useLiveResize({
+    clamp: clampDockWidth,
+    currentWidth: () => props.width,
+    grow: "left",
+    commit: (width) => emit("update:width", width),
+    panel: panelRef,
+    bubble: bubbleRef,
+});
 
 const isPinned = computed(() => props.mode === "pinned"),
     modeLabel = computed(() =>
@@ -146,30 +160,6 @@ function handleTabAuxClick(event: MouseEvent, id: string) {
     closeTab(id);
 }
 
-function handleResizeStart(event: MouseEvent) {
-    event.preventDefault();
-    const startX = event.clientX,
-        startWidth = props.width;
-
-    resizingWidth.value = startWidth;
-
-    function onMouseMove(moveEvent: MouseEvent) {
-        // The dock sits on the right edge: dragging left widens it.
-        const next = clampDockWidth(startWidth - (moveEvent.clientX - startX));
-        resizingWidth.value = next;
-        emit("update:width", next);
-    }
-
-    function onMouseUp() {
-        resizingWidth.value = null;
-        document.removeEventListener("mousemove", onMouseMove);
-        document.removeEventListener("mouseup", onMouseUp);
-    }
-
-    document.addEventListener("mousemove", onMouseMove);
-    document.addEventListener("mouseup", onMouseUp);
-}
-
 /** P2-1: double-clicking the handle restores the default width. */
 function resetWidth() {
     emit("update:width", clampDockWidth(props.defaultWidth));
@@ -189,11 +179,12 @@ function handleResizeKeydown(event: KeyboardEvent) {
 
 <template>
     <aside
+        ref="panelRef"
         data-testid="workspace-aux-panel"
         :data-dock-mode="focus ? 'focus' : mode"
         :data-dock-focus="focus ? 'true' : 'false'"
         :aria-label="t('workspace.dockTabs')"
-        :class="panelClass"
+        :class="[panelClass, { 'is-resizing': resizingWidth !== null }]"
         :style="focus ? undefined : { width: `${width}px` }"
     >
         <!-- Focus fills the row, so a resize handle (and its width) has no meaning. -->
@@ -216,6 +207,7 @@ function handleResizeKeydown(event: KeyboardEvent) {
         <!-- P2-2: the live width bubble; display-only, never persisted. -->
         <span
             v-if="resizingWidth !== null"
+            ref="bubbleRef"
             data-testid="dock-resize-bubble"
             aria-hidden="true"
             class="pointer-events-none absolute left-0 top-1/2 z-30 -translate-x-full -translate-y-1/2 rounded bg-foreground/85 px-1.5 py-0.5 text-[11px] tabular-nums text-background"
@@ -382,3 +374,18 @@ function handleResizeKeydown(event: KeyboardEvent) {
         </div>
     </aside>
 </template>
+
+<style scoped>
+/*
+ * Resize-follow fix (PLAN-0626 P2-9 follow-up): while the pointer owns the width,
+ * promote the panel to its own compositing layer and stop the children from
+ * hit-testing, so the tab strip / agent panels cannot force reflow per mousemove.
+ */
+.is-resizing {
+    will-change: width;
+}
+
+.is-resizing :deep(*) {
+    pointer-events: none;
+}
+</style>

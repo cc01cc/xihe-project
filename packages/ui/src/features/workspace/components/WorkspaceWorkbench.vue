@@ -29,6 +29,7 @@ import {
     type WorkbenchSqueezeResult,
     type WorkspaceLayoutState,
 } from "../../../composables/useWorkspaceLayout";
+import { useLiveResize } from "../../../composables/useLiveResize";
 import { useWorkspaceStore } from "../stores/workspace";
 import WorkspaceToolbar from "./WorkspaceToolbar.vue";
 import WorkspaceDock from "./WorkspaceDock.vue";
@@ -247,37 +248,26 @@ const effectiveTreeCollapsed = computed(
 );
 
 const treeWidth = computed(() => layout.value.treeWidth);
-const treeResizingWidth = ref<number | null>(null);
+const treeRailRef = ref<HTMLElement | null>(null);
+const treeBubbleRef = ref<HTMLElement | null>(null);
 
 function setTreeWidth(width: number): void {
     layout.value.treeWidth = clampTreeWidth(width);
 }
 
+/** Resize-follow fix: the rail follows the pointer directly; the store sees one write. */
+const { resizingWidth: treeResizingWidth, start: handleTreeResizeStart } = useLiveResize({
+    clamp: clampTreeWidth,
+    currentWidth: () => layout.value.treeWidth,
+    grow: "right",
+    commit: (width) => setTreeWidth(width),
+    panel: treeRailRef,
+    bubble: treeBubbleRef,
+});
+
 /** P2-1 (tree): double-clicking the handle restores the default width. */
 function resetTreeWidth(): void {
     setTreeWidth(TREE_WIDTH_DEFAULT);
-}
-
-function handleTreeResizeStart(event: MouseEvent): void {
-    event.preventDefault();
-    const startX = event.clientX,
-        startWidth = layout.value.treeWidth;
-    treeResizingWidth.value = startWidth;
-
-    function onMouseMove(moveEvent: MouseEvent) {
-        const next = clampTreeWidth(startWidth + (moveEvent.clientX - startX));
-        treeResizingWidth.value = next;
-        setTreeWidth(next);
-    }
-
-    function onMouseUp() {
-        treeResizingWidth.value = null;
-        document.removeEventListener("mousemove", onMouseMove);
-        document.removeEventListener("mouseup", onMouseUp);
-    }
-
-    document.addEventListener("mousemove", onMouseMove);
-    document.addEventListener("mouseup", onMouseUp);
 }
 
 function handleTreeResizeKeydown(event: KeyboardEvent): void {
@@ -522,8 +512,10 @@ defineExpose({ openDockTab });
         <div v-else class="relative flex min-h-0 min-w-0 flex-1" data-testid="workspace-workbench">
             <!-- Left column: the file tree. S3b: draggable 200-320 + keyboard + dblclick. -->
             <div
+                ref="treeRailRef"
                 data-testid="workspace-file-rail"
                 class="relative flex shrink-0 flex-col border-r border-border-subtle bg-surface-canvas"
+                :class="{ 'is-resizing': treeResizingWidth !== null }"
                 :style="{
                     width: `${effectiveTreeCollapsed ? TREE_COLLAPSED_WIDTH : treeWidth}px`,
                 }"
@@ -553,6 +545,7 @@ defineExpose({ openDockTab });
                 <!-- P2-2: live width bubble (display-only; the write is throttled). -->
                 <span
                     v-if="treeResizingWidth !== null"
+                    ref="treeBubbleRef"
                     data-testid="tree-resize-bubble"
                     aria-hidden="true"
                     class="pointer-events-none absolute -right-1 top-1/2 z-30 translate-x-full -translate-y-1/2 rounded bg-foreground/85 px-1.5 py-0.5 text-[11px] tabular-nums text-background"
@@ -653,3 +646,17 @@ defineExpose({ openDockTab });
         </div>
     </div>
 </template>
+
+<style scoped>
+/*
+ * Resize-follow fix for the file rail: same contract as the dock/sidebar — the rail
+ * follows the pointer via a direct width write and its content stops hit-testing.
+ */
+.is-resizing {
+    will-change: width;
+}
+
+.is-resizing :deep(*) {
+    pointer-events: none;
+}
+</style>

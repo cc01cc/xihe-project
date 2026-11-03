@@ -26,6 +26,7 @@ import {
     clampNavWidth,
     clampNavWidthForViewport,
 } from "../../composables/useWorkspaceLayout";
+import { useLiveResize } from "../../composables/useLiveResize";
 import { useWindowSize } from "@vueuse/core";
 import { useSessionStore } from "../../stores/session";
 
@@ -113,30 +114,22 @@ function toggleSidebar() {
     emit("update:open", !props.open);
 }
 
-/** S3b P2-2: live width bubble while dragging (display-only, never persisted). */
-const resizingWidth = ref<number | null>(null);
-
-function handleResizeStart(e: MouseEvent) {
-    e.preventDefault();
-    const startX = e.clientX,
-        startWidth = props.width;
-    resizingWidth.value = startWidth;
-
-    function onMouseMove(ev: MouseEvent) {
-        const next = clampNavWidth(startWidth + (ev.clientX - startX));
-        resizingWidth.value = next;
-        emit("update:width", next);
-    }
-
-    function onMouseUp() {
-        resizingWidth.value = null;
-        document.removeEventListener("mousemove", onMouseMove);
-        document.removeEventListener("mouseup", onMouseUp);
-    }
-
-    document.addEventListener("mousemove", onMouseMove);
-    document.addEventListener("mouseup", onMouseUp);
-}
+/**
+ * S3b P2-2 + resize-follow fix: the width follows the pointer through a direct
+ * `style.width` write (the aside also carries the fixed icon rail), and
+ * `update:width` is emitted once on release so the store/persistence sees one write.
+ */
+const panelRef = ref<HTMLElement | null>(null);
+const bubbleRef = ref<HTMLElement | null>(null);
+const { resizingWidth, start: handleResizeStart } = useLiveResize({
+    clamp: clampNavWidth,
+    currentWidth: () => props.width,
+    grow: "right",
+    commit: (width) => emit("update:width", width),
+    panel: panelRef,
+    bubble: bubbleRef,
+    elementWidth: (width) => RAIL_WIDTH + width,
+});
 
 /** S3b P2-1: double-clicking the handle restores the default panel width. */
 function resetWidth() {
@@ -182,11 +175,15 @@ function handleLogout() {
 
 <template>
     <aside
+        ref="panelRef"
         data-testid="sidebar"
         :aria-hidden="isMobile && !open ? 'true' : undefined"
         :inert="isMobile && !open ? true : undefined"
-        class="fixed left-0 top-0 z-40 flex h-full overflow-hidden bg-surface-canvas border-r border-sidebar-border transition-[width] duration-300"
-        :class="{ 'shadow-lg': isMobile && open }"
+        class="fixed left-0 top-0 z-40 flex h-full overflow-hidden bg-surface-canvas border-r border-sidebar-border"
+        :class="[
+            { 'shadow-lg': isMobile && open, 'is-resizing': resizingWidth !== null },
+            resizingWidth === null ? 'transition-[width] duration-300' : 'transition-none',
+        ]"
         :style="asideStyle"
     >
         <NavRail v-if="!isMobile" :show-expand="showRailExpand" @expand="expandSidebar" />
@@ -299,6 +296,7 @@ function handleLogout() {
             <!-- S3b P2-2: live width bubble (display-only). -->
             <span
                 v-if="resizingWidth !== null"
+                ref="bubbleRef"
                 data-testid="sidebar-resize-bubble"
                 aria-hidden="true"
                 class="pointer-events-none absolute -right-1 top-1/2 z-30 translate-x-full -translate-y-1/2 rounded bg-foreground/85 px-1.5 py-0.5 text-[11px] tabular-nums text-background"
@@ -332,3 +330,18 @@ function handleLogout() {
         />
     </Teleport>
 </template>
+
+<style scoped>
+/*
+ * Resize-follow fix: no width transition while the pointer drags (the 300ms
+ * `transition-[width]` was the left column's "one beat behind" feeling), promoted
+ * layer, and children stop hit-testing so nav content cannot reflow per mousemove.
+ */
+.is-resizing {
+    will-change: width;
+}
+
+.is-resizing :deep(*) {
+    pointer-events: none;
+}
+</style>
