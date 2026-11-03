@@ -1,0 +1,10 @@
+# 构建产物外置：裸 `cargo build` / `cargo check` / rust-analyzer 也写到仓库外的共享 target，
+# 避免 `packages/runtime/target` 再次长到 GB 级（现状根因见 task-16 / DEV-002 §6）。
+#
+# target-dir 的相对路径按「本文件所在 .cargo 目录的父目录」解析：
+#   A03-xihe/.cargo/config.toml 的父目录 = A03-xihe，故 `../.tmp` = <one>/.tmp
+# 即实际落盘：<one>/.tmp/cargo-target/main（gitignored，不写入仓库内部）。
+# 不写死盘符：仓库可整体迁移；需要临时覆盖时用 CARGO_TARGET_DIR 环境变量（优先级高于本文件）。
+# worktree 仍由 scripts/worktree-env.ps1 单独外置（按 worktree 名），不共用此目录。
+[build]
+target-dir = "../.tmp/cargo-target/main"
