@@ -82,3 +82,39 @@ export function chatErrorToastText(code: string | undefined, detail?: string | n
     }
     return mapped;
 }
+
+/**
+ * PLAN-0649 M3 (spec `tool-refusal-observability.md` §1/§2): the frozen shape of
+ * a `refusalCode`. The UI re-validates instead of trusting the wire, so a value
+ * that is not a bare enum token can never reach the card as "a reason".
+ */
+const REFUSAL_CODE_RE = /^[A-Z][A-Z0-9_]{0,63}$/;
+
+/** Returns the code only when it matches the frozen shape, else `undefined` (fail-closed). */
+export function normalizeRefusalCode(value: unknown): string | undefined {
+    return typeof value === "string" && REFUSAL_CODE_RE.test(value) ? value : undefined;
+}
+
+/**
+ * PLAN-0649 M3 / B5: i18n **key** for a tool-refusal code, or `null` when the code
+ * has no dedicated copy — callers then render the generic refusal line **plus the
+ * raw code** so support can identify it.
+ *
+ * Deliberately a key rather than text: unlike `mappedErrorCopy` (hardcoded
+ * Chinese, HTTP/SSE error channel), this copy is user-facing in both locales and
+ * lives in `i18n/index.ts`.
+ */
+export function toolRefusalCopyKey(code: string | undefined | null): string | null {
+    switch ((code ?? "").trim()) {
+        case "DELEGATION_LIMIT_EXCEEDED":
+            return "chat.toolRefusalDelegationLimit";
+        case "DELEGATION_POLICY_INVALID":
+            return "chat.toolRefusalDelegationPolicy";
+        case "SPAWN_EXECUTION_FAILED":
+            return "chat.toolRefusalSpawnFailed";
+        case "ACQUIRE_EXECUTION_FAILED":
+            return "chat.toolRefusalAcquireFailed";
+        default:
+            return null;
+    }
+}

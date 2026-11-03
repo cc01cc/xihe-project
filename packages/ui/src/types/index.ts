@@ -384,6 +384,16 @@ export interface ToolCall {
     waitingOn?: ToolCallWaitingOn | null;
     /** PLAN-0344: durable job archival summary restored from the messages DTO after refresh. */
     jobSummary?: JobSummary;
+    /**
+     * PLAN-0649: CP's refusal/short-circuit code (`DELEGATION_LIMIT_EXCEEDED`, …).
+     *
+     * Present ⇒ the call was refused by policy/budget instead of executed. The tool
+     * result body stays withheld on every surface, so this code (plus the localized
+     * copy it maps to) is the only reason the user can see. Judge refusals by this
+     * field, **not** by `status`: a non-CP tool error can still be `completed` in the
+     * durable snapshot.
+     */
+    refusalCode?: string;
 }
 
 export type ApprovalPolicyEffect = "allow" | "ask" | "deny";

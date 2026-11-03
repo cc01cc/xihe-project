@@ -849,6 +849,8 @@ const messages = {
                 completed: "已完成",
                 failed: "执行失败",
                 cancelled: "已取消",
+                /** PLAN-0649：被策略/预算拒绝（不是执行报错），折叠态状态行专用。 */
+                refused: "被拒绝",
             },
             /*
              * PLAN-0631 D31-04/07：Run 状态的**可见语言**。文案刻意沿用 `toolStatus`/`followUpStatus`
@@ -865,6 +867,19 @@ const messages = {
             toolDiagnosticsSummary: "共 {total} 条，已回灌前 {shown} 条",
             toolDiagnosticsMore: "另有 {count} 条",
             toolRawOutput: "原文",
+            /*
+             * PLAN-0649：拒绝态展示。原因码 → 文案的唯一映射在
+             * `lib/errorMessages.ts#toolRefusalCopyKey`（未映射码回落到通用文案 + 原码，B5 裁定）；
+             * 文案里不出现配额数字（B4 裁定）。
+             */
+            toolRefusedTitle: "该调用被拒绝，未执行",
+            toolRefusedGeneric: "该工具调用被拒绝，未产生执行",
+            toolRefusedCodeLabel: "原因码：",
+            toolRefusedHint: "可以调整任务范围或稍后重试；原样重试同一请求通常仍会被拒",
+            toolRefusalDelegationLimit: "委托预算已用尽：这次没有再派子任务",
+            toolRefusalDelegationPolicy: "委托策略当前不可用，本次没有派子任务",
+            toolRefusalSpawnFailed: "派发子任务时出错，本次没有产生子任务",
+            toolRefusalAcquireFailed: "获取凭据时出错，本次没有取到凭据",
             jobOutputTitle: "后台任务输出",
             jobOutputLoad: "查看输出",
             jobOutputReload: "重新加载",
@@ -3003,6 +3018,8 @@ const messages = {
                 completed: "Completed",
                 failed: "Failed",
                 cancelled: "Cancelled",
+                /** PLAN-0649: refused by policy/budget (not an execution error). */
+                refused: "Refused",
             },
             /* PLAN-0631 D31-04/07: visible language for a Run's state (see the zh block note). */
             runState: {
@@ -3016,6 +3033,19 @@ const messages = {
             toolDiagnosticsSummary: "{total} total, first {shown} fed back",
             toolDiagnosticsMore: "{count} more",
             toolRawOutput: "Raw output",
+            /* PLAN-0649: refusal copy; the code→copy map lives in `lib/errorMessages.ts`. */
+            toolRefusedTitle: "This call was refused and never ran",
+            toolRefusedGeneric: "The tool call was refused; nothing was executed",
+            toolRefusedCodeLabel: "Reason code:",
+            toolRefusedHint:
+                "Adjust the task or retry later; retrying the same request verbatim will usually be refused again",
+            toolRefusalDelegationLimit:
+                "The delegation budget is exhausted, so no child task was spawned",
+            toolRefusalDelegationPolicy:
+                "The delegation policy is unavailable, so no child task was spawned",
+            toolRefusalSpawnFailed: "Spawning the child task failed, so no child task was created",
+            toolRefusalAcquireFailed:
+                "Fetching the credential failed, so no credential was delivered",
             jobOutputTitle: "Background job output",
             jobOutputLoad: "View output",
             jobOutputReload: "Reload",

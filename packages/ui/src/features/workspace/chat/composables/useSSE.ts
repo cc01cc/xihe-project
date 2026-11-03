@@ -5,6 +5,7 @@ import { useAgentStore } from "../../../../stores/agent";
 import { useCheckpointStore } from "../../../../stores/checkpoint";
 import { useChatStore } from "../stores/chat.ts";
 import { logger } from "../../../../lib/logger";
+import { normalizeRefusalCode } from "../../../../lib/errorMessages";
 import { chatTransport } from "../../../../services/chatTransport";
 import { notifySessionConnection, notifySessionEvent } from "../sessionEvents";
 import { applyTransportAttempt, applyTransportProgress } from "../transportLive";
@@ -187,7 +188,26 @@ function stripUntrustedEnvelope(result: string): string {
         : result;
 }
 
-function toolResultStatus(result: unknown): ToolCall["status"] {
+const TOOL_CALL_STATUSES: ReadonlySet<ToolCall["status"]> = new Set([
+    "running",
+    "completed",
+    "failed",
+    "pending",
+    "cancelled",
+]);
+
+/**
+ * PLAN-0649 M3: the Agent now publishes an authoritative `status` on `tool_result`
+ * (spec §1), so the event wins over any text inference.
+ *
+ * The legacy text sniff stays as the fallback for an older Agent — and it is
+ * exactly why it must not be the primary source any more: the tool result body is
+ * withheld on every surface, so a placeholder could only ever read as "completed".
+ */
+function toolResultStatus(result: unknown, status?: unknown): ToolCall["status"] {
+    if (typeof status === "string" && TOOL_CALL_STATUSES.has(status as ToolCall["status"])) {
+        return status as ToolCall["status"];
+    }
     if (typeof result !== "string") return "completed";
     return stripUntrustedEnvelope(result).startsWith("Tool error:") ? "failed" : "completed";
 }
@@ -427,13 +447,18 @@ export function useSSE(sessionId: MaybeRefOrGetter<string>) {
                                 typeof data.result === "string"
                                     ? data.result
                                     : JSON.stringify(data.result),
-                            status = toolResultStatus(data.result),
+                            status = toolResultStatus(data.result, data.status),
+                            // PLAN-0649 M3: a refusal is carried as a bare enum token
+                            // (spec §1); re-validate here so a malformed value can
+                            // never render as "the reason".
+                            refusalCode = normalizeRefusalCode(data.refusalCode),
                             diagnostics = normalizeDiagnostics(data.diagnostics),
                             updates: Partial<ToolCall> = {
                                 status,
                                 completedAt: new Date().toISOString(),
                                 ...(typeof result === "string" ? { result } : {}),
                                 ...(diagnostics ? { diagnostics } : {}),
+                                ...(refusalCode ? { refusalCode } : {}),
                                 ...(typeof data.tool === "string" ? { name: data.tool } : {}),
                                 ...(typeof data.run_id === "string" ? { runId: data.run_id } : {}),
                             };
