@@ -128,6 +128,19 @@ canonical JSON（无多余空白，键序固定：`v`、`entries`、`merkle_root
 
 > 压缩口径提醒：v1 用 deflate 后压缩比预期低于 spike 的 zstd（2.15–2.28×），体积可能比 git（zlib）持平或略差；P3 前以 V2/V7 判据实测为准，不在此处承诺数字。
 
+### 9.1 与现状 git slice 的字段映射（迁移口径）
+
+现状 slice = 影子库里的一个 ref + commit（`checkpoint.rs:39,45,733`）；v1 slice 记录要与它可逆映射：
+
+| 现状（git 影子库） | v1 slice 记录 | 说明 |
+|---|---|---|
+| ref `refs/xihe/slices/<epochMs>-<commitHash>` | `id` = `<epochMs>-<manifest_id 前 12>` | 时间前缀保留；提交哈希不再可用，改为 manifest 前缀 |
+| ref 名里的 `epochMs` | `captured_at_ms` / `captured_at` | 直接解析 |
+| commit message `runId:` / `actor:` / `callId:` 三行 trailer | `run_id` / `principal_id` | `actor` 即捕获主体；`callId` 无对应字段（v1 记入 `stats.warnings` 之外不保存，避免伪造） |
+| 前驱 = 同 root 字典序最新既有 ref | `parent` | 语义相同（现状 commit 无 parent，迁移时按 ref 序推出） |
+| `git ls-tree -r` 的 `(mode, oid, path)` | `entries`（`blob_hash` 替换 oid） | mode 白名单一致（100644/100755/120000） |
+| 无 | `merkle_root` / `state` / `migrated_from` | git 侧无等价物：迁移时重算/显式标记，缺失的 run/principal/nestedRoots 一律 null |
+
 ## 10. git 桥接契约（T0.3）
 
 ### 10.1 `export --git <store> --slice <id> --out <dir>`
