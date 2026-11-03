@@ -20,6 +20,11 @@ const props = defineProps<{
     layer: ConfigLayer;
     workspaceId?: string;
     readonly?: boolean;
+    /**
+     * 保存写入口，由父组件注入：必须 await 到真实 PUT 200 才 resolve，失败要抛。
+     * 未注入时退回 emit("save")（仅单元测试/旧调用方兼容，此时无法感知真实结果）。
+     */
+    submit?: (entries: Record<string, string>) => Promise<void>;
 }>();
 const emit = defineEmits<{ save: [entries: Record<string, string>] }>();
 const { t } = useI18n();
@@ -30,6 +35,8 @@ const selected = ref<ApiRequestTemplate | null>(null);
 const selectedType = ref("");
 const diagnostics = ref<TemplateDiagnostic[]>([]);
 const validating = ref(false);
+const submitting = ref(false);
+const busy = computed(() => props.saving || submitting.value || validating.value);
 const error = ref("");
 let generation = 0;
 onBeforeUnmount(() => {
@@ -150,10 +157,35 @@ function nextRevision(status: ApiRequestTemplate["status"]): ApiRequestTemplate 
         version: persisted?.status === "published" ? max + 1 : selected.value.version,
     };
 }
+/**
+ * 保存成功后回读服务端列表：列表原本只来自 props，父层未及时回填时用户会看到
+ * 「保存成功但模板不出现」，因此这里以服务端返回为准再对齐一次。
+ */
+async function refreshTemplatesFromServer() {
+    try {
+        const entries = await readTemplateConfig(props.layer, props.workspaceId);
+        templates.value = parseTemplates(entries.templates);
+        if (props.layer === "instance") {
+            builtins.value = templates.value.filter((item) => item.status === "published");
+        }
+    } catch (cause) {
+        logger.warn("API request template refresh after save failed", cause);
+    }
+    const persisted = templates.value.find(
+        (item) => item.id === selected.value?.id && item.version === selected.value?.version,
+    );
+    if (persisted) selected.value = { ...persisted };
+}
+
 async function save(publish: boolean) {
+    // 按钮在 busy 时已禁用；这里只兜并发重复点击，不再「静默无反应」。
+    if (busy.value) return;
     const currentGeneration = generation;
     const next = nextRevision(publish ? "published" : "draft");
-    if (!next || props.saving || validating.value) return;
+    if (!next) {
+        error.value = t("settings.apiRequest.chooseType");
+        return;
+    }
     error.value = "";
     if (!next.name.trim()) {
         error.value = t("settings.apiRequest.nameRequired");
@@ -181,9 +213,27 @@ async function save(publish: boolean) {
         (item) => item.id !== next.id || item.version !== next.version,
     );
     updated.push(next);
-    emit("save", { ...props.entries, templates: JSON.stringify(updated) });
-    selected.value = next;
-    toast.info(t("settings.apiRequest.saveRequested"));
+    const entries = { ...props.entries, templates: JSON.stringify(updated) };
+    submitting.value = true;
+    try {
+        if (props.submit) {
+            // 只有在真实 PUT 200 后才会走到这里。
+            await props.submit(entries);
+        } else {
+            emit("save", entries);
+        }
+        selected.value = next;
+        await refreshTemplatesFromServer();
+        toast.success(t("common.saved"));
+    } catch (cause) {
+        const message =
+            cause instanceof Error && cause.message ? cause.message : t("settings.saveFailed");
+        logger.warn("API request template save failed", cause);
+        error.value = message;
+        toast.error(message);
+    } finally {
+        submitting.value = false;
+    }
 }
 </script>
 
@@ -318,12 +368,12 @@ async function save(publish: boolean) {
                     </li>
                 </ul>
                 <p class="text-xs text-muted-foreground">{{ t("settings.apiRequest.rawHelp") }}</p>
-                <div v-if="!readonly" class="flex gap-2">
+                <div v-if="!readonly" class="flex flex-wrap items-center gap-2">
                     <button
                         type="button"
                         data-testid="api-request-save-draft"
-                        class="rounded-md border px-3 py-2 text-xs"
-                        :disabled="saving || validating"
+                        class="rounded-md border px-3 py-2 text-xs disabled:opacity-60"
+                        :disabled="busy"
                         @click="save(false)"
                     >
                         {{ t("settings.apiRequest.saveDraft") }}
@@ -331,12 +381,20 @@ async function save(publish: boolean) {
                     <button
                         type="button"
                         data-testid="api-request-publish"
-                        class="rounded-md bg-action px-3 py-2 text-xs text-action-foreground"
-                        :disabled="saving || validating"
+                        class="rounded-md bg-action px-3 py-2 text-xs text-action-foreground disabled:opacity-60"
+                        :disabled="busy"
                         @click="save(true)"
                     >
                         {{ t("settings.apiRequest.publish") }}
                     </button>
+                    <span
+                        v-if="busy"
+                        role="status"
+                        data-testid="api-request-saving"
+                        class="text-xs text-muted-foreground"
+                    >
+                        {{ t("common.saving") }}
+                    </span>
                 </div>
             </div>
             <p v-else class="p-4 text-sm text-muted-foreground">
