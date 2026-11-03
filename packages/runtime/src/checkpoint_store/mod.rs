@@ -4,6 +4,7 @@
 //! modules must follow it. This module is introduced incrementally: M1 starts
 //! with the blob codec/atomic write path and the manifest codec.
 
+pub mod audit;
 pub mod blob;
 pub mod capture;
 pub mod fsck;

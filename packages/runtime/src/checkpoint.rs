@@ -20,7 +20,7 @@
 //! Restore execution lives in [`crate::checkpoint_revert`]; this module owns the
 //! primitives it consumes (isolated env, scratch index/excludes, git plumbing).
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::{ExitStatus, Stdio};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
@@ -32,6 +32,7 @@ use thiserror::Error;
 use tokio::process::Command;
 use tracing::{debug, info, warn};
 
+use crate::checkpoint_store::audit::{self, AuditFinding, AuditReport, DualPendingRecord};
 use crate::checkpoint_store::capture::{
     CaptureOptions, CaptureResult, GitTreeEntry, capture_from_git_entries,
     capture_root_with_options,
@@ -101,6 +102,7 @@ struct DualWriteContext<'a> {
     git_tree: &'a str,
     previous_tree: Option<&'a str>,
     changed_paths: Option<&'a HashSet<String>>,
+    git_ref: Option<&'a str>,
     env: &'a [(String, String)],
     git_ms: u64,
 }
@@ -1094,9 +1096,28 @@ impl ShadowGit {
                     store_error = "none",
                     "checkpoint dual-write completed"
                 );
-                if !use_git_fed {
-                    self.check_store_git_consistency(&context, &store_for_check, &result)
-                        .await;
+                let record = DualPendingRecord {
+                    v: 1,
+                    root_id: root_id.to_owned(),
+                    run_id: run_id.to_owned(),
+                    git_ref: context.git_ref.map(str::to_owned),
+                    git_tree: context.git_tree.to_owned(),
+                    store_slice_id: result.slice_id.clone(),
+                    store_manifest_id: result.manifest_id.clone(),
+                    created_at_ms: SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .map(|duration| duration.as_millis() as u64)
+                        .unwrap_or(0),
+                };
+                if let Err(error) = audit::write_pending(&store_for_check, &record) {
+                    self.store_failures.fetch_add(1, Ordering::SeqCst);
+                    warn!(
+                        workspace_id,
+                        root_id,
+                        run_id,
+                        %error,
+                        "checkpoint dual-write pending audit record failed"
+                    );
                 }
                 Some(result)
             }
@@ -1117,6 +1138,7 @@ impl ShadowGit {
         }
     }
 
+    #[allow(dead_code)]
     async fn check_store_git_consistency(
         &self,
         context: &DualWriteContext<'_>,
@@ -1278,6 +1300,94 @@ impl ShadowGit {
         }
     }
 
+    /// Replay pending dual-write audit records. This is a harness entry, not a
+    /// product CLI: capture never performs this synchronous comparison.
+    pub async fn audit_dual_pending(
+        &self,
+        root_filter: Option<&str>,
+        run_filter: Option<&str>,
+    ) -> Result<AuditReport> {
+        let Some(store) = self.store.clone() else {
+            return Err(CheckpointError::Io(std::io::Error::other(
+                "audit requires a configured checkpoint store",
+            )));
+        };
+        let pending =
+            audit::list_pending(&store, root_filter, run_filter).map_err(CheckpointError::Io)?;
+        let mut report = AuditReport::default();
+        for (_path, record) in pending {
+            report.audited += 1;
+            let shadow = self.shadow_git_dir(&record.root_id)?;
+            let work_tree = self.work_tree_for_root(&record.root_id)?;
+            let env = self.isolated_env(&shadow, &work_tree, None);
+            let (git_entries, _) = self.git_tree_snapshot(&env, &record.git_tree).await?;
+            let manifest_bytes = std::fs::read(store.manifest_path(&record.store_manifest_id))
+                .map_err(CheckpointError::Io)?;
+            let manifest = Manifest::parse(&manifest_bytes).map_err(|error| {
+                CheckpointError::Io(std::io::Error::other(format!(
+                    "audit manifest parse failed: {error}"
+                )))
+            })?;
+            let mut expected = BTreeMap::new();
+            for entry in git_entries {
+                expected.insert(entry.path, (entry.mode.as_str(), entry.size));
+            }
+            let mut actual = BTreeMap::new();
+            for entry in &manifest.entries {
+                actual.insert(entry.path.clone(), (entry.mode.as_str(), entry.size));
+            }
+            let mut findings = Vec::new();
+            if expected.len() != actual.len() {
+                findings.push(AuditFinding {
+                    kind: "count",
+                    path: String::new(),
+                    expected: expected.len().to_string(),
+                    actual: actual.len().to_string(),
+                });
+            }
+            for path in expected.keys().chain(actual.keys()) {
+                match (expected.get(path), actual.get(path)) {
+                    (Some(expected), Some(actual)) if expected != actual => {
+                        findings.push(AuditFinding {
+                            kind: "size",
+                            path: path.clone(),
+                            expected: format!("{}:{}", expected.0, expected.1),
+                            actual: format!("{}:{}", actual.0, actual.1),
+                        });
+                    }
+                    (None, Some(actual)) => findings.push(AuditFinding {
+                        kind: "path_set",
+                        path: path.clone(),
+                        expected: "absent".to_string(),
+                        actual: format!("{}:{}", actual.0, actual.1),
+                    }),
+                    (Some(expected), None) => findings.push(AuditFinding {
+                        kind: "path_set",
+                        path: path.clone(),
+                        expected: format!("{}:{}", expected.0, expected.1),
+                        actual: "absent".to_string(),
+                    }),
+                    _ => {}
+                }
+            }
+            findings.sort_by(|left, right| {
+                left.path
+                    .cmp(&right.path)
+                    .then_with(|| left.kind.cmp(right.kind))
+            });
+            findings.dedup();
+            if findings.is_empty() {
+                audit::move_to_done(&store, &record).map_err(CheckpointError::Io)?;
+                report.passed += 1;
+            } else {
+                audit::write_failure(&store, &record, &findings).map_err(CheckpointError::Io)?;
+                report.failed += 1;
+                report.findings.extend(findings);
+            }
+        }
+        Ok(report)
+    }
+
     pub async fn capture_for_root(
         &self,
         workspace_id: &str,
@@ -1356,6 +1466,7 @@ impl ShadowGit {
                 git_tree: &tree,
                 previous_tree: tail_tree.as_deref(),
                 changed_paths: None,
+                git_ref: None,
                 env: &env,
                 git_ms,
             })
@@ -1406,6 +1517,7 @@ impl ShadowGit {
             git_tree: &tree,
             previous_tree: tail_tree.as_deref(),
             changed_paths: changed_paths.as_ref(),
+            git_ref: Some(slice_ref.as_str()),
             env: &env,
             git_ms,
         })
@@ -3496,6 +3608,68 @@ mod tests {
             gitfed_bytes, walker_bytes,
             "incremental git-fed and walker manifests must be byte-identical"
         );
+        let report = engine
+            .audit_dual_pending(Some("ws1"), None)
+            .await
+            .expect("audit pending");
+        assert_eq!(report.failed, 0, "audit findings: {:?}", report.findings);
+        assert!(report.passed >= 2, "expected both pending records to audit");
+    }
+
+    #[tokio::test]
+    #[ignore = "manual 200x dual-write audit gate; --ignored --nocapture"]
+    async fn audit_dual_pending_200x() {
+        let temp = TempDir::new().expect("tempdir");
+        let workspace = temp.path().join("ws1");
+        for index in 0..1_000usize {
+            let path = workspace.join(format!("dir/{:02}/file-{index:04}.txt", index / 50));
+            std::fs::create_dir_all(path.parent().expect("parent")).expect("dir");
+            std::fs::write(path, format!("payload-{index}")).expect("seed");
+        }
+        let store_root = temp.path().join(".xihe-store");
+        let mut engine =
+            ShadowGit::new(temp.path()).with_nested_repo_policy(NestedRepoPolicy::Opaque);
+        if !require_git(&engine).await {
+            return;
+        }
+        engine
+            .configure_checkpoint_storage(CheckpointStorageMode::Dual, &store_root)
+            .expect("configure dual");
+        engine
+            .capture("ws1", "audit-warm", "tester", "audit-warm-call", false)
+            .await
+            .expect("warm capture");
+        for iteration in 0..200usize {
+            std::fs::write(
+                workspace.join("changed.txt"),
+                format!("changed-{iteration}"),
+            )
+            .expect("change");
+            engine
+                .capture(
+                    "ws1",
+                    &format!("audit-{iteration}"),
+                    "tester",
+                    &format!("audit-call-{iteration}"),
+                    false,
+                )
+                .await
+                .expect("audit capture");
+        }
+        let report = engine
+            .audit_dual_pending(Some("ws1"), None)
+            .await
+            .expect("audit pending");
+        eprintln!(
+            "audit_200x audited={} passed={} failed={} findings={}",
+            report.audited,
+            report.passed,
+            report.failed,
+            report.findings.len()
+        );
+        assert_eq!(report.failed, 0, "audit findings: {:?}", report.findings);
+        assert!(report.audited >= 200, "expected >=200 pending records");
+        assert_eq!(report.passed, report.audited);
     }
 
     #[tokio::test]
