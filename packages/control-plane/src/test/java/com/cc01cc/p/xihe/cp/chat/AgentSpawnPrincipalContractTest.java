@@ -600,22 +600,22 @@ class AgentSpawnPrincipalContractTest extends AbstractIntegrationTest {
             // Negative caller contexts fail closed through invocation scope.
 
             // 1. invocation belongs to a different parent run's Session.
-            assertMcpCallDeniedWithoutRuntime(authorized.parentSessionId, restricted.parentRunId,
+            assertMcpCallRejectedWithCodedEnvelopeWithoutRuntime(authorized.parentSessionId, restricted.parentRunId,
                     restricted.toolCallId, "read_file", runtimePath, runtime);
             // 2. no durable ChatRun ⇒ no invocation row ⇒ fail closed.
-            assertMcpCallDeniedWithoutRuntime(authorized.parentSessionId, UUID.randomUUID().toString(),
+            assertMcpCallRejectedWithCodedEnvelopeWithoutRuntime(authorized.parentSessionId, UUID.randomUUID().toString(),
                     authorized.toolCallId, "read_file", runtimePath, runtime);
             // 3. tool name disagrees with the durable invocation row.
-            assertMcpCallDeniedWithoutRuntime(authorized.parentSessionId, authorized.parentRunId,
+            assertMcpCallRejectedWithCodedEnvelopeWithoutRuntime(authorized.parentSessionId, authorized.parentRunId,
                     authorized.toolCallId, "list_directory", runtimePath, runtime);
             // 4. no X-Tool-Call-Id header: the gate claims nothing while the
             //    policy key falls back to the body-derived id, so no row governs it.
-            assertMcpCallDeniedWithoutRuntime(authorized.parentSessionId, authorized.parentRunId,
+            assertMcpCallRejectedWithCodedEnvelopeWithoutRuntime(authorized.parentSessionId, authorized.parentRunId,
                     null, "read_file", runtimePath, runtime);
 
             ParentFixture otherWorkspace = fixtureInOtherWorkspace();
             int crossWorkspaceAttemptsBefore = invocationAttemptCount(otherWorkspace.invocationId());
-            assertMcpCallDeniedWithoutRuntime(otherWorkspace.parentSessionId, otherWorkspace.parentRunId,
+            assertMcpCallRejectedWithCodedEnvelopeWithoutRuntime(otherWorkspace.parentSessionId, otherWorkspace.parentRunId,
                     otherWorkspace.toolCallId, "read_file", runtimePath,
                     runtime, HttpStatus.NOT_FOUND, null);
             assertEquals(crossWorkspaceAttemptsBefore, invocationAttemptCount(otherWorkspace.invocationId()),
@@ -627,13 +627,13 @@ class AgentSpawnPrincipalContractTest extends AbstractIntegrationTest {
             terminalRun.setStatus("completed");
             terminalRun.setTerminalAt(Instant.now());
             chatRunRepository.saveAndFlush(terminalRun);
-            assertMcpCallDeniedWithoutRuntime(authorized.parentSessionId, authorized.parentRunId,
+            assertMcpCallRejectedWithCodedEnvelopeWithoutRuntime(authorized.parentSessionId, authorized.parentRunId,
                     authorized.toolCallId, "read_file", runtimePath, runtime);
 
             // 6. revoked grant: the policy layer still denies before dispatch.
             ParentFixture revoked = fixture("read_file", "{\"path\":\"revoked.md\"}");
             revokeReadGrant();
-            assertMcpCallDeniedWithoutRuntime(revoked.parentSessionId, revoked.parentRunId,
+            assertMcpCallRejectedWithCodedEnvelopeWithoutRuntime(revoked.parentSessionId, revoked.parentRunId,
                     revoked.toolCallId, "read_file", runtimePath, runtime);
 
             assertEquals(attemptsAfterAllow, invocationAttemptCount(authorized.invocationId()),
@@ -738,17 +738,25 @@ class AgentSpawnPrincipalContractTest extends AbstractIntegrationTest {
         return restTemplate.postForEntity(url("/api/v1/mcp"), new HttpEntity<>(body, headers), String.class);
     }
 
-    private void assertMcpCallDeniedWithoutRuntime(String sessionId, String runId,
-                                                   String toolCallId, String toolName, String runtimePath,
-                                                   WireMockServer runtime) throws Exception {
-        assertMcpCallDeniedWithoutRuntime(sessionId, runId, toolCallId, toolName,
-                runtimePath, runtime, HttpStatus.FORBIDDEN, "FORBIDDEN");
+    /**
+     * A rejected caller context must answer with the coded tool-result envelope (PLAN-0649 follow-up,
+     * 2026-11-04): HTTP 200 + {@code result.isError=true} + {@code result.structuredContent.code} +
+     * {@code content:"Tool error: <CODE>"}. It used to be a bare {@code 403 FORBIDDEN} problem, which
+     * the MCP SDK collapsed into an opaque "Server returned an error response" — the model could not
+     * tell "no permission" from "wrong context". Whatever the code is, the four no-side-effect
+     * invariants below stay the real contract of this test: no invocation, no attempt, no approval,
+     * no Runtime dispatch.
+     */
+    private void assertMcpCallRejectedWithCodedEnvelopeWithoutRuntime(
+            String sessionId, String runId, String toolCallId, String toolName, String runtimePath,
+            WireMockServer runtime) throws Exception {
+        assertMcpCallRejectedWithCodedEnvelopeWithoutRuntime(sessionId, runId, toolCallId, toolName,
+                runtimePath, runtime, HttpStatus.OK, null);
     }
 
-    private void assertMcpCallDeniedWithoutRuntime(String sessionId, String runId,
-                                                   String toolCallId, String toolName, String runtimePath,
-                                                   WireMockServer runtime, HttpStatus expectedStatus,
-                                                   String expectedCode) throws Exception {
+    private void assertMcpCallRejectedWithCodedEnvelopeWithoutRuntime(
+            String sessionId, String runId, String toolCallId, String toolName, String runtimePath,
+            WireMockServer runtime, HttpStatus expectedStatus, String expectedCode) throws Exception {
         int invocationCountBefore = workspaceMcpInvocationCount();
         int attemptCountBefore = workspaceMcpAttemptCount();
         int approvalCountBefore = approvalCount(sessionId);
@@ -758,8 +766,21 @@ class AgentSpawnPrincipalContractTest extends AbstractIntegrationTest {
         ResponseEntity<String> response = mcpToolCall(sessionId, runId, toolCallId, toolName);
 
         assertEquals(expectedStatus, response.getStatusCode());
-        if (expectedCode != null) {
-            assertEquals(expectedCode, objectMapper.readTree(response.getBody()).path("code").asText());
+        com.fasterxml.jackson.databind.JsonNode body = objectMapper.readTree(response.getBody());
+        if (expectedStatus == HttpStatus.OK) {
+            com.fasterxml.jackson.databind.JsonNode result = body.path("result");
+            assertTrue(result.path("isError").asBoolean(false),
+                    "a refused call must be an error result: " + response.getBody());
+            String code = result.path("structuredContent").path("code").asText("");
+            assertTrue(code.matches("^[A-Z][A-Z0-9_]{0,63}$"),
+                    "the refusal code must be shape-valid metadata, got '" + code + "' in " + response.getBody());
+            assertEquals("Tool error: " + code, result.path("content").path(0).path("text").asText(),
+                    "the model-visible text stays 'Tool error: CODE': " + response.getBody());
+            if (expectedCode != null) {
+                assertEquals(expectedCode, code);
+            }
+        } else if (expectedCode != null) {
+            assertEquals(expectedCode, body.path("code").asText());
         }
         assertEquals(invocationCountBefore, workspaceMcpInvocationCount(),
                 "rejected call must not create MCP invocations");
