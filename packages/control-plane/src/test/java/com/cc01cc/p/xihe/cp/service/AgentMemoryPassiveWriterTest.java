@@ -167,7 +167,7 @@ class AgentMemoryPassiveWriterTest {
         verify(memoryService).rememberPassive(write.capture());
         AgentMemoryService.PassiveWrite captured = write.getValue();
         assertEquals(PRINCIPAL_ID, captured.principalId());
-        assertEquals(WORKSPACE_ID, captured.workspaceId());
+        assertEquals(WORKSPACE_ID, captured.authzWorkspaceId());
         assertEquals(AgentMemory.ORIGIN_PASSIVE_SUMMARY, captured.origin());
         assertEquals("passive.summary:" + SESSION_ID + ":" + CURSOR, captured.sourceRef(),
                 "the idempotency key is the natural key: mode + session + compaction cursor");
@@ -184,7 +184,7 @@ class AgentMemoryPassiveWriterTest {
 
     @Test
     void theSameSessionEndIsWrittenOnlyOnce() {
-        when(memoryService.passiveAlreadyWritten(PRINCIPAL_ID, WORKSPACE_ID,
+        when(memoryService.passiveAlreadyWritten(PRINCIPAL_ID,
                 "passive.summary:" + SESSION_ID + ":" + CURSOR)).thenReturn(true);
 
         writer.onCompaction(end());
@@ -275,7 +275,7 @@ class AgentMemoryPassiveWriterTest {
 
     @Test
     void aFailingWriteNeverEscapesIntoTheCompactionPath() {
-        when(memoryService.passiveAlreadyWritten(any(), any(), anyString()))
+        when(memoryService.passiveAlreadyWritten(any(), anyString()))
                 .thenThrow(new IllegalStateException("database is on fire"));
 
         assertDoesNotThrow(() -> writer.onCompaction(end()),

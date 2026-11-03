@@ -155,7 +155,7 @@ public class AgentMemoryPassiveWriter {
                     ? AgentMemory.ORIGIN_PASSIVE_SUMMARY
                     : AgentMemory.ORIGIN_PASSIVE_JUDGE;
             String sourceRef = origin + ":" + end.sessionId() + ":" + end.cursor();
-            if (memoryService.passiveAlreadyWritten(principalId, workspaceId, sourceRef)) {
+            if (memoryService.passiveAlreadyWritten(principalId, sourceRef)) {
                 skip(end, principalId, origin, REASON_ALREADY_WRITTEN);
                 return;
             }

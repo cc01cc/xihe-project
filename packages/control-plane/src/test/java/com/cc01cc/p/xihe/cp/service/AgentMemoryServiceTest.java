@@ -24,6 +24,7 @@ import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -110,7 +111,7 @@ class AgentMemoryServiceTest extends AbstractIntegrationTest {
         memoryService.forget(principalId, workspaceId, stored.getId(), userId.toString());
 
         assertTrue(memories.findById(stored.getId()).orElseThrow().getDeletedAt() != null);
-        assertTrue(memoryService.activeMemories(principalId, workspaceId).isEmpty(),
+        assertTrue(memoryService.activeMemories(principalId).isEmpty(),
                 "a forgotten assertion is no longer injected");
         assertEquals(1, auditCount(AgentMemoryService.AUDIT_DELETED));
 
@@ -122,20 +123,27 @@ class AgentMemoryServiceTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void isolationIsByPrincipalAndWorkspace() {
+    void oneMemorySetIsSharedAcrossWorkspacesOfTheSamePrincipal() {
         fixture();
-        memoryService.remember(write("Shared sentence", AgentMemory.ORIGIN_UI, "user-1", false));
+        AgentMemory first = memoryService.remember(
+                write("Deploys happen on Fridays", AgentMemory.ORIGIN_UI, "user-1", false));
 
-        // Same content, different workspace: a different assertion scope, so a second row is correct.
-        AgentMemory inOtherWorkspace = memoryService.remember(new AgentMemoryService.MemoryWrite(
-                principalId, otherWorkspaceId, "Shared sentence",
+        // V107 (user ruling 2026-11-04): the workspace authorizes a write, it does not partition one.
+        // The very same sentence written from another workspace is a dedupe hit, not a second row.
+        AgentMemory fromOtherWorkspace = memoryService.remember(new AgentMemoryService.MemoryWrite(
+                principalId, otherWorkspaceId, "Deploys happen on Fridays",
                 AgentMemory.ORIGIN_UI, "user-1", false, userId.toString()));
 
-        assertEquals(2, memories.count());
-        assertEquals(1, memoryService.activeMemories(principalId, workspaceId).size());
-        assertEquals(List.of(inOtherWorkspace.getId()),
-                memoryService.activeMemories(principalId, otherWorkspaceId).stream()
-                        .map(AgentMemory::getId).toList());
+        assertEquals(1, memories.count(), "one assertion, one row, regardless of workspace");
+        assertEquals(first.getId(), fromOtherWorkspace.getId());
+        assertEquals(1, memoryService.activeMemories(principalId).size());
+
+        // And a different sentence written from the other workspace is visible from this one.
+        memoryService.remember(new AgentMemoryService.MemoryWrite(
+                principalId, otherWorkspaceId, "Never bake on release day",
+                AgentMemory.ORIGIN_UI, "user-1", false, userId.toString()));
+        assertEquals(List.of("Deploys happen on Fridays", "Never bake on release day").size(),
+                memoryService.activeMemories(principalId).size());
     }
 
     @Test
@@ -149,7 +157,7 @@ class AgentMemoryServiceTest extends AbstractIntegrationTest {
         memoryService.remember(write("Older but pinned", AgentMemory.ORIGIN_UI, "user-1", true));
         memoryService.remember(write("Newer but not pinned", AgentMemory.ORIGIN_UI, "user-1", false));
 
-        List<AgentMemory> injected = memoryService.activeMemories(principalId, workspaceId);
+        List<AgentMemory> injected = memoryService.activeMemories(principalId);
         assertEquals(2, injected.size());
         assertTrue(injected.getFirst().isPinned(), "injection order is pinned first");
         assertEquals(AgentMemory.ORIGIN_UI, injected.getFirst().getPinnedBy());
@@ -177,17 +185,30 @@ class AgentMemoryServiceTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void aForeignMemoryIdIsIndistinguishableFromAMissingOne() {
+    void aForeignPrincipalMemoryIdIsIndistinguishableFromAMissingOne() {
         fixture();
         AgentMemory stored = memoryService.remember(write("Scoped row",
                 AgentMemory.ORIGIN_UI, "user-1", false));
 
+        // V107: the subject is the boundary, so "foreign" now means another principal — a
+        // cross-workspace call of the same principal is legal (see the sharing test above) and must
+        // not be turned into a 404, otherwise the ruling would be invisible on the wire.
+        UUID foreignPrincipal = savePrincipal("Foreign principal", userId);
         CpApiException error = assertThrows(CpApiException.class, () -> memoryService.forget(
-                principalId, otherWorkspaceId, stored.getId(), userId.toString()));
+                foreignPrincipal, workspaceId, stored.getId(), userId.toString()));
         assertEquals(HttpStatus.NOT_FOUND, error.getStatus());
         assertEquals("MEMORY_NOT_FOUND", error.getCode());
         assertNull(memories.findById(stored.getId()).orElseThrow().getDeletedAt(),
-                "a cross-workspace id must not delete anything");
+                "a foreign principal's id must not delete anything");
+
+        memoryService.forget(principalId, otherWorkspaceId, stored.getId(), userId.toString());
+        assertNotNull(memories.findById(stored.getId()).orElseThrow().getDeletedAt(),
+                "the same principal may archive from any authorizing workspace");
+
+        // The second principal exists only for this test; the shared fixture cleanup deletes users and
+        // would trip fk_agent_principals_created_by_user if the row were left behind.
+        principalRepository.deleteById(foreignPrincipal);
+        principalRepository.flush();
     }
 
     @Test
@@ -225,7 +246,7 @@ class AgentMemoryServiceTest extends AbstractIntegrationTest {
         assertEquals(AgentMemory.ORIGIN_PASSIVE_SUMMARY, candidate.getOrigin(),
                 "the origin records WHICH passive producer wrote it (audit/UI distinction)");
         assertFalse(candidate.isPinned(), "a passive write can never pin (V99: pinned ⇒ active)");
-        assertTrue(memoryService.activeMemories(principalId, workspaceId).isEmpty(),
+        assertTrue(memoryService.activeMemories(principalId).isEmpty(),
                 "a candidate is invisible to the injection read");
         assertEquals(1, memories.count());
         assertEquals(1, auditCount(AgentMemoryService.AUDIT_CREATED));
@@ -251,7 +272,7 @@ class AgentMemoryServiceTest extends AbstractIntegrationTest {
         fixture();
         memoryService.rememberPassive(passive("Prefers concise answers",
                 AgentMemory.ORIGIN_PASSIVE_SUMMARY, "passive.summary:sess-2:9"));
-        assertTrue(memoryService.activeMemories(principalId, workspaceId).isEmpty(),
+        assertTrue(memoryService.activeMemories(principalId).isEmpty(),
                 "before promotion the assertion is invisible");
 
         AgentMemory promoted = memoryService.remember(
@@ -263,7 +284,7 @@ class AgentMemoryServiceTest extends AbstractIntegrationTest {
                 "the explicit channel takes over the provenance (a passive origin may not be active)");
         assertEquals("user-9", promoted.getSourceRef());
         assertEquals(1, memories.count(), "promotion updates the row instead of adding a second one");
-        assertEquals(List.of(promoted.getId()), memoryService.activeMemories(principalId, workspaceId)
+        assertEquals(List.of(promoted.getId()), memoryService.activeMemories(principalId)
                 .stream().map(AgentMemory::getId).toList());
         assertEquals(1, auditCount(AgentMemoryService.AUDIT_PROMOTED));
     }
@@ -362,15 +383,15 @@ class AgentMemoryServiceTest extends AbstractIntegrationTest {
         memoryService.forget(principalId, workspaceId, archived.getId(), userId.toString());
 
         assertEquals(List.of(live.getId()), memoryService
-                .listMemories(principalId, workspaceId, AgentMemoryService.MemoryStatus.ACTIVE)
+                .listMemories(principalId, AgentMemoryService.MemoryStatus.ACTIVE)
                 .stream().map(AgentMemory::getId).toList());
         assertEquals(List.of(archived.getId()), memoryService
-                .listMemories(principalId, workspaceId, AgentMemoryService.MemoryStatus.RETIRED)
+                .listMemories(principalId, AgentMemoryService.MemoryStatus.RETIRED)
                 .stream().map(AgentMemory::getId).toList(),
                 "the archive must stay readable, or a soft delete looks like data loss");
         assertEquals(2, memoryService
-                .listMemories(principalId, workspaceId, AgentMemoryService.MemoryStatus.ALL).size());
-        assertTrue(memoryService.activeMemories(principalId, workspaceId).stream()
+                .listMemories(principalId, AgentMemoryService.MemoryStatus.ALL).size());
+        assertTrue(memoryService.activeMemories(principalId).stream()
                         .noneMatch(row -> row.getId().equals(archived.getId())),
                 "injection keeps using the live-only finder");
     }
