@@ -7,3 +7,4 @@
 pub mod blob;
 pub mod manifest;
 pub mod store;
+pub mod walk;
