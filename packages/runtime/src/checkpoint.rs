@@ -38,6 +38,7 @@ use crate::checkpoint_store::capture::{
     capture_root_with_options,
 };
 use crate::checkpoint_store::manifest::{FileMode, Manifest};
+use crate::checkpoint_store::refs::{self, RefRecord};
 use crate::checkpoint_store::store::{Store, StoreError};
 use crate::checkpoint_store::walk::{WalkEntryKind, walk_workspace};
 use crate::error::RuntimeError;
@@ -246,6 +247,9 @@ pub enum CheckpointError {
 
     #[error("nested repositories present and the hard limit is enabled: {paths:?}")]
     NestedRepoLimit { paths: Vec<String> },
+
+    #[error("self-mode store capture failed: {detail}")]
+    StoreCaptureFailed { detail: String },
 
     #[error("checkpoint cleanup rejected: a capture or restore owns workspace {0}")]
     CleanupBusy(String),
@@ -1020,15 +1024,22 @@ impl ShadowGit {
         .map_err(|error| CheckpointError::Io(std::io::Error::other(error.to_string())))
     }
 
-    async fn dual_write_store(&self, context: DualWriteContext<'_>) -> Option<CaptureResult> {
+    async fn dual_write_store(
+        &self,
+        context: DualWriteContext<'_>,
+    ) -> Result<Option<CaptureResult>> {
         let workspace_id = context.workspace_id;
         let root_id = context.root_id;
         let run_id = context.run_id;
         let actor = context.actor;
         let work_tree = context.work_tree;
         let git_ms = context.git_ms;
-        if self.checkpoint_storage != CheckpointStorageMode::Dual {
-            return None;
+        let is_self = self.checkpoint_storage == CheckpointStorageMode::Self_;
+        if !matches!(
+            self.checkpoint_storage,
+            CheckpointStorageMode::Dual | CheckpointStorageMode::Self_
+        ) {
+            return Ok(None);
         }
         let Some(store) = self.store.clone() else {
             self.store_failures.fetch_add(1, Ordering::SeqCst);
@@ -1039,7 +1050,12 @@ impl ShadowGit {
                 store_error = "store_not_configured",
                 "checkpoint dual-write skipped"
             );
-            return None;
+            if is_self {
+                return Err(CheckpointError::StoreCaptureFailed {
+                    detail: "self mode requires a configured checkpoint store".into(),
+                });
+            }
+            return Ok(None);
         };
         let store_for_check = store.clone();
         let use_git_fed = self.nested_repo_policy == NestedRepoPolicy::Opaque;
@@ -1121,7 +1137,37 @@ impl ShadowGit {
                         "checkpoint dual-write pending audit record failed"
                     );
                 }
-                Some(result)
+                if let Some(git_ref) = context.git_ref {
+                    let ref_record = RefRecord {
+                        v: 1,
+                        root_id: root_id.to_owned(),
+                        git_ref: git_ref.to_owned(),
+                        git_tree: context.git_tree.to_owned(),
+                        store_slice_id: result.slice_id.clone(),
+                        store_manifest_id: result.manifest_id.clone(),
+                        source: "capture".into(),
+                        created_at_ms: record.created_at_ms,
+                    };
+                    if let Err(error) = refs::write_ref(&store_for_check, &ref_record) {
+                        self.store_failures.fetch_add(1, Ordering::SeqCst);
+                        warn!(
+                            workspace_id,
+                            root_id,
+                            run_id,
+                            %error,
+                            "checkpoint ref sidecar write failed; store slice is unmapped"
+                        );
+                        if is_self {
+                            return Err(CheckpointError::StoreCaptureFailed {
+                                detail: format!(
+                                    "store slice {} written but refs sidecar failed: {error}",
+                                    result.slice_id
+                                ),
+                            });
+                        }
+                    }
+                }
+                Ok(Some(result))
             }
             Err(error) => {
                 self.store_failures.fetch_add(1, Ordering::SeqCst);
@@ -1135,7 +1181,12 @@ impl ShadowGit {
                     "checkpoint dual-write failed; git slice remains authoritative"
                 );
                 debug!(%error, "checkpoint dual-write error detail");
-                None
+                if is_self {
+                    return Err(CheckpointError::StoreCaptureFailed {
+                        detail: error.to_string(),
+                    });
+                }
+                Ok(None)
             }
         }
     }
@@ -1468,11 +1519,11 @@ impl ShadowGit {
                 git_tree: &tree,
                 previous_tree: tail_tree.as_deref(),
                 changed_paths: None,
-                git_ref: None,
+                git_ref: predecessor.as_deref(),
                 env: &env,
                 git_ms,
             })
-            .await;
+            .await?;
             return Ok(CaptureOutcome {
                 run_id: run_id.to_string(),
                 root_id: root_id.to_string(),
@@ -1523,7 +1574,7 @@ impl ShadowGit {
             env: &env,
             git_ms,
         })
-        .await;
+        .await?;
         Ok(CaptureOutcome {
             run_id: run_id.to_string(),
             root_id: root_id.to_string(),
@@ -3492,6 +3543,239 @@ mod tests {
             .expect("slice dir")
             .count();
         assert_eq!(slices, 1, "next capture backfills the store slice");
+    }
+
+    #[tokio::test]
+    async fn self_capture_writes_store_and_refs_sidecar() {
+        use crate::checkpoint_store::preflight::{PreflightOptions, run_preflight};
+
+        let temp = TempDir::new().expect("tempdir");
+        let workspace = temp.path().join("ws1");
+        std::fs::create_dir_all(&workspace).expect("workspace");
+        std::fs::write(workspace.join("a.txt"), "self").expect("file");
+        let store_root = temp.path().join(".xihe-store");
+        let mut engine =
+            ShadowGit::new(temp.path()).with_nested_repo_policy(NestedRepoPolicy::Opaque);
+        if !require_git(&engine).await {
+            return;
+        }
+        engine
+            .configure_checkpoint_storage(CheckpointStorageMode::Self_, &store_root)
+            .expect("configure self");
+        let outcome = engine
+            .capture("ws1", "run-self-1", "tester", "call-self-1", false)
+            .await
+            .expect("self capture");
+        let git_ref = outcome.slice_ref.expect("git ref");
+        let store = Store::open(&store_root).expect("store");
+        let record = refs::read_ref(&store, "ws1", &git_ref)
+            .expect("ref read")
+            .expect("ref sidecar");
+        assert_eq!(record.source, "capture");
+        assert_eq!(record.git_ref, git_ref);
+        assert!(!record.git_tree.is_empty());
+        assert!(
+            store
+                .slice_dir("ws1")
+                .join(format!("{}.json", record.store_slice_id))
+                .is_file()
+        );
+
+        let shadow = engine.shadow_git_dir("ws1").expect("shadow");
+        let mut shadows = HashMap::new();
+        shadows.insert("ws1".to_string(), shadow);
+        let report = run_preflight(
+            &store,
+            &PreflightOptions {
+                roots: vec!["ws1".into()],
+                shadow_git_dirs: shadows,
+                ..PreflightOptions::default()
+            },
+        )
+        .expect("preflight");
+        assert!(report.ok, "{report:?}");
+        assert_eq!(report.roots[0].mapped_refs, 1);
+        assert_eq!(report.roots[0].unmapped_slices.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn self_capture_store_failure_is_hard_failure() {
+        let temp = TempDir::new().expect("tempdir");
+        let workspace = temp.path().join("ws1");
+        std::fs::create_dir_all(&workspace).expect("workspace");
+        std::fs::write(workspace.join("a.txt"), "self").expect("file");
+        let store_root = temp.path().join(".xihe-store");
+        let mut engine = ShadowGit::new(temp.path());
+        if !require_git(&engine).await {
+            return;
+        }
+        engine
+            .configure_checkpoint_storage(CheckpointStorageMode::Self_, &store_root)
+            .expect("configure self");
+        std::fs::remove_dir_all(&store_root).expect("remove store");
+        let error = engine
+            .capture("ws1", "run-self-fail", "tester", "call-self-fail", false)
+            .await
+            .expect_err("store failure must fail capture");
+        assert!(
+            matches!(error, CheckpointError::StoreCaptureFailed { .. }),
+            "{error:?}"
+        );
+        assert!(engine.store_failures() > 0);
+    }
+
+    #[tokio::test]
+    async fn self_capture_refs_failure_fails_then_retry_repairs_mapping() {
+        let temp = TempDir::new().expect("tempdir");
+        let workspace = temp.path().join("ws1");
+        std::fs::create_dir_all(&workspace).expect("workspace");
+        std::fs::write(workspace.join("a.txt"), "self").expect("file");
+        let store_root = temp.path().join(".xihe-store");
+        let mut engine =
+            ShadowGit::new(temp.path()).with_nested_repo_policy(NestedRepoPolicy::Opaque);
+        if !require_git(&engine).await {
+            return;
+        }
+        engine
+            .configure_checkpoint_storage(CheckpointStorageMode::Self_, &store_root)
+            .expect("configure self");
+        std::fs::write(store_root.join("index/refs"), "not a directory").expect("refs blocker");
+        let error = engine
+            .capture("ws1", "run-refs-fail", "tester", "call-refs-fail", false)
+            .await
+            .expect_err("refs failure must fail capture");
+        assert!(
+            matches!(error, CheckpointError::StoreCaptureFailed { .. }),
+            "{error:?}"
+        );
+        let store = Store::open(&store_root).expect("store");
+        let slices: Vec<_> = std::fs::read_dir(store.slice_dir("ws1"))
+            .expect("slice dir")
+            .flatten()
+            .map(|entry| entry.path())
+            .collect();
+        assert_eq!(slices.len(), 1, "store slice remains explicitly orphaned");
+        std::fs::remove_file(store_root.join("index/refs")).expect("remove refs blocker");
+
+        let repaired = engine
+            .capture(
+                "ws1",
+                "run-refs-repair",
+                "tester",
+                "call-refs-repair",
+                false,
+            )
+            .await
+            .expect("retry capture");
+        assert!(repaired.no_change);
+        let git_ref = repaired
+            .predecessor
+            .expect("predecessor ref for no-change retry");
+        let record = refs::read_ref(&store, "ws1", &git_ref)
+            .expect("ref read")
+            .expect("repaired ref");
+        assert_eq!(record.source, "capture");
+    }
+
+    #[tokio::test]
+    #[ignore = "P2.0 real dual-backfill fixture; run with --ignored --nocapture"]
+    async fn p2_real_dual_backfill_fixture() {
+        use crate::checkpoint_store::preflight::{PreflightOptions, run_preflight};
+
+        let temp = TempDir::new().expect("tempdir");
+        let workspace = temp.path().join("ws1");
+        std::fs::create_dir_all(&workspace).expect("workspace");
+        std::fs::write(workspace.join("a.txt"), "one").expect("a");
+        let store_root = temp.path().join(".xihe-store");
+        let mut engine =
+            ShadowGit::new(temp.path()).with_nested_repo_policy(NestedRepoPolicy::Opaque);
+        if !require_git(&engine).await {
+            return;
+        }
+        engine
+            .configure_checkpoint_storage(CheckpointStorageMode::Dual, &store_root)
+            .expect("configure dual");
+        engine
+            .capture("ws1", "real-1", "tester", "real-call-1", false)
+            .await
+            .expect("capture 1");
+        std::fs::write(workspace.join("b.txt"), "two").expect("b");
+        engine
+            .capture("ws1", "real-2", "tester", "real-call-2", false)
+            .await
+            .expect("capture 2");
+        let audit = engine
+            .audit_dual_pending(Some("ws1"), None)
+            .await
+            .expect("audit");
+        assert_eq!(audit.failed, 0, "{audit:?}");
+        assert!(audit.passed >= 2);
+        let store = Store::open(&store_root).expect("store");
+        // Simulate historical dual slices from before P2.1: no refs sidecars.
+        let refs_dir = store.root().join("index").join("refs");
+        if refs_dir.exists() {
+            std::fs::remove_dir_all(&refs_dir).expect("remove refs for backfill");
+        }
+        let shadow = engine.shadow_git_dir("ws1").expect("shadow");
+        let mut shadows = HashMap::new();
+        shadows.insert("ws1".to_string(), shadow.clone());
+        let report = run_preflight(
+            &store,
+            &PreflightOptions {
+                roots: vec!["ws1".into()],
+                shadow_git_dirs: shadows,
+                ..PreflightOptions::default()
+            },
+        )
+        .expect("preflight");
+        assert!(report.ok, "{report:?}");
+        assert_eq!(report.roots[0].backfilled_refs, audit.passed);
+        assert!(report.roots[0].unmapped_slices.is_empty());
+        assert_eq!(
+            report.roots[0].mapped_refs,
+            std::fs::read_dir(store.slice_dir("ws1"))
+                .expect("slices")
+                .flatten()
+                .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "json"))
+                .count()
+        );
+
+        let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let evidence = manifest_dir
+            .join("..")
+            .join("..")
+            .join(".local")
+            .join("evidence")
+            .join("plan-0653")
+            .join("p2.0-real-backfill");
+        if evidence.exists() {
+            std::fs::remove_dir_all(&evidence).expect("clean fixture");
+        }
+        fn copy_dir(from: &Path, to: &Path) {
+            std::fs::create_dir_all(to).expect("copy dir");
+            for entry in std::fs::read_dir(from).expect("copy read") {
+                let entry = entry.expect("copy entry");
+                let source = entry.path();
+                let target = to.join(entry.file_name());
+                if entry.file_type().expect("copy type").is_dir() {
+                    copy_dir(&source, &target);
+                } else {
+                    std::fs::copy(&source, &target).expect("copy file");
+                }
+            }
+        }
+        copy_dir(&store_root, &evidence.join("store"));
+        copy_dir(&shadow, &evidence.join("shadow.git"));
+        copy_dir(&workspace, &evidence.join("workspace"));
+        std::fs::write(
+            evidence.join("preflight.json"),
+            serde_json::to_vec_pretty(&report).expect("report json"),
+        )
+        .expect("write report");
+        eprintln!(
+            "P2_REAL_BACKFILL {}",
+            serde_json::to_string(&report).expect("report")
+        );
     }
 
     #[tokio::test]
