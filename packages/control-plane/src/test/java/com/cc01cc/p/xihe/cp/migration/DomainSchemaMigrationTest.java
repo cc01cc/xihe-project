@@ -1316,4 +1316,65 @@ class DomainSchemaMigrationTest {
             }
         }
     }
+
+    /**
+     * PLAN-0630 M2 T1.7 (V105): the durable wake edge — chat_runs.parent_run_id is UUID NULL
+     * with no FK (V37/V52 ruling: no cascade through this edge; the ancestor-missing case is
+     * judged fail-closed in the service layer), a self-reference CHECK, and a partial index.
+     * Historical rows keep NULL = root: no backfill.
+     */
+    @Test
+    void v105ChatRunParentRunEdgeApplied() throws SQLException {
+        assertEquals(1, scalarInt(
+                "SELECT count(*) FROM flyway_schema_history WHERE version = '105' AND success = true"),
+                "V105 must be recorded as applied on the fresh chain");
+        assertEquals("uuid", scalarString(
+                "SELECT data_type FROM information_schema.columns WHERE table_schema = 'public' "
+                        + "AND table_name = 'chat_runs' AND column_name = 'parent_run_id'"));
+        assertEquals("YES", scalarString(
+                "SELECT is_nullable FROM information_schema.columns WHERE table_schema = 'public' "
+                        + "AND table_name = 'chat_runs' AND column_name = 'parent_run_id'"),
+                "historical runs keep parent_run_id NULL = root (no backfill)");
+        assertEquals(1, scalarInt(
+                "SELECT count(*) FROM pg_constraint WHERE conname = 'ck_chat_runs_parent_run_not_self' "
+                        + "AND contype = 'c'"),
+                "the self-reference CHECK must exist");
+        assertEquals(0, scalarInt(
+                "SELECT count(*) FROM pg_constraint WHERE conname LIKE 'fk_chat_runs_parent%'"),
+                "the wake edge must not declare a FK (no cascade through this edge)");
+
+        assertEquals(1, scalarInt(
+                "SELECT count(*) FROM pg_indexes WHERE schemaname = 'public' "
+                        + "AND indexname = 'idx_chat_runs_parent_run'"),
+                "the wake-edge lookup index must exist");
+        String indexDef = scalarString(
+                "SELECT indexdef FROM pg_indexes WHERE schemaname = 'public' "
+                        + "AND indexname = 'idx_chat_runs_parent_run'");
+        assertTrue(indexDef.contains("parent_run_id IS NOT NULL"),
+                "the wake-edge index must be partial: " + indexDef);
+
+        UUID userId = UUID.randomUUID();
+        executeUpdate("INSERT INTO users (id, email, password_hash, username) VALUES ('" + userId
+                + "'::uuid, 'v105-" + userId + "@test.local', 'hash', 'x' || left(md5(random()::text), 31))");
+        UUID runId = insertV44Fixture(connection, userId, "v105");
+
+        assertEquals(0, scalarInt("SELECT count(*) FROM chat_runs WHERE id = '" + runId
+                        + "'::uuid AND parent_run_id IS NOT NULL"),
+                "a fresh run row keeps parent_run_id NULL = root");
+
+        UUID parentRunId = UUID.randomUUID();
+        executeUpdate("UPDATE chat_runs SET parent_run_id = '" + parentRunId
+                + "'::uuid WHERE id = '" + runId + "'::uuid");
+        assertEquals(1, scalarInt("SELECT count(*) FROM chat_runs WHERE id = '" + runId
+                        + "'::uuid AND parent_run_id = '" + parentRunId + "'::uuid"),
+                "a non-self parent reference must round-trip");
+
+        SQLException selfReference = assertThrows(SQLException.class, () -> executeUpdate(
+                "UPDATE chat_runs SET parent_run_id = id WHERE id = '" + runId + "'::uuid"));
+        assertTrue(hasCauseMessage(selfReference, "ck_chat_runs_parent_run_not_self"),
+                selfReference.getMessage());
+        assertEquals(1, scalarInt("SELECT count(*) FROM chat_runs WHERE id = '" + runId
+                        + "'::uuid AND parent_run_id = '" + parentRunId + "'::uuid"),
+                "a rejected self-reference must leave the row untouched");
+    }
 }

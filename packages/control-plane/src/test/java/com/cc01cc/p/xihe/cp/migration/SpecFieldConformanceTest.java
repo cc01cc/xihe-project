@@ -26,7 +26,8 @@ import static org.junit.jupiter.api.Assertions.assertNull;
  * <p>{@code DomainSchemaMigrationTest} covers fresh and upgraded schema paths on a standalone
  * Flyway connection. This class asserts exact enumeration value sets (grants.source,
  * sessions.kind, chat_runs.origin), the partial default-index definition, the ChatRun waiting-link
- * carrier, and that Hibernate {@code ddl-auto=validate} runs against this schema.</p>
+ * and wake-edge (PLAN-0630 V105) carriers, and that Hibernate {@code ddl-auto=validate} runs
+ * against this schema.</p>
  */
 class SpecFieldConformanceTest extends AbstractIntegrationTest {
 
@@ -114,6 +115,24 @@ class SpecFieldConformanceTest extends AbstractIntegrationTest {
         assertEquals("YES", columnInfo("chat_runs", "waiting_tool_call_id", "is_nullable"));
         assertEquals(2, waitingKeyColumnCount("chat_runs"),
                 "spec §3.3: ChatRun carries the parent-run and tool-call waiting keys");
+
+        // PLAN-0630 M2 T1.7 (V105): the durable wake edge joins the provenance group next to
+        // the waiting link. Same ruling as sessions.spawned_from_* and the V52 waiting link:
+        // UUID NULL (root runs and all historical rows keep NULL — no backfill), no FK, and a
+        // partial index plus a self-reference CHECK instead of a cycle-detecting trigger.
+        assertEquals(1, columnCount("chat_runs", "parent_run_id"),
+                "spec provenance: chat_runs.parent_run_id must exist (PLAN-0630 D30-02)");
+        assertEquals("uuid", columnInfo("chat_runs", "parent_run_id", "data_type"),
+                "spec provenance: the wake edge is UUID-valued");
+        assertEquals("YES", columnInfo("chat_runs", "parent_run_id", "is_nullable"),
+                "spec provenance: root runs keep parent_run_id NULL");
+        assertNotNull(indexDefinition("idx_chat_runs_parent_run"),
+                "spec provenance: the wake edge keeps a partial lookup index");
+        assertEquals(1, jdbcTemplate.queryForObject(
+                        "SELECT count(*) FROM pg_constraint WHERE conname = "
+                                + "'ck_chat_runs_parent_run_not_self' AND contype = 'c'",
+                        Integer.class),
+                "spec provenance: the wake edge fences the self-reference at the DB level");
 
         assertEquals("timestamp with time zone", columnInfo("chat_runs", "terminal_at", "data_type"),
                 "V44 delta: chat_runs.terminal_at exists");
