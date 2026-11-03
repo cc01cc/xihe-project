@@ -128,13 +128,14 @@ test.describe("Workspace management dialogs (PLAN-262 M2)", () => {
         await dialog.getByTestId("workspace-create-submit").click();
 
         await expect(page).toHaveURL(/\/workspace\/ws-new/);
-        // The direct-attach request must carry the host binding and the execution mode; the
+        // The direct-attach request must carry the root binding and the execution mode; the
         // retired `profile` field and the frozen `managed_import` mode must not appear.
+        // PLAN-0639 M1: root binding is roots=[{path}] (root[0] = primary).
         expect(createPayload).toMatchObject({
             name: "E2E Workspace",
             storageMode: "direct_attach",
             executionMode: "windows-mxc",
-            hostPath: "H:/src/demo",
+            roots: [{ path: "H:/src/demo" }],
         });
         expect(createPayload?.profile).toBeUndefined();
     });
