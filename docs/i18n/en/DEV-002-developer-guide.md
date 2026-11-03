@@ -324,7 +324,7 @@ JSONC supports comments and trailing commas; you can directly copy MCP configura
 
 The CLI is an operator entry point. It calls CP's authenticated HTTP API for Provider Connections; Agent execution continues to use its own lease/protocol path. The real E2E key is injected directly into the isolated Agent process and does not test a Provider Connection lease.
 
-`--api-key-env` reads a variable already present in the CLI process. An interactive terminal prompts without echo when needed; non-interactive tasks must inject the environment variable. The CLI does not read `.env.local` itself.
+`--api-key-env` reads a variable already present in the CLI process. An interactive terminal prompts without echo when needed; non-interactive tasks must inject the environment variable. The CLI entry point **fills missing keys** from the `.env` → `.env.$XIHE_ENV` → `.env.local` chain (PLAN-0547 `loadEnvFileChain`; an existing OS env value is never overwritten by a file); secrets are still read only from env or a TTY, never from argv, logs, or reports.
 
 `real-tool-roundtrip` may send up to two model prompts and can incur provider charges. Playwright retries are disabled for this command; decide manually whether to rerun after a failure.
 
