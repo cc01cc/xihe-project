@@ -33,7 +33,15 @@ const i18n = createI18n({
                     failed: "Failed",
                     approved: "Approved",
                     rejected: "Rejected",
+                    refused: "Refused",
                 },
+                // PLAN-0649 M3: refusal presentation keys.
+                toolRefusedTitle: "This call was refused and never ran",
+                toolRefusedGeneric: "The tool call was refused; nothing was executed",
+                toolRefusedCodeLabel: "Reason code:",
+                toolRefusedHint: "Adjust the task or retry later",
+                toolRefusalDelegationLimit: "The delegation budget is exhausted",
+                toolRefusalSpawnFailed: "Spawning the child task failed",
                 approve: "Approve",
                 reject: "Reject",
                 toolDiagnosticsTitle: "Diagnostics",
@@ -505,5 +513,79 @@ describe("ToolCallCard job cancel (PLAN-0366 T2.2)", () => {
         expect(wrapper.find('[data-testid="job-cancel-error"]').text()).toContain(
             "temporarily unavailable",
         );
+    });
+});
+
+describe("ToolCallCard refusal presentation (PLAN-0649 M3)", () => {
+    const UNSAFE_PLACEHOLDER =
+        "Tool result withheld from durable history because no checkpoint-safe output schema is registered.";
+
+    function refusedCall(overrides = {}) {
+        return makeToolCall({
+            name: "spawn_agent",
+            status: "failed",
+            refusalCode: "DELEGATION_LIMIT_EXCEEDED",
+            result: UNSAFE_PLACEHOLDER,
+            ...overrides,
+        });
+    }
+
+    it("shows the refusal in the collapsed row instead of a completed status", () => {
+        const wrapper = mountCard({ toolCall: refusedCall() });
+        const header = wrapper.get('[data-testid="tool-card-toggle"]').text();
+
+        expect(header).toContain("Refused");
+        expect(header).not.toContain("Completed");
+        // Red tone comes from the failed palette, not from a new colour token.
+        expect(wrapper.get('[data-testid="tool-card-toggle"]').html()).toContain("text-red-500");
+    });
+
+    it("renders one refusal line plus the reason code when expanded", async () => {
+        const wrapper = mountCard({ toolCall: refusedCall() });
+        await wrapper.get('[data-testid="tool-card-toggle"]').trigger("click");
+
+        const block = wrapper.get('[data-testid="tool-refusal"]');
+        expect(block.text()).toContain("This call was refused and never ran");
+        expect(block.text()).toContain("The delegation budget is exhausted");
+        expect(block.text()).toContain("Adjust the task or retry later");
+        expect(wrapper.get('[data-testid="tool-refusal-code"]').text()).toBe(
+            "DELEGATION_LIMIT_EXCEEDED",
+        );
+    });
+
+    it("falls back to generic copy but still shows the raw code for an unmapped one", async () => {
+        const wrapper = mountCard({
+            toolCall: refusedCall({ refusalCode: "SOME_FUTURE_CODE" }),
+        });
+        await wrapper.get('[data-testid="tool-card-toggle"]').trigger("click");
+
+        const block = wrapper.get('[data-testid="tool-refusal"]');
+        expect(block.text()).toContain("The tool call was refused");
+        expect(wrapper.get('[data-testid="tool-refusal-code"]').text()).toBe("SOME_FUTURE_CODE");
+    });
+
+    it("treats a refusal as failed even when the wire status is still completed", () => {
+        // Mixed-version case: an older Agent (or a pre-M2 snapshot) still says completed.
+        const wrapper = mountCard({
+            toolCall: refusedCall({
+                status: "completed",
+                refusalCode: "DELEGATION_LIMIT_EXCEEDED",
+            }),
+        });
+        const header = wrapper.get('[data-testid="tool-card-toggle"]');
+
+        expect(header.text()).toContain("Refused");
+        expect(header.text()).not.toContain("Completed");
+        expect(header.html()).toContain("text-red-500");
+    });
+
+    it("keeps a normal completed card free of any refusal block", async () => {
+        const wrapper = mountCard({
+            toolCall: makeToolCall({ status: "completed", result: UNSAFE_PLACEHOLDER }),
+        });
+        await wrapper.get('[data-testid="tool-card-toggle"]').trigger("click");
+
+        expect(wrapper.find('[data-testid="tool-refusal"]').exists()).toBe(false);
+        expect(wrapper.get('[data-testid="tool-card-toggle"]').text()).toContain("Completed");
     });
 });

@@ -3,6 +3,7 @@ import { ref, computed, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import type { Diagnostic, ToolCall } from "../../../../types";
 import { ApiError, api } from "../../../../composables/api";
+import { toolRefusalCopyKey } from "../../../../lib/errorMessages";
 import { LoaderCircle, CheckCircle, XCircle, Clock, Bot, ChevronDown } from "@lucide/vue";
 
 const props = defineProps<{
@@ -90,6 +91,39 @@ const duration = computed(() => {
     if (ms < 1000) return `${ms}ms`;
     return `${(ms / 1000).toFixed(1)}s`;
 });
+
+/**
+ * PLAN-0649: refusal presentation.
+ *
+ * A refused call keeps its withheld body on every surface, so the refusal code is
+ * the only reason the user can ever see — the card must therefore stop presenting
+ * it as a completed call. Refusals are judged by `refusalCode`, **not** by `status`
+ * (`spec/tool-refusal-observability.md` §1): the durable status of a non-CP tool
+ * error can still be `completed`.
+ */
+const refusalCode = computed(() => props.toolCall.refusalCode ?? null);
+const refusalReason = computed(() => {
+    const code = refusalCode.value;
+    if (!code) return "";
+    const key = toolRefusalCopyKey(code);
+    // B5 ruling: an unmapped code still renders the generic line plus the raw code.
+    return key ? t(key) : t("chat.toolRefusedGeneric");
+});
+const statusLabel = computed(() =>
+    refusalCode.value
+        ? t("chat.toolStatus.refused")
+        : t(`chat.toolStatus.${props.toolCall.status}`),
+);
+// A refusal reads as a failure even when the wire status is still `completed`
+// (older Agent, or a durable snapshot written before M2 lands).
+const statusIcon = computed(() =>
+    refusalCode.value ? XCircle : (statusIcons[props.toolCall.status] ?? Bot),
+);
+const statusTone = computed(() =>
+    refusalCode.value
+        ? statusColors.failed
+        : (statusColors[props.toolCall.status] ?? "text-muted-foreground"),
+);
 
 // PLAN-0344：durable job 卡片——档案（jobSummary）给状态与 jobId，
 // 输出按字节游标从 CP 续看端点分页拉取（真源仍是容器文件）。
@@ -211,18 +245,16 @@ async function loadJobOutput(reset: boolean) {
             @click="expanded = !expanded"
         >
             <component
-                :is="statusIcons[toolCall.status] || Bot"
+                :is="statusIcon"
                 class="size-4 shrink-0"
-                :class="statusColors[toolCall.status] || 'text-muted-foreground'"
+                :class="statusTone"
                 aria-hidden="true"
             />
             <span class="font-medium flex-1 text-left truncate">{{ toolCall.name }}</span>
             <span v-if="duration" class="text-xs text-muted-foreground tabular-nums">{{
                 duration
             }}</span>
-            <span class="text-xs" :class="statusColors[toolCall.status] || 'text-muted-foreground'">
-                {{ t(`chat.toolStatus.${toolCall.status}`) }}
-            </span>
+            <span class="text-xs" :class="statusTone"> {{ statusLabel }} </span>
             <ChevronDown
                 class="size-4 text-muted-foreground transition-transform"
                 :class="expanded ? 'rotate-180' : ''"
@@ -246,6 +278,24 @@ async function loadJobOutput(reset: boolean) {
         </div>
 
         <div v-if="expanded" class="space-y-2 border-t px-3 pb-3 pt-2 text-xs">
+            <!--
+                PLAN-0649: the refused call never ran, and its body stays withheld,
+                so this block is the only place the reason can appear. It sits
+                above diagnostics/raw output on purpose (reason before payload).
+            -->
+            <div
+                v-if="refusalCode"
+                class="rounded border border-destructive/40 bg-destructive/5 p-2"
+                data-testid="tool-refusal"
+            >
+                <div class="font-medium text-destructive">{{ t("chat.toolRefusedTitle") }}</div>
+                <p class="mt-0.5 text-foreground">{{ refusalReason }}</p>
+                <p class="mt-0.5 text-muted-foreground">{{ t("chat.toolRefusedHint") }}</p>
+                <p class="mt-0.5 text-muted-foreground">
+                    {{ t("chat.toolRefusedCodeLabel") }}
+                    <span class="font-mono" data-testid="tool-refusal-code">{{ refusalCode }}</span>
+                </p>
+            </div>
             <div v-if="hasDiagnostics" class="space-y-1.5" data-testid="tool-diagnostics">
                 <div class="flex items-baseline justify-between gap-2">
                     <span class="font-medium text-foreground">{{
