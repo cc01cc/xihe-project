@@ -1,5 +1,6 @@
 import { spawnSync } from 'node:child_process';
 import { createInterface } from 'node:readline/promises';
+import { persistToken, tokenEntryFor } from './token-store.mjs';
 
 const DEFAULT_CP_PORT = '12631';
 const CP_REQUEST_TIMEOUT_MS = 10_000;
@@ -346,7 +347,32 @@ export async function requestText(pathname, {
   };
 }
 
-export async function login({ apiBase, fetchImpl, env, options, promptSecret }) {
+/**
+ * PLAN-0643 T1.2/T1.3 (design D16/D17, spec §5): credential precedence is
+ * `XIHE_TOKEN` → cached access token for this base URL → TTY/env password login.
+ * `forcePassword: true` skips both the cache read and the cache write, so
+ * `xihe auth login` can own persistence and report ACL/write failures explicitly.
+ * A corrupt or unsafe cache file is an explicit error — never a silent degrade.
+ */
+export async function login({ apiBase, fetchImpl, env, options = {}, promptSecret, forcePassword = false }) {
+  const envToken = typeof env?.XIHE_TOKEN === 'string' ? env.XIHE_TOKEN.trim() : '';
+  if (envToken !== '') return envToken;
+  if (!forcePassword) {
+    const cached = tokenEntryFor(env, apiBase);
+    if (cached.kind === 'hit') return cached.token;
+    if (cached.kind === 'unsafe') {
+      throw new CliError(
+        'TOKEN_FILE_UNSAFE',
+        `${cached.path} is unsafe (${cached.reason}); fix the path or run \`xihe auth logout --force\`, then log in again.`,
+      );
+    }
+    if (cached.kind === 'corrupt') {
+      throw new CliError(
+        'TOKEN_FILE_CORRUPT',
+        `${cached.path} is corrupt (${cached.reason}); run \`xihe auth logout --force\` to rebuild it, or set XIHE_TOKEN.`,
+      );
+    }
+  }
   const email = options['--email'] ?? 'admin@xihe.local';
   const password = env.XIHE_DEV_ADMIN_PASSWORD || await promptSecret('XH local admin password');
   const response = await requestJson('/api/v1/auth/login', {
@@ -357,6 +383,11 @@ export async function login({ apiBase, fetchImpl, env, options, promptSecret }) 
   });
   if (typeof response?.accessToken !== 'string' || response.accessToken.length === 0) {
     throw new CliError('AUTH_RESPONSE_INVALID', 'CP login response did not contain an access token.');
+  }
+  if (!forcePassword) {
+    // Best effort: a cache that cannot be written must not break the command itself
+    // (fail-closed = the token is simply not persisted). `xihe auth login` is strict.
+    persistToken(env, { baseUrl: apiBase, token: response.accessToken, email: options['--email'] });
   }
   return response.accessToken;
 }
