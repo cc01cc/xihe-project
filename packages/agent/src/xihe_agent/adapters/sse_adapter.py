@@ -9,7 +9,11 @@ from xihe_agent.interfaces.event_adapter import EventAdapter
 from xihe_agent.interfaces.tool import (
     ACQUIRE_CREDENTIAL_TOOL_NAME,
     CREDENTIAL_DELIVERED_PLACEHOLDER,
+    TOOL_RESULT_REFUSAL_CODE_KEY,
+    TOOL_RESULT_STATUS_KEY,
     UNSAFE_DURABLE_TOOL_RESULT_PLACEHOLDER,
+    normalize_tool_refusal_code,
+    normalize_tool_result_status,
 )
 
 FINAL_CHAIN_NAME = "LangGraph"
@@ -121,6 +125,11 @@ class LangGraphEventAdapter(EventAdapter):
                 # 排除清单），抑制孤儿事件，避免 CP 中继 unmatched 噪声。
                 return None
             tool_output = data.get("output")
+            # PLAN-0649 M1 (spec §1): the tool adapter publishes the authoritative
+            # status/refusal code on the ToolMessage metadata. Re-validate it here
+            # (fail-closed) and publish it verbatim, so a withheld result no longer
+            # implies "completed".
+            tool_metadata: dict[str, Any] = {}
             if isinstance(tool_output, ToolMessage):
                 # Tool results remain available to the current graph/model but
                 # never cross the public presentation boundary as raw text.
@@ -132,6 +141,16 @@ class LangGraphEventAdapter(EventAdapter):
                 # Provider ToolMessage IDs only pair LangGraph messages; CP
                 # MCP headers use the callback lifecycle run ID.
                 tool_call_id = run_id or tool_output.tool_call_id
+                raw_metadata = getattr(tool_output, "additional_kwargs", None)
+                if isinstance(raw_metadata, dict):
+                    status = normalize_tool_result_status(raw_metadata.get(TOOL_RESULT_STATUS_KEY))
+                    refusal_code = normalize_tool_refusal_code(
+                        raw_metadata.get(TOOL_RESULT_REFUSAL_CODE_KEY)
+                    )
+                    if status is not None:
+                        tool_metadata["status"] = status
+                    if refusal_code is not None:
+                        tool_metadata["refusalCode"] = refusal_code
             else:
                 formatted = (
                     CREDENTIAL_DELIVERED_PLACEHOLDER
@@ -146,6 +165,7 @@ class LangGraphEventAdapter(EventAdapter):
                 "run_id": run_id,
                 "toolCallId": tool_call_id,
                 "origin": self._origin(name),
+                **tool_metadata,
             }
             return AgentEvent(type="tool_result", data=tool_event_data)
 
