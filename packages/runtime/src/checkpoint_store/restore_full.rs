@@ -327,6 +327,39 @@ fn clear_marker(path: &Path) -> Result<(), FullRestoreError> {
     }
 }
 
+fn ensure_trash_base(work_tree: &Path) -> Result<PathBuf, FullRestoreError> {
+    let base = work_tree.join(RESTORE_TRASH);
+    match fs::symlink_metadata(&base) {
+        Ok(metadata) if is_reparse(&metadata) || !metadata.is_dir() => {
+            return Err(FullRestoreError::UnsafePath(RESTORE_TRASH.to_owned()));
+        }
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(io_error(&base, error)),
+    }
+    fs::create_dir_all(&base).map_err(|error| io_error(&base, error))?;
+    let metadata = fs::symlink_metadata(&base).map_err(|error| io_error(&base, error))?;
+    if is_reparse(&metadata) || !metadata.is_dir() {
+        return Err(FullRestoreError::UnsafePath(RESTORE_TRASH.to_owned()));
+    }
+    Ok(base)
+}
+
+fn remove_trash(trash_root: &Path) -> Result<(), FullRestoreError> {
+    if !trash_root.exists() {
+        return Ok(());
+    }
+    let metadata = fs::symlink_metadata(trash_root).map_err(|error| io_error(trash_root, error))?;
+    if is_reparse(&metadata) || !metadata.is_dir() {
+        return Err(FullRestoreError::UnsafePath(RESTORE_TRASH.to_owned()));
+    }
+    fs::remove_dir_all(trash_root).map_err(|error| io_error(trash_root, error))?;
+    if let Some(parent) = trash_root.parent() {
+        let _ = fs::remove_dir(parent);
+    }
+    Ok(())
+}
+
 /// Full restore of one slice into `work_tree`.
 pub fn restore_full(
     store: &Store,
@@ -388,6 +421,7 @@ pub fn restore_full(
     }
 
     let restore_id = format!("{}-{}", std::process::id(), now_ms());
+    let trash_base = ensure_trash_base(work_tree)?;
     let marker = mark_incomplete(
         work_tree,
         root_id,
@@ -395,7 +429,7 @@ pub fn restore_full(
         &restore_id,
         tail_slice.as_ref(),
     )?;
-    let trash_root = work_tree.join(RESTORE_TRASH).join(&restore_id);
+    let trash_root = trash_base.join(&restore_id);
     let mut stats = FullRestoreStats::default();
     let result = (|| -> Result<(), FullRestoreError> {
         fs::create_dir_all(&trash_root).map_err(|error| io_error(&trash_root, error))?;
@@ -514,12 +548,7 @@ pub fn restore_full(
         return result.map(|()| stats);
     }
     // Successful restore: remove the quarantine and only then the marker.
-    if trash_root.exists() {
-        fs::remove_dir_all(&trash_root).map_err(|error| io_error(&trash_root, error))?;
-    }
-    if let Some(parent) = trash_root.parent() {
-        let _ = fs::remove_dir(parent);
-    }
+    remove_trash(&trash_root)?;
     clear_marker(&marker)?;
     stats.duration_ms = started.elapsed().as_millis() as u64;
     Ok(stats)
@@ -735,6 +764,31 @@ mod tests {
             }
         }
         assert_eq!(recovered.as_deref(), Some("two"));
+    }
+
+    #[test]
+    fn unsafe_trash_base_fails_before_marker() {
+        let workspace = workspace();
+        let root = workspace.path().join("ws");
+        fs::create_dir_all(&root).expect("root");
+        write(&root.join("a.txt"), "one");
+        fs::write(root.join(RESTORE_TRASH), "not a directory").expect("trash file");
+        let store = Store::init(workspace.path().join("store")).expect("store");
+        let first = capture_root(&store, &root, "ws-1", None, None).expect("capture");
+        let error = restore_full(
+            &store,
+            "ws-1",
+            &first.slice_id,
+            &root,
+            &FullRestoreOptions::default(),
+        )
+        .expect_err("trash file must fail");
+        assert!(
+            matches!(error, FullRestoreError::UnsafePath(_)),
+            "{error:?}"
+        );
+        assert!(!root.join(RESTORE_MARKER).exists());
+        assert_eq!(fs::read_to_string(root.join("a.txt")).expect("a"), "one");
     }
 
     #[test]
