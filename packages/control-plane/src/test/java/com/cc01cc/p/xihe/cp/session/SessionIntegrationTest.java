@@ -93,6 +93,9 @@ class SessionIntegrationTest extends AbstractIntegrationTest {
     private SessionService sessionService;
 
     @Autowired
+    private com.cc01cc.p.xihe.cp.repository.ProviderConnectionRepository providerConnections;
+
+    @Autowired
     private GrantDefaultService grantDefaultService;
 
     @Autowired
@@ -292,10 +295,19 @@ class SessionIntegrationTest extends AbstractIntegrationTest {
         assertEquals(HttpStatus.BAD_REQUEST, missingPrincipal.getStatusCode());
         assertEquals(before, sessionRepository.count());
 
+        // 2026-11-04 P0（task-24）：裸会话已被禁止，建会话必须带显式 provider 绑定，
+        // 否则 CP 在写行前返回 400 PROVIDER_REQUIRED（原断言期待 201 是旧契约）。
+        var chatConnection = com.cc01cc.p.xihe.cp.chat.ChatBindingTestSupport.ensureChatConnection(
+                providerConnections, "USER", userId,
+                "ses-int-" + UUID.randomUUID().toString().substring(0, 8));
         ResponseEntity<Map> created = restTemplate.exchange(baseUrl + "/api/v1/sessions", HttpMethod.POST,
-                new HttpEntity<>(Map.of("title", "Bound principal", "agentPrincipalId", principal.getId().toString()), headers),
+                new HttpEntity<>(Map.of("title", "Bound principal",
+                        "agentPrincipalId", principal.getId().toString(),
+                        "modelProvider", chatConnection.getProviderId(),
+                        "modelName", "gpt-test",
+                        "providerConnectionId", chatConnection.getId().toString()), headers),
                 Map.class);
-        assertEquals(HttpStatus.CREATED, created.getStatusCode());
+        assertEquals(HttpStatus.CREATED, created.getStatusCode(), String.valueOf(created.getBody()));
         assertEquals(principal.getId().toString(), created.getBody().get("agentPrincipalId"));
         UUID sessionId = UUID.fromString((String) created.getBody().get("id"));
         Session session = sessionRepository.findById(sessionId).orElseThrow();

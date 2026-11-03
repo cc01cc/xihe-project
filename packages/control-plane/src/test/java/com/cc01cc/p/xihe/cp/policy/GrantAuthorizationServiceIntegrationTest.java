@@ -410,10 +410,23 @@ class GrantAuthorizationServiceIntegrationTest extends AbstractIntegrationTest {
                 userId, "Scoped agent", "template-code", snapshot);
         principalId = principal.getId();
 
-        AuthorizationGrant baseGrant = grantRepository.findBySubjectTypeAndSubjectId(
-                GrantPrincipalPathResolver.AGENT_PRINCIPAL, principalId).getFirst();
-        assertEquals(atoms("read", "write"), baseGrant.getPermissions(),
-                "principal creation intersects template capabilities with creator grants");
+        // 2026-11-04 裁定（PLAN-0629「role 行是唯一权威源」）：creation 不再写 template 快照行
+        // （createAgentPrincipalGrant 已删除），权限只来自绑定角色 —— 原断言"creation intersects
+        // template capabilities with creator grants"已过时。新规则：每个原子一行，集合 = 绑定角色原子集。
+        java.util.Set<String> expectedRoleAtoms = SystemAccessRoleCatalog.roleSeeds().stream()
+                .filter(seed -> SystemAccessRoleCatalog.USER.equals(seed.name()))
+                .flatMap(seed -> seed.atoms().stream())
+                .map(SystemAccessRoleCatalog.AtomRef::actionClass)
+                .collect(java.util.stream.Collectors.toSet());
+        java.util.Set<String> grantedAtoms = new java.util.LinkedHashSet<>();
+        grantRepository.findBySubjectTypeAndSubjectId(
+                        GrantPrincipalPathResolver.AGENT_PRINCIPAL, principalId).stream()
+                .filter(grant -> GrantSources.ROLE.equals(grant.getSource()))
+                .forEach(grant -> grant.getPermissions()
+                        .forEach(atom -> grantedAtoms.add(atom.path("actionClass").asText())));
+        assertEquals(expectedRoleAtoms, grantedAtoms,
+                "authority comes from the bound default role (one atom per row); the template "
+                        + "snapshot write is gone");
         assertEquals(1, jdbcTemplate.queryForObject("SELECT count(*) FROM audit_logs "
                 + "WHERE action = 'agent_principal_created' AND user_id = ? AND resource_id = ?",
                 Integer.class, UUID.fromString(userId), principalId.toString()));
@@ -444,9 +457,14 @@ class GrantAuthorizationServiceIntegrationTest extends AbstractIntegrationTest {
         agentPrincipalService.setWorkspaceCap(userId, workspaceId, principalId, atoms("read", "write"));
         assertTrue(grantAuthorizationService.allows(request(workspaceId, userId,
                         session, "write", "src/main.java")));
-        assertEquals(atoms("read", "write"), grantRepository
-                        .findBySubjectTypeAndSubjectId(GrantPrincipalPathResolver.AGENT_PRINCIPAL, principalId)
-                        .getFirst().getPermissions(),
+        // 旧断言读 `.getFirst()` 的 template 行；快照写删除后，这里改为"role 行集合不变"的规则断言。
+        java.util.Set<String> roleAtomsAfterCap = new java.util.LinkedHashSet<>();
+        grantRepository.findBySubjectTypeAndSubjectId(
+                        GrantPrincipalPathResolver.AGENT_PRINCIPAL, principalId).stream()
+                .filter(grant -> GrantSources.ROLE.equals(grant.getSource()))
+                .forEach(grant -> grant.getPermissions()
+                        .forEach(atom -> roleAtomsAfterCap.add(atom.path("actionClass").asText())));
+        assertEquals(expectedRoleAtoms, roleAtomsAfterCap,
                 "changing a Workspace cap must not mutate global principal grants");
         assertEquals(1, jdbcTemplate.queryForObject("SELECT count(*) FROM audit_logs "
                 + "WHERE action = 'workspace_agent_cap_updated' AND workspace_id = ? AND resource_id = ?",

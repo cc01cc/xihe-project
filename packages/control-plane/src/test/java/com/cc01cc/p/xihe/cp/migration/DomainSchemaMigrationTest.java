@@ -178,9 +178,11 @@ class DomainSchemaMigrationTest {
         assertEquals(1, scalarInt(
                 "SELECT count(*) FROM pg_indexes WHERE schemaname = 'public' "
                         + "AND indexname = 'uq_agent_memories_dedupe' "
-                        + "AND indexdef LIKE '%(principal_id, workspace_id, content_sha256)%' "
+                        + "AND indexdef LIKE '%(principal_id, content_sha256)%' "
+                        + "AND indexdef NOT LIKE '%workspace_id%' "
                         + "AND indexdef NOT LIKE '%type%'"),
-                "the dedupe key must be (principal, workspace, content_sha256) after V106");
+                "the dedupe key must be (principal, content_sha256) after V107 "
+                        + "(memory follows the principal, not the workspace)");
         assertEquals(0, scalarInt("SELECT count(*) FROM agent_memories"),
                 "V106 clears the table by user ruling 2026-11-03 (no back-fill, not a migration bug)");
         assertEquals(1, scalarInt(

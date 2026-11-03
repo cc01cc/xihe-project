@@ -154,6 +154,8 @@ class AgentPrincipalHooksHttpTest extends AbstractIntegrationTest {
         fixture();
         UUID hooked = createPrincipal("Hooked agent", HOOKS_JSON);
         UUID plain = createPrincipal("Plain agent", null);
+        bindToWorkspace(hooked);
+        bindToWorkspace(plain);
 
         List<Map<String, Object>> agents = listAgents();
 
@@ -512,6 +514,14 @@ class AgentPrincipalHooksHttpTest extends AbstractIntegrationTest {
         UUID principalId = UUID.fromString(String.valueOf(response.getBody().get("principalId")));
         principalIds.add(principalId);
         return principalId;
+    }
+
+    /** 2026-11-04 裁定（PLAN-0629）：列表只含「绑定了这里 ∪ 在这里持有角色绑定」的主体。 */
+    private void bindToWorkspace(UUID principalId) {
+        ResponseEntity<Map> response = exchange(HttpMethod.PUT,
+                "/api/v1/workspaces/" + workspaceId + "/agents/" + principalId,
+                workspaceToken(), Map.of("permissions", List.of()));
+        assertEquals(HttpStatus.OK, response.getStatusCode(), String.valueOf(response.getBody()));
     }
 
     private List<Map<String, Object>> listAgents() {

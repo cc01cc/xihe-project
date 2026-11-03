@@ -165,14 +165,19 @@ class McpToolMapRebuildIntegrationTest extends AbstractWireMockTest {
         ResponseEntity<String> call = restTemplate.postForEntity(url("/api/v1/mcp"),
                 agentEntity(toolsCall("e2e_echo")), String.class);
 
-        JsonNode problem = readProblem(call);
+        // 2026-11-04 裁定（92aa7ebd「上下文闸拒绝改走工具结果信封」）：载体从 problem+403 变为
+        // JSON-RPC result（200 + isError + structuredContent.code=TOOL_CONTEXT_MISMATCH）；
+        // 「rebuild 成功后仍必须被 durable Agent tool-call 闸拦下」这条不变量原样保留。
+        assertEquals(HttpStatus.OK, call.getStatusCode(), call.getBody());
+        String gateBody = call.getBody();
         assertNotEquals(HttpStatus.BAD_REQUEST.value(), call.getStatusCode().value(),
-                "a stdio tool that is still installed must not degrade to UNKNOWN_TOOL: " + call.getBody());
-        assertFalse("UNKNOWN_TOOL".equals(problem.path("code").asText()),
-                "the rebuild must resolve the name before the error path: " + call.getBody());
-        assertEquals("FORBIDDEN", problem.path("code").asText(),
-                "expected the durable Agent tool-call gate to stop the dispatch after a successful rebuild: "
-                        + call.getBody());
+                "a stdio tool that is still installed must not degrade to UNKNOWN_TOOL: " + gateBody);
+        assertFalse(gateBody.contains("UNKNOWN_TOOL"),
+                "the rebuild must resolve the name before the error path: " + gateBody);
+        assertTrue(gateBody.contains("\"isError\":true"),
+                "the durable Agent tool-call gate must stop the dispatch: " + gateBody);
+        assertTrue(gateBody.contains("TOOL_CONTEXT_MISMATCH"),
+                "the gate's own code must be visible (第 7 码): " + gateBody);
 
         // 唯一能区分「重建过」与「没重建过」的计数：stdio 目录被扇出恰好两次（首次 list + 重建）。
         wireMock.verify(2, postRequestedFor(urlEqualTo(stdioPath()))

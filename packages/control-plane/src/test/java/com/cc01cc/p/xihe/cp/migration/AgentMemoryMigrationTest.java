@@ -72,9 +72,12 @@ class AgentMemoryMigrationTest {
     void tableHasTheFrozenColumnsAndIndexes() throws SQLException {
         List<String> columns = queryStrings("SELECT column_name FROM information_schema.columns "
                 + "WHERE table_name = 'agent_memories' ORDER BY column_name");
-        assertTrue(columns.containsAll(List.of("id", "principal_id", "workspace_id", "content",
+        // V107（2026-11-04 裁定「记忆跟智能体走」）删掉 workspace 维度：列快照里不再有 workspace_id。
+        assertTrue(columns.containsAll(List.of("id", "principal_id", "content",
                 "content_sha256", "origin", "source_ref", "status", "pinned", "pinned_by",
                 "created_at", "updated_at", "deleted_at")), columns.toString());
+        assertFalse(columns.contains("workspace_id"),
+                "V107 drops agent_memories.workspace_id (memory is principal-scoped): " + columns);
         // PLAN-0629 M1-5 / V106: the classification column must be genuinely gone, not just unused.
         assertFalse(columns.contains("type"), "V106 drops agent_memories.type: " + columns);
 
@@ -84,9 +87,10 @@ class AgentMemoryMigrationTest {
                 + "AND indexname = 'ix_agent_memories_active_injection'"));
         assertEquals(1, scalarInt("SELECT count(*) FROM pg_indexes WHERE tablename = 'agent_memories' "
                 + "AND indexname = 'uq_agent_memories_dedupe' "
-                + "AND indexdef LIKE '%(principal_id, workspace_id, content_sha256)%' "
+                + "AND indexdef LIKE '%(principal_id, content_sha256)%' "
+                + "AND indexdef NOT LIKE '%workspace_id%' "
                 + "AND indexdef NOT LIKE '%type%'"),
-                "the dedupe key must not mention the removed column");
+                "the dedupe key must not mention a removed column");
     }
 
     @Test
@@ -168,9 +172,10 @@ class AgentMemoryMigrationTest {
     private static UUID insertMemory(String hash, String origin, String sourceRef,
                                      String status, boolean pinned, String pinnedBy) throws SQLException {
         UUID id = UUID.randomUUID();
-        execute("INSERT INTO agent_memories (id, principal_id, workspace_id, content, content_sha256,"
+        // V107：agent_memories 已无 workspace_id 列（记忆属主体）。
+        execute("INSERT INTO agent_memories (id, principal_id, content, content_sha256,"
                 + " origin, source_ref, status, pinned, pinned_by) VALUES ('" + id + "', '" + PRINCIPAL_ID
-                + "', '" + WORKSPACE_ID + "', 'assertion " + id + "', '" + hash + "', '"
+                + "', 'assertion " + id + "', '" + hash + "', '"
                 + origin + "', '" + sourceRef + "', '" + status + "', " + pinned + ", "
                 + (pinnedBy == null ? "NULL" : "'" + pinnedBy + "'") + ")");
         return id;

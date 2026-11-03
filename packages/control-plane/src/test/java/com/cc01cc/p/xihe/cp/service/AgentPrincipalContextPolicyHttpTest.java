@@ -333,6 +333,7 @@ class AgentPrincipalContextPolicyHttpTest extends AbstractIntegrationTest {
         UUID principalId = createPrincipal("Listed memory agent");
         assertEquals(HttpStatus.OK, patch(principalId, body("contextPolicy", plainJson(POLICY_JSON)),
                 globalToken()).getStatusCode());
+        bindToWorkspace(principalId);
 
         Map<String, Object> row = listAgents().stream()
                 .filter(item -> principalId.toString().equals(String.valueOf(item.get("principalId"))))
@@ -405,6 +406,14 @@ class AgentPrincipalContextPolicyHttpTest extends AbstractIntegrationTest {
                 AgentPrincipal.ORIGIN_SYSTEM_PRESET, "00000000-0000-4000-8000-0000000000a2");
         principalIds.add(guard.getId());
         return guard.getId();
+    }
+
+    /** 2026-11-04 裁定（PLAN-0629）：列表只含「绑定了这里 ∪ 在这里持有角色绑定」的主体。 */
+    private void bindToWorkspace(UUID principalId) {
+        ResponseEntity<Map> response = exchange(HttpMethod.PUT,
+                "/api/v1/workspaces/" + workspaceId + "/agents/" + principalId,
+                workspaceToken(), Map.of("permissions", List.of()));
+        assertEquals(HttpStatus.OK, response.getStatusCode(), String.valueOf(response.getBody()));
     }
 
     private List<Map<String, Object>> listAgents() {

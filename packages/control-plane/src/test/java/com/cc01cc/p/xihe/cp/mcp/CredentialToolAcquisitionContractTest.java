@@ -302,7 +302,15 @@ class CredentialToolAcquisitionContractTest extends AbstractIntegrationTest {
         ResponseEntity<String> response = acquireCall(
                 leaseCredential.getId().toString(), null, UUID.randomUUID().toString());
 
-        assertEquals(HttpStatus.FORBIDDEN, response.getStatusCode(), response.getBody());
+        // 2026-11-04 裁定（87e630f2「pre-dispatch 拒绝改走工具结果信封，不再裸 403」）：
+        // 原断言期待 problem+403，已过时；现在载体是 JSON-RPC result（200 + isError + 结构化 code），
+        // 但"拒绝且不产生 approval / 不签发 lease"这两条不变量原样保留。
+        assertEquals(HttpStatus.OK, response.getStatusCode(), response.getBody());
+        String deniedBody = response.getBody();
+        assertTrue(deniedBody.contains("\"isError\":true"),
+                "a pre-dispatch deny is a tool result envelope now: " + deniedBody);
+        assertTrue(deniedBody.contains("TOOL_GRANT_DENIED"),
+                "the decision must stay machine-readable in structuredContent.code: " + deniedBody);
         assertEquals(0, approvalsForSession(),
                 "V3: a grant deny must not create a pending approval");
         assertEquals(0, credentialLeaseRepository.findAll().size(),

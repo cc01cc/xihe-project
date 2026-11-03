@@ -40,6 +40,13 @@ public final class AgentPrincipalTestSupport {
             GrantIntersectionEvaluator evaluator) {
 
         public AgentPrincipalService service() {
+            // PLAN-0629（2026-11-04 裁定）：建 principal 总会解析默认实例角色并写角色绑定，
+            // 纯 Mockito 测试必须提供角色目录桩（补齐新依赖，不是放宽校验）。
+            com.cc01cc.p.xihe.cp.repository.AccessRoleRepository roles =
+                    mock(com.cc01cc.p.xihe.cp.repository.AccessRoleRepository.class);
+            when(roles.findByName(any())).thenReturn(java.util.Optional.of(
+                    new com.cc01cc.p.xihe.cp.entity.AccessRole(UUID.randomUUID(), "USER", "User",
+                            "test fixture role", true)));
             return new AgentPrincipalService(principals, grants, authService, workspaceService,
                     mock(com.cc01cc.p.xihe.cp.policy.GrantDefaultService.class),
                     mock(WorkspaceAgentRepository.class), evaluator,
@@ -48,7 +55,7 @@ public final class AgentPrincipalTestSupport {
                     mock(com.cc01cc.p.xihe.cp.policy.AuthzContext.class),
                     // PLAN-0629: role bindings are the permission source, not the scope field.
                     mock(com.cc01cc.p.xihe.cp.repository.AccessRoleBindingRepository.class),
-                    mock(com.cc01cc.p.xihe.cp.repository.AccessRoleRepository.class),
+                    roles,
                     mock(com.cc01cc.p.xihe.cp.repository.AccessRolePermissionRepository.class),
                     mock(com.cc01cc.p.xihe.cp.policy.RoleGrantMaterializer.class));
         }

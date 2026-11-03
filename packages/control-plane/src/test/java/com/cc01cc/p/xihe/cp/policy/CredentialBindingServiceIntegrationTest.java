@@ -1,4 +1,5 @@
 package com.cc01cc.p.xihe.cp.policy;
+import com.cc01cc.p.xihe.cp.chat.ChatBindingTestSupport;
 
 import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
 
@@ -55,6 +56,7 @@ class CredentialBindingServiceIntegrationTest extends AbstractIntegrationTest {
     @Autowired private CredentialService credentialService;
     @Autowired private AgentPrincipalService agentPrincipalService;
     @Autowired private SessionService sessionService;
+    @Autowired private com.cc01cc.p.xihe.cp.repository.ProviderConnectionRepository providerConnections;
     @Autowired private AuthService authService;
     @Autowired private WorkspaceService workspaceService;
     @Autowired private AgentPrincipalRepository agentPrincipalRepository;
@@ -200,8 +202,12 @@ class CredentialBindingServiceIntegrationTest extends AbstractIntegrationTest {
     @Test
     void bindingAppliesToNewSessionsOnly() {
         Fixture fixture = fixture("credential:*", "credential:*", true);
+        // 2026-11-04 P0（task-24）：裸会话被禁止 —— 这两个 createAgentSession 必须带显式 provider 绑定。
+        var chatConnection = ChatBindingTestSupport.ensureChatConnection(providerConnections, "USER",
+                creatorId.toString(), "cb-int-" + UUID.randomUUID().toString().substring(0, 8));
         Session before = sessionService.createAgentSession(creatorId.toString(), workspaceId,
-                "before-binding", null, null, null, fixture.principalId.toString());
+                "before-binding", chatConnection.getProviderId(), "gpt-test",
+                chatConnection.getId().toString(), fixture.principalId.toString());
         sessionIds.add(before.getId());
         assertFalse(snapshotContains(before.getAgentPermissionsSnapshot(), fixture.credentialResource),
                 "a session created before the binding must not carry the atom");
@@ -210,7 +216,8 @@ class CredentialBindingServiceIntegrationTest extends AbstractIntegrationTest {
                 fixture.principalId, List.of(fixture.credentialResource));
 
         Session after = sessionService.createAgentSession(creatorId.toString(), workspaceId,
-                "after-binding", null, null, null, fixture.principalId.toString());
+                "after-binding", chatConnection.getProviderId(), "gpt-test",
+                chatConnection.getId().toString(), fixture.principalId.toString());
         sessionIds.add(after.getId());
         assertTrue(snapshotContains(after.getAgentPermissionsSnapshot(), fixture.credentialResource),
                 "a new session picks up the binding (0494 #13)");

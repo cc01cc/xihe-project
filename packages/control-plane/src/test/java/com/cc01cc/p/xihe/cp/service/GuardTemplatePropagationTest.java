@@ -46,10 +46,12 @@ class GuardTemplatePropagationTest {
     private AgentTemplateService templates;
     private WorkspaceAgentRepository bindings;
     private AgentPrincipalService service;
+    private com.cc01cc.p.xihe.cp.repository.AccessRoleRepository roles;
 
     @BeforeEach
     void setUp() {
         principals = mock(AgentPrincipalRepository.class);
+        roles = mock(com.cc01cc.p.xihe.cp.repository.AccessRoleRepository.class);
         AuthorizationGrantRepository grants = mock(AuthorizationGrantRepository.class);
         com.cc01cc.p.xihe.cp.auth.AuthService authService = mock(com.cc01cc.p.xihe.cp.auth.AuthService.class);
         when(authService.userExists(any())).thenReturn(true);
@@ -73,9 +75,13 @@ class GuardTemplatePropagationTest {
                 mock(com.cc01cc.p.xihe.cp.policy.AuthzContext.class),
                 // PLAN-0629: role bindings are the permission source, not the scope field.
                 mock(com.cc01cc.p.xihe.cp.repository.AccessRoleBindingRepository.class),
-                mock(com.cc01cc.p.xihe.cp.repository.AccessRoleRepository.class),
+                roles,
                     mock(com.cc01cc.p.xihe.cp.repository.AccessRolePermissionRepository.class),
                 mock(com.cc01cc.p.xihe.cp.policy.RoleGrantMaterializer.class));
+        // PLAN-0629（2026-11-04 裁定）：建 principal 现在总会解析默认实例角色并写角色绑定，
+        // 所以纯 Mockito 测试必须提供角色目录桩——这不是放宽校验，而是补齐新依赖。
+        when(roles.findByName(any())).thenReturn(java.util.Optional.of(new com.cc01cc.p.xihe.cp.entity.AccessRole(
+                UUID.randomUUID(), "USER", "User", "fixture role", true)));
 
         when(principals.saveAndFlush(any())).thenAnswer(invocation -> {
             AgentPrincipal saved = invocation.getArgument(0);
