@@ -222,6 +222,10 @@ const messages = {
             dropHint: "可把文件拖到工作区",
             noFiles: "工作区暂无文件",
             retry: "重试",
+            // PLAN-0639 M2: multi-root file tree groups (design §5 candidate ①).
+            rootGroupFallback: "根 {position}",
+            rootEmpty: "该根暂无文件",
+            rootLoadFailed: "该根文件列表加载失败",
             treeLoadFailed: "文件树加载失败，可重试或先继续使用聊天。",
             treeLoadFailedRuntime:
                 "工作区运行时未就绪（Runtime 不可达），请确认服务已启动后重试；若持续失败请联系管理员",
@@ -2335,6 +2339,10 @@ const messages = {
             dropHint: "Drag files into the workspace",
             noFiles: "No files in this workspace",
             retry: "Retry",
+            // PLAN-0639 M2: multi-root file tree groups (design §5 candidate ①).
+            rootGroupFallback: "Root {position}",
+            rootEmpty: "No files in this root",
+            rootLoadFailed: "Failed to load this root's files",
             treeLoadFailed: "The file tree failed to load. Retry, or keep chatting meanwhile.",
             treeLoadFailedRuntime:
                 "The workspace runtime is unreachable. Start the service and retry; contact an admin if it keeps failing.",

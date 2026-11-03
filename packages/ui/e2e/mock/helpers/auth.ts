@@ -24,6 +24,12 @@ export interface MockSSEStream {
 
 export interface MockAuthOptions {
     sse?: MockSSEStream;
+    /**
+     * PLAN-0639 M2: extra workspace fields merged into both workspace seeds
+     * (localStorage + sessionStorage), e.g. `roots` for the grouped file tree.
+     * Fields the caller does not set keep the existing fixture values.
+     */
+    workspace?: Record<string, unknown>;
 }
 
 export interface MockSessionRecord {
@@ -62,7 +68,7 @@ export async function setupMockAuth(page: Page, options: MockAuthOptions = {}) {
             response: { branchId: string; parentBranchId: string; forkPointMessageId: string };
         }
     >();
-    await page.addInitScript(() => {
+    await page.addInitScript((workspaceOverrides) => {
         localStorage.setItem("xihe-token", "mock-token");
         localStorage.setItem(
             "xihe-user",
@@ -70,7 +76,12 @@ export async function setupMockAuth(page: Page, options: MockAuthOptions = {}) {
         );
         localStorage.setItem(
             "xihe-workspace",
-            JSON.stringify({ id: "workspace-1", name: "Mock Workspace", ownerId: "user-1" }),
+            JSON.stringify({
+                id: "workspace-1",
+                name: "Mock Workspace",
+                ownerId: "user-1",
+                ...workspaceOverrides,
+            }),
         );
         // PLAN-0559 per-tab context is authoritative; migrateLegacyWorkspace drops
         // role fields, so seed sessionStorage directly with the post-login shape
@@ -82,9 +93,10 @@ export async function setupMockAuth(page: Page, options: MockAuthOptions = {}) {
                 name: "Mock Workspace",
                 workspaceRole: "OWNER",
                 ownerId: "user-1",
+                ...workspaceOverrides,
             }),
         );
-    });
+    }, options.workspace ?? {});
 
     if (options.sse) {
         await page.addInitScript(

@@ -18,10 +18,12 @@ import type { FileNode } from "../../../types";
 import TreeItem from "../../../components/ui/tree/TreeItem.vue";
 import FileNodeMenu from "./FileNodeMenu.vue";
 
-defineProps<{
+const props = defineProps<{
     nodes: FileNode[];
     level: number;
     searchQuery?: string;
+    /** PLAN-0639 M2: owning declared root of this tree slice (multi-root grouping). */
+    rootId?: string;
 }>();
 
 const ws = useWorkspaceStore();
@@ -64,7 +66,7 @@ function getIcon(node: FileNode, isExpanded: boolean): Component {
 
 function handleSelect(node: FileNode) {
     if (node.type === "directory") return;
-    ws.openFile(node.path);
+    ws.openFile(node.path, props.rootId);
 }
 
 function escapeHtml(s: string): string {
@@ -124,6 +126,7 @@ function highlightName(name: string, query?: string): string {
                     :nodes="node.children"
                     :level="level + 1"
                     :search-query="searchQuery"
+                    :root-id="rootId"
                 />
             </TreeItem>
         </li>

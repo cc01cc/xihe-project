@@ -2,6 +2,9 @@
 import { computed, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import {
+    ChevronRight,
+    Folder,
+    FolderOpen,
     FolderPlus,
     LoaderCircle,
     PanelLeftClose,
@@ -11,6 +14,7 @@ import {
     X,
 } from "@lucide/vue";
 import { useWorkspaceStore } from "../stores/workspace";
+import type { ApiWorkspaceRoot } from "../../../composables/api";
 import { useAuthStore } from "../../../stores/auth";
 import { toast } from "vue-sonner";
 import FileTree from "./FileTree.vue";
@@ -43,7 +47,43 @@ const filteredTree = computed(() => {
     return { query: q };
 });
 
-const isEmpty = computed(() => ws.fileTree.length === 0);
+const isEmpty = computed(() => {
+    if (ws.fileTree.length > 0) return false;
+    // PLAN-0639 M2: a loaded non-empty secondary root group also enables search.
+    if (!ws.isMultiRoot) return true;
+    return !Array.from(ws.rootTrees.values()).some((s) => s.loaded && s.nodes.length > 0);
+});
+
+/**
+ * PLAN-0639 M2 (design §5 candidate ①): one group per declared root of a multi-root
+ * workspace; null for single-root workspaces, which keep the pre-M2 flat rendering.
+ */
+const rootGroups = computed(() => {
+    if (!ws.isMultiRoot) return null;
+    return ws.workspaceRoots.map((root) => {
+        const isPrimary = root.id === ws.primaryRootId;
+        return {
+            root,
+            isPrimary,
+            label: rootGroupLabel(root, isPrimary),
+            expanded: ws.isRootExpanded(root.id),
+            state: ws.rootTreeState(root.id),
+        };
+    });
+});
+
+/** 组头 = alias；主根回退到 hostPath 末段；其余回退到序号（wire 投影无 path，D39-5）。 */
+function rootGroupLabel(root: ApiWorkspaceRoot, isPrimary: boolean): string {
+    if (root.alias) return root.alias;
+    if (isPrimary && ws.primaryRootPath) return pathLastSegment(ws.primaryRootPath);
+    return t("workspace.rootGroupFallback", { position: root.position + 1 });
+}
+
+/** Windows 路径先归一化再取末段（workspace 硬规则：转正斜杠后处理）。 */
+function pathLastSegment(value: string): string {
+    const normalized = value.replace(/\\/g, "/").replace(/\/+$/, "");
+    return normalized.split("/").pop() || normalized;
+}
 
 /**
  * PLAN-0557/BL-109: the visible line must name the cause; the tooltip is a
@@ -259,6 +299,90 @@ function upload() {
                 {{ t("workspace.uploadFile") }}
             </button>
             <p class="text-[11px] text-muted-foreground">{{ t("workspace.dropHint") }}</p>
+        </div>
+
+        <!-- PLAN-0639 M2: multi-root workspaces render one group per declared root;
+            selecting a root group expands and lazily loads its tree. -->
+        <div
+            v-else-if="rootGroups"
+            data-testid="workspace-tree-grouped"
+            class="flex-1 overflow-y-auto py-1 px-1"
+        >
+            <section
+                v-for="group in rootGroups"
+                :key="group.root.id"
+                data-testid="workspace-tree-root-group"
+            >
+                <button
+                    type="button"
+                    data-testid="workspace-tree-root-header"
+                    :aria-expanded="group.expanded"
+                    class="flex w-full items-center gap-1 rounded px-1 py-1 text-left text-xs font-medium text-muted-foreground transition-colors hover:bg-accent/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    :class="group.expanded ? 'bg-accent/40 text-foreground' : ''"
+                    @click="ws.toggleRoot(group.root.id)"
+                >
+                    <ChevronRight
+                        class="size-3.5 shrink-0 transition-transform"
+                        :class="group.expanded ? 'rotate-90' : ''"
+                        aria-hidden="true"
+                    />
+                    <component
+                        :is="group.expanded ? FolderOpen : Folder"
+                        class="size-3.5 shrink-0"
+                        aria-hidden="true"
+                    />
+                    <span class="min-w-0 flex-1 truncate" :title="group.label">{{
+                        group.label
+                    }}</span>
+                </button>
+                <div v-if="group.expanded" class="pb-1">
+                    <div
+                        v-if="!group.isPrimary && group.state.loading"
+                        data-testid="workspace-tree-root-loading"
+                        class="flex items-center justify-center py-2"
+                    >
+                        <LoaderCircle
+                            class="size-4 animate-spin text-muted-foreground"
+                            aria-hidden="true"
+                        />
+                    </div>
+                    <div
+                        v-else-if="!group.isPrimary && group.state.error"
+                        data-testid="workspace-tree-root-error"
+                        role="alert"
+                        class="mx-1 mt-1 flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/10 px-2 py-1.5 text-xs text-destructive"
+                    >
+                        <p class="min-w-0 flex-1 line-clamp-2">{{ group.state.error }}</p>
+                        <button
+                            type="button"
+                            data-testid="workspace-tree-root-retry"
+                            class="shrink-0 rounded border border-destructive/40 px-1.5 py-0.5 font-medium transition-colors hover:bg-destructive/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                            @click="ws.loadRootTree(group.root.id)"
+                        >
+                            {{ t("workspace.retry") }}
+                        </button>
+                    </div>
+                    <p
+                        v-else-if="
+                            !group.isPrimary && group.state.loaded && group.state.nodes.length === 0
+                        "
+                        data-testid="workspace-tree-root-empty"
+                        class="px-2 py-1.5 text-xs text-muted-foreground"
+                    >
+                        {{ t("workspace.rootEmpty") }}
+                    </p>
+                    <FileTree
+                        v-else-if="group.isPrimary"
+                        :search-query="filteredTree?.query ?? ''"
+                    />
+                    <FileTree
+                        v-else
+                        :nodes="group.state.nodes"
+                        :root-id="group.root.id"
+                        :search-query="filteredTree?.query ?? ''"
+                    />
+                </div>
+            </section>
         </div>
 
         <div v-else class="flex-1 overflow-y-auto py-1 px-1">
