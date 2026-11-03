@@ -35,7 +35,9 @@ public class AgentPrincipalController {
     private static final java.util.Set<String> ALLOWED_BODY_KEYS = java.util.Set.of(
             "name", "templateId", "scope", "defaultModelProvider", "defaultModelName", "allowedModels",
             // PLAN-0625 M2 (D25-14): hook subscriptions ride the create surface — no new endpoint.
-            "hooks");
+            "hooks",
+            // PLAN-0629 task-12: the roles the new principal is bound to (absent/null ⇒ defaults).
+            "roleIds");
 
     /**
      * PLAN-0625 D25-14 + PLAN-0629 D29-21: the PATCH body carries the subject-level documents. Both
@@ -205,6 +207,27 @@ public class AgentPrincipalController {
         }
         String templateId = body.get("templateId") instanceof String value ? value : null;
         String scope = body.get("scope") instanceof String scopeValue ? scopeValue : null;
+        // PLAN-0629 task-12: roleIds is a plain array of uuids; anything else is a 400 at the wire
+        // edge (the service owns the "does it exist / may it be bound here" questions).
+        java.util.List<java.util.UUID> roleIds = new java.util.ArrayList<>();
+        if (body.get("roleIds") != null) {
+            if (!(body.get("roleIds") instanceof java.util.List<?> rawRoleIds)) {
+                return ProblemDetailsHandler.problemResponse(HttpStatus.BAD_REQUEST,
+                        "INVALID_REQUEST", "roleIds must be an array of role ids");
+            }
+            for (Object rawRoleId : rawRoleIds) {
+                if (!(rawRoleId instanceof String roleIdText) || roleIdText.isBlank()) {
+                    return ProblemDetailsHandler.problemResponse(HttpStatus.BAD_REQUEST,
+                            "INVALID_REQUEST", "roleIds must be an array of role ids");
+                }
+                try {
+                    roleIds.add(java.util.UUID.fromString(roleIdText));
+                } catch (IllegalArgumentException notAUuid) {
+                    return ProblemDetailsHandler.problemResponse(HttpStatus.BAD_REQUEST,
+                            "INVALID_REQUEST", "roleIds must be an array of role ids");
+                }
+            }
+        }
         String defaultModelProvider = body.get("defaultModelProvider") instanceof String provider
                 ? provider : null;
         String defaultModelName = body.get("defaultModelName") instanceof String model ? model : null;
@@ -224,7 +247,7 @@ public class AgentPrincipalController {
                     : objectMapper.valueToTree(body.get("hooks"));
             AgentPrincipal principal = agentPrincipalService.createPrincipalFromTemplate(
                     actorUserId, name, templateId, scope, defaultModelProvider, defaultModelName,
-                    allowedModels, hooks);
+                    allowedModels, hooks, null, null, roleIds);
             Map<String, Object> response = new LinkedHashMap<>();
             response.put("principalId", principal.getId());
             response.put("templateId", principal.getTemplateId());
@@ -244,6 +267,8 @@ public class AgentPrincipalController {
             // (null = off), so the caller learns immediately whether memory is on for the new subject.
             response.put(
                     "contextPolicy", JacksonNodeExit.toDocument(objectMapper, principal.getContextPolicy()));
+            // PLAN-0629 task-12: echo the bound roles so the caller does not have to re-read the list.
+            response.put("roleIds", roleIds);
             return ResponseEntity.status(HttpStatus.CREATED).body(response);
         } catch (CpApiException e) {
             return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());

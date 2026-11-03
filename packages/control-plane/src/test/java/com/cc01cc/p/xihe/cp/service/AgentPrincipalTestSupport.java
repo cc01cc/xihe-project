@@ -49,6 +49,7 @@ public final class AgentPrincipalTestSupport {
                     // PLAN-0629: role bindings are the permission source, not the scope field.
                     mock(com.cc01cc.p.xihe.cp.repository.AccessRoleBindingRepository.class),
                     mock(com.cc01cc.p.xihe.cp.repository.AccessRoleRepository.class),
+                    mock(com.cc01cc.p.xihe.cp.repository.AccessRolePermissionRepository.class),
                     mock(com.cc01cc.p.xihe.cp.policy.RoleGrantMaterializer.class));
         }
     }

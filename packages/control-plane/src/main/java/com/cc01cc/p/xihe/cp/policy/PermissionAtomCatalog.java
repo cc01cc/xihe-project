@@ -4,6 +4,7 @@ import com.cc01cc.p.xihe.cp.config.CpApiException;
 import org.springframework.http.HttpStatus;
 
 import java.util.LinkedHashMap;
+import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -156,6 +157,56 @@ public final class PermissionAtomCatalog {
     /** The instance-only atom set of decision #27 (the write-time scope guard). */
     public static Set<String> instanceOnlyAtoms() {
         return INSTANCE_ONLY_ATOMS;
+    }
+
+    /**
+     * PLAN-0629 (user ruling 2026-11-04): action classes an <b>agent principal</b> may never be
+     * granted, because the agent is a grantee and not an administrator. The rule is atom-based, not
+     * role-name based, so it keeps holding when a new role is invented from those atoms.
+     *
+     * <p>Derived from the vocabulary, never from a role list: every capability atom (they answer
+     * "is this subject an administrator"), every instance-only atom (the instance management set),
+     * plus the workspace-administration atoms — an agent may be managed by a workspace owner, it
+     * must not manage the workspace or other subjects.</p>
+     */
+    public static Set<String> agentPrincipalForbiddenAtoms() {
+        Set<String> forbidden = new java.util.LinkedHashSet<>(INSTANCE_ONLY_ATOMS);
+        for (Atom atom : ATOMS.values()) {
+            if (atom.capability()) {
+                forbidden.add(atom.name());
+            }
+        }
+        forbidden.add(ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_AGENTS);
+        forbidden.add(ToolFaceRegistry.ACTION_MANAGE_ROLES);
+        return Set.copyOf(forbidden);
+    }
+
+    /** True when a role made of these atoms may be bound to an agent principal. */
+    public static boolean canBindToAgentPrincipal(Collection<String> roleAtomNames) {
+        if (roleAtomNames == null || roleAtomNames.isEmpty()) {
+            return true;
+        }
+        Set<String> forbidden = agentPrincipalForbiddenAtoms();
+        for (String atomName : roleAtomNames) {
+            if (forbidden.contains(atomName)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /** The first forbidden atom of a role, for a precise {@code detail} (never a silent refusal). */
+    public static String firstForbiddenAgentPrincipalAtom(Collection<String> roleAtomNames) {
+        if (roleAtomNames == null) {
+            return null;
+        }
+        Set<String> forbidden = agentPrincipalForbiddenAtoms();
+        for (String atomName : roleAtomNames) {
+            if (forbidden.contains(atomName)) {
+                return atomName;
+            }
+        }
+        return null;
     }
 
     public static boolean isActionAtom(String name) {
