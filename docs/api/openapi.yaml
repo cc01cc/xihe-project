@@ -71,6 +71,74 @@ paths:
     get: { operationId: getWorkspace, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }], responses: { '200': { description: Workspace, content: { application/json: { schema: { $ref: '#/components/schemas/Workspace' } } } }, '404': { $ref: '#/components/responses/Problem' } } }
     patch: { operationId: updateWorkspace, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }], requestBody: { required: false, content: { application/json: { schema: { $ref: '#/components/schemas/WorkspaceUpdateRequest' } } } }, responses: { '200': { description: Updated, content: { application/json: { schema: { $ref: '#/components/schemas/Workspace' } } } }, '404': { $ref: '#/components/responses/Problem' } } }
     delete: { operationId: deleteWorkspace, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }], responses: { '204': { description: Logically deleted }, '404': { $ref: '#/components/responses/Problem' } } }
+  /api/v1/workspaces/{workspaceId}/roots:
+    post:
+      operationId: addWorkspaceRoot
+      summary: Add a root to a multi-root workspace (PLAN-0639 D39-3)
+      description: |
+        PLAN-0639 M1: runtime root CRUD. The new root is available immediately
+        (file access, authorization, watcher). Shadow repo is created lazily on
+        first checkpoint capture. Nested roots (fully contained) are allowed;
+        partial overlap → 400 INVALID_ROOT_OVERLAP. Requires workspace owner
+        or cap:workspace:admin.
+      security: [{ bearerAuth: [] }]
+      parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string, format: uuid } }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/WorkspaceRootCreateRequest' }
+      responses:
+        '201': { description: Root created; projection returned, position appended. Shadow repo not yet created (lazy on first capture)., content: { application/json: { schema: { $ref: '#/components/schemas/WorkspaceRoot' } } } }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+  /api/v1/workspaces/{workspaceId}/roots/{rootId}:
+    patch:
+      operationId: updateWorkspaceRoot
+      summary: Update root alias or position (PLAN-0639 D39-3)
+      description: |
+        PLAN-0639 M1: body {alias?, position?}. Position change triggers
+        sequential shift of sibling roots (soft-deleted rows do not
+        participate). Does not change root path or id.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: workspaceId, required: true, schema: { type: string, format: uuid } }
+        - { in: path, name: rootId, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/WorkspaceRootPatchRequest' }
+      responses:
+        '200': { description: Root updated., content: { application/json: { schema: { $ref: '#/components/schemas/WorkspaceRoot' } } } }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+    delete:
+      operationId: deleteWorkspaceRoot
+      summary: Soft-delete a root (PLAN-0639 D39-3)
+      description: |
+        PLAN-0639 M1: soft-delete (deleted_at set). Shadow repo is archived
+        in-place (directory preserved, no longer written). Historical slices
+        remain readable (diff/preview) but execute-revert → 409 ROOT_DELETED.
+        Re-adding the same path creates a new rootId unconnected to old
+        history. If any non-terminal run has slices attributed to this root,
+        → 409 ROOT_IN_USE with reason (run ids).
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: workspaceId, required: true, schema: { type: string, format: uuid } }
+        - { in: path, name: rootId, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '204': { description: Root soft-deleted. Shadow repo archived in-place. }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
   /api/v1/workspaces/{workspaceId}/agents:
     get:
       operationId: listWorkspaceAgents
@@ -3685,8 +3753,8 @@ components:
     MemberAddRequest: { type: object, required: [username, role], properties: { username: { type: string, description: 'Unique account username (PLAN-0565 ruling #7)' }, role: { type: string, enum: [EDITOR, VIEWER] } } }
     MemberRoleUpdateRequest: { type: object, required: [role], properties: { role: { type: string, enum: [EDITOR, VIEWER] } } }
     AuthResponse: { type: object, properties: { accessToken: { type: string }, refreshToken: { type: string }, user: { type: object }, workspaceId: { type: [string, 'null'], description: 'The account first active workspace, or null when it has none yet (PLAN-0614 blank start: register/login/refresh never create a workspace; the user creates the first one explicitly).' } } }
-    Workspace: { type: object, required: [id, name, ownerId, storageBackend, storageRef, storageMode, executionMode, generation], properties: { id: { type: string }, name: { type: string }, description: { type: [string, 'null'] }, ownerId: { type: string, description: 'PLAN-0610 W4b: derived from the workspace''s earliest-granted WS_OWNER role binding (workspaces.owner_id was dropped by V89). The contract field is unchanged; it is null only for a workspace without an owner binding.' }, storageBackend: { type: string }, storageRef: { type: string }, storageMode: { type: string, enum: [managed_import, direct_attach] }, hostPath: { type: [string, 'null'], description: 'Canonical host path only for the owner/admin; null for ordinary members. Never a display or authorization substitute.' }, executionMode: { type: string, enum: [docker, windows-mxc, windows-host] }, workspaceRole: { type: [string, 'null'], enum: [OWNER, EDITOR, VIEWER, null], description: 'PLAN-0559 canonical workspace role for the caller; ADMIN/MEMBER legacy rows project as EDITOR.' }, canWrite: { type: boolean, description: 'PLAN-0559 UI hint; CP remains authoritative.' }, generation: { type: integer }, createdAt: { type: [string, 'null'], format: date-time }, updatedAt: { type: [string, 'null'], format: date-time } } }
-    WorkspaceCreateRequest: { type: object, required: [name, storageMode], properties: { name: { type: string }, description: { type: [string, 'null'] }, profile: { type: string, enum: [strict, coding, isolated], default: coding, description: 'Docker-only sandbox profile (requires the frozen docker backend).' }, image: { type: string, description: 'Docker-only allowlisted image (requires the frozen docker backend).' }, storageMode: { type: string, enum: [managed_import, direct_attach], description: 'Required. The docker backend is frozen, so the only usable value is direct_attach (with hostPath + executionMode windows-mxc|windows-host); managed_import is rejected with 409 BACKEND_DISABLED while the backend stays frozen and is kept only for the future thaw.' }, hostPath: { type: string, description: 'Required for direct_attach; Runtime validates the absolute directory. This request field is never echoed to ordinary members.' }, executionMode: { type: string, enum: [docker, windows-mxc, windows-host] } } }
+    Workspace: { type: object, required: [id, name, ownerId, storageBackend, storageRef, storageMode, executionMode, generation], properties: { id: { type: string }, name: { type: string }, description: { type: [string, 'null'] }, ownerId: { type: string, description: 'PLAN-0610 W4b: derived from the workspace''s earliest-granted WS_OWNER role binding (workspaces.owner_id was dropped by V89). The contract field is unchanged; it is null only for a workspace without an owner binding.' }, storageBackend: { type: string }, storageRef: { type: string }, storageMode: { type: string, enum: [managed_import, direct_attach] }, hostPath: { type: [string, 'null'], description: 'Canonical host path only for the owner/admin; null for ordinary members. Never a display or authorization substitute.' }, executionMode: { type: string, enum: [docker, windows-mxc, windows-host] }, workspaceRole: { type: [string, 'null'], enum: [OWNER, EDITOR, VIEWER, null], description: 'PLAN-0559 canonical workspace role for the caller; ADMIN/MEMBER legacy rows project as EDITOR.' }, canWrite: { type: boolean, description: 'PLAN-0559 UI hint; CP remains authoritative.' }, generation: { type: integer }, roots: { type: array, description: 'PLAN-0639: ordered root projection [{id, alias, position}]. Root[0].id == workspace.id (primary root invariant).' }, createdAt: { type: [string, 'null'], format: date-time }, updatedAt: { type: [string, 'null'], format: date-time } } }
+    WorkspaceCreateRequest: { type: object, required: [name, storageMode], properties: { name: { type: string }, description: { type: [string, 'null'] }, profile: { type: string, enum: [strict, coding, isolated], default: coding, description: 'Docker-only sandbox profile (requires the frozen docker backend).' }, image: { type: string, description: 'Docker-only allowlisted image (requires the frozen docker backend).' }, storageMode: { type: string, enum: [managed_import, direct_attach], description: 'Required. The docker backend is frozen, so the only usable value is direct_attach (with hostPath + executionMode windows-mxc|windows-host); managed_import is rejected with 409 BACKEND_DISABLED while the backend stays frozen and is kept only for the future thaw.' }, hostPath: { type: string, description: 'Required for direct_attach (legacy single-root form); mutually exclusive with roots[]. Runtime validates the absolute directory. This request field is never echoed to ordinary members.' }, roots: { type: array, minItems: 1, description: 'PLAN-0639 multi-root: ordered root list. Mutually exclusive with hostPath. Each root.path is an absolute host directory (direct_attach). Root[0] is the primary root. Nested roots (fully-contained) are allowed; partial overlap is rejected 400 INVALID_ROOT_OVERLAP.' }, executionMode: { type: string, enum: [docker, windows-mxc, windows-host] } } }
     WorkspaceUpdateRequest: { type: object, properties: { name: { type: string }, description: { type: [string, 'null'] } } }
     WorkspaceAgentPermission: { type: object, additionalProperties: false, required: [actionClass], properties: { actionClass: { type: string }, resource: { type: string, default: '*' } } }
     WorkspaceAgentView: { type: object, required: [principalId, name, createdAt, source, permissionsSnapshot, bound, disabled], properties: { principalId: { type: string, format: uuid }, name: { type: string }, templateId: { type: [string, 'null'] }, templateName: { type: [string, 'null'] }, createdAt: { type: string, format: date-time }, source: { type: string, enum: [workspace, personal, instance], description: 'PLAN-0622: the sharing tier that makes this principal usable in this Workspace.' }, bound: { type: boolean, description: 'D26: whether the principal is bound to this Workspace. false = listed here (personal/instance are visible without a binding) but a Session still needs a binding before it is usable.' }, disabled: { type: boolean, description: 'D27: the principal is disabled (disabledAt set); the UI must block selection and show the disabled badge.' }, hooks: { type: [object, 'null'], description: 'PLAN-0625 V96/D25-09: the subscription document {advisors:[{kind,on:[actionClass]}]}, copied from the template at creation and mutable through PATCH /api/v1/agent-principals/{principalId}; null = no subscriptions (never an array — Gap I).' }, contextPolicy: { type: [object, 'null'], description: 'PLAN-0629 M1 (D29-21): the subject memory policy {memory:{enabled,writeMode,types}}; null = no policy (memory off). The workspace agent list carries it so the UI can show/manage memory.' }, permissionsSnapshot: { type: array, items: { $ref: '#/components/schemas/WorkspaceAgentPermission' }, description: 'Frozen cap stored on the Workspace binding; empty for personal/instance sources, whose cap resolves per run.' } } }
@@ -5213,7 +5281,28 @@ components:
         requestId: { type: string }
     RagIngestResponse: { type: object, required: [status, chunks, docIds], properties: { status: { type: string }, chunks: { type: integer }, docIds: { type: array, items: { type: string } } } }
     RagStatsResponse: { type: object, required: [totalDocuments], properties: { totalDocuments: { type: integer } } }
-    WorkspaceExecutionSpec: { type: object, required: [workspaceId, generation, sandboxSpecHash, sandboxSpec, storageBackend, storageRef, storageMode, executionMode], properties: { workspaceId: { type: string }, generation: { type: integer }, sandboxSpecHash: { type: string }, sandboxSpec: { type: object, additionalProperties: true }, storageBackend: { type: string }, storageRef: { type: string }, storageMode: { type: string, enum: [managed_import, direct_attach] }, hostPath: { type: [string, 'null'] }, executionMode: { type: string, enum: [docker, windows-mxc, windows-host] } } }
+    WorkspaceExecutionSpec: { type: object, required: [workspaceId, generation, sandboxSpecHash, sandboxSpec, storageBackend, storageRef, storageMode, executionMode], properties: { workspaceId: { type: string }, generation: { type: integer }, sandboxSpecHash: { type: string }, sandboxSpec: { type: object, additionalProperties: true }, storageBackend: { type: string }, storageRef: { type: string }, storageMode: { type: string, enum: [managed_import, direct_attach] }, hostPath: { type: [string, 'null'] }, roots: { type: array, description: 'PLAN-0639: ordered root list [{rootId, hostPath}]. Runtime hydrate reads this to register per-root canonical paths. hostPath == roots[0].hostPath (legacy compat).' }, executionMode: { type: string, enum: [docker, windows-mxc, windows-host] } } }
+    WorkspaceRootCreateRequest:
+      type: object
+      additionalProperties: false
+      required: [path]
+      properties:
+        path: { type: string, description: 'Absolute host directory for the new root. Must not partially overlap existing roots; fully-nested roots are allowed.' }
+        alias: { type: [string, 'null'], maxLength: 128, description: 'Optional display name; UI-only, not a path component.' }
+    WorkspaceRootPatchRequest:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        alias: { type: [string, 'null'], maxLength: 128 }
+        position: { type: integer, minimum: 0, description: 'New position in the ordered root list; triggers sequential shift of siblings.' }
+    WorkspaceRoot:
+      type: object
+      required: [id, position]
+      properties:
+        id: { type: string, format: uuid, description: 'Root key. root[0].id == workspace.id (primary root invariant).' }
+        alias: { type: [string, 'null'], maxLength: 128 }
+        position: { type: integer, minimum: 0 }
     WorkspaceEnvironment: { type: object, required: [workspaceId, status, storageBackend, storageRef, storageMode, executionMode, capability, jobCapability, runtime], properties: { workspaceId: { type: string }, status: { type: string }, storageBackend: { type: string }, storageRef: { type: string }, storageMode: { type: string, enum: [managed_import, direct_attach] }, hostPath: { type: [string, 'null'], description: 'Canonical host path only for the owner/admin; null for ordinary members.' }, executionMode: { type: string, enum: [docker, windows-mxc, windows-host] }, capability: { $ref: '#/components/schemas/BackendCapabilitySnapshot' }, jobCapability: { $ref: '#/components/schemas/WorkspaceJobCapability' }, executionSpec: { type: object, additionalProperties: true }, runtime: { type: object, additionalProperties: true, description: 'Runtime view. PLAN-0391 additive keys: activeJobCount (integer), releaseOperationId (string|null), reason (USER_RELEASED|AUTO_EVICT|DESTROYED|CLEANUP_FAILED|RUNTIME_UNAVAILABLE|null).' } } }
     WorkspaceJob:
       type: object
