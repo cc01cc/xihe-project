@@ -57,9 +57,10 @@ canonical JSON（无多余空白，键序固定：`v`、`entries`、`merkle_root
 ```
 
 - `entries` 元素：`[path, mode, size, blob_hash]`；按 `path` 的 **UTF-8 字节序严格升序**且唯一。
+- **rename 语义（v1）**：**不做 rename 检测**；文件改名按 delete + add 表示。与 git 输出对拍时必须传 `--no-renames`，否则 git 的 `R100` 会造成假红。
 - `path`：`/` 分隔、无空段、无 `..`、无 `\`、不以 `/` 开头；非 UTF-8 文件名由 walker 跳过并计入 warnings（不伪造）。
 - `mode` ∈ {`100644`（普通）, `100755`（可执行）, `120000`（符号链接，blob 内容为 link target）}。
-- `size`：原始字节数（symlink 为 target 字符串长度）。
+- `size`：普通/可执行文件的原始内容字节数；**symlink 的 `size` = link target 路径字符串的 UTF-8 字节长度，`blob_hash` = 该 target 字符串的 SHA-256**（不是目标文件内容长度）。
 - `manifest_id = SHA-256(canonical bytes)`；相同内容 ⇒ 相同 id（跨时间/跨 root 复用）。
 - **merkle**：叶子 `SHA-256(0x00 || path || 0x00 || mode || 0x00 || size_decimal || 0x00 || blob_hash_hex)`；内部 `SHA-256(0x01 || left || right)`（32 字节二进制拼接）；奇数节点上提；空 manifest root = 64 个 `0`。
 - **读取严格校验**（任一失败即拒绝，**绝不按空 manifest 处理**）：JSON 可解析、`v==1`、entries 有序唯一、path/mode/size/hash 合法、`total_bytes == Σsize`、merkle 复算一致、文件字节 SHA-256 == manifest_id。

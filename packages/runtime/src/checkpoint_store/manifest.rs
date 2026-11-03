@@ -176,8 +176,17 @@ fn checked_total(entries: &[ManifestEntry]) -> Result<u64, ManifestError> {
     Ok(total)
 }
 
-fn hex_digest(digest: impl AsRef<[u8]>) -> String {
-    format!("{:x}", Sha256::digest(digest.as_ref()))
+fn to_hex(bytes: &[u8]) -> String {
+    use std::fmt::Write;
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        write!(out, "{byte:02x}").expect("writing to String cannot fail");
+    }
+    out
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    to_hex(&Sha256::digest(bytes))
 }
 
 fn leaf_hash(entry: &ManifestEntry) -> [u8; 32] {
@@ -223,7 +232,7 @@ pub fn merkle_root(entries: &[ManifestEntry]) -> String {
         }
         level = next;
     }
-    hex_digest(level[0])
+    to_hex(&level[0])
 }
 
 fn entry_from_raw(
@@ -305,7 +314,7 @@ impl Manifest {
 
     /// `SHA-256(canonical bytes)`, lowercase hex.
     pub fn manifest_id(&self) -> Result<String, ManifestError> {
-        Ok(hex_digest(self.canonical_bytes()?))
+        Ok(sha256_hex(&self.canonical_bytes()?))
     }
 
     /// Strict reader: JSON shape, version, paths/modes/hashes, sorted/unique
@@ -420,7 +429,33 @@ impl Manifest {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashSet;
+    use std::fs;
+    use std::path::Path;
+    use std::process::Command;
+
     use super::*;
+    use crate::checkpoint_store::blob::blob_hash;
+
+    #[derive(serde::Deserialize)]
+    struct MerkleFixture {
+        vectors: Vec<MerkleVector>,
+    }
+
+    #[derive(serde::Deserialize)]
+    struct MerkleVector {
+        name: String,
+        entries: Vec<MerkleEntry>,
+        merkle_root: String,
+    }
+
+    #[derive(serde::Deserialize)]
+    struct MerkleEntry {
+        path: String,
+        mode: String,
+        size: u64,
+        blob_hash: String,
+    }
 
     fn hash(marker: u8) -> String {
         format!("{marker:064x}")
@@ -660,5 +695,175 @@ mod tests {
         let right = manifest(vec![entry("a.txt", 1, 1)]);
         assert!(left.diff(&right).is_empty());
         assert_eq!(left.merkle_root, right.merkle_root);
+    }
+
+    fn write_fixture_file(root: &Path, rel: &str, content: &[u8]) {
+        let path = root.join(rel);
+        fs::create_dir_all(path.parent().expect("fixture parent")).expect("fixture dir");
+        fs::write(path, content).expect("fixture file");
+    }
+
+    fn manifest_from_files(root: &Path, names: &[&str]) -> Manifest {
+        let entries = names
+            .iter()
+            .map(|name| {
+                let bytes = fs::read(root.join(name)).expect("fixture file bytes");
+                ManifestEntry::new(
+                    *name,
+                    FileMode::Regular,
+                    bytes.len() as u64,
+                    blob_hash(&bytes),
+                )
+                .expect("fixture entry")
+            })
+            .collect();
+        Manifest::from_entries(entries).expect("fixture manifest")
+    }
+
+    fn sorted(mut paths: Vec<String>) -> Vec<String> {
+        paths.sort_by(|left, right| left.as_bytes().cmp(right.as_bytes()));
+        paths
+    }
+
+    fn git_name_status(root: &Path) -> Option<Vec<(String, String)>> {
+        let output = Command::new("git")
+            .current_dir(root)
+            .args([
+                "diff",
+                "--no-index",
+                "--no-renames",
+                "--name-status",
+                "--",
+                "left",
+                "right",
+            ])
+            .output()
+            .ok()?;
+        if !output.status.success() && output.status.code() != Some(1) {
+            panic!(
+                "git diff --no-index failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let mut statuses = Vec::new();
+        for line in stdout.lines() {
+            let mut parts = line.split('\t');
+            let status = parts.next().expect("git status");
+            let path = parts.next().expect("git path");
+            let relative = path
+                .strip_prefix("left/")
+                .or_else(|| path.strip_prefix("right/"))
+                .unwrap_or(path);
+            statuses.push((status.to_owned(), relative.to_owned()));
+        }
+        Some(statuses)
+    }
+
+    #[test]
+    fn merkle_fixture_vectors_match() {
+        let fixture: MerkleFixture = serde_json::from_str(include_str!(
+            "../../tests/fixtures/checkpoint-store/merkle-vectors.json"
+        ))
+        .expect("merkle fixture json");
+        for vector in fixture.vectors {
+            let entries = vector
+                .entries
+                .into_iter()
+                .map(|raw| {
+                    let mode = FileMode::parse(&raw.mode, &raw.path).expect("fixture vector mode");
+                    ManifestEntry::new(raw.path, mode, raw.size, raw.blob_hash)
+                        .expect("fixture vector entry")
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(
+                merkle_root(&entries),
+                vector.merkle_root,
+                "vector {}",
+                vector.name
+            );
+        }
+    }
+
+    #[test]
+    fn diff_matches_git_no_index_fixture_without_renames() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let left = dir.path().join("left");
+        let right = dir.path().join("right");
+        write_fixture_file(&left, "keep.txt", b"keep");
+        write_fixture_file(&left, "modify.txt", b"v1");
+        write_fixture_file(&left, "remove.txt", b"gone");
+        write_fixture_file(&left, "old.txt", b"rename-me");
+        write_fixture_file(&right, "keep.txt", b"keep");
+        write_fixture_file(&right, "modify.txt", b"v2");
+        write_fixture_file(&right, "add.txt", b"new");
+        write_fixture_file(&right, "new.txt", b"rename-me");
+
+        let Some(statuses) = git_name_status(dir.path()) else {
+            eprintln!("SKIP: git not available; cannot compare ManifestDiff with git");
+            return;
+        };
+
+        let mut git_added = HashSet::new();
+        let mut git_removed = HashSet::new();
+        let mut git_modified = HashSet::new();
+        for (status, path) in statuses {
+            match status.as_str() {
+                "A" => {
+                    git_added.insert(path);
+                }
+                "D" => {
+                    git_removed.insert(path);
+                }
+                "M" => {
+                    git_modified.insert(path);
+                }
+                other => panic!("unexpected git status {other:?} for {path:?}"),
+            }
+        }
+
+        let left_manifest =
+            manifest_from_files(&left, &["keep.txt", "modify.txt", "remove.txt", "old.txt"]);
+        let right_manifest =
+            manifest_from_files(&right, &["keep.txt", "modify.txt", "add.txt", "new.txt"]);
+        let diff = left_manifest.diff(&right_manifest);
+
+        assert_eq!(
+            sorted(diff.added.clone()),
+            sorted(git_added.into_iter().collect())
+        );
+        assert_eq!(
+            sorted(diff.removed.clone()),
+            sorted(git_removed.into_iter().collect())
+        );
+        assert_eq!(
+            sorted(diff.modified.clone()),
+            sorted(git_modified.into_iter().collect())
+        );
+        // v1 deliberately has no rename detection: old.txt -> new.txt is D + A.
+        assert!(diff.removed.contains(&"old.txt".to_owned()));
+        assert!(diff.added.contains(&"new.txt".to_owned()));
+    }
+
+    #[test]
+    fn symlink_entry_size_is_target_length_and_roundtrips() {
+        let target = "dir/target.txt";
+        let target_bytes = target.as_bytes();
+        let entry = ManifestEntry::new(
+            "link",
+            FileMode::Symlink,
+            target_bytes.len() as u64,
+            blob_hash(target_bytes),
+        )
+        .expect("symlink entry");
+        let manifest = Manifest::from_entries(vec![entry]).expect("manifest");
+        let canonical = manifest.canonical_bytes().expect("canonical");
+        let text = String::from_utf8(canonical.clone()).expect("utf8");
+        assert!(text.contains("\"120000\""));
+        let parsed = Manifest::parse(&canonical).expect("parse");
+        assert_eq!(parsed.entries[0].mode, FileMode::Symlink);
+        assert_eq!(parsed.entries[0].size, target_bytes.len() as u64);
+        assert_eq!(parsed.entries[0].blob_hash, blob_hash(target_bytes));
+        // Deliberately no OS symlink creation: Windows dev-mode/privilege-free.
     }
 }
