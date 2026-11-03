@@ -526,6 +526,17 @@ class ChatSubmissionServiceIntegrationTest extends AbstractIntegrationTest {
         // PLAN-0649 M2 (T2.2/T2.4): the code is metadata, so it must survive the three carriers on
         // one path — sanitized durable event → assistant Message snapshot → GET /messages DTO —
         // while the body stays the CP placeholder at every hop.
+        // Both the original budget code and the table extension added 2026-11-04 must survive: the
+        // shape gate only checks the pattern, so a code that is malformed (or dropped as unknown)
+        // would silently lose the refusal reason on the wire.
+        for (String code : List.of(
+                ToolRefusalCodes.DELEGATION_LIMIT_EXCEEDED,
+                ToolRefusalCodes.SPAWN_ARGUMENTS_INVALID)) {
+            assertRefusalCodeSurvivesAllCarriers(code);
+        }
+    }
+
+    private void assertRefusalCodeSurvivesAllCarriers(String refusalCode) {
         ChatFixture fixture = createChatFixture("tool-refusal");
         String runId = UUID.randomUUID().toString();
         ChatSubmissionService.Submission submission = submit(runId, fixture.session(), fixture.user(),
@@ -545,13 +556,14 @@ class ChatSubmissionServiceIntegrationTest extends AbstractIntegrationTest {
                 "toolName", "spawn_agent",
                 "runId", runId,
                 "status", "failed",
-                "refusalCode", "DELEGATION_LIMIT_EXCEEDED",
+                "refusalCode", refusalCode,
                 "result", "WORKSPACE-PRIVATE-TOOL-BODY"));
 
         String messageId = submissionService.persistAssistantResponse(
                 fixture.session().getId().toString(), runId, "");
         Message stored = messageRepository.findById(UUID.fromString(messageId)).orElseThrow();
-        assertTrue(stored.getToolCalls().contains("DELEGATION_LIMIT_EXCEEDED"));
+        assertTrue(stored.getToolCalls().contains(refusalCode),
+                "the durable snapshot must carry " + refusalCode);
         assertFalse(stored.getToolCalls().contains("WORKSPACE-PRIVATE-TOOL-BODY"),
                 "the body must never reach the persisted snapshot");
 
@@ -571,7 +583,7 @@ class ChatSubmissionServiceIntegrationTest extends AbstractIntegrationTest {
         assertNotNull(cards);
         assertEquals(1, cards.size());
         assertEquals("failed", cards.get(0).get("status"));
-        assertEquals("DELEGATION_LIMIT_EXCEEDED", cards.get(0).get("refusalCode"));
+        assertEquals(refusalCode, cards.get(0).get("refusalCode"));
         assertFalse(String.valueOf(cards.get(0).get("result")).contains("WORKSPACE-PRIVATE-TOOL-BODY"));
     }
 

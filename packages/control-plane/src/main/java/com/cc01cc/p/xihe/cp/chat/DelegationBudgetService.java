@@ -172,7 +172,7 @@ public class DelegationBudgetService {
         // the query/alert contract surface (零新事件名).
         logger.warn("[LIFECYCLE] service=cp event=delegation_tree_broken reason={} detail={}",
                 missing.reason(), missing.getMessage());
-        return DelegationRefusedException.raw(HttpStatus.CONFLICT, "DELEGATION_POLICY_INVALID",
+        return DelegationRefusedException.raw(HttpStatus.CONFLICT, ToolRefusalCodes.DELEGATION_POLICY_INVALID,
                 "Delegation ancestor is missing: " + missing.getMessage(),
                 "{\"reason\":\"" + missing.reason() + "\",\"parentSessionId\":\""
                         + parentSession.getId() + "\"}");
@@ -270,7 +270,7 @@ public class DelegationBudgetService {
     private static DelegationRefusedException treeBroken(Session broken) {
         logger.warn("[LIFECYCLE] service=cp event=delegation_tree_broken sessionId={} spawnedFrom={}",
                 broken.getId(), broken.getSpawnedFromSessionId());
-        return DelegationRefusedException.raw(HttpStatus.CONFLICT, "DELEGATION_POLICY_INVALID",
+        return DelegationRefusedException.raw(HttpStatus.CONFLICT, ToolRefusalCodes.DELEGATION_POLICY_INVALID,
                 "Delegation tree is broken: a spawn ancestor is missing",
                 "{\"reason\":\"tree_broken\",\"parentSessionId\":\"" + broken.getId() + "\"}");
     }
