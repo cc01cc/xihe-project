@@ -8,7 +8,7 @@
     <parent>
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-starter-parent</artifactId>
-        <version>4.0.6</version>
+        <version>4.1.2</version>
     </parent>
     
     <groupId>com.cc01cc.p.xihe</groupId>
@@ -20,7 +20,7 @@
         <!-- PLAN-0618: the single switch for frozen docker tests (default: excluded). -->
         <docker.frozen.excludedGroups>docker-frozen</docker.frozen.excludedGroups>
         <java.version>25</java.version>
-        <springdoc.version>3.1.0</springdoc.version>
+        <springdoc.version>3.2.0</springdoc.version>
         <resilience4j.version>2.4.0</resilience4j.version>
         <mapstruct.version>1.6.3</mapstruct.version>
         <flyway.version>13.4.0</flyway.version>
@@ -75,10 +75,10 @@
         <dependency>
             <groupId>org.postgresql</groupId>
             <artifactId>postgresql</artifactId>
-            <!-- PLAN-0633 D33-01 batch A1: Spring Boot 4.0.6's BOM still manages pgjdbc at 42.7.10, so
-                 this explicit pin is the override that carries the two-CVE fix (42.7.13 -> 42.7.14).
-                 Remove the pin once the BOM itself manages >= 42.7.14. -->
-            <version>42.7.14</version>
+            <!-- PLAN-0633: batch A1 pinned 42.7.14 because Spring Boot 4.0.6's BOM managed 42.7.10
+                 (that pin carried the two-CVE fix). Spring Boot 4.1.2's BOM manages 42.7.14 itself,
+                 so batch B removes the pin per the A1 note ("remove once the BOM manages >= 42.7.14");
+                 `mvn dependency:list` confirms 42.7.14 is still what resolves. -->
             <scope>runtime</scope>
         </dependency>
         

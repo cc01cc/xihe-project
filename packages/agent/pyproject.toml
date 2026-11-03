@@ -12,7 +12,6 @@ dependencies = [
     "langgraph>=1.2.2",
     "litellm>=1.68.0",
     "langchain-litellm>=0.3.0",
-    "langgraph-supervisor>=0.0.31",
     "langchain[mcp]>=1.4.0",
     "langchain-postgres>=0.0.14",
     "psycopg>=3.2.0",

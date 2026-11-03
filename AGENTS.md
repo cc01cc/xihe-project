@@ -9,7 +9,7 @@
 | `packages/ui/` | 前端界面 (Vue 3 + Vite) | TypeScript |
 | `packages/control-plane/` | 路由 + 认证 + MCP 反向代理 | Java 25 / Spring Boot 4 |
 | `packages/agent/` | LLM 编排 + 工具调用 + RAG | Python 3.12 / LangChain |
-| `packages/runtime/` | 文件系统 + 沙盒 + 进程管理 | Rust 1.97.1 / rmcp 3.1.4 (edition 2024) |
+| `packages/runtime/` | 文件系统 + 沙盒 + 进程管理 | Rust 1.97.1 / rmcp 3.7.0 (edition 2024) |
 
 ## Tech Stack
 

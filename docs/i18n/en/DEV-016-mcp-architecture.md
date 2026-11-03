@@ -27,7 +27,7 @@ MCP (Model Context Protocol) requests from Agent to tool execution pass through 
 2. **Runtime Gateway** — Per-workspace dispatch
 3. **In-container bridge** — STDIO subprocess management
 
-> **Protocol version note**: The current MCP `Protocol-Version: 2026-07-28` (rmcp 3.1.4, SEP-2567) is fully **sessionless (stateless)** on the Runtime side. Therefore CP must carry the `Mcp-Method` and `Mcp-Name` HTTP headers when forwarding `tools/list` / `tools/call` to Runtime (see commit `a9923e3`); omitting them yields an empty system tool list and `UNKNOWN_TOOL`. CP neither issues nor accepts `mcp-session-id`: any inbound value returns 403 `MCP_SESSION_INVALID` (PLAN-0537). This is orthogonal to the Runtime transport.
+> **Protocol version note**: The current MCP `Protocol-Version: 2026-07-28` (rmcp 3.7.0, SEP-2567) is fully **sessionless (stateless)** on the Runtime side. Therefore CP must carry the `Mcp-Method` and `Mcp-Name` HTTP headers when forwarding `tools/list` / `tools/call` to Runtime (see commit `a9923e3`); omitting them yields an empty system tool list and `UNKNOWN_TOOL`. CP neither issues nor accepts `mcp-session-id`: any inbound value returns 403 `MCP_SESSION_INVALID` (PLAN-0537). This is orthogonal to the Runtime transport.
 
 ## 2. Architecture Diagram
 

@@ -4,7 +4,7 @@
 
 ## Tech Stack
 
-- **Rust** 1.97.1（edition 2024，rmcp 3.1.4；`rust-toolchain.toml` 固定）— 编译语言
+- **Rust** 1.97.1（edition 2024，rmcp 3.7.0；`rust-toolchain.toml` 固定）— 编译语言
 - **Cargo** — 构建/测试
 - **rmcp** — MCP 服务器框架
 - **Axum** — HTTP 服务器

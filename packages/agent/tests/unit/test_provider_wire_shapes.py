@@ -297,20 +297,42 @@ async def test_template_prompt_order_uses_provider_role_mapping(
         else:
             # Anthropic transports system blocks in its top-level `system`
             # field, so cross-role interleaving cannot survive this provider's
-            # protocol. Verify system-block order and user-content order rather
+            # protocol. Verify system-block content and user-content order rather
             # than claiming OpenAI-style cross-role order is preserved.
             system = body.get("system", "")
             if isinstance(system, list):
                 system_text = "\n".join(str(block.get("text", "")) for block in system if isinstance(block, dict))
             else:
                 system_text = str(system)
-            assert system_text.index("template-prefix") < system_text.index("selected-platform-instructions")
+            # PLAN-0633 D batch (litellm 1.101 -> 1.106.4): only the *leading* run
+            # of system messages is hoisted into the cached `system` prefix now.
+            # Upstream's mid-conversation placement policy re-rolls a later system
+            # turn into the user turn it follows (next assertion block), instead of
+            # hoisting it (1.101) or silently dropping it on the floor (<=1.105).
+            assert "template-prefix" in system_text
+            assert "selected-platform-instructions" not in system_text
             user_blocks = [
                 block.get("text", "")
                 for message in body["messages"] if message["role"] == "user"
                 for block in (message["content"] if isinstance(message["content"], list) else [])
             ]
-            assert user_blocks == ["history-marker", "current-prompt"]
+            # PLAN-0633 D batch (litellm 1.101 -> 1.106.4): upstream added a
+            # mid-conversation system-message placement policy
+            # (`litellm/litellm_core_utils/prompt_templates/mid_conversation_system.py`).
+            # For models without `supports_mid_conversation_system` the later
+            # system turn is re-rolled into the user turn **with** an explicit
+            # "operator note" header; 1.101 silently dropped it on the floor,
+            # which is why this test used to assert "selected-platform-instructions"
+            # was absent from the user blocks. The wire shape changed upstream
+            # (silent drop -> explicit, provenance-marked delivery); XH behavior
+            # did not degrade. Kept strict: exactly four blocks, user text order
+            # preserved, platform instructions present exactly once and marked
+            # as not user-authored.
+            assert len(user_blocks) == 4
+            assert user_blocks[0] == "history-marker"
+            assert user_blocks[1].startswith("Operator note (not from the user):")
+            assert user_blocks[2] == "selected-platform-instructions"
+            assert user_blocks[3] == "current-prompt"
         assert response.choices[0].message.content == "ok"
     finally:
         await fixture.stop()
