@@ -894,10 +894,14 @@ public class RunCheckpointService {
             row.setId(UUID.randomUUID());
             row.setSourceRunId(runId);
             row.setWorkspaceId(workspaceId);
-            row.setRootId(workspaceId);
             row.setSourceSessionId(run.getSessionId());
             row.setCreatedAt(now);
         }
+        // PLAN-0639 M7 (VM11): the root the Runtime actually captured instead of a
+        // hardcoded workspace guess. A pre-M7 Runtime reports no root, and a
+        // primary-root capture reports the workspace id, so single-root rows keep
+        // the historical attribution byte-for-byte.
+        row.setRootId(valueOrDefault(result.rootId(), workspaceId));
         row.setState(state);
         row.setSliceRef(result.sliceRef());
         row.setCapturedAt(capturedAt == null ? now : capturedAt);

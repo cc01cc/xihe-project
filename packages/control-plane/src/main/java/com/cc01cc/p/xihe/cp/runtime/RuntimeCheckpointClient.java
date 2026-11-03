@@ -78,11 +78,26 @@ public class RuntimeCheckpointClient {
      * capturedAt (the tree equals the chain tail); {@code state} is
      * {@code captured|abnormal-captured}, {@code predecessor} is the previous
      * slice ref when the workspace chain is not empty.
+     *
+     * <p>PLAN-0639 M7 (VM11): {@code rootId} is the declared root the Runtime
+     * actually captured. {@code null} means the Runtime build predates M7 (or the
+     * response carried no root), in which case the caller keeps the historical
+     * {@code root_id = workspaceId} attribution.</p>
      */
     public record CaptureResult(Outcome outcome, String runId, boolean noChange, String sliceRef,
                                 String commit, String capturedAt, String state,
                                 List<ChangedFile> changedFiles, List<String> opaqueNestedRepos,
-                                String predecessor, String reason) {}
+                                String predecessor, String reason, String rootId) {
+
+        /** Pre-M7 shape: a result that reports no captured root. */
+        public CaptureResult(Outcome outcome, String runId, boolean noChange, String sliceRef,
+                             String commit, String capturedAt, String state,
+                             List<ChangedFile> changedFiles, List<String> opaqueNestedRepos,
+                             String predecessor, String reason) {
+            this(outcome, runId, noChange, sliceRef, commit, capturedAt, state, changedFiles,
+                    opaqueNestedRepos, predecessor, reason, null);
+        }
+    }
 
     public record GcResult(Outcome outcome, Map<String, Object> counts, String reason) {}
 
@@ -143,9 +158,24 @@ public class RuntimeCheckpointClient {
     /**
      * Captures the terminal Run into one slice (Runtime-side idempotent per run;
      * no-change answers {@code noChange=true} without writing a ref).
+     *
+     * <p>PLAN-0639 M7 (VM11): the primary-root form — {@code rootId} is omitted
+     * from the wire, so a single-root workspace sends exactly the pre-M7 payload.</p>
      */
     public CaptureResult capture(String workspaceId, String runId, String actor, String callId,
                                  boolean abnormal) {
+        return capture(workspaceId, null, runId, actor, callId, abnormal);
+    }
+
+    /**
+     * PLAN-0639 M7 (VM11): capture one declared root of the workspace.
+     *
+     * <p>{@code rootId} blank ⇒ field omitted (primary root, byte-identical wire).
+     * A non-blank value routes the Runtime to that root's own shadow repo; the
+     * response then reports the captured root in {@link CaptureResult#rootId()}.</p>
+     */
+    public CaptureResult capture(String workspaceId, String rootId, String runId, String actor,
+                                 String callId, boolean abnormal) {
         if (isBlank(workspaceId) || isBlank(runId)) {
             return transportCapture(runId, "invalid_request");
         }
@@ -154,6 +184,9 @@ public class RuntimeCheckpointClient {
         payload.put("actor", actor);
         payload.put("callId", callId);
         payload.put("abnormal", abnormal);
+        if (!isBlank(rootId)) {
+            payload.put("rootId", rootId);
+        }
         String url = baseUrl(workspaceId) + "/capture";
         try {
             HttpResponse<String> response = send("capture", url, payload, CAPTURE_TIMEOUT);
@@ -182,7 +215,8 @@ public class RuntimeCheckpointClient {
                     stringValue(body, "capturedAt"), stringValue(body, "state"),
                     parseChangedFiles(body.get("changedFiles")),
                     parseStringList(body.get("opaqueNestedRepos")),
-                    stringValue(body, "predecessor"), null);
+                    stringValue(body, "predecessor"), null,
+                    stringValue(body, "rootId"));
         } catch (Exception e) {
             logger.warn("[LIFECYCLE] service=cp event=runtime_checkpoint_capture_unreachable workspaceId={} runId={} error={}",
                     workspaceId, runId, e.getMessage());
