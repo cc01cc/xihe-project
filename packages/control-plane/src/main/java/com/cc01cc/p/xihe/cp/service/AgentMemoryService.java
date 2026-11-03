@@ -47,6 +47,12 @@ import java.util.UUID;
  * <p>Not done here on purpose: the principal/workspace existence checks and the authorization of the
  * actor. They belong to the API layer, which is the only place that knows "who is asking, and in which
  * run"; the FK constraints still make a dangling write fail loudly instead of silently succeeding.</p>
+ *
+ * <p>User ruling 2026-11-04 (V107): memory is <b>subject-scoped</b>. A {@code workspaceId} still travels
+ * with every call, but only as the <b>authorization and audit context</b> ("which workspace's grant
+ * allowed this call, and where the audit row is filed") — it is no longer part of any storage key.
+ * Hence the parameter name {@code authzWorkspaceId}: reading it as "the memory's workspace" is exactly
+ * the bug this ruling removed.</p>
  */
 @Service
 public class AgentMemoryService {
@@ -86,8 +92,10 @@ public class AgentMemoryService {
      *     and never let a model supply it through tool arguments
      * @param pinned only honoured for the {@code ui}/{@code cli} channels
      * @param actorId the audit actor (the agent principal for {@code tool}, the user otherwise)
+     * @param authzWorkspaceId the workspace whose grant authorized this write; audit and authorization
+     *     context only — the row itself is subject-scoped (V107)
      */
-    public record MemoryWrite(UUID principalId, UUID workspaceId, String content,
+    public record MemoryWrite(UUID principalId, UUID authzWorkspaceId, String content,
                               String origin, String sourceRef, boolean pinned, String actorId) {}
 
     /**
@@ -100,8 +108,9 @@ public class AgentMemoryService {
      * @param actorId the durable audit actor — a <b>user</b> id (the session owner whose session produced
      *     the write), because {@code audit_logs.user_id} is a user foreign key. The subject is not the
      *     actor of a system-side write, and its id would not satisfy the FK.
+     * @param authzWorkspaceId the workspace whose context produced the write; audit context only (V107)
      */
-    public record PassiveWrite(UUID principalId, UUID workspaceId, String content,
+    public record PassiveWrite(UUID principalId, UUID authzWorkspaceId, String content,
                                String origin, String sourceRef, String actorId) {}
 
     /**
@@ -122,7 +131,7 @@ public class AgentMemoryService {
     @Transactional
     public AgentMemory remember(MemoryWrite write) {
         Objects.requireNonNull(write, "write");
-        requireScope(write.principalId(), write.workspaceId());
+        requireAuthzContext(write.principalId(), write.authzWorkspaceId());
         String origin = requireV1Origin(write.origin());
         String sourceRef = requireSourceRef(write.sourceRef());
         boolean pinned = write.pinned();
@@ -142,8 +151,7 @@ public class AgentMemoryService {
         String hash = AgentMemoryNormalizer.sha256Hex(normalized);
 
         Optional<AgentMemory> existing = memories
-                .findByPrincipalIdAndWorkspaceIdAndContentSha256AndDeletedAtIsNull(
-                        write.principalId(), write.workspaceId(), hash);
+                .findByPrincipalIdAndContentSha256AndDeletedAtIsNull(write.principalId(), hash);
         if (existing.isPresent()) {
             AgentMemory row = existing.get();
             if (AgentMemory.STATUS_CANDIDATE.equals(row.getStatus())) {
@@ -152,13 +160,12 @@ public class AgentMemoryService {
             // Keep created_at and source_ref: the assertion did not change (see the method Javadoc).
             row.setUpdatedAt(Instant.now());
             AgentMemory saved = memories.saveAndFlush(row);
-            audit(AUDIT_DEDUPE_HIT, saved, write.actorId(), origin, sourceRef);
+            audit(AUDIT_DEDUPE_HIT, saved, write.actorId(), write.authzWorkspaceId(), origin, sourceRef);
             return saved;
         }
 
         AgentMemory memory = new AgentMemory();
         memory.setPrincipalId(write.principalId());
-        memory.setWorkspaceId(write.workspaceId());
         memory.setContent(normalized);
         memory.setContentSha256(hash);
         memory.setOrigin(origin);
@@ -171,7 +178,7 @@ public class AgentMemoryService {
             memory.setPinnedBy(origin);
         }
         AgentMemory saved = memories.saveAndFlush(memory);
-        audit(AUDIT_CREATED, saved, write.actorId(), origin, sourceRef);
+        audit(AUDIT_CREATED, saved, write.actorId(), write.authzWorkspaceId(), origin, sourceRef);
         return saved;
     }
 
@@ -196,7 +203,7 @@ public class AgentMemoryService {
     @Transactional
     public Optional<AgentMemory> rememberPassive(PassiveWrite write) {
         Objects.requireNonNull(write, "write");
-        requireScope(write.principalId(), write.workspaceId());
+        requireAuthzContext(write.principalId(), write.authzWorkspaceId());
         String origin = requirePassiveOrigin(write.origin());
         String sourceRef = requireSourceRef(write.sourceRef());
         String normalized = AgentMemoryNormalizer.normalize(write.content());
@@ -211,8 +218,7 @@ public class AgentMemoryService {
         String hash = AgentMemoryNormalizer.sha256Hex(normalized);
 
         Optional<AgentMemory> existing = memories
-                .findByPrincipalIdAndWorkspaceIdAndContentSha256AndDeletedAtIsNull(
-                        write.principalId(), write.workspaceId(), hash);
+                .findByPrincipalIdAndContentSha256AndDeletedAtIsNull(write.principalId(), hash);
         if (existing.isPresent()) {
             AgentMemory row = existing.get();
             if (AgentMemory.STATUS_ACTIVE.equals(row.getStatus())) {
@@ -220,13 +226,12 @@ public class AgentMemoryService {
             }
             row.setUpdatedAt(Instant.now());
             AgentMemory saved = memories.saveAndFlush(row);
-            audit(AUDIT_DEDUPE_HIT, saved, write.actorId(), origin, sourceRef);
+            audit(AUDIT_DEDUPE_HIT, saved, write.actorId(), write.authzWorkspaceId(), origin, sourceRef);
             return Optional.of(saved);
         }
 
         AgentMemory memory = new AgentMemory();
         memory.setPrincipalId(write.principalId());
-        memory.setWorkspaceId(write.workspaceId());
         memory.setContent(normalized);
         memory.setContentSha256(hash);
         memory.setOrigin(origin);
