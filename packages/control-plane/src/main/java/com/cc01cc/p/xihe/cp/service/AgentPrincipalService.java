@@ -5,6 +5,8 @@ import com.cc01cc.p.xihe.cp.auth.AuthService;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
 import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
+import com.cc01cc.p.xihe.cp.entity.AccessRole;
+import com.cc01cc.p.xihe.cp.entity.AccessRoleBinding;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceAgent;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceAgentId;
 import com.cc01cc.p.xihe.cp.policy.AuthzContext;
@@ -12,6 +14,7 @@ import com.cc01cc.p.xihe.cp.policy.CapabilityAuthorities;
 import com.cc01cc.p.xihe.cp.policy.ContextPolicyValidator;
 import com.cc01cc.p.xihe.cp.policy.DelegationPolicyValidator;
 import com.cc01cc.p.xihe.cp.policy.PolicyRequest;
+import com.cc01cc.p.xihe.cp.policy.RoleGrantMaterializer;
 import com.cc01cc.p.xihe.cp.policy.ToolFaceRegistry;
 import com.cc01cc.p.xihe.cp.policy.ToolShape;
 import com.cc01cc.p.xihe.cp.policy.GrantIntersectionEvaluator;
@@ -19,6 +22,8 @@ import com.cc01cc.p.xihe.cp.policy.GrantPrincipalPathResolver;
 import com.cc01cc.p.xihe.cp.policy.HookAdvisorRegistry;
 import com.cc01cc.p.xihe.cp.policy.GrantSources;
 import com.cc01cc.p.xihe.cp.policy.GrantDefaultService;
+import com.cc01cc.p.xihe.cp.repository.AccessRoleBindingRepository;
+import com.cc01cc.p.xihe.cp.repository.AccessRoleRepository;
 import com.cc01cc.p.xihe.cp.repository.AgentPrincipalRepository;
 import com.cc01cc.p.xihe.cp.repository.AuthorizationGrantRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceAgentRepository;
@@ -56,6 +61,12 @@ public class AgentPrincipalService {
     public static final String SCOPE_PERSONAL = "PERSONAL";
     public static final String SCOPE_WORKSPACE = "WORKSPACE";
     public static final String SCOPE_INSTANCE = "INSTANCE";
+    /**
+     * PLAN-0629 (user ruling 2026-11-04): the default role an agent principal is bound to when a
+     * workspace binding is created without an explicit role set. `WS_EDITOR` is the seeded workspace
+     * role that keeps a fresh agent usable (read/write/delete/exec) without handing out management.
+     */
+    private static final String DEFAULT_AGENT_WORKSPACE_ROLE = "WS_EDITOR";
 
     private final AgentPrincipalRepository agentPrincipalRepository;
     private final AuthorizationGrantRepository grantRepository;
@@ -68,6 +79,10 @@ public class AgentPrincipalService {
     private final ObjectMapper objectMapper;
     private final AgentTemplateService agentTemplateService;
     private final AuthzContext authzContext;
+    /** PLAN-0629: roles are the permission source, so bindings and materialization live here. */
+    private final AccessRoleBindingRepository roleBindingRepository;
+    private final AccessRoleRepository roleRepository;
+    private final RoleGrantMaterializer roleMaterializer;
 
     public AgentPrincipalService(AgentPrincipalRepository agentPrincipalRepository,
                                  AuthorizationGrantRepository grantRepository,
@@ -79,7 +94,10 @@ public class AgentPrincipalService {
                                  AuditLogger auditLogger,
                                  ObjectMapper objectMapper,
                                  AgentTemplateService agentTemplateService,
-                                 AuthzContext authzContext) {
+                                 AuthzContext authzContext,
+                                 AccessRoleBindingRepository roleBindingRepository,
+                                 AccessRoleRepository roleRepository,
+                                 RoleGrantMaterializer roleMaterializer) {
         this.agentPrincipalRepository = agentPrincipalRepository;
         this.grantRepository = grantRepository;
         this.authService = authService;
@@ -91,6 +109,9 @@ public class AgentPrincipalService {
         this.objectMapper = objectMapper;
         this.agentTemplateService = agentTemplateService;
         this.authzContext = authzContext;
+        this.roleBindingRepository = roleBindingRepository;
+        this.roleRepository = roleRepository;
+        this.roleMaterializer = roleMaterializer;
     }
 
     /** Authorizes, resolves a caller-readable snapshot, and creates a principal atomically. */
@@ -465,6 +486,9 @@ public class AgentPrincipalService {
         }
 
         WorkspaceAgent savedBinding = workspaceAgentRepository.saveAndFlush(binding);
+        // PLAN-0629: a binding materializes into a workspace role binding, so reachability has one
+        // source of truth. Idempotent; the existing materializer writes the `source='role'` grants.
+        ensureWorkspaceRoleBinding(principalId, workspaceId, actorId);
         ObjectNode detail = objectMapper.createObjectNode();
         detail.put("authorizationAction", "MANAGE_WORKSPACE_AGENTS");
         detail.put("principalId", principalId.toString());
@@ -498,6 +522,9 @@ public class AgentPrincipalService {
         detail.put("principalId", principalId.toString());
         detail.set("permissionsBefore", binding.getPermissionsSnapshot().deepCopy());
         workspaceAgentRepository.delete(binding);
+        // PLAN-0629: revoking the binding revokes the role binding too — otherwise the read path
+        // would keep reporting reach for a principal that was just unbound.
+        revokeWorkspaceRoleBinding(principalId, workspaceId, actorId);
         auditLogger.recordDurableChange(actorId.toString(), workspaceId.toString(),
                 "workspace_agent_unbound", "agent_principal", principal.getId().toString(), detail.toString());
         return true;
@@ -520,6 +547,8 @@ public class AgentPrincipalService {
         requireWorkspaceMember(actorId, workspaceId);
 
         java.util.Map<UUID, WorkspaceAgentView> merged = new java.util.LinkedHashMap<>();
+        // One query for the whole list: the role bindings of this workspace, grouped per principal.
+        java.util.Map<UUID, List<UUID>> rolesByPrincipal = roleBindingsByPrincipal(workspaceId);
         workspaceAgentRepository.findByIdWorkspaceId(workspaceId).stream()
                 .map(binding -> agentPrincipalRepository.findById(binding.getId().getPrincipalId())
                         .map(principal -> new WorkspaceAgentView(principal.getId(), principal.getName(),
@@ -528,20 +557,32 @@ public class AgentPrincipalService {
                                 sourceOf(principal), true, principal.getDisabledAt() != null,
                                 principal.getHooks() == null ? null : principal.getHooks().deepCopy(),
                                 principal.getContextPolicy() == null
-                                        ? null : principal.getContextPolicy().deepCopy()))
+                                        ? null : principal.getContextPolicy().deepCopy(),
+                                rolesByPrincipal.getOrDefault(principal.getId(), List.of())))
                         .orElseThrow(() -> new CpApiException(HttpStatus.INTERNAL_SERVER_ERROR,
                                 "AGENT_PRINCIPAL_INCONSISTENT", "Workspace Agent binding has no principal")))
                 .forEach(view -> merged.put(view.principalId(), view));
-        // V4: the list is the union of three sources, not the binding table. A PERSONAL or INSTANCE
-        // principal is usable without a binding, so it must be listed without one; putIfAbsent keeps
-        // one row per principal, and the bound row already carries the scope-derived source.
-        agentPrincipalRepository.findByScopeAndOwnerUserId(SCOPE_PERSONAL, actorId)
-                .forEach(principal -> merged.putIfAbsent(principal.getId(),
-                        unboundView(principal, principalOnlyCap(principal.getId()))));
-        agentPrincipalRepository.findByScope(SCOPE_INSTANCE)
-                .forEach(principal -> merged.putIfAbsent(principal.getId(),
-                        unboundView(principal, principalOnlyCap(principal.getId()))));
+        // PLAN-0629 (user ruling 2026-11-04): reach is a role binding, not the `scope` field. The
+        // list is "bound here" ∪ "bound to a workspace role here"; the legacy scope queries are gone,
+        // so a PERSONAL/INSTANCE principal shows up only in workspaces it actually holds access to.
+        rolesByPrincipal.keySet().stream()
+                .filter(principalId -> !merged.containsKey(principalId))
+                .map(agentPrincipalRepository::findById)
+                .flatMap(java.util.Optional::stream)
+                .forEach(principal -> merged.put(principal.getId(),
+                        unboundView(principal, principalOnlyCap(principal.getId()),
+                                rolesByPrincipal.getOrDefault(principal.getId(), List.of()))));
         return merged.values().stream().sorted(WORKSPACE_AGENT_LIST_ORDER).toList();
+    }
+
+    /** PLAN-0629: principals holding a role binding in this workspace, resolved in one query. */
+    private java.util.Set<UUID> roleBoundPrincipalIds(UUID workspaceId) {
+        return roleBindingRepository
+                .findBySubjectTypeAndScopeTypeAndScopeId(GrantPrincipalPathResolver.AGENT_PRINCIPAL,
+                        "workspace", workspaceId)
+                .stream()
+                .map(AccessRoleBinding::getSubjectId)
+                .collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
     }
 
     /** Stable list order: workspace → personal → instance, then name, then id (D24). */
@@ -553,12 +594,26 @@ public class AgentPrincipalService {
             .thenComparing(view -> view.name() == null ? "" : view.name().toLowerCase(java.util.Locale.ROOT))
             .thenComparing(view -> view.principalId().toString());
 
-    private WorkspaceAgentView unboundView(AgentPrincipal principal, JsonNode cap) {
+    private WorkspaceAgentView unboundView(AgentPrincipal principal, JsonNode cap,
+                                           List<UUID> roleIds) {
         return new WorkspaceAgentView(principal.getId(), principal.getName(), principal.getTemplateId(),
                 optionalText(principal.getTemplateSnapshot(), "templateName"), principal.getCreatedAt(), cap,
                 sourceOf(principal), false, principal.getDisabledAt() != null,
                 principal.getHooks() == null ? null : principal.getHooks().deepCopy(),
-                principal.getContextPolicy() == null ? null : principal.getContextPolicy().deepCopy());
+                principal.getContextPolicy() == null ? null : principal.getContextPolicy().deepCopy(),
+                roleIds);
+    }
+
+    /** PLAN-0629: one query per list call — workspace role bindings grouped by principal. */
+    private java.util.Map<UUID, List<UUID>> roleBindingsByPrincipal(UUID workspaceId) {
+        return roleBindingRepository
+                .findBySubjectTypeAndScopeTypeAndScopeId(GrantPrincipalPathResolver.AGENT_PRINCIPAL,
+                        "workspace", workspaceId)
+                .stream()
+                .collect(java.util.stream.Collectors.groupingBy(AccessRoleBinding::getSubjectId,
+                        java.util.LinkedHashMap::new,
+                        java.util.stream.Collectors.mapping(AccessRoleBinding::getRoleId,
+                                java.util.stream.Collectors.toList())));
     }
 
     /** Without a binding there is no narrowing cap: the principal's own atoms are the whole cap. */
@@ -662,8 +717,12 @@ public class AgentPrincipalService {
         Set<GrantIntersectionEvaluator.PermissionAtom> principalPermissions = evaluator.union(
                 grantRepository.findBySubjectTypeAndSubjectId(
                         GrantPrincipalPathResolver.AGENT_PRINCIPAL, principal.getId()));
-        Set<GrantIntersectionEvaluator.PermissionAtom> bindingPermissions = parsePermissions(
-                binding.workspaceAgent().getPermissionsSnapshot());
+        Set<GrantIntersectionEvaluator.PermissionAtom> bindingPermissions = binding.workspaceAgent() == null
+                // PLAN-0629: access granted by a workspace role binding, no binding row involved.
+                ? evaluator.union(grantRepository.findScopedGrants(
+                        GrantPrincipalPathResolver.AGENT_PRINCIPAL, principal.getId(),
+                        GrantSources.EVALUATION_SOURCES, workspaceId))
+                : parsePermissions(binding.workspaceAgent().getPermissionsSnapshot());
         return toJson(retainCovered(bindingPermissions, principalPermissions));
     }
 
@@ -693,12 +752,69 @@ public class AgentPrincipalService {
                 parseUuid(workspaceIdValue, "INVALID_WORKSPACE"));
     }
 
+    /**
+     * PLAN-0629 (scope→roles): reachability is decided by a role binding, not by the legacy `scope`
+     * column. A principal may act in a workspace when it holds a workspace-scoped role binding there;
+     * the binding table stays accepted because it carries the optional narrowing cap (`permissions
+     * _snapshot`) and is the row V107 backfills from, so no access is lost mid-upgrade.
+     */
     private ActiveWorkspaceBinding requireActiveWorkspaceBinding(UUID principalId, UUID workspaceId) {
         AgentPrincipal principal = requireActivePrincipal(principalId);
-        WorkspaceAgent binding = workspaceAgentRepository.findById(new WorkspaceAgentId(principalId, workspaceId))
-                .orElseThrow(() -> new CpApiException(HttpStatus.FORBIDDEN, "FORBIDDEN",
-                        "Agent principal is not bound to this Workspace"));
+        WorkspaceAgent binding = workspaceAgentRepository
+                .findById(new WorkspaceAgentId(principalId, workspaceId))
+                .orElse(null);
+        if (binding == null && !roleBoundPrincipalIds(workspaceId).contains(principalId)) {
+            throw new CpApiException(HttpStatus.FORBIDDEN, "FORBIDDEN",
+                    "Agent principal holds no role binding for this Workspace");
+        }
         return new ActiveWorkspaceBinding(principal, binding);
+    }
+
+    /** PLAN-0629: the workspace-scoped role ids bound to this principal (read-only view field). */
+    private List<UUID> workspaceRoleIds(UUID principalId, UUID workspaceId) {
+        return roleBindingRepository
+                .findBySubjectTypeAndScopeTypeAndScopeId(GrantPrincipalPathResolver.AGENT_PRINCIPAL,
+                        "workspace", workspaceId)
+                .stream()
+                .filter(row -> principalId.equals(row.getSubjectId()))
+                .map(AccessRoleBinding::getRoleId)
+                .toList();
+    }
+
+    /**
+     * PLAN-0629: binding a role is what grants access. The role binding is written first and the
+     * existing {@link RoleGrantMaterializer} then materializes `source='role'` grants, so the runtime
+     * path and the V107 backfill produce the same rows — one materialization implementation, not two.
+     */
+    private void ensureWorkspaceRoleBinding(UUID principalId, UUID workspaceId, UUID actorId) {
+        if (!workspaceRoleIds(principalId, workspaceId).isEmpty()) {
+            return;
+        }
+        AccessRole defaultRole = roleRepository.findByName(DEFAULT_AGENT_WORKSPACE_ROLE)
+                .orElseThrow(() -> new CpApiException(HttpStatus.INTERNAL_SERVER_ERROR,
+                        "ROLE_CATALOG_INCONSISTENT",
+                        "Seeded role " + DEFAULT_AGENT_WORKSPACE_ROLE + " is missing"));
+        roleBindingRepository.save(new AccessRoleBinding(defaultRole.getId(),
+                GrantPrincipalPathResolver.AGENT_PRINCIPAL, principalId, "workspace", workspaceId,
+                actorId));
+        roleMaterializer.materializeSubject(GrantPrincipalPathResolver.AGENT_PRINCIPAL, principalId,
+                actorId, workspaceId.toString());
+    }
+
+    /** PLAN-0629: revoking the binding revokes the role binding and its materialized atoms. */
+    private void revokeWorkspaceRoleBinding(UUID principalId, UUID workspaceId, UUID actorId) {
+        List<AccessRoleBinding> rows = roleBindingRepository
+                .findBySubjectTypeAndScopeTypeAndScopeId(GrantPrincipalPathResolver.AGENT_PRINCIPAL,
+                        "workspace", workspaceId)
+                .stream()
+                .filter(row -> principalId.equals(row.getSubjectId()))
+                .toList();
+        if (rows.isEmpty()) {
+            return;
+        }
+        roleBindingRepository.deleteAll(rows);
+        roleMaterializer.materializeSubject(GrantPrincipalPathResolver.AGENT_PRINCIPAL, principalId,
+                actorId, workspaceId.toString());
     }
 
     @Transactional(readOnly = true)
@@ -1143,7 +1259,9 @@ public class AgentPrincipalService {
     public record WorkspaceAgentView(UUID principalId, String name, String templateId,
                                      String templateName, Instant createdAt, JsonNode permissions,
                                      String source, boolean bound, boolean disabled, JsonNode hooks,
-                                     JsonNode contextPolicy) {}
+                                     JsonNode contextPolicy,
+                                     // PLAN-0629: the workspace-scoped roles that authorize this row.
+                                     java.util.List<UUID> roleIds) {}
 
     private record ActiveWorkspaceBinding(AgentPrincipal principal, WorkspaceAgent workspaceAgent) {}
 }
