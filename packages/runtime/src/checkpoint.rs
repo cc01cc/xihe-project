@@ -32,6 +32,8 @@ use thiserror::Error;
 use tokio::process::Command;
 use tracing::{debug, info, warn};
 
+use crate::checkpoint_store::manifest::FileMode;
+use crate::checkpoint_store::walk::{WalkEntryKind, walk_workspace};
 use crate::error::RuntimeError;
 use crate::storage;
 
@@ -1298,7 +1300,19 @@ impl ShadowGit {
             .await?;
 
             let mut relative_files = Vec::new();
-            collect_nested_files(&absolute_root, Path::new(""), &mut relative_files)?;
+            let outcome = walk_workspace(&absolute_root).map_err(|error| {
+                std::io::Error::other(format!("nested repository walk failed: {error}"))
+            })?;
+            for issue in &outcome.issues {
+                warn!(
+                    root = %root,
+                    path = ?issue.path,
+                    kind = ?issue.kind,
+                    message = %issue.message,
+                    "nested walker reported an issue"
+                );
+            }
+            relative_files.extend(outcome.entries.iter().map(|entry| entry.path.clone()));
             if relative_files.is_empty() {
                 continue;
             }
@@ -1310,37 +1324,39 @@ impl ShadowGit {
                 .ignored_paths(&env, excludes, work_tree, &repo_relative)
                 .await?;
 
-            for relative in &relative_files {
-                let repo_path = format!("{root}/{relative}");
+            for entry in &outcome.entries {
+                let repo_path = format!("{root}/{}", entry.path);
                 if ignored.contains(&repo_path) {
                     continue;
                 }
-                let absolute =
-                    absolute_root.join(relative.replace('/', std::path::MAIN_SEPARATOR_STR));
-                let Ok(metadata) = std::fs::symlink_metadata(&absolute) else {
-                    continue;
-                };
-                if metadata.file_type().is_symlink() {
-                    let Ok(target) = std::fs::read_link(&absolute) else {
-                        continue;
-                    };
-                    let blob = target.to_string_lossy().replace('\\', "/");
-                    let oid = self.hash_object_stdin(&env, blob.as_bytes()).await?;
-                    self.update_index_cacheinfo(&env, "120000", &oid, &repo_path)
-                        .await?;
-                } else if metadata.is_file() {
-                    if metadata.len() > self.max_untracked_file_bytes {
-                        warn!(
-                            path = %repo_path,
-                            bytes = metadata.len(),
-                            cap = self.max_untracked_file_bytes,
-                            "oversized nested-repo file skipped by the size cap"
-                        );
-                        continue;
+                match entry.kind {
+                    WalkEntryKind::Symlink => {
+                        let Some(target) = entry.symlink_target.as_deref() else {
+                            warn!(path = %repo_path, "nested symlink has no target; skipped");
+                            continue;
+                        };
+                        let oid = self.hash_object_stdin(&env, target.as_bytes()).await?;
+                        self.update_index_cacheinfo(&env, "120000", &oid, &repo_path)
+                            .await?;
                     }
-                    let oid = self.hash_object_file(&env, &absolute).await?;
-                    self.update_index_cacheinfo(&env, "100644", &oid, &repo_path)
-                        .await?;
+                    WalkEntryKind::File => {
+                        if entry.size > self.max_untracked_file_bytes {
+                            warn!(
+                                path = %repo_path,
+                                bytes = entry.size,
+                                cap = self.max_untracked_file_bytes,
+                                "oversized nested-repo file skipped by the size cap"
+                            );
+                            continue;
+                        }
+                        let mode = match entry.mode {
+                            FileMode::Executable => "100755",
+                            FileMode::Regular | FileMode::Symlink => "100644",
+                        };
+                        let oid = self.hash_object_file(&env, &entry.absolute_path).await?;
+                        self.update_index_cacheinfo(&env, mode, &oid, &repo_path)
+                            .await?;
+                    }
                 }
             }
             flattened.push(root.clone());
@@ -1925,33 +1941,6 @@ fn parse_name_status_z(bytes: &[u8]) -> Result<Vec<ChangedFile>> {
         }
     }
     Ok(changed)
-}
-
-/// Depth-first walk of one nested repository, collecting file/symlink paths
-/// relative to the nested root (forward slashes). Any `.git` entry (directory or
-/// `gitdir:` pointer file) is skipped, so nested history never enters the parent
-/// slice (PLAN-0361 L1).
-fn collect_nested_files(root: &Path, prefix: &Path, out: &mut Vec<String>) -> Result<()> {
-    let entries = match std::fs::read_dir(root) {
-        Ok(entries) => entries,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-        Err(error) => return Err(error.into()),
-    };
-    for entry in entries {
-        let entry = entry?;
-        let name = entry.file_name();
-        if name == std::ffi::OsStr::new(".git") {
-            continue;
-        }
-        let file_type = entry.file_type()?;
-        let relative = prefix.join(&name);
-        if file_type.is_dir() {
-            collect_nested_files(&entry.path(), &relative, out)?;
-        } else if file_type.is_file() || file_type.is_symlink() {
-            out.push(relative.to_string_lossy().replace('\\', "/"));
-        }
-    }
-    Ok(())
 }
 
 /// Parse `git ls-files --stage -z` output for mode 160000 (gitlink) entries.
