@@ -860,6 +860,18 @@ mod tests {
             "v": 1,
             "tiers": tiers,
             "negatives": negatives,
+            "expected_exceptions": {
+                "nested_gitlink": "git tree gitlinks are not materialized; store Opaque excludes nested contents; only regular-file paths are compared",
+                "empty_dirs": "directories are not compared as entries; T2.1 only prunes empty parents left by its own deletions",
+                "line_endings": "fixture forces core.autocrlf=false and core.eol=lf",
+                "modified_deletion": "negative case is intentionally preserved by store restore and would be covered by git checkout; recorded in negatives.expectations"
+            },
+            "gate": {
+                "tiers": 3,
+                "slices_per_tier": 3,
+                "positive_findings": 0,
+                "negative_cases": 3
+            }
         });
         eprintln!(
             "V3_REPORT {}",
