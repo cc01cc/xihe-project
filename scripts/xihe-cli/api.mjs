@@ -1,4 +1,4 @@
-import { CliError, confirmAction, getApiBase, login, parseOptions } from './provider.mjs';
+import { CliError, confirmAction, getApiBase, login, parseOptions, readResponseText } from './provider.mjs';
 
 // PLAN-0643 T1.1/T1.6 (design D19–D22, spec/cli-contract.md §6): the escape hatch.
 // It exists to unblock commands the CLI has not wrapped yet — it is NOT a second
@@ -269,13 +269,16 @@ export async function runApiEscape({
   }
 
   let text;
+  let truncated = false;
   try {
-    text = await response.text();
+    ({ text, truncated } = await readResponseText(response, maxBytes));
   } catch {
     throw new CliError('CP_RESPONSE_INVALID', 'CP response could not be read.');
   }
-  if (text.length > maxBytes) {
-    throw new CliError('CP_RESPONSE_TOO_LARGE', 'CP response exceeded --max-bytes; re-run with a higher limit or --raw.');
+  if (truncated) {
+    // PLAN-0643 R7: truncation is observable, never silent: stderr marker + the
+    // `truncated: true` envelope field + exit 1 (the payload is incomplete by design).
+    stderr.write(`# truncated: response exceeded --max-bytes (${maxBytes} bytes); pass a higher --max-bytes for the full body\n`);
   }
 
   let parsed;
@@ -291,8 +294,22 @@ export async function runApiEscape({
   const raw = values['--raw'] === true;
   if (raw) {
     return {
-      exitCode: response.ok ? 0 : 1,
-      envelope: { ok: response.ok, status: response.status, body: text },
+      exitCode: response.ok && !truncated ? 0 : 1,
+      envelope: {
+        ok: response.ok && !truncated,
+        status: response.status,
+        body: text,
+        ...(truncated ? { truncated: true } : {}),
+      },
+      bodyText: text,
+    };
+  }
+  if (truncated) {
+    // Keep the partial body as text: a truncated JSON document must not be parsed
+    // into a half-valid value that callers could mistake for the real response.
+    return {
+      exitCode: 1,
+      envelope: { ok: false, status: response.status, body: text, truncated: true },
       bodyText: text,
     };
   }
