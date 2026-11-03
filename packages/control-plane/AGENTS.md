@@ -44,6 +44,16 @@ mvn -o -q test "-Dtest=CpArchitectureTest"
 
 单进程全量 **598 s**（2654 测试 / 362 类），2 shard 并行 **301–343 s**（**−49.6%**）。**一次只允许一个"会写 `target/` 且产生权威测量"的全量执行体** —— 两个并发 `mvn test` 会共享 `target/classes`、`target/test-classes`、`target/surefire-reports*`，Maven 无锁，结果是**静默互覆盖 → 假绿/假红**（2026-11-02 实测：shard 把报告写成 `surefire-reports-shard-a/b`，读默认目录者只看到半个套件）。需要两个**完整** `mvn test` 同树并行时用 `D32-26 T2`：`"-Dxihe.build.suffix=-b"`（PowerShell 必须加引号）。
 
+**这条不是"建议"，违反者会让正在跑的 JVM 读到空目录。** 2026-11-03 实测（改一个测试源后的 `mvn -o -q test-compile`，7.6 s 完成）：`target/test-classes` 在 t+2.4 s 变成 **0 个 class**、t+4.2 s 起回填、t+7.5 s 才回到 567 个。正在跑的套件按路径懒加载类/扫描组件，于是窗口内：
+
+- `WorkspaceFixture`（测试源码里**唯一**的 `@Component`）静默扫不到 ⇒ 该测试类所有用例 `No qualifying bean of type WorkspaceFixture`（实测 13E/10E）；
+- 尚未加载的内部类 ⇒ `NoClassDefFoundError: Xxx$1` / `TestDatabaseProvider$DatabaseRef`（类文件确实存在）。
+
+每次撞上的类不同、单跑全绿，因此极易误判为 Spring Test context cache 污染 —— **不是**：context cache 只是把这一次坏掉的扫描留给了建它的那一个类。所以临时验证（`mvn test -Dtest=X`）也必须独占 `target/`（另一个 worktree，或 `-Dxihe.build.suffix=-b`）。
+
+兜底是 `TestClasspathGuard`（由 `TestFixtureContextCustomizer` 在每次上下文创建时调用）：比对 `target/test-classes` 的指纹（文件数/字节数/最新 mtime），检测到重写就打印**一次**写明 cause 的横幅，而不是留给后人猜一串 bean/classloader 错误。同一个 customizer 还把 `WorkspaceFixture` 以 `workspaceFixture` 定义在**配置类解析之前**注册进上下文（扫描器判为兼容并跳过），因此扫描窗口不再能让该 fixture 消失。
+
+
 标准流程（在目标 worktree 内执行）：
 
 ```powershell

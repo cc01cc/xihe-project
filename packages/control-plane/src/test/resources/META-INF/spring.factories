@@ -1,0 +1,2 @@
+org.springframework.test.context.ContextCustomizerFactory=\
+com.cc01cc.p.xihe.cp.support.TestFixtureContextCustomizer

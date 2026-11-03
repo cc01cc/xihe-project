@@ -235,6 +235,14 @@ updated: 2026-10-25
 
 > UI 触发 revert 的账本来源已修正为 `source=ui`；不要再登记或声称存在未解决的 `source=cp` 缺陷。
 
+## CP 全量测试的 `target/test-classes` 共享写竞争（2026-11-03 定位，已加运行时守卫）
+
+- **现象**：CP 全量跑每次都有 10–14 个集成类报错，形状固定为 `No qualifying bean of type WorkspaceFixture` 或 `NoClassDefFoundError: Xxx$1`（而类文件确实存在），单跑同类全绿，且**每次中招的类不同**。两轮实测：`TerminalTransactionCoreIntegrationTest` 10E；`WorkspaceJobStartIntegrationTest` 13E + `AgentRagIntegrationTest` 1E。
+- **根因（实测，不是 Spring Test context cache 污染）**：同一 `target/` 上有第二个 Maven 写者。证据链：① 全量跑（17:55:58–18:04:52，字母序）期间，`chat.DelegationTimeoutPropagationIntegrationTest` 的报告落在 18:03:19 的 policy 段中间——chat 包 4 分钟前已跑完 ⇒ 存在第二个 surefire 会话；② 单源增量触发的一次 `mvn -o -q test-compile` 会把 `target/test-classes` 清空再回填（567 个 class → t+2.4 s 变 0 → t+7.5 s 回 567），正在跑的 JVM 按路径懒加载类、按目录扫描组件；③ 测试源码里**唯一**的 `@Component` 就是 `WorkspaceFixture`（全仓仅此一处），所以扫描窗口只产出一个可观察症状：该类的 fixture 注入失败 ⇒ 全类 ERROR。context cache 只是把这一次坏掉的扫描留给建它的那一个类（`@DirtiesContext(AFTER_CLASS)` 下正好一类一个），因此**顺序本身不构成污染**：同 JVM 连跑三个"受害者" 29/29 全绿（2026-11-03 复现实验），而注入并发编译后同一套件立刻出现 `NoClassDefFoundError: TestDatabaseProvider$DatabaseRef` 等同类失败。
+- **修复**：① `TestFixtureContextCustomizer`（`ContextCustomizerFactory`，经测试资源 `META-INF/spring.factories` 全局注册）在**配置类解析之前**为所有以 `CpApplication` 为配置的 Spring 测试上下文注册 `workspaceFixture` 定义（lazy）；扫描器遇到同名同类型的既有定义会判为兼容并跳过 ⇒ 不重复定义，且 fixture 一旦随上下文加载过就不再依赖目录列举（无需改任何测试类）；② `TestClasspathGuard` 在每次上下文创建时比对 `target/test-classes` 的指纹（文件数/字节数/最新 mtime），检测到重写就打印**一次**写明 cause 的横幅（不主动判红，避免把本来能过的类弄红）。
+- **验证（红→绿，确定性复刻）**：`.tmp/ctx/fixture-vanish.ps1` 在首个测试类跑完后删除 `WorkspaceFixture.class`（= 扫描窗口缺失）——修复前 44 测试 **23E**，错误串正是 `No qualifying bean of type '…WorkspaceFixture'`；修复后 **44/44 绿** + 守卫横幅（`McpProxyControllerTest` 处打印）。
+- **纪律**：临时验证（`mvn test -Dtest=X`）也必须独占 `target/`（另一个 worktree，或 `-Dxihe.build.suffix=-b`）。见 `packages/control-plane/AGENTS.md` §L2。
+
 ## Code
 
 - **Jackson 2/3 混用**: CP 同时依赖 Jackson2（`com.fasterxml.jackson.databind`，如 `McpProxyController` 仍用 `fieldNames()`）与 Jackson3（`tools.jackson`）。3.x 新增 `propertyNames()`（返回 `Collection<String>`）；按所在模块的依赖对齐选用，禁跨版本混调
