@@ -941,6 +941,11 @@ public class RunCheckpointService {
             row.setId(UUID.randomUUID());
             row.setSourceRunId(runId);
             row.setWorkspaceId(workspaceId);
+            // PLAN-0639 M7 (VM11): a degraded row records a *failed* capture, so
+            // there is no captured root to report. The primary root (the workspace
+            // id) is the only attribution this row can honestly carry; a later
+            // successful capture overwrites it with the Runtime-reported root
+            // (`persistCaptured`).
             row.setRootId(workspaceId);
             row.setSourceSessionId(run.getSessionId());
             row.setChangedFiles("[]");
