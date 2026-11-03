@@ -71,6 +71,9 @@ base64 = "0.22.1"
 # === NEW: SHA-256 content hashing (PLAN-275 snapshot/patch) ===
 sha2 = "0.10"
 
+# === NEW: checkpoint store blob codec (PLAN-0653 M1/T1.1; direct dep approved D53-17) ===
+flate2 = { version = "1.1.9", default-features = false, features = ["rust_backend"] }
+
 # === NEW: URL percent-encoding support (REST API write path) ===
 percent-encoding = "2"
 url = "2"
