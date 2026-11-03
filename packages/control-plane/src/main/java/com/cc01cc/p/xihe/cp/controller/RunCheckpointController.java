@@ -78,6 +78,8 @@ public class RunCheckpointController {
         body.put("entries", preview.entries());
         body.put("truncated", preview.truncated());
         body.put("opaqueNestedRepos", outcome.details().getOrDefault("opaqueNestedRepos", List.of()));
+        body.put("descendantsAffected",
+                outcome.details().getOrDefault("descendantsAffected", List.of()));
         return ResponseEntity.ok(body);
     }
 
@@ -114,6 +116,8 @@ public class RunCheckpointController {
         body.put("entries", result.entries());
         body.put("durationMs", result.durationMs());
         body.put("suspects", result.suspects());
+        body.put("descendantsAffected",
+                outcome.details().getOrDefault("descendantsAffected", List.of()));
         logger.info("[LIFECYCLE] service=cp event=run_checkpoint_revert_completed workspaceId={} sliceRef={} "
                         + "restored={} "
                         + "deleted={} failed={}",

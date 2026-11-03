@@ -2,9 +2,11 @@ package com.cc01cc.p.xihe.cp.service;
 
 import com.cc01cc.p.xihe.cp.entity.ChatRun;
 import com.cc01cc.p.xihe.cp.entity.RunCheckpoint;
+import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.chat.SseEmitterManager;
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
 import com.cc01cc.p.xihe.cp.repository.RunCheckpointRepository;
+import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.runtime.RuntimeCheckpointClient;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -16,9 +18,13 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.Deque;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -104,6 +110,7 @@ public class RunCheckpointService {
     private final RunCheckpointRepository checkpoints;
     private final RuntimeCheckpointClient runtime;
     private final ChatRunRepository chatRuns;
+    private final SessionRepository sessions;
     private final ObjectMapper objectMapper;
     private final SseEmitterManager sseManager;
     private final AtomicLong captureSequence = new AtomicLong();
@@ -113,11 +120,13 @@ public class RunCheckpointService {
     public RunCheckpointService(RunCheckpointRepository checkpoints,
                                 RuntimeCheckpointClient runtime,
                                 ChatRunRepository chatRuns,
+                                SessionRepository sessions,
                                 ObjectMapper objectMapper,
                                 SseEmitterManager sseManager) {
         this.checkpoints = checkpoints;
         this.runtime = runtime;
         this.chatRuns = chatRuns;
+        this.sessions = sessions;
         this.objectMapper = objectMapper;
         this.sseManager = sseManager;
         this.captureExecutor = Executors.newSingleThreadExecutor(runnable -> {
@@ -271,6 +280,13 @@ public class RunCheckpointService {
     public record RevertView(String state, Instant at, Map<String, Object> counts, String ref,
                              int attemptCount) {}
 
+    /**
+     * PLAN-0640 T1: one descendant session whose post-target work overlaps the
+     * paths a revert to the target slice will roll back. Explanatory only — the
+     * warning never blocks the restore (D40-2: data is forward-recoverable).
+     */
+    public record DescendantImpact(String sessionId, List<String> overlappingPaths) {}
+
     /** Public workspace slice projection. Expired rows are omitted by {@link #list}. */
     public record View(UUID id, String sliceRef, Instant capturedAt, String sourceRunId,
                        String sourceSessionId, String predecessorRef, String state,
@@ -339,8 +355,12 @@ public class RunCheckpointService {
         RunCheckpoint capturedRow = Objects.requireNonNull(row);
         RuntimeCheckpointClient.RevertPreview preview = runtime.previewRevert(workspaceId, sliceRef);
         return switch (preview.outcome()) {
-            case OK -> new PreviewOutcome(Gate.OK, null, preview,
-                    Map.of("opaqueNestedRepos", parseStringList(capturedRow.getOpaqueNestedRepos())));
+            case OK -> {
+                Map<String, Object> details = new LinkedHashMap<>();
+                details.put("opaqueNestedRepos", parseStringList(capturedRow.getOpaqueNestedRepos()));
+                details.put("descendantsAffected", computeDescendantsAffected(capturedRow));
+                yield new PreviewOutcome(Gate.OK, null, preview, details);
+            }
             case TYPE_CHANGES_UNACKNOWLEDGED -> new PreviewOutcome(Gate.TYPE_CHANGES_UNACKNOWLEDGED,
                     "TYPE_CHANGES_UNACKNOWLEDGED", null, Map.of());
             case RESTORE_LOCKED -> new PreviewOutcome(Gate.RESTORE_LOCKED, "RESTORE_LOCKED", null, Map.of());
@@ -375,7 +395,8 @@ public class RunCheckpointService {
         return switch (result.outcome()) {
             case OK -> {
                 recordRevert(capturedRow, result);
-                yield new RevertOutcome(Gate.OK, null, result, Map.of());
+                yield new RevertOutcome(Gate.OK, null, result,
+                        Map.of("descendantsAffected", computeDescendantsAffected(capturedRow)));
             }
             case TYPE_CHANGES_UNACKNOWLEDGED -> new RevertOutcome(Gate.TYPE_CHANGES_UNACKNOWLEDGED,
                     "TYPE_CHANGES_UNACKNOWLEDGED", null, Map.of());
@@ -661,6 +682,96 @@ public class RunCheckpointService {
     private boolean hasActiveRun(String workspaceId) {
         return !isBlank(workspaceId)
                 && chatRuns.existsByWorkspaceIdAndStatusIn(workspaceId, NON_TERMINAL_RUN_STATUSES);
+    }
+
+    /**
+     * PLAN-0640 T1: BFS the durable V37 spawn edge
+     * ({@code sessions.spawned_from_session_id}, kind={@code spawn}) starting from the
+     * reverted slice's session, then intersect each descendant session's post-target
+     * slice paths with the paths the revert will roll back (the union of all captured
+     * slices captured after the target). Defensive visited set: delegation edges are
+     * acyclic by construction, but the probe must never loop or fail the revert.
+     */
+    private List<DescendantImpact> computeDescendantsAffected(RunCheckpoint targetRow) {
+        try {
+            if (targetRow.getCapturedAt() == null) {
+                return List.of();
+            }
+            Set<String> descendantIds = descendantSessionIds(targetRow.getSourceSessionId());
+            if (descendantIds.isEmpty()) {
+                return List.of();
+            }
+            Set<String> rollbackPaths = new LinkedHashSet<>();
+            Map<String, Set<String>> descendantPaths = new LinkedHashMap<>();
+            for (RunCheckpoint row : checkpoints.findByWorkspaceIdAndStateNotOrderByCapturedAtDesc(
+                    targetRow.getWorkspaceId(), RunCheckpoint.STATE_EXPIRED)) {
+                if (!isCapturedState(row.getState()) || row.getCapturedAt() == null
+                        || !row.getCapturedAt().isAfter(targetRow.getCapturedAt())) {
+                    continue;
+                }
+                List<String> paths = parseChangedFiles(row.getChangedFiles()).stream()
+                        .map(RuntimeCheckpointClient.ChangedFile::path)
+                        .filter(Objects::nonNull)
+                        .toList();
+                rollbackPaths.addAll(paths);
+                if (row.getSourceSessionId() != null && descendantIds.contains(row.getSourceSessionId())) {
+                    descendantPaths.computeIfAbsent(row.getSourceSessionId(), ignored -> new LinkedHashSet<>())
+                            .addAll(paths);
+                }
+            }
+            List<DescendantImpact> impacted = new ArrayList<>();
+            for (Map.Entry<String, Set<String>> entry : descendantPaths.entrySet()) {
+                List<String> overlapping = entry.getValue().stream()
+                        .filter(rollbackPaths::contains)
+                        .sorted()
+                        .toList();
+                if (!overlapping.isEmpty()) {
+                    impacted.add(new DescendantImpact(entry.getKey(), overlapping));
+                }
+            }
+            if (!impacted.isEmpty()) {
+                logger.info("[LIFECYCLE] service=cp event=run_checkpoint_descendants_affected "
+                                + "workspaceId={} sliceRef={} descendants={} impacts={}",
+                        targetRow.getWorkspaceId(), targetRow.getSliceRef(), impacted.size(), impacted);
+            }
+            return impacted;
+        } catch (Exception e) {
+            logger.warn("[LIFECYCLE] service=cp event=run_checkpoint_descendants_probe_failed "
+                            + "workspaceId={} failureType={}",
+                    targetRow.getWorkspaceId(), e.getClass().getName());
+            return List.of();
+        }
+    }
+
+    /** Transitive spawn descendants of one session (the root itself is excluded). */
+    private Set<String> descendantSessionIds(String rootSessionId) {
+        Set<String> descendantIds = new HashSet<>();
+        if (isBlank(rootSessionId)) {
+            return descendantIds;
+        }
+        Set<String> visited = new HashSet<>();
+        Deque<String> frontier = new ArrayDeque<>();
+        visited.add(rootSessionId);
+        frontier.add(rootSessionId);
+        while (!frontier.isEmpty()) {
+            String current = frontier.poll();
+            List<Session> children;
+            try {
+                children = sessions.findBySpawnedFromSessionIdAndKind(
+                        UUID.fromString(current), Session.KIND_SPAWN);
+            } catch (IllegalArgumentException e) {
+                // Defensive: a malformed session id simply cannot expand any further.
+                continue;
+            }
+            for (Session child : children) {
+                String childId = child.getId().toString();
+                if (visited.add(childId)) {
+                    descendantIds.add(childId);
+                    frontier.add(childId);
+                }
+            }
+        }
+        return descendantIds;
     }
 
     private static Map<String, Object> problemDetails(Map<String, Object> problem, String... keys) {

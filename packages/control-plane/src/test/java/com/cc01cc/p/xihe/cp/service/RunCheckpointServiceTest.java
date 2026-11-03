@@ -110,6 +110,7 @@ class RunCheckpointServiceTest {
         when(repository.countByWorkspaceId(anyString())).thenReturn(0L);
         when(repository.countSliceRefs(anyString())).thenReturn(0L);
         service = new RunCheckpointService(repository, client, chatRunRepository,
+                org.mockito.Mockito.mock(com.cc01cc.p.xihe.cp.repository.SessionRepository.class),
                 new ObjectMapper(), sseManager);
     }
 

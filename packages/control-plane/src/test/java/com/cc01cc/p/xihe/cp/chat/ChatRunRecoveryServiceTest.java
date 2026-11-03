@@ -151,7 +151,9 @@ class ChatRunRecoveryServiceTest {
         when(chatRunRepository.findById(UUID.fromString(RUN_ID)))
                 .thenReturn(Optional.of(terminal));
         RunCheckpointService realService = new RunCheckpointService(checkpointRepository, client,
-                chatRunRepository, new ObjectMapper(),
+                chatRunRepository,
+                mock(com.cc01cc.p.xihe.cp.repository.SessionRepository.class),
+                new ObjectMapper(),
                 mock(com.cc01cc.p.xihe.cp.chat.SseEmitterManager.class));
         ChatRunRecoveryService recovery = new ChatRunRecoveryService(chatRunRepository,
                 approvalRepository, activeRunRegistry, terminalService, historyWriter, realService);
