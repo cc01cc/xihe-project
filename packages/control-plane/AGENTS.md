@@ -2,7 +2,7 @@
 
 ## 定位与技术栈
 
-Control Plane（CP）负责公开 API、认证/租户边界、策略与审批、Chat/MCP 编排、Workspace Job 生命周期、Audit 读面，以及 Runtime/Agent 客户端调用。技术栈：Java 25、Spring Boot 4.0.6、Maven、PostgreSQL 17、Flyway 13.4.0、JPA、Spring Security、springdoc 3.1.0。
+Control Plane（CP）负责公开 API、认证/租户边界、策略与审批、Chat/MCP 编排、Workspace Job 生命周期、Audit 读面，以及 Runtime/Agent 客户端调用。技术栈：Java 25、Spring Boot 4.1.2、Maven、PostgreSQL 17、Flyway 13.4.0（显式 pin，高于 BOM 的 12.4.0）、JPA、Spring Security、springdoc 3.2.0。
 
 完整架构与 API 说明：
 - [`DEV-014-control-plane-architecture.md`](../../docs/i18n/zh-Hans/DEV-014-control-plane-architecture.md)
