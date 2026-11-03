@@ -53,6 +53,12 @@ public class MessageReadService {
                                                           BranchPathService.BranchVisibility visibility) {
         List<Map<String, Object>> result = new ArrayList<>();
         for (Message message : messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId)) {
+            // PLAN-0630 M5b / D3: internal Messages (wake instructions) are model input only — they
+            // never render in the conversation. The filter lives here, in the single public read
+            // entry, so no caller can forget it; dispatch reads the content via findDispatchMessage.
+            if (!Message.VISIBILITY_USER.equals(message.getVisibility())) {
+                continue;
+            }
             if (isVisibleOnPath(message, sessionId, workspaceId, rootBranchId, visibility)) {
                 result.add(toMessageDto(message));
             }

@@ -161,6 +161,9 @@ public class WakeDispatchService {
         SessionWakeupService.WakeupResult result = sessionWakeupService.wakeupAs(
                 sessionId.toString(), session.getUserId(), session.getWorkspaceId(), prompt,
                 wakeRoundId, participant.getPrincipalId(), triggerSource, chainParentRunId);
+        // PLAN-0630 M5b / D2: a dispatch refusal downstream terminalizes the Run with its own
+        // error_code (ChatController listener); this wake-level audit keeps "submitted/deferred",
+        // so a reviewer can join the two facts instead of guessing from a stuck Run.
         audit(sessionId, participantId, triggerSource, wakeRoundId,
                 result.started() ? "submitted" : "deferred", null, result.runId(), parentRunId);
         return new WakeFireResult(result.started(), result.runId(),

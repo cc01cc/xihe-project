@@ -17,6 +17,15 @@ import java.util.UUID;
 @Table(name = "messages")
 public class Message {
 
+    /**
+     * PLAN-0630 M5b / D3: the wake pipeline hands the woken agent its instruction through the Run's
+     * user Message, which used to render in the conversation stream. {@code visibility} is the
+     * explicit channel for that distinction — the alternative (marker prefixes on {@code content})
+     * was rejected because every read path would have to re-parse untrusted text.
+     */
+    public static final String VISIBILITY_USER = "user";
+    public static final String VISIBILITY_INTERNAL = "internal";
+
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
     @Column(name = "id", columnDefinition = "uuid")
@@ -53,6 +62,10 @@ public class Message {
 
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
+
+    /** V110: {@code user} (default, rendered in the conversation) or {@code internal} (pipeline only). */
+    @Column(name = "visibility", nullable = false, length = 16)
+    private String visibility = VISIBILITY_USER;
 
     public Message() {}
 
@@ -94,6 +107,9 @@ public class Message {
 
     public String getToolCalls() { return toolCalls; }
     public void setToolCalls(String toolCalls) { this.toolCalls = toolCalls; }
+
+    public String getVisibility() { return visibility; }
+    public void setVisibility(String visibility) { this.visibility = visibility; }
 
     public Instant getCreatedAt() { return createdAt; }
     public void setCreatedAt(Instant createdAt) { this.createdAt = createdAt; }

@@ -912,11 +912,22 @@ public class ChatController {
         );
     }
 
-    @EventListener
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT, fallbackExecution = true)
     void onSpawnRunDispatchRequested(SpawnRunDispatchRequestedEvent event) {
-        boolean dispatched = dispatchSpawnRun(event.childRunId());
-        logger.info("[LIFECYCLE] service=cp event=spawn_dispatch_result parentRunId={} childRunId={} dispatched={}",
-                event.parentRunId(), event.childRunId(), dispatched);
+        // PLAN-0630 M5b / D2: same refusal contract as the scheduled handoff — a committed
+        // accepted Run has exactly one owner (this listener), so it must not drop it silently.
+        DispatchOutcome outcome;
+        try {
+            outcome = dispatchSpawnRunDetailed(event.childRunId());
+        } catch (RuntimeException e) {
+            outcome = DispatchOutcome.refused("handoff_failed:" + e.getClass().getSimpleName());
+        }
+        logger.info("[LIFECYCLE] service=cp event=spawn_dispatch_result parentRunId={} childRunId={} dispatched={} reason={}",
+                event.parentRunId(), event.childRunId(), outcome.dispatched(), outcome.reason());
+        if (!outcome.dispatched()) {
+            terminalizeRefusedDispatch(event.childRunId(), event.childRunId(), "SPAWN_DISPATCH_REFUSED",
+                    outcome.reason());
+        }
     }
 
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT, fallbackExecution = true)
@@ -985,50 +996,106 @@ public class ChatController {
 
     /** Dispatches a committed spawn Run through the same local worker and lease path as user Runs. */
     public boolean dispatchSpawnRun(String runId) {
+        return dispatchSpawnRunDetailed(runId).dispatched();
+    }
+
+    DispatchOutcome dispatchSpawnRunDetailed(String runId) {
         ChatRunReadService.DispatchRun run = chatRunReadService.findDispatchRun(runId).orElse(null);
-        if (run == null || !ChatRun.ORIGIN_SPAWN.equals(run.origin()) || !"accepted".equals(run.status())) {
-            return false;
+        if (run == null) {
+            return DispatchOutcome.refused("run_missing");
+        }
+        if (!ChatRun.ORIGIN_SPAWN.equals(run.origin())) {
+            return DispatchOutcome.refused("origin_not_spawn:" + run.origin());
+        }
+        if (!"accepted".equals(run.status())) {
+            return DispatchOutcome.refused("status_not_dispatchable:" + run.status());
         }
         Session session;
         try {
             session = sessionService.requireCurrent(run.sessionId(), run.userId(), run.workspaceId());
         } catch (com.cc01cc.p.xihe.cp.config.CpApiException e) {
-            throw new IllegalStateException("Committed spawn Session is no longer dispatchable", e);
+            return DispatchOutcome.refused("session_not_dispatchable:" + e.getCode());
         }
         MessageReadService.DispatchMessage userMessage = run.userMessageId() == null
                 ? null : messageReadService.findDispatchMessage(run.userMessageId()).orElse(null);
-        if (session == null || userMessage == null
-                || !Session.KIND_SPAWN.equals(session.getKind())
-                || !run.id().equals(userMessage.runId())
+        if (session == null) {
+            return DispatchOutcome.refused("session_missing");
+        }
+        if (userMessage == null || !run.id().equals(userMessage.runId())
                 || !run.sessionId().equals(userMessage.sessionId())
                 || !run.userId().equals(session.getUserId())
                 || !run.workspaceId().equals(session.getWorkspaceId())) {
-            throw new IllegalStateException("Committed spawn Run is missing its child Session or user Message");
+            return DispatchOutcome.refused("user_message_mismatch");
+        }
+        if (!Session.KIND_SPAWN.equals(session.getKind())) {
+            return DispatchOutcome.refused("child_session_kind:" + session.getKind());
         }
 
         String sessionId = run.sessionId();
         if (!activeRunRegistry.claim(sessionId, runId)) {
-            return false;
+            return DispatchOutcome.refused("already_claimed");
         }
         if (!acquireLeaseForExistingRun(runId)) {
             activeRunRegistry.release(sessionId, runId);
-            return false;
+            return DispatchOutcome.refused("lease_not_acquired");
         }
         try {
             execAsync(sessionId, userMessage.content(), run.provider(), run.model(), run.toolMode(),
                     Map.of(), List.of(), run.userId(), run.workspaceId(), runId, runId, null);
-            return true;
+            return DispatchOutcome.ok();
         } catch (RuntimeException e) {
             releaseRun(sessionId, runId, "spawn_dispatch_handoff_failed");
-            throw e;
+            return DispatchOutcome.refused("handoff_failed:" + e.getClass().getSimpleName());
         }
     }
 
-    @EventListener
+    /**
+     * PLAN-0630 M5b / D2: an event-driven handoff that returns {@code false} used to leave the Run
+     * in {@code accepted} for ever — nothing retried it (only the startup recovery sweep did). The
+     * outcome now carries the refusing branch, so the listener can log it, audit it on the Run row
+     * and terminalize instead of orphaning the Run.
+     */
+    record DispatchOutcome(boolean dispatched, String reason) {
+        static DispatchOutcome ok() { return new DispatchOutcome(true, "dispatched"); }
+
+        static DispatchOutcome refused(String reason) { return new DispatchOutcome(false, reason); }
+    }
+
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT, fallbackExecution = true)
     void onScheduledRunDispatchRequested(ScheduledRunDispatchRequestedEvent event) {
-        boolean dispatched = dispatchScheduledRun(event.runId());
-        logger.info("[LIFECYCLE] service=cp event=scheduled_dispatch_result sessionId={} runId={} dispatched={}",
-                event.sessionId(), event.runId(), dispatched);
+        DispatchOutcome outcome;
+        try {
+            outcome = dispatchScheduledRunDetailed(event.runId());
+        } catch (RuntimeException e) {
+            outcome = DispatchOutcome.refused("handoff_failed:" + e.getClass().getSimpleName());
+        }
+        logger.info("[LIFECYCLE] service=cp event=scheduled_dispatch_result sessionId={} runId={} dispatched={} reason={}",
+                event.sessionId(), event.runId(), outcome.dispatched(), outcome.reason());
+        if (!outcome.dispatched()) {
+            terminalizeRefusedDispatch(event.sessionId(), event.runId(), "SCHEDULED_DISPATCH_REFUSED", outcome.reason());
+        }
+    }
+
+    /**
+     * PLAN-0630 M5b / D2: a Run that could not be handed to a worker must not stay {@code accepted}
+     * — that state looks like "queued work" to every reader (UI, recovery sweep, ②-a verification)
+     * while nothing owns it. The refusing branch rides {@code error_code}/{@code error_detail}, so the
+     * reason survives the request that produced it.
+     */
+    private void terminalizeRefusedDispatch(String sessionId, String runId, String errorCode, String reason) {
+        boolean failed = chatRunLifecycleService.transition(runId, List.of("accepted"), "failed",
+                "dispatch_refused", errorCode, reason, 0, 0, null);
+        logger.warn("[LIFECYCLE] service=cp event=chat_run_dispatch_refused_terminal runId={} errorCode={} reason={} terminalized={}",
+                runId, errorCode, reason, failed);
+        chatRunLifecycleService.releaseLease(UUID.fromString(runId), instanceId());
+        String registrySessionId = sessionId;
+        if (registrySessionId == null) {
+            registrySessionId = chatRunReadService.findDispatchRun(runId)
+                    .map(ChatRunReadService.DispatchRun::sessionId).orElse(null);
+        }
+        if (registrySessionId != null) {
+            activeRunRegistry.release(registrySessionId, runId);
+        }
     }
 
     /**
@@ -1038,41 +1105,53 @@ public class ChatController {
      * accepted status and Run/Session/user-Message consistency gate dispatch).
      */
     public boolean dispatchScheduledRun(String runId) {
+        return dispatchScheduledRunDetailed(runId).dispatched();
+    }
+
+    DispatchOutcome dispatchScheduledRunDetailed(String runId) {
         ChatRunReadService.DispatchRun run = chatRunReadService.findDispatchRun(runId).orElse(null);
-        if (run == null || !ChatRun.ORIGIN_SCHEDULED.equals(run.origin()) || !"accepted".equals(run.status())) {
-            return false;
+        if (run == null) {
+            return DispatchOutcome.refused("run_missing");
+        }
+        if (!ChatRun.ORIGIN_SCHEDULED.equals(run.origin())) {
+            return DispatchOutcome.refused("origin_not_scheduled:" + run.origin());
+        }
+        if (!"accepted".equals(run.status())) {
+            return DispatchOutcome.refused("status_not_dispatchable:" + run.status());
         }
         Session session;
         try {
             session = sessionService.requireCurrent(run.sessionId(), run.userId(), run.workspaceId());
         } catch (com.cc01cc.p.xihe.cp.config.CpApiException e) {
-            throw new IllegalStateException("Committed scheduled Session is no longer dispatchable", e);
+            return DispatchOutcome.refused("session_not_dispatchable:" + e.getCode());
         }
         MessageReadService.DispatchMessage userMessage = run.userMessageId() == null
                 ? null : messageReadService.findDispatchMessage(run.userMessageId()).orElse(null);
-        if (session == null || userMessage == null
-                || !run.id().equals(userMessage.runId())
+        if (session == null) {
+            return DispatchOutcome.refused("session_missing");
+        }
+        if (userMessage == null || !run.id().equals(userMessage.runId())
                 || !run.sessionId().equals(userMessage.sessionId())
                 || !run.userId().equals(session.getUserId())
                 || !run.workspaceId().equals(session.getWorkspaceId())) {
-            throw new IllegalStateException("Committed scheduled Run is missing its Session or user Message");
+            return DispatchOutcome.refused("user_message_mismatch");
         }
 
         String sessionId = run.sessionId();
         if (!activeRunRegistry.claim(sessionId, runId)) {
-            return false;
+            return DispatchOutcome.refused("already_claimed");
         }
         if (!acquireLeaseForExistingRun(runId)) {
             activeRunRegistry.release(sessionId, runId);
-            return false;
+            return DispatchOutcome.refused("lease_not_acquired");
         }
         try {
             execAsync(sessionId, userMessage.content(), run.provider(), run.model(), run.toolMode(),
                     Map.of(), List.of(), run.userId(), run.workspaceId(), runId, runId, null);
-            return true;
+            return DispatchOutcome.ok();
         } catch (RuntimeException e) {
             releaseRun(sessionId, runId, "scheduled_dispatch_handoff_failed");
-            throw e;
+            return DispatchOutcome.refused("handoff_failed:" + e.getClass().getSimpleName());
         }
     }
 

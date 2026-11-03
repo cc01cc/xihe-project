@@ -2,6 +2,7 @@ package com.cc01cc.p.xihe.cp.chat;
 
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
+import com.cc01cc.p.xihe.cp.entity.Message;
 import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionFollowUpItemRepository;
@@ -202,7 +203,7 @@ public class SessionWakeupService {
             created = chatSubmissionService.createScheduled(runId, sessionId, userId, workspaceId, branchId,
                     idempotencyKey, requestHash, provider, model, SCHEDULED_TOOL_MODE,
                     session.getProviderConnectionId(), session.getConnectionRevision(), null,
-                    UUID.randomUUID().toString(), prompt, "[]", List.of(), principalId);
+                    UUID.randomUUID().toString(), prompt, "[]", List.of(), principalId, Message.VISIBILITY_INTERNAL);
         } catch (CpApiException e) {
             logger.warn("[LIFECYCLE] service=cp event=session_wakeup_start_rejected sessionId={} code={}",
                     sessionId, e.getCode());

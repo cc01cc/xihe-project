@@ -14,11 +14,12 @@ import org.springframework.context.ApplicationEventPublisher;
 import java.util.Optional;
 import java.util.UUID;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -165,15 +166,88 @@ class ChatControllerScheduledDispatchTest {
     }
 
     @Test
-    void missing_user_message_fails_the_committed_consistency_gate() {
+    void missing_user_message_is_refused_with_a_reason_instead_of_throwing() {
+        // PLAN-0630 M5b / D2: the old contract threw from inside the event listener, which left the
+        // committed Run in "accepted" with no owner. A refusal now names its branch.
         Session normalSession = new Session(WORKSPACE_ID, USER_ID, "normal target");
         when(chatRunReadService.findDispatchRun(RUN_ID)).thenReturn(Optional.of(
                 scheduledRun(ChatRun.ORIGIN_SCHEDULED, "accepted")));
         when(sessionService.requireCurrent(SESSION_ID, USER_ID, WORKSPACE_ID)).thenReturn(normalSession);
         when(messageReadService.findDispatchMessage(MESSAGE_ID)).thenReturn(Optional.empty());
 
-        assertThrows(IllegalStateException.class, () -> controller.dispatchScheduledRun(RUN_ID));
+        ChatController.DispatchOutcome outcome = controller.dispatchScheduledRunDetailed(RUN_ID);
 
+        assertFalse(outcome.dispatched());
+        assertEquals("user_message_mismatch", outcome.reason());
         verify(activeRunRegistry, never()).claim(anyString(), anyString());
+    }
+
+    @Test
+    void already_claimed_run_is_refused_with_its_branch() {
+        Session normalSession = new Session(WORKSPACE_ID, USER_ID, "normal target");
+        stubCommittedScheduledRun(scheduledRun(ChatRun.ORIGIN_SCHEDULED, "accepted"), normalSession);
+        when(activeRunRegistry.claim(SESSION_ID, RUN_ID)).thenReturn(false);
+
+        ChatController.DispatchOutcome outcome = controller.dispatchScheduledRunDetailed(RUN_ID);
+
+        assertFalse(outcome.dispatched());
+        assertEquals("already_claimed", outcome.reason());
+        verify(chatRunLifecycleService, never()).tryAcquireLease(any(UUID.class), anyString(),
+                any(java.time.Instant.class), any(java.time.Instant.class));
+    }
+
+    @Test
+    void lease_refusal_releases_the_claim_and_names_the_branch() {
+        Session normalSession = new Session(WORKSPACE_ID, USER_ID, "normal target");
+        stubCommittedScheduledRun(scheduledRun(ChatRun.ORIGIN_SCHEDULED, "accepted"), normalSession);
+        when(chatRunLifecycleService.tryAcquireLease(any(UUID.class), anyString(),
+                any(java.time.Instant.class), any(java.time.Instant.class))).thenReturn(0);
+
+        ChatController.DispatchOutcome outcome = controller.dispatchScheduledRunDetailed(RUN_ID);
+
+        assertFalse(outcome.dispatched());
+        assertEquals("lease_not_acquired", outcome.reason());
+        verify(activeRunRegistry).release(SESSION_ID, RUN_ID);
+    }
+
+    @Test
+    void status_refusal_names_the_observed_status() {
+        when(chatRunReadService.findDispatchRun(RUN_ID)).thenReturn(Optional.of(
+                scheduledRun(ChatRun.ORIGIN_SCHEDULED, "running")));
+
+        ChatController.DispatchOutcome outcome = controller.dispatchScheduledRunDetailed(RUN_ID);
+
+        assertFalse(outcome.dispatched());
+        assertEquals("status_not_dispatchable:running", outcome.reason());
+    }
+
+    @Test
+    void listener_terminalizes_a_refused_run_so_it_never_stays_accepted() {
+        // The defect that blocked PLAN-0630 T5b.4: dispatched=false used to leave the Run accepted
+        // for ever. The listener owns the committed Run, so it must terminalize it.
+        Session normalSession = new Session(WORKSPACE_ID, USER_ID, "normal target");
+        stubCommittedScheduledRun(scheduledRun(ChatRun.ORIGIN_SCHEDULED, "accepted"), normalSession);
+        when(activeRunRegistry.claim(SESSION_ID, RUN_ID)).thenReturn(false);
+
+        controller.onScheduledRunDispatchRequested(
+                new ScheduledRunDispatchRequestedEvent(SESSION_ID, RUN_ID));
+
+        verify(chatRunLifecycleService).transition(RUN_ID, java.util.List.of("accepted"), "failed",
+                "dispatch_refused", "SCHEDULED_DISPATCH_REFUSED", "already_claimed", 0, 0, null);
+        verify(chatRunLifecycleService).releaseLease(eq(UUID.fromString(RUN_ID)), anyString());
+    }
+
+    @Test
+    void listener_leaves_a_dispatched_run_alone() {
+        Session normalSession = new Session(WORKSPACE_ID, USER_ID, "normal target");
+        stubCommittedScheduledRun(scheduledRun(ChatRun.ORIGIN_SCHEDULED, "accepted"), normalSession);
+
+        controller.onScheduledRunDispatchRequested(
+                new ScheduledRunDispatchRequestedEvent(SESSION_ID, RUN_ID));
+
+        // execAsync itself fails in this harness (no Agent endpoint), so the only assertion that
+        // matters here is: no *refusal* terminalization was written for a Run that WAS dispatched.
+        verify(chatRunLifecycleService, never()).transition(anyString(), any(),
+                anyString(), eq("dispatch_refused"), any(), any(), anyInt(), anyInt(), any());
     }
 }
