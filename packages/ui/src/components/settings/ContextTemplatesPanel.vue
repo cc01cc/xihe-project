@@ -140,6 +140,27 @@ function insertVariable(name: string) {
         selected.value.bodySource.slice(0, start) + token + selected.value.bodySource.slice(end);
     input?.focus();
 }
+/**
+ * 只做排版：`JSON.parse` → `JSON.stringify(…, null, 2)`（两空格缩进）。
+ * 语义不变：`${xh.*}` 等字符串值原样保留，不增删字段，不自动补默认值。
+ * 非法 JSON 就地报错且**不改写原文**（不静默、不「尽力修复」）。
+ */
+function formatSource() {
+    const current = selected.value;
+    if (!current || busy.value) return;
+    try {
+        const parsed: unknown = JSON.parse(current.bodySource);
+        current.bodySource = JSON.stringify(parsed, null, 2);
+        error.value = "";
+        diagnostics.value = [];
+    } catch (cause) {
+        const detail = cause instanceof Error && cause.message ? `: ${cause.message}` : "";
+        const message = `${t("common.error")}${detail}`;
+        logger.warn("API request template format failed", cause);
+        error.value = message;
+        toast.error(message);
+    }
+}
 function nextRevision(status: ApiRequestTemplate["status"]): ApiRequestTemplate | null {
     if (!selected.value) return null;
     const persisted = templates.value.find(
@@ -369,6 +390,16 @@ async function save(publish: boolean) {
                 </ul>
                 <p class="text-xs text-muted-foreground">{{ t("settings.apiRequest.rawHelp") }}</p>
                 <div v-if="!readonly" class="flex flex-wrap items-center gap-2">
+                    <button
+                        type="button"
+                        data-testid="api-request-format"
+                        class="rounded-md border px-3 py-2 text-xs disabled:opacity-60"
+                        :disabled="busy"
+                        :aria-label="t('settings.apiRequest.format')"
+                        @click="formatSource"
+                    >
+                        {{ t("settings.apiRequest.format") }}
+                    </button>
                     <button
                         type="button"
                         data-testid="api-request-save-draft"

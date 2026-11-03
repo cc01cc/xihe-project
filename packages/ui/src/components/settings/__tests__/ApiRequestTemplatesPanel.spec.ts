@@ -226,4 +226,50 @@ describe("API request template lifecycle", () => {
         expect(wrapper.text()).toContain("API_REQUEST_TEMPLATE_REVISION_IMMUTABLE");
         wrapper.unmount();
     });
+
+    // A4（用户要求）：格式化只改排版，不改语义；非法 JSON 就地报错且原文不动。
+    it("formats the source with two-space indentation without changing semantics", async () => {
+        const wrapper = mount(Panel, {
+            props: {
+                entries: { templates: JSON.stringify([builtin]) },
+                saving: false,
+                layer: "user",
+            },
+        });
+        await flushPromises();
+        const compact =
+            '{"model":"${xh.model}","messages":[{"role":"user","content":"${xh.user_input}"}],"stream":true}';
+        await wrapper.get('[data-testid="api-request-body-source"]').setValue(compact);
+        await wrapper.get('[data-testid="api-request-format"]').trigger("click");
+        const formatted = (
+            wrapper.get('[data-testid="api-request-body-source"]').element as HTMLTextAreaElement
+        ).value;
+        expect(formatted).toBe(JSON.stringify(JSON.parse(compact), null, 2));
+        expect(formatted).toContain('\n  "model"');
+        expect(formatted).toContain("${xh.user_input}");
+        expect(JSON.parse(formatted)).toEqual(JSON.parse(compact));
+        wrapper.unmount();
+    });
+
+    it("rejects invalid JSON without rewriting the source", async () => {
+        const wrapper = mount(Panel, {
+            props: {
+                entries: { templates: JSON.stringify([builtin]) },
+                saving: false,
+                layer: "user",
+            },
+        });
+        await flushPromises();
+        const invalid = '{"model": "x",';
+        await wrapper.get('[data-testid="api-request-body-source"]').setValue(invalid);
+        await wrapper.get('[data-testid="api-request-format"]').trigger("click");
+        expect(
+            (wrapper.get('[data-testid="api-request-body-source"]').element as HTMLTextAreaElement)
+                .value,
+        ).toBe(invalid);
+        const alert = wrapper.find('[role="alert"]');
+        expect(alert.exists()).toBe(true);
+        expect(alert.text().length).toBeGreaterThan(0);
+        wrapper.unmount();
+    });
 });

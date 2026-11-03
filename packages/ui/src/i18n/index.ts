@@ -1372,6 +1372,7 @@ const messages = {
                 source: "API 请求 JSON 原文",
                 rawHelp: "保存草稿保留原文；发布时校验 API Type。编辑已发布版本会生成新版本。",
                 saveDraft: "保存草稿",
+                format: "格式化",
                 publish: "校验并发布",
                 chooseType: "选择 API Type 后新建模板",
                 rebindRequired: "需显式重新绑定请求模板",
@@ -3595,6 +3596,7 @@ const messages = {
                 rawHelp:
                     "Drafts preserve the source. Publishing validates the API Type. Editing a published version creates a new version.",
                 saveDraft: "Save draft",
+                format: "Format",
                 publish: "Validate and publish",
                 chooseType: "Choose an API Type to create a template",
                 rebindRequired: "Explicit request template rebind required",
