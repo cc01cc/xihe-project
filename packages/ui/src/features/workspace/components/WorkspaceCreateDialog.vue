@@ -346,8 +346,13 @@ async function handleCreate() {
             storageMode: storageMode.value,
             // Managed import uses the server default executionMode (docker); only
             // direct-attach sends an explicit Windows execution mode.
+            // PLAN-0639 M1: direct-attach sends roots[] (ordered, root[0] = primary);
+            // single-root is roots=[{path}] — identical wire shape to hostPath but forward-compatible.
             ...(isDirectAttach.value
-                ? { executionMode: executionMode.value, hostPath: selectedHostPath.value }
+                ? {
+                      executionMode: executionMode.value,
+                      roots: [{ path: selectedHostPath.value }],
+                  }
                 : {}),
             idempotencyKey: idempotencyKey.value,
         });

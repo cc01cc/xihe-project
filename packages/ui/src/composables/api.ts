@@ -112,6 +112,12 @@ export interface ProblemDetails {
     resourceKind?: string;
 }
 
+export interface ApiWorkspaceRoot {
+    id: string;
+    alias: string | null;
+    position: number;
+}
+
 export interface ApiWorkspace {
     id: string;
     name: string;
@@ -122,6 +128,8 @@ export interface ApiWorkspace {
     storageRef?: string;
     storageMode?: WorkspaceStorageMode;
     hostPath?: string | null;
+    /** PLAN-0639 M1: ordered root projection [{id, alias, position}]. */
+    roots?: ApiWorkspaceRoot[];
     executionMode?: WorkspaceExecutionMode;
     workspaceRole?: "OWNER" | "EDITOR" | "VIEWER" | null;
     canWrite?: boolean;
@@ -3268,6 +3276,7 @@ export const api = {
         profile?: "strict" | "coding" | "isolated";
         storageMode?: WorkspaceStorageMode;
         hostPath?: string;
+        roots?: { path: string; alias?: string | null }[];
         executionMode?: WorkspaceExecutionMode;
         idempotencyKey?: string;
     }): Promise<ApiWorkspace> {
@@ -3277,6 +3286,8 @@ export const api = {
         if (input.profile !== undefined) body.profile = input.profile;
         if (input.storageMode !== undefined) body.storageMode = input.storageMode;
         if (input.hostPath !== undefined) body.hostPath = input.hostPath;
+        // PLAN-0639 M1: multi-root creation.  Mutually exclusive with hostPath.
+        if (input.roots !== undefined) body.roots = input.roots;
         if (input.executionMode !== undefined) body.executionMode = input.executionMode;
         // image is server-allowlisted (v1: xihe/workspace:latest); UI keeps it read-only.
         return normalizeWorkspaceResponse(
@@ -3287,6 +3298,45 @@ export const api = {
                 },
                 body: JSON.stringify(body),
             }),
+        );
+    },
+
+    /** PLAN-0639 M1: add a root to an existing workspace. */
+    async addWorkspaceRoot(
+        wsId: string,
+        input: { path: string; alias?: string | null },
+    ): Promise<{ id: string; alias: string | null; position: number }> {
+        return request(`/workspaces/${encodeURIComponent(wsId)}/roots`, {
+            method: "POST",
+            headers: workspaceHeaders(wsId),
+            body: JSON.stringify(input),
+        });
+    },
+
+    /** PLAN-0639 M1: patch a root's alias or position. */
+    async patchWorkspaceRoot(
+        wsId: string,
+        rootId: string,
+        input: { alias?: string | null; position?: number },
+    ): Promise<{ id: string; alias: string | null; position: number }> {
+        return request(
+            `/workspaces/${encodeURIComponent(wsId)}/roots/${encodeURIComponent(rootId)}`,
+            {
+                method: "PATCH",
+                headers: workspaceHeaders(wsId),
+                body: JSON.stringify(input),
+            },
+        );
+    },
+
+    /** PLAN-0639 M1: soft-delete a root. */
+    async deleteWorkspaceRoot(wsId: string, rootId: string): Promise<void> {
+        return request<void>(
+            `/workspaces/${encodeURIComponent(wsId)}/roots/${encodeURIComponent(rootId)}`,
+            {
+                method: "DELETE",
+                headers: workspaceHeaders(wsId),
+            },
         );
     },
     async updateWorkspace(

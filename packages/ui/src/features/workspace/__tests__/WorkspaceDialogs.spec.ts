@@ -194,7 +194,7 @@ describe("WorkspaceCreateDialog (PLAN-0384)", () => {
             description: null,
             storageMode: "direct_attach",
             executionMode: "windows-mxc",
-            hostPath: "H:\\projects\\demo",
+            roots: [{ path: "H:\\projects\\demo" }],
             idempotencyKey: expect.any(String),
         });
 
@@ -271,7 +271,7 @@ describe("WorkspaceCreateDialog (PLAN-0384)", () => {
             expect.objectContaining({
                 storageMode: "direct_attach",
                 executionMode: "windows-host",
-                hostPath: "H:\\projects\\demo",
+                roots: [{ path: "H:\\projects\\demo" }],
             }),
         );
     });
