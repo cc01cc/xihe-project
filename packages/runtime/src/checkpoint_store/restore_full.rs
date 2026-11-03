@@ -558,8 +558,12 @@ pub fn restore_full(
 mod tests {
     use super::*;
     use crate::checkpoint_store::blob::write_blob;
-    use crate::checkpoint_store::capture::capture_root;
+    use crate::checkpoint_store::capture::{
+        CaptureOptions, capture_root, capture_root_with_options,
+    };
     use crate::checkpoint_store::manifest::ManifestEntry;
+    use std::collections::BTreeMap;
+    use std::process::Command;
 
     fn write(path: &Path, content: &str) {
         fs::create_dir_all(path.parent().expect("parent")).expect("parent");
@@ -841,5 +845,455 @@ mod tests {
                 "temp leftover: {name:?}"
             );
         }
+    }
+
+    #[test]
+    #[ignore = "V3 git-checkout parity: 3 tiers x 3 slices + negative expectations"]
+    fn v3_git_checkout_parity() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let mut tiers = Vec::new();
+        for tier in ["small", "medium", "large"] {
+            tiers.push(run_v3_tier(temp.path(), tier));
+        }
+        let negatives = run_v3_negatives(temp.path());
+        let report = serde_json::json!({
+            "v": 1,
+            "tiers": tiers,
+            "negatives": negatives,
+        });
+        eprintln!(
+            "V3_REPORT {}",
+            serde_json::to_string_pretty(&report).expect("report json")
+        );
+        if let Ok(path) = std::env::var("V3_REPORT_PATH") {
+            fs::write(
+                path,
+                serde_json::to_vec_pretty(&report).expect("report json bytes"),
+            )
+            .expect("write V3 report");
+        }
+        assert!(
+            tiers
+                .iter()
+                .all(|tier| tier["findings"].as_array().is_some_and(Vec::is_empty)),
+            "positive parity findings: {report}"
+        );
+        assert!(
+            negatives.iter().all(|item| item["status"] == "pass"),
+            "negative expectations failed: {report}"
+        );
+    }
+
+    fn run_v3_tier(base: &Path, tier: &str) -> Value {
+        let root = base.join(format!("v3-{tier}"));
+        let store_dir = base.join(format!("v3-{tier}-store"));
+        let target_base = base.join(format!("v3-{tier}-targets"));
+        fs::create_dir_all(&root).expect("root");
+        fs::create_dir_all(&target_base).expect("targets");
+        git(&root, &["init", "-q"]);
+        git(&root, &["config", "user.email", "v3@example.invalid"]);
+        git(&root, &["config", "user.name", "v3"]);
+        git(&root, &["config", "core.autocrlf", "false"]);
+        git(&root, &["config", "core.eol", "lf"]);
+        seed_v3_files(&root, tier);
+        write(&root.join(".gitignore"), "ignored.txt\n");
+        if tier == "large" {
+            seed_nested_repo(&root);
+        }
+        let files = files_under(&root);
+        let first = files.keys().next().expect("file").clone();
+        let second = files.keys().nth(1).expect("second").clone();
+        let store = Store::init(&store_dir).expect("store");
+        let mut commits = Vec::new();
+        let mut slices = Vec::new();
+        commits.push(commit_all(&root, "S1"));
+        slices.push(
+            capture_root_with_options(
+                &store,
+                &root,
+                "ws-1",
+                None,
+                None,
+                &CaptureOptions {
+                    declared_roots: Vec::new(),
+                    exclude_opaque_nested: true,
+                },
+            )
+            .expect("capture S1")
+            .slice_id,
+        );
+        fs::write(root.join(&first), b"v3-modified").expect("modify");
+        fs::remove_file(root.join(&second)).expect("delete");
+        commits.push(commit_all(&root, "S2"));
+        slices.push(
+            capture_root_with_options(
+                &store,
+                &root,
+                "ws-1",
+                None,
+                None,
+                &CaptureOptions {
+                    declared_roots: Vec::new(),
+                    exclude_opaque_nested: true,
+                },
+            )
+            .expect("capture S2")
+            .slice_id,
+        );
+        write(&root.join("added/new-file.txt"), "added");
+        commits.push(commit_all(&root, "S3"));
+        slices.push(
+            capture_root_with_options(
+                &store,
+                &root,
+                "ws-1",
+                None,
+                None,
+                &CaptureOptions {
+                    declared_roots: Vec::new(),
+                    exclude_opaque_nested: true,
+                },
+            )
+            .expect("capture S3")
+            .slice_id,
+        );
+        let mut findings = Vec::new();
+        let mut comparisons = Vec::new();
+        for (commit, slice_id) in commits.iter().zip(&slices) {
+            let store_target = target_base.join(format!("{slice_id}-store"));
+            let git_target = target_base.join(format!("{slice_id}-git"));
+            fs::create_dir_all(&store_target).expect("store target");
+            restore_full(
+                &store,
+                "ws-1",
+                slice_id,
+                &store_target,
+                &FullRestoreOptions::default(),
+            )
+            .expect("store restore");
+            git(
+                &root,
+                &[
+                    "worktree",
+                    "add",
+                    "--detach",
+                    git_target.to_str().expect("target path"),
+                    commit,
+                ],
+            );
+            let target_findings =
+                compare_v3_targets(&root, &store, slice_id, &store_target, &git_target, commit);
+            findings.extend(target_findings);
+            comparisons.push(serde_json::json!({
+                "slice": slice_id,
+                "commit": commit,
+                "status": if findings.is_empty() { "pass" } else { "fail" },
+            }));
+            git(
+                &root,
+                &[
+                    "worktree",
+                    "remove",
+                    "--force",
+                    git_target.to_str().expect("target path"),
+                ],
+            );
+        }
+        serde_json::json!({
+            "tier": tier,
+            "slices": slices,
+            "comparisons": comparisons,
+            "findings": findings,
+        })
+    }
+
+    fn run_v3_negatives(base: &Path) -> Vec<Value> {
+        let root = base.join("v3-negative");
+        let store_dir = base.join("v3-negative-store");
+        fs::create_dir_all(&root).expect("root");
+        git(&root, &["init", "-q"]);
+        git(&root, &["config", "user.email", "v3@example.invalid"]);
+        git(&root, &["config", "user.name", "v3"]);
+        git(&root, &["config", "core.autocrlf", "false"]);
+        git(&root, &["config", "core.eol", "lf"]);
+        write(&root.join("a.txt"), "a");
+        write(&root.join(".gitignore"), "ignored.txt\n");
+        commit_all(&root, "S1");
+        let store = Store::init(&store_dir).expect("store");
+        let first = capture_root(&store, &root, "ws-1", None, None).expect("capture S1");
+        write(&root.join("doomed.txt"), "original");
+        commit_all(&root, "S2");
+        capture_root(&store, &root, "ws-1", None, None).expect("capture S2");
+        write(&root.join("doomed.txt"), "modified-after-capture");
+        write(&root.join("new.txt"), "new");
+        write(&root.join("ignored.txt"), "ignored");
+        let target = base.join("v3-negative-target");
+        copy_tree(&root, &target);
+        restore_full(
+            &store,
+            "ws-1",
+            &first.slice_id,
+            &target,
+            &FullRestoreOptions::default(),
+        )
+        .expect("negative restore");
+        let cases = [
+            (
+                "modified_deletion",
+                fs::read_to_string(target.join("doomed.txt"))
+                    .ok()
+                    .as_deref()
+                    == Some("modified-after-capture"),
+                fs::read_to_string(target.join("doomed.txt")).ok(),
+            ),
+            (
+                "new_file",
+                target.join("new.txt").is_file(),
+                fs::read_to_string(target.join("new.txt")).ok(),
+            ),
+            (
+                "ignored_file",
+                target.join("ignored.txt").is_file(),
+                fs::read_to_string(target.join("ignored.txt")).ok(),
+            ),
+        ];
+        cases
+            .into_iter()
+            .map(|(case, passed, actual)| {
+                serde_json::json!({
+                    "case": case,
+                    "status": if passed { "pass" } else { "fail" },
+                    "expected": match case {
+                        "modified_deletion" => "preserved (store intentionally differs from git restore)",
+                        "new_file" => "preserved",
+                        _ => "preserved",
+                    },
+                    "actual": actual,
+                })
+            })
+            .collect()
+    }
+
+    fn seed_v3_files(root: &Path, tier: &str) {
+        match tier {
+            "small" => {
+                for index in 0..10 {
+                    write(
+                        &root.join(format!("files/file-{index:02}.txt")),
+                        &format!("small-{index}"),
+                    );
+                }
+            }
+            "medium" => {
+                for index in 0..1000 {
+                    write(
+                        &root.join(format!("dir/{:02}/file-{index:04}.txt", index / 50)),
+                        &format!("medium-{index}"),
+                    );
+                }
+            }
+            _ => {
+                for index in 0..40 {
+                    write(
+                        &root.join(format!("files/file-{index:02}.txt")),
+                        &format!("large-{index}"),
+                    );
+                }
+                let long_segment = "a".repeat(100);
+                write(
+                    &root.join(format!("long/{long_segment}/file.txt")),
+                    "long-path",
+                );
+                fs::create_dir_all(root.join("binary")).expect("binary dir");
+                fs::write(
+                    root.join("binary/blob.bin"),
+                    (0u8..=255).collect::<Vec<_>>(),
+                )
+                .expect("binary");
+            }
+        }
+    }
+
+    fn seed_nested_repo(root: &Path) {
+        let nested = root.join("nested");
+        fs::create_dir_all(&nested).expect("nested");
+        git(&nested, &["init", "-q"]);
+        git(&nested, &["config", "user.email", "v3@example.invalid"]);
+        git(&nested, &["config", "user.name", "v3"]);
+        write(&nested.join("inner.txt"), "inner");
+        commit_all(&nested, "nested base");
+    }
+
+    fn commit_all(root: &Path, message: &str) -> String {
+        git(root, &["add", "-A"]);
+        git(root, &["commit", "-qm", message]);
+        git(root, &["rev-parse", "HEAD"])
+    }
+
+    fn git(root: &Path, args: &[&str]) -> String {
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(root)
+            .args(args)
+            .output()
+            .unwrap_or_else(|error| panic!("git {args:?} spawn failed: {error}"));
+        assert!(
+            output.status.success(),
+            "git -C {} {args:?} failed: {}",
+            root.display(),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8_lossy(&output.stdout).trim().to_owned()
+    }
+
+    fn files_under(root: &Path) -> BTreeMap<String, PathBuf> {
+        fn walk(root: &Path, current: &Path, out: &mut BTreeMap<String, PathBuf>) {
+            let Ok(entries) = fs::read_dir(current) else {
+                return;
+            };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                let name = entry.file_name();
+                if name == ".git" {
+                    continue;
+                }
+                let Ok(metadata) = fs::symlink_metadata(&path) else {
+                    continue;
+                };
+                if metadata.is_dir() {
+                    walk(root, &path, out);
+                } else if metadata.is_file() {
+                    let relative = path
+                        .strip_prefix(root)
+                        .expect("relative")
+                        .to_string_lossy()
+                        .replace('\\', "/");
+                    out.insert(relative, path);
+                }
+            }
+        }
+        let mut out = BTreeMap::new();
+        walk(root, root, &mut out);
+        out
+    }
+
+    fn copy_tree(from: &Path, to: &Path) {
+        for (relative, source) in files_under(from) {
+            let destination = to.join(relative.replace('/', std::path::MAIN_SEPARATOR_STR));
+            if let Some(parent) = destination.parent() {
+                fs::create_dir_all(parent).expect("copy parent");
+            }
+            fs::copy(source, destination).expect("copy file");
+        }
+    }
+
+    fn git_tree_entries(root: &Path, commit: &str) -> BTreeMap<String, (String, u64)> {
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(root)
+            .args(["ls-tree", "-r", "-l", "-z", commit])
+            .output()
+            .expect("ls-tree");
+        assert!(output.status.success(), "ls-tree failed");
+        let mut out = BTreeMap::new();
+        for record in output.stdout.split(|byte| *byte == 0) {
+            let Some(tab) = record.iter().position(|byte| *byte == b'\t') else {
+                continue;
+            };
+            let header = String::from_utf8_lossy(&record[..tab]);
+            let path = String::from_utf8_lossy(&record[tab + 1..]).replace('\\', "/");
+            let mut fields = header.split_whitespace();
+            let mode = fields.next().unwrap_or_default();
+            let kind = fields.next().unwrap_or_default();
+            let _oid = fields.next().unwrap_or_default();
+            let size = fields.next().unwrap_or_default();
+            if kind != "blob" {
+                continue;
+            }
+            out.insert(path, (mode.to_owned(), size.parse().unwrap_or(0)));
+        }
+        out
+    }
+
+    fn compare_v3_targets(
+        root: &Path,
+        store: &Store,
+        slice_id: &str,
+        store_target: &Path,
+        git_target: &Path,
+        commit: &str,
+    ) -> Vec<Value> {
+        let mut findings = Vec::new();
+        let store_files = files_under(store_target);
+        let git_files = files_under(git_target);
+        for path in store_files.keys().chain(git_files.keys()) {
+            match (store_files.get(path), git_files.get(path)) {
+                (Some(_), None) => findings.push(serde_json::json!({
+                    "kind": "path_set", "path": path.as_str(),
+                    "expected": "present-in-git", "actual": "absent-in-git"
+                })),
+                (None, Some(_)) => findings.push(serde_json::json!({
+                    "kind": "path_set", "path": path.as_str(),
+                    "expected": "absent-in-store", "actual": "present-in-git"
+                })),
+                _ => {}
+            }
+        }
+        let git_tree = git_tree_entries(root, commit);
+        let slice_path = store.slice_dir("ws-1").join(format!("{slice_id}.json"));
+        let slice: Value =
+            serde_json::from_slice(&fs::read(slice_path).expect("slice")).expect("slice json");
+        let manifest_id = slice["manifest"].as_str().expect("manifest id");
+        let manifest = Manifest::parse_verified(
+            &fs::read(store.manifest_path(manifest_id)).expect("manifest"),
+            manifest_id,
+        )
+        .expect("manifest");
+        let manifest_by_path: BTreeMap<String, &ManifestEntry> = manifest
+            .entries
+            .iter()
+            .map(|entry| (entry.path.clone(), entry))
+            .collect();
+        for path in git_tree.keys().chain(manifest_by_path.keys()) {
+            match (git_tree.get(path), manifest_by_path.get(path)) {
+                (Some((git_mode, git_size)), Some(entry)) => {
+                    if *git_mode != entry.mode.as_str() {
+                        findings.push(serde_json::json!({
+                            "kind": "mode", "path": path.as_str(),
+                            "expected": git_mode, "actual": entry.mode.as_str()
+                        }));
+                    }
+                    if *git_size != entry.size {
+                        findings.push(serde_json::json!({
+                            "kind": "size", "path": path.as_str(),
+                            "expected": git_size, "actual": entry.size
+                        }));
+                    }
+                }
+                (None, Some(entry)) => findings.push(serde_json::json!({
+                    "kind": "path_set", "path": path.as_str(),
+                    "expected": "absent-in-git", "actual": entry.path
+                })),
+                (Some((_, _)), None) => findings.push(serde_json::json!({
+                    "kind": "path_set", "path": path.as_str(),
+                    "expected": "present-in-git", "actual": "absent-in-manifest"
+                })),
+                (None, None) => {}
+            }
+        }
+        for (path, store_file) in &store_files {
+            let Some(git_file) = git_files.get(path) else {
+                continue;
+            };
+            let store_bytes = fs::read(store_file).expect("store file");
+            let git_bytes = fs::read(git_file).expect("git file");
+            if blob_hash(&store_bytes) != blob_hash(&git_bytes) {
+                findings.push(serde_json::json!({
+                    "kind": "content", "path": path.as_str(),
+                    "expected": blob_hash(&git_bytes), "actual": blob_hash(&store_bytes)
+                }));
+            }
+        }
+        findings
     }
 }
