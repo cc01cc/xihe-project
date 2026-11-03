@@ -113,6 +113,88 @@ test('the security gate machinery is present (attestation, log signatures, exit 
   assert.ok(source.includes('restoreAcl('), 'the ACL failure path (restore) is gone');
 });
 
+test('BL-204 A(1): the security-level log list is explicit, ordered and source-attributed', () => {
+  // The list itself: one entry per signature, each with its CP file:line. A keyword/regex match
+  // would fail this test because the sources are asserted verbatim.
+  assert.ok(
+    /static\s+final\s+List<SecurityLogSignature>\s+SECURITY_LOG_SIGNATURES\s*=\s*List\.of\(/.test(source),
+    'SECURITY_LOG_SIGNATURES is gone: the gate would be back to an ad-hoc keyword match',
+  );
+  const cpValidator = 'packages/control-plane/src/main/java/com/cc01cc/p/xihe/cp/SecurityDefaultsValidator.java';
+  for (const sourceRef of [`${cpValidator}:45`, `${cpValidator}:49`]) {
+    assert.ok(source.includes(sourceRef), `the signature table lost its source citation: ${sourceRef}`);
+  }
+  assert.ok(
+    source.includes('SECURITY_REFUSED_SIGNATURE, "ERROR"')
+      && source.includes('SECURITY_WARN_SIGNATURE, "WARN"'),
+    'the table entries no longer declare their severity, so launcher.log cannot say which one fired',
+  );
+  assert.ok(
+    source.includes('for (SecurityLogSignature candidate : SECURITY_LOG_SIGNATURES)'),
+    'scanLogFile no longer iterates the table (a second matcher crept back in)',
+  );
+  // Narrowed on purpose: the generic "Refusing to start" also prefixes unrelated config refusals,
+  // and mislabelling those as insecure defaults would be a false positive.
+  assert.ok(
+    /SECURITY_REFUSED_SIGNATURE\s*=\s*\n?\s*"Refusing to start: insecure default configuration in prod mode"/.test(source),
+    'the refusal signature must stay narrowed to the insecure-defaults refusal',
+  );
+});
+
+test('BL-204 A(2): an unprovable ACL is a refusal, and the old file survives it', () => {
+  assert.ok(
+    /static\s+final\s+String\s+CODE_SECRETS_ACL\s*=\s*"LAUNCHER_SECRETS_ACL_UNHARDENED"/.test(source),
+    'CODE_SECRETS_ACL is gone: an ACL failure would be a warning again',
+  );
+  assert.ok(
+    source.includes('throw new LauncherException(CODE_SECRETS_ACL'),
+    'hardenPermissions must throw, not log-and-continue',
+  );
+  assert.ok(
+    !/log\(\s*"WARN: could not harden/.test(source),
+    'the silent WARN path is back — "wrote secrets we could not protect" must not ship',
+  );
+  assert.ok(source.includes('PosixFilePermission'), 'the POSIX 600 fallback is gone');
+  assert.ok(source.includes('verifyHardened('), 'the post-move read-only verification is gone');
+  // Ordering: harden tmp + parent BEFORE the atomic move, so a failure leaves the old file intact.
+  const persistAt = source.indexOf('private boolean persistSecrets');
+  const persist = source.slice(persistAt, source.indexOf('private void hardenPermissions'));
+  assert.ok(persist.length > 0, 'persistSecrets not found — the ordering check would be vacuous');
+  const hardenTmpAt = persist.indexOf('hardenPermissions(tmp)');
+  const hardenParentAt = persist.indexOf('hardenPermissions(file.getParent())');
+  const moveAt = persist.indexOf('Files.move(tmp, file, StandardCopyOption.ATOMIC_MOVE)');
+  assert.ok(hardenTmpAt > 0 && hardenParentAt > 0 && moveAt > 0, 'harden/move call sites not found');
+  assert.ok(hardenTmpAt < moveAt && hardenParentAt < moveAt,
+    'hardening happens after publishing the file: an ACL failure would replace a good file with a bad one');
+  assert.ok(persist.indexOf('Files.deleteIfExists(tmp);\n            throw failure;') > 0
+    || /catch \(LauncherException failure\) \{\s*Files\.deleteIfExists\(tmp\);\s*throw failure;/.test(persist),
+  'the failure path must drop the tmp file and rethrow');
+});
+
+test('BL-204 A(3): no nullable value can reach the child environment', () => {
+  // The assembly must reject a blank/missing value before it can be put into the env map, and the
+  // pre-flight sweep must keep listing exactly the keys the env assembly consumes.
+  const envAt = source.indexOf('private Map<String, String> securityEnv');
+  const envBody = source.slice(envAt, source.indexOf('private void attestSecurity'));
+  assert.ok(envBody.length > 0, 'securityEnv() not found — this gate would be vacuous');
+  assert.ok(
+    envBody.indexOf('value == null || value.isBlank()') < envBody.indexOf('env.put(entry.getKey(), value)'),
+    'securityEnv can put a null/blank value into the child environment',
+  );
+  assert.ok(
+    !/env\.put\([^)]*props\.getProperty/.test(envBody),
+    'a raw property read reaches env.put() again',
+  );
+  assert.ok(
+    source.includes('requireAllSecrets(secrets);'),
+    'the pre-flight requireAllSecrets() sweep is gone',
+  );
+  assert.ok(
+    /private static final List<String> REQUIRED_SECRET_KEYS = List\.of\(/.test(source),
+    'REQUIRED_SECRET_KEYS is gone: the sweep would have nothing to iterate',
+  );
+});
+
 test('no bare getProperty can reach a child environment', () => {
   // `props.getProperty` is the only legal way to read launcher.properties, and only from the
   // two marked places (requireSecret / the pre-flight sweep). `System.getProperty` is unrelated

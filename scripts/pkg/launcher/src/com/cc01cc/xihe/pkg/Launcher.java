@@ -14,6 +14,8 @@ import java.nio.file.attribute.AclEntry;
 import java.nio.file.attribute.AclEntryPermission;
 import java.nio.file.attribute.AclEntryType;
 import java.nio.file.attribute.AclFileAttributeView;
+import java.nio.file.attribute.PosixFileAttributeView;
+import java.nio.file.attribute.PosixFilePermission;
 import java.nio.file.attribute.UserPrincipal;
 import java.security.SecureRandom;
 import java.time.Instant;
@@ -27,6 +29,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Properties;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -106,9 +109,39 @@ public final class Launcher {
      *   <li>{@code Refusing to start} — the CP was in prod and refused. The launcher must report
      *       that cause instead of a generic "process exited".</li>
      * </ul>
+     *
+     * <p>BL-204 A① (2026-11-04): the two literals are listed once, verbatim and with their CP
+     * source, in {@link #SECURITY_LOG_SIGNATURES}. That table — not a keyword search and not a
+     * regex — is what {@code scanLogFile} iterates, so "which CP lines fail the launcher" is an
+     * enumerated answer with a file:line per entry instead of a fuzzy match. Anything severity-wise
+     * outside this list (e.g. the other {@code Refusing to start: <config error>} validators) is
+     * deliberately NOT matched: those make the child exit and are reported by the process-exit gate,
+     * and calling them "insecure defaults" would mislabel a config typo.</p>
      */
     static final String SECURITY_WARN_SIGNATURE = "Insecure default configuration detected";
-    static final String SECURITY_REFUSED_SIGNATURE = "Refusing to start";
+    static final String SECURITY_REFUSED_SIGNATURE =
+            "Refusing to start: insecure default configuration in prod mode";
+
+    /** One CP log line that proves the packaged product is running with insecure defaults. */
+    record SecurityLogSignature(String signature, String severity, String source) {
+        String describe() {
+            return severity + " " + source + " \"" + signature + "\"";
+        }
+    }
+
+    /**
+     * BL-204 A①: the explicit security-level list, verbatim literals owned by the CP.
+     *
+     * <p>Ordering is intentional: the prod refusal (ERROR) is checked first so a log that contains
+     * both reports the refusal rather than the warning. Each {@code source} cites the CP file and
+     * line that emits the text — that citation is the thing the test suite pins, so an upstream
+     * wording change fails here instead of silently disarming the gate.</p>
+     */
+    static final List<SecurityLogSignature> SECURITY_LOG_SIGNATURES = List.of(
+            new SecurityLogSignature(SECURITY_REFUSED_SIGNATURE, "ERROR",
+                    "packages/control-plane/src/main/java/com/cc01cc/p/xihe/cp/SecurityDefaultsValidator.java:45"),
+            new SecurityLogSignature(SECURITY_WARN_SIGNATURE, "WARN",
+                    "packages/control-plane/src/main/java/com/cc01cc/p/xihe/cp/SecurityDefaultsValidator.java:49"));
 
     /** Exit code for a security-policy refusal (user ruling Q-2, 2026-11-03). */
     static final int EXIT_SECURITY = 4;
@@ -118,6 +151,14 @@ public final class Launcher {
 
     static final String CODE_SECRETS_MISSING = "LAUNCHER_INSECURE_SECRETS_MISSING";
     static final String CODE_SECURITY_DEFAULTS = "LAUNCHER_SECURITY_DEFAULTS_REJECTED";
+
+    /**
+     * BL-204 A② (2026-11-04): the secrets file exists but its DACL/POSIX mode could not be proven
+     * owner-only. This is a refusal, not a warning: "we wrote the secrets but could not protect
+     * them" is exactly the state the packaging security gate exists to prevent, and a WARN in a log
+     * nobody reads would silently ship it.
+     */
+    static final String CODE_SECRETS_ACL = "LAUNCHER_SECRETS_ACL_UNHARDENED";
 
     /**
      * Enforcement convention, proved by {@code scripts/pkg/launcher-security.test.mjs}: every line
@@ -386,37 +427,66 @@ public final class Launcher {
             props.store(out, "Xihe first-run secrets (generated once, never leaves this machine)");
             out.flush();
         }
-        hardenPermissions(tmp);
+        // BL-204 A② (2026-11-04): harden BEFORE the move, and treat failure as a refusal. The old
+        // file (if any) is therefore still in place when hardening fails — no half-protected
+        // secrets file is ever published. The parent directory is hardened for the same reason
+        // (a world-writable directory can re-ACL the file) and also before the move, because the
+        // tmp file lives in that same directory.
+        try {
+            hardenPermissions(tmp);
+            hardenPermissions(file.getParent());
+        } catch (LauncherException failure) {
+            Files.deleteIfExists(tmp);
+            throw failure;
+        }
         if (Files.exists(file)) {
             Files.deleteIfExists(tmp);
             log("secrets: another launcher created " + file + " concurrently; reusing it");
             return false;
         }
         Files.move(tmp, file, StandardCopyOption.ATOMIC_MOVE);
-        hardenPermissions(file);
-        hardenPermissions(file.getParent());
-        log("secrets: wrote " + file + " (" + props.size() + " keys, atomic move)");
+        // The ACL travels with the file object across ATOMIC_MOVE; re-asserting it here would be a
+        // second opinion on a state we just proved. Verify instead (read-only, no re-set): if the
+        // read-back is wrong something external changed the file between move and check, and that
+        // must be loud.
+        verifyHardened(file);
+        log("secrets: wrote " + file + " (" + props.size() + " keys, atomic move, owner-only ACL)");
         return true;
     }
 
     /**
-     * PLAN-0650 A-2 (user ruling Q-1, 2026-11-03): DACL = file owner + SYSTEM, inherited ACEs
-     * dropped. {@code AclFileAttributeView} rather than chmod/icacls: Windows has no POSIX mode,
-     * and an in-process ACL write has no shell-quoting or locale trap.
+     * PLAN-0650 A-2 (user ruling Q-1, 2026-11-03) + BL-204 A② (2026-11-04): DACL = file owner +
+     * SYSTEM, inherited ACEs dropped. {@code AclFileAttributeView} rather than icacls: Windows has
+     * no POSIX mode, and an in-process ACL write has no shell-quoting or locale trap. On a
+     * non-Windows filesystem the same intent is expressed as POSIX mode {@code 600}.
      *
-     * <p>A failure is logged and the previous ACL is restored — a broken DACL must never lock the
-     * user out of their own secrets.
+     * <p><b>Failure is a refusal, not a warning.</b> The old behaviour logged
+     * {@code WARN: could not harden the DACL …} and continued, which is indistinguishable from
+     * success for every consumer of the installer — the whole point of the gate is that a secrets
+     * file the launcher cannot prove owner-only must not be used. The previous ACL is restored
+     * first (a broken DACL must never lock the user out of their own secrets) and then
+     * {@link #CODE_SECRETS_ACL} is thrown; {@code persistSecrets} deletes the tmp file and leaves
+     * any pre-existing secrets file untouched.
      */
     private void hardenPermissions(Path target) {
-        AclFileAttributeView view = Files.getFileAttributeView(target, AclFileAttributeView.class);
-        if (view == null) {
-            log("WARN: no ACL view for " + target + "; secrets keep the inherited DACL");
+        AclFileAttributeView acl = Files.getFileAttributeView(target, AclFileAttributeView.class);
+        if (acl != null) {
+            hardenAcl(acl, target);
             return;
         }
-        List<AclEntry> previous;
+        PosixFileAttributeView posix = Files.getFileAttributeView(target, PosixFileAttributeView.class);
+        if (posix != null) {
+            hardenPosix(posix, target);
+            return;
+        }
+        throw new LauncherException(CODE_SECRETS_ACL + ": " + target
+                + " 既没有 ACL 视图也没有 POSIX 权限视图，无法收紧到仅当前用户",
+                "把 secrets 目录放到 NTFS（Windows）或 ext4/xfs（Linux）；不要用 FAT/网络盘", true);
+    }
+
+    private void hardenAcl(AclFileAttributeView view, Path target) {
         List<AclEntry> hardened = new ArrayList<>();
         try {
-            previous = view.getAcl();
             hardened.add(fullControl(view.getOwner()));
             UserPrincipal system = lookupSystemPrincipal(target);
             if (system != null) {
@@ -431,9 +501,51 @@ public final class Launcher {
             log("security: acl " + target.getFileName() + " entries=" + readBack.size()
                     + " (owner+SYSTEM, inherited dropped)");
         } catch (IOException | RuntimeException failure) {
-            log("WARN: could not harden the DACL of " + target + " (" + failure.getMessage()
-                    + "); keeping the inherited ACL");
             restoreAcl(view, target);
+            throw new LauncherException(CODE_SECRETS_ACL + ": 无法收紧 DACL " + target
+                    + "（" + failure.getMessage() + "）",
+                    "检查该文件是否被占用/被组策略锁定；secrets 不能被证明为仅当前用户可读就不启动", true);
+        }
+    }
+
+    private void hardenPosix(PosixFileAttributeView view, Path target) {
+        Set<PosixFilePermission> ownerOnly = EnumSet.of(
+                PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_WRITE);
+        try {
+            view.setPermissions(ownerOnly);
+            Set<PosixFilePermission> readBack = view.readAttributes().permissions();
+            if (!readBack.equals(ownerOnly)) {
+                throw new IOException("POSIX read-back is " + readBack);
+            }
+            log("security: posix " + target.getFileName() + " mode=600");
+        } catch (IOException | RuntimeException failure) {
+            throw new LauncherException(CODE_SECRETS_ACL + ": 无法收紧 POSIX 权限 " + target
+                    + "（" + failure.getMessage() + "）",
+                    "chmod 600 失败通常意味着文件系统不支持 POSIX 权限或文件被占用", true);
+        }
+    }
+
+    /** Read-only re-check after the atomic move; never re-sets, only refuses. */
+    private void verifyHardened(Path target) {
+        try {
+            AclFileAttributeView acl = Files.getFileAttributeView(target, AclFileAttributeView.class);
+            if (acl != null) {
+                if (acl.getAcl().isEmpty()) {
+                    throw new IOException("ACL read-back is empty");
+                }
+                return;
+            }
+            PosixFileAttributeView posix = Files.getFileAttributeView(target, PosixFileAttributeView.class);
+            if (posix != null
+                    && !posix.readAttributes().permissions().equals(EnumSet.of(
+                            PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_WRITE))) {
+                throw new IOException("POSIX mode changed after the move: "
+                        + posix.readAttributes().permissions());
+            }
+        } catch (IOException | RuntimeException failure) {
+            throw new LauncherException(CODE_SECRETS_ACL + ": secrets 文件写好后权限校验失败 "
+                    + target + "（" + failure.getMessage() + "）",
+                    "文件在 move 之后被外部改动（同步盘/杀软）；改用本地非同步目录", true);
         }
     }
 
@@ -603,13 +715,14 @@ public final class Launcher {
         }
         try {
             String text = Files.readString(file, StandardCharsets.UTF_8);
-            int refusedAt = text.indexOf(SECURITY_REFUSED_SIGNATURE);
-            if (refusedAt >= 0) {
-                return file.getFileName() + ": " + excerpt(text, refusedAt);
-            }
-            int warnedAt = text.indexOf(SECURITY_WARN_SIGNATURE);
-            if (warnedAt >= 0) {
-                return file.getFileName() + ": " + excerpt(text, warnedAt);
+            // BL-204 A①: iterate the explicit table, not a keyword. The finding names which
+            // signature matched and the CP file:line that emits it, so a refusal in launcher.log is
+            // attributable without re-reading the CP source.
+            for (SecurityLogSignature candidate : SECURITY_LOG_SIGNATURES) {
+                int at = text.indexOf(candidate.signature());
+                if (at >= 0) {
+                    return file.getFileName() + ": [" + candidate.describe() + "] " + excerpt(text, at);
+                }
             }
             return null;
         } catch (IOException unreadable) {
