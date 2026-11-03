@@ -195,6 +195,28 @@ describe("WorkspaceDock (PLAN-0582 S2)", () => {
         expect(wrapper.emitted("update:width")?.at(-1)).toEqual([320]);
     });
 
+    it("follows the pointer without emitting until release (resize-follow fix)", async () => {
+        const wrapper = mountDock({ width: 360 });
+        const panel = wrapper.get('[data-testid="workspace-aux-panel"]');
+
+        await wrapper.get('[data-testid="dock-resizer"]').trigger("mousedown", {
+            clientX: 1000,
+        });
+        document.dispatchEvent(new MouseEvent("mousemove", { clientX: 960 }));
+
+        // Mid-drag: the element already shows the new width, but the store write
+        // (the emitted v-model update) waits for the release.
+        expect((panel.element as HTMLElement).style.width).toBe("400px");
+        expect(panel.classes()).toContain("is-resizing");
+        expect(wrapper.emitted("update:width")).toBeUndefined();
+
+        document.dispatchEvent(new MouseEvent("mouseup", {}));
+
+        expect(wrapper.emitted("update:width")).toEqual([[400]]);
+        await wrapper.vm.$nextTick();
+        expect(panel.classes()).not.toContain("is-resizing");
+    });
+
     it("resizes with the keyboard on the separator", async () => {
         const wrapper = mountDock({ width: 360 });
         const resizer = wrapper.get('[data-testid="dock-resizer"]');
