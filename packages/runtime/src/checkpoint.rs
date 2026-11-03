@@ -193,6 +193,12 @@ pub(crate) struct SliceRef {
 #[serde(rename_all = "camelCase")]
 pub struct CaptureOutcome {
     pub run_id: String,
+    /// PLAN-0639 M7 (VM11): the root this slice was captured from. Equals
+    /// `workspaceId` for the primary root (primary-root invariant), so a
+    /// single-root body is unchanged; `#[serde(default)]` keeps old readers and
+    /// pre-M7 fixtures deserializing.
+    #[serde(default)]
+    pub root_id: String,
     /// `true` when the captured tree equals the chain tail: no ref was written.
     pub no_change: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -331,6 +337,12 @@ pub struct ShadowGit {
     /// `hostPath` is not `<hostRoot>/<workspaceId>` capture/restore the real
     /// directory. Empty map falls back to the legacy `<hostRoot>/<workspaceId>`.
     work_tree_overrides: StdMutex<HashMap<String, PathBuf>>,
+    /// PLAN-0639 M7 (VM13): ordered declared roots (`(root_id, host_path)`) per
+    /// workspace, registered by the same seam that refreshes the work tree.
+    /// Capture uses them to (a) route to the requested root and (b) keep a parent
+    /// root's slice from flattening/overwriting a nested declared root, which is
+    /// captured by its own shadow repo (D39-5b①).
+    declared_roots: StdMutex<HashMap<String, Vec<(String, String)>>>,
     active_capture_locks: Arc<AtomicUsize>,
     active_restore_locks: Arc<AtomicUsize>,
     probe_cache: StdMutex<ProbeCache>,
@@ -347,6 +359,7 @@ impl ShadowGit {
             git_binary: "git".to_string(),
             locks: StdMutex::new(HashMap::new()),
             work_tree_overrides: StdMutex::new(HashMap::new()),
+            declared_roots: StdMutex::new(HashMap::new()),
             active_capture_locks: Arc::new(AtomicUsize::new(0)),
             active_restore_locks: Arc::new(AtomicUsize::new(0)),
             probe_cache: StdMutex::new(ProbeCache::default()),
@@ -459,6 +472,97 @@ impl ShadowGit {
             .insert(root_id.to_string(), path);
     }
 
+    /// PLAN-0639 M7 (VM11/VM13): registers the ordered declared roots of one
+    /// workspace `(root_id, host_path)` and points the per-root work-tree map at
+    /// each of them. This is the single registration seam for per-root capture:
+    /// before it, `work_tree_for_root` had no production caller and every capture
+    /// silently used the workspace path.
+    pub fn set_declared_roots(&self, workspace_id: &str, roots: Vec<(String, String)>) {
+        if validate_workspace_id(workspace_id).is_err() {
+            return;
+        }
+        {
+            let mut map = self
+                .declared_roots
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            map.insert(workspace_id.to_string(), roots.clone());
+        }
+        for (root_id, host_path) in roots {
+            if host_path.trim().is_empty() {
+                continue;
+            }
+            self.set_work_tree_override_for_root(&root_id, PathBuf::from(host_path));
+        }
+    }
+
+    /// Drops the declared-root registration of a destroyed/unmaterialized workspace.
+    ///
+    /// The per-root work-tree overrides are intentionally left in place: they are
+    /// keyed by root id (not workspace id) and a root may outlive one runtime
+    /// process's view of the workspace; a stale path is only ever read by a
+    /// capture for that same root id.
+    pub fn clear_declared_roots(&self, workspace_id: &str) {
+        self.declared_roots
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .remove(workspace_id);
+    }
+
+    /// The declared roots registered for one workspace (empty = none registered).
+    pub fn declared_roots(&self, workspace_id: &str) -> Vec<(String, String)> {
+        self.declared_roots
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(workspace_id)
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    /// PLAN-0639 M7 (VM13): declared roots that live **strictly inside**
+    /// `work_tree`, as workspace-relative POSIX prefixes (`sub/root`).
+    ///
+    /// Lookup is across every registered workspace rather than one id: the
+    /// exclusion has to be identical on the capture path (which knows the
+    /// workspace) and on the restore path (which only knows the work tree), and
+    /// two roots declaring the same host path is not a supported shape.
+    pub(crate) fn nested_declared_root_prefixes(&self, work_tree: &Path) -> Vec<String> {
+        let roots: Vec<(String, String)> = {
+            let map = self
+                .declared_roots
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            map.values().flat_map(|rows| rows.iter().cloned()).collect()
+        };
+        let base = normalize_path_for_git(work_tree).to_ascii_lowercase();
+        let base = base.trim_end_matches('/').to_string();
+        if base.is_empty() {
+            return Vec::new();
+        }
+        let mut prefixes: Vec<String> = Vec::new();
+        for (_, host_path) in roots {
+            if host_path.trim().is_empty() {
+                continue;
+            }
+            let candidate = normalize_path_for_git(Path::new(&host_path)).to_ascii_lowercase();
+            if candidate == base {
+                continue; // the captured root itself
+            }
+            let Some(rest) = candidate.strip_prefix(&base) else {
+                continue;
+            };
+            let rest = rest.trim_start_matches('/').trim_end_matches('/');
+            if rest.is_empty() || rest.starts_with("..") {
+                continue;
+            }
+            if !prefixes.iter().any(|existing| existing == rest) {
+                prefixes.push(rest.to_string());
+            }
+        }
+        prefixes.sort();
+        prefixes
+    }
+
     /// Cached host-git probe (`git --version` ≥ 2.20). Failures are retried after a
     /// backoff; the result is a structured value and never panics, even when git is
     /// missing entirely.
@@ -497,6 +601,11 @@ impl ShadowGit {
     /// tree hash, and — only when it differs from the chain tail — a root commit
     /// is written as `refs/xihe/slices/<epochMs>-<hash>`. A capture that detects
     /// no change writes no commit and no ref.
+    ///
+    /// PLAN-0639 M7 (VM11): this is the **primary-root** form; it delegates to
+    /// [`Self::capture_for_root`] with `root_id = workspace_id`, which is
+    /// byte-for-byte the pre-M7 behavior (primary-root invariant
+    /// `root[0].id == workspaceId`).
     pub async fn capture(
         &self,
         workspace_id: &str,
@@ -505,10 +614,36 @@ impl ShadowGit {
         call_id: &str,
         abnormal: bool,
     ) -> Result<CaptureOutcome> {
+        self.capture_for_root(workspace_id, workspace_id, run_id, actor, call_id, abnormal)
+            .await
+    }
+
+    /// PLAN-0639 M7 (VM11): capture **one declared root** of a workspace.
+    ///
+    /// `root_id` selects both the shadow repository
+    /// (`<hostRoot>/.xihe-shadow/<rootId>.git`) and the work tree
+    /// ([`Self::work_tree_for_root`]), so a declared non-primary root gets its own
+    /// slice chain instead of silently re-capturing the primary root.
+    ///
+    /// VM13 (D39-5b①): declared roots nested **inside** the captured root are
+    /// excluded from this root's slice, because each of them is captured by its own
+    /// shadow repo. Without it the parent's `add -A` would flatten/overwrite the
+    /// child's content, and the two chains would disagree about who owns those
+    /// files.
+    pub async fn capture_for_root(
+        &self,
+        workspace_id: &str,
+        root_id: &str,
+        run_id: &str,
+        actor: &str,
+        call_id: &str,
+        abnormal: bool,
+    ) -> Result<CaptureOutcome> {
         validate_run_id(run_id)?;
-        let shadow = self.shadow_git_dir(workspace_id)?;
-        let work_tree = self.work_tree(workspace_id)?;
-        let _guard = self.lock_capture(workspace_id).await;
+        validate_workspace_id(root_id)?;
+        let shadow = self.shadow_git_dir(root_id)?;
+        let work_tree = self.work_tree_for_root(root_id)?;
+        let _guard = self.lock_capture(root_id).await;
         self.require_git().await?;
         if !work_tree.is_dir() {
             return Err(CheckpointError::WorkspaceMissing(normalize_path_for_git(
@@ -517,6 +652,7 @@ impl ShadowGit {
         }
         self.ensure_initialized(&shadow, &work_tree).await?;
 
+        let excluded_prefixes = self.nested_declared_root_prefixes(&work_tree);
         let index = scratch_index_path(&shadow, run_id);
         let excludes = scratch_excludes_path(&shadow, run_id);
         let _scratch = ScratchFiles::new(vec![index.clone(), excludes.clone()]);
@@ -545,12 +681,15 @@ impl ShadowGit {
         if tail_tree.as_deref() == Some(tree.as_str()) {
             debug!(
                 workspace_id,
+                root_id,
                 run_id,
                 predecessor = predecessor.as_deref().unwrap_or("none"),
+                excluded_roots = excluded_prefixes.len(),
                 "shadow checkpoint capture found no change; no slice written"
             );
             return Ok(CaptureOutcome {
                 run_id: run_id.to_string(),
+                root_id: root_id.to_string(),
                 no_change: true,
                 slice_ref: None,
                 commit: None,
@@ -573,14 +712,17 @@ impl ShadowGit {
         };
         info!(
             workspace_id,
+            root_id,
             run_id,
             slice_ref = %slice_ref,
             changed = changed_files.len(),
+            excluded_roots = excluded_prefixes.len(),
             state,
             "shadow checkpoint slice captured"
         );
         Ok(CaptureOutcome {
             run_id: run_id.to_string(),
+            root_id: root_id.to_string(),
             no_change: false,
             slice_ref: Some(slice_ref),
             commit: Some(commit),
@@ -1023,7 +1165,14 @@ impl ShadowGit {
         let dynamic = self
             .collect_oversized_untracked(shadow, work_tree, Some(index))
             .await?;
-        self.write_excludes_file(excludes, &dynamic).await?;
+        // PLAN-0639 M7 (VM13 / D39-5b①): a declared root nested inside this one is
+        // captured by its own shadow repo, so it must not enter this root's tree.
+        // The exclusion is expressed through the same `core.excludesFile` that
+        // `add -A` already honours, which keeps one exclusion implementation.
+        let mut excludes_entries = dynamic;
+        excludes_entries.extend(self.nested_declared_root_prefixes(work_tree));
+        self.write_excludes_file(excludes, &excludes_entries)
+            .await?;
         let config = format!("core.excludesFile={}", normalize_path_for_git(excludes));
         self.run_git_checked(
             &["-c", &config, "add", "-A"],
@@ -1071,7 +1220,8 @@ impl ShadowGit {
                 return Err(CheckpointError::NestedRepoLimit { paths: detected });
             }
             NestedRepoPolicy::Flatten => {
-                self.flatten_nested_repos(shadow, work_tree, index, excludes, &detected)
+                let excluded = self.nested_declared_root_prefixes(work_tree);
+                self.flatten_nested_repos(shadow, work_tree, index, excludes, &detected, &excluded)
                     .await?;
                 Vec::new()
             }
@@ -1094,6 +1244,7 @@ impl ShadowGit {
         index: &Path,
         excludes: &Path,
         nested_roots: &[String],
+        excluded_prefixes: &[String],
     ) -> Result<Vec<String>> {
         if nested_roots.is_empty() {
             return Ok(Vec::new());
@@ -1101,6 +1252,15 @@ impl ShadowGit {
         let env = self.isolated_env(shadow, work_tree, Some(index));
         let mut flattened = Vec::new();
         for root in nested_roots {
+            // PLAN-0639 M7 (VM13): a nested repo that is itself a declared root is
+            // captured by its own shadow repo; flattening it here would make the
+            // parent chain own the child's files (and fight the child's chain).
+            if excluded_prefixes
+                .iter()
+                .any(|prefix| root == prefix || root.starts_with(&format!("{prefix}/")))
+            {
+                continue;
+            }
             let absolute_root = work_tree.join(root.replace('/', std::path::MAIN_SEPARATOR_STR));
             // Drop the opaque gitlink for the repo root before staging its files.
             self.run_git_checked(

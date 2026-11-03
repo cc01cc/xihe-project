@@ -9,7 +9,9 @@ use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use tokio::sync::{Mutex, mpsc};
 use tokio::task::JoinHandle;
 
-use crate::ws_file_handler::{report_workspace_event, report_workspace_snapshot_required};
+use crate::ws_file_handler::{
+    report_workspace_event_attributed, report_workspace_snapshot_required,
+};
 
 const EVENT_BUFFER: usize = 256;
 
@@ -30,18 +32,29 @@ struct WatchHandle {
 struct PendingEvent {
     workspace_id: String,
     root_id: String,
-    path: Option<String>,
+    /// PLAN-0639 M7 (VM14): the **absolute** host path. Attribution to the
+    /// deepest declared root happens on the publish side, where the declared-root
+    /// set is known; emitting here would need the same set in two places.
+    path: Option<PathBuf>,
     change_type: Option<&'static str>,
     snapshot_required: bool,
 }
 
 impl WorkspaceEventWatchers {
     /// PLAN-0639 M1: install one watcher per root.  `key` = `workspace_id + ":" + root_id`.
+    ///
+    /// `declared_roots` is the ordered `(root_id, host_path)` set of the workspace.
+    /// PLAN-0639 M7 (VM14): the watcher is installed on the primary root, so an
+    /// event under a *nested* declared root must be attributed to that deeper root
+    /// (and reported with a path relative to it) instead of being reported as a
+    /// primary-root change — otherwise the UI routes the refresh to the wrong tree
+    /// group and the parent's slice no longer owns those files.
     pub(crate) async fn ensure(
         &self,
         workspace_id: &str,
         root_id: &str,
         workspace_path: &str,
+        declared_roots: Vec<(String, String)>,
     ) -> Result<(), String> {
         let map_key = format!("{workspace_id}:{root_id}");
         let mut handles = self.handles.lock().await;
@@ -75,10 +88,21 @@ impl WorkspaceEventWatchers {
         let id = workspace_id.to_string();
         let root_id_owned = root_id.to_string();
         let task_root = root.clone();
+        // Canonicalize the declared-root paths once so per-event attribution is a
+        // pure prefix comparison (no per-event syscall).
+        let spec_roots: Vec<(String, PathBuf)> = declared_roots
+            .into_iter()
+            .filter_map(|(id, host_path)| {
+                std::fs::canonicalize(&host_path)
+                    .ok()
+                    .map(|canonical| (id, canonical))
+            })
+            .collect();
         let (publish_sender, mut publish_receiver) = mpsc::channel::<PendingEvent>(EVENT_BUFFER);
         let watch_overflow = overflow.clone();
         let watch_id = id.clone();
         let watch_root_id = root_id_owned.clone();
+        let watch_task_root = task_root.clone();
         let watch_task = tokio::spawn(async move {
             while let Some(result) = receiver.recv().await {
                 if watch_overflow.swap(false, Ordering::AcqRel)
@@ -100,14 +124,17 @@ impl WorkspaceEventWatchers {
                             continue;
                         };
                         for path in event.paths {
-                            let Some(relative) = relative_path(&task_root, &path) else {
+                            // Keep only paths under the watched root; the
+                            // absolute path travels to the publish side so
+                            // attribution can pick the deepest declared root.
+                            if relative_path(&watch_task_root, &path).is_none() {
                                 continue;
-                            };
+                            }
                             if publish_sender
                                 .try_send(PendingEvent {
                                     workspace_id: watch_id.clone(),
                                     root_id: watch_root_id.clone(),
-                                    path: Some(relative),
+                                    path: Some(path),
                                     change_type: Some(change_type),
                                     snapshot_required: false,
                                 })
@@ -127,24 +154,34 @@ impl WorkspaceEventWatchers {
                 }
             }
         });
+        let publish_root_path = task_root.clone();
         let publish_task = tokio::spawn(async move {
             let mut recent_events: HashMap<(String, &'static str), Instant> = HashMap::new();
             while let Some(event) = publish_receiver.recv().await {
                 if event.snapshot_required {
                     report_workspace_snapshot_required(&event.workspace_id).await;
                 } else if let (Some(path), Some(change_type)) = (event.path, event.change_type) {
+                    // PLAN-0639 M7 (VM14): debounce on the absolute path — the
+                    // attributed root id is derived, not part of the identity.
+                    let debounce_key = path.to_string_lossy().replace('\\', "/");
                     let now = Instant::now();
                     recent_events.retain(|_, seen_at| {
                         now.saturating_duration_since(*seen_at) < Duration::from_millis(100)
                     });
                     if recent_events
-                        .insert((path.clone(), change_type), now)
+                        .insert((debounce_key, change_type), now)
                         .is_some()
                     {
                         continue;
                     }
-                    report_workspace_event(&event.workspace_id, &event.root_id, &path, change_type)
-                        .await;
+                    report_workspace_event_attributed(
+                        &event.workspace_id,
+                        &spec_roots,
+                        (&event.root_id, &publish_root_path),
+                        &path,
+                        change_type,
+                    )
+                    .await;
                 }
             }
         });
@@ -260,7 +297,7 @@ mod tests {
         let watchers = WorkspaceEventWatchers::default();
         let root_path = root.path().to_string_lossy().into_owned();
         watchers
-            .ensure("ws-direct", "root-0", &root_path)
+            .ensure("ws-direct", "root-0", &root_path, Vec::new())
             .await
             .expect("watcher should start for a direct-attach root");
         watchers.stop("ws-direct", "root-0").await;
@@ -272,7 +309,7 @@ mod tests {
         let watchers = WorkspaceEventWatchers::default();
         let root_path = root.path().to_string_lossy().into_owned();
         let error = watchers
-            .ensure("ws-file", "root-0", &root_path)
+            .ensure("ws-file", "root-0", &root_path, Vec::new())
             .await
             .expect_err("file roots must not be watched as a workspace");
         assert_eq!(error, "WATCHER_ROOT_NOT_DIRECTORY");
