@@ -69,6 +69,14 @@ pub enum CaptureError {
     StatCacheCorrupt { path: PathBuf, reason: String },
     #[error("failed to encode capture JSON: {0}")]
     Encode(String),
+    #[error("git tree references {path:?} but no changed blob or previous manifest entry exists")]
+    MissingGitBlob { path: String },
+    #[error("git blob size mismatch for {path:?}: expected {expected}, got {actual}")]
+    GitBlobSizeMismatch {
+        path: String,
+        expected: u64,
+        actual: u64,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -814,6 +822,194 @@ pub fn capture_root_with_options(
         blob_write_ms,
         manifest_ms,
         nested_roots,
+    })
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GitTreeEntry {
+    pub path: String,
+    pub mode: FileMode,
+    pub size: u64,
+    pub oid: String,
+}
+
+/// Git-fed capture used only for `dual` + `Opaque`. Entries and sizes come from
+/// `git ls-tree`; `changed_blobs` carries raw content for paths whose git tree
+/// changed (all paths on the first slice), while unchanged paths reuse the
+/// previous store manifest hash.
+pub fn capture_from_git_entries(
+    store: &Store,
+    root_id: &str,
+    run_id: Option<&str>,
+    principal_id: Option<&str>,
+    entries: &[GitTreeEntry],
+    changed_blobs: &HashMap<String, Vec<u8>>,
+    nested_roots: Vec<String>,
+) -> Result<CaptureResult, CaptureError> {
+    let started = Instant::now();
+    let lock_started = Instant::now();
+    let _lock = store.lock()?;
+    let lock_ms = lock_started.elapsed().as_millis() as u64;
+    let tail = tail_slice(store, root_id)?;
+    let previous = match &tail {
+        Some(tail) => Some(read_tail_manifest(store, tail)?),
+        None => None,
+    };
+    let previous_entries: HashMap<&str, &ManifestEntry> = previous
+        .as_ref()
+        .map(|manifest| {
+            manifest
+                .entries
+                .iter()
+                .map(|entry| (entry.path.as_str(), entry))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let mut manifest_entries = Vec::with_capacity(entries.len());
+    let mut blobs_new = 0;
+    let mut blobs_dedup = 0;
+    let mut hashed_files = 0;
+    let mut blob_write_ms = 0u64;
+    for entry in entries {
+        let (hash, size) = if let Some(bytes) = changed_blobs.get(&entry.path) {
+            let size = bytes.len() as u64;
+            if size != entry.size {
+                return Err(CaptureError::GitBlobSizeMismatch {
+                    path: entry.path.clone(),
+                    expected: entry.size,
+                    actual: size,
+                });
+            }
+            let started = Instant::now();
+            let outcome = write_blob(store.root(), bytes)?;
+            blob_write_ms += started.elapsed().as_millis() as u64;
+            if outcome.deduped {
+                blobs_dedup += 1;
+            } else {
+                blobs_new += 1;
+            }
+            hashed_files += 1;
+            (outcome.hash, size)
+        } else {
+            let Some(previous) = previous_entries.get(entry.path.as_str()) else {
+                return Err(CaptureError::MissingGitBlob {
+                    path: entry.path.clone(),
+                });
+            };
+            if previous.mode != entry.mode || previous.size != entry.size {
+                return Err(CaptureError::GitBlobSizeMismatch {
+                    path: entry.path.clone(),
+                    expected: entry.size,
+                    actual: previous.size,
+                });
+            }
+            (previous.blob_hash.clone(), previous.size)
+        };
+        manifest_entries.push(ManifestEntry::new(
+            entry.path.clone(),
+            entry.mode,
+            size,
+            hash,
+        )?);
+    }
+
+    let manifest_started = Instant::now();
+    let manifest = Manifest::from_entries(manifest_entries)?;
+    let manifest_bytes = manifest.canonical_bytes()?;
+    let manifest_id = manifest.manifest_id()?;
+    let manifest_ms = manifest_started.elapsed().as_millis() as u64;
+    store.write_atomic(&store.manifest_path(&manifest_id), &manifest_bytes)?;
+
+    let no_change = tail
+        .as_ref()
+        .is_some_and(|tail| tail.manifest == manifest_id);
+    if no_change {
+        return Ok(CaptureResult {
+            slice_id: tail
+                .as_ref()
+                .map(|tail| tail.id.clone())
+                .unwrap_or_default(),
+            manifest_id,
+            entry_count: manifest.entries.len(),
+            total_bytes: manifest.total_bytes,
+            blobs_new,
+            blobs_dedup,
+            hashed_files,
+            no_change: true,
+            duration_ms: started.elapsed().as_millis() as u64,
+            blob_write_ms,
+            manifest_ms,
+            lock_ms,
+            slice_write_ms: 0,
+            nested_roots,
+            ..CaptureResult::default()
+        });
+    }
+
+    let captured_at = Utc::now();
+    let captured_at_ms = now_ms();
+    let slice_id = format!("{captured_at_ms:013}-{}", &manifest_id[..12]);
+    let slice_path = store.slice_dir(root_id).join(format!("{slice_id}.json"));
+    let (patterns, gitignore_files) = exclusion_patterns(Path::new(""));
+    let slice = serde_json::json!({
+        "v": 1,
+        "id": slice_id,
+        "parent": tail.as_ref().map(|tail| tail.id.clone()),
+        "root_id": root_id,
+        "run_id": run_id,
+        "principal_id": principal_id,
+        "captured_at_ms": captured_at_ms,
+        "captured_at": captured_at.format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string(),
+        "manifest": manifest_id,
+        "merkle_root": manifest.merkle_root,
+        "entry_count": manifest.entries.len(),
+        "total_bytes": manifest.total_bytes,
+        "exclusion_patterns": patterns,
+        "gitignore_files": gitignore_files,
+        "nested_roots": nested_roots.clone(),
+        "stats": {
+            "scanned_files": entries.len(),
+            "hashed_files": hashed_files,
+            "hashed_bytes": manifest.total_bytes,
+            "cache_hits": 0,
+            "blobs_new": blobs_new,
+            "blobs_dedup": blobs_dedup,
+            "reparse_skipped": [],
+            "non_utf8_skipped": [],
+            "suspects": [],
+            "warnings": [],
+            "duration_ms": started.elapsed().as_millis() as u64,
+            "walk_ms": 0,
+            "blob_write_ms": blob_write_ms,
+            "manifest_ms": manifest_ms,
+            "lock_ms": lock_ms,
+        },
+        "state": "captured",
+        "migrated_from": serde_json::Value::Null,
+    });
+    let slice_write_started = Instant::now();
+    let slice_bytes =
+        serde_json::to_vec(&slice).map_err(|error| CaptureError::Encode(error.to_string()))?;
+    store.write_atomic(&slice_path, &slice_bytes)?;
+    let slice_write_ms = slice_write_started.elapsed().as_millis() as u64;
+
+    Ok(CaptureResult {
+        slice_id,
+        manifest_id,
+        entry_count: manifest.entries.len(),
+        total_bytes: manifest.total_bytes,
+        blobs_new,
+        blobs_dedup,
+        hashed_files,
+        no_change: false,
+        duration_ms: started.elapsed().as_millis() as u64,
+        blob_write_ms,
+        manifest_ms,
+        lock_ms,
+        slice_write_ms,
+        nested_roots,
+        ..CaptureResult::default()
     })
 }
 
