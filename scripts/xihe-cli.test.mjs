@@ -3984,3 +3984,50 @@ test('an unknown skill subcommand is refused instead of completing silently', as
   assert.equal(result.error.code, 'INVALID_ARGUMENT');
   assert.match(result.error.message, /Unknown skill command/);
 });
+
+test('PLAN-0643 T1.7: XIHE_CP_URL selects the endpoint when XIHE_CP_PORT is absent', async (t) => {
+  const cp = await startCpMock();
+  t.after(cp.close);
+
+  const result = await runCommand(['provider', 'list'], {
+    env: { ...cp.env, XIHE_CP_URL: `http://127.0.0.1:${cp.env.XIHE_CP_PORT}`, XIHE_CP_PORT: `1` },
+    promptSecret: noPrompt,
+  });
+
+  assert.equal(result.exitCode, 0);
+  assert.deepEqual(result.data.connections, []);
+});
+
+test('PLAN-0643 T1.7: global --base-url wins over XIHE_CP_PORT', async (t) => {
+  const cp = await startCpMock();
+  t.after(cp.close);
+
+  const result = await runCommand(['--base-url', `http://127.0.0.1:${cp.env.XIHE_CP_PORT}`, 'provider', 'list'], {
+    env: { XIHE_DEV_ADMIN_PASSWORD: cp.env.XIHE_DEV_ADMIN_PASSWORD, XIHE_CP_PORT: '1' },
+    promptSecret: noPrompt,
+  });
+
+  assert.equal(result.exitCode, 0);
+});
+
+test('PLAN-0643 T1.7: an invalid --base-url fails closed as a usage error', async () => {
+  const result = await runCommand(['--base-url', 'not-a-url', 'provider', 'list'], {
+    env: { XIHE_CP_PORT: '1' },
+    promptSecret: noPrompt,
+  });
+
+  assert.equal(result.exitCode, 1);
+  assert.equal(result.error.code, 'INVALID_BASE_URL');
+});
+
+test('PLAN-0643 T1.7: global --workspace is accepted before the group and forwarded', async (t) => {
+  const cp = await startCpMock();
+  t.after(cp.close);
+
+  const result = await runCommand(['--workspace', 'ws-1', 'skill', 'list'], {
+    env: cp.env,
+    promptSecret: noPrompt,
+  });
+
+  assert.notEqual(result.error?.code, 'INVALID_ARGUMENT');
+});

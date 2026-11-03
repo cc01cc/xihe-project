@@ -90,12 +90,44 @@ export async function confirmAction({ message, stdin = process.stdin, output = p
   }
 }
 
-export function getApiBase(env) {
+function loopbackFromPort(env) {
   const rawPort = env.XIHE_CP_PORT ?? DEFAULT_CP_PORT;
   if (!/^\d{1,5}$/.test(rawPort)) throw new CliError('INVALID_CP_PORT', 'XIHE_CP_PORT must be a valid local TCP port');
   const port = Number(rawPort);
   if (port < 1 || port > 65535) throw new CliError('INVALID_CP_PORT', 'XIHE_CP_PORT must be a valid local TCP port');
   return `http://127.0.0.1:${port}`;
+}
+
+function absoluteHttpUrl(value, code) {
+  let parsed;
+  try {
+    parsed = new URL(value);
+  } catch {
+    throw new CliError(code, 'The CP base URL must be an absolute http(s) URL.');
+  }
+  if (!/^https?:$/.test(parsed.protocol) || !parsed.host) {
+    throw new CliError(code, 'The CP base URL must be an absolute http(s) URL.');
+  }
+  return value.replace(/\/+$/, '');
+}
+
+/**
+ * PLAN-0643 T1.7 (design D5): one precedence chain for the CP endpoint —
+ * `--base-url` > `XIHE_CP_URL` > `XIHE_CP_PORT` (loopback) > default 12631.
+ * The CLI used to hardcode loopback, so a parallel stack (stack-2..8) or a remote
+ * CP was unreachable even though `scripts/lib/stack-ports.mjs` already exports
+ * `XIHE_CP_URL`.
+ */
+export function resolveBaseUrl(env = {}, override) {
+  const explicit = typeof override === 'string' ? override.trim() : '';
+  if (explicit !== '') return absoluteHttpUrl(explicit, 'INVALID_BASE_URL');
+  const fromEnv = typeof env.XIHE_CP_URL === 'string' ? env.XIHE_CP_URL.trim() : '';
+  if (fromEnv !== '') return absoluteHttpUrl(fromEnv, 'INVALID_CP_URL');
+  return loopbackFromPort(env);
+}
+
+export function getApiBase(env) {
+  return resolveBaseUrl(env);
 }
 
 function isSafeConnectFailure(error) {
