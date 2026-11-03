@@ -21,9 +21,11 @@ import com.cc01cc.p.xihe.cp.policy.ToolShape;
 import com.cc01cc.p.xihe.cp.policy.GrantIntersectionEvaluator;
 import com.cc01cc.p.xihe.cp.policy.GrantPrincipalPathResolver;
 import com.cc01cc.p.xihe.cp.policy.HookAdvisorRegistry;
+import com.cc01cc.p.xihe.cp.policy.PermissionAtomCatalog;
 import com.cc01cc.p.xihe.cp.policy.GrantSources;
 import com.cc01cc.p.xihe.cp.policy.GrantDefaultService;
 import com.cc01cc.p.xihe.cp.repository.AccessRoleBindingRepository;
+import com.cc01cc.p.xihe.cp.repository.AccessRolePermissionRepository;
 import com.cc01cc.p.xihe.cp.repository.AccessRoleRepository;
 import com.cc01cc.p.xihe.cp.repository.AgentPrincipalRepository;
 import com.cc01cc.p.xihe.cp.repository.AuthorizationGrantRepository;
@@ -85,6 +87,7 @@ public class AgentPrincipalService {
     /** PLAN-0629: roles are the permission source, so bindings and materialization live here. */
     private final AccessRoleBindingRepository roleBindingRepository;
     private final AccessRoleRepository roleRepository;
+    private final AccessRolePermissionRepository rolePermissionRepository;
     private final RoleGrantMaterializer roleMaterializer;
 
     public AgentPrincipalService(AgentPrincipalRepository agentPrincipalRepository,
@@ -100,6 +103,7 @@ public class AgentPrincipalService {
                                  AuthzContext authzContext,
                                  AccessRoleBindingRepository roleBindingRepository,
                                  AccessRoleRepository roleRepository,
+                                 AccessRolePermissionRepository rolePermissionRepository,
                                  RoleGrantMaterializer roleMaterializer) {
         this.agentPrincipalRepository = agentPrincipalRepository;
         this.grantRepository = grantRepository;
@@ -114,9 +118,9 @@ public class AgentPrincipalService {
         this.authzContext = authzContext;
         this.roleBindingRepository = roleBindingRepository;
         this.roleRepository = roleRepository;
+        this.rolePermissionRepository = rolePermissionRepository;
         this.roleMaterializer = roleMaterializer;
     }
-
     /** Authorizes, resolves a caller-readable snapshot, and creates a principal atomically. */
     @Transactional
     /**
@@ -159,6 +163,24 @@ public class AgentPrincipalService {
                                                       String requestedScope, String defaultModelProvider,
                                                       String defaultModelName, JsonNode allowedModels, JsonNode hooks,
                                                       String origin, String presetId) {
+        return createPrincipalFromTemplate(actorUserId, name, templateId, requestedScope,
+                defaultModelProvider, defaultModelName, allowedModels, hooks, origin, presetId, null);
+    }
+
+    /**
+     * PLAN-0629 task-12: the same create, plus the roles the new principal is bound to.
+     *
+     * <p>{@code roleIds} is the only permission input now — a null/empty list means "use the default
+     * role", i.e. the instance-scope {@code USER} role here and {@code WS_EDITOR} when the principal
+     * is bound to a workspace later. Every id is validated once, before the row is written
+     * ({@code 403 ROLE_NOT_GRANTABLE} on failure), and the binding goes through the existing
+     * materializer so there is exactly one write path.</p>
+     */
+    public AgentPrincipal createPrincipalFromTemplate(String actorUserId, String name, String templateId,
+                                                      String requestedScope, String defaultModelProvider,
+                                                      String defaultModelName, JsonNode allowedModels, JsonNode hooks,
+                                                      String origin, String presetId,
+                                                      List<UUID> roleIds) {
         UUID actorId = parseUuid(actorUserId, "INVALID_ACTOR");
         requireUser(actorId);
         UUID workspaceContext = currentWorkspaceContext();
@@ -180,7 +202,7 @@ public class AgentPrincipalService {
                 defaultModelProvider, defaultModelName, allowedModels, effectiveHooks,
                 builtinPreset ? AgentPrincipal.ORIGIN_SYSTEM_PRESET
                         : (origin == null || origin.isBlank() ? AgentPrincipal.ORIGIN_USER : origin),
-                builtinPreset ? resolvedTemplateId : presetId);
+                builtinPreset ? resolvedTemplateId : presetId, roleIds);
     }
 
     /** Legacy signature kept for the pre-0622 callers; same semantics as an omitted scope. */
@@ -359,6 +381,19 @@ public class AgentPrincipalService {
                                           String defaultModelProvider, String defaultModelName,
                                           JsonNode allowedModels, JsonNode hooks,
                                           String origin, String presetId) {
+        return createPrincipal(actorUserId, name, templateId, templateSnapshot, scope, ownerUserId,
+                defaultModelProvider, defaultModelName, allowedModels, hooks, origin, presetId, null);
+    }
+
+    /**
+     * PLAN-0629 task-12 core: {@code roleIds} is validated once up front and then bound through
+     * {@link #bindInstanceRoles}, i.e. the only permission source this method has.
+     */
+    public AgentPrincipal createPrincipal(String actorUserId, String name, String templateId,
+                                          JsonNode templateSnapshot, String scope, UUID ownerUserId,
+                                          String defaultModelProvider, String defaultModelName,
+                                          JsonNode allowedModels, JsonNode hooks,
+                                          String origin, String presetId, List<UUID> roleIds) {
         JsonNode checkedHooks = HookAdvisorRegistry.validateSubscriptions(hooks);
         UUID actorId = parseUuid(actorUserId, "INVALID_ACTOR");
         if (!authService.userExists(actorId)) {
@@ -403,6 +438,10 @@ public class AgentPrincipalService {
                 retainCovered(templatePermissions, creatorPermissions);
         ArrayNode grantPermissions = toJson(effectivePermissions);
 
+        // PLAN-0629 task-12: the one-time grant check for exactly the roles the caller asked for.
+        // It runs before any row is written, so a refusal leaves no half-created principal.
+        validateGrantableRoles(actorId, roleIds);
+
         AgentPrincipal principal = new AgentPrincipal();
         principal.setName(name.trim());
         principal.setTemplateId(templateId);
@@ -433,7 +472,7 @@ public class AgentPrincipalService {
         // or unbind it. Do not "fix" this by re-checking the creator later: that would reintroduce
         // the ownership coupling. The one-time authority check happened above (the action atom that
         // authorized this create), and it is the only creator-scoped check.
-        bindInstanceRoles(savedPrincipal.getId(), actorId, List.of());
+        bindInstanceRoles(savedPrincipal.getId(), actorId, roleIds);
 
         ObjectNode detail = objectMapper.createObjectNode();
         // PLAN-0622 M1.1: the audit record carries the tier (checklist risk #7) and the action that
@@ -780,8 +819,7 @@ public class AgentPrincipalService {
     }
 
     /** PLAN-0629: a freshly created principal gets instance-scope role bindings (roleIds or default). */
-    private void bindInstanceRoles(UUID principalId, UUID actorId, List<UUID> roleIds) {
-        List<UUID> effective = roleIds == null || roleIds.isEmpty()
+    private void bindInstanceRoles(UUID principalId, UUID actorId, List<UUID> roleIds) {        List<UUID> effective = roleIds == null || roleIds.isEmpty()
                 ? List.of(requireRole(DEFAULT_AGENT_INSTANCE_ROLE).getId())
                 : roleIds;
         List<UUID> existing = roleBindingRepository
@@ -799,6 +837,67 @@ public class AgentPrincipalService {
         }
         roleMaterializer.materializeSubject(GrantPrincipalPathResolver.AGENT_PRINCIPAL, principalId,
                 actorId, null);
+    }
+
+    /**
+     * PLAN-0629 task-12: the one-time grant check for {@code roleIds}. It answers three questions in
+     * a fixed order and always refuses with {@code 403 ROLE_NOT_GRANTABLE} plus a reason in the
+     * detail (the code stays stable, the prose may change):
+     *
+     * <ol>
+     *   <li>does the role exist — a missing id is not a permission problem, but reporting it as 404
+     *       would leak which roles exist to callers that may not see them;</li>
+     *   <li>may this role be bound to an <b>agent principal</b> at all — administrator and
+     *       management atoms are refused ({@link PermissionAtomCatalog#canBindToAgentPrincipal}),
+     *       because an agent is a grantee, never an administrator;</li>
+     *   <li>does the actor hold everything the role grants — "you cannot grant what you do not
+     *       hold" — evaluated with the same atom union the rest of the service uses.</li>
+     * </ol>
+     *
+     * <p>Deliberately one-time: once bound, the role takes effect immediately and stays until the
+     * role is edited or the binding removed. Re-checking the original grantor later would
+     * reintroduce the creator coupling the 2026-11-04 ruling removed.</p>
+     */
+    private void validateGrantableRoles(UUID actorId, List<UUID> roleIds) {
+        if (roleIds == null || roleIds.isEmpty()) {
+            return;
+        }
+        Set<GrantIntersectionEvaluator.PermissionAtom> actorAtoms = evaluator.union(
+                grantRepository.findBySubjectTypeAndSubjectId(GrantPrincipalPathResolver.USER, actorId));
+        for (UUID roleId : new java.util.LinkedHashSet<>(roleIds)) {
+            if (roleId == null) {
+                throw notGrantable("roleIds must not contain null");
+            }
+            AccessRole role = roleRepository.findById(roleId)
+                    .orElseThrow(() -> notGrantable("roleId is not bindable"));
+            List<String> atomNames = roleAtomNames(roleId);
+            String forbidden = PermissionAtomCatalog.firstForbiddenAgentPrincipalAtom(atomNames);
+            if (forbidden != null) {
+                throw notGrantable("instance-admin role cannot be bound to an agent principal ("
+                        + forbidden + ")");
+            }
+            Set<GrantIntersectionEvaluator.PermissionAtom> roleAtoms = new LinkedHashSet<>();
+            for (String atomName : atomNames) {
+                if (PermissionAtomCatalog.isActionAtom(atomName)) {
+                    roleAtoms.add(new GrantIntersectionEvaluator.PermissionAtom(atomName, "*"));
+                }
+            }
+            if (!isSubset(roleAtoms, actorAtoms)) {
+                throw notGrantable("actor cannot grant role " + role.getName()
+                        + ": it grants more than the actor holds");
+            }
+        }
+    }
+
+    /** The atom names of one role, straight from the role materialization table. */
+    private List<String> roleAtomNames(UUID roleId) {
+        return rolePermissionRepository.findByIdRoleId(roleId).stream()
+                .map(row -> row.getId().getActionClass())
+                .toList();
+    }
+
+    private static CpApiException notGrantable(String detail) {
+        return new CpApiException(HttpStatus.FORBIDDEN, "ROLE_NOT_GRANTABLE", detail);
     }
 
     private AccessRole requireRole(String name) {
