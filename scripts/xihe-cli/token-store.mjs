@@ -242,7 +242,7 @@ export function persistToken(env = {}, { baseUrl, token, email, expiresAt, obtai
   return writeStoreAtomic({ env, store, fsImpl, platform, aclRunner });
 }
 
-export function clearToken(env = {}, { baseUrl, fsImpl = fs, platform = process.platform } = {}) {
+export function clearToken(env = {}, { baseUrl, fsImpl = fs, platform = process.platform, aclRunner } = {}) {
   if (cacheDisabled(env)) return { ok: true, removed: false, path: resolveTokenPath(env, platform) };
   const current = readStore(env, { fsImpl, platform });
   if (current.kind === 'absent') return { ok: true, removed: false, path: current.path };
@@ -264,7 +264,12 @@ export function clearToken(env = {}, { baseUrl, fsImpl = fs, platform = process.
       return { ok: false, code: 'TOKEN_FILE_UNWRITABLE', message: `Cannot remove ${current.path} (${error?.code ?? 'unknown'}).` };
     }
   }
-  const written = writeStoreAtomic({ env, store: current.store, fsImpl, platform, aclRunner: () => ({ ok: true }) });
+  // R2 (PLAN-0643 audit 2026-11-04): a partial logout rewrites the file for the
+  // *remaining* base URLs, so it must tighten the new file exactly like a login does.
+  // Passing a no-op ACL runner here silently downgraded the file to the inherited
+  // directory ACL — the token of every other stack then became readable by any
+  // account that inherits it.
+  const written = writeStoreAtomic({ env, store: current.store, fsImpl, platform, aclRunner });
   return written.ok ? { ok: true, removed: true, path: written.path } : written;
 }
 

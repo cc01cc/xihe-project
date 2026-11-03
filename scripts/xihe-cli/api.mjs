@@ -26,8 +26,47 @@ function enabled(value) {
 function splitPath(rawPath) {
   const value = String(rawPath ?? '').trim();
   if (value === '') throw new CliError('INVALID_ARGUMENT', 'xihe api requires a path (for example /api/v1/status).');
-  const [pathname, query = ''] = value.split('?');
+  if (!value.startsWith('/')) {
+    throw new CliError('API_TARGET_INVALID', 'xihe api takes an absolute path such as /api/v1/status (no scheme or host).');
+  }
+  const queryIndex = value.indexOf('?');
+  const pathname = queryIndex === -1 ? value : value.slice(0, queryIndex);
+  const query = queryIndex === -1 ? '' : value.slice(queryIndex + 1);
   return { pathname, query, raw: value };
+}
+
+/**
+ * R1 (PLAN-0643 audit 2026-11-04): normalise the target BEFORE gating it.
+ *
+ * Node/undici resolve dot segments client-side, so a raw-string gate can be walked
+ * past: `/api/v1/x/%2e%2e/mcp` goes out as `/api/v1/mcp`, `/api/v1/config/x/%2e%2e/
+ * export` lands on `/api/v1/config/export`, and `/api/v1/%2e%2e/%2e%2e/internal/v1/x`
+ * reaches the service surface. Anything that is not already canonical is refused
+ * outright (percent-encoded segments, `//`, non-canonical dot segments / separators)
+ * so no encoding variant can re-open the bypass. The gate then runs on the same
+ * string that is sent on the wire.
+ */
+function normalizeTargetPath(pathname) {
+  if (pathname.includes('%')) {
+    throw new CliError(
+      'API_TARGET_INVALID',
+      'xihe api refuses percent-encoded paths; write the target in canonical form.',
+    );
+  }
+  if (pathname.includes('//')) {
+    throw new CliError(
+      'API_TARGET_INVALID',
+      'xihe api refuses "//" in the target path; write the canonical path.',
+    );
+  }
+  const normalized = new URL(pathname, 'http://cli.invalid').pathname;
+  if (normalized !== pathname) {
+    throw new CliError(
+      'API_TARGET_INVALID',
+      `xihe api refuses non-canonical paths (it resolves to ${normalized}); write the canonical path.`,
+    );
+  }
+  return normalized;
 }
 
 function setQueryParam(query, name, value) {
@@ -77,10 +116,13 @@ export function resolveApiInvocation(rawArgs) {
     rawPath = parsed.positionals[0];
   }
   const target = splitPath(rawPath);
-  assertAllowedTarget(target.pathname);
+  // R1: gate the *normalised* path (the same one fetch sends); a non-canonical
+  // input is refused instead of silently resolving to a different endpoint.
+  const normalizedPathname = normalizeTargetPath(target.pathname);
+  assertAllowedTarget(normalizedPathname);
   return {
     method,
-    pathname: target.pathname,
+    pathname: normalizedPathname,
     rawPath: target.raw,
     query: target.query,
     values: parsed.values,
