@@ -46,6 +46,20 @@
           `.gitignore` must keep ignoring `target*/`.
         -->
         <xihe.build.suffix></xihe.build.suffix>
+        <!--
+          task-8: absolute build-directory override, so two lanes can build the SAME checkout in
+          parallel without sharing one `target/` (the race the D32-26 note above describes).
+
+          Usage: `mvn -o -q "-Dxihe.target.dir=<abs-path>" test-compile` (or `test`). The whole output
+          tree moves — `classes`, `test-classes`, `surefire-reports` — so the two runs cannot delete
+          each other's class files mid-test. Prefer a directory outside the checkout (and, on this
+          machine, outside `H:`): `H:\zeotmp\cp-build-a`, `C:/xihe-cp-build-b`.
+
+          Default = `${project.basedir}/target${xihe.build.suffix}`, i.e. byte-for-byte the previous
+          behaviour: plain `mvn` still uses `target/`, and `-Dxihe.build.suffix=-b` still produces
+          `target-b/`. An explicit `-Dxihe.target.dir` wins over the suffix (it is the absolute form).
+        -->
+        <xihe.target.dir>${project.basedir}/target${xihe.build.suffix}</xihe.target.dir>
     </properties>
     
     <dependencies>
@@ -238,8 +252,10 @@
     </dependencies>
     
     <build>
-        <!-- D32-26 T2: parameterised build directory (default `target`, `-Dxihe.build.suffix=-b` ⇒ `target-b`). -->
-        <directory>${project.basedir}/target${xihe.build.suffix}</directory>
+        <!-- D32-26 T2 + task-8: parameterised build directory.
+             Default `target`; `-Dxihe.build.suffix=-b` ⇒ `target-b`;
+             `-Dxihe.target.dir=<abs>` ⇒ that directory (any volume). -->
+        <directory>${xihe.target.dir}</directory>
         <testOutputDirectory>${xihe.native.test.outputDirectory}</testOutputDirectory>
         <!-- PLAN-0534: pom.properties is the runtime projection of <version>.
              Filter only this file; all other resources are copied verbatim. -->
