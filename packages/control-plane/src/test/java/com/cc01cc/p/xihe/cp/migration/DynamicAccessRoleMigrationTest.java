@@ -14,6 +14,7 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
@@ -314,9 +315,17 @@ class DynamicAccessRoleMigrationTest {
                 namesById.put(UUID.fromString(rs.getString(1)), rs.getString(2));
             }
         }
-        assertEquals(SystemAccessRoleCatalog.roleSeeds().size(), namesById.size(),
-                "code and migration must describe the same catalog size");
-        for (SystemAccessRoleCatalog.RoleSeed seed : SystemAccessRoleCatalog.roleSeeds()) {
+        // task-25: the code catalog also ships AGENT_DELEGATOR (V109). This class pins the V87
+        // target, so only the V87-era roles participate here; the reverse direction (every code seed
+        // is seeded at head) is asserted by
+        // AgentPrincipalScopeMigrationTest#headSeedsMatchTheCodeSideCatalog.
+        List<SystemAccessRoleCatalog.RoleSeed> v87Seeds = SystemAccessRoleCatalog.roleSeeds().stream()
+                .filter(seed -> namesById.containsKey(seed.id()))
+                .toList();
+        assertEquals(6, namesById.size(), "V87 seeds exactly six built-in roles");
+        assertEquals(v87Seeds.size(), namesById.size(),
+                "every V87-seeded role must be described by the code catalog");
+        for (SystemAccessRoleCatalog.RoleSeed seed : v87Seeds) {
             assertEquals(seed.name(), namesById.get(seed.id()),
                     "fixed id must map to the same role name on both sides: " + seed.name());
             Set<String> codeAtoms = new HashSet<>();

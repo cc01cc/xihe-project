@@ -32,12 +32,20 @@ import java.util.Set;
  * <ul>
  *   <li>{@link #SCOPE_CLASS_INSTANCE} — bindable in the instance scope only: the instance
  *       capabilities plus the atoms that act on the instance itself (accounts, roles, templates,
- *       agent spawning, credentials).</li>
+ *       credentials).</li>
  *   <li>{@link #SCOPE_CLASS_BOTH} — bindable in either scope. This covers the file/exec/network
  *       atoms, the workspace-management atoms ({@code MANAGE_WORKSPACE_AGENTS},
- *       {@code CREATE_SCHEDULED_TASK}, {@code MANAGE_SCHEDULED_TASK}) and
- *       {@code workspace:admin}: an instance-scope binding of them means "in every workspace",
- *       which is the same shape as {@code workspace:admin(both)}.</li>
+ *       {@code CREATE_SCHEDULED_TASK}, {@code MANAGE_SCHEDULED_TASK}),
+ *       {@code SPAWN_AGENT} and {@code workspace:admin}: an instance-scope binding of them means
+ *       "in every workspace", which is the same shape as {@code workspace:admin(both)}.</li>
+ *   <li><b>SPAWN_AGENT is workspace-executable, not instance-only</b> (2026-11-04 ruling, task-25):
+ *       its effect is "create a child Session/Run inside the same workspace" and the authorization
+ *       path resolves the <b>session's agent principal</b> grants, not the human's. Keeping it in
+ *       {@link #INSTANCE_ONLY_ATOMS} blocked both the workspace binding
+ *       ({@code 400 ROLE_SCOPE_MISMATCH}) and every agent principal
+ *       ({@link #agentPrincipalForbiddenAtoms()} includes the instance-only set) — i.e. it made
+ *       agent delegation impossible regardless of role. Instance-only stays for actions that act on
+ *       the whole instance (accounts, roles, templates, credentials).</li>
  * </ul>
  *
  * <p>The remaining risk — an instance-level capability leaking down to one workspace — is guarded
@@ -106,7 +114,6 @@ public final class PermissionAtomCatalog {
             ToolFaceRegistry.ACTION_CREDENTIAL_MANAGE,
             ToolFaceRegistry.ACTION_CREATE_ACCOUNT,
             ToolFaceRegistry.ACTION_CREATE_TEMPLATE,
-            ToolFaceRegistry.ACTION_SPAWN_AGENT,
             ToolFaceRegistry.ACTION_MANAGE_ROLES,
             // PLAN-0622 D8: "create your own agent" is a user capability; a workspace-scoped
             // binding of it would be meaningless, so it is instance-bindable only.
