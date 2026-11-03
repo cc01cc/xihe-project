@@ -577,8 +577,14 @@ public class ProviderConnectionService {
             }
             String requiredSuffix = apiTypes.requiredBaseSuffix(apiTypeId, apiTypeVersion);
             if (!requiredSuffix.isEmpty() && !value.endsWith(requiredSuffix)) {
-                throw new IllegalArgumentException(
-                        "Base URL must end with the API Type path prefix " + requiredSuffix);
+                // 官方端点并非都以 /v1 结尾（Gemini …/v1beta/openai、智谱 …/api/paas/v4、
+                // 火山 …/api/v3）。requiredBaseSuffix 只是"必须带版本段"的默认期望；
+                // 接受任意以版本段结尾的路径，否则这些 provider 的默认连接会被直接 400 挡死。
+                boolean versionedPath = value.matches(".*/v\\d+[A-Za-z0-9]*(/openai)?$");
+                if (!versionedPath) {
+                    throw new IllegalArgumentException(
+                            "Base URL must end with the API Type path prefix " + requiredSuffix);
+                }
             }
             // PLAN-0485 spec §API Type: the embedding type contract pins this
             // host (probe evidence: the workspace endpoint rejected the key).

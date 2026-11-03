@@ -239,7 +239,7 @@
     "description": "MiniMax abab 系列模型。",
     "adapter": "openai-compatible",
     "litellmProvider": "openai",
-    "defaultBaseUrl": "https://api.minimax.chat/v1",
+    "defaultBaseUrl": "https://api.minimax.cn/v1",
     "modelDiscovery": "manual",
     "supportedApiTypes": [{ "apiTypeId": "openai-chat-completions", "version": 1, "capability": { "tools": false, "vision": false } }],
     "defaultApiType": { "apiTypeId": "openai-chat-completions", "version": 1 },
