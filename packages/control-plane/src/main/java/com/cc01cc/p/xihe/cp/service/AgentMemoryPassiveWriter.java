@@ -70,7 +70,13 @@ public class AgentMemoryPassiveWriter {
     public static final String REASON_WRITTEN = "candidate_written";
 
     /** The one type a compaction summary may become: it is knowledge about the work, not "who you are". */
-    public static final String PASSIVE_TYPE = AgentMemory.TYPE_FACT;
+    /**
+     * The context-policy document still classifies writes by type ({@code memory.types}); storage lost
+     * the column in V106, so this value is consulted <b>only</b> as the legacy policy gate. Keeping the
+     * gate unchanged means the passive channel behaves exactly as it did in M1-6; reconciling the
+     * policy document with the column removal is a separate ruling, not something to guess here.
+     */
+    public static final String LEGACY_POLICY_TYPE = "fact";
 
     /** How the candidate is marked when the summary is longer than the D29-33 content bound. */
     static final String TRUNCATION_MARKER = " …[truncated]";
@@ -136,7 +142,7 @@ public class AgentMemoryPassiveWriter {
                 skip(end, principalId, null, REASON_MEMORY_DISABLED);
                 return;
             }
-            if (!policy.types().contains(PASSIVE_TYPE)) {
+            if (!policy.types().contains(LEGACY_POLICY_TYPE)) {
                 skip(end, principalId, null, REASON_TYPE_NOT_ALLOWED);
                 return;
             }
@@ -165,7 +171,7 @@ public class AgentMemoryPassiveWriter {
                 }
             }
             Optional<AgentMemory> written = memoryService.rememberPassive(
-                    new AgentMemoryService.PassiveWrite(principalId, workspaceId, PASSIVE_TYPE, content,
+                    new AgentMemoryService.PassiveWrite(principalId, workspaceId, content,
                             origin, sourceRef, auditActor));
             if (written.isEmpty()) {
                 // An active row already holds this assertion: the passive path must not touch it.

@@ -5,6 +5,8 @@ import com.cc01cc.p.xihe.cp.config.ProblemDetailsHandler;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceAgent;
 import com.cc01cc.p.xihe.cp.entity.AgentMemory;
+import com.cc01cc.p.xihe.cp.policy.RequesterAuthority;
+import com.cc01cc.p.xihe.cp.policy.ToolFaceRegistry;
 import com.cc01cc.p.xihe.cp.service.AgentMemoryService;
 import com.cc01cc.p.xihe.cp.service.AgentPrincipalService;
 import com.cc01cc.p.xihe.cp.util.JacksonNodeExit;
@@ -15,30 +17,41 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 @RestController
 @RequestMapping("/api/v1/workspaces/{workspaceId}/agents")
 public class WorkspaceAgentController {
 
+    /** `additionalProperties: false` on the wire is enforced here: these are the only legal keys. */
+    private static final Set<String> MEMORY_CREATE_KEYS = Set.of("content", "pinned");
+    private static final Set<String> MEMORY_UPDATE_KEYS = Set.of("content", "pinned");
+
     private final AgentPrincipalService agentPrincipalService;
     private final AgentMemoryService agentMemoryService;
+    private final RequesterAuthority requesterAuthority;
     private final ObjectMapper objectMapper;
 
     public WorkspaceAgentController(AgentPrincipalService agentPrincipalService,
                                     AgentMemoryService agentMemoryService,
+                                    RequesterAuthority requesterAuthority,
                                     ObjectMapper objectMapper) {
         this.agentPrincipalService = agentPrincipalService;
         this.agentMemoryService = agentMemoryService;
+        this.requesterAuthority = requesterAuthority;
         this.objectMapper = objectMapper;
     }
 
@@ -59,26 +72,36 @@ public class WorkspaceAgentController {
     }
 
     /**
-     * PLAN-0629 M1-4 (C): the read-only memory tab of the workspace agent dialog.
+     * PLAN-0629 M1-4 (C) + M1-5: the memory tab of the workspace agent dialog (read face).
      *
      * <p>Authorization reuses the list gate: a caller who cannot see the principal in this workspace
      * gets the same 404 as a principal that does not exist (no existence leak), and the read is scoped
-     * to exactly this {@code (principal, workspace)} pair. Read-only by design — writes belong to M1-5
-     * and go through the approval gate ({@code MEMORY_WRITE}).</p>
+     * to exactly this {@code (principal, workspace)} pair.</p>
+     *
+     * <p>Archive ruling (Lead 2026-11-03): "删除" is an <b>archive</b>. The write delete is the V99 soft
+     * delete ({@code deleted_at}, no new status value), and reading it back is an explicit query:
+     * {@code status=active} (default) is "what is in effect now", {@code status=retired} is the archived
+     * rows, {@code status=all} is both — every row carries {@code archived}/{@code deletedAt} so the UI
+     * can label 归档 rather than 删除. An unknown value is a 400, never a silent fallback. Candidates
+     * are never listed in any mode.</p>
      */
     @PreAuthorize("isAuthenticated()")
     @GetMapping("/{principalId}/memories")
-    public ResponseEntity<?> memories(@PathVariable String workspaceId, @PathVariable String principalId) {
+    public ResponseEntity<?> memories(@PathVariable String workspaceId, @PathVariable String principalId,
+                                      @RequestParam(value = "status", defaultValue = "active")
+                                      String status) {
         try {
             UUID workspace = parseUuid(workspaceId);
             UUID principal = parseUuid(principalId);
+            AgentMemoryService.MemoryStatus filter = memoryStatus(status);
             boolean visible = agentPrincipalService.listWorkspaceAgents(requireActor(), workspace).stream()
                     .anyMatch(view -> view.principalId().equals(principal));
             if (!visible) {
                 return ProblemDetailsHandler.problemResponse(HttpStatus.NOT_FOUND,
                         "AGENT_PRINCIPAL_NOT_FOUND", "Agent principal not found");
             }
-            List<Map<String, Object>> rows = agentMemoryService.activeMemories(principal, workspace).stream()
+            List<Map<String, Object>> rows = agentMemoryService
+                    .listMemories(principal, workspace, filter).stream()
                     .map(this::toMemoryView).toList();
             Map<String, Object> response = new LinkedHashMap<>();
             response.put("memories", rows);
@@ -88,14 +111,179 @@ public class WorkspaceAgentController {
         }
     }
 
+    /**
+     * PLAN-0629 M1-5: the API write face of agent memory (the read face sits above).
+     *
+     * <p>Authorization is the {@code MEMORY_WRITE} <b>action atom</b> evaluated in this workspace by
+     * {@link RequesterAuthority} — never a role name. V99 seeds it into no default role, so a normal
+     * account cannot write memory until an explicit grant; {@code SUPER_ADMIN} holds every atom by
+     * definition. The atom is checked <b>before</b> the visibility lookup: a caller without it learns
+     * nothing about which principals exist (no existence oracle), while a caller with it still gets
+     * the same 404 as the read face for a principal outside this workspace.</p>
+     *
+     * <p>Channel and provenance are injected here, never taken from the body: {@code origin=ui} and
+     * {@code sourceRef=<userId>} are the UI channel's frozen values (D29-19), which is also what makes
+     * {@code pinned} legal (only {@code ui}/{@code cli} may pin — V99 CHECK).</p>
+     */
+    @PreAuthorize("isAuthenticated()")
+    @PostMapping("/{principalId}/memories")
+    public ResponseEntity<?> createMemory(@PathVariable String workspaceId,
+                                          @PathVariable String principalId,
+                                          @RequestBody(required = false) Map<String, Object> body) {
+        try {
+            UUID workspace = parseUuid(workspaceId);
+            UUID principal = parseUuid(principalId);
+            String actor = requireActor();
+            requireMemoryWrite(workspace, principal);
+            if (body == null || !MEMORY_CREATE_KEYS.containsAll(body.keySet())) {
+                return invalidRequest("Body must contain only content and pinned");
+            }
+            if (!(body.get("content") instanceof String content)) {
+                return invalidRequest("content is required and must be a string");
+            }
+            if (body.containsKey("pinned") && !(body.get("pinned") instanceof Boolean)) {
+                return invalidRequest("pinned must be a boolean");
+            }
+            boolean pinned = Boolean.TRUE.equals(body.get("pinned"));
+            AgentMemory saved = agentMemoryService.remember(new AgentMemoryService.MemoryWrite(
+                    principal, workspace, content, AgentMemory.ORIGIN_UI, actor, pinned, actor));
+            return ResponseEntity.status(HttpStatus.CREATED).body(memoryEnvelope(saved));
+        } catch (CpApiException e) {
+            return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
+        }
+    }
+
+    @PreAuthorize("isAuthenticated()")
+    @PatchMapping("/{principalId}/memories/{memoryId}")
+    public ResponseEntity<?> updateMemory(@PathVariable String workspaceId,
+                                          @PathVariable String principalId,
+                                          @PathVariable String memoryId,
+                                          @RequestBody(required = false) Map<String, Object> body) {
+        try {
+            UUID workspace = parseUuid(workspaceId);
+            UUID principal = parseUuid(principalId);
+            UUID memory = parseUuid(memoryId);
+            String actor = requireActor();
+            requireMemoryWrite(workspace, principal);
+            if (body == null || body.isEmpty() || !MEMORY_UPDATE_KEYS.containsAll(body.keySet())) {
+                return invalidRequest("Body must contain only content and/or pinned");
+            }
+            if (body.containsKey("content") && !(body.get("content") instanceof String)) {
+                return invalidRequest("content must be a string");
+            }
+            if (body.containsKey("pinned") && !(body.get("pinned") instanceof Boolean)) {
+                return invalidRequest("pinned must be a boolean");
+            }
+            String content = body.get("content") instanceof String value ? value : null;
+            Boolean pinned = body.get("pinned") instanceof Boolean value ? value : null;
+            AgentMemory saved = agentMemoryService.update(new AgentMemoryService.MemoryUpdate(
+                    principal, workspace, memory, content, pinned, actor));
+            return ResponseEntity.ok(memoryEnvelope(saved));
+        } catch (CpApiException e) {
+            return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
+        }
+    }
+
+    /**
+     * Archive one assertion ("归档", Lead ruling 2026-11-03 — <b>not</b> a hard delete).
+     *
+     * <p>V99 already models this as a soft delete ({@code deleted_at}), which is why no new status
+     * value is invented: the row keeps its identity, its audit trail and its dedupe history, while
+     * injection and the default listing stop returning it and the dedupe key is freed. Reading it back
+     * is an explicit opt-in ({@code GET …?includeArchived=true}), so "归档" stays recoverable and
+     * distinguishable from "never existed".</p>
+     */
+    @PreAuthorize("isAuthenticated()")
+    @DeleteMapping("/{principalId}/memories/{memoryId}")
+    public ResponseEntity<?> forgetMemory(@PathVariable String workspaceId,
+                                          @PathVariable String principalId,
+                                          @PathVariable String memoryId) {
+        try {
+            UUID workspace = parseUuid(workspaceId);
+            UUID principal = parseUuid(principalId);
+            UUID memory = parseUuid(memoryId);
+            String actor = requireActor();
+            requireMemoryWrite(workspace, principal);
+            agentMemoryService.forget(principal, workspace, memory, actor);
+            return ResponseEntity.noContent().build();
+        } catch (CpApiException e) {
+            return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
+        }
+    }
+
+    /**
+     * {@code MEMORY_WRITE} first (no existence oracle), then the workspace agent visibility gate the
+     * read face already uses (404 for a principal outside this workspace).
+     */
+    private void requireMemoryWrite(UUID workspace, UUID principal) {
+        UUID subject = requesterAuthority.currentSubjectId();
+        if (subject == null || !requesterAuthority.holdsActionAtom(subject,
+                ToolFaceRegistry.ACTION_MEMORY_WRITE, workspace)) {
+            throw new CpApiException(HttpStatus.FORBIDDEN, "FORBIDDEN",
+                    "MEMORY_WRITE is required to write agent memory in this workspace");
+        }
+        boolean visible = agentPrincipalService.listWorkspaceAgents(requireActor(), workspace).stream()
+                .anyMatch(view -> view.principalId().equals(principal));
+        if (!visible) {
+            throw new CpApiException(HttpStatus.NOT_FOUND, "AGENT_PRINCIPAL_NOT_FOUND",
+                    "Agent principal not found");
+        }
+    }
+
+    private Map<String, Object> memoryEnvelope(AgentMemory memory) {
+        Map<String, Object> response = new LinkedHashMap<>();
+        response.put("memory", toMemoryView(memory));
+        return response;
+    }
+
+    private static ResponseEntity<Map<String, Object>> invalidRequest(String detail) {
+        return ProblemDetailsHandler.problemResponse(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", detail);
+    }
+
     private Map<String, Object> toMemoryView(AgentMemory memory) {
         Map<String, Object> view = new LinkedHashMap<>();
         view.put("id", memory.getId().toString());
-        view.put("type", memory.getType());
+        view.put("origin", memoryOrigin(memory.getOrigin()));
         view.put("pinned", memory.isPinned());
+        view.put("createdAt", memory.getCreatedAt() == null ? null : memory.getCreatedAt().toString());
         view.put("updatedAt", memory.getUpdatedAt() == null ? null : memory.getUpdatedAt().toString());
+        // Lead ruling 2026-11-03: "deleted" is an archive. Both keys are always present so the UI does
+        // not have to guess from absence; a live row reports archived=false / deletedAt=null.
+        view.put("archived", memory.getDeletedAt() != null);
+        view.put("deletedAt", memory.getDeletedAt() == null ? null : memory.getDeletedAt().toString());
         view.put("content", memory.getContent());
         return view;
+    }
+
+    /**
+     * UI vocabulary for "where did this memory come from" (Lead ruling 2026-11-03): the stored
+     * {@code origin} stays the durable channel list ({@code tool|ui|cli|passive.*}); the wire exposes
+     * the two buckets the UI can explain — {@code manual} (a person wrote it: {@code ui}/{@code cli})
+     * and {@code run} (an agent run produced it: {@code tool}/{@code passive.*}). The mapping lives here
+     * so the bucket has exactly one definition.
+     */
+    private static String memoryOrigin(String origin) {
+        if (origin == null) {
+            return "run";
+        }
+        return switch (origin) {
+            case AgentMemory.ORIGIN_UI, AgentMemory.ORIGIN_CLI -> "manual";
+            default -> "run";
+        };
+    }
+
+    /** {@code status=active|retired|all} (default {@code active}); an unknown value is a 400, not a fallback. */
+    private static AgentMemoryService.MemoryStatus memoryStatus(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return AgentMemoryService.MemoryStatus.ACTIVE;
+        }
+        return switch (raw.trim().toLowerCase(java.util.Locale.ROOT)) {
+            case "active" -> AgentMemoryService.MemoryStatus.ACTIVE;
+            case "retired" -> AgentMemoryService.MemoryStatus.RETIRED;
+            case "all" -> AgentMemoryService.MemoryStatus.ALL;
+            default -> throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST",
+                    "status must be one of active|retired|all");
+        };
     }
 
     @PreAuthorize("isAuthenticated()")
