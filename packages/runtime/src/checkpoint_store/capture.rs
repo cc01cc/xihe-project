@@ -34,6 +34,13 @@ pub struct CaptureResult {
     pub walk_ms: u64,
     pub blob_write_ms: u64,
     pub manifest_ms: u64,
+    pub lock_ms: u64,
+    pub cache_read_ms: u64,
+    pub cache_write_ms: u64,
+    pub slice_write_ms: u64,
+    pub entries_ms: u64,
+    pub nested_scan_ms: u64,
+    pub tail_read_ms: u64,
     pub nested_roots: Vec<String>,
 }
 
@@ -585,14 +592,18 @@ pub fn capture_root_with_options(
     options: &CaptureOptions,
 ) -> Result<CaptureResult, CaptureError> {
     let started = Instant::now();
+    let lock_started = Instant::now();
     let _lock = store.lock()?;
+    let lock_ms = lock_started.elapsed().as_millis() as u64;
     let walk_started = Instant::now();
     let walk = walk_workspace(root)?;
     let walk_ms = walk_started.elapsed().as_millis() as u64;
     if !walk.issues.is_empty() {
         return Err(CaptureError::WalkIssues(walk.issues));
     }
+    let nested_started = Instant::now();
     let nested_roots = discover_nested_roots(root, &options.declared_roots)?;
+    let nested_scan_ms = nested_started.elapsed().as_millis() as u64;
     let walk_entries: Vec<WalkEntry> = if options.exclude_opaque_nested {
         walk.entries
             .into_iter()
@@ -609,8 +620,12 @@ pub fn capture_root_with_options(
     } else {
         walk.entries
     };
+    let cache_started = Instant::now();
     let cache = read_cache(store, root_id)?;
+    let cache_read_ms = cache_started.elapsed().as_millis() as u64;
+    let tail_started = Instant::now();
     let tail = tail_slice(store, root_id)?;
+    let tail_read_ms = tail_started.elapsed().as_millis() as u64;
 
     if let Some(tail) = &tail
         && let Some(hits) = fast_no_change(store, tail, &walk_entries, &cache)?
@@ -628,6 +643,13 @@ pub fn capture_root_with_options(
             walk_ms,
             blob_write_ms: 0,
             manifest_ms: 0,
+            lock_ms,
+            cache_read_ms,
+            cache_write_ms: 0,
+            slice_write_ms: 0,
+            entries_ms: 0,
+            nested_scan_ms,
+            tail_read_ms,
             nested_roots,
             ..CaptureResult::default()
         });
@@ -642,6 +664,7 @@ pub fn capture_root_with_options(
     let mut total_bytes = 0u64;
     let mut blob_write_ms = 0u64;
 
+    let entries_started = Instant::now();
     for walk_entry in &walk_entries {
         match walk_entry.kind {
             WalkEntryKind::File => {
@@ -727,6 +750,8 @@ pub fn capture_root_with_options(
         }
     }
 
+    let entries_ms = (entries_started.elapsed().as_millis() as u64).saturating_sub(blob_write_ms);
+
     let manifest_started = Instant::now();
     let manifest = Manifest::from_entries(entries)?;
     let manifest_bytes = manifest.canonical_bytes()?;
@@ -735,12 +760,15 @@ pub fn capture_root_with_options(
     store.write_atomic(&store.manifest_path(&manifest_id), &manifest_bytes)?;
 
     let cache_write = || write_cache(store, root_id, next_cache.clone());
+    let mut cache_write_ms = 0u64;
     if let Some(tail) = &tail
         && tail.manifest == manifest_id
     {
+        let cache_started = Instant::now();
         if let Err(error) = cache_write() {
             tracing::warn!(root_id, %error, "checkpoint stat cache write failed");
         }
+        cache_write_ms = cache_started.elapsed().as_millis() as u64;
         return Ok(CaptureResult {
             slice_id: tail.id.clone(),
             manifest_id,
@@ -755,6 +783,13 @@ pub fn capture_root_with_options(
             walk_ms,
             blob_write_ms,
             manifest_ms,
+            lock_ms,
+            cache_read_ms,
+            cache_write_ms,
+            slice_write_ms: 0,
+            entries_ms,
+            nested_scan_ms,
+            tail_read_ms,
             nested_roots,
         });
     }
@@ -779,6 +814,9 @@ pub fn capture_root_with_options(
         "walk_ms": walk_ms,
         "blob_write_ms": blob_write_ms,
         "manifest_ms": manifest_ms,
+        "lock_ms": lock_ms,
+        "cache_read_ms": cache_read_ms,
+        "cache_write_ms": cache_write_ms,
     });
     let slice = serde_json::json!({
         "v": 1,
@@ -800,12 +838,16 @@ pub fn capture_root_with_options(
         "state": "captured",
         "migrated_from": serde_json::Value::Null,
     });
+    let slice_write_started = Instant::now();
     let slice_bytes =
         serde_json::to_vec(&slice).map_err(|error| CaptureError::Encode(error.to_string()))?;
     store.write_atomic(&slice_path, &slice_bytes)?;
+    let slice_write_ms = slice_write_started.elapsed().as_millis() as u64;
+    let cache_started = Instant::now();
     if let Err(error) = cache_write() {
         tracing::warn!(root_id, %error, "checkpoint stat cache write failed");
     }
+    cache_write_ms = cache_started.elapsed().as_millis() as u64;
 
     Ok(CaptureResult {
         slice_id,
@@ -821,6 +863,13 @@ pub fn capture_root_with_options(
         walk_ms,
         blob_write_ms,
         manifest_ms,
+        lock_ms,
+        cache_read_ms,
+        cache_write_ms,
+        slice_write_ms,
+        entries_ms,
+        nested_scan_ms,
+        tail_read_ms,
         nested_roots,
     })
 }
@@ -1364,5 +1413,107 @@ mod tests {
             assert_eq!(warm.cache_hits, count);
             assert_eq!(warm.hashed_files, 0);
         }
+    }
+
+    #[test]
+    #[ignore = "manual 200x dual-write phase breakdown; --ignored --nocapture"]
+    fn benchmark_dual_phase_breakdown_200x() {
+        fn pct(values: &[u64], percent: usize) -> u64 {
+            let mut sorted = values.to_vec();
+            sorted.sort_unstable();
+            sorted[(sorted.len() * percent / 100).min(sorted.len() - 1)]
+        }
+        fn dir_size(root: &Path) -> u64 {
+            let mut total = 0u64;
+            let mut stack = vec![root.to_path_buf()];
+            while let Some(dir) = stack.pop() {
+                let Ok(entries) = fs::read_dir(&dir) else {
+                    continue;
+                };
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    let Ok(metadata) = fs::symlink_metadata(&path) else {
+                        continue;
+                    };
+                    if metadata.is_dir() {
+                        stack.push(path);
+                    } else {
+                        total = total.saturating_add(metadata.len());
+                    }
+                }
+            }
+            total
+        }
+
+        let workspace = workspace();
+        for index in 0..1_000usize {
+            write_file(
+                workspace.path(),
+                &format!("dir/{:02}/file-{index:04}.txt", index / 50),
+                format!("payload-{index}").as_bytes(),
+            );
+        }
+        let (_store_dir, store) = store();
+        let cold = capture_root(&store, workspace.path(), "ws-1", None, None).expect("cold");
+        assert!(!cold.no_change);
+
+        let mut walk = Vec::with_capacity(200);
+        let mut blob = Vec::with_capacity(200);
+        let mut manifest = Vec::with_capacity(200);
+        let mut slice = Vec::with_capacity(200);
+        let mut cache_read = Vec::with_capacity(200);
+        let mut cache_write = Vec::with_capacity(200);
+        let mut lock = Vec::with_capacity(200);
+        let mut entries = Vec::with_capacity(200);
+        let mut nested_scan = Vec::with_capacity(200);
+        let mut tail_read = Vec::with_capacity(200);
+        let mut total = Vec::with_capacity(200);
+        for iteration in 0..200usize {
+            write_file(
+                workspace.path(),
+                "changed.txt",
+                format!("changed-{iteration}").as_bytes(),
+            );
+            let result =
+                capture_root(&store, workspace.path(), "ws-1", None, None).expect("phase capture");
+            assert!(!result.no_change);
+            walk.push(result.walk_ms);
+            blob.push(result.blob_write_ms);
+            manifest.push(result.manifest_ms);
+            slice.push(result.slice_write_ms);
+            cache_read.push(result.cache_read_ms);
+            cache_write.push(result.cache_write_ms);
+            lock.push(result.lock_ms);
+            entries.push(result.entries_ms);
+            nested_scan.push(result.nested_scan_ms);
+            tail_read.push(result.tail_read_ms);
+            total.push(result.duration_ms);
+        }
+        eprintln!(
+            "dual_phase_200x entries=1001 lock_p50={} lock_p95={} walk_p50={} walk_p95={} blob_p50={} blob_p95={} manifest_p50={} manifest_p95={} slice_p50={} slice_p95={} cache_read_p50={} cache_read_p95={} cache_write_p50={} cache_write_p95={} entries_p50={} entries_p95={} nested_scan_p50={} nested_scan_p95={} tail_read_p50={} tail_read_p95={} total_p50={} total_p95={} store_bytes={}",
+            pct(&lock, 50),
+            pct(&lock, 95),
+            pct(&walk, 50),
+            pct(&walk, 95),
+            pct(&blob, 50),
+            pct(&blob, 95),
+            pct(&manifest, 50),
+            pct(&manifest, 95),
+            pct(&slice, 50),
+            pct(&slice, 95),
+            pct(&cache_read, 50),
+            pct(&cache_read, 95),
+            pct(&cache_write, 50),
+            pct(&cache_write, 95),
+            pct(&entries, 50),
+            pct(&entries, 95),
+            pct(&nested_scan, 50),
+            pct(&nested_scan, 95),
+            pct(&tail_read, 50),
+            pct(&tail_read, 95),
+            pct(&total, 50),
+            pct(&total, 95),
+            dir_size(store.root())
+        );
     }
 }
