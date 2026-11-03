@@ -200,7 +200,8 @@ paths:
   /api/v1/workspaces/{workspaceId}/agents/{principalId}/memories:
     get:
       operationId: listWorkspaceAgentMemories
-      summary: List one agent's memory in this workspace (PLAN-0629 M1-4/M1-5)
+      deprecated: true
+      summary: "[DEPRECATED] List one agent's memory (subject-level route preferred)"
       description: |
         PLAN-0629 M1-4 (C) + M1-5: the memory tab of the workspace agent dialog. Returns the subject's
         memory rows scoped to exactly this `(principal, workspace)` pair (candidates are never listed),
@@ -218,14 +219,15 @@ paths:
         - { in: path, name: principalId, required: true, schema: { type: string, format: uuid } }
         - { in: query, name: status, required: false, schema: { type: string, enum: [active, retired, all], default: active }, description: 'PLAN-0629 M1-5 (Lead 2026-11-03): active = in effect (default), retired = archived (soft-deleted) only, all = both. Unknown values are rejected with 400 INVALID_REQUEST.' }
       responses:
-        '200': { description: 'Active memory rows (frozen envelope {memories:[…]})', content: { application/json: { schema: { $ref: '#/components/schemas/WorkspaceAgentMemoryListResponse' } } } }
+        '200': { description: 'Active memory rows (frozen envelope {memories:[…]})', content: { application/json: { schema: { $ref: '#/components/schemas/AgentMemoryListResponse' } } } }
         '400': { $ref: '#/components/responses/Problem' }
         '401': { $ref: '#/components/responses/Problem' }
         '403': { $ref: '#/components/responses/Problem' }
         '404': { description: 'AGENT_PRINCIPAL_NOT_FOUND (also for a principal the caller cannot see)', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
     post:
       operationId: createWorkspaceAgentMemory
-      summary: Write one agent memory assertion (PLAN-0629 M1-5)
+      deprecated: true
+      summary: "[DEPRECATED] Write one agent memory assertion (subject-level route preferred)"
       description: |
         PLAN-0629 M1-5: the write face of agent memory. `origin` and `source_ref` are injected by CP
         (`ui` + the caller's user id) and can never come from the body; `content_sha256` is always
@@ -244,9 +246,9 @@ paths:
         - { in: path, name: principalId, required: true, schema: { type: string, format: uuid } }
       requestBody:
         required: true
-        content: { application/json: { schema: { $ref: '#/components/schemas/WorkspaceAgentMemoryCreateRequest' } } }
+        content: { application/json: { schema: { $ref: '#/components/schemas/AgentMemoryCreateRequest' } } }
       responses:
-        '201': { description: 'The stored (or dedupe-hit) memory row', content: { application/json: { schema: { $ref: '#/components/schemas/WorkspaceAgentMemoryResponse' } } } }
+        '201': { description: 'The stored (or dedupe-hit) memory row', content: { application/json: { schema: { $ref: '#/components/schemas/AgentMemoryResponse' } } } }
         '400': { description: 'INVALID_REQUEST / MEMORY_CONTENT_TOO_LONG', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
         '401': { $ref: '#/components/responses/Problem' }
         '403': { description: 'FORBIDDEN (MEMORY_WRITE not held in this workspace)', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
@@ -254,7 +256,8 @@ paths:
   /api/v1/workspaces/{workspaceId}/agents/{principalId}/memories/{memoryId}:
     patch:
       operationId: updateWorkspaceAgentMemory
-      summary: Edit one agent memory assertion (PLAN-0629 M1-5)
+      deprecated: true
+      summary: "[DEPRECATED] Edit one agent memory assertion (subject-level route preferred)"
       description: |
         PATCH semantics: send `content`, `pinned`, or both. Omitted fields are left alone, so pinning
         cannot accidentally rewrite the content hash. The row keeps its identity and provenance
@@ -269,9 +272,9 @@ paths:
         - { in: path, name: memoryId, required: true, schema: { type: string, format: uuid } }
       requestBody:
         required: true
-        content: { application/json: { schema: { $ref: '#/components/schemas/WorkspaceAgentMemoryUpdateRequest' } } }
+        content: { application/json: { schema: { $ref: '#/components/schemas/AgentMemoryUpdateRequest' } } }
       responses:
-        '200': { description: 'The updated memory row', content: { application/json: { schema: { $ref: '#/components/schemas/WorkspaceAgentMemoryResponse' } } } }
+        '200': { description: 'The updated memory row', content: { application/json: { schema: { $ref: '#/components/schemas/AgentMemoryResponse' } } } }
         '400': { description: 'INVALID_REQUEST / MEMORY_CONTENT_TOO_LONG', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
         '401': { $ref: '#/components/responses/Problem' }
         '403': { description: 'FORBIDDEN (MEMORY_WRITE not held in this workspace)', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
@@ -279,7 +282,8 @@ paths:
         '409': { description: 'MEMORY_DUPLICATE (the edit would collide with another live assertion)', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
     delete:
       operationId: deleteWorkspaceAgentMemory
-      summary: Archive (soft-delete) one agent memory assertion (PLAN-0629 M1-5)
+      deprecated: true
+      summary: "[DEPRECATED] Archive (soft-delete) one agent memory assertion (subject-level route preferred)"
       description: |
         Archive, not erase (Lead ruling 2026-11-03): the row keeps its identity, its audit trail
         (`memory_deleted`) and its history, while injection and the default listing stop returning it
@@ -295,6 +299,100 @@ paths:
         '400': { $ref: '#/components/responses/Problem' }
         '401': { $ref: '#/components/responses/Problem' }
         '403': { description: 'FORBIDDEN (MEMORY_WRITE not held in this workspace)', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '404': { description: 'MEMORY_NOT_FOUND / AGENT_PRINCIPAL_NOT_FOUND', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+  /api/v1/agent-principals/{principalId}/memories:
+    get:
+      operationId: listAgentMemories
+      summary: List one agent's memory (subject-level, V107)
+      description: |
+        V107 (user ruling 2026-11-04): memory belongs to the **agent principal**, not to a workspace, so
+        the same principal reads one memory set in every workspace it is bound to. `workspaceId` is a
+        **required** query parameter and is used only as the authorization context: the workspace agent
+        visibility gate is evaluated there and the read returns identical rows for any workspace the
+        principal is bound to. A missing `workspaceId` is a 400 `INVALID_REQUEST` (never an implicit
+        "all workspaces" read).
+        Candidates are never listed; `status=active` (default) is what is in effect, `status=retired` is
+        the archived (soft-deleted) rows and `status=all` is both. An unknown value is a 400, never a
+        silent fallback.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: principalId, required: true, schema: { type: string, format: uuid } }
+        - { in: query, name: workspaceId, required: true, schema: { type: string, format: uuid }, description: "Authorization context only (V107): the workspace in which the caller's visibility of this principal is evaluated. It is not part of the memory key." }
+        - { in: query, name: status, required: false, schema: { type: string, enum: [active, retired, all], default: active }, description: "active = in effect (default), retired = archived (soft-deleted) only, all = both. Unknown values are rejected with 400 INVALID_REQUEST." }
+      responses:
+        '200': { description: 'Memory rows (frozen envelope {memories:[…]})', content: { application/json: { schema: { $ref: '#/components/schemas/AgentMemoryListResponse' } } } }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { description: 'AGENT_PRINCIPAL_NOT_FOUND (also for a principal the caller cannot see in the authorizing workspace)', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+    post:
+      operationId: createAgentMemory
+      summary: Write one agent memory assertion (subject-level, V107)
+      description: |
+        The write face of subject-level memory. `origin` and `source_ref` are injected by CP (`ui` + the
+        caller's user id) and can never come from the body; `content_sha256` is always computed
+        server-side. Dedupe key is `(principal_id, content_sha256)`: the same normalized assertion written
+        from any workspace is one row (a re-write returns the existing row with a refreshed `updatedAt`).
+        Authorization is the `MEMORY_WRITE` action atom evaluated in the `workspaceId` workspace (never a
+        role name), checked **before** the visibility lookup so a caller without the atom learns nothing
+        about which principals exist (403), while a caller with it gets the read face's 404 for a
+        principal outside the authorizing workspace.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: principalId, required: true, schema: { type: string, format: uuid } }
+        - { in: query, name: workspaceId, required: true, schema: { type: string, format: uuid }, description: "Authorization context only (V107): the workspace whose grant is evaluated for MEMORY_WRITE and against which the audit row is filed." }
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/AgentMemoryCreateRequest' } } }
+      responses:
+        '201': { description: 'The stored (or dedupe-hit) memory row', content: { application/json: { schema: { $ref: '#/components/schemas/AgentMemoryResponse' } } } }
+        '400': { description: 'INVALID_REQUEST (missing workspaceId / bad body) or MEMORY_CONTENT_TOO_LONG', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { description: 'FORBIDDEN (MEMORY_WRITE not held in the authorizing workspace)', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '404': { description: 'AGENT_PRINCIPAL_NOT_FOUND (also for a principal the caller cannot see)', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+  /api/v1/agent-principals/{principalId}/memories/{memoryId}:
+    patch:
+      operationId: updateAgentMemory
+      summary: Edit one agent memory assertion (subject-level, V107)
+      description: |
+        PATCH semantics: send `content`, `pinned`, or both. Omitted fields are left alone, so pinning
+        cannot accidentally rewrite the content hash. The row keeps its identity and provenance
+        (`created_at`, `origin`, `source_ref`); `content_sha256` is recomputed when the normalized content
+        changes. Only live, `status=active` rows are addressable: a candidate answers the same 404 as a
+        missing id, and an id belonging to another principal is indistinguishable from a missing one.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: principalId, required: true, schema: { type: string, format: uuid } }
+        - { in: path, name: memoryId, required: true, schema: { type: string, format: uuid } }
+        - { in: query, name: workspaceId, required: true, schema: { type: string, format: uuid }, description: "Authorization context only (V107)." }
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/AgentMemoryUpdateRequest' } } }
+      responses:
+        '200': { description: 'The updated memory row', content: { application/json: { schema: { $ref: '#/components/schemas/AgentMemoryResponse' } } } }
+        '400': { description: 'INVALID_REQUEST (missing workspaceId / bad body) or MEMORY_CONTENT_TOO_LONG', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { description: 'FORBIDDEN (MEMORY_WRITE not held in the authorizing workspace)', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '404': { description: 'MEMORY_NOT_FOUND / AGENT_PRINCIPAL_NOT_FOUND', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '409': { description: 'MEMORY_DUPLICATE (the edit would collide with another live assertion of this subject)', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+    delete:
+      operationId: deleteAgentMemory
+      summary: Archive (soft-delete) one agent memory assertion (subject-level, V107)
+      description: |
+        Archive, not erase: the row keeps its identity, its audit trail (`memory_deleted`) and its
+        history, while injection and the default listing stop returning it and the dedupe key is freed
+        (the same content may be written again later). Read it back with `GET …?status=retired|all`.
+        The risk of a mis-delete is bounded by the subject: an id of another principal is a 404.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: principalId, required: true, schema: { type: string, format: uuid } }
+        - { in: path, name: memoryId, required: true, schema: { type: string, format: uuid } }
+        - { in: query, name: workspaceId, required: true, schema: { type: string, format: uuid }, description: "Authorization context only (V107)." }
+      responses:
+        '204': { description: 'Archived' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { description: 'FORBIDDEN (MEMORY_WRITE not held in the authorizing workspace)', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
         '404': { description: 'MEMORY_NOT_FOUND / AGENT_PRINCIPAL_NOT_FOUND', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
   /api/v1/workspaces/{workspaceId}/members:
     get:
@@ -3887,11 +3985,11 @@ components:
     WorkspaceAgentPermission: { type: object, additionalProperties: false, required: [actionClass], properties: { actionClass: { type: string }, resource: { type: string, default: '*' } } }
     WorkspaceAgentView: { type: object, required: [principalId, name, createdAt, source, permissionsSnapshot, bound, disabled, roleIds], properties: { roleIds: { type: array, items: { type: string, format: uuid }, description: 'PLAN-0629 (user ruling 2026-11-04): the workspace-scoped roles that authorize this row; empty = listed because of a legacy binding cap only.' }, principalId: { type: string, format: uuid }, name: { type: string }, templateId: { type: [string, 'null'] }, templateName: { type: [string, 'null'] }, createdAt: { type: string, format: date-time }, source: { type: string, enum: [workspace, personal, instance], description: 'PLAN-0622: the sharing tier that makes this principal usable in this Workspace.' }, bound: { type: boolean, description: 'D26: whether the principal is bound to this Workspace. false = listed here (personal/instance are visible without a binding) but a Session still needs a binding before it is usable.' }, disabled: { type: boolean, description: 'D27: the principal is disabled (disabledAt set); the UI must block selection and show the disabled badge.' }, hooks: { type: [object, 'null'], description: 'PLAN-0625 V96/D25-09: the subscription document {advisors:[{kind,on:[actionClass]}]}, copied from the template at creation and mutable through PATCH /api/v1/agent-principals/{principalId}; null = no subscriptions (never an array — Gap I).' }, contextPolicy: { type: [object, 'null'], description: 'PLAN-0629 M1 (D29-21): the subject memory policy {memory:{enabled,writeMode,types}}; null = no policy (memory off). The workspace agent list carries it so the UI can show/manage memory.' }, permissionsSnapshot: { type: array, items: { $ref: '#/components/schemas/WorkspaceAgentPermission' }, description: 'Frozen cap stored on the Workspace binding; empty for personal/instance sources, whose cap resolves per run.' } } }
     WorkspaceAgentListResponse: { type: object, required: [agents], properties: { agents: { type: array, items: { $ref: '#/components/schemas/WorkspaceAgentView' } } } }
-    WorkspaceAgentMemoryView: { type: object, additionalProperties: false, required: [id, pinned, createdAt, updatedAt, origin, archived, deletedAt, content], properties: { id: { type: string, format: uuid }, origin: { type: string, enum: [manual, run], description: 'PLAN-0629 M1-5 (Lead 2026-11-03): where the assertion came from, in UI vocabulary — manual = a person wrote it (stored origin ui/cli), run = an agent run produced it (stored origin tool/passive.*).' }, pinned: { type: boolean, description: 'Only the ui/cli channels can pin (V99 CHECK); pinned rows are injected first.' }, createdAt: { type: string, format: date-time, description: 'PLAN-0629 M1-5: when the assertion was first written; an edit keeps it.' }, updatedAt: { type: string, format: date-time }, archived: { type: boolean, description: 'PLAN-0629 M1-5 (Lead 2026-11-03): true for a soft-deleted row. "删除" is an archive, so the UI labels it 归档 and reads it back with status=retired|all.' }, deletedAt: { type: [string, 'null'], format: date-time, description: 'When it was archived; null while live.' }, content: { type: string, description: 'Stored (normalized) content; the UI truncates for display.' } } }
-    WorkspaceAgentMemoryListResponse: { type: object, required: [memories], properties: { memories: { type: array, items: { $ref: '#/components/schemas/WorkspaceAgentMemoryView' } } } }
-    WorkspaceAgentMemoryCreateRequest: { type: object, additionalProperties: false, required: [content], properties: { content: { type: string, minLength: 1, maxLength: 8000, description: 'Normalised server-side (NFC -> trim -> collapse whitespace -> drop zero-width); 1..8000 characters after normalisation.' }, pinned: { type: boolean, default: false, description: 'Only the ui/cli channels may pin; this endpoint is the ui channel.' } } }
-    WorkspaceAgentMemoryUpdateRequest: { type: object, additionalProperties: false, minProperties: 1, properties: { content: { type: string, minLength: 1, maxLength: 8000 }, pinned: { type: boolean } } }
-    WorkspaceAgentMemoryResponse: { type: object, required: [memory], properties: { memory: { $ref: '#/components/schemas/WorkspaceAgentMemoryView' } } }
+    AgentMemoryView: { type: object, additionalProperties: false, required: [id, pinned, createdAt, updatedAt, origin, archived, deletedAt, content], properties: { id: { type: string, format: uuid }, origin: { type: string, enum: [manual, run], description: 'PLAN-0629 M1-5 (Lead 2026-11-03): where the assertion came from, in UI vocabulary — manual = a person wrote it (stored origin ui/cli), run = an agent run produced it (stored origin tool/passive.*).' }, pinned: { type: boolean, description: 'Only the ui/cli channels can pin (V99 CHECK); pinned rows are injected first.' }, createdAt: { type: string, format: date-time, description: 'PLAN-0629 M1-5: when the assertion was first written; an edit keeps it.' }, updatedAt: { type: string, format: date-time }, archived: { type: boolean, description: 'PLAN-0629 M1-5 (Lead 2026-11-03): true for a soft-deleted row. "删除" is an archive, so the UI labels it 归档 and reads it back with status=retired|all.' }, deletedAt: { type: [string, 'null'], format: date-time, description: 'When it was archived; null while live.' }, content: { type: string, description: 'Stored (normalized) content; the UI truncates for display.' } } }
+    AgentMemoryListResponse: { type: object, additionalProperties: false, required: [memories], properties: { memories: { type: array, items: { $ref: '#/components/schemas/AgentMemoryView' } } } }
+    AgentMemoryCreateRequest: { type: object, additionalProperties: false, required: [content], properties: { content: { type: string, minLength: 1, maxLength: 8000, description: 'Normalised server-side (NFC -> trim -> collapse whitespace -> drop zero-width); 1..8000 characters after normalisation.' }, pinned: { type: boolean, default: false, description: 'Only the ui/cli channels may pin; this endpoint is the ui channel.' } } }
+    AgentMemoryUpdateRequest: { type: object, additionalProperties: false, minProperties: 1, properties: { content: { type: string, minLength: 1, maxLength: 8000 }, pinned: { type: boolean } } }
+    AgentMemoryResponse: { type: object, additionalProperties: false, required: [memory], properties: { memory: { $ref: '#/components/schemas/AgentMemoryView' } } }
     AgentModelRef: { type: object, additionalProperties: false, required: [provider, model], properties: { provider: { type: string, minLength: 1 }, model: { type: string, minLength: 1 } } }
     AgentPrincipalCreateRequest: { type: object, additionalProperties: false, required: [name], properties: { name: { type: string, minLength: 1 }, templateId: { type: [string, 'null'], format: uuid }, roleIds: { type: [array, 'null'], items: { type: string, format: uuid }, description: 'PLAN-0629 task-12: the roles the new principal is bound to. Absent or null means the defaults (instance scope USER; a workspace binding additionally gets WS_EDITOR). Every id is validated once before the row is written: an unknown id, an instance-administrator role (any atom in PermissionAtomCatalog.agentPrincipalForbiddenAtoms, e.g. ADMIN/SUPER_ADMIN), or a role wider than the caller itself holds is refused with 403 ROLE_NOT_GRANTABLE — never a generic 400.' }, scope: { type: string, enum: [PERSONAL, WORKSPACE, INSTANCE], default: WORKSPACE, deprecated: true, description: 'DEPRECATED (PLAN-0629, user ruling 2026-11-04): read-only compatibility field. Permission comes from role bindings, not from a tier — accessibility is decided by workspace-scoped role_bindings rows (V108 backfills them from existing workspace bindings). Accepted on create for older clients and ignored; the column keeps its WORKSPACE default.' }, defaultModelProvider: { type: [string, 'null'], description: 'Model intent only; the principal never holds a provider connection.' }, defaultModelName: { type: [string, 'null'] }, allowedModels: { type: [array, 'null'], items: { $ref: '#/components/schemas/AgentModelRef' }, description: 'null = unrestricted.' }, hooks: { type: [object, 'null'], description: 'PLAN-0625 M2 (D25-12/14): hook subscriptions {advisors:[{kind,on:[actionClass]}]}; on must hit the frozen action-class whitelist (today: approval.ask) or the write is rejected 400. A preset guard (origin=SYSTEM_PRESET) refuses subscription changes with 403 GUARD_HOOKS_IMMUTABLE.' } } }
     AgentPrincipalCreateView: { type: object, required: [principalId, createdAt, scope, ownerUserId, defaultModelProvider, defaultModelName, allowedModels, roleIds], properties: { roleIds: { type: array, items: { type: string, format: uuid }, description: 'The bindings that were actually written (echo, so the caller does not have to re-read).' }, principalId: { type: string, format: uuid }, templateId: { type: [string, 'null'], format: uuid }, templateName: { type: [string, 'null'] }, scope: { type: string, enum: [PERSONAL, WORKSPACE, INSTANCE], deprecated: true, description: 'DEPRECATED (PLAN-0629, user ruling 2026-11-04): kept so older clients keep parsing the payload. It no longer participates in authorization — an agent principal is visible and usable in a workspace when it holds a workspace-scoped role binding there.' }, ownerUserId: { type: [string, 'null'], format: uuid, description: 'The PERSONAL owner; null for WORKSPACE/INSTANCE.' }, defaultModelProvider: { type: [string, 'null'] }, defaultModelName: { type: [string, 'null'] }, allowedModels: { type: [array, 'null'], items: { $ref: '#/components/schemas/AgentModelRef' } }, createdAt: { type: string, format: date-time }, hooks: { type: [object, 'null'], description: 'PLAN-0625 M2: the stored subscription document {advisors:[{kind,on:[actionClass]}]} (null = none) — serialised as plain JSON (Gap J).' }, contextPolicy: { type: [object, 'null'], description: 'PLAN-0629 M1 (D29-21): the memory policy of the new principal (null = off). A create never sets it — the subject starts with memory off — but the view carries it so the caller sees the state immediately.' } } }
