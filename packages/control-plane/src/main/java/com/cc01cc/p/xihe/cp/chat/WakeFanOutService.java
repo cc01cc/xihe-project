@@ -88,9 +88,9 @@ public class WakeFanOutService {
      * Parses {@code content} and fans the wake out serially over the resolved recipients.
      * {@code roster} must already be ordered by order_index (the caller sorts).
      */
-    public void fanOut(UUID sessionId, String workspaceId, String userId, String rootRunId,
-                       String content, List<MentionParser.RosterEntry> roster) {
-        fanOut(sessionId, workspaceId, userId, rootRunId, content, roster, null);
+    public WakeHandoff fanOut(UUID sessionId, String workspaceId, String userId, String rootRunId,
+                              String content, List<MentionParser.RosterEntry> roster) {
+        return fanOut(sessionId, workspaceId, userId, rootRunId, content, roster, null);
     }
 
     /**
@@ -102,11 +102,18 @@ public class WakeFanOutService {
      * which the mention fan-out above already handles. Observers already woken as mention
      * recipients this round are not notified twice.
      */
-    public void fanOut(UUID sessionId, String workspaceId, String userId, String rootRunId,
-                       String content, List<MentionParser.RosterEntry> roster,
-                       List<UUID> ccParticipantIds) {
+    public WakeHandoff fanOut(UUID sessionId, String workspaceId, String userId, String rootRunId,
+                              String content, List<MentionParser.RosterEntry> roster,
+                              List<UUID> ccParticipantIds) {
+        // PLAN-0648 task-33: every branch of this method reports what it did. The suppression path
+        // promises a hand-off ("I do not answer" must never mean "nobody answers"), so a round that
+        // silently finds nothing is a lost message — it used to be unobservable, which is exactly how
+        // the as=PRIMARY rounds of session e1d08857 lost their wake with no trace at all.
         if (roster == null || roster.isEmpty()) {
-            return;
+            logger.warn("[LIFECYCLE] service=cp event=wake_handoff_skipped sessionId={} round={} "
+                            + "reason=empty_roster rosterSize=0",
+                    sessionId, "wake:mention:" + rootRunId);
+            return WakeHandoff.skipped("empty_roster");
         }
         MentionParser.ParseResult parsed = MentionParser.parse(content, roster);
         List<MentionParser.RosterEntry> recipients = parsed.all()
@@ -119,12 +126,37 @@ public class WakeFanOutService {
                         .toList();
         List<MentionParser.RosterEntry> ccObservers = resolveCcObservers(sessionId, ccParticipantIds,
                 roster, recipients);
-        if (recipients.isEmpty() && parsed.unresolvedTokens().isEmpty() && ccObservers.isEmpty()) {
-            return;
-        }
         String wakeRoundId = "wake:mention:" + rootRunId;
+        if (recipients.isEmpty() && parsed.unresolvedTokens().isEmpty() && ccObservers.isEmpty()) {
+            logger.warn("[LIFECYCLE] service=cp event=wake_handoff_skipped sessionId={} round={} "
+                            + "reason=no_recipients rosterSize={} contentLength={}",
+                    sessionId, wakeRoundId, roster.size(),
+                    content == null ? 0 : content.length());
+            return WakeHandoff.skipped("no_recipients");
+        }
         executorFor(sessionId).submit(() -> runSerial(sessionId, workspaceId, userId, wakeRoundId, recipients,
                 parsed.unresolvedTokens(), ccObservers, content));
+        logger.info("[LIFECYCLE] service=cp event=wake_handoff_enqueued sessionId={} round={} "
+                        + "recipients={} ccObservers={} unresolved={}",
+                sessionId, wakeRoundId, recipients.size(), ccObservers.size(),
+                parsed.unresolvedTokens().size());
+        return WakeHandoff.enqueued(wakeRoundId, recipients.size(), ccObservers.size());
+    }
+
+    /**
+     * What one fan-out did. Callers on the suppression path assert {@code enqueued} so a message
+     * that nobody will answer cannot be committed silently.
+     */
+    public record WakeHandoff(boolean enqueued, String roundId, int recipients, int ccObservers,
+                              String skipReason) {
+
+        static WakeHandoff enqueued(String roundId, int recipients, int ccObservers) {
+            return new WakeHandoff(true, roundId, recipients, ccObservers, null);
+        }
+
+        static WakeHandoff skipped(String reason) {
+            return new WakeHandoff(false, null, 0, 0, reason);
+        }
     }
 
     /**

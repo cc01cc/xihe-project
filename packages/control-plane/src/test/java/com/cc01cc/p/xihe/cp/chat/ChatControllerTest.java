@@ -2029,9 +2029,10 @@ class ChatControllerTest extends AbstractH2Test {
         seedAgentParticipant(member, SessionParticipant.ROLE_MEMBER,
                 SessionParticipant.RESPOND_WHEN_MENTIONED, 1);
         // The fan-out itself is covered by WakeFanOutServiceTest; here we assert the branch calls it.
-        Mockito.doNothing().when(wakeFanOutService).fanOut(Mockito.any(), Mockito.anyString(),
-                Mockito.anyString(), Mockito.anyString(), Mockito.anyString(), Mockito.any(),
-                Mockito.any());
+        Mockito.when(wakeFanOutService.fanOut(Mockito.any(), Mockito.anyString(),
+                        Mockito.anyString(), Mockito.anyString(), Mockito.anyString(), Mockito.any(),
+                        Mockito.any()))
+                .thenReturn(WakeFanOutService.WakeHandoff.enqueued("wake:mention:test", 1, 0));
 
         ResponseEntity<Map> response = postChat("@Mention Target B 你来答这个");
 
@@ -2070,9 +2071,10 @@ class ChatControllerTest extends AbstractH2Test {
         AgentPrincipal member = seedMentionablePrincipal("Mention Target C");
         seedAgentParticipant(member, SessionParticipant.ROLE_MEMBER,
                 SessionParticipant.RESPOND_WHEN_MENTIONED, 1);
-        Mockito.doNothing().when(wakeFanOutService).fanOut(Mockito.any(), Mockito.anyString(),
-                Mockito.anyString(), Mockito.anyString(), Mockito.anyString(), Mockito.any(),
-                Mockito.any());
+        Mockito.when(wakeFanOutService.fanOut(Mockito.any(), Mockito.anyString(),
+                        Mockito.anyString(), Mockito.anyString(), Mockito.anyString(), Mockito.any(),
+                        Mockito.any()))
+                .thenReturn(WakeFanOutService.WakeHandoff.enqueued("wake:mention:test", 1, 0));
 
         ResponseEntity<Map> response = postChat("@Chat controller test principal 你来说");
 
@@ -2096,9 +2098,10 @@ class ChatControllerTest extends AbstractH2Test {
         AgentPrincipal member = seedMentionablePrincipal("Mention Target D");
         seedAgentParticipant(member, SessionParticipant.ROLE_MEMBER,
                 SessionParticipant.RESPOND_WHEN_MENTIONED, 1);
-        Mockito.doNothing().when(wakeFanOutService).fanOut(Mockito.any(), Mockito.anyString(),
-                Mockito.anyString(), Mockito.anyString(), Mockito.anyString(), Mockito.any(),
-                Mockito.any());
+        Mockito.when(wakeFanOutService.fanOut(Mockito.any(), Mockito.anyString(),
+                        Mockito.anyString(), Mockito.anyString(), Mockito.anyString(), Mockito.any(),
+                        Mockito.any()))
+                .thenReturn(WakeFanOutService.WakeHandoff.enqueued("wake:mention:test", 1, 0));
 
         // The UI posts every ordinary message with asParticipantId = PRIMARY; that is the default
         // shape, not an explicit re-targeting, so an @ of the member must still win.
@@ -2118,9 +2121,10 @@ class ChatControllerTest extends AbstractH2Test {
         AgentPrincipal member = seedMentionablePrincipal("Mention Target E");
         String memberParticipantId = seedAgentParticipant(member, SessionParticipant.ROLE_MEMBER,
                 SessionParticipant.RESPOND_WHEN_MENTIONED, 1);
-        Mockito.doNothing().when(wakeFanOutService).fanOut(Mockito.any(), Mockito.anyString(),
-                Mockito.anyString(), Mockito.anyString(), Mockito.anyString(), Mockito.any(),
-                Mockito.any());
+        Mockito.when(wakeFanOutService.fanOut(Mockito.any(), Mockito.anyString(),
+                        Mockito.anyString(), Mockito.anyString(), Mockito.anyString(), Mockito.any(),
+                        Mockito.any()))
+                .thenReturn(WakeFanOutService.WakeHandoff.enqueued("wake:mention:test", 1, 0));
 
         // Answering *as* that member is an explicit targeting: the mention must not suppress it.
         ResponseEntity<Map> response = postChat("@Mention Target E 你来答这个", memberParticipantId);
@@ -2130,5 +2134,94 @@ class ChatControllerTest extends AbstractH2Test {
         java.util.Objects.requireNonNull(body);
         assertNull(body.get("terminalOutcome"),
                 "as=<member> is an explicit answer and keeps the normal lifecycle");
+    }
+    // ── PLAN-0648 task-33: suppressing the PRIMARY must hand the turn over, not swallow it ──
+
+    private void stubAgentSuccessReply() {
+        String sseBody = "event: token\ndata: {\"content\":\"hello\"}\n\n"
+                + "event: done\ndata: {\"type\":\"done\",\"outcome\":\"success\"}\n\n";
+        agentServer.createContext("/internal/v1/agent/chat", exchange -> {
+            byte[] responseBody = sseBody.getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "text/event-stream");
+            exchange.sendResponseHeaders(200, responseBody.length);
+            try (OutputStream output = exchange.getResponseBody()) {
+                output.write(responseBody);
+            }
+        });
+    }
+
+    /** {primaryParticipantId, memberParticipantId, memberPrincipalId} */
+    private String[] seedMentionPair(String memberName) {
+        String primaryParticipantId = seedAgentParticipant(primaryPrincipal(),
+                SessionParticipant.ROLE_PRIMARY, SessionParticipant.RESPOND_ALWAYS, 0);
+        AgentPrincipal member = seedMentionablePrincipal(memberName);
+        String memberParticipantId = seedAgentParticipant(member, SessionParticipant.ROLE_MEMBER,
+                SessionParticipant.RESPOND_WHEN_MENTIONED, 1);
+        return new String[] {primaryParticipantId, memberParticipantId, member.getId().toString()};
+    }
+
+    private void assertWakeRunAndReply(String memberPrincipalId) {
+        await().atMost(java.time.Duration.ofSeconds(20)).untilAsserted(() -> {
+            java.util.List<Map<String, Object>> wakeRuns = jdbcTemplate.queryForList(
+                    "SELECT id, status, origin FROM chat_runs WHERE origin = 'scheduled' "
+                            + "AND CAST(session_id AS VARCHAR) = ? AND CAST(agent_principal_id AS VARCHAR) = ?",
+                    sessionId, memberPrincipalId);
+            assertEquals(1, wakeRuns.size(), "the @-target must own a scheduled wake run");
+            String wakeRunId = String.valueOf(wakeRuns.get(0).get("id"));
+            Integer replies = jdbcTemplate.queryForObject(
+                    "SELECT count(*) FROM messages WHERE CAST(run_id AS VARCHAR) = ? AND role = 'ASSISTANT'",
+                    Integer.class, wakeRunId);
+            assertEquals(1, replies, "the woken participant must have produced its own answer");
+        });
+    }
+
+    @Test
+    void chat_withAsPrimaryAndMentionOfAnother_handsTheTurnOverToTheMentionedParticipant() {
+        String[] pair = seedMentionPair("Mention Target F");
+        stubAgentSuccessReply();
+
+        // The UI sends the PRIMARY *participant* id: that is the default form (decision v15).
+        ResponseEntity<Map> response = postChat("@Mention Target F 你来答这个", pair[0]);
+
+        assertEquals(HttpStatus.ACCEPTED, response.getStatusCode());
+        Map body = response.getBody();
+        java.util.Objects.requireNonNull(body);
+        assertEquals(ChatController.SUPPRESSED_NO_RESPONDER, body.get("terminalOutcome"));
+        String primaryRunId = (String) body.get("runId");
+        assertEquals(ChatController.SUPPRESSED_NO_RESPONDER, jdbcTemplate.queryForObject(
+                "SELECT terminal_outcome FROM chat_runs WHERE CAST(id AS VARCHAR) = ?",
+                String.class, primaryRunId), "the PRIMARY Run is terminalized, not queued");
+        assertWakeRunAndReply(pair[2]);
+    }
+
+    @Test
+    void chat_withoutAs_mentioningAnother_handsTheTurnOverTheSameWay() {
+        String[] pair = seedMentionPair("Mention Target G");
+        stubAgentSuccessReply();
+
+        ResponseEntity<Map> response = postChat("@Mention Target G 你来答这个");
+
+        assertEquals(HttpStatus.ACCEPTED, response.getStatusCode());
+        java.util.Objects.requireNonNull(response.getBody());
+        assertEquals(ChatController.SUPPRESSED_NO_RESPONDER, response.getBody().get("terminalOutcome"));
+        assertWakeRunAndReply(pair[2]);
+    }
+
+    @Test
+    void chat_whenTheHandoffCannotBeEnqueued_fallsBackToAnsweringInsteadOfLosingTheMessage() {
+        seedMentionPair("Mention Target H");
+        Mockito.when(wakeFanOutService.fanOut(Mockito.any(), Mockito.anyString(),
+                        Mockito.anyString(), Mockito.anyString(), Mockito.anyString(), Mockito.any(),
+                        Mockito.any()))
+                .thenReturn(WakeFanOutService.WakeHandoff.skipped("no_recipients"));
+        stubAgentSuccessReply();
+
+        ResponseEntity<Map> response = postChat("@Mention Target H 你来答这个");
+
+        assertEquals(HttpStatus.ACCEPTED, response.getStatusCode());
+        Map body = response.getBody();
+        java.util.Objects.requireNonNull(body);
+        assertNull(body.get("terminalOutcome"),
+                "a hand-off that could not be enqueued must not suppress the answer");
     }
 }

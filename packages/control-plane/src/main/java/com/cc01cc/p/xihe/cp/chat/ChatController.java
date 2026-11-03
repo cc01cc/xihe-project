@@ -731,20 +731,33 @@ public class ChatController {
             if (suppressPrimary) {
                 List<String> mentionedNames = mentions.mentions().stream().map(MentionParser.Mention::displayName)
                         .toList();
-                chatRunLifecycleService.transition(runId, List.of("accepted"), "succeeded",
-                        SUPPRESSED_NO_RESPONDER, null, null, 0, 0, null);
-                logger.info("[LIFECYCLE] service=cp event=chat_primary_suppressed requestId={} sessionId={} "
-                                + "runId={} mentioned={} cause=explicit_mention_of_other",
-                        requestId, sessionId, runId, mentionedNames);
-                wakeFanOutService.fanOut(UUID.fromString(sessionId), workspaceId, userId, runId,
+                // PLAN-0648 task-33: "suppress" means "I do not answer", never "nobody answers". The
+                // suppression is therefore only legal once the hand-off to the @-target is actually
+                // enqueued; a round that finds no recipient falls back to answering here instead of
+                // leaving the message unanswered (that silent loss is what session e1d08857 hit).
+                WakeFanOutService.WakeHandoff handoff = wakeFanOutService.fanOut(
+                        UUID.fromString(sessionId), workspaceId, userId, runId,
                         content, roster, ccParticipantIds);
-                handedOff = true;
-                Map<String, Object> suppressedBody = runAcceptedBody(chatRun, "succeeded", sessionId,
-                        userMessage.getId(), runId, "primary_suppressed");
-                // Same token in all three places: the wire body, the durable run row
-                // (terminal_outcome, written by the transition above) and the log line.
-                suppressedBody.put("terminalOutcome", SUPPRESSED_NO_RESPONDER);
-                return ResponseEntity.accepted().body(suppressedBody);
+                if (!handoff.enqueued()) {
+                    logger.error("[LIFECYCLE] service=cp event=wake_handoff_lost requestId={} sessionId={} "
+                                    + "runId={} mentioned={} skipReason={} fallback=primary_dispatch",
+                            requestId, sessionId, runId, mentionedNames, handoff.skipReason());
+                } else {
+                    chatRunLifecycleService.transition(runId, List.of("accepted"), "succeeded",
+                            SUPPRESSED_NO_RESPONDER, null, null, 0, 0, null);
+                    logger.info("[LIFECYCLE] service=cp event=chat_primary_suppressed requestId={} sessionId={} "
+                                    + "runId={} mentioned={} handoffRound={} handoffRecipients={} "
+                                    + "cause=explicit_mention_of_other",
+                            requestId, sessionId, runId, mentionedNames, handoff.roundId(),
+                            handoff.recipients());
+                    handedOff = true;
+                    Map<String, Object> suppressedBody = runAcceptedBody(chatRun, "succeeded", sessionId,
+                            userMessage.getId(), runId, "primary_suppressed");
+                    // Same token in all three places: the wire body, the durable run row
+                    // (terminal_outcome, written by the transition above) and the log line.
+                    suppressedBody.put("terminalOutcome", SUPPRESSED_NO_RESPONDER);
+                    return ResponseEntity.accepted().body(suppressedBody);
+                }
             }
 
             final ProviderCredentialLeaseService.Admission dispatchAdmission =
