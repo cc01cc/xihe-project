@@ -19,10 +19,7 @@ fn primary_root_shadow_path_is_unchanged() {
     let primary = shadow
         .shadow_git_dir("ws-alpha")
         .expect("primary root shadow path");
-    let expected = tmp
-        .path()
-        .join(".xihe-shadow")
-        .join("ws-alpha.git");
+    let expected = tmp.path().join(".xihe-shadow").join("ws-alpha.git");
     assert_eq!(primary, expected);
 }
 
@@ -75,10 +72,7 @@ fn work_tree_override_for_root_isolates_roots() {
     let override_path = tmp.path().join("override-a");
     shadow.set_work_tree_override_for_root("root-a", override_path.clone());
 
-    assert_eq!(
-        shadow.work_tree_for_root("root-a").unwrap(),
-        override_path
-    );
+    assert_eq!(shadow.work_tree_for_root("root-a").unwrap(), override_path);
     // root-b is unaffected.
     assert_eq!(
         shadow.work_tree_for_root("root-b").unwrap(),

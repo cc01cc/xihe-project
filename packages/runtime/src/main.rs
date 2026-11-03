@@ -121,9 +121,21 @@ impl AppState {
             .await?;
         // PLAN-0639 M1: watcher key = workspace_id:root_id; root_id defaults to workspace_id
         // for the legacy single-root shape (primary root invariant root[0].id = workspace.id).
+        // PLAN-0639 M7 (VM14): hand the watcher the declared-root set so events under a
+        // nested declared root are attributed to that root (D39-5b③).
+        let declared_roots = self
+            .workspace_ensurer
+            .declared_roots(workspace_id)
+            .await
+            .unwrap_or_default();
         if let Err(error) = self
             .workspace_event_watchers
-            .ensure(workspace_id, workspace_id, &instance.workspace_path)
+            .ensure(
+                workspace_id,
+                workspace_id,
+                &instance.workspace_path,
+                declared_roots,
+            )
             .await
         {
             tracing::warn!(
@@ -149,13 +161,34 @@ impl AppState {
     /// ExecutionSpec/materialized path for this workspace before any checkpoint
     /// operation; falls back to the legacy `<hostRoot>/<workspaceId>` layout
     /// when the workspace is not materialized in this Runtime process.
+    ///
+    /// PLAN-0639 M7 (VM11/VM13): also refreshes the workspace's declared roots into
+    /// the same engine, which is what makes `capture_for_root` route to a real
+    /// per-root shadow repo and work tree instead of the workspace path. A spec
+    /// fetch failure is non-fatal here (the engine keeps the primary root and the
+    /// capture degrades exactly as before), but it is logged because it silently
+    /// downgrades multi-root checkpointing to primary-only.
     pub async fn refresh_checkpoint_work_tree(&self, workspace_id: &str) {
         match self.registry.get(workspace_id).await {
             Some(instance) => {
                 self.checkpoints
                     .set_work_tree(workspace_id, PathBuf::from(&instance.workspace_path));
+                match self.workspace_ensurer.declared_roots(workspace_id).await {
+                    Ok(roots) => self.checkpoints.set_declared_roots(workspace_id, roots),
+                    Err(error) => {
+                        tracing::warn!(
+                            workspace_id,
+                            error = %error,
+                            "declared roots unavailable; checkpoint routing stays primary-root only"
+                        );
+                        self.checkpoints.clear_declared_roots(workspace_id);
+                    }
+                }
             }
-            None => self.checkpoints.clear_work_tree(workspace_id),
+            None => {
+                self.checkpoints.clear_work_tree(workspace_id);
+                self.checkpoints.clear_declared_roots(workspace_id);
+            }
         }
     }
 }
@@ -2548,6 +2581,10 @@ struct CaptureCheckpointRequest {
     call_id: String,
     #[serde(default)]
     abnormal: bool,
+    /// PLAN-0639 M7 (VM11): declared root to capture. Absent = primary root
+    /// (`root_id = workspaceId`), i.e. byte-identical to the pre-M7 wire.
+    #[serde(default, rename = "rootId")]
+    root_id: Option<String>,
 }
 
 fn checkpoint_problem_response(
@@ -2594,16 +2631,27 @@ fn checkpoint_problem_response_with(
 
 /// `POST .../checkpoints/capture` — the single capture point (Run terminal,
 /// abnormal re-capture and the C0 baseline). `noChange` responses carry no ref.
+///
+/// PLAN-0639 M7 (VM11): an optional `rootId` selects the declared root to capture;
+/// absent keeps the primary-root behavior (`root_id = workspaceId`), which is what
+/// every pre-M7 caller sends — the wire stays backward compatible.
 async fn capture_checkpoint_handler(
     Path(ws_id): Path<String>,
     State(app): State<Arc<AppState>>,
     AxumJson(request): AxumJson<CaptureCheckpointRequest>,
 ) -> Response {
     app.refresh_checkpoint_work_tree(&ws_id).await;
+    let root_id = request
+        .root_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(ws_id.as_str());
     match app
         .checkpoints
-        .capture(
+        .capture_for_root(
             &ws_id,
+            root_id,
             &request.run_id,
             &request.actor,
             &request.call_id,
@@ -3503,8 +3551,13 @@ async fn run() -> anyhow::Result<()> {
                     let instance = service_ensurer
                         .ensure_workspace_materialized(&ws_id)
                         .await?;
+                    // PLAN-0639 M7 (VM14): same declared-root handoff as the HTTP path.
+                    let declared_roots = service_ensurer
+                        .declared_roots(&ws_id)
+                        .await
+                        .unwrap_or_default();
                     if let Err(error) = service_workspace_event_watchers
-                        .ensure(&ws_id, &ws_id, &instance.workspace_path)
+                        .ensure(&ws_id, &ws_id, &instance.workspace_path, declared_roots)
                         .await
                     {
                         tracing::warn!(

@@ -97,15 +97,39 @@ public class WorkspaceEventManager {
             String source,
             String reason,
             String status) {
+        return publish(workspaceId, null, kind, path, changeType, source, reason, status);
+    }
+
+    /**
+     * PLAN-0639 M7 (VM14): publish with an explicit root attribution.
+     *
+     * <p>{@code rootId} is the declared root that owns the relative {@code path}
+     * ({@code null}/blank ⇒ the workspace id, i.e. the single-root shape). The
+     * Runtime already attributes host events to the deepest declared root; without
+     * this parameter CP dropped that attribution and re-labelled every event with
+     * the workspace id, which made the multi-root file tree refresh the wrong
+     * group.</p>
+     */
+    public WorkspaceEvent publish(
+            String workspaceId,
+            String rootId,
+            String kind,
+            String path,
+            String changeType,
+            String source,
+            String reason,
+            String status) {
         validateWorkspaceId(workspaceId);
+        validateRootId(rootId);
         validateKind(kind);
         validateSource(source);
         validatePath(path);
+        String attributedRoot = rootId == null || rootId.isBlank() ? workspaceId : rootId;
         WorkspaceChannel channel = channels.computeIfAbsent(workspaceId, ignored -> new WorkspaceChannel());
         long sequence = channel.sequence.incrementAndGet();
         WorkspaceEvent event = new WorkspaceEvent(
                 workspaceId,
-                workspaceId,
+                attributedRoot,
                 sequence,
                 kind,
                 path,
@@ -245,8 +269,27 @@ public class WorkspaceEventManager {
         }
     }
 
-    private void validatePath(String path) {
-        if (path == null) {
+    /**
+     * PLAN-0639 M7 (VM14): a root id is an opaque attribution token, never a path.
+     * Blank = primary root (caller substitutes the workspace id); anything that
+     * could be read as a path or exceed the column budget fails closed.
+     */
+    private void validateRootId(String rootId) {
+        if (rootId == null || rootId.isBlank()) {
+            return;
+        }
+        if (rootId.length() > 64
+                || rootId.contains("/")
+                || rootId.contains("\\")
+                || rootId.contains("..")) {
+            throw new CpApiException(
+                    HttpStatus.BAD_REQUEST,
+                    "INVALID_REQUEST",
+                    "rootId must be an opaque root identifier");
+        }
+    }
+
+    private void validatePath(String path) {        if (path == null) {
             return;
         }
         if (path.isBlank() || path.startsWith("/") || path.contains("\\") || path.matches("^[A-Za-z]:.*")

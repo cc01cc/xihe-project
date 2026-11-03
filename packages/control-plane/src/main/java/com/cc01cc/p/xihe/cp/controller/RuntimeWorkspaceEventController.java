@@ -41,6 +41,7 @@ public class RuntimeWorkspaceEventController {
         }
         WorkspaceEvent event = eventManager.publish(
                 workspaceId,
+                request.rootId(),
                 request.kind(),
                 request.path(),
                 request.changeType(),
@@ -53,12 +54,19 @@ public class RuntimeWorkspaceEventController {
                 "sequence", event.sequence()));
     }
 
+    /**
+     * PLAN-0639 M7 (VM14): {@code rootId} carries the Runtime's
+     * deepest-declared-root attribution of the relative {@code path}. Absent means
+     * the primary root (legacy single-root senders), so the ingress stays
+     * backward compatible.
+     */
     public record PublishWorkspaceEventRequest(
             String kind,
             String path,
             String changeType,
             String source,
             String reason,
-            String status) {
+            String status,
+            String rootId) {
     }
 }

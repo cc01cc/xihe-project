@@ -180,6 +180,24 @@ impl CheckpointService {
         self.engine.set_work_tree_override(workspace_id, path);
     }
 
+    /// PLAN-0639 M7 (VM11/VM13): register the ordered declared roots of one
+    /// workspace `(root_id, host_path)`. This is what turns per-root capture from
+    /// a naming convention into a routed operation: the engine learns both the
+    /// shadow-repo key and the work tree of every root.
+    pub fn set_declared_roots(&self, workspace_id: &str, roots: Vec<(String, String)>) {
+        self.engine.set_declared_roots(workspace_id, roots);
+    }
+
+    /// Drops the declared-root registration of a destroyed/unmaterialized workspace.
+    pub fn clear_declared_roots(&self, workspace_id: &str) {
+        self.engine.clear_declared_roots(workspace_id);
+    }
+
+    /// The declared roots currently registered for one workspace.
+    pub fn declared_roots(&self, workspace_id: &str) -> Vec<(String, String)> {
+        self.engine.declared_roots(workspace_id)
+    }
+
     /// Drops a stale work-tree override for a destroyed/unmaterialized workspace.
     pub fn clear_work_tree(&self, workspace_id: &str) {
         self.engine.clear_work_tree_override(workspace_id);
@@ -187,8 +205,12 @@ impl CheckpointService {
 
     /// Capture the workspace as one checkpoint slice (the single capture point).
     ///
-    /// Idempotent per `(workspace, run)` within this process: a replay whose slice
-    /// ref still resolves returns the recorded outcome unchanged.
+    /// PLAN-0639 M7 (VM11): the primary-root form; delegates to
+    /// [`Self::capture_for_root`] with `root_id = workspace_id`, so a single-root
+    /// workspace keeps the exact pre-M7 behavior (root[0].id == workspaceId).
+    ///
+    /// Idempotent per `(workspace, root, run)` within this process: a replay whose
+    /// slice ref still resolves returns the recorded outcome unchanged.
     pub async fn capture(
         &self,
         workspace_id: &str,
@@ -197,7 +219,28 @@ impl CheckpointService {
         call_id: &str,
         abnormal: bool,
     ) -> Result<CaptureOutcome, CaptureFailure> {
+        self.capture_for_root(workspace_id, workspace_id, run_id, actor, call_id, abnormal)
+            .await
+    }
+
+    /// PLAN-0639 M7 (VM11): capture **one declared root** into its own slice chain.
+    ///
+    /// The replay cache is keyed by `(workspace, root, run)` so two roots of the
+    /// same workspace can be captured for the same run without one replaying the
+    /// other's outcome.
+    pub async fn capture_for_root(
+        &self,
+        workspace_id: &str,
+        root_id: &str,
+        run_id: &str,
+        actor: &str,
+        call_id: &str,
+        abnormal: bool,
+    ) -> Result<CaptureOutcome, CaptureFailure> {
         validate_workspace_id(workspace_id).map_err(|error| CaptureFailure::Validation {
+            detail: error.to_string(),
+        })?;
+        validate_workspace_id(root_id).map_err(|error| CaptureFailure::Validation {
             detail: error.to_string(),
         })?;
         validate_run_id(run_id).map_err(|error| CaptureFailure::Validation {
@@ -210,7 +253,7 @@ impl CheckpointService {
                 detail: capability.detail,
             });
         }
-        let key = run_key(workspace_id, run_id);
+        let key = capture_key(workspace_id, root_id, run_id);
         let existing = self
             .captures
             .lock()
@@ -220,7 +263,7 @@ impl CheckpointService {
         if let Some(record) = existing
             && let Some(slice_ref) = record.slice_ref.as_deref()
         {
-            match self.engine.slice_commit(workspace_id, slice_ref).await {
+            match self.engine.slice_commit(root_id, slice_ref).await {
                 Ok(Some(_)) => return Ok(record),
                 Ok(None) => {
                     // The slice was reclaimed (retention) or the shadow repo was
@@ -235,12 +278,13 @@ impl CheckpointService {
         }
         let outcome = self
             .engine
-            .capture(workspace_id, run_id, actor, call_id, abnormal)
+            .capture_for_root(workspace_id, root_id, run_id, actor, call_id, abnormal)
             .await
             .map_err(capture_failure)?;
         if outcome.slice_ref.is_some() {
             info!(
                 workspace_id,
+                root_id,
                 run_id,
                 slice_ref = outcome.slice_ref.as_deref().unwrap_or(""),
                 changed = outcome.changed_files.len(),
@@ -257,6 +301,7 @@ impl CheckpointService {
         } else {
             info!(
                 workspace_id,
+                root_id,
                 run_id,
                 predecessor = outcome.predecessor.as_deref().unwrap_or("none"),
                 "run checkpoint capture found no change"
@@ -359,9 +404,10 @@ impl CheckpointService {
     }
 }
 
-fn run_key(workspace_id: &str, run_id: &str) -> String {
-    // Workspace ids cannot contain `/` (storage-ref contract), so this is unambiguous.
-    format!("{workspace_id}/{run_id}")
+/// PLAN-0639 M7 (VM11): replay-cache key for one `(workspace, root, run)` capture.
+/// Root ids are workspace-id shaped (no `/`), so the composite stays unambiguous.
+fn capture_key(workspace_id: &str, root_id: &str, run_id: &str) -> String {
+    format!("{workspace_id}/{root_id}/{run_id}")
 }
 
 /// `GIT_TOO_OLD` when a version string was reported but rejected (below 2.20 or
@@ -489,7 +535,19 @@ mod tests {
 
     #[test]
     fn run_key_is_workspace_scoped_and_unambiguous() {
-        assert_eq!(run_key("ws-a", "run-1"), "ws-a/run-1");
-        assert_ne!(run_key("ws-a", "run-1"), run_key("ws", "a/run-1"));
+        assert_eq!(capture_key("ws-a", "ws-a", "run-1"), "ws-a/ws-a/run-1");
+        assert_ne!(
+            capture_key("ws-a", "ws-a", "run-1"),
+            capture_key("ws", "a/ws-a", "run-1")
+        );
+    }
+
+    /// PLAN-0639 M7 (VM11): two roots of one workspace must not share a replay
+    /// entry — that was the silent no-op shape of the pre-M7 key `(workspace, run)`.
+    #[test]
+    fn capture_key_separates_roots_of_one_workspace() {
+        let primary = capture_key("ws-a", "ws-a", "run-1");
+        let secondary = capture_key("ws-a", "root-b", "run-1");
+        assert_ne!(primary, secondary);
     }
 }

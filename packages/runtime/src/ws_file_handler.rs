@@ -7,6 +7,7 @@ use axum::{
 use percent_encoding::{AsciiSet, CONTROLS, utf8_percent_encode};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::path::{Path as FsPath, PathBuf};
 use std::sync::Arc;
 use std::sync::OnceLock;
 use std::time::Duration;
@@ -61,37 +62,100 @@ pub(crate) async fn report_workspace_event(
     .await;
 }
 
-/// PLAN-0639 M1: report a file event with deepest-root attribution.  When the path falls
-/// inside a nested declared root, the event is attributed to that deepest root and the
-/// parent root's duplicate is dropped at the emission side (D39-5b).
-#[allow(dead_code)] // wired in PLAN-0639 M1 checkpoint dispatch (D39-5b emission side)
+/// PLAN-0639 M7 (VM14 / D39-5b③): report a file event with deepest-root attribution.
+///
+/// The workspace watcher is installed on one root (normally the primary one) but a
+/// declared root may be **nested** inside it. Emitting such a path as a change of
+/// the parent root would (a) route the UI refresh to the wrong tree group and
+/// (b) claim files the parent root's slice deliberately excludes (VM13). So the
+/// absolute host path is matched against every declared root and the **longest**
+/// match wins; the emitted `path` is then relative to that root, which is the
+/// only shape CP accepts (`report_workspace_event` validates it as relative).
+///
+/// `fallback_root` is the watcher's own root, used when no declared root matches
+/// (legacy specs where the declared set is synthesized to just the primary root).
 pub(crate) async fn report_workspace_event_attributed(
     workspace_id: &str,
-    spec_roots: &[(String, String)], // (root_id, canonical_root_path)
-    path: &str,
+    spec_roots: &[(String, PathBuf)],
+    fallback_root: (&str, &FsPath),
+    absolute_path: &FsPath,
     change_type: &str,
 ) {
-    let canonical_path = path.replace('\\', "/");
-    let mut best: Option<&(String, String)> = None;
-    for root in spec_roots {
-        let root_path = root.1.replace('\\', "/");
-        if canonical_path.starts_with(&format!("{root_path}/")) || canonical_path == root_path {
-            let best_len = best.map(|b| b.1.len()).unwrap_or(0);
-            if root.1.len() > best_len {
-                best = Some(root);
+    let target = normalized_host_path(absolute_path);
+    let (root_id, relative) = match deepest_declared_root(spec_roots, &target) {
+        Some(attributed) => attributed,
+        None => {
+            let fallback = normalized_host_path(fallback_root.1);
+            match path_relative_to(&fallback, &target) {
+                Some(relative) => (fallback_root.0.to_string(), relative),
+                None => {
+                    warn!(
+                        "workspace event dropped: no matching declared root workspaceId={} path={}",
+                        workspace_id, target
+                    );
+                    return;
+                }
             }
         }
+    };
+    report_workspace_event(workspace_id, &root_id, &relative, change_type).await;
+}
+
+/// PLAN-0639 M7 (VM14): the declared root that owns `target`, i.e. the **deepest**
+/// root whose normalized path strictly contains it. `None` when no declared root
+/// matches (the caller then falls back to the watcher's own root).
+///
+/// Pure (no IO, no async) so the attribution rule is unit-testable without a
+/// watcher, a workspace or a CP stub.
+fn deepest_declared_root(
+    spec_roots: &[(String, PathBuf)],
+    target: &str,
+) -> Option<(String, String)> {
+    let mut best: Option<(String, String, usize)> = None;
+    for (root_id, root_path) in spec_roots {
+        let root = normalized_host_path(root_path);
+        let Some(relative) = path_relative_to(&root, target) else {
+            continue;
+        };
+        let depth = root.len();
+        if best
+            .as_ref()
+            .map(|(_, _, current)| depth > *current)
+            .unwrap_or(true)
+        {
+            best = Some((root_id.clone(), relative, depth));
+        }
     }
-    match best {
-        Some((root_id, _)) => {
-            report_workspace_event(workspace_id, root_id, path, change_type).await;
-        }
-        None => {
-            warn!(
-                "workspace event dropped: no matching declared root workspaceId={} path={}",
-                workspace_id, path
-            );
-        }
+    best.map(|(root_id, relative, _)| (root_id, relative))
+}
+
+/// Host path → normalized POSIX form used only for comparisons and for the
+/// workspace-relative `path` field (Windows canonicalize emits `\\?\`; the
+/// contract never carries host paths).
+fn normalized_host_path(path: &FsPath) -> String {
+    let raw = path.to_string_lossy();
+    let stripped = raw.strip_prefix(r"\\?\").unwrap_or(&raw);
+    stripped.replace('\\', "/")
+}
+
+/// `target` relative to `root`, or `None` when `target` is not strictly inside
+/// `root`. Comparison is case-insensitive (Windows); the returned slice keeps the
+/// original casing/separators of `target`.
+fn path_relative_to(root: &str, target: &str) -> Option<String> {
+    if root.is_empty() || target.len() <= root.len() {
+        return None;
+    }
+    let root_lower = root.to_ascii_lowercase();
+    let target_lower = target.to_ascii_lowercase();
+    if !target_lower.starts_with(&root_lower) {
+        return None;
+    }
+    let rest = &target[root.len()..];
+    let rest = rest.strip_prefix('/')?;
+    if rest.is_empty() {
+        None
+    } else {
+        Some(rest.to_string())
     }
 }
 
@@ -146,6 +210,8 @@ async fn post_workspace_event(workspace_id: &str, payload: serde_json::Value) {
 #[cfg(test)]
 mod event_contract_tests {
     use super::snapshot_required_payload;
+    use super::{deepest_declared_root, normalized_host_path, path_relative_to};
+    use std::path::{Path, PathBuf};
 
     #[test]
     fn overflow_event_uses_reason_not_snapshot_version() {
@@ -153,6 +219,61 @@ mod event_contract_tests {
         assert_eq!(payload["kind"], "snapshot_required");
         assert_eq!(payload["reason"], "overflow");
         assert!(payload.get("snapshotVersion").is_none());
+    }
+
+    fn roots() -> Vec<(String, PathBuf)> {
+        vec![
+            ("ws-1".to_string(), PathBuf::from("H:/ws/primary")),
+            (
+                "root-b".to_string(),
+                PathBuf::from("H:/ws/primary/vendor/lib"),
+            ),
+        ]
+    }
+
+    /// PLAN-0639 M7 (VM14): an event under the nested declared root is attributed to
+    /// that root, and the emitted path is relative to it — not to the primary root.
+    #[test]
+    fn deepest_declared_root_wins_for_a_nested_path() {
+        let attributed =
+            deepest_declared_root(&roots(), "H:/ws/primary/vendor/lib/src/a.rs").unwrap();
+        assert_eq!(attributed.0, "root-b");
+        assert_eq!(attributed.1, "src/a.rs");
+    }
+
+    /// A path only under the primary root keeps the primary attribution.
+    #[test]
+    fn primary_root_keeps_paths_outside_nested_roots() {
+        let attributed = deepest_declared_root(&roots(), "H:/ws/primary/src/main.ts").unwrap();
+        assert_eq!(attributed.0, "ws-1");
+        assert_eq!(attributed.1, "src/main.ts");
+    }
+
+    /// Windows canonicalize prefixes `\\?\`; comparison must not depend on it.
+    #[test]
+    fn normalized_paths_strip_the_windows_extended_prefix() {
+        assert_eq!(
+            normalized_host_path(Path::new(r"\\?\H:\ws\primary\a.txt")),
+            "H:/ws/primary/a.txt"
+        );
+    }
+
+    /// Sibling-prefix must not be treated as containment (`/a/bc` is not inside `/a/b`).
+    #[test]
+    fn path_relative_to_requires_a_segment_boundary() {
+        assert!(path_relative_to("H:/ws/primary", "H:/ws/primary-b/a.txt").is_none());
+        assert_eq!(
+            path_relative_to("H:/ws/primary", "H:/ws/primary/a.txt").as_deref(),
+            Some("a.txt")
+        );
+    }
+
+    /// Out-of-tree paths get no attribution, so the caller falls back (and otherwise
+    /// drops the event) instead of inventing a root.
+    #[test]
+    fn unrelated_paths_have_no_declared_root() {
+        assert!(deepest_declared_root(&roots(), "H:/elsewhere/a.txt").is_none());
+        assert!(deepest_declared_root(&[], "H:/ws/primary/a.txt").is_none());
     }
 }
 
@@ -204,6 +325,17 @@ pub struct WriteBinaryQuery {
     pub root_id: Option<String>,
 }
 
+/// PLAN-0639 M7 (VM14): which boundary a file request may use.
+///
+/// Read-only requests may be served from a declared non-primary root on
+/// execution modes whose file layer can address it; writes stay on the primary
+/// root until non-primary roots have an execution surface.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RootAccess {
+    ReadOnly,
+    Write,
+}
+
 /// PLAN-0639 D39-5 先定根、再解析: resolve the declared-root boundary for one
 /// file request and enforce the executable-surface policy.
 ///
@@ -212,14 +344,19 @@ pub struct WriteBinaryQuery {
 /// * `rootId` present → declared roots are read from the ExecutionSpec and the
 ///   requested root selected; unknown ids fail closed (`400`, via
 ///   `fs::select_root_boundary`).
-/// * A non-primary root currently has no execution surface — executor-side
-///   per-root dispatch is a later wave — so it fails closed with `501
-///   PER_ROOT_EXECUTION_UNSUPPORTED` rather than being silently served from
-///   the primary root (D39-5: serving the wrong root would be a boundary lie).
+/// * PLAN-0639 M7 (VM12): a non-primary root is now **served for read-only
+///   operations** ([`RootAccess::ReadOnly`]) so declared-root files can be opened
+///   in the UI. The mode gate lives one layer down
+///   (`WorkspaceExecutionRouter::exec_oneshot_in_root`): docker/MXC reads still
+///   fail closed because their in-container path mapping is a separate wave, and
+///   writes keep answering `501 PER_ROOT_EXECUTION_UNSUPPORTED` rather than
+///   silently being served from the primary root (D39-5: serving the wrong root
+///   would be a boundary lie).
 async fn resolve_request_root(
     app: &AppState,
     ws_id: &str,
     root_id: Option<&str>,
+    access: RootAccess,
 ) -> Result<fs::RootBoundary, (StatusCode, Json<Value>)> {
     let instance = app.registry.get(ws_id).await.ok_or_else(|| {
         problem(
@@ -249,17 +386,41 @@ async fn resolve_request_root(
                     .ok(),
             )
             .is_some_and(|(a, b)| a == b);
-        if !same_root {
+        if !same_root && access == RootAccess::Write {
             return Err(problem(
                 StatusCode::NOT_IMPLEMENTED,
                 "PER_ROOT_EXECUTION_UNSUPPORTED",
                 &format!(
-                    "declared root {requested:?} resolved, but non-primary root execution is not routed in this runtime build"
+                    "declared root {requested:?} resolved, but writes to a non-primary root are not routed in this runtime build"
                 ),
             ));
         }
     }
     Ok(boundary)
+}
+
+/// PLAN-0639 M7 (VM12): a routed read hit a mode that cannot address the declared
+/// root (docker/MXC container-path mapping). Fail closed with the same 501 shape
+/// as the write gate instead of letting it surface as a generic 500.
+fn per_root_read_unsupported(
+    workspace_id: &str,
+    boundary: &fs::RootBoundary,
+    error: &RuntimeError,
+) -> (StatusCode, Json<Value>) {
+    let root_id = boundary.root_id.as_deref().unwrap_or("");
+    let reason = match error {
+        RuntimeError::Unsupported { reason, .. } => reason.as_str(),
+        _ => "PER_ROOT_READ_UNSUPPORTED",
+    };
+    warn!(
+        "declared-root read not routed workspaceId={} rootId={} reason={}",
+        workspace_id, root_id, reason
+    );
+    problem(
+        StatusCode::NOT_IMPLEMENTED,
+        "PER_ROOT_READ_UNSUPPORTED",
+        &format!("declared root {root_id:?} cannot be served in this runtime build: {reason}"),
+    )
 }
 
 /// PLAN-0639 D39-5 再解析: authoritative two-stage validation of the request
@@ -383,14 +544,22 @@ pub async fn handle_read_file(
     // PLAN-0639 D39-5: rootId (absent = primary root) selects the declared
     // root boundary; the per-root two-stage check runs here, authoritatively,
     // before the executor dispatch.
-    let boundary = resolve_request_root(&app, &ws_id, req.root_id.as_deref()).await?;
+    let boundary =
+        resolve_request_root(&app, &ws_id, req.root_id.as_deref(), RootAccess::ReadOnly).await?;
     preflight_read_path(&req.path, &boundary)?;
     // PLAN-0427 T2.1: absence is a domain fact, not an error — FileNotFound
     // (ENOENT classified in fs::resolve_canonical) answers 200 {found:false}.
     // Real traversal still fails via map_error below (403), and workspace
     // absence was already intercepted by ensure_workspace (404).
-    let mut content = match app.router.read_file(&ws_id, &req.path).await {
+    let mut content = match app
+        .router
+        .read_file_in_root(&ws_id, &boundary, &req.path)
+        .await
+    {
         Ok(content) => content,
+        Err(error @ RuntimeError::Unsupported { .. }) => {
+            return Err(per_root_read_unsupported(&ws_id, &boundary, &error));
+        }
         Err(RuntimeError::FileNotFound(_)) => {
             return Ok(Json(ReadFileResult {
                 found: false,
@@ -441,7 +610,8 @@ pub async fn handle_write_binary(
     app.ensure_workspace(&ws_id).await.map_err(map_error)?;
     ensure_workspace_consistent(&app, &ws_id).await?;
     // PLAN-0639 D39-5: declared-root boundary + authoritative write preflight.
-    let boundary = resolve_request_root(&app, &ws_id, query.root_id.as_deref()).await?;
+    let boundary =
+        resolve_request_root(&app, &ws_id, query.root_id.as_deref(), RootAccess::Write).await?;
     preflight_write_path(&path, &boundary)?;
     let body = to_bytes(
         body,
@@ -471,13 +641,19 @@ pub async fn handle_list_directory(
     app.ensure_workspace(&ws_id).await.map_err(map_error)?;
     ensure_workspace_consistent(&app, &ws_id).await?;
     // PLAN-0639 D39-5: declared-root boundary + authoritative read preflight.
-    let boundary = resolve_request_root(&app, &ws_id, req.root_id.as_deref()).await?;
+    let boundary =
+        resolve_request_root(&app, &ws_id, req.root_id.as_deref(), RootAccess::ReadOnly).await?;
     preflight_read_path(&req.path, &boundary)?;
     let val = app
         .router
-        .list_directory(&ws_id, &req.path)
+        .list_directory_in_root(&ws_id, &boundary, &req.path)
         .await
-        .map_err(map_error)?;
+        .map_err(|error| match error {
+            error @ RuntimeError::Unsupported { .. } => {
+                per_root_read_unsupported(&ws_id, &boundary, &error)
+            }
+            other => map_error(other),
+        })?;
     let entries: Vec<fs::FileInfo> =
         serde_json::from_value(val.get("entries").cloned().unwrap_or(val))
             .map_err(serde_map_error)?;
@@ -493,7 +669,8 @@ pub async fn handle_delete_file(
     app.ensure_workspace(&ws_id).await.map_err(map_error)?;
     ensure_workspace_consistent(&app, &ws_id).await?;
     // PLAN-0639 D39-5: declared-root boundary + authoritative read preflight.
-    let boundary = resolve_request_root(&app, &ws_id, req.root_id.as_deref()).await?;
+    let boundary =
+        resolve_request_root(&app, &ws_id, req.root_id.as_deref(), RootAccess::Write).await?;
     preflight_read_path(&req.path, &boundary)?;
     let msg = app
         .router
@@ -512,7 +689,8 @@ pub async fn handle_mkdir(
     app.ensure_workspace(&ws_id).await.map_err(map_error)?;
     ensure_workspace_consistent(&app, &ws_id).await?;
     // PLAN-0639 D39-5: declared-root boundary + authoritative write preflight.
-    let boundary = resolve_request_root(&app, &ws_id, req.root_id.as_deref()).await?;
+    let boundary =
+        resolve_request_root(&app, &ws_id, req.root_id.as_deref(), RootAccess::Write).await?;
     preflight_write_path(&req.path, &boundary)?;
     let msg = app
         .router
@@ -531,13 +709,19 @@ pub async fn handle_stat(
     app.ensure_workspace(&ws_id).await.map_err(map_error)?;
     ensure_workspace_consistent(&app, &ws_id).await?;
     // PLAN-0639 D39-5: declared-root boundary + authoritative read preflight.
-    let boundary = resolve_request_root(&app, &ws_id, req.root_id.as_deref()).await?;
+    let boundary =
+        resolve_request_root(&app, &ws_id, req.root_id.as_deref(), RootAccess::ReadOnly).await?;
     preflight_read_path(&req.path, &boundary)?;
     let val = app
         .router
-        .get_file_info(&ws_id, &req.path)
+        .get_file_info_in_root(&ws_id, &boundary, &req.path)
         .await
-        .map_err(map_error)?;
+        .map_err(|error| match error {
+            error @ RuntimeError::Unsupported { .. } => {
+                per_root_read_unsupported(&ws_id, &boundary, &error)
+            }
+            other => map_error(other),
+        })?;
     let info: fs::FileInfo = serde_json::from_value(val).map_err(serde_map_error)?;
     Ok(Json(info))
 }
@@ -983,11 +1167,13 @@ mod tests {
         }
     }
 
-    /// A well-known non-primary root resolves its boundary but cannot execute
-    /// yet (executor-side per-root dispatch is a later wave) — 501, never a
-    /// silent serve from the primary root.
+    /// PLAN-0639 M7 (VM12): a well-known non-primary root resolves its boundary and
+    /// is now **served** for reads (it used to answer the write gate's 501, which
+    /// made declared-root files unopenable in the UI). The remaining 501 is the
+    /// execution-mode gate (`PER_ROOT_READ_UNSUPPORTED`, e.g. docker/MXC), which is
+    /// a different code on purpose so the two failures stay distinguishable.
     #[tokio::test]
-    async fn test_read_non_primary_root_fails_closed_501() {
+    async fn test_read_non_primary_root_is_routed_not_write_gated() {
         let primary = TempDir::new().unwrap();
         let root_b = TempDir::new().unwrap();
         let (app, ws_id, _dir, _cp) = setup_ws_light(serde_json::json!([
@@ -1003,13 +1189,46 @@ mod tests {
             max_bytes: None,
             root_id: Some("root-b".into()),
         });
-        let result = handle_read_file(state, path, json).await;
-        match result {
+        match handle_read_file(state, path, json).await {
+            Err((status, Json(body))) => {
+                assert_eq!(status, StatusCode::NOT_IMPLEMENTED);
+                assert_eq!(
+                    body["code"], "PER_ROOT_READ_UNSUPPORTED",
+                    "reads must not fall back to the write gate: {body}"
+                );
+            }
+            Ok(Json(result)) => assert!(
+                !result.found,
+                "a served non-primary read must answer found:false for a missing file"
+            ),
+        }
+    }
+
+    /// PLAN-0639 M7 (VM12): writes stay on the primary root — a declared root has no
+    /// execution surface yet, so answering 501 with the dedicated code beats
+    /// silently writing into a directory the executors cannot see (D39-5).
+    #[tokio::test]
+    async fn test_write_non_primary_root_stays_fail_closed_501() {
+        let primary = TempDir::new().unwrap();
+        let root_b = TempDir::new().unwrap();
+        let (app, ws_id, _dir, _cp) = setup_ws_light(serde_json::json!([
+            {"rootId": "ws-primary", "hostPath": primary.path().to_string_lossy()},
+            {"rootId": "root-b", "hostPath": root_b.path().to_string_lossy()},
+        ]))
+        .await;
+
+        let state = State(app);
+        let path = Path(ws_id);
+        let json = Json(RootFileRequest {
+            path: "new-dir".into(),
+            root_id: Some("root-b".into()),
+        });
+        match handle_mkdir(state, path, json).await {
             Err((status, Json(body))) => {
                 assert_eq!(status, StatusCode::NOT_IMPLEMENTED);
                 assert_eq!(body["code"], "PER_ROOT_EXECUTION_UNSUPPORTED");
             }
-            Ok(_) => panic!("non-primary root execution must fail closed in this wave"),
+            Ok(_) => panic!("non-primary root writes must fail closed in this wave"),
         }
     }
 }

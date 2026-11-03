@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::path::Path;
 use std::sync::{Arc, Mutex as StdMutex};
 use std::time::Duration;
 
@@ -444,6 +445,39 @@ fn preflight_file_operation(workspace: &str, operation: &str, payload: &Value) -
     }
 }
 
+/// PLAN-0639 M7 (VM12): the file operations that may be served from a
+/// **non-primary declared root**. Read-only by construction — a declared root
+/// without an execution surface must not become a writable escape from the
+/// primary root's boundary.
+pub const ROOT_READ_ONLY_OPERATIONS: &[&str] = &[
+    "read_file",
+    "read_file_range",
+    "list_directory",
+    "get_file_info",
+    "glob",
+    "grep",
+];
+
+/// `true` when `operation` may be routed to a non-primary declared root.
+pub fn is_root_read_only_operation(operation: &str) -> bool {
+    ROOT_READ_ONLY_OPERATIONS.contains(&operation)
+}
+
+/// Two host paths denote the same directory. Canonicalize first (the declared
+/// `hostPath` and the materialized instance path are written by different owners),
+/// and fall back to a normalized textual comparison when the path does not exist.
+fn same_host_path(left: &Path, right: &Path) -> bool {
+    if let (Ok(a), Ok(b)) = (left.canonicalize(), right.canonicalize()) {
+        return a == b;
+    }
+    let normalize = |path: &Path| {
+        let raw = path.to_string_lossy();
+        let stripped = raw.strip_prefix(r"\\?\").unwrap_or(&raw);
+        stripped.replace('\\', "/").to_lowercase()
+    };
+    normalize(left) == normalize(right)
+}
+
 #[allow(dead_code)]
 #[derive(Clone)]
 pub struct WorkspaceExecutionRouter {
@@ -720,6 +754,64 @@ impl WorkspaceExecutionRouter {
         }
         self.exec_oneshot_inner(workspace_id, operation, payload)
             .await
+    }
+
+    /// PLAN-0639 M7 (VM12): route one **read-only** file operation to a declared
+    /// root boundary instead of the primary root.
+    ///
+    /// * `boundary.root_id == None` → primary root: delegates to [`Self::exec_oneshot`],
+    ///   byte-identical to pre-M7 (the caller already validated that path).
+    /// * non-primary root → the operation resolves against the root's own host
+    ///   path, so a path declared in root B is served from root B (D39-5: serving
+    ///   it from the primary root would be a boundary lie).
+    ///
+    /// Writes are deliberately not routed here: a non-primary root has no
+    /// execution surface yet, so `PER_ROOT_WRITE_UNSUPPORTED` fails closed rather
+    /// than writing into a directory the executors cannot see. Docker/MXC reads
+    /// fail closed for the same reason — their in-container path mapping is a
+    /// separate wave.
+    async fn exec_oneshot_in_root(
+        &self,
+        workspace_id: &str,
+        boundary: &fs::RootBoundary,
+        operation: &str,
+        payload: Value,
+    ) -> Result<Value> {
+        let Some(root_id) = boundary.root_id.as_deref() else {
+            return self.exec_oneshot(workspace_id, operation, payload).await;
+        };
+        validate_file_operation_payload(operation, &payload)?;
+        let instance = self.ensure(workspace_id).await?;
+        // An explicit rootId naming the primary root is not a new surface: delegate
+        // to the unchanged path so an MXC/docker request keeps working exactly as it
+        // did before M7 (the primary root is reachable on every execution mode).
+        if same_host_path(&boundary.host_path, Path::new(&instance.workspace_path)) {
+            return self.exec_oneshot(workspace_id, operation, payload).await;
+        }
+        if !is_root_read_only_operation(operation) {
+            return Err(RuntimeError::Unsupported {
+                capability: format!("file-operation:{operation}:root:{root_id}"),
+                reason: "PER_ROOT_WRITE_UNSUPPORTED".into(),
+            });
+        }
+        if instance.execution_mode != "windows-host" {
+            return Err(RuntimeError::Unsupported {
+                capability: format!("file-operation:{operation}:root:{root_id}"),
+                reason: format!(
+                    "PER_ROOT_READ_UNSUPPORTED:{}",
+                    instance.execution_mode.as_str()
+                ),
+            });
+        }
+        let root_path = boundary.host_path.to_string_lossy().into_owned();
+        self.execute_direct_attach_operation(
+            workspace_id,
+            &root_path,
+            &instance.execution_mode,
+            operation,
+            payload,
+        )
+        .await
     }
 
     async fn execute_direct_attach_operation(
@@ -1378,6 +1470,25 @@ impl WorkspaceExecutionRouter {
             .to_string())
     }
 
+    /// PLAN-0639 M7 (VM12): declared-root-aware read. `boundary.root_id == None`
+    /// delegates to [`Self::read_file`] unchanged (primary root, byte-identical).
+    pub async fn read_file_in_root(
+        &self,
+        workspace_id: &str,
+        boundary: &fs::RootBoundary,
+        path: &str,
+    ) -> Result<String> {
+        let payload = serde_json::json!({"path": path});
+        let val = self
+            .exec_oneshot_in_root(workspace_id, boundary, "read_file", payload)
+            .await?;
+        Ok(val
+            .get("content")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string())
+    }
+
     // PLAN-292 T6: binary-safe read — the sandbox op detects binary content
     // and returns {content, total_lines, is_binary} (base64 when binary).
     pub async fn read_file_range(
@@ -1445,6 +1556,18 @@ impl WorkspaceExecutionRouter {
             .await
     }
 
+    /// PLAN-0639 M7 (VM12): declared-root-aware directory listing.
+    pub async fn list_directory_in_root(
+        &self,
+        workspace_id: &str,
+        boundary: &fs::RootBoundary,
+        path: &str,
+    ) -> Result<Value> {
+        let payload = serde_json::json!({"path": path});
+        self.exec_oneshot_in_root(workspace_id, boundary, "list_directory", payload)
+            .await
+    }
+
     pub async fn glob(&self, workspace_id: &str, pattern: &str, path: &str) -> Result<Value> {
         let payload = serde_json::json!({"pattern": pattern, "path": path});
         self.exec_oneshot(workspace_id, "glob", payload).await
@@ -1458,6 +1581,18 @@ impl WorkspaceExecutionRouter {
     pub async fn get_file_info(&self, workspace_id: &str, path: &str) -> Result<Value> {
         let payload = serde_json::json!({"path": path});
         self.exec_oneshot(workspace_id, "get_file_info", payload)
+            .await
+    }
+
+    /// PLAN-0639 M7 (VM12): declared-root-aware stat.
+    pub async fn get_file_info_in_root(
+        &self,
+        workspace_id: &str,
+        boundary: &fs::RootBoundary,
+        path: &str,
+    ) -> Result<Value> {
+        let payload = serde_json::json!({"path": path});
+        self.exec_oneshot_in_root(workspace_id, boundary, "get_file_info", payload)
             .await
     }
 
@@ -2031,6 +2166,38 @@ mod sandbox_error_mapping_tests {
 #[cfg(test)]
 mod file_operation_tests {
     use super::*;
+
+    /// PLAN-0639 M7 (VM12): the non-primary-root routing allowlist is exactly the
+    /// read-only surface. A write op routed to a declared root would be a boundary
+    /// escape from the primary root, so the policy is pinned here.
+    #[test]
+    fn only_read_only_operations_may_be_routed_to_a_declared_root() {
+        for operation in [
+            "read_file",
+            "read_file_range",
+            "list_directory",
+            "get_file_info",
+        ] {
+            assert!(
+                is_root_read_only_operation(operation),
+                "{operation} must stay routable (UI opens declared-root files)"
+            );
+        }
+        for operation in [
+            "write_file",
+            "write_binary",
+            "delete_file",
+            "mkdir",
+            "edit_file",
+            "apply_patch",
+            "execute_command",
+        ] {
+            assert!(
+                !is_root_read_only_operation(operation),
+                "{operation} must not be routed to a non-primary root yet"
+            );
+        }
+    }
 
     #[test]
     fn mutation_payload_cap_is_checked_before_dispatch() {
