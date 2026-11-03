@@ -575,7 +575,9 @@ class TestSpawnAgentBudgetRefusal:
         result = await asyncio.wait_for(spawn.execute({"prompt": "child task"}, context), timeout=5)
 
         # T4.2：isError=true 的 tool result 不上抛 —— run 不终止，本轮可继续。
-        assert result == {"content": "Tool error: DELEGATION_LIMIT_EXCEEDED"}
+        # PLAN-0649 M1：`is_error` 作为协议字段随返回值带回（供上层出权威状态），
+        # `content` 逐字节不变。
+        assert result == {"content": "Tool error: DELEGATION_LIMIT_EXCEEDED", "is_error": True}
 
         # T4.3：拒绝返回体键集合不含内部策略键/原值（不泄漏 delegationPolicy /
         # delegationMax*Ceiling / maxCount）。
@@ -583,7 +585,10 @@ class TestSpawnAgentBudgetRefusal:
         assert set(body) == {"jsonrpc", "id", "result"}
         assert set(body["result"]) == {"resultType", "isError", "content"}
         flattened = json.dumps(body, ensure_ascii=False)
-        assert set(result) == {"content"}
+        # PLAN-0649 M1：CP 当前信封只有文本码、无 structuredContent ⇒ 不产生
+        # `refusal_code`（绝不从文本猜码，spec §2 I2）。M2 给信封补
+        # structuredContent.code 后由下面新增用例覆盖。
+        assert set(result) == {"content", "is_error"}
         for forbidden in (
             "delegationPolicy",
             "delegationMaxCountCeiling",
@@ -622,6 +627,93 @@ class TestSpawnAgentBudgetRefusal:
         assert result["content"] == "Tool error: DELEGATION_LIMIT_EXCEEDED"
         assert "maxCount" not in result["content"]
         assert "delegationPolicy" not in result["content"]
+
+
+class TestRefusalCodeExtraction:
+    """PLAN-0649 M1 (spec §1/§2): the refusal code comes from CP's structured
+    envelope only, is shape-checked, and never widens the body channel."""
+
+    @staticmethod
+    def _context() -> AgentContext:
+        context = AgentContext.empty("session-budget")
+        context.metadata.update(
+            {"sessionId": "session-budget", "workspaceId": "workspace-1", "runId": "run-1"}
+        )
+        return context
+
+    @staticmethod
+    def _result(structured: object, *, is_error: bool = True) -> SimpleNamespace:
+        return SimpleNamespace(
+            content=[TextContent(type="text", text="Tool error: DELEGATION_LIMIT_EXCEEDED")],
+            structured_content=structured,
+            is_error=is_error,
+        )
+
+    @pytest.mark.asyncio
+    async def test_structured_code_is_carried_verbatim(self):
+        manager = _fake_manager(result=self._result({"code": "DELEGATION_LIMIT_EXCEEDED"}))
+        tool = MCPAgentTool(_stub_tool("spawn_agent"), manager)
+
+        result = await asyncio.wait_for(tool.execute({"prompt": "x"}, self._context()), timeout=5)
+
+        assert result == {
+            "content": "Tool error: DELEGATION_LIMIT_EXCEEDED",
+            "is_error": True,
+            "refusal_code": "DELEGATION_LIMIT_EXCEEDED",
+        }
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "bad_code",
+        [
+            "delegation_limit_exceeded",  # lowercase
+            "DELEGATION LIMIT",  # space
+            "DELEGATION:LIMIT",  # colon
+            "DELEGATION_LIMIT\nEXCEEDED",  # newline
+            "A" * 65,  # over the frozen bound
+            "拒绝",  # non-ASCII
+            "1DELEGATION",  # must start with a letter
+            "",  # empty
+            123,  # not a string
+            None,
+        ],
+    )
+    async def test_malformed_code_is_dropped_fail_closed(self, bad_code):
+        manager = _fake_manager(result=self._result({"code": bad_code}))
+        tool = MCPAgentTool(_stub_tool("spawn_agent"), manager)
+
+        result = await asyncio.wait_for(tool.execute({"prompt": "x"}, self._context()), timeout=5)
+
+        assert "refusal_code" not in result
+        assert result["is_error"] is True
+        # The body channel is untouched: still the plain CP text, never the code.
+        assert result["content"] == "Tool error: DELEGATION_LIMIT_EXCEEDED"
+
+    @pytest.mark.asyncio
+    async def test_code_on_a_successful_result_is_not_a_refusal(self):
+        manager = _fake_manager(
+            result=SimpleNamespace(
+                content=[TextContent(type="text", text='{"sessionId":"s-1"}')],
+                structured_content={"code": "SOME_SUCCESS_CODE"},
+                is_error=False,
+            )
+        )
+        tool = MCPAgentTool(_stub_tool("skill_read"), manager)
+
+        result = await asyncio.wait_for(tool.execute({}, self._context()), timeout=5)
+
+        assert result == {"content": '{"sessionId":"s-1"}'}
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("structured", [None, "code=DELEGATION_LIMIT_EXCEEDED", ["DELEGATION_LIMIT_EXCEEDED"]])
+    async def test_non_mapping_structured_content_yields_no_code(self, structured):
+        manager = _fake_manager(result=self._result(structured))
+        tool = MCPAgentTool(_stub_tool("spawn_agent"), manager)
+
+        result = await asyncio.wait_for(tool.execute({"prompt": "x"}, self._context()), timeout=5)
+
+        assert "refusal_code" not in result
+        assert result["is_error"] is True
 
 
 class TestMCPAgentToolTimeout:
