@@ -139,12 +139,15 @@ async def test_refusal_metadata_reaches_durable_payload_and_message(monkeypatch)
 
 
 @pytest.mark.asyncio
-async def test_plain_tool_error_does_not_invent_a_code(monkeypatch):
+async def test_plain_tool_error_marks_failed_without_inventing_a_code(monkeypatch):
     """An `is_error` without CP's structured code is a failure, not a refusal.
 
-    Spec §1 keeps `status` on the SSE venue and only `refusalCode` on the durable
-    one; widening the durable status to every non-CP error is an M2/CP decision
-    (see the PLAN's M2 handoff list), so the legacy payload keeps today's shape.
+    PLAN-0649 M2 (Lead 2026-11-03 ruling): the durable `status` widens from
+    "refusal only" to **every** `is_error` — a failed call is failed whether or
+    not CP attached a code, so durable history and the card agree. `refusalCode`
+    stays the narrower, CP-decided signal and is never invented from the text
+    (spec I2). Legacy gate OFF writes `status` exactly when it is not
+    `completed`, so this payload grows the key and nothing else.
     """
     monkeypatch.delenv(EVENT_WRITER_V2_ENV, raising=False)
     adapter, event_store = _adapter(_Tool({"content": "Tool error: something broke", "is_error": True}))
@@ -153,7 +156,7 @@ async def test_plain_tool_error_does_not_invent_a_code(monkeypatch):
 
     _, result_payload = _payloads(event_store)
     assert "refusalCode" not in result_payload
-    assert "status" not in result_payload  # legacy gate OFF: completed stays unwritten
+    assert result_payload["status"] == "failed"
     assert isinstance(content, ToolMessage)
     assert content.additional_kwargs[TOOL_RESULT_STATUS_KEY] == "failed"
     assert TOOL_RESULT_REFUSAL_CODE_KEY not in content.additional_kwargs

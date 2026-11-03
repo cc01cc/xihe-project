@@ -1322,19 +1322,35 @@ public class McpProxyController {
     }
 
     private String cpToolResult(String requestBody, Map<String, Object> output, String errorCode) {
-        ObjectNode response = objectMapper.createObjectNode();
+        return cpToolResult(objectMapper, requestBody, output, errorCode);
+    }
+
+    /**
+     * PLAN-0649 M2 (T2.1): the tool-result envelope builder, extracted so the wire shape is
+     * unit-testable without a Spring context. Every CP-owned tool call site (spawn / acquire /
+     * generic {@code cpToolErrorResponse}) funnels through this one method.
+     */
+    static String cpToolResult(ObjectMapper mapper, String requestBody, Map<String, Object> output,
+                               String errorCode) {
+        ObjectNode response = mapper.createObjectNode();
         response.put("jsonrpc", "2.0");
-        response.set("id", objectMapper.valueToTree(readJsonRpcId(requestBody)));
+        response.set("id", mapper.valueToTree(readJsonRpcId(mapper, requestBody)));
         ObjectNode result = response.putObject("result");
         result.put("resultType", "complete");
         ObjectNode text = result.putArray("content").addObject();
         text.put("type", "text");
         if (errorCode != null) {
             result.put("isError", true);
+            // PLAN-0649 M2 (T2.1, spec §1/§2 I2): the model-visible text stays byte-identical
+            // ("Tool error: CODE"), and the *structured* code rides beside it so the Agent can
+            // classify a refusal without parsing text. Same `structuredContent.code` shape the
+            // PLAN-0628 skill_read envelope already uses; `detail`/`status` are deliberately not
+            // added here (spec §5 keeps CP internals off the wire).
+            result.putObject("structuredContent").put("code", errorCode);
             text.put("text", "Tool error: " + errorCode);
             return response.toString();
         }
-        ObjectNode structured = objectMapper.valueToTree(output);
+        ObjectNode structured = mapper.valueToTree(output);
         result.set("structuredContent", structured);
         text.put("text", structured.toString());
         return response.toString();
@@ -2422,15 +2438,20 @@ public class McpProxyController {
      * 的 1.x 会话模型，modern 客户端会把该响应按「未知/迟到 id」丢弃，等待者永久挂起。
      */
     private JsonNode readJsonRpcId(String body) {
+        return readJsonRpcId(objectMapper, body);
+    }
+
+    /** PLAN-0649 M2: mapper-explicit form so the envelope builder stays context-free (see above). */
+    private static JsonNode readJsonRpcId(ObjectMapper mapper, String body) {
         try {
-            JsonNode id = objectMapper.readTree(body).get("id");
+            JsonNode id = mapper.readTree(body).get("id");
             if (id != null && !id.isNull() && !id.isMissingNode()) {
                 return id;
             }
         } catch (Exception e) {
             logger.warn("Failed to read JSON-RPC id from request: {}", e.getMessage());
         }
-        return objectMapper.getNodeFactory().numberNode(1);
+        return mapper.getNodeFactory().numberNode(1);
     }
 
     /**

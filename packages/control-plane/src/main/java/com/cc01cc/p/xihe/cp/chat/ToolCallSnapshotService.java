@@ -41,6 +41,14 @@ public class ToolCallSnapshotService {
     private static final Set<String> EVENT_TYPES = Set.of("tool.called", "tool.result");
     private static final String APPROVAL_TOOL = "request_approval";
 
+    /**
+     * PLAN-0649 M2 (T2.4, spec §1/§3 I3): the same refusal-code shape the durable sanitizer keeps.
+     * Re-checked here rather than trusted: the snapshot is a separate carrier, and every layer is
+     * fail-closed on its own (a malformed value is dropped, never stored).
+     */
+    private static final java.util.regex.Pattern REFUSAL_CODE_PATTERN =
+            java.util.regex.Pattern.compile("^[A-Z][A-Z0-9_]{0,63}$");
+
     private final EventStoreRepository eventStoreRepository;
     private final ObjectMapper objectMapper;
 
@@ -103,6 +111,7 @@ public class ToolCallSnapshotService {
             }
             card.completedAt = event.getCreatedAt();
             card.status = status(text(payload, "status"), true);
+            card.refusalCode = refusalCode(text(payload, "refusalCode"));
             String resultText = bound(extractResult(payload.get("result")), RESULT_LIMIT, false).text();
             card.result = resultText == null || resultText.isBlank() ? null : resultText;
         }
@@ -151,6 +160,9 @@ public class ToolCallSnapshotService {
             call.put("truncated", bound.truncated());
             call.put("status", card.completedAt == null
                     ? status(null, false) : status(card.status, true));
+            if (card.refusalCode != null) {
+                call.put("refusalCode", card.refusalCode);
+            }
             call.put("startedAt", card.startedAt.toString());
             if (card.completedAt != null) {
                 call.put("completedAt", card.completedAt.toString());
@@ -243,6 +255,11 @@ public class ToolCallSnapshotService {
         };
     }
 
+    /** PLAN-0649 M2: shape-checked refusal metadata; anything else is "no refusal information". */
+    private static String refusalCode(String raw) {
+        return raw != null && REFUSAL_CODE_PATTERN.matcher(raw).matches() ? raw : null;
+    }
+
     /** Bounds one text field; the marker is itself a valid compact JSON string. */
     static Bound bound(String raw, int limit, boolean arguments) {
         if (raw == null) {
@@ -292,6 +309,7 @@ public class ToolCallSnapshotService {
         private final String arguments;
         private Instant completedAt;
         private String status;
+        private String refusalCode;
         private String result;
 
         private Card(String id, String name, Instant startedAt, String arguments) {

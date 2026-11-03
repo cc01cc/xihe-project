@@ -40,6 +40,15 @@ public final class ContextEventPayloadSafety {
     private static final Set<String> TOOL_STATUSES = Set.of(
             "completed", "failed", "interrupted", "expired", "denied", "timeout", "cancelled", "unknown", "pending");
 
+    /**
+     * PLAN-0649 M2 (spec §1/§3 I2/I3): the only refusal-code shape durable history and the read
+     * projection may keep. Shape-only — the value vocabulary belongs to CP (`DelegationRefused*`,
+     * `McpProxyController` error codes), so adding a code never needs a change here. A value that
+     * does not match is dropped, which is byte-identical to the pre-0649 payload.
+     */
+    public static final java.util.regex.Pattern REFUSAL_CODE_PATTERN =
+            java.util.regex.Pattern.compile("^[A-Z][A-Z0-9_]{0,63}$");
+
     private ContextEventPayloadSafety() {
     }
 
@@ -70,6 +79,13 @@ public final class ContextEventPayloadSafety {
         String status = source.path("status").asText("");
         if (TOOL_STATUSES.contains(status)) {
             safe.put("status", status);
+        }
+        // PLAN-0649 M2 (T2.2): refusal metadata is shape-checked and kept — it is an enum-shaped
+        // code, not body content, so it does not open a result path (spec I1/I2). Placed before the
+        // skill_read branch on purpose: a refused skill_read must keep its code too.
+        String refusalCode = source.path("refusalCode").asText("");
+        if (REFUSAL_CODE_PATTERN.matcher(refusalCode).matches()) {
+            safe.put("refusalCode", refusalCode);
         }
         String name = source.path("toolName").asText(source.path("tool_name").asText(""));
         if (SKILL_READ_TOOL.equals(name)) {

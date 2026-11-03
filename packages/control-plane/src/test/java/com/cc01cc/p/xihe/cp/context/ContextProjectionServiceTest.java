@@ -626,6 +626,71 @@ class ContextProjectionServiceTest extends AbstractH2Test {
     }
 
     @Test
+    void failedToolResultWithoutRefusalCodeProjectsAsFailedAndStaysMasked() {
+        // PLAN-0649 M2 (Lead 2026-11-03 ruling): the durable `status` widens from "refusal only" to
+        // every `is_error`, so a plain failed call must reach the projection as failed even though it
+        // carries no refusal code — the body stays the CP placeholder either way (I1).
+        String sessionId = "aaaaab00-0000-0000-0000-00000000001a";
+        contextService.appendEvent(sessionId, TEST_WS, TEST_USER, "tool.called", Map.of(
+                "toolCallId", "c-failed", "toolName", "spawn_agent", "arguments", Map.of("prompt", "x")
+        ));
+        contextService.appendEvent(sessionId, TEST_WS, TEST_USER, "tool.result", Map.of(
+                "toolCallId", "c-failed",
+                "toolName", "spawn_agent",
+                "status", "failed",
+                "result", "WORKSPACE-PRIVATE-OUTPUT"
+        ));
+
+        ObjectNode ctx = projectionService.project(sessionId, 0L);
+        var message = ctx.get("messages").get(1);
+
+        assertThat(message.path("role").asText()).isEqualTo("tool");
+        assertThat(message.path("tool_call_id").asText()).isEqualTo("c-failed");
+        assertThat(message.path("status").asText()).isEqualTo("failed");
+        assertThat(message.path("content").asText()).isEqualTo(
+                "Tool result withheld from durable history because no checkpoint-safe output schema is registered.");
+        assertThat(ctx.get("messages").toString()).doesNotContain("WORKSPACE-PRIVATE-OUTPUT");
+    }
+
+    @Test
+    void failedToolResultReplaysIdenticallyFromACursorAndTheDurableSnapshot() {
+        // Cross-turn replay regression (design decision #11 + Lead ruling): a failed tool result must
+        // replay as the same projection whether it is rebuilt live, resumed from a mid-history
+        // cursor, or served from the upserted durable snapshot. No new model-wire field rides along.
+        String sessionId = "aaaaab00-0000-0000-0000-00000000001b";
+        contextService.appendEvent(sessionId, TEST_WS, TEST_USER, "prompt.admitted", Map.of(
+                "message", Map.of("role", "human", "content", "run it")
+        ));
+        contextService.appendEvent(sessionId, TEST_WS, TEST_USER, "tool.called", Map.of(
+                "toolCallId", "c-replay", "toolName", "spawn_agent", "arguments", Map.of("prompt", "x")
+        ));
+        contextService.appendEvent(sessionId, TEST_WS, TEST_USER, "tool.result", Map.of(
+                "toolCallId", "c-replay",
+                "toolName", "spawn_agent",
+                "status", "failed",
+                "result", "Tool error: DELEGATION_LIMIT_EXCEEDED"
+        ));
+        contextService.appendEvent(sessionId, TEST_WS, TEST_USER, "assistant.responded", Map.of(
+                "message", Map.of("role", "ai", "content", "the child task was refused")
+        ));
+
+        ObjectNode live = projectionService.project(sessionId, 0L);
+
+        assertThat(projectionService.project(sessionId, 2L)).isEqualTo(live);
+        ObjectNode snapshot = contextService.getSnapshot(sessionId, TEST_WS, TEST_USER, 2L);
+        assertThat(snapshot.get("messages")).isEqualTo(live.get("messages"));
+
+        var toolMessage = snapshot.get("messages").get(2);
+        assertThat(toolMessage.path("role").asText()).isEqualTo("tool");
+        assertThat(toolMessage.path("status").asText()).isEqualTo("failed");
+        assertThat(toolMessage.path("content").asText()).isEqualTo(
+                "Tool result withheld from durable history because no checkpoint-safe output schema is registered.");
+        // Decision #11: refusal metadata is NOT added to the model-visible replay (no new wire face).
+        assertThat(toolMessage.has("refusalCode")).isFalse();
+        assertThat(snapshot.get("messages").toString()).doesNotContain("DELEGATION_LIMIT_EXCEEDED");
+    }
+
+    @Test
     void toolResultMissingCallIdMarksDegraded() {
         String sessionId = "aaaaab00-0000-0000-0000-00000000000a";
         contextService.appendEvent(sessionId, TEST_WS, TEST_USER, "tool.result", Map.of(
