@@ -21,6 +21,12 @@ export interface HistoryToolCall {
     completedAt?: string;
     result?: string;
     truncated?: boolean;
+    /**
+     * PLAN-0649: CP refusal code persisted in the V83 snapshot. Refusals are judged
+     * by this field, **not** by `status` — the durable status of a non-CP tool error
+     * can still be `completed`.
+     */
+    refusalCode?: string;
 }
 
 /**

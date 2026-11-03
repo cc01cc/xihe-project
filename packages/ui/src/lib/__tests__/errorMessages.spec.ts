@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { chatErrorToastText, humanizeErrorCode, mappedErrorCopy } from "../errorMessages";
+import {
+    chatErrorToastText,
+    humanizeErrorCode,
+    mappedErrorCopy,
+    normalizeRefusalCode,
+    toolRefusalCopyKey,
+} from "../errorMessages";
 
 describe("mappedErrorCopy", () => {
     it("returns dedicated copy only for codes it actually maps", () => {
@@ -49,5 +55,52 @@ describe("humanizeErrorCode", () => {
         for (const [code, copy] of Object.entries(cases)) {
             expect(humanizeErrorCode(code), code).toContain(copy);
         }
+    });
+});
+
+describe("normalizeRefusalCode (PLAN-0649 M3)", () => {
+    it("accepts only the frozen enum shape", () => {
+        expect(normalizeRefusalCode("DELEGATION_LIMIT_EXCEEDED")).toBe("DELEGATION_LIMIT_EXCEEDED");
+        expect(normalizeRefusalCode("A")).toBe("A");
+        expect(normalizeRefusalCode("X".repeat(64))).toBe("X".repeat(64));
+    });
+
+    it("drops everything else so a malformed value can never read as a reason", () => {
+        for (const value of [
+            "delegation_limit_exceeded",
+            "DELEGATION LIMIT",
+            "DELEGATION:LIMIT",
+            "拒绝",
+            "X".repeat(65),
+            "1DELEGATION",
+            "",
+            undefined,
+            null,
+            123,
+            { code: "DELEGATION_LIMIT_EXCEEDED" },
+        ]) {
+            expect(normalizeRefusalCode(value)).toBeUndefined();
+        }
+    });
+});
+
+describe("toolRefusalCopyKey (PLAN-0649 M3 / B5)", () => {
+    it("maps the CP refusal codes to i18n keys", () => {
+        expect(toolRefusalCopyKey("DELEGATION_LIMIT_EXCEEDED")).toBe(
+            "chat.toolRefusalDelegationLimit",
+        );
+        expect(toolRefusalCopyKey("DELEGATION_POLICY_INVALID")).toBe(
+            "chat.toolRefusalDelegationPolicy",
+        );
+        expect(toolRefusalCopyKey("SPAWN_EXECUTION_FAILED")).toBe("chat.toolRefusalSpawnFailed");
+        expect(toolRefusalCopyKey("ACQUIRE_EXECUTION_FAILED")).toBe(
+            "chat.toolRefusalAcquireFailed",
+        );
+    });
+
+    it("returns null for an unmapped code so the caller shows generic copy plus the code", () => {
+        expect(toolRefusalCopyKey("SOME_FUTURE_CODE")).toBeNull();
+        expect(toolRefusalCopyKey("")).toBeNull();
+        expect(toolRefusalCopyKey(undefined)).toBeNull();
     });
 });

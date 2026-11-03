@@ -72,4 +72,28 @@ describe("mergeHistoryToolCalls", () => {
         expect(mergeHistoryToolCalls(undefined, undefined)).toBeUndefined();
         expect(mergeHistoryToolCalls([], [])).toBeUndefined();
     });
+
+    it("carries the PLAN-0649 refusal code from the persisted snapshot", () => {
+        // Refusals are judged by `refusalCode`, not by `status` — the durable status
+        // of a non-CP tool error can still be `completed`.
+        const cards = mergeHistoryToolCalls(
+            [
+                {
+                    id: "call-9",
+                    name: "spawn_agent",
+                    arguments: "{}",
+                    status: "completed",
+                    startedAt: "2026-11-03T10:00:00Z",
+                    refusalCode: "DELEGATION_LIMIT_EXCEEDED",
+                },
+            ],
+            undefined,
+        );
+
+        expect(cards?.[0]).toMatchObject({
+            id: "call-9",
+            status: "completed",
+            refusalCode: "DELEGATION_LIMIT_EXCEEDED",
+        });
+    });
 });

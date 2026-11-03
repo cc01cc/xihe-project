@@ -2867,6 +2867,8 @@ export const api = {
                     completedAt?: string;
                     result?: string;
                     truncated?: boolean;
+                    /** PLAN-0649: CP refusal code; the durable body stays a placeholder. */
+                    refusalCode?: string;
                 }>;
                 toolCallsTruncated?: boolean;
                 toolCallsTotal?: number;

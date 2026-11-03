@@ -881,3 +881,92 @@ describe("parseParticipantEnvelope", () => {
         expect(parseParticipantEnvelope("not json")).toBeUndefined();
     });
 });
+
+describe("tool_result 权威 status 与 refusalCode（PLAN-0649 M3）", () => {
+    async function seedToolCall() {
+        const transport = createTransportController(),
+            { connect } = useSSE(SESSION_ID);
+        connect();
+        await flushPromises();
+
+        await transport.simulateMessage(
+            "tool_call",
+            JSON.stringify({
+                type: "tool_call",
+                tool: "spawn_agent",
+                arguments: { prompt: "child" },
+                run_id: RUN_ID,
+                toolCallId: "tc-refused-1",
+            }),
+        );
+
+        return transport;
+    }
+
+    function liveCall() {
+        return useChatStore().getMessages(SESSION_ID)[0].toolCalls?.[0];
+    }
+
+    it("trusts the event status so a withheld body no longer reads as completed", async () => {
+        const transport = await seedToolCall();
+
+        await transport.simulateMessage(
+            "tool_result",
+            JSON.stringify({
+                type: "tool_result",
+                tool: "spawn_agent",
+                // The withheld body is exactly what used to be sniffed as "completed".
+                result: "Tool result withheld from durable history because no checkpoint-safe output schema is registered.",
+                status: "failed",
+                refusalCode: "DELEGATION_LIMIT_EXCEEDED",
+                run_id: RUN_ID,
+                toolCallId: "tc-refused-1",
+            }),
+        );
+
+        expect(liveCall()).toMatchObject({
+            id: "tc-refused-1",
+            status: "failed",
+            refusalCode: "DELEGATION_LIMIT_EXCEEDED",
+        });
+        expect(liveCall()?.result).toContain("withheld");
+    });
+
+    it("falls back to the legacy text sniff when the event carries no status", async () => {
+        const transport = await seedToolCall();
+
+        await transport.simulateMessage(
+            "tool_result",
+            JSON.stringify({
+                type: "tool_result",
+                tool: "spawn_agent",
+                result: "Tool error: DELEGATION_LIMIT_EXCEEDED",
+                run_id: RUN_ID,
+                toolCallId: "tc-refused-1",
+            }),
+        );
+
+        expect(liveCall()?.status).toBe("failed");
+        expect(liveCall()?.refusalCode).toBeUndefined();
+    });
+
+    it("drops a malformed refusalCode so it can never render as a reason", async () => {
+        const transport = await seedToolCall();
+
+        await transport.simulateMessage(
+            "tool_result",
+            JSON.stringify({
+                type: "tool_result",
+                tool: "spawn_agent",
+                result: "withheld",
+                status: "failed",
+                refusalCode: "delegation limit exceeded",
+                run_id: RUN_ID,
+                toolCallId: "tc-refused-1",
+            }),
+        );
+
+        expect(liveCall()?.refusalCode).toBeUndefined();
+        expect(liveCall()?.status).toBe("failed");
+    });
+});
