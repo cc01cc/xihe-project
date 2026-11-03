@@ -58,9 +58,11 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -463,6 +465,36 @@ public class ChatController {
                     "INVALID_REQUEST", "asParticipantId must be a UUID string");
         }
         String asParticipantId = (String) rawAsParticipantId;
+        // PLAN-0630 M5b (D30-14): optional composer cc list — observer participant ids. Every
+        // entry must be a UUID string (400 INVALID_REQUEST otherwise); roster membership and
+        // disabled state are resolved fail-closed in WakeFanOutService, same as mentions.
+        // cc is notify-only and deliberately NOT part of the idempotency request hash.
+        Object rawCc = request.get("cc");
+        List<UUID> ccParticipantIds = null;
+        if (rawCc != null) {
+            if (!(rawCc instanceof List<?> ccList)) {
+                return ProblemDetailsHandler.problemResponse(HttpStatus.BAD_REQUEST,
+                        "INVALID_REQUEST", "cc must be an array of participant UUID strings");
+            }
+            List<UUID> parsedCc = new ArrayList<>();
+            Set<String> seenCc = new HashSet<>();
+            for (Object item : ccList) {
+                if (!(item instanceof String ccValue) || ccValue.isBlank()) {
+                    return ProblemDetailsHandler.problemResponse(HttpStatus.BAD_REQUEST,
+                            "INVALID_REQUEST", "cc entries must be participant UUID strings");
+                }
+                try {
+                    UUID ccId = UUID.fromString(ccValue.trim());
+                    if (seenCc.add(ccId.toString())) {
+                        parsedCc.add(ccId);
+                    }
+                } catch (IllegalArgumentException invalidCc) {
+                    return ProblemDetailsHandler.problemResponse(HttpStatus.BAD_REQUEST,
+                            "INVALID_REQUEST", "cc entries must be participant UUID strings");
+                }
+            }
+            ccParticipantIds = parsedCc;
+        }
         String provider = (String) request.get("provider");
         String model = (String) request.get("model");
         String toolMode = (String) request.getOrDefault("toolMode", "none");
@@ -679,8 +711,10 @@ public class ChatController {
                     attachmentInfos, userId, workspaceId, requestId, runId, dispatchAdmission, null, responder);
             // PLAN-0624 M4 (D24-10): mention fan-out rides the accepted submission — the
             // recipients answer serially on the session executor, never on this thread.
+            // PLAN-0630 M5b (D30-14): the composer's cc observer list rides the same round —
+            // observers get a notify signal only, never a run of their own.
             wakeFanOutService.fanOut(UUID.fromString(sessionId), workspaceId, userId, runId,
-                    content, mentionRoster(userId, workspaceId, sessionId));
+                    content, mentionRoster(userId, workspaceId, sessionId), ccParticipantIds);
             handedOff = true;
             return ResponseEntity.accepted().body(runAcceptedBody(chatRun, "accepted", sessionId,
                 userMessage.getId(), runId, null));

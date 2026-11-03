@@ -115,6 +115,8 @@ export interface SendMessageOptions {
     agentPrincipalId?: string;
     /** D23-27：以某个参与者身份发言。仅 `capabilities.speakAs` 为真时才应由 UI 传入。 */
     asParticipantId?: string;
+    /** PLAN-0630 M5b (D30-14)：composer 的 cc 旁听名单（participantId UUID 数组）。 */
+    cc?: string[];
     provider?: string;
     toolMode?: "none" | "workspace";
     idempotencyKey?: string;
@@ -714,6 +716,7 @@ export function useSSE(sessionId: MaybeRefOrGetter<string>) {
         sessionId: overrideSid,
         agentPrincipalId,
         asParticipantId,
+        cc,
     }: SendMessageOptions): Promise<ChatRunResponse | null> {
         const generation = connectionGeneration;
         error.value = null;
@@ -732,6 +735,8 @@ export function useSSE(sessionId: MaybeRefOrGetter<string>) {
             if (agentPrincipalId) body.agentPrincipalId = agentPrincipalId;
             // D23-27：代发。服务端再校验（owner + 自己/自己拥有的 AGENT + 未停用），UI 只做入口门禁。
             if (asParticipantId) body.asParticipantId = asParticipantId;
+            // PLAN-0630 M5b (D30-14)：cc 旁听名单；服务端对非 UUID 条目 400，非本会话参与者 fail-closed 忽略。
+            if (cc && cc.length > 0) body.cc = cc;
             if (model) {
                 body.model = model;
             }

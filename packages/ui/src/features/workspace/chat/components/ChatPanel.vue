@@ -131,6 +131,8 @@ const pendingSend = ref<{
     content: string;
     attachments?: AttachmentFile[];
     branchId: string;
+    /** PLAN-0630 M5b (D30-14)：旁听名单随挂起的发送一起保留，绑定 principal 后继续透传。 */
+    cc?: string[];
 } | null>(null);
 const loadingPrincipalChoices = ref(false),
     creatingBranchForMessageId = ref<string | null>(null);
@@ -497,6 +499,8 @@ async function handleSend(
     attachments?: AttachmentFile[],
     branchIdOverride?: string,
     speakAsParticipantId?: string,
+    /** PLAN-0630 M5b (D30-14)：composer 的 cc 旁听名单（participantId 数组）。 */
+    cc?: string[],
 ) {
     const id = props.sessionId;
     if (!id) return;
@@ -525,6 +529,7 @@ async function handleSend(
             agentPrincipalId: selectedPrincipal,
             branchId,
             asParticipantId: speakAsParticipantId,
+            cc,
         });
         return;
     }
@@ -538,7 +543,7 @@ async function handleSend(
             toast.error(t("workspace.noBoundAgent"));
             return;
         }
-        pendingSend.value = { content, attachments, branchId };
+        pendingSend.value = { content, attachments, branchId, cc };
         selectedPrincipalId.value = "";
         showPrincipalBinding.value = true;
     } catch (cause) {
@@ -697,16 +702,17 @@ async function continueFollowUpQueue() {
 }
 
 /**
- * 输入框的 `send` 事件现在带第三个参数（`asParticipantId`，D23-27 代发）。
- * `handleSend` 的第三个位置是 `branchIdOverride`（队列流程在用），所以这里显式转接，
- * 避免"代发 id 被当成 branchId"这种静默错位。
+ * 输入框的 `send` 事件现在带第三个参数（`asParticipantId`，D23-27 代发 / M5b to）与第四个参数
+ * （`cc`，M5b 旁听名单）。`handleSend` 的第三个位置是 `branchIdOverride`（队列流程在用），
+ * 所以这里显式转接，避免"代发 id 被当成 branchId"这种静默错位。
  */
 function onInputSend(
     content: string,
     attachments?: AttachmentFile[],
     asParticipantId?: string,
+    cc?: string[],
 ): Promise<void> {
-    return handleSend(content, attachments, undefined, asParticipantId);
+    return handleSend(content, attachments, undefined, asParticipantId, cc);
 }
 
 async function submitMessage(input: {
@@ -716,8 +722,10 @@ async function submitMessage(input: {
     branchId: string;
     /** D23-27：以某个参与者身份发言（"代发"）。仅当 `capabilities.speakAs` 为真时才会有值。 */
     asParticipantId?: string;
+    /** PLAN-0630 M5b (D30-14)：composer 的 cc 旁听名单（participantId 数组，随消息发送）。 */
+    cc?: string[];
 }) {
-    const { content, attachments, agentPrincipalId, branchId, asParticipantId } = input;
+    const { content, attachments, agentPrincipalId, branchId, asParticipantId, cc } = input;
     if (!authStore.canWriteWorkspace) {
         toast.error(t("workspace.viewerReadOnly"));
         return;
@@ -733,6 +741,7 @@ async function submitMessage(input: {
         toolMode: props.toolMode,
         agentPrincipalId,
         asParticipantId,
+        cc,
     });
     if (!result) return;
 
@@ -775,6 +784,7 @@ async function confirmPrincipalBinding() {
         attachments: pending.attachments,
         agentPrincipalId: principalId,
         branchId: pending.branchId,
+        cc: pending.cc,
     });
 }
 

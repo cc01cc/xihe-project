@@ -1,14 +1,21 @@
 package com.cc01cc.p.xihe.cp.chat;
 
 import com.cc01cc.p.xihe.cp.config.ConfigService;
+import com.cc01cc.p.xihe.cp.context.service.EventStoreService;
+import com.cc01cc.p.xihe.cp.repository.SessionParticipantCursorRepository;
 import com.cc01cc.p.xihe.cp.service.WakeDispatchService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Service;
 
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
@@ -33,15 +40,34 @@ public class WakeFanOutService {
 
     private static final Logger logger = LoggerFactory.getLogger(WakeFanOutService.class);
     static final long DEFAULT_WAIT_SECONDS = 600;
+    /**
+     * Same durable event name WakeDispatchService audits wake outcomes under (its constant is
+     * package-private in {@code service}); a cc notify deliberately reuses the envelope —
+     * {@code triggerSource="cc", outcome="notify"} — instead of inventing a second event type.
+     */
+    static final String EVENT_WAKE_DISPATCH = "wake_dispatch";
 
     private final WakeDispatchService wakeDispatchService;
     private final ConfigService configService;
+    /** PLAN-0630 M5b: cc observer notifications; {@code null} in the legacy 2-arg construction. */
+    private final EventStoreService eventStoreService;
+    private final SessionParticipantCursorRepository cursorRepository;
     private final Map<String, CompletableFuture<Void>> terminalAwaiters = new ConcurrentHashMap<>();
     private final Map<UUID, ExecutorService> sessionExecutors = new ConcurrentHashMap<>();
 
+    /** Legacy test seam (WakeFanOutServiceTest builds with dispatch + config only). */
     public WakeFanOutService(WakeDispatchService wakeDispatchService, ConfigService configService) {
+        this(wakeDispatchService, configService, null, null);
+    }
+
+    @Autowired
+    public WakeFanOutService(WakeDispatchService wakeDispatchService, ConfigService configService,
+                             EventStoreService eventStoreService,
+                             SessionParticipantCursorRepository cursorRepository) {
         this.wakeDispatchService = wakeDispatchService;
         this.configService = configService;
+        this.eventStoreService = eventStoreService;
+        this.cursorRepository = cursorRepository;
     }
 
     /** Test/observer seam: is a terminal awaiter registered for this run right now. */
@@ -64,6 +90,21 @@ public class WakeFanOutService {
      */
     public void fanOut(UUID sessionId, String workspaceId, String userId, String rootRunId,
                        String content, List<MentionParser.RosterEntry> roster) {
+        fanOut(sessionId, workspaceId, userId, rootRunId, content, roster, null);
+    }
+
+    /**
+     * PLAN-0630 M5b (D30-14): the composer's optional {@code cc} observer list rides the same
+     * wake round. Semantics = 旁听名单: an observer gets the durable notify signal
+     * ({@code wake_dispatch} outcome {@code notify} + the unread {@code mention_count}
+     * advance — the same signal a human mention produces) but <b>never a Run</b>; an agent
+     * observer still answers when actually {@code @}-mentioned (WHEN_MENTIONED equivalent),
+     * which the mention fan-out above already handles. Observers already woken as mention
+     * recipients this round are not notified twice.
+     */
+    public void fanOut(UUID sessionId, String workspaceId, String userId, String rootRunId,
+                       String content, List<MentionParser.RosterEntry> roster,
+                       List<UUID> ccParticipantIds) {
         if (roster == null || roster.isEmpty()) {
             return;
         }
@@ -76,17 +117,61 @@ public class WakeFanOutService {
                                 .findFirst().orElse(null))
                         .filter(entry -> entry != null && entry.enabled())
                         .toList();
-        if (recipients.isEmpty() && parsed.unresolvedTokens().isEmpty()) {
+        List<MentionParser.RosterEntry> ccObservers = resolveCcObservers(sessionId, ccParticipantIds,
+                roster, recipients);
+        if (recipients.isEmpty() && parsed.unresolvedTokens().isEmpty() && ccObservers.isEmpty()) {
             return;
         }
         String wakeRoundId = "wake:mention:" + rootRunId;
-        executorFor(sessionId).submit(() -> runSerial(sessionId, wakeRoundId, recipients,
-                parsed.unresolvedTokens()));
+        executorFor(sessionId).submit(() -> runSerial(sessionId, workspaceId, userId, wakeRoundId, recipients,
+                parsed.unresolvedTokens(), ccObservers));
     }
 
-    private void runSerial(UUID sessionId, String wakeRoundId,
+    /**
+     * Resolves the caller-supplied cc ids against the roster, fail-closed the same way
+     * {@link MentionParser} treats tokens: an id that is not an enabled session participant
+     * is logged and ignored — the fan-out never guesses, and a disabled member can never be
+     * notified. Duplicates and mention recipients of the same round are dropped.
+     */
+    private List<MentionParser.RosterEntry> resolveCcObservers(UUID sessionId, List<UUID> ccParticipantIds,
+            List<MentionParser.RosterEntry> roster, List<MentionParser.RosterEntry> mentionRecipients) {
+        if (ccParticipantIds == null || ccParticipantIds.isEmpty()) {
+            return List.of();
+        }
+        Set<UUID> alreadyWoken = new HashSet<>();
+        for (MentionParser.RosterEntry recipient : mentionRecipients) {
+            alreadyWoken.add(recipient.participantId());
+        }
+        Map<UUID, MentionParser.RosterEntry> byId = new LinkedHashMap<>();
+        for (MentionParser.RosterEntry entry : roster) {
+            byId.putIfAbsent(entry.participantId(), entry);
+        }
+        List<MentionParser.RosterEntry> observers = new ArrayList<>();
+        Set<UUID> seen = new HashSet<>();
+        for (UUID participantId : ccParticipantIds) {
+            if (participantId == null || !seen.add(participantId) || alreadyWoken.contains(participantId)) {
+                continue;
+            }
+            MentionParser.RosterEntry entry = byId.get(participantId);
+            if (entry == null) {
+                logger.warn("[LIFECYCLE] service=cp event=wake_cc_ignored sessionId={} participantId={} "
+                        + "reason=not_in_roster", sessionId, participantId);
+                continue;
+            }
+            if (!entry.enabled()) {
+                logger.info("[LIFECYCLE] service=cp event=wake_cc_ignored sessionId={} participantId={} "
+                        + "reason=disabled", sessionId, participantId);
+                continue;
+            }
+            observers.add(entry);
+        }
+        return observers;
+    }
+
+    private void runSerial(UUID sessionId, String workspaceId, String userId, String wakeRoundId,
                            List<MentionParser.RosterEntry> recipients,
-                           List<String> unresolvedTokens) {
+                           List<String> unresolvedTokens,
+                           List<MentionParser.RosterEntry> ccObservers) {
         for (String token : unresolvedTokens) {
             logger.info("[LIFECYCLE] service=cp event=wake_mention_unresolved sessionId={} "
                     + "token={} round={}", sessionId, token, wakeRoundId);
@@ -108,6 +193,43 @@ public class WakeFanOutService {
                 awaitTerminal(result.runId().toString(), waitSeconds());
             }
         }
+        for (MentionParser.RosterEntry observer : ccObservers) {
+            try {
+                notifyObserver(sessionId, workspaceId, userId, wakeRoundId, observer);
+            } catch (RuntimeException failure) {
+                // Q3: a failed notification never aborts the round either.
+                logger.error("[LIFECYCLE] service=cp event=wake_cc_failed sessionId={} "
+                        + "participantId={} round={} failureType={}", sessionId,
+                        observer.participantId(), wakeRoundId, failure.getClass().getSimpleName(),
+                        failure);
+            }
+        }
+    }
+
+    /**
+     * PLAN-0630 M5b: the cc notify — durable {@code wake_dispatch} outcome {@code notify}
+     * (fields mirror {@code WakeDispatchService}'s audit envelope: wakeRoundId, participantId,
+     * triggerSource, outcome) plus the cursor {@code mention_count} advance that surfaces the
+     * "@N" unread badge. No Run is created and nothing speaks as the observer.
+     */
+    private void notifyObserver(UUID sessionId, String workspaceId, String userId, String wakeRoundId,
+                                MentionParser.RosterEntry observer) {
+        if (eventStoreService != null) {
+            Map<String, Object> payload = new LinkedHashMap<>();
+            payload.put("wakeRoundId", wakeRoundId);
+            payload.put("participantId", observer.participantId().toString());
+            payload.put("triggerSource", "cc");
+            payload.put("outcome", "notify");
+            eventStoreService.append(sessionId.toString(), workspaceId, userId, EVENT_WAKE_DISPATCH, payload);
+        }
+        if (cursorRepository != null) {
+            cursorRepository.findById(observer.participantId()).ifPresent(cursor -> {
+                cursor.setMentionCount((cursor.getMentionCount() == null ? 0 : cursor.getMentionCount()) + 1);
+                cursorRepository.save(cursor);
+            });
+        }
+        logger.info("[LIFECYCLE] service=cp event=wake_cc_notify sessionId={} participantId={} round={}",
+                sessionId, observer.participantId(), wakeRoundId);
     }
 
     /** Bounded wait for the run's terminal event; a timeout just logs (Q3 续行 already done). */

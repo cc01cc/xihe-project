@@ -706,6 +706,11 @@ const messages = {
                 commandsTitle: "命令",
                 mentionsTitle: "会话成员",
                 filesTitle: "文件与目录",
+                // PLAN-0630 M5b (D30-14)：composer to/cc 栏（邮箱隐喻：to = 主要响应者，cc = 旁听名单）。
+                toLabel: "收件人",
+                ccLabel: "抄送",
+                ccAdd: "添加…",
+                ccRemove: "移除抄送",
                 mentionAll: "所有人",
                 mentionAgent: "智能体",
                 mentionHuman: "人类成员",
@@ -2850,6 +2855,11 @@ const messages = {
                 commandsTitle: "Commands",
                 mentionsTitle: "Session members",
                 filesTitle: "Files and folders",
+                // PLAN-0630 M5b (D30-14): composer to/cc bars (email metaphor: to = primary responder, cc = observers).
+                toLabel: "To",
+                ccLabel: "Cc",
+                ccAdd: "Add…",
+                ccRemove: "Remove cc",
                 mentionAll: "Everyone",
                 mentionAgent: "Agent",
                 mentionHuman: "Human",

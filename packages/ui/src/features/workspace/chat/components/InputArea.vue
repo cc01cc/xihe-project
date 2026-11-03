@@ -63,18 +63,30 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{
-    send: [content: string, attachments?: AttachmentFile[], asParticipantId?: string];
-    queue: [content: string, attachments?: AttachmentFile[], asParticipantId?: string];
+    send: [
+        content: string,
+        attachments?: AttachmentFile[],
+        asParticipantId?: string,
+        cc?: string[],
+    ];
+    queue: [
+        content: string,
+        attachments?: AttachmentFile[],
+        asParticipantId?: string,
+        cc?: string[],
+    ];
     stop: [];
 }>();
 
 const { t } = useI18n();
 
 /**
- * D23-27「代发」：以某个参与者身份发言。
- * - 入口由 `capabilities.speakAs`（同一响应里的归约）决定**显不显示**，false 时**不渲染**（不是禁用）；
- * - 候选 = store 的 `speakAsCandidates`（`selfOwned === true` 且未停用）；
- * - 默认选自己（HUMAN 行），没有则选第一个 —— 绝不默认代别人发言。
+ * PLAN-0630 M5b (D30-14)：speak-as 下拉升级为 **to 栏**（本次消息的主要响应者，单选）。
+ * - 入口仍由 `capabilities.speakAs`（同一响应里的归约）决定**显不显示**，false 时**不渲染**；
+ * - 候选 = store 的 `speakAsCandidates`（`selfOwned === true` 且未停用）——只有能说的人才出现在 to；
+ * - 默认 = PRIMARY participant（D30-14），没有 PRIMARY 行时回落到自己的 HUMAN 行、再退回第一个；
+ * - **纯前端状态**：改变 to 不写回 Session 绑定（`Session.agent_principal_id` 仍是快照/预算锚），
+ *   选定值只随本条消息以 `asParticipantId` 发出。
  */
 const participantsStore = useSessionParticipantsStore();
 /** PLAN-0635 M2: already-loaded workspace tree feeds `@文件/目录` candidates (no request here). */
@@ -94,9 +106,103 @@ const activeSpeakAsId = computed(() =>
         : "",
 );
 
+/**
+ * PLAN-0630 M5b (D30-14)：cc 栏 = 旁听名单（多选 chips）。
+ * - 候选 = 会话的未停用参与者（store 的单一数据源），排除 to 已选中的那个；
+ * - 纯前端状态：不写回任何绑定，只随本条消息以 `cc`（participantId 数组）发出；
+ * - 被 @ 的参与者自动入 cc（见下方 watch）；用户点 × 移除后，同一个 @ 不再自动加回
+ *   （`ccSuppressed` 记住手动移除），直到该 @ 从文本里消失再重新出现。
+ *
+ * 声明必须早于下方 `watch(props.sessionId, …, { immediate: true })`：该 watch 在 setup 期
+ * 就会调用 `resetCc()`。
+ */
+const ccIds = ref<string[]>([]);
+/** 手动移除过的自动 cc：文本里还挂着这个 @ 时不再自动加回。非响应式（只在 watch 内读写）。 */
+let ccSuppressed = new Set<string>();
+
+/** cc 添加下拉的候选：未停用、有显示名、不在 cc 里、也不是 to 当前值。 */
+const ccCandidates = computed(() =>
+    (participantsStore.participants ?? []).filter(
+        (item) =>
+            !item.disabledAt &&
+            Boolean(item.displayName) &&
+            !ccIds.value.includes(item.participantId) &&
+            item.participantId !== activeSpeakAsId.value,
+    ),
+);
+
+const showCcBar = computed(() => ccCandidates.value.length > 0 || ccIds.value.length > 0);
+
+function addCc(participantId: string): void {
+    if (!participantId || ccIds.value.includes(participantId)) return;
+    ccSuppressed.delete(participantId);
+    ccIds.value = [...ccIds.value, participantId];
+}
+
+function removeCc(participantId: string): void {
+    ccIds.value = ccIds.value.filter((id) => id !== participantId);
+    // 只压制"自动加入"：手动从下拉再添加同一个人是允许的。
+    ccSuppressed.add(participantId);
+}
+
+function resetCc(): void {
+    ccIds.value = [];
+    ccSuppressed = new Set<string>();
+}
+
+/**
+ * T5b.2「@自动入 cc」：解析草稿里的 @token（规则镜像 CP 的 `MentionParser`——@ 前必须是
+ * 词边界、名称贪婪最长匹配、后跟空白/结尾、重名歧义不落座、`@all` 不收），命中且未停用
+ * 的参与者自动进 cc chips；文本里 @ 的用法不受影响。
+ */
+function mentionedParticipantIds(text: string): string[] {
+    const roster = (participantsStore.participants ?? []).filter(
+        (item) => !item.disabledAt && Boolean(item.displayName),
+    );
+    if (roster.length === 0 || !text.includes("@")) return [];
+    const ids: string[] = [];
+    let index = 0;
+    while (index < text.length) {
+        const at = text.indexOf("@", index);
+        if (at < 0) break;
+        index = at + 1;
+        // '@' 粘在前一个词后面（如邮箱地址）不是提及。
+        if (at > 0 && !/\s/.test(text.charAt(at - 1))) continue;
+        // @all 是保留 token：由 mention fan-out 处理，不自动入 cc。
+        if (
+            text.slice(at + 1, at + 4).toLowerCase() === "all" &&
+            (at + 4 >= text.length || /\s/.test(text.charAt(at + 4)))
+        ) {
+            continue;
+        }
+        let best: (typeof roster)[number] | null = null,
+            bestTies = 0;
+        for (const item of roster) {
+            const name = item.displayName!;
+            if (!text.startsWith(name, at + 1)) continue;
+            const boundary = at + 1 + name.length;
+            if (boundary < text.length && !/\s/.test(text.charAt(boundary))) continue;
+            if (best === null || name.length > best.displayName!.length) {
+                best = item;
+                bestTies = 1;
+            } else if (name.length === best.displayName!.length) {
+                bestTies += 1;
+            }
+        }
+        if (best !== null && bestTies === 1 && !ids.includes(best.participantId)) {
+            ids.push(best.participantId);
+        }
+    }
+    return ids;
+}
+
 watch(
     () => props.sessionId,
-    (id) => void participantsStore.ensureLoaded(id ?? null),
+    (id) => {
+        // to/cc 是草稿级纯前端状态：换会话即重置，绝不跨会话残留。
+        resetCc();
+        void participantsStore.ensureLoaded(id ?? null);
+    },
     { immediate: true },
 );
 
@@ -104,14 +210,28 @@ watch(
     speakAsOptions,
     (options) => {
         if (options.some((item) => item.participantId === speakAsId.value)) return;
+        // D30-14：默认 to = PRIMARY participant；无 PRIMARY（如纯人类会话）回落自己，绝不默认代别人。
+        const primary = options.find((item) => item.role === "PRIMARY");
         const own = options.find((item) => item.principalKind === "HUMAN") ?? options[0];
-        speakAsId.value = own?.participantId ?? "";
+        speakAsId.value = (primary ?? own)?.participantId ?? "";
     },
     { immediate: true },
 );
+
 const input = ref(""),
     isComposing = ref(false),
     attachments = ref<File[]>([]);
+
+// T5b.2「@自动入 cc」：草稿变化时把 @命中 的参与者放进 cc chips（解析规则见 mentionedParticipantIds）。
+watch(input, (text) => {
+    const mentioned = mentionedParticipantIds(text);
+    // 文本里已经不含某个 @ 时，解除它的手动移除压制（下次重新 @ 会自动入 cc）。
+    for (const id of ccSuppressed) {
+        if (!mentioned.includes(id)) ccSuppressed.delete(id);
+    }
+    const additions = mentioned.filter((id) => !ccIds.value.includes(id) && !ccSuppressed.has(id));
+    if (additions.length > 0) ccIds.value = [...ccIds.value, ...additions];
+});
 let uploadedByFile = new WeakMap<File, Map<string, AttachmentFile>>();
 const attachmentErrors = ref<Record<string, string>>({});
 
@@ -440,6 +560,7 @@ async function handleSend() {
             text,
             uploadedForSubmit.length > 0 ? uploadedForSubmit : undefined,
             activeSpeakAsId.value,
+            ccIds.value.length > 0 ? [...ccIds.value] : undefined,
         );
     else
         emit(
@@ -447,6 +568,7 @@ async function handleSend() {
             text,
             uploadedForSubmit.length > 0 ? uploadedForSubmit : undefined,
             activeSpeakAsId.value,
+            ccIds.value.length > 0 ? [...ccIds.value] : undefined,
         );
 }
 
@@ -730,6 +852,8 @@ function clearDraft() {
     attachments.value = [];
     uploadedByFile = new WeakMap<File, Map<string, AttachmentFile>>();
     attachmentErrors.value = {};
+    // cc 随本条消息发出后即清空，不带到下一条。
+    resetCc();
 }
 
 /**
@@ -756,12 +880,14 @@ defineExpose({ clearDraft, insertMention });
     <div class="min-w-0 border-t bg-background px-4 py-3">
         <div class="mx-auto w-full max-w-4xl space-y-2">
             <!--
-                D23-27「代发」：只有 capabilities.speakAs 为真才**渲染**（false 时不渲染，不是禁用）。
-                候选只含我拥有的、未停用的参与者（selfOwned 由 CP 归约）。
+                D23-27 / PLAN-0630 M5b (D30-14)：to 栏（speak-as 升级版）——本次消息的主要响应者
+                （单选，默认 = PRIMARY participant）。只有 capabilities.speakAs 为真才**渲染**
+                （false 时不渲染，不是禁用）；候选只含我拥有的、未停用的参与者。
+                data-testid 沿用 speak-as-*（既有单测与 E2E 的合同），语义已是 to。
             -->
             <div v-if="showSpeakAs" class="flex items-center gap-2 px-2" data-testid="speak-as-bar">
                 <label class="text-[11px] text-muted-foreground" :for="'speak-as-select'">{{
-                    t("workspace.speakAsLabel")
+                    t("chat.input.toLabel")
                 }}</label>
                 <select
                     id="speak-as-select"
@@ -771,6 +897,57 @@ defineExpose({ clearDraft, insertMention });
                 >
                     <option
                         v-for="option in speakAsOptions"
+                        :key="option.participantId"
+                        :value="option.participantId"
+                        :data-participant-id="option.participantId"
+                    >
+                        {{ option.displayName ?? t("workspace.participantUnknownName") }}
+                    </option>
+                </select>
+            </div>
+            <!--
+                PLAN-0630 M5b (D30-14)：cc 栏 = 旁听名单（多选 chips）。被 @ 的参与者会自动
+                出现在这里；点 × 移除（同一个 @ 不再自动加回，直到它从文本里消失）；+ 下拉手动添加。
+            -->
+            <div
+                v-if="showCcBar"
+                class="flex flex-wrap items-center gap-1.5 px-2"
+                data-testid="cc-bar"
+            >
+                <span class="text-[11px] text-muted-foreground">{{ t("chat.input.ccLabel") }}</span>
+                <span
+                    v-for="id in ccIds"
+                    :key="id"
+                    class="inline-flex items-center gap-1 rounded-full border bg-muted/40 px-2 py-0.5 text-[11px]"
+                    data-testid="cc-chip"
+                    :data-participant-id="id"
+                >
+                    {{
+                        participantsStore.participants?.find((item) => item.participantId === id)
+                            ?.displayName ?? t("workspace.participantUnknownName")
+                    }}
+                    <button
+                        type="button"
+                        class="text-muted-foreground hover:text-foreground"
+                        data-testid="cc-chip-remove"
+                        :aria-label="t('chat.input.ccRemove')"
+                        @click="removeCc(id)"
+                    >
+                        ×
+                    </button>
+                </span>
+                <select
+                    class="rounded border bg-background px-1.5 py-0.5 text-[11px]"
+                    data-testid="cc-add-select"
+                    :value="''"
+                    @change="
+                        addCc(($event.target as HTMLSelectElement).value);
+                        ($event.target as HTMLSelectElement).value = '';
+                    "
+                >
+                    <option value="" disabled>{{ t("chat.input.ccAdd") }}</option>
+                    <option
+                        v-for="option in ccCandidates"
                         :key="option.participantId"
                         :value="option.participantId"
                         :data-participant-id="option.participantId"
