@@ -563,6 +563,22 @@ impl ShadowGit {
         prefixes
     }
 
+    /// PLAN-0639 M8: is `root_id` routable for this workspace?
+    ///
+    /// Accepts the primary root (`root_id == workspace_id`, the primary-root
+    /// invariant) and any **registered declared root**. Restore/preview call this so
+    /// a caller-supplied id cannot address an unregistered directory under the host
+    /// root: without the check the resolver would join `<hostRoot>/<id>`
+    /// unconditionally, which turns a bad `rootId` into a path probe.
+    pub(crate) fn is_routable_root(&self, workspace_id: &str, root_id: &str) -> bool {
+        if root_id == workspace_id {
+            return true;
+        }
+        self.declared_roots(workspace_id)
+            .iter()
+            .any(|(id, _)| id == root_id)
+    }
+
     /// Cached host-git probe (`git --version` ≥ 2.20). Failures are retried after a
     /// backoff; the result is a structured value and never panics, even when git is
     /// missing entirely.
@@ -641,6 +657,16 @@ impl ShadowGit {
     ) -> Result<CaptureOutcome> {
         validate_run_id(run_id)?;
         validate_workspace_id(root_id)?;
+        // PLAN-0639 M8: only the primary root and registered declared roots are
+        // routable. Without this, a caller-supplied id would be joined under the host
+        // root and could capture an unrelated directory.
+        if !self.is_routable_root(workspace_id, root_id) {
+            return Err(CheckpointError::InvalidIdentifier {
+                kind: "rootId",
+                value: root_id.to_string(),
+                detail: format!("root id {root_id:?} is not a declared root of {workspace_id:?}"),
+            });
+        }
         let shadow = self.shadow_git_dir(root_id)?;
         let work_tree = self.work_tree_for_root(root_id)?;
         let _guard = self.lock_capture(root_id).await;

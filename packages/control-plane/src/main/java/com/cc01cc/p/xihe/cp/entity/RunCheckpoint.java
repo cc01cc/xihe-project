@@ -12,13 +12,32 @@ import jakarta.persistence.UniqueConstraint;
 import java.time.Instant;
 import java.util.UUID;
 
-/** CP projection of one Runtime-owned workspace checkpoint slice. */
+/**
+ * CP projection of one Runtime-owned workspace checkpoint slice.
+ *
+ * <p>PLAN-0639 M8: the uniqueness key carries {@code root_id}, so one Run captured
+ * across N declared roots holds N rows. The database already enforces exactly that —
+ * `V103__workspace_roots.sql:60-68` replaced {@code uq_run_checkpoints_workspace_source_run}
+ * with {@code uq_run_checkpoints_workspace_root_source_run}. This annotation is the
+ * JPA declaration of the same key and must not drift: H2 test profiles build their
+ * schema from these annotations ({@code ddl-auto=create-drop}), so a stale key here
+ * would silently restore the single-row-per-run model in those tests.</p>
+ *
+ * <p>Rollback note (PLAN-0639 M8): reverting to the old single-row key requires
+ * {@code ALTER TABLE run_checkpoints DROP CONSTRAINT uq_run_checkpoints_workspace_root_source_run,
+ * ADD CONSTRAINT uq_run_checkpoints_workspace_source_run UNIQUE (workspace_id, source_run_id)},
+ * whose precondition is <b>one row per (workspace_id, source_run_id)</b>:
+ * {@code SELECT count(*) FROM (SELECT 1 FROM run_checkpoints GROUP BY workspace_id, source_run_id
+ * HAVING count(*) > 1) d} must be 0. The M8 code path stops producing multi-root rows once
+ * reverted, but rows already written by it violate that precondition and must be collapsed
+ * first.</p>
+ */
 @Entity
 @Table(name = "run_checkpoints", uniqueConstraints = {
         @UniqueConstraint(name = "uq_run_checkpoints_workspace_slice",
                 columnNames = {"workspace_id", "slice_ref"}),
-        @UniqueConstraint(name = "uq_run_checkpoints_workspace_source_run",
-                columnNames = {"workspace_id", "source_run_id"})
+        @UniqueConstraint(name = "uq_run_checkpoints_workspace_root_source_run",
+                columnNames = {"workspace_id", "root_id", "source_run_id"})
 })
 public class RunCheckpoint {
 

@@ -277,12 +277,23 @@ public class RuntimeCheckpointClient {
      * ref is gone (the caller flips the projection row to expired once).
      */
     public RevertPreview previewRevert(String workspaceId, String sliceRef) {
+        return previewRevert(workspaceId, null, sliceRef);
+    }
+
+    /**
+     * PLAN-0639 M8: preview the revert of one slice **of a declared root**. A blank
+     * {@code rootId} omits the field (primary root, pre-M8 wire unchanged).
+     */
+    public RevertPreview previewRevert(String workspaceId, String rootId, String sliceRef) {
         if (isBlank(workspaceId) || isBlank(sliceRef)) {
             return transportPreview("invalid_request");
         }
         String url = baseUrl(workspaceId) + "/revert/preview";
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("sliceRef", sliceRef);
+        if (!isBlank(rootId)) {
+            payload.put("rootId", rootId);
+        }
         try {
             HttpResponse<String> response = send("revert_preview", url, payload, PREVIEW_TIMEOUT);
             int status = response.statusCode();
@@ -310,12 +321,24 @@ public class RuntimeCheckpointClient {
      */
     public RevertResult revert(String workspaceId, String sliceRef,
                                List<String> acknowledgeTypeChanges) {
+        return revert(workspaceId, null, sliceRef, acknowledgeTypeChanges);
+    }
+
+    /**
+     * PLAN-0639 M8: execute the revert of one slice **of a declared root**, so the
+     * Runtime resolves that root's own shadow repo and work tree.
+     */
+    public RevertResult revert(String workspaceId, String rootId, String sliceRef,
+                               List<String> acknowledgeTypeChanges) {
         if (isBlank(workspaceId) || isBlank(sliceRef)) {
             return transportRevert("invalid_request");
         }
         String url = baseUrl(workspaceId) + "/revert";
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("sliceRef", sliceRef);
+        if (!isBlank(rootId)) {
+            payload.put("rootId", rootId);
+        }
         payload.put("acknowledgeTypeChanges",
                 acknowledgeTypeChanges == null ? List.of() : acknowledgeTypeChanges);
         try {
@@ -341,11 +364,17 @@ public class RuntimeCheckpointClient {
 
     /** Reads one plain-text file out of a slice tree (≤ 1 MiB). */
     public BlobResult checkpointBlob(String workspaceId, String sliceRef, String path) {
+        return checkpointBlob(workspaceId, null, sliceRef, path);
+    }
+
+    /** PLAN-0639 M8: read one file out of a slice that belongs to a declared root. */
+    public BlobResult checkpointBlob(String workspaceId, String rootId, String sliceRef, String path) {
         if (isBlank(workspaceId) || isBlank(sliceRef) || isBlank(path)) {
             return new BlobResult(Outcome.INVALID_REQUEST, path, sliceRef, null, "invalid_request", Map.of());
         }
         String url = baseUrl(workspaceId) + "/blob?sliceRef=" + encodeQuery(sliceRef)
-                + "&path=" + encodeQuery(path);
+                + "&path=" + encodeQuery(path)
+                + (isBlank(rootId) ? "" : "&rootId=" + encodeQuery(rootId));
         try {
             HttpRequest request = HttpRequest.newBuilder()
                     .uri(URI.create(url))

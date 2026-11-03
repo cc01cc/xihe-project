@@ -281,8 +281,20 @@ impl ShadowGit {
         workspace_id: &str,
         slice_ref: &str,
     ) -> Result<RestorePreview> {
+        self.restore_preview_for_root(workspace_id, None, slice_ref)
+            .await
+    }
+
+    /// PLAN-0639 M8: restore dry-run for a slice of one **declared root**.
+    /// `root_id = None` (or the workspace id) keeps the primary-root behavior.
+    pub async fn restore_preview_for_root(
+        &self,
+        workspace_id: &str,
+        root_id: Option<&str>,
+        slice_ref: &str,
+    ) -> Result<RestorePreview> {
         let context = self
-            .resolve_restore_context(workspace_id, slice_ref)
+            .resolve_restore_context(workspace_id, root_id, slice_ref)
             .await?;
         let target = self.resolve_slice_target(&context, slice_ref).await?;
         let planned = self.plan_restore(&context, &target).await?;
@@ -326,9 +338,25 @@ impl ShadowGit {
         slice_ref: &str,
         acknowledge_type_changes: &[String],
     ) -> Result<RestoreResult> {
+        self.restore_execute_for_root(workspace_id, None, slice_ref, acknowledge_type_changes)
+            .await
+    }
+
+    /// PLAN-0639 M8: execute the restore of one slice of a **declared root**.
+    ///
+    /// The shadow repo and the work tree are both resolved from `root_id`, so a
+    /// revert of root B never touches root A — the capture-side per-root routing
+    /// (M7) is only honest if restore uses the same key.
+    pub async fn restore_execute_for_root(
+        &self,
+        workspace_id: &str,
+        root_id: Option<&str>,
+        slice_ref: &str,
+        acknowledge_type_changes: &[String],
+    ) -> Result<RestoreResult> {
         let started = Instant::now();
         let context = self
-            .resolve_restore_context(workspace_id, slice_ref)
+            .resolve_restore_context(workspace_id, root_id, slice_ref)
             .await?;
         let target = self.resolve_slice_target(&context, slice_ref).await?;
         let _lock = self
@@ -469,9 +497,22 @@ impl ShadowGit {
         path: &str,
         max_bytes: u64,
     ) -> Result<SliceBlob> {
+        self.slice_blob_for_root(workspace_id, None, slice_ref, path, max_bytes)
+            .await
+    }
+
+    /// PLAN-0639 M8: read one file out of a slice of a **declared root**.
+    pub async fn slice_blob_for_root(
+        &self,
+        workspace_id: &str,
+        root_id: Option<&str>,
+        slice_ref: &str,
+        path: &str,
+        max_bytes: u64,
+    ) -> Result<SliceBlob> {
         validate_relative_path(path).map_err(|detail| RestoreError::InvalidRequest { detail })?;
         let context = self
-            .resolve_restore_context(workspace_id, slice_ref)
+            .resolve_restore_context(workspace_id, root_id, slice_ref)
             .await?;
         let target = self.resolve_slice_target(&context, slice_ref).await?;
         let spec = literal_pathspec(path);
@@ -509,9 +550,14 @@ impl ShadowGit {
 
     /// Git availability, workspace directory and shadow resolution shared by every
     /// restore read (the slice ref is resolved by the caller against `context.env`).
+    ///
+    /// PLAN-0639 M8: `root_id` selects the **declared root** whose shadow repo and
+    /// work tree this restore works on. `None` (or the workspace id itself, the
+    /// primary-root invariant) keeps the pre-M8 resolution byte-for-byte.
     async fn resolve_restore_context(
         &self,
         workspace_id: &str,
+        root_id: Option<&str>,
         slice_ref: &str,
     ) -> Result<RestoreContext> {
         let capability = self.probe().await;
@@ -524,9 +570,25 @@ impl ShadowGit {
         if validate_workspace_id(workspace_id).is_err() {
             return Err(RestoreError::SliceNotFound(slice_ref.to_string()));
         }
-        let work_tree = self
-            .work_tree(workspace_id)
-            .map_err(|error| RestoreError::Failed(error.to_string()))?;
+        let root = match root_id.map(str::trim).filter(|value| !value.is_empty()) {
+            Some(root) if root != workspace_id => {
+                if validate_workspace_id(root).is_err()
+                    || !self.is_routable_root(workspace_id, root)
+                {
+                    // Unknown/undeclared root: fail closed as "no such slice" instead
+                    // of joining an unregistered directory under the host root.
+                    return Err(RestoreError::SliceNotFound(slice_ref.to_string()));
+                }
+                Some(root)
+            }
+            // Primary root: no per-root routing, exactly the pre-M8 path.
+            _ => None,
+        };
+        let work_tree = match root {
+            Some(root) => self.work_tree_for_root(root),
+            None => self.work_tree(workspace_id),
+        }
+        .map_err(|error| RestoreError::Failed(error.to_string()))?;
         if !work_tree.is_dir() {
             return Err(RestoreError::Unavailable {
                 reason: RESTORE_REASON_WORKSPACE_UNKNOWN,
@@ -537,7 +599,7 @@ impl ShadowGit {
             });
         }
         let shadow = self
-            .shadow_git_dir(workspace_id)
+            .shadow_git_dir(root.unwrap_or(workspace_id))
             .map_err(|error| RestoreError::Failed(error.to_string()))?;
         if !shadow.is_dir() {
             return Err(RestoreError::SliceNotFound(slice_ref.to_string()));
@@ -1537,7 +1599,7 @@ mod tests {
 
         let context = fixture
             .engine
-            .resolve_restore_context(WS, &slice)
+            .resolve_restore_context(WS, None, &slice)
             .await
             .expect("context");
         let target = fixture

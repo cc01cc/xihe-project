@@ -128,10 +128,18 @@ class ChatRunRecoveryServiceTest {
         RunCheckpointRepository checkpointRepository = mock(RunCheckpointRepository.class);
         RuntimeCheckpointClient client = mock(RuntimeCheckpointClient.class);
         List<RunCheckpoint> rows = new ArrayList<>();
+        // PLAN-0639 M8: (run, workspace) now yields one row **per captured root**.
         when(checkpointRepository.findBySourceRunIdAndWorkspaceId(anyString(), anyString()))
                 .thenAnswer(invocation -> rows.stream()
                         .filter(row -> row.getSourceRunId().equals(invocation.getArgument(0))
                                 && row.getWorkspaceId().equals(invocation.getArgument(1)))
+                        .toList());
+        when(checkpointRepository.findBySourceRunIdAndWorkspaceIdAndRootId(
+                anyString(), anyString(), anyString()))
+                .thenAnswer(invocation -> rows.stream()
+                        .filter(row -> row.getSourceRunId().equals(invocation.getArgument(0))
+                                && row.getWorkspaceId().equals(invocation.getArgument(1))
+                                && java.util.Objects.equals(row.getRootId(), invocation.getArgument(2)))
                         .findFirst());
         when(checkpointRepository.save(any(RunCheckpoint.class))).thenAnswer(invocation -> {
             RunCheckpoint row = invocation.getArgument(0);
@@ -153,6 +161,7 @@ class ChatRunRecoveryServiceTest {
         RunCheckpointService realService = new RunCheckpointService(checkpointRepository, client,
                 chatRunRepository,
                 mock(com.cc01cc.p.xihe.cp.repository.SessionRepository.class),
+                mock(com.cc01cc.p.xihe.cp.repository.WorkspaceRootRepository.class),
                 new ObjectMapper(),
                 mock(com.cc01cc.p.xihe.cp.chat.SseEmitterManager.class));
         ChatRunRecoveryService recovery = new ChatRunRecoveryService(chatRunRepository,
