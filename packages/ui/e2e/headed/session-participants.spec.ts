@@ -536,11 +536,11 @@ test.describe("PLAN-0623 有头走查：会话参与者 dock tab", () => {
         attachPageDiagnostics(page);
     });
 
-    // Playwright 把 fixtures 对象作为**第一个位置参数**传入；本 hook 不用任何 fixture，所以用
-    // `_fixtures` 占位（下划线前缀是 no-unused-vars 认可的"有意不用"）。
-    // 这里原先写成 `({})` + `eslint-disable-next-line no-empty-pattern`：空解构并非 Playwright 的
-    // 要求（它只是普通形参），换普通标识符即可，不需要抑制注释。
-    test.afterEach((_fixtures, testInfo) => {
+    // Playwright **强制** hook 第一个参数用对象解构（普通标识符会被
+    // "First argument must use the object destructuring pattern" 拒绝 —— 2026-11-03
+    // 有头车道实测整个文件因此 0 用例收集）；空解构 `{}` 需要 no-empty-pattern 抑制注释。
+    // eslint-disable-next-line no-empty-pattern
+    test.afterEach(({}, testInfo) => {
         if (testInfo.status === "failed" || testInfo.status === "timedOut") {
             failedTests.push(`${testInfo.title} [${testInfo.status}]`);
         } else if (testInfo.status === "skipped") {
