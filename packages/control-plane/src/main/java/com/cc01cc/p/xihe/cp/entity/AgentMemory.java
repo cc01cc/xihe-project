@@ -30,12 +30,14 @@ import java.util.UUID;
 @Table(name = "agent_memories")
 public class AgentMemory {
 
-    /** v1 memory types (user ruling 2026-11-02: profile + fact only). */
-    public static final String TYPE_PROFILE = "profile";
-    public static final String TYPE_FACT = "fact";
-    public static final List<String> TYPES = List.of(TYPE_PROFILE, TYPE_FACT);
-
-    /** The three v1 write channels. There is deliberately no {@code auto} value (D29-24). */
+    /**
+     * The three v1 write channels. There is deliberately no {@code auto} value (D29-24).
+     *
+     * <p>PLAN-0629 M1-5 (user ruling 2026-11-03): the {@code profile}/{@code fact} classification is
+     * gone — V106 drops the column, so a memory row is just an assertion. The type vocabulary below is
+     * kept <b>only</b> for the frozen context-policy document ({@code memory.types}), which the
+     * passive writer still consults; storage no longer has a type.</p>
+     */
     public static final String ORIGIN_TOOL = "tool";
     public static final String ORIGIN_UI = "ui";
     public static final String ORIGIN_CLI = "cli";
@@ -63,9 +65,6 @@ public class AgentMemory {
 
     @Column(name = "workspace_id", nullable = false, columnDefinition = "uuid")
     private UUID workspaceId;
-
-    @Column(name = "type", nullable = false, length = 16)
-    private String type;
 
     /** Normalised content (single normalizer); the DDL enforces 1..8000 characters. */
     @Column(name = "content", nullable = false, columnDefinition = "TEXT")
@@ -131,9 +130,6 @@ public class AgentMemory {
 
     public UUID getWorkspaceId() { return workspaceId; }
     public void setWorkspaceId(UUID workspaceId) { this.workspaceId = workspaceId; }
-
-    public String getType() { return type; }
-    public void setType(String type) { this.type = type; }
 
     public String getContent() { return content; }
     public void setContent(String content) { this.content = content; }

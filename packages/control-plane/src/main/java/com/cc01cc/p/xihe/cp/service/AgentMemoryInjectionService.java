@@ -22,9 +22,9 @@ import java.util.UUID;
  *
  * <p>Frozen selection rule (D29-20 / task book): rows of exactly one {@code (principal, workspace)}
  * with {@code status='active' AND deleted_at IS NULL}, ordered
- * <b>pinned DESC, then {@code type='profile'} first, then updated_at DESC</b>, capped by both
- * {@code maxEntries} and {@code maxTokens}. Candidates (passive writes, D29-26/27) are never injected
- * in v1; a soft-deleted row is gone.</p>
+ * <b>pinned DESC, then updated_at DESC</b> (the {@code type='profile'} key is gone with V106), capped
+ * by both {@code maxEntries} and {@code maxTokens}. Candidates (passive writes, D29-26/27) are never
+ * injected in v1; a soft-deleted row is gone.</p>
  *
  * <p>Token estimate: {@code chars / 2}, deliberately the same conservative rule as the Agent's
  * {@code injection_budget.conservative_token_count} — the two sides must agree, or CP would hand over
@@ -71,11 +71,17 @@ public class AgentMemoryInjectionService {
         this.memories = memories;
     }
 
-    /** The frozen injection order: pinned first, then profile before fact, then freshest. */
+    /**
+     * The injection order: pinned first, freshest second, then the id as a deterministic tiebreak.
+     *
+     * <p>PLAN-0629 M1-5 (V106) removed the {@code profile}/{@code fact} classification, so the old
+     * "profile before fact inside a pinned group" key is gone; ordering no longer claims anything about
+     * the assertion itself.</p>
+     */
     private static final Comparator<AgentMemory> INJECTION_ORDER = Comparator
             .comparingInt((AgentMemory memory) -> memory.isPinned() ? 0 : 1)
-            .thenComparingInt(memory -> AgentMemory.TYPE_PROFILE.equals(memory.getType()) ? 0 : 1)
-            .thenComparing(AgentMemory::getUpdatedAt, Comparator.reverseOrder());
+            .thenComparing(AgentMemory::getUpdatedAt, Comparator.reverseOrder())
+            .thenComparing(memory -> memory.getId().toString());
 
     /**
      * @param maxEntries positive entry cap (already bounded by the caller)
@@ -96,8 +102,8 @@ public class AgentMemoryInjectionService {
         if (rows.isEmpty()) {
             return view(STATUS_EMPTY, List.of(), false, diagnostics, maxEntries, maxTokens, 0);
         }
-        // The repository orders by (pinned, updated_at); the frozen rule additionally puts profile
-        // before fact inside each pinned group, so the final order is decided here, once.
+        // The repository orders by (pinned, updated_at); the final order is decided here, once, so
+        // the tiebreak is identical for every caller.
         List<AgentMemory> ordered = new ArrayList<>(rows);
         ordered.sort(INJECTION_ORDER);
         boolean truncated = false;
@@ -144,7 +150,6 @@ public class AgentMemoryInjectionService {
 
     private static Map<String, Object> entry(AgentMemory memory, int tokens) {
         Map<String, Object> entry = new LinkedHashMap<>();
-        entry.put("type", memory.getType());
         entry.put("pinned", memory.isPinned());
         entry.put("updatedAt", memory.getUpdatedAt() == null ? null : memory.getUpdatedAt().toString());
         entry.put("content", memory.getContent());

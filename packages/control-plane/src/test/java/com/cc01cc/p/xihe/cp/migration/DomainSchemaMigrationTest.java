@@ -167,6 +167,28 @@ class DomainSchemaMigrationTest {
     }
 
     @Test
+    void v106RemovesTheMemoryTypeAndKeepsTheDedupeKeyOnTheContentHash() throws SQLException {
+        // PLAN-0629 M1-5 (user ruling 2026-11-03): the profile/fact classification is gone, and the
+        // migration is destructive by the same ruling — the table is cleared rather than back-filled.
+        // A missing column yields no row at all, so count the catalog entry instead of reading null.
+        assertEquals(0, scalarInt(
+                "SELECT count(*) FROM information_schema.columns WHERE table_schema = 'public' "
+                        + "AND table_name = 'agent_memories' AND column_name = 'type'"),
+                "V106 must drop the profile/fact classification column");
+        assertEquals(1, scalarInt(
+                "SELECT count(*) FROM pg_indexes WHERE schemaname = 'public' "
+                        + "AND indexname = 'uq_agent_memories_dedupe' "
+                        + "AND indexdef LIKE '%(principal_id, workspace_id, content_sha256)%' "
+                        + "AND indexdef NOT LIKE '%type%'"),
+                "the dedupe key must be (principal, workspace, content_sha256) after V106");
+        assertEquals(0, scalarInt("SELECT count(*) FROM agent_memories"),
+                "V106 clears the table by user ruling 2026-11-03 (no back-fill, not a migration bug)");
+        assertEquals(1, scalarInt(
+                "SELECT count(*) FROM flyway_schema_history WHERE version = '106' AND success = true"),
+                "V106 must be recorded as applied");
+    }
+
+    @Test
     void v38GrantsDefaultUniquenessIsScopedToSubjectAndSource() throws SQLException {
         assertEquals(2, scalarInt(
                 "SELECT count(*) FROM pg_indexes WHERE schemaname = 'public' "

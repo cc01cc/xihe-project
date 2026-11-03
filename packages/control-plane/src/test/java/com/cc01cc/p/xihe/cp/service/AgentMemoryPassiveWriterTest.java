@@ -168,7 +168,6 @@ class AgentMemoryPassiveWriterTest {
         AgentMemoryService.PassiveWrite captured = write.getValue();
         assertEquals(PRINCIPAL_ID, captured.principalId());
         assertEquals(WORKSPACE_ID, captured.workspaceId());
-        assertEquals(AgentMemory.TYPE_FACT, captured.type());
         assertEquals(AgentMemory.ORIGIN_PASSIVE_SUMMARY, captured.origin());
         assertEquals("passive.summary:" + SESSION_ID + ":" + CURSOR, captured.sourceRef(),
                 "the idempotency key is the natural key: mode + session + compaction cursor");

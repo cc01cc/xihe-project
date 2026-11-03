@@ -98,7 +98,7 @@ class AgentMemoryInjectionTest extends AbstractIntegrationTest {
     void candidateRowsAreNeverInjected() {
         fixture();
         // A passive write may only land as a candidate (V99 CHECK); v1 must not inject it.
-        saveMemory("fact", "candidate assertion", AgentMemory.ORIGIN_PASSIVE_SUMMARY,
+        saveMemory("candidate assertion", AgentMemory.ORIGIN_PASSIVE_SUMMARY,
                 AgentMemory.STATUS_CANDIDATE, false, 1, null);
         Map<String, Object> view = injection.snapshot(principalId, workspaceId, 24, 4_000);
         assertEquals(AgentMemoryInjectionService.STATUS_EMPTY, view.get("status"));
@@ -108,27 +108,18 @@ class AgentMemoryInjectionTest extends AbstractIntegrationTest {
     @Test
     void pinnedRowsComeFirst() {
         fixture();
-        saveMemory("fact", "newer unpinned", AgentMemory.ORIGIN_UI, AgentMemory.STATUS_ACTIVE, false, 3, null);
-        saveMemory("fact", "older pinned", AgentMemory.ORIGIN_UI, AgentMemory.STATUS_ACTIVE, true, 1, null);
+        saveMemory("newer unpinned", AgentMemory.ORIGIN_UI, AgentMemory.STATUS_ACTIVE, false, 3, null);
+        saveMemory("older pinned", AgentMemory.ORIGIN_UI, AgentMemory.STATUS_ACTIVE, true, 1, null);
         List<String> contents = contents(injection.snapshot(principalId, workspaceId, 24, 4_000));
         assertEquals(List.of("older pinned", "newer unpinned"), contents);
     }
 
-    @Test
-    void profileRowsComeBeforeFactsWithinTheSamePinnedGroup() {
-        fixture();
-        saveMemory("fact", "newer fact", AgentMemory.ORIGIN_UI, AgentMemory.STATUS_ACTIVE, false, 3, null);
-        saveMemory("profile", "older profile", AgentMemory.ORIGIN_UI, AgentMemory.STATUS_ACTIVE, false, 1, null);
-        List<String> contents = contents(injection.snapshot(principalId, workspaceId, 24, 4_000));
-        assertEquals(List.of("older profile", "newer fact"), contents,
-                "type=profile outranks updated_at inside the same pinned group");
-    }
 
     @Test
     void maxEntriesTruncatesAndReportsIt() {
         fixture();
         for (int i = 1; i <= 3; i++) {
-            saveMemory("fact", "assertion " + i, AgentMemory.ORIGIN_UI, AgentMemory.STATUS_ACTIVE,
+            saveMemory("assertion " + i, AgentMemory.ORIGIN_UI, AgentMemory.STATUS_ACTIVE,
                     false, 5 - i, null);
         }
         Map<String, Object> view = injection.snapshot(principalId, workspaceId, 2, 4_000);
@@ -140,8 +131,8 @@ class AgentMemoryInjectionTest extends AbstractIntegrationTest {
     @Test
     void maxTokensTruncatesAndReportsIt() {
         fixture();
-        saveMemory("fact", "x".repeat(200), AgentMemory.ORIGIN_UI, AgentMemory.STATUS_ACTIVE, false, 2, null);
-        saveMemory("fact", "y".repeat(200), AgentMemory.ORIGIN_UI, AgentMemory.STATUS_ACTIVE, false, 1, null);
+        saveMemory("x".repeat(200), AgentMemory.ORIGIN_UI, AgentMemory.STATUS_ACTIVE, false, 2, null);
+        saveMemory("y".repeat(200), AgentMemory.ORIGIN_UI, AgentMemory.STATUS_ACTIVE, false, 1, null);
         // Each entry estimates ~100 tokens; a 150-token cap admits exactly one.
         Map<String, Object> view = injection.snapshot(principalId, workspaceId, 24, 150);
         assertEquals(AgentMemoryInjectionService.STATUS_TRUNCATED, view.get("status"));
@@ -153,7 +144,7 @@ class AgentMemoryInjectionTest extends AbstractIntegrationTest {
     @Test
     void anotherWorkspaceOfTheSamePrincipalIsNotInjected() {
         fixture();
-        saveMemoryIn("fact", "only in the other workspace", otherWorkspaceId, 1);
+        saveMemoryIn("only in the other workspace", otherWorkspaceId, 1);
         Map<String, Object> view = injection.snapshot(principalId, workspaceId, 24, 4_000);
         assertEquals(AgentMemoryInjectionService.STATUS_EMPTY, view.get("status"),
                 "memory is isolated by (principal, workspace), never by principal alone");
@@ -163,7 +154,7 @@ class AgentMemoryInjectionTest extends AbstractIntegrationTest {
     @Test
     void softDeletedRowsAreNotInjected() {
         fixture();
-        saveMemory("fact", "forgotten assertion", AgentMemory.ORIGIN_UI, AgentMemory.STATUS_ACTIVE,
+        saveMemory("forgotten assertion", AgentMemory.ORIGIN_UI, AgentMemory.STATUS_ACTIVE,
                 false, 1, Instant.now());
         Map<String, Object> view = injection.snapshot(principalId, workspaceId, 24, 4_000);
         assertEquals(AgentMemoryInjectionService.STATUS_EMPTY, view.get("status"));
@@ -208,22 +199,21 @@ class AgentMemoryInjectionTest extends AbstractIntegrationTest {
         return principalRepository.saveAndFlush(principal).getId();
     }
 
-    private void saveMemoryIn(String type, String content, UUID workspace, int ageMinutes) {
-        saveMemory(type, content, AgentMemory.ORIGIN_UI, AgentMemory.STATUS_ACTIVE, false, ageMinutes, null,
+    private void saveMemoryIn(String content, UUID workspace, int ageMinutes) {
+        saveMemory(content, AgentMemory.ORIGIN_UI, AgentMemory.STATUS_ACTIVE, false, ageMinutes, null,
                 workspace);
     }
 
-    private void saveMemory(String type, String content, String origin, String status, boolean pinned,
+    private void saveMemory(String content, String origin, String status, boolean pinned,
                             int ageMinutes, Instant deletedAt) {
-        saveMemory(type, content, origin, status, pinned, ageMinutes, deletedAt, workspaceId);
+        saveMemory(content, origin, status, pinned, ageMinutes, deletedAt, workspaceId);
     }
 
-    private void saveMemory(String type, String content, String origin, String status, boolean pinned,
+    private void saveMemory(String content, String origin, String status, boolean pinned,
                             int ageMinutes, Instant deletedAt, UUID workspace) {
         AgentMemory memory = new AgentMemory();
         memory.setPrincipalId(principalId);
         memory.setWorkspaceId(workspace);
-        memory.setType(type);
         memory.setContent(content);
         memory.setContentSha256(AgentMemoryNormalizer.sha256Hex(AgentMemoryNormalizer.normalize(content)));
         memory.setOrigin(origin);

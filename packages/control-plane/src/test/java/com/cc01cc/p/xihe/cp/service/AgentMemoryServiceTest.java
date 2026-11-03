@@ -83,10 +83,10 @@ class AgentMemoryServiceTest extends AbstractIntegrationTest {
     @Test
     void aDedupeHitRefreshesUpdatedAtButKeepsTheOriginalProvenance() {
         fixture();
-        AgentMemory first = memoryService.remember(write("profile", "  Likes concise answers  ",
+        AgentMemory first = memoryService.remember(write("  Likes concise answers  ",
                 AgentMemory.ORIGIN_TOOL, "run-1", false));
 
-        AgentMemory second = memoryService.remember(write("profile", "Likes concise   answers",
+        AgentMemory second = memoryService.remember(write("Likes concise   answers",
                 AgentMemory.ORIGIN_UI, "user-1", false));
 
         assertEquals(first.getId(), second.getId(), "the same assertion must not create a second row");
@@ -104,7 +104,7 @@ class AgentMemoryServiceTest extends AbstractIntegrationTest {
     @Test
     void forgetIsASoftDeleteThatFreesTheDedupeKey() {
         fixture();
-        AgentMemory stored = memoryService.remember(write("fact", "Deploys happen on Fridays",
+        AgentMemory stored = memoryService.remember(write("Deploys happen on Fridays",
                 AgentMemory.ORIGIN_CLI, "cmd-1", false));
 
         memoryService.forget(principalId, workspaceId, stored.getId(), userId.toString());
@@ -114,7 +114,7 @@ class AgentMemoryServiceTest extends AbstractIntegrationTest {
                 "a forgotten assertion is no longer injected");
         assertEquals(1, auditCount(AgentMemoryService.AUDIT_DELETED));
 
-        AgentMemory rewritten = memoryService.remember(write("fact", "Deploys happen on Fridays",
+        AgentMemory rewritten = memoryService.remember(write("Deploys happen on Fridays",
                 AgentMemory.ORIGIN_CLI, "cmd-2", false));
         assertFalse(rewritten.getId().equals(stored.getId()),
                 "after a soft delete the same content may be remembered again as a live row");
@@ -124,11 +124,11 @@ class AgentMemoryServiceTest extends AbstractIntegrationTest {
     @Test
     void isolationIsByPrincipalAndWorkspace() {
         fixture();
-        memoryService.remember(write("fact", "Shared sentence", AgentMemory.ORIGIN_UI, "user-1", false));
+        memoryService.remember(write("Shared sentence", AgentMemory.ORIGIN_UI, "user-1", false));
 
         // Same content, different workspace: a different assertion scope, so a second row is correct.
         AgentMemory inOtherWorkspace = memoryService.remember(new AgentMemoryService.MemoryWrite(
-                principalId, otherWorkspaceId, "fact", "Shared sentence",
+                principalId, otherWorkspaceId, "Shared sentence",
                 AgentMemory.ORIGIN_UI, "user-1", false, userId.toString()));
 
         assertEquals(2, memories.count());
@@ -142,12 +142,12 @@ class AgentMemoryServiceTest extends AbstractIntegrationTest {
     void onlyTheUiAndCliChannelsMayPinAndPinnedRowsComeFirst() {
         fixture();
         CpApiException toolPin = assertThrows(CpApiException.class, () -> memoryService.remember(
-                write("fact", "Pinned by tool?", AgentMemory.ORIGIN_TOOL, "run-1", true)));
+                write("Pinned by tool?", AgentMemory.ORIGIN_TOOL, "run-1", true)));
         assertEquals(HttpStatus.BAD_REQUEST, toolPin.getStatus());
         assertTrue(toolPin.getMessage().contains("ui or cli"));
 
-        memoryService.remember(write("fact", "Older but pinned", AgentMemory.ORIGIN_UI, "user-1", true));
-        memoryService.remember(write("fact", "Newer but not pinned", AgentMemory.ORIGIN_UI, "user-1", false));
+        memoryService.remember(write("Older but pinned", AgentMemory.ORIGIN_UI, "user-1", true));
+        memoryService.remember(write("Newer but not pinned", AgentMemory.ORIGIN_UI, "user-1", false));
 
         List<AgentMemory> injected = memoryService.activeMemories(principalId, workspaceId);
         assertEquals(2, injected.size());
@@ -159,22 +159,19 @@ class AgentMemoryServiceTest extends AbstractIntegrationTest {
     void v1RefusesPassiveOriginsAndKeepsTheContentBound() {
         fixture();
         CpApiException passive = assertThrows(CpApiException.class, () -> memoryService.remember(
-                write("fact", "Candidate text", AgentMemory.ORIGIN_PASSIVE_SUMMARY, "run-1", false)));
+                write("Candidate text", AgentMemory.ORIGIN_PASSIVE_SUMMARY, "run-1", false)));
         assertEquals(HttpStatus.BAD_REQUEST, passive.getStatus());
         assertTrue(passive.getMessage().contains("passive memory writes are not available in v1"));
 
         CpApiException blank = assertThrows(CpApiException.class, () -> memoryService.remember(
-                write("fact", "   \u200B  ", AgentMemory.ORIGIN_UI, "user-1", false)));
+                write("   \u200B  ", AgentMemory.ORIGIN_UI, "user-1", false)));
         assertEquals("INVALID_REQUEST", blank.getCode());
 
         CpApiException tooLong = assertThrows(CpApiException.class, () -> memoryService.remember(
-                write("fact", "x".repeat(AgentMemory.MAX_CONTENT_LENGTH + 1),
+                write("x".repeat(AgentMemory.MAX_CONTENT_LENGTH + 1),
                         AgentMemory.ORIGIN_UI, "user-1", false)));
         assertEquals("MEMORY_CONTENT_TOO_LONG", tooLong.getCode());
 
-        CpApiException badType = assertThrows(CpApiException.class, () -> memoryService.remember(
-                write("opinion", "not a v1 type", AgentMemory.ORIGIN_UI, "user-1", false)));
-        assertEquals("INVALID_REQUEST", badType.getCode());
 
         assertEquals(0, memories.count(), "no rejected write may reach the table");
     }
@@ -182,7 +179,7 @@ class AgentMemoryServiceTest extends AbstractIntegrationTest {
     @Test
     void aForeignMemoryIdIsIndistinguishableFromAMissingOne() {
         fixture();
-        AgentMemory stored = memoryService.remember(write("fact", "Scoped row",
+        AgentMemory stored = memoryService.remember(write("Scoped row",
                 AgentMemory.ORIGIN_UI, "user-1", false));
 
         CpApiException error = assertThrows(CpApiException.class, () -> memoryService.forget(
@@ -197,7 +194,7 @@ class AgentMemoryServiceTest extends AbstractIntegrationTest {
     void auditKeepsTheHashAndProvenanceButNeverTheRawContent() {
         fixture();
         String secret = "the user's private sentence";
-        AgentMemory stored = memoryService.remember(write("fact", secret,
+        AgentMemory stored = memoryService.remember(write(secret,
                 AgentMemory.ORIGIN_TOOL, "run-42", false));
 
         List<String> details = jdbcTemplate.queryForList(
@@ -218,8 +215,7 @@ class AgentMemoryServiceTest extends AbstractIntegrationTest {
     void aPassiveWriteLandsAsACandidateThatIsNeverInjected() {
         fixture();
 
-        Optional<AgentMemory> written = memoryService.rememberPassive(passive("fact",
-                "Deploys happen on Fridays", AgentMemory.ORIGIN_PASSIVE_SUMMARY,
+        Optional<AgentMemory> written = memoryService.rememberPassive(passive("Deploys happen on Fridays", AgentMemory.ORIGIN_PASSIVE_SUMMARY,
                 "passive.summary:sess-1:7"));
 
         assertTrue(written.isPresent(), "a clean passive write must land");
@@ -242,8 +238,8 @@ class AgentMemoryServiceTest extends AbstractIntegrationTest {
         // Proof that "passive ⇒ candidate" is a database invariant, not service discipline: this insert
         // bypasses the service entirely and must be rejected by V99's CHECK pair.
         assertThrows(org.springframework.dao.DataAccessException.class, () -> jdbcTemplate.update(
-                "INSERT INTO agent_memories (principal_id, workspace_id, type, content, content_sha256,"
-                        + " origin, source_ref, status) VALUES (CAST(? AS UUID), CAST(? AS UUID), 'fact',"
+                "INSERT INTO agent_memories (principal_id, workspace_id, content, content_sha256,"
+                        + " origin, source_ref, status) VALUES (CAST(? AS UUID), CAST(? AS UUID),"
                         + " 'active by hand', ?, 'passive.summary', 'hand-written', 'active')",
                 principalId.toString(), workspaceId.toString(),
                 "0".repeat(64)));
@@ -253,13 +249,13 @@ class AgentMemoryServiceTest extends AbstractIntegrationTest {
     @Test
     void anExplicitWritePromotesTheCandidateAndOnlyThenDoesItCount() {
         fixture();
-        memoryService.rememberPassive(passive("fact", "Prefers concise answers",
+        memoryService.rememberPassive(passive("Prefers concise answers",
                 AgentMemory.ORIGIN_PASSIVE_SUMMARY, "passive.summary:sess-2:9"));
         assertTrue(memoryService.activeMemories(principalId, workspaceId).isEmpty(),
                 "before promotion the assertion is invisible");
 
         AgentMemory promoted = memoryService.remember(
-                write("fact", "Prefers concise answers", AgentMemory.ORIGIN_UI, "user-9", false));
+                write("Prefers concise answers", AgentMemory.ORIGIN_UI, "user-9", false));
 
         assertEquals(AgentMemory.STATUS_ACTIVE, promoted.getStatus(),
                 "only an explicit channel write promotes a candidate");
@@ -276,11 +272,10 @@ class AgentMemoryServiceTest extends AbstractIntegrationTest {
     void aPassiveWriteNeverTouchesAnActiveRow() {
         fixture();
         AgentMemory active = memoryService.remember(
-                write("fact", "Already in effect", AgentMemory.ORIGIN_UI, "user-1", false));
+                write("Already in effect", AgentMemory.ORIGIN_UI, "user-1", false));
         var updatedAtBefore = memories.findById(active.getId()).orElseThrow().getUpdatedAt();
 
-        Optional<AgentMemory> passiveHit = memoryService.rememberPassive(passive("fact",
-                "Already in effect", AgentMemory.ORIGIN_PASSIVE_JUDGE, "passive.judge:sess-3:1"));
+        Optional<AgentMemory> passiveHit = memoryService.rememberPassive(passive("Already in effect", AgentMemory.ORIGIN_PASSIVE_JUDGE, "passive.judge:sess-3:1"));
 
         assertTrue(passiveHit.isEmpty(),
                 "a passive write of an already-active assertion is a no-op, not an update");
@@ -293,7 +288,7 @@ class AgentMemoryServiceTest extends AbstractIntegrationTest {
     void thePassiveEntryRefusesExplicitOrigins() {
         fixture();
         CpApiException explicit = assertThrows(CpApiException.class, () -> memoryService.rememberPassive(
-                passive("fact", "Not a passive channel", AgentMemory.ORIGIN_UI, "src-1")));
+                passive("Not a passive channel", AgentMemory.ORIGIN_UI, "src-1")));
         assertEquals(HttpStatus.BAD_REQUEST, explicit.getStatus());
         assertTrue(explicit.getMessage().contains("passive memory origin must be one of"),
                 "the two entry points may not be mixed: " + explicit.getMessage());
@@ -301,18 +296,98 @@ class AgentMemoryServiceTest extends AbstractIntegrationTest {
     }
 
     // ---------------------------------------------------------------------------------------
+    // PLAN-0629 M1-5: the in-place edit (PATCH) and the archive read face
+    // ---------------------------------------------------------------------------------------
+
+    @Test
+    void anEditRehashesInPlaceAndKeepsTheIdentity() {
+        fixture();
+        AgentMemory stored = memoryService.remember(write("Prefers short answers",
+                AgentMemory.ORIGIN_UI, "user-1", false));
+        String originalHash = stored.getContentSha256();
+
+        AgentMemory edited = memoryService.update(new AgentMemoryService.MemoryUpdate(
+                principalId, workspaceId, stored.getId(), "Prefers  very short   answers", true,
+                userId.toString()));
+
+        assertEquals(stored.getId(), edited.getId(), "an edit is not a second row");
+        assertEquals(1, memories.count());
+        assertEquals("Prefers very short answers", edited.getContent(), "the stored form is normalized");
+        assertFalse(originalHash.equals(edited.getContentSha256()),
+                "a changed assertion must get a new hash, or dedupe would lie");
+        assertEquals(AgentMemoryNormalizer.sha256Hex(edited.getContent()), edited.getContentSha256());
+        assertTrue(edited.isPinned());
+        assertEquals(AgentMemory.ORIGIN_UI, edited.getPinnedBy(), "V99: only ui|cli may pin");
+        assertEquals(AgentMemory.ORIGIN_UI, edited.getOrigin(),
+                "an edit keeps the original channel: provenance records where it came from");
+        assertEquals(1, auditCount(AgentMemoryService.AUDIT_UPDATED));
+    }
+
+    @Test
+    void anEditCannotSilentlyBecomeADuplicateAndCannotTouchACandidate() {
+        fixture();
+        memoryService.remember(write("first assertion", AgentMemory.ORIGIN_UI, "user-1", false));
+        AgentMemory second = memoryService.remember(
+                write("second assertion", AgentMemory.ORIGIN_UI, "user-1", false));
+
+        CpApiException duplicate = assertThrows(CpApiException.class, () -> memoryService.update(
+                new AgentMemoryService.MemoryUpdate(principalId, workspaceId, second.getId(),
+                        "first assertion", null, userId.toString())));
+        assertEquals(HttpStatus.CONFLICT, duplicate.getStatus());
+        assertEquals("MEMORY_DUPLICATE", duplicate.getCode());
+        assertEquals("second assertion", memories.findById(second.getId()).orElseThrow().getContent(),
+                "a refused edit must not change the row");
+
+        AgentMemory candidate = memoryService.rememberPassive(passive("candidate assertion",
+                AgentMemory.ORIGIN_PASSIVE_SUMMARY, "passive.summary:sess-1:1")).orElseThrow();
+        CpApiException invisible = assertThrows(CpApiException.class, () -> memoryService.update(
+                new AgentMemoryService.MemoryUpdate(principalId, workspaceId, candidate.getId(),
+                        "edited candidate", null, userId.toString())));
+        assertEquals(HttpStatus.NOT_FOUND, invisible.getStatus(),
+                "a candidate is invisible: by id it looks exactly like a missing row");
+        assertEquals("MEMORY_NOT_FOUND", invisible.getCode());
+
+        CpApiException nothingToDo = assertThrows(CpApiException.class, () -> memoryService.update(
+                new AgentMemoryService.MemoryUpdate(principalId, workspaceId, second.getId(), null, null,
+                        userId.toString())));
+        assertEquals("INVALID_REQUEST", nothingToDo.getCode());
+    }
+
+    @Test
+    void theStatusFilterSeparatesInEffectFromArchived() {
+        fixture();
+        AgentMemory live = memoryService.remember(write("still in effect", AgentMemory.ORIGIN_UI, "user-1", false));
+        AgentMemory archived = memoryService.remember(
+                write("archived one", AgentMemory.ORIGIN_UI, "user-1", false));
+        memoryService.forget(principalId, workspaceId, archived.getId(), userId.toString());
+
+        assertEquals(List.of(live.getId()), memoryService
+                .listMemories(principalId, workspaceId, AgentMemoryService.MemoryStatus.ACTIVE)
+                .stream().map(AgentMemory::getId).toList());
+        assertEquals(List.of(archived.getId()), memoryService
+                .listMemories(principalId, workspaceId, AgentMemoryService.MemoryStatus.RETIRED)
+                .stream().map(AgentMemory::getId).toList(),
+                "the archive must stay readable, or a soft delete looks like data loss");
+        assertEquals(2, memoryService
+                .listMemories(principalId, workspaceId, AgentMemoryService.MemoryStatus.ALL).size());
+        assertTrue(memoryService.activeMemories(principalId, workspaceId).stream()
+                        .noneMatch(row -> row.getId().equals(archived.getId())),
+                "injection keeps using the live-only finder");
+    }
+
+    // ---------------------------------------------------------------------------------------
     // fixtures / helpers
     // ---------------------------------------------------------------------------------------
 
-    private AgentMemoryService.PassiveWrite passive(String type, String content, String origin,
+    private AgentMemoryService.PassiveWrite passive(String content, String origin,
                                                     String sourceRef) {
-        return new AgentMemoryService.PassiveWrite(principalId, workspaceId, type, content, origin,
+        return new AgentMemoryService.PassiveWrite(principalId, workspaceId, content, origin,
                 sourceRef, userId.toString());
     }
 
-    private AgentMemoryService.MemoryWrite write(String type, String content, String origin,
+    private AgentMemoryService.MemoryWrite write(String content, String origin,
                                                  String sourceRef, boolean pinned) {
-        return new AgentMemoryService.MemoryWrite(principalId, workspaceId, type, content, origin,
+        return new AgentMemoryService.MemoryWrite(principalId, workspaceId, content, origin,
                 sourceRef, pinned, userId.toString());
     }
 
