@@ -33,6 +33,8 @@ pub struct WalkEntry {
     pub kind: WalkEntryKind,
     pub mode: FileMode,
     pub size: u64,
+    /// File mtime in nanoseconds since the Unix epoch (0 for symlinks).
+    pub mtime_ns: u64,
     /// Present for `Symlink` entries (file symlinks and directory junctions).
     pub symlink_target: Option<String>,
 }
@@ -182,6 +184,7 @@ fn symlink_entry(path: &Path, root: &Path) -> Result<WalkEntry, WalkIssue> {
         kind: WalkEntryKind::Symlink,
         mode: FileMode::Symlink,
         size: target.len() as u64,
+        mtime_ns: 0,
         symlink_target: Some(target),
     })
 }
@@ -356,6 +359,12 @@ where
                 kind: WalkEntryKind::File,
                 mode: file_mode(&metadata),
                 size: metadata.len(),
+                mtime_ns: metadata
+                    .modified()
+                    .ok()
+                    .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map(|duration| duration.as_nanos() as u64)
+                    .unwrap_or(0),
                 symlink_target: None,
             });
     }

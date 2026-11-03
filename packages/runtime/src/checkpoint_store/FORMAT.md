@@ -93,10 +93,11 @@ canonical JSON（无多余空白，键序固定：`v`、`entries`、`merkle_root
 
 ## 6. stat cache
 
-`index/stat/<rootId>.json`：`{"v":1,"entries":{"<path>":{"hash":"<64 hex>","size":123,"mtime_ns":1793...}}}`
+`index/stat/<rootId>.json`：`{"v":1,"entries":{"<path>":{"hash":"<64 hex>","size":123,"mtime_ns":1793...,"file_id":"<opaque>"}}}`
 
-- 仅 capture 优化：`size + mtime_ns` 与上次一致 ⇒ 复用 hash（不读内容）。
-- **已知限制**：racy-clean（同一 size/mtime 窗口内改内容会漏检），与 git `last-index` 同级；capture 前后对「可疑窗口」可强制重哈希（v1 不做）。
+- 仅 capture 优化：`size + mtime_ns + file_id` 与上次一致 ⇒ 复用 hash（不读内容）。
+- `file_id`：Unix `dev:ino`，Windows `volume_serial:file_index`（`GetFileInformationByHandle`）。用于识别「同 size/mtime 但文件被替换」；旧 cache 无该字段时视为不命中（严格优先），仅在同平台无法取得身份时回退 size+mtime。
+- **已知限制**：若平台/文件系统拿不到 `file_id`（或读取旧 v1 cache 无该字段且实现选择回退），仍存在 racy-clean 盲区：同一 size/mtime 窗口内改内容会漏检；与 git `last-index` 同级。测试覆盖 replacement 的 file_id 变化；同 inode 原地改内容 + 强制还原 mtime 的场景无法稳定构造，不做测试，v1 不做可疑窗口强制重哈希。
 - cache 写入在 slice 提交**之后**；损坏/缺失只退化为全量哈希。
 
 ## 7. 锁与并发
@@ -186,3 +187,4 @@ canonical JSON（无多余空白，键序固定：`v`、`entries`、`merkle_root
 
 - **2026-11-04 v1 冻结**（PLAN-0653 M0）：blob/manifest/slice/stat cache/VERSION/GC journal 字段与校验规则定稿。后续变更必须新增条目并说明向后兼容策略；禁止原地修改已发布格式。
 - **2026-11-04 v1 校验补充**（PLAN-0653 T1.2）：读侧新增 4096× 压缩比门，写侧同条件回落 raw；字节布局与 `VERSION` 不变。合法 flate2 输出最大压缩比约 1032×，因此既有 blob 不会被新增的门拒收。
+- **2026-11-04 stat cache 可选 `file_id`**（PLAN-0653 T1.7）：entries 增加可选 `file_id` 字符串；缺省解析为 `None`，旧 cache 仍可读但视为不命中，不影响 VERSION/其他格式。用于收紧同 size+mtime 替换盲区；取不到身份的降级路径已在上文标注。
