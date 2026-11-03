@@ -832,21 +832,14 @@ test.describe("PLAN-0631 M2 visual variants", () => {
         const mutedContrast = contrastRatio(result.tokens.mutedForeground, [
             result.tokens.background,
         ]);
-        const brandContrast = contrastRatio(result.tokens.brandForeground, [
-            result.tokens.brand,
-        ]);
-        const sendButtonContrast = contrastRatio(result.control.color, [
-            result.control.background,
-        ]);
+        const brandContrast = contrastRatio(result.tokens.brandForeground, [result.tokens.brand]);
+        const sendButtonContrast = contrastRatio(result.control.color, [result.control.background]);
 
         // 默认态的关键 token 必须 **等于 B**（用户 2026-11-03 圈选）。这条替代了旧的
         // "默认与改动前逐像素一致" —— 默认现在就应该长成 B，而不是维持旧外观。
         expect(result.variant, "默认不得投影任何 variant 属性").toBeNull();
         expect(result.text.fontSizePx, "B 正文 13px").toBeCloseTo(DEFAULT_B.bodyFontPx, 1);
-        expect(result.text.lineHeightPx, "B 正文行高 1.45").toBeCloseTo(
-            DEFAULT_B.lineHeightPx,
-            1,
-        );
+        expect(result.text.lineHeightPx, "B 正文行高 1.45").toBeCloseTo(DEFAULT_B.lineHeightPx, 1);
         expect(result.control.borderRadiusPx, "B 主档圆角 4px").toBeCloseTo(
             DEFAULT_B.controlRadiusPx,
             1,
@@ -870,10 +863,7 @@ test.describe("PLAN-0631 M2 visual variants", () => {
         const hasRing = focus.boxShadow !== "none" && focus.boxShadow.length > 0;
         expect(hasOutline || hasRing, "焦点指示必须可见（outline 或 ring）").toBe(true);
         const focusColor = firstColorIn(hasOutline ? focus.outlineColor : focus.boxShadow);
-        expect(
-            focusColor,
-            `焦点环颜色必须可解析（focus=${JSON.stringify(focus)}）`,
-        ).not.toBeNull();
+        expect(focusColor, `焦点环颜色必须可解析（focus=${JSON.stringify(focus)}）`).not.toBeNull();
         const focusContrast = contrastRatio(focusColor!, focus.backgrounds);
         expect(
             focusContrast,
@@ -932,16 +922,11 @@ test.describe("PLAN-0631 M2 visual variants", () => {
         const mutedContrast = contrastRatio(result.tokens.mutedForeground, [
             result.tokens.background,
         ]);
-        const brandContrast = contrastRatio(result.tokens.brandForeground, [
-            result.tokens.brand,
-        ]);
+        const brandContrast = contrastRatio(result.tokens.brandForeground, [result.tokens.brand]);
 
         expect(result.variant, "默认不得投影任何 variant 属性").toBeNull();
         expect(result.text.fontSizePx, "B 正文 13px").toBeCloseTo(DEFAULT_B.bodyFontPx, 1);
-        expect(result.text.lineHeightPx, "B 正文行高 1.45").toBeCloseTo(
-            DEFAULT_B.lineHeightPx,
-            1,
-        );
+        expect(result.text.lineHeightPx, "B 正文行高 1.45").toBeCloseTo(DEFAULT_B.lineHeightPx, 1);
         expect(result.control.borderRadiusPx, "B 主档圆角 4px").toBeCloseTo(
             DEFAULT_B.controlRadiusPx,
             1,
