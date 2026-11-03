@@ -308,9 +308,104 @@ fn windows_path_within(path: &Path, root: &Path) -> bool {
     }
 }
 
+/// PLAN-0639 D39-5 (先定根、再解析): the declared root selected for one path
+/// operation. `host_path` is the declared root's host path and becomes the
+/// resolution boundary for both validation stages — it is NOT necessarily the
+/// workspace's primary root.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RootBoundary {
+    /// Selected declared root id. `None` marks the primary root for legacy
+    /// callers that never saw a rootId (root[0].id == workspaceId invariant).
+    pub root_id: Option<String>,
+    /// Host path of the selected root — pass this as the `workspace` argument
+    /// of `resolve_read_path_for_root` / `resolve_write_path_for_root`.
+    pub host_path: PathBuf,
+}
+
+/// PLAN-0639 D39-5 先定根: select the declared root boundary for a path op.
+///
+/// * `workspace` — the materialized primary root path (root[0], id ==
+///   workspaceId), always available from the Workspace registry.
+/// * `roots` — ordered `spec.roots` as `(root_id, host_path)` pairs. Ignored
+///   when `root_id` is `None`.
+/// * `root_id = None` — primary root (legacy single-root callers): the
+///   boundary is `workspace` itself, byte-identical to pre-0639 behavior.
+/// * `root_id = Some(id)` — the declared root with that id; its hostPath
+///   becomes the boundary, NOT the primary root. Unknown ids, blank ids, and
+///   empty/relative hostPaths all fail closed (`InvalidPath`).
+///
+/// D39-5: a relative path declared in root A must never resolve into root B —
+/// the returned boundary is the single source of truth handed to the
+/// two-stage resolution.
+pub fn select_root_boundary(
+    workspace: &str,
+    roots: &[(String, String)],
+    root_id: Option<&str>,
+) -> Result<RootBoundary> {
+    let Some(root_id) = root_id else {
+        if workspace.trim().is_empty() {
+            return Err(RuntimeError::InvalidPath(
+                "primary root boundary is empty".into(),
+            ));
+        }
+        return Ok(RootBoundary {
+            root_id: None,
+            host_path: PathBuf::from(workspace),
+        });
+    };
+    if root_id.trim().is_empty() {
+        return Err(RuntimeError::InvalidPath("rootId must not be blank".into()));
+    }
+    let (_, host_path) = roots
+        .iter()
+        .find(|(id, _)| id == root_id)
+        .ok_or_else(|| RuntimeError::InvalidPath(format!("unknown rootId {root_id:?}")))?;
+    if host_path.trim().is_empty() {
+        return Err(RuntimeError::InvalidPath(format!(
+            "declared root {root_id:?} has an empty hostPath"
+        )));
+    }
+    let path = PathBuf::from(host_path);
+    if !path.is_absolute() {
+        return Err(RuntimeError::InvalidPath(format!(
+            "declared root {root_id:?} hostPath is not absolute: {host_path:?}"
+        )));
+    }
+    Ok(RootBoundary {
+        root_id: Some(root_id.to_string()),
+        host_path: path,
+    })
+}
+
+/// PLAN-0639 D39-5: reject malformed root ids before resolution (fail closed).
+fn reject_malformed_root_id(root_id: Option<&str>) -> Result<()> {
+    if let Some(id) = root_id
+        && id.trim().is_empty()
+    {
+        return Err(RuntimeError::InvalidPath("rootId must not be blank".into()));
+    }
+    Ok(())
+}
+
 /// Resolve a path for read operations.
 /// Two-stage check: lexical ⇒ filesystem (canonicalize).
 pub fn resolve_read_path(path: &str, workspace: &str) -> Result<PathBuf> {
+    resolve_read_path_for_root(path, workspace, None)
+}
+
+/// PLAN-0639 D39-5 (先定根、再解析): resolve a read path against the DECLARED
+/// ROOT boundary. `workspace` must be the declared root's host path (see
+/// [`select_root_boundary`]) — for `root_id = None` that is the primary root
+/// and behavior is byte-identical to pre-0639. The two-stage validation is
+/// unchanged; only the boundary root moved from "always the primary root" to
+/// "the root the path was declared in". `root_id` is validated (blank ids fail
+/// closed) and carried as the attribution for this resolution.
+pub fn resolve_read_path_for_root(
+    path: &str,
+    workspace: &str,
+    root_id: Option<&str>,
+) -> Result<PathBuf> {
+    reject_malformed_root_id(root_id)?;
     let ws = Path::new(workspace);
     let normalized = lexically_safe(path, ws)?;
     resolve_canonical(&normalized, ws)
@@ -320,6 +415,17 @@ pub fn resolve_read_path(path: &str, workspace: &str) -> Result<PathBuf> {
 /// Since the target file may not exist yet, we canonicalize the first existing
 /// ancestor directory instead, then re-check the ancestor lies within workspace.
 pub fn resolve_write_path(path: &str, workspace: &str) -> Result<PathBuf> {
+    resolve_write_path_for_root(path, workspace, None)
+}
+
+/// PLAN-0639 D39-5 (先定根、再解析): write-side variant of
+/// [`resolve_read_path_for_root`] — same declared-root boundary semantics.
+pub fn resolve_write_path_for_root(
+    path: &str,
+    workspace: &str,
+    root_id: Option<&str>,
+) -> Result<PathBuf> {
+    reject_malformed_root_id(root_id)?;
     let ws = Path::new(workspace);
     let target = lexically_safe(path, ws)?;
 
@@ -1123,6 +1229,186 @@ mod tests {
             matches!(err, RuntimeError::PathTraversal { .. }),
             "expected PathTraversal for symlink loop (ELOOP), got {err}"
         );
+    }
+
+    // ---- PLAN-0639 D39-5: per-root resolution (先定根、再解析) ----
+
+    #[test]
+    fn select_root_boundary_defaults_to_primary_root() {
+        let boundary = select_root_boundary("H:/ws/primary", &[], None).unwrap();
+        assert_eq!(boundary.root_id, None);
+        assert_eq!(boundary.host_path, PathBuf::from("H:/ws/primary"));
+    }
+
+    #[test]
+    fn select_root_boundary_picks_declared_root_not_primary() {
+        let roots = vec![
+            ("ws-1".to_string(), "H:/ws/primary".to_string()),
+            ("root-b".to_string(), "H:/other/root-b".to_string()),
+        ];
+        let boundary = select_root_boundary("H:/ws/primary", &roots, Some("root-b")).unwrap();
+        assert_eq!(boundary.root_id, Some("root-b".to_string()));
+        assert_eq!(boundary.host_path, PathBuf::from("H:/other/root-b"));
+    }
+
+    #[test]
+    fn select_root_boundary_rejects_unknown_root_id() {
+        let roots = vec![("ws-1".to_string(), "H:/ws/primary".to_string())];
+        let err = select_root_boundary("H:/ws/primary", &roots, Some("root-x")).unwrap_err();
+        assert!(
+            err.to_string().contains("unknown rootId"),
+            "unknown rootId must fail closed, got {err}"
+        );
+    }
+
+    #[test]
+    fn select_root_boundary_rejects_blank_and_malformed_declarations() {
+        let err = select_root_boundary("H:/ws/primary", &[], Some("   ")).unwrap_err();
+        assert!(err.to_string().contains("blank"), "got {err}");
+        let roots = vec![("r".to_string(), String::new())];
+        let err = select_root_boundary("H:/ws/primary", &roots, Some("r")).unwrap_err();
+        assert!(err.to_string().contains("empty hostPath"), "got {err}");
+        let roots = vec![("r".to_string(), "relative/path".to_string())];
+        let err = select_root_boundary("H:/ws/primary", &roots, Some("r")).unwrap_err();
+        assert!(err.to_string().contains("not absolute"), "got {err}");
+    }
+
+    #[test]
+    fn resolve_read_path_for_root_matches_legacy_default() {
+        let dir = tempfile::tempdir().unwrap();
+        let ws = dir.path().to_str().unwrap();
+        fs::write(dir.path().join("bar.txt"), "data").unwrap();
+        let legacy = resolve_read_path("bar.txt", ws).unwrap();
+        let per_root = resolve_read_path_for_root("bar.txt", ws, None).unwrap();
+        assert_eq!(
+            legacy, per_root,
+            "root_id = None must be byte-identical to the legacy shim"
+        );
+    }
+
+    #[test]
+    fn resolve_read_path_for_root_resolves_inside_declared_root() {
+        let primary = tempfile::tempdir().unwrap();
+        let declared = tempfile::tempdir().unwrap();
+        fs::write(declared.path().join("in-root.txt"), "data").unwrap();
+        let boundary = select_root_boundary(
+            primary.path().to_str().unwrap(),
+            &[
+                (
+                    "ws-1".to_string(),
+                    primary.path().to_string_lossy().into_owned(),
+                ),
+                (
+                    "root-b".to_string(),
+                    declared.path().to_string_lossy().into_owned(),
+                ),
+            ],
+            Some("root-b"),
+        )
+        .unwrap();
+        let resolved = resolve_read_path_for_root(
+            "in-root.txt",
+            boundary.host_path.to_str().unwrap(),
+            Some("root-b"),
+        )
+        .unwrap();
+        assert!(
+            windows_path_within(&resolved, &declared.path().canonicalize().unwrap()),
+            "resolved path must stay inside the declared root, got {resolved:?}"
+        );
+    }
+
+    #[test]
+    fn resolve_read_path_for_root_rejects_lexical_escape_from_declared_root() {
+        // base/outside.txt is a real file sitting NEXT TO the declared root.
+        // Declared in root-b, the path "../outside.txt" must not reach it —
+        // the lexical stage pins every resolution to its declared root (D39-5).
+        let base = tempfile::tempdir().unwrap();
+        let declared = base.path().join("declared");
+        std::fs::create_dir_all(&declared).unwrap();
+        fs::write(base.path().join("outside.txt"), "data").unwrap();
+        let boundary = select_root_boundary(
+            base.path().to_str().unwrap(),
+            &[(
+                "root-b".to_string(),
+                declared.to_string_lossy().into_owned(),
+            )],
+            Some("root-b"),
+        )
+        .unwrap();
+        let err = resolve_read_path_for_root(
+            "../outside.txt",
+            boundary.host_path.to_str().unwrap(),
+            Some("root-b"),
+        )
+        .unwrap_err();
+        assert!(
+            matches!(err, RuntimeError::PathTraversal { .. }),
+            "lexical escape out of the declared root must be PathTraversal, got {err}"
+        );
+    }
+
+    #[test]
+    fn resolve_read_path_for_root_rejects_blank_root_id() {
+        let dir = tempfile::tempdir().unwrap();
+        let err = resolve_read_path_for_root("x.txt", dir.path().to_str().unwrap(), Some("  "))
+            .unwrap_err();
+        assert!(err.to_string().contains("blank"), "got {err}");
+    }
+
+    // D39-5 #2/#3: a symlink inside the declared root that points into another
+    // root canonicalizes outside the declared root → SymlinkEscape, same code
+    // and meaning as the legacy single-root symlink escape.
+    #[test]
+    fn resolve_read_path_for_root_rejects_cross_root_symlink() {
+        let primary = tempfile::tempdir().unwrap();
+        let declared = tempfile::tempdir().unwrap();
+        fs::write(primary.path().join("secret.txt"), "data").unwrap();
+        let link_path = declared.path().join("link-to-primary");
+        #[cfg(windows)]
+        let sym_res = std::os::windows::fs::symlink_dir(primary.path(), &link_path);
+        #[cfg(not(windows))]
+        let sym_res = std::os::unix::fs::symlink(primary.path(), &link_path);
+        if sym_res.is_err() {
+            println!("symlink creation not permitted, skipping test: {sym_res:?}");
+            return;
+        }
+        let boundary = select_root_boundary(
+            primary.path().to_str().unwrap(),
+            &[(
+                "root-b".to_string(),
+                declared.path().to_string_lossy().into_owned(),
+            )],
+            Some("root-b"),
+        )
+        .unwrap();
+        let err = resolve_read_path_for_root(
+            "link-to-primary/secret.txt",
+            boundary.host_path.to_str().unwrap(),
+            Some("root-b"),
+        )
+        .unwrap_err();
+        assert!(
+            matches!(err, RuntimeError::SymlinkEscape { .. }),
+            "cross-root symlink must be SymlinkEscape, got {err}"
+        );
+        // The symlink target itself resolves fine under the primary-root
+        // boundary: the boundary, not the path string, is what D39-5 pins down.
+        let legacy =
+            resolve_read_path_for_root("secret.txt", primary.path().to_str().unwrap(), None);
+        assert!(
+            legacy.is_ok(),
+            "primary-root resolution of its own file must succeed: {legacy:?}"
+        );
+    }
+
+    #[test]
+    fn resolve_write_path_for_root_matches_legacy_default() {
+        let dir = tempfile::tempdir().unwrap();
+        let ws = dir.path().to_str().unwrap();
+        let legacy = resolve_write_path("new_file.txt", ws).unwrap();
+        let per_root = resolve_write_path_for_root("new_file.txt", ws, None).unwrap();
+        assert_eq!(legacy, per_root);
     }
 
     fn minimal_pdf_with_text(text: &str) -> Vec<u8> {

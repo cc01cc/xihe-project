@@ -1,7 +1,7 @@
 use axum::body::{Body, to_bytes};
 use axum::{
     Json,
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::StatusCode,
 };
 use percent_encoding::{AsciiSet, CONTROLS, utf8_percent_encode};
@@ -12,7 +12,7 @@ use std::sync::OnceLock;
 use std::time::Duration;
 use tracing::warn;
 
-use crate::{AppState, DeleteFileRequest, GetFileInfoRequest, ListDirectoryRequest, MkdirRequest};
+use crate::AppState;
 use xihe_runtime::{error::RuntimeError, fs};
 
 static EVENT_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
@@ -75,9 +75,7 @@ pub(crate) async fn report_workspace_event_attributed(
     let mut best: Option<&(String, String)> = None;
     for root in spec_roots {
         let root_path = root.1.replace('\\', "/");
-        if canonical_path.starts_with(&format!("{root_path}/"))
-            || canonical_path == root_path
-        {
+        if canonical_path.starts_with(&format!("{root_path}/")) || canonical_path == root_path {
             let best_len = best.map(|b| b.1.len()).unwrap_or(0);
             if root.1.len() > best_len {
                 best = Some(root);
@@ -181,6 +179,119 @@ async fn ensure_workspace_consistent(
 pub struct ReadFileRestRequest {
     pub path: String,
     pub max_bytes: Option<usize>,
+    /// PLAN-0639 D39-5: declared root that owns `path`. Absent = primary root
+    /// (root[0].id == workspaceId, legacy callers).
+    #[serde(default, rename = "rootId")]
+    pub root_id: Option<String>,
+}
+
+/// PLAN-0639 D39-5: shared REST wire shape for single-path file endpoints
+/// (list / delete / mkdir / stat). `rootId` selects the declared root; absent
+/// = primary root (legacy callers). These are the REST twins of the MCP tool
+/// request structs in `main.rs`, extended with the optional rootId.
+#[derive(Debug, Deserialize)]
+pub struct RootFileRequest {
+    pub path: String,
+    #[serde(default, rename = "rootId")]
+    pub root_id: Option<String>,
+}
+
+/// PLAN-0639 D39-5: write-binary carries `rootId` in the query string — the
+/// request body is the raw file payload.
+#[derive(Debug, Deserialize)]
+pub struct WriteBinaryQuery {
+    #[serde(default, rename = "rootId")]
+    pub root_id: Option<String>,
+}
+
+/// PLAN-0639 D39-5 先定根、再解析: resolve the declared-root boundary for one
+/// file request and enforce the executable-surface policy.
+///
+/// * No `rootId` → primary root: the boundary is the materialized workspace
+///   path, no extra spec fetch, byte-identical to pre-0639 behavior.
+/// * `rootId` present → declared roots are read from the ExecutionSpec and the
+///   requested root selected; unknown ids fail closed (`400`, via
+///   `fs::select_root_boundary`).
+/// * A non-primary root currently has no execution surface — executor-side
+///   per-root dispatch is a later wave — so it fails closed with `501
+///   PER_ROOT_EXECUTION_UNSUPPORTED` rather than being silently served from
+///   the primary root (D39-5: serving the wrong root would be a boundary lie).
+async fn resolve_request_root(
+    app: &AppState,
+    ws_id: &str,
+    root_id: Option<&str>,
+) -> Result<fs::RootBoundary, (StatusCode, Json<Value>)> {
+    let instance = app.registry.get(ws_id).await.ok_or_else(|| {
+        problem(
+            StatusCode::NOT_FOUND,
+            "WORKSPACE_NOT_FOUND",
+            "workspace is not materialized in this runtime",
+        )
+    })?;
+    let roots = if root_id.is_none() {
+        Vec::new()
+    } else {
+        app.workspace_ensurer
+            .declared_roots(ws_id)
+            .await
+            .map_err(map_error)?
+    };
+    let boundary =
+        fs::select_root_boundary(&instance.workspace_path, &roots, root_id).map_err(map_error)?;
+    if let Some(requested) = boundary.root_id.as_deref() {
+        let same_root = boundary
+            .host_path
+            .canonicalize()
+            .ok()
+            .zip(
+                std::path::Path::new(&instance.workspace_path)
+                    .canonicalize()
+                    .ok(),
+            )
+            .is_some_and(|(a, b)| a == b);
+        if !same_root {
+            return Err(problem(
+                StatusCode::NOT_IMPLEMENTED,
+                "PER_ROOT_EXECUTION_UNSUPPORTED",
+                &format!(
+                    "declared root {requested:?} resolved, but non-primary root execution is not routed in this runtime build"
+                ),
+            ));
+        }
+    }
+    Ok(boundary)
+}
+
+/// PLAN-0639 D39-5 再解析: authoritative two-stage validation of the request
+/// path against its declared root boundary, before the executor dispatch.
+/// `FileNotFound` is absence, not a guard failure — the executor owns
+/// `found:false` / 404 semantics, so preflight lets it through unchanged.
+fn preflight_read_path(
+    path: &str,
+    boundary: &fs::RootBoundary,
+) -> Result<(), (StatusCode, Json<Value>)> {
+    match fs::resolve_read_path_for_root(
+        path,
+        &boundary.host_path.to_string_lossy(),
+        boundary.root_id.as_deref(),
+    ) {
+        Ok(_) | Err(RuntimeError::FileNotFound(_)) => Ok(()),
+        Err(error) => Err(map_error(error)),
+    }
+}
+
+/// Write-side variant of [`preflight_read_path`].
+fn preflight_write_path(
+    path: &str,
+    boundary: &fs::RootBoundary,
+) -> Result<(), (StatusCode, Json<Value>)> {
+    fs::resolve_write_path_for_root(
+        path,
+        &boundary.host_path.to_string_lossy(),
+        boundary.root_id.as_deref(),
+    )
+    .map(|_| ())
+    .map_err(map_error)
 }
 
 #[derive(Serialize, Deserialize)]
@@ -269,6 +380,11 @@ pub async fn handle_read_file(
     // response shape is unchanged for REST consumers.
     app.ensure_workspace(&ws_id).await.map_err(map_error)?;
     ensure_workspace_consistent(&app, &ws_id).await?;
+    // PLAN-0639 D39-5: rootId (absent = primary root) selects the declared
+    // root boundary; the per-root two-stage check runs here, authoritatively,
+    // before the executor dispatch.
+    let boundary = resolve_request_root(&app, &ws_id, req.root_id.as_deref()).await?;
+    preflight_read_path(&req.path, &boundary)?;
     // PLAN-0427 T2.1: absence is a domain fact, not an error — FileNotFound
     // (ENOENT classified in fs::resolve_canonical) answers 200 {found:false}.
     // Real traversal still fails via map_error below (403), and workspace
@@ -304,6 +420,7 @@ pub async fn handle_read_file(
 pub async fn handle_write_binary(
     State(app): State<Arc<AppState>>,
     Path((ws_id, raw_path)): Path<(String, String)>,
+    Query(query): Query<WriteBinaryQuery>,
     body: Body,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     let path = percent_encoding::percent_decode_str(&raw_path)
@@ -323,6 +440,9 @@ pub async fn handle_write_binary(
         })?;
     app.ensure_workspace(&ws_id).await.map_err(map_error)?;
     ensure_workspace_consistent(&app, &ws_id).await?;
+    // PLAN-0639 D39-5: declared-root boundary + authoritative write preflight.
+    let boundary = resolve_request_root(&app, &ws_id, query.root_id.as_deref()).await?;
+    preflight_write_path(&path, &boundary)?;
     let body = to_bytes(
         body,
         xihe_runtime::executor::FILE_OPERATION_MAX_PAYLOAD_BYTES + 1,
@@ -345,11 +465,14 @@ pub async fn handle_write_binary(
 pub async fn handle_list_directory(
     State(app): State<Arc<AppState>>,
     Path(ws_id): Path<String>,
-    Json(req): Json<ListDirectoryRequest>,
+    Json(req): Json<RootFileRequest>,
 ) -> Result<Json<fs::DirectoryListing>, (StatusCode, Json<Value>)> {
     // PLAN-0345 T2.3: router.list_directory (executor oneshot), same shape.
     app.ensure_workspace(&ws_id).await.map_err(map_error)?;
     ensure_workspace_consistent(&app, &ws_id).await?;
+    // PLAN-0639 D39-5: declared-root boundary + authoritative read preflight.
+    let boundary = resolve_request_root(&app, &ws_id, req.root_id.as_deref()).await?;
+    preflight_read_path(&req.path, &boundary)?;
     let val = app
         .router
         .list_directory(&ws_id, &req.path)
@@ -364,11 +487,14 @@ pub async fn handle_list_directory(
 pub async fn handle_delete_file(
     State(app): State<Arc<AppState>>,
     Path(ws_id): Path<String>,
-    Json(req): Json<DeleteFileRequest>,
+    Json(req): Json<RootFileRequest>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     // PLAN-274 §3.2: mutations share the Sandbox executor with MCP tools.
     app.ensure_workspace(&ws_id).await.map_err(map_error)?;
     ensure_workspace_consistent(&app, &ws_id).await?;
+    // PLAN-0639 D39-5: declared-root boundary + authoritative read preflight.
+    let boundary = resolve_request_root(&app, &ws_id, req.root_id.as_deref()).await?;
+    preflight_read_path(&req.path, &boundary)?;
     let msg = app
         .router
         .delete_file(&ws_id, &req.path)
@@ -380,11 +506,14 @@ pub async fn handle_delete_file(
 pub async fn handle_mkdir(
     State(app): State<Arc<AppState>>,
     Path(ws_id): Path<String>,
-    Json(req): Json<MkdirRequest>,
+    Json(req): Json<RootFileRequest>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     // PLAN-274 §3.2: mutations share the Sandbox executor with MCP tools.
     app.ensure_workspace(&ws_id).await.map_err(map_error)?;
     ensure_workspace_consistent(&app, &ws_id).await?;
+    // PLAN-0639 D39-5: declared-root boundary + authoritative write preflight.
+    let boundary = resolve_request_root(&app, &ws_id, req.root_id.as_deref()).await?;
+    preflight_write_path(&req.path, &boundary)?;
     let msg = app
         .router
         .mkdir(&ws_id, &req.path)
@@ -396,11 +525,14 @@ pub async fn handle_mkdir(
 pub async fn handle_stat(
     State(app): State<Arc<AppState>>,
     Path(ws_id): Path<String>,
-    Json(req): Json<GetFileInfoRequest>,
+    Json(req): Json<RootFileRequest>,
 ) -> Result<Json<fs::FileInfo>, (StatusCode, Json<Value>)> {
     // PLAN-0345 T2.3: router.get_file_info (executor oneshot), same shape.
     app.ensure_workspace(&ws_id).await.map_err(map_error)?;
     ensure_workspace_consistent(&app, &ws_id).await?;
+    // PLAN-0639 D39-5: declared-root boundary + authoritative read preflight.
+    let boundary = resolve_request_root(&app, &ws_id, req.root_id.as_deref()).await?;
+    preflight_read_path(&req.path, &boundary)?;
     let val = app
         .router
         .get_file_info(&ws_id, &req.path)
@@ -438,11 +570,26 @@ mod tests {
 
     /// Create a targeted-spec test server and a cached workspace instance.
     async fn setup_ws() -> (Arc<AppState>, String, TempDir, TestCp) {
+        setup_ws_with(serde_json::Value::Null, true).await
+    }
+
+    /// PLAN-0639 D39-5: light variant — the spec carries `roots` and no Sandbox
+    /// container is created. Root-aware guards (400 on unknown rootId, 501 on
+    /// non-primary roots) exit before the executor dispatch, so these tests
+    /// need no Docker.
+    async fn setup_ws_light(roots: serde_json::Value) -> (Arc<AppState>, String, TempDir, TestCp) {
+        setup_ws_with(roots, false).await
+    }
+
+    async fn setup_ws_with(
+        roots: serde_json::Value,
+        with_container: bool,
+    ) -> (Arc<AppState>, String, TempDir, TestCp) {
         let dir = TempDir::new().unwrap();
         let ws_id = uuid::Uuid::new_v4().to_string();
         let hash = "a".repeat(64);
         let route_path = format!("/internal/v1/runtime/workspaces/{ws_id}/execution-spec");
-        let spec_body = serde_json::json!({
+        let mut spec_body = serde_json::json!({
             "workspaceId": ws_id,
             "generation": 1,
             "sandboxSpecHash": hash,
@@ -450,6 +597,9 @@ mod tests {
             "storageBackend": "host_directory",
             "storageRef": ws_id,
         });
+        if !roots.is_null() {
+            spec_body["roots"] = roots;
+        }
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let route_body = spec_body.clone();
@@ -499,17 +649,19 @@ mod tests {
         // which runs inside a real Sandbox container. Create the container bound
         // to the workspace tempdir so the exec-based handlers can serve ops
         // (V6/V7 want real-container evidence, not host-direct shortcuts).
-        manager
-            .lock()
-            .await
-            .create_workspace(
-                &ws_id,
-                workspace_path.to_str().unwrap(),
-                xihe_runtime::sandbox::SecurityProfile::Strict,
-                "xihe/workspace:latest",
-            )
-            .await
-            .expect("test sandbox container must start");
+        if with_container {
+            manager
+                .lock()
+                .await
+                .create_workspace(
+                    &ws_id,
+                    workspace_path.to_str().unwrap(),
+                    xihe_runtime::sandbox::SecurityProfile::Strict,
+                    "xihe/workspace:latest",
+                )
+                .await
+                .expect("test sandbox container must start");
+        }
         let router = Arc::new(WorkspaceExecutionRouter::new(
             workspace_ensurer.clone(),
             manager.clone(),
@@ -570,6 +722,7 @@ mod tests {
         let json = Json(ReadFileRestRequest {
             path: "hello.txt".into(),
             max_bytes: None,
+            root_id: None,
         });
         let result = handle_read_file(state, path, json).await.unwrap();
         assert!(result.found);
@@ -588,6 +741,7 @@ mod tests {
         let json = Json(ReadFileRestRequest {
             path: "does-not-exist.txt".into(),
             max_bytes: None,
+            root_id: None,
         });
         let result = handle_read_file(state, path, json).await.unwrap();
         assert!(!result.found, "missing file must answer found:false");
@@ -609,6 +763,7 @@ mod tests {
         let json = Json(ReadFileRestRequest {
             path: "empty.txt".into(),
             max_bytes: None,
+            root_id: None,
         });
         let result = handle_read_file(state, path, json).await.unwrap();
         assert!(result.found, "empty file must answer found:true");
@@ -624,6 +779,7 @@ mod tests {
         let json = Json(ReadFileRestRequest {
             path: "x.txt".into(),
             max_bytes: None,
+            root_id: None,
         });
         let result = handle_read_file(state, path, json).await;
         match result {
@@ -639,8 +795,9 @@ mod tests {
         // URL-encoded path "test/hello.txt"
         let state = State(app);
         let path = Path((ws_id, "test%2Fhello.txt".to_string()));
+        let query = Query(WriteBinaryQuery { root_id: None });
         let body = Body::from("Hello, Binary!");
-        let result = handle_write_binary(state, path, body).await.unwrap();
+        let result = handle_write_binary(state, path, query, body).await.unwrap();
         assert!(
             result
                 .get("message")
@@ -667,6 +824,7 @@ mod tests {
         let json = Json(ReadFileRestRequest {
             path: "large.txt".into(),
             max_bytes: Some(10),
+            root_id: None,
         });
         let result = handle_read_file(state, path, json).await.unwrap();
         assert_eq!(result.content.len(), 10);
@@ -689,7 +847,10 @@ mod tests {
         // List via handler
         let state = State(app);
         let path = Path(ws_id);
-        let json = Json(ListDirectoryRequest { path: ".".into() });
+        let json = Json(RootFileRequest {
+            path: ".".into(),
+            root_id: None,
+        });
         let result = handle_list_directory(state, path, json).await.unwrap();
         let names: Vec<&str> = result.entries.iter().map(|e| e.name.as_str()).collect();
         assert!(names.contains(&"a.txt"));
@@ -714,8 +875,9 @@ mod tests {
         // file be gone afterwards (no host-direct fallback exists).
         let state = State(app);
         let path = Path(ws_id);
-        let json = Json(DeleteFileRequest {
+        let json = Json(RootFileRequest {
             path: "del.txt".into(),
+            root_id: None,
         });
         let _ = handle_delete_file(state, path, json)
             .await
@@ -733,8 +895,9 @@ mod tests {
 
         let state = State(app);
         let path = Path(ws_id);
-        let json = Json(MkdirRequest {
+        let json = Json(RootFileRequest {
             path: "sub/dir".into(),
+            root_id: None,
         });
         let _ = handle_mkdir(state, path, json)
             .await
@@ -759,8 +922,9 @@ mod tests {
         // Stat via handler
         let state = State(app);
         let path = Path(ws_id);
-        let json = Json(GetFileInfoRequest {
+        let json = Json(RootFileRequest {
             path: "metrics.txt".into(),
+            root_id: None,
         });
         let result = handle_stat(state, path, json).await.unwrap();
         assert_eq!(result.name, "metrics.txt");
@@ -774,17 +938,78 @@ mod tests {
         // Write via handler
         let state = State(app.clone());
         let path = Path((ws_id.clone(), "binary.bin".to_string()));
+        let query = Query(WriteBinaryQuery { root_id: None });
         let bin_data: Vec<u8> = vec![0x00, 0x01, 0x02, 0xFF, 0xFE];
         let body = Body::from(bin_data.clone());
-        let _ = handle_write_binary(state, path, body).await.unwrap();
+        let _ = handle_write_binary(state, path, query, body).await.unwrap();
 
         // Stat via handler
         let state = State(app);
         let path = Path(ws_id);
-        let json = Json(GetFileInfoRequest {
+        let json = Json(RootFileRequest {
             path: "binary.bin".into(),
+            root_id: None,
         });
         let result = handle_stat(state, path, json).await.unwrap();
         assert_eq!(result.size as usize, bin_data.len());
+    }
+
+    // ---- PLAN-0639 D39-5: rootId on REST file endpoints ----
+
+    /// Unknown rootId fails closed with 400 before any filesystem access —
+    /// 先定根 never guesses a boundary.
+    #[tokio::test]
+    async fn test_read_unknown_root_id_fails_closed_400() {
+        let primary = TempDir::new().unwrap();
+        let (app, ws_id, _dir, _cp) = setup_ws_light(serde_json::json!([
+            {"rootId": "ws-primary", "hostPath": primary.path().to_string_lossy()},
+        ]))
+        .await;
+
+        let state = State(app);
+        let path = Path(ws_id);
+        let json = Json(ReadFileRestRequest {
+            path: "x.txt".into(),
+            max_bytes: None,
+            root_id: Some("root-unknown".into()),
+        });
+        let result = handle_read_file(state, path, json).await;
+        match result {
+            Err((status, Json(body))) => {
+                assert_eq!(status, StatusCode::BAD_REQUEST);
+                assert_eq!(body["code"], "INVALID_REQUEST");
+            }
+            Ok(_) => panic!("unknown rootId must fail closed, not resolve"),
+        }
+    }
+
+    /// A well-known non-primary root resolves its boundary but cannot execute
+    /// yet (executor-side per-root dispatch is a later wave) — 501, never a
+    /// silent serve from the primary root.
+    #[tokio::test]
+    async fn test_read_non_primary_root_fails_closed_501() {
+        let primary = TempDir::new().unwrap();
+        let root_b = TempDir::new().unwrap();
+        let (app, ws_id, _dir, _cp) = setup_ws_light(serde_json::json!([
+            {"rootId": "ws-primary", "hostPath": primary.path().to_string_lossy()},
+            {"rootId": "root-b", "hostPath": root_b.path().to_string_lossy()},
+        ]))
+        .await;
+
+        let state = State(app);
+        let path = Path(ws_id);
+        let json = Json(ReadFileRestRequest {
+            path: "x.txt".into(),
+            max_bytes: None,
+            root_id: Some("root-b".into()),
+        });
+        let result = handle_read_file(state, path, json).await;
+        match result {
+            Err((status, Json(body))) => {
+                assert_eq!(status, StatusCode::NOT_IMPLEMENTED);
+                assert_eq!(body["code"], "PER_ROOT_EXECUTION_UNSUPPORTED");
+            }
+            Ok(_) => panic!("non-primary root execution must fail closed in this wave"),
+        }
     }
 }

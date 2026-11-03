@@ -336,6 +336,31 @@ impl WorkspaceEnsurer {
             .is_some_and(|instance| instance.state == InstanceState::Paused)
     }
 
+    /// PLAN-0639 D39-5 先定根: ordered declared roots `(root_id, host_path)`
+    /// from the targeted ExecutionSpec. Legacy specs without `roots` synthesize
+    /// a single primary root (id = workspaceId) from `hostPath`; specs with
+    /// neither fail closed. Callers feed the result to
+    /// `fs::select_root_boundary` — this is the only Runtime read of the
+    /// root declaration outside materialization.
+    pub async fn declared_roots(&self, workspace_id: &str) -> Result<Vec<(String, String)>> {
+        let spec = self.client.fetch_for_workspace(workspace_id).await?;
+        if let Some(roots) = spec.roots.as_ref() {
+            return Ok(roots
+                .iter()
+                .map(|root| (root.root_id.clone(), root.host_path.clone()))
+                .collect());
+        }
+        match spec.host_path.as_deref() {
+            Some(host_path) if !host_path.trim().is_empty() => {
+                Ok(vec![(workspace_id.to_string(), host_path.to_string())])
+            }
+            _ => Err(RuntimeError::InvalidExecutionSpec {
+                workspace_id: workspace_id.to_string(),
+                detail: "execution spec declares no roots".to_string(),
+            }),
+        }
+    }
+
     pub fn from_env(lifecycle: Arc<Lifecycle>, manager: Arc<Mutex<WorkspaceManager>>) -> Self {
         let host_root = read_host_root();
         Self::new(
@@ -465,11 +490,12 @@ impl WorkspaceEnsurer {
             let raw_paths: Vec<String> = if let Some(roots) = spec.roots.as_ref() {
                 roots.iter().map(|r| r.host_path.clone()).collect()
             } else {
-                vec![spec
-                    .host_path
-                    .as_deref()
-                    .expect("validated direct-attach hostPath")
-                    .to_string()]
+                vec![
+                    spec.host_path
+                        .as_deref()
+                        .expect("validated direct-attach hostPath")
+                        .to_string(),
+                ]
             };
             let primary = PathBuf::from(&raw_paths[0]);
             match tokio::fs::canonicalize(&primary).await {
@@ -928,6 +954,132 @@ mod tests {
 
         ensurer.ensure_workspace_identity("ws-1").await.unwrap();
         assert!(registry.status("ws-1").await.is_none());
+        mock.assert_async().await;
+    }
+
+    /// PLAN-0639 D39-5: declared_roots returns spec.roots verbatim (ordered).
+    #[tokio::test]
+    async fn declared_roots_reads_spec_roots_ordered() {
+        let mut server = Server::new_async().await;
+        let hash = "a".repeat(64);
+        let body = serde_json::json!({
+            "workspaceId": "ws-1",
+            "generation": 1,
+            "sandboxSpecHash": hash,
+            "sandboxSpec": {"profile": "strict"},
+            "storageBackend": "host_directory",
+            "storageRef": "ws-1",
+            "storageMode": "direct_attach",
+            "hostPath": "C:/ws/primary",
+            "roots": [
+                {"rootId": "ws-1", "hostPath": "C:/ws/primary"},
+                {"rootId": "root-b", "hostPath": "D:/ws/root-b"},
+            ],
+            "executionMode": "windows-host",
+        })
+        .to_string();
+        let mock = server
+            .mock("GET", "/internal/v1/runtime/workspaces/ws-1/execution-spec")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(body)
+            .create_async()
+            .await;
+
+        let host_root = tempfile::tempdir().unwrap();
+        let registry = Arc::new(WorkspaceRegistry::new());
+        let ensurer = WorkspaceEnsurer::new(
+            test_lifecycle(&registry),
+            Arc::new(Mutex::new(WorkspaceManager::new())),
+            ExecutionSpecClient::new(&server.url(), "test-token"),
+            Some(host_root.path().to_path_buf()),
+        );
+
+        let roots = ensurer.declared_roots("ws-1").await.unwrap();
+        assert_eq!(
+            roots,
+            vec![
+                ("ws-1".to_string(), "C:/ws/primary".to_string()),
+                ("root-b".to_string(), "D:/ws/root-b".to_string()),
+            ]
+        );
+        mock.assert_async().await;
+    }
+
+    /// PLAN-0639 D39-5: legacy specs without roots synthesize the primary root
+    /// from hostPath (id = workspaceId), preserving the root[0] invariant.
+    #[tokio::test]
+    async fn declared_roots_synthesizes_primary_root_for_legacy_specs() {
+        let mut server = Server::new_async().await;
+        let hash = "a".repeat(64);
+        let body = serde_json::json!({
+            "workspaceId": "ws-1",
+            "generation": 1,
+            "sandboxSpecHash": hash,
+            "sandboxSpec": {"profile": "strict"},
+            "storageBackend": "host_directory",
+            "storageRef": "ws-1",
+            "storageMode": "direct_attach",
+            "hostPath": "C:/ws/legacy",
+            "executionMode": "windows-host",
+        })
+        .to_string();
+        let mock = server
+            .mock("GET", "/internal/v1/runtime/workspaces/ws-1/execution-spec")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(body)
+            .create_async()
+            .await;
+
+        let host_root = tempfile::tempdir().unwrap();
+        let registry = Arc::new(WorkspaceRegistry::new());
+        let ensurer = WorkspaceEnsurer::new(
+            test_lifecycle(&registry),
+            Arc::new(Mutex::new(WorkspaceManager::new())),
+            ExecutionSpecClient::new(&server.url(), "test-token"),
+            Some(host_root.path().to_path_buf()),
+        );
+
+        let roots = ensurer.declared_roots("ws-1").await.unwrap();
+        assert_eq!(
+            roots,
+            vec![("ws-1".to_string(), "C:/ws/legacy".to_string())]
+        );
+        mock.assert_async().await;
+    }
+
+    /// PLAN-0639 D39-5: a spec that declares neither roots nor hostPath fails
+    /// closed instead of inventing a boundary.
+    #[tokio::test]
+    async fn declared_roots_fails_closed_when_spec_declares_no_roots() {
+        let mut server = Server::new_async().await;
+        let hash = "a".repeat(64);
+        let mock = server
+            .mock("GET", "/internal/v1/runtime/workspaces/ws-1/execution-spec")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(spec_body("ws-1", 1, &hash))
+            .create_async()
+            .await;
+
+        let host_root = tempfile::tempdir().unwrap();
+        let registry = Arc::new(WorkspaceRegistry::new());
+        let ensurer = WorkspaceEnsurer::new(
+            test_lifecycle(&registry),
+            Arc::new(Mutex::new(WorkspaceManager::new())),
+            ExecutionSpecClient::new(&server.url(), "test-token"),
+            Some(host_root.path().to_path_buf()),
+        );
+
+        let error = ensurer
+            .declared_roots("ws-1")
+            .await
+            .expect_err("spec without roots/hostPath must fail closed");
+        assert!(
+            matches!(error, RuntimeError::InvalidExecutionSpec { .. }),
+            "got {error}"
+        );
         mock.assert_async().await;
     }
 
