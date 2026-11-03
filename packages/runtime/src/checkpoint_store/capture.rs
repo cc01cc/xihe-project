@@ -594,6 +594,12 @@ mod tests {
     }
 
     #[test]
+    fn missing_file_read_maps_to_vanished() {
+        let error = read_file(Path::new("capture-does-not-exist")).expect_err("missing file");
+        assert!(matches!(error, CaptureError::Vanished { .. }), "{error:?}");
+    }
+
+    #[test]
     fn capture_fails_when_store_cannot_write_manifest() {
         let workspace = workspace();
         write_file(workspace.path(), "a.txt", b"alpha");
