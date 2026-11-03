@@ -112,9 +112,14 @@ onMounted(async () => {
             data-testid="workspace-picker-empty"
         >
             <p class="text-sm text-muted-foreground">{{ t("workspacePicker.empty") }}</p>
+            <!--
+                PLAN-0631 反馈②（注意力预算 2026-11-03 用户裁定）：「新建工作区」低频、
+                可逆、位置固定，不配主按钮层级 —— 降级为中性 ghost（透明底 + 1px 边 +
+                常规字重），不用 --action 填充。对话框里的「创建」确认按钮保持主层级。
+            -->
             <button
                 type="button"
-                class="rounded-lg bg-action px-4 py-2.5 text-sm font-semibold text-action-foreground transition-opacity hover:opacity-90"
+                class="rounded-lg border px-4 py-2.5 text-sm font-normal text-foreground transition-colors hover:bg-accent"
                 data-testid="workspace-picker-create"
                 @click="createOpen = true"
             >

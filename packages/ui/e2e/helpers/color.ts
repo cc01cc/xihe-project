@@ -36,6 +36,7 @@ export interface ElementProbe {
     boxShadow: string;
     borderRadiusPx: number;
     fontSizePx: number;
+    fontWeight: string;
     lineHeightPx: number;
     /** 由近到远的非透明底色栈（含元素自身）。 */
     backgrounds: string[];
@@ -283,6 +284,7 @@ export async function probe(
                 boxShadow: style.boxShadow,
                 borderRadiusPx: px(style.borderTopLeftRadius),
                 fontSizePx: px(style.fontSize),
+                fontWeight: style.fontWeight,
                 lineHeightPx: px(style.lineHeight),
                 backgrounds,
                 rect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },

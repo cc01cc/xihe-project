@@ -1,14 +1,20 @@
 /**
- * PLAN-0631 色彩方案（C1 中性优先 / C2 蓝仅小面积 / C3 降饱和）的**真实截图 + 质量门**。
+ * PLAN-0631 色彩方案质量门。**默认 = C2′（C2 弱化描边版，用户 2026-11-03 圈选定案）**，
+ * C1/C3 仅 `?color=c1|c3` opt-in 对比用。用户三条反馈（本次需求）：
+ * ① C2 描边 #8b93a1 太实 → 弱化为 #c9cfd6（白底上 1.57:1，弱化但可见）；
+ * ② 「新建工作区」不配主按钮层级（低频/可逆/位置固定）→ 中性 ghost；
+ * ③ 自己的气泡保持品牌蓝实心（--bubble），不描边、不中性化。
  *
- * 用户 2026-11-03 的原话是"色彩不够克制 —— 大块按钮真的有必须是有色即蓝色吗"，所以
- * 这个 spec 不是"截三张图完事"，而是把"克制"变成可验的数字：
- * - **每候选 3 页**：chat（看发送按钮）/ dialog（primary vs destructive）/ settings
- *   （badge + 选中态 + 主按钮），1920×1080、同数据、deviceScaleFactor=1（像素面积可比）；
- * - **对比度实测**：正文 ≥4.5、按钮文字 ≥4.5、危险按钮红字 ≥4.5、焦点环 ≥3（WCAG 1.4.11）；
- * - **危险区分度**：destructive 必须仍是红色（饱和度高），且与 primary 在色相或中性上可区分；
- * - **默认不变**：没有 `?color=` 时不得有 `data-xh-color`，发送按钮仍是品牌蓝；
- * - **0 console error / 0 pageerror**（三个候选 × 三个页面，各自断言）。
+ * 结构（10 例）：
+ * - **C2′ 默认 × 4 页**：chat（发送按钮弱化描边 + 用户气泡蓝）/ dialog（primary vs
+ *   destructive）/ settings / **picker（新建工作区已降级 ghost）**，产出 default2-*.png；
+ * - **C1/C3 opt-in × 3 页**：`?color=` 对比断言（描边/气泡/徽标 token 真的换掉了）；
+ * - 全部 1920×1080、同数据、deviceScaleFactor=1（像素面积可比）。
+ * - **对比度实测**：正文 ≥4.5、按钮文字 ≥4.5、气泡白字 ≥4.5、危险按钮红字 ≥4.5、
+ *   焦点环 ≥3（WCAG 1.4.11）；
+ * - **持久化清除式迁移**：任何情况下 localStorage `xihe-color-scheme` 都必须为 null
+ *   （启动 removeItem，不读值、不再写）；
+ * - **0 console error / 0 pageerror**（每个用例各自断言）。
  *
  * 复现（headless，**必须**给 `--config`；本机 Playwright 需 chrome-beta 通道）：
  *   cd packages/ui
@@ -60,14 +66,17 @@ const SHOT_DIR = process.env.XH_0631_COLOR_SHOT_DIR
     : defaultShotDir();
 
 interface ColorCase {
-    id: "C1" | "C2" | "C3";
-    param: "c1" | "c2" | "c3";
+    id: "C1" | "C3";
+    param: "c1" | "c3";
     name: string;
     /** `--action` 解析后的期望色。 */
     action: string;
     actionForeground: string;
-    /** 1px 描边（C1/C3 为透明）。 */
+    /** 1px 描边（C1/C3 为透明；默认 C2′ 另测）。 */
     actionBorder: string;
+    /** 自己的气泡（反馈③：默认走 --bubble 品牌蓝；C1/C3 各自覆盖）。 */
+    bubble: string;
+    bubbleForeground: string;
     badge: string;
     badgeForeground: string;
     badgeBorder: string;
@@ -83,22 +92,11 @@ const CASES: ColorCase[] = [
         action: "#1a1a1a",
         actionForeground: "#ffffff",
         actionBorder: "transparent",
+        bubble: "#1a1a1a",
+        bubbleForeground: "#ffffff",
         badge: "#eef0f3",
         badgeForeground: "#1b1e24",
         badgeBorder: "transparent",
-        brand: "#2450c8",
-        destructive: "#b42318",
-    },
-    {
-        id: "C2",
-        param: "c2",
-        name: "蓝仅小面积",
-        action: "#ffffff",
-        actionForeground: "#1b1e24",
-        actionBorder: "#8b93a1",
-        badge: "#f4f4f5",
-        badgeForeground: "#1b1e24",
-        badgeBorder: "#d5d9e0",
         brand: "#2450c8",
         destructive: "#b42318",
     },
@@ -109,6 +107,8 @@ const CASES: ColorCase[] = [
         action: "#4a68a4",
         actionForeground: "#ffffff",
         actionBorder: "transparent",
+        bubble: "#4a68a4",
+        bubbleForeground: "#ffffff",
         badge: "transparent",
         badgeForeground: "#2f4a8c",
         badgeBorder: "#b9c6df",
@@ -116,6 +116,21 @@ const CASES: ColorCase[] = [
         destructive: "#b42318",
     },
 ];
+
+/** C2′（默认）期望色 —— 用户三条反馈落进基础层后的实测基准。 */
+const DEFAULT_CASE = {
+    id: "C2′",
+    name: "蓝仅小面积（默认）",
+    action: "#ffffff",
+    actionForeground: "#1b1e24",
+    /** 反馈①：弱化描边（旧 C2 是 #8b93a1）。 */
+    actionBorder: "#c9cfd6",
+    /** 反馈③：气泡保持品牌蓝实心 + 白字。 */
+    bubble: "#2450c8",
+    bubbleForeground: "#ffffff",
+    brand: "#2450c8",
+    destructive: "#b42318",
+} as const;
 
 const SESSION_ID = "color-session";
 const AGENT_PRINCIPAL_ID = "00000000-0000-4000-8000-0000000000a1";
@@ -416,7 +431,7 @@ async function mockRolesApis(page: Page): Promise<void> {
 
 test.use({ viewport: { width: 1920, height: 1080 }, deviceScaleFactor: 1 });
 
-test.describe("PLAN-0631 colour schemes", () => {
+test.describe("PLAN-0631 colour schemes（C1/C3 opt-in 对比）", () => {
     for (const item of CASES) {
         test(`${item.id} (${item.name}) — chat: send button + composer`, async ({ page }) => {
             await page.emulateMedia({ reducedMotion: "reduce" });
@@ -443,7 +458,7 @@ test.describe("PLAN-0631 colour schemes", () => {
                 stored: localStorage.getItem("xihe-color-scheme"),
             }));
             expect(attributes.color, "?color= 必须投影到 <html data-xh-color>").toBe(item.param);
-            expect(attributes.stored, "?color= 必须写入持久化键，刷新后仍能对比").toBe(item.param);
+            expect(attributes.stored, "清除式迁移：不得再写持久化键").toBeNull();
 
             const shot = await shoot(page, `${item.id}-chat.png`);
 
@@ -516,8 +531,11 @@ test.describe("PLAN-0631 colour schemes", () => {
             expect(send.color, "发送按钮文字 = --action-foreground").toBe(
                 cssColor(item.actionForeground),
             );
-            expect(bubble.background, "用户消息气泡 = --action（大块色面也归动作色）").toBe(
-                cssColor(item.action),
+            expect(bubble.background, "用户消息气泡 = 该方案的 --bubble").toBe(
+                cssColor(item.bubble),
+            );
+            expect(bubble.color, "气泡文字 = --bubble-foreground").toBe(
+                cssColor(item.bubbleForeground),
             );
             expect(tokens.brand, "--brand").toBe(item.brand);
             expect(tokens.destructive, "--destructive").toBe(item.destructive);
@@ -529,9 +547,9 @@ test.describe("PLAN-0631 colour schemes", () => {
             expect(focusContrast, "焦点环与背景 ≥ 3:1（WCAG 1.4.11）").toBeGreaterThanOrEqual(3);
 
             if (item.actionBorder !== "transparent") {
-                // C2：raw <button> 没有 border token 通道，由候选文件补 1px 内描边。
-                expect(send.outlineWidthPx, "C2 发送按钮必须有 1px 描边").toBeGreaterThanOrEqual(1);
-                expect(send.outlineColor, "C2 描边颜色").toBe(cssColor(item.actionBorder));
+                // raw <button> 没有 border token 通道，由基础层补 1px 内描边。
+                expect(send.outlineWidthPx, "发送按钮必须有 1px 描边").toBeGreaterThanOrEqual(1);
+                expect(send.outlineColor, "描边颜色").toBe(cssColor(item.actionBorder));
             }
 
             writeMeasure(`${item.id}-chat`, {
@@ -706,12 +724,12 @@ test.describe("PLAN-0631 colour schemes", () => {
         });
     }
 
-    test("default: no ?color = 现状不变（发送按钮仍是品牌蓝、无属性）", async ({ page }) => {
+    test("C2′ (default) — chat: 弱化描边发送按钮 + 品牌蓝气泡", async ({ page }) => {
         await page.emulateMedia({ reducedMotion: "reduce" });
         const { errors, http } = collectErrors(page);
         await prepareAuth(page);
         await setupMockSessions(page, {
-            sessions: [{ id: SESSION_ID, title: "默认主题回归" }],
+            sessions: [{ id: SESSION_ID, title: "默认色彩 C2′" }],
             messages: MESSAGES,
         });
         await mockSessionProjections(page, SESSION_ID);
@@ -730,25 +748,328 @@ test.describe("PLAN-0631 colour schemes", () => {
             actionBorder: getComputedStyle(document.documentElement)
                 .getPropertyValue("--action-border")
                 .trim(),
+            bubble: getComputedStyle(document.documentElement).getPropertyValue("--bubble").trim(),
         }));
-        expect(attributes.color, "默认不得投影 data-xh-color").toBeNull();
-        expect(attributes.stored, "默认不得写持久化键").toBeNull();
-        expect(attributes.action, "默认 --action 解析为品牌蓝（等价于改前的 --primary）").toBe(
-            "#2450c8",
+        expect(attributes.color, "默认 = C2′：不设 data-xh-color").toBeNull();
+        expect(attributes.stored, "清除式迁移：旧 xihe-color-scheme 必须已清除").toBeNull();
+        expect(attributes.action, "默认 --action = 白底（反馈①②：主操作不再铺色）").toBe("#ffffff");
+        expect(attributes.actionBorder, "默认 --action-border = 弱化描边").toBe(
+            DEFAULT_CASE.actionBorder,
         );
-        expect(attributes.actionBorder).toBe("transparent");
+        expect(attributes.bubble, "默认 --bubble = 品牌蓝（反馈③）").toBe(DEFAULT_CASE.bubble);
 
+        const shot = await shoot(page, "default2-chat.png");
+
+        // 先在**未聚焦**状态量按钮填充/描边（聚焦会把 1px 描边换成 2px 焦点环）。
         const send = await probe(page, '[data-testid="chat-send-button"]');
-        expect(send.background, "默认发送按钮仍是品牌蓝 #2450c8").toBe("rgb(36, 80, 200)");
-        expect(contrastRatio(send.color, [send.background])).toBeGreaterThanOrEqual(4.5);
-
-        // 默认态与 B 的几何一致（此前 D31-M2 已锁定 13px / 4px）。
+        const bubble = await probe(
+            page,
+            '[data-testid="message-item"] [data-slot="bubble-content"]',
+        );
         const body = await probe(
             page,
             '[data-testid="message-item"] p, [data-testid="message-item"] .paragraph-node',
         );
-        expect(body.fontSizePx).toBeCloseTo(13, 0);
-        expect(send.borderRadiusPx).toBeCloseTo(4, 0);
+        const tokens = await page.evaluate(() => {
+            const style = getComputedStyle(document.documentElement);
+            const read = (name: string) => style.getPropertyValue(name).trim();
+            return {
+                background: read("--background"),
+                foreground: read("--foreground"),
+                mutedForeground: read("--muted-foreground"),
+                action: read("--action"),
+                actionForeground: read("--action-foreground"),
+                actionBorder: read("--action-border"),
+                bubble: read("--bubble"),
+                primary: read("--primary"),
+                brand: read("--brand"),
+                link: read("--link"),
+                ring: read("--ring"),
+                destructive: read("--destructive"),
+                badge: read("--badge"),
+            };
+        });
+        // 焦点环：真实键盘 Tab 到**发送按钮**（不数固定次数，按 activeElement 判定）。
+        await page.getByTestId("chat-input").focus();
+        for (let step = 0; step < 12; step += 1) {
+            const activeTestId = await page.evaluate(
+                () =>
+                    (document.activeElement as HTMLElement | null)?.getAttribute("data-testid") ??
+                    "",
+            );
+            if (activeTestId === "chat-send-button") break;
+            await page.keyboard.press("Tab");
+        }
+        const focus = await probeActive(page);
+        expect(focus.testId, "焦点环必须量在发送按钮上（键盘可达）").toBe("chat-send-button");
+
+        // 反馈①：白底 + 弱化 1px 描边（旧 C2 是 #8b93a1）。
+        expect(send.background, "发送按钮填充 = 白底").toBe(cssColor(DEFAULT_CASE.action));
+        expect(send.color, "发送按钮文字 = --action-foreground").toBe(
+            cssColor(DEFAULT_CASE.actionForeground),
+        );
+        expect(send.outlineWidthPx, "发送按钮必须有 1px 内描边").toBeGreaterThanOrEqual(1);
+        expect(send.outlineColor, "弱化描边色值（反馈①）").toBe(
+            cssColor(DEFAULT_CASE.actionBorder),
+        );
+
+        // 反馈③：气泡品牌蓝实心 + 白字，无描边。
+        expect(bubble.background, "用户气泡 = 品牌蓝实心").toBe(cssColor(DEFAULT_CASE.bubble));
+        expect(bubble.color, "气泡白字").toBe(cssColor(DEFAULT_CASE.bubbleForeground));
+        expect(bubble.outlineStyle, "气泡不得有描边（反馈③）").toBe("none");
+
+        // 几何必须还是 B（色彩方案不许顺手改密度/字号/圆角）。
+        expect(body.fontSizePx, "B 正文 13px").toBeCloseTo(13, 0);
+        expect(body.lineHeightPx, "B 正文行高 1.45").toBeCloseTo(18.85, 0);
+        expect(send.borderRadiusPx, "B 主档圆角 4px").toBeCloseTo(4, 0);
+
+        expect(tokens.brand, "--brand").toBe(DEFAULT_CASE.brand);
+        // 基础层 --destructive 是 oklch 红（候选文件才落 #b42318 字面值）：
+        // 判"仍是语义红"用色相距离，不判字面量。
+        expect(
+            hueDistance(tokens.destructive, DEFAULT_CASE.destructive),
+            "--destructive 仍是语义红（与 #b42318 同族）",
+        ).toBeLessThanOrEqual(10);
+
+        const sendContrast = contrastRatio(send.color, [send.background]);
+        const bodyContrast = contrastRatio(body.color, body.backgrounds);
+        const bodyTokenContrast = contrastRatio(tokens.foreground, [tokens.background]);
+        const mutedContrast = contrastRatio(tokens.mutedForeground, [tokens.background]);
+        const bubbleTextContrast = contrastRatio(bubble.color, [bubble.background]);
+        const hasOutline = focus.outlineStyle !== "none" && focus.outlineWidthPx >= 2;
+        const hasRing = focus.boxShadow !== "none" && focus.boxShadow.length > 0;
+        expect(hasOutline || hasRing, "焦点指示必须可见（outline 或 ring）").toBe(true);
+        const focusColor = firstColorIn(hasOutline ? focus.outlineColor : focus.boxShadow);
+        expect(focusColor, `焦点环颜色必须可解析（focus=${JSON.stringify(focus)}）`).not.toBeNull();
+        const focusContrast = contrastRatio(focusColor!, focus.backgrounds);
+
+        expect(bodyTokenContrast, "正文 token（前景/背景）≥ 4.5:1").toBeGreaterThanOrEqual(4.5);
+        expect(bodyContrast, "消息气泡内正文 ≥ 4.5:1").toBeGreaterThanOrEqual(4.5);
+        expect(bubbleTextContrast, "气泡白字 ≥ 4.5:1（反馈③）").toBeGreaterThanOrEqual(4.5);
+        expect(mutedContrast, "次级文字 ≥ 4.5:1").toBeGreaterThanOrEqual(4.5);
+        expect(sendContrast, "发送按钮文字 ≥ 4.5:1").toBeGreaterThanOrEqual(4.5);
+        expect(focusContrast, "焦点环与背景 ≥ 3:1（WCAG 1.4.11）").toBeGreaterThanOrEqual(3);
+
+        writeMeasure("default2-chat", {
+            scheme: DEFAULT_CASE.id,
+            page: "chat",
+            shot,
+            tokens,
+            contrast: {
+                body: bodyTokenContrast,
+                bubbleText: bodyContrast,
+                bubbleWhite: bubbleTextContrast,
+                muted: mutedContrast,
+                sendButton: sendContrast,
+                focusRing: focusContrast,
+            },
+            borderWeakened: {
+                before: "#8b93a1（对白 3.09:1）",
+                after: `${DEFAULT_CASE.actionBorder}（对白 1.57:1）`,
+            },
+            geometry: {
+                bodyFontSizePx: body.fontSizePx,
+                bodyLineHeightPx: body.lineHeightPx,
+                controlRadiusPx: send.borderRadiusPx,
+            },
+            send,
+            bubble,
+            focus,
+            focusTarget: `${focus.tag} ${focus.testId} ${focus.label}`.trim(),
+        });
+        expect(errors, `4xx/5xx 响应：\n${http.join("\n")}`).toEqual([]);
+    });
+
+    test("C2′ (default) — dialog: primary vs destructive", async ({ page }) => {
+        await page.emulateMedia({ reducedMotion: "reduce" });
+        const { errors, http } = collectErrors(page);
+        await prepareAuth(page);
+        await setupMockSessions(page, {
+            sessions: [
+                {
+                    id: SESSION_ID,
+                    title: "审批弹窗配色",
+                    agentPrincipalId: AGENT_PRINCIPAL_ID,
+                },
+            ],
+        });
+        await mockSessionProjections(page, SESSION_ID);
+        await installPolicyModeRoute(page);
+        await installApprovalSSE(page);
+
+        await page.goto(`/workspace/workspace-1/chat/${SESSION_ID}`, { waitUntil: "load" });
+        await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: 20000 });
+        await page.evaluate((payload) => {
+            const push = (window as unknown as Record<string, unknown>).__pushApprovalEvent as (
+                event: unknown,
+            ) => void;
+            push(payload);
+        }, approvalEvent(REQUEST_ID));
+
+        const dialog = page.locator('[data-testid="modal-content"]');
+        await expect(dialog).toBeVisible({ timeout: 10000 });
+        await expect(dialog.locator('[data-testid="approval-approve"]')).toBeVisible();
+        await expect(dialog.locator('[data-testid="approval-reject"]')).toBeVisible();
+
+        const shot = await shoot(page, "default2-dialog.png");
+
+        const approve = await probe(page, '[data-testid="approval-approve"]');
+        const reject = await probe(page, '[data-testid="approval-reject"]');
+
+        const approveContrast = contrastRatio(approve.color, approve.backgrounds);
+        const rejectContrast = contrastRatio(reject.color, reject.backgrounds);
+
+        // primary = 白底弱化描边；destructive = 语义红（红字 + 红边，不是中性）。
+        expect(approve.background, "primary 按钮填充 = 白底").toBe(cssColor(DEFAULT_CASE.action));
+        expect(approve.color, "primary 按钮文字 = 深字").toBe(
+            cssColor(DEFAULT_CASE.actionForeground),
+        );
+        // 基础层 --destructive 是 oklch 红：判"仍是语义红"用色相距离 + 饱和度，不判字面量。
+        const dangerHsl = hsl(reject.color);
+        expect(
+            hueDistance(reject.color, DEFAULT_CASE.destructive) <= 10 && dangerHsl.s >= 40,
+            `destructive 按钮文字必须仍是语义红（实测 ${reject.color}）`,
+        ).toBe(true);
+
+        // 区分度：destructive 必须"红"（饱和度高），且与 primary 在色相或中性上不同。
+        const actionHsl = hsl(approve.background);
+        const hueGap = hueDistance(reject.color, approve.background);
+        const distinguishable = dangerHsl.s >= 40 && (actionHsl.s < 24 || hueGap >= 60);
+        expect(
+            distinguishable,
+            `primary(${approve.background}) 与 destructive(${reject.color}) 必须可区分：` +
+                `danger.s=${dangerHsl.s} action.s=${actionHsl.s} hueGap=${hueGap}`,
+        ).toBe(true);
+
+        expect(approveContrast, "primary 按钮文字 ≥ 4.5:1").toBeGreaterThanOrEqual(4.5);
+        expect(rejectContrast, "destructive 文字 ≥ 4.5:1").toBeGreaterThanOrEqual(4.5);
+
+        writeMeasure("default2-dialog", {
+            scheme: DEFAULT_CASE.id,
+            page: "dialog",
+            shot,
+            contrast: {
+                primaryButton: approveContrast,
+                destructiveButton: rejectContrast,
+                primaryVsDestructive: contrastBetween(approve.background, reject.color),
+            },
+            distinguishability: {
+                actionHsl,
+                dangerHsl,
+                hueGap,
+                rule: "danger.s>=40 && (action.s<24 || hueGap>=60)",
+            },
+            approve,
+            reject,
+        });
+        expect(errors, `4xx/5xx 响应：\n${http.join("\n")}`).toEqual([]);
+    });
+
+    test("C2′ (default) — settings: badge / selected tab / primary", async ({ page }) => {
+        await page.emulateMedia({ reducedMotion: "reduce" });
+        const { errors, http } = collectErrors(page);
+        await prepareAuth(page);
+        await mockRolesApis(page);
+
+        await page.goto("/settings/roles", { waitUntil: "load" });
+        await expect(page.getByTestId("roles-view")).toBeVisible({ timeout: 20000 });
+        await expect(page.getByTestId("role-system-badge").first()).toBeVisible({
+            timeout: 20000,
+        });
+
+        const shot = await shoot(page, "default2-settings.png");
+
+        const badge = await probe(page, '[data-testid="role-system-badge"]');
+        const create = await probe(page, '[data-testid="roles-create"]');
+        const selectedNav = await probe(page, '[data-testid="roles-tab-roles"]');
+        const row = await probe(page, '[data-testid="role-row-SUPER_ADMIN"]');
+
+        const badgeContrast = contrastRatio(badge.color, badge.backgrounds);
+        const createContrast = contrastRatio(create.color, create.backgrounds);
+
+        // 徽标沿用默认（--badge = --secondary #eef0f3），不铺强调色。
+        expect(badge.background, "徽标底 = --badge（secondary 浅灰）").toBe(cssColor("#eef0f3"));
+        expect(badge.color, "徽标字 = --badge-foreground").toBe(cssColor("#1b1e24"));
+        expect(create.background, "主按钮填充 = 白底弱化描边").toBe(cssColor(DEFAULT_CASE.action));
+        expect(create.borderTopWidth, "主按钮 1px 弱化描边").toBeGreaterThanOrEqual(1);
+        expect(create.borderTopColor, "弱化描边色值").toBe(cssColor(DEFAULT_CASE.actionBorder));
+        // 选中态用 --brand（2px 下划线），蓝只留小面积。
+        expect(selectedNav.borderBottomColor, "设置页选中 tab 下划线 = --brand").toBe(
+            cssColor(DEFAULT_CASE.brand),
+        );
+        expect(selectedNav.borderBottomWidth).toBeGreaterThanOrEqual(2);
+
+        expect(badgeContrast, "徽标文字 ≥ 4.5:1").toBeGreaterThanOrEqual(4.5);
+        expect(createContrast, "主按钮文字 ≥ 4.5:1").toBeGreaterThanOrEqual(4.5);
+        // B 的表格行：`tr { height: 32px }` 是下限，13px 正文 + py-1 + 1px 边实际落 36px。
+        expect(row.rect.height, "B 表格行高（≥32 下限）").toBeGreaterThanOrEqual(31);
+        expect(row.rect.height, "B 表格行高仍是一屏多行的密集档").toBeLessThanOrEqual(40);
+
+        writeMeasure("default2-settings", {
+            scheme: DEFAULT_CASE.id,
+            page: "settings",
+            shot,
+            contrast: { badge: badgeContrast, primaryButton: createContrast },
+            badge,
+            create,
+            selectedNav,
+            rowHeightPx: row.rect.height,
+        });
+        expect(errors, `4xx/5xx 响应：\n${http.join("\n")}`).toEqual([]);
+    });
+
+    test("C2′ (default) — picker: 新建工作区已降级 ghost", async ({ page }) => {
+        await page.emulateMedia({ reducedMotion: "reduce" });
+        const { errors, http } = collectErrors(page);
+        await prepareAuth(page);
+        // 选择面只在"无 tab 上下文"时渲染：清掉 setupMockAuth 种下的工作区——
+        // 两处都要清：sessionStorage 是当前 SSOT，localStorage 是 legacy 迁移源，
+        // 不清 localStorage 的话启动迁移会把它又拷回 sessionStorage。
+        await page.addInitScript(() => {
+            sessionStorage.removeItem("xihe-workspace");
+            localStorage.removeItem("xihe-workspace");
+        });
+        await page.route("**/api/v1/workspaces", async (route) => {
+            if (route.request().method() !== "GET") {
+                await route.fallback();
+                return;
+            }
+            await route.fulfill({
+                status: 200,
+                contentType: "application/json",
+                body: JSON.stringify([]),
+            });
+        });
+
+        await page.goto("/workspace", { waitUntil: "load" });
+        await expect(page.getByTestId("workspace-picker-empty")).toBeVisible({ timeout: 20000 });
+
+        const shot = await shoot(page, "default2-picker.png");
+
+        const create = await probe(page, '[data-testid="workspace-picker-create"]');
+        const createContrast = contrastRatio(create.color, create.backgrounds);
+
+        // 反馈②：中性 ghost —— 透明底 + 1px 边框 + 常规字重，不用 --action 填充。
+        expect(create.background, "新建工作区 = 透明底（不是 --action 白底/蓝底）").toBe(
+            "rgba(0, 0, 0, 0)",
+        );
+        expect(create.borderTopWidth, "ghost 必须有 1px 边框").toBeGreaterThanOrEqual(1);
+        expect(create.borderTopColor, "ghost 边框 = --border").toBe(cssColor("#d5d9e0"));
+        expect(create.color, "ghost 文字 = --foreground").toBe(cssColor("#1b1e24"));
+        expect(create.fontWeight, "常规字重（不是主按钮的 600）").toBe("400");
+        expect(createContrast, "ghost 文字 ≥ 4.5:1").toBeGreaterThanOrEqual(4.5);
+
+        writeMeasure("default2-picker", {
+            scheme: DEFAULT_CASE.id,
+            page: "picker",
+            shot,
+            ghostDowngrade: {
+                before: "bg-action 实心（主按钮层级）",
+                after: "透明底 + 1px --border 边框 + font-normal（L2 中性可操作）",
+            },
+            contrast: { createButton: createContrast },
+            create,
+        });
         expect(errors, `4xx/5xx 响应：\n${http.join("\n")}`).toEqual([]);
     });
 });

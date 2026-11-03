@@ -340,8 +340,9 @@ watch(isMobileViewport, (mobile) => {
         <p class="max-w-sm text-sm text-muted-foreground">
             上一个工作区已删除。创建一个新的工作区开始使用文件、终端与 Agent 工具。
         </p>
+        <!-- PLAN-0631 反馈②：低频可逆的「创建工作区」入口不配主按钮层级，中性 ghost。 -->
         <button
-            class="px-4 py-2 text-sm rounded bg-action text-action-foreground hover:opacity-90"
+            class="px-4 py-2 text-sm rounded border text-foreground transition-colors hover:bg-accent"
             @click="showCreateDialog = true"
         >
             创建工作区
