@@ -113,6 +113,12 @@ public class ChatController {
     private final ChatActiveRunRegistry activeRunRegistry;
     private final com.cc01cc.p.xihe.cp.policy.ResourceGovernor governor;
 
+    /**
+     * PLAN-0648 D1: terminal outcome for a submission whose answer was delegated to the mention
+     * target. One literal, so the wire body, the durable row and the log cannot drift apart.
+     */
+    static final String SUPPRESSED_NO_RESPONDER = "suppressed_no_responder";
+
     private static final java.time.Duration LEASE_TTL = java.time.Duration.ofMinutes(10);
     private static final String INSTANCE_ID = UUID.randomUUID().toString();
 
@@ -723,15 +729,19 @@ public class ChatController {
                 List<String> mentionedNames = mentions.mentions().stream().map(MentionParser.Mention::displayName)
                         .toList();
                 chatRunLifecycleService.transition(runId, List.of("accepted"), "succeeded",
-                        "suppressed_no_responder", null, null, 0, 0, null);
+                        SUPPRESSED_NO_RESPONDER, null, null, 0, 0, null);
                 logger.info("[LIFECYCLE] service=cp event=chat_primary_suppressed requestId={} sessionId={} "
                                 + "runId={} mentioned={} cause=explicit_mention_of_other",
                         requestId, sessionId, runId, mentionedNames);
                 wakeFanOutService.fanOut(UUID.fromString(sessionId), workspaceId, userId, runId,
                         content, roster, ccParticipantIds);
                 handedOff = true;
-                return ResponseEntity.accepted().body(runAcceptedBody(chatRun, "succeeded", sessionId,
-                        userMessage.getId(), runId, "primary_suppressed"));
+                Map<String, Object> suppressedBody = runAcceptedBody(chatRun, "succeeded", sessionId,
+                        userMessage.getId(), runId, "primary_suppressed");
+                // Same token in all three places: the wire body, the durable run row
+                // (terminal_outcome, written by the transition above) and the log line.
+                suppressedBody.put("terminalOutcome", SUPPRESSED_NO_RESPONDER);
+                return ResponseEntity.accepted().body(suppressedBody);
             }
 
             final ProviderCredentialLeaseService.Admission dispatchAdmission =
