@@ -108,7 +108,7 @@ const kindLabel = computed(() =>
 const ROLE_KEYS: Record<SessionParticipantRole, string> = {
     PRIMARY: "workspace.participantRolePrimary",
     MEMBER: "workspace.participantRoleMember",
-    GUARD: "workspace.participantRoleGuard",
+    GUARD: "workspace.participantRoleGuardBuiltin",
 };
 
 const WAKE_KEYS: Record<ParticipantWakePolicy, string> = {
