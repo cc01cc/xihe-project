@@ -3785,6 +3785,66 @@ mod tests {
         );
     }
 
+    #[test]
+    #[ignore = "P2.4 real dev-store preflight + GC dry run; env-driven"]
+    fn p24_real_store_checks() {
+        use crate::checkpoint_store::gc::{GcOptions, gc};
+        use crate::checkpoint_store::preflight::{PreflightOptions, run_preflight};
+
+        let store_path = std::env::var("P24_STORE").expect("P24_STORE");
+        let roots = std::env::var("P24_ROOTS")
+            .expect("P24_ROOTS")
+            .split(',')
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        let shadow_root = std::env::var("P24_SHADOW_ROOT").expect("P24_SHADOW_ROOT");
+        let store = Store::open(&store_path).expect("open store");
+        let mut shadows = HashMap::new();
+        for root in &roots {
+            let shadow = Path::new(&shadow_root).join(format!("{root}.git"));
+            if shadow.is_dir() {
+                shadows.insert(root.clone(), shadow);
+            }
+        }
+        let preflight = run_preflight(
+            &store,
+            &PreflightOptions {
+                roots: roots.clone(),
+                shadow_git_dirs: shadows,
+                enforce_read_paths: true,
+                ..PreflightOptions::default()
+            },
+        )
+        .expect("preflight");
+        assert!(preflight.ok, "{preflight:?}");
+        for root in &preflight.roots {
+            assert_eq!(root.unmapped_slices.len(), 0, "{root:?}");
+            assert_eq!(root.mapped_refs, root.store_slices, "{root:?}");
+        }
+        let gc = gc(
+            &store,
+            &GcOptions {
+                repair: false,
+                ..GcOptions::default()
+            },
+        )
+        .expect("gc dry run");
+        assert!(gc.dry_run);
+        let payload = serde_json::json!({
+            "preflight": preflight,
+            "gc": gc,
+            "storePath": store_path,
+        });
+        if let Ok(out) = std::env::var("P24_OUT") {
+            std::fs::write(&out, serde_json::to_vec_pretty(&payload).expect("json"))
+                .expect("write P24_OUT");
+        }
+        eprintln!(
+            "P24_REAL {}",
+            serde_json::to_string(&payload).expect("payload")
+        );
+    }
+
     #[tokio::test]
     #[ignore = "V6: three self->git->self rounds; every store slice restores"]
     async fn v6_three_rounds_self_git_self_restore_history() {
