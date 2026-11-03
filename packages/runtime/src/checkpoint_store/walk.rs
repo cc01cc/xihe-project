@@ -114,12 +114,25 @@ fn first_ignore_error_path(error: &ignore::Error) -> Option<&Path> {
     }
 }
 
-fn ignore_error_issue(error: &ignore::Error) -> WalkIssue {
+fn issue_path(path: &Path, root: &Path) -> String {
+    relative_utf8(path, root).unwrap_or_else(|_| path.display().to_string())
+}
+
+fn ignore_error_issue(error: &ignore::Error, root: &Path) -> WalkIssue {
     let path = first_ignore_error_path(error);
+    let relative = path.map(|path| issue_path(path, root));
     match error.io_error() {
-        Some(source) => issue_for_io(path, source),
+        Some(source) => WalkIssue {
+            path: relative,
+            kind: match source.kind() {
+                std::io::ErrorKind::PermissionDenied => WalkIssueKind::PermissionDenied,
+                std::io::ErrorKind::NotFound => WalkIssueKind::Vanished,
+                _ => WalkIssueKind::WalkError,
+            },
+            message: source.to_string(),
+        },
         None => WalkIssue {
-            path: path.map(|path| path.display().to_string()),
+            path: relative,
             kind: WalkIssueKind::WalkError,
             message: error.to_string(),
         },
@@ -190,6 +203,13 @@ fn static_exclude_matcher(root: &Path) -> Result<Gitignore, WalkError> {
 /// Walk `root` and return files/symlinks plus per-path issues. The root is
 /// canonicalized first so Windows long paths use the `\\?\` form throughout.
 pub fn walk_workspace(root: &Path) -> Result<WalkOutcome, WalkError> {
+    walk_workspace_with_hook(root, |_| {})
+}
+
+fn walk_workspace_with_hook<H>(root: &Path, hook: H) -> Result<WalkOutcome, WalkError>
+where
+    H: Fn(&Path) + Send + Sync + 'static,
+{
     let root = fs::canonicalize(root).map_err(|source| {
         if source.kind() == std::io::ErrorKind::NotFound {
             WalkError::RootMissing {
@@ -214,6 +234,8 @@ pub fn walk_workspace(root: &Path) -> Result<WalkOutcome, WalkError> {
     let entries_for_filter = Arc::clone(&entries);
     let issues_for_filter = Arc::clone(&issues);
     let matcher_for_filter = Arc::clone(&matcher);
+    let hook = Arc::new(hook);
+    let hook_for_filter = Arc::clone(&hook);
     let mut builder = WalkBuilder::new(&root);
     builder
         .hidden(false)
@@ -225,6 +247,9 @@ pub fn walk_workspace(root: &Path) -> Result<WalkOutcome, WalkError> {
         .ignore(false)
         .require_git(false);
     builder.filter_entry(move |entry| {
+        // T1.6 test hook: lets the mid-walk-deletion test remove a sibling
+        // after the first entry is observed. Production passes a no-op.
+        hook_for_filter(entry.path());
         if entry.depth() == 0 {
             return true;
         }
@@ -269,7 +294,7 @@ pub fn walk_workspace(root: &Path) -> Result<WalkOutcome, WalkError> {
                 issues
                     .lock()
                     .expect("walker issues mutex")
-                    .push(ignore_error_issue(&error));
+                    .push(ignore_error_issue(&error, &root));
                 continue;
             }
         };
@@ -294,10 +319,9 @@ pub fn walk_workspace(root: &Path) -> Result<WalkOutcome, WalkError> {
         let metadata = match fs::symlink_metadata(path) {
             Ok(metadata) => metadata,
             Err(source) => {
-                issues
-                    .lock()
-                    .expect("walker issues mutex")
-                    .push(issue_for_io(Some(path), &source));
+                let mut issue = issue_for_io(Some(path), &source);
+                issue.path = Some(relative.clone());
+                issues.lock().expect("walker issues mutex").push(issue);
                 continue;
             }
         };
@@ -600,8 +624,33 @@ mod tests {
                 std::io::ErrorKind::NotFound,
             ))),
         };
-        let issue = ignore_error_issue(&error);
+        let issue = ignore_error_issue(&error, Path::new(""));
         assert_eq!(issue.kind, WalkIssueKind::Vanished);
         assert_eq!(issue.path.as_deref(), Some("gone.txt"));
+    }
+
+    #[test]
+    fn walk_reports_vanished_entry_when_file_disappears_mid_walk() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = dir.path();
+        write_file(root, "000-marker.txt", b"marker");
+        write_file(root, "zzz-victim.txt", b"victim");
+        let victim = root.join("zzz-victim.txt");
+
+        let outcome = walk_workspace_with_hook(root, move |path| {
+            if path.file_name() == Some(OsStr::new("000-marker.txt")) {
+                let _ = fs::remove_file(&victim);
+            }
+        })
+        .expect("walk");
+
+        assert!(
+            outcome.issues.iter().any(|issue| {
+                issue.kind == WalkIssueKind::Vanished
+                    && issue.path.as_deref() == Some("zzz-victim.txt")
+            }),
+            "expected a Vanished issue, got {:?}",
+            outcome.issues
+        );
     }
 }
