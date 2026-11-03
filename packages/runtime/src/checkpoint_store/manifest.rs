@@ -13,7 +13,7 @@ use super::blob::is_valid_blob_hash;
 
 pub const MANIFEST_VERSION: u8 = 1;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 pub enum FileMode {
     Regular,
     Executable,
