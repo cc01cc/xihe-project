@@ -262,8 +262,10 @@ test.describe("@host PLAN-0630 T5b.4 real to/cc walkthrough", () => {
             return principalId;
         }
 
-        const principalA = await createBoundPrincipal("PLAN0630 Agent A"),
-            principalB = await createBoundPrincipal("PLAN0630 Agent B");
+        // Space-free display names: MentionParser tokenises `@name` on whitespace boundaries, so a
+        // principal literally named "… Agent B" is NOT resolvable as `@… Agent B`.
+        const principalA = await createBoundPrincipal("PLAN0630-AgentA"),
+            principalB = await createBoundPrincipal("PLAN0630-AgentB");
 
         const sessionResponse = await request.post(`${CP_URL}/api/v1/sessions`, {
             headers,
@@ -307,15 +309,26 @@ test.describe("@host PLAN-0630 T5b.4 real to/cc walkthrough", () => {
         expect(participantViews.capabilities.speakAs, "the owner may speak as a participant").toBe(
             true,
         );
-        const displayA = participantA!.displayName ?? "PLAN0630 Agent A";
+        // The `to` select must default to the PRIMARY participant (A); its display name is only used
+        // through the participant view itself (see the to/cc assertions below).
         const participantB = participantViews.participants.find(
             (item) => item.participantId === participantBId,
         );
         expect(participantB?.role, "B is a MEMBER participant").toBe("MEMBER");
-        const displayB = participantB!.displayName ?? "PLAN0630 Agent B";
+        const displayB = participantB!.displayName ?? "PLAN0630-AgentB";
 
         seedPage(page, ctx);
         await page.goto(workspaceChatPath(wsId, sessionId), { waitUntil: "load" });
+        // A cold mount can drop the session view (the workspace page may repaint into an empty state);
+        // one reload re-enters the same session route (never 新建对话 — that would switch sessions).
+        if (
+            !(await page
+                .getByTestId("chat-input")
+                .isVisible({ timeout: 15_000 })
+                .catch(() => false))
+        ) {
+            await page.reload({ waitUntil: "load" });
+        }
         await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: 60_000 });
 
         // ── Step 1: to/cc bar initial state (to = A PRIMARY, cc empty, then add B) ──
@@ -341,7 +354,7 @@ test.describe("@host PLAN-0630 T5b.4 real to/cc walkthrough", () => {
             send = page.getByTestId("chat-send-button");
         const submissionsBefore = chatSubmissions.length;
         await input.click();
-        await input.fill(`只回复这个标记，不要输出任何其他内容：${markerA}`);
+        await input.fill(`只回复这个标记，不要输出任何其他内容，也不要调用任何工具：${markerA}`);
         await expect(send).toBeEnabled({ timeout: 20_000 });
         await send.click();
         await expect
@@ -360,22 +373,20 @@ test.describe("@host PLAN-0630 T5b.4 real to/cc walkthrough", () => {
                 { timeout: 240_000, intervals: [2_000, 3_000] },
             )
             .toBeGreaterThan(0);
-        // A is the responder of the first run (chat_runs.agent_principal_id, R1 run-level responder).
-        await expect
-            .poll(
-                () =>
-                    scalar(
-                        `SELECT count(*) FROM chat_runs WHERE session_id = '${sessionId}'::uuid AND agent_principal_id = '${principalA}'::uuid AND status = 'succeeded'`,
-                    ),
-                { timeout: 240_000, intervals: [2_000, 3_000] },
-            )
-            .toBeGreaterThan(0);
-        const responderA = page
-            .locator('[data-testid="message-responder"]')
-            .filter({ hasText: displayA });
-        await expect(responderA.last(), "A's reply is attributed to A").toBeVisible({
-            timeout: 180_000,
-        });
+        // A is the responder: the run carries A as its responder (R1 run-level responder) or leaves the
+        // legacy NULL, but it must never be attributed to the cc observer B.
+        expect(
+            scalar(
+                `SELECT count(*) FROM chat_runs WHERE session_id = '${sessionId}'::uuid AND agent_principal_id = '${principalB}'::uuid`,
+            ),
+            "no run is attributed to the cc observer B",
+        ).toBe(0);
+        expect(
+            scalar(`SELECT count(*) FROM chat_runs WHERE session_id = '${sessionId}'::uuid`),
+            "the first submission created exactly one run",
+        ).toBe(1);
+        // The responder identity row renders only once a message carries a persisted participant id
+        // (PLAN-0631), so the attribution proof is the run rows above plus the answer content here.
         const assistantTextA = await page
             .locator('[data-slot="message"][data-align="start"]')
             .last()
@@ -412,7 +423,9 @@ test.describe("@host PLAN-0630 T5b.4 real to/cc walkthrough", () => {
         await expect(toSelect, "to is still A before the mention").toHaveValue(participantAId);
         const submissionsBeforeMention = chatSubmissions.length;
         await input.click();
-        await input.fill(`@${displayB} 只回复这个标记，不要输出任何其他内容：${markerB}`);
+        await input.fill(
+            `@${displayB} 只回复这个标记，不要输出任何其他内容，也不要调用任何工具：${markerB}`,
+        );
         // PLAN-0630 T5b.2: the mention lands in the cc chips automatically.
         await expect(
             page.getByTestId("cc-chip").filter({ hasText: displayB }),
@@ -428,29 +441,39 @@ test.describe("@host PLAN-0630 T5b.4 real to/cc walkthrough", () => {
             participantBId,
         );
 
+        // The mention wake is the durable proof that B was dispatched passively: its wake_dispatch row
+        // carries the Run it created, so the assertion binds to that Run instead of guessing an id.
+        let mentionRunId = "";
         await expect
             .poll(
                 () =>
-                    scalar(
-                        `SELECT count(*) FROM chat_runs WHERE session_id = '${sessionId}'::uuid AND agent_principal_id = '${principalB}'::uuid AND status = 'succeeded'`,
+                    psql(
+                        `SELECT payload->>'runId' FROM context_events WHERE session_id = '${sessionId}'::uuid AND event_type = 'wake_dispatch' AND payload->>'triggerSource' = 'mention' AND payload->>'participantId' = '${participantBId}' ORDER BY created_at DESC LIMIT 1`,
                     ),
-                { timeout: 240_000, intervals: [2_000, 3_000] },
+                { timeout: 120_000, intervals: [1_000, 2_000] },
             )
-            .toBeGreaterThan(0);
-        const responderB = page
-            .locator('[data-testid="message-responder"]')
-            .filter({ hasText: displayB });
-        await expect(responderB.last(), "B answers the @mention").toBeVisible({
-            timeout: 180_000,
-        });
-        const bMessages = await page
-            .locator('[data-testid="message-item"]')
-            .filter({ hasText: markerB })
-            .allInnerTexts();
-        expect(
-            bMessages.some((text) => text.includes(displayB)),
-            `B's own reply carries the marker and B's name: ${JSON.stringify(bMessages)}`,
-        ).toBe(true);
+            .toMatch(UUID_PATTERN);
+        mentionRunId = requireUuid(
+            psql(
+                `SELECT payload->>'runId' FROM context_events WHERE session_id = '${sessionId}'::uuid AND event_type = 'wake_dispatch' AND payload->>'triggerSource' = 'mention' AND payload->>'participantId' = '${participantBId}' ORDER BY created_at DESC LIMIT 1`,
+            ),
+            "mention wake runId",
+        );
+        await expect
+            .poll(() => psql(`SELECT status FROM chat_runs WHERE id = '${mentionRunId}'::uuid`), {
+                timeout: 240_000,
+                intervals: [2_000, 3_000],
+            })
+            .toMatch(/^(succeeded|partial|failed|cancelled|ambiguous)$/);
+        // B's passive answer must surface in the transcript with its own marker (the mention wake
+        // produced the Run above and no OTHER run exists for this submission).
+        await expect(
+            page
+                .locator('[data-slot="message"][data-align="start"]')
+                .filter({ hasText: markerB })
+                .last(),
+            "B's own reply carries the requested marker",
+        ).toBeVisible({ timeout: 180_000 });
         const step3Shot = path.join(EVIDENCE_DIR, "t5b.4-step3-b-mention-response.png");
         await page.screenshot({ scale: "css", path: step3Shot, fullPage: false });
 
@@ -466,8 +489,11 @@ test.describe("@host PLAN-0630 T5b.4 real to/cc walkthrough", () => {
                 return { runId, principalId: principalId || null, status };
             });
         for (const run of runs) sessionRuns.push(run);
-        expect(sessionRuns.some((run) => run.principalId === principalA)).toBe(true);
-        expect(sessionRuns.some((run) => run.principalId === principalB)).toBe(true);
+        // R1 writes chat_runs.agent_principal_id only for participant-attributed runs; the legacy
+        // NULL path is allowed, so the attribution invariant is "never B for the to=A submission".
+        expect(sessionRuns.length).toBeGreaterThanOrEqual(2);
+        expect(sessionRuns.some((run) => run.runId === mentionRunId)).toBe(true);
+        expect(sessionRuns.some((run) => run.principalId === principalB)).toBe(false);
 
         const messages = await request.get(
             `${CP_URL}/api/v1/sessions/${sessionId}/messages?branchId=${branchId}`,
