@@ -132,7 +132,7 @@ flowchart LR
 | 本地模式 | ✅ 已实现 | `XIHE_LOCAL_MODE=true` + CP 绑定回环 + `XIHE_ENV` 非 prod，三个条件缺一个 CP 启动即拒绝（fail-fast）；仅回环来源且 `Origin`/`Host` 回环时可用，签发对象必须是唯一可登录用户（否则 404/409），本地模式跳过默认 admin seed |
 | 记忆（memory） | 🔄 进行中 | 已落 `agent_memories`（V99）+ CP 服务层 + `MEMORY_WRITE` 原子（默认不授予任何角色）；注入快照仍停在「数据就绪层」——api-request 模板的模型可见槽位尚未上线，所以记忆还不会进模型上下文；episodic、向量检索、`judge` 写入模式均未实现 |
 | Skills 平台 | 🔄 规划中（未开工） | 只有冻结设计与 M1 任务书，无表、无代码；模型可见的 listing 槽位与 memory 合并成一次跨层变更，同样未上线 |
-| Subagent 委派 | 🔄 进行中 | subagent = 正常 session（有自己的参与者/PRIMARY/run 归属），预算制 `{maxCount, maxDepth}` 只递减 root session 预算；子会话补 PRIMARY 与 `wakeChainMaxDepth` 可配置已并入 develop，委派预算门仍在分支上待补测试矩阵，委托边、`DELEGATE` 原子与会话树 UI 未落，跨会话委派链路尚不可用 |
+| Subagent 委派 | ✅（有限制） | subagent = 正常 session（有自己的参与者/PRIMARY/run 归属），预算制 `{maxCount, maxDepth}` 只递减 root session 预算。已交付：委派预算门（`agent_principals.delegation_policy` V100 + `DelegationPolicyValidator`，超限 `409 DELEGATION_LIMIT_EXCEEDED`、策略不可读/树断裂 `409 DELEGATION_POLICY_INVALID`）、spawn/wake 双链 walker（`DelegationChainWalker`，深度不落库，祖先缺失 fail-closed `ancestor_missing`）、唤醒边 `chat_runs.parent_run_id`（V105；内存 `WakeChainRegistry` 已删除，环按 principal 检测）、composer to/cc（cc = 旁听名单，只发 `notify` 并推进 `mention_count`，不建 run）。授权原子复用 `SPAWN_AGENT`，不新增 `DELEGATE`（D30-04）。**明确不做**（design §8）：会话树 UI（归后续 UI 计划）、跨工作区委托、跨实例委托、全局并发上限/排队 |
 | 原生打包 / MVP 分发 | 🔄 进行中 | 目标是双击安装包 → 服务自启 → 浏览器访问 localhost；CP native image、Agent PyInstaller（实测 onedir 优于 onefile）、随包 pgvector 与 launcher 都已 spike 过，**暂无安装包可下载**，当前最快路径仍是本地 dev 模式 |
 
 **Known boundaries**

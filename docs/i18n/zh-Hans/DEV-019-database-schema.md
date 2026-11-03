@@ -296,7 +296,7 @@ erDiagram
 > - `idx_messages_session_id (session_id)`
 > - `idx_messages_run_id (run_id)`（`V16`）
 
-**chat_runs**（`V16` + `V19/V22/V39/V44/V48/V52/V59`，Entity `entity/ChatRun.java`）：一次用户提交、CP 内部 spawn 派生或定时唤醒执行（PLAN-247/0407/0489），同幂等键不重复起 Agent。
+**chat_runs**（`V16` + `V19/V22/V39/V44/V48/V52/V59/V105`，Entity `entity/ChatRun.java`）：一次用户提交、CP 内部 spawn 派生或定时唤醒执行（PLAN-247/0407/0489），同幂等键不重复起 Agent。
 
 | 字段 | 类型 | 约束 | 说明 |
 |------|------|------|------|
@@ -324,6 +324,7 @@ erDiagram
 | terminal_at | TIMESTAMPTZ | nullable（`V44`） | 统一 terminal transaction 写入的终态时间戳；pre-V44 行保持 NULL |
 | waiting_on_run_id | UUID | nullable，无 FK（`V52`） | spawn 等待链：child run 等待的父 Run（V44 曾暂存于 operation_items，V52 迁回 child ChatRun 行；不做 FK，避免子 run 删除与终态事务冲突） |
 | waiting_tool_call_id | UUID | nullable，无 FK（`V52`） | 等待归属的父 `spawn_agent` 工具调用 |
+| parent_run_id | UUID | nullable，无 FK，`ck_chat_runs_parent_run_not_self`（`V105`） | PLAN-0630 M2 唤醒边：本 run 由哪个 run 的输出唤醒；spawn run 不写此列（父边在 `waiting_on_run_id`），不落深度/链根；历史行 NULL = root |
 | lease_owner | VARCHAR(80) | nullable（`V22`） | 单并发租约持有者，防双发 |
 | lease_expires_at | TIMESTAMPTZ | nullable（`V22`） | 租约过期时间 |
 | created_at | TIMESTAMPTZ | NOT NULL DEFAULT NOW() | — |
@@ -334,6 +335,7 @@ erDiagram
 > - `idx_chat_runs_provider_connection (provider_connection_id, connection_revision)`（`V19`）
 > - `idx_chat_runs_active_lease (session_id, status, lease_expires_at)` — 活跃租约判定（`V22`）
 > - `idx_chat_runs_waiting_on_run (waiting_on_run_id) WHERE waiting_on_run_id IS NOT NULL` — 等待链查找（`V52`）
+> - `idx_chat_runs_parent_run (parent_run_id) WHERE parent_run_id IS NOT NULL` — 唤醒链 walk（`V105`）
 > - 唯一约束 `(user_id, session_id, idempotency_key)` — 同 key 不重复起 run，同 key 不同 payload 报冲突
 > - 部分唯一 `uq_chat_runs_spawn_event_idempotency (user_id, idempotency_key) WHERE origin='spawn'`（`V39`）— 同父 durable event 即使重试使用不同 child Session 也只落一个 spawn ChatRun
 

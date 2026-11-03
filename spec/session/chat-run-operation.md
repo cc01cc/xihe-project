@@ -9,8 +9,8 @@
 > Owner：CP ChatRun + Follow-up Queue + Run Guidance domains
 >
 > 消费者：Agent、Runtime、UI、Audit
-> 来源：PLAN-0387、PLAN-0442、PLAN-0463–0467、PLAN-0528、PLAN-0529、PLAN-0530、PLAN-0536、DEV-014、DEV-017
-> 更新日期：2026-10-22
+> 来源：PLAN-0387、PLAN-0442、PLAN-0463–0467、PLAN-0528、PLAN-0529、PLAN-0530、PLAN-0536、PLAN-0630、DEV-014、DEV-017
+> 更新日期：2026-11-03
 
 ## 三类对象
 
@@ -31,7 +31,7 @@ ChatRun 是 Chat 生命周期的唯一执行根。工具调用、Workspace Job �
 - User submission 的幂等键沿用 `(userId, sessionId, idempotencyKey)` 当前实现；spawn 另按 V39 的父 durable event key 全局防重；principal 泛化由 Security/PLAN-0374 承接。
 - `origin` 是持久化来源标签：`user_submission` / `spawn`。公开 `POST /api/v1/chat` 恒为 `user_submission`，请求体不得控制该字段。
 - CP 内部 `spawn_agent` 创建不经过浏览器 SSE subscription gate。其 spawn event key = 父 run 下 `spawn_agent` 的 canonical `toolCallId`（PLAN-0464 T2.1；旧 `operation_items.id` 身份退役），并作为 child ChatRun 的 `idempotency_key`；同事件+同 request hash 返回既有 run，不同 hash 冲突。V39 以 `(user_id, idempotency_key) WHERE origin='spawn'` 唯一索引防并发重复。
-- Internal spawn MUST 校验父 run、父 `mcp_invocations(source=agent)` 行与 child Session 的 user/workspace/parent provenance 一致；child run 行记录 waiting link（`waiting_on_run_id`/`waiting_tool_call_id`，V52 无回填，pre-V52 子 run 按 legacy 处理、不阻断终态）；只有子会话派生首条 run 使用 spawn，子会话后续用户输入仍走现有 `/api/v1/chat` 门禁。
+- Internal spawn MUST 校验父 run、父 `mcp_invocations(source=agent)` 行与 child Session 的 user/workspace/parent provenance 一致；child run 行记录 waiting link（`waiting_on_run_id`/`waiting_tool_call_id`，V52 无回填，pre-V52 子 run 按 legacy 处理、不阻断终态）；只有子会话派生首条 run 使用 spawn，子会话后续用户输入仍走现有 `/api/v1/chat` 门禁。唤醒链另见 `chat_runs.parent_run_id`（V105）：它是 wake 边，spawn 边仍只用 `waiting_on_run_id`，两者不互相填充；深度不落库，由 CP 每次沿双链现算，祖先缺失 fail-closed（PLAN-0630 M3）。
 - Spawn 不接受调用方自行提交的 attachment JSON；CP 根据 File 表重建只读摘要并把规范化 fileId 纳入 request hash。附件必须归 child Session 所有，不隐式共享 parent Session 的 fileId；跨 Session 携带文件须走 fork 的显式复制或未来显式授权路径。
 - 工具关联使用 `toolCallId` 作为跨 Agent/CP/Runtime 关联键，禁止按事件时间或工具名启发式配对。
 
