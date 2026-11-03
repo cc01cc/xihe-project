@@ -434,6 +434,11 @@ public class AgentPrincipalService {
                     "Credential atoms are not covered by the creator's permissions: "
                             + String.join(", ", uncoveredCredentialAtoms));
         }
+        // LEGACY-ONLY（2026-11-04 裁定「role 行是唯一权威源」）：这里算出的 template 交集**不再落库**
+        // —— createAgentPrincipalGrant 的 snapshot 写在 PLAN-0629 已删除，老库残留的
+        // template/agent_default 行只在"主体还没有 source='role' 行"时作为回退被求值。
+        // 新增能力请走角色原子；反向契约见
+        // AgentPrincipalCredentialBoundaryTest#legacySnapshotAtomDoesNotAuthorizeAWorkspaceCap。
         Set<GrantIntersectionEvaluator.PermissionAtom> effectivePermissions =
                 retainCovered(templatePermissions, creatorPermissions);
         ArrayNode grantPermissions = toJson(effectivePermissions);
@@ -928,9 +933,12 @@ public class AgentPrincipalService {
      */
     private Set<GrantIntersectionEvaluator.PermissionAtom> principalEffectiveAtoms(UUID principalId,
                                                                                   UUID workspaceId) {
+        // role 行是模板/默认能力的唯一权威源（2026-11-04 裁定），但 credential_binding 是**活跃**机制
+        // （PLAN-0494 把凭证原子合并到主体上），不是 legacy 快照 —— 它必须与 role 一起参与求值，
+        // 否则"绑了凭证但主体已有角色行"会让凭证原子永远进不了会话 cap（本单 task-29 实测）。
         List<AuthorizationGrant> roleRows = grantRepository.findScopedGrants(
                 GrantPrincipalPathResolver.AGENT_PRINCIPAL, principalId,
-                List.of(GrantSources.ROLE), workspaceId);
+                List.of(GrantSources.ROLE, GrantSources.CREDENTIAL_BINDING), workspaceId);
         if (!roleRows.isEmpty()) {
             return evaluator.union(roleRows);
         }

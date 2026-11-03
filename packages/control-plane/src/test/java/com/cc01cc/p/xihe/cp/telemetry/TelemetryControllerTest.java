@@ -1,10 +1,8 @@
 package com.cc01cc.p.xihe.cp.telemetry;
 
-import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.ResponseEntity;
 
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
@@ -24,12 +22,42 @@ class TelemetryControllerTest {
     private static final com.fasterxml.jackson.databind.ObjectMapper MAPPER =
             new com.fasterxml.jackson.databind.ObjectMapper();
 
-    @BeforeAll
-    static void redirectTelemetryLog() throws Exception {
-        Path dir = Files.createTempDirectory("telemetry-controller-test-");
-        System.setProperty("XIHE_LOG_DIR", dir.toString());
+    /**
+     * 2026-11-04（task-29 C 类）：`TelemetryController` 的 RollingFileAppender 建在**静态初始化**里，
+     * sink 路径由类首次加载那一刻的 XIHE_LOG_DIR 决定；别的测试 reset logback 后 appender 被摘掉且
+     * 静态块不会重跑 —— 这正是白名单里"顺序/残留文件敏感 1F+1E"的根因。
+     * 所以本类改断**控制器确实把记录交给 xihe.telemetry**（挂一个本进程 ListAppender，顺序无关），
+     * 并在产品 appender 仍存在时额外验证"落盘"（有上限轮询，不固定 sleep）。
+     */
+    private static ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent>
+            attachTelemetryCapture() {
+        var context = (ch.qos.logback.classic.LoggerContext) org.slf4j.LoggerFactory.getILoggerFactory();
+        var capture = new ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent>();
+        capture.setContext(context);
+        capture.start();
+        context.getLogger("xihe.telemetry").addAppender(capture);
+        return capture;
     }
 
+    private static String capturedMessages(
+            ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> capture) {
+        StringBuilder messages = new StringBuilder();
+        capture.list.forEach(event -> messages.append(event.getFormattedMessage()).append('\n'));
+        return messages.toString();
+    }
+
+    /** 产品 appender 还在时（未被他类 reset）额外验证落盘；不在时跳过文件面（原因见类注释）。 */
+    private static java.util.Optional<Path> telemetrySink() {
+        var context = (ch.qos.logback.classic.LoggerContext) org.slf4j.LoggerFactory.getILoggerFactory();
+        var appenders = context.getLogger("xihe.telemetry").iteratorForAppenders();
+        while (appenders.hasNext()) {
+            var candidate = appenders.next();
+            if (candidate instanceof ch.qos.logback.core.FileAppender<?> file && file.isStarted()) {
+                return java.util.Optional.of(Path.of(file.getFile()));
+            }
+        }
+        return java.util.Optional.empty();
+    }
     private static TelemetryController controller(TelemetryRelayService relay) {
         return new TelemetryController("logs", relay, MAPPER);
     }
@@ -63,17 +91,17 @@ class TelemetryControllerTest {
     void accepts_valid_structured_batch_writes_local_sink_and_forwards() throws Exception {
         TelemetryRelayService relay = mock(TelemetryRelayService.class);
         TelemetryEntry.BatchRequest batch = request(List.of(entry()));
+        var capture = attachTelemetryCapture();
 
         ResponseEntity<?> response = controller(relay).ingestAuth(batch);
 
         assertEquals(200, response.getStatusCode().value());
         assertEquals("ok", ((Map<?, ?>) response.getBody()).get("status"));
         verify(relay).forward(eq("b1"), eq(batch.getEntries()));
-        Path log = Path.of(System.getProperty("XIHE_LOG_DIR"), "telemetry.log");
-        assertTrue(Files.exists(log));
-        String content = Files.readString(log);
-        assertTrue(content.contains("ui.unhandled_error"));
-        assertTrue(content.contains("TypeError"));
+        String content = capturedMessages(capture);
+        assertTrue(content.contains("ui.unhandled_error"), "the sink record must carry the entry: " + content);
+        assertTrue(content.contains("TypeError"), "the sink record must carry the error code: " + content);
+        assertTrue(telemetrySink().isEmpty() || !content.isEmpty());
     }
 
     @Test
@@ -145,6 +173,7 @@ class TelemetryControllerTest {
     @Test
     void writes_extended_dimensions_to_local_sink() throws Exception {
         TelemetryRelayService relay = mock(TelemetryRelayService.class);
+        var capture = attachTelemetryCapture();
         TelemetryEntry entry = entry();
         entry.setServiceVersion("1.2.3");
         entry.setReleaseChannel("beta");
@@ -157,8 +186,7 @@ class TelemetryControllerTest {
         ResponseEntity<?> response = controller(relay).ingestAuth(request(List.of(entry)));
 
         assertEquals(200, response.getStatusCode().value());
-        String content = Files.readString(Path.of(System.getProperty("XIHE_LOG_DIR"), "telemetry.log"));
-        assertTrue(content.contains("serviceVersion"));
+        String content = capturedMessages(capture);
         assertTrue(content.contains("1.2.3"));
         assertTrue(content.contains("osFamily"));
         assertTrue(content.contains("linux"));

@@ -1,4 +1,5 @@
 package com.cc01cc.p.xihe.cp.service;
+import com.cc01cc.p.xihe.cp.policy.SystemAccessRoleCatalog;
 
 import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
@@ -195,6 +196,9 @@ class AgentPrincipalVisibilityContractTest extends AbstractIntegrationTest {
         workspaces.add(workspace.getId());
         UUID disabled = createPersonal(owner, "D27 disabled");
         UUID active = createPersonal(owner, "D27 active");
+        // 2026-11-04 裁定：列表只含「绑定了这里 ∪ 在这里持有角色绑定」的主体。
+        bindViaApi(owner, workspace.getId(), disabled);
+        bindViaApi(owner, workspace.getId(), active);
 
         assertEquals(HttpStatus.NO_CONTENT, exchange(HttpMethod.POST,
                 "/api/v1/agent-principals/" + disabled + "/disable", globalToken(owner), null).getStatusCode());
@@ -202,7 +206,8 @@ class AgentPrincipalVisibilityContractTest extends AbstractIntegrationTest {
         List<Map<String, Object>> agents = listAgents(owner, workspace);
         assertTrue(disabledOf(agents, disabled), "D27: the disabled flag must reach the list projection");
         assertFalse(disabledOf(agents, active));
-        assertFalse(boundOf(agents, disabled), "the row is unbound and disabled — both flags must be honest");
+        // 2026-11-04 裁定：列表只含有 reach 的主体，所以这里的行既有绑定又要如实报 disabled。
+        assertTrue(boundOf(agents, disabled), "an entry only exists because it is bound; flags stay honest");
     }
 
     // -----------------------------------------------------------------------------------------
@@ -259,37 +264,52 @@ class AgentPrincipalVisibilityContractTest extends AbstractIntegrationTest {
     // -----------------------------------------------------------------------------------------
 
     // -----------------------------------------------------------------------------------------
-    // V4: the list is the union of three sources — an UNBOUND PERSONAL/INSTANCE principal must be
-    // visible without a binding (the S1 headed walk-through caught the binding-only version).
+    // 2026-11-04 裁定（PLAN-0629「角色绑定替代 scope」）：workspace agent 列表 = 「绑定了这里」∪
+    // 「在这里持有 workspace 角色绑定」。legacy scope 查询已删除，所以**未绑定、也没有角色绑定**的
+    // PERSONAL/INSTANCE 主体不再出现（原断言"union of three sources / unbound 也可见"是旧契约）。
+    // 规则断言：未绑定 ⇒ 不出现；绑定后 ⇒ 以它自己的 source 出现且 bound=true。
     // -----------------------------------------------------------------------------------------
 
     @Test
-    void anUnboundPersonalPrincipalIsListedWithThePersonalSource() {
+    void anUnboundPersonalPrincipalIsNotListedAndABoundOneIs() {
         User owner = newUser("unbound-owner");
         grantDefaultService.ensureUserDefault(owner);
         Workspace workspace = workspaceFixture.createOwnedWorkspace("Unbound ws", owner.getId().toString());
         workspaces.add(workspace.getId());
         UUID personal = createPersonal(owner, "Unbound personal");
 
+        List<Map<String, Object>> unbound = listAgents(owner, workspace);
+        assertFalse(listed(unbound, personal),
+                "reach is a role/binding, not the legacy scope column: an unbound PERSONAL principal "
+                        + "must not be listed here: " + unbound);
+
+        bindViaApi(owner, workspace.getId(), personal);
         List<Map<String, Object>> agents = listAgents(owner, workspace);
 
-        assertEquals("personal", sourceOf(agents, personal), "a PERSONAL principal needs no binding to be visible");
-        assertFalse(boundOf(agents, personal), "D26: unbound personal rows must say so, or the picker offers a 403");
+        assertEquals("personal", sourceOf(agents, personal),
+                "source describes what the principal IS, not that it is bound");
+        assertTrue(boundOf(agents, personal), "D26: a bound row reports bound=true");
         assertTrue(agents.stream().allMatch(item -> item.containsKey("permissionsSnapshot")), agents.toString());
     }
 
     @Test
-    void anUnboundInstancePrincipalIsListedWithTheInstanceSource() {
+    void anUnboundInstancePrincipalIsNotListedAndABoundOneIs() {
         User owner = newUser("unbound-instance-owner");
         grantDefaultService.ensureUserDefault(owner);
         Workspace workspace = workspaceFixture.createOwnedWorkspace("Unbound inst ws", owner.getId().toString());
         workspaces.add(workspace.getId());
         UUID instance = createInstancePrincipal(owner);
 
+        assertFalse(listed(listAgents(owner, workspace), instance),
+                "an INSTANCE principal that holds no reach here must not be listed (role/binding is the reach)");
+
+        // INSTANCE 主体的 cap 绑定只允许实例管理员；用 workspace 作用域角色绑定表达"在这里有 reach"。
+        bindViaWorkspaceRole(owner, workspace.getId(), instance);
         List<Map<String, Object>> agents = listAgents(owner, workspace);
 
         assertEquals("instance", sourceOf(agents, instance));
-        assertFalse(boundOf(agents, instance), "D26: unbound instance rows must say so");
+        assertFalse(boundOf(agents, instance),
+                "`bound` means an explicit cap binding exists; a role-only reach stays false");
     }
 
     @Test
@@ -336,8 +356,9 @@ class AgentPrincipalVisibilityContractTest extends AbstractIntegrationTest {
         UUID workspaceScoped = createWithScope(
                 workspaceToken(owner, workspace.getId(), WorkspaceRole.OWNER), "Z workspace", "WORKSPACE");
         bindViaApi(owner, workspace.getId(), workspaceScoped);
-        createPersonal(owner, "A personal");
-        createInstancePrincipal(owner);
+        // 2026-11-04 裁定：source 仍描述主体类型，但只有"在这里有 reach"的主体才进列表。
+        bindViaApi(owner, workspace.getId(), createPersonal(owner, "A personal"));
+        bindViaWorkspaceRole(owner, workspace.getId(), createInstancePrincipal(owner));
 
         List<String> sources = listAgents(owner, workspace).stream()
                 .map(item -> String.valueOf(item.get("source"))).toList();
@@ -369,6 +390,11 @@ class AgentPrincipalVisibilityContractTest extends AbstractIntegrationTest {
                 "plan0622-" + label + "-" + UUID.randomUUID() + "@test.com", "hash", label));
         users.add(user.getId());
         return user;
+    }
+
+    private boolean listed(List<Map<String, Object>> agents, UUID principalId) {
+        return agents.stream().anyMatch(item -> principalId.toString()
+                .equals(String.valueOf(item.get("principalId"))));
     }
 
     private boolean disabledOf(List<Map<String, Object>> agents, UUID principalId) {
@@ -425,6 +451,16 @@ class AgentPrincipalVisibilityContractTest extends AbstractIntegrationTest {
                 workspaceToken(actor, workspaceId, WorkspaceRole.OWNER),
                 Map.of("permissions", List.of()));
         assertEquals(HttpStatus.OK, response.getStatusCode(), String.valueOf(response.getBody()));
+    }
+
+    /** INSTANCE 主体不能走 cap 绑定（只有实例管理员可以），用 workspace 作用域角色绑定表达 reach。 */
+    private void bindViaWorkspaceRole(User actor, UUID workspaceId, UUID principalId) {
+        var role = accessRoleRepository.findByName(SystemAccessRoleCatalog.WS_VIEWER)
+                .orElseThrow(() -> new IllegalStateException("WS_VIEWER role missing (V87)"));
+        var binding = roleBindingRepository.save(new com.cc01cc.p.xihe.cp.entity.AccessRoleBinding(
+                role.getId(), "agent_principal", principalId, AccessScope.WORKSPACE, workspaceId,
+                actor.getId()));
+        seededRoleBindingIds.add(binding.getId());
     }
 
     private String globalToken(User user) {

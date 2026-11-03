@@ -1,4 +1,5 @@
 package com.cc01cc.p.xihe.cp.service;
+import com.cc01cc.p.xihe.cp.policy.GrantSources;
 
 import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
 
@@ -37,6 +38,9 @@ import java.util.List;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import java.util.Set;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -117,7 +121,7 @@ class AgentPrincipalCredentialBoundaryTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void creationKeepsCoveredCredentialAtomsWhenTheCreatorHoldsTheWildcard() {
+    void coveredCredentialAtomComesFromABoundRoleNotFromTheTemplateSnapshot() {
         registerCreator();
         grantCreator("""
                 [{"actionClass":"credential_use","resource":"credential:*"}]
@@ -132,20 +136,32 @@ class AgentPrincipalCredentialBoundaryTest extends AbstractIntegrationTest {
                         """.formatted(credentialId)));
         principalIds.add(principal.getId());
 
-        JsonNode permissions = principalGrant(principal.getId());
-        assertEquals(2, permissions.size(),
-                "the covered credential atom must survive minting (naming rule): " + permissions);
-        boolean carriesCredential = false;
-        for (JsonNode atom : permissions) {
-            if ("credential_use".equals(atom.get("actionClass").asText())) {
-                carriesCredential = credentialId.equals(atom.get("resource").asText());
-            }
-        }
-        assertTrue(carriesCredential, "the concrete credential atom is preserved: " + permissions);
+        // 2026-11-04 裁定（role 行唯一权威源）：template 快照写已删除 ⇒ 模板里的 credential 原子不落库，
+        // 主体只有默认实例角色的原子集；要拿到它必须由角色携带（先绑角色，再设 cap）。
+        assertFalse(actionClassNames(principalGrant(principal.getId())).contains("credential_use"),
+                "a template-only credential atom must not materialize: "
+                        + principalGrant(principal.getId()));
+
+        CpApiException denied = assertThrows(CpApiException.class, () ->
+                agentPrincipalService.setWorkspaceCap(creatorId.toString(), UUID.fromString(workspaceId),
+                        principal.getId(), permissions("""
+                                [{"actionClass":"credential_use","resource":"%s"}]
+                                """.formatted(credentialId))));
+        assertEquals(HttpStatus.FORBIDDEN, denied.getStatus());
+        assertEquals("AGENT_PERMISSION_SCOPE_EXCEEDED", denied.getCode());
+
+        grantRoleAtom(principal.getId(), """
+                [{"actionClass":"credential_use","resource":"%s"}]
+                """.formatted(credentialId));
+        assertDoesNotThrow(() -> agentPrincipalService.setWorkspaceCap(creatorId.toString(),
+                UUID.fromString(workspaceId), principal.getId(), permissions("""
+                        [{"actionClass":"credential_use","resource":"%s"}]
+                        """.formatted(credentialId))),
+                "with the atom carried by a bound role, the cap is accepted");
     }
 
     @Test
-    void nonCredentialAtomsStillNarrowSilently() {
+    void templateOnlyAtomsAreNeverMaterializedForANewPrincipal() {
         registerCreator();
 
         AgentPrincipal principal = agentPrincipalService.createPrincipal(
@@ -155,11 +171,11 @@ class AgentPrincipalCredentialBoundaryTest extends AbstractIntegrationTest {
                         """));
         principalIds.add(principal.getId());
 
-        JsonNode permissions = principalGrant(principal.getId());
-        assertEquals(1, permissions.size(),
-                "SPAWN_AGENT is outside the creator's set and is narrowed silently (0496 #9): "
-                        + permissions);
-        assertEquals("read", permissions.get(0).get("actionClass").asText());
+        // 原断言"被 creator grants 收窄成 read"过时：模板快照不再落库，主体拿到的就是默认角色的原子集。
+        Set<String> atoms = actionClassNames(principalGrant(principal.getId()));
+        assertTrue(atoms.contains("read"), "the default role still grants read: " + atoms);
+        assertFalse(atoms.contains("SPAWN_AGENT"),
+                "a template-only SPAWN_AGENT must not materialize: " + atoms);
     }
 
     @Test
@@ -178,6 +194,11 @@ class AgentPrincipalCredentialBoundaryTest extends AbstractIntegrationTest {
                         [{"actionClass":"credential_use","resource":"%s"}]
                         """.formatted(credentialId)));
         principalIds.add(principal.getId());
+        // 2026-11-04 裁定（role 行是唯一权威源）：cap 的 ceiling 读 role 行，而 template 派生行已降级为
+        // legacy-only，所以这里把 credential 原子写进一条 role 行（与"先绑角色再设 cap"等价的最小形态）。
+        grantRoleAtom(principal.getId(), """
+                [{"actionClass":"credential_use","resource":"%s"}]
+                """.formatted(credentialId));
         UUID workspaceUuid = UUID.fromString(workspaceId);
 
         // A concrete cap under a wildcard ceiling is allowed by the naming rule.
@@ -192,6 +213,36 @@ class AgentPrincipalCredentialBoundaryTest extends AbstractIntegrationTest {
                         principal.getId(), permissions("""
                                 [{"actionClass":"credential_use","resource":"credential:*"}]
                                 """)));
+        assertEquals(HttpStatus.FORBIDDEN, error.getStatus());
+        assertEquals("AGENT_PERMISSION_SCOPE_EXCEEDED", error.getCode());
+    }
+
+    /**
+     * 反向契约（2026-11-04 裁定「role 行是唯一权威源」）：只有 template 派生行、没有角色携带该原子时，
+     * `setWorkspaceCap` 必须 403 —— 把这条不对称固定下来，别让它以后被当成 bug 改回去。
+     */
+    @Test
+    void templateOnlyGrantDoesNotAuthorizeAWorkspaceCap() {
+        registerCreator();
+        grantCreator("""
+                [{"actionClass":"MANAGE_WORKSPACE_AGENTS"}]
+                """);
+        grantCreator("""
+                [{"actionClass":"credential_use","resource":"credential:*"}]
+                """);
+        String credentialId = "credential:" + UUID.randomUUID();
+        AgentPrincipal principal = agentPrincipalService.createPrincipal(creatorId.toString(),
+                "legacy-only-agent", null, snapshot("""
+                        [{"actionClass":"credential_use","resource":"%s"}]
+                        """.formatted(credentialId)));
+        principalIds.add(principal.getId());
+
+        CpApiException error = assertThrows(CpApiException.class, () ->
+                agentPrincipalService.setWorkspaceCap(creatorId.toString(), UUID.fromString(workspaceId),
+                        principal.getId(), permissions("""
+                                [{"actionClass":"credential_use","resource":"%s"}]
+                                """.formatted(credentialId))));
+
         assertEquals(HttpStatus.FORBIDDEN, error.getStatus());
         assertEquals("AGENT_PERMISSION_SCOPE_EXCEEDED", error.getCode());
     }
@@ -231,12 +282,19 @@ class AgentPrincipalCredentialBoundaryTest extends AbstractIntegrationTest {
         materializer.materializeSubject("user", creatorId, creatorId, null);
     }
 
+    /**
+     * 2026-11-04 裁定（PLAN-0629「role 行是唯一权威源」）：creation 不再写 template/agent_default
+     * 快照行（`createAgentPrincipalGrant` 已删除），所以"模板原子被 creator grants 收窄"只能从
+     * **role 行**观察：主体拿到的就是它绑定的角色原子。
+     */
     private JsonNode principalGrant(UUID principalId) {
-        return grantRepository.findBySubjectTypeAndSubjectId(
+        com.fasterxml.jackson.databind.node.ArrayNode merged = objectMapper.createArrayNode();
+        grantRepository.findBySubjectTypeAndSubjectId(
                         GrantPrincipalPathResolver.AGENT_PRINCIPAL, principalId).stream()
-                .findFirst()
-                .orElseThrow(() -> new AssertionError("no grant for principal " + principalId))
-                .getPermissions();
+                .filter(grant -> GrantSources.ROLE.equals(grant.getSource()))
+                .forEach(grant -> grant.getPermissions().forEach(merged::add));
+        assertTrue(merged.size() > 0, "a created principal must carry its bound-role atoms");
+        return merged;
     }
 
     private JsonNode snapshot(String permissionsJson) {
@@ -244,6 +302,26 @@ class AgentPrincipalCredentialBoundaryTest extends AbstractIntegrationTest {
         snapshot.put("systemPrompt", "boundary-agent-prompt");
         snapshot.set("permissions", permissions(permissionsJson));
         return snapshot;
+    }
+
+    /** 直接写一条 source='role' 的授权行：这是求值唯一认的权威源（legacy-only 行不算）。 */
+    private void grantRoleAtom(UUID principalId, String permissionsJson) {
+        com.cc01cc.p.xihe.cp.entity.AuthorizationGrant grant =
+                new com.cc01cc.p.xihe.cp.entity.AuthorizationGrant();
+        grant.setGranterType("user");
+        grant.setGranterId(creatorId);
+        grant.setSubjectType("agent_principal");
+        grant.setSubjectId(principalId);
+        grant.setSource(com.cc01cc.p.xihe.cp.policy.GrantSources.ROLE);
+        grant.setReadState("read");
+        grant.setPermissions(permissions(permissionsJson));
+        grantRepository.saveAndFlush(grant);
+    }
+
+    private static Set<String> actionClassNames(JsonNode permissions) {
+        Set<String> names = new java.util.LinkedHashSet<>();
+        permissions.forEach(atom -> names.add(atom.path("actionClass").asText()));
+        return names;
     }
 
     private JsonNode permissions(String permissionsJson) {

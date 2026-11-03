@@ -1,4 +1,5 @@
 package com.cc01cc.p.xihe.cp.service;
+import com.cc01cc.p.xihe.cp.policy.SystemAccessRoleCatalog;
 
 import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
 import com.cc01cc.p.xihe.cp.entity.AccessRole;
@@ -113,9 +114,20 @@ class AgentPrincipalControllerContractTest extends AbstractIntegrationTest {
         assertTrue(principal.getTemplateSnapshot().path("templateName").isNull());
         assertEquals(List.of("CREATE_ACCOUNT"), actionClasses(principal.getTemplateSnapshot().path("permissions")));
         assertTrue(bindingRepository.findByIdPrincipalId(principalId).isEmpty());
-        assertEquals(1, jdbcTemplate.queryForObject(
-                "SELECT count(*) FROM grants WHERE subject_type = 'agent_principal' AND subject_id = ?",
-                Integer.class, principalId));
+        // 2026-11-04 裁定（PLAN-0629「role 行是唯一权威源」）：creation 会物化默认实例角色，
+        // 一原子一行（uq_grants_role_atom）。断言规则（行集合 == USER 角色的原子集）而不是字面量，
+        // 这样以后角色原子集变化不会假红。
+        java.util.Set<String> expectedAtoms = SystemAccessRoleCatalog.roleSeeds().stream()
+                .filter(seed -> SystemAccessRoleCatalog.USER.equals(seed.name()))
+                .flatMap(seed -> seed.atoms().stream())
+                .map(SystemAccessRoleCatalog.AtomRef::actionClass)
+                .collect(java.util.stream.Collectors.toSet());
+        java.util.Set<String> actualAtoms = new java.util.HashSet<>(jdbcTemplate.queryForList(
+                "SELECT jsonb_array_elements(permissions)->>'actionClass' FROM grants"
+                        + " WHERE subject_type = 'agent_principal' AND subject_id = ?::uuid",
+                String.class, principalId));
+        assertEquals(expectedAtoms, actualAtoms,
+                "each bound-role atom is exactly one grant row: " + actualAtoms);
         assertEquals(1, auditCount());
         assertEquals(principalId.toString(), jdbcTemplate.queryForObject(
                 "SELECT resource_id FROM audit_logs WHERE action = 'agent_principal_created' AND user_id = ?::uuid",

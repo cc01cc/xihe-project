@@ -159,18 +159,20 @@ class CredentialThreeLayerAuthorizationTest extends AbstractIntegrationTest {
         agentPrincipalService.setWorkspaceCap(userId, workspaceId, principalId,
                 objectMapper.createArrayNode());
 
-        // The principal already carries its default grant from minting (uq_grants_default_subject)
-        // — merge the credential atom into that single row instead of inserting another one.
-        AuthorizationGrant principalGrant = grantRepository.findBySubjectTypeAndSubjectId(
-                        GrantPrincipalPathResolver.AGENT_PRINCIPAL, principalId).stream()
-                .filter(grant -> GrantSources.AGENT_DEFAULT.equals(grant.getSource()))
-                .findFirst()
-                .orElseThrow();
-        com.fasterxml.jackson.databind.node.ArrayNode mergedPermissions = objectMapper.createArrayNode();
-        principalGrant.getPermissions().forEach(mergedPermissions::add);
-        sessionSnapshot.forEach(mergedPermissions::add);
-        principalGrant.setPermissions(mergedPermissions);
-        grantRepository.save(principalGrant);
+        // 2026-11-04 裁定（PLAN-0629「role 行是唯一权威源」）：求值只看 source='role' 的行；
+        // creation 物化的 role 行（默认实例角色，一原子一行）才是权威源，所以把 credential 原子
+        // 合进 role 行，而不是已降级为 legacy-only 的 agent_default 行。
+        // 2026-11-04 裁定：creation 不再写 legacy 快照行；把 credential 原子作为一条**新的**
+        // source='role' 行写入（role 行一原子一行，避免把两个原子塞进同一行触发 uq 约束）。
+        AuthorizationGrant credentialRoleRow = new AuthorizationGrant();
+        credentialRoleRow.setGranterType(GrantPrincipalPathResolver.USER);
+        credentialRoleRow.setGranterId(UUID.fromString(userId));
+        credentialRoleRow.setSubjectType(GrantPrincipalPathResolver.AGENT_PRINCIPAL);
+        credentialRoleRow.setSubjectId(principalId);
+        credentialRoleRow.setSource(GrantSources.ROLE);
+        credentialRoleRow.setReadState("read");
+        credentialRoleRow.setPermissions(sessionSnapshot);
+        grantRepository.saveAndFlush(credentialRoleRow);
 
         Session session = new Session(workspaceId.toString(), userId, "cred-layer-session");
         session.setId(UUID.randomUUID());
