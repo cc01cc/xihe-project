@@ -126,7 +126,7 @@ description = "Run all tests"
 alias = "test"
 
 [tasks."test:cli"]
-run = "node --test scripts/xihe-cli.test.mjs scripts/xihe-cli/skill.test.mjs scripts/lib/stack-ports.test.mjs scripts/lib/env-file.test.mjs scripts/lib/service-supervisor.test.mjs scripts/lib/llm-env.test.mjs scripts/lib/cp-boot-plan.test.mjs scripts/lib/e2e-rounds.test.mjs scripts/stack-run.test.mjs scripts/e2e-host-readiness.test.mjs scripts/test-wiring.test.mjs scripts/pkg/phase-parity.test.mjs scripts/pkg/ports-json.test.mjs scripts/pkg/launcher-security.test.mjs scripts/env-log-level.test.mjs"
+run = "node --test scripts/xihe-cli.test.mjs scripts/xihe-cli/skill.test.mjs scripts/lib/stack-ports.test.mjs scripts/lib/env-file.test.mjs scripts/lib/service-supervisor.test.mjs scripts/lib/llm-env.test.mjs scripts/lib/cp-boot-plan.test.mjs scripts/lib/e2e-rounds.test.mjs scripts/stack-run.test.mjs scripts/e2e-host-readiness.test.mjs scripts/test-wiring.test.mjs scripts/pkg/phase-parity.test.mjs scripts/pkg/ports-json.test.mjs scripts/pkg/launcher-security.test.mjs scripts/pkg/launcher-security-behavior.test.mjs scripts/env-log-level.test.mjs"
 description = "Run every scripts/**/*.test.mjs unit test — the file list is explicit and pinned by scripts/test-wiring.test.mjs (a new test file that is not listed turns that meta test red)"
 alias = "test:cli"
 
