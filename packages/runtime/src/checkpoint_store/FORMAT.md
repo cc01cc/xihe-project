@@ -46,6 +46,7 @@ offset 13  payload        codec 编码后的字节
 - **读取三重校验**：codec 合法且受支持；解码长度 == `raw_len`；`SHA-256(payload 解码结果)` == 文件名。任一不符 ⇒ 拒绝（`BLOB_CORRUPT`，错误携带路径与期望哈希）。
 - **读侧压缩比门**：`raw_len > payload_len * 4096` ⇒ 拒绝（`CompressionRatioTooHigh`），在创建解码器/分配内存之前判定。
 - **写侧不变式**：writer 不得产出 reader 会拒收的 blob；zlib 结果若 `raw_len > compressed_len * 4096`，强制回落 raw（与 `<64 B` / 压缩无收益同一判定）。
+- **说明**：合法 flate2/deflate 输出压缩比上限约 1032×，因此 4096× 回落是面向未来 codec/后端的防御门，不是当前 writer 的常规分支（当前 writer 不会产出会被读侧拒收的 blob）。
 
 ## 4. manifest 文件
 
