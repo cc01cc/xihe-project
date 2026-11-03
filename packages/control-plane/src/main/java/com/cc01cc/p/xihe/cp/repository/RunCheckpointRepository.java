@@ -19,7 +19,20 @@ import java.util.UUID;
  */
 public interface RunCheckpointRepository extends JpaRepository<RunCheckpoint, UUID> {
 
-    Optional<RunCheckpoint> findBySourceRunIdAndWorkspaceId(String sourceRunId, String workspaceId);
+    /**
+     * Every slice row of one Run in one workspace — one per captured root
+     * (PLAN-0639 M8). Callers that only care about the primary root filter on
+     * {@code rootId.equals(workspaceId)}.
+     */
+    List<RunCheckpoint> findBySourceRunIdAndWorkspaceId(String sourceRunId, String workspaceId);
+
+    /**
+     * The single row of one (run, workspace, root): the per-root idempotency
+     * lookup, replacing the pre-M8 (run, workspace) lookup whose uniqueness no
+     * longer holds once a run is captured per declared root.
+     */
+    Optional<RunCheckpoint> findBySourceRunIdAndWorkspaceIdAndRootId(
+            String sourceRunId, String workspaceId, String rootId);
 
     Optional<RunCheckpoint> findByWorkspaceIdAndSliceRef(String workspaceId, String sliceRef);
 

@@ -3,10 +3,12 @@ package com.cc01cc.p.xihe.cp.service;
 import com.cc01cc.p.xihe.cp.entity.ChatRun;
 import com.cc01cc.p.xihe.cp.entity.RunCheckpoint;
 import com.cc01cc.p.xihe.cp.entity.Session;
+import com.cc01cc.p.xihe.cp.entity.WorkspaceRoot;
 import com.cc01cc.p.xihe.cp.chat.SseEmitterManager;
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
 import com.cc01cc.p.xihe.cp.repository.RunCheckpointRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
+import com.cc01cc.p.xihe.cp.repository.WorkspaceRootRepository;
 import com.cc01cc.p.xihe.cp.runtime.RuntimeCheckpointClient;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -111,6 +113,7 @@ public class RunCheckpointService {
     private final RuntimeCheckpointClient runtime;
     private final ChatRunRepository chatRuns;
     private final SessionRepository sessions;
+    private final WorkspaceRootRepository workspaceRoots;
     private final ObjectMapper objectMapper;
     private final SseEmitterManager sseManager;
     private final AtomicLong captureSequence = new AtomicLong();
@@ -121,12 +124,14 @@ public class RunCheckpointService {
                                 RuntimeCheckpointClient runtime,
                                 ChatRunRepository chatRuns,
                                 SessionRepository sessions,
+                                WorkspaceRootRepository workspaceRoots,
                                 ObjectMapper objectMapper,
                                 SseEmitterManager sseManager) {
         this.checkpoints = checkpoints;
         this.runtime = runtime;
         this.chatRuns = chatRuns;
         this.sessions = sessions;
+        this.workspaceRoots = workspaceRoots;
         this.objectMapper = objectMapper;
         this.sseManager = sseManager;
         this.captureExecutor = Executors.newSingleThreadExecutor(runnable -> {
@@ -157,10 +162,19 @@ public class RunCheckpointService {
     }
 
     /**
-     * Captures one Run into a slice exactly once (idempotent per run: an already
-     * captured row is left untouched). A failed capture records a {@code degraded}
-     * row with the frozen reason and returns {@code false} — callers must never
-     * fail their own Run transition because of it.
+     * Captures one Run into one slice **per declared root** (PLAN-0639 M8).
+     *
+     * <p>Before M8 this method issued exactly one capture, so a workspace with a
+     * second declared root got no slice for it (the "silent no-op" M7 exposed).
+     * Now the Run is captured once per root: the primary root first
+     * ({@code root_id == workspaceId}), then every other active declared root in
+     * stable root-id order. Each root is independent — a failing root records its
+     * own {@code degraded} row and never blocks the remaining roots — and the
+     * aggregate is one {@code run_checkpoint_capture_summary} log line.</p>
+     *
+     * <p>Idempotent per (run, root): an already captured root is skipped. The
+     * boolean result keeps its pre-M8 meaning = "this call persisted the primary
+     * root's captured row", which is what the startup sweep counts.</p>
      */
     public boolean captureCheckpoint(String runId) {
         if (isBlank(runId)) {
@@ -179,22 +193,61 @@ public class RunCheckpointService {
                 return false;
             }
             String workspaceId = run.getWorkspaceId();
-            RunCheckpoint existing = findSourceRun(runId, workspaceId);
-            if (existing != null && isCapturedState(existing.getState())) {
-                logger.debug("[LIFECYCLE] service=cp event=run_checkpoint_capture_exists runId={} workspaceId={}",
-                        runId, workspaceId);
-                return false;
-            }
+            List<String> roots = captureRoots(workspaceId);
+            Set<String> alreadyCaptured = capturedRoots(runId, workspaceId);
             boolean abnormal = isAbnormalStatus(run.getStatus());
-            RuntimeCheckpointClient.CaptureResult result = runtime.capture(workspaceId, runId,
-                    run.getUserId(), captureCallId(runId), abnormal);
-            return switch (result.outcome()) {
-                case OK -> {
-                    boolean persisted = persistCaptured(run, result, abnormal);
-                    yield persisted;
+            boolean primaryPersisted = false;
+            int captured = 0;
+            int failed = 0;
+            int skipped = 0;
+            for (String rootId : roots) {
+                if (alreadyCaptured.contains(rootId)) {
+                    skipped++;
+                    continue;
                 }
+                boolean rootPersisted = captureOneRoot(run, rootId, abnormal);
+                if (rootPersisted) {
+                    captured++;
+                    if (rootId.equals(workspaceId)) {
+                        primaryPersisted = true;
+                    }
+                } else {
+                    failed++;
+                }
+            }
+            if (roots.size() > 1 || captured > 0 || failed > 0) {
+                logger.info("[LIFECYCLE] service=cp event=run_checkpoint_capture_summary runId={} "
+                                + "workspaceId={} roots={} captured={} failed={} skipped={}",
+                        runId, workspaceId, roots.size(), captured, failed, skipped);
+            }
+            return primaryPersisted;
+        } catch (Exception e) {
+            logger.warn("[LIFECYCLE] service=cp event=run_checkpoint_capture_failed runId={} failureType={}",
+                    runId, e.getClass().getName());
+            return false;
+        } finally {
+            captureInFlight.remove(runId);
+        }
+    }
+
+    /**
+     * One root of one Run: capture, persist, and never throw upward so the caller's
+     * loop can continue with the remaining roots.
+     */
+    private boolean captureOneRoot(ChatRun run, String rootId, boolean abnormal) {
+        String runId = run.getId().toString();
+        String workspaceId = run.getWorkspaceId();
+        try {
+            // Primary root keeps the 5-argument (pre-M8) call so its request body stays
+            // byte-identical; only a declared non-primary root adds `rootId`.
+            RuntimeCheckpointClient.CaptureResult result = rootId.equals(workspaceId)
+                    ? runtime.capture(workspaceId, runId, run.getUserId(), captureCallId(runId), abnormal)
+                    : runtime.capture(workspaceId, rootId, runId, run.getUserId(),
+                            captureCallId(runId), abnormal);
+            return switch (result.outcome()) {
+                case OK -> persistCaptured(run, rootId, result, abnormal);
                 case INVALID_REQUEST -> {
-                    persistDegraded(run, REASON_INVALID_REQUEST, result.reason());
+                    persistDegraded(run, rootId, REASON_INVALID_REQUEST, result.reason());
                     yield false;
                 }
                 case UNAVAILABLE -> {
@@ -202,22 +255,68 @@ public class RunCheckpointService {
                     String durable = reason != null && PROPAGATED_CAPTURE_REASONS.contains(reason)
                             ? reason
                             : REASON_UNAVAILABLE;
-                    persistDegraded(run, durable, reason);
+                    persistDegraded(run, rootId, durable, reason);
                     yield false;
                 }
                 default -> {
                     // Transport/404/unknown outcomes never propagate a capture reason,
                     // even if a proxy happens to echo an allowlisted token.
-                    persistDegraded(run, REASON_UNAVAILABLE, result.reason());
+                    persistDegraded(run, rootId, REASON_UNAVAILABLE, result.reason());
                     yield false;
                 }
             };
         } catch (Exception e) {
-            logger.warn("[LIFECYCLE] service=cp event=run_checkpoint_capture_failed runId={} failureType={}",
-                    runId, e.getClass().getName());
+            logger.warn("[LIFECYCLE] service=cp event=run_checkpoint_capture_root_failed runId={} "
+                            + "workspaceId={} rootId={} failureType={}",
+                    runId, workspaceId, rootId, e.getClass().getName());
             return false;
-        } finally {
-            captureInFlight.remove(runId);
+        }
+    }
+
+    /**
+     * The ordered roots one Run must be captured for: the primary root first
+     * ({@code root_id == workspaceId}, the primary-root invariant), then the other
+     * active declared roots sorted by root id so the capture order is stable
+     * across runs and processes.
+     *
+     * <p>A missing/unknown root set degrades to the single primary root, which is
+     * exactly the pre-M8 behaviour for legacy and unmaterialized workspaces.</p>
+     */
+    private List<String> captureRoots(String workspaceId) {
+        if (isBlank(workspaceId)) {
+            return List.of();
+        }
+        LinkedHashSet<String> ordered = new LinkedHashSet<>();
+        ordered.add(workspaceId);
+        try {
+            List<WorkspaceRoot> roots =
+                    workspaceRoots.findByWorkspaceIdAndDeletedAtIsNullOrderByPositionAsc(
+                            UUID.fromString(workspaceId));
+            roots.stream()
+                    .map(root -> root.getId() == null ? null : root.getId().toString())
+                    .filter(Objects::nonNull)
+                    .filter(rootId -> !rootId.equals(workspaceId))
+                    .sorted()
+                    .forEach(ordered::add);
+        } catch (Exception e) {
+            logger.warn("[LIFECYCLE] service=cp event=run_checkpoint_roots_unavailable workspaceId={} "
+                            + "failureType={}", workspaceId, e.getClass().getName());
+        }
+        return List.copyOf(ordered);
+    }
+
+    /** Roots of this Run that already hold a captured row (per-root idempotency). */
+    private Set<String> capturedRoots(String runId, String workspaceId) {
+        try {
+            return checkpoints.findBySourceRunIdAndWorkspaceId(runId, workspaceId).stream()
+                    .filter(row -> isCapturedState(row.getState()))
+                    .map(RunCheckpoint::getRootId)
+                    .filter(Objects::nonNull)
+                    .collect(java.util.stream.Collectors.toSet());
+        } catch (Exception e) {
+            logger.warn("[LIFECYCLE] service=cp event=run_checkpoint_captured_roots_unreadable runId={} "
+                            + "failureType={}", runId, e.getClass().getName());
+            return Set.of();
         }
     }
 
@@ -391,7 +490,8 @@ public class RunCheckpointService {
             return new PreviewOutcome(verdict.gate(), verdict.reason(), null, Map.of());
         }
         RunCheckpoint capturedRow = Objects.requireNonNull(row);
-        RuntimeCheckpointClient.RevertPreview preview = runtime.previewRevert(workspaceId, sliceRef);
+        RuntimeCheckpointClient.RevertPreview preview =
+                runtime.previewRevert(workspaceId, wireRootId(capturedRow), sliceRef);
         return switch (preview.outcome()) {
             case OK -> {
                 Map<String, Object> details = new LinkedHashMap<>();
@@ -429,7 +529,7 @@ public class RunCheckpointService {
         }
         RunCheckpoint capturedRow = Objects.requireNonNull(row);
         RuntimeCheckpointClient.RevertResult result =
-                runtime.revert(workspaceId, sliceRef, acknowledgeTypeChanges);
+                runtime.revert(workspaceId, wireRootId(capturedRow), sliceRef, acknowledgeTypeChanges);
         return switch (result.outcome()) {
             case OK -> {
                 recordRevert(capturedRow, result);
@@ -460,7 +560,8 @@ public class RunCheckpointService {
         if (verdict != null) {
             return new FileOutcome(verdict.gate(), verdict.reason(), null, null, Map.of());
         }
-        RuntimeCheckpointClient.BlobResult blob = runtime.checkpointBlob(workspaceId, sliceRef, path);
+        RuntimeCheckpointClient.BlobResult blob =
+                runtime.checkpointBlob(workspaceId, wireRootId(row), sliceRef, path);
         return switch (blob.outcome()) {
             case OK -> new FileOutcome(Gate.OK, null, blob.content(), blob.path(), Map.of());
             case INVALID_REQUEST -> new FileOutcome(Gate.INVALID_REQUEST, REASON_INVALID_REQUEST,
@@ -702,11 +803,25 @@ public class RunCheckpointService {
         }
     }
 
-    private RunCheckpoint findSourceRun(String sourceRunId, String workspaceId) {
-        if (isBlank(sourceRunId) || isBlank(workspaceId)) {
+    /** The row of one (run, workspace, root) — the per-root idempotency lookup. */
+    private RunCheckpoint findSourceRun(String sourceRunId, String workspaceId, String rootId) {
+        if (isBlank(sourceRunId) || isBlank(workspaceId) || isBlank(rootId)) {
             return null;
         }
-        return checkpoints.findBySourceRunIdAndWorkspaceId(sourceRunId, workspaceId).orElse(null);
+        return checkpoints.findBySourceRunIdAndWorkspaceIdAndRootId(sourceRunId, workspaceId, rootId)
+                .orElse(null);
+    }
+
+    /**
+     * PLAN-0639 M8: the `rootId` to put on the Runtime wire for one row — {@code null}
+     * when the row belongs to the primary root, so a single-root workspace keeps the
+     * pre-M8 request body and the pre-M8 Runtime path.
+     */
+    private static String wireRootId(RunCheckpoint row) {
+        if (row == null || isBlank(row.getRootId()) || row.getRootId().equals(row.getWorkspaceId())) {
+            return null;
+        }
+        return row.getRootId();
     }
 
     private RunCheckpoint findSlice(String workspaceId, String sliceRef) {
@@ -872,7 +987,7 @@ public class RunCheckpointService {
     }
 
     /** Persists a changed capture; no-change captures deliberately have no CP row. */
-    private boolean persistCaptured(ChatRun run, RuntimeCheckpointClient.CaptureResult result, boolean abnormal) {
+    private boolean persistCaptured(ChatRun run, String rootId, RuntimeCheckpointClient.CaptureResult result, boolean abnormal) {
         String runId = run.getId().toString();
         String workspaceId = run.getWorkspaceId();
         if (result.noChange()) {
@@ -881,14 +996,14 @@ public class RunCheckpointService {
             return false;
         }
         if (isBlank(result.sliceRef())) {
-            persistDegraded(run, REASON_UNAVAILABLE, "missing_slice_ref");
+            persistDegraded(run, rootId, REASON_UNAVAILABLE, "missing_slice_ref");
             return false;
         }
         Instant now = Instant.now();
         Instant capturedAt = parseInstant(result.capturedAt());
         String state = valueOrDefault(result.state(),
                 abnormal ? RunCheckpoint.STATE_ABNORMAL_CAPTURED : RunCheckpoint.STATE_CAPTURED);
-        RunCheckpoint row = findSourceRun(runId, workspaceId);
+        RunCheckpoint row = findSourceRun(runId, workspaceId, rootId);
         if (row == null) {
             row = new RunCheckpoint();
             row.setId(UUID.randomUUID());
@@ -901,7 +1016,7 @@ public class RunCheckpointService {
         // hardcoded workspace guess. A pre-M7 Runtime reports no root, and a
         // primary-root capture reports the workspace id, so single-root rows keep
         // the historical attribution byte-for-byte.
-        row.setRootId(valueOrDefault(result.rootId(), workspaceId));
+        row.setRootId(valueOrDefault(result.rootId(), rootId));
         row.setState(state);
         row.setSliceRef(result.sliceRef());
         row.setCapturedAt(capturedAt == null ? now : capturedAt);
@@ -925,11 +1040,11 @@ public class RunCheckpointService {
     }
 
     /** Records one failed capture as a degraded row; never overwrites a captured row. */
-    private void persistDegraded(ChatRun run, String reason, String detail) {
+    private void persistDegraded(ChatRun run, String rootId, String reason, String detail) {
         String runId = run.getId().toString();
         String workspaceId = run.getWorkspaceId();
         Instant now = Instant.now();
-        RunCheckpoint row = findSourceRun(runId, workspaceId);
+        RunCheckpoint row = findSourceRun(runId, workspaceId, rootId);
         if (row != null && isCapturedState(row.getState())) {
             logger.info("[LIFECYCLE] service=cp event=run_checkpoint_degrade_skipped runId={} workspaceId={} "
                             + "reason=already_captured",
@@ -941,12 +1056,10 @@ public class RunCheckpointService {
             row.setId(UUID.randomUUID());
             row.setSourceRunId(runId);
             row.setWorkspaceId(workspaceId);
-            // PLAN-0639 M7 (VM11): a degraded row records a *failed* capture, so
-            // there is no captured root to report. The primary root (the workspace
-            // id) is the only attribution this row can honestly carry; a later
-            // successful capture overwrites it with the Runtime-reported root
-            // (`persistCaptured`).
-            row.setRootId(workspaceId);
+            // PLAN-0639 M8: the row is attributed to the root this capture attempt
+            // targeted (not the workspace), so a failed secondary root keeps its own
+            // degraded row while the primary root stays independent.
+            row.setRootId(rootId);
             row.setSourceSessionId(run.getSessionId());
             row.setChangedFiles("[]");
             row.setOpaqueNestedRepos("[]");

@@ -333,6 +333,20 @@ class DomainSchemaMigrationTest {
         assertNotNull(scalarString(
                 "SELECT conname FROM pg_constraint WHERE conname = 'uq_run_checkpoints_workspace_slice'"),
                 "unique (workspace_id, slice_ref) must exist");
+        // PLAN-0639 M8: the run-slice uniqueness key carries the root, so one Run can
+        // hold one row per captured root (V103 replaced the pre-M8 key).
+        assertNotNull(scalarString(
+                "SELECT conname FROM pg_constraint "
+                        + "WHERE conname = 'uq_run_checkpoints_workspace_root_source_run'"),
+                "unique (workspace_id, root_id, source_run_id) must exist");
+        assertEquals(0, scalarInt(
+                "SELECT count(*) FROM pg_constraint "
+                        + "WHERE conname = 'uq_run_checkpoints_workspace_source_run'"),
+                "the pre-M8 (workspace_id, source_run_id) key must be gone");
+        assertEquals("NO", scalarString(
+                "SELECT is_nullable FROM information_schema.columns WHERE table_schema = 'public' "
+                        + "AND table_name = 'run_checkpoints' AND column_name = 'root_id'"),
+                "root_id must stay NOT NULL (V76) — M8 requires every row to be root-attributed");
         assertNotNull(scalarString(
                 "SELECT indexname FROM pg_indexes WHERE indexname = 'idx_run_checkpoints_workspace_state_captured'"),
                 "(workspace_id, state) index must exist");

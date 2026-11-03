@@ -54,6 +54,7 @@ class RunCheckpointServiceTest {
     private RuntimeCheckpointClient client;
     private ChatRunRepository chatRunRepository;
     private SseEmitterManager sseManager;
+    private com.cc01cc.p.xihe.cp.repository.WorkspaceRootRepository workspaceRootRepository;
     private RunCheckpointService service;
     private final List<RunCheckpoint> rows = new CopyOnWriteArrayList<>();
 
@@ -65,10 +66,18 @@ class RunCheckpointServiceTest {
         sseManager = mock(SseEmitterManager.class);
         rows.clear();
 
+        // PLAN-0639 M8: one Run holds one row per captured root, so the (run, workspace)
+        // lookup is a list and the idempotency lookup adds the root dimension.
         when(repository.findBySourceRunIdAndWorkspaceId(anyString(), anyString()))
                 .thenAnswer(invocation -> rows.stream()
                         .filter(row -> row.getSourceRunId().equals(invocation.getArgument(0))
                                 && row.getWorkspaceId().equals(invocation.getArgument(1)))
+                        .toList());
+        when(repository.findBySourceRunIdAndWorkspaceIdAndRootId(anyString(), anyString(), anyString()))
+                .thenAnswer(invocation -> rows.stream()
+                        .filter(row -> row.getSourceRunId().equals(invocation.getArgument(0))
+                                && row.getWorkspaceId().equals(invocation.getArgument(1))
+                                && java.util.Objects.equals(row.getRootId(), invocation.getArgument(2)))
                         .findFirst());
         when(repository.findByWorkspaceIdAndSliceRef(anyString(), anyString()))
                 .thenAnswer(invocation -> rows.stream()
@@ -109,9 +118,11 @@ class RunCheckpointServiceTest {
                 });
         when(repository.countByWorkspaceId(anyString())).thenReturn(0L);
         when(repository.countSliceRefs(anyString())).thenReturn(0L);
+        workspaceRootRepository = mock(
+                com.cc01cc.p.xihe.cp.repository.WorkspaceRootRepository.class);
         service = new RunCheckpointService(repository, client, chatRunRepository,
                 org.mockito.Mockito.mock(com.cc01cc.p.xihe.cp.repository.SessionRepository.class),
-                new ObjectMapper(), sseManager);
+                workspaceRootRepository, new ObjectMapper(), sseManager);
     }
 
     @AfterEach
@@ -177,6 +188,116 @@ class RunCheckpointServiceTest {
         assertNotNull(row.getCapturedAt());
         verify(client).capture(WORKSPACE_ID, RUN_ID, USER_ID, captureCallId(RUN_ID), false);
 
+    }
+
+    // ── PLAN-0639 M8: one slice row per declared root ───────────────────────
+
+    private com.cc01cc.p.xihe.cp.entity.WorkspaceRoot rootRow(String rootId, String hostPath,
+                                                              int position) {
+        com.cc01cc.p.xihe.cp.entity.WorkspaceRoot root =
+                new com.cc01cc.p.xihe.cp.entity.WorkspaceRoot();
+        root.setId(UUID.fromString(rootId));
+        root.setWorkspaceId(UUID.fromString(WORKSPACE_ID));
+        root.setPosition(position);
+        root.setHostPath(hostPath);
+        root.setCreatedBy("user:" + USER_ID);
+        return root;
+    }
+
+    /**
+     * M8's reason for existing: the same Run is captured once per declared root and
+     * writes one row per root. Pre-M8 the second root never got a slice — the capture
+     * call happened exactly once, for the workspace path.
+     */
+    @Test
+    void terminalCaptureWritesOneRowPerDeclaredRoot() {
+        String secondaryRoot = "33333333-3333-3333-3333-333333333333";
+        String secondarySlice = "refs/xihe/slices/1757980000001-cd34ef";
+        when(chatRunRepository.findById(UUID.fromString(RUN_ID)))
+                .thenReturn(Optional.of(runWithStatus("succeeded")));
+        when(workspaceRootRepository
+                .findByWorkspaceIdAndDeletedAtIsNullOrderByPositionAsc(UUID.fromString(WORKSPACE_ID)))
+                .thenReturn(List.of(
+                        rootRow(WORKSPACE_ID, "H:/ws/primary", 0),
+                        rootRow(secondaryRoot, "H:/ws/vendor-lib", 1)));
+        when(client.capture(WORKSPACE_ID, RUN_ID, USER_ID, captureCallId(RUN_ID), false))
+                .thenReturn(captureOk(SLICE_REF));
+        when(client.capture(WORKSPACE_ID, secondaryRoot, RUN_ID, USER_ID,
+                captureCallId(RUN_ID), false))
+                .thenReturn(new RuntimeCheckpointClient.CaptureResult(
+                        RuntimeCheckpointClient.Outcome.OK, RUN_ID, false, secondarySlice,
+                        "cd34ef", "2026-09-15T00:00:01Z", RunCheckpoint.STATE_CAPTURED,
+                        List.of(new RuntimeCheckpointClient.ChangedFile("A", "vendor/lib/x.rs")),
+                        List.of(), null, null));
+
+        assertTrue(service.captureCheckpoint(RUN_ID));
+
+        assertEquals(2, rows.size(), "one captured row per declared root");
+        RunCheckpoint primaryRow = rows.stream()
+                .filter(row -> WORKSPACE_ID.equals(row.getRootId())).findFirst().orElseThrow();
+        RunCheckpoint secondaryRow = rows.stream()
+                .filter(row -> secondaryRoot.equals(row.getRootId())).findFirst().orElseThrow();
+        assertEquals(SLICE_REF, primaryRow.getSliceRef());
+        assertEquals(secondarySlice, secondaryRow.getSliceRef());
+        assertEquals(RunCheckpoint.STATE_CAPTURED, secondaryRow.getState(),
+                "the secondary root keeps its own captured state");
+        verify(client).capture(WORKSPACE_ID, secondaryRoot, RUN_ID, USER_ID,
+                captureCallId(RUN_ID), false);
+    }
+
+    /**
+     * A failing secondary root must not block the primary one and must not abort the
+     * loop: it records its own degraded row while the primary stays captured.
+     */
+    @Test
+    void aFailingSecondaryRootDoesNotBlockThePrimaryRoot() {
+        String secondaryRoot = "33333333-3333-3333-3333-333333333333";
+        when(chatRunRepository.findById(UUID.fromString(RUN_ID)))
+                .thenReturn(Optional.of(runWithStatus("succeeded")));
+        when(workspaceRootRepository
+                .findByWorkspaceIdAndDeletedAtIsNullOrderByPositionAsc(UUID.fromString(WORKSPACE_ID)))
+                .thenReturn(List.of(
+                        rootRow(WORKSPACE_ID, "H:/ws/primary", 0),
+                        rootRow(secondaryRoot, "H:/ws/missing", 1)));
+        when(client.capture(WORKSPACE_ID, RUN_ID, USER_ID, captureCallId(RUN_ID), false))
+                .thenReturn(captureOk(SLICE_REF));
+        when(client.capture(WORKSPACE_ID, secondaryRoot, RUN_ID, USER_ID,
+                captureCallId(RUN_ID), false))
+                .thenThrow(new IllegalStateException("runtime unreachable for root"));
+
+        assertTrue(service.captureCheckpoint(RUN_ID), "the primary root still captures");
+
+        assertEquals(2, rows.size());
+        assertEquals(RunCheckpoint.STATE_CAPTURED, rows.stream()
+                .filter(row -> WORKSPACE_ID.equals(row.getRootId())).findFirst().orElseThrow()
+                .getState());
+        assertEquals(RunCheckpoint.STATE_DEGRADED, rows.stream()
+                .filter(row -> secondaryRoot.equals(row.getRootId())).findFirst().orElseThrow()
+                .getState());
+    }
+
+    /**
+     * Equivalence guard: a workspace with no declared-root rows (every legacy
+     * single-root workspace) captures exactly once, with the pre-M8 five-argument
+     * call, and writes exactly one row.
+     */
+    @Test
+    void singleRootCaptureKeepsThePreM8Shape() {
+        when(chatRunRepository.findById(UUID.fromString(RUN_ID)))
+                .thenReturn(Optional.of(runWithStatus("succeeded")));
+        when(workspaceRootRepository
+                .findByWorkspaceIdAndDeletedAtIsNullOrderByPositionAsc(UUID.fromString(WORKSPACE_ID)))
+                .thenReturn(List.of());
+        when(client.capture(WORKSPACE_ID, RUN_ID, USER_ID, captureCallId(RUN_ID), false))
+                .thenReturn(captureOk(SLICE_REF));
+
+        assertTrue(service.captureCheckpoint(RUN_ID));
+
+        assertEquals(1, rows.size());
+        assertEquals(WORKSPACE_ID, rows.get(0).getRootId());
+        verify(client, times(1)).capture(WORKSPACE_ID, RUN_ID, USER_ID, captureCallId(RUN_ID), false);
+        verify(client, never()).capture(anyString(), anyString(), anyString(), anyString(),
+                anyString(), anyBoolean());
     }
 
     @Test
