@@ -119,9 +119,11 @@ impl AppState {
             .workspace_ensurer
             .ensure_workspace_materialized_with_guard(&operation_guard)
             .await?;
+        // PLAN-0639 M1: watcher key = workspace_id:root_id; root_id defaults to workspace_id
+        // for the legacy single-root shape (primary root invariant root[0].id = workspace.id).
         if let Err(error) = self
             .workspace_event_watchers
-            .ensure(workspace_id, &instance.workspace_path)
+            .ensure(workspace_id, workspace_id, &instance.workspace_path)
             .await
         {
             tracing::warn!(
@@ -2417,7 +2419,7 @@ async fn delete_workspace_handler(
             .map_err(runtime_problem)?;
         return Err(runtime_problem(error));
     }
-    app.workspace_event_watchers.stop(ws_id).await;
+    app.workspace_event_watchers.stop_workspace(ws_id).await;
     // F2: no resident `destroyed` state — unregister + released marker.
     app.lifecycle.complete_destroy(ws_id).await;
     tracing::info!(
@@ -2504,7 +2506,7 @@ async fn workspace_release_handler(
     }
     // Reclaim the execution-resource set (decision #28): watcher + Job process
     // tree + MCP sessions + in-memory instance. No container touches (decision #22).
-    app.workspace_event_watchers.stop(&ws_id).await;
+    app.workspace_event_watchers.stop_workspace(&ws_id).await;
     let terminated = app.job_engine.terminate_workspace(&ws_id);
     app.mcp_sessions.cleanup_workspace(&ws_id).await;
     app.lifecycle.release(&ws_id, "USER_RELEASED").await;
@@ -3502,7 +3504,7 @@ async fn run() -> anyhow::Result<()> {
                         .ensure_workspace_materialized(&ws_id)
                         .await?;
                     if let Err(error) = service_workspace_event_watchers
-                        .ensure(&ws_id, &instance.workspace_path)
+                        .ensure(&ws_id, &ws_id, &instance.workspace_path)
                         .await
                     {
                         tracing::warn!(
@@ -3828,7 +3830,7 @@ async fn idle_reaper_loop(ctx: ReaperContext, ct: tokio_util::sync::Cancellation
                     // still need the same eviction boundary.
                     if instance.execution_mode != "docker" {
                         if tier == ReapTier::Evict {
-                            workspace_event_watchers.stop(ws_id).await;
+                            workspace_event_watchers.stop_workspace(ws_id).await;
                             lifecycle.evict(ws_id).await;
                             sessions.cleanup_workspace(ws_id).await;
                             tracing::info!(
@@ -3849,7 +3851,7 @@ async fn idle_reaper_loop(ctx: ReaperContext, ct: tokio_util::sync::Cancellation
                             let mut mgr = manager.lock().await;
                             match mgr.delete_workspace(ws_id).await {
                                 Ok(_) => {
-                                    workspace_event_watchers.stop(ws_id).await;
+                                    workspace_event_watchers.stop_workspace(ws_id).await;
                                     lifecycle.evict(ws_id).await;
                                     sessions.cleanup_workspace(ws_id).await;
                                     tracing::info!(

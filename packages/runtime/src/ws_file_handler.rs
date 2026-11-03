@@ -28,7 +28,15 @@ const PATH_SEGMENT_ENCODE_SET: &AsciiSet = &CONTROLS
 /// Best-effort Runtime -> CP notification. File operations stay successful
 /// when the event surface is unavailable; UI will recover through snapshot
 /// refresh after reconnect or a sequence gap.
-pub(crate) async fn report_workspace_event(workspace_id: &str, path: &str, change_type: &str) {
+///
+/// PLAN-0639 M1: `root_id` is the declared root that owns this path (defaults to the
+/// workspace id for the legacy single-root shape).
+pub(crate) async fn report_workspace_event(
+    workspace_id: &str,
+    root_id: &str,
+    path: &str,
+    change_type: &str,
+) {
     let normalized_path = path.replace('\\', "/");
     if normalized_path.starts_with('/')
         || normalized_path.contains(':')
@@ -46,10 +54,47 @@ pub(crate) async fn report_workspace_event(workspace_id: &str, path: &str, chang
             "kind": "file_changed",
             "path": normalized_path,
             "changeType": change_type,
+            "rootId": root_id,
             "source": "runtime",
         }),
     )
     .await;
+}
+
+/// PLAN-0639 M1: report a file event with deepest-root attribution.  When the path falls
+/// inside a nested declared root, the event is attributed to that deepest root and the
+/// parent root's duplicate is dropped at the emission side (D39-5b).
+#[allow(dead_code)] // wired in PLAN-0639 M1 checkpoint dispatch (D39-5b emission side)
+pub(crate) async fn report_workspace_event_attributed(
+    workspace_id: &str,
+    spec_roots: &[(String, String)], // (root_id, canonical_root_path)
+    path: &str,
+    change_type: &str,
+) {
+    let canonical_path = path.replace('\\', "/");
+    let mut best: Option<&(String, String)> = None;
+    for root in spec_roots {
+        let root_path = root.1.replace('\\', "/");
+        if canonical_path.starts_with(&format!("{root_path}/"))
+            || canonical_path == root_path
+        {
+            let best_len = best.map(|b| b.1.len()).unwrap_or(0);
+            if root.1.len() > best_len {
+                best = Some(root);
+            }
+        }
+    }
+    match best {
+        Some((root_id, _)) => {
+            report_workspace_event(workspace_id, root_id, path, change_type).await;
+        }
+        None => {
+            warn!(
+                "workspace event dropped: no matching declared root workspaceId={} path={}",
+                workspace_id, path
+            );
+        }
+    }
 }
 
 pub(crate) async fn report_workspace_snapshot_required(workspace_id: &str) {

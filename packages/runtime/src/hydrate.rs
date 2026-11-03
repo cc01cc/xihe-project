@@ -45,8 +45,20 @@ pub struct WorkspaceExecutionSpec {
     pub storage_mode: String,
     #[serde(rename = "hostPath", default)]
     pub host_path: Option<String>,
+    /// PLAN-0639 M1: ordered root list [{rootId, hostPath}].  Absent on legacy specs.
+    #[serde(rename = "roots", default)]
+    pub roots: Option<Vec<SpecRoot>>,
     #[serde(rename = "executionMode", default = "default_execution_mode")]
     pub execution_mode: String,
+}
+
+/// PLAN-0639 M1: one entry of `WorkspaceExecutionSpec.roots`.
+#[derive(Debug, Clone, Deserialize)]
+pub struct SpecRoot {
+    #[serde(rename = "rootId")]
+    pub root_id: String,
+    #[serde(rename = "hostPath")]
+    pub host_path: String,
 }
 
 fn default_storage_mode() -> String {
@@ -448,19 +460,26 @@ impl WorkspaceEnsurer {
             Err(error) => return self.failure(workspace_id, error).await,
         };
         let workspace_path = if spec.storage_mode == "direct_attach" {
-            let raw_path = spec
-                .host_path
-                .as_deref()
-                .expect("validated direct-attach hostPath");
-            let candidate = PathBuf::from(raw_path);
-            match tokio::fs::canonicalize(&candidate).await {
+            // PLAN-0639 M1: read spec.roots[] (ordered root absolute paths).  Fall back to
+            // spec.host_path for legacy single-root specs that predate the roots field.
+            let raw_paths: Vec<String> = if let Some(roots) = spec.roots.as_ref() {
+                roots.iter().map(|r| r.host_path.clone()).collect()
+            } else {
+                vec![spec
+                    .host_path
+                    .as_deref()
+                    .expect("validated direct-attach hostPath")
+                    .to_string()]
+            };
+            let primary = PathBuf::from(&raw_paths[0]);
+            match tokio::fs::canonicalize(&primary).await {
                 Ok(path) if path.is_dir() => path,
                 Ok(_) => {
                     return self
                         .failure(
                             workspace_id,
                             RuntimeError::InvalidPath(
-                                "direct-attach hostPath is not a directory".to_string(),
+                                "direct-attach root[0] is not a directory".to_string(),
                             ),
                         )
                         .await;
@@ -470,7 +489,7 @@ impl WorkspaceEnsurer {
                         .failure(
                             workspace_id,
                             RuntimeError::InvalidPath(format!(
-                                "direct-attach hostPath is not accessible: {error}"
+                                "direct-attach root[0] is not accessible: {error}"
                             )),
                         )
                         .await;
@@ -710,6 +729,7 @@ mod tests {
             storage_ref: "ws-1".to_string(),
             storage_mode: "managed_import".to_string(),
             host_path: None,
+            roots: None,
             execution_mode: "docker".to_string(),
         }
     }

@@ -29,19 +29,23 @@ struct WatchHandle {
 
 struct PendingEvent {
     workspace_id: String,
+    root_id: String,
     path: Option<String>,
     change_type: Option<&'static str>,
     snapshot_required: bool,
 }
 
 impl WorkspaceEventWatchers {
+    /// PLAN-0639 M1: install one watcher per root.  `key` = `workspace_id + ":" + root_id`.
     pub(crate) async fn ensure(
         &self,
         workspace_id: &str,
+        root_id: &str,
         workspace_path: &str,
     ) -> Result<(), String> {
+        let map_key = format!("{workspace_id}:{root_id}");
         let mut handles = self.handles.lock().await;
-        if handles.contains_key(workspace_id) {
+        if handles.contains_key(&map_key) {
             return Ok(());
         }
         let raw_root = PathBuf::from(workspace_path);
@@ -69,16 +73,19 @@ impl WorkspaceEventWatchers {
             .map_err(|_| "WATCHER_START_FAILED".to_string())?;
 
         let id = workspace_id.to_string();
+        let root_id_owned = root_id.to_string();
         let task_root = root.clone();
         let (publish_sender, mut publish_receiver) = mpsc::channel::<PendingEvent>(EVENT_BUFFER);
         let watch_overflow = overflow.clone();
         let watch_id = id.clone();
+        let watch_root_id = root_id_owned.clone();
         let watch_task = tokio::spawn(async move {
             while let Some(result) = receiver.recv().await {
                 if watch_overflow.swap(false, Ordering::AcqRel)
                     && publish_sender
                         .try_send(PendingEvent {
                             workspace_id: watch_id.clone(),
+                            root_id: watch_root_id.clone(),
                             path: None,
                             change_type: None,
                             snapshot_required: true,
@@ -99,6 +106,7 @@ impl WorkspaceEventWatchers {
                             if publish_sender
                                 .try_send(PendingEvent {
                                     workspace_id: watch_id.clone(),
+                                    root_id: watch_root_id.clone(),
                                     path: Some(relative),
                                     change_type: Some(change_type),
                                     snapshot_required: false,
@@ -135,12 +143,13 @@ impl WorkspaceEventWatchers {
                     {
                         continue;
                     }
-                    report_workspace_event(&event.workspace_id, &path, change_type).await;
+                    report_workspace_event(&event.workspace_id, &event.root_id, &path, change_type)
+                        .await;
                 }
             }
         });
         handles.insert(
-            workspace_id.to_string(),
+            map_key,
             WatchHandle {
                 _watcher: watcher,
                 watch_task,
@@ -150,10 +159,33 @@ impl WorkspaceEventWatchers {
         Ok(())
     }
 
-    pub(crate) async fn stop(&self, workspace_id: &str) {
-        if let Some(handle) = self.handles.lock().await.remove(workspace_id) {
+    /// PLAN-0639 M1: stop the watcher for one root (key = `workspace_id + ":" + root_id`).
+    #[allow(dead_code)] // available for per-root stop once CP emits root lifecycle events
+    pub(crate) async fn stop(&self, workspace_id: &str, root_id: &str) {
+        let map_key = format!("{workspace_id}:{root_id}");
+        if let Some(handle) = self.handles.lock().await.remove(&map_key) {
             handle.watch_task.abort();
             handle.publish_task.abort();
+        }
+    }
+
+    /// Stop all watchers for a workspace (all roots).
+    pub(crate) async fn stop_workspace(&self, workspace_id: &str) {
+        let prefix = format!("{workspace_id}:");
+        let keys: Vec<String> = self
+            .handles
+            .lock()
+            .await
+            .keys()
+            .filter(|k| k.starts_with(&prefix))
+            .cloned()
+            .collect();
+        let mut handles = self.handles.lock().await;
+        for key in keys {
+            if let Some(handle) = handles.remove(&key) {
+                handle.watch_task.abort();
+                handle.publish_task.abort();
+            }
         }
     }
 }
@@ -228,10 +260,10 @@ mod tests {
         let watchers = WorkspaceEventWatchers::default();
         let root_path = root.path().to_string_lossy().into_owned();
         watchers
-            .ensure("ws-direct", &root_path)
+            .ensure("ws-direct", "root-0", &root_path)
             .await
             .expect("watcher should start for a direct-attach root");
-        watchers.stop("ws-direct").await;
+        watchers.stop("ws-direct", "root-0").await;
     }
 
     #[tokio::test]
@@ -240,7 +272,7 @@ mod tests {
         let watchers = WorkspaceEventWatchers::default();
         let root_path = root.path().to_string_lossy().into_owned();
         let error = watchers
-            .ensure("ws-file", &root_path)
+            .ensure("ws-file", "root-0", &root_path)
             .await
             .expect_err("file roots must not be watched as a workspace");
         assert_eq!(error, "WATCHER_ROOT_NOT_DIRECTORY");

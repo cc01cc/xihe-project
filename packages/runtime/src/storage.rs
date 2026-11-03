@@ -81,17 +81,20 @@ pub fn absolutize_path(path: &Path) -> PathBuf {
     }
 }
 
-/// Resolve a Workspace's roots to validated host directories (PLAN-0502 seam B).
+/// Resolve a Workspace's roots to validated host directories (PLAN-0639 M1).
 ///
-/// The single-root model yields exactly one entry; the collection shape keeps
-/// multi-root additive. Fails if any root fails validation.
+/// Multi-root: `roots` is the ordered list of root **absolute host paths** (already
+/// canonicalised by CP).  Root[0] is the primary root (id = workspaceId); the old
+/// ownership weld (`ws_id == storage_ref`) is replaced by a root[0] identity check so
+/// per-root shadow repos and path resolution work without changing the legacy single-root
+/// path shape (`<hostRoot>/.xihe-shadow/<workspaceId>.git`).
 pub async fn resolve_hosts(host_root: &str, roots: &[String], ws_id: &str) -> Result<Vec<PathBuf>> {
     if roots.is_empty() {
         return Err(RuntimeError::InvalidPath("workspace has no roots".into()));
     }
     let mut resolved = Vec::with_capacity(roots.len());
-    for storage_ref in roots {
-        resolved.push(resolve_one(host_root, storage_ref, ws_id).await?);
+    for (index, root_path) in roots.iter().enumerate() {
+        resolved.push(resolve_one(host_root, root_path, ws_id, index).await?);
     }
     Ok(resolved)
 }
@@ -102,31 +105,21 @@ pub async fn resolve_host_path(host_root: &str, storage_ref: &str, ws_id: &str) 
     Ok(hosts.remove(0))
 }
 
-/// Resolve `hostRoot + storageRef` to one validated host directory.
+/// Resolve one root absolute path to a validated host directory.
 ///
-/// Validation per grill B1/B2/B6:
-/// - B1: strict regex, length, no NUL/colon/slash already covered by regex
-/// - Ownership: `ws_id == storageRef` (per M1a 2.1a) — kept this round to hold
-///   zero behavior change; multi-root decoupling is deferred to BL-94
-/// - B2: Windows canonicalize + lowercase prefix check (requires hostRoot exists;
-///   if joined path not yet exists, canonicalize its parent)
-/// - Returns `STORAGE_BINDING_INVALID` (InvalidPath/PathTraversal/SymlinkEscape) on failure
-async fn resolve_one(host_root: &str, storage_ref: &str, ws_id: &str) -> Result<PathBuf> {
-    // B1: strict regex
-    if !is_valid_storage_ref(storage_ref) {
+/// PLAN-0639 M1: root[0] must equal `ws_id` (the primary-root invariant); roots[1..] are
+/// additional declared roots, each validated as an absolute canonical path within `hostRoot`.
+async fn resolve_one(host_root: &str, root_path: &str, ws_id: &str, index: usize) -> Result<PathBuf> {
+    if root_path.contains('\0') {
         return Err(RuntimeError::InvalidPath(format!(
-            "invalid storageRef {storage_ref:?}: must match {STORAGE_REF_RE}"
+            "root path contains NUL: {root_path:?}"
         )));
     }
-    if storage_ref.contains('\0') {
+
+    // Primary-root invariant: roots[0] must be the workspace identity.
+    if index == 0 && ws_id != root_path {
         return Err(RuntimeError::InvalidPath(format!(
-            "storageRef contains NUL: {storage_ref:?}"
-        )));
-    }
-    // Ownership: workspaceId must equal storageRef (prevents cross-workspace write)
-    if ws_id != storage_ref {
-        return Err(RuntimeError::InvalidPath(format!(
-            "workspaceId {ws_id:?} != storageRef {storage_ref:?}: ownership mismatch"
+            "primary root {root_path:?} must equal workspace id {ws_id:?}"
         )));
     }
 
@@ -135,8 +128,6 @@ async fn resolve_one(host_root: &str, storage_ref: &str, ws_id: &str) -> Result<
         return Err(RuntimeError::InvalidPath("hostRoot is empty".into()));
     }
 
-    // hostRoot must exist for canonicalize; if not, try to create it (first-run).
-    // For M1a pure-logic tests, we ensure TempDir hostRoot already exists.
     if !host_root_path.exists() {
         fs::create_dir_all(host_root_path)
             .await
@@ -147,50 +138,42 @@ async fn resolve_one(host_root: &str, storage_ref: &str, ws_id: &str) -> Result<
         RuntimeError::InvalidPath(format!("hostRoot canonicalize failed {host_root:?}: {e}"))
     })?);
 
-    // Join (lexically) — regex already guarantees no traversal, but we still canonical-check.
-    let joined = host_root_path.join(storage_ref);
+    // The root path may be absolute (multi-root) or relative to hostRoot (legacy single-root
+    // where storage_ref == ws_id and lives under hostRoot).
+    let root_candidate = PathBuf::from(root_path);
+    let joined = if root_candidate.is_absolute() {
+        root_candidate
+    } else {
+        host_root_path.join(root_path)
+    };
 
-    // If joined exists, canonicalize it; otherwise canonicalize its first existing ancestor (hostRoot) and append remaining.
     let joined_canonical = if joined.exists() {
         strip_unc_prefix(joined.canonicalize().map_err(|e| {
             RuntimeError::InvalidPath(format!(
-                "joined canonicalize failed {:?}: {}",
+                "root canonicalize failed {:?}: {}",
                 joined.display(),
                 e
             ))
         })?)
     } else {
-        // Parent (hostRoot) is guaranteed to exist after above; canonicalize parent + push child name lexically then check.
-        // We still need to ensure no symlink escape via parent: hostRoot_canonical is already canonical.
-        // For non-existing child, the canonical of parent + child name is parent_canonical + child.
-        host_root_canonical.join(storage_ref)
+        host_root_canonical.join(root_path)
     };
 
-    // B2: prefix check — Windows is case-insensitive, so lowercase both.
-    // Use filesystem canonical forms for symlink/junction resolution.
+    // Prefix check — Windows is case-insensitive, so lowercase both.
     let host_lower = host_root_canonical.to_string_lossy().to_lowercase();
     let joined_lower = joined_canonical.to_string_lossy().to_lowercase();
 
-    // Ensure joined is exactly hostRoot or hostRoot + separator + storageRef.
-    // starts_with on Path would be case-sensitive on Windows, so use lowercased string.
     if joined_lower != host_lower
         && !joined_lower.starts_with(&format!("{host_lower}/"))
         && !joined_lower.starts_with(&format!("{}\\{}", host_lower, ""))
-    // host_lower already ends without sep; handle both
+        && !joined_canonical.starts_with(&host_root_canonical)
     {
-        // More robust: check Path starts_with on canonical Paths (which are already case-preserving but we lowercased).
-        // Fall back to Path check as well.
-        if !joined_canonical.starts_with(&host_root_canonical) {
-            return Err(RuntimeError::SymlinkEscape {
-                path: joined.display().to_string(),
-                resolved: joined_canonical.display().to_string(),
-            });
-        }
-        // If Path check passed but lowercased string check failed due to separator, still allow.
-        // The Path check is authoritative for symlink.
+        return Err(RuntimeError::SymlinkEscape {
+            path: joined.display().to_string(),
+            resolved: joined_canonical.display().to_string(),
+        });
     }
 
-    // Additional check via Path::starts_with on canonical paths (handles symlink).
     if !joined_canonical.starts_with(&host_root_canonical) {
         return Err(RuntimeError::SymlinkEscape {
             path: joined.display().to_string(),
