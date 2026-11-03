@@ -8,13 +8,20 @@ import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
+import java.nio.file.attribute.AclEntry;
+import java.nio.file.attribute.AclEntryPermission;
+import java.nio.file.attribute.AclEntryType;
+import java.nio.file.attribute.AclFileAttributeView;
+import java.nio.file.attribute.UserPrincipal;
 import java.security.SecureRandom;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.Base64;
+import java.util.EnumSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -82,6 +89,66 @@ public final class Launcher {
     private static final String ENV_FILE = "launcher.properties";
     private static final String PID_FILE = "launcher-pids.json";
 
+    /* ------------------------------------------------- PLAN-0650 A: the security gate */
+
+    /**
+     * PLAN-0650 A-1: the two signatures the CP security validator emits
+     * ({@code SecurityDefaultsValidator}). They are a cross-module contract — the CP owns the
+     * texts, this launcher only consumes them — so {@code scripts/pkg/launcher-security.test.mjs}
+     * pins both literals: an upstream rewrite must fail that test rather than silently disarm
+     * the gate.
+     *
+     * <ul>
+     *   <li>{@code Insecure default configuration detected} — the CP booted with
+     *       {@code XIHE_ENV != prod} and is therefore <b>accepting factory defaults</b>. It still
+     *       reaches health 200, which is exactly why "wait for the child to exit" proves nothing
+     *       (BL-204 ①).</li>
+     *   <li>{@code Refusing to start} — the CP was in prod and refused. The launcher must report
+     *       that cause instead of a generic "process exited".</li>
+     * </ul>
+     */
+    static final String SECURITY_WARN_SIGNATURE = "Insecure default configuration detected";
+    static final String SECURITY_REFUSED_SIGNATURE = "Refusing to start";
+
+    /** Exit code for a security-policy refusal (user ruling Q-2, 2026-11-03). */
+    static final int EXIT_SECURITY = 4;
+
+    /** The packaged product always runs the CP in prod mode; one constant, no second opinion. */
+    static final String SECURITY_ENV_CP = "prod";
+
+    static final String CODE_SECRETS_MISSING = "LAUNCHER_INSECURE_SECRETS_MISSING";
+    static final String CODE_SECURITY_DEFAULTS = "LAUNCHER_SECURITY_DEFAULTS_REJECTED";
+
+    /**
+     * Enforcement convention, proved by {@code scripts/pkg/launcher-security.test.mjs}: every line
+     * that reads the secrets file carries the literal marker {@code launcher-secret-read-ok:} in
+     * its comment, so "no bare {@code getProperty} reaches an env map" is a machine-checked
+     * invariant instead of a code-review habit. There is deliberately no Java constant for it — a
+     * constant that nothing reads would imply enforcement that does not exist.
+     */
+
+    /**
+     * The 7 properties {@code launcher.properties} must carry. Missing any of them used to flow
+     * into {@code ProcessBuilder.environment().putAll(...)}, which on this JDK does <b>not</b>
+     * throw: the PLAN-0650 M0 probe showed the child receives the literal 4-character string
+     * {@code null}. A secret of {@code null} is non-blank, so the CP's own prod validator reports
+     * no violation — the only place this can be caught is here, before {@code spawn}.
+     */
+    private static final List<String> REQUIRED_SECRET_KEYS = List.of(
+            "pg.password", "jwt.secret", "credentials.key", "credentials.fingerprint.key",
+            "oauth.encryption.key", "service.token", "admin.password");
+
+    /** The five CP envs the prod validator requires, each paired with its launcher property. */
+    private static final Map<String, String> SECURITY_ENV_SOURCES = new LinkedHashMap<>();
+
+    static {
+        SECURITY_ENV_SOURCES.put("XIHE_CP_JWT_SECRET", "jwt.secret");
+        SECURITY_ENV_SOURCES.put("XIHE_CP_CREDENTIALS_KEY", "credentials.key");
+        SECURITY_ENV_SOURCES.put("XIHE_CP_CREDENTIALS_FINGERPRINT_KEY", "credentials.fingerprint.key");
+        SECURITY_ENV_SOURCES.put("XIHE_CP_PROVIDER_CREDENTIALS_KEY", "credentials.key");
+        SECURITY_ENV_SOURCES.put("XIHE_CP_OAUTH_ENCRYPTION_KEY", "oauth.encryption.key");
+    }
+
     private Launcher() {
     }
 
@@ -108,8 +175,12 @@ public final class Launcher {
             if (error.hint != null) {
                 System.err.println("[launcher] next: " + error.hint);
             }
+            // PLAN-0650: the refusal must land in the same file the user is told to read. Before
+            // this, a secrets refusal only reached stderr and diagnostic.html, so the installed
+            // launcher.log (the documented first place to look) stayed silent about the cause.
+            launcher.log("FAILED security=" + error.security + " reason=" + error.getMessage());
             launcher.writeDiagnostic("startup", error.getMessage(), error.hint, List.of());
-            code = 2;
+            code = error.security ? EXIT_SECURITY : 2;
         } catch (Exception error) {
             System.err.println("[launcher] ERROR: " + error);
             launcher.writeDiagnostic("startup", String.valueOf(error), "看 logs/launcher.log", List.of());
@@ -142,6 +213,13 @@ public final class Launcher {
         }
         Files.createDirectories(logsDir);
         this.dataRoot = resolveDataRoot();
+        if ("self-check".equals(parsed.action)) {
+            // PLAN-0650: a stack-free way to prove the security preconditions (attestation line,
+            // missing-key refusal, log gate). Ports are best-effort here: the first-run note wants
+            // the CP port, but a fixture install directory has no ports.json.
+            this.ports = tryReadPorts(appDir.resolve("ports.json"));
+            return selfCheck();
+        }
         this.ports = readPorts(appDir.resolve("ports.json"));
 
         return switch (parsed.action) {
@@ -156,6 +234,7 @@ public final class Launcher {
     private static final class Args {
         String action = "status";
         Path install;
+        Path scanLog;
         boolean noBrowser;
         boolean quiet;
         boolean cleanupOnFailure;
@@ -166,8 +245,10 @@ public final class Launcher {
             for (int i = 0; i < argv.length; i++) {
                 String token = argv[i];
                 switch (token) {
-                    case "start", "stop", "status", "about" -> args.action = token;
+                    case "start", "stop", "status", "about", "self-check" -> args.action = token;
                     case "--install" -> args.install = Path.of(requireValue(argv, ++i, token)).toAbsolutePath().normalize();
+                    case "--scan-log" -> args.scanLog =
+                            Path.of(requireValue(argv, ++i, token)).toAbsolutePath().normalize();
                     case "--no-browser" -> args.noBrowser = true;
                     case "--quiet" -> args.quiet = true;
                     case "--cleanup-on-failure" -> args.cleanupOnFailure = true;
@@ -188,15 +269,17 @@ public final class Launcher {
 
     private static String usage() {
         return """
-                usage: Xihe.exe <start|stop|status|about> [options]
+                usage: Xihe.exe <start|stop|status|about|self-check> [options]
 
                   --install <dir>        安装目录（默认从 launcher jar 的位置推导：<install>/app/..）
+                  --scan-log <file>      self-check：额外扫描该日志文件里的安全默认签名
                   --no-browser           就绪后不自动打开浏览器
                   --quiet                少输出（停止快捷方式用）
                   --cleanup-on-failure   启动失败时回收已启动的进程（默认保留供排查）
                   --help                 本帮助
 
                 phases: pg(tcp) -> cp(/actuator/health) -> agent -> runtime -> ui(same-origin)
+                exit: 0 ok, 1 residual/not-up, 2 failure, 4 security-policy refusal
                 """;
     }
 
@@ -272,28 +355,325 @@ public final class Launcher {
         // minimum viable onboarding for a per-user install; the human-readable copy is
         // %LOCALAPPDATA%\Xihe\FIRST-RUN.txt (see writeFirstRunNote).
         props.setProperty("admin.password", randomToken(random, 24));
-        try (OutputStream out = Files.newOutputStream(file, StandardOpenOption.CREATE_NEW)) {
-            props.store(out, "Xihe first-run secrets (generated once, never leaves this machine)");
+        if (!persistSecrets(props, file)) {
+            // Another launcher won the create race between the existence check and the move.
+            Properties existing = new Properties();
+            try (InputStream in = Files.newInputStream(file)) {
+                existing.load(in);
+            }
+            return existing;
         }
-        writeFirstRunNote(props);
+        writeFirstRunNote(requireSecret(props, "admin.password"));
         return props;
     }
 
+    /**
+     * PLAN-0650 A-2: write the secrets atomically, then hand them back with an owner-only DACL.
+     *
+     * <p>Why this matters beyond tidiness: the previous path streamed {@code props.store} straight
+     * into the target, so a crash mid-write left a truncated file that the next start loaded as
+     * "0 of 7 keys" — and (M0 probe) those missing keys then reached the child as the literal
+     * string {@code null} rather than failing loudly. Atomicity plus a validated read are the two
+     * halves of A-2/A-3.
+     *
+     * @return {@code true} when this call created the file, {@code false} when another process won
+     */
+    private boolean persistSecrets(Properties props, Path file) throws IOException {
+        Path tmp = file.resolveSibling(file.getFileName() + ".tmp");
+        Files.deleteIfExists(tmp);
+        try (OutputStream out = Files.newOutputStream(tmp, StandardOpenOption.CREATE_NEW,
+                StandardOpenOption.WRITE)) {
+            props.store(out, "Xihe first-run secrets (generated once, never leaves this machine)");
+            out.flush();
+        }
+        hardenPermissions(tmp);
+        if (Files.exists(file)) {
+            Files.deleteIfExists(tmp);
+            log("secrets: another launcher created " + file + " concurrently; reusing it");
+            return false;
+        }
+        Files.move(tmp, file, StandardCopyOption.ATOMIC_MOVE);
+        hardenPermissions(file);
+        hardenPermissions(file.getParent());
+        log("secrets: wrote " + file + " (" + props.size() + " keys, atomic move)");
+        return true;
+    }
+
+    /**
+     * PLAN-0650 A-2 (user ruling Q-1, 2026-11-03): DACL = file owner + SYSTEM, inherited ACEs
+     * dropped. {@code AclFileAttributeView} rather than chmod/icacls: Windows has no POSIX mode,
+     * and an in-process ACL write has no shell-quoting or locale trap.
+     *
+     * <p>A failure is logged and the previous ACL is restored — a broken DACL must never lock the
+     * user out of their own secrets.
+     */
+    private void hardenPermissions(Path target) {
+        AclFileAttributeView view = Files.getFileAttributeView(target, AclFileAttributeView.class);
+        if (view == null) {
+            log("WARN: no ACL view for " + target + "; secrets keep the inherited DACL");
+            return;
+        }
+        List<AclEntry> previous;
+        List<AclEntry> hardened = new ArrayList<>();
+        try {
+            previous = view.getAcl();
+            hardened.add(fullControl(view.getOwner()));
+            UserPrincipal system = lookupSystemPrincipal(target);
+            if (system != null) {
+                hardened.add(fullControl(system));
+            }
+            view.setAcl(hardened);
+            List<AclEntry> readBack = view.getAcl();
+            if (readBack.size() < hardened.size()) {
+                throw new IOException("ACL read-back has " + readBack.size() + " of "
+                        + hardened.size() + " entries");
+            }
+            log("security: acl " + target.getFileName() + " entries=" + readBack.size()
+                    + " (owner+SYSTEM, inherited dropped)");
+        } catch (IOException | RuntimeException failure) {
+            log("WARN: could not harden the DACL of " + target + " (" + failure.getMessage()
+                    + "); keeping the inherited ACL");
+            restoreAcl(view, target);
+        }
+    }
+
+    private void restoreAcl(AclFileAttributeView view, Path target) {
+        try {
+            List<AclEntry> current = view.getAcl();
+            view.setAcl(current);
+            log("WARN: ACL for " + target.getFileName()
+                    + " left as read back (" + current.size() + " entries); verify with icacls");
+        } catch (IOException | RuntimeException rollbackFailure) {
+            log("ERROR: ACL rollback failed for " + target + ": " + rollbackFailure);
+        }
+    }
+
+    private UserPrincipal lookupSystemPrincipal(Path target) {
+        try {
+            return target.getFileSystem().getUserPrincipalLookupService().lookupPrincipalByName("SYSTEM");
+        } catch (IOException | RuntimeException failure) {
+            log("WARN: SYSTEM principal lookup failed for " + target + " (" + failure.getMessage()
+                    + "); hardening to the owner only");
+            return null;
+        }
+    }
+
+    private static AclEntry fullControl(UserPrincipal principal) {
+        return AclEntry.newBuilder()
+                .setType(AclEntryType.ALLOW)
+                .setPrincipal(principal)
+                .setPermissions(EnumSet.allOf(AclEntryPermission.class))
+                .build();
+    }
+
+    /* --------------------------------------------------- PLAN-0650 A-3: fail-closed secrets */
+
+    /**
+     * The only sanctioned reader of {@code launcher.properties}.
+     *
+     * <p>Every secret must come through here: a missing key has to be a named refusal (exit 4)
+     * instead of a {@code null} that the child receives as the literal 4-character string
+     * {@code null} (PLAN-0650 M0 probe). Each read carries the literal marker
+     * {@code launcher-secret-read-ok:} in its comment, so
+     * {@code scripts/pkg/launcher-security.test.mjs} can prove no bare read slipped back in.
+     */
+    private static String requireSecret(Properties props, String key) {
+        String value = props.getProperty(key); // launcher-secret-read-ok: the sanctioned reader
+        if (value == null || value.isBlank()) {
+            throw new LauncherException(CODE_SECRETS_MISSING + ": launcher.properties 缺键 `" + key + "`",
+                    "secrets 文件被截断或手工改坏了。从备份恢复 secrets\\launcher.properties；"
+                            + "不会自动重建密钥（重建会让既有密文不可读）", true);
+        }
+        return value;
+    }
+
+    /** Pre-flight sweep: report every missing key in one refusal instead of one start per key. */
+    private void requireAllSecrets(Properties props) {
+        List<String> missing = new ArrayList<>();
+        for (String key : REQUIRED_SECRET_KEYS) {
+            String value = props.getProperty(key); // launcher-secret-read-ok: pre-flight sweep
+            if (value == null || value.isBlank()) {
+                missing.add(key);
+            }
+        }
+        if (!missing.isEmpty()) {
+            throw new LauncherException(CODE_SECRETS_MISSING + ": launcher.properties 缺 "
+                    + missing.size() + " 个键 [" + String.join(", ", missing) + "]",
+                    "secrets 文件被截断或手工改坏了：从备份恢复 " + dataRoot.resolve("secrets").resolve(ENV_FILE)
+                            + "；不会自动重建密钥（重建会让既有凭据密文永久不可读）", true);
+        }
+    }
+
+    /* ------------------------------------------------- PLAN-0650 A-1: prove it, don't assume */
+
+    /**
+     * Build the five CP security envs from the secrets and the three {@code ALLOW_DEV_KEY=false}
+     * switches. The {@code keys=5/5} attestation counts exactly what the CP validator will see,
+     * so the positive evidence and the negative gate are computed from one source.
+     *
+     * <p>Two inherited rationales are preserved here on purpose: the Runtime decrypts
+     * credential/OAuth payloads with the <b>same</b> keys and its own prod validator refuses a
+     * blank one (measured before PLAN-0632: runtime exit 1 "Insecure default configuration
+     * rejected in prod mode" when only the CP received them); and PLAN-0553 retired the
+     * provider-credentials domain while both validators still require a real key in prod, so
+     * reusing the credentials key keeps the legacy knob unable to fall back to a public constant.
+     */
+    private Map<String, String> securityEnv(Properties props) {
+        Map<String, String> env = new LinkedHashMap<>();
+        List<String> missing = new ArrayList<>();
+        for (Map.Entry<String, String> entry : SECURITY_ENV_SOURCES.entrySet()) {
+            String value = props.getProperty(entry.getValue()); // launcher-secret-read-ok: attestation source
+            if (value == null || value.isBlank()) {
+                missing.add(entry.getKey() + "<-" + entry.getValue());
+            } else {
+                env.put(entry.getKey(), value);
+            }
+        }
+        if (!missing.isEmpty()) {
+            throw new LauncherException(CODE_SECRETS_MISSING + ": CP 安全 env 无法组装（缺 "
+                    + String.join(", ", missing) + "）",
+                    "launcher.properties 缺键；不会自动重建密钥", true);
+        }
+        env.put("XIHE_CP_CREDENTIALS_ALLOW_DEV_KEY", "false");
+        env.put("XIHE_CP_PROVIDER_CREDENTIALS_ALLOW_DEV_KEY", "false");
+        env.put("XIHE_CP_OAUTH_ALLOW_DEV_KEY", "false");
+        return env;
+    }
+
+    /**
+     * PLAN-0650 A-1 positive evidence: one greppable line saying what the launcher is about to
+     * hand the CP. This is the <b>intent</b>; the negative gate below is the <b>proof</b>, because
+     * only the CP's own log can say which mode it actually booted in.
+     */
+    private void attestSecurity(String envName, Map<String, String> securityEnv) {
+        int required = SECURITY_ENV_SOURCES.size();
+        int present = 0;
+        for (String key : SECURITY_ENV_SOURCES.keySet()) {
+            String value = securityEnv.get(key);
+            if (value != null && !value.isBlank()) {
+                present++;
+            }
+        }
+        boolean allowDevKeys = devKeyFallbackEnabled(securityEnv);
+        log("security: env=" + envName + " keys=" + present + "/" + required
+                + " allowDevKeys=" + allowDevKeys);
+        if (present < required || allowDevKeys) {
+            throw new LauncherException(CODE_SECURITY_DEFAULTS + ": security 前置条件不满足 (keys="
+                    + present + "/" + required + ", allowDevKeys=" + allowDevKeys + ")",
+                    "密钥未送达时 CP 会在非 prod 模式接受工厂默认值并照常启动；先修 launcher.properties", true);
+        }
+    }
+
+    private static boolean devKeyFallbackEnabled(Map<String, String> env) {
+        for (String key : List.of("XIHE_CP_CREDENTIALS_ALLOW_DEV_KEY",
+                "XIHE_CP_PROVIDER_CREDENTIALS_ALLOW_DEV_KEY", "XIHE_CP_OAUTH_ALLOW_DEV_KEY")) {
+            if ("true".equalsIgnoreCase(env.get(key))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * PLAN-0650 A-1 negative gate: scan the CP's own logs for the two security signatures.
+     *
+     * <p>Runs on <b>every</b> cp outcome (ready / process-exited / timeout), because the dangerous
+     * case is the one that reaches health 200: a CP booted with {@code XIHE_ENV != prod} accepts
+     * factory defaults, logs a WARN and looks perfectly healthy. Waiting for the child to exit
+     * (the old behaviour) can therefore never prove anything.
+     *
+     * <p>Both streams are scanned on purpose: which stream logback's console appender writes to is
+     * the CP's business, not the launcher's, so betting on one stream would bet on an
+     * implementation detail.
+     */
+    private String scanCpSecurityLogs() {
+        for (Path candidate : List.of(logsDir.resolve("cp.out.log"), logsDir.resolve("cp.err.log"))) {
+            String violation = scanLogFile(candidate);
+            if (violation != null) {
+                return violation;
+            }
+        }
+        return null;
+    }
+
+    /** @return a one-line finding, or {@code null} when the file is absent/clean */
+    private String scanLogFile(Path file) {
+        if (file == null || !Files.isRegularFile(file)) {
+            return null;
+        }
+        try {
+            String text = Files.readString(file, StandardCharsets.UTF_8);
+            int refusedAt = text.indexOf(SECURITY_REFUSED_SIGNATURE);
+            if (refusedAt >= 0) {
+                return file.getFileName() + ": " + excerpt(text, refusedAt);
+            }
+            int warnedAt = text.indexOf(SECURITY_WARN_SIGNATURE);
+            if (warnedAt >= 0) {
+                return file.getFileName() + ": " + excerpt(text, warnedAt);
+            }
+            return null;
+        } catch (IOException unreadable) {
+            log("WARN: cannot read " + file + " for the security scan: " + unreadable.getMessage());
+            return null;
+        }
+    }
+
+    private static String excerpt(String text, int at) {
+        int from = Math.max(0, at - 60);
+        int to = Math.min(text.length(), at + 200);
+        return text.substring(from, to).replaceAll("\\R", " ").trim();
+    }
+
+    /**
+     * PLAN-0650: stack-free proof of the security preconditions — creates/validates the secrets,
+     * emits the same attestation line the real start emits, and optionally runs the log gate over
+     * a supplied file ({@code --scan-log}). It spawns nothing and binds no port, so it is safe in
+     * CI and inside a fixture install directory.
+     */
+    private int selfCheck() throws IOException {
+        Files.createDirectories(dataRoot);
+        this.secrets = loadOrCreateSecrets();
+        requireAllSecrets(secrets);
+        Map<String, String> securityEnv = securityEnv(secrets);
+        attestSecurity(SECURITY_ENV_CP, securityEnv);
+        if (args.scanLog != null) {
+            String violation = scanLogFile(args.scanLog);
+            if (violation != null) {
+                throw new LauncherException(
+                        CODE_SECURITY_DEFAULTS + ": 日志命中安全默认签名 → " + violation,
+                        "CP 以非 prod 模式接受了工厂默认密钥；检查传给 CP 的 XIHE_ENV 与 5 个密钥", true);
+            }
+            log("self-check: scan-log clean " + args.scanLog);
+        }
+        System.out.println("[launcher] self-check OK");
+        return 0;
+    }
+
+    private Map<String, Integer> tryReadPorts(Path file) {
+        try {
+            return readPorts(file);
+        } catch (IOException | RuntimeException unavailable) {
+            log("self-check: ports.json 不可用（" + unavailable.getMessage() + "）；端口相关检查跳过");
+            return null;
+        }
+    }
+
     /** One-time human-readable bootstrap note. Contains a local-only credential by design. */
-    private void writeFirstRunNote(Properties props) {
+    private void writeFirstRunNote(String adminPassword) {
         Path note = dataRoot.resolve("FIRST-RUN.txt");
         if (Files.exists(note)) {
             return;
         }
+        String cpPort = ports == null ? "<ports.json 缺失>" : String.valueOf(ports.get("cp"));
         String text = String.join(System.lineSeparator(),
                 "XH 首次启动说明（本文件由启动器生成，可随时删除）",
                 "==================================================",
                 "",
-                "浏览器地址: http://127.0.0.1:" + ports.get("cp") + "/",
+                "浏览器地址: http://127.0.0.1:" + cpPort + "/",
                 "",
                 "初始管理员账号（安装时随机生成，仅本机有效）:",
                 "  email:    admin@xihe.local",
-                "  password: " + props.getProperty("admin.password"),
+                "  password: " + adminPassword,
                 "",
                 "用法:",
                 "  1) 双击桌面 / 开始菜单的「启动 XH」，等浏览器自动打开；",
@@ -310,6 +690,7 @@ public final class Launcher {
                 "");
         try {
             Files.writeString(note, text, StandardCharsets.UTF_8);
+            hardenPermissions(note);
             log("first-run: wrote " + note + " (initial admin credentials + startup notes)");
         } catch (IOException error) {
             log("WARN: could not write FIRST-RUN.txt: " + error.getMessage());
@@ -441,7 +822,7 @@ public final class Launcher {
         }
         log("first-run: initdb " + pgData + " (measured 1.71 s, PLAN-0632 T1)");
         Path passwordFile = dataRoot.resolve("secrets").resolve("pg-password.initdb");
-        Files.writeString(passwordFile, secrets.getProperty("pg.password"), StandardCharsets.UTF_8);
+        Files.writeString(passwordFile, requireSecret(secrets, "pg.password"), StandardCharsets.UTF_8);
         ProcessResult init = runProcess(List.of(
                 initdb.toString(),
                 "-D", pgData.toString(),
@@ -487,7 +868,7 @@ public final class Launcher {
                         "--database", "xihe_1"),
                 dir,
                 "db-bootstrap",
-                Map.of("XIHE_BOOTSTRAP_PG_PASSWORD", secrets.getProperty("pg.password")));
+                Map.of("XIHE_BOOTSTRAP_PG_PASSWORD", requireSecret(secrets, "pg.password")));
         appendLog(indent(result.output));
         if (result.exitCode != 0) {
             throw new LauncherException("数据库引导失败（exit=" + result.exitCode + "）：" + tail(result.output),
@@ -511,12 +892,12 @@ public final class Launcher {
         int cpPort = ports.get("cp");
         int agentPort = ports.get("agent");
         int runtimePort = ports.get("runtime");
-        String password = secrets.getProperty("pg.password");
-        String token = secrets.getProperty("service.token");
+        String password = requireSecret(secrets, "pg.password");
+        String token = requireSecret(secrets, "service.token");
         String cpUrl = "http://127.0.0.1:" + cpPort;
 
         Map<String, String> common = new LinkedHashMap<>();
-        common.put("XIHE_ENV", "prod");
+        common.put("XIHE_ENV", SECURITY_ENV_CP);
         common.put("XIHE_LOAD_DOTENV", "0");
         common.put("XIHE_STACK_ID", "stack-1");
         common.put("XIHE_LOG_DIR", logsDir.toString());
@@ -525,21 +906,11 @@ public final class Launcher {
         common.put("XIHE_CP_BASE_URL", cpUrl);
         common.put("XIHE_CP_API_TOKEN", token);
         common.put("XIHE_AGENT_API_TOKEN", token);
-        // Secrets shared by the CP and the Runtime: the Runtime decrypts credential/OAuth payloads
-        // with the same keys, and its own prod validator refuses a blank key (measured: runtime
-        // exit 1 "Insecure default configuration rejected in prod mode" when only the CP got them).
-        // The dev fallbacks are explicitly disabled so no public constant can ever be accepted.
-        common.put("XIHE_CP_JWT_SECRET", secrets.getProperty("jwt.secret"));
-        common.put("XIHE_CP_CREDENTIALS_KEY", secrets.getProperty("credentials.key"));
-        common.put("XIHE_CP_CREDENTIALS_FINGERPRINT_KEY", secrets.getProperty("credentials.fingerprint.key"));
-        common.put("XIHE_CP_CREDENTIALS_ALLOW_DEV_KEY", "false");
-        // PLAN-0553 retired the provider-credentials domain, but both validators still require a
-        // real key in prod. Reusing the credentials key is deliberate: the legacy knob must not be
-        // able to fall back to a public constant.
-        common.put("XIHE_CP_PROVIDER_CREDENTIALS_KEY", secrets.getProperty("credentials.key"));
-        common.put("XIHE_CP_PROVIDER_CREDENTIALS_ALLOW_DEV_KEY", "false");
-        common.put("XIHE_CP_OAUTH_ENCRYPTION_KEY", secrets.getProperty("oauth.encryption.key"));
-        common.put("XIHE_CP_OAUTH_ALLOW_DEV_KEY", "false");
+        // PLAN-0650 A-1/A-3: the five CP security envs plus the three "no dev fallback" switches
+        // come from ONE builder, so "what we attest" and "what we pass" cannot drift apart.
+        // Secrets are read through requireSecret(): a missing key is a named refusal here instead
+        // of a null that the child would receive as the literal string "null" (M0 probe).
+        common.putAll(securityEnv(secrets));
 
         services.put("pg", new ServiceSpec(
                 "pg",
@@ -557,7 +928,7 @@ public final class Launcher {
         cpEnv.put("XIHE_CP_DATASOURCE_URL", "jdbc:postgresql://127.0.0.1:" + pgPort + "/xihe_1");
         cpEnv.put("XIHE_CP_DATASOURCE_USERNAME", "xihe");
         cpEnv.put("XIHE_CP_DATASOURCE_PASSWORD", password);
-        cpEnv.put("XIHE_DEV_ADMIN_PASSWORD", secrets.getProperty("admin.password"));
+        cpEnv.put("XIHE_DEV_ADMIN_PASSWORD", requireSecret(secrets, "admin.password"));
         cpEnv.put("XIHE_AGENT_URL", "http://127.0.0.1:" + agentPort + "/internal/v1/agent/chat");
         cpEnv.put("XIHE_AGENT_BASE_URL", "http://127.0.0.1:" + agentPort);
         cpEnv.put("XIHE_RUNTIME_URL", "http://127.0.0.1:" + runtimePort);
@@ -632,11 +1003,21 @@ public final class Launcher {
         Files.createDirectories(dataRoot.resolve("data").resolve("workspaces"));
         Files.createDirectories(dataRoot.resolve("data").resolve("runtime-state"));
         Files.createDirectories(dataRoot.resolve("secrets"));
+        // PLAN-0650: the log is truncated BEFORE any work so the first-run lines (payload extract,
+        // initdb) and the security attestation survive. Before this change truncation happened
+        // after first-run and erased exactly the lines a failed first start needs (PLAN-0632
+        // verify §9 #1, the "日志行被 truncateLauncherLog 清掉" debt).
+        truncateLauncherLog();
+        // A-3 must run before any spawn: a missing key has to be a named refusal (exit 4), never a
+        // child that silently receives the literal string "null" as its secret.
         this.secrets = loadOrCreateSecrets();
+        requireAllSecrets(secrets);
+        // A-1 positive evidence: what we are about to hand the CP. The negative gate below is the
+        // real proof, because only the CP's own log can say which mode it actually booted in.
+        attestSecurity(SECURITY_ENV_CP, securityEnv(secrets));
         ensurePostgresPayload();
         ensurePostgresCluster();
 
-        truncateLauncherLog();
         log("start install=" + installDir + " data=" + dataRoot
                 + " ports ui=" + ports.get("ui") + " cp=" + ports.get("cp") + " agent=" + ports.get("agent")
                 + " runtime=" + ports.get("runtime") + " pg=" + ports.get("postgres"));
@@ -676,6 +1057,19 @@ public final class Launcher {
             long began = System.nanoTime();
             Probe probe = waitForPhase(spec);
             long elapsed = (System.nanoTime() - began) / 1_000_000;
+            // PLAN-0650 A-1: the security gate runs on EVERY cp outcome — ready, process-exited and
+            // timeout. The dangerous case reaches health 200 (a CP in non-prod mode accepts factory
+            // defaults and looks healthy), so gating only on failure would miss it entirely.
+            if ("cp".equals(name)) {
+                String violation = scanCpSecurityLogs();
+                if (violation != null) {
+                    if (args.cleanupOnFailure) {
+                        stopAll(services, false);
+                    }
+                    return fail("cp", CODE_SECURITY_DEFAULTS + ": " + violation, PHASE_HINTS.get("cp"),
+                            started, EXIT_SECURITY);
+                }
+            }
             if (!probe.ready) {
                 if (args.cleanupOnFailure) {
                     stopAll(services, false);
@@ -723,6 +1117,17 @@ public final class Launcher {
     }
 
     private int fail(String phase, String reason, String hint, List<ProcessRecord> started) throws IOException {
+        return fail(phase, reason, hint, started, 2);
+    }
+
+    /**
+     * PLAN-0650: {@code exitCode} separates a security-policy refusal (4, user ruling Q-2) from a
+     * generic startup failure (2). Scripts must be able to tell "the secrets are wrong" from "the
+     * CP did not come up" — the two have completely different remediations.
+     */
+    private int fail(String phase, String reason, String hint, List<ProcessRecord> started, int exitCode)
+            throws IOException {
+
         StringBuilder message = new StringBuilder();
         message.append("step=").append(phase).append(" ").append(reason).append('\n');
         message.append("[launcher] services started before the failure: ");
@@ -746,7 +1151,7 @@ public final class Launcher {
         System.err.println("[launcher] next: " + hint);
         log("FAILED step=" + phase + " reason=" + reason);
         writeDiagnostic(phase, reason, hint, started);
-        return 2;
+        return exitCode;
     }
 
     /**
@@ -831,6 +1236,17 @@ public final class Launcher {
             // the same defect scripts/stack-run.mjs and the Node supervisor already scrub.
             env.put("NO_PROXY", scrubNoProxy(noProxy));
             env.put("no_proxy", scrubNoProxy(env.getOrDefault("no_proxy", noProxy)));
+        }
+        // PLAN-0650 A-3 defence in depth: every secret now goes through requireSecret(), but a
+        // future regression must fail HERE (named, exit 4) instead of quietly handing the child the
+        // literal string "null" — which is what ProcessBuilder.environment().putAll() does with a
+        // null value on this JDK (PLAN-0650 M0 probe, evidence/m0-null-env-probe.md).
+        for (Map.Entry<String, String> entry : spec.env.entrySet()) {
+            if (entry.getValue() == null) {
+                throw new LauncherException(CODE_SECRETS_MISSING + ": 环境变量 " + entry.getKey()
+                        + " 的值为 null，拒绝启动（子进程会把它当成字符串 \"null\"）",
+                        "这是编码回归：该值必须经 requireSecret() 取得", true);
+            }
         }
         env.putAll(spec.env);
         // Fresh instance, fresh logs: the pg readiness gate greps this file, so an old
@@ -1342,10 +1758,21 @@ public final class Launcher {
 
     private static final class LauncherException extends RuntimeException {
         final String hint;
+        /**
+         * PLAN-0650: a security-policy refusal maps to exit 4 (user ruling Q-2) so a script can
+         * tell "the secrets are wrong / the CP accepts factory defaults" from "a service did not
+         * come up". Never set this for an ordinary startup failure.
+         */
+        final boolean security;
 
         LauncherException(String message, String hint) {
+            this(message, hint, false);
+        }
+
+        LauncherException(String message, String hint, boolean security) {
             super(message);
             this.hint = hint;
+            this.security = security;
         }
     }
 }
