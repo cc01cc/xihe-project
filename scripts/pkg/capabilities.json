@@ -1,0 +1,84 @@
+{
+  "$comment": "PLAN-0632 M2-4: the capabilities this INSTALLER deliberately does not ship. This file is the single source for the installer finish page (NSIS MUI_FINISHPAGE_TEXT), the shipped app/NOT-INCLUDED.txt, and plans/PLAN-0632-.../installer-scope.md. Scope note (user ruling 2026-11-03): these are missing INSTALLER/PACKAGING capabilities, not a product gap list.",
+  "version": 0,
+  "updatedAt": "2026-11-03",
+  "items": [
+    {
+      "id": "auto-update",
+      "capability": "自动更新（检查新版本 / 下载 / 原地替换）",
+      "whyNot": "最小可用版只求「双击能跑」，更新器要额外的更新服务、签名校验与回滚保险；本版本连代码签名都没有，自动更新会把「未签名二进制自动下载执行」变成默认行为，风险高于收益。",
+      "impact": "用户看到的：装完之后不会收到任何「有新版本」提示，也没有「检查更新」按钮。要升级只能重新下载安装包再覆盖安装（数据保留，见 D32-09）。版本陈旧时界面不会有任何提醒。",
+      "whenNeeded": "有第二个对外版本、且安装包已代码签名之后；在此之前用「覆盖安装 + CHANGELOG」手工通道即可。"
+    },
+    {
+      "id": "autostart-tray",
+      "capability": "开机自启 + 系统托盘常驻（托盘菜单启动/停止/退出）",
+      "whyNot": "D32-08 明确否决托盘：约 300 行 Windows FFI + 杀软误报面，而 MVP 目标是「双击即用」而不是「后台常驻服务」。开机自启还需要一个真正的常驻进程做崩溃/端口守护。",
+      "impact": "用户看到的：开机后 XH 不会自己起来；每次用都要点开始菜单「启动 XH」。启动后会短暂闪一个控制台窗口，就绪后浏览器自动打开；关掉浏览器不会停服务。想停必须点「停止 XH」（否则三个后台进程一直占着 12631-12634 端口）。",
+      "whenNeeded": "当「每次手动启动」被用户抱怨，或需要后台定时任务（scheduled tasks）在无人值守时运行时。"
+    },
+    {
+      "id": "code-signing",
+      "capability": "代码签名（Authenticode / EV 证书）与 SmartScreen 信誉",
+      "whyNot": "D32-03 用户裁定：不做。需要 OV/EV 证书采购（年费 + 企业主体核验）与签名流水线；MVP 阶段装的是内部可验证产物。",
+      "impact": "用户看到的：在干净机器上首次运行安装包，Windows SmartScreen 会拦一次，显示「Windows 已保护你的电脑」，必须点「更多信息 → 仍要运行」。企业环境里 AppLocker/WDAC 可能直接阻止，且不会有我们的签名者名称可白名单。",
+      "whenNeeded": "对外分发（非内部/非朋友）之前；或首次遇到企业终端策略拦截时。"
+    },
+    {
+      "id": "silent-enterprise",
+      "capability": "静默安装 / 企业批量分发（MSI、GPO、Intune、`/S` 之外的参数化安装）",
+      "whyNot": "只做了 NSIS 交互式安装（外加 `/S` 静默兜底，未做参数化配置、未做 MSI 封装与升级码）。企业分发要求 per-machine 安装、注册表策略、卸载审计，属于另一套交付面。",
+      "impact": "用户看到的：IT 管理员双击安装包只能走图形向导；用 `/S` 可以静默装到默认目录 `%LOCALAPPDATA%\\Programs\\Xihe`，但**不能**指定「为所有用户安装」、不能由 GPO/Intune 下发、不会出现在「程序和功能」的企业清单里做集中卸载。",
+      "whenNeeded": "出现第一个「公司内 10 台以上统一部署」的需求时；届时先做 MSI（WiX）+ per-machine 模式。"
+    },
+    {
+      "id": "uninstall-data-policy",
+      "capability": "卸载时的数据清理策略（默认保留 vs 彻底清除的分级/合规策略）",
+      "whyNot": "D32-09 只裁定「卸载默认保留数据、可勾选删除」，没有做更细的分级（保留配置但删数据库、导出后再删、按保留期自动清理）。数据目录同时含会话数据库、附件与工作区文件，误删不可恢复。",
+      "impact": "用户看到的：卸载时会弹一次「是否同时删除本地数据（会话/数据库/附件/工作区）」的确认框，**默认「否」**。选「否」后 `%LOCALAPPDATA%\\Xihe` 原样留下（含 PostgreSQL 数据目录与生成的密钥），重装可继续用；选「是」则整目录删除且**不可恢复**、无导出机会。没有「先导出再删」的选项。",
+      "whenNeeded": "当需要合规审计（谁在什么时间删了什么）或需要「保留数据但清空密钥」这类分级策略时。"
+    },
+    {
+      "id": "multi-arch",
+      "capability": "多架构（ARM64 / 32 位）安装包",
+      "whyNot": "全部载荷都是 x64：CP 的 jlink JRE、Agent 的 PyInstaller 产物、Runtime 的 Rust target、PostgreSQL 的 zonky 载荷（windows-amd64）、pgvector 的 MSVC 构建产物。ARM64 需要每个组件各自重建并在 ARM 机器上验证。",
+      "impact": "用户看到的：在 Windows on ARM（如 Snapdragon X Elite 笔记本）上，安装包能装（x64 仿真），但四个服务全部跑在仿真层：启动明显更慢、内存占用更高；没有原生 ARM64 包可选。32 位 Windows 无法安装。",
+      "whenNeeded": "当有用户在 ARM64 Windows 上实际使用并抱怨性能，或需要进入 ARM 设备分发渠道时。"
+    },
+    {
+      "id": "port-renegotiation",
+      "capability": "端口冲突自动改号（占用探测 + 换端口 + 持久化）",
+      "whyNot": "端口是 SSOT（`scripts/lib/stack-ports.mjs` 构建期生成 `ports.json`，D32-11）；自动改号会让「安装了什么端口」变成运行期状态，需要额外的端口租约、持久化与 UI 展示，且会破坏与开发栈的端口对照。最小可用版选择「冲突就明确失败并告诉用户哪个端口被谁占了」。",
+      "impact": "用户看到的：如果 12631-12634 已被别的程序（包括另一份 XH）占用，启动会**失败**并打印「residual listeners on our ports: 12631(pid=…, image=…)」，不会自动换端口、也不会自动杀掉占用者。用户需要自己关掉占用程序再重试（或用 `--stop` 停掉另一份 XH）。",
+      "whenNeeded": "当「端口被占」成为常见支持问题时；届时先做「探测 + 建议端口 + 一键换号」，再做全自动。"
+    },
+    {
+      "id": "crash-supervision",
+      "capability": "崩溃自动重启 / 守护进程（服务掉了自动拉起、退避、健康上报）",
+      "whyNot": "launcher 只负责「启动 + 就绪门 + 退出」，不是守护进程（D32-08 的托盘/常驻被否决，守护依赖它）。做对需要 Job Object（D32-10 已研究）+ 重启退避 + 避免重启风暴，属独立工程。",
+      "impact": "用户看到的：任一服务崩了（例如 Agent 被 OOM 杀掉、CP 因数据库异常退出）之后，XH 就一直是「打不开/发不出消息」的状态；不会有自动恢复，也不会有弹窗提示。用户必须点「停止 XH」再「启动 XH」，并从 `logs\\` 里自己找原因。",
+      "whenNeeded": "当用户开始把它当常驻服务用（配合 autostart-tray），或出现「莫名其妙要重启」的支持案例时。"
+    },
+    {
+      "id": "log-upload",
+      "capability": "日志上报 / 一键诊断包上传（崩溃报告、支持工单附件）",
+      "whyNot": "日志只落本地 `logs\\`（launcher/cp/agent/runtime 各自一份）。上报涉及隐私（会话内容、路径、可能的密钥泄漏面）、接收端服务与合规声明，MVP 不做任何外发。",
+      "impact": "用户看到的：出问题时界面上没有「发送诊断信息」按钮，也没有错误码上报；只能自己打开安装目录下的 `logs\\launcher.log`（内含每次探针的时间/URL/HTTP 状态）并手工把文件发给支持者。日志里不含 API Key（启动器不写密钥），但会包含本地路径。",
+      "whenNeeded": "当支持流程需要用户远程求助、且已有隐私声明与接收端时；先做「导出诊断包（zip）本地保存」，再做上传。"
+    },
+    {
+      "id": "rollback",
+      "capability": "版本回滚 / 并行版本共存（保留旧版本一键切回）",
+      "whyNot": "D32-09 只承诺「覆盖安装 + 保留数据 + Flyway 只前进」；回滚需要旧版本二进制保留 + 数据库向下迁移（Flyway 不支持自动降级），这是另一个设计问题（D32-16 已记为已知边界）。",
+      "impact": "用户看到的：升级后若新版本有问题，**不能**一键回到旧版本；装回旧安装包会因为数据库 schema 已前进而失败或行为异常。升级前没有「创建还原点」提示。",
+      "whenNeeded": "在第一次因为升级出问题而需要手工恢复数据之前；届时要么做双目录并存 + 数据导出/导入，要么做向下迁移脚本。"
+    },
+    {
+      "id": "localized-installer",
+      "capability": "多语言安装界面与文档（仅简体中文）",
+      "whyNot": "安装向导、finish page、`NOT-INCLUDED.txt`、launcher 的诊断提示全部是简体中文硬编码；做 i18n 需要把 launcher 文案外置成资源并维护多份翻译。",
+      "impact": "用户看到的：非中文 Windows 上安装向导仍是中文（按钮/说明不跟随系统语言）；launcher 的失败提示也是中文。英文用户能装能用，但排障信息需要中文能力。",
+      "whenNeeded": "当出现非中文用户（开源分发/海外试用）时。"
+    }
+  ]
+}

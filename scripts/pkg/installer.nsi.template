@@ -1,0 +1,164 @@
+; PLAN-0632 M2-3: XH MVP installer (NSIS 3.x, per-user, no admin, no code signing).
+;
+; This file is a TEMPLATE. `scripts/pkg/build-installer.mjs` replaces the __TOKENS__ and writes
+; `installer.generated.nsi` inside the staging directory, because every `File` path below is
+; relative to the script and the script must sit next to the staged `app/` + `payload/` trees.
+;
+; Design decisions this script encodes (see plans/PLAN-0632-.../README.md):
+;   D32-03  no code signing      -> SmartScreen will warn once; documented in installer-scope.md
+;   D32-08  no tray              -> Start Menu gets 启动/停止/未包含的能力 3 shortcuts, nothing resident
+;   D32-09  upgrade = overwrite  -> install over an existing version, data kept, Flyway forward only
+;   D32-12  data root            -> %LOCALAPPDATA%\Xihe (PG must not roam in %APPDATA%)
+;   D32-15  PG has no psql       -> the installer never touches the database; first launch does initdb
+;
+; What the installer must NOT do: start the stack itself. Starting means initdb + Flyway + four
+; processes; the launcher owns that, with one readiness gate per phase. The finish page offers to
+; run the launcher, which is the same code path as the shortcut.
+
+Unicode true
+!include "MUI2.nsh"
+!include "LogicLib.nsh"
+
+!define APP_NAME "XH (Xihe)"
+!define APP_VERSION "__APP_VERSION__"
+!define APP_PUBLISHER "Xihe"
+!define APP_REGKEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\Xihe"
+!define LAUNCHER_JAR "app\xihe-launcher.jar"
+!define JAVA_EXE "payload\jre\bin\java.exe"
+!define JAVAW_EXE "payload\jre\bin\javaw.exe"
+!define LAUNCHER_MAIN "com.cc01cc.xihe.pkg.Launcher"
+
+Name "${APP_NAME} ${APP_VERSION}"
+OutFile "__OUTFILE__"
+InstallDir "$LOCALAPPDATA\Programs\Xihe"
+InstallDirRegKey HKCU "${APP_REGKEY}" "InstallLocation"
+RequestExecutionLevel user
+SetCompressor /SOLID lzma
+SetCompressorDictSize 64
+ShowInstDetails show
+ShowUninstDetails show
+
+; Per-user install: the shell context must be the current user, not the machine. It can only be
+; set inside a Section/Function, so it lives in .onInit.
+Function .onInit
+  SetShellVarContext current
+FunctionEnd
+
+; ------------------------------------------------------------------ finish page (M2-4)
+; The list below is generated from scripts/pkg/capabilities.json, the same source as
+; app\NOT-INCLUDED.txt and installer-scope.md. A user who reads only this page must still learn
+; what this build does NOT do, in user-visible terms.
+!define MUI_FINISHPAGE_TITLE "XH 安装完成"
+!define MUI_FINISHPAGE_TEXT "__FINISH_TEXT__"
+!define MUI_FINISHPAGE_RUN "$INSTDIR\${JAVA_EXE}"
+!define MUI_FINISHPAGE_RUN_TEXT "启动 XH（就绪后自动打开浏览器）"
+!define MUI_FINISHPAGE_RUN_PARAMETERS "-cp $\"$INSTDIR\app\xihe-launcher.jar$\" ${LAUNCHER_MAIN} start"
+
+!define MUI_WELCOMEPAGE_TITLE "安装 XH（最小可用版）"
+!define MUI_WELCOMEPAGE_TEXT "本安装包会把 XH 的四个服务（Control Plane、Agent、Runtime、PostgreSQL）$\r$\n装到当前用户目录，无需 Docker、无需另装 Java/Python/Node。$\r$\n$\r$\n安装完成后双击开始菜单或桌面的「启动 XH」即可：服务依次自启，就绪后浏览器自动打开 localhost。$\r$\n$\r$\n已知边界（请先读）：本版本未包含自动更新、开机自启/托盘、代码签名、静默企业分发等能力，$\r$\n完整清单见安装目录下 app\NOT-INCLUDED.txt，或结束页的说明。"
+
+!insertmacro MUI_PAGE_WELCOME
+!insertmacro MUI_PAGE_DIRECTORY
+!insertmacro MUI_PAGE_INSTFILES
+!insertmacro MUI_PAGE_FINISH
+
+!insertmacro MUI_UNPAGE_CONFIRM
+!insertmacro MUI_UNPAGE_INSTFILES
+!insertmacro MUI_LANGUAGE "SimpChinese"
+
+Var /GLOBAL StoppedExisting
+
+; Stop an already-installed stack before overwriting its files. The launcher's own `stop` is used
+; (not taskkill on guessed names) so the process tree and the pid file stay consistent; a stop
+; failure is non-fatal because a fresh install has nothing to stop.
+Function StopExistingInstall
+  StrCpy $StoppedExisting "0"
+  IfFileExists "$INSTDIR\${LAUNCHER_JAR}" 0 stopDone
+  IfFileExists "$INSTDIR\${JAVA_EXE}" 0 stopDone
+  DetailPrint "检测到已安装的 XH：先停止正在运行的服务 ..."
+  nsExec::ExecToLog '"$INSTDIR\${JAVA_EXE}" -cp "$INSTDIR\${LAUNCHER_JAR}" ${LAUNCHER_MAIN} stop --quiet'
+  Pop $0
+  DetailPrint "停止结果: $0"
+  StrCpy $StoppedExisting "1"
+stopDone:
+FunctionEnd
+
+Section "XH 运行时" SEC_APP
+  SectionIn RO
+  Call StopExistingInstall
+
+  SetOutPath "$INSTDIR\app"
+  File /r "app\*.*"
+
+  SetOutPath "$INSTDIR\payload"
+  File /r "payload\*.*"
+
+  ; logs/ is part of the documented install layout. The launcher writes into it on first run;
+  ; creating it here makes the layout true immediately after installation.
+  CreateDirectory "$INSTDIR\logs"
+  SetOutPath "$INSTDIR\logs"
+  FileOpen $0 "README.txt" w
+  FileWrite $0 "XH 运行日志目录。$\r$\n$\r$\nlauncher.log     每次启动的阶段/探针/失败原因（排查先看这个）$\r$\ncp.out.log/cp.err.log            Control Plane$\r$\nagent.out.log/agent.err.log      Agent$\r$\nruntime.out.log/runtime.err.log  Runtime$\r$\npg.out.log/pg.err.log            PostgreSQL$\r$\nlauncher-pids.json               本次运行的进程号（--stop 用）$\r$\n$\r$\n本目录内的文件不属于用户数据：可以在 XH 停止后安全删除，下次启动会重建。"
+  FileClose $0
+
+  WriteUninstaller "$INSTDIR\Uninstall.exe"
+SectionEnd
+
+Section "快捷方式与卸载登记" SEC_SHORTCUTS
+  CreateDirectory "$SMPROGRAMS\XH"
+  CreateShortCut "$SMPROGRAMS\XH\启动 XH.lnk" "$INSTDIR\${JAVA_EXE}" \
+    '-cp "$INSTDIR\app\xihe-launcher.jar" ${LAUNCHER_MAIN} start'
+  CreateShortCut "$SMPROGRAMS\XH\停止 XH.lnk" "$INSTDIR\${JAVAW_EXE}" \
+    '-cp "$INSTDIR\app\xihe-launcher.jar" ${LAUNCHER_MAIN} stop --quiet'
+  CreateShortCut "$SMPROGRAMS\XH\本版本未包含的能力.lnk" "$INSTDIR\app\NOT-INCLUDED.html"
+  CreateShortCut "$DESKTOP\XH.lnk" "$INSTDIR\${JAVA_EXE}" \
+    '-cp "$INSTDIR\app\xihe-launcher.jar" ${LAUNCHER_MAIN} start'
+
+  WriteRegStr HKCU "${APP_REGKEY}" "DisplayName" "${APP_NAME}"
+  WriteRegStr HKCU "${APP_REGKEY}" "DisplayVersion" "${APP_VERSION}"
+  WriteRegStr HKCU "${APP_REGKEY}" "Publisher" "${APP_PUBLISHER}"
+  WriteRegStr HKCU "${APP_REGKEY}" "DisplayIcon" "$INSTDIR\${JAVA_EXE}"
+  WriteRegStr HKCU "${APP_REGKEY}" "InstallLocation" "$INSTDIR"
+  WriteRegStr HKCU "${APP_REGKEY}" "UninstallString" '"$INSTDIR\Uninstall.exe"'
+  WriteRegDWORD HKCU "${APP_REGKEY}" "NoModify" 1
+  WriteRegDWORD HKCU "${APP_REGKEY}" "NoRepair" 1
+  WriteRegDWORD HKCU "${APP_REGKEY}" "EstimatedSize" __ESTIMATED_KB__
+SectionEnd
+
+Section "Uninstall"
+  ; D32-09: uninstall must not leave orphan processes. `--stop` walks the pid file in reverse
+  ; order and verifies the ports afterwards (the launcher prints the residual list to its log).
+  DetailPrint "停止 XH 服务 ..."
+  IfFileExists "$INSTDIR\${LAUNCHER_JAR}" 0 noStop
+  nsExec::ExecToLog '"$INSTDIR\${JAVA_EXE}" -cp "$INSTDIR\${LAUNCHER_JAR}" ${LAUNCHER_MAIN} stop --quiet'
+  Pop $0
+  DetailPrint "停止结果: $0"
+noStop:
+
+  Delete "$SMPROGRAMS\XH\启动 XH.lnk"
+  Delete "$SMPROGRAMS\XH\停止 XH.lnk"
+  Delete "$SMPROGRAMS\XH\本版本未包含的能力.lnk"
+  RMDir "$SMPROGRAMS\XH"
+  Delete "$DESKTOP\XH.lnk"
+  DeleteRegKey HKCU "${APP_REGKEY}"
+
+  ; Program files: always removed.
+  RMDir /r "$INSTDIR\payload"
+  RMDir /r "$INSTDIR\app"
+  RMDir /r "$INSTDIR\logs"
+  Delete "$INSTDIR\Uninstall.exe"
+
+  ; D32-09: local data is KEPT by default. It contains the PostgreSQL cluster, attachments, the
+  ; workspace tree and the generated secrets; deleting it is irreversible and there is no export
+  ; step in this version. /SD IDNO keeps silent uninstalls on the safe side.
+  MessageBox MB_YESNO|MB_ICONEXCLAMATION \
+    "是否同时删除本地数据？$\r$\n$\r$\n将删除：$LOCALAPPDATA\Xihe（会话数据库、附件、工作区文件、生成的密钥）$\r$\n保留数据可以重装后继续使用；删除后不可恢复，且本版本没有导出功能。$\r$\n$\r$\n选择「否」= 保留数据（推荐）。" \
+    /SD IDNO IDYES deleteData
+  Goto dataKept
+deleteData:
+  RMDir /r "$LOCALAPPDATA\Xihe"
+dataKept:
+
+  ; Remove the directory only if empty (logs/data may live elsewhere).
+  RMDir "$INSTDIR"
+SectionEnd
