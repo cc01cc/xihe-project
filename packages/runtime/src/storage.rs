@@ -109,7 +109,12 @@ pub async fn resolve_host_path(host_root: &str, storage_ref: &str, ws_id: &str) 
 ///
 /// PLAN-0639 M1: root[0] must equal `ws_id` (the primary-root invariant); roots[1..] are
 /// additional declared roots, each validated as an absolute canonical path within `hostRoot`.
-async fn resolve_one(host_root: &str, root_path: &str, ws_id: &str, index: usize) -> Result<PathBuf> {
+async fn resolve_one(
+    host_root: &str,
+    root_path: &str,
+    ws_id: &str,
+    index: usize,
+) -> Result<PathBuf> {
     if root_path.contains('\0') {
         return Err(RuntimeError::InvalidPath(format!(
             "root path contains NUL: {root_path:?}"
