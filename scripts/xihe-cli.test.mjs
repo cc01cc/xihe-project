@@ -4260,3 +4260,261 @@ test('PLAN-0643 T1.8: XIHE_CLI_DISABLE_API_ESCAPE=1 disables the escape hatch', 
   assert.equal(result.exitCode, 2);
   assert.equal(result.error.code, 'API_ESCAPE_DISABLED');
 });
+
+// ── PLAN-0643 T1.2–T1.5: token cache ──────────────────────────────────────
+
+function tempTokenFile() {
+  const directory = fs.mkdtempSync(path.join(tmpdir(), 'xihe-cli-token-'));
+  return { directory, file: path.join(directory, 'cli-token.json'), cleanup: () => fs.rmSync(directory, { recursive: true, force: true }) };
+}
+
+function readTokenFile(file) {
+  return JSON.parse(fs.readFileSync(file, 'utf8'));
+}
+
+async function startAuthMock({ status = 200 } = {}) {
+  const state = { loginRequests: 0, statusRequests: 0, statusCode: status, lastAuthHeader: null };
+  const server = createServer(async (request, response) => {
+    const url = new URL(request.url, 'http://127.0.0.1');
+    await requestBody(request);
+    if (url.pathname === '/api/v1/auth/login') {
+      state.loginRequests += 1;
+      json(response, 200, { accessToken: 'access-token-1' });
+      return;
+    }
+    if (url.pathname === '/api/v1/status') {
+      state.statusRequests += 1;
+      state.lastAuthHeader = request.headers.authorization ?? null;
+      json(response, state.statusCode, state.statusCode === 200 ? { status: 'ok' } : { code: 'AUTHENTICATION_FAILED' });
+      return;
+    }
+    json(response, 404, { code: 'NOT_FOUND' });
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  return {
+    state,
+    env: { XIHE_CP_PORT: String(server.address().port), XIHE_DEV_ADMIN_PASSWORD: TEST_PASSWORD },
+    close: () => new Promise((resolve, reject) => server.close((error) => (error ? reject(error) : resolve()))),
+  };
+}
+
+test('PLAN-0643 T1.2: auth login writes an access-only, baseUrl-keyed cache entry', async (t) => {
+  const cp = await startAuthMock();
+  const token = tempTokenFile();
+  t.after(async () => { await cp.close(); token.cleanup(); });
+
+  const result = await runCommand(['auth', 'login', '--json'], {
+    env: { ...cp.env, XIHE_CLI_TOKEN_FILE: token.file },
+    promptSecret: noPrompt,
+    stderr: sink(),
+  });
+
+  assert.equal(result.exitCode, 0, JSON.stringify(result.error));
+  assert.equal(result.data.persisted, true);
+  const store = readTokenFile(token.file);
+  assert.equal(store.version, 1);
+  const entry = store.tokens[`http://127.0.0.1:${cp.env.XIHE_CP_PORT}`];
+  assert.ok(entry, 'entry must be keyed by the CP base URL');
+  assert.equal(entry.token, 'access-token-1');
+  assert.ok(Number.isFinite(Date.parse(entry.expiresAt)));
+  assert.equal(Object.hasOwn(entry, 'refresh'), false);
+  assert.equal(Object.keys(store.tokens).length, 1);
+});
+
+test('PLAN-0643 T1.3: the cached token is reused instead of logging in again', async (t) => {
+  const cp = await startAuthMock();
+  const token = tempTokenFile();
+  t.after(async () => { await cp.close(); token.cleanup(); });
+  const env = { ...cp.env, XIHE_CLI_TOKEN_FILE: token.file };
+
+  await runCommand(['auth', 'login', '--json'], { env, promptSecret: noPrompt, stderr: sink() });
+  const loginCount = cp.state.loginRequests;
+  const second = await runCommand(['auth', 'status', '--check', '--json'], { env, promptSecret: noPrompt, stderr: sink() });
+
+  assert.equal(second.exitCode, 0, JSON.stringify(second.error));
+  assert.equal(cp.state.loginRequests, loginCount);
+  assert.equal(cp.state.lastAuthHeader, 'Bearer access-token-1');
+  assert.equal(second.data.source, 'cache');
+});
+
+test('PLAN-0643 T1.3: XIHE_TOKEN takes precedence over the cache file', async (t) => {
+  const cp = await startAuthMock();
+  const token = tempTokenFile();
+  t.after(async () => { await cp.close(); token.cleanup(); });
+  const env = { ...cp.env, XIHE_CLI_TOKEN_FILE: token.file, XIHE_TOKEN: 'env-token-value' };
+
+  const result = await runCommand(['auth', 'status', '--check', '--json'], { env, promptSecret: noPrompt, stderr: sink() });
+
+  assert.equal(result.exitCode, 0, JSON.stringify(result.error));
+  assert.equal(result.data.source, 'env');
+  assert.equal(cp.state.loginRequests, 0);
+  assert.equal(cp.state.lastAuthHeader, 'Bearer env-token-value');
+});
+
+test('PLAN-0643 T1.2: entries are partitioned per base URL', async (t) => {
+  const first = await startAuthMock();
+  const second = await startAuthMock();
+  const token = tempTokenFile();
+  t.after(async () => { await first.close(); await second.close(); token.cleanup(); });
+
+  await runCommand(['auth', 'login', '--json'], {
+    env: { ...first.env, XIHE_CLI_TOKEN_FILE: token.file }, promptSecret: noPrompt, stderr: sink(),
+  });
+  await runCommand(['auth', 'login', '--json'], {
+    env: { ...second.env, XIHE_CLI_TOKEN_FILE: token.file }, promptSecret: noPrompt, stderr: sink(),
+  });
+
+  const store = readTokenFile(token.file);
+  assert.deepEqual(Object.keys(store.tokens).sort(), [
+    `http://127.0.0.1:${first.env.XIHE_CP_PORT}`,
+    `http://127.0.0.1:${second.env.XIHE_CP_PORT}`,
+  ].sort());
+});
+
+test('PLAN-0643 T1.3: a corrupt cache file is an explicit error, never a silent degrade', async (t) => {
+  const cp = await startAuthMock();
+  const token = tempTokenFile();
+  t.after(async () => { await cp.close(); token.cleanup(); });
+  fs.writeFileSync(token.file, '{not json');
+  const env = { ...cp.env, XIHE_CLI_TOKEN_FILE: token.file };
+
+  const result = await runCommand(['provider', 'list', '--json'], { env, promptSecret: noPrompt, stderr: sink() });
+  assert.equal(result.exitCode, 1);
+  assert.equal(result.error.code, 'TOKEN_FILE_CORRUPT');
+  assert.equal(cp.state.loginRequests, 0);
+
+  const repaired = await runCommand(['auth', 'logout', '--force', '--json'], { env, promptSecret: noPrompt, stderr: sink() });
+  assert.equal(repaired.exitCode, 0, JSON.stringify(repaired.error));
+  assert.equal(fs.existsSync(token.file), false);
+});
+
+test('PLAN-0643 T1.4: auth status reports metadata only and never the token value', async (t) => {
+  const cp = await startAuthMock();
+  const token = tempTokenFile();
+  t.after(async () => { await cp.close(); token.cleanup(); });
+  const env = { ...cp.env, XIHE_CLI_TOKEN_FILE: token.file };
+  await runCommand(['auth', 'login', '--json'], { env, promptSecret: noPrompt, stderr: sink() });
+
+  const status = await runCommand(['auth', 'status', '--json'], { env, promptSecret: noPrompt, stderr: sink() });
+  assert.equal(status.exitCode, 0);
+  assert.equal(status.data.hasToken, true);
+  assert.equal(status.data.charCount, 'access-token-1'.length);
+  assert.equal(JSON.stringify(status.data).includes('access-token-1'), false);
+  assert.equal(status.data.fileState, 'ok');
+});
+
+test('PLAN-0643 T1.4: auth logout removes the entry and deletes the file when empty', async (t) => {
+  const cp = await startAuthMock();
+  const token = tempTokenFile();
+  t.after(async () => { await cp.close(); token.cleanup(); });
+  const env = { ...cp.env, XIHE_CLI_TOKEN_FILE: token.file };
+  await runCommand(['auth', 'login', '--json'], { env, promptSecret: noPrompt, stderr: sink() });
+
+  const logout = await runCommand(['auth', 'logout', '--json'], { env, promptSecret: noPrompt, stderr: sink() });
+  assert.equal(logout.exitCode, 0, JSON.stringify(logout.error));
+  assert.equal(logout.data.removed, true);
+  assert.equal(fs.existsSync(token.file), false);
+});
+
+test('PLAN-0643 T1.5: an expired cache entry triggers exactly one silent re-login and a rewrite', async (t) => {
+  const cp = await startCpMock();
+  const token = tempTokenFile();
+  t.after(async () => { await cp.close(); token.cleanup(); });
+  const baseUrl = `http://127.0.0.1:${cp.env.XIHE_CP_PORT}`;
+  fs.writeFileSync(token.file, JSON.stringify({
+    version: 1,
+    tokens: { [baseUrl]: { token: 'stale-token', email: null, expiresAt: '2020-01-01T00:00:00.000Z', obtainedAt: '2020-01-01T00:00:00.000Z' } },
+  }));
+  const env = { ...cp.env, XIHE_CLI_TOKEN_FILE: token.file };
+
+  const result = await runCommand(['provider', 'list', '--json'], { env, promptSecret: noPrompt, stderr: sink() });
+
+  assert.equal(result.exitCode, 0, JSON.stringify(result.error));
+  assert.equal(cp.state.loginRequests, 1);
+  const store = readTokenFile(token.file);
+  assert.notEqual(store.tokens[baseUrl].token, 'stale-token');
+  assert.ok(Date.parse(store.tokens[baseUrl].expiresAt) > Date.now());
+});
+
+test('PLAN-0643 T1.5: a 401 on --check drops the entry; 403 and network keep it', async (t) => {
+  const denied = await startAuthMock();
+  const token = tempTokenFile();
+  t.after(async () => { await denied.close(); token.cleanup(); });
+  const env = { ...denied.env, XIHE_CLI_TOKEN_FILE: token.file };
+  await runCommand(['auth', 'login', '--json'], { env, promptSecret: noPrompt, stderr: sink() });
+  assert.equal(fs.existsSync(token.file), true);
+  denied.state.statusCode = 401;
+
+  const checked = await runCommand(['auth', 'status', '--check', '--json'], { env, promptSecret: noPrompt, stderr: sink() });
+  assert.equal(checked.data.verification, 'unauthorized');
+  assert.equal(checked.data.entryDropped, true);
+  assert.equal(fs.existsSync(token.file), false);
+});
+
+test('PLAN-0643 T1.2 worst case: a token path that is a directory is refused', async (t) => {
+  const cp = await startAuthMock();
+  const token = tempTokenFile();
+  const asDirectory = path.join(token.directory, 'nested');
+  fs.mkdirSync(asDirectory);
+  t.after(async () => { await cp.close(); token.cleanup(); });
+
+  const result = await runCommand(['auth', 'login', '--json'], {
+    env: { ...cp.env, XIHE_CLI_TOKEN_FILE: asDirectory },
+    promptSecret: noPrompt,
+    stderr: sink(),
+  });
+
+  assert.equal(result.exitCode, 1);
+  assert.equal(result.error.code, 'TOKEN_FILE_UNSAFE');
+});
+
+test('PLAN-0643 T1.2 worst case: an ACL failure leaves no token file behind', async (t) => {
+  const cp = await startAuthMock();
+  const token = tempTokenFile();
+  t.after(async () => { await cp.close(); token.cleanup(); });
+
+  const result = await runCommand(['auth', 'login', '--json'], {
+    env: { ...cp.env, XIHE_CLI_TOKEN_FILE: token.file },
+    promptSecret: noPrompt,
+    stderr: sink(),
+    aclRunner: () => ({ ok: false, code: 'TOKEN_ACL_FAILED', message: 'simulated icacls failure' }),
+  });
+
+  assert.equal(result.exitCode, 1);
+  assert.equal(result.error.code, 'TOKEN_ACL_FAILED');
+  assert.equal(fs.existsSync(token.file), false);
+  assert.deepEqual(fs.readdirSync(token.directory), []);
+});
+
+test('PLAN-0643 T1.2 worst case: an unwritable token path reports TOKEN_FILE_UNWRITABLE', async (t) => {
+  const cp = await startAuthMock();
+  const token = tempTokenFile();
+  const blocker = path.join(token.directory, 'blocker');
+  fs.writeFileSync(blocker, 'x');
+  t.after(async () => { await cp.close(); token.cleanup(); });
+
+  const result = await runCommand(['auth', 'login', '--json'], {
+    env: { ...cp.env, XIHE_CLI_TOKEN_FILE: path.join(blocker, 'cli-token.json') },
+    promptSecret: noPrompt,
+    stderr: sink(),
+  });
+
+  assert.equal(result.exitCode, 1);
+  assert.equal(result.error.code, 'TOKEN_FILE_UNWRITABLE');
+});
+
+test('PLAN-0643 T1.5: concurrent logins converge on one valid entry (last writer wins)', async (t) => {
+  const cp = await startAuthMock();
+  const token = tempTokenFile();
+  t.after(async () => { await cp.close(); token.cleanup(); });
+  const env = { ...cp.env, XIHE_CLI_TOKEN_FILE: token.file };
+
+  const results = await Promise.all(Array.from({ length: 5 }, () => runCommand(['auth', 'login', '--json'], {
+    env, promptSecret: noPrompt, stderr: sink(),
+  })));
+
+  assert.equal(results.every((result) => result.exitCode === 0), true);
+  const store = readTokenFile(token.file);
+  assert.equal(Object.keys(store.tokens).length, 1);
+  assert.deepEqual(fs.readdirSync(token.directory), ['cli-token.json']);
+});
