@@ -8,7 +8,7 @@ import { test } from 'node:test';
 import path from 'node:path';
 import { tmpdir } from 'node:os';
 import { printResult, runCommand } from './xihe.mjs';
-import { promptSecret } from './xihe-cli/provider.mjs';
+import { promptSecret, readResponseText } from './xihe-cli/provider.mjs';
 import { clearToken } from './xihe-cli/token-store.mjs';
 import { applySetToEnv, applyUrlSyncToEnv, parseStackSetArgs } from './lib/stack-set.mjs';
 
@@ -4055,7 +4055,7 @@ test('PLAN-0643 T1.7: global --workspace is accepted before the group and forwar
 
 // ── PLAN-0643 T1.1/T1.6/T1.8: escape hatch ────────────────────────────────
 
-async function startApiEscapeMock({ responseType = 'json', status = 200 } = {}) {
+async function startApiEscapeMock({ responseType = 'json', status = 200, bodyText } = {}) {
   const state = { requests: [], lastQuery: null, lastMethod: null, lastBody: null, lastHeaders: null };
   const server = createServer(async (request, response) => {
     const url = new URL(request.url, 'http://127.0.0.1');
@@ -4066,6 +4066,11 @@ async function startApiEscapeMock({ responseType = 'json', status = 200 } = {}) 
     state.lastBody = await requestBody(request);
     if (url.pathname === '/api/v1/auth/login') {
       json(response, 200, { accessToken: 'test-token' });
+      return;
+    }
+    if (bodyText !== undefined) {
+      response.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
+      response.end(bodyText);
       return;
     }
     if (responseType === 'sse') {
@@ -4739,4 +4744,87 @@ test('PLAN-0643 R5: automatic refresh never reads XIHE_DEV_ADMIN_PASSWORD (B7)',
   assert.equal(result.exitCode, 1);
   assert.equal(result.error.code, 'AUTHENTICATION_FAILED', 'without an interactive prompt the original 401 is surfaced');
   assert.equal(cp.state.loginRequests, 0, 'the dev-admin password from the environment must never be replayed automatically');
+});
+
+// ── PLAN-0643 R7: byte-capped, streaming response reads ─────────────────────────
+
+test('PLAN-0643 R7: readResponseText caps by BYTES and reports truncation', async () => {
+  const exact = new Response('abcdef');
+  const exactRead = await readResponseText(exact, 6);
+  assert.deepEqual(exactRead, { text: 'abcdef', truncated: false }, 'exactly at the cap is not truncation');
+
+  const over = new Response('abcdefg');
+  const overRead = await readResponseText(over, 6);
+  assert.equal(overRead.text, 'abcdef');
+  assert.equal(overRead.truncated, true);
+
+  // 2 chars but 6 UTF-8 bytes: a character-based cap would have admitted this.
+  const multibyte = new Response('中文');
+  const multibyteRead = await readResponseText(multibyte, 4);
+  assert.equal(multibyteRead.truncated, true, 'the cap is measured in bytes, not UTF-16 units');
+  assert.ok(Buffer.byteLength(multibyteRead.text, 'utf8') <= 4);
+});
+
+test('PLAN-0643 R7: an oversized CP response fails with CP_RESPONSE_TOO_LARGE + truncated details', async (t) => {
+  const state = { requests: 0 };
+  const server = createServer(async (request, response) => {
+    const url = new URL(request.url, 'http://127.0.0.1');
+    state.requests += 1;
+    await requestBody(request);
+    if (url.pathname === '/api/v1/auth/login') {
+      json(response, 200, { accessToken: 'token-1' });
+      return;
+    }
+    if (url.pathname === '/api/v1/provider-connections') {
+      response.writeHead(200, { 'Content-Type': 'application/json' });
+      response.end(`{"connections":[{"id":"c-1","big":"${'x'.repeat(1_200_000)}"}]}`);
+      return;
+    }
+    json(response, 404, { code: 'NOT_FOUND' });
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise((resolve) => server.close(resolve)));
+
+  const result = await runCommand(['provider', 'list', '--json'], {
+    env: { XIHE_CP_PORT: String(server.address().port), XIHE_DEV_ADMIN_PASSWORD: TEST_PASSWORD },
+    promptSecret: noPrompt,
+    stderr: sink(),
+  });
+
+  assert.equal(result.exitCode, 1);
+  assert.equal(result.error.code, 'CP_RESPONSE_TOO_LARGE');
+  assert.equal(result.error.details.truncated, true);
+  assert.equal(result.error.details.limitBytes, 1_000_000);
+});
+
+test('PLAN-0643 R7: xihe api reports truncation (stderr marker + truncated:true + exit 1)', async (t) => {
+  const cp = await startApiEscapeMock();
+  t.after(cp.close);
+  const stderr = sink();
+
+  const result = await runCommand(['api', 'GET', '/api/v1/status', '--max-bytes', '5', '--json'], {
+    env: cp.env, promptSecret: noPrompt, stderr,
+  });
+
+  assert.equal(result.exitCode, 1);
+  assert.equal(result.envelope.ok, false);
+  assert.equal(result.envelope.truncated, true);
+  assert.equal(typeof result.envelope.body, 'string', 'a truncated JSON body stays text and is not half-parsed');
+  assert.match(stderr.text(), /# truncated: response exceeded --max-bytes \(5 bytes\)/);
+});
+
+test('PLAN-0643 R7: --raw truncation keeps the partial bytes and never claims success', async (t) => {
+  // 2 chars / 6 UTF-8 bytes: the old `text.length` check (2 <= 4) would have passed it whole.
+  const cp = await startApiEscapeMock({ bodyText: '中文' });
+  t.after(cp.close);
+
+  const result = await runCommand(['api', 'GET', '/api/v1/whatever', '--raw', '--max-bytes', '4'], {
+    env: cp.env, promptSecret: noPrompt, stderr: sink(),
+  });
+
+  assert.equal(result.exitCode, 1);
+  assert.equal(result.envelope.truncated, true);
+  assert.equal(result.envelope.ok, false);
+  assert.ok(Buffer.byteLength(result.data.bodyText, 'utf8') <= 4, 'the printed body is capped at the byte limit');
+  assert.ok(result.data.bodyText.startsWith('中'), 'the readable prefix is preserved');
 });

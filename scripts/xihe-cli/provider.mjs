@@ -227,6 +227,60 @@ async function fetchWithConnectRetry(url, { fetchImpl, method, headers, body, ti
   }
 }
 
+/**
+ * PLAN-0643 R7: read a response body with a **byte** cap and stop the stream as soon
+ * as the cap is crossed. An oversized or hostile response therefore never lands in
+ * memory in full, and the truncation is reported instead of being silently sliced.
+ * Returns `{ text, truncated }`; `truncated` means the CP body continued past the cap.
+ */
+export async function readResponseText(response, limitBytes) {
+  const cap = Number.isFinite(limitBytes) && limitBytes > 0 ? Math.floor(limitBytes) : Number.MAX_SAFE_INTEGER;
+  const body = response?.body;
+  if (!body || typeof body.getReader !== 'function') {
+    // Non-streaming implementation (or a Response stub in tests): bounded fallback.
+    const text = await response.text();
+    if (Buffer.byteLength(text, 'utf8') <= cap) return { text, truncated: false };
+    const sliced = Buffer.from(text, 'utf8').subarray(0, cap).toString('utf8').replace(/\uFFFD+$/u, '');
+    return { text: sliced, truncated: true };
+  }
+  const reader = body.getReader();
+  const chunks = [];
+  let total = 0;
+  let truncated = false;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      const buffer = Buffer.from(value);
+      const remaining = cap - total;
+      if (buffer.length > remaining) {
+        if (remaining > 0) chunks.push(buffer.subarray(0, remaining));
+        truncated = true;
+        await reader.cancel().catch(() => {});
+        break;
+      }
+      chunks.push(buffer);
+      total += buffer.length;
+      if (total === cap) {
+        const next = await reader.read();
+        truncated = !next.done;
+        if (!next.done) await reader.cancel().catch(() => {});
+        break;
+      }
+    }
+  } finally {
+    try {
+      reader.releaseLock?.();
+    } catch {
+      // the stream is already closed on the truncation path
+    }
+  }
+  const raw = Buffer.concat(chunks).toString('utf8');
+  // A byte cap can split a multi-byte code point; drop the replacement character it
+  // produces so the returned text never exceeds the cap in UTF-8 bytes.
+  return { text: truncated ? raw.replace(/\uFFFD+$/u, '') : raw, truncated };
+}
+
 export async function requestJson(pathname, {
   apiBase,
   fetchImpl = fetch,
@@ -268,15 +322,22 @@ export async function requestJson(pathname, {
 
   if (response.status === 204) return null;
   let text;
+  let truncated = false;
   try {
-    text = await response.text();
+    ({ text, truncated } = await readResponseText(response, maxBytes));
   } catch {
     if (method !== 'GET' && method !== 'HEAD') {
       throw new CliError('OPERATION_OUTCOME_UNKNOWN', 'CP accepted the request but its response could not be read.');
     }
     throw new CliError('CP_RESPONSE_INVALID', 'CP response could not be read.');
   }
-  if (text.length > maxBytes) throw new CliError('CP_RESPONSE_TOO_LARGE', 'CP response exceeded the CLI response limit.');
+  if (truncated) {
+    throw new CliError(
+      'CP_RESPONSE_TOO_LARGE',
+      `CP response exceeded the CLI response limit (${maxBytes} bytes).`,
+      { limitBytes: maxBytes, truncated: true, path: pathname },
+    );
+  }
 
   let parsed = null;
   if (text.trim() !== '') {
@@ -337,13 +398,18 @@ export async function requestText(pathname, {
   });
 
   let text;
+  let truncated = false;
   try {
-    text = await response.text();
+    ({ text, truncated } = await readResponseText(response, maxBytes));
   } catch {
     throw new CliError('CP_RESPONSE_INVALID', 'CP response could not be read.');
   }
-  if (text.length > maxBytes) {
-    throw new CliError('CP_RESPONSE_TOO_LARGE', 'CP response exceeded the CLI response limit.');
+  if (truncated) {
+    throw new CliError(
+      'CP_RESPONSE_TOO_LARGE',
+      `CP response exceeded the CLI response limit (${maxBytes} bytes).`,
+      { limitBytes: maxBytes, truncated: true, path: pathname },
+    );
   }
   if (!response.ok) {
     let parsed = null;

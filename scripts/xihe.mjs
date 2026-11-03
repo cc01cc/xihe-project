@@ -206,7 +206,7 @@ function helpText() {
     '  node scripts/xihe.mjs auth login [--email <account>] [--force] [--no-cache]',
     '  node scripts/xihe.mjs auth status',
     '  node scripts/xihe.mjs auth logout [--force]',
-    '  node scripts/xihe.mjs api [METHOD] <path> [--yes] [--allow-dangerous] [--body-file <file> | --stdin] [--raw] [--timeout <ms>] [--max-bytes <n>]',
+    '  node scripts/xihe.mjs api [METHOD] <path> [--yes] [--allow-dangerous] [--body-file <file> | --stdin] [--raw] [--timeout <ms>] [--max-bytes <bytes>]',
     '',
     'Global options: --json (machine envelope), --base-url <url>, --workspace <wsId>, --help.',
     'Exit codes: 0 = success; 1 = business/runtime failure; 2 = usage error (unknown command/option, missing argument, forbidden api target).',
