@@ -65,6 +65,15 @@ pnpm run build
 - `AlertDialogAction` 点击后无条件关闭；校验失败需要保持对话框时用普通 destructive `Button` 并显式控制关闭。
 - MenuItem 的程序化选择不由 jsdom 覆盖；交互行为用 Playwright 验证。
 
+## UI 预览（mock）工作流（2026-11-03 用户裁定）
+
+- **禁止手写静态 HTML 预览稿**。所有 UI 预览、评审稿、宣传配图稿必须用**真组件 + mock 数据**渲染——手写 HTML 只仿外形，组件、图标、间距与真实不一致，已造成一次返工。
+- 载体优先 `preview.html` + `src/preview/main.ts`（Vite 多入口，独立 `createApp`，**不进产品路由**）；退路 `/__ui-preview` 路由且必须用 `import.meta.env.DEV` 守卫，生产不可达。
+- 图标用 `@lucide/vue`；样式只用产品 token 与 `components/ui/*`；**不新增色阶、不引入第二套设计语言**。
+- 全部 mock（本地对象/ref），**不调任何 `/api/v1/**`**；每个区块在 1440×900 下单独可截图、不跨屏截断。
+- 覆盖面为常态维护项：工作台主面板（含 **TO / CC**）、智能体面板、记忆面板、配置页（ProviderHub + API 请求模板）、凭据与角色页、审批卡与工具调用卡、空/加载/错误/无权限四态。
+- 「页面上点了保存没反应」这类问题，真栈 E2E 才能发现；预览页只解决"看"，不替代 E2E 证据。
+
 ## Session / Agent Principal
 
 - 新建 Session 必须显式携带已绑定 Agent 的 `agentPrincipalId`（`POST /api/v1/sessions`）；principal-null 空 Session 在首次发送前于 UI 选择 principal。
