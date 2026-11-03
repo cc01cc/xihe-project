@@ -4324,6 +4324,55 @@ async function startAuthMock({ status = 200 } = {}) {
   };
 }
 
+// PLAN-0643 R5: a fake CP that rejects a stale token with 401 and accepts the token
+// issued by the (single) re-login. `forbidden` makes every business call 403 instead.
+async function startAuthRefreshMock({ freshToken = 'fresh-token', loginStatus = 200, forbidden = false } = {}) {
+  const state = { loginRequests: 0, staleRequests: 0, freshRequests: 0 };
+  const server = createServer(async (request, response) => {
+    const url = new URL(request.url, 'http://127.0.0.1');
+    await requestBody(request);
+    if (url.pathname === '/api/v1/auth/login') {
+      state.loginRequests += 1;
+      if (loginStatus !== 200) {
+        json(response, loginStatus, { code: 'AUTHENTICATION_FAILED' });
+        return;
+      }
+      json(response, 200, { accessToken: freshToken });
+      return;
+    }
+    if (forbidden) {
+      json(response, 403, { code: 'ACCESS_DENIED' });
+      return;
+    }
+    if (url.pathname === '/api/v1/provider-connections') {
+      if (String(request.headers.authorization ?? '') === `Bearer ${freshToken}`) {
+        state.freshRequests += 1;
+        json(response, 200, { connections: [] });
+        return;
+      }
+      state.staleRequests += 1;
+      json(response, 401, { code: 'AUTHENTICATION_FAILED' });
+      return;
+    }
+    json(response, 404, { code: 'NOT_FOUND' });
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  return {
+    state,
+    baseUrl,
+    env: { XIHE_CP_PORT: String(server.address().port) },
+    close: () => new Promise((resolve, reject) => server.close((error) => (error ? reject(error) : resolve()))),
+  };
+}
+
+function seedStaleToken(file, baseUrl, token = 'stale-token') {
+  fs.writeFileSync(file, JSON.stringify({
+    version: 1,
+    tokens: { [baseUrl]: { token, email: null, expiresAt: '2099-01-01T00:00:00.000Z', obtainedAt: '2026-01-01T00:00:00.000Z' } },
+  }));
+}
+
 test('PLAN-0643 T1.2: auth login writes an access-only, baseUrl-keyed cache entry', async (t) => {
   const cp = await startAuthMock();
   const token = tempTokenFile();
@@ -4609,4 +4658,85 @@ test('PLAN-0643 V14b: an ACL failure during a partial logout keeps the old file 
   } finally {
     token.cleanup();
   }
+});
+
+// ── PLAN-0643 R5: 401 refresh, single-flight across processes ───────────────────
+
+test('PLAN-0643 R5: three concurrent 401s trigger exactly one re-login and all commands succeed', async (t) => {
+  const cp = await startAuthRefreshMock();
+  const token = tempTokenFile();
+  t.after(async () => { await cp.close(); token.cleanup(); });
+  seedStaleToken(token.file, cp.baseUrl);
+  const env = { ...cp.env, XIHE_CLI_TOKEN_FILE: token.file };
+  const prompt = async () => TEST_PASSWORD;
+
+  const results = await Promise.all(Array.from({ length: 3 }, () => runCommand(['provider', 'list', '--json'], {
+    env,
+    promptSecret: prompt,
+    stderr: sink(),
+    authRefreshWaitMs: 5_000,
+    authRefreshPollMs: 10,
+  })));
+
+  for (const result of results) assert.equal(result.exitCode, 0, JSON.stringify(result.error));
+  assert.equal(cp.state.loginRequests, 1, 'three concurrent 401s must produce exactly one login');
+  assert.equal(cp.state.freshRequests, 3, 'each command replays with the refreshed token');
+  const store = readTokenFile(token.file);
+  assert.equal(store.tokens[cp.baseUrl].token, 'fresh-token', 'the cache is replaced with the refreshed token');
+  assert.deepEqual(fs.readdirSync(token.directory).sort(), ['cli-token.json'], 'the refresh lock is released');
+});
+
+test('PLAN-0643 R5: a 403 keeps the cache and never triggers a re-login', async (t) => {
+  const cp = await startAuthRefreshMock({ forbidden: true });
+  const token = tempTokenFile();
+  t.after(async () => { await cp.close(); token.cleanup(); });
+  seedStaleToken(token.file, cp.baseUrl);
+  const env = { ...cp.env, XIHE_CLI_TOKEN_FILE: token.file };
+
+  const result = await runCommand(['provider', 'list', '--json'], {
+    env, promptSecret: async () => TEST_PASSWORD, stderr: sink(), authRefreshWaitMs: 2_000, authRefreshPollMs: 10,
+  });
+
+  assert.equal(result.exitCode, 1);
+  assert.equal(result.error.code, 'ACCESS_DENIED');
+  assert.equal(cp.state.loginRequests, 0, '403 is an authorization answer, not an expired token');
+  assert.equal(readTokenFile(token.file).tokens[cp.baseUrl].token, 'stale-token', 'the cache is untouched on 403');
+});
+
+test('PLAN-0643 R5: a failed re-login reports AUTH_REFRESH_FAILED and keeps the old entry', async (t) => {
+  const cp = await startAuthRefreshMock({ loginStatus: 401 });
+  const token = tempTokenFile();
+  t.after(async () => { await cp.close(); token.cleanup(); });
+  seedStaleToken(token.file, cp.baseUrl);
+  const env = { ...cp.env, XIHE_CLI_TOKEN_FILE: token.file };
+
+  const result = await runCommand(['provider', 'list', '--json'], {
+    env, promptSecret: async () => TEST_PASSWORD, stderr: sink(), authRefreshWaitMs: 2_000, authRefreshPollMs: 10,
+  });
+
+  assert.equal(result.exitCode, 1);
+  assert.equal(result.error.code, 'AUTH_REFRESH_FAILED');
+  assert.equal(cp.state.loginRequests, 1, 'exactly one refresh attempt');
+  assert.equal(readTokenFile(token.file).tokens[cp.baseUrl].token, 'stale-token', 'the old token is not deleted on failure');
+  assert.deepEqual(
+    fs.readdirSync(token.directory).filter((name) => name.endsWith('.lock') || name.endsWith('.tmp')),
+    [],
+    'the refresh lock is released (the .lock.error marker is left for waiting processes)',
+  );
+});
+
+test('PLAN-0643 R5: automatic refresh never reads XIHE_DEV_ADMIN_PASSWORD (B7)', async (t) => {
+  const cp = await startAuthRefreshMock();
+  const token = tempTokenFile();
+  t.after(async () => { await cp.close(); token.cleanup(); });
+  seedStaleToken(token.file, cp.baseUrl);
+  const env = { ...cp.env, XIHE_CLI_TOKEN_FILE: token.file, XIHE_DEV_ADMIN_PASSWORD: TEST_PASSWORD };
+
+  const result = await runCommand(['provider', 'list', '--json'], {
+    env, promptSecret: noPrompt, stderr: sink(), authRefreshWaitMs: 2_000, authRefreshPollMs: 10,
+  });
+
+  assert.equal(result.exitCode, 1);
+  assert.equal(result.error.code, 'AUTHENTICATION_FAILED', 'without an interactive prompt the original 401 is surfaced');
+  assert.equal(cp.state.loginRequests, 0, 'the dev-admin password from the environment must never be replayed automatically');
 });

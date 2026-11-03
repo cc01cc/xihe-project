@@ -250,6 +250,20 @@ export async function requestJson(pathname, {
     body: body === undefined ? undefined : JSON.stringify(body),
     timeoutMs,
     path: pathname,
+  }).then(async (first) => {
+    // PLAN-0643 R5: the 401-only refresh lives one level above fetch, so a refresh
+    // failure surfaces as its own CLI error instead of being re-labelled CP_UNAVAILABLE
+    // by the connect-retry classifier. 403/other statuses never reach this hook.
+    if (first.status !== 401 || typeof fetchImpl?.authRefreshHook !== 'function') return first;
+    const retried = await fetchImpl.authRefreshHook({
+      url: `${apiBase}${pathname}`,
+      method,
+      headers,
+      body: body === undefined ? undefined : JSON.stringify(body),
+      timeoutMs,
+      fetchImpl,
+    });
+    return retried ?? first;
   });
 
   if (response.status === 204) return null;
