@@ -7,6 +7,7 @@ import com.cc01cc.p.xihe.cp.config.TenantContext;
 import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
 import com.cc01cc.p.xihe.cp.entity.AccessRole;
 import com.cc01cc.p.xihe.cp.entity.AccessRoleBinding;
+import com.cc01cc.p.xihe.cp.entity.AuthorizationGrant;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceAgent;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceAgentId;
 import com.cc01cc.p.xihe.cp.policy.AuthzContext;
@@ -67,6 +68,8 @@ public class AgentPrincipalService {
      * role that keeps a fresh agent usable (read/write/delete/exec) without handing out management.
      */
     private static final String DEFAULT_AGENT_WORKSPACE_ROLE = "WS_EDITOR";
+    /** PLAN-0629: the instance-scope role a fresh principal is bound to (no frozen ceiling anymore). */
+    private static final String DEFAULT_AGENT_INSTANCE_ROLE = "USER";
 
     private final AgentPrincipalRepository agentPrincipalRepository;
     private final AuthorizationGrantRepository grantRepository;
@@ -418,12 +421,19 @@ public class AgentPrincipalService {
         principal.setPresetId(presetId);
         AgentPrincipal savedPrincipal = agentPrincipalRepository.saveAndFlush(principal);
 
-        // PLAN-0470 #22: the grant write itself is Policy-owned.
-        grantDefaultService.createAgentPrincipalGrant(savedPrincipal.getId(), actorId,
-                templateId == null ? "default" : "template",
-                optionalText(templateSnapshot, "roleName"),
-                optionalText(templateSnapshot, "templateName"),
-                grantPermissions);
+        // PLAN-0629 (user ruling 2026-11-04, option A): the frozen ceiling is retired. Permissions of
+        // an agent principal come from bound roles only — "the creator's rights at creation time" is
+        // exactly the ownership coupling the ruling removed. The old `createAgentPrincipalGrant`
+        // snapshot write is intentionally gone; rows already in the database are left untouched
+        // (deprecated, kept for rollback) and evaluation falls back to them only while a subject has
+        // no `source='role'` rows yet.
+        //
+        // Accepted risk, on purpose: if the creator is demoted later, roles they granted keep working.
+        // That is the point of the ruling — a role is an independent object; to revoke, edit the role
+        // or unbind it. Do not "fix" this by re-checking the creator later: that would reintroduce
+        // the ownership coupling. The one-time authority check happened above (the action atom that
+        // authorized this create), and it is the only creator-scoped check.
+        bindInstanceRoles(savedPrincipal.getId(), actorId, List.of());
 
         ObjectNode detail = objectMapper.createObjectNode();
         // PLAN-0622 M1.1: the audit record carries the tier (checklist risk #7) and the action that
@@ -714,9 +724,8 @@ public class AgentPrincipalService {
     public JsonNode resolveCapFor(UUID principalId, UUID workspaceId) {
         ActiveWorkspaceBinding binding = requireActiveWorkspaceBinding(principalId, workspaceId);
         AgentPrincipal principal = binding.principal();
-        Set<GrantIntersectionEvaluator.PermissionAtom> principalPermissions = evaluator.union(
-                grantRepository.findBySubjectTypeAndSubjectId(
-                        GrantPrincipalPathResolver.AGENT_PRINCIPAL, principal.getId()));
+        Set<GrantIntersectionEvaluator.PermissionAtom> principalPermissions =
+                principalEffectiveAtoms(principal.getId(), workspaceId);
         Set<GrantIntersectionEvaluator.PermissionAtom> bindingPermissions = binding.workspaceAgent() == null
                 // PLAN-0629: access granted by a workspace role binding, no binding row involved.
                 ? evaluator.union(grantRepository.findScopedGrants(
@@ -768,6 +777,53 @@ public class AgentPrincipalService {
                     "Agent principal holds no role binding for this Workspace");
         }
         return new ActiveWorkspaceBinding(principal, binding);
+    }
+
+    /** PLAN-0629: a freshly created principal gets instance-scope role bindings (roleIds or default). */
+    private void bindInstanceRoles(UUID principalId, UUID actorId, List<UUID> roleIds) {
+        List<UUID> effective = roleIds == null || roleIds.isEmpty()
+                ? List.of(requireRole(DEFAULT_AGENT_INSTANCE_ROLE).getId())
+                : roleIds;
+        List<UUID> existing = roleBindingRepository
+                .findBySubjectTypeAndSubjectIdAndScopeType(
+                        GrantPrincipalPathResolver.AGENT_PRINCIPAL, principalId, "instance")
+                .stream()
+                .map(AccessRoleBinding::getRoleId)
+                .toList();
+        for (UUID roleId : effective) {
+            if (existing.contains(roleId)) {
+                continue;
+            }
+            roleBindingRepository.save(new AccessRoleBinding(roleId,
+                    GrantPrincipalPathResolver.AGENT_PRINCIPAL, principalId, "instance", null, actorId));
+        }
+        roleMaterializer.materializeSubject(GrantPrincipalPathResolver.AGENT_PRINCIPAL, principalId,
+                actorId, null);
+    }
+
+    private AccessRole requireRole(String name) {
+        return roleRepository.findByName(name)
+                .orElseThrow(() -> new CpApiException(HttpStatus.INTERNAL_SERVER_ERROR,
+                        "ROLE_CATALOG_INCONSISTENT", "Seeded role " + name + " is missing"));
+    }
+
+    /**
+     * PLAN-0629: the permission source is the bound roles. A subject that already materialized
+     * {@code source='role'} rows is evaluated from those only; a legacy subject (no role rows yet,
+     * e.g. rows written before the migration) keeps the pre-ruling behaviour — the frozen
+     * {@code agent_default}/{@code template} snapshots — so nothing becomes unusable mid-upgrade and
+     * the change stays reversible.
+     */
+    private Set<GrantIntersectionEvaluator.PermissionAtom> principalEffectiveAtoms(UUID principalId,
+                                                                                  UUID workspaceId) {
+        List<AuthorizationGrant> roleRows = grantRepository.findScopedGrants(
+                GrantPrincipalPathResolver.AGENT_PRINCIPAL, principalId,
+                List.of(GrantSources.ROLE), workspaceId);
+        if (!roleRows.isEmpty()) {
+            return evaluator.union(roleRows);
+        }
+        return evaluator.union(grantRepository.findBySubjectTypeAndSubjectId(
+                GrantPrincipalPathResolver.AGENT_PRINCIPAL, principalId));
     }
 
     /** PLAN-0629: the workspace-scoped role ids bound to this principal (read-only view field). */
