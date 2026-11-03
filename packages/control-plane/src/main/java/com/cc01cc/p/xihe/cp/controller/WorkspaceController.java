@@ -6,6 +6,7 @@ import com.cc01cc.p.xihe.cp.config.ProblemDetailsHandler;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
+import com.cc01cc.p.xihe.cp.entity.WorkspaceRoot;
 import com.cc01cc.p.xihe.cp.service.WorkspaceBackendPolicy;
 import com.cc01cc.p.xihe.cp.service.WorkspaceService;
 import org.springframework.http.HttpStatus;
@@ -22,6 +23,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 @RestController
@@ -104,10 +106,11 @@ public class WorkspaceController {
             String image = request == null ? null : request.image();
             String storageMode = request == null ? null : request.storageMode();
             String hostPath = request == null ? null : request.hostPath();
+            List<Map<String, String>> roots = request == null ? null : request.roots();
             String executionMode = request == null ? null : request.executionMode();
             Workspace workspace = workspaceService.createWorkspace(
                     name, description, userId, profile, image,
-                    storageMode, hostPath, executionMode, idempotencyKey);
+                    storageMode, hostPath, roots, executionMode, idempotencyKey);
             // toView already returns a ResponseEntity. Nesting it as the body
             // serializes `{body, headers, statusCode}` and hides workspace.id
             // from the UI response.
@@ -147,6 +150,66 @@ public class WorkspaceController {
             return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
         }
     }
+
+    // ---------------------------------------------------------------- PLAN-0639 M1: root CRUD
+
+    @PostMapping("/{workspaceId}/roots")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<?> addRoot(
+            @PathVariable String workspaceId,
+            @RequestBody(required = false) RootCreateRequest request) {
+        String userId = TenantContext.getUserId();
+        try {
+            String path = request == null ? null : request.path();
+            String alias = request == null ? null : request.alias();
+            WorkspaceRoot root = workspaceService.addRoot(workspaceId, userId, path, alias);
+            return ResponseEntity.status(HttpStatus.CREATED).body(rootToMap(root));
+        } catch (CpApiException e) {
+            return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
+        }
+    }
+
+    @PatchMapping("/{workspaceId}/roots/{rootId}")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<?> patchRoot(
+            @PathVariable String workspaceId,
+            @PathVariable String rootId,
+            @RequestBody(required = false) RootPatchRequest request) {
+        String userId = TenantContext.getUserId();
+        try {
+            String alias = request == null ? null : request.alias();
+            Integer position = request == null ? null : request.position();
+            WorkspaceRoot root = workspaceService.patchRoot(workspaceId, rootId, userId, alias, position);
+            return ResponseEntity.ok(rootToMap(root));
+        } catch (CpApiException e) {
+            return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
+        }
+    }
+
+    @DeleteMapping("/{workspaceId}/roots/{rootId}")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<?> deleteRoot(
+            @PathVariable String workspaceId,
+            @PathVariable String rootId) {
+        String userId = TenantContext.getUserId();
+        try {
+            workspaceService.deleteRoot(workspaceId, rootId, userId);
+            return ResponseEntity.noContent().build();
+        } catch (CpApiException e) {
+            return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
+        }
+    }
+
+    private static Map<String, Object> rootToMap(WorkspaceRoot root) {
+        Map<String, Object> view = new LinkedHashMap<>();
+        view.put("id", root.getId());
+        view.put("alias", root.getAlias());
+        view.put("position", root.getPosition());
+        return view;
+    }
+
+    public record RootCreateRequest(String path, String alias) {}
+    public record RootPatchRequest(String alias, Integer position) {}
 
     private ResponseEntity<Map<String, Object>> toView(Workspace workspace, String userId, boolean admin) {
         return ResponseEntity.ok(toMap(workspace, workspaceService.ownerIdOf(workspace.getId()),
@@ -191,7 +254,14 @@ public class WorkspaceController {
             String image,
             String storageMode,
             String hostPath,
-            String executionMode) {}
+            List<Map<String, String>> roots,
+            String executionMode) {
+        /** Back-compat for the pre-0639 7-arg call sites. */
+        public CreateWorkspaceRequest(String name, String description, String profile,
+                String image, String storageMode, String hostPath, String executionMode) {
+            this(name, description, profile, image, storageMode, hostPath, null, executionMode);
+        }
+    }
     public record UpdateWorkspaceRequest(String name, String description) {}
 }
 

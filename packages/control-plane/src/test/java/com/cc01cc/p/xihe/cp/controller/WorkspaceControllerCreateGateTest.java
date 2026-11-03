@@ -54,7 +54,7 @@ class WorkspaceControllerCreateGateTest {
         assertNotNull(response.getBody());
         assertEquals("INVALID_REQUEST", ((Map<?, ?>) response.getBody()).get("code"));
         verify(workspaceService, never()).createWorkspace(any(), any(), any(), any(), any(),
-                any(), any(), any(), any());
+                any(), any(), any(), any(), any());
     }
 
     @Test
@@ -67,7 +67,7 @@ class WorkspaceControllerCreateGateTest {
         assertEquals(HttpStatus.CONFLICT, response.getStatusCode());
         assertEquals("BACKEND_DISABLED", ((Map<?, ?>) response.getBody()).get("code"));
         verify(workspaceService, never()).createWorkspace(any(), any(), any(), any(), any(),
-                any(), any(), any(), any());
+                any(), any(), any(), any(), any());
     }
 
     @Test
@@ -75,7 +75,7 @@ class WorkspaceControllerCreateGateTest {
         WorkspaceController.CreateWorkspaceRequest request = new WorkspaceController.CreateWorkspaceRequest(
                 "Host workspace", null, null, null, "direct_attach", "H:/tmp/ws", "windows-host");
         when(workspaceService.createWorkspace(eq("Host workspace"), any(), eq("user-1"), any(), any(),
-                eq("direct_attach"), eq("H:/tmp/ws"), eq("windows-host"), any()))
+                eq("direct_attach"), eq("H:/tmp/ws"), any(), eq("windows-host"), any()))
                 .thenThrow(new CpApiException(HttpStatus.BAD_REQUEST, "PROBE_REJECTED", "probe rejected"));
 
         ResponseEntity<?> response = controller.create(request, null);
@@ -90,7 +90,7 @@ class WorkspaceControllerCreateGateTest {
         enabled.validate();
         WorkspaceController relaxed = new WorkspaceController(workspaceService, enabled);
         when(workspaceService.createWorkspace(any(), any(), eq("user-1"), any(), any(),
-                any(), any(), any(), any()))
+                any(), any(), any(), any(), any()))
                 .thenThrow(new CpApiException(HttpStatus.BAD_REQUEST, "SEEN_BY_SERVICE", "reached"));
 
         ResponseEntity<?> response = relaxed.create(
@@ -100,7 +100,7 @@ class WorkspaceControllerCreateGateTest {
         assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode());
         assertEquals("SEEN_BY_SERVICE", ((Map<?, ?>) response.getBody()).get("code"));
         verify(workspaceService).createWorkspace(any(), any(), eq("user-1"), any(), any(),
-                eq("managed_import"), any(), eq("docker"), any());
+                eq("managed_import"), any(), any(), eq("docker"), any());
     }
 
     @Test
@@ -111,6 +111,6 @@ class WorkspaceControllerCreateGateTest {
 
         assertEquals(HttpStatus.UNAUTHORIZED, response.getStatusCode());
         verify(workspaceService, never()).createWorkspace(any(), any(), any(), any(), any(),
-                any(), any(), any(), any());
+                any(), any(), any(), any(), any());
     }
 }

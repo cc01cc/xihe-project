@@ -56,6 +56,15 @@ public class WorkspaceExecutionSpec {
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 
+    /**
+     * PLAN-0639 M1: ordered root list {@code [{rootId, hostPath}]} as a JSON string.  Runtime
+     * hydrate reads this to register per-root canonical paths.  {@code hostPath} (legacy) ==
+     * {@code roots[0].hostPath}.
+     */
+    @Column(name = "roots", columnDefinition = "JSONB")
+    @JdbcTypeCode(SqlTypes.JSON)
+    private String roots;
+
     @PrePersist
     protected void onCreate() {
         if (createdAt == null) {
@@ -141,5 +150,13 @@ public class WorkspaceExecutionSpec {
 
     public void setCreatedAt(Instant createdAt) {
         this.createdAt = createdAt;
+    }
+
+    public String getRoots() {
+        return roots;
+    }
+
+    public void setRoots(String roots) {
+        this.roots = roots;
     }
 }

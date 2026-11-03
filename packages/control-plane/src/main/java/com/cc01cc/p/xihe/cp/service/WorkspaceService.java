@@ -4,10 +4,12 @@ import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
 import com.cc01cc.p.xihe.cp.audit.AuditLogger;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
+import com.cc01cc.p.xihe.cp.entity.WorkspaceRoot;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
 import com.cc01cc.p.xihe.cp.event.WorkspaceEventManager;
 import com.cc01cc.p.xihe.cp.operation.JobStateService;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
+import com.cc01cc.p.xihe.cp.repository.WorkspaceRootRepository;
 import com.cc01cc.p.xihe.cp.policy.AuthzContext;
 import com.cc01cc.p.xihe.cp.policy.WorkspaceMembershipService;
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -56,6 +58,7 @@ public class WorkspaceService {
     private static final String DEFAULT_EXECUTION_MODE = "docker";
 
     private final WorkspaceRepository workspaceRepository;
+    private final WorkspaceRootRepository workspaceRootRepository;
     private final WorkspaceMembershipService memberships;
     private final WorkspaceExecutionSpecService executionSpecService;
     private final RestTemplate restTemplate;
@@ -66,8 +69,10 @@ public class WorkspaceService {
     private final WorkspaceEventManager workspaceEventManager;
     private final AuditLogger auditLogger;
     private final AuthzContext authzContext;
+    private final jakarta.persistence.EntityManager entityManager;
 
     public WorkspaceService(WorkspaceRepository workspaceRepository,
+                            WorkspaceRootRepository workspaceRootRepository,
                             WorkspaceMembershipService memberships,
                             WorkspaceExecutionSpecService executionSpecService,
                             @Qualifier("runtimeCleanupRestTemplate") RestTemplate restTemplate,
@@ -77,8 +82,10 @@ public class WorkspaceService {
                             com.fasterxml.jackson.databind.ObjectMapper objectMapper,
                             WorkspaceEventManager workspaceEventManager,
                             AuditLogger auditLogger,
-                            AuthzContext authzContext) {
+                            AuthzContext authzContext,
+                            jakarta.persistence.EntityManager entityManager) {
         this.workspaceRepository = workspaceRepository;
+        this.workspaceRootRepository = workspaceRootRepository;
         this.memberships = memberships;
         this.executionSpecService = executionSpecService;
         this.restTemplate = restTemplate;
@@ -89,6 +96,7 @@ public class WorkspaceService {
         this.workspaceEventManager = workspaceEventManager;
         this.auditLogger = auditLogger;
         this.authzContext = authzContext;
+        this.entityManager = entityManager;
     }
 
     /**
@@ -126,10 +134,38 @@ public class WorkspaceService {
     public Workspace createWorkspace(String name, String description, String ownerId,
             String profile, String image, String storageMode, String hostPath,
             String executionMode, String idempotencyKey) {
+        return createWorkspace(name, description, ownerId, profile, image,
+                storageMode, hostPath, null, executionMode, idempotencyKey);
+    }
+
+    @Transactional
+    public Workspace createWorkspace(String name, String description, String ownerId,
+            String profile, String image, String storageMode, String hostPath,
+            List<Map<String, String>> roots, String executionMode, String idempotencyKey) {
         requireNonBlank(ownerId, "ownerId");
         String normalizedStorageMode = normalizeStorageMode(storageMode);
         String normalizedExecutionMode = normalizeExecutionMode(executionMode, normalizedStorageMode);
-        String normalizedHostPath = normalizeHostPath(hostPath, normalizedStorageMode);
+
+        // PLAN-0639 M1: roots[] and hostPath are mutually exclusive.
+        boolean hasRoots = roots != null && !roots.isEmpty();
+        boolean hasHostPath = hostPath != null && !hostPath.isBlank();
+        if (hasRoots && hasHostPath) {
+            throw new CpApiException(
+                    org.springframework.http.HttpStatus.BAD_REQUEST,
+                    "INVALID_REQUEST",
+                    "roots[] and hostPath are mutually exclusive");
+        }
+
+        List<WorkspaceRoot> validatedRoots;
+        String normalizedHostPath;
+        if (hasRoots) {
+            validatedRoots = normalizeRoots(roots, normalizedStorageMode);
+            normalizedHostPath = validatedRoots.get(0).getHostPath();
+        } else {
+            normalizedHostPath = normalizeHostPath(hostPath, normalizedStorageMode);
+            validatedRoots = List.of();
+        }
+
         String normalizedProfile = normalizeProfileForExecution(profile, normalizedExecutionMode);
         String normalizedImage = normalizeImageForExecution(image, normalizedExecutionMode);
         String normalizedIdempotencyKey = normalizeIdempotencyKey(idempotencyKey);
@@ -157,7 +193,7 @@ public class WorkspaceService {
         }
 
         return createWorkspaceLocked(name, description, ownerId, normalizedProfile, normalizedImage,
-                normalizedStorageMode, normalizedHostPath, normalizedExecutionMode,
+                normalizedStorageMode, normalizedHostPath, validatedRoots, normalizedExecutionMode,
                 normalizedIdempotencyKey, requestHash);
     }
 
@@ -459,6 +495,7 @@ public class WorkspaceService {
 
     private Workspace createWorkspaceLocked(String name, String description, String ownerId,
             String profile, String image, String storageMode, String hostPath,
+            List<WorkspaceRoot> validatedRoots,
             String executionMode, String idempotencyKey, String requestHash) {
         requireNonBlank(name, "name");
         Workspace workspace = new Workspace(name.trim());
@@ -477,13 +514,22 @@ public class WorkspaceService {
         memberships.assign(workspace.getId(), UUID.fromString(ownerId), WorkspaceRole.OWNER,
                 UUID.fromString(ownerId));
 
+        // PLAN-0639 M1: persist root rows (root[0].id = workspace.id for the primary root).
+        for (int i = 0; i < validatedRoots.size(); i++) {
+            WorkspaceRoot root = validatedRoots.get(i);
+            root.setId(i == 0 ? workspace.getId() : UUID.randomUUID());
+            root.setWorkspaceId(workspace.getId());
+            root.setCreatedBy("user:" + ownerId);
+            workspaceRootRepository.save(root);
+        }
+
         String initialSpec = "docker".equals(executionMode)
                 ? "{\"image\":\"" + image + "\",\"profile\":\"" + profile + "\"}"
                 : "{}";
         executionSpecService.createExecutionSpec(workspace.getId().toString(), initialSpec, ownerId, "create");
-        logger.info("Workspace created: id={} name={} storageRef={} storageMode={} executionMode={} profile={} image={}",
+        logger.info("Workspace created: id={} name={} storageRef={} storageMode={} executionMode={} profile={} image={} roots={}",
                 workspace.getId(), workspace.getName(), workspace.getStorageRef(),
-                storageMode, executionMode, profile, image);
+                storageMode, executionMode, profile, image, validatedRoots.size());
         return workspace;
     }
 
@@ -533,6 +579,220 @@ public class WorkspaceService {
                     "hostPath is only allowed for direct_attach");
         }
         return null;
+    }
+
+    // ---------------------------------------------------------------- PLAN-0639: multi-root
+
+    /**
+     * PLAN-0639 M1: validate and canonicalise a root list.  Each root.path must be an absolute
+     * directory; canonical (lowercase) uniqueness within the workspace; fully-nested roots are
+     * allowed, partial overlap is rejected.
+     *
+     * @return ordered list of {@link WorkspaceRoot} to persist (id not yet set for new roots).
+     */
+    private List<WorkspaceRoot> normalizeRoots(List<Map<String, String>> roots, String storageMode) {
+        if (!"direct_attach".equals(storageMode)) {
+            if (roots != null && !roots.isEmpty()) {
+                throw new CpApiException(
+                        org.springframework.http.HttpStatus.BAD_REQUEST,
+                        "INVALID_REQUEST",
+                        "roots[] is only allowed for direct_attach");
+            }
+            return List.of();
+        }
+        if (roots == null || roots.isEmpty()) {
+            throw new CpApiException(
+                    org.springframework.http.HttpStatus.BAD_REQUEST,
+                    "INVALID_REQUEST",
+                    "roots[] is required for direct_attach (or use legacy hostPath)");
+        }
+
+        List<WorkspaceRoot> result = new java.util.ArrayList<>();
+        Set<String> seenPaths = new LinkedHashSet<>();
+
+        for (int i = 0; i < roots.size(); i++) {
+            Map<String, String> entry = roots.get(i);
+            String path = entry.get("path");
+            requireNonBlank(path, "roots[" + i + "].path");
+            String canonical = path.trim().toLowerCase(java.util.Locale.ROOT);
+            if (!seenPaths.add(canonical)) {
+                throw new CpApiException(
+                        org.springframework.http.HttpStatus.BAD_REQUEST,
+                        "INVALID_REQUEST",
+                        "Duplicate root path after canonicalization: " + canonical);
+            }
+            WorkspaceRoot root = new WorkspaceRoot();
+            root.setPosition(i);
+            root.setHostPath(canonical);
+            String alias = entry.get("alias");
+            if (alias != null && !alias.isBlank()) {
+                root.setAlias(alias.trim().length() > 128 ? alias.trim().substring(0, 128) : alias.trim());
+            }
+            result.add(root);
+        }
+
+        // Overlap detection: fully-nested allowed, partial overlap rejected.
+        for (int i = 0; i < result.size(); i++) {
+            for (int j = i + 1; j < result.size(); j++) {
+                String a = result.get(i).getHostPath();
+                String b = result.get(j).getHostPath();
+                boolean aInB = b.endsWith("/") ? a.startsWith(b) : (a.startsWith(b + "/") || a.equals(b));
+                boolean bInA = a.endsWith("/") ? b.startsWith(a) : (b.startsWith(a + "/") || b.equals(a));
+                if (!aInB && !bInA) {
+                    // Check for prefix-based partial overlap (neither contains the other).
+                    String shorter = a.length() <= b.length() ? a : b;
+                    String longer = a.length() <= b.length() ? b : a;
+                    if (longer.startsWith(shorter + "/") || longer.startsWith(shorter)) {
+                        throw new CpApiException(
+                                org.springframework.http.HttpStatus.BAD_REQUEST,
+                                "INVALID_ROOT_OVERLAP",
+                                "Roots partially overlap: " + a + " vs " + b);
+                    }
+                }
+            }
+        }
+
+        return result;
+    }
+
+    /**
+     * PLAN-0639 M1: add a root to an existing workspace.  The root is available immediately;
+     * the shadow repo is created lazily on first checkpoint capture.
+     */
+    @Transactional
+    public WorkspaceRoot addRoot(String workspaceId, String actorId, String path, String alias) {
+        Workspace workspace = requireActiveWorkspace(workspaceId);
+        requireOwnerOrAdmin(workspace, actorId);
+
+        List<WorkspaceRoot> existing = workspaceRootRepository
+                .findByWorkspaceIdAndDeletedAtIsNullOrderByPositionAsc(UUID.fromString(workspaceId));
+        int nextPosition = existing.stream().mapToInt(WorkspaceRoot::getPosition).max().orElse(-1) + 1;
+
+        Map<String, String> entry = new LinkedHashMap<>();
+        entry.put("path", path);
+        if (alias != null) {
+            entry.put("alias", alias);
+        }
+        List<WorkspaceRoot> validated = normalizeRoots(List.of(entry), workspace.getStorageMode());
+
+        WorkspaceRoot root = validated.get(0);
+        root.setId(UUID.randomUUID());
+        root.setWorkspaceId(UUID.fromString(workspaceId));
+        root.setPosition(nextPosition);
+        root.setCreatedBy("user:" + actorId);
+        workspaceRootRepository.save(root);
+
+        // Bump execution spec so Runtime picks up the new root.
+        executionSpecService.createExecutionSpec(workspaceId, "{}", actorId, "root_added");
+        return root;
+    }
+
+    /**
+     * PLAN-0639 M1: soft-delete a root.  Shadow repo is archived in-place; historical slices
+     * are frozen-readable but execute-revert is rejected with 409 ROOT_DELETED.
+     */
+    @Transactional
+    public void deleteRoot(String workspaceId, String rootId, String actorId) {
+        Workspace workspace = requireActiveWorkspace(workspaceId);
+        requireOwnerOrAdmin(workspace, actorId);
+
+        WorkspaceRoot root = workspaceRootRepository.findByIdAndDeletedAtIsNull(UUID.fromString(rootId))
+                .filter(r -> r.getWorkspaceId().equals(UUID.fromString(workspaceId)))
+                .orElseThrow(() -> new CpApiException(
+                        org.springframework.http.HttpStatus.NOT_FOUND,
+                        "ROOT_NOT_FOUND",
+                        "Root not found or already deleted"));
+
+        // Guard: refuse if any non-terminal run has slices attributed to this root.
+        if (hasNonTerminalRunForRoot(workspaceId, rootId)) {
+            throw new CpApiException(
+                    org.springframework.http.HttpStatus.CONFLICT,
+                    "ROOT_IN_USE",
+                    "Root has slices from non-terminal runs; wait or cancel those runs first");
+        }
+
+        root.setDeletedAt(Instant.now());
+        workspaceRootRepository.save(root);
+        executionSpecService.createExecutionSpec(workspaceId, "{}", actorId, "root_deleted");
+    }
+
+    /**
+     * PLAN-0639 M1: patch a root's alias or position.  Position change triggers sequential
+     * shift of sibling roots (soft-deleted rows do not participate).
+     */
+    @Transactional
+    public WorkspaceRoot patchRoot(String workspaceId, String rootId, String actorId,
+                                   String alias, Integer position) {
+        Workspace workspace = requireActiveWorkspace(workspaceId);
+        requireOwnerOrAdmin(workspace, actorId);
+
+        WorkspaceRoot root = workspaceRootRepository.findByIdAndDeletedAtIsNull(UUID.fromString(rootId))
+                .filter(r -> r.getWorkspaceId().equals(UUID.fromString(workspaceId)))
+                .orElseThrow(() -> new CpApiException(
+                        org.springframework.http.HttpStatus.NOT_FOUND,
+                        "ROOT_NOT_FOUND",
+                        "Root not found or already deleted"));
+
+        if (alias != null) {
+            root.setAlias(alias.isBlank() ? null
+                    : (alias.trim().length() > 128 ? alias.trim().substring(0, 128) : alias.trim()));
+        }
+
+        if (position != null && !position.equals(root.getPosition())) {
+            List<WorkspaceRoot> siblings = workspaceRootRepository
+                    .findByWorkspaceIdAndDeletedAtIsNullOrderByPositionAsc(UUID.fromString(workspaceId));
+            int oldPos = root.getPosition();
+            int newPos = Math.max(0, Math.min(position, siblings.size() - 1));
+            for (WorkspaceRoot sibling : siblings) {
+                if (sibling.getId().equals(root.getId())) {
+                    continue;
+                }
+                int sp = sibling.getPosition();
+                if (oldPos < newPos && sp > oldPos && sp <= newPos) {
+                    sibling.setPosition(sp - 1);
+                    workspaceRootRepository.save(sibling);
+                } else if (oldPos > newPos && sp >= newPos && sp < oldPos) {
+                    sibling.setPosition(sp + 1);
+                    workspaceRootRepository.save(sibling);
+                }
+            }
+            root.setPosition(newPos);
+        }
+
+        workspaceRootRepository.save(root);
+        return root;
+    }
+
+    /** PLAN-0639 M1: list active roots of a workspace in position order. */
+    @Transactional(readOnly = true)
+    public List<WorkspaceRoot> listRoots(String workspaceId) {
+        return workspaceRootRepository
+                .findByWorkspaceIdAndDeletedAtIsNullOrderByPositionAsc(UUID.fromString(workspaceId));
+    }
+
+    private void requireOwnerOrAdmin(Workspace workspace, String actorId) {
+        boolean isOwner = memberships.isOwner(workspace.getId(), UUID.fromString(actorId));
+        UUID actorUuid = UUID.fromString(actorId);
+        boolean isWsAdmin = authzContext.capabilitiesFor(actorUuid).canWorkspaceAdmin(workspace.getId());
+        if (!isOwner && !isWsAdmin) {
+            throw new CpApiException(
+                    org.springframework.http.HttpStatus.FORBIDDEN,
+                    "WORKSPACE_FORBIDDEN",
+                    "Only the workspace owner or a workspace admin can manage roots");
+        }
+    }
+
+    /**
+     * PLAN-0639 M1: approximate guard — true if any non-terminal run has checkpoint slices
+     * attributed to this root.  Precise attribution lands with PLAN-0630.
+     */
+    private boolean hasNonTerminalRunForRoot(String workspaceId, String rootId) {
+        String sql = "SELECT COUNT(*) FROM run_checkpoints rc "
+                + "JOIN chat_runs cr ON cr.id = rc.source_run_id "
+                + "WHERE rc.workspace_id = '" + workspaceId + "' AND rc.root_id = '" + rootId + "' "
+                + "AND cr.status NOT IN ('succeeded','failed','cancelled')";
+        Object result = entityManager.createNativeQuery(sql).getSingleResult();
+        return result instanceof Number n && n.longValue() > 0;
     }
 
     private String normalizeProfileForExecution(String profile, String executionMode) {
