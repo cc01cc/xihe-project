@@ -352,9 +352,21 @@ function validateJsonFields(domain: string, body: Record<string, string>): strin
     return null;
 }
 
+/**
+ * API 请求模板面板的写入口（注入为 `submit`）：await 到真实 PUT 200 才 resolve，
+ * 失败必须抛出——反馈（toast/内联错误）由面板自己给，所以本函数对
+ * `api-request-templates` 域不弹 toast，也不吞异常。
+ */
+async function submitTemplates(entries: Record<string, string>) {
+    await handleSave("api-request-templates", entries);
+}
+
 async function handleSave(domain: string, body: Record<string, string>) {
+    // 这两个域的反馈由各自面板负责（agent-templates 一直如此，模板面板自 2026-11 起同样）。
+    const panelOwnsFeedback = domain === "agent-templates" || domain === "api-request-templates";
     const jsonError = validateJsonFields(domain, body);
     if (jsonError) {
+        if (panelOwnsFeedback) throw new Error(jsonError);
         toast.error(jsonError);
         return;
     }
@@ -362,13 +374,14 @@ async function handleSave(domain: string, body: Record<string, string>) {
     try {
         await configStore.putLayerConfig(props.layer, domain, body, props.workspaceId);
         await reloadLayer();
-        if (domain !== "agent-templates") {
+        if (!panelOwnsFeedback) {
             toast.success(`${domainLabels[domain] || domain} ${t("common.saved")}`);
         }
     } catch (e) {
-        if (domain !== "agent-templates") {
+        if (!panelOwnsFeedback) {
             toast.error(e instanceof Error ? e.message : `${t("settings.saveFailed")} ${domain}`);
         }
+        if (panelOwnsFeedback) throw e;
     } finally {
         savingDomains.value[domain] = false;
     }
@@ -477,6 +490,7 @@ async function handleReset(domain: string, key: string) {
                 :layer="layer"
                 :workspace-id="workspaceId"
                 :readonly="readonly"
+                :submit="submitTemplates"
                 @save="handleSave(domain, $event)"
             />
             <ConfigSourceSummary

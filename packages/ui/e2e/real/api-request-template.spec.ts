@@ -323,3 +323,60 @@ for (const wire of cases) {
         });
     });
 }
+
+// 2026-11-04：模板面板保存反馈修复的回归门（事故：点「保存草稿」界面无变化、无报错、模板不出现）。
+// 该用例不需要真实模型（不触发 provider wire），因此不依赖 XIHE_E2E_LLM_MODE=success。
+test("@host PLAN-0642 saving a draft is confirmed only after the real write and survives a reload", async ({
+    page,
+    request,
+}) => {
+    test.setTimeout(45000);
+    const headers = {
+        Authorization: `Bearer ${auth.accessToken}`,
+        "X-Workspace-Id": auth.workspaceId,
+    };
+    await page.addInitScript(
+        ({ token, workspaceId }) => {
+            localStorage.setItem("xihe-token", token);
+            localStorage.setItem("xihe-user", JSON.stringify({ workspaceId }));
+            localStorage.setItem(
+                "xihe-workspace",
+                JSON.stringify({ id: workspaceId, name: "Default Workspace" }),
+            );
+        },
+        { token: auth.accessToken, workspaceId: auth.workspaceId },
+    );
+    await page.goto("/settings/config");
+    await page.getByTestId("config-tab-user").click();
+    const panel = page.getByTestId("api-request-templates-panel");
+    await expect(panel).toBeVisible();
+    await panel.getByTestId("api-request-type").selectOption("openai-chat-completions@1");
+    await panel.getByTestId("api-request-new").click();
+    const name = `Draft survives reload ${randomUUID().slice(0, 8)}`;
+    await panel.getByTestId("api-request-name").fill(name);
+
+    const saved = page.waitForResponse(
+        (r) =>
+            r.url().includes("/config/user/api-request-templates") &&
+            r.request().method() === "PUT",
+    );
+    const draftButton = panel.getByTestId("api-request-save-draft");
+    await expect(draftButton).toBeEnabled();
+    await draftButton.click();
+    expect((await saved).status()).toBe(200);
+
+    // 1) 服务端真的有这条草稿（写入不是假的）
+    const config = await request.get(`${CP_URL}/api/v1/config/api-request-templates?layer=user`, {
+        headers,
+    });
+    expect(config.ok()).toBe(true);
+    const templates = JSON.parse((await config.json()).templates) as {
+        name: string;
+        status: string;
+    }[];
+    expect(templates.some((item) => item.name === name && item.status === "draft")).toBe(true);
+
+    // 2) 刷新后列表里仍然可见（事故的直接症状：保存后模板不出现）
+    await page.reload();
+    await expect(page.getByTestId("api-request-templates-panel")).toContainText(name);
+});

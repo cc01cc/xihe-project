@@ -12,7 +12,13 @@ vi.mock("../../../services/apiRequestTemplates", async (importOriginal) => ({
     readTemplateConfig: vi.fn<typeof readTemplateConfig>(),
     validateTemplate: vi.fn<typeof validateTemplate>(),
 }));
-vi.mock("vue-sonner", () => ({ toast: { info: vi.fn<(message: string) => void>() } }));
+vi.mock("vue-sonner", () => ({
+    toast: {
+        info: vi.fn<(message: string) => void>(),
+        success: vi.fn<(message: string) => void>(),
+        error: vi.fn<(message: string) => void>(),
+    },
+}));
 vi.mock("vue-i18n", () => ({ useI18n: () => ({ t: (key: string) => key }) }));
 const builtin = {
     id: "builtin",
@@ -167,6 +173,57 @@ describe("API request template lifecycle", () => {
         finish({ valid: true, diagnostics: [] });
         await flushPromises();
         expect(wrapper.emitted("save")).toBeUndefined();
+        wrapper.unmount();
+    });
+
+    // 2026-11-04 事故回归：保存草稿必须等真实写结果，失败要显式呈现，不能「像成功」。
+    it("awaits the injected submit and only claims success after it resolves", async () => {
+        let finish!: () => void;
+        const submit = vi.fn<() => Promise<void>>(
+            () =>
+                new Promise<void>((resolve) => {
+                    finish = resolve;
+                }),
+        );
+        const wrapper = mount(Panel, {
+            props: {
+                entries: { templates: JSON.stringify([builtin]) },
+                saving: false,
+                layer: "user",
+                submit,
+            },
+        });
+        await flushPromises();
+        await wrapper.get('[data-testid="api-request-save-draft"]').trigger("click");
+        await flushPromises();
+        expect(submit).toHaveBeenCalledTimes(1);
+        // 未 resolve 之前不得回显「已保存」
+        expect(wrapper.text()).not.toContain("common.saved");
+        expect(wrapper.find('[data-testid="api-request-saving"]').exists()).toBe(true);
+        finish();
+        await flushPromises();
+        expect(wrapper.find('[data-testid="api-request-saving"]').exists()).toBe(false);
+        expect(wrapper.emitted("save")).toBeUndefined();
+        wrapper.unmount();
+    });
+
+    it("surfaces a failed save instead of reporting success", async () => {
+        const submit = vi
+            .fn<() => Promise<void>>()
+            .mockRejectedValue(new Error("API_REQUEST_TEMPLATE_REVISION_IMMUTABLE"));
+        const wrapper = mount(Panel, {
+            props: {
+                entries: { templates: JSON.stringify([builtin]) },
+                saving: false,
+                layer: "user",
+                submit,
+            },
+        });
+        await flushPromises();
+        await wrapper.get('[data-testid="api-request-save-draft"]').trigger("click");
+        await flushPromises();
+        expect(submit).toHaveBeenCalledTimes(1);
+        expect(wrapper.text()).toContain("API_REQUEST_TEMPLATE_REVISION_IMMUTABLE");
         wrapper.unmount();
     });
 });
