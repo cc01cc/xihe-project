@@ -10,6 +10,7 @@ import {
   confirmAction,
   deleteProvider,
   getApiBase,
+  resolveBaseUrl,
   initProvider,
   listProviderConnections,
   login,
@@ -80,14 +81,61 @@ import { runVerify } from './xihe-cli/verify.mjs';
 import { runVersion } from './xihe-cli/version.mjs';
 import { loadEnvFileChain } from './lib/env-file.mjs';
 
-function splitGlobalJsonFlag(args) {
+/**
+ * PLAN-0643 T1.7 (design D4): the single global-option layer, run before group
+ * dispatch so `--json` / `--help` work anywhere and `--base-url` / `--workspace`
+ * work in the leading position (`xihe --base-url URL provider list`).
+ *
+ * `--base-url` is **leading-only** on purpose: `provider add|update` already owns a
+ * command-level `--base-url` (the provider connection base URL) and its
+ * `CUSTOM_BASE_URL_UNSUPPORTED` contract must not be shadowed by the global flag.
+ * `--workspace` is exported into env and **re-appended** to the group arguments so a
+ * group that declares it keeps its exact current semantics (T3.5 will switch the
+ * consumers to the env value; this batch stays behavior-compatible).
+ */
+function splitGlobalOptions(args) {
   const rest = [];
-  let json = false;
-  for (const arg of args) {
-    if (arg === '--json') json = true;
-    else rest.push(arg);
+  const globals = { json: false, baseUrl: undefined, workspace: undefined, help: false };
+  let groupSeen = false;
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (arg === '--json') {
+      globals.json = true;
+      continue;
+    }
+    if (arg === '--help' || arg === '-h') {
+      globals.help = true;
+      continue;
+    }
+    const matches = (name) => arg === name || arg.startsWith(`${name}=`);
+    if (!groupSeen && matches('--base-url')) {
+      const value = arg.includes('=') ? arg.slice('--base-url='.length) : args[index + 1];
+      if (value === undefined || value === '') throw new CliError('INVALID_ARGUMENT', '--base-url requires a value.');
+      if (!arg.includes('=')) index += 1;
+      globals.baseUrl = value;
+      continue;
+    }
+    if (!groupSeen && matches('--workspace')) {
+      const value = arg.includes('=') ? arg.slice('--workspace='.length) : args[index + 1];
+      if (value === undefined || value === '') throw new CliError('INVALID_ARGUMENT', '--workspace requires a value.');
+      if (!arg.includes('=')) index += 1;
+      globals.workspace = value;
+      continue;
+    }
+    if (!groupSeen && arg.startsWith('--')) {
+      // Unknown leading option: leave it to the group parser so the existing
+      // "unknown option" error text and exit code do not change.
+      groupSeen = true;
+      rest.push(arg);
+      continue;
+    }
+    groupSeen = true;
+    rest.push(arg);
   }
-  return { args: rest, json };
+  // Re-append after the loop: putting it back in place would let a leading
+  // `--workspace` become the group token (`xihe --workspace ws-1 skill list`).
+  if (globals.workspace !== undefined) rest.push('--workspace', globals.workspace);
+  return { args: rest, ...globals };
 }
 
 function parseCommandOptions(args, valueOptions, booleanOptions = []) {
@@ -161,20 +209,30 @@ function helpText() {
 }
 
 export async function runCommand(argv, dependencies = {}) {
-  const env = dependencies.env ?? process.env;
+  const baseEnv = dependencies.env ?? process.env;
   // PLAN-0547: fill missing keys from the .env chain (.env → .env.$XIHE_ENV → .env.local)
   // before any consumer reads XIHE_DEV_ADMIN_PASSWORD. OS env and test-injected bags win;
   // called here (entry) not at module top so unit tests with injected env bags are unaffected.
-  if (!dependencies.env) loadEnvFileChain({ env });
+  if (!dependencies.env) loadEnvFileChain({ env: baseEnv });
   const fetchImpl = dependencies.fetchImpl ?? fetch;
   const spawnSyncImpl = dependencies.spawnSyncImpl;
   const spawnImpl = dependencies.spawnImpl;
   const prompt = dependencies.promptSecret ?? ((label) => promptSecret(label));
-  const { args, json } = splitGlobalJsonFlag([...argv]);
+  const globals = splitGlobalOptions([...argv]);
+  const { args, json } = globals;
+  // PLAN-0643 T1.7: a shallow copy so `--base-url` / `--workspace` never mutate the
+  // caller's env bag; every existing `getApiBase(env)` call site picks the override up
+  // through the `XIHE_CP_URL` precedence link (design D5) with no per-command edit.
+  const env = { ...baseEnv };
+  if (globals.baseUrl !== undefined) env.XIHE_CP_URL = globals.baseUrl;
+  if (globals.workspace !== undefined) env.XIHE_WORKSPACE_ID = globals.workspace;
   const [group, command, ...rest] = args;
 
   try {
-    if (!group || group === 'help' || args.includes('--help') || args.includes('-h')) {
+    // T1.7: validate the flag value before dispatch so a malformed `--base-url`
+    // reports INVALID_BASE_URL (the env link alone would report INVALID_CP_URL).
+    if (globals.baseUrl !== undefined) resolveBaseUrl({}, globals.baseUrl);
+    if (!group || group === 'help' || globals.help) {
       return { exitCode: 0, json, data: { help: helpText() } };
     }
     if (group === '--version' || group === 'version') {

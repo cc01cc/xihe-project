@@ -34,6 +34,31 @@ mise run dev:host
 mise run xihe -- --help
 ```
 
+**CLI（`xihe` 命令族，16 个命令组）**：`mise run xihe -- --help`。
+
+| 组 | 用途 |
+|---|---|
+| `dev` | 本地环境检查 / Provider 初始化 |
+| `config` | 配置导入 / 导出（instance 层） |
+| `provider` | Provider Connection 增删改查 / verify / 限额 |
+| `credential` | 凭据生命周期、绑定、reveal、轮换 |
+| `agent` | Agent 主体创建 / 绑定 / 禁用 |
+| `session` | 会话参与者读写 |
+| `chat` | 发送一条消息（`chat send`） |
+| `skill` | Skill 列表 / 导入 / 绑定 |
+| `workspace` | 工作区列表 / 详情 |
+| `job` | Workspace Job 列表 / 输出 / 取消 |
+| `checkpoint` | checkpoint 列表 / revert 预览 |
+| `scheduled-task` | 定时任务列表 |
+| `audit` | 审计条目查询 |
+| `status` | 实例状态汇总 |
+| `verify` | 端到端自检 |
+| `test` | host E2E 入口 |
+
+另有 `version`（`--check`）与 `help` 两个顶层入口。示例：`mise run xihe -- status`、`mise run xihe -- config export --out cfg.json`、`mise run xihe -- provider list --scope WORKSPACE`。
+
+exit code 契约：`0` 成功、`1` 业务/运行失败（含 `partial`）、`2` 用法错误（未知命令、未知选项、缺必填参数）。加 `--json` 时 stdout 固定为 `{ok,data}` 或 `{ok:false,error:{code,message}}`。
+
 **当前门槛（还没有安装包）**：需要 Windows 宿主机上的 mise 固定工具链，以及 Docker —— Docker 里**只有 PostgreSQL**，Control Plane、Agent、Runtime、UI 四个服务由 mise 作为原生进程启动。原生打包（PLAN-0632）仍在进行中，**暂无下载安装包**，所以现在不能双击即用；最短路径就是本节的四条命令。首跑判据见 [DEV-033](DEV-033-first-run-gold-path.md)。
 
 `.env` 与 `.env.dev` 已作为安全基线入库，无需复制或覆盖；个人凭据写入 gitignored 的 `.env.local`，不得提交或写入日志。日常开发中 PostgreSQL 使用 Docker，其余服务由 mise 在宿主机启动。`dev:host` 不会导入配置或创建 Provider Connection；需要时运行 `mise run dev:host:import-config` 和 `mise run dev:host:provider-init`。UI 默认端口为 `12630`（stack-1；并行多栈见 [DEV-002](DEV-002-developer-guide.md)「模式 D」）。`mise run dev:full` **已冻结禁用（2026-10-07：仅 PostgreSQL 保留容器，服务全 host；mise.toml 已注释）**，日常走 `dev:host`；环境说明见 [DEV-002](DEV-002-developer-guide.md)。
@@ -128,7 +153,7 @@ flowchart LR
 | Judge 决策 | ✅ 已实现 | 独立决策模型（`dashscope` 原生 apiType）判「该不该发言」，与发言 run 分开计量；失败或超时 fail-closed 不发言；`judge_decisions` 每次调用一行（含失败行），只写不读、无查询端点；agent→agent 唤醒链深度默认 3，超限/成环显式失败并审计 |
 | 嵌套 AGENTS.md 注入 | ✅（有限制） | 子目录 AGENTS.md 随 read/list 工具按祖先链 JIT 加载（上界 workspace root；根级仍走既有 eager 注入），nearest-first + 去重；内容作为仓库数据注入专用信封 `untrusted-repo-instructions`，durable `tool.result` 不落注入正文；与 skills / memory 共用 `context/injection_budget.py` 预算账本，超限丢最远祖先；真栈走查与 `apply_patch` / `list_directory` 的行为面目前只有单测与干跑证据 |
 | 工作区多标签 dock 与布局持久化 | ✅（有限制） | 右侧栏多标签（可同时开多个、上限 6）、放大态 `dockFocus`、关闭后激活相邻标签、满额有可见提示；布局按 workspace 存 localStorage（`xihe-layout-ws:<id>`），无服务端布局持久化；Agent 管理面板迁入标签（M3）未完成 |
-| CLI（`xihe` 命令族） | ✅ 已实现 | `mise run xihe -- <command>`（`scripts/xihe.mjs`）：dev / config / verify / version / status / workspace / job / checkpoint / scheduled-task / audit / provider / agent / session participants / chat send / credential；`scripts/xihe-cli.test.mjs` 101 项测试；覆盖面是开发与运维动作，不是终端用户入口 |
+| CLI（`xihe` 命令族） | ✅ 已实现 | `mise run xihe -- <command>`（`scripts/xihe.mjs`）：**16 个命令组**（dev / config / provider / credential / agent / session / chat / skill / workspace / job / checkpoint / scheduled-task / audit / status / verify / test，另有 `version`、`help` 入口）；`scripts/xihe-cli.test.mjs` 110 项测试；exit code 契约 0/1/2；覆盖面是开发与运维动作，不是终端用户入口（管理面扩展见 PLAN-0643） |
 | 本地模式 | ✅ 已实现 | `XIHE_LOCAL_MODE=true` + CP 绑定回环 + `XIHE_ENV` 非 prod，三个条件缺一个 CP 启动即拒绝（fail-fast）；仅回环来源且 `Origin`/`Host` 回环时可用，签发对象必须是唯一可登录用户（否则 404/409），本地模式跳过默认 admin seed |
 | 记忆（memory） | 🔄 进行中 | 已落 `agent_memories`（V99）+ CP 服务层 + `MEMORY_WRITE` 原子（默认不授予任何角色）；注入快照仍停在「数据就绪层」——api-request 模板的模型可见槽位尚未上线，所以记忆还不会进模型上下文；episodic、向量检索、`judge` 写入模式均未实现 |
 | Skills 平台 | 🔄 规划中（未开工） | 只有冻结设计与 M1 任务书，无表、无代码；模型可见的 listing 槽位与 memory 合并成一次跨层变更，同样未上线 |

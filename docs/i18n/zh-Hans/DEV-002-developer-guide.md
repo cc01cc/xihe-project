@@ -143,7 +143,7 @@ mise run xihe -- version [--check]
 - 全命令支持 `--json`（stdout 单对象 `{ok:true,data}` / `{ok:false,error:{code,message}}`），人类输出为单行/表格摘要；详见 `mise run xihe -- --help`。
 - stack 端口覆盖（bootstrap 白名单）：`node scripts/stack-run.mjs <cp|agent|runtime> --set XIHE_CP_PORT|XIHE_AGENT_PORT|XIHE_RUNTIME_PORT=<1..65535>`——仅白名单三键、仅注入实际消费该键的目标；重复/未知/敏感/非法值在启动任何进程前拒绝且不回显输入值；`XIHE_CP_URL` / `XIHE_AGENT_URL(_BASE_URL)` / `XIHE_RUNTIME_URL` 已显式设置时端口只改监听端并提示断链风险。机制详见 DEV-003 §2 与 `spec/configuration/env-effective.md`。
 
-`--api-key-env` 指向当前进程已注入的变量；交互终端缺少变量时 CLI 会以无回显方式提示，非交互任务则失败。CLI 不自行读取 `.env.local`；无人值守时由调用方安全注入环境变量。
+`--api-key-env` 指向当前进程已注入的变量；交互终端缺少变量时 CLI 会以无回显方式提示，非交互任务则失败。CLI 入口会按 `.env` → `.env.$XIHE_ENV` → `.env.local` 链**补齐缺失键**（PLAN-0547 `loadEnvFileChain`，已存在的 OS env 永不被文件覆盖）；secret 仍只从 env 或 TTY 读取，绝不进 argv、日志或报告。无人值守时由调用方安全注入环境变量。
 
 ### 凭据 CLI（PLAN-0575）
 

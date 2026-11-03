@@ -28,6 +28,31 @@ mise run dev:host
 mise run xihe -- --help
 ```
 
+**CLI (`xihe` command family, 16 groups)** — `mise run xihe -- --help`
+
+| Group | Purpose |
+|---|---|
+| `dev` | host environment check / provider init |
+| `config` | config import / export (instance layer) |
+| `provider` | provider connections: add/update/list/verify/delete/limits |
+| `credential` | credential lifecycle, bindings, reveal, rotation |
+| `agent` | agent principals: create/bind/unbind/disable |
+| `session` | session participants |
+| `chat` | send one message (`chat send`) |
+| `skill` | skills: list/import/bind/unbind/delete |
+| `workspace` | workspace list / get |
+| `job` | workspace jobs: list/output/cancel |
+| `checkpoint` | checkpoints: list / revert preview |
+| `scheduled-task` | scheduled task list |
+| `audit` | audit entry queries |
+| `status` | instance status summary |
+| `verify` | end-to-end self check |
+| `test` | host E2E entry |
+
+`version` (`--check`) and `help` are two additional top-level entries. Examples: `mise run xihe -- status`, `mise run xihe -- config export --out cfg.json`, `mise run xihe -- provider list --scope WORKSPACE`.
+
+Exit-code contract: `0` success, `1` business/runtime failure (including `partial`), `2` usage error (unknown command, unknown option, missing required argument). With `--json`, stdout is `{ok,data}` or `{ok:false,error:{code,message}}`.
+
 **Requirements (there is no installer yet):** a Windows host with mise for the pinned toolchain, plus Docker — Docker runs **only PostgreSQL**; the Control Plane, Agent, Runtime, and UI run as four native processes started by mise. Native packaging (PLAN-0632) is still in progress, so a single clone plus `dev:host` is the fastest path today and nothing is double-click-to-run yet.
 
 The UI uses port `12630` by default (stack-1; parallel stacks shift the whole block, see "模式 D" in DEV-002). `dev:host` does not import config or create a provider connection; use the explicit `mise run dev:host:import-config` / `mise run dev:host:provider-init` tasks when needed. See [DEV-002](docs/i18n/zh-Hans/DEV-002-developer-guide.md). `mise run dev:full` is **frozen (2026-10-07: only PostgreSQL remains in Docker; services run on host)** and commented out in `mise.toml` — use `dev:host`.

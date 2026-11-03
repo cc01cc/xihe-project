@@ -1177,6 +1177,49 @@ paths:
         '409': { $ref: '#/components/responses/WorkspaceContextRequired' }
         '403': { $ref: '#/components/responses/Problem' }
         '404': { $ref: '#/components/responses/Problem' }
+  /api/v1/chat/runs/{runId}/cancel:
+    post:
+      operationId: cancelChatRun
+      summary: Cancel a ChatRun (PLAN-275 M1 T1.3)
+      description: |
+        Claims the Run for cancellation (conditional update, the same row-lock discipline as
+        spawn), settles the root Run and stops `kind=spawn` propagation with a bounded wait.
+        An explicit workspace context (`X-Workspace-Id`) is required; without it the call
+        answers 409 WORKSPACE_CONTEXT_REQUIRED. The body is optional — `{"reason": "..."}`
+        defaults to `user_requested`. The call is idempotent for a Run that is already
+        cancelling (`cancel_accepted`); a terminal Run answers 409 RUN_NOT_CANCELLABLE.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: path
+          name: runId
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                reason: { type: string }
+      responses:
+        '200':
+          description: Cancellation claimed, or already in progress
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status, runId]
+                properties:
+                  status: { type: string, enum: [cancel_accepted] }
+                  runId: { type: string, format: uuid }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { description: RUN_NOT_FOUND, content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '409':
+          description: 'WORKSPACE_CONTEXT_REQUIRED (no workspace context) / RUN_NOT_CANCELLABLE (Run is already terminal)'
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } }
   /api/v1/chat/runs/{runId}/attempts:
     get:
       operationId: getChatRunAttempts
