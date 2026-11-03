@@ -266,6 +266,10 @@ public class RunCheckpointController {
                     "another restore is already running in this workspace", details);
             case RUN_ACTIVE -> ProblemDetailsHandler.problemResponse(HttpStatus.CONFLICT,
                     "RUN_ACTIVE", "a chat run is active in this workspace", details);
+            case ROOT_DELETED -> ProblemDetailsHandler.problemResponse(HttpStatus.CONFLICT,
+                    "ROOT_DELETED",
+                    "the slice's root has been deleted; frozen slices stay readable but restore is refused",
+                    details);
             case INVALID_REQUEST -> ProblemDetailsHandler.problemResponse(HttpStatus.BAD_REQUEST,
                     "CHECKPOINT_INVALID_REQUEST", "Invalid checkpoint request", details);
             case TOO_LARGE -> ProblemDetailsHandler.problemResponse(HttpStatus.PAYLOAD_TOO_LARGE,

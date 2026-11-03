@@ -379,6 +379,8 @@ public class RunCheckpointService {
         RESTORE_LOCKED,
         /** 409 RUN_ACTIVE — a ChatRun is active in the workspace; revert must wait. */
         RUN_ACTIVE,
+        /** 409 ROOT_DELETED — the slice's root was soft-deleted; frozen readable, execute-revert refused. */
+        ROOT_DELETED,
         /** 400 CHECKPOINT_INVALID_REQUEST — malformed blob request. */
         INVALID_REQUEST,
         /** 413 CHECKPOINT_BLOB_TOO_LARGE — preview cap exceeded. */
@@ -506,6 +508,8 @@ public class RunCheckpointService {
             return new PreviewOutcome(verdict.gate(), verdict.reason(), null, Map.of());
         }
         RunCheckpoint capturedRow = Objects.requireNonNull(row);
+        // PLAN-0639 D39-3: preview stays allowed for a soft-deleted root — its slices are frozen
+        // readable (the shadow repo is archived in place); only execute-revert is refused.
         // PLAN-0639 M8: the primary root keeps the pre-M8 call shape (and wire body);
         // only a declared non-primary root switches to the root-routed overload.
         String previewRoot = wireRootId(capturedRow);
@@ -548,6 +552,14 @@ public class RunCheckpointService {
             return new RevertOutcome(verdict.gate(), verdict.reason(), null, Map.of());
         }
         RunCheckpoint capturedRow = Objects.requireNonNull(row);
+        // PLAN-0639 D39-3: a soft-deleted root keeps its historical slices readable (preview
+        // still works) but must never be written back. The root's host path is no longer in the
+        // declared set, so a restore could only fail later as a SymlinkEscape at the fs layer;
+        // the service layer answers the explicit 409 ROOT_DELETED instead.
+        if (rootWasDeleted(capturedRow)) {
+            return new RevertOutcome(Gate.ROOT_DELETED, "ROOT_DELETED", null,
+                    Map.of("rootId", capturedRow.getRootId()));
+        }
         String revertRoot = wireRootId(capturedRow);
         RuntimeCheckpointClient.RevertResult result = revertRoot == null
                 ? runtime.revert(workspaceId, sliceRef, acknowledgeTypeChanges)
@@ -846,6 +858,30 @@ public class RunCheckpointService {
             return null;
         }
         return row.getRootId();
+    }
+
+    /**
+     * PLAN-0639 D39-3: whether the slice's root is **known and soft-deleted**.
+     *
+     * <p>A row without {@code root_id}, a malformed id, or an id with no {@code workspace_roots}
+     * row (legacy/unmigrated fixture) is <b>not</b> treated as deleted: those predate root CRUD and
+     * must keep the pre-M8 revert behaviour. Only a persisted row that belongs to this workspace
+     * and carries {@code deleted_at} blocks the restore.</p>
+     */
+    private boolean rootWasDeleted(RunCheckpoint row) {
+        if (row == null || isBlank(row.getRootId())) {
+            return false;
+        }
+        try {
+            UUID rootId = UUID.fromString(row.getRootId());
+            UUID workspaceId = UUID.fromString(row.getWorkspaceId());
+            return workspaceRoots.findById(rootId)
+                    .map(root -> root.getDeletedAt() != null
+                            && workspaceId.equals(root.getWorkspaceId()))
+                    .orElse(false);
+        } catch (IllegalArgumentException malformedId) {
+            return false;
+        }
     }
 
     private RunCheckpoint findSlice(String workspaceId, String sliceRef) {

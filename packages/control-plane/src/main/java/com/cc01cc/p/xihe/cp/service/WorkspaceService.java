@@ -634,25 +634,49 @@ public class WorkspaceService {
         // Overlap detection: fully-nested allowed, partial overlap rejected.
         for (int i = 0; i < result.size(); i++) {
             for (int j = i + 1; j < result.size(); j++) {
-                String a = result.get(i).getHostPath();
-                String b = result.get(j).getHostPath();
-                boolean aInB = b.endsWith("/") ? a.startsWith(b) : (a.startsWith(b + "/") || a.equals(b));
-                boolean bInA = a.endsWith("/") ? b.startsWith(a) : (b.startsWith(a + "/") || b.equals(a));
-                if (!aInB && !bInA) {
-                    // Check for prefix-based partial overlap (neither contains the other).
-                    String shorter = a.length() <= b.length() ? a : b;
-                    String longer = a.length() <= b.length() ? b : a;
-                    if (longer.startsWith(shorter + "/") || longer.startsWith(shorter)) {
-                        throw new CpApiException(
-                                org.springframework.http.HttpStatus.BAD_REQUEST,
-                                "INVALID_ROOT_OVERLAP",
-                                "Roots partially overlap: " + a + " vs " + b);
-                    }
-                }
+                requireNoPartialOverlap(result.get(i).getHostPath(), result.get(j).getHostPath());
             }
         }
 
         return result;
+    }
+
+    /**
+     * PLAN-0639 D39-3/D39-5b (task-17): fully-nested roots are allowed, partial overlap is
+     * rejected with {@code 400 INVALID_ROOT_OVERLAP}.
+     *
+     * <p>Compares on canonical path form: lowercase, {@code /} separators (Windows roots are
+     * stored with {@code \}, which the path-component check must not misread as a different
+     * root), no trailing separator. Nested = one is a component prefix of the other; partial =
+     * one is a textual prefix of the other without the component boundary (e.g. {@code /a} vs
+     * {@code /a2}). Equality is handled by the caller (duplicate-path rules).</p>
+     */
+    private static void requireNoPartialOverlap(String first, String second) {
+        String a = comparablePath(first);
+        String b = comparablePath(second);
+        if (a.isEmpty() || b.isEmpty() || a.equals(b)) {
+            return;
+        }
+        if (a.startsWith(b + "/") || b.startsWith(a + "/")) {
+            return; // fully nested: one contains the other
+        }
+        if (a.startsWith(b) || b.startsWith(a)) {
+            throw new CpApiException(
+                    org.springframework.http.HttpStatus.BAD_REQUEST,
+                    "INVALID_ROOT_OVERLAP",
+                    "Roots partially overlap: " + first + " vs " + second);
+        }
+    }
+
+    private static String comparablePath(String value) {
+        if (value == null) {
+            return "";
+        }
+        String normalized = value.trim().toLowerCase(java.util.Locale.ROOT).replace('\\', '/');
+        while (normalized.length() > 1 && normalized.endsWith("/")) {
+            normalized = normalized.substring(0, normalized.length() - 1);
+        }
+        return normalized;
     }
 
     /**
@@ -689,6 +713,13 @@ public class WorkspaceService {
                     "An active root already exists at path: " + canonical);
         }
 
+        // PLAN-0639 D39-3 (task-17): POST /roots must honour the same "no partial overlap"
+        // rule as creation. normalizeRoots only sees this one entry, so compare it against the
+        // active set here (fully-nested still allowed, partial overlap → 400 INVALID_ROOT_OVERLAP).
+        for (WorkspaceRoot existingRoot : existing) {
+            requireNoPartialOverlap(root.getHostPath(), existingRoot.getHostPath());
+        }
+
         root.setId(UUID.randomUUID());
         root.setWorkspaceId(UUID.fromString(workspaceId));
         root.setPosition(nextPosition);
@@ -703,11 +734,23 @@ public class WorkspaceService {
     /**
      * PLAN-0639 M1: soft-delete a root.  Shadow repo is archived in-place; historical slices
      * are frozen-readable but execute-revert is rejected with 409 ROOT_DELETED.
+     *
+     * <p>PLAN-0639 task-17: the primary root ({@code rootId == workspaceId}, position 0) is
+     * immutable — {@code captureRoots} always puts it first, so a deletable primary root would
+     * contradict the "a deleted root stops capturing" rule. DELETE on it answers
+     * {@code 409 PRIMARY_ROOT_IMMUTABLE}.</p>
      */
     @Transactional
     public void deleteRoot(String workspaceId, String rootId, String actorId) {
         Workspace workspace = requireActiveWorkspace(workspaceId);
         requireOwnerOrAdmin(workspace, actorId);
+
+        if (rootId.equals(workspaceId)) {
+            throw new CpApiException(
+                    org.springframework.http.HttpStatus.CONFLICT,
+                    "PRIMARY_ROOT_IMMUTABLE",
+                    "The primary root cannot be deleted: it equals the workspace itself");
+        }
 
         WorkspaceRoot root = workspaceRootRepository.findByIdAndDeletedAtIsNull(UUID.fromString(rootId))
                 .filter(r -> r.getWorkspaceId().equals(UUID.fromString(workspaceId)))

@@ -864,6 +864,68 @@ class RunCheckpointServiceTest {
         verify(client, never()).revert(anyString(), anyString(), any());
     }
 
+    // ── PLAN-0639 D39-3: a soft-deleted root freezes execute-revert, preview stays readable ──
+
+    private static final String SECONDARY_ROOT_ID = "33333333-3333-3333-3333-333333333333";
+
+    private com.cc01cc.p.xihe.cp.entity.WorkspaceRoot rootRow(String rootId, Instant deletedAt) {
+        com.cc01cc.p.xihe.cp.entity.WorkspaceRoot root = new com.cc01cc.p.xihe.cp.entity.WorkspaceRoot();
+        root.setId(UUID.fromString(rootId));
+        root.setWorkspaceId(UUID.fromString(WORKSPACE_ID));
+        root.setDeletedAt(deletedAt);
+        return root;
+    }
+
+    private RuntimeCheckpointClient.RevertPreview previewOkDeletedRoot() {
+        return new RuntimeCheckpointClient.RevertPreview(RuntimeCheckpointClient.Outcome.OK, SLICE_REF,
+                new RuntimeCheckpointClient.PreviewCounts(2, 0, 0), List.of(), false, Map.of(), null);
+    }
+
+    @Test
+    void revertOfADeletedRootIsRefusedWithRootDeleted() {
+        RunCheckpoint row = seedCapturedRow();
+        row.setRootId(SECONDARY_ROOT_ID);
+        when(workspaceRootRepository.findById(UUID.fromString(SECONDARY_ROOT_ID)))
+                .thenReturn(Optional.of(rootRow(SECONDARY_ROOT_ID, Instant.now())));
+
+        RunCheckpointService.RevertOutcome outcome = service.revert(WORKSPACE_ID, SLICE_REF, List.of());
+
+        assertEquals(RunCheckpointService.Gate.ROOT_DELETED, outcome.gate());
+        assertEquals("ROOT_DELETED", outcome.reason());
+        assertEquals(SECONDARY_ROOT_ID, outcome.details().get("rootId"));
+        verify(client, never()).revert(anyString(), anyString(), anyString(), any());
+    }
+
+    @Test
+    void revertOfAnUnknownRootKeepsTheLegacyBehaviour() {
+        RunCheckpoint row = seedCapturedRow();
+        row.setRootId(SECONDARY_ROOT_ID);
+        when(workspaceRootRepository.findById(UUID.fromString(SECONDARY_ROOT_ID)))
+                .thenReturn(Optional.empty());
+        when(client.revert(WORKSPACE_ID, SECONDARY_ROOT_ID, SLICE_REF, List.of()))
+                .thenReturn(revertOk(1, 0, 0));
+
+        RunCheckpointService.RevertOutcome outcome = service.revert(WORKSPACE_ID, SLICE_REF, List.of());
+
+        assertEquals(RunCheckpointService.Gate.OK, outcome.gate(),
+                "a root without a workspace_roots row predates root CRUD and must keep pre-M8 revert");
+    }
+
+    @Test
+    void previewRevertOfADeletedRootStaysReadable() {
+        RunCheckpoint row = seedCapturedRow();
+        row.setRootId(SECONDARY_ROOT_ID);
+        when(workspaceRootRepository.findById(UUID.fromString(SECONDARY_ROOT_ID)))
+                .thenReturn(Optional.of(rootRow(SECONDARY_ROOT_ID, Instant.now())));
+        when(client.previewRevert(WORKSPACE_ID, SECONDARY_ROOT_ID, SLICE_REF)).thenReturn(previewOkDeletedRoot());
+
+        RunCheckpointService.PreviewOutcome outcome = service.previewRevert(WORKSPACE_ID, SLICE_REF);
+
+        assertEquals(RunCheckpointService.Gate.OK, outcome.gate(),
+                "frozen slices of a deleted root stay readable for preview/diff");
+        assertNotNull(outcome.preview());
+    }
+
     @Test
     void checkpointFileMapsOutcomes() {
         seedCapturedRow();
