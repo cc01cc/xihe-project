@@ -116,6 +116,8 @@ export interface ApiWorkspaceRoot {
     id: string;
     alias: string | null;
     position: number;
+    /** PLAN-0641 B12: workspace-relative POSIX path (nullable — primary root / no host visibility). */
+    path?: string | null;
 }
 
 /** PLAN-0641 F4: one discovery entry of the nested-repos read face. */

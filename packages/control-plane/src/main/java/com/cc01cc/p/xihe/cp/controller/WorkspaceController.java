@@ -188,7 +188,9 @@ public class WorkspaceController {
             String path = request == null ? null : request.path();
             String alias = request == null ? null : request.alias();
             WorkspaceRoot root = workspaceService.addRoot(workspaceId, userId, path, alias);
-            return ResponseEntity.status(HttpStatus.CREATED).body(rootToMap(root));
+            Workspace workspace = workspaceService.requireAccessibleWorkspace(workspaceId, userId);
+            return ResponseEntity.status(HttpStatus.CREATED)
+                    .body(rootToMap(workspace, root, canSeeHostPaths(workspace, userId)));
         } catch (CpApiException e) {
             return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
         }
@@ -205,7 +207,8 @@ public class WorkspaceController {
             String alias = request == null ? null : request.alias();
             Integer position = request == null ? null : request.position();
             WorkspaceRoot root = workspaceService.patchRoot(workspaceId, rootId, userId, alias, position);
-            return ResponseEntity.ok(rootToMap(root));
+            Workspace workspace = workspaceService.requireAccessibleWorkspace(workspaceId, userId);
+            return ResponseEntity.ok(rootToMap(workspace, root, canSeeHostPaths(workspace, userId)));
         } catch (CpApiException e) {
             return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
         }
@@ -225,12 +228,51 @@ public class WorkspaceController {
         }
     }
 
-    private static Map<String, Object> rootToMap(WorkspaceRoot root) {
+    /** Mirrors the Workspace.hostPath rule (owner/admin only) for the B12 root path. */
+    private boolean canSeeHostPaths(Workspace workspace, String userId) {
+        return isAdmin() || (userId != null && userId.equals(workspaceService.ownerIdOf(workspace.getId())));
+    }
+
+    private static Map<String, Object> rootToMap(Workspace workspace, WorkspaceRoot root,
+            boolean canSeePaths) {
         Map<String, Object> view = new LinkedHashMap<>();
         view.put("id", root.getId());
         view.put("alias", root.getAlias());
         view.put("position", root.getPosition());
+        // PLAN-0641 B12 (minimal additive): workspace-relative path so two roots that
+        // share a leaf name stay distinguishable (rootId stays the key). Null for the
+        // primary root and for callers who cannot see host paths — the same rule that
+        // already governs Workspace.hostPath.
+        view.put("path", canSeePaths ? workspaceRelativeRootPath(workspace, root) : null);
         return view;
+    }
+
+    /**
+     * Workspace-relative POSIX path of one root, or {@code null} when the root IS the
+     * workspace (primary root) or sits outside its tree. Windows paths are normalised
+     * before comparing (workspace rule: forward slashes + lowercase compare).
+     */
+    private static String workspaceRelativeRootPath(Workspace workspace, WorkspaceRoot root) {
+        String base = workspace.getHostPath();
+        String candidate = root.getHostPath();
+        if (base == null || candidate == null) {
+            return null;
+        }
+        String normalizedBase = base.replace('\\', '/').replaceAll("/+$", "");
+        String normalizedCandidate = candidate.replace('\\', '/').replaceAll("/+$", "");
+        if (normalizedBase.isEmpty()) {
+            return null;
+        }
+        String baseLower = normalizedBase.toLowerCase(java.util.Locale.ROOT);
+        String candidateLower = normalizedCandidate.toLowerCase(java.util.Locale.ROOT);
+        if (candidateLower.equals(baseLower)) {
+            return null;
+        }
+        if (!candidateLower.startsWith(baseLower + "/")) {
+            return null;
+        }
+        String relative = normalizedCandidate.substring(normalizedBase.length() + 1);
+        return relative.isEmpty() ? null : relative;
     }
 
     public record RootCreateRequest(String path, String alias) {}
@@ -259,9 +301,11 @@ public class WorkspaceController {
         view.put("storageMode", workspace.getStorageMode());
         view.put("hostPath", admin || (userId != null && userId.equals(ownerId))
                 ? workspace.getHostPath() : null);
-        // PLAN-0639 M1: ordered root projection [{id, alias, position}].
+        // PLAN-0639 M1: ordered root projection; PLAN-0641 B12 adds the nullable
+        // workspace-relative `path` for callers allowed to see host paths.
+        boolean canSeePaths = admin || (userId != null && userId.equals(ownerId));
         view.put("roots", roots == null ? java.util.List.of() : roots.stream()
-                .map(WorkspaceController::rootToMap).toList());
+                .map(root -> rootToMap(workspace, root, canSeePaths)).toList());
         view.put("executionMode", workspace.getExecutionMode());
         view.put("generation", workspace.getGeneration());
         view.put("workspaceRole", workspaceRole);

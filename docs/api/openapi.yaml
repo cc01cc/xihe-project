@@ -5663,6 +5663,7 @@ components:
         id: { type: string, format: uuid, description: 'Root key. root[0].id == workspace.id (primary root invariant).' }
         alias: { type: [string, 'null'], maxLength: 128 }
         position: { type: integer, minimum: 0 }
+        path: { type: [string, 'null'], description: 'PLAN-0641 B12: workspace-relative POSIX path (nullable). Null for the primary root, roots outside the workspace tree, and callers who cannot see host paths (same rule as Workspace.hostPath). Display only — rootId stays the key.' }
     WorkspaceNestedRepos:
       type: object
       required: [workspaceId, cachedAt, items]
