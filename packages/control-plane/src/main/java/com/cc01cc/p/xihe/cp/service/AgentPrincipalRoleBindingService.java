@@ -9,6 +9,7 @@ import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
 import com.cc01cc.p.xihe.cp.policy.AccessScope;
 import com.cc01cc.p.xihe.cp.policy.GrantPrincipalPathResolver;
 import com.cc01cc.p.xihe.cp.policy.PermissionAtomCatalog;
+import com.cc01cc.p.xihe.cp.policy.PermissionAtomLabels;
 import com.cc01cc.p.xihe.cp.policy.RoleGrantMaterializer;
 import com.cc01cc.p.xihe.cp.repository.AccessRoleBindingRepository;
 import com.cc01cc.p.xihe.cp.repository.AccessRolePermissionRepository;
@@ -26,6 +27,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 
 /**
@@ -63,7 +65,11 @@ public class AgentPrincipalRoleBindingService {
     static final String RESOURCE_TYPE = "role_binding";
     static final String AUDIT_BIND = "agent_principal_role_bind";
     static final String AUDIT_UNBIND = "agent_principal_role_unbind";
-    /** The binding API never lists the whole permission surface: a bounded summary is the contract. */
+    /**
+     * The list never dumps the whole permission surface: {@code atoms} carries at most this many
+     * localized labels while {@code atomCount} carries the real size (Lead ruling 2026-11-05: the UI
+     * shows the first three plus "共 N 个"; the panel must not become a permission catalogue).
+     */
     static final int ATOM_SUMMARY_LIMIT = 12;
 
     private final AccessRoleBindingRepository bindings;
@@ -90,17 +96,24 @@ public class AgentPrincipalRoleBindingService {
         this.audit = audit;
     }
 
-    /** One binding as the API shows it; {@code atoms} is a bounded summary (D5). */
-    public record AgentRoleBindingView(UUID bindingId, UUID principalId, UUID roleId, String roleName,
-                                       String roleDisplayName, String description, String scopeType,
-                                       UUID scopeId, boolean isSystem, int atomCount,
+    /**
+     * One binding as the API shows it.
+     *
+     * <p>{@code atoms} are <b>localized short labels</b> (from {@link PermissionAtomLabels}) of the
+     * role's derived atoms, capped at {@link #ATOM_SUMMARY_LIMIT}; {@code atomCount} is the real
+     * distinct count. Both are needed: labels alone would let the list grow into a full permission
+     * dump, a count alone would tell the user nothing about what the role can do.</p>
+     */
+    public record AgentRoleBindingView(UUID bindingId, UUID principalId, UUID roleId, String name,
+                                       String displayName, String description, String scopeType,
+                                       UUID scopeId, String scopeName, boolean isSystem, int atomCount,
                                        List<String> atoms, UUID grantedBy, Instant grantedAt) {
     }
 
     @Transactional(readOnly = true)
-    public List<AgentRoleBindingView> list(UUID principalId) {
+    public List<AgentRoleBindingView> list(UUID principalId, String locale) {
         return viewOf(bindings.findBySubjectTypeAndSubjectId(
-                GrantPrincipalPathResolver.AGENT_PRINCIPAL, principalId));
+                GrantPrincipalPathResolver.AGENT_PRINCIPAL, principalId), locale);
     }
 
     /**
@@ -112,7 +125,7 @@ public class AgentPrincipalRoleBindingService {
      */
     @Transactional
     public AgentRoleBindingView bind(UUID principalId, UUID roleId, String scopeType, UUID scopeId,
-                                     UUID actorUserId, String auditWorkspaceId) {
+                                     UUID actorUserId, String auditWorkspaceId, String locale) {
         AccessRole role = roles.findById(roleId).orElseThrow(() -> new CpApiException(
                 HttpStatus.NOT_FOUND, "ROLE_NOT_FOUND", "Role not found"));
         AccessScope scope = requireScope(scopeType, scopeId);
@@ -122,7 +135,7 @@ public class AgentPrincipalRoleBindingService {
                         GrantPrincipalPathResolver.AGENT_PRINCIPAL, principalId).stream()
                 .anyMatch(row -> roleId.equals(row.getRoleId())
                         && scope.type().equals(row.getScopeType())
-                        && java.util.Objects.equals(scope.id(), row.getScopeId()));
+                        && Objects.equals(scope.id(), row.getScopeId()));
         if (duplicate) {
             throw new CpApiException(HttpStatus.CONFLICT, "ROLE_BINDING_EXISTS",
                     "this agent principal already has that role binding in that scope");
@@ -139,7 +152,7 @@ public class AgentPrincipalRoleBindingService {
                 saved.getId().toString(), auditDetail(roleId, saved.getId(), principalId, "bound"));
         logger.info("[POLICY] event=agent_principal_role_bind principalId={} roleId={} scope={}:{} actor={}",
                 principalId, roleId, scope.type(), scope.id(), actorUserId);
-        return viewOf(saved, role).get(0);
+        return viewOf(saved, role, locale);
     }
 
     /**
@@ -182,14 +195,14 @@ public class AgentPrincipalRoleBindingService {
     /** The principal must exist and be enabled; a disabled/missing one answers one stable 404. */
     public AgentPrincipal requirePrincipal(UUID principalId) {
         AgentPrincipal principal = principals.findById(principalId)
-                .orElseThrow(() -> principalNotFound());
+                .orElseThrow(AgentPrincipalRoleBindingService::principalNotFound);
         if (principal.getDisabledAt() != null) {
             throw principalNotFound();
         }
         return principal;
     }
 
-    /** Workspace existence check for a workspace-scoped binding (400/404 before any write). */
+    /** Workspace existence check for a workspace-scoped binding (404 before any write). */
     public void requireWorkspace(UUID workspaceId) {
         if (workspaces.findById(workspaceId).isEmpty()) {
             throw new CpApiException(HttpStatus.NOT_FOUND, "WORKSPACE_NOT_FOUND", "Workspace not found");
@@ -232,7 +245,7 @@ public class AgentPrincipalRoleBindingService {
                 "Agent principal not found");
     }
 
-    private List<AgentRoleBindingView> viewOf(List<AccessRoleBinding> rows) {
+    private List<AgentRoleBindingView> viewOf(List<AccessRoleBinding> rows, String locale) {
         if (rows.isEmpty()) {
             return List.of();
         }
@@ -242,29 +255,37 @@ public class AgentPrincipalRoleBindingService {
         }
         List<AgentRoleBindingView> views = new ArrayList<>(rows.size());
         for (AccessRoleBinding row : rows) {
-            views.addAll(viewOf(row, byId.get(row.getRoleId())));
+            AccessRole role = byId.get(row.getRoleId());
+            if (role != null) {
+                views.add(viewOf(row, role, locale));
+            }
         }
         return views;
     }
 
-    private List<AgentRoleBindingView> viewOf(AccessRoleBinding row, AccessRole role) {
-        if (role == null) {
-            return List.of();
-        }
-        List<String> atoms = new ArrayList<>();
+    private AgentRoleBindingView viewOf(AccessRoleBinding row, AccessRole role, String locale) {
+        List<String> atomNames = new ArrayList<>();
         for (AccessRolePermission permission : permissions.findByIdRoleId(role.getId())) {
-            if (permission.actionClass() != null) {
-                atoms.add(permission.actionClass());
+            if (permission.actionClass() != null && !atomNames.contains(permission.actionClass())) {
+                atomNames.add(permission.actionClass());
             }
         }
-        atoms.sort(String::compareTo);
-        int atomCount = atoms.size();
-        List<String> summary = atoms.size() <= ATOM_SUMMARY_LIMIT
-                ? atoms : List.copyOf(atoms.subList(0, ATOM_SUMMARY_LIMIT));
-        return List.of(new AgentRoleBindingView(row.getId(), row.getSubjectId(), row.getRoleId(),
-                role.getName(), role.getDisplayName(), role.getDescription(), row.getScopeType(),
-                row.getScopeId(), role.isSystem(), atomCount, summary, row.getGrantedBy(),
-                row.getGrantedAt()));
+        atomNames.sort(String::compareTo);
+        int atomCount = atomNames.size();
+        List<String> summary = new ArrayList<>();
+        for (String atom : atomNames) {
+            if (summary.size() >= ATOM_SUMMARY_LIMIT) {
+                break;
+            }
+            summary.add(PermissionAtomLabels.label(atom, locale));
+        }
+        String scopeName = AccessScope.WORKSPACE.equals(row.getScopeType()) && row.getScopeId() != null
+                ? workspaces.findById(row.getScopeId()).map(workspace -> workspace.getName()).orElse(null)
+                : null;
+        return new AgentRoleBindingView(row.getId(), row.getSubjectId(), row.getRoleId(), role.getName(),
+                role.getDisplayName(), role.getDescription(), row.getScopeType(), row.getScopeId(),
+                scopeName, role.isSystem(), atomCount, List.copyOf(summary), row.getGrantedBy(),
+                row.getGrantedAt());
     }
 
     private static String auditDetail(UUID roleId, UUID bindingId, UUID principalId, String result) {

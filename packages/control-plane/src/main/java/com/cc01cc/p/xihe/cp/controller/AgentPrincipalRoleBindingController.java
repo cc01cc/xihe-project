@@ -2,11 +2,9 @@ package com.cc01cc.p.xihe.cp.controller;
 
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.config.ProblemDetailsHandler;
-import com.cc01cc.p.xihe.cp.config.TenantContext;
-import com.cc01cc.p.xihe.cp.policy.RequesterAuthority;
-import com.cc01cc.p.xihe.cp.policy.ToolFaceRegistry;
+import com.cc01cc.p.xihe.cp.policy.PermissionAtomLabels;
+import com.cc01cc.p.xihe.cp.service.AgentPrincipalBindingAuthority;
 import com.cc01cc.p.xihe.cp.service.AgentPrincipalRoleBindingService;
-import com.cc01cc.p.xihe.cp.service.AgentPrincipalService;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -15,6 +13,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -36,20 +35,13 @@ import java.util.UUID;
  *
  * <p>Deliberately a separate controller: the user binding surface ({@code BindingController},
  * PLAN-0610) keeps its user-only contract and its full-replacement semantics, so an agent binding can
- * never be written through a user path (design D1(b)).</p>
+ * never be written through a user path (design D1(b)). The two-tier gate lives in
+ * {@link AgentPrincipalBindingAuthority} because the skill surface uses exactly the same rule.</p>
  *
- * <p>Authorization is atom-based and has exactly two tiers, mirroring the memory face:</p>
- * <ul>
- *   <li>{@code MANAGE_AGENT_PRINCIPALS} (N1, instance tier) — may bind at any scope;</li>
- *   <li>{@code MANAGE_WORKSPACE_AGENTS} <b>in a workspace</b> — may bind at that workspace's scope,
- *       and only sees principals visible in that workspace.</li>
- * </ul>
- * <p>The optional {@code workspaceId} parameter is an authorization context only (same pattern as
- * V107 memory); it never becomes part of the binding key — a binding carries its own
- * {@code scopeType}/{@code scopeId}.</p>
- *
- * <p>{@code actor != subject} is enforced explicitly. In practice an agent cannot reach this surface
- * (it has no user token), but the check keeps the rule visible and cheap if that ever changes.</p>
+ * <p>{@code atoms} in the response are <b>localized short labels</b> (never machine names): the
+ * locale comes from {@code ?locale=} when given, else the {@code Accept-Language} header, else
+ * {@code zh-CN} ({@link PermissionAtomLabels#normalize}). {@code atomCount} is the real distinct
+ * atom count, so the UI can show "first three + 共 N 个" without exposing the whole atom set.</p>
  */
 @RestController
 @RequestMapping("/api/v1/agent-principals/{principalId}/roles")
@@ -58,27 +50,27 @@ public class AgentPrincipalRoleBindingController {
     private static final Set<String> BIND_KEYS = Set.of("roleId", "scopeType", "scopeId");
 
     private final AgentPrincipalRoleBindingService bindingService;
-    private final AgentPrincipalService agentPrincipalService;
-    private final RequesterAuthority requesterAuthority;
+    private final AgentPrincipalBindingAuthority authority;
 
     public AgentPrincipalRoleBindingController(AgentPrincipalRoleBindingService bindingService,
-                                               AgentPrincipalService agentPrincipalService,
-                                               RequesterAuthority requesterAuthority) {
+                                               AgentPrincipalBindingAuthority authority) {
         this.bindingService = bindingService;
-        this.agentPrincipalService = agentPrincipalService;
-        this.requesterAuthority = requesterAuthority;
+        this.authority = authority;
     }
 
     @PreAuthorize("isAuthenticated()")
     @GetMapping
     public ResponseEntity<?> list(@PathVariable String principalId,
-                                  @RequestParam(required = false) String workspaceId) {
+                                  @RequestParam(required = false) String workspaceId,
+                                  @RequestParam(required = false) String locale,
+                                  @RequestHeader(value = "Accept-Language", required = false) String acceptLanguage) {
         try {
-            Caller caller = requireBindingAuthority(principalId, workspaceId);
-            List<Map<String, Object>> rows = bindingService.list(caller.principalId()).stream()
-                    .map(AgentPrincipalRoleBindingController::toView).toList();
+            AgentPrincipalBindingAuthority.Caller caller = authority.require(principalId, workspaceId);
+            String resolvedLocale = resolveLocale(locale, acceptLanguage);
+            List<Map<String, Object>> rows = bindingService.list(caller.principalId(), resolvedLocale)
+                    .stream().map(AgentPrincipalRoleBindingController::toView).toList();
             Map<String, Object> response = new LinkedHashMap<>();
-            response.put("bindings", rows);
+            response.put("items", rows);
             return ResponseEntity.ok(response);
         } catch (CpApiException e) {
             return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
@@ -89,20 +81,24 @@ public class AgentPrincipalRoleBindingController {
     @PostMapping
     public ResponseEntity<?> bind(@PathVariable String principalId,
                                   @RequestParam(required = false) String workspaceId,
+                                  @RequestParam(required = false) String locale,
+                                  @RequestHeader(value = "Accept-Language", required = false) String acceptLanguage,
                                   @RequestBody(required = false) Map<String, Object> body) {
         try {
-            Caller caller = requireBindingAuthority(principalId, workspaceId);
+            AgentPrincipalBindingAuthority.Caller caller = authority.require(principalId, workspaceId);
             if (body == null || !BIND_KEYS.containsAll(body.keySet())) {
                 throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST",
                         "Body must contain only roleId, scopeType and scopeId");
             }
-            UUID roleId = parseUuid(body.get("roleId"));
+            UUID roleId = AgentPrincipalBindingAuthority.parseUuid(body.get("roleId"),
+                    "roleId must be a UUID");
             String scopeType = body.get("scopeType") instanceof String value ? value : null;
-            UUID scopeId = body.get("scopeId") == null ? null : parseUuid(body.get("scopeId"));
+            UUID scopeId = body.get("scopeId") == null ? null : AgentPrincipalBindingAuthority
+                    .parseUuid(body.get("scopeId"), "scopeId must be a UUID");
             requireScopeAuthority(caller, scopeType, scopeId);
             AgentPrincipalRoleBindingService.AgentRoleBindingView binding = bindingService.bind(
                     caller.principalId(), roleId, scopeType, scopeId, caller.actorUuid(),
-                    caller.auditWorkspaceId());
+                    caller.auditWorkspaceId(), resolveLocale(locale, acceptLanguage));
             return ResponseEntity.status(HttpStatus.CREATED).body(toView(binding));
         } catch (CpApiException e) {
             return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
@@ -115,71 +111,21 @@ public class AgentPrincipalRoleBindingController {
                                     @PathVariable String bindingId,
                                     @RequestParam(required = false) String workspaceId) {
         try {
-            Caller caller = requireBindingAuthority(principalId, workspaceId);
+            AgentPrincipalBindingAuthority.Caller caller = authority.require(principalId, workspaceId);
             UUID actor = caller.actorUuid();
-            bindingService.unbind(caller.principalId(), parseUuid(bindingId), actor,
-                    caller.auditWorkspaceId(), caller.instanceTier(),
-                    workspace -> requesterAuthority.holdsActionAtom(actor,
-                            ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_AGENTS, workspace));
+            bindingService.unbind(caller.principalId(),
+                    AgentPrincipalBindingAuthority.parseUuid(bindingId, "A valid binding id is required"),
+                    actor, caller.auditWorkspaceId(), caller.instanceTier(),
+                    workspace -> authority.canManageWorkspace(actor, workspace));
             return ResponseEntity.noContent().build();
         } catch (CpApiException e) {
             return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
         }
     }
 
-    /** The resolved caller, after the two-tier atom gate and the visibility check. */
-    private record Caller(String actorUserId, UUID actorUuid, UUID principalId, UUID workspaceId,
-                          boolean instanceTier) {
-        String auditWorkspaceId() {
-            return workspaceId == null ? null : workspaceId.toString();
-        }
-    }
-
-    private Caller requireBindingAuthority(String principalIdValue, String workspaceIdValue) {
-        String actor = TenantContext.getUserId();
-        if (actor == null || actor.isBlank()) {
-            throw new CpApiException(HttpStatus.UNAUTHORIZED, "AUTHORIZATION_REQUIRED",
-                    "Authentication required");
-        }
-        UUID actorUuid = parseUuid(actor);
-        UUID principal = parseUuid(principalIdValue);
-        UUID workspace = isBlank(workspaceIdValue) ? null : parseUuid(workspaceIdValue);
-        boolean instanceTier = requesterAuthority.holdsActionAtom(
-                ToolFaceRegistry.ACTION_MANAGE_AGENT_PRINCIPALS);
-        boolean workspaceTier = workspace != null && requesterAuthority.holdsActionAtom(actorUuid,
-                ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_AGENTS, workspace);
-        if (!instanceTier && !workspaceTier) {
-            throw new CpApiException(HttpStatus.FORBIDDEN, "FORBIDDEN",
-                    "MANAGE_AGENT_PRINCIPALS or MANAGE_WORKSPACE_AGENTS in the authorizing workspace is required");
-        }
-        if (actorUuid.equals(principal)) {
-            throw new CpApiException(HttpStatus.FORBIDDEN, "FORBIDDEN",
-                    "an agent principal cannot administer its own bindings");
-        }
-        requireVisible(actor, principal, workspace, instanceTier);
-        return new Caller(actor, actorUuid, principal, workspace, instanceTier);
-    }
-
-    /** Instance tier: the principal must exist. Workspace tier: it must be visible in that workspace. */
-    private void requireVisible(String actor, UUID principal, UUID workspace, boolean instanceTier) {
-        if (workspace == null) {
-            if (!instanceTier) {
-                throw new CpApiException(HttpStatus.FORBIDDEN, "FORBIDDEN",
-                        "a workspace-scoped authority needs the authorizing workspaceId");
-            }
-            bindingService.requirePrincipal(principal);
-            return;
-        }
-        boolean visible = agentPrincipalService.listWorkspaceAgents(actor, workspace).stream()
-                .anyMatch(view -> principal.equals(view.principalId()));
-        if (!visible) {
-            throw new CpApiException(HttpStatus.NOT_FOUND, "AGENT_PRINCIPAL_NOT_FOUND",
-                    "Agent principal not found");
-        }
-    }
-
     /** A write at the instance scope needs the instance tier; a workspace scope needs its manager. */
-    private void requireScopeAuthority(Caller caller, String scopeType, UUID scopeId) {
+    private void requireScopeAuthority(AgentPrincipalBindingAuthority.Caller caller,
+                                       String scopeType, UUID scopeId) {
         if ("instance".equals(scopeType)) {
             if (scopeId != null) {
                 throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST",
@@ -196,8 +142,8 @@ public class AgentPrincipalRoleBindingController {
                 throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST",
                         "a workspace-scope binding requires scopeId");
             }
-            boolean allowed = caller.instanceTier() || requesterAuthority.holdsActionAtom(
-                    caller.actorUuid(), ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_AGENTS, scopeId);
+            boolean allowed = caller.instanceTier()
+                    || authority.canManageWorkspace(caller.actorUuid(), scopeId);
             if (!allowed) {
                 throw new CpApiException(HttpStatus.FORBIDDEN, "FORBIDDEN",
                         "MANAGE_WORKSPACE_AGENTS in the target workspace is required");
@@ -209,39 +155,27 @@ public class AgentPrincipalRoleBindingController {
                 "scopeType must be instance or workspace");
     }
 
+    private static String resolveLocale(String locale, String acceptLanguage) {
+        return PermissionAtomLabels.normalize(locale != null ? locale : acceptLanguage);
+    }
+
     private static Map<String, Object> toView(
             AgentPrincipalRoleBindingService.AgentRoleBindingView view) {
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("bindingId", view.bindingId());
         result.put("principalId", view.principalId());
         result.put("roleId", view.roleId());
-        result.put("roleName", view.roleName());
-        result.put("roleDisplayName", view.roleDisplayName());
+        result.put("name", view.name());
+        result.put("displayName", view.displayName());
         result.put("description", view.description());
         result.put("scopeType", view.scopeType());
         result.put("scopeId", view.scopeId());
+        result.put("scopeName", view.scopeName());
         result.put("isSystem", view.isSystem());
         result.put("atomCount", view.atomCount());
         result.put("atoms", view.atoms());
         result.put("grantedBy", view.grantedBy());
         result.put("grantedAt", view.grantedAt() == null ? null : view.grantedAt().toString());
         return result;
-    }
-
-    private static boolean isBlank(String value) {
-        return value == null || value.isBlank();
-    }
-
-    private static UUID parseUuid(Object raw) {
-        if (!(raw instanceof String value) || value.isBlank()) {
-            throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST",
-                    "A valid UUID is required");
-        }
-        try {
-            return UUID.fromString(value);
-        } catch (IllegalArgumentException e) {
-            throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST",
-                    "A valid UUID is required", e);
-        }
     }
 }
