@@ -5,10 +5,11 @@ resolution, event translation, and terminal-outcome semantics unchanged.
 """
 
 import asyncio
+import json
 from typing import Any
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from litellm import get_llm_provider as _litellm_get_llm_provider  # noqa: F401  (provider util parity)
 from loguru import logger
@@ -51,6 +52,7 @@ from xihe_agent.config_state import ConfigUnavailableError, ensure_config_ready
 from xihe_agent.context.agent_memory import (
     render_from_component_sources as render_memory_from_component_sources,
 )
+from xihe_agent.context.inbound_limits import InboundTooLargeError, read_body_with_limit
 from xihe_agent.context.path_mentions import (
     append_to_user_input,
     parse_path_mentions,
@@ -221,7 +223,22 @@ async def _close_guidance_consumer(consumer: GuidanceConsumer | None) -> None:
 
 @router.post("/internal/v1/agent/chat", dependencies=[Depends(verify_api_token)])
 async def chat(request: Request):
-    data = await request.json()
+    try:
+        body_bytes = await read_body_with_limit(request)
+    except InboundTooLargeError as too_large:
+        logger.warning(
+            "event=agent_context_too_large limitBytes={} observedBytes={} requestId={}",
+            too_large.limit_bytes,
+            too_large.observed_bytes,
+            request.headers.get("X-Request-Id") or "unknown",
+        )
+        raise HTTPException(
+            status_code=413, detail={"code": "AGENT_CONTEXT_TOO_LARGE"}
+        ) from too_large
+    try:
+        data = json.loads(body_bytes)
+    except ValueError as malformed:
+        raise HTTPException(status_code=400, detail={"code": "INVALID_REQUEST"}) from malformed
     content: str = data.get("content", "")
     session_id: str = data.get("sessionId", "default")
     workspace_id: str | None = data.get("workspaceId") or None

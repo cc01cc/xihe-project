@@ -157,3 +157,42 @@ def _length(key: Any, value: Any) -> bool:
     if key in BASE64_KEYS:
         return True
     return key.endswith("Base64")
+
+class InboundTooLargeError(Exception):
+    """Raised before any JSON parsing when the inbound body exceeds the frozen byte cap."""
+
+    def __init__(self, limit_bytes: int, observed_bytes: int | None = None) -> None:
+        super().__init__(f"agent context body exceeds {limit_bytes} bytes")
+        self.limit_bytes = limit_bytes
+        self.observed_bytes = observed_bytes
+
+
+async def read_body_with_limit(request: Any, max_bytes: int | None = None) -> bytes:
+    """Read the request body under the byte cap, before any JSON parsing (T2c.1, step 1).
+
+    Two checks, because a header can be missing or lie:
+    1. `Content-Length` is refused when it already exceeds the cap (cheap, no read);
+    2. the stream is read chunk by chunk and stops at `cap + 1` — a chunked upload without a
+       `Content-Length` cannot smuggle an unbounded body past us.
+
+    The caller parses the returned bytes itself (`json.loads`), so this really happens before
+    pydantic/model validation; that ordering is the whole point.
+    """
+    limit = max_bytes or limits_from_env()[1]
+    declared = request.headers.get("content-length")
+    if declared is not None:
+        try:
+            declared_int = int(declared)
+        except ValueError:
+            declared_int = None
+        if declared_int is not None and declared_int > limit:
+            raise InboundTooLargeError(limit, declared_int)
+
+    chunks: list[bytes] = []
+    total = 0
+    async for chunk in request.stream():
+        total += len(chunk)
+        if total > limit:
+            raise InboundTooLargeError(limit, total)
+        chunks.append(chunk)
+    return b"".join(chunks)
