@@ -2704,7 +2704,7 @@ paths:
   /internal/v1/runtime/workspaces/{workspaceId}/mcp:
     post: { operationId: runtimeMcp, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }], responses: { '200': { description: MCP JSON-RPC response } } }
   /internal/v1/runtime/remote-mcp/{workspaceId}/{serverId}/call:
-    post: { operationId: runtimeRemoteMcpCall, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }, { in: path, name: serverId, required: true, schema: { type: string } }], responses: { '200': { description: MCP response }, '401': { $ref: '#/components/responses/Problem' } } }
+    post: { operationId: runtimeRemoteMcpCall, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }, { in: path, name: serverId, required: true, schema: { type: string } }], responses: { '200': { description: 'MCP response (result body). PLAN-0654: non-2xx carries a Problem body with a fine-grained code while the HTTP status stays 502 for every upstream/transport class: REMOTE_MCP_PROTOCOL_NOT_ACCEPTABLE (upstream 406), REMOTE_MCP_UPSTREAM_NOT_FOUND (404), REMOTE_MCP_UPSTREAM_STATUS_ERROR (other, with upstreamStatus), REMOTE_MCP_INVALID_RESPONSE, REMOTE_MCP_DNS_FAILED / REMOTE_MCP_CONNECT_REFUSED / REMOTE_MCP_TLS_FAILED / REMOTE_MCP_TRANSPORT_FAILED, plus the pre-existing 401 AUTHORIZATION_REQUIRED and 408 TIMEOUT. The upstream response body is never copied; only status/category/upstreamStatus ride along.' }, '401': { $ref: '#/components/responses/Problem' } } }
   /internal/v1/agent/chat:
     post:
       operationId: agentChat

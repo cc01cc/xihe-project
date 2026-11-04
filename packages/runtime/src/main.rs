@@ -1181,23 +1181,102 @@ fn remote_mcp_error_response(
     [(axum::http::HeaderName, &'static str); 1],
     AxumJson<serde_json::Value>,
 ) {
-    let (status, code) = match error {
-        RemoteMcpError::AuthorizationRequired => {
-            (StatusCode::UNAUTHORIZED, "authorization_required")
+    // PLAN-0654 T1.1–T1.3: keep the upstream status and a closed error category on the
+    // wire so callers can tell "protocol rejected" / "not found" / "invalid response" /
+    // "dns" / "refused" / "tls" / "generic transport" apart. User ruling (unchangeable):
+    // the outward HTTP status stays 502 for every upstream/transport class — only
+    // `code`/`category`/`upstreamStatus` carry the diagnosis (CP classify + agent retry
+    // semantics depend on 5xx here). The upstream response body is never copied: a 401
+    // body may contain token hints or internal hosts, so `detail` stays constant.
+    let (status, code, category, upstream_status): (
+        StatusCode,
+        &'static str,
+        &'static str,
+        Option<u16>,
+    ) = match error {
+        RemoteMcpError::AuthorizationRequired => (
+            StatusCode::UNAUTHORIZED,
+            "authorization_required",
+            "auth",
+            None,
+        ),
+        RemoteMcpError::Cancelled => (
+            StatusCode::from_u16(499).unwrap(),
+            "cancelled",
+            "cancelled",
+            None,
+        ),
+        RemoteMcpError::Timeout => (StatusCode::REQUEST_TIMEOUT, "timeout", "timeout", None),
+        RemoteMcpError::EndpointNotAllowed(_) => (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "endpoint_not_allowed",
+            "endpoint",
+            None,
+        ),
+        RemoteMcpError::InvalidEndpoint(_) => (
+            StatusCode::BAD_REQUEST,
+            "invalid_endpoint",
+            "endpoint",
+            None,
+        ),
+        RemoteMcpError::HttpStatus(upstream) => (
+            StatusCode::BAD_GATEWAY,
+            match upstream {
+                StatusCode::NOT_ACCEPTABLE => "remote_mcp_protocol_not_acceptable",
+                StatusCode::NOT_FOUND => "remote_mcp_upstream_not_found",
+                _ => "remote_mcp_upstream_status_error",
+            },
+            match upstream {
+                StatusCode::NOT_ACCEPTABLE => "protocol",
+                _ => "upstream_status",
+            },
+            Some(upstream.as_u16()),
+        ),
+        RemoteMcpError::InvalidJson(_) | RemoteMcpError::InvalidResponse => (
+            StatusCode::BAD_GATEWAY,
+            "remote_mcp_invalid_response",
+            "invalid_response",
+            None,
+        ),
+        RemoteMcpError::Request(_) => (
+            StatusCode::BAD_GATEWAY,
+            "remote_mcp_transport_failed",
+            "transport",
+            None,
+        ),
+        RemoteMcpError::DnsFailed => (
+            StatusCode::BAD_GATEWAY,
+            "remote_mcp_dns_failed",
+            "dns",
+            None,
+        ),
+        RemoteMcpError::ConnectRefused => (
+            StatusCode::BAD_GATEWAY,
+            "remote_mcp_connect_refused",
+            "connect",
+            None,
+        ),
+        RemoteMcpError::TlsFailed => (
+            StatusCode::BAD_GATEWAY,
+            "remote_mcp_tls_failed",
+            "tls",
+            None,
+        ),
+        RemoteMcpError::TransportFailed => (
+            StatusCode::BAD_GATEWAY,
+            "remote_mcp_transport_failed",
+            "transport",
+            None,
+        ),
+        RemoteMcpError::JsonRpc(_) => {
+            (StatusCode::BAD_GATEWAY, "remote_mcp_error", "jsonrpc", None)
         }
-        RemoteMcpError::Cancelled => (StatusCode::from_u16(499).unwrap(), "cancelled"),
-        RemoteMcpError::Timeout => (StatusCode::REQUEST_TIMEOUT, "timeout"),
-        RemoteMcpError::EndpointNotAllowed(_) => {
-            (StatusCode::UNPROCESSABLE_ENTITY, "endpoint_not_allowed")
-        }
-        RemoteMcpError::InvalidEndpoint(_) => (StatusCode::BAD_REQUEST, "invalid_endpoint"),
-        RemoteMcpError::HttpStatus(_)
-        | RemoteMcpError::InvalidJson(_)
-        | RemoteMcpError::Request(_) => (StatusCode::BAD_GATEWAY, "remote_mcp_unavailable"),
-        RemoteMcpError::JsonRpc(_) => (StatusCode::BAD_GATEWAY, "remote_mcp_error"),
-        RemoteMcpError::RequestStateInvalid => {
-            (StatusCode::UNPROCESSABLE_ENTITY, "request_state_invalid")
-        }
+        RemoteMcpError::RequestStateInvalid => (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "request_state_invalid",
+            "state",
+            None,
+        ),
     };
     (
         status,
@@ -1207,6 +1286,8 @@ fn remote_mcp_error_response(
             "title": "Remote MCP request failed",
             "status": status.as_u16(),
             "code": code.to_ascii_uppercase(),
+            "category": category,
+            "upstreamStatus": upstream_status,
             "detail": "Remote MCP request failed",
             "requestId": uuid::Uuid::new_v4().to_string()
         })),
@@ -7319,5 +7400,125 @@ mod job_engine_route_tests {
         app.job_engine.cancel(&job_id).expect("cancel");
         app.job_engine.cleanup(&job_id).expect("cleanup");
         drop(dir);
+    }
+}
+
+#[cfg(test)]
+mod remote_mcp_error_map_tests {
+    //! PLAN-0654 T1.4: the outward mapping keeps HTTP 502 for every upstream/transport
+    //! class (user ruling) while `code`/`category`/`upstreamStatus` carry the diagnosis.
+
+    use super::remote_mcp_error_response;
+    use axum::http::StatusCode;
+    use xihe_runtime::remote_mcp::RemoteMcpError;
+
+    fn map(error: RemoteMcpError) -> (u16, String, String, Option<u16>) {
+        let (status, _headers, body) = remote_mcp_error_response(error);
+        let value = body.0;
+        (
+            status.as_u16(),
+            value
+                .get("code")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
+            value
+                .get("category")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
+            value
+                .get("upstreamStatus")
+                .and_then(|v| v.as_u64())
+                .map(|n| n as u16),
+        )
+    }
+
+    #[test]
+    fn http_status_406_maps_to_protocol_not_acceptable() {
+        let (status, code, category, upstream) =
+            map(RemoteMcpError::HttpStatus(StatusCode::NOT_ACCEPTABLE));
+        assert_eq!(status, 502);
+        assert_eq!(code, "REMOTE_MCP_PROTOCOL_NOT_ACCEPTABLE");
+        assert_eq!(category, "protocol");
+        assert_eq!(upstream, Some(406));
+    }
+
+    #[test]
+    fn http_status_404_maps_to_upstream_not_found() {
+        let (status, code, category, upstream) =
+            map(RemoteMcpError::HttpStatus(StatusCode::NOT_FOUND));
+        assert_eq!(status, 502);
+        assert_eq!(code, "REMOTE_MCP_UPSTREAM_NOT_FOUND");
+        assert_eq!(category, "upstream_status");
+        assert_eq!(upstream, Some(404));
+    }
+
+    #[test]
+    fn http_status_500_maps_to_upstream_status_error() {
+        let (status, code, category, upstream) = map(RemoteMcpError::HttpStatus(
+            StatusCode::INTERNAL_SERVER_ERROR,
+        ));
+        assert_eq!(status, 502);
+        assert_eq!(code, "REMOTE_MCP_UPSTREAM_STATUS_ERROR");
+        assert_eq!(category, "upstream_status");
+        assert_eq!(upstream, Some(500));
+    }
+
+    #[test]
+    fn transport_variants_keep_502_with_distinct_codes() {
+        for (error, expected) in [
+            (RemoteMcpError::DnsFailed, "REMOTE_MCP_DNS_FAILED"),
+            (RemoteMcpError::ConnectRefused, "REMOTE_MCP_CONNECT_REFUSED"),
+            (RemoteMcpError::TlsFailed, "REMOTE_MCP_TLS_FAILED"),
+            (
+                RemoteMcpError::TransportFailed,
+                "REMOTE_MCP_TRANSPORT_FAILED",
+            ),
+        ] {
+            let (status, code, _category, upstream) = map(error);
+            assert_eq!(status, 502, "{expected} must stay 502");
+            assert_eq!(code, expected);
+            assert_eq!(upstream, None);
+        }
+    }
+
+    #[test]
+    fn regression_variants_keep_their_existing_codes() {
+        let (status, code, _, _) = map(RemoteMcpError::AuthorizationRequired);
+        assert_eq!((status, code.as_str()), (401, "AUTHORIZATION_REQUIRED"));
+        let (status, code, _, _) = map(RemoteMcpError::Timeout);
+        assert_eq!((status, code.as_str()), (408, "TIMEOUT"));
+        let (status, code, _, _) = map(RemoteMcpError::EndpointNotAllowed("x".into()));
+        assert_eq!((status, code.as_str()), (422, "ENDPOINT_NOT_ALLOWED"));
+        let (status, code, _, _) = map(RemoteMcpError::JsonRpc("boom".into()));
+        assert_eq!((status, code.as_str()), (502, "REMOTE_MCP_ERROR"));
+    }
+
+    /// A connection to a closed loopback port yields a real `reqwest::Error`, letting us
+    /// exercise the `InvalidJson`/`Request` arms and the transport classifier end to end.
+    async fn sample_reqwest_error() -> reqwest::Error {
+        reqwest::Client::new()
+            .get("http://127.0.0.1:1/")
+            .send()
+            .await
+            .expect_err("connecting to a closed port must fail")
+    }
+
+    #[tokio::test]
+    async fn invalid_json_and_request_have_distinct_codes() {
+        let error = sample_reqwest_error().await;
+        let (status, code, category, upstream) = map(RemoteMcpError::InvalidJson(error));
+        assert_eq!(status, 502);
+        assert_eq!(code, "REMOTE_MCP_INVALID_RESPONSE");
+        assert_eq!(category, "invalid_response");
+        assert_eq!(upstream, None);
+
+        let error = sample_reqwest_error().await;
+        let (status, code, category, upstream) = map(RemoteMcpError::Request(error));
+        assert_eq!(status, 502);
+        assert_eq!(code, "REMOTE_MCP_TRANSPORT_FAILED");
+        assert_eq!(category, "transport");
+        assert_eq!(upstream, None);
     }
 }

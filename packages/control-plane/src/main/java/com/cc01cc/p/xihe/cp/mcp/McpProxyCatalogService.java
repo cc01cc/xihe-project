@@ -140,7 +140,8 @@ public class McpProxyCatalogService {
     }
 
     private static RemoteServerView toRemoteServerView(McpServer server) {
-        return new RemoteServerView(server.getId().toString(), server.getEndpoint(), server.getAuthMode());
+        return new RemoteServerView(server.getId().toString(), server.getName(),
+                server.getEndpoint(), server.getAuthMode());
     }
 
     private static ToolAliasView toToolAliasView(McpToolAlias alias) {
@@ -157,7 +158,7 @@ public class McpProxyCatalogService {
     public record RemoteServerConfigView(String name, String endpoint) {
     }
 
-    public record RemoteServerView(String id, String endpoint, String authMode) {
+    public record RemoteServerView(String id, String name, String endpoint, String authMode) {
     }
 
     public record ToolAliasView(String workspaceId, String issuedName, String serverId,

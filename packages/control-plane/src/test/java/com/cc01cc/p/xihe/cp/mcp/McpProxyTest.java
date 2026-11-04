@@ -570,6 +570,149 @@ class McpProxyTest {
 
     @Test
     @SuppressWarnings("unchecked")
+    void handleToolsList_remoteFailure_carriesPerServerDiagnostics() throws Exception {
+        when(requestRewriter.rewrite(anyString(), anyString(), anyString()))
+                .thenAnswer(inv -> inv.getArgument(1));
+
+        com.sun.net.httpserver.HttpServer stub = com.sun.net.httpserver.HttpServer.create(
+                new java.net.InetSocketAddress("127.0.0.1", 0), 0);
+        // PLAN-0557: the system catalog must stay reachable or tools/list fails closed.
+        stub.createContext("/internal/v1/runtime/workspaces/" + TEST_WS_UUID + "/mcp", exchange -> {
+            byte[] bytes = "{\"jsonrpc\":\"2.0\",\"result\":{\"tools\":[]},\"id\":1}"
+                    .getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, bytes.length);
+            exchange.getResponseBody().write(bytes);
+            exchange.close();
+        });
+        // A remote server whose Runtime forward reports the new PLAN-0654 protocol code.
+        stub.createContext("/internal/v1/runtime/remote-mcp/" + TEST_WS_UUID + "/"
+                + java.util.UUID.nameUUIDFromBytes("deepwiki".getBytes()) + "/call", exchange -> {
+            String body = "{\"type\":\"https://xihe.dev/problems/remote_mcp_protocol_not_acceptable\","
+                    + "\"title\":\"Remote MCP request failed\",\"status\":502,"
+                    + "\"code\":\"REMOTE_MCP_PROTOCOL_NOT_ACCEPTABLE\",\"category\":\"protocol\","
+                    + "\"upstreamStatus\":406,\"detail\":\"Remote MCP request failed\",\"requestId\":\"r1\"}";
+            byte[] bytes = body.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "application/problem+json");
+            exchange.sendResponseHeaders(502, bytes.length);
+            exchange.getResponseBody().write(bytes);
+            exchange.close();
+        });
+        stub.start();
+        try {
+            ReflectionTestUtils.setField(controller, "runtimeBaseUrl",
+                    "http://127.0.0.1:" + stub.getAddress().getPort());
+
+            com.cc01cc.p.xihe.cp.entity.McpServer server =
+                    new com.cc01cc.p.xihe.cp.entity.McpServer(
+                            TEST_WS_UUID, "deepwiki", "https://mcp.deepwiki.com/mcp");
+            server.setId(java.util.UUID.nameUUIDFromBytes("deepwiki".getBytes()));
+            server.setEnabled(true);
+            server.setAuthMode("no-auth");
+            when(mcpServerRepository.findByWorkspaceIdAndEnabledTrue(TEST_WS_UUID))
+                    .thenReturn(java.util.List.of(server));
+            when(stdioServerRepository.findByWorkspaceIdOrderByNameAsc(TEST_WS_UUID))
+                    .thenReturn(java.util.List.of());
+            when(aliasRepository.findByWorkspaceId(java.util.UUID.fromString(TEST_WS_UUID)))
+                    .thenReturn(java.util.List.of());
+            when(aliasRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+            Object access = accessContext(TEST_WS_UUID, "u-1");
+            String listBody = "{\"jsonrpc\":\"2.0\",\"method\":\"tools/list\",\"id\":2,\"params\":{}}";
+            ResponseEntity<String> listResp = (ResponseEntity<String>) ReflectionTestUtils.invokeMethod(
+                    controller, "handleToolsList", TEST_WS_UUID, listBody,
+                    new HttpHeaders(), "sess-1", access);
+            assertNotNull(listResp);
+            String json = listResp.getBody();
+            assertTrue(json.contains("\"diagnostics\""),
+                    "partial remote failure must surface diagnostics, got: " + json);
+            assertTrue(json.contains("protocol_not_acceptable"), json);
+            assertTrue(json.contains("\"upstreamStatus\":406"), json);
+            assertTrue(json.contains(server.getId().toString()), json);
+            assertTrue(json.contains("\"serverName\":\"deepwiki\""), json);
+            assertFalse(json.contains("fake_echo"),
+                    "a failed remote server must not contribute tools, got: " + json);
+        } finally {
+            stub.stop(0);
+        }
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void handleToolsList_remoteRecovery_republishesToolsAndClearsDiagnostics() throws Exception {
+        when(requestRewriter.rewrite(anyString(), anyString(), anyString()))
+                .thenAnswer(inv -> inv.getArgument(1));
+
+        java.util.concurrent.atomic.AtomicBoolean failing = new java.util.concurrent.atomic.AtomicBoolean(true);
+        com.sun.net.httpserver.HttpServer stub = com.sun.net.httpserver.HttpServer.create(
+                new java.net.InetSocketAddress("127.0.0.1", 0), 0);
+        stub.createContext("/internal/v1/runtime/workspaces/" + TEST_WS_UUID + "/mcp", exchange -> {
+            byte[] bytes = "{\"jsonrpc\":\"2.0\",\"result\":{\"tools\":[]},\"id\":1}"
+                    .getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, bytes.length);
+            exchange.getResponseBody().write(bytes);
+            exchange.close();
+        });
+        stub.createContext("/internal/v1/runtime/remote-mcp/" + TEST_WS_UUID + "/"
+                + java.util.UUID.nameUUIDFromBytes("deepwiki".getBytes()) + "/call", exchange -> {
+            String body = failing.get()
+                    ? "{\"status\":502,\"code\":\"REMOTE_MCP_DNS_FAILED\",\"category\":\"dns\","
+                            + "\"detail\":\"Remote MCP request failed\",\"requestId\":\"r2\"}"
+                    : "{\"tools\":[{\"name\":\"fake_echo\",\"description\":\"Echo\","
+                            + "\"inputSchema\":{\"type\":\"object\"}}]}";
+            int status = failing.get() ? 502 : 200;
+            byte[] bytes = body.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(status, bytes.length);
+            exchange.getResponseBody().write(bytes);
+            exchange.close();
+        });
+        stub.start();
+        try {
+            ReflectionTestUtils.setField(controller, "runtimeBaseUrl",
+                    "http://127.0.0.1:" + stub.getAddress().getPort());
+
+            com.cc01cc.p.xihe.cp.entity.McpServer server =
+                    new com.cc01cc.p.xihe.cp.entity.McpServer(
+                            TEST_WS_UUID, "deepwiki", "https://mcp.deepwiki.com/mcp");
+            server.setId(java.util.UUID.nameUUIDFromBytes("deepwiki".getBytes()));
+            server.setEnabled(true);
+            server.setAuthMode("no-auth");
+            when(mcpServerRepository.findByWorkspaceIdAndEnabledTrue(TEST_WS_UUID))
+                    .thenReturn(java.util.List.of(server));
+            when(stdioServerRepository.findByWorkspaceIdOrderByNameAsc(TEST_WS_UUID))
+                    .thenReturn(java.util.List.of());
+            when(aliasRepository.findByWorkspaceId(java.util.UUID.fromString(TEST_WS_UUID)))
+                    .thenReturn(java.util.List.of());
+            when(aliasRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+            Object access = accessContext(TEST_WS_UUID, "u-1");
+            String listBody = "{\"jsonrpc\":\"2.0\",\"method\":\"tools/list\",\"id\":2,\"params\":{}}";
+            ResponseEntity<String> first = (ResponseEntity<String>) ReflectionTestUtils.invokeMethod(
+                    controller, "handleToolsList", TEST_WS_UUID, listBody,
+                    new HttpHeaders(), "sess-1", access);
+            assertNotNull(first);
+            assertTrue(first.getBody().contains("\"diagnostics\""), first.getBody());
+            assertTrue(first.getBody().contains("dns_failed"), first.getBody());
+            assertFalse(first.getBody().contains("fake_echo"), first.getBody());
+
+            failing.set(false);
+            ResponseEntity<String> second = (ResponseEntity<String>) ReflectionTestUtils.invokeMethod(
+                    controller, "handleToolsList", TEST_WS_UUID, listBody,
+                    new HttpHeaders(), "sess-1", access);
+            assertNotNull(second);
+            assertTrue(second.getBody().contains("fake_echo"),
+                    "recovered remote must republish its tools, got: " + second.getBody());
+            assertFalse(second.getBody().contains("\"diagnostics\""),
+                    "clean generations carry no diagnostics, got: " + second.getBody());
+        } finally {
+            stub.stop(0);
+        }
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
     void handleToolsCall_requireApproval_failsClosedBeforeRuntimeForward() throws Exception {
         String body = "{\"jsonrpc\":\"2.0\",\"method\":\"tools/call\","
                 + "\"params\":{\"name\":\"write_file\",\"arguments\":{}},\"id\":7}";
