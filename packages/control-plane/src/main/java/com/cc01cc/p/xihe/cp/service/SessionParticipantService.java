@@ -28,6 +28,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 
@@ -378,6 +379,21 @@ public class SessionParticipantService {
     /** The responder triple: participant, its kind, and the principal that actually answers. */
     public record Responder(UUID participantId, String principalKind, UUID principalId) {}
 
+    /**
+     * PLAN-0669 D2: the participant row for a (session, principal) pair — used by the single
+     * assistant-write point to stamp durable message attribution. Empty when the pair has no row, so
+     * the caller persists NULL instead of guessing a participant (an attribution that is wrong is
+     * worse than an absent one).
+     */
+    @Transactional(readOnly = true)
+    public Optional<UUID> participantIdForPrincipal(UUID sessionId, UUID principalId) {
+        if (sessionId == null || principalId == null) {
+            return Optional.empty();
+        }
+        return participantRepository.findFirstBySessionIdAndPrincipalId(sessionId, principalId)
+                .map(SessionParticipant::getId);
+    }
+
 /**
      * Authorization for {@code POST /api/v1/chat} with {@code asParticipantId}.
      *
@@ -420,6 +436,38 @@ public class SessionParticipantService {
         static SpeakDecision refused(String code) {
             return new SpeakDecision(false, code);
         }
+    }
+
+    /**
+     * PLAN-0665 Q3: gate every explicit TO target ({@code toParticipantIds}) through the <b>same</b>
+     * D23-08 judgment as {@code asParticipantId} — a fan-out selector must not become an
+     * authorization bypass.
+     *
+     * <p>M1 accepts <b>AGENT participants only</b>: a human target is refused with
+     * {@code 400 INVALID_REQUEST} (not 403 — the caller may legitimately speak as themselves; this
+     * is a selector that is not supported yet). Human TO is blocked on BL-238 (the wake path refuses
+     * every human participant) and is a separate plan.</p>
+     *
+     * @return authorized rows in the caller's selection order (first-seen, already de-duplicated)
+     */
+    @Transactional(readOnly = true)
+    public List<SessionParticipant> authorizeToTargets(String actorId, String workspaceId,
+                                                       String sessionId, List<UUID> targetParticipantIds) {
+        if (targetParticipantIds == null || targetParticipantIds.isEmpty()) {
+            return List.of();
+        }
+        List<SessionParticipant> authorized = new ArrayList<>(targetParticipantIds.size());
+        for (UUID target : targetParticipantIds) {
+            SessionParticipant row = authorizeAsParticipantInTransaction(actorId, workspaceId,
+                    sessionId, target.toString());
+            if (!SessionParticipant.KIND_AGENT.equals(row.getPrincipalKind())) {
+                throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST",
+                        "toParticipantIds currently accepts AGENT participants only; "
+                                + "human targets are a later plan");
+            }
+            authorized.add(row);
+        }
+        return authorized;
     }
 
     private SessionParticipant authorizeAsParticipantInTransaction(String actorId, String workspaceId,

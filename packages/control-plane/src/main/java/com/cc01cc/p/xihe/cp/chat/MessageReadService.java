@@ -109,7 +109,14 @@ public class MessageReadService {
         dto.put("role", message.getRole().name());
         dto.put("content", message.getContent());
         dto.put("createdAt", message.getCreatedAt());
+        // PLAN-0669 M1b (V121): durable actor attribution — the participant id the UI resolves
+        // against the roster. Omitted (not null) for pre-V121 rows and for user messages (v1), so
+        // clients keep the single "no attribution ⇒ no badge" path (D4) instead of an "unknown" state.
+        if (message.getParticipantId() != null) {
+            dto.put("participantId", message.getParticipantId());
+        }
         putToolCalls(dto, message);
+        putDelivery(dto, message);
         if (message.getRunId() != null) {
             ChatRun run = chatRunRepository.findById(java.util.UUID.fromString(message.getRunId())).orElse(null);
             // Forked Message rows may keep the parent Run id as nullable lineage.
@@ -140,6 +147,24 @@ public class MessageReadService {
         return dto;
     }
 
+    /**
+     * PLAN-0665 D3 (V120): expose the durable TO / CC audience. Same fail-soft rule as tool calls —
+     * a malformed payload must never break the message listing (the field is simply omitted).
+     */
+    private void putDelivery(Map<String, Object> dto, Message message) {
+        String deliveryJson = message.getDelivery();
+        if (deliveryJson == null || deliveryJson.isBlank()) {
+            return;
+        }
+        try {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> delivery = objectMapper.readValue(deliveryJson, Map.class);
+            dto.put("delivery", delivery);
+        } catch (com.fasterxml.jackson.core.JsonProcessingException | IllegalArgumentException e) {
+            logger.warn("[LIFECYCLE] service=cp event=message_delivery_projection_failed messageId={} "
+                            + "errorType={}", message.getId(), e.getClass().getSimpleName());
+        }
+    }
     /** PLAN-0572: expose the Message's bounded snapshot; parse failures never break the listing. */
     private void putToolCalls(Map<String, Object> dto, Message message) {
         String snapshotJson = message.getToolCalls();

@@ -335,6 +335,9 @@ public class SessionForkService {
             childMessage.setBranchId(childRootBranchId);
             // PLAN-0572 D1=A: the tool-call snapshot travels with its message.
             childMessage.setToolCalls(sourceMessage.getToolCalls());
+            // PLAN-0669 D4: attribution is deliberately NOT copied. The child has its own roster
+            // (fork never copies session_participants), so a parent participant id would dangle —
+            // and would violate the V121 FK. The child rows start with NULL (no badge) instead.
             childMessage = messages.saveAndFlush(childMessage);
             childMessage.setAttachments(copyAttachments(sourceMessage, childMessage, claim,
                     sourceFilesByMessage.getOrDefault(sourceMessage.getId(), List.of())));

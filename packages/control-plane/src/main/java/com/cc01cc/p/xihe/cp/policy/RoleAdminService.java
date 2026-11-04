@@ -119,6 +119,35 @@ public class RoleAdminService {
                 .toList();
     }
 
+    /**
+     * PLAN-0667 addendum (Lead ruling 2026-11-05, real-stack gap 1): the role candidates a caller
+     * who may manage an agent's bindings is allowed to see.
+     *
+     * <p>Role <em>definitions</em> are instance-wide (see {@link com.cc01cc.p.xihe.cp.entity.AccessRole}:
+     * scope lives on the binding, not on the role), so "workspace roles" cannot be filtered by an
+     * ownership column. What can be filtered — and what the UI actually needs — is <b>bindability</b>:
+     * a role carrying any {@code agentPrincipalForbidden} atom can never be bound to an agent, so
+     * listing it would only produce a button that always answers 409. The result keeps the same view
+     * shape and ordering as {@link #list()} (system roles first, then name).</p>
+     */
+    @Transactional(readOnly = true)
+    public List<RoleAdminViews.RoleView> listAgentBindable() {
+        Map<UUID, List<String>> atomsByRole = atomsByRole();
+        List<AccessRole> all = roles.findAll();
+        Map<UUID, Long> bindingCounts = new LinkedHashMap<>();
+        for (AccessRole role : all) {
+            bindingCounts.put(role.getId(), bindings.countByRoleId(role.getId()));
+        }
+        return all.stream()
+                .filter(role -> PermissionAtomCatalog.canBindToAgentPrincipal(
+                        atomsByRole.getOrDefault(role.getId(), List.of())))
+                .sorted(Comparator.comparing(AccessRole::isSystem).reversed()
+                        .thenComparing(AccessRole::getName))
+                .map(role -> toView(role, atomsByRole.getOrDefault(role.getId(), List.of()),
+                        bindingCounts.getOrDefault(role.getId(), 0L)))
+                .toList();
+    }
+
     /** {@code POST /api/v1/roles}: a custom role with an explicit atom set. */
     @Transactional
     public RoleAdminViews.RoleView create(RoleAdminViews.RoleCreate request) {

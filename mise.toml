@@ -17,6 +17,11 @@
 
 [env]
 NODE_OPTIONS = "--max-old-space-size=2048"
+# sccache 试点结论（2026-11-05，**未启用**）：sccache 0.19.0 已装入 mise 全局，
+# 但在本机（rustup shim + Windows）实测**每个编译都返回 `UnhandledCompile`**（`SCCACHE_LOG=debug` 实证），
+# 换 target 目录与直接调 rustc 均 0 命中 ⇒ **零收益**，故不写入 `RUSTC_WRAPPER`。
+# 另：无条件设置 RUSTC_WRAPPER 会让未安装 sccache 的机器直接构建失败，属可移植性回归。
+# 需要继续诊断时按 `scripts/worktree-env.ps1 -EnableSccache` 单次开启，不要改回本文件。
 # uv cache: 使用 uv 自身默认位置（不再写死盘符）。需要与其它项目共享缓存的人
 # 自行在外层 shell 设置 UV_CACHE_DIR；本仓库不替用户决定机器布局。
 
@@ -261,6 +266,11 @@ alias = "lint:runtime"
 run = "node scripts/mise/run-posix.mjs scripts/check-doc-links-entry.sh ."
 description = "Check documentation links (no escape from docs/)"
 alias = "lint:links"
+
+[tasks."perf:chat"]
+run = "node scripts/perf/chat-load.mjs"
+description = "PLAN-0670 long-session capacity baseline (seed|run); zero dependencies, L2 only, isolated perf stack required (never stack-1/stack-2)"
+alias = "perf:chat"
 
 [tasks.typecheck]
 depends = ["typecheck:ui"]
