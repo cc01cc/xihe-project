@@ -1373,6 +1373,70 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "V3 symlink probe: store restore is intentionally fail-closed"]
+    fn v3_symlink_probe() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path().join("symlink-root");
+        fs::create_dir_all(&root).expect("root");
+        git(&root, &["init", "-q"]);
+        git(&root, &["config", "user.email", "v3@example.invalid"]);
+        git(&root, &["config", "user.name", "v3"]);
+        git(&root, &["config", "core.autocrlf", "false"]);
+        git(&root, &["config", "core.symlinks", "true"]);
+        write(&root.join("target.txt"), "target");
+        let link = root.join("link.txt");
+        #[cfg(windows)]
+        std::os::windows::fs::symlink_file(root.join("target.txt"), &link).expect("create symlink");
+        #[cfg(unix)]
+        std::os::unix::fs::symlink("target.txt", &link).expect("create symlink");
+        let commit = commit_all(&root, "symlink slice");
+        let store = Store::init(temp.path().join("symlink-store")).expect("store");
+        let capture = capture_root(&store, &root, "ws-1", None, None).expect("capture");
+        let store_target = temp.path().join("symlink-store-target");
+        fs::create_dir_all(&store_target).expect("store target");
+        let store_error = restore_full(
+            &store,
+            "ws-1",
+            &capture.slice_id,
+            &store_target,
+            &FullRestoreOptions::default(),
+        )
+        .expect_err("store symlink restore must fail closed");
+        let git_target = temp.path().join("symlink-git-target");
+        git(
+            &root,
+            &[
+                "worktree",
+                "add",
+                "--detach",
+                git_target.to_str().expect("git target"),
+                &commit,
+            ],
+        );
+        let git_symlink = fs::symlink_metadata(git_target.join("link.txt")).expect("git symlink");
+        let report = serde_json::json!({
+            "case": "symlink_restore",
+            "store_supported": false,
+            "store_error": store_error.to_string(),
+            "git_worktree_created_symlink": git_symlink.file_type().is_symlink(),
+            "status": "blocked_by_t21_fail_closed",
+        });
+        if let Ok(path) = std::env::var("V3_SYMLINK_REPORT_PATH") {
+            fs::write(path, serde_json::to_vec_pretty(&report).expect("report"))
+                .expect("write symlink report");
+        }
+        eprintln!(
+            "V3_SYMLINK {}",
+            serde_json::to_string(&report).expect("report")
+        );
+        assert!(matches!(
+            store_error,
+            FullRestoreError::SymlinkUnsupported(_) | FullRestoreError::UnsafePath(_)
+        ));
+        assert!(git_symlink.file_type().is_symlink());
+    }
+
+    #[test]
     #[ignore = "V3 git-checkout parity: 3 tiers x 3 slices + negative expectations"]
     fn v3_git_checkout_parity() {
         let temp = tempfile::tempdir().expect("tempdir");
