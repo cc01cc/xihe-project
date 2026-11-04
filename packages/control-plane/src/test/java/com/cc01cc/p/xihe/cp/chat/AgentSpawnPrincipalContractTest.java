@@ -288,6 +288,27 @@ class AgentSpawnPrincipalContractTest extends AbstractIntegrationTest {
     }
 
     @Test
+    void spawnAcceptsLegacyEnvelopePreviewReachingTheGrantGate() {
+        // BL-220：CP MCP 代理侧曾把整条 JSON-RPC 信封写进 arguments_preview，与 Agent 事件侧
+        // 的纯参数双形状并存；deriveSpawnContent 只认纯参数 ⇒ 授权/预算闸永远到不了
+        // （0649 两次真栈实证为硬阻塞）。读侧现在容忍信封：本用例钉"信封不再
+        // SPAWN_ARGUMENTS_INVALID，而是正常走到授权闸"。
+        String envelope = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\","
+                + "\"params\":{\"name\":\"spawn_agent\",\"arguments\":{\"prompt\":\"envelope child\"}}}";
+        ParentFixture parent = fixture("spawn_agent", envelope);
+        grantRepository.deleteAll(grantRepository.findBySubjectTypeAndSubjectId(
+                "agent_principal", principalId));
+
+        assertNoWrites(() -> {
+            ResponseEntity<Map> response = spawnRequest(parent.parentRunId, parent.toolCallId, SERVICE_TOKEN);
+            assertEquals(HttpStatus.FORBIDDEN, response.getStatusCode());
+            assertEquals("FORBIDDEN", response.getBody().get("code"));
+        });
+        assertEquals(0, approvalCount(parent.parentSessionId),
+                "envelope preview must reach the grant gate, not die as SPAWN_ARGUMENTS_INVALID");
+    }
+
+    @Test
     void spawnManualApprovalConsumesMatchingGrantWithChildAndWaitingLink() {
         ParentFixture parent = fixture("spawn_agent", "{\"prompt\":\"approve this child\"}");
         Session parentSession = sessionRepository.findById(UUID.fromString(parent.parentSessionId)).orElseThrow();

@@ -890,7 +890,7 @@ public class McpProxyController {
                     gateToolCallId,
                     toolName,
                     headers.getFirst("X-Request-Id"),
-                    safePreview(body));
+                    toolArgumentsPreview(body, objectMapper));
         }
         if (access.internalService() && !policy.hasCurrentAgentToolCall(
                 access.userId(), wsId, access.applicationSessionId(),
@@ -2213,6 +2213,36 @@ public class McpProxyController {
     private String safePreview(String body) {
         String preview = body == null ? "" : body;
         return preview.length() <= 4096 ? preview : preview.substring(0, 4096);
+    }
+
+    /**
+     * BL-220: {@code mcp_invocations.arguments_preview} 的形状约定是「纯参数对象」，与 Agent
+     * 事件侧（{@code McpRelayToolRecorder} 写 {@code payload.arguments}）一致。这里曾把整条
+     * JSON-RPC 信封写进 preview（两条写入路径双形状），spawn 的 {@code deriveSpawnContent}
+     * 只认纯参数 ⇒ 预算闸永远到不了。解析不出 {@code params.arguments} 时退回原文（读侧同时
+     * 容忍信封，双保险）。static + 包级可见以便单测直接钉形状。
+     */
+    static String toolArgumentsPreview(String body, ObjectMapper mapper) {
+        JsonNode arguments = readToolArguments(body, mapper);
+        if (arguments != null && arguments.isObject()) {
+            String preview = arguments.toString();
+            return preview.length() <= 4096 ? preview : preview.substring(0, 4096);
+        }
+        String preview = body == null ? "" : body;
+        return preview.length() <= 4096 ? preview : preview.substring(0, 4096);
+    }
+
+    private static JsonNode readToolArguments(String body, ObjectMapper mapper) {
+        if (body == null || body.isBlank()) {
+            return null;
+        }
+        try {
+            JsonNode node = mapper.readTree(body);
+            JsonNode params = node == null ? null : node.get("params");
+            return params == null || !params.isObject() ? null : params.get("arguments");
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     /**
