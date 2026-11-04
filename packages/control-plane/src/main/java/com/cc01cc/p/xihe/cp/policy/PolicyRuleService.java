@@ -45,10 +45,13 @@ public class PolicyRuleService {
 
     private final PolicyRuleRepository repository;
     private final PolicyRevision policyRevision;
+    private final RequesterAuthority requesterAuthority;
 
-    public PolicyRuleService(PolicyRuleRepository repository, PolicyRevision policyRevision) {
+    public PolicyRuleService(PolicyRuleRepository repository, PolicyRevision policyRevision,
+                             RequesterAuthority requesterAuthority) {
         this.repository = repository;
         this.policyRevision = policyRevision;
+        this.requesterAuthority = requesterAuthority;
     }
 
     public record RuleInput(String actionClass, String resource, String effect, Integer priority, Boolean locked) {}
@@ -62,7 +65,7 @@ public class PolicyRuleService {
     @Transactional
     public RuleView create(String layer, String userId, String workspaceId, boolean admin, RuleInput input) {
         String owner = ownerFor(layer, userId, workspaceId, admin, true);
-        requireWorkspaceAdmin(layer);
+        requireWorkspaceAdmin(layer, userId);
         String actionClass = requireText(input.actionClass(), "actionClass", MAX_ACTION_CLASS);
         String resource = requireText(input.resource(), "resource", MAX_RESOURCE);
         String effect = input.effect() == null ? "" : input.effect().toLowerCase();
@@ -117,13 +120,30 @@ public class PolicyRuleService {
         return views;
     }
 
-    private static void requireWorkspaceAdmin(String layer) {
+    /**
+     * PLAN-0651 M3 T3.3 (A15 → N9 {@code MANAGE_WORKSPACE_POLICY}).
+     *
+     * <p>The {@code WorkspaceRole.canWrite(role)} judgement is retained (matrix cell S2: a
+     * workspace EDITOR can write workspace-layer rules). Only the instance-admin bypass is migrated:
+     * N9 is evaluated at <b>instance scope</b> so a workspace-scoped N9 row cannot act as a global
+     * bypass. ADMIN/SUPER_ADMIN hold N9 at instance scope ⇒ matrix S1 stays "pass". Refusal shape
+     * (403 {@code FORBIDDEN} + the same message) is unchanged.</p>
+     */
+    private void requireWorkspaceAdmin(String layer, String userId) {
         if (!LAYER_WORKSPACE.equals(layer)) {
             return;
         }
         String role = TenantContext.getWorkspaceRole();
-        // PLAN-0610 W1b (R2-9): the instance-level bypass is a capability, not the role string.
-        if (!(WorkspaceRole.canWrite(role) || CapabilityAuthorities.isInstanceAdmin())) {
+        boolean instancePolicyAdmin = false;
+        if (userId != null && !userId.isBlank()) {
+            try {
+                instancePolicyAdmin = requesterAuthority.holdsActionAtom(UUID.fromString(userId),
+                        ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_POLICY, null);
+            } catch (IllegalArgumentException invalidSubject) {
+                instancePolicyAdmin = false;
+            }
+        }
+        if (!(WorkspaceRole.canWrite(role) || instancePolicyAdmin)) {
             throw new CpApiException(HttpStatus.FORBIDDEN, "FORBIDDEN",
                     "workspace-layer rules require workspace EDITOR or OWNER");
         }

@@ -46,7 +46,7 @@ public class SkillBindingController {
         try {
             UUID actor = UUID.fromString(guard.requireActor());
             SkillBindingService.Caller caller = new SkillBindingService.Caller(
-                    actor, guard.isInstanceAdmin(), guard.canManageWorkspace(request.scopeId()));
+                    actor, guard.canManageInstanceLibrary(), guard.canManageWorkspace(request.scopeId()));
             SkillBinding binding = bindingService.bind(
                     new SkillBindingService.BindCommand(request.skillId(), request.subjectType(),
                             request.subjectId(), request.scopeType(), request.scopeId()),
