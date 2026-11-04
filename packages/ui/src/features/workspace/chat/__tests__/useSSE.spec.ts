@@ -344,6 +344,44 @@ describe("useSSE", () => {
         expect(isStreaming.value).toBe(false);
     });
 
+    it("passes agentContextTruncation from the done payload (PLAN-0670 M2c / BL-292)", async () => {
+        const transport = createTransportController(),
+            { connect } = useSSE(SESSION_ID),
+            onDone = vi.fn<NonNullable<useSSEModule.SSECallbacks["onDone"]>>();
+        connect({ onDone });
+        await flushPromises();
+
+        // 真实 wire 形状（Agent `Truncation.to_wire()`，从 bl-293 分支源码核对，不手造字段名）。
+        const marker = {
+            droppedMessages: 500,
+            droppedBytes: 123456,
+            keptMessages: 2000,
+            keptBytes: 987654,
+            limitMessages: 2000,
+            limitBytes: 8 * 1024 * 1024,
+            strategy: "newestKeep",
+        };
+        await transport.simulateMessage(
+            "done",
+            JSON.stringify({ outcome: "success", runId: RUN_ID, agentContextTruncation: marker }),
+        );
+
+        expect(onDone).toHaveBeenLastCalledWith("success", RUN_ID, marker);
+    });
+
+    it("passes undefined truncation when the done payload has no key (not all-zero)", async () => {
+        const transport = createTransportController(),
+            { connect } = useSSE(SESSION_ID),
+            onDone = vi.fn<NonNullable<useSSEModule.SSECallbacks["onDone"]>>();
+        connect({ onDone });
+        await flushPromises();
+        await transport.simulateMessage(
+            "done",
+            JSON.stringify({ outcome: "success", runId: RUN_ID }),
+        );
+        expect(onDone).toHaveBeenLastCalledWith("success", RUN_ID, undefined);
+    });
+
     it("emits error via onError callback when connect fails", async () => {
         vi.mocked(chatTransport.sendMessages).mockRejectedValueOnce(new Error("connect failed"));
         const { connect } = useSSE(SESSION_ID),
@@ -984,7 +1022,7 @@ describe("useSSE per-run scopes (0645 M2)", () => {
             "done",
             JSON.stringify({ outcome: "success", runId: RUN_ID }),
         );
-        expect(onDone).toHaveBeenLastCalledWith("success", RUN_ID);
+        expect(onDone).toHaveBeenLastCalledWith("success", RUN_ID, undefined);
         expect(isStreaming.value).toBe(true);
 
         await transport.simulateMessage(

@@ -837,6 +837,9 @@ const messages = {
                 loadingOlder: "正在加载更早的消息…",
                 loadOlderFailed: "加载更早的消息失败",
                 foldedOlder: "更早的 {count} 条消息已折叠，点击加载",
+                contextTruncationNotice:
+                    "本次回答基于被截断的历史（丢弃 {dropped} 条 / 保留 {kept} 条）",
+                contextTruncationDismiss: "关闭截断提示",
                 ccLabel: "抄送",
                 ccAdd: "添加…",
                 ccRemove: "移除抄送",
@@ -3169,6 +3172,9 @@ const messages = {
                 loadingOlder: "Loading earlier messages…",
                 loadOlderFailed: "Failed to load earlier messages",
                 foldedOlder: "{count} earlier messages are folded; click to load",
+                contextTruncationNotice:
+                    "This answer used a truncated history ({dropped} dropped / {kept} kept)",
+                contextTruncationDismiss: "Dismiss truncation notice",
                 ccLabel: "Cc",
                 ccAdd: "Add…",
                 ccRemove: "Remove cc",
