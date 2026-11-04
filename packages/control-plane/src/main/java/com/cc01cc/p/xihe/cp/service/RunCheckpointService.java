@@ -124,8 +124,7 @@ public class RunCheckpointService {
     private final ExecutorService captureExecutor;
 
     /** PLAN-0641 F1 warm (contract §3): best-effort cache warm from primary-root captures. */
-    @org.springframework.beans.factory.annotation.Autowired
-    private WorkspaceNestedReposService nestedReposService;
+    private final WorkspaceNestedReposService nestedReposService;
 
     public RunCheckpointService(RunCheckpointRepository checkpoints,
                                 RuntimeCheckpointClient runtime,
@@ -133,7 +132,8 @@ public class RunCheckpointService {
                                 SessionRepository sessions,
                                 WorkspaceRootRepository workspaceRoots,
                                 ObjectMapper objectMapper,
-                                SseEmitterManager sseManager) {
+                                SseEmitterManager sseManager,
+                                WorkspaceNestedReposService nestedReposService) {
         this.checkpoints = checkpoints;
         this.runtime = runtime;
         this.chatRuns = chatRuns;
@@ -141,6 +141,7 @@ public class RunCheckpointService {
         this.workspaceRoots = workspaceRoots;
         this.objectMapper = objectMapper;
         this.sseManager = sseManager;
+        this.nestedReposService = nestedReposService;
         this.captureExecutor = Executors.newSingleThreadExecutor(runnable -> {
             Thread thread = new Thread(runnable, "xihe-checkpoint-capture-" + captureSequence.incrementAndGet());
             thread.setDaemon(true);
@@ -401,7 +402,11 @@ public class RunCheckpointService {
         /** 503 CHECKPOINT_UNAVAILABLE {reason} — Runtime slice refs unreachable. */
         UNAVAILABLE,
         /** 409 CHECKPOINT_BUSY — Runtime cleanup overlaps capture or restore. */
-        CLEANUP_BUSY
+        CLEANUP_BUSY,
+        /** 409 NESTED_REPO_DIRTY — undeclared nested repos have uncommitted changes (force overrides). */
+        NESTED_REPO_DIRTY,
+        /** 409 NESTED_REPO_UNCONFIRMED — head-drifted nested repos not fully acknowledged. */
+        NESTED_REPO_UNCONFIRMED
     }
 
     /** Revert projection of the checkpoint view ({state,at,counts,ref,attemptCount}). */
@@ -601,6 +606,12 @@ public class RunCheckpointService {
             }
             case TYPE_CHANGES_UNACKNOWLEDGED -> new RevertOutcome(Gate.TYPE_CHANGES_UNACKNOWLEDGED,
                     "TYPE_CHANGES_UNACKNOWLEDGED", null, Map.of());
+            // PLAN-0641 M3 T4.2: the Runtime names the repo roots in the problem's `nestedRepos`;
+            // the client keeps the parsed problem, so pass the list through for the UI.
+            case NESTED_REPO_DIRTY -> new RevertOutcome(Gate.NESTED_REPO_DIRTY,
+                    "NESTED_REPO_DIRTY", null, problemDetails(result.problem(), "nestedRepos"));
+            case NESTED_REPO_UNCONFIRMED -> new RevertOutcome(Gate.NESTED_REPO_UNCONFIRMED,
+                    "NESTED_REPO_UNCONFIRMED", null, problemDetails(result.problem(), "nestedRepos"));
             case RESTORE_LOCKED -> new RevertOutcome(Gate.RESTORE_LOCKED, "RESTORE_LOCKED", null, Map.of());
             case UNAVAILABLE -> new RevertOutcome(Gate.UNAVAILABLE,
                     valueOrDefault(result.reason(), REASON_UNAVAILABLE), null, Map.of());

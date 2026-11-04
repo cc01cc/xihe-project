@@ -48,6 +48,11 @@ const i18n = createI18n({
                 checkpointEntryNoop: "No action",
                 checkpointEntryTypeConflict: "Type conflict",
                 checkpointTypeConflictAck: "Confirm type changes",
+                checkpointNestedRepoImpactTitle: "Nested impact",
+                checkpointNestedRepoDirty: "Uncommitted changes",
+                checkpointNestedRepoHeadMoved: "HEAD drifted",
+                checkpointNestedRepoForceAck: "Force over their changes",
+                checkpointNestedRepoDriftAck: "Acknowledge HEAD drift",
             },
         },
     },
@@ -126,7 +131,65 @@ describe("RevertPreviewDialog", () => {
         expect((confirm.element as HTMLButtonElement).disabled).toBe(true);
         await wrapper.find('[data-testid="revert-preview-type-conflict-ack"]').setValue(true);
         await confirm.trigger("click");
-        expect(wrapper.emitted("confirm")).toEqual([[["src/type.ts"]]]);
+        expect(wrapper.emitted("confirm")).toEqual([[["src/type.ts"], [], false]]);
+    });
+
+    it("gates a forced restore behind the dirty nested-repo confirmation", async () => {
+        mockedApi.previewWorkspaceCheckpointRevert.mockResolvedValueOnce(
+            preview({
+                nestedRepoAffected: [
+                    { repoPath: "vendor/lib", kind: "git", dirty: true, headMoved: false },
+                ],
+            }),
+        );
+        const wrapper = mountDialog();
+        await settle();
+        const block = wrapper.find('[data-testid="revert-preview-nested-repos"]');
+        expect(block.exists()).toBe(true);
+        expect(block.text()).toContain("vendor/lib");
+        expect(wrapper.find('[data-testid="revert-preview-nested-repo-row"]').text()).toContain(
+            "Uncommitted changes",
+        );
+        const confirm = wrapper.find('[data-testid="revert-preview-confirm"]');
+        expect((confirm.element as HTMLButtonElement).disabled).toBe(true);
+        await wrapper
+            .find('[data-testid="revert-preview-nested-force-ack"]')
+            .setValue(true);
+        await confirm.trigger("click");
+        // dirty (not drifted) repos: force=true and no acknowledgement list
+        expect(wrapper.emitted("confirm")).toEqual([[[], [], true]]);
+    });
+
+    it("requires acknowledging every head-drifted nested repo and sends the full list", async () => {
+        mockedApi.previewWorkspaceCheckpointRevert.mockResolvedValueOnce(
+            preview({
+                nestedRepoAffected: [
+                    { repoPath: "vendor/lib", kind: "git", dirty: false, headMoved: true },
+                    { repoPath: "vendor/lib2", kind: "git", dirty: false, headMoved: true },
+                ],
+            }),
+        );
+        const wrapper = mountDialog();
+        await settle();
+        const confirm = wrapper.find('[data-testid="revert-preview-confirm"]');
+        expect((confirm.element as HTMLButtonElement).disabled).toBe(true);
+        await wrapper
+            .find('[data-testid="revert-preview-nested-drift-ack"]')
+            .setValue(true);
+        await confirm.trigger("click");
+        // ruling (a): the acknowledgement covers every drifted repo, force stays false
+        expect(wrapper.emitted("confirm")).toEqual([
+            [[], ["vendor/lib", "vendor/lib2"], false],
+        ]);
+    });
+
+    it("hides the nested block when the preview reports no affected repositories", async () => {
+        mockedApi.previewWorkspaceCheckpointRevert.mockResolvedValueOnce(preview());
+        const wrapper = mountDialog();
+        await settle();
+        expect(wrapper.find('[data-testid="revert-preview-nested-repos"]').exists()).toBe(false);
+        await wrapper.find('[data-testid="revert-preview-confirm"]').trigger("click");
+        expect(wrapper.emitted("confirm")).toEqual([[[], [], false]]);
     });
 
     it("shows entry state and supports a deterministic retry", async () => {

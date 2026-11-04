@@ -70,7 +70,11 @@ public class RuntimeCheckpointClient {
     public enum Outcome {
         OK, NOT_FOUND, UNAVAILABLE, TRANSPORT,
         NOT_SEALED, TYPE_CHANGES_UNACKNOWLEDGED, RESTORE_LOCKED, CLEANUP_BUSY,
-        INVALID_REQUEST, TOO_LARGE
+        INVALID_REQUEST, TOO_LARGE,
+        /** PLAN-0641 M3 (T4.2): undeclared nested repos with uncommitted changes; force overrides. */
+        NESTED_REPO_DIRTY,
+        /** PLAN-0641 M3 (T4.2): head-drifted nested repos missing from acknowledgeNestedRepos. */
+        NESTED_REPO_UNCONFIRMED
     }
 
     /** One entry of a capture change set. */
@@ -607,6 +611,9 @@ public class RuntimeCheckpointClient {
                 case "CHECKPOINT_NOT_SEALED" -> Outcome.NOT_SEALED;
                 case "CHECKPOINT_TYPE_CHANGES_UNACKNOWLEDGED" -> Outcome.TYPE_CHANGES_UNACKNOWLEDGED;
                 case "CHECKPOINT_RESTORE_LOCKED" -> Outcome.RESTORE_LOCKED;
+                // PLAN-0641 M3 (T4.2): the Runtime names the affected repo roots in `nestedRepos`.
+                case "NESTED_REPO_DIRTY" -> Outcome.NESTED_REPO_DIRTY;
+                case "NESTED_REPO_UNCONFIRMED" -> Outcome.NESTED_REPO_UNCONFIRMED;
                 default -> Outcome.TRANSPORT;
             };
         }
