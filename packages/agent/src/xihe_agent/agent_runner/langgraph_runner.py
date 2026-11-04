@@ -49,19 +49,16 @@ from xihe_agent.llm.api_request import ApiRequestError
 # Truncation must never orphan a tool result (window start lands on a tool
 # message → walk back so the preceding call stays paired).
 #
-# BL-289 / PLAN-0670 M2c — relationship to the inbound caps: this fuse is NOT a
-# second governance layer. `inbound_limits.truncate_for_run` (called by
-# `api/chat.py` *before* the runner) is the governance cap: count + bytes over
-# the whole inbound history, newest-kept, WARN'd and reported on the terminal
-# payload. This constant bounds only the LangGraph message list the runner
-# assembles, so the graph never assembles an unbounded list (and never orphans
-# a tool result). It is intentionally tighter (20) and therefore binds the
-# runner's own history first; the inbound cap still binds what the process
-# materialised and what `native_history(...)` puts in the provider body (both
-# happen before this point). Order: prune → inbound cap → this fuse → token
-# budget. If the fuse ever becomes redundant, retire it here rather than
-# lowering the governance cap.
-HISTORY_TRUNCATION_LIMIT = 20
+# BL-289 / PLAN-0670 M2c — **this is an assembly fuse, NOT the inbound governance cap.**
+# `inbound_limits.truncate_for_run` (called by `api/chat.py` *before* the runner) is the governance
+# cap: count + bytes over the whole inbound history, newest-kept, WARN'd and reported on the terminal
+# payload. `ASSEMBLY_FUSE_LIMIT` bounds only the LangGraph message list the runner assembles, so the
+# graph never assembles an unbounded list (and never orphans a tool result). It is intentionally
+# tighter (20) and therefore binds the runner's own history first; the inbound cap still binds what
+# the process materialised and what `native_history(...)` puts in the provider body (both happen
+# before this point). Order: prune → inbound cap → this fuse → token budget. If the fuse ever
+# becomes redundant, retire it here rather than lowering the governance cap.
+ASSEMBLY_FUSE_LIMIT = 20
 
 # PLAN-294 #17 / PLAN-0341 T1.2: cheapest-first prune of historical tool
 # results. Rules (decision #30/#47/#60):
@@ -329,15 +326,15 @@ class LangGraphRunner(AgentRunner):
         # turns come from the snapshot so multi-turn context reaches the LLM.
         history: Sequence[Message] = [] if config.template_context else list(context.messages)
         # PLAN-0341 T1.2: assembly fuse only — never orphan a tool result.
-        # Rule: max(inbound cap, fuse) is visible; the fuse is the binding one for
-        # the runner's own history (see the constant's comment for the layering).
-        if len(history) > HISTORY_TRUNCATION_LIMIT:
-            fuse_start = _align_truncation_start(history, HISTORY_TRUNCATION_LIMIT)
+        # Rule: the inbound cap (api/chat.py) is the governance layer; this fuse is
+        # the binding limit for the runner's own history (see the constant's comment).
+        if len(history) > ASSEMBLY_FUSE_LIMIT:
+            fuse_start = _align_truncation_start(history, ASSEMBLY_FUSE_LIMIT)
             logger.debug(
                 "event=agent_history_fuse_applied kept={} dropped={} limit={}",
                 len(history) - fuse_start,
                 fuse_start,
-                HISTORY_TRUNCATION_LIMIT,
+                ASSEMBLY_FUSE_LIMIT,
             )
             history = history[fuse_start:]
         # PLAN-0341 T1.2: prune is the real shrinkage; emit tombstones as
