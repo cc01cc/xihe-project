@@ -152,9 +152,7 @@ describe("RevertPreviewDialog", () => {
         );
         const confirm = wrapper.find('[data-testid="revert-preview-confirm"]');
         expect((confirm.element as HTMLButtonElement).disabled).toBe(true);
-        await wrapper
-            .find('[data-testid="revert-preview-nested-force-ack"]')
-            .setValue(true);
+        await wrapper.find('[data-testid="revert-preview-nested-force-ack"]').setValue(true);
         await confirm.trigger("click");
         // dirty (not drifted) repos: force=true and no acknowledgement list
         expect(wrapper.emitted("confirm")).toEqual([[[], [], true]]);
@@ -173,14 +171,10 @@ describe("RevertPreviewDialog", () => {
         await settle();
         const confirm = wrapper.find('[data-testid="revert-preview-confirm"]');
         expect((confirm.element as HTMLButtonElement).disabled).toBe(true);
-        await wrapper
-            .find('[data-testid="revert-preview-nested-drift-ack"]')
-            .setValue(true);
+        await wrapper.find('[data-testid="revert-preview-nested-drift-ack"]').setValue(true);
         await confirm.trigger("click");
         // ruling (a): the acknowledgement covers every drifted repo, force stays false
-        expect(wrapper.emitted("confirm")).toEqual([
-            [[], ["vendor/lib", "vendor/lib2"], false],
-        ]);
+        expect(wrapper.emitted("confirm")).toEqual([[[], ["vendor/lib", "vendor/lib2"], false]]);
     });
 
     it("hides the nested block when the preview reports no affected repositories", async () => {

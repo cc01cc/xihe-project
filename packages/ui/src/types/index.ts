@@ -938,7 +938,6 @@ export interface CheckpointNestedRepoAffected {
     headMoved: boolean;
 }
 
-
 export interface CheckpointPreview {
     sliceRef: string;
     counts: CheckpointPreviewCounts;

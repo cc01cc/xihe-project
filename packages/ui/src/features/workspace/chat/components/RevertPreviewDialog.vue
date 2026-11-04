@@ -26,11 +26,7 @@ const props = withDefaults(
 );
 
 const emit = defineEmits<{
-    confirm: [
-        acknowledgeTypeChanges: string[],
-        acknowledgeNestedRepos: string[],
-        force: boolean,
-    ];
+    confirm: [acknowledgeTypeChanges: string[], acknowledgeNestedRepos: string[], force: boolean];
     close: [];
 }>();
 

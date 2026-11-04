@@ -2435,19 +2435,18 @@ export interface VersionInfo {
 }
 
 function revertExecuteBody(
-        sliceRef: string,
-        acknowledgeTypeChanges: string[],
-        acknowledgeNestedRepos: string[],
-        force: boolean,
-    ): Record<string, unknown> {
-        const body: Record<string, unknown> = { sliceRef, acknowledgeTypeChanges };
-        if (acknowledgeNestedRepos.length > 0) {
-            body.acknowledgeNestedRepos = acknowledgeNestedRepos;
-        }
-        if (force) body.force = true;
-        return body;
+    sliceRef: string,
+    acknowledgeTypeChanges: string[],
+    acknowledgeNestedRepos: string[],
+    force: boolean,
+): Record<string, unknown> {
+    const body: Record<string, unknown> = { sliceRef, acknowledgeTypeChanges };
+    if (acknowledgeNestedRepos.length > 0) {
+        body.acknowledgeNestedRepos = acknowledgeNestedRepos;
     }
-
+    if (force) body.force = true;
+    return body;
+}
 
 export const api = {
     // PLAN-0565 ruling #7: identifier is email (contains '@') or username.
@@ -3941,8 +3940,14 @@ export const api = {
                 {
                     method: "POST",
                     headers: workspaceHeaders(workspaceId),
-                    body: JSON.stringify(revertExecuteBody(sliceRef, acknowledgeTypeChanges,
-                        acknowledgeNestedRepos, force)),
+                    body: JSON.stringify(
+                        revertExecuteBody(
+                            sliceRef,
+                            acknowledgeTypeChanges,
+                            acknowledgeNestedRepos,
+                            force,
+                        ),
+                    ),
                 },
             ),
             result = normalizeCheckpointResult(payload);
