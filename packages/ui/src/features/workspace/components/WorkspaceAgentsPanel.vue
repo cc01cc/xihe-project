@@ -19,6 +19,7 @@ import {
     type WorkspaceAgentMemory,
     type WorkspaceAgentPermission,
 } from "../../../composables/api";
+import { problemDetailText } from "../../../lib/errorMessages";
 // 用户裁定（2026-11-03）：二态统一用项目 Switch（reka-ui），不混用 checkbox。
 import { Switch } from "../../../components/ui/switch";
 
@@ -450,6 +451,9 @@ async function loadRbac(principalId: string) {
 /** 409 三类码给可读文案；404 不当崩溃；其它沿用 CP problem message。 */
 function rbacErrorMessage(cause: unknown): string {
     if (cause instanceof ApiError) {
+        // BL-288：可行动 detail（具体原子名/条数/上限）优先；无 detail 才回退本地化文案。
+        const detail = problemDetailText(cause, "");
+        if (detail) return detail;
         switch (cause.problem.code) {
             case "AGENT_PRINCIPAL_FORBIDDEN_ATOMS":
                 return t("workspace.agentRoleForbiddenAtoms");
