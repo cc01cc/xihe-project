@@ -7,7 +7,6 @@ import com.cc01cc.p.xihe.cp.service.SessionService;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.mock.web.MockHttpServletResponse;
@@ -16,34 +15,44 @@ import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBo
 import java.io.IOException;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
- * BL-279 (A1): the export precheck must refuse a session whose message count exceeds
- * {@link SessionExportService#MAX_MESSAGES} **before any message row is materialised**, and it must
- * use the same constant as the renderer (single source, no drifting second literal).
+ * BL-295: export is a <b>bounded artifact</b>, never an error face. These tests pin the four
+ * required behaviours at the controller boundary:
+ * <ol>
+ *   <li>a large session (more visible messages than {@link SessionExportService#MAX_MESSAGES})
+ *       answers 200 with {@code messagesTruncated: true} — the removed 413 must not come back;</li>
+ *   <li>a session under the cap answers 200 with {@code messagesTruncated: false};</li>
+ *   <li>a small branch of a large session exports only the branch-visible messages, with no
+ *       truncation disclosure (the exact case the old session-wide count refused);</li>
+ *   <li>the streamed bytes are exactly the renderer's Markdown bytes (the 413 removal changes no
+ *       successful export payload).</li>
+ * </ol>
  *
  * <p>PLAN-0670 M2c/B: the success face is a {@link StreamingResponseBody} (declared return type is
  * required by Spring MVC to dispatch it, so error faces throw {@link CpApiException}). These tests
- * drive the real body into a {@link MockHttpServletResponse} and assert on the produced Markdown
- * bytes, chunked headers, precheck ordering and disconnect propagation.
+ * drive the real body into a {@link MockHttpServletResponse}; the truncation decisions themselves are
+ * covered by the real-DB renderer tests ({@code SessionExportServiceTest},
+ * {@code SessionExportStreamRendererTest}) and the renderer is mocked here only to keep this class a
+ * deterministic HTTP-boundary test.
  */
 @ExtendWith(MockitoExtension.class)
 class SessionExportControllerTest {
@@ -53,8 +62,6 @@ class SessionExportControllerTest {
 
     @Mock
     private SessionService sessionService;
-    @Mock
-    private MessageReadService messageReadService;
     @Mock
     private BranchPathService branchPathService;
     @Mock
@@ -73,8 +80,7 @@ class SessionExportControllerTest {
         when(branchPathService.resolveVisibility(SESSION, BRANCH))
                 .thenReturn(new BranchPathService.BranchVisibility(BRANCH, Map.of()));
         when(branchPathService.resolvePath(SESSION, BRANCH)).thenReturn(BRANCH);
-        return new SessionExportController(sessionService, messageReadService, branchPathService,
-                streamRenderer);
+        return new SessionExportController(sessionService, branchPathService, streamRenderer);
     }
 
     private static Map<String, Object> message(String role, String content) {
@@ -85,108 +91,115 @@ class SessionExportControllerTest {
         return dto;
     }
 
+    private static List<Map<String, Object>> messages(int count) {
+        List<Map<String, Object>> rows = new ArrayList<>(count);
+        for (int index = 0; index < count; index++) {
+            rows.add(message("user", "m-" + index));
+        }
+        return rows;
+    }
+
     private static String bodyText(StreamingResponseBody body) throws IOException {
         MockHttpServletResponse response = new MockHttpServletResponse();
         body.writeTo(response.getOutputStream());
         return response.getContentAsString(StandardCharsets.UTF_8);
     }
 
+    private static long documentSections(String markdown) {
+        return markdown.lines().filter(line -> line.matches("^## \\d+\\. .*")).count();
+    }
+
     @Test
-    void exportsBelowTheLimitAndRendersTheShippedDocument() throws IOException {
+    void largeSessionExportsTheNewestLimitAndDisclosesTruncation() throws IOException {
         String userId = UUID.randomUUID().toString();
         String workspaceId = UUID.randomUUID().toString();
         SessionExportController controller = controllerWith(userId, workspaceId);
-        when(messageReadService.countSessionMessages(SESSION)).thenReturn(2L);
+        // 2001 visible rows -> the renderer keeps 2000 and sets the disclosure (the same branch the
+        // old session-wide count refused as soon as ANY branch made the session exceed the limit).
+        SessionExportService.ExportResult capped = exportService.render(SESSION,
+                messages(SessionExportService.MAX_MESSAGES + 1));
         when(streamRenderer.render(eq(SESSION), eq(workspaceId), eq(BRANCH), any()))
-                .thenReturn(exportService.render(SESSION,
-                        List.of(message("user", "hello"), message("assistant", "world"))));
+                .thenReturn(new SessionExportService.ExportResult(capped.markdown(),
+                        SessionExportService.MAX_MESSAGES, true, false));
         MockHttpServletResponse response = new MockHttpServletResponse();
 
         StreamingResponseBody body = controller.export(SESSION, BRANCH, response);
 
-        assertEquals(200, response.getStatus());
-        assertEquals("text/markdown;charset=UTF-8", response.getContentType());
-        assertNull(response.getHeader("Content-Length"),
-                "streamed export must not announce a Content-Length (chunked transfer)");
-        String disposition = response.getHeader("Content-Disposition");
-        assertNotNull(disposition);
-        assertTrue(disposition.startsWith("attachment;"), disposition);
-        assertTrue(disposition.contains("session-" + SESSION + ".md"), disposition);
+        assertEquals(200, response.getStatus(), "BL-295: over the cap is 200, never 413");
         String markdown = bodyText(body);
-        assertTrue(markdown.startsWith("# Session export\n"), markdown);
-        assertTrue(markdown.contains("- messages: 2"), markdown);
-        assertTrue(markdown.contains("## 1. user"), markdown);
-        assertTrue(markdown.contains("world"), markdown);
-        verify(streamRenderer).render(eq(SESSION), eq(workspaceId), eq(BRANCH), any());
-        verify(messageReadService, never()).listVisibleMessages(anyString(), anyString(), anyString(), any(), anyString());
-    }
-
-    @Test
-    void acceptsExactlyTheLimitAsTheBoundary() {
-        String userId = UUID.randomUUID().toString();
-        String workspaceId = UUID.randomUUID().toString();
-        SessionExportController controller = controllerWith(userId, workspaceId);
-        when(messageReadService.countSessionMessages(SESSION))
-                .thenReturn((long) SessionExportService.MAX_MESSAGES);
-        when(streamRenderer.render(eq(SESSION), eq(workspaceId), eq(BRANCH), any()))
-                .thenReturn(exportService.render(SESSION, List.of(message("user", "boundary"))));
-
-        StreamingResponseBody body = controller.export(SESSION, BRANCH, new MockHttpServletResponse());
-
-        assertNotNull(body);
+        assertTrue(markdown.contains("- messages: 2000"), markdown);
+        assertTrue(markdown.contains("- messagesTruncated: true"), "the cut must be disclosed");
+        assertEquals(SessionExportService.MAX_MESSAGES, documentSections(markdown),
+                "the document contains exactly the 2000 exported messages");
         verify(streamRenderer).render(eq(SESSION), eq(workspaceId), eq(BRANCH), any());
     }
 
     @Test
-    void refusesOverTheLimitBeforeReadingAnyMessage() {
+    void underTheLimitHasNoTruncationDisclosure() throws IOException {
         String userId = UUID.randomUUID().toString();
         String workspaceId = UUID.randomUUID().toString();
         SessionExportController controller = controllerWith(userId, workspaceId);
-        long total = SessionExportService.MAX_MESSAGES + 1L;
-        when(messageReadService.countSessionMessages(SESSION)).thenReturn(total);
+        SessionExportService.ExportResult result = exportService.render(SESSION, messages(3));
+        when(streamRenderer.render(eq(SESSION), eq(workspaceId), eq(BRANCH), any())).thenReturn(result);
+        MockHttpServletResponse response = new MockHttpServletResponse();
 
-        CpApiException refused = assertThrows(CpApiException.class,
-                () -> controller.export(SESSION, BRANCH, new MockHttpServletResponse()));
+        String markdown = bodyText(controller.export(SESSION, BRANCH, response));
 
-        assertEquals(413, refused.getStatus().value());
-        assertEquals("EXPORT_TOO_LARGE", refused.getCode());
-        assertTrue(refused.getMessage().contains(String.valueOf(total)), refused.getMessage());
-        assertEquals(total, refused.getExtra().get("messages"));
-        assertEquals(SessionExportService.MAX_MESSAGES, refused.getExtra().get("limit"));
-        verify(messageReadService).countSessionMessages(SESSION);
-        verify(streamRenderer, never()).render(anyString(), anyString(), anyString(), any());
+        assertEquals(200, response.getStatus());
+        assertTrue(markdown.contains("- messages: 3"), markdown);
+        assertTrue(markdown.contains("- messagesTruncated: false"), "under the cap nothing was cut");
+        assertFalse(markdown.contains("- messagesTruncated: true"), markdown);
     }
 
     @Test
-    void precheckRunsAfterAuthorizationAndBeforeTheRead() {
+    void smallBranchOfLargeSessionExportsOnlyTheVisibleMessages() throws IOException {
         String userId = UUID.randomUUID().toString();
         String workspaceId = UUID.randomUUID().toString();
         SessionExportController controller = controllerWith(userId, workspaceId);
-        when(messageReadService.countSessionMessages(SESSION)).thenReturn(1L);
+        // The 20k session rows are invisible on this branch; the renderer returns the 50 visible rows.
+        SessionExportService.ExportResult branchVisible = exportService.render(SESSION, messages(50));
         when(streamRenderer.render(eq(SESSION), eq(workspaceId), eq(BRANCH), any()))
-                .thenReturn(exportService.render(SESSION, List.of(message("user", "ordered"))));
+                .thenReturn(branchVisible);
+        MockHttpServletResponse response = new MockHttpServletResponse();
 
-        controller.export(SESSION, BRANCH, new MockHttpServletResponse());
+        String markdown = bodyText(controller.export(SESSION, BRANCH, response));
 
-        InOrder order = inOrder(sessionService, messageReadService, streamRenderer);
-        order.verify(sessionService).requireCurrent(SESSION, userId, workspaceId);
-        order.verify(messageReadService).countSessionMessages(SESSION);
-        order.verify(streamRenderer).render(eq(SESSION), eq(workspaceId), eq(BRANCH), any());
+        assertEquals(200, response.getStatus(), "BL-295: the old count precheck refused this case");
+        assertTrue(markdown.contains("- messages: 50"), markdown);
+        assertEquals(50, documentSections(markdown));
+        assertTrue(markdown.contains("- messagesTruncated: false"),
+                "a branch with 50 visible messages is not a truncated export");
+    }
+
+    @Test
+    void successfulBytesAreExactlyTheRendererMarkdown() throws IOException {
+        String userId = UUID.randomUUID().toString();
+        String workspaceId = UUID.randomUUID().toString();
+        SessionExportController controller = controllerWith(userId, workspaceId);
+        SessionExportService.ExportResult result = exportService.render(SESSION,
+                List.of(message("user", "hello"), message("assistant", "world")));
+        when(streamRenderer.render(eq(SESSION), eq(workspaceId), eq(BRANCH), any())).thenReturn(result);
+        MockHttpServletResponse response = new MockHttpServletResponse();
+
+        StreamingResponseBody body = controller.export(SESSION, BRANCH, response);
+        body.writeTo(response.getOutputStream());
+
+        assertArrayEquals(result.markdown().getBytes(StandardCharsets.UTF_8),
+                response.getContentAsByteArray(),
+                "removing the 413 path must not alter a successful export byte");
     }
 
     @Test
     void refusesWithoutWorkspaceContext() {
         SessionExportController controller = new SessionExportController(sessionService,
-                messageReadService, branchPathService, streamRenderer);
+                branchPathService, streamRenderer);
 
         CpApiException refused = assertThrows(CpApiException.class,
                 () -> controller.export(SESSION, BRANCH, new MockHttpServletResponse()));
 
         assertEquals(409, refused.getStatus().value());
         assertEquals("WORKSPACE_CONTEXT_REQUIRED", refused.getCode());
-        verify(messageReadService, never()).countSessionMessages(anyString());
         verify(streamRenderer, never()).render(anyString(), anyString(), anyString(), any());
-        assertFalse(refused.getExtra().containsKey("messages"));
     }
 
     @Test
@@ -195,10 +208,9 @@ class SessionExportControllerTest {
         String workspaceId = UUID.randomUUID().toString();
         SessionExportController controller = controllerWith(userId, workspaceId);
         String huge = "x".repeat(SessionExportService.MAX_MESSAGE_CHARS);
-        when(messageReadService.countSessionMessages(SESSION)).thenReturn(1L);
-        when(streamRenderer.render(eq(SESSION), eq(workspaceId), eq(BRANCH), any()))
-                .thenReturn(exportService.render(SESSION,
-                        List.of(message("user", huge), message("assistant", huge))));
+        SessionExportService.ExportResult result = exportService.render(SESSION,
+                List.of(message("user", huge), message("assistant", huge)));
+        when(streamRenderer.render(eq(SESSION), eq(workspaceId), eq(BRANCH), any())).thenReturn(result);
         MockHttpServletResponse response = new MockHttpServletResponse();
         StreamingResponseBody body = controller.export(SESSION, BRANCH, response);
 
