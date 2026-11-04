@@ -106,9 +106,14 @@ public class McpProxyController {
      * normal fail-closed tool-error path instead of registering a waiter.
      */
     private static final int APPROVAL_REJECTED_JSONRPC_CODE = -32004;
-    /** PLAN-0557: frozen diagnostic vocabulary for dependency failures. */
+    /** PLAN-0557: frozen diagnostic vocabulary for dependency failures.
+     *  PLAN-0654 T2.2: extended with the remote-MCP split reasons. This set is the single
+     *  definition of the vocabulary; unknown values from a newer Runtime pass through
+     *  unchanged (see {@link #reasonFromRuntimeCode}). */
     private static final Set<String> DEPENDENCY_REASONS =
-            Set.of("unreachable", "timeout", "auth_failed", "upstream_error");
+            Set.of("unreachable", "timeout", "auth_failed", "upstream_error",
+                    "protocol_not_acceptable", "not_found", "dns_failed", "connect_refused",
+                    "tls_failed", "invalid_response", "transport_failed");
     /** Safe wire code of an immediate answerer rejection (Agent audit/log correlation). */
     private static final String APPROVAL_REJECTED_CODE = "APPROVAL_REJECTED";
     /**
@@ -328,10 +333,16 @@ public class McpProxyController {
 
             // PLAN-0583 T1.1: stdio/remote 合并抽成 refreshToolMapping，与 tools/call 的
             // 未命中兜底共用**同一**合并例程（I1/I4：别名粘滞与 generation 只有一套实现）。
-            refreshToolMapping(wsId, body, headers, sessionId, access, mapping, allTools);
+            MappingRefresh refresh =
+                    refreshToolMapping(wsId, body, headers, sessionId, access, mapping, allTools);
 
             Map<String, Object> result = new LinkedHashMap<>();
             result.put("tools", allTools);
+            // PLAN-0654 T2.1 (BL-新2): partial remote failures ride along as diagnostics so a
+            // silently-shrunk tool face becomes observable. Additive; `tools` is unchanged.
+            if (!refresh.remoteDiagnostics().isEmpty()) {
+                result.put("diagnostics", refresh.remoteDiagnostics());
+            }
             // 2026-07-28（modern）结果必填字段：客户端按协商版本做严格校验。
             result.put("resultType", "complete");
             result.put("cacheScope", "private");
@@ -419,12 +430,28 @@ public class McpProxyController {
         }
         remotes.sort(Comparator.comparing(McpProxyCatalogService.RemoteServerView::id));
         int remoteFailed = 0;
+        List<Map<String, Object>> remoteDiagnostics = new ArrayList<>();
         for (McpProxyCatalogService.RemoteServerView server : remotes) {
             RemoteToolFetch fetch = fetchRemoteTools(wsId, server, sessionId, access);
             if (fetch.failure() != null) {
                 remoteFailed++;
                 if (failure == null) {
                     failure = fetch.failure();
+                }
+                if (fetch.remoteFailure() != null) {
+                    // PLAN-0654 T2.1: surface the per-server failure on the wire so agents
+                    // (and the UI) can see *which* server was skipped and *why*, instead of
+                    // silently merging a smaller tool face. Additive result field only.
+                    RemoteServerFailure detail = fetch.remoteFailure();
+                    Map<String, Object> diagnostic = new LinkedHashMap<>();
+                    diagnostic.put("kind", "remote");
+                    diagnostic.put("serverId", server.id());
+                    diagnostic.put("serverName", server.name());
+                    diagnostic.put("reason", detail.reason());
+                    diagnostic.put("upstreamStatus", detail.upstreamStatus());
+                    diagnostic.put("retryable", detail.retryable());
+                    diagnostic.put("generation", generation);
+                    remoteDiagnostics.add(diagnostic);
                 }
             }
             for (Map<String, Object> tool : fetch.tools()) {
@@ -477,7 +504,8 @@ public class McpProxyController {
         }
 
         toolTimeoutService.putMapping(wsId, mapping);
-        return new MappingRefresh(generation, stdioMerged, stdioFailed, remoteFailed, failure);
+        return new MappingRefresh(generation, stdioMerged, stdioFailed, remoteFailed, failure,
+                remoteDiagnostics);
     }
 
     /**
@@ -610,12 +638,12 @@ public class McpProxyController {
 
     private static DependencyFailure classifyUpstreamStatus(String dependency, int status) {
         if (status == 401 || status == 403) {
-            return dependencyFailure(dependency, "auth_failed", false);
+            return dependencyFailure(dependency, "auth_failed", false, status);
         }
         if (status == 408 || status == 504) {
-            return dependencyFailure(dependency, "timeout", true);
+            return dependencyFailure(dependency, "timeout", true, status);
         }
-        return dependencyFailure(dependency, "upstream_error", status >= 500);
+        return dependencyFailure(dependency, "upstream_error", status >= 500, status);
     }
 
     /** PLAN-0557: transport failures are unreachable/timeout; never a caller error. */
@@ -625,6 +653,11 @@ public class McpProxyController {
     }
 
     private static DependencyFailure dependencyFailure(String dependency, String reason, boolean retryable) {
+        return dependencyFailure(dependency, reason, retryable, null);
+    }
+
+    private static DependencyFailure dependencyFailure(
+            String dependency, String reason, boolean retryable, Integer upstreamStatus) {
         boolean runtime = "runtime".equals(dependency);
         return new DependencyFailure(
                 HttpStatus.SERVICE_UNAVAILABLE,
@@ -632,7 +665,57 @@ public class McpProxyController {
                 dependency,
                 reason,
                 retryable,
-                dependencyDetail(dependency, reason));
+                dependencyDetail(dependency, reason),
+                upstreamStatus);
+    }
+
+    /**
+     * PLAN-0654 T2.2: map a Runtime remote-MCP problem code to the reason vocabulary.
+     * Runtime codes are the uppercase form of these reasons with the {@code REMOTE_MCP_}
+     * prefix; the prefix is stripped and the suffix lowercased. Unknown suffixes pass
+     * through unchanged (normalized) so a newer Runtime never loses information here.
+     */
+    static String reasonFromRuntimeCode(String code) {
+        if (code == null || code.isBlank()) {
+            return null;
+        }
+        String normalized = code.trim();
+        if (normalized.regionMatches(true, 0, "REMOTE_MCP_", 0, "REMOTE_MCP_".length())) {
+            normalized = normalized.substring("REMOTE_MCP_".length());
+        }
+        return normalized.toLowerCase(java.util.Locale.ROOT);
+    }
+
+    private String runtimeProblemCode(String body) {
+        try {
+            JsonNode node = objectMapper.readTree(body);
+            String code = node.path("code").asText(null);
+            return code == null || code.isBlank() ? null : code;
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private Integer runtimeProblemUpstreamStatus(String body, int fallbackStatus) {
+        try {
+            JsonNode node = objectMapper.readTree(body);
+            if (node.has("upstreamStatus") && node.get("upstreamStatus").isNumber()) {
+                return node.get("upstreamStatus").asInt();
+            }
+        } catch (Exception e) {
+            // unparseable body: keep the status-based fallback
+        }
+        return fallbackStatus;
+    }
+
+    /** PLAN-0654: retryability by reason class, mirroring the existing status buckets. */
+    private static boolean retryableForReason(String reason, Integer upstreamStatus) {
+        return switch (reason) {
+            case "timeout", "unreachable", "dns_failed", "connect_refused", "tls_failed",
+                    "transport_failed" -> true;
+            case "upstream_error" -> upstreamStatus == null || upstreamStatus >= 500;
+            default -> false;
+        };
     }
 
     private static String dependencyDetail(String dependency, String reason) {
@@ -2389,24 +2472,41 @@ public class McpProxyController {
             int status = resp == null ? 0 : resp.getStatusCode().value();
             logger.warn("Remote tools/list failed: wsId={} server={} status={}",
                     wsId, server.id(), resp == null ? "null" : resp.getStatusCode());
-            return new RemoteToolFetch(Collections.emptyList(),
-                    resp == null ? dependencyFailure("runtime", "unreachable", true)
-                            : classifyUpstreamStatus("runtime", status));
+            if (resp == null) {
+                DependencyFailure failure = dependencyFailure("runtime", "unreachable", true);
+                return new RemoteToolFetch(Collections.emptyList(), failure,
+                        new RemoteServerFailure(failure.reason(), null, failure.retryable()));
+            }
+            // PLAN-0654 T2.1/T2.2: prefer the Runtime problem body's code (single vocabulary,
+            // unknown codes pass through); fall back to status bucketing when unparsable.
+            String reason = reasonFromRuntimeCode(runtimeProblemCode(resp.getBody()));
+            if (reason != null) {
+                Integer upstreamStatus = runtimeProblemUpstreamStatus(resp.getBody(), status);
+                boolean retryable = retryableForReason(reason, upstreamStatus);
+                DependencyFailure failure = dependencyFailure("runtime", reason, retryable, upstreamStatus);
+                return new RemoteToolFetch(Collections.emptyList(), failure,
+                        new RemoteServerFailure(reason, upstreamStatus, retryable));
+            }
+            DependencyFailure classified = classifyUpstreamStatus("runtime", status);
+            return new RemoteToolFetch(Collections.emptyList(), classified,
+                    new RemoteServerFailure(classified.reason(), status, classified.retryable()));
         }
         try {
             JsonNode root = objectMapper.readTree(resp.getBody());
             JsonNode tools = root.has("tools") ? root.get("tools") : root.path("result").path("tools");
             if (tools != null && tools.isArray()) {
-                return new RemoteToolFetch(objectMapper.convertValue(tools, List.class), null);
+                return new RemoteToolFetch(objectMapper.convertValue(tools, List.class), null, null);
             }
         } catch (Exception e) {
             logger.warn("Remote tools/list parse failed: wsId={} server={}: {}",
                     wsId, server.id(), e.getMessage());
-            return new RemoteToolFetch(Collections.emptyList(),
-                    dependencyFailure("runtime", "upstream_error", true));
+            DependencyFailure failure = dependencyFailure("runtime", "upstream_error", true);
+            return new RemoteToolFetch(Collections.emptyList(), failure,
+                    new RemoteServerFailure(failure.reason(), null, failure.retryable()));
         }
-        return new RemoteToolFetch(Collections.emptyList(),
-                dependencyFailure("runtime", "upstream_error", true));
+        DependencyFailure failure = dependencyFailure("runtime", "upstream_error", true);
+        return new RemoteToolFetch(Collections.emptyList(), failure,
+                new RemoteServerFailure(failure.reason(), null, failure.retryable()));
     }
 
     private String normalizeRuntimeBody(String body, String protocolVersion) {
@@ -2716,10 +2816,12 @@ public class McpProxyController {
         }
     }
 
-    /** PLAN-0557: dependency outage facts carried into a Problem Details response. */
+    /** PLAN-0557: dependency outage facts carried into a Problem Details response.
+     *  PLAN-0654: {@code upstreamStatus} carries the upstream HTTP status when known
+     *  (null for transport classes); the upstream response body is never copied. */
     private record DependencyFailure(
             HttpStatus status, String code, String dependency, String reason,
-            boolean retryable, String detail) {
+            boolean retryable, String detail, Integer upstreamStatus) {
     }
 
     /** PLAN-0557: either a usable catalog or the reason it could not be loaded. */
@@ -2729,14 +2831,20 @@ public class McpProxyController {
     /**
      * PLAN-0583 T1.1：一次目录重建的摘要。{@code failure} 只用于 `tools/call` 兜底分流
      * （重建期间依赖不可用 → 503 族），`tools/list` 仍按既有语义部分失败照常合并。
+     * PLAN-0654 T2.1: {@code remoteDiagnostics} 把每个失败 remote server 的事实带出 wire。
      */
     private record MappingRefresh(
             long generation, int stdioMerged, int stdioFailed, int remoteFailed,
-            DependencyFailure failure) {
+            DependencyFailure failure, List<Map<String, Object>> remoteDiagnostics) {
+    }
+
+    /** PLAN-0654 T2.1: per-remote-server failure fact, assembled into a diagnostic entry. */
+    private record RemoteServerFailure(String reason, Integer upstreamStatus, boolean retryable) {
     }
 
     /** PLAN-0583：remote 目录读取结果（工具面 + 依赖失败事实）。 */
-    private record RemoteToolFetch(List<Map<String, Object>> tools, DependencyFailure failure) {
+    private record RemoteToolFetch(List<Map<String, Object>> tools, DependencyFailure failure,
+                                   RemoteServerFailure remoteFailure) {
     }
 
     /** PLAN-0583：未命中重建结果（命中到的 serverId + 是否真的重建过 + 依赖失败事实）。 */

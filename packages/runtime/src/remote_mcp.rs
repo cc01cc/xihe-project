@@ -27,12 +27,49 @@ pub enum RemoteMcpError {
     HttpStatus(StatusCode),
     #[error("remote MCP returned invalid JSON")]
     InvalidJson(#[source] reqwest::Error),
+    #[error("remote MCP returned an unparseable response")]
+    InvalidResponse,
     #[error("remote MCP request failed")]
     Request(#[source] reqwest::Error),
+    #[error("remote MCP DNS lookup failed")]
+    DnsFailed,
+    #[error("remote MCP connection refused")]
+    ConnectRefused,
+    #[error("remote MCP TLS handshake failed")]
+    TlsFailed,
+    #[error("remote MCP transport failed")]
+    TransportFailed,
     #[error("remote MCP returned a JSON-RPC error: {0}")]
     JsonRpc(String),
     #[error("remote MCP request state is invalid or expired")]
     RequestStateInvalid,
+}
+
+/// PLAN-0654 T1.2: classify a `reqwest` send failure into the closed transport vocabulary.
+///
+/// `reqwest` does not expose a first-class DNS variant, so the split is a conservative
+/// keyword pass over the error chain (`{:#}` renders the full source chain). Any miss
+/// degrades to `TransportFailed`, which is never worse than the previous behaviour of a
+/// single indistinguishable 502. The classification only refines `code`; the outward
+/// HTTP status stays 502 for every transport class.
+pub(crate) fn classify_send_error(error: reqwest::Error) -> RemoteMcpError {
+    if error.is_timeout() {
+        return RemoteMcpError::Timeout;
+    }
+    let message = format!("{error:#}").to_lowercase();
+    if message.contains("dns") || message.contains("resolve") {
+        return RemoteMcpError::DnsFailed;
+    }
+    if message.contains("certificate") || message.contains("tls") || message.contains("handshake") {
+        return RemoteMcpError::TlsFailed;
+    }
+    if error.is_connect() {
+        if message.contains("refused") || message.contains("unreachable") {
+            return RemoteMcpError::ConnectRefused;
+        }
+        return RemoteMcpError::TransportFailed;
+    }
+    RemoteMcpError::Request(error)
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -412,13 +449,7 @@ impl RemoteMcpConnector {
     ) -> Result<reqwest::Response, RemoteMcpError> {
         tokio::select! {
             result = request.send() => {
-                let response = result.map_err(|error| {
-                    if error.is_timeout() {
-                        RemoteMcpError::Timeout
-                    } else {
-                        RemoteMcpError::Request(error)
-                    }
-                })?;
+                let response = result.map_err(classify_send_error)?;
                 if response.status() == StatusCode::UNAUTHORIZED {
                     return Err(RemoteMcpError::AuthorizationRequired);
                 }
@@ -455,8 +486,7 @@ async fn parse_response_body(response: reqwest::Response) -> Result<Value, Remot
             .ok_or_else(|| RemoteMcpError::JsonRpc("empty SSE response".into()))
             .and_then(parse_response);
     }
-    let body = serde_json::from_str(&body)
-        .map_err(|error| RemoteMcpError::JsonRpc(format!("invalid JSON: {error}")))?;
+    let body = serde_json::from_str(&body).map_err(|_error| RemoteMcpError::InvalidResponse)?;
     parse_response(body)
 }
 
@@ -470,10 +500,7 @@ fn parse_sse_events(body: &str) -> Result<Vec<Value>, RemoteMcpError> {
                 .collect::<Vec<_>>();
             (!data.is_empty()).then(|| data.join("\n"))
         })
-        .map(|data| {
-            serde_json::from_str(&data)
-                .map_err(|error| RemoteMcpError::JsonRpc(format!("invalid SSE JSON: {error}")))
-        })
+        .map(|data| serde_json::from_str(&data).map_err(|_error| RemoteMcpError::InvalidResponse))
         .collect()
 }
 
@@ -1090,5 +1117,61 @@ mod tests {
         .unwrap();
         assert_eq!(events.len(), 2);
         assert_eq!(events[1]["result"]["n"], 2);
+    }
+}
+
+#[cfg(test)]
+mod classify_send_error_tests {
+    //! PLAN-0654 T1.2: the transport classifier is `pub(crate)`, so its tests live next
+    //! to it. A real connection to a closed loopback port yields a genuine
+    //! `reqwest::Error` without any network beyond loopback.
+
+    use super::{RemoteMcpError, classify_send_error};
+
+    async fn sample_reqwest_error() -> reqwest::Error {
+        reqwest::Client::new()
+            .get("http://127.0.0.1:1/")
+            .send()
+            .await
+            .expect_err("connecting to a closed port must fail")
+    }
+
+    #[tokio::test]
+    async fn closed_port_classifies_into_the_transport_vocabulary() {
+        let error = sample_reqwest_error().await;
+        let message = format!("{error:#}").to_lowercase();
+        let classified = classify_send_error(error);
+        let is_transport_class = matches!(
+            classified,
+            RemoteMcpError::ConnectRefused
+                | RemoteMcpError::TransportFailed
+                | RemoteMcpError::DnsFailed
+                | RemoteMcpError::TlsFailed
+        );
+        assert!(
+            is_transport_class,
+            "closed-port error must classify into the transport vocabulary, got {message}"
+        );
+    }
+
+    #[tokio::test]
+    async fn unknown_error_form_stays_in_the_transport_vocabulary() {
+        // A builder error (illegal header) is neither connect nor timeout; per the
+        // conservative-classification ruling it must land in the transport bucket
+        // (wire code REMOTE_MCP_TRANSPORT_FAILED), never in a caller-error class.
+        let error = reqwest::Client::new()
+            .get("http://127.0.0.1:1/")
+            .header("x-bad", "`n")
+            .send()
+            .await
+            .expect_err("invalid header value must fail before any I/O");
+        let classified = classify_send_error(error);
+        assert!(
+            matches!(
+                classified,
+                RemoteMcpError::Request(_) | RemoteMcpError::TransportFailed
+            ),
+            "unknown error form must stay in the transport vocabulary, got {classified:?}"
+        );
     }
 }
