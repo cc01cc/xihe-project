@@ -102,6 +102,16 @@ flowchart LR
   - **wire 前提（T0.2 条款，见 OpenAPI `GET /api/v1/events`）**：run 级事件必带 `runId`，CP 在 relay/dispatch 出口补戳（producer 显式值优先）。新增 run 级事件时必须带 `runId`，否则客户端无法分流。
 - **useStreamParser**（`features/workspace/chat/composables/useStreamParser.ts`）：token 实时分类为 `MessagePart[]`（`text`/`reasoning`/`citation`/`artifact`）；`Message.parts` 替代旧 `marked`；代码渲染经 `MarkstreamCodeBlockAdapter` + `parts/TextPart`。
 
+### 4.2 多主体线程渲染（PLAN-0659）
+
+会话是**多主体**的（人类参与者 + 多个 Agent principal），同一条线程会混多个产出者。四个 UI 契约（全部是**呈现层投影**，不改 SSE wire、不改投递后端、不新增设计 token）：
+
+- **run 分组（T1.1）**：`chat/runView.ts` 提供 `runShortCode`（**仅展示**，任何断言/身份一律用全文 `runId`）与 `formatRunDuration`（`createdAt → terminalAt`，在途不显示耗时、不挂定时器）。`MessageList` 按相邻 `runId` 分段：分组态下每个 run 一条 `RunGroupHeader`（run 短码 · 主体名 · 状态 · 耗时），组内消息缩进（`run-group-body` 左边框）；**run 数 ≤1 不分组**（单 run 不增噪音）；**失败/取消默认折叠**为单行 run 头，点击可展开。数据源：`GET /chat/sessions/{id}/runs` 摘要 + message 自带 `runStatus/terminalOutcome` 兜底；`ChatPanel.sessionRuns` 在**会话激活期只有追平循环一个消费者**（每个 tick 写摘要；终态点仅在无追平循环时补拉）——同一事件两个消费者会让调用次数语义漂移（BL-228 教训）。
+- **actor 徽标（T1.2）**：`chat/actorView.ts#actorOf` 只从**服务端归因**派生（`Message.participantId` → 会话参与者花名册行）；无归因 ⇒ 不渲染、不猜 PRIMARY。`hasMultipleActors`（≥2 个不同产出者）决定是否给**过程行**（`ProcessRow` 的思考/工具卡）挂徽标：首字母圆点 + 名字，`data-actor-principal-id`/`data-actor-kind` 是 DOM 断言面。**颜色中立**（不引入 per-principal 色值，D31-10 裁定）：可辨靠首字母 + 名字 + kind。
+- **投递语义（T1.3）**：`chat/deliveryView.ts` 输出消息头三态 `发送→(A) · @被@者(高亮 chip) · 抄送→(B,C)`。TO/CC 来自 composer 发送参数（`asParticipantId` / `cc`），由 `ChatPanel` 写成 `Message.delivery` 的**本地发送态视图**（不落 localStorage、不进 wire）；`@` 从正文 + 花名册重建（长名优先、只认完整 token）。三态去重（@ 不再进抄送名单）；只有 `role=user` 做 @ 重建。**限制（BL-239，P3）**：投递语义没有持久载体 ⇒ 会话重载后 TO/CC 丢失，@ 仍在。
+- **委派 DAG（T1.4）**：`chat/delegationGraph.ts` 把 sessions 投影成父→子图（`kind=SPAWN` + `spawnedFromSessionId`，与 0655 会话树同源）；节点状态来自父会话 derived-state、预算来自根会话 delegation-usage。`DelegationDagPanel` 在右栏 dock（tab `delegation`，工具栏入口），SVG 自绘边（不引图库）；**截断/孤儿/环三种脏数据显式化**（`truncated` 提示、孤儿不硬挂、环按当前会话为根并防递归）。根=当前会话祖先链顶端；DFS 序、`depth` 从 0。
+- **投影前提**：会话列表必须透传 OpenAPI `Session` 契约里 required 的 `kind`/`spawnedFromSessionId`/`spawnedAt`（`api.ts#normalizeSession`，曾丢过这三个字段导致 0655 树/0659 DAG 在真实链路恒空，`d880d705` 修复）。历史消息无 `participantId` 归因（**BL-197**）时：身份行与 actor 徽标都不渲染——不猜。
+
 ### 4.1 Workspace 级事件 SSE（PLAN-0350）
 
 - `useWorkspaceSSE` 按 `workspaceId` 建立独立订阅，Workspace 无 Session 时同样启用；连接 key 使用 `workspace:<id>`，不与 Chat SSE 共用 Session 语义。
