@@ -47,7 +47,7 @@ import java.util.UUID;
 @RequestMapping("/api/v1/agent-principals/{principalId}/roles")
 public class AgentPrincipalRoleBindingController {
 
-    private static final Set<String> BIND_KEYS = Set.of("roleId", "scopeType", "scopeId");
+    private static final Set<String> BIND_KEYS = Set.of("roleId");
 
     private final AgentPrincipalRoleBindingService bindingService;
     private final AgentPrincipalBindingAuthority authority;
@@ -88,17 +88,15 @@ public class AgentPrincipalRoleBindingController {
             AgentPrincipalBindingAuthority.Caller caller = authority.require(principalId, workspaceId);
             if (body == null || !BIND_KEYS.containsAll(body.keySet())) {
                 throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST",
-                        "Body must contain only roleId, scopeType and scopeId");
+                        "Body must contain only roleId");
             }
             UUID roleId = AgentPrincipalBindingAuthority.parseUuid(body.get("roleId"),
                     "roleId must be a UUID");
-            String scopeType = body.get("scopeType") instanceof String value ? value : null;
-            UUID scopeId = body.get("scopeId") == null ? null : AgentPrincipalBindingAuthority
-                    .parseUuid(body.get("scopeId"), "scopeId must be a UUID");
-            requireScopeAuthority(caller, scopeType, scopeId);
+            UUID actor = caller.actorUuid();
             AgentPrincipalRoleBindingService.AgentRoleBindingView binding = bindingService.bind(
-                    caller.principalId(), roleId, scopeType, scopeId, caller.actorUuid(),
-                    caller.auditWorkspaceId(), resolveLocale(locale, acceptLanguage));
+                    caller.principalId(), roleId, actor, caller.workspaceId(), caller.instanceTier(),
+                    workspace -> authority.canManageWorkspace(actor, workspace),
+                    resolveLocale(locale, acceptLanguage));
             return ResponseEntity.status(HttpStatus.CREATED).body(toView(binding));
         } catch (CpApiException e) {
             return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
@@ -123,38 +121,12 @@ public class AgentPrincipalRoleBindingController {
         }
     }
 
-    /** A write at the instance scope needs the instance tier; a workspace scope needs its manager. */
-    private void requireScopeAuthority(AgentPrincipalBindingAuthority.Caller caller,
-                                       String scopeType, UUID scopeId) {
-        if ("instance".equals(scopeType)) {
-            if (scopeId != null) {
-                throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST",
-                        "an instance-scope binding must not carry scopeId");
-            }
-            if (!caller.instanceTier()) {
-                throw new CpApiException(HttpStatus.FORBIDDEN, "FORBIDDEN",
-                        "binding an instance-scope role to an agent principal requires MANAGE_AGENT_PRINCIPALS");
-            }
-            return;
-        }
-        if ("workspace".equals(scopeType)) {
-            if (scopeId == null) {
-                throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST",
-                        "a workspace-scope binding requires scopeId");
-            }
-            boolean allowed = caller.instanceTier()
-                    || authority.canManageWorkspace(caller.actorUuid(), scopeId);
-            if (!allowed) {
-                throw new CpApiException(HttpStatus.FORBIDDEN, "FORBIDDEN",
-                        "MANAGE_WORKSPACE_AGENTS in the target workspace is required");
-            }
-            bindingService.requireWorkspace(scopeId);
-            return;
-        }
-        throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST",
-                "scopeType must be instance or workspace");
-    }
-
+    /**
+     * PLAN-0667 addendum (Lead ruling 2026-11-05, real-stack gap 2): the scope is server-derived —
+     * a {@code workspaceId} authorization context means workspace scope, no context means the
+     * instance scope (which needs {@code MANAGE_AGENT_PRINCIPALS}). Nothing here trusts a
+     * client-supplied scope, so this method deliberately has no scope branch to audit.
+     */
     private static String resolveLocale(String locale, String acceptLanguage) {
         return PermissionAtomLabels.normalize(locale != null ? locale : acceptLanguage);
     }
