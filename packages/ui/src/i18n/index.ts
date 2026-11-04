@@ -741,6 +741,10 @@ const messages = {
         },
         chat: {
             send: "发送",
+            // PLAN-0659 T1.1：run 头的折叠开关 aria-label（run 短码仅展示）。
+            runHeader: {
+                toggle: "展开或折叠 run {run}",
+            },
             // 2026-11-04 DSH 式过程渲染：推理行的统一标签。
             reasoning: "思考",
             // 2026-11-04 生产力密度裁定：composer 是工具条不是聊天框 —— placeholder 用简写；
@@ -3003,6 +3007,9 @@ const messages = {
         },
         chat: {
             send: "Send",
+            runHeader: {
+                toggle: "Expand or collapse run {run}",
+            },
             reasoning: "Reasoning",
             delegation: {
                 button: "Delegate",
