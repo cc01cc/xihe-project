@@ -11,6 +11,7 @@ import {
     FileDiff,
     FolderOpen,
     FolderTree,
+    GitBranch,
     MoreHorizontal,
     PanelLeft,
     Plus,
@@ -35,6 +36,8 @@ const props = defineProps<{
     changesOpen?: boolean;
     monitorOpen?: boolean;
     membersOpen?: boolean;
+    /** PLAN-0659 T1.4：委派 DAG 面板是否处于当前 dock tab。 */
+    delegationOpen?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -46,6 +49,7 @@ const emit = defineEmits<{
     toggleChanges: [];
     toggleMonitor: [];
     toggleMembers: [];
+    toggleDelegation: [];
 }>();
 
 const { t } = useI18n();
@@ -154,6 +158,14 @@ function overflowNav(navigate: () => void) {
                     @click="overflowNav(() => emit('toggleMonitor'))"
                 >
                     {{ t("workspace.panelMonitor") }}
+                </button>
+                <button
+                    type="button"
+                    class="w-full rounded px-2 py-1.5 text-left hover:bg-accent"
+                    data-testid="workspace-toolbar-more-delegation"
+                    @click="overflowNav(() => emit('toggleDelegation'))"
+                >
+                    {{ t("workspace.panelDelegation") }}
                 </button>
                 <button
                     type="button"
@@ -282,6 +294,23 @@ function overflowNav(navigate: () => void) {
                 @click="emit('toggleMembers')"
             >
                 <Users class="size-3.5" />
+            </button>
+            <!-- PLAN-0659 T1.4：委派 DAG 面板入口（与 monitor/members 同构）。 -->
+            <button
+                type="button"
+                data-testid="workspace-toolbar-delegation"
+                class="p-1.5 rounded transition-colors"
+                :class="
+                    delegationOpen
+                        ? 'bg-accent text-foreground'
+                        : 'text-muted-foreground hover:bg-accent'
+                "
+                :title="t('workspace.toggleDelegation')"
+                :aria-label="t('workspace.toggleDelegation')"
+                :aria-pressed="delegationOpen === true"
+                @click="emit('toggleDelegation')"
+            >
+                <GitBranch class="size-3.5" />
             </button>
             <button
                 type="button"

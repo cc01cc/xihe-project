@@ -15,4 +15,5 @@ export const DOCK_TAB_LABEL_KEYS: Record<DockTabId, string> = {
     members: "workspace.panelMembers",
     context: "workspace.panelContext",
     agents: "workspace.panelAgents",
+    delegation: "workspace.panelDelegation",
 };

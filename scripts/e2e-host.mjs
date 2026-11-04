@@ -481,7 +481,7 @@ usage: node scripts/e2e-host.mjs [runner flags] [playwright args...]
 
 runner flags:
   --include-docker-frozen  collect the docker-frozen specs/cases too (default: skipped as "DOCKER_FROZEN")
---llm-mode=<mode>     spec gate mode (mock default; also real / write_file / approval / spawn_agent / history-marker / job / job-cancel / exec_command / overflow / success)
+--llm-mode=<mode>     spec gate mode (mock default; also real / write_file / approval / spawn_agent / history-marker / job / job-cancel / exec_command / overflow / reasoning / success)
   --batch=<name>        expand a batch from scripts/e2e-batches.jsonc; the batch llm-mode applies unless --llm-mode is explicit
   --auth-lane=<lane>    CP auth env lane (PLAN-0566 D6): exempt (default, register dimension off) | ratelimit (lowered thresholds + loopback trusted proxies for auth-lockout / auth-rate-limit)
   --first-run=local     PLAN-0611 gold path: empty DB + XIHE_LOCAL_MODE=true + SERVER_ADDRESS=127.0.0.1, no seeded admin (default: off)
