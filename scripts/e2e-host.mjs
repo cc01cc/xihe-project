@@ -7,6 +7,7 @@ import { rm } from 'node:fs/promises'
 import { createServer as createTcpServer, connect as connectTcp } from 'node:net'
 import { createServer as createHttpServer } from 'node:http'
 import { waitForAgentLlmReady } from './lib/agent-readiness.mjs'
+import { cpTargetDir, externalCpBuildCheck, gitHead } from './lib/cp-build-info.mjs'
 import { llmEnv } from './lib/llm-env.mjs'
 import { decideCpBoot } from './lib/cp-boot-plan.mjs'
 import { stopPidIfOwned, E2E_PORT_MIN, E2E_PORT_MAX } from './lib/kill-guard.mjs'
@@ -2312,6 +2313,22 @@ async function main() {
     // （隔离库名与 host root 都由它派生）。两者都打印，避免操作者误判。
     console.log(`[e2e-host] reuse: 传给 Playwright 的 XIHE_E2E_RUN_ID=${runIdForTests}（本次进程 runId=${e2eRunId} 仅用于日志）`)
   } else if (externalServer) {
+    // PLAN-0662 L5: an external stack is exactly the case where "which commit is CP actually
+    // running" is invisible — and where a stale build manufactures fake product bugs (BL-240:
+    // a 20:01 build was read as `develop` 11 merges later). Assert before any spec runs:
+    // expected = XIHE_E2E_EXPECT_CP_COMMIT when the caller declares one, else this checkout's
+    // HEAD. A **missing** stamp fails too — an unstamped CP must not slip through this gate.
+    const cpBuildCheck = externalCpBuildCheck({
+      targetDir: cpTargetDir({ projectRoot: projectDir, env: process.env }),
+      expectedCommit: process.env.XIHE_E2E_EXPECT_CP_COMMIT,
+      headCommit: gitHead({ cwd: projectDir }).commit,
+    })
+    if (!cpBuildCheck.ok) {
+      console.error(`[e2e-host] CP build check FAILED (${cpBuildCheck.verdict}): ${cpBuildCheck.message}`)
+      process.exitCode = 1
+      return
+    }
+    console.log(`[e2e-host] ${cpBuildCheck.message}`)
     console.log('[e2e-host] XIHE_E2E_EXTERNAL_SERVER=1 set; assuming services are already running externally')
   }
 
