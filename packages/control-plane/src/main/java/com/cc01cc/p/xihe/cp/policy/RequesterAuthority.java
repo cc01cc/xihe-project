@@ -9,6 +9,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
 
 import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 
@@ -65,6 +66,38 @@ public class RequesterAuthority {
             return false;
         }
         return actionAtoms(subjectId, workspaceId).contains(actionClass);
+    }
+
+    /**
+     * PLAN-0651 T1.5 (A1, Lead-approved): the <b>shared kernel entry</b> for a user-driven policy
+     * decision — the same "read the scoped grant rows, then let the evaluator decide" sequence that
+     * {@code AgentPrincipalService#requireUserAction} used to implement locally.
+     *
+     * <p>Why this exists: the two implementations were only <i>accidentally</i> identical (same
+     * {@code findScopedGrants} call, same {@link GrantSources#EVALUATION_SOURCES}) and would drift
+     * apart. Consolidating them removes the duplicate, but the evaluation itself must not change:
+     * {@link GrantIntersectionEvaluator#allows} applies resource matching
+     * ({@code LayeredPolicyResolver.matches}: {@code *} / {@code credential:*} wildcards) and shape
+     * constraints, which a plain {@code holdsActionAtom} set-contains does <b>not</b> — so this
+     * method deliberately keeps {@code allows}.</p>
+     *
+     * <p>{@code scopeWorkspaceId} is passed separately on purpose: the caller's {@link PolicyRequest}
+     * may carry a null workspace (it feeds shape/resource matching only), while the grant read has
+     * always been scoped by an explicit parameter. Deriving the scope from the request instead would
+     * silently change which grant rows participate.</p>
+     *
+     * <p>No {@code @Transactional(REQUIRES_NEW)} here (Lead constraint 1): the caller's transaction
+     * visibility must stay exactly as before.</p>
+     */
+    public boolean allowsForUser(PolicyRequest request, UUID scopeWorkspaceId) {
+        if (request == null || request.userId() == null) {
+            return false;
+        }
+        UUID subjectId = UUID.fromString(request.userId());
+        Set<GrantIntersectionEvaluator.PermissionAtom> grants = evaluator.union(
+                grantRepository.findScopedGrants(GrantPrincipalPathResolver.USER, subjectId,
+                        GrantSources.EVALUATION_SOURCES, scopeWorkspaceId));
+        return evaluator.allows(request, List.of(grants));
     }
 
     /**
