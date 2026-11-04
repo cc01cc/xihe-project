@@ -91,10 +91,13 @@ pub struct CheckpointDiagnostics {
     pub active_restore_locks: usize,
     /// Nested-repository policy token (`opaque` | `reject`).
     pub nested_repo_policy: &'static str,
-    /// `git` (default) or `dual`; `self` is reserved for T2.
+    /// `git` (default), `dual`, or explicit-only `self`.
     pub checkpoint_storage: &'static str,
     /// Number of dual-write store attempts that failed since process start.
     pub store_failures: u64,
+    /// P3 T2.5: best-effort shadow backup failures after a successful self
+    /// capture (store stayed authoritative; never silent).
+    pub shadow_backup_failures: u64,
     /// Configured store root; absent for `git` mode.
     pub store_root: Option<String>,
     /// P2.4: last store fsck summary (non-mutating check).
@@ -286,6 +289,16 @@ impl CheckpointService {
                 }
             }
         }
+        // P3 T2.5 (D53-37): git is the best-effort backup, not a gate. When the
+        // binary is absent the shadow cross-check degrades with a visible WARN
+        // instead of blocking self startup; store validation still runs.
+        let git_available = self.engine.git_binary_available();
+        if !git_available && !roots.is_empty() {
+            tracing::warn!(
+                roots = roots.len(),
+                "self startup: git unavailable; shadow validation degraded (store is primary, backup will be skipped)"
+            );
+        }
         let mut shadows = std::collections::HashMap::new();
         for root in &roots {
             let work_tree = self
@@ -298,6 +311,9 @@ impl CheckpointService {
                     store.root().display(),
                     work_tree.display()
                 ));
+            }
+            if !git_available {
+                continue;
             }
             let shadow = self
                 .engine
@@ -411,12 +427,18 @@ impl CheckpointService {
         validate_run_id(run_id).map_err(|error| CaptureFailure::Validation {
             detail: error.to_string(),
         })?;
-        let capability = self.engine.probe().await;
-        if !capability.available {
-            return Err(CaptureFailure::Unavailable {
-                reason: unavailable_reason(&capability.version).into(),
-                detail: capability.detail,
-            });
+        // P3 T2.5: the self primary path (Flatten default) must not gate on git
+        // capability; git/dual and the legacy self policies keep the probe.
+        let needs_git_gate = self.engine.checkpoint_storage() != CheckpointStorageMode::Self_
+            || self.engine.nested_repo_policy() != NestedRepoPolicy::Flatten;
+        if needs_git_gate {
+            let capability = self.engine.probe().await;
+            if !capability.available {
+                return Err(CaptureFailure::Unavailable {
+                    reason: unavailable_reason(&capability.version).into(),
+                    detail: capability.detail,
+                });
+            }
         }
         let key = capture_key(workspace_id, root_id, run_id);
         let existing = self
@@ -428,6 +450,14 @@ impl CheckpointService {
         if let Some(record) = existing
             && let Some(slice_ref) = record.slice_ref.as_deref()
         {
+            // Self/store mode never reclaims slices behind the cache (cleanup
+            // clears this map), so the cached record is authoritative without
+            // asking git.
+            if self.engine.checkpoint_storage() == CheckpointStorageMode::Self_
+                && self.engine.nested_repo_policy() == NestedRepoPolicy::Flatten
+            {
+                return Ok(record);
+            }
             match self.engine.slice_commit(root_id, slice_ref).await {
                 Ok(Some(_)) => return Ok(record),
                 Ok(None) => {
@@ -485,6 +515,12 @@ impl CheckpointService {
             return Err(GcFailure::Disabled {
                 detail: "checkpoint GC is disabled by XIHE_CHECKPOINT_GC=off".into(),
             });
+        }
+        // P3 T2.5: self mode sweeps the store (blob + stale stat-cache) and never
+        // spawns git. Store slices are never deleted by GC (P2.3 policy), so the
+        // counts keep their slice meaning; blob sweep numbers live in `lastGc`.
+        if self.engine.checkpoint_storage() == CheckpointStorageMode::Self_ {
+            return self.store_gc_sweep(workspace_id);
         }
         let report = self
             .engine
@@ -612,6 +648,7 @@ impl CheckpointService {
             nested_repo_policy: self.engine.nested_repo_policy().as_str(),
             checkpoint_storage: self.engine.checkpoint_storage().as_str(),
             store_failures: self.engine.store_failures(),
+            shadow_backup_failures: self.engine.shadow_backup_failures(),
             store_root: self
                 .engine
                 .store_root()
@@ -623,7 +660,73 @@ impl CheckpointService {
         }
     }
 
+    /// P3 T2.5: explicit self-mode GC = store blob/cache sweep, no git spawn.
+    fn store_gc_sweep(&self, workspace_id: &str) -> Result<GcOutcome, GcFailure> {
+        use crate::checkpoint_store::gc::{GcError, GcOptions, gc as store_gc};
+
+        let Some(store_root) = self.engine.store_root() else {
+            return Err(GcFailure::Unavailable {
+                reason: Cow::Borrowed("STORE_NOT_INITIALIZED"),
+                detail: "self GC has no configured store root".into(),
+            });
+        };
+        let store = Store::open(store_root).map_err(|error| GcFailure::Unavailable {
+            reason: Cow::Borrowed("STORE_IO"),
+            detail: error.to_string(),
+        })?;
+        let sweep = store_gc(
+            &store,
+            &GcOptions {
+                repair: true,
+                ..GcOptions::default()
+            },
+        )
+        .map_err(|error| {
+            let (reason, detail) = match &error {
+                GcError::Busy => (Cow::Borrowed(REASON_STORE_BUSY), error.to_string()),
+                GcError::ReferenceCorrupt(_) => {
+                    (Cow::Borrowed("GC_REFERENCE_CORRUPT"), error.to_string())
+                }
+                GcError::Io(_) => (Cow::Borrowed("GC_IO"), error.to_string()),
+                GcError::Store(_) => (Cow::Borrowed("GC_STORE"), error.to_string()),
+                GcError::InjectedCrash => (Cow::Borrowed("GC_CRASH_INJECTED"), error.to_string()),
+            };
+            GcFailure::Unavailable {
+                reason,
+                detail: detail.to_string(),
+            }
+        })?;
+        let kept = list_slices(&store, workspace_id)
+            .map(|list| list.slices.len())
+            .unwrap_or(0);
+        let diagnostics = LastGcDiagnostics {
+            at_ms: now_ms(),
+            dry_run: sweep.dry_run,
+            candidates: sweep.candidates,
+            candidate_bytes: sweep.candidate_bytes,
+            deleted: sweep.deleted,
+            bytes_freed: sweep.bytes_freed,
+            journal: sweep.journal_path,
+        };
+        *self.last_gc.lock().unwrap_or_else(PoisonError::into_inner) = Some(diagnostics);
+        info!(
+            store_root = %store.root().display(),
+            candidates = sweep.candidates,
+            blobs_deleted = sweep.deleted,
+            kept_slices = kept,
+            "checkpoint self GC store sweep completed (no git spawn)"
+        );
+        Ok(GcOutcome {
+            counts: GcCounts { deleted: 0, kept },
+        })
+    }
+
     async fn best_effort_gc(&self, workspace_id: &str) {
+        // Self mode: the store is authoritative; skip git retention entirely
+        // (explicit GC runs the store sweep above).
+        if self.engine.checkpoint_storage() == CheckpointStorageMode::Self_ {
+            return;
+        }
         match self
             .engine
             .retention_gc(workspace_id, self.max_slices, self.ttl_days)
@@ -883,5 +986,276 @@ mod tests {
         assert_eq!(dual_diagnostics.checkpoint_storage, "dual");
         assert_eq!(dual_diagnostics.store_failures, 0);
         assert!(dual_diagnostics.store_root.is_some());
+    }
+
+    /// P3 T2.5 (D53-37): the self primary path must capture, start up and GC
+    /// with git entirely absent; the skipped backup stays visible.
+    #[tokio::test]
+    async fn self_capture_startup_and_gc_work_without_git() {
+        use crate::checkpoint_store::refs;
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        let host = temp.path().join("host");
+        let work = host.join("ws-1");
+        std::fs::create_dir_all(&work).expect("work");
+        std::fs::write(work.join("a.txt"), "one").expect("file");
+        let store_root = temp.path().join(".xihe-store");
+        let service = CheckpointService::new(&host)
+            .with_git_binary("xihe-git-missing-binary")
+            .with_checkpoint_storage(CheckpointStorageMode::Self_, &store_root)
+            .expect("self store");
+
+        let capture = service
+            .capture("ws-1", "run-nogit-1", "tester", "call-1", false)
+            .await
+            .expect("capture must not need git");
+        let slice_ref = capture.slice_ref.expect("slice ref");
+        assert!(crate::checkpoint::parse_slice_ref(&slice_ref).is_some());
+
+        let store = Store::open(&store_root).expect("store");
+        let record = refs::read_ref(&store, "ws-1", &slice_ref)
+            .expect("ref read")
+            .expect("store mapping");
+        assert_eq!(record.git_tree, "", "backup skipped: no shadow object");
+        assert_eq!(service.engine().shadow_backup_failures(), 1);
+        assert_eq!(service.engine().store_failures(), 0);
+
+        // Startup degrades the shadow check instead of blocking self mode.
+        service
+            .validate_self_startup()
+            .expect("self startup must degrade, not fail");
+
+        // Explicit GC sweeps the store without spawning git.
+        let gc_out = service.gc("ws-1").await.expect("store gc");
+        assert_eq!(gc_out.counts.deleted, 0, "store GC never deletes slices");
+        assert!(gc_out.counts.kept >= 1);
+
+        let diagnostics = service.diagnostics().await;
+        assert_eq!(diagnostics.checkpoint_storage, "self");
+        assert!(!diagnostics.capable, "git probe must report unavailable");
+        assert_eq!(diagnostics.shadow_backup_failures, 1);
+        assert!(diagnostics.last_gc.is_some());
+    }
+
+    /// P3 T2.5: with git present the backup publishes the SAME slice ref the
+    /// store records, so a later git-mode rollback sees a consistent list.
+    #[tokio::test]
+    async fn self_backup_shares_store_slice_ref_and_preflight_validates_it() {
+        use crate::checkpoint_store::preflight::{PreflightOptions, run_preflight};
+        use crate::checkpoint_store::refs;
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        let host = temp.path().join("host");
+        let work = host.join("ws-1");
+        std::fs::create_dir_all(&work).expect("work");
+        std::fs::write(work.join("a.txt"), "one").expect("file");
+        let store_root = temp.path().join(".xihe-store");
+        let service = CheckpointService::new(&host)
+            .with_checkpoint_storage(CheckpointStorageMode::Self_, &store_root)
+            .expect("self store");
+        if !service.engine().git_binary_available() {
+            return;
+        }
+
+        let capture = service
+            .capture("ws-1", "run-backup-1", "tester", "call-1", false)
+            .await
+            .expect("capture");
+        let slice_ref = capture.slice_ref.expect("slice ref");
+        assert!(crate::checkpoint::parse_slice_ref(&slice_ref).is_some());
+
+        let store = Store::open(&store_root).expect("store");
+        let record = refs::read_ref(&store, "ws-1", &slice_ref)
+            .expect("ref read")
+            .expect("store mapping");
+        assert!(!record.git_tree.is_empty(), "backup recorded its tree");
+
+        // The shadow publishes the identical ref name.
+        let commit = service
+            .engine()
+            .slice_commit("ws-1", &slice_ref)
+            .await
+            .expect("slice commit")
+            .expect("shadow must contain the same slice ref");
+
+        // Preflight cross-checks sidecar git_tree against the shadow object.
+        let shadow = service
+            .engine()
+            .shadow_git_dir("ws-1")
+            .expect("shadow path");
+        let report = run_preflight(
+            &store,
+            &PreflightOptions {
+                roots: vec!["ws-1".into()],
+                shadow_git_dirs: [("ws-1".to_string(), shadow)].into_iter().collect(),
+                enforce_read_paths: true,
+                ..PreflightOptions::default()
+            },
+        )
+        .expect("preflight");
+        assert!(report.ok && report.blockers.is_empty(), "{report:?}");
+        assert!(!commit.is_empty());
+        assert_eq!(service.engine().shadow_backup_failures(), 0);
+        assert_eq!(service.engine().store_failures(), 0);
+    }
+
+    /// T3.5 (a, D53-38): the full chain on an isolated fixture with PATH
+    /// stripped to an empty directory, so even a literal `git` spawn fails.
+    /// capture → list → diff → restore (full + single path) → gc → fsck all run
+    /// through the store; every skipped shadow backup is counted.
+    #[tokio::test]
+    #[ignore = "T3.5(a) no-git full-chain smoke; run isolated (--ignored --test-threads=1)"]
+    async fn t3_5_no_git_full_chain_smoke() {
+        use crate::checkpoint_store::manifest::Manifest;
+        use crate::checkpoint_store::refs;
+
+        struct PathGuard(Option<String>);
+        // Test-only: PATH stripping is process-global; the suite runs isolated
+        // (`--ignored --test-threads=1`) and the guard restores PATH on drop.
+        #[allow(unsafe_code)]
+        impl Drop for PathGuard {
+            fn drop(&mut self) {
+                if let Some(previous) = self.0.take() {
+                    unsafe { std::env::set_var("PATH", previous) };
+                }
+            }
+        }
+
+        let empty_bin = tempfile::tempdir().expect("empty bin dir");
+        let previous_path = std::env::var("PATH").ok();
+        let _path_guard = PathGuard(previous_path);
+        #[allow(unsafe_code)]
+        unsafe {
+            std::env::set_var("PATH", empty_bin.path())
+        };
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        let host = temp.path().join("host");
+        let work = host.join("ws-1");
+        std::fs::create_dir_all(&work).expect("work");
+        std::fs::write(work.join("a.txt"), "alpha").expect("a");
+        std::fs::write(work.join("b.txt"), "beta").expect("b");
+        let store_root = temp.path().join(".xihe-store");
+        let service = CheckpointService::new(&host)
+            .with_checkpoint_storage(CheckpointStorageMode::Self_, &store_root)
+            .expect("self store");
+
+        // capture #1
+        let first = service
+            .capture("ws-1", "t35-run-1", "tester", "call-1", false)
+            .await
+            .expect("capture #1 must not need git");
+        let first_ref = first.slice_ref.expect("slice #1");
+
+        // capture #2 after a change
+        std::fs::write(work.join("a.txt"), "alpha-modified").expect("mutate a");
+        let second = service
+            .capture("ws-1", "t35-run-2", "tester", "call-2", false)
+            .await
+            .expect("capture #2 must not need git");
+        let second_ref = second.slice_ref.expect("slice #2");
+
+        // list: store refs + slices, no git for-each-ref.
+        let store = Store::open(&store_root).expect("store");
+        let list = crate::checkpoint_store::reads::list_slices(&store, "ws-1").expect("list");
+        assert_eq!(list.slices.len(), 2, "two store slices");
+        assert!(list.unmapped_slices.is_empty(), "{list:?}");
+        assert!(
+            refs::read_ref(&store, "ws-1", &first_ref)
+                .expect("ref io")
+                .is_some()
+        );
+        assert!(
+            refs::read_ref(&store, "ws-1", &second_ref)
+                .expect("ref io")
+                .is_some()
+        );
+
+        // diff: store manifest diff between the two slices.
+        let ref2 = refs::read_ref(&store, "ws-1", &second_ref)
+            .expect("ref io")
+            .expect("mapping #2");
+        let ref1 = refs::read_ref(&store, "ws-1", &first_ref)
+            .expect("ref io")
+            .expect("mapping #1");
+        let manifest_of = |id: &str| -> Manifest {
+            let bytes = std::fs::read(store.manifest_path(id)).expect("manifest bytes");
+            Manifest::parse_verified(&bytes, id).expect("manifest parse")
+        };
+        let diff = manifest_of(&ref1.store_manifest_id).diff(&manifest_of(&ref2.store_manifest_id));
+        assert_eq!(diff.modified, vec!["a.txt".to_string()], "{diff:?}");
+
+        // restore full: workspace must return to slice #1 contents.
+        let full = service
+            .restore_execute_for_root("ws-1", None, &first_ref, &[])
+            .await
+            .expect("full restore");
+        assert!(full.counts.restored >= 2);
+        assert_eq!(
+            std::fs::read_to_string(work.join("a.txt")).expect("a"),
+            "alpha"
+        );
+
+        // restore single path: only b.txt is scoped back to slice #2 state.
+        std::fs::write(work.join("b.txt"), "beta-modified").expect("mutate b");
+        let scoped = service
+            .restore_execute_for_root_paths("ws-1", None, &second_ref, &[], &["b.txt".to_string()])
+            .await
+            .expect("path restore");
+        assert_eq!(scoped.counts.restored, 1);
+        assert_eq!(
+            std::fs::read_to_string(work.join("b.txt")).expect("b"),
+            "beta"
+        );
+
+        // gc: store sweep, slice counts preserved, no git.
+        let gc_out = service.gc("ws-1").await.expect("gc without git");
+        assert_eq!(gc_out.counts.deleted, 0);
+        assert!(gc_out.counts.kept >= 2);
+
+        // fsck: store health.
+        let fsck = fsck_store(&store, false).expect("fsck");
+        assert!(fsck.is_clean(), "{fsck:?}");
+
+        // startup + visibility of every skipped backup.
+        service
+            .validate_self_startup()
+            .expect("self startup must degrade, not fail");
+        assert_eq!(service.engine().store_failures(), 0);
+        assert_eq!(service.engine().shadow_backup_failures(), 2);
+        let diagnostics = service.diagnostics().await;
+        assert!(!diagnostics.capable);
+        assert_eq!(diagnostics.shadow_backup_failures, 2);
+        assert!(diagnostics.fsck.ok);
+
+        let report = serde_json::json!({
+            "suite": "t3-5-no-git-full-chain",
+            "path_stripped": true,
+            "captures": 2,
+            "list_slices": list.slices.len(),
+            "diff_modified": diff.modified,
+            "full_restore_restored": full.counts.restored,
+            "path_restore_restored": scoped.counts.restored,
+            "gc_kept": gc_out.counts.kept,
+            "fsck_clean": true,
+            "shadow_backup_failures": diagnostics.shadow_backup_failures,
+            "store_failures": diagnostics.store_failures,
+            "expected_warn_text": "checkpoint self capture: shadow backup skipped; store slice remains authoritative",
+        });
+        eprintln!(
+            "T35_REPORT {}",
+            serde_json::to_string_pretty(&report).expect("report")
+        );
+        if let Ok(path) = std::env::var("T35_REPORT_PATH") {
+            let target = std::path::Path::new(&path);
+            if let Some(parent) = target.parent() {
+                std::fs::create_dir_all(parent).expect("report dir");
+            }
+            std::fs::write(
+                target,
+                serde_json::to_vec_pretty(&report).expect("report bytes"),
+            )
+            .expect("write report");
+        }
     }
 }

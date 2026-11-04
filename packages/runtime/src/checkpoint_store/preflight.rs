@@ -365,6 +365,12 @@ fn validate_done(
         fs::read(&manifest_path).map_err(|error| format!("manifest unreadable: {error}"))?;
     Manifest::parse_verified(&manifest_bytes, &record.store_manifest_id)
         .map_err(|error| format!("manifest invalid: {error}"))?;
+    // P3 T2.5: a store-direct self ref has no shadow object (git_tree is empty
+    // when the backup was skipped); its store mapping is validated above and
+    // the git cross-check is intentionally skipped instead of failing.
+    if record.git_tree.is_empty() {
+        return Ok(());
+    }
     if let Some(shadow) = options.shadow_git_dirs.get(&record.root_id) {
         let output = Command::new("git")
             .arg("--git-dir")

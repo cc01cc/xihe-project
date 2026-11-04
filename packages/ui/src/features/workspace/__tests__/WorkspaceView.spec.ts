@@ -421,7 +421,9 @@ describe("WorkspaceView workbench layout (PLAN-0582 S2)", () => {
 
         await wrapper.find('[data-testid="workspace-toolbar-agents"]').trigger("click");
         await flushPromises();
-        await wrapper.find('[data-testid="agent-principal-name"]').setValue("Template-backed");
+        // 2026-11-04 五裁（主体名规范）：名字只允许字母/中文/数字且不能以数字开头 ——
+        // 原 "Template-backed" 带连字符，现在会被实时校验拦下（createBlocked ⇒ submit 不发）。
+        await wrapper.find('[data-testid="agent-principal-name"]').setValue("TemplateBacked");
         await wrapper.find('[data-testid="agent-principal-template"]').setValue("template-1");
         expect(wrapper.find('[data-testid="agent-principal-create-form"]').text()).toContain(
             "role-1",
@@ -435,7 +437,7 @@ describe("WorkspaceView workbench layout (PLAN-0582 S2)", () => {
         // PLAN-0622：创建改用对象入参（携带 scope/模型意图）；本用例只断言模板字段原样透传。
         expect(mockedApi.createAgentPrincipal).toHaveBeenCalledWith(
             expect.objectContaining({
-                name: "Template-backed",
+                name: "TemplateBacked",
                 templateId: "template-1",
             }),
         );

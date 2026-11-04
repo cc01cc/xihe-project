@@ -6,6 +6,7 @@ import {
 import { generateE2EPassword } from "./helpers/password";
 import { ensureChatBinding, getRootBranchId } from "./helpers/journey";
 import { ensureWorkspace } from "./helpers/workspace";
+import { bindSessionViaApi } from "./helpers/session-binding";
 
 const SHARED_PASSWORD = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword();
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`;
@@ -204,20 +205,20 @@ test.describe("PLAN-247 Chat availability @host", () => {
             });
             await openChat(page, request, auth);
 
-            const trigger = page.getByTestId("model-popover-trigger");
-            await expect(trigger).toBeVisible();
-            await trigger.click();
-            await expect(page.getByText("fake-openai", { exact: true })).toBeVisible({
-                timeout: 10000,
-            });
-            await expect(page.getByText("fake-openai-asr", { exact: true })).not.toBeVisible();
-            const modelSearch = page.getByTestId("model-popover-search");
-            await modelSearch.fill("fake-deepseek");
-            await expect(page.getByTestId("model-item-deepseek/fake-deepseek")).toBeVisible();
-            await modelSearch.press("ArrowDown");
-            await modelSearch.press("Enter");
-
+            // 2026-11-04 用户裁定移除 composer 模型选择器：绑定改走产品 PATCH API
+            // （原 ModelPopover 内部调用的同一端点），"选择器 UI 可选模型"的断言随之作废。
             const id = await sessionId(request, auth);
+            await bindSessionViaApi(
+                request,
+                CP_URL,
+                {
+                    Authorization: `Bearer ${auth.accessToken}`,
+                    "X-Workspace-Id": auth.workspaceId,
+                },
+                id,
+                "deepseek",
+                "fake-deepseek",
+            );
             await expect
                 .poll(
                     async () => {
@@ -342,21 +343,19 @@ test.describe("PLAN-247 Chat availability @host", () => {
             await page.reload({ waitUntil: "load" });
             await expect(page.locator("textarea")).toBeVisible({ timeout: 30000 });
 
-            const trigger = page.getByTestId("model-popover-trigger");
-            await expect(trigger).toBeVisible();
-            await trigger.click();
-            await expect(page.getByText("mimo-v2.6-flash", { exact: true }).first()).toBeVisible({
-                timeout: 15000,
-            });
-            const modelSearch = page.getByTestId("model-popover-search");
-            await modelSearch.fill("mimo-v2.6-flash");
-            // The exact item is the first filter match (plain Enter selects it).
-            // ArrowDown would move highlight to a sibling model; .click() never
-            // stabilizes because the open popover list re-renders continuously.
-            await expect(page.getByTestId("model-item-xiaomi/mimo-v2.6-flash")).toBeVisible();
-            await modelSearch.press("Enter");
-
+            // 2026-11-04 用户裁定移除 composer 模型选择器：绑定改走产品 PATCH API。
             const id = await sessionId(request, auth);
+            await bindSessionViaApi(
+                request,
+                CP_URL,
+                {
+                    Authorization: `Bearer ${auth.accessToken}`,
+                    "X-Workspace-Id": auth.workspaceId,
+                },
+                id,
+                "xiaomi",
+                "mimo-v2.6-flash",
+            );
             await expect
                 .poll(
                     async () => {

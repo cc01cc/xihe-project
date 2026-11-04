@@ -134,8 +134,10 @@ sequenceDiagram
 | 其他 `GC_*`/未知 token | 503 | 原样透出，不归一化 |
 
 - **GC 开关**：`XIHE_CHECKPOINT_GC=auto|off`（默认 `auto`）；`off` 时自动/显式 GC 均不删除，显式请求返回 `STORE_GC_DISABLED`（409），不得静默假装成功。store GC 使用 **per-root lease + 全局 GC 锁**分层：capture/restore 持各自 root lease，GC 持 `gc.lock` 后尝试全部 root lease（任一 busy 即 abort），默认 grace **24h**；journal 先写 planned，崩溃后重放，引用扫描错误即中止。
-- **diagnostics 契约**：`checkpoint` 增加 `fsck{ok,findings,repaired,lastRunAt}`、`incompleteRestore{incomplete,restoreId,trashEntries}`、`unmappedSlices`、`lastGc{at,dryRun,candidates,candidateBytes,deleted,bytesFreed,journal}`；保留 `checkpointStorage/storeFailures/active*Locks`。
+- **diagnostics 契约**：`checkpoint` 增加 `fsck{ok,findings,repaired,lastRunAt}`、`incompleteRestore{incomplete,restoreId,trashEntries}`、`unmappedSlices`、`lastGc{at,dryRun,candidates,candidateBytes,deleted,bytesFreed,journal}`、`shadowBackupFailures`（P3 T2.5）；保留 `checkpointStorage/storeFailures/active*Locks`。
 - **回切 runbook**：改 env（self→git）+ 重启 12633；`switch_ms≈1.5s` 包含 stop/start/readiness，**不是热切换**。运行期 store 不可用 → fail-closed，不回退 git；按 `STORE_*`/启动失败原因修复 store 后再启动。V5 已测 **1000 文件 / 3.0s / 0 差异**，该数字不等于 10k 数据。
+- **P3 T2.5/T3.4 store 主路径（D53-37）**：self + 默认 `Flatten` 策略下 capture **先写 store**（changed 集来自 store manifest diff，不再取 git diff；sliceRef 合成 `<epoch>-<sha256(sliceId)[..40]>`，保持 `refs/xihe/slices/<40hex>` 冻结格式），成功后才做 **best-effort shadow 备份**（备份把**同一 sliceRef** 写入 shadow，回切后列表一致）。备份失败 ⇒ WARN + `shadowBackupFailures` 计数 + sidecar `gitTree=""`（preflight 跳过 git 交叉校验），**不回滚 capture**；git 缺失时启动 preflight 同样降级（WARN、不要求 shadow 目录存在）。service capture 不再 probe git 能力；self 显式 GC = **store blob/cache sweep**（slice 永不删：`counts.deleted=0`、blob 数进 `lastGc`），全程无 git spawn。`Opaque`/`Reject` 策略仍走 legacy git 路径；self 的 `cleanup` 端点仍只删 shadow（store slice 保留，见 DEV-018 已知限制）。
+- **P3 T3.x 迁移**：`migrate_shadow_slices_to_store`（`ls-tree -r -l -z` → `cat-file blob` → `capture_from_git_entries` → sidecar `source=migrated`；幂等跳过已映射 ref、失败即停保持链连续、可重跑）+ 逐 slice `git show ref:path` 字节对拍门禁 + 只读盘点脚本；SOP 与证据见 `.local/evidence/plan-0653/p3/`。**真实机器改写待批准**（T3.3 已按只读执行）。
 - `apply_patch` 为 Gateway-public 工具之一，走正常审批；捕获只在 Run 终止 / 异常补拍 / C0，不由派发前置触发；UI 回滚只经 CP public workspace route。
 
 ### 6.2 对象模型（Git 本体）

@@ -50,6 +50,8 @@ mise run setup
 
 前置：Node 22+ / pnpm 10+ / Python 3.12+ + uv / Java 25+ + Maven 3.9 / Rust 1.97.1+ / Docker（Desktop for Windows 需 WSL2 集成）。
 
+> **Checkpoint 存储（PLAN-0653 P3）**：`XIHE_CHECKPOINT_STORAGE=git|dual|self`，**默认 `git`**；`self` 必须显式设置且 `XIHE_ENV=dev|staging` + `XIHE_CHECKPOINT_SELF_ACK=1`（安装版镜像不得预置 self）。`XIHE_CHECKPOINT_STORE_PATH` 指向 workspace 外的独立目录（默认 `<hostRoot>/.xihe-store`）。self 模式下 **store 是主路径、git shadow 是 best-effort 备份**：git 缺失只降级备份（WARN + `shadowBackupFailures`），不阻断 capture/startup；因此 **self 链路不再把 git 列为硬前置**（git 模式/dual 与 `Opaque`/`Reject` 策略仍需 git）。legacy shadow 历史迁移见 `.local/evidence/plan-0653/p3/migration-sop.md`；开关/回切操作手册见 `.local/evidence/plan-0653/p2.4-sop.md`。
+
 > **本仓库可单独 clone 运行（PLAN-0612）**：不依赖上层 ONE 工作区。`mise run check:standalone`（`mise.toml:395`）会导出无父级副本并验证 `stack-run`/`dev check` 不依赖 one 根；端口默认值的**事实源在本仓库** `scripts/lib/stack-ports.mjs`，ONE 侧 `config/ports.mjs` 只是编排镜像（见「模式 D」末两条）。
 
 模块级等价命令：

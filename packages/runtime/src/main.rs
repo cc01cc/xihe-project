@@ -2790,12 +2790,21 @@ async fn checkpoint_gc_handler(
             Some("STORE_GC_DISABLED"),
             &detail,
         ),
-        Err(GcFailure::Unavailable { reason, detail }) => checkpoint_problem_response(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "CHECKPOINT_UNAVAILABLE",
-            Some(reason.as_ref()),
-            &detail,
-        ),
+        Err(GcFailure::Unavailable { reason, detail }) => {
+            // STORE_BUSY keeps the frozen 409 contract (P2.4 token table);
+            // every other GC failure stays 503.
+            let status = if reason.as_ref() == "STORE_BUSY" {
+                StatusCode::CONFLICT
+            } else {
+                StatusCode::SERVICE_UNAVAILABLE
+            };
+            checkpoint_problem_response(
+                status,
+                "CHECKPOINT_UNAVAILABLE",
+                Some(reason.as_ref()),
+                &detail,
+            )
+        }
     }
 }
 

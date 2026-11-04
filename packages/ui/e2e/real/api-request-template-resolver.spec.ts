@@ -188,22 +188,8 @@ test.describe("@host PLAN-0439 owner-scope connection resolver matrix", () => {
             expect(wsObserved).toHaveLength(1);
             expect(userObserved).toHaveLength(0);
 
-            // (4) browser: the model picker mirrors the overlay and hides non-chat slots.
-            await page.getByTestId("model-popover-trigger").click();
-            const chatGroup = page.locator('[data-testid="model-group-custom-openai-compatible"]');
-            await expect(chatGroup).toHaveCount(1);
-            await expect(chatGroup).toHaveAttribute("data-connection-id", wsShared.id);
-            await expect(chatGroup).toContainText("shared");
-            await expect(
-                page.getByTestId("model-item-custom-openai-compatible/shared-model"),
-            ).toBeVisible();
-            await expect(page.locator('[data-testid="model-group-dashscope-qwen"]')).toHaveCount(0);
-            await page.screenshot({
-                scale: "css",
-                path: test.info().outputPath("resolver-model-popover.png"),
-                animations: "disabled",
-            });
-            await page.keyboard.press("Escape");
+            // (4) 2026-11-04 用户裁定移除 composer 模型选择器：原"选择器镜像 overlay、
+            // 隐藏非 chat slot"的 UI 断言随之作废（overlay 合同由 (3) 与下面的 API 断言覆盖）。
 
             // (5) fallback: disabling the workspace connection falls back to the user one.
             expect(

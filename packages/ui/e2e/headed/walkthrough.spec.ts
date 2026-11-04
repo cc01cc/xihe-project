@@ -640,7 +640,7 @@ test.describe.serial("@host headed walkthrough — real user scenarios S1–S8",
         await bindToolCapableConnection(request, token, workspaceId, headedSessionId);
         await page.reload({ waitUntil: "load" });
         await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: 30000 });
-        await expect(page.getByTestId("model-popover-trigger")).toBeVisible({ timeout: 30000 });
+        // 2026-11-04 用户裁定移除 composer 模型选择器：不再断言模型选择器触发器可见。
 
         await page.getByTestId("chat-input").fill("你好，介绍一下这个工作区");
         const chatResponse = page.waitForResponse(

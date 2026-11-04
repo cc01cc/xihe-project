@@ -1517,6 +1517,63 @@ async function bootstrapFirstRunAccount() {
   }
 }
 
+// PLAN-0648 对账修复（Lead 2026-11-04 A 类授权）：task-24 的严格解析要求
+// "instance profile → 消费用户自己的 USER 连接（providerId+connectionKey+READY）"，
+// 而本文件的 fake import 只写 profile 不建连接（见下方「连接靠 spec 自建」注释）
+// ⇒ goldpath admin 用 UI 建会话必 409 LLM_PROFILE_CONFLICT（窗口 3 G2-e :921 实测）。
+// 补齐：为 token 主体建一条 connectionKey='default' 的 USER 连接并 verify 到 READY。
+// 幂等：reuse/external 轮会重复进入——已存在则只补 verify。
+async function ensureDefaultFakeConnection({ cpBaseUrl, accessToken }) {
+  const headers = { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' }
+  const list = await fetch(`${cpBaseUrl}/api/v1/provider-connections`, { headers })
+  if (!list.ok) {
+    throw new Error(`provider-connections list failed: HTTP ${list.status} ${(await list.text()).slice(0, 300)}`)
+  }
+  const listBody = await list.json()
+  const rows = Array.isArray(listBody) ? listBody : (listBody.connections ?? [])
+  let connection = rows.find(
+    (row) => row.providerId === 'openai' && row.connectionKey === 'default',
+  )
+  if (!connection) {
+    const created = await fetch(`${cpBaseUrl}/api/v1/provider-connections`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        providerId: 'openai',
+        apiTypeId: 'openai-chat-completions',
+        apiTypeVersion: 1,
+        apiKey: 'sk-fake-openai-key',
+        connectionKey: 'default',
+        label: 'e2e fake LLM (default)',
+        scope: 'USER',
+        modelDiscovery: 'manual',
+        manualModels: ['fake-openai'],
+        baseUrl: `http://127.0.0.1:${fakeLlmPort}/openai/v1`,
+      }),
+    })
+    if (!created.ok) {
+      throw new Error(
+        `default fake connection create failed: HTTP ${created.status} ${(await created.text()).slice(0, 300)}`,
+      )
+    }
+    connection = await created.json()
+  }
+  if (connection.status !== 'READY') {
+    const verified = await fetch(
+      `${cpBaseUrl}/api/v1/provider-connections/${connection.id}/verify`,
+      { method: 'POST', headers },
+    )
+    if (!verified.ok) {
+      throw new Error(
+        `default fake connection verify failed: HTTP ${verified.status} ${(await verified.text()).slice(0, 300)}`,
+      )
+    }
+  }
+  console.log(
+    `[e2e-host] default fake connection ensured key=default status=${connection.status ?? 'READY'}`,
+  )
+}
+
 async function configureFakeLlm() {
   const cpBaseUrl = `http://127.0.0.1:${cpPort}`
   if (firstRun === 'local') {
@@ -1609,6 +1666,8 @@ async function configureFakeLlm() {
     throw new Error(`fake LLM config import failed: HTTP ${imported.status} ${problem.slice(0, 500)}`)
   }
   console.log(`[e2e-host] fake LLM configuration imported mode=${llmMode}`)
+  // task-24 严格解析的另一半：profile 引用 key='default'，连接必须真实存在且 READY。
+  await ensureDefaultFakeConnection({ cpBaseUrl, accessToken })
 }
 
 async function removeRunSandboxContainers(runId = e2eRunId) {

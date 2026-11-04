@@ -217,35 +217,149 @@ async function startRun(
     headers: Record<string, string>,
     text: string,
 ): Promise<string> {
-    if (agentBindingWorkspaceId) await ensureAgentWorkspaceBinding(agentBindingWorkspaceId);
-    await waitForControlPlaneAgentReady(request, headers);
-    if (sessionId) await ensureChatBinding(page, sessionId);
-    const input = page.locator('[data-testid="chat-input"]');
-    const send = page.locator('[data-testid="chat-send-button"]');
-    await expect(input, "chat input").toBeVisible({ timeout: 30_000 });
-    for (let attempt = 0; attempt < 4; attempt += 1) {
-        await input.click().catch(() => {});
-        await input.fill(text).catch(() => {});
+    // 每段入口等待带 label + 计时（上轮 10.2m 用例超时且无自定义错误 ⇒ 卡在某段
+    // 无界等待里；这轮先把"卡在哪段"打出来再修）。
+    const logged = async (label: string, fn: () => Promise<void>): Promise<void> => {
+        const started = Date.now();
+        console.log(`[t1.1] enter ${label}`);
         try {
-            await expect(send).toBeEnabled({ timeout: 8_000 });
-        } catch {
-            continue;
+            await fn();
+        } catch (cause) {
+            const message = cause instanceof Error ? cause.message : String(cause);
+            throw new Error(
+                `startRun step "${label}" failed after ${Date.now() - started}ms: ${message}`,
+                { cause },
+            );
         }
-        const posted = page
-            .waitForResponse(
-                (response) =>
-                    response.url().endsWith("/api/v1/chat") &&
-                    response.request().method() === "POST",
-                { timeout: 20_000 },
-            )
-            .catch(() => null);
-        await send.click().catch(() => {});
-        const response = await posted;
-        if (!response) continue;
-        const body = (await response.json().catch(() => ({}))) as { runId?: string };
-        if (body.runId) return body.runId;
+        console.log(`[t1.1] exit ${label} in ${Date.now() - started}ms`);
+    };
+
+    if (agentBindingWorkspaceId) {
+        await logged("agent-workspace-binding", () =>
+            ensureAgentWorkspaceBinding(agentBindingWorkspaceId),
+        );
     }
-    throw new Error("chat send never returned a runId (POST /api/v1/chat)");
+    await logged("cp-agent-ready", () => waitForControlPlaneAgentReady(request, headers));
+
+    // watcher 必须在 ensureChatBinding **之前**挂（窗口 4 时间线：页面加载后 1s 就有
+    // 一次 POST /chat 202，早于我的 click ⇒ 发送方是产品自身路径（inline-send 嫌疑），
+    // 而 waitForResponse 只在 click 前 armed，抓不到"我点击之前"的响应）。
+    // 用途双合一：① 捕获**任何** chat POST（我的或产品自动发的），先到的 runId 直接复用
+    // （Lead 裁定：inline-send 自发 ⇒ 等它并复用——那本来就是 turn1 的 run）；
+    // ② 全量 chatLog 进失败信息，一跑定性。
+    let runId = "";
+    const chatLog: string[] = [];
+    const onResponse = (response: {
+        url: () => string;
+        request: () => { method: () => string };
+        status: () => number;
+        text: () => Promise<string>;
+    }) => {
+        if (!response.url().endsWith("/api/v1/chat") || response.request().method() !== "POST") {
+            return;
+        }
+        chatLog.push(`status=${response.status()} @${new Date().toISOString()}`);
+        void response
+            .text()
+            .then((raw) => {
+                try {
+                    const body = JSON.parse(raw) as { runId?: string };
+                    if (body.runId && !runId) runId = body.runId;
+                } catch {
+                    /* 非 JSON 体：只留 chatLog */
+                }
+            })
+            .catch(() => {});
+    };
+    page.on("response", onResponse);
+
+    try {
+        if (sessionId) {
+            await logged("chat-binding", () => ensureChatBinding(page, sessionId));
+        }
+        // pre-loop：产品自发的 turn1 run（若有）——6s 内等到即复用
+        try {
+            // 显式 truthy 语义（不依赖 bare poll 的隐式断言）：等到 runId 非空即停。
+            await expect.poll(() => runId, { timeout: 6_000, intervals: [250] }).not.toBe("");
+        } catch {
+            /* 没有自发 run：走自己的发送循环 */
+        }
+        console.log(
+            `[t1.1] pre-loop settled runId=${runId ? "<set>" : "<empty>"} chatLog=[${chatLog.join(" | ") || "empty"}]`,
+        );
+        // run 终态轮询（产品权威状态，非绕 UI）：上一轮 run 未 terminal 时产品自身的
+        // run 守卫会锁 composer（窗口 6/7 实测 turn2 锁 62s+，4 次 enable 全超时）。
+        // 终态口径复用 checkpoint-slices 的 TERMINAL_RUN_PATTERN，不自造状态词。
+        const waitRunTerminal = async (id: string): Promise<void> => {
+            await expect
+                .poll(
+                    async () => {
+                        const res = await request.get(`${CP_URL}/api/v1/chat/runs/${id}`, {
+                            headers,
+                        });
+                        if (!res.ok()) return `http-${res.status()}`;
+                        const body = (await res.json()) as { status?: string };
+                        return body.status ?? "";
+                    },
+                    {
+                        timeout: 60_000,
+                        intervals: [500, 1_000],
+                        message: `run ${id} must reach a terminal state`,
+                    },
+                )
+                .toMatch(/^(succeeded|failed|partial|ambiguous|cancelled)$/);
+            console.log(`[t1.1] run ${id} terminal`);
+        };
+        if (runId) {
+            console.log(
+                `[t1.1] pre-loop chat POST reused runId=${runId} chatLog=${chatLog.join(" | ")}`,
+            );
+            await waitRunTerminal(runId);
+            return runId;
+        }
+
+        const input = page.locator('[data-testid="chat-input"]');
+        const send = page.locator('[data-testid="chat-send-button"]');
+        await expect(input, "chat input").toBeVisible({ timeout: 30_000 });
+        // 窗口 6 定性：turn2 的发送按钮 32s 始终不亮、全程无 chat POST ⇒ 上一轮 run 尚未
+        // 真正 terminal 时，产品自身的 run 守卫锁着 composer。先带 label 等真终态（30s，
+        // 失败信息直接指名这一段）；循环里的 8s 只兜"点完又锁回去"的抖动。
+        try {
+            await logged("send-enabled-after-turn1", async () => {
+                await expect(send).toBeEnabled({ timeout: 30_000 });
+            });
+        } catch {
+            /* 进循环继续尝试；循环内每轮失败会打 attempt 日志 */
+        }
+        for (let attempt = 0; attempt < 4; attempt += 1) {
+            await input.click().catch(() => {});
+            await input.fill(text).catch(() => {});
+            try {
+                await expect(send).toBeEnabled({ timeout: 8_000 });
+            } catch {
+                console.log(`[t1.1] attempt ${attempt + 1} send not enabled`);
+                continue;
+            }
+            await send.click().catch(() => {});
+            // 用 watcher+poll 取代 waitForResponse：无论响应何时到都能收，且不与
+            // 已被消费的 body 抢（窗口 4 "no response captured" 的根治）。
+            try {
+                await expect.poll(() => runId, { timeout: 20_000, intervals: [250] }).not.toBe("");
+            } catch {
+                /* 本轮没等到：下一次重试 */
+            }
+            console.log(
+                `[t1.1] attempt ${attempt + 1} settled runId=${runId ? "<set>" : "<empty>"} chatLog=[${chatLog.join(" | ") || "empty"}]`,
+            );
+            await waitRunTerminal(runId);
+            if (runId) return runId;
+        }
+        throw new Error(
+            `chat send never returned a runId (POST /api/v1/chat); chatLog=[${chatLog.join(" | ") || "empty"}]`,
+        );
+    } finally {
+        page.off("response", onResponse);
+    }
 }
 
 /** 审批卡片出现并点掉（只认审批面 testid）。 */

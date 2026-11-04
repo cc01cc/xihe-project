@@ -13,6 +13,7 @@ import {
     sendChat,
     waitForControlPlaneAgentReady,
 } from "./helpers/journey";
+import { bindSessionViaApi } from "./helpers/session-binding";
 import { seedUserGrant } from "./helpers/user-grants";
 
 // PLAN-0372 (BL-28) decision #B: real-lane workspace tool round-trip over the
@@ -121,22 +122,13 @@ test.describe("@host PLAN-0372 real lane — OpenAI-compatible tool round-trip",
         });
         await ensureChatReady(page);
 
-        // Pin the canonical pair to the OpenAI-compatible route (in this mode the
-        // catalog lists the MiMo models under provider `openai`).
-        const trigger = page.getByTestId("model-popover-trigger");
-        await expect(trigger).toBeVisible();
-        await trigger.click();
-        const modelSearch = page.getByTestId("model-popover-search");
-        await modelSearch.fill(MODEL_ID);
-        await expect(page.getByTestId(`model-item-openai/${MODEL_ID}`)).toBeVisible({
-            timeout: 15000,
-        });
-        await modelSearch.press("Enter");
-
         // The session was created above; use it directly instead of racing the
         // session list (2026-10-02 review: the poll could pick another session).
         const sessionId = seededSessionId,
             branchId = await getRootBranchId(request, sessionId, headers);
+        // 2026-11-04 用户裁定移除 composer 模型选择器：绑定改走产品 PATCH API
+        //（in this mode the catalog lists the MiMo models under provider `openai`）。
+        await bindSessionViaApi(request, CP_URL, headers, sessionId, "openai", MODEL_ID);
         await expect
             .poll(
                 async () => {

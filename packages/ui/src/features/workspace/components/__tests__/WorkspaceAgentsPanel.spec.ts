@@ -108,6 +108,31 @@ afterEach(() => {
     document.body.innerHTML = "";
 });
 
+describe("WorkspaceAgentsPanel principal naming (2026-11-04)", () => {
+    it("blocks a name with a space and explains the rule", async () => {
+        const wrapper = await mountOpenedPanel();
+        await wrapper.find('[data-testid="agent-principal-name"]').setValue("Research Agent");
+        await flushPromises();
+
+        expect(wrapper.find('[data-testid="agent-principal-name-error"]').exists()).toBe(true);
+        expect(
+            wrapper.find('[data-testid="agent-principal-create"]').attributes("disabled"),
+        ).toBeDefined();
+        expect(apiMock.createAgentPrincipal).not.toHaveBeenCalled();
+    });
+
+    it("blocks a name starting with a digit", async () => {
+        const wrapper = await mountOpenedPanel();
+        await wrapper.find('[data-testid="agent-principal-name"]').setValue("1agent");
+        await flushPromises();
+
+        expect(wrapper.find('[data-testid="agent-principal-name-error"]').exists()).toBe(true);
+        expect(
+            wrapper.find('[data-testid="agent-principal-create"]').attributes("disabled"),
+        ).toBeDefined();
+    });
+});
+
 describe("WorkspaceAgentsPanel F-02 grant hint (PLAN-0585 M2 / PLAN-0610 W5c)", () => {
     it("shows a localized actionable hint plus a link to the role surface for admins", async () => {
         const wrapper = mountPanel();
@@ -126,7 +151,7 @@ describe("WorkspaceAgentsPanel F-02 grant hint (PLAN-0585 M2 / PLAN-0610 W5c)", 
         apiMock.createAgentPrincipal.mockRejectedValue(new ErrorCtor("FORBIDDEN"));
         const wrapper = await mountOpenedPanel();
 
-        await wrapper.find('[data-testid="agent-principal-name"]').setValue("Research Agent");
+        await wrapper.find('[data-testid="agent-principal-name"]').setValue("ResearchAgent");
         await wrapper.find('[data-testid="agent-principal-create-form"]').trigger("submit");
         await flushPromises();
 
@@ -427,7 +452,7 @@ describe("WorkspaceAgentsPanel list refresh after create", () => {
             wrapper.find(`[data-testid="agent-scope-badge-${created.principalId}"]`).exists(),
         ).toBe(false);
 
-        await wrapper.find('[data-testid="agent-principal-name"]').setValue("Fresh agent");
+        await wrapper.find('[data-testid="agent-principal-name"]').setValue("FreshAgent");
         await wrapper.find('[data-testid="agent-principal-create-form"]').trigger("submit");
         await flushPromises();
 

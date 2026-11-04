@@ -4,6 +4,7 @@ import { ref, computed } from "vue";
 import { useRouter } from "vue-router";
 import { useAuthStore } from "../../stores/auth";
 import { Sun } from "@lucide/vue";
+import { principalNameError } from "../../lib/principalName";
 
 const { t } = useI18n(),
     router = useRouter(),
@@ -22,14 +23,14 @@ const passwordMismatch = computed(() => {
 });
 
 /**
- * PLAN-0621 F-05：CP 的用户名规则是 `^[a-z][a-z0-9]{0,31}$`（1–32 位小写字母/数字、字母开头）。
- * 之前没有前端校验：用户填完提交才被 `400 USERNAME_INVALID` 打回，且 detail 是英文。
- * 这里做**前置拦截**（留空合法 —— 由 CP 从邮箱派生），错误文案走 i18n。
+ * 2026-11-04 用户裁定：agent 主体名与 username 统一为「字母 / 中文汉字 / 数字，不得以数字开头、
+ * 不得含空格」（规则见 `lib/principalName.ts`，CP 侧另行落地）。长度仍按 CP 现有 32 上限拦截。
+ * 留空合法 —— 由 CP 从邮箱派生。前端**前置拦截**，错误文案走 i18n。
  */
-const USERNAME_PATTERN = /^[a-z][a-z0-9]{0,31}$/;
-const usernameInvalid = computed(
-    () => username.value.trim() !== "" && !USERNAME_PATTERN.test(username.value.trim()),
-);
+const usernameInvalid = computed(() => {
+    const value = username.value.trim();
+    return value !== "" && (principalNameError(value) !== null || value.length > 32);
+});
 
 function rateLimitMessage(): string | null {
     if (auth.lastError?.code !== "AUTH_RATE_LIMITED") return null;
