@@ -64,7 +64,7 @@ class AgentScopeGrantsMigrationTest {
     private static Connection connection;
 
     @BeforeAll
-    static void migrateToJustBeforeV108ThenSeedFixtures() throws SQLException {
+    static void migrateToJustBeforeV108ThenSeedFixtures() throws SQLException, IOException {
         String url = postgres.getJdbcUrl();
         // Stop at V106 so the fixtures exist before the backfill runs — the real upgrade path.
         Flyway.configure()
@@ -91,6 +91,11 @@ class AgentScopeGrantsMigrationTest {
                 + "{\"actionClass\":\"SPAWN_AGENT\",\"resource\":\"*\"}]'::jsonb)");
         // The upgrade itself.
         Flyway.configure().dataSource(url, postgres.getUsername(), postgres.getPassword()).load().migrate();
+        // PLAN-0651 M2 T2.1 widened the seeded role sets AFTER V108 ran during the upgrade. The
+        // backfill is deliberately re-runnable, so settle it once here; both tests then measure the
+        // same state regardless of JUnit's method order (a test that re-runs the migration mutates
+        // the database for the others).
+        execute(migrationSql());
     }
 
     @Test
@@ -116,30 +121,47 @@ class AgentScopeGrantsMigrationTest {
 
     @Test
     void materializesRoleGrantsWithTheBindingScope() throws SQLException {
-        // WS_EDITOR carries read/write/delete/exec ⇒ four materialized atoms, all workspace scoped.
-        assertEquals(4, scalarInt("SELECT count(*) FROM grants WHERE subject_type = 'agent_principal' "
+        // V108 ran during the upgrade from V106; later migrations (0651 M2 T2.1) widened the seeded
+        // role sets, and the backfill is deliberately re-runnable, so the settled state is measured.
+        // Expected rows are derived from the CURRENT role_permissions rows, not a literal: WS_EDITOR
+        // moved 4→7 (N6/N7/N9), AGENT_DEFAULT keeps its single SPAWN_AGENT row.
+        int editorAtoms = roleAtomCount("WS_EDITOR");
+        assertEquals(editorAtoms, scalarInt("SELECT count(*) FROM grants WHERE subject_type = 'agent_principal' "
                 + "AND subject_id = '" + EDITOR_PRINCIPAL_ID + "' AND source = 'role' "
                 + "AND scope_type = 'workspace' AND scope_id = '" + WORKSPACE_ID + "'"));
         // One atom per row, and the unique atom key really is one row per atom.
-        assertEquals(4, scalarInt("SELECT count(DISTINCT permissions -> 0 ->> 'actionClass') FROM grants "
-                + "WHERE subject_type = 'agent_principal' AND subject_id = '"
+        assertEquals(editorAtoms, scalarInt("SELECT count(DISTINCT permissions -> 0 ->> 'actionClass') "
+                + "FROM grants WHERE subject_type = 'agent_principal' AND subject_id = '"
                 + EDITOR_PRINCIPAL_ID + "' AND source = 'role'"));
     }
 
     @Test
     void reRunningTheMigrationLeavesTheSameRows() throws IOException, SQLException {
-        String before = roleBindingAndGrantCounts();
-        String sql;
+        // The backfill is re-runnable in the sense that a second execution changes nothing. The
+        // first execution after later migrations is expected to heal the atoms those migrations
+        // added (before: 5 grants for the two bound roles; after: one row per current role atom).
+        try (Statement statement = connection.createStatement()) {
+            statement.execute(migrationSql());
+        }
+        String settled = roleBindingAndGrantCounts();
+        try (Statement statement = connection.createStatement()) {
+            statement.execute(migrationSql());
+        }
+        assertEquals(settled, roleBindingAndGrantCounts(),
+                "V108 must be re-runnable: NOT EXISTS guards bindings, uq_grants_role_atom guards atoms");
+    }
+
+    private static String migrationSql() throws IOException {
         try (InputStream stream = Thread.currentThread().getContextClassLoader()
                 .getResourceAsStream(MIGRATION)) {
             assertTrue(stream != null, "migration resource not on the classpath: " + MIGRATION);
-            sql = new String(stream.readAllBytes(), StandardCharsets.UTF_8);
+            return new String(stream.readAllBytes(), StandardCharsets.UTF_8);
         }
-        try (Statement statement = connection.createStatement()) {
-            statement.execute(sql);
-        }
-        assertEquals(before, roleBindingAndGrantCounts(),
-                "V108 must be re-runnable: NOT EXISTS guards bindings, uq_grants_role_atom guards atoms");
+    }
+
+    private static int roleAtomCount(String roleName) throws SQLException {
+        return scalarInt("SELECT count(*) FROM role_permissions rp JOIN roles r ON r.id = rp.role_id "
+                + "WHERE r.name = '" + roleName + "'");
     }
 
     @Test

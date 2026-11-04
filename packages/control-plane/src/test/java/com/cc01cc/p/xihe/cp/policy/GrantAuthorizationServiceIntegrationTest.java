@@ -458,14 +458,18 @@ class GrantAuthorizationServiceIntegrationTest extends AbstractIntegrationTest {
         assertTrue(grantAuthorizationService.allows(request(workspaceId, userId,
                         session, "write", "src/main.java")));
         // 旧断言读 `.getFirst()` 的 template 行；快照写删除后，这里改为"role 行集合不变"的规则断言。
+        // 注意：setWorkspaceCap 会经 ensureWorkspaceRoleBinding 物化 **workspace-scope** 角色行
+        // （WS_EDITOR 的 atom 子集），所以"global principal grants"必须只比 instance-scope 行；
+        // 把 workspace 行算进来会把"cap 变更顺带物化 workspace 角色"误判为"改了全局授权"。
         java.util.Set<String> roleAtomsAfterCap = new java.util.LinkedHashSet<>();
         grantRepository.findBySubjectTypeAndSubjectId(
                         GrantPrincipalPathResolver.AGENT_PRINCIPAL, principalId).stream()
                 .filter(grant -> GrantSources.ROLE.equals(grant.getSource()))
+                .filter(grant -> !AccessScope.WORKSPACE.equals(grant.getScopeType()))
                 .forEach(grant -> grant.getPermissions()
                         .forEach(atom -> roleAtomsAfterCap.add(atom.path("actionClass").asText())));
         assertEquals(expectedRoleAtoms, roleAtomsAfterCap,
-                "changing a Workspace cap must not mutate global principal grants");
+                "changing a Workspace cap must not mutate global (instance-scope) principal grants");
         assertEquals(1, jdbcTemplate.queryForObject("SELECT count(*) FROM audit_logs "
                 + "WHERE action = 'workspace_agent_cap_updated' AND workspace_id = ? AND resource_id = ?",
                 Integer.class, workspaceId, principalId.toString()));
@@ -561,9 +565,14 @@ class GrantAuthorizationServiceIntegrationTest extends AbstractIntegrationTest {
         // PLAN-0610 W4b: the default snapshot is the caller's materialized atom set. The fixture user
         // holds the WS_OWNER binding, so the default carries the owner rings (design #23/#27: the
         // workspace usage atoms are materialized, only capability atoms are not).
-        assertEquals(atoms("MANAGE_WORKSPACE_AGENTS", "delete", "exec", "read", "write"),
-                defaultTemplate.snapshot().path("permissions"),
-                "no selected template preserves the bare-default grant behavior");
+        // PLAN-0651 M2 T2.1 widened WS_OWNER (adds N5–N9) — compare as a SET derived from the
+        // catalog, not as an ordered literal, so the next widening does not re-break this assertion.
+        java.util.Set<String> defaultAtoms = new java.util.LinkedHashSet<>();
+        defaultTemplate.snapshot().path("permissions")
+                .forEach(atom -> defaultAtoms.add(atom.path("actionClass").asText()));
+        assertEquals(RoleAtomExpectations.materializedAtoms(SystemAccessRoleCatalog.WS_OWNER),
+                defaultAtoms,
+                "no selected template preserves the bare-default grant behavior (catalog-derived set)");
 
         AgentPrincipal principal = agentPrincipalService.createPrincipal(
                 userId, "TemplateBoundPrincipal", userTemplateId, userTemplate.snapshot());
