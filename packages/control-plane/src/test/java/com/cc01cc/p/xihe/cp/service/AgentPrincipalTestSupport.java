@@ -57,7 +57,10 @@ public final class AgentPrincipalTestSupport {
                     mock(com.cc01cc.p.xihe.cp.repository.AccessRoleBindingRepository.class),
                     roles,
                     mock(com.cc01cc.p.xihe.cp.repository.AccessRolePermissionRepository.class),
-                    mock(com.cc01cc.p.xihe.cp.policy.RoleGrantMaterializer.class));
+                    mock(com.cc01cc.p.xihe.cp.policy.RoleGrantMaterializer.class),
+                    // PLAN-0651 T1.4: default-deny fake — a test that needs the management atom
+                    // must declare it (see DeclaredAtomAuthority's coverage contract).
+                    new com.cc01cc.p.xihe.cp.policy.DeclaredAtomAuthority());
         }
     }
 

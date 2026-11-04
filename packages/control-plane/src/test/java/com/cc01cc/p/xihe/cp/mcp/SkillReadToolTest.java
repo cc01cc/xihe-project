@@ -160,7 +160,8 @@ class SkillReadToolTest {
                 mcpInvocationService, lineageInvocationService, toolTimeoutService,
                 mock(com.cc01cc.p.xihe.cp.credentials.CredentialLeaseService.class),
                 skillReadService,
-                new com.cc01cc.p.xihe.cp.status.BuildVersion());
+                new com.cc01cc.p.xihe.cp.status.BuildVersion(),
+                mock(com.cc01cc.p.xihe.cp.chat.DelegationBudgetService.class));
         ReflectionTestUtils.setField(controller, "runtimeBaseUrl", "http://localhost:9091");
 
         // Route seeds: the tool map already knows both names, so no Runtime probe is attempted.

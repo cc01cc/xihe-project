@@ -850,6 +850,8 @@ const messages = {
             branchCreated: "分支已创建并切换",
             branchCreateFailed: "创建分支失败",
             branchLoadFailed: "无法加载对话分支，暂时无法发送消息",
+            // PLAN-0663 M2/T2.1：审批过期是终态——弹窗关闭，用非模态提示告知（不再要求用户点）。
+            approvalExpiredNotice: "这条审批已过期，已自动关闭；如需继续请重新发起。",
             providerAutoBound: "已自动绑定",
             providerBindingGuideTitle: "会话尚未绑定模型",
             providerBindingGuideProviderRequired:
@@ -3142,6 +3144,10 @@ const messages = {
             branchCreated: "Branch created and selected",
             branchCreateFailed: "Failed to create branch",
             branchLoadFailed: "Branches could not be loaded; chat is temporarily unavailable",
+            // PLAN-0663 M2/T2.1: an expired approval is terminal — the modal closes and a
+            // non-modal notice explains it instead of asking for a decision that cannot be taken.
+            approvalExpiredNotice:
+                "This approval request expired and was closed automatically; start it again if you still need it.",
             providerAutoBound: "Auto-bound",
             providerBindingGuideTitle: "This session has no model binding",
             providerBindingGuideProviderRequired:
