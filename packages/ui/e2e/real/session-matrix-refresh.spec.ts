@@ -19,6 +19,7 @@ import {
     createSessionWithPrincipal,
     provisionWorkspaceAgentPrincipal,
 } from "./helpers/agent-principal";
+import { agentName } from "./helpers/agent-name";
 import { openSessionSse } from "./helpers/sse";
 import { workspaceChatPath } from "../../src/lib/routes";
 
@@ -169,7 +170,7 @@ test.describe("@host PLAN-0658 R8 刷新恢复（BL-228 守护）", () => {
             request,
             { accessToken: owner.token, workspaceId: owner.workspaceId },
             {
-                name: `r8-agent-${NONCE}`,
+                name: agentName("R8", NONCE),
                 actions: [],
                 defaultModelProvider: "openai",
                 defaultModelName: FAKE_LLM_MODEL,

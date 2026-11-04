@@ -36,6 +36,7 @@ import {
     createSessionWithPrincipal,
     provisionWorkspaceAgentPrincipal,
 } from "./helpers/agent-principal";
+import { agentName } from "./helpers/agent-name";
 import { openSessionSse } from "./helpers/sse";
 import { workspaceChatPath } from "../../src/lib/routes";
 
@@ -199,7 +200,7 @@ test.describe("@host PLAN-0658 R1 多人类账户", () => {
             request,
             { accessToken: owner.token, workspaceId: owner.workspaceId },
             {
-                name: `r1-agent-${NONCE}`,
+                name: agentName("R1", NONCE),
                 actions: [],
                 defaultModelProvider: "openai",
                 defaultModelName: FAKE_LLM_MODEL,
