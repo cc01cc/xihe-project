@@ -6,7 +6,7 @@ sidebar_group: "开发指南"
 status: active
 sidebar_order: 17
 created: 2026-09-03
-updated: 2026-10-10
+updated: 2026-11-04
 ---
 
 # DEV-017: Session 架构
@@ -109,6 +109,73 @@ ChatRun 通过 `runId` 关联 Message，服务端返回的 `runStatus`、`termin
 - 新增视图优先读 `useSessionStore`，不直接操作 chat store 的 Session 状态；文件上下文写入统一走 `syncActiveFileToSession`。
 - 后续扩展（右侧面板拖拽宽、统一 `/session/:id` 路由评估、文件拖拽入 chat、多 Session 并列）另行 PLAN。
 - **Checkpoint slice 不变量（PLAN-0653 P3）**：回滚句柄始终是 `sliceRef`（`refs/xihe/slices/<epoch>-<40hex>`），其中不携带任何文件内容；self 模式下 store 是读写主路径、shadow 仅作 best-effort 回切备份，Session/ChatRun 语义不感知存储模式（存储细节见 `DEV-015` §6.1）。
+
+## 6. 会话多类型测试矩阵（PLAN-0658）
+
+会话面涉及**多主体（人类/Agent）、多账户、多角色、投递与失败语义**，单元测试证明不了"组合起来还对"。本节是这套矩阵的**唯一入口**：跑什么、看什么、怎么判、哪些缺口以 `fixme` 挂账。
+
+### 6.1 通道与文件
+
+| 通道 | 文件 | 起栈 | 说明 |
+|------|------|------|------|
+| mock 交互矩阵（M1–M8） | `packages/ui/e2e/mock/session-matrix-*.spec.ts` | 仅 UI dev server | 交互 affordance + wire 形状；**不能**当真实链路证据 |
+| real 数据面矩阵（R1–R3、R5–R9） | `packages/ui/e2e/real/session-matrix-*.spec.ts` | 隔离栈（e2e-host，27xxx 段） | 真 CP/Agent/Runtime + 隔离 PG + fake LLM |
+| headed 走查（R4 等交互键位） | `packages/ui/e2e/headed/session-participants.spec.ts` | 隔离栈 + `--first-run=local --bootstrap-user=register` | Chrome Beta 有头、单窗口串行 |
+
+一次跑完整 real 矩阵（`session-matrix` batch，8 个 spec）：
+
+```powershell
+node scripts/e2e-host.mjs --persistent --batch=session-matrix
+$env:XIHE_E2E_EXTERNAL_SERVER='1'; node scripts/e2e-host.mjs --batch=session-matrix --retries=0
+node scripts/e2e-host.mjs --teardown
+```
+
+**强制纪律**：跑 real spec 必须带 `--batch=<name>`（或 `--llm-mode=success`）。裸跑会把默认 llm-mode 导进实例 `llm-provider` 配置，栈会长期停在 `llmReady=model_unavailable`，`POST /chat` 恒 503 且不自愈（只能 teardown 重起）。
+
+### 6.2 矩阵与判据（2026-11-04 实测）
+
+| # | 维度 / 判据 | 断言面 | 文件 | 结果 |
+|---|-------------|--------|------|------|
+| R1 | 多人类账户（双账户互见 / 旁观者 / 外部账户） | wire + durable + UI | `session-matrix-multi-account.spec.ts` | 3 通 + **3 fixme**（BL-237 ×2、BL-238 ×1） |
+| R2 | 发送与主体身份（selfOwned / 默认归属 / `as` / 越权 / 停用 / 发送→徽标） | wire + durable + UI | `session-matrix-to.spec.ts` | 6 通 |
+| R3 | 三角色会话可见性（OWNER / EDITOR / VIEWER） | wire + UI | `session-matrix-roles.spec.ts` | 4 通 |
+| R4 | `@` 提及候选面键盘（↑↓ / Enter / Tab / Esc + 真栈发送） | UI + wire | `headed/session-participants.spec.ts`（`R4@host`） | 1 通（headed） |
+| R5 | 停用主体后的候选 / 成员行过滤 | UI | `session-matrix-disabled.spec.ts` | 3 通 |
+| R6 | 并发排队（durable queue + 幂等重放 + 排水） | durable | `session-matrix-concurrency.spec.ts` | 2 通 |
+| R7 | 失败终态（`ambiguous` + 稳定 `errorCode` + attempts 行 + 不产出正文） | durable | `session-matrix-failures.spec.ts` | 3 通 |
+| R8 | 刷新恢复（BL-228 守护：消息恰好一条、run 终态、cc 草稿不复活） | durable + UI | `session-matrix-refresh.spec.ts` | 2 通 + 1 fixme（BL-237） |
+| R9 | reasoning 三段同值（durable + UI 折叠 + 刷新后同值） | durable + UI | `session-matrix-reasoning.spec.ts` | 3 通 + 1 fixme（BL-197 ①，见 6.4） |
+
+整批基线（e2e-host 干净库，merge `develop` 后）：**26 passed / 4 skipped / 0 failed**；同一批在常驻 stack-2（`xihe_2` 有历史数据）逐组一致 ⇒ 矩阵**不依赖干净库**。
+
+### 6.3 渲染契约断言（与 PLAN-0659 共用，real 段回填）
+
+身份一律认 `data-*`（`participantId` / `runId` / `depth`），**不认文案短码、不依赖时钟**。
+
+| 断言 | real 段 | 状态 |
+|------|---------|------|
+| `process-row` 的 `data-process-kind` | 1/1 | ✅ |
+| 单主体线程**不出现** `process-row-actor` | 1/1 | ✅（**但见 6.5：恒真，不构成正向证据**） |
+| 单 run 会话**无** `run-header` | 1/1 | ✅ |
+| `message-delivery-to` = `发送→<显示名>` | 1/1 | ✅（R2-6，真 composer 发送） |
+| `message-delivery-mention` / `-cc`（R1） | 0 | ⏸ 不可达：R1 发送走 API，TO/CC 无持久载体（BL-239） |
+| 混主体 `process-row-actor` **正例** | 0/1 | ⏸ **不成立**：`SessionMessage` 缺 `participantId`（BL-197 ①）⇒ `fixme` 挂账 |
+| `delegation-node` / `delegation-edge` | — | N/A（本矩阵不触发委派） |
+
+### 6.4 已挂账的产品缺口（不因"跑绿"而消失）
+
+| 缺口 | 现象 | 矩阵里的处理 |
+|------|------|--------------|
+| BL-237 | 会话本体读面 owner-only（`SessionService.requireCurrent`），受邀人类参与者读不到 | R1-a2 / R1-e / R8-3 `fixme` |
+| BL-238 | wake 用 owner 身份授权 → 人类参与者恒 `refused`，且内层事务 rollback-only | R1-b `fixme`（BL-214 `mention_count=0` 是其症状，不是独立缺陷） |
+| BL-239 | TO/CC 是 composer 本地发送态视图，无持久载体 ⇒ 刷新后投递徽标消失 | 投递徽标断言只在发送后立刻做；R8-2 反向验证"刷新后不复活" |
+| BL-197 ① | `SessionMessage` 无 `participantId` ⇒ 历史线程无法派生 actor 归因 | R9-4 正例 `fixme`，字段补齐后去 `.fixme` 即验收 |
+
+### 6.5 判定纪律：负例通过必须自问"是不是恒真"
+
+**这次实测的教训**：R9-2 的负例（单主体线程不出 `process-row-actor`）一直是绿的 —— 但在 `SessionMessage` 缺 `participantId` 期间它**恒真**（任何线程都不会渲染徽标），所以它当时的绿**不证明"单主体不刷身份"这个能力**。只有混主体**正例**（R9-4）才把这个缺口暴露出来。
+
+因此：**负例通过必须能指出"正向能力在别处被证过"**，否则按"未验证"记录；涉及归因/角色的断言，正例与负例同批写、同批跑。
 
 ## 附录：RFC-001 历史设计（已退役）
 

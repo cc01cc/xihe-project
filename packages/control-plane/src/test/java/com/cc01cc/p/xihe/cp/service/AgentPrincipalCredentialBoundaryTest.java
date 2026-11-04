@@ -108,7 +108,7 @@ class AgentPrincipalCredentialBoundaryTest extends AbstractIntegrationTest {
         String credentialId = "credential:" + UUID.randomUUID();
 
         CpApiException error = assertThrows(CpApiException.class, () ->
-                agentPrincipalService.createPrincipal(creatorId.toString(), "uncovered-agent", null,
+                agentPrincipalService.createPrincipal(creatorId.toString(), "uncoveredAgent", null,
                         snapshot("""
                                 [{"actionClass":"read"},
                                  {"actionClass":"credential_use","resource":"%s"}]
@@ -129,7 +129,7 @@ class AgentPrincipalCredentialBoundaryTest extends AbstractIntegrationTest {
         String credentialId = "credential:" + UUID.randomUUID();
 
         AgentPrincipal principal = agentPrincipalService.createPrincipal(
-                creatorId.toString(), "covered-agent", null,
+                creatorId.toString(), "coveredAgent", null,
                 snapshot("""
                         [{"actionClass":"read"},
                          {"actionClass":"credential_use","resource":"%s"}]
@@ -165,7 +165,7 @@ class AgentPrincipalCredentialBoundaryTest extends AbstractIntegrationTest {
         registerCreator();
 
         AgentPrincipal principal = agentPrincipalService.createPrincipal(
-                creatorId.toString(), "narrowed-agent", null,
+                creatorId.toString(), "narrowedAgent", null,
                 snapshot("""
                         [{"actionClass":"read"},{"actionClass":"SPAWN_AGENT"}]
                         """));
@@ -189,7 +189,7 @@ class AgentPrincipalCredentialBoundaryTest extends AbstractIntegrationTest {
                 """);
         String credentialId = "credential:" + UUID.randomUUID();
         AgentPrincipal principal = agentPrincipalService.createPrincipal(
-                creatorId.toString(), "cap-agent", null,
+                creatorId.toString(), "capAgent", null,
                 snapshot("""
                         [{"actionClass":"credential_use","resource":"%s"}]
                         """.formatted(credentialId)));
@@ -232,7 +232,7 @@ class AgentPrincipalCredentialBoundaryTest extends AbstractIntegrationTest {
                 """);
         String credentialId = "credential:" + UUID.randomUUID();
         AgentPrincipal principal = agentPrincipalService.createPrincipal(creatorId.toString(),
-                "legacy-only-agent", null, snapshot("""
+                "legacyOnlyAgent", null, snapshot("""
                         [{"actionClass":"credential_use","resource":"%s"}]
                         """.formatted(credentialId)));
         principalIds.add(principal.getId());

@@ -276,7 +276,7 @@ test.describe("@host PLAN-0649 refusal visible + durable", () => {
             headers,
             data: {
                 scope: "WORKSPACE",
-                name: "PLAN0649 Delegator",
+                name: "PLAN0649Delegator",
                 templateId,
                 // SessionProviderDefaults (2026-11-04 P0, task-24) resolves the agent-principal
                 // default model FIRST; without it session create falls through to the effective

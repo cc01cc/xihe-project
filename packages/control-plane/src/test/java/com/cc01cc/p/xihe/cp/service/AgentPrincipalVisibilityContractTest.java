@@ -109,8 +109,8 @@ class AgentPrincipalVisibilityContractTest extends AbstractIntegrationTest {
         User bob = newUser("list-bob");
         grantDefaultService.ensureUserDefault(alice);
         grantDefaultService.ensureUserDefault(bob);
-        UUID alicePersonal = createPersonal(alice, "Alice private");
-        UUID bobPersonal = createPersonal(bob, "Bob private");
+        UUID alicePersonal = createPersonal(alice, "AlicePrivate");
+        UUID bobPersonal = createPersonal(bob, "BobPrivate");
 
         ResponseEntity<Map> response = exchange(HttpMethod.GET,
                 "/api/v1/agent-principals?scope=PERSONAL", globalToken(alice), null);
@@ -121,7 +121,7 @@ class AgentPrincipalVisibilityContractTest extends AbstractIntegrationTest {
         assertTrue(ids.contains(alicePersonal.toString()), ids.toString());
         assertFalse(ids.contains(bobPersonal.toString()), "another user's PERSONAL principal leaked: " + ids);
         // The response never carries someone else's template or name.
-        assertTrue(principals.stream().noneMatch(item -> "Bob private".equals(item.get("name"))));
+        assertTrue(principals.stream().noneMatch(item -> "BobPrivate".equals(item.get("name"))));
     }
 
     // -----------------------------------------------------------------------------------------
@@ -136,8 +136,8 @@ class AgentPrincipalVisibilityContractTest extends AbstractIntegrationTest {
         workspaces.add(workspace.getId());
 
         UUID workspaceScoped = createWithScope(workspaceToken(owner, workspace.getId(), WorkspaceRole.OWNER),
-                "Workspace scoped", "WORKSPACE");
-        UUID personalScoped = createPersonal(owner, "Owner personal");
+                "WorkspaceScoped", "WORKSPACE");
+        UUID personalScoped = createPersonal(owner, "OwnerPersonal");
         UUID instanceScoped = createInstancePrincipal(owner);
         // The three bindable ones are actually bound to the workspace. INSTANCE binding is instance
         // administration only (M1.1), so a seeded admin performs that one binding.
@@ -173,7 +173,7 @@ class AgentPrincipalVisibilityContractTest extends AbstractIntegrationTest {
     void disableAnswersNoContentAndWritesAudit() {
         User owner = newUser("disable-owner");
         grantDefaultService.ensureUserDefault(owner);
-        UUID personal = createPersonal(owner, "Disable me");
+        UUID personal = createPersonal(owner, "DisableMe");
 
         ResponseEntity<Map> response = exchange(HttpMethod.POST,
                 "/api/v1/agent-principals/" + personal + "/disable", globalToken(owner), null);
@@ -194,8 +194,8 @@ class AgentPrincipalVisibilityContractTest extends AbstractIntegrationTest {
         grantDefaultService.ensureUserDefault(owner);
         Workspace workspace = workspaceFixture.createOwnedWorkspace("D27 ws", owner.getId().toString());
         workspaces.add(workspace.getId());
-        UUID disabled = createPersonal(owner, "D27 disabled");
-        UUID active = createPersonal(owner, "D27 active");
+        UUID disabled = createPersonal(owner, "D27Disabled");
+        UUID active = createPersonal(owner, "D27Active");
         // 2026-11-04 裁定：列表只含「绑定了这里 ∪ 在这里持有角色绑定」的主体。
         bindViaApi(owner, workspace.getId(), disabled);
         bindViaApi(owner, workspace.getId(), active);
@@ -220,7 +220,7 @@ class AgentPrincipalVisibilityContractTest extends AbstractIntegrationTest {
         User stranger = newUser("disable-authority-stranger");
         grantDefaultService.ensureUserDefault(owner);
         grantDefaultService.ensureUserDefault(stranger);
-        UUID personal = createPersonal(owner, "Owner only");
+        UUID personal = createPersonal(owner, "OwnerOnly");
 
         ResponseEntity<Map> denied = exchange(HttpMethod.POST,
                 "/api/v1/agent-principals/" + personal + "/disable", globalToken(stranger), null);
@@ -242,7 +242,7 @@ class AgentPrincipalVisibilityContractTest extends AbstractIntegrationTest {
         grantDefaultService.ensureUserDefault(owner);
         Workspace workspace = workspaceFixture.createOwnedWorkspace("V15 ws", owner.getId().toString());
         workspaces.add(workspace.getId());
-        UUID personal = createPersonal(owner, "V15 agent");
+        UUID personal = createPersonal(owner, "V15Agent");
         bindViaApi(owner, workspace.getId(), personal);
 
         // Before disabling the binding resolves (this is what the first submission already used).
@@ -276,7 +276,7 @@ class AgentPrincipalVisibilityContractTest extends AbstractIntegrationTest {
         grantDefaultService.ensureUserDefault(owner);
         Workspace workspace = workspaceFixture.createOwnedWorkspace("Unbound ws", owner.getId().toString());
         workspaces.add(workspace.getId());
-        UUID personal = createPersonal(owner, "Unbound personal");
+        UUID personal = createPersonal(owner, "UnboundPersonal");
 
         List<Map<String, Object>> unbound = listAgents(owner, workspace);
         assertFalse(listed(unbound, personal),
@@ -320,7 +320,7 @@ class AgentPrincipalVisibilityContractTest extends AbstractIntegrationTest {
         grantDefaultService.ensureUserDefault(bob);
         Workspace workspace = workspaceFixture.createOwnedWorkspace("O5 ws", alice.getId().toString());
         workspaces.add(workspace.getId());
-        UUID bobPersonal = createPersonal(bob, "Bob private");
+        UUID bobPersonal = createPersonal(bob, "BobPrivate");
 
         List<Map<String, Object>> agents = listAgents(alice, workspace);
 
@@ -335,7 +335,7 @@ class AgentPrincipalVisibilityContractTest extends AbstractIntegrationTest {
         grantDefaultService.ensureUserDefault(owner);
         Workspace workspace = workspaceFixture.createOwnedWorkspace("Both ws", owner.getId().toString());
         workspaces.add(workspace.getId());
-        UUID personal = createPersonal(owner, "Bound personal");
+        UUID personal = createPersonal(owner, "BoundPersonal");
         bindViaApi(owner, workspace.getId(), personal);
 
         List<Map<String, Object>> agents = listAgents(owner, workspace);
@@ -354,10 +354,10 @@ class AgentPrincipalVisibilityContractTest extends AbstractIntegrationTest {
         Workspace workspace = workspaceFixture.createOwnedWorkspace("Order ws", owner.getId().toString());
         workspaces.add(workspace.getId());
         UUID workspaceScoped = createWithScope(
-                workspaceToken(owner, workspace.getId(), WorkspaceRole.OWNER), "Z workspace", "WORKSPACE");
+                workspaceToken(owner, workspace.getId(), WorkspaceRole.OWNER), "ZWorkspace", "WORKSPACE");
         bindViaApi(owner, workspace.getId(), workspaceScoped);
         // 2026-11-04 裁定：source 仍描述主体类型，但只有"在这里有 reach"的主体才进列表。
-        bindViaApi(owner, workspace.getId(), createPersonal(owner, "A personal"));
+        bindViaApi(owner, workspace.getId(), createPersonal(owner, "APersonal"));
         bindViaWorkspaceRole(owner, workspace.getId(), createInstancePrincipal(owner));
 
         List<String> sources = listAgents(owner, workspace).stream()
@@ -436,7 +436,7 @@ class AgentPrincipalVisibilityContractTest extends AbstractIntegrationTest {
 
     private UUID createInstancePrincipal(User creator) {
         AgentPrincipal principal = new AgentPrincipal();
-        principal.setName("Instance shared agent");
+        principal.setName("InstanceSharedAgent");
         principal.setScope("INSTANCE");
         principal.setTemplateSnapshot(objectMapper.createObjectNode());
         principal.setCreatedByUserId(creator.getId().toString());

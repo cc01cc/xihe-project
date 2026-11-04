@@ -1050,7 +1050,14 @@ async function decideApproval(submission: ApprovalDecisionEnvelope) {
             err instanceof ApiError
                 ? `${err.problem.code}: ${err.problem.detail ?? err.message}`
                 : "Approval decision failed";
-        approvalError.value = message;
+        if (err instanceof ApiError && err.problem.code === "APPROVAL_EXPIRED") {
+            // PLAN-0663 M2/T2.1: the store already retired the expired request (terminal state), so
+            // the modal is gone — explain it with a NON-modal notice instead of leaving a dead
+            // approval on screen. Reused `vue-sonner`; no second feedback surface is introduced.
+            toast.error(t("chat.approvalExpiredNotice"));
+        } else {
+            approvalError.value = message;
+        }
         logger.error("Failed to submit chat approval decision", err);
     } finally {
         approvalSubmitting.value = false;

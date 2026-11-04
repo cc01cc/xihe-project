@@ -153,7 +153,7 @@ class CredentialThreeLayerAuthorizationTest extends AbstractIntegrationTest {
                 """).get("permissions"));
         grantRepository.save(manageGrant);
 
-        AgentPrincipal principal = agentPrincipalService.createPrincipal(userId, "cred-layer-agent",
+        AgentPrincipal principal = agentPrincipalService.createPrincipal(userId, "credLayerAgent",
                 null, snapshotOf("[{\"actionClass\":\"read\"}]"));
         principalId = principal.getId();
         agentPrincipalService.setWorkspaceCap(userId, workspaceId, principalId,

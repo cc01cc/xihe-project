@@ -2,6 +2,7 @@ package com.cc01cc.p.xihe.cp.service;
 
 import com.cc01cc.p.xihe.cp.audit.AuditLogger;
 import com.cc01cc.p.xihe.cp.auth.AuthService;
+import com.cc01cc.p.xihe.cp.auth.NameFormat;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
 import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
@@ -11,7 +12,7 @@ import com.cc01cc.p.xihe.cp.entity.AuthorizationGrant;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceAgent;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceAgentId;
 import com.cc01cc.p.xihe.cp.policy.AuthzContext;
-import com.cc01cc.p.xihe.cp.policy.CapabilityAuthorities;
+import com.cc01cc.p.xihe.cp.policy.RequesterAuthority;
 import com.cc01cc.p.xihe.cp.policy.ContextPolicyValidator;
 import com.cc01cc.p.xihe.cp.policy.DelegationPolicyValidator;
 import com.cc01cc.p.xihe.cp.policy.PolicyRequest;
@@ -84,6 +85,8 @@ public class AgentPrincipalService {
     private final ObjectMapper objectMapper;
     private final AgentTemplateService agentTemplateService;
     private final AuthzContext authzContext;
+    /** PLAN-0651 T1.4 (A21/A22): the instance-administrator bypass is an action atom (N1). */
+    private final RequesterAuthority requesterAuthority;
     /** PLAN-0629: roles are the permission source, so bindings and materialization live here. */
     private final AccessRoleBindingRepository roleBindingRepository;
     private final AccessRoleRepository roleRepository;
@@ -104,7 +107,8 @@ public class AgentPrincipalService {
                                  AccessRoleBindingRepository roleBindingRepository,
                                  AccessRoleRepository roleRepository,
                                  AccessRolePermissionRepository rolePermissionRepository,
-                                 RoleGrantMaterializer roleMaterializer) {
+                                 RoleGrantMaterializer roleMaterializer,
+                                 RequesterAuthority requesterAuthority) {
         this.agentPrincipalRepository = agentPrincipalRepository;
         this.grantRepository = grantRepository;
         this.authService = authService;
@@ -120,6 +124,7 @@ public class AgentPrincipalService {
         this.roleRepository = roleRepository;
         this.rolePermissionRepository = rolePermissionRepository;
         this.roleMaterializer = roleMaterializer;
+        this.requesterAuthority = requesterAuthority;
     }
     /** Authorizes, resolves a caller-readable snapshot, and creates a principal atomically. */
     @Transactional
@@ -404,6 +409,8 @@ public class AgentPrincipalService {
             throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_AGENT_PRINCIPAL",
                     "A name and server-resolved template snapshot are required");
         }
+        // 用户 2026-11-03 裁定：主体名只允许 字母/汉字/数字 且不得数字开头、不得含空格与符号。
+        NameFormat.require(name, "name");
         if (!java.util.Objects.equals(templateId, optionalText(templateSnapshot, "templateId"))) {
             throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_TEMPLATE_SNAPSHOT",
                     "Template ID does not match the frozen snapshot");
@@ -1050,16 +1057,18 @@ public class AgentPrincipalService {
     }
 
     private void requireDisableAuthority(UUID actorId, AgentPrincipal principal) {
-        boolean instanceAdmin = CapabilityAuthorities.isInstanceAdmin();
+        // PLAN-0651 T1.4 (D51-26): the instance-administrator bypass is the instance-scope
+        // MANAGE_AGENT_PRINCIPALS atom (ADMIN/SUPER_ADMIN hold it through the seeded role, V111).
+        boolean instanceAdministrator = holdsAgentPrincipalManagementAtom(actorId);
         String scope = principal.getScope() == null ? SCOPE_WORKSPACE : principal.getScope();
         if (SCOPE_PERSONAL.equals(scope)) {
-            if (instanceAdmin || actorId.equals(principal.getOwnerUserId())) {
+            if (instanceAdministrator || actorId.equals(principal.getOwnerUserId())) {
                 return;
             }
             throw new CpApiException(HttpStatus.FORBIDDEN, "AGENT_PRINCIPAL_OWNER_MISMATCH",
                     "Only the owner or instance administration may disable a PERSONAL agent principal");
         }
-        if (instanceAdmin) {
+        if (instanceAdministrator) {
             return;
         }
         if (SCOPE_INSTANCE.equals(scope)) {
@@ -1119,10 +1128,21 @@ public class AgentPrincipalService {
             }
             return;
         }
-        if (SCOPE_INSTANCE.equals(scope) && !CapabilityAuthorities.isInstanceAdmin()) {
+        if (SCOPE_INSTANCE.equals(scope) && !holdsAgentPrincipalManagementAtom(actorId)) {
             throw new CpApiException(HttpStatus.FORBIDDEN, "INSTANCE_ADMIN_REQUIRED",
                     "An INSTANCE-scope agent principal may only be bound by instance administration");
         }
+    }
+
+    /**
+     * PLAN-0651 T1.4 (A21/A22, D51-26): whether the actor holds the instance-scope
+     * {@code MANAGE_AGENT_PRINCIPALS} atom (N1). ADMIN and SUPER_ADMIN hold it through the seeded
+     * roles (V111). N1 is instance-only by construction, so evaluating it with a {@code null}
+     * workspace selects exactly the instance-scope grant rows.
+     */
+    private boolean holdsAgentPrincipalManagementAtom(UUID actorId) {
+        return actorId != null && requesterAuthority.holdsActionAtom(actorId,
+                ToolFaceRegistry.ACTION_MANAGE_AGENT_PRINCIPALS, null);
     }
 
     /**

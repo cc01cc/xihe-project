@@ -32,6 +32,7 @@ import { createWorkspaceSessionWithPrincipal } from "./helpers/agent-principal";
 import { seedUserGrant, seedUserGrantPermissions } from "./helpers/user-grants";
 import { ensureWorkspace } from "./helpers/workspace";
 
+import { agentName } from "./helpers/agent-name";
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`;
 const LLM_MODE = process.env.XIHE_E2E_LLM_MODE ?? "mock";
 const EVIDENCE_DIR = evidenceDir("plan-0498-credential-manager");
@@ -345,13 +346,21 @@ test("@host credential manager — UI registration, role block, binding, lease u
     expect(templateWrite.status(), await templateWrite.text()).toBe(200);
     const principalResponse = await request.post(`${CP_URL}/api/v1/agent-principals`, {
         headers: authHeaders,
-        data: { scope: "WORKSPACE", name: `E2E Manager Principal ${Date.now()}`, templateId },
+        data: {
+            scope: "WORKSPACE",
+            name: agentName("E2EManagerPrincipal", Date.now()),
+            templateId,
+        },
     });
     expect(principalResponse.status(), await principalResponse.text()).toBe(201);
     const principalId = ((await principalResponse.json()) as { principalId: string }).principalId;
     const secondPrincipalResponse = await request.post(`${CP_URL}/api/v1/agent-principals`, {
         headers: authHeaders,
-        data: { scope: "WORKSPACE", name: `E2E Manager Principal B ${Date.now()}`, templateId },
+        data: {
+            scope: "WORKSPACE",
+            name: agentName("E2EManagerPrincipalB", Date.now()),
+            templateId,
+        },
     });
     expect(secondPrincipalResponse.status(), await secondPrincipalResponse.text()).toBe(201);
     const secondPrincipalId = ((await secondPrincipalResponse.json()) as { principalId: string })

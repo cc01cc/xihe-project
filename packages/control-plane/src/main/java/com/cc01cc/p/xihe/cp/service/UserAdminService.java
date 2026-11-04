@@ -3,6 +3,7 @@ package com.cc01cc.p.xihe.cp.service;
 import com.cc01cc.p.xihe.cp.audit.AuditLogger;
 import com.cc01cc.p.xihe.cp.auth.AuthLog;
 import com.cc01cc.p.xihe.cp.auth.CapabilityProjectionService;
+import com.cc01cc.p.xihe.cp.auth.NameFormat;
 import com.cc01cc.p.xihe.cp.auth.UserAdminView;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.config.DbLockTimeout;
@@ -372,19 +373,22 @@ public class UserAdminService {
                 HttpStatus.NOT_FOUND, "USER_NOT_FOUND", "User not found"));
     }
 
-    /** Username rules are PLAN-0565's (regex + uniqueness); a blank one is derived from the email. */
+    /** Username rules follow PLAN-0565 #7's shape plus 决策 v29's character set; blank derives from email. */
     private String resolveUsername(String requested, String email) {
         if (requested != null && !requested.isBlank()) {
-            String candidate = requested.trim();
-            if (!candidate.matches("^[a-z][a-z0-9]{0,31}$")) {
+            // 决策 v29（2026-11-04）：与注册面同一规则（NameFormat 单一供给）；对原始输入判定、
+            // 不 trim/不改写；错误码保留 USERNAME_INVALID（D61-05 暂定 (ii)）。
+            if (!NameFormat.isValidUsername(requested)) {
                 throw new CpApiException(HttpStatus.BAD_REQUEST, "USERNAME_INVALID",
-                        "Username must be 1-32 lowercase letters/digits and start with a letter");
+                        "Username must be 1-32 characters of letters (any case), Chinese characters "
+                                + "or digits, must not start with a digit, and must not contain "
+                                + "spaces or symbols");
             }
-            if (users.existsByUsername(candidate)) {
+            if (users.existsByUsername(requested)) {
                 throw new CpApiException(HttpStatus.CONFLICT, "USERNAME_TAKEN",
                         "Username already taken");
             }
-            return candidate;
+            return requested;
         }
         String base = User.defaultUsernameFromEmail(email);
         String candidate = base;

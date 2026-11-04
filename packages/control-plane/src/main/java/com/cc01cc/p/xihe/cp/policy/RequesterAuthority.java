@@ -146,19 +146,24 @@ public class RequesterAuthority {
         }
     }
 
+    /**
+     * PLAN-0651 T1.2 (D51-30): the escalation check is now <b>atom-based</b>. The caller may grant a
+     * capability atom when it holds that atom in the addressed scope, or when a held atom
+     * <b>implies</b> it per {@link PermissionAtomCatalog#impliedHolders(String)} — one implication
+     * chain only (`instance:super ⇒ instance:admin ⇒ workspace:admin`), and it lives here in the
+     * grant-validation path, never as an implicit grant in the default sets.
+     */
     private static boolean mayGrantCapability(AuthzContext.Capabilities capabilities, String atom,
                                               UUID workspaceId) {
-        return switch (atom) {
-            case PermissionAtomCatalog.CAP_INSTANCE_SUPER -> capabilities.isInstanceSuper();
-            case PermissionAtomCatalog.CAP_INSTANCE_ADMIN ->
-                    capabilities.isInstanceAdmin() || capabilities.isInstanceSuper();
-            case PermissionAtomCatalog.CAP_WORKSPACE_ADMIN -> workspaceId == null
-                    ? capabilities.isInstanceAdmin() || capabilities.isInstanceSuper()
-                    || capabilities.workspaceAdminAll()
-                    : capabilities.canWorkspaceAdmin(workspaceId)
-                    || capabilities.isInstanceAdmin() || capabilities.isInstanceSuper();
-            default -> false;
-        };
+        if (capabilities.holdsCapability(atom, workspaceId)) {
+            return true;
+        }
+        for (String holder : PermissionAtomCatalog.impliedHolders(atom)) {
+            if (capabilities.holdsCapability(holder, workspaceId)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** The caller holds {@code MANAGE_ROLES}; used by unit tests and callers outside SpEL. */

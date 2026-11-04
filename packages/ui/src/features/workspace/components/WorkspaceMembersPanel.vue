@@ -10,6 +10,7 @@ import {
     type MemberAssignableRole,
 } from "../../../composables/api";
 import { logger } from "../../../lib/logger";
+import { usernameError } from "../../../lib/principalName";
 import Input from "../../../components/ui/input/Input.vue";
 import { Button } from "../../../components/ui/button";
 import AlertDialog from "../../../components/ui/alert-dialog/AlertDialog.vue";
@@ -41,6 +42,28 @@ const addUsername = ref(""),
     addRole = ref<MemberAssignableRole>("EDITOR"),
     adding = ref(false),
     addError = ref("");
+
+/**
+ * 2026-11-04 用户裁定（v23 + v29）：工作区成员邀请按 username 寻址，字符规则与注册/主体名同一条
+ * （`lib/principalName.ts#usernameError`，≤32）。对**原始输入**判定、不 trim —— CP 会拒掉含空格的
+ * 原名，前端静默 trim 只会把「用户以为成功」拖到 CP 的 400。
+ */
+const addUsernameError = computed(() => usernameError(addUsername.value));
+
+const addUsernameMessage = computed(() => {
+    switch (addUsernameError.value) {
+        case "required":
+            return t("validation.principalNameRequired");
+        case "whitespace":
+            return t("validation.principalNameWhitespace");
+        case "length":
+            return t("validation.usernameTooLong");
+        case "pattern":
+            return t("validation.principalNamePattern");
+        default:
+            return "";
+    }
+});
 
 const roleBusyUserIds = ref<Set<string>>(new Set()),
     actionError = ref("");
@@ -101,8 +124,15 @@ async function load() {
 }
 
 async function handleAdd() {
-    const username = addUsername.value.trim();
-    if (!username || adding.value || props.readonly) return;
+    if (!addUsername.value || adding.value || props.readonly) return;
+    if (addUsernameError.value) {
+        // 前端能判定的非法名不发请求（含前后空格/连字符/数字开头/超 32）：
+        // CP 也会 400，但没必要让用户等一个来回。
+        addError.value = addUsernameMessage.value;
+        return;
+    }
+    // 不再 trim：v29 规则已排除空格，静默 trim 会把非法输入伪装成成功。
+    const username = addUsername.value;
     adding.value = true;
     addError.value = "";
     try {
@@ -279,7 +309,7 @@ onMounted(() => {
                     <option value="VIEWER">{{ t("workspace.membersRoleViewer") }}</option>
                 </select>
                 <Button
-                    :disabled="adding || !addUsername.trim()"
+                    :disabled="adding || !addUsername || !!addUsernameError"
                     data-testid="ws-members-add-btn"
                     @click="() => void handleAdd()"
                 >
@@ -287,6 +317,14 @@ onMounted(() => {
                     {{ adding ? t("workspace.membersAdding") : t("workspace.membersAddSubmit") }}
                 </Button>
             </div>
+            <!-- 实时规则提示（v29）：非法名直接禁用提交，不必等一次 CP 400。 -->
+            <p
+                v-if="addUsername && addUsernameError"
+                class="text-sm text-destructive"
+                data-testid="ws-members-add-username-error"
+            >
+                {{ addUsernameMessage }}
+            </p>
             <p v-if="addError" class="text-sm text-destructive">{{ addError }}</p>
         </div>
 

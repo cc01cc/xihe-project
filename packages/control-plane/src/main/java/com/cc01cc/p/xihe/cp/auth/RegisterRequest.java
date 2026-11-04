@@ -20,9 +20,10 @@ public class RegisterRequest {
     private String name;
 
     /**
-     * PLAN-0565 ruling #7: optional at registration — when blank the CP derives
+     * PLAN-0565 ruling #7 + 决策 v29: optional at registration — when blank the CP derives
      * a default from the email local part. Format enforcement happens in
-     * {@link AuthService#registerUser} (400 USERNAME_INVALID / 409 USERNAME_TAKEN).
+     * {@link AuthService#registerUser} via the shared {@link NameFormat} rule
+     * (400 USERNAME_INVALID / 409 USERNAME_TAKEN); this DTO only caps the length.
      */
     @Size(max = 32)
     private String username;

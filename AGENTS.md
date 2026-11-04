@@ -33,7 +33,9 @@
 - Agent 质量回归门（PLAN-0512/0540，本地 lane）：`mise run gate:agent-quality -- --report <invariant.json> --report <behavior.json> --baseline <baseline.json>` 只读消费每个 lane 一份的评测报告（v2 gate 合并判定），退出码 `0/1/2/3` = `PASS/FAIL/NOT_EVALUATED/GATE_ERROR`（仅 PASS 退出 0）；阈值、required/expected task 集在 `packages/agent/evaluation/gate-v2.json`（含证据溯源），契约见 DEV-025，未接 CI。
 - Compose E2E（`mise run test:e2e:compose`，旧名 `test:e2e`）**已冻结注释（2026-10-07 docker 冻结裁定）**，不得用于验收或临时验证；Sandbox/host E2E 使用 `mise run test:e2e:host`，由 host runner 管理每轮隔离环境。清理/就绪要求见 [`DEV-020`](docs/i18n/zh-Hans/DEV-020-e2e-test-strategy.md) / [`DEV-021`](docs/i18n/zh-Hans/DEV-021-integration-test-strategy.md)。
 - 环境搭建、模块任务、资源清理和全栈排障见 [`DEV-002`](docs/i18n/zh-Hans/DEV-002-developer-guide.md)。
+- **栈构建新鲜度（PLAN-0662，运维口径）**：`health UP` 不代表跑的是当前代码；**重启/复用栈前先看 verdict** ——`mise run dev:host:status`（`-- --json` 字段 `runningCommit`/`headCommit`/`behind`/`stale`/`verdict` 是 lane 脚本的固定契约）。`verdict` 非 `fresh` 时 `stack-run.mjs cp` 会在 `mvn` 前默认 `clean compile` 重建（`--no-rebuild` 显式跳过并 WARN）；外部复用栈跑 E2E 时 runner 会断言 CP build commit == `XIHE_E2E_EXPECT_CP_COMMIT`（缺省取 HEAD），不匹配或读不到 `build-info` 一律 fail-fast。构建戳在 `classes/META-INF/build-info.properties`，启动日志有 `cp.build commit=… built=… dirty=…`。判据与实测见 `plans/PLAN-0662-dev-stack-freshness/`。
 - 根 `README.md`（英文 GitHub 门面）与 `docs/i18n/zh-Hans/README.md`（中文文档页）独立维护；架构图、Quick Start 命令、端口和技术栈摘要同批同步，功能状态表仅在中文版维护。`scripts/sync-readmes.sh` 只管理包 README symlink，不管理根 README。
+- **CP 构建目录按栈隔离（BL-253 L3）**：每栈一个 `C:/xihe-build/cp/<stackId>/<sha12>[-dirty]`（`XIHE_CP_BUILD_ROOT` 可改根），`.current` 记录该栈**最后一次启动**所用目录；`cpBuild.targetDirSource` = `pointer`/`newest`/`env`/`derived`（**新增字段，旧字段契约不变**）。保留只走显式清理 `mise run dev:host:cp-build:clean`（默认 dry-run，`-- --apply` 才删；每栈留最新 3 个 + 指针目标；绝不碰 legacy 目录）。回滚通道 = 显式 `XIHE_CP_TARGET_DIR`（优先级最高）。切布局后各栈**下次重启**首建约 60s，谁重启谁核 `verdict=fresh`+四端口。
 
 ## Architecture
 

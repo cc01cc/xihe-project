@@ -119,7 +119,8 @@ class JobTimeoutClampTest {
                 toolTimeoutService,
                 mock(com.cc01cc.p.xihe.cp.credentials.CredentialLeaseService.class),
                 mock(com.cc01cc.p.xihe.cp.skill.SkillReadService.class),
-                new com.cc01cc.p.xihe.cp.status.BuildVersion()
+                new com.cc01cc.p.xihe.cp.status.BuildVersion(),
+                mock(com.cc01cc.p.xihe.cp.chat.DelegationBudgetService.class)
         );
         ReflectionTestUtils.setField(controller, "runtimeBaseUrl", "http://localhost:9091");
 

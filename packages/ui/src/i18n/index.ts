@@ -850,6 +850,8 @@ const messages = {
             branchCreated: "分支已创建并切换",
             branchCreateFailed: "创建分支失败",
             branchLoadFailed: "无法加载对话分支，暂时无法发送消息",
+            // PLAN-0663 M2/T2.1：审批过期是终态——弹窗关闭，用非模态提示告知（不再要求用户点）。
+            approvalExpiredNotice: "这条审批已过期，已自动关闭；如需继续请重新发起。",
             providerAutoBound: "已自动绑定",
             providerBindingGuideTitle: "会话尚未绑定模型",
             providerBindingGuideProviderRequired:
@@ -2053,7 +2055,9 @@ const messages = {
         },
         validation: {
             principalNameRequired: "名称不能为空",
+            principalNameWhitespace: "名称前后不能有空格",
             principalNamePattern: "只能使用英文字母、中文汉字或数字，且不能以数字开头（不含空格）",
+            usernameTooLong: "用户名最长 32 个字符",
             nameAllowed: "允许：英文字母 / 中文汉字 / 数字，且不能以数字开头",
         },
         common: {
@@ -3140,6 +3144,10 @@ const messages = {
             branchCreated: "Branch created and selected",
             branchCreateFailed: "Failed to create branch",
             branchLoadFailed: "Branches could not be loaded; chat is temporarily unavailable",
+            // PLAN-0663 M2/T2.1: an expired approval is terminal — the modal closes and a
+            // non-modal notice explains it instead of asking for a decision that cannot be taken.
+            approvalExpiredNotice:
+                "This approval request expired and was closed automatically; start it again if you still need it.",
             providerAutoBound: "Auto-bound",
             providerBindingGuideTitle: "This session has no model binding",
             providerBindingGuideProviderRequired:
@@ -4410,8 +4418,10 @@ const messages = {
         },
         validation: {
             principalNameRequired: "A name is required",
+            principalNameWhitespace: "No leading or trailing spaces allowed",
             principalNamePattern:
                 "Use only letters, Chinese characters or digits, and do not start with a digit (no spaces)",
+            usernameTooLong: "Username must be at most 32 characters",
             nameAllowed:
                 "Allowed: letters / Chinese characters / digits, not starting with a digit",
         },

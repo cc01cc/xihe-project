@@ -141,7 +141,7 @@ class AgentChatIntegrationTest extends AbstractWireMockTest {
 
         var defaultTemplate = agentTemplateService.resolveForCreation(userId, workspaceId, null);
         AgentPrincipal principal = agentPrincipalService.createPrincipal(
-                userId, "Agent chat test principal", null, defaultTemplate.snapshot());
+                userId, "AgentChatTestPrincipal", null, defaultTemplate.snapshot());
         principalId = principal.getId().toString();
         principalPermissions = principal.getTemplateSnapshot().get("permissions");
         workspaceAgentRepository.saveAndFlush(new WorkspaceAgent(

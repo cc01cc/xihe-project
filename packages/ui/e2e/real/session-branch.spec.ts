@@ -70,7 +70,7 @@ test.describe("@host Session branch path", () => {
                 templates: JSON.stringify([
                     {
                         id: templateId,
-                        name: "Session Branch Agent",
+                        name: "SessionBranchAgent",
                         description: "Workspace-bound host fixture for branch path verification",
                         systemPrompt: "Respond briefly using only the current chat context.",
                         toolMode: "workspace",
@@ -85,7 +85,7 @@ test.describe("@host Session branch path", () => {
 
         const principalResponse = await request.post(`${CP_URL}/api/v1/agent-principals`, {
             headers: workspaceHeaders,
-            data: { scope: "WORKSPACE", name: "Session Branch Agent", templateId },
+            data: { scope: "WORKSPACE", name: "SessionBranchAgent", templateId },
         });
         expect(principalResponse.status(), await principalResponse.text()).toBe(201);
         principalId = ((await principalResponse.json()) as { principalId: string }).principalId;

@@ -52,7 +52,7 @@ test.describe("@host PLAN-0340 U1/U2 context sources", () => {
         const principalId = await provisionWorkspaceAgentPrincipal(
             request,
             { accessToken: sharedAuth, workspaceId: sharedWs },
-            { name: "Context Sources Fixture", actions: ["read", "write"] },
+            { name: "ContextSourcesFixture", actions: ["read", "write"] },
         );
         // PLAN-0369: rebind the Agent to this spec's workspace before the chat.
         await ensureAgentWorkspaceBinding(sharedWs);

@@ -107,20 +107,24 @@ describe("RegisterView username validation (PLAN-0621 F-05)", () => {
         await flushPromises();
     }
 
-    it.each(["Headed Second", "1abc", "ab-c", "a".repeat(33), "ab_c", "1王小明"])(
-        "blocks %s before any request and shows the rule hint",
-        async (username) => {
-            authMock.register.mockResolvedValue(true);
-            const wrapper = mountView();
-            await fillWithUsername(wrapper, username);
+    it.each([
+        "Headed Second",
+        "1abc",
+        "ab-c",
+        "abc-def",
+        " abc ",
+        "abc ",
+        "a".repeat(33),
+        "ab_c",
+        "1王小明",
+    ])("blocks %s before any request and shows the rule hint", async (username) => {
+        authMock.register.mockResolvedValue(true);
+        const wrapper = mountView();
+        await fillWithUsername(wrapper, username);
 
-            expect(
-                authMock.register,
-                "invalid username must not reach the CP",
-            ).not.toHaveBeenCalled();
-            expect(wrapper.text()).toContain("register.usernameInvalid");
-        },
-    );
+        expect(authMock.register, "invalid username must not reach the CP").not.toHaveBeenCalled();
+        expect(wrapper.text()).toContain("register.usernameInvalid");
+    });
 
     it.each(["王小明", "HeadedSecond", "abc123"])(
         "accepts %s under the 2026-11-04 naming rule",

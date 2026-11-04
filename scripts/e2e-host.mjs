@@ -7,6 +7,8 @@ import { rm } from 'node:fs/promises'
 import { createServer as createTcpServer, connect as connectTcp } from 'node:net'
 import { createServer as createHttpServer } from 'node:http'
 import { waitForAgentLlmReady } from './lib/agent-readiness.mjs'
+import { cpBuildRoot, resolveBuildTargetForStack } from './lib/cp-build-dir.mjs'
+import { cpTargetDir, externalCpBuildCheck, gitHead } from './lib/cp-build-info.mjs'
 import { llmEnv } from './lib/llm-env.mjs'
 import { decideCpBoot } from './lib/cp-boot-plan.mjs'
 import { stopPidIfOwned, E2E_PORT_MIN, E2E_PORT_MAX } from './lib/kill-guard.mjs'
@@ -1769,7 +1771,17 @@ async function runPlaywright() {
     playwrightTestArgs = merged
   }
   if (userGrep) {
-    playwrightTestArgs.push('--grep', `(?:${userGrep})[\\s\\S]*@host|@host[\\s\\S]*(?:${userGrep})`)
+    // 退化情形（PLAN-0658 实测）：用户 grep 本身**已经含 `@host`**（如 headed 场景
+    // `--grep 'R4@host'`）。此时再套 "(?:grep)…@host | @host…(?:grep)" 会要求标题里出现
+    // **两次** `@host`，结果 `No tests found`（假阴性，看起来像参数没透传）。它已满足车道门，
+    // 直接原样使用即可 —— 只加这一个分支，其它参数解析逻辑不变。
+    const alreadyLaneTagged = /@host/i.test(userGrep)
+    playwrightTestArgs.push(
+      '--grep',
+      alreadyLaneTagged
+        ? userGrep
+        : `(?:${userGrep})[\\s\\S]*@host|@host[\\s\\S]*(?:${userGrep})`,
+    )
   }
   if (reportPath) console.log(`[e2e-host] JSON report → ${reportPath}`)
   // PLAN-0579 R2: specs that restart the Runtime (journey-b B1) must spawn the
@@ -2312,6 +2324,46 @@ async function main() {
     // （隔离库名与 host root 都由它派生）。两者都打印，避免操作者误判。
     console.log(`[e2e-host] reuse: 传给 Playwright 的 XIHE_E2E_RUN_ID=${runIdForTests}（本次进程 runId=${e2eRunId} 仅用于日志）`)
   } else if (externalServer) {
+    // PLAN-0662 L5 (+ BL-253 L3): an external stack is exactly the case where "which commit is CP
+    // actually running" is invisible — and where a stale build manufactures fake product bugs
+    // (BL-240: a 20:01 build was read as `develop` 11 merges later). Assert before any spec runs.
+    //
+    // Which directory to check: with per-stack build dirs, "from env" is a guess. Ask the stack
+    // record instead — `XIHE_STACK_ID` → that stack's `.current` pointer (last start), then the
+    // newest build slot, then the computed path. It is still a record on disk, not JVM
+    // introspection; the log line names the source so the operator can see what was checked.
+    // Expected commit: XIHE_E2E_EXPECT_CP_COMMIT when declared, else this checkout's HEAD.
+    // A **missing** stamp fails too — an unstamped CP must not slip through this gate.
+    const externalStackId = (process.env.XIHE_STACK_ID ?? '').trim()
+    const cpBuildRootDir = cpBuildRoot({ env: process.env })
+    const headInfo = gitHead({ cwd: projectDir })
+    const target = externalStackId
+      ? resolveBuildTargetForStack({
+          root: cpBuildRootDir,
+          stackId: externalStackId,
+          env: process.env,
+          commit: headInfo.commit,
+          dirty: headInfo.dirty,
+        })
+      : {
+          targetDir: cpTargetDir({ projectRoot: projectDir, env: process.env }),
+          source: 'env',
+        }
+    console.log(
+      `[e2e-host] CP build dir check: ${target.targetDir} source=${target.source}`
+      + (externalStackId ? ` stack=${externalStackId}` : ' (no XIHE_STACK_ID: env-derived path)'),
+    )
+    const cpBuildCheck = externalCpBuildCheck({
+      targetDir: target.targetDir,
+      expectedCommit: process.env.XIHE_E2E_EXPECT_CP_COMMIT,
+      headCommit: headInfo.commit,
+    })
+    if (!cpBuildCheck.ok) {
+      console.error(`[e2e-host] CP build check FAILED (${cpBuildCheck.verdict}): ${cpBuildCheck.message}`)
+      process.exitCode = 1
+      return
+    }
+    console.log(`[e2e-host] ${cpBuildCheck.message}`)
     console.log('[e2e-host] XIHE_E2E_EXTERNAL_SERVER=1 set; assuming services are already running externally')
   }
 

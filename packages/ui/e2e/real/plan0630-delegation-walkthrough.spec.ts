@@ -269,7 +269,7 @@ test.describe("@host PLAN-0630 T5.9 real delegation walkthrough", () => {
 
         const principalResponse = await request.post(`${CP_URL}/api/v1/agent-principals`, {
             headers,
-            data: { scope: "WORKSPACE", name: "PLAN0630 Delegator", templateId },
+            data: { scope: "WORKSPACE", name: "PLAN0630Delegator", templateId },
         });
         expect(principalResponse.status(), await principalResponse.text()).toBe(201);
         const principalId = requireUuid(
@@ -364,6 +364,29 @@ test.describe("@host PLAN-0630 T5.9 real delegation walkthrough", () => {
         await page.goto(workspaceChatPath(wsId, parentSessionId), { waitUntil: "load" });
         await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: 60_000 });
         const modal = page.locator('[data-testid="modal-content"]');
+        /**
+         * PLAN-0663: "no approval modal on screen" is a state over time — the modal is portal-rendered
+         * and re-rendered by SSE, so a one-shot `toBeHidden()` can observe a detached node mid-update
+         * (`Received: undefined`) and flake. Poll the VISIBLE state instead.
+         */
+        const expectNoApprovalModal = async (
+            message: string,
+            options: { timeout?: number } = {},
+        ): Promise<void> => {
+            await expect
+                .poll(
+                    async () => {
+                        if ((await modal.count()) === 0) return "absent";
+                        const visible = await modal
+                            .first()
+                            .isVisible()
+                            .catch(() => false);
+                        return visible ? "visible" : "hidden";
+                    },
+                    { message, timeout: options.timeout ?? 10_000, intervals: [200, 400, 800] },
+                )
+                .not.toBe("visible");
+        };
 
         // ── Step 1: real agent calls spawn_agent → child session appears ──
         const childMarker = `T59-CHILD-${Date.now().toString(36)}`;
@@ -535,29 +558,52 @@ test.describe("@host PLAN-0630 T5.9 real delegation walkthrough", () => {
         };
         persist();
 
-        // ── Step 4: two spawn attempts in one parent run → the budget refusal ──
+        // ── Step 4: two spawn attempts in one parent run → the precheck refuses the over-budget one ──
+        // PLAN-0663 (BL-255): the delegation budget is evaluated BEFORE an approval request exists.
+        // The first spawn of this run still asks (and gets) the modal; once its child is in flight the
+        // second spawn is refused by the precheck — it must NOT open a second modal, and it must not
+        // leave a pending approval row behind (that residue is what BL-240 hit).
         await page.goto(workspaceChatPath(wsId, parentSessionId), { waitUntil: "load" });
         await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: 60_000 });
         await waitForIdleSession(request, headers, parentSessionId);
         const spawnInvocationsBefore = scalar(
             `SELECT count(*) FROM mcp_invocations WHERE session_id = '${parentSessionId}'::uuid`,
         );
+        const approvalsBefore = scalar(
+            `SELECT count(*) FROM approval_requests WHERE session_id = '${parentSessionId}'::uuid`,
+        );
+        expect(
+            scalar(
+                `SELECT count(*) FROM approval_requests WHERE session_id = '${parentSessionId}'::uuid AND state = 'pending'`,
+            ),
+            "step4 starts with no pending approval left over from the earlier steps",
+        ).toBe(0);
         await sendMessage(
             page,
             "请连续调用 spawn_agent 工具两次（必须两次都用工具调用）：第一次的 prompt 填「回复标记 T59-SPAWN-ONE」，第二次的 prompt 填「回复标记 T59-SPAWN-TWO」。两次调用之间不要等待，也不要只调用一次。",
         );
-        // The first spawn of this run passes the gate (still needs the modal), the second is
-        // refused by the delegation budget while the first child is in flight.
+        // PLAN-0663: with the budget already exhausted (step1's child still owns the single slot),
+        // BOTH spawn calls of this run are refused by the precheck — no approval modal may appear at
+        // all. The `approvalSeen` branch only covers the (rare) snapshot where a slot is still free:
+        // approval semantics are unchanged there, and the second call is still refused by the precheck.
         const approvalSeen = await modal
-            .waitFor({ state: "visible", timeout: 180_000 })
+            .waitFor({ state: "visible", timeout: 60_000 })
             .then(() => true)
             .catch(() => false);
         if (approvalSeen) {
             await modal.locator('[data-testid="approval-approve"]').click();
-            await expect(modal).toBeHidden({ timeout: 30_000 });
+            await expectNoApprovalModal("the approval modal closes once the decision is accepted", {
+                timeout: 30_000,
+            });
         }
         await waitForIdleSession(request, headers, parentSessionId);
 
+        const approvalsAfter = scalar(
+            `SELECT count(*) FROM approval_requests WHERE session_id = '${parentSessionId}'::uuid`,
+        );
+        const pendingAfter = scalar(
+            `SELECT count(*) FROM approval_requests WHERE session_id = '${parentSessionId}'::uuid AND state = 'pending'`,
+        );
         const refusedRows = psql(
             `SELECT to_jsonb(a) FROM audit_logs a WHERE action = 'agent_spawn_refused' AND resource_id = '${parentSessionId}' ORDER BY created_at DESC LIMIT 1`,
         );
@@ -572,15 +618,46 @@ test.describe("@host PLAN-0630 T5.9 real delegation walkthrough", () => {
         );
         steps.step4 = {
             description:
-                "second spawn_agent of the same run refused by the delegation budget (maxCount=1)",
+                "over-budget spawn_agent refused by the delegation-budget PRECHECK (no modal residue, no pending row)",
             parentSessionId,
+            approvalModalSeen: approvalSeen,
+            approvalsDelta: approvalsAfter - approvalsBefore,
+            pendingApprovalsAfter: pendingAfter,
             spawnInvocationDelta: spawnInvocationsAfter - spawnInvocationsBefore,
             spawnInvocationDump: invocationDump,
             agentSpawnRefusedAudit: refusedRows || "(no agent_spawn_refused row)",
         };
         persist();
+        expect(
+            approvalsAfter - approvalsBefore,
+            "an over-budget spawn never creates an approval request (only an allowed first call may)",
+        ).toBeLessThanOrEqual(approvalSeen ? 1 : 0);
+        expect(
+            pendingAfter,
+            "the over-budget spawn is refused BEFORE an approval request exists (no pending residue)",
+        ).toBe(0);
         expect(refusedRows, "CP wrote the durable agent_spawn_refused audit row").not.toBe("");
         expect(refusedRows, "the refusal reason is count_exceeded").toContain("count_exceeded");
+        // `details` is a JSON *text* column, so `to_jsonb(a)` double-escapes it: match the phase token
+        // rather than a quoted form, and require the pre-approval phase explicitly.
+        expect(
+            refusedRows,
+            "the refusal is decided by the pre-approval check (phase=precheck), not after a wasted approval",
+        ).toContain("precheck");
+        expect(
+            refusedRows,
+            "a precheck refusal must not be the post-approval (TOCTOU) branch",
+        ).not.toContain("post_approval");
+        // V1 (DOM): the durable facts are asserted above and persisted first; the modal must not be on
+        // screen either (single-shot read — the DOM is re-rendered by SSE, so a polled locator can
+        // observe a detached node mid-update and flake).
+        expect(
+            await modal
+                .first()
+                .isVisible()
+                .catch(() => false),
+            "an over-budget spawn must not leave (or open) an approval modal on screen",
+        ).toBe(false);
 
         // V14/T5.9 criterion: the refusal must be visible in the UI, not a silent failure.
         // Expand every tool card so a persisted result/error slab is rendered, then read the

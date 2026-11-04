@@ -272,7 +272,7 @@ class ChatControllerTest extends AbstractH2Test {
 
         var defaultTemplate = agentTemplateService.resolveForCreation(userId, workspaceId, null);
         AgentPrincipal principal = agentPrincipalService.createPrincipal(
-                userId, "Chat controller test principal", null, defaultTemplate.snapshot());
+                userId, "ChatControllerTestPrincipal", null, defaultTemplate.snapshot());
         var permissions = principal.getTemplateSnapshot().get("permissions");
         workspaceAgentRepository.saveAndFlush(new WorkspaceAgent(
                 principal.getId().toString(), workspaceId, permissions.deepCopy()));
@@ -643,7 +643,7 @@ class ChatControllerTest extends AbstractH2Test {
      */
     @Test
     void participantAttributionDoesNotCrossUnderConcurrentRuns() throws Exception {
-        String[] pair = seedMentionPair("Attribution Member");
+        String[] pair = seedMentionPair("AttributionMember");
         assertFalse(pair[0].equals(pair[1]), "the two runs must have different responders");
         java.util.concurrent.CountDownLatch release = new java.util.concurrent.CountDownLatch(1);
         agentServer.createContext("/internal/v1/agent/chat", exchange -> {
@@ -2137,7 +2137,7 @@ class ChatControllerTest extends AbstractH2Test {
         AgentPrincipal primary = primaryPrincipal();
         seedAgentParticipant(primary, SessionParticipant.ROLE_PRIMARY,
                 SessionParticipant.RESPOND_ALWAYS, 0);
-        AgentPrincipal member = seedMentionablePrincipal("Mention Target B");
+        AgentPrincipal member = seedMentionablePrincipal("MentionTargetB");
         seedAgentParticipant(member, SessionParticipant.ROLE_MEMBER,
                 SessionParticipant.RESPOND_WHEN_MENTIONED, 1);
         // The fan-out itself is covered by WakeFanOutServiceTest; here we assert the branch calls it.
@@ -2146,7 +2146,7 @@ class ChatControllerTest extends AbstractH2Test {
                         Mockito.any()))
                 .thenReturn(WakeFanOutService.WakeHandoff.enqueued("wake:mention:test", 1, 0));
 
-        ResponseEntity<Map> response = postChat("@Mention Target B 你来答这个");
+        ResponseEntity<Map> response = postChat("@MentionTargetB 你来答这个");
 
         assertEquals(HttpStatus.ACCEPTED, response.getStatusCode());
         Map body = response.getBody();
@@ -2172,7 +2172,7 @@ class ChatControllerTest extends AbstractH2Test {
 
         Mockito.verify(wakeFanOutService).fanOut(Mockito.eq(UUID.fromString(sessionId)),
                 Mockito.eq(workspaceId), Mockito.eq(userId), Mockito.eq(runId),
-                Mockito.contains("@Mention Target B"), Mockito.any(), Mockito.any());
+                Mockito.contains("@MentionTargetB"), Mockito.any(), Mockito.any());
     }
 
     @Test
@@ -2180,7 +2180,7 @@ class ChatControllerTest extends AbstractH2Test {
         AgentPrincipal primary = primaryPrincipal();
         seedAgentParticipant(primary, SessionParticipant.ROLE_PRIMARY,
                 SessionParticipant.RESPOND_ALWAYS, 0);
-        AgentPrincipal member = seedMentionablePrincipal("Mention Target C");
+        AgentPrincipal member = seedMentionablePrincipal("MentionTargetC");
         seedAgentParticipant(member, SessionParticipant.ROLE_MEMBER,
                 SessionParticipant.RESPOND_WHEN_MENTIONED, 1);
         Mockito.when(wakeFanOutService.fanOut(Mockito.any(), Mockito.anyString(),
@@ -2188,7 +2188,7 @@ class ChatControllerTest extends AbstractH2Test {
                         Mockito.any()))
                 .thenReturn(WakeFanOutService.WakeHandoff.enqueued("wake:mention:test", 1, 0));
 
-        ResponseEntity<Map> response = postChat("@Chat controller test principal 你来说");
+        ResponseEntity<Map> response = postChat("@ChatControllerTestPrincipal 你来说");
 
         assertEquals(HttpStatus.ACCEPTED, response.getStatusCode());
         Map body = response.getBody();
@@ -2207,7 +2207,7 @@ class ChatControllerTest extends AbstractH2Test {
         AgentPrincipal primary = primaryPrincipal();
         String primaryParticipantId = seedAgentParticipant(primary, SessionParticipant.ROLE_PRIMARY,
                 SessionParticipant.RESPOND_ALWAYS, 0);
-        AgentPrincipal member = seedMentionablePrincipal("Mention Target D");
+        AgentPrincipal member = seedMentionablePrincipal("MentionTargetD");
         seedAgentParticipant(member, SessionParticipant.ROLE_MEMBER,
                 SessionParticipant.RESPOND_WHEN_MENTIONED, 1);
         Mockito.when(wakeFanOutService.fanOut(Mockito.any(), Mockito.anyString(),
@@ -2217,7 +2217,7 @@ class ChatControllerTest extends AbstractH2Test {
 
         // The UI posts every ordinary message with asParticipantId = PRIMARY; that is the default
         // shape, not an explicit re-targeting, so an @ of the member must still win.
-        ResponseEntity<Map> response = postChat("@Mention Target D 你来答这个", primaryParticipantId);
+        ResponseEntity<Map> response = postChat("@MentionTargetD 你来答这个", primaryParticipantId);
 
         assertEquals(HttpStatus.ACCEPTED, response.getStatusCode());
         Map body = response.getBody();
@@ -2230,7 +2230,7 @@ class ChatControllerTest extends AbstractH2Test {
     void chat_withAsAnotherParticipant_isAnExplicitAnswerAndIsNotSuppressed() {
         seedAgentParticipant(primaryPrincipal(), SessionParticipant.ROLE_PRIMARY,
                 SessionParticipant.RESPOND_ALWAYS, 0);
-        AgentPrincipal member = seedMentionablePrincipal("Mention Target E");
+        AgentPrincipal member = seedMentionablePrincipal("MentionTargetE");
         String memberParticipantId = seedAgentParticipant(member, SessionParticipant.ROLE_MEMBER,
                 SessionParticipant.RESPOND_WHEN_MENTIONED, 1);
         Mockito.when(wakeFanOutService.fanOut(Mockito.any(), Mockito.anyString(),
@@ -2239,7 +2239,7 @@ class ChatControllerTest extends AbstractH2Test {
                 .thenReturn(WakeFanOutService.WakeHandoff.enqueued("wake:mention:test", 1, 0));
 
         // Answering *as* that member is an explicit targeting: the mention must not suppress it.
-        ResponseEntity<Map> response = postChat("@Mention Target E 你来答这个", memberParticipantId);
+        ResponseEntity<Map> response = postChat("@MentionTargetE 你来答这个", memberParticipantId);
 
         assertEquals(HttpStatus.ACCEPTED, response.getStatusCode());
         Map body = response.getBody();
@@ -2289,11 +2289,11 @@ class ChatControllerTest extends AbstractH2Test {
 
     @Test
     void chat_withAsPrimaryAndMentionOfAnother_handsTheTurnOverToTheMentionedParticipant() {
-        String[] pair = seedMentionPair("Mention Target F");
+        String[] pair = seedMentionPair("MentionTargetF");
         stubAgentSuccessReply();
 
         // The UI sends the PRIMARY *participant* id: that is the default form (decision v15).
-        ResponseEntity<Map> response = postChat("@Mention Target F 你来答这个", pair[0]);
+        ResponseEntity<Map> response = postChat("@MentionTargetF 你来答这个", pair[0]);
 
         assertEquals(HttpStatus.ACCEPTED, response.getStatusCode());
         Map body = response.getBody();
@@ -2308,10 +2308,10 @@ class ChatControllerTest extends AbstractH2Test {
 
     @Test
     void chat_withoutAs_mentioningAnother_handsTheTurnOverTheSameWay() {
-        String[] pair = seedMentionPair("Mention Target G");
+        String[] pair = seedMentionPair("MentionTargetG");
         stubAgentSuccessReply();
 
-        ResponseEntity<Map> response = postChat("@Mention Target G 你来答这个");
+        ResponseEntity<Map> response = postChat("@MentionTargetG 你来答这个");
 
         assertEquals(HttpStatus.ACCEPTED, response.getStatusCode());
         java.util.Objects.requireNonNull(response.getBody());
@@ -2321,14 +2321,14 @@ class ChatControllerTest extends AbstractH2Test {
 
     @Test
     void chat_whenTheHandoffCannotBeEnqueued_fallsBackToAnsweringInsteadOfLosingTheMessage() {
-        seedMentionPair("Mention Target H");
+        seedMentionPair("MentionTargetH");
         Mockito.when(wakeFanOutService.fanOut(Mockito.any(), Mockito.anyString(),
                         Mockito.anyString(), Mockito.anyString(), Mockito.anyString(), Mockito.any(),
                         Mockito.any()))
                 .thenReturn(WakeFanOutService.WakeHandoff.skipped("no_recipients"));
         stubAgentSuccessReply();
 
-        ResponseEntity<Map> response = postChat("@Mention Target H 你来答这个");
+        ResponseEntity<Map> response = postChat("@MentionTargetH 你来答这个");
 
         assertEquals(HttpStatus.ACCEPTED, response.getStatusCode());
         Map body = response.getBody();
@@ -2340,13 +2340,13 @@ class ChatControllerTest extends AbstractH2Test {
 
     @Test
     void chat_twoBackToBackMentions_bothHandoffsDrainAndTheMentionedAgentAnswersTwice() {
-        String[] pair = seedMentionPair("Mention Target I");
+        String[] pair = seedMentionPair("MentionTargetI");
         String memberPrincipalId = pair[2];
         stubAgentSuccessReply();
 
-        ResponseEntity<Map> first = postChat("@Mention Target I 第一条");
+        ResponseEntity<Map> first = postChat("@MentionTargetI 第一条");
         assertEquals(HttpStatus.ACCEPTED, first.getStatusCode());
-        ResponseEntity<Map> second = postChat("@Mention Target I 第二条");
+        ResponseEntity<Map> second = postChat("@MentionTargetI 第二条");
         assertEquals(HttpStatus.ACCEPTED, second.getStatusCode());
 
         // Both submissions are suppressed (the hand-off owns the turn) and both hand-offs must end in

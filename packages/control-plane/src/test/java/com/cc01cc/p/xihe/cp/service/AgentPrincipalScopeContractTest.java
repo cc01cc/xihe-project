@@ -126,7 +126,7 @@ class AgentPrincipalScopeContractTest extends AbstractIntegrationTest {
         grantDefaultService.ensureUserDefault(owner);
 
         ResponseEntity<Map> personal = create(globalToken(owner),
-                Map.of("name", "My own agent", "scope", "PERSONAL"));
+                Map.of("name", "MyOwnAgent", "scope", "PERSONAL"));
         assertEquals(HttpStatus.CREATED, personal.getStatusCode(), String.valueOf(personal.getBody()));
         Map<String, Object> body = personal.getBody();
         assertNotNull(body);
@@ -147,13 +147,13 @@ class AgentPrincipalScopeContractTest extends AbstractIntegrationTest {
         int principalCount = principalRepository.findAll().size();
 
         ResponseEntity<Map> workspaceScope = create(globalToken(owner),
-                Map.of("name", "Shared agent", "scope", "WORKSPACE"));
+                Map.of("name", "SharedAgent", "scope", "WORKSPACE"));
         assertEquals(HttpStatus.FORBIDDEN, workspaceScope.getStatusCode(),
                 "a plain USER must not create WORKSPACE-scope principals: "
                         + String.valueOf(workspaceScope.getBody()));
 
         ResponseEntity<Map> instanceScope = create(globalToken(owner),
-                Map.of("name", "Instance agent", "scope", "INSTANCE"));
+                Map.of("name", "InstanceAgent", "scope", "INSTANCE"));
         assertEquals(HttpStatus.FORBIDDEN, instanceScope.getStatusCode(),
                 "a plain USER must not create INSTANCE-scope principals: "
                         + String.valueOf(instanceScope.getBody()));
@@ -175,14 +175,14 @@ class AgentPrincipalScopeContractTest extends AbstractIntegrationTest {
         workspaces.add(workspace.getId());
 
         ResponseEntity<Map> withoutContext = create(globalToken(owner),
-                Map.of("name", "No context", "scope", "WORKSPACE"));
+                Map.of("name", "NoContext", "scope", "WORKSPACE"));
         assertEquals(HttpStatus.CONFLICT, withoutContext.getStatusCode(),
                 "WORKSPACE creation without a workspace context must fail explicitly: "
                         + String.valueOf(withoutContext.getBody()));
         assertEquals("WORKSPACE_CONTEXT_REQUIRED", withoutContext.getBody().get("code"));
 
         ResponseEntity<Map> created = create(workspaceToken(owner, workspace.getId(),
-                        WorkspaceRole.OWNER), Map.of("name", "Team agent", "scope", "WORKSPACE"));
+                        WorkspaceRole.OWNER), Map.of("name", "TeamAgent", "scope", "WORKSPACE"));
         assertEquals(HttpStatus.CREATED, created.getStatusCode(), String.valueOf(created.getBody()));
         UUID principalId = UUID.fromString((String) created.getBody().get("principalId"));
         principals.add(principalId);
@@ -191,13 +191,13 @@ class AgentPrincipalScopeContractTest extends AbstractIntegrationTest {
         assertNull(stored.getOwnerUserId(), "non-PERSONAL principals must not carry an owner");
 
         ResponseEntity<Map> instanceDenied = create(globalToken(owner),
-                Map.of("name", "Instance agent", "scope", "INSTANCE"));
+                Map.of("name", "InstanceAgent", "scope", "INSTANCE"));
         assertEquals(HttpStatus.FORBIDDEN, instanceDenied.getStatusCode(),
                 String.valueOf(instanceDenied.getBody()));
 
         addInstanceActionGrant(owner.getId(), "CREATE_ACCOUNT", "*");
         ResponseEntity<Map> instanceCreated = create(globalToken(owner),
-                Map.of("name", "Instance agent", "scope", "INSTANCE"));
+                Map.of("name", "InstanceAgent", "scope", "INSTANCE"));
         assertEquals(HttpStatus.CREATED, instanceCreated.getStatusCode(),
                 String.valueOf(instanceCreated.getBody()));
         UUID instancePrincipalId = UUID.fromString((String) instanceCreated.getBody().get("principalId"));
@@ -221,7 +221,7 @@ class AgentPrincipalScopeContractTest extends AbstractIntegrationTest {
         int principalCount = principalRepository.findAll().size();
 
         ResponseEntity<Map> injected = create(globalToken(admin), Map.of(
-                "name", "Forged owner",
+                "name", "ForgedOwner",
                 "scope", "PERSONAL",
                 "ownerUserId", victim.toString()));
         assertEquals(HttpStatus.BAD_REQUEST, injected.getStatusCode(),
@@ -229,7 +229,7 @@ class AgentPrincipalScopeContractTest extends AbstractIntegrationTest {
         assertEquals(principalCount, principalRepository.findAll().size());
 
         ResponseEntity<Map> created = create(globalToken(admin),
-                Map.of("name", "Admin personal", "scope", "PERSONAL"));
+                Map.of("name", "AdminPersonal", "scope", "PERSONAL"));
         assertEquals(HttpStatus.CREATED, created.getStatusCode(), String.valueOf(created.getBody()));
         UUID principalId = UUID.fromString((String) created.getBody().get("principalId"));
         principals.add(principalId);
@@ -253,8 +253,8 @@ class AgentPrincipalScopeContractTest extends AbstractIntegrationTest {
         workspaces.add(aliceWs.getId());
         workspaceFixture.bindWorkspaceRole(aliceWs.getId(), bob.getId(), WorkspaceRole.EDITOR);
 
-        UUID bobPersonal = createPersonal(bob, "Bob private");
-        UUID alicePersonal = createPersonal(alice, "Alice private");
+        UUID bobPersonal = createPersonal(bob, "BobPrivate");
+        UUID alicePersonal = createPersonal(alice, "AlicePrivate");
 
         ResponseEntity<Map> stolen = putCap(alice, aliceWs.getId(), bobPersonal, List.of());
         assertEquals(HttpStatus.FORBIDDEN, stolen.getStatusCode(),
@@ -328,7 +328,7 @@ class AgentPrincipalScopeContractTest extends AbstractIntegrationTest {
         int principalCount = principalRepository.findAll().size();
 
         // No MANAGE_WORKSPACE_AGENTS: the legacy CREATE_ACCOUNT path must be gone, so this is 403.
-        ResponseEntity<Map> denied = create(globalToken(plain), Map.of("name", "Legacy body"));
+        ResponseEntity<Map> denied = create(globalToken(plain), Map.of("name", "LegacyBody"));
         assertEquals(HttpStatus.FORBIDDEN, denied.getStatusCode(),
                 "an omitted scope must not fall back to the pre-0622 CREATE_ACCOUNT path: "
                         + String.valueOf(denied.getBody()));
@@ -342,7 +342,7 @@ class AgentPrincipalScopeContractTest extends AbstractIntegrationTest {
 
         ResponseEntity<Map> created = create(
                 workspaceToken(owner, workspace.getId(), WorkspaceRole.OWNER),
-                Map.of("name", "Legacy body with context"));
+                Map.of("name", "LegacyBodyWithContext"));
         assertEquals(HttpStatus.CREATED, created.getStatusCode(), String.valueOf(created.getBody()));
         UUID principalId = UUID.fromString((String) created.getBody().get("principalId"));
         principals.add(principalId);
@@ -372,7 +372,7 @@ class AgentPrincipalScopeContractTest extends AbstractIntegrationTest {
 
     private UUID createInstancePrincipal(User creator) {
         AgentPrincipal principal = new AgentPrincipal();
-        principal.setName("Instance shared agent");
+        principal.setName("InstanceSharedAgent");
         principal.setScope("INSTANCE");
         principal.setTemplateSnapshot(objectMapper.createObjectNode());
         // Fixture hygiene: created_by_user_id has a FK to users; a random UUID violates it.

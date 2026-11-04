@@ -383,8 +383,13 @@ class UserAdminIntegrationTest extends AbstractIntegrationTest {
         assertEquals(HttpStatus.CONFLICT, duplicateUsername.getStatusCode());
         assertTrue(duplicateUsername.getBody().contains("USERNAME_TAKEN"));
 
+        // 决策 v29（2026-11-04）：大写与中文汉字现在是合法显式 username；非法样本改为「含空格」。
+        ResponseEntity<String> uppercaseUsername = post(
+                Map.of("email", actualEmail("another-upper@test.com"), "username", "BadName"), "/api/v1/users", adminToken);
+        assertEquals(HttpStatus.CREATED, uppercaseUsername.getStatusCode(), uppercaseUsername.getBody());
+
         ResponseEntity<String> invalidUsername = post(
-                Map.of("email", actualEmail("another2@test.com"), "username", "BadName"), "/api/v1/users", adminToken);
+                Map.of("email", actualEmail("another2@test.com"), "username", "Bad Name"), "/api/v1/users", adminToken);
         assertEquals(HttpStatus.BAD_REQUEST, invalidUsername.getStatusCode());
         assertTrue(invalidUsername.getBody().contains("USERNAME_INVALID"));
 

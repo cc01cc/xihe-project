@@ -201,7 +201,11 @@ defineExpose({ error });
                                     :disabled="isSystem"
                                     @update:model-value="toggleAtom(atom.name)"
                                 />
-                                <span class="font-mono text-xs">{{ atom.name }}</span>
+                                <!-- D51-37: 标签由服务端按 ?locale 解析，UI 不自建词表；wire 名保留为次级信息 -->
+                                <span class="text-sm">{{ atom.displayName ?? atom.name }}</span>
+                                <span class="font-mono text-[11px] text-muted-foreground">
+                                    {{ atom.name }}
+                                </span>
                                 <span v-if="atom.capability" class="text-xs text-muted-foreground">
                                     {{ t("settings.rolesEditorCapabilityBadge") }}
                                 </span>
@@ -228,7 +232,11 @@ defineExpose({ error });
                                     :disabled="isSystem"
                                     @update:model-value="toggleAtom(atom.name)"
                                 />
-                                <span class="font-mono text-xs">{{ atom.name }}</span>
+                                <!-- D51-37: 标签由服务端按 ?locale 解析，UI 不自建词表；wire 名保留为次级信息 -->
+                                <span class="text-sm">{{ atom.displayName ?? atom.name }}</span>
+                                <span class="font-mono text-[11px] text-muted-foreground">
+                                    {{ atom.name }}
+                                </span>
                             </label>
                         </div>
                     </div>

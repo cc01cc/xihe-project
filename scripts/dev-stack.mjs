@@ -33,6 +33,8 @@ import net from 'node:net';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { cargoTargetForStack } from './lib/stack-cargo-target.mjs';
+import { cpBuildRoot, resolveBuildTargetForStack } from './lib/cp-build-dir.mjs';
+import { cpBuildStatus, cpTargetDir, gitHead, shortSha } from './lib/cp-build-info.mjs';
 import { sweepOrphanProcesses } from './lib/stack-orphan.mjs';
 import { STACK_IDS, deriveStack, normalizeStackArg } from './lib/stack-ports.mjs';
 
@@ -58,6 +60,17 @@ function usage(exitCode = 2) {
   console.log('  --json           machine-readable output');
   console.log('  --all            status: overview of EVERY stack that has a pid file or a listening port');
   console.log('  --help           this message');
+  console.log('');
+  console.log('status adds `cpBuild` (PLAN-0662 L4; **field names are a contract** for lane scripts):');
+  console.log('  runningCommit   stamped commit of the classes this stack\'s CP runs (null = no stamp)');
+  console.log('  headCommit      git rev-parse HEAD of this checkout (null = git unavailable)');
+  console.log('  behind          git rev-list --count runningCommit..headCommit (null = unknown)');
+  console.log('  stale           true when the classes are provably not from HEAD (verdict stale|missing)');
+  console.log('  verdict         fresh | stale | missing | unverified (same vocabulary as the start gate)');
+  console.log('  targetDirSource pointer | newest | env | derived — where targetDir came from');
+  console.log('                  (pointer =该栈 .current 记录的最后一次启动目录；newest = 磁盘最新构建槽；');
+  console.log('                   env = 显式 XIHE_CP_TARGET_DIR；derived = 尚未构建时按 HEAD 推出的路径)');
+  console.log('  builtAt, dirty, targetDir, file   stamp metadata / where it was read from');
   process.exit(exitCode);
 }
 
@@ -198,6 +211,46 @@ function tableRows(rows, columns) {
   const lines = [];
   for (const column of columns) lines.push(column);
   return lines;
+}
+
+/**
+ * PLAN-0662 L4 + BL-253 L3: build freshness of **this stack's** CP build.
+ *
+ * With per-stack build dirs a single env-derived path is no longer the answer, so this reads the
+ * same facts the launcher wrote: the stack's `.current` pointer first, then the newest build slot
+ * on disk, then the computed target (explicit `XIHE_CP_TARGET_DIR` or derived from HEAD).
+ * `targetDirSource` says which of those answered, so an operator can tell "the stack's last start
+ * used this dir" from "we guessed what a start *would* use".
+ *
+ * Read-only: it never rebuilds and never touches a stack — it only reports `verdict`.
+ */
+function cpBuildFor(root = projectRoot, stackId = derived.stackId) {
+  const head = gitHead({ cwd: root });
+  const target = resolveBuildTargetForStack({
+    root: cpBuildRoot({ env: process.env }),
+    stackId,
+    env: process.env,
+    commit: head.commit,
+    dirty: head.dirty,
+  });
+  return cpBuildStatus({
+    targetDir: target.targetDir ?? cpTargetDir({ projectRoot: root, env: process.env }),
+    headCommit: head.commit,
+    cwd: root,
+    targetDirSource: target.source,
+  });
+}
+
+function formatCpBuild(cpBuild) {
+  return (
+    `commit=${shortSha(cpBuild.runningCommit) || '(none)'}`
+    + ` head=${shortSha(cpBuild.headCommit) || '(unknown)'}`
+    + ` behind=${cpBuild.behind ?? '?'} stale=${cpBuild.stale} verdict=${cpBuild.verdict}`
+    + ` built=${cpBuild.builtAt || '(none)'}`
+    + ` dirty=${cpBuild.dirty === null ? '?' : cpBuild.dirty}`
+    + ` source=${cpBuild.targetDirSource}`
+    + ` target=${cpBuild.targetDir}`
+  );
 }
 
 /* --------------------------------------------------------------- context */
@@ -444,6 +497,7 @@ async function status() {
   }
   const pgListening = await isPortListening(ports.postgres);
   const ok = rows.every((row) => row.alive && row.listening) && pgListening;
+  const cpBuild = cpBuildFor(projectRoot);
   if (args.json) {
     console.log(
       JSON.stringify(
@@ -454,6 +508,7 @@ async function status() {
           pidFile,
           pidFileExists: existsSync(pidFile),
           pg: { port: ports.postgres, listening: pgListening },
+          cpBuild,
           services: rows,
           ok,
         },
@@ -469,6 +524,7 @@ async function status() {
           `port=${String(row.port).padEnd(6)} listen=${row.listening} http=${row.httpStatus ?? '-'} ready=${row.ready}`,
       );
     }
+    console.log(`  cpBuild  ${formatCpBuild(cpBuild)}`);
     console.log(`  PostgreSQL port ${ports.postgres} listen=${pgListening}`);
     console.log(`[dev-stack] ${ok ? 'stack is up' : 'stack is not fully up'}`);
   }
@@ -487,6 +543,9 @@ async function status() {
  */
 async function statusAll() {
   const stacks = [];
+  // One CP build per checkout in the current layout (BL-253: stacks share the classes dir), so
+  // the overview prints it once and every live stack repeats it in its own row.
+  const cpBuild = cpBuildFor(projectRoot);
   for (const stackId of STACK_IDS) {
     let d;
     try {
@@ -519,17 +578,19 @@ async function statusAll() {
       pidFile: stackPidFile,
       pidFileExists: existsSync(stackPidFile),
       cargoTargetDir: cargoTarget ?? null,
+      cpBuild: cpBuildFor(projectRoot, d.stackId),
       pg: { port: p.postgres, listening: pgListening, database: d.database, composeProject: d.composeProject },
       services,
       ok: services.every((row) => row.listening) && pgListening,
     });
   }
   if (args.json) {
-    console.log(JSON.stringify({ action: 'status-all', projectRoot, stacks }, null, 2));
+    console.log(JSON.stringify({ action: 'status-all', projectRoot, cpBuild, stacks }, null, 2));
     if (stacks.some((stack) => !stack.ok)) process.exitCode = 1;
     return;
   }
   console.log(`[dev-stack] status --all cwd=${projectRoot}`);
+  console.log(`  cpBuild  ${formatCpBuild(cpBuild)}`);
   if (stacks.length === 0) console.log('  (no stack has a pid file or a listening port)');
   for (const stack of stacks) {
     console.log(
@@ -542,6 +603,7 @@ async function statusAll() {
           `http=${row.httpStatus ?? '-'} ready=${row.ready} pid=${row.pid ?? '-'}${row.alive ? '' : row.pid ? ' (record dead)' : ''}`,
       );
     }
+    console.log(`    cpBuild  ${formatCpBuild(stack.cpBuild)}`);
     console.log(`    PostgreSQL port ${stack.pg.port} listen=${stack.pg.listening}`);
   }
   if (stacks.some((stack) => !stack.ok)) process.exitCode = 1;

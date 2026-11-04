@@ -151,7 +151,7 @@ class CredentialBindingServiceIntegrationTest extends AbstractIntegrationTest {
         assertEquals("CREDENTIAL_NOT_FOUND", missingCredential.getCode());
 
         AgentPrincipal unbound = agentPrincipalService.createPrincipal(
-                creatorId.toString(), "unbound-agent", null, snapshot("[{\"actionClass\":\"read\"}]"));
+                creatorId.toString(), "unboundAgent", null, snapshot("[{\"actionClass\":\"read\"}]"));
         principalIds.add(unbound.getId());
         CpApiException missingBinding = assertThrows(CpApiException.class, () ->
                 credentialBindingService.bindCredentialAtoms(creatorId.toString(), fixture.workspaceId,
@@ -273,7 +273,7 @@ class CredentialBindingServiceIntegrationTest extends AbstractIntegrationTest {
         credentialBindingService.bindCredentialAtoms(creatorId.toString(), fixture.workspaceId,
                 fixture.principalId, List.of(fixture.credentialResource));
         AgentPrincipal unboundPeer = agentPrincipalService.createPrincipal(creatorId.toString(),
-                "unbound-peer", null, snapshot("[{\"actionClass\":\"read\"}]"));
+                "unboundPeer", null, snapshot("[{\"actionClass\":\"read\"}]"));
         principalIds.add(unboundPeer.getId());
 
         assertThrows(com.cc01cc.p.xihe.cp.config.CpApiException.class,
@@ -315,7 +315,7 @@ class CredentialBindingServiceIntegrationTest extends AbstractIntegrationTest {
                 + "{\"actionClass\":\"credential_manage\",\"resource\":\"" + manageResource + "\"},"
                 + "{\"actionClass\":\"credential_use\",\"resource\":\"" + useResource + "\"}]");
         AgentPrincipal principal = agentPrincipalService.createPrincipal(
-                creatorId.toString(), "binding-agent", null, snapshot("[{\"actionClass\":\"read\"}]"));
+                creatorId.toString(), "bindingAgent", null, snapshot("[{\"actionClass\":\"read\"}]"));
         principalIds.add(principal.getId());
         UUID workspaceUuid = UUID.fromString(workspaceId);
         if (withCapBinding) {

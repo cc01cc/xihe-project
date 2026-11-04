@@ -102,6 +102,36 @@ describe("WorkspaceMembersPanel", () => {
         expect(apiMock.listWorkspaceMembers).toHaveBeenCalledTimes(2);
     });
 
+    it("blocks a username outside the shared name rule before any request (v29)", async () => {
+        // v23/v29：username 与主体名同规则。含前后空格不静默 trim，符号/数字开头同样拦在前端。
+        const wrapper = await mountPanel();
+        const input = wrapper.find('[data-testid="ws-members-add-input"]');
+        const button = wrapper.find('[data-testid="ws-members-add-btn"]');
+        const hint = () => wrapper.find('[data-testid="ws-members-add-username-error"]');
+
+        await input.setValue(" bad name ");
+        await flushPromises();
+        expect(button.attributes("disabled")).toBeDefined();
+        expect(hint().text()).toContain("名称前后不能有空格");
+
+        await input.setValue("abc-def");
+        await flushPromises();
+        expect(button.attributes("disabled")).toBeDefined();
+        expect(hint().text()).toContain("只能使用英文字母、中文汉字或数字");
+
+        await input.setValue("a".repeat(33));
+        await flushPromises();
+        expect(button.attributes("disabled")).toBeDefined();
+        expect(hint().text()).toContain("用户名最长 32 个字符");
+
+        await input.setValue("王小明");
+        await flushPromises();
+        expect(hint().exists()).toBe(false);
+        expect(button.attributes("disabled")).toBeUndefined();
+
+        expect(apiMock.addWorkspaceMember).not.toHaveBeenCalled();
+    });
+
     it("surfaces the ruling-6 copy for unknown usernames", async () => {
         const { ApiError } = await import("../../../../composables/api");
         apiMock.addWorkspaceMember.mockRejectedValue(new ApiError("USER_NOT_FOUND"));

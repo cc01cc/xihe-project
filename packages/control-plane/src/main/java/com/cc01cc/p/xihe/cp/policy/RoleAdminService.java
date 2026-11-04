@@ -81,16 +81,22 @@ public class RoleAdminService {
         this.dbLockTimeout = dbLockTimeout;
     }
 
-    /** {@code GET /api/v1/roles/catalog}: 18 atoms (15 action + 3 capability) with scope class. */
+    /** Default-locale overload (callers that do not carry a request locale). */
     @Transactional(readOnly = true)
     public RoleAdminViews.CatalogView catalog() {
+        return catalog(null);
+    }
+
+    /** {@code GET /api/v1/roles/catalog}: every action atom + capability atom with scope class. */
+    @Transactional(readOnly = true)
+    public RoleAdminViews.CatalogView catalog(String locale) {
         List<RoleAdminViews.AtomView> atoms = new ArrayList<>();
         // Order matters for the UI: action atoms first, then the capability atoms.
         for (String name : PermissionAtomCatalog.actionAtoms()) {
-            atoms.add(RoleAdminViews.AtomView.of(PermissionAtomCatalog.atom(name)));
+            atoms.add(RoleAdminViews.AtomView.of(PermissionAtomCatalog.atom(name), locale));
         }
         for (String name : PermissionAtomCatalog.capabilityAtoms()) {
-            atoms.add(RoleAdminViews.AtomView.of(PermissionAtomCatalog.atom(name)));
+            atoms.add(RoleAdminViews.AtomView.of(PermissionAtomCatalog.atom(name), locale));
         }
         return new RoleAdminViews.CatalogView(atoms,
                 List.of(AccessScope.INSTANCE, AccessScope.WORKSPACE));
@@ -255,7 +261,8 @@ public class RoleAdminService {
         // Stable order regardless of how the atoms were supplied: the UI diffs this list.
         List<RoleAdminViews.AtomView> atoms = atomNames.stream()
                 .sorted(java.util.Comparator.naturalOrder())
-                .map(name -> RoleAdminViews.AtomView.of(PermissionAtomCatalog.atom(name)))
+                .map(name -> RoleAdminViews.AtomView.of(PermissionAtomCatalog.atom(name),
+                        PermissionAtomLabels.DEFAULT_LOCALE))
                 .toList();
         return new RoleAdminViews.RoleView(role.getId(), role.getName(), role.getDisplayName(),
                 role.getDescription(), role.isSystem(), atoms, bindingCount);

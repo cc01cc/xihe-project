@@ -1,7 +1,6 @@
 package com.cc01cc.p.xihe.cp.service;
 
 import com.cc01cc.p.xihe.cp.chat.SessionWakeupService;
-import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.config.DbLockTimeout;
 import com.cc01cc.p.xihe.cp.context.service.EventStoreService;
 import com.cc01cc.p.xihe.cp.entity.Session;
@@ -16,7 +15,6 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import com.cc01cc.p.xihe.cp.logging.LogRedactor;
 import org.mockito.ArgumentCaptor;
-import org.springframework.http.HttpStatus;
 
 import java.util.Optional;
 import java.util.UUID;
@@ -31,6 +29,7 @@ import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 /**
@@ -78,6 +77,10 @@ class WakeDispatchServiceTest {
         agent = new SessionParticipant(SESSION_ID, "AGENT", UUID.randomUUID(), "MEMBER", 20,
                 "MENTION", "ALWAYS");
         when(participants.findById(PARTICIPANT_ID)).thenReturn(Optional.of(agent));
+        // PLAN-0660 T2.1: the speak-as gate now answers with a value, so every test that reaches the
+        // AGENT branch needs a default. Refusal cases override this stub.
+        when(participantService.judgeSpeakAs(anyString(), anyString(), anyString(), anyString()))
+                .thenReturn(SessionParticipantService.SpeakDecision.permit());
     }
 
     @Test
@@ -93,11 +96,30 @@ class WakeDispatchServiceTest {
     }
 
     @Test
+    void agentRefusalIsAResultNotAnException() {
+        // PLAN-0660 T3.2: the refusal must come back as a value — no exception may leave fire(), and
+        // the durable refused row must be written in the same (still committable) transaction.
+        // Deliberately no assertThrows here: the signature of this test IS the criterion.
+        when(participantService.judgeSpeakAs(anyString(), anyString(), anyString(), anyString()))
+                .thenReturn(SessionParticipantService.SpeakDecision.refused("PARTICIPANT_CAP_DENIED"));
+
+        WakeDispatchService.WakeFireResult result = service.fire(PARTICIPANT_ID, "mention", ROUND, SESSION_ID, null);
+
+        assertEquals("refused", result.outcome());
+        assertFalse(result.dispatched());
+        verify(wakeupService, never()).wakeupAs(anyString(), anyString(), anyString(), anyString(),
+                anyString(), any(), anyString(), any());
+        verifyNoInteractions(chatRuns);
+        assertAuditOutcome("refused");
+    }
+
+    @Test
     void systemTriggeredStillNeedsAuthorization() {
-        org.mockito.Mockito.doThrow(new CpApiException(HttpStatus.FORBIDDEN,
-                "PARTICIPANT_IMPERSONATION_FORBIDDEN", "no"))
-                .when(participantService).authorizeAsParticipant(anyString(), anyString(), anyString(),
-                        anyString());
+        // PLAN-0660 T2.1: the gate answers with a refusal VALUE (it used to throw across the
+        // transactional boundary, which is what poisoned the shared transaction).
+        when(participantService.judgeSpeakAs(anyString(), anyString(), anyString(), anyString()))
+                .thenReturn(SessionParticipantService.SpeakDecision
+                        .refused("PARTICIPANT_IMPERSONATION_FORBIDDEN"));
 
         WakeDispatchService.WakeFireResult result = service.fire(PARTICIPANT_ID, "schedule", ROUND, SESSION_ID, null);
 
@@ -109,6 +131,12 @@ class WakeDispatchServiceTest {
 
     @Test
     void humanRecipientIsNotifiedNotRun() {
+        // PLAN-0660 T3.1: make the fake speak-as gate actually refuse, the way it always does in
+        // production for another human (SessionParticipantService:334-340). Before the fix this drove
+        // the recipient to "refused", so the case now really fails if the HUMAN branch ever moves back
+        // behind the authorization.
+        when(participantService.judgeSpeakAs(anyString(), anyString(), anyString(), anyString()))
+                .thenReturn(SessionParticipantService.SpeakDecision.refused("PARTICIPANT_CAP_DENIED"));
         SessionParticipant human = new SessionParticipant(SESSION_ID, "HUMAN", UUID.randomUUID(),
                 "MEMBER", 30, "MENTION", "ALWAYS");
         human.setId(PARTICIPANT_ID);
@@ -121,9 +149,36 @@ class WakeDispatchServiceTest {
         assertEquals("notify", result.outcome());
         assertFalse(result.dispatched(), "人=通知：a HUMAN recipient never gets a run");
         assertEquals(3, cursor.getMentionCount(), "the cursor advances server-side (R7)");
+        verify(participantService, never()).judgeSpeakAs(anyString(), anyString(), anyString(),
+                anyString());
+        verify(participantService, never()).authorizeAsParticipant(anyString(), anyString(), anyString(),
+                anyString());
         verify(wakeupService, never()).wakeupAs(anyString(), anyString(), anyString(), anyString(),
                 anyString(), any(), anyString(), any());
+        verifyNoInteractions(chatRuns);
         assertAuditOutcome("notify");
+    }
+
+    @Test
+    void participantFromAnotherSessionIsRefusedNotNotified() {
+        // PLAN-0660 T1.3: a foreign participantId must not be notified/counted in this session's
+        // round. The speak-as gate used to be the only participant↔session binding; the HUMAN branch
+        // no longer reaches it, so fire() owns that check now.
+        SessionParticipant foreign = new SessionParticipant(UUID.randomUUID(), "HUMAN", UUID.randomUUID(),
+                "MEMBER", 30, "MENTION", "ALWAYS");
+        foreign.setId(PARTICIPANT_ID);
+        when(participants.findById(PARTICIPANT_ID)).thenReturn(Optional.of(foreign));
+        SessionParticipantCursor cursor = new SessionParticipantCursor(PARTICIPANT_ID, 5L, 0);
+        when(cursors.findById(PARTICIPANT_ID)).thenReturn(Optional.of(cursor));
+
+        WakeDispatchService.WakeFireResult result = service.fire(PARTICIPANT_ID, "mention", ROUND, SESSION_ID, null);
+
+        assertEquals("refused", result.outcome(), "a participant of another session is not a delivery target");
+        assertEquals(0, cursor.getMentionCount(), "a foreign participant must not advance this cursor");
+        verify(wakeupService, never()).wakeupAs(anyString(), anyString(), anyString(), anyString(),
+                anyString(), any(), anyString(), any());
+        verifyNoInteractions(chatRuns);
+        assertAuditOutcome("refused");
     }
 
     @Test
@@ -179,7 +234,7 @@ class WakeDispatchServiceTest {
         WakeDispatchService.WakeFireResult result = service.fire(PARTICIPANT_ID, "schedule", ROUND, SESSION_ID, null);
 
         assertTrue(result.dispatched());
-        verify(participantService).authorizeAsParticipant(eq("owner-1"), eq("ws-1"),
+        verify(participantService).judgeSpeakAs(eq("owner-1"), eq("ws-1"),
                 eq(SESSION_ID.toString()), eq(PARTICIPANT_ID.toString()));
     }
 

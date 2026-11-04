@@ -2,7 +2,6 @@ package com.cc01cc.p.xihe.cp.service;
 
 import com.cc01cc.p.xihe.cp.chat.DelegationChainWalker;
 import com.cc01cc.p.xihe.cp.chat.SessionWakeupService;
-import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.config.DbLockTimeout;
 import com.cc01cc.p.xihe.cp.context.service.EventStoreService;
 import com.cc01cc.p.xihe.cp.entity.ChatRun;
@@ -128,20 +127,37 @@ public class WakeDispatchService {
                     "session is gone", null, parentRunId);
             return new WakeFireResult(false, null, "refused");
         }
-        // D23-08: the wake path carries the SAME authorization as the owner's --as.
-        try {
-            participantService.authorizeAsParticipant(session.getUserId(), session.getWorkspaceId(),
-                    sessionId.toString(), participantId.toString());
-        } catch (CpApiException denied) {
+        // PLAN-0660 T1.3 (I4): the delivery target must belong to THIS session. Until now the only
+        // place that bound participant↔session was the speak-as gate below (`findByIdAndSessionId`);
+        // HUMAN recipients no longer pass through it, so the binding is checked here — a foreign
+        // participantId must never be notified, counted, or audited into another session's round.
+        if (!sessionId.equals(participant.getSessionId())) {
             audit(sessionId, participantId, triggerSource, wakeRoundId, "refused",
-                    "authorization: " + denied.getCode(), null, parentRunId);
+                    "cross_session: participant does not belong to this session", null, parentRunId);
             return new WakeFireResult(false, null, "refused");
         }
-
+        // 人=通知 (0618/0630 frozen): a HUMAN recipient only gets a notification. The criterion is
+        // "the delivery target exists, is enabled and lives in this session" (above) — NOT "may this
+        // subject speak", which is what D23-08 answers and is always false for another human.
         if (SessionParticipant.KIND_HUMAN.equals(participant.getPrincipalKind())) {
             notifyHuman(sessionId, participant, triggerSource, wakeRoundId, parentRunId);
             return new WakeFireResult(false, null, "notify");
         }
+
+        // D23-08: waking an AGENT writes chat_runs.agent_principal_id, so it carries the SAME
+        // authorization as the owner's --as. The judgment comes back as a VALUE (PLAN-0660 T2.1):
+        // catching an exception that escaped the inner transactional method is what marked this
+        // shared transaction rollback-only, so a plain refusal surfaced as UnexpectedRollbackException
+        // at commit time and swallowed the round.
+        SessionParticipantService.SpeakDecision speak = participantService.judgeSpeakAs(
+                session.getUserId(), session.getWorkspaceId(), sessionId.toString(),
+                participantId.toString());
+        if (!speak.allowed()) {
+            audit(sessionId, participantId, triggerSource, wakeRoundId, "refused",
+                    "authorization: " + speak.code(), null, parentRunId);
+            return new WakeFireResult(false, null, "refused");
+        }
+
         String policy = participant.getRespondPolicy() == null
                 ? SessionParticipant.RESPOND_WHEN_MENTIONED : participant.getRespondPolicy();
         if (SessionParticipant.RESPOND_MUTED.equals(policy)) {

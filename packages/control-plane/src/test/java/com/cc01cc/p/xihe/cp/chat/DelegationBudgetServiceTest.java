@@ -369,4 +369,74 @@ class DelegationBudgetServiceTest {
                 () -> budget.usageFor(root));
         assertEquals("DELEGATION_POLICY_INVALID", refused.getCode());
     }
+
+    // ------------------------------------------------- PLAN-0663 pre-approval precheck
+
+    /** Root session + its parent run, wired so the id-based precheck can load both. */
+    private ChatRun rootRun(ChatRun parentRun) {
+        when(runs.findById(any())).thenReturn(Optional.of(parentRun));
+        return parentRun;
+    }
+
+    @Test
+    void precheckRefusesOverBudgetCountBeforeAnyApprovalWithThePrecheckPhase() throws Exception {
+        policy("{\"maxCount\":1}");
+        Session root = session(UUID.randomUUID(), null, null, ROOT_PRINCIPAL);
+        Session live = childOf(root);
+        inFlight.put(live.getId(), true);
+        ChatRun parentRun = rootRun(run());
+
+        DelegationRefusedException refused = assertThrows(DelegationRefusedException.class,
+                () -> budget.precheckBeforeApproval(root.getId().toString(),
+                        parentRun.getId().toString(), "tc"));
+
+        assertEquals("DELEGATION_LIMIT_EXCEEDED", refused.getCode(),
+                "the wire error code is unchanged (PLAN-0648/0630 contract)");
+        assertTrue(refused.auditDetail().contains("\"reason\":\"count_exceeded\""),
+                refused.auditDetail());
+        assertTrue(refused.auditDetail().contains("\"phase\":\"precheck\""),
+                "operators must be able to tell 'never asked' from 'approved then refused'");
+    }
+
+    @Test
+    void precheckPassesWhenTheBudgetIsStillAvailable() throws Exception {
+        policy("{\"maxCount\":2}");
+        Session root = session(UUID.randomUUID(), null, null, ROOT_PRINCIPAL);
+        Session live = childOf(root);
+        inFlight.put(live.getId(), true);
+        ChatRun parentRun = rootRun(run());
+
+        // Must not throw: the approval gate is allowed to park an approval request.
+        budget.precheckBeforeApproval(root.getId().toString(), parentRun.getId().toString(), "tc");
+    }
+
+    @Test
+    void precheckRefusesWhenDelegationIsDisabled() throws Exception {
+        policy("{\"maxCount\":0}");
+        Session root = session(UUID.randomUUID(), null, null, ROOT_PRINCIPAL);
+        ChatRun parentRun = rootRun(run());
+
+        DelegationRefusedException refused = assertThrows(DelegationRefusedException.class,
+                () -> budget.precheckBeforeApproval(root.getId().toString(),
+                        parentRun.getId().toString(), "tc"));
+        assertTrue(refused.auditDetail().contains("\"reason\":\"delegation_disabled\""),
+                refused.auditDetail());
+        assertTrue(refused.auditDetail().contains("\"phase\":\"precheck\""), refused.auditDetail());
+    }
+
+    @Test
+    void theAuthoritativeGateStillReportsThePostApprovalPhase() throws Exception {
+        policy("{\"maxCount\":1}");
+        Session root = session(UUID.randomUUID(), null, null, ROOT_PRINCIPAL);
+        Session live = childOf(root);
+        inFlight.put(live.getId(), true);
+
+        DelegationRefusedException refused = assertThrows(DelegationRefusedException.class,
+                () -> budget.requireWithinBudget(root, run(), "tc"));
+
+        assertTrue(refused.auditDetail().contains("\"reason\":\"count_exceeded\""),
+                refused.auditDetail());
+        assertTrue(refused.auditDetail().contains("\"phase\":\"post_approval\""),
+                "the locked TOCTOU re-check keeps its own phase so the two refusals never look alike");
+    }
 }

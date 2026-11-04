@@ -287,6 +287,19 @@ export const useAgentStore = defineStore("agent", () => {
                 }
                 if (generation === storeGeneration) void refreshPendingApprovals(true);
                 return response;
+            } catch (error) {
+                // PLAN-0663 M2/T2.1: `expired` is a terminal approval state too. Retire the request
+                // here so the modal cannot stay on screen asking for a decision that can no longer be
+                // taken; the caller still gets the error and explains it without a modal.
+                if (
+                    generation === storeGeneration &&
+                    error instanceof ApiError &&
+                    error.problem.code === "APPROVAL_EXPIRED"
+                ) {
+                    removeApprovalRequest(requestId, "expired");
+                    void refreshPendingApprovals(true);
+                }
+                throw error;
             } finally {
                 if (decisionTokens.get(requestId) === token) {
                     decisionTokens.delete(requestId);

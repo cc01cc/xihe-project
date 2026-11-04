@@ -79,7 +79,7 @@ test.describe("@host PLAN-0508 transport telemetry relay and diagnostics", () =>
         // AgentAuth uses `accessToken` while JourneyContext exposes `authToken`.
         const agentAuth = { accessToken: ctx.authToken, workspaceId: ctx.workspaceId };
         const principalId = await provisionWorkspaceAgentPrincipal(request, agentAuth, {
-            name: "Transport Agent",
+            name: "TransportAgent",
         });
         sessionId = await createSessionWithPrincipal(request, agentAuth, {
             principalId,

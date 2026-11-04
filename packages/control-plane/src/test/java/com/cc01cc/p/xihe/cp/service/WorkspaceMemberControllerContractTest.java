@@ -56,6 +56,8 @@ class WorkspaceMemberControllerContractTest extends AbstractIntegrationTest {
     @Autowired private AccessRoleRepository accessRoleRepository;
     @Autowired private AccessRoleBindingRepository accessRoleBindingRepository;
     @Autowired private AuthzContext authzContext;
+    /** PLAN-0651 T1.3 (A7): the bypass is an action atom now, so the fixture must materialize. */
+    @Autowired private com.cc01cc.p.xihe.cp.policy.RoleGrantMaterializer roleGrantMaterializer;
 
     private UUID ownerId;
     private UUID workspaceId;
@@ -115,10 +117,17 @@ class WorkspaceMemberControllerContractTest extends AbstractIntegrationTest {
         assertEquals("MEMBER_ALREADY_EXISTS", code(duplicate));
 
         // Unknown username → 404 USER_NOT_FOUND (ruling #6 copy is a UI mapping).
+        // v23/v29: the handle must first satisfy the shared name rule, so "unknown" is exercised
+        // with a well-shaped-but-unregistered username, and the shape-invalid one is 400.
         ResponseEntity<Map> unknown = request(HttpMethod.POST, path,
-                Map.of("username", "no-such-user", "role", "VIEWER"), ownerToken, true, Map.class);
+                Map.of("username", "nosuchuser", "role", "VIEWER"), ownerToken, true, Map.class);
         assertEquals(HttpStatusCode.valueOf(404), unknown.getStatusCode());
         assertEquals("USER_NOT_FOUND", code(unknown));
+
+        ResponseEntity<Map> invalidShape = request(HttpMethod.POST, path,
+                Map.of("username", "no-such-user", "role", "VIEWER"), ownerToken, true, Map.class);
+        assertEquals(HttpStatusCode.valueOf(400), invalidShape.getStatusCode());
+        assertEquals("INVALID_NAME_FORMAT", code(invalidShape));
 
         // Role input is limited to EDITOR|VIEWER (OWNER/legacy values are 400).
         assertEquals(HttpStatusCode.valueOf(400),
@@ -312,6 +321,10 @@ class WorkspaceMemberControllerContractTest extends AbstractIntegrationTest {
                     .orElseThrow();
             accessRoleBindingRepository.save(new AccessRoleBinding(role.getId(), "user",
                     adminUser.getId(), AccessScope.INSTANCE, null, null));
+            // PLAN-0651 T1.3 (A7): the service now evaluates the materialized
+            // MANAGE_WORKSPACE_MEMBERS atom instead of reading cap:instance:admin, so the fixture
+            // must materialize the role's atoms (the binding row alone is not enough).
+            roleGrantMaterializer.materializeSubject("user", adminUser.getId(), null, null);
             authzContext.invalidate(adminUser.getId());
         }
         return adminUser;

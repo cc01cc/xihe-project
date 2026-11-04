@@ -254,10 +254,10 @@ class WorkspaceAgentMemoryControllerContractTest extends AbstractIntegrationTest
         workspaceFixture.bindWorkspaceRole(workspaceId.toString(), userId.toString(), WorkspaceRole.EDITOR);
         workspaceFixture.bindWorkspaceRole(otherWorkspaceId.toString(), userId.toString(), WorkspaceRole.EDITOR);
 
-        principalId = newPrincipal("Memory agent");
+        principalId = newPrincipal("MemoryAgent");
         bindingRepository.saveAndFlush(new WorkspaceAgent(principalId.toString(), workspaceId.toString(),
                 objectMapper.readTree("[{\"actionClass\":\"read\"}]")));
-        otherPrincipalId = newPrincipal("Other workspace agent");
+        otherPrincipalId = newPrincipal("OtherWorkspaceAgent");
         bindingRepository.saveAndFlush(new WorkspaceAgent(otherPrincipalId.toString(), otherWorkspaceId.toString(),
                 objectMapper.readTree("[{\"actionClass\":\"read\"}]")));
         addGrant("read", "*");

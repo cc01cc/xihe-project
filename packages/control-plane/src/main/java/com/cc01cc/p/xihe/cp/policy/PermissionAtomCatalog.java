@@ -102,7 +102,11 @@ public final class PermissionAtomCatalog {
             // "tool writes are denied by default". Scope class stays `both`: memory is isolated by
             // (principal, workspace), so a workspace-scoped grant is meaningful (an instance-scoped
             // one means "in every workspace", the same shape as workspace:admin).
-            ToolFaceRegistry.ACTION_MEMORY_WRITE);
+            ToolFaceRegistry.ACTION_MEMORY_WRITE,
+            // PLAN-0651 M1 (D51-26/D51-27): management atoms replacing the coarse
+            // instance-administrator bypass on the agent-principal and member faces.
+            ToolFaceRegistry.ACTION_MANAGE_AGENT_PRINCIPALS,
+            ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_MEMBERS);
 
     private static final List<String> CAPABILITY_ATOM_NAMES = List.of(
             CAP_INSTANCE_SUPER, CAP_INSTANCE_ADMIN, CAP_WORKSPACE_ADMIN);
@@ -118,10 +122,35 @@ public final class PermissionAtomCatalog {
             // PLAN-0622 D8: "create your own agent" is a user capability; a workspace-scoped
             // binding of it would be meaningless, so it is instance-bindable only.
             ToolFaceRegistry.ACTION_OWN_AGENT,
+            // PLAN-0651 M1 (D51-26): instance-level agent-principal authority acts on the instance.
+            ToolFaceRegistry.ACTION_MANAGE_AGENT_PRINCIPALS,
             CAP_INSTANCE_SUPER,
             CAP_INSTANCE_ADMIN);
 
     private static final Map<String, Atom> ATOMS = buildAtoms();
+
+    /**
+     * PLAN-0651 D51-30: the <b>only</b> implication chain, and it is used <b>solely</b> by
+     * {@code RequesterAuthority.mayGrantCapability} (the escalation check). It is deliberately NOT
+     * applied to default sets: a built-in role receives N1–N10 through explicit seeds (greppable,
+     * auditable), and a custom role never inherits anything implicitly.
+     */
+    private static final Map<String, Set<String>> IMPLIES = Map.of(
+            CAP_INSTANCE_SUPER, Set.of(CAP_INSTANCE_ADMIN, CAP_WORKSPACE_ADMIN),
+            CAP_INSTANCE_ADMIN, Set.of(CAP_WORKSPACE_ADMIN));
+
+    /** True when holding {@code holder} also satisfies {@code target} in the grant-check sense. */
+    public static boolean implies(String holder, String target) {
+        return IMPLIES.getOrDefault(holder, Set.of()).contains(target);
+    }
+
+    /** The capability atoms whose holding implies {@code target} (empty when none). */
+    public static Set<String> impliedHolders(String target) {
+        return IMPLIES.entrySet().stream()
+                .filter(entry -> entry.getValue().contains(target))
+                .map(Map.Entry::getKey)
+                .collect(java.util.stream.Collectors.toUnmodifiableSet());
+    }
 
     private PermissionAtomCatalog() {
     }
@@ -185,6 +214,11 @@ public final class PermissionAtomCatalog {
         }
         forbidden.add(ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_AGENTS);
         forbidden.add(ToolFaceRegistry.ACTION_MANAGE_ROLES);
+        // PLAN-0651 D51-27: "bindable in both scopes" does NOT mean grantable to an agent
+        // principal. Every atom this plan adds answers an administrative face, so it joins the
+        // forbidden set explicitly — today these faces are always false for an agent (they can only
+        // come from a capability atom, and capability atoms are already forbidden above).
+        forbidden.add(ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_MEMBERS);
         return Set.copyOf(forbidden);
     }
 

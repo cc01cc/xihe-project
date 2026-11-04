@@ -6,7 +6,6 @@ import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.entity.SessionParticipant;
 import com.cc01cc.p.xihe.cp.entity.SessionParticipantCursor;
 import com.cc01cc.p.xihe.cp.entity.User;
-import com.cc01cc.p.xihe.cp.policy.CapabilityAuthorities;
 import com.cc01cc.p.xihe.cp.policy.GrantAuthorizationService;
 import com.cc01cc.p.xihe.cp.policy.PolicyRequest;
 import com.cc01cc.p.xihe.cp.policy.ToolFaceRegistry;
@@ -322,6 +321,44 @@ public class SessionParticipantService {
     @Transactional(readOnly = true)
     public SessionParticipant authorizeAsParticipant(String actorId, String workspaceId,
                                                      String sessionId, String asParticipantId) {
+        return authorizeAsParticipantInTransaction(actorId, workspaceId, sessionId, asParticipantId);
+    }
+
+    /**
+     * PLAN-0660 T2.1 (BL-238): the wake path needs the same D23-08 judgment as a <b>value</b>, not as
+     * an exception. The catch sits INSIDE this transactional method, so a refusal can never mark the
+     * caller's shared transaction rollback-only — that propagation is exactly what made
+     * {@code WakeDispatchService.fire()} fail at commit time with
+     * {@code UnexpectedRollbackException} and silently swallow the whole wake round.
+     *
+     * <p>One implementation: every check lives in {@link #authorizeAsParticipantInTransaction} and is
+     * shared with {@link #authorizeAsParticipant}; only the failure shape differs (value vs throw).</p>
+     */
+    @Transactional(readOnly = true)
+    public SpeakDecision judgeSpeakAs(String actorId, String workspaceId, String sessionId,
+                                      String asParticipantId) {
+        try {
+            authorizeAsParticipantInTransaction(actorId, workspaceId, sessionId, asParticipantId);
+            return SpeakDecision.permit();
+        } catch (CpApiException denied) {
+            return SpeakDecision.refused(denied.getCode());
+        }
+    }
+
+    /** The wake path's refusal as a value; {@code code} is the same code the throwing path carries. */
+    public record SpeakDecision(boolean allowed, String code) {
+        static SpeakDecision permit() {
+            return new SpeakDecision(true, null);
+        }
+
+        static SpeakDecision refused(String code) {
+            return new SpeakDecision(false, code);
+        }
+    }
+
+    private SessionParticipant authorizeAsParticipantInTransaction(String actorId, String workspaceId,
+                                                                   String sessionId,
+                                                                   String asParticipantId) {
         Session session = requireVisibleSession(actorId, workspaceId, sessionId);
         SessionParticipant row = participantRepository
                 .findByIdAndSessionId(parseUuid(asParticipantId, "PARTICIPANT_NOT_FOUND"), session.getId())
@@ -455,7 +492,18 @@ public class SessionParticipantService {
         if (actorId == null) {
             return false;
         }
-        if (actorId.equals(session.getUserId()) || CapabilityAuthorities.isInstanceAdmin()) {
+        if (actorId.equals(session.getUserId())) {
+            return true;
+        }
+        // PLAN-0651 T1.3 (D51-29): the instance-administrator bypass is an action atom now —
+        // MANAGE_WORKSPACE_MEMBERS at instance scope (ADMIN holds it through the seeded role).
+        // A8 deliberately keeps MANAGE_WORKSPACE_AGENTS for the workspace-scope branch so WS_OWNER
+        // keeps managing participants exactly as today.
+        boolean instanceAdministrator = grantAuthorizationService.allowsUserOnly(new PolicyRequest(
+                "manage_session_participants_instance",
+                List.of(ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_MEMBERS), List.of("*"),
+                ToolShape.OPAQUE, actorId, null, session.getId().toString()));
+        if (instanceAdministrator) {
             return true;
         }
         if (!workspaceService.isWorkspaceMember(workspaceId, actorId)) {

@@ -1,7 +1,9 @@
 package com.cc01cc.p.xihe.cp.service;
 
-import com.cc01cc.p.xihe.cp.policy.CapabilityAuthorities;
+import com.cc01cc.p.xihe.cp.policy.RequesterAuthority;
+import com.cc01cc.p.xihe.cp.policy.ToolFaceRegistry;
 import com.cc01cc.p.xihe.cp.audit.AuditLogger;
+import com.cc01cc.p.xihe.cp.auth.NameFormat;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.controller.MemberView;
 import com.cc01cc.p.xihe.cp.entity.User;
@@ -53,24 +55,27 @@ public class WorkspaceMemberService {
     private final WorkspaceMembershipService memberships;
     private final AuditLogger auditLogger;
     private final MaintenanceWriteFreeze writeFreeze;
+    /** PLAN-0651 T1.3 (A7): the instance-administrator bypass is an action atom, not a role name. */
+    private final RequesterAuthority requesterAuthority;
 
     public WorkspaceMemberService(WorkspaceRepository workspaceRepository,
             UserRepository userRepository,
             WorkspaceMembershipService memberships,
             AuditLogger auditLogger,
-            MaintenanceWriteFreeze writeFreeze) {
+            MaintenanceWriteFreeze writeFreeze,
+            RequesterAuthority requesterAuthority) {
         this.workspaceRepository = workspaceRepository;
         this.userRepository = userRepository;
         this.memberships = memberships;
         this.auditLogger = auditLogger;
         this.writeFreeze = writeFreeze;
+        this.requesterAuthority = requesterAuthority;
     }
 
     /** spec §3: GET list — OWNER/EDITOR see the list; VIEWER and outsiders do not. */
     @Transactional(readOnly = true)
-    public List<MemberView> listMembers(String workspaceId, String callerUserId,
-            String callerInstanceRole) {
-        Caller caller = authorize(workspaceId, callerUserId, callerInstanceRole);
+    public List<MemberView> listMembers(String workspaceId, String callerUserId) {
+        Caller caller = authorize(workspaceId, callerUserId);
         if (caller.workspaceRole() != null && "VIEWER".equals(caller.workspaceRole())) {
             throw forbidden();
         }
@@ -82,9 +87,9 @@ public class WorkspaceMemberService {
     /** spec §3: POST — OWNER only (instance ADMIN cannot add, ruling #3). */
     @Transactional
     public MemberView addMember(String workspaceId, String username, String role,
-            String callerUserId, String callerInstanceRole) {
+            String callerUserId) {
         writeFreeze.requireWritable("workspace member add");
-        Caller caller = authorize(workspaceId, callerUserId, callerInstanceRole);
+        Caller caller = authorize(workspaceId, callerUserId);
         requireOwner(caller);
         WorkspaceRole targetRole = requireAssignableRole(role);
         String targetUsername = requireUsername(username);
@@ -110,9 +115,9 @@ public class WorkspaceMemberService {
     /** spec §3: PATCH role — OWNER only; unique OWNER downgrade is rejected. */
     @Transactional
     public MemberView updateMemberRole(String workspaceId, String targetUserId, String role,
-            String callerUserId, String callerInstanceRole) {
+            String callerUserId) {
         writeFreeze.requireWritable("workspace member role change");
-        Caller caller = authorize(workspaceId, callerUserId, callerInstanceRole);
+        Caller caller = authorize(workspaceId, callerUserId);
         requireOwner(caller);
         WorkspaceRole newRole = requireAssignableRole(role);
         UUID targetId = requireTargetUserId(targetUserId);
@@ -136,10 +141,9 @@ public class WorkspaceMemberService {
 
     /** spec §3: DELETE — workspace OWNER, or instance-ADMIN emergency removal (ruling #3). */
     @Transactional
-    public void removeMember(String workspaceId, String targetUserId, String callerUserId,
-            String callerInstanceRole) {
+    public void removeMember(String workspaceId, String targetUserId, String callerUserId) {
         writeFreeze.requireWritable("workspace member removal");
-        Caller caller = authorize(workspaceId, callerUserId, callerInstanceRole);
+        Caller caller = authorize(workspaceId, callerUserId);
         boolean owner = "OWNER".equals(caller.workspaceRole());
         if (!owner && !caller.instanceAdmin()) {
             throw forbidden();
@@ -159,12 +163,18 @@ public class WorkspaceMemberService {
                 targetId, currentRole.canonicalName(), !owner);
     }
 
-    private Caller authorize(String workspaceId, String callerUserId, String callerInstanceRole) {
+    private Caller authorize(String workspaceId, String callerUserId) {
         requireWorkspaceId(workspaceId);
-        // PLAN-0610 W1b (R2-9): the instance-level bypass is a capability. The
-        // compatibility parameter stays for the audit/echo contract only.
-        boolean instanceAdmin = CapabilityAuthorities.isInstanceAdmin();
         UUID workspaceUuid = UUID.fromString(workspaceId);
+        // PLAN-0651 T1.3 (A7, D51-26): the instance-administrator bypass is the instance-scope
+        // MANAGE_WORKSPACE_MEMBERS atom (ADMIN/SUPER_ADMIN hold it through the seeded roles). It
+        // replaces the former capability read and the transitional instance-role string. WS_OWNER
+        // deliberately does NOT hold this atom: it keeps managing members through its workspace
+        // role (the owner branch below), so this atom only restores the previous instance-admin
+        // reach — it grants no new workspace-scope power.
+        boolean instanceAdmin = callerUserId != null
+                && requesterAuthority.holdsActionAtom(UUID.fromString(callerUserId),
+                        ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_MEMBERS, workspaceUuid);
         Optional<WorkspaceRole> membership = callerUserId == null ? Optional.empty()
                 : memberships.roleOf(workspaceUuid, UUID.fromString(callerUserId));
         if (membership.isEmpty()) {
@@ -228,6 +238,10 @@ public class WorkspaceMemberService {
         if (username == null || username.isBlank()) {
             throw invalidRequest();
         }
+        // 用户 2026-11-03/04 裁定（v23/v29）：username 只允许 字母/汉字/数字 且不得数字开头、
+        // 不得含空格与符号。对**原始输入**判定（不 trim）：含空格即非法，静默 trim 会把前导空格
+        // 当成合法。长度上限取 username 面的 32（列宽 VARCHAR(32)），不是 agent 名的 64。
+        NameFormat.require(username, "username", NameFormat.USERNAME_MAX_LENGTH);
         return username.trim();
     }
 

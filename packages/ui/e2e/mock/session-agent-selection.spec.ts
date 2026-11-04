@@ -18,7 +18,7 @@ test("new Workspace Session is created only after selecting a bound Agent", asyn
                 agents: [
                     {
                         principalId: "agent-1",
-                        name: "Research Agent",
+                        name: "ResearchAgent",
                         templateId: null,
                         templateName: "Research",
                         createdAt: new Date().toISOString(),
@@ -156,7 +156,7 @@ test("creates a principal separately, binds an explicit cap, and confirms unbind
             // previous frame ("正在加载智能体…") — the freeze this case used to report.
             const bindingRow = {
                 principalId: "agent-1",
-                name: "Research Agent",
+                name: "ResearchAgent",
                 templateId: null,
                 templateName: null,
                 createdAt: new Date().toISOString(),
@@ -215,7 +215,7 @@ test("creates a principal separately, binds an explicit cap, and confirms unbind
     const dialog = page.getByTestId("workspace-agent-management-dialog");
     await expect(dialog).toBeVisible();
 
-    await page.getByTestId("agent-principal-name").fill("Research Agent");
+    await page.getByTestId("agent-principal-name").fill("ResearchAgent");
     await page.getByTestId("agent-principal-create").click();
     await expect(page.getByTestId("unbound-agent-principal")).toContainText("agent-1");
     await page.getByTestId("agent-cap-read").check();
@@ -224,10 +224,10 @@ test("creates a principal separately, binds an explicit cap, and confirms unbind
     await page.getByTestId("agent-principal-bind").click();
 
     const binding = page.getByTestId("workspace-agent-agent-1");
-    await expect(binding).toContainText("Research Agent");
+    await expect(binding).toContainText("ResearchAgent");
     await expect(binding).toContainText("src/*");
     expect(createBody).toEqual({
-        name: "Research Agent",
+        name: "ResearchAgent",
         // PLAN-0622 M1: the create request carries the Agent scope, and the panel always sends
         // the scope it resolved from the capability projection (default WORKSPACE).
         scope: "WORKSPACE",
@@ -342,7 +342,7 @@ test("a created principal stays visible while binding is disabled up front with 
     await expect(scope).toHaveValue("PERSONAL");
     await expect(scope.locator("option")).toHaveCount(1);
 
-    await page.getByTestId("agent-principal-name").fill("Created without manage grant");
+    await page.getByTestId("agent-principal-name").fill("CreatedWithoutManageGrant");
     await page.getByTestId("agent-principal-create").click();
     await expect(page.getByTestId("unbound-agent-principal")).toContainText("agent-created");
 
@@ -398,7 +398,7 @@ async function stubAgentTemplates(page: Page): Promise<void> {
 function agentViewRow(overrides: Record<string, unknown> = {}): Record<string, unknown> {
     return {
         principalId: "agent-1",
-        name: "Research Agent",
+        name: "ResearchAgent",
         templateId: null,
         templateName: null,
         createdAt: new Date().toISOString(),
@@ -464,7 +464,7 @@ test("a failed agent list resets the loading state, names the failure, and retry
 
     failing = false;
     await page.getByTestId("workspace-agent-refresh").click();
-    await expect(page.getByTestId("workspace-agent-agent-1")).toContainText("Research Agent");
+    await expect(page.getByTestId("workspace-agent-agent-1")).toContainText("ResearchAgent");
     await expect(page.getByTestId("agent-error")).toHaveCount(0);
 });
 
@@ -492,7 +492,7 @@ test("one contract-violating row degrades instead of freezing the whole list", a
     await openAgentsPanel(page);
 
     const row = page.getByTestId("workspace-agent-agent-1");
-    await expect(row).toContainText("Research Agent");
+    await expect(row).toContainText("ResearchAgent");
     await expect(row).toContainText("无工具权限");
     await expect(page.getByText("正在加载智能体…")).toHaveCount(0);
     expect(pageErrors).toEqual([]);
