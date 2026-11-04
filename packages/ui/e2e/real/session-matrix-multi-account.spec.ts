@@ -16,12 +16,12 @@
  *
  * 覆盖：
  *  1. R1-a 双账户互见 —— A（owner）发送后**A 的** messages 读面可见（wire + durable）；
- *  2. R1-a2〔fixme · BL-237〕B（受邀参与者）应能读同一会话消息；
+ *  2. R1-a2〔PLAN-0668 转正〕B（受邀参与者）应能读同一会话消息；
  *  3. R1-b〔fixme · BL-238〕@ 对方 → 人类参与者 wake 被 owner 身份授权拒绝，通知永不投递；
  *  4. R1-c 抄送对方 → 202 + B 收到旁听通知（cursor 前进；cc 不走 wake 授权，故可达）；
  *  5. R1-d 旁观者（同工作区 VIEWER，非参与者）403 SESSION_ACCESS_DENIED；外部账户
  *     在租户层就被拦（403 WORKSPACE_FORBIDDEN）；
- *  6. R1-e〔fixme · BL-237 下游〕B 登录后 UI 看到消息气泡。
+ *  6. R1-e〔PLAN-0668 转正〕B 登录后 UI 看到消息气泡；R1-a2n 负向矩阵。
  *
  * 硬约束（xh-host-e2e-pitfalls）：serial + retries 0；无固定 sleep；断言只认用户可感知结果与
  * 产品权威读面（messages/participants API），不做 in-page 绕过。
@@ -284,7 +284,7 @@ test.describe("@host PLAN-0658 R1 多人类账户", () => {
     // 404 SESSION_NOT_FOUND；而 `SessionParticipantService.requireVisibleSession` 已允许
     // owner/受邀 HUMAN/管理者读名册 ⇒「被 @ 到却看不到消息」。
     // 本项记录**期望行为**：读面加参与者分支后无需改断言即可转绿。
-    test.fixme("R1-a2 受邀参与者应能读会话消息（BL-237：requireCurrent owner-only）", async ({
+    test("R1-a2 受邀参与者应能读会话消息（BL-237：requireCurrent owner-only）", async ({
         request,
     }) => {
         const response = await request.get(messagesPath(rootBranchId), {
@@ -301,6 +301,28 @@ test.describe("@host PLAN-0658 R1 多人类账户", () => {
         ).toBe(true);
     });
 
+    // PLAN-0668 D5：读面负向矩阵（与 R1-a2 同 describe，API 级）。实现已由 M1 的
+    // SessionReadAccess.requireReadable 收敛；这里只钉"不可见一律 not-区分 404 / 未登录 401"。
+    test("R1-a2n 非参与者/跨工作区/未登录均不可读消息（not-区分）", async ({ request }) => {
+        // 1) 同 workspace 的 VIEWER 旁观者（不是 Session participant）
+        const bystanderRead = await request.get(messagesPath(rootBranchId), {
+            headers: inWorkspace(bystander, owner.workspaceId),
+        });
+        expect(bystanderRead.status(), "非参与者消息读面").toBe(404);
+        expect(await problemCode(bystanderRead), "非参与者错误码").toBe("SESSION_NOT_FOUND");
+
+        // 2) 跨工作区：member 用自己 workspace 的上下文读 owner workspace 的 Session
+        const crossWorkspace = await request.get(messagesPath(rootBranchId), {
+            headers: inWorkspace(member, member.workspaceId),
+        });
+        expect(crossWorkspace.status(), "跨工作区消息读面").toBe(404);
+        expect(await problemCode(crossWorkspace), "跨工作区错误码").toBe("SESSION_NOT_FOUND");
+
+        // 3) 未登录（不带 Authorization）
+        const unauthenticated = await request.get(messagesPath(rootBranchId));
+        expect(unauthenticated.status(), "未登录消息读面").toBe(401);
+        expect(await problemCode(unauthenticated), "未登录错误码").toBe("AUTHORIZATION_REQUIRED");
+    });
     // BL-238（2026-11-04 登记，B 类待裁定）：@ 人类参与者**永远叫不醒对方**。
     // `WakeFanOutService.runSerial` → `WakeDispatchService.fire()` 用
     // `authorizeAsParticipant(session.getUserId(), …, 参与人 id)` 做唤醒授权，即拿**会话 owner
@@ -390,7 +412,7 @@ test.describe("@host PLAN-0658 R1 多人类账户", () => {
     // BL-237 下游表现（同 R1-a2）：UI 的消息投影走 `GET /sessions/{id}/messages`，读面被
     // owner-only gate 挡住 ⇒ 受邀参与者登录后看不到会话内容（页签/输入框可能仍在）。
     // 读面放开即转绿。
-    test.fixme("R1-e B 登录后 UI 可见消息气泡（BL-237 下游：消息投影被 owner-only gate 挡住）", async ({
+    test("R1-e B 登录后 UI 可见消息气泡（BL-237 下游：消息投影被 owner-only gate 挡住）", async ({
         page,
     }) => {
         // 第二人类账户的浏览器上下文种子（PLAN-0560：角色只认 sessionStorage，

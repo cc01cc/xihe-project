@@ -286,7 +286,7 @@ test.describe("@host PLAN-0658 R8 刷新恢复（BL-228 守护）", () => {
 
     // BL-237：会话读面 owner-only（`SessionService.requireCurrent` 按 session.user_id 过滤）⇒
     // 受邀人类参与者刷新后读不到消息。本项记录**期望行为**：读面加参与者分支后自动转绿。
-    test.fixme("R8-3 第二人类账户刷新后应能看到同一条消息（BL-237）", async ({ page }) => {
+    test("R8-3 第二人类账户刷新后应能看到同一条消息（BL-237）", async ({ page }) => {
         seedMemberPage(page);
         await page.goto(workspaceChatPath(owner.workspaceId, sessionId));
         await expect(page.getByTestId("chat-input"), "composer mounts").toBeVisible({
