@@ -709,7 +709,8 @@ public class ChatController {
             ChatSubmissionService.Submission submission = chatSubmissionService.create(
                     runId, sessionId, userId, workspaceId, branchId, agentPrincipalId, idempotencyKey, requestHash,
                     provider, model, toolMode, session.getProviderConnectionId(), session.getConnectionRevision(),
-                    instanceId(), requestId, content, attachmentsJson, attachmentIds, asParticipantId);
+                    instanceId(), requestId, content, attachmentsJson, attachmentIds, asParticipantId,
+                    ChatDeliveryPayload.toJson(objectMapper, toParticipantIds, asParticipantId, ccParticipantIds));
             ChatRun chatRun = submission.run();
             if (!admission.isEmpty() && !admission.covers(chatRun.getProviderConnectionId(),
                     chatRun.getProvider(), chatRun.getModel())) {

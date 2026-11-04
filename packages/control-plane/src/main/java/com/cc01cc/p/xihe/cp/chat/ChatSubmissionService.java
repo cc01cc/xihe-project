@@ -160,10 +160,27 @@ public class ChatSubmissionService {
             Long connectionRevision, String leaseOwner, String requestId,
             String content, String attachmentsJson, List<String> attachmentIds,
             String asParticipantId) {
+        return create(runId, sessionId, userId, workspaceId, branchId, agentPrincipalId, idempotencyKey,
+                requestHash, provider, model, toolMode, providerConnectionId, connectionRevision,
+                leaseOwner, requestId, content, attachmentsJson, attachmentIds, asParticipantId, null);
+    }
+
+    /**
+     * PLAN-0665 M1/D3 (V120): same submission, plus the durable delivery audience (TO / CC
+     * participant ids as JSON) written onto the user Message. {@code deliveryJson == null} keeps the
+     * pre-V120 shape (no delivery record) for every non-composer caller.
+     */
+    @Transactional
+    public Submission create(String runId, String sessionId, String userId, String workspaceId,
+            String branchId, String agentPrincipalId, String idempotencyKey, String requestHash,
+            String provider, String model, String toolMode, String providerConnectionId,
+            Long connectionRevision, String leaseOwner, String requestId,
+            String content, String attachmentsJson, List<String> attachmentIds,
+            String asParticipantId, String deliveryJson) {
         Submission submission = persist(ChatRun.ORIGIN_USER_SUBMISSION, runId, sessionId, userId, workspaceId,
                 branchId, idempotencyKey, requestHash, provider, model, toolMode, providerConnectionId,
                 connectionRevision, leaseOwner, requestId, content, attachmentsJson, attachmentIds,
-                agentPrincipalId, false, Message.VISIBILITY_USER);
+                agentPrincipalId, false, Message.VISIBILITY_USER, deliveryJson);
         // R1 (PLAN-0623): record who answered. `asParticipantId` wins (already authorized by the
         // controller); otherwise the PRIMARY participant answers; a Session with neither keeps NULL —
         // the same "never invent a responder" rule the V92 backfill follows.
@@ -186,7 +203,7 @@ public class ChatSubmissionService {
         return persist(ChatRun.ORIGIN_USER_SUBMISSION, runId, sessionId, userId, workspaceId,
                 branchId, idempotencyKey, requestHash, provider, model, toolMode, providerConnectionId,
                 connectionRevision, leaseOwner, requestId, content, attachmentsJson, attachmentIds,
-                agentPrincipalId, true, Message.VISIBILITY_USER);
+                agentPrincipalId, true, Message.VISIBILITY_USER, null);
     }
 
     /**
@@ -223,7 +240,7 @@ public class ChatSubmissionService {
         return persist(ChatRun.ORIGIN_SCHEDULED, runId, sessionId, userId, workspaceId,
                 branchId, idempotencyKey, requestHash, provider, model, toolMode, providerConnectionId,
                 connectionRevision, leaseOwner, requestId, content, attachmentsJson, attachmentIds,
-                agentPrincipalId, false, messageVisibility);
+                agentPrincipalId, false, messageVisibility, null);
     }
 
     /**
@@ -462,7 +479,7 @@ public class ChatSubmissionService {
                 requestHash,
                 parentRun.getProvider(), parentRun.getModel(), parentRun.getToolMode(),
                 parentRun.getProviderConnectionId(), parentRun.getConnectionRevision(), null, requestId,
-                content, "[]", List.of(), childSession.getAgentPrincipalId(), false, Message.VISIBILITY_USER);
+                content, "[]", List.of(), childSession.getAgentPrincipalId(), false, Message.VISIBILITY_USER, null);
         // PLAN-0464 T2.1: the waiting link lives on the child run row itself.
         ChatRun childRun = created.run();
         childRun.setWaitingOnRunId(parentRun.getId().toString());
@@ -597,7 +614,7 @@ public class ChatSubmissionService {
                 parentRun.getUserId(), parentRun.getWorkspaceId(), childBranchId, idempotencyKey,
                 requestHash, parentRun.getProvider(), parentRun.getModel(), parentRun.getToolMode(),
                 parentRun.getProviderConnectionId(), parentRun.getConnectionRevision(), null, requestId,
-                task, "[]", List.of(), agentPrincipalId, false, Message.VISIBILITY_USER);
+                task, "[]", List.of(), agentPrincipalId, false, Message.VISIBILITY_USER, null);
         ChatRun childRun = created.run();
         childRun.setWaitingOnRunId(parentRun.getId().toString());
         // The waiting tool-call column is a 36-char uuid string, and settlement only compares it for
@@ -778,7 +795,7 @@ public class ChatSubmissionService {
                                 String toolMode, String providerConnectionId, Long connectionRevision,
                                 String leaseOwner, String requestId, String content, String attachmentsJson,
                                 List<String> attachmentIds, String requestedPrincipalId,
-                                boolean followUpAdmission, String messageVisibility) {
+                                boolean followUpAdmission, String messageVisibility, String deliveryJson) {
         Session session = bindOrValidateAgentSession(sessionId, userId, workspaceId, requestedPrincipalId);
         var requestSnapshot = apiRequestTemplates.admissionSnapshot(session);
         provider = session.getModelProvider();
@@ -835,6 +852,8 @@ public class ChatSubmissionService {
         userMessage.setRunId(runId);
         userMessage.setBranchId(branchId);
         userMessage.setAttachments(attachmentsJson);
+        // PLAN-0665 D3: the delivery audience is durable on the Message itself (nullable).
+        userMessage.setDelivery(deliveryJson);
         messageRepository.save(userMessage);
         chatRun.setUserMessageId(userMessage.getId().toString());
         chatRunRepository.save(chatRun);
