@@ -1110,7 +1110,11 @@ function closeRevertPreview() {
     revertError.value = null;
 }
 
-async function confirmRevert(acknowledgeTypeChanges: string[]) {
+async function confirmRevert(
+    acknowledgeTypeChanges: string[],
+    acknowledgeNestedRepos: string[] = [],
+    force = false,
+) {
     const sliceRef = revertPreviewSliceRef.value,
         sessionId = props.sessionId;
     const workspaceId = authStore.currentWorkspaceId;
@@ -1122,6 +1126,8 @@ async function confirmRevert(acknowledgeTypeChanges: string[]) {
             workspaceId,
             sliceRef,
             acknowledgeTypeChanges,
+            acknowledgeNestedRepos,
+            force,
         );
         // A session switch while the request was in flight drops the continuation: the result
         // dialog must not open over a different session.

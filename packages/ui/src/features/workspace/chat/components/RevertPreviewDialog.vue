@@ -26,7 +26,7 @@ const props = withDefaults(
 );
 
 const emit = defineEmits<{
-    confirm: [acknowledgeTypeChanges: string[]];
+    confirm: [acknowledgeTypeChanges: string[], acknowledgeNestedRepos: string[], force: boolean];
     close: [];
 }>();
 
@@ -36,6 +36,8 @@ const loading = ref(false),
     loadError = ref<string | null>(null),
     preview = ref<CheckpointPreview | null>(null);
 const typeConflictAck = ref(false),
+    forceNestedAck = ref(false),
+    nestedDriftAck = ref(false),
     expanded = ref(false),
     cancelButton = ref<HTMLButtonElement | null>(null);
 const retryButton = ref<HTMLButtonElement | null>(null);
@@ -58,6 +60,10 @@ const typeConflictIncomplete = computed(
         typeConflictPaths.value.length < (counts.value?.typeConflict ?? 0),
 );
 
+const nestedRepos = computed(() => preview.value?.nestedRepoAffected ?? []);
+const dirtyNestedRepos = computed(() => nestedRepos.value.filter((repo) => repo.dirty));
+const driftedNestedRepos = computed(() => nestedRepos.value.filter((repo) => repo.headMoved));
+
 const canSubmit = computed(
     () =>
         Boolean(preview.value) &&
@@ -65,6 +71,8 @@ const canSubmit = computed(
         !loadError.value &&
         !typeConflictIncomplete.value &&
         (!typeConflictRequired.value || typeConflictAck.value) &&
+        (dirtyNestedRepos.value.length === 0 || forceNestedAck.value) &&
+        (driftedNestedRepos.value.length === 0 || nestedDriftAck.value) &&
         !props.busy,
 );
 
@@ -92,6 +100,8 @@ async function loadPreview() {
     loadError.value = null;
     preview.value = null;
     typeConflictAck.value = false;
+    forceNestedAck.value = false;
+    nestedDriftAck.value = false;
     expanded.value = false;
     try {
         const result = await api.previewWorkspaceCheckpointRevert(workspaceId, sliceRef);
@@ -150,7 +160,14 @@ function handleClose() {
 
 function submit() {
     if (!preview.value || !canSubmit.value) return;
-    emit("confirm", typeConflictRequired.value ? typeConflictPaths.value : []);
+    // The acknowledgement list always covers every head-drifted repo the preview reported
+    // (ruling (a)); force is sent only when the user confirmed overwriting dirty repos.
+    emit(
+        "confirm",
+        typeConflictRequired.value ? typeConflictPaths.value : [],
+        driftedNestedRepos.value.map((repo) => repo.repoPath),
+        dirtyNestedRepos.value.length > 0 && forceNestedAck.value,
+    );
 }
 </script>
 
@@ -334,6 +351,61 @@ function submit() {
                     >
                         {{ t("chat.checkpointPreviewTypeConflictIncomplete") }}
                     </p>
+                    <div
+                        v-if="nestedRepos.length > 0"
+                        data-testid="revert-preview-nested-repos"
+                        class="space-y-2 rounded-lg border border-amber-500/40 bg-amber-500/5 p-2"
+                    >
+                        <p class="text-sm font-medium">
+                            {{ t("chat.checkpointNestedRepoImpactTitle") }}
+                        </p>
+                        <ul class="space-y-1 text-xs">
+                            <li
+                                v-for="repo in nestedRepos"
+                                :key="repo.repoPath"
+                                data-testid="revert-preview-nested-repo-row"
+                                class="flex flex-wrap items-center gap-1.5"
+                            >
+                                <span class="truncate font-mono">{{ repo.repoPath }}</span>
+                                <span
+                                    v-if="repo.dirty"
+                                    class="rounded bg-destructive/10 px-1 py-px text-destructive"
+                                >
+                                    {{ t("chat.checkpointNestedRepoDirty") }}
+                                </span>
+                                <span
+                                    v-if="repo.headMoved"
+                                    class="rounded bg-amber-500/15 px-1 py-px text-foreground"
+                                >
+                                    {{ t("chat.checkpointNestedRepoHeadMoved") }}
+                                </span>
+                            </li>
+                        </ul>
+                        <label
+                            v-if="dirtyNestedRepos.length > 0"
+                            class="flex items-start gap-2 text-sm"
+                        >
+                            <input
+                                v-model="forceNestedAck"
+                                data-testid="revert-preview-nested-force-ack"
+                                type="checkbox"
+                                class="mt-0.5 size-4 rounded border"
+                            />
+                            <span>{{ t("chat.checkpointNestedRepoForceAck") }}</span>
+                        </label>
+                        <label
+                            v-if="driftedNestedRepos.length > 0"
+                            class="flex items-start gap-2 text-sm"
+                        >
+                            <input
+                                v-model="nestedDriftAck"
+                                data-testid="revert-preview-nested-drift-ack"
+                                type="checkbox"
+                                class="mt-0.5 size-4 rounded border"
+                            />
+                            <span>{{ t("chat.checkpointNestedRepoDriftAck") }}</span>
+                        </label>
+                    </div>
                 </div>
 
                 <p

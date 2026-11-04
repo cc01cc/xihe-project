@@ -140,6 +140,8 @@ pub struct RestorePreview {
     pub commit: String,
     pub entries: Vec<RestorePreviewEntry>,
     pub counts: RestorePreviewCounts,
+    /// PLAN-0641 M3 (T4.3): undeclared nested repos this restore touches.
+    pub nested_repo_affected: Vec<NestedRepoAffected>,
 }
 
 /// One executed path of a [`RestoreResult`].
@@ -169,6 +171,8 @@ pub struct RestoreResult {
     pub duration_ms: u64,
     /// Executed paths that no longer match the target slice (concurrent write).
     pub suspects: Vec<String>,
+    /// PLAN-0641 M3 (T4.3): undeclared nested repos this restore touched.
+    pub nested_repo_affected: Vec<NestedRepoAffected>,
 }
 
 /// One blob read out of a slice tree (plain-text preview payload).
@@ -176,6 +180,27 @@ pub struct RestoreResult {
 pub struct SliceBlob {
     pub path: String,
     pub content: Vec<u8>,
+}
+
+/// PLAN-0641 M3 (T4.1): one undeclared nested repository touched by a restore plan.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NestedRepoAffected {
+    /// Workspace-relative POSIX path of the repository root.
+    pub repo_path: String,
+    /// Five-kind classification wire value (`nested|gitdir|submodule|bare|symlink`).
+    pub kind: &'static str,
+    /// The repository work tree has uncommitted changes (`status --porcelain` non-empty).
+    pub dirty: bool,
+    /// Clean repository whose restored content differs from its current HEAD tree.
+    pub head_moved: bool,
+}
+
+/// Result of one nested-repo probe (T4.1). `git_calls` is the zero-cost short
+/// circuit proof: an empty ancestor set must spend zero git processes.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct NestedRepoProbe {
+    pub affected: Vec<NestedRepoAffected>,
+    pub git_calls: usize,
 }
 
 /// Typed restore failures mapped by the endpoint layer
@@ -190,6 +215,16 @@ pub enum RestoreError {
 
     #[error("type changes must be acknowledged before restore: {}", paths.join(", "))]
     TypeChangesUnacknowledged { paths: Vec<String> },
+
+    /// PLAN-0641 M3 T4.2: an undeclared nested repo has uncommitted changes —
+    /// restoring would overwrite them permanently (scenario b). `force` passes.
+    #[error("nested repositories have uncommitted changes: {}", repos.join(", "))]
+    NestedRepoDirty { repos: Vec<String> },
+
+    /// PLAN-0641 M3 T4.2: clean repos whose content will differ from their HEAD
+    /// after the restore (scenario c) must be listed in `acknowledgeNestedRepos`.
+    #[error("nested repositories must be acknowledged before restore: {}", repos.join(", "))]
+    NestedReposUnacknowledged { repos: Vec<String> },
 
     #[error("checkpoint restore unavailable [{reason}]: {detail}")]
     Unavailable {
@@ -274,6 +309,114 @@ impl Drop for ScratchIndex {
 }
 
 impl ShadowGit {
+    /// PLAN-0641 M3 (T4.1): undeclared nested repositories touched by a restore
+    /// plan. For every affected path the nearest ancestor directory that carries
+    /// a `.git` marker is collected (declared roots are skipped — they are not
+    /// part of this root's slice); each repository then costs exactly two git
+    /// processes (`status --porcelain` + `rev-parse HEAD^{tree}`). An empty
+    /// ancestor set spends **zero** processes — the short circuit is surfaced as
+    /// [`NestedRepoProbe::git_calls`] so a test can prove it.
+    ///
+    /// HEAD drift (scenario c) is a **pure-read prediction**: the flattened blob
+    /// subtree stored in the target slice (`<commit>:<repo>`) is compared against
+    /// the repository's current `HEAD^{tree}` — nothing is written or staged.
+    pub async fn probe_nested_repos(
+        &self,
+        shadow: &Path,
+        work_tree: &Path,
+        slice_commit: &str,
+        paths: &[String],
+    ) -> Result<NestedRepoProbe> {
+        let declared = self.nested_declared_root_prefixes(work_tree);
+        let declared = |candidate: &str| {
+            let lowered = candidate.to_ascii_lowercase();
+            declared
+                .iter()
+                .any(|prefix| lowered == *prefix || lowered.starts_with(&format!("{prefix}/")))
+        };
+
+        // Nearest ancestor repository root per affected path (deduplicated).
+        let mut repo_paths: Vec<String> = Vec::new();
+        let mut seen: HashSet<String> = HashSet::new();
+        for path in paths {
+            let segments: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
+            for end in (1..segments.len()).rev() {
+                let candidate = segments[..end].join("/");
+                let absolute =
+                    work_tree.join(candidate.replace('/', std::path::MAIN_SEPARATOR_STR));
+                if !absolute.join(".git").exists() {
+                    continue;
+                }
+                if declared(&candidate) {
+                    break; // a declared root has its own chain — not this root's problem
+                }
+                if seen.insert(candidate.clone()) {
+                    repo_paths.push(candidate);
+                }
+                break;
+            }
+        }
+
+        let shadow_arg = shadow.to_string_lossy().replace('\\', "/");
+        let mut probe = NestedRepoProbe::default();
+        for repo in repo_paths {
+            let absolute = work_tree.join(repo.replace('/', std::path::MAIN_SEPARATOR_STR));
+            probe.git_calls += 2;
+            let porcelain = self
+                .run_git_checked(
+                    &["status", "--porcelain"],
+                    &self.null_config_env(),
+                    Some(&absolute),
+                    self.call_timeout,
+                )
+                .await
+                .map_err(|error| RestoreError::Failed(format!("nested repo {repo}: {error}")))?;
+            let dirty = !porcelain.is_empty();
+            let mut head_moved = false;
+            if !dirty {
+                match self
+                    .run_git_checked(
+                        &["rev-parse", "HEAD^{tree}"],
+                        &self.null_config_env(),
+                        Some(&absolute),
+                        self.call_timeout,
+                    )
+                    .await
+                {
+                    Ok(head_tree) => {
+                        let head_tree = String::from_utf8_lossy(&head_tree).trim().to_string();
+                        let target_tree = format!("{slice_commit}:{repo}");
+                        match self
+                            .run_git_checked(
+                                &["--git-dir", shadow_arg.as_str(), "rev-parse", &target_tree],
+                                &self.null_config_env(),
+                                None,
+                                self.call_timeout,
+                            )
+                            .await
+                        {
+                            Ok(target) => {
+                                head_moved = String::from_utf8_lossy(&target).trim() != head_tree;
+                            }
+                            // No flattened subtree in the target slice: nothing to compare.
+                            Err(_) => head_moved = false,
+                        }
+                    }
+                    // A repository without commits cannot prove equivalence.
+                    Err(_) => head_moved = true,
+                }
+            }
+            let kind = crate::nested_repo_kind::classify(work_tree, &repo);
+            probe.affected.push(NestedRepoAffected {
+                repo_path: repo,
+                kind: kind.as_wire(),
+                dirty,
+                head_moved,
+            });
+        }
+        Ok(probe)
+    }
+
     /// Read-only restore dry-run for one slice: every difference between the
     /// slice tree and the current workspace tree, with type changes flagged.
     pub async fn restore_preview(
@@ -298,6 +441,15 @@ impl ShadowGit {
             .await?;
         let target = self.resolve_slice_target(&context, slice_ref).await?;
         let planned = self.plan_restore(&context, &target).await?;
+        let affected_paths: Vec<String> = planned.iter().map(|entry| entry.path.clone()).collect();
+        let probe = self
+            .probe_nested_repos(
+                &context.shadow,
+                &context.work_tree,
+                &target.commit,
+                &affected_paths,
+            )
+            .await?;
         let entries: Vec<RestorePreviewEntry> = planned
             .iter()
             .map(|entry| RestorePreviewEntry {
@@ -314,6 +466,7 @@ impl ShadowGit {
             restore = counts.restore,
             delete = counts.delete,
             type_conflict = counts.type_conflict,
+            nested_repos = probe.affected.len(),
             "checkpoint restore preview computed"
         );
         Ok(RestorePreview {
@@ -321,6 +474,7 @@ impl ShadowGit {
             commit: target.commit,
             entries,
             counts,
+            nested_repo_affected: probe.affected,
         })
     }
 
@@ -338,8 +492,15 @@ impl ShadowGit {
         slice_ref: &str,
         acknowledge_type_changes: &[String],
     ) -> Result<RestoreResult> {
-        self.restore_execute_for_root(workspace_id, None, slice_ref, acknowledge_type_changes)
-            .await
+        self.restore_execute_for_root(
+            workspace_id,
+            None,
+            slice_ref,
+            acknowledge_type_changes,
+            false,
+            &[],
+        )
+        .await
     }
 
     /// PLAN-0639 M8: execute the restore of one slice of a **declared root**.
@@ -353,6 +514,8 @@ impl ShadowGit {
         root_id: Option<&str>,
         slice_ref: &str,
         acknowledge_type_changes: &[String],
+        force: bool,
+        acknowledge_nested_repos: &[String],
     ) -> Result<RestoreResult> {
         let started = Instant::now();
         let context = self
@@ -364,6 +527,39 @@ impl ShadowGit {
             .ok_or(RestoreError::RestoreLocked)?;
         let planned = self.plan_restore(&context, &target).await?;
         ensure_type_changes_acknowledged(&planned, acknowledge_type_changes)?;
+        // PLAN-0641 M3 (T4.2): the undeclared-nested-repo gate. Dirty repos block
+        // unless forced; clean-but-drifted repos must all be acknowledged so a
+        // partial confirmation can never slip through (lead ruling (a)).
+        let affected_paths: Vec<String> = planned.iter().map(|entry| entry.path.clone()).collect();
+        let probe = self
+            .probe_nested_repos(
+                &context.shadow,
+                &context.work_tree,
+                &target.commit,
+                &affected_paths,
+            )
+            .await?;
+        let dirty: Vec<String> = probe
+            .affected
+            .iter()
+            .filter(|repo| repo.dirty)
+            .map(|repo| repo.repo_path.clone())
+            .collect();
+        if !dirty.is_empty() && !force {
+            return Err(RestoreError::NestedRepoDirty { repos: dirty });
+        }
+        let unacknowledged: Vec<String> = probe
+            .affected
+            .iter()
+            .filter(|repo| repo.head_moved)
+            .map(|repo| repo.repo_path.clone())
+            .filter(|repo| !acknowledge_nested_repos.iter().any(|acked| acked == repo))
+            .collect();
+        if !unacknowledged.is_empty() {
+            return Err(RestoreError::NestedReposUnacknowledged {
+                repos: unacknowledged,
+            });
+        }
 
         let scratch = ScratchIndex::create(&context.shadow);
         let mut results = Vec::with_capacity(planned.len());
@@ -482,6 +678,7 @@ impl ShadowGit {
             counts,
             duration_ms: u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
             suspects,
+            nested_repo_affected: probe.affected,
         })
     }
 
@@ -1166,6 +1363,16 @@ mod tests {
                 .await
                 .expect("fixture restore")
         }
+
+        /// PLAN-0641 M3: the dirty-nested-repo gate refuses an undeclared dirty repo by
+        /// default. The 0361 fixtures below create that exact state on purpose, so they take
+        /// the same explicit override a user confirms (force=true).
+        async fn execute_forced(&self, slice_ref: &str) -> RestoreResult {
+            self.engine
+                .restore_execute_for_root(WS, None, slice_ref, &[], true, &[])
+                .await
+                .expect("fixture forced restore")
+        }
     }
 
     #[test]
@@ -1421,7 +1628,9 @@ mod tests {
             "flattened nested content must not be a type change: {changed:?}"
         );
 
-        let result = fixture.execute(&slice).await;
+        // M3: the post-capture drift inside the nested repo makes it dirty, so the restore
+        // must be the explicit force path (the behavior under test is 0361 flatten recovery).
+        let result = fixture.execute_forced(&slice).await;
         assert_eq!(result.counts.failed, 0);
         assert_eq!(fixture.read("sub/nested/README.md"), "nested-base");
         assert!(!fixture.exists("sub/nested/new.txt"));
@@ -1476,11 +1685,21 @@ mod tests {
 
         // The file→directory shadow is a type change, so acknowledge it and let git
         // fail to overwrite the non-empty directory: exactly that path fails.
+        // M3: the nested repo is dirty (rewritten directory shadow), so the restore has to
+        // take the explicit force override; the behavior under test is the 0361 per-path
+        // failure attribution below.
         let result = fixture
             .engine
-            .restore_execute(WS, &slice, &[String::from("sub/nested/blocked")])
+            .restore_execute_for_root(
+                WS,
+                None,
+                &slice,
+                &[String::from("sub/nested/blocked")],
+                true,
+                &[],
+            )
             .await
-            .expect("fixture restore with acknowledged type change");
+            .expect("fixture forced restore with acknowledged type change");
 
         let mut paths: Vec<&str> = result
             .entries

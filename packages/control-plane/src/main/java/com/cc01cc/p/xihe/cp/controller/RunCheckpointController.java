@@ -77,6 +77,8 @@ public class RunCheckpointController {
         body.put("counts", preview.counts());
         body.put("entries", preview.entries());
         body.put("truncated", preview.truncated());
+        // PLAN-0641 M3 (T4.3): cross-root impact block on the preview face.
+        body.put("nestedRepoAffected", preview.nestedRepoAffected());
         body.put("opaqueNestedRepos", outcome.details().getOrDefault("opaqueNestedRepos", List.of()));
         body.put("descendantsAffected",
                 outcome.details().getOrDefault("descendantsAffected", List.of()));
@@ -92,7 +94,8 @@ public class RunCheckpointController {
         if (denied != null) {
             return denied;
         }
-        String sliceRef = requiredSliceRef(request, true);
+        // PLAN-0641 M3 T4.2: the execute route also carries `force` / `acknowledgeNestedRepos`.
+        String sliceRef = requiredSliceRef(request, true, "force", "acknowledgeNestedRepos");
         if (sliceRef == null) {
             return invalidRequest("sliceRef is required");
         }
@@ -104,8 +107,19 @@ public class RunCheckpointController {
         if (rawAcknowledgements instanceof List<?> values && values.size() != acknowledgeTypeChanges.size()) {
             return invalidRequest("acknowledgeTypeChanges must contain only non-empty strings");
         }
+        // PLAN-0641 M3 (T4.2): force overrides the dirty-nested-repo gate; every
+        // head-drifted repo must be listed in acknowledgeNestedRepos (ruling (a)).
+        boolean force = Boolean.TRUE.equals(request == null ? null : request.get("force"));
+        List<String> acknowledgeNestedRepos = List.of();
+        Object rawNested = request == null ? null : request.get("acknowledgeNestedRepos");
+        if (rawNested instanceof List<?> nestedValues) {
+            acknowledgeNestedRepos = stringList(nestedValues);
+            if (nestedValues.size() != acknowledgeNestedRepos.size()) {
+                return invalidRequest("acknowledgeNestedRepos must contain only non-empty strings");
+            }
+        }
         RunCheckpointService.RevertOutcome outcome = checkpoints.revert(
-                workspaceId, sliceRef, acknowledgeTypeChanges);
+                workspaceId, sliceRef, acknowledgeTypeChanges, force, acknowledgeNestedRepos);
         if (outcome.gate() != Gate.OK) {
             return gateResponse(outcome.gate(), outcome.reason(), outcome.details());
         }
@@ -116,6 +130,8 @@ public class RunCheckpointController {
         body.put("entries", result.entries());
         body.put("durationMs", result.durationMs());
         body.put("suspects", result.suspects());
+        // PLAN-0641 M3 (T4.3): cross-root impact of this revert.
+        body.put("nestedRepoAffected", result.nestedRepoAffected());
         body.put("descendantsAffected",
                 outcome.details().getOrDefault("descendantsAffected", List.of()));
         logger.info("[LIFECYCLE] service=cp event=run_checkpoint_revert_completed workspaceId={} sliceRef={} "
@@ -242,10 +258,14 @@ public class RunCheckpointController {
                 "CHECKPOINT_INVALID_REQUEST", detail);
     }
 
-    private static String requiredSliceRef(Map<String, Object> request, boolean allowAcknowledgements) {
+    private static String requiredSliceRef(Map<String, Object> request, boolean allowAcknowledgements,
+                                           String... extraAllowedKeys) {
+        java.util.Set<String> allowed = java.util.Set.of("sliceRef", "acknowledgeTypeChanges");
+        java.util.Set<String> extra = java.util.Set.of(extraAllowedKeys);
         if (request == null
-                || request.keySet().stream().anyMatch(key -> !key.equals("sliceRef")
-                && (!allowAcknowledgements || !key.equals("acknowledgeTypeChanges")))) {
+                || request.keySet().stream().anyMatch(key -> !allowed.contains(key)
+                && (!allowAcknowledgements || (!key.equals("acknowledgeTypeChanges")
+                && !extra.contains(key))))) {
             return null;
         }
         Object raw = request.get("sliceRef");
@@ -280,6 +300,14 @@ public class RunCheckpointController {
                     "CHECKPOINT_UNAVAILABLE", "Checkpoint service is unavailable", details);
             case CLEANUP_BUSY -> ProblemDetailsHandler.problemResponse(HttpStatus.CONFLICT,
                     "CHECKPOINT_BUSY", "checkpoint capture or restore is in progress", details);
+            case NESTED_REPO_DIRTY -> ProblemDetailsHandler.problemResponse(HttpStatus.CONFLICT,
+                    "NESTED_REPO_DIRTY",
+                    "undeclared nested repositories have uncommitted changes; commit/stash them"
+                            + " or repeat with force=true", details);
+            case NESTED_REPO_UNCONFIRMED -> ProblemDetailsHandler.problemResponse(HttpStatus.CONFLICT,
+                    "NESTED_REPO_UNCONFIRMED",
+                    "head-drifted nested repositories must be acknowledged in"
+                            + " acknowledgeNestedRepos", details);
             case OK -> ProblemDetailsHandler.problemResponse(HttpStatus.INTERNAL_SERVER_ERROR,
                     "INTERNAL_ERROR", "Unexpected checkpoint gate");
         };

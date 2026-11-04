@@ -927,12 +927,25 @@ export interface CheckpointPreviewCounts {
 }
 
 /** `POST .../checkpoints/revert/preview` response. */
+/** PLAN-0641 M3 (T4.3): one undeclared nested repository touched by a restore. */
+export interface CheckpointNestedRepoAffected {
+    /** Workspace-relative POSIX path of the repository root. */
+    repoPath: string;
+    kind: string;
+    /** Uncommitted changes in the repo; a restore needs `force` to overwrite them. */
+    dirty: boolean;
+    /** Clean repo whose restored content differs from its current HEAD tree. */
+    headMoved: boolean;
+}
+
 export interface CheckpointPreview {
     sliceRef: string;
     counts: CheckpointPreviewCounts;
     entries: CheckpointPreviewEntry[];
     truncated: boolean;
     opaqueNestedRepos: string[];
+    /** PLAN-0641 M3 (T4.3): cross-root impact of this restore plan. */
+    nestedRepoAffected?: CheckpointNestedRepoAffected[];
 }
 
 export type CheckpointResultOutcome = "restored" | "deleted" | "failed" | "suspect";

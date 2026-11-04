@@ -17,6 +17,7 @@ import type {
     AuditTimelineEvent,
     AuditAttemptView,
     CheckpointCleanupResult,
+    CheckpointNestedRepoAffected,
     CheckpointPreview,
     CheckpointPreviewAction,
     CheckpointPreviewCounts,
@@ -1489,6 +1490,19 @@ function normalizeCheckpointPreviewCounts(value: unknown): CheckpointPreviewCoun
     return { restore, delete: deleted, typeConflict };
 }
 
+function normalizeCheckpointNestedRepoAffected(
+    value: unknown,
+): CheckpointNestedRepoAffected | null {
+    const record = asRecord(value);
+    if (!record || !isNonEmptyString(record.repoPath)) return null;
+    return {
+        repoPath: record.repoPath,
+        kind: typeof record.kind === "string" ? record.kind : "",
+        dirty: record.dirty === true,
+        headMoved: record.headMoved === true,
+    };
+}
+
 function normalizeCheckpointPreviewEntry(value: unknown): CheckpointPreviewEntry | null {
     const record = asRecord(value);
     if (!record || !isNonEmptyString(record.path)) return null;
@@ -1521,12 +1535,20 @@ export function normalizeCheckpointPreview(value: unknown): CheckpointPreview | 
     const opaqueNestedRepos = Array.isArray(record.opaqueNestedRepos)
         ? record.opaqueNestedRepos.filter(isNonEmptyString)
         : [];
+    const nestedRepoAffected: CheckpointNestedRepoAffected[] = [];
+    if (Array.isArray(record.nestedRepoAffected)) {
+        for (const raw of record.nestedRepoAffected) {
+            const nested = normalizeCheckpointNestedRepoAffected(raw);
+            if (nested) nestedRepoAffected.push(nested);
+        }
+    }
     return {
         sliceRef: record.sliceRef,
         counts,
         entries,
         truncated: record.truncated === true,
         opaqueNestedRepos,
+        nestedRepoAffected,
     };
 }
 
@@ -2410,6 +2432,20 @@ export interface VersionInfo {
         agent: VersionModule;
         runtime: VersionModule;
     };
+}
+
+function revertExecuteBody(
+    sliceRef: string,
+    acknowledgeTypeChanges: string[],
+    acknowledgeNestedRepos: string[],
+    force: boolean,
+): Record<string, unknown> {
+    const body: Record<string, unknown> = { sliceRef, acknowledgeTypeChanges };
+    if (acknowledgeNestedRepos.length > 0) {
+        body.acknowledgeNestedRepos = acknowledgeNestedRepos;
+    }
+    if (force) body.force = true;
+    return body;
 }
 
 export const api = {
@@ -3887,18 +3923,31 @@ export const api = {
         if (!preview) throw new Error("Invalid checkpoint preview response");
         return preview;
     },
-    /** Execute a workspace restore after explicit type-change confirmations. */
+    /**
+     * PLAN-0641 M3 T4.2: force overrides the dirty-nested-repo gate; every head-drifted repo must be
+     * listed in acknowledgeNestedRepos (ruling (a)). Absent keys keep the pre-M3 wire shape so a
+     * caller with nothing to acknowledge sends exactly the old body.
+     */
     async executeWorkspaceCheckpointRevert(
         workspaceId: string,
         sliceRef: string,
         acknowledgeTypeChanges: string[] = [],
+        acknowledgeNestedRepos: string[] = [],
+        force = false,
     ): Promise<CheckpointResult> {
         const payload = await request<unknown>(
                 `/workspaces/${encodeURIComponent(workspaceId)}/checkpoints/revert`,
                 {
                     method: "POST",
                     headers: workspaceHeaders(workspaceId),
-                    body: JSON.stringify({ sliceRef, acknowledgeTypeChanges }),
+                    body: JSON.stringify(
+                        revertExecuteBody(
+                            sliceRef,
+                            acknowledgeTypeChanges,
+                            acknowledgeNestedRepos,
+                            force,
+                        ),
+                    ),
                 },
             ),
             result = normalizeCheckpointResult(payload);
