@@ -75,6 +75,8 @@ class McpProxyTest {
     private McpInvocationService mcpInvocationService;
     private LineageInvocationService lineageInvocationService;
     private AgentSpawnExecutionService agentSpawnExecutionService;
+    /** PLAN-0663: pre-approval budget precheck collaborator. */
+    private com.cc01cc.p.xihe.cp.chat.DelegationBudgetService delegationBudgetService;
     private McpProxyController controller;
     private McpToolTimeoutService toolTimeoutService;
     private org.springframework.mock.env.MockEnvironment environment;
@@ -165,6 +167,63 @@ class McpProxyTest {
         verify(approvalService, never()).tryReuseSessionGrant(anyString(), anyString(), anyString(), anyString());
     }
 
+    /**
+     * PLAN-0663 M1: a spawn the current budget snapshot already forbids must be refused BEFORE an
+     * approval request exists — the human is never asked, no modal can be opened for it, and the
+     * durable audit says {@code phase=precheck} (BL-240 step4 residue).
+     */
+    @Test
+    @SuppressWarnings("unchecked")
+    void cpSpawnOverBudgetIsRefusedBeforeAnyApprovalRequestIsCreated() throws Exception {
+        String runId = "11111111-1111-1111-1111-111111111111";
+        String toolCallId = "33333333-3333-3333-3333-333333333333";
+        String sessionId = "55555555-5555-5555-5555-555555555555";
+        String body = "{\"jsonrpc\":\"2.0\",\"method\":\"tools/call\",\"id\":9,"
+                + "\"params\":{\"name\":\"spawn_agent\",\"arguments\":{\"prompt\":\"second spawn\"}}}";
+        ChatSubmissionService.SpawnInvocation invocation = new ChatSubmissionService.SpawnInvocation(
+                runId, toolCallId, sessionId, java.util.UUID.randomUUID(), "user-1",
+                TEST_WS_UUID, "agent-1", "canonical-body");
+        when(requestRewriter.rewrite(eq("spawn_agent"), eq(body), eq(sessionId))).thenReturn(body);
+        when(policyEngine.allowsByGrant(any(PolicyContext.class), eq("spawn_agent"), eq(body),
+                eq(sessionId), eq("user-1"), eq(TEST_WS_UUID), eq(false))).thenReturn(true);
+        when(policyEngine.evaluateVerdict(any(PolicyContext.class), eq("spawn_agent"), eq(body),
+                eq(sessionId), isNull(), eq("user-1"), eq(TEST_WS_UUID)))
+                .thenReturn(PolicyVerdict.of(PolicyEffect.ASK, null, PolicyLayer.BUILTIN, "manual", "approval"));
+        when(policyEngine.faceOf(any(PolicyContext.class), eq("spawn_agent")))
+                .thenReturn(new ToolFaceRegistry.Face("SPAWN_AGENT", ToolShape.STRUCTURED));
+        when(agentSpawnExecutionService.prepareMcpInvocation(eq(body), any(HttpHeaders.class),
+                eq(sessionId), eq("user-1"), eq(TEST_WS_UUID))).thenReturn(invocation);
+        var auditContext = new com.cc01cc.p.xihe.cp.chat.DelegationRefusedException.DelegationAuditContext(
+                "88888888-8888-8888-8888-888888888888", sessionId, runId, toolCallId, "agent-1");
+        org.mockito.Mockito.doThrow(com.cc01cc.p.xihe.cp.chat.DelegationRefusedException.refused(
+                        "count_exceeded", auditContext,
+                        com.cc01cc.p.xihe.cp.chat.DelegationRefusedException.PHASE_PRECHECK,
+                        1, 2, 1, 1))
+                .when(delegationBudgetService).precheckBeforeApproval(sessionId, runId, toolCallId);
+        Map<String, Map<String, String>> cache = (Map<String, Map<String, String>>)
+                ReflectionTestUtils.getField(toolTimeoutService, "toolServerCache");
+        cache.put(TEST_WS_UUID, new ConcurrentHashMap<>(Map.of("spawn_agent", "__cp__")));
+
+        ResponseEntity<String> response = (ResponseEntity<String>) ReflectionTestUtils.invokeMethod(
+                controller, "handleToolsCall", TEST_WS_UUID, body, new HttpHeaders(), sessionId,
+                internalAccessContext(TEST_WS_UUID, "user-1", sessionId));
+
+        assertEquals(HttpStatus.OK, response.getStatusCode());
+        JsonNode result = objectMapper.readTree(response.getBody()).path("result");
+        assertTrue(result.path("isError").asBoolean(), "a budget refusal is a coded tool error");
+        assertEquals(com.cc01cc.p.xihe.cp.chat.ToolRefusalCodes.DELEGATION_LIMIT_EXCEEDED,
+                result.path("structuredContent").path("code").asText());
+        // The whole point: no approval request (and therefore no modal) for a spawn that cannot run.
+        verify(approvalService, never()).recordGatePending(any(), any(), any(), any(), any(), any(), any());
+        verify(agentSpawnExecutionService, never()).execute(any(), any());
+        // Durable audit distinguishes the pre-approval refusal from the post-approval (TOCTOU) one.
+        ArgumentCaptor<String> detail = ArgumentCaptor.forClass(String.class);
+        verify(auditLogger).recordDurableChange(eq("user-1"), eq(TEST_WS_UUID),
+                eq("agent_spawn_refused"), eq("chat_session"), eq(sessionId), detail.capture());
+        assertTrue(detail.getValue().contains("\"phase\":\"precheck\""), detail.getValue());
+        assertTrue(detail.getValue().contains("\"reason\":\"count_exceeded\""), detail.getValue());
+    }
+
     @BeforeEach
     void setUp() {
         requestRewriter = mock(RequestRewriter.class);
@@ -192,6 +251,7 @@ class McpProxyTest {
                 .thenReturn(new LineageInvocationService.ReservationDecision(
                         LineageInvocationService.DecisionKind.NOT_LINEAGED, null));
         agentSpawnExecutionService = mock(AgentSpawnExecutionService.class);
+        delegationBudgetService = mock(com.cc01cc.p.xihe.cp.chat.DelegationBudgetService.class);
         environment = new org.springframework.mock.env.MockEnvironment();
 
         var configService = mock(com.cc01cc.p.xihe.cp.config.ConfigService.class);
@@ -212,7 +272,8 @@ class McpProxyTest {
                 toolTimeoutService,
                 mock(com.cc01cc.p.xihe.cp.credentials.CredentialLeaseService.class),
                 mock(com.cc01cc.p.xihe.cp.skill.SkillReadService.class),
-                new com.cc01cc.p.xihe.cp.status.BuildVersion()
+                new com.cc01cc.p.xihe.cp.status.BuildVersion(),
+                delegationBudgetService
         );
         ReflectionTestUtils.setField(controller, "runtimeBaseUrl", "http://localhost:9091");
 

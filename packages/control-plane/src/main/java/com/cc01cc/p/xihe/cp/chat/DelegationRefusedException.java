@@ -22,6 +22,15 @@ import org.springframework.http.HttpStatus;
  */
 public class DelegationRefusedException extends CpApiException {
 
+    /**
+     * PLAN-0663: where the refusal was decided. The two phases answer different operator questions —
+     * {@code precheck} means "the user was never asked" (no approval request exists), while
+     * {@code post_approval} means "the user approved and the budget moved on before dispatch"
+     * (TOCTOU). Both use the same error code; only the durable audit distinguishes them.
+     */
+    public static final String PHASE_PRECHECK = "precheck";
+    public static final String PHASE_POST_APPROVAL = "post_approval";
+
     private final String auditDetail;
 
     private DelegationRefusedException(String code, String message, String auditDetail) {
@@ -52,10 +61,16 @@ public class DelegationRefusedException extends CpApiException {
      * the {@code delegation_disabled} reason distinguishes it in the audit detail.
      */
     public static DelegationRefusedException disabled(DelegationAuditContext context, int depth, int maxDepth) {
+        return disabled(context, DelegationAuditContext.PHASE_POST_APPROVAL, depth, maxDepth);
+    }
+
+    /** PLAN-0663: phase-aware variant; see {@link DelegationAuditContext#PHASE_PRECHECK}. */
+    public static DelegationRefusedException disabled(DelegationAuditContext context, String phase,
+                                                      int depth, int maxDepth) {
         return new DelegationRefusedException(ToolRefusalCodes.DELEGATION_LIMIT_EXCEEDED,
                 "delegation is disabled by this principal's delegationPolicy (maxCount=0)"
                         + " — 该委派策略已禁用委派",
-                context.toAuditDetail("delegation_disabled", depth, maxDepth, 0, 0));
+                context.toAuditDetail("delegation_disabled", phase, depth, maxDepth, 0, 0));
     }
     /**
      * @param reason {@code count_exceeded} | {@code depth_exceeded}
@@ -66,6 +81,14 @@ public class DelegationRefusedException extends CpApiException {
      */
     public static DelegationRefusedException refused(String reason, DelegationAuditContext context,
                                                     int depth, int maxDepth, int current, int maxCount) {
+        return refused(reason, context, DelegationAuditContext.PHASE_POST_APPROVAL, depth, maxDepth,
+                current, maxCount);
+    }
+
+    /** PLAN-0663: phase-aware variant; see {@link DelegationAuditContext#PHASE_PRECHECK}. */
+    public static DelegationRefusedException refused(String reason, DelegationAuditContext context,
+                                                    String phase, int depth, int maxDepth, int current,
+                                                    int maxCount) {
         String detail = switch (reason) {
             case "depth_exceeded" -> "Delegation depth limit exceeded (depth " + depth + " > maxDepth " + maxDepth + ")";
             case "count_exceeded" -> "Delegation count limit exceeded (in flight " + current
@@ -73,15 +96,21 @@ public class DelegationRefusedException extends CpApiException {
             default -> "Delegation refused: " + reason;
         };
         return new DelegationRefusedException(ToolRefusalCodes.DELEGATION_LIMIT_EXCEEDED, detail,
-                context.toAuditDetail(reason, depth, maxDepth, current, maxCount));
+                context.toAuditDetail(reason, phase, depth, maxDepth, current, maxCount));
     }
 
     /** Fail-closed refusal for a broken/absent tree or an unreadable stored policy. */
     public static DelegationRefusedException policyInvalid(String reason, DelegationAuditContext context,
                                                            String detail) {
+        return policyInvalid(reason, context, DelegationAuditContext.PHASE_POST_APPROVAL, detail);
+    }
+
+    /** PLAN-0663: phase-aware variant; see {@link DelegationAuditContext#PHASE_PRECHECK}. */
+    public static DelegationRefusedException policyInvalid(String reason, DelegationAuditContext context,
+                                                           String phase, String detail) {
         return new DelegationRefusedException(ToolRefusalCodes.DELEGATION_POLICY_INVALID,
                 "Delegation policy is invalid (" + reason + "): " + detail,
-                context.toAuditDetail(reason, -1, -1, -1, -1));
+                context.toAuditDetail(reason, phase, -1, -1, -1, -1));
     }
 
     /**
@@ -92,9 +121,20 @@ public class DelegationRefusedException extends CpApiException {
     public record DelegationAuditContext(String rootSessionId, String parentSessionId, String parentRunId,
                                          String parentToolCallId, String agentPrincipalId) {
 
+        /** Pre-approval refusal: no approval request was ever created. */
+        public static final String PHASE_PRECHECK = DelegationRefusedException.PHASE_PRECHECK;
+        /** Post-approval refusal: the user decided, then the budget moved (TOCTOU). */
+        public static final String PHASE_POST_APPROVAL = DelegationRefusedException.PHASE_POST_APPROVAL;
+
+        /** Historical shape: every pre-PLAN-0663 refusal was decided after an approval. */
         String toAuditDetail(String reason, int depth, int maxDepth, int current, int maxCount) {
-            StringBuilder json = new StringBuilder(192);
+            return toAuditDetail(reason, PHASE_POST_APPROVAL, depth, maxDepth, current, maxCount);
+        }
+
+        String toAuditDetail(String reason, String phase, int depth, int maxDepth, int current, int maxCount) {
+            StringBuilder json = new StringBuilder(224);
             json.append("{\"reason\":\"").append(reason).append('"');
+            append(json, "phase", phase);
             append(json, "rootSessionId", rootSessionId);
             append(json, "parentSessionId", parentSessionId);
             append(json, "parentRunId", parentRunId);
