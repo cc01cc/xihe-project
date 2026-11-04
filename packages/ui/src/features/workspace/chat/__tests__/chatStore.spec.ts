@@ -1018,3 +1018,60 @@ describe("PLAN-0631 run state view", () => {
         expect(live?.participantId).toBeUndefined();
     });
 });
+
+// ── PLAN-0645 M2: one live bubble per run ────────────────────────────────────────────────
+describe("useChatStore per-run bubbles (0645 M2)", () => {
+    it("keeps two concurrent runs in separate bubbles and finalizes them independently", () => {
+        const store = useChatStore(),
+            sessionId = "s-per-run";
+
+        const bubbleA = store.createStreamingMessage(sessionId, "run-a"),
+            bubbleB = store.createStreamingMessage(sessionId, "run-b");
+        expect(bubbleA).not.toBe(bubbleB);
+        expect(store.getStreamingMessageId(sessionId, "run-a")).toBe(bubbleA);
+        expect(store.getStreamingMessageId(sessionId, "run-b")).toBe(bubbleB);
+        expect(store.isStreaming(sessionId)).toBe(true);
+
+        // Tokens are routed by the run they belong to: the two bubbles never share content.
+        store.appendToParts(sessionId, { type: "text", content: "a1" }, "run-a");
+        store.appendToParts(sessionId, { type: "text", content: "b1" }, "run-b");
+        store.appendToParts(sessionId, { type: "text", content: "a2" }, "run-a");
+
+        const messages = store.getMessages(sessionId),
+            bubbleAMessage = messages.find((m) => m.id === bubbleA),
+            bubbleBMessage = messages.find((m) => m.id === bubbleB);
+        expect(bubbleAMessage?.parts?.map((p) => p.content).join("")).toBe("a1a2");
+        expect(bubbleBMessage?.parts?.map((p) => p.content).join("")).toBe("b1");
+        expect(bubbleAMessage?.runId).toBe("run-a");
+        expect(bubbleBMessage?.runId).toBe("run-b");
+
+        // done(run A) finalizes only A; the session keeps streaming for B.
+        store.finalizeStreaming(sessionId, "run-a");
+        expect(store.getStreamingMessageId(sessionId, "run-a")).toBeNull();
+        expect(store.isStreaming(sessionId)).toBe(true);
+        expect(store.getMessages(sessionId).find((m) => m.id === bubbleA)?.isStreaming).toBe(false);
+        expect(store.getMessages(sessionId).find((m) => m.id === bubbleB)?.isStreaming).toBe(true);
+
+        store.finalizeStreaming(sessionId, "run-b");
+        expect(store.isStreaming(sessionId)).toBe(false);
+        expect(store.getMessages(sessionId).find((m) => m.id === bubbleB)?.isStreaming).toBe(false);
+    });
+
+    it("adopts the 202 run id onto the fallback bubble instead of opening a second one", () => {
+        const store = useChatStore(),
+            sessionId = "s-adopt-per-run";
+
+        // The first token beat the `202` body: the bubble exists in the fallback scope.
+        const earlyBubble = store.createStreamingMessage(sessionId);
+        store.appendToParts(sessionId, { type: "text", content: "early" });
+        store.adoptRunId(sessionId, "run-late");
+        expect(store.getStreamingMessageId(sessionId, "run-late")).toBe(earlyBubble);
+
+        // The run's own tokens keep going into that same bubble, not a new one.
+        store.appendToParts(sessionId, { type: "text", content: "more" }, "run-late");
+        store.finalizeStreaming(sessionId, "run-late");
+        const bubbles = store.getMessages(sessionId).filter((m) => m.role === "assistant");
+        expect(bubbles).toHaveLength(1);
+        expect(bubbles[0].parts?.map((p) => p.content).join("")).toBe("earlymore");
+    });
+});

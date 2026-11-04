@@ -76,6 +76,32 @@ export const useChatStore = defineStore("chat", () => {
         unprojectedRuns = new Map<string, Set<string>>(),
         clientOwnedMessageIds = new Map<string, Set<string>>();
 
+    /**
+     * PLAN-0645 M2: the live assistant bubble is keyed by **(sessionId, runId)** — up to
+     * `maxConcurrentRunsPerSession` runs stream into one session at once and each owns its own
+     * bubble. The empty runId segment is the fallback scope for legacy/runId-less events, and
+     * `resolveStreamKey` maps an unknown runId onto the single live scope when exactly one exists —
+     * which keeps every pre-0645 single-run caller byte-compatible.
+     */
+    const STREAM_KEY_SEP = "\u0000";
+
+    function streamKey(sessionId: string, runId?: string): string {
+        return `${sessionId}${STREAM_KEY_SEP}${runId ?? ""}`;
+    }
+
+    function liveStreamKeys(sessionId: string): string[] {
+        const prefix = `${sessionId}${STREAM_KEY_SEP}`;
+        return Object.keys(streamingMessageId.value).filter(
+            (key) => key.startsWith(prefix) && streamingMessageId.value[key],
+        );
+    }
+
+    function resolveStreamKey(sessionId: string, runId?: string): string {
+        if (runId !== undefined) return streamKey(sessionId, runId);
+        const live = liveStreamKeys(sessionId);
+        return live.length === 1 ? live[0] : streamKey(sessionId);
+    }
+
     function getMessages(sessionId: string): Message[] {
         return messages.value[sessionId] ?? [];
     }
@@ -131,8 +157,8 @@ export const useChatStore = defineStore("chat", () => {
         delete selectedBranchIds.value[sessionId];
     }
 
-    function getStreamingMessageId(sessionId: string): string | null {
-        return streamingMessageId.value[sessionId] ?? null;
+    function getStreamingMessageId(sessionId: string, runId?: string): string | null {
+        return streamingMessageId.value[resolveStreamKey(sessionId, runId)] ?? null;
     }
 
     function getSessionRunState(sessionId: string): ChatSessionRunState {
@@ -185,8 +211,7 @@ export const useChatStore = defineStore("chat", () => {
     function isStreaming(sessionId: string): boolean {
         const status = sessionRunStates.value[sessionId]?.status;
         return (
-            (streamingMessageId.value[sessionId] !== undefined &&
-                streamingMessageId.value[sessionId] !== null) ||
+            liveStreamKeys(sessionId).length > 0 ||
             status === "thinking" ||
             status === "executing" ||
             status === "awaiting_approval"
@@ -270,6 +295,18 @@ export const useChatStore = defineStore("chat", () => {
         for (const message of messages.value[sessionId] ?? []) {
             if (owned.has(message.id) && message.runId === undefined) message.runId = runId;
         }
+        // PLAN-0645 M2: a bubble created before the `202` body lives in the fallback scope. Once
+        // the run id is known, move the scope so the per-run callbacks (token/done/error) address
+        // the bubble we already have instead of opening a second one for the same run.
+        const fallbackKey = streamKey(sessionId),
+            liveId = streamingMessageId.value[fallbackKey];
+        if (liveId) {
+            const live = (messages.value[sessionId] ?? []).find((msg) => msg.id === liveId);
+            if (live && live.runId === runId) {
+                streamingMessageId.value[streamKey(sessionId, runId)] = liveId;
+                streamingMessageId.value[fallbackKey] = null;
+            }
+        }
     }
 
     /**
@@ -284,14 +321,16 @@ export const useChatStore = defineStore("chat", () => {
     }
 
     function detachLiveSession(sessionId: string) {
-        const messageId = streamingMessageId.value[sessionId];
-        if (messageId) {
-            messages.value[sessionId] = (messages.value[sessionId] ?? []).filter(
-                (message) => message.id !== messageId,
-            );
-            clientOwnedMessageIds.get(sessionId)?.delete(messageId);
+        for (const key of liveStreamKeys(sessionId)) {
+            const messageId = streamingMessageId.value[key];
+            if (messageId) {
+                messages.value[sessionId] = (messages.value[sessionId] ?? []).filter(
+                    (message) => message.id !== messageId,
+                );
+                clientOwnedMessageIds.get(sessionId)?.delete(messageId);
+            }
+            streamingMessageId.value[key] = null;
         }
-        streamingMessageId.value[sessionId] = null;
         delete sessionRunStates.value[sessionId];
         clearRunQueued(sessionId);
         removeRunStatusMarker(sessionId);
@@ -362,8 +401,8 @@ export const useChatStore = defineStore("chat", () => {
         if (kept.length !== list.length) messages.value[sessionId] = kept;
     }
 
-    function findStreamingMessage(sessionId: string): Message | undefined {
-        const messageId = streamingMessageId.value[sessionId];
+    function findStreamingMessage(sessionId: string, runId?: string): Message | undefined {
+        const messageId = streamingMessageId.value[resolveStreamKey(sessionId, runId)];
         if (!messageId) return undefined;
         return messages.value[sessionId]?.find((msg) => msg.id === messageId);
     }
@@ -374,9 +413,13 @@ export const useChatStore = defineStore("chat", () => {
      * run, so the first known one wins; a null/absent attribution is left alone — no
      * PRIMARY back-fill (DEV-032) and no client-side guessing.
      */
-    function setStreamingMessageResponder(sessionId: string, participantId: string | null) {
+    function setStreamingMessageResponder(
+        sessionId: string,
+        participantId: string | null,
+        runId?: string,
+    ) {
         if (participantId === null) return;
-        const message = findStreamingMessage(sessionId);
+        const message = findStreamingMessage(sessionId, runId);
         if (message && message.participantId === undefined) message.participantId = participantId;
     }
 
@@ -394,7 +437,7 @@ export const useChatStore = defineStore("chat", () => {
         trackUnprojectedRun(sessionId, runId);
         // Tool-first runs create the live assistant message from `upsertToolCall`
         // before any token arrives; reuse it instead of spawning a second bubble.
-        const existing = findStreamingMessage(sessionId);
+        const existing = findStreamingMessage(sessionId, runId);
         if (existing) {
             if (runId !== undefined) existing.runId = runId;
             if (branchId !== undefined) existing.branchId = branchId;
@@ -414,7 +457,7 @@ export const useChatStore = defineStore("chat", () => {
             };
         markClientOwned(sessionId, id);
         addMessage(sessionId, message);
-        streamingMessageId.value[sessionId] = id;
+        streamingMessageId.value[streamKey(sessionId, runId)] = id;
         setSessionRunState(sessionId, "thinking", runId);
         return id;
     }
@@ -429,7 +472,11 @@ export const useChatStore = defineStore("chat", () => {
      * message is created on demand.
      */
     function upsertToolCall(sessionId: string, call: ToolCallUpsert) {
-        const messageId = streamingMessageId.value[sessionId] ?? createStreamingMessage(sessionId),
+        // PLAN-0645 M2: a tool event belongs to its run's bubble (`call.runId`), so a tool card can
+        // never land in a sibling run's message.
+        const messageId =
+                streamingMessageId.value[resolveStreamKey(sessionId, call.runId)] ??
+                createStreamingMessage(sessionId, call.runId),
             message = messages.value[sessionId]?.find((msg) => msg.id === messageId);
         if (!message) return;
 
@@ -460,8 +507,8 @@ export const useChatStore = defineStore("chat", () => {
         message.toolCalls.push({ name: "", arguments: "", status: "running", ...call });
     }
 
-    function appendToParts(sessionId: string, part: MessagePart) {
-        const messageId = streamingMessageId.value[sessionId];
+    function appendToParts(sessionId: string, part: MessagePart, runId?: string) {
+        const messageId = streamingMessageId.value[resolveStreamKey(sessionId, runId)];
         if (!messageId) return;
 
         const msgs = messages.value[sessionId],
@@ -502,8 +549,8 @@ export const useChatStore = defineStore("chat", () => {
         message.parts.push(part);
     }
 
-    function replaceStreamingParts(sessionId: string, nextParts: MessagePart[]) {
-        const messageId = streamingMessageId.value[sessionId];
+    function replaceStreamingParts(sessionId: string, nextParts: MessagePart[], runId?: string) {
+        const messageId = streamingMessageId.value[resolveStreamKey(sessionId, runId)];
         if (!messageId) return;
 
         const message = messages.value[sessionId]?.find((msg) => msg.id === messageId);
@@ -512,12 +559,15 @@ export const useChatStore = defineStore("chat", () => {
         message.parts = [...nextParts];
     }
 
-    function finalizeStreaming(sessionId: string) {
-        const messageId = streamingMessageId.value[sessionId];
+    function finalizeStreaming(sessionId: string, runId?: string) {
+        const streamKeyToClear = resolveStreamKey(sessionId, runId),
+            messageId = streamingMessageId.value[streamKeyToClear];
         if (!messageId) {
-            setSessionRunState(sessionId, "idle");
-            clearRunQueued(sessionId);
-            removeRunStatusMarker(sessionId);
+            if (liveStreamKeys(sessionId).length === 0) {
+                setSessionRunState(sessionId, "idle");
+                clearRunQueued(sessionId);
+                removeRunStatusMarker(sessionId);
+            }
             return;
         }
 
@@ -534,15 +584,20 @@ export const useChatStore = defineStore("chat", () => {
             }
         }
 
-        streamingMessageId.value[sessionId] = null;
-        setSessionRunState(sessionId, "idle");
-        // PLAN-0631 D31-04/07: terminal — no parked view, no live status line.
-        clearRunQueued(sessionId);
-        removeRunStatusMarker(sessionId);
+        streamingMessageId.value[streamKeyToClear] = null;
+        // PLAN-0645 M2: a sibling run may still be streaming — only the last scope resets the
+        // session-level state line and the live status marker.
+        if (liveStreamKeys(sessionId).length === 0) {
+            setSessionRunState(sessionId, "idle");
+            // PLAN-0631 D31-04/07: terminal — no parked view, no live status line.
+            clearRunQueued(sessionId);
+            removeRunStatusMarker(sessionId);
+        }
     }
 
     function cancelStreaming(sessionId: string, runId: string) {
-        const messageId = streamingMessageId.value[sessionId];
+        const streamKeyToClear = streamKey(sessionId, runId),
+            messageId = streamingMessageId.value[streamKeyToClear];
         const message = messages.value[sessionId]?.find((msg) => msg.id === messageId);
         if (message && message.runId && message.runId !== runId) return;
         if (message) {
@@ -567,13 +622,16 @@ export const useChatStore = defineStore("chat", () => {
                 }
             }
         }
-        streamingMessageId.value[sessionId] = null;
-        setSessionRunState(sessionId, "idle");
-        // PLAN-0631 D31-04/07: the run is no longer active from the view's side.
-        clearRunQueued(sessionId);
-        // The `interrupted` marker added just above is semantic history and survives
-        // `removeRunStatusMarker` (it only removes live "…is running" lines).
-        removeRunStatusMarker(sessionId);
+        streamingMessageId.value[streamKeyToClear] = null;
+        // PLAN-0645 M2: keep the session state live while a sibling run is still streaming.
+        if (liveStreamKeys(sessionId).length === 0) {
+            setSessionRunState(sessionId, "idle");
+            // PLAN-0631 D31-04/07: the run is no longer active from the view's side.
+            clearRunQueued(sessionId);
+            // The `interrupted` marker added just above is semantic history and survives
+            // `removeRunStatusMarker` (it only removes live "…is running" lines).
+            removeRunStatusMarker(sessionId);
+        }
     }
 
     /**
@@ -581,8 +639,9 @@ export const useChatStore = defineStore("chat", () => {
      * it interrupted so the retry's new reply is the official answer.
      * Case A (no visible content): drop the empty streaming bubble.
      */
-    function interruptForOverflowRetry(sessionId: string) {
-        const messageId = streamingMessageId.value[sessionId];
+    function interruptForOverflowRetry(sessionId: string, runId?: string) {
+        const streamKeyToClear = resolveStreamKey(sessionId, runId),
+            messageId = streamingMessageId.value[streamKeyToClear];
         if (!messageId) return;
 
         const message = messages.value[sessionId]?.find((msg) => msg.id === messageId);
@@ -616,8 +675,11 @@ export const useChatStore = defineStore("chat", () => {
                 });
             }
         }
-        streamingMessageId.value[sessionId] = null;
-        setSessionRunState(sessionId, "idle");
+        streamingMessageId.value[streamKeyToClear] = null;
+        // PLAN-0645 M2: only reset the session state when the folded run was the last live scope.
+        if (liveStreamKeys(sessionId).length === 0) {
+            setSessionRunState(sessionId, "idle");
+        }
     }
 
     /**
@@ -644,7 +706,9 @@ export const useChatStore = defineStore("chat", () => {
             resourceKind?: string;
         },
     ) {
-        const messageId = streamingMessageId.value[sessionId];
+        // PLAN-0645 M2: the failing run (when named) owns the bubble this error is written to.
+        const streamKeyToClear = resolveStreamKey(sessionId, error.runId),
+            messageId = streamingMessageId.value[streamKeyToClear];
         if (!messageId) {
             // 真实链路：占位气泡只在 SSE `onStart` 里创建（SSEStream.vue），而 D28 的 429 发生在
             // **准入**（202 之前），不会产生任何 SSE 事件 ⇒ 原来的 `return` 会把整条错误静默丢掉，
@@ -696,10 +760,12 @@ export const useChatStore = defineStore("chat", () => {
                 messages.value[sessionId] = messages.value[sessionId].filter(
                     (msg) => msg.id !== messageId,
                 );
-                streamingMessageId.value[sessionId] = null;
-                setSessionRunState(sessionId, "idle");
-                clearRunQueued(sessionId);
-                removeRunStatusMarker(sessionId);
+                streamingMessageId.value[streamKeyToClear] = null;
+                if (liveStreamKeys(sessionId).length === 0) {
+                    setSessionRunState(sessionId, "idle");
+                    clearRunQueued(sessionId);
+                    removeRunStatusMarker(sessionId);
+                }
                 if (error.runId) void refreshRunRecovery(sessionId, error.runId);
                 return;
             }
@@ -723,10 +789,12 @@ export const useChatStore = defineStore("chat", () => {
             }
         }
 
-        streamingMessageId.value[sessionId] = null;
-        setSessionRunState(sessionId, "idle");
-        clearRunQueued(sessionId);
-        removeRunStatusMarker(sessionId);
+        streamingMessageId.value[streamKeyToClear] = null;
+        if (liveStreamKeys(sessionId).length === 0) {
+            setSessionRunState(sessionId, "idle");
+            clearRunQueued(sessionId);
+            removeRunStatusMarker(sessionId);
+        }
         if (error.runId) void refreshRunRecovery(sessionId, error.runId);
     }
 
@@ -875,7 +943,11 @@ export const useChatStore = defineStore("chat", () => {
     function clearSession(sessionId: string) {
         delete messages.value[sessionId];
         clearSessionBranches(sessionId);
-        delete streamingMessageId.value[sessionId];
+        // PLAN-0645 M2: the live-bubble map is keyed by (sessionId, runId) — drop every run scope.
+        const streamPrefix = `${sessionId}${STREAM_KEY_SEP}`;
+        for (const key of Object.keys(streamingMessageId.value)) {
+            if (key.startsWith(streamPrefix)) delete streamingMessageId.value[key];
+        }
         delete sessionRunStates.value[sessionId];
         delete sessionRunQueued.value[sessionId];
         delete runRecovery.value[sessionId];
