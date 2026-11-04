@@ -48,10 +48,11 @@ public class ToolFaceRegistry {
     // but seeded into NO default role (USER/ADMIN included), so an account can only use it after
     // an explicit grant. The UI/CLI channels do not consume this atom (they act as the user).
     public static final String ACTION_MEMORY_WRITE = "MEMORY_WRITE";
-    // PLAN-0651 M1 (D51-26/D51-27): two management atoms replacing the coarse `isInstanceAdmin()`
-    // bypass on the agent-principal face and the member face. MANAGE_AGENT_PRINCIPALS is
-    // instance-only (it acts on the instance); MANAGE_WORKSPACE_MEMBERS is bindable in both scopes
-    // (a workspace role may be handed member management later, WS_OWNER is deliberately not).
+    // PLAN-0651 M1 (D51-26/D51-27): two management atoms replacing the coarse
+    // instance-administrator bypass on the agent-principal face and the member face.
+    // MANAGE_AGENT_PRINCIPALS is instance-only (it acts on the instance);
+    // MANAGE_WORKSPACE_MEMBERS is bindable in both scopes (a workspace role may be handed member
+    // management later, WS_OWNER is deliberately not).
     // Neither may ever be granted to an agent principal (see agentPrincipalForbiddenAtoms()).
     public static final String ACTION_MANAGE_AGENT_PRINCIPALS = "MANAGE_AGENT_PRINCIPALS";
     public static final String ACTION_MANAGE_WORKSPACE_MEMBERS = "MANAGE_WORKSPACE_MEMBERS";

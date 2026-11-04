@@ -129,6 +129,36 @@ class P0ManagementAtomSeedMigrationTest {
     }
 
     @Test
+    void noDefaultPolicyRuleTargetsTheManagementAtoms() throws SQLException {
+        // D51-30 / T1.1 review: the management atoms become configurable policy domains
+        // (builtinActionClasses feeds PolicyRuleService.domains). A seeded rule would make the
+        // default verdict non-allow and could lock an administrator out; rule adjudication is
+        // retired (PolicyVerdict javadoc), so "no row" is the mechanical form of "default allow".
+        assertEquals(0, scalar("SELECT count(*) FROM policy_rules WHERE action_class IN "
+                        + "('MANAGE_AGENT_PRINCIPALS','MANAGE_WORKSPACE_MEMBERS')"),
+                "no default policy rule may be seeded for the new atoms (default = allow)");
+    }
+
+    @Test
+    void noCustomRoleReliedOnInstanceAdminImplyingWorkspaceAdmin() throws SQLException {
+        // D51-30 zero-gap check: A9 no longer treats instance:admin as workspace administration.
+        // Report-only: the migration must never rewrite custom roles, so this asserts the current
+        // data is unaffected (XH not released => expected 0 on a fresh database).
+        assertEquals(0, scalar("SELECT count(*) FROM role_bindings b "
+                        + "JOIN roles r ON r.id = b.role_id AND r.is_system = FALSE "
+                        + "WHERE EXISTS (SELECT 1 FROM role_permissions rp "
+                        + "              WHERE rp.role_id = r.id AND rp.action_class = 'instance:admin') "
+                        + "  AND NOT EXISTS (SELECT 1 FROM role_permissions rp2 "
+                        + "                  WHERE rp2.role_id = r.id "
+                        + "                    AND rp2.action_class = 'workspace:admin')"),
+                "a custom role carrying instance:admin alone would lose workspace administration "
+                        + "after T1.2 — if this ever fires, stop and report the count to the Lead");
+        assertEquals(1, scalar("SELECT count(*) FROM role_permissions WHERE role_id = '"
+                        + ADMIN_ID + "'::uuid AND action_class = 'workspace:admin'"),
+                "the built-in ADMIN role is unaffected: V111 seeds workspace:admin for it");
+    }
+
+    @Test
     void bothAtomsAreForbiddenToAgentPrincipals() {
         var forbidden = PermissionAtomCatalog.agentPrincipalForbiddenAtoms();
         assertTrue(forbidden.contains(ToolFaceRegistry.ACTION_MANAGE_AGENT_PRINCIPALS));
