@@ -12,13 +12,15 @@
  */
 export const PRINCIPAL_NAME_PATTERN = /^[A-Za-z\u4e00-\u9fff][A-Za-z0-9\u4e00-\u9fff]*$/;
 
-export type PrincipalNameError = "required" | "pattern";
+export type PrincipalNameError = "required" | "whitespace" | "pattern";
 
 /** `null` = 合法；调用方把错误码映射到自己的 i18n 文案与禁用逻辑。 */
 export function principalNameError(value: string): PrincipalNameError | null {
-    const trimmed = value.trim();
-    if (!trimmed) return "required";
-    return PRINCIPAL_NAME_PATTERN.test(trimmed) ? null : "pattern";
+    // CP 是权威判定且**不 trim**（前后有空格即非法）。这里同样不 trim：
+    // 静默 trim 会让 " abc " 在 UI 通过、到 CP 才 400。
+    if (!value.trim()) return "required";
+    if (value !== value.trim()) return "whitespace";
+    return PRINCIPAL_NAME_PATTERN.test(value) ? null : "pattern";
 }
 
 /** 允许的字符集，供输入框的 `title`/提示文案复用。 */

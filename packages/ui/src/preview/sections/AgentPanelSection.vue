@@ -36,6 +36,19 @@ const formOpen = ref(true);
 const name = ref("Nova 实现");
 /** 2026-11-04 用户裁定：实时校验 + 阻止提交（空格即非法）。 */
 const nameError = computed(() => principalNameError(name.value));
+/** 错误码 → 文案（前后空格单独一条，CP 权威不 trim）。 */
+const nameErrorMessage = computed(() => {
+    switch (nameError.value) {
+        case "required":
+            return t("validation.principalNameRequired");
+        case "whitespace":
+            return t("validation.principalNameWhitespace");
+        case "pattern":
+            return t("validation.principalNamePattern");
+        default:
+            return "";
+    }
+});
 const advancedOpen = ref(true);
 const showEmpty = ref(true);
 
@@ -195,11 +208,7 @@ const scopeLabel = (scope?: string) =>
                                         class="block text-xs text-destructive"
                                         data-testid="preview-agent-name-error"
                                     >
-                                        {{
-                                            nameError === "required"
-                                                ? t("validation.principalNameRequired")
-                                                : t("validation.principalNamePattern")
-                                        }}
+                                        {{ nameErrorMessage }}
                                     </span>
                                     <span v-else class="block text-xs text-muted-foreground">
                                         {{ t("validation.nameAllowed") }}
@@ -276,11 +285,7 @@ const scopeLabel = (scope?: string) =>
                             创建智能体
                         </Button>
                         <p class="mt-1.5 text-center text-[11px] text-muted-foreground">
-                            {{
-                                nameError
-                                    ? t("validation.principalNamePattern")
-                                    : t("validation.nameAllowed")
-                            }}
+                            {{ nameError ? nameErrorMessage : t("validation.nameAllowed") }}
                         </p>
                     </div>
                 </Card>
