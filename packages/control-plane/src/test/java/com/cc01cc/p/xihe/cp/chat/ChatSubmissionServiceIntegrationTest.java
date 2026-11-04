@@ -938,6 +938,39 @@ class ChatSubmissionServiceIntegrationTest extends AbstractIntegrationTest {
                 "no participant row ⇒ NULL; the read face then omits the field and the UI renders no badge");
     }
 
+    /** PLAN-0669 M1b: the durable listing projects participantId only when attributed. */
+    @Test
+    void messageListingProjectsParticipantIdOnlyWhenAttributed() {
+        ChatFixture fixture = createChatFixture("attribution-read");
+        sessionRepository.saveAndFlush(boundSession(fixture.session(), fixture.principal()));
+        UUID participantId = addPrimaryParticipant(fixture.session(), fixture.principal());
+        String runId = UUID.randomUUID().toString();
+        submit(runId, fixture.session(), fixture.user(), fixture.workspace(), "read me",
+                fixture.principal().getId().toString());
+        String assistantId = submissionService.persistAssistantResponse(
+                fixture.session().getId().toString(), runId, "reply");
+        assertNotNull(assistantId);
+
+        String branchId = branchPathService.ensureRootBranchId(fixture.session().getId().toString());
+        BranchPathService.BranchVisibility visibility = branchPathService.resolveVisibility(
+                fixture.session().getId().toString(), branchId);
+        String rootBranchId = branchPathService.resolvePath(fixture.session().getId().toString(), branchId);
+        List<Map<String, Object>> messages = messageReadService.listVisibleMessages(
+                fixture.session().getId().toString(), fixture.workspace().getId().toString(),
+                rootBranchId, visibility);
+
+        Map<String, Object> assistant = messages.stream()
+                .filter(message -> assistantId.equals(String.valueOf(message.get("id"))))
+                .findFirst().orElseThrow();
+        assertEquals(participantId.toString(), String.valueOf(assistant.get("participantId")),
+                "assistant rows expose the durable actor to the history DTO");
+        Map<String, Object> user = messages.stream()
+                .filter(message -> "USER".equals(String.valueOf(message.get("role"))))
+                .findFirst().orElseThrow();
+        assertFalse(user.containsKey("participantId"),
+                "user rows carry no v1 attribution — the field is omitted, not null");
+    }
+
     private UUID addPrimaryParticipant(Session session, AgentPrincipal principal) {
         SessionParticipant participant = new SessionParticipant(session.getId(),
                 SessionParticipant.KIND_AGENT, principal.getId(), SessionParticipant.ROLE_PRIMARY, 10,

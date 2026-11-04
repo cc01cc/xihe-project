@@ -109,6 +109,12 @@ public class MessageReadService {
         dto.put("role", message.getRole().name());
         dto.put("content", message.getContent());
         dto.put("createdAt", message.getCreatedAt());
+        // PLAN-0669 M1b (V121): durable actor attribution — the participant id the UI resolves
+        // against the roster. Omitted (not null) for pre-V121 rows and for user messages (v1), so
+        // clients keep the single "no attribution ⇒ no badge" path (D4) instead of an "unknown" state.
+        if (message.getParticipantId() != null) {
+            dto.put("participantId", message.getParticipantId());
+        }
         putToolCalls(dto, message);
         putDelivery(dto, message);
         if (message.getRunId() != null) {
