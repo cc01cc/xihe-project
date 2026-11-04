@@ -9,7 +9,6 @@ import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.logging.LogRedactor;
 import com.cc01cc.p.xihe.cp.entity.SessionParticipant;
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
-import com.cc01cc.p.xihe.cp.repository.SessionParticipantCursorRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionParticipantRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -57,7 +56,6 @@ public class WakeDispatchService {
     private final SessionWakeupService sessionWakeupService;
     private final JudgeDecisionService judgeDecisionService;
     private final EventStoreService eventStoreService;
-    private final SessionParticipantCursorRepository cursorRepository;
     private final ObjectMapper objectMapper;
     private final ChatRunRepository chatRunRepository;
     private final DbLockTimeout dbLockTimeout;
@@ -69,7 +67,6 @@ public class WakeDispatchService {
                                SessionWakeupService sessionWakeupService,
                                JudgeDecisionService judgeDecisionService,
                                EventStoreService eventStoreService,
-                               SessionParticipantCursorRepository cursorRepository,
                                ObjectMapper objectMapper,
                                ChatRunRepository chatRunRepository,
                                DbLockTimeout dbLockTimeout) {
@@ -79,7 +76,6 @@ public class WakeDispatchService {
         this.sessionWakeupService = sessionWakeupService;
         this.judgeDecisionService = judgeDecisionService;
         this.eventStoreService = eventStoreService;
-        this.cursorRepository = cursorRepository;
         this.objectMapper = objectMapper;
         this.chatRunRepository = chatRunRepository;
         this.dbLockTimeout = dbLockTimeout;
@@ -339,15 +335,17 @@ public class WakeDispatchService {
         return new WakeFireResult(false, null, "chain_refused");
     }
 
-    /** 人=通知：wake_dispatch notify event (SSE = the v1 站内 channel) + mention_count advance. */
+    /**
+     * 人=通知：只写 durable {@code wake_dispatch} notify 行。
+     *
+     * <p>PLAN-0660 T5.3：未读**不再**在这里自增 —— 它是从
+     * {@code wake_dispatch ∧ outcome=notify ∧ sequence > last_read_event_seq} 派生的值
+     * （`spec/session/user-channel.md` §3，D66-07 / B-4）；此方法只负责把通知这件事记账。</p>
+     */
     private void notifyHuman(UUID sessionId, SessionParticipant participant,
                              String triggerSource, String wakeRoundId, String parentRunId) {
         audit(sessionId, participant.getId(), triggerSource, wakeRoundId, "notify",
                 null, null, parentRunId);
-        cursorRepository.findById(participant.getId()).ifPresent(cursor -> {
-            cursor.setMentionCount((cursor.getMentionCount() == null ? 0 : cursor.getMentionCount()) + 1);
-            cursorRepository.save(cursor);
-        });
     }
 
     /**

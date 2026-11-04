@@ -197,6 +197,12 @@ XIHE_E2E_EXTERNAL_SERVER=1 node scripts/e2e-host.mjs --retries=0 <spec>.spec.ts
 pnpm exec playwright test e2e/mock/<reviewed-spec>.spec.ts --config e2e/playwright.config.ts --update-snapshots
 ```
 
+> **host runner CLI 语义（PLAN-0664 / BL-267，2026-11-04）**：
+> ① `--batch=<name>` 与位置 spec 路径是**并集**——批内 spec 全部照跑，位置参数只是追加；要收窄用 `--only=<完整路径|basename|唯一子串>`（子串多命中直接拒绝并列出候选，不猜）；
+> ② `--llm-mode`（或 `XIHE_E2E_LLM_MODE`）与 `scripts/e2e-batches.jsonc` 的 `llmMode` 不一致会**拒绝启动**（批声明的车道不能被静默改掉）；跨车道调试需显式 `--allow-llm-mode-override`；
+> ③ `--retries` 是 Playwright 每次用例重试，`XIHE_E2E_RETRY_ROUNDS` 是整轮重跑（轮间重置 DB 状态），两者叠加时总尝试 = 轮数 × (1 + retries)；取证跑法建议 `--retries=0` + `XIHE_E2E_RETRY_ROUNDS=1`，避免"重试后通过"掩盖真故障；
+> ④ 启动前自检（不启栈、秒级）：`node scripts/e2e-host.mjs --batch=<name> [--only=…] --check-cli`。
+
 未来另行授权恢复 Linux 验收时，候选 workflow 使用以下命令（各执行 9 个路由截图用例）：
 
 ```bash
