@@ -107,6 +107,8 @@ public class ChatController {
     private final ChatRunLifecycleService chatRunLifecycleService;
     private final MessageReadService messageReadService;
     private final com.cc01cc.p.xihe.cp.context.service.ContextSourceRefreshService contextSourceRefreshService;
+    /** PLAN-0666 M1b: writes the per-run context fingerprint at the first dispatch (fail-open). */
+    private final ContextFingerprintRecorder contextFingerprintRecorder;
     private final com.cc01cc.p.xihe.cp.usage.UsageCostMapper usageCostMapper;
     private final com.cc01cc.p.xihe.cp.service.ContextTemplateSourceService contextTemplateSourceService;
     private final ApplicationEventPublisher eventPublisher;
@@ -182,7 +184,9 @@ public class ChatController {
               ApplicationEventPublisher eventPublisher,
               com.cc01cc.p.xihe.cp.policy.ResourceGovernor governor,
               // PLAN-0635 M2: appended last so the many positional constructions stay stable.
-              com.cc01cc.p.xihe.cp.context.service.MentionPathResolver mentionPathResolver) {
+              com.cc01cc.p.xihe.cp.context.service.MentionPathResolver mentionPathResolver,
+              // PLAN-0666 M1b: appended last for the same reason.
+              ContextFingerprintRecorder contextFingerprintRecorder) {
         this.agentHttpClient = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(10))
             .build();
@@ -206,6 +210,7 @@ public class ChatController {
         this.embeddingProfiles = embeddingProfiles;
         this.requestValidator = requestValidator;
         this.mentionPathResolver = mentionPathResolver;
+        this.contextFingerprintRecorder = contextFingerprintRecorder;
         this.configService = configService;
         this.mcpRelayToolRecorder = mcpRelayToolRecorder;
         this.mcpToolTimeoutService = mcpToolTimeoutService;
@@ -1448,6 +1453,14 @@ public class ChatController {
 
                 String agentRequestBody = objectMapper.writeValueAsString(agentRequest);
 
+                // PLAN-0666 M1b: fingerprint the outbound context at the first dispatch.
+                // Placed after the payload is complete and before any POST — the only point where
+                // every layer (componentSources/instructions/overrides/images) exists (design D3).
+                // Fail-open: never blocks the run.
+                recordContextFingerprint(runId, sessionId, userId, workspaceId, persistedRun, content,
+                        componentSources, agentInstructions, userOverrides, workspaceOverrides,
+                        agentRequest);
+
                 // PLAN-0341 T1.1 (decision #2/#3): at-most-once overflow retry.
                 // On CONTEXT_OVERFLOW: force-compact (bypass cooldown) → preflight →
                 // re-dispatch the same runId before any terminal transition.
@@ -1727,7 +1740,30 @@ public class ChatController {
     /**
      * Resolve model window from context-policy (T1.6). Priority:
      * models.&lt;model&gt;.maxInputTokens → defaults.maxInputTokens → null (caller falls back).
+     */    /**
+     * PLAN-0666 M1b: record the dispatch-time fingerprint. Deliberately swallows every failure —
+     * an observability artifact must never fail a run (D5 fail-open); the recorder itself already
+     * downgrades failures to a stored {@code status=error} document.
      */
+    private void recordContextFingerprint(String runId, String sessionId, String userId, String workspaceId,
+                                          ChatRunReadService.ExecutionRun persistedRun, String content,
+                                          Map<String, Object> componentSources, String agentInstructions,
+                                          Map<String, Map<String, String>> userOverrides,
+                                          Map<String, Map<String, String>> workspaceOverrides,
+                                          Map<String, Object> agentRequest) {
+        try {
+            contextFingerprintRecorder.recordFirstDispatch(new ContextFingerprintRecorder.RecordInput(
+                    runId, sessionId, persistedRun.branchId(), userId, workspaceId,
+                    persistedRun.context().contextTemplateSnapshot(),
+                    persistedRun.context().skillsSnapshot(),
+                    content, componentSources, agentInstructions,
+                    userOverrides, workspaceOverrides, agentRequest));
+        } catch (RuntimeException exception) {
+            logger.warn("[CONTEXT-FINGERPRINT] event=record_failed runId={} reason={}",
+                    runId, exception.getClass().getSimpleName());
+        }
+    }
+
     private Long resolveMaxInputTokens(String userId, String workspaceId, String model) {
         try {
             Map<String, String> domain = configService.resolveDomain(

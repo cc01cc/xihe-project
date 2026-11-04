@@ -115,6 +115,34 @@ public class ContextProjectionService {
     }
 
     /**
+     * PLAN-0666 M1b: read the stored projection's {@code messages} array without replaying events.
+     *
+     * <p>The dispatch path needs the pre-turn history for the context fingerprint (one jsonb read by
+     * the {@code (session_id, projection_type, branch_id)} key); replaying the whole event stream
+     * there would be an unacceptable cost on the hot path. A missing projection means "no history
+     * yet" and is reported as an empty array, not as an error.
+     */
+    @Transactional(readOnly = true)
+    public JsonNode currentHistoryMessages(String sessionId, String branchId) {
+        if (sessionId == null || sessionId.isBlank() || branchId == null || branchId.isBlank()) {
+            return objectMapper.createArrayNode();
+        }
+        return projectionRepository
+                .findBySessionIdAndProjectionTypeAndBranchId(sessionId, AGENT_CONTEXT_TYPE, branchId)
+                .map(projection -> projectionMessages(projection.getPayload()))
+                .orElseGet(() -> objectMapper.createArrayNode());
+    }
+
+    private JsonNode projectionMessages(String payload) {
+        try {
+            JsonNode messages = objectMapper.readTree(payload).path("messages");
+            return messages.isArray() ? messages : objectMapper.createArrayNode();
+        } catch (com.fasterxml.jackson.core.JsonProcessingException exception) {
+            throw new IllegalStateException("stored context projection is not JSON", exception);
+        }
+    }
+
+    /**
      * PLAN-0410 T2.1/T2.3: projection upsert keyed by
      * (session_id, projection_type, branch_id) — the cache key carries the
      * branchId. A null branchId bootstraps the Session root (legacy callers);
