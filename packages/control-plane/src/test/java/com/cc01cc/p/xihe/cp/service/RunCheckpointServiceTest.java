@@ -709,7 +709,7 @@ class RunCheckpointServiceTest {
         assertEquals(RunCheckpointService.Gate.RUN_ACTIVE, preview.gate());
         assertEquals("RUN_ACTIVE", preview.reason());
 
-        RunCheckpointService.RevertOutcome revert = service.revert(WORKSPACE_ID, SLICE_REF, List.of());
+        RunCheckpointService.RevertOutcome revert = service.revert(WORKSPACE_ID, SLICE_REF, List.of(), false, List.of());
         assertEquals(RunCheckpointService.Gate.RUN_ACTIVE, revert.gate());
         assertEquals("RUN_ACTIVE", revert.reason());
 
@@ -723,7 +723,7 @@ class RunCheckpointServiceTest {
                     "both in-flight runs must be inside the frozen non-terminal set: " + queried);
         }
         verify(client, never()).previewRevert(anyString(), anyString());
-        verify(client, never()).revert(anyString(), anyString(), any());
+        verify(client, never()).revert(anyString(), anyString(), any(), anyBoolean(), any());
     }
 
     @Test

@@ -110,7 +110,10 @@ async function sendMessage(page: Page, text: string): Promise<void> {
     // composer/bubble 重写后 `data-align` 移到 Bubble 原语上，`[data-slot="message"]` 不再承载它；
     // 改用每条消息行的稳定锚点 `message-item` 按文本定位（断言语义不变：发送后用户气泡出现）。
     await expect(
-        page.getByTestId("message-item").filter({ hasText: text.slice(0, 12) }).first(),
+        page
+            .getByTestId("message-item")
+            .filter({ hasText: text.slice(0, 12) })
+            .first(),
         "the user bubble appears after sending",
     ).toBeVisible({ timeout: 30_000 });
 }
