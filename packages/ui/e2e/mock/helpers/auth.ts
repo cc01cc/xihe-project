@@ -10,6 +10,14 @@ export interface MockSSEStream {
         source: string;
     };
     retryTokens?: string[];
+    /**
+     * PLAN-0659 T1.2：给本流的每个事件盖 `participantId`（多主体线程证据用）。wire 契约里
+     * 每条事件都带产出主体（openapi.yaml 的 M1b-3）；夹具不盖这个字段时 UI **正确地**不渲染
+     * 身份行 —— 所以「谁产出的」必须由夹具显式给，UI 不猜。
+     */
+    participantId?: string;
+    /** PLAN-0659 T1.2：token 之后补一个 `tool_call`（过程行/工具卡的 actor 徽标证据）。 */
+    toolCall?: { tool: string; toolCallId?: string; arguments?: unknown };
     errorAfterTokens?: {
         code: string;
         detail: string;
@@ -100,7 +108,16 @@ export async function setupMockAuth(page: Page, options: MockAuthOptions = {}) {
 
     if (options.sse) {
         await page.addInitScript(
-            ({ tokens, retryTokens, errorAfterTokens, delayMs, optionsUsage, holdOpen }) => {
+            ({
+                tokens,
+                retryTokens,
+                errorAfterTokens,
+                delayMs,
+                optionsUsage,
+                holdOpen,
+                participantId,
+                toolCall,
+            }) => {
                 const originalFetch = window.fetch.bind(window);
                 let streamController: ReadableStreamDefaultController<Uint8Array> | null = null,
                     streamClosed = false;
@@ -113,6 +130,16 @@ export async function setupMockAuth(page: Page, options: MockAuthOptions = {}) {
                 const encode = (value: string) => new TextEncoder().encode(value);
                 const event = (name: string, data: unknown) =>
                     `event: ${name}\ndata: ${JSON.stringify(data)}\n\n`;
+                /**
+                 * PLAN-0659 T1.2：装配可选的事件信封字段 —— `runId`（CP 的每条事件都带，UI 用它
+                 * 把 token 与 tool_call 归到同一个 run 的同一个气泡）与 `participantId`（产出主体，
+                 * wire 契约 M1b-3）。夹具不带 `runId` 时 tool_call 会另起一个气泡（假失败）。
+                 */
+                const withParticipant = (data: Record<string, unknown>) => ({
+                    ...(currentRunId ? { runId: currentRunId } : {}),
+                    ...data,
+                    ...(participantId ? { participantId } : {}),
+                });
 
                 const emit = async () => {
                     if (!streamController || streamClosed || streamEmitted) return;
@@ -123,7 +150,26 @@ export async function setupMockAuth(page: Page, options: MockAuthOptions = {}) {
                             if (delayMs > 0)
                                 await new Promise((resolve) => setTimeout(resolve, delayMs));
                             if (!streamController || streamClosed) return;
-                            streamController.enqueue(encode(event("token", { content: token })));
+                            streamController.enqueue(
+                                encode(event("token", withParticipant({ content: token }))),
+                            );
+                        }
+                        if (!streamClosed && toolCall) {
+                            streamController.enqueue(
+                                encode(
+                                    event(
+                                        "tool_call",
+                                        withParticipant({
+                                            tool: toolCall.tool,
+                                            ...(toolCall.toolCallId
+                                                ? { toolCallId: toolCall.toolCallId }
+                                                : {}),
+                                            arguments: toolCall.arguments ?? {},
+                                            ...(currentRunId ? { run_id: currentRunId } : {}),
+                                        }),
+                                    ),
+                                ),
+                            );
                         }
                         if (shouldFail && errorAfterTokens) {
                             // The stream is correlated by `runId` (the one the `202` ChatRunResponse
@@ -209,6 +255,8 @@ export async function setupMockAuth(page: Page, options: MockAuthOptions = {}) {
                 errorAfterTokens: options.sse.errorAfterTokens,
                 delayMs: options.sse.delayMs ?? 0,
                 holdOpen: options.sse.holdOpen ?? false,
+                participantId: options.sse.participantId,
+                toolCall: options.sse.toolCall,
             },
         );
     }
