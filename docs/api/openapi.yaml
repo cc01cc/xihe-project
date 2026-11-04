@@ -1131,6 +1131,8 @@ paths:
         reason is null when available, otherwise one of approval_required, denied,
         policy_unavailable, branch_locked. The browser renders this list plus its two local-only
         commands (/clear and /help) and never filters availability itself.
+        BL-299 read access: the session owner or an enabled invited HUMAN participant (managers are
+        excluded); everyone else gets 404 SESSION_NOT_FOUND. Read only — this route has no write face.
       security: [{ bearerAuth: [] }]
       parameters: [{ in: path, name: sessionId, required: true, schema: { type: string, format: uuid } }]
       responses:
@@ -1845,6 +1847,8 @@ paths:
         status/terminal fields plus `waitingOnRunId`/`waitingToolCallId` (the spawn
         waiting link owned by the child ChatRun). ChatPanel uses this endpoint as
         its refresh-recovery source.
+        BL-299 read access: the session owner or an enabled invited HUMAN participant (managers are
+        excluded); everyone else gets 404 SESSION_NOT_FOUND. Read-only metadata only.
       security: [{ bearerAuth: [] }]
       parameters:
         - in: path
@@ -1953,6 +1957,9 @@ paths:
     get:
       operationId: getPolicyMode
       summary: Get the session-scoped policy mode
+      description: |
+        BL-299 read access: the session owner or an enabled invited HUMAN participant (managers are
+        excluded); everyone else gets 404 SESSION_NOT_FOUND. The POST below stays owner-only.
       security: [{ bearerAuth: [] }]
       parameters:
         - in: query
@@ -1977,7 +1984,8 @@ paths:
         Persists `manual` / `auto` on the session row (PLAN-0337 V24), so the choice survives a CP
         restart; a workspace-level default comes from the `approval-policy` config domain. An
         unsupported mode is rejected with `400 INVALID_REQUEST`, an unknown/unowned session with
-        `404 SESSION_NOT_FOUND`.
+        `404 SESSION_NOT_FOUND`. BL-299: this is a write face and stays owner-only (invited HUMAN
+        participants get 404); the GET sibling is the only widened read.
       security: [{ bearerAuth: [] }]
       requestBody:
         required: true

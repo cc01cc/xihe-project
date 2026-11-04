@@ -89,7 +89,10 @@ public class PolicyController {
             return ProblemDetailsHandler.workspaceContextRequired();
         }
         try {
-            sessionService.requireCurrent(sessionId, userId, workspaceId);
+            // BL-299: GET /policy/mode is the UI's read of the session approval mode + rule
+            // count — a session read face (owner or invited enabled HUMAN). The POST below keeps
+            // requireCurrent (owner-only): a read widening must never widen this write face.
+            sessionService.requireReadable(sessionId, userId, workspaceId);
         } catch (CpApiException e) {
             return problem(e);
         }
