@@ -517,12 +517,15 @@ paths:
         in the optional `workspaceId` authorization context; without either the answer is 403. A
         principal the caller cannot see answers 404 `AGENT_PRINCIPAL_NOT_FOUND` (same body as a
         missing id — no existence oracle).
-        `atoms` is a bounded summary of the role's derived atoms (first 12 names) with `atomCount`
-        carrying the real size (D5: show what the role can do, never dump the whole permission surface).
+        `atoms` are **localized short labels** of the role's derived atoms (PermissionAtomLabels, at most 12;
+        `atomCount` carries the real distinct count, so the UI shows `slice(0,3)` plus "共 N 个"). Label
+        locale comes from `?locale=` (zh-CN default, en-US supported), else the Accept-Language header; machine
+        atom names never leave the server (D5: show what the role can do, never dump the whole permission surface).
       security: [{ bearerAuth: [] }]
       parameters:
         - { in: path, name: principalId, required: true, schema: { type: string, format: uuid } }
         - { in: query, name: workspaceId, required: false, schema: { type: string, format: uuid }, description: 'Authorization context only: when present the workspace-tier atom is evaluated in this workspace; absent means only the instance-tier atom can authorize the read.' }
+        - { in: query, name: locale, required: false, schema: { type: string, enum: [zh-CN, en-US] }, description: 'Label locale for atoms (zh-CN default; en-US supported). Falls back to Accept-Language, then zh-CN.' }
       responses:
         '200': { description: 'Role bindings of this principal', content: { application/json: { schema: { $ref: '#/components/schemas/AgentPrincipalRoleBindingListResponse' } } } }
         '400': { $ref: '#/components/responses/Problem' }
@@ -538,20 +541,25 @@ paths:
         already sees the new capability (no cache warm-up, no background job).
         Gates: `MANAGE_AGENT_PRINCIPALS` (instance tier) or `MANAGE_WORKSPACE_AGENTS` in `workspaceId`;
         the actor can never be the subject itself (an agent cannot bind itself).
-        Refusals: a role carrying any `PermissionAtomCatalog.agentPrincipalForbiddenAtoms()` atom (and,
-        for a workspace binding, any instance-only atom) ⇒ **409 `AGENT_PRINCIPAL_FORBIDDEN_ATOMS`**
-        with only atom names in `detail`; an existing row for the same (role, principal) ⇒
-        **409 `ROLE_BINDING_EXISTS`**; an unknown/invisible role or principal ⇒ 404.
+        Scope is **server-derived** (Lead ruling 2026-11-05, real-stack gap 2): the body carries
+        only `roleId`; a `workspaceId` authorization context derives workspace scope, no context
+        derives the instance scope (which requires `MANAGE_AGENT_PRINCIPALS`). The caller can never
+        choose a scope it cannot authorize, so `scopeType`/`scopeId` in the body are rejected.
+        Refusals: a role carrying any `PermissionAtomCatalog.agentPrincipalForbiddenAtoms()` atom ⇒
+        **409 `AGENT_PRINCIPAL_FORBIDDEN_ATOMS`** with only atom names in `detail`; an existing row
+        for the same (role, principal, derived scope) ⇒ **409 `ROLE_BINDING_EXISTS`**; an
+        unknown/invisible role or principal ⇒ 404.
       security: [{ bearerAuth: [] }]
       parameters:
         - { in: path, name: principalId, required: true, schema: { type: string, format: uuid } }
         - { in: query, name: workspaceId, required: false, schema: { type: string, format: uuid }, description: 'Authorization context only (see GET).' }
+        - { in: query, name: locale, required: false, schema: { type: string, enum: [zh-CN, en-US] }, description: 'Label locale for the response atoms (see GET).' }
       requestBody:
         required: true
         content: { application/json: { schema: { $ref: '#/components/schemas/AgentPrincipalRoleBindRequest' } } }
       responses:
         '201': { description: 'The created binding', content: { application/json: { schema: { $ref: '#/components/schemas/AgentPrincipalRoleBindingView' } } } }
-        '400': { description: 'INVALID_REQUEST (bad body / unknown keys) or ROLE_SCOPE_MISMATCH (instance-only atom in a workspace binding)', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '400': { description: 'INVALID_REQUEST (body must contain only roleId; a client-supplied scope is rejected)', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
         '401': { $ref: '#/components/responses/Problem' }
         '403': { description: 'FORBIDDEN (no binding authority, or actor == subject)', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
         '404': { description: 'AGENT_PRINCIPAL_NOT_FOUND / ROLE_NOT_FOUND', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
@@ -3905,9 +3913,20 @@ paths:
   /api/v1/roles:
     get:
       operationId: listRoles
-      summary: List access-role definitions (PLAN-0610 W3-2a)
-      description: 'Every role definition (the seven system roles: the six V87 seeds plus AGENT_DELEGATOR from V109, plus custom ones), system roles first and then by name. Each row carries its atom set and bindingCount so the UI can disable a delete it cannot perform. Gate: MANAGE_ROLES.'
+      summary: List access-role definitions (PLAN-0610 W3-2a; PLAN-0667 gap-1 read path)
+      description: |
+        Two views share this endpoint. A caller holding `MANAGE_ROLES` gets every role definition
+        (PLAN-0610 admin view, unchanged). A caller who may manage an agent's bindings
+        (`MANAGE_WORKSPACE_AGENTS` in the `workspaceId` context, or the instance-tier
+        `MANAGE_AGENT_PRINCIPALS`) gets the **agent-bindable subset**: roles carrying any
+        `agentPrincipalForbidden` atom are omitted, because binding them would always answer 409
+        (Lead ruling 2026-11-05, real-stack gap 1: the OWNER previously received 403 and the
+        binding picker had no candidates). Role definitions are instance-wide — scope lives on the
+        binding — so no workspace-owned role can leak through this filter. Rows keep the same
+        RoleView shape (system roles first, then by name, atoms + bindingCount included).
       security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: query, name: workspaceId, required: false, schema: { type: string, format: uuid }, description: 'Authorization context for the agent-binding view: MANAGE_WORKSPACE_AGENTS is evaluated in this workspace. Ignored by the MANAGE_ROLES admin view. A workspace-tier caller cannot read candidates without it (403).' }
       responses:
         '200': { description: 'Role definitions', content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/RoleView' } } } } }
         '401': { $ref: '#/components/responses/Problem' }
@@ -4418,11 +4437,11 @@ components:
     AgentMemoryCreateRequest: { type: object, additionalProperties: false, required: [content], properties: { content: { type: string, minLength: 1, maxLength: 8000, description: 'Normalised server-side (NFC -> trim -> collapse whitespace -> drop zero-width); 1..8000 characters after normalisation.' }, pinned: { type: boolean, default: false, description: 'Only the ui/cli channels may pin; this endpoint is the ui channel.' } } }
     AgentMemoryUpdateRequest: { type: object, additionalProperties: false, minProperties: 1, properties: { content: { type: string, minLength: 1, maxLength: 8000 }, pinned: { type: boolean } } }
     AgentMemoryResponse: { type: object, additionalProperties: false, required: [memory], properties: { memory: { $ref: '#/components/schemas/AgentMemoryView' } } }
-    AgentPrincipalRoleBindingView: { type: object, additionalProperties: false, required: [bindingId, principalId, roleId, roleName, scopeType, isSystem, atomCount, atoms, grantedAt], description: 'PLAN-0667: one role binding of an agent principal. `atoms` is a bounded summary (first 12 derived atom names) with `atomCount` carrying the real size (D5).', properties: { bindingId: { type: string, format: uuid }, principalId: { type: string, format: uuid }, roleId: { type: string, format: uuid }, roleName: { type: string }, roleDisplayName: { type: [string, 'null'] }, description: { type: [string, 'null'] }, scopeType: { type: string, enum: [instance, workspace] }, scopeId: { type: [string, 'null'], format: uuid }, isSystem: { type: boolean, description: 'roles.is_system: a seed role; its binding answers 409 ROLE_BINDING_IMMUTABLE on delete.' }, atomCount: { type: integer }, atoms: { type: array, items: { type: string } }, grantedBy: { type: [string, 'null'], format: uuid }, grantedAt: { type: string, format: date-time } } }
-    AgentPrincipalRoleBindingListResponse: { type: object, additionalProperties: false, required: [bindings], properties: { bindings: { type: array, items: { $ref: '#/components/schemas/AgentPrincipalRoleBindingView' } } } }
-    AgentPrincipalRoleBindRequest: { type: object, additionalProperties: false, required: [roleId, scopeType], description: 'PLAN-0667. `scopeId` is present exactly for scopeType=workspace; instance scope must omit it (otherwise 400 INVALID_REQUEST).', properties: { roleId: { type: string, format: uuid }, scopeType: { type: string, enum: [instance, workspace] }, scopeId: { type: [string, 'null'], format: uuid } } }
-    AgentPrincipalSkillBindingView: { type: object, additionalProperties: false, required: [bindingId, principalId, skillId, skillName, scopeType, createdAt], description: 'PLAN-0667 v1: one skill binding of an agent principal (scope is always instance, i.e. the agent carries it everywhere).', properties: { bindingId: { type: string, format: uuid }, principalId: { type: string, format: uuid }, skillId: { type: string, format: uuid }, skillName: { type: string }, description: { type: [string, 'null'] }, scopeType: { type: string, enum: [instance] }, createdByUserId: { type: [string, 'null'], format: uuid }, createdAt: { type: string, format: date-time } } }
-    AgentPrincipalSkillBindingListResponse: { type: object, additionalProperties: false, required: [bindings], properties: { bindings: { type: array, items: { $ref: '#/components/schemas/AgentPrincipalSkillBindingView' } } } }
+    AgentPrincipalRoleBindingView: { type: object, additionalProperties: false, required: [bindingId, principalId, roleId, name, scopeType, isSystem, atomCount, atoms, grantedAt], description: 'PLAN-0667: one role binding of an agent principal. `name`/`displayName` identify the role, `scopeName` carries the workspace name for workspace-scope rows; `atoms` are localized short labels (PermissionAtomLabels, at most 12) and `atomCount` is the real distinct atom count, so the UI can show the first three plus 共 N 个 without exposing the whole permission set (D5). Labels follow `?locale=` (zh-CN default, en-US supported) or the Accept-Language header; machine atom names never leave the server.', properties: { bindingId: { type: string, format: uuid }, principalId: { type: string, format: uuid }, roleId: { type: string, format: uuid }, name: { type: string, description: 'roles.name, e.g. WS_EDITOR' }, displayName: { type: [string, 'null'] }, description: { type: [string, 'null'] }, scopeType: { type: string, enum: [instance, workspace] }, scopeId: { type: [string, 'null'], format: uuid }, scopeName: { type: [string, 'null'], description: 'workspace name when scopeType=workspace, else null' }, isSystem: { type: boolean, description: 'roles.is_system: a seed role; its binding answers 409 ROLE_BINDING_IMMUTABLE on delete.' }, atomCount: { type: integer, description: 'distinct derived atom count of the role' }, atoms: { type: array, maxItems: 12, items: { type: string }, description: 'localized short labels (PermissionAtomLabels); slice(0,3) for display' }, grantedBy: { type: [string, 'null'], format: uuid }, grantedAt: { type: string, format: date-time } } }
+    AgentPrincipalRoleBindingListResponse: { type: object, additionalProperties: false, required: [items], properties: { items: { type: array, items: { $ref: '#/components/schemas/AgentPrincipalRoleBindingView' } } } }
+    AgentPrincipalRoleBindRequest: { type: object, additionalProperties: false, required: [roleId], description: 'PLAN-0667 (Lead ruling 2026-11-05, gap 2): the body carries only roleId. The binding scope is server-derived from the authorization context — `workspaceId` present ⇒ workspace scope, absent ⇒ instance scope (requires MANAGE_AGENT_PRINCIPALS). Sending scopeType/scopeId is rejected with 400 INVALID_REQUEST, because scope is an authorization decision, not a client choice.', properties: { roleId: { type: string, format: uuid } } }
+    AgentPrincipalSkillBindingView: { type: object, additionalProperties: false, required: [bindingId, principalId, skillId, name, tokenEstimate, createdAt], description: 'PLAN-0667 v1: one skill binding of an agent principal. The server writes scope_type=instance/scope_id=NULL (the agent carries the skill in every workspace) and the request body only accepts skillId. sourceType=workspace means the definition is workspace-private (sourceName=that workspace); sourceType=personal means the instance library definition. tokenEstimate mirrors skills.body_tokens_est.', properties: { bindingId: { type: string, format: uuid }, principalId: { type: string, format: uuid }, skillId: { type: string, format: uuid }, name: { type: string }, description: { type: [string, 'null'] }, sourceType: { type: string, enum: [workspace, personal] }, sourceName: { type: [string, 'null'] }, tokenEstimate: { type: integer }, createdBy: { type: [string, 'null'], format: uuid }, createdAt: { type: string, format: date-time } } }
+    AgentPrincipalSkillBindingListResponse: { type: object, additionalProperties: false, required: [items], properties: { items: { type: array, items: { $ref: '#/components/schemas/AgentPrincipalSkillBindingView' } } } }
     AgentPrincipalSkillBindRequest: { type: object, additionalProperties: false, required: [skillId], properties: { skillId: { type: string, format: uuid } } }
     AgentModelRef: { type: object, additionalProperties: false, required: [provider, model], properties: { provider: { type: string, minLength: 1 }, model: { type: string, minLength: 1 } } }
     AgentPrincipalCreateRequest: { type: object, additionalProperties: false, required: [name], properties: { name: { type: string, minLength: 1, maxLength: 64, pattern: '^[A-Za-z\u4e00-\u9fff][A-Za-z0-9\u4e00-\u9fff]*$', description: 'Agent subject name. 2026-11-03 name-format ruling: letters / Chinese characters (U+4E00-U+9FFF) / digits only, must not start with a digit, no spaces or symbols; any other shape is rejected with 400 INVALID_NAME_FORMAT (not the generic INVALID_REQUEST).' }, templateId: { type: [string, 'null'], format: uuid }, roleIds: { type: [array, 'null'], items: { type: string, format: uuid }, description: 'PLAN-0629 task-12: the roles the new principal is bound to. Absent or null means the defaults (instance scope USER; a workspace binding additionally gets WS_EDITOR). Every id is validated once before the row is written: an unknown id, an instance-administrator role (any atom in PermissionAtomCatalog.agentPrincipalForbiddenAtoms, e.g. ADMIN/SUPER_ADMIN), or a role wider than the caller itself holds is refused with 403 ROLE_NOT_GRANTABLE — never a generic 400. The built-in delegation role for agent principals is AGENT_DELEGATOR (workspace scope, single atom SPAWN_AGENT, V109); WS_OWNER/WS_EDITOR deliberately do not carry SPAWN_AGENT.' }, scope: { type: string, enum: [PERSONAL, WORKSPACE, INSTANCE], default: WORKSPACE, deprecated: true, description: 'DEPRECATED (PLAN-0629, user ruling 2026-11-04): read-only compatibility field. Permission comes from role bindings, not from a tier — accessibility is decided by workspace-scoped role_bindings rows (V108 backfills them from existing workspace bindings). Accepted on create for older clients and ignored; the column keeps its WORKSPACE default.' }, defaultModelProvider: { type: [string, 'null'], description: 'Model intent only; the principal never holds a provider connection.' }, defaultModelName: { type: [string, 'null'] }, allowedModels: { type: [array, 'null'], items: { $ref: '#/components/schemas/AgentModelRef' }, description: 'null = unrestricted.' }, hooks: { type: [object, 'null'], description: 'PLAN-0625 M2 (D25-12/14): hook subscriptions {advisors:[{kind,on:[actionClass]}]}; on must hit the frozen action-class whitelist (today: approval.ask) or the write is rejected 400. A preset guard (origin=SYSTEM_PRESET) refuses subscription changes with 403 GUARD_HOOKS_IMMUTABLE.' } } }

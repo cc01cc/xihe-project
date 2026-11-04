@@ -31,6 +31,10 @@ public interface SkillBindingRepository extends JpaRepository<SkillBinding, UUID
 
     List<SkillBinding> findBySkillIdOrderByCreatedAtAsc(UUID skillId);
 
+    /** PLAN-0667 M2: the agent-principal binding list (nested surface), newest last. */
+    List<SkillBinding> findBySubjectTypeAndSubjectIdOrderByCreatedAtAsc(String subjectType,
+                                                                       UUID subjectId);
+
     /**
      * The resolution candidates for one subject (PLAN-0628 §6.2): both identity axes plus the two
      * scopes that can apply, with the cross-workspace definition-leak guard.
