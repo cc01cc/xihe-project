@@ -334,7 +334,15 @@ if (ignoreBuild) {
   console.log('  INFO  artifact freshness checks skipped (--ignore-build)')
 } else {
 const cpDir = join(projectDir, 'packages', 'control-plane')
-const cpTarget = join(cpDir, 'target')
+// PLAN-0656 R2: the runner builds and boots the CP jar from its OWN build dir
+// (XIHE_CP_TARGET_DIR, default C:/xihe-build/e2e) — never from the checkout
+// target/. The freshness check must look where the runner looks; an in-tree jar
+// is not consulted by the default flow.
+const e2eCpTargetDir =
+  typeof process.env.XIHE_CP_TARGET_DIR === 'string' && process.env.XIHE_CP_TARGET_DIR.trim() !== ''
+    ? process.env.XIHE_CP_TARGET_DIR
+    : 'C:/xihe-build/e2e'
+const cpTarget = e2eCpTargetDir
 let cpJar = null
 if (existsSync(cpTarget)) {
   for (const name of readdirSync(cpTarget)) {
@@ -345,13 +353,13 @@ if (existsSync(cpTarget)) {
   }
 }
 if (!cpJar) {
-  console.log('  INFO  control-plane: no fat jar in target/ — the runner will use `mvn spring-boot:run` (no stale-jar risk)')
+  console.log(`  INFO  control-plane: no fat jar in the E2E build dir (${e2eCpTargetDir}) — the runner builds one on first boot (mvn package -Dxihe.target.dir=...; no stale-jar risk)`)
 } else {
   const cpSource = newestMtime(join(cpDir, 'src', 'main'))
   const pomStat = existsSync(join(cpDir, 'pom.xml')) ? statSync(join(cpDir, 'pom.xml')) : { mtimeMs: 0, path: null }
   const newestSource = cpSource.mtimeMs > pomStat.mtimeMs ? cpSource : { path: join(cpDir, 'pom.xml'), mtimeMs: pomStat.mtimeMs }
   if (newestSource.mtimeMs > cpJar.mtimeMs) {
-    add('FAIL', 'build', `CP jar is older than CP sources by ${fmtAge(newestSource.mtimeMs - cpJar.mtimeMs)}`, `runner boots any existing jar without a freshness check; rebuild: cd packages/control-plane && mvn -q -DskipTests package`)
+    add('FAIL', 'build', `CP jar is older than CP sources by ${fmtAge(newestSource.mtimeMs - cpJar.mtimeMs)}`, `runner boots any existing jar without a freshness check; rebuild: cd packages/control-plane && mvn -q -DskipTests -Dxihe.target.dir=${e2eCpTargetDir} package`)
     console.log(`  FAIL  CP jar ${cpJar.name} (${fmtAge(now - cpJar.mtimeMs)} old) is STALE vs ${newestSource.path} (${fmtAge(now - newestSource.mtimeMs)} old)`)
   } else {
     console.log(`  OK    CP jar ${cpJar.name} (${fmtAge(now - cpJar.mtimeMs)} old) is newer than CP sources`)
