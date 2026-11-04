@@ -26,6 +26,7 @@ import {
   shortSha,
   writeBuildInfo,
 } from "./lib/cp-build-info.mjs";
+import { cpBuildRoot, resolveCpTargetDir, writePointer } from "./lib/cp-build-dir.mjs";
 import { applySetToEnv, applyUrlSyncToEnv, parseStackSetArgs } from "./lib/stack-set.mjs";
 import { cargoTargetForStack } from "./lib/stack-cargo-target.mjs";
 import { recordedServiceAlive, sweepOrphanProcesses } from "./lib/stack-orphan.mjs";
@@ -125,13 +126,16 @@ function describeTarget(target, derived, hostRoot) {
 
 const targets = {
   pg: () => ({ command: "docker", args: ["compose", "up", "-d", "--wait", "postgres"], cwd: projectRoot }),
-  cp: () => ({
+  cp: (effectiveEnv) => ({
     command: "mvn",
-    // XIHE_CP_TARGET_DIR：把 CP 的构建输出（target/）放到快卷上（默认不设 = 行为不变）。
+    // -Dxihe.target.dir：把 CP 的构建输出（target/）放到快卷上。
     // 背景：H: 是 ReFS，每文件写 56-170ms，CP 冷编译在 H: 上要 ~8 分钟；C: 上 ~15s。
+    // BL-253 L3：值来自本脚本的派生（每栈每 commit 一个目录），显式 env 仍最优先。
     args: [
       "spring-boot:run",
-      ...(process.env.XIHE_CP_TARGET_DIR ? ["-Dxihe.target.dir=" + process.env.XIHE_CP_TARGET_DIR] : []),
+      ...(effectiveEnv.XIHE_CP_TARGET_DIR
+        ? ["-Dxihe.target.dir=" + effectiveEnv.XIHE_CP_TARGET_DIR]
+        : []),
     ],
     cwd: join(projectRoot, "packages", "control-plane"),
   }),
@@ -389,9 +393,32 @@ if (GUARDED_TARGETS.includes(target) && process.platform === "win32") {
 // "I know the tree is old and I need this stack up now", which must stay visible in the log.
 if (target === "cp") {
   const cpDir = join(projectRoot, "packages", "control-plane"),
-    targetDir = cpTargetDir({ projectRoot, env }),
     head = gitHead({ cwd: projectRoot }),
     noRebuild = rest.includes("--no-rebuild");
+  // BL-253 L3: derive this stack's own build dir **before** Maven runs, so two stacks never
+  // compile into one directory again. Priority: explicit XIHE_CP_TARGET_DIR (rollback channel,
+  // untouched) → `<root>/<stackId>/<sha12>[-dirty]`. Setting it on the effective env here is what
+  // also fixes the old `dev-stack` gap: detached stacks spawn this script, so they get the same
+  // derivation as `mise run dev:host:start:cp` — no second implementation, no in-checkout target/.
+  const layout = resolveCpTargetDir({
+    stackId: derived.stackId,
+    env,
+    commit: head.commit,
+    dirty: head.dirty,
+  });
+  if (layout.source === "derived") {
+    env.XIHE_CP_TARGET_DIR = layout.targetDir;
+  }
+  const targetDir = cpTargetDir({ projectRoot, env });
+  console.error(
+    `[stack] cp build dir (BL-253 L3): ${targetDir} source=${layout.source}`
+    + ` stack=${derived.stackId} commit=${shortSha(head.commit) || "(unknown)"} dirty=${head.dirty}`,
+  );
+  if (layout.source === "unresolved") {
+    console.error(
+      `[stack] WARNING: ${layout.reason}; falling back to the in-checkout target/ (no isolation)`,
+    );
+  }
   let verdict = evaluateCpFreshness({ targetDir, headCommit: head.commit });
   console.error(`[stack] cp build-info: ${describeBuildVerdict(verdict, head)}`);
   if (verdict.status === "stale" || verdict.status === "missing") {
@@ -440,6 +467,25 @@ if (target === "cp") {
     + ` built=${verdict.builtAt || "(none)"}`
     + ` dirty=${verdict.dirty === null ? "?" : verdict.dirty}`,
   );
+  // BL-253 L3: record which dir this start uses. This is a **launcher-written fact about the last
+  // start** (status + external-E2E assertion read it) — not an introspection of the running JVM.
+  try {
+    writePointer({
+      root: layout.root ?? cpBuildRoot({ env }),
+      stackId: derived.stackId,
+      pointer: {
+        targetDir,
+        commit: verdict.fileCommit ?? head.commit ?? null,
+        dirty: verdict.dirty ?? head.dirty ?? null,
+        verdict: verdict.status,
+        builtAt: verdict.builtAt ?? null,
+        startedAt: new Date().toISOString(),
+        source: layout.source,
+      },
+    });
+  } catch (error) {
+    console.error(`[stack] WARNING: could not write the cp build pointer: ${error.message}`);
+  }
 }
 
-launch({ ...factory(), env });
+launch({ ...factory(env), env });
