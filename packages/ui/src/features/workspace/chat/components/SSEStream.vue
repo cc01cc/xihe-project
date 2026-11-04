@@ -38,11 +38,42 @@ const { isConnected, isStreaming, connect, sendMessage, disconnect } = useSSE(
 );
 let activeRunId: string | undefined, activeBranchId: string | undefined;
 /**
- * PLAN-0631 D31-08: the run's responder as CP attributed it (SSE envelope `participantId`).
- * Constant for a run, so it is remembered once and stamped onto the live message — the
- * citation is never derived from `role` or the session's PRIMARY participant.
+ * PLAN-0645 M2: per-run live view state. Up to `maxConcurrentRunsPerSession` runs stream on one
+ * session connection at a time, so the stream parser and the run's surfaced terminal error are
+ * keyed by runId (the empty key is the runId-less fallback scope). `activeRunId` only keeps
+ * pointing at the newest run for composer/stop purposes.
  */
-let activeResponderId: string | null = null;
+const parsers = new Map<string, ReturnType<typeof useStreamParser>>(),
+    terminalErrors = new Map<string, SSEErrorPayload>(),
+    responders = new Map<string, string | null>();
+/**
+ * PLAN-0631 D31-08: the run's responder as CP attributed it (SSE envelope `participantId`). The
+ * envelope callback has no runId, so the value is parked here and consumed by the next run-scoped
+ * callback (start/token) — that is the run whose bubble it belongs to.
+ */
+let pendingResponderId: string | null = null;
+
+function runKey(runId?: string): string {
+    return runId ?? "";
+}
+
+function parserFor(runId?: string) {
+    const key = runKey(runId);
+    let parser = parsers.get(key);
+    if (!parser) {
+        parser = useStreamParser();
+        parsers.set(key, parser);
+    }
+    return parser;
+}
+
+/** Drop every piece of live state owned by one run (terminal / folded / retried). */
+function forgetRun(runId?: string) {
+    const key = runKey(runId);
+    parsers.delete(key);
+    terminalErrors.delete(key);
+    responders.delete(key);
+}
 /**
  * Bumped on **every** run-terminal event. The `202 ChatRunResponse` is processed on a
  * different connection (the POST) than the run's events (the session SSE), and nothing
@@ -57,7 +88,10 @@ watch(
     (id) => {
         activeRunId = undefined;
         activeBranchId = undefined;
-        activeResponderId = null;
+        pendingResponderId = null;
+        parsers.clear();
+        terminalErrors.clear();
+        responders.clear();
         if (id) {
             connectSession(id);
         }
@@ -66,8 +100,6 @@ watch(
 );
 
 function connectSession(id: string) {
-    const parser = useStreamParser();
-    let terminalError: SSEErrorPayload | null = null;
     const isCurrentSession = () => props.sessionId === id;
     connect({
         onOpen: () => {
@@ -78,35 +110,43 @@ function connectSession(id: string) {
         },
         onParticipant: (participantId: string | null) => {
             if (!isCurrentSession() || participantId === null) return;
-            activeResponderId = participantId;
-            chatStore.setStreamingMessageResponder(id, participantId);
+            // No runId on this envelope: park it and let the next run-scoped callback consume it.
+            pendingResponderId = participantId;
+            chatStore.setStreamingMessageResponder(id, participantId, activeRunId);
         },
-        onStart: () => {
+        onStart: (runId?: string) => {
             if (!isCurrentSession()) return;
-            // A new run owns its own terminal state: a `terminalError` remembered from the
-            // previous turn must never be replayed onto this one (it would relabel a healthy
-            // reply as failed, or duplicate the old error bubble at its `done`).
-            terminalError = null;
-            parser.reset();
-            chatStore.createStreamingMessage(id, activeRunId, activeBranchId);
-            // The attribution usually arrives on the very first event of the run, i.e.
-            // before this callback — stamp it now that the live message exists.
-            if (activeResponderId !== null) {
-                chatStore.setStreamingMessageResponder(id, activeResponderId);
+            // PLAN-0645 M2: a run owns its own parser and terminal surface; a sibling run's error
+            // must never be replayed onto this one, and vice versa.
+            forgetRun(runId);
+            activeRunId = runId ?? activeRunId;
+            chatStore.createStreamingMessage(id, runId, activeBranchId);
+            const responder = pendingResponderId ?? responders.get(runKey(runId)) ?? null;
+            if (responder !== null) {
+                responders.set(runKey(runId), responder);
+                chatStore.setStreamingMessageResponder(id, responder, runId);
+                pendingResponderId = null;
             }
         },
-        onToken: (token: string, hint?) => {
+        onToken: (token: string, hint?: "reasoning" | "text", runId?: string) => {
             if (!isCurrentSession()) return;
+            activeRunId = runId ?? activeRunId;
+            if (pendingResponderId !== null && !responders.has(runKey(runId))) {
+                responders.set(runKey(runId), pendingResponderId);
+                chatStore.setStreamingMessageResponder(id, pendingResponderId, runId);
+                pendingResponderId = null;
+            }
             if (hint === "reasoning") {
-                chatStore.appendToParts(id, { type: "reasoning", content: token });
+                chatStore.appendToParts(id, { type: "reasoning", content: token }, runId);
                 return;
             }
             if (hint === "text") {
-                chatStore.appendToParts(id, { type: "text", content: token });
+                chatStore.appendToParts(id, { type: "text", content: token }, runId);
                 return;
             }
+            const parser = parserFor(runId);
             parser.handleToken(token, hint);
-            chatStore.replaceStreamingParts(id, parser.parts.value);
+            chatStore.replaceStreamingParts(id, parser.parts.value, runId);
         },
         onStatus: (status: string) => {
             if (!isCurrentSession()) return;
@@ -126,11 +166,14 @@ function connectSession(id: string) {
                 chatStore.upsertRunStatusMarker(id, status, activeRunId);
             }
         },
-        onDone: (outcome?: string) => {
+        onDone: (outcome?: string, runId?: string) => {
             if (!isCurrentSession()) return;
+            const key = runKey(runId),
+                parser = parserFor(runId),
+                terminalError = terminalErrors.get(key) ?? null;
             parser.finalize();
             if (parser.parts.value.length > 0) {
-                chatStore.replaceStreamingParts(id, parser.parts.value);
+                chatStore.replaceStreamingParts(id, parser.parts.value, runId);
             }
             const terminal =
                 outcome === "error" || outcome === "partial" || outcome === "ambiguous";
@@ -139,7 +182,7 @@ function connectSession(id: string) {
                 // partial content, retry affordance). Applying it a second time at `done`
                 // only spawns a second, contentless error bubble — and calling
                 // `finalizeStreaming` here would flip the failed run to `succeeded`.
-                terminalError = null;
+                terminalErrors.delete(key);
             } else if (terminal) {
                 chatStore.markStreamingError(id, {
                     code:
@@ -148,28 +191,37 @@ function connectSession(id: string) {
                         outcome === "ambiguous"
                             ? "The provider result is uncertain; retry requires confirmation"
                             : "Agent stream failed",
-                    runId: activeRunId,
+                    runId,
                     retryable: outcome !== "ambiguous",
                     outcome,
                 });
             } else {
-                chatStore.finalizeStreaming(id);
+                chatStore.finalizeStreaming(id, runId);
             }
-            agentStore.setStatus("idle");
-            chatStore.setSessionRunState(id, "idle");
-            activeRunId = undefined;
-            activeBranchId = undefined;
-            activeResponderId = null;
+            forgetRun(runId);
+            // PLAN-0645 M2: composer/session surfaces stay live while a sibling run streams.
+            if (!chatStore.isStreaming(id)) {
+                agentStore.setStatus("idle");
+                chatStore.setSessionRunState(id, "idle");
+                activeRunId = undefined;
+                activeBranchId = undefined;
+            } else if (activeRunId === runId) {
+                activeRunId = undefined;
+            }
             terminalEpoch += 1;
         },
         onError: (payload: SSEErrorPayload) => {
             if (!isCurrentSession()) return;
-            terminalError = payload;
+            terminalErrors.set(runKey(payload.runId), payload);
             chatStore.markStreamingError(id, payload);
-            agentStore.setStatus("error");
-            chatStore.setSessionRunState(id, "error", activeRunId);
-            activeRunId = undefined;
-            activeResponderId = null;
+            forgetRun(payload.runId);
+            if (!chatStore.isStreaming(id)) {
+                agentStore.setStatus("error");
+                chatStore.setSessionRunState(id, "error", payload.runId ?? activeRunId);
+                activeRunId = undefined;
+            } else if (activeRunId === payload.runId) {
+                activeRunId = undefined;
+            }
             terminalEpoch += 1;
             toast.error(chatErrorToastText(payload.code, payload.detail));
         },
@@ -195,8 +247,10 @@ function connectSession(id: string) {
         onContextOverflowRetry: (data) => {
             if (!isCurrentSession()) return;
             // PLAN-0341 U3 case B: fold prior visible content as interrupted so the
-            // retry reply is the official answer (decision #2 ③).
-            chatStore.interruptForOverflowRetry(id);
+            // retry reply is the official answer (decision #2 ③). PLAN-0645 M2: only the
+            // retried run's, so a concurrent run's bubble is untouched.
+            chatStore.interruptForOverflowRetry(id, data.runId);
+            forgetRun(data.runId);
             toast.info(t("chat.contextOverflowRetry"), {
                 description: data.runId ? `run ${data.runId.slice(0, 8)}` : undefined,
             });

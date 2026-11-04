@@ -237,4 +237,39 @@ describe("SSEStream terminal error scoping", () => {
         expect(recovered.terminalOutcome).toBe("success");
         wrapper.unmount();
     });
+
+    it("keeps two concurrent runs in separate bubbles and finalizes each on its own done", async () => {
+        // PLAN-0645 M2: cap=2 means two runs can stream into one session at once. Before this
+        // change both replies' tokens were written into a single bubble and the first `done`
+        // froze it — the "mixed stream" the plan's案 B described.
+        const sessionId = "session-per-run";
+        const { wrapper, push } = await mountStream(sessionId),
+            chatStore = useChatStore();
+
+        await push("token", { content: "a1", runId: "run-a" });
+        await push("token", { content: "b1", runId: "run-b" });
+        await push("token", { content: "a2", runId: "run-a" });
+        await push("token", { content: "b2", runId: "run-b" });
+
+        const assistants = chatStore
+            .getMessages(sessionId)
+            .filter((message) => message.role === "assistant");
+        expect(assistants).toHaveLength(2, "one bubble per run, not one per session");
+        const bubbleA = assistants.find((message) => message.runId === "run-a"),
+            bubbleB = assistants.find((message) => message.runId === "run-b");
+        expect(bubbleA?.parts?.map((part) => part.content).join("")).toBe("a1a2");
+        expect(bubbleB?.parts?.map((part) => part.content).join("")).toBe("b1b2");
+        expect(chatStore.isStreaming(sessionId)).toBe(true);
+
+        // run A finishes: only A's bubble freezes, the session is still streaming for B.
+        await push("done", { outcome: "success", runId: "run-a" });
+        expect(bubbleA?.isStreaming).toBe(false);
+        expect(bubbleB?.isStreaming).toBe(true);
+        expect(chatStore.isStreaming(sessionId)).toBe(true);
+
+        await push("done", { outcome: "success", runId: "run-b" });
+        expect(bubbleB?.isStreaming).toBe(false);
+        expect(chatStore.isStreaming(sessionId)).toBe(false);
+        wrapper.unmount();
+    });
 });
