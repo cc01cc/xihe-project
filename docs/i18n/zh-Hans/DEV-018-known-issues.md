@@ -15,6 +15,17 @@ updated: 2026-10-25
 
 本文件收录 AGENTS.md 之外的已知问题，供排查时参考。
 
+## PLAN-0653 XH checkpoint 自研存储（BL-207）— P3 后状态与已知限制（2026-11-04）
+
+- **现状**：P2 已合入（store v1 + 双写 + self 读路径 + GC 分层锁 + 回切演练）；P3 起 **self 模式 store 为读写主路径**，git shadow 降级为 best-effort 备份（D53-37）；安装版默认仍 `git`。capture 性能取舍已裁定（D53-36 案 A：10k 档 capture 慢于 git 接受，不优化）。
+- **已知限制**：
+  1. **shadow 备份为 best-effort**：git 缺失/失败只 WARN + `shadowBackupFailures`，store 结果不变；副作用是备份期 shadow 列表可能落后于 store（回切后由 sidecar `gitTree=""` 降级校验兜底）。
+  2. **`Opaque`/`Reject` 策略的 self capture 仍走 legacy git 路径**（默认 `Flatten` 才是 store 主路径）。
+  3. **self 的 `cleanup` 端点仍只删 shadow**：store slice/sidecar 不随 cleanup 删除（CP 行会清但 Runtime 侧历史保留），磁盘增长需显式处理；未立项。
+  4. **真实机器迁移未执行**：T3.3 只读盘点 8 roots/21 slice_refs/store 未初始化；真改写待批准，工具与对拍门禁见 `.local/evidence/plan-0653/p3/migration-sop.md`。
+  5. **V3 symlink restore parity 为登记例外**（T2.1 fail-closed 契约，store 不恢复 symlink）。
+- 证据：`.local/evidence/plan-0653/`（`p2.4-10k.md`、`gate4-*`、`p3/*`）。
+
 ## OpenAPI 与 MCP 入口 405 漂移（PLAN-0537 登记，未修复）
 
 `docs/api/openapi.yaml` 的 `mcpStream`（GET）与 `mcpDisconnect`（DELETE）仍声明 `200` / `204`，而代码自 PLAN-0308 决策 #34 起固定返回 405（`MCP_STREAM_NOT_SUPPORTED` / `MCP_SESSION_NOT_SUPPORTED`）。属历史漂移，不影响运行时行为；下次修订 OpenAPI 时一并校正。
