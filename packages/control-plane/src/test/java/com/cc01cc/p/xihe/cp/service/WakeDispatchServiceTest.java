@@ -19,6 +19,7 @@ import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -216,6 +217,25 @@ class WakeDispatchServiceTest {
         verify(wakeupService).wakeupAs(eq(SESSION_ID.toString()), eq("owner-1"), eq("ws-1"), anyString(),
                 eq(ROUND), eq(agent.getPrincipalId()), eq("mention"), isNull());
         assertAuditOutcome("submitted");
+    }
+
+    /**
+     * BL-283: a Session at its run cap answers {@code deferred} — the wake must come back as a result
+     * (never as an exception), the audit keeps {@code outcome=deferred}, and the caller can keep
+     * counting it as "queued" instead of "failed".
+     */
+    @Test
+    void capReachedWakeReturnsDeferred_andAuditsDeferred() {
+        when(wakeupService.wakeupAs(anyString(), anyString(), anyString(), anyString(), anyString(),
+                any(), anyString(), any()))
+                .thenReturn(SessionWakeupService.WakeupResult.deferred());
+
+        WakeDispatchService.WakeFireResult result = service.fire(PARTICIPANT_ID, "mention", ROUND, SESSION_ID, null);
+
+        assertFalse(result.dispatched());
+        assertNull(result.runId());
+        assertEquals("deferred", result.outcome());
+        assertAuditOutcome("deferred");
     }
 
     @Test

@@ -35,6 +35,7 @@ class WakeFanOutServiceTargetedTest {
     private static final UUID ROOT_RUN = UUID.randomUUID();
     private static final UUID PLANNER = UUID.randomUUID();
     private static final UUID REVIEWER = UUID.randomUUID();
+    private static final UUID CONSULTANT = UUID.randomUUID();
 
     private WakeDispatchService dispatch;
     private WakeFanOutService fanOut;
@@ -135,7 +136,50 @@ class WakeFanOutServiceTargetedTest {
         assertThat(result.runIds()).isEmpty();
         assertThat(result.failedTargets()).hasSize(1);
         assertThat(result.failedTargets().get(0).reason()).isEqualTo("skipped_muted");
+        assertThat(result.deferredTargets()).isEmpty();
         assertThat(result.accounted()).isEqualTo(1);
+    }
+
+    /** BL-283: a target deferred by the run cap is QUEUED, not failed (Lead ruling 2026-11-05). */
+    @Test
+    void deferredOutcome_landsInDeferredTargets_notInFailedTargets() {
+        when(dispatch.fire(eq(PLANNER), eq("user"), eq("to"), anyString(), eq(SESSION_ID), isNull(),
+                anyString()))
+                .thenReturn(new WakeDispatchService.WakeFireResult(false, null, "deferred"));
+
+        WakeFanOutService.TargetedWake result = fanOut.targetedFanOut(SESSION_ID, "ws-1", "user-1",
+                ROOT_RUN.toString(), "请评审", List.of(PLANNER));
+
+        assertThat(result.runIds()).isEmpty();
+        assertThat(result.failedTargets()).as("deferred is not a failure").isEmpty();
+        assertThat(result.deferredTargets()).hasSize(1);
+        assertThat(result.deferredTargets().get(0).participantId()).isEqualTo(PLANNER.toString());
+        assertThat(result.deferredTargets().get(0).reason()).isEqualTo("deferred");
+        assertThat(result.accounted()).isEqualTo(1);
+    }
+
+    /** BL-283 conservation: every requested target is exactly one of dispatched / deferred / failed. */
+    @Test
+    void everyTargetIsAccountedFor_acrossTheThreeBuckets() {
+        UUID reviewerRun = UUID.randomUUID();
+        dispatched(REVIEWER, reviewerRun);
+        when(dispatch.fire(eq(PLANNER), eq("user"), eq("to"), anyString(), eq(SESSION_ID), isNull(),
+                anyString()))
+                .thenReturn(new WakeDispatchService.WakeFireResult(false, null, "deferred"));
+        when(dispatch.fire(eq(CONSULTANT), eq("user"), eq("to"), anyString(), eq(SESSION_ID), isNull(),
+                anyString()))
+                .thenThrow(new IllegalStateException("boom"));
+
+        WakeFanOutService.TargetedWake result = fanOut.targetedFanOut(SESSION_ID, "ws-1", "user-1",
+                ROOT_RUN.toString(), "请评审", List.of(PLANNER, REVIEWER, CONSULTANT));
+
+        assertThat(result.runIds()).containsExactly(reviewerRun);
+        assertThat(result.deferredTargets()).hasSize(1);
+        assertThat(result.failedTargets()).hasSize(1);
+        assertThat(result.accounted())
+                .as("runIds + failedTargets + deferredTargets == targets")
+                .isEqualTo(result.targets())
+                .isEqualTo(3);
     }
 
     @Test

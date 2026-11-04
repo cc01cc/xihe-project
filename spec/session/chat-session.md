@@ -59,9 +59,15 @@ Session 负责连续对话上下文、消息、附件引用、模型绑定和 Ch
 5. **显式 TO 优先于 @ 抑制**：带 `toParticipantIds` 的提交 MUST NOT 被 `@` 抑制成
    `suppressed_no_responder`；`@` 与 TO 命中同一参与者时 MUST 由 **TO 路径唯一建 run**（mention 轮跳过 TO 目标），一条消息不得为其开两个 run。
 5b. **运行时失败不得静默**（2026-11-05 真栈实锤）：目标在**运行时**派发失败（DB 约束、网络、Agent 不可用）MUST 部分成功并
-   在 202 响应回报 `failedTargets:[{participantId,reason}]`，且 `runIds.length + failedTargets.length` MUST 等于请求目标数；
-   失败 MUST 以 ERROR 级 `event=to_target_dispatch_failed` 留痕（可 grep 计数）。**前置校验失败**（目标不存在/无权限/已停用/非 AGENT）
-   则 MUST 整条拒绝（400/403），两类情形不得混用同一处理。
+   在 202 响应回报 `failedTargets:[{participantId,reason}]`，且 `runIds.length + failedTargets.length + deferredTargets.length`
+   MUST 等于请求目标数；失败 MUST 以 ERROR 级 `event=to_target_dispatch_failed` 留痕（可 grep 计数）。**前置校验失败**
+   （目标不存在/无权限/已停用/非 AGENT）则 MUST 整条拒绝（400/403），两类情形不得混用同一处理。
+5c. **deferred 是排队，不是失败**（BL-283，Lead 2026-11-05 裁定）：目标因 Session 并发满
+   （`maxConcurrentRunsPerSession`）被顺延入 follow-up 队列时 MUST 在 202 响应回报
+   `deferredTargets:[{participantId,reason:"deferred"}]`（**MUST NOT** 计入 `failedTargets`），
+   且唤醒 MUST 以**返回值**（`deferred`）结束而非抛异常 —— 准入拒绝若以异常穿过 REQUIRED 事务边界，
+   会把调用方共享事务标成 rollback-only，导致 deferred 入队与 `wake_dispatch` 审计一起回滚
+   （`UnexpectedRollbackException`）。审计 MUST 保留 `outcome=deferred`，INFO 级 `event=to_target_deferred` 留痕。
 6. **幂等身份含集合**：排序后的 TO 集合与 `asParticipantId` MUST 进入 `Idempotency-Key` 的
    request hash（同内容不同收件人 MUST NOT 判为重复）；`cc` 仍不入哈希（notify-only）。
 

@@ -344,6 +344,68 @@ class ChatSubmissionServiceIntegrationTest extends AbstractIntegrationTest {
     }
 
     /**
+     * BL-283（PLAN-0660 T2.1 同族）：唤醒路径用**返回值**问准入要 slot。cap 满时答案是一个空
+     * Optional，而关键点是**调用方事务仍可提交** —— 原先 `createScheduled` 抛出的 409 会穿过它
+     * 自己的 REQUIRED 事务边界，把共享事务标成 rollback-only，deferred 入队与 wake 审计随事务一起
+     * 回滚，提交时变成 `UnexpectedRollbackException`（BL-283：该唤醒既没跑也没留下"顺延"事实）。
+     *
+     * <p>本用例把 `tryCreateScheduled` 放进一个真实事务：cap 满 ⇒ 返回空；随后在同一事务里做一次
+     * 可观测写入并提交。若事务被标脏，`execute` 会在提交时抛 `UnexpectedRollbackException`；若没被
+     * 标脏，写入必须持久化。</p>
+     */
+    @Test
+    void tryCreateScheduled_returnsEmptyWhenTheCapIsFull_andTheCallerTransactionStillCommits() {
+        configService.putLayer("instance", "agent-runtime",
+                Map.of("maxConcurrentRunsPerSession", "1"), "test", null, null);
+        try {
+            User user = userRepository.save(new User("bl283-deferred-" + UUID.randomUUID() + "@test.com", "hash", "BL-283 deferred test"));
+            Workspace workspace = workspaceFixture.createOwnedWorkspace("BL-283 Deferred Workspace", user.getId().toString());
+            workspaceFixture.bindWorkspaceRole(workspace.getId().toString(), user.getId().toString(), WorkspaceRole.OWNER);
+            Session session = new Session(workspace.getId().toString(), user.getId().toString(), "BL-283 Deferred Session");
+            session.setId(UUID.randomUUID());
+            Session persistedSession = saveBoundChatSession(session, user);
+            AgentPrincipal principal = savePrincipal(user);
+            sessionRepository.saveAndFlush(boundSession(persistedSession, principal));
+            workspaceAgentRepository.saveAndFlush(new WorkspaceAgent(principal.getId().toString(),
+                    workspace.getId().toString(), objectMapper.createArrayNode()));
+
+            // Occupy the only slot.
+            ChatSubmissionService.Submission first = submit(UUID.randomUUID().toString(),
+                    persistedSession, user, workspace, "first message", principal.getId().toString());
+            assertTrue(chatRunRepository.findById(first.run().getId()).isPresent());
+
+            String sessionId = persistedSession.getId().toString();
+            String deferredRunId = UUID.randomUUID().toString();
+            TransactionTemplate transaction = new TransactionTemplate(transactionManager);
+            transaction.executeWithoutResult(status -> {
+                String branchId = branchPathService.ensureRootBranchId(sessionId);
+                var deferred = submissionService.tryCreateScheduled(deferredRunId, sessionId,
+                        user.getId().toString(), workspace.getId().toString(), branchId,
+                        "idem-" + deferredRunId, "request-hash", "provider", "model", "none", null, null,
+                        "lease-owner", UUID.randomUUID().toString(), "deferred wake prompt", "[]",
+                        java.util.List.of(), principal.getId().toString(),
+                        com.cc01cc.p.xihe.cp.entity.Message.VISIBILITY_INTERNAL);
+                assertTrue(deferred.isEmpty(),
+                        "a full cap must answer as a value (empty), not as a thrown exception");
+                jdbcTemplate.update("UPDATE sessions SET title = ? WHERE id = CAST(? AS UUID)",
+                        "bl283-committed", sessionId);
+            });
+
+            assertEquals("bl283-committed", jdbcTemplate.queryForObject(
+                    "SELECT title FROM sessions WHERE id = CAST(? AS UUID)", String.class, sessionId),
+                    "the caller transaction must commit — a rollback-only marker would have thrown "
+                            + "UnexpectedRollbackException instead");
+            assertEquals(1, jdbcTemplate.queryForObject(
+                    "SELECT count(*) FROM chat_runs WHERE CAST(session_id AS VARCHAR) = ?",
+                    Integer.class, sessionId), "the deferred attempt must not create a run row");
+            assertTrue(chatRunRepository.findById(UUID.fromString(deferredRunId)).isEmpty());
+        } finally {
+            configService.deleteKey("instance", "agent-runtime",
+                    "maxConcurrentRunsPerSession", "test", null, null);
+        }
+    }
+
+    /**
      * PLAN-0645 V1（服务层）：默认 cap=2 时，第一条 run 仍在非终态，第二次 create 必须被接纳，
      * 且两条 run 同时非终态、user Message 各一条。
      */

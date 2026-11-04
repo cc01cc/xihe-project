@@ -110,15 +110,18 @@ public class SessionWakeupService {
         boolean queueOutstanding = followUpItemRepository.countBySessionIdAndStatusIn(
                 sessionId, SessionFollowUpItemRepository.OUTSTANDING_STATUSES) > 0;
         if (!queueOutstanding) {
-            try {
-                return startScheduledRun(session, sessionId, userId, workspaceId, prompt, idempotencyKey);
-            } catch (CpApiException runCapReached) {
-                if (!"CHAT_IN_PROGRESS".equals(runCapReached.getCode())) {
-                    throw runCapReached;
-                }
-                logger.info("[LIFECYCLE] service=cp event=session_wakeup_deferred sessionId={} "
-                        + "reason=run_cap_reached", sessionId);
+            // BL-283: the cap refusal must come back as a VALUE, never as an exception escaping a
+            // transactional boundary — `createScheduled` is REQUIRED, so a thrown 409 would mark the
+            // CALLER's transaction rollback-only and the deferred enqueue/audit below would be lost
+            // (the caller then commits into UnexpectedRollbackException). `tryCreateScheduled` catches
+            // only CHAT_IN_PROGRESS; everything else still throws.
+            WakeupResult started = startScheduledRun(session, sessionId, userId, workspaceId, prompt,
+                    idempotencyKey);
+            if (started != null) {
+                return started;
             }
+            logger.info("[LIFECYCLE] service=cp event=session_wakeup_deferred sessionId={} "
+                    + "reason=run_cap_reached", sessionId);
         }
 
         String branchId = branchPathService.ensureRootBranchId(sessionId);
@@ -198,29 +201,31 @@ public class SessionWakeupService {
         String runId = UUID.randomUUID().toString();
         String requestHash = ChatRequestHash.calculate(objectMapper, prompt, provider, model,
                 SCHEDULED_TOOL_MODE, List.of(), Map.of(), principalId, branchId);
-        ChatSubmissionService.Submission created;
-        try {
-            created = chatSubmissionService.createScheduled(runId, sessionId, userId, workspaceId, branchId,
-                    idempotencyKey, requestHash, provider, model, SCHEDULED_TOOL_MODE,
-                    session.getProviderConnectionId(), session.getConnectionRevision(), null,
-                    UUID.randomUUID().toString(), prompt, "[]", List.of(), principalId, Message.VISIBILITY_INTERNAL);
-        } catch (CpApiException e) {
-            logger.warn("[LIFECYCLE] service=cp event=session_wakeup_start_rejected sessionId={} code={}",
-                    sessionId, e.getCode());
-            throw e;
+        // BL-283: a full run cap answers as an empty Optional instead of a thrown 409 — the throw used
+        // to cross `createScheduled`'s REQUIRED boundary and poison the caller's transaction.
+        java.util.Optional<ChatSubmissionService.Submission> created =
+                chatSubmissionService.tryCreateScheduled(runId, sessionId, userId, workspaceId, branchId,
+                        idempotencyKey, requestHash, provider, model, SCHEDULED_TOOL_MODE,
+                        session.getProviderConnectionId(), session.getConnectionRevision(), null,
+                        UUID.randomUUID().toString(), prompt, "[]", List.of(), principalId,
+                        Message.VISIBILITY_INTERNAL);
+        if (created.isEmpty()) {
+            // Deferred by the admission gate: the caller falls through to the follow-up queue and
+            // audits outcome=deferred — no Run row was written.
+            return null;
         }
         try {
             eventPublisher.publishEvent(new ScheduledRunDispatchRequestedEvent(sessionId,
-                    created.run().getId().toString()));
+                    created.get().run().getId().toString()));
         } catch (RuntimeException e) {
             // 与 spawn 分派（AgentSpawnExecutionService.execute）同语义：发布失败只留痕，
             // 已提交的 accepted Run 由后续 reconciliation/终态路径收口。
             logger.error("[LIFECYCLE] service=cp event=session_wakeup_dispatch_failed sessionId={} "
-                    + "runId={} failureType={}", sessionId, created.run().getId(),
+                    + "runId={} failureType={}", sessionId, created.get().run().getId(),
                     e.getClass().getSimpleName(), e);
         }
         logger.info("[LIFECYCLE] service=cp event=session_wakeup_started sessionId={} runId={}",
-                sessionId, created.run().getId());
-        return WakeupResult.started(created.run().getId());
+                sessionId, created.get().run().getId());
+        return WakeupResult.started(created.get().run().getId());
     }
 }
