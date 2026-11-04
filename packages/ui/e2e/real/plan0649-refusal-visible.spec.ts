@@ -282,6 +282,21 @@ test.describe("@host PLAN-0649 refusal visible + durable", () => {
             ((await principalResponse.json()) as { principalId: string }).principalId,
             "principalId",
         );
+
+        // The materialized grant must carry SPAWN_AGENT, otherwise the tool is filtered out of
+        // tools/list and no refusal can ever happen. This MUST run before the workspace bind:
+        // the bind validates cap ⊆ principal atoms AND ⊆ operator atoms
+        // (AgentPrincipalService: AGENT_PERMISSION_SCOPE_EXCEEDED), and a freshly created
+        // principal only has the agent_default atoms — SPAWN_AGENT has to be materialized first.
+        const principalGrantId = requireUuid(
+            psql(
+                `SELECT id FROM grants WHERE subject_type = 'agent_principal' AND subject_id = '${principalId}'::uuid ORDER BY created_at DESC LIMIT 1`,
+            ),
+            "principal grant id",
+        );
+        psql(
+            `UPDATE grants SET permissions = permissions || '[{"actionClass":"SPAWN_AGENT","resource":"*"}]'::jsonb WHERE id = '${principalGrantId}'::uuid AND NOT (permissions @> '[{"actionClass":"SPAWN_AGENT","resource":"*"}]'::jsonb)`,
+        );
         const boundAgent = await request.put(
             `${CP_URL}/api/v1/workspaces/${wsId}/agents/${principalId}`,
             {
@@ -295,18 +310,6 @@ test.describe("@host PLAN-0649 refusal visible + durable", () => {
             },
         );
         expect(boundAgent.status(), await boundAgent.text()).toBe(200);
-
-        // The materialized grant must carry SPAWN_AGENT, otherwise the tool is filtered out of
-        // tools/list and no refusal can ever happen.
-        const principalGrantId = requireUuid(
-            psql(
-                `SELECT id FROM grants WHERE subject_type = 'agent_principal' AND subject_id = '${principalId}'::uuid ORDER BY created_at DESC LIMIT 1`,
-            ),
-            "principal grant id",
-        );
-        psql(
-            `UPDATE grants SET permissions = permissions || '[{"actionClass":"SPAWN_AGENT","resource":"*"}]'::jsonb WHERE id = '${principalGrantId}'::uuid AND NOT (permissions @> '[{"actionClass":"SPAWN_AGENT","resource":"*"}]'::jsonb)`,
-        );
 
         // maxCount=1 → the second spawn of one run is refused while the first child is in flight.
         const delegationPolicy = await request.patch(
