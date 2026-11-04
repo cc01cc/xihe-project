@@ -227,7 +227,7 @@ const messages = {
             rootEmpty: "该根暂无文件",
             rootLoadFailed: "该根文件列表加载失败",
             // PLAN-0641 T2.5: undeclared nested git repositories (discovery read face).
-            nestedReposTitle: "发现未声明的嵌套 Git 仓库",
+            nestedReposTitle: "未声明的嵌套 Git 仓库",
             nestedRepoDeclare: "声明为根",
             nestedRepoDeclareYes: "确认声明",
             nestedRepoDeclareCancel: "取消",
@@ -1166,7 +1166,7 @@ const messages = {
             checkpointNestedRepoImpactTitle: "本次恢复会触及以下未声明嵌套仓库",
             checkpointNestedRepoDirty: "有未提交改动",
             checkpointNestedRepoHeadMoved: "HEAD 已漂移",
-            checkpointNestedRepoForceAck: "我确认强制覆盖这些仓库中未提交的改动（force）",
+            checkpointNestedRepoForceAck: "我确认强制覆盖这些仓库中未提交的改动",
             checkpointNestedRepoDriftAck: "我确认这些仓库恢复后会与当前 HEAD 不同",
             checkpointResultTitle: "恢复结果",
             checkpointResultDescription: "逐项结果与疑点；可查看差异后重试失败项。",
