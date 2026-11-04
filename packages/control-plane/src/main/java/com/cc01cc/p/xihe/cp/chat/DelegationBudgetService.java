@@ -18,6 +18,7 @@ import org.springframework.stereotype.Service;
 import java.util.ArrayDeque;
 import java.util.Deque;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 /**
@@ -186,22 +187,7 @@ public class DelegationBudgetService {
 
     private DelegationLimits effectiveLimits(String rootPrincipalId,
                                              DelegationRefusedException.DelegationAuditContext audit) {
-        JsonNode stored;
-        try {
-            stored = agentPrincipalService.readDelegationPolicy(rootPrincipalId);
-        } catch (CpApiException missing) {
-            if (!"AGENT_PRINCIPAL_NOT_FOUND".equals(missing.getCode())) {
-                throw DelegationRefusedException.policyInvalid("policy_unreadable", audit, missing.getMessage());
-            }
-            // The FK (agent_principals, ON DELETE RESTRICT) makes a missing root principal unreachable in
-            // production; only hand-built fixtures and hard-deleted rows get here. The budget gate must
-            // not invent a new spawn outage for a state the rest of the spawn path tolerates (the child
-            // cap is derived from the parent's snapshot, not from this row), so it degrades to "no
-            // budget configured" and says so out loud.
-            logger.warn("[LIFECYCLE] service=cp event=delegation_root_principal_missing rootPrincipalId={} "
-                    + "rootSessionId={} fallback=code_defaults", rootPrincipalId, audit.rootSessionId());
-            stored = null;
-        }
+        JsonNode stored = readStoredPolicy(rootPrincipalId, audit);
         DelegationLimits raw;
         try {
             raw = DelegationPolicyValidator.limits(stored, DEFAULT_MAX_COUNT, DEFAULT_MAX_DEPTH);
@@ -218,6 +204,24 @@ public class DelegationBudgetService {
         return new DelegationLimits(maxCount, maxDepth);
     }
 
+    /**
+     * The stored policy document, or {@code null} when the subject carries none (or the principal row
+     * is gone — the FK makes that unreachable in production; fixtures degrade to code defaults and say
+     * so out loud). Unreadable documents fail closed, never fall back silently.
+     */
+    private JsonNode readStoredPolicy(String rootPrincipalId,
+                                      DelegationRefusedException.DelegationAuditContext audit) {
+        try {
+            return agentPrincipalService.readDelegationPolicy(rootPrincipalId);
+        } catch (CpApiException missing) {
+            if (!"AGENT_PRINCIPAL_NOT_FOUND".equals(missing.getCode())) {
+                throw DelegationRefusedException.policyInvalid("policy_unreadable", audit, missing.getMessage());
+            }
+            logger.warn("[LIFECYCLE] service=cp event=delegation_root_principal_missing rootPrincipalId={} "
+                    + "rootSessionId={} fallback=code_defaults", rootPrincipalId, audit.rootSessionId());
+            return null;
+        }
+    }
     /** Instance-level ceiling; {@code 0} (or absent) = no clamp, mirroring {@code runMaxTurnsCeiling}. */
     private int ceiling(String key) {
         if (configService == null) {
@@ -248,12 +252,29 @@ public class DelegationBudgetService {
      * as "exhausted" so a pathologically deep or cyclic tree cannot be used to bypass the gate.
      */
     private int countInFlight(UUID rootId, int stopAt,
-                             DelegationRefusedException.DelegationAuditContext audit) {
+                              DelegationRefusedException.DelegationAuditContext audit) {
+        return traverseUsage(rootId, stopAt, audit).usedSessions();
+    }
+
+    /**
+     * PLAN-0655: the shared usage traversal behind both the gate's count and the read view. One
+     * predicate ("spawn session with a non-terminal run"), one traversal cap, one hop accounting —
+     * the read view cannot drift from the gate because there is nothing to drift: it IS the gate's
+     * query, with the hop distance recorded alongside.
+     *
+     * @return usedSessions (non-terminal spawn sessions under the root) and deepestLiveDepth (the
+     *     deepest of those sessions measured in spawn hops from the root; 0 when none are live)
+     */
+    private UsageTraversal traverseUsage(UUID rootId, int stopAt,
+                                         DelegationRefusedException.DelegationAuditContext audit) {
         int used = 0;
+        int deepestLiveDepth = 0;
         int visited = 0;
-        Deque<UUID> queue = new ArrayDeque<>(List.of(rootId));
+        Deque<Map.Entry<UUID, Integer>> queue = new ArrayDeque<>(List.of(Map.entry(rootId, 0)));
         while (!queue.isEmpty()) {
-            UUID current = queue.poll();
+            Map.Entry<UUID, Integer> entry = queue.poll();
+            UUID current = entry.getKey();
+            int depth = entry.getValue();
             if (++visited > MAX_TRAVERSAL_NODES) {
                 logger.warn("[LIFECYCLE] service=cp event=delegation_tree_traversal_capped rootSessionId={} "
                         + "visited={} maxNodes={}", rootId, visited, MAX_TRAVERSAL_NODES);
@@ -263,14 +284,58 @@ public class DelegationBudgetService {
             for (Session child : sessionRepository.findBySpawnedFromSessionIdAndKind(current, Session.KIND_SPAWN)) {
                 if (chatRunRepository.existsBySessionIdAndStatusIn(child.getId().toString(),
                         ChatRunCancellationService.NON_TERMINAL_STATUSES)) {
+                    deepestLiveDepth = Math.max(deepestLiveDepth, depth + 1);
                     if (++used >= stopAt) {
-                        return used;
+                        return new UsageTraversal(used, deepestLiveDepth);
                     }
                 }
-                queue.add(child.getId());
+                queue.add(Map.entry(child.getId(), depth + 1));
             }
         }
-        return used;
+        return new UsageTraversal(used, deepestLiveDepth);
+    }
+
+    /** BFS result of {@link #traverseUsage}: the gate's count plus the deepest live depth. */
+    private record UsageTraversal(int usedSessions, int deepestLiveDepth) {}
+
+    /**
+     * PLAN-0655 read view (GET /api/v1/sessions/{sessionId}/delegation-usage). The SAME evaluation
+     * point as the budget gate: same root walk, same stored-policy read, same effective-limits
+     * clamp, same live-run predicate. An unreadable stored policy fails closed here exactly like
+     * the gate does (409 DELEGATION_POLICY_INVALID) — the read face never silently substitutes
+     * defaults for a broken document.
+     */
+    @org.springframework.transaction.annotation.Transactional(readOnly = true)
+    public DelegationUsage usageFor(Session session) {
+        Walk walk = walkToRoot(session);
+        Session root = walk.root();
+        String rootPrincipalId = root.getAgentPrincipalId();
+        DelegationRefusedException.DelegationAuditContext audit = new DelegationRefusedException
+                .DelegationAuditContext(root.getId().toString(), session.getId().toString(), null, null,
+                rootPrincipalId);
+        DelegationLimits limits = effectiveLimits(rootPrincipalId, audit);
+        UsageTraversal traversal = traverseUsage(root.getId(), Integer.MAX_VALUE, audit);
+        JsonNode stored = readStoredPolicy(rootPrincipalId, audit);
+        return new DelegationUsage(root.getId().toString(), traversal.usedSessions(), limits.maxCount(),
+                traversal.deepestLiveDepth(), limits.maxDepth(), rootPrincipalId, principalName(rootPrincipalId),
+                stored == null ? "code-defaults" : "subject", limits.maxCount() == 0);
+    }
+
+    /** Read view row; field names mirror the OpenAPI DelegationUsageView schema. */
+    public record DelegationUsage(String rootSessionId, int usedSessions, int maxCount, int currentDepth,
+                                  int maxDepth, String principalId, String principalName, String policySource,
+                                  boolean disabled) {}
+
+    /** Best-effort display name; null when the principal row is gone (the view still answers). */
+    private String principalName(String rootPrincipalId) {
+        if (rootPrincipalId == null) {
+            return null;
+        }
+        try {
+            return agentPrincipalService.readPrincipalName(rootPrincipalId);
+        } catch (RuntimeException unreadable) {
+            return null;
+        }
     }
 
     private static DelegationRefusedException treeBroken(Session broken) {

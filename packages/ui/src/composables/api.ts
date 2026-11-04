@@ -249,6 +249,10 @@ export interface ApiSession {
     agentPrincipalId?: string | null;
     createdAt?: string;
     updatedAt?: string;
+    /** PLAN-0655 T1.5: delegation projection — `SPAWN` = delegated child session. */
+    kind?: string | null;
+    spawnedFromSessionId?: string | null;
+    spawnedAt?: string | null;
     modelProvider?: string;
     modelName?: string;
     providerConnectionId?: string;
@@ -470,6 +474,39 @@ export interface AgentPrincipalHooks {
 export interface AgentModelRef {
     provider: string;
     model: string;
+}
+
+/**
+ * PLAN-0655 (contract 8a546e3f): read-only delegation budget view of the Session's delegation
+ * root. Resolved at the same evaluation point as the budget gate — never a second reader.
+ */
+export interface DelegationUsageView {
+    rootSessionId: string;
+    usedSessions: number;
+    maxCount: number;
+    currentDepth: number;
+    maxDepth: number;
+    principalId: string | null;
+    principalName: string | null;
+    policySource: "subject" | "code-defaults";
+    /** `maxCount = 0` — the root's delegation policy disables delegation (ruling A1). */
+    disabled: boolean;
+}
+
+/** 201 answer of POST /sessions/{id}/delegation-spawn. */
+export interface DelegationSpawnResult {
+    childSessionId: string;
+    childRunId?: string | null;
+    rootSessionId: string;
+    chainDepth: number;
+    budget: DelegationUsageView;
+}
+
+/** 202 answer — a pending ChatApproval; re-post with the same Idempotency-Key plus its grant header. */
+export interface DelegationSpawnAccepted {
+    approvalRequestId: string;
+    statusUrl: string;
+    retryHeader: "X-Xihe-Approval-Request-Id";
 }
 
 export interface WorkspaceAgentBinding {
@@ -2638,6 +2675,33 @@ export const api = {
         await request<void>(
             `/sessions/${encodeURIComponent(sessionId)}/participants/${encodeURIComponent(participantId)}`,
             { method: "DELETE" },
+        );
+    },
+    /** PLAN-0655: the budget view used by the delegation dialog's read-only row. */
+    async delegationUsage(sessionId: string): Promise<DelegationUsageView> {
+        return request<DelegationUsageView>(
+            `/sessions/${encodeURIComponent(sessionId)}/delegation-usage`,
+        );
+    },
+    /**
+     * PLAN-0655: human delegation. Resolves to `DelegationSpawnAccepted` (202, pending approval —
+     * re-post with the same Idempotency-Key plus the returned retryHeader) or `DelegationSpawnResult`
+     * (201). Idempotency-Key is mandatory: the CP replays the same key instead of spending the
+     * budget (or a granted approval) twice.
+     */
+    async delegationSpawn(
+        sessionId: string,
+        input: { agentPrincipalId: string; task: string },
+        idempotencyKey: string,
+        approvalRequestId?: string,
+    ): Promise<DelegationSpawnResult | DelegationSpawnAccepted> {
+        const headers: Record<string, string> = { "Idempotency-Key": idempotencyKey };
+        if (approvalRequestId) {
+            headers["X-Xihe-Approval-Request-Id"] = approvalRequestId;
+        }
+        return request<DelegationSpawnResult | DelegationSpawnAccepted>(
+            `/sessions/${encodeURIComponent(sessionId)}/delegation-spawn`,
+            { method: "POST", headers, body: JSON.stringify(input) },
         );
     },
     async getWorkspaceAgents(workspaceId: string): Promise<WorkspaceAgentBinding[]> {

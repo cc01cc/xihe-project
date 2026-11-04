@@ -19,6 +19,7 @@ import java.util.Optional;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -293,5 +294,79 @@ class DelegationBudgetServiceTest {
 
         DelegationLimits limits = budget.requireWithinBudget(root, run(), "tc");
         assertEquals(1, limits.maxCount(), "a single-child policy is unchanged");
+    }
+    // ---------------------------------------------------------- PLAN-0655 read view
+
+    @Test
+    void usageForAnswersCodeDefaultsWhenNoPolicyIsStored() throws Exception {
+        policy(null);
+        when(principals.readPrincipalName(anyString())).thenReturn("Root Agent");
+        Session root = session(UUID.randomUUID(), null, null, ROOT_PRINCIPAL);
+
+        DelegationBudgetService.DelegationUsage usage = budget.usageFor(root);
+
+        assertEquals(root.getId().toString(), usage.rootSessionId());
+        assertEquals(0, usage.usedSessions());
+        assertEquals(8, usage.maxCount());
+        assertEquals(0, usage.currentDepth());
+        assertEquals(3, usage.maxDepth());
+        assertEquals("code-defaults", usage.policySource());
+        assertFalse(usage.disabled());
+        assertEquals("Root Agent", usage.principalName());
+    }
+
+    @Test
+    void usageForReportsZeroPolicyAsDisabled() throws Exception {
+        policy("{\"maxCount\":0}");
+        Session root = session(UUID.randomUUID(), null, null, ROOT_PRINCIPAL);
+
+        DelegationBudgetService.DelegationUsage usage = budget.usageFor(root);
+
+        assertTrue(usage.disabled(), "maxCount=0 is the delegation-disabled value");
+        assertEquals(0, usage.maxCount());
+        assertEquals("subject", usage.policySource());
+    }
+
+    @Test
+    void usageForCountsLiveChildrenAndDeepestDepth() throws Exception {
+        policy("{\"maxCount\":4,\"maxDepth\":2}");
+        Session root = session(UUID.randomUUID(), null, null, ROOT_PRINCIPAL);
+        Session d1 = childOf(root);
+        Session d2 = childOf(d1);
+        childOf(root); // second child, kept terminal on purpose
+        inFlight.put(d1.getId(), true);
+        inFlight.put(d2.getId(), true);
+
+        DelegationBudgetService.DelegationUsage usage = budget.usageFor(d1);
+
+        assertEquals(2, usage.usedSessions(), "both live spawn sessions count, wherever in the tree");
+        assertEquals(2, usage.currentDepth(), "deepest LIVE session is depth 2 (the terminal sibling is ignored)");
+        assertEquals(4, usage.maxCount());
+    }
+
+    @Test
+    void usageForWalksUpToTheRootBeforeAnswering() throws Exception {
+        policy("{\"maxCount\":6,\"maxDepth\":4}");
+        Session root = session(UUID.randomUUID(), null, null, ROOT_PRINCIPAL);
+        Session d1 = childOf(root);
+        Session d2 = childOf(d1);
+        inFlight.put(d2.getId(), true);
+
+        DelegationBudgetService.DelegationUsage usage = budget.usageFor(d2);
+
+        assertEquals(root.getId().toString(), usage.rootSessionId());
+        assertEquals(1, usage.usedSessions());
+        assertEquals(6, usage.maxCount());
+        assertEquals(4, usage.maxDepth());
+    }
+
+    @Test
+    void usageForFailsClosedOnAnUnreadableStoredPolicy() throws Exception {
+        policy("{\"maxCount\":\"x\"}");
+        Session root = session(UUID.randomUUID(), null, null, ROOT_PRINCIPAL);
+
+        DelegationRefusedException refused = assertThrows(DelegationRefusedException.class,
+                () -> budget.usageFor(root));
+        assertEquals("DELEGATION_POLICY_INVALID", refused.getCode());
     }
 }

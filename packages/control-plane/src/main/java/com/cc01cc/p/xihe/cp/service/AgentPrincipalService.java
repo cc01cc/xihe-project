@@ -1325,6 +1325,13 @@ public class AgentPrincipalService {
                 .orElseThrow(() -> new CpApiException(HttpStatus.NOT_FOUND,
                         "AGENT_PRINCIPAL_NOT_FOUND", "Agent principal not found"));
     }
+    /** PLAN-0655 read view: best-effort display name for a principal id (null when missing). */
+    @org.springframework.transaction.annotation.Transactional(readOnly = true)
+    public String readPrincipalName(String principalIdValue) {
+        return agentPrincipalRepository.findById(parseUuid(principalIdValue, "INVALID_AGENT_PRINCIPAL"))
+                .map(AgentPrincipal::getName)
+                .orElse(null);
+    }
     /** D25-02/D25-08: preset guards (and any future hook-only preset) never get their cap rewritten. */
     private void requireMutableCap(AgentPrincipal principal) {
         if (com.cc01cc.p.xihe.cp.entity.AgentPrincipal.ORIGIN_SYSTEM_PRESET.equals(principal.getOrigin())) {

@@ -1,12 +1,13 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRouter } from "vue-router";
 import { useSessionStore } from "../../../../stores/session";
 import { useChatStore } from "../stores/chat.ts";
 import { useAgentStore } from "../../../../stores/agent";
 import { useAuthStore } from "../../../../stores/auth";
-import { ApiError, api } from "../../../../composables/api";
+import { ApiError, api, type DelegationUsageView } from "../../../../composables/api";
+import type { Session } from "../../../../types";
 import { logger } from "../../../../lib/logger";
 import { toast } from "vue-sonner";
 import SessionItem from "./SessionItem.vue";
@@ -55,6 +56,71 @@ function handleDelete(id: string) {
 }
 
 const terminalRunStatuses = new Set(["succeeded", "failed", "partial", "ambiguous", "cancelled"]);
+
+// ---- PLAN-0655 T1.5: delegation tree + read-only budget chips ------------------------------
+/** Delegated children grouped under their parent session (children may live in any time group). */
+const childrenByParent = computed(() => {
+    const map = new Map<string, Session[]>();
+    for (const session of sessionStore.sessions) {
+        if (session.kind === "SPAWN" && session.spawnedFromSessionId) {
+            const children = map.get(session.spawnedFromSessionId) ?? [];
+            children.push(session);
+            map.set(session.spawnedFromSessionId, children);
+        }
+    }
+    return map;
+});
+
+/**
+ * One group's render order: a delegated session whose parent is in the SAME group renders as an
+ * indented child right after that parent (the mock's 挂树); a child whose parent lives in another
+ * group keeps its own row so it can never disappear from the list.
+ */
+function rowsFor(sessions: Session[]): Array<{ session: Session; child: boolean }> {
+    const present = new Set(sessions.map((item) => item.id)),
+        childIds = new Set<string>();
+    for (const [parentId, children] of childrenByParent.value) {
+        if (present.has(parentId)) {
+            for (const child of children) childIds.add(child.id);
+        }
+    }
+    const rows: Array<{ session: Session; child: boolean }> = [];
+    for (const session of sessions) {
+        if (childIds.has(session.id)) continue;
+        rows.push({ session, child: false });
+        for (const child of childrenByParent.value.get(session.id) ?? []) {
+            rows.push({ session: child, child: true });
+        }
+    }
+    return rows;
+}
+
+/** Read-only budget chips; fetched once per delegated session, cached per list lifetime. */
+const delegationUsageBySession = ref(new Map<string, DelegationUsageView>());
+const delegatedSessionIds = computed(() =>
+    sessionStore.sessions
+        .filter((session) => session.kind === "SPAWN")
+        .map((session) => session.id),
+);
+
+watch(
+    () => delegatedSessionIds.value.join(","),
+    async () => {
+        for (const sessionId of delegatedSessionIds.value) {
+            if (delegationUsageBySession.value.has(sessionId)) continue;
+            try {
+                delegationUsageBySession.value.set(sessionId, await api.delegationUsage(sessionId));
+            } catch (error) {
+                logger.warn("failed to read delegation usage", { sessionId, error });
+            }
+        }
+    },
+    { immediate: true },
+);
+
+function delegationUsage(sessionId: string): DelegationUsageView | null {
+    return delegationUsageBySession.value.get(sessionId) ?? null;
+}
 
 async function handleFork(id: string) {
     const session = sessionStore.sessions.find((item) => item.id === id);
@@ -171,12 +237,15 @@ async function confirmDelete() {
                 </span>
             </div>
             <SessionItem
-                v-for="session in sessions"
-                :key="session.id"
-                :session="session"
-                :is-active="session.id === sessionStore.currentSessionId"
-                :pending-count="agentStore.pendingApprovalCount(session.id)"
-                :fork-busy="forkingSessionId === session.id"
+                v-for="row in rowsFor(sessions)"
+                :key="row.session.id"
+                :session="row.session"
+                :is-active="row.session.id === sessionStore.currentSessionId"
+                :pending-count="agentStore.pendingApprovalCount(row.session.id)"
+                :fork-busy="forkingSessionId === row.session.id"
+                :delegated="row.session.kind === 'SPAWN'"
+                :delegation-usage="delegationUsage(row.session.id)"
+                :indent="row.child"
                 @select="handleSelect"
                 @rename="handleRename"
                 @delete="handleDelete"

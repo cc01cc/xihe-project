@@ -7,6 +7,7 @@ import com.cc01cc.p.xihe.cp.config.ConfigService;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.context.service.EventStoreService;
 import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
+import com.cc01cc.p.xihe.cp.entity.ChatRun;
 import com.cc01cc.p.xihe.cp.entity.AuthorizationGrant;
 import com.cc01cc.p.xihe.cp.entity.McpInvocation;
 import com.cc01cc.p.xihe.cp.entity.Message;
@@ -63,6 +64,9 @@ class ChatSubmissionServiceIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired
     private SessionRepository sessionRepository;
+
+    @Autowired
+    private com.cc01cc.p.xihe.cp.repository.SessionParticipantRepository sessionParticipantRepository;
 
     @Autowired
     private com.cc01cc.p.xihe.cp.repository.ProviderConnectionRepository providerConnectionRepository;
@@ -760,4 +764,110 @@ class ChatSubmissionServiceIntegrationTest extends AbstractIntegrationTest {
 
     private record PendingInboxFixture(User user, Workspace workspace, Session session,
                                        AgentPrincipal principal, UUID inboxId) {}
+
+    // ---------------------------------------------------------- PLAN-0655 human delegation
+
+    /**
+     * The end-to-end settlement contract behind the human route: a delegation child carries full
+     * provenance (spawned_from_session/run + waiting link) because
+     * {@code ChatRunTerminalService.lockParentLink} rejects a spawn child without it. Code review
+     * was not enough for the PLAN — this drives the child to a terminal state and asserts the
+     * invariant holds (a missing provenance row would throw instead of committing).
+     */
+    @Test
+    void humanDelegationChildCarriesProvenanceAndSettlesItsTerminalState() {
+        User user = userRepository.save(new User("deleg-" + UUID.randomUUID() + "@test.com", "hash", "Delegator"));
+        Workspace workspace = workspaceFixture.createOwnedWorkspace("Delegation Workspace",
+                user.getId().toString());
+        workspaceFixture.bindWorkspaceRole(workspace.getId().toString(), user.getId().toString(),
+                WorkspaceRole.OWNER);
+        AgentPrincipal principal = savePrincipal(user);
+        workspaceAgentRepository.saveAndFlush(new WorkspaceAgent(principal.getId().toString(),
+                workspace.getId().toString(), objectMapper.createArrayNode()));
+
+        Session parent = new Session(workspace.getId().toString(), user.getId().toString(),
+                "Delegation Parent");
+        parent.setId(UUID.randomUUID());
+        parent.setAgentPrincipalId(principal.getId().toString());
+        parent.setAgentPermissionsSnapshot(objectMapper.createArrayNode());
+        saveBoundChatSession(parent, user);
+
+        // The parent's latest run, already terminal — the human route never waits on it; it exists
+        // purely as the provenance anchor the settlement invariant requires.
+        String parentRunId = UUID.randomUUID().toString();
+        chatRunRepository.saveAndFlush(new ChatRun(parentRunId, parent.getId().toString(),
+                user.getId().toString(), workspace.getId().toString(), "parent-key-" + parentRunId,
+                "parent-hash", "provider", "model", "workspace", "succeeded"));
+
+        String idempotencyKey = "deleg-" + UUID.randomUUID();
+        String authorizationBody = submissionService.delegationAuthorizationBody("translate this paragraph");
+        ChatSubmissionService.SpawnResult child = submissionService.createDelegation(
+                parentRunId, principal.getId().toString(), "translate this paragraph", idempotencyKey,
+                new ChatSubmissionService.SpawnAuthorization(authorizationBody, null, null));
+
+        Session childSession = sessionRepository.findById(UUID.fromString(child.sessionId())).orElseThrow();
+        assertEquals(Session.KIND_SPAWN, childSession.getKind());
+        assertEquals(parent.getId(), childSession.getSpawnedFromSessionId());
+        assertEquals(UUID.fromString(parentRunId), childSession.getSpawnedFromRunId());
+        assertEquals(principal.getId().toString(), childSession.getAgentPrincipalId());
+        assertEquals(1, sessionParticipantRepository.findBySessionIdOrderByOrderIndexAsc(childSession.getId()).size(),
+                "the child owns exactly one PRIMARY — the same rule as create/fork/spawn");
+
+        ChatRun childRun = chatRunRepository.findById(UUID.fromString(child.runId())).orElseThrow();
+        assertEquals(ChatRun.ORIGIN_SPAWN, childRun.getOrigin());
+        assertEquals("accepted", childRun.getStatus());
+        assertEquals(parentRunId, childRun.getWaitingOnRunId());
+        assertEquals(
+                UUID.nameUUIDFromBytes(idempotencyKey.getBytes(java.nio.charset.StandardCharsets.UTF_8)),
+                UUID.fromString(childRun.getWaitingToolCallId()),
+                "the waiting tool-call id is a stable 36-char derivation of the idempotency key");
+
+        // The settlement itself: a provenance gap here throws Spawn child is missing parent
+        // provenance / waiting link instead of committing.
+        assertTrue(terminalService.terminalize(new ChatRunTerminalService.TerminalRequest(
+                child.runId(), List.of("accepted"), "succeeded", "success", null, null,
+                0, 0, ChatRunTerminalService.TerminalSource.STREAM, List.of())).committed(),
+                "the child settles cleanly against the human parent anchor");
+        ChatRun settled = chatRunRepository.findById(UUID.fromString(child.runId())).orElseThrow();
+        assertEquals("succeeded", settled.getStatus());
+        assertNotNull(settled.getTerminalAt());
+    }
+
+    @Test
+    void delegationReplayOfTheSameKeyReturnsTheExistingChildWithoutSpendingBudgetAgain() {
+        User user = userRepository.save(new User("deleg-rp-" + UUID.randomUUID() + "@test.com", "hash", "Delegator"));
+        Workspace workspace = workspaceFixture.createOwnedWorkspace("Delegation Replay Workspace",
+                user.getId().toString());
+        workspaceFixture.bindWorkspaceRole(workspace.getId().toString(), user.getId().toString(),
+                WorkspaceRole.OWNER);
+        AgentPrincipal principal = savePrincipal(user);
+        workspaceAgentRepository.saveAndFlush(new WorkspaceAgent(principal.getId().toString(),
+                workspace.getId().toString(), objectMapper.createArrayNode()));
+
+        Session parent = new Session(workspace.getId().toString(), user.getId().toString(),
+                "Replay Parent");
+        parent.setId(UUID.randomUUID());
+        parent.setAgentPrincipalId(principal.getId().toString());
+        parent.setAgentPermissionsSnapshot(objectMapper.createArrayNode());
+        saveBoundChatSession(parent, user);
+        String parentRunId = UUID.randomUUID().toString();
+        chatRunRepository.saveAndFlush(new ChatRun(parentRunId, parent.getId().toString(),
+                user.getId().toString(), workspace.getId().toString(), "parent-key-" + parentRunId,
+                "parent-hash", "provider", "model", "workspace", "succeeded"));
+
+        String idempotencyKey = "deleg-replay-" + UUID.randomUUID();
+        String authorizationBody = submissionService.delegationAuthorizationBody("task");
+        ChatSubmissionService.SpawnAuthorization authorization =
+                new ChatSubmissionService.SpawnAuthorization(authorizationBody, null, null);
+        ChatSubmissionService.SpawnResult first = submissionService.createDelegation(
+                parentRunId, principal.getId().toString(), "task", idempotencyKey, authorization);
+        ChatSubmissionService.SpawnResult second = submissionService.createDelegation(
+                parentRunId, principal.getId().toString(), "task", idempotencyKey, authorization);
+
+        assertEquals(first.sessionId(), second.sessionId(), "same key = same child");
+        assertEquals(first.runId(), second.runId());
+        assertEquals(1, chatRunRepository.findAll().stream()
+                .filter(run -> idempotencyKey.equals(run.getIdempotencyKey())).count(),
+                "the replay never inserts a second Run");
+    }
 }

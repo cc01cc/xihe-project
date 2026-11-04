@@ -29,6 +29,10 @@ export interface Session {
     updatedAt: string;
     workspaceId?: string;
     agentPrincipalId?: string | null;
+    /** PLAN-0655 T1.5: `SPAWN` = a delegated child session (tree + badge + budget chip). */
+    kind?: string | null;
+    spawnedFromSessionId?: string | null;
+    spawnedAt?: string | null;
     modelProvider?: string;
     modelName?: string;
     providerConnectionId?: string;

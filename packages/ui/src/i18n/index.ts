@@ -724,7 +724,32 @@ const messages = {
         },
         chat: {
             send: "发送",
-            placeholder: "输入消息，Enter 发送，Shift+Enter 换行...",
+            delegation: {
+                button: "委派",
+                badge: "委派",
+                delegatedTo: "委派给",
+                buttonHint: "委派一个子会话去完成单独的任务",
+                reasonNoCapability: "缺少在本工作区委派子会话的能力（SPAWN_AGENT）",
+                reasonUnknown: "暂时无法确认委派能力，请稍后重试",
+                title: "创建委派（新子会话）",
+                description: "委派会为所选主体新开一个独立子会话，预算受该主体的委派策略约束。",
+                principalLabel: "委派给",
+                principalPlaceholder: "选择智能体主体",
+                taskLabel: "任务描述",
+                taskPlaceholder: "描述子会话要完成的任务（最多 4000 字）",
+                budgetLabel: "预算上限",
+                budgetUsage: "预算",
+                budgetDepth: "深度",
+                budgetHint: "受该主体的 delegationPolicy 约束",
+                budgetDisabled: "该主体的委派策略已禁用委派",
+                cancel: "取消",
+                submit: "创建委派",
+                created: "委派已创建，子会话已就绪",
+                approvalPending: "审批已发起，批准后将自动创建委派",
+                approvalPendingHint: "会话中已发起审批；批准后会用同一幂等键自动重试，无需重填",
+                approvalRejected: "委派审批被拒绝或已过期",
+                submitFailed: "委派创建失败，请稍后重试",
+            },
             // PLAN-0635 M1：`/` 命令与 `@` 提及的输入面文案（两者共用一个候选面）。
             input: {
                 commandsTitle: "命令",
@@ -2922,6 +2947,38 @@ const messages = {
         },
         chat: {
             send: "Send",
+            delegation: {
+                button: "Delegate",
+                badge: "Delegated",
+                delegatedTo: "Delegated to",
+                buttonHint: "Delegate a child session for a standalone task",
+                reasonNoCapability:
+                    "Missing the capability to delegate in this workspace (SPAWN_AGENT)",
+                reasonUnknown:
+                    "Delegation capability cannot be confirmed right now, try again later",
+                title: "Create delegation (new child session)",
+                description:
+                    "A delegation opens a fresh child session for the chosen principal; the budget follows that principal's delegation policy.",
+                principalLabel: "Delegate to",
+                principalPlaceholder: "Select an agent principal",
+                taskLabel: "Task",
+                taskPlaceholder:
+                    "Describe what the child session should do (up to 4000 characters)",
+                budgetLabel: "Budget",
+                budgetUsage: "Budget",
+                budgetDepth: "Depth",
+                budgetHint: "Governed by that principal's delegationPolicy",
+                budgetDisabled: "That principal's delegation policy disables delegation",
+                cancel: "Cancel",
+                submit: "Create delegation",
+                created: "Delegation created, child session is ready",
+                approvalPending:
+                    "Approval requested; it will be created automatically once granted",
+                approvalPendingHint:
+                    "An approval was opened in this session; granting it replays the same idempotency key — no need to refill",
+                approvalRejected: "The delegation approval was rejected or expired",
+                submitFailed: "Could not create the delegation, try again later",
+            },
             placeholder: "Type a message, Enter to send, Shift+Enter for new line...",
             // PLAN-0635 M1: input-surface copy for `/` commands and `@` mentions (one shared menu).
             input: {

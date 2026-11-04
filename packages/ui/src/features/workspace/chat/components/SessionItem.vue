@@ -3,6 +3,7 @@ import { ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { CircleAlert, MessageSquareText } from "@lucide/vue";
 import type { Session } from "../../../../types";
+import type { DelegationUsageView } from "../../../../composables/api";
 
 const props = withDefaults(
     defineProps<{
@@ -10,10 +11,19 @@ const props = withDefaults(
         isActive: boolean;
         pendingCount?: number;
         forkBusy?: boolean;
+        /** PLAN-0655 T1.5: a delegated child session (badge + budget chip). */
+        delegated?: boolean;
+        /** Read-only budget chip; null until the usage view for this session resolves. */
+        delegationUsage?: DelegationUsageView | null;
+        /** Rendered indented under its parent row. */
+        indent?: boolean;
     }>(),
     {
         pendingCount: 0,
         forkBusy: false,
+        delegated: false,
+        delegationUsage: null,
+        indent: false,
     },
 );
 
@@ -81,11 +91,12 @@ function handleRenameKeydown(e: KeyboardEvent) {
     <div
         data-testid="session-item"
         class="group relative flex items-center gap-2 px-3 py-2.5 rounded-lg cursor-pointer transition-colors"
-        :class="
+        :class="[
             isActive
                 ? 'bg-accent text-accent-foreground'
-                : 'hover:bg-accent/50 text-sidebar-foreground'
-        "
+                : 'hover:bg-accent/50 text-sidebar-foreground',
+        ]"
+        :style="indent ? { paddingLeft: '2rem' } : undefined"
         role="button"
         tabindex="0"
         :aria-current="isActive ? 'page' : undefined"
@@ -105,7 +116,30 @@ function handleRenameKeydown(e: KeyboardEvent) {
                 @click.stop
             />
         </div>
-        <span v-else class="flex-1 truncate text-sm">{{ session.title }}</span>
+        <div v-else class="flex-1 min-w-0">
+            <div class="flex items-center gap-1.5 min-w-0">
+                <span class="truncate text-sm">{{ session.title }}</span>
+                <span
+                    v-if="delegated"
+                    data-testid="session-delegated-badge"
+                    class="shrink-0 rounded border px-1 py-px text-[10px] leading-none text-muted-foreground"
+                >
+                    {{ t("chat.delegation.badge") }}
+                </span>
+            </div>
+            <p
+                v-if="delegated && delegationUsage"
+                data-testid="session-delegation-chip"
+                class="mt-0.5 truncate text-[11px] leading-snug text-muted-foreground"
+            >
+                {{ t("chat.delegation.delegatedTo") }}
+                {{ delegationUsage.principalName ?? "—" }} ｜ {{ t("chat.delegation.budgetUsage") }}
+                {{ delegationUsage.usedSessions }}/{{ delegationUsage.maxCount }} ｜
+                {{ t("chat.delegation.budgetDepth") }} {{ delegationUsage.currentDepth }}/{{
+                    delegationUsage.maxDepth
+                }}
+            </p>
+        </div>
         <span
             v-if="pendingCount > 0"
             data-testid="session-pending-badge"
