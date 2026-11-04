@@ -40,6 +40,7 @@ import SessionMonitorPanel from "../monitor/SessionMonitorPanel.vue";
 import SessionParticipantsPanel from "./SessionParticipantsPanel.vue";
 import SessionContextPanel from "./SessionContextPanel.vue";
 import WorkspaceAgentsPanel from "./WorkspaceAgentsPanel.vue";
+import DelegationDagPanel from "../chat/components/DelegationDagPanel.vue";
 import { DOCK_TAB_LABEL_KEYS, type DockTab } from "./workspaceDockTabs";
 
 /**
@@ -159,6 +160,8 @@ const changesOpen = computed(() => dockOpen.value && activeDockTab.value === "ch
 const monitorOpen = computed(() => dockOpen.value && activeDockTab.value === "monitor");
 /** PLAN-0623 U1：参与者面板与 monitor 同构（按会话挂载），tab 默认不打开。 */
 const membersOpen = computed(() => dockOpen.value && activeDockTab.value === "members");
+/** PLAN-0659 T1.4：委派 DAG 面板（同样按会话挂载，tab 默认不打开）。 */
+const delegationOpen = computed(() => dockOpen.value && activeDockTab.value === "delegation");
 
 const dockTabs = computed<DockTab[]>(() =>
     layout.value.dockTabs.map((id) => ({ id, label: t(DOCK_TAB_LABEL_KEYS[id]) })),
@@ -494,6 +497,7 @@ defineExpose({ openDockTab });
                 isMobile ? (mobileChangesOpen ?? false) && mobileAuxTab === 'monitor' : monitorOpen
             "
             :members-open="isMobile ? false : membersOpen"
+            :delegation-open="isMobile ? false : delegationOpen"
             @import-source="emit('importSource')"
             @agents="emit('agents')"
             @add-workspace="emit('addWorkspace')"
@@ -502,6 +506,7 @@ defineExpose({ openDockTab });
             @toggle-changes="handleToggleChanges"
             @toggle-monitor="handleToggleMonitor"
             @toggle-members="toggleDockTab('members')"
+            @toggle-delegation="toggleDockTab('delegation')"
         />
 
         <!-- Mobile keeps the editor-first body with files/chat as sheets (ruling #9). -->
@@ -633,6 +638,13 @@ defineExpose({ openDockTab });
                 <template #context>
                     <!-- PLAN-0626 M2：会话设置（粘性面板，无会话时面板自身给空态）。 -->
                     <SessionContextPanel :session-id="sessionId ?? null" />
+                </template>
+                <template #delegation>
+                    <!-- PLAN-0659 T1.4：委派 DAG（父→子会话，状态/深度/预算）。 -->
+                    <DelegationDagPanel v-if="sessionId" :session-id="sessionId" />
+                    <div v-else class="p-4 text-xs text-muted-foreground">
+                        {{ t("workspace.noSession") }}
+                    </div>
                 </template>
                 <template #agents>
                     <!--

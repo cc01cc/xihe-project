@@ -754,8 +754,17 @@ describe("PLAN-0626 context dock tab", () => {
         expect(isDockTabId("context")).toBe(true);
         // Reserved name, no panel yet (approvals stay a modal, D26-14).
         expect(isDockTabId("approval")).toBe(false);
-        // The tab set stays inside the hard cap.
-        expect(DOCK_TAB_IDS.length).toBeLessThanOrEqual(DOCK_MAX_TABS);
+    });
+
+    it("knows the delegation tab id (PLAN-0659 T1.4)", () => {
+        expect(DOCK_TAB_IDS).toContain("delegation");
+        expect(isDockTabId("delegation")).toBe(true);
+        // `DOCK_MAX_TABS` 约束的是**同时打开**的 tab 数，不是可选 id 的个数；「加到 7 个 id
+        // 之后仍然只有 6 个能同时打开」由上面的 clamp 用例守护。
+        expect(new Set(DOCK_TAB_IDS).size).toBe(DOCK_TAB_IDS.length);
+        expect(DOCK_MAX_TABS).toBeLessThanOrEqual(DOCK_TAB_IDS.length);
+        // 新 tab 不默认打开（既有布局零迁移）。
+        expect(defaultWorkspaceLayout().dockTabs).toEqual([]);
     });
 
     it("keeps a pre-M2 payload (four ids) valid without injecting context", () => {
