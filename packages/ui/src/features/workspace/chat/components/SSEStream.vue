@@ -289,6 +289,8 @@ async function handleSend(
         asParticipantId?: string;
         /** PLAN-0630 M5b (D30-14)：旁听名单（participantId 数组），契约字段 `cc`。 */
         cc?: string[];
+        /** PLAN-0665 M1：TO 目标集合（AGENT participantId），契约字段 `toParticipantIds`。 */
+        toParticipantIds?: string[];
     },
 ): Promise<ChatRunResponse | null> {
     const sessionId = props.sessionId;
@@ -323,6 +325,7 @@ async function handleSend(
         agentPrincipalId: options?.agentPrincipalId,
         asParticipantId: options?.asParticipantId,
         cc: options?.cc,
+        toParticipantIds: options?.toParticipantIds,
     });
     if (props.sessionId !== sessionId) return null;
     if (result) {

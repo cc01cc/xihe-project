@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { flushPromises, mount } from "@vue/test-utils";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { i18n } from "../../../../i18n";
 
 const WORKSPACE_ID = "66666666-6666-4666-8666-666666666666";
@@ -21,6 +23,15 @@ const apiMock = vi.hoisted(() => ({
     updateAgentMemory: vi.fn<() => Promise<void>>(),
     deleteAgentMemory: vi.fn<() => Promise<void>>(),
     updateAgentPrincipalContextPolicy: vi.fn<() => Promise<void>>(),
+    // PLAN-0667 M3：角色 / 技能区块（六条 agent 子资源 + 两条候选清单）。
+    getAgentRoles: vi.fn<() => Promise<unknown[]>>(),
+    getAgentSkills: vi.fn<() => Promise<unknown[]>>(),
+    bindAgentRole: vi.fn<() => Promise<void>>(),
+    unbindAgentRole: vi.fn<() => Promise<void>>(),
+    bindAgentSkill: vi.fn<() => Promise<void>>(),
+    unbindAgentSkill: vi.fn<() => Promise<void>>(),
+    listRoles: vi.fn<() => Promise<unknown[]>>(),
+    getSkills: vi.fn<() => Promise<unknown[]>>(),
 }));
 
 const CREATE_ACCOUNT_GRANTED = {
@@ -1017,5 +1028,210 @@ describe("WorkspaceAgentsPanel memory write surface", () => {
             PRINCIPAL_ID,
             "all",
         );
+    });
+});
+
+// ── PLAN-0667 M3：角色 / 技能区块（列表 + 绑定/解绑 + 409 三类码 + 无硬编码中文） ──────────
+describe("WorkspaceAgentsPanel PLAN-0667 roles & skills", () => {
+    const PRINCIPAL_ID = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
+    const rbacAgent = {
+        principalId: PRINCIPAL_ID,
+        name: "rbac agent",
+        templateId: null,
+        templateName: null,
+        createdAt: "2026-11-02T00:00:00Z",
+        permissionsSnapshot: [],
+        bound: true,
+        disabled: false,
+        source: "personal",
+        ownerUserId: "99999999-9999-4999-8999-999999999999",
+    };
+    const WORKSPACE_MANAGE = {
+        userId: "99999999-9999-4999-8999-999999999999",
+        instanceCapabilities: [],
+        instancePermissions: [],
+        workspaces: [
+            {
+                workspaceId: WORKSPACE_ID,
+                workspaceAdmin: true,
+                permissions: [{ actionClass: "MANAGE_WORKSPACE_AGENTS", resource: WORKSPACE_ID }],
+            },
+        ],
+    };
+    const rolesToggle = `[data-testid="agent-roles-toggle-${PRINCIPAL_ID}"]`;
+
+    beforeEach(() => {
+        apiMock.getWorkspaceAgents.mockResolvedValue([rbacAgent]);
+        apiMock.getSelfPermissions.mockResolvedValue(WORKSPACE_MANAGE);
+        apiMock.getAgentRoles.mockResolvedValue([
+            {
+                bindingId: "binding-system",
+                roleId: "role-seed",
+                name: "AGENT_SPAWNER",
+                displayName: null,
+                scopeType: "instance",
+                scopeId: null,
+                scopeName: null,
+                isSystem: true,
+                grantedBy: "99999999-9999-4999-8999-999999999999",
+                atomSummary: ["读取", "执行"],
+                atomCount: 2,
+                atomsTruncated: false,
+            },
+            {
+                bindingId: "binding-editor",
+                roleId: "role-editor",
+                name: "WS_EDITOR",
+                displayName: null,
+                scopeType: "workspace",
+                scopeId: WORKSPACE_ID,
+                scopeName: null,
+                isSystem: false,
+                atomSummary: ["读取", "写入", "执行"],
+                atomCount: 6,
+                atomsTruncated: true,
+            },
+        ]);
+        apiMock.getAgentSkills.mockResolvedValue([
+            {
+                bindingId: "skill-binding-1",
+                skillId: "skill-1",
+                name: "contract-review",
+                sourceType: "workspace",
+                sourceName: "工作区技能库",
+                tokenEstimate: 1200,
+            },
+        ]);
+        apiMock.listRoles.mockResolvedValue([
+            { id: "role-editor", name: "WS_EDITOR", displayName: "Workspace editor" },
+        ]);
+        apiMock.getSkills.mockResolvedValue([
+            { skillId: "skill-2", name: "test-case-writing", definitionScope: null },
+        ]);
+    });
+
+    it("lists name / scope / system badge / derived-atom summary and never unbinds a system binding", async () => {
+        const wrapper = await mountOpenedPanel();
+        await wrapper.get(rolesToggle).trigger("click");
+        await flushPromises();
+
+        const system = wrapper.get('[data-testid="agent-role-item-binding-system"]');
+        expect(system.text()).toContain("AGENT_SPAWNER");
+        expect(system.text()).toContain(
+            i18n.global.t("workspace.agentRoleGrantedBy", { id: "99999999" }),
+        );
+        expect(system.text()).toContain("instance");
+        expect(system.text()).toContain(i18n.global.t("workspace.agentRoleSystemBadge"));
+        // D5(b)：只渲染摘要（前 3 个）+ 总数，不展开全集。
+        expect(system.text()).toContain(
+            i18n.global.t("workspace.agentRoleAtomsSummary", { atoms: "读取 · 执行", count: 2 }),
+        );
+        expect(wrapper.find('[data-testid="agent-role-unbind-binding-system"]').exists()).toBe(
+            false,
+        );
+
+        const editor = wrapper.get('[data-testid="agent-role-item-binding-editor"]');
+        expect(editor.text()).toContain("WS_EDITOR");
+        await wrapper.get('[data-testid="agent-role-unbind-binding-editor"]').trigger("click");
+        await flushPromises();
+        expect(apiMock.unbindAgentRole).toHaveBeenCalledWith(
+            WORKSPACE_ID,
+            PRINCIPAL_ID,
+            "binding-editor",
+        );
+    });
+
+    it("binds the selected role and maps 409 AGENT_PRINCIPAL_FORBIDDEN_ATOMS to localized copy", async () => {
+        apiMock.bindAgentRole.mockRejectedValue(new ApiError("AGENT_PRINCIPAL_FORBIDDEN_ATOMS"));
+        const wrapper = await mountOpenedPanel();
+        await wrapper.get(rolesToggle).trigger("click");
+        await flushPromises();
+
+        await wrapper
+            .get(`[data-testid="agent-role-select-${PRINCIPAL_ID}"]`)
+            .setValue("role-editor");
+        await wrapper.get(`[data-testid="agent-role-bind-${PRINCIPAL_ID}"]`).trigger("click");
+        await flushPromises();
+
+        expect(apiMock.bindAgentRole).toHaveBeenCalledWith(
+            WORKSPACE_ID,
+            PRINCIPAL_ID,
+            "role-editor",
+        );
+        expect(wrapper.get('[data-testid="agent-rbac-action-error"]').text()).toBe(
+            i18n.global.t("workspace.agentRoleForbiddenAtoms"),
+        );
+    });
+
+    it("maps 409 ROLE_BINDING_EXCEEDS_CAP to localized copy and shows the cap hint", async () => {
+        apiMock.bindAgentRole.mockRejectedValue(new ApiError("ROLE_BINDING_EXCEEDS_CAP"));
+        const wrapper = await mountOpenedPanel();
+        await wrapper.get(rolesToggle).trigger("click");
+        await flushPromises();
+
+        expect(wrapper.get(`[data-testid="agent-role-cap-hint-${PRINCIPAL_ID}"]`).text()).toBe(
+            i18n.global.t("workspace.agentRoleCapHint"),
+        );
+        await wrapper
+            .get(`[data-testid="agent-role-select-${PRINCIPAL_ID}"]`)
+            .setValue("role-editor");
+        await wrapper.get(`[data-testid="agent-role-bind-${PRINCIPAL_ID}"]`).trigger("click");
+        await flushPromises();
+
+        expect(wrapper.get('[data-testid="agent-rbac-action-error"]').text()).toBe(
+            i18n.global.t("workspace.agentRoleExceedsCap"),
+        );
+    });
+
+    it("lists skills and unbinds one through the skill endpoint", async () => {
+        const wrapper = await mountOpenedPanel();
+        await wrapper.get(rolesToggle).trigger("click");
+        await flushPromises();
+
+        expect(wrapper.get('[data-testid="agent-skills-list"]').text()).toContain(
+            "contract-review",
+        );
+        // 三列：来源类型 / 来源名 / token 估算（M2 契约字段）。
+        expect(wrapper.get('[data-testid="agent-skill-source-skill-binding-1"]').text()).toBe(
+            i18n.global.t("workspace.agentSkillSourceWorkspace"),
+        );
+        expect(wrapper.get('[data-testid="agent-skill-item-skill-binding-1"]').text()).toContain(
+            "工作区技能库",
+        );
+        expect(wrapper.get('[data-testid="agent-skill-item-skill-binding-1"]').text()).toContain(
+            i18n.global.t("workspace.agentSkillTokens", { tokens: 1200 }),
+        );
+        await wrapper.get('[data-testid="agent-skill-unbind-skill-binding-1"]').trigger("click");
+        await flushPromises();
+        expect(apiMock.unbindAgentSkill).toHaveBeenCalledWith(
+            WORKSPACE_ID,
+            PRINCIPAL_ID,
+            "skill-binding-1",
+        );
+    });
+
+    it("keeps the section read-only (with explanation) when the projection lacks MANAGE_WORKSPACE_AGENTS", async () => {
+        apiMock.getSelfPermissions.mockResolvedValue(CREATE_ACCOUNT_MISSING);
+        const wrapper = await mountOpenedPanel();
+        await wrapper.get(rolesToggle).trigger("click");
+        await flushPromises();
+
+        expect(wrapper.find(`[data-testid="agent-role-bind-${PRINCIPAL_ID}"]`).exists()).toBe(
+            false,
+        );
+        expect(wrapper.find('[data-testid="agent-rbac-readonly-hint"]').exists()).toBe(true);
+    });
+
+    it("has no hardcoded CJK copy outside comments (i18n is the single source)", () => {
+        const source = readFileSync(
+            resolve(process.cwd(), "src/features/workspace/components/WorkspaceAgentsPanel.vue"),
+            "utf8",
+        );
+        const stripped = source
+            .replace(/<!--[\s\S]*?-->/g, "")
+            .replace(/\/\*[\s\S]*?\*\//g, "")
+            .replace(/\/\/[^\n]*/g, "");
+        const cjk = stripped.match(/[\u4e00-\u9fff]/g);
+        expect(cjk, `hardcoded CJK: ${cjk?.slice(0, 6).join("") ?? ""}`).toBeNull();
     });
 });

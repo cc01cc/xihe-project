@@ -47,6 +47,17 @@ public class AccessRoleBinding {
     @Column(name = "granted_by", columnDefinition = "uuid")
     private UUID grantedBy;
 
+    /**
+     * Lead ruling 2026-11-05 (<b>ROLE_BINDING_IMMUTABLE semantics</b>): {@code true} only for a
+     * binding created by the seeding/default-granting paths (migrations, or the default role written
+     * at agent-principal creation / workspace binding). Immutability is about <em>"this row is a
+     * default, not something the user chose"</em>, <b>not</b> about {@code roles.is_system}: a user
+     * may bind a system role through the API and must be able to unbind it, otherwise binding the
+     * most useful roles (WS_EDITOR &amp; co.) would be a one-way door (data-reversibility fix).
+     */
+    @Column(name = "is_seed", nullable = false)
+    private boolean seed;
+
     @Column(name = "granted_at", nullable = false, updatable = false)
     private Instant grantedAt;
 
@@ -93,6 +104,10 @@ public class AccessRoleBinding {
 
     public UUID getGrantedBy() { return grantedBy; }
     public void setGrantedBy(UUID grantedBy) { this.grantedBy = grantedBy; }
+
+    /** See {@link #seed}: seed bindings are the immutable defaults, user-created rows are not. */
+    public boolean isSeed() { return seed; }
+    public void setSeed(boolean seed) { this.seed = seed; }
 
     public Instant getGrantedAt() { return grantedAt; }
     public void setGrantedAt(Instant grantedAt) { this.grantedAt = grantedAt; }

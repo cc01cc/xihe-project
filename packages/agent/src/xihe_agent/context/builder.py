@@ -8,6 +8,8 @@ from dataclasses import replace
 from pathlib import PurePosixPath
 from typing import Any
 
+from loguru import logger
+
 from xihe_agent.context.agent_memory import entry_tokens as memory_entry_tokens
 from xihe_agent.context.agent_memory import render_memory_block
 from xihe_agent.context.injection_budget import (
@@ -55,6 +57,28 @@ def _tokens(messages: list[TextMessage], counter: Any) -> int:
         payload.append({"role": message.role, "content": body})
     return counter.estimate_messages(payload) if counter is not None else sum(len(item["content"]) // 4 for item in payload)
 
+
+def _limit_inbound_history(messages: Any) -> tuple[list[Any], Any]:
+    """Apply the frozen count/byte caps and make an overflow visible (never silent).
+
+    WARN is loguru-style ``{}`` on purpose (``%s`` would not interpolate in this package) and stays a
+    single line so it can be counted: ``grep -c 'event=agent_context_truncated'``.
+    """
+    from xihe_agent.context.inbound_limits import apply_inbound_limits
+
+    kept, truncation = apply_inbound_limits(messages)
+    if truncation is not None:
+        logger.warning(
+            "event=agent_context_truncated inbound={} kept={} dropped={} droppedBytes={} "
+            "limitMessages={} limitBytes={}",
+            truncation.kept_messages + truncation.dropped_messages,
+            truncation.kept_messages,
+            truncation.dropped_messages,
+            truncation.dropped_bytes,
+            truncation.limit_messages,
+            truncation.limit_bytes,
+        )
+    return list(kept), truncation
 
 def _take_newest(groups: list[list[TextMessage]], budget: int, counter: Any) -> tuple[list[TextMessage], bool]:
     chosen: list[list[TextMessage]] = []
@@ -179,9 +203,14 @@ def _render(component: dict[str, Any], run: ChatRunContext, tools: list[Any], to
         source = {"kind": "agent_memory", "entries": len(items)}
     elif kind == "conversation_history":
         cfg = _config(component, ("selection", "maxTokens", "includeCompaction"), {"selection": {"recent", "all_within_budget"}})
+        # PLAN-0670 T2c.1 (second line of defence): trim the inbound history BEFORE it is grouped and
+        # handed to ``_take_newest``. The three lines deliberately differ: CP sends a window (first),
+        # this count/byte cap bounds what the process ever materialises (second), and the token budget
+        # in ``_take_newest`` stays the third line for what the model can actually read.
+        inbound_messages, inbound_truncation = _limit_inbound_history(run.agent_context.messages)
         groups: list[list[TextMessage]] = []
         pending: list[TextMessage] = []
-        for message in run.agent_context.messages:
+        for message in inbound_messages:
             if message.role == "human":
                 if pending:
                     groups.append(pending)
@@ -209,7 +238,9 @@ def _render(component: dict[str, Any], run: ChatRunContext, tools: list[Any], to
         )
         groups = []
         artifact_diagnostics: list[str] = []
-        history = run.agent_context.messages
+        # PLAN-0670 T2c.1: the tool-history branch gets the same inbound caps as the conversation
+        # branch — two branches with different limits would be a new silent difference.
+        history, _ = _limit_inbound_history(run.agent_context.messages)
         index = 0
         while index < len(history):
             assistant = history[index]

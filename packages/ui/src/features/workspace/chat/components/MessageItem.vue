@@ -81,6 +81,10 @@ const actorForRows = computed(() => (props.showActor ? actorOfMessage.value : un
 const deliveryCcNames = computed(() =>
     (props.delivery?.cc ?? []).join(t("chat.delivery.listSeparator")),
 );
+/** PLAN-0665 M2：TO 变集合（一条消息可定向多个 agent），消息头显示 `发送→A · B`。 */
+const deliveryToNames = computed(() =>
+    (props.delivery?.to ?? []).join(t("chat.delivery.listSeparator")),
+);
 
 const emit = defineEmits<{
     approve: [id: string];
@@ -361,11 +365,11 @@ onUnmounted(() => {
                 :class="isOwnMessage ? 'justify-end' : 'justify-start'"
                 data-testid="message-delivery"
             >
-                <span v-if="delivery.to" data-testid="message-delivery-to">{{
-                    t("chat.delivery.to", { name: delivery.to })
+                <span v-if="deliveryToNames" data-testid="message-delivery-to">{{
+                    t("chat.delivery.to", { name: deliveryToNames })
                 }}</span>
                 <template v-if="delivery.mentions.length">
-                    <span v-if="delivery.to" class="text-muted-foreground/60" aria-hidden="true"
+                    <span v-if="deliveryToNames" class="text-muted-foreground/60" aria-hidden="true"
                         >·</span
                     >
                     <span
@@ -379,7 +383,7 @@ onUnmounted(() => {
                 </template>
                 <template v-if="delivery.cc.length">
                     <span
-                        v-if="delivery.to || delivery.mentions.length"
+                        v-if="deliveryToNames || delivery.mentions.length"
                         class="text-muted-foreground/60"
                         aria-hidden="true"
                         >·</span
@@ -466,6 +470,7 @@ onUnmounted(() => {
                             <ReasoningPart
                                 v-if="part.type === 'reasoning'"
                                 :content="part.content"
+                                :actor="actorForRows"
                             />
                             <ArtifactPart v-if="part.type === 'artifact'" :part="part" />
                             <CitationPart v-if="part.type === 'citation'" :index="part.index" />

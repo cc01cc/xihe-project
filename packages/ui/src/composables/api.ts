@@ -596,6 +596,48 @@ export interface WorkspaceAgentMemory {
 export type WorkspaceAgentMemoryOrigin = "manual" | "run";
 
 /**
+ * PLAN-0667 M3：agent 主体的**角色绑定**（`GET /api/v1/agent-principals/{id}/roles`）。
+ *
+ * 契约（Lead 2026-11-05 冻结，camelCase，信封 `{items:[…]}`）：
+ * - `isSystem` 决定 🔒 与「无解绑按钮」（种子绑定由 CP 409 ROLE_BINDING_EXCEEDS_CAP | ROLE_BINDING_IMMUTABLE 兜底）；
+ * - `atomSummary` = **字符串标签数组（≤3）**，`atomCount` = 总数，`atomsTruncated` 表示被截断；
+ *   UI 只渲染「摘要 + 总数」，**不展开全集**（D5(b)）。
+ */
+export interface AgentRoleBinding {
+    bindingId: string;
+    roleId: string;
+    name: string;
+    displayName?: string | null;
+    scopeType: string;
+    scopeId?: string | null;
+    scopeName?: string | null;
+    isSystem: boolean;
+    /** 绑定的授予者（wire 已有；UI 只展示短 ID，不请求用户资料）。 */
+    grantedBy?: string | null;
+    atomSummary: string[];
+    atomCount: number;
+    atomsTruncated: boolean;
+}
+
+/** PLAN-0667 M3：agent 主体的**技能绑定**（`GET /api/v1/agent-principals/{id}/skills`，v1 principal 级）。 */
+export interface AgentSkillBinding {
+    bindingId: string;
+    skillId: string;
+    name: string;
+    description?: string | null;
+    sourceType?: string | null;
+    sourceName?: string | null;
+    tokenEstimate?: number | null;
+}
+
+/** 可绑定技能（`GET /api/v1/skills` 的 `items[]` 投影，仅取 UI 需要的最小字段）。 */
+export interface AgentSkillSummary {
+    skillId: string;
+    name: string;
+    definitionScope?: { type: string; workspaceId?: string | null } | null;
+}
+
+/**
  * 记忆写入入参（`{content, pinned}`；`type` 随 CP 删列一并去掉）。
  *
  * 写成功与否**不看响应体**：成功后调用方重新 GET 列表（权威源是 CP 的读取面），
@@ -2845,6 +2887,179 @@ export const api = {
      * 返回 `void`：调用方成功后重读列表（见 `WorkspaceAgentMemoryInput` 的说明），
      * 因此 CP 的 201/200 返回体形状不构成契约耦合。
      */
+    /**
+     * PLAN-0667 M3：agent 主体角色绑定列表（**信封 `{items:[…]}`**，Lead 2026-11-05 冻结）。
+     *
+     * D5(b)：只消费 CP 给的摘要（`atomSummary` ≤3 + `atomCount`），不请求、不展开全集；
+     * `isSystem` 缺失按 `false`（fail-closed：不把未知当只读，但解绑仍由 CP 409 兜底）。
+     */
+    async getAgentRoles(workspaceId: string, principalId: string): Promise<AgentRoleBinding[]> {
+        const raw = await request<{
+            items?: Array<Record<string, unknown>>;
+            bindings?: Array<Record<string, unknown>>;
+        }>(
+            `/agent-principals/${encodeURIComponent(principalId)}/roles?workspaceId=${encodeURIComponent(workspaceId)}&locale=${encodeURIComponent(catalogLocale())}`,
+        );
+        // 实际 CP wire（2026-11-05 联调实测）用 `{bindings:[…]}`；冻结稿写的是 `{items:[…]}`。
+        // 两种信封都接受，字段同时兼容 roleName/roleDisplayName 与 name/displayName。
+        const rows = raw?.items ?? raw?.bindings;
+        if (!Array.isArray(rows)) {
+            console.warn("[agents] role envelope malformed; treated as empty");
+            return [];
+        }
+        return rows.flatMap((row) => {
+            const bindingId = typeof row.bindingId === "string" ? row.bindingId : "";
+            const roleId = typeof row.roleId === "string" ? row.roleId : "";
+            const name =
+                typeof row.roleName === "string"
+                    ? row.roleName
+                    : typeof row.name === "string"
+                      ? row.name
+                      : "";
+            if (!bindingId || !roleId || !name) return [];
+            const rawAtoms = Array.isArray(row.atoms)
+                ? row.atoms
+                : Array.isArray(row.atomSummary)
+                  ? row.atomSummary
+                  : [];
+            const atoms = rawAtoms.filter((atom): atom is string => typeof atom === "string");
+            // D5(b)：UI 只展示前 3 个 + 总数，不铺全集。
+            const atomSummary = atoms.slice(0, 3);
+            const atomCount =
+                typeof row.atomCount === "number" && Number.isFinite(row.atomCount)
+                    ? row.atomCount
+                    : atoms.length;
+            return [
+                {
+                    bindingId,
+                    roleId,
+                    name,
+                    displayName:
+                        typeof row.roleDisplayName === "string"
+                            ? row.roleDisplayName
+                            : typeof row.displayName === "string"
+                              ? row.displayName
+                              : null,
+                    scopeType: typeof row.scopeType === "string" ? row.scopeType : "",
+                    scopeId: typeof row.scopeId === "string" ? row.scopeId : null,
+                    scopeName: typeof row.scopeName === "string" ? row.scopeName : null,
+                    isSystem: row.isSystem === true,
+                    grantedBy: typeof row.grantedBy === "string" ? row.grantedBy : null,
+                    atomSummary,
+                    atomCount,
+                    atomsTruncated: row.atomsTruncated === true || atomCount > atomSummary.length,
+                },
+            ];
+        });
+    },
+    /** 绑定角色（body `{roleId}`；`workspaceId` 是授权上下文，2026-11-05 联调实测必需）。 */
+    async bindAgentRole(workspaceId: string, principalId: string, roleId: string): Promise<void> {
+        await request<void>(
+            `/agent-principals/${encodeURIComponent(principalId)}/roles?workspaceId=${encodeURIComponent(workspaceId)}`,
+            {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ roleId }),
+            },
+        );
+    },
+    async unbindAgentRole(
+        workspaceId: string,
+        principalId: string,
+        bindingId: string,
+    ): Promise<void> {
+        await request<void>(
+            `/agent-principals/${encodeURIComponent(principalId)}/roles/${encodeURIComponent(bindingId)}?workspaceId=${encodeURIComponent(workspaceId)}`,
+            { method: "DELETE" },
+        );
+    },
+    /** PLAN-0667 M3：agent 主体技能绑定列表（信封 `{items:[…]}`，CP M2 待合入；两种信封都接受）。 */
+    async getAgentSkills(workspaceId: string, principalId: string): Promise<AgentSkillBinding[]> {
+        const raw = await request<{
+            items?: Array<Record<string, unknown>>;
+            bindings?: Array<Record<string, unknown>>;
+        }>(
+            `/agent-principals/${encodeURIComponent(principalId)}/skills?workspaceId=${encodeURIComponent(workspaceId)}`,
+        );
+        const rows = raw?.items ?? raw?.bindings;
+        if (!Array.isArray(rows)) {
+            console.warn("[agents] skill envelope malformed; treated as empty");
+            return [];
+        }
+        return rows.flatMap((row) => {
+            const bindingId = typeof row.bindingId === "string" ? row.bindingId : "";
+            const skillId = typeof row.skillId === "string" ? row.skillId : "";
+            const name = typeof row.name === "string" ? row.name : "";
+            if (!bindingId || !skillId || !name) return [];
+            return [
+                {
+                    bindingId,
+                    skillId,
+                    name,
+                    description: typeof row.description === "string" ? row.description : null,
+                    sourceType: typeof row.sourceType === "string" ? row.sourceType : null,
+                    sourceName: typeof row.sourceName === "string" ? row.sourceName : null,
+                    tokenEstimate:
+                        typeof row.tokenEstimate === "number" && Number.isFinite(row.tokenEstimate)
+                            ? row.tokenEstimate
+                            : null,
+                },
+            ];
+        });
+    },
+    /** 绑定技能（body `{skillId}`）。 */
+    async bindAgentSkill(workspaceId: string, principalId: string, skillId: string): Promise<void> {
+        await request<void>(
+            `/agent-principals/${encodeURIComponent(principalId)}/skills?workspaceId=${encodeURIComponent(workspaceId)}`,
+            {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ skillId }),
+            },
+        );
+    },
+    async unbindAgentSkill(
+        workspaceId: string,
+        principalId: string,
+        bindingId: string,
+    ): Promise<void> {
+        await request<void>(
+            `/agent-principals/${encodeURIComponent(principalId)}/skills/${encodeURIComponent(bindingId)}?workspaceId=${encodeURIComponent(workspaceId)}`,
+            { method: "DELETE" },
+        );
+    },
+    /**
+     * 可绑定技能候选（复用 CP 既有 `GET /api/v1/skills` → `{items:[…]}`，不新增契约）。
+     * 只取 UI 需要的最小字段；缺字段的行丢弃（fail-closed）。
+     */
+    async getSkills(): Promise<AgentSkillSummary[]> {
+        const raw = await request<{ items?: Array<Record<string, unknown>> }>("/skills");
+        if (!Array.isArray(raw?.items)) return [];
+        return raw.items.flatMap((row) => {
+            const skillId = typeof row.skillId === "string" ? row.skillId : "";
+            const name = typeof row.name === "string" ? row.name : "";
+            if (!skillId || !name) return [];
+            const scope = row.definitionScope as
+                | { type?: unknown; workspaceId?: unknown }
+                | undefined;
+            return [
+                {
+                    skillId,
+                    name,
+                    definitionScope:
+                        scope && typeof scope.type === "string"
+                            ? {
+                                  type: scope.type,
+                                  workspaceId:
+                                      typeof scope.workspaceId === "string"
+                                          ? scope.workspaceId
+                                          : null,
+                              }
+                            : null,
+                },
+            ];
+        });
+    },
     async createAgentMemory(
         workspaceId: string,
         principalId: string,
@@ -2915,10 +3130,14 @@ export const api = {
     rolesCatalog(): Promise<ApiRoleCatalog> {
         // D51-37: the CP resolves the label server-side from an explicit locale; the UI keeps no
         // atom vocabulary. `<html lang>` is the locale SSOT written by applyLocale().
-        return request<ApiRoleCatalog>(`/roles/catalog?locale=${encodeURIComponent(catalogLocale())}`);
+        return request<ApiRoleCatalog>(
+            `/roles/catalog?locale=${encodeURIComponent(catalogLocale())}`,
+        );
     },
-    listRoles(): Promise<ApiRole[]> {
-        return request<ApiRole[]>("/roles");
+    listRoles(workspaceId?: string): Promise<ApiRole[]> {
+        // PLAN-0667 M3：候选角色按 workspace 授权上下文过滤（Lead 2026-11-05 冻结：不新增候选端点）。
+        const query = workspaceId ? `?workspaceId=${encodeURIComponent(workspaceId)}` : "";
+        return request<ApiRole[]>(`/roles${query}`);
     },
     createRole(input: ApiRoleWrite): Promise<ApiRole> {
         return request<ApiRole>("/roles", { method: "POST", body: JSON.stringify(input) });
@@ -3105,6 +3324,8 @@ export const api = {
                 role: string;
                 content: string;
                 createdAt: string;
+                /** PLAN-0669 M1：历史消息的主体归属（可选；缺失 = 未知，不渲染徽标）。 */
+                participantId?: string | null;
                 runId?: string;
                 runStatus?: string;
                 terminalOutcome?: string;
@@ -3113,6 +3334,12 @@ export const api = {
                 errorDetail?: string;
                 error?: string;
                 retryable?: boolean;
+                /**
+                 * PLAN-0665 M2 / V120: durable delivery audience written on the user Message.
+                 * `{to:[participantId],cc:[participantId]}`; `null` when the message had neither
+                 * (never an empty object), so the read side falls back to local composer state.
+                 */
+                delivery?: { to?: string[]; cc?: string[] } | null;
                 attachments?: Array<{ fileId: string; name: string; type: string; size: number }>;
                 /** PLAN-0572: persisted per-Run tool cards (V83 snapshot). */
                 toolCalls?: Array<{

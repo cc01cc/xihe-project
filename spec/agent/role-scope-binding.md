@@ -78,17 +78,28 @@ flowchart LR
    （有 `workspaceId` ⇒ workspace 作用域；无 ⇒ instance 作用域且需 N1），**调用方不得自报 scope**
    （否则等于把授权语义交给客户端）。角色定义是 instance 级、本身不带 scope，故不存在"从角色行复制 scope"。
    **actor ≠ subject**：agent 不得给自己绑定（由 `MANAGE_*` 原子与"仅真人 principal 可作 actor"共同保证，禁止新增旁路）。
-2a. **候选读面**：能管理 agent 绑定的人 MUST 能读候选角色，但只返回**可绑定子集**
-   （含任一禁授原子的角色不列），复用既有 `GET /api/v1/roles`（不新增候选端点）；持 `MANAGE_ROLES`
-   的管理员视图保持返回全量。无授权上下文时 workspace 层调用者 403。
+2a. **候选读面**：能管理 agent 绑定的人 MUST 能读候选角色，但**候选仅含可绑定角色**——
+   含任一禁授原子的角色**不出现在候选中**（UI 零策略复制），复用既有 `GET /api/v1/roles`
+   （不新增候选端点、不加 `bindable`/`reason` 字段）；持 `MANAGE_ROLES` 的管理员视图保持返回全量。
+   **绑定 409 仍是兜底**：绕过 UI 直接调 API 绑定时，`AGENT_PRINCIPAL_FORBIDDEN_ATOMS` 照常拒绝。
+   无授权上下文时 workspace 层调用者 403。
 3. **禁授原子（不可变）**：角色若含 `PermissionAtomCatalog.agentPrincipalForbiddenAtoms()` 中任一原子
    ⇒ **409 `AGENT_PRINCIPAL_FORBIDDEN_ATOMS`**；`detail` **只列原子名，不列资源**（不泄露实例资源面）。
    该集合由词汇表派生（instance-only 全集 + 全部 capability 原子 + `MANAGE_WORKSPACE_AGENTS` /
    `MANAGE_ROLES` / `MANAGE_WORKSPACE_MEMBERS`），**不得**在绑定入口被放宽；绑定入口拦截 + 物化后二次校验双保险。
-4. **绑定生命周期**：角色 `is_system=true`（种子角色）的绑定**不可删** ⇒ 409 `ROLE_BINDING_IMMUTABLE`；
+4. **绑定生命周期**：绑定的 `isSystem` **只表示 seed 绑定**（由 seeding/创建默认值写入的默认授予），
+   其 **不可删** ⇒ 409 `ROLE_BINDING_IMMUTABLE`；**用户通过 API 绑定系统角色**（角色行
+   `is_system=true`，如 `WS_EDITOR`/`AGENT_DELEGATOR`）⇒ 绑定行 `isSystem=false`、**可解绑（204）**。
+   不得把 `isSystem` 解释为"角色是系统角色"——那会让最常用的角色绑上即死结（2026-11-05 裁定，
+   `role_bindings.is_seed` 列区分两者）；
    同一 `(roleId, subject)` 重复绑定 ⇒ 409 `ROLE_BINDING_EXISTS`；不可见角色/技能/主体 ⇒ **404**（not-区分，不泄露存在性）。
 5. **即时生效**：绑定/解绑 MUST 在**同一事务内**重物化该主体的 grants（复用 `RoleGrantMaterializer.materializeSubject` 路径），
    使该 agent **新会话**的能力判定立即按新绑定生效；不得依赖缓存过期或后台任务。
+   **cap 是硬上限（BL-287，2026-11-05 裁定）**：agent 的工作区 cap（`WorkspaceAgent.permissionsSnapshot`，
+   会话创建时写入 `agent_permissions_snapshot`）是授权交集的一环——绑定角色若含**超出该 cap** 的原子，
+   该原子实际不会被允许。因此绑定入口 MUST **fail-closed**：含超限原子 ⇒ **409 `ROLE_BINDING_EXCEEDS_CAP`**，
+   `detail` 只列超限原子名；**不得**先返回 201 再静默无效。"即时生效"仅指 cap 内的原子；
+   让 cap 随绑定扩展是产品语义变更（B 类），不在本面内做。
 6. **技能绑定（v1）**：复用 `skill_bindings`（`subject_type='agent_principal'`，嵌套端点写入
    `scope_type='instance'`、`scope_id=null`，即"该 agent 全局可用"）；技能定义不可见 ⇒ 404，重复 ⇒ 409。
 7. **审计**：每次绑定/解绑落 durable audit：`agent_principal_role_bind|agent_principal_role_unbind`、

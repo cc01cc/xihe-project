@@ -327,6 +327,13 @@ def _bound_command_field(value: str, budget: int) -> tuple[str, bool]:
     total = len(value)
     shown = max(1, min(len(value), budget))
     for _ in range(8):
+        # PLAN-0670 T2c.3: a bounded preview must be loud — one greppable line, no artifact yet.
+        logger.warning(
+            "event=tool_output_truncated originalBytes={} keptBytes={} shownChars={}",
+            len(value.encode("utf-8")),
+            len(candidate_preview.encode("utf-8")) if (candidate_preview := value[:shown]) else 0,
+            shown,
+        )
         candidate = value[:shown] + f"[truncated: first {shown} of {total} chars]"
         dumped = _dump_len(candidate)
         if dumped <= budget:

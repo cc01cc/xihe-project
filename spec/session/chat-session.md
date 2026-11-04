@@ -79,6 +79,22 @@ Session 负责连续对话上下文、消息、附件引用、模型绑定和 Ch
    「无投递记录」，不得伪造默认受众。
 3. 本载体 MUST 终结 BL-239（刷新后 TO/CC 不再丢失），UI 不得再以「本地发送态」作为唯一来源。
 
+### 消息主体归属的持久载体（PLAN-0669 D1/D2 / V121）
+
+1. **归属 = 谁说的，且只存 id**：`messages.participant_id`（UUID，可空，`ON DELETE SET NULL`）MUST 存
+   **会话参与者 id**（`session_participants.id`），MUST NOT 存名字（重命名不得留下陈旧文案）。
+2. **写入方唯一**：assistant 消息 MUST 在单一写入点（`ChatSubmissionService.persistAssistantResponse`）
+   按回退链 `chat_runs.agent_principal_id → sessions.agent_principal_id → 参与者行` 落值；仍解析不到
+   ⇒ MUST 保持 NULL（MUST NOT 猜 PRIMARY —— 错误归属比没有归属更糟）。
+3. **用户消息 v1 不归属**：composer 的 `asParticipantId` 是**目标身份**（默认 PRIMARY 是 AGENT），
+   MUST NOT 当作作者写入；human 作者归属属 BL-277（需拆 author/target 或加 wire 字段）。
+4. **老数据语义**：V121 之前的消息 MUST 保持 NULL、**不回填**；读面 MUST 省略该字段（而非发 null），
+   UI MUST 在字段缺失或花名册无该行时**不渲染**徽标（MUST NOT 显示"未知"、MUST NOT 上屏裸 UUID）。
+5. **归属与 run 一致**：assistant 消息的 `participant_id` MUST 等于该 run 的 responding participant
+   （单测 + 真栈断言；run responder principal 与 participant 行 MUST 同一行）。
+6. **契约面**：OpenAPI `SessionMessage.participantId` 可空；fork/复制消息 MUST NOT 复制归属
+   （子会话花名册未复制，父 id 会悬空/撞 FK）。
+
 ## 恢复与失败
 
 - Chat SSE 断线由 UI transport 按 session generation 和 `Last-Event-ID` 恢复；恢复不创建新的 Session。
