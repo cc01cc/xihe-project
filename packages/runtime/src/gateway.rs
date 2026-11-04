@@ -191,6 +191,24 @@ impl WorkspaceRegistry {
         self.mark_ready(ws_id, generation, spec_hash).await;
     }
 
+    /// PLAN-0641 T7.5 (BL-260)：CP 推送的 direct_attach 注册。
+    ///
+    /// 只记录 `workspaceId → hostPath`（+ 执行模式）映射，让发现/切片面解析真实宿主目录，
+    /// 而不再回退到托管布局 `<hostRoot>/<workspaceId>`。**不是** lifecycle 迁移、**不**
+    /// materialize 沙盒；重复注册覆盖（HashMap 按 workspace id 键）。模式由调用方
+    /// （CP）按 workspace 既有类型派生，handler 已校验与路径形态一致。
+    pub async fn register_external(&self, ws_id: &str, workspace_path: &str, execution_mode: &str) {
+        self.register_with_spec_and_mode(
+            ws_id,
+            workspace_path,
+            SecurityProfile::Strict,
+            0,
+            "",
+            execution_mode,
+        )
+        .await;
+    }
+
     pub(crate) async fn mark_materializing(&self, ws_id: &str) {
         let mut statuses = self.statuses.write().await;
         let previous_generation = statuses.get(ws_id).and_then(|status| status.generation);
