@@ -726,6 +726,8 @@ const messages = {
             send: "发送",
             delegation: {
                 button: "委派",
+                badge: "委派",
+                delegatedTo: "委派给",
                 buttonHint: "委派一个子会话去完成单独的任务",
                 reasonNoCapability: "缺少在本工作区委派子会话的能力（SPAWN_AGENT）",
                 reasonUnknown: "暂时无法确认委派能力，请稍后重试",
@@ -2939,6 +2941,8 @@ const messages = {
             send: "Send",
             delegation: {
                 button: "Delegate",
+                badge: "Delegated",
+                delegatedTo: "Delegated to",
                 buttonHint: "Delegate a child session for a standalone task",
                 reasonNoCapability:
                     "Missing the capability to delegate in this workspace (SPAWN_AGENT)",

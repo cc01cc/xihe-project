@@ -249,6 +249,10 @@ export interface ApiSession {
     agentPrincipalId?: string | null;
     createdAt?: string;
     updatedAt?: string;
+    /** PLAN-0655 T1.5: delegation projection — `SPAWN` = delegated child session. */
+    kind?: string | null;
+    spawnedFromSessionId?: string | null;
+    spawnedAt?: string | null;
     modelProvider?: string;
     modelName?: string;
     providerConnectionId?: string;
