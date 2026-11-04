@@ -627,6 +627,62 @@ describe("useChatStore", () => {
         expect(localStorage.getItem("xihe-workspace")).toBeNull();
         expect(store.getMessages("s1")).toEqual([]);
     });
+
+    it("prepends older pages in order and dedupes by message id (PLAN-0670 M2d.1)", () => {
+        const store = useChatStore();
+        const sessionId = "session-paging";
+        const make = (id: string) =>
+            ({
+                id,
+                sessionId,
+                role: "user",
+                content: id,
+                timestamp: "2026-11-05T00:00:00Z",
+            }) as unknown as Parameters<typeof store.loadMessages>[1][number];
+
+        store.loadMessages(sessionId, [make("m3"), make("m4")]);
+        store.prependMessages(sessionId, [make("m1"), make("m2"), make("m3")]);
+        expect(store.getMessages(sessionId).map((message) => message.id)).toEqual([
+            "m1",
+            "m2",
+            "m3",
+            "m4",
+        ]);
+
+        // 重复 prepend（CP 游标重放/忽略 before 返回全量）不得产生重复行。
+        store.prependMessages(sessionId, [make("m1"), make("m2")]);
+        expect(store.getMessages(sessionId).map((message) => message.id)).toEqual([
+            "m1",
+            "m2",
+            "m3",
+            "m4",
+        ]);
+    });
+
+    it("trims the oldest messages over the cap and reports the dropped count (PLAN-0670 M2d.3)", () => {
+        const store = useChatStore();
+        const sessionId = "session-cap";
+        const make = (index: number) =>
+            ({
+                id: `m${index}`,
+                sessionId,
+                role: "user",
+                content: `m${index}`,
+                timestamp: "2026-11-05T00:00:00Z",
+            }) as unknown as Parameters<typeof store.loadMessages>[1][number];
+
+        store.loadMessages(
+            sessionId,
+            Array.from({ length: 503 }, (_, index) => make(index)),
+        );
+        expect(store.trimMessages(sessionId, 500)).toBe(3);
+        expect(store.getMessages(sessionId).map((message) => message.id)).toEqual(
+            Array.from({ length: 500 }, (_, index) => `m${index + 3}`),
+        );
+        // 未超限/未知会话不丢。
+        expect(store.trimMessages(sessionId, 500)).toBe(0);
+        expect(store.trimMessages("missing", 500)).toBe(0);
+    });
 });
 
 describe("refreshRunRecovery tri-state (PLAN-292 M3 C2/C3)", () => {

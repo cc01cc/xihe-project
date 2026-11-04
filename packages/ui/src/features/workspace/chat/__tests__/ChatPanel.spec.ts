@@ -428,7 +428,11 @@ describe("ChatPanel branch actions", () => {
         await nextTick();
         await flushPromises();
 
-        expect(api.getMessages).toHaveBeenLastCalledWith(SESSION_ID, ROOT_BRANCH_ID);
+        expect(api.getMessages).toHaveBeenLastCalledWith(
+            SESSION_ID,
+            ROOT_BRANCH_ID,
+            expect.objectContaining({ limit: expect.any(Number) }),
+        );
         expect(store.getMessages(SESSION_ID).map((message) => message.id)).toEqual([canonicalId]);
         wrapper.unmount();
     });
@@ -770,7 +774,11 @@ describe("ChatPanel Follow-up queue", () => {
         await flushPromises();
 
         expect(api.getFollowUpQueue).toHaveBeenCalledTimes(2);
-        expect(api.getMessages).toHaveBeenCalledWith(SESSION_ID, ROOT_BRANCH_ID);
+        expect(api.getMessages).toHaveBeenCalledWith(
+            SESSION_ID,
+            ROOT_BRANCH_ID,
+            expect.objectContaining({ limit: expect.any(Number) }),
+        );
         expect(
             wrapper.find('[data-testid="follow-up-item-status"]').attributes("data-status"),
         ).toBe("admitted");

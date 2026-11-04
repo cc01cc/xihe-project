@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, markRaw, nextTick, watch } from "vue";
+import { ref, computed, markRaw, nextTick, onBeforeUnmount, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { useSessionParticipantsStore } from "../../stores/sessionParticipants";
 import { useWorkspaceStore } from "../../stores/workspace";
@@ -418,6 +418,27 @@ watch(
 const input = ref(""),
     isComposing = ref(false),
     attachments = ref<File[]>([]);
+
+/**
+ * PLAN-0670 M2d.4：本地图片预览的 object URL 必须**创建必配对释放**。
+ * 之前模板里 `attachmentObjectUrl(file)` 每次渲染都 `URL.createObjectURL`，从不 revoke ——
+ * 选过图后整个 Blob 常驻内存。这里按 File 缓存（同一文件只建一次），移除/清空/卸载时 revoke。
+ */
+const attachmentObjectUrls = new Map<File, string>();
+
+function revokeAttachmentUrl(file: File): void {
+    const url = attachmentObjectUrls.get(file);
+    if (!url) return;
+    URL.revokeObjectURL(url);
+    attachmentObjectUrls.delete(file);
+}
+
+function revokeAllAttachmentUrls(): void {
+    for (const url of attachmentObjectUrls.values()) URL.revokeObjectURL(url);
+    attachmentObjectUrls.clear();
+}
+
+onBeforeUnmount(revokeAllAttachmentUrls);
 
 // T5b.2「@ 自动入抄送」：草稿变化时把 @命中 的参与者放进抄送 chips（解析规则见 mentionedParticipantIds）。
 watch(input, (text) => {
@@ -1039,6 +1060,7 @@ function removeAttachment(index: number) {
         const nextErrors = { ...attachmentErrors.value };
         delete nextErrors[file.name];
         attachmentErrors.value = nextErrors;
+        revokeAttachmentUrl(file);
     }
     attachments.value.splice(index, 1);
 }
@@ -1048,7 +1070,11 @@ function handleTranscript(text: string) {
 }
 
 function attachmentObjectUrl(file: File): string {
-    return URL.createObjectURL(file);
+    const existing = attachmentObjectUrls.get(file);
+    if (existing) return existing;
+    const url = URL.createObjectURL(file);
+    attachmentObjectUrls.set(file, url);
+    return url;
 }
 
 function focusInput(): void {
@@ -1058,6 +1084,7 @@ function focusInput(): void {
 
 function clearDraft() {
     input.value = "";
+    revokeAllAttachmentUrls();
     attachments.value = [];
     uploadedByFile = new WeakMap<File, Map<string, AttachmentFile>>();
     attachmentErrors.value = {};

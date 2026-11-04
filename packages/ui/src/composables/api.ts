@@ -2510,6 +2510,56 @@ function revertExecuteBody(
     return body;
 }
 
+export type ApiSessionMessage = {
+    id: string;
+    sessionId: string;
+    role: string;
+    content: string;
+    createdAt: string;
+    /** PLAN-0669 M1：历史消息的主体归属（可选；缺失 = 未知，不渲染徽标）。 */
+    participantId?: string | null;
+    runId?: string;
+    runStatus?: string;
+    terminalOutcome?: string;
+    errorCode?: string;
+    /** CP `MessageReadService` field name for the terminal error text. */
+    errorDetail?: string;
+    error?: string;
+    retryable?: boolean;
+    /**
+     * PLAN-0665 M2 / V120: durable delivery audience written on the user Message.
+     * `{to:[participantId],cc:[participantId]}`; `null` when the message had neither
+     * (never an empty object), so the read side falls back to local composer state.
+     */
+    delivery?: { to?: string[]; cc?: string[] } | null;
+    attachments?: Array<{ fileId: string; name: string; type: string; size: number }>;
+    /** PLAN-0572: persisted per-Run tool cards (V83 snapshot). */
+    toolCalls?: Array<{
+        id: string;
+        name: string;
+        arguments: string;
+        status: "running" | "completed" | "failed" | "pending" | "cancelled";
+        startedAt: string;
+        completedAt?: string;
+        result?: string;
+        truncated?: boolean;
+        /** PLAN-0649: CP refusal code; the durable body stays a placeholder. */
+        refusalCode?: string;
+    }>;
+    toolCallsTruncated?: boolean;
+    toolCallsTotal?: number;
+    jobSummary?: Array<{
+        jobId: string;
+        workspaceId: string;
+        toolCallId?: string;
+        toolName?: string;
+        status: string;
+        scope?: string;
+        startedAt?: string | null;
+        endedAt?: string | null;
+    }>;
+};
+
 export const api = {
     // PLAN-0565 ruling #7: identifier is email (contains '@') or username.
     login(identifier: string, password: string) {
@@ -3316,60 +3366,26 @@ export const api = {
             { method: "POST" },
         );
     },
-    getMessages(sessionId: string, branchId: string) {
+    getMessages(
+        sessionId: string,
+        branchId: string,
+        options: { limit?: number; before?: string } = {},
+    ) {
+        // PLAN-0670 M2d.1（Lead 2026-11-05 裁定 a）：分页参数**可选**；CP 未支持时忽略未知
+        // query（继续返回全量数组），调用方据此自动退化 —— 行为与改造前逐字节一致。
+        // 只有响应带 `nextCursor`/`truncated` 时 UI 才显示「加载更早」入口（不硬编码假设）。
+        const query = new URLSearchParams({ branchId });
+        if (options.limit !== undefined) query.set("limit", String(options.limit));
+        if (options.before) query.set("before", options.before);
         return request<
-            Array<{
-                id: string;
-                sessionId: string;
-                role: string;
-                content: string;
-                createdAt: string;
-                /** PLAN-0669 M1：历史消息的主体归属（可选；缺失 = 未知，不渲染徽标）。 */
-                participantId?: string | null;
-                runId?: string;
-                runStatus?: string;
-                terminalOutcome?: string;
-                errorCode?: string;
-                /** CP `MessageReadService` field name for the terminal error text. */
-                errorDetail?: string;
-                error?: string;
-                retryable?: boolean;
-                /**
-                 * PLAN-0665 M2 / V120: durable delivery audience written on the user Message.
-                 * `{to:[participantId],cc:[participantId]}`; `null` when the message had neither
-                 * (never an empty object), so the read side falls back to local composer state.
-                 */
-                delivery?: { to?: string[]; cc?: string[] } | null;
-                attachments?: Array<{ fileId: string; name: string; type: string; size: number }>;
-                /** PLAN-0572: persisted per-Run tool cards (V83 snapshot). */
-                toolCalls?: Array<{
-                    id: string;
-                    name: string;
-                    arguments: string;
-                    status: "running" | "completed" | "failed" | "pending" | "cancelled";
-                    startedAt: string;
-                    completedAt?: string;
-                    result?: string;
-                    truncated?: boolean;
-                    /** PLAN-0649: CP refusal code; the durable body stays a placeholder. */
-                    refusalCode?: string;
-                }>;
-                toolCallsTruncated?: boolean;
-                toolCallsTotal?: number;
-                jobSummary?: Array<{
-                    jobId: string;
-                    workspaceId: string;
-                    toolCallId?: string;
-                    toolName?: string;
-                    status: string;
-                    scope?: string;
-                    startedAt?: string | null;
-                    endedAt?: string | null;
-                }>;
-            }>
-        >(
-            `/sessions/${encodeURIComponent(sessionId)}/messages?branchId=${encodeURIComponent(branchId)}`,
-        );
+            | ApiSessionMessage[]
+            | {
+                  messages?: ApiSessionMessage[];
+                  items?: ApiSessionMessage[];
+                  nextCursor?: string | null;
+                  truncated?: boolean;
+              }
+        >(`/sessions/${encodeURIComponent(sessionId)}/messages?${query.toString()}`);
     },
     /**
      * PLAN-0465 T2.1：durable job 输出续看（canonical 路径
