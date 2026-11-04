@@ -26,7 +26,7 @@ import {
     provisionWorkspaceAgentPrincipal,
 } from "./helpers/agent-principal";
 
-import { agentName } from "../helpers/agent-name";
+import { agentName } from "./helpers/agent-name";
 const RUN_ID = process.env.XIHE_E2E_RUN_ID ?? "";
 const PROJECT_DIR = path.resolve(process.cwd(), "../..");
 const HOST_ROOT =
@@ -47,7 +47,7 @@ test.describe("@host PLAN-0550 checkpoint reason GIT_FAILED", () => {
         const principalId = await provisionWorkspaceAgentPrincipal(
             request,
             { accessToken: ctx.authToken, workspaceId: ctx.workspaceId },
-            { name: agentName("plan0550", NONCE), actions: ["read", "write"] },
+            { name: agentName("Plan0550", NONCE), actions: ["read", "write"] },
         );
         sessionId = await createSessionWithPrincipal(
             request,

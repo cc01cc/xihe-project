@@ -4,7 +4,7 @@ import { ensureWorkspace } from "./helpers/workspace";
 import { CP_URL, evidenceDir } from "./helpers/journey";
 import { provisionWorkspaceAgentPrincipal } from "./helpers/agent-principal";
 
-import { agentName } from "../helpers/agent-name";
+import { agentName } from "./helpers/agent-name";
 // PLAN-0608 M3 — C′ 会话归属的**浏览器侧**证据。
 // 判据映射（编号以 `plans/PLAN-0608-XH-session-workspace-ownership/verify.md` V10 原文为准）：
 //   test 1 → V2 硬断言（必修 4）：登录后「未导航前」tab 上下文不存在/未选择
@@ -107,7 +107,7 @@ async function buildTwoWorkspaceFixture(request: APIRequestContext) {
     const principalId = await provisionWorkspaceAgentPrincipal(
         request,
         { accessToken: g.accessToken, workspaceId: targetWs },
-        { name: agentName("p0608Agent", Date.now().toString(36).slice(-5)) },
+        { name: agentName("P0608", Date.now().toString(36).slice(-5)) },
     );
 
     return { b, g, fallback, targetWs, principalId };
@@ -275,7 +275,7 @@ test.describe("@host PLAN-0608 — C′ 会话归属的浏览器侧证据", () =
         const principalId = await provisionWorkspaceAgentPrincipal(
             request,
             { accessToken: owner.accessToken, workspaceId: workspaceA },
-            { name: agentName("p0608AAgent", Date.now().toString(36).slice(-5)) },
+            { name: agentName("P0608A", Date.now().toString(36).slice(-5)) },
         );
 
         const results: { label: string; sessionId: string; workspaceId: string }[] = [];
@@ -338,7 +338,7 @@ test.describe("@host PLAN-0608 — C′ 会话归属的浏览器侧证据", () =
         const principalId = await provisionWorkspaceAgentPrincipal(
             request,
             { accessToken: solo.accessToken, workspaceId: solo.workspaceId },
-            { name: agentName("p0608SoloAgent", Date.now().toString(36).slice(-5)) },
+            { name: agentName("P0608Solo", Date.now().toString(36).slice(-5)) },
         );
         const body = { agentPrincipalId: principalId };
         const headers = { Authorization: `Bearer ${solo.accessToken}` };
@@ -439,7 +439,7 @@ test.describe("@host PLAN-0608 — C′ 会话归属的浏览器侧证据", () =
         const principalId = await provisionWorkspaceAgentPrincipal(
             request,
             { accessToken: owner.accessToken, workspaceId: workspaceA },
-            { name: agentName("p0608V1Agent", Date.now().toString(36).slice(-5)) },
+            { name: agentName("P0608V1", Date.now().toString(36).slice(-5)) },
         );
 
         const createInA = async (account: typeof b) => {

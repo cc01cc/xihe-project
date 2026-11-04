@@ -32,7 +32,7 @@ import { createWorkspaceSessionWithPrincipal } from "./helpers/agent-principal";
 import { seedUserGrant, seedUserGrantPermissions } from "./helpers/user-grants";
 import { ensureWorkspace } from "./helpers/workspace";
 
-import { agentName } from "../helpers/agent-name";
+import { agentName } from "./helpers/agent-name";
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`;
 const LLM_MODE = process.env.XIHE_E2E_LLM_MODE ?? "mock";
 const EVIDENCE_DIR = evidenceDir("plan-0498-credential-manager");

@@ -3,7 +3,7 @@ import { expect, type APIRequestContext, type Locator, type Page } from "@playwr
 import { CP_URL } from "./journey";
 import { seedUserGrantPermissions, standardWorkspaceUserPermissions } from "./user-grants";
 
-import { AGENT_NAME_PATTERN } from "../../helpers/agent-name";
+import { AGENT_NAME_PATTERN } from "./agent-name";
 type AgentAuth = { accessToken: string; workspaceId: string };
 type ToolAction = "read" | "write";
 type PrincipalOptions = {

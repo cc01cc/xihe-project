@@ -14,7 +14,7 @@ import {
 } from "./helpers/agent-principal";
 import { test, expect } from "@playwright/test";
 
-import { agentName } from "../helpers/agent-name";
+import { agentName } from "./helpers/agent-name";
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`;
 const LLM_MODE = process.env.XIHE_E2E_LLM_MODE ?? "mock";
 const HOST_ROOT =

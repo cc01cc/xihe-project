@@ -40,7 +40,7 @@ import {
     provisionWorkspaceAgentPrincipal,
 } from "./helpers/agent-principal";
 
-import { agentName } from "../helpers/agent-name";
+import { agentName } from "./helpers/agent-name";
 const NONCE = Date.now().toString(36);
 const CHAIN = "wf1-coding";
 const READ_TARGET = "README.md";
@@ -102,7 +102,7 @@ test.describe("@host PLAN-0648 T1.1 DSH 工作流 1 — 编码会话", () => {
             request,
             { accessToken: ctx.authToken, workspaceId: ctx.workspaceId },
             {
-                name: agentName("dshWf1", NONCE),
+                name: agentName("DshWf1", NONCE),
                 actions: ["read", "write"],
                 // 主体默认模型 ⇒ SessionProviderDefaults 按权威顺序「主体默认 → profile」
                 // 时取主体侧，**不碰 instance profile 的严格解析**（否则又回 409）。

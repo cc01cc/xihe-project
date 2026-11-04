@@ -15,7 +15,7 @@ import {
     provisionWorkspaceAgentPrincipal,
 } from "./helpers/agent-principal";
 
-import { agentName } from "../helpers/agent-name";
+import { agentName } from "./helpers/agent-name";
 const AGENT_URL = `http://127.0.0.1:${process.env.XIHE_AGENT_PORT ?? "12632"}`;
 const SERVICE_TOKEN = process.env.XIHE_CP_API_TOKEN ?? "";
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;

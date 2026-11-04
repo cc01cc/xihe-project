@@ -7,7 +7,7 @@ import {
     provisionWorkspaceAgentPrincipal,
 } from "./helpers/agent-principal";
 
-import { agentName } from "../helpers/agent-name";
+import { agentName } from "./helpers/agent-name";
 const AGENT_URL = `http://127.0.0.1:${process.env.XIHE_AGENT_PORT ?? "12632"}`,
     SERVICE_TOKEN = process.env.XIHE_CP_API_TOKEN ?? "",
     CREDENTIAL_CANARY_BYTES_HEX = Buffer.from(
