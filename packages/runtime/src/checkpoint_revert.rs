@@ -667,7 +667,7 @@ impl ShadowGit {
             ),
             None => None,
         };
-        let (current_tree, _opaque) = self
+        let (current_tree, _opaque, _nested_repos) = self
             .stage_workspace(
                 &context.shadow,
                 &context.work_tree,

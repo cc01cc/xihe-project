@@ -330,6 +330,14 @@ pub struct CaptureOutcome {
     /// Sub-directories recorded as opaque gitlinks (mode 160000); their contents
     /// are not captured and cannot be restored.
     pub opaque_nested_repos: Vec<String>,
+    /// PLAN-0641 T2.1 (D41-24): every nested repository this capture discovered —
+    /// the staged gitlink candidates regardless of policy (flattened, opaque, or
+    /// declared-root-excluded), depth-ascending (parents before children).
+    /// Internal wire only (contract-draft F1): CP warms its TTL cache from this
+    /// and never persists it — zero durable migration. `skip_serializing_if`
+    /// keeps pre-M1 readers and fixtures byte-identical when nothing is found.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub nested_repos: Vec<String>,
     /// Slice ref this capture was compared against / created on top of.
     pub predecessor: Option<String>,
 }
@@ -1605,7 +1613,7 @@ impl ShadowGit {
         // The temp index starts from the chain tail so the size cap and the
         // exclusion rules only judge genuinely new (untracked) paths: paths the
         // previous slice already indexed stay included even when they grew.
-        let (tree, opaque_nested_repos) = self
+        let (tree, opaque_nested_repos, nested_repos) = self
             .stage_workspace(&shadow, &work_tree, &index, &excludes, tail_tree.as_deref())
             .await?;
         self.save_last_index(&shadow, &index).await?;
@@ -1657,6 +1665,9 @@ impl ShadowGit {
                     state: state.to_string(),
                     changed_files: Vec::new(),
                     opaque_nested_repos: Vec::new(),
+                    // PLAN-0641 T2.1: discovery still reports what staging found —
+                    // a no-change run must warm the same cache as a changed one.
+                    nested_repos,
                     predecessor,
                 },
                 tree,
@@ -1717,6 +1728,8 @@ impl ShadowGit {
                 state: state.to_string(),
                 changed_files,
                 opaque_nested_repos,
+                // PLAN-0641 T2.1: per-capture discovery list (internal wire, F1).
+                nested_repos,
                 predecessor,
             },
             tree,
@@ -1855,6 +1868,9 @@ impl ShadowGit {
                 state: state.to_owned(),
                 changed_files: Vec::new(),
                 opaque_nested_repos: Vec::new(),
+                // PLAN-0641 T2.1: the self-store path has no gitlink staging in v1,
+                // so discovery reports empty (F1 stays the git-path fact source).
+                nested_repos: Vec::new(),
                 predecessor,
             });
         }
@@ -1991,6 +2007,8 @@ impl ShadowGit {
             state: state.to_owned(),
             changed_files,
             opaque_nested_repos: Vec::new(),
+            // PLAN-0641 T2.1: self-store path has no gitlink staging in v1 (F1 = git path).
+            nested_repos: Vec::new(),
             predecessor,
         })
     }
@@ -2662,6 +2680,10 @@ impl ShadowGit {
     ///
     /// Both capture and restore planning go through this so the "current" tree
     /// they compare is built identically.
+    ///
+    /// PLAN-0641 T2.1: the third element is the discovery list (every gitlink
+    /// candidate regardless of policy, depth-ascending) that feeds `nestedRepos`
+    /// — internal wire only, never persisted (contract-draft F1 / D41-24).
     pub(crate) async fn stage_workspace(
         &self,
         shadow: &Path,
@@ -2669,11 +2691,19 @@ impl ShadowGit {
         index: &Path,
         excludes: &Path,
         reference_tree: Option<&str>,
-    ) -> Result<(String, Vec<String>)> {
+    ) -> Result<(String, Vec<String>, Vec<String>)> {
         self.stage_index(shadow, work_tree, index, excludes, reference_tree)
             .await?;
         let index_env = self.isolated_env(shadow, work_tree, Some(index));
         let detected = self.staged_gitlinks(&index_env).await?;
+        // PLAN-0641 T2.1: discovery is a fact of staging, independent of the
+        // policy below. Depth-ascending (parents before children), then
+        // lexicographic so two siblings keep a stable order.
+        let mut nested_repos = detected.clone();
+        nested_repos.sort_by(|left, right| {
+            (left.matches('/').count(), left.as_str())
+                .cmp(&(right.matches('/').count(), right.as_str()))
+        });
         let opaque = match self.nested_repo_policy {
             NestedRepoPolicy::Reject if !detected.is_empty() => {
                 return Err(CheckpointError::NestedRepoLimit { paths: detected });
@@ -2687,7 +2717,7 @@ impl ShadowGit {
             NestedRepoPolicy::Opaque | NestedRepoPolicy::Reject => detected,
         };
         let tree = self.write_tree(&index_env).await?;
-        Ok((tree, opaque))
+        Ok((tree, opaque, nested_repos))
     }
 
     /// L1 (PLAN-0361): flatten each detected nested repository into the parent
