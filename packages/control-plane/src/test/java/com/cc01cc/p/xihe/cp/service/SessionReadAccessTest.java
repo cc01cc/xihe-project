@@ -168,11 +168,18 @@ class SessionReadAccessTest {
         assertEquals(HttpStatus.CONFLICT, error.getStatus());
     }
 
+    /**
+     * BL-294 (Lead ruling 2026-11-05): parameter legality precedes resource visibility. A value that
+     * is not an id at all is a request error (400), not a hidden resource; a well-formed but unknown
+     * id still answers the single 404 SESSION_NOT_FOUND (no existence oracle — see the stranger /
+     * other-workspace cases above).
+     */
     @Test
-    void malformedSessionIdIsNotFound() {
+    void malformedSessionIdIsBadRequest_notNotFound() {
         CpApiException error = assertThrows(CpApiException.class,
                 () -> access.resolve(OWNER, WORKSPACE, "not-a-uuid"));
-        assertEquals("SESSION_NOT_FOUND", error.getCode());
+        assertEquals("INVALID_REQUEST", error.getCode());
+        assertEquals(HttpStatus.BAD_REQUEST, error.getStatus());
     }
 
     @Test

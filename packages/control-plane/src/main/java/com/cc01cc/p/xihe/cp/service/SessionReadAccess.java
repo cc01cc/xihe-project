@@ -168,14 +168,27 @@ public class SessionReadAccess {
         }
     }
 
+    /**
+     * BL-294 (Lead ruling 2026-11-05): <b>parameter legality precedes resource visibility</b>.
+     *
+     * <p>"Not-区分" (one 404 for missing vs forbidden) exists to deny an existence oracle to callers
+     * who may not see a Session — it says nothing about a value that is <b>not an id at all</b>.
+     * Folding the two together made client debugging impossible ("bad uuid" and "not yours" were the
+     * same answer). A malformed {@code sessionId} is a request error, so it answers
+     * {@code 400 INVALID_REQUEST}; a <b>well-formed</b> id that is missing, archived, in another
+     * workspace, or simply not visible to the caller still answers the single
+     * {@code 404 SESSION_NOT_FOUND} — the oracle goal is unchanged.</p>
+     */
     private static UUID parseUuid(String sessionId) {
         if (sessionId == null || sessionId.isBlank()) {
-            throw sessionNotFound();
+            throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST",
+                    "sessionId must be a UUID");
         }
         try {
             return UUID.fromString(sessionId);
         } catch (IllegalArgumentException invalidSessionId) {
-            throw sessionNotFound();
+            throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST",
+                    "sessionId must be a UUID");
         }
     }
 
