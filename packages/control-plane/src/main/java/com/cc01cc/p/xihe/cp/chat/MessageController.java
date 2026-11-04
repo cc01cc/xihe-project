@@ -22,6 +22,9 @@ import java.util.UUID;
 @RequestMapping("/api/v1/sessions/{sessionId}/messages")
 public class MessageController {
 
+    private static final org.slf4j.Logger logger =
+            org.slf4j.LoggerFactory.getLogger(MessageController.class);
+
     private final SessionService sessionService;
     private final BranchPathService branchPathService;
     private final MessageReadService messageReadService;
@@ -78,6 +81,25 @@ public class MessageController {
         // the cursor envelope; an absent `limit` then defaults to 50 and values above 200 are
         // truncated (the effective limit is echoed in the response).
         if (limit == null && before == null) {
+            // PLAN-0670 M2b: compatibility must not mean unbounded memory. Refuse BEFORE reading a
+            // single row (same "count first" pattern as the BL-279 A1 export guard, same 2000 cap):
+            // a normal session keeps the old byte-for-byte response, a long one gets an actionable
+            // 413 instead of a ~90 MB heap spike. Never silently truncate the legacy contract.
+            long totalMessages = messageReadService.countSessionMessages(sessionId);
+            if (totalMessages > MessageReadService.MAX_FULL_READ_MESSAGES) {
+                logger.warn("[LIFECYCLE] service=cp event=session_messages_pagination_required "
+                                + "sessionId={} messages={} limit={}", sessionId, totalMessages,
+                        MessageReadService.MAX_FULL_READ_MESSAGES);
+                Map<String, Object> extra = new java.util.LinkedHashMap<>();
+                extra.put("messages", totalMessages);
+                extra.put("limit", MessageReadService.MAX_FULL_READ_MESSAGES);
+                return ProblemDetailsHandler.problemResponse(HttpStatus.PAYLOAD_TOO_LARGE,
+                        "PAGINATION_REQUIRED",
+                        "session has " + totalMessages + " messages, exceeding the full-read limit of "
+                                + MessageReadService.MAX_FULL_READ_MESSAGES
+                                + "; request a page with limit/before (the paginated response returns nextCursor)",
+                        extra);
+            }
             return ResponseEntity.ok(messageReadService.listVisibleMessages(
                     sessionId, workspaceId, rootBranchId, visibility));
         }

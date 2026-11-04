@@ -118,7 +118,7 @@ public class SessionExportController {
                             + "; export a smaller session or split the history before exporting",
                     extra);
         }
-        messages = messageReadService.listVisibleMessages(sessionId, workspaceId, rootBranchId, visibility);
+        messages = messageReadService.listVisibleMessages(sessionId, workspaceId, rootBranchId, visibility, "export");
         SessionExportService.ExportResult result = exportService.render(sessionId, messages);
         logger.info("[LIFECYCLE] service=cp event=session_export sessionId={} messages={} messagesTruncated={} contentTruncated={}",
                 sessionId, result.messages(), result.messagesTruncated(), result.contentTruncated());
