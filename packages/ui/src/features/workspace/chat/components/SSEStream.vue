@@ -166,8 +166,14 @@ function connectSession(id: string) {
                 chatStore.upsertRunStatusMarker(id, status, activeRunId);
             }
         },
-        onDone: (outcome?: string, runId?: string) => {
+        onDone: (
+            outcome?: string,
+            runId?: string,
+            truncation?: import("../composables/useSSE").AgentContextTruncation,
+        ) => {
             if (!isCurrentSession()) return;
+            // PLAN-0670 M2c / BL-292：run 级截断标记落 store（按 runId，多 run 同屏不串）。
+            if (runId && truncation) chatStore.setRunContextTruncation(id, runId, truncation);
             const key = runKey(runId),
                 parser = parserFor(runId),
                 terminalError = terminalErrors.get(key) ?? null;

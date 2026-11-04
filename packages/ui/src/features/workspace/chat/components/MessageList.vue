@@ -5,9 +5,12 @@ import { useI18n } from "vue-i18n";
 import type { Message, SessionRunSummary } from "../../../../types";
 import type { SessionParticipantView } from "../../../../types/participant";
 import { useSessionParticipantsStore } from "../../stores/sessionParticipants";
+import { useChatStore } from "../stores/chat.ts";
 import MessageItem from "./MessageItem.vue";
+import ContextTruncationNotice from "./ContextTruncationNotice.vue";
 import MessageSearch from "./MessageSearch.vue";
 import RunGroupHeader from "./RunGroupHeader.vue";
+import type { AgentContextTruncation } from "../composables/useSSE";
 import { hasMultipleActors } from "../actorView";
 import { resolveDelivery, type ResolvedDelivery } from "../deliveryView";
 import { DEFAULT_VIRTUAL_MIN_ROWS } from "../composables/virtualWindow";
@@ -52,6 +55,28 @@ const props = defineProps<{
  * only lookup, PRIMARY is never assumed.
  */
 const participantsStore = useSessionParticipantsStore();
+const chatStore = useChatStore();
+
+/** PLAN-0670 M2c / BL-292：run 级截断提示（按 runId 取，不按会话全局）。 */
+const truncationSessionId = computed(() => props.messages[0]?.sessionId ?? "");
+const truncationRunIds = computed(() => [
+    ...new Set(props.messages.map((message) => message.runId).filter((id): id is string => !!id)),
+]);
+const singleTruncationRunId = computed(() =>
+    truncationRunIds.value.length === 1 ? truncationRunIds.value[0] : undefined,
+);
+function truncationFor(runId: string | undefined): AgentContextTruncation | undefined {
+    if (!runId || !truncationSessionId.value) return undefined;
+    if (chatStore.isRunContextTruncationDismissed(truncationSessionId.value, runId)) {
+        return undefined;
+    }
+    return chatStore.getRunContextTruncation(truncationSessionId.value, runId);
+}
+function dismissTruncation(runId: string): void {
+    if (truncationSessionId.value) {
+        chatStore.dismissRunContextTruncation(truncationSessionId.value, runId);
+    }
+}
 const { t } = useI18n();
 const responderById = computed(() => {
     const byId = new Map<string, SessionParticipantView>();
@@ -388,6 +413,13 @@ watch(
                                 }}
                             </button>
                         </div>
+                        <!-- 单 run（无分组头）时提示仍要可见，且只挂在这一个 run 上。 -->
+                        <ContextTruncationNotice
+                            :truncation="truncationFor(singleTruncationRunId)"
+                            @dismiss="
+                                singleTruncationRunId && dismissTruncation(singleTruncationRunId)
+                            "
+                        />
                         <!-- 窗口化：窗口上方/下方的未渲染行用占位高度撑住 scrollHeight（PLAN-0670 M2d.2） -->
                         <div
                             v-if="virtualizationActive"
@@ -396,17 +428,22 @@ watch(
                             :style="{ height: topSpacerHeight }"
                         />
                         <template v-for="row in visibleRows" :key="row.key">
-                            <RunGroupHeader
-                                v-if="row.type === 'header'"
-                                :run-id="row.header.runId"
-                                :status="row.header.status"
-                                :terminal-outcome="row.header.terminalOutcome"
-                                :created-at="row.header.createdAt"
-                                :terminal-at="row.header.terminalAt"
-                                :principal-name="row.header.principalName"
-                                :collapsed="row.header.collapsed"
-                                @toggle="toggleRun(row.header.runId, row.groupMessages)"
-                            />
+                            <div v-if="row.type === 'header'" :data-run-block="row.header.runId">
+                                <RunGroupHeader
+                                    :run-id="row.header.runId"
+                                    :status="row.header.status"
+                                    :terminal-outcome="row.header.terminalOutcome"
+                                    :created-at="row.header.createdAt"
+                                    :terminal-at="row.header.terminalAt"
+                                    :principal-name="row.header.principalName"
+                                    :collapsed="row.header.collapsed"
+                                    @toggle="toggleRun(row.header.runId, row.groupMessages)"
+                                />
+                                <ContextTruncationNotice
+                                    :truncation="truncationFor(row.header.runId)"
+                                    @dismiss="dismissTruncation(row.header.runId)"
+                                />
+                            </div>
 
                             <Marker
                                 v-else-if="row.type === 'date'"

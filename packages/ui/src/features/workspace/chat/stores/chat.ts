@@ -9,6 +9,7 @@ import type {
 } from "../../../../types";
 import { ApiError, api, type ApiSessionBranch } from "../../../../composables/api";
 import { logger } from "../../../../lib/logger";
+import type { AgentContextTruncation } from "../composables/useSSE";
 import { useAgentStore } from "../../../../stores/agent";
 
 export const XIHE_STORAGE_KEYS = ["xihe-token", "xihe-user", "xihe-workspace"] as const;
@@ -100,6 +101,45 @@ export const useChatStore = defineStore("chat", () => {
         if (runId !== undefined) return streamKey(sessionId, runId);
         const live = liveStreamKeys(sessionId);
         return live.length === 1 ? live[0] : streamKey(sessionId);
+    }
+
+    /**
+     * PLAN-0670 M2c / BL-292：run 级上下文截断标记（sessionId → runId → marker）。
+     * 必须按 runId 索引：多 run 同屏时用一个全局单值会把 A 的截断提示串到 B 上。
+     */
+    const runContextTruncations = ref<Record<string, Record<string, AgentContextTruncation>>>({});
+    const dismissedRunContextTruncations = ref(new Set<string>());
+
+    function runTruncationKey(sessionId: string, runId: string): string {
+        return `${sessionId}:${runId}`;
+    }
+
+    function setRunContextTruncation(
+        sessionId: string,
+        runId: string,
+        truncation: AgentContextTruncation,
+    ) {
+        const sessionMap = runContextTruncations.value[sessionId] ?? {};
+        sessionMap[runId] = truncation;
+        runContextTruncations.value = { ...runContextTruncations.value, [sessionId]: sessionMap };
+    }
+
+    function getRunContextTruncation(
+        sessionId: string,
+        runId: string | undefined,
+    ): AgentContextTruncation | undefined {
+        if (!runId) return undefined;
+        return runContextTruncations.value[sessionId]?.[runId];
+    }
+
+    function isRunContextTruncationDismissed(sessionId: string, runId: string): boolean {
+        return dismissedRunContextTruncations.value.has(runTruncationKey(sessionId, runId));
+    }
+
+    function dismissRunContextTruncation(sessionId: string, runId: string) {
+        const next = new Set(dismissedRunContextTruncations.value);
+        next.add(runTruncationKey(sessionId, runId));
+        dismissedRunContextTruncations.value = next;
     }
 
     function getMessages(sessionId: string): Message[] {
@@ -1067,6 +1107,10 @@ export const useChatStore = defineStore("chat", () => {
         addMessage,
         loadMessages,
         prependMessages,
+        setRunContextTruncation,
+        getRunContextTruncation,
+        isRunContextTruncationDismissed,
+        dismissRunContextTruncation,
         trimMessages,
         trackUnprojectedRun,
         markClientOwned,
