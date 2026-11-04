@@ -1,6 +1,9 @@
 package com.cc01cc.p.xihe.cp.controller;
 
-import com.cc01cc.p.xihe.cp.policy.CapabilityAuthorities;
+import com.cc01cc.p.xihe.cp.policy.RequesterAuthority;
+import com.cc01cc.p.xihe.cp.policy.ToolFaceRegistry;
+
+import java.util.UUID;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.config.ProblemDetailsHandler;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
@@ -28,11 +31,25 @@ public class WorkspaceRuntimeReleaseController {
 
     private final WorkspaceService workspaceService;
     private final WorkspaceRuntimeReleaseService releaseService;
+    private final RequesterAuthority requesterAuthority;
 
     public WorkspaceRuntimeReleaseController(WorkspaceService workspaceService,
-                                             WorkspaceRuntimeReleaseService releaseService) {
+                                             WorkspaceRuntimeReleaseService releaseService,
+                                             RequesterAuthority requesterAuthority) {
         this.workspaceService = workspaceService;
         this.releaseService = releaseService;
+        this.requesterAuthority = requesterAuthority;
+    }
+
+    private UUID parseUuid(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        try {
+            return UUID.fromString(value);
+        } catch (IllegalArgumentException invalidUuid) {
+            return null;
+        }
     }
 
     @PostMapping("/api/v1/workspaces/{workspaceId}/runtime/release")
@@ -42,10 +59,12 @@ public class WorkspaceRuntimeReleaseController {
             @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey,
             Authentication authentication) {
         String userId = authentication == null ? TenantContext.getUserId() : authentication.getName();
-        // PLAN-0610 W1b (R2-9): capability projection, never the ROLE_ADMIN authority.
-        boolean isAdmin = CapabilityAuthorities.isInstanceAdmin(authentication);
+        // PLAN-0651 M3 T3.5 (A5): "may use this workspace's runtime" is the N7 atom, evaluated at
+        // workspace scope (instance rows always participate, so the instance-admin bypass is kept).
+        boolean canUseRuntime = requesterAuthority.holdsActionAtom(
+                parseUuid(userId), ToolFaceRegistry.ACTION_USE_WORKSPACE_RUNTIME, parseUuid(workspaceId));
         Workspace workspace = workspaceService.findActiveWorkspace(workspaceId).orElse(null);
-        if (workspace == null || (!isAdmin && !workspaceService.isWorkspaceMember(workspaceId, userId))) {
+        if (workspace == null || (!canUseRuntime && !workspaceService.isWorkspaceMember(workspaceId, userId))) {
             return ProblemDetailsHandler.problemResponse(
                     HttpStatus.NOT_FOUND, "WORKSPACE_NOT_FOUND", "Workspace not found");
         }

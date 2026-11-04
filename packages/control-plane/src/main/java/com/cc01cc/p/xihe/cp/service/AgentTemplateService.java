@@ -10,6 +10,7 @@ import com.cc01cc.p.xihe.cp.policy.AuthzContext;
 import com.cc01cc.p.xihe.cp.policy.GrantIntersectionEvaluator;
 import com.cc01cc.p.xihe.cp.policy.GrantPrincipalPathResolver;
 import com.cc01cc.p.xihe.cp.policy.PolicyRequest;
+import com.cc01cc.p.xihe.cp.policy.RequesterAuthority;
 import com.cc01cc.p.xihe.cp.policy.ToolFaceRegistry;
 import com.cc01cc.p.xihe.cp.policy.ToolShape;
 import com.cc01cc.p.xihe.cp.repository.AuthorizationGrantRepository;
@@ -67,6 +68,7 @@ public class AgentTemplateService {
     private final AuditLogger auditLogger;
     private final CredentialService credentialService;
     private final AuthzContext authzContext;
+    private final RequesterAuthority requesterAuthority;
 
     public AgentTemplateService(ConfigService configService,
                                 ConfigDomainSchema schemaValidator,
@@ -78,7 +80,8 @@ public class AgentTemplateService {
                                 ObjectMapper objectMapper,
                                 AuditLogger auditLogger,
                                 CredentialService credentialService,
-                                AuthzContext authzContext) {
+                                AuthzContext authzContext,
+                                RequesterAuthority requesterAuthority) {
         this.configService = configService;
         this.schemaValidator = schemaValidator;
         this.userRepository = userRepository;
@@ -90,6 +93,7 @@ public class AgentTemplateService {
         this.auditLogger = auditLogger;
         this.credentialService = credentialService;
         this.authzContext = authzContext;
+        this.requesterAuthority = requesterAuthority;
     }
 
     @Transactional(readOnly = true)
@@ -113,7 +117,7 @@ public class AgentTemplateService {
         // PLAN-0610 W4a (round-3 P1-4): the instance layer is a capability, not a role name. The
         // legacy `users.role == ADMIN` read is gone; a SUPER_ADMIN holder satisfies instance:admin
         // too (its role seed carries every capability atom).
-        if (authzContext.isInstanceAdmin(actorId)) {
+        if (canReadInstanceContent(actorId)) {
             readableScopes.add(new ConfigScope("instance", null, null));
         }
 
@@ -157,7 +161,7 @@ public class AgentTemplateService {
         }
         switch (layer) {
             case "instance" -> {
-                if (!authzContext.isInstanceAdmin(actorId)) {
+                if (!canReadInstanceContent(actorId)) {
                     logger.warn("Denied non-ADMIN Agent template instance layer read: actor={}", actorId);
                     throw new CpApiException(HttpStatus.FORBIDDEN, "FORBIDDEN",
                             "Instance Agent templates are readable by ADMIN only");
@@ -238,12 +242,31 @@ public class AgentTemplateService {
                 .orElseThrow(() -> new ConfigService.ConfigAccessException("Template writer is unavailable"));
     }
 
+    /**
+     * PLAN-0651 M3 T3.1 (A18/A19): the instance template layer is the N2 atom,
+     * {@code READ_INSTANCE_CONTENT}, evaluated at instance scope.
+     */
+    private boolean canReadInstanceContent(UUID actorId) {
+        return requesterAuthority.holdsActionAtom(actorId,
+                ToolFaceRegistry.ACTION_READ_INSTANCE_CONTENT, null);
+    }
+
+    /**
+     * PLAN-0651 M3 T3.1 (A20): instance-layer template writes are the N3 atom,
+     * {@code WRITE_INSTANCE_CONTENT}, evaluated at instance scope. The existing
+     * {@code CREATE_TEMPLATE} check at the end of {@link #requireLayerWrite} is untouched (D51-18).
+     */
+    private boolean canWriteInstanceContent(UUID actorId) {
+        return requesterAuthority.holdsActionAtom(actorId,
+                ToolFaceRegistry.ACTION_WRITE_INSTANCE_CONTENT, null);
+    }
+
     private void requireLayerWrite(User actor, String layer, UUID userId, UUID workspaceId) {
         UUID actorId = actor.getId();
         String actionResource = "*";
         switch (layer) {
             case "instance" -> {
-                if (!authzContext.isInstanceAdmin(actorId) || userId != null || workspaceId != null) {
+                if (!canWriteInstanceContent(actorId) || userId != null || workspaceId != null) {
                     throw new ConfigService.ConfigAccessException("Instance template write is not allowed");
                 }
             }

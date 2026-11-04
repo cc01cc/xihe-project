@@ -1,6 +1,7 @@
 package com.cc01cc.p.xihe.cp.service;
 
-import com.cc01cc.p.xihe.cp.policy.CapabilityAuthorities;
+import com.cc01cc.p.xihe.cp.policy.RequesterAuthority;
+import com.cc01cc.p.xihe.cp.policy.ToolFaceRegistry;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.config.DbLockTimeout;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
@@ -57,11 +58,13 @@ public class ApiRequestTemplateService {
      * depends back on this service — a direct field would close a Spring dependency cycle.
      */
     private final org.springframework.beans.factory.ObjectProvider<ContextTemplateService> contextTemplates;
+    private final RequesterAuthority requesterAuthority;
 
     public ApiRequestTemplateService(ConfigJpaRepository configs, ConfigAuditRepository audits, ProviderConnectionRepository connections,
                                      EntityManager em, ObjectMapper json, ApiInputTypeService types,
                                      ApiRequestValidator validator, org.springframework.beans.factory.ObjectProvider<WorkspaceService> workspaces, DbLockTimeout timeout,
-                                     org.springframework.beans.factory.ObjectProvider<ContextTemplateService> contextTemplates) {
+                                     org.springframework.beans.factory.ObjectProvider<ContextTemplateService> contextTemplates,
+                                     RequesterAuthority requesterAuthority) {
         this.configs = configs;
         this.audits = audits;
         this.connections = connections;
@@ -72,6 +75,7 @@ public class ApiRequestTemplateService {
         this.workspaces = workspaces;
         this.timeout = timeout;
         this.contextTemplates = contextTemplates;
+        this.requesterAuthority = requesterAuthority;
     }
 
     public static CpApiException invalid(String message) {
@@ -82,9 +86,41 @@ public class ApiRequestTemplateService {
         return new CpApiException(HttpStatus.CONFLICT, code, message);
     }
 
-    /** PLAN-0610 W1b (R2-9): capability projection, not the ROLE_ADMIN authority. */
-    public static boolean admin() {
-        return CapabilityAuthorities.isInstanceAdmin();
+    /**
+     * PLAN-0651 M3 T3.1 (A23): the instance-layer read surface is the N2 atom,
+     * {@code READ_INSTANCE_CONTENT}, evaluated at instance scope.
+     */
+    private boolean canReadInstanceContent() {
+        return holdsInstanceAtom(ToolFaceRegistry.ACTION_READ_INSTANCE_CONTENT);
+    }
+
+    /**
+     * PLAN-0651 M3 T3.1 (A23): the instance-layer write surface is the N3 atom,
+     * {@code WRITE_INSTANCE_CONTENT}, evaluated at instance scope.
+     */
+    private boolean canWriteInstanceContent() {
+        return holdsInstanceAtom(ToolFaceRegistry.ACTION_WRITE_INSTANCE_CONTENT);
+    }
+
+    /**
+     * PLAN-0651 M3 T3.1 (A23): the cross-user / cross-workspace support bypass keeps the
+     * privileged-operator meaning: either instance-content atom qualifies, so the built-in
+     * ADMIN/SUPER_ADMIN roles keep today's reach while a custom role can be granted it explicitly.
+     */
+    private boolean canManageAnyTemplateLayer() {
+        return canReadInstanceContent() || canWriteInstanceContent();
+    }
+
+    private boolean holdsInstanceAtom(String actionClass) {
+        String actor = TenantContext.getUserId();
+        if (actor == null) {
+            return false;
+        }
+        try {
+            return requesterAuthority.holdsActionAtom(UUID.fromString(actor), actionClass, null);
+        } catch (IllegalArgumentException invalidActor) {
+            return false;
+        }
     }
 
     private void access(String layer, UUID user, UUID workspace, boolean write) {
@@ -94,12 +130,13 @@ public class ApiRequestTemplateService {
         }
         switch (layer) {
             case "instance" -> {
-                if (write && !admin()) {
+                if (write && !canWriteInstanceContent()) {
                     throw new CpApiException(HttpStatus.FORBIDDEN, "FORBIDDEN", "Instance writes require admin");
                 }
             }
             case "user" -> {
-                if (user == null || (!actor.equals(user.toString()) && !admin())) {
+                if (user == null || (!actor.equals(user.toString())
+                        && !(write ? canWriteInstanceContent() : canReadInstanceContent()))) {
                     throw new CpApiException(HttpStatus.FORBIDDEN, "FORBIDDEN", "User scope is not accessible");
                 }
             }
@@ -111,7 +148,7 @@ public class ApiRequestTemplateService {
                 if (write) {
                     // PLAN-0559: workspace-layer writes require EDITOR or OWNER.
                     String role = TenantContext.getWorkspaceRole();
-                    if (!admin() && !(workspace.toString().equals(TenantContext.getWorkspaceId())
+                    if (!canManageAnyTemplateLayer() && !(workspace.toString().equals(TenantContext.getWorkspaceId())
                             && WorkspaceRole.canWrite(role))) {
                         throw new CpApiException(HttpStatus.FORBIDDEN, "FORBIDDEN", "Workspace editor permission required");
                     }
@@ -126,7 +163,7 @@ public class ApiRequestTemplateService {
         Map<String, String> result = raw(layer, user, workspace);
         ArrayNode templates = array(result.getOrDefault("templates", "[]"));
         if (layer.equals("instance")) {
-            if (!admin()) {
+            if (!canReadInstanceContent()) {
                 result.clear();
                 ArrayNode visible = json.createArrayNode();
                 for (JsonNode template : templates) {
