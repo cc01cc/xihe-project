@@ -34,8 +34,8 @@ use thiserror::Error;
 use tracing::{debug, info, warn};
 
 use crate::checkpoint::{
-    CheckpointError, ScratchFiles, ShadowGit, parse_slice_ref, scratch_excludes_path,
-    scratch_index_path, validate_workspace_id,
+    CheckpointError, ExcludeProfile, ScratchFiles, ShadowGit, parse_slice_ref,
+    scratch_excludes_path, scratch_index_path, validate_workspace_id,
 };
 
 /// Frozen type-conflict reason code (spec §5).
@@ -264,6 +264,10 @@ struct RestoreContext {
     shadow: PathBuf,
     work_tree: PathBuf,
     env: Vec<(String, String)>,
+    /// PLAN-0641 M5 T6.1: restore planning stages the current tree through the same
+    /// per-root exclusion profile capture used, or a declared root's slice would show
+    /// its noise files as diff entries.
+    exclude_profile: ExcludeProfile,
 }
 
 /// One resolved target slice.
@@ -802,10 +806,12 @@ impl ShadowGit {
             return Err(RestoreError::SliceNotFound(slice_ref.to_string()));
         }
         let env = self.isolated_env(&shadow, &work_tree, None);
+        let exclude_profile = ExcludeProfile::for_root(workspace_id, root.unwrap_or(workspace_id));
         Ok(RestoreContext {
             shadow,
             work_tree,
             env,
+            exclude_profile,
         })
     }
 
@@ -871,6 +877,7 @@ impl ShadowGit {
                 &index,
                 &excludes,
                 reference_tree.as_deref(),
+                context.exclude_profile,
             )
             .await
             .map_err(restore_git_failure)?;

@@ -191,7 +191,9 @@ fn symlink_entry(path: &Path, root: &Path) -> Result<WalkEntry, WalkIssue> {
 
 fn static_exclude_matcher(root: &Path) -> Result<Gitignore, WalkError> {
     let mut builder = GitignoreBuilder::new(root);
-    for pattern in crate::checkpoint::STATIC_EXCLUDE_PATTERNS {
+    // PLAN-0641 M5: the store walk (self/storage mode, explicit-only dev/gray) keeps the
+    // primary-root table; the graded per-root profile is the git-path capture surface.
+    for pattern in crate::checkpoint::ExcludeProfile::PrimaryRoot.patterns() {
         builder
             .add_line(None, pattern)
             .map_err(|error| WalkError::ExcludeMatcher {
@@ -422,7 +424,16 @@ mod tests {
             ".xhs-restore-inprogress",
             ".xhs-restore-trash/",
         ];
-        assert_eq!(crate::checkpoint::STATIC_EXCLUDE_PATTERNS, expected);
+        // PLAN-0641 M5: the profile composition is safety-then-noise, and none of the frozen
+        // patterns carries a `!` negation, so exclude order is not semantic — the frozen
+        // contract is the SET of patterns the walker applies.
+        let mut expected = expected.to_vec();
+        expected.sort_unstable();
+        let mut actual: Vec<&str> = crate::checkpoint::ExcludeProfile::PrimaryRoot
+            .patterns()
+            .collect();
+        actual.sort_unstable();
+        assert_eq!(actual, expected);
     }
 
     #[test]
