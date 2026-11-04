@@ -1,6 +1,7 @@
 import { createServer } from "node:http";
 
 import { CHAIN_SCRIPTS } from "./chain-scripts.mjs";
+import { REASONING_MODE, composeReasoningStream } from "./reasoning-chunks.mjs";
 
 const port = Number(process.env.XIHE_FAKE_LLM_PORT ?? "13642"),
     mode = process.env.XIHE_FAKE_LLM_MODE ?? "success";
@@ -210,6 +211,17 @@ async function sendCompletion(response, provider, requestBody) {
         return;
     }
 
+    // PLAN-0658 R9: reasoning 段落（`<think>…</think>` 内联载体，见 reasoning-chunks.mjs）。
+    // 两条激活通道：提示词 marker（按消息触发，不改 runner 的 --llm-mode）/ 整机 mode=reasoning。
+    // 未命中时返回 null ⇒ 下面的成功路径与既有模式**逐字节不变**。
+    const reasoningSegments = composeReasoningStream(lastUserText, {
+        force: effectiveMode === REASONING_MODE,
+    });
+    if (reasoningSegments) {
+        await sendReasoningCompletion(response, reasoningSegments);
+        return;
+    }
+
     const lastMessage = requestBody.messages?.at(-1)?.content ?? "empty";
     // PLAN-0307 T2.17 (V17): echo the model so a spec can prove that the
     // UI-saved config actually reached the LLM call.
@@ -224,6 +236,20 @@ async function sendCompletion(response, provider, requestBody) {
             response.destroy();
             return;
         }
+        await new Promise((resolve) => setTimeout(resolve, 30));
+    }
+    response.end("data: [DONE]\n\n");
+}
+
+/**
+ * PLAN-0658 R9: 按 `composeReasoningStream` 的冻结段落表逐段下发（每段一个 delta，
+ * 30ms 间隔），因此 reasoning 段落**确实是流式**到达的，而不是一次性整块。
+ */
+async function sendReasoningCompletion(response, segments) {
+    for (const segment of segments) {
+        response.write(
+            `data: ${JSON.stringify({ choices: [{ delta: { content: segment.content } }] })}\n\n`,
+        );
         await new Promise((resolve) => setTimeout(resolve, 30));
     }
     response.end("data: [DONE]\n\n");
