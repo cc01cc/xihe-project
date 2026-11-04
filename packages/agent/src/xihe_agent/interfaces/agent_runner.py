@@ -95,6 +95,11 @@ class RunnerConfig:
     # PLAN-0529: optional Guidance consumer (agent_runner.guidance.GuidanceConsumer).
     # Typed as Any to keep interfaces/ free of agent_runner/langchain imports.
     guidance: Any | None = None
+    # PLAN-0670 M2c / BL-289: the run's inbound-cap marker in wire shape
+    # (``Truncation.to_wire()``), or None when nothing was dropped. The runner merges it into the
+    # terminal ``done`` payload (``agentContextTruncation``) — the value must come from the same
+    # truncation that was applied to ``context.messages``, never be recomputed here.
+    agent_context_truncation: dict[str, Any] | None = None
 
 
 class AgentRunner(ABC):

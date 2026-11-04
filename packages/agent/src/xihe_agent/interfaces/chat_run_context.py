@@ -23,6 +23,11 @@ class ComponentResult:
     estimated_tokens: int = 0
     truncated: bool = False
     diagnostics: tuple[str, ...] = ()
+    #: PLAN-0670 M2c / BL-289: the inbound-cap marker for this component in its already-approved wire
+    #: shape (``Truncation.to_wire()``), or ``None`` when nothing was dropped. A run's terminal payload
+    #: carries at most one object (``agentContextTruncation``); when future stages add more, this
+    #: becomes ``truncations[] + stage`` and the wire name is versioned then.
+    truncation: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
