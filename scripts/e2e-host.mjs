@@ -1770,7 +1770,17 @@ async function runPlaywright() {
     playwrightTestArgs = merged
   }
   if (userGrep) {
-    playwrightTestArgs.push('--grep', `(?:${userGrep})[\\s\\S]*@host|@host[\\s\\S]*(?:${userGrep})`)
+    // 退化情形（PLAN-0658 实测）：用户 grep 本身**已经含 `@host`**（如 headed 场景
+    // `--grep 'R4@host'`）。此时再套 "(?:grep)…@host | @host…(?:grep)" 会要求标题里出现
+    // **两次** `@host`，结果 `No tests found`（假阴性，看起来像参数没透传）。它已满足车道门，
+    // 直接原样使用即可 —— 只加这一个分支，其它参数解析逻辑不变。
+    const alreadyLaneTagged = /@host/i.test(userGrep)
+    playwrightTestArgs.push(
+      '--grep',
+      alreadyLaneTagged
+        ? userGrep
+        : `(?:${userGrep})[\\s\\S]*@host|@host[\\s\\S]*(?:${userGrep})`,
+    )
   }
   if (reportPath) console.log(`[e2e-host] JSON report → ${reportPath}`)
   // PLAN-0579 R2: specs that restart the Runtime (journey-b B1) must spawn the
