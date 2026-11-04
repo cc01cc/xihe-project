@@ -229,6 +229,10 @@ test.describe("@host PLAN-0649 refusal visible + durable", () => {
         const userId = requireUuid(((await meResponse.json()) as { id: string }).id, "userId");
         seedUserGrantPermissions(userId, [
             { actionClass: "CREATE_ACCOUNT", resource: "*" },
+            // Ceiling-set member (helpers/user-grants.ts standardWorkspaceUserPermissions):
+            // the spec writes agent-templates below; without this atom the write is a 403 on
+            // every environment — the original fixture omitted it and never ran.
+            { actionClass: "CREATE_TEMPLATE", resource: "*" },
             { actionClass: "MANAGE_WORKSPACE_AGENTS", resource: wsId },
             { actionClass: "SPAWN_AGENT", resource: "*" },
             { actionClass: "write", resource: "*" },
@@ -271,12 +275,41 @@ test.describe("@host PLAN-0649 refusal visible + durable", () => {
 
         const principalResponse = await request.post(`${CP_URL}/api/v1/agent-principals`, {
             headers,
-            data: { scope: "WORKSPACE", name: "PLAN0649 Delegator", templateId },
+            data: {
+                scope: "WORKSPACE",
+                name: "PLAN0649 Delegator",
+                templateId,
+                // SessionProviderDefaults (2026-11-04 P0, task-24) resolves the agent-principal
+                // default model FIRST; without it session create falls through to the effective
+                // llm-provider profile, which cannot resolve for a fresh journey user and fails
+                // with 409 LLM_PROFILE_CONFLICT (attempt 5). The template's provider/model do NOT
+                // feed this path — the principal itself must carry the default model.
+                defaultModelProvider: "openai",
+                defaultModelName: MODEL_ID,
+            },
         });
         expect(principalResponse.status(), await principalResponse.text()).toBe(201);
         const principalId = requireUuid(
             ((await principalResponse.json()) as { principalId: string }).principalId,
             "principalId",
+        );
+
+        // The materialized grant must carry SPAWN_AGENT, otherwise the tool is filtered out of
+        // tools/list and no refusal can ever happen. This MUST run before the workspace bind:
+        // the bind validates cap ⊆ principal atoms AND ⊆ operator atoms
+        // (AgentPrincipalService: AGENT_PERMISSION_SCOPE_EXCEEDED), and a freshly created
+        // principal only has the agent_default atoms — SPAWN_AGENT has to be materialized first.
+        // One atom per row: the materializer's ledger shape. The earlier UPDATE-append put a
+        // second atom into an existing row and the workspace bind then violated
+        // uq_grants_role_atom (subject, atom, scope) on re-materialization (attempt 4). An
+        // instance-scope row mirrors a role grant; the bind writes workspace-scope rows, so the
+        // unique key never collides and the subset check reads the union across scopes.
+        psql(
+            `INSERT INTO grants (id, granter_type, granter_id, subject_type, subject_id, permissions, source, scope_type, scope_id, read_state, created_at)
+             SELECT gen_random_uuid(), 'user', '${userId}', 'agent_principal', '${principalId}',
+                    jsonb_build_array(jsonb_build_object('actionClass', 'SPAWN_AGENT', 'resource', '*')),
+                    'role', 'instance', NULL, 'read', now()
+             ON CONFLICT DO NOTHING`,
         );
         const boundAgent = await request.put(
             `${CP_URL}/api/v1/workspaces/${wsId}/agents/${principalId}`,
@@ -292,27 +325,34 @@ test.describe("@host PLAN-0649 refusal visible + durable", () => {
         );
         expect(boundAgent.status(), await boundAgent.text()).toBe(200);
 
-        // The materialized grant must carry SPAWN_AGENT, otherwise the tool is filtered out of
-        // tools/list and no refusal can ever happen.
-        const principalGrantId = requireUuid(
-            psql(
-                `SELECT id FROM grants WHERE subject_type = 'agent_principal' AND subject_id = '${principalId}'::uuid ORDER BY created_at DESC LIMIT 1`,
-            ),
-            "principal grant id",
-        );
-        psql(
-            `UPDATE grants SET permissions = permissions || '[{"actionClass":"SPAWN_AGENT","resource":"*"}]'::jsonb WHERE id = '${principalGrantId}'::uuid AND NOT (permissions @> '[{"actionClass":"SPAWN_AGENT","resource":"*"}]'::jsonb)`,
-        );
-
-        // maxCount=1 → the second spawn of one run is refused while the first child is in flight.
+        // maxCount=0 (delegation forbidden) — the budget gate refuses any spawn regardless of the
+        // invocation arguments. maxCount=1 with two concurrent calls instead hits the recorded
+        // BL-NEW12 product defect (mcp_invocations.arguments_preview is either the bare arguments
+        // object or the whole JSON-RPC envelope, so deriveSpawnContent rejects the envelope shape
+        // with SPAWN_ARGUMENTS_INVALID before the budget gate is reached). maxCount=0 keeps this
+        // walkthrough on a legitimate product path that does not depend on that shape.
         const delegationPolicy = await request.patch(
             `${CP_URL}/api/v1/agent-principals/${principalId}`,
-            { headers, data: { delegationPolicy: { maxCount: 1, maxDepth: 2 } } },
+            { headers, data: { delegationPolicy: { maxCount: 0, maxDepth: 2 } } },
         );
         expect(
             delegationPolicy.status(),
             `delegationPolicy ${delegationPolicy.status()}: ${await delegationPolicy.text()}`,
         ).toBe(200);
+
+        // Re-materialize SPAWN_AGENT AFTER the workspace bind: the bind's grant re-materialization
+        // rebuilds the principal's rows from its role bindings and drops ad-hoc rows (attempt 6
+        // evidence: session snapshot was [{actionClass:write}] and the principal's grants had no
+        // SPAWN_AGENT after the bind). The pre-bind insert is still required for the bind's
+        // subset check; this second, idempotent insert is what the session snapshot freezes
+        // (resolveCapFor = cap ∩ principal atoms at session create).
+        psql(
+            `INSERT INTO grants (id, granter_type, granter_id, subject_type, subject_id, permissions, source, scope_type, scope_id, read_state, created_at)
+             SELECT gen_random_uuid(), 'user', '${userId}', 'agent_principal', '${principalId}',
+                    jsonb_build_array(jsonb_build_object('actionClass', 'SPAWN_AGENT', 'resource', '*')),
+                    'role', 'instance', NULL, 'read', now()
+             ON CONFLICT DO NOTHING`,
+        );
 
         const sessionResponse = await request.post(`${CP_URL}/api/v1/sessions`, {
             headers,
