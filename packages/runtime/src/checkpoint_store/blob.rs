@@ -286,6 +286,127 @@ pub fn decode_blob_verified(
     Ok(decoded)
 }
 
+/// T2.8: stream a verified blob into `writer` without buffering the full
+/// decoded content. The decoded length and SHA-256 are checked while copying;
+/// a writer error/length/hash mismatch leaves only the caller's temporary file
+/// to clean up.
+pub fn stream_blob_to_writer(
+    store_root: &Path,
+    expected_hash: &str,
+    writer: &mut impl Write,
+) -> Result<u64, BlobError> {
+    if !is_valid_blob_hash(expected_hash) {
+        return Err(BlobError::InvalidHash {
+            hash: expected_hash.to_owned(),
+        });
+    }
+    let path = blob_path(store_root, expected_hash);
+    let mut file = fs::File::open(&path).map_err(|source| io_error(&path, source))?;
+    let file_len = file
+        .metadata()
+        .map_err(|source| io_error(&path, source))?
+        .len();
+    if file_len < HEADER_LEN as u64 {
+        return Err(BlobError::HeaderTooShort {
+            path,
+            len: file_len as usize,
+        });
+    }
+    let mut header = [0u8; HEADER_LEN];
+    file.read_exact(&mut header)
+        .map_err(|source| io_error(&path, source))?;
+    let (codec, raw_len, _) = parse_header(&header, &path)?;
+    let payload_len = file_len - HEADER_LEN as u64;
+    if codec == CODEC_ZLIB && raw_len > payload_len.saturating_mul(MAX_DECOMPRESSION_RATIO) {
+        return Err(BlobError::CompressionRatioTooHigh {
+            path,
+            raw_len,
+            payload_len,
+            limit: MAX_DECOMPRESSION_RATIO,
+        });
+    }
+    let mut hasher = Sha256::new();
+    let mut copied = 0u64;
+    let mut buffer = [0u8; 64 * 1024];
+    match codec {
+        CODEC_RAW => {
+            let mut reader = file.take(raw_len.saturating_add(1));
+            loop {
+                let read = reader
+                    .read(&mut buffer)
+                    .map_err(|source| BlobError::Corrupt {
+                        path: path.clone(),
+                        reason: source.to_string(),
+                    })?;
+                if read == 0 {
+                    break;
+                }
+                copied += read as u64;
+                if copied > raw_len {
+                    return Err(BlobError::LengthMismatch {
+                        path,
+                        expected_len: raw_len,
+                        actual_len: copied,
+                    });
+                }
+                hasher.update(&buffer[..read]);
+                writer
+                    .write_all(&buffer[..read])
+                    .map_err(|source| io_error(&path, source))?;
+            }
+        }
+        CODEC_ZLIB => {
+            let mut decoder = ZlibDecoder::new(file.take(payload_len));
+            loop {
+                let read = decoder
+                    .read(&mut buffer)
+                    .map_err(|source| BlobError::Corrupt {
+                        path: path.clone(),
+                        reason: source.to_string(),
+                    })?;
+                if read == 0 {
+                    break;
+                }
+                copied += read as u64;
+                if copied > raw_len {
+                    return Err(BlobError::LengthMismatch {
+                        path,
+                        expected_len: raw_len,
+                        actual_len: copied,
+                    });
+                }
+                hasher.update(&buffer[..read]);
+                writer
+                    .write_all(&buffer[..read])
+                    .map_err(|source| io_error(&path, source))?;
+            }
+        }
+        _ => {
+            return Err(BlobError::UnsupportedCodec { path, codec });
+        }
+    }
+    if copied != raw_len {
+        return Err(BlobError::LengthMismatch {
+            path,
+            expected_len: raw_len,
+            actual_len: copied,
+        });
+    }
+    let actual = format!("{:x}", hasher.finalize());
+    if actual != expected_hash {
+        return Err(BlobError::HashMismatch {
+            path,
+            expected: expected_hash.to_owned(),
+            actual,
+        });
+    }
+    writer.flush().map_err(|source| BlobError::Io {
+        path: blob_path(store_root, expected_hash),
+        source,
+    })?;
+    Ok(copied)
+}
+
 /// Read and fully verify a blob by its content hash.
 pub fn read_blob(store_root: &Path, hash: &str) -> Result<Vec<u8>, BlobError> {
     if !is_valid_blob_hash(hash) {
@@ -700,5 +821,29 @@ mod tests {
             "blob_write_10k total_ms={total_ms} hash_ms={} write_ms={} fsync_ms={} rename_ms={}",
             timing[0], timing[1], timing[2], timing[3]
         );
+    }
+
+    #[test]
+    fn stream_blob_large_roundtrip_verifies_content() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let raw: Vec<u8> = (0..(9 * 1024 * 1024))
+            .map(|index| (index % 251) as u8)
+            .collect();
+        let outcome = write_blob(dir.path(), &raw).expect("write blob");
+        let mut decoded = Vec::new();
+        let copied =
+            stream_blob_to_writer(dir.path(), &outcome.hash, &mut decoded).expect("stream blob");
+        assert_eq!(copied, raw.len() as u64);
+        assert_eq!(decoded, raw);
+        assert_eq!(blob_hash(&decoded), outcome.hash);
+
+        let mut sink = Vec::new();
+        let bad = "0".repeat(64);
+        let bad_path = blob_path(dir.path(), &bad);
+        fs::create_dir_all(bad_path.parent().expect("parent")).expect("bad parent");
+        fs::copy(blob_path(dir.path(), &outcome.hash), &bad_path).expect("copy bad blob");
+        let error = stream_blob_to_writer(dir.path(), &bad, &mut sink)
+            .expect_err("hash mismatch must fail");
+        assert!(matches!(error, BlobError::HashMismatch { .. }), "{error:?}");
     }
 }

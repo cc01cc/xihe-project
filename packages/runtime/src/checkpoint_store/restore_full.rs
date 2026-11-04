@@ -12,7 +12,7 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use serde_json::Value;
 
-use super::blob::{BlobError, blob_hash, read_blob};
+use super::blob::{BlobError, blob_hash, read_blob, stream_blob_to_writer};
 use super::capture::{TailSlice, read_tail_manifest, tail_slice};
 use super::manifest::{FileMode, Manifest, ManifestError};
 use super::store::{Store, StoreError};
@@ -20,6 +20,9 @@ use super::store::{Store, StoreError};
 pub const RESTORE_MARKER: &str = ".xhs-restore-inprogress";
 pub const RESTORE_TRASH: &str = ".xhs-restore-trash";
 pub const RESTORE_CHECKOUT_CHUNK: usize = 64;
+/// Files above this size are streamed from blob to temp file (T2.8) instead of
+/// being buffered in memory.
+pub const STREAMING_BLOB_THRESHOLD: u64 = 8 * 1024 * 1024;
 
 #[derive(Debug, Clone, Default)]
 pub struct FullRestoreOptions {
@@ -865,12 +868,7 @@ pub fn restore_full(
             {
                 return Err(FullRestoreError::UnsafePath(entry.path.clone()));
             }
-            let raw = read_blob(store.root(), &entry.blob_hash)?;
-            if raw.len() as u64 != entry.size {
-                return Err(FullRestoreError::VerifyFailed {
-                    path: entry.path.clone(),
-                });
-            }
+            let streamed = entry.size > STREAMING_BLOB_THRESHOLD;
             let tmp = destination
                 .with_file_name(format!(".xhs-restore-tmp-{restore_id}-{}", stats.restored));
             let mut file = OpenOptions::new()
@@ -878,8 +876,18 @@ pub fn restore_full(
                 .create_new(true)
                 .open(&tmp)
                 .map_err(|error| io_error(&tmp, error))?;
-            file.write_all(&raw)
-                .map_err(|error| io_error(&tmp, error))?;
+            if streamed {
+                stream_blob_to_writer(store.root(), &entry.blob_hash, &mut file)?;
+            } else {
+                let raw = read_blob(store.root(), &entry.blob_hash)?;
+                if raw.len() as u64 != entry.size {
+                    return Err(FullRestoreError::VerifyFailed {
+                        path: entry.path.clone(),
+                    });
+                }
+                file.write_all(&raw)
+                    .map_err(|error| io_error(&tmp, error))?;
+            }
             drop(file);
             #[cfg(unix)]
             {
@@ -898,8 +906,16 @@ pub fn restore_full(
                 let _ = fs::remove_file(&tmp);
                 return Err(io_error(&destination, error));
             }
-            let verified = fs::read(&destination).map_err(|error| io_error(&destination, error))?;
-            if verified.len() as u64 != entry.size || blob_hash(&verified) != entry.blob_hash {
+            let verified_ok = if streamed {
+                fs::metadata(&destination)
+                    .map(|metadata| metadata.len() == entry.size)
+                    .unwrap_or(false)
+            } else {
+                let verified =
+                    fs::read(&destination).map_err(|error| io_error(&destination, error))?;
+                verified.len() as u64 == entry.size && blob_hash(&verified) == entry.blob_hash
+            };
+            if !verified_ok {
                 return Err(FullRestoreError::VerifyFailed {
                     path: entry.path.clone(),
                 });
@@ -1488,6 +1504,32 @@ mod tests {
                 "temp leftover: {name:?}"
             );
         }
+    }
+
+    #[test]
+    fn large_file_restore_uses_streaming_and_matches_content() {
+        let workspace = workspace();
+        let root = workspace.path().join("ws");
+        fs::create_dir_all(&root).expect("root");
+        let content: Vec<u8> = (0..(9 * 1024 * 1024))
+            .map(|index| (index % 251) as u8)
+            .collect();
+        fs::write(root.join("large.bin"), &content).expect("large file");
+        let store = Store::init(workspace.path().join("store")).expect("store");
+        let capture = capture_root(&store, &root, "ws-1", None, None).expect("capture");
+        fs::write(root.join("large.bin"), b"mutated").expect("mutate");
+        let stats = restore_full(
+            &store,
+            "ws-1",
+            &capture.slice_id,
+            &root,
+            &FullRestoreOptions::default(),
+        )
+        .expect("streaming restore");
+        assert_eq!(stats.restored, 1);
+        let restored = fs::read(root.join("large.bin")).expect("restored");
+        assert_eq!(restored.len(), content.len());
+        assert_eq!(blob_hash(&restored), blob_hash(&content));
     }
 
     #[test]
