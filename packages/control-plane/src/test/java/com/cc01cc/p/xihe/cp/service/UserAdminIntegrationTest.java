@@ -572,6 +572,10 @@ class UserAdminIntegrationTest extends AbstractIntegrationTest {
         return loginToken("instance-owner-admin@test.com");
     }
 
+    /** PLAN-0651 T1.3: the member-face bypass reads materialised grants, so fixtures must materialise. */
+    @org.springframework.beans.factory.annotation.Autowired
+    private com.cc01cc.p.xihe.cp.policy.RoleGrantMaterializer roleGrantMaterializer;
+
     private void grantInstanceRole(String userId, String roleName) {
         jdbc.update("DELETE FROM role_bindings WHERE subject_type = 'user'"
                 + " AND subject_id = CAST(? AS UUID) AND scope_type = 'instance'", userId);
@@ -579,6 +583,11 @@ class UserAdminIntegrationTest extends AbstractIntegrationTest {
                 + " granted_at) SELECT CAST(? AS UUID), r.id, 'user', CAST(? AS UUID), 'instance',"
                 + " NOW() FROM roles r WHERE r.name = ?",
                 UUID.randomUUID().toString(), userId, roleName);
+        // PLAN-0651 T1.3 (d7847c49): the instance-admin bypass on the member face now reads the
+        // **materialised** MANAGE_WORKSPACE_MEMBERS atom instead of cap:instance:admin, so a fixture
+        // that only inserts the binding row grants nothing. Materialise, exactly like
+        // WorkspaceMemberControllerContractTest#adminUser does.
+        roleGrantMaterializer.materializeSubject("user", UUID.fromString(userId), null, null);
         authzContext.invalidate(UUID.fromString(userId));
     }
 

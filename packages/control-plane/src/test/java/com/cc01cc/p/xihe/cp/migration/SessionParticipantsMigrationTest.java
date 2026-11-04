@@ -163,7 +163,9 @@ class SessionParticipantsMigrationTest {
     void cursorsAreAReadPointerWithTheSessionCascade() throws SQLException {
         assertColumn("session_participant_cursors", "participant_id", "uuid", false);
         assertColumn("session_participant_cursors", "last_read_event_seq", "bigint", false);
-        assertColumn("session_participant_cursors", "mention_count", "integer", false);
+        // PLAN-0660/V112 removed the denormalised counter: V92:110 created `mention_count` and
+        // V112__plan0660_derived_unread.sql:34 DROPPED it — unread/mention counts are derived from
+        // the event stream now. Pinning the column asserted a schema that no longer exists.
         assertColumn("session_participant_cursors", "updated_at", "timestamp with time zone", false);
         assertEquals("session_participants|c", foreignKey("session_participant_cursors", "participant_id"),
                 "cursors die with their participant");
@@ -192,13 +194,15 @@ class SessionParticipantsMigrationTest {
         assertEquals("ALL_MESSAGES", row[4], "R3: PRIMARY wakes on every message");
         assertEquals("ALWAYS", row[5], "R3: PRIMARY responds to every message");
 
-        List<String[]> cursors = query("SELECT last_read_event_seq, mention_count FROM"
+        // mention_count no longer exists (V112 drops it); the cursor is a read pointer only.
+        List<String[]> cursors = query("SELECT last_read_event_seq FROM"
                 + " session_participant_cursors c JOIN session_participants p ON p.id = c.participant_id"
                 + " WHERE p.session_id = '" + BOUND_SESSION_ID + "'");
         assertEquals(1, cursors.size(), "the PRIMARY gets a cursor row");
         assertEquals("3", cursors.getFirst()[0],
                 "R7: history counts as read — the cursor starts at MAX(context_events.sequence)");
-        assertEquals("0", cursors.getFirst()[1]);
+        // mention_count is gone (V112 collapses it into the derived unread model), so there is no
+        // second column to assert; the cursor is a read pointer and nothing else.
     }
 
     @Test
