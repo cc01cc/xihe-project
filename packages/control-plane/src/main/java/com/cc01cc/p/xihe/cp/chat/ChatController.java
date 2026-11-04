@@ -516,11 +516,16 @@ public class ChatController {
             return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
         }
         if (!toParticipantIds.isEmpty()) {
-            // Sub-item 1 (hash + validation) ships ahead of dispatch wiring; refuse the selector
-            // instead of silently answering as the default responder. Removed by the dispatch
-            // sub-item (TargetedWake + runIds[]).
-            return ProblemDetailsHandler.problemResponse(HttpStatus.BAD_REQUEST, "INVALID_REQUEST",
-                    "toParticipantIds dispatch is not enabled yet (PLAN-0665 M1)");
+            // PLAN-0665 M1/Q1: the FIRST target owns the user_submission Run (runId = runIds[0]);
+            // the remaining targets become sibling runs through the single TargetedWake entry.
+            // `asParticipantId` may not contradict the explicit selection.
+            String firstTarget = toParticipantIds.get(0).toString();
+            if (asParticipantId != null && !asParticipantId.isBlank()
+                    && !asParticipantId.equalsIgnoreCase(firstTarget)) {
+                return ProblemDetailsHandler.problemResponse(HttpStatus.BAD_REQUEST, "INVALID_REQUEST",
+                        "asParticipantId conflicts with toParticipantIds[0]");
+            }
+            asParticipantId = firstTarget;
         }
         String provider = (String) request.get("provider");
         String model = (String) request.get("model");
@@ -758,8 +763,11 @@ public class ChatController {
             // stays observable (a silent non-dispatch would look like a stuck Run).
             List<MentionParser.RosterEntry> roster = mentionRoster(userId, workspaceId, sessionId);
             MentionParser.ParseResult mentions = MentionParser.parse(content, roster);
-            boolean suppressPrimary = MentionParser.suppressesPrimary(mentions,
-                    responder == null ? null : responder.participantId(), explicitAsParticipant);
+            // PLAN-0665 M1: an explicit TO selection outranks the mention suppression — the caller
+            // named exactly who should answer, so the first target always owns this run.
+            boolean suppressPrimary = toParticipantIds.isEmpty()
+                    && MentionParser.suppressesPrimary(mentions,
+                            responder == null ? null : responder.participantId(), explicitAsParticipant);
             if (suppressPrimary) {
                 List<String> mentionedNames = mentions.mentions().stream().map(MentionParser.Mention::displayName)
                         .toList();
@@ -803,8 +811,27 @@ public class ChatController {
             wakeFanOutService.fanOut(UUID.fromString(sessionId), workspaceId, userId, runId,
                     content, roster, ccParticipantIds);
             handedOff = true;
-            return ResponseEntity.accepted().body(runAcceptedBody(chatRun, "accepted", sessionId,
-                userMessage.getId(), runId, null));
+            Map<String, Object> acceptedBody = runAcceptedBody(chatRun, "accepted", sessionId,
+                    userMessage.getId(), runId, null);
+            if (!toParticipantIds.isEmpty()) {
+                // PLAN-0665 Q1: runId = runIds[0] (this Run = the first target); the remaining
+                // targets are dispatched through the SINGLE TargetedWake entry and answered as
+                // sibling runs. Explicit TO (not @) drives the wake, so `triggerSource="to"`.
+                List<String> runIds = new ArrayList<>();
+                runIds.add(runId);
+                if (toParticipantIds.size() > 1) {
+                    Set<UUID> mentionedIds = new HashSet<>();
+                    for (MentionParser.Mention mention : mentions.mentions()) {
+                        mentionedIds.add(mention.participantId());
+                    }
+                    WakeFanOutService.TargetedWake targeted = wakeFanOutService.targetedFanOut(
+                            UUID.fromString(sessionId), workspaceId, userId, runId, content,
+                            toParticipantIds.subList(1, toParticipantIds.size()), mentionedIds);
+                    targeted.runIds().forEach(id -> runIds.add(id.toString()));
+                }
+                acceptedBody.put("runIds", runIds);
+            }
+            return ResponseEntity.accepted().body(acceptedBody);
         } finally {
             if (!handedOff) {
                 // D28: a run that never reached dispatch must not keep the admission slots.
