@@ -1910,6 +1910,17 @@ async function unbind(agent: WorkspaceAgentBinding) {
                                             })
                                         }}
                                     </p>
+                                    <p
+                                        v-if="binding.grantedBy"
+                                        class="mt-0.5 text-[11px] text-muted-foreground"
+                                        :data-testid="`agent-role-granted-by-${binding.bindingId}`"
+                                    >
+                                        {{
+                                            t("workspace.agentRoleGrantedBy", {
+                                                id: binding.grantedBy.slice(0, 8),
+                                            })
+                                        }}
+                                    </p>
                                 </li>
                             </ul>
                             <div

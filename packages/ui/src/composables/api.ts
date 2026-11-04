@@ -612,6 +612,8 @@ export interface AgentRoleBinding {
     scopeId?: string | null;
     scopeName?: string | null;
     isSystem: boolean;
+    /** 绑定的授予者（wire 已有；UI 只展示短 ID，不请求用户资料）。 */
+    grantedBy?: string | null;
     atomSummary: string[];
     atomCount: number;
     atomsTruncated: boolean;
@@ -2942,6 +2944,7 @@ export const api = {
                     scopeId: typeof row.scopeId === "string" ? row.scopeId : null,
                     scopeName: typeof row.scopeName === "string" ? row.scopeName : null,
                     isSystem: row.isSystem === true,
+                    grantedBy: typeof row.grantedBy === "string" ? row.grantedBy : null,
                     atomSummary,
                     atomCount,
                     atomsTruncated: row.atomsTruncated === true || atomCount > atomSummary.length,

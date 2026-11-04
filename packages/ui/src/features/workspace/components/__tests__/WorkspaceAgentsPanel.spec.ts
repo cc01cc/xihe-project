@@ -1073,6 +1073,7 @@ describe("WorkspaceAgentsPanel PLAN-0667 roles & skills", () => {
                 scopeId: null,
                 scopeName: null,
                 isSystem: true,
+                grantedBy: "99999999-9999-4999-8999-999999999999",
                 atomSummary: ["读取", "执行"],
                 atomCount: 2,
                 atomsTruncated: false,
@@ -1115,6 +1116,9 @@ describe("WorkspaceAgentsPanel PLAN-0667 roles & skills", () => {
 
         const system = wrapper.get('[data-testid="agent-role-item-binding-system"]');
         expect(system.text()).toContain("AGENT_SPAWNER");
+        expect(system.text()).toContain(
+            i18n.global.t("workspace.agentRoleGrantedBy", { id: "99999999" }),
+        );
         expect(system.text()).toContain("instance");
         expect(system.text()).toContain(i18n.global.t("workspace.agentRoleSystemBadge"));
         // D5(b)：只渲染摘要（前 3 个）+ 总数，不展开全集。
