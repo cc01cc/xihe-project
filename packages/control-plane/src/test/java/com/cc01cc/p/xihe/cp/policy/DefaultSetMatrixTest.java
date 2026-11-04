@@ -69,7 +69,12 @@ class DefaultSetMatrixTest extends AbstractIntegrationTest {
             "credential_use", "credential_reveal", "credential_manage",
             // PLAN-0651 M1 (D51-26): the two faces that used to be an isInstanceAdmin() bypass.
             // These are action atoms and therefore materialize; workspace:admin does NOT (capability).
-            "MANAGE_AGENT_PRINCIPALS", "MANAGE_WORKSPACE_MEMBERS");
+            "MANAGE_AGENT_PRINCIPALS", "MANAGE_WORKSPACE_MEMBERS",
+            // PLAN-0651 M2 T2.1: the eight P1 atoms are part of the fixed instance-administrator
+            // set (D51-27). 19 action atoms + these 8 = 27 (see SkillReadFaceTest for the count).
+            "READ_INSTANCE_CONTENT", "WRITE_INSTANCE_CONTENT", "VIEW_SECRET_CONTENT",
+            "MANAGE_SKILL_LIBRARY", "MANAGE_PROVIDER_CONNECTIONS", "USE_WORKSPACE_RUNTIME",
+            "MANAGE_WORKSPACE_RUNTIME", "MANAGE_WORKSPACE_POLICY");
 
     /** spec §2.1: vocabulary members that never enter a built-in default set. */
     private static final List<String> OUT_OF_DEFAULT_VOCABULARY = List.of(

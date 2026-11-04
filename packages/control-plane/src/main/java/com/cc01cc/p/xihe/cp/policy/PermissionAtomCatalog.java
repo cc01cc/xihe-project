@@ -106,7 +106,17 @@ public final class PermissionAtomCatalog {
             // PLAN-0651 M1 (D51-26/D51-27): management atoms replacing the coarse
             // instance-administrator bypass on the agent-principal and member faces.
             ToolFaceRegistry.ACTION_MANAGE_AGENT_PRINCIPALS,
-            ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_MEMBERS);
+            ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_MEMBERS,
+            // PLAN-0651 M2 T2.1 (D51-27): the P1 face atoms. 19 + 8 = 27 action atoms; the terminal
+            // count 27 = the 17 original atoms + the 10 this plan adds (N1/N10 landed in M1).
+            ToolFaceRegistry.ACTION_READ_INSTANCE_CONTENT,
+            ToolFaceRegistry.ACTION_WRITE_INSTANCE_CONTENT,
+            ToolFaceRegistry.ACTION_VIEW_SECRET_CONTENT,
+            ToolFaceRegistry.ACTION_MANAGE_SKILL_LIBRARY,
+            ToolFaceRegistry.ACTION_MANAGE_PROVIDER_CONNECTIONS,
+            ToolFaceRegistry.ACTION_USE_WORKSPACE_RUNTIME,
+            ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_RUNTIME,
+            ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_POLICY);
 
     private static final List<String> CAPABILITY_ATOM_NAMES = List.of(
             CAP_INSTANCE_SUPER, CAP_INSTANCE_ADMIN, CAP_WORKSPACE_ADMIN);
@@ -124,6 +134,11 @@ public final class PermissionAtomCatalog {
             ToolFaceRegistry.ACTION_OWN_AGENT,
             // PLAN-0651 M1 (D51-26): instance-level agent-principal authority acts on the instance.
             ToolFaceRegistry.ACTION_MANAGE_AGENT_PRINCIPALS,
+            // PLAN-0651 M2 T2.1: reading/writing instance content and revealing secrets all act on
+            // the whole instance, so they stay instance-bindable only (decision #27).
+            ToolFaceRegistry.ACTION_READ_INSTANCE_CONTENT,
+            ToolFaceRegistry.ACTION_WRITE_INSTANCE_CONTENT,
+            ToolFaceRegistry.ACTION_VIEW_SECRET_CONTENT,
             CAP_INSTANCE_SUPER,
             CAP_INSTANCE_ADMIN);
 
@@ -219,6 +234,17 @@ public final class PermissionAtomCatalog {
         // forbidden set explicitly — today these faces are always false for an agent (they can only
         // come from a capability atom, and capability atoms are already forbidden above).
         forbidden.add(ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_MEMBERS);
+        // PLAN-0651 M2 T2.1 (D51-27): every P1 face atom is administrative, so none may be granted
+        // to an agent principal — the set grows 13 → 21 with these eight.
+        forbidden.addAll(List.of(
+                ToolFaceRegistry.ACTION_READ_INSTANCE_CONTENT,
+                ToolFaceRegistry.ACTION_WRITE_INSTANCE_CONTENT,
+                ToolFaceRegistry.ACTION_VIEW_SECRET_CONTENT,
+                ToolFaceRegistry.ACTION_MANAGE_SKILL_LIBRARY,
+                ToolFaceRegistry.ACTION_MANAGE_PROVIDER_CONNECTIONS,
+                ToolFaceRegistry.ACTION_USE_WORKSPACE_RUNTIME,
+                ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_RUNTIME,
+                ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_POLICY));
         return Set.copyOf(forbidden);
     }
 

@@ -18,12 +18,15 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class SkillReadFaceTest {
 
     /**
-     * 19 atoms after PLAN-0651 M1: {@code MANAGE_AGENT_PRINCIPALS} and
-     * {@code MANAGE_WORKSPACE_MEMBERS} (D51-26) replace the coarse isInstanceAdmin bypass on the
-     * agent-principal and member faces. Frozen here so an added atom has to be an explicit,
-     * reviewed decision rather than an accident.
+     * 27 atoms after PLAN-0651 M2 T2.1: {@code 17 existing + 10 added by this plan} = 27, where
+     * N1 ({@code MANAGE_AGENT_PRINCIPALS}) and N10 ({@code MANAGE_WORKSPACE_MEMBERS}) landed in M1
+     * (17 → 19) and N2–N9 — {@code READ_INSTANCE_CONTENT}, {@code WRITE_INSTANCE_CONTENT},
+     * {@code VIEW_SECRET_CONTENT}, {@code MANAGE_SKILL_LIBRARY},
+     * {@code MANAGE_PROVIDER_CONNECTIONS}, {@code USE_WORKSPACE_RUNTIME},
+     * {@code MANAGE_WORKSPACE_RUNTIME}, {@code MANAGE_WORKSPACE_POLICY} — add the remaining 8
+     * (19 → 27). Frozen here so an added atom has to be an explicit, reviewed decision.
      */
-    private static final int BUILTIN_ACTION_CLASS_COUNT = 19;
+    private static final int BUILTIN_ACTION_CLASS_COUNT = 27;
 
     @Test
     void skillReadResolvesToTheExistingReadFace() {
