@@ -223,6 +223,7 @@ async function startRun(
     const input = page.locator('[data-testid="chat-input"]');
     const send = page.locator('[data-testid="chat-send-button"]');
     await expect(input, "chat input").toBeVisible({ timeout: 30_000 });
+    let lastResult = "";
     for (let attempt = 0; attempt < 4; attempt += 1) {
         await input.click().catch(() => {});
         await input.fill(text).catch(() => {});
@@ -242,10 +243,21 @@ async function startRun(
         await send.click().catch(() => {});
         const response = await posted;
         if (!response) continue;
-        const body = (await response.json().catch(() => ({}))) as { runId?: string };
+        // 取证优先（窗口 3 实测 202 却取不到 runId）：先留原文再 parse，
+        // 失败时把最后一次 status+body 带进错误信息，不再只报"没拿到 runId"。
+        const raw = await response.text().catch(() => "");
+        lastResult = `status=${response.status()} body=${raw.slice(0, 600)}`;
+        let body: { runId?: string } = {};
+        try {
+            body = raw ? (JSON.parse(raw) as { runId?: string }) : {};
+        } catch {
+            body = {};
+        }
         if (body.runId) return body.runId;
     }
-    throw new Error("chat send never returned a runId (POST /api/v1/chat)");
+    throw new Error(
+        `chat send never returned a runId (POST /api/v1/chat); last attempt: ${lastResult || "no response captured"}`,
+    );
 }
 
 /** 审批卡片出现并点掉（只认审批面 testid）。 */
