@@ -130,6 +130,8 @@ $env:XIHE_E2E_EXTERNAL_SERVER='1'; node scripts/e2e-host.mjs --batch=session-mat
 node scripts/e2e-host.mjs --teardown
 ```
 
+单 spec 迭代（PLAN-0664 起）：**不要**写成 `--batch=session-matrix <spec>`——批内 8 个 spec 与位置参数是**并集**，那样会整批照跑；用 `--only=<完整路径|basename|唯一子串>` 收窄（如 `--batch=session-matrix --only=session-matrix-multi-account`），或先 `--check-cli` 看计划清单。
+
 **强制纪律**：跑 real spec 必须带 `--batch=<name>`（或 `--llm-mode=success`）。裸跑会把默认 llm-mode 导进实例 `llm-provider` 配置，栈会长期停在 `llmReady=model_unavailable`，`POST /chat` 恒 503 且不自愈（只能 teardown 重起）。
 
 ### 6.2 矩阵与判据（2026-11-04 实测）
