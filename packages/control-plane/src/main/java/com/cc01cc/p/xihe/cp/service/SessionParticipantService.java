@@ -6,7 +6,6 @@ import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.entity.SessionParticipant;
 import com.cc01cc.p.xihe.cp.entity.SessionParticipantCursor;
 import com.cc01cc.p.xihe.cp.entity.User;
-import com.cc01cc.p.xihe.cp.policy.CapabilityAuthorities;
 import com.cc01cc.p.xihe.cp.policy.GrantAuthorizationService;
 import com.cc01cc.p.xihe.cp.policy.PolicyRequest;
 import com.cc01cc.p.xihe.cp.policy.ToolFaceRegistry;
@@ -455,7 +454,18 @@ public class SessionParticipantService {
         if (actorId == null) {
             return false;
         }
-        if (actorId.equals(session.getUserId()) || CapabilityAuthorities.isInstanceAdmin()) {
+        if (actorId.equals(session.getUserId())) {
+            return true;
+        }
+        // PLAN-0651 T1.3 (D51-29): the instance-administrator bypass is an action atom now —
+        // MANAGE_WORKSPACE_MEMBERS at instance scope (ADMIN holds it through the seeded role).
+        // A8 deliberately keeps MANAGE_WORKSPACE_AGENTS for the workspace-scope branch so WS_OWNER
+        // keeps managing participants exactly as today.
+        boolean instanceAdministrator = grantAuthorizationService.allowsUserOnly(new PolicyRequest(
+                "manage_session_participants_instance",
+                List.of(ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_MEMBERS), List.of("*"),
+                ToolShape.OPAQUE, actorId, null, session.getId().toString()));
+        if (instanceAdministrator) {
             return true;
         }
         if (!workspaceService.isWorkspaceMember(workspaceId, actorId)) {
