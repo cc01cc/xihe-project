@@ -35,4 +35,20 @@ public final class DeclaredAtomAuthority extends RequesterAuthority {
     public boolean holdsActionAtom(UUID subjectId, String actionClass, UUID workspaceId) {
         return subjectId != null && actionClass != null && declared.contains(actionClass);
     }
+
+    /**
+     * PLAN-0651 T1.5-A1: {@code AgentPrincipalService.requireUserAction} now delegates to the shared
+     * kernel entry {@link RequesterAuthority#allowsForUser} (same {@code findScopedGrants} +
+     * {@code evaluator.allows} sequence, moved so the two implementations cannot drift). The fake
+     * declares the atoms, so the equivalent answer here is "every requested action class is
+     * declared" — its resources are {@code *} by construction, and the real resource/shape matching
+     * is covered by the real-context contract tests named in the class javadoc.
+     */
+    @Override
+    public boolean allowsForUser(PolicyRequest request, UUID scopeWorkspaceId) {
+        if (request == null || request.userId() == null || request.actionClasses().isEmpty()) {
+            return false;
+        }
+        return request.actionClasses().stream().allMatch(declared::contains);
+    }
 }
