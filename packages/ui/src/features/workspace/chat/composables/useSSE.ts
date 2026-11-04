@@ -118,6 +118,8 @@ export interface SendMessageOptions {
     asParticipantId?: string;
     /** PLAN-0630 M5b (D30-14)：composer 的 cc 旁听名单（participantId UUID 数组）。 */
     cc?: string[];
+    /** PLAN-0665 M1：TO 目标集合（AGENT participantId）；每个目标各自起 run。 */
+    toParticipantIds?: string[];
     provider?: string;
     toolMode?: "none" | "workspace";
     idempotencyKey?: string;
@@ -794,6 +796,7 @@ export function useSSE(sessionId: MaybeRefOrGetter<string>) {
         agentPrincipalId,
         asParticipantId,
         cc,
+        toParticipantIds,
     }: SendMessageOptions): Promise<ChatRunResponse | null> {
         const generation = connectionGeneration;
         error.value = null;
@@ -815,6 +818,10 @@ export function useSSE(sessionId: MaybeRefOrGetter<string>) {
             if (asParticipantId) body.asParticipantId = asParticipantId;
             // PLAN-0630 M5b (D30-14)：cc 旁听名单；服务端对非 UUID 条目 400，非本会话参与者 fail-closed 忽略。
             if (cc && cc.length > 0) body.cc = cc;
+            // PLAN-0665 M1：显式 TO 集合 ⇒ 每个被选 AGENT 各自起 run（排序由 CP 负责）。
+            if (toParticipantIds && toParticipantIds.length > 0) {
+                body.toParticipantIds = toParticipantIds;
+            }
             if (model) {
                 body.model = model;
             }

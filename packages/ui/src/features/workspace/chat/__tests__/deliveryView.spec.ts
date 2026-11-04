@@ -97,7 +97,7 @@ describe("resolveDelivery (PLAN-0659 T1.3)", () => {
             },
         });
         expect(resolved).toEqual({
-            to: "Owner One",
+            to: ["Owner One"],
             mentions: ["Member Two"],
             cc: ["Viewer Three"],
         });
@@ -106,6 +106,7 @@ describe("resolveDelivery (PLAN-0659 T1.3)", () => {
     it("renders mention-only delivery for history messages (rebuilt from the body)", () => {
         // 历史消息没有 delivery（BL-239）：只重建 @，TO/CC 不猜。
         expect(resolveDelivery({ ...base, content: "@Agent Alpha 继续" })).toEqual({
+            to: [],
             mentions: ["Agent Alpha"],
             cc: [],
         });
@@ -139,6 +140,60 @@ describe("resolveDelivery (PLAN-0659 T1.3)", () => {
             content: "走查一下",
             delivery: { ccParticipantIds: ["part-viewer", "part-member"] },
         });
-        expect(resolved).toEqual({ mentions: [], cc: ["Viewer Three", "Member Two"] });
+        expect(resolved).toEqual({ to: [], mentions: [], cc: ["Viewer Three", "Member Two"] });
+    });
+
+    describe("durable delivery (PLAN-0665 M2 / V120)", () => {
+        it("renders the durable to/cc arrays (multi-target) instead of legacy single values", () => {
+            const resolved = resolveDelivery({
+                ...base,
+                content: "普通提问",
+                delivery: {
+                    to: ["part-alpha", "part-owner"],
+                    cc: ["part-viewer"],
+                    toParticipantId: "part-member",
+                    ccParticipantIds: ["part-member"],
+                },
+            });
+            // durable 优先：legacy 单值被忽略，TO 是集合。
+            expect(resolved).toEqual({
+                to: ["Agent Alpha", "Owner One"],
+                mentions: [],
+                cc: ["Viewer Three"],
+            });
+        });
+
+        it("treats an explicit durable empty set as authoritative (no legacy fallback)", () => {
+            // durable `to: []` 表示"CP 判定没有显式 TO"，不能偷偷用本地旧态补回来。
+            const resolved = resolveDelivery({
+                ...base,
+                content: "普通提问",
+                delivery: { to: [], cc: [], toParticipantId: "part-owner" },
+            });
+            expect(resolved).toBeUndefined();
+        });
+
+        it("falls back to the legacy local state when durable delivery is absent", () => {
+            // 安全网：V120 之前的历史消息 / 本地乐观消息只有 legacy 形状，仍要显示徽标。
+            const resolved = resolveDelivery({
+                ...base,
+                content: "普通提问",
+                delivery: { toParticipantId: "part-owner", ccParticipantIds: ["part-member"] },
+            });
+            expect(resolved).toEqual({ to: ["Owner One"], mentions: [], cc: ["Member Two"] });
+        });
+
+        it("dedupes durable to/cc overlaps and @ mentions", () => {
+            const resolved = resolveDelivery({
+                ...base,
+                content: "@Agent Alpha 帮我看",
+                delivery: { to: ["part-owner"], cc: ["part-alpha", "part-viewer"] },
+            });
+            expect(resolved).toEqual({
+                to: ["Owner One"],
+                mentions: ["Agent Alpha"],
+                cc: ["Viewer Three"],
+            });
+        });
     });
 });

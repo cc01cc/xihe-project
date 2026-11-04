@@ -828,6 +828,9 @@ const messages = {
                 filesTitle: "文件与目录",
                 // PLAN-0630 M5b (D30-14)：composer to/cc 栏（邮箱隐喻：to = 主要响应者，cc = 旁听名单）。
                 toLabel: "发送",
+                // PLAN-0665 M2（Q3）：M1 只允许 AGENT 作为 TO；人类作答受 BL-238 阻塞，单独立项。
+                toTargetsLabel: "定向发送",
+                toAgentsOnlyHint: "人类成员请用抄送；人类作答待后续版本",
                 ccLabel: "抄送",
                 ccAdd: "添加…",
                 ccRemove: "移除抄送",
@@ -1062,6 +1065,8 @@ const messages = {
             approve: "确认",
             reject: "拒绝",
             approvalDescription: "智能体请求执行以下操作，请确认后继续：",
+            // PLAN-0665 M2 D5：多路审批串行，首卡显示「1/N 待批」。
+            approvalQueueProgress: "第 {position}/{total} 张待批",
             approvalAction: "动作",
             approvalDetails: "参数预览",
             approvalEvidence: "策略依据",
@@ -3149,6 +3154,8 @@ const messages = {
                 filesTitle: "Files and folders",
                 // PLAN-0630 M5b (D30-14): composer to/cc bars (email metaphor: to = primary responder, cc = observers).
                 toLabel: "To",
+                toTargetsLabel: "Send to",
+                toAgentsOnlyHint: "Humans use Cc; human replies come in a later version",
                 ccLabel: "Cc",
                 ccAdd: "Add…",
                 ccRemove: "Remove cc",
@@ -3390,6 +3397,7 @@ const messages = {
             reject: "Reject",
             approvalDescription:
                 "The agent wants to perform the following action. Review it before continuing:",
+            approvalQueueProgress: "Approval {position} of {total} pending",
             approvalAction: "Action",
             approvalDetails: "Parameter preview",
             approvalEvidence: "Policy evidence",

@@ -593,17 +593,22 @@ export type MessagePart =
       };
 
 /**
- * PLAN-0659 T1.3：一条消息的**投递语义**（UI 本地视图，非 wire 契约）。
+ * PLAN-0665 M2 / V120：一条消息的**投递语义**。
  *
- * 数据来源只有 composer 的发送参数（`asParticipantId` = 「发送」栏主体、`cc` = 抄送旁听
- * 名单）；CP 的 messages DTO 不带投递信息，本 PLAN 明确不改 wire（README 非目标），所以
- * 这是**发送态本地视图**：会话重载后 TO/CC 丢失，只有 `@`（可从正文 + 花名册重建）仍在。
- * 不落 localStorage —— 投递是消息事实，不是用户偏好。
+ * 两代形状共存（兼容期）：
+ *  - **durable**（`messages.delivery` jsonb，跨刷新仍在）：`{ to: string[], cc: string[] }`，
+ *    只含 participantId，名字走花名册解析；@ 不在此列（正文重建）。无 TO 无 CC ⇒ 字段为 null。
+ *  - **legacy 本地发送态**（V120 之前乐观消息）：`toParticipantId`/`ccParticipantIds`；
+ *    仅在 durable 缺失时作为回落，`resolveDelivery` 负责优先级。
  */
 export interface MessageDelivery {
-    /** 「发送」栏选中的参与者（本次消息的主要响应者）。 */
+    /** V120 durable：显式 TO 集合（participantId）；若调用方只给 asParticipantId，CP 回落为该单值。 */
+    to?: string[];
+    /** V120 durable：抄送集合（participantId）。 */
+    cc?: string[];
+    /** @deprecated legacy 本地发送态：单值 TO；durable `to` 存在时不读它。 */
     toParticipantId?: string | null;
-    /** 「抄送」旁听名单（参与者 id 数组）。 */
+    /** @deprecated legacy 本地发送态：单值 cc 名单；durable `cc` 存在时不读它。 */
     ccParticipantIds?: string[];
 }
 
@@ -641,8 +646,9 @@ export interface Message {
      */
     participantId?: string | null;
     /**
-     * PLAN-0659 T1.3: composer 发送时的投递语义（TO/CC）。**本地发送态视图**：历史 DTO
-     * 不携带，重载后只有 @（正文 + 花名册重建）仍可显示；见 `MessageDelivery`。
+     * PLAN-0665 M2 / V120: 投递语义（TO/CC）。**durable**：历史 DTO 已带
+     * `messages.delivery`，刷新后徽标仍在；V120 之前的乐观消息仍写 legacy 形状。
+     * 读侧优先级由 `resolveDelivery` 统一：durable `to`/`cc` 优先，缺失才回落 legacy 单值。
      */
     delivery?: MessageDelivery;
 }

@@ -143,7 +143,10 @@ public class AgentPrincipalRoleBindingController {
         result.put("scopeType", view.scopeType());
         result.put("scopeId", view.scopeId());
         result.put("scopeName", view.scopeName());
-        result.put("isSystem", view.isSystem());
+        // Lead ruling 2026-11-05: the public `isSystem` flag now means "seed binding" (default
+        // grant, immutable), NOT "the role is a system role". A user-created binding of a system
+        // role is deletable and therefore reports false (the UI enables the unbind button).
+        result.put("isSystem", view.isSeed());
         result.put("atomCount", view.atomCount());
         result.put("atoms", view.atoms());
         result.put("grantedBy", view.grantedBy());
