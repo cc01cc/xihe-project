@@ -8,6 +8,24 @@ process could be pushed into OOM *before* the diet started. This module is the s
 (the first one is CP sending a window at all, PLAN-0651; the third one stays the token budget in
 ``_take_newest``). The three lines deliberately do different jobs and none of them duplicates another.
 
+Where it is wired (BL-289, 2026-11-05)
+--------------------------------------
+The production call site is ``api/chat.py``, **after** ``prune_history_tool_results`` (prune shrinks
+tool-result bytes first; capping before prune would drop messages by their pre-prune size) and
+**before** ``native_history(...)`` / ``LangGraphRunner.stream``. The `Truncation` returned there is
+both WARN'd and attached to the run's terminal `done` payload as ``agentContextTruncation``. The
+component builder's ``_limit_inbound_history`` delegates to :func:`truncate_for_run` too, so the
+WARN line and the wire object can never drift apart.
+
+Relationship to ``HISTORY_TRUNCATION_LIMIT`` (``agent_runner/langgraph_runner.py``)
+----------------------------------------------------------------------------------
+That constant (20) is an **assembly fuse** (PLAN-0341 T1.2), not a second governance cap: it only
+bounds the LangGraph message list the runner assembles and exists so the graph never assembles an
+unbounded history (and never orphans a tool result). It is intentionally *tighter* than the inbound
+cap, so for the runner's own history it is the binding limit; the inbound cap is the governance layer
+that bounds what the process materialises (count + bytes) and what the provider body may contain
+(``native_history`` is built before the runner). Order: prune → inbound cap → fuse → token budget.
+
 Contract (frozen with the Lead, PLAN-0670 M2c):
 - defaults: **2000 messages** and **8 MiB** of serialised JSON, both overridable by env;
 - overflow is never silent: a :class:`Truncation` marker is returned *and* logged by the caller, and the
@@ -26,6 +44,8 @@ import os
 from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any
+
+from loguru import logger
 
 DEFAULT_MAX_MESSAGES = 2000
 DEFAULT_MAX_BYTES = 8 * 1024 * 1024
@@ -123,6 +143,40 @@ def apply_inbound_limits(messages: Iterable[Any], *, max_messages: int | None = 
         limit_messages=limit_messages,
         limit_bytes=limit_bytes,
     )
+
+
+def truncate_for_run(messages: Iterable[Any]) -> tuple[list[Any], Truncation | None]:
+    """Production entry: cap, WARN once, self-check the arithmetic, return the wire-ready marker.
+
+    BL-289: this is the **single** function both the real chat path (``api/chat.py``) and the
+    component builder call, so the WARN line and the ``agentContextTruncation`` payload come from the
+    same :class:`Truncation` object. The previous implementation lived only in ``context/builder.py``,
+    which has no production caller — the caps therefore never ran on a real run.
+    """
+    materialised = list(messages)
+    kept, truncation = apply_inbound_limits(materialised)
+    if truncation is None:
+        return kept, None
+    inbound = len(materialised)
+    if truncation.kept_messages + truncation.dropped_messages != inbound:
+        logger.error(
+            "event=agent_context_truncation_invariant_violated inbound={} kept={} dropped={}",
+            inbound,
+            truncation.kept_messages,
+            truncation.dropped_messages,
+        )
+        raise RuntimeError("inbound truncation arithmetic is inconsistent")
+    logger.warning(
+        "event=agent_context_truncated inbound={} kept={} dropped={} droppedBytes={} "
+        "limitMessages={} limitBytes={}",
+        inbound,
+        truncation.kept_messages,
+        truncation.dropped_messages,
+        truncation.dropped_bytes,
+        truncation.limit_messages,
+        truncation.limit_bytes,
+    )
+    return kept, truncation
 
 
 def base64_stats(value: Any) -> dict[str, int]:
