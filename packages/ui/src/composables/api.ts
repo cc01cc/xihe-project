@@ -2075,7 +2075,12 @@ function normalizeSession(value: unknown): SessionResponse {
         // spawnedAt]`）与 `stores/session.ts#toSession` 都消费这三个字段；此前 normalize 把
         // 它们丢了 ⇒ 会话树的父子嵌套与「委派」徽标在真实链路上永远看不到（单测直接塞
         // store 状态，故一直没暴露）。这是投影层缺陷，不是夹具问题。
-        kind: typeof record.kind === "string" ? record.kind : null,
+        // Contract/CP wire uses lowercase `spawn` / `fork` (Session.KIND_* and the OpenAPI
+        // SessionSummary enum), while every UI consumer (session tree, badge, DAG) keys on the
+        // canonical uppercase form. Normalize here so a real list response actually nests children.
+        // M3 real stack 2026-11-05: before this, GET /sessions emitted `spawn` and the tree/badge
+        // silently treated the child as a root session.
+        kind: typeof record.kind === "string" ? record.kind.toUpperCase() : null,
         spawnedFromSessionId:
             typeof record.spawnedFromSessionId === "string" ? record.spawnedFromSessionId : null,
         spawnedFromRunId:

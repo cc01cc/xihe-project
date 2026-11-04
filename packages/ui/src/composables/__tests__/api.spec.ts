@@ -2583,6 +2583,45 @@ describe("api.getSessions delegation lineage (PLAN-0659 T1.4)", () => {
             spawnedAt: null,
         });
     });
+
+    it("normalizes the CP lowercase `spawn` wire kind to the UI canonical uppercase", async () => {
+        // M3 real stack 2026-11-05: CP emits `spawn` (Session.KIND_SPAWN / OpenAPI enum), while
+        // every UI consumer (tree/badge/DAG) keys on `SPAWN`; without this the child rendered as a
+        // root session in the real UI even though the wire lineage was present.
+        fetchSpy.mockResolvedValueOnce({
+            ok: true,
+            json: () =>
+                Promise.resolve({
+                    sessions: [
+                        {
+                            id: SESSION_ID,
+                            title: "父会话",
+                            workspaceId: WORKSPACE_ID,
+                            archived: false,
+                            kind: null,
+                            spawnedFromSessionId: null,
+                            spawnedAt: null,
+                        },
+                        {
+                            id: "99999999-9999-4999-8999-999999999999",
+                            title: "子会话",
+                            workspaceId: WORKSPACE_ID,
+                            archived: false,
+                            kind: "spawn",
+                            spawnedFromSessionId: SESSION_ID,
+                            spawnedAt: "2026-11-05T00:01:00Z",
+                        },
+                    ],
+                }),
+        } as Response);
+
+        const response = await api.getSessions();
+
+        expect(response.sessions[1]).toMatchObject({
+            kind: "SPAWN",
+            spawnedFromSessionId: SESSION_ID,
+        });
+    });
 });
 // PLAN-0668 M2: contract-driven guard. The required field names are PARSED from the published
 // OpenAPI document — not hand-kept here — so a future contract addition fails this test instead
@@ -2699,10 +2738,7 @@ describe("OpenAPI Session contract guard (PLAN-0668 M2)", () => {
         // Real response captured from stack-1 (PLAN-0668 M3, CP 9b249e35): not hand-built.
         const real = JSON.parse(
             readFileSync(
-                resolve(
-                    process.cwd(),
-                    "src/composables/__tests__/fixtures/sessions-real.json",
-                ),
+                resolve(process.cwd(), "src/composables/__tests__/fixtures/sessions-real.json"),
                 "utf8",
             ),
         );
