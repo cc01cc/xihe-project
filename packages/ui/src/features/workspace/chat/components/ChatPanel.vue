@@ -78,7 +78,7 @@ const router = useRouter();
 
 /** C1：守卫拦下时暂存这次发送，「自动绑定」成功后原样重发、关闭弹窗时把草稿还给输入框。 */
 const pendingProviderBindingSend = ref<
-    [string, AttachmentFile[]?, string?, string?, string[]?] | null
+    [string, AttachmentFile[]?, string?, string?, string[]?, string[]?] | null
 >(null);
 
 /** C1（2026-11-04 用户裁定）：发送前的 provider 绑定守卫 —— 裸会话不静默失败。 */
@@ -220,6 +220,8 @@ const pendingSend = ref<{
     branchId: string;
     /** PLAN-0630 M5b (D30-14)：旁听名单随挂起的发送一起保留，绑定 principal 后继续透传。 */
     cc?: string[];
+    /** PLAN-0665 M2：TO 目标集合同样随挂起发送保留。 */
+    toParticipantIds?: string[];
 } | null>(null);
 const loadingPrincipalChoices = ref(false),
     creatingBranchForMessageId = ref<string | null>(null);
@@ -672,6 +674,8 @@ async function handleSend(
     speakAsParticipantId?: string,
     /** PLAN-0630 M5b (D30-14)：composer 的 cc 旁听名单（participantId 数组）。 */
     cc?: string[],
+    /** PLAN-0665 M2（D4）：composer 的 TO 目标集合（participantId 数组，1..N 个 AGENT）。 */
+    toParticipantIds?: string[],
 ) {
     const id = props.sessionId;
     if (!id) return;
@@ -684,6 +688,7 @@ async function handleSend(
             branchIdOverride,
             speakAsParticipantId,
             cc,
+            toParticipantIds,
         ];
         return;
     }
@@ -712,6 +717,7 @@ async function handleSend(
             branchId,
             asParticipantId: speakAsParticipantId,
             cc,
+            toParticipantIds,
         });
         return;
     }
@@ -725,7 +731,7 @@ async function handleSend(
             toast.error(t("workspace.noBoundAgent"));
             return;
         }
-        pendingSend.value = { content, attachments, branchId, cc };
+        pendingSend.value = { content, attachments, branchId, cc, toParticipantIds };
         selectedPrincipalId.value = "";
         showPrincipalBinding.value = true;
     } catch (cause) {
@@ -895,8 +901,9 @@ function onInputSend(
     attachments?: AttachmentFile[],
     asParticipantId?: string,
     cc?: string[],
+    toParticipantIds?: string[],
 ): Promise<void> {
-    return handleSend(content, attachments, undefined, asParticipantId, cc);
+    return handleSend(content, attachments, undefined, asParticipantId, cc, toParticipantIds);
 }
 
 async function submitMessage(input: {
@@ -908,8 +915,18 @@ async function submitMessage(input: {
     asParticipantId?: string;
     /** PLAN-0630 M5b (D30-14)：composer 的 cc 旁听名单（participantId 数组，随消息发送）。 */
     cc?: string[];
+    /** PLAN-0665 M2（D4）：TO 目标集合；每个目标各自起 run。 */
+    toParticipantIds?: string[];
 }) {
-    const { content, attachments, agentPrincipalId, branchId, asParticipantId, cc } = input;
+    const {
+        content,
+        attachments,
+        agentPrincipalId,
+        branchId,
+        asParticipantId,
+        cc,
+        toParticipantIds,
+    } = input;
     if (!authStore.canWriteWorkspace) {
         toast.error(t("workspace.viewerReadOnly"));
         return;
@@ -926,6 +943,7 @@ async function submitMessage(input: {
         agentPrincipalId,
         asParticipantId,
         cc,
+        toParticipantIds,
     });
     if (!result) return;
 
@@ -956,8 +974,11 @@ async function submitMessage(input: {
         // PLAN-0659 T1.3：投递语义（发送/抄送）只有 composer 这一层知道，**UI 本地视图**，
         // 与 `participantId` 同一口径：history DTO 不携带该字段 ⇒ 刷新后消失（BL-239：
         // 投递语义暂无持久载体，P3）。不落 localStorage、不进 wire（本 PLAN 非目标）。
-        ...(asParticipantId || (cc?.length ?? 0) > 0
-            ? { delivery: { toParticipantId: asParticipantId ?? null, ccParticipantIds: cc ?? [] } }
+        // PLAN-0665 M2 / V120：乐观消息直接写 **durable 形状**（`{to[], cc[]}`），
+        // 这样刷新回来的 durable `messages.delivery` 与本地是同一形状、同一渲染路径；
+        // legacy 形状只作为旧消息的回落（见 `resolveDelivery`）。
+        ...(toParticipantIds?.length || (cc?.length ?? 0) > 0
+            ? { delivery: { to: toParticipantIds ?? [], cc: cc ?? [] } }
             : {}),
     });
     inputComponent.value?.clearDraft();
@@ -975,6 +996,7 @@ async function confirmPrincipalBinding() {
         agentPrincipalId: principalId,
         branchId: pending.branchId,
         cc: pending.cc,
+        toParticipantIds: pending.toParticipantIds,
     });
 }
 

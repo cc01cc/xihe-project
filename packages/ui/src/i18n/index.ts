@@ -803,6 +803,9 @@ const messages = {
                 filesTitle: "文件与目录",
                 // PLAN-0630 M5b (D30-14)：composer to/cc 栏（邮箱隐喻：to = 主要响应者，cc = 旁听名单）。
                 toLabel: "发送",
+                // PLAN-0665 M2（Q3）：M1 只允许 AGENT 作为 TO；人类作答受 BL-238 阻塞，单独立项。
+                toTargetsLabel: "定向发送",
+                toAgentsOnlyHint: "人类成员请用抄送；人类作答待后续版本",
                 ccLabel: "抄送",
                 ccAdd: "添加…",
                 ccRemove: "移除抄送",
@@ -3098,6 +3101,8 @@ const messages = {
                 filesTitle: "Files and folders",
                 // PLAN-0630 M5b (D30-14): composer to/cc bars (email metaphor: to = primary responder, cc = observers).
                 toLabel: "To",
+                toTargetsLabel: "Send to",
+                toAgentsOnlyHint: "Humans use Cc; human replies come in a later version",
                 ccLabel: "Cc",
                 ccAdd: "Add…",
                 ccRemove: "Remove cc",
