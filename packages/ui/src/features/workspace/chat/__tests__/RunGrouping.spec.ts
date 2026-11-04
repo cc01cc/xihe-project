@@ -133,15 +133,19 @@ describe("MessageList run grouping (PLAN-0659 T1.1)", () => {
         ).toContain("b-assistant");
     });
 
-    it("keeps two fan-out runs apart even when their origin values are identical", () => {
-        // PLAN-0665 M1：同一条 TO 消息派生的 run `origin` 仍是 user_submission（不是 wake），
-        // 所以按 origin 合并会把两个 run 错误地并成一屏——分组只认 runId / durable delivery。
-        const runs = [
-            runSummary(RUN_A, "succeeded", "success"),
-            runSummary(RUN_B, "succeeded", "success"),
-        ];
-        expect(runs.map((run) => run.origin)).toEqual(["user_submission", "user_submission"]);
+    it("keeps two fan-out runs apart even though their origin values differ (scheduled wake)", () => {
+        // PLAN-0665 M1 真栈实测（2026-11-05）：TO 双目标消息派生出两条 run ——
+        //   首条（用户提交）：origin = user_submission
+        //   派生（wake 载体）：origin = scheduled（wake 的既有分类，不是 user_submission）
+        // 两者 trigger_source 都是 user、parent_run_id 都是 NULL。所以"按 origin 分组"会拆错/并错：
+        // 分组只认 runId / durable delivery；origin 不同也不能合并，相同也不能合并。
+        const groupA = runSummary(RUN_A, "succeeded", "success");
+        const groupB = { ...runSummary(RUN_B, "succeeded", "success"), origin: "scheduled" };
+        expect(groupA.origin).toBe("user_submission");
+        expect(groupB.origin).toBe("scheduled");
+        expect(groupA.origin).not.toBe(groupB.origin);
 
+        const runs = [groupA, groupB];
         const wrapper = mountList(
             [
                 {
