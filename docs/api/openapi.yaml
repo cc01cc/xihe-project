@@ -1018,6 +1018,50 @@ paths:
         '409': { $ref: '#/components/responses/WorkspaceContextRequired' }
         '403': { $ref: '#/components/responses/Problem' }
         '404': { $ref: '#/components/responses/Problem' }
+  /api/v1/sessions/{sessionId}/delegation-spawn:
+    post:
+      operationId: delegateSpawn
+      summary: Human delegation — create a budgeted child Session owned by an agent principal (PLAN-0655)
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: sessionId, required: true, schema: { type: string, format: uuid } }
+        - { in: header, name: Idempotency-Key, required: true, schema: { type: string, minLength: 1, maxLength: 128 } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DelegationSpawnRequest' }
+      responses:
+        '201':
+          description: Child delegation Session created; its first Run admitted (auto-allow, or the replay carries a reused grant).
+          headers:
+            Location: { required: true, schema: { type: string }, description: Child Session URL }
+          content: { application/json: { schema: { $ref: '#/components/schemas/DelegationSpawnResponse' } } }
+        '202':
+          description: >-
+            SPAWN_AGENT sits in the approval-policy ask set and no grant exists — a pending ChatApproval was created
+            or reused (same session + tool + canonical arguments hash). The client renders the existing approval flow
+            (statusUrl) and re-POSTs with the same Idempotency-Key after grant; the replay then answers 201.
+          content: { application/json: { schema: { $ref: '#/components/schemas/DelegationSpawnAccepted' } } }
+        '400': { description: IDEMPOTENCY_KEY_REQUIRED / INVALID_REQUEST, content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { description: AGENT_SPAWN_DENIED — the caller lacks the SPAWN_AGENT capability atom for this workspace (capability evaluation; no role-name checks), content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '404': { description: SESSION_NOT_FOUND / AGENT_PRINCIPAL_NOT_FOUND, content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '409': { description: IDEMPOTENCY_KEY_CONFLICT / DELEGATION_LIMIT_EXCEEDED (depth_exceeded | count_exceeded | delegation_disabled — maxCount=0) / DELEGATION_POLICY_INVALID (unreadable stored policy or broken tree, fail-closed) / SESSION_DELETING, content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+  /api/v1/sessions/{sessionId}/delegation-usage:
+    get:
+      operationId: getSessionDelegationUsage
+      summary: Read-only delegation budget view for the Session's delegation root (PLAN-0655); the SAME evaluation point as the budget gate — never a second reader.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: sessionId, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: Effective budget usage of the root this Session delegates under, content: { application/json: { schema: { $ref: '#/components/schemas/DelegationUsageView' } } } }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { description: DELEGATION_POLICY_INVALID — the stored subject policy is unreadable; the read face fails closed instead of silently substituting defaults, content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+
   /api/v1/sessions/{sessionId}/compact:
     post:
       operationId: compactSessionContext
@@ -4197,6 +4241,46 @@ components:
          sessionId: { type: string, format: uuid }
          activeChildren: { type: array, items: { $ref: '#/components/schemas/SessionDerivedActiveChild' } }
          terminalNotices: { type: array, items: { $ref: '#/components/schemas/SessionDerivedTerminalNotice' } }
+    DelegationSpawnRequest:
+       type: object
+       additionalProperties: false
+       required: [agentPrincipalId, task]
+       properties:
+         agentPrincipalId: { type: string, format: uuid, description: The agent principal that owns the child Session PRIMARY participant; must be visible to the caller in this workspace. }
+         task: { type: string, minLength: 1, maxLength: 4000, description: Human-authored task description; becomes the child Session's first user Message. }
+    DelegationSpawnResponse:
+       type: object
+       additionalProperties: false
+       required: [childSessionId, rootSessionId, chainDepth, budget]
+       properties:
+         childSessionId: { type: string, format: uuid }
+         childRunId: { type: [string, 'null'], format: uuid, description: The admitted first Run; null until dispatch confirms (same lazy visibility as the spawn tool). }
+         rootSessionId: { type: string, format: uuid }
+         chainDepth: { type: integer, minimum: 1 }
+         budget: { $ref: '#/components/schemas/DelegationUsageView' }
+    DelegationSpawnAccepted:
+       type: object
+       additionalProperties: false
+       required: [approvalRequestId, statusUrl, retryHeader]
+       properties:
+         approvalRequestId: { type: string, minLength: 1, maxLength: 128, description: Durable ChatApproval request id; created or reused (same session + tool + canonical arguments hash). }
+         statusUrl: { type: string, description: The existing approvals status surface — the same one the tool channel renders. }
+         retryHeader: { type: string, enum: ['X-Xihe-Approval-Request-Id'] }
+    DelegationUsageView:
+       type: object
+       additionalProperties: false
+       required: [rootSessionId, usedSessions, maxCount, currentDepth, maxDepth, principalId, principalName, policySource, disabled]
+       properties:
+         rootSessionId: { type: string, format: uuid, description: The delegation root — the first non-spawn Session above this one (a fork is a new authority root). }
+         usedSessions: { type: integer, minimum: 0, description: Spawn sessions in the root tree with a non-terminal Run — exactly the count the gate compares against maxCount. }
+         maxCount: { type: integer, minimum: 0 }
+         currentDepth: { type: integer, minimum: 0, description: Deepest live chain depth under this root. }
+         maxDepth: { type: integer, minimum: 1 }
+         principalId: { type: [string, 'null'], format: uuid, description: null when the root carries no agent principal (the gate's fail-closed branch; the view still answers with code defaults). }
+         principalName: { type: [string, 'null'] }
+         policySource: { type: string, enum: [subject, code-defaults], description: subject = agent_principals.delegation_policy (V100); code-defaults = the built-in 8/3. }
+         disabled: { type: boolean, description: maxCount == 0 — every spawn under this principal is refused (PLAN-0648 ruling A1). }
+
     SessionDerivedActiveChild:
        type: object
        additionalProperties: false
