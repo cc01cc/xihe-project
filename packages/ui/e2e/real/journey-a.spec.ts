@@ -14,6 +14,7 @@ import {
 } from "./helpers/agent-principal";
 import { test, expect } from "@playwright/test";
 
+import { agentName } from "../helpers/agent-name";
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`;
 const LLM_MODE = process.env.XIHE_E2E_LLM_MODE ?? "mock";
 const HOST_ROOT =
@@ -57,7 +58,7 @@ test.describe("@host Journey A — AI write_file approve/reject", () => {
             principalId = await provisionWorkspaceAgentPrincipal(
                 request,
                 { accessToken: authToken, workspaceId: wsId },
-                { name: `Journey A ${Date.now()}`, actions: ["read", "write"] },
+                { name: agentName("JourneyA", Date.now()), actions: ["read", "write"] },
             ),
             authHeaders = {
                 Authorization: `Bearer ${authToken}`,
@@ -239,7 +240,7 @@ test.describe("@host Journey A — AI write_file approve/reject", () => {
             principalId = await provisionWorkspaceAgentPrincipal(
                 request,
                 { accessToken: authToken, workspaceId: wsId },
-                { name: `Journey A Expiry ${Date.now()}`, actions: ["read", "write"] },
+                { name: agentName("JourneyAExpiry", Date.now()), actions: ["read", "write"] },
             );
 
         await ensureAgentWorkspaceBinding(wsId);

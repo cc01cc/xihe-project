@@ -309,7 +309,7 @@ class SessionParticipantServiceTest {
         when(participants.findBySessionIdOrderByOrderIndexAsc(SESSION_ID))
                 .thenReturn(List.of(agentRow, humanRow));
         AgentPrincipal principal = mock(AgentPrincipal.class);
-        when(principal.getName()).thenReturn("Research Agent");
+        when(principal.getName()).thenReturn("ResearchAgent");
         when(principal.getScope()).thenReturn("WORKSPACE");
         when(principal.getDefaultModelProvider()).thenReturn("openai");
         when(principal.getDefaultModelName()).thenReturn("gpt-5");
@@ -319,7 +319,7 @@ class SessionParticipantServiceTest {
         SessionParticipantService.ParticipantView agent = view.participants().getFirst();
         SessionParticipantService.ParticipantView human = view.participants().get(1);
 
-        assertEquals("Research Agent", agent.displayName(), "AGENT rows carry the principal name");
+        assertEquals("ResearchAgent", agent.displayName(), "AGENT rows carry the principal name");
         assertEquals("openai", agent.defaultModelProvider());
         assertEquals("gpt-5", agent.defaultModelName());
         assertEquals("workspace", agent.source(), "source reuses the 0622 scope vocabulary");

@@ -100,7 +100,7 @@ test.describe("@host PLAN-0492 run-budget exhaustion", () => {
 
         auth = await registerUser(request);
         const principalId = await provisionWorkspaceAgentPrincipal(request, auth, {
-            name: "Run Budget Agent",
+            name: "RunBudgetAgent",
             actions: ["read", "write"],
         });
         sessionId = await createSessionWithPrincipal(request, auth, {

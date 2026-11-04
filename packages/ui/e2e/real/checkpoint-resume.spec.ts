@@ -15,6 +15,7 @@ import {
     provisionWorkspaceAgentPrincipal,
 } from "./helpers/agent-principal";
 
+import { agentName } from "../helpers/agent-name";
 const AGENT_URL = `http://127.0.0.1:${process.env.XIHE_AGENT_PORT ?? "12632"}`;
 const SERVICE_TOKEN = process.env.XIHE_CP_API_TOKEN ?? "";
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -413,7 +414,7 @@ test("@host PLAN-0510 continuation resumes only an exact safe checkpoint", async
         request,
         { accessToken: journey.authToken, workspaceId: journey.workspaceId },
         {
-            name: `Checkpoint Resume ${process.env.XIHE_E2E_RUN_ID}`,
+            name: agentName("CheckpointResume", process.env.XIHE_E2E_RUN_ID),
             actions: ["write"],
             systemPrompt:
                 "Use the available tools to complete the requested mutation, then answer briefly.",

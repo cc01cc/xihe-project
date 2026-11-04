@@ -78,7 +78,7 @@ test("@host PLAN-0387 T3.2 — CP checks durable Agent MCP tool-call provenance"
             roles: JSON.stringify([
                 {
                     id: roleId,
-                    name: "Provenance Writer",
+                    name: "ProvenanceWriter",
                     permissions: [
                         { actionClass: "read", resource: "*" },
                         { actionClass: "write", resource: "*" },
@@ -88,7 +88,7 @@ test("@host PLAN-0387 T3.2 — CP checks durable Agent MCP tool-call provenance"
             templates: JSON.stringify([
                 {
                     id: templateId,
-                    name: "Provenance Writer",
+                    name: "ProvenanceWriter",
                     description: "Workspace tool permissions for the T3.2 flow",
                     systemPrompt:
                         "Use the Workspace tool named write_file for the requested marker.",
@@ -104,7 +104,7 @@ test("@host PLAN-0387 T3.2 — CP checks durable Agent MCP tool-call provenance"
 
     const principalResponse = await request.post(`${CP_URL}/api/v1/agent-principals`, {
         headers,
-        data: { name: "Provenance Writer", templateId, scope: "WORKSPACE" },
+        data: { name: "ProvenanceWriter", templateId, scope: "WORKSPACE" },
     });
     expect(principalResponse.status(), await principalResponse.text()).toBe(201);
     const principalId = ((await principalResponse.json()) as { principalId: string }).principalId;

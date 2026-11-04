@@ -17,6 +17,7 @@ import {
 } from "../../../../scripts/xihe-cli/session-binding.mjs";
 import { prepareConnection } from "../../../../scripts/xihe-cli/prepare-agent-e2e-connection.mjs";
 
+import { agentName } from "../helpers/agent-name";
 const RUN_ID = process.env.XIHE_E2E_RUN_ID || `headed-0623-${Date.now()}`;
 const RUN_DIR = path.resolve(process.cwd(), "../../.tmp/xh-headed-0623/runs", RUN_ID);
 const SHOTS_DIR = path.join(RUN_DIR, "shots");
@@ -390,7 +391,7 @@ async function ensureAgentPrincipal(request: APIRequestContext, token: string): 
         request,
         { accessToken: token, workspaceId },
         {
-            name: `Headed-Participants-${randomUUID().slice(0, 8)}`,
+            name: agentName("HeadedParticipants", randomUUID().slice(0, 8)),
             actions: ["read"],
             defaultModelProvider: "mock",
             defaultModelName: "gpt-5",

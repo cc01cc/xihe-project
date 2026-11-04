@@ -170,7 +170,7 @@ test("@host PLAN-0337 Session approval mode is persisted and reflected by the ch
 }, testInfo) => {
     const auth = await register(request);
     const principalId = await provisionWorkspaceAgentPrincipal(request, auth, {
-        name: "Approval Policy Fixture",
+        name: "ApprovalPolicyFixture",
     });
     const sessionId = await createSessionWithPrincipal(request, auth, {
         principalId,

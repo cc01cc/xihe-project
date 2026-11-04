@@ -7,6 +7,7 @@ import {
     provisionWorkspaceAgentPrincipal,
 } from "./helpers/agent-principal";
 
+import { agentName } from "../helpers/agent-name";
 const AGENT_URL = `http://127.0.0.1:${process.env.XIHE_AGENT_PORT ?? "12632"}`,
     SERVICE_TOKEN = process.env.XIHE_CP_API_TOKEN ?? "",
     CREDENTIAL_CANARY_BYTES_HEX = Buffer.from(
@@ -244,7 +245,7 @@ test("@host PLAN-0510 T0.5 — Agent BaseCheckpointSaver persists through CP", a
     const principalId = await provisionWorkspaceAgentPrincipal(
         request,
         { accessToken: journey.authToken, workspaceId: journey.workspaceId },
-        { name: `Checkpoint Probe ${runId}` },
+        { name: agentName("CheckpointProbe", runId) },
     );
     const sessionId = await createSessionWithPrincipal(
         request,

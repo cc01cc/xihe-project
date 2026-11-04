@@ -32,6 +32,7 @@ import {
 } from "./helpers/agent-principal";
 import { bindToolCapableChat } from "./helpers/tool-capable-chat";
 
+import { agentName } from "../helpers/agent-name";
 const RUN_ID = process.env.XIHE_E2E_RUN_ID ?? "";
 const AGENT_PORT = Number(process.env.XIHE_AGENT_PORT || "12632");
 const AGENT_URL = `http://127.0.0.1:${AGENT_PORT}`;
@@ -100,7 +101,7 @@ async function newWorkspace(request: APIRequestContext, prefix: string): Promise
     const principalId = await provisionWorkspaceAgentPrincipal(
         request,
         { accessToken: ctx.authToken, workspaceId: ctx.workspaceId },
-        { name: `${prefix} principal`, actions: ["read", "write"] },
+        { name: agentName(`${prefix}Principal`), actions: ["read", "write"] },
     );
     const sessionId = await createSessionWithPrincipal(
         request,

@@ -35,7 +35,7 @@ test.describe("@host Journey D — compaction circuit (U4)", () => {
         const ctx = await registerJourneyUser(request, "journey-circuit");
         const auth = { accessToken: ctx.authToken, workspaceId: ctx.workspaceId };
         const principalId = await provisionWorkspaceAgentPrincipal(request, auth, {
-            name: "Journey Circuit Fixture",
+            name: "JourneyCircuitFixture",
         });
         const sessionId = await createSessionWithPrincipal(request, auth, {
             principalId,

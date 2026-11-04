@@ -269,7 +269,7 @@ test.describe("@host PLAN-0630 T5.9 real delegation walkthrough", () => {
 
         const principalResponse = await request.post(`${CP_URL}/api/v1/agent-principals`, {
             headers,
-            data: { scope: "WORKSPACE", name: "PLAN0630 Delegator", templateId },
+            data: { scope: "WORKSPACE", name: "PLAN0630Delegator", templateId },
         });
         expect(principalResponse.status(), await principalResponse.text()).toBe(201);
         const principalId = requireUuid(
