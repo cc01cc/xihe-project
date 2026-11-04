@@ -244,6 +244,50 @@ public class ChatSubmissionService {
     }
 
     /**
+     * BL-283 (PLAN-0660 T2.1 family): the wake path must treat "the Session is at its run cap" as a
+     * <b>value</b>, not as an exception escaping this transactional boundary.
+     *
+     * <p>Why the exception is poisonous: {@code createScheduled} is {@code REQUIRED}, so it joins the
+     * caller's transaction. A {@code 409 CHAT_IN_PROGRESS} thrown inside it crosses a transactional
+     * proxy, Spring marks that <b>shared</b> transaction rollback-only, and the caller's later commit
+     * fails with {@code UnexpectedRollbackException} — the deferred follow-up enqueue and the wake
+     * audit were rolled back with it (BL-283: the wake neither ran nor left a "deferred" fact).</p>
+     *
+     * <p>Why catching here is safe: {@code persist} runs the admission gate
+     * ({@code rejectConcurrentSubmission}) <b>before</b> it writes the Run or the user Message, and the
+     * wake path's Session already has a principal (so {@code bindOrValidateAgentSession} only takes the
+     * row lock, it does not bind). A caught refusal therefore leaves the transaction equivalent to
+     * "never attempted"; the row lock is released at commit/rollback as usual.</p>
+     *
+     * <p>Only {@code CHAT_IN_PROGRESS} is converted to an empty result — every other failure (DB,
+     * permission, principal mismatch) still throws, so real errors are never swallowed.</p>
+     */
+    @Transactional
+    public Optional<Submission> tryCreateScheduled(String runId, String sessionId, String userId, String workspaceId,
+                                                   String branchId, String idempotencyKey, String requestHash,
+                                                   String provider, String model, String toolMode,
+                                                   String providerConnectionId, Long connectionRevision,
+                                                   String leaseOwner, String requestId, String content,
+                                                   String attachmentsJson, List<String> attachmentIds,
+                                                   String agentPrincipalId, String messageVisibility) {
+        try {
+            // Self-invocation on purpose: the annotation is already active on this method, and going
+            // through the proxy again would just re-enter the same (REQUIRED) transaction.
+            return Optional.of(createScheduled(runId, sessionId, userId, workspaceId, branchId,
+                    idempotencyKey, requestHash, provider, model, toolMode, providerConnectionId,
+                    connectionRevision, leaseOwner, requestId, content, attachmentsJson, attachmentIds,
+                    agentPrincipalId, messageVisibility));
+        } catch (CpApiException refused) {
+            if (!"CHAT_IN_PROGRESS".equals(refused.getCode())) {
+                throw refused;
+            }
+            logger.info("[LIFECYCLE] service=cp event=chat_admission_deferred sessionId={} reason=run_cap",
+                    sessionId);
+            return Optional.empty();
+        }
+    }
+
+    /**
      * Persists an assistant response and links it to its Run in the existing order.
      *
      * <p>PLAN-0572 D1=A/D5: the Message carries a bounded snapshot of this Run's
