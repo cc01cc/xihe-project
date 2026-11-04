@@ -350,6 +350,7 @@ PLAN-0416 Chat 消费：`ChatController` 仅在 admission snapshot 原始 native
 - **三档结果的呈现**：`ALLOW` ⇒ `available=true`；`ASK` ⇒ `available=false, reason=approval_required`（**不隐藏**——用户必须知道能力存在，UI 灰显 + 文案）；`DENY` ⇒ `reason=denied`；策略上下文读不出 ⇒ `reason=policy_unavailable`（fail-closed，不影响 run）。
 - **`/compact` 不用 policy 门**，改**镜像其端点前置条件**：`POST /api/v1/sessions/{sessionId}/compact` 在活动 run 时返回 `409 BRANCH_LOCK` ⇒ 注册表对应 `reason=branch_locked`。原则：**UI 不得提供必然失败的命令**。该命令本身不新造端点（PLAN-294 decision #15 的既有入口）。
 - **`/export` 是真产出**：`GET /api/v1/sessions/{sessionId}/export?branchId=` 由 `SessionExportService` 用既有消息读面（`MessageReadService.listVisibleMessages`）生成 Markdown，`text/markdown` + `Content-Disposition: attachment`；**不经 Agent、不调模型、不产生 run**（M1 桩的"发一句固定英文给模型"是反面）。有界：≤2000 条消息 / 单条 ≤20000 字符 / 整篇 ≤2000000 字符，截断在文档头以 `messagesTruncated`/`contentTruncated` 披露。
+- **BL-279（A1，2026-11-05）**：上面那组上限只作用在**已全量读入内存之后** —— 真正无界的是读取层（`findBySessionIdOrderByCreatedAtAsc` 一次载入整个 session + 每条 run 的 `chatRunRepository.findById` N+1）与同步全量 String 响应。故导出改为**先预检再读**：`countBySessionId`（走 `idx_messages_session_id`）> `SessionExportService.MAX_MESSAGES`（2000）⇒ **`413 EXPORT_TOO_LARGE`**，body 带 `messages`/`limit` 与"缩小会话或分批导出"文案，**不读取任何消息**；上限常量与 renderer **单一来源**。流式（B）另立 0670 后续项，复用其 `(created_at,id)` 分页原语，不另写游标。
 - **v1 不含 skill 命令**：`/skill:<name>` 的候选必须来自 PLAN-0628 的 run 快照 listing（`skills_snapshot`）与按需正文（`skill_read`），两者在 0628 M2 前不落地（D35-07）；M3 只交付其形态设计。
 - **C1 门**：两条路由均返回**纯标量 / 纯文本**，不经 Jackson-2 `JsonNode`（无 `JacksonNodeExit` 调用即无泄露面）。
 

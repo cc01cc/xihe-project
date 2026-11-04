@@ -72,6 +72,15 @@ public class MessageReadService {
                         message.getSessionId(), message.getRunId(), message.getContent(), message.getAttachments()));
     }
 
+    /**
+     * BL-279: cheap session-wide message count for the export precheck. Counts **all** rows (every
+     * branch and visibility) because the cap guards CP memory before any message is materialised;
+     * the export is refused rather than silently truncated. Uses {@code idx_messages_session_id}.
+     */
+    public long countSessionMessages(String sessionId) {
+        return messageRepository.countBySessionId(sessionId);
+    }
+
     private boolean isVisibleOnPath(Message message, String sessionId, String workspaceId,
                                     String rootBranchId,
                                     BranchPathService.BranchVisibility visibility) {

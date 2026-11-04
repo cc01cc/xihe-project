@@ -1165,6 +1165,10 @@ paths:
         message read surface (no Agent, no provider, no run). Bounded: at most 2000 messages,
         20000 characters per message and 2000000 characters per document; every cap is disclosed
         in the document header via messagesTruncated and contentTruncated.
+        BL-279: the read surface materialises the whole session, so the endpoint first counts the
+        session's messages and refuses with 413 EXPORT_TOO_LARGE (detail plus messages/limit
+        fields carry the actual count and the 2000-message limit) BEFORE reading any message. The
+        cap is on session size, not on the visible branch path, and it is never a silent truncation.
       security: [{ bearerAuth: [] }]
       parameters:
         - { in: path, name: sessionId, required: true, schema: { type: string, format: uuid } }
@@ -1178,6 +1182,7 @@ paths:
         '400': { $ref: '#/components/responses/Problem' }
         '401': { $ref: '#/components/responses/Problem' }
         '404': { $ref: '#/components/responses/Problem' }
+        '413': { description: 'EXPORT_TOO_LARGE — the session has more than 2000 messages; the body carries messages/limit and asks the caller to export a smaller session or split the history', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
   /api/v1/sessions/{sessionId}/derived-state:
     get:
       operationId: getSessionDerivedState

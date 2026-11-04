@@ -12,6 +12,15 @@ import java.util.List;
 
 public interface MessageRepository extends JpaRepository<Message, UUID> {
     boolean existsBySessionId(String sessionId);
+
+    /**
+     * BL-279: session-wide message count for the export precheck. Backed by
+     * {@code idx_messages_session_id}; deliberately counts every branch/visibility row because the
+     * export cap protects CP memory *before* any message is materialised (see
+     * {@code SessionExportController}).
+     */
+    long countBySessionId(String sessionId);
+
     List<Message> findBySessionIdOrderByCreatedAtAsc(String sessionId);
     long deleteBySessionId(String sessionId);
 
