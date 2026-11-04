@@ -33,7 +33,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * {@code done.agentContextTruncation}. Real PostgreSQL (Testcontainers), not H2.
  *
  * <p>Two states are mandatory: truncation present ⇒ JSON round-trip equals the object; no truncation ⇒
- * {@code NULL} (never {@code {}} or all-zero stats). The migration test additionally proves V125 can be
+ * {@code NULL} (never {@code {}} or all-zero stats). The migration test additionally proves V124 can be
  * applied and that a row written without the marker stays null in an already-migrated database.
  */
 class ChatRunContextTruncationIntegrationTest extends AbstractIntegrationTest {
@@ -139,17 +139,17 @@ class ChatRunContextTruncationIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void migrationV125IsAppliedAndColumnIsNullableJsonb() {
+    void migrationV124IsAppliedAndColumnIsNullableJsonb() {
         Integer applied = jdbcTemplate.queryForObject(
-                "select count(*) from flyway_schema_history where version = '125' and success",
+                "select count(*) from flyway_schema_history where version = '124' and success",
                 Integer.class);
-        assertEquals(1, applied, "V125 must be present and successful in a migrated database");
+        assertEquals(1, applied, "V124 must be present and successful in a migrated database");
 
         Map<String, Object> column = jdbcTemplate.queryForMap(
                 "select data_type, is_nullable from information_schema.columns "
                         + "where table_name = 'chat_runs' and column_name = 'context_truncation'");
         assertEquals("jsonb", column.get("data_type"));
         assertEquals("YES", column.get("is_nullable"),
-                "pre-V125 rows / runs without truncation must be allowed to stay NULL");
+                "pre-V124 rows / runs without truncation must be allowed to stay NULL");
     }
 }
