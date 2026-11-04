@@ -3,6 +3,7 @@ import { expect, type APIRequestContext, type Locator, type Page } from "@playwr
 import { CP_URL } from "./journey";
 import { seedUserGrantPermissions, standardWorkspaceUserPermissions } from "./user-grants";
 
+import { AGENT_NAME_PATTERN } from "./agent-name";
 type AgentAuth = { accessToken: string; workspaceId: string };
 type ToolAction = "read" | "write";
 type PrincipalOptions = {
@@ -83,6 +84,13 @@ export async function provisionWorkspaceAgentPrincipal(
     // PLAN-0614: fail fast when the caller forgot `ensureWorkspace()`. Passing a null workspace
     // would seed a grant row with `resource = null`, and the real failure would surface much later
     // (workspace-scoped 404/403 deep inside the agent flow) instead of here.
+    // PLAN-0661: CP 对不合法主体名回答 400 INVALID_NAME_FORMAT；夹具名先在本层 fail-fast，
+    // 免得错误在 agent 流程深处才冒出来（新夹具名一律用 agentName() 生成）。
+    if (!AGENT_NAME_PATTERN.test(name)) {
+        throw new Error(
+            `provisionWorkspaceAgentPrincipal: invalid agent principal name ${JSON.stringify(name)}`,
+        );
+    }
     if (!auth.workspaceId) {
         throw new Error(
             "provisionWorkspaceAgentPrincipal requires a workspace; call ensureWorkspace() first",

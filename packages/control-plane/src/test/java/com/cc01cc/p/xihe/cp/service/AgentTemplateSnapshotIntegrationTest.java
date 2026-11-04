@@ -308,11 +308,11 @@ class AgentTemplateSnapshotIntegrationTest extends AbstractIntegrationTest {
         assertEquals("user", resolved.sourceLayer());
 
         AgentPrincipal first = agentPrincipalService.createPrincipal(
-                memberUserId.toString(), "Snapshot principal A",
+                memberUserId.toString(), "SnapshotPrincipalA",
                 memberTemplateId.toString(), resolved.snapshot());
         principalIds.add(first.getId());
         AgentPrincipal second = agentPrincipalService.createPrincipal(
-                memberUserId.toString(), "Snapshot principal B",
+                memberUserId.toString(), "SnapshotPrincipalB",
                 memberTemplateId.toString(), resolved.snapshot());
         principalIds.add(second.getId());
 

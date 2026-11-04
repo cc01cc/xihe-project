@@ -17,6 +17,7 @@ import {
 } from "../../../../scripts/xihe-cli/session-binding.mjs";
 import { prepareConnection } from "../../../../scripts/xihe-cli/prepare-agent-e2e-connection.mjs";
 
+import { agentName } from "../real/helpers/agent-name";
 const RUN_ID = process.env.XIHE_E2E_RUN_ID || `headed-0623-${Date.now()}`;
 const RUN_DIR = path.resolve(process.cwd(), "../../.tmp/xh-headed-0623/runs", RUN_ID);
 const SHOTS_DIR = path.join(RUN_DIR, "shots");
@@ -390,7 +391,7 @@ async function ensureAgentPrincipal(request: APIRequestContext, token: string): 
         request,
         { accessToken: token, workspaceId },
         {
-            name: `Headed-Participants-${randomUUID().slice(0, 8)}`,
+            name: agentName("HeadedParticipants", randomUUID().slice(0, 8)),
             actions: ["read"],
             defaultModelProvider: "mock",
             defaultModelName: "gpt-5",
@@ -403,7 +404,20 @@ async function ensureAgentPrincipal(request: APIRequestContext, token: string): 
  *
  * 第一个参数是历史遗留：CLI 用 `--email`/`--password-env` 自己取凭据，不需要页面 token，
  * 因此形参保留位置但不使用（`_token`，调用方无需改动）。
+ *
+ * **readiness 轮询（PLAN-0658 R4，A 类测试基础设施修正）**：`prepareConnection` 在
+ * 「连接已存在但缺目标模型」时会 PATCH `manualModels`，而 PATCH 会让连接重新进入
+ * `VERIFYING`（CP 异步复验）——旧实现只查一次状态就直接断言 READY，冷栈上实测偶发拿到
+ * `VERIFYING`（`the prepared connection must be READY`，Expected READY / Received VERIFYING）。
+ * 这里改为**轮询到 READY**：非终态（`UNVERIFIED`/`VERIFYING`）继续等，**终态**
+ * （`INVALID_CREDENTIALS`/`UNREACHABLE`/`DISABLED`）立即失败，不浪费超时预算；
+ * 超时预算沿用既有 `XIHE_E2E_READY_TIMEOUT_MS` 覆盖机制。**本修正不放宽任何 R4 断言。**
  */
+const CONNECTION_READY_TIMEOUT_MS = Number(process.env.XIHE_E2E_READY_TIMEOUT_MS ?? "30000"),
+    CONNECTION_READY_POLL_MS = 500,
+    /** 这些状态等多久都不会变 READY（CP 的 provider connection 状态枚举）。 */
+    TERMINAL_CONNECTION_STATUS = new Set(["INVALID_CREDENTIALS", "UNREACHABLE", "DISABLED"]);
+
 async function ensureConnectionReady(_token: string): Promise<void> {
     if (connectionPrepared) return;
     const prepareOptions = {
@@ -413,7 +427,23 @@ async function ensureConnectionReady(_token: string): Promise<void> {
         "--email": GOLDPATH_EMAIL,
         "--password-env": "XIHE_E2E_GOLDPATH_PASSWORD",
     };
-    const prepared = await prepareConnection({ env: process.env, options: prepareOptions });
+    let prepared = await prepareConnection({ env: process.env, options: prepareOptions });
+    let waitedMs = 0;
+    while (prepared.status !== "READY") {
+        const status = String(prepared.status ?? "unknown");
+        expect(
+            TERMINAL_CONNECTION_STATUS.has(status),
+            `the prepared connection is in a terminal status (${status}); waiting cannot help`,
+        ).toBe(false);
+        expect(
+            waitedMs,
+            `the prepared connection was not READY within ${CONNECTION_READY_TIMEOUT_MS}ms ` +
+                `(last status=${status}); override with XIHE_E2E_READY_TIMEOUT_MS`,
+        ).toBeLessThan(CONNECTION_READY_TIMEOUT_MS);
+        await new Promise((resolve) => setTimeout(resolve, CONNECTION_READY_POLL_MS));
+        waitedMs += CONNECTION_READY_POLL_MS;
+        prepared = await prepareConnection({ env: process.env, options: prepareOptions });
+    }
     expect(prepared.status, "the prepared connection must be READY").toBe("READY");
     const again = await prepareConnection({ env: process.env, options: prepareOptions });
     expect(

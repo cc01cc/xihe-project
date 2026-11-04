@@ -36,7 +36,7 @@ async function createBoundAgent(
             templates: JSON.stringify([
                 {
                     id: templateId,
-                    name: "Follow-up Approval Agent",
+                    name: "FollowUpApprovalAgent",
                     description: "Bounded Agent for real Follow-up queue verification",
                     systemPrompt: "Use only the Workspace tools provided by CP.",
                     toolMode: "workspace",
@@ -51,7 +51,7 @@ async function createBoundAgent(
 
     const principalResponse = await request.post(`${CP_URL}/api/v1/agent-principals`, {
         headers,
-        data: { scope: "WORKSPACE", name: "Follow-up Approval Agent", templateId },
+        data: { scope: "WORKSPACE", name: "FollowUpApprovalAgent", templateId },
     });
     expect(principalResponse.status(), await principalResponse.text()).toBe(201);
     const principalId = ((await principalResponse.json()) as { principalId: string }).principalId;

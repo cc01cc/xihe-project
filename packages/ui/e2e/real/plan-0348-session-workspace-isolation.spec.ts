@@ -140,7 +140,7 @@ test("@host two workspaces each get their own MCP shard on one Agent process", a
     const authA = { accessToken: a.authToken, workspaceId: a.workspaceId };
     await waitForControlPlaneAgentReady(request, a.headers);
     const principalA = await provisionWorkspaceAgentPrincipal(request, authA, {
-        name: "PLAN-0588 A",
+        name: "PLAN0588A",
         actions: ["read", "write"],
     });
     const sessionA = await createSessionWithPrincipal(request, authA, {
@@ -172,7 +172,7 @@ test("@host two workspaces each get their own MCP shard on one Agent process", a
     const b = await registerJourneyUser(request, "plan0588-ws-b");
     const authB = { accessToken: b.authToken, workspaceId: b.workspaceId };
     const principalB = await provisionWorkspaceAgentPrincipal(request, authB, {
-        name: "PLAN-0588 B",
+        name: "PLAN0588B",
         actions: ["read", "write"],
     });
     const sessionB = await createSessionWithPrincipal(request, authB, {

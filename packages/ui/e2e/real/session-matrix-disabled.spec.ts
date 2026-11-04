@@ -23,6 +23,7 @@ import {
     createSessionWithPrincipal,
     provisionWorkspaceAgentPrincipal,
 } from "./helpers/agent-principal";
+import { agentName } from "./helpers/agent-name";
 import { openSessionSse } from "./helpers/sse";
 import { workspaceChatPath } from "../../src/lib/routes";
 
@@ -137,8 +138,8 @@ test.describe("@host PLAN-0658 R5 停用主体过滤", () => {
         );
         expect(verified.ok(), await verified.text()).toBe(true);
 
-        primaryDisplayName = `r5-primary-${NONCE}`;
-        disabledDisplayName = `r5-retired-${NONCE}`;
+        primaryDisplayName = agentName("R5Primary", NONCE);
+        disabledDisplayName = agentName("R5Retired", NONCE);
         primaryPrincipalId = await provisionWorkspaceAgentPrincipal(
             request,
             { accessToken: token, workspaceId },
@@ -226,9 +227,9 @@ test.describe("@host PLAN-0658 R5 停用主体过滤", () => {
         });
         // 候选面语义（`RecipientField.vue:50-74`）：`filtered` 会同时排除**已选中**和停用的项，
         // `open` 由 query 变化驱动。默认预选 PRIMARY ⇒ 先把它的 chip 移除，否则候选只剩空集
-        // （这会让人误判成"过滤掉了"）。移除后再输入两个 agent 共有的前缀 `r5-`：
+        // （这会让人误判成"过滤掉了"）。移除后再输入两个 agent 共有的前缀 `AgentR5`：
         // 只有 enabled 的那个出现在候选里，才证明停用主体被过滤。
-        const sharedPrefix = "r5-";
+        const sharedPrefix = "AgentR5";
         expect(primaryDisplayName.startsWith(sharedPrefix)).toBe(true);
         expect(disabledDisplayName.startsWith(sharedPrefix)).toBe(true);
         const chipRemove = page.getByTestId("speak-as-chip-remove");

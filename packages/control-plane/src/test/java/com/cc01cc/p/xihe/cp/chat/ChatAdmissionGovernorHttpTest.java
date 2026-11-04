@@ -192,7 +192,7 @@ class ChatAdmissionGovernorHttpTest extends AbstractIntegrationTest {
         authToken = jwtTokenProvider.createAccessToken(userId, email, "USER", workspaceId, 0);
         var defaultTemplate = agentTemplateService.resolveForCreation(userId, workspaceId, null);
         AgentPrincipal principal = agentPrincipalService.createPrincipal(
-                userId, "Admission principal", null, defaultTemplate.snapshot());
+                userId, "AdmissionPrincipal", null, defaultTemplate.snapshot());
         principalId = principal.getId().toString();
         principalPermissions = principal.getTemplateSnapshot().get("permissions");
         workspaceAgentRepository.saveAndFlush(new WorkspaceAgent(

@@ -196,7 +196,7 @@ class SessionWorkspaceBindingNegativeTest extends AbstractH2Test {
                 providerConnectionRepository, "USER", userId, "plan-0348");
         var defaultTemplate = agentTemplateService.resolveForCreation(userId, workspaceA, null);
         AgentPrincipal principal = agentPrincipalService.createPrincipal(
-                userId, "PLAN-0348 principal", null, defaultTemplate.snapshot());
+                userId, "PLAN0348Principal", null, defaultTemplate.snapshot());
         var permissions = principal.getTemplateSnapshot().get("permissions");
         workspaceAgentRepository.saveAndFlush(new WorkspaceAgent(
                 principal.getId().toString(), workspaceA, permissions.deepCopy()));

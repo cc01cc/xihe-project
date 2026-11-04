@@ -30,7 +30,7 @@ test.describe("@host PLAN-0438 model selection connection identity", () => {
         await waitForControlPlaneAgentReady(request, ctx.headers);
 
         const principalId = await provisionWorkspaceAgentPrincipal(request, agentAuth, {
-            name: "0438 Model Selector",
+            name: "Plan0438ModelSelector",
         });
         const sessionId = await createSessionWithPrincipal(request, agentAuth, {
             principalId,

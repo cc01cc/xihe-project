@@ -83,7 +83,7 @@ test.describe("@host PLAN-0372 real lane — OpenAI-compatible tool round-trip",
                 templates: JSON.stringify([
                     {
                         id: templateId,
-                        name: "Real Compat Agent",
+                        name: "RealCompatAgent",
                         description: "Workspace-bound fixture for the openai-compat round trip",
                         systemPrompt: "Use only the Workspace tools provided by CP.",
                         toolMode: "workspace",
@@ -97,7 +97,7 @@ test.describe("@host PLAN-0372 real lane — OpenAI-compatible tool round-trip",
         expect(templateWrite.status(), await templateWrite.text()).toBe(200);
         const principalRes = await request.post(`${CP_URL}/api/v1/agent-principals`, {
             headers: setupHeaders,
-            data: { scope: "WORKSPACE", name: "Real Compat Agent", templateId },
+            data: { scope: "WORKSPACE", name: "RealCompatAgent", templateId },
         });
         expect(principalRes.status(), await principalRes.text()).toBe(201);
         const principalId = ((await principalRes.json()) as { principalId: string }).principalId;

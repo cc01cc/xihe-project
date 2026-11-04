@@ -21,6 +21,7 @@ import {
     createSessionWithPrincipal,
     provisionWorkspaceAgentPrincipal,
 } from "./helpers/agent-principal";
+import { agentName } from "./helpers/agent-name";
 import { openSessionSse } from "./helpers/sse";
 import { workspaceChatPath } from "../../src/lib/routes";
 
@@ -182,7 +183,7 @@ test.describe("@host PLAN-0658 R3 三角色会话可见性", () => {
             request,
             { accessToken: owner.token, workspaceId: ownerWorkspaceId },
             {
-                name: `r3-agent-${NONCE}`,
+                name: agentName("R3", NONCE),
                 actions: [],
                 defaultModelProvider: "openai",
                 defaultModelName: FAKE_LLM_MODEL,
@@ -271,6 +272,10 @@ test.describe("@host PLAN-0658 R3 三角色会话可见性", () => {
     });
 
     test("R3-4 UI：三角色登录后只有 OWNER 看到该消息", async ({ browser }) => {
+        // 三个独立 browser context 串行登录 + 各自首次加载 SPA：冷栈上默认 30s 预算不够用
+        // （实测 30.3s 打满在第一个 `page.goto(..., waitUntil: "load")`）。这里只放宽**用例超时**，
+        // 不是放宽断言：下面所有可见性断言一字未改。
+        test.setTimeout(180_000);
         const cases: Array<{ account: Account; role: string; label: string; visible: boolean }> = [
             { account: owner, role: "OWNER", label: "owner", visible: true },
             { account: editor, role: "EDITOR", label: "editor", visible: false },

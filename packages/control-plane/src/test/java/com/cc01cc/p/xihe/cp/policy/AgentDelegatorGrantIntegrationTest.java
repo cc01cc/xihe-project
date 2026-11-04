@@ -84,7 +84,7 @@ class AgentDelegatorGrantIntegrationTest extends AbstractIntegrationTest {
 
     @Test
     void bindingTheDelegatorRoleLetsAnAgentSessionCarrySpawnAgent() {
-        String principalId = createAgent("Delegator agent",
+        String principalId = createAgent("DelegatorAgent",
                 List.of(SystemAccessRoleCatalog.AGENT_DELEGATOR_ID));
         bindAgentToWorkspace(principalId, SPAWN_ATOM_JSON);
 
@@ -101,7 +101,7 @@ class AgentDelegatorGrantIntegrationTest extends AbstractIntegrationTest {
     @Test
     void grantIsEffectiveImmediatelyButAnExistingSessionSnapshotStaysFrozen() {
         // 1) 先建会话：此时没有委派角色，cap 也为空 ⇒ 快照不含原子（基线）。
-        String principalId = createAgent("Late delegator", List.of());
+        String principalId = createAgent("LateDelegator", List.of());
         bindAgentToWorkspace(principalId, "[]");
         String existingSessionId = createSession(principalId);
         assertFalse(sessionSnapshot(existingSessionId).contains(SPAWN_AGENT),
@@ -126,7 +126,7 @@ class AgentDelegatorGrantIntegrationTest extends AbstractIntegrationTest {
     void superAdminRoleStillCannotBeBoundToAnAgentPrincipal() {
         ResponseEntity<Map> response = exchange(HttpMethod.POST, "/api/v1/agent-principals",
                 """
-                {"name":"Admin-ish agent","scope":"PERSONAL","roleIds":["%s"]}"""
+                {"name":"AdminIshAgent","scope":"PERSONAL","roleIds":["%s"]}"""
                         .formatted(SystemAccessRoleCatalog.SUPER_ADMIN_ID));
         assertEquals(HttpStatus.FORBIDDEN.value(), response.getStatusCode().value(),
                 "实例管理角色对 agent 主体仍然禁绑（2026-11-04 裁定）: " + response.getBody());
