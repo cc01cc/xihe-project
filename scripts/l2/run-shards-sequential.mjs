@@ -120,7 +120,7 @@ for (const shard of ['a', 'b']) {
     + `tests=${result.tests} failures+errors=${result.failures} missCount=${result.cache?.missCount ?? 'n/a'}`);
 }
 
-const { computeExpectedTestClasses } = await import('file:///H:/zeogit/one/.tmp/plan-eff-l2/lib/test-class-set.mjs');
+const { computeExpectedTestClasses } = await import('./lib/test-class-set.mjs');
 const expected = computeExpectedTestClasses({ repoRoot: ROOT });
 // `computeExpectedTestClasses` 的返回形状随 helper 演进而变：现在是
 // `{ repoRoot, sourceFileCount, expected: [...classNames], excludedAbstract, ... }`，

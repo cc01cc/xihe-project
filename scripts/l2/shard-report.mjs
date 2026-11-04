@@ -76,7 +76,7 @@ const shards = ['a', 'b'].map((shard) => {
   };
 });
 
-const { computeExpectedTestClasses } = await import('file:///H:/zeogit/one/.tmp/plan-eff-l2/lib/test-class-set.mjs');
+const { computeExpectedTestClasses } = await import('./lib/test-class-set.mjs');
 const expectedRaw = computeExpectedTestClasses({ repoRoot: ROOT });
 const expected = expectedRaw?.classes ?? expectedRaw?.classNames ?? [];
 const expectedSet = new Set(expected);
