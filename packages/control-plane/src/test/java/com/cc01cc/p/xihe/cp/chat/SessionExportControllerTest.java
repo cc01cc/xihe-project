@@ -11,7 +11,12 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBody;
 
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.OutputStream;
+import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -19,7 +24,9 @@ import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -34,9 +41,10 @@ import static org.mockito.Mockito.when;
  * {@link SessionExportService#MAX_MESSAGES} **before any message row is materialised**, and it must
  * use the same constant as the renderer (single source, no drifting second literal).
  *
- * <p>These are controller-level tests: the read surface is a mock so the "never read" assertion is
- * exact ({@code listVisibleMessages} not called), while {@link SessionExportService} is the real
- * renderer so the 200-path document content is the shipped one.
+ * <p>PLAN-0670 M2c/B: the success path is now a {@link StreamingResponseBody}. These tests execute
+ * the body (exactly what the servlet container does) and assert on the produced Markdown bytes, so
+ * "streaming" cannot silently change the document; they also assert that the precheck runs before
+ * the renderer and that a client disconnect propagates instead of being swallowed.
  */
 @ExtendWith(MockitoExtension.class)
 class SessionExportControllerTest {
@@ -50,6 +58,8 @@ class SessionExportControllerTest {
     private MessageReadService messageReadService;
     @Mock
     private BranchPathService branchPathService;
+    @Mock
+    private SessionExportStreamRenderer streamRenderer;
 
     private final SessionExportService exportService = new SessionExportService();
 
@@ -65,7 +75,7 @@ class SessionExportControllerTest {
                 .thenReturn(new BranchPathService.BranchVisibility(BRANCH, Map.of()));
         when(branchPathService.resolvePath(SESSION, BRANCH)).thenReturn(BRANCH);
         return new SessionExportController(sessionService, messageReadService, branchPathService,
-                exportService);
+                streamRenderer);
     }
 
     private static Map<String, Object> message(String role, String content) {
@@ -76,24 +86,39 @@ class SessionExportControllerTest {
         return dto;
     }
 
+    private static String bodyText(ResponseEntity<?> response) throws IOException {
+        Object body = response.getBody();
+        assertNotNull(body, "successful export must carry a body");
+        assertTrue(body instanceof StreamingResponseBody, "export body must be streamed");
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        ((StreamingResponseBody) body).writeTo(output);
+        return output.toString(StandardCharsets.UTF_8);
+    }
+
     @Test
-    void exportsBelowTheLimitAndRendersTheShippedDocument() {
+    void exportsBelowTheLimitAndRendersTheShippedDocument() throws IOException {
         String userId = UUID.randomUUID().toString();
         String workspaceId = UUID.randomUUID().toString();
         SessionExportController controller = controllerWith(userId, workspaceId);
         when(messageReadService.countSessionMessages(SESSION)).thenReturn(2L);
-        when(messageReadService.listVisibleMessages(anyString(), anyString(), anyString(), any(), eq("export")))
-                .thenReturn(List.of(message("user", "hello"), message("assistant", "world")));
+        when(streamRenderer.render(eq(SESSION), eq(workspaceId), eq(BRANCH), any()))
+                .thenReturn(exportService.render(SESSION,
+                        List.of(message("user", "hello"), message("assistant", "world"))));
 
         ResponseEntity<?> response = controller.export(SESSION, BRANCH);
 
         assertEquals(HttpStatus.OK, response.getStatusCode());
-        String markdown = String.valueOf(response.getBody());
+        assertEquals(-1L, response.getHeaders().getContentLength(),
+                "streamed body must not carry a Content-Length (chunked transfer)");
+        assertEquals("text/markdown;charset=UTF-8",
+                String.valueOf(response.getHeaders().getContentType()));
+        String markdown = bodyText(response);
         assertTrue(markdown.startsWith("# Session export\n"), markdown);
         assertTrue(markdown.contains("- messages: 2"), markdown);
         assertTrue(markdown.contains("## 1. user"), markdown);
         assertTrue(markdown.contains("world"), markdown);
-        verify(messageReadService).listVisibleMessages(anyString(), anyString(), anyString(), any(), eq("export"));
+        verify(streamRenderer).render(eq(SESSION), eq(workspaceId), eq(BRANCH), any());
+        verify(messageReadService, never()).listVisibleMessages(anyString(), anyString(), anyString(), any(), anyString());
     }
 
     @Test
@@ -103,13 +128,13 @@ class SessionExportControllerTest {
         SessionExportController controller = controllerWith(userId, workspaceId);
         when(messageReadService.countSessionMessages(SESSION))
                 .thenReturn((long) SessionExportService.MAX_MESSAGES);
-        when(messageReadService.listVisibleMessages(anyString(), anyString(), anyString(), any(), eq("export")))
-                .thenReturn(List.of(message("user", "boundary")));
+        when(streamRenderer.render(eq(SESSION), eq(workspaceId), eq(BRANCH), any()))
+                .thenReturn(exportService.render(SESSION, List.of(message("user", "boundary"))));
 
         ResponseEntity<?> response = controller.export(SESSION, BRANCH);
 
         assertEquals(HttpStatus.OK, response.getStatusCode());
-        verify(messageReadService).listVisibleMessages(anyString(), anyString(), anyString(), any(), eq("export"));
+        verify(streamRenderer).render(eq(SESSION), eq(workspaceId), eq(BRANCH), any());
     }
 
     @Test
@@ -132,7 +157,7 @@ class SessionExportControllerTest {
         assertEquals(total, body.get("messages"));
         assertEquals(SessionExportService.MAX_MESSAGES, body.get("limit"));
         verify(messageReadService).countSessionMessages(SESSION);
-        verify(messageReadService, never()).listVisibleMessages(anyString(), anyString(), anyString(), any(), eq("export"));
+        verify(streamRenderer, never()).render(anyString(), anyString(), anyString(), any());
     }
 
     @Test
@@ -141,21 +166,21 @@ class SessionExportControllerTest {
         String workspaceId = UUID.randomUUID().toString();
         SessionExportController controller = controllerWith(userId, workspaceId);
         when(messageReadService.countSessionMessages(SESSION)).thenReturn(1L);
-        when(messageReadService.listVisibleMessages(anyString(), anyString(), anyString(), any(), eq("export")))
-                .thenReturn(List.of(message("user", "ordered")));
+        when(streamRenderer.render(eq(SESSION), eq(workspaceId), eq(BRANCH), any()))
+                .thenReturn(exportService.render(SESSION, List.of(message("user", "ordered"))));
 
         controller.export(SESSION, BRANCH);
 
-        InOrder order = inOrder(sessionService, messageReadService);
+        InOrder order = inOrder(sessionService, messageReadService, streamRenderer);
         order.verify(sessionService).requireCurrent(SESSION, userId, workspaceId);
         order.verify(messageReadService).countSessionMessages(SESSION);
-        order.verify(messageReadService).listVisibleMessages(anyString(), anyString(), anyString(), any(), eq("export"));
+        order.verify(streamRenderer).render(eq(SESSION), eq(workspaceId), eq(BRANCH), any());
     }
 
     @Test
     void refusesWithoutWorkspaceContext() {
         SessionExportController controller = new SessionExportController(sessionService,
-                messageReadService, branchPathService, exportService);
+                messageReadService, branchPathService, streamRenderer);
 
         ResponseEntity<?> response = controller.export(SESSION, BRANCH);
 
@@ -164,7 +189,36 @@ class SessionExportControllerTest {
         Map<String, Object> body = (Map<String, Object>) response.getBody();
         assertEquals("WORKSPACE_CONTEXT_REQUIRED", body.get("code"));
         verify(messageReadService, never()).countSessionMessages(anyString());
+        verify(streamRenderer, never()).render(anyString(), anyString(), anyString(), any());
         assertFalse(body.containsKey("messages"));
         assertNull(body.get("limit"));
+    }
+
+    @Test
+    void clientDisconnectPropagatesAndStopsTheWrite() {
+        String userId = UUID.randomUUID().toString();
+        String workspaceId = UUID.randomUUID().toString();
+        SessionExportController controller = controllerWith(userId, workspaceId);
+        String huge = "x".repeat(SessionExportService.MAX_MESSAGE_CHARS);
+        when(messageReadService.countSessionMessages(SESSION)).thenReturn(1L);
+        when(streamRenderer.render(eq(SESSION), eq(workspaceId), eq(BRANCH), any()))
+                .thenReturn(exportService.render(SESSION,
+                        List.of(message("user", huge), message("assistant", huge))));
+        ResponseEntity<?> response = controller.export(SESSION, BRANCH);
+        StreamingResponseBody body = (StreamingResponseBody) response.getBody();
+
+        IOException disconnected = assertThrows(IOException.class,
+                () -> body.writeTo(new OutputStream() {
+                    private int accepted;
+
+                    @Override
+                    public void write(int value) throws IOException {
+                        accepted += 1;
+                        if (accepted > 1024) {
+                            throw new IOException("client went away");
+                        }
+                    }
+                }));
+        assertEquals("client went away", disconnected.getMessage());
     }
 }
