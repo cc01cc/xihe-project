@@ -91,7 +91,7 @@ class AgentPrincipalRoleBindingIntegrationTest extends AbstractIntegrationTest {
 
     @Test
     void bindTakesEffectImmediately() {
-        AgentPrincipal principal = createPlainPrincipal("bind effective");
+        AgentPrincipal principal = createPlainPrincipal("bindEffective");
         assertEquals(0, roleGrants(principal.getId(), GrantSources.ROLE).size(),
                 "a fresh principal has no workspace role grants");
 
@@ -126,7 +126,7 @@ class AgentPrincipalRoleBindingIntegrationTest extends AbstractIntegrationTest {
     void instanceAdminRoleCannotBeBoundToAnAgentPrincipal() {
         AccessRole admin = roleRepository.findByName("ADMIN").orElseThrow();
         CpApiException refused = assertThrows(CpApiException.class,
-                () -> createPlainPrincipal("admin role", List.of(admin.getId())));
+                () -> createPlainPrincipal("adminRole", List.of(admin.getId())));
         assertEquals(HttpStatus.FORBIDDEN, refused.getStatus());
         assertEquals("ROLE_NOT_GRANTABLE", refused.getCode());
         assertTrue(refused.getMessage().contains("instance-admin role"),
@@ -136,7 +136,7 @@ class AgentPrincipalRoleBindingIntegrationTest extends AbstractIntegrationTest {
     @Test
     void unknownRoleIdIsRefusedWithTheSameStableCode() {
         CpApiException refused = assertThrows(CpApiException.class,
-                () -> createPlainPrincipal("bogus role", List.of(UUID.randomUUID())));
+                () -> createPlainPrincipal("bogusRole", List.of(UUID.randomUUID())));
         assertEquals(HttpStatus.FORBIDDEN, refused.getStatus());
         assertEquals("ROLE_NOT_GRANTABLE", refused.getCode(),
                 "no 404: the code must not leak which roles exist");
@@ -144,7 +144,7 @@ class AgentPrincipalRoleBindingIntegrationTest extends AbstractIntegrationTest {
 
     @Test
     void principalWithoutRoleRowsStillWorksThroughTheLegacyCeiling() {
-        AgentPrincipal principal = createPlainPrincipal("legacy fallback");
+        AgentPrincipal principal = createPlainPrincipal("legacyFallback");
         bindToWorkspace(principal.getId());
         // Simulate a pre-ruling row: drop the role side entirely, leave a legacy snapshot behind.
         roleBindingRepository.deleteAll(roleBindingRepository

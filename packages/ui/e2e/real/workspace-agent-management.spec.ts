@@ -156,7 +156,7 @@ test("@host V6 Workspace Agent management uses CP grants and persists isolated c
     await expect(dialog).toBeVisible();
     await expect(dialog.getByText("暂无活动会话")).toHaveCount(0);
 
-    await page.getByTestId("agent-principal-name").fill("T4.4 Persistent Agent");
+    await page.getByTestId("agent-principal-name").fill("T44PersistentAgent");
     await page.getByTestId("agent-principal-template").selectOption(templateId);
     await expect(page.getByTestId("agent-principal-create-form")).toContainText(
         "Browser Workspace Reader",
@@ -505,7 +505,7 @@ test("@host V6 Workspace Agent management uses CP grants and persists isolated c
     // block so the remaining assertions keep an owner.
     replaceWorkspaceRole(ownerUserId, workspaceA, "WS_EDITOR");
     await page.getByTestId("workspace-toolbar-agents").click();
-    await page.getByTestId("agent-principal-name").fill("Create only, no bind permission");
+    await page.getByTestId("agent-principal-name").fill("CreateOnlyNoBindPermission");
     const createOnlyResponsePromise = page.waitForResponse(
         (response) =>
             response.url().endsWith("/api/v1/agent-principals") &&

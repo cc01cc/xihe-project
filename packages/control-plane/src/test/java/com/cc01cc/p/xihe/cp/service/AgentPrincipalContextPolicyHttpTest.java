@@ -141,7 +141,7 @@ class AgentPrincipalContextPolicyHttpTest extends AbstractIntegrationTest {
     @Test
     void patchStoresTheContextPolicyAndBothReadSurfacesProjectIt() {
         fixture();
-        UUID principalId = createPrincipal("Memory agent");
+        UUID principalId = createPrincipal("MemoryAgent");
 
         ResponseEntity<Map> response = patch(principalId, body("contextPolicy", plainJson(POLICY_JSON)),
                 globalToken());
@@ -169,7 +169,7 @@ class AgentPrincipalContextPolicyHttpTest extends AbstractIntegrationTest {
     @Test
     void patchCarriesHooksAndContextPolicyTogether() {
         fixture();
-        UUID principalId = createPrincipal("Both documents agent");
+        UUID principalId = createPrincipal("BothDocumentsAgent");
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("hooks", plainJson(HOOKS_JSON));
         body.put("contextPolicy", plainJson(POLICY_JSON));
@@ -191,7 +191,7 @@ class AgentPrincipalContextPolicyHttpTest extends AbstractIntegrationTest {
     @Test
     void patchOnOneDocumentLeavesTheOtherUntouched() {
         fixture();
-        UUID principalId = createPrincipal("Half update agent");
+        UUID principalId = createPrincipal("HalfUpdateAgent");
         assertEquals(HttpStatus.OK, patch(principalId, body("contextPolicy", plainJson(POLICY_JSON)),
                 globalToken()).getStatusCode());
         int policyAuditsAfterFirstPatch = auditCount(principalId, "agent_principal_context_policy_updated");
@@ -213,7 +213,7 @@ class AgentPrincipalContextPolicyHttpTest extends AbstractIntegrationTest {
     @Test
     void patchClearsContextPolicyWithNull() {
         fixture();
-        UUID principalId = createPrincipal("Clearable memory agent");
+        UUID principalId = createPrincipal("ClearableMemoryAgent");
         patch(principalId, body("contextPolicy", plainJson(POLICY_JSON)), globalToken());
 
         ResponseEntity<Map> response = patch(principalId, body("contextPolicy", null), globalToken());
@@ -234,7 +234,7 @@ class AgentPrincipalContextPolicyHttpTest extends AbstractIntegrationTest {
     @Test
     void patchRejectsUnknownKeysAndEmptyBodies() {
         fixture();
-        UUID principalId = createPrincipal("Body shape agent");
+        UUID principalId = createPrincipal("BodyShapeAgent");
 
         assertBadRequest(principalId, Map.of("name", "renamed"),
                 "additionalProperties:false — no key outside hooks/contextPolicy is accepted");
@@ -253,7 +253,7 @@ class AgentPrincipalContextPolicyHttpTest extends AbstractIntegrationTest {
     @Test
     void patchRejectsMemoryDocumentsOutsideTheFrozenV1Shape() {
         fixture();
-        UUID principalId = createPrincipal("Invalid policy agent");
+        UUID principalId = createPrincipal("InvalidPolicyAgent");
 
         // The memory section and each of its values is validated by ContextPolicyValidator (single
         // write-side gate); this table is the user-facing contract of D29-25.
@@ -290,7 +290,7 @@ class AgentPrincipalContextPolicyHttpTest extends AbstractIntegrationTest {
     @Test
     void patchRequiresTheTierAuthority() {
         fixture();
-        UUID principalId = createPrincipal("Owner only memory agent");
+        UUID principalId = createPrincipal("OwnerOnlyMemoryAgent");
 
         ResponseEntity<Map> response = patch(principalId, body("contextPolicy", plainJson(POLICY_JSON)),
                 tokenOf(strangerUserId));
@@ -308,7 +308,7 @@ class AgentPrincipalContextPolicyHttpTest extends AbstractIntegrationTest {
     @Test
     void patchRefusesToWriteAPresetGuardsMemoryPolicy() {
         fixture();
-        UUID guardId = seedPresetGuard("Preset guard memory");
+        UUID guardId = seedPresetGuard("PresetGuardMemory");
 
         ResponseEntity<Map> policy = patch(guardId, body("contextPolicy", plainJson(POLICY_JSON)),
                 globalToken());
@@ -330,7 +330,7 @@ class AgentPrincipalContextPolicyHttpTest extends AbstractIntegrationTest {
     @Test
     void workspaceAgentListProjectsTheMemoryPolicy() {
         fixture();
-        UUID principalId = createPrincipal("Listed memory agent");
+        UUID principalId = createPrincipal("ListedMemoryAgent");
         assertEquals(HttpStatus.OK, patch(principalId, body("contextPolicy", plainJson(POLICY_JSON)),
                 globalToken()).getStatusCode());
         bindToWorkspace(principalId);
@@ -348,7 +348,7 @@ class AgentPrincipalContextPolicyHttpTest extends AbstractIntegrationTest {
     @Test
     void createResponseReportsThatMemoryIsOff() {
         fixture();
-        Map<String, Object> created = createPrincipalResponse("Fresh memory agent");
+        Map<String, Object> created = createPrincipalResponse("FreshMemoryAgent");
 
         assertTrue(created.containsKey("contextPolicy"),
                 "the create view must state the memory policy: " + created);

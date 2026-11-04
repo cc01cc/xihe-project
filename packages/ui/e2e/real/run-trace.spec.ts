@@ -307,7 +307,7 @@ test.describe("@host PLAN-0509 Run trace browser acceptance", () => {
         ctx = await registerJourneyUser(request, "plan-0509-run-trace");
         const agentAuth = { accessToken: ctx.authToken, workspaceId: ctx.workspaceId };
         const principalId = await provisionWorkspaceAgentPrincipal(request, agentAuth, {
-            name: "Run Trace Agent",
+            name: "RunTraceAgent",
             systemPrompt: "Answer briefly in Chinese. Do not call tools unless asked.",
         });
         sessionId = await createSessionWithPrincipal(request, agentAuth, {

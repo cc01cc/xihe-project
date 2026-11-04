@@ -2,6 +2,7 @@ package com.cc01cc.p.xihe.cp.service;
 
 import com.cc01cc.p.xihe.cp.audit.AuditLogger;
 import com.cc01cc.p.xihe.cp.auth.AuthService;
+import com.cc01cc.p.xihe.cp.auth.NameFormat;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
 import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
@@ -404,6 +405,8 @@ public class AgentPrincipalService {
             throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_AGENT_PRINCIPAL",
                     "A name and server-resolved template snapshot are required");
         }
+        // 用户 2026-11-03 裁定：主体名只允许 字母/汉字/数字 且不得数字开头、不得含空格与符号。
+        NameFormat.require(name, "name");
         if (!java.util.Objects.equals(templateId, optionalText(templateSnapshot, "templateId"))) {
             throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_TEMPLATE_SNAPSHOT",
                     "Template ID does not match the frozen snapshot");

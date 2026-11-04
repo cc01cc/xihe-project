@@ -523,12 +523,12 @@ test.describe("@host PLAN-0328 M3 checkpoint rollback (real Runtime + CP)", () =
         const principalId = await provisionWorkspaceAgentPrincipal(
             request,
             { accessToken: sharedAuth, workspaceId: sharedWs },
-            { name: "checkpoint-rollback", actions: ["read", "write"] },
+            { name: "checkpointRollback", actions: ["read", "write"] },
         );
         rollbackSessionId = await createSessionWithPrincipal(
             request,
             { accessToken: sharedAuth, workspaceId: sharedWs },
-            { principalId, title: "checkpoint-rollback" },
+            { principalId, title: "checkpointRollback" },
         );
     });
 

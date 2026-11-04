@@ -69,7 +69,7 @@ test.describe("@host PLAN-0507 session monitor panel", () => {
         // Fresh workspaces have no principal; workspace session creation requires
         // a bound agent principal (POST /api/v1/sessions 400 otherwise).
         const principalId = await provisionWorkspaceAgentPrincipal(request, agentAuth, {
-            name: "Monitor Agent",
+            name: "MonitorAgent",
         });
         sessionId = await createSessionWithPrincipal(request, agentAuth, {
             principalId,

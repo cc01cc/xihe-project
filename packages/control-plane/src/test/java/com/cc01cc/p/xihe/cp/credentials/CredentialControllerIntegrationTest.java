@@ -146,7 +146,7 @@ class CredentialControllerIntegrationTest extends AbstractIntegrationTest {
         // Bind a workspace agent so the reference report has entries.
         grantUser("{\"actionClass\":\"MANAGE_WORKSPACE_AGENTS\"}");
         AgentPrincipal principal = agentPrincipalService.createPrincipal(userId.toString(),
-                "ref-agent", null, snapshot("""
+                "refAgent", null, snapshot("""
                         [{"actionClass":"read"}]
                         """));
         principalIds.add(principal.getId());
@@ -182,12 +182,12 @@ class CredentialControllerIntegrationTest extends AbstractIntegrationTest {
 
         grantUser("{\"actionClass\":\"MANAGE_WORKSPACE_AGENTS\"}");
         AgentPrincipal boundPrincipal = agentPrincipalService.createPrincipal(userId.toString(),
-                "bound-agent", null, snapshot("[{\"actionClass\":\"read\"}]"));
+                "boundAgent", null, snapshot("[{\"actionClass\":\"read\"}]"));
         principalIds.add(boundPrincipal.getId());
         agentPrincipalService.setWorkspaceCap(userId.toString(), UUID.fromString(workspaceId),
                 boundPrincipal.getId(), objectMapper.createArrayNode());
         AgentPrincipal unboundPrincipal = agentPrincipalService.createPrincipal(userId.toString(),
-                "unbound-agent", null, snapshot("[{\"actionClass\":\"read\"}]"));
+                "unboundAgent", null, snapshot("[{\"actionClass\":\"read\"}]"));
         principalIds.add(unboundPrincipal.getId());
 
         ResponseEntity<String> failed = post("/api/v1/credentials/" + credentialId + "/bindings",
@@ -295,7 +295,7 @@ class CredentialControllerIntegrationTest extends AbstractIntegrationTest {
         String credentialId = field(created.getBody(), "id");
 
         AgentPrincipal principal = agentPrincipalService.createPrincipal(userId.toString(),
-                "unbind-flow-agent", null, snapshot("[{\"actionClass\":\"read\"}]"));
+                "unbindFlowAgent", null, snapshot("[{\"actionClass\":\"read\"}]"));
         principalIds.add(principal.getId());
         agentPrincipalService.setWorkspaceCap(userId.toString(), UUID.fromString(workspaceId),
                 principal.getId(), objectMapper.createArrayNode());

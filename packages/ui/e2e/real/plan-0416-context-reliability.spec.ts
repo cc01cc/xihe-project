@@ -39,13 +39,13 @@ async function setup(request: APIRequestContext): Promise<Fixture> {
         data: {
             email: `context-${randomUUID()}@test.local`,
             password: generateE2EPassword(),
-            name: "Context Reliability",
+            name: "ContextReliability",
         },
     });
     expect(registered.status()).toBe(201);
     const auth: Auth = await registered.json();
     const principalId = await provisionWorkspaceAgentPrincipal(request, auth, {
-        name: "Context Reliability",
+        name: "ContextReliability",
     });
     const observed: Record<string, unknown>[] = [];
     const provider = createServer(async (incoming, response) => {
@@ -131,7 +131,7 @@ async function publishAndOpen(
         localStorage.setItem("xihe-user", JSON.stringify({ workspaceId }));
         localStorage.setItem(
             "xihe-workspace",
-            JSON.stringify({ id: workspaceId, name: "Context Reliability" }),
+            JSON.stringify({ id: workspaceId, name: "ContextReliability" }),
         );
     }, fixture.auth);
     await page.goto("/settings/config");
@@ -484,7 +484,7 @@ test.describe.serial("@host PLAN-0416 context reliability", () => {
                 request,
                 fixture.auth,
                 {
-                    name: "Context Reliability Second",
+                    name: "ContextReliabilitySecond",
                     systemPrompt: secondBaseline,
                 },
             );
