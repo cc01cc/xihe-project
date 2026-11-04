@@ -1166,9 +1166,10 @@ public class AgentPrincipalService {
         PolicyRequest request = new PolicyRequest(actionClass.toLowerCase(),
                 List.of(actionClass), List.of(resource), ToolShape.OPAQUE,
                 actorId.toString(), null, null);
-        if (!evaluator.allows(request, List.of(evaluator.union(
-                grantRepository.findScopedGrants(GrantPrincipalPathResolver.USER, actorId,
-                        GrantSources.EVALUATION_SOURCES, workspaceId))))) {
+        // PLAN-0651 T1.5 (A1): shared kernel entry (RequesterAuthority#allowsForUser). The scope is
+        // passed explicitly because this request carries a null workspace by design; the decision
+        // itself is unchanged (same findScopedGrants + same evaluator.allows resource/shape matching).
+        if (!requesterAuthority.allowsForUser(request, workspaceId)) {
             throw new CpApiException(HttpStatus.FORBIDDEN, "FORBIDDEN", actionClass + " permission is required");
         }
     }
