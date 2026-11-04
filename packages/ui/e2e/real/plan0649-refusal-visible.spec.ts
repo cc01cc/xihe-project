@@ -325,10 +325,15 @@ test.describe("@host PLAN-0649 refusal visible + durable", () => {
         );
         expect(boundAgent.status(), await boundAgent.text()).toBe(200);
 
-        // maxCount=1 → the second spawn of one run is refused while the first child is in flight.
+        // maxCount=0 (delegation forbidden) — the budget gate refuses any spawn regardless of the
+        // invocation arguments. maxCount=1 with two concurrent calls instead hits the recorded
+        // BL-NEW12 product defect (mcp_invocations.arguments_preview is either the bare arguments
+        // object or the whole JSON-RPC envelope, so deriveSpawnContent rejects the envelope shape
+        // with SPAWN_ARGUMENTS_INVALID before the budget gate is reached). maxCount=0 keeps this
+        // walkthrough on a legitimate product path that does not depend on that shape.
         const delegationPolicy = await request.patch(
             `${CP_URL}/api/v1/agent-principals/${principalId}`,
-            { headers, data: { delegationPolicy: { maxCount: 1, maxDepth: 2 } } },
+            { headers, data: { delegationPolicy: { maxCount: 0, maxDepth: 2 } } },
         );
         expect(
             delegationPolicy.status(),
