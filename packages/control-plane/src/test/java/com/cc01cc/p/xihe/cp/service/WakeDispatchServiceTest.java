@@ -31,6 +31,7 @@ import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 /**
@@ -109,6 +110,14 @@ class WakeDispatchServiceTest {
 
     @Test
     void humanRecipientIsNotifiedNotRun() {
+        // PLAN-0660 T3.1: make the fake speak-as gate actually refuse, the way it always does in
+        // production for another human (SessionParticipantService.authorizeAsParticipant:334-340).
+        // Before the fix this drove the recipient to "refused", so the case now really fails if the
+        // HUMAN branch ever moves back behind the authorization.
+        org.mockito.Mockito.doThrow(new CpApiException(HttpStatus.FORBIDDEN,
+                "PARTICIPANT_CAP_DENIED", "speaking as another human is impersonation"))
+                .when(participantService).authorizeAsParticipant(anyString(), anyString(), anyString(),
+                        anyString());
         SessionParticipant human = new SessionParticipant(SESSION_ID, "HUMAN", UUID.randomUUID(),
                 "MEMBER", 30, "MENTION", "ALWAYS");
         human.setId(PARTICIPANT_ID);
@@ -121,9 +130,34 @@ class WakeDispatchServiceTest {
         assertEquals("notify", result.outcome());
         assertFalse(result.dispatched(), "人=通知：a HUMAN recipient never gets a run");
         assertEquals(3, cursor.getMentionCount(), "the cursor advances server-side (R7)");
+        verify(participantService, never()).authorizeAsParticipant(anyString(), anyString(), anyString(),
+                anyString());
         verify(wakeupService, never()).wakeupAs(anyString(), anyString(), anyString(), anyString(),
                 anyString(), any(), anyString(), any());
+        verifyNoInteractions(chatRuns);
         assertAuditOutcome("notify");
+    }
+
+    @Test
+    void participantFromAnotherSessionIsRefusedNotNotified() {
+        // PLAN-0660 T1.3: a foreign participantId must not be notified/counted in this session's
+        // round. The speak-as gate used to be the only participant↔session binding; the HUMAN branch
+        // no longer reaches it, so fire() owns that check now.
+        SessionParticipant foreign = new SessionParticipant(UUID.randomUUID(), "HUMAN", UUID.randomUUID(),
+                "MEMBER", 30, "MENTION", "ALWAYS");
+        foreign.setId(PARTICIPANT_ID);
+        when(participants.findById(PARTICIPANT_ID)).thenReturn(Optional.of(foreign));
+        SessionParticipantCursor cursor = new SessionParticipantCursor(PARTICIPANT_ID, 5L, 0);
+        when(cursors.findById(PARTICIPANT_ID)).thenReturn(Optional.of(cursor));
+
+        WakeDispatchService.WakeFireResult result = service.fire(PARTICIPANT_ID, "mention", ROUND, SESSION_ID, null);
+
+        assertEquals("refused", result.outcome(), "a participant of another session is not a delivery target");
+        assertEquals(0, cursor.getMentionCount(), "a foreign participant must not advance this cursor");
+        verify(wakeupService, never()).wakeupAs(anyString(), anyString(), anyString(), anyString(),
+                anyString(), any(), anyString(), any());
+        verifyNoInteractions(chatRuns);
+        assertAuditOutcome("refused");
     }
 
     @Test
