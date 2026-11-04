@@ -67,10 +67,10 @@ const stubs = {
     Send: { template: "<span />" },
 };
 
-function mountInputArea(props = {}) {
+function mountInputArea(props = {}, stubOverrides: Record<string, unknown> = {}) {
     return mount(InputArea, {
         props: { sessionId: "test-session", ...props },
-        global: { plugins: [createI18nInstance()], stubs },
+        global: { plugins: [createI18nInstance()], stubs: { ...stubs, ...stubOverrides } },
     });
 }
 
@@ -205,5 +205,52 @@ describe("InputArea", () => {
         await flushPromises();
 
         expect(mockedUpload).toHaveBeenCalledTimes(2);
+    });
+
+    it("creates one object URL per attachment and revokes it on remove/unmount (PLAN-0670 M2d.4)", async () => {
+        const create = vi.fn<() => string>(() => "blob:preview");
+        const revoke = vi.fn<(url: string) => void>();
+        const originalCreate = globalThis.URL.createObjectURL;
+        const originalRevoke = globalThis.URL.revokeObjectURL;
+        globalThis.URL.createObjectURL = create;
+        globalThis.URL.revokeObjectURL = revoke;
+        mockedUpload.mockResolvedValue({ success: [], failed: [] });
+
+        try {
+            const wrapper = mountInputArea(
+                {},
+                {
+                    ImageUpload: {
+                        props: ["onUpload"],
+                        setup() {
+                            return {
+                                files: [new File(["img"], "photo.png", { type: "image/png" })],
+                            };
+                        },
+                        template:
+                            '<button data-testid="mock-image-upload" @click="onUpload(files)" />',
+                    },
+                },
+            );
+            await wrapper.find('[data-testid="mock-image-upload"]').trigger("click");
+            await flushPromises();
+            expect(wrapper.findAll('[data-testid="selected-attachment"]')).toHaveLength(1);
+            // 同一文件重复渲染不得重复创建（缓存按 File 命中）。
+            wrapper.vm.$forceUpdate();
+            await flushPromises();
+            expect(create).toHaveBeenCalledTimes(1);
+
+            await wrapper.find('[data-testid="remove-attachment-button"]').trigger("click");
+            expect(revoke).toHaveBeenCalledWith("blob:preview");
+
+            // 再次上传后组件卸载 ⇒ 仍未释放的 URL 必须 revoke（创建必配对释放）。
+            await wrapper.find('[data-testid="mock-image-upload"]').trigger("click");
+            await flushPromises();
+            wrapper.unmount();
+            expect(revoke).toHaveBeenCalledTimes(2);
+        } finally {
+            globalThis.URL.createObjectURL = originalCreate;
+            globalThis.URL.revokeObjectURL = originalRevoke;
+        }
     });
 });
