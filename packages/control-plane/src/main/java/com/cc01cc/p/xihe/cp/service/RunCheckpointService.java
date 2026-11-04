@@ -120,6 +120,10 @@ public class RunCheckpointService {
     private final java.util.Set<String> captureInFlight = ConcurrentHashMap.newKeySet();
     private final ExecutorService captureExecutor;
 
+    /** PLAN-0641 F1 warm (contract §3): best-effort cache warm from primary-root captures. */
+    @org.springframework.beans.factory.annotation.Autowired
+    private WorkspaceNestedReposService nestedReposService;
+
     public RunCheckpointService(RunCheckpointRepository checkpoints,
                                 RuntimeCheckpointClient runtime,
                                 ChatRunRepository chatRuns,
@@ -245,7 +249,11 @@ public class RunCheckpointService {
                     : runtime.capture(workspaceId, rootId, runId, run.getUserId(),
                             captureCallId(runId), abnormal);
             return switch (result.outcome()) {
-                case OK -> persistCaptured(run, rootId, result, abnormal);
+                case OK -> {
+                    // PLAN-0641 F1 warm (contract §3): best-effort, never fails the capture.
+                    nestedReposService.warmFromCapture(workspaceId, rootId, result.nestedRepos());
+                    yield persistCaptured(run, rootId, result, abnormal);
+                }
                 case INVALID_REQUEST -> {
                     persistDegraded(run, rootId, REASON_INVALID_REQUEST, result.reason());
                     yield false;

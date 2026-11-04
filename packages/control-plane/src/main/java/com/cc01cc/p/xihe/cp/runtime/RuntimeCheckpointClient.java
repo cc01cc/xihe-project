@@ -16,6 +16,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 /**
  * PLAN-0338: client for the Runtime slice-checkpoint contract
@@ -56,6 +57,8 @@ public class RuntimeCheckpointClient {
     private static final Duration GIT_STATUS_TIMEOUT = Duration.ofSeconds(5);
     private static final Duration GC_TIMEOUT = Duration.ofSeconds(10);
     private static final Duration CLEANUP_TIMEOUT = Duration.ofSeconds(10);
+    /** PLAN-0641 F3: cold probe runs one full staging pass over the work tree. */
+    private static final Duration NESTED_REPOS_TIMEOUT = Duration.ofSeconds(15);
 
     /**
      * Typed call outcome; never an exception at the call site. The 409 codes of the
@@ -87,7 +90,10 @@ public class RuntimeCheckpointClient {
     public record CaptureResult(Outcome outcome, String runId, boolean noChange, String sliceRef,
                                 String commit, String capturedAt, String state,
                                 List<ChangedFile> changedFiles, List<String> opaqueNestedRepos,
-                                String predecessor, String reason, String rootId) {
+                                String predecessor, String reason, String rootId,
+                                /** PLAN-0641 F1: nested repos this capture discovered (internal
+                                 * wire only — never persisted, contract-draft §3 / D41-24). */
+                                List<String> nestedRepos) {
 
         /** Pre-M7 shape: a result that reports no captured root. */
         public CaptureResult(Outcome outcome, String runId, boolean noChange, String sliceRef,
@@ -95,9 +101,12 @@ public class RuntimeCheckpointClient {
                              List<ChangedFile> changedFiles, List<String> opaqueNestedRepos,
                              String predecessor, String reason) {
             this(outcome, runId, noChange, sliceRef, commit, capturedAt, state, changedFiles,
-                    opaqueNestedRepos, predecessor, reason, null);
+                    opaqueNestedRepos, predecessor, reason, null, List.of());
         }
     }
+
+    /** PLAN-0641 F4: one discovery entry ({@code type} = nested|gitdir|submodule|bare|symlink). */
+    public record NestedRepoItem(String path, String type, boolean declared) {}
 
     public record GcResult(Outcome outcome, Map<String, Object> counts, String reason) {}
 
@@ -216,7 +225,8 @@ public class RuntimeCheckpointClient {
                     parseChangedFiles(body.get("changedFiles")),
                     parseStringList(body.get("opaqueNestedRepos")),
                     stringValue(body, "predecessor"), null,
-                    stringValue(body, "rootId"));
+                    stringValue(body, "rootId"),
+                    parseStringList(body.get("nestedRepos")));
         } catch (Exception e) {
             logger.warn("[LIFECYCLE] service=cp event=runtime_checkpoint_capture_unreachable workspaceId={} runId={} error={}",
                     workspaceId, runId, e.getMessage());
@@ -427,6 +437,78 @@ public class RuntimeCheckpointClient {
             logger.warn("[LIFECYCLE] service=cp event=runtime_git_status_unreachable workspaceId={} error={}",
                     workspaceId, e.getMessage());
             return new GitStatusResult(Outcome.TRANSPORT, false, List.of(), "unreachable");
+        }
+    }
+
+    /**
+     * PLAN-0641 F3: cold probe — `{path,type,declared}` items for nested git repos
+     * of the workspace. Empty = runtime unreachable / non-2xx (the caller maps
+     * that to 503; unknown-workspace 404 is decided CP-side before calling).
+     */
+    public Optional<List<NestedRepoItem>> nestedReposProbe(String workspaceId) {
+        if (isBlank(workspaceId)) {
+            return Optional.empty();
+        }
+        String url = runtimeUrl + "/internal/v1/runtime/workspaces/" + workspaceId + "/nested-repos";
+        try {
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(URI.create(url))
+                    .header("Authorization", "Bearer " + serviceToken)
+                    .header("Accept", "application/json")
+                    .GET()
+                    .timeout(NESTED_REPOS_TIMEOUT)
+                    .build();
+            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+            if (response.statusCode() / 100 != 2) {
+                logger.warn("[LIFECYCLE] service=cp event=runtime_nested_repos_http_error workspaceId={} status={}",
+                        workspaceId, response.statusCode());
+                return Optional.empty();
+            }
+            List<NestedRepoItem> items = OBJECT_MAPPER.convertValue(
+                    parseBody(response.body()).get("items"),
+                    new TypeReference<List<NestedRepoItem>>() {});
+            return items == null ? Optional.empty() : Optional.of(items);
+        } catch (Exception e) {
+            logger.warn("[LIFECYCLE] service=cp event=runtime_nested_repos_unreachable workspaceId={} error={}",
+                    workspaceId, e.getMessage());
+            return Optional.empty();
+        }
+    }
+
+    /**
+     * T2.3 classify-only (contract F1 warm path): classify explicit workspace-relative
+     * paths without staging. Empty = runtime unreachable / non-2xx (warm is best-effort).
+     */
+    public Optional<List<NestedRepoItem>> classifyNestedRepos(String workspaceId, List<String> paths) {
+        if (isBlank(workspaceId) || paths == null || paths.isEmpty()) {
+            return Optional.empty();
+        }
+        String url = runtimeUrl + "/internal/v1/runtime/workspaces/" + workspaceId + "/nested-repos/classify";
+        try {
+            Map<String, Object> payload = new LinkedHashMap<>();
+            payload.put("paths", paths);
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(URI.create(url))
+                    .header("Authorization", "Bearer " + serviceToken)
+                    .header("Content-Type", "application/json")
+                    .header("Accept", "application/json")
+                    .POST(HttpRequest.BodyPublishers.ofString(OBJECT_MAPPER.writeValueAsString(payload)))
+                    .timeout(NESTED_REPOS_TIMEOUT)
+                    .build();
+            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+            if (response.statusCode() / 100 != 2) {
+                logger.warn("[LIFECYCLE] service=cp event=runtime_nested_repos_classify_http_error workspaceId={} status={}",
+                        workspaceId, response.statusCode());
+                return Optional.empty();
+            }
+            List<NestedRepoItem> items = OBJECT_MAPPER.convertValue(
+                    parseBody(response.body()).get("items"),
+                    new TypeReference<List<NestedRepoItem>>() {});
+            return items == null ? Optional.empty() : Optional.of(items);
+        } catch (Exception e) {
+            logger.warn("[LIFECYCLE] service=cp event=runtime_nested_repos_classify_unreachable workspaceId={} error={}",
+                    workspaceId, e.getMessage());
+            return Optional.empty();
         }
     }
 
