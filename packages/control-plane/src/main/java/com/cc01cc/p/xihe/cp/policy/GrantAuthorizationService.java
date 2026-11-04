@@ -125,14 +125,27 @@ public class GrantAuthorizationService {
                 return false;
             }
             return evaluateUserPath(request);
-        } catch (IllegalArgumentException e) {
-            logger.warn("[POLICY] event=grant_user_evaluation_fail_closed exceptionType={}",
-                    e.getClass().getSimpleName());
+        } catch (IllegalArgumentException | NullPointerException e) {
+            // PLAN-0651: fail closed *and* say so. A missing/blank scope used to escape as a 500
+            // (canManage's instance-scope probe passes a null workspace); refusing with a WARN is
+            // strictly safer than an unhandled runtime exception on a read path.
+            logger.warn("[POLICY] event=grant_user_evaluation_fail_closed exceptionType={} workspaceId={}",
+                    e.getClass().getSimpleName(), request.workspaceId());
             return false;
         }
     }
 
+    /**
+     * PLAN-0651 (D51-26): {@code null} workspace means <b>instance-scope evaluation</b>, not an
+     * error — the instance-only atoms (N1/N10) are asked exactly this way, and a workspace
+     * membership precondition does not apply to them. Previously the {@code UUID.fromString(null)}
+     * here threw an NPE that escaped {@code allowsUserOnly}'s {@code IllegalArgumentException}
+     * handler and surfaced as a 500 on the participant-list read path.
+     */
     private boolean isWorkspaceMember(PolicyRequest request) {
+        if (request.workspaceId() == null) {
+            return true;
+        }
         UUID userId = UUID.fromString(request.userId());
         UUID workspaceId = UUID.fromString(request.workspaceId());
         return workspaceRepository.findByIdAndDeletedAtIsNull(workspaceId).isPresent()
@@ -148,7 +161,9 @@ public class GrantAuthorizationService {
      */
     private boolean evaluateUserPath(PolicyRequest request) {
         UUID userId = UUID.fromString(request.userId());
-        UUID workspaceId = UUID.fromString(request.workspaceId());
+        // PLAN-0651: null workspace = instance-scope evaluation; findScopedGrants then selects
+        // only the instance rows (its JPQL keeps the workspace branch unsatisfiable).
+        UUID workspaceId = request.workspaceId() == null ? null : UUID.fromString(request.workspaceId());
         Set<GrantIntersectionEvaluator.PermissionAtom> userGrants = evaluator.union(
                 grantRepository.findScopedGrants(GrantPrincipalPathResolver.USER, userId,
                         GrantSources.EVALUATION_SOURCES, workspaceId));
