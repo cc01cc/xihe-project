@@ -436,9 +436,8 @@ async function bindToolCapableFakeLlmConnection(page: Page, sessionId: string): 
     await expect(page.getByTestId("workspace-agent-management-dialog")).toBeVisible({
         timeout: 20000,
     });
-    await page
-        .getByTestId("agent-principal-name")
-        .fill(`Gold Path Agent ${randomUUID().slice(0, 8)}`);
+    const agentName = `Gold Path Agent ${randomUUID().slice(0, 8)}`;
+    await page.getByTestId("agent-principal-name").fill(agentName);
     await page.getByTestId("agent-principal-template").selectOption("");
 
     const createResponse = page.waitForResponse(
@@ -460,50 +459,21 @@ async function bindToolCapableFakeLlmConnection(page: Page, sessionId: string): 
     await page.getByTestId("agent-principal-bind").click();
     expect((await bindResponse).status()).toBe(200);
 
-    // 关掉模态框：`modal-backdrop` 会拦住后续点击（G2-c 把它当最后一步所以之前没人管）。
-    //
-    // 2026-11-04（PLAN-0648 窗口 1 实测）：原实现是「点一次 Close → toBeHidden(20s)」，
-    // G2-e 在这里挂了 5 分钟（整条用例超时），而失败信息只有一句 toBeHidden —— 无法判断
-    // 是"按钮没点中"还是"产品真的不关"。改成显式等待：每轮先尝试 Close（含中文标签），
-    // 再退到 Escape，轮询到关闭为止；仍未关就**把对话框可见文本带进失败信息**（供 BL 判定），
-    // 不用 retries 掩盖。
-    const dialog = page.getByTestId("workspace-agent-management-dialog");
-    try {
-        await expect
-            .poll(
-                async () => {
-                    if (!(await dialog.isVisible().catch(() => false))) return "closed";
-                    await page
-                        .getByTestId("modal-content")
-                        .getByRole("button", { name: /^(close|关闭|关闭对话框)$/i })
-                        .first()
-                        .click({ timeout: 2_000 })
-                        .catch(async () => {
-                            await page.keyboard.press("Escape").catch(() => {});
-                        });
-                    return (await dialog.isVisible().catch(() => false)) ? "open" : "closed";
-                },
-                {
-                    message: "agent management dialog must close after binding",
-                    timeout: 30_000,
-                    intervals: [250, 500, 1_000],
-                },
-            )
-            .toBe("closed");
-    } catch (cause) {
-        const visibleText = await dialog
-            .innerText()
-            .catch(() => "")
-            .then((text) => text.slice(0, 400));
-        const buttons = await dialog
-            .getByRole("button")
-            .allInnerTexts()
-            .catch(() => [] as string[]);
-        throw new Error(
-            `agent management dialog did not close after bind (visible text=${JSON.stringify(visibleText)}, buttons=${JSON.stringify(buttons.slice(0, 12))})`,
-            { cause },
-        );
-    }
+    // BL-A（2026-11-04 Lead 裁定，A 类非 flake）：D26-09 已把该面从模态改为**常驻面板**
+    // （WorkspaceAgentsPanel.vue:764-767 注释原文 "It is now the panel body, not a modal"）
+    // —— 没有 Close、也不会关闭，原 `点一次 Close → toBeHidden` 结构性必挂（窗口 1 实测
+    // 挂 5 分钟超时）。改为断言**绑定结果出现在面板里**（更贴产品语义）：刚创建的主体
+    // 出现在「已绑定智能体」列表、且带它的 principalId，即视为这一步通过。
+    // 注：`getByText` 不匹配 input 的 value，所以这断言钉的是列表渲染，不是创建表单残留。
+    const panel = page.getByTestId("workspace-agent-management-dialog");
+    await expect(
+        panel.getByText(agentName, { exact: false }).first(),
+        "bound agent must be listed in the panel after bind",
+    ).toBeVisible({ timeout: 20_000 });
+    await expect(
+        panel.getByText(principalId, { exact: false }).first(),
+        "bound principal id must be listed in the panel",
+    ).toBeVisible({ timeout: 20_000 });
     return principalId;
 }
 
