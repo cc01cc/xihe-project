@@ -28,9 +28,9 @@ function isVisible(action: ToolbarAction): boolean {
 </script>
 
 <template>
-    <div class="flex min-w-0 flex-1 items-center gap-1">
+    <div class="flex min-w-0 flex-1 items-center gap-1.5">
         <!-- Keep left actions clipped so narrow layouts leave Stop and Queue visible. -->
-        <div class="flex min-w-0 flex-auto items-center gap-1 overflow-hidden">
+        <div class="flex min-w-0 flex-auto items-center gap-1.5 overflow-hidden">
             <template v-for="action in leftActions" :key="action.key">
                 <component :is="action.component" v-bind="action.props">
                     <component :is="action.icon" v-if="action.icon" class="size-3.5" />

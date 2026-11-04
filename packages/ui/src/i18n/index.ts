@@ -738,6 +738,9 @@ const messages = {
         },
         chat: {
             send: "发送",
+            // 2026-11-04 生产力密度裁定：composer 是工具条不是聊天框 —— placeholder 用简写；
+            // 此前 zh 缺该 key（走 en fallback）才露出长英文句 "Type a message…"。
+            placeholder: "输入消息，Enter 发送 · Shift+Enter 换行",
             delegation: {
                 button: "委派",
                 badge: "委派",
@@ -3022,7 +3025,7 @@ const messages = {
                 approvalRejected: "The delegation approval was rejected or expired",
                 submitFailed: "Could not create the delegation, try again later",
             },
-            placeholder: "Type a message, Enter to send, Shift+Enter for new line...",
+            placeholder: "Message · Enter to send · Shift+Enter for newline",
             // PLAN-0635 M1: input-surface copy for `/` commands and `@` mentions (one shared menu).
             input: {
                 commandsTitle: "Commands",
