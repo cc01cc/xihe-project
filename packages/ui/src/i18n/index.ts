@@ -403,6 +403,8 @@ const messages = {
             agentRoleAtomsSummary: "派生原子：{atoms} · 共 {count} 个",
             agentRoleGrantedBy: "创建者：{id}",
             agentSkillTokens: "约 {tokens} tokens",
+            agentSkillSourceWorkspace: "工作区技能",
+            agentSkillSourcePersonal: "个人技能",
             agentRoleSelectPlaceholder: "选择要绑定的角色",
             agentSkillSelectPlaceholder: "选择要绑定的技能",
             agentRoleForbiddenAtoms: "该角色含 agent 不可授予的原子，绑定被拒绝",
@@ -2698,6 +2700,8 @@ const messages = {
             agentRoleAtomsSummary: "Derived atoms: {atoms} · {count} total",
             agentRoleGrantedBy: "Granted by: {id}",
             agentSkillTokens: "~{tokens} tokens",
+            agentSkillSourceWorkspace: "Workspace skill",
+            agentSkillSourcePersonal: "Personal skill",
             agentRoleSelectPlaceholder: "Select a role to bind",
             agentSkillSelectPlaceholder: "Select a skill to bind",
             agentRoleForbiddenAtoms:

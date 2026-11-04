@@ -2014,6 +2014,18 @@ async function unbind(agent: WorkspaceAgentBinding) {
                                     :data-testid="`agent-skill-item-${binding.bindingId}`"
                                 >
                                     <span class="text-xs font-medium">{{ binding.name }}</span>
+                                    <span
+                                        v-if="binding.sourceType"
+                                        class="rounded border px-1 py-0.5 text-[10px] text-muted-foreground"
+                                        :data-testid="`agent-skill-source-${binding.bindingId}`"
+                                        >{{
+                                            t(
+                                                binding.sourceType === "workspace"
+                                                    ? "workspace.agentSkillSourceWorkspace"
+                                                    : "workspace.agentSkillSourcePersonal",
+                                            )
+                                        }}</span
+                                    >
                                     <span v-if="binding.sourceName" class="text-muted-foreground">{{
                                         binding.sourceName
                                     }}</span>

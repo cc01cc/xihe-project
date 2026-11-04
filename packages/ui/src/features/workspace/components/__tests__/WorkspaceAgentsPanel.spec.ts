@@ -1097,6 +1097,7 @@ describe("WorkspaceAgentsPanel PLAN-0667 roles & skills", () => {
                 bindingId: "skill-binding-1",
                 skillId: "skill-1",
                 name: "contract-review",
+                sourceType: "workspace",
                 sourceName: "工作区技能库",
                 tokenEstimate: 1200,
             },
@@ -1169,6 +1170,16 @@ describe("WorkspaceAgentsPanel PLAN-0667 roles & skills", () => {
 
         expect(wrapper.get('[data-testid="agent-skills-list"]').text()).toContain(
             "contract-review",
+        );
+        // 三列：来源类型 / 来源名 / token 估算（M2 契约字段）。
+        expect(wrapper.get('[data-testid="agent-skill-source-skill-binding-1"]').text()).toBe(
+            i18n.global.t("workspace.agentSkillSourceWorkspace"),
+        );
+        expect(wrapper.get('[data-testid="agent-skill-item-skill-binding-1"]').text()).toContain(
+            "工作区技能库",
+        );
+        expect(wrapper.get('[data-testid="agent-skill-item-skill-binding-1"]').text()).toContain(
+            i18n.global.t("workspace.agentSkillTokens", { tokens: 1200 }),
         );
         await wrapper.get('[data-testid="agent-skill-unbind-skill-binding-1"]').trigger("click");
         await flushPromises();
