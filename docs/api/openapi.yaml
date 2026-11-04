@@ -1436,6 +1436,47 @@ paths:
           description: 'PARTICIPANT_ALREADY_EXISTS | PARTICIPANT_PRIMARY_EXISTS | PARTICIPANT_ORDER_CONFLICT'
           content:
             application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } }
+  /api/v1/sessions/{sessionId}/participants/{participantId}/cursor:
+    patch:
+      operationId: advanceParticipantCursor
+      summary: Advance the caller's own read cursor for this session
+      description: |
+        PLAN-0660 T5.1 (contract `spec/session/user-channel.md` §2): advance-only
+        (`max(current, requested)`), clamped to the Session's current max `context_events.sequence`.
+        Self-only — the row must be a HUMAN participant whose `principal_id` is the caller;
+        otherwise **403 `CURSOR_SELF_ONLY`**. No counter is written: the response's
+        `readCursor.mentionCount` is derived from `wake_dispatch` notify rows past the pointer (§3).
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: sessionId, required: true, schema: { type: string } }
+        - { in: path, name: participantId, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [lastReadEventSeq]
+              properties:
+                lastReadEventSeq: { type: integer, minimum: 0, description: 'Target read position; advance-only + clamped to the session max sequence.' }
+      responses:
+        '200':
+          description: The updated cursor view (same CursorView shape the list endpoint returns)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  lastReadEventSeq: { type: integer }
+                  mentionCount: { type: integer, description: 'DERIVED from wake_dispatch notify rows past the pointer (PLAN-0660 T5.2); not a stored column.' }
+                  updatedAt: { type: string, format: date-time }
+        '400':
+          description: Body missing or lastReadEventSeq not an integer (400 INVALID_REQUEST)
+        '403':
+          description: Not the row's own human participant (403 CURSOR_SELF_ONLY)
+        '404':
+          description: Session or participant not found (404 SESSION_NOT_FOUND / PARTICIPANT_NOT_FOUND)
+
   /api/v1/sessions/{sessionId}/participants/{participantId}:
     patch:
       operationId: updateSessionParticipant
@@ -1704,6 +1745,43 @@ paths:
         '403': { $ref: '#/components/responses/Problem' }
         '404': { $ref: '#/components/responses/Problem' }
         '503': { $ref: '#/components/responses/Problem' }
+  /api/v1/chat/runs/{runId}/context-fingerprint:
+    get:
+      operationId: getChatRunContextFingerprint
+      summary: Read a run's context fingerprint, optionally diffed against another run
+      description: |
+        PLAN-0666 (BL-269): returns the layered fingerprint recorded when this run was
+        **first dispatched** (`dispatchAttempt: 1`). A context-overflow re-dispatch of the
+        same run produces a second outbound document that is **not** recorded; attempt-level
+        fingerprints are v2. `tools` is not observable from CP and is always
+        `{"unavailable":"agent_side"}` (v2: reported by the Agent).
+
+        **Two-level model (assertion A1):** a stored document has `status` in exactly
+        `ok|disabled|error`; `not_dispatched` is a read-side synthetic state and is never
+        stored. A run with no document returns `available=false + reason`, and that absence
+        must **never** be mapped to `disabled` or `error` (`pre_plan` = row predates the plan;
+        `not_dispatched` = never dispatched). **Assertion A2:** a layer that is unavailable is
+        reported as `unavailable`, never downgraded to `unchanged`.
+
+        With `against`, both runs must belong to the same Session (`409 DIFF_SESSION_MISMATCH`).
+        Authorization reuses the run-trace path (run identity + current Session); no new bypass.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: runId, required: true, schema: { type: string, format: uuid } }
+        - { in: query, name: against, required: false, description: Baseline run id (same Session only)., schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Fingerprint envelope, or fingerprint diff when `against` is supplied
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/ContextFingerprintView'
+                  - $ref: '#/components/schemas/ContextFingerprintDiffView'
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
   /api/v1/chat/runs/{runId}/guidance:
     post:
       operationId: submitChatRunGuidance
@@ -4044,6 +4122,107 @@ components:
           schema: { type: string, enum: [no-store] }
       content: { application/problem+json: { schema: { $ref: '#/components/schemas/ResourceExhaustedProblem' } } }
   schemas:
+    ContextFingerprintView:
+      type: object
+      description: |
+        PLAN-0666 read-side envelope (assertion A1). `available=false` means no stored document
+        exists — it is never re-encoded as `disabled`/`error`.
+      required: [runId, available]
+      properties:
+        runId: { type: string, format: uuid }
+        available: { type: boolean }
+        reason:
+          type: string
+          nullable: true
+          enum: [pre_plan, not_dispatched]
+          description: Present iff `available=false`. `not_dispatched` is read-side only.
+        fingerprint:
+          nullable: true
+          allOf: [{ $ref: '#/components/schemas/ContextFingerprint' }]
+    ContextFingerprint:
+      type: object
+      description: |
+        Stored document (assertion A1): `status` is exactly one of `ok`/`disabled`/`error`;
+        `disabled` is the only state with `enabled=false`; `error` stays enabled (fail-open).
+      required: [enabled, status]
+      properties:
+        enabled: { type: boolean }
+        status: { type: string, enum: [ok, disabled, error] }
+        reason: { type: string, nullable: true, enum: [workspace_disabled] }
+        reasonCode: { type: string, nullable: true, description: 'Closed set, e.g. HASH_FAILED.' }
+        algo: { type: string, example: sha256 }
+        dispatchAttempt: { type: integer, minimum: 1, description: 'v1 is always 1 (first dispatch only).' }
+        layers:
+          type: object
+          additionalProperties:
+            oneOf:
+              - $ref: '#/components/schemas/ContextFingerprintLayer'
+              - $ref: '#/components/schemas/ContextFingerprintUnavailableLayer'
+        outbound:
+          oneOf:
+            - $ref: '#/components/schemas/ContextFingerprintLayer'
+            - $ref: '#/components/schemas/ContextFingerprintUnavailableLayer'
+    ContextFingerprintLayer:
+      type: object
+      required: [hash, count, bytes]
+      properties:
+        hash: { type: string, description: sha256 hex over canonical JSON. }
+        count: { type: integer }
+        bytes: { type: integer }
+        templateId: { type: string }
+        version: { type: integer }
+        layer: { type: string }
+    ContextFingerprintUnavailableLayer:
+      type: object
+      required: [unavailable]
+      properties:
+        unavailable: { type: string, description: 'Closed reasons: agent_side | not_provided.' }
+    ContextFingerprintDiffView:
+      type: object
+      required: [againstRunId, runId, status]
+      properties:
+        againstRunId: { type: string, format: uuid }
+        runId: { type: string, format: uuid }
+        status: { type: string, enum: [comparable, unavailable] }
+        sides:
+          type: array
+          items:
+            type: object
+            properties:
+              side: { type: string, enum: [against, current] }
+              reason: { type: string, nullable: true }
+              status: { type: string, nullable: true }
+        layers:
+          type: object
+          additionalProperties: { $ref: '#/components/schemas/ContextFingerprintLayerDiff' }
+        outbound:
+          type: object
+          properties:
+            status: { type: string, enum: [unchanged, changed, added, removed, unavailable, absent] }
+            bytesDelta: { type: integer }
+        dispatchAttempt:
+          type: object
+          properties:
+            against: { type: integer }
+            current: { type: integer }
+        summary:
+          type: object
+          properties:
+            changedLayers: { type: array, items: { type: string } }
+            unavailableLayers: { type: array, items: { type: string } }
+    ContextFingerprintLayerDiff:
+      type: object
+      required: [layer, status]
+      description: 'Assertion A2: unavailable is never downgraded to unchanged.'
+      properties:
+        layer: { type: string }
+        status:
+          type: string
+          enum: [unchanged, 'changed(sameShape)', 'changed(grew)', 'changed(shrank)', added, removed, unavailable, absent]
+        countDelta: { type: integer }
+        bytesDelta: { type: integer }
+        againstReason: { type: string, nullable: true }
+        currentReason: { type: string, nullable: true }
     UserCapabilities:
       type: object
       description: 'PLAN-0610 W3-2b: binding-backed capability projection that replaces the retired role string (decision #22).'

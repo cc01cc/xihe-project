@@ -67,7 +67,8 @@ public final class PermissionAtomCatalog {
     /** Canonical resource pattern of a wildcard atom (mirrors the {@code permissions} shape). */
     public static final String WILDCARD = "*";
 
-    public record Atom(String name, String scopeClass, boolean capability, String canonicalResource) {
+    public record Atom(String name, String scopeClass, boolean capability, String canonicalResource,
+                       boolean agentPrincipalForbidden) {
 
         public boolean instanceOnly() {
             return SCOPE_CLASS_INSTANCE.equals(scopeClass);
@@ -78,6 +79,42 @@ public final class PermissionAtomCatalog {
             return AccessScope.INSTANCE.equals(scopeType) || !instanceOnly();
         }
     }
+
+    /**
+     * PLAN-0651 M2 (Lead ruling 2026-11-05): the <b>one</b> source of truth for "an agent principal
+     * may never hold this atom" — instance-domain administration, credentials, account/template/role
+     * and principal management, the three capability atoms, and the workspace-management faces.
+     *
+     * <p>The rule in one sentence: <b>instance-domain things are off limits to an agent; workspace
+     * things are decided by the workspace owner through roles.</b> That is why N5–N9
+     * ({@code MANAGE_SKILL_LIBRARY}, {@code MANAGE_PROVIDER_CONNECTIONS},
+     * {@code USE_WORKSPACE_RUNTIME}, {@code MANAGE_WORKSPACE_RUNTIME},
+     * {@code MANAGE_WORKSPACE_POLICY}) are deliberately <b>not</b> here: forbidding them made every
+     * {@code WS_EDITOR} role unbindable to an agent and would also forbid an agent from running code
+     * ({@code USE_WORKSPACE_RUNTIME}).</p>
+     */
+    private static final Set<String> AGENT_FORBIDDEN_ATOMS = Set.of(
+            // instance-domain content / secret
+            ToolFaceRegistry.ACTION_READ_INSTANCE_CONTENT,
+            ToolFaceRegistry.ACTION_WRITE_INSTANCE_CONTENT,
+            ToolFaceRegistry.ACTION_VIEW_SECRET_CONTENT,
+            // credentials
+            ToolFaceRegistry.ACTION_CREDENTIAL_USE,
+            ToolFaceRegistry.ACTION_CREDENTIAL_REVEAL,
+            ToolFaceRegistry.ACTION_CREDENTIAL_MANAGE,
+            // accounts / templates / roles / principals
+            ToolFaceRegistry.ACTION_CREATE_ACCOUNT,
+            ToolFaceRegistry.ACTION_CREATE_TEMPLATE,
+            ToolFaceRegistry.ACTION_MANAGE_ROLES,
+            ToolFaceRegistry.ACTION_OWN_AGENT,
+            ToolFaceRegistry.ACTION_MANAGE_AGENT_PRINCIPALS,
+            // caps
+            CAP_INSTANCE_SUPER,
+            CAP_INSTANCE_ADMIN,
+            CAP_WORKSPACE_ADMIN,
+            // workspace management faces
+            ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_AGENTS,
+            ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_MEMBERS);
 
     private static final List<String> ACTION_ATOM_NAMES = List.of(
             ToolFaceRegistry.ACTION_READ,
@@ -106,7 +143,17 @@ public final class PermissionAtomCatalog {
             // PLAN-0651 M1 (D51-26/D51-27): management atoms replacing the coarse
             // instance-administrator bypass on the agent-principal and member faces.
             ToolFaceRegistry.ACTION_MANAGE_AGENT_PRINCIPALS,
-            ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_MEMBERS);
+            ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_MEMBERS,
+            // PLAN-0651 M2 T2.1 (D51-27): the P1 face atoms. 19 + 8 = 27 action atoms; the terminal
+            // count 27 = the 17 original atoms + the 10 this plan adds (N1/N10 landed in M1).
+            ToolFaceRegistry.ACTION_READ_INSTANCE_CONTENT,
+            ToolFaceRegistry.ACTION_WRITE_INSTANCE_CONTENT,
+            ToolFaceRegistry.ACTION_VIEW_SECRET_CONTENT,
+            ToolFaceRegistry.ACTION_MANAGE_SKILL_LIBRARY,
+            ToolFaceRegistry.ACTION_MANAGE_PROVIDER_CONNECTIONS,
+            ToolFaceRegistry.ACTION_USE_WORKSPACE_RUNTIME,
+            ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_RUNTIME,
+            ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_POLICY);
 
     private static final List<String> CAPABILITY_ATOM_NAMES = List.of(
             CAP_INSTANCE_SUPER, CAP_INSTANCE_ADMIN, CAP_WORKSPACE_ADMIN);
@@ -124,6 +171,11 @@ public final class PermissionAtomCatalog {
             ToolFaceRegistry.ACTION_OWN_AGENT,
             // PLAN-0651 M1 (D51-26): instance-level agent-principal authority acts on the instance.
             ToolFaceRegistry.ACTION_MANAGE_AGENT_PRINCIPALS,
+            // PLAN-0651 M2 T2.1: reading/writing instance content and revealing secrets all act on
+            // the whole instance, so they stay instance-bindable only (decision #27).
+            ToolFaceRegistry.ACTION_READ_INSTANCE_CONTENT,
+            ToolFaceRegistry.ACTION_WRITE_INSTANCE_CONTENT,
+            ToolFaceRegistry.ACTION_VIEW_SECRET_CONTENT,
             CAP_INSTANCE_SUPER,
             CAP_INSTANCE_ADMIN);
 
@@ -158,10 +210,12 @@ public final class PermissionAtomCatalog {
     private static Map<String, Atom> buildAtoms() {
         Map<String, Atom> atoms = new LinkedHashMap<>();
         for (String name : ACTION_ATOM_NAMES) {
-            atoms.put(name, new Atom(name, scopeClassOfName(name), false, actionResource(name)));
+            atoms.put(name, new Atom(name, scopeClassOfName(name), false, actionResource(name),
+                    AGENT_FORBIDDEN_ATOMS.contains(name)));
         }
         for (String name : CAPABILITY_ATOM_NAMES) {
-            atoms.put(name, new Atom(name, scopeClassOfName(name), true, WILDCARD));
+            atoms.put(name, new Atom(name, scopeClassOfName(name), true, WILDCARD,
+                    AGENT_FORBIDDEN_ATOMS.contains(name)));
         }
         return Map.copyOf(atoms);
     }
@@ -206,19 +260,14 @@ public final class PermissionAtomCatalog {
      * must not manage the workspace or other subjects.</p>
      */
     public static Set<String> agentPrincipalForbiddenAtoms() {
-        Set<String> forbidden = new java.util.LinkedHashSet<>(INSTANCE_ONLY_ATOMS);
+        // Derived from the per-atom metadata below (single source of truth): an atom joins the set
+        // by carrying the flag, never by a second hand-maintained list.
+        java.util.LinkedHashSet<String> forbidden = new java.util.LinkedHashSet<>();
         for (Atom atom : ATOMS.values()) {
-            if (atom.capability()) {
+            if (atom.agentPrincipalForbidden()) {
                 forbidden.add(atom.name());
             }
         }
-        forbidden.add(ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_AGENTS);
-        forbidden.add(ToolFaceRegistry.ACTION_MANAGE_ROLES);
-        // PLAN-0651 D51-27: "bindable in both scopes" does NOT mean grantable to an agent
-        // principal. Every atom this plan adds answers an administrative face, so it joins the
-        // forbidden set explicitly — today these faces are always false for an agent (they can only
-        // come from a capability atom, and capability atoms are already forbidden above).
-        forbidden.add(ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_MEMBERS);
         return Set.copyOf(forbidden);
     }
 

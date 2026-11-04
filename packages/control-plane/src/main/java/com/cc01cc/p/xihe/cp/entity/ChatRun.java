@@ -96,6 +96,18 @@ public class ChatRun {
     @Column(name = "skills_snapshot", nullable = false, columnDefinition = "jsonb")
     private JsonNode skillsSnapshot = JsonNodeFactory.instance.objectNode();
 
+    /**
+     * PLAN-0666 M1b (BL-269): layered context fingerprint of the FIRST dispatch.
+     *
+     * <p>Nullable on purpose: rows written before the plan and runs that never dispatched have no
+     * document, and the read API names that absence explicitly (`pre_plan` / `not_dispatched`)
+     * instead of faking a state (two-level model, spec §可观测性). Write-once is enforced in SQL
+     * (`context_fingerprint IS NULL` guard), so a context-overflow re-dispatch cannot replace it.</p>
+     */
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "context_fingerprint", columnDefinition = "jsonb")
+    private JsonNode contextFingerprint;
+
     @Column(name = "user_message_id", length = 36)
     @Convert(converter = UuidStringConverter.class)
     private String userMessageId;
@@ -272,6 +284,10 @@ public class ChatRun {
     public void setSkillsSnapshot(JsonNode skillsSnapshot) {
         this.skillsSnapshot = skillsSnapshot == null
                 ? JsonNodeFactory.instance.objectNode() : skillsSnapshot.deepCopy();
+    }
+    public JsonNode getContextFingerprint() { return contextFingerprint; }
+    public void setContextFingerprint(JsonNode contextFingerprint) {
+        this.contextFingerprint = contextFingerprint == null ? null : contextFingerprint.deepCopy();
     }
     public String getUserMessageId() { return userMessageId; }
     public void setUserMessageId(String userMessageId) { this.userMessageId = userMessageId; }

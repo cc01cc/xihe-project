@@ -108,7 +108,25 @@ public class SystemAccessRoleCatalog {
                                         AtomRef.wildcard(
                                                 ToolFaceRegistry.ACTION_MANAGE_AGENT_PRINCIPALS),
                                         AtomRef.wildcard(
-                                                ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_MEMBERS)))),
+                                                ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_MEMBERS),
+                                        // PLAN-0651 M2 T2.1: every P1 atom is in the fixed
+                                        // instance-administrator set (D51-27 default grant set).
+                                        AtomRef.wildcard(
+                                                ToolFaceRegistry.ACTION_READ_INSTANCE_CONTENT),
+                                        AtomRef.wildcard(
+                                                ToolFaceRegistry.ACTION_WRITE_INSTANCE_CONTENT),
+                                        AtomRef.wildcard(
+                                                ToolFaceRegistry.ACTION_VIEW_SECRET_CONTENT),
+                                        AtomRef.wildcard(
+                                                ToolFaceRegistry.ACTION_MANAGE_SKILL_LIBRARY),
+                                        AtomRef.wildcard(
+                                                ToolFaceRegistry.ACTION_MANAGE_PROVIDER_CONNECTIONS),
+                                        AtomRef.wildcard(
+                                                ToolFaceRegistry.ACTION_USE_WORKSPACE_RUNTIME),
+                                        AtomRef.wildcard(
+                                                ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_RUNTIME),
+                                        AtomRef.wildcard(
+                                                ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_POLICY)))),
                 new RoleSeed(USER_ID, USER, "User",
                         "Instance scope: the registration minimal set "
                                 + "(read/write/delete/exec/network) plus CREATE_OWN_AGENT.",
@@ -122,17 +140,41 @@ public class SystemAccessRoleCatalog {
                                         AtomRef.wildcard(ToolFaceRegistry.ACTION_DELETE),
                                         AtomRef.wildcard(ToolFaceRegistry.ACTION_EXEC)),
                                 List.of(AtomRef.wildcard(ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_AGENTS),
-                                        AtomRef.wildcard(PermissionAtomCatalog.CAP_WORKSPACE_ADMIN)))),
+                                        AtomRef.wildcard(PermissionAtomCatalog.CAP_WORKSPACE_ADMIN),
+                                        // PLAN-0651 M2 T2.1: owner manages skills, providers, runtime
+                                        // and workspace policy; N10 (members) stays unassigned by
+                                        // ruling D51-26.
+                                        AtomRef.wildcard(
+                                                ToolFaceRegistry.ACTION_MANAGE_SKILL_LIBRARY),
+                                        AtomRef.wildcard(
+                                                ToolFaceRegistry.ACTION_MANAGE_PROVIDER_CONNECTIONS),
+                                        AtomRef.wildcard(
+                                                ToolFaceRegistry.ACTION_USE_WORKSPACE_RUNTIME),
+                                        AtomRef.wildcard(
+                                                ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_RUNTIME),
+                                        AtomRef.wildcard(
+                                                ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_POLICY)))),
                 new RoleSeed(WS_EDITOR_ID, WS_EDITOR, "Workspace Editor",
                         "Workspace scope: read/write/delete/exec.",
                         List.of(
                                 AtomRef.wildcard(ToolFaceRegistry.ACTION_READ),
                                 AtomRef.wildcard(ToolFaceRegistry.ACTION_WRITE),
                                 AtomRef.wildcard(ToolFaceRegistry.ACTION_DELETE),
-                                AtomRef.wildcard(ToolFaceRegistry.ACTION_EXEC))),
+                                AtomRef.wildcard(ToolFaceRegistry.ACTION_EXEC),
+                                // PLAN-0651 M2 T2.1: editors manage providers, runtime use and
+                                // workspace policy; skills stay owner-level and N10 stays unassigned.
+                                AtomRef.wildcard(
+                                        ToolFaceRegistry.ACTION_MANAGE_PROVIDER_CONNECTIONS),
+                                AtomRef.wildcard(ToolFaceRegistry.ACTION_USE_WORKSPACE_RUNTIME),
+                                AtomRef.wildcard(
+                                        ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_POLICY))),
                 new RoleSeed(WS_VIEWER_ID, WS_VIEWER, "Workspace Viewer",
                         "Workspace scope: read only.",
-                        List.of(AtomRef.wildcard(ToolFaceRegistry.ACTION_READ))),
+                        List.of(AtomRef.wildcard(ToolFaceRegistry.ACTION_READ),
+                                // PLAN-0651 M2 T2.1: a viewer may use the workspace runtime (read the
+                                // environment snapshot) but never manage it.
+                                AtomRef.wildcard(
+                                        ToolFaceRegistry.ACTION_USE_WORKSPACE_RUNTIME))),
                 // 2026-11-04 ruling (task-25): SPAWN_AGENT is a workspace-scoped action atom, so a
                 // non-administrative role can carry it and an agent principal may be bound to it.
                 // Single atom on purpose: delegation grants nothing else (no MANAGE_* atoms, no

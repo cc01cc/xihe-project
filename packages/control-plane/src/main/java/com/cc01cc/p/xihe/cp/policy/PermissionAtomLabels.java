@@ -75,6 +75,23 @@ public final class PermissionAtomLabels {
         put(labels, PermissionAtomCatalog.CAP_INSTANCE_SUPER, "实例超级管理员", "Instance super admin");
         put(labels, PermissionAtomCatalog.CAP_INSTANCE_ADMIN, "实例管理员", "Instance admin");
         put(labels, PermissionAtomCatalog.CAP_WORKSPACE_ADMIN, "工作区管理员", "Workspace admin");
+        // PLAN-0651 M2 T2.1: the eight P1 atoms.
+        put(labels, ToolFaceRegistry.ACTION_READ_INSTANCE_CONTENT,
+                "读取实例内容", "Read instance content");
+        put(labels, ToolFaceRegistry.ACTION_WRITE_INSTANCE_CONTENT,
+                "写实例内容", "Write instance content");
+        put(labels, ToolFaceRegistry.ACTION_VIEW_SECRET_CONTENT,
+                "查看密文内容", "View secret content");
+        put(labels, ToolFaceRegistry.ACTION_MANAGE_SKILL_LIBRARY,
+                "管理技能库", "Manage skill library");
+        put(labels, ToolFaceRegistry.ACTION_MANAGE_PROVIDER_CONNECTIONS,
+                "管理模型连接", "Manage provider connections");
+        put(labels, ToolFaceRegistry.ACTION_USE_WORKSPACE_RUNTIME,
+                "使用工作区运行态", "Use workspace runtime");
+        put(labels, ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_RUNTIME,
+                "管理工作区运行态", "Manage workspace runtime");
+        put(labels, ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_POLICY,
+                "管理工作区策略", "Manage workspace policy");
         return labels;
     }
 

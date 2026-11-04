@@ -1,12 +1,14 @@
 package com.cc01cc.p.xihe.cp.service;
 
 import com.cc01cc.p.xihe.cp.config.CpApiException;
+import com.cc01cc.p.xihe.cp.context.entity.ContextEvent;
 import com.cc01cc.p.xihe.cp.context.repository.EventStoreRepository;
 import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
 import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.entity.SessionParticipant;
 import com.cc01cc.p.xihe.cp.entity.SessionParticipantCursor;
 import com.cc01cc.p.xihe.cp.entity.User;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.cc01cc.p.xihe.cp.policy.GrantAuthorizationService;
 import com.cc01cc.p.xihe.cp.policy.PolicyRequest;
 import com.cc01cc.p.xihe.cp.policy.ToolFaceRegistry;
@@ -77,6 +79,12 @@ public class SessionParticipantService {
     /** PLAN-0660 T5.1/T5.2: session max sequence (clamp) + the derived unread aggregate. */
     private final EventStoreRepository eventStoreRepository;
 
+    private static final org.slf4j.Logger logger =
+            org.slf4j.LoggerFactory.getLogger(SessionParticipantService.class);
+    private static final String EVENT_WAKE_DISPATCH = "wake_dispatch";
+    private static final com.fasterxml.jackson.databind.ObjectReader PAYLOAD_READER =
+            new com.fasterxml.jackson.databind.ObjectMapper().reader();
+
     public SessionParticipantService(SessionParticipantRepository participantRepository,
                                      SessionParticipantCursorRepository cursorRepository,
                                      SessionRepository sessionRepository,
@@ -111,8 +119,8 @@ public class SessionParticipantService {
         }
         Map<UUID, String> humanNames = humanDisplayNames(rows);
         Map<UUID, AgentPrincipal> agents = agentPrincipals(rows);
-        // PLAN-0660 T5.2: unread is DERIVED once for the whole roster (one SQL, never N+1).
-        Map<UUID, Integer> unread = derivedMentionCounts(session.getId());
+        // PLAN-0660 T5.2: unread is DERIVED once for the whole roster (one query + Java aggregation).
+        Map<UUID, Integer> unread = derivedMentionCounts(session.getId(), cursorThresholds(cursors));
         List<ParticipantView> views = new ArrayList<>(rows.size());
         for (SessionParticipant row : rows) {
             views.add(toView(row, cursors.get(row.getId()), humanNames.get(row.getPrincipalId()),
@@ -170,7 +178,9 @@ public class SessionParticipantService {
         long next = Math.max(current, clamped);
         cursor.setLastReadEventSeq(next);
         SessionParticipantCursor saved = cursorRepository.save(cursor);
-        int unread = derivedMentionCounts(session.getId()).getOrDefault(participantUuid, 0);
+        long threshold = saved.getLastReadEventSeq() == null ? 0L : saved.getLastReadEventSeq();
+        int unread = derivedMentionCounts(session.getId(), Map.of(participantUuid, threshold))
+                .getOrDefault(participantUuid, 0);
         return new CursorView(saved.getLastReadEventSeq(), unread, saved.getUpdatedAt());
     }
 
@@ -290,9 +300,13 @@ public class SessionParticipantService {
             row.setDisabledAt(Boolean.TRUE.equals(request.disabled()) ? Instant.now() : null);
         }
         SessionParticipant saved = participantRepository.save(row);
-        return toView(saved, cursorRepository.findById(saved.getId()).orElse(null), humanDisplayName(saved),
+        SessionParticipantCursor savedCursor = cursorRepository.findById(saved.getId()).orElse(null);
+        long savedThreshold = savedCursor == null || savedCursor.getLastReadEventSeq() == null
+                ? 0L : savedCursor.getLastReadEventSeq();
+        return toView(saved, savedCursor, humanDisplayName(saved),
                 isSelfOwned(saved, actorId, session, agentPrincipals(List.of(saved))),
-                derivedMentionCounts(saved.getSessionId()).getOrDefault(saved.getId(), 0));
+                derivedMentionCounts(saved.getSessionId(), Map.of(saved.getId(), savedThreshold))
+                        .getOrDefault(saved.getId(), 0));
     }
 
     @Transactional
@@ -596,20 +610,75 @@ public class SessionParticipantService {
     }
 
     /**
-     * PLAN-0660 T5.2: {@code participantId → unread mention count} for one session, in ONE query.
+     * PLAN-0660 T5.2 (BL-273): {@code participantId → unread mention count} for one session.
      *
      * <p>Unread is a <b>derived</b> value: notify rows whose {@code sequence} is past that
      * participant's pointer. It is deliberately not a stored counter (D66-07 / B-4,
      * `spec/session/user-channel.md` §3).</p>
+     *
+     * <p><b>Dialect-neutral on purpose (BL-273):</b> the events are fetched with a plain derived
+     * query and the {@code payload} JSON is interpreted in Java. The first implementation pushed
+     * {@code payload->>'outcome'} into native SQL — PostgreSQL-only syntax that H2
+     * ({@code MODE=PostgreSQL}) rejects with {@code SQL 42000}, which broke the roster on the H2 lane
+     * while the unit tests stayed green because the repository was mocked. The rule that came out of
+     * it: <em>any new native SQL needs a test that really executes it on the test database's dialect</em>.</p>
      */
-    private Map<UUID, Integer> derivedMentionCounts(UUID sessionId) {
+    private Map<UUID, Integer> derivedMentionCounts(UUID sessionId,
+                                                    Map<UUID, Long> cursorSeqByParticipant) {
+        if (cursorSeqByParticipant == null || cursorSeqByParticipant.isEmpty()) {
+            return Map.of();
+        }
+        List<ContextEvent> events = eventStoreRepository
+                .findBySessionIdAndEventTypeOrderBySequenceAsc(sessionId.toString(), EVENT_WAKE_DISPATCH);
         Map<UUID, Integer> counts = new LinkedHashMap<>();
-        for (Object[] row : eventStoreRepository.countDerivedMentionsBySession(sessionId)) {
-            UUID participantId = (UUID) row[0];
-            long count = ((Number) row[1]).longValue();
-            counts.put(participantId, count > Integer.MAX_VALUE ? Integer.MAX_VALUE : (int) count);
+        for (ContextEvent event : events) {
+            String participantId = notifyTargetParticipant(event.getPayload());
+            if (participantId == null || event.getSequence() == null) {
+                continue;
+            }
+            UUID participant;
+            try {
+                participant = UUID.fromString(participantId);
+            } catch (IllegalArgumentException malformed) {
+                continue;
+            }
+            Long threshold = cursorSeqByParticipant.get(participant);
+            if (threshold == null || event.getSequence() <= threshold) {
+                continue;
+            }
+            counts.merge(participant, 1, Integer::sum);
         }
         return counts;
+    }
+
+    /**
+     * The {@code participantId} of a {@code wake_dispatch} row whose outcome is {@code notify}, or
+     * {@code null} for every other row (other outcomes are not unread mentions).
+     */
+    private static String notifyTargetParticipant(String payloadJson) {
+        if (payloadJson == null || payloadJson.isBlank()) {
+            return null;
+        }
+        try {
+            JsonNode payload = PAYLOAD_READER.readTree(payloadJson);
+            if (!"notify".equals(payload.path("outcome").asText())) {
+                return null;
+            }
+            String participantId = payload.path("participantId").asText(null);
+            return participantId == null || participantId.isBlank() ? null : participantId;
+        } catch (java.io.IOException malformed) {
+            // A payload we cannot parse cannot be attributed to a participant — log it, never guess.
+            logger.warn("[LIFECYCLE] service=cp event=wake_dispatch_payload_unparsable reason={}",
+                    malformed.getClass().getSimpleName());
+            return null;
+        }
+    }
+
+    private static Map<UUID, Long> cursorThresholds(Map<UUID, SessionParticipantCursor> cursors) {
+        Map<UUID, Long> thresholds = new LinkedHashMap<>();
+        cursors.forEach((participantId, cursor) -> thresholds.put(participantId,
+                cursor.getLastReadEventSeq() == null ? 0L : cursor.getLastReadEventSeq()));
+        return thresholds;
     }
 
     private ParticipantView toView(SessionParticipant row, SessionParticipantCursor cursor,
