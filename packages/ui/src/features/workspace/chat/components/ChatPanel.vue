@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
@@ -349,6 +349,54 @@ async function loadSessionMessages(sessionId: string, requiredMessageIds?: Reado
     }
 }
 
+// BL-228: 刷新重开（冷启动）时若会话还有在途 run，本页没有它的 SSE —— 终态前历史投影缺
+// 在途回复，而 watch(isStreaming) 只管本页发起的 run，列表会永远停在"用户消息"一条
+// （goldpath G2-e reload 后 [data-slot=message] 卡 1/2 的根因）。对冷启动做有界追平：
+// 只要 listSessionRuns 还有非终态 run，就周期性重拉历史，直到无活动 run 或达到上限。
+// loadMessages 在 isStreaming 时早退，不会覆盖本页新发起的 live 流。
+const RUN_CATCHUP_INTERVAL_MS = 1000;
+const RUN_CATCHUP_MAX_ATTEMPTS = 30;
+const runCatchupTimers = new Map<string, ReturnType<typeof setInterval>>();
+
+function stopRunCatchup(sessionId: string): void {
+    const timer = runCatchupTimers.get(sessionId);
+    if (timer !== undefined) {
+        clearInterval(timer);
+        runCatchupTimers.delete(sessionId);
+    }
+}
+
+function catchUpInFlightRunProjection(sessionId: string): void {
+    stopRunCatchup(sessionId);
+    let attempts = 0;
+    // 首次 tick 只见已终态的会话时不重拉（挂载那次 loadSessionMessages 已是新鲜投影），
+    // 避免每次进会话都多打一次 getMessages。
+    let sawActiveRun = false;
+    const tick = async (): Promise<void> => {
+        attempts += 1;
+        const exhausted = attempts >= RUN_CATCHUP_MAX_ATTEMPTS;
+        try {
+            const response = await api.listSessionRuns(sessionId, { page: 0, size: 50 });
+            if (props.sessionId !== sessionId) {
+                stopRunCatchup(sessionId);
+                return;
+            }
+            const hasActiveRun = response.runs.some((run) => !isTerminalRunStatus(run.status));
+            if (hasActiveRun) sawActiveRun = true;
+            if (sawActiveRun) await loadSessionMessages(sessionId);
+            if (!hasActiveRun || exhausted) stopRunCatchup(sessionId);
+        } catch (cause) {
+            logger.warn("run projection catch-up tick failed", cause);
+            if (exhausted) stopRunCatchup(sessionId);
+        }
+    };
+    void tick();
+    runCatchupTimers.set(
+        sessionId,
+        setInterval(() => void tick(), RUN_CATCHUP_INTERVAL_MS),
+    );
+}
+
 /**
  * PLAN-0464 T2.1: the waiting link lives on the child ChatRun row, so the
  * projection reads `GET /chat/sessions/{childSessionId}/runs` once per child
@@ -536,6 +584,7 @@ watch(
         followUpQueueContinuing.value = false;
         followUpQueueBusyItemId.value = null;
         if (previousSessionId && previousSessionId !== sessionId) {
+            stopRunCatchup(previousSessionId);
             chatStore.detachLiveSession(previousSessionId);
             lastRunId.value = undefined;
         }
@@ -544,10 +593,16 @@ watch(
             void loadSessionMessages(sessionId);
             void refreshDerivedState(sessionId);
             void refreshFollowUpQueue(sessionId);
+            catchUpInFlightRunProjection(sessionId);
         }
     },
     { immediate: true },
 );
+
+onBeforeUnmount(() => {
+    // 删除当前项对 Map 迭代安全（与 chatStore 的 Set 迭代注释同理）。
+    for (const id of runCatchupTimers.keys()) stopRunCatchup(id);
+});
 
 watch(selectedBranchId, (branchId, previousBranchId) => {
     if (branchId && branchId !== previousBranchId && props.sessionId) {
