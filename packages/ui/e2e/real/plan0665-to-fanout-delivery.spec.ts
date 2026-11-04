@@ -44,7 +44,24 @@ import { workspaceChatPath } from "../../src/lib/routes";
  *
  * 证据：`.local/evidence/plan-0665/`（截图 + 观测 JSON + DB 转储），绝不写入 worktree。
  */
-const EVIDENCE_DIR = path.resolve(process.cwd(), "../../../.local/evidence/plan-0665");
+/**
+ * 证据根**不依赖 `process.cwd()`**（直跑 Playwright / 从 worktree 跑时 cwd 不同，会写到
+ * "不知道去哪了"的位置）。优先用 e2e-host 注入的 `XIHE_WORKSPACE_HOST_ROOT`
+ * （= `<one>/A03-xihe/.tmp/e2e-host/<runId>`，上 4 级即 one 根）；手工直跑时从 cwd 上 3 级
+ * 推导，worktree 下多退一级 `.worktrees`。
+ */
+function resolveEvidenceDir(): string {
+    const hostRoot = process.env.XIHE_WORKSPACE_HOST_ROOT;
+    let oneRoot: string;
+    if (hostRoot) {
+        oneRoot = path.resolve(hostRoot, "../../../..");
+    } else {
+        const threeUp = path.resolve(process.cwd(), "../../..");
+        oneRoot = path.basename(threeUp) === ".worktrees" ? path.resolve(threeUp, "..") : threeUp;
+    }
+    return path.join(oneRoot, ".local", "evidence", "plan-0665");
+}
+const EVIDENCE_DIR = resolveEvidenceDir();
 
 /**
  * 真栈演示夹具（e2e-host `--llm-mode=success` 的 fake LLM 通道，Lead 2026-11-05 授权）：
@@ -206,6 +223,7 @@ test.describe("@host PLAN-0665 M2 real TO fan-out delivery", () => {
         const observed: Record<string, unknown> = {
             plan: "PLAN-0665",
             task: "T2.2/T2.3 real demo",
+            evidenceDir: EVIDENCE_DIR,
             steps: {} as Record<string, unknown>,
         };
         const steps = observed.steps as Record<string, unknown>;
