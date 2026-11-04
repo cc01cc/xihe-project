@@ -37,6 +37,12 @@ public class ContextTemplateService {
      * that was the second half of BL-281 ("fix landed but memory still never reaches outbound").
      */
     private static final UUID BUILTIN_MEMORY_COMPONENT = UUID.fromString("00000000-0000-4000-8000-000000000013");
+    /**
+     * BL-285: the same gap existed for skills — the built-in manifest had no {@code skill_catalog}
+     * entry, so {@code ${xh.skill_catalog}} stayed empty on a fresh install even though the component
+     * implementation (PLAN-0628) was complete.
+     */
+    private static final UUID BUILTIN_SKILLS_COMPONENT = UUID.fromString("00000000-0000-4000-8000-000000000014");
     private static final Pattern COMPONENT_MARKER = Pattern.compile("\\{\\{component:([0-9a-fA-F-]{36})}}");
 
     private final ConfigService configService;
@@ -360,7 +366,8 @@ public class ContextTemplateService {
             template.put("name", "默认上下文");
             template.put("description", "平台内置上下文模板");
             template.put("document", "{{component:" + BUILTIN_PROMPT_COMPONENT + "}}\n\n{{component:"
-                    + BUILTIN_MEMORY_COMPONENT + "}}\n\n{{component:" + BUILTIN_HISTORY_COMPONENT + "}}");
+                    + BUILTIN_MEMORY_COMPONENT + "}}\n\n{{component:" + BUILTIN_SKILLS_COMPONENT
+                    + "}}\n\n{{component:" + BUILTIN_HISTORY_COMPONENT + "}}");
             ArrayNode components = objectMapper.createArrayNode();
             ObjectNode prompt = components.addObject();
             prompt.put("instanceId", BUILTIN_PROMPT_COMPONENT.toString());
@@ -375,6 +382,15 @@ public class ContextTemplateService {
             memory.put("type", "agent_memory");
             memory.put("enabled", true);
             memory.set("config", objectMapper.createObjectNode().put("maxEntries", 24).put("maxTokens", 4000));
+            // BL-285: skills listing joins the built-in manifest. The config keys are the ones
+            // SkillCatalogSourceService.requestFrom reads (maxSkills/includeDescriptions/sort) —
+            // CP owns the count bound, the Agent owns the token budget (PLAN-0628 D28-16).
+            ObjectNode skills = components.addObject();
+            skills.put("instanceId", BUILTIN_SKILLS_COMPONENT.toString());
+            skills.put("type", "skill_catalog");
+            skills.put("enabled", true);
+            skills.set("config", objectMapper.createObjectNode().put("maxSkills", 24)
+                    .put("includeDescriptions", true).put("sort", "binding"));
             ObjectNode history = components.addObject();
             history.put("instanceId", BUILTIN_HISTORY_COMPONENT.toString());
             history.put("type", "conversation_history");

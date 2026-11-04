@@ -25,6 +25,8 @@ const FALLBACK_CAPABILITIES: SessionParticipantCapabilities = {
  * - `forbidden` = 403 / `view === false`；
  * - `error` = 其它失败（可重试）。
  */
+import { createHintCoalescer } from "../chat/userChannelHintCoalescer";
+
 export const useSessionParticipantsStore = defineStore("sessionParticipants", () => {
     const sessionId = ref<string | null>(null);
     const participants = ref<SessionParticipantView[] | null>(null);
@@ -93,9 +95,27 @@ export const useSessionParticipantsStore = defineStore("sessionParticipants", ()
         await load(sessionId.value);
     }
 
+    /** PLAN-0660 T5.6: coalesces user-channel hints into one roster reload per window. */
+    const hintCoalescer = createHintCoalescer(() => sessionId.value, {
+        onFlush: () => {
+            void reload();
+        },
+    });
+
     /** 本地失效（例如刚 `DELETE` 过某行）：下一次 `ensureLoaded` 会重新拉取。 */
     function invalidate(): void {
         participants.value = null;
+    }
+
+    /**
+     * PLAN-0660 T5.6: a `user-events` hint arrived. The channel only says "something changed for
+     * this participant" — the badge keeps rendering the CP-derived `readCursor.mentionCount`, so the
+     * only thing to do here is re-read the roster, coalesced so a burst of hints costs ONE reload.
+     *
+     * @returns `true` when the hint belongs to the session currently rendered.
+     */
+    function onUserChannelHint(hintSessionId: string, participantId: string): boolean {
+        return hintCoalescer.push(hintSessionId, participantId);
     }
 
     return {
@@ -111,5 +131,6 @@ export const useSessionParticipantsStore = defineStore("sessionParticipants", ()
         ensureLoaded,
         reload,
         invalidate,
+        onUserChannelHint,
     };
 });
