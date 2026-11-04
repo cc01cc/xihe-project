@@ -75,6 +75,10 @@ public class WorkspaceService {
     @org.springframework.beans.factory.annotation.Autowired
     private WorkspaceNestedReposCache nestedReposCache;
 
+    /** PLAN-0641 T7.5 (BL-260): CP→Runtime direct_attach 注册推送。 */
+    @org.springframework.beans.factory.annotation.Autowired
+    private com.cc01cc.p.xihe.cp.runtime.RuntimeWorkspaceClient runtimeWorkspaceClient;
+
     public WorkspaceService(WorkspaceRepository workspaceRepository,
                             WorkspaceRootRepository workspaceRootRepository,
                             WorkspaceMembershipService memberships,
@@ -531,6 +535,11 @@ public class WorkspaceService {
                 ? "{\"image\":\"" + image + "\",\"profile\":\"" + profile + "\"}"
                 : "{}";
         executionSpecService.createExecutionSpec(workspace.getId().toString(), initialSpec, ownerId, "create");
+        // PLAN-0641 T7.5 (BL-260)：事务提交后把 hostPath + roots 登记到 Runtime；
+        // best-effort，失败不阻断 create（发现面/根操作会懒重试或全量重推）。
+        Workspace registeredWorkspace = workspace;
+        List<WorkspaceRoot> registeredRoots = validatedRoots;
+        scheduleAfterCommit(() -> pushWorkspaceRegistration(registeredWorkspace, registeredRoots));
         logger.info("Workspace created: id={} name={} storageRef={} storageMode={} executionMode={} profile={} image={} roots={}",
                 workspace.getId(), workspace.getName(), workspace.getStorageRef(),
                 storageMode, executionMode, profile, image, validatedRoots.size());
@@ -748,6 +757,11 @@ public class WorkspaceService {
                 "workspace_root", root.getId().toString(),
                 "position=" + root.getPosition()
                         + " path=" + auditRootPath(workspace, root));
+        // PLAN-0641 T7.5 (BL-260)：声明后推全量 roots（覆盖语义，天然幂等）。
+        List<WorkspaceRoot> allRoots = new java.util.ArrayList<>(existing);
+        allRoots.add(root);
+        Workspace currentWorkspace = workspace;
+        scheduleAfterCommit(() -> pushWorkspaceRegistration(currentWorkspace, allRoots));
         return root;
     }
 
@@ -796,6 +810,73 @@ public class WorkspaceService {
         auditLogger.recordDurableChange(actorId, workspaceId, "workspace_root_deleted",
                 "workspace_root", rootId,
                 "position=" + root.getPosition() + " path=" + auditRootPath(workspace, root));
+        // PLAN-0641 T7.5 (BL-260)：删除后重推剩余 roots，避免 Runtime 保留已删根。
+        List<WorkspaceRoot> remainingRoots = workspaceRootRepository
+                .findByWorkspaceIdAndDeletedAtIsNullOrderByPositionAsc(UUID.fromString(workspaceId));
+        Workspace currentWorkspace = workspace;
+        scheduleAfterCommit(() -> pushWorkspaceRegistration(currentWorkspace, remainingRoots));
+    }
+
+    /**
+     * PLAN-0641 T7.5 (BL-260)：把 direct_attach 工作区的 hostPath + 全量 roots 推给 Runtime。
+     * 托管形态（无 hostPath）不发；日志只含 ws id / roots 数量 / 结果，不含凭据与文件内容。
+     */
+    private boolean pushWorkspaceRegistration(Workspace workspace, List<WorkspaceRoot> roots) {
+        if (workspace == null || runtimeWorkspaceClient == null
+                || !"direct_attach".equals(workspace.getStorageMode())) {
+            return false;
+        }
+        String primaryPath = workspace.getHostPath();
+        if (primaryPath == null || primaryPath.isBlank()) {
+            return false;
+        }
+        List<Map<String, String>> payload = new java.util.ArrayList<>();
+        payload.add(Map.of("rootId", workspace.getId().toString(), "hostPath", primaryPath));
+        if (roots != null) {
+            for (WorkspaceRoot root : roots) {
+                if (root == null || root.getId() == null || root.getHostPath() == null
+                        || root.getHostPath().isBlank()) {
+                    continue;
+                }
+                if (root.getId().equals(workspace.getId())) {
+                    continue; // 主根已按 workspace 身份放在首位
+                }
+                payload.add(Map.of("rootId", root.getId().toString(), "hostPath", root.getHostPath()));
+            }
+        }
+        String executionMode = workspace.getExecutionMode() == null || workspace.getExecutionMode().isBlank()
+                ? "windows-host" : workspace.getExecutionMode();
+        return runtimeWorkspaceClient.registerWorkspace(
+                workspace.getId().toString(), primaryPath, executionMode, payload);
+    }
+
+    /**
+     * PLAN-0641 T7.5 (BL-260)：发现面懒重试入口。仅 direct_attach + hostPath 形态会推送；
+     * managed 工作区返回 false（有界懒重试不得改变托管路径语义）。
+     */
+    public boolean registerWorkspaceWithRuntimeBestEffort(String workspaceId) {
+        Workspace workspace = requireActiveWorkspace(workspaceId);
+        if (!"direct_attach".equals(workspace.getStorageMode())
+                || workspace.getHostPath() == null || workspace.getHostPath().isBlank()) {
+            return false;
+        }
+        List<WorkspaceRoot> roots = workspaceRootRepository
+                .findByWorkspaceIdAndDeletedAtIsNullOrderByPositionAsc(UUID.fromString(workspaceId));
+        return pushWorkspaceRegistration(workspace, roots);
+    }
+
+    /** PLAN-0641 T7.5：事务提交后执行；无事务上下文时立即执行。 */
+    private void scheduleAfterCommit(Runnable action) {
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    action.run();
+                }
+            });
+        } else {
+            action.run();
+        }
     }
 
     /**

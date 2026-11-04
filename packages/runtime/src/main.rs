@@ -1012,13 +1012,28 @@ fn runtime_problem_with_header(
 struct CreateWorkspaceRequest {
     #[serde(rename = "workspaceId")]
     ws_id: String,
-    #[allow(dead_code)]
     #[serde(rename = "workspacePath")]
-    workspace_path: String,
+    workspace_path: Option<String>,
     #[serde(rename = "storageRef")]
     storage_ref: Option<String>,
     #[allow(dead_code)]
     profile: Option<String>,
+    /// PLAN-0641 T7.5 (BL-260)：CP 推送的 direct_attach 注册。handler 只接受与路径形态
+    /// 一致的模式（宿主路径 ⇒ windows-host / windows-mxc），客户端不能借此绕过托管校验。
+    #[serde(rename = "executionMode")]
+    execution_mode: Option<String>,
+    /// PLAN-0641 T7.5：有序根集合；`roots[0]` 是主根且必须携带 workspaceId。
+    #[serde(default)]
+    roots: Option<Vec<RegisterRoot>>,
+}
+
+/// PLAN-0641 T7.5 (BL-260)：CP 为 direct_attach 工作区推送的一条根记录。
+#[derive(Debug, Clone, Deserialize)]
+struct RegisterRoot {
+    #[serde(rename = "rootId")]
+    root_id: String,
+    #[serde(rename = "hostPath")]
+    host_path: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -2444,15 +2459,127 @@ async fn workspace_materialize_handler(
     ))
 }
 
+fn registration_invalid(
+    workspace_id: &str,
+    detail: impl Into<String>,
+) -> (StatusCode, AxumJson<serde_json::Value>) {
+    runtime_problem(RuntimeError::InvalidPath(format!(
+        "workspace {workspace_id}: {}",
+        detail.into()
+    )))
+}
+
 async fn create_workspace_handler(
     State(app): State<Arc<AppState>>,
     AxumJson(req): AxumJson<CreateWorkspaceRequest>,
 ) -> Result<AxumJson<CreateWorkspaceResponse>, (StatusCode, AxumJson<serde_json::Value>)> {
-    let _ = &app; // explicit acknowledgement that the AppState may be extended later
+    // PLAN-0641 T7.5 (BL-260) 方向 (a)：CP 为 direct_attach 工作区下发 hostPath + roots，
+    // Runtime 只登记「id → hostPath」映射（不建容器、不改 lifecycle），使发现/切片面不再
+    // 猜测托管目录。与既有 storageRef 路径互斥；幂等 = 覆盖。
+    let workspace_path = req
+        .workspace_path
+        .as_deref()
+        .map(str::trim)
+        .filter(|path| !path.is_empty());
+    if req.storage_ref.is_some() && workspace_path.is_some() {
+        return Err(registration_invalid(
+            &req.ws_id,
+            "storageRef and workspacePath are mutually exclusive",
+        ));
+    }
+    if let Some(workspace_path) = workspace_path {
+        let execution_mode = req
+            .execution_mode
+            .as_deref()
+            .map(str::trim)
+            .filter(|mode| !mode.is_empty())
+            .unwrap_or("windows-host")
+            .to_ascii_lowercase();
+        if !matches!(execution_mode.as_str(), "windows-host" | "windows-mxc") {
+            return Err(registration_invalid(
+                &req.ws_id,
+                "executionMode must be windows-host or windows-mxc for a direct_attach registration",
+            ));
+        }
+        let primary = std::path::Path::new(workspace_path);
+        if !primary.is_absolute() {
+            return Err(registration_invalid(
+                &req.ws_id,
+                "workspacePath must be an absolute host path",
+            ));
+        }
+        if !primary.is_dir() {
+            return Err(registration_invalid(
+                &req.ws_id,
+                "workspacePath must be an existing directory",
+            ));
+        }
+        let mut declared_roots: Vec<(String, String)> = Vec::new();
+        if let Some(roots) = req.roots.as_deref() {
+            if roots.is_empty() {
+                return Err(registration_invalid(
+                    &req.ws_id,
+                    "roots must contain the primary root when provided",
+                ));
+            }
+            if roots[0].root_id != req.ws_id {
+                return Err(registration_invalid(
+                    &req.ws_id,
+                    "roots[0].rootId must equal workspaceId (primary root invariant)",
+                ));
+            }
+            let normalized_primary = workspace_path.replace('\\', "/").to_ascii_lowercase();
+            let normalized_root = roots[0]
+                .host_path
+                .trim()
+                .replace('\\', "/")
+                .to_ascii_lowercase();
+            if normalized_primary != normalized_root {
+                return Err(registration_invalid(
+                    &req.ws_id,
+                    "roots[0].hostPath must equal workspacePath",
+                ));
+            }
+            for (index, root) in roots.iter().enumerate().skip(1) {
+                let path = std::path::Path::new(root.host_path.trim());
+                if !path.is_absolute() {
+                    return Err(registration_invalid(
+                        &req.ws_id,
+                        format!("roots[{index}].hostPath must be an absolute host path"),
+                    ));
+                }
+                if !path.is_dir() {
+                    return Err(registration_invalid(
+                        &req.ws_id,
+                        format!("roots[{index}].hostPath must be an existing directory"),
+                    ));
+                }
+                declared_roots.push((root.root_id.clone(), root.host_path.trim().to_string()));
+            }
+        }
+        let root_count = 1 + declared_roots.len();
+        app.registry
+            .register_external(&req.ws_id, workspace_path, &execution_mode)
+            .await;
+        app.checkpoints
+            .set_work_tree(&req.ws_id, primary.to_path_buf());
+        app.checkpoints
+            .set_declared_roots(&req.ws_id, declared_roots);
+        tracing::info!(
+            workspace_id = %req.ws_id,
+            execution_mode = %execution_mode,
+            roots = root_count,
+            "direct_attach workspace registered by control plane"
+        );
+        return Ok(AxumJson(CreateWorkspaceResponse {
+            status: "ok".to_string(),
+            ws_id: req.ws_id,
+        }));
+    }
     let storage_ref = req.storage_ref.as_deref().ok_or_else(|| {
         runtime_problem(RuntimeError::InvalidExecutionSpec {
             workspace_id: req.ws_id.clone(),
-            detail: "storageRef is required; workspacePath is never used as a fallback".to_string(),
+            detail: "storageRef or workspacePath is required".to_string(),
         })
     })?;
     let host_root = storage::host_root_from_env().map_err(|detail| {
@@ -4712,6 +4839,172 @@ mod remote_handler_tests {
         format!("http://{addr}/mcp")
     }
 
+    // PLAN-0641 T7.5 (BL-260)：CP 推送的 direct_attach 注册（方向 (a)）。
+    fn registration_request(
+        ws_id: &str,
+        workspace_path: Option<String>,
+        storage_ref: Option<&str>,
+        execution_mode: Option<&str>,
+        roots: Option<Vec<RegisterRoot>>,
+    ) -> CreateWorkspaceRequest {
+        CreateWorkspaceRequest {
+            ws_id: ws_id.to_string(),
+            workspace_path,
+            storage_ref: storage_ref.map(str::to_string),
+            profile: None,
+            execution_mode: execution_mode.map(str::to_string),
+            roots,
+        }
+    }
+
+    #[tokio::test]
+    async fn direct_attach_registration_sets_work_tree_and_detects_nested_repo() {
+        let state = test_state("http://127.0.0.1:9").await;
+        let dir = tempfile::tempdir().expect("workspace dir");
+        let primary = dir.path().to_string_lossy().to_string();
+        let nested = dir.path().join("vendor").join("lib");
+        std::fs::create_dir_all(&nested).expect("nested dir");
+        std::fs::write(nested.join("README.md"), "nested\n").expect("nested file");
+        for args in [
+            vec!["init", "-q"],
+            vec!["config", "user.email", "test@test.local"],
+            vec!["config", "user.name", "test"],
+            vec!["add", "-A"],
+            vec!["commit", "-q", "-m", "nested base"],
+        ] {
+            std::process::Command::new("git")
+                .args(&args)
+                .current_dir(&nested)
+                .status()
+                .expect("git command");
+        }
+        let request = registration_request(
+            "ws-direct-reg",
+            Some(primary.clone()),
+            None,
+            Some("windows-host"),
+            None,
+        );
+        let response = create_workspace_handler(State(state.clone()), AxumJson(request))
+            .await
+            .expect("registration accepted");
+        assert_eq!(response.0.status, "ok");
+        let instance = state
+            .registry
+            .get("ws-direct-reg")
+            .await
+            .expect("registered instance");
+        assert_eq!(instance.workspace_path, primary);
+        state.refresh_checkpoint_work_tree("ws-direct-reg").await;
+        let detected = state
+            .checkpoints
+            .detect_nested_repos("ws-direct-reg")
+            .await
+            .expect("nested discovery");
+        assert!(
+            detected.iter().any(|item| item.path == "vendor/lib"),
+            "nested repo must be discoverable after registration, got {detected:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn direct_attach_registration_rejects_inconsistent_requests() {
+        let state = test_state("http://127.0.0.1:9").await;
+        let dir = tempfile::tempdir().expect("workspace dir");
+        let primary = dir.path().to_string_lossy().to_string();
+        let relative = "relative/workspace".to_string();
+        let missing = dir.path().join("missing").to_string_lossy().to_string();
+        let cases = vec![
+            registration_request(
+                "ws-reject",
+                Some(primary.clone()),
+                Some("ws-reject"),
+                None,
+                None,
+            ),
+            registration_request("ws-reject", Some(relative), None, None, None),
+            registration_request("ws-reject", Some(missing), None, None, None),
+            registration_request("ws-reject", Some(primary), None, Some("docker"), None),
+        ];
+        for request in cases {
+            match create_workspace_handler(State(state.clone()), AxumJson(request)).await {
+                Ok(_) => panic!("inconsistent registration must be rejected"),
+                Err(error) => assert_eq!(error.0, StatusCode::BAD_REQUEST, "unexpected {error:?}"),
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn direct_attach_registration_is_overwrite_idempotent() {
+        let state = test_state("http://127.0.0.1:9").await;
+        let first = tempfile::tempdir().expect("first dir");
+        let second = tempfile::tempdir().expect("second dir");
+        let child = second.path().join("vendor").join("lib");
+        std::fs::create_dir_all(&child).expect("child dir");
+        let first_path = first.path().to_string_lossy().to_string();
+        let second_path = second.path().to_string_lossy().to_string();
+        let child_path = child.to_string_lossy().to_string();
+
+        let first_request = registration_request(
+            "ws-idem",
+            Some(first_path.clone()),
+            None,
+            Some("windows-host"),
+            None,
+        );
+        let _ = create_workspace_handler(State(state.clone()), AxumJson(first_request))
+            .await
+            .expect("first registration");
+
+        let roots = vec![
+            RegisterRoot {
+                root_id: "ws-idem".to_string(),
+                host_path: second_path.clone(),
+            },
+            RegisterRoot {
+                root_id: "root-child".to_string(),
+                host_path: child_path.clone(),
+            },
+        ];
+        let second_request = registration_request(
+            "ws-idem",
+            Some(second_path.clone()),
+            None,
+            Some("windows-host"),
+            Some(roots),
+        );
+        let _ = create_workspace_handler(State(state.clone()), AxumJson(second_request))
+            .await
+            .expect("second registration");
+
+        let instance = state
+            .registry
+            .get("ws-idem")
+            .await
+            .expect("single overwritten instance");
+        assert_eq!(instance.workspace_path, second_path);
+        assert_eq!(
+            state.checkpoints.declared_roots("ws-idem"),
+            vec![("root-child".to_string(), child_path)]
+        );
+    }
+
+    #[tokio::test]
+    async fn registration_requires_one_of_storage_ref_or_workspace_path() {
+        let state = test_state("http://127.0.0.1:9").await;
+        let request = registration_request("ws-empty", None, None, None, None);
+        match create_workspace_handler(State(state), AxumJson(request)).await {
+            Ok(_) => panic!("registration without a target must be rejected"),
+            Err(error) => {
+                assert_eq!(
+                    error.0,
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    "unexpected {error:?}"
+                );
+                assert_eq!(error.1.0["code"], "EXECUTION_SPEC_INVALID");
+            }
+        }
+    }
     pub(super) async fn test_state(cp_url: &str) -> Arc<AppState> {
         test_state_with_backend(cp_url, None).await
     }

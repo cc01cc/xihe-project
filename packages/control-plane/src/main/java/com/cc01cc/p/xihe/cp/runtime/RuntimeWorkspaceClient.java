@@ -12,6 +12,7 @@ import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestTemplate;
 
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
@@ -176,6 +177,40 @@ public class RuntimeWorkspaceClient {
         } catch (Exception e) {
             logger.warn("Runtime release failed workspaceId={}: {}", workspaceId, e.getMessage());
             return new ReleaseResult(null, null, null, null, true);
+        }
+    }
+
+    /**
+     * PLAN-0641 T7.5 (BL-260) 方向 (a)：CP 把 direct_attach 工作区的 hostPath + roots
+     * 推给 Runtime 登记（幂等覆盖；不 materialize 沙盒）。失败只 WARN 并返回 false，
+     * 由调用方按 best-effort 处理（绝不因运行期路由元数据失败而回滚业务事务）。
+     */
+    public boolean registerWorkspace(String workspaceId, String workspacePath,
+                                     String executionMode, List<Map<String, String>> roots) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("workspaceId", workspaceId);
+        body.put("workspacePath", workspacePath);
+        body.put("executionMode", executionMode);
+        body.put("roots", roots);
+        try {
+            HttpHeaders headers = new HttpHeaders();
+            headers.setContentType(MediaType.APPLICATION_JSON);
+            headers.setBearerAuth(serviceToken);
+            ResponseEntityWrap<Map<String, Object>> response = invoke(
+                    restTemplate.exchange(
+                            runtimeUrl + "/internal/v1/runtime/workspaces",
+                            org.springframework.http.HttpMethod.POST,
+                            new HttpEntity<>(body, headers),
+                            new org.springframework.core.ParameterizedTypeReference<Map<String, Object>>() { }),
+                    "registerWorkspace");
+            boolean accepted = response.status() != null && response.status().is2xxSuccessful();
+            logger.info("Runtime workspace registration workspaceId={} roots={} accepted={}",
+                    workspaceId, roots.size(), accepted);
+            return accepted;
+        } catch (Exception e) {
+            logger.warn("Runtime workspace registration failed workspaceId={} roots={} reason={}",
+                    workspaceId, roots.size(), e.getMessage());
+            return false;
         }
     }
 

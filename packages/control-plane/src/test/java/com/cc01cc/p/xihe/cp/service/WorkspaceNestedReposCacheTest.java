@@ -22,6 +22,7 @@ import static com.github.tomakehurst.wiremock.client.WireMock.aResponse;
 import static com.github.tomakehurst.wiremock.client.WireMock.get;
 import static com.github.tomakehurst.wiremock.client.WireMock.getRequestedFor;
 import static com.github.tomakehurst.wiremock.client.WireMock.post;
+import static com.github.tomakehurst.wiremock.client.WireMock.postRequestedFor;
 import static com.github.tomakehurst.wiremock.client.WireMock.urlEqualTo;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -47,6 +48,12 @@ class WorkspaceNestedReposCacheTest extends AbstractWireMockTest {
 
     @Autowired
     private WorkspaceNestedReposService service;
+
+    @Autowired
+    private WorkspaceService workspaceService;
+
+    @Autowired
+    private com.cc01cc.p.xihe.cp.repository.WorkspaceRepository workspaceRepository;
 
     private String token;
 
@@ -217,5 +224,61 @@ class WorkspaceNestedReposCacheTest extends AbstractWireMockTest {
         assertEquals("vendor/lib", body.path("items").get(0).path("path").asText(),
                 "the warm entry serves the read face: " + body);
         wireMock.verify(0, getRequestedFor(urlEqualTo(probePath(workspaceId))));
+    }
+
+    // ---- PLAN-0641 T7.5 (BL-260) 懒重试 -------------------------------------------------
+
+    @Test
+    void lazyRetryReRegistersOnceThenSucceeds() {
+        Fixture fixture = createWorkspaceOrFail();
+        String workspaceId = fixture.workspaceId();
+        String registerPath = "/internal/v1/runtime/workspaces";
+        wireMock.stubFor(post(urlEqualTo(registerPath))
+                .willReturn(aResponse()
+                        .withStatus(200)
+                        .withHeader("Content-Type", "application/json")
+                        .withBody("{\"status\":\"ok\",\"workspaceId\":\"" + workspaceId + "\"}")));
+        // 冷探针先 404（Runtime 还不认识该 direct_attach 工作区），重试一次后成功。
+        wireMock.stubFor(get(urlEqualTo(probePath(workspaceId)))
+                .inScenario("lazy-retry")
+                .whenScenarioStateIs(com.github.tomakehurst.wiremock.stubbing.Scenario.STARTED)
+                .willReturn(aResponse()
+                        .withStatus(404)
+                        .withHeader("Content-Type", "application/json")
+                        .withBody("{\"code\":\"WORKSPACE_NOT_FOUND\"}"))
+                .willSetStateTo("retried"));
+        wireMock.stubFor(get(urlEqualTo(probePath(workspaceId)))
+                .inScenario("lazy-retry")
+                .whenScenarioStateIs("retried")
+                .willReturn(aResponse()
+                        .withStatus(200)
+                        .withHeader("Content-Type", "application/json")
+                        .withBody("{\"items\":[{\"path\":\"vendor/lib\",\"type\":\"nested\","
+                                + "\"declared\":false}]}")));
+        wireMock.resetRequests();
+
+        ResponseEntity<String> response = readNested(workspaceId);
+
+        assertTrue(response.getStatusCode().is2xxSuccessful(), String.valueOf(response.getBody()));
+        assertEquals("vendor/lib", bodyOf(response).path("items").get(0).path("path").asText());
+        wireMock.verify(1, postRequestedFor(urlEqualTo(registerPath)));
+        wireMock.verify(2, getRequestedFor(urlEqualTo(probePath(workspaceId))));
+    }
+
+    @Test
+    void lazyRetryNeverTriggersForManagedWorkspace() {
+        com.cc01cc.p.xihe.cp.entity.Workspace managed =
+                new com.cc01cc.p.xihe.cp.entity.Workspace("managed-" + UUID.randomUUID());
+        managed.setStorageBackend("docker");
+        managed.setStorageMode("managed_import");
+        managed.setExecutionMode("docker");
+        com.cc01cc.p.xihe.cp.entity.Workspace saved = workspaceRepository.save(managed);
+        saved.setStorageRef(saved.getId().toString());
+        saved = workspaceRepository.save(saved);
+        wireMock.resetRequests();
+
+        assertFalse(workspaceService.registerWorkspaceWithRuntimeBestEffort(saved.getId().toString()),
+                "managed workspaces must never re-register through the lazy path");
+        wireMock.verify(0, postRequestedFor(urlEqualTo("/internal/v1/runtime/workspaces")));
     }
 }
