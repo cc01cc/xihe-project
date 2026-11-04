@@ -375,6 +375,23 @@ export const useAuthStore = defineStore("auth", () => {
         }
     }
 
+    /**
+     * PLAN-0641 M2 T3.1: force a workspace re-read after a mutation that changes
+     * the root projection (declare/undeclare). `hydrateWorkspace` deliberately
+     * short-circuits on a loaded workspace, so the refresh needs its own entry.
+     */
+    async function refreshWorkspace(): Promise<void> {
+        const tabWorkspaceId = readTabWorkspaceId() ?? workspace.value?.id ?? null;
+        if (!token.value || !tabWorkspaceId) return;
+        try {
+            const current = await api.getWorkspace(tabWorkspaceId);
+            workspace.value = current;
+            writeTabWorkspace(current);
+        } catch (cause) {
+            logger.warn("Failed to refresh the current workspace", cause);
+        }
+    }
+
     let selectSequence = 0;
 
     async function selectWorkspace(workspaceId: string): Promise<ApiWorkspace> {
@@ -461,6 +478,7 @@ export const useAuthStore = defineStore("auth", () => {
         refreshCapabilities,
         logout,
         hydrateWorkspace,
+        refreshWorkspace,
         selectWorkspace,
     };
 });

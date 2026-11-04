@@ -98,7 +98,10 @@ paths:
         (file access, authorization, watcher). Shadow repo is created lazily on
         first checkpoint capture. Nested roots (fully contained) are allowed;
         partial overlap → 400 INVALID_ROOT_OVERLAP. Requires workspace owner
-        or cap:workspace:admin.
+        or cap:workspace:admin. PLAN-0641 M2 T3.2 (conservative ruling): while any
+        run of the workspace is still non-terminal the declaration is refused with
+        409 ROOT_IN_USE — the new root changes the root set of every later capture,
+        so the in-flight run's rollback target would be incomplete.
       security: [{ bearerAuth: [] }]
       parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string, format: uuid } }]
       requestBody:
@@ -112,7 +115,7 @@ paths:
         '401': { $ref: '#/components/responses/Problem' }
         '403': { $ref: '#/components/responses/Problem' }
         '404': { $ref: '#/components/responses/Problem' }
-        '409': { $ref: '#/components/responses/Problem' }
+        '409': { description: 'ROOT_PATH_CONFLICT (an active root already exists at that path) or ROOT_IN_USE (a workspace run is still non-terminal; declare after it finishes)' }
   /api/v1/workspaces/{workspaceId}/roots/{rootId}:
     patch:
       operationId: updateWorkspaceRoot
