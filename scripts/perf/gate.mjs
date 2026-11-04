@@ -76,40 +76,71 @@ function evaluate(metrics, thresholds) {
     return { rows, missingTiers: Object.keys(thresholds.tiers).filter((tier) => !seen.has(tier)) };
 }
 
-function evaluateUi(uiMetrics, uiThresholds) {
+function evaluateUi(uiMetrics, uiThresholds, { legacy = false } = {}) {
     const rows = [];
+    const missing = [];
+    const push = (tier, check, measured, limit, pass) => rows.push({ tier, check, measured, limit, pass });
     for (const tier of uiMetrics.tiers ?? []) {
-        if (tier.messageCount && tier.domNodes) {
-            rows.push({
-                tier: `ui-${tier.label}`, check: "domNodesPerMessage",
-                measured: Math.round((tier.domNodes / tier.messageCount) * 10) / 10,
-                limit: uiThresholds.domNodesPerMessageMax,
-                pass: tier.domNodes / tier.messageCount <= uiThresholds.domNodesPerMessageMax,
-            });
+        const perf = tier.scrollPerf ?? {};
+        const rendered = tier.renderedFirstScreen ?? perf.renderedFirst ?? tier.renderedMessages ?? 0;
+        const total = tier.sessionTotal ?? tier.messageCount ?? 0;
+        const domNodes = tier.domNodes ?? null;
+
+        if (legacy) {
+            // --legacy-full-render: the pre-virtual-scroll criteria, kept so pre-fix code can still
+            // be judged on its own terms (history stays comparable; do NOT delete the old rule).
+            if (tier.messageCount && domNodes) {
+                const perMessage = Math.round((domNodes / tier.messageCount) * 10) / 10;
+                const limit = uiThresholds.legacyDomNodesPerMessageMax ?? 25;
+                push(`ui-${tier.label}`, "domNodesPerMessage", perMessage, limit, perMessage <= limit);
+            }
+            if (tier.label === "5k" && tier.status === "ok") {
+                push("ui-5k", "fps", perf.fps ?? null, uiThresholds.fps5kMin,
+                    (perf.fps ?? 0) >= uiThresholds.fps5kMin);
+            }
+            if (tier.label === "20k") {
+                push("ui-20k", "renderCompleted", `${rendered}/${total}`, `>=${total}`, rendered >= total);
+            }
+            continue;
+        }
+
+        // 1) rendered window band (10..200): a virtual list renders a window, not everything —
+        //    but "rendered > 0" alone would let a 1-row fake pass (Lead 2026-11-05).
+        if (tier.status === "ok") {
+            push(`ui-${tier.label}`, "renderedWindow", `${rendered}/${total}`,
+                `${uiThresholds.renderedMin}..${uiThresholds.renderedMax}`,
+                rendered >= uiThresholds.renderedMin && rendered <= uiThresholds.renderedMax);
+        }
+        // 2) DOM absolute cap (nodes must be constant, not proportional to message count).
+        if (domNodes !== null && domNodes !== undefined) {
+            push(`ui-${tier.label}`, "domNodesMax", domNodes, uiThresholds.domNodesMax,
+                domNodes <= uiThresholds.domNodesMax);
+        }
+        // 3) scrollable: content taller than viewport AND scroll events actually fired.
+        //    Files produced by the pre-fix script lack these fields — skip (cannot judge), and the
+        //    missing-field list is printed so nobody mistakes "not measured" for "passed".
+        if (tier.status === "ok" && perf.scrollable !== undefined && perf.scrollEvents !== undefined) {
+            push(`ui-${tier.label}`, "scrollable",
+                `${perf.scrollHeightBefore ?? 0}>${perf.clientHeight ?? 0},events=${perf.scrollEvents ?? 0}`,
+                "true", Boolean(perf.scrollable) && (perf.scrollEvents ?? 0) > 0);
+        } else if (tier.status === "ok") {
+            missing.push(`ui-${tier.label}.scrollable`);
         }
         if (tier.label === "5k" && tier.status === "ok") {
-            rows.push({
-                tier: "ui-5k", check: "fps",
-                measured: tier.scrollPerf?.fps ?? null,
-                limit: uiThresholds.fps5kMin,
-                pass: (tier.scrollPerf?.fps ?? 0) >= uiThresholds.fps5kMin,
-            });
+            push("ui-5k", "fps", perf.fps ?? null, uiThresholds.fps5kMin,
+                (perf.fps ?? 0) >= uiThresholds.fps5kMin);
         }
-        if (uiThresholds.require20kRender && tier.label === "20k") {
-            rows.push({
-                tier: "ui-20k", check: "renderCompleted",
-                measured: tier.status,
-                limit: "ok",
-                pass: tier.status === "ok" && (tier.renderedMessages ?? 0) >= tier.messageCount,
-            });
+        if (tier.label === "20k") {
+            push("ui-20k", "renderCompleted", tier.status, "ok", tier.status === "ok" && rendered > 0);
         }
     }
-    return rows;
+    return { rows, missing };
 }
 
 function printRows(rows) {
     const label = { p95Ms: "p95 (ms)", responseBytesMean: "response mean (B)", heapPeakMb: "heap peak (MB)",
         rssGrowthMb: "RSS growth (MB)", failures: "failures", domNodesPerMessage: "DOM nodes/msg",
+        domNodesMax: "DOM nodes (abs)", renderedWindow: "rendered/total", scrollable: "scrollable",
         fps: "scroll FPS", renderCompleted: "20k render" };
     for (const row of rows) {
         const measured = row.measured === null || row.measured === undefined ? "n/a"
@@ -127,7 +158,9 @@ function impossibleThresholds(thresholds) {
         tier.heapPeakMbMax = 1;
         tier.rssGrowthMbMax = 1;
     }
-    clone.ui.domNodesPerMessageMax = 0.001;
+    clone.ui.domNodesMax = 1;
+    clone.ui.renderedMin = 100000;
+    clone.ui.renderedMax = 0;
     clone.ui.fps5kMin = 100000;
     clone.ui.require20kRender = true;
     return clone;
@@ -178,17 +211,22 @@ if (flag("with-ui")) {
         console.error("--with-ui needs --ui-metrics <m2d-webui-memory.json>");
         process.exit(2);
     }
-    uiResult = evaluateUi(readJson(uiMetricsPath), thresholds.ui);
-    rows.push(...uiResult);
+    uiResult = evaluateUi(readJson(uiMetricsPath), thresholds.ui,
+        { legacy: flag("legacy-full-render") });
+    rows.push(...uiResult.rows);
 }
 
 const failures = rows.filter((row) => !row.pass);
 const passed = failures.length === 0 && result.missingTiers.length === 0;
-console.log(`\nPLAN-0670 perf gate — ${flag("with-ui") ? "CP + UI" : "CP"} — `
+console.log(`\nPLAN-0670 perf gate — ${flag("with-ui") ? "CP + UI" : "CP"}`
+    + `${flag("legacy-full-render") ? " (legacy full-render criteria)" : ""} — `
     + `${passed ? "PASS" : "FAIL"} (${rows.length - failures.length}/${rows.length} checks, `
     + `thresholds=${thresholds.source?.provisional ? "provisional" : "backfilled"})`);
 printRows(rows);
 if (result.missingTiers.length) console.log(`  FAIL  missing tiers: ${result.missingTiers.join(", ")}`);
+if (uiResult?.missing?.length) {
+    console.log(`  NOTE  unmeasured UI fields (old script, not judged): ${uiResult.missing.join(", ")}`);
+}
 if (flag("json")) {
     console.log(JSON.stringify({ passed, rows, missingTiers: result.missingTiers }, null, 2));
 }

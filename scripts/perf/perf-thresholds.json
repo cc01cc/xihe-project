@@ -36,9 +36,12 @@
     }
   },
   "ui": {
-    "domNodesPerMessageMax": 25,
+    "domNodesMax": 2000,
+    "renderedMin": 10,
+    "renderedMax": 200,
     "fps5kMin": 30,
     "require20kRender": true,
-    "source": "M2d 实测：DOM ≈20.8 节点/条（1k/5k 均线性）；5k FPS 16.8（dev mode）；20k 120s 未渲染。阈值取 bl232 修复后的目标：节点/条 ≤25、5k FPS ≥30、20k 必须能渲染完成。"
+    "legacyDomNodesPerMessageMax": 25,
+    "source": "Lead 2026-11-05 定稿（虚拟滚动后口径）。语义变更：旧的「全量渲染」判据（renderedMessages >= messageCount）与虚拟滚动互斥——虚拟列表永远只渲染窗口，旧判据必然误报红，因此改为三条同时满足：①renderedMessages 在 10..200 窗口带内（>200 说明窗口化失效，<10 说明只渲染了视口一角）；②DOM 绝对节点数 ≤2000（1k/5k 应从 20,931/102,940 降为常数级）；③可滚动（scrollHeight>clientHeight 且滚动事件真实触发）。20k 需能打开并渲染（rendered>0），语义是「20k 数据量下的可用性」而非「20k 条全渲染」；rendered/total 必须落盘备查。旧判据保留在 --legacy-full-render 开关下（legacyDomNodesPerMessageMax=25），供改造前代码复跑。5k 滚动 4.0s 平均 FPS ≥30（before=16.8，同口径）。"
   }
 }

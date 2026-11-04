@@ -1,8 +1,8 @@
 {
   "schema": 1,
   "fixture": true,
-  "note": "门禁自检/干跑用的**样例指标**（不是产品基线）：responseBytes 取 M2d 真栈实测；p95/heapPeak/rssGrowth 为可通过的占位值。真实指标由 run-baseline.mjs 产出。",
-  "capturedAt": "2026-11-05T04:00+08:00",
+  "note": "门禁自检/干跑用的**样例指标**（不是产品基线）：数值取自 2026-11-05 全量首跑实测（host-1793823817017-e13c），用于验证判定链路；真实指标由 run-baseline.mjs 产出。",
+  "capturedAt": "2026-11-05T04:30+08:00",
   "stack": { "kind": "fixture", "note": "no stack needed; used by chat-gate.mjs --dry-run / --self-check" },
   "tiers": [
     {
@@ -10,11 +10,11 @@
       "tier": "1k",
       "samples": 200,
       "failures": 0,
-      "latencyMs": { "p50": 12, "p95": 40, "p99": 55 },
-      "responseBytes": { "min": 1258291, "max": 1258291, "mean": 1258291 },
+      "latencyMs": { "p50": 20, "p95": 61.0, "p99": 80 },
+      "responseBytes": { "min": 438447, "max": 438447, "mean": 438447 },
       "memory": {
-        "heapMbBefore": 220, "heapMbAfter": 240, "heapPeakMb": 260,
-        "rssMbBefore": 900, "rssMbAfter": 950, "rssPeakMb": 1000, "rssGrowthMb": 100,
+        "heapMbBefore": 220, "heapMbAfter": 250, "heapPeakMb": 257,
+        "rssMbBefore": 900, "rssMbAfter": 946, "rssPeakMb": 1000, "rssGrowthMb": 47,
         "oom": false
       }
     },
@@ -23,11 +23,11 @@
       "tier": "5k",
       "samples": 200,
       "failures": 0,
-      "latencyMs": { "p50": 80, "p95": 200, "p99": 260 },
-      "responseBytes": { "min": 6081740, "max": 6081740, "mean": 6081740 },
+      "latencyMs": { "p50": 40, "p95": 86.5, "p99": 120 },
+      "responseBytes": { "min": 2196447, "max": 2196447, "mean": 2196447 },
       "memory": {
-        "heapMbBefore": 320, "heapMbAfter": 380, "heapPeakMb": 420,
-        "rssMbBefore": 1200, "rssMbAfter": 1350, "rssPeakMb": 1400, "rssGrowthMb": 200,
+        "heapMbBefore": 230, "heapMbAfter": 240, "heapPeakMb": 246,
+        "rssMbBefore": 1200, "rssMbAfter": 1243, "rssPeakMb": 1350, "rssGrowthMb": 43,
         "oom": false
       }
     },
@@ -36,11 +36,11 @@
       "tier": "20k",
       "samples": 200,
       "failures": 0,
-      "latencyMs": { "p50": 700, "p95": 900, "p99": 1200 },
-      "responseBytes": { "min": 24431616, "max": 24431616, "mean": 24431616 },
+      "latencyMs": { "p50": 120, "p95": 220.3, "p99": 300 },
+      "responseBytes": { "min": 8798447, "max": 8798447, "mean": 8798447 },
       "memory": {
-        "heapMbBefore": 500, "heapMbAfter": 700, "heapPeakMb": 750,
-        "rssMbBefore": 2000, "rssMbAfter": 2250, "rssPeakMb": 2300, "rssGrowthMb": 300,
+        "heapMbBefore": 240, "heapMbAfter": 250, "heapPeakMb": 253,
+        "rssMbBefore": 2000, "rssMbAfter": 2075, "rssPeakMb": 2100, "rssGrowthMb": 75,
         "oom": false
       }
     },
@@ -49,11 +49,11 @@
       "tier": "20k",
       "samples": 1,
       "failures": 0,
-      "latencyMs": { "p50": 1500, "p95": 1500, "p99": 1500 },
+      "latencyMs": { "p50": 300, "p95": 300, "p99": 300 },
       "responseBytes": null,
       "memory": {
-        "heapMbBefore": 700, "heapMbAfter": 820, "heapPeakMb": 830,
-        "rssMbBefore": 2250, "rssMbAfter": 2450, "rssPeakMb": 2500, "rssGrowthMb": 250,
+        "heapMbBefore": 250, "heapMbAfter": 280, "heapPeakMb": 300,
+        "rssMbBefore": 2075, "rssMbAfter": 2095, "rssPeakMb": 2100, "rssGrowthMb": 20,
         "oom": false
       }
     }
