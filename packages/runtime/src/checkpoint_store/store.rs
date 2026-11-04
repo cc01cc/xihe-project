@@ -221,6 +221,17 @@ impl Store {
         self.root.join(LOCK_FILE)
     }
 
+    pub fn gc_lock_path(&self) -> PathBuf {
+        self.root.join("gc.lock")
+    }
+
+    pub fn root_lock_path(&self, root_id: &str) -> PathBuf {
+        self.root
+            .join("locks")
+            .join("roots")
+            .join(format!("{}.lock", root_id_dir(root_id)))
+    }
+
     /// Read the diagnostic lock owner, if the lock file exists and is valid.
     pub fn lock_owner(&self) -> Result<Option<LockOwner>, StoreError> {
         let path = self.lock_path();
@@ -243,6 +254,55 @@ impl Store {
     /// Acquire the v1 store-wide lock immediately; never waits.
     pub fn lock(&self) -> Result<StoreLock, StoreError> {
         StoreLock::acquire(self)
+    }
+
+    /// Per-root lease used by capture/restore; independent roots can proceed.
+    pub fn lock_root(&self, root_id: &str) -> Result<StoreLock, StoreError> {
+        self.ensure_store_root()?;
+        StoreLock::acquire_path(&self.root_lock_path(root_id))
+    }
+
+    /// Global GC lock, separate from per-root leases.
+    pub fn lock_gc(&self) -> Result<StoreLock, StoreError> {
+        self.ensure_store_root()?;
+        StoreLock::acquire_path(&self.gc_lock_path())
+    }
+
+    fn ensure_store_root(&self) -> Result<(), StoreError> {
+        if self.root.join(VERSION_FILE).is_file() {
+            Ok(())
+        } else {
+            Err(io_error(
+                &self.root,
+                std::io::Error::new(std::io::ErrorKind::NotFound, "store root is missing"),
+            ))
+        }
+    }
+
+    /// Acquire every existing root lease for a GC pass. Any busy root means the
+    /// caller must abort (conservative: never delete while a root is active).
+    pub fn lock_all_roots(&self) -> Result<Vec<StoreLock>, StoreError> {
+        let roots_dir = self.root.join("slices");
+        let mut locks = Vec::new();
+        if roots_dir.is_dir() {
+            for entry in fs::read_dir(&roots_dir).map_err(|source| io_error(&roots_dir, source))? {
+                let entry = entry.map_err(|source| io_error(&roots_dir, source))?;
+                if !entry
+                    .file_type()
+                    .map_err(|source| io_error(&entry.path(), source))?
+                    .is_dir()
+                {
+                    continue;
+                }
+                let path = self
+                    .root
+                    .join("locks")
+                    .join("roots")
+                    .join(format!("{}.lock", entry.file_name().to_string_lossy()));
+                locks.push(StoreLock::acquire_path(&path)?);
+            }
+        }
+        Ok(locks)
     }
 
     /// Write an immutable object atomically through `<store>/tmp` (manifest,
@@ -280,27 +340,35 @@ pub struct StoreLock {
 
 impl StoreLock {
     pub fn acquire(store: &Store) -> Result<Self, StoreError> {
-        let path = store.lock_path();
+        Self::acquire_path(&store.lock_path())
+    }
+
+    pub fn acquire_path(path: &Path) -> Result<Self, StoreError> {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).map_err(|source| io_error(parent, source))?;
+        }
         let mut file = OpenOptions::new()
             .read(true)
             .write(true)
             .create(true)
             .truncate(false)
-            .open(&path)
-            .map_err(|source| io_error(&path, source))?;
+            .open(path)
+            .map_err(|source| io_error(path, source))?;
         match file.try_lock_exclusive() {
             Ok(()) => {}
             Err(source)
                 if source.kind() == std::io::ErrorKind::WouldBlock
                     || source.raw_os_error() == Some(33) =>
             {
-                return Err(StoreError::Busy { path });
+                return Err(StoreError::Busy {
+                    path: path.to_path_buf(),
+                });
             }
-            Err(source) => return Err(io_error(&path, source)),
+            Err(source) => return Err(io_error(path, source)),
         }
-        file.set_len(0).map_err(|source| io_error(&path, source))?;
+        file.set_len(0).map_err(|source| io_error(path, source))?;
         file.seek(SeekFrom::Start(0))
-            .map_err(|source| io_error(&path, source))?;
+            .map_err(|source| io_error(path, source))?;
         let owner = LockOwner {
             pid: std::process::id(),
             created_at_ms: now_ms(),
@@ -310,7 +378,7 @@ impl StoreLock {
             reason: error.to_string(),
         })?;
         file.write_all(&encoded)
-            .map_err(|source| io_error(&path, source))?;
+            .map_err(|source| io_error(path, source))?;
         Ok(Self { file })
     }
 }
@@ -428,6 +496,24 @@ mod tests {
         ));
         drop(first);
         assert!(StoreLock::acquire(&store).is_ok());
+    }
+
+    #[test]
+    fn root_leases_are_independent_and_global_gc_lock_is_separate() {
+        let (_dir, store) = test_store();
+        let a = store.lock_root("root-a").expect("root a");
+        let b = store.lock_root("root-b").expect("root b");
+        let gc = store.lock_gc().expect("global gc");
+        assert!(store.lock_gc().is_err(), "second GC lock must be busy");
+        assert!(
+            store.lock_root("root-a").is_err(),
+            "same root lease must be busy"
+        );
+        drop(a);
+        assert!(store.lock_root("root-a").is_ok());
+        drop(b);
+        drop(gc);
+        assert!(store.lock_gc().is_ok());
     }
 
     #[test]

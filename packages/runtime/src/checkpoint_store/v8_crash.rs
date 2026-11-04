@@ -184,8 +184,8 @@ fn v8_crash_suite_46_plus_2() {
     checked(
         &mut checks,
         "crash #1 lock released",
-        store.lock().is_ok(),
-        "store lock",
+        store.lock_root("ws").is_ok(),
+        "root lock",
     );
     checked(
         &mut checks,
@@ -370,7 +370,7 @@ fn v8_crash_suite_46_plus_2() {
     );
 
     // GC after crash leftovers: manual orphan blobs are swept.
-    let lease = store.lock().expect("lease");
+    let lease = store.lock_root("ws").expect("lease");
     let gc_blocked = gc(&store, &GcOptions::default()).is_err();
     drop(lease);
     checked(

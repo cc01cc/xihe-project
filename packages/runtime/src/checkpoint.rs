@@ -3540,7 +3540,7 @@ mod tests {
             .configure_checkpoint_storage(CheckpointStorageMode::Dual, &store_root)
             .expect("configure dual");
         let store = Store::open(&store_root).expect("open store");
-        let guard = store.lock().expect("hold store lock");
+        let guard = store.lock_root("ws1").expect("hold root store lock");
 
         let outcome = engine
             .capture("ws1", "run-locked", "tester", "call-locked", false)

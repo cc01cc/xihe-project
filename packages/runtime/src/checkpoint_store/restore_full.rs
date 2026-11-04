@@ -761,7 +761,7 @@ pub fn restore_full(
     options: &FullRestoreOptions,
 ) -> Result<FullRestoreStats, FullRestoreError> {
     let started = Instant::now();
-    let _store_lease = store.lock()?;
+    let _store_lease = store.lock_root(root_id)?;
     let plan = build_plan(store, root_id, slice_id, work_tree, options)?;
     let tail_slice = plan.tail_slice.clone();
 

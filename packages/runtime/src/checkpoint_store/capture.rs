@@ -606,7 +606,7 @@ pub fn capture_root_with_options(
 ) -> Result<CaptureResult, CaptureError> {
     let started = Instant::now();
     let lock_started = Instant::now();
-    let _lock = store.lock()?;
+    let _lock = store.lock_root(root_id)?;
     let lock_ms = lock_started.elapsed().as_millis() as u64;
     let walk_started = Instant::now();
     let walk = walk_workspace(root)?;
@@ -920,7 +920,7 @@ pub fn capture_from_git_entries(
 ) -> Result<CaptureResult, CaptureError> {
     let started = Instant::now();
     let lock_started = Instant::now();
-    let _lock = store.lock()?;
+    let _lock = store.lock_root(root_id)?;
     let lock_ms = lock_started.elapsed().as_millis() as u64;
     let tail = tail_slice(store, root_id)?;
     let previous = match &tail {

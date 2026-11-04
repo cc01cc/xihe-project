@@ -32,7 +32,7 @@ impl Default for GcOptions {
     fn default() -> Self {
         Self {
             repair: false,
-            grace_seconds: 3_600,
+            grace_seconds: 86_400,
             #[cfg(test)]
             crash_after_plan: false,
             #[cfg(test)]
@@ -90,7 +90,11 @@ pub enum GcError {
 }
 
 pub fn gc(store: &Store, options: &GcOptions) -> Result<GcReport, GcError> {
-    let _lease = store.lock().map_err(|error| match error {
+    let _gc_lock = store.lock_gc().map_err(|error| match error {
+        StoreError::Busy { .. } => GcError::Busy,
+        other => GcError::Store(other),
+    })?;
+    let _root_leases: Vec<_> = store.lock_all_roots().map_err(|error| match error {
         StoreError::Busy { .. } => GcError::Busy,
         other => GcError::Store(other),
     })?;
@@ -518,9 +522,22 @@ mod tests {
     }
 
     #[test]
+    fn default_grace_is_24_hours() {
+        assert_eq!(GcOptions::default().grace_seconds, 24 * 60 * 60);
+    }
+
+    #[test]
+    fn gc_refuses_when_global_gc_lock_is_held() {
+        let (_temp, store, _root) = fixture();
+        let _lease = store.lock_gc().expect("gc lease");
+        let error = gc(&store, &GcOptions::default()).expect_err("busy");
+        assert!(matches!(error, GcError::Busy), "{error:?}");
+    }
+
+    #[test]
     fn gc_refuses_when_store_lease_is_held() {
         let (_temp, store, _root) = fixture();
-        let _lease = store.lock().expect("lease");
+        let _lease = store.lock_root("ws-1").expect("root lease");
         let error = gc(&store, &GcOptions::default()).expect_err("busy");
         assert!(matches!(error, GcError::Busy), "{error:?}");
     }
