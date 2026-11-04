@@ -15,11 +15,14 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
+import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.NoSuchElementException;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.stream.Stream;
 
 /** Read-side message listing and response projection. */
 @Service
@@ -91,6 +94,80 @@ public class MessageReadService {
         // the guard on and the estimate crosses its threshold.
         memoryGuard.observe(endpointLabel, result.size(), estimateResponseBytes(result));
         return result;
+    }
+
+    /**
+     * PLAN-0670 M2c/B: the export read path never materialises the session. Returns a lazy,
+     * cursor-backed stream of raw messages (same order as
+     * {@link #listVisibleMessages}) that must be consumed inside a read-only transaction and closed.
+     * Visibility/anchor predicates stay exactly where they are ({@link #visibleMessageIterator}), so
+     * the streaming export cannot drift from {@code GET /messages} semantics.
+     */
+    public Stream<Message> streamSessionMessages(String sessionId) {
+        return messageRepository.streamBySessionIdOrderByCreatedAtAsc(sessionId);
+    }
+
+    /**
+     * Lazy projection of {@link #streamSessionMessages} into the public DTO shape, applying the
+     * exact same visibility filter and DTO projection as {@link #listVisibleMessages} (single source
+     * of truth: {@link #isVisibleOnPath} + {@link #toMessageDto}). The memory watermark is emitted
+     * once when the iterator is exhausted.
+     */
+    public Iterator<Map<String, Object>> visibleMessageIterator(Iterator<Message> messages,
+                                                                 String sessionId, String workspaceId,
+                                                                 String rootBranchId,
+                                                                 BranchPathService.BranchVisibility visibility,
+                                                                 String endpointLabel) {
+        return new Iterator<>() {
+            private Map<String, Object> next;
+            private boolean exhausted;
+            private int visibleCount;
+            private long estimatedBytes;
+
+            private void advance() {
+                if (exhausted) {
+                    return;
+                }
+                while (messages.hasNext()) {
+                    Message message = messages.next();
+                    if (!Message.VISIBILITY_USER.equals(message.getVisibility())) {
+                        continue;
+                    }
+                    if (!isVisibleOnPath(message, sessionId, workspaceId, rootBranchId, visibility)) {
+                        continue;
+                    }
+                    Map<String, Object> dto = toMessageDto(message);
+                    visibleCount += 1;
+                    estimatedBytes += 256L + (dto.get("content") instanceof String content
+                            ? 2L * content.length() : 0L);
+                    next = dto;
+                    return;
+                }
+                exhausted = true;
+                memoryGuard.observe(endpointLabel, visibleCount, estimatedBytes);
+            }
+
+            @Override
+            public boolean hasNext() {
+                if (next == null) {
+                    advance();
+                }
+                return next != null;
+            }
+
+            @Override
+            public Map<String, Object> next() {
+                if (next == null) {
+                    advance();
+                }
+                if (next == null) {
+                    throw new NoSuchElementException();
+                }
+                Map<String, Object> value = next;
+                next = null;
+                return value;
+            }
+        };
     }
 
     /**
