@@ -229,6 +229,10 @@ test.describe("@host PLAN-0649 refusal visible + durable", () => {
         const userId = requireUuid(((await meResponse.json()) as { id: string }).id, "userId");
         seedUserGrantPermissions(userId, [
             { actionClass: "CREATE_ACCOUNT", resource: "*" },
+            // Ceiling-set member (helpers/user-grants.ts standardWorkspaceUserPermissions):
+            // the spec writes agent-templates below; without this atom the write is a 403 on
+            // every environment — the original fixture omitted it and never ran.
+            { actionClass: "CREATE_TEMPLATE", resource: "*" },
             { actionClass: "MANAGE_WORKSPACE_AGENTS", resource: wsId },
             { actionClass: "SPAWN_AGENT", resource: "*" },
             { actionClass: "write", resource: "*" },
