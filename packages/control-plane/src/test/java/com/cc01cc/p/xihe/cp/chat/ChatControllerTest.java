@@ -73,6 +73,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import org.mockito.ArgumentCaptor;
+import org.slf4j.LoggerFactory;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -87,6 +88,8 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.reset;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.timeout;
 import static org.mockito.Mockito.verify;
@@ -116,6 +119,10 @@ class ChatControllerTest extends AbstractH2Test {
 
     @MockitoSpyBean
     private com.cc01cc.p.xihe.cp.service.ApiRequestTemplateService apiRequestTemplates;
+
+    /** PLAN-0660 T5.6 / BL-273：roster 读面故障时 warn 必须可观测（本类唯一注入点）。 */
+    @MockitoSpyBean
+    private com.cc01cc.p.xihe.cp.service.SessionParticipantService sessionParticipantService;
 
     private com.cc01cc.p.xihe.cp.entity.ProviderConnection chatConnection;
 
@@ -2370,5 +2377,51 @@ class ChatControllerTest extends AbstractH2Test {
                             Integer.class, sessionId, memberPrincipalId);
                     assertEquals(2, replies, "the mentioned agent must answer both rounds");
                 });
+    }
+
+    /**
+     * PLAN-0660 T5.6 / BL-273：roster 读面故障必须**可观测**（greppable warn 带 sessionId/requestId）
+     * 且**不拖垮主流程**（降级为空 @ 名单，请求仍 202，不 500）。
+     *
+     * <p>用 {@code ListAppender} 挂在 {@code ChatController} 的 logger 上；让
+     * {@code SessionParticipantService.list(...)} 抛 {@code RuntimeException} 模拟 DB/权限故障
+     * —— 这是该 warn 唯一可达路径（参数错误会先被 SSE 门 409 拦下，见 T5.6 联调结论）。</p>
+     */
+    @Test
+    void mentionRosterFailureIsLoggedWithCorrelationAndDispatchStillAccepted() {
+        ch.qos.logback.classic.Logger controllerLogger =
+                (ch.qos.logback.classic.Logger) LoggerFactory.getLogger(ChatController.class);
+        ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> appender =
+                new ch.qos.logback.core.read.ListAppender<>();
+        appender.start();
+        controllerLogger.addAppender(appender);
+        try {
+            doThrow(new RuntimeException("roster-down"))
+                    .when(sessionParticipantService)
+                    .list(anyString(), anyString(), anyString());
+
+            HttpHeaders headers = new HttpHeaders();
+            headers.setBearerAuth(authToken);
+            headers.setContentType(MediaType.APPLICATION_JSON);
+            ResponseEntity<Map> response = restTemplate.exchange(baseUrl + "/api/v1/chat",
+                    HttpMethod.POST,
+                    chatEntity(Map.of("sessionId", sessionId, "branchId", branchId,
+                            "content", "@Ghost 看一下", "workspaceId", workspaceId,
+                            "userId", userId), headers),
+                    Map.class);
+
+            assertEquals(HttpStatus.ACCEPTED, response.getStatusCode(),
+                    "roster 故障必须降级放行，不能 500");
+            assertTrue(appender.list.stream().anyMatch(event -> {
+                String message = event.getFormattedMessage();
+                return message.contains("event=mention_roster_unavailable")
+                        && message.contains("sessionId=" + sessionId)
+                        && message.contains("requestId=")
+                        && !message.contains("requestId=null");
+            }), () -> "warn 缺失或不带关联 id: " + appender.list);
+        } finally {
+            controllerLogger.detachAppender(appender);
+            reset(sessionParticipantService);
+        }
     }
 }

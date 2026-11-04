@@ -3134,8 +3134,10 @@ export const api = {
             `/roles/catalog?locale=${encodeURIComponent(catalogLocale())}`,
         );
     },
-    listRoles(): Promise<ApiRole[]> {
-        return request<ApiRole[]>("/roles");
+    listRoles(workspaceId?: string): Promise<ApiRole[]> {
+        // PLAN-0667 M3：候选角色按 workspace 授权上下文过滤（Lead 2026-11-05 冻结：不新增候选端点）。
+        const query = workspaceId ? `?workspaceId=${encodeURIComponent(workspaceId)}` : "";
+        return request<ApiRole[]>(`/roles${query}`);
     },
     createRole(input: ApiRoleWrite): Promise<ApiRole> {
         return request<ApiRole>("/roles", { method: "POST", body: JSON.stringify(input) });

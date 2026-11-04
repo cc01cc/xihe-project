@@ -434,7 +434,7 @@ async function loadRbac(principalId: string) {
         rbacState.value = "ready";
         // 候选清单（roles 复用既有 /roles；skills 复用 /skills）——失败只影响"可绑定项"，不影响已绑定列表。
         const [rolesCatalog, skillsCatalog] = await Promise.allSettled([
-            api.listRoles(),
+            api.listRoles(props.workspaceId),
             api.getSkills(),
         ]);
         if (generation !== rbacGeneration) return;
