@@ -84,7 +84,12 @@ class GrantScopeIsolationIntegrationTest extends AbstractH2Test {
         List<AuthorizationGrant> roleRows = grantRepository
                 .findBySubjectTypeAndSubjectIdAndSource("user", fixture.userId(),
                         GrantSources.ROLE);
-        assertEquals(4, roleRows.size(), "WS_EDITOR materializes read/write/delete/exec");
+        // PLAN-0651 M2 T2.1 widened the default set (WS_EDITOR 4→7: +MANAGE_PROVIDER_CONNECTIONS,
+        // +USE_WORKSPACE_RUNTIME, +MANAGE_WORKSPACE_POLICY). Derive from the code catalog instead of
+        // a literal, so the next widening does not re-break an assertion that is about scope, not
+        // about the exact count.
+        assertEquals(RoleAtomExpectations.materializedAtomCount(SystemAccessRoleCatalog.WS_EDITOR),
+                roleRows.size(), "WS_EDITOR materializes one row per catalog action atom");
         roleRows.forEach(row -> {
             assertEquals("workspace", row.getScopeType());
             assertEquals(fixture.workspaceA(), row.getScopeId(),
@@ -93,8 +98,9 @@ class GrantScopeIsolationIntegrationTest extends AbstractH2Test {
         assertTrue(grantRepository.findScopedGrants("user", fixture.userId(),
                         GrantSources.EVALUATION_SOURCES, fixture.workspaceB()).isEmpty(),
                 "B sees none of A's materialized rows");
-        assertEquals(4, grantRepository.findScopedGrants("user", fixture.userId(),
-                GrantSources.EVALUATION_SOURCES, fixture.workspaceA()).size());
+        assertEquals(RoleAtomExpectations.materializedAtomCount(SystemAccessRoleCatalog.WS_EDITOR),
+                grantRepository.findScopedGrants("user", fixture.userId(),
+                        GrantSources.EVALUATION_SOURCES, fixture.workspaceA()).size());
     }
 
     @Test

@@ -247,8 +247,9 @@ class RoleAdminApiIntegrationTest extends AbstractIntegrationTest {
                 "the workspace owner binding plus the granted viewer");
         int epochAfterFirst = tokenVersion(subjectId);
         int auditsAfterFirst = auditCount("role_bindings_replaced");
-        assertEquals(1, grantRows(subjectId, "workspace", workspaceId),
-                "WS_VIEWER materializes its single read atom in that workspace");
+        assertEquals(RoleAtomExpectations.materializedAtomCount(SystemAccessRoleCatalog.WS_VIEWER),
+                grantRows(subjectId, "workspace", workspaceId),
+                "WS_VIEWER materializes one row per catalog atom (0651 M2 added USE_WORKSPACE_RUNTIME)");
         assertEquals(0, epochAfterFirst,
                 "PLAN-0610 W3-3: a workspace-tier binding does not move the epoch — the token "
                         + "carries no workspace role, so only the capability cache is invalidated");
@@ -377,14 +378,23 @@ class RoleAdminApiIntegrationTest extends AbstractIntegrationTest {
         String adminToken = login("gate-instance-admin@test.com");
         assertTrue(authzContext.isInstanceAdmin(UUID.fromString(adminId)));
 
-        for (String path : List.of("/api/v1/roles/catalog", "/api/v1/roles",
+        for (String path : List.of("/api/v1/roles/catalog",
                 "/api/v1/bindings?scope=instance")) {
             ResponseEntity<String> denied = call(HttpMethod.GET, path, null, adminToken);
             assertEquals(HttpStatus.FORBIDDEN, denied.getStatusCode(),
                     "instance ADMIN has no MANAGE_ROLES: " + path);
         }
+        // PLAN-0667 `3345e522` (2026-11-05): GET /api/v1/roles became a DUAL-VIEW read — holders of
+        // MANAGE_ROLES keep the full admin view, holders of MANAGE_AGENT_PRINCIPALS (instance) /
+        // MANAGE_WORKSPACE_AGENTS (?workspaceId=) get only the agent-bindable subset, everyone else
+        // 403. Writes were deliberately NOT widened. ADMIN carries MANAGE_AGENT_PRINCIPALS (0651),
+        // so the old blanket 403 is the stale half of this assertion.
+        ResponseEntity<String> bindable = call(HttpMethod.GET, "/api/v1/roles", null, adminToken);
+        assertEquals(HttpStatus.OK, bindable.getStatusCode(),
+                "ADMIN reads the agent-bindable subset, not the admin view");
         assertEquals(HttpStatus.FORBIDDEN, call(HttpMethod.POST, "/api/v1/roles",
-                Map.of("name", "NOPE", "atoms", List.of("read")), adminToken).getStatusCode());
+                        Map.of("name", "NOPE", "atoms", List.of("read")), adminToken).getStatusCode(),
+                "the write gate still requires MANAGE_ROLES (read widening did not widen writes)");
 
         String plainToken = register("gate-plain@test.com");
         assertEquals(HttpStatus.FORBIDDEN,
