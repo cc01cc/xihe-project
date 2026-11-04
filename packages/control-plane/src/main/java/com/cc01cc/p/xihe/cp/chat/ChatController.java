@@ -1013,7 +1013,10 @@ public class ChatController {
         if (userId == null || workspaceId == null) {
             return ProblemDetailsHandler.workspaceContextRequired();
         }
-        Session session = sessionService.requireCurrent(sessionId, userId, workspaceId);
+        // BL-299: the run list is read-only metadata (runId/status/origin/terminal outcome/error
+        // code/timestamps/waiting links). The messages read surface already exposes the same run
+        // fields to an invited participant; there is no owner-only content here.
+        Session session = sessionService.requireReadable(sessionId, userId, workspaceId);
         int safePage = Math.max(page, 0);
         int safeSize = Math.min(Math.max(size, 1), 200);
         return ResponseEntity.ok(chatRunReadService.listSessionRuns(

@@ -357,6 +357,18 @@ PLAN-0416 Chat 消费：`ChatController` 仅在 admission snapshot 原始 native
 - **v1 不含 skill 命令**：`/skill:<name>` 的候选必须来自 PLAN-0628 的 run 快照 listing（`skills_snapshot`）与按需正文（`skill_read`），两者在 0628 M2 前不落地（D35-07）；M3 只交付其形态设计。
 - **C1 门**：两条路由均返回**纯标量 / 纯文本**，不经 Jackson-2 `JsonNode`（无 `JacksonNodeExit` 调用即无泄露面）。
 
+## 14a. 受邀 HUMAN 的辅助读面（BL-298 / BL-299，2026-11-05）
+
+- **统一原语**：`SessionReadAccess.requireReadable` = **owner 或 enabled invited HUMAN participant**；**manager 不含**（D1b：不能让 instance admin 读所有会话）；其余一律 404 `SESSION_NOT_FOUND`（not-区分，无存在性预言机）。写面/管理面一律继续 `requireOwned`，读面放宽不得外溢。
+- **BL-299 逐面裁定（开放 3 / 保持 404 3）**：
+  - **开放**：`GET /api/v1/chat/sessions/{id}/runs` —— 只读 run 元数据（`runId/status/origin/terminalOutcome/errorCode/时间戳/waiting*`），`messages` 读面已对 participant 暴露同一 run 的 `runId/status/terminalOutcome/errorCode`，**同域无新增泄露**；`GET /api/v1/sessions/{id}/commands` —— 只有命令名 + `available/reason`，是交互能力面；`GET /api/v1/policy/mode` —— 只有 session `mode` + `sessionRules` 数量，UI 需要它决定行为。
+  - **保持 404（即"不是缺陷"的显式登记，禁止下次重复登记为漏开）**：
+    1. `GET /api/v1/sessions/{id}/follow-ups`：快照 items 直接带 `content`/`attachmentInfos`/`pauseReason`/`childRunId`，是 **owner 尚未发送的草稿队列**（写入也只按 owner 授权）；对 participant 开放等于泄漏未公开内容，不是"会话可见性"问题。
+    2. `GET /api/v1/chat/sessions/{id}/monitor`：运维聚合（`providerConnectionId`/`connectionRevision`、agent health、transport attempt/failed/partial、readiness、history），属**管理/可观测面**，不是会话内容读面。
+    3. `GET /api/v1/events`（SSE）：事件流含 `approval_request`（tool/action/details/**argumentsHash**）、`tool_exec_approval_required`、`run_checkpoint`、`usage`/transport；未声明 `asParticipantId` 时还是 **observer 全量广播** ⇒ **订阅权限 ≠ 消息读权限**，必须先按事件类型做 allowlist 再开（BL-304，另批）。
+- **写面边界**：`POST /api/v1/policy/mode` 仍 `requireOwned`（participant 404）；本轮测试显式钉住"读面开放 + 写面不开放"。
+- **测试**：`SessionAuxReadFacesParticipantTest` 对每个开放面覆盖 participant 200 / owner 200 / 非参与者 404 / 跨工作区 404，并额外断言 participant 的 `POST /policy/mode` 404。
+
 ## 15. 同源 UI 静伺服（`cp.ui.static-root`，PLAN-0632 D32-06 / M2-3）
 
 - **默认关闭，语义只有一条开关**：`cp.ui.static-root`（env `XIHE_UI_STATIC_ROOT`）为空 ⇒ `UiStaticServingFilter` 是纯 pass-through，请求原样进原链路；dev/host 两条车道仍由 Vite dev server 代理 UI，**行为零变化**（`UiStaticServingFilterTest` 第 1 组断言钉住这一点）。指向一个目录（安装版由 launcher 设为 `<install>\ui`）才启用。
