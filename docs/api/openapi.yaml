@@ -1295,6 +1295,47 @@ paths:
           description: 'PARTICIPANT_ALREADY_EXISTS | PARTICIPANT_PRIMARY_EXISTS | PARTICIPANT_ORDER_CONFLICT'
           content:
             application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } }
+  /api/v1/sessions/{sessionId}/participants/{participantId}/cursor:
+    patch:
+      operationId: advanceParticipantCursor
+      summary: Advance the caller's own read cursor for this session
+      description: |
+        PLAN-0660 T5.1 (contract `spec/session/user-channel.md` §2): advance-only
+        (`max(current, requested)`), clamped to the Session's current max `context_events.sequence`.
+        Self-only — the row must be a HUMAN participant whose `principal_id` is the caller;
+        otherwise **403 `CURSOR_SELF_ONLY`**. No counter is written: the response's
+        `readCursor.mentionCount` is derived from `wake_dispatch` notify rows past the pointer (§3).
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: sessionId, required: true, schema: { type: string } }
+        - { in: path, name: participantId, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [lastReadEventSeq]
+              properties:
+                lastReadEventSeq: { type: integer, minimum: 0, description: 'Target read position; advance-only + clamped to the session max sequence.' }
+      responses:
+        '200':
+          description: The updated cursor view (same CursorView shape the list endpoint returns)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  lastReadEventSeq: { type: integer }
+                  mentionCount: { type: integer, description: 'DERIVED from wake_dispatch notify rows past the pointer (PLAN-0660 T5.2); not a stored column.' }
+                  updatedAt: { type: string, format: date-time }
+        '400':
+          description: Body missing or lastReadEventSeq not an integer (400 INVALID_REQUEST)
+        '403':
+          description: Not the row's own human participant (403 CURSOR_SELF_ONLY)
+        '404':
+          description: Session or participant not found (404 SESSION_NOT_FOUND / PARTICIPANT_NOT_FOUND)
+
   /api/v1/sessions/{sessionId}/participants/{participantId}:
     patch:
       operationId: updateSessionParticipant
