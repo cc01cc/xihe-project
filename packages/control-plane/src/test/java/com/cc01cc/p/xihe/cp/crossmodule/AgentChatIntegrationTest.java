@@ -15,8 +15,12 @@ import static com.github.tomakehurst.wiremock.client.WireMock.urlEqualTo;
 import static com.github.tomakehurst.wiremock.client.WireMock.urlPathMatching;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.awaitility.Awaitility.await;
 
@@ -28,6 +32,8 @@ import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceAgent;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
 import com.cc01cc.p.xihe.cp.entity.Session;
+import com.fasterxml.jackson.databind.JsonNode;
+import org.mockito.ArgumentCaptor;
 import com.cc01cc.p.xihe.cp.repository.AgentPrincipalRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceAgentRepository;
@@ -113,6 +119,9 @@ class AgentChatIntegrationTest extends AbstractWireMockTest {
 
     @Autowired
     private BranchPathService branchPathService;
+
+    @Autowired
+    private com.cc01cc.p.xihe.cp.repository.ChatRunRepository chatRunRepository;
 
     private String token;
     private String userId;
@@ -439,6 +448,60 @@ class AgentChatIntegrationTest extends AbstractWireMockTest {
                 url("/api/v1/chat"), body, Map.class);
 
         assertEquals(HttpStatus.UNAUTHORIZED, response.getStatusCode());
+    }
+
+    /**
+     * PLAN-0670 M2c / BL-293: the terminal {@code done.agentContextTruncation} object is relayed to the
+     * UI AND persisted into {@code chat_runs.context_truncation}; both must be the same object (no
+     * re-derivation). This is the real CP→Agent(fake WireMock)→CP relay→DB link.
+     */
+    @Test
+    void doneAgentContextTruncationIsStoredAndEqualsTheRelayedSseObject() throws Exception {
+        String sessionId = UUID.randomUUID().toString();
+        createAgentSession(sessionId, "Truncation durable test");
+
+        String markerJson = "{\"droppedMessages\":500,\"keptMessages\":2000,"
+                + "\"keptBytes\":1030000,\"droppedBytes\":9270000,"
+                + "\"limitMessages\":2000,\"limitBytes\":8388608,\"strategy\":\"newestKeep\"}";
+        wireMock.stubFor(post(urlEqualTo("/internal/v1/agent/chat"))
+                .willReturn(aResponse()
+                        .withStatus(200)
+                        .withHeader("Content-Type", "text/event-stream")
+                        .withBody("event: done\ndata: {\"type\":\"done\",\"outcome\":\"success\","
+                                + "\"agentContextTruncation\":" + markerJson + "}\n\n")));
+
+        ResponseEntity<Map> response = restTemplate.exchange(
+                url("/api/v1/chat"),
+                HttpMethod.POST,
+                entityWithAuth(Map.of(
+                        "sessionId", sessionId,
+                        "branchId", branchPathService.ensureRootBranchId(sessionId),
+                        "content", "truncation durable",
+                        "userId", userId,
+                        "workspaceId", workspaceId), token),
+                Map.class);
+        assertEquals(HttpStatus.ACCEPTED, response.getStatusCode());
+
+        JsonNode expected = objectMapper.readTree(markerJson);
+        await().atMost(Duration.ofSeconds(5)).untilAsserted(() -> {
+            var run = chatRunRepository
+                    .findFirstBySessionIdOrderByCreatedAtDescIdDesc(sessionId).orElseThrow();
+            assertNotNull(run.getContextTruncation(), "terminal write must persist the marker");
+            assertEquals(expected, run.getContextTruncation(),
+                    "durable jsonb must equal the Agent's done.agentContextTruncation object");
+            assertEquals("succeeded", run.getStatus());
+        });
+
+        ArgumentCaptor<Object> payloads = ArgumentCaptor.forClass(Object.class);
+        verify(sseEmitterManager, Mockito.atLeastOnce())
+                .send(eq(sessionId), eq("done"), payloads.capture(), any());
+        Map<?, ?> relayedDone = payloads.getAllValues().stream()
+                .filter(value -> value instanceof Map<?, ?> map && map.containsKey("agentContextTruncation"))
+                .map(value -> (Map<?, ?>) value)
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("relayed done must carry agentContextTruncation"));
+        assertEquals(expected, objectMapper.valueToTree(relayedDone.get("agentContextTruncation")),
+                "durable value and the relayed SSE value must be the same object");
     }
 
     private void createAgentSession(String sessionId, String title) {
