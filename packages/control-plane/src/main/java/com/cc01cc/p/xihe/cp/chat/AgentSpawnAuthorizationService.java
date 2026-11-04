@@ -17,7 +17,13 @@ import org.springframework.stereotype.Service;
 import java.time.Instant;
 import java.util.Map;
 
-/** Applies the normal CP grant and approval gate to the non-MCP spawn route. */
+/**
+ * Applies the normal CP grant and approval gate to spawn.
+ *
+ * <p>Two entry points share one {@link #gate}: the agent channel ({@link #authorize}, MCP
+ * {@code spawn_agent}) evaluates the calling AGENT principal's grant path; the human delegation
+ * channel ({@link #authorizeUserSpawn}, PLAN-0655) evaluates the CALLER's user grant path.</p>
+ */
 @Service
 public class AgentSpawnAuthorizationService {
     public static final String APPROVAL_GRANT_HEADER = "X-Xihe-Approval-Request-Id";
@@ -36,12 +42,31 @@ public class AgentSpawnAuthorizationService {
         this.audit = audit;
     }
 
+    /**
+     * Agent-channel spawn (MCP {@code spawn_agent}): the capability check walks the AGENT
+     * principal's grant path — the calling agent itself must hold SPAWN_AGENT.
+     */
     public GateResult authorize(ChatSubmissionService.SpawnInvocation invocation, String approvalRequestId) {
+        return gate(invocation, approvalRequestId, false);
+    }
+
+    /**
+     * PLAN-0655: the HUMAN delegation gate. Same verdict/ask machinery as {@link #authorize}, but
+     * the capability check evaluates the CALLER'S user grant path (workspace role-binding atoms
+     * such as AGENT_DELEGATOR's SPAWN_AGENT) — the chosen child principal's cap is intentionally
+     * NOT consulted: being delegated TO is not the same as holding the spawn capability.
+     */
+    public GateResult authorizeUserSpawn(ChatSubmissionService.SpawnInvocation invocation, String approvalRequestId) {
+        return gate(invocation, approvalRequestId, true);
+    }
+
+    private GateResult gate(ChatSubmissionService.SpawnInvocation invocation, String approvalRequestId,
+                            boolean userOnly) {
         String tool = ChatSubmissionService.SPAWN_TOOL_NAME;
         PolicyContext context = policy.loadContext(
                 invocation.userId(), invocation.workspaceId(), invocation.parentSessionId());
         if (!policy.allowsByGrant(context, tool, invocation.authorizationBody(), invocation.parentSessionId(),
-                invocation.userId(), invocation.workspaceId(), false)) {
+                invocation.userId(), invocation.workspaceId(), userOnly)) {
             audit.record(invocation.parentSessionId(), tool, "authorization_denied", "actionClass=SPAWN_AGENT");
             throw new CpApiException(HttpStatus.FORBIDDEN, "FORBIDDEN",
                     "An explicit SPAWN_AGENT grant is required");
