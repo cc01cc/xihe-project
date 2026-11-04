@@ -185,6 +185,20 @@ const defaultModelError = computed(() => {
 /** 2026-11-04 用户裁定：主体名不得含空格、不得数字开头，只允许字母/汉字/数字。 */
 const agentNameError = computed(() => principalNameError(name.value));
 
+/** 错误码 → 文案。前后空格单独一条提示：CP 权威不 trim，UI 不得静默吞掉。 */
+const agentNameErrorMessage = computed(() => {
+    switch (agentNameError.value) {
+        case "required":
+            return t("validation.principalNameRequired");
+        case "whitespace":
+            return t("validation.principalNameWhitespace");
+        case "pattern":
+            return t("validation.principalNamePattern");
+        default:
+            return "";
+    }
+});
+
 const createBlocked = computed(
     () =>
         !!agentNameError.value ||
@@ -828,11 +842,7 @@ async function unbind(agent: WorkspaceAgentBinding) {
                     class="block text-xs text-destructive"
                     data-testid="agent-principal-name-error"
                 >
-                    {{
-                        agentNameError === "required"
-                            ? t("validation.principalNameRequired")
-                            : t("validation.principalNamePattern")
-                    }}
+                    {{ agentNameErrorMessage }}
                 </span>
                 <span v-else class="block text-xs text-muted-foreground">
                     {{ t("validation.nameAllowed") }}

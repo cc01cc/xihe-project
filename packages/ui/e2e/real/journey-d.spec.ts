@@ -169,7 +169,7 @@ test.describe("@host Journey D — context pipeline", () => {
         const principalId = await provisionWorkspaceAgentPrincipal(
             request,
             { accessToken: authToken, workspaceId: wsId },
-            { name: "Journey D Real Agent" },
+            { name: "JourneyDRealAgent" },
         );
         const realSessionId = await createSessionWithPrincipal(
             request,

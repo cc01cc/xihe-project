@@ -128,7 +128,7 @@ test("@host PLAN-0466 Audit read view serves the four-domain entry stream", asyn
     test.setTimeout(180000);
     const auth = await register(request);
     const principalId = await provisionWorkspaceAgentPrincipal(request, auth, {
-        name: "Audit Read Fixture",
+        name: "AuditReadFixture",
         actions: ["read", "write"],
     });
     const sessionId = await createSessionWithPrincipal(request, auth, {

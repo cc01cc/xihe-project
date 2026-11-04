@@ -20,6 +20,7 @@ import { test, expect } from "@playwright/test";
 import type { APIRequestContext, Page } from "@playwright/test";
 import { bindToolCapableChat } from "../real/helpers/tool-capable-chat";
 
+import { agentName } from "../real/helpers/agent-name";
 const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`;
 const RUN_ID = process.env.XIHE_E2E_RUN_ID || `headed-${Date.now()}`;
 const RUN_DIR = path.resolve(process.cwd(), "../../.tmp/xh-headed-walkthrough/runs", RUN_ID);
@@ -270,7 +271,9 @@ async function createAndBindAgent(page: Page): Promise<string> {
     await expect(page.getByTestId("workspace-agent-management-dialog")).toBeVisible({
         timeout: 20000,
     });
-    await page.getByTestId("agent-principal-name").fill(`Headed Agent ${randomUUID().slice(0, 8)}`);
+    await page
+        .getByTestId("agent-principal-name")
+        .fill(agentName("Headed", randomUUID().slice(0, 8)));
     await page.getByTestId("agent-principal-template").selectOption("");
 
     const createResponse = page.waitForResponse(
@@ -501,7 +504,7 @@ test.describe.serial("@host headed walkthrough — real user scenarios S1–S8",
         for (const scope of ["WORKSPACE", "INSTANCE"] as const) {
             const denied = await request.post(`${CP_URL}/api/v1/agent-principals`, {
                 headers: { ...bearer(token), "X-Workspace-Id": s5WorkspaceId },
-                data: { scope, name: `headed-f01-${scope.toLowerCase()}-${Date.now()}` },
+                data: { scope, name: agentName(`headedF01${scope}`, Date.now()) },
             });
             const problem = (await denied.json().catch(() => ({}))) as { code?: string };
             deniedScopes.push({ scope, status: denied.status(), code: problem.code ?? null });
@@ -541,7 +544,7 @@ test.describe.serial("@host headed walkthrough — real user scenarios S1–S8",
             )
             .toEqual(["PERSONAL"]);
         await expect(page.getByTestId("agent-create-forbidden-hint")).toHaveCount(0);
-        await page.getByTestId("agent-principal-name").fill(`headed-plain-${Date.now()}`);
+        await page.getByTestId("agent-principal-name").fill(agentName("HeadedPlain", Date.now()));
         await expect(page.getByTestId("agent-principal-create")).toBeEnabled();
         const personalCreateResponse = page.waitForResponse(
             (response) =>

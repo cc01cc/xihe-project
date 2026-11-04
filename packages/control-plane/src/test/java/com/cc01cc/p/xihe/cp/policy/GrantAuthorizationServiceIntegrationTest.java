@@ -407,7 +407,7 @@ class GrantAuthorizationServiceIntegrationTest extends AbstractIntegrationTest {
         snapshot.put("systemPrompt", "internal template prompt");
         snapshot.set("permissions", atoms("read", "write", "network"));
         AgentPrincipal principal = agentPrincipalService.createPrincipal(
-                userId, "Scoped agent", "template-code", snapshot);
+                userId, "ScopedAgent", "template-code", snapshot);
         principalId = principal.getId();
 
         // 2026-11-04 裁定（PLAN-0629「role 行是唯一权威源」）：creation 不再写 template 快照行
@@ -566,7 +566,7 @@ class GrantAuthorizationServiceIntegrationTest extends AbstractIntegrationTest {
                 "no selected template preserves the bare-default grant behavior");
 
         AgentPrincipal principal = agentPrincipalService.createPrincipal(
-                userId, "Template-bound principal", userTemplateId, userTemplate.snapshot());
+                userId, "TemplateBoundPrincipal", userTemplateId, userTemplate.snapshot());
         principalId = principal.getId();
         ConfigEntity updatedUserTemplates = configJpaRepository.findById(userTemplates.getId()).orElseThrow();
         updatedUserTemplates.setConfigValue(templateConfig(

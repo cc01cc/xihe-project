@@ -318,7 +318,7 @@ class ContextToolHistoryLiveChainTest extends AbstractH2Test {
         headers.setContentType(MediaType.APPLICATION_JSON);
         ResponseEntity<Map> principalResponse = restTemplate.postForEntity(
                 url("/api/v1/agent-principals"),
-                new HttpEntity<>(Map.of("name", "PLAN-0381 V15 reader"), headers),
+                new HttpEntity<>(Map.of("name", "PLAN0381V15Reader"), headers),
                 Map.class);
         assertThat(principalResponse.getStatusCode().is2xxSuccessful()).as("principal API create").isTrue();
         String principalId = String.valueOf(principalResponse.getBody().get("principalId"));

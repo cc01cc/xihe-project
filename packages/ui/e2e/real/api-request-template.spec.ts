@@ -13,14 +13,14 @@ test.beforeAll(async ({ request }) => {
         data: {
             email: `template-${randomUUID()}@test.local`,
             password: generateE2EPassword(),
-            name: "Template Wire",
+            name: "TemplateWire",
         },
     });
     expect(registration.status()).toBe(201);
     auth = await registration.json();
     // PLAN-0614: registration no longer creates a workspace — create one explicitly.
     auth.workspaceId = await ensureWorkspace(request, auth.accessToken);
-    principalId = await provisionWorkspaceAgentPrincipal(request, auth, { name: "Template Wire" });
+    principalId = await provisionWorkspaceAgentPrincipal(request, auth, { name: "TemplateWire" });
 });
 const cases = [
     {
@@ -144,7 +144,7 @@ for (const wire of cases) {
                         apiTypeVersion: 1,
                         apiKey: "fake-wire-credential",
                         connectionKey: `template-wire-${wire.apiTypeId}`,
-                        label: "Template Wire",
+                        label: "TemplateWire",
                         scope: "USER",
                         baseUrl: `http://127.0.0.1:${address.port}/v1`,
                         modelDiscovery: "manual",
@@ -258,7 +258,7 @@ for (const wire of cases) {
                 const sessionResponse = await request.post(`${CP_URL}/api/v1/sessions`, {
                     headers,
                     data: {
-                        title: "Template Wire",
+                        title: "TemplateWire",
                         agentPrincipalId: principalId,
                         modelProvider: wire.providerId,
                         modelName: "wire-model",

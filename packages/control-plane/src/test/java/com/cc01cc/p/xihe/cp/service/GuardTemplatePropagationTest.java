@@ -180,7 +180,7 @@ class GuardTemplatePropagationTest {
                 .thenReturn(new AgentTemplateService.ResolvedTemplate("user", guardSnapshot(false)));
         String actor = UUID.randomUUID().toString();
 
-        AgentPrincipal principal = service.createPrincipalFromTemplate(actor, "My Agent", GUARD_TEMPLATE_ID,
+        AgentPrincipal principal = service.createPrincipalFromTemplate(actor, "MyAgent", GUARD_TEMPLATE_ID,
                 "PERSONAL", null, null, null, null);
 
         assertEquals(AgentPrincipal.ORIGIN_USER, principal.getOrigin(),

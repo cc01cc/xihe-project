@@ -1971,6 +1971,15 @@ function normalizeSession(value: unknown): SessionResponse {
         workspaceId: typeof record.workspaceId === "string" ? record.workspaceId : workspace?.id,
         agentPrincipalId:
             typeof record.agentPrincipalId === "string" ? record.agentPrincipalId : null,
+        // PLAN-0655 T1.5 / PLAN-0659 T1.4：委派 lineage 必须在 list 投影里透传。
+        // OpenAPI 的 Session 契约（`required: [kind, spawnedFromSessionId, spawnedFromRunId,
+        // spawnedAt]`）与 `stores/session.ts#toSession` 都消费这三个字段；此前 normalize 把
+        // 它们丢了 ⇒ 会话树的父子嵌套与「委派」徽标在真实链路上永远看不到（单测直接塞
+        // store 状态，故一直没暴露）。这是投影层缺陷，不是夹具问题。
+        kind: typeof record.kind === "string" ? record.kind : null,
+        spawnedFromSessionId:
+            typeof record.spawnedFromSessionId === "string" ? record.spawnedFromSessionId : null,
+        spawnedAt: typeof record.spawnedAt === "string" ? record.spawnedAt : null,
         createdAt: typeof record.createdAt === "string" ? record.createdAt : undefined,
         updatedAt: typeof record.updatedAt === "string" ? record.updatedAt : undefined,
         modelProvider: typeof record.modelProvider === "string" ? record.modelProvider : undefined,

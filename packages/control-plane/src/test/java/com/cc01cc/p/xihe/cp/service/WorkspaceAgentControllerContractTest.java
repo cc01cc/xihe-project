@@ -109,7 +109,7 @@ class WorkspaceAgentControllerContractTest extends AbstractIntegrationTest {
         assertEquals(1, listedAgents.size(), String.valueOf(listed.getBody()));
         Map<?, ?> view = (Map<?, ?>) listedAgents.getFirst();
         assertEquals(principalId.toString(), view.get("principalId"));
-        assertEquals("Research Agent", view.get("name"));
+        assertEquals("ResearchAgent", view.get("name"));
         assertEquals("template-1", view.get("templateId"));
         assertEquals("Research", view.get("templateName"));
         // PLAN-0622 M1.2 renamed `permissions` -> `permissionsSnapshot` and made `source` mandatory;
@@ -171,7 +171,7 @@ class WorkspaceAgentControllerContractTest extends AbstractIntegrationTest {
         workspaceFixture.bindWorkspaceRole(otherWorkspaceId.toString(), userId.toString(), WorkspaceRole.EDITOR);
 
         AgentPrincipal principal = new AgentPrincipal();
-        principal.setName("Research Agent");
+        principal.setName("ResearchAgent");
         principal.setCreatedByUserId(userId.toString());
         principal.setTemplateId("template-1");
         principal.setTemplateSnapshot(objectMapper.readTree(

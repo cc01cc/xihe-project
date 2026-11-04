@@ -223,7 +223,7 @@ test.describe("@host PLAN-0489 scheduled tasks", () => {
 
         const agentAuth = { accessToken: ctx.authToken, workspaceId: ctx.workspaceId };
         const principalId = await provisionWorkspaceAgentPrincipal(request, agentAuth, {
-            name: "Plan0489 Scheduled",
+            name: "Plan0489Scheduled",
         });
         sessionId = await createSessionWithPrincipal(request, agentAuth, {
             principalId,

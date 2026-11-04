@@ -269,7 +269,7 @@ test.describe("@host PLAN-0630 T5.9 real delegation walkthrough", () => {
 
         const principalResponse = await request.post(`${CP_URL}/api/v1/agent-principals`, {
             headers,
-            data: { scope: "WORKSPACE", name: "PLAN0630 Delegator", templateId },
+            data: { scope: "WORKSPACE", name: "PLAN0630Delegator", templateId },
         });
         expect(principalResponse.status(), await principalResponse.text()).toBe(201);
         const principalId = requireUuid(
@@ -472,7 +472,14 @@ test.describe("@host PLAN-0630 T5.9 real delegation walkthrough", () => {
         await expect(primaryBadge, "the members dock shows the PRIMARY badge").toBeVisible({
             timeout: 60_000,
         });
-        await expect(primaryBadge).toContainText(/PRIMARY|主要/i);
+        // BL-240: the badge renders the **localized role label** from
+        // `workspace.participantRolePrimary` (zh「主智能体」/ en "Primary agent") and keeps the wire
+        // enum on `data-session-role`; the retired `/PRIMARY|主要/i` pattern predated that i18n key
+        // ("主要" is no longer any label). Pin BOTH facts — the structural role attribute and the
+        // exact localized wording — so this still fails if the badge shows a wrong role or a
+        // placeholder; it is not weakened to a bare visibility check.
+        await expect(primaryBadge).toHaveAttribute("data-session-role", "PRIMARY");
+        await expect(primaryBadge).toContainText(/主智能体|Primary agent/i);
         const step2Shot = path.join(EVIDENCE_DIR, "t5.9-step2-child-primary.png");
         await page.screenshot({ scale: "css", path: step2Shot, fullPage: false });
         steps.step2 = {

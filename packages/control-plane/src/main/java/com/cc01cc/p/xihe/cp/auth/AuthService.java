@@ -56,6 +56,8 @@ public class AuthService {
      * a caller-supplied value is validated (400 USERNAME_INVALID / 409
      * USERNAME_TAKEN), a blank one is derived from the email local part with
      * automatic numeric de-duplication.
+     * 决策 v29（2026-11-04）：字符规则改由 {@link NameFormat} 单一供给（字母含大写 / 中文汉字 /
+     * 数字，不得数字开头、不得含空格与符号，≤32）；错误码沿用 {@code USERNAME_INVALID}。
      * PLAN-0610 W4a: the account is created without {@code users.role}; the tier is the USER
      * binding written by {@link GrantDefaultService#ensureUserDefault(User)} below.
      */
@@ -80,19 +82,24 @@ public class AuthService {
         return user;
     }
 
-    /** PLAN-0565 ruling #7: explicit usernames are validated; blank ones are derived. */
+    /** PLAN-0565 ruling #7 + 决策 v29: explicit usernames are validated; blank ones are derived. */
     private String resolveUsername(String requested, String email) {
         if (requested != null && !requested.isBlank()) {
-            String candidate = requested.trim();
-            if (!candidate.matches("^[a-z][a-z0-9]{0,31}$")) {
+            // 决策 v29（2026-11-04）：username 与 agent 主体名/昵称同规则——允许英文字母（含大写）、
+            // 中文汉字、数字，不得数字开头、不得含空格与符号；列宽 users.username VARCHAR(32) 定 32 上限。
+            // 对**原始输入**判定（不 trim）：静默 trim 会把 " zoe" 当成合法（D61-03 不变式）。
+            // 错误码保留 USERNAME_INVALID（D61-05 暂定 (ii)：改码是破坏式 API）。
+            if (!NameFormat.isValidUsername(requested)) {
                 throw new CpApiException(HttpStatus.BAD_REQUEST, "USERNAME_INVALID",
-                        "Username must be 1-32 lowercase letters/digits and start with a letter");
+                        "Username must be 1-32 characters of letters (any case), Chinese characters "
+                                + "or digits, must not start with a digit, and must not contain "
+                                + "spaces or symbols");
             }
-            if (userRepository.existsByUsername(candidate)) {
+            if (userRepository.existsByUsername(requested)) {
                 throw new CpApiException(HttpStatus.CONFLICT, "USERNAME_TAKEN",
                         "Username already taken");
             }
-            return candidate;
+            return requested;
         }
 
         String base = User.defaultUsernameFromEmail(email);

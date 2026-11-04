@@ -3,6 +3,7 @@ package com.cc01cc.p.xihe.cp.service;
 import com.cc01cc.p.xihe.cp.policy.RequesterAuthority;
 import com.cc01cc.p.xihe.cp.policy.ToolFaceRegistry;
 import com.cc01cc.p.xihe.cp.audit.AuditLogger;
+import com.cc01cc.p.xihe.cp.auth.NameFormat;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.controller.MemberView;
 import com.cc01cc.p.xihe.cp.entity.User;
@@ -237,6 +238,10 @@ public class WorkspaceMemberService {
         if (username == null || username.isBlank()) {
             throw invalidRequest();
         }
+        // 用户 2026-11-03/04 裁定（v23/v29）：username 只允许 字母/汉字/数字 且不得数字开头、
+        // 不得含空格与符号。对**原始输入**判定（不 trim）：含空格即非法，静默 trim 会把前导空格
+        // 当成合法。长度上限取 username 面的 32（列宽 VARCHAR(32)），不是 agent 名的 64。
+        NameFormat.require(username, "username", NameFormat.USERNAME_MAX_LENGTH);
         return username.trim();
     }
 

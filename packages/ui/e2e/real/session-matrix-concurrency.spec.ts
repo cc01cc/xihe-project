@@ -20,6 +20,7 @@ import {
     createSessionWithPrincipal,
     provisionWorkspaceAgentPrincipal,
 } from "./helpers/agent-principal";
+import { agentName } from "./helpers/agent-name";
 import { openSessionSse } from "./helpers/sse";
 
 const NONCE = Date.now().toString(36);
@@ -134,7 +135,7 @@ test.describe("@host PLAN-0658 R6 并发排队（durable queue）", () => {
             request,
             { accessToken: auth.accessToken, workspaceId },
             {
-                name: `r6-agent-${NONCE}`,
+                name: agentName("R6", NONCE),
                 actions: [],
                 defaultModelProvider: "openai",
                 defaultModelName: FAKE_LLM_MODEL,

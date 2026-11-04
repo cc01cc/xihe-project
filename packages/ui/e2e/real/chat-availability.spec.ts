@@ -85,7 +85,7 @@ async function openChat(
     let chatSessionId = sessionId;
     if (!chatSessionId) {
         const principalId = await provisionWorkspaceAgentPrincipal(request, auth, {
-            name: "Chat availability agent",
+            name: "ChatAvailabilityAgent",
         });
         chatSessionId = await createSessionWithPrincipal(request, auth, {
             principalId,
@@ -330,7 +330,7 @@ test.describe("PLAN-247 Chat availability @host", () => {
             const principalId = await provisionWorkspaceAgentPrincipal(
                 request,
                 { accessToken: auth.accessToken, workspaceId: auth.workspaceId },
-                { name: "Real Xiaomi Agent" },
+                { name: "RealXiaomiAgent" },
             );
             const chatSessionId = await createSessionWithPrincipal(
                 request,

@@ -83,7 +83,7 @@ test.describe("@host PLAN-269 full UI acceptance: real core flows", () => {
     test("real session rename and delete are visible in the sidebar", async ({ page, request }) => {
         const auth = await register(request, "session-lifecycle");
         const principalId = await provisionWorkspaceAgentPrincipal(request, auth, {
-            name: "Session Lifecycle Fixture",
+            name: "SessionLifecycleFixture",
         });
         await createSessionWithPrincipal(request, auth, {
             principalId,
@@ -217,7 +217,7 @@ test.describe("@host PLAN-269 full UI acceptance: real mobile flows", () => {
     }, testInfo) => {
         const auth = await register(request, "mobile-sheets");
         const principalId = await provisionWorkspaceAgentPrincipal(request, auth, {
-            name: "Mobile Sheets Fixture",
+            name: "MobileSheetsFixture",
         });
         const sessionId = await createSessionWithPrincipal(request, auth, {
             principalId,
