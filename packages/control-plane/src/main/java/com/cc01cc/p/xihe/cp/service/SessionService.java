@@ -41,6 +41,8 @@ public class SessionService {
 
     private final SessionRepository sessionRepository;
     private final SessionParticipantService sessionParticipantService;
+    /** PLAN-0668 D1: single visibility primitive shared with the roster guard. */
+    private final SessionReadAccess sessionReadAccess;
     private final SessionForkRequestRepository forkRequestRepository;
     private final SessionBranchRepository sessionBranchRepository;
     private final MessageRepository messageRepository;
@@ -74,7 +76,8 @@ public class SessionService {
                           McpInvocationService mcpInvocationService,
                           GrantDefaultService grantDefaultService,
                           WorkspaceBackendPolicy backendPolicy,
-            SessionParticipantService sessionParticipantService) {
+            SessionParticipantService sessionParticipantService,
+            SessionReadAccess sessionReadAccess) {
         this.sessionRepository = sessionRepository;
         this.forkRequestRepository = forkRequestRepository;
         this.sessionBranchRepository = sessionBranchRepository;
@@ -91,6 +94,7 @@ public class SessionService {
         this.mcpInvocationService = mcpInvocationService;
         this.grantDefaultService = grantDefaultService;
         this.sessionParticipantService = sessionParticipantService;
+        this.sessionReadAccess = sessionReadAccess;
     }
 
     @Transactional(readOnly = true)
@@ -259,11 +263,18 @@ public class SessionService {
 
     @Transactional(readOnly = true)
     public Session requireCurrent(String sessionId, String userId, String workspaceId) {
-        requireWorkspace(userId, workspaceId);
-        return sessionRepository.findByIdAndUserIdAndWorkspaceIdAndArchivedFalse(
-                        UUID.fromString(sessionId), userId, workspaceId)
-                .orElseThrow(() -> new CpApiException(
-                        HttpStatus.NOT_FOUND, "SESSION_NOT_FOUND", "Session not found"));
+        // PLAN-0668 D1: owner-only semantics preserved verbatim; the primitive lives in
+        // SessionReadAccess so the read/roster guards cannot drift from it again.
+        return sessionReadAccess.requireOwned(userId, workspaceId, sessionId);
+    }
+
+    /**
+     * PLAN-0668 D1/D1b read face: owner or invited enabled HUMAN participant. Managers are
+     * deliberately excluded (they keep the existing roster read only); 404 otherwise.
+     */
+    @Transactional(readOnly = true)
+    public Session requireReadable(String sessionId, String userId, String workspaceId) {
+        return sessionReadAccess.requireReadable(userId, workspaceId, sessionId);
     }
 
     @Transactional(readOnly = true)

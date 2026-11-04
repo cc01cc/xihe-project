@@ -10,9 +10,6 @@ import com.cc01cc.p.xihe.cp.entity.SessionParticipantCursor;
 import com.cc01cc.p.xihe.cp.entity.User;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.cc01cc.p.xihe.cp.policy.GrantAuthorizationService;
-import com.cc01cc.p.xihe.cp.policy.PolicyRequest;
-import com.cc01cc.p.xihe.cp.policy.ToolFaceRegistry;
-import com.cc01cc.p.xihe.cp.policy.ToolShape;
 import com.cc01cc.p.xihe.cp.repository.AgentPrincipalRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionParticipantCursorRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionParticipantRepository;
@@ -75,6 +72,8 @@ public class SessionParticipantService {
     private final UserRepository userRepository;
     private final WorkspaceService workspaceService;
     private final GrantAuthorizationService grantAuthorizationService;
+    /** PLAN-0668 D1: the single visibility primitive (also used by SessionService). */
+    private final SessionReadAccess sessionReadAccess;
     private final com.cc01cc.p.xihe.cp.scheduled.WakeScheduleProjectionService wakeScheduleProjectionService;
     /** PLAN-0660 T5.1/T5.2: session max sequence (clamp) + the derived unread aggregate. */
     private final EventStoreRepository eventStoreRepository;
@@ -93,7 +92,8 @@ public class SessionParticipantService {
                                      WorkspaceService workspaceService,
                                      GrantAuthorizationService grantAuthorizationService,
                 com.cc01cc.p.xihe.cp.scheduled.WakeScheduleProjectionService wakeScheduleProjectionService,
-            EventStoreRepository eventStoreRepository) {
+            EventStoreRepository eventStoreRepository,
+            SessionReadAccess sessionReadAccess) {
         this.wakeScheduleProjectionService = wakeScheduleProjectionService;
         this.eventStoreRepository = eventStoreRepository;
         this.participantRepository = participantRepository;
@@ -103,6 +103,7 @@ public class SessionParticipantService {
         this.userRepository = userRepository;
         this.workspaceService = workspaceService;
         this.grantAuthorizationService = grantAuthorizationService;
+        this.sessionReadAccess = sessionReadAccess;
     }
 
     // ------------------------------------------------------------------ read
@@ -494,28 +495,14 @@ public class SessionParticipantService {
     // ------------------------------------------------------------------ helpers
 
     private Session requireVisibleSession(String actorId, String workspaceId, String sessionId) {
-        if (workspaceId == null || workspaceId.isBlank()) {
-            throw new CpApiException(HttpStatus.CONFLICT, "WORKSPACE_CONTEXT_REQUIRED",
-                    "A workspace context is required to read session participants");
-        }
-        Session session = sessionRepository.findById(parseUuid(sessionId, "SESSION_NOT_FOUND"))
-                .filter(found -> !found.isArchived() && workspaceId.equals(found.getWorkspaceId()))
-                .orElseThrow(() -> new CpApiException(HttpStatus.NOT_FOUND, "SESSION_NOT_FOUND",
-                        "Session not found"));
-        boolean owner = actorId != null && actorId.equals(session.getUserId());
-        boolean invited = actorId != null && participantRepository
-                .existsBySessionIdAndPrincipalKindAndPrincipalIdAndDisabledAtIsNull(
-                        session.getId(), SessionParticipant.KIND_HUMAN,
-                        parseUuid(actorId, "SESSION_ACCESS_DENIED"));
-        // D23-08: an administrator who may manage this workspace's agents must also be able to add
-        // people to a conversation they do not own, so "manage authority" counts as visibility here;
-        // it never implies "speak as" (see authorizeAsParticipant).
-        boolean manager = !owner && !invited && canManage(actorId, workspaceId, session);
-        if (!owner && !invited && !manager) {
+        // PLAN-0668 D1/D2: same SessionReadAccess decision as the read faces; the roster face
+        // keeps its shipped 403 SESSION_ACCESS_DENIED shape (error shape is frozen per face).
+        SessionReadAccess.Resolved resolved = sessionReadAccess.resolve(actorId, workspaceId, sessionId);
+        if (!resolved.access().rosterAllowed()) {
             throw new CpApiException(HttpStatus.FORBIDDEN, "SESSION_ACCESS_DENIED",
                     "Only the session owner or an invited participant may read the participant list");
         }
-        return session;
+        return resolved.session();
     }
 
     /** D24-12: "all" is the reserved @all token; no participant may claim it as a display name. */
@@ -587,30 +574,8 @@ public class SessionParticipantService {
     }
 
     private boolean canManage(String actorId, String workspaceId, Session session) {
-        if (actorId == null) {
-            return false;
-        }
-        if (actorId.equals(session.getUserId())) {
-            return true;
-        }
-        // PLAN-0651 T1.3 (D51-29): the instance-administrator bypass is an action atom now —
-        // MANAGE_WORKSPACE_MEMBERS at instance scope (ADMIN holds it through the seeded role).
-        // A8 deliberately keeps MANAGE_WORKSPACE_AGENTS for the workspace-scope branch so WS_OWNER
-        // keeps managing participants exactly as today.
-        boolean instanceAdministrator = grantAuthorizationService.allowsUserOnly(new PolicyRequest(
-                "manage_session_participants_instance",
-                List.of(ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_MEMBERS), List.of("*"),
-                ToolShape.OPAQUE, actorId, null, session.getId().toString()));
-        if (instanceAdministrator) {
-            return true;
-        }
-        if (!workspaceService.isWorkspaceMember(workspaceId, actorId)) {
-            return false;
-        }
-        PolicyRequest request = new PolicyRequest("manage_session_participants",
-                List.of(ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_AGENTS), List.of("*"),
-                ToolShape.OPAQUE, actorId, workspaceId, session.getId().toString());
-        return grantAuthorizationService.allowsUserOnly(request);
+        // PLAN-0668 D1: one implementation (SessionReadAccess), no duplicate manager predicate.
+        return sessionReadAccess.canManage(actorId, workspaceId, session);
     }
 
     private void requirePrincipalExists(String kind, UUID principalId) {
