@@ -1,13 +1,17 @@
 package com.cc01cc.p.xihe.cp.chat;
 
 import com.cc01cc.p.xihe.cp.config.ConfigService;
+import com.cc01cc.p.xihe.cp.context.service.EventStoreService;
+import com.cc01cc.p.xihe.cp.repository.SessionParticipantCursorRepository;
 import com.cc01cc.p.xihe.cp.service.WakeDispatchService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InOrder;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 import static org.mockito.ArgumentMatchers.any;
@@ -199,6 +203,48 @@ class WakeFanOutServiceTest {
         long elapsedMs = System.currentTimeMillis() - startedAt;
         assertTrue(elapsedMs < 5_000,
                 "an already-terminal run must not occupy the 30s wait (elapsed=" + elapsedMs + "ms)");
+    }
+
+    @Test
+    void aFailingRecipientStillKeepsEveryOtherRecipientAndTheCcObserversDelivered() {
+        // PLAN-0660 T2.3 (I3): one recipient blowing up must not end the round, and the cc observers
+        // must still be notified. Assertions: later recipients still fire, the observer's durable
+        // notify row is written exactly once per observer (notifyObserver is private — the append is
+        // its first observable effect), and the round counters stay balanced.
+        UUID ccObserver = UUID.randomUUID();
+        EventStoreService eventStore = mock(EventStoreService.class);
+        SessionParticipantCursorRepository cursors = mock(SessionParticipantCursorRepository.class);
+        WakeFanOutService fanOutWithStore = new WakeFanOutService(dispatch, config, eventStore, cursors);
+        when(dispatch.fire(eq(ANN), eq("mention"), anyString(), eq(SESSION_ID), isNull(), anyString()))
+                .thenThrow(new IllegalStateException("first recipient exploded"));
+        when(dispatch.fire(eq(JOHN), eq("mention"), anyString(), eq(SESSION_ID), isNull(), anyString()))
+                .thenReturn(new WakeDispatchService.WakeFireResult(false, null, "skipped_muted"));
+        List<MentionParser.RosterEntry> roundRoster = List.of(agent(ANN, "Ann"), agent(JOHN, "John"),
+                agent(ccObserver, "Observer"));
+
+        WakeFanOutService.WakeHandoff handoff = fanOutWithStore.fanOut(SESSION_ID, "ws-1", "owner-1",
+                ROOT_RUN.toString(), "@Ann @John 都别停", roundRoster, List.of(ccObserver));
+
+        assertTrue(handoff.enqueued(), "the round is still handed off");
+        InOrder order = inOrder(dispatch);
+        order.verify(dispatch, timeout(2000)).fire(eq(ANN), eq("mention"), anyString(),
+                eq(SESSION_ID), isNull(), anyString());
+        order.verify(dispatch, timeout(2000)).fire(eq(JOHN), eq("mention"), anyString(),
+                eq(SESSION_ID), isNull(), anyString());
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Map<String, Object>> payload = ArgumentCaptor.forClass(Map.class);
+        verify(eventStore, timeout(2000)).append(eq(SESSION_ID.toString()), eq("ws-1"), eq("owner-1"),
+                eq(WakeFanOutService.EVENT_WAKE_DISPATCH), payload.capture());
+        assertEquals("cc", payload.getValue().get("triggerSource"));
+        assertEquals(ccObserver.toString(), payload.getValue().get("participantId"));
+        assertEquals("notify", payload.getValue().get("outcome"));
+
+        WakeFanOutService.WakeRoundStats stats = fanOutWithStore.lastRoundStats();
+        assertEquals(1, stats.dropped(), "the failed recipient is counted, never silent");
+        assertEquals(1, stats.deferred(), "the surviving recipient still ran");
+        assertEquals(1, stats.ccObservers(), "cc must match the delivered observer count");
+        assertTrue(stats.balanced(), "enqueued == started + deferred + dropped");
     }
 
     @Test

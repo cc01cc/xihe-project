@@ -2,7 +2,6 @@ package com.cc01cc.p.xihe.cp.service;
 
 import com.cc01cc.p.xihe.cp.chat.DelegationChainWalker;
 import com.cc01cc.p.xihe.cp.chat.SessionWakeupService;
-import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.config.DbLockTimeout;
 import com.cc01cc.p.xihe.cp.context.service.EventStoreService;
 import com.cc01cc.p.xihe.cp.entity.ChatRun;
@@ -146,13 +145,16 @@ public class WakeDispatchService {
         }
 
         // D23-08: waking an AGENT writes chat_runs.agent_principal_id, so it carries the SAME
-        // authorization as the owner's --as.
-        try {
-            participantService.authorizeAsParticipant(session.getUserId(), session.getWorkspaceId(),
-                    sessionId.toString(), participantId.toString());
-        } catch (CpApiException denied) {
+        // authorization as the owner's --as. The judgment comes back as a VALUE (PLAN-0660 T2.1):
+        // catching an exception that escaped the inner transactional method is what marked this
+        // shared transaction rollback-only, so a plain refusal surfaced as UnexpectedRollbackException
+        // at commit time and swallowed the round.
+        SessionParticipantService.SpeakDecision speak = participantService.judgeSpeakAs(
+                session.getUserId(), session.getWorkspaceId(), sessionId.toString(),
+                participantId.toString());
+        if (!speak.allowed()) {
             audit(sessionId, participantId, triggerSource, wakeRoundId, "refused",
-                    "authorization: " + denied.getCode(), null, parentRunId);
+                    "authorization: " + speak.code(), null, parentRunId);
             return new WakeFireResult(false, null, "refused");
         }
 
