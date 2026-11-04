@@ -4079,6 +4079,137 @@ mod tests {
         assert_eq!(record.source, "capture");
     }
 
+    /// T3.2 migration gate: every sidecar-mapped slice of a legacy dual-mode
+    /// workspace must byte-match its shadow git object (`git show ref:path`).
+    /// Read-only over both stores; the report is the migration verifier.
+    #[tokio::test]
+    #[ignore = "T3.2 migration verify: store vs shadow, byte-for-byte per slice"]
+    async fn p3_migration_verify_store_matches_shadow() {
+        use std::process::Command;
+
+        let temp = TempDir::new().expect("tempdir");
+        let workspace = temp.path().join("ws1");
+        std::fs::create_dir_all(workspace.join("dir/00")).expect("dirs");
+        std::fs::write(workspace.join("a.txt"), "alpha").expect("a");
+        std::fs::write(workspace.join("dir/00/b.txt"), "beta").expect("b");
+        std::fs::write(workspace.join("dir/00/c.txt"), "gamma").expect("c");
+        let store_root = temp.path().join(".xihe-store");
+        let mut engine = ShadowGit::new(temp.path());
+        if !require_git(&engine).await {
+            return;
+        }
+        engine
+            .configure_checkpoint_storage(CheckpointStorageMode::Dual, &store_root)
+            .expect("configure dual");
+        let shadow = engine.shadow_git_dir("ws1").expect("shadow path");
+
+        let mut refs_collected = Vec::new();
+        for round in 0..3usize {
+            match round {
+                1 => {
+                    std::fs::write(workspace.join("a.txt"), "alpha-modified").expect("mutate");
+                    std::fs::remove_file(workspace.join("dir/00/c.txt")).expect("delete");
+                }
+                2 => {
+                    std::fs::write(workspace.join("dir/00/d.txt"), "delta").expect("add");
+                }
+                _ => {}
+            }
+            let outcome = engine
+                .capture(
+                    "ws1",
+                    &format!("migrate-{round}"),
+                    "tester",
+                    &format!("call-{round}"),
+                    false,
+                )
+                .await
+                .expect("capture");
+            refs_collected.push(outcome.slice_ref.expect("slice ref"));
+        }
+
+        let store = Store::open(&store_root).expect("store");
+        let env = engine.isolated_env(&shadow, &workspace, None);
+        let mut slices_report = Vec::new();
+        let mut total_entries = 0usize;
+        let mut total_mismatch = 0usize;
+        let mut total_missing = 0usize;
+        for slice_ref in &refs_collected {
+            let record = crate::checkpoint_store::refs::read_ref(&store, "ws1", slice_ref)
+                .expect("ref read")
+                .expect("sidecar mapping");
+            let manifest_path = store.manifest_path(&record.store_manifest_id);
+            let bytes = std::fs::read(&manifest_path).expect("manifest bytes");
+            let manifest = Manifest::parse_verified(&bytes, &record.store_manifest_id)
+                .expect("manifest parse");
+            let mut mismatch = 0usize;
+            let mut missing = 0usize;
+            let mut checked = 0usize;
+            for entry in &manifest.entries {
+                // Store slices keep nested `.git` and symlinks out under Flatten;
+                // the verifier covers regular/executable file bytes.
+                if entry.mode == FileMode::Symlink {
+                    continue;
+                }
+                let mut command = Command::new("git");
+                command.arg("--git-dir").arg(&shadow);
+                for (key, value) in &env {
+                    command.env(key, value);
+                }
+                command.args(["show", &format!("{slice_ref}:{}", entry.path)]);
+                let output = command.output().expect("git show");
+                if !output.status.success() {
+                    missing += 1;
+                    continue;
+                }
+                checked += 1;
+                if crate::checkpoint_store::blob::blob_hash(&output.stdout) != entry.blob_hash {
+                    mismatch += 1;
+                }
+            }
+            total_entries += manifest.entries.len();
+            total_mismatch += mismatch;
+            total_missing += missing;
+            slices_report.push(serde_json::json!({
+                "slice_ref": slice_ref,
+                "entries": manifest.entries.len(),
+                "checked": checked,
+                "byte_mismatch": mismatch,
+                "missing_in_shadow": missing,
+                "sidecar_git_tree": record.git_tree,
+            }));
+        }
+
+        let report = serde_json::json!({
+            "suite": "p3-migration-verify",
+            "mode": "dual legacy workspace -> store vs shadow",
+            "slices": refs_collected.len(),
+            "entries": total_entries,
+            "byte_mismatch": total_mismatch,
+            "missing_in_shadow": total_missing,
+            "slice_details": slices_report,
+            "generated_at": chrono::Utc::now().to_rfc3339(),
+        });
+        eprintln!(
+            "MIGRATE_VERIFY {}",
+            serde_json::to_string_pretty(&report).expect("report")
+        );
+        if let Ok(path) = std::env::var("MIGRATE_VERIFY_PATH") {
+            let target = std::path::Path::new(&path);
+            if let Some(parent) = target.parent() {
+                std::fs::create_dir_all(parent).expect("report dir");
+            }
+            std::fs::write(
+                target,
+                serde_json::to_vec_pretty(&report).expect("report bytes"),
+            )
+            .expect("write report");
+        }
+        assert_eq!(refs_collected.len(), 3, "three legacy slices");
+        assert_eq!(total_mismatch, 0, "byte mismatches: {report}");
+        assert_eq!(total_missing, 0, "missing shadow objects: {report}");
+    }
+
     #[tokio::test]
     #[ignore = "P2.0 real dual-backfill fixture; run with --ignored --nocapture"]
     async fn p2_real_dual_backfill_fixture() {
