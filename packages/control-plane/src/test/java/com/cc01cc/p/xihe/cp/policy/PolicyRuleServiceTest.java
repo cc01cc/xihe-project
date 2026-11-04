@@ -26,7 +26,8 @@ class PolicyRuleServiceTest {
 
     private final PolicyRuleRepository repository = mock(PolicyRuleRepository.class);
     private final PolicyRevision policyRevision = mock(PolicyRevision.class);
-    private final PolicyRuleService service = new PolicyRuleService(repository, policyRevision);
+    private final RequesterAuthority requesterAuthority = mock(RequesterAuthority.class);
+    private final PolicyRuleService service = new PolicyRuleService(repository, policyRevision, requesterAuthority);
 
     @AfterEach
     void clearTenant() {
@@ -59,6 +60,23 @@ class PolicyRuleServiceTest {
         assertEquals("ws1", service.create("workspace", "u1", "ws1", false, input("read", "*", "allow", false)).ownerId());
         assertThrows(CpApiException.class, () -> service.create("workspace", "u1", null, false,
                 input("read", "*", "allow", false)));
+    }
+
+    /**
+     * PLAN-0651 M3 T3.3 (A15): the instance-admin bypass is the N9 atom at instance scope. A caller
+     * with no workspace role (matrix S1 "non-member") but the instance N9 row keeps today's bypass;
+     * the retained {@code WorkspaceRole.canWrite} judgement still governs the workspace roles.
+     */
+    @Test
+    void instancePolicyAtomIsTheWorkspaceLayerBypass() {
+        java.util.UUID actor = java.util.UUID.randomUUID();
+        TenantContext.clear();
+        when(requesterAuthority.holdsActionAtom(actor,
+                ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_POLICY, null)).thenReturn(true);
+        when(repository.save(any(PolicyRuleEntity.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        assertEquals("ws1", service.create("workspace", actor.toString(), "ws1", false,
+                input("read", "*", "allow", false)).ownerId());
     }
 
     @Test

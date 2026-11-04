@@ -32,15 +32,17 @@ public class PolicyController {
     private final SessionPolicyState sessionState;
     private final SessionApprovalMode sessionApprovalMode;
     private final SessionService sessionService;
+    private final RequesterAuthority requesterAuthority;
 
     public PolicyController(PolicyRuleService ruleService, ToolFaceService faceService,
                             SessionPolicyState sessionState, SessionApprovalMode sessionApprovalMode,
-                            SessionService sessionService) {
+                            SessionService sessionService, RequesterAuthority requesterAuthority) {
         this.ruleService = ruleService;
         this.faceService = faceService;
         this.sessionState = sessionState;
         this.sessionApprovalMode = sessionApprovalMode;
         this.sessionService = sessionService;
+        this.requesterAuthority = requesterAuthority;
     }
 
     @PreAuthorize("isAuthenticated()")
@@ -144,9 +146,18 @@ public class PolicyController {
         return ResponseEntity.ok(payload);
     }
 
-    /** PLAN-0610 W1b (R2-9): capability projection, not the compatibility role string. */
-    private static boolean isAdmin() {
-        return CapabilityAuthorities.isInstanceAdmin();
+    /**
+     * PLAN-0651 M3 T3.3 (A13 → {@code MANAGE_ROLES}, instance-only).
+     *
+     * <p>The atom is the target judgement. The {@code cap:instance:admin} fallback is deliberate and
+     * temporary: ADMIN does not carry {@code MANAGE_ROLES} in the V87 seed, so removing the capability
+     * path here would change a visible behaviour (matrix cell S1: instance ADMIN can manage tool
+     * faces) — that is a B-class narrowing and needs a Lead ruling, not a silent edit. Refusal shape
+     * (403 {@code FORBIDDEN} from the service) is unchanged.</p>
+     */
+    private boolean isAdmin() {
+        return requesterAuthority.holdsActionAtom(ToolFaceRegistry.ACTION_MANAGE_ROLES)
+                || TenantContext.hasCapability(CapabilityAuthorities.CAP_INSTANCE_ADMIN);
     }
 
     private static ResponseEntity<?> problem(CpApiException e) {

@@ -63,6 +63,10 @@ class SkillControllerContractTest extends AbstractIntegrationTest {
     @Autowired
     private AuthzContext authzContext;
 
+    /** PLAN-0651 M3 T3.2: the N5 judgement reads materialized grants, not the capability cache. */
+    @Autowired
+    private com.cc01cc.p.xihe.cp.policy.RoleGrantMaterializer roleGrantMaterializer;
+
     private static final String[] SKILL_ROUTES = {
             "/api/v1/skills/import",
             "/api/v1/skills",
@@ -118,6 +122,11 @@ class SkillControllerContractTest extends AbstractIntegrationTest {
                 .findByName(SystemAccessRoleCatalog.ADMIN).orElseThrow().getId();
         bindingRepository.save(new AccessRoleBinding(adminRoleId, "user", userId,
                 AccessScope.INSTANCE, null, userId));
+        // PLAN-0651 M3 T3.2 (A24–A29 → N5): authoring the binding row alone no longer authorizes —
+        // the atom judgement reads `source='role'` grants, exactly like the production write path
+        // (BindingAdminService materializes). Materialize explicitly so the fixture keeps proving
+        // "an instance administrator may import".
+        roleGrantMaterializer.materializeSubject("user", userId, userId, null);
         authzContext.invalidate(userId);
 
         ResponseEntity<String> response = post(registered.getAccessToken(), "/api/v1/skills/import",

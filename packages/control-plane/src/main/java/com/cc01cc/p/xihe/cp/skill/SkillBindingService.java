@@ -116,7 +116,7 @@ public class SkillBindingService {
                         "binding not found"));
         boolean managesThatWorkspace = SkillBinding.SCOPE_WORKSPACE.equals(binding.getScopeType())
                 && guard.canManageWorkspace(binding.getScopeId());
-        Caller caller = new Caller(UUID.fromString(guard.requireActor()), guard.isInstanceAdmin(),
+        Caller caller = new Caller(UUID.fromString(guard.requireActor()), guard.canManageInstanceLibrary(),
                 managesThatWorkspace);
         requireAuthorized(new BindCommand(binding.getSkillId(), binding.getSubjectType(),
                 binding.getSubjectId(), binding.getScopeType(), binding.getScopeId()), caller);

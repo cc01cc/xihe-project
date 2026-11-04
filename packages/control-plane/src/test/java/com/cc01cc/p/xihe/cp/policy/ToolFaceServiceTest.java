@@ -28,7 +28,8 @@ class ToolFaceServiceTest {
     private final ToolFaceRepository repository = mock(ToolFaceRepository.class);
     private final PolicyRevision policyRevision = mock(PolicyRevision.class);
     private final AuditLogger audit = mock(AuditLogger.class);
-    private final ToolFaceService service = new ToolFaceService(repository, policyRevision, audit);
+    private final RequesterAuthority requesterAuthority = mock(RequesterAuthority.class);
+    private final ToolFaceService service = new ToolFaceService(repository, policyRevision, audit, requesterAuthority);
 
     @AfterEach
     void clearTenant() {
@@ -103,6 +104,30 @@ class ToolFaceServiceTest {
         CpApiException error = assertThrows(CpApiException.class, () -> service.upsert("workspace", "u1", "ws1", false,
                 new ToolFaceService.FaceInput("mcp__acme__deploy", "exec", "interpreter")));
         assertEquals(HttpStatus.FORBIDDEN, error.getStatus());
+    }
+
+    /**
+     * PLAN-0651 M3 T3.3 (A14): the old instance-admin bypass is now the N9 atom, evaluated at
+     * <b>instance scope</b>. A caller with no workspace role but with the instance N9 row (ADMIN /
+     * SUPER_ADMIN default set) keeps today's "admin may manage any workspace's faces" cell; a
+     * workspace-scoped N9 row must not be consulted for this bypass (D51-28 keeps the OWNER role
+     * judgement for workspace rows).
+     */
+    @Test
+    void instancePolicyAtomActsAsTheWorkspaceManagerBypass() {
+        java.util.UUID actor = java.util.UUID.randomUUID();
+        TenantContext.setUserId(actor.toString());
+        when(requesterAuthority.holdsActionAtom(actor,
+                ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_POLICY, null)).thenReturn(true);
+        when(repository.findByScopeAndOwnerIdOrderByCreatedAtAscIdAsc("workspace", "ws1"))
+                .thenReturn(List.of());
+
+        ToolFaceService.FaceView view = service.upsert("workspace", actor.toString(), "ws1", false,
+                new ToolFaceService.FaceInput("mcp__acme__deploy", "exec", "interpreter"));
+
+        assertEquals("workspace", view.scope());
+        verify(requesterAuthority).holdsActionAtom(actor,
+                ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_POLICY, null);
     }
 
     @Test
