@@ -10,11 +10,19 @@ import SSEStream from "../components/SSEStream.vue";
 import MessageList from "../components/MessageList.vue";
 import InputArea from "../components/InputArea.vue";
 import { i18n } from "../../../../i18n";
-import { api, type ApiFollowUpQueueSnapshot } from "../../../../composables/api";
+import { api, ApiError, type ApiFollowUpQueueSnapshot } from "../../../../composables/api";
 import type * as apiModule from "../../../../composables/api";
+import { toast } from "vue-sonner";
 import { useAgentStore } from "../../../../stores/agent";
 import { useChatStore } from "../stores/chat.ts";
 import type { ApprovalRequest, SessionDerivedStateResponse } from "../../../../types";
+
+vi.mock("vue-sonner", () => ({
+    toast: {
+        success: vi.fn<(message: string) => void>(),
+        error: vi.fn<(message: string) => void>(),
+    },
+}));
 
 vi.mock("../../../../composables/api", async (importOriginal) => {
     const actual = await importOriginal<typeof apiModule>();
@@ -230,6 +238,75 @@ describe("ChatPanel approval decision correlation (PLAN-0328 T1.14)", () => {
 
         expect(decideChatApproval).toHaveBeenCalledTimes(1);
         expect(decideChatApproval).toHaveBeenCalledWith(REQUEST_ID, { decision: "session" });
+    });
+});
+
+describe("ChatPanel approval terminal states (PLAN-0663 M2)", () => {
+    function apiProblem(code: string, status: number): ApiError {
+        return new ApiError({
+            type: "about:blank",
+            title: "problem",
+            status,
+            code,
+            detail: code,
+            requestId: "00000000-0000-4000-8000-0000000000ff",
+        } as never);
+    }
+
+    async function mountWithPendingApproval() {
+        const wrapper = mountPanel();
+        useAgentStore().addApprovalRequest(approval);
+        await nextTick();
+        await flushPromises();
+        expect(wrapper.findComponent(ApprovalModal).exists()).toBe(true);
+        return wrapper;
+    }
+
+    it("closes the modal after an accepted approve decision", async () => {
+        vi.mocked(api.decideChatApproval).mockResolvedValue({
+            status: "accepted",
+            requestId: REQUEST_ID,
+            approved: true,
+            decision: "once",
+        });
+        const wrapper = await mountWithPendingApproval();
+
+        await wrapper.find('[data-testid="approval-approve"]').trigger("click");
+        await flushPromises();
+        await nextTick();
+
+        expect(wrapper.findComponent(ApprovalModal).props("show")).toBe(false);
+    });
+
+    it("closes the modal after an accepted reject decision", async () => {
+        vi.mocked(api.decideChatApproval).mockResolvedValue({
+            status: "accepted",
+            requestId: REQUEST_ID,
+            approved: false,
+            decision: "once",
+        });
+        const wrapper = await mountWithPendingApproval();
+
+        await wrapper.find('[data-testid="approval-reject"]').trigger("click");
+        await flushPromises();
+        await nextTick();
+
+        expect(wrapper.findComponent(ApprovalModal).props("show")).toBe(false);
+    });
+
+    it("retires an EXPIRED approval, closes the modal and explains it non-modally", async () => {
+        // PLAN-0663 T2.1: `expired` is terminal — the modal must not keep asking for a decision that
+        // can no longer be taken; the reason is surfaced through the existing toast channel.
+        vi.mocked(api.decideChatApproval).mockRejectedValue(apiProblem("APPROVAL_EXPIRED", 410));
+        const wrapper = await mountWithPendingApproval();
+
+        await wrapper.find('[data-testid="approval-approve"]').trigger("click");
+        await flushPromises();
+        await nextTick();
+        await nextTick();
+
+        expect(wrapper.findComponent(ApprovalModal).props("show")).toBe(false);
+        expect(toast.error).toHaveBeenCalledWith(expect.stringContaining("过期"));
     });
 });
 

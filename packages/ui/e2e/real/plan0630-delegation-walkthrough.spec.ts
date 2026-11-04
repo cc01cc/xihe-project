@@ -535,29 +535,56 @@ test.describe("@host PLAN-0630 T5.9 real delegation walkthrough", () => {
         };
         persist();
 
-        // ── Step 4: two spawn attempts in one parent run → the budget refusal ──
+        // ── Step 4: two spawn attempts in one parent run → the precheck refuses the over-budget one ──
+        // PLAN-0663 (BL-255): the delegation budget is evaluated BEFORE an approval request exists.
+        // The first spawn of this run still asks (and gets) the modal; once its child is in flight the
+        // second spawn is refused by the precheck — it must NOT open a second modal, and it must not
+        // leave a pending approval row behind (that residue is what BL-240 hit).
         await page.goto(workspaceChatPath(wsId, parentSessionId), { waitUntil: "load" });
         await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: 60_000 });
         await waitForIdleSession(request, headers, parentSessionId);
         const spawnInvocationsBefore = scalar(
             `SELECT count(*) FROM mcp_invocations WHERE session_id = '${parentSessionId}'::uuid`,
         );
+        const approvalsBefore = scalar(
+            `SELECT count(*) FROM approval_requests WHERE session_id = '${parentSessionId}'::uuid`,
+        );
+        expect(
+            scalar(
+                `SELECT count(*) FROM approval_requests WHERE session_id = '${parentSessionId}'::uuid AND state = 'pending'`,
+            ),
+            "step4 starts with no pending approval left over from the earlier steps",
+        ).toBe(0);
         await sendMessage(
             page,
             "请连续调用 spawn_agent 工具两次（必须两次都用工具调用）：第一次的 prompt 填「回复标记 T59-SPAWN-ONE」，第二次的 prompt 填「回复标记 T59-SPAWN-TWO」。两次调用之间不要等待，也不要只调用一次。",
         );
-        // The first spawn of this run passes the gate (still needs the modal), the second is
-        // refused by the delegation budget while the first child is in flight.
+        // The FIRST spawn still needs the approval modal (budget allows it) …
         const approvalSeen = await modal
             .waitFor({ state: "visible", timeout: 180_000 })
             .then(() => true)
             .catch(() => false);
-        if (approvalSeen) {
-            await modal.locator('[data-testid="approval-approve"]').click();
-            await expect(modal).toBeHidden({ timeout: 30_000 });
-        }
+        expect(
+            approvalSeen,
+            "the first spawn of the step4 run still goes through the approval gate",
+        ).toBe(true);
+        await modal.locator('[data-testid="approval-approve"]').click();
+        await expect(modal, "the approval modal closes once the decision is accepted").toBeHidden({
+            timeout: 30_000,
+        });
         await waitForIdleSession(request, headers, parentSessionId);
+        // … the SECOND one must be refused by the budget precheck: no new modal may appear at all.
+        await expect(
+            modal,
+            "the over-budget spawn must not open a second approval modal (budget precheck runs first)",
+        ).toBeHidden({ timeout: 10_000 });
 
+        const approvalsAfter = scalar(
+            `SELECT count(*) FROM approval_requests WHERE session_id = '${parentSessionId}'::uuid`,
+        );
+        const pendingAfter = scalar(
+            `SELECT count(*) FROM approval_requests WHERE session_id = '${parentSessionId}'::uuid AND state = 'pending'`,
+        );
         const refusedRows = psql(
             `SELECT to_jsonb(a) FROM audit_logs a WHERE action = 'agent_spawn_refused' AND resource_id = '${parentSessionId}' ORDER BY created_at DESC LIMIT 1`,
         );
@@ -572,15 +599,29 @@ test.describe("@host PLAN-0630 T5.9 real delegation walkthrough", () => {
         );
         steps.step4 = {
             description:
-                "second spawn_agent of the same run refused by the delegation budget (maxCount=1)",
+                "second spawn_agent of the same run refused by the delegation-budget PRECHECK (no second modal, no pending row)",
             parentSessionId,
+            approvalsDelta: approvalsAfter - approvalsBefore,
+            pendingApprovalsAfter: pendingAfter,
             spawnInvocationDelta: spawnInvocationsAfter - spawnInvocationsBefore,
             spawnInvocationDump: invocationDump,
             agentSpawnRefusedAudit: refusedRows || "(no agent_spawn_refused row)",
         };
         persist();
+        expect(
+            approvalsAfter - approvalsBefore,
+            "only the first spawn created an approval request",
+        ).toBe(1);
+        expect(
+            pendingAfter,
+            "the over-budget spawn is refused BEFORE an approval request exists (no pending residue)",
+        ).toBe(0);
         expect(refusedRows, "CP wrote the durable agent_spawn_refused audit row").not.toBe("");
         expect(refusedRows, "the refusal reason is count_exceeded").toContain("count_exceeded");
+        expect(
+            refusedRows,
+            "the refusal is decided by the pre-approval check (phase=precheck), not after a wasted approval",
+        ).toContain('"phase":"precheck"');
 
         // V14/T5.9 criterion: the refusal must be visible in the UI, not a silent failure.
         // Expand every tool card so a persisted result/error slab is rendered, then read the
