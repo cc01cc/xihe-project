@@ -435,6 +435,24 @@ erDiagram
 >
 > 语义注记：硬上限 5 统计全部未结束项（queued/paused/admitted），完成/撤回后释放；QueueItem 状态转换与 child ChatRun/Message 在同一事务原子写入，执行事实归 ChatRun；claim/withdraw 以 Session 行锁 + item 行锁串行（并发至多一方成功）。API 与状态机见 [`spec/session/chat-run-operation.md`](../../../spec/session/chat-run-operation.md) §Follow-up 队列 与 DEV-017 §1.3。
 
+### 3.2b 参与者已读游标（session_participant_cursors，PLAN-0623 R7 / PLAN-0660 T5.3）
+
+| 列 | 类型 | 约束 | 说明 |
+|---|---|---|---|
+| participant_id | UUID | PK，FK `session_participants(id)` `ON DELETE CASCADE` | 一行一参与者 |
+| last_read_event_seq | BIGINT | NOT NULL DEFAULT 0 | **唯一存储事实**：已读位置（指向 `context_events.sequence`）；参与者加入时初始化为当时会话最大 sequence |
+| updated_at | TIMESTAMPTZ | NOT NULL DEFAULT NOW() | 推进时间 |
+
+> **V112（PLAN-0660 T5.3）已 drop `mention_count`**：未读是**派生值** ——
+> `count(context_events where event_type='wake_dispatch' and payload->>'outcome'='notify'
+> and payload->>'participantId'=<participant_id> and sequence > last_read_event_seq)`，整册一条 SQL 算完
+> （契约见 [`spec/session/user-channel.md`](../../../spec/session/user-channel.md) §3，裁定 `decisions-2026-11-03.md:281`）。
+> 回滚重建配方（`ADD COLUMN` + 从 `wake_dispatch` 聚合的 `UPDATE`）写在 `V112__plan0660_derived_unread.sql` 注释里。
+>
+> 索引现状：`uq_context_events_session_sequence (session_id, sequence)` 已为派生聚合提供访问路径（EXPLAIN 见
+> PLAN-0660 `evidence/m5-g1-gate.md` §2），故 V112 **未**新增表达式索引。推进端点 `PATCH …/participants/{id}/cursor`
+> 语义（advance-only + clamp + self-only）见 [_inventory.md_](../../api/inventory.md)。
+
 ### 3.3 Workspace 执行（workspace_execution_specs / workspace_lifecycle_operations）
 
 **workspace_execution_specs**（`V1` 内建；旧链溯源：旧 V11 建 `workspace_assignments`、旧 V12 加唯一、旧 V13 重命名；Entity `entity/WorkspaceExecutionSpec.java`）：期望执行规格（非调度绑定，旧 V13 注释原名误导已纠正）。
