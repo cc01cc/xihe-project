@@ -13,6 +13,7 @@ import com.cc01cc.p.xihe.cp.entity.McpInvocation;
 import com.cc01cc.p.xihe.cp.entity.Message;
 import com.cc01cc.p.xihe.cp.entity.MessageRole;
 import com.cc01cc.p.xihe.cp.entity.Session;
+import com.cc01cc.p.xihe.cp.entity.SessionParticipant;
 import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceAgent;
@@ -869,5 +870,111 @@ class ChatSubmissionServiceIntegrationTest extends AbstractIntegrationTest {
         assertEquals(1, chatRunRepository.findAll().stream()
                 .filter(run -> idempotencyKey.equals(run.getIdempotencyKey())).count(),
                 "the replay never inserts a second Run");
+    }
+
+    // ------------------------------------------- PLAN-0669 M1 (V121): durable message attribution
+
+    /** PLAN-0669 D2 acceptance: the assistant Message must name the Run's responding participant. */
+    @Test
+    void assistantMessageIsAttributedToTheRunsResponderParticipant() {
+        ChatFixture fixture = createChatFixture("attribution");
+        sessionRepository.saveAndFlush(boundSession(fixture.session(), fixture.principal()));
+        UUID participantId = addPrimaryParticipant(fixture.session(), fixture.principal());
+
+        String runId = UUID.randomUUID().toString();
+        submit(runId, fixture.session(), fixture.user(), fixture.workspace(), "attribute me",
+                fixture.principal().getId().toString());
+        ChatRun run = chatRunRepository.findById(UUID.fromString(runId)).orElseThrow();
+        assertEquals(fixture.principal().getId(), run.getAgentPrincipalId(),
+                "admission recorded the responder principal (the attribution source of truth)");
+
+        String assistantId = submissionService.persistAssistantResponse(
+                fixture.session().getId().toString(), runId, "hello");
+        assertNotNull(assistantId);
+        Message stored = messageRepository.findById(UUID.fromString(assistantId)).orElseThrow();
+        assertEquals(participantId, stored.getParticipantId(),
+                "assistant Message carries the responder participant (same identity the live SSE badge uses)");
+        assertEquals(participantId, sessionParticipantRepository
+                        .findFirstBySessionIdAndPrincipalId(fixture.session().getId(),
+                                run.getAgentPrincipalId()).orElseThrow().getId(),
+                "the invariant is one row: run responder principal ⇔ message participant");
+    }
+
+    /** PLAN-0669 D2 fallback: derived runs (follow-up/continuation) answer as the Session binding. */
+    @Test
+    void assistantMessageFallsBackToTheSessionBindingWhenTheRunHasNoResponder() {
+        ChatFixture fixture = createChatFixture("attribution-fallback");
+        sessionRepository.saveAndFlush(boundSession(fixture.session(), fixture.principal()));
+        UUID participantId = addPrimaryParticipant(fixture.session(), fixture.principal());
+
+        String runId = UUID.randomUUID().toString();
+        chatRunRepository.saveAndFlush(new ChatRun(runId, fixture.session().getId().toString(),
+                fixture.user().getId().toString(), fixture.workspace().getId().toString(),
+                "fallback-key-" + runId, "fallback-hash", "provider", "model", "none", "accepted"));
+
+        String assistantId = submissionService.persistAssistantResponse(
+                fixture.session().getId().toString(), runId, "derived run reply");
+        assertNotNull(assistantId);
+        assertEquals(participantId,
+                messageRepository.findById(UUID.fromString(assistantId)).orElseThrow().getParticipantId(),
+                "follow-up/continuation children never persist a run responder; attribution follows the "
+                        + "Session-bound principal instead of going dark");
+    }
+
+    /** PLAN-0669 D2: no participant row ⇒ NULL (no guessing PRIMARY — absent beats wrong). */
+    @Test
+    void assistantMessageKeepsNoAttributionWhenNoParticipantExists() {
+        ChatFixture fixture = createChatFixture("attribution-none");
+        // Bound Session, but deliberately no session_participants row: admission is legal, yet the
+        // fallback chain has nothing to resolve — the Message must stay NULL instead of guessing.
+        sessionRepository.saveAndFlush(boundSession(fixture.session(), fixture.principal()));
+        String runId = UUID.randomUUID().toString();
+        submit(runId, fixture.session(), fixture.user(), fixture.workspace(), "no roster row");
+
+        String assistantId = submissionService.persistAssistantResponse(
+                fixture.session().getId().toString(), runId, "reply without roster");
+        assertNotNull(assistantId);
+        assertNull(messageRepository.findById(UUID.fromString(assistantId)).orElseThrow().getParticipantId(),
+                "no participant row ⇒ NULL; the read face then omits the field and the UI renders no badge");
+    }
+
+    /** PLAN-0669 M1b: the durable listing projects participantId only when attributed. */
+    @Test
+    void messageListingProjectsParticipantIdOnlyWhenAttributed() {
+        ChatFixture fixture = createChatFixture("attribution-read");
+        sessionRepository.saveAndFlush(boundSession(fixture.session(), fixture.principal()));
+        UUID participantId = addPrimaryParticipant(fixture.session(), fixture.principal());
+        String runId = UUID.randomUUID().toString();
+        submit(runId, fixture.session(), fixture.user(), fixture.workspace(), "read me",
+                fixture.principal().getId().toString());
+        String assistantId = submissionService.persistAssistantResponse(
+                fixture.session().getId().toString(), runId, "reply");
+        assertNotNull(assistantId);
+
+        String branchId = branchPathService.ensureRootBranchId(fixture.session().getId().toString());
+        BranchPathService.BranchVisibility visibility = branchPathService.resolveVisibility(
+                fixture.session().getId().toString(), branchId);
+        String rootBranchId = branchPathService.resolvePath(fixture.session().getId().toString(), branchId);
+        List<Map<String, Object>> messages = messageReadService.listVisibleMessages(
+                fixture.session().getId().toString(), fixture.workspace().getId().toString(),
+                rootBranchId, visibility);
+
+        Map<String, Object> assistant = messages.stream()
+                .filter(message -> assistantId.equals(String.valueOf(message.get("id"))))
+                .findFirst().orElseThrow();
+        assertEquals(participantId.toString(), String.valueOf(assistant.get("participantId")),
+                "assistant rows expose the durable actor to the history DTO");
+        Map<String, Object> user = messages.stream()
+                .filter(message -> "USER".equals(String.valueOf(message.get("role"))))
+                .findFirst().orElseThrow();
+        assertFalse(user.containsKey("participantId"),
+                "user rows carry no v1 attribution — the field is omitted, not null");
+    }
+
+    private UUID addPrimaryParticipant(Session session, AgentPrincipal principal) {
+        SessionParticipant participant = new SessionParticipant(session.getId(),
+                SessionParticipant.KIND_AGENT, principal.getId(), SessionParticipant.ROLE_PRIMARY, 10,
+                SessionParticipant.WAKE_ALL_MESSAGES, SessionParticipant.RESPOND_ALWAYS);
+        return sessionParticipantRepository.saveAndFlush(participant).getId();
     }
 }
