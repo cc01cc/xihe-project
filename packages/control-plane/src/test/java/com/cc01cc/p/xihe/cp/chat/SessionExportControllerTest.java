@@ -23,6 +23,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -81,7 +82,7 @@ class SessionExportControllerTest {
         String workspaceId = UUID.randomUUID().toString();
         SessionExportController controller = controllerWith(userId, workspaceId);
         when(messageReadService.countSessionMessages(SESSION)).thenReturn(2L);
-        when(messageReadService.listVisibleMessages(anyString(), anyString(), anyString(), any()))
+        when(messageReadService.listVisibleMessages(anyString(), anyString(), anyString(), any(), eq("export")))
                 .thenReturn(List.of(message("user", "hello"), message("assistant", "world")));
 
         ResponseEntity<?> response = controller.export(SESSION, BRANCH);
@@ -92,7 +93,7 @@ class SessionExportControllerTest {
         assertTrue(markdown.contains("- messages: 2"), markdown);
         assertTrue(markdown.contains("## 1. user"), markdown);
         assertTrue(markdown.contains("world"), markdown);
-        verify(messageReadService).listVisibleMessages(anyString(), anyString(), anyString(), any());
+        verify(messageReadService).listVisibleMessages(anyString(), anyString(), anyString(), any(), eq("export"));
     }
 
     @Test
@@ -102,13 +103,13 @@ class SessionExportControllerTest {
         SessionExportController controller = controllerWith(userId, workspaceId);
         when(messageReadService.countSessionMessages(SESSION))
                 .thenReturn((long) SessionExportService.MAX_MESSAGES);
-        when(messageReadService.listVisibleMessages(anyString(), anyString(), anyString(), any()))
+        when(messageReadService.listVisibleMessages(anyString(), anyString(), anyString(), any(), eq("export")))
                 .thenReturn(List.of(message("user", "boundary")));
 
         ResponseEntity<?> response = controller.export(SESSION, BRANCH);
 
         assertEquals(HttpStatus.OK, response.getStatusCode());
-        verify(messageReadService).listVisibleMessages(anyString(), anyString(), anyString(), any());
+        verify(messageReadService).listVisibleMessages(anyString(), anyString(), anyString(), any(), eq("export"));
     }
 
     @Test
@@ -131,7 +132,7 @@ class SessionExportControllerTest {
         assertEquals(total, body.get("messages"));
         assertEquals(SessionExportService.MAX_MESSAGES, body.get("limit"));
         verify(messageReadService).countSessionMessages(SESSION);
-        verify(messageReadService, never()).listVisibleMessages(anyString(), anyString(), anyString(), any());
+        verify(messageReadService, never()).listVisibleMessages(anyString(), anyString(), anyString(), any(), eq("export"));
     }
 
     @Test
@@ -140,7 +141,7 @@ class SessionExportControllerTest {
         String workspaceId = UUID.randomUUID().toString();
         SessionExportController controller = controllerWith(userId, workspaceId);
         when(messageReadService.countSessionMessages(SESSION)).thenReturn(1L);
-        when(messageReadService.listVisibleMessages(anyString(), anyString(), anyString(), any()))
+        when(messageReadService.listVisibleMessages(anyString(), anyString(), anyString(), any(), eq("export")))
                 .thenReturn(List.of(message("user", "ordered")));
 
         controller.export(SESSION, BRANCH);
@@ -148,7 +149,7 @@ class SessionExportControllerTest {
         InOrder order = inOrder(sessionService, messageReadService);
         order.verify(sessionService).requireCurrent(SESSION, userId, workspaceId);
         order.verify(messageReadService).countSessionMessages(SESSION);
-        order.verify(messageReadService).listVisibleMessages(anyString(), anyString(), anyString(), any());
+        order.verify(messageReadService).listVisibleMessages(anyString(), anyString(), anyString(), any(), eq("export"));
     }
 
     @Test

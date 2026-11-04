@@ -2679,8 +2679,11 @@ paths:
       responses:
         '200':
           description: |
-            PLAN-0670 M2. Without `limit`/`before` the legacy contract is unchanged: a bare array of
-            all visible messages (ascending). When either pagination parameter is present the response
+            PLAN-0670 M2. Without `limit`/`before` the legacy contract is unchanged for normal
+            sessions: a bare array of all visible messages (ascending). PLAN-0670 M2b adds a hard
+            ceiling to that legacy path — above 2000 messages it answers 413 PAGINATION_REQUIRED
+            **before reading any row** (compatibility must not mean unbounded memory; the legacy body
+            is never silently truncated). When either pagination parameter is present the response
             is a page envelope `{messages, limit, truncated, nextCursor}`: `messages` ascending
             (newest window reversed for rendering), `truncated=true` when older messages remain and
             `nextCursor` is then present, otherwise `nextCursor` is omitted (never an empty string).
@@ -2694,6 +2697,7 @@ paths:
         '401': { $ref: '#/components/responses/Problem' }
         '403': { $ref: '#/components/responses/Problem' }
         '404': { $ref: '#/components/responses/Problem' }
+        '413': { description: 'PAGINATION_REQUIRED (PLAN-0670 M2b) — the legacy full read was refused because the session exceeds 2000 messages (same cap as the BL-279 A1 export guard); the body carries messages (actual count) and limit (the cap) and asks the caller to page with limit/before. Refused before any message row is read.', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
   /api/v1/sessions/{sessionId}/messages/{messageId}:
     delete: { operationId: deleteMessage, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: sessionId, required: true, schema: { type: string } }, { in: path, name: messageId, required: true, schema: { type: string } }], responses: { '204': { description: Deleted }, '409': { description: FORK_REQUEST_IN_PROGRESS while the Session snapshot is copying / SESSION_DELETING while a delete intent is recorded (V47), content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } } } }
   /api/v1/sessions/{sessionId}/attachments:

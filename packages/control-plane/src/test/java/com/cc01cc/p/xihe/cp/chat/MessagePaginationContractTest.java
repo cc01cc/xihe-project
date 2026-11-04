@@ -58,6 +58,7 @@ class MessagePaginationContractTest extends AbstractIntegrationTest {
     @Autowired private WorkspaceFixture workspaceFixture;
     @Autowired private JwtTokenProvider jwtTokenProvider;
     @Autowired private BranchPathService branchPathService;
+    @Autowired private org.springframework.jdbc.core.JdbcTemplate jdbcTemplate;
 
     private String authToken;
     private String sessionId;
@@ -235,6 +236,71 @@ class MessagePaginationContractTest extends AbstractIntegrationTest {
         for (int i = 0; i < count; i++) {
             saveMessage((prefix == null ? "m-" : prefix) + String.format("%04d", i),
                     BASE.plusSeconds(i), branchId);
+        }
+    }
+
+    /**
+     * PLAN-0670 M2b: the legacy full-read path (no {@code limit}/{@code before}) keeps its contract
+     * for normal sessions but refuses long ones with an actionable 413 <b>before</b> reading a row —
+     * same "count first" pattern and the same 2000 cap as the BL-279 A1 export guard.
+     */
+    @Test
+    void legacyFullReadKeepsCompatibilityAtTheCeilingAndRefusesAboveIt() {
+        seedRows(MessageReadService.MAX_FULL_READ_MESSAGES);
+
+        ResponseEntity<List> atCeiling = restTemplate.exchange(legacyListUri(), HttpMethod.GET,
+                new HttpEntity<>(bearerHeaders()), List.class);
+        assertEquals(HttpStatus.OK, atCeiling.getStatusCode(),
+                "a session at the ceiling keeps the byte-for-byte legacy contract");
+        assertEquals(MessageReadService.MAX_FULL_READ_MESSAGES, atCeiling.getBody().size(),
+                "the legacy path must return every row at the ceiling (no silent truncation)");
+
+        seedRows(1);
+
+        ResponseEntity<Map> overCeiling = restTemplate.exchange(legacyListUri(), HttpMethod.GET,
+                new HttpEntity<>(bearerHeaders()), Map.class);
+        // 413 by value: Spring 6.2 renamed the enum constant (PAYLOAD_TOO_LARGE → CONTENT_TOO_LARGE),
+        // the wire status the client sees is the same.
+        assertEquals(413, overCeiling.getStatusCode().value(),
+                "above the ceiling the legacy path refuses instead of allocating the whole session");
+        Map<String, Object> problem = overCeiling.getBody();
+        assertEquals("PAGINATION_REQUIRED", problem.get("code"));
+        assertEquals(MessageReadService.MAX_FULL_READ_MESSAGES + 1,
+                ((Number) problem.get("messages")).intValue(), "the body reports the actual count");
+        assertEquals(MessageReadService.MAX_FULL_READ_MESSAGES,
+                ((Number) problem.get("limit")).intValue(), "the body reports the cap");
+        assertTrue(String.valueOf(problem.get("detail")).contains("limit/before"),
+                "the detail must be actionable: " + problem.get("detail"));
+
+        // The paginated contract still works on the same (now over-ceiling) session.
+        ResponseEntity<Map> paged = restTemplate.exchange(
+                baseUrl + "/api/v1/sessions/" + sessionId + "/messages?branchId=" + branchId + "&limit=50",
+                HttpMethod.GET, new HttpEntity<>(bearerHeaders()), Map.class);
+        assertEquals(HttpStatus.OK, paged.getStatusCode());
+        assertEquals(50, ((List<?>) paged.getBody().get("messages")).size());
+    }
+
+    private HttpHeaders bearerHeaders() {
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(authToken);
+        return headers;
+    }
+
+    private String legacyListUri() {
+        return baseUrl + "/api/v1/sessions/" + sessionId + "/messages?branchId=" + branchId;
+    }
+
+    /** Bulk seed: one JDBC statement, so a 2000-row fixture stays a fraction of a second. */
+    private void seedRows(int count) {
+        int offset = jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM messages WHERE CAST(session_id AS VARCHAR) = ?",
+                Integer.class, sessionId);
+        for (int index = 0; index < count; index += 1) {
+            jdbcTemplate.update("INSERT INTO messages (id, session_id, branch_id, role, content, "
+                            + "created_at, visibility) VALUES (gen_random_uuid(), CAST(? AS UUID), "
+                            + "CAST(? AS UUID), 'USER', ?, ?, 'user')",
+                    sessionId, branchId, "bulk-" + (offset + index),
+                    java.sql.Timestamp.from(BASE.plusSeconds(offset + index)));
         }
     }
 

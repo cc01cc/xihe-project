@@ -27,30 +27,53 @@ public class MessageReadService {
 
     private static final Logger logger = LoggerFactory.getLogger(MessageReadService.class);
 
+    /**
+     * PLAN-0670 M2b: hard ceiling for the <b>legacy full-read</b> path ({@code GET /messages} without
+     * {@code limit}/{@code before}). Kept equal to the BL-279 export cap on purpose — both guards are
+     * "count before reading", so they must not drift into two different numbers.
+     */
+    public static final int MAX_FULL_READ_MESSAGES = SessionExportService.MAX_MESSAGES;
+
     private final MessageRepository messageRepository;
     private final ChatRunRepository chatRunRepository;
     private final McpInvocationService mcpInvocationService;
     private final JobStateService jobStateService;
     private final BranchPathService branchPathService;
     private final ObjectMapper objectMapper;
+    private final SessionReadMemoryGuard memoryGuard;
 
     public MessageReadService(MessageRepository messageRepository,
                               ChatRunRepository chatRunRepository,
                               McpInvocationService mcpInvocationService,
                               JobStateService jobStateService,
                               BranchPathService branchPathService,
-                              ObjectMapper objectMapper) {
+                              ObjectMapper objectMapper,
+                              SessionReadMemoryGuard memoryGuard) {
         this.messageRepository = messageRepository;
         this.chatRunRepository = chatRunRepository;
         this.mcpInvocationService = mcpInvocationService;
         this.jobStateService = jobStateService;
         this.branchPathService = branchPathService;
         this.objectMapper = objectMapper;
+        this.memoryGuard = memoryGuard;
     }
 
     public List<Map<String, Object>> listVisibleMessages(String sessionId, String workspaceId,
                                                           String rootBranchId,
                                                           BranchPathService.BranchVisibility visibility) {
+        return listVisibleMessages(sessionId, workspaceId, rootBranchId, visibility, "messages.list");
+    }
+
+    /**
+     * Same as {@link #listVisibleMessages(String, String, String, BranchPathService.BranchVisibility)}
+     * with an explicit read-path label for the heap watermark (T2b.4). Callers that materialise a whole
+     * conversation (messages list, export) pass their own label so the diagnostic line says which read
+     * path grew.
+     */
+    public List<Map<String, Object>> listVisibleMessages(String sessionId, String workspaceId,
+                                                          String rootBranchId,
+                                                          BranchPathService.BranchVisibility visibility,
+                                                          String endpointLabel) {
         List<Map<String, Object>> result = new ArrayList<>();
         for (Message message : messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId)) {
             // PLAN-0630 M5b / D3: internal Messages (wake instructions) are model input only — they
@@ -63,7 +86,26 @@ public class MessageReadService {
                 result.add(toMessageDto(message));
             }
         }
+        // PLAN-0670 M2b (T2b.4): one WARN line when this read path materialises a large conversation.
+        // Estimate only — never log content (privacy) — and stay silent unless the deployment turned
+        // the guard on and the estimate crosses its threshold.
+        memoryGuard.observe(endpointLabel, result.size(), estimateResponseBytes(result));
         return result;
+    }
+
+    /**
+     * Footprint estimate for the watermark: UTF-16 content (2 bytes/char) plus a fixed per-row
+     * overhead for the DTO map/keys. Deliberately coarse — it only decides "worth a WARN line".
+     */
+    static long estimateResponseBytes(List<Map<String, Object>> messages) {
+        long estimated = 0L;
+        for (Map<String, Object> message : messages) {
+            estimated += 256L;
+            if (message.get("content") instanceof String content) {
+                estimated += 2L * content.length();
+            }
+        }
+        return estimated;
     }
 
     /** Hard upper bound of {@code ?limit=}; larger values are truncated (never rejected). */
