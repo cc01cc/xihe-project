@@ -2875,6 +2875,18 @@ export const api = {
             }),
         );
     },
+    /**
+     * C1（2026-11-04 用户裁定）：把裸会话按默认绑定重绑（CP `POST /sessions/{id}/bind-defaults`，
+     * task-24）。幂等：已绑定的会话原样返回；无可用默认 ⇒ 400 `PROVIDER_REQUIRED`。
+     * 发送前守卫用它做「自动绑定」，不静默失败。
+     */
+    async bindSessionDefaults(sessionId: string): Promise<SessionResponse> {
+        return normalizeSession(
+            await request<unknown>(`/sessions/${encodeURIComponent(sessionId)}/bind-defaults`, {
+                method: "POST",
+            }),
+        );
+    },
     deleteSession(id: string) {
         return apiDelete(`/sessions/${encodeURIComponent(id)}`);
     },

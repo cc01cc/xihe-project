@@ -11,6 +11,11 @@ import type { LlmProviderProfile } from "../../../services/llmProviderProfile";
  * the Session first, then the local binding cache, then the llm-provider
  * profile. It never mutates config/session state and never changes what a run
  * dispatches.
+ *
+ * C1（2026-11-04 用户裁定）：`hasBinding` 只认**会话行**（`session.providerConnectionId`）。
+ * 本地 binding 缓存与 profile 是"发送时会用的兜底"，不是"已经绑上"——把它们算进
+ * `hasBinding` 会让裸会话显示成已绑模型（用户一发言就 409 `PROVIDER_REQUIRED`）。
+ * 未绑定时触发器退回占位文案，不再展示"看起来像已绑定"的模型名。
  */
 export type ConnectionDisplayState = "resolved" | "loading" | "unavailable" | "not-recorded";
 
@@ -99,11 +104,15 @@ export function resolveModelDisplay(input: ModelDisplayInput): ModelDisplay {
         connectionId: string | undefined,
         connectionKey: string | undefined;
 
-    // 1. A bound Session is what CP actually dispatches.
-    if (session?.modelProvider && session.modelName) {
-        providerId = session.modelProvider;
-        model = session.modelName;
-        connectionId = session.providerConnectionId;
+    // 1. A bound Session is what CP actually dispatches. Only the session row counts as
+    //    "bound" for display (C1); the branches below still resolve what the send would use.
+    const boundBySession = Boolean(
+        session?.providerConnectionId && session?.modelProvider && session?.modelName,
+    );
+    if (boundBySession) {
+        providerId = session!.modelProvider!;
+        model = session!.modelName!;
+        connectionId = session!.providerConnectionId;
     } else if (binding?.provider && binding.model) {
         // 2. Local binding cache (also covers the profile fallback of getEffectiveModel).
         providerId = binding.provider;
@@ -177,7 +186,8 @@ export function resolveModelDisplay(input: ModelDisplayInput): ModelDisplay {
     }
 
     return {
-        hasBinding: true,
+        // C1: 只有会话行真的绑了才叫"已绑"；profile/本地缓存兜底只回答"发送时会用什么"。
+        hasBinding: boundBySession,
         model,
         providerId,
         providerName,

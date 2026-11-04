@@ -772,6 +772,14 @@ const messages = {
             branchCreated: "分支已创建并切换",
             branchCreateFailed: "创建分支失败",
             branchLoadFailed: "无法加载对话分支，暂时无法发送消息",
+            providerAutoBound: "已自动绑定",
+            providerBindingGuideTitle: "会话尚未绑定模型",
+            providerBindingGuideProviderRequired:
+                "这个会话还没有绑定 provider 连接，CP 会拒绝发送。可以尝试按智能体默认模型 / 生效配置自动绑定，或前往设置手动选择。",
+            providerBindingGuideProfileConflict:
+                "生效的 LLM Provider 配置没有可用连接，无法自动绑定。请前往设置检查 Provider 与连接状态。",
+            providerBindingGuideRetry: "自动绑定",
+            providerBindingGuideSettings: "去设置",
             thinking: "思考中...",
             error: "发送失败",
             stop: "停止生成",
@@ -2962,6 +2970,14 @@ const messages = {
             branchCreated: "Branch created and selected",
             branchCreateFailed: "Failed to create branch",
             branchLoadFailed: "Branches could not be loaded; chat is temporarily unavailable",
+            providerAutoBound: "Auto-bound",
+            providerBindingGuideTitle: "This session has no model binding",
+            providerBindingGuideProviderRequired:
+                "This session has no provider connection, so the server refuses to send. Try auto-binding from the agent default model / effective profile, or pick one in Settings.",
+            providerBindingGuideProfileConflict:
+                "The effective LLM Provider profile has no usable connection, so auto-binding is impossible. Check the provider and its connections in Settings.",
+            providerBindingGuideRetry: "Auto-bind",
+            providerBindingGuideSettings: "Open Settings",
             thinking: "Thinking...",
             error: "Failed to send",
             stop: "Stop generating",

@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { flushPromises, mount } from "@vue/test-utils";
 import { nextTick } from "vue";
 import { createPinia, setActivePinia } from "pinia";
+import { useSessionStore } from "../../../../stores/session";
 import ChatPanel from "../components/ChatPanel.vue";
 import ApprovalModal from "../components/ApprovalModal.vue";
 import SessionDerivedStatePanel from "../components/SessionDerivedStatePanel.vue";
@@ -32,6 +33,7 @@ vi.mock("../../../../composables/api", async (importOriginal) => {
             continueFollowUpQueue: vi.fn<typeof api.continueFollowUpQueue>(),
             getSessionDerivedState: vi.fn<typeof api.getSessionDerivedState>(),
             listSessionRuns: vi.fn<typeof api.listSessionRuns>(),
+            bindSessionDefaults: vi.fn<typeof api.bindSessionDefaults>(),
         },
     };
 });
@@ -99,6 +101,21 @@ const approval: ApprovalRequest = {
 };
 
 function mountPanel() {
+    // C1：这些用例钉 enqueue/branch 契约，不是"未绑定引导"——种子一个已绑会话，让守卫零开销放行
+    // （未绑定路径由 ensureProviderBinding.spec / mock e2e 单独覆盖）。
+    useSessionStore().applySessionRecord({
+        id: SESSION_ID,
+        title: "T",
+        workspaceId: "workspace-1",
+        agentPrincipalId: "00000000-0000-4000-8000-0000000000a1",
+        modelProvider: "deepseek",
+        modelName: "deepseek-flash",
+        providerConnectionId: "conn-1",
+        connectionRevision: 2,
+        createdAt: "2026-11-04T10:00:00Z",
+        updatedAt: "2026-11-04T10:00:00Z",
+    } as never);
+
     return mount(ChatPanel, {
         props: { sessionId: SESSION_ID },
         global: {
@@ -117,6 +134,18 @@ function mountPanel() {
 
 beforeEach(() => {
     setActivePinia(createPinia());
+    vi.mocked(api.bindSessionDefaults).mockReset().mockResolvedValue({
+        id: SESSION_ID,
+        title: "T",
+        workspaceId: "workspace-1",
+        agentPrincipalId: "00000000-0000-4000-8000-0000000000a1",
+        modelProvider: "deepseek",
+        modelName: "deepseek-flash",
+        providerConnectionId: "conn-1",
+        connectionRevision: 2,
+        createdAt: "2026-11-04T10:00:00Z",
+        updatedAt: "2026-11-04T10:00:00Z",
+    });
     vi.mocked(api.decideChatApproval).mockReset();
     vi.mocked(api.getPendingApprovals).mockReset();
     vi.mocked(api.getPendingApprovals).mockResolvedValue([]);

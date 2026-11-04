@@ -166,6 +166,25 @@ function mockConnections(connections: connectionApi.ProviderConnectionListRespon
     }));
 }
 
+/**
+ * C1（2026-11-04 用户裁定）：触发器只在**会话行绑定**时显示模型名。
+ * 需要验证"已绑"状态下的三段标签/连接逻辑的用例，用这个 helper 把会话行绑上
+ * （等价于 `resolveModelDisplay` 的分支 1）。
+ */
+function bindSessionRow(id: string, provider: string, model: string, connectionId: string) {
+    const store = useSessionStore();
+    store.sessions = store.sessions.map((item) =>
+        item.id === id
+            ? {
+                  ...item,
+                  modelProvider: provider,
+                  modelName: model,
+                  providerConnectionId: connectionId,
+              }
+            : item,
+    );
+}
+
 async function createSessionInStore(id: string, title: string) {
     const auth = useAuthStore();
     auth.$patch({ token: "mock", workspace: { id: "ws-test", name: "Default Workspace" } });
@@ -258,13 +277,21 @@ describe("ModelPopover", () => {
         configStore.setSessionModel(sessionStore.currentSessionId!, "deepseek", "deepseek-chat");
         vi.spyOn(configStore, "fetchModels").mockResolvedValue(undefined);
 
+        // C1：本地 binding 缓存 ≠ 已绑定 —— 触发器必须退回占位文案，不得显示模型名。
+        const unbound = mountPopover();
+        expect(unbound.text()).toContain("Select Model");
+        expect(unbound.text()).not.toContain("deepseek-chat");
+        unbound.unmount();
+
+        // 会话行真的绑了 ⇒ 三段标签照常（标签逻辑本身没变）。
+        bindSessionRow(sessionStore.currentSessionId!, "deepseek", "deepseek-chat", "deepseek");
         const wrapper = mountPopover();
         expect(wrapper.text()).toContain("deepseek-chat");
         expect(wrapper.text()).toContain("DeepSeek");
         wrapper.unmount();
     });
 
-    it("shows effective model from config defaults when no session binding", async () => {
+    it("shows placeholder when only the profile default exists (C1: fallback is not a binding)", async () => {
         await createSessionInStore("mp-2", "Default model");
         const configStore = useConfigStore(),
             sessionStore = useSessionStore();
@@ -285,9 +312,9 @@ describe("ModelPopover", () => {
 
         const wrapper = mountPopover();
         await flushPromises();
-        expect(wrapper.text()).toContain("gpt-4o");
-        expect(wrapper.text()).toContain("OpenAI");
-        expect(wrapper.text()).toContain("default");
+        // C1：profile 兜底是"发送时会用什么"，不是"已绑"——触发器必须退回占位。
+        expect(wrapper.text()).toContain("Select Model");
+        expect(wrapper.text()).not.toContain("gpt-4o");
         wrapper.unmount();
     });
 
@@ -429,6 +456,8 @@ describe("ModelPopover", () => {
             connectionFixture("connection-b", "openai", "Workspace", "openai-compat", "USER", 2),
         ]);
         configStore.setSessionModel("mp-3", "openai", "vendor/model", "connection-a", 1);
+        // C1：触发器标签只在会话行绑定时显示；本用例钉连接身份逻辑，故绑会话行。
+        bindSessionRow("mp-3", "openai", "vendor/model", "connection-a");
         configStore.toggleFavorite("openai", "vendor/model");
         vi.spyOn(configStore, "fetchModels").mockResolvedValue(undefined);
         const updateSpy = vi.spyOn(sessionStore, "updateSession").mockResolvedValue({
@@ -510,6 +539,7 @@ describe("ModelPopover", () => {
         const configStore = useConfigStore();
         configStore.modelCache = readyCacheForConnection("connection-blank", "openai", "gpt-4o");
         configStore.setSessionModel("mp-blank", "openai", "gpt-4o", "connection-blank", 1);
+        bindSessionRow("mp-blank", "openai", "gpt-4o", "connection-blank");
         mockConnections([connectionFixture("connection-blank", "openai", "   ", "openai-compat")]);
         vi.spyOn(configStore, "fetchModels").mockResolvedValue(undefined);
 
@@ -524,6 +554,7 @@ describe("ModelPopover", () => {
         const configStore = useConfigStore();
         configStore.modelCache = readyCacheForConnection("connection-loading", "openai", "gpt-4o");
         configStore.setSessionModel("mp-loading", "openai", "gpt-4o", "connection-loading", 1);
+        bindSessionRow("mp-loading", "openai", "gpt-4o", "connection-loading");
         vi.spyOn(connectionApi, "listProviderConnections").mockImplementation(
             () => new Promise(() => {}),
         );
@@ -539,9 +570,12 @@ describe("ModelPopover", () => {
         const configStore = useConfigStore();
         configStore.modelCache = readyModelCache({ openai: ["gpt-4o"] });
         configStore.setSessionModel("mp-none", "openai", "gpt-4o");
+        bindSessionRow("mp-none", "openai", "gpt-4o", "connection-none");
         vi.spyOn(configStore, "fetchModels").mockResolvedValue(undefined);
 
         const wrapper = mountPopover();
+        // 会话行现在带 connectionId ⇒ 连接列表要先加载完，才能判定 "connection 不在可见集"（—）。
+        await flushPromises();
         expect(wrapper.get('[data-testid="model-trigger-segment-connection"]').text()).toBe("—");
         wrapper.unmount();
     });
@@ -551,6 +585,7 @@ describe("ModelPopover", () => {
         const configStore = useConfigStore();
         configStore.modelCache = readyCacheForConnection("connection-user", "openai", "gpt-4o");
         configStore.setSessionModel("mp-dup", "openai", "gpt-4o", "connection-user", 1);
+        bindSessionRow("mp-dup", "openai", "gpt-4o", "connection-user");
         mockConnections([
             connectionFixture("connection-user", "openai", "Shared", "default", "USER"),
             connectionFixture("connection-ws", "openai", "Shared", "openai-compat", "WORKSPACE"),
