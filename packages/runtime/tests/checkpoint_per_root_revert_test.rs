@@ -108,7 +108,7 @@ async fn revert_of_a_secondary_root_restores_only_that_root() {
     fixture.write(&fixture.secondary(), "secondary.txt", "secondary dirty\n");
 
     let result = engine
-        .restore_execute_for_root(WS, Some("root-b"), &secondary_slice, &[])
+        .restore_execute_for_root(WS, Some("root-b"), &secondary_slice, &[], false, &[])
         .await
         .expect("restore of the secondary root must succeed");
     assert_eq!(
@@ -158,7 +158,7 @@ async fn revert_without_a_root_id_stays_on_the_primary_root() {
     // An explicit primary root id is the same request, not a new surface.
     fixture.write(&fixture.primary(), "primary.txt", "dirty again\n");
     let again = engine
-        .restore_execute_for_root(WS, Some(WS), &slice, &[])
+        .restore_execute_for_root(WS, Some(WS), &slice, &[], false, &[])
         .await
         .expect("explicit primary root restore");
     assert_eq!(again.counts.restored, 1);

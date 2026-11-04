@@ -1363,6 +1363,16 @@ mod tests {
                 .await
                 .expect("fixture restore")
         }
+
+        /// PLAN-0641 M3: the dirty-nested-repo gate refuses an undeclared dirty repo by
+        /// default. The 0361 fixtures below create that exact state on purpose, so they take
+        /// the same explicit override a user confirms (force=true).
+        async fn execute_forced(&self, slice_ref: &str) -> RestoreResult {
+            self.engine
+                .restore_execute_for_root(WS, None, slice_ref, &[], true, &[])
+                .await
+                .expect("fixture forced restore")
+        }
     }
 
     #[test]
@@ -1618,7 +1628,9 @@ mod tests {
             "flattened nested content must not be a type change: {changed:?}"
         );
 
-        let result = fixture.execute(&slice).await;
+        // M3: the post-capture drift inside the nested repo makes it dirty, so the restore
+        // must be the explicit force path (the behavior under test is 0361 flatten recovery).
+        let result = fixture.execute_forced(&slice).await;
         assert_eq!(result.counts.failed, 0);
         assert_eq!(fixture.read("sub/nested/README.md"), "nested-base");
         assert!(!fixture.exists("sub/nested/new.txt"));
@@ -1673,11 +1685,21 @@ mod tests {
 
         // The file→directory shadow is a type change, so acknowledge it and let git
         // fail to overwrite the non-empty directory: exactly that path fails.
+        // M3: the nested repo is dirty (rewritten directory shadow), so the restore has to
+        // take the explicit force override; the behavior under test is the 0361 per-path
+        // failure attribution below.
         let result = fixture
             .engine
-            .restore_execute(WS, &slice, &[String::from("sub/nested/blocked")])
+            .restore_execute_for_root(
+                WS,
+                None,
+                &slice,
+                &[String::from("sub/nested/blocked")],
+                true,
+                &[],
+            )
             .await
-            .expect("fixture restore with acknowledged type change");
+            .expect("fixture forced restore with acknowledged type change");
 
         let mut paths: Vec<&str> = result
             .entries

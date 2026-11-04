@@ -322,6 +322,10 @@ impl CheckpointService {
         .await
     }
 
+    // PLAN-0641 M3: the two nested-repo gates (`force` / `acknowledge_nested_repos`) follow the
+    // engine signature this method forwards to; folding them into a struct would ripple through
+    // the handler and every caller for no behavioural gain.
+    #[allow(clippy::too_many_arguments)]
     pub async fn restore_execute_for_root_path(
         &self,
         workspace_id: &str,
@@ -373,6 +377,8 @@ impl CheckpointService {
     }
 
     /// T2.2 batch execute: literal paths, self/store adapter only.
+    // PLAN-0641 M3: same arity rationale as `restore_execute_for_root_path`.
+    #[allow(clippy::too_many_arguments)]
     pub async fn restore_execute_for_root_paths(
         &self,
         workspace_id: &str,
@@ -927,6 +933,7 @@ mod tests {
             commit: "abc".to_string(),
             entries,
             counts,
+            nested_repo_affected: Vec::new(),
         }
     }
 
@@ -990,7 +997,7 @@ mod tests {
             .expect("blob");
         assert_eq!(blob.content, b"store-a");
         let executed = service
-            .restore_execute_for_root("ws-1", None, slice_ref, &[])
+            .restore_execute_for_root("ws-1", None, slice_ref, &[], false, &[])
             .await
             .expect("restore");
         assert_eq!(executed.counts.restored, 2);
@@ -1001,7 +1008,7 @@ mod tests {
         std::fs::write(work.join("a.txt"), "changed-again").expect("mutate a");
         std::fs::write(work.join("b.txt"), "changed-b").expect("mutate b");
         let scoped = service
-            .restore_execute_for_root_path("ws-1", None, slice_ref, &[], Some("a.txt"))
+            .restore_execute_for_root_path("ws-1", None, slice_ref, &[], false, &[], Some("a.txt"))
             .await
             .expect("path restore");
         assert_eq!(scoped.counts.restored, 1);
@@ -1021,7 +1028,7 @@ mod tests {
             .expect("batch preview");
         assert_eq!(batch_preview.counts.restore, 2);
         let batch = service
-            .restore_execute_for_root_paths("ws-1", None, slice_ref, &[], &paths)
+            .restore_execute_for_root_paths("ws-1", None, slice_ref, &[], false, &[], &paths)
             .await
             .expect("batch restore");
         assert_eq!(batch.counts.restored, 2);
@@ -1109,6 +1116,7 @@ mod tests {
             },
             duration_ms: 12,
             suspects: vec!["b.txt".to_string()],
+            nested_repo_affected: Vec::new(),
         };
         let outcome = project_execute(result);
         assert_eq!(outcome.slice_ref, "refs/xihe/slices/1-abc");

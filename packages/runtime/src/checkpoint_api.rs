@@ -1207,7 +1207,7 @@ mod tests {
 
         // restore full: workspace must return to slice #1 contents.
         let full = service
-            .restore_execute_for_root("ws-1", None, &first_ref, &[])
+            .restore_execute_for_root("ws-1", None, &first_ref, &[], false, &[])
             .await
             .expect("full restore");
         assert!(full.counts.restored >= 2);
@@ -1219,7 +1219,15 @@ mod tests {
         // restore single path: only b.txt is scoped back to slice #2 state.
         std::fs::write(work.join("b.txt"), "beta-modified").expect("mutate b");
         let scoped = service
-            .restore_execute_for_root_paths("ws-1", None, &second_ref, &[], &["b.txt".to_string()])
+            .restore_execute_for_root_paths(
+                "ws-1",
+                None,
+                &second_ref,
+                &[],
+                false,
+                &[],
+                &["b.txt".to_string()],
+            )
             .await
             .expect("path restore");
         assert_eq!(scoped.counts.restored, 1);
