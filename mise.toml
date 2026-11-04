@@ -187,7 +187,7 @@ alias = "test:runtime:lib"
 
 [tasks."test:e2e:host"]
 run = "node scripts/e2e-host.mjs"
-description = "Run host-only E2E tests in an isolated per-run native stack"
+description = "Run host-only E2E tests in an isolated per-run native stack (own ports/PG/build targets; dev stacks keep running — PLAN-0656 R2)"
 alias = "test:e2e:host"
 
 [tasks.xihe]
