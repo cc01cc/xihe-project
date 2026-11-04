@@ -102,7 +102,11 @@ public final class PermissionAtomCatalog {
             // "tool writes are denied by default". Scope class stays `both`: memory is isolated by
             // (principal, workspace), so a workspace-scoped grant is meaningful (an instance-scoped
             // one means "in every workspace", the same shape as workspace:admin).
-            ToolFaceRegistry.ACTION_MEMORY_WRITE);
+            ToolFaceRegistry.ACTION_MEMORY_WRITE,
+            // PLAN-0651 M1 (D51-26/D51-27): management atoms replacing the coarse isInstanceAdmin()
+            // bypass on the agent-principal and member faces.
+            ToolFaceRegistry.ACTION_MANAGE_AGENT_PRINCIPALS,
+            ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_MEMBERS);
 
     private static final List<String> CAPABILITY_ATOM_NAMES = List.of(
             CAP_INSTANCE_SUPER, CAP_INSTANCE_ADMIN, CAP_WORKSPACE_ADMIN);
@@ -118,6 +122,8 @@ public final class PermissionAtomCatalog {
             // PLAN-0622 D8: "create your own agent" is a user capability; a workspace-scoped
             // binding of it would be meaningless, so it is instance-bindable only.
             ToolFaceRegistry.ACTION_OWN_AGENT,
+            // PLAN-0651 M1 (D51-26): instance-level agent-principal authority acts on the instance.
+            ToolFaceRegistry.ACTION_MANAGE_AGENT_PRINCIPALS,
             CAP_INSTANCE_SUPER,
             CAP_INSTANCE_ADMIN);
 
@@ -185,6 +191,11 @@ public final class PermissionAtomCatalog {
         }
         forbidden.add(ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_AGENTS);
         forbidden.add(ToolFaceRegistry.ACTION_MANAGE_ROLES);
+        // PLAN-0651 D51-27: "bindable in both scopes" does NOT mean grantable to an agent
+        // principal. Every atom this plan adds answers an administrative face, so it joins the
+        // forbidden set explicitly — today these faces are always false for an agent (they can only
+        // come from a capability atom, and capability atoms are already forbidden above).
+        forbidden.add(ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_MEMBERS);
         return Set.copyOf(forbidden);
     }
 

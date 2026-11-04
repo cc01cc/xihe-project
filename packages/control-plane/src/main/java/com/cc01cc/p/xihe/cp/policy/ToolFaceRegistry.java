@@ -48,6 +48,13 @@ public class ToolFaceRegistry {
     // but seeded into NO default role (USER/ADMIN included), so an account can only use it after
     // an explicit grant. The UI/CLI channels do not consume this atom (they act as the user).
     public static final String ACTION_MEMORY_WRITE = "MEMORY_WRITE";
+    // PLAN-0651 M1 (D51-26/D51-27): two management atoms replacing the coarse `isInstanceAdmin()`
+    // bypass on the agent-principal face and the member face. MANAGE_AGENT_PRINCIPALS is
+    // instance-only (it acts on the instance); MANAGE_WORKSPACE_MEMBERS is bindable in both scopes
+    // (a workspace role may be handed member management later, WS_OWNER is deliberately not).
+    // Neither may ever be granted to an agent principal (see agentPrincipalForbiddenAtoms()).
+    public static final String ACTION_MANAGE_AGENT_PRINCIPALS = "MANAGE_AGENT_PRINCIPALS";
+    public static final String ACTION_MANAGE_WORKSPACE_MEMBERS = "MANAGE_WORKSPACE_MEMBERS";
 
     /** PLAN-0496 #2: the credential resource namespace ({@code credential:<uuid>} / {@code credential:*}).
      */
@@ -161,7 +168,11 @@ public class ToolFaceRegistry {
                 ACTION_CREDENTIAL_USE, ACTION_CREDENTIAL_REVEAL, ACTION_CREDENTIAL_MANAGE,
                 ACTION_CREATE_ACCOUNT, ACTION_CREATE_TEMPLATE, ACTION_MANAGE_WORKSPACE_AGENTS, ACTION_SPAWN_AGENT,
                 ACTION_CREATE_SCHEDULED_TASK, ACTION_MANAGE_SCHEDULED_TASK, ACTION_MANAGE_ROLES,
-                ACTION_OWN_AGENT, ACTION_MEMORY_WRITE);
+                ACTION_OWN_AGENT, ACTION_MEMORY_WRITE,
+                // PLAN-0651 M1 (D51-26): management atoms. They join the built-in vocabulary because
+                // it is the catalog's action-class set (PermissionAtomCatalog.actionAtoms() must stay
+                // equal to it, see MemoryWriteAtomTest); they are not attached to any tool face.
+                ACTION_MANAGE_AGENT_PRINCIPALS, ACTION_MANAGE_WORKSPACE_MEMBERS);
     }
 
     /** PLAN-0496 #2: credential-namespace action classes (the three atoms share resource rules). */

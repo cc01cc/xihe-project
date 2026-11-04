@@ -63,7 +63,7 @@
 |---|---|---|
 | V1 `isInstanceAdmin` 收口 | `rg -n 'isInstanceAdmin' packages/control-plane/src/main` | 13 行 = 能力层本体 11 + `CapabilityProjectionService:90`（wire 字段）+ `WorkspaceController:320`（defer） |
 | V15 角色名收口 | `rg -n 'WorkspaceRole\.|"ADMIN"\|"OWNER"\|"VIEWER"\|"EDITOR"'` | defer 项 + `WorkspaceRole` 定义本体 + 成员面两步成员角色判据（`WorkspaceMemberService:74,143`）+ `ToolFaceService:171` |
-| 原子集合 | `actionAtoms().size()` / `capabilityAtoms().size()` / `builtinActionClasses().size()` | 27 / 3 / 17（差集 = N1–N10） |
+| 原子集合 | `actionAtoms().size()` / `capabilityAtoms().size()` / `builtinActionClasses().size()` | 27 / 3 / 27（三集合一致，差集 ∅；M1 时为 19） |
 | agent 禁授 | `agentPrincipalForbiddenAtoms()` | MUST 含全部新原子 |
 | 种子零遗漏 | 迁移校验查询（§5.1） | 0 行 |
 

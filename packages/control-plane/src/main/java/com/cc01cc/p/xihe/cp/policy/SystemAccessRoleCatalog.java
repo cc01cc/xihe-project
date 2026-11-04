@@ -99,10 +99,16 @@ public class SystemAccessRoleCatalog {
                         "Instance scope: every action atom plus every capability atom. Immutable.",
                         superAdminAtoms()),
                 new RoleSeed(ADMIN_ID, ADMIN, "Administrator",
-                        "Instance scope: the user default set plus the three credential atoms "
-                                + "and instance:admin.",
+                        "Instance scope: the user default set plus the three credential atoms, "
+                                + "instance:admin, workspace:admin and the PLAN-0651 management "
+                                + "atoms (agent principals, workspace members).",
                         concat(USER_DEFAULT_ATOMS, CREDENTIAL_ATOMS,
-                                List.of(AtomRef.wildcard(PermissionAtomCatalog.CAP_INSTANCE_ADMIN)))),
+                                List.of(AtomRef.wildcard(PermissionAtomCatalog.CAP_INSTANCE_ADMIN),
+                                        AtomRef.wildcard(PermissionAtomCatalog.CAP_WORKSPACE_ADMIN),
+                                        AtomRef.wildcard(
+                                                ToolFaceRegistry.ACTION_MANAGE_AGENT_PRINCIPALS),
+                                        AtomRef.wildcard(
+                                                ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_MEMBERS)))),
                 new RoleSeed(USER_ID, USER, "User",
                         "Instance scope: the registration minimal set "
                                 + "(read/write/delete/exec/network) plus CREATE_OWN_AGENT.",
