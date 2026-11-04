@@ -5,6 +5,7 @@ import {
     createSessionWithPrincipal,
     provisionWorkspaceAgentPrincipal,
 } from "./helpers/agent-principal";
+import { bindSessionViaApi } from "./helpers/session-binding";
 import {
     CP_URL,
     awaitLatestChatRunCompleted,
@@ -187,16 +188,7 @@ test.describe("@host Journey D — context pipeline", () => {
         // real uses the same popover flow) so "no silent route switch" has a
         // concrete before/after: the session must stay on xiaomi/mimo-v2.6-flash after
         // the refusal.
-        const trigger = page.getByTestId("model-popover-trigger");
-        await expect(trigger).toBeVisible();
-        await trigger.click();
-        const modelSearch = page.getByTestId("model-popover-search");
-        await modelSearch.fill("mimo-v2.6-flash");
-        await expect(page.getByTestId("model-item-xiaomi/mimo-v2.6-flash")).toBeVisible({
-            timeout: 15000,
-        });
-        await modelSearch.press("Enter");
-
+        // 2026-11-04 用户裁定移除 composer 模型选择器：绑定改走产品 PATCH API。
         let sessionId = "";
         await expect
             .poll(
@@ -210,6 +202,7 @@ test.describe("@host Journey D — context pipeline", () => {
                 { timeout: 30000 },
             )
             .not.toBe("");
+        await bindSessionViaApi(request, CP_URL, headers, sessionId, "xiaomi", "mimo-v2.6-flash");
         await expect
             .poll(
                 async () => {

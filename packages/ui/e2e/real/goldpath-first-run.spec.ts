@@ -411,22 +411,35 @@ async function bindToolCapableFakeLlmConnection(page: Page, sessionId: string): 
         ((await verified.json()) as { connection?: { status?: string } }).connection?.status,
     ).toBe("READY");
 
-    // 3) 回到会话，经 ModelPopover 产品路径完成绑定（BL-204 修复点）。
+    // 3) 绑定会话：2026-11-04 用户裁定移除 composer 模型选择器 —— 走产品 PATCH API
+    //（原 ModelPopover 内部同一端点），连接就是刚创建并 verify 过的那条（按 id 取回
+    // providerId/revision，绑定四件套必须齐全）。
     await page.goto(chatUrl, { waitUntil: "load" });
     await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: 25000 });
-    await page.getByTestId("model-popover-trigger").click();
-    const modelItem = page
-        .locator(`[data-testid^="model-item-"][data-testid$="/${FAKE_LLM_MODEL}"]`)
-        .first();
-    await expect(modelItem).toBeVisible({ timeout: 20000 });
-    const bindResponse = page.waitForResponse(
-        (response) =>
-            new URL(response.url()).pathname.endsWith(`/api/v1/sessions/${sessionId}`) &&
-            response.request().method() === "PATCH",
-    );
-    await modelItem.click();
-    const bound = await bindResponse;
-    expect(bound.status(), await bound.text()).toBe(200);
+    const workspace = JSON.parse(
+        await page.evaluate(() => sessionStorage.getItem("xihe-workspace") ?? "{}"),
+    ) as { id?: string };
+    const requestHeaders = { ...bearer(token), "X-Workspace-Id": workspace.id ?? "" };
+    const connections = await page.request.get(`${CP_URL}/api/v1/provider-connections`, {
+        headers: requestHeaders,
+    });
+    expect(connections.ok(), await connections.text()).toBe(true);
+    const listedConnection = (
+        (await connections.json()) as {
+            connections?: Array<{ id: string; providerId: string; revision: number }>;
+        }
+    ).connections?.find((item) => item.id === connectionId);
+    expect(listedConnection, "the just-created fake connection must be listed").toBeTruthy();
+    const bound = await page.request.patch(`${CP_URL}/api/v1/sessions/${sessionId}`, {
+        headers: requestHeaders,
+        data: {
+            modelProvider: listedConnection!.providerId,
+            modelName: FAKE_LLM_MODEL,
+            providerConnectionId: connectionId,
+            connectionRevision: listedConnection!.revision,
+        },
+    });
+    expect(bound.ok(), await bound.text()).toBe(true);
 }
 
 /** 在**当前**工作区里经 UI 建一个 Agent principal 并绑定（G2-c 的步骤，供 G2-e 复用）。 */ async function createAndBindAgentInCurrentWorkspace(
@@ -936,7 +949,6 @@ test.describe("@host gold path G2 — zero to first reply through the UI", () =>
         await bindToolCapableFakeLlmConnection(page, chatSessionId);
         await page.reload({ waitUntil: "load" });
         await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: 25000 });
-        await expect(page.getByTestId("model-popover-trigger")).toBeVisible({ timeout: 25000 });
 
         await page.getByTestId("chat-input").fill("你好，介绍一下这个工作区");
         const chatResponse = page.waitForResponse(
@@ -1052,25 +1064,9 @@ test.describe("@host gold path G3 — provider connection to selectable model", 
         await expect(page.getByText(label).first()).toBeVisible({ timeout: 20000 });
     });
 
-    test("G3-b the fake model becomes selectable in the composer model popover", async ({
-        page,
-        request,
-    }) => {
-        const workspaceId = await openOrCreateWorkspace(page, request);
-        const token = await tokenOf(page);
-
-        const list = await request.get(`${CP_URL}/api/v1/sessions`, { headers: bearer(token) });
-        const sessions =
-            ((await list.json()) as { sessions?: Array<{ id: string }> }).sessions ?? [];
-        test.skip(!sessions[0]?.id, "needs the session created by G2-d");
-        await page.goto(`/workspace/${workspaceId}/chat/${sessions[0].id}`, { waitUntil: "load" });
-        await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: 25000 });
-
-        await page.getByTestId("model-popover-trigger").click();
-        await expect(
-            page.locator(`[data-testid^="model-item-"][data-testid$="/${FAKE_LLM_MODEL}"]`).first(),
-        ).toBeVisible({ timeout: 20000 });
-    });
+    // G3-b 已删除（2026-11-04 用户裁定移除 composer 模型选择器）：原断言"假模型可在选择器里
+    // 被选中"随选择器 UI 一并作废；绑定效果由 G2-d 的 bindToolCapableFakeLlmConnection
+    //（产品 PATCH API）与后续发送断言覆盖。
 });
 
 // ══════════════════════════════════════════════════════════════════════════

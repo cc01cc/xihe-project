@@ -79,7 +79,6 @@ const messages = {
 // at setup time — stub them instead of patching browser globals (same approach as
 // `InputAreaSpeakAs.spec.ts`).
 const stubs = {
-    ModelPopover: { template: "<div />" },
     LoaderCircle: { template: "<span />" },
     ImageUpload: { template: "<div />" },
     FileUpload: { template: "<div />" },

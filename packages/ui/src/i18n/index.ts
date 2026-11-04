@@ -756,10 +756,15 @@ const messages = {
                 mentionsTitle: "会话成员",
                 filesTitle: "文件与目录",
                 // PLAN-0630 M5b (D30-14)：composer to/cc 栏（邮箱隐喻：to = 主要响应者，cc = 旁听名单）。
-                toLabel: "收件人",
+                toLabel: "发送",
                 ccLabel: "抄送",
                 ccAdd: "添加…",
                 ccRemove: "移除抄送",
+                // 2026-11-04 用户裁定：收件/抄送改为「输入 + 候选浮层」，术语定为「发送 / 抄送」。
+                recipientPlaceholder: "输入名字…",
+                recipientUnknown: "没有找到这个成员",
+                recipientRemove: "移除",
+                recipientHint: "↑↓ 选择 · Enter 确认 · Tab 补全 · Esc 关闭",
                 mentionAll: "所有人",
                 mentionAgent: "智能体",
                 mentionHuman: "人类成员",
@@ -1994,6 +1999,11 @@ const messages = {
             captureScreen: "截取屏幕",
             cancel: "取消",
         },
+        validation: {
+            principalNameRequired: "名称不能为空",
+            principalNamePattern: "只能使用英文字母、中文汉字或数字，且不能以数字开头（不含空格）",
+            nameAllowed: "允许：英文字母 / 中文汉字 / 数字，且不能以数字开头",
+        },
         common: {
             loading: "加载中...",
             uploading: "上传中...",
@@ -2035,8 +2045,9 @@ const messages = {
             email: "邮箱",
             username: "用户名",
             usernameHint: "可选，留空则根据邮箱自动生成",
-            usernameRule: "1–32 位小写字母或数字，需以字母开头",
-            usernameInvalid: "用户名需为 1–32 位小写字母或数字，并以字母开头（例如 zhangsan）",
+            usernameRule: "英文字母 / 中文汉字 / 数字，且不能以数字开头",
+            usernameInvalid:
+                "用户名只能使用英文字母、中文汉字或数字，不能以数字开头、不能含空格，最长 32 位（例如 zhangsan / 王小明）",
             password: "密码",
             confirmPassword: "确认密码",
             submit: "注册",
@@ -2990,6 +3001,10 @@ const messages = {
                 ccLabel: "Cc",
                 ccAdd: "Add…",
                 ccRemove: "Remove cc",
+                recipientPlaceholder: "Type a name…",
+                recipientUnknown: "No such member",
+                recipientRemove: "Remove",
+                recipientHint: "↑↓ to choose · Enter to confirm · Tab to complete · Esc to close",
                 mentionAll: "Everyone",
                 mentionAgent: "Agent",
                 mentionHuman: "Human",
@@ -4288,6 +4303,13 @@ const messages = {
             captureScreen: "Capture Screen",
             cancel: "Cancel",
         },
+        validation: {
+            principalNameRequired: "A name is required",
+            principalNamePattern:
+                "Use only letters, Chinese characters or digits, and do not start with a digit (no spaces)",
+            nameAllowed:
+                "Allowed: letters / Chinese characters / digits, not starting with a digit",
+        },
         common: {
             loading: "Loading...",
             uploading: "Uploading...",
@@ -4330,9 +4352,9 @@ const messages = {
             email: "Email",
             username: "Username",
             usernameHint: "Optional; left blank one is derived from your email",
-            usernameRule: "1-32 lowercase letters or digits, starting with a letter",
+            usernameRule: "letters / Chinese characters / digits, not starting with a digit",
             usernameInvalid:
-                "Username must be 1-32 lowercase letters or digits and start with a letter (e.g. zhangsan)",
+                "Username may only use letters, Chinese characters or digits, must not start with a digit or contain spaces, and is at most 32 characters (e.g. zhangsan / 王小明)",
             password: "Password",
             confirmPassword: "Confirm Password",
             submit: "Register",
