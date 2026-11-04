@@ -104,3 +104,17 @@ describe("toolRefusalCopyKey (PLAN-0649 M3 / B5)", () => {
         expect(toolRefusalCopyKey(undefined)).toBeNull();
     });
 });
+
+describe("provider binding errors (C1 / BL-204)", () => {
+    it("maps the three provider-binding codes to actionable Chinese copy", () => {
+        expect(mappedErrorCopy("PROVIDER_REQUIRED")).toContain("尚未绑定");
+        expect(mappedErrorCopy("PROVIDER_CONNECTION_AMBIGUOUS")).toContain("多个");
+        expect(mappedErrorCopy("LLM_PROFILE_CONFLICT")).toContain("没有可用连接");
+    });
+
+    it("keeps the raw code visible in the toast so support can identify it", () => {
+        const text = chatErrorToastText("PROVIDER_REQUIRED", "some detail");
+        expect(text).toContain("PROVIDER_REQUIRED");
+        expect(text).toContain("尚未绑定");
+    });
+});

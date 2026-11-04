@@ -873,7 +873,12 @@ function insertMention(name: string): void {
     focusInput();
 }
 
-defineExpose({ clearDraft, insertMention });
+/** C1：守卫把发送拦下时，ChatPanel 用它把草稿还给用户（不丢消息）。 */
+function setDraft(text: string) {
+    input.value = text;
+}
+
+defineExpose({ clearDraft, insertMention, setDraft });
 </script>
 
 <template>

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue";
+import { useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
 import { useChatStore } from "../stores/chat.ts";
@@ -37,6 +38,12 @@ import RevertPreviewDialog from "./RevertPreviewDialog.vue";
 import RevertResultDialog from "./RevertResultDialog.vue";
 import BaseModal from "../../../../components/shared/BaseModal.vue";
 import { useSessionBranches } from "../composables/useSessionBranches";
+import {
+    ensureProviderBinding,
+    type ProviderBindingGuideReason,
+} from "../composables/ensureProviderBinding";
+import ProviderBindingGuideDialog from "./ProviderBindingGuideDialog.vue";
+import { chatErrorToastText } from "../../../../lib/errorMessages";
 import { isTerminalRunStatus, runStateLabelKey } from "../runStateView";
 import { Marker, MarkerContent, MarkerIcon } from "@/components/ui/marker";
 import { Clock, ShieldAlert } from "@lucide/vue";
@@ -66,6 +73,70 @@ const chatStore = useChatStore(),
 const checkpointStore = useCheckpointStore(),
     configStore = useConfigStore(),
     sessionStore = useSessionStore();
+const router = useRouter();
+
+/** C1：守卫拦下时暂存这次发送，「自动绑定」成功后原样重发、关闭弹窗时把草稿还给输入框。 */
+const pendingProviderBindingSend = ref<
+    [string, AttachmentFile[]?, string?, string?, string[]?] | null
+>(null);
+
+/** C1（2026-11-04 用户裁定）：发送前的 provider 绑定守卫 —— 裸会话不静默失败。 */
+const providerBindingGuide = ref<{
+    reason: ProviderBindingGuideReason;
+    detail: string | null;
+} | null>(null);
+
+async function guardProviderBinding(id: string): Promise<boolean> {
+    const session = sessionStore.sessions.find((item) => item.id === id);
+    return ensureProviderBinding({
+        hasBinding: Boolean(session?.providerConnectionId),
+        bindDefaults: () => api.bindSessionDefaults(id),
+        onAutoBound: (bound) => {
+            sessionStore.applySessionRecord(bound);
+            if (bound.modelProvider && bound.modelName) {
+                configStore.setSessionModel(
+                    id,
+                    bound.modelProvider,
+                    bound.modelName,
+                    bound.providerConnectionId ?? undefined,
+                    bound.connectionRevision ?? undefined,
+                );
+            }
+            const label = [bound.modelProvider, bound.modelName].filter(Boolean).join(" · ");
+            toast.success(
+                label ? `${t("chat.providerAutoBound")} ${label}` : t("chat.providerAutoBound"),
+            );
+        },
+        onGuide: (reason, detail) => {
+            providerBindingGuide.value = { reason, detail: detail ?? null };
+        },
+        onBlocked: (code, detail) => {
+            toast.error(chatErrorToastText(code, detail));
+        },
+    });
+}
+
+async function retryProviderBindingGuide(): Promise<void> {
+    providerBindingGuide.value = null;
+    const bound = await guardProviderBinding(props.sessionId);
+    const pending = pendingProviderBindingSend.value;
+    pendingProviderBindingSend.value = null;
+    // 绑定成功 ⇒ 把刚才被拦下的消息原样发出去（用户点一次「自动绑定」就能继续）。
+    if (bound && pending) await handleSend(...pending);
+}
+
+function closeProviderBindingGuide(): void {
+    providerBindingGuide.value = null;
+    const pending = pendingProviderBindingSend.value;
+    pendingProviderBindingSend.value = null;
+    // 关闭引导 = 放弃本次发送，把草稿还给输入框，不丢用户写的内容。
+    if (pending?.[0]) inputComponent.value?.setDraft?.(pending[0]);
+}
+
+function openProviderSettings(): void {
+    providerBindingGuide.value = null;
+    void router.push({ name: "settings-config" });
+}
 
 const suggestions = computed(() =>
     props.toolMode === "workspace"
@@ -505,6 +576,17 @@ async function handleSend(
     const id = props.sessionId;
     if (!id) return;
     if (isStreaming.value) return;
+    // C1：未绑定的会话先补绑/引导，绝不把消息发出去撞 409 PROVIDER_REQUIRED。
+    if (!(await guardProviderBinding(id))) {
+        pendingProviderBindingSend.value = [
+            content,
+            attachments,
+            branchIdOverride,
+            speakAsParticipantId,
+            cc,
+        ];
+        return;
+    }
     let branchId: string | undefined = branchIdOverride ?? selectedBranchId.value;
     if (!branchId) {
         try {
@@ -565,6 +647,8 @@ async function handleFollowUpQueue(content: string, attachments?: AttachmentFile
         followUpQueueContinuing.value
     )
         return;
+    // C1：入队同样先补绑 —— 否则只是把 409 推迟到 run 派发时。
+    if (!(await guardProviderBinding(sessionId))) return;
     let branchId = selectedBranchId.value;
     if (!branchId) {
         try {
@@ -1192,6 +1276,14 @@ watch(
             @close="closeRevertResult"
         />
 
+        <ProviderBindingGuideDialog
+            :show="providerBindingGuide !== null"
+            :reason="providerBindingGuide?.reason ?? 'provider_required'"
+            :detail="providerBindingGuide?.detail ?? null"
+            @close="closeProviderBindingGuide"
+            @retry="retryProviderBindingGuide"
+            @settings="openProviderSettings"
+        />
         <BaseModal
             :show="showPrincipalBinding"
             :title="t('workspace.chooseAgentTitle')"

@@ -57,6 +57,12 @@ export function mappedErrorCopy(code: string | undefined | null): string | null 
             return "进程已取消";
         case "JOB_BACKEND_LAUNCH_PENDING":
             return "当前执行后端尚未提供 Job 启动器，暂不可用";
+        case "PROVIDER_REQUIRED":
+            return "会话尚未绑定模型，无法发送：请先绑定 provider 连接（可在发送时选择自动绑定）";
+        case "PROVIDER_CONNECTION_AMBIGUOUS":
+            return "有多个可用的 provider 连接，无法自动选择：请在设置中指定默认模型或连接";
+        case "LLM_PROFILE_CONFLICT":
+            return "生效的 LLM Provider 配置没有可用连接：请在设置中检查 Provider 与连接状态";
         case "UNMAPPED_ERROR":
             return "执行失败，后端未映射具体错误";
         default:
