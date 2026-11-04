@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, nextTick, watch } from "vue";
+import { useI18n } from "vue-i18n";
 
 import type { Message, SessionRunSummary } from "../../../../types";
 import type { SessionParticipantView } from "../../../../types/participant";
@@ -8,6 +9,7 @@ import MessageItem from "./MessageItem.vue";
 import MessageSearch from "./MessageSearch.vue";
 import RunGroupHeader from "./RunGroupHeader.vue";
 import { hasMultipleActors } from "../actorView";
+import { resolveDelivery, type ResolvedDelivery } from "../deliveryView";
 import { Search } from "@lucide/vue";
 import { Marker } from "@/components/ui/marker";
 import {
@@ -37,6 +39,7 @@ const props = defineProps<{
  * only lookup, PRIMARY is never assumed.
  */
 const participantsStore = useSessionParticipantsStore();
+const { t } = useI18n();
 const responderById = computed(() => {
     const byId = new Map<string, SessionParticipantView>();
     for (const row of participantsStore.participants ?? []) byId.set(row.participantId, row);
@@ -44,6 +47,21 @@ const responderById = computed(() => {
 });
 function responderFor(message: Message): SessionParticipantView | undefined {
     return message.participantId ? responderById.value.get(message.participantId) : undefined;
+}
+
+/**
+ * PLAN-0659 T1.3：消息头投递语义投影（显示名）。TO/CC 来自 composer 本地发送态
+ * （`Message.delivery`，BL-239：无持久载体）；@ 从正文 + 花名册重建。没有任何一态 ⇒ 不渲染。
+ */
+const roster = computed(() => participantsStore.participants ?? []);
+function deliveryOf(message: Message): ResolvedDelivery | undefined {
+    return resolveDelivery({
+        delivery: message.delivery,
+        content: message.content,
+        role: message.role,
+        roster: roster.value,
+        unknownNameLabel: t("workspace.participantUnknownName"),
+    });
 }
 
 const emit = defineEmits<{
@@ -280,6 +298,7 @@ const rows = computed<Row[]>(() => {
                                     <MessageItem
                                         :message="row.msg"
                                         :responder="responderFor(row.msg)"
+                                        :delivery="deliveryOf(row.msg)"
                                         :show-actor="multiActor"
                                         :is-streaming="row.msg.isStreaming"
                                         :branch-busy="branchBusy"

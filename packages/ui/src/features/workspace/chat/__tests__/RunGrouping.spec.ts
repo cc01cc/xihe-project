@@ -14,6 +14,9 @@ const i18n = createI18n({
     locale: "zh",
     messages: {
         zh: {
+            // T1.3 接上后 MessageList 会为每条消息解析投递语义（显示名 fallback 走这个 key）；
+            // 本 spec 只钉分组结构，但保留该 key 以免 intlify 缺键告警淹没输出。
+            workspace: { participantUnknownName: "未知用户" },
             chat: {
                 runHeader: { toggle: "展开或折叠 run {run}" },
                 followUpStatusCompleted: "已完成",

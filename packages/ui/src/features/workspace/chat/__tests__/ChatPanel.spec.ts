@@ -841,26 +841,22 @@ describe("BL-228: 刷新重开（冷启动）在途 run 的投影追平", () => 
     it("存在非终态 run 时周期性重拉历史，终态补齐后停止", async () => {
         vi.useFakeTimers();
         try {
+            // 计数驱动（不是 mockResolvedValueOnce 链）：PLAN-0659 起 `listSessionRuns` 的
+            // 消费者可能不止一个（会话激活期的追平循环 + 终态点刷新），"谁先调用"不该改变
+            // 语义。这里钉的是**第 N 次看到的状态序列**：前两次仍在途，第三次起终态。
+            let listCalls = 0;
             vi.mocked(api.listSessionRuns)
                 .mockReset()
-                .mockResolvedValueOnce({
-                    sessionId: SESSION_ID,
-                    page: 0,
-                    size: 50,
-                    runs: [{ runId: "run-active", status: "streaming" }],
-                } as never)
-                .mockResolvedValueOnce({
-                    sessionId: SESSION_ID,
-                    page: 0,
-                    size: 50,
-                    runs: [{ runId: "run-active", status: "streaming" }],
-                } as never)
-                .mockResolvedValue({
-                    sessionId: SESSION_ID,
-                    page: 0,
-                    size: 50,
-                    runs: [{ runId: "run-active", status: "succeeded" }],
-                } as never);
+                .mockImplementation(async () => {
+                    listCalls += 1;
+                    const status = listCalls <= 2 ? "streaming" : "succeeded";
+                    return {
+                        sessionId: SESSION_ID,
+                        page: 0,
+                        size: 50,
+                        runs: [{ runId: "run-active", status }],
+                    } as never;
+                });
             const wrapper = mountPanel();
             await flushPromises();
 
@@ -893,7 +889,20 @@ describe("BL-228: 刷新重开（冷启动）在途 run 的投影追平", () => 
     it("冷启动无在途 run 时不产生额外历史请求", async () => {
         vi.useFakeTimers();
         try {
-            // beforeEach 默认 listSessionRuns → { runs: [] }。
+            // 计数驱动：会话激活期只有追平循环这一个 `listSessionRuns` 消费者（PLAN-0659
+            // T1.1 起会话切换不再另发一次），因此断言强度保持「恰好 1 次」。
+            let listCalls = 0;
+            vi.mocked(api.listSessionRuns)
+                .mockReset()
+                .mockImplementation(async () => {
+                    listCalls += 1;
+                    return {
+                        sessionId: SESSION_ID,
+                        page: 0,
+                        size: 50,
+                        runs: [],
+                    } as never;
+                });
             const wrapper = mountPanel();
             await flushPromises();
             const mountCalls = vi.mocked(api.getMessages).mock.calls.length;
@@ -902,6 +911,7 @@ describe("BL-228: 刷新重开（冷启动）在途 run 的投影追平", () => 
             await flushPromises();
             expect(vi.mocked(api.getMessages).mock.calls.length).toBe(mountCalls);
             expect(vi.mocked(api.listSessionRuns).mock.calls.length).toBe(1);
+            expect(listCalls).toBe(1);
 
             wrapper.unmount();
         } finally {

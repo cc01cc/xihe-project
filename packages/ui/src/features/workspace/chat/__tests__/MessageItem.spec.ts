@@ -5,6 +5,7 @@ import { i18n } from "../../../../i18n";
 import type { Message } from "../../../../types";
 import type { SessionParticipantView } from "../../../../types/participant";
 import MessageItem from "../components/MessageItem.vue";
+import type { ResolvedDelivery } from "../deliveryView";
 
 describe("MessageItem branch action", () => {
     it("emits the terminal message ID when branching from a visible message", async () => {
@@ -640,6 +641,61 @@ describe("MessageItem actor badges (PLAN-0659 T1.2)", () => {
         );
         expect(wrapper.find('[data-testid="process-row-actor"]').exists()).toBe(false);
         expect(wrapper.find('[data-testid="message-responder"]').exists()).toBe(false);
+        wrapper.unmount();
+    });
+});
+
+// ── PLAN-0659 T1.3 (投递语义) ───────────────────────────────────────────────
+describe("MessageItem delivery header (PLAN-0659 T1.3)", () => {
+    function mountDelivery(message: Partial<Message>, delivery?: ResolvedDelivery) {
+        return mount(MessageItem, {
+            props: {
+                message: {
+                    id: "message-delivery",
+                    sessionId: "session-1",
+                    role: "user",
+                    content: "请 @Member Two 一起看",
+                    timestamp: "2026-11-04T00:00:00Z",
+                    ...message,
+                },
+                ...(delivery ? { delivery } : {}),
+            },
+            global: { plugins: [i18n, createPinia()] },
+        });
+    }
+
+    it("renders 发送 / 抄送 / 被@ 三态: @ highlighted as its own chip", () => {
+        const wrapper = mountDelivery(
+            {},
+            { to: "Owner One", mentions: ["Member Two"], cc: ["Viewer Three"] },
+        );
+
+        const header = wrapper.get('[data-testid="message-delivery"]');
+        expect(header.text()).toContain(i18n.global.t("chat.delivery.to", { name: "Owner One" }));
+        expect(header.text()).toContain(
+            i18n.global.t("chat.delivery.cc", { names: "Viewer Three" }),
+        );
+        const mention = wrapper.get('[data-testid="message-delivery-mention"]');
+        expect(mention.text()).toBe("@Member Two");
+        expect(mention.attributes("title")).toBe(
+            i18n.global.t("chat.delivery.mentioned", { name: "Member Two" }),
+        );
+        // 单引用的 @ 不再重复进抄送名单（去重在三态解析里做）。
+        expect(header.text()).not.toContain("Member Two,");
+        wrapper.unmount();
+    });
+
+    it("renders mention-only delivery (history messages after BL-239 loses TO/CC)", () => {
+        const wrapper = mountDelivery({}, { mentions: ["Member Two"], cc: [] });
+        expect(wrapper.find('[data-testid="message-delivery-to"]').exists()).toBe(false);
+        expect(wrapper.find('[data-testid="message-delivery-cc"]').exists()).toBe(false);
+        expect(wrapper.get('[data-testid="message-delivery-mention"]').text()).toBe("@Member Two");
+        wrapper.unmount();
+    });
+
+    it("renders no delivery header when there is nothing to show", () => {
+        const wrapper = mountDelivery({});
+        expect(wrapper.find('[data-testid="message-delivery"]').exists()).toBe(false);
         wrapper.unmount();
     });
 });
