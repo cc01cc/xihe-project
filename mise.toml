@@ -262,6 +262,11 @@ run = "node scripts/mise/run-posix.mjs scripts/check-doc-links-entry.sh ."
 description = "Check documentation links (no escape from docs/)"
 alias = "lint:links"
 
+[tasks."perf:chat"]
+run = "node scripts/perf/chat-load.mjs"
+description = "PLAN-0670 long-session capacity baseline (seed|run); zero dependencies, L2 only, isolated perf stack required (never stack-1/stack-2)"
+alias = "perf:chat"
+
 [tasks.typecheck]
 depends = ["typecheck:ui"]
 description = "Run static type checks"
