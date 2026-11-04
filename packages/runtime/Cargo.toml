@@ -17,7 +17,9 @@ path = "src/stdio_fixture.rs"
 
 [dependencies]
 rmcp = { version = "3.7.0", features = ["server", "transport-streamable-http-server", "schemars", "request-state"] }
-tokio = { version = "1.54.1", features = ["full"] }
+# PLAN-0657 M1: explicit tokio feature set (was "full"). Usage audit of src/+tests/: fs/time/sync/io/net/process/signal/select/spawn all present,
+# so this is contract hygiene, not a behaviour cut; "full" would silently enable unused subsystems.
+tokio = { version = "1.54.1", features = ["macros", "rt-multi-thread", "io-util", "io-std", "fs", "time", "sync", "net", "process", "signal"] }
 tokio-util = "0.7.20"
 axum = "0.8.9"
 serde = { version = "1.0.229", features = ["derive"] }
@@ -83,7 +85,7 @@ bytes = "1"
 rustix = { version = "1.1", features = ["fs"] }
 
 # === NEW: HTTP client & HTML parsing (web_fetch) ===
-reqwest = { version = "0.13", default-features = false, features = ["rustls", "json", "blocking"] }
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "json"] }
 scraper = "0.27.0"
 html2md = "0.2.15"
 

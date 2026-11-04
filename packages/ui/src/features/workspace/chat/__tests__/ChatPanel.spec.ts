@@ -836,3 +836,76 @@ describe("ChatPanel approval waiting surface", () => {
         expect(wrapper.get('[data-testid="run-recovery-banner"]').attributes("role")).toBe("alert");
     });
 });
+
+describe("BL-228: 刷新重开（冷启动）在途 run 的投影追平", () => {
+    it("存在非终态 run 时周期性重拉历史，终态补齐后停止", async () => {
+        vi.useFakeTimers();
+        try {
+            vi.mocked(api.listSessionRuns)
+                .mockReset()
+                .mockResolvedValueOnce({
+                    sessionId: SESSION_ID,
+                    page: 0,
+                    size: 50,
+                    runs: [{ runId: "run-active", status: "streaming" }],
+                } as never)
+                .mockResolvedValueOnce({
+                    sessionId: SESSION_ID,
+                    page: 0,
+                    size: 50,
+                    runs: [{ runId: "run-active", status: "streaming" }],
+                } as never)
+                .mockResolvedValue({
+                    sessionId: SESSION_ID,
+                    page: 0,
+                    size: 50,
+                    runs: [{ runId: "run-active", status: "succeeded" }],
+                } as never);
+            const wrapper = mountPanel();
+            await flushPromises();
+
+            // 基线：挂载的历史加载 + immediate tick 见到在途 run 的第一次追平。
+            const baseline = vi.mocked(api.getMessages).mock.calls.length;
+            expect(baseline).toBeGreaterThanOrEqual(1);
+
+            // 第 2 次 tick：仍在途（streaming）→ 继续重拉（追平不中断）。
+            await vi.advanceTimersByTimeAsync(1000);
+            await flushPromises();
+            const afterInFlightTick = vi.mocked(api.getMessages).mock.calls.length;
+            expect(afterInFlightTick).toBeGreaterThan(baseline);
+
+            // 第 3 次 tick：已终态（succeeded）→ 再拉一次（把补齐的 assistant 消息带回来）后停止。
+            await vi.advanceTimersByTimeAsync(1000);
+            await flushPromises();
+            expect(vi.mocked(api.getMessages).mock.calls.length).toBe(afterInFlightTick + 1);
+
+            // 停止后不再增长。
+            await vi.advanceTimersByTimeAsync(5000);
+            await flushPromises();
+            expect(vi.mocked(api.getMessages).mock.calls.length).toBe(afterInFlightTick + 1);
+
+            wrapper.unmount();
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it("冷启动无在途 run 时不产生额外历史请求", async () => {
+        vi.useFakeTimers();
+        try {
+            // beforeEach 默认 listSessionRuns → { runs: [] }。
+            const wrapper = mountPanel();
+            await flushPromises();
+            const mountCalls = vi.mocked(api.getMessages).mock.calls.length;
+
+            await vi.advanceTimersByTimeAsync(5000);
+            await flushPromises();
+            expect(vi.mocked(api.getMessages).mock.calls.length).toBe(mountCalls);
+            expect(vi.mocked(api.listSessionRuns).mock.calls.length).toBe(1);
+
+            wrapper.unmount();
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+});

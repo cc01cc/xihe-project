@@ -5133,7 +5133,9 @@ mod remote_handler_tests {
         .await
         .expect_err("broker 503 on the refetch must fail");
         assert_eq!(error.0, StatusCode::BAD_GATEWAY);
-        assert_eq!(error.2.0["code"], "REMOTE_MCP_UNAVAILABLE");
+        // PLAN-0654: the refetch-path 503 is now a distinct upstream-status code (502 + category);
+        // the generic REMOTE_MCP_UNAVAILABLE bucket only survives for unparsable/transport cases.
+        assert_eq!(error.2.0["code"], "REMOTE_MCP_UPSTREAM_STATUS_ERROR");
     }
 
     /// The refetch path keeps its existing timeout mapping (the 30s wire
