@@ -207,3 +207,91 @@ describe("SessionList current-session fork action", () => {
         wrapper.unmount();
     });
 });
+
+describe("SessionList delegation tree (PLAN-0655 T1.5)", () => {
+    const PARENT_ID = "11111111-1111-4111-8111-111111111111";
+    const DELEGATED_ID = "22222222-2222-4222-8222-222222222222";
+
+    function usage() {
+        return {
+            rootSessionId: PARENT_ID,
+            usedSessions: 1,
+            maxCount: 1,
+            currentDepth: 1,
+            maxDepth: 2,
+            principalId: "33333333-3333-4333-8333-333333333333",
+            principalName: "Promo Agent B",
+            policySource: "subject" as const,
+            disabled: false,
+        };
+    }
+
+    function baseSession(id: string, title: string) {
+        return {
+            id,
+            title,
+            createdAt: "2026-11-04T00:00:00Z",
+            updatedAt: "2026-11-04T00:00:00Z",
+            workspaceId: WORKSPACE_ID,
+            context: { agents: [] },
+        };
+    }
+
+    it("renders a delegated child indented under its parent with badge, chip and one usage fetch", async () => {
+        setActivePinia(createPinia());
+        const sessionStore = useSessionStore();
+        sessionStore.sessions = [
+            { ...baseSession(PARENT_ID, "Promo 启动"), kind: null, spawnedFromSessionId: null },
+            {
+                ...baseSession(DELEGATED_ID, "翻译校对"),
+                kind: "SPAWN",
+                spawnedFromSessionId: PARENT_ID,
+            },
+        ];
+        const usageSpy = vi.spyOn(api, "delegationUsage").mockResolvedValue(usage());
+
+        const wrapper = mount(SessionList, {
+            global: { plugins: [i18n], stubs: { Teleport: true } },
+        });
+        await flushPromises();
+
+        const rows = wrapper.findAll('[data-testid="session-item"]');
+        expect(rows).toHaveLength(2);
+        expect(rows[0].text()).toContain("Promo 启动");
+        expect(rows[1].text()).toContain("翻译校对");
+        expect(rows[1].get('[data-testid="session-delegated-badge"]').text()).toContain("委派");
+        expect(rows[1].get('[data-testid="session-delegation-chip"]').text()).toContain(
+            "Promo Agent B",
+        );
+        expect(rows[1].get('[data-testid="session-delegation-chip"]').text()).toContain("1/1");
+        expect(rows[1].attributes("style") ?? "").toContain("padding-left: 2rem");
+        expect(usageSpy).toHaveBeenCalledTimes(1);
+        expect(usageSpy).toHaveBeenCalledWith(DELEGATED_ID);
+        wrapper.unmount();
+    });
+
+    it("keeps a child row when its parent is not in the list (filtering never hides delegation)", async () => {
+        setActivePinia(createPinia());
+        const sessionStore = useSessionStore();
+        sessionStore.sessions = [
+            {
+                ...baseSession(DELEGATED_ID, "翻译校对"),
+                kind: "SPAWN",
+                spawnedFromSessionId: "99999999-9999-4999-8999-999999999999",
+            },
+        ];
+        vi.spyOn(api, "delegationUsage").mockResolvedValue(usage());
+
+        const wrapper = mount(SessionList, {
+            global: { plugins: [i18n], stubs: { Teleport: true } },
+        });
+        await flushPromises();
+
+        const rows = wrapper.findAll('[data-testid="session-item"]');
+        expect(rows).toHaveLength(1);
+        expect(rows[0].text()).toContain("翻译校对");
+        expect(rows[0].get('[data-testid="session-delegated-badge"]').exists()).toBe(true);
+        expect(rows[0].attributes("style") ?? "").not.toContain("padding-left");
+        wrapper.unmount();
+    });
+});
