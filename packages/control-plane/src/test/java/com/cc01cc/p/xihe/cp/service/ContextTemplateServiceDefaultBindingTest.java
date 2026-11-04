@@ -75,6 +75,22 @@ class ContextTemplateServiceDefaultBindingTest {
         assertThat(memory.path("config").path("maxTokens").asInt()).isEqualTo(4000);
         assertThat(binding.snapshot().path("template").path("document").asText())
                 .contains(memory.path("instanceId").asText());
+
+        // BL-285: the skills listing belongs to the same built-in manifest; without it the
+        // ${xh.skill_catalog} slot stays empty on a fresh install.
+        JsonNode skills = null;
+        for (JsonNode component : components) {
+            if ("skill_catalog".equals(component.path("type").asText())) {
+                skills = component;
+            }
+        }
+        assertThat(skills).as("built-in manifest must contain skill_catalog").isNotNull();
+        assertThat(skills.path("enabled").asBoolean()).isTrue();
+        assertThat(skills.path("config").path("maxSkills").asInt()).isEqualTo(24);
+        assertThat(skills.path("config").path("includeDescriptions").asBoolean()).isTrue();
+        assertThat(skills.path("config").path("sort").asText()).isEqualTo("binding");
+        assertThat(binding.snapshot().path("template").path("document").asText())
+                .contains(skills.path("instanceId").asText());
     }
 
     @Test
