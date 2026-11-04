@@ -600,7 +600,12 @@ public class ChatSubmissionService {
                 task, "[]", List.of(), agentPrincipalId, false, Message.VISIBILITY_USER);
         ChatRun childRun = created.run();
         childRun.setWaitingOnRunId(parentRun.getId().toString());
-        childRun.setWaitingToolCallId(idempotencyKey);
+        // The waiting tool-call column is a 36-char uuid string, and settlement only compares it for
+        // equality with the anchor — derive a stable uuid from the idempotency key instead of storing
+        // the (longer) key itself. Stable: a replay recomputes the same value.
+        childRun.setWaitingToolCallId(
+                java.util.UUID.nameUUIDFromBytes(idempotencyKey.getBytes(java.nio.charset.StandardCharsets.UTF_8))
+                        .toString());
         chatRunRepository.save(childRun);
 
         com.fasterxml.jackson.databind.node.ObjectNode detail = objectMapper.createObjectNode();
