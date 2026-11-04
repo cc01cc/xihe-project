@@ -18,7 +18,7 @@ General-purpose Agent tool platform.
 - [DEV-010: UI Architecture](DEV-010-ui-architecture.md)
 - [DEV-011: UI Visual Checklist](DEV-011-ui-checklist.md)
 - [DEV-016: MCP Architecture](DEV-016-mcp-architecture.md)
-- [DEV-017: Session Views Design (superseded)](DEV-017-session-architecture.md)
+- [DEV-017: Session Architecture](DEV-017-session-architecture.md)
 - [DEV-020: E2E Test Strategy](DEV-020-e2e-test-strategy.md)
 - [DEV-021: Integration Test Strategy](DEV-021-integration-test-strategy.md)
 - [DEV-022: Unit Test Strategy](DEV-022-unit-test-strategy.md)
