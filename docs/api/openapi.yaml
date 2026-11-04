@@ -2629,6 +2629,13 @@ paths:
           `acknowledgeNestedRepos`, otherwise `409 NESTED_REPO_UNCONFIRMED`. Both nested-repo
           bodies carry `nestedRepos[]` (the affected workspace-relative repo roots), and a forced
           revert that actually covers dirty repos writes one `nested_repo_force_revert` audit row.
+          PLAN-0641 M4: `409 CROSS_ROOT_LEGACY_SLICE` refuses a slice captured before a child root
+          was declared — the slice still carries that child path flat, so restoring it would write
+          into another root's directory. Its body adds `sliceCapturedAt` and
+          `legacyRoots[{rootId, path, declaredAt}]` (path relative to the slice's root). The slice
+          stays readable (list/diff/preview) and the manual rescue path is documented in the PLAN
+          evidence. The boundary is derived from `workspace_roots.created_at` (declaration instant)
+          vs `run_checkpoints.captured_at`: equal instants are treated as legacy (fail-closed).
         security: [{ bearerAuth: [] }]
         parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }]
         requestBody:

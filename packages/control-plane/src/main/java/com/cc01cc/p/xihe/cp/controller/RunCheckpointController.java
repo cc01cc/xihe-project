@@ -308,6 +308,11 @@ public class RunCheckpointController {
                     "NESTED_REPO_UNCONFIRMED",
                     "head-drifted nested repositories must be acknowledged in"
                             + " acknowledgeNestedRepos", details);
+            case CROSS_ROOT_LEGACY_SLICE -> ProblemDetailsHandler.problemResponse(HttpStatus.CONFLICT,
+                    "CROSS_ROOT_LEGACY_SLICE",
+                    "the slice was captured before a child root was declared; restoring it would"
+                            + " write into that root. Read the slice or use the documented rescue path",
+                    details);
             case OK -> ProblemDetailsHandler.problemResponse(HttpStatus.INTERNAL_SERVER_ERROR,
                     "INTERNAL_ERROR", "Unexpected checkpoint gate");
         };

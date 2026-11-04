@@ -406,7 +406,9 @@ public class RunCheckpointService {
         /** 409 NESTED_REPO_DIRTY — undeclared nested repos have uncommitted changes (force overrides). */
         NESTED_REPO_DIRTY,
         /** 409 NESTED_REPO_UNCONFIRMED — head-drifted nested repos not fully acknowledged. */
-        NESTED_REPO_UNCONFIRMED
+        NESTED_REPO_UNCONFIRMED,
+        /** 409 CROSS_ROOT_LEGACY_SLICE — the slice predates a child root declaration (PLAN-0641 M4). */
+        CROSS_ROOT_LEGACY_SLICE
     }
 
     /** Revert projection of the checkpoint view ({state,at,counts,ref,attemptCount}). */
@@ -509,6 +511,29 @@ public class RunCheckpointService {
     }
 
     /**
+     * PLAN-0641 M4 T5.1/T5.2: legacy-slice boundary for one row — see
+     * {@link LegacySliceBoundary}. The roots are read through the same active-root query the capture
+     * path uses, so a soft-deleted root never re-enters the gate (its slices are refused earlier with
+     * ROOT_DELETED).
+     */
+    private List<LegacySliceBoundary.LegacyRoot> legacySliceConflicts(RunCheckpoint row) {
+        String workspaceId = row.getWorkspaceId();
+        if (isBlank(workspaceId)) {
+            return List.of();
+        }
+        String sliceRootId = isBlank(row.getRootId()) ? workspaceId : row.getRootId();
+        List<LegacySliceBoundary.RootRef> roots = workspaceRoots
+                .findByWorkspaceIdAndDeletedAtIsNullOrderByPositionAsc(UUID.fromString(workspaceId))
+                .stream()
+                .map(root -> new LegacySliceBoundary.RootRef(
+                        root.getId() == null ? null : root.getId().toString(),
+                        root.getHostPath(),
+                        root.getCreatedAt()))
+                .toList();
+        return LegacySliceBoundary.legacyChildRoots(roots, sliceRootId, row.getCapturedAt());
+    }
+
+    /**
      * Read-only revert dry-run against the row's slice ref. A Runtime 404 for a row
      * the CP still considers captured flips the row to {@code expired} once
      * (decision #74 first consumer) and answers
@@ -577,6 +602,29 @@ public class RunCheckpointService {
         if (rootWasDeleted(capturedRow)) {
             return new RevertOutcome(Gate.ROOT_DELETED, "ROOT_DELETED", null,
                     Map.of("rootId", capturedRow.getRootId()));
+        }
+        // PLAN-0641 M4 T5.2 (B4=(a)): a slice captured before a child root was declared still carries
+        // that child path flat inside this root's shadow slice; writing it back would land in another
+        // declared root's host directory (per-root invariant). Refuse the execute; the read faces
+        // (list/diff/preview) stay available and the rescue path is documented in the PLAN evidence.
+        List<LegacySliceBoundary.LegacyRoot> legacyRoots = legacySliceConflicts(capturedRow);
+        if (!legacyRoots.isEmpty()) {
+            Map<String, Object> details = new LinkedHashMap<>();
+            details.put("sliceCapturedAt", capturedRow.getCapturedAt());
+            details.put("legacyRoots", legacyRoots.stream()
+                    .map(root -> {
+                        Map<String, Object> entry = new LinkedHashMap<>();
+                        entry.put("rootId", root.rootId());
+                        entry.put("path", root.path());
+                        entry.put("declaredAt", root.declaredAt());
+                        return entry;
+                    })
+                    .toList());
+            logger.info("[LIFECYCLE] service=cp event=run_checkpoint_legacy_slice_refused "
+                            + "workspaceId={} sliceRef={} childRoots={}",
+                    workspaceId, sliceRef, legacyRoots.size());
+            return new RevertOutcome(Gate.CROSS_ROOT_LEGACY_SLICE, "CROSS_ROOT_LEGACY_SLICE",
+                    null, details);
         }
         String revertRoot = wireRootId(capturedRow);
         RuntimeCheckpointClient.RevertResult result = revertRoot == null
