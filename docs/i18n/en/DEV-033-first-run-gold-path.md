@@ -154,7 +154,7 @@ The four batches (`scripts/e2e-batches.jsonc:144-175`):
 
 ### 5.5 Screenshot references (7 shots, produced by the same assertions)
 
-Screenshot directory (outside the A03 repo; open as needed): [t5.2-screenshots](../../../../plans/PLAN-0611-XH-first-run-goldpath/evidence/t5.2-screenshots/)
+Screenshot directory (outside the A03 repo; open as needed): [t5.2-screenshots](../../../../plans/archive/PLAN-0611-XH-first-run-goldpath/evidence/t5.2-screenshots/)
 
 | File | Criterion / case | What it shows |
 |---|---|---|
