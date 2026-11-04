@@ -328,6 +328,11 @@ class AgentPrincipalScopeContractTest extends AbstractIntegrationTest {
         int principalCount = principalRepository.findAll().size();
 
         // No MANAGE_WORKSPACE_AGENTS: the legacy CREATE_ACCOUNT path must be gone, so this is 403.
+        // PLAN-0651 lock: this denial is produced by AgentPrincipalService#requireUserAction, which
+        // builds a PolicyRequest with a null workspace and evaluates it with evaluator.allows(...)
+        // directly (no UUID parsing). ASSERT THE EXACT 403 — if that method is ever refactored onto
+        // GrantAuthorizationService#allowsUserOnly, the null workspace goes through
+        // UUID.fromString and the caller turns into a 500; this assertion must go red, not silent.
         ResponseEntity<Map> denied = create(globalToken(plain), Map.of("name", "LegacyBody"));
         assertEquals(HttpStatus.FORBIDDEN, denied.getStatusCode(),
                 "an omitted scope must not fall back to the pre-0622 CREATE_ACCOUNT path: "

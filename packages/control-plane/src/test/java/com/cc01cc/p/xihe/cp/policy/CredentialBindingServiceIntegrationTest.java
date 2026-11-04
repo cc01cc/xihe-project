@@ -117,6 +117,11 @@ class CredentialBindingServiceIntegrationTest extends AbstractIntegrationTest {
 
     @Test
     void bindRejectsWhenOperatorLacksManageForTheCredential() {
+        // PLAN-0651 lock: this denial comes from CredentialBindingService#requireCredentialManage,
+        // which evaluates a PolicyRequest with a null workspace through evaluator.allows(...)
+        // directly (no UUID parsing) and throws 403 FORBIDDEN. ASSERT THE EXACT STATUS — if that
+        // method is ever refactored onto GrantAuthorizationService#allowsUserOnly, the null
+        // workspace reaches UUID.fromString and the call becomes a 500; this must go red.
         Fixture fixture = fixture("credential:" + UUID.randomUUID(), "credential:*", true);
         Credential second = createCredential("second");
         String secondResource = "credential:" + second.getId();
