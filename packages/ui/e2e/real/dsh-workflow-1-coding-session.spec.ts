@@ -27,6 +27,7 @@ import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
 import {
+    CP_URL,
     ensureAgentWorkspaceBinding,
     ensureChatBinding,
     registerJourneyUser,
@@ -45,6 +46,9 @@ const READ_TARGET = "README.md";
 const WRITE_PATH = `notes/wf1-${NONCE}.md`;
 const WRITE_CONTENT = `wf1-chain-${NONCE}`;
 const HOST_ROOT = process.env.XIHE_E2E_WORKSPACE_ROOT ?? "";
+const FAKE_LLM_PORT = process.env.XIHE_FAKE_LLM_PORT ?? "";
+const FAKE_LLM_MODEL = "fake-openai";
+const FAKE_LLM_API_KEY = "sk-fake-openai-key";
 
 let ctx: JourneyContext;
 let sessionId = "";
@@ -54,12 +58,58 @@ test.describe.configure({ mode: "serial", retries: 0 });
 
 test.describe("@host PLAN-0648 T1.1 DSH 工作流 1 — 编码会话", () => {
     test.beforeAll(async ({ request }) => {
+        expect(FAKE_LLM_PORT, "needs XIHE_FAKE_LLM_PORT (runner-provided fake LLM)").not.toBe("");
         ctx = await registerJourneyUser(request, "dsh-wf1");
         agentBindingWorkspaceId = ctx.workspaceId;
+
+        // 会话创建的连接解析（task-24, 2026-11-04）：三件套全空时 CP 按权威顺序补默认
+        // （主体默认 → instance llm-provider profile），profile 走严格解析
+        // （ConfigService:1199 → 消费用户自己的 USER 连接）；本 spec 的 journey user 没有
+        // 连接 ⇒ 409 LLM_PROFILE_CONFLICT（首跑实测）。
+        // 修法两步：① 给该用户建一条 fake 连接（request.post 夹具级准备，非产品路径），
+        // 它同时是 bindProviderConnection 按 provider 挑唯一候选的目标；
+        // ② 主体带 defaultModelProvider/Name ⇒ 取主体侧默认，**不碰 profile 严格解析**。
+        const headers = ctx.headers;
+        const created = await request.post(`${CP_URL}/api/v1/provider-connections`, {
+            headers,
+            data: {
+                providerId: "openai",
+                apiTypeId: "openai-chat-completions",
+                apiTypeVersion: 1,
+                apiKey: FAKE_LLM_API_KEY,
+                connectionKey: `t11-${NONCE}`,
+                label: `T1.1 fake LLM (${NONCE})`,
+                scope: "USER",
+                modelDiscovery: "manual",
+                manualModels: [FAKE_LLM_MODEL],
+                baseUrl: `http://127.0.0.1:${FAKE_LLM_PORT}/openai/v1`,
+            },
+        });
+        expect(created.status(), await created.text()).toBe(201);
+        const connectionId = ((await created.json()) as { id: string }).id;
+        expect(connectionId).toMatch(/^[0-9a-f-]{36}$/i);
+        const verified = await request.post(
+            `${CP_URL}/api/v1/provider-connections/${connectionId}/verify`,
+            { headers },
+        );
+        expect(verified.ok(), await verified.text()).toBe(true);
+        expect(
+            ((await verified.json()) as { connection?: { status?: string } }).connection?.status,
+        ).toBe("READY");
+
         const principalId = await provisionWorkspaceAgentPrincipal(
             request,
             { accessToken: ctx.authToken, workspaceId: ctx.workspaceId },
-            { name: `dsh-wf1-${NONCE}`, actions: ["read", "write"] },
+            {
+                name: `dsh-wf1-${NONCE}`,
+                actions: ["read", "write"],
+                // 主体默认模型 ⇒ SessionProviderDefaults 按权威顺序「主体默认 → profile」
+                // 时取主体侧，**不碰 instance profile 的严格解析**（否则又回 409）。
+                // 连接不写在主体上（主体从不持有连接）：会话创建时由 bindProviderConnection
+                // 按 provider 自动挑唯一 READY 候选 —— 上面刚建的这条 fake 连接。
+                defaultModelProvider: "openai",
+                defaultModelName: FAKE_LLM_MODEL,
+            },
         );
         sessionId = await createSessionWithPrincipal(
             request,
@@ -143,10 +193,21 @@ test.describe("@host PLAN-0648 T1.1 DSH 工作流 1 — 编码会话", () => {
 
 async function openChat(page: Page): Promise<void> {
     seedPage(page, ctx);
-    await page.goto(`/workspace/${ctx.workspaceId}/chat/${sessionId}`, { waitUntil: "load" });
-    await expect(page.locator('[data-testid="chat-input"]'), "chat input").toBeVisible({
-        timeout: 30_000,
-    });
+    const chatUrl = `/workspace/${ctx.workspaceId}/chat/${sessionId}`;
+    // Vite dev 首次深路由会撞上依赖预打包窗口：pageError「Failed to fetch dynamically
+    // imported module: …/AppLayout.vue」（2026-11-04 T1.1 首跑 trace 实测，network 同时
+    // 在拉 /node_modules/.vite/deps/*）。预打包结束后要么 Vite 自动 full-reload、要么需要
+    // 重新导航一次。两段式显式等待 + 一次重导航，无固定 sleep。
+    await page.goto(chatUrl, { waitUntil: "load" });
+    const input = page.locator('[data-testid="chat-input"]');
+    try {
+        await expect(input, "chat input (first load)").toBeVisible({ timeout: 60_000 });
+    } catch {
+        await page.goto(chatUrl, { waitUntil: "load" });
+        await expect(input, "chat input (after vite re-optimization reload)").toBeVisible({
+            timeout: 90_000,
+        });
+    }
 }
 
 /** 发送一条消息并返回 Run id（重试覆盖"输入被清空"与"点击早于 SSE 水合"）。 */

@@ -57,13 +57,21 @@ function resolveChainMode(requestBody) {
         state = { served: 0, lastTurnFp: "" };
         chainSessions.set(sessionFp, state);
     }
+    const lastMessage = messages[messages.length - 1];
+    // 一轮用户消息可能触发多个 LLM 请求（请求1 → 工具调用 → 工具结果 → 请求2…）。
+    // 只有「最后一条是新的 user 消息」才推进游标；轮内续请求（tool/assistant 结尾）
+    // 与完全相同的重试都**重放当前步**，让 builder 自己的 followUp 分支收尾——
+    // 否则一轮会吃掉两步，链从第 2 轮起整体错位（2026-11-04 首跑前实测推理）。
+    const freshTurn = lastMessage?.role === "user";
     let index;
     if (turnFp === state.lastTurnFp) {
-        index = state.served - 1; // exact retry of the served turn: replay its step
-    } else {
-        index = state.served;
+        index = state.served - 1; // exact retry of the served request: replay its step
+    } else if (freshTurn) {
+        index = state.served; // a new user turn advances the chain
         state.served += 1;
         state.lastTurnFp = turnFp;
+    } else {
+        index = Math.max(state.served - 1, 0); // mid-turn continuation: replay this turn's step
     }
     if (index < 0) index = 0;
     if (index >= script.length) {

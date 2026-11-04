@@ -131,6 +131,39 @@ describe("fake-llm mode=chain (env activation)", () => {
         const retried = await chat(history);
         assert.deepEqual(retried.toolCalls, ["read_file"], "retry replays the same step");
     });
+
+    it("replays the current step across a mid-turn tool-result request", async () => {
+        // 一轮用户消息 = 多个 LLM 请求（请求1 → 工具调用 → 工具结果 → 请求2）。
+        // 只有新的 user 消息才推进游标；轮内续请求必须重放当前步（走 builder 的
+        // followUp 分支收尾），否则一轮吃两步、链从下一轮起整体错位。
+        const u1 = { role: "user", content: "turn A XIHE-E2E-READ A.md" };
+        const first = await chat([sys, u1]);
+        assert.deepEqual(first.toolCalls, ["read_file"], "fresh turn → step 1");
+
+        const continuation = [
+            sys,
+            u1,
+            { role: "assistant", content: null },
+            { role: "tool", content: "file body" },
+        ];
+        const second = await chat(continuation);
+        assert.deepEqual(
+            second.toolCalls,
+            [],
+            "mid-turn continuation must not emit a new tool call",
+        );
+        assert.equal(
+            second.hasProse,
+            true,
+            "mid-turn continuation replays step 1's followUp prose",
+        );
+
+        const nextTurn = await chat([
+            ...continuation,
+            { role: "user", content: "turn B XIHE-E2E-WRITE b.md hello" },
+        ]);
+        assert.deepEqual(nextTurn.toolCalls, ["write_file"], "next fresh turn → step 2");
+    });
 });
 
 describe("fake-llm mode=chain (marker activation)", () => {
