@@ -97,6 +97,9 @@ sequenceDiagram
 - 需要创建 Provider Connection 时，单独运行 `mise run dev:host:provider-init -- --provider xiaomi --scope USER --label xh-local --api-key-env XIHE_XIAOMI_API_KEY`。
 - Runtime 用 `XIHE_WORKSPACE_HOST_ROOT`（默认 `A03-xihe/.xihe-workspaces`）作**进程级宿主存储基目录**：managed workspace 路径由其 + `storageRef` 派生，shadow 在 `<hostRoot>/.xihe-shadow`；不是每个 workspace 一个根，也不是用户路径白名单。launcher 注入的进程值必须绝对；源配置可相对（`.env.dev` 的 `../../.xihe-workspaces` 以 `packages/runtime` 为基准）。
 - `/health` 为 liveness，`/ready` 不等待全部 Sandbox 物化；Workspace 按 `workspaceId` 首次操作时懒物化。
+- **栈构建新鲜度（PLAN-0662）**：常驻栈不会自动跟随 `develop`，`health UP` 也不等于"跑的是最新代码"（BL-240 的误判就是这么来的）。构建产物带 `classes/META-INF/build-info.properties`（`commit`/`builtAt`/`dirty`），启动日志有一行 `cp.build commit=… built=… dirty=…`。运维口径：**重启前先看 verdict** ——`mise run dev:host:status`（加 `-- --json` 取固定字段，lane 脚本按此断言）；`verdict=fresh` 才说明这棵 classes 来自当前 HEAD。
+  - `stale`/`missing` 时**默认重建**：`mise run dev:host:start:cp`、`dev:host`、`dev:stack` 都在 `mvn` 前比对 build-info 与 `git rev-parse HEAD`，不一致先 `clean compile` 再启动（单一实现 `scripts/stack-run.mjs`）。确实要"用旧类先把栈拉起来"时加 `--no-rebuild`，日志会留 `WARNING` 与旧 commit，事后可追。
+  - 外部复用栈跑 E2E 时（`XIHE_E2E_EXTERNAL_SERVER=1`），runner 启动前断言 CP build commit == `XIHE_E2E_EXPECT_CP_COMMIT`（未声明则取本 checkout HEAD），不匹配或**读不到 build-info** 都 fail-fast，提示先重建/重启 CP——避免拿旧构建当产品缺陷（BL-240）。
 
 常用命令：
 
@@ -104,6 +107,7 @@ sequenceDiagram
 |------|------|
 | `mise run xihe -- --help` | 查看 CLI 命令 |
 | `mise run dev:host:check` | 检查开发环境 |
+| `mise run dev:host:status` | 每栈 CP 构建新鲜度（`runningCommit`/`headCommit`/`behind`/`stale`/`verdict`）+ 服务健康；`-- --json` 固定契约 |
 | `mise run dev:host:import-config` | 显式导入非密钥配置 |
 | `mise run dev:host:provider-init` | 创建或复用 Provider Connection |
 | `mise run test:e2e:host:real` | 运行指定真实 MiMo 用例 |
