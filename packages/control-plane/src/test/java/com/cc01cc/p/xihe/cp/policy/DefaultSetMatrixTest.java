@@ -66,7 +66,10 @@ class DefaultSetMatrixTest extends AbstractIntegrationTest {
      */
     private static final Set<String> ADMIN_MATRIX = Set.of(
             "read", "write", "delete", "exec", "network", "CREATE_OWN_AGENT",
-            "credential_use", "credential_reveal", "credential_manage");
+            "credential_use", "credential_reveal", "credential_manage",
+            // PLAN-0651 M1 (D51-26): the two faces that used to be an isInstanceAdmin() bypass.
+            // These are action atoms and therefore materialize; workspace:admin does NOT (capability).
+            "MANAGE_AGENT_PRINCIPALS", "MANAGE_WORKSPACE_MEMBERS");
 
     /** spec §2.1: vocabulary members that never enter a built-in default set. */
     private static final List<String> OUT_OF_DEFAULT_VOCABULARY = List.of(
@@ -182,8 +185,8 @@ class DefaultSetMatrixTest extends AbstractIntegrationTest {
 
         Set<String> adminAtoms = materializedAtoms("user", userUuid);
         assertEquals(ADMIN_MATRIX, adminAtoms,
-                "spec §4.1 ADMIN row = 全 allow 的一个集: five rows plus the PLAN-0496 "
-                        + "credential atoms (credential_use/reveal/manage)");
+                "spec §4.1 ADMIN row = 全 allow 的一个集: five rows plus the PLAN-0496 credential "
+                        + "atoms and the PLAN-0651 management atoms (agent principals/members)");
         assertCanonicalAtoms("user", userUuid);
         assertFalse(adminAtoms.contains("SPAWN_AGENT"),
                 "spec §2.1: SPAWN_AGENT stays out of the ADMIN set");

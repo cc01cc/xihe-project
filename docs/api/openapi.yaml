@@ -3674,8 +3674,14 @@ paths:
   /api/v1/roles/catalog:
     get:
       operationId: getRoleCatalog
-      summary: Access-role atom catalog (PLAN-0610 W3-2a)
-      description: 'The permission vocabulary of the access-role model: 18 atoms = 15 action atoms + 3 capability atoms (R2-8). scope_class (instance|both) is the SSOT of PermissionAtomCatalog — the API projects it and never carries its own table (R2-10); capability=true marks the three atoms that become cap:<atom> authorities (instance:super, instance:admin, workspace:admin) and are never materialized into grants (decision #23). Gate: MANAGE_ROLES — an action atom, evaluated from the grant rows because only capability atoms are authorities (R2-5).'
+      summary: Access-role atom catalog (PLAN-0610 W3-2a; labels PLAN-0651 D51-37)
+      description: 'The permission vocabulary of the access-role model: 19 atoms = 16 action atoms + 3 capability atoms (PLAN-0651 M1 adds MANAGE_AGENT_PRINCIPALS and MANAGE_WORKSPACE_MEMBERS). scope_class (instance|both) is the SSOT of PermissionAtomCatalog — the API projects it and never carries its own table (R2-10); capability=true marks the three atoms that become cap:<atom> authorities (instance:super, instance:admin, workspace:admin) and are never materialized into grants (decision #23). Each atom carries displayName resolved server-side from the explicit locale (zh-CN default, en-US supported, unknown ⇒ zh-CN) so the UI keeps no vocabulary of its own (D51-19/D51-37). Gate: MANAGE_ROLES — an action atom, evaluated from the grant rows because only capability atoms are authorities (R2-5).'
+      parameters:
+        - name: locale
+          in: query
+          required: false
+          description: 'Display-label locale for atom displayName (zh-CN default, en-US supported; any other value falls back to zh-CN).'
+          schema: { type: string, enum: [zh-CN, en-US] }
       security: [{ bearerAuth: [] }]
       responses:
         '200': { description: 'Atom catalog', content: { application/json: { schema: { $ref: '#/components/schemas/RoleCatalogView' } } } }
@@ -3985,6 +3991,7 @@ components:
         scopeClass: { type: string, enum: [instance, both] }
         capability: { type: boolean, description: 'true for instance:super / instance:admin / workspace:admin — resolved as cap:<atom> authorities, never materialized (decision #23)' }
         resource: { type: string, description: 'Canonical resource pattern of a wildcard atom (* or credential:*)' }
+        displayName: { type: string, description: 'PLAN-0651 D51-37: human label resolved server-side from ?locale (zh-CN default, en-US supported). Always non-empty; the UI renders this instead of the wire name so it keeps no atom vocabulary of its own.' }
     RoleCatalogView:
       type: object
       required: [atoms, scopes]
