@@ -53,6 +53,29 @@ public final class ContextFingerprintCalculator {
     /** Reason used when the caller has no payload for a CP-visible layer at all. */
     public static final String UNAVAILABLE_NOT_PROVIDED = "not_provided";
 
+    /**
+     * Stored-document states, a closed set (design D5, Lead 2026-11-05): a reader must be able to
+     * tell "workspace switched it off" from "collection failed" from "the run never dispatched".
+     * The absence of a stored document (legacy rows) is a <b>read-side</b> reason, never a fifth
+     * status — see {@link ContextFingerprintReadService}.
+     */
+    public static final String STATUS_OK = "ok";
+
+    public static final String STATUS_DISABLED = "disabled";
+
+    public static final String STATUS_NOT_DISPATCHED = "not_dispatched";
+
+    public static final String STATUS_ERROR = "error";
+
+    /** Closed reason set used when a workspace switched fingerprinting off. */
+    public static final String REASON_WORKSPACE_DISABLED = "workspace_disabled";
+
+    /** Read-side reason: the run never reached dispatch, so no document was ever written. */
+    public static final String REASON_NOT_DISPATCHED = "not_dispatched";
+
+    /** Read-side reason: the row predates PLAN-0666 (or its write failed); indistinguishable by design. */
+    public static final String REASON_PRE_PLAN = "pre_plan";
+
     private static final JsonNodeFactory NODES = JsonNodeFactory.instance;
 
     private ContextFingerprintCalculator() {}
@@ -91,6 +114,8 @@ public final class ContextFingerprintCalculator {
             }
         }
         ObjectNode document = NODES.objectNode();
+        document.put("enabled", true);
+        document.put("status", STATUS_OK);
         document.put("algo", ALGO);
         document.put("dispatchAttempt", dispatchAttempt);
         ObjectNode layers = document.putObject("layers");
@@ -107,6 +132,55 @@ public final class ContextFingerprintCalculator {
         return document;
     }
 
+    /**
+     * Document stored when the workspace switched fingerprinting off (D5). Deliberately carries
+     * {@code enabled:false} + a reason, so a reader can never confuse "off" with "empty context".
+     */
+    public static ObjectNode disabled() {
+        return disabled(REASON_WORKSPACE_DISABLED);
+    }
+
+    /** Same as {@link #disabled()}, with an explicit (closed-set) reason. */
+    public static ObjectNode disabled(String reason) {
+        requireText(reason, "disabled reason");
+        ObjectNode document = NODES.objectNode();
+        document.put("enabled", false);
+        document.put("status", STATUS_DISABLED);
+        document.put("reason", reason);
+        return document;
+    }
+
+    /**
+     * Synthetic document for "the run never reached dispatch". The dispatch path cannot write it
+     * (there is no document to store), so only the read side emits it — still explicitly, never as
+     * a missing column.
+     */
+    public static ObjectNode notDispatched() {
+        ObjectNode document = NODES.objectNode();
+        document.put("enabled", true);
+        document.put("status", STATUS_NOT_DISPATCHED);
+        document.put("reason", REASON_NOT_DISPATCHED);
+        return document;
+    }
+
+    /**
+     * Fail-open document (D5): hashing failed, the run was <b>not</b> affected. {@code enabled}
+     * stays true so "collection failed" is distinguishable from "workspace disabled".
+     */
+    public static ObjectNode error(String reasonCode) {
+        requireText(reasonCode, "error reasonCode");
+        ObjectNode document = NODES.objectNode();
+        document.put("enabled", true);
+        document.put("status", STATUS_ERROR);
+        document.put("reasonCode", reasonCode);
+        return document;
+    }
+
+    private static void requireText(String value, String label) {
+        if (value == null || value.isBlank()) {
+            throw new IllegalArgumentException(label + " must not be blank");
+        }
+    }
     private static ObjectNode layerNode(Object payload) {
         ObjectNode node = NODES.objectNode();
         if (payload == null) {
