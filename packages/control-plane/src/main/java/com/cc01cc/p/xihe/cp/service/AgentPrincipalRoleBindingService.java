@@ -119,17 +119,28 @@ public class AgentPrincipalRoleBindingService {
     /**
      * Bind one role to one agent principal and materialize the subject in the same transaction.
      *
-     * @param auditWorkspaceId authorization/audit context (may be {@code null} for an instance-scope
-     *                         call); it is never part of the binding key — the binding carries its own
-     *                         {@code scope_type}/{@code scope_id}.
+     * <p>PLAN-0667 addendum (Lead ruling 2026-11-05, real-stack gap 2): the request body carries only
+     * {@code roleId}; the <b>scope is derived server-side from the authorization context</b> —
+     * a workspace context means workspace scope, no context means the instance scope (which needs the
+     * instance-tier atom). Letting the client send {@code scopeType}/{@code scopeId} would hand the
+     * authorization semantics to the caller: the same role id could be bound at a scope the caller is
+     * not allowed to write. Role definitions are instance-wide, so the role row itself carries no
+     * scope to copy (see {@link com.cc01cc.p.xihe.cp.entity.AccessRole}).</p>
+     *
+     * @param authWorkspaceId the optional {@code ?workspaceId=} authorization context; when present it
+     *                        is also the derived binding scope, when absent the binding is instance-scoped.
      */
     @Transactional
-    public AgentRoleBindingView bind(UUID principalId, UUID roleId, String scopeType, UUID scopeId,
-                                     UUID actorUserId, String auditWorkspaceId, String locale) {
+    public AgentRoleBindingView bind(UUID principalId, UUID roleId, UUID actorUserId,
+                                     UUID authWorkspaceId, boolean instanceTier,
+                                     java.util.function.Predicate<UUID> canManageWorkspace,
+                                     String locale) {
         AccessRole role = roles.findById(roleId).orElseThrow(() -> new CpApiException(
                 HttpStatus.NOT_FOUND, "ROLE_NOT_FOUND", "Role not found"));
-        AccessScope scope = requireScope(scopeType, scopeId);
+        // Forbidden atoms first: 409 must not depend on which scope the caller can authorize.
         requireBindableAtoms(roleId);
+        AccessScope scope = deriveScope(authWorkspaceId, instanceTier, canManageWorkspace);
+        String auditWorkspaceId = scope.id() == null ? null : scope.id().toString();
         requirePrincipal(principalId);
         boolean duplicate = bindings.findBySubjectTypeAndSubjectId(
                         GrantPrincipalPathResolver.AGENT_PRINCIPAL, principalId).stream()
@@ -231,13 +242,26 @@ public class AgentPrincipalRoleBindingService {
         return forbidden;
     }
 
-    private static AccessScope requireScope(String scopeType, UUID scopeId) {
-        try {
-            return new AccessScope(scopeType, scopeId);
-        } catch (IllegalArgumentException e) {
-            throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST",
-                    "scopeType must be instance (no scopeId) or workspace (scopeId required)", e);
+    /**
+     * The server-owned scope decision (gap 2). A workspace context means workspace scope; without it
+     * the binding is instance-scoped and therefore needs the instance-tier atom. The caller never
+     * supplies a scope, so no client can move a binding into a workspace it cannot manage.
+     */
+    private AccessScope deriveScope(UUID authWorkspaceId, boolean instanceTier,
+                                    java.util.function.Predicate<UUID> canManageWorkspace) {
+        if (authWorkspaceId == null) {
+            if (!instanceTier) {
+                throw new CpApiException(HttpStatus.FORBIDDEN, "FORBIDDEN",
+                        "binding at the instance scope requires MANAGE_AGENT_PRINCIPALS");
+            }
+            return AccessScope.instance();
         }
+        if (!instanceTier && !canManageWorkspace.test(authWorkspaceId)) {
+            throw new CpApiException(HttpStatus.FORBIDDEN, "FORBIDDEN",
+                    "MANAGE_WORKSPACE_AGENTS in the authorizing workspace is required");
+        }
+        requireWorkspace(authWorkspaceId);
+        return AccessScope.workspace(authWorkspaceId);
     }
 
     private static CpApiException principalNotFound() {

@@ -71,10 +71,16 @@ flowchart LR
    `GET/POST /api/v1/agent-principals/{principalId}/roles`、`DELETE …/roles/{bindingId}`；
    `GET/POST /api/v1/agent-principals/{principalId}/skills`、`DELETE …/skills/{bindingId}`。
    **既有 user-only 的 `/api/v1/bindings` 保持不变**（不放开 `subjectType`），避免把 agent 语义混进用户绑定面。
-2. **谁能绑**：`MANAGE_AGENT_PRINCIPALS`（N1，instance 层原子）**或** `MANAGE_WORKSPACE_AGENTS`
-   （在 `?workspaceId=` 授权上下文中求值）。工作区层的求值沿用记忆面的同一模式：`workspaceId`
-   只作**授权上下文**，不是绑定的存储键（角色绑定自带 `scope_type/scope_id`）。
+2. **谁能绑 + 绑定 scope 由服务端定**：`MANAGE_AGENT_PRINCIPALS`（N1，instance 层原子）**或**
+   `MANAGE_WORKSPACE_AGENTS`（在 `?workspaceId=` 授权上下文中求值）。工作区层的求值沿用记忆面的同一模式：
+   `workspaceId` 只作**授权上下文**，不是绑定的存储键。
+   **角色绑定 POST body 只收 `{roleId}`**：`scope_type/scope_id` 由服务端从授权上下文推导
+   （有 `workspaceId` ⇒ workspace 作用域；无 ⇒ instance 作用域且需 N1），**调用方不得自报 scope**
+   （否则等于把授权语义交给客户端）。角色定义是 instance 级、本身不带 scope，故不存在"从角色行复制 scope"。
    **actor ≠ subject**：agent 不得给自己绑定（由 `MANAGE_*` 原子与"仅真人 principal 可作 actor"共同保证，禁止新增旁路）。
+2a. **候选读面**：能管理 agent 绑定的人 MUST 能读候选角色，但只返回**可绑定子集**
+   （含任一禁授原子的角色不列），复用既有 `GET /api/v1/roles`（不新增候选端点）；持 `MANAGE_ROLES`
+   的管理员视图保持返回全量。无授权上下文时 workspace 层调用者 403。
 3. **禁授原子（不可变）**：角色若含 `PermissionAtomCatalog.agentPrincipalForbiddenAtoms()` 中任一原子
    ⇒ **409 `AGENT_PRINCIPAL_FORBIDDEN_ATOMS`**；`detail` **只列原子名，不列资源**（不泄露实例资源面）。
    该集合由词汇表派生（instance-only 全集 + 全部 capability 原子 + `MANAGE_WORKSPACE_AGENTS` /

@@ -120,8 +120,7 @@ class AgentPrincipalRoleBindingContractTest extends AbstractIntegrationTest {
         int before = totalBindingCount();
 
         ResponseEntity<Map> created = post("/roles?workspaceId=" + workspace.getId(),
-                Map.of("roleId", roleId.toString(), "scopeType", "workspace",
-                        "scopeId", workspace.getId().toString()));
+                Map.of("roleId", roleId.toString()));
 
         assertEquals(HttpStatus.CREATED, created.getStatusCode(), String.valueOf(created.getBody()));
         Map<String, Object> body = created.getBody();
@@ -146,8 +145,7 @@ class AgentPrincipalRoleBindingContractTest extends AbstractIntegrationTest {
         UUID roleId = createCustomRole("network");
         int before = totalBindingCount();
         ResponseEntity<Map> created = post("/roles?workspaceId=" + workspace.getId(),
-                Map.of("roleId", roleId.toString(), "scopeType", "workspace",
-                        "scopeId", workspace.getId().toString()));
+                Map.of("roleId", roleId.toString()));
         assertEquals(HttpStatus.CREATED, created.getStatusCode());
         String bindingId = String.valueOf(created.getBody().get("bindingId"));
         assertTrue(materializedAtoms().contains("network"));
@@ -166,8 +164,7 @@ class AgentPrincipalRoleBindingContractTest extends AbstractIntegrationTest {
         int before = totalBindingCount();
         AccessRole seed = roleRepository.findByName("WS_VIEWER").orElseThrow();
         ResponseEntity<Map> created = post("/roles?workspaceId=" + workspace.getId(),
-                Map.of("roleId", seed.getId().toString(), "scopeType", "workspace",
-                        "scopeId", workspace.getId().toString()));
+                Map.of("roleId", seed.getId().toString()));
         assertEquals(HttpStatus.CREATED, created.getStatusCode(), String.valueOf(created.getBody()));
         assertEquals(true, created.getBody().get("isSystem"));
 
@@ -186,7 +183,7 @@ class AgentPrincipalRoleBindingContractTest extends AbstractIntegrationTest {
         AccessRole admin = roleRepository.findByName("ADMIN").orElseThrow();
 
         ResponseEntity<Map> refused = post("/roles",
-                Map.of("roleId", admin.getId().toString(), "scopeType", "instance"));
+                Map.of("roleId", admin.getId().toString()));
 
         assertEquals(HttpStatus.CONFLICT, refused.getStatusCode(), String.valueOf(refused.getBody()));
         Map<String, Object> body = refused.getBody();
@@ -203,18 +200,15 @@ class AgentPrincipalRoleBindingContractTest extends AbstractIntegrationTest {
         fixture();
         UUID roleId = createCustomRole("read");
         assertEquals(HttpStatus.CREATED, post("/roles?workspaceId=" + workspace.getId(),
-                Map.of("roleId", roleId.toString(), "scopeType", "workspace",
-                        "scopeId", workspace.getId().toString())).getStatusCode());
+                Map.of("roleId", roleId.toString())).getStatusCode());
 
         ResponseEntity<Map> duplicate = post("/roles?workspaceId=" + workspace.getId(),
-                Map.of("roleId", roleId.toString(), "scopeType", "workspace",
-                        "scopeId", workspace.getId().toString()));
+                Map.of("roleId", roleId.toString()));
         assertEquals(HttpStatus.CONFLICT, duplicate.getStatusCode());
         assertEquals("ROLE_BINDING_EXISTS", duplicate.getBody().get("code"));
 
         ResponseEntity<Map> unknownRole = post("/roles?workspaceId=" + workspace.getId(),
-                Map.of("roleId", UUID.randomUUID().toString(), "scopeType", "workspace",
-                        "scopeId", workspace.getId().toString()));
+                Map.of("roleId", UUID.randomUUID().toString()));
         assertEquals(HttpStatus.NOT_FOUND, unknownRole.getStatusCode());
         assertEquals("ROLE_NOT_FOUND", unknownRole.getBody().get("code"));
 
@@ -229,8 +223,7 @@ class AgentPrincipalRoleBindingContractTest extends AbstractIntegrationTest {
         fixture();
         UUID roleId = createCustomRole("network", "CREATE_SCHEDULED_TASK");
         assertEquals(HttpStatus.CREATED, post("/roles?workspaceId=" + workspace.getId(),
-                Map.of("roleId", roleId.toString(), "scopeType", "workspace",
-                        "scopeId", workspace.getId().toString())).getStatusCode());
+                Map.of("roleId", roleId.toString())).getStatusCode());
 
         ResponseEntity<Map> listed = get("/roles?workspaceId=" + workspace.getId());
 
@@ -254,14 +247,79 @@ class AgentPrincipalRoleBindingContractTest extends AbstractIntegrationTest {
         headers.set(HttpHeaders.ACCEPT_LANGUAGE, "en-US");
         ResponseEntity<Map> created = restTemplate.exchange(
                 url(pathFor("/roles?workspaceId=" + workspace.getId())), HttpMethod.POST,
-                new HttpEntity<>(Map.of("roleId", roleId.toString(), "scopeType", "workspace",
-                        "scopeId", workspace.getId().toString()), headers), Map.class);
+                new HttpEntity<>(Map.of("roleId", roleId.toString()), headers), Map.class);
 
         assertEquals(HttpStatus.CREATED, created.getStatusCode(), String.valueOf(created.getBody()));
         assertTrue(((List<?>) created.getBody().get("atoms"))
                         .containsAll(List.of("Network access", "Create scheduled task")),
                 "labels follow Accept-Language, machine names never leave the server: "
                         + created.getBody().get("atoms"));
+    }
+
+    /**
+     * PLAN-0667 gap 1 (real-stack): the binding picker needs candidates for a workspace OWNER.
+     * Before the fix this call was 403 because {@code GET /api/v1/roles} was hard-gated on
+     * {@code MANAGE_ROLES}; now a workspace agent manager gets the agent-bindable subset.
+     */
+    @Test
+    void roleCandidatesAreReadableByWorkspaceOwnerAndFilteredToBindableRoles() {
+        fixture();
+        ResponseEntity<List> listed = restTemplate.exchange(
+                url("/api/v1/roles?workspaceId=" + workspace.getId()), HttpMethod.GET,
+                new HttpEntity<>(authHeaders()), List.class);
+
+        assertEquals(HttpStatus.OK, listed.getStatusCode(), String.valueOf(listed.getBody()));
+        List<String> names = ((List<Map<String, Object>>) listed.getBody()).stream()
+                .map(row -> String.valueOf(row.get("name")))
+                .toList();
+        assertTrue(names.contains("WS_EDITOR"), "bindable workspace role is listed: " + names);
+        assertTrue(!names.contains("ADMIN"), "a role carrying forbidden atoms is not a candidate: " + names);
+        assertTrue(!names.contains("SUPER_ADMIN"), "capability role is not a candidate: " + names);
+        assertEquals(0, ((List<?>) listed.getBody()).stream()
+                .filter(row -> Boolean.TRUE.equals(((Map<?, ?>) row).get("system"))
+                        && "ADMIN".equals(((Map<?, ?>) row).get("name")))
+                .count(), "no forbidden system role may leak into the candidate list");
+    }
+
+    /**
+     * Gap 1 boundary: a workspace-tier manager may read candidates only inside a workspace context;
+     * without one there is no instance authority to fall back on (403, not an empty list).
+     */
+    @Test
+    void roleCandidatesNeedAWorkspaceContextForWorkspaceTierCallers() {
+        fixture();
+        User manager = createWorkspaceManager("wsm");
+        String managerToken = TestDataFactory.createGlobalToken(
+                manager.getId().toString(), manager.getEmail(), "USER", 0);
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(managerToken);
+
+        ResponseEntity<Map> withoutContext = restTemplate.exchange(url("/api/v1/roles"),
+                HttpMethod.GET, new HttpEntity<>(headers), Map.class);
+        assertEquals(HttpStatus.FORBIDDEN, withoutContext.getStatusCode(), String.valueOf(withoutContext.getBody()));
+        assertEquals("FORBIDDEN", withoutContext.getBody().get("code"));
+
+        ResponseEntity<List> withContext = restTemplate.exchange(
+                url("/api/v1/roles?workspaceId=" + workspace.getId()), HttpMethod.GET,
+                new HttpEntity<>(headers), List.class);
+        assertEquals(HttpStatus.OK, withContext.getStatusCode(), String.valueOf(withContext.getBody()));
+        assertTrue(((List<Map<String, Object>>) withContext.getBody()).stream()
+                        .anyMatch(row -> "WS_EDITOR".equals(row.get("name"))),
+                "workspace manager sees the bindable candidates");
+    }
+
+    /** Gap 2: the frozen body is {@code {roleId}} only — a scope sent by the caller is rejected. */
+    @Test
+    void bindBodyMustNotCarryClientSuppliedScope() {
+        fixture();
+        UUID roleId = createCustomRole("network");
+        int before = totalBindingCount();
+        ResponseEntity<Map> refused = post("/roles?workspaceId=" + workspace.getId(),
+                Map.of("roleId", roleId.toString(), "scopeType", "workspace"));
+
+        assertEquals(HttpStatus.BAD_REQUEST, refused.getStatusCode());
+        assertEquals("INVALID_REQUEST", refused.getBody().get("code"));
+        assertEquals(before, totalBindingCount());
     }
 
     @Test
@@ -332,6 +390,31 @@ class AgentPrincipalRoleBindingContractTest extends AbstractIntegrationTest {
 
     private String shortId() {
         return UUID.randomUUID().toString().replace("-", "").substring(0, 10).toUpperCase();
+    }
+
+    /**
+     * A real workspace-tier manager: no instance atoms, only MANAGE_WORKSPACE_AGENTS materialized
+     * in this workspace. Used to prove the gap-1 read path distinguishes "context given" from
+     * "no authority at all".
+     */
+    private User createWorkspaceManager(String prefix) {
+        User manager = userRepository.saveAndFlush(new User(
+                prefix + "-" + UUID.randomUUID() + "@test.com", "hash", "Workspace manager"));
+        extraUsers.add(manager.getId());
+        // Membership so the tenant interceptor accepts the request; the authority under test is
+        // the separately materialized MANAGE_WORKSPACE_AGENTS atom, not the member role.
+        workspaceFixture.bindWorkspaceRole(workspace.getId(), manager.getId(),
+                com.cc01cc.p.xihe.cp.entity.WorkspaceRole.MEMBER);
+        UUID roleId = UUID.randomUUID();
+        roleRepository.save(new AccessRole(roleId, "TEST_WSM_" + shortId(),
+                "Workspace manager (test-only)", "test-only", false));
+        permissionRepository.save(new AccessRolePermission(roleId, "MANAGE_WORKSPACE_AGENTS", "*"));
+        authorityRoleIds.add(roleId);
+        roleBindingRepository.save(new AccessRoleBinding(roleId, "user", manager.getId(),
+                AccessScope.WORKSPACE, workspace.getId(), owner.getId()));
+        materializer.materializeSubject("user", manager.getId(), owner.getId(),
+                workspace.getId().toString());
+        return manager;
     }
 
     /** Total rows of this principal (a created principal carries default role bindings too). */
