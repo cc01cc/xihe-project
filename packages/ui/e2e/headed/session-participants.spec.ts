@@ -404,7 +404,20 @@ async function ensureAgentPrincipal(request: APIRequestContext, token: string): 
  *
  * 第一个参数是历史遗留：CLI 用 `--email`/`--password-env` 自己取凭据，不需要页面 token，
  * 因此形参保留位置但不使用（`_token`，调用方无需改动）。
+ *
+ * **readiness 轮询（PLAN-0658 R4，A 类测试基础设施修正）**：`prepareConnection` 在
+ * 「连接已存在但缺目标模型」时会 PATCH `manualModels`，而 PATCH 会让连接重新进入
+ * `VERIFYING`（CP 异步复验）——旧实现只查一次状态就直接断言 READY，冷栈上实测偶发拿到
+ * `VERIFYING`（`the prepared connection must be READY`，Expected READY / Received VERIFYING）。
+ * 这里改为**轮询到 READY**：非终态（`UNVERIFIED`/`VERIFYING`）继续等，**终态**
+ * （`INVALID_CREDENTIALS`/`UNREACHABLE`/`DISABLED`）立即失败，不浪费超时预算；
+ * 超时预算沿用既有 `XIHE_E2E_READY_TIMEOUT_MS` 覆盖机制。**本修正不放宽任何 R4 断言。**
  */
+const CONNECTION_READY_TIMEOUT_MS = Number(process.env.XIHE_E2E_READY_TIMEOUT_MS ?? "30000"),
+    CONNECTION_READY_POLL_MS = 500,
+    /** 这些状态等多久都不会变 READY（CP 的 provider connection 状态枚举）。 */
+    TERMINAL_CONNECTION_STATUS = new Set(["INVALID_CREDENTIALS", "UNREACHABLE", "DISABLED"]);
+
 async function ensureConnectionReady(_token: string): Promise<void> {
     if (connectionPrepared) return;
     const prepareOptions = {
@@ -414,7 +427,23 @@ async function ensureConnectionReady(_token: string): Promise<void> {
         "--email": GOLDPATH_EMAIL,
         "--password-env": "XIHE_E2E_GOLDPATH_PASSWORD",
     };
-    const prepared = await prepareConnection({ env: process.env, options: prepareOptions });
+    let prepared = await prepareConnection({ env: process.env, options: prepareOptions });
+    let waitedMs = 0;
+    while (prepared.status !== "READY") {
+        const status = String(prepared.status ?? "unknown");
+        expect(
+            TERMINAL_CONNECTION_STATUS.has(status),
+            `the prepared connection is in a terminal status (${status}); waiting cannot help`,
+        ).toBe(false);
+        expect(
+            waitedMs,
+            `the prepared connection was not READY within ${CONNECTION_READY_TIMEOUT_MS}ms ` +
+                `(last status=${status}); override with XIHE_E2E_READY_TIMEOUT_MS`,
+        ).toBeLessThan(CONNECTION_READY_TIMEOUT_MS);
+        await new Promise((resolve) => setTimeout(resolve, CONNECTION_READY_POLL_MS));
+        waitedMs += CONNECTION_READY_POLL_MS;
+        prepared = await prepareConnection({ env: process.env, options: prepareOptions });
+    }
     expect(prepared.status, "the prepared connection must be READY").toBe("READY");
     const again = await prepareConnection({ env: process.env, options: prepareOptions });
     expect(
@@ -993,6 +1022,104 @@ test.describe("PLAN-0623 有头走查：会话参与者 dock tab", () => {
             id: "S4",
             name: "s4-soft-disabled-row",
             assertion: "两次点击移除 → DELETE 204 → 行仍在且出现「已停用」徽标（D23-26）",
+        });
+    });
+
+    /**
+     * PLAN-0658 R4（权威定义见 `plans/PLAN-0658-xh-session-test-matrix/evidence/r-matrix-source.md`）：
+     * 「@ typeahead 真栈键盘（↑↓ / Enter / Tab / Esc）+ 真栈发送」，断言面 UI + wire。
+     *
+     * 设计决策 2：R4 **放 headed/**，扩展本 spec 而不是新建 real spec（草稿里 R4 的通道列写的是
+     * `real(headed)`）。键盘契约来自 `InputArea.vue:920-940`：ArrowDown/ArrowUp 移动
+     * `triggerIndex`、Enter/Tab 选中插入、Escape 只关候选面（保留草稿）。
+     */
+    test("R4@host @ typeahead 键盘：↑↓ 移动 / Enter 插入 / Tab 插入 / Esc 关面保草稿 + 真栈发送", async ({
+        page,
+        request,
+    }) => {
+        await loginViaForm(page, GOLDPATH_EMAIL, GOLDPATH_PASSWORD);
+        await ensureTwoMemberSession(request);
+        await page.goto(`/workspace/${workspaceId}/chat/${sessionId}`, { waitUntil: "load" });
+
+        const input = page.getByTestId("chat-input");
+        const menu = page.getByTestId("chat-input-trigger-menu");
+        await expect(input).toBeVisible({ timeout: 45000 });
+
+        // ① `@` 打开统一候选面（PLAN-0635 D35-01：单个 listbox），默认选中第一项。
+        await input.click();
+        await input.fill("@");
+        await expect(menu, "@ opens the unified candidate surface").toBeVisible({
+            timeout: 20000,
+        });
+        const options = menu.getByRole("option");
+        await expect(options.first(), "at least one @ candidate").toBeVisible({
+            timeout: 20000,
+        });
+        const optionCount = await options.count();
+        await expect(options.first()).toHaveAttribute("aria-selected", "true");
+
+        // ② ↓ 移动选中项（只有 ≥2 个候选时才有意义；否则跳过移动断言并登记）。
+        if (optionCount >= 2) {
+            await input.press("ArrowDown");
+            await expect(options.nth(1), "ArrowDown moves the selection").toHaveAttribute(
+                "aria-selected",
+                "true",
+            );
+            await expect(options.first()).toHaveAttribute("aria-selected", "false");
+            await input.press("ArrowUp");
+            await expect(options.first(), "ArrowUp moves it back").toHaveAttribute(
+                "aria-selected",
+                "true",
+            );
+        } else {
+            recordNotCovered(
+                "R4-arrow-move",
+                "本次会话的 @ 候选只有 1 项，↑↓ 的选中位移无法真实观察到",
+            );
+        }
+
+        // ③ Esc：只关候选面，草稿保留（不误发）。
+        await input.press("Escape");
+        await expect(menu, "Escape closes the candidate surface").toBeHidden({ timeout: 10000 });
+        await expect(input, "Escape keeps the draft").toHaveValue("@");
+
+        // ④ Tab：选中插入（草稿变成 `@<displayName> `）。
+        await input.fill("@");
+        await expect(menu).toBeVisible({ timeout: 20000 });
+        await input.press("Tab");
+        await expect(menu, "Tab closes the surface").toBeHidden({ timeout: 10000 });
+        const afterTab = await input.inputValue();
+        expect(afterTab.length, "Tab inserts the candidate").toBeGreaterThan(1);
+        expect(afterTab.startsWith("@")).toBe(true);
+
+        // ⑤ Enter：同样插入（清空重来，避免叠加）。
+        await input.fill("@");
+        await expect(menu).toBeVisible({ timeout: 20000 });
+        await input.press("Enter");
+        await expect(menu, "Enter closes the surface").toBeHidden({ timeout: 10000 });
+        const afterEnter = await input.inputValue();
+        expect(afterEnter.length, "Enter inserts the candidate").toBeGreaterThan(1);
+
+        // ⑥ 真栈发送：草稿（含 @ 提及）→ POST /api/v1/chat 202，wire 里带着这条内容。
+        const chatResponse = page.waitForResponse(
+            (res) =>
+                new URL(res.url()).pathname === "/api/v1/chat" && res.request().method() === "POST",
+            { timeout: 30000 },
+        );
+        await page.getByTestId("chat-send-button").click();
+        const sent = await chatResponse;
+        expect(sent.status(), "real send is accepted").toBe(202);
+        const body = sent.request().postDataJSON() as { content?: string };
+        expect(body.content ?? "", "wire content carries the inserted mention").toContain(
+            afterEnter.trim(),
+        );
+
+        await shot(page, {
+            id: "R4",
+            name: "r4-typeahead-keyboard",
+            assertion:
+                "@ 候选面：↑↓ 移动 aria-selected、Enter/Tab 插入 @displayName、Esc 关面保草稿；" +
+                "真栈发送 202 且 body.content 含插入的提及",
         });
     });
 

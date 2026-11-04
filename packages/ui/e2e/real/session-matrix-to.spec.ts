@@ -24,6 +24,7 @@ import {
     createSessionWithPrincipal,
     provisionWorkspaceAgentPrincipal,
 } from "./helpers/agent-principal";
+import { agentName } from "./helpers/agent-name";
 import { openSessionSse } from "./helpers/sse";
 
 const NONCE = Date.now().toString(36);
@@ -180,7 +181,7 @@ test.describe("@host PLAN-0658 R2 TO（发送）wire 面", () => {
             request,
             { accessToken: token, workspaceId },
             {
-                name: `r2-primary-${NONCE}`,
+                name: agentName("R2Primary", NONCE),
                 actions: [],
                 defaultModelProvider: "openai",
                 defaultModelName: FAKE_LLM_MODEL,
@@ -190,7 +191,7 @@ test.describe("@host PLAN-0658 R2 TO（发送）wire 面", () => {
             request,
             { accessToken: token, workspaceId },
             {
-                name: `r2-extra-${NONCE}`,
+                name: agentName("R2Extra", NONCE),
                 actions: [],
                 defaultModelProvider: "openai",
                 defaultModelName: FAKE_LLM_MODEL,

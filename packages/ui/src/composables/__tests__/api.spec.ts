@@ -2494,3 +2494,70 @@ describe("getWorkspaceAgents principal hooks (PLAN-0625 M3, fail-closed)", () =>
         expect(agents[0]?.hooks).toEqual({ advisors: [{ kind: "guard", on: [] }] });
     });
 });
+
+// PLAN-0659 T1.4：委派 lineage 必须在 list 投影里透传（会话树 / 委派 DAG 的数据源）。
+// 回归背景：`normalizeSession` 曾只白名单部分字段，把 contract 里 required 的
+// kind/spawnedFromSessionId/spawnedAt 丢掉 ⇒ 真实链路上父子嵌套与「委派」徽标永远不出现。
+describe("api.getSessions delegation lineage (PLAN-0659 T1.4)", () => {
+    it("keeps kind / spawnedFromSessionId / spawnedAt from the wire payload", async () => {
+        fetchSpy.mockResolvedValueOnce({
+            ok: true,
+            json: () =>
+                Promise.resolve({
+                    sessions: [
+                        {
+                            id: SESSION_ID,
+                            title: "父会话",
+                            createdAt: "2026-11-04T10:00:00.000Z",
+                            updatedAt: "2026-11-04T10:00:00.000Z",
+                            workspaceId: WORKSPACE_ID,
+                            kind: null,
+                            spawnedFromSessionId: null,
+                            spawnedAt: null,
+                        },
+                        {
+                            id: "77777777-7777-4777-8777-777777777777",
+                            title: "子会话",
+                            createdAt: "2026-11-04T10:01:00.000Z",
+                            updatedAt: "2026-11-04T10:01:00.000Z",
+                            workspaceId: WORKSPACE_ID,
+                            kind: "SPAWN",
+                            spawnedFromSessionId: SESSION_ID,
+                            spawnedAt: "2026-11-04T10:01:00.000Z",
+                        },
+                    ],
+                }),
+        } as Response);
+
+        const response = await api.getSessions();
+
+        expect(response.sessions[0]).toMatchObject({
+            kind: null,
+            spawnedFromSessionId: null,
+            spawnedAt: null,
+        });
+        expect(response.sessions[1]).toMatchObject({
+            kind: "SPAWN",
+            spawnedFromSessionId: SESSION_ID,
+            spawnedAt: "2026-11-04T10:01:00.000Z",
+        });
+    });
+
+    it("normalizes missing lineage to null instead of undefined (stable Session shape)", async () => {
+        fetchSpy.mockResolvedValueOnce({
+            ok: true,
+            json: () =>
+                Promise.resolve({
+                    sessions: [{ id: SESSION_ID, title: "legacy" }],
+                }),
+        } as Response);
+
+        const response = await api.getSessions();
+
+        expect(response.sessions[0]).toMatchObject({
+            kind: null,
+            spawnedFromSessionId: null,
+            spawnedAt: null,
+        });
+    });
+});

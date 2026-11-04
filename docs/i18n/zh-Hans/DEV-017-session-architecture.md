@@ -38,6 +38,8 @@ Session 是用户一次连贯工作上下文，独立于视图：
 | 派生来源（PLAN-0407 M2 / PLAN-0630） | V37 保存 `spawned_from_session_id/run_id/spawned_at`；V40 用 `kind=spawn/fork` 区分权限 lineage。root 为全空 provenance；spawn 沿父 Agent Session 收敛权限/停止，fork 保留来源链接但作为独立权限根；**父会话删除后子会话不转独立 root**——spawn 链祖先缺失一律 fail-closed（`ancestor_missing`，PLAN-0630 D30-08），避免静默放大预算。PLAN-0407 T2.10 通过 CP-owned logical MCP `spawn_agent` caller 接入独立 grant/approval、waiting link 与 child dispatch；Agent 不直调 `/internal/v1/agents/spawn`。PLAN-0630 委派边仍只用上述既有列（不新增同义列，D30-01）；唤醒边另落 `chat_runs.parent_run_id`（V105），委托深度与唤醒深度由 `DelegationChainWalker` 在同一 walk 中现算、不落库 |
 | Fork context seed（PLAN-0409/0410） | `session.forked` child root event 携带 selected branch/terminal anchor 前的 seed 消息与可选 SUM；child EventStore sequence 是 child-local cursor，parent 来源字段仅作 lineage，不参与 child 授权；Workspace L1 在 child Run 前刷新 |
 | 派生协作通知（PLAN-0408） | child terminal 写入 parent Inbox 为 durable source；父 ChatRun 可在创建事务领取；UI 从 derived-state API 恢复，SSE 仅作 refresh hint；parent 删除不级联 child |
+| 委派投影（UI，PLAN-0655/0659） | 会话树与委派 DAG 只消费既有投影：`sessions` 列表的 `kind=SPAWN` + `spawnedFromSessionId`（list 投影必须在 `normalizeSession` 透传 `kind`/`spawnedFromSessionId`/`spawnedAt`，`d880d705` 修复过丢失）、父会话 derived-state（子节点状态）、根会话 delegation-usage（预算/深度）。不新建持久化面、不改 wire；节点上限/截断/孤儿/环在 UI 显式化（DEV-010 §4.2） |
+| 消息投递语义（UI，PLAN-0659） | `Message.delivery` 是 composer 发送态的**本地视图**（TO/CC 无持久载体，**BL-239**）：会话重载后丢失，`@` 由正文 + 花名册重建；不落 localStorage、不进 wire |
 | Message | 属于 Session，由 `useChatStore` 按 `sessionId` 索引；生命周期（创建/流式/完成）走 chat store |
 | Attachment | Session-scoped；后端 Session 专属空间持久化（`{base}/{sessionId}/` 下按 fileId 存取），`Message.attachments` 存元数据；workspace 对附件只读（文件本身经 workspace store 可写，见 DEV-010 §5） |
 | File | 物理文件归 Runtime；Session 经 `fileContext` 存引用（workspaceFiles/activeFilePath） |
