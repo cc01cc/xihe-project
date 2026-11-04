@@ -47,9 +47,9 @@ class DelegationPolicyValidatorTest {
     }
 
     @Test
-    void rejectsZeroNegativeFractionalAndTextualValues() {
+    void rejectsNegativeFractionalAndTextualValues() {
         for (String bad : new String[] {
-                "{\"maxCount\":0}", "{\"maxDepth\":0}", "{\"maxCount\":-1}", "{\"maxDepth\":-2}",
+                "{\"maxDepth\":0}", "{\"maxCount\":-1}", "{\"maxDepth\":-2}",
                 "{\"maxCount\":1.5}", "{\"maxDepth\":2.0}", "{\"maxCount\":\"8\"}", "{\"maxDepth\":\"3\"}",
                 "{\"maxCount\":true}", "{\"maxDepth\":[]}", "{\"maxCount\":{\"v\":1}}"}) {
             CpApiException rejected = assertThrows(CpApiException.class,
@@ -95,11 +95,16 @@ class DelegationPolicyValidatorTest {
     }
 
     @Test
-    void limitsFailsClosedWithItsOwnCode() {
-        // The same malformed document is 400 on the write face; the read gate must not silently use
-        // the defaults, and it must say DELEGATION_POLICY_INVALID (not INVALID_REQUEST).
+    void limitsAcceptsMaxCountZeroAsTheDelegationDisabledValue() {
+        assertEquals(new DelegationPolicyValidator.DelegationLimits(0, 3),
+                DelegationPolicyValidator.limits(json("{\"maxCount\":0}"), 8, 3),
+                "maxCount=0 is the legal delegation-disabled value (ruling A1)");
+    }
+
+    @Test
+    void limitsStillFailsClosedOnAMalformedDocument() {
         CpApiException rejected = assertThrows(CpApiException.class,
-                () -> DelegationPolicyValidator.limits(json("{\"maxCount\":0}"), 8, 3));
+                () -> DelegationPolicyValidator.limits(json("{\"maxCount\":\"x\"}"), 8, 3));
         assertEquals(HttpStatus.CONFLICT, rejected.getStatus());
         assertEquals("DELEGATION_POLICY_INVALID", rejected.getCode());
     }
