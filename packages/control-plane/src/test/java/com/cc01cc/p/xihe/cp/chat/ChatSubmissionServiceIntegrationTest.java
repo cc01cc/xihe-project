@@ -971,6 +971,70 @@ class ChatSubmissionServiceIntegrationTest extends AbstractIntegrationTest {
                 "user rows carry no v1 attribution — the field is omitted, not null");
     }
 
+    // ------------------------------------------------- BL-280: derived runs stamp the agent principal
+
+    @Test
+    void derivedRunsStampTheSessionBoundPrincipal() {
+        ChatFixture main = createChatFixture("stamp-main");
+        sessionRepository.saveAndFlush(boundSession(main.session(), main.principal()));
+        addPrimaryParticipant(main.session(), main.principal());
+        String mainRunId = UUID.randomUUID().toString();
+        submit(mainRunId, main.session(), main.user(), main.workspace(), "main",
+                main.principal().getId().toString());
+        assertEquals(main.principal().getId(),
+                chatRunRepository.findById(UUID.fromString(mainRunId)).orElseThrow().getAgentPrincipalId(),
+                "main submission stamps the responder");
+
+        ChatFixture followUp = createChatFixture("stamp-follow-up");
+        sessionRepository.saveAndFlush(boundSession(followUp.session(), followUp.principal()));
+        addPrimaryParticipant(followUp.session(), followUp.principal());
+        String followUpRunId = UUID.randomUUID().toString();
+        submissionService.createFollowUp(followUpRunId, followUp.session().getId().toString(),
+                followUp.user().getId().toString(), followUp.workspace().getId().toString(),
+                branchPathService.ensureRootBranchId(followUp.session().getId().toString()),
+                "follow-up-" + followUpRunId, "hash-follow-up", "provider", "model", "none", null, null,
+                "lease", UUID.randomUUID().toString(), "queued prompt", "[]", List.of(),
+                followUp.principal().getId().toString());
+        assertEquals(followUp.principal().getId(),
+                chatRunRepository.findById(UUID.fromString(followUpRunId)).orElseThrow().getAgentPrincipalId(),
+                "follow-up children are stamped at admission (BL-280)");
+
+        ChatFixture scheduled = createChatFixture("stamp-scheduled");
+        sessionRepository.saveAndFlush(boundSession(scheduled.session(), scheduled.principal()));
+        addPrimaryParticipant(scheduled.session(), scheduled.principal());
+        String scheduledRunId = UUID.randomUUID().toString();
+        submissionService.createScheduled(scheduledRunId, scheduled.session().getId().toString(),
+                scheduled.user().getId().toString(), scheduled.workspace().getId().toString(),
+                branchPathService.ensureRootBranchId(scheduled.session().getId().toString()),
+                "scheduled-" + scheduledRunId, "hash-scheduled", "provider", "model", "none", null,
+                null, null, UUID.randomUUID().toString(), "wake prompt", "[]", List.of(),
+                scheduled.principal().getId().toString());
+        assertEquals(scheduled.principal().getId(),
+                chatRunRepository.findById(UUID.fromString(scheduledRunId)).orElseThrow().getAgentPrincipalId(),
+                "scheduled wake carriers are stamped at admission (BL-280)");
+    }
+
+    @Test
+    void humanResponderKeepsTheAgentOnlyColumnNull() {
+        ChatFixture fixture = createChatFixture("stamp-human");
+        sessionRepository.saveAndFlush(boundSession(fixture.session(), fixture.principal()));
+        addPrimaryParticipant(fixture.session(), fixture.principal());
+        SessionParticipant human = sessionParticipantRepository.saveAndFlush(new SessionParticipant(
+                fixture.session().getId(), SessionParticipant.KIND_HUMAN, fixture.user().getId(),
+                SessionParticipant.ROLE_MEMBER, 20, SessionParticipant.WAKE_MENTION,
+                SessionParticipant.RESPOND_WHEN_MENTIONED));
+
+        String runId = UUID.randomUUID().toString();
+        submissionService.create(runId, fixture.session().getId().toString(),
+                fixture.user().getId().toString(), fixture.workspace().getId().toString(),
+                branchPathService.ensureRootBranchId(fixture.session().getId().toString()),
+                fixture.principal().getId().toString(), "human-" + runId, "hash-human", "provider", "model",
+                "none", null, null, "lease", UUID.randomUUID().toString(), "hi", "[]", List.of(),
+                human.getId().toString());
+        assertNull(chatRunRepository.findById(UUID.fromString(runId)).orElseThrow().getAgentPrincipalId(),
+                "a HUMAN responder keeps the agent-only column NULL — no stamp, and no FK violation");
+    }
+
     private UUID addPrimaryParticipant(Session session, AgentPrincipal principal) {
         SessionParticipant participant = new SessionParticipant(session.getId(),
                 SessionParticipant.KIND_AGENT, principal.getId(), SessionParticipant.ROLE_PRIMARY, 10,

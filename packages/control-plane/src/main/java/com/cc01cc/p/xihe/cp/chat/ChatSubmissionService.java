@@ -189,12 +189,14 @@ public class ChatSubmissionService {
         SessionParticipantService.Responder responder = sessionParticipantService.responderFor(
                 UUID.fromString(sessionId), asParticipantId);
         // `chat_runs.agent_principal_id` carries a FK to agent_principals (V92), so only an AGENT
-        // responder can be recorded here. A HUMAN responder (owner speaking as themselves) keeps NULL:
-        // its identity lives in the participant attribution of the Message (PLAN-0669), while the
-        // assistant reply is still produced by the Session-bound agent (the PLAN-0669 fallback chain
-        // resolves that). Persisting the human id here would violate fk_chat_runs_agent_principal.
-        if (responder != null && SessionParticipant.KIND_AGENT.equals(responder.principalKind())) {
-            submission.run().setAgentPrincipalId(responder.principalId());
+        // responder can be recorded here. Persist has already stamped the Session-bound principal for
+        // this Run (BL-280); the main submission replaces it with the actual responder, and a HUMAN
+        // responder **clears** it — the human id can never be stored, and leaving the agent stamp
+        // would misname who answered (the PLAN-0669 participant attribution carries the human).
+        if (responder != null) {
+            submission.run().setAgentPrincipalId(
+                    SessionParticipant.KIND_AGENT.equals(responder.principalKind())
+                            ? responder.principalId() : null);
         }
         return submission;
     }
@@ -905,6 +907,14 @@ public class ChatSubmissionService {
         chatRun.setLeaseExpiresAt(Instant.now().plus(LEASE_TTL));
         chatRun.setProviderConnectionId(providerConnectionId);
         chatRun.setConnectionRevision(connectionRevision);
+        // BL-280: every persisted Run gets its responder stamp here. Before this, only the main
+        // submission tried to stamp it (and lost the write to a detached entity); derived paths
+        // (follow-up / scheduled / spawn) never did, so `chat_runs.agent_principal_id` was NULL for
+        // them and the dispatch read (memory / skill_catalog components) lost the principal. The
+        // Session's bound principal is the agent that executes any derived Run. `create()` overrides
+        // this with the main submission's actual responder (AGENT-only; a HUMAN responder clears it —
+        // the V92 FK only allows agent_principals.id).
+        chatRun.setAgentPrincipalId(parseUuidOrNull(session.getAgentPrincipalId(), "run_principal_stamp"));
         // PLAN-0464 T1.1: ChatRun is the only admission root. Conflicts are owned
         // by the chat_runs unique indexes; a race that slips past the in-memory
         // and locked pre-checks surfaces on this insert and maps to the same 409.
