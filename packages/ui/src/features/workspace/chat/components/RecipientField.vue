@@ -222,15 +222,22 @@ function focusInput(): void {
                 aria-autocomplete="list"
                 :aria-label="label"
                 :placeholder="placeholder"
-                class="w-full min-w-0 rounded-sm bg-transparent py-0.5 text-[11px] outline-none placeholder:text-muted-foreground focus-visible:ring-1 focus-visible:ring-ring"
+                class="w-full min-w-0 rounded-sm bg-transparent py-0.5 text-[11px] outline-none placeholder:text-muted-foreground focus-visible:ring-1 focus-visible:ring-ring/60 focus-visible:ring-offset-0"
                 :data-testid="`${testid}-input`"
                 @keydown="onKeydown"
                 @focus="open = query.trim().length > 0"
             />
+            <!--
+                2026-11-04 用户裁定（composer 打磨）：候选列表是 **elevation overlay** —— 绝对定位
+                盖在输入区上方（z-30 + 独立 popover 背景 + 阴影），不占文档流，因此不会把下方
+                「抄送」行挤走；`relative` 定位锚在字段容器上。
+                候选行美化（DEV-011 §10）：紧凑行高；hover 只加浅底；键盘高亮 = 左侧 2px 指示条 +
+                浅底（与 hover 可区分）；role 收成右侧小 chip。
+            -->
             <div
                 v-if="open && filtered.length > 0"
                 :id="listId"
-                class="absolute left-0 top-full z-20 mt-1 max-h-56 w-64 overflow-y-auto rounded-lg border bg-popover shadow-lg"
+                class="absolute left-0 top-full z-30 mt-1 max-h-56 w-72 overflow-y-auto rounded-lg border bg-popover py-1 shadow-lg"
                 role="listbox"
                 :aria-label="label"
                 :data-testid="`${testid}-menu`"
@@ -242,18 +249,32 @@ function focusInput(): void {
                     type="button"
                     role="option"
                     :aria-selected="index === activeIndex"
-                    class="flex w-full items-center gap-2 px-3 py-2 text-left text-sm transition-colors hover:bg-accent"
-                    :class="index === activeIndex && 'bg-accent'"
+                    class="relative flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-xs transition-colors before:absolute before:inset-y-1 before:left-0 before:w-0.5 before:rounded-full before:bg-ring before:content-[''] hover:bg-accent/60"
+                    :class="
+                        index === activeIndex ? 'bg-accent before:opacity-100' : 'before:opacity-0'
+                    "
                     :data-testid="`${testid}-option`"
                     :data-participant-id="candidate.participantId"
                     @mousedown.prevent
                     @click="commit(candidate.participantId)"
                 >
-                    <span class="truncate font-medium">{{ candidate.displayName }}</span>
-                    <span class="ml-auto shrink-0 text-xs text-muted-foreground">{{
-                        candidate.role
+                    <span class="truncate text-[13px] font-medium">{{
+                        candidate.displayName
                     }}</span>
+                    <span
+                        class="ml-auto shrink-0 rounded-full border px-1.5 py-px font-mono text-[10px] uppercase tracking-wide text-muted-foreground"
+                        >{{ candidate.role }}</span
+                    >
                 </button>
+            </div>
+            <!-- 空态：打字后没有匹配候选时也要有反馈（不是"什么都没发生"）。 -->
+            <div
+                v-else-if="open"
+                class="absolute left-0 top-full z-30 mt-1 w-72 rounded-lg border bg-popover px-2.5 py-2 text-[11px] text-muted-foreground shadow-lg"
+                role="status"
+                :data-testid="`${testid}-empty`"
+            >
+                {{ t("chat.input.recipientEmpty") }}
             </div>
         </div>
         <span
