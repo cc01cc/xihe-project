@@ -96,7 +96,8 @@ class GrantDenyStopsBeforeDispatchTest {
                 toolTimeoutService,
                 mock(com.cc01cc.p.xihe.cp.credentials.CredentialLeaseService.class),
                 mock(com.cc01cc.p.xihe.cp.skill.SkillReadService.class),
-                new com.cc01cc.p.xihe.cp.status.BuildVersion());
+                new com.cc01cc.p.xihe.cp.status.BuildVersion(),
+                mock(com.cc01cc.p.xihe.cp.chat.DelegationBudgetService.class));
 
         runtimeStub = com.sun.net.httpserver.HttpServer.create(
                 new java.net.InetSocketAddress("127.0.0.1", 0), 0);

@@ -1,5 +1,7 @@
 package com.cc01cc.p.xihe.cp.service;
 
+import com.cc01cc.p.xihe.cp.entity.Workspace;
+
 import com.cc01cc.p.xihe.cp.entity.ChatRun;
 import com.cc01cc.p.xihe.cp.entity.RunCheckpoint;
 import com.cc01cc.p.xihe.cp.entity.Session;
@@ -117,6 +119,9 @@ public class RunCheckpointService {
     private final ChatRunRepository chatRuns;
     private final SessionRepository sessions;
     private final WorkspaceRootRepository workspaceRoots;
+    /** PLAN-0641 T7.2 fix: legacy-gate root paths resolve against the workspace hostPath. */
+    @org.springframework.beans.factory.annotation.Autowired
+    private com.cc01cc.p.xihe.cp.repository.WorkspaceRepository workspaceRepository;
     private final ObjectMapper objectMapper;
     private final SseEmitterManager sseManager;
     private final AtomicLong captureSequence = new AtomicLong();
@@ -522,15 +527,40 @@ public class RunCheckpointService {
             return List.of();
         }
         String sliceRootId = isBlank(row.getRootId()) ? workspaceId : row.getRootId();
-        List<LegacySliceBoundary.RootRef> roots = workspaceRoots
+        Workspace workspace = workspaceRepository
+                .findByIdAndDeletedAtIsNull(UUID.fromString(workspaceId))
+                .orElse(null);
+        String primaryPath = workspace == null ? null : workspace.getHostPath();
+        // legacy hostPath 形态没有持久化的主根行：先合成主根（rootId = workspaceId），否则
+        // 分界函数拿不到切片根路径；声明根的 workspace 相对路径按主根解析为绝对路径。
+        java.util.List<LegacySliceBoundary.RootRef> roots = new java.util.ArrayList<>();
+        roots.add(new LegacySliceBoundary.RootRef(workspaceId, primaryPath,
+                workspace == null ? null : workspace.getCreatedAt()));
+        roots.addAll(workspaceRoots
                 .findByWorkspaceIdAndDeletedAtIsNullOrderByPositionAsc(UUID.fromString(workspaceId))
                 .stream()
+                .filter(root -> root.getId() != null && !root.getId().toString().equals(workspaceId))
                 .map(root -> new LegacySliceBoundary.RootRef(
                         root.getId() == null ? null : root.getId().toString(),
-                        root.getHostPath(),
+                        absoluteRootPath(primaryPath, root.getHostPath()),
                         root.getCreatedAt()))
-                .toList();
+                .toList());
         return LegacySliceBoundary.legacyChildRoots(roots, sliceRootId, row.getCapturedAt());
+    }
+
+    /** 相对声明根路径按主根 hostPath 解析为绝对路径（与执行 spec 的 roots 同源）。 */
+    private static String absoluteRootPath(String primaryPath, String rootPath) {
+        if (rootPath == null || rootPath.isBlank()) {
+            return null;
+        }
+        java.nio.file.Path candidate = java.nio.file.Path.of(rootPath);
+        if (candidate.isAbsolute()) {
+            return candidate.normalize().toString();
+        }
+        if (primaryPath == null || primaryPath.isBlank()) {
+            return null;
+        }
+        return java.nio.file.Path.of(primaryPath).resolve(candidate).normalize().toString();
     }
 
     /**

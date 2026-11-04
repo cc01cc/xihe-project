@@ -190,6 +190,12 @@ public class McpProxyController {
     private final SessionService sessionService;
     private final JobStateService jobStateService;
     private final AgentSpawnExecutionService agentSpawnExecutionService;
+    /**
+     * PLAN-0663: pre-approval delegation budget precheck. Used only where an approval request is
+     * about to be created (see the ASK branch); the authoritative locked check stays in
+     * {@code ChatSubmissionService.createSpawnFromParent}.
+     */
+    private final com.cc01cc.p.xihe.cp.chat.DelegationBudgetService delegationBudgetService;
     private final McpInvocationService mcpInvocationService;
     private final LineageInvocationService lineageInvocationService;
     private final CredentialLeaseService credentialLeaseService;
@@ -216,7 +222,8 @@ public class McpProxyController {
             McpToolTimeoutService toolTimeoutService,
             CredentialLeaseService credentialLeaseService,
             com.cc01cc.p.xihe.cp.skill.SkillReadService skillReadService,
-            BuildVersion buildVersion) {
+            BuildVersion buildVersion,
+            com.cc01cc.p.xihe.cp.chat.DelegationBudgetService delegationBudgetService) {
         this.httpClient = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(10))
                 .build();
@@ -240,6 +247,7 @@ public class McpProxyController {
         this.credentialLeaseService = credentialLeaseService;
         this.skillReadService = skillReadService;
         this.buildVersion = buildVersion;
+        this.delegationBudgetService = delegationBudgetService;
     }
 
     @PreAuthorize("isAuthenticated()")
@@ -967,6 +975,28 @@ public class McpProxyController {
                 // PLAN-290 B2: user file-panel mutations are UI-confirmed, not Agent-gated.
                 audit.record(sessionId, toolName, "user_direct_allow", "no agent grant required");
             } else {
+                if (cpOwnedSpawn) {
+                    // PLAN-0663 M1: the delegation budget is a "can this happen" fact, an approval is
+                    // a "may this happen" decision. Check the budget BEFORE parking an approval
+                    // request so a human is never asked to approve a spawn the current snapshot
+                    // already forbids — and so the UI never opens a second modal for a spawn that
+                    // cannot run (the BL-240 step4 residue). Read-only: the authoritative locked
+                    // check still runs inside createSpawnFromParent (TOCTOU).
+                    try {
+                        delegationBudgetService.precheckBeforeApproval(
+                                spawnInvocation.parentSessionId(), spawnInvocation.parentRunId(),
+                                spawnInvocation.toolCallId());
+                    } catch (com.cc01cc.p.xihe.cp.chat.DelegationRefusedException refused) {
+                        // The refusal happens before any approval/dispatch transaction, so this is its
+                        // durable home (INV-7). Detail carries phase=precheck; no prompt/arguments.
+                        audit.recordDurableChange(access.userId(), wsId, "agent_spawn_refused",
+                                "chat_session", sessionId, refused.auditDetail());
+                        audit.record(sessionId, toolName, "tool_error", refused.getCode());
+                        // PLAN-0649 envelope: a CP decision must reach the model as a coded tool
+                        // result, otherwise the refusal is opaque and the card carries no refusalCode.
+                        return cpToolErrorResponse(body, refused.getCode());
+                    }
+                }
                 sse.send(sessionId, "tool_exec_approval_required",
                     Map.of("tool", toolName, "reason", verdict.reason()));
                 audit.record(sessionId, toolName, "approval_required", verdict.reason());

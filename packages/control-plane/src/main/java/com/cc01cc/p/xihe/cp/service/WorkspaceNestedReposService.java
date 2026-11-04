@@ -43,12 +43,37 @@ public class WorkspaceNestedReposService {
                 .map(entry -> new WorkspaceNestedReposView(workspaceId, entry.cachedAt(), entry.items()))
                 .orElseGet(() -> {
                     List<RuntimeCheckpointClient.NestedRepoItem> items = runtime.nestedReposProbe(workspaceId)
-                            .orElseThrow(() -> new CpApiException(HttpStatus.SERVICE_UNAVAILABLE,
-                                    CODE_RUNTIME_UNAVAILABLE,
-                                    "nested-repos probe is unavailable (Runtime unreachable)"));
+                            .orElse(null);
+                    if (items == null) {
+                        // PLAN-0641 T7.5 (BL-260) 懒重试：direct_attach 工作区若注册缺失（Runtime
+                        // 不认识该 id），补推一次注册后**只重试一次**；managed 形态不触发。
+                        items = reRegisterAndRetryOnce(workspaceId);
+                    }
+                    if (items == null) {
+                        throw new CpApiException(HttpStatus.SERVICE_UNAVAILABLE,
+                                CODE_RUNTIME_UNAVAILABLE,
+                                "nested-repos probe is unavailable (Runtime unreachable)");
+                    }
                     cache.put(workspaceId, items);
                     return new WorkspaceNestedReposView(workspaceId, Instant.now(), items);
                 });
+    }
+
+    /** PLAN-0641 T7.5：有界懒重试（一次注册 + 一次探针）；null = 仍失败或不应重试。 */
+    private List<RuntimeCheckpointClient.NestedRepoItem> reRegisterAndRetryOnce(String workspaceId) {
+        boolean reRegistered;
+        try {
+            reRegistered = workspaces.registerWorkspaceWithRuntimeBestEffort(workspaceId);
+        } catch (Exception e) {
+            logger.warn("nestedRepos: lazy re-registration failed ws={} error={}",
+                    workspaceId, e.getMessage());
+            return null;
+        }
+        if (!reRegistered) {
+            return null; // managed workspace / no hostPath / registration rejected
+        }
+        logger.info("nestedRepos: re-registered ws={} then retried (source=lazy)", workspaceId);
+        return runtime.nestedReposProbe(workspaceId).orElse(null);
     }
 
     /** F1 warm path (contract §3): classify-only after a primary-root capture. */

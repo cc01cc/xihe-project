@@ -5,6 +5,7 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
+        "fingerprintEnabled": { "type": "boolean", "description": "PLAN-0666: per-workspace context-fingerprint switch (default true). When false, dispatched runs store an explicit {enabled:false,status:disabled} document instead of hashing the context." },
         "softThresholdPct": { "type": "number", "minimum": 0.1, "maximum": 1.0 },
         "hardThresholdPct": { "type": "number", "minimum": 0.1, "maximum": 1.0 },
         "keepRecentMessages": { "type": "integer", "minimum": 0, "maximum": 200 },

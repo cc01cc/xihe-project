@@ -5,9 +5,7 @@ import com.cc01cc.p.xihe.cp.config.DbLockTimeout;
 import com.cc01cc.p.xihe.cp.context.service.EventStoreService;
 import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.entity.SessionParticipant;
-import com.cc01cc.p.xihe.cp.entity.SessionParticipantCursor;
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
-import com.cc01cc.p.xihe.cp.repository.SessionParticipantCursorRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionParticipantRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -48,7 +46,6 @@ class WakeDispatchServiceTest {
     private SessionWakeupService wakeupService;
     private JudgeDecisionService judgeService;
     private EventStoreService eventStore;
-    private SessionParticipantCursorRepository cursors;
     private ChatRunRepository chatRuns;
     private DbLockTimeout dbLockTimeout;
     private WakeDispatchService service;
@@ -64,11 +61,10 @@ class WakeDispatchServiceTest {
         wakeupService = mock(SessionWakeupService.class);
         judgeService = mock(JudgeDecisionService.class);
         eventStore = mock(EventStoreService.class);
-        cursors = mock(SessionParticipantCursorRepository.class);
         chatRuns = mock(ChatRunRepository.class);
         dbLockTimeout = mock(DbLockTimeout.class);
         service = new WakeDispatchService(participants, sessions, participantService, wakeupService,
-                judgeService, eventStore, cursors, new ObjectMapper(), chatRuns, dbLockTimeout);
+                judgeService, eventStore, new ObjectMapper(), chatRuns, dbLockTimeout);
 
         session = mock(Session.class);
         when(session.getUserId()).thenReturn("owner-1");
@@ -92,6 +88,24 @@ class WakeDispatchServiceTest {
         assertEquals("refused", result.outcome());
         verify(wakeupService, never()).wakeupAs(anyString(), anyString(), anyString(), anyString(),
                 anyString(), any(), anyString(), any());
+        assertAuditOutcome("refused");
+    }
+
+    @Test
+    void agentRefusalIsAResultNotAnException() {
+        // PLAN-0660 T3.2: the refusal must come back as a value — no exception may leave fire(), and
+        // the durable refused row must be written in the same (still committable) transaction.
+        // Deliberately no assertThrows here: the signature of this test IS the criterion.
+        when(participantService.judgeSpeakAs(anyString(), anyString(), anyString(), anyString()))
+                .thenReturn(SessionParticipantService.SpeakDecision.refused("PARTICIPANT_CAP_DENIED"));
+
+        WakeDispatchService.WakeFireResult result = service.fire(PARTICIPANT_ID, "mention", ROUND, SESSION_ID, null);
+
+        assertEquals("refused", result.outcome());
+        assertFalse(result.dispatched());
+        verify(wakeupService, never()).wakeupAs(anyString(), anyString(), anyString(), anyString(),
+                anyString(), any(), anyString(), any());
+        verifyNoInteractions(chatRuns);
         assertAuditOutcome("refused");
     }
 
@@ -123,14 +137,14 @@ class WakeDispatchServiceTest {
                 "MEMBER", 30, "MENTION", "ALWAYS");
         human.setId(PARTICIPANT_ID);
         when(participants.findById(PARTICIPANT_ID)).thenReturn(Optional.of(human));
-        SessionParticipantCursor cursor = new SessionParticipantCursor(PARTICIPANT_ID, 5L, 2);
-        when(cursors.findById(PARTICIPANT_ID)).thenReturn(Optional.of(cursor));
 
         WakeDispatchService.WakeFireResult result = service.fire(PARTICIPANT_ID, "mention", ROUND, SESSION_ID, null);
 
         assertEquals("notify", result.outcome());
         assertFalse(result.dispatched(), "人=通知：a HUMAN recipient never gets a run");
-        assertEquals(3, cursor.getMentionCount(), "the cursor advances server-side (R7)");
+        // PLAN-0660 T5.3: the notify no longer advances a stored counter — unread is derived from the
+        // durable wake_dispatch row (`spec/session/user-channel.md` §3), so there is no cursor write
+        // to assert here; the audit outcome below is the observable effect.
         verify(participantService, never()).judgeSpeakAs(anyString(), anyString(), anyString(),
                 anyString());
         verify(participantService, never()).authorizeAsParticipant(anyString(), anyString(), anyString(),
@@ -150,13 +164,10 @@ class WakeDispatchServiceTest {
                 "MEMBER", 30, "MENTION", "ALWAYS");
         foreign.setId(PARTICIPANT_ID);
         when(participants.findById(PARTICIPANT_ID)).thenReturn(Optional.of(foreign));
-        SessionParticipantCursor cursor = new SessionParticipantCursor(PARTICIPANT_ID, 5L, 0);
-        when(cursors.findById(PARTICIPANT_ID)).thenReturn(Optional.of(cursor));
 
         WakeDispatchService.WakeFireResult result = service.fire(PARTICIPANT_ID, "mention", ROUND, SESSION_ID, null);
 
         assertEquals("refused", result.outcome(), "a participant of another session is not a delivery target");
-        assertEquals(0, cursor.getMentionCount(), "a foreign participant must not advance this cursor");
         verify(wakeupService, never()).wakeupAs(anyString(), anyString(), anyString(), anyString(),
                 anyString(), any(), anyString(), any());
         verifyNoInteractions(chatRuns);

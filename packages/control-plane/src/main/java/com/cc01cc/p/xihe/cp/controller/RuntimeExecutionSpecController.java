@@ -41,6 +41,10 @@ public class RuntimeExecutionSpecController {
             Map<String, Object> sandboxSpec = objectMapper.readValue(
                     spec.getSandboxSpec(), new TypeReference<>() { });
             var workspace = workspaceService.requireActiveWorkspace(workspaceId);
+            // PLAN-0641 T7.5：roots 是 Runtime declared-root 的唯一真相（绝对 hostPath）。
+            java.util.List<java.util.Map<String, Object>> roots = spec.getRoots() == null
+                    ? java.util.List.of()
+                    : objectMapper.readValue(spec.getRoots(), new TypeReference<>() { });
             return new WorkspaceExecutionSpecResponse(
                     spec.getWorkspaceId(),
                     spec.getGeneration(),
@@ -50,7 +54,8 @@ public class RuntimeExecutionSpecController {
                     spec.getStorageRef(),
                     workspace.getStorageMode(),
                     workspace.getHostPath(),
-                    workspace.getExecutionMode());
+                    workspace.getExecutionMode(),
+                    roots);
         } catch (JsonProcessingException e) {
             logger.error("Invalid persisted sandbox spec workspaceId={} generation={}",
                     spec.getWorkspaceId(), spec.getGeneration(), e);
@@ -71,6 +76,7 @@ public class RuntimeExecutionSpecController {
             String storageRef,
             String storageMode,
             String hostPath,
-            String executionMode) {
+            String executionMode,
+            java.util.List<java.util.Map<String, Object>> roots) {
     }
 }

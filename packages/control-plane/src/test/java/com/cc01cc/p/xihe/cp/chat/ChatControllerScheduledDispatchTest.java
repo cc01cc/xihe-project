@@ -93,7 +93,8 @@ class ChatControllerScheduledDispatchTest {
                 Mockito.mock(com.cc01cc.p.xihe.cp.service.ContextTemplateSourceService.class),
                 Mockito.mock(ApplicationEventPublisher.class),
                 new com.cc01cc.p.xihe.cp.policy.ResourceGovernor(),
-                Mockito.mock(com.cc01cc.p.xihe.cp.context.service.MentionPathResolver.class));
+                Mockito.mock(com.cc01cc.p.xihe.cp.context.service.MentionPathResolver.class),
+                Mockito.mock(ContextFingerprintRecorder.class));
     }
 
     private static ChatRunReadService.DispatchRun scheduledRun(String origin, String status) {

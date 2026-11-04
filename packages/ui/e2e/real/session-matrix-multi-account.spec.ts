@@ -311,7 +311,7 @@ test.describe("@host PLAN-0658 R1 多人类账户", () => {
     // `wake_handoff_dropped reason=UnexpectedRollbackException`（round
     // `wake:mention:d87ba33c…`：recipients=1 started=0 deferred=0 dropped=1），整轮 fan-out
     // 直接中断。BL-214（`mention_count` 恒 0）是这条链的**症状**，不是独立缺陷。
-    test.fixme("R1-b @ 对方：B 的提及游标累计（BL-238：wake 授权用 owner 身份 ⇒ 人类参与者恒 refused）", async ({
+    test("R1-b @ 对方：B 的提及游标累计（BL-238：wake 授权用 owner 身份 ⇒ 人类参与者恒 refused）", async ({
         request,
     }) => {
         const before = await memberMentionCount(request);

@@ -25,6 +25,14 @@ import {
   roundRunId,
   selectTablesToTruncate,
 } from './lib/e2e-rounds.mjs'
+import {
+  RETRY_HELP_LINES,
+  decideLlmMode,
+  decideRetrySemantics,
+  formatCheckCliSummary,
+  resolveOnlyPatterns,
+  warnBatchPlusSpecs,
+} from './lib/e2e-host-cli.mjs'
 
 const projectDir = dirname(import.meta.dirname)
 const uiDir = join(projectDir, 'packages', 'ui')
@@ -82,6 +90,34 @@ const includeDockerFrozen = process.argv.includes('--include-docker-frozen')
 process.env.XIHE_E2E_INCLUDE_DOCKER_FROZEN = includeDockerFrozen ? '1' : '0'
 const reportNameArg = process.argv.find((arg) => arg.startsWith('--report-name='))
 const reportName = reportNameArg?.slice('--report-name='.length) ?? ''
+// PLAN-0664 (BL-267) runner flags. Kept out of the Playwright passthrough exactly like the rest of
+// the runner-owned surface (see runPlaywright): a leaked `--only`/`--check-cli` would be rejected
+// by the Playwright CLI with a misleading "unknown option" error.
+const checkCli = process.argv.includes('--check-cli')
+const allowLlmModeOverride = process.argv.includes('--allow-llm-mode-override')
+const onlyPatterns = process.argv
+  .filter((arg) => arg.startsWith('--only='))
+  .map((arg) => arg.slice('--only='.length))
+const RUNNER_ONLY_ARGS = new Set(['--keep', '--skip-runtime', '--persistent', '--teardown', '--skip-preflight',
+  '--validate-at-end', '--list-batches', '--help', '-h', '--check-cli', '--allow-llm-mode-override'])
+const RUNNER_ONLY_PREFIXES = ['--llm-mode=', '--batch=', '--report-name=', '--jar-mode=', '--auth-lane=',
+  '--first-run=', '--bootstrap-user=', '--registration-policy=', '--only=']
+/** Everything the runner passes through to Playwright (spec files, --grep, --retries, --reporter, …). */
+const playwrightPassthroughArgs = process.argv.slice(2).filter(
+  (arg) => !RUNNER_ONLY_ARGS.has(arg) && !RUNNER_ONLY_PREFIXES.some((prefix) => arg.startsWith(prefix)),
+)
+/** Positional args are spec paths Playwright will run **in addition to** any expanded batch. */
+const positionalSpecs = playwrightPassthroughArgs.filter((arg) => !arg.startsWith('-'))
+/** Playwright's per-test retries (`--retries=<n>` or `--retries <n>`), if the caller set them. */
+const retriesArgValue = (() => {
+  const argv = process.argv.slice(2)
+  for (let index = 0; index < argv.length; index += 1) {
+    const arg = argv[index]
+    if (arg.startsWith('--retries=')) return arg.slice('--retries='.length)
+    if (arg === '--retries') return argv[index + 1]
+  }
+  return undefined
+})()
 if (!['auto', 'use', 'rebuild', 'run', 'native'].includes(jarMode)) {
   console.error(`[e2e-host] invalid --jar-mode=${jarMode}; expected auto | use | rebuild | run | native`)
   process.exit(2)
@@ -224,7 +260,17 @@ const requestedLlmMode = process.env.XIHE_E2E_LLM_MODE
   ?? llmModeArg?.slice('--llm-mode='.length)
   ?? batch?.llmMode
   ?? (firstRun === 'local' && bootstrapUser === 'none' ? 'missing' : undefined)
-const batchSpecs = batch?.specs ?? []
+let batchSpecs = batch?.specs ?? []
+// PLAN-0664 (BL-267): `--only` narrows an expanded batch. Refuse before any side effect; `--help` /
+// `--list-batches` / `--teardown` stay reachable because they never boot a run.
+if (onlyPatterns.length > 0 && !showHelp && !listBatches && !isTeardown) {
+  const onlyResolution = resolveOnlyPatterns({ batchName, batchSpecs, onlyPatterns })
+  if (onlyResolution.action === 'refuse') {
+    console.error(`[e2e-host] REFUSE ${onlyResolution.message}`)
+    process.exit(2)
+  }
+  batchSpecs = onlyResolution.specs
+}
 const checkpointSaverProbeRequested = process.argv.some((arg) => {
   const normalized = arg.replaceAll('\\', '/')
   return normalized === 'checkpoint-saver-probe.spec.ts'
@@ -485,6 +531,12 @@ runner flags:
   --include-docker-frozen  collect the docker-frozen specs/cases too (default: skipped as "DOCKER_FROZEN")
 --llm-mode=<mode>     spec gate mode (mock default; also real / write_file / approval / spawn_agent / history-marker / job / job-cancel / exec_command / overflow / reasoning / success)
   --batch=<name>        expand a batch from scripts/e2e-batches.jsonc; the batch llm-mode applies unless --llm-mode is explicit
+                        (positional spec paths are ADDED to the batch, not a narrowing — use --only; a differing
+                        --llm-mode/XIHE_E2E_LLM_MODE is refused unless --allow-llm-mode-override)
+  --only=<path|base|fragment>  narrow an expanded --batch to one target: exact path or basename first, then a substring
+                        that must match exactly one spec (ambiguous ⇒ exit 2 with candidates; needs --batch)
+  --check-cli           validate runner args and print the planned batch/specs/warnings, then exit (boots nothing)
+  --allow-llm-mode-override  let --llm-mode/XIHE_E2E_LLM_MODE differ from the batch llmMode (default: refuse to start)
   --auth-lane=<lane>    CP auth env lane (PLAN-0566 D6): exempt (default, register dimension off) | ratelimit (lowered thresholds + loopback trusted proxies for auth-lockout / auth-rate-limit)
   --first-run=local     PLAN-0611 gold path: empty DB + XIHE_LOCAL_MODE=true + SERVER_ADDRESS=127.0.0.1, no seeded admin (default: off)
   --bootstrap-user=<u>  register | none (default none); register creates the first localMode account and configures the fake LLM profile with it
@@ -500,8 +552,8 @@ runner flags:
   --keep                keep isolated resources for debugging
   --help, -h            this text
 
-retry rounds (PLAN-0650 M5; a failed round resets state and replays without rebooting the stack):
-  XIHE_E2E_RETRY_ROUNDS=<n>          rounds incl. the first (default 2 = one in-process retry; max 5)
+retry semantics (PLAN-0650 M5 + PLAN-0664; these are TWO different knobs and they stack):
+${RETRY_HELP_LINES.join('\n')}
   XIHE_E2E_REBUILD_ON_RETRY=1        legacy shape: one attempt per process (a re-run rebuilds the stack)
   XIHE_E2E_ROUND_RESET=<strategy>    truncate (default) | template | dump-restore — see lib/e2e-rounds.mjs
 
@@ -1740,13 +1792,10 @@ function resolveRuntimeBinary() {
 }
 
 async function runPlaywright() {
-  // PLAN-0375: runner-owned flags must never reach the Playwright CLI.
-  const runnerOnlyArgs = new Set(['--keep', '--skip-runtime', '--persistent', '--teardown', '--skip-preflight', '--validate-at-end', '--list-batches', '--help', '-h'])
-  const runnerOnlyPrefixes = ['--llm-mode=', '--batch=', '--report-name=', '--jar-mode=', '--auth-lane=',
-    '--first-run=', '--bootstrap-user=', '--registration-policy=']
-  const testArgs = process.argv.slice(2).filter(
-    (arg) => !runnerOnlyArgs.has(arg) && !runnerOnlyPrefixes.some((prefix) => arg.startsWith(prefix)),
-  )
+  // PLAN-0375: runner-owned flags must never reach the Playwright CLI. The lists live at module
+  // scope (`RUNNER_ONLY_ARGS`/`RUNNER_ONLY_PREFIXES`) so the PLAN-0664 CLI preflight and this
+  // passthrough compute "positional specs" from exactly the same rule set.
+  const testArgs = playwrightPassthroughArgs
   let playwrightTestArgs = [...batchSpecs, ...testArgs]
   if (playwrightTestArgs.length === 0) playwrightTestArgs = ['e2e/real']
   // PLAN-0375 (R7): --report-name pins the JSON report under .local/dev
@@ -2233,6 +2282,68 @@ async function runPreflightGate({ allowPorts = [], ownRunId = '', extraSelfPids 
   return true
 }
 
+/**
+ * PLAN-0664 (BL-267): the three CLI traps are decided here — after `--help`/`--list-batches`/
+ * `--teardown` are handled, and **before** any build, port, container or process work. Nothing in
+ * this function derives ports, creates directories or starts child processes, so `--check-cli`
+ * (print the plan and exit) can never boot part of a stack.
+ *
+ * Returns false when the caller must stop (refusal, strict-mode escalation or `--check-cli`);
+ * the exit code has already been set on `process.exitCode`.
+ */
+function runCliPreflight() {
+  const strictCli = process.env.XIHE_E2E_CLI_STRICT === '1'
+  const stop = (exitCode = 2) => {
+    process.exitCode = exitCode
+    return false
+  }
+
+  const llmDecision = decideLlmMode({
+    batchName,
+    batchLlmMode: batch?.llmMode,
+    argMode: llmModeArg?.slice('--llm-mode='.length),
+    envMode: process.env.XIHE_E2E_LLM_MODE,
+    allowOverride: allowLlmModeOverride,
+  })
+  if (llmDecision.action === 'refuse') {
+    console.error(`[e2e-host] REFUSE ${llmDecision.message}`)
+    return stop()
+  }
+
+  const issues = []
+  if (llmDecision.action === 'warn') issues.push(llmDecision.message)
+  const batchWarning = warnBatchPlusSpecs({ batchName, batchSpecs, positionalSpecs })
+  if (batchWarning.action === 'warn') issues.push(batchWarning.message)
+  const retryWarning = decideRetrySemantics({
+    retriesArg: retriesArgValue,
+    retryRoundsEnv: process.env.XIHE_E2E_RETRY_ROUNDS,
+  })
+  if (retryWarning.action === 'warn') issues.push(retryWarning.message)
+
+  for (const message of issues) {
+    if (strictCli) {
+      console.error(`[e2e-host] REFUSE (XIHE_E2E_CLI_STRICT=1) ${message}`)
+      return stop()
+    }
+    console.warn(`[e2e-host] WARN ${message}`)
+  }
+
+  if (checkCli) {
+    console.log(`[e2e-host] check-cli (no process, port or directory is created by this mode)`)
+    console.log(`[e2e-host] check-cli: ${formatCheckCliSummary({
+      batchName,
+      llmMode,
+      specs: batchSpecs,
+      positionalSpecs,
+    })}`)
+    if (issues.length > 0) {
+      console.log(`[e2e-host] check-cli: ${issues.length} warning(s) above; exit 0 (warnings are non-blocking unless XIHE_E2E_CLI_STRICT=1)`)
+    }
+    return stop(0)
+  }
+  return true
+}
+
 async function main() {
   if (checkpointSaverProbeRequested && (externalServer || isPersistent)) {
     throw new Error('checkpoint saver probe requires an owned, non-persistent exact-spec host run')
@@ -2254,6 +2365,9 @@ async function main() {
     await teardownPersistent()
     return
   }
+  // PLAN-0664 (BL-267): CLI traps are decided before any artifact/port/container work, and
+  // `--check-cli` stops here (nothing below this line has run yet).
+  if (!runCliPreflight()) return
   if (jarMode === 'native' && skipRuntime) {
     throw new Error('--jar-mode=native requires Runtime; remove --skip-runtime to test the native compatibility lane')
   }

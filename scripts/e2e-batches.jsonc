@@ -7,6 +7,8 @@
   // live in the specs themselves: a run executes the cases whose gate matches
   // the selected mode and skips the rest (that is expected, not a failure).
   //
+  // PLAN-0664/BL-267: narrow a batch with --only=<full path|basename|unique substring>; a differing --llm-mode(or env) is refused.
+  //
   // Spec paths are relative to packages/ui (Playwright cwd).
   "batches": {
     "smoke": {

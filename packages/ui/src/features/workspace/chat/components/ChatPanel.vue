@@ -89,6 +89,16 @@ const providerBindingGuide = ref<{
 
 async function guardProviderBinding(id: string): Promise<boolean> {
     const session = sessionStore.sessions.find((item) => item.id === id);
+    // BL-270 (P1): `hasBinding` reads the session row (C1), so a list projection that omits
+    // `providerConnectionId` looks unbound even when the session is bound — the send then re-runs
+    // bind-defaults and toasts on every message. Warn here (no extra request) so the next projection
+    // gap shows up in the console instead of hiding behind a "successful" bind.
+    if (!session?.providerConnectionId) {
+        logger.warn(
+            "session list projection has no providerConnectionId; falling back to bind-defaults",
+            { sessionId: id },
+        );
+    }
     return ensureProviderBinding({
         hasBinding: Boolean(session?.providerConnectionId),
         bindDefaults: () => api.bindSessionDefaults(id),
@@ -1050,7 +1060,14 @@ async function decideApproval(submission: ApprovalDecisionEnvelope) {
             err instanceof ApiError
                 ? `${err.problem.code}: ${err.problem.detail ?? err.message}`
                 : "Approval decision failed";
-        approvalError.value = message;
+        if (err instanceof ApiError && err.problem.code === "APPROVAL_EXPIRED") {
+            // PLAN-0663 M2/T2.1: the store already retired the expired request (terminal state), so
+            // the modal is gone — explain it with a NON-modal notice instead of leaving a dead
+            // approval on screen. Reused `vue-sonner`; no second feedback surface is introduced.
+            toast.error(t("chat.approvalExpiredNotice"));
+        } else {
+            approvalError.value = message;
+        }
         logger.error("Failed to submit chat approval decision", err);
     } finally {
         approvalSubmitting.value = false;
