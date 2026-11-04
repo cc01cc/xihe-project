@@ -506,6 +506,22 @@ public class ChatController {
             }
             ccParticipantIds = parsedCc;
         }
+        // PLAN-0665 M1 (D6/Q3): explicit TO target set. Shape is validated here (fail-closed
+        // 400 INVALID_REQUEST; never silently dropped); roster authz + AGENT-only classification
+        // runs with the other participant gates further down. Empty/absent ⇒ today's single-TO path.
+        List<UUID> toParticipantIds;
+        try {
+            toParticipantIds = ChatToTargets.parse(request.get(ChatToTargets.FIELD));
+        } catch (com.cc01cc.p.xihe.cp.config.CpApiException e) {
+            return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
+        }
+        if (!toParticipantIds.isEmpty()) {
+            // Sub-item 1 (hash + validation) ships ahead of dispatch wiring; refuse the selector
+            // instead of silently answering as the default responder. Removed by the dispatch
+            // sub-item (TargetedWake + runIds[]).
+            return ProblemDetailsHandler.problemResponse(HttpStatus.BAD_REQUEST, "INVALID_REQUEST",
+                    "toParticipantIds dispatch is not enabled yet (PLAN-0665 M1)");
+        }
         String provider = (String) request.get("provider");
         String model = (String) request.get("model");
         String toolMode = (String) request.getOrDefault("toolMode", "none");
@@ -542,6 +558,16 @@ public class ChatController {
         if (asParticipantId != null && !asParticipantId.isBlank()) {
             try {
                 sessionParticipantService.authorizeAsParticipant(userId, workspaceId, sessionId, asParticipantId);
+            } catch (com.cc01cc.p.xihe.cp.config.CpApiException e) {
+                return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
+            }
+        }
+        // PLAN-0665 M1/Q3: every explicit TO target passes the SAME D23-08 gate as `asParticipantId`
+        // (a fan-out selector must never become an authorization bypass). M1 accepts AGENT
+        // participants only; human TO is a later plan (blocked on BL-238).
+        if (!toParticipantIds.isEmpty()) {
+            try {
+                sessionParticipantService.authorizeToTargets(userId, workspaceId, sessionId, toParticipantIds);
             } catch (com.cc01cc.p.xihe.cp.config.CpApiException e) {
                 return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
             }
@@ -635,7 +661,8 @@ public class ChatController {
         }
 
         String requestHash = requestHash(content, provider, model, toolMode, attachmentIds,
-                perCallTimeouts.values(), agentPrincipalId, branchId);
+                perCallTimeouts.values(), agentPrincipalId, branchId,
+                ChatToTargets.canonical(toParticipantIds), asParticipantId);
         try {
             var replay = chatSubmissionService.findSubmissionReplay(
                     userId, sessionId, idempotencyKey, requestHash);
@@ -2058,6 +2085,21 @@ public class ChatController {
                                Map<String, Integer> toolTimeouts, String agentPrincipalId, String branchId) {
         return ChatRequestHash.calculate(objectMapper, content, provider, model,
                 toolMode, attachmentIds, toolTimeouts, agentPrincipalId, branchId);
+    }
+
+    /**
+     * PLAN-0665 D6: identity-bearing overload — the TO target set (canonical, order-insensitive) and
+     * the explicit responder (`asParticipantId`) are part of the request hash. Fixes a pre-existing
+     * bug where the same content sent as two different participants under one Idempotency-Key
+     * replayed the first run (design §2.2 supersede row).
+     */
+    private String requestHash(String content, String provider, String model,
+                               String toolMode, List<String> attachmentIds,
+                               Map<String, Integer> toolTimeouts, String agentPrincipalId, String branchId,
+                               List<String> toParticipantIds, String asParticipantId) {
+        return ChatRequestHash.calculate(objectMapper, content, provider, model,
+                toolMode, attachmentIds, toolTimeouts, agentPrincipalId, branchId,
+                toParticipantIds, asParticipantId);
     }
 
     /**
