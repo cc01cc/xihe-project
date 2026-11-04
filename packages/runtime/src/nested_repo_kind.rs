@@ -51,6 +51,44 @@ pub fn classify(work_tree: &Path, rel_path: &str) -> NestedRepoKind {
     classify_absolute(&absolute)
 }
 
+/// F4（contract-draft）：按需端点的一条发现记录。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NestedRepoItem {
+    /// Workspace 相对 POSIX 路径。
+    pub path: String,
+    /// F4 `type` —— `type` 是 Rust 关键字，结构体字段用 `kind`，wire 名固定为 `type`。
+    #[serde(rename = "type")]
+    pub kind: NestedRepoKind,
+    /// 该路径是否已是本工作区的声明根（读取时用于防「已声明还被二次声明」）。
+    pub declared: bool,
+}
+
+impl NestedRepoItem {
+    pub fn new(path: impl Into<String>, kind: NestedRepoKind, declared: bool) -> Self {
+        Self {
+            path: path.into(),
+            kind,
+            declared,
+        }
+    }
+}
+
+/// 路径下是否带 git 标记（`.git` 目录或文件）——声明根回加时用它区分
+/// 「真嵌套仓」与「被声明的普通目录」（0639 允许声明不含 .git 的目录）。
+pub fn has_git_marker(work_tree: &Path, rel_path: &str) -> bool {
+    let absolute = work_tree.join(rel_path.replace('/', std::path::MAIN_SEPARATOR_STR));
+    absolute.join(".git").exists()
+}
+
+/// 深度升序（父先于子）+ 同深度字典序，发现结果的统一排序。
+pub fn sort_items_depth_ascending(items: &mut [NestedRepoItem]) {
+    items.sort_by(|left, right| {
+        (left.path.matches('/').count(), left.path.as_str())
+            .cmp(&(right.path.matches('/').count(), right.path.as_str()))
+    });
+}
+
 fn classify_absolute(absolute: &Path) -> NestedRepoKind {
     let meta = match std::fs::symlink_metadata(absolute) {
         Ok(meta) => meta,

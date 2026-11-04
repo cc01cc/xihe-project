@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use tempfile::TempDir;
-use xihe_runtime::checkpoint::{CaptureOutcome, ShadowGit};
+use xihe_runtime::checkpoint::{CaptureOutcome, SHADOW_DIR_NAME, ShadowGit};
 
 const WS: &str = "ws1";
 
@@ -216,4 +216,102 @@ async fn nested_repos_wire_field_is_optional_and_absent_when_nothing_found() {
         legacy_json.contains("opaqueNestedRepos"),
         "frozen body keys unchanged: {legacy_json}"
     );
+}
+
+#[tokio::test]
+async fn detect_endpoint_lists_undeclared_and_flags_declared_roots() {
+    let fixture = Fixture::new().await;
+    fixture.make_nested_repo("vendor/lib", "README.md");
+    // A bare repo is invisible to gitlink detection — caught by the one-level
+    // readdir heuristic (design §6.1 / D41-7: never a recursive walk).
+    let bare = fixture.ws().join("mirror.git");
+    std::fs::create_dir_all(bare.join("objects")).expect("bare objects");
+    std::fs::create_dir_all(bare.join("refs")).expect("bare refs");
+    std::fs::write(bare.join("HEAD"), "ref: refs/heads/main\n").expect("bare HEAD");
+
+    // Cold probe before any capture: both candidates, bare typed via readdir.
+    let items = fixture
+        .engine
+        .detect_nested_repos(WS)
+        .await
+        .expect("cold probe");
+    let summary: Vec<String> = items
+        .iter()
+        .map(|item| {
+            format!(
+                "{}={} declared={}",
+                item.path,
+                item.kind.as_wire(),
+                item.declared
+            )
+        })
+        .collect();
+    assert_eq!(
+        summary,
+        vec![
+            "mirror.git=bare declared=false".to_string(),
+            "vendor/lib=nested declared=false".to_string(),
+        ],
+        "depth-ascending discovery with five-kind types: {summary:?}",
+    );
+    // Wire shape: F4 renames the Rust keyword to `type`.
+    let first = serde_json::to_value(&items[0]).expect("serialize item");
+    assert_eq!(first["type"], "bare", "F4 wire name: {first}");
+    assert!(
+        !fixture.temp.path().join(SHADOW_DIR_NAME).exists(),
+        "detection never touches the real shadow store"
+    );
+
+    // Declare the nested root → the re-probe labels it instead of re-offering.
+    fixture.engine.set_declared_roots(
+        WS,
+        vec![
+            (WS.to_string(), fixture.ws().to_string_lossy().into_owned()),
+            (
+                "root-vendor".to_string(),
+                fixture
+                    .ws()
+                    .join("vendor")
+                    .join("lib")
+                    .to_string_lossy()
+                    .into_owned(),
+            ),
+        ],
+    );
+    let after = fixture
+        .engine
+        .detect_nested_repos(WS)
+        .await
+        .expect("probe after declare");
+    let vendor = after
+        .iter()
+        .find(|item| item.path == "vendor/lib")
+        .expect("declared repo still visible");
+    assert_eq!(
+        vendor.kind,
+        xihe_runtime::nested_repo_kind::NestedRepoKind::Nested
+    );
+    assert!(
+        vendor.declared,
+        "declared roots are labelled, not re-offered"
+    );
+    assert!(
+        after
+            .iter()
+            .any(|item| item.path == "mirror.git" && !item.declared),
+        "undeclared bare repo still listed"
+    );
+
+    // Classify-only mode (CP cache warm from a capture's `nestedRepos`).
+    let classified = fixture
+        .engine
+        .classify_nested_repos(WS, &["vendor/lib".to_string(), "mirror.git".to_string()])
+        .expect("classify");
+    let kinds: Vec<&str> = classified.iter().map(|item| item.kind.as_wire()).collect();
+    assert_eq!(
+        kinds,
+        vec!["bare", "nested"],
+        "classify-only sorts too: {kinds:?}"
+    );
+    assert!(classified[1].declared, "classify-only keeps declared flags");
 }
