@@ -2,24 +2,26 @@
  * PLAN-0658 R1 @host — 多人类账户矩阵（**从未真栈验过**的最高价值场景）。
  *
  * 真栈实测结论（2026-11-04，本 spec 首跑 + CP 源码核对）：
- *  - **会话本体读面是 owner-only**：`SessionController.get` 与 `MessageController.listMessages`
- *    都先走 `SessionService.requireCurrent(sessionId, userId, workspaceId)`，而它按
+ *  - **会话本体读面是 owner-only**（BL-237）：`SessionController.get` 与
+ *    `MessageController.listMessages` 都先走
+ *    `SessionService.requireCurrent(sessionId, userId, workspaceId)`，而它按
  *    `id AND user_id AND workspace_id AND archived=false` 过滤（`SessionService:261`）——
  *    受邀人类参与者拿到的就是 `404 SESSION_NOT_FOUND`；
  *  - **参与者名册读面是多人类感知的**：`SessionParticipantService.requireVisibleSession`
- *    允许 owner / 受邀 HUMAN 参与者 / 可管理该工作区者，其余 403 `SESSION_ACCESS_DENIED`。
- *  两个读面的口径不一致 ⇒ "被 @ 到却看不到消息"。这会话矩阵要照出来的东西，所以本 spec
- *  **不放宽断言**：能真跑的（owner 读面、@/cc 的 durable 投递、名册权限门）正常断言，
- *  缺口项以 `test.fixme` 记录期望（CP 放开参与者读面即自动转绿）。
+ *    允许 owner / 受邀 HUMAN 参与者 / 可管理该工作区者，其余 403 `SESSION_ACCESS_DENIED`；
+ *  - **人类参与者永远叫不醒**（BL-238）：wake 用 owner 身份走 `authorizeAsParticipant`，
+ *    必然 `PARTICIPANT_CAP_DENIED` + `UnexpectedRollbackException`（BL-214 是其症状）。
+ *  两条都是 B 类（授权/通知语义变更），本 lane 不动产品；**不放宽断言**：能真跑的（owner
+ *  读面、cc 的 durable 投递、名册权限门）正常断言，缺口项以 `test.fixme` 记录期望。
  *
  * 覆盖：
  *  1. R1-a 双账户互见 —— A（owner）发送后**A 的** messages 读面可见（wire + durable）；
- *  2. R1-a2〔fixme〕B（受邀参与者）应能读同一会话消息（当前产品缺口）；
- *  3. R1-b〔fixme〕@ 对方 → 人类参与者 wake 被 owner 身份授权拒绝，通知永不投递；
+ *  2. R1-a2〔fixme · BL-237〕B（受邀参与者）应能读同一会话消息；
+ *  3. R1-b〔fixme · BL-238〕@ 对方 → 人类参与者 wake 被 owner 身份授权拒绝，通知永不投递；
  *  4. R1-c 抄送对方 → 202 + B 收到旁听通知（cursor 前进；cc 不走 wake 授权，故可达）；
  *  5. R1-d 旁观者（同工作区 VIEWER，非参与者）403 SESSION_ACCESS_DENIED；外部账户
  *     在租户层就被拦（403 WORKSPACE_FORBIDDEN）；
- *  6. R1-e〔fixme〕B 登录后 UI 看到消息气泡（同一读面缺口的下游表现）。
+ *  6. R1-e〔fixme · BL-237 下游〕B 登录后 UI 看到消息气泡。
  *
  * 硬约束（xh-host-e2e-pitfalls）：serial + retries 0；无固定 sleep；断言只认用户可感知结果与
  * 产品权威读面（messages/participants API），不做 in-page 绕过。
@@ -275,12 +277,13 @@ test.describe("@host PLAN-0658 R1 多人类账户", () => {
             .toBe("visible");
     });
 
-    // 产品缺口（2026-11-04 真栈实测 + 源码核对）：`SessionController.get` /
-    // `MessageController.listMessages` 都先 `SessionService.requireCurrent`，按
-    // `session.user_id = 调用者` 过滤 ⇒ 受邀参与者拿到 404 SESSION_NOT_FOUND。
-    // 名册读面（participants）却是多人类感知的（owner/受邀参与者/管理者）。
-    // 本项记录**期望行为**：参与者读面放开后无需改断言即可转绿。
-    test.fixme("R1-a2 受邀参与者应能读会话消息（当前产品缺口：requireCurrent owner-only）", async ({
+    // BL-237（2026-11-04 登记，B 类待裁定）：会话读面 owner-only，名册读面却多人类感知。
+    // `SessionController.get` / `MessageController.listMessages` 都先 `SessionService.requireCurrent`
+    // （`SessionService:261`），按 `session.user_id = 调用者` 过滤 ⇒ 受邀参与者拿到
+    // 404 SESSION_NOT_FOUND；而 `SessionParticipantService.requireVisibleSession` 已允许
+    // owner/受邀 HUMAN/管理者读名册 ⇒「被 @ 到却看不到消息」。
+    // 本项记录**期望行为**：读面加参与者分支后无需改断言即可转绿。
+    test.fixme("R1-a2 受邀参与者应能读会话消息（BL-237：requireCurrent owner-only）", async ({
         request,
     }) => {
         const response = await request.get(messagesPath(rootBranchId), {
@@ -297,7 +300,7 @@ test.describe("@host PLAN-0658 R1 多人类账户", () => {
         ).toBe(true);
     });
 
-    // 产品缺口（2026-11-04 真栈实测 + 源码核对）：@ 人类参与者**永远叫不醒对方**。
+    // BL-238（2026-11-04 登记，B 类待裁定）：@ 人类参与者**永远叫不醒对方**。
     // `WakeFanOutService.runSerial` → `WakeDispatchService.fire()` 用
     // `authorizeAsParticipant(session.getUserId(), …, 参与人 id)` 做唤醒授权，即拿**会话 owner
     // 的身份**判断"能否以该参与者身份发言"；D23-08 对人类参与者的规则是"以别人身份发言 =
@@ -307,7 +310,7 @@ test.describe("@host PLAN-0658 R1 多人类账户", () => {
     // `wake_handoff_dropped reason=UnexpectedRollbackException`（round
     // `wake:mention:d87ba33c…`：recipients=1 started=0 deferred=0 dropped=1），整轮 fan-out
     // 直接中断。BL-214（`mention_count` 恒 0）是这条链的**症状**，不是独立缺陷。
-    test.fixme("R1-b @ 对方：B 的提及游标累计（受阻：wake 授权用 owner 身份 ⇒ 人类参与者恒 refused）", async ({
+    test.fixme("R1-b @ 对方：B 的提及游标累计（BL-238：wake 授权用 owner 身份 ⇒ 人类参与者恒 refused）", async ({
         request,
     }) => {
         const before = await memberMentionCount(request);
@@ -383,9 +386,12 @@ test.describe("@host PLAN-0658 R1 多人类账户", () => {
         expect(await problemCode(outsiderParticipants)).toBe("WORKSPACE_FORBIDDEN");
     });
 
-    // 下游表现同 R1-a2：UI 的消息投影走 `GET /sessions/{id}/messages`，读面被 owner-only
-    // gate 挡住 ⇒ 受邀参与者登录后看不到会话内容（页签/输入框可能仍在）。放开读面即转绿。
-    test.fixme("R1-e B 登录后 UI 可见消息气泡（受阻于同一读面缺口）", async ({ page }) => {
+    // BL-237 下游表现（同 R1-a2）：UI 的消息投影走 `GET /sessions/{id}/messages`，读面被
+    // owner-only gate 挡住 ⇒ 受邀参与者登录后看不到会话内容（页签/输入框可能仍在）。
+    // 读面放开即转绿。
+    test.fixme("R1-e B 登录后 UI 可见消息气泡（BL-237 下游：消息投影被 owner-only gate 挡住）", async ({
+        page,
+    }) => {
         // 第二人类账户的浏览器上下文种子（PLAN-0560：角色只认 sessionStorage，
         // localStorage 只留 legacy 形状）。
         await page.addInitScript(
