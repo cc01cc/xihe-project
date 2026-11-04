@@ -6,6 +6,7 @@ import static com.github.tomakehurst.wiremock.client.WireMock.urlEqualTo;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.cc01cc.p.xihe.cp.entity.WorkspaceRoot;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRootRepository;
@@ -326,5 +327,30 @@ class WorkspaceRootCrudTest extends AbstractWireMockTest {
         assertEquals(workspaceId, roots.get(0).path("id").asText());
         WorkspaceRoot row = workspaceRootRepository.findById(UUID.fromString(workspaceId)).orElseThrow();
         assertEquals(null, row.getDeletedAt(), "no soft-delete marker is written for the primary root");
+    }
+
+    /**
+     * PLAN-0641 B12 (M1 tail): the root projection carries a nullable workspace-relative
+     * {@code path} so two roots sharing a leaf name stay distinguishable. The primary root
+     * and callers without host-path visibility project null.
+     */
+    @Test
+    void rootProjectionCarriesTheWorkspaceRelativePath() throws IOException {
+        String host = tempPath("b12-relative");
+        String workspaceId = createWorkspaceOrFail(host);
+        java.nio.file.Path nested = java.nio.file.Path.of(host, "vendor", "lib");
+        Files.createDirectories(nested);
+
+        ResponseEntity<String> added = restTemplate.exchange(
+                url("/api/v1/workspaces/" + workspaceId + "/roots"), HttpMethod.POST,
+                entityWithAuth(Map.of("path", nested.toAbsolutePath().toString()), token), String.class);
+        assertEquals(HttpStatus.CREATED, added.getStatusCode(), String.valueOf(added.getBody()));
+
+        JsonNode roots = getWorkspace(workspaceId).path("roots");
+        assertEquals(2, roots.size());
+        assertTrue(roots.get(0).path("path").isNull(),
+                "the primary root IS the workspace, so it projects no relative path");
+        assertEquals("vendor/lib", roots.get(1).path("path").asText(),
+                "secondary roots project the POSIX workspace-relative path (B12)");
     }
 }

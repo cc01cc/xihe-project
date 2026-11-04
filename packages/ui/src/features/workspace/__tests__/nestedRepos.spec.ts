@@ -13,7 +13,7 @@ import FileTreePanel from "../components/FileTreePanel.vue";
  */
 
 type NestedRepo = { path: string; type: string; declared: boolean };
-type RootRow = { id: string; alias: string | null; position: number };
+type RootRow = { id: string; alias: string | null; position: number; path?: string | null };
 
 const { wsStub, authStub, apiStub, toastStub } = vi.hoisted(() => ({
     wsStub: {
@@ -204,5 +204,29 @@ describe("nested repos panel", () => {
         const seventeen = mountPanel();
         await flushPromises();
         expect(seventeen.find('[data-testid="roots-cost-hint"]').exists()).toBe(true);
+    });
+
+    it("labels root groups with the workspace-relative path so leaf-name twins differ (B12)", async () => {
+        wsStub.isMultiRoot = true;
+        // A non-empty tree keeps the empty-state branch (which precedes the grouped
+        // branch) out of the way; FileTree itself is stubbed.
+        wsStub.fileTree = [{ name: "a.txt", path: "a.txt" }];
+        wsStub.workspaceRoots = [
+            { id: "workspace-a", alias: null, position: 0, path: null },
+            { id: "root-1", alias: null, position: 1, path: "vendor/lib" },
+            { id: "root-2", alias: "工具", position: 2, path: "tools/lib" },
+        ];
+        const wrapper = mountPanel();
+        await flushPromises();
+
+        const headers = wrapper
+            .findAll('[data-testid="workspace-tree-root-header"]')
+            .map((header) => header.text());
+        expect(headers).toHaveLength(3);
+        // Path beats alias (the two `lib` roots must stay distinguishable — B12).
+        expect(headers[1]).toBe("vendor/lib");
+        expect(headers[2]).toBe("tools/lib");
+        wsStub.isMultiRoot = false;
+        wsStub.fileTree = [];
     });
 });

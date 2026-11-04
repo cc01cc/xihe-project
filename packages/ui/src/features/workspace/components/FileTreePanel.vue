@@ -128,8 +128,12 @@ const rootGroups = computed(() => {
     });
 });
 
-/** 组头 = alias；主根回退到 hostPath 末段；其余回退到序号（wire 投影无 path，D39-5）。 */
+/**
+ * 组头 = workspace 相对路径（B12：两个同末段名的根必须可区分；rootId 才是键）；
+ * 回退 alias；主根回退 hostPath 末段；其余回退序号（wire 投影无 path 时，D39-5）。
+ */
 function rootGroupLabel(root: ApiWorkspaceRoot, isPrimary: boolean): string {
+    if (root.path) return root.path;
     if (root.alias) return root.alias;
     if (isPrimary && ws.primaryRootPath) return pathLastSegment(ws.primaryRootPath);
     return t("workspace.rootGroupFallback", { position: root.position + 1 });
