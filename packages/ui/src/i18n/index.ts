@@ -741,6 +741,8 @@ const messages = {
         },
         chat: {
             send: "发送",
+            // 2026-11-04 DSH 式过程渲染：推理行的统一标签。
+            reasoning: "思考",
             // 2026-11-04 生产力密度裁定：composer 是工具条不是聊天框 —— placeholder 用简写；
             // 此前 zh 缺该 key（走 en fallback）才露出长英文句 "Type a message…"。
             placeholder: "输入消息，Enter 发送 · Shift+Enter 换行",
@@ -3001,6 +3003,7 @@ const messages = {
         },
         chat: {
             send: "Send",
+            reasoning: "Reasoning",
             delegation: {
                 button: "Delegate",
                 badge: "Delegated",

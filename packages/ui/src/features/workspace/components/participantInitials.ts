@@ -17,7 +17,8 @@ export function participantInitials(
 ): string {
     const name = displayName?.trim() ?? "";
     if (name) {
-        const words = name.split(/\s+/).filter(Boolean);
+        // 纯分隔符/标点词不参与首字母（"Atlas · 架构" ⇒ "A架"，而不是 "A·"）。
+        const words = name.split(/\s+/).filter((word) => !/^[\p{P}\p{S}]+$/u.test(word));
         return words
             .slice(0, 2)
             .map((word) => word[0] ?? "")
