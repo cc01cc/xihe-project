@@ -34,7 +34,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { cargoTargetForStack } from './lib/stack-cargo-target.mjs';
 import { sweepOrphanProcesses } from './lib/stack-orphan.mjs';
-import { deriveStack, normalizeStackArg } from './lib/stack-ports.mjs';
+import { STACK_IDS, deriveStack, normalizeStackArg } from './lib/stack-ports.mjs';
 
 const scriptPath = fileURLToPath(import.meta.url);
 const scriptProjectRoot = resolve(dirname(scriptPath), '..');
@@ -56,17 +56,19 @@ function usage(exitCode = 2) {
   console.log('  --with-pg        start (start) / stop (stop) this stack\'s PostgreSQL container');
   console.log('  --timeout <s>    readiness timeout for start (default 300)');
   console.log('  --json           machine-readable output');
+  console.log('  --all            status: overview of EVERY stack that has a pid file or a listening port');
   console.log('  --help           this message');
   process.exit(exitCode);
 }
 
 function parseArgs(argv) {
-  const args = { action: 'status', stack: undefined, cwd: undefined, withPg: false, json: false, timeout: 300 };
+  const args = { action: 'status', stack: undefined, cwd: undefined, withPg: false, json: false, all: false, timeout: 300 };
   const rest = [];
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === '--help' || arg === '-h') usage(0);
     else if (arg === '--json') args.json = true;
+    else if (arg === '--all') args.all = true;
     else if (arg === '--with-pg') args.withPg = true;
     else if (arg === '--stack' || arg === '--stack=') {
       args.stack = arg.includes('=') ? arg.slice('--stack='.length) : argv[(i += 1)];
@@ -226,10 +228,6 @@ const childEnv = {
   XIHE_ENV: process.env.XIHE_ENV ?? 'dev',
 };
 
-function endpointUrl(service) {
-  return `http://127.0.0.1:${ports[service]}${ENDPOINTS[service]}`;
-}
-
 /* ---------------------------------------------------------------- spawn */
 
 function spawnDetached(service, outPath, errPath) {
@@ -273,12 +271,12 @@ function spawnDetached(service, outPath, errPath) {
 
 /* -------------------------------------------------------------- readiness */
 
-async function probeService(service) {
-  const listening = await isPortListening(ports[service]);
-  if (!listening) return { service, port: ports[service], listening, status: null, ready: false };
-  const status = await httpStatus(endpointUrl(service));
+async function probeService(service, d = derived, p = ports) {
+  const listening = await isPortListening(p[service]);
+  if (!listening) return { service, port: p[service], listening, status: null, ready: false };
+  const status = await httpStatus(`http://127.0.0.1:${p[service]}${ENDPOINTS[service]}`);
   const ready = status !== null && status < 500;
-  return { service, port: ports[service], listening, status, ready };
+  return { service, port: p[service], listening, status, ready };
 }
 
 async function waitReady(timeoutSeconds, servicesToWait) {
@@ -477,6 +475,78 @@ async function status() {
   if (!ok) process.exitCode = 1;
 }
 
+/* ------------------------------------------------------- status --all (R4) */
+
+/**
+ * PLAN-0656 R4: dual-stack observability. Read-only overview of every registered
+ * stack that has a pid file OR any listening port (idle slots are skipped), with
+ * per-service port/health, the PG database/compose project, and the cargo target
+ * each stack builds into (per-stack for non-default stacks, shared default for
+ * stack-1). This checkout's perspective: pid files are read from this projectRoot's
+ * stack log dirs.
+ */
+async function statusAll() {
+  const stacks = [];
+  for (const stackId of STACK_IDS) {
+    let d;
+    try {
+      d = deriveStack(stackId);
+    } catch {
+      continue;
+    }
+    const p = d.ports;
+    const stackPidFile = join(resolve(projectRoot, d.logDir), 'dev-stack-pids.json');
+    const record = readJson(stackPidFile);
+    const services = [];
+    for (const service of SERVICES) {
+      const probe = await probeService(service, d, p);
+      const saved = record?.services?.[service];
+      services.push({
+        service,
+        port: p[service],
+        pid: saved?.pid ?? null,
+        alive: saved?.pid ? processAlive(saved.pid) : false,
+        listening: probe.listening,
+        httpStatus: probe.status,
+        ready: probe.ready,
+      });
+    }
+    const pgListening = await isPortListening(p.postgres);
+    if (!existsSync(stackPidFile) && !pgListening && services.every((row) => !row.listening)) continue;
+    const cargoTarget = cargoTargetForStack({ stackId: d.stackId, projectRoot, env: process.env });
+    stacks.push({
+      stackId: d.stackId,
+      pidFile: stackPidFile,
+      pidFileExists: existsSync(stackPidFile),
+      cargoTargetDir: cargoTarget ?? null,
+      pg: { port: p.postgres, listening: pgListening, database: d.database, composeProject: d.composeProject },
+      services,
+      ok: services.every((row) => row.listening) && pgListening,
+    });
+  }
+  if (args.json) {
+    console.log(JSON.stringify({ action: 'status-all', projectRoot, stacks }, null, 2));
+    if (stacks.some((stack) => !stack.ok)) process.exitCode = 1;
+    return;
+  }
+  console.log(`[dev-stack] status --all cwd=${projectRoot}`);
+  if (stacks.length === 0) console.log('  (no stack has a pid file or a listening port)');
+  for (const stack of stacks) {
+    console.log(
+      `  ${stack.stackId} ok=${stack.ok} db=${stack.pg.database} compose=${stack.pg.composeProject}` +
+        ` cargoTarget=${stack.cargoTargetDir ?? '(default .cargo/config.toml)'}`,
+    );
+    for (const row of stack.services) {
+      console.log(
+        `    ${row.service.padEnd(8)} port=${String(row.port).padEnd(6)} listen=${row.listening} ` +
+          `http=${row.httpStatus ?? '-'} ready=${row.ready} pid=${row.pid ?? '-'}${row.alive ? '' : row.pid ? ' (record dead)' : ''}`,
+      );
+    }
+    console.log(`    PostgreSQL port ${stack.pg.port} listen=${stack.pg.listening}`);
+  }
+  if (stacks.some((stack) => !stack.ok)) process.exitCode = 1;
+}
+
 /* ----------------------------------------------------------------- stop */
 
 async function stop() {
@@ -552,8 +622,10 @@ async function stop() {
 
 try {
   if (args.action === 'start') await start();
-  else if (args.action === 'status') await status();
-  else await stop();
+  else if (args.action === 'status') {
+    if (args.all) await statusAll();
+    else await status();
+  } else await stop();
 } catch (error) {
   console.error(`[dev-stack] ERROR: ${error.message}`);
   process.exit(2);

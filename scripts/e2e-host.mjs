@@ -27,6 +27,29 @@ import {
 const projectDir = dirname(import.meta.dirname)
 const uiDir = join(projectDir, 'packages', 'ui')
 const e2eRunId = `host-${Date.now()}-${randomBytes(2).toString('hex')}`
+
+// PLAN-0656 R2 (build isolation): the E2E stack builds with its OWN target
+// directories, so a normal `mise run test:e2e:host` no longer requires stopping the
+// dev stacks. Both settings follow the R1 precedence rule — an explicitly provided
+// environment value always wins:
+//   C1  CARGO_TARGET_DIR  default <anchor>/.tmp/cargo-target/e2e — without this the
+//       E2E `cargo run` collides with the running dev runtime over one exe
+//       (BL-221 family; this was the sole reason the runner used to demand 12633 free).
+//   C2  XIHE_CP_TARGET_DIR default C:/xihe-build/e2e — without it the E2E mvn build
+//       overwrites the checkout target/classes a running dev CP is loading from.
+import { cargoTargetBase } from './lib/stack-cargo-target.mjs'
+if (typeof process.env.CARGO_TARGET_DIR !== 'string' || process.env.CARGO_TARGET_DIR.trim() === '') {
+  process.env.CARGO_TARGET_DIR = join(cargoTargetBase(projectDir), 'e2e')
+}
+const e2eCpTargetDir =
+  typeof process.env.XIHE_CP_TARGET_DIR === 'string' && process.env.XIHE_CP_TARGET_DIR.trim() !== ''
+    ? process.env.XIHE_CP_TARGET_DIR
+    : 'C:/xihe-build/e2e'
+const e2eCpBuildArgs = ['-Dxihe.target.dir=' + e2eCpTargetDir]
+console.log(
+  `[e2e-host] PLAN-0656 R2 build isolation: CARGO_TARGET_DIR=${process.env.CARGO_TARGET_DIR}` +
+    ` XIHE_CP_TARGET_DIR=${e2eCpTargetDir} (dev stacks are NOT stopped for this run)`,
+)
 // 外部复用（XIHE_E2E_EXTERNAL_SERVER=1）时栈属于更早的 runId，而隔离 DB 名与 host root
 // 都由 runId 派生：传给 Playwright 的必须是**栈的** runId，否则会去查不存在的库/目录（假失败）。
 // 审计发现（PLAN-0337 Audit 2 B2）：reuse 分支此前只回写 ports，未回写 runId。
@@ -374,9 +397,8 @@ function newestMtimeSync(root, skipDirs = ['node_modules', 'target', '.git']) {
   return newest
 }
 
-function resolveCpJarState() {
+function resolveCpJarState(targetDir = join(projectDir, 'packages', 'control-plane', 'target')) {
   const cpDir = join(projectDir, 'packages', 'control-plane')
-  const targetDir = join(cpDir, 'target')
   let jar = null
   if (existsSync(targetDir)) {
     for (const name of readdirSync(targetDir)) {
@@ -403,6 +425,9 @@ function resolveCpJarState() {
 // performs the side effects (warn, build, re-inspect, fall back).
 async function resolveCpBootPlan() {
   if (jarMode === 'native') {
+    // PLAN-0656 R2: the native mode keeps its historical checkout `target/` layout
+    // (native-image output does not follow -Dxihe.target.dir the same way); it is an
+    // explicit opt-in mode and out of the dev-stack coexistence scope.
     const state = resolveCpJarState()
     const executableName = process.platform === 'win32' ? 'control-plane.exe' : 'control-plane'
     const executablePath = join(state.cpDir, 'target', executableName)
@@ -419,7 +444,7 @@ async function resolveCpBootPlan() {
       reason: 'forced native executable',
     }
   }
-  const state = resolveCpJarState()
+  const state = resolveCpJarState(e2eCpTargetDir)
   const stale = state.jar ? state.newestSource.mtimeMs > state.jar.mtimeMs : false
   const plan = decideCpBoot({ jarMode, hasJar: Boolean(state.jar), stale })
   if (plan.action === 'run') return { mode: 'run', jar: null, reason: plan.reason }
@@ -429,18 +454,18 @@ async function resolveCpBootPlan() {
   }
   // plan.action === 'build-then-use': missing jar, stale jar, or a forced rebuild.
   if (!state.jar) {
-    console.log('[e2e-host] no CP jar in target/: building one once (mvn -q -DskipTests package) so later runs reuse it')
+    console.log('[e2e-host] no CP jar in the E2E build dir: building one once (mvn -q -DskipTests package) so later runs reuse it')
   } else if (stale) {
     console.log(`[e2e-host] CP jar ${state.jar.name} is stale vs ${state.newestSource.path} by ${fmtAge(state.newestSource.mtimeMs - state.jar.mtimeMs)}; rebuilding (mvn -q -DskipTests package)`)
   } else {
     console.log(`[e2e-host] --jar-mode=rebuild: rebuilding CP jar (mvn -q -DskipTests package)`)
   }
-  const rebuild = await run(mvnCommand, ['-q', '-DskipTests', 'package'], { cwd: state.cpDir, stdio: 'inherit' })
+  const rebuild = await run(mvnCommand, ['-q', '-DskipTests', ...e2eCpBuildArgs, 'package'], { cwd: state.cpDir, stdio: 'inherit' })
   if (rebuild.code !== 0) {
     console.warn(`[e2e-host] CP jar rebuild failed (exit=${rebuild.code}); falling back to mvn spring-boot:run`)
     return { mode: 'run', jar: null, reason: 'rebuild failed' }
   }
-  const after = resolveCpJarState()
+  const after = resolveCpJarState(e2eCpTargetDir)
   if (!after.jar || after.newestSource.mtimeMs > after.jar.mtimeMs) {
     console.warn('[e2e-host] CP jar still stale after rebuild; falling back to mvn spring-boot:run')
     return { mode: 'run', jar: null, reason: 'still stale after rebuild' }
@@ -2027,25 +2052,11 @@ async function waitForPostgresWireReady() {
   throw new Error('PostgreSQL host port did not answer SSLRequest within 30s')
 }
 
-async function precheckDevRuntimeConflict() {
-  if (skipRuntime || process.platform !== 'win32') return
-  const result = await run('powershell.exe', [
-    '-NoProfile', '-NonInteractive', '-Command',
-    "(Get-NetTCPConnection -LocalPort 12633 -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1).OwningProcess",
-  ], { stdio: ['ignore', 'pipe', 'ignore'] })
-  const pid = (result.stdout || '').trim()
-  if (!pid) return
-  const nameProbe = await run('powershell.exe', [
-    '-NoProfile', '-NonInteractive', '-Command',
-    `(Get-Process -Id ${pid}).Path`,
-  ], { stdio: ['ignore', 'pipe', 'ignore'] })
-  const exePath = (nameProbe.stdout || '').trim()
-  console.error(`[e2e-host] port 12633 is held by PID ${pid} (${exePath || 'unknown process'}).`)
-  console.error('[e2e-host] A dev runtime blocks `cargo run --bin xihe-runtime` (binary lock, os error 5).')
-  console.error('[e2e-host] Stop it first:  taskkill /PID <pid> /F   (or `mise run dev:host:stop` for the whole stack),')
-  console.error('[e2e-host] or skip the runtime here with --skip-runtime.')
-  throw new Error('dev runtime conflict on port 12633')
-}
+// PLAN-0656 R2 C3: `precheckDevRuntimeConflict` used to hard-fail when 12633 was
+// busy, forcing operators to stop the dev stack before every E2E run. Its only
+// justification was the shared cargo target's exe lock (BL-221 family), which the
+// build isolation above removes — the gate is gone for good (no opt-in switch: a
+// premise that is no longer true should not survive as a flag).
 
 async function teardownPersistent() {
   // Read the state file written by --persistent and stop that stack.
@@ -2182,7 +2193,6 @@ async function main() {
   console.log(`[e2e-host] runId=${e2eRunId} ports ui=${uiPort} cp=${cpPort} agent=${agentPort} runtime=${runtimePort} pg=${pgPort}`)
   console.log(`[e2e-host] isolated pg project=${pgProjectName} db=${pgDatabase} hostRoot=${hostRoot}`)
   if (skipRuntime) console.log('[e2e-host] --skip-runtime set; this run validates chat-only paths without Sandbox execution')
-  await precheckDevRuntimeConflict()
   await pruneStaleRunDirs()
 
   // Reuse mode: a persistent stack is already up — point this run's ports at
@@ -2347,7 +2357,7 @@ async function main() {
           await launchNativeService({
             name: 'control-plane',
             cmd: 'mvn.cmd',
-            args: ['-q', '-DskipTests', '-Dspring-boot.run.profiles=e2e', 'spring-boot:run'],
+            args: ['-q', '-DskipTests', ...e2eCpBuildArgs, '-Dspring-boot.run.profiles=e2e', 'spring-boot:run'],
             cwd: join(projectDir, 'packages', 'control-plane'),
             extraEnv: { ...commonCpEnv, XIHE_CP_PORT: cpPort, XIHE_LOG_DIR: e2eLogDir },
             healthUrl: `http://127.0.0.1:${cpPort}/actuator/health`,
@@ -2560,16 +2570,8 @@ async function main() {
     }
   }
   process.exitCode = result.code
-  // ③2 (PLAN-294 review): Host E2E requires the dev runtime stopped (binary
-  // lock); remind the operator instead of leaving the stack headless.
-  if (process.platform === 'win32') {
-    const probe = await run('powershell.exe', [
-      '-NoProfile', '-NonInteractive', '-Command',
-      'if (Get-NetTCPConnection -LocalPort 12633 -State Listen -ErrorAction SilentlyContinue) { echo down } else { echo down }',
-    ], { stdio: ['ignore', 'pipe', 'ignore'] })
-    void probe
-    console.log('[e2e-host] reminder: dev runtime was stopped for this run — restart with `mise run dev:runtime` (or dev:host) if you need the dev stack.')
-  }
+  // PLAN-0656 R2 C4: E2E no longer stops or disturbs the dev stacks (build
+  // isolation), so the old "dev runtime was stopped for this run" reminder is gone.
 }
 
 for (const signal of ['SIGINT', 'SIGTERM']) {

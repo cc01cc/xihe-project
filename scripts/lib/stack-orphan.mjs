@@ -18,7 +18,9 @@ import { join } from 'node:path';
 
 export const SERVICE_OWNER = {
   runtime: /xihe-runtime/i,
-  cp: /spring-boot:run|control-plane|xihe-cp/i,
+  // `mvn spring-boot:run` forks a JVM whose cmdline hides the classpath in an
+  // @argfile, leaving only the main class (`com.cc01cc.p.xihe.cp.CpApplication`).
+  cp: /spring-boot:run|control-plane|xihe-cp|xihe\.cp|CpApplication/i,
   agent: /xihe_agent|xihe-agent/i,
   ui: /dev-ui-host|vite\b|xihe-ui/i,
 };

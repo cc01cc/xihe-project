@@ -25,6 +25,19 @@ test('a maven/cp listener matches by command line even when the process name is 
   assert.deepEqual(decision, { kind: 'kill', service: 'cp' });
 });
 
+test('a forked spring-boot JVM (classpath hidden in an @argfile) still matches by main class', () => {
+  const decision = classifyListener(
+    {
+      port: 12631,
+      pid: 223,
+      name: 'java',
+      cmdline: 'java -XX:TieredStopAtLevel=1 -cp @C:\\Temp\\spring-boot-123.argfile com.cc01cc.p.xihe.cp.CpApplication',
+    },
+    { ports: PORTS, isWindows: true },
+  );
+  assert.deepEqual(decision, { kind: 'kill', service: 'cp' });
+});
+
 test('a foreign squatter on our runtime port is reported, not killed', () => {
   const decision = classifyListener(
     { port: 12633, pid: 333, name: 'python', cmdline: 'python -m http.server 12633' },
