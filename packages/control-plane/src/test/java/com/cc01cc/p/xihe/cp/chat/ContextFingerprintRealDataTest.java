@@ -85,7 +85,15 @@ class ContextFingerprintRealDataTest {
         }
         assertTrue(finished, "child JVM timed out; classpath=" + classpath);
         assertEquals(0, process.exitValue(), "child JVM failed: " + output);
-        return output;
+        // The JVM prints launcher banner lines such as
+        //   Picked up JAVA_TOOL_OPTIONS: -Xmx4g
+        // on stderr; this harness merges stderr into stdout, so an L2 run that sets
+        // JAVA_TOOL_OPTIONS (the standard 4 GiB heap cap) would otherwise look like a
+        // fingerprint mismatch. The banner is launcher noise, not calculator output.
+        return output.lines()
+                .filter(line -> !line.startsWith("Picked up "))
+                .reduce((left, right) -> left + "\n" + right)
+                .orElse("");
     }
 
     private static Path fixturePath() throws Exception {
