@@ -3,10 +3,11 @@ import { ref, computed, markRaw, nextTick, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { useSessionParticipantsStore } from "../../stores/sessionParticipants";
 import { useWorkspaceStore } from "../../stores/workspace";
+import { useAuthStore } from "../../../../stores/auth";
 import { useChatStore } from "../stores/chat";
 import type { AttachmentFile, FileNode } from "../../../../types";
 import { toast } from "vue-sonner";
-import { Send, Square, LoaderCircle } from "@lucide/vue";
+import { Send, Square, LoaderCircle, CornerUpRight } from "@lucide/vue";
 import ImageUpload from "../../../../components/multimodal/ImageUpload.vue";
 import FileUpload from "../../../../components/multimodal/FileUpload.vue";
 import ScreenshotCapture from "../../../../components/multimodal/ScreenshotCapture.vue";
@@ -14,6 +15,11 @@ import VoiceInput from "../../../../components/multimodal/VoiceInput.vue";
 import ModelPopover from "./ModelPopover.vue";
 import InputToolbar, { type ToolbarAction } from "./InputToolbar.vue";
 import { uploadAttachments, validateAttachment } from "../../../../services/attachmentService";
+import DelegationDialog, {
+    type DelegationBudgetView,
+    type DelegationPrincipal,
+} from "./DelegationDialog.vue";
+import { useDelegationPermission } from "../composables/useDelegationPermission";
 import { api } from "../../../../composables/api";
 import { logger } from "../../../../lib/logger";
 import {
@@ -91,6 +97,42 @@ const { t } = useI18n();
 const participantsStore = useSessionParticipantsStore();
 /** PLAN-0635 M2: already-loaded workspace tree feeds `@文件/目录` candidates (no request here). */
 const workspaceStore = useWorkspaceStore();
+const authStore = useAuthStore();
+// PLAN-0655 T1.2: capability-atom read (SPAWN_AGENT in this workspace) — grey vs. clickable only;
+// the spawn POST re-evaluates the same atom server-side.
+const delegationPermission = useDelegationPermission(() => authStore.currentWorkspaceId ?? "");
+const delegationOpen = ref(false);
+const delegationSubmitting = ref(false);
+const delegationPrincipals = ref<DelegationPrincipal[]>([]);
+const delegationBudget = ref<DelegationBudgetView | null>(null);
+
+async function openDelegation() {
+    delegationOpen.value = true;
+    // T1.4 adds the budget read (GET /delegation-usage) for the open session; the skeleton only
+    // loads the delegable principals so the picker shows the real workspace roster.
+    try {
+        const workspaceId = authStore.currentWorkspaceId;
+        if (!workspaceId) return;
+        const agents = await api.getWorkspaceAgents(workspaceId);
+        delegationPrincipals.value = agents
+            .filter((agent) => agent.bound && !agent.disabled)
+            .map((agent) => ({ principalId: agent.principalId, name: agent.name }));
+    } catch (error) {
+        logger.warn("failed to load delegation principals", error);
+        delegationPrincipals.value = [];
+    }
+}
+
+async function handleDelegationSubmit() {
+    // T1.4: POST /api/v1/sessions/{sessionId}/delegation-spawn (201/202 + approval replay).
+    delegationSubmitting.value = true;
+    try {
+        toast.success(t("chat.delegation.mockSubmitted"));
+        delegationOpen.value = false;
+    } finally {
+        delegationSubmitting.value = false;
+    }
+}
 /** PLAN-0635 M3: `/export` and `/compact` are branch-scoped — read the selected branch here. */
 const chatStore = useChatStore();
 const speakAsId = ref("");
@@ -467,6 +509,21 @@ const toolbarActions = computed<ToolbarAction[]>(() => [
         position: "left",
         component: markRaw(VoiceInput),
         props: { onTranscript: handleTranscript },
+    },
+    {
+        key: "delegate",
+        position: "right",
+        component: "button",
+        props: {
+            class: "shrink-0 h-8 px-2 inline-flex items-center gap-1 rounded-lg border border-brand bg-action text-brand hover:bg-action-hover disabled:opacity-50 disabled:cursor-not-allowed transition-colors",
+            disabled: !delegationPermission.canDelegate.value,
+            title: delegationPermission.reason(),
+            "data-testid": "chat-delegate-button",
+            "aria-label": t("chat.delegation.button"),
+            onClick: () => void openDelegation(),
+        },
+        icon: markRaw(CornerUpRight),
+        visible: !props.queueMode,
     },
     {
         key: props.isStreaming ? "stop" : "send",
@@ -1115,6 +1172,14 @@ defineExpose({ clearDraft, insertMention });
                                 item.hint
                             }}</span>
                         </button>
+                        <DelegationDialog
+                            v-model:open="delegationOpen"
+                            :session-id="sessionId"
+                            :principals="delegationPrincipals"
+                            :budget="delegationBudget"
+                            :submitting="delegationSubmitting"
+                            @submit="handleDelegationSubmit"
+                        />
                     </template>
                 </div>
             </div>
