@@ -15,16 +15,25 @@ import {
     createSessionWithPrincipal,
     provisionWorkspaceAgentPrincipal,
 } from "./helpers/agent-principal";
+import { agentName } from "./helpers/agent-name";
 import { workspaceChatPath } from "../../src/lib/routes";
 
 /**
  * PLAN-0665 M2 —— TO 多目标 fan-out 的**真栈演示**（BL-239 可视闭环的判据脚本）。
  *
- * 前置：由 `scripts/e2e-host.mjs` 起隔离栈（提供 `XIHE_E2E_PG_CONTAINER/DB/USER` 与 CP 端口），
- * 之后由 lane 在排到的窗口里运行：
+ * 运行方式（标准 real lane，必须经 e2e-host；手起 dev:host 不满足本 spec 的夹具契约）：
  *
- *   pnpm exec playwright test e2e/real/plan0665-to-fanout-delivery.spec.ts \
- *     --config e2e/playwright.config.ts --project=real
+ *   # 1) 起持久隔离栈（fake LLM = success，注入 XIHE_E2E_RUN_ID / PG 容器 / 端口 / agent fake env）
+ *   node scripts/e2e-host.mjs --persistent --llm-mode=success
+ *   # 2) 复用该栈跑本 spec（runner 会校验 CP build commit == HEAD）
+ *   node scripts/e2e-host.mjs --batch=plan0665-fanout e2e/real/plan0665-to-fanout-delivery.spec.ts
+ *   # 3) 收尾（必须，零残留）
+ *   node scripts/e2e-host.mjs --teardown
+ *
+ * 为什么不能在 `mise run dev:host` 手起栈上跑：Agent 的 LLM base 只认 e2e-host 注入的
+ * `XIHE_API_BASE`，connection base / 启动 env 都不会改变它（2026-11-05 实测：fake server 收到
+ * 0 个请求，run 报 LLM_CREDENTIALS_INVALID）；而手工重启 Agent 会被 dev:host 监工连带收掉
+ * CP/Runtime/UI。这是 e2e-host 存在的理由，不是本 spec 的缺陷。
  *
  * 判据（一条消息、两个 TO 目标）：
  *   1. UI 出现**两个 run 分组**（`run-header` 的 `data-run-id` 不同）；
@@ -35,7 +44,81 @@ import { workspaceChatPath } from "../../src/lib/routes";
  *
  * 证据：`.local/evidence/plan-0665/`（截图 + 观测 JSON + DB 转储），绝不写入 worktree。
  */
-const EVIDENCE_DIR = path.resolve(process.cwd(), "../../../.local/evidence/plan-0665");
+/**
+ * 证据根**不依赖 `process.cwd()`**（直跑 Playwright / 从 worktree 跑时 cwd 不同，会写到
+ * "不知道去哪了"的位置）。优先用 e2e-host 注入的 `XIHE_WORKSPACE_HOST_ROOT`
+ * （= `<one>/A03-xihe/.tmp/e2e-host/<runId>`，上 4 级即 one 根）；手工直跑时从 cwd 上 3 级
+ * 推导，worktree 下多退一级 `.worktrees`。
+ */
+function resolveEvidenceDir(): string {
+    const hostRoot = process.env.XIHE_WORKSPACE_HOST_ROOT;
+    let oneRoot: string;
+    if (hostRoot) {
+        oneRoot = path.resolve(hostRoot, "../../../..");
+    } else {
+        const threeUp = path.resolve(process.cwd(), "../../..");
+        oneRoot = path.basename(threeUp) === ".worktrees" ? path.resolve(threeUp, "..") : threeUp;
+    }
+    return path.join(oneRoot, ".local", "evidence", "plan-0665");
+}
+const EVIDENCE_DIR = resolveEvidenceDir();
+
+/**
+ * 真栈演示夹具（e2e-host `--llm-mode=success` 的 fake LLM 通道，Lead 2026-11-05 授权）：
+ * 新用户 → USER 作用域 `openai` 连接（dummy key，指向 e2e-host 的 fake LLM）→ verify READY →
+ * user 层 llm profile 指向它。Agent 侧由 e2e-host 注入 `XIHE_LLM_PROVIDER=openai` +
+ * `XIHE_API_BASE=<fake>/openai/v1`，两端因此落在同一个 fake server 上。
+ */
+const FAKE_LLM_PORT = process.env.XIHE_FAKE_LLM_PORT || "12680";
+const FAKE_LLM_BASE = `http://127.0.0.1:${FAKE_LLM_PORT}/openai/v1`;
+const FAKE_MODEL = "fake-fanout";
+const FAKE_CONNECTION_KEY = "default";
+
+async function ensureFakeProvider(
+    request: APIRequestContext,
+    auth: { accessToken: string; workspaceId: string },
+): Promise<void> {
+    const headers = {
+        Authorization: `Bearer ${auth.accessToken}`,
+        "Content-Type": "application/json",
+    };
+    const created = await request.post(`${CP_URL}/api/v1/provider-connections`, {
+        headers,
+        data: {
+            providerId: "openai",
+            apiTypeId: "openai-chat-completions",
+            apiTypeVersion: 1,
+            apiKey: "sk-fake-openai-key",
+            connectionKey: FAKE_CONNECTION_KEY,
+            label: "PLAN-0665 fan-out fake LLM",
+            scope: "USER",
+            modelDiscovery: "manual",
+            manualModels: [FAKE_MODEL],
+            baseUrl: FAKE_LLM_BASE,
+        },
+    });
+    expect(
+        created.ok(),
+        `provider connection create ${created.status()}: ${await created.text()}`,
+    ).toBe(true);
+    const connection = (await created.json()) as { id: string };
+    const verified = await request.post(
+        `${CP_URL}/api/v1/provider-connections/${connection.id}/verify`,
+        { headers },
+    );
+    expect(verified.ok(), `provider connection verify: ${await verified.text()}`).toBe(true);
+    const profile = await request.put(`${CP_URL}/api/v1/config/user/llm-provider`, {
+        headers,
+        data: {
+            profile: JSON.stringify({
+                providerId: "openai",
+                connectionKey: FAKE_CONNECTION_KEY,
+                model: FAKE_MODEL,
+            }),
+        },
+    });
+    expect(profile.status(), `user llm profile write: ${await profile.text()}`).toBe(200);
+}
 
 function psql(sql: string): string {
     const container = process.env.XIHE_E2E_PG_CONTAINER,
@@ -140,6 +223,7 @@ test.describe("@host PLAN-0665 M2 real TO fan-out delivery", () => {
         const observed: Record<string, unknown> = {
             plan: "PLAN-0665",
             task: "T2.2/T2.3 real demo",
+            evidenceDir: EVIDENCE_DIR,
             steps: {} as Record<string, unknown>,
         };
         const steps = observed.steps as Record<string, unknown>;
@@ -154,17 +238,21 @@ test.describe("@host PLAN-0665 M2 real TO fan-out delivery", () => {
         const ctx = await registerJourneyUser(request, "plan0665-fanout"),
             wsId = ctx.workspaceId,
             headers = { ...ctx.headers, "X-Workspace-Id": wsId };
+        await ensureFakeProvider(request, {
+            accessToken: ctx.authToken,
+            workspaceId: ctx.workspaceId,
+        });
         await ensureAgentWorkspaceBinding(wsId);
         await waitForControlPlaneAgentReady(request, headers);
 
         const auth = { accessToken: ctx.authToken, workspaceId: ctx.workspaceId };
         const agentA = await provisionWorkspaceAgentPrincipal(request, auth, {
-            name: `Fanout Alpha ${Date.now()}`,
+            name: agentName("FanoutAlpha", Date.now()),
             actions: ["read"],
             systemPrompt: "Reply with a single short sentence naming yourself as Alpha.",
         });
         const agentB = await provisionWorkspaceAgentPrincipal(request, auth, {
-            name: `Fanout Beta ${Date.now()}`,
+            name: agentName("FanoutBeta", Date.now()),
             actions: ["read"],
             systemPrompt: "Reply with a single short sentence naming yourself as Beta.",
         });
@@ -239,7 +327,7 @@ test.describe("@host PLAN-0665 M2 real TO fan-out delivery", () => {
 
         // ── DB 判据：durable delivery + origin 不同（user_submission / scheduled）──
         const deliveryJson = psql(
-            `SELECT delivery::text FROM messages WHERE session_id = '${sessionId}' AND role = 'user' ORDER BY created_at ASC LIMIT 1`,
+            `SELECT delivery::text FROM messages WHERE session_id = '${sessionId}' AND role = 'USER' AND delivery IS NOT NULL ORDER BY created_at ASC LIMIT 1`,
         );
         steps["messages.delivery"] = deliveryJson;
         const delivery = JSON.parse(deliveryJson) as { to?: string[]; cc?: string[] };
