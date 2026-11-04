@@ -29,21 +29,14 @@ import {
     Brain,
     LoaderCircle,
     Clock,
-    Bot,
-    User,
     Trash2,
     GitBranch,
     Shield,
     CircleAlert,
     XCircle,
 } from "@lucide/vue";
-import {
-    Message as MessageRoot,
-    MessageAvatar,
-    MessageContent,
-    MessageHeader,
-} from "@/components/ui/message";
-import { Marker, MarkerIcon, MarkerContent } from "@/components/ui/marker";
+import { Message as MessageRoot, MessageContent, MessageHeader } from "@/components/ui/message";
+import ProcessRow from "./ProcessRow.vue";
 
 const props = defineProps<{
     message: Message;
@@ -305,18 +298,16 @@ onUnmounted(() => {
 </script>
 
 <template>
-    <Marker
+    <!-- 2026-11-04：思考/执行状态与工具调用同一条单行过程行语言（无展开体）。 -->
+    <ProcessRow
         v-if="isMarker"
-        variant="default"
+        kind="thinking"
+        :icon="statusIcon"
+        :label="markerLabel"
         :class="message.status === 'executing' ? 'shimmer' : ''"
-    >
-        <MarkerIcon>
-            <component :is="statusIcon" class="size-4" />
-        </MarkerIcon>
-        <MarkerContent>
-            {{ markerLabel }}
-        </MarkerContent>
-    </Marker>
+        testid="process-thinking"
+        :expandable="false"
+    />
 
     <MessageRoot
         v-else
@@ -325,34 +316,6 @@ onUnmounted(() => {
         data-testid="message-item"
         :data-message-role="message.role"
     >
-        <MessageAvatar v-if="!isOwnMessage">
-            <!-- PLAN-0631 D31-10: initials identify the responder; no per-participant color. -->
-            <div
-                v-if="showResponder"
-                class="flex size-6 items-center justify-center rounded-full border bg-muted text-[10px] font-medium text-foreground"
-                data-testid="message-responder-initials"
-                aria-hidden="true"
-            >
-                {{ responderInitials }}
-            </div>
-            <div
-                v-else
-                class="flex size-6 items-center justify-center rounded-full bg-primary/10"
-                aria-hidden="true"
-            >
-                <Bot class="size-3.5 text-primary" />
-            </div>
-        </MessageAvatar>
-
-        <MessageAvatar v-if="isOwnMessage">
-            <div
-                class="flex size-6 items-center justify-center rounded-full bg-secondary"
-                aria-hidden="true"
-            >
-                <User class="size-3.5 text-secondary-foreground" />
-            </div>
-        </MessageAvatar>
-
         <MessageContent class="max-w-[85%] min-w-0 md:max-w-[75%]">
             <!--
                 PLAN-0631 D31-09: identity row, reusing the shipped-but-unused MessageHeader.
@@ -365,6 +328,16 @@ onUnmounted(() => {
                 data-testid="message-responder"
                 :data-participant-id="responder?.participantId"
             >
+                <!--
+                    2026-11-04 用户裁定（DSH 密度）：不再有独立头像列 —— 消息身份 = 16px 首字母
+                    圆点 + 名称（多主体下靠圆点+名区分），中心线程保持无头像观感。
+                -->
+                <span
+                    class="flex size-4 shrink-0 items-center justify-center rounded-full border bg-muted text-[9px] font-medium text-foreground"
+                    data-testid="message-responder-initials"
+                    aria-hidden="true"
+                    >{{ responderInitials }}</span
+                >
                 <span class="truncate text-foreground">{{ responderName }}</span>
                 <span
                     class="flex shrink-0 items-center gap-1 rounded border border-border px-1.5 py-0.5 text-[10px] font-normal text-muted-foreground"
