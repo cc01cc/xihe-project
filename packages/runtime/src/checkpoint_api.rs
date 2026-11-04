@@ -1098,4 +1098,164 @@ mod tests {
         assert_eq!(service.engine().shadow_backup_failures(), 0);
         assert_eq!(service.engine().store_failures(), 0);
     }
+
+    /// T3.5 (a, D53-38): the full chain on an isolated fixture with PATH
+    /// stripped to an empty directory, so even a literal `git` spawn fails.
+    /// capture → list → diff → restore (full + single path) → gc → fsck all run
+    /// through the store; every skipped shadow backup is counted.
+    #[tokio::test]
+    #[ignore = "T3.5(a) no-git full-chain smoke; run isolated (--ignored --test-threads=1)"]
+    async fn t3_5_no_git_full_chain_smoke() {
+        use crate::checkpoint_store::manifest::Manifest;
+        use crate::checkpoint_store::refs;
+
+        struct PathGuard(Option<String>);
+        // Test-only: PATH stripping is process-global; the suite runs isolated
+        // (`--ignored --test-threads=1`) and the guard restores PATH on drop.
+        #[allow(unsafe_code)]
+        impl Drop for PathGuard {
+            fn drop(&mut self) {
+                if let Some(previous) = self.0.take() {
+                    unsafe { std::env::set_var("PATH", previous) };
+                }
+            }
+        }
+
+        let empty_bin = tempfile::tempdir().expect("empty bin dir");
+        let previous_path = std::env::var("PATH").ok();
+        let _path_guard = PathGuard(previous_path);
+        #[allow(unsafe_code)]
+        unsafe {
+            std::env::set_var("PATH", empty_bin.path())
+        };
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        let host = temp.path().join("host");
+        let work = host.join("ws-1");
+        std::fs::create_dir_all(&work).expect("work");
+        std::fs::write(work.join("a.txt"), "alpha").expect("a");
+        std::fs::write(work.join("b.txt"), "beta").expect("b");
+        let store_root = temp.path().join(".xihe-store");
+        let service = CheckpointService::new(&host)
+            .with_checkpoint_storage(CheckpointStorageMode::Self_, &store_root)
+            .expect("self store");
+
+        // capture #1
+        let first = service
+            .capture("ws-1", "t35-run-1", "tester", "call-1", false)
+            .await
+            .expect("capture #1 must not need git");
+        let first_ref = first.slice_ref.expect("slice #1");
+
+        // capture #2 after a change
+        std::fs::write(work.join("a.txt"), "alpha-modified").expect("mutate a");
+        let second = service
+            .capture("ws-1", "t35-run-2", "tester", "call-2", false)
+            .await
+            .expect("capture #2 must not need git");
+        let second_ref = second.slice_ref.expect("slice #2");
+
+        // list: store refs + slices, no git for-each-ref.
+        let store = Store::open(&store_root).expect("store");
+        let list = crate::checkpoint_store::reads::list_slices(&store, "ws-1").expect("list");
+        assert_eq!(list.slices.len(), 2, "two store slices");
+        assert!(list.unmapped_slices.is_empty(), "{list:?}");
+        assert!(
+            refs::read_ref(&store, "ws-1", &first_ref)
+                .expect("ref io")
+                .is_some()
+        );
+        assert!(
+            refs::read_ref(&store, "ws-1", &second_ref)
+                .expect("ref io")
+                .is_some()
+        );
+
+        // diff: store manifest diff between the two slices.
+        let ref2 = refs::read_ref(&store, "ws-1", &second_ref)
+            .expect("ref io")
+            .expect("mapping #2");
+        let ref1 = refs::read_ref(&store, "ws-1", &first_ref)
+            .expect("ref io")
+            .expect("mapping #1");
+        let manifest_of = |id: &str| -> Manifest {
+            let bytes = std::fs::read(store.manifest_path(id)).expect("manifest bytes");
+            Manifest::parse_verified(&bytes, id).expect("manifest parse")
+        };
+        let diff = manifest_of(&ref1.store_manifest_id).diff(&manifest_of(&ref2.store_manifest_id));
+        assert_eq!(diff.modified, vec!["a.txt".to_string()], "{diff:?}");
+
+        // restore full: workspace must return to slice #1 contents.
+        let full = service
+            .restore_execute_for_root("ws-1", None, &first_ref, &[])
+            .await
+            .expect("full restore");
+        assert!(full.counts.restored >= 2);
+        assert_eq!(
+            std::fs::read_to_string(work.join("a.txt")).expect("a"),
+            "alpha"
+        );
+
+        // restore single path: only b.txt is scoped back to slice #2 state.
+        std::fs::write(work.join("b.txt"), "beta-modified").expect("mutate b");
+        let scoped = service
+            .restore_execute_for_root_paths("ws-1", None, &second_ref, &[], &["b.txt".to_string()])
+            .await
+            .expect("path restore");
+        assert_eq!(scoped.counts.restored, 1);
+        assert_eq!(
+            std::fs::read_to_string(work.join("b.txt")).expect("b"),
+            "beta"
+        );
+
+        // gc: store sweep, slice counts preserved, no git.
+        let gc_out = service.gc("ws-1").await.expect("gc without git");
+        assert_eq!(gc_out.counts.deleted, 0);
+        assert!(gc_out.counts.kept >= 2);
+
+        // fsck: store health.
+        let fsck = fsck_store(&store, false).expect("fsck");
+        assert!(fsck.is_clean(), "{fsck:?}");
+
+        // startup + visibility of every skipped backup.
+        service
+            .validate_self_startup()
+            .expect("self startup must degrade, not fail");
+        assert_eq!(service.engine().store_failures(), 0);
+        assert_eq!(service.engine().shadow_backup_failures(), 2);
+        let diagnostics = service.diagnostics().await;
+        assert!(!diagnostics.capable);
+        assert_eq!(diagnostics.shadow_backup_failures, 2);
+        assert!(diagnostics.fsck.ok);
+
+        let report = serde_json::json!({
+            "suite": "t3-5-no-git-full-chain",
+            "path_stripped": true,
+            "captures": 2,
+            "list_slices": list.slices.len(),
+            "diff_modified": diff.modified,
+            "full_restore_restored": full.counts.restored,
+            "path_restore_restored": scoped.counts.restored,
+            "gc_kept": gc_out.counts.kept,
+            "fsck_clean": true,
+            "shadow_backup_failures": diagnostics.shadow_backup_failures,
+            "store_failures": diagnostics.store_failures,
+            "expected_warn_text": "checkpoint self capture: shadow backup skipped; store slice remains authoritative",
+        });
+        eprintln!(
+            "T35_REPORT {}",
+            serde_json::to_string_pretty(&report).expect("report")
+        );
+        if let Ok(path) = std::env::var("T35_REPORT_PATH") {
+            let target = std::path::Path::new(&path);
+            if let Some(parent) = target.parent() {
+                std::fs::create_dir_all(parent).expect("report dir");
+            }
+            std::fs::write(
+                target,
+                serde_json::to_vec_pretty(&report).expect("report bytes"),
+            )
+            .expect("write report");
+        }
+    }
 }
