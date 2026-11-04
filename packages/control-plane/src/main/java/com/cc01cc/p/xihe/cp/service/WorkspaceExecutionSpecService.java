@@ -6,6 +6,8 @@ import java.util.UUID;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
 
 import com.cc01cc.p.xihe.cp.entity.WorkspaceExecutionSpec;
+import com.cc01cc.p.xihe.cp.entity.WorkspaceRoot;
+import com.cc01cc.p.xihe.cp.repository.WorkspaceRootRepository;
 
 import com.cc01cc.p.xihe.cp.repository.WorkspaceExecutionSpecRepository;
 
@@ -17,6 +19,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.List;
 import java.util.Map;
 
 @Service
@@ -24,6 +27,13 @@ public class WorkspaceExecutionSpecService {
 
     private final WorkspaceRepository workspaceRepository;
     private final WorkspaceExecutionSpecRepository specRepository;
+
+    /** PLAN-0641 T7.5/T7.2: execution-spec roots are the Runtime's declared-root truth. */
+    @org.springframework.beans.factory.annotation.Autowired
+    private WorkspaceRootRepository workspaceRootRepository;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    private com.fasterxml.jackson.databind.ObjectMapper objectMapper;
 
     public WorkspaceExecutionSpecService(WorkspaceRepository workspaceRepository,
                                          WorkspaceExecutionSpecRepository specRepository) {
@@ -62,6 +72,9 @@ public class WorkspaceExecutionSpecService {
         spec.setSandboxSpec(sandboxSpecJson);
         spec.setStorageBackend(nonBlankOrDefault(workspace.getStorageBackend(), "host_directory"));
         spec.setStorageRef(nonBlankOrDefault(workspace.getStorageRef(), workspaceId));
+        // PLAN-0641 T7.5：把有序 roots（绝对 hostPath）写进 spec，Runtime hydrate 以它为
+        // declared-root 真相；legacy hostPath 形态只有一个合成主根（rootId = workspaceId）。
+        spec.setRoots(resolveRootsJson(workspace, workspaceId));
         spec.setActor(actor);
         spec.setReason(reason);
         specRepository.save(spec);
@@ -101,5 +114,46 @@ public class WorkspaceExecutionSpecService {
 
     private String nonBlankOrDefault(String value, String fallback) {
         return value == null || value.isBlank() ? fallback : value;
+    }
+
+    /** Ordered roots [{rootId, hostPath}] with absolute host paths (primary first). */
+    private String resolveRootsJson(Workspace workspace, String workspaceId) {
+        java.util.List<Map<String, String>> pairs = new java.util.ArrayList<>();
+        String primaryPath = workspace.getHostPath();
+        if (primaryPath != null && !primaryPath.isBlank()) {
+            pairs.add(Map.of("rootId", workspaceId, "hostPath", primaryPath));
+        }
+        List<WorkspaceRoot> roots = workspaceRootRepository
+                .findByWorkspaceIdAndDeletedAtIsNullOrderByPositionAsc(UUID.fromString(workspaceId));
+        for (WorkspaceRoot root : roots) {
+            if (root.getId() == null || root.getId().toString().equals(workspaceId)) {
+                continue;
+            }
+            String path = absoluteRootPath(primaryPath, root.getHostPath());
+            if (path != null) {
+                pairs.add(Map.of("rootId", root.getId().toString(), "hostPath", path));
+            }
+        }
+        try {
+            return objectMapper.writeValueAsString(pairs);
+        } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+            throw new CpApiException(HttpStatus.INTERNAL_SERVER_ERROR,
+                    "INVALID_EXECUTION_SPEC", "roots could not be serialized", e);
+        }
+    }
+
+    /** 相对声明根路径按主根 hostPath 解析为绝对路径（Runtime 要求绝对 hostPath）。 */
+    private static String absoluteRootPath(String primaryPath, String rootPath) {
+        if (rootPath == null || rootPath.isBlank()) {
+            return null;
+        }
+        java.nio.file.Path candidate = java.nio.file.Path.of(rootPath);
+        if (candidate.isAbsolute()) {
+            return candidate.normalize().toString();
+        }
+        if (primaryPath == null || primaryPath.isBlank()) {
+            return null;
+        }
+        return java.nio.file.Path.of(primaryPath).resolve(candidate).normalize().toString();
     }
 }

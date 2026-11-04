@@ -55,6 +55,9 @@ class WorkspaceRootCrudTest extends AbstractWireMockTest {
     @Autowired
     private JdbcTemplate jdbcTemplate;
 
+    @Autowired
+    private com.cc01cc.p.xihe.cp.service.WorkspaceExecutionSpecService executionSpecService;
+
     private String token;
 
     @BeforeEach
@@ -417,5 +420,25 @@ class WorkspaceRootCrudTest extends AbstractWireMockTest {
                 "audit detail carries the workspace-relative path, not the host path: " + details);
         assertTrue(!details.contains(host),
                 "audit detail must never embed the host-absolute path: " + details);
+    }
+
+    @Test
+    void executionSpecRootsAreAbsoluteAndOrdered() throws IOException {
+        // PLAN-0641 T7.5/T7.2：Runtime declared-root 真相来自 execution-spec roots[]；
+        // 这里锁住 false-red 现场（roots 列曾为空 -> Runtime capture 400 -> declared slice degraded）。
+        String base = tempPath("spec-roots");
+        String nested = base + java.io.File.separator + "vendor" + java.io.File.separator + "lib";
+        assertTrue(new java.io.File(nested).mkdirs());
+        ResponseEntity<String> created = createWorkspace(java.util.List.of(base, nested));
+        assertEquals(HttpStatus.CREATED, created.getStatusCode(), String.valueOf(created.getBody()));
+        String workspaceId = idOf(created.getBody());
+
+        JsonNode roots = objectMapper.readTree(
+                executionSpecService.findCurrentExecutionSpec(workspaceId).getRoots());
+        assertEquals(2, roots.size());
+        assertEquals(workspaceId, roots.get(0).path("rootId").asText());
+        assertEquals(base.toLowerCase(java.util.Locale.ROOT), roots.get(0).path("hostPath").asText());
+        assertNotEquals(workspaceId, roots.get(1).path("rootId").asText());
+        assertEquals(nested.toLowerCase(java.util.Locale.ROOT), roots.get(1).path("hostPath").asText());
     }
 }

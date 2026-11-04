@@ -841,13 +841,25 @@ public class WorkspaceService {
                 if (root.getId().equals(workspace.getId())) {
                     continue; // 主根已按 workspace 身份放在首位
                 }
-                payload.add(Map.of("rootId", root.getId().toString(), "hostPath", root.getHostPath()));
+                // 声明根行可能保存 workspace 相对路径（legacy hostPath 形态）；Runtime 注册
+                // 契约要求绝对宿主路径，这里统一解析到绝对路径再下发（T7.2 实测 400 修复）。
+                payload.add(Map.of("rootId", root.getId().toString(),
+                        "hostPath", absoluteRootPath(primaryPath, root.getHostPath())));
             }
         }
         String executionMode = workspace.getExecutionMode() == null || workspace.getExecutionMode().isBlank()
                 ? "windows-host" : workspace.getExecutionMode();
         return runtimeWorkspaceClient.registerWorkspace(
                 workspace.getId().toString(), primaryPath, executionMode, payload);
+    }
+
+    /** 声明根路径解析：绝对路径原样归一化；相对路径按主根 hostPath 解析为绝对路径。 */
+    private String absoluteRootPath(String primaryPath, String rootPath) {
+        java.nio.file.Path candidate = java.nio.file.Path.of(rootPath);
+        if (candidate.isAbsolute()) {
+            return candidate.normalize().toString();
+        }
+        return java.nio.file.Path.of(primaryPath).resolve(candidate).normalize().toString();
     }
 
     /**
@@ -968,8 +980,10 @@ public class WorkspaceService {
      * project — this guard is cheap and never wrong, only strict.
      */
     private boolean hasNonTerminalRuns(String workspaceId) {
+        // T7.2 实测修正：ambiguous/partial 也是终态（capture 已落切片），否则一次异常终态会让
+        // “声明根”永久 409 ROOT_IN_USE。与 RunCheckpointService 的非终态白名单保持一致。
         String sql = "SELECT COUNT(*) FROM chat_runs WHERE workspace_id = :workspaceId "
-                + "AND status NOT IN ('succeeded','failed','cancelled')";
+                + "AND status IN ('accepted','queued','running','streaming','awaiting_approval','dispatching','cancelling')";
         Object result = entityManager.createNativeQuery(sql)
                 .setParameter("workspaceId", UUID.fromString(workspaceId))
                 .getSingleResult();

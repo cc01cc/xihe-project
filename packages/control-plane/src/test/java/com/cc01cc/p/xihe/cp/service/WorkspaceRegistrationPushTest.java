@@ -115,7 +115,9 @@ class WorkspaceRegistrationPushTest extends AbstractWireMockTest {
                 .withRequestBody(matchingJsonPath("$.roots[0].rootId",
                         com.github.tomakehurst.wiremock.client.WireMock.equalTo(workspaceId)))
                 .withRequestBody(matchingJsonPath("$.roots[1].rootId",
-                        com.github.tomakehurst.wiremock.client.WireMock.equalTo(rootId))));
+                        com.github.tomakehurst.wiremock.client.WireMock.equalTo(rootId)))
+                .withRequestBody(matchingJsonPath("$.roots[1].hostPath",
+                        com.github.tomakehurst.wiremock.client.WireMock.equalTo(nestedPath.toLowerCase(java.util.Locale.ROOT)))));
     }
 
     @Test
