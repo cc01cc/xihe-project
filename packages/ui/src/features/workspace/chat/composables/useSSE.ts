@@ -217,19 +217,19 @@ export function useSSE(sessionId: MaybeRefOrGetter<string>) {
         isConnected = ref(false),
         isStreaming = ref(false),
         error = ref<string | null>(null);
+    /**
+     * PLAN-0645 M2: per-run scopes — which runs' assistant bubbles this connection is
+     * currently feeding. Up to `maxConcurrentRunsPerSession` (default 2) run scopes can be
+     * live at once; a token for run B arriving while run A is mid-stream opens B's bubble
+     * instead of flipping A's scope. The empty-string key is the fallback scope for
+     * runId-less tokens (pre-T2.1 agents or producer-less helpers); it never steals a
+     * runId-carrying token.
+     */
+    const runScopes = new Map<string, { contentStarted: boolean }>();
     let currentCallbacks: SSECallbacks = {},
         streamTimeout: ReturnType<typeof setTimeout> | null = null,
         connectionErrorReported = false,
         activeSessionId: string | null = null,
-        /**
-         * PLAN-0645 M2: per-run scopes — which runs' assistant bubbles this connection is
-         * currently feeding. Up to `maxConcurrentRunsPerSession` (default 2) run scopes can be
-         * live at once; a token for run B arriving while run A is mid-stream opens B's bubble
-         * instead of flipping A's scope. The empty-string key is the fallback scope for
-         * runId-less tokens (pre-T2.1 agents or producer-less helpers); it never steals a
-         * runId-carrying token.
-         */
-        runScopes = new Map<string, { contentStarted: boolean }>(),
         connectionGeneration = 0,
         activeApprovalEpoch: string | null = null;
 
