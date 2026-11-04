@@ -33,6 +33,9 @@ pub struct FullRestoreOptions {
     /// Test-only fault injection after the destructive deletion phase.
     #[cfg(test)]
     pub fail_after_deletes: bool,
+    /// Test-only crash hook: panic after N files have been restored.
+    #[cfg(test)]
+    pub fail_after_files: Option<usize>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -835,6 +838,12 @@ pub fn restore_full(
                 });
             }
             stats.restored += 1;
+            #[cfg(test)]
+            if let Some(after_files) = options.fail_after_files
+                && stats.restored >= after_files
+            {
+                panic!("injected restore crash after {after_files} files");
+            }
             stats.bytes = stats.bytes.saturating_add(entry.size);
         }
         Ok(())
@@ -1028,6 +1037,48 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["a.txt"]
         );
+    }
+
+    #[test]
+    fn crash_after_files_leaves_marker_and_resume_completes() {
+        let workspace = workspace();
+        let root = workspace.path().join("ws");
+        fs::create_dir_all(&root).expect("root");
+        write(&root.join("a.txt"), "a");
+        write(&root.join("b.txt"), "b");
+        let store = Store::init(workspace.path().join("store")).expect("store");
+        let capture = capture_root(&store, &root, "ws-1", None, None).expect("capture");
+        fs::write(root.join("a.txt"), "changed-a").expect("mutate a");
+        fs::write(root.join("b.txt"), "changed-b").expect("mutate b");
+        let crash = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            restore_full(
+                &store,
+                "ws-1",
+                &capture.slice_id,
+                &root,
+                &FullRestoreOptions {
+                    fail_after_files: Some(1),
+                    ..FullRestoreOptions::default()
+                },
+            )
+            .expect("injected panic must not return")
+        }));
+        assert!(crash.is_err(), "restore crash hook must panic");
+        assert!(root.join(RESTORE_MARKER).exists(), "marker must remain");
+        assert!(restore_status(&root).expect("status").incomplete);
+        let resumed = restore_full(
+            &store,
+            "ws-1",
+            &capture.slice_id,
+            &root,
+            &FullRestoreOptions {
+                resume_same_target: true,
+                ..FullRestoreOptions::default()
+            },
+        )
+        .expect("resume");
+        assert!(resumed.restored >= 1);
+        assert!(!root.join(RESTORE_MARKER).exists());
     }
 
     #[test]
@@ -1518,6 +1569,7 @@ mod tests {
                 &CaptureOptions {
                     declared_roots: Vec::new(),
                     exclude_opaque_nested: true,
+                    ..CaptureOptions::default()
                 },
             )
             .expect("capture S1")
@@ -1536,6 +1588,7 @@ mod tests {
                 &CaptureOptions {
                     declared_roots: Vec::new(),
                     exclude_opaque_nested: true,
+                    ..CaptureOptions::default()
                 },
             )
             .expect("capture S2")
@@ -1553,6 +1606,7 @@ mod tests {
                 &CaptureOptions {
                     declared_roots: Vec::new(),
                     exclude_opaque_nested: true,
+                    ..CaptureOptions::default()
                 },
             )
             .expect("capture S3")

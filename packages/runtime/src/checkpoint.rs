@@ -1031,6 +1031,7 @@ impl ShadowGit {
         .map_err(|error| CheckpointError::Io(std::io::Error::other(error.to_string())))
     }
 
+    #[allow(clippy::needless_update)]
     async fn dual_write_store(
         &self,
         context: DualWriteContext<'_>,
@@ -1078,6 +1079,7 @@ impl ShadowGit {
             let options = CaptureOptions {
                 declared_roots,
                 exclude_opaque_nested: false,
+                ..CaptureOptions::default()
             };
             let root_id_owned = root_id.to_owned();
             let run_id_owned = run_id.to_owned();
@@ -4073,6 +4075,7 @@ mod tests {
             &CaptureOptions {
                 declared_roots: Vec::new(),
                 exclude_opaque_nested: true,
+                ..CaptureOptions::default()
             },
         )
         .expect("walker capture");
@@ -4113,6 +4116,7 @@ mod tests {
             &CaptureOptions {
                 declared_roots: Vec::new(),
                 exclude_opaque_nested: true,
+                ..CaptureOptions::default()
             },
         )
         .expect("second walker capture");
