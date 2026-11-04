@@ -238,7 +238,9 @@ def _render(component: dict[str, Any], run: ChatRunContext, tools: list[Any], to
         )
         groups = []
         artifact_diagnostics: list[str] = []
-        history = run.agent_context.messages
+        # PLAN-0670 T2c.1: the tool-history branch gets the same inbound caps as the conversation
+        # branch — two branches with different limits would be a new silent difference.
+        history, _ = _limit_inbound_history(run.agent_context.messages)
         index = 0
         while index < len(history):
             assistant = history[index]
