@@ -67,7 +67,7 @@ ChatRun 通过 `runId` 关联 Message，服务端返回的 `runStatus`、`termin
 - 每个 Session 恰有一个 root `session_branches` 行（partial unique）；非 root 分支携带 `parent_branch_id` + `fork_point_message_id/run_id/sequence`（同 Session、同 parent branch 由 anchor composite FK 保证）。`messages`/`chat_runs`/`context_projections.branch_id NOT NULL`、`context_events.branch_id NULL`；读模型唯一键 `(session_id, projection_type, branch_id)`。
 - 每个 ChatRun/Message 创建时由 CP 固化 branchId 且 Run 分支不可变；可见集 = Session/global 事件 ∪ 每层祖先段至 child `fork_point_sequence` ∪ 当前分支（cursor 仍是 Session 全局 sequence，不引入 per-branch 计数）。
 - anchor 必须属于 terminal Run：`'USER'` 锚取该 Run 唯一 `prompt.admitted` sequence、`'ASSISTANT'` 锚取 Run 最大 correlated sequence；不可锚定（legacy 无 correlation/无 cursor）一律 409 fail-closed，不用 wall-clock 猜测。
-- 同 Session 单飞不变（`409 CHAT_IN_PROGRESS`）；公开 `GET/POST /api/v1/sessions/{sessionId}/branches`、`GET /messages?branchId=`、`ChatRequest.branchId`、manual compact `branchId` 与 `409 BRANCH_LOCK` 归 **PLAN-0409**。UI path 选择按 Session 隔离；服务器仍按 V43/0410 可见性解析，不信任客户端 parent/anchor 推断。契约见 [`spec/session/branch-context-isolation.md`](../../../spec/session/branch-context-isolation.md)，内部 API 见 DEV-014 §8d。
+- 同 Session **并发上限**（PLAN-0645 M0/M1）：非终态 run 达 `maxConcurrentRunsPerSession`（默认 2）才 `409 CHAT_IN_PROGRESS`，cap 内可并发；把该键设回 `1` 即回滚为原单飞行为；公开 `GET/POST /api/v1/sessions/{sessionId}/branches`、`GET /messages?branchId=`、`ChatRequest.branchId`、manual compact `branchId` 与 `409 BRANCH_LOCK` 归 **PLAN-0409**。UI path 选择按 Session 隔离；服务器仍按 V43/0410 可见性解析，不信任客户端 parent/anchor 推断。契约见 [`spec/session/branch-context-isolation.md`](../../../spec/session/branch-context-isolation.md)，内部 API 见 DEV-014 §8d。
 
 ### 1.3 Session Follow-up 队列（PLAN-0442 / V49）
 

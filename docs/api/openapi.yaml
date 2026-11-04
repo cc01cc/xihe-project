@@ -1324,7 +1324,9 @@ paths:
         Accepts a user message for the given session and enqueues an async relay to the Agent.
         The caller must already hold an active `GET /api/v1/events?sessionId=` subscription for the same session;
         otherwise the request is rejected with `409 SSE_SUBSCRIPTION_REQUIRED`.
-        Each request must identify its selected branch with `branchId`; the branch is validated before durable Run/Message creation and remains bound through Run ID recovery. Only one in-flight run per session is allowed (`409 CHAT_IN_PROGRESS`).
+        Each request must identify its selected branch with `branchId`; the branch is validated before durable Run/Message creation and remains bound through Run ID recovery.
+        A session admits up to `maxConcurrentRunsPerSession` (default 2) concurrent runs (PLAN-0645 M0/M1); only when that cap is already full is the next submission rejected with `409 CHAT_IN_PROGRESS`.
+        Rollback: set `agent-runtime.maxConcurrentRunsPerSession` back to `1` to restore the frozen single-flight behaviour (PLAN-0645 V3 equivalence) — no code change is needed.
         The accepted run streams `token` events followed by a terminal `done` over the persistent session SSE —
         `done` ends the run, not the SSE connection. The SSE remains reusable for the next chat.
         A new run is rejected with `403 FORBIDDEN` unless the persisted Session resolves to an active Agent principal

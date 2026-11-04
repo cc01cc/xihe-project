@@ -153,7 +153,7 @@ XH 目标形态是**多主体协作**：Agent 是独立主体（有自己的账�
 | 词 A | 词 B | 关系 |
 |---|---|---|
 | 单写者 ledger（0326） | ensure single-flight（M-3） | 账本单写 vs 实体只建一次 |
-| ensure single-flight | chat `409 CHAT_IN_PROGRESS` | 沙盒就绪 vs 会话单并发 run |
+| ensure single-flight | chat `409 CHAT_IN_PROGRESS` | 沙盒就绪 vs 会话并发 run 上限（PLAN-0645 起为 `maxConcurrentRunsPerSession`，默认 2，cap 满才 409；设回 1 恢复单飞） |
 | 工作区生命周期操作锁持有者 | **workspace operation lock holder** | `execution lease holder`（旧名）vs workspace 角色 owner；Runtime 互斥操作 vs RBAC 角色 |
 | run resume | unpause | 会话恢复 vs 容器解除暂停 |
 | **durable job 续看** | **Workspace `unpause` / `run resume`** | 读既有 Job 输出（`job-output`，只读游标）vs 重新激活执行；禁止把续看说成恢复/unpause |

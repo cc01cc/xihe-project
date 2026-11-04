@@ -66,7 +66,7 @@ mise run validate:full  # 单元 + 集成 + E2E
 ### 2.1. 聊天
 
 1. 在侧边栏点击 "+" 创建新会话（进入 `/chat/:sessionId` 时自动建立会话级持久 SSE：`GET /api/v1/events?sessionId=`）。
-2. 在输入框输入消息，按 Enter 或点击发送按钮发送。同一会话同一时间仅允许一条发送中的消息（`CHAT_IN_PROGRESS`）；若提示“已有进行中的对话”，请等待当前回复结束。
+2. 在输入框输入消息，按 Enter 或点击发送按钮发送。同一会话默认最多同时生成 2 条回复（可连续/并发提问）；超出上限时提示 `CHAT_IN_PROGRESS`（“已有进行中的对话”），请等其中一条回复结束再发送。
 3. Agent 通过 SSE 流式回复：`token` 增量逐步追加到助手气泡（支持 `text`/`reasoning` 分区），工具调用以卡片形式展示，可折叠查看详情。
 4. 首条回复结束后 SSE 保持连接，**无需刷新**即可继续发送下一条消息（第二条也会立即得到 `token` 增量）。`done` 仅结束当前轮次，不关闭会话 SSE。
 5. 若网络抖动导致连接中断，UI 会自动以指数退避（250ms 起，上限 5s）重连并恢复连接状态。
@@ -175,7 +175,7 @@ Provider 可在设置页面的模型配置中管理，选择预设后自动填�
 | 输入 | 注册返回 400 | 密码不足 8 位 | 使用 ≥8 位密码 |
 | 登录态 | 401 错误 | 未登录或 Token 过期 | 重新登录；持久 SSE 会在过期前关闭并清理本地 token，需重新登录 |
 | Network `/events` | `409 SSE_SUBSCRIPTION_REQUIRED` | 页面未建立 `GET /api/v1/events` 订阅就发送 | 刷新页面或等待 SSE `connected` 后重发；发送前 `SSEStream` 会手工确认连接（无自动 409 重试分支） |
-| 等待 `done` | `409 CHAT_IN_PROGRESS` | 同一会话已有进行中的 run | 等待当前 `done` 结束后再发送；刷新不会清除服务端租约 |
+| 等待 `done` | `409 CHAT_IN_PROGRESS` | 同一会话的在生成回复已达上限（默认 2 条） | 等待其中一条 `done` 结束后再发送；刷新不会清除服务端状态 |
 | Network + `logs/cp.log` | 发送后仅用户气泡、无助手回复 | 曾为 `SSE_SUBSCRIPTION_REQUIRED` 误判；已由 PLAN-230 修复（持久 SSE + 代数隔离） | 确认 `Network` 中 `/events` 仍为 `200 text/event-stream` 且 `POST /api/v1/chat` 返回 `202`；检查 `logs/cp.log` 的 `stale_cleanup_ignored` / `replaced` |
 | Network `token` 数 | 长回复只有一次内容变化 | provider 不支持流式，触发单 `token` 回落 | 属兼容路径：查看 `Network → events` 的 `token` 数量；真实 MiMo 应产生 ≥2 `token` |
 | 等待重连 | SSE 断开（网络抖动） | 网络问题或心跳超时 | 自动重连（指数退避 250ms 起，上限 5s）；重连后重新加载 `/api/v1/sessions/{id}/messages` 恢复最终内容 |

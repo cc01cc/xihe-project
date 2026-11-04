@@ -293,7 +293,7 @@ tests/
 ### 4.0 PLAN-247 Chat 可用性契约
 
 - Agent health 的 HTTP liveness 与 `llmReady` 必须分别断言；`unknown`、缺凭据、认证失败、provider 不可达和模型不可用不得被测试 helper 当作普通 `200` ready。
-- CP `/api/v1/chat` 必须在 readiness/SSE/single-flight gate 后才创建 `ChatRun` 和 user `Message`；重复 `Idempotency-Key` 不得再次启动 Agent，同 key 不同 payload 必须返回 `IDEMPOTENCY_KEY_CONFLICT`。
+- CP `/api/v1/chat` 必须在 readiness/SSE/每会话 run 上限 gate（`maxConcurrentRunsPerSession`，默认 2；cap 满 → `409 CHAT_IN_PROGRESS`，PLAN-0645）后才创建 `ChatRun` 和 user `Message`；重复 `Idempotency-Key` 不得再次启动 Agent，同 key 不同 payload 必须返回 `IDEMPOTENCY_KEY_CONFLICT`。
 - Agent chat 请求的 `provider`、`model`、`toolMode`、`runId` 和附件必须由 T2 body/header 断言；`toolMode=none` 不应产生 MCP `tools/list` 请求，workspace 模式的 MCP context 冲突必须失败而不是回退为空工具集。
 - T3/Host 测试使用隔离 fake LLM 覆盖 missing、401、multi-token success 和 disconnect；服务不可达时测试必须失败或明确记录阻塞，禁止 `skip` 冒充通过。
 
