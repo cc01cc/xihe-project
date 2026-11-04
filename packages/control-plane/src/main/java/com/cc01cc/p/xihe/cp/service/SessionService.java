@@ -104,6 +104,23 @@ public class SessionService {
                 workspaceId, userId);
     }
 
+    /**
+     * PLAN-0668 D1/D5 read-face list: owner ∨ invited enabled HUMAN participant. Managers stay out
+     * (D1b), and this deliberately does not replace the owner-only {@link #list} used by nothing
+     * else after the controller switch (kept for call-site stability in tests/clients).
+     */
+    @Transactional(readOnly = true)
+    public List<Session> listReadable(String userId, String workspaceId) {
+        requireWorkspace(userId, workspaceId);
+        UUID actorId;
+        try {
+            actorId = UUID.fromString(userId);
+        } catch (IllegalArgumentException malformedActor) {
+            return List.of();
+        }
+        return sessionRepository.findReadableByWorkspaceIdAndActor(workspaceId, userId, actorId);
+    }
+
     @Transactional
     public Session create(String userId, String workspaceId, String title,
                           String modelProvider, String modelName) {
