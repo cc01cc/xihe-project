@@ -57,16 +57,23 @@ class ContextFingerprintDocumentStatesTest {
     }
 
     @Test
-    void notDispatchedStateIsExplicit() {
-        ObjectNode document = ContextFingerprintCalculator.notDispatched();
-        assertEquals(true, document.path("enabled").asBoolean());
-        assertEquals("not_dispatched", document.path("status").asText());
-        assertEquals("not_dispatched", document.path("reason").asText());
-        assertFalse(document.has("layers"));
+    void notDispatchedIsReadSideOnlyAndNeverAStoredStatus() {
+        ObjectNode synthetic = ContextFingerprintCalculator.notDispatched();
+        assertEquals("not_dispatched", synthetic.path("status").asText());
+        // Two-level model (Lead 2026-11-05): stored documents are exactly ok/disabled/error.
+        java.util.Set<String> storable = java.util.Set.of(
+                ContextFingerprintCalculator.STATUS_OK,
+                ContextFingerprintCalculator.STATUS_DISABLED,
+                ContextFingerprintCalculator.STATUS_ERROR);
+        assertFalse(storable.contains(ContextFingerprintCalculator.STATUS_NOT_DISPATCHED),
+                "not_dispatched must never be a stored status; absence is a read-side envelope reason");
+        assertEquals("ok", ContextFingerprintCalculator.calculate(Map.of(), null, 1).path("status").asText());
+        assertEquals("disabled", ContextFingerprintCalculator.disabled().path("status").asText());
+        assertEquals("error", ContextFingerprintCalculator.error("X").path("status").asText());
     }
 
     @Test
-    void theFourStatesAreDistinguishableByStatusAndEnabledTogether() {
+    void theFourStateNamesAreDistinctAndOnlyDisabledTurnsEnabledOff() {
         assertEquals(4, java.util.Set.of(
                 ContextFingerprintCalculator.STATUS_OK,
                 ContextFingerprintCalculator.STATUS_DISABLED,

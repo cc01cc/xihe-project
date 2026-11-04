@@ -19,9 +19,14 @@ import java.util.Set;
  * stay explicit. Legacy rows (written before PLAN-0666) have {@code NULL} and no amount of
  * back-filling can reconstruct them, so the read side reports
  * {@code available=false + reason="pre_plan"}; a run that never dispatched reports
- * {@code reason="not_dispatched"}. The closed four-state set ({@code ok/disabled/error} +
- * {@code not_dispatched}) applies to a <b>stored document</b>; absence is a read-side reason, not a
- * fifth status, so consumers can exhaustively match both levels.
+ * {@code reason="not_dispatched"}.
+ *
+ * <p><b>Two-level model (Lead 2026-11-05, spec §可观测性; assertion):</b> a <b>stored</b> document
+ * is exactly one of {@code ok/disabled/error} — {@code not_dispatched} is never stored. Absence is
+ * carried only by this envelope ({@code available=false + reason}), and <b>"no document" must never
+ * be mapped to {@code disabled} or {@code error}</b>: a legacy run is neither switched off nor
+ * broken. If someone later wants "submitted but not dispatched" to be a stored state, that needs
+ * its own decision — do not add a fifth status silently.
  */
 public final class ContextFingerprintReadService {
 

@@ -151,9 +151,14 @@ public final class ContextFingerprintCalculator {
     }
 
     /**
-     * Synthetic document for "the run never reached dispatch". The dispatch path cannot write it
-     * (there is no document to store), so only the read side emits it — still explicitly, never as
-     * a missing column.
+     * Synthetic document for "the run never reached dispatch".
+     *
+     * <p><b>Two-level model (Lead 2026-11-05, spec §可观测性):</b> only {@code ok/disabled/error} are
+     * <b>stored</b>; {@code not_dispatched} never is. Absence is carried by the read-side envelope
+     * ({@code available=false + reason ∈ {pre_plan, not_dispatched}}). This method therefore exists
+     * only so a read-side adapter <i>could</i> materialize the state for a client that prefers a
+     * document over an envelope — it is never written to {@code chat_runs}. Turning it into a
+     * stored fifth state requires its own decision; do not add it silently.
      */
     public static ObjectNode notDispatched() {
         ObjectNode document = NODES.objectNode();
