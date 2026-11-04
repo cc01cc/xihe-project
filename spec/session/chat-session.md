@@ -42,6 +42,32 @@ Session 负责连续对话上下文、消息、附件引用、模型绑定和 Ch
 6. **失败不静默**：每次投递 MUST 以 `started`/`deferred`/`dropped`/`notify`/`refused`/`skipped_*` 之一收口并留可查留痕；不得因事务回滚而只剩日志行。
 7. **不扩契约**：本节点不新增事件名、计数维度或 API 路由；新增语义 MUST 复用既有 `wake_dispatch` 信封的 `outcome` / `reason` 字段。
 
+### 显式 TO 多目标（fan-out，PLAN-0665）
+
+> 来源：PLAN-0665 M1。语义 = 「这条消息由**被点名的这些主体**各自回应」（TO 从单值扩到集合）。
+
+1. **目标集合 = AGENT 参与者**：`toParticipantIds` MUST 只接受本 Session 的 **AGENT** 参与者；
+   人类目标 MUST 以 `400 INVALID_REQUEST` 显式拒绝（人类作答受 BL-238 wake 授权缺陷阻塞，另立计划）。
+2. **第一个目标承载提交**：集合首个目标 MUST 拥有本次 `user_submission` run（`runId` = `runIds[0]`）；
+   其余目标 MUST 作为派生 run 派发，其 wake 审计 `triggerSource="to"`；MUST NOT 为未选中主体
+   虚构 PRIMARY run。
+3. **origin 不得当分组依据**：派生 run 的 `origin` 仍为 `user_submission`、`parent_run_id` MUST 保持
+   NULL（委派链语义不得复用）。MUST NOT 新增 origin 枚举或列；读侧 MUST 按 `runId` / 消息的
+   durable `delivery` 归组，**不得**按 `origin` 推断「同一消息」。
+4. **单一入口**：单目标与多目标 MUST 走同一个 `TargetedWake` 入口，只差目标集合大小（禁止两条路径）。
+5. **显式 TO 优先于 @ 抑制**：带 `toParticipantIds` 的提交 MUST NOT 被 `@` 抑制成
+   `suppressed_no_responder`；`@` 与 TO 命中同一参与者时 MUST 去重（一条消息不为其开两个 run）。
+6. **幂等身份含集合**：排序后的 TO 集合与 `asParticipantId` MUST 进入 `Idempotency-Key` 的
+   request hash（同内容不同收件人 MUST NOT 判为重复）；`cc` 仍不入哈希（notify-only）。
+
+### 投递语义的持久载体（PLAN-0665 D3 / V120）
+
+1. composer 的 TO / CC 受众 MUST 落 `messages.delivery`（JSONB，可空）——`{"to":[...],"cc":[...]}`，
+   只存 participantId；`@` 仍由正文 + 花名册重建，不重复存。
+2. 读取面 MUST 在消息 DTO 中回传 `delivery`；缺字段（V120 之前的消息、内部 wake 提示）MUST 视为
+   「无投递记录」，不得伪造默认受众。
+3. 本载体 MUST 终结 BL-239（刷新后 TO/CC 不再丢失），UI 不得再以「本地发送态」作为唯一来源。
+
 ## 恢复与失败
 
 - Chat SSE 断线由 UI transport 按 session generation 和 `Last-Event-ID` 恢复；恢复不创建新的 Session。

@@ -1,0 +1,18 @@
+-- PLAN-0665 D3 (Q4): durable delivery semantics for a user Message.
+--
+-- The composer's TO / CC audience used to live only in the client's local send-state
+-- (BL-239): a refresh lost "who this message was addressed to". Storing the audience on the
+-- message row is the smallest durable carrier — same shape as the existing `tool_calls` JSONB
+-- column (V83), no new table and no generic `metadata` column (that one was dropped in V32).
+--
+-- Shape: {"to": ["<participantId>", ...], "cc": ["<participantId>", ...]}
+--   * participant ids only (display names are resolved from the roster, so renames never leave
+--     stale text behind);
+--   * @mentions are NOT stored here: they are rebuilt from the message body + roster, which
+--     already survives refreshes today.
+--
+-- Nullable, no backfill: rows written before this migration have no delivery record and the read
+-- side simply omits the field (same behaviour the UI had when the state was local-only).
+--
+-- Rollback: ALTER TABLE messages DROP COLUMN delivery;
+ALTER TABLE messages ADD COLUMN delivery JSONB;
