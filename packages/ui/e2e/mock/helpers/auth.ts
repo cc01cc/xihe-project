@@ -558,9 +558,44 @@ export async function setupMockSessions(page: Page, options: MockSessionOptions 
         });
     });
 
+    // C1（2026-11-04 合入）：composer 发送前会先 `POST /sessions/{id}/bind-defaults`，
+    // 只有端点回带 `providerConnectionId` 才会真正发送；否则弹「绑定引导」并把消息挂起
+    // （ChatPanel.handleSend → guardProviderBinding）。统一在此补齐夹具，否则所有
+    // 「发送后断言」的 mock 用例都会在发送前被拦下（mock lane 基线红）。
+    await page.route("**/api/v1/sessions/*/bind-defaults", async (route) => {
+        const sessionId =
+            new URL(route.request().url()).pathname.split("/").filter(Boolean).at(-2) ??
+            sessions[0]?.id ??
+            "mock-session";
+        const base = sessions.find((item) => item.id === sessionId) ?? sessions[0];
+        await route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify({
+                id: base?.id ?? sessionId,
+                title: base?.title ?? "Mock Session",
+                workspaceId: base?.workspaceId ?? "workspace-1",
+                agentPrincipalId: base?.agentPrincipalId ?? MOCK_BOUND_PRINCIPAL_ID,
+                createdAt: base?.createdAt ?? now,
+                updatedAt: base?.updatedAt ?? now,
+                archived: false,
+                providerConnectionId: "conn-mock-default",
+                connectionRevision: 1,
+                modelProvider: "openai",
+                modelName: "fake-openai",
+            }),
+        });
+    });
+
     await page.route("**/api/v1/sessions/**", async (route) => {
         const url = new URL(route.request().url()),
             parts = url.pathname.split("/").filter(Boolean);
+        // bind-defaults 有专用桩（注册在本路由之前）：fallback 交给它，避免被这里的
+        // 通用分支吃掉（Playwright 后注册优先，fallback 会回退到更早的 handler）。
+        if (parts.at(-1) === "bind-defaults") {
+            await route.fallback();
+            return;
+        }
         const sessionId = parts.at(-1) === "messages" ? parts.at(-2) : parts.at(-1);
         if (!sessionId) {
             await route.fulfill({

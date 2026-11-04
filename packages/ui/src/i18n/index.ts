@@ -741,6 +741,15 @@ const messages = {
         },
         chat: {
             send: "发送",
+            // PLAN-0659 T1.1：run 头的折叠开关 aria-label（run 短码仅展示）。
+            runHeader: {
+                toggle: "展开或折叠 run {run}",
+            },
+            // 2026-11-04 DSH 式过程渲染：推理行的统一标签。
+            reasoning: "思考",
+            // 2026-11-04 生产力密度裁定：composer 是工具条不是聊天框 —— placeholder 用简写；
+            // 此前 zh 缺该 key（走 en fallback）才露出长英文句 "Type a message…"。
+            placeholder: "输入消息，Enter 发送 · Shift+Enter 换行",
             delegation: {
                 button: "委派",
                 badge: "委派",
@@ -782,6 +791,8 @@ const messages = {
                 recipientUnknown: "没有找到这个成员",
                 recipientRemove: "移除",
                 recipientHint: "↑↓ 选择 · Enter 确认 · Tab 补全 · Esc 关闭",
+                recipientEmpty: "没有匹配的成员",
+                ccCollapse: "收起抄送",
                 mentionAll: "所有人",
                 mentionAgent: "智能体",
                 mentionHuman: "人类成员",
@@ -3001,6 +3012,10 @@ const messages = {
         },
         chat: {
             send: "Send",
+            runHeader: {
+                toggle: "Expand or collapse run {run}",
+            },
+            reasoning: "Reasoning",
             delegation: {
                 button: "Delegate",
                 badge: "Delegated",
@@ -3033,7 +3048,7 @@ const messages = {
                 approvalRejected: "The delegation approval was rejected or expired",
                 submitFailed: "Could not create the delegation, try again later",
             },
-            placeholder: "Type a message, Enter to send, Shift+Enter for new line...",
+            placeholder: "Message · Enter to send · Shift+Enter for newline",
             // PLAN-0635 M1: input-surface copy for `/` commands and `@` mentions (one shared menu).
             input: {
                 commandsTitle: "Commands",
@@ -3048,6 +3063,8 @@ const messages = {
                 recipientUnknown: "No such member",
                 recipientRemove: "Remove",
                 recipientHint: "↑↓ to choose · Enter to confirm · Tab to complete · Esc to close",
+                recipientEmpty: "No matching member",
+                ccCollapse: "Collapse cc",
                 mentionAll: "Everyone",
                 mentionAgent: "Agent",
                 mentionHuman: "Human",

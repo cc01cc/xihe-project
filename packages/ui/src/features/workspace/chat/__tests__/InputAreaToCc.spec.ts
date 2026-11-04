@@ -115,6 +115,15 @@ function mountInputArea() {
     });
 }
 
+/**
+ * 2026-11-04 composer 打磨：抄送栏**默认收起**为「抄送 +」小按钮 —— 需要输入框的用例先点开。
+ * （旧断言"挂载即见 cc-input"已随折叠模型废止。）
+ */
+async function openCcBar(wrapper: ReturnType<typeof mountInputArea>) {
+    await wrapper.get('[data-testid="cc-expand"]').trigger("click");
+    await flushPromises();
+}
+
 beforeEach(() => {
     setActivePinia(createPinia());
     storeState.canSpeakAs = false;
@@ -138,12 +147,18 @@ describe("InputArea to/cc (PLAN-0630 M5b, D30-14)", () => {
         expect(wrapper.get('[data-testid="speak-as-chip"]').text()).toContain("Alpha");
     });
 
-    it("抄送初始为空（无 chips）", async () => {
+    it("抄送默认收起为「抄送 +」，点击后才出现输入行", async () => {
         storeState.participants = roster();
         const wrapper = mountInputArea();
         await flushPromises();
 
+        // 2026-11-04 裁定：有候选也不再常驻占一行 —— 默认只给一个小按钮。
         expect(wrapper.find('[data-testid="cc-chip"]').exists()).toBe(false);
+        expect(wrapper.find('[data-testid="cc-input"]').exists()).toBe(false);
+        expect(wrapper.find('[data-testid="cc-bar"]').exists()).toBe(false);
+        expect(wrapper.find('[data-testid="cc-expand"]').exists()).toBe(true);
+
+        await openCcBar(wrapper);
         expect(wrapper.find('[data-testid="cc-input"]').exists()).toBe(true);
     });
 
@@ -151,6 +166,7 @@ describe("InputArea to/cc (PLAN-0630 M5b, D30-14)", () => {
         storeState.participants = roster();
         const wrapper = mountInputArea();
         await flushPromises();
+        await openCcBar(wrapper);
 
         const field = wrapper.get('[data-testid="cc-input"]');
         await field.setValue("Helper");
@@ -181,6 +197,7 @@ describe("InputArea to/cc (PLAN-0630 M5b, D30-14)", () => {
         storeState.participants = roster();
         const wrapper = mountInputArea();
         await flushPromises();
+        await openCcBar(wrapper);
 
         await wrapper.get('[data-testid="cc-input"]').setValue("Helper Alpha");
         await wrapper.get('[data-testid="cc-input"]').trigger("keydown", { key: " " });
@@ -197,6 +214,7 @@ describe("InputArea to/cc (PLAN-0630 M5b, D30-14)", () => {
         storeState.participants = roster();
         const wrapper = mountInputArea();
         await flushPromises();
+        await openCcBar(wrapper);
 
         await wrapper.get('[data-testid="cc-input"]').setValue("Nobody");
         await wrapper.get('[data-testid="cc-input"]').trigger("keydown", { key: " " });
@@ -230,6 +248,7 @@ describe("InputArea to/cc (PLAN-0630 M5b, D30-14)", () => {
         storeState.participants = roster();
         const wrapper = mountInputArea();
         await flushPromises();
+        await openCcBar(wrapper);
 
         await wrapper.get('[data-testid="cc-input"]').setValue("Helper");
         await wrapper.get('[data-testid="cc-input"]').trigger("keydown", { key: " " });
@@ -309,5 +328,73 @@ describe("InputArea to/cc (PLAN-0630 M5b, D30-14)", () => {
         await flushPromises();
 
         expect(wrapper.findAll('[data-testid="cc-chip"]')).toHaveLength(0);
+    });
+});
+
+describe("composer 打磨（2026-11-04 用户裁定）", () => {
+    it("抄送三态：默认收起 → 手动展开 → 手动收起（chips 清空后）", async () => {
+        storeState.participants = roster();
+        const wrapper = mountInputArea();
+        await flushPromises();
+
+        expect(wrapper.find('[data-testid="cc-expand"]').exists()).toBe(true);
+        await openCcBar(wrapper);
+        expect(wrapper.get('[data-testid="cc-input"]').exists()).toBe(true);
+        // 展开态且无 chips → 允许手动收起。
+        expect(wrapper.find('[data-testid="cc-collapse"]').exists()).toBe(true);
+        await wrapper.get('[data-testid="cc-collapse"]').trigger("click");
+        await flushPromises();
+        expect(wrapper.find('[data-testid="cc-input"]').exists()).toBe(false);
+        expect(wrapper.find('[data-testid="cc-expand"]').exists()).toBe(true);
+    });
+
+    it("已有 chips 时不允许收起（名字必须可见）；chips 清空后可收起", async () => {
+        storeState.participants = roster();
+        const wrapper = mountInputArea();
+        await flushPromises();
+        await openCcBar(wrapper);
+
+        await wrapper.get('[data-testid="cc-input"]').setValue("Helper");
+        await wrapper.get('[data-testid="cc-input"]').trigger("keydown", { key: " " });
+        await flushPromises();
+        expect(wrapper.findAll('[data-testid="cc-chip"]')).toHaveLength(1);
+        // 有 chips → 收起按钮不渲染（避免把名字藏起来）。
+        expect(wrapper.find('[data-testid="cc-collapse"]').exists()).toBe(false);
+
+        await wrapper.get('[data-testid="cc-chip-remove"]').trigger("click");
+        await flushPromises();
+        expect(wrapper.find('[data-testid="cc-collapse"]').exists()).toBe(true);
+        await wrapper.get('[data-testid="cc-collapse"]').trigger("click");
+        await flushPromises();
+        expect(wrapper.find('[data-testid="cc-expand"]').exists()).toBe(true);
+    });
+
+    it("手动展开按会话记忆：切走再切回保持展开，新会话回到默认收起", async () => {
+        storeState.participants = roster();
+        const wrapper = mountInputArea();
+        await flushPromises();
+        await openCcBar(wrapper);
+
+        // 切到另一个会话 → 未记忆过 ⇒ 默认收起。
+        await wrapper.setProps({ sessionId: "session-2" });
+        await flushPromises();
+        expect(wrapper.find('[data-testid="cc-expand"]').exists()).toBe(true);
+
+        // 切回 session-1 → 记得上次手动展开。
+        await wrapper.setProps({ sessionId: "session-1" });
+        await flushPromises();
+        expect(wrapper.find('[data-testid="cc-input"]').exists()).toBe(true);
+    });
+
+    it("焦点环只落在真实 input：composer 容器不再套满框 ring", async () => {
+        storeState.participants = roster();
+        const wrapper = mountInputArea();
+        await flushPromises();
+
+        const textarea = wrapper.get('[data-testid="chat-input"]');
+        expect(textarea.classes().join(" ")).toContain("focus-visible:ring-1");
+        // 全宽容器（textarea 的祖先）不得再把 focus-within ring 套成满框。
+        const composerBox = textarea.element.parentElement?.parentElement;
+        expect(composerBox?.className ?? "").not.toContain("focus-within:ring");
     });
 });

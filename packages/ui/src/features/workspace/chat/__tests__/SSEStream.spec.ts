@@ -272,4 +272,48 @@ describe("SSEStream terminal error scoping", () => {
         expect(chatStore.isStreaming(sessionId)).toBe(false);
         wrapper.unmount();
     });
+
+    it("keeps a tool-first run in one bubble and releases the composer on done (BL-229)", async () => {
+        // BL-229 真实 wire：tool 事件同时带 Agent 的 snake `run_id`（LangChain 回调 id）与
+        // CP 的 camel `runId`（ChatRun id），而 `done` 只认后者。按 `run_id` 分流会留下孤儿活
+        // scope ⇒ `isStreaming()` 不回 idle ⇒ composer 停在停止键（发送键从 DOM 消失）。
+        const sessionId = "session-tool-first";
+        const { wrapper, push } = await mountStream(sessionId),
+            chatStore = useChatStore();
+        const assistants = () =>
+            chatStore.getMessages(sessionId).filter((message) => message.role === "assistant");
+
+        await push("tool_call", {
+            tool: "run_command",
+            arguments: { command: "ls" },
+            run_id: "lc-tool-1",
+            runId: "run-cp",
+            toolCallId: "lc-tool-1",
+        });
+        await push("tool_result", {
+            tool: "run_command",
+            result: "a.txt",
+            run_id: "lc-tool-1",
+            runId: "run-cp",
+            toolCallId: "lc-tool-1",
+        });
+        await push("token", { content: "finished", runId: "run-cp" });
+
+        // tool-first: the bubble already exists before the first token, and the token joins it.
+        expect(assistants()).toHaveLength(1);
+        expect(chatStore.isStreaming(sessionId)).toBe(true);
+
+        await push("done", { outcome: "success", runId: "run-cp" });
+
+        expect(assistants()).toHaveLength(1);
+        expect(assistants()[0].content).toBe("finished");
+        expect(assistants()[0].toolCalls?.[0]).toMatchObject({
+            id: "lc-tool-1",
+            status: "completed",
+        });
+        expect(assistants()[0].isStreaming).toBe(false);
+        expect(chatStore.isStreaming(sessionId)).toBe(false);
+        expect(chatStore.getSessionRunState(sessionId).status).toBe("idle");
+        wrapper.unmount();
+    });
 });

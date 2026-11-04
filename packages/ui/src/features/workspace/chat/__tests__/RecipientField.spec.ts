@@ -23,6 +23,7 @@ const i18n = createI18n({
                     recipientRemove: "移除",
                     recipientUnknown: "没有找到这个成员",
                     recipientHint: "↑↓ 选择 · Enter 确认 · Tab 补全 · Esc 关闭",
+                    recipientEmpty: "没有匹配的成员",
                 },
             },
             workspace: { participantUnknownName: "未知成员" },
@@ -147,5 +148,41 @@ describe("RecipientField — 自由输入兜底", () => {
         expect(wrapper.emitted("update:modelValue")?.at(-1)).toEqual([["id-lin"]]);
         expect((input.element as HTMLInputElement).value).toBe("张三");
         await flushPromises();
+    });
+});
+
+describe("RecipientField — 浮层与候选行（2026-11-04 composer 打磨）", () => {
+    it("候选列表是绝对定位 overlay：不占文档流，锚在字段容器的 relative 上", async () => {
+        const wrapper = mountField();
+        await wrapper.get('[data-testid="cc-input"]').setValue("林");
+
+        const menu = wrapper.get('[data-testid="cc-menu"]');
+        const menuClasses = menu.classes().join(" ");
+        expect(menuClasses).toContain("absolute");
+        expect(menuClasses).toContain("z-30");
+        // 菜单挂在字段内的相对定位容器里（overlay），不是两行之间的流内兄弟。
+        expect(menu.element.parentElement?.className ?? "").toContain("relative");
+        expect(menu.element.parentElement?.className ?? "").not.toContain("flex-wrap");
+    });
+
+    it("候选行美化：role 收成小 chip，键盘高亮用 aria-selected + 左侧指示条", async () => {
+        const wrapper = mountField();
+        await wrapper.get('[data-testid="cc-input"]').setValue("林");
+
+        const option = wrapper.get('[data-testid="cc-option"]');
+        expect(option.classes().join(" ")).toContain("before:bg-ring");
+        expect(option.find(".font-mono").text()).toBe("MEMBER");
+        expect(option.attributes("aria-selected")).toBe("true");
+
+        // hover 只加浅底，键盘高亮才是 selected 状态（两者可区分）。
+        expect(option.classes().join(" ")).toContain("hover:bg-accent/60");
+    });
+
+    it("无匹配候选时给空态提示（不静默）", async () => {
+        const wrapper = mountField();
+        await wrapper.get('[data-testid="cc-input"]').setValue("zzz");
+
+        expect(wrapper.find('[data-testid="cc-menu"]').exists()).toBe(false);
+        expect(wrapper.get('[data-testid="cc-empty"]').text()).toContain("没有匹配的成员");
     });
 });

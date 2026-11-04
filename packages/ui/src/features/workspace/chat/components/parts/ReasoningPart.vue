@@ -1,21 +1,35 @@
 <script setup lang="ts">
-import { ref } from "vue";
+/**
+ * 2026-11-04 用户裁定（DSH 式过程渲染）：推理与思考/工具调用/refusal 同一渲染语言 ——
+ * 单行可折叠 chip（icon + label + 首行摘要 + chevron），展开看全文。
+ */
+import { computed } from "vue";
+import { Brain } from "@lucide/vue";
+import { useI18n } from "vue-i18n";
+import ProcessRow from "../ProcessRow.vue";
 
-defineProps<{
+const props = defineProps<{
     content: string;
 }>();
 
-const expanded = ref(false);
+const { t } = useI18n();
+
+/** 折叠行摘要 = 第一段非空文本（再截断，交给 ProcessRow 的 truncate）。 */
+const summary = computed(() => {
+    const line = props.content.split("\n").find((item) => item.trim());
+    return line ? line.trim().slice(0, 80) : "";
+});
 </script>
 
 <template>
-    <details class="my-2 rounded-lg border bg-muted/30 p-3" :open="expanded">
-        <summary
-            class="cursor-pointer text-sm font-medium text-muted-foreground select-none"
-            @click="expanded = !expanded"
-        >
-            Reasoning
-        </summary>
-        <div class="mt-2 text-sm leading-relaxed whitespace-pre-wrap">{{ content }}</div>
-    </details>
+    <ProcessRow
+        kind="reasoning"
+        :icon="Brain"
+        :label="t('chat.reasoning')"
+        :summary="summary"
+        expandable
+        testid="process-reasoning"
+    >
+        <div class="whitespace-pre-wrap leading-relaxed text-muted-foreground">{{ content }}</div>
+    </ProcessRow>
 </template>

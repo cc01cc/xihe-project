@@ -252,10 +252,13 @@ class ApprovalServiceTest {
     }
 
     @Test
-    void decideSkipsAgentRelayForCpGateApprovals() {
-        // PLAN-0655 T2 (real-stack finding): a cp_gate row (spawn gate / human delegation) has no
-        // agent-side counterpart; relaying the decision 404s and strands the row. The CP marks the
-        // decision locally and the caller retries with the approval grant header.
+    void decideRelaysToAgentForCpGateApprovalsAndToleratesNotFound() {
+        // BL-232 (real-stack finding): a cp_gate row can have an Agent-side waiter (PLAN-0328 T1.9
+        // post-gate listener) — the MCP gate answers the first tools/call with a 409 gate frame and
+        // the Agent blocks until this push arrives. Without the relay the waiter sleeps until the
+        // approval TTL and the run dies with CHAT_EXECUTION_FAILED.
+        // A cp_gate row with NO waiter (PLAN-0655 human delegation) answers 404 APPROVAL_NOT_FOUND;
+        // that is expected: keep the local decision, never mark dispatch_unknown.
         ChatApproval approval = pending(Instant.now().plusSeconds(60));
         approval.setOrigin(ChatApproval.ORIGIN_CP_GATE);
         when(approvals.findById(UUID.fromString(TEST_REQUEST_ID))).thenReturn(Optional.of(approval));
@@ -264,13 +267,43 @@ class ApprovalServiceTest {
                 .thenReturn(1);
         when(approvals.markDecided(eq(UUID.fromString(TEST_REQUEST_ID)), eq("approved"), eq("once"), any(Instant.class)))
                 .thenReturn(1);
+        when(agent.respond(TEST_REQUEST_ID, true, "once", null))
+                .thenThrow(new CpApiException(HttpStatus.NOT_FOUND, "APPROVAL_NOT_FOUND",
+                        "no agent-side approval with this id"));
 
         Map<String, Object> response = service.decide(TEST_REQUEST_ID, TEST_USER, TEST_WORKSPACE,
                 ApprovalDecision.once());
 
         assertEquals("accepted", response.get("status"));
-        verify(agent, never()).respond(any(), anyBoolean(), any(), any());
+        // the relay is attempted for gate rows too (BL-232 restores it)
+        verify(agent).respond(TEST_REQUEST_ID, true, "once", null);
+        // ...but a missing Agent waiter does not strand the row
         verify(approvals).markDecided(eq(UUID.fromString(TEST_REQUEST_ID)), eq("approved"), eq("once"), any());
+        verify(approvals, never()).markDispatchUnknown(any(), any(), any());
+    }
+
+    @Test
+    void decideMarksDispatchUnknownForAgentRelayRowsWhenAgentUnavailable() {
+        // agent_relay rows keep the historical fail-closed behavior: the Agent owns the pending
+        // request, so a failed push must surface as dispatch_unknown instead of a silent accept.
+        ChatApproval approval = pending(Instant.now().plusSeconds(60));
+        approval.setOrigin(ChatApproval.ORIGIN_AGENT_RELAY);
+        when(approvals.findById(UUID.fromString(TEST_REQUEST_ID))).thenReturn(Optional.of(approval));
+        when(approvals.markDispatching(eq(UUID.fromString(TEST_REQUEST_ID)), eq(true), any(),
+                any(), any(), any(), any(Instant.class)))
+                .thenReturn(1);
+        when(agent.respond(TEST_REQUEST_ID, true, "once", null))
+                .thenThrow(new CpApiException(HttpStatus.BAD_GATEWAY, "AGENT_UNAVAILABLE",
+                        "agent unreachable"));
+        when(approvals.markDispatchUnknown(eq(UUID.fromString(TEST_REQUEST_ID)), eq("AGENT_UNAVAILABLE"),
+                any(Instant.class))).thenReturn(1);
+
+        CpApiException error = assertThrows(CpApiException.class,
+                () -> service.decide(TEST_REQUEST_ID, TEST_USER, TEST_WORKSPACE, ApprovalDecision.once()));
+
+        assertEquals("AGENT_UNAVAILABLE", error.getCode());
+        verify(approvals).markDispatchUnknown(eq(UUID.fromString(TEST_REQUEST_ID)), eq("AGENT_UNAVAILABLE"), any());
+        verify(approvals, never()).markDecided(any(), any(), any(), any());
     }
 
     @Test

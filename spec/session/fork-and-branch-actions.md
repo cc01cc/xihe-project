@@ -68,5 +68,5 @@ Child 通过现有 `session.forked` Session/global root event 接收 PLAN-0410 �
 ## In-Session Branch Actions
 
 - Rewind/edit/path selection remain within the same Session and preserve original path rows. Branch path reads, anchor mapping and Context projection 读模型 use PLAN-0410 services.
-- Mutating an in-session branch while a Run is active returns `409 BRANCH_LOCK`; normal Session single-flight behavior remains `409 CHAT_IN_PROGRESS`.
+- Mutating an in-session branch while a Run is active returns `409 BRANCH_LOCK`; when a session is already at `maxConcurrentRunsPerSession` (default 2, PLAN-0645) the next `POST /api/v1/chat` returns `409 CHAT_IN_PROGRESS`.
 - Every public action enforces Bearer authentication, Session owner/Workspace visibility and RFC 9457 Problem Details; browser clients cannot synthesize branch membership or child context.

@@ -693,6 +693,39 @@ class RunCheckpointServiceTest {
         verify(client, never()).revert(anyString(), anyString(), any(), anyBoolean(), any());
     }
 
+    /**
+     * PLAN-0645 V9 (D45-09): the frozen judgement is workspace-level non-terminal **existence**,
+     * so two concurrent in-flight runs are exactly the state the gate must hold on — for preview
+     * and revert alike, and before any slice lookup or Runtime work. The query's frozen status set
+     * is asserted directly: both runs (running / streaming / awaiting_approval) must be inside it,
+     * otherwise a live run could slip past the gate.
+     */
+    @Test
+    @SuppressWarnings("unchecked")
+    void runActiveGateHoldsWithTwoInFlightRuns() {
+        when(chatRunRepository.existsByWorkspaceIdAndStatusIn(eq(WORKSPACE_ID), any())).thenReturn(true);
+
+        RunCheckpointService.PreviewOutcome preview = service.previewRevert(WORKSPACE_ID, SLICE_REF);
+        assertEquals(RunCheckpointService.Gate.RUN_ACTIVE, preview.gate());
+        assertEquals("RUN_ACTIVE", preview.reason());
+
+        RunCheckpointService.RevertOutcome revert = service.revert(WORKSPACE_ID, SLICE_REF, List.of());
+        assertEquals(RunCheckpointService.Gate.RUN_ACTIVE, revert.gate());
+        assertEquals("RUN_ACTIVE", revert.reason());
+
+        ArgumentCaptor<java.util.Collection<String>> statuses =
+                ArgumentCaptor.forClass(java.util.Collection.class);
+        verify(chatRunRepository, times(2))
+                .existsByWorkspaceIdAndStatusIn(eq(WORKSPACE_ID), statuses.capture());
+        for (java.util.Collection<String> queried : statuses.getAllValues()) {
+            assertTrue(queried.contains("running") && queried.contains("streaming")
+                            && queried.contains("awaiting_approval"),
+                    "both in-flight runs must be inside the frozen non-terminal set: " + queried);
+        }
+        verify(client, never()).previewRevert(anyString(), anyString());
+        verify(client, never()).revert(anyString(), anyString(), any());
+    }
+
     @Test
     void previewRevertPassesSliceRefToRuntimePreview() {
         seedCapturedRow();
@@ -791,6 +824,9 @@ class RunCheckpointServiceTest {
         @SuppressWarnings("unchecked")
         Map<String, Object> revert = (Map<String, Object>) payload.getValue().get("revert");
         assertEquals(RunCheckpoint.REVERT_ROLLED_BACK, revert.get("state"));
+        // PLAN-0645 V8: `run_checkpoint` is producer-less — it must keep using the participant-less
+        // send, so a client can never mistake it for a run's attributed output.
+        verify(sseManager, never()).send(eq(SESSION_ID), eq("run_checkpoint"), any(), any());
     }
 
     @Test

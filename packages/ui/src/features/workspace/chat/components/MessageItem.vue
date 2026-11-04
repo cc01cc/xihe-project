@@ -29,21 +29,15 @@ import {
     Brain,
     LoaderCircle,
     Clock,
-    Bot,
-    User,
     Trash2,
     GitBranch,
     Shield,
     CircleAlert,
     XCircle,
 } from "@lucide/vue";
-import {
-    Message as MessageRoot,
-    MessageAvatar,
-    MessageContent,
-    MessageHeader,
-} from "@/components/ui/message";
-import { Marker, MarkerIcon, MarkerContent } from "@/components/ui/marker";
+import { Message as MessageRoot, MessageContent, MessageHeader } from "@/components/ui/message";
+import ProcessRow from "./ProcessRow.vue";
+import { actorOf } from "../actorView";
 
 const props = defineProps<{
     message: Message;
@@ -55,8 +49,22 @@ const props = defineProps<{
      * and then **no** identity row is rendered — PRIMARY is never assumed.
      */
     responder?: SessionParticipantView;
+    /**
+     * PLAN-0659 T1.2：给**过程行**挂 actor 徽标。只在混主体线程为 true（单主体线程重复
+     * 标注同一个人是噪音）；消息身份行不受此开关影响（它一直按服务端归因渲染）。
+     */
+    showActor?: boolean;
 }>();
 const { t } = useI18n();
+
+/**
+ * PLAN-0659 T1.2：该消息的产出主体。只从服务端归因派生（`responder`），没有归因就没有
+ * actor —— 与身份行同一口径，不猜 PRIMARY。颜色中立，靠首字母 + 名字。
+ */
+const actorOfMessage = computed(() =>
+    actorOf(props.responder, t("workspace.participantUnknownName")),
+);
+const actorForRows = computed(() => (props.showActor ? actorOfMessage.value : undefined));
 
 const emit = defineEmits<{
     approve: [id: string];
@@ -305,47 +313,25 @@ onUnmounted(() => {
 </script>
 
 <template>
-    <Marker
+    <!-- 2026-11-04：思考/执行状态与工具调用同一条单行过程行语言（无展开体）。 -->
+    <ProcessRow
         v-if="isMarker"
-        variant="default"
+        kind="thinking"
+        :icon="statusIcon"
+        :label="markerLabel"
         :class="message.status === 'executing' ? 'shimmer' : ''"
-    >
-        <MarkerIcon>
-            <component :is="statusIcon" class="size-4" />
-        </MarkerIcon>
-        <MarkerContent>
-            {{ markerLabel }}
-        </MarkerContent>
-    </Marker>
+        testid="process-thinking"
+        :actor="actorForRows"
+        :expandable="false"
+    />
 
     <MessageRoot
         v-else
         :align="isOwnMessage ? 'end' : 'start'"
-        class="px-3 py-1.5"
+        class="px-3 py-1"
         data-testid="message-item"
         :data-message-role="message.role"
     >
-        <MessageAvatar v-if="!isOwnMessage">
-            <!-- PLAN-0631 D31-10: initials identify the responder; no per-participant color. -->
-            <div
-                v-if="showResponder"
-                class="flex size-8 items-center justify-center rounded-full border bg-muted text-[11px] font-medium text-foreground"
-                data-testid="message-responder-initials"
-                aria-hidden="true"
-            >
-                {{ responderInitials }}
-            </div>
-            <div v-else class="flex size-8 items-center justify-center rounded-full bg-primary/10">
-                <Bot class="size-4 text-primary" />
-            </div>
-        </MessageAvatar>
-
-        <MessageAvatar v-if="isOwnMessage">
-            <div class="flex size-8 items-center justify-center rounded-full bg-secondary">
-                <User class="size-4 text-secondary-foreground" />
-            </div>
-        </MessageAvatar>
-
         <MessageContent class="max-w-[85%] min-w-0 md:max-w-[75%]">
             <!--
                 PLAN-0631 D31-09: identity row, reusing the shipped-but-unused MessageHeader.
@@ -354,10 +340,22 @@ onUnmounted(() => {
             -->
             <MessageHeader
                 v-if="showResponder"
-                class="mb-1 gap-1.5 px-0.5"
+                class="mb-0.5 gap-1 px-0.5"
                 data-testid="message-responder"
                 :data-participant-id="responder?.participantId"
             >
+                <!--
+                    2026-11-04 用户裁定（DSH 密度）：不再有独立头像列 —— 消息身份 = 16px 首字母
+                    圆点 + 名称（多主体下靠圆点+名区分），中心线程保持无头像观感。
+                -->
+                <span
+                    class="flex size-4 shrink-0 items-center justify-center rounded-full border bg-muted text-[9px] font-medium text-foreground"
+                    data-testid="message-responder-initials"
+                    :data-actor-principal-id="responder?.participantId"
+                    :data-actor-kind="responder?.principalKind"
+                    aria-hidden="true"
+                    >{{ responderInitials }}</span
+                >
                 <span class="truncate text-foreground">{{ responderName }}</span>
                 <span
                     class="flex shrink-0 items-center gap-1 rounded border border-border px-1.5 py-0.5 text-[10px] font-normal text-muted-foreground"
@@ -476,6 +474,7 @@ onUnmounted(() => {
                     v-for="tc in message.toolCalls"
                     :key="tc.id"
                     :tool-call="tc"
+                    :actor="actorForRows"
                     @approve="emit('approve', $event)"
                     @reject="emit('reject', $event)"
                 />

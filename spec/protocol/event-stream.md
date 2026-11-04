@@ -8,7 +8,7 @@
 入口：`GET /api/v1/events?sessionId=`。完整 event payload 以 OpenAPI/代码类型为准，本文冻结生命周期和 ownership：
 
 - 一个 `sessionId` **MUST** 只有一个 active emitter；新连接替换旧连接并递增 generation。
-- `POST /api/v1/chat` **MUST** 先通过 SSE subscription 和 single-flight gate，再持久化消息/run。
+- `POST /api/v1/chat` **MUST** 先通过 SSE subscription 与每会话 run 上限 gate（`maxConcurrentRunsPerSession`，默认 2；cap 满 → 409 `CHAT_IN_PROGRESS`，PLAN-0645），再持久化消息/run。
 - `done` **MUST** 只结束当前 ChatRun，不得关闭 Session SSE。
 - `heartbeat` 是 transport event，不得进入 UI MessagePart。
 - `derived_state_changed` 是 child terminal 提交后的 best-effort refresh hint，发送到**父 Session**的 SSE channel；data JSON 恰好 `{sessionId,runId,state,at}` 四键，其中 `sessionId/runId/state` 标识 child Run，`at` 等于其 durable `chat_runs.terminal_at`。接收端只据此重新读取父 Session derived-state API；Inbox 是通知事实源，SSE 不承诺必达、replay 或与 DB 原子。

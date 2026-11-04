@@ -107,10 +107,12 @@ async function sendMessage(page: Page, text: string): Promise<void> {
         .waitFor({ state: "detached", timeout: 8_000 })
         .catch(() => {});
     await send.click();
+    // composer/bubble 重写后 `data-align` 移到 Bubble 原语上，`[data-slot="message"]` 不再承载它；
+    // 改用每条消息行的稳定锚点 `message-item` 按文本定位（断言语义不变：发送后用户气泡出现）。
     await expect(
-        page.locator('[data-slot="message"][data-align="end"]').last(),
+        page.getByTestId("message-item").filter({ hasText: text.slice(0, 12) }).first(),
         "the user bubble appears after sending",
-    ).toContainText(text.slice(0, 12), { timeout: 30_000 });
+    ).toBeVisible({ timeout: 30_000 });
 }
 
 async function ensureOpenAiCompatConnection(
@@ -147,7 +149,10 @@ async function ensureOpenAiCompatConnection(
             apiTypeId: "openai-chat-completions",
             apiTypeVersion: 1,
             apiKey,
-            connectionKey: "plan0630-delegation",
+            // task-24 严格解析：instance 层 profile（runner 导入 `openai`/`default`/`mimo-v2.6-flash`）
+            // 只在**消费用户自己**的 USER 连接里按 providerId+connectionKey 查 READY；key 不是
+            // `default` 时 `POST /sessions` 直接 409 LLM_PROFILE_CONFLICT。改名只动夹具标识。
+            connectionKey: "default",
             label: "PLAN-0630 delegation walkthrough",
             scope: "USER",
             modelDiscovery: "manual",
@@ -218,6 +223,9 @@ test.describe("@host PLAN-0630 T5.9 real delegation walkthrough", () => {
             { actionClass: "CREATE_ACCOUNT", resource: "*" },
             { actionClass: "MANAGE_WORKSPACE_AGENTS", resource: wsId },
             { actionClass: "SPAWN_AGENT", resource: "*" },
+            // user 层 agent-templates 写入走 CREATE_TEMPLATE（AgentTemplateService.requireUserAction），
+            // 旧的 `write` 原子已不再覆盖该动作；其余 real spec 同样按此播种。
+            { actionClass: "CREATE_TEMPLATE", resource: "*" },
             { actionClass: "write", resource: "*" },
         ]);
         const connection = await ensureOpenAiCompatConnection(request, headers, MODEL_ID);
@@ -265,6 +273,18 @@ test.describe("@host PLAN-0630 T5.9 real delegation walkthrough", () => {
             ((await principalResponse.json()) as { principalId: string }).principalId,
             "principalId",
         );
+        // 工作区 cap 的两道校验（AgentPrincipalService.setWorkspaceCap）：cap ⊆ principal 原子
+        // 并集 **且** ⊆ 操作者并集。新 principal 只带 agent_default 原子，SPAWN_AGENT 必须先落
+        // grants 才能通过 —— 而且是**每行单原子**（多原子行会被 RoleGrantMaterializer 判
+        // malformed 并在 repair 路径撞 uq_grants_role_atom，BL-230）。instance 作用域行镜像
+        // 角色授权，绑定写的是 workspace 作用域行，唯一键不冲突。配方照 0649（已验证）。
+        psql(
+            `INSERT INTO grants (id, granter_type, granter_id, subject_type, subject_id, permissions, source, scope_type, scope_id, read_state, created_at)
+             SELECT gen_random_uuid(), 'user', '${userId}', 'agent_principal', '${principalId}',
+                    jsonb_build_array(jsonb_build_object('actionClass', 'SPAWN_AGENT', 'resource', '*')),
+                    'role', 'instance', NULL, 'read', now()
+             ON CONFLICT DO NOTHING`,
+        );
         const boundAgent = await request.put(
             `${CP_URL}/api/v1/workspaces/${wsId}/agents/${principalId}`,
             {
@@ -279,22 +299,22 @@ test.describe("@host PLAN-0630 T5.9 real delegation walkthrough", () => {
         );
         expect(boundAgent.status(), await boundAgent.text()).toBe(200);
 
-        // The principal's materialized grant must carry SPAWN_AGENT (the tool is filtered
-        // out of tools/list otherwise — agent-spawn-caller does the same fixture step).
-        const principalGrantId = requireUuid(
-            psql(
-                `SELECT id FROM grants WHERE subject_type = 'agent_principal' AND subject_id = '${principalId}'::uuid ORDER BY created_at DESC LIMIT 1`,
-            ),
-            "principal grant id",
-        );
+        // 绑定会按角色绑定重置化 principal 的 grants 并丢掉临时行，所以绑定后要再补一次：
+        // 会话创建时冻结的 agentPermissionsSnapshot = cap ∩ principal 原子，缺了它 spawn_agent
+        // 不会出现在 tools/list（0649 attempt 6 实证）。
         psql(
-            `UPDATE grants SET permissions = permissions || '[{"actionClass":"SPAWN_AGENT","resource":"*"}]'::jsonb WHERE id = '${principalGrantId}'::uuid AND NOT (permissions @> '[{"actionClass":"SPAWN_AGENT","resource":"*"}]'::jsonb)`,
+            `INSERT INTO grants (id, granter_type, granter_id, subject_type, subject_id, permissions, source, scope_type, scope_id, read_state, created_at)
+             SELECT gen_random_uuid(), 'user', '${userId}', 'agent_principal', '${principalId}',
+                    jsonb_build_array(jsonb_build_object('actionClass', 'SPAWN_AGENT', 'resource', '*')),
+                    'role', 'instance', NULL, 'read', now()
+             ON CONFLICT DO NOTHING`,
         );
         expect(
             scalar(
-                `SELECT count(*) FROM grants WHERE id = '${principalGrantId}'::uuid AND permissions @> '[{"actionClass":"SPAWN_AGENT","resource":"*"}]'::jsonb`,
+                `SELECT count(*) FROM grants WHERE subject_type = 'agent_principal' AND subject_id = '${principalId}'::uuid AND permissions @> '[{"actionClass":"SPAWN_AGENT","resource":"*"}]'::jsonb`,
             ),
-        ).toBe(1);
+            "the principal carries SPAWN_AGENT before the session freezes its snapshot",
+        ).toBeGreaterThan(0);
 
         // M1 budget: maxCount=1 → the first spawn of a run is allowed, the second is refused
         // with DELEGATION_LIMIT_EXCEEDED while the first child is still in flight.
@@ -479,7 +499,11 @@ test.describe("@host PLAN-0630 T5.9 real delegation walkthrough", () => {
                 { timeout: 240_000, intervals: [2_000, 3_000] },
             )
             .toBeGreaterThan(0);
-        const interactiveReply = page.locator('[data-slot="message"][data-align="start"]').last();
+        // 同一处漂移：`data-align` 已移到 Bubble 原语，按消息行锚点 + 文本定位。
+        const interactiveReply = page
+            .getByTestId("message-item")
+            .filter({ hasText: interactiveMarker })
+            .last();
         await expect(
             interactiveReply,
             "the child answers the user in its own session",

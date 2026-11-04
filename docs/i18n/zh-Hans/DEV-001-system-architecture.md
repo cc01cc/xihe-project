@@ -121,7 +121,7 @@ CP 三通道：
 
 | 通道 | 契约 |
 |------|------|
-| 聊天 | `POST /api/v1/chat` + 持久 `GET /api/v1/events?sessionId=`（PLAN-230：单会话单活 emitter + generation、`done` 只结束 run、`heartbeat` 15s、409 准入/单并发） |
+| 聊天 | `POST /api/v1/chat` + 持久 `GET /api/v1/events?sessionId=`（PLAN-230：单会话单活 emitter + generation、`done` 只结束 run、`heartbeat` 15s、409 准入门；PLAN-0645 M0/M1 起同会话可并发 `maxConcurrentRunsPerSession`（默认 2）条 run，cap 满才 `409 CHAT_IN_PROGRESS`） |
 | MCP 反向代理 | `POST /api/v1/mcp`（认证 + tool-name 路由 + 三层转发） |
 | 状态分发 | Runtime notification → UI SSE / Agent 透传 |
 
@@ -131,7 +131,7 @@ CP 三通道：
 
 | 协议 | 用途 | 链路 | 关键契约 |
 |------|------|------|----------|
-| 持久 SSE + `POST /api/v1/chat` | 聊天：`GET /api/v1/events?sessionId=` 建会话长连接；`token` 增量 → `done` 结束 run，SSE 保留 | UI ↔ CP ↔ Agent | `done` ≠ 关 SSE；单活 emitter + generation；单并发 run |
+| 持久 SSE + `POST /api/v1/chat` | 聊天：`GET /api/v1/events?sessionId=` 建会话长连接；`token` 增量 → `done` 结束 run，SSE 保留 | UI ↔ CP ↔ Agent | `done` ≠ 关 SSE；单活 emitter + generation；同会话并发上限 `maxConcurrentRunsPerSession`（默认 2，PLAN-0645） |
 | MCP Streamable HTTP | Agent 工具调用（JSON-RPC over HTTP，经 CP 反代） | Agent → CP → Runtime / 外部 | tool-name 路由 |
 | MCP notification | 状态同步 | Runtime → CP → UI / Agent | — |
 | HTTP (REST) | 文件操作/上传/管理（二进制直传） | UI → CP → Runtime | `/internal/v1/runtime/...` |

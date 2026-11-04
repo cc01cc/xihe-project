@@ -5,9 +5,13 @@ import type { Diagnostic, ToolCall } from "../../../../types";
 import { ApiError, api } from "../../../../composables/api";
 import { toolRefusalCopyKey } from "../../../../lib/errorMessages";
 import { LoaderCircle, CheckCircle, XCircle, Clock, Bot, ChevronDown } from "@lucide/vue";
+import ProcessRow from "./ProcessRow.vue";
+import type { ProcessRowActor } from "./ProcessRow.vue";
 
 const props = defineProps<{
     toolCall: ToolCall;
+    /** PLAN-0659 T1.2：产出主体徽标；由消息按「线程是否混主体」决定传不传。 */
+    actor?: ProcessRowActor;
 }>();
 
 const emit = defineEmits<{
@@ -82,6 +86,32 @@ const statusColors: Record<string, string> = {
     approved: "text-green-500",
     rejected: "text-red-500",
 };
+
+/**
+ * 折叠行摘要：参数里最能说明"这次调用在干什么"的字段（命令/路径/提示词…），否则退回原文。
+ * 只做展示，不改请求体。
+ */
+const argumentsSummary = computed(() => {
+    const raw = typeof props.toolCall.arguments === "string" ? props.toolCall.arguments : "";
+    if (!raw) return "";
+    try {
+        const parsed = JSON.parse(raw) as Record<string, unknown>;
+        const keys = ["command", "path", "prompt", "query", "url", "pattern", "file", "model"];
+        for (const key of keys) {
+            const value = parsed[key];
+            if (typeof value === "string" && value.trim()) {
+                return value.trim().split("\n")[0]!.slice(0, 60);
+            }
+        }
+        const firstString = Object.values(parsed).find(
+            (value): value is string => typeof value === "string" && Boolean(value.trim()),
+        );
+        if (firstString) return firstString.trim().split("\n")[0]!.slice(0, 60);
+    } catch {
+        // 参数不是 JSON（旧快照/截断）：退回原文首行。
+    }
+    return raw.trim().split("\n")[0]!.slice(0, 60);
+});
 
 const duration = computed(() => {
     if (!props.toolCall.startedAt || !props.toolCall.completedAt) return null;
@@ -237,47 +267,44 @@ async function loadJobOutput(reset: boolean) {
 </script>
 
 <template>
-    <div class="my-2 overflow-hidden rounded-lg border bg-card">
-        <button
-            class="flex w-full items-center gap-2 px-3 py-2 text-sm transition-colors hover:bg-accent/50"
-            :aria-expanded="expanded"
-            data-testid="tool-card-toggle"
-            @click="expanded = !expanded"
-        >
-            <component
-                :is="statusIcon"
-                class="size-4 shrink-0"
-                :class="statusTone"
-                aria-hidden="true"
-            />
-            <span class="font-medium flex-1 text-left truncate">{{ toolCall.name }}</span>
-            <span v-if="duration" class="text-xs text-muted-foreground tabular-nums">{{
-                duration
-            }}</span>
-            <span class="text-xs" :class="statusTone"> {{ statusLabel }} </span>
-            <ChevronDown
-                class="size-4 text-muted-foreground transition-transform"
-                :class="expanded ? 'rotate-180' : ''"
-                aria-hidden="true"
-            />
-        </button>
+    <!--
+        2026-11-04 用户裁定（DSH 式过程渲染）：工具调用与思考/推理/refusal 同一条单行可折叠
+        chip。外壳替换、**展开体原样搬运**（refusal/diagnostics/job/raw 一律不动）；既有 testid
+        全部保留（`tool-card-toggle` 仍挂可点折叠行，waiting-on 两枚在常驻 extra 行）。
+    -->
+    <ProcessRow
+        kind="tool"
+        :icon="statusIcon"
+        :tone="statusTone"
+        :label="toolCall.name"
+        :summary="argumentsSummary"
+        :meta="duration ?? undefined"
+        :status="statusLabel"
+        :failed="Boolean(refusalCode) || toolCall.status === 'failed'"
+        :actor="actor"
+        expandable
+        testid="tool-card"
+        toggle-testid="tool-card-toggle"
+        v-model:expanded="expanded"
+    >
+        <template #extra>
+            <div
+                v-if="toolCall.waitingOn"
+                class="flex min-w-0 items-center justify-between gap-3 border-t border-border/60 px-2 py-1 text-[11px] text-muted-foreground"
+                role="status"
+                data-testid="tool-call-waiting-on"
+            >
+                <span class="truncate">
+                    {{ t("chat.waitingOnChild") }}:
+                    {{ toolCall.waitingOn.name ?? t("chat.derivedStateUnnamedChild") }}
+                </span>
+                <span class="shrink-0" data-testid="tool-call-waiting-status">
+                    {{ t(`chat.derivedStateStatus.${toolCall.waitingOn.status}`) }}
+                </span>
+            </div>
+        </template>
 
-        <div
-            v-if="toolCall.waitingOn"
-            class="flex min-w-0 items-center justify-between gap-3 border-t px-3 py-2 text-xs text-muted-foreground"
-            role="status"
-            data-testid="tool-call-waiting-on"
-        >
-            <span class="truncate">
-                {{ t("chat.waitingOnChild") }}:
-                {{ toolCall.waitingOn.name ?? t("chat.derivedStateUnnamedChild") }}
-            </span>
-            <span class="shrink-0" data-testid="tool-call-waiting-status">
-                {{ t(`chat.derivedStateStatus.${toolCall.waitingOn.status}`) }}
-            </span>
-        </div>
-
-        <div v-if="expanded" class="space-y-2 border-t px-3 pb-3 pt-2 text-xs">
+        <div class="space-y-2">
             <!--
                 PLAN-0649: the refused call never ran, and its body stays withheld,
                 so this block is the only place the reason can appear. It sits
@@ -531,5 +558,5 @@ async function loadJobOutput(reset: boolean) {
                 </button>
             </div>
         </div>
-    </div>
+    </ProcessRow>
 </template>

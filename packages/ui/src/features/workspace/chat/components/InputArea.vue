@@ -8,7 +8,7 @@ import { useAgentStore } from "../../../../stores/agent";
 import { useChatStore } from "../stores/chat";
 import type { AttachmentFile, FileNode } from "../../../../types";
 import { toast } from "vue-sonner";
-import { Send, Square, LoaderCircle, CornerUpRight } from "@lucide/vue";
+import { Send, Square, LoaderCircle, CornerUpRight, Plus } from "@lucide/vue";
 import ImageUpload from "../../../../components/multimodal/ImageUpload.vue";
 import FileUpload from "../../../../components/multimodal/FileUpload.vue";
 import ScreenshotCapture from "../../../../components/multimodal/ScreenshotCapture.vue";
@@ -21,6 +21,7 @@ import DelegationDialog, {
     type DelegationPrincipal,
 } from "./DelegationDialog.vue";
 import { useDelegationPermission } from "../composables/useDelegationPermission";
+import { useComposerPreferences } from "../composables/useComposerPreferences";
 import { api } from "../../../../composables/api";
 import { logger } from "../../../../lib/logger";
 import {
@@ -248,7 +249,49 @@ const ccCandidates = computed(() =>
     ),
 );
 
-const showCcBar = computed(() => ccCandidates.value.length > 0 || ccIds.value.length > 0);
+/** 有抄送可选项（或已有 chips）时才出现抄送入口（与旧的 showCcBar 门一致）。 */
+const showCcSection = computed(() => ccCandidates.value.length > 0 || ccIds.value.length > 0);
+
+/**
+ * 2026-11-04 用户裁定（composer 打磨）：抄送栏**默认收起**为「抄送 +」小按钮 —— ≥2 agent 的
+ * 工作区不再因为"有候选"就常驻占一整行。展开只有两条路：① 已有 chips（含 @ 点名自动加入）；
+ * ② 用户手动点开。chips 清空后允许手动收起；手动选择按**会话记忆**（composerPreferences，
+ * 模块级 Map 不落 localStorage，刷新回默认收起）。
+ */
+const composerPreferences = useComposerPreferences();
+const ccExpanded = ref(false);
+const ccBarVisible = computed(
+    () => showCcSection.value && (ccExpanded.value || ccIds.value.length > 0),
+);
+
+watch(
+    () => props.sessionId,
+    (sessionId) => {
+        ccExpanded.value = sessionId ? composerPreferences.isCcExpanded(sessionId) : false;
+    },
+    { immediate: true },
+);
+
+// ① chips 出现（@ 自动加入 / 手动选）→ 自动展开；这是事件驱动，不写"手动记忆"。
+watch(
+    ccIds,
+    (ids) => {
+        if (ids.length > 0) ccExpanded.value = true;
+    },
+    { immediate: true },
+);
+
+function expandCc(): void {
+    ccExpanded.value = true;
+    composerPreferences.setCcExpanded(props.sessionId, true);
+}
+
+/** 只有 chips 清空后才允许收起（有 chips 时收起会让名字不可见，必须留在展开态）。 */
+function collapseCc(): void {
+    if (ccIds.value.length > 0) return;
+    ccExpanded.value = false;
+    composerPreferences.setCcExpanded(props.sessionId, false);
+}
 
 function resetCc(): void {
     ccIds.value = [];
@@ -1017,8 +1060,8 @@ defineExpose({ clearDraft, insertMention, setDraft });
 </script>
 
 <template>
-    <div class="min-w-0 border-t bg-background px-4 py-3">
-        <div class="mx-auto w-full max-w-4xl space-y-2">
+    <div class="min-w-0 border-t bg-background px-4 py-2">
+        <div class="mx-auto w-full max-w-4xl space-y-1.5">
             <!--
                 D23-27 / PLAN-0630 M5b (D30-14)：`发送`栏（speak-as 升级版）——本次消息的主要响应者
                 （单选，默认 = PRIMARY participant）。只有 capabilities.speakAs 为真才**渲染**
@@ -1039,17 +1082,46 @@ defineExpose({ clearDraft, insertMention, setDraft });
                 PLAN-0630 M5b (D30-14)：cc 栏 = 旁听名单（多选 chips）。被 @ 的参与者会自动
                 出现在这里；点 × 移除（同一个 @ 不再自动加回，直到它从文本里消失）；+ 下拉手动添加。
             -->
-            <RecipientField
-                v-if="showCcBar"
-                :label="t('chat.input.ccLabel')"
-                :model-value="ccIds"
-                :candidates="ccCandidates"
-                :multiple="true"
-                :placeholder="t('chat.input.recipientPlaceholder')"
-                testid="cc"
-                data-testid="cc-bar"
-                @update:model-value="onCcFieldChange"
-            />
+            <!--
+                2026-11-04 用户裁定（composer 打磨）：抄送栏默认收起为「抄送 +」小按钮，
+                自动展开仅两种 —— 已有 chips（含 @ 点名自动加入）、用户手动点开；
+                chips 清空后可手动收起，手动选择按会话记忆（不落 localStorage）。
+            -->
+            <div v-if="showCcSection" class="flex items-center gap-1">
+                <button
+                    v-if="!ccBarVisible"
+                    type="button"
+                    data-testid="cc-expand"
+                    class="inline-flex shrink-0 items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                    @click="expandCc"
+                >
+                    <Plus class="size-3" />
+                    {{ t("chat.input.ccLabel") }}
+                </button>
+                <template v-else>
+                    <RecipientField
+                        class="min-w-0 flex-1"
+                        :label="t('chat.input.ccLabel')"
+                        :model-value="ccIds"
+                        :candidates="ccCandidates"
+                        :multiple="true"
+                        :placeholder="t('chat.input.recipientPlaceholder')"
+                        testid="cc"
+                        data-testid="cc-bar"
+                        @update:model-value="onCcFieldChange"
+                    />
+                    <button
+                        v-if="ccIds.length === 0"
+                        type="button"
+                        data-testid="cc-collapse"
+                        :aria-label="t('chat.input.ccCollapse')"
+                        class="shrink-0 rounded-sm px-1 text-[11px] text-muted-foreground transition-colors hover:text-foreground"
+                        @click="collapseCc"
+                    >
+                        ×
+                    </button>
+                </template>
+            </div>
             <p
                 v-if="queueMode"
                 class="px-2 text-[11px] text-muted-foreground"
@@ -1222,14 +1294,12 @@ defineExpose({ clearDraft, insertMention, setDraft });
                 </div>
             </div>
 
-            <div
-                class="rounded-2xl border bg-card p-2 shadow-sm transition-shadow focus-within:ring-2 focus-within:ring-ring"
-            >
+            <div class="rounded-lg border bg-muted/30 px-3 py-2">
                 <textarea
                     ref="textareaRef"
                     v-model="input"
                     data-testid="chat-input"
-                    class="w-full min-h-[44px] max-h-[200px] px-2 py-2 bg-transparent resize-none text-sm placeholder:text-muted-foreground focus:outline-none field-sizing-content"
+                    class="w-full min-h-[36px] max-h-[180px] px-1 py-0.5 bg-transparent resize-none text-[13px] leading-5 placeholder:text-[12px] placeholder:text-muted-foreground/70 focus:outline-none focus-visible:ring-1 focus-visible:ring-ring/60 focus-visible:ring-offset-0 field-sizing-content"
                     :placeholder="queueMode ? t('chat.followUpPlaceholder') : t('chat.placeholder')"
                     rows="1"
                     :style="{ fieldSizing: 'content' }"
