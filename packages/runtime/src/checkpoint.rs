@@ -35,7 +35,7 @@ use tracing::{debug, info, warn};
 use crate::checkpoint_store::audit::{self, AuditFinding, AuditReport, DualPendingRecord};
 use crate::checkpoint_store::capture::{
     CaptureOptions, CaptureResult, GitTreeEntry, capture_from_git_entries,
-    capture_root_with_options,
+    capture_root_with_options, read_tail_manifest, tail_slice,
 };
 use crate::checkpoint_store::manifest::{FileMode, Manifest};
 use crate::checkpoint_store::refs::{self, RefRecord};
@@ -334,6 +334,14 @@ pub struct CaptureOutcome {
     pub predecessor: Option<String>,
 }
 
+/// Result of one internal git-path capture: the public outcome plus the
+/// staged tree and the ref target so a self-mode backup can record them.
+struct GitPathCapture {
+    outcome: CaptureOutcome,
+    tree: String,
+    ref_target_commit: Option<String>,
+}
+
 /// Retention result (counts slices; abnormal slices participate equally).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -469,6 +477,9 @@ pub struct ShadowGit {
     checkpoint_storage: CheckpointStorageMode,
     store: Option<Store>,
     store_failures: Arc<AtomicU64>,
+    /// P3 T2.5: best-effort shadow backup failures after a successful store
+    /// capture. Never blocks the store result; surfaced in diagnostics.
+    shadow_backup_failures: Arc<AtomicU64>,
     pub(crate) call_timeout: Duration,
 }
 
@@ -490,6 +501,7 @@ impl ShadowGit {
             checkpoint_storage: CheckpointStorageMode::Git,
             store: None,
             store_failures: Arc::new(AtomicU64::new(0)),
+            shadow_backup_failures: Arc::new(AtomicU64::new(0)),
             call_timeout: GIT_CALL_TIMEOUT,
         }
     }
@@ -519,6 +531,12 @@ impl ShadowGit {
 
     pub fn store_failures(&self) -> u64 {
         self.store_failures.load(Ordering::SeqCst)
+    }
+
+    /// P3 T2.5: how many best-effort shadow backup attempts failed after a
+    /// successful self capture (visibility requirement: never silent).
+    pub fn shadow_backup_failures(&self) -> u64 {
+        self.shadow_backup_failures.load(Ordering::SeqCst)
     }
 
     pub fn store_root(&self) -> Option<&Path> {
@@ -738,6 +756,19 @@ impl ShadowGit {
     /// Cached host-git probe (`git --version` ≥ 2.20). Failures are retried after a
     /// backoff; the result is a structured value and never panics, even when git is
     /// missing entirely.
+    /// P3 T2.5: synchronous `git --version` probe used by the sync self
+    /// startup gate to degrade shadow validation when git is absent.
+    pub fn git_binary_available(&self) -> bool {
+        std::process::Command::new(&self.git_binary)
+            .arg("--version")
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|status| status.success())
+            .unwrap_or(false)
+    }
+
     pub async fn probe(&self) -> GitCapability {
         {
             let cache = self
@@ -1484,9 +1515,55 @@ impl ShadowGit {
                 detail: format!("root id {root_id:?} is not a declared root of {workspace_id:?}"),
             });
         }
-        let shadow = self.shadow_git_dir(root_id)?;
         let work_tree = self.work_tree_for_root(root_id)?;
         let _guard = self.lock_capture(root_id).await;
+        if !work_tree.is_dir() {
+            return Err(CheckpointError::WorkspaceMissing(normalize_path_for_git(
+                &work_tree,
+            )));
+        }
+        // P3 T2.5 (D53-37): in self mode the store is the primary write path;
+        // the shadow becomes a best-effort backup captured after the store
+        // succeeds. `Reject` keeps the legacy git path (the hard-limit check
+        // lives in stage_workspace), and git/dual modes are unchanged.
+        if self.checkpoint_storage == CheckpointStorageMode::Self_
+            && self.nested_repo_policy == NestedRepoPolicy::Flatten
+        {
+            return self
+                .capture_self_store_path(workspace_id, root_id, run_id, actor, call_id, abnormal)
+                .await;
+        }
+        self.capture_git_path_for_root(
+            workspace_id,
+            root_id,
+            run_id,
+            actor,
+            call_id,
+            abnormal,
+            None,
+            capture_started,
+        )
+        .await
+        .map(|git| git.outcome)
+    }
+
+    /// The legacy git-path capture (git/dual modes and self-mode backup).
+    /// `forced_slice_ref` pins the ref name so a self backup shares the store
+    /// slice ref; in that mode the store is never touched again.
+    #[allow(clippy::too_many_arguments)]
+    async fn capture_git_path_for_root(
+        &self,
+        workspace_id: &str,
+        root_id: &str,
+        run_id: &str,
+        actor: &str,
+        call_id: &str,
+        abnormal: bool,
+        forced_slice_ref: Option<&str>,
+        capture_started: Instant,
+    ) -> Result<GitPathCapture> {
+        let shadow = self.shadow_git_dir(root_id)?;
+        let work_tree = self.work_tree_for_root(root_id)?;
         self.require_git().await?;
         if !work_tree.is_dir() {
             return Err(CheckpointError::WorkspaceMissing(normalize_path_for_git(
@@ -1522,6 +1599,16 @@ impl ShadowGit {
         self.save_last_index(&shadow, &index).await?;
 
         if tail_tree.as_deref() == Some(tree.as_str()) {
+            // A forced (self-backup) ref must still be published for this
+            // capture even though the staged tree equals the shadow tail.
+            let ref_target_commit = if let Some(forced) = forced_slice_ref
+                && let Some(row) = &tail
+            {
+                self.update_ref(&env, forced, &row.commit).await?;
+                Some(row.commit.clone())
+            } else {
+                None
+            };
             debug!(
                 workspace_id,
                 root_id,
@@ -1531,38 +1618,47 @@ impl ShadowGit {
                 "shadow checkpoint capture found no change; no slice written"
             );
             let git_ms = capture_started.elapsed().as_millis() as u64;
-            self.dual_write_store(DualWriteContext {
-                workspace_id,
-                root_id,
-                run_id,
-                actor,
-                work_tree: &work_tree,
-                git_tree: &tree,
-                previous_tree: tail_tree.as_deref(),
-                changed_paths: None,
-                git_ref: predecessor.as_deref(),
-                env: &env,
-                git_ms,
-            })
-            .await?;
-            return Ok(CaptureOutcome {
-                run_id: run_id.to_string(),
-                root_id: root_id.to_string(),
-                no_change: true,
-                slice_ref: None,
-                commit: None,
-                captured_at: None,
-                state: state.to_string(),
-                changed_files: Vec::new(),
-                opaque_nested_repos: Vec::new(),
-                predecessor,
+            if forced_slice_ref.is_none() {
+                self.dual_write_store(DualWriteContext {
+                    workspace_id,
+                    root_id,
+                    run_id,
+                    actor,
+                    work_tree: &work_tree,
+                    git_tree: &tree,
+                    previous_tree: tail_tree.as_deref(),
+                    changed_paths: None,
+                    git_ref: predecessor.as_deref(),
+                    env: &env,
+                    git_ms,
+                })
+                .await?;
+            }
+            return Ok(GitPathCapture {
+                outcome: CaptureOutcome {
+                    run_id: run_id.to_string(),
+                    root_id: root_id.to_string(),
+                    no_change: true,
+                    slice_ref: None,
+                    commit: None,
+                    captured_at: None,
+                    state: state.to_string(),
+                    changed_files: Vec::new(),
+                    opaque_nested_repos: Vec::new(),
+                    predecessor,
+                },
+                tree,
+                ref_target_commit,
             });
         }
 
         let epoch_ms = wall_clock_ms();
         let message = slice_message(run_id, actor, call_id);
         let commit = self.commit_tree(&env, &tree, None, &message).await?;
-        let slice_ref = format!("{SLICE_REF_PREFIX}{epoch_ms}-{commit}");
+        let slice_ref = match forced_slice_ref {
+            Some(forced) => forced.to_owned(),
+            None => format!("{SLICE_REF_PREFIX}{epoch_ms}-{commit}"),
+        };
         self.update_ref(&env, &slice_ref, &commit).await?;
         let changed_files = match &tail_tree {
             Some(tail_tree) => self.changed_files_for(&env, tail_tree, &tree).await?,
@@ -1582,32 +1678,317 @@ impl ShadowGit {
         let changed_paths: Option<HashSet<String>> = tail_tree
             .as_ref()
             .map(|_| changed_files.iter().map(|file| file.path.clone()).collect());
-        self.dual_write_store(DualWriteContext {
+        if forced_slice_ref.is_none() {
+            self.dual_write_store(DualWriteContext {
+                workspace_id,
+                root_id,
+                run_id,
+                actor,
+                work_tree: &work_tree,
+                git_tree: &tree,
+                previous_tree: tail_tree.as_deref(),
+                changed_paths: changed_paths.as_ref(),
+                git_ref: Some(slice_ref.as_str()),
+                env: &env,
+                git_ms,
+            })
+            .await?;
+        }
+        Ok(GitPathCapture {
+            outcome: CaptureOutcome {
+                run_id: run_id.to_string(),
+                root_id: root_id.to_string(),
+                no_change: false,
+                slice_ref: Some(slice_ref),
+                commit: Some(commit.clone()),
+                captured_at: Some(rfc3339_ms(epoch_ms)),
+                state: state.to_string(),
+                changed_files,
+                opaque_nested_repos,
+                predecessor,
+            },
+            tree,
+            ref_target_commit: Some(commit),
+        })
+    }
+
+    /// P3 T2.5: self-mode store-first capture. The store write is
+    /// authoritative; the shadow backup runs afterwards and its failure is
+    /// visible (WARN + `shadowBackupFailures`) but never blocks the result.
+    #[allow(clippy::needless_update)]
+    async fn capture_self_store_path(
+        &self,
+        workspace_id: &str,
+        root_id: &str,
+        run_id: &str,
+        actor: &str,
+        call_id: &str,
+        abnormal: bool,
+    ) -> Result<CaptureOutcome> {
+        use sha2::{Digest as _, Sha256};
+
+        let state = if abnormal {
+            "abnormal-captured"
+        } else {
+            "captured"
+        };
+        let work_tree = self.work_tree_for_root(root_id)?;
+        let store = match &self.store {
+            Some(store) => store.clone(),
+            None => {
+                return Err(
+                    self.store_capture_failure("self mode requires a configured checkpoint store")
+                );
+            }
+        };
+
+        // Previous store tail: predecessor + changed-set baseline.
+        let prev_tail = tail_slice(&store, root_id)
+            .map_err(|error| self.store_capture_failure(format!("store tail read: {error}")))?;
+        let prev_manifest =
+            match &prev_tail {
+                Some(tail) => Some(read_tail_manifest(&store, tail).map_err(|error| {
+                    self.store_capture_failure(format!("tail manifest: {error}"))
+                })?),
+                None => None,
+            };
+        let tail_slice_id = prev_tail.as_ref().map(|tail| tail.id.clone());
+        let sidecar = match &tail_slice_id {
+            Some(tail_id) => refs::list_refs(&store, root_id).ok().and_then(|rows| {
+                rows.into_iter()
+                    .find(|(_, record)| record.store_slice_id == *tail_id)
+            }),
+            None => None,
+        };
+        let mut predecessor = sidecar.as_ref().map(|(_, record)| record.git_ref.clone());
+        // Recovery path: a previous attempt wrote the pending audit record but
+        // failed the refs sidecar; the no-change retry repairs it below.
+        let pending_for_tail = if sidecar.is_none() {
+            match &tail_slice_id {
+                Some(tail_id) => audit::list_pending(&store, Some(root_id), None)
+                    .ok()
+                    .and_then(|rows| {
+                        rows.into_iter()
+                            .find(|(_, record)| record.store_slice_id == *tail_id)
+                    }),
+                None => None,
+            }
+        } else {
+            None
+        };
+
+        let declared_roots = self
+            .declared_roots(workspace_id)
+            .into_iter()
+            .map(|(root, _)| root)
+            .collect();
+        let options = CaptureOptions {
+            declared_roots,
+            exclude_opaque_nested: false,
+            ..CaptureOptions::default()
+        };
+        let store_for_walk = store.clone();
+        let walk_root = work_tree.to_path_buf();
+        let walk_root_id = root_id.to_owned();
+        let walk_run_id = run_id.to_owned();
+        let walk_actor = actor.to_owned();
+        let capture = tokio::task::spawn_blocking(move || {
+            capture_root_with_options(
+                &store_for_walk,
+                &walk_root,
+                &walk_root_id,
+                Some(&walk_run_id),
+                Some(&walk_actor),
+                &options,
+            )
+        })
+        .await
+        .map_err(|error| self.store_capture_failure(format!("store capture task failed: {error}")))
+        .and_then(|result| {
+            result.map_err(|error| self.store_capture_failure(format!("store capture: {error}")))
+        })?;
+
+        if capture.no_change {
+            // Repair a missing sidecar from the pending audit record so a
+            // failed sidecar write can be retried (mirrors the dual path).
+            if sidecar.is_none()
+                && let Some((_, pending)) = &pending_for_tail
+                && let Some(git_ref) = pending.git_ref.clone()
+            {
+                let record = RefRecord {
+                    v: 1,
+                    root_id: root_id.to_owned(),
+                    git_ref: git_ref.clone(),
+                    git_tree: pending.git_tree.clone(),
+                    store_slice_id: capture.slice_id.clone(),
+                    store_manifest_id: capture.manifest_id.clone(),
+                    source: "capture".into(),
+                    created_at_ms: pending.created_at_ms,
+                };
+                if let Err(error) = refs::write_ref(&store, &record) {
+                    return Err(self.store_capture_failure(format!(
+                        "store slice {} written but refs sidecar repair failed: {error}",
+                        capture.slice_id
+                    )));
+                }
+                predecessor = Some(git_ref);
+            }
+            return Ok(CaptureOutcome {
+                run_id: run_id.to_owned(),
+                root_id: root_id.to_owned(),
+                no_change: true,
+                slice_ref: None,
+                commit: None,
+                captured_at: None,
+                state: state.to_owned(),
+                changed_files: Vec::new(),
+                opaque_nested_repos: Vec::new(),
+                predecessor,
+            });
+        }
+
+        // Canonical store slice ref: `<epoch>-<sha256(sliceId)[..40]>` keeps the
+        // frozen `refs/xihe/slices/<epoch>-<40hex>` leaf contract so every git
+        // and CP parser still accepts it, without depending on a git commit.
+        let epoch_ms: i64 = capture
+            .slice_id
+            .split('-')
+            .next()
+            .and_then(|value| value.parse::<i64>().ok())
+            .unwrap_or_else(wall_clock_ms);
+        let hash_hex = format!("{:x}", Sha256::digest(capture.slice_id.as_bytes()));
+        let slice_ref = format!("{SLICE_REF_PREFIX}{epoch_ms}-{}", &hash_hex[..40]);
+        let captured_at = rfc3339_ms(epoch_ms);
+
+        // Changed set from the store manifest diff (no git diff involved).
+        let new_manifest_bytes = std::fs::read(store.manifest_path(&capture.manifest_id))
+            .map_err(|error| self.store_capture_failure(format!("manifest read: {error}")))?;
+        let new_manifest = Manifest::parse_verified(&new_manifest_bytes, &capture.manifest_id)
+            .map_err(|error| self.store_capture_failure(format!("manifest parse: {error}")))?;
+        let changed_files = match &prev_manifest {
+            Some(prev) => {
+                let diff = prev.diff(&new_manifest);
+                let mut rows: Vec<(&str, String)> = diff
+                    .modified
+                    .into_iter()
+                    .map(|path| ("M", path))
+                    .chain(diff.added.into_iter().map(|path| ("A", path)))
+                    .chain(diff.removed.into_iter().map(|path| ("D", path)))
+                    .collect();
+                rows.sort_by(|left, right| left.1.cmp(&right.1));
+                rows.into_iter()
+                    .map(|(status, path)| ChangedFile {
+                        status: status.to_owned(),
+                        path,
+                        old_path: None,
+                    })
+                    .collect()
+            }
+            None => Vec::new(),
+        };
+
+        // Pending audit record first: it is the preflight backfill source if
+        // the sidecar write fails or the process dies before it.
+        let created_at_ms = wall_clock_ms().max(0) as u64;
+        let pending = DualPendingRecord {
+            v: 1,
+            root_id: root_id.to_owned(),
+            run_id: run_id.to_owned(),
+            git_ref: Some(slice_ref.clone()),
+            git_tree: String::new(),
+            store_slice_id: capture.slice_id.clone(),
+            store_manifest_id: capture.manifest_id.clone(),
+            created_at_ms,
+        };
+        if let Err(error) = audit::write_pending(&store, &pending) {
+            self.store_failures.fetch_add(1, Ordering::SeqCst);
+            warn!(
+                workspace_id,
+                root_id,
+                run_id,
+                %error,
+                "checkpoint self capture pending audit record failed"
+            );
+        }
+
+        // Best-effort shadow backup AFTER the authoritative store write.
+        let backup = self
+            .capture_git_path_for_root(
+                workspace_id,
+                root_id,
+                run_id,
+                actor,
+                call_id,
+                abnormal,
+                Some(slice_ref.as_str()),
+                Instant::now(),
+            )
+            .await;
+        let (backup_commit, backup_tree) = match backup {
+            Ok(git) => (git.ref_target_commit, Some(git.tree)),
+            Err(error) => {
+                self.shadow_backup_failures.fetch_add(1, Ordering::SeqCst);
+                warn!(
+                    workspace_id,
+                    root_id,
+                    run_id,
+                    %error,
+                    "checkpoint self capture: shadow backup skipped; store slice remains authoritative"
+                );
+                (None, None)
+            }
+        };
+
+        // Sidecar mapping is required in self mode (hard fail, visible count).
+        let ref_record = RefRecord {
+            v: 1,
+            root_id: root_id.to_owned(),
+            git_ref: slice_ref.clone(),
+            git_tree: backup_tree.unwrap_or_default(),
+            store_slice_id: capture.slice_id.clone(),
+            store_manifest_id: capture.manifest_id.clone(),
+            source: "capture".into(),
+            created_at_ms,
+        };
+        if let Err(error) = refs::write_ref(&store, &ref_record) {
+            return Err(self.store_capture_failure(format!(
+                "store slice {} written but refs sidecar failed: {error}",
+                capture.slice_id
+            )));
+        }
+
+        info!(
             workspace_id,
             root_id,
             run_id,
-            actor,
-            work_tree: &work_tree,
-            git_tree: &tree,
-            previous_tree: tail_tree.as_deref(),
-            changed_paths: changed_paths.as_ref(),
-            git_ref: Some(slice_ref.as_str()),
-            env: &env,
-            git_ms,
-        })
-        .await?;
+            slice_ref = %slice_ref,
+            changed = changed_files.len(),
+            state,
+            store_slice = %capture.slice_id,
+            store_entries = capture.entry_count,
+            backup = backup_commit.is_some(),
+            "checkpoint store slice captured (self primary path)"
+        );
         Ok(CaptureOutcome {
-            run_id: run_id.to_string(),
-            root_id: root_id.to_string(),
+            run_id: run_id.to_owned(),
+            root_id: root_id.to_owned(),
             no_change: false,
             slice_ref: Some(slice_ref),
-            commit: Some(commit),
-            captured_at: Some(rfc3339_ms(epoch_ms)),
-            state: state.to_string(),
+            commit: backup_commit,
+            captured_at: Some(captured_at),
+            state: state.to_owned(),
             changed_files,
-            opaque_nested_repos,
+            opaque_nested_repos: Vec::new(),
             predecessor,
         })
+    }
+
+    /// Count and wrap a self store-write failure (visibility requirement).
+    fn store_capture_failure(&self, detail: impl Into<String>) -> CheckpointError {
+        let detail = detail.into();
+        self.store_failures.fetch_add(1, Ordering::SeqCst);
+        warn!(store_error = "self_capture_failed", detail = %detail, "checkpoint self store capture failed");
+        CheckpointError::StoreCaptureFailed { detail }
     }
 
     /// Resolve a slice ref to its commit; `None` when the ref does not exist.
