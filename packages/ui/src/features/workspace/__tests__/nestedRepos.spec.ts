@@ -37,6 +37,7 @@ const { wsStub, authStub, apiStub, toastStub } = vi.hoisted(() => ({
         canWriteWorkspace: true,
         currentWorkspaceId: "workspace-a",
         workspace: { name: "ws-a" },
+        refreshWorkspace: vi.fn<() => Promise<void>>(async () => {}),
     },
     apiStub: {
         listWorkspaceNestedRepos: vi.fn<() => Promise<NestedRepo[]>>(),
@@ -80,6 +81,9 @@ const i18n = createI18n({
                 nestedRepoDeclareConfirm: "This directory becomes an independent root.",
                 nestedRepoDeclared: "Declared as an independent root",
                 nestedRepoDeclareFailed: "Declaration failed",
+                nestedRepoDeclareErrorRootInUse: "A run is in progress",
+                nestedRepoDeclareErrorConflict: "That path is already a root",
+                nestedRepoDeclareErrorOverlap: "That path partially overlaps a root",
                 nestedReposCostHint: "Many roots: each root adds cost.",
                 nestedRepoType_nested: "Nested repo",
                 nestedRepoType_gitdir: "Linked worktree",
@@ -165,12 +169,15 @@ describe("nested repos panel", () => {
             path: "vendor/lib",
         });
         expect(wsStub.refreshTree).toHaveBeenCalled();
+        // T3.1: the workspace view is re-read so the new root group (and its B12
+        // path label) appears without a manual reload.
+        expect(authStub.refreshWorkspace).toHaveBeenCalled();
         // The cache was evicted CP-side; the refetch reports nothing left to offer.
         expect(wrapper.find('[data-testid="nested-repos-panel"]').exists()).toBe(false);
         expect(toastStub.success).toHaveBeenCalled();
     });
 
-    it("surfaces the problem code when the declaration is rejected", async () => {
+    it("maps the problem code to a localized declaration error (T3.1)", async () => {
         apiStub.addWorkspaceRoot.mockRejectedValue({
             problem: { code: "ROOT_PATH_CONFLICT" },
         });
@@ -181,7 +188,8 @@ describe("nested repos panel", () => {
         await wrapper.find('[data-testid="nested-repo-declare-confirm"]').trigger("click");
         await flushPromises();
 
-        expect(toastStub.error).toHaveBeenCalledWith("ROOT_PATH_CONFLICT");
+        // Localized copy, never the raw CP detail/code.
+        expect(toastStub.error).toHaveBeenCalledWith("That path is already a root");
         // Failure keeps the confirm step open for a retry.
         expect(wrapper.find('[data-testid="nested-repo-confirm"]').exists()).toBe(true);
     });

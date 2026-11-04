@@ -2745,12 +2745,87 @@ impl ShadowGit {
         }
         self.require_git().await?;
 
+        let mut items: Vec<NestedRepoItem> = Vec::new();
+        let mut seen: HashSet<String> = HashSet::new();
+
+        // Primary scope: staging already excludes declared roots (capture parity).
+        let primary_prefixes = self.nested_declared_root_prefixes(&work_tree);
+        for path in self.probe_nested_paths(&work_tree).await? {
+            if seen.insert(path.clone()) {
+                items.push(NestedRepoItem::new(
+                    path.clone(),
+                    classify_nested_path(&work_tree, &path),
+                    Self::is_declared_prefix(&primary_prefixes, &path),
+                ));
+            }
+        }
+
+        // Declared roots never surface from staging (the excludes file skipped
+        // them); append the ones that are real repositories so the UI can label
+        // `declared=true`. A declared plain directory (0639 allows those) has no
+        // `.git` marker and is not a nested repo — skipped by design.
+        for prefix in &primary_prefixes {
+            if seen.contains(prefix) || !has_git_marker(&work_tree, prefix) {
+                continue;
+            }
+            seen.insert(prefix.clone());
+            items.push(NestedRepoItem::new(
+                prefix.clone(),
+                classify_nested_path(&work_tree, prefix),
+                true,
+            ));
+        }
+
+        // PLAN-0641 M2 T3.5 (B10 / D41-25): recurse into every declared root so a
+        // repository nested INSIDE an already declared one still surfaces (one more
+        // staging pass per root — bounded by the declared-root count and cached by CP).
+        for (_, host_path) in self.declared_roots(workspace_id) {
+            let Some(prefix) = Self::workspace_relative_path(&work_tree, &host_path) else {
+                continue; // the primary root itself or a path outside the tree
+            };
+            let declared_tree = PathBuf::from(&host_path);
+            if prefix.is_empty() || !declared_tree.is_dir() {
+                continue;
+            }
+            let inner_prefixes = self.nested_declared_root_prefixes(&declared_tree);
+            for inner in self.probe_nested_paths(&declared_tree).await? {
+                let full = format!("{prefix}/{inner}");
+                if seen.insert(full.clone()) {
+                    items.push(NestedRepoItem::new(
+                        full,
+                        classify_nested_path(&declared_tree, &inner),
+                        Self::is_declared_prefix(&inner_prefixes, &inner),
+                    ));
+                }
+            }
+            // A deeper declared root that is a repository is labelled, not re-offered.
+            for deeper in &inner_prefixes {
+                let full = format!("{prefix}/{deeper}");
+                if seen.contains(&full) || !has_git_marker(&declared_tree, deeper) {
+                    continue;
+                }
+                seen.insert(full.clone());
+                items.push(NestedRepoItem::new(
+                    full,
+                    classify_nested_path(&declared_tree, deeper),
+                    true,
+                ));
+            }
+        }
+
+        sort_items_depth_ascending(&mut items);
+        Ok(items)
+    }
+
+    /// PLAN-0641 T2.3/M2 T3.5: one throwaway-shadow staging pass scoped to
+    /// `work_tree` — gitlink (160000) candidates plus the one-level bare readdir
+    /// (design §6.1「一次 readdir 启发式」, D41-7: never a recursive walk). The
+    /// scratch shadow never touches the real store; declared roots are excluded by
+    /// [`Self::stage_index`] with the same excludes file capture uses.
+    async fn probe_nested_paths(&self, work_tree: &Path) -> Result<Vec<String>> {
         let scratch = tempfile::TempDir::new()?;
-        let shadow = scratch
-            .path()
-            .join(SHADOW_DIR_NAME)
-            .join(format!("{workspace_id}.git"));
-        self.ensure_initialized(&shadow, &work_tree).await?;
+        let shadow = scratch.path().join(SHADOW_DIR_NAME).join("probe.git");
+        self.ensure_initialized(&shadow, work_tree).await?;
         let token = format!(
             "nestedprobe-{}",
             SystemTime::now()
@@ -2761,12 +2836,12 @@ impl ShadowGit {
         let index = scratch_index_path(&shadow, &token);
         let excludes = scratch_excludes_path(&shadow, &token);
         let _scratch = ScratchFiles::new(vec![index.clone(), excludes.clone()]);
-        self.stage_index(&shadow, &work_tree, &index, &excludes, None)
+        self.stage_index(&shadow, work_tree, &index, &excludes, None)
             .await?;
-        let env = self.isolated_env(&shadow, &work_tree, Some(&index));
+        let env = self.isolated_env(&shadow, work_tree, Some(&index));
         let mut detected = self.staged_gitlinks(&env).await?;
 
-        if let Ok(entries) = std::fs::read_dir(&work_tree) {
+        if let Ok(entries) = std::fs::read_dir(work_tree) {
             for entry in entries.flatten() {
                 let name = entry.file_name().to_string_lossy().into_owned();
                 if name.starts_with('.') {
@@ -2782,46 +2857,14 @@ impl ShadowGit {
                 if detected.contains(&name) {
                     continue;
                 }
-                if classify_nested_path(&work_tree, &name)
+                if classify_nested_path(work_tree, &name)
                     == crate::nested_repo_kind::NestedRepoKind::Bare
                 {
                     detected.push(name);
                 }
             }
         }
-
-        let declared_prefixes = self.nested_declared_root_prefixes(&work_tree);
-        let mut items: Vec<NestedRepoItem> = detected
-            .iter()
-            .map(|path| {
-                NestedRepoItem::new(
-                    path.clone(),
-                    classify_nested_path(&work_tree, path),
-                    Self::is_declared_prefix(&declared_prefixes, path),
-                )
-            })
-            .collect();
-
-        // Declared roots never surface from staging (the excludes file skipped
-        // them); append the ones that are real repositories so the UI can label
-        // `declared=true`. A declared plain directory (0639 allows those) has no
-        // `.git` marker and is not a nested repo — skipped by design.
-        for prefix in &declared_prefixes {
-            if detected.contains(prefix) {
-                continue;
-            }
-            if !has_git_marker(&work_tree, prefix) {
-                continue;
-            }
-            items.push(NestedRepoItem::new(
-                prefix.clone(),
-                classify_nested_path(&work_tree, prefix),
-                true,
-            ));
-        }
-
-        sort_items_depth_ascending(&mut items);
-        Ok(items)
+        Ok(detected)
     }
 
     /// T2.3 classify-only mode (contract F1 warm path, §3.1): classify explicit
@@ -2865,6 +2908,23 @@ impl ShadowGit {
         declared_prefixes
             .iter()
             .any(|prefix| lowered == *prefix || lowered.starts_with(&format!("{prefix}/")))
+    }
+
+    /// PLAN-0641 M2 T3.5: workspace-relative POSIX prefix of a declared root's host
+    /// path, or [`None`] when it IS the primary root or sits outside the tree.
+    /// Windows paths are normalised before the case-insensitive comparison.
+    fn workspace_relative_path(base: &Path, candidate_host: &str) -> Option<String> {
+        let normalized_base = normalize_path_for_git(base).replace('\\', "/");
+        let normalized_base = normalized_base.trim_end_matches('/').to_ascii_lowercase();
+        let normalized_candidate = candidate_host.replace('\\', "/");
+        let candidate_lower = normalized_candidate.to_ascii_lowercase();
+        if normalized_base.is_empty() || candidate_lower == normalized_base {
+            return None;
+        }
+        if !candidate_lower.starts_with(&format!("{normalized_base}/")) {
+            return None;
+        }
+        Some(normalized_candidate[normalized_base.len() + 1..].to_string())
     }
 
     /// L1 (PLAN-0361): flatten each detected nested repository into the parent

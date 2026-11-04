@@ -72,6 +72,20 @@ function nestedRepoTypeLabel(kind: ApiNestedRepoItem["type"]): string {
     return t(`workspace.nestedRepoType_${kind}`);
 }
 
+/** PLAN-0641 M2 T3.1: localized declaration failure — never the raw CP detail. */
+function nestedRepoDeclareError(code: string | null): string {
+    switch (code) {
+        case "ROOT_IN_USE":
+            return t("workspace.nestedRepoDeclareErrorRootInUse");
+        case "ROOT_PATH_CONFLICT":
+            return t("workspace.nestedRepoDeclareErrorConflict");
+        case "INVALID_ROOT_OVERLAP":
+            return t("workspace.nestedRepoDeclareErrorOverlap");
+        default:
+            return t("workspace.nestedRepoDeclareFailed");
+    }
+}
+
 async function confirmDeclareNestedRepo(repo: ApiNestedRepoItem) {
     const id = auth.currentWorkspaceId;
     if (!id || !canDeclareNestedRepo.value || declaringNestedRepo.value) return;
@@ -79,14 +93,16 @@ async function confirmDeclareNestedRepo(repo: ApiNestedRepoItem) {
     try {
         await api.addWorkspaceRoot(id, { path: repo.path });
         confirmingNestedRepo.value = null;
-        await Promise.all([ws.refreshTree(), loadNestedRepos()]);
+        // Tree + discovery refresh, and the workspace view so the new root group and
+        // its B12 path label appear without a manual reload (T3.1).
+        await Promise.all([ws.refreshTree(), loadNestedRepos(), auth.refreshWorkspace()]);
         toast.success(t("workspace.nestedRepoDeclared"));
     } catch (error) {
         const code =
             typeof (error as { problem?: { code?: string } }).problem?.code === "string"
                 ? (error as { problem: { code: string } }).problem.code
                 : null;
-        toast.error(code ?? t("workspace.nestedRepoDeclareFailed"));
+        toast.error(nestedRepoDeclareError(code));
     } finally {
         declaringNestedRepo.value = false;
     }

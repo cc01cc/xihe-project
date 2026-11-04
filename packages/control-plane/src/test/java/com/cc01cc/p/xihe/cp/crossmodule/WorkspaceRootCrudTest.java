@@ -8,7 +8,9 @@ import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.cc01cc.p.xihe.cp.entity.ChatRun;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceRoot;
+import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRootRepository;
 import com.fasterxml.jackson.databind.JsonNode;
 
@@ -21,6 +23,7 @@ import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.jdbc.core.JdbcTemplate;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -45,6 +48,12 @@ class WorkspaceRootCrudTest extends AbstractWireMockTest {
 
     @Autowired
     private WorkspaceRootRepository workspaceRootRepository;
+
+    @Autowired
+    private ChatRunRepository chatRunRepository;
+
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
 
     private String token;
 
@@ -352,5 +361,61 @@ class WorkspaceRootCrudTest extends AbstractWireMockTest {
                 "the primary root IS the workspace, so it projects no relative path");
         assertEquals("vendor/lib", roots.get(1).path("path").asText(),
                 "secondary roots project the POSIX workspace-relative path (B12)");
+    }
+
+    /**
+     * PLAN-0641 M2 T3.2 (conservative ruling): while any run in the workspace is still
+     * non-terminal, a declaration is refused with 409 ROOT_IN_USE — the new root changes
+     * the root set of every later capture, so the in-flight run's rollback target would be
+     * incomplete at declaration time.
+     */
+    @Test
+    void declareIsRefusedWhileARunIsInFlight() throws IOException {
+        String host = tempPath("root-in-use");
+        String workspaceId = createWorkspaceOrFail(host);
+        java.nio.file.Path nested = java.nio.file.Path.of(host, "vendor");
+        Files.createDirectories(nested);
+
+        chatRunRepository.saveAndFlush(new ChatRun(
+                UUID.randomUUID().toString(), UUID.randomUUID().toString(),
+                UUID.randomUUID().toString(), workspaceId,
+                "idem-" + UUID.randomUUID(), "hash", "openai", "model", "chat", "running"));
+
+        ResponseEntity<String> refused = restTemplate.exchange(
+                url("/api/v1/workspaces/" + workspaceId + "/roots"), HttpMethod.POST,
+                entityWithAuth(Map.of("path", nested.toAbsolutePath().toString()), token), String.class);
+
+        assertEquals(HttpStatus.CONFLICT, refused.getStatusCode(), String.valueOf(refused.getBody()));
+        assertEquals("ROOT_IN_USE", problemCode(refused.getBody()));
+        // The refusal happens before anything is persisted (no partial declaration).
+        assertEquals(1, getWorkspace(workspaceId).path("roots").size());
+    }
+
+    /** PLAN-0641 M2 T3.3: declaration writes a durable audit row with the relative path. */
+    @Test
+    void declaringARootWritesADurableAuditRow() throws IOException {
+        String host = tempPath("root-audit");
+        String workspaceId = createWorkspaceOrFail(host);
+        java.nio.file.Path nested = java.nio.file.Path.of(host, "vendor", "lib");
+        Files.createDirectories(nested);
+
+        ResponseEntity<String> added = restTemplate.exchange(
+                url("/api/v1/workspaces/" + workspaceId + "/roots"), HttpMethod.POST,
+                entityWithAuth(Map.of("path", nested.toAbsolutePath().toString()), token), String.class);
+        assertEquals(HttpStatus.CREATED, added.getStatusCode(), String.valueOf(added.getBody()));
+        String rootId = objectMapperStatic().readTree(added.getBody()).path("id").asText();
+
+        List<Map<String, Object>> rows = jdbcTemplate.queryForList(
+                "SELECT user_id, resource_type, resource_id, details FROM audit_logs "
+                        + "WHERE workspace_id = ? AND action = 'workspace_root_declared'",
+                UUID.fromString(workspaceId));
+        assertEquals(1, rows.size(), "one durable audit row per declaration");
+        assertEquals("workspace_root", rows.get(0).get("resource_type"));
+        assertEquals(rootId, rows.get(0).get("resource_id"));
+        String details = String.valueOf(rows.get(0).get("details"));
+        assertTrue(details.contains("path=vendor/lib"),
+                "audit detail carries the workspace-relative path, not the host path: " + details);
+        assertTrue(!details.contains(host),
+                "audit detail must never embed the host-absolute path: " + details);
     }
 }

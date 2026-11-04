@@ -234,6 +234,9 @@ const messages = {
             nestedRepoDeclareConfirm: "声明后该目录将作为独立根参与快照与回滚。",
             nestedRepoDeclared: "已声明为独立根",
             nestedRepoDeclareFailed: "声明失败，请稍后重试",
+            nestedRepoDeclareErrorRootInUse: "工作区有运行中的对话，等它结束后再声明",
+            nestedRepoDeclareErrorConflict: "该路径已经是根",
+            nestedRepoDeclareErrorOverlap: "该路径与已有根部分重叠，请调整",
             nestedReposCostHint: "根数量较多：每个根都有独立的影子库与快照成本。",
             nestedRepoType_nested: "嵌套仓",
             nestedRepoType_gitdir: "worktree 指针",
@@ -2455,6 +2458,11 @@ const messages = {
                 "After declaring, this directory participates in snapshots and rollback as an independent root.",
             nestedRepoDeclared: "Declared as an independent root",
             nestedRepoDeclareFailed: "Declaration failed, try again later",
+            nestedRepoDeclareErrorRootInUse:
+                "A conversation run is in progress; declare after it finishes",
+            nestedRepoDeclareErrorConflict: "That path is already a root",
+            nestedRepoDeclareErrorOverlap:
+                "That path partially overlaps an existing root; adjust it",
             nestedReposCostHint:
                 "Many roots: each root adds an independent shadow repo and snapshot cost.",
             nestedRepoType_nested: "Nested repo",

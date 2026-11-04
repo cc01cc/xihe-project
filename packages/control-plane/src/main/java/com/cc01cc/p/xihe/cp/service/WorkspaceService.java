@@ -691,6 +691,15 @@ public class WorkspaceService {
     public WorkspaceRoot addRoot(String workspaceId, String actorId, String path, String alias) {
         Workspace workspace = requireActiveWorkspace(workspaceId);
         requireOwnerOrAdmin(workspace, actorId);
+        // PLAN-0641 M2 T3.2 (conservative ruling): declaring a root changes the root set
+        // of every later capture, so an in-flight run's rollback target would be
+        // incomplete at declaration time. The B1 two-step confirm lets the user wait.
+        if (hasNonTerminalRuns(workspaceId)) {
+            throw new CpApiException(
+                    org.springframework.http.HttpStatus.CONFLICT,
+                    "ROOT_IN_USE",
+                    "The workspace has a run in progress; declare roots after it finishes");
+        }
 
         List<WorkspaceRoot> existing = workspaceRootRepository
                 .findByWorkspaceIdAndDeletedAtIsNullOrderByPositionAsc(UUID.fromString(workspaceId));
@@ -734,6 +743,11 @@ public class WorkspaceService {
         executionSpecService.createExecutionSpec(workspaceId, "{}", actorId, "root_added");
         // PLAN-0641 T2.4: the new root must re-project into the discovery face immediately.
         nestedReposCache.evict(workspaceId);
+        // PLAN-0641 M2 T3.3: declaration is a durable change (actor, rootId, relative path).
+        auditLogger.recordDurableChange(actorId, workspaceId, "workspace_root_declared",
+                "workspace_root", root.getId().toString(),
+                "position=" + root.getPosition()
+                        + " path=" + auditRootPath(workspace, root));
         return root;
     }
 
@@ -778,6 +792,10 @@ public class WorkspaceService {
         executionSpecService.createExecutionSpec(workspaceId, "{}", actorId, "root_deleted");
         // PLAN-0641 T2.4: undeleted roots must re-enter the discovery face.
         nestedReposCache.evict(workspaceId);
+        // PLAN-0641 M2 T3.3: undeclaration is a durable change (actor, rootId, relative path).
+        auditLogger.recordDurableChange(actorId, workspaceId, "workspace_root_deleted",
+                "workspace_root", rootId,
+                "position=" + root.getPosition() + " path=" + auditRootPath(workspace, root));
     }
 
     /**
@@ -859,6 +877,49 @@ public class WorkspaceService {
                 + "AND cr.status NOT IN ('succeeded','failed','cancelled')";
         Object result = entityManager.createNativeQuery(sql).getSingleResult();
         return result instanceof Number n && n.longValue() > 0;
+    }
+
+    /**
+     * PLAN-0641 M2 T3.2 (conservative ruling): is any run in this workspace still
+     * non-terminal? Declaring a root is refused while so, because the new root changes the
+     * root set of every later capture and the in-flight run's rollback target would be
+     * incomplete at declaration time. Path-overlap (option ii) stays a separate future
+     * project — this guard is cheap and never wrong, only strict.
+     */
+    private boolean hasNonTerminalRuns(String workspaceId) {
+        String sql = "SELECT COUNT(*) FROM chat_runs WHERE workspace_id = :workspaceId "
+                + "AND status NOT IN ('succeeded','failed','cancelled')";
+        Object result = entityManager.createNativeQuery(sql)
+                .setParameter("workspaceId", UUID.fromString(workspaceId))
+                .getSingleResult();
+        return result instanceof Number n && n.longValue() > 0;
+    }
+
+    /**
+     * PLAN-0641 M2 T3.3: audit detail path — workspace-relative POSIX path when the root
+     * sits inside the workspace, otherwise a redacted marker. Host-absolute paths never
+     * enter the audit detail (they are owner/admin-only on the API surface).
+     */
+    private static String auditRootPath(Workspace workspace, WorkspaceRoot root) {
+        String base = workspace.getHostPath();
+        String candidate = root.getHostPath();
+        if (base == null || candidate == null) {
+            return "<unknown>";
+        }
+        String normalizedBase = base.replace('\\', '/').replaceAll("/+$", "");
+        String normalizedCandidate = candidate.replace('\\', '/').replaceAll("/+$", "");
+        String baseLower = normalizedBase.toLowerCase(java.util.Locale.ROOT);
+        String candidateLower = normalizedCandidate.toLowerCase(java.util.Locale.ROOT);
+        if (normalizedBase.isEmpty()) {
+            return "<unknown>";
+        }
+        if (candidateLower.equals(baseLower)) {
+            return ".";
+        }
+        if (!candidateLower.startsWith(baseLower + "/")) {
+            return "<outside-workspace>";
+        }
+        return normalizedCandidate.substring(normalizedBase.length() + 1);
     }
 
     private String normalizeProfileForExecution(String profile, String executionMode) {

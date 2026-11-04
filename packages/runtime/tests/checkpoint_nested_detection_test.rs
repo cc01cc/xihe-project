@@ -315,3 +315,69 @@ async fn detect_endpoint_lists_undeclared_and_flags_declared_roots() {
     );
     assert!(classified[1].declared, "classify-only keeps declared flags");
 }
+
+/**
+ * PLAN-0641 M2 T3.5 (B10 / D41-25, the M2 acceptance gate): a repository nested
+ * INSIDE an already declared root must surface too — the probe recurses into each
+ * declared root once, and its inner paths stay workspace-relative.
+ */
+#[tokio::test]
+async fn detect_recurses_into_declared_roots_for_b10() {
+    let fixture = Fixture::new().await;
+    // The declared root is itself a repository and holds a deeper nested repo.
+    fixture.make_nested_repo("vendor/lib", "README.md");
+    let inner = fixture.ws().join("vendor").join("lib").join("inner");
+    std::fs::create_dir_all(&inner).expect("inner dir");
+    std::fs::write(inner.join("main.rs"), "fn main() {}\n").expect("inner file");
+    git_in(&inner, &["init"]);
+    git_in(&inner, &["add", "-A"]);
+    git_in(&inner, &["commit", "-m", "inner initial"]);
+
+    fixture.engine.set_declared_roots(
+        WS,
+        vec![
+            (WS.to_string(), fixture.ws().to_string_lossy().into_owned()),
+            (
+                "root-vendor".to_string(),
+                fixture
+                    .ws()
+                    .join("vendor")
+                    .join("lib")
+                    .to_string_lossy()
+                    .into_owned(),
+            ),
+        ],
+    );
+
+    let items = fixture.engine.detect_nested_repos(WS).await.expect("probe");
+    let summary: Vec<String> = items
+        .iter()
+        .map(|item| {
+            format!(
+                "{}={} declared={}",
+                item.path,
+                item.kind.as_wire(),
+                item.declared
+            )
+        })
+        .collect();
+    // The declared root is labelled from the primary scope (never re-offered).
+    assert!(
+        summary.contains(&"vendor/lib=nested declared=true".to_string()),
+        "{summary:?}"
+    );
+    // B10: the repository nested inside the declared root is discovered again.
+    assert!(
+        summary.contains(&"vendor/lib/inner=nested declared=false".to_string()),
+        "nested-inside-declared must surface with a workspace-relative path: {summary:?}"
+    );
+    let lib = summary
+        .iter()
+        .position(|entry| entry.starts_with("vendor/lib="))
+        .expect("declared root row");
+    let inner_row = summary
+        .iter()
+        .position(|entry| entry.starts_with("vendor/lib/inner="))
+        .expect("inner row");
+    assert!(lib < inner_row, "parents before children: {summary:?}");
+}
