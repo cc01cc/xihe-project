@@ -73,6 +73,13 @@ public class WakeFanOutService {
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private ChatRunStatusReadService chatRunStatus;
 
+    /** PLAN-0660 T5.5: user-channel hint target and the participant lookup it needs (both optional). */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.cc01cc.p.xihe.cp.event.UserChannelPort userChannel;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.cc01cc.p.xihe.cp.repository.SessionParticipantRepository participantRepository;
+
     /** Legacy test seam (WakeFanOutServiceTest builds with dispatch + config only). */
     public WakeFanOutService(WakeDispatchService wakeDispatchService, ConfigService configService) {
         this(wakeDispatchService, configService, null);
@@ -303,6 +310,11 @@ public class WakeFanOutService {
      *
      * <p>PLAN-0660 T5.3: the cursor advance is gone on purpose — the "@N" unread badge is a
      * derived value (`spec/session/user-channel.md` §3), so this path only records the notify.</p>
+     *
+     * <p>PLAN-0660 T5.5: after the durable row, push the minimal hint
+     * `{sessionId, participantId}` to the observer's own user channel (§4). Both collaborators are
+     * optional — without them this method behaves exactly as before; a push failure is logged with an
+     * incrementable event name and never retried on the dispatch path.</p>
      */
     private void notifyObserver(UUID sessionId, String workspaceId, String userId, String wakeRoundId,
                                 MentionParser.RosterEntry observer) {
@@ -314,9 +326,33 @@ public class WakeFanOutService {
             payload.put("outcome", "notify");
             eventStoreService.append(sessionId.toString(), workspaceId, userId, EVENT_WAKE_DISPATCH, payload);
         }
+        pushObserverHint(sessionId, observer);
         logger.info("[LIFECYCLE] service=cp event=wake_dispatch triggerSource=cc outcome=notify "
                         + "sessionId={} participantId={} round={}",
                 sessionId, observer.participantId(), wakeRoundId);
+    }
+
+    /**
+     * T5.5 seam: resolve the observer's principal (the roster entry carries no principal id) and push
+     * the hint. No-op when the user channel or the participant lookup is absent.
+     */
+    private void pushObserverHint(UUID sessionId, MentionParser.RosterEntry observer) {
+        if (userChannel == null || participantRepository == null) {
+            return;
+        }
+        participantRepository.findById(observer.participantId()).ifPresent(row -> {
+            if (row.getPrincipalId() == null) {
+                return;
+            }
+            try {
+                userChannel.participantNotified(row.getPrincipalId().toString(),
+                        sessionId.toString(), row.getId().toString());
+            } catch (RuntimeException failure) {
+                logger.warn("[LIFECYCLE] service=cp event=user_channel_push_failed userId={} "
+                                + "reason={} sessionId={}", row.getPrincipalId(),
+                        failure.getClass().getSimpleName(), sessionId);
+            }
+        });
     }
 
     /**

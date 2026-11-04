@@ -5,27 +5,36 @@ import org.junit.jupiter.api.Test;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.io.IOException;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * PLAN-0660 T5.4 — the user-channel contract (`spec/session/user-channel.md` §4/§5).
+ * PLAN-0660 T5.4 / T5.5 — the user-channel contract (`spec/session/user-channel.md` §4/§5).
  *
- * <p>Everything here is about the three things a naive SSE manager gets wrong: keeping **every** tab
- * of one user (no single-connection replacement — unlike Chat SSE), never leaking one user's hint
- * into another user's connection, and refusing the 9th connection **explicitly** rather than
- * dropping it silently.</p>
+ * <p>Three things a naive SSE manager gets wrong are pinned here: keeping <b>every</b> tab of one user
+ * (no single-connection replacement — unlike Chat SSE), never leaking one user's hint into another
+ * user's connection, and refusing the 9th connection <b>explicitly</b> rather than dropping it
+ * silently. Plus the hint whitelist: payload keys are asserted as a <b>subset</b> of the frozen keys,
+ * so a future "just add the count/body to the hint" change fails here instead of leaking onto the wire.</p>
  */
 class UserChannelSseManagerTest {
 
     private static final String USER_A = "user-a";
     private static final String USER_B = "user-b";
+    private static final Set<String> NOTIFIED_HINT_KEYS = Set.of("sessionId", "participantId");
+    private static final Set<String> QUESTION_HINT_KEYS = Set.of("questionId", "sessionId", "state");
 
-    /** Counts frames per emitter: {@code connected} on open, then one frame per hint. */
+    /** Counts frames per emitter and remembers the payload key sets it was handed. */
     private static final class CountingEmitter extends SseEmitter {
         private final AtomicInteger frames = new AtomicInteger();
+        private final List<Map<?, ?>> payloads = new ArrayList<>();
 
         CountingEmitter() {
             super(0L);
@@ -34,10 +43,19 @@ class UserChannelSseManagerTest {
         @Override
         public void send(SseEventBuilder builder) throws IOException {
             frames.incrementAndGet();
+            builder.build().forEach(data -> {
+                if (data.getData() instanceof Map<?, ?> map) {
+                    payloads.add(map);
+                }
+            });
         }
 
         int frames() {
             return frames.get();
+        }
+
+        List<Map<?, ?>> payloads() {
+            return payloads;
         }
     }
 
@@ -95,8 +113,42 @@ class UserChannelSseManagerTest {
         for (String name : new String[] {UserChannelSseManager.EVENT_CONNECTED,
                 UserChannelSseManager.EVENT_PARTICIPANT_NOTIFIED,
                 UserChannelSseManager.EVENT_USER_QUESTION}) {
-            assertEquals(false, name.startsWith("wake_"),
+            assertTrue(!name.startsWith("wake_"),
                     "public wire names are intentionally NOT the internal wake_* names (D-102)");
         }
+    }
+
+    @Test
+    void theNotifiedHintCarriesOnlyTheTwoFrozenKeys() {
+        UserChannelSseManager manager = new UserChannelSseManager();
+        CountingEmitter tab = new CountingEmitter();
+        manager.registerForTest(USER_A, tab);
+
+        manager.participantNotified(USER_A, "session-1", "participant-1");
+
+        Map<?, ?> hint = tab.payloads().stream()
+                .filter(payload -> payload.containsKey("participantId"))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("the participant_notified hint was not pushed"));
+        assertTrue(NOTIFIED_HINT_KEYS.containsAll(hint.keySet()),
+                "hint keys must be a SUBSET of {sessionId, participantId}; got " + hint.keySet());
+        assertEquals(NOTIFIED_HINT_KEYS, hint.keySet(), "and carry both identifiers, nothing else");
+    }
+
+    @Test
+    void theQuestionHintCarriesOnlyTheThreeFrozenKeys() {
+        UserChannelSseManager manager = new UserChannelSseManager();
+        CountingEmitter tab = new CountingEmitter();
+        manager.registerForTest(USER_A, tab);
+
+        manager.questionChanged(USER_A, "question-1", "session-1", "pending");
+
+        Map<?, ?> hint = tab.payloads().stream()
+                .filter(payload -> payload.containsKey("questionId"))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("the user_question hint was not pushed"));
+        assertTrue(QUESTION_HINT_KEYS.containsAll(hint.keySet()),
+                "hint keys must be a SUBSET of {questionId, sessionId, state}; got " + hint.keySet());
+        assertEquals(QUESTION_HINT_KEYS, hint.keySet());
     }
 }
