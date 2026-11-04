@@ -24,6 +24,7 @@ import type {
     CheckpointResult,
     Message,
     SessionDerivedStateResponse,
+    SessionRunSummary,
     ToolCallWaitingOn,
 } from "../../../../types";
 import MessageList from "./MessageList.vue";
@@ -177,6 +178,11 @@ const followUpQueueFull = computed(() =>
 );
 const derivedState = ref<SessionDerivedStateResponse | null>(null),
     derivedStateLoading = ref(false);
+/**
+ * PLAN-0659 T1.1：run 分组的数据源（`GET /chat/sessions/{id}/runs` 摘要）。
+ * 只在会话切换与 **run 终态**（0645 的终态刷新点）各拉一次，不做轮询。
+ */
+const sessionRuns = ref<SessionRunSummary[]>([]);
 const derivedStateError = ref(false),
     waitingOnByToolCallId = ref<Record<string, ToolCallWaitingOn>>({});
 let derivedStateRequestId = 0,
@@ -354,6 +360,18 @@ async function loadSessionMessages(sessionId: string, requiredMessageIds?: Reado
 // （goldpath G2-e reload 后 [data-slot=message] 卡 1/2 的根因）。对冷启动做有界追平：
 // 只要 listSessionRuns 还有非终态 run，就周期性重拉历史，直到无活动 run 或达到上限。
 // loadMessages 在 isStreaming 时早退，不会覆盖本页新发起的 live 流。
+async function refreshSessionRuns(sessionId: string): Promise<void> {
+    if (!sessionId) return;
+    try {
+        const response = await api.listSessionRuns(sessionId, { page: 0, size: 100 });
+        if (props.sessionId !== sessionId) return;
+        sessionRuns.value = response.runs;
+    } catch (cause) {
+        // 非关键展示数据：失败只记日志，run 头退回 message 自带的 runStatus。
+        logger.warn("failed to load session runs", cause);
+    }
+}
+
 const RUN_CATCHUP_INTERVAL_MS = 1000;
 const RUN_CATCHUP_MAX_ATTEMPTS = 30;
 const runCatchupTimers = new Map<string, ReturnType<typeof setInterval>>();
@@ -585,6 +603,7 @@ watch(
         followUpQueueBusyItemId.value = null;
         if (previousSessionId && previousSessionId !== sessionId) {
             stopRunCatchup(previousSessionId);
+            sessionRuns.value = [];
             chatStore.detachLiveSession(previousSessionId);
             lastRunId.value = undefined;
         }
@@ -593,6 +612,7 @@ watch(
             void loadSessionMessages(sessionId);
             void refreshDerivedState(sessionId);
             void refreshFollowUpQueue(sessionId);
+            void refreshSessionRuns(sessionId);
             catchUpInFlightRunProjection(sessionId);
         }
     },
@@ -614,6 +634,7 @@ watch(isStreaming, (streaming, previous) => {
     if (streaming !== previous && props.sessionId) {
         if (previous && !streaming) {
             void loadSessionMessages(props.sessionId);
+            void refreshSessionRuns(props.sessionId);
             guidancePanelRef.value?.refetch();
         }
         void refreshFollowUpQueue(props.sessionId);
@@ -1227,6 +1248,7 @@ watch(
         <MessageList
             v-if="messages.length > 0"
             :messages="renderedMessages"
+            :runs="sessionRuns"
             :branch-busy="creatingBranchForMessageId !== null"
             @approve="approveTool"
             @reject="rejectTool"
