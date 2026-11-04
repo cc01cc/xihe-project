@@ -38,6 +38,7 @@ import {
 import { Message as MessageRoot, MessageContent, MessageHeader } from "@/components/ui/message";
 import ProcessRow from "./ProcessRow.vue";
 import { actorOf } from "../actorView";
+import type { ResolvedDelivery } from "../deliveryView";
 
 const props = defineProps<{
     message: Message;
@@ -54,6 +55,13 @@ const props = defineProps<{
      * 标注同一个人是噪音）；消息身份行不受此开关影响（它一直按服务端归因渲染）。
      */
     showActor?: boolean;
+    /**
+     * PLAN-0659 T1.3：消息头投递语义（发送/抄送/被 @），由列表按本地发送态 + 花名册
+     * 解析成**显示名**后传入；`undefined` = 不渲染投递行。
+     *
+     * 限制（BL-239）：TO/CC 无持久载体，会话重载后丢失；@ 从正文 + 花名册重建仍在。
+     */
+    delivery?: ResolvedDelivery;
 }>();
 const { t } = useI18n();
 
@@ -65,6 +73,14 @@ const actorOfMessage = computed(() =>
     actorOf(props.responder, t("workspace.participantUnknownName")),
 );
 const actorForRows = computed(() => (props.showActor ? actorOfMessage.value : undefined));
+
+/**
+ * PLAN-0659 T1.3：抄送名单按 locale 连接（视图里不硬编码 "、" / ", "）。@ 已单独高亮，
+ * 所以这里只承载「其余旁听者」，同一个人不会出现两次。
+ */
+const deliveryCcNames = computed(() =>
+    (props.delivery?.cc ?? []).join(t("chat.delivery.listSeparator")),
+);
 
 const emit = defineEmits<{
     approve: [id: string];
@@ -333,6 +349,46 @@ onUnmounted(() => {
         :data-message-role="message.role"
     >
         <MessageContent class="max-w-[85%] min-w-0 md:max-w-[75%]">
+            <!--
+                PLAN-0659 T1.3：消息头投递语义 —— `发送→(A) · @被@者 · 抄送→(B,C)`。
+                三态来源不同：TO/CC 是 composer 发送态本地视图（BL-239：无持久载体，刷新后
+                丢失）；@ 从正文 + 花名册重建（仍在）。@ 是**高亮 chip**，不再重复出现在
+                抄送名单里；只染色到 muted/foreground 层级（注意力预算：投递信息不是危险/主 CTA）。
+            -->
+            <div
+                v-if="delivery"
+                class="mb-0.5 flex flex-wrap items-center gap-1 px-0.5 text-[10px] text-muted-foreground"
+                :class="isOwnMessage ? 'justify-end' : 'justify-start'"
+                data-testid="message-delivery"
+            >
+                <span v-if="delivery.to" data-testid="message-delivery-to">{{
+                    t("chat.delivery.to", { name: delivery.to })
+                }}</span>
+                <template v-if="delivery.mentions.length">
+                    <span v-if="delivery.to" class="text-muted-foreground/60" aria-hidden="true"
+                        >·</span
+                    >
+                    <span
+                        v-for="name in delivery.mentions"
+                        :key="`mention-${name}`"
+                        class="rounded border border-border bg-muted/60 px-1 text-foreground"
+                        data-testid="message-delivery-mention"
+                        :title="t('chat.delivery.mentioned', { name })"
+                        >@{{ name }}</span
+                    >
+                </template>
+                <template v-if="delivery.cc.length">
+                    <span
+                        v-if="delivery.to || delivery.mentions.length"
+                        class="text-muted-foreground/60"
+                        aria-hidden="true"
+                        >·</span
+                    >
+                    <span data-testid="message-delivery-cc">{{
+                        t("chat.delivery.cc", { names: deliveryCcNames })
+                    }}</span>
+                </template>
+            </div>
             <!--
                 PLAN-0631 D31-09: identity row, reusing the shipped-but-unused MessageHeader.
                 Only rendered for a **server-attributed** responder that is not the caller;

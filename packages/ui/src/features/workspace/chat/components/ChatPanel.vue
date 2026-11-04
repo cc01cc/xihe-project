@@ -929,6 +929,12 @@ async function submitMessage(input: {
         // PLAN-0631 D31-08: a `speakAs` message is attributed to the participant whose
         // identity the caller chose (CP validates it). Absent = the caller's own words.
         ...(asParticipantId ? { participantId: asParticipantId } : {}),
+        // PLAN-0659 T1.3：投递语义（发送/抄送）只有 composer 这一层知道，**UI 本地视图**，
+        // 与 `participantId` 同一口径：history DTO 不携带该字段 ⇒ 刷新后消失（BL-239：
+        // 投递语义暂无持久载体，P3）。不落 localStorage、不进 wire（本 PLAN 非目标）。
+        ...(asParticipantId || (cc?.length ?? 0) > 0
+            ? { delivery: { toParticipantId: asParticipantId ?? null, ccParticipantIds: cc ?? [] } }
+            : {}),
     });
     inputComponent.value?.clearDraft();
 }

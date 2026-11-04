@@ -745,6 +745,16 @@ const messages = {
             runHeader: {
                 toggle: "展开或折叠 run {run}",
             },
+            // PLAN-0659 T1.3：消息头投递语义三态（发送 / 抄送 / 被 @）。`listSeparator` 供
+            // 名单按 locale 连接（不在视图里硬编码 "、" / ", "）。
+            // 限制：TO/CC 无持久载体（BL-239），刷新后三态丢失（@ 可从正文+花名册重建）。
+            delivery: {
+                to: "发送→{name}",
+                cc: "抄送→{names}",
+                // vue-i18n 里 `@` 是 link 语法修饰符，字面量必须用 `{'@'}` 转义。
+                mentioned: "被 {'@'}：{name}",
+                listSeparator: "、",
+            },
             // 2026-11-04 DSH 式过程渲染：推理行的统一标签。
             reasoning: "思考",
             // 2026-11-04 生产力密度裁定：composer 是工具条不是聊天框 —— placeholder 用简写；
@@ -3009,6 +3019,15 @@ const messages = {
             send: "Send",
             runHeader: {
                 toggle: "Expand or collapse run {run}",
+            },
+            // PLAN-0659 T1.3: delivery semantics (to / cc / mentioned). TO/CC have no durable
+            // carrier yet (BL-239), so they disappear after a reload; @ is rebuilt from the
+            // message body + roster.
+            delivery: {
+                to: "To → {name}",
+                cc: "Cc → {names}",
+                mentioned: "Mentioned: {name}",
+                listSeparator: ", ",
             },
             reasoning: "Reasoning",
             delegation: {
