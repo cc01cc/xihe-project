@@ -369,11 +369,11 @@ test.describe("@host PLAN-0658 R9 reasoning 三段同值", () => {
      * 消息身份行也按服务端归因正确渲染（`AgentR9… 主智能体` / `AgentR9Extra… 成员`）。
      * **但 reasoning 过程行仍无 actor 徽标**：`ReasoningPart.vue` 渲染 `ProcessRow` 时
      * 没有把 `actor` 透传下去（同一缺口只在 reasoning 行；thinking marker / tool card 已接）。
-     * ⇒ 本用例保留 `.fixme`，等 UI 侧把 `actor` 从 `MessageItem.actorForRows` 经
-     * `ReasoningPart` 转发到 `ProcessRow` 后解除（**BL-286（P2）**：归因数据面无缺陷、
-     * UI 透传缺失；补丁派 bl232）。
+     * **BL-286 已合入 develop（`935c9ff3` / `94a9830b`）**：`ReasoningPart` 现在把
+     * `actor` 从 `MessageItem.actorForRows` 透传到 `ProcessRow`，reasoning 行与 thinking/tool
+     * 行同一契约；本用例解除 `.fixme`，由真栈复验（stack-1，`runningCommit=79cca962`）。
      */
-    test.fixme("R9-4 混主体：两个 principal 各出过程行，actor 徽标 id 与顺序正确", async ({
+    test("R9-4 混主体：两个 principal 各出过程行，actor 徽标 id 与顺序正确", async ({
         page,
         request,
     }) => {
