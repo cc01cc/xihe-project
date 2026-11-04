@@ -106,6 +106,7 @@ ChatRun 通过 `runId` 关联 Message，服务端返回的 `runStatus`、`termin
 
 - 新增视图优先读 `useSessionStore`，不直接操作 chat store 的 Session 状态；文件上下文写入统一走 `syncActiveFileToSession`。
 - 后续扩展（右侧面板拖拽宽、统一 `/session/:id` 路由评估、文件拖拽入 chat、多 Session 并列）另行 PLAN。
+- **Checkpoint slice 不变量（PLAN-0653 P3）**：回滚句柄始终是 `sliceRef`（`refs/xihe/slices/<epoch>-<40hex>`），其中不携带任何文件内容；self 模式下 store 是读写主路径、shadow 仅作 best-effort 回切备份，Session/ChatRun 语义不感知存储模式（存储细节见 `DEV-015` §6.1）。
 
 ## 附录：RFC-001 历史设计（已退役）
 

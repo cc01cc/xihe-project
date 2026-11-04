@@ -35,7 +35,7 @@ use tracing::{debug, info, warn};
 use crate::checkpoint_store::audit::{self, AuditFinding, AuditReport, DualPendingRecord};
 use crate::checkpoint_store::capture::{
     CaptureOptions, CaptureResult, GitTreeEntry, capture_from_git_entries,
-    capture_root_with_options,
+    capture_root_with_options, read_tail_manifest, tail_slice,
 };
 use crate::checkpoint_store::manifest::{FileMode, Manifest};
 use crate::checkpoint_store::refs::{self, RefRecord};
@@ -334,6 +334,26 @@ pub struct CaptureOutcome {
     pub predecessor: Option<String>,
 }
 
+/// Result of one internal git-path capture: the public outcome plus the
+/// staged tree and the ref target so a self-mode backup can record them.
+struct GitPathCapture {
+    outcome: CaptureOutcome,
+    tree: String,
+    ref_target_commit: Option<String>,
+}
+
+/// T3.1 migration report: one root's shadow slice refs -> store sidecars.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MigrationReport {
+    pub root_id: String,
+    pub total_refs: usize,
+    pub migrated: usize,
+    pub skipped_existing: usize,
+    pub failed: usize,
+    pub errors: Vec<String>,
+}
+
 /// Retention result (counts slices; abnormal slices participate equally).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -469,6 +489,9 @@ pub struct ShadowGit {
     checkpoint_storage: CheckpointStorageMode,
     store: Option<Store>,
     store_failures: Arc<AtomicU64>,
+    /// P3 T2.5: best-effort shadow backup failures after a successful store
+    /// capture. Never blocks the store result; surfaced in diagnostics.
+    shadow_backup_failures: Arc<AtomicU64>,
     pub(crate) call_timeout: Duration,
 }
 
@@ -490,6 +513,7 @@ impl ShadowGit {
             checkpoint_storage: CheckpointStorageMode::Git,
             store: None,
             store_failures: Arc::new(AtomicU64::new(0)),
+            shadow_backup_failures: Arc::new(AtomicU64::new(0)),
             call_timeout: GIT_CALL_TIMEOUT,
         }
     }
@@ -519,6 +543,12 @@ impl ShadowGit {
 
     pub fn store_failures(&self) -> u64 {
         self.store_failures.load(Ordering::SeqCst)
+    }
+
+    /// P3 T2.5: how many best-effort shadow backup attempts failed after a
+    /// successful self capture (visibility requirement: never silent).
+    pub fn shadow_backup_failures(&self) -> u64 {
+        self.shadow_backup_failures.load(Ordering::SeqCst)
     }
 
     pub fn store_root(&self) -> Option<&Path> {
@@ -738,6 +768,19 @@ impl ShadowGit {
     /// Cached host-git probe (`git --version` ≥ 2.20). Failures are retried after a
     /// backoff; the result is a structured value and never panics, even when git is
     /// missing entirely.
+    /// P3 T2.5: synchronous `git --version` probe used by the sync self
+    /// startup gate to degrade shadow validation when git is absent.
+    pub fn git_binary_available(&self) -> bool {
+        std::process::Command::new(&self.git_binary)
+            .arg("--version")
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|status| status.success())
+            .unwrap_or(false)
+    }
+
     pub async fn probe(&self) -> GitCapability {
         {
             let cache = self
@@ -1484,9 +1527,55 @@ impl ShadowGit {
                 detail: format!("root id {root_id:?} is not a declared root of {workspace_id:?}"),
             });
         }
-        let shadow = self.shadow_git_dir(root_id)?;
         let work_tree = self.work_tree_for_root(root_id)?;
         let _guard = self.lock_capture(root_id).await;
+        if !work_tree.is_dir() {
+            return Err(CheckpointError::WorkspaceMissing(normalize_path_for_git(
+                &work_tree,
+            )));
+        }
+        // P3 T2.5 (D53-37): in self mode the store is the primary write path;
+        // the shadow becomes a best-effort backup captured after the store
+        // succeeds. `Reject` keeps the legacy git path (the hard-limit check
+        // lives in stage_workspace), and git/dual modes are unchanged.
+        if self.checkpoint_storage == CheckpointStorageMode::Self_
+            && self.nested_repo_policy == NestedRepoPolicy::Flatten
+        {
+            return self
+                .capture_self_store_path(workspace_id, root_id, run_id, actor, call_id, abnormal)
+                .await;
+        }
+        self.capture_git_path_for_root(
+            workspace_id,
+            root_id,
+            run_id,
+            actor,
+            call_id,
+            abnormal,
+            None,
+            capture_started,
+        )
+        .await
+        .map(|git| git.outcome)
+    }
+
+    /// The legacy git-path capture (git/dual modes and self-mode backup).
+    /// `forced_slice_ref` pins the ref name so a self backup shares the store
+    /// slice ref; in that mode the store is never touched again.
+    #[allow(clippy::too_many_arguments)]
+    async fn capture_git_path_for_root(
+        &self,
+        workspace_id: &str,
+        root_id: &str,
+        run_id: &str,
+        actor: &str,
+        call_id: &str,
+        abnormal: bool,
+        forced_slice_ref: Option<&str>,
+        capture_started: Instant,
+    ) -> Result<GitPathCapture> {
+        let shadow = self.shadow_git_dir(root_id)?;
+        let work_tree = self.work_tree_for_root(root_id)?;
         self.require_git().await?;
         if !work_tree.is_dir() {
             return Err(CheckpointError::WorkspaceMissing(normalize_path_for_git(
@@ -1522,6 +1611,16 @@ impl ShadowGit {
         self.save_last_index(&shadow, &index).await?;
 
         if tail_tree.as_deref() == Some(tree.as_str()) {
+            // A forced (self-backup) ref must still be published for this
+            // capture even though the staged tree equals the shadow tail.
+            let ref_target_commit = if let Some(forced) = forced_slice_ref
+                && let Some(row) = &tail
+            {
+                self.update_ref(&env, forced, &row.commit).await?;
+                Some(row.commit.clone())
+            } else {
+                None
+            };
             debug!(
                 workspace_id,
                 root_id,
@@ -1531,38 +1630,47 @@ impl ShadowGit {
                 "shadow checkpoint capture found no change; no slice written"
             );
             let git_ms = capture_started.elapsed().as_millis() as u64;
-            self.dual_write_store(DualWriteContext {
-                workspace_id,
-                root_id,
-                run_id,
-                actor,
-                work_tree: &work_tree,
-                git_tree: &tree,
-                previous_tree: tail_tree.as_deref(),
-                changed_paths: None,
-                git_ref: predecessor.as_deref(),
-                env: &env,
-                git_ms,
-            })
-            .await?;
-            return Ok(CaptureOutcome {
-                run_id: run_id.to_string(),
-                root_id: root_id.to_string(),
-                no_change: true,
-                slice_ref: None,
-                commit: None,
-                captured_at: None,
-                state: state.to_string(),
-                changed_files: Vec::new(),
-                opaque_nested_repos: Vec::new(),
-                predecessor,
+            if forced_slice_ref.is_none() {
+                self.dual_write_store(DualWriteContext {
+                    workspace_id,
+                    root_id,
+                    run_id,
+                    actor,
+                    work_tree: &work_tree,
+                    git_tree: &tree,
+                    previous_tree: tail_tree.as_deref(),
+                    changed_paths: None,
+                    git_ref: predecessor.as_deref(),
+                    env: &env,
+                    git_ms,
+                })
+                .await?;
+            }
+            return Ok(GitPathCapture {
+                outcome: CaptureOutcome {
+                    run_id: run_id.to_string(),
+                    root_id: root_id.to_string(),
+                    no_change: true,
+                    slice_ref: None,
+                    commit: None,
+                    captured_at: None,
+                    state: state.to_string(),
+                    changed_files: Vec::new(),
+                    opaque_nested_repos: Vec::new(),
+                    predecessor,
+                },
+                tree,
+                ref_target_commit,
             });
         }
 
         let epoch_ms = wall_clock_ms();
         let message = slice_message(run_id, actor, call_id);
         let commit = self.commit_tree(&env, &tree, None, &message).await?;
-        let slice_ref = format!("{SLICE_REF_PREFIX}{epoch_ms}-{commit}");
+        let slice_ref = match forced_slice_ref {
+            Some(forced) => forced.to_owned(),
+            None => format!("{SLICE_REF_PREFIX}{epoch_ms}-{commit}"),
+        };
         self.update_ref(&env, &slice_ref, &commit).await?;
         let changed_files = match &tail_tree {
             Some(tail_tree) => self.changed_files_for(&env, tail_tree, &tree).await?,
@@ -1582,32 +1690,507 @@ impl ShadowGit {
         let changed_paths: Option<HashSet<String>> = tail_tree
             .as_ref()
             .map(|_| changed_files.iter().map(|file| file.path.clone()).collect());
-        self.dual_write_store(DualWriteContext {
+        if forced_slice_ref.is_none() {
+            self.dual_write_store(DualWriteContext {
+                workspace_id,
+                root_id,
+                run_id,
+                actor,
+                work_tree: &work_tree,
+                git_tree: &tree,
+                previous_tree: tail_tree.as_deref(),
+                changed_paths: changed_paths.as_ref(),
+                git_ref: Some(slice_ref.as_str()),
+                env: &env,
+                git_ms,
+            })
+            .await?;
+        }
+        Ok(GitPathCapture {
+            outcome: CaptureOutcome {
+                run_id: run_id.to_string(),
+                root_id: root_id.to_string(),
+                no_change: false,
+                slice_ref: Some(slice_ref),
+                commit: Some(commit.clone()),
+                captured_at: Some(rfc3339_ms(epoch_ms)),
+                state: state.to_string(),
+                changed_files,
+                opaque_nested_repos,
+                predecessor,
+            },
+            tree,
+            ref_target_commit: Some(commit),
+        })
+    }
+
+    /// P3 T2.5: self-mode store-first capture. The store write is
+    /// authoritative; the shadow backup runs afterwards and its failure is
+    /// visible (WARN + `shadowBackupFailures`) but never blocks the result.
+    #[allow(clippy::needless_update)]
+    async fn capture_self_store_path(
+        &self,
+        workspace_id: &str,
+        root_id: &str,
+        run_id: &str,
+        actor: &str,
+        call_id: &str,
+        abnormal: bool,
+    ) -> Result<CaptureOutcome> {
+        use sha2::{Digest as _, Sha256};
+
+        let state = if abnormal {
+            "abnormal-captured"
+        } else {
+            "captured"
+        };
+        let work_tree = self.work_tree_for_root(root_id)?;
+        let store = match &self.store {
+            Some(store) => store.clone(),
+            None => {
+                return Err(
+                    self.store_capture_failure("self mode requires a configured checkpoint store")
+                );
+            }
+        };
+
+        // Previous store tail: predecessor + changed-set baseline.
+        let prev_tail = tail_slice(&store, root_id)
+            .map_err(|error| self.store_capture_failure(format!("store tail read: {error}")))?;
+        let prev_manifest =
+            match &prev_tail {
+                Some(tail) => Some(read_tail_manifest(&store, tail).map_err(|error| {
+                    self.store_capture_failure(format!("tail manifest: {error}"))
+                })?),
+                None => None,
+            };
+        let tail_slice_id = prev_tail.as_ref().map(|tail| tail.id.clone());
+        let sidecar = match &tail_slice_id {
+            Some(tail_id) => refs::list_refs(&store, root_id).ok().and_then(|rows| {
+                rows.into_iter()
+                    .find(|(_, record)| record.store_slice_id == *tail_id)
+            }),
+            None => None,
+        };
+        let mut predecessor = sidecar.as_ref().map(|(_, record)| record.git_ref.clone());
+        // Recovery path: a previous attempt wrote the pending audit record but
+        // failed the refs sidecar; the no-change retry repairs it below.
+        let pending_for_tail = if sidecar.is_none() {
+            match &tail_slice_id {
+                Some(tail_id) => audit::list_pending(&store, Some(root_id), None)
+                    .ok()
+                    .and_then(|rows| {
+                        rows.into_iter()
+                            .find(|(_, record)| record.store_slice_id == *tail_id)
+                    }),
+                None => None,
+            }
+        } else {
+            None
+        };
+
+        let declared_roots = self
+            .declared_roots(workspace_id)
+            .into_iter()
+            .map(|(root, _)| root)
+            .collect();
+        let options = CaptureOptions {
+            declared_roots,
+            exclude_opaque_nested: false,
+            ..CaptureOptions::default()
+        };
+        let store_for_walk = store.clone();
+        let walk_root = work_tree.to_path_buf();
+        let walk_root_id = root_id.to_owned();
+        let walk_run_id = run_id.to_owned();
+        let walk_actor = actor.to_owned();
+        let capture = tokio::task::spawn_blocking(move || {
+            capture_root_with_options(
+                &store_for_walk,
+                &walk_root,
+                &walk_root_id,
+                Some(&walk_run_id),
+                Some(&walk_actor),
+                &options,
+            )
+        })
+        .await
+        .map_err(|error| self.store_capture_failure(format!("store capture task failed: {error}")))
+        .and_then(|result| {
+            result.map_err(|error| self.store_capture_failure(format!("store capture: {error}")))
+        })?;
+
+        if capture.no_change {
+            // Repair a missing sidecar from the pending audit record so a
+            // failed sidecar write can be retried (mirrors the dual path).
+            if sidecar.is_none()
+                && let Some((_, pending)) = &pending_for_tail
+                && let Some(git_ref) = pending.git_ref.clone()
+            {
+                let record = RefRecord {
+                    v: 1,
+                    root_id: root_id.to_owned(),
+                    git_ref: git_ref.clone(),
+                    git_tree: pending.git_tree.clone(),
+                    store_slice_id: capture.slice_id.clone(),
+                    store_manifest_id: capture.manifest_id.clone(),
+                    source: "capture".into(),
+                    created_at_ms: pending.created_at_ms,
+                };
+                if let Err(error) = refs::write_ref(&store, &record) {
+                    return Err(self.store_capture_failure(format!(
+                        "store slice {} written but refs sidecar repair failed: {error}",
+                        capture.slice_id
+                    )));
+                }
+                predecessor = Some(git_ref);
+            }
+            return Ok(CaptureOutcome {
+                run_id: run_id.to_owned(),
+                root_id: root_id.to_owned(),
+                no_change: true,
+                slice_ref: None,
+                commit: None,
+                captured_at: None,
+                state: state.to_owned(),
+                changed_files: Vec::new(),
+                opaque_nested_repos: Vec::new(),
+                predecessor,
+            });
+        }
+
+        // Canonical store slice ref: `<epoch>-<sha256(sliceId)[..40]>` keeps the
+        // frozen `refs/xihe/slices/<epoch>-<40hex>` leaf contract so every git
+        // and CP parser still accepts it, without depending on a git commit.
+        let epoch_ms: i64 = capture
+            .slice_id
+            .split('-')
+            .next()
+            .and_then(|value| value.parse::<i64>().ok())
+            .unwrap_or_else(wall_clock_ms);
+        let hash_hex = format!("{:x}", Sha256::digest(capture.slice_id.as_bytes()));
+        let slice_ref = format!("{SLICE_REF_PREFIX}{epoch_ms}-{}", &hash_hex[..40]);
+        let captured_at = rfc3339_ms(epoch_ms);
+
+        // Changed set from the store manifest diff (no git diff involved).
+        let new_manifest_bytes = std::fs::read(store.manifest_path(&capture.manifest_id))
+            .map_err(|error| self.store_capture_failure(format!("manifest read: {error}")))?;
+        let new_manifest = Manifest::parse_verified(&new_manifest_bytes, &capture.manifest_id)
+            .map_err(|error| self.store_capture_failure(format!("manifest parse: {error}")))?;
+        let changed_files = match &prev_manifest {
+            Some(prev) => {
+                let diff = prev.diff(&new_manifest);
+                let mut rows: Vec<(&str, String)> = diff
+                    .modified
+                    .into_iter()
+                    .map(|path| ("M", path))
+                    .chain(diff.added.into_iter().map(|path| ("A", path)))
+                    .chain(diff.removed.into_iter().map(|path| ("D", path)))
+                    .collect();
+                rows.sort_by(|left, right| left.1.cmp(&right.1));
+                rows.into_iter()
+                    .map(|(status, path)| ChangedFile {
+                        status: status.to_owned(),
+                        path,
+                        old_path: None,
+                    })
+                    .collect()
+            }
+            None => Vec::new(),
+        };
+
+        // Pending audit record first: it is the preflight backfill source if
+        // the sidecar write fails or the process dies before it.
+        let created_at_ms = wall_clock_ms().max(0) as u64;
+        let pending = DualPendingRecord {
+            v: 1,
+            root_id: root_id.to_owned(),
+            run_id: run_id.to_owned(),
+            git_ref: Some(slice_ref.clone()),
+            git_tree: String::new(),
+            store_slice_id: capture.slice_id.clone(),
+            store_manifest_id: capture.manifest_id.clone(),
+            created_at_ms,
+        };
+        if let Err(error) = audit::write_pending(&store, &pending) {
+            self.store_failures.fetch_add(1, Ordering::SeqCst);
+            warn!(
+                workspace_id,
+                root_id,
+                run_id,
+                %error,
+                "checkpoint self capture pending audit record failed"
+            );
+        }
+
+        // Best-effort shadow backup AFTER the authoritative store write.
+        let backup = self
+            .capture_git_path_for_root(
+                workspace_id,
+                root_id,
+                run_id,
+                actor,
+                call_id,
+                abnormal,
+                Some(slice_ref.as_str()),
+                Instant::now(),
+            )
+            .await;
+        let (backup_commit, backup_tree) = match backup {
+            Ok(git) => (git.ref_target_commit, Some(git.tree)),
+            Err(error) => {
+                self.shadow_backup_failures.fetch_add(1, Ordering::SeqCst);
+                warn!(
+                    workspace_id,
+                    root_id,
+                    run_id,
+                    %error,
+                    "checkpoint self capture: shadow backup skipped; store slice remains authoritative"
+                );
+                (None, None)
+            }
+        };
+
+        // Sidecar mapping is required in self mode (hard fail, visible count).
+        let ref_record = RefRecord {
+            v: 1,
+            root_id: root_id.to_owned(),
+            git_ref: slice_ref.clone(),
+            git_tree: backup_tree.unwrap_or_default(),
+            store_slice_id: capture.slice_id.clone(),
+            store_manifest_id: capture.manifest_id.clone(),
+            source: "capture".into(),
+            created_at_ms,
+        };
+        if let Err(error) = refs::write_ref(&store, &ref_record) {
+            return Err(self.store_capture_failure(format!(
+                "store slice {} written but refs sidecar failed: {error}",
+                capture.slice_id
+            )));
+        }
+
+        info!(
             workspace_id,
             root_id,
             run_id,
-            actor,
-            work_tree: &work_tree,
-            git_tree: &tree,
-            previous_tree: tail_tree.as_deref(),
-            changed_paths: changed_paths.as_ref(),
-            git_ref: Some(slice_ref.as_str()),
-            env: &env,
-            git_ms,
-        })
-        .await?;
+            slice_ref = %slice_ref,
+            changed = changed_files.len(),
+            state,
+            store_slice = %capture.slice_id,
+            store_entries = capture.entry_count,
+            backup = backup_commit.is_some(),
+            "checkpoint store slice captured (self primary path)"
+        );
         Ok(CaptureOutcome {
-            run_id: run_id.to_string(),
-            root_id: root_id.to_string(),
+            run_id: run_id.to_owned(),
+            root_id: root_id.to_owned(),
             no_change: false,
             slice_ref: Some(slice_ref),
-            commit: Some(commit),
-            captured_at: Some(rfc3339_ms(epoch_ms)),
-            state: state.to_string(),
+            commit: backup_commit,
+            captured_at: Some(captured_at),
+            state: state.to_owned(),
             changed_files,
-            opaque_nested_repos,
+            opaque_nested_repos: Vec::new(),
             predecessor,
         })
+    }
+
+    /// Count and wrap a self store-write failure (visibility requirement).
+    fn store_capture_failure(&self, detail: impl Into<String>) -> CheckpointError {
+        let detail = detail.into();
+        self.store_failures.fetch_add(1, Ordering::SeqCst);
+        warn!(store_error = "self_capture_failed", detail = %detail, "checkpoint self store capture failed");
+        CheckpointError::StoreCaptureFailed { detail }
+    }
+
+    /// T3.1 migration tool: backfill legacy shadow slice refs into the store.
+    ///
+    /// Idempotent and interruptible: refs with a sidecar mapping are skipped,
+    /// the first per-ref failure stops the run (the chain stays contiguous) and
+    /// the command can be re-run until `failed == 0`. The shadow is only read
+    /// (`GIT_OPTIONAL_LOCKS=0`), never rewritten.
+    pub async fn migrate_shadow_slices_to_store(
+        &self,
+        workspace_id: &str,
+    ) -> Result<MigrationReport> {
+        let store = match &self.store {
+            Some(store) => store.clone(),
+            None => {
+                return Err(CheckpointError::StoreFailure {
+                    reason: "STORE_NOT_INITIALIZED".into(),
+                    detail: "migration requires a configured store (self/dual)".into(),
+                });
+            }
+        };
+        let shadow = self.shadow_git_dir(workspace_id)?;
+        let work_tree = self.work_tree(workspace_id)?;
+        let mut report = MigrationReport {
+            root_id: workspace_id.to_owned(),
+            ..MigrationReport::default()
+        };
+        if !shadow.is_dir() {
+            return Ok(report);
+        }
+        self.require_git().await?;
+        let env = self.isolated_env(&shadow, &work_tree, None);
+        let mut rows = self.list_slices(&env).await?;
+        rows.sort_by(|left, right| left.name.cmp(&right.name));
+        report.total_refs = rows.len();
+
+        // git oid map of the previous ref in the chain (None before the first),
+        // so unchanged blobs reuse the store tail and only real changes are read.
+        let mut previous_oids: Option<HashMap<String, String>> = None;
+        for row in &rows {
+            let existing = match refs::read_ref(&store, workspace_id, &row.name) {
+                Ok(existing) => existing,
+                Err(error) => {
+                    report.failed += 1;
+                    report
+                        .errors
+                        .push(format!("{}: sidecar read failed: {error}", row.name));
+                    break;
+                }
+            };
+            let tree_stdout = match self
+                .run_git_checked(
+                    &["ls-tree", "-r", "-l", "-z", &row.name],
+                    &env,
+                    None,
+                    self.call_timeout,
+                )
+                .await
+            {
+                Ok(stdout) => stdout,
+                Err(error) => {
+                    report.failed += 1;
+                    report
+                        .errors
+                        .push(format!("{}: ls-tree failed: {error}", row.name));
+                    break;
+                }
+            };
+            let (entries, nested_roots) = parse_git_tree_output(&tree_stdout);
+            let current_oids: HashMap<String, String> = entries
+                .iter()
+                .map(|entry| (entry.path.clone(), entry.oid.clone()))
+                .collect();
+
+            if existing.is_some() {
+                // Already migrated (or mapped by preflight backfill): keep the
+                // chain context for the next unmigrated ref.
+                report.skipped_existing += 1;
+                previous_oids = Some(current_oids);
+                continue;
+            }
+
+            let mut changed_blobs: HashMap<String, Vec<u8>> = HashMap::new();
+            for entry in &entries {
+                let unchanged = previous_oids
+                    .as_ref()
+                    .is_some_and(|previous| previous.get(&entry.path) == Some(&entry.oid));
+                if unchanged {
+                    continue;
+                }
+                match self.git_blob_bytes(&env, &entry.oid).await {
+                    Ok(bytes) => {
+                        changed_blobs.insert(entry.path.clone(), bytes);
+                    }
+                    Err(error) => {
+                        report.failed += 1;
+                        report.errors.push(format!(
+                            "{}: cat-file failed for {}: {error}",
+                            row.name, entry.path
+                        ));
+                        break;
+                    }
+                }
+            }
+            if report.failed > 0 {
+                break;
+            }
+
+            let run_id = format!("migrated-{}", row.epoch_ms);
+            let result = match capture_from_git_entries(
+                &store,
+                workspace_id,
+                Some(&run_id),
+                None,
+                &entries,
+                &changed_blobs,
+                nested_roots,
+            ) {
+                Ok(result) => result,
+                Err(error) => {
+                    report.failed += 1;
+                    report
+                        .errors
+                        .push(format!("{}: store capture failed: {error}", row.name));
+                    break;
+                }
+            };
+            let git_tree = match self
+                .rev_parse(&env, &format!("{}^{{tree}}", row.name))
+                .await
+            {
+                Ok(Some(tree)) => tree,
+                Ok(None) => {
+                    report.failed += 1;
+                    report.errors.push(format!("{}: ref has no tree", row.name));
+                    break;
+                }
+                Err(error) => {
+                    report.failed += 1;
+                    report
+                        .errors
+                        .push(format!("{}: rev-parse failed: {error}", row.name));
+                    break;
+                }
+            };
+            let record = RefRecord {
+                v: 1,
+                root_id: workspace_id.to_owned(),
+                git_ref: row.name.clone(),
+                git_tree,
+                store_slice_id: result.slice_id.clone(),
+                store_manifest_id: result.manifest_id.clone(),
+                source: "migrated".into(),
+                created_at_ms: SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .map(|duration| duration.as_millis() as u64)
+                    .unwrap_or(0),
+            };
+            if let Err(error) = refs::write_ref(&store, &record) {
+                report.failed += 1;
+                report
+                    .errors
+                    .push(format!("{}: sidecar write failed: {error}", row.name));
+                break;
+            }
+            info!(
+                root_id = workspace_id,
+                slice_ref = %row.name,
+                store_slice = %result.slice_id,
+                run_id,
+                "migrated shadow slice into checkpoint store"
+            );
+            report.migrated += 1;
+            previous_oids = Some(current_oids);
+        }
+        Ok(report)
+    }
+
+    /// Raw blob bytes from the shadow (`git cat-file blob <oid>`).
+    async fn git_blob_bytes(&self, env: &[(String, String)], oid: &str) -> Result<Vec<u8>> {
+        let output = self
+            .run_git(&["cat-file", "blob", oid], env, None, self.call_timeout)
+            .await?;
+        if !output.status.success() {
+            return Err(CheckpointError::GitCommand {
+                command: format!("cat-file blob {oid}"),
+                detail: String::from_utf8_lossy(&output.stderr).trim().to_owned(),
+            });
+        }
+        Ok(output.stdout)
     }
 
     /// Resolve a slice ref to its commit; `None` when the ref does not exist.
@@ -3696,6 +4279,280 @@ mod tests {
             .expect("ref read")
             .expect("repaired ref");
         assert_eq!(record.source, "capture");
+    }
+
+    /// T3.1 migration tool gate: git-only history -> store sidecars, idempotent,
+    /// then byte-verify every migrated slice against the shadow object.
+    #[tokio::test]
+    #[ignore = "T3.1 migration tool: git-only history backfill, idempotent"]
+    async fn p3_migration_tool_backfills_git_only_history() {
+        use std::process::Command;
+
+        let temp = TempDir::new().expect("tempdir");
+        let workspace = temp.path().join("ws1");
+        std::fs::create_dir_all(workspace.join("dir")).expect("dirs");
+        std::fs::write(workspace.join("a.txt"), "alpha").expect("a");
+        std::fs::write(workspace.join("dir/b.txt"), "beta").expect("b");
+        std::fs::write(workspace.join("dir/c.txt"), "gamma").expect("c");
+        let mut engine = ShadowGit::new(temp.path());
+        if !require_git(&engine).await {
+            return;
+        }
+
+        // Legacy history: captures made with NO store configured (git only).
+        let mut legacy_refs = Vec::new();
+        for round in 0..3usize {
+            match round {
+                1 => {
+                    std::fs::write(workspace.join("a.txt"), "alpha-modified").expect("mutate");
+                    std::fs::remove_file(workspace.join("dir/c.txt")).expect("delete");
+                }
+                2 => std::fs::write(workspace.join("dir/d.txt"), "delta").expect("add"),
+                _ => {}
+            }
+            let outcome = engine
+                .capture(
+                    "ws1",
+                    &format!("legacy-{round}"),
+                    "tester",
+                    &format!("call-{round}"),
+                    false,
+                )
+                .await
+                .expect("legacy capture");
+            legacy_refs.push(outcome.slice_ref.expect("slice ref"));
+        }
+
+        // Enable the store and migrate.
+        let store_root = temp.path().join(".xihe-store");
+        engine
+            .configure_checkpoint_storage(CheckpointStorageMode::Self_, &store_root)
+            .expect("self store");
+        let first = engine
+            .migrate_shadow_slices_to_store("ws1")
+            .await
+            .expect("migrate");
+        assert_eq!(first.total_refs, 3, "{first:?}");
+        assert_eq!(first.migrated, 3, "{first:?}");
+        assert_eq!(first.failed, 0, "{first:?}");
+
+        // Idempotent re-run.
+        let second = engine
+            .migrate_shadow_slices_to_store("ws1")
+            .await
+            .expect("migrate rerun");
+        assert_eq!(second.migrated, 0, "{second:?}");
+        assert_eq!(second.skipped_existing, 3, "{second:?}");
+        assert_eq!(second.failed, 0, "{second:?}");
+
+        // Sidecars + byte verification against `git show ref:path`.
+        let store = Store::open(&store_root).expect("store");
+        let shadow = engine.shadow_git_dir("ws1").expect("shadow path");
+        let env = engine.isolated_env(&shadow, &workspace, None);
+        let mut checked_entries = 0usize;
+        for slice_ref in &legacy_refs {
+            let record = crate::checkpoint_store::refs::read_ref(&store, "ws1", slice_ref)
+                .expect("ref read")
+                .expect("migrated sidecar");
+            assert_eq!(record.source, "migrated", "{record:?}");
+            assert!(!record.git_tree.is_empty());
+            let manifest_path = store.manifest_path(&record.store_manifest_id);
+            let bytes = std::fs::read(&manifest_path).expect("manifest bytes");
+            let manifest = Manifest::parse_verified(&bytes, &record.store_manifest_id)
+                .expect("manifest parse");
+            for entry in &manifest.entries {
+                if entry.mode == FileMode::Symlink {
+                    continue;
+                }
+                let mut command = Command::new("git");
+                command.arg("--git-dir").arg(&shadow);
+                for (key, value) in &env {
+                    command.env(key, value);
+                }
+                command.args(["show", &format!("{slice_ref}:{}", entry.path)]);
+                let output = command.output().expect("git show");
+                assert!(
+                    output.status.success(),
+                    "{slice_ref} {} missing",
+                    entry.path
+                );
+                assert_eq!(
+                    crate::checkpoint_store::blob::blob_hash(&output.stdout),
+                    entry.blob_hash,
+                    "byte mismatch {slice_ref} {}",
+                    entry.path
+                );
+                checked_entries += 1;
+            }
+        }
+        assert!(
+            checked_entries >= 6,
+            "three slices worth of entries, got {checked_entries}"
+        );
+
+        // Preflight cross-checks every migrated mapping against the shadow.
+        let report = crate::checkpoint_store::preflight::run_preflight(
+            &store,
+            &crate::checkpoint_store::preflight::PreflightOptions {
+                roots: vec!["ws1".into()],
+                shadow_git_dirs: [("ws1".to_string(), shadow)].into_iter().collect(),
+                enforce_read_paths: true,
+                ..crate::checkpoint_store::preflight::PreflightOptions::default()
+            },
+        )
+        .expect("preflight");
+        assert!(report.ok && report.blockers.is_empty(), "{report:?}");
+
+        let json = serde_json::json!({
+            "suite": "p3-migration-tool",
+            "first_run": first,
+            "rerun": second,
+            "byte_checked_entries": checked_entries,
+            "preflight_ok": true,
+        });
+        eprintln!(
+            "MIGRATE_TOOL {}",
+            serde_json::to_string_pretty(&json).expect("report")
+        );
+        if let Ok(path) = std::env::var("MIGRATE_TOOL_PATH") {
+            let target = std::path::Path::new(&path);
+            if let Some(parent) = target.parent() {
+                std::fs::create_dir_all(parent).expect("report dir");
+            }
+            std::fs::write(target, serde_json::to_vec_pretty(&json).expect("bytes"))
+                .expect("write report");
+        }
+    }
+
+    /// T3.2 migration gate: every sidecar-mapped slice of a legacy dual-mode
+    /// workspace must byte-match its shadow git object (`git show ref:path`).
+    /// Read-only over both stores; the report is the migration verifier.
+    #[tokio::test]
+    #[ignore = "T3.2 migration verify: store vs shadow, byte-for-byte per slice"]
+    async fn p3_migration_verify_store_matches_shadow() {
+        use std::process::Command;
+
+        let temp = TempDir::new().expect("tempdir");
+        let workspace = temp.path().join("ws1");
+        std::fs::create_dir_all(workspace.join("dir/00")).expect("dirs");
+        std::fs::write(workspace.join("a.txt"), "alpha").expect("a");
+        std::fs::write(workspace.join("dir/00/b.txt"), "beta").expect("b");
+        std::fs::write(workspace.join("dir/00/c.txt"), "gamma").expect("c");
+        let store_root = temp.path().join(".xihe-store");
+        let mut engine = ShadowGit::new(temp.path());
+        if !require_git(&engine).await {
+            return;
+        }
+        engine
+            .configure_checkpoint_storage(CheckpointStorageMode::Dual, &store_root)
+            .expect("configure dual");
+        let shadow = engine.shadow_git_dir("ws1").expect("shadow path");
+
+        let mut refs_collected = Vec::new();
+        for round in 0..3usize {
+            match round {
+                1 => {
+                    std::fs::write(workspace.join("a.txt"), "alpha-modified").expect("mutate");
+                    std::fs::remove_file(workspace.join("dir/00/c.txt")).expect("delete");
+                }
+                2 => {
+                    std::fs::write(workspace.join("dir/00/d.txt"), "delta").expect("add");
+                }
+                _ => {}
+            }
+            let outcome = engine
+                .capture(
+                    "ws1",
+                    &format!("migrate-{round}"),
+                    "tester",
+                    &format!("call-{round}"),
+                    false,
+                )
+                .await
+                .expect("capture");
+            refs_collected.push(outcome.slice_ref.expect("slice ref"));
+        }
+
+        let store = Store::open(&store_root).expect("store");
+        let env = engine.isolated_env(&shadow, &workspace, None);
+        let mut slices_report = Vec::new();
+        let mut total_entries = 0usize;
+        let mut total_mismatch = 0usize;
+        let mut total_missing = 0usize;
+        for slice_ref in &refs_collected {
+            let record = crate::checkpoint_store::refs::read_ref(&store, "ws1", slice_ref)
+                .expect("ref read")
+                .expect("sidecar mapping");
+            let manifest_path = store.manifest_path(&record.store_manifest_id);
+            let bytes = std::fs::read(&manifest_path).expect("manifest bytes");
+            let manifest = Manifest::parse_verified(&bytes, &record.store_manifest_id)
+                .expect("manifest parse");
+            let mut mismatch = 0usize;
+            let mut missing = 0usize;
+            let mut checked = 0usize;
+            for entry in &manifest.entries {
+                // Store slices keep nested `.git` and symlinks out under Flatten;
+                // the verifier covers regular/executable file bytes.
+                if entry.mode == FileMode::Symlink {
+                    continue;
+                }
+                let mut command = Command::new("git");
+                command.arg("--git-dir").arg(&shadow);
+                for (key, value) in &env {
+                    command.env(key, value);
+                }
+                command.args(["show", &format!("{slice_ref}:{}", entry.path)]);
+                let output = command.output().expect("git show");
+                if !output.status.success() {
+                    missing += 1;
+                    continue;
+                }
+                checked += 1;
+                if crate::checkpoint_store::blob::blob_hash(&output.stdout) != entry.blob_hash {
+                    mismatch += 1;
+                }
+            }
+            total_entries += manifest.entries.len();
+            total_mismatch += mismatch;
+            total_missing += missing;
+            slices_report.push(serde_json::json!({
+                "slice_ref": slice_ref,
+                "entries": manifest.entries.len(),
+                "checked": checked,
+                "byte_mismatch": mismatch,
+                "missing_in_shadow": missing,
+                "sidecar_git_tree": record.git_tree,
+            }));
+        }
+
+        let report = serde_json::json!({
+            "suite": "p3-migration-verify",
+            "mode": "dual legacy workspace -> store vs shadow",
+            "slices": refs_collected.len(),
+            "entries": total_entries,
+            "byte_mismatch": total_mismatch,
+            "missing_in_shadow": total_missing,
+            "slice_details": slices_report,
+            "generated_at": chrono::Utc::now().to_rfc3339(),
+        });
+        eprintln!(
+            "MIGRATE_VERIFY {}",
+            serde_json::to_string_pretty(&report).expect("report")
+        );
+        if let Ok(path) = std::env::var("MIGRATE_VERIFY_PATH") {
+            let target = std::path::Path::new(&path);
+            if let Some(parent) = target.parent() {
+                std::fs::create_dir_all(parent).expect("report dir");
+            }
+            std::fs::write(
+                target,
+                serde_json::to_vec_pretty(&report).expect("report bytes"),
+            )
+            .expect("write report");
+        }
+        assert_eq!(refs_collected.len(), 3, "three legacy slices");
+        assert_eq!(total_mismatch, 0, "byte mismatches: {report}");
+        assert_eq!(total_missing, 0, "missing shadow objects: {report}");
     }
 
     #[tokio::test]
