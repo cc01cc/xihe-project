@@ -184,6 +184,73 @@ public class WakeFanOutService {
     }
 
     /**
+     * PLAN-0665 M1 (D1 a'): the <b>single</b> entry for explicit TO targets. A one-element and an
+     * N-element selection both go through this method — the only difference is the target-set size,
+     * so the single-TO and multi-TO paths cannot drift (Lead's hard requirement).
+     *
+     * <p>Unlike {@link #fanOut} (fire-and-forget, mention/cc round), the runs here are created
+     * <b>synchronously in the caller's thread</b> and in selection order, because the caller has to
+     * answer {@code runIds[]} (Q1: {@code runId = runIds[0]}). Each target's audit rides the existing
+     * {@code wake_dispatch} envelope with {@code triggerSource="to"}; {@code parent_run_id} stays
+     * NULL on purpose — it carries delegation-chain semantics (Q2), and fan-out targets are siblings
+     * of one user submission, not delegates.</p>
+     *
+     * @param excludeParticipantIds targets already woken by this submission's mention round (so one
+     *                              message never creates two runs for the same participant)
+     */
+    public TargetedWake targetedFanOut(UUID sessionId, String workspaceId, String userId,
+                                       String rootRunId, String content,
+                                       List<UUID> targetParticipantIds,
+                                       Set<UUID> excludeParticipantIds) {
+        if (targetParticipantIds == null || targetParticipantIds.isEmpty()) {
+            return new TargetedWake(List.of(), 0, 0);
+        }
+        String wakeRoundId = "wake:to:" + rootRunId;
+        List<UUID> runIds = new ArrayList<>();
+        int skipped = 0;
+        for (UUID participantId : targetParticipantIds) {
+            if (excludeParticipantIds != null && excludeParticipantIds.contains(participantId)) {
+                skipped++;
+                logger.info("[LIFECYCLE] service=cp event=wake_to_deduped sessionId={} participantId={} "
+                        + "round={} reason=already_woken_by_mention", sessionId, participantId, wakeRoundId);
+                continue;
+            }
+            WakeDispatchService.WakeFireResult result;
+            try {
+                result = wakeDispatchService.fire(participantId, "to", wakeRoundId, sessionId, null, content);
+            } catch (RuntimeException failure) {
+                // Q3 (task-34 invariant): one target's failure never aborts the fan-out round, but it
+                // is never silent either.
+                skipped++;
+                logger.error("[LIFECYCLE] service=cp event=wake_handoff_dropped sessionId={} "
+                                + "participantId={} round={} triggerSource=to reason={}", sessionId,
+                        participantId, wakeRoundId, failure.getClass().getSimpleName(), failure);
+                continue;
+            }
+            if (result.dispatched() && result.runId() != null) {
+                runIds.add(result.runId());
+                observeTerminalAsync(result.runId().toString(), waitSeconds());
+            } else {
+                skipped++;
+                logger.info("[LIFECYCLE] service=cp event=wake_dispatch_outcome sessionId={} "
+                                + "participantId={} round={} triggerSource=to outcome={}", sessionId,
+                        participantId, wakeRoundId, result.outcome());
+            }
+        }
+        logger.info("[LIFECYCLE] service=cp event=wake_to_handoff sessionId={} round={} targets={} "
+                        + "dispatched={} skipped={}", sessionId, wakeRoundId, targetParticipantIds.size(),
+                runIds.size(), skipped);
+        return new TargetedWake(List.copyOf(runIds), targetParticipantIds.size(), skipped);
+    }
+
+    /** What one explicit TO fan-out did: the created run ids, in selection order (Q1 {@code runIds[]}). */
+    public record TargetedWake(List<UUID> runIds, int targets, int skipped) {
+        public TargetedWake {
+            runIds = List.copyOf(runIds);
+        }
+    }
+
+    /**
      * What one fan-out did. Callers on the suppression path assert {@code enqueued} so a message
      * that nobody will answer cannot be committed silently.
      */

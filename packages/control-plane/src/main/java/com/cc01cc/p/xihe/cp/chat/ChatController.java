@@ -506,6 +506,27 @@ public class ChatController {
             }
             ccParticipantIds = parsedCc;
         }
+        // PLAN-0665 M1 (D6/Q3): explicit TO target set. Shape is validated here (fail-closed
+        // 400 INVALID_REQUEST; never silently dropped); roster authz + AGENT-only classification
+        // runs with the other participant gates further down. Empty/absent ⇒ today's single-TO path.
+        List<UUID> toParticipantIds;
+        try {
+            toParticipantIds = ChatToTargets.parse(request.get(ChatToTargets.FIELD));
+        } catch (com.cc01cc.p.xihe.cp.config.CpApiException e) {
+            return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
+        }
+        if (!toParticipantIds.isEmpty()) {
+            // PLAN-0665 M1/Q1: the FIRST target owns the user_submission Run (runId = runIds[0]);
+            // the remaining targets become sibling runs through the single TargetedWake entry.
+            // `asParticipantId` may not contradict the explicit selection.
+            String firstTarget = toParticipantIds.get(0).toString();
+            if (asParticipantId != null && !asParticipantId.isBlank()
+                    && !asParticipantId.equalsIgnoreCase(firstTarget)) {
+                return ProblemDetailsHandler.problemResponse(HttpStatus.BAD_REQUEST, "INVALID_REQUEST",
+                        "asParticipantId conflicts with toParticipantIds[0]");
+            }
+            asParticipantId = firstTarget;
+        }
         String provider = (String) request.get("provider");
         String model = (String) request.get("model");
         String toolMode = (String) request.getOrDefault("toolMode", "none");
@@ -542,6 +563,16 @@ public class ChatController {
         if (asParticipantId != null && !asParticipantId.isBlank()) {
             try {
                 sessionParticipantService.authorizeAsParticipant(userId, workspaceId, sessionId, asParticipantId);
+            } catch (com.cc01cc.p.xihe.cp.config.CpApiException e) {
+                return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
+            }
+        }
+        // PLAN-0665 M1/Q3: every explicit TO target passes the SAME D23-08 gate as `asParticipantId`
+        // (a fan-out selector must never become an authorization bypass). M1 accepts AGENT
+        // participants only; human TO is a later plan (blocked on BL-238).
+        if (!toParticipantIds.isEmpty()) {
+            try {
+                sessionParticipantService.authorizeToTargets(userId, workspaceId, sessionId, toParticipantIds);
             } catch (com.cc01cc.p.xihe.cp.config.CpApiException e) {
                 return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
             }
@@ -635,7 +666,8 @@ public class ChatController {
         }
 
         String requestHash = requestHash(content, provider, model, toolMode, attachmentIds,
-                perCallTimeouts.values(), agentPrincipalId, branchId);
+                perCallTimeouts.values(), agentPrincipalId, branchId,
+                ChatToTargets.canonical(toParticipantIds), asParticipantId);
         try {
             var replay = chatSubmissionService.findSubmissionReplay(
                     userId, sessionId, idempotencyKey, requestHash);
@@ -677,7 +709,8 @@ public class ChatController {
             ChatSubmissionService.Submission submission = chatSubmissionService.create(
                     runId, sessionId, userId, workspaceId, branchId, agentPrincipalId, idempotencyKey, requestHash,
                     provider, model, toolMode, session.getProviderConnectionId(), session.getConnectionRevision(),
-                    instanceId(), requestId, content, attachmentsJson, attachmentIds, asParticipantId);
+                    instanceId(), requestId, content, attachmentsJson, attachmentIds, asParticipantId,
+                    ChatDeliveryPayload.toJson(objectMapper, toParticipantIds, asParticipantId, ccParticipantIds));
             ChatRun chatRun = submission.run();
             if (!admission.isEmpty() && !admission.covers(chatRun.getProviderConnectionId(),
                     chatRun.getProvider(), chatRun.getModel())) {
@@ -731,8 +764,11 @@ public class ChatController {
             // stays observable (a silent non-dispatch would look like a stuck Run).
             List<MentionParser.RosterEntry> roster = mentionRoster(userId, workspaceId, sessionId);
             MentionParser.ParseResult mentions = MentionParser.parse(content, roster);
-            boolean suppressPrimary = MentionParser.suppressesPrimary(mentions,
-                    responder == null ? null : responder.participantId(), explicitAsParticipant);
+            // PLAN-0665 M1: an explicit TO selection outranks the mention suppression — the caller
+            // named exactly who should answer, so the first target always owns this run.
+            boolean suppressPrimary = toParticipantIds.isEmpty()
+                    && MentionParser.suppressesPrimary(mentions,
+                            responder == null ? null : responder.participantId(), explicitAsParticipant);
             if (suppressPrimary) {
                 List<String> mentionedNames = mentions.mentions().stream().map(MentionParser.Mention::displayName)
                         .toList();
@@ -776,8 +812,27 @@ public class ChatController {
             wakeFanOutService.fanOut(UUID.fromString(sessionId), workspaceId, userId, runId,
                     content, roster, ccParticipantIds);
             handedOff = true;
-            return ResponseEntity.accepted().body(runAcceptedBody(chatRun, "accepted", sessionId,
-                userMessage.getId(), runId, null));
+            Map<String, Object> acceptedBody = runAcceptedBody(chatRun, "accepted", sessionId,
+                    userMessage.getId(), runId, null);
+            if (!toParticipantIds.isEmpty()) {
+                // PLAN-0665 Q1: runId = runIds[0] (this Run = the first target); the remaining
+                // targets are dispatched through the SINGLE TargetedWake entry and answered as
+                // sibling runs. Explicit TO (not @) drives the wake, so `triggerSource="to"`.
+                List<String> runIds = new ArrayList<>();
+                runIds.add(runId);
+                if (toParticipantIds.size() > 1) {
+                    Set<UUID> mentionedIds = new HashSet<>();
+                    for (MentionParser.Mention mention : mentions.mentions()) {
+                        mentionedIds.add(mention.participantId());
+                    }
+                    WakeFanOutService.TargetedWake targeted = wakeFanOutService.targetedFanOut(
+                            UUID.fromString(sessionId), workspaceId, userId, runId, content,
+                            toParticipantIds.subList(1, toParticipantIds.size()), mentionedIds);
+                    targeted.runIds().forEach(id -> runIds.add(id.toString()));
+                }
+                acceptedBody.put("runIds", runIds);
+            }
+            return ResponseEntity.accepted().body(acceptedBody);
         } finally {
             if (!handedOff) {
                 // D28: a run that never reached dispatch must not keep the admission slots.
@@ -2070,6 +2125,21 @@ public class ChatController {
                                Map<String, Integer> toolTimeouts, String agentPrincipalId, String branchId) {
         return ChatRequestHash.calculate(objectMapper, content, provider, model,
                 toolMode, attachmentIds, toolTimeouts, agentPrincipalId, branchId);
+    }
+
+    /**
+     * PLAN-0665 D6: identity-bearing overload — the TO target set (canonical, order-insensitive) and
+     * the explicit responder (`asParticipantId`) are part of the request hash. Fixes a pre-existing
+     * bug where the same content sent as two different participants under one Idempotency-Key
+     * replayed the first run (design §2.2 supersede row).
+     */
+    private String requestHash(String content, String provider, String model,
+                               String toolMode, List<String> attachmentIds,
+                               Map<String, Integer> toolTimeouts, String agentPrincipalId, String branchId,
+                               List<String> toParticipantIds, String asParticipantId) {
+        return ChatRequestHash.calculate(objectMapper, content, provider, model,
+                toolMode, attachmentIds, toolTimeouts, agentPrincipalId, branchId,
+                toParticipantIds, asParticipantId);
     }
 
     /**
