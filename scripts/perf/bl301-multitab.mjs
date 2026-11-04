@@ -27,7 +27,11 @@ const { chromium } = requireUi('@playwright/test');
 const STATE_FILE = `${A03}/.tmp/e2e-host/persistent-stack.json`;
 const state = JSON.parse(readFileSync(STATE_FILE, 'utf8'));
 const CP = `http://127.0.0.1:${state.ports.cp}`;
-const UI = `http://127.0.0.1:${state.ports.ui}`;
+// BL-307：生产 bundle 复测时用 --ui-base 指向静态服务；缺省仍用 e2e-host 的 Vite dev UI。
+const uiBaseInline = process.argv.find((arg) => arg.startsWith('--ui-base='));
+const uiBaseIndex = process.argv.indexOf('--ui-base');
+const UI = uiBaseInline ? uiBaseInline.slice('--ui-base='.length)
+    : (uiBaseIndex !== -1 ? process.argv[uiBaseIndex + 1] : `http://127.0.0.1:${state.ports.ui}`);
 const ADMIN_EMAIL = 'admin@xihe.local';
 const ADMIN_PASSWORD = state.adminPassword;
 const pgContainer = `${state.pgProjectName}-postgres-1`;
@@ -410,6 +414,7 @@ async function measureProfile(profile) {
 const PROFILES = [
     { name: '1-tab', counts: [5000] },
     { name: '3-tabs', counts: [5000, 5000, 1000] },
+    { name: '4-tabs', counts: [5000, 5000, 1000, 1000] },
     { name: '5-tabs', counts: [5000, 5000, 5000, 1000, 1000] },
     { name: '10-tabs', counts: [5000, 5000, 5000, 5000, 5000, 1000, 1000, 1000, 1000, 1000] },
     { name: '5-tabs-1k', counts: [1000, 1000, 1000, 1000, 1000] },
