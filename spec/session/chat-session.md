@@ -56,7 +56,11 @@ Session 负责连续对话上下文、消息、附件引用、模型绑定和 Ch
    durable `delivery` 归组，**不得**按 `origin` 推断「同一消息」。
 4. **单一入口**：单目标与多目标 MUST 走同一个 `TargetedWake` 入口，只差目标集合大小（禁止两条路径）。
 5. **显式 TO 优先于 @ 抑制**：带 `toParticipantIds` 的提交 MUST NOT 被 `@` 抑制成
-   `suppressed_no_responder`；`@` 与 TO 命中同一参与者时 MUST 去重（一条消息不为其开两个 run）。
+   `suppressed_no_responder`；`@` 与 TO 命中同一参与者时 MUST 由 **TO 路径唯一建 run**（mention 轮跳过 TO 目标），一条消息不得为其开两个 run。
+5b. **运行时失败不得静默**（2026-11-05 真栈实锤）：目标在**运行时**派发失败（DB 约束、网络、Agent 不可用）MUST 部分成功并
+   在 202 响应回报 `failedTargets:[{participantId,reason}]`，且 `runIds.length + failedTargets.length` MUST 等于请求目标数；
+   失败 MUST 以 ERROR 级 `event=to_target_dispatch_failed` 留痕（可 grep 计数）。**前置校验失败**（目标不存在/无权限/已停用/非 AGENT）
+   则 MUST 整条拒绝（400/403），两类情形不得混用同一处理。
 6. **幂等身份含集合**：排序后的 TO 集合与 `asParticipantId` MUST 进入 `Idempotency-Key` 的
    request hash（同内容不同收件人 MUST NOT 判为重复）；`cc` 仍不入哈希（notify-only）。
 

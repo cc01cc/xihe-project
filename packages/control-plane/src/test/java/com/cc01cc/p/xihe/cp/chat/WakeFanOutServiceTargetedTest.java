@@ -7,7 +7,6 @@ import org.junit.jupiter.api.Test;
 import org.mockito.InOrder;
 
 import java.util.List;
-import java.util.Set;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -22,14 +21,13 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
- * PLAN-0665 M1 (D1 a'/Q1/Q2): the single TargetedWake entry used by both the one-element and the
- * N-element selection.
+ * PLAN-0665 M1 (D1 a'/Q1/Q2) + the 2026-11-05 real-stack finding.
  *
- * <p>Pins: (a) dispatch order = selection order, (b) {@code triggerSource="to"} with a NULL
- * {@code parentRunId} (Q2 forbids reusing the delegation chain), (c) returned {@code runIds} are the
- * created runs in that same order (Q1 {@code runId = runIds[0]}), (d) participants already woken by
- * this submission's mention round are not woken twice, (e) one target's failure never aborts the
- * others.</p>
+ * <p>Pins: (a) dispatch order = selection order, (b) the run column gets {@code "user"} while the
+ * audit label stays {@code "to"} (writing {@code "to"} into {@code chat_runs.trigger_source} violates
+ * its CHECK — the real-stack defect this class now guards), (c) {@code parentRunId} stays NULL
+ * (Q2), (d) one target's failure never aborts the others AND is reported in {@code failedTargets[]},
+ * (e) {@code runIds + failedTargets == targets} always.</p>
  */
 class WakeFanOutServiceTargetedTest {
 
@@ -51,8 +49,9 @@ class WakeFanOutServiceTargetedTest {
     }
 
     private void dispatched(UUID participant, UUID runId) {
-        when(dispatch.fire(eq(participant), eq("to"), anyString(), eq(SESSION_ID), isNull(), anyString()))
-                .thenReturn(new WakeDispatchService.WakeFireResult(true, runId, "started"));
+        when(dispatch.fire(eq(participant), eq("user"), eq("to"), anyString(), eq(SESSION_ID), isNull(),
+                anyString()))
+                .thenReturn(new WakeDispatchService.WakeFireResult(true, runId, "submitted"));
     }
 
     @Test
@@ -63,16 +62,19 @@ class WakeFanOutServiceTargetedTest {
         dispatched(REVIEWER, reviewerRun);
 
         WakeFanOutService.TargetedWake result = fanOut.targetedFanOut(SESSION_ID, "ws-1", "user-1",
-                ROOT_RUN.toString(), "请评审", List.of(PLANNER, REVIEWER), Set.of());
+                ROOT_RUN.toString(), "请评审", List.of(PLANNER, REVIEWER));
 
         assertThat(result.runIds()).containsExactly(plannerRun, reviewerRun);
+        assertThat(result.failedTargets()).isEmpty();
         assertThat(result.targets()).isEqualTo(2);
-        assertThat(result.skipped()).isZero();
-        // triggerSource is "to" and the delegation-chain parent is intentionally NULL (Q2).
+        assertThat(result.accounted()).isEqualTo(2);
+        // Run column = "user" (CHECK-safe), audit label = "to", delegation parent = NULL (Q2).
         InOrder order = inOrder(dispatch);
-        order.verify(dispatch).fire(eq(PLANNER), eq("to"), anyString(), eq(SESSION_ID), isNull(), anyString());
-        order.verify(dispatch).fire(eq(REVIEWER), eq("to"), anyString(), eq(SESSION_ID), isNull(), anyString());
-        verify(dispatch, never()).fire(eq(PLANNER), eq("mention"), anyString(), any(), any(), any());
+        order.verify(dispatch).fire(eq(PLANNER), eq("user"), eq("to"), anyString(), eq(SESSION_ID),
+                isNull(), anyString());
+        order.verify(dispatch).fire(eq(REVIEWER), eq("user"), eq("to"), anyString(), eq(SESSION_ID),
+                isNull(), anyString());
+        verify(dispatch, never()).fire(eq(PLANNER), eq("to"), eq("to"), any(), any(), any(), any());
     }
 
     @Test
@@ -81,58 +83,69 @@ class WakeFanOutServiceTargetedTest {
         dispatched(PLANNER, plannerRun);
 
         WakeFanOutService.TargetedWake result = fanOut.targetedFanOut(SESSION_ID, "ws-1", "user-1",
-                ROOT_RUN.toString(), "请评审", List.of(PLANNER), Set.of());
+                ROOT_RUN.toString(), "请评审", List.of(PLANNER));
 
         assertThat(result.runIds()).containsExactly(plannerRun);
         assertThat(result.targets()).isEqualTo(1);
     }
 
     @Test
-    void participantsAlreadyWokenByTheMentionRound_areNotWokenTwice() {
+    void oneTargetsFailureIsReported_andDoesNotAbortTheOthers() {
         UUID reviewerRun = UUID.randomUUID();
-        dispatched(REVIEWER, reviewerRun);
-
-        WakeFanOutService.TargetedWake result = fanOut.targetedFanOut(SESSION_ID, "ws-1", "user-1",
-                ROOT_RUN.toString(), "请评审", List.of(PLANNER, REVIEWER), Set.of(PLANNER));
-
-        assertThat(result.runIds()).containsExactly(reviewerRun);
-        assertThat(result.skipped()).isEqualTo(1);
-        verify(dispatch, never()).fire(eq(PLANNER), eq("to"), anyString(), any(), any(), any());
-    }
-
-    @Test
-    void oneTargetsFailureDoesNotAbortTheOthers() {
-        UUID reviewerRun = UUID.randomUUID();
-        when(dispatch.fire(eq(PLANNER), eq("to"), anyString(), eq(SESSION_ID), isNull(), anyString()))
+        when(dispatch.fire(eq(PLANNER), eq("user"), eq("to"), anyString(), eq(SESSION_ID), isNull(),
+                anyString()))
                 .thenThrow(new IllegalStateException("planner exploded"));
         dispatched(REVIEWER, reviewerRun);
 
         WakeFanOutService.TargetedWake result = fanOut.targetedFanOut(SESSION_ID, "ws-1", "user-1",
-                ROOT_RUN.toString(), "请评审", List.of(PLANNER, REVIEWER), Set.of());
+                ROOT_RUN.toString(), "请评审", List.of(PLANNER, REVIEWER));
 
         assertThat(result.runIds()).containsExactly(reviewerRun);
-        assertThat(result.skipped()).isEqualTo(1);
+        assertThat(result.failedTargets()).hasSize(1);
+        assertThat(result.failedTargets().get(0).participantId()).isEqualTo(PLANNER.toString());
+        assertThat(result.failedTargets().get(0).reason()).isEqualTo("IllegalStateException");
+        assertThat(result.accounted()).isEqualTo(2);
     }
 
     @Test
-    void nonDispatchedOutcome_countsAsSkippedAndYieldsNoRunId() {
-        when(dispatch.fire(eq(PLANNER), eq("to"), anyString(), eq(SESSION_ID), isNull(), anyString()))
+    void dbConstraintViolation_isReportedNotSwallowed() {
+        UUID reviewerRun = UUID.randomUUID();
+        when(dispatch.fire(eq(PLANNER), eq("user"), eq("to"), anyString(), eq(SESSION_ID), isNull(),
+                anyString()))
+                .thenThrow(new IllegalStateException("ck_chat_runs_trigger_source violated"));
+        dispatched(REVIEWER, reviewerRun);
+
+        WakeFanOutService.TargetedWake result = fanOut.targetedFanOut(SESSION_ID, "ws-1", "user-1",
+                ROOT_RUN.toString(), "请评审", List.of(PLANNER, REVIEWER));
+
+        assertThat(result.failedTargets()).hasSize(1);
+        assertThat(result.failedTargets().get(0).reason()).isEqualTo("IllegalStateException");
+        assertThat(result.runIds()).containsExactly(reviewerRun);
+    }
+
+    @Test
+    void nonDispatchedOutcome_isReportedAsFailureWithItsOutcome() {
+        when(dispatch.fire(eq(PLANNER), eq("user"), eq("to"), anyString(), eq(SESSION_ID), isNull(),
+                anyString()))
                 .thenReturn(new WakeDispatchService.WakeFireResult(false, null, "skipped_muted"));
 
         WakeFanOutService.TargetedWake result = fanOut.targetedFanOut(SESSION_ID, "ws-1", "user-1",
-                ROOT_RUN.toString(), "请评审", List.of(PLANNER), Set.of());
+                ROOT_RUN.toString(), "请评审", List.of(PLANNER));
 
         assertThat(result.runIds()).isEmpty();
-        assertThat(result.skipped()).isEqualTo(1);
+        assertThat(result.failedTargets()).hasSize(1);
+        assertThat(result.failedTargets().get(0).reason()).isEqualTo("skipped_muted");
+        assertThat(result.accounted()).isEqualTo(1);
     }
 
     @Test
     void emptyTargetSet_isANoOp() {
         WakeFanOutService.TargetedWake result = fanOut.targetedFanOut(SESSION_ID, "ws-1", "user-1",
-                ROOT_RUN.toString(), "请评审", List.of(), Set.of());
+                ROOT_RUN.toString(), "请评审", List.of());
 
         assertThat(result.runIds()).isEmpty();
+        assertThat(result.failedTargets()).isEmpty();
         assertThat(result.targets()).isZero();
-        verify(dispatch, never()).fire(any(), any(), any(), any(), any(), any());
+        verify(dispatch, never()).fire(any(), any(), any(), any(), any(), any(), any());
     }
 }

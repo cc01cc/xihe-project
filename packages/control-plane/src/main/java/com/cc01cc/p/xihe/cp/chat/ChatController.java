@@ -809,8 +809,11 @@ public class ChatController {
             // recipients answer serially on the session executor, never on this thread.
             // PLAN-0630 M5b (D30-14): the composer's cc observer list rides the same round —
             // observers get a notify signal only, never a run of their own.
+            // PLAN-0665 M1: TO targets own their run — the mention/cc round skips them so one
+            // message can never create two runs for the same participant.
+            Set<UUID> toTargetIds = toParticipantIds.isEmpty() ? Set.of() : new HashSet<>(toParticipantIds);
             wakeFanOutService.fanOut(UUID.fromString(sessionId), workspaceId, userId, runId,
-                    content, roster, ccParticipantIds);
+                    content, roster, ccParticipantIds, toTargetIds);
             handedOff = true;
             Map<String, Object> acceptedBody = runAcceptedBody(chatRun, "accepted", sessionId,
                     userMessage.getId(), runId, null);
@@ -820,17 +823,29 @@ public class ChatController {
                 // sibling runs. Explicit TO (not @) drives the wake, so `triggerSource="to"`.
                 List<String> runIds = new ArrayList<>();
                 runIds.add(runId);
+                List<Map<String, String>> failedTargets = new ArrayList<>();
                 if (toParticipantIds.size() > 1) {
-                    Set<UUID> mentionedIds = new HashSet<>();
-                    for (MentionParser.Mention mention : mentions.mentions()) {
-                        mentionedIds.add(mention.participantId());
-                    }
                     WakeFanOutService.TargetedWake targeted = wakeFanOutService.targetedFanOut(
                             UUID.fromString(sessionId), workspaceId, userId, runId, content,
-                            toParticipantIds.subList(1, toParticipantIds.size()), mentionedIds);
+                            toParticipantIds.subList(1, toParticipantIds.size()));
                     targeted.runIds().forEach(id -> runIds.add(id.toString()));
+                    targeted.failedTargets().forEach(failure -> failedTargets.add(Map.of(
+                            "participantId", failure.participantId(), "reason", failure.reason())));
                 }
                 acceptedBody.put("runIds", runIds);
+                // 2026-11-05 real-stack finding: a target that could not be dispatched must be
+                // reported, never silently dropped — runIds + failedTargets = requested targets.
+                if (!failedTargets.isEmpty()) {
+                    acceptedBody.put("failedTargets", failedTargets);
+                    logger.error("[LIFECYCLE] service=cp event=to_fanout_partial sessionId={} runId={} "
+                                    + "targets={} dispatched={} failed={}", sessionId, runId,
+                            toParticipantIds.size(), runIds.size(), failedTargets.size());
+                }
+                if (runIds.size() + failedTargets.size() != toParticipantIds.size()) {
+                    logger.error("[LIFECYCLE] service=cp event=to_fanout_accounting_mismatch sessionId={} "
+                                    + "runId={} targets={} dispatched={} failed={}", sessionId, runId,
+                            toParticipantIds.size(), runIds.size(), failedTargets.size());
+                }
             }
             return ResponseEntity.accepted().body(acceptedBody);
         } finally {
