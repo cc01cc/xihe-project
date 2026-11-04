@@ -449,7 +449,7 @@ async function bindToolCapableFakeLlmConnection(page: Page, sessionId: string): 
     await expect(page.getByTestId("workspace-agent-management-dialog")).toBeVisible({
         timeout: 20000,
     });
-    const agentName = `Gold Path Agent ${randomUUID().slice(0, 8)}`;
+    const agentName = `GoldPathAgent${randomUUID().slice(0, 8)}`;
     await page.getByTestId("agent-principal-name").fill(agentName);
     await page.getByTestId("agent-principal-template").selectOption("");
 
@@ -843,7 +843,7 @@ test.describe("@host gold path G2 — zero to first reply through the UI", () =>
 
         await page
             .getByTestId("agent-principal-name")
-            .fill(`Gold Path Agent ${randomUUID().slice(0, 8)}`);
+            .fill(`GoldPathAgent${randomUUID().slice(0, 8)}`);
         // 模板留空 = 默认模板。
         await page.getByTestId("agent-principal-template").selectOption("");
 
