@@ -25,6 +25,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -106,6 +107,23 @@ class DelegationControllerTest {
         ResponseEntity<?> response = controller.spawn(SESSION_ID, extra, "key-1", null);
 
         assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode());
+    }
+
+    @Test
+    void budgetPrecheckRefusesBeforeAnyApprovalIsParked() {
+        // T2: a disabled / count-exhausted root must 409 BEFORE the ask gate — no approval row.
+        org.springframework.http.HttpStatus conflict = org.springframework.http.HttpStatus.CONFLICT;
+        doThrow(DelegationRefusedException.raw(conflict, "DELEGATION_LIMIT_EXCEEDED",
+                "delegation is disabled by this principal's delegationPolicy (maxCount=0)"
+                        + " — 该委派策略已禁用委派", "{}"))
+                .when(budget).requireUsableForDelegation(any(Session.class));
+
+        ResponseEntity<?> response = controller.spawn(SESSION_ID, body(PRINCIPAL_ID, "do it"), "key-1", null);
+
+        assertEquals(HttpStatus.CONFLICT, response.getStatusCode());
+        verify(authorization, never()).authorizeUserSpawn(any(), any());
+        verify(submissions, never()).createDelegation(anyString(), anyString(), anyString(), anyString(), any());
+        verify(events, never()).publishEvent(any());
     }
 
     @Test

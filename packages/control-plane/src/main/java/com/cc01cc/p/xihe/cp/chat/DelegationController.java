@@ -147,6 +147,15 @@ public class DelegationController {
             return invalidRequest("The parent session has no run to delegate from");
         }
 
+        // T2: refuse disabled / count-exhausted roots BEFORE the ask gate parks an approval
+        // (a human must never be asked to approve a delegation that cannot be created).
+        try {
+            delegationBudgetService.requireUsableForDelegation(session);
+        } catch (CpApiException refused) {
+            return ProblemDetailsHandler.problemResponse(refused.getStatus(), refused.getCode(),
+                    refused.getMessage());
+        }
+
         String authorizationBody = chatSubmissionService.delegationAuthorizationBody(task);
         ChatSubmissionService.SpawnInvocation invocation = new ChatSubmissionService.SpawnInvocation(
                 parentRun.getId().toString(), idempotencyKey, session.getId().toString(), null,

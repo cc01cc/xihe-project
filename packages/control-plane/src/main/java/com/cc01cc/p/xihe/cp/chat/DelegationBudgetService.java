@@ -322,6 +322,30 @@ public class DelegationBudgetService {
     }
 
     /** Read view row; field names mirror the OpenAPI DelegationUsageView schema. */
+    /**
+     * PLAN-0655 T2: read-only budget precheck for the HUMAN route, run BEFORE the ask gate.
+     * Without it the gate would park an approval for a delegation that can never be created
+     * (disabled by maxCount=0, or count already exhausted) and ask a human to approve a
+     * guaranteed refusal. The authoritative locked check still runs inside createDelegation;
+     * this only prevents the pointless approval round-trip.
+     */
+    public void requireUsableForDelegation(Session session) {
+        DelegationUsage usage = usageFor(session);
+        if (usage.disabled()) {
+            throw DelegationRefusedException.disabled(auditOf(usage, session), 0, usage.maxDepth());
+        }
+        if (usage.usedSessions() >= usage.maxCount()) {
+            throw DelegationRefusedException.refused("count_exceeded", auditOf(usage, session),
+                    usage.currentDepth() + 1, usage.maxDepth(), usage.usedSessions(), usage.maxCount());
+        }
+    }
+
+    private static DelegationRefusedException.DelegationAuditContext auditOf(DelegationUsage usage,
+                                                                             Session session) {
+        return new DelegationRefusedException.DelegationAuditContext(
+                usage.rootSessionId(), session.getId().toString(), null, null, usage.principalId());
+    }
+
     public record DelegationUsage(String rootSessionId, int usedSessions, int maxCount, int currentDepth,
                                   int maxDepth, String principalId, String principalName, String policySource,
                                   boolean disabled) {}
