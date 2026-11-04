@@ -21,8 +21,6 @@ import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBo
 import java.io.IOException;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
-import java.util.LinkedHashMap;
-import java.util.Map;
 import java.util.UUID;
 
 /**
@@ -32,11 +30,15 @@ import java.util.UUID;
  * no data read, and a wasted run. Export is a read of data CP already owns, so the document is
  * generated here from the existing message read surface and never touches the Agent or a provider.
  *
- * <p>BL-279 (A1): the read surface used to materialise the whole session, so the controller
- * prechecks the session-wide message count against {@link SessionExportService#MAX_MESSAGES} and
- * refuses with {@code 413 EXPORT_TOO_LARGE} **before reading any message**. The cap is on session
- * size (the memory driver), not on the visible branch path; the refusal is never a silent
- * truncation and its problem body carries {@code messages}/{@code limit}.
+ * <p>BL-295: export is a <b>bounded artifact</b>, not an error face. The renderer
+ * ({@link SessionExportService#MAX_MESSAGES}) already cap the document and disclose the cut in the
+ * header ({@code messagesTruncated}/{@code contentTruncated}); the old session-wide count precheck
+ * that refused with {@code 413 EXPORT_TOO_LARGE} was removed because it counted ALL session rows
+ * (every branch/visibility) and therefore refused legitimate exports of a small branch in a large
+ * session. The streaming read ({@link SessionExportStreamRenderer}) keeps memory decoupled from the
+ * session size, so no numeric refusal is needed: a 20k-message session with 50 visible messages
+ * exports 50 messages, and a session with more than 2000 visible messages exports the newest 2000
+ * with an explicit disclosure.
  *
  * <p>PLAN-0670 M2c/B: the document is prepared inside a short read-only transaction by
  * {@link SessionExportStreamRenderer} (cursor-backed read; document capped at {@code 2M} chars) and
@@ -61,16 +63,13 @@ public class SessionExportController {
     private static final int EXPORT_CHUNK_BYTES = 32 * 1024;
 
     private final SessionService sessionService;
-    private final MessageReadService messageReadService;
     private final BranchPathService branchPathService;
     private final SessionExportStreamRenderer streamRenderer;
 
     public SessionExportController(SessionService sessionService,
-                                   MessageReadService messageReadService,
                                    BranchPathService branchPathService,
                                    SessionExportStreamRenderer streamRenderer) {
         this.sessionService = sessionService;
-        this.messageReadService = messageReadService;
         this.branchPathService = branchPathService;
         this.streamRenderer = streamRenderer;
     }
@@ -110,22 +109,10 @@ public class SessionExportController {
         } catch (CpApiException e) {
             throw e;
         }
-        // BL-279 A1: refuse before any message row is materialised. `MAX_MESSAGES` is the single
-        // source of the export cap (shared with the renderer) — never introduce a second literal.
-        long totalMessages = messageReadService.countSessionMessages(sessionId);
-        if (totalMessages > SessionExportService.MAX_MESSAGES) {
-            logger.warn("[LIFECYCLE] service=cp event=session_export_refused sessionId={} messages={} "
-                            + "limit={} reason=EXPORT_TOO_LARGE",
-                    sessionId, totalMessages, SessionExportService.MAX_MESSAGES);
-            Map<String, Object> extra = new LinkedHashMap<>();
-            extra.put("messages", totalMessages);
-            extra.put("limit", SessionExportService.MAX_MESSAGES);
-            throw new CpApiException(HttpStatus.PAYLOAD_TOO_LARGE, "EXPORT_TOO_LARGE",
-                    "session has " + totalMessages + " messages, exceeding the export limit of "
-                            + SessionExportService.MAX_MESSAGES
-                            + "; export a smaller session or split the history before exporting")
-                    .withExtra(extra);
-        }
+        // BL-295: bounded export, no numeric refusal. The renderer caps the document at
+        // MAX_MESSAGES and discloses the cut in the header; the old session-wide count precheck was
+        // removed (it refused a 50-message branch of a 20k-message session). Streaming decouples
+        // memory from session size, so this path is always 200 for an authorised session/branch.
         SessionExportService.ExportResult result = streamRenderer.render(sessionId, workspaceId,
                 rootBranchId, visibility);
         logger.info("[LIFECYCLE] service=cp event=session_export sessionId={} messages={} messagesTruncated={} contentTruncated={}",

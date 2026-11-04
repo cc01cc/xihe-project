@@ -31,14 +31,12 @@ public class SessionExportService {
     /**
      * Hard ceiling on exported messages (the read surface returns the visible branch path).
      *
-     * <p>BL-279: this constant is the **single source** of the export cap — {@code
-     * SessionExportController} prechecks the session-wide message count against it and refuses with
-     * {@code 413 EXPORT_TOO_LARGE} before reading any message, so a huge session is never
-     * materialised just to be truncated here. Do not duplicate the number.
-     *
-     * <p>PLAN-0670 M2c/B (deferred): the count is session-wide (all branches/visibility) while the
-     * cap's motivation is memory. Streaming makes the memory driver disappear; raising/removing the
-     * precheck is a separate semantic decision and deliberately **not** part of this change.
+     * <p>BL-295: this constant is the **only** expression of the export cap. Export is a bounded
+     * artifact: the renderer stops after this many visible messages and discloses the cut in the
+     * document header ({@code messagesTruncated}), always answering 200. The former session-wide
+     * {@code 413 EXPORT_TOO_LARGE} precheck was removed — it counted all session rows (every
+     * branch/visibility) and refused a small branch of a large session; streaming decoupled memory
+     * from session size, so there is no numeric refusal to make. Do not duplicate the number.
      */
     static final int MAX_MESSAGES = 2_000;
     /** Per-message content ceiling in characters (long tool results / pastes). */
