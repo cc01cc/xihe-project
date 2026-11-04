@@ -54,10 +54,10 @@ vi.mock("../../../../composables/api", async (importOriginal) => {
         api: apiMock,
         ApiError: class MockApiError extends Error {
             problem: { code: string; detail?: string };
-            constructor(code: string) {
-                super("CREATE_ACCOUNT permission is required");
+            constructor(code: string, detail = "CREATE_ACCOUNT permission is required") {
+                super(detail);
                 this.name = "MockApiError";
-                this.problem = { code, detail: "CREATE_ACCOUNT permission is required" };
+                this.problem = { code, detail };
             }
         },
     };
@@ -1142,7 +1142,12 @@ describe("WorkspaceAgentsPanel PLAN-0667 roles & skills", () => {
     });
 
     it("binds the selected role and maps 409 AGENT_PRINCIPAL_FORBIDDEN_ATOMS to localized copy", async () => {
-        apiMock.bindAgentRole.mockRejectedValue(new ApiError("AGENT_PRINCIPAL_FORBIDDEN_ATOMS"));
+        apiMock.bindAgentRole.mockRejectedValue(
+            new ApiError(
+                "AGENT_PRINCIPAL_FORBIDDEN_ATOMS",
+                "role carries atoms an agent principal may never hold: INSTANCE_ADMIN",
+            ),
+        );
         const wrapper = await mountOpenedPanel();
         await wrapper.get(rolesToggle).trigger("click");
         await flushPromises();
@@ -1158,13 +1163,18 @@ describe("WorkspaceAgentsPanel PLAN-0667 roles & skills", () => {
             PRINCIPAL_ID,
             "role-editor",
         );
-        expect(wrapper.get('[data-testid="agent-rbac-action-error"]').text()).toBe(
-            i18n.global.t("workspace.agentRoleForbiddenAtoms"),
+        expect(wrapper.get('[data-testid="agent-rbac-action-error"]').text()).toContain(
+            "INSTANCE_ADMIN",
         );
     });
 
     it("maps 409 ROLE_BINDING_EXCEEDS_CAP to localized copy and shows the cap hint", async () => {
-        apiMock.bindAgentRole.mockRejectedValue(new ApiError("ROLE_BINDING_EXCEEDS_CAP"));
+        apiMock.bindAgentRole.mockRejectedValue(
+            new ApiError(
+                "ROLE_BINDING_EXCEEDS_CAP",
+                "role atoms exceed the agent's workspace cap: CREATE_ACCOUNT,MANAGE_WORKSPACE_AGENTS",
+            ),
+        );
         const wrapper = await mountOpenedPanel();
         await wrapper.get(rolesToggle).trigger("click");
         await flushPromises();
@@ -1178,6 +1188,21 @@ describe("WorkspaceAgentsPanel PLAN-0667 roles & skills", () => {
         await wrapper.get(`[data-testid="agent-role-bind-${PRINCIPAL_ID}"]`).trigger("click");
         await flushPromises();
 
+        expect(wrapper.get('[data-testid="agent-rbac-action-error"]').text()).toContain(
+            "CREATE_ACCOUNT,MANAGE_WORKSPACE_AGENTS",
+        );
+    });
+
+    it("falls back to localized copy when the role binding Problem has no detail", async () => {
+        apiMock.bindAgentRole.mockRejectedValue(new ApiError("ROLE_BINDING_EXCEEDS_CAP", ""));
+        const wrapper = await mountOpenedPanel();
+        await wrapper.get(rolesToggle).trigger("click");
+        await flushPromises();
+        await wrapper
+            .get(`[data-testid="agent-role-select-${PRINCIPAL_ID}"]`)
+            .setValue("role-editor");
+        await wrapper.get(`[data-testid="agent-role-bind-${PRINCIPAL_ID}"]`).trigger("click");
+        await flushPromises();
         expect(wrapper.get('[data-testid="agent-rbac-action-error"]').text()).toBe(
             i18n.global.t("workspace.agentRoleExceedsCap"),
         );
