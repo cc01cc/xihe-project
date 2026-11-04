@@ -17,3 +17,6 @@ pub mod restore;
 pub mod restore_full;
 pub mod store;
 pub mod walk;
+
+#[cfg(test)]
+mod v8_crash;

@@ -1031,6 +1031,7 @@ impl ShadowGit {
         .map_err(|error| CheckpointError::Io(std::io::Error::other(error.to_string())))
     }
 
+    #[allow(clippy::needless_update)]
     async fn dual_write_store(
         &self,
         context: DualWriteContext<'_>,
@@ -1078,6 +1079,7 @@ impl ShadowGit {
             let options = CaptureOptions {
                 declared_roots,
                 exclude_opaque_nested: false,
+                ..CaptureOptions::default()
             };
             let root_id_owned = root_id.to_owned();
             let run_id_owned = run_id.to_owned();
@@ -1118,6 +1120,18 @@ impl ShadowGit {
                     store_entries = result.entry_count,
                     blobs_new = result.blobs_new,
                     blobs_dedup = result.blobs_dedup,
+                    phase_walk_ms = result.walk_ms,
+                    phase_blob_ms = result.blob_write_ms,
+                    phase_manifest_ms = result.manifest_ms,
+                    phase_slice_ms = result.slice_write_ms,
+                    phase_cache_read_ms = result.cache_read_ms,
+                    phase_cache_write_ms = result.cache_write_ms,
+                    phase_lock_ms = result.lock_ms,
+                    phase_entries_ms = result.entries_ms,
+                    phase_nested_scan_ms = result.nested_scan_ms,
+                    phase_tail_read_ms = result.tail_read_ms,
+                    cache_hits = result.cache_hits,
+                    hashed_files = result.hashed_files,
                     store_error = "none",
                     "checkpoint dual-write completed"
                 );
@@ -3526,7 +3540,7 @@ mod tests {
             .configure_checkpoint_storage(CheckpointStorageMode::Dual, &store_root)
             .expect("configure dual");
         let store = Store::open(&store_root).expect("open store");
-        let guard = store.lock().expect("hold store lock");
+        let guard = store.lock_root("ws1").expect("hold root store lock");
 
         let outcome = engine
             .capture("ws1", "run-locked", "tester", "call-locked", false)
@@ -3785,6 +3799,119 @@ mod tests {
         );
     }
 
+    #[test]
+    #[ignore = "P2.4 real dev-store preflight + GC dry run; env-driven"]
+    fn p24_real_store_checks() {
+        use crate::checkpoint_store::gc::{GcOptions, gc};
+        use crate::checkpoint_store::preflight::{PreflightOptions, run_preflight};
+
+        let store_path = std::env::var("P24_STORE").expect("P24_STORE");
+        let roots = std::env::var("P24_ROOTS")
+            .expect("P24_ROOTS")
+            .split(',')
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        let shadow_root = std::env::var("P24_SHADOW_ROOT").expect("P24_SHADOW_ROOT");
+        let store = Store::open(&store_path).expect("open store");
+        let mut shadows = HashMap::new();
+        for root in &roots {
+            let shadow = Path::new(&shadow_root).join(format!("{root}.git"));
+            if shadow.is_dir() {
+                shadows.insert(root.clone(), shadow);
+            }
+        }
+        let preflight = run_preflight(
+            &store,
+            &PreflightOptions {
+                roots: roots.clone(),
+                shadow_git_dirs: shadows,
+                enforce_read_paths: true,
+                ..PreflightOptions::default()
+            },
+        )
+        .expect("preflight");
+        assert!(preflight.ok, "{preflight:?}");
+        for root in &preflight.roots {
+            assert_eq!(root.unmapped_slices.len(), 0, "{root:?}");
+            assert_eq!(root.mapped_refs, root.store_slices, "{root:?}");
+        }
+        let gc = gc(
+            &store,
+            &GcOptions {
+                repair: false,
+                ..GcOptions::default()
+            },
+        )
+        .expect("gc dry run");
+        assert!(gc.dry_run);
+        let payload = serde_json::json!({
+            "preflight": preflight,
+            "gc": gc,
+            "storePath": store_path,
+        });
+        if let Ok(out) = std::env::var("P24_OUT") {
+            std::fs::write(&out, serde_json::to_vec_pretty(&payload).expect("json"))
+                .expect("write P24_OUT");
+        }
+        eprintln!(
+            "P24_REAL {}",
+            serde_json::to_string(&payload).expect("payload")
+        );
+    }
+
+    #[test]
+    #[ignore = "P2.4 real store orphan GC dry-run; env-driven"]
+    fn p24_real_gc_orphan_dry_run() {
+        use crate::checkpoint_store::blob::{blob_path, write_blob};
+        use crate::checkpoint_store::gc::{GcOptions, gc};
+
+        let store_path = std::env::var("P24_STORE").expect("P24_STORE");
+        let store = Store::open(&store_path).expect("open store");
+        let content = format!(
+            "p24-unreferenced-orphan-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        );
+        let orphan = write_blob(store.root(), content.as_bytes()).expect("write orphan");
+        let orphan_path = blob_path(store.root(), &orphan.hash);
+        let report = gc(
+            &store,
+            &GcOptions {
+                repair: false,
+                grace_seconds: 0,
+                ..GcOptions::default()
+            },
+        )
+        .expect("gc dry run");
+        assert!(report.dry_run);
+        assert!(report.candidates >= 1, "{report:?}");
+        assert!(report.candidate_bytes > 0, "{report:?}");
+        assert!(orphan_path.exists(), "dry-run must not delete the orphan");
+        // Remove only the orphan this test created; never run repair on the
+        // real store from this harness.
+        std::fs::remove_file(&orphan_path).expect("cleanup seeded orphan");
+        let payload = serde_json::json!({
+            "orphanHash": orphan.hash,
+            "orphanBytes": content.len(),
+            "orphanRemovedAfterEvidence": true,
+            "gc": report,
+            "atUtc": std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|duration| duration.as_millis())
+                .unwrap_or(0),
+        });
+        if let Ok(out) = std::env::var("P24_OUT") {
+            std::fs::write(&out, serde_json::to_vec_pretty(&payload).expect("json"))
+                .expect("write P24_OUT");
+        }
+        eprintln!(
+            "P24_ORPHAN {}",
+            serde_json::to_string(&payload).expect("payload")
+        );
+    }
+
     #[tokio::test]
     #[ignore = "V6: three self->git->self rounds; every store slice restores"]
     async fn v6_three_rounds_self_git_self_restore_history() {
@@ -3948,6 +4075,7 @@ mod tests {
             &CaptureOptions {
                 declared_roots: Vec::new(),
                 exclude_opaque_nested: true,
+                ..CaptureOptions::default()
             },
         )
         .expect("walker capture");
@@ -3988,6 +4116,7 @@ mod tests {
             &CaptureOptions {
                 declared_roots: Vec::new(),
                 exclude_opaque_nested: true,
+                ..CaptureOptions::default()
             },
         )
         .expect("second walker capture");

@@ -87,7 +87,7 @@ pub fn restore_slice_to_dir(
     if slice_id.contains(['/', '\\']) || slice_id == "." || slice_id == ".." {
         return Err(RestoreError::InvalidSliceId(slice_id.to_owned()));
     }
-    let _lock = store.lock().map_err(|error| RestoreError::Io {
+    let _lock = store.lock_root(root_id).map_err(|error| RestoreError::Io {
         path: store.root().to_path_buf(),
         source: std::io::Error::other(error.to_string()),
     })?;

@@ -200,7 +200,7 @@ impl CheckpointService {
         path_prefix: Option<&str>,
     ) -> Result<RestorePreviewOutcome, RestoreFailure> {
         if self.engine().checkpoint_storage() == CheckpointStorageMode::Self_ {
-            return self.self_restore_preview(workspace_id, root_id, slice_ref, path_prefix);
+            return self.self_restore_preview(workspace_id, root_id, slice_ref, path_prefix, &[]);
         }
         if path_prefix.is_some() {
             return Err(RestoreFailure::Unavailable {
@@ -214,6 +214,27 @@ impl CheckpointService {
             .await
             .map_err(restore_failure)?;
         Ok(project_preview(preview))
+    }
+
+    /// T2.2 batch preview: literal paths, self/store adapter only.
+    pub async fn restore_preview_for_root_paths(
+        &self,
+        workspace_id: &str,
+        root_id: Option<&str>,
+        slice_ref: &str,
+        paths: &[String],
+    ) -> Result<RestorePreviewOutcome, RestoreFailure> {
+        if self.engine().checkpoint_storage() == CheckpointStorageMode::Self_ {
+            return self.self_restore_preview(workspace_id, root_id, slice_ref, None, paths);
+        }
+        if !paths.is_empty() {
+            return Err(RestoreFailure::Unavailable {
+                reason: "RESTORE_PATH_UNSUPPORTED".into(),
+                detail: "batch path restore is available only in self mode".into(),
+            });
+        }
+        self.restore_preview_for_root(workspace_id, root_id, slice_ref)
+            .await
     }
 
     /// Execute the restore of one slice.
@@ -264,6 +285,7 @@ impl CheckpointService {
                 slice_ref,
                 acknowledge_type_changes,
                 path_prefix,
+                &[],
             );
         }
         if path_prefix.is_some() {
@@ -287,6 +309,35 @@ impl CheckpointService {
             "checkpoint restore executed via host API"
         );
         Ok(project_execute(result))
+    }
+
+    /// T2.2 batch execute: literal paths, self/store adapter only.
+    pub async fn restore_execute_for_root_paths(
+        &self,
+        workspace_id: &str,
+        root_id: Option<&str>,
+        slice_ref: &str,
+        acknowledge_type_changes: &[String],
+        paths: &[String],
+    ) -> Result<RestoreExecuteOutcome, RestoreFailure> {
+        if self.engine().checkpoint_storage() == CheckpointStorageMode::Self_ {
+            return self.self_restore_execute(
+                workspace_id,
+                root_id,
+                slice_ref,
+                acknowledge_type_changes,
+                None,
+                paths,
+            );
+        }
+        if !paths.is_empty() {
+            return Err(RestoreFailure::Unavailable {
+                reason: "RESTORE_PATH_UNSUPPORTED".into(),
+                detail: "batch path restore is available only in self mode".into(),
+            });
+        }
+        self.restore_execute_for_root(workspace_id, root_id, slice_ref, acknowledge_type_changes)
+            .await
     }
 
     /// Read one regular file out of the slice tree.
@@ -370,12 +421,14 @@ impl CheckpointService {
         root_id: Option<&str>,
         slice_ref: &str,
         path_prefix: Option<&str>,
+        paths: &[String],
     ) -> Result<RestorePreviewOutcome, RestoreFailure> {
         let store = self.self_store()?;
         let record = self.self_ref(&store, workspace_id, root_id, slice_ref)?;
         let work_tree = self.self_work_tree(&record)?;
         let options = FullRestoreOptions {
             path_prefix: path_prefix.map(str::to_owned),
+            paths: paths.to_vec(),
             ..FullRestoreOptions::default()
         };
         let preview = restore_full::preview_full(
@@ -432,12 +485,14 @@ impl CheckpointService {
         slice_ref: &str,
         _acknowledge_type_changes: &[String],
         path_prefix: Option<&str>,
+        paths: &[String],
     ) -> Result<RestoreExecuteOutcome, RestoreFailure> {
         let store = self.self_store()?;
         let record = self.self_ref(&store, workspace_id, root_id, slice_ref)?;
         let work_tree = self.self_work_tree(&record)?;
         let options = FullRestoreOptions {
             path_prefix: path_prefix.map(str::to_owned),
+            paths: paths.to_vec(),
             ..FullRestoreOptions::default()
         };
         let preview = restore_full::preview_full(
@@ -448,7 +503,16 @@ impl CheckpointService {
             &options,
         )
         .map_err(Self::self_full_restore_failure)?;
-        let stats = if let Some(prefix) = path_prefix {
+        let stats = if !paths.is_empty() {
+            restore_full::restore_paths(
+                &store,
+                &record.root_id,
+                &record.store_slice_id,
+                &work_tree,
+                paths,
+                &options,
+            )
+        } else if let Some(prefix) = path_prefix {
             restore_full::restore_path(
                 &store,
                 &record.root_id,
@@ -870,6 +934,21 @@ mod tests {
             std::fs::read_to_string(work.join("b.txt")).expect("b"),
             "changed-b",
             "path-scoped restore must not touch b.txt"
+        );
+        let paths = vec!["a.txt".to_string(), "b.txt".to_string()];
+        let batch_preview = service
+            .restore_preview_for_root_paths("ws-1", None, slice_ref, &paths)
+            .await
+            .expect("batch preview");
+        assert_eq!(batch_preview.counts.restore, 2);
+        let batch = service
+            .restore_execute_for_root_paths("ws-1", None, slice_ref, &[], &paths)
+            .await
+            .expect("batch restore");
+        assert_eq!(batch.counts.restored, 2);
+        assert_eq!(
+            std::fs::read_to_string(work.join("b.txt")).expect("b"),
+            "store-b"
         );
     }
 

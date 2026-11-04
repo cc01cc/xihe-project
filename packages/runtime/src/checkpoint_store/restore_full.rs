@@ -12,13 +12,17 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use serde_json::Value;
 
-use super::blob::{BlobError, blob_hash, read_blob};
+use super::blob::{BlobError, blob_hash, read_blob, stream_blob_to_writer};
 use super::capture::{TailSlice, read_tail_manifest, tail_slice};
 use super::manifest::{FileMode, Manifest, ManifestError};
 use super::store::{Store, StoreError};
 
 pub const RESTORE_MARKER: &str = ".xhs-restore-inprogress";
 pub const RESTORE_TRASH: &str = ".xhs-restore-trash";
+pub const RESTORE_CHECKOUT_CHUNK: usize = 64;
+/// Files above this size are streamed from blob to temp file (T2.8) instead of
+/// being buffered in memory.
+pub const STREAMING_BLOB_THRESHOLD: u64 = 8 * 1024 * 1024;
 
 #[derive(Debug, Clone, Default)]
 pub struct FullRestoreOptions {
@@ -30,9 +34,15 @@ pub struct FullRestoreOptions {
     /// T2.2 subtree scope: `None` = full workspace; `Some("dir")` = that path
     /// and its children (literal path semantics, no wildcard).
     pub path_prefix: Option<String>,
+    /// T2.2 batch scope: all listed paths (literal, no wildcard). Chunked at
+    /// [`RESTORE_CHECKOUT_CHUNK`] by [`restore_paths`].
+    pub paths: Vec<String>,
     /// Test-only fault injection after the destructive deletion phase.
     #[cfg(test)]
     pub fail_after_deletes: bool,
+    /// Test-only crash hook: panic after N files have been restored.
+    #[cfg(test)]
+    pub fail_after_files: Option<usize>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -103,6 +113,7 @@ pub struct FullRestoreStats {
     pub skipped_modified_deletions: Vec<String>,
     pub bytes: u64,
     pub duration_ms: u64,
+    pub chunks_executed: usize,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -509,6 +520,28 @@ fn in_scope(path: &str, prefix: Option<&str>) -> bool {
     }
 }
 
+fn scope_ok(path: &str, options: &FullRestoreOptions) -> bool {
+    let prefix_match = options
+        .path_prefix
+        .as_deref()
+        .is_some_and(|prefix| in_scope(path, Some(prefix)));
+    match (options.path_prefix.is_some(), options.paths.is_empty()) {
+        (false, true) => true,
+        (true, true) => prefix_match,
+        (false, false) => options
+            .paths
+            .iter()
+            .any(|prefix| in_scope(path, Some(prefix))),
+        (true, false) => {
+            prefix_match
+                || options
+                    .paths
+                    .iter()
+                    .any(|prefix| in_scope(path, Some(prefix)))
+        }
+    }
+}
+
 fn build_plan(
     store: &Store,
     root_id: &str,
@@ -525,6 +558,9 @@ fn build_plan(
     if let Some(prefix) = options.path_prefix.as_deref() {
         validate_path(prefix)?;
     }
+    for path in &options.paths {
+        validate_path(path)?;
+    }
     let (target, _manifest_id) = read_target_manifest(store, root_id, slice_id)?;
     let tail_slice = tail_slice(store, root_id).map_err(|error| {
         FullRestoreError::SliceCorrupt(format!("tail slice read failed: {error}"))
@@ -536,16 +572,15 @@ fn build_plan(
         None => None,
     };
     preflight(store, &target, tail_manifest.as_ref())?;
-    let prefix = options.path_prefix.as_deref();
     let target_paths: BTreeSet<&str> = target
         .entries
         .iter()
-        .filter(|entry| in_scope(&entry.path, prefix))
+        .filter(|entry| scope_ok(&entry.path, options))
         .map(|entry| entry.path.as_str())
         .collect();
     let mut writes = Vec::new();
     for entry in &target.entries {
-        if !in_scope(&entry.path, prefix) {
+        if !scope_ok(&entry.path, options) {
             continue;
         }
         check_ancestors(work_tree, &entry.path)?;
@@ -568,7 +603,7 @@ fn build_plan(
     let mut already_absent = Vec::new();
     if let Some(tail) = &tail_manifest {
         for entry in &tail.entries {
-            if target_paths.contains(entry.path.as_str()) || !in_scope(&entry.path, prefix) {
+            if target_paths.contains(entry.path.as_str()) || !scope_ok(&entry.path, options) {
                 continue;
             }
             validate_path(&entry.path)?;
@@ -637,10 +672,10 @@ pub fn preview_full(
     }
     // The plan also carries skipped/missing decisions; recompute their labels
     // from the same tail/worktree inputs without another mutation pass.
-    if let Some(prefix) = options.path_prefix.as_deref() {
+    if options.path_prefix.is_some() || !options.paths.is_empty() {
         preview
             .entries
-            .retain(|entry| in_scope(&entry.path, Some(prefix)));
+            .retain(|entry| scope_ok(&entry.path, options));
     }
     for path in &plan.skipped_modified {
         preview.skipped_modified.push(path.clone());
@@ -683,6 +718,43 @@ pub fn restore_path(
     restore_full(store, root_id, slice_id, work_tree, &scoped)
 }
 
+/// T2.2 batch restore: literal paths are restored in chunks of
+/// [`RESTORE_CHECKOUT_CHUNK`], in deterministic order. No git subprocess is
+/// spawned; chunking is only the semantic boundary used by the git fallback.
+pub fn restore_paths(
+    store: &Store,
+    root_id: &str,
+    slice_id: &str,
+    work_tree: &Path,
+    paths: &[String],
+    options: &FullRestoreOptions,
+) -> Result<FullRestoreStats, FullRestoreError> {
+    let mut ordered = paths.to_vec();
+    ordered.sort();
+    ordered.dedup();
+    for path in &ordered {
+        validate_path(path)?;
+    }
+    let mut total = FullRestoreStats::default();
+    for chunk in ordered.chunks(RESTORE_CHECKOUT_CHUNK) {
+        let mut scoped = options.clone();
+        scoped.path_prefix = None;
+        scoped.paths = chunk.to_vec();
+        let part = restore_full(store, root_id, slice_id, work_tree, &scoped)?;
+        total.restored += part.restored;
+        total.deleted += part.deleted;
+        total.pruned_dirs += part.pruned_dirs;
+        total.skipped_already_absent += part.skipped_already_absent;
+        total
+            .skipped_modified_deletions
+            .extend(part.skipped_modified_deletions);
+        total.bytes = total.bytes.saturating_add(part.bytes);
+        total.duration_ms = total.duration_ms.saturating_add(part.duration_ms);
+        total.chunks_executed += 1;
+    }
+    Ok(total)
+}
+
 /// Full restore of one slice into `work_tree`.
 pub fn restore_full(
     store: &Store,
@@ -692,7 +764,7 @@ pub fn restore_full(
     options: &FullRestoreOptions,
 ) -> Result<FullRestoreStats, FullRestoreError> {
     let started = Instant::now();
-    let _store_lease = store.lock()?;
+    let _store_lease = store.lock_root(root_id)?;
     let plan = build_plan(store, root_id, slice_id, work_tree, options)?;
     let tail_slice = plan.tail_slice.clone();
 
@@ -725,6 +797,7 @@ pub fn restore_full(
     let mut stats = FullRestoreStats {
         skipped_already_absent: plan.already_absent.len(),
         skipped_modified_deletions: plan.skipped_modified.clone(),
+        chunks_executed: 1,
         ..FullRestoreStats::default()
     };
     let result = (|| -> Result<(), FullRestoreError> {
@@ -795,12 +868,7 @@ pub fn restore_full(
             {
                 return Err(FullRestoreError::UnsafePath(entry.path.clone()));
             }
-            let raw = read_blob(store.root(), &entry.blob_hash)?;
-            if raw.len() as u64 != entry.size {
-                return Err(FullRestoreError::VerifyFailed {
-                    path: entry.path.clone(),
-                });
-            }
+            let streamed = entry.size > STREAMING_BLOB_THRESHOLD;
             let tmp = destination
                 .with_file_name(format!(".xhs-restore-tmp-{restore_id}-{}", stats.restored));
             let mut file = OpenOptions::new()
@@ -808,8 +876,18 @@ pub fn restore_full(
                 .create_new(true)
                 .open(&tmp)
                 .map_err(|error| io_error(&tmp, error))?;
-            file.write_all(&raw)
-                .map_err(|error| io_error(&tmp, error))?;
+            if streamed {
+                stream_blob_to_writer(store.root(), &entry.blob_hash, &mut file)?;
+            } else {
+                let raw = read_blob(store.root(), &entry.blob_hash)?;
+                if raw.len() as u64 != entry.size {
+                    return Err(FullRestoreError::VerifyFailed {
+                        path: entry.path.clone(),
+                    });
+                }
+                file.write_all(&raw)
+                    .map_err(|error| io_error(&tmp, error))?;
+            }
             drop(file);
             #[cfg(unix)]
             {
@@ -828,13 +906,27 @@ pub fn restore_full(
                 let _ = fs::remove_file(&tmp);
                 return Err(io_error(&destination, error));
             }
-            let verified = fs::read(&destination).map_err(|error| io_error(&destination, error))?;
-            if verified.len() as u64 != entry.size || blob_hash(&verified) != entry.blob_hash {
+            let verified_ok = if streamed {
+                fs::metadata(&destination)
+                    .map(|metadata| metadata.len() == entry.size)
+                    .unwrap_or(false)
+            } else {
+                let verified =
+                    fs::read(&destination).map_err(|error| io_error(&destination, error))?;
+                verified.len() as u64 == entry.size && blob_hash(&verified) == entry.blob_hash
+            };
+            if !verified_ok {
                 return Err(FullRestoreError::VerifyFailed {
                     path: entry.path.clone(),
                 });
             }
             stats.restored += 1;
+            #[cfg(test)]
+            if let Some(after_files) = options.fail_after_files
+                && stats.restored >= after_files
+            {
+                panic!("injected restore crash after {after_files} files");
+            }
             stats.bytes = stats.bytes.saturating_add(entry.size);
         }
         Ok(())
@@ -1028,6 +1120,48 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["a.txt"]
         );
+    }
+
+    #[test]
+    fn crash_after_files_leaves_marker_and_resume_completes() {
+        let workspace = workspace();
+        let root = workspace.path().join("ws");
+        fs::create_dir_all(&root).expect("root");
+        write(&root.join("a.txt"), "a");
+        write(&root.join("b.txt"), "b");
+        let store = Store::init(workspace.path().join("store")).expect("store");
+        let capture = capture_root(&store, &root, "ws-1", None, None).expect("capture");
+        fs::write(root.join("a.txt"), "changed-a").expect("mutate a");
+        fs::write(root.join("b.txt"), "changed-b").expect("mutate b");
+        let crash = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            restore_full(
+                &store,
+                "ws-1",
+                &capture.slice_id,
+                &root,
+                &FullRestoreOptions {
+                    fail_after_files: Some(1),
+                    ..FullRestoreOptions::default()
+                },
+            )
+            .expect("injected panic must not return")
+        }));
+        assert!(crash.is_err(), "restore crash hook must panic");
+        assert!(root.join(RESTORE_MARKER).exists(), "marker must remain");
+        assert!(restore_status(&root).expect("status").incomplete);
+        let resumed = restore_full(
+            &store,
+            "ws-1",
+            &capture.slice_id,
+            &root,
+            &FullRestoreOptions {
+                resume_same_target: true,
+                ..FullRestoreOptions::default()
+            },
+        )
+        .expect("resume");
+        assert!(resumed.restored >= 1);
+        assert!(!root.join(RESTORE_MARKER).exists());
     }
 
     #[test]
@@ -1373,6 +1507,139 @@ mod tests {
     }
 
     #[test]
+    fn large_file_restore_uses_streaming_and_matches_content() {
+        let workspace = workspace();
+        let root = workspace.path().join("ws");
+        fs::create_dir_all(&root).expect("root");
+        let content: Vec<u8> = (0..(9 * 1024 * 1024))
+            .map(|index| (index % 251) as u8)
+            .collect();
+        fs::write(root.join("large.bin"), &content).expect("large file");
+        let store = Store::init(workspace.path().join("store")).expect("store");
+        let capture = capture_root(&store, &root, "ws-1", None, None).expect("capture");
+        fs::write(root.join("large.bin"), b"mutated").expect("mutate");
+        let stats = restore_full(
+            &store,
+            "ws-1",
+            &capture.slice_id,
+            &root,
+            &FullRestoreOptions::default(),
+        )
+        .expect("streaming restore");
+        assert_eq!(stats.restored, 1);
+        let restored = fs::read(root.join("large.bin")).expect("restored");
+        assert_eq!(restored.len(), content.len());
+        assert_eq!(blob_hash(&restored), blob_hash(&content));
+    }
+
+    #[test]
+    fn batch_restore_chunks_at_checkout_chunk_size() {
+        let workspace = workspace();
+        let root = workspace.path().join("ws");
+        fs::create_dir_all(&root).expect("root");
+        let mut paths = Vec::new();
+        for index in 0..70 {
+            let relative = format!("files/f{index:02}.txt");
+            write(&root.join(&relative), &format!("content-{index}"));
+            paths.push(relative);
+        }
+        let store = Store::init(workspace.path().join("store")).expect("store");
+        let capture = capture_root(&store, &root, "ws-1", None, None).expect("capture");
+        let selected = paths[..65].to_vec();
+        for relative in &paths {
+            fs::write(root.join(relative), "mutated").expect("mutate");
+        }
+        let stats = restore_paths(
+            &store,
+            "ws-1",
+            &capture.slice_id,
+            &root,
+            &selected,
+            &FullRestoreOptions::default(),
+        )
+        .expect("batch restore");
+        assert_eq!(stats.restored, 65);
+        assert_eq!(stats.chunks_executed, 2);
+        assert_eq!(
+            fs::read_to_string(root.join(&paths[0])).expect("first"),
+            "content-0"
+        );
+        assert_eq!(
+            fs::read_to_string(root.join(&paths[64])).expect("65th"),
+            "content-64"
+        );
+        assert_eq!(
+            fs::read_to_string(root.join(&paths[65])).expect("unselected"),
+            "mutated",
+            "paths outside the batch must stay untouched"
+        );
+    }
+
+    #[test]
+    #[ignore = "V3 symlink probe: store restore is intentionally fail-closed"]
+    fn v3_symlink_probe() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path().join("symlink-root");
+        fs::create_dir_all(&root).expect("root");
+        git(&root, &["init", "-q"]);
+        git(&root, &["config", "user.email", "v3@example.invalid"]);
+        git(&root, &["config", "user.name", "v3"]);
+        git(&root, &["config", "core.autocrlf", "false"]);
+        git(&root, &["config", "core.symlinks", "true"]);
+        write(&root.join("target.txt"), "target");
+        let link = root.join("link.txt");
+        #[cfg(windows)]
+        std::os::windows::fs::symlink_file(root.join("target.txt"), &link).expect("create symlink");
+        #[cfg(unix)]
+        std::os::unix::fs::symlink("target.txt", &link).expect("create symlink");
+        let commit = commit_all(&root, "symlink slice");
+        let store = Store::init(temp.path().join("symlink-store")).expect("store");
+        let capture = capture_root(&store, &root, "ws-1", None, None).expect("capture");
+        let store_target = temp.path().join("symlink-store-target");
+        fs::create_dir_all(&store_target).expect("store target");
+        let store_error = restore_full(
+            &store,
+            "ws-1",
+            &capture.slice_id,
+            &store_target,
+            &FullRestoreOptions::default(),
+        )
+        .expect_err("store symlink restore must fail closed");
+        let git_target = temp.path().join("symlink-git-target");
+        git(
+            &root,
+            &[
+                "worktree",
+                "add",
+                "--detach",
+                git_target.to_str().expect("git target"),
+                &commit,
+            ],
+        );
+        let git_symlink = fs::symlink_metadata(git_target.join("link.txt")).expect("git symlink");
+        let report = serde_json::json!({
+            "case": "symlink_restore",
+            "store_supported": false,
+            "store_error": store_error.to_string(),
+            "git_worktree_created_symlink": git_symlink.file_type().is_symlink(),
+            "status": "blocked_by_t21_fail_closed",
+        });
+        if let Ok(path) = std::env::var("V3_SYMLINK_REPORT_PATH") {
+            fs::write(path, serde_json::to_vec_pretty(&report).expect("report"))
+                .expect("write symlink report");
+        }
+        eprintln!(
+            "V3_SYMLINK {}",
+            serde_json::to_string(&report).expect("report")
+        );
+        assert!(matches!(
+            store_error,
+            FullRestoreError::SymlinkUnsupported(_) | FullRestoreError::UnsafePath(_)
+        ));
+        assert!(git_symlink.file_type().is_symlink());
+    }
+
+    #[test]
     #[ignore = "V3 git-checkout parity: 3 tiers x 3 slices + negative expectations"]
     fn v3_git_checkout_parity() {
         let temp = tempfile::tempdir().expect("tempdir");
@@ -1454,6 +1721,7 @@ mod tests {
                 &CaptureOptions {
                     declared_roots: Vec::new(),
                     exclude_opaque_nested: true,
+                    ..CaptureOptions::default()
                 },
             )
             .expect("capture S1")
@@ -1472,6 +1740,7 @@ mod tests {
                 &CaptureOptions {
                     declared_roots: Vec::new(),
                     exclude_opaque_nested: true,
+                    ..CaptureOptions::default()
                 },
             )
             .expect("capture S2")
@@ -1489,6 +1758,7 @@ mod tests {
                 &CaptureOptions {
                     declared_roots: Vec::new(),
                     exclude_opaque_nested: true,
+                    ..CaptureOptions::default()
                 },
             )
             .expect("capture S3")

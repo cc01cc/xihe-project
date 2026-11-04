@@ -23,15 +23,20 @@ pub struct GcOptions {
     pub grace_seconds: u64,
     #[cfg(test)]
     pub crash_after_plan: bool,
+    /// Test-only crash hook: panic after N candidate blobs have been deleted.
+    #[cfg(test)]
+    pub crash_after_deletes: Option<usize>,
 }
 
 impl Default for GcOptions {
     fn default() -> Self {
         Self {
             repair: false,
-            grace_seconds: 3_600,
+            grace_seconds: 86_400,
             #[cfg(test)]
             crash_after_plan: false,
+            #[cfg(test)]
+            crash_after_deletes: None,
         }
     }
 }
@@ -85,7 +90,11 @@ pub enum GcError {
 }
 
 pub fn gc(store: &Store, options: &GcOptions) -> Result<GcReport, GcError> {
-    let _lease = store.lock().map_err(|error| match error {
+    let _gc_lock = store.lock_gc().map_err(|error| match error {
+        StoreError::Busy { .. } => GcError::Busy,
+        other => GcError::Store(other),
+    })?;
+    let _root_leases: Vec<_> = store.lock_all_roots().map_err(|error| match error {
         StoreError::Busy { .. } => GcError::Busy,
         other => GcError::Store(other),
     })?;
@@ -187,6 +196,12 @@ pub fn gc(store: &Store, options: &GcOptions) -> Result<GcReport, GcError> {
                 report.deleted += 1;
                 report.bytes_freed = report.bytes_freed.saturating_add(candidate.size);
                 deleted_hashes.insert(candidate.hash.clone());
+                #[cfg(test)]
+                if let Some(after_deletes) = options.crash_after_deletes
+                    && report.deleted >= after_deletes
+                {
+                    panic!("injected GC crash after {after_deletes} deletes");
+                }
             }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(error) => {
@@ -507,11 +522,59 @@ mod tests {
     }
 
     #[test]
-    fn gc_refuses_when_store_lease_is_held() {
+    fn default_grace_is_24_hours() {
+        assert_eq!(GcOptions::default().grace_seconds, 24 * 60 * 60);
+    }
+
+    #[test]
+    fn gc_refuses_when_global_gc_lock_is_held() {
         let (_temp, store, _root) = fixture();
-        let _lease = store.lock().expect("lease");
+        let _lease = store.lock_gc().expect("gc lease");
         let error = gc(&store, &GcOptions::default()).expect_err("busy");
         assert!(matches!(error, GcError::Busy), "{error:?}");
+    }
+
+    #[test]
+    fn gc_refuses_when_store_lease_is_held() {
+        let (_temp, store, _root) = fixture();
+        let _lease = store.lock_root("ws-1").expect("root lease");
+        let error = gc(&store, &GcOptions::default()).expect_err("busy");
+        assert!(matches!(error, GcError::Busy), "{error:?}");
+    }
+
+    #[test]
+    fn crash_after_deletes_is_replayed_and_completes() {
+        let (_temp, store, _root) = fixture();
+        let (_hash_a, path_a) = orphan(&store, b"crash-delete-a");
+        let (_hash_b, path_b) = orphan(&store, b"crash-delete-b");
+        let crash = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            gc(
+                &store,
+                &GcOptions {
+                    repair: true,
+                    grace_seconds: 0,
+                    crash_after_deletes: Some(1),
+                    ..GcOptions::default()
+                },
+            )
+            .expect("injected panic must not return")
+        }));
+        assert!(crash.is_err(), "GC crash hook must panic");
+        let journal_dir = store.root().join("gc");
+        assert_eq!(fs::read_dir(&journal_dir).expect("journal dir").count(), 1);
+        let recovered = gc(
+            &store,
+            &GcOptions {
+                repair: true,
+                grace_seconds: 0,
+                ..GcOptions::default()
+            },
+        )
+        .expect("recover");
+        assert!(recovered.deleted >= 1);
+        assert!(!path_a.exists() || !path_b.exists());
+        let fsck = crate::checkpoint_store::fsck::fsck_store(&store, false).expect("fsck");
+        assert!(fsck.is_clean(), "{fsck:?}");
     }
 
     #[test]
@@ -524,6 +587,7 @@ mod tests {
                 repair: true,
                 grace_seconds: 0,
                 crash_after_plan: true,
+                crash_after_deletes: None,
             },
         )
         .expect_err("injected crash");

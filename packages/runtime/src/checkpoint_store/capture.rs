@@ -542,10 +542,18 @@ fn discover_nested_roots(
 pub struct CaptureOptions {
     pub declared_roots: Vec<String>,
     pub exclude_opaque_nested: bool,
+    /// Test-only crash hook: panic after N files have been hashed in this capture.
+    #[cfg(test)]
+    pub crash_after_files: Option<usize>,
+    /// Test-only crash hook: panic after the manifest rename but before the slice
+    /// record is committed, leaving an orphan manifest.
+    #[cfg(test)]
+    pub crash_before_slice_commit: bool,
 }
 
 /// Capture one root into the store. The caller decides which roots exist; this
 /// function never combines roots into one slice.
+#[allow(clippy::needless_update)]
 pub fn capture_root(
     store: &Store,
     root: &Path,
@@ -565,6 +573,7 @@ pub fn capture_root(
 
 /// Capture one root, excluding workspace-declared roots from `nested_roots`
 /// (0639 multi-root semantics: a declared root owns its own slice chain).
+#[allow(clippy::needless_update)]
 pub fn capture_root_with_declared_roots(
     store: &Store,
     root: &Path,
@@ -582,6 +591,7 @@ pub fn capture_root_with_declared_roots(
         &CaptureOptions {
             declared_roots: declared_roots.to_vec(),
             exclude_opaque_nested: false,
+            ..CaptureOptions::default()
         },
     )
 }
@@ -596,7 +606,7 @@ pub fn capture_root_with_options(
 ) -> Result<CaptureResult, CaptureError> {
     let started = Instant::now();
     let lock_started = Instant::now();
-    let _lock = store.lock()?;
+    let _lock = store.lock_root(root_id)?;
     let lock_ms = lock_started.elapsed().as_millis() as u64;
     let walk_started = Instant::now();
     let walk = walk_workspace(root)?;
@@ -700,6 +710,12 @@ pub fn capture_root_with_options(
                         let blob_started = Instant::now();
                         let outcome = write_blob(store.root(), &bytes)?;
                         blob_write_ms += blob_started.elapsed().as_millis() as u64;
+                        #[cfg(test)]
+                        if let Some(after_files) = options.crash_after_files
+                            && hashed_files >= after_files
+                        {
+                            panic!("injected capture crash after {after_files} files");
+                        }
                         if outcome.deduped {
                             blobs_dedup += 1;
                         } else {
@@ -844,6 +860,10 @@ pub fn capture_root_with_options(
     let slice_write_started = Instant::now();
     let slice_bytes =
         serde_json::to_vec(&slice).map_err(|error| CaptureError::Encode(error.to_string()))?;
+    #[cfg(test)]
+    if options.crash_before_slice_commit {
+        panic!("injected capture crash before slice record commit");
+    }
     store.write_atomic(&slice_path, &slice_bytes)?;
     let slice_write_ms = slice_write_started.elapsed().as_millis() as u64;
     let cache_started = Instant::now();
@@ -900,7 +920,7 @@ pub fn capture_from_git_entries(
 ) -> Result<CaptureResult, CaptureError> {
     let started = Instant::now();
     let lock_started = Instant::now();
-    let _lock = store.lock()?;
+    let _lock = store.lock_root(root_id)?;
     let lock_ms = lock_started.elapsed().as_millis() as u64;
     let tail = tail_slice(store, root_id)?;
     let previous = match &tail {
@@ -1099,6 +1119,105 @@ mod tests {
                     .count()
             })
             .unwrap_or(0)
+    }
+
+    fn manifest_files(store: &Store) -> usize {
+        fn walk(dir: &Path, count: &mut usize) {
+            let Ok(entries) = fs::read_dir(dir) else {
+                return;
+            };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    walk(&path, count);
+                } else if path.extension().is_some_and(|ext| ext == "json") {
+                    *count += 1;
+                }
+            }
+        }
+        let mut count = 0;
+        walk(&store.root().join("manifests"), &mut count);
+        count
+    }
+
+    #[test]
+    fn crash_after_files_leaves_store_readable_and_committed_slice_intact() {
+        let workspace = workspace();
+        for index in 0..10 {
+            write_file(
+                workspace.path(),
+                &format!("files/f{index}.txt"),
+                format!("file-{index}").as_bytes(),
+            );
+        }
+        let (_store_dir, store) = store();
+        let baseline =
+            capture_root(&store, workspace.path(), "ws-1", None, None).expect("baseline");
+        for index in 0..10 {
+            write_file(
+                workspace.path(),
+                &format!("files/f{index}.txt"),
+                format!("changed-{index}").as_bytes(),
+            );
+        }
+        let crash = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            capture_root_with_options(
+                &store,
+                workspace.path(),
+                "ws-1",
+                None,
+                None,
+                &CaptureOptions {
+                    crash_after_files: Some(3),
+                    ..CaptureOptions::default()
+                },
+            )
+            .expect("injected panic must not return")
+        }));
+        assert!(crash.is_err(), "crash hook must panic");
+        assert_eq!(slice_files(&store, "ws-1"), 1);
+        let report = crate::checkpoint_store::fsck::fsck_store(&store, false).expect("fsck");
+        assert!(
+            report.findings.iter().all(|finding| {
+                finding.kind == crate::checkpoint_store::fsck::FsckFindingKind::OrphanBlob
+            }),
+            "crash may leave orphan blobs, never corrupt references: {report:?}"
+        );
+        let after = capture_root(&store, workspace.path(), "ws-1", None, None).expect("recover");
+        assert_ne!(after.slice_id, baseline.slice_id);
+    }
+
+    #[test]
+    fn crash_before_slice_commit_leaves_orphan_manifest_only() {
+        let workspace = workspace();
+        write_file(workspace.path(), "a.txt", b"a");
+        let (_store_dir, store) = store();
+        capture_root(&store, workspace.path(), "ws-1", None, None).expect("baseline");
+        let before_manifests = manifest_files(&store);
+        write_file(workspace.path(), "b.txt", b"b");
+        let crash = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            capture_root_with_options(
+                &store,
+                workspace.path(),
+                "ws-1",
+                None,
+                None,
+                &CaptureOptions {
+                    crash_before_slice_commit: true,
+                    ..CaptureOptions::default()
+                },
+            )
+            .expect("injected panic must not return")
+        }));
+        assert!(crash.is_err(), "crash hook must panic");
+        assert_eq!(slice_files(&store, "ws-1"), 1, "no new slice committed");
+        assert!(
+            manifest_files(&store) > before_manifests,
+            "manifest must already be renamed"
+        );
+        let report = crate::checkpoint_store::fsck::fsck_store(&store, false).expect("fsck");
+        assert!(report.is_clean(), "{report:?}");
+        capture_root(&store, workspace.path(), "ws-1", None, None).expect("recover");
     }
 
     #[test]
@@ -1321,6 +1440,7 @@ mod tests {
             &CaptureOptions {
                 declared_roots: Vec::new(),
                 exclude_opaque_nested: true,
+                ..CaptureOptions::default()
             },
         )
         .expect("dual opaque capture");
