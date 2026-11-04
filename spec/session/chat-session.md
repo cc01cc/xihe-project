@@ -137,3 +137,14 @@ Session 负责连续对话上下文、消息、附件引用、模型绑定和 Ch
 - Agent principal Workspace scope：PLAN-0374。
 - 当前实现对账：PLAN-0387 `evidence/current-state.md`。
 - 真实 delete/recovery/SSE 验证：PLAN-0387 V7，尚未完成。
+
+### 消息读面分页（PLAN-0670 M2，proposed）
+
+1. `GET /api/v1/sessions/{sessionId}/messages` MUST 支持游标分页：`?limit=`（默认 50，上限 200；
+   超上限截断到 200 并在响应回显实际值，**不得**静默返回全集）与 `?before=`（**不透明**游标，客户端 MUST NOT 解析）。
+2. 游标 MUST 基于复合 `(created_at, id)`：单时间戳键在批量写入同毫秒时会跳过或重复消息。
+   返回消息 MUST 按 `(created_at, id)` 正序；`nextCursor` 取本次窗口**最旧**一条的边界。
+3. 响应 MUST 提供 `truncated`（还有更旧消息）与 `nextCursor`（无更旧时**省略**，不得为空串）；
+   旧客户端（不带 `limit`/`before`）MUST 保持既有"返回全部可见消息的数组"契约不变。
+4. 分页 MUST **在可见性过滤之后**计数（内部 wake 消息、branch path 之外的消息不占页大小），
+   且 MUST 使用游标而非 OFFSET（深分页禁止）。
