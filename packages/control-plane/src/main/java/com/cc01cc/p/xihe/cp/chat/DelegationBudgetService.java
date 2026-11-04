@@ -94,8 +94,59 @@ public class DelegationBudgetService {
      * the depth/count budget is exhausted.
      *
      * <p>Caller must already hold the parent Session and parent Run row locks.</p>
+     *
+     * <p>PLAN-0663: this is the <b>authoritative</b> (post-approval) evaluation — the refusal detail
+     * carries {@code phase=post_approval} so operators can tell "approved, then the budget moved"
+     * (TOCTOU) apart from "never asked" ({@link #precheckBeforeApproval}).</p>
      */
     public DelegationLimits requireWithinBudget(Session parentSession, ChatRun parentRun, String toolCallId) {
+        return evaluate(parentSession, parentRun, toolCallId, DelegationRefusedException.PHASE_POST_APPROVAL);
+    }
+
+    /**
+     * PLAN-0663: <b>read-only</b> budget precheck for the approval gate, run BEFORE an approval request
+     * is created.
+     *
+     * <p>Why it exists: the budget is a "can this happen" fact and an approval is a "may this happen"
+     * decision. Asking a human to approve a delegation that the current snapshot already forbids
+     * wastes a round-trip and (before PLAN-0663) left a modal on screen for a spawn that could never
+     * run.</p>
+     *
+     * <p><b>Not authoritative.</b> This reads without the parent Session/Run row locks, so two
+     * concurrent spawns may both pass here; the locked {@link #requireWithinBudget} inside
+     * {@code createSpawnFromParent} stays the single authority (TOCTOU by design). Refusals decided
+     * here carry {@code phase=precheck} and are answered without creating any approval row.</p>
+     *
+     * @throws DelegationRefusedException with {@code phase=precheck} when delegation is disabled, the
+     *     child would exceed the depth ceiling, or the in-flight count is already exhausted
+     */
+    public void precheckBeforeApproval(String parentSessionId, String parentRunId, String toolCallId) {
+        Session parentSession = sessionRepository.findById(requireUuid(parentSessionId, "parentSessionId"))
+                .orElseThrow(DelegationBudgetService::parentNotFound);
+        ChatRun parentRun = chatRunRepository.findById(requireUuid(parentRunId, "parentRunId"))
+                .orElseThrow(DelegationBudgetService::parentNotFound);
+        evaluate(parentSession, parentRun, toolCallId, DelegationRefusedException.PHASE_PRECHECK);
+    }
+
+    /** Same error shape as {@code ChatSubmissionService}'s spawn-parent lookup. */
+    private static CpApiException parentNotFound() {
+        return new CpApiException(HttpStatus.NOT_FOUND, "SPAWN_PARENT_RUN_NOT_FOUND",
+                "Parent run or session not found");
+    }
+
+    private static UUID requireUuid(String value, String field) {
+        if (value == null || value.isBlank()) {
+            throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", field + " is required");
+        }
+        try {
+            return UUID.fromString(value);
+        } catch (IllegalArgumentException invalid) {
+            throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", field + " must be a UUID");
+        }
+    }
+
+    private DelegationLimits evaluate(Session parentSession, ChatRun parentRun, String toolCallId,
+                                      String phase) {
         Walk walk = walkToRoot(parentSession);
         DelegationRefusedException.DelegationAuditContext audit = new DelegationRefusedException
                 .DelegationAuditContext(walk.root().getId().toString(), parentSession.getId().toString(),
@@ -105,30 +156,30 @@ public class DelegationBudgetService {
         if (rootPrincipalId == null) {
             // Not reachable through the product surface (a session always carries a principal once it
             // has runs), but the gate fails closed instead of assuming "no budget".
-            throw DelegationRefusedException.policyInvalid("root_without_principal", audit,
+            throw DelegationRefusedException.policyInvalid("root_without_principal", audit, phase,
                     "the delegation root has no agent principal");
         }
 
-        DelegationLimits limits = effectiveLimits(rootPrincipalId, audit);
+        DelegationLimits limits = effectiveLimits(rootPrincipalId, audit, phase);
         int childDepth = walk.depth() + 1;
         // PLAN-0648 ruling A1: maxCount=0 is the explicit "delegation disabled" value. Refuse every
         // spawn under this principal with a dedicated reason (the refusal envelope stays the same
         // DELEGATION_LIMIT_EXCEEDED shape the client already handles).
         if (limits.maxCount() == 0) {
-            throw DelegationRefusedException.disabled(audit, childDepth, limits.maxDepth());
+            throw DelegationRefusedException.disabled(audit, phase, childDepth, limits.maxDepth());
         }
         if (childDepth > limits.maxDepth()) {
-            throw DelegationRefusedException.refused("depth_exceeded", audit, childDepth,
+            throw DelegationRefusedException.refused("depth_exceeded", audit, phase, childDepth,
                     limits.maxDepth(), 0, limits.maxCount());
         }
 
         int used = countInFlight(walk.root().getId(), limits.maxCount(), audit);
         if (used >= limits.maxCount()) {
-            throw DelegationRefusedException.refused("count_exceeded", audit, childDepth,
+            throw DelegationRefusedException.refused("count_exceeded", audit, phase, childDepth,
                     limits.maxDepth(), used, limits.maxCount());
         }
-        logger.debug("[LIFECYCLE] service=cp event=delegation_budget_ok rootSessionId={} childDepth={} used={} "
-                        + "maxDepth={} maxCount={}", walk.root().getId(), childDepth, used,
+        logger.debug("[LIFECYCLE] service=cp event=delegation_budget_ok phase={} rootSessionId={} childDepth={} "
+                        + "used={} maxDepth={} maxCount={}", phase, walk.root().getId(), childDepth, used,
                 limits.maxDepth(), limits.maxCount());
         return limits;
     }
@@ -187,7 +238,13 @@ public class DelegationBudgetService {
 
     private DelegationLimits effectiveLimits(String rootPrincipalId,
                                              DelegationRefusedException.DelegationAuditContext audit) {
-        JsonNode stored = readStoredPolicy(rootPrincipalId, audit);
+        return effectiveLimits(rootPrincipalId, audit, DelegationRefusedException.PHASE_POST_APPROVAL);
+    }
+
+    private DelegationLimits effectiveLimits(String rootPrincipalId,
+                                             DelegationRefusedException.DelegationAuditContext audit,
+                                             String phase) {
+        JsonNode stored = readStoredPolicy(rootPrincipalId, audit, phase);
         DelegationLimits raw;
         try {
             raw = DelegationPolicyValidator.limits(stored, DEFAULT_MAX_COUNT, DEFAULT_MAX_DEPTH);
@@ -195,7 +252,7 @@ public class DelegationBudgetService {
             // Fail closed AND keep the audit shape: the validator already answers 409
             // DELEGATION_POLICY_INVALID, but the refusal must also reach the durable agent_spawn_refused
             // line, and only DelegationRefusedException carries the audit context out of the transaction.
-            throw DelegationRefusedException.policyInvalid("policy_invalid", audit, invalid.getMessage());
+            throw DelegationRefusedException.policyInvalid("policy_invalid", audit, phase, invalid.getMessage());
         }
         int countCeiling = ceiling(CEILING_MAX_COUNT);
         int depthCeiling = ceiling(CEILING_MAX_DEPTH);
@@ -210,12 +267,14 @@ public class DelegationBudgetService {
      * so out loud). Unreadable documents fail closed, never fall back silently.
      */
     private JsonNode readStoredPolicy(String rootPrincipalId,
-                                      DelegationRefusedException.DelegationAuditContext audit) {
+                                      DelegationRefusedException.DelegationAuditContext audit,
+                                      String phase) {
         try {
             return agentPrincipalService.readDelegationPolicy(rootPrincipalId);
         } catch (CpApiException missing) {
             if (!"AGENT_PRINCIPAL_NOT_FOUND".equals(missing.getCode())) {
-                throw DelegationRefusedException.policyInvalid("policy_unreadable", audit, missing.getMessage());
+                throw DelegationRefusedException.policyInvalid("policy_unreadable", audit, phase,
+                        missing.getMessage());
             }
             logger.warn("[LIFECYCLE] service=cp event=delegation_root_principal_missing rootPrincipalId={} "
                     + "rootSessionId={} fallback=code_defaults", rootPrincipalId, audit.rootSessionId());
@@ -315,7 +374,8 @@ public class DelegationBudgetService {
                 rootPrincipalId);
         DelegationLimits limits = effectiveLimits(rootPrincipalId, audit);
         UsageTraversal traversal = traverseUsage(root.getId(), Integer.MAX_VALUE, audit);
-        JsonNode stored = readStoredPolicy(rootPrincipalId, audit);
+        JsonNode stored = readStoredPolicy(rootPrincipalId, audit,
+                DelegationRefusedException.PHASE_POST_APPROVAL);
         return new DelegationUsage(root.getId().toString(), traversal.usedSessions(), limits.maxCount(),
                 traversal.deepestLiveDepth(), limits.maxDepth(), rootPrincipalId, principalName(rootPrincipalId),
                 stored == null ? "code-defaults" : "subject", limits.maxCount() == 0);

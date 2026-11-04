@@ -33,13 +33,16 @@ public class AgentSpawnAuthorizationService {
     private final ApprovalService approvals;
     private final SseEmitterManager sseManager;
     private final AuditLogger audit;
+    private final DelegationBudgetService delegationBudget;
 
     public AgentSpawnAuthorizationService(PolicyEngine policy, ApprovalService approvals,
-                                          SseEmitterManager sseManager, AuditLogger audit) {
+                                          SseEmitterManager sseManager, AuditLogger audit,
+                                          DelegationBudgetService delegationBudget) {
         this.policy = policy;
         this.approvals = approvals;
         this.sseManager = sseManager;
         this.audit = audit;
+        this.delegationBudget = delegationBudget;
     }
 
     /**
@@ -102,6 +105,22 @@ public class AgentSpawnAuthorizationService {
 
     private GateResult createPendingApproval(ChatSubmissionService.SpawnInvocation invocation) {
         String tool = ChatSubmissionService.SPAWN_TOOL_NAME;
+        // PLAN-0663 M1: a budget check is a "can this happen" fact, an approval is a "may this
+        // happen" decision. Evaluate the budget BEFORE parking an approval request, so a human is
+        // never asked to approve a spawn the current snapshot already forbids (and so no modal is
+        // left on screen for a spawn that cannot run). This is a read-only precheck — the
+        // authoritative, locked check still runs in createSpawnFromParent (TOCTOU).
+        try {
+            delegationBudget.precheckBeforeApproval(invocation.parentSessionId(), invocation.parentRunId(),
+                    invocation.toolCallId());
+        } catch (DelegationRefusedException refused) {
+            // The refusal never enters createSpawnFromParent's transaction, so this is its single
+            // durable home (INV-7). Detail carries phase=precheck and no prompt/arguments.
+            audit.recordDurableChange(invocation.userId(), invocation.workspaceId(), "agent_spawn_refused",
+                    "chat_session", invocation.parentSessionId(), refused.auditDetail());
+            audit.record(invocation.parentSessionId(), tool, "tool_error", refused.getCode());
+            throw refused;
+        }
         ApprovalService.GateApprovalOutcome outcome;
         try {
             outcome = approvals.recordGatePending(invocation.parentSessionId(), invocation.parentRunId(),
