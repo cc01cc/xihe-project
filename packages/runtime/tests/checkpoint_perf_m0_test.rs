@@ -556,3 +556,142 @@ async fn m0_s2_code_repo_5k() {
         ),
     );
 }
+
+/// P2.4 gate 4: independent 10k self-store fixture, incremental capture and
+/// self-vs-git restore ratio. Run with `--ignored` (large disk/time fixture).
+#[tokio::test]
+#[ignore = "P2.4 10k self performance/RSS fixture; run with --ignored --nocapture"]
+async fn m0_s6_self_10k() {
+    use xihe_runtime::checkpoint::CheckpointStorageMode;
+    use xihe_runtime::checkpoint_store::refs;
+    use xihe_runtime::checkpoint_store::restore_full::{FullRestoreOptions, restore_full};
+    use xihe_runtime::checkpoint_store::store::Store;
+
+    let fixture = Fixture::new().await;
+    let store_root = fixture.temp.path().join("self-store");
+    let mut self_engine = ShadowGit::new(fixture.temp.path());
+    self_engine
+        .configure_checkpoint_storage(CheckpointStorageMode::Self_, &store_root)
+        .expect("self store");
+    let store = Store::open(&store_root).expect("store");
+    fixture.write_bytes("seed.txt", 16);
+    let _ = self_engine
+        .capture(WS, "m0-s6-seed", "perf-m0", "m0-s6-seed-call", false)
+        .await
+        .expect("seed capture");
+
+    let small = 7_500usize;
+    let medium = 1_800usize;
+    let large = 600usize;
+    let oversized = 100usize;
+    for index in 0..small {
+        let size = 200 + (index % 38) * 100;
+        fixture.write_bytes(&format!("src/small/s{index:05}.ts"), size);
+    }
+    for index in 0..medium {
+        let size = 4_096 + (index % 60) * 1_024;
+        fixture.write_bytes(&format!("src/medium/m{index:05}.ts"), size);
+    }
+    for index in 0..large {
+        let size = 65_536 + (index % 20) * 32_768;
+        if index % 10 == 0 {
+            fixture.write_incompressible(&format!("assets/large/l{index:05}.bin"), size);
+        } else {
+            fixture.write_bytes(&format!("assets/large/l{index:05}.bin"), size);
+        }
+    }
+    for index in 0..oversized {
+        let size = 2 * 1_024 * 1_024 + (index % 4) * 1_024 * 1_024;
+        fixture.write_incompressible(&format!("assets/oversized/o{index:05}.bin"), size);
+    }
+
+    let first_started = Instant::now();
+    let first = self_engine
+        .capture(WS, "m0-s6-first", "perf-m0", "m0-s6-first-call", false)
+        .await
+        .expect("first capture");
+    let first_ms = first_started.elapsed().as_millis();
+    assert!(!first.no_change);
+
+    // Incremental: touch 100 files (~1%).
+    for index in 0..100 {
+        fixture.write_bytes(&format!("src/small/s{index:05}.ts"), 512 + index);
+    }
+    let incr_started = Instant::now();
+    let incr = self_engine
+        .capture(WS, "m0-s6-incr", "perf-m0", "m0-s6-incr-call", false)
+        .await
+        .expect("incremental capture");
+    let incr_ms = incr_started.elapsed().as_millis();
+    assert!(!incr.no_change);
+    let capture_gate_pass = incr_ms <= 2_000;
+    if !capture_gate_pass {
+        eprintln!("SELF10K_CAPTURE_GATE_FAIL incr_ms={incr_ms} limit=2000");
+    }
+    let slice_ref = incr.slice_ref.clone().expect("slice ref");
+    let record = refs::read_ref(&store, WS, &slice_ref)
+        .expect("ref read")
+        .expect("ref exists");
+
+    let self_restore_started = Instant::now();
+    let self_stats = restore_full(
+        &store,
+        WS,
+        &record.store_slice_id,
+        &fixture.ws(),
+        &FullRestoreOptions::default(),
+    )
+    .expect("self restore");
+    let self_restore_ms = self_restore_started.elapsed().as_millis();
+    assert!(self_stats.restored >= 10_000);
+    assert_eq!(self_stats.skipped_modified_deletions.len(), 0);
+
+    for index in 0..100 {
+        fixture.write_bytes(&format!("src/small/s{index:05}.ts"), 700 + index);
+    }
+    let git_engine = ShadowGit::new(fixture.temp.path());
+    let git_restore_started = Instant::now();
+    let git_restore = git_engine
+        .restore_execute(WS, &slice_ref, &[])
+        .await
+        .expect("git restore");
+    let git_restore_ms = git_restore_started.elapsed().as_millis();
+    assert_eq!(git_restore.counts.failed, 0);
+    let ratio = self_restore_ms as f64 / git_restore_ms.max(1) as f64;
+    eprintln!(
+        "[perf-m0] SELF10K files={} first_ms={first_ms} incr_ms={incr_ms} self_restore_ms={self_restore_ms} git_restore_ms={git_restore_ms} ratio={ratio:.3} self_restored={} git_restored={}",
+        small + medium + large + oversized + 1,
+        self_stats.restored,
+        git_restore.counts.restored
+    );
+    let payload = serde_json::json!({
+        "files": small + medium + large + oversized + 1,
+        "small": small,
+        "medium": medium,
+        "large": large,
+        "oversized": oversized,
+        "first_capture_ms": first_ms,
+        "incremental_capture_ms": incr_ms,
+        "capture_gate_pass": capture_gate_pass,
+        "self_restore_ms": self_restore_ms,
+        "git_restore_ms": git_restore_ms,
+        "ratio": ratio,
+        "ratio_gate_pass": ratio <= 2.2,
+        "self_restored": self_stats.restored,
+        "git_restored": git_restore.counts.restored,
+        "capture_gate_ms": 2_000,
+        "ratio_gate": 2.2,
+        "at_utc": std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or(0),
+    });
+    if let Ok(path) = std::env::var("P24_10K_OUT") {
+        std::fs::write(path, serde_json::to_vec_pretty(&payload).expect("json"))
+            .expect("write 10k evidence");
+    }
+    eprintln!(
+        "SELF10K_JSON {}",
+        serde_json::to_string(&payload).expect("payload")
+    );
+}
