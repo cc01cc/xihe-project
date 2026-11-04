@@ -148,6 +148,12 @@ node scripts/e2e-compose.mjs e2e/real --workers=1 --retries=0
 pnpm exec playwright test e2e/mock/<reviewed-spec>.spec.ts --config e2e/playwright.config.ts --update-snapshots
 ```
 
+> **Host runner CLI semantics (PLAN-0664 / BL-267, 2026-11-04)**:
+> ① `--batch=<name>` and positional spec paths are a **union** — every batch spec still runs and a positional path only appends; narrow with `--only=<full path|basename|unique substring>` (an ambiguous substring is refused with candidates instead of guessing);
+> ② a `--llm-mode` (or `XIHE_E2E_LLM_MODE`) that differs from the batch `llmMode` in `scripts/e2e-batches.jsonc` **refuses to start** (the declared lane must not be silently overridden); cross-lane debugging needs the explicit `--allow-llm-mode-override`;
+> ③ `--retries` is Playwright's per-test retry, `XIHE_E2E_RETRY_ROUNDS` is a whole-run replay (with a DB reset between rounds); when both are set the total attempts = rounds × (1 + retries); evidence runs should use `--retries=0` plus `XIHE_E2E_RETRY_ROUNDS=1` so a retry cannot mask a real failure;
+> ④ pre-flight your arguments without booting anything: `node scripts/e2e-host.mjs --batch=<name> [--only=…] --check-cli`.
+
 If Linux validation is authorized in future work, the local candidate workflow uses these two screenshot specs:
 
 ```bash
