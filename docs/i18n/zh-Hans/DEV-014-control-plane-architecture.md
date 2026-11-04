@@ -224,6 +224,28 @@ flowchart LR
 - **作用域判定统一**：`AccessScopeResolver` 的成员校验新增 `AuthzContext.canWorkspaceAdmin` 回落（round-4 P2），使「实例管理员不是工作区成员」不再被成员门挡住；回落本身不授权，后续原子评估仍决定动作是否放行。
 - **`users.role` 清零（PLAN-0610 W4a，V89 前置）**：账号实体不再映射该列，产品代码 0 读 0 写——建号（注册/管理员建号/`DataSeeder`）只写账号行，实例 tier 由 `GrantDefaultService.ensureUserDefault` 写 `USER` 绑定（本地单用户的 `SUPER_ADMIN` 仍由 `AuthController`/`DataSeeder` 的 bootstrap 路径绑定）；`GrantDefaultService.ensureInstanceTierBinding` 只补空缺、**不再按列改 tier**（tier 变更只走绑定 API 或 owner 交接）；`AgentTemplateService` 实例层模板 ACL 由 `actor.getRole()==ADMIN` 改为 `AuthzContext.isInstanceAdmin(actorId)`（round-3 P1-4），超管因 `SUPER_ADMIN` 种子含全部能力原子同样满足；`UserAdminService` 的「最后一个可用管理员」守卫改判**实例 `ADMIN`/`SUPER_ADMIN` 绑定的 ACTIVE 持有者计数**（`countActiveUsersWithInstanceRoles`）。副作用（已写进测试断言）：活跃调用者自身的管理员绑定必然计入，因此经该 API 已无法把实例降到 0 个可用管理员，`409 LAST_ADMIN` 保留为对陈旧能力/绕过写入的纵深防御。列本身与 `ck_users_role` 由 V89 删除。
 
+### 权限原子默认授予集（PLAN-0651，2026-11-05）
+
+十个原子（N1–N10）在**代码侧**的默认集（`SystemAccessRoleCatalog` 是权威，迁移 V111/V114/V115 是它的物化）。
+与 `DefaultSetAtomMatrixTest` 的硬编码矩阵**同源**——改这张表必须同批改测试，否则测试会红。
+
+| 原子 | scope | SUPER_ADMIN | ADMIN | USER | WS_OWNER | WS_EDITOR | WS_VIEWER | AGENT_DELEGATOR | agent 可持 |
+|---|---|---|---|---|---|---|---|---|---|
+| N1 `MANAGE_AGENT_PRINCIPALS` | instance | ✓ | ✓ | — | — | — | — | — | 禁 |
+| N2 `READ_INSTANCE_CONTENT` | instance | ✓ | ✓ | — | — | — | — | — | 禁 |
+| N3 `WRITE_INSTANCE_CONTENT` | instance | ✓ | ✓ | — | — | — | — | — | 禁 |
+| N4 `VIEW_SECRET_CONTENT` | instance | ✓ | ✓ | — | — | — | — | — | 禁 |
+| N5 `MANAGE_SKILL_LIBRARY` | both | ✓ | ✓ | — | ✓ | — | — | — | **可** |
+| N6 `MANAGE_PROVIDER_CONNECTIONS` | both | ✓ | ✓ | — | ✓ | ✓ | — | — | **可** |
+| N7 `USE_WORKSPACE_RUNTIME` | both | ✓ | ✓ | — | ✓ | ✓ | ✓ | — | **可** |
+| N8 `MANAGE_WORKSPACE_RUNTIME` | both | ✓ | ✓ | — | ✓ | — | — | — | **可** |
+| N9 `MANAGE_WORKSPACE_POLICY` | both | ✓ | ✓ | — | ✓ | ✓ | — | — | **可** |
+| N10 `MANAGE_WORKSPACE_MEMBERS` | both | ✓ | ✓ | — | — | — | — | — | 禁 |
+
+**agent principal 禁授集合 = 16 项**（2026-11-05 裁定）：N1/N2/N3/N4/N10 + 三个凭证原子 + `CREATE_ACCOUNT`/`CREATE_TEMPLATE`/`MANAGE_ROLES`/`CREATE_OWN_AGENT` + `MANAGE_WORKSPACE_AGENTS` + 三个能力原子。
+判据一句话：**实例域的东西 agent 不能碰；工作区域的东西由 owner 通过角色授予**（N5–N9 因此**可授**——禁掉会让所有 `WS_EDITOR` 绑定非法，且 agent 无法跑代码）。
+唯一真相是 `PermissionAtomCatalog.ATOMS` 上每个原子的 `agentPrincipalForbidden` 标记，聚合函数从它派生（别再维护第二份清单）。
+
 ## 8f. 上下文模板与 Session 绑定（PLAN-0414）
 
 - **配置域 `context-templates`**：仿 `agent-templates` 走显式分层读写（`ConfigService` 三层白名单注册、merged `effective()` 拒绝、非 ADMIN 读 instance 层 403、写入经 `ContextTemplateService` 追加式校验）；schema = `config-schemas/context-templates.json`，导入样例见 `config.import.example.jsonc` 注释块。与 `agent-templates`（Agent 角色卡）是不同概念，路由/键名区分。
