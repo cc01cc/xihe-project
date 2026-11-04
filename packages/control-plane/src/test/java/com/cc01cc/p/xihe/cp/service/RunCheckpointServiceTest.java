@@ -122,7 +122,8 @@ class RunCheckpointServiceTest {
                 com.cc01cc.p.xihe.cp.repository.WorkspaceRootRepository.class);
         service = new RunCheckpointService(repository, client, chatRunRepository,
                 org.mockito.Mockito.mock(com.cc01cc.p.xihe.cp.repository.SessionRepository.class),
-                workspaceRootRepository, new ObjectMapper(), sseManager);
+                workspaceRootRepository, new ObjectMapper(), sseManager,
+                mock(WorkspaceNestedReposService.class));
     }
 
     @AfterEach
@@ -592,7 +593,7 @@ class RunCheckpointServiceTest {
         return new RuntimeCheckpointClient.RevertPreview(RuntimeCheckpointClient.Outcome.OK, SLICE_REF,
                 new RuntimeCheckpointClient.PreviewCounts(1, 0, 0),
                 List.of(new RuntimeCheckpointClient.PreviewEntry("src/a.txt", "restore", "planned", null)),
-                false, Map.of(), null);
+                false, Map.of(), null, List.of());
     }
 
     private RuntimeCheckpointClient.RevertResult revertOk(int restored, int failed, int suspectCount) {
@@ -609,7 +610,7 @@ class RunCheckpointServiceTest {
         }
         return new RuntimeCheckpointClient.RevertResult(RuntimeCheckpointClient.Outcome.OK, SLICE_REF,
                 new RuntimeCheckpointClient.ExecuteCounts(restored, 0, failed),
-                entries, 12L, suspects, Map.of(), null);
+                entries, 12L, suspects, List.of(), Map.of(), null);
     }
 
     @Test
@@ -683,13 +684,13 @@ class RunCheckpointServiceTest {
         assertEquals(RunCheckpointService.Gate.RUN_ACTIVE, preview.gate());
         assertEquals("RUN_ACTIVE", preview.reason());
 
-        RunCheckpointService.RevertOutcome revert = service.revert(WORKSPACE_ID, SLICE_REF, List.of());
+        RunCheckpointService.RevertOutcome revert = service.revert(WORKSPACE_ID, SLICE_REF, List.of(), false, List.of());
         assertEquals(RunCheckpointService.Gate.RUN_ACTIVE, revert.gate());
         assertEquals("RUN_ACTIVE", revert.reason());
 
         // The gate precedes slice resolution: no Runtime call is made.
         verify(client, never()).previewRevert(anyString(), anyString());
-        verify(client, never()).revert(anyString(), anyString(), any());
+        verify(client, never()).revert(anyString(), anyString(), any(), anyBoolean(), any());
     }
 
     /**
@@ -708,7 +709,7 @@ class RunCheckpointServiceTest {
         assertEquals(RunCheckpointService.Gate.RUN_ACTIVE, preview.gate());
         assertEquals("RUN_ACTIVE", preview.reason());
 
-        RunCheckpointService.RevertOutcome revert = service.revert(WORKSPACE_ID, SLICE_REF, List.of());
+        RunCheckpointService.RevertOutcome revert = service.revert(WORKSPACE_ID, SLICE_REF, List.of(), false, List.of());
         assertEquals(RunCheckpointService.Gate.RUN_ACTIVE, revert.gate());
         assertEquals("RUN_ACTIVE", revert.reason());
 
@@ -722,7 +723,7 @@ class RunCheckpointServiceTest {
                     "both in-flight runs must be inside the frozen non-terminal set: " + queried);
         }
         verify(client, never()).previewRevert(anyString(), anyString());
-        verify(client, never()).revert(anyString(), anyString(), any());
+        verify(client, never()).revert(anyString(), anyString(), any(), anyBoolean(), any());
     }
 
     @Test
@@ -743,7 +744,7 @@ class RunCheckpointServiceTest {
         seedCapturedRow();
         when(client.previewRevert(WORKSPACE_ID, SLICE_REF)).thenReturn(
                 new RuntimeCheckpointClient.RevertPreview(RuntimeCheckpointClient.Outcome.NOT_FOUND,
-                        null, null, List.of(), false, Map.of(), "http_404"));
+                        null, null, List.of(), false, Map.of(), "http_404", List.of()));
 
         RunCheckpointService.PreviewOutcome first = service.previewRevert(WORKSPACE_ID, SLICE_REF);
         RunCheckpointService.PreviewOutcome second = service.previewRevert(WORKSPACE_ID, SLICE_REF);
@@ -790,11 +791,11 @@ class RunCheckpointServiceTest {
         seedCapturedRow();
         when(chatRunRepository.findById(UUID.fromString(RUN_ID)))
                 .thenReturn(Optional.of(runWithStatus("succeeded")));
-        when(client.revert(WORKSPACE_ID, SLICE_REF, List.of(RAW_REQUEST_MARKER)))
+        when(client.revert(WORKSPACE_ID, SLICE_REF, List.of(RAW_REQUEST_MARKER), false, List.of()))
                 .thenReturn(revertOk(2, 0, 0));
 
         RunCheckpointService.RevertOutcome outcome = service.revert(
-                WORKSPACE_ID, SLICE_REF, List.of(RAW_REQUEST_MARKER));
+                WORKSPACE_ID, SLICE_REF, List.of(RAW_REQUEST_MARKER), false, List.of());
 
         assertEquals(RunCheckpointService.Gate.OK, outcome.gate());
         RunCheckpoint row = rows.get(0);
@@ -831,11 +832,11 @@ class RunCheckpointServiceTest {
     @Test
     void revertPartialRecordsPartialStateAndCappedSuspects() {
         seedCapturedRow();
-        when(client.revert(WORKSPACE_ID, SLICE_REF, List.of("c0.txt", RAW_REQUEST_MARKER)))
+        when(client.revert(WORKSPACE_ID, SLICE_REF, List.of("c0.txt", RAW_REQUEST_MARKER), false, List.of()))
                 .thenReturn(revertOk(1, 2, 25));
 
         RunCheckpointService.RevertOutcome outcome = service.revert(
-                WORKSPACE_ID, SLICE_REF, List.of("c0.txt", RAW_REQUEST_MARKER));
+                WORKSPACE_ID, SLICE_REF, List.of("c0.txt", RAW_REQUEST_MARKER), false, List.of());
 
         assertEquals(RunCheckpointService.Gate.OK, outcome.gate());
         RunCheckpoint row = rows.get(0);
@@ -853,9 +854,9 @@ class RunCheckpointServiceTest {
     @Test
     void revertWithFailuresStoresDomainSummary() {
         seedCapturedRow();
-        when(client.revert(WORKSPACE_ID, SLICE_REF, List.of())).thenReturn(revertOk(1, 2, 0));
+        when(client.revert(WORKSPACE_ID, SLICE_REF, List.of(), false, List.of())).thenReturn(revertOk(1, 2, 0));
 
-        RunCheckpointService.RevertOutcome outcome = service.revert(WORKSPACE_ID, SLICE_REF, List.of());
+        RunCheckpointService.RevertOutcome outcome = service.revert(WORKSPACE_ID, SLICE_REF, List.of(), false, List.of());
 
         assertEquals(RunCheckpointService.Gate.OK, outcome.gate());
         RunCheckpoint row = rows.get(0);
@@ -867,24 +868,24 @@ class RunCheckpointServiceTest {
     void revertMapsRuntimeFailureGates() {
         RunCheckpoint row = seedCapturedRow();
 
-        when(client.revert(WORKSPACE_ID, SLICE_REF, List.of())).thenReturn(
+        when(client.revert(WORKSPACE_ID, SLICE_REF, List.of(), false, List.of())).thenReturn(
                 new RuntimeCheckpointClient.RevertResult(
                         RuntimeCheckpointClient.Outcome.TYPE_CHANGES_UNACKNOWLEDGED,
-                        null, null, List.of(), 0L, List.of(), Map.of(),
+                        null, null, List.of(), 0L, List.of(), List.of(), Map.of(),
                         "CHECKPOINT_TYPE_CHANGES_UNACKNOWLEDGED"));
-        RunCheckpointService.RevertOutcome conflicts = service.revert(WORKSPACE_ID, SLICE_REF, List.of());
+        RunCheckpointService.RevertOutcome conflicts = service.revert(WORKSPACE_ID, SLICE_REF, List.of(), false, List.of());
         assertEquals(RunCheckpointService.Gate.TYPE_CHANGES_UNACKNOWLEDGED, conflicts.gate());
 
-        when(client.revert(WORKSPACE_ID, SLICE_REF, List.of())).thenReturn(
+        when(client.revert(WORKSPACE_ID, SLICE_REF, List.of(), false, List.of())).thenReturn(
                 new RuntimeCheckpointClient.RevertResult(RuntimeCheckpointClient.Outcome.RESTORE_LOCKED,
-                        null, null, List.of(), 0L, List.of(), Map.of(), "CHECKPOINT_RESTORE_LOCKED"));
-        RunCheckpointService.RevertOutcome locked = service.revert(WORKSPACE_ID, SLICE_REF, List.of());
+                        null, null, List.of(), 0L, List.of(), List.of(), Map.of(), "CHECKPOINT_RESTORE_LOCKED"));
+        RunCheckpointService.RevertOutcome locked = service.revert(WORKSPACE_ID, SLICE_REF, List.of(), false, List.of());
         assertEquals(RunCheckpointService.Gate.RESTORE_LOCKED, locked.gate());
 
-        when(client.revert(WORKSPACE_ID, SLICE_REF, List.of())).thenReturn(
+        when(client.revert(WORKSPACE_ID, SLICE_REF, List.of(), false, List.of())).thenReturn(
                 new RuntimeCheckpointClient.RevertResult(RuntimeCheckpointClient.Outcome.TRANSPORT,
-                        null, null, List.of(), 0L, List.of(), Map.of(), "unreachable"));
-        RunCheckpointService.RevertOutcome transport = service.revert(WORKSPACE_ID, SLICE_REF, List.of());
+                        null, null, List.of(), 0L, List.of(), List.of(), Map.of(), "unreachable"));
+        RunCheckpointService.RevertOutcome transport = service.revert(WORKSPACE_ID, SLICE_REF, List.of(), false, List.of());
         assertEquals(RunCheckpointService.Gate.UNAVAILABLE, transport.gate());
         assertEquals(RunCheckpointService.REASON_UNAVAILABLE, transport.reason());
         assertEquals(RunCheckpoint.STATE_CAPTURED, row.getState(), "failed reverts leave the row captured");
@@ -893,11 +894,11 @@ class RunCheckpointServiceTest {
 
     @Test
     void revertOnMissingRowNeverCallsRuntime() {
-        RunCheckpointService.RevertOutcome outcome = service.revert(WORKSPACE_ID, SLICE_REF, List.of());
+        RunCheckpointService.RevertOutcome outcome = service.revert(WORKSPACE_ID, SLICE_REF, List.of(), false, List.of());
 
         assertEquals(RunCheckpointService.Gate.NOT_AVAILABLE, outcome.gate());
         assertEquals(RunCheckpointService.REASON_MISSING, outcome.reason());
-        verify(client, never()).revert(anyString(), anyString(), any());
+        verify(client, never()).revert(anyString(), anyString(), any(), anyBoolean(), any());
     }
 
     // ── PLAN-0639 D39-3: a soft-deleted root freezes execute-revert, preview stays readable ──
@@ -914,7 +915,7 @@ class RunCheckpointServiceTest {
 
     private RuntimeCheckpointClient.RevertPreview previewOkDeletedRoot() {
         return new RuntimeCheckpointClient.RevertPreview(RuntimeCheckpointClient.Outcome.OK, SLICE_REF,
-                new RuntimeCheckpointClient.PreviewCounts(2, 0, 0), List.of(), false, Map.of(), null);
+                new RuntimeCheckpointClient.PreviewCounts(2, 0, 0), List.of(), false, Map.of(), null, List.of());
     }
 
     @Test
@@ -924,12 +925,12 @@ class RunCheckpointServiceTest {
         when(workspaceRootRepository.findById(UUID.fromString(SECONDARY_ROOT_ID)))
                 .thenReturn(Optional.of(rootRow(SECONDARY_ROOT_ID, Instant.now())));
 
-        RunCheckpointService.RevertOutcome outcome = service.revert(WORKSPACE_ID, SLICE_REF, List.of());
+        RunCheckpointService.RevertOutcome outcome = service.revert(WORKSPACE_ID, SLICE_REF, List.of(), false, List.of());
 
         assertEquals(RunCheckpointService.Gate.ROOT_DELETED, outcome.gate());
         assertEquals("ROOT_DELETED", outcome.reason());
         assertEquals(SECONDARY_ROOT_ID, outcome.details().get("rootId"));
-        verify(client, never()).revert(anyString(), anyString(), anyString(), any());
+        verify(client, never()).revert(anyString(), anyString(), anyString(), any(), anyBoolean(), any());
     }
 
     @Test
@@ -938,10 +939,10 @@ class RunCheckpointServiceTest {
         row.setRootId(SECONDARY_ROOT_ID);
         when(workspaceRootRepository.findById(UUID.fromString(SECONDARY_ROOT_ID)))
                 .thenReturn(Optional.empty());
-        when(client.revert(WORKSPACE_ID, SECONDARY_ROOT_ID, SLICE_REF, List.of()))
+        when(client.revert(WORKSPACE_ID, SECONDARY_ROOT_ID, SLICE_REF, List.of(), false, List.of()))
                 .thenReturn(revertOk(1, 0, 0));
 
-        RunCheckpointService.RevertOutcome outcome = service.revert(WORKSPACE_ID, SLICE_REF, List.of());
+        RunCheckpointService.RevertOutcome outcome = service.revert(WORKSPACE_ID, SLICE_REF, List.of(), false, List.of());
 
         assertEquals(RunCheckpointService.Gate.OK, outcome.gate(),
                 "a root without a workspace_roots row predates root CRUD and must keep pre-M8 revert");

@@ -11,6 +11,7 @@ import com.cc01cc.p.xihe.cp.entity.RunCheckpoint;
 import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
+import com.cc01cc.p.xihe.cp.entity.WorkspaceRoot;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
 import com.cc01cc.p.xihe.cp.integration.TestDataFactory;
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
@@ -18,6 +19,7 @@ import com.cc01cc.p.xihe.cp.repository.RunCheckpointRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
+import com.cc01cc.p.xihe.cp.repository.WorkspaceRootRepository;
 import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeEach;
@@ -60,6 +62,9 @@ class RunCheckpointControllerTest extends AbstractH2Test {
     private static final String SLICE_REF = "refs/xihe/slices/1757980000000-ab12cd";
     private static final String RAW_REQUEST_MARKER = "secret-revert-request-marker";
 
+    /** PLAN-0641 M4 T5.2: a child root declared after the seeded slice was captured. */
+    private static final String CHILD_ROOT_ID = "66666666-6666-4666-8666-666666666666";
+
     @Autowired
     private UserRepository userRepository;
     @Autowired
@@ -72,6 +77,11 @@ class RunCheckpointControllerTest extends AbstractH2Test {
     private ChatRunRepository chatRunRepository;
     @Autowired
     private RunCheckpointRepository checkpointRepository;
+
+    @Autowired
+    private com.cc01cc.p.xihe.cp.repository.AuditLogRepository auditLogRepository;
+    @Autowired
+    private WorkspaceRootRepository workspaceRootRepository;
     @Autowired
     private JwtTokenProvider jwtTokenProvider;
     @LocalServerPort
@@ -150,6 +160,7 @@ class RunCheckpointControllerTest extends AbstractH2Test {
     private String workspaceId;
     private String sessionId;
     private String runId;
+    private String workspaceHostPath;
 
     @BeforeEach
     void setUpCheckpointFixtures() {
@@ -165,6 +176,7 @@ class RunCheckpointControllerTest extends AbstractH2Test {
         userId = user.getId().toString();
         Workspace workspace = workspaceFixture.createOwnedWorkspace("cp-test-workspace", userId);
         workspaceId = workspace.getId().toString();
+        workspaceHostPath = workspace.getHostPath();
         workspaceFixture.bindWorkspaceRole(workspaceId, userId, WorkspaceRole.OWNER);
         authToken = jwtTokenProvider.createAccessToken(userId, email, "USER", workspaceId, 0);
 
@@ -320,6 +332,131 @@ class RunCheckpointControllerTest extends AbstractH2Test {
 
         assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode());
         assertEquals(0, calls("revert"));
+    }
+
+    @Test
+    void revertRefusesDirtyUndeclaredNestedRepoWithForceHint() {
+        // PLAN-0641 M3 T4.2: the Runtime answers 409 NESTED_REPO_DIRTY with the repo roots;
+        // the CP passes code + nestedRepos through so the UI can offer force=true.
+        seedCheckpoint(RunCheckpoint.STATE_CAPTURED);
+        RESPONSES.put("revert", new AtomicReference<>(json(409,
+                "{\"code\":\"NESTED_REPO_DIRTY\",\"nestedRepos\":[\"vendor/lib\"]}")));
+
+        ResponseEntity<Map> response = post("/api/v1/workspaces/" + workspaceId + "/checkpoints/revert",
+                Map.of("sliceRef", SLICE_REF, "acknowledgeTypeChanges", List.of("a.txt")));
+
+        assertEquals(HttpStatus.CONFLICT, response.getStatusCode());
+        assertEquals("NESTED_REPO_DIRTY", response.getBody().get("code"));
+        assertEquals(List.of("vendor/lib"), response.getBody().get("nestedRepos"));
+        assertEquals(1, calls("revert"));
+        RunCheckpoint row = checkpointRepository.findByWorkspaceIdAndSliceRef(workspaceId, SLICE_REF)
+                .orElseThrow();
+        assertEquals(RunCheckpoint.REVERT_NONE, row.getRevertState(), "a gated revert leaves the row untouched");
+    }
+
+    @Test
+    void revertRefusesUnacknowledgedHeadDriftWithNestedRepos() {
+        // Ruling (a): every head-drifted repo must be listed in acknowledgeNestedRepos.
+        seedCheckpoint(RunCheckpoint.STATE_CAPTURED);
+        RESPONSES.put("revert", new AtomicReference<>(json(409,
+                "{\"code\":\"NESTED_REPO_UNCONFIRMED\",\"nestedRepos\":[\"vendor/lib\"]}")));
+
+        ResponseEntity<Map> response = post("/api/v1/workspaces/" + workspaceId + "/checkpoints/revert",
+                Map.of("sliceRef", SLICE_REF, "acknowledgeTypeChanges", List.of(),
+                        "acknowledgeNestedRepos", List.of("vendor/lib")));
+
+        assertEquals(HttpStatus.CONFLICT, response.getStatusCode(), String.valueOf(response.getBody()));
+        assertEquals("NESTED_REPO_UNCONFIRMED", response.getBody().get("code"));
+        assertEquals(List.of("vendor/lib"), response.getBody().get("nestedRepos"));
+        assertEquals(1, calls("revert"));
+    }
+
+    @Test
+    void forcedRevertOverDirtyNestedRepoPassesAndWritesTheForceAuditRow() {
+        // T4.2: force overrides the dirty gate; the cross-root impact travels in the body and
+        // the forced decision is durably audited with the repo roots (never file content).
+        seedCheckpoint(RunCheckpoint.STATE_CAPTURED);
+        RESPONSES.put("revert", new AtomicReference<>(json(200,
+                "{\"sliceRef\":\"" + SLICE_REF + "\","
+                        + "\"counts\":{\"restored\":1,\"deleted\":0,\"failed\":0},"
+                        + "\"entries\":[{\"path\":\"vendor/lib/a.txt\",\"outcome\":\"restored\"}],"
+                        + "\"durationMs\":7,\"suspects\":[],"
+                        + "\"nestedRepoAffected\":[{\"repoPath\":\"vendor/lib\",\"kind\":\"git\","
+                        + "\"dirty\":true,\"headMoved\":false}]}")));
+
+        ResponseEntity<Map> response = post("/api/v1/workspaces/" + workspaceId + "/checkpoints/revert",
+                Map.of("sliceRef", SLICE_REF, "acknowledgeTypeChanges", List.of(), "force", true));
+
+        assertEquals(HttpStatus.OK, response.getStatusCode(), String.valueOf(response.getBody()));
+        List<?> affected = (List<?>) response.getBody().get("nestedRepoAffected");
+        assertEquals(1, affected.size());
+        assertEquals("vendor/lib", ((Map<?, ?>) affected.get(0)).get("repoPath"));
+        assertTrue(String.valueOf(response.getBody().get("descendantsAffected")).contains("[]"),
+                "a single-root revert has no cross-root descendants");
+        List<com.cc01cc.p.xihe.cp.entity.AuditLog> auditRows = auditLogRepository
+                .findByWorkspaceIdOrderByCreatedAtDesc(workspaceId).stream()
+                .filter(row -> "nested_repo_force_revert".equals(row.getAction()))
+                .toList();
+        assertEquals(1, auditRows.size(), "the forced revert must leave exactly one audit row");
+        String detail = auditRows.get(0).getDetails();
+        assertTrue(detail.contains("repos=[vendor/lib]"), "audit detail lists the dirty repo roots: " + detail);
+        assertTrue(detail.contains("sliceRef=" + SLICE_REF), "audit detail names the slice");
+    }
+
+    /** Seeds the primary root row plus one child root declared under it (both active). */
+    private void seedPrimaryAndChildRoots() {
+        workspaceRootRepository.saveAndFlush(new WorkspaceRoot(UUID.fromString(workspaceId),
+                UUID.fromString(workspaceId), 0, workspaceHostPath, "user:" + userId));
+        workspaceRootRepository.saveAndFlush(new WorkspaceRoot(UUID.fromString(CHILD_ROOT_ID),
+                UUID.fromString(workspaceId), 1, workspaceHostPath + "/vendor/lib",
+                "user:" + userId));
+    }
+
+    @Test
+    void revertRefusesALegacySliceCapturedBeforeAChildRootWasDeclared() {
+        // PLAN-0641 M4 T5.2 / B4=(a): the slice predates the child declaration, so this root's
+        // shadow slice still carries the child path flat; a restore would write into the child
+        // root's host directory. The gate answers before any Runtime call and lists the roots.
+        seedCheckpoint(RunCheckpoint.STATE_CAPTURED);
+        seedPrimaryAndChildRoots();
+
+        ResponseEntity<Map> response = post("/api/v1/workspaces/" + workspaceId
+                + "/checkpoints/revert",
+                Map.of("sliceRef", SLICE_REF, "acknowledgeTypeChanges", List.of()));
+
+        assertEquals(HttpStatus.CONFLICT, response.getStatusCode(),
+                String.valueOf(response.getBody()));
+        assertEquals("CROSS_ROOT_LEGACY_SLICE", response.getBody().get("code"));
+        List<?> legacyRoots = (List<?>) response.getBody().get("legacyRoots");
+        assertEquals(1, legacyRoots.size(), String.valueOf(response.getBody()));
+        Map<?, ?> child = (Map<?, ?>) legacyRoots.get(0);
+        assertEquals(CHILD_ROOT_ID, child.get("rootId"));
+        assertEquals("vendor/lib", child.get("path"));
+        assertEquals(0, calls("revert"), "the CP-side boundary gate never reaches Runtime");
+        RunCheckpoint row = checkpointRepository.findByWorkspaceIdAndSliceRef(workspaceId, SLICE_REF)
+                .orElseThrow();
+        assertEquals(RunCheckpoint.REVERT_NONE, row.getRevertState(),
+                "a refused legacy slice leaves the bookkeeping untouched");
+    }
+
+    @Test
+    void revertAllowsASliceCapturedAfterTheChildRootDeclaration() {
+        // Same root set, but the slice is captured strictly after the declaration: the parent
+        // capture already excluded the child path, so the restore is a normal per-root revert.
+        seedCheckpoint(RunCheckpoint.STATE_CAPTURED);
+        seedPrimaryAndChildRoots();
+        RunCheckpoint row = checkpointRepository.findByWorkspaceIdAndSliceRef(workspaceId, SLICE_REF)
+                .orElseThrow();
+        row.setCapturedAt(Instant.now().plusSeconds(3600));
+        checkpointRepository.saveAndFlush(row);
+        RESPONSES.put("revert", new AtomicReference<>(json(200, revertBody())));
+
+        ResponseEntity<Map> response = post("/api/v1/workspaces/" + workspaceId
+                + "/checkpoints/revert",
+                Map.of("sliceRef", SLICE_REF, "acknowledgeTypeChanges", List.of()));
+
+        assertEquals(HttpStatus.OK, response.getStatusCode(), String.valueOf(response.getBody()));
+        assertEquals(1, calls("revert"));
     }
 
     @Test

@@ -176,6 +176,7 @@ const messages = {
             panelMembers: "成员",
             panelContext: "会话设置",
             panelAgents: "智能体",
+            panelDelegation: "委派",
             diffTabTimeline: "切片时间线",
             diffTabPending: "待提交",
             diffDifferenceNote: "两个列表可能不一致：切片变更与待提交状态来源不同，二者不会合并。",
@@ -227,7 +228,7 @@ const messages = {
             rootEmpty: "该根暂无文件",
             rootLoadFailed: "该根文件列表加载失败",
             // PLAN-0641 T2.5: undeclared nested git repositories (discovery read face).
-            nestedReposTitle: "发现未声明的嵌套 Git 仓库",
+            nestedReposTitle: "未声明的嵌套 Git 仓库",
             nestedRepoDeclare: "声明为根",
             nestedRepoDeclareYes: "确认声明",
             nestedRepoDeclareCancel: "取消",
@@ -255,6 +256,7 @@ const messages = {
             toggleDiff: "打开或收起变更面板",
             toggleMonitor: "打开或收起监控面板",
             toggleMembers: "打开或收起成员面板",
+            toggleDelegation: "打开或收起委派面板",
             participantsEmptyNoSession: "先选择一个会话，再查看它的参与者。",
             participantsEmptyNone: "这个会话还没有参与者。",
             participantPrimaryImmutable: "主智能体（PRIMARY）的策略与成员关系不可修改。",
@@ -741,6 +743,20 @@ const messages = {
         },
         chat: {
             send: "发送",
+            // PLAN-0659 T1.1：run 头的折叠开关 aria-label（run 短码仅展示）。
+            runHeader: {
+                toggle: "展开或折叠 run {run}",
+            },
+            // PLAN-0659 T1.3：消息头投递语义三态（发送 / 抄送 / 被 @）。`listSeparator` 供
+            // 名单按 locale 连接（不在视图里硬编码 "、" / ", "）。
+            // 限制：TO/CC 无持久载体（BL-239），刷新后三态丢失（@ 可从正文+花名册重建）。
+            delivery: {
+                to: "发送→{name}",
+                cc: "抄送→{names}",
+                // vue-i18n 里 `@` 是 link 语法修饰符，字面量必须用 `{'@'}` 转义。
+                mentioned: "被 {'@'}：{name}",
+                listSeparator: "、",
+            },
             // 2026-11-04 DSH 式过程渲染：推理行的统一标签。
             reasoning: "思考",
             // 2026-11-04 生产力密度裁定：composer 是工具条不是聊天框 —— placeholder 用简写；
@@ -771,6 +787,14 @@ const messages = {
                 approvalPendingHint: "会话中已发起审批；批准后会用同一幂等键自动重试，无需重填",
                 approvalRejected: "委派审批被拒绝或已过期",
                 submitFailed: "委派创建失败，请稍后重试",
+                // PLAN-0659 T1.4：委派 DAG（右栏）。节点状态复用 derivedStateStatus/Outcome
+                // 两套既有词汇，这里只补面板自身文案。
+                dagTitle: "委派 DAG",
+                dagEmpty: "当前会话还没有委派子会话",
+                dagRefresh: "刷新委派图",
+                dagError: "委派图暂时加载失败（结构仍显示）",
+                dagTruncated: "节点过多，仅显示前 {count} 个",
+                dagBudget: "预算 {used}/{max} · 深度 {depth}/{maxDepth}",
             },
             // PLAN-0635 M1：`/` 命令与 `@` 提及的输入面文案（两者共用一个候选面）。
             input: {
@@ -992,7 +1016,6 @@ const messages = {
                 timeout: "超时",
                 orphaned: "孤儿",
             },
-            modelSelectorPlaceholder: "选择模型",
             modelSegmentLabel: "模型",
             providerSegmentLabel: "Provider",
             connectionSegmentLabel: "连接",
@@ -1170,6 +1193,11 @@ const messages = {
             checkpointEntryNoop: "无需动作",
             checkpointEntryTypeConflict: "类型变化冲突",
             checkpointTypeConflictAck: "我确认按目标切片处理这些路径（会替换当前路径类型）",
+            checkpointNestedRepoImpactTitle: "本次恢复会触及以下未声明嵌套仓库",
+            checkpointNestedRepoDirty: "有未提交改动",
+            checkpointNestedRepoHeadMoved: "HEAD 已漂移",
+            checkpointNestedRepoForceAck: "我确认强制覆盖这些仓库中未提交的改动",
+            checkpointNestedRepoDriftAck: "我确认这些仓库恢复后会与当前 HEAD 不同",
             checkpointResultTitle: "恢复结果",
             checkpointResultDescription: "逐项结果与疑点；可查看差异后重试失败项。",
             checkpointResultRestored: "已恢复",
@@ -2025,6 +2053,7 @@ const messages = {
         },
         validation: {
             principalNameRequired: "名称不能为空",
+            principalNameWhitespace: "名称前后不能有空格",
             principalNamePattern: "只能使用英文字母、中文汉字或数字，且不能以数字开头（不含空格）",
             nameAllowed: "允许：英文字母 / 中文汉字 / 数字，且不能以数字开头",
         },
@@ -2403,6 +2432,7 @@ const messages = {
             panelMembers: "Members",
             panelContext: "Session settings",
             panelAgents: "Agents",
+            panelDelegation: "Delegation",
             diffTabTimeline: "Slice timeline",
             diffTabPending: "Pending commit",
             diffDifferenceNote:
@@ -2489,6 +2519,7 @@ const messages = {
             toggleDiff: "Toggle the changes panel",
             toggleMonitor: "Toggle the monitor panel",
             toggleMembers: "Toggle the participants panel",
+            toggleDelegation: "Toggle the delegation panel",
             participantsEmptyNoSession: "Select a session to see its participants.",
             participantsEmptyNone: "This session has no participants yet.",
             participantPrimaryImmutable: "The PRIMARY agent policies and membership are immutable.",
@@ -3003,6 +3034,18 @@ const messages = {
         },
         chat: {
             send: "Send",
+            runHeader: {
+                toggle: "Expand or collapse run {run}",
+            },
+            // PLAN-0659 T1.3: delivery semantics (to / cc / mentioned). TO/CC have no durable
+            // carrier yet (BL-239), so they disappear after a reload; @ is rebuilt from the
+            // message body + roster.
+            delivery: {
+                to: "To → {name}",
+                cc: "Cc → {names}",
+                mentioned: "Mentioned: {name}",
+                listSeparator: ", ",
+            },
             reasoning: "Reasoning",
             delegation: {
                 button: "Delegate",
@@ -3035,6 +3078,14 @@ const messages = {
                     "An approval was opened in this session; granting it replays the same idempotency key — no need to refill",
                 approvalRejected: "The delegation approval was rejected or expired",
                 submitFailed: "Could not create the delegation, try again later",
+                // PLAN-0659 T1.4: delegation DAG (right dock). Node statuses reuse the existing
+                // derivedStateStatus/Outcome vocabulary; only panel copy is added here.
+                dagTitle: "Delegation DAG",
+                dagEmpty: "This session has no delegated child sessions yet",
+                dagRefresh: "Refresh the delegation graph",
+                dagError: "The delegation graph could not be loaded (structure is still shown)",
+                dagTruncated: "Too many nodes — showing the first {count}",
+                dagBudget: "Budget {used}/{max} · depth {depth}/{maxDepth}",
             },
             placeholder: "Message · Enter to send · Shift+Enter for newline",
             // PLAN-0635 M1: input-surface copy for `/` commands and `@` mentions (one shared menu).
@@ -3260,7 +3311,6 @@ const messages = {
                 timeout: "Timeout",
                 orphaned: "Orphaned",
             },
-            modelSelectorPlaceholder: "Select Model",
             modelSegmentLabel: "Model",
             providerSegmentLabel: "Provider",
             connectionSegmentLabel: "Connection",
@@ -3450,6 +3500,14 @@ const messages = {
             checkpointEntryDelete: "Delete",
             checkpointEntryNoop: "No action",
             checkpointEntryTypeConflict: "Type change conflict",
+            checkpointNestedRepoImpactTitle:
+                "This restore touches the following undeclared nested repositories",
+            checkpointNestedRepoDirty: "Uncommitted changes",
+            checkpointNestedRepoHeadMoved: "HEAD drifted",
+            checkpointNestedRepoForceAck:
+                "I confirm forcing the restore over their uncommitted changes",
+            checkpointNestedRepoDriftAck:
+                "I acknowledge these repositories will differ from their current HEAD",
             checkpointTypeConflictAck:
                 "I confirm these paths should use the target slice type (the current type will be replaced)",
             checkpointResultTitle: "Restore result",
@@ -4353,6 +4411,7 @@ const messages = {
         },
         validation: {
             principalNameRequired: "A name is required",
+            principalNameWhitespace: "No leading or trailing spaces allowed",
             principalNamePattern:
                 "Use only letters, Chinese characters or digits, and do not start with a digit (no spaces)",
             nameAllowed:

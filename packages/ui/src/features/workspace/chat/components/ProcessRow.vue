@@ -9,8 +9,8 @@
  * - 纯展示组件：不做 i18n、不碰业务状态；`expanded` 可 v-model 受控（ToolCallCard 用它保留
  *   "有 diagnostics 时自动展开" 的 PLAN-0349/0649 行为）。
  *
- * 前瞻（Step 2 铺路，本批**不渲染**）：`actor` 预留给 run 分组 / actor 徽标，届时由主线程
- * 渲染，避免再改组件签名。
+ * 前瞻（Step 2 已落地）：`actor` = 该过程行的产出主体（PLAN-0659 T1.2），由主线程按
+ * 「线程是否混主体」决定传不传（单主体线程不重复刷身份）；徽标颜色中立，靠首字母 + 名字。
  */
 import { computed, useSlots } from "vue";
 import { ChevronDown } from "@lucide/vue";
@@ -19,8 +19,10 @@ import type { Component } from "vue";
 export interface ProcessRowActor {
     name: string;
     initials: string;
-    /** 角色 tone（如 AGENT/HUMAN 的颜色 class）；Step 2 使用。 */
-    tone?: string;
+    /** 主体类型：过程行只用于 DOM 断言/图标语义，不靠颜色区分（颜色中立裁定）。 */
+    kind?: "HUMAN" | "AGENT";
+    /** 参与者 id（仅供 `data-actor-principal-id` 断言/排障；UUID 不上屏）。 */
+    principalId?: string;
 }
 
 const props = withDefaults(
@@ -46,7 +48,7 @@ const props = withDefaults(
         testid?: string;
         /** 折叠按钮 testid（默认 `process-row-toggle`；ToolCallCard 传 `tool-card-toggle`）。 */
         toggleTestid?: string;
-        /** Step 2 预留：actor 徽标数据。本批不渲染。 */
+        /** PLAN-0659 T1.2：产出主体徽标（首字母 + 名字）。缺省 = 不标注（单主体线程）。 */
         actor?: ProcessRowActor;
     }>(),
     {
@@ -102,6 +104,28 @@ function toggle(): void {
                 >{{ summary }}</span
             >
             <span v-else class="min-w-0 flex-1" />
+            <!--
+                PLAN-0659 T1.2：产出主体徽标。颜色中立（不新增色值）：首字母圆点 + 名字，
+                `kind`/`principalId` 只进 data-* 供断言与排障；名字用 `title` 兜住截断。
+            -->
+            <span
+                v-if="actor"
+                class="flex min-w-0 shrink items-center gap-1"
+                :title="actor.name"
+                data-testid="process-row-actor"
+                :data-actor-principal-id="actor.principalId"
+                :data-actor-kind="actor.kind"
+            >
+                <span
+                    class="flex size-3.5 shrink-0 items-center justify-center rounded-full border bg-muted text-[8px] font-medium text-foreground"
+                    aria-hidden="true"
+                    data-testid="process-row-actor-initials"
+                    >{{ actor.initials }}</span
+                >
+                <span class="max-w-24 truncate text-[11px] text-muted-foreground">{{
+                    actor.name
+                }}</span>
+            </span>
             <span
                 v-if="meta"
                 class="shrink-0 tabular-nums text-[11px] text-muted-foreground"

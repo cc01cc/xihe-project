@@ -2871,6 +2871,30 @@ fn restore_failure_response(failure: RestoreFailure) -> Response {
             None,
             "another checkpoint restore is already running for this workspace",
         ),
+        // PLAN-0641 M3 (T4.2): undeclared nested-repo gates. The repo roots travel
+        // in `nestedRepos` so a client can list them without parsing prose.
+        RestoreFailure::NestedRepoDirty { repos } => {
+            let mut extra = serde_json::Map::new();
+            extra.insert("nestedRepos".to_string(), serde_json::json!(repos));
+            checkpoint_problem_response_with(
+                StatusCode::CONFLICT,
+                "NESTED_REPO_DIRTY",
+                None,
+                "undeclared nested repositories have uncommitted changes; commit/stash them or repeat with force=true",
+                extra,
+            )
+        }
+        RestoreFailure::NestedReposUnacknowledged { repos } => {
+            let mut extra = serde_json::Map::new();
+            extra.insert("nestedRepos".to_string(), serde_json::json!(repos));
+            checkpoint_problem_response_with(
+                StatusCode::CONFLICT,
+                "NESTED_REPO_UNCONFIRMED",
+                None,
+                "head-drifted nested repositories must be acknowledged in acknowledgeNestedRepos",
+                extra,
+            )
+        }
         RestoreFailure::Unavailable { reason, detail } => checkpoint_problem_response(
             StatusCode::SERVICE_UNAVAILABLE,
             "CHECKPOINT_UNAVAILABLE",
@@ -2945,6 +2969,12 @@ struct RestoreExecuteRequest {
     slice_ref: String,
     #[serde(rename = "acknowledgeTypeChanges", default)]
     acknowledge_type_changes: Vec<String>,
+    /// PLAN-0641 M3 (T4.2): dirty undeclared nested repos block unless forced.
+    #[serde(default)]
+    force: bool,
+    /// PLAN-0641 M3 (T4.2): every head-drifted nested repo path must be listed.
+    #[serde(rename = "acknowledgeNestedRepos", default)]
+    acknowledge_nested_repos: Vec<String>,
     /// PLAN-0639 M8: slice of one declared root; absent = primary root.
     #[serde(default, rename = "rootId")]
     root_id: Option<String>,
@@ -2978,6 +3008,8 @@ async fn restore_execute_handler(
                 request.root_id.as_deref(),
                 &request.slice_ref,
                 &request.acknowledge_type_changes,
+                request.force,
+                &request.acknowledge_nested_repos,
                 &request.paths,
             )
             .await
@@ -2993,6 +3025,8 @@ async fn restore_execute_handler(
             request.root_id.as_deref(),
             &request.slice_ref,
             &request.acknowledge_type_changes,
+            request.force,
+            &request.acknowledge_nested_repos,
             request.path_prefix.as_deref(),
         )
         .await

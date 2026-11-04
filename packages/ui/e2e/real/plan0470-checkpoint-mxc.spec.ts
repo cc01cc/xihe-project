@@ -143,7 +143,7 @@ test.describe("@host PLAN-0470 checkpoint direct-attach MXC consumer", () => {
         const principalId = await provisionWorkspaceAgentPrincipal(
             request,
             { accessToken: auth.accessToken, workspaceId: workspace.id },
-            { name: "PLAN-0470 Checkpoint Writer", actions: ["read", "write"] },
+            { name: "PLAN0470CheckpointWriter", actions: ["read", "write"] },
         );
         const sessionId = await createSessionWithPrincipal(
             request,

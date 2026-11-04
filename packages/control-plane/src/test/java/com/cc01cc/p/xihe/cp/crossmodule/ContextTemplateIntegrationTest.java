@@ -137,7 +137,7 @@ class ContextTemplateIntegrationTest extends AbstractWireMockTest {
 
         var defaultTemplate = agentTemplateService.resolveForCreation(userId, workspaceId, null);
         AgentPrincipal principal = agentPrincipalService.createPrincipal(
-                userId, "Context template test principal", null, defaultTemplate.snapshot());
+                userId, "ContextTemplateTestPrincipal", null, defaultTemplate.snapshot());
         principalId = principal.getId().toString();
         principalInstructions = principal.getTemplateSnapshot().path("systemPrompt").asText();
         principalPermissions = principal.getTemplateSnapshot().get("permissions");

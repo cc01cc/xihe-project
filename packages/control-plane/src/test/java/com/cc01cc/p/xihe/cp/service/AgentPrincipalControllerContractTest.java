@@ -84,7 +84,7 @@ class AgentPrincipalControllerContractTest extends AbstractIntegrationTest {
         fixture();
         int principalCount = principalRepository.findAll().size();
 
-        ResponseEntity<Map> denied = create(Map.of("name", "No Grant"));
+        ResponseEntity<Map> denied = create(Map.of("name", "NoGrant"));
         assertEquals(HttpStatus.FORBIDDEN, denied.getStatusCode());
         assertEquals(principalCount, principalRepository.findAll().size());
         assertEquals(0, auditCount());
@@ -92,7 +92,7 @@ class AgentPrincipalControllerContractTest extends AbstractIntegrationTest {
         addGrant("CREATE_ACCOUNT", "*");
         // PLAN-0622 D21: the tier is explicit on the wire now; an INSTANCE principal still needs no
         // workspace binding, which is exactly what this case pins.
-        ResponseEntity<Map> created = create(Map.of("name", "Bare Default Agent", "scope", "INSTANCE"));
+        ResponseEntity<Map> created = create(Map.of("name", "BareDefaultAgent", "scope", "INSTANCE"));
         assertEquals(HttpStatus.CREATED, created.getStatusCode(), String.valueOf(created.getBody()));
         Map<String, Object> body = created.getBody();
         assertNotNull(body);
@@ -109,7 +109,7 @@ class AgentPrincipalControllerContractTest extends AbstractIntegrationTest {
 
         UUID principalId = UUID.fromString((String) body.get("principalId"));
         var principal = principalRepository.findById(principalId).orElseThrow();
-        assertEquals("Bare Default Agent", principal.getName());
+        assertEquals("BareDefaultAgent", principal.getName());
         assertEquals(userId.toString(), principal.getCreatedByUserId());
         assertTrue(principal.getTemplateSnapshot().path("templateName").isNull());
         assertEquals(List.of("CREATE_ACCOUNT"), actionClasses(principal.getTemplateSnapshot().path("permissions")));
@@ -145,7 +145,7 @@ class AgentPrincipalControllerContractTest extends AbstractIntegrationTest {
         assertEquals(principalCount, principalRepository.findAll().size());
         assertEquals(0, auditCount());
 
-        ResponseEntity<Map> blankTemplate = create(Map.of("name", "Blank Template", "templateId", ""));
+        ResponseEntity<Map> blankTemplate = create(Map.of("name", "BlankTemplate", "templateId", ""));
         assertEquals(HttpStatus.BAD_REQUEST, blankTemplate.getStatusCode());
         assertEquals(principalCount, principalRepository.findAll().size());
         assertEquals(0, auditCount());

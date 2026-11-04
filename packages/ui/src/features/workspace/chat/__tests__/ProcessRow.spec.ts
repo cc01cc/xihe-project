@@ -9,7 +9,8 @@ import ProcessRow from "../components/ProcessRow.vue";
  * 思考 / 推理 / 工具调用 / refusal 共用它。本 spec 钉四件事：
  * ① 默认折叠、点击/`aria-expanded` 切换；② 失败态在折叠行上就有颜色 + `data-failed`；
  * ③ `testid`/`toggle-testid` 可由调用方覆盖（ToolCallCard 用 `tool-card-toggle`）；
- * ④ Step 2 预留的 `actor` 只落 `data-has-actor`，**本批不渲染**任何 actor 内容。
+ * ④ actor 徽标（PLAN-0659 T1.2）：给 `actor` 就渲染首字母 + 名字 + `data-actor-*`；
+ *    不给（单主体线程）就完全不渲染 —— 是否传由调用方按线程主体数决定。
  */
 describe("ProcessRow", () => {
     it("renders a single collapsed row with label, summary, meta and status", () => {
@@ -68,19 +69,38 @@ describe("ProcessRow", () => {
         expect(wrapper.get("button").html()).toContain("text-destructive");
     });
 
-    it("reserves the Step-2 actor API without rendering it", () => {
+    it("renders the actor badge (initials + name + DOM identity) for mixed-principal threads", () => {
         const wrapper = mount(ProcessRow, {
             props: {
                 kind: "tool",
                 label: "read_file",
-                actor: { name: "Atlas", initials: "AT", tone: "text-primary" },
+                actor: {
+                    name: "Agent Alpha",
+                    initials: "AA",
+                    kind: "AGENT",
+                    principalId: "part-agent-alpha",
+                },
             },
         });
         expect(wrapper.get('[data-testid="process-row"]').attributes("data-has-actor")).toBe(
             "true",
         );
-        expect(wrapper.text()).not.toContain("Atlas");
-        expect(wrapper.text()).not.toContain("AT");
+        const badge = wrapper.get('[data-testid="process-row-actor"]');
+        // 身份断言认 participantId / kind，不认名字文本。
+        expect(badge.attributes("data-actor-principal-id")).toBe("part-agent-alpha");
+        expect(badge.attributes("data-actor-kind")).toBe("AGENT");
+        expect(wrapper.get('[data-testid="process-row-actor-initials"]').text()).toBe("AA");
+        expect(badge.text()).toContain("Agent Alpha");
+        // 徽标靠 title 兜住截断后的全名。
+        expect(badge.attributes("title")).toBe("Agent Alpha");
+    });
+
+    it("renders no actor badge when the caller passes no actor (single-principal thread)", () => {
+        const wrapper = mount(ProcessRow, { props: { kind: "tool", label: "read_file" } });
+        expect(wrapper.find('[data-testid="process-row-actor"]').exists()).toBe(false);
+        expect(wrapper.get('[data-testid="process-row"]').attributes("data-has-actor")).toBe(
+            undefined,
+        );
     });
 
     it("drops the chevron and the click affordance when there is no body", () => {

@@ -120,7 +120,7 @@ class PrincipalGrantAuthorizationIntegrationTest extends AbstractIntegrationTest
         headers.setContentType(MediaType.APPLICATION_JSON);
         ResponseEntity<Map> created = patchClient.exchange(
                 url("/api/v1/agent-principals"), HttpMethod.POST,
-                new HttpEntity<>(Map.of("name", "retired-grant-probe"), headers), Map.class);
+                new HttpEntity<>(Map.of("name", "retiredGrantProbe"), headers), Map.class);
 
         assertEquals(HttpStatus.FORBIDDEN, created.getStatusCode(),
                 "the default-deny baseline is unchanged after the retirement");

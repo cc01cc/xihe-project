@@ -51,14 +51,14 @@ test.describe("@host PLAN-0439 owner-scope connection resolver matrix", () => {
             data: {
                 email: `resolver-${randomUUID()}@test.local`,
                 password: generateE2EPassword(),
-                name: "Resolver Matrix",
+                name: "ResolverMatrix",
             },
         });
         expect(registration.status()).toBe(201);
         const auth: { accessToken: string; workspaceId: string } = await registration.json();
         auth.workspaceId = await ensureWorkspace(request, auth.accessToken);
         const principalId = await provisionWorkspaceAgentPrincipal(request, auth, {
-            name: "Resolver Matrix",
+            name: "ResolverMatrix",
         });
         const headers = {
             Authorization: `Bearer ${auth.accessToken}`,
@@ -139,7 +139,7 @@ test.describe("@host PLAN-0439 owner-scope connection resolver matrix", () => {
             const createSession = (data: Record<string, unknown>) =>
                 request.post(`${CP_URL}/api/v1/sessions`, {
                     headers,
-                    data: { title: "Resolver Matrix", agentPrincipalId: principalId, ...data },
+                    data: { title: "ResolverMatrix", agentPrincipalId: principalId, ...data },
                 });
 
             // (1) union: two distinct keys both occupy custom-openai-compatible slots,

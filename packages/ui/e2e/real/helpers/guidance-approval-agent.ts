@@ -45,7 +45,7 @@ export async function createApprovalAgent(
                 templates: JSON.stringify([
                     {
                         id: templateId,
-                        name: "Guidance E2E Agent",
+                        name: "GuidanceE2EAgent",
                         description: "PLAN-0529/0530 host guidance fixture",
                         systemPrompt: "Use only the Workspace tools provided by CP.",
                         toolMode: "workspace",
@@ -61,7 +61,7 @@ export async function createApprovalAgent(
     const principalHeaders = { ...headers, "X-Workspace-Id": workspaceId };
     const principalResponse = await request.post(`${CP_URL}/api/v1/agent-principals`, {
         headers: principalHeaders,
-        data: { scope: "WORKSPACE", name: "Guidance E2E Agent", templateId },
+        data: { scope: "WORKSPACE", name: "GuidanceE2EAgent", templateId },
     });
     expect(principalResponse.status(), await principalResponse.text()).toBe(201);
     const principalId = ((await principalResponse.json()) as { principalId: string }).principalId,

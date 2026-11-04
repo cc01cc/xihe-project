@@ -17,4 +17,44 @@ for (const path of paths) {
 if (!text.includes('application/problem+json') || !text.includes('ProblemDetails')) {
   throw new Error('Problem Details schema is not declared')
 }
+
+// PLAN-0641 M3: the checkpoint-revert risk grading is a cross-layer contract — the three wire
+// fields and the two 409 gate codes must stay declared on the document, not only in prose.
+// Scoped slices keep the assertions honest: a name that appears elsewhere cannot satisfy them.
+function sliceBetween(startMarker, endMarker) {
+  const start = text.indexOf(startMarker)
+  if (start < 0) throw new Error(`Missing contract block: ${startMarker.trim()}`)
+  const end = text.indexOf(endMarker, start + startMarker.length)
+  return end < 0 ? text.slice(start) : text.slice(start, end)
+}
+
+const revertRequest = sliceBetween('\n    CheckpointRevertRequest:', '\n    CheckpointRevertPreviewEntry:')
+for (const field of ['force:', 'acknowledgeNestedRepos:']) {
+  if (!revertRequest.includes(field)) throw new Error(`CheckpointRevertRequest must declare ${field}`)
+}
+for (const schema of ['CheckpointRevertPreviewResponse', 'CheckpointRevertResponse']) {
+  const block = sliceBetween(`\n    ${schema}:`, '\n    Checkpoint')
+  if (!block.includes('nestedRepoAffected:')) throw new Error(`${schema} must declare nestedRepoAffected`)
+}
+const affected = sliceBetween('\n    CheckpointNestedRepoAffected:', '\n    Checkpoint')
+for (const field of ['repoPath:', 'kind:', 'dirty:', 'headMoved:']) {
+  if (!affected.includes(field)) throw new Error(`CheckpointNestedRepoAffected must declare ${field}`)
+}
+const publicExecute = sliceBetween('\n  /api/v1/workspaces/{workspaceId}/checkpoints/revert:', '\n  /')
+const runtimeExecute = sliceBetween(
+  '\n  /internal/v1/runtime/workspaces/{workspaceId}/checkpoints/revert:',
+  '\n  /',
+)
+// PLAN-0641 M4: the legacy-slice boundary is decided CP-side, so only the public operation
+// names CROSS_ROOT_LEGACY_SLICE and the legacyRoots body; the Runtime pair keeps the M3 codes.
+for (const code of ['NESTED_REPO_DIRTY', 'NESTED_REPO_UNCONFIRMED', 'CROSS_ROOT_LEGACY_SLICE']) {
+  if (!publicExecute.includes(code)) throw new Error(`public checkpoint revert must name ${code}`)
+}
+if (!publicExecute.includes('legacyRoots')) {
+  throw new Error('public checkpoint revert must document the legacyRoots body')
+}
+for (const code of ['NESTED_REPO_DIRTY', 'NESTED_REPO_UNCONFIRMED']) {
+  if (!runtimeExecute.includes(code)) throw new Error(`runtime checkpoint revert must name ${code}`)
+}
+
 console.log(`OpenAPI structural validation passed (${paths.length} paths)`)

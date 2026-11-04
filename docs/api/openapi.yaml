@@ -2596,6 +2596,9 @@ paths:
           `409 RUN_ACTIVE` while a ChatRun is active in the workspace (checked before slice
           resolution), plus `CHECKPOINT_NOT_AVAILABLE` / `CHECKPOINT_TYPE_CHANGES_UNACKNOWLEDGED` /
           `CHECKPOINT_RESTORE_LOCKED` as applicable.
+          The `nestedRepoAffected[]` block (PLAN-0641 M3) lists the undeclared nested repositories
+          this plan touches, each with `repoPath` / `kind` / `dirty` / `headMoved`. It is
+          informational on the preview face; the execute face enforces the matching gates.
         security: [{ bearerAuth: [] }]
         parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }]
         requestBody:
@@ -2621,6 +2624,18 @@ paths:
           preview and may be discarded. The response reports each path and any concurrent-write suspects.
           Returns `409 RUN_ACTIVE` while a ChatRun is active in the workspace (checked before slice
           resolution).
+          PLAN-0641 M3 risk grading over undeclared nested repositories: a dirty repo answers
+          `409 NESTED_REPO_DIRTY` unless `force=true`; a head-drifted repo must be listed in
+          `acknowledgeNestedRepos`, otherwise `409 NESTED_REPO_UNCONFIRMED`. Both nested-repo
+          bodies carry `nestedRepos[]` (the affected workspace-relative repo roots), and a forced
+          revert that actually covers dirty repos writes one `nested_repo_force_revert` audit row.
+          PLAN-0641 M4: `409 CROSS_ROOT_LEGACY_SLICE` refuses a slice captured before a child root
+          was declared — the slice still carries that child path flat, so restoring it would write
+          into another root's directory. Its body adds `sliceCapturedAt` and
+          `legacyRoots[{rootId, path, declaredAt}]` (path relative to the slice's root). The slice
+          stays readable (list/diff/preview) and the manual rescue path is documented in the PLAN
+          evidence. The boundary is derived from `workspace_roots.created_at` (declaration instant)
+          vs `run_checkpoints.captured_at`: equal instants are treated as legacy (fail-closed).
         security: [{ bearerAuth: [] }]
         parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }]
         requestBody:
@@ -3186,7 +3201,7 @@ paths:
   /internal/v1/runtime/workspaces/{workspaceId}/checkpoints/revert/preview:
     post:
       operationId: runtimeCheckpointRevertPreview
-      description: 'Read-only restore plan from one slice to the current workspace. Entries are bounded and `truncated` is explicit; counts cover the complete plan.'
+      description: 'Read-only restore plan from one slice to the current workspace. Entries are bounded and `truncated` is explicit; counts cover the complete plan. PLAN-0641 M3: `nestedRepoAffected[]` reports undeclared nested repositories the plan touches (`repoPath` / `kind` / `dirty` / `headMoved`) without gating the preview; the execute route enforces the gates.'
       security: [{ bearerAuth: [] }]
       parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }]
       requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/CheckpointRevertPreviewRequest' } } } }
@@ -3200,7 +3215,7 @@ paths:
   /internal/v1/runtime/workspaces/{workspaceId}/checkpoints/revert:
     post:
       operationId: runtimeCheckpointRevert
-      description: 'Restores the workspace to one slice. Only type-change paths need acknowledgement; the restore lock rejects a second concurrent restore.'
+      description: 'Restores the workspace to one slice. Only type-change paths need acknowledgement; the restore lock rejects a second concurrent restore. PLAN-0641 M3: undeclared nested repositories are graded — a dirty repo answers 409 NESTED_REPO_DIRTY unless `force` is true, and a head-drifted repo must be listed in `acknowledgeNestedRepos` or the call answers 409 NESTED_REPO_UNCONFIRMED; both nested-repo bodies add `nestedRepos[]` with the affected repo roots.'
       security: [{ bearerAuth: [] }]
       parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }]
       requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/CheckpointRevertRequest' } } } }
@@ -4066,7 +4081,7 @@ components:
     LocalPasswordResetRequest: { type: object, required: [newPassword], properties: { newPassword: { type: string, minLength: 8, maxLength: 128 } } }
     LoginRequest: { type: object, required: [identifier, password], properties: { identifier: { type: string, description: 'PLAN-0565 ruling #7: email (contains @) or username; renamed from the former email field.' }, password: { type: string } } }
     MemberView: { type: object, required: [userId, username, email, role, createdAt], properties: { userId: { type: string, format: uuid }, username: { type: string }, email: { type: string }, name: { type: [string, 'null'] }, role: { type: string, enum: [OWNER, EDITOR, VIEWER], description: 'Canonical role; legacy ADMIN/MEMBER rows project as EDITOR (PLAN-0559).' }, createdAt: { type: string, format: date-time, description: 'Membership creation time (the joined-at value).' } } }
-    MemberAddRequest: { type: object, required: [username, role], properties: { username: { type: string, description: 'Unique account username (PLAN-0565 ruling #7)' }, role: { type: string, enum: [EDITOR, VIEWER] } } }
+    MemberAddRequest: { type: object, required: [username, role], properties: { username: { type: string, minLength: 1, maxLength: 64, pattern: '^[A-Za-z\u4e00-\u9fff][A-Za-z0-9\u4e00-\u9fff]*$', description: 'Unique account username (PLAN-0565 ruling #7). 2026-11-03 name-format ruling: letters / Chinese characters (U+4E00-U+9FFF) / digits only, must not start with a digit, no spaces or symbols; any other shape is rejected with 400 INVALID_NAME_FORMAT (not the generic INVALID_REQUEST).' }, role: { type: string, enum: [EDITOR, VIEWER] } } }
     MemberRoleUpdateRequest: { type: object, required: [role], properties: { role: { type: string, enum: [EDITOR, VIEWER] } } }
     AuthResponse: { type: object, properties: { accessToken: { type: string }, refreshToken: { type: string }, user: { type: object }, workspaceId: { type: [string, 'null'], description: 'The account first active workspace, or null when it has none yet (PLAN-0614 blank start: register/login/refresh never create a workspace; the user creates the first one explicitly).' } } }
     Workspace: { type: object, required: [id, name, ownerId, storageBackend, storageRef, storageMode, executionMode, generation], properties: { id: { type: string }, name: { type: string }, description: { type: [string, 'null'] }, ownerId: { type: string, description: 'PLAN-0610 W4b: derived from the workspace''s earliest-granted WS_OWNER role binding (workspaces.owner_id was dropped by V89). The contract field is unchanged; it is null only for a workspace without an owner binding.' }, storageBackend: { type: string }, storageRef: { type: string }, storageMode: { type: string, enum: [managed_import, direct_attach] }, hostPath: { type: [string, 'null'], description: 'Canonical host path only for the owner/admin; null for ordinary members. Never a display or authorization substitute.' }, executionMode: { type: string, enum: [docker, windows-mxc, windows-host] }, workspaceRole: { type: [string, 'null'], enum: [OWNER, EDITOR, VIEWER, null], description: 'PLAN-0559 canonical workspace role for the caller; ADMIN/MEMBER legacy rows project as EDITOR.' }, canWrite: { type: boolean, description: 'PLAN-0559 UI hint; CP remains authoritative.' }, generation: { type: integer }, roots: { type: array, description: 'PLAN-0639: ordered root projection [{id, alias, position}]. Root[0].id == workspace.id (primary root invariant).' }, createdAt: { type: [string, 'null'], format: date-time }, updatedAt: { type: [string, 'null'], format: date-time } } }
@@ -4081,7 +4096,7 @@ components:
     AgentMemoryUpdateRequest: { type: object, additionalProperties: false, minProperties: 1, properties: { content: { type: string, minLength: 1, maxLength: 8000 }, pinned: { type: boolean } } }
     AgentMemoryResponse: { type: object, additionalProperties: false, required: [memory], properties: { memory: { $ref: '#/components/schemas/AgentMemoryView' } } }
     AgentModelRef: { type: object, additionalProperties: false, required: [provider, model], properties: { provider: { type: string, minLength: 1 }, model: { type: string, minLength: 1 } } }
-    AgentPrincipalCreateRequest: { type: object, additionalProperties: false, required: [name], properties: { name: { type: string, minLength: 1 }, templateId: { type: [string, 'null'], format: uuid }, roleIds: { type: [array, 'null'], items: { type: string, format: uuid }, description: 'PLAN-0629 task-12: the roles the new principal is bound to. Absent or null means the defaults (instance scope USER; a workspace binding additionally gets WS_EDITOR). Every id is validated once before the row is written: an unknown id, an instance-administrator role (any atom in PermissionAtomCatalog.agentPrincipalForbiddenAtoms, e.g. ADMIN/SUPER_ADMIN), or a role wider than the caller itself holds is refused with 403 ROLE_NOT_GRANTABLE — never a generic 400. The built-in delegation role for agent principals is AGENT_DELEGATOR (workspace scope, single atom SPAWN_AGENT, V109); WS_OWNER/WS_EDITOR deliberately do not carry SPAWN_AGENT.' }, scope: { type: string, enum: [PERSONAL, WORKSPACE, INSTANCE], default: WORKSPACE, deprecated: true, description: 'DEPRECATED (PLAN-0629, user ruling 2026-11-04): read-only compatibility field. Permission comes from role bindings, not from a tier — accessibility is decided by workspace-scoped role_bindings rows (V108 backfills them from existing workspace bindings). Accepted on create for older clients and ignored; the column keeps its WORKSPACE default.' }, defaultModelProvider: { type: [string, 'null'], description: 'Model intent only; the principal never holds a provider connection.' }, defaultModelName: { type: [string, 'null'] }, allowedModels: { type: [array, 'null'], items: { $ref: '#/components/schemas/AgentModelRef' }, description: 'null = unrestricted.' }, hooks: { type: [object, 'null'], description: 'PLAN-0625 M2 (D25-12/14): hook subscriptions {advisors:[{kind,on:[actionClass]}]}; on must hit the frozen action-class whitelist (today: approval.ask) or the write is rejected 400. A preset guard (origin=SYSTEM_PRESET) refuses subscription changes with 403 GUARD_HOOKS_IMMUTABLE.' } } }
+    AgentPrincipalCreateRequest: { type: object, additionalProperties: false, required: [name], properties: { name: { type: string, minLength: 1, maxLength: 64, pattern: '^[A-Za-z\u4e00-\u9fff][A-Za-z0-9\u4e00-\u9fff]*$', description: 'Agent subject name. 2026-11-03 name-format ruling: letters / Chinese characters (U+4E00-U+9FFF) / digits only, must not start with a digit, no spaces or symbols; any other shape is rejected with 400 INVALID_NAME_FORMAT (not the generic INVALID_REQUEST).' }, templateId: { type: [string, 'null'], format: uuid }, roleIds: { type: [array, 'null'], items: { type: string, format: uuid }, description: 'PLAN-0629 task-12: the roles the new principal is bound to. Absent or null means the defaults (instance scope USER; a workspace binding additionally gets WS_EDITOR). Every id is validated once before the row is written: an unknown id, an instance-administrator role (any atom in PermissionAtomCatalog.agentPrincipalForbiddenAtoms, e.g. ADMIN/SUPER_ADMIN), or a role wider than the caller itself holds is refused with 403 ROLE_NOT_GRANTABLE — never a generic 400. The built-in delegation role for agent principals is AGENT_DELEGATOR (workspace scope, single atom SPAWN_AGENT, V109); WS_OWNER/WS_EDITOR deliberately do not carry SPAWN_AGENT.' }, scope: { type: string, enum: [PERSONAL, WORKSPACE, INSTANCE], default: WORKSPACE, deprecated: true, description: 'DEPRECATED (PLAN-0629, user ruling 2026-11-04): read-only compatibility field. Permission comes from role bindings, not from a tier — accessibility is decided by workspace-scoped role_bindings rows (V108 backfills them from existing workspace bindings). Accepted on create for older clients and ignored; the column keeps its WORKSPACE default.' }, defaultModelProvider: { type: [string, 'null'], description: 'Model intent only; the principal never holds a provider connection.' }, defaultModelName: { type: [string, 'null'] }, allowedModels: { type: [array, 'null'], items: { $ref: '#/components/schemas/AgentModelRef' }, description: 'null = unrestricted.' }, hooks: { type: [object, 'null'], description: 'PLAN-0625 M2 (D25-12/14): hook subscriptions {advisors:[{kind,on:[actionClass]}]}; on must hit the frozen action-class whitelist (today: approval.ask) or the write is rejected 400. A preset guard (origin=SYSTEM_PRESET) refuses subscription changes with 403 GUARD_HOOKS_IMMUTABLE.' } } }
     AgentPrincipalCreateView: { type: object, required: [principalId, createdAt, scope, ownerUserId, defaultModelProvider, defaultModelName, allowedModels, roleIds], properties: { roleIds: { type: array, items: { type: string, format: uuid }, description: 'The bindings that were actually written (echo, so the caller does not have to re-read).' }, principalId: { type: string, format: uuid }, templateId: { type: [string, 'null'], format: uuid }, templateName: { type: [string, 'null'] }, scope: { type: string, enum: [PERSONAL, WORKSPACE, INSTANCE], deprecated: true, description: 'DEPRECATED (PLAN-0629, user ruling 2026-11-04): kept so older clients keep parsing the payload. It no longer participates in authorization — an agent principal is visible and usable in a workspace when it holds a workspace-scoped role binding there.' }, ownerUserId: { type: [string, 'null'], format: uuid, description: 'The PERSONAL owner; null for WORKSPACE/INSTANCE.' }, defaultModelProvider: { type: [string, 'null'] }, defaultModelName: { type: [string, 'null'] }, allowedModels: { type: [array, 'null'], items: { $ref: '#/components/schemas/AgentModelRef' } }, createdAt: { type: string, format: date-time }, hooks: { type: [object, 'null'], description: 'PLAN-0625 M2: the stored subscription document {advisors:[{kind,on:[actionClass]}]} (null = none) — serialised as plain JSON (Gap J).' }, contextPolicy: { type: [object, 'null'], description: 'PLAN-0629 M1 (D29-21): the memory policy of the new principal (null = off). A create never sets it — the subject starts with memory off — but the view carries it so the caller sees the state immediately.' } } }
     AgentPrincipalView: { type: object, required: [principalId, name, createdAt, scope, ownerUserId, defaultModelProvider, defaultModelName, allowedModels], properties: { principalId: { type: string, format: uuid }, name: { type: string }, templateId: { type: [string, 'null'], format: uuid }, templateName: { type: [string, 'null'] }, scope: { type: string, enum: [PERSONAL, WORKSPACE, INSTANCE], deprecated: true, description: 'DEPRECATED (PLAN-0629, user ruling 2026-11-04): kept so older clients keep parsing the payload. It no longer participates in authorization — an agent principal is visible and usable in a workspace when it holds a workspace-scoped role binding there.' }, ownerUserId: { type: [string, 'null'], format: uuid }, defaultModelProvider: { type: [string, 'null'] }, defaultModelName: { type: [string, 'null'] }, allowedModels: { type: [array, 'null'], items: { $ref: '#/components/schemas/AgentModelRef' } }, createdAt: { type: string, format: date-time }, disabledAt: { type: [string, 'null'], format: date-time }, hooks: { type: [object, 'null'], description: 'PLAN-0625 V96/D25-09: the subscription document {advisors:[{kind,on:[actionClass]}]} — copied from the template at creation, mutable via PATCH /api/v1/agent-principals/{principalId}; null = no subscriptions. The runtime single-read surface for the approval gate.' }, contextPolicy: { type: [object, 'null'], description: 'PLAN-0629 M1 (D29-21/D29-25): the subject memory policy {memory:{enabled,writeMode,types}} stored in agent_principals.context_policy; null = no policy (memory off). See the PATCH /api/v1/agent-principals/{principalId} description for the frozen v1 shape and value rules.' }, delegationPolicy: { type: [object, 'null'], description: 'PLAN-0630 M1 + PLAN-0648 ruling A1: the delegation budget {maxCount,maxDepth} stored in agent_principals.delegation_policy (V100); null = code defaults (8/3). maxCount=0 means delegation disabled (every spawn_agent under this principal is refused with reason delegation_disabled); maxDepth stays >= 1. Only the root subject of a delegation tree is read at spawn time.' } } }
     AgentPrincipalListResponse: { type: object, required: [principals], properties: { principals: { type: array, items: { $ref: '#/components/schemas/AgentPrincipalView' } } } }
@@ -4139,6 +4154,8 @@ components:
        properties:
          sliceRef: { type: string }
          acknowledgeTypeChanges: { type: array, items: { type: string }, description: Type-change paths confirmed from the preview }
+         force: { type: boolean, default: false, description: 'PLAN-0641 M3: overwrite undeclared nested repositories that carry uncommitted changes. Without it those repos answer 409 NESTED_REPO_DIRTY. A forced revert that actually covers dirty repos writes one `nested_repo_force_revert` audit row.' }
+         acknowledgeNestedRepos: { type: array, items: { type: string }, description: 'PLAN-0641 M3: every head-drifted repo root listed by the preview `nestedRepoAffected[]` (workspace-relative POSIX paths). A missing entry answers 409 NESTED_REPO_UNCONFIRMED (ruling (a): the acknowledgement is explicit, never assumed).' }
     CheckpointRevertPreviewEntry:
        type: object
        additionalProperties: false
@@ -4151,14 +4168,24 @@ components:
     CheckpointRevertPreviewResponse:
        type: object
        additionalProperties: false
-       required: [sliceRef, counts, entries, truncated, opaqueNestedRepos, descendantsAffected]
+       required: [sliceRef, counts, entries, truncated, opaqueNestedRepos, nestedRepoAffected, descendantsAffected]
        properties:
          sliceRef: { type: string }
          counts: { type: object, required: [restore, delete, typeConflict], properties: { restore: { type: integer }, delete: { type: integer }, typeConflict: { type: integer } } }
          entries: { type: array, items: { $ref: '#/components/schemas/CheckpointRevertPreviewEntry' } }
          truncated: { type: boolean }
          opaqueNestedRepos: { type: array, items: { type: string } }
+         nestedRepoAffected: { type: array, items: { $ref: '#/components/schemas/CheckpointNestedRepoAffected' }, description: 'PLAN-0641 M3 (T4.3): undeclared nested repositories this plan touches, with the two gates each one triggers. Informational on the preview face; the execute face enforces them.' }
          descendantsAffected: { type: array, items: { $ref: '#/components/schemas/CheckpointDescendantImpact' }, description: Spawn-descendant sessions whose work after the target slice overlaps the rollback paths; informational only, never blocks the restore }
+    CheckpointNestedRepoAffected:
+       type: object
+       additionalProperties: false
+       required: [repoPath, kind, dirty, headMoved]
+       properties:
+         repoPath: { type: string, description: Workspace-relative POSIX path of the undeclared nested repository root. }
+         kind: { type: string, enum: [nested, gitdir, submodule, bare, symlink], description: 'PLAN-0641 T2.2 five-kind classification of the affected repo.' }
+         dirty: { type: boolean, description: 'Uncommitted changes in the repo: execute-revert answers 409 NESTED_REPO_DIRTY unless force=true.' }
+         headMoved: { type: boolean, description: 'Clean repo whose restored content would differ from its current HEAD tree: the repo root must be listed in acknowledgeNestedRepos, otherwise execute-revert answers 409 NESTED_REPO_UNCONFIRMED.' }
     CheckpointDescendantImpact:
        type: object
        additionalProperties: false
@@ -4177,13 +4204,14 @@ components:
     CheckpointRevertResponse:
        type: object
        additionalProperties: false
-       required: [sliceRef, counts, entries, durationMs, suspects, descendantsAffected]
+       required: [sliceRef, counts, entries, durationMs, suspects, nestedRepoAffected, descendantsAffected]
        properties:
          sliceRef: { type: string }
          counts: { type: object, required: [restored, deleted, failed], properties: { restored: { type: integer }, deleted: { type: integer }, failed: { type: integer } } }
          entries: { type: array, items: { $ref: '#/components/schemas/CheckpointRevertEntry' } }
          durationMs: { type: integer, minimum: 0 }
          suspects: { type: array, items: { type: string } }
+         nestedRepoAffected: { type: array, items: { $ref: '#/components/schemas/CheckpointNestedRepoAffected' }, description: 'PLAN-0641 M3 (T4.3): undeclared nested repositories this revert covered, echoed so the client can see which gates were explicitly overridden.' }
          descendantsAffected: { type: array, items: { $ref: '#/components/schemas/CheckpointDescendantImpact' }, description: Spawn-descendant sessions whose work after the target slice overlaps the rollback paths; informational only, never blocks the restore }
     CheckpointCleanupRequest:
        type: object

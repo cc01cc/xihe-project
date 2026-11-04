@@ -211,7 +211,7 @@ test.describe("@host PLAN-0493 loop guard", () => {
 
         auth = await registerUser(request);
         const principalId = await provisionWorkspaceAgentPrincipal(request, auth, {
-            name: "Loop Guard Agent",
+            name: "LoopGuardAgent",
             actions: ["read"],
         });
         sessionId = await createSessionWithPrincipal(request, auth, {

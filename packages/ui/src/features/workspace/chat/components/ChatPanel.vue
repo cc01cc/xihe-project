@@ -24,6 +24,7 @@ import type {
     CheckpointResult,
     Message,
     SessionDerivedStateResponse,
+    SessionRunSummary,
     ToolCallWaitingOn,
 } from "../../../../types";
 import MessageList from "./MessageList.vue";
@@ -177,6 +178,11 @@ const followUpQueueFull = computed(() =>
 );
 const derivedState = ref<SessionDerivedStateResponse | null>(null),
     derivedStateLoading = ref(false);
+/**
+ * PLAN-0659 T1.1：run 分组的数据源（`GET /chat/sessions/{id}/runs` 摘要）。
+ * 只在会话切换与 **run 终态**（0645 的终态刷新点）各拉一次，不做轮询。
+ */
+const sessionRuns = ref<SessionRunSummary[]>([]);
 const derivedStateError = ref(false),
     waitingOnByToolCallId = ref<Record<string, ToolCallWaitingOn>>({});
 let derivedStateRequestId = 0,
@@ -354,6 +360,18 @@ async function loadSessionMessages(sessionId: string, requiredMessageIds?: Reado
 // （goldpath G2-e reload 后 [data-slot=message] 卡 1/2 的根因）。对冷启动做有界追平：
 // 只要 listSessionRuns 还有非终态 run，就周期性重拉历史，直到无活动 run 或达到上限。
 // loadMessages 在 isStreaming 时早退，不会覆盖本页新发起的 live 流。
+async function refreshSessionRuns(sessionId: string): Promise<void> {
+    if (!sessionId) return;
+    try {
+        const response = await api.listSessionRuns(sessionId, { page: 0, size: 100 });
+        if (props.sessionId !== sessionId) return;
+        sessionRuns.value = response.runs;
+    } catch (cause) {
+        // 非关键展示数据：失败只记日志，run 头退回 message 自带的 runStatus。
+        logger.warn("failed to load session runs", cause);
+    }
+}
+
 const RUN_CATCHUP_INTERVAL_MS = 1000;
 const RUN_CATCHUP_MAX_ATTEMPTS = 30;
 const runCatchupTimers = new Map<string, ReturnType<typeof setInterval>>();
@@ -383,6 +401,10 @@ function catchUpInFlightRunProjection(sessionId: string): void {
             }
             const hasActiveRun = response.runs.some((run) => !isTerminalRunStatus(run.status));
             if (hasActiveRun) sawActiveRun = true;
+            // PLAN-0659 T1.1：run 摘要（run 头的状态/耗时）由**这个**唯一的会话激活期消费者
+            // 落盘；会话切换时不再另发一次 `listSessionRuns`（同一事件两个消费者会让
+            // BL-228 的调用次数语义漂移，也是白打一次请求）。
+            sessionRuns.value = response.runs;
             if (sawActiveRun) await loadSessionMessages(sessionId);
             if (!hasActiveRun || exhausted) stopRunCatchup(sessionId);
         } catch (cause) {
@@ -585,6 +607,7 @@ watch(
         followUpQueueBusyItemId.value = null;
         if (previousSessionId && previousSessionId !== sessionId) {
             stopRunCatchup(previousSessionId);
+            sessionRuns.value = [];
             chatStore.detachLiveSession(previousSessionId);
             lastRunId.value = undefined;
         }
@@ -593,6 +616,8 @@ watch(
             void loadSessionMessages(sessionId);
             void refreshDerivedState(sessionId);
             void refreshFollowUpQueue(sessionId);
+            // run 摘要不在这里单独拉：`catchUpInFlightRunProjection` 的首个 tick 就是一次
+            // `listSessionRuns`，并在拿到结果时写 `sessionRuns`（同一会话激活期只打一次）。
             catchUpInFlightRunProjection(sessionId);
         }
     },
@@ -614,6 +639,9 @@ watch(isStreaming, (streaming, previous) => {
     if (streaming !== previous && props.sessionId) {
         if (previous && !streaming) {
             void loadSessionMessages(props.sessionId);
+            // 追平循环在跑时它每个 tick 都会写 `sessionRuns`，终态点不再重复拉一次
+            // （同一 run 的终态只留一个消费者）；没有循环时才由这里刷新。
+            if (!runCatchupTimers.has(props.sessionId)) void refreshSessionRuns(props.sessionId);
             guidancePanelRef.value?.refetch();
         }
         void refreshFollowUpQueue(props.sessionId);
@@ -908,6 +936,12 @@ async function submitMessage(input: {
         // PLAN-0631 D31-08: a `speakAs` message is attributed to the participant whose
         // identity the caller chose (CP validates it). Absent = the caller's own words.
         ...(asParticipantId ? { participantId: asParticipantId } : {}),
+        // PLAN-0659 T1.3：投递语义（发送/抄送）只有 composer 这一层知道，**UI 本地视图**，
+        // 与 `participantId` 同一口径：history DTO 不携带该字段 ⇒ 刷新后消失（BL-239：
+        // 投递语义暂无持久载体，P3）。不落 localStorage、不进 wire（本 PLAN 非目标）。
+        ...(asParticipantId || (cc?.length ?? 0) > 0
+            ? { delivery: { toParticipantId: asParticipantId ?? null, ccParticipantIds: cc ?? [] } }
+            : {}),
     });
     inputComponent.value?.clearDraft();
 }
@@ -1089,7 +1123,11 @@ function closeRevertPreview() {
     revertError.value = null;
 }
 
-async function confirmRevert(acknowledgeTypeChanges: string[]) {
+async function confirmRevert(
+    acknowledgeTypeChanges: string[],
+    acknowledgeNestedRepos: string[] = [],
+    force = false,
+) {
     const sliceRef = revertPreviewSliceRef.value,
         sessionId = props.sessionId;
     const workspaceId = authStore.currentWorkspaceId;
@@ -1101,6 +1139,8 @@ async function confirmRevert(acknowledgeTypeChanges: string[]) {
             workspaceId,
             sliceRef,
             acknowledgeTypeChanges,
+            acknowledgeNestedRepos,
+            force,
         );
         // A session switch while the request was in flight drops the continuation: the result
         // dialog must not open over a different session.
@@ -1227,6 +1267,7 @@ watch(
         <MessageList
             v-if="messages.length > 0"
             :messages="renderedMessages"
+            :runs="sessionRuns"
             :branch-busy="creatingBranchForMessageId !== null"
             @approve="approveTool"
             @reject="rejectTool"

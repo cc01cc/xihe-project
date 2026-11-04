@@ -60,6 +60,7 @@ import {
     provisionWorkspaceAgentPrincipal,
 } from "./helpers/agent-principal";
 
+import { agentName } from "./helpers/agent-name";
 const LLM_MODE = process.env.XIHE_E2E_LLM_MODE ?? "mock",
     RUN_ID = process.env.XIHE_E2E_RUN_ID ?? "";
 const PROJECT_DIR = path.resolve(process.cwd(), "../..");
@@ -504,7 +505,7 @@ test.describe("@host PLAN-0338 checkpoint slice model (real Runtime + CP)", () =
         const principalId = await provisionWorkspaceAgentPrincipal(
             request,
             { accessToken: ctx.authToken, workspaceId: ctx.workspaceId },
-            { name: `checkpoint-slices-${NONCE}`, actions: ["read", "write"] },
+            { name: agentName("CheckpointSlices", NONCE), actions: ["read", "write"] },
         );
         checkpointSessionId = await createSessionWithPrincipal(
             request,

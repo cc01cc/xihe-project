@@ -161,22 +161,16 @@ fn parse_git_tree_output(output: &[u8]) -> (Vec<GitTreeEntry>, Vec<String>) {
     (entries, nested_roots)
 }
 
-/// Explicit exclusion patterns beyond the workspace `.gitignore` (decision #14).
-///
-/// Credential material must never enter the shadow object store; generated and
-/// Runtime-infrastructure paths are excluded so checkpoints stay noise-free.
-pub const STATIC_EXCLUDE_PATTERNS: &[&str] = &[
+/// B3 safety class (PLAN-0641 M5 T6.1): credential material and Runtime infrastructure.
+/// Always excluded on **every** root — declaring a child root must not make credentials
+/// (or the shadow/store machinery itself) capturable.
+pub const SAFETY_EXCLUDE_PATTERNS: &[&str] = &[
     "*.pem",
     "*.key",
     "*.p12",
     ".npmrc",
     ".netrc",
     "id_rsa*",
-    "node_modules/",
-    "dist/",
-    "build/",
-    ".cache/",
-    ".tmp/",
     ".env",
     ".xihe-sentinel",
     ".xihe-probe-writable",
@@ -188,6 +182,43 @@ pub const STATIC_EXCLUDE_PATTERNS: &[&str] = &[
     ".xhs-restore-inprogress",
     ".xhs-restore-trash/",
 ];
+
+/// B3 noise class (PLAN-0641 M5 T6.1): generated output. Kept on the primary root (the
+/// historical decision-#14 table); a declared root is an independent repository, so its
+/// products are judged by **that root's own `.gitignore`** instead of XH's global guess.
+pub const NOISE_EXCLUDE_PATTERNS: &[&str] =
+    &["node_modules/", "dist/", "build/", ".cache/", ".tmp/"];
+
+/// PLAN-0641 M5 T6.1/T6.2 (B3=(a) graded default): which static-exclusion class one root
+/// takes. Derived from root identity only — no env var, no config switch (T6.2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExcludeProfile {
+    /// Root[0]: keeps both classes (pre-M5 behaviour unchanged).
+    PrimaryRoot,
+    /// Any declared root: safety class only.
+    DeclaredRoot,
+}
+
+impl ExcludeProfile {
+    /// Default derivation (T6.2): `root_id == workspaceId` is the primary root; every other
+    /// routable root is declared. No call site can opt out of the grading.
+    pub fn for_root(workspace_id: &str, root_id: &str) -> Self {
+        if root_id == workspace_id {
+            Self::PrimaryRoot
+        } else {
+            Self::DeclaredRoot
+        }
+    }
+
+    /// The static patterns this profile applies, in the frozen order (safety first).
+    pub fn patterns(self) -> impl Iterator<Item = &'static str> {
+        let noise: &[&'static str] = match self {
+            Self::PrimaryRoot => NOISE_EXCLUDE_PATTERNS,
+            Self::DeclaredRoot => &[],
+        };
+        SAFETY_EXCLUDE_PATTERNS.iter().chain(noise.iter()).copied()
+    }
+}
 
 const BOOTSTRAP_MARKER: &str = ".xihe-bootstrapped";
 
@@ -1593,7 +1624,11 @@ impl ShadowGit {
                 &work_tree,
             )));
         }
-        self.ensure_initialized(&shadow, &work_tree).await?;
+        // PLAN-0641 M5 T6.1/T6.2 (B3=(a)): the exclusion table follows the root class —
+        // the primary root keeps the frozen noise table, a declared root only the safety class.
+        let exclude_profile = ExcludeProfile::for_root(workspace_id, root_id);
+        self.ensure_initialized(&shadow, &work_tree, exclude_profile)
+            .await?;
 
         let excluded_prefixes = self.nested_declared_root_prefixes(&work_tree);
         let index = scratch_index_path(&shadow, run_id);
@@ -1617,7 +1652,14 @@ impl ShadowGit {
         // exclusion rules only judge genuinely new (untracked) paths: paths the
         // previous slice already indexed stay included even when they grew.
         let (tree, opaque_nested_repos, nested_repos) = self
-            .stage_workspace(&shadow, &work_tree, &index, &excludes, tail_tree.as_deref())
+            .stage_workspace(
+                &shadow,
+                &work_tree,
+                &index,
+                &excludes,
+                tail_tree.as_deref(),
+                exclude_profile,
+            )
             .await?;
         self.save_last_index(&shadow, &index).await?;
 
@@ -2486,7 +2528,12 @@ impl ShadowGit {
         }
     }
 
-    async fn ensure_initialized(&self, shadow: &Path, work_tree: &Path) -> Result<()> {
+    async fn ensure_initialized(
+        &self,
+        shadow: &Path,
+        work_tree: &Path,
+        exclude_profile: ExcludeProfile,
+    ) -> Result<()> {
         if shadow.join(BOOTSTRAP_MARKER).is_file() {
             return Ok(());
         }
@@ -2533,16 +2580,21 @@ impl ShadowGit {
             self.run_git_checked(&["config", key, &value], &env, None, self.call_timeout)
                 .await?;
         }
-        self.write_static_excludes(shadow).await?;
+        self.write_static_excludes(shadow, exclude_profile).await?;
         tokio::fs::write(shadow.join(BOOTSTRAP_MARKER), b"bootstrapped\n").await?;
         info!(shadow = %shadow.display(), "shadow git repository bootstrapped");
         Ok(())
     }
 
-    async fn write_static_excludes(&self, shadow: &Path) -> Result<()> {
-        let mut content =
-            String::from("# Xihe shadow checkpoint excludes (PLAN-0328 decision #14)\n");
-        for pattern in STATIC_EXCLUDE_PATTERNS {
+    async fn write_static_excludes(
+        &self,
+        shadow: &Path,
+        exclude_profile: ExcludeProfile,
+    ) -> Result<()> {
+        let mut content = String::from(
+            "# Xihe shadow checkpoint excludes (PLAN-0328 decision #14 + PLAN-0641 M5 B3)\n",
+        );
+        for pattern in exclude_profile.patterns() {
             content.push_str(pattern);
             content.push('\n');
         }
@@ -2550,9 +2602,14 @@ impl ShadowGit {
         Ok(())
     }
 
-    pub(crate) async fn write_excludes_file(&self, path: &Path, dynamic: &[String]) -> Result<()> {
+    pub(crate) async fn write_excludes_file(
+        &self,
+        path: &Path,
+        dynamic: &[String],
+        exclude_profile: ExcludeProfile,
+    ) -> Result<()> {
         let mut content = String::from("# Xihe shadow checkpoint excludes (static + dynamic)\n");
-        for pattern in STATIC_EXCLUDE_PATTERNS {
+        for pattern in exclude_profile.patterns() {
             content.push_str(pattern);
             content.push('\n');
         }
@@ -2631,6 +2688,7 @@ impl ShadowGit {
         index: &Path,
         excludes: &Path,
         reference_tree: Option<&str>,
+        exclude_profile: ExcludeProfile,
     ) -> Result<()> {
         let env = self.isolated_env(shadow, work_tree, Some(index));
         // Prefer the persisted last-index (valid stat + untracked cache) over a
@@ -2651,7 +2709,7 @@ impl ShadowGit {
         // `add -A` already honours, which keeps one exclusion implementation.
         let mut excludes_entries = dynamic;
         excludes_entries.extend(self.nested_declared_root_prefixes(work_tree));
-        self.write_excludes_file(excludes, &excludes_entries)
+        self.write_excludes_file(excludes, &excludes_entries, exclude_profile)
             .await?;
         let config = format!("core.excludesFile={}", normalize_path_for_git(excludes));
         self.run_git_checked(
@@ -2694,9 +2752,17 @@ impl ShadowGit {
         index: &Path,
         excludes: &Path,
         reference_tree: Option<&str>,
+        exclude_profile: ExcludeProfile,
     ) -> Result<(String, Vec<String>, Vec<String>)> {
-        self.stage_index(shadow, work_tree, index, excludes, reference_tree)
-            .await?;
+        self.stage_index(
+            shadow,
+            work_tree,
+            index,
+            excludes,
+            reference_tree,
+            exclude_profile,
+        )
+        .await?;
         let index_env = self.isolated_env(shadow, work_tree, Some(index));
         let detected = self.staged_gitlinks(&index_env).await?;
         // PLAN-0641 T2.1: discovery is a fact of staging, independent of the
@@ -2825,7 +2891,9 @@ impl ShadowGit {
     async fn probe_nested_paths(&self, work_tree: &Path) -> Result<Vec<String>> {
         let scratch = tempfile::TempDir::new()?;
         let shadow = scratch.path().join(SHADOW_DIR_NAME).join("probe.git");
-        self.ensure_initialized(&shadow, work_tree).await?;
+        // Discovery keeps the primary-root table: the M2 discovery shape is unchanged.
+        self.ensure_initialized(&shadow, work_tree, ExcludeProfile::PrimaryRoot)
+            .await?;
         let token = format!(
             "nestedprobe-{}",
             SystemTime::now()
@@ -2836,8 +2904,15 @@ impl ShadowGit {
         let index = scratch_index_path(&shadow, &token);
         let excludes = scratch_excludes_path(&shadow, &token);
         let _scratch = ScratchFiles::new(vec![index.clone(), excludes.clone()]);
-        self.stage_index(&shadow, work_tree, &index, &excludes, None)
-            .await?;
+        self.stage_index(
+            &shadow,
+            work_tree,
+            &index,
+            &excludes,
+            None,
+            ExcludeProfile::PrimaryRoot,
+        )
+        .await?;
         let env = self.isolated_env(&shadow, work_tree, Some(&index));
         let mut detected = self.staged_gitlinks(&env).await?;
 
@@ -3321,7 +3396,8 @@ impl ShadowGit {
         })
     }
 
-    fn null_config_env(&self) -> Vec<(String, String)> {
+    /// PLAN-0641 M3: shared with the restore-side nested-repo probe (`checkpoint_revert`).
+    pub(crate) fn null_config_env(&self) -> Vec<(String, String)> {
         let mut env = platform_env();
         env.push(("GIT_CONFIG_GLOBAL".to_string(), null_device().to_string()));
         env.push(("GIT_CONFIG_SYSTEM".to_string(), null_device().to_string()));

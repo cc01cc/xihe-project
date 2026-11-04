@@ -53,8 +53,18 @@ export const DOCK_INLINE_MIN_VIEWPORT = 1800;
  * PLAN-0626 M3 (D26-05): `agents` (工作区 Agent 管理) extends the same value domain — no
  * second tab array, no second tab-id type. Its panel is sticky too (it owns a create form);
  * the whole-page routes and `openTabs` are untouched, so existing deep links keep working.
+ *
+ * PLAN-0659 T1.4: `delegation`（委派 DAG）同样复用这一份值域与 `DOCK_MAX_TABS` 上限。
  */
-export const DOCK_TAB_IDS = ["code", "changes", "monitor", "members", "context", "agents"] as const;
+export const DOCK_TAB_IDS = [
+    "code",
+    "changes",
+    "monitor",
+    "members",
+    "context",
+    "agents",
+    "delegation",
+] as const;
 export type DockTabId = (typeof DOCK_TAB_IDS)[number];
 
 /**

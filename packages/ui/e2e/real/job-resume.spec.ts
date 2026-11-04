@@ -102,7 +102,7 @@ test.describe("@host PLAN-0344 durable job resume", () => {
                 templates: JSON.stringify([
                     {
                         id: templateId,
-                        name: "JobResume Agent",
+                        name: "JobResumeAgent",
                         description: "Workspace-bound host fixture for durable job resume",
                         systemPrompt: "Respond briefly using only the current chat context.",
                         toolMode: "workspace",
@@ -117,7 +117,7 @@ test.describe("@host PLAN-0344 durable job resume", () => {
 
         const principalRes = await request.post(`${CP_URL}/api/v1/agent-principals`, {
             headers: bootHeaders,
-            data: { scope: "WORKSPACE", name: "JobResume Agent", templateId },
+            data: { scope: "WORKSPACE", name: "JobResumeAgent", templateId },
         });
         expect(principalRes.status(), await principalRes.text()).toBe(201);
         const principalId = ((await principalRes.json()) as { principalId: string }).principalId;

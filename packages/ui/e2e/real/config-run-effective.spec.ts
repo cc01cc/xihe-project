@@ -133,7 +133,7 @@ test.describe("@host PLAN-0504 — UI profile reaches the Agent run payload", ()
         //    provider/model through the saved profile (the chain PLAN-0504 owns).
         await ensureAgentWorkspaceBinding(auth.workspaceId);
         const principalId = await provisionWorkspaceAgentPrincipal(request, auth, {
-            name: "P0504 Profile Agent",
+            name: "P0504ProfileAgent",
         });
         const sessionId = await createSessionWithPrincipal(request, auth, {
             principalId,

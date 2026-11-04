@@ -17,6 +17,7 @@ import type {
     AuditTimelineEvent,
     AuditAttemptView,
     CheckpointCleanupResult,
+    CheckpointNestedRepoAffected,
     CheckpointPreview,
     CheckpointPreviewAction,
     CheckpointPreviewCounts,
@@ -1489,6 +1490,19 @@ function normalizeCheckpointPreviewCounts(value: unknown): CheckpointPreviewCoun
     return { restore, delete: deleted, typeConflict };
 }
 
+function normalizeCheckpointNestedRepoAffected(
+    value: unknown,
+): CheckpointNestedRepoAffected | null {
+    const record = asRecord(value);
+    if (!record || !isNonEmptyString(record.repoPath)) return null;
+    return {
+        repoPath: record.repoPath,
+        kind: typeof record.kind === "string" ? record.kind : "",
+        dirty: record.dirty === true,
+        headMoved: record.headMoved === true,
+    };
+}
+
 function normalizeCheckpointPreviewEntry(value: unknown): CheckpointPreviewEntry | null {
     const record = asRecord(value);
     if (!record || !isNonEmptyString(record.path)) return null;
@@ -1521,12 +1535,20 @@ export function normalizeCheckpointPreview(value: unknown): CheckpointPreview | 
     const opaqueNestedRepos = Array.isArray(record.opaqueNestedRepos)
         ? record.opaqueNestedRepos.filter(isNonEmptyString)
         : [];
+    const nestedRepoAffected: CheckpointNestedRepoAffected[] = [];
+    if (Array.isArray(record.nestedRepoAffected)) {
+        for (const raw of record.nestedRepoAffected) {
+            const nested = normalizeCheckpointNestedRepoAffected(raw);
+            if (nested) nestedRepoAffected.push(nested);
+        }
+    }
     return {
         sliceRef: record.sliceRef,
         counts,
         entries,
         truncated: record.truncated === true,
         opaqueNestedRepos,
+        nestedRepoAffected,
     };
 }
 
@@ -1938,6 +1960,15 @@ function normalizeSession(value: unknown): SessionResponse {
         workspaceId: typeof record.workspaceId === "string" ? record.workspaceId : workspace?.id,
         agentPrincipalId:
             typeof record.agentPrincipalId === "string" ? record.agentPrincipalId : null,
+        // PLAN-0655 T1.5 / PLAN-0659 T1.4：委派 lineage 必须在 list 投影里透传。
+        // OpenAPI 的 Session 契约（`required: [kind, spawnedFromSessionId, spawnedFromRunId,
+        // spawnedAt]`）与 `stores/session.ts#toSession` 都消费这三个字段；此前 normalize 把
+        // 它们丢了 ⇒ 会话树的父子嵌套与「委派」徽标在真实链路上永远看不到（单测直接塞
+        // store 状态，故一直没暴露）。这是投影层缺陷，不是夹具问题。
+        kind: typeof record.kind === "string" ? record.kind : null,
+        spawnedFromSessionId:
+            typeof record.spawnedFromSessionId === "string" ? record.spawnedFromSessionId : null,
+        spawnedAt: typeof record.spawnedAt === "string" ? record.spawnedAt : null,
         createdAt: typeof record.createdAt === "string" ? record.createdAt : undefined,
         updatedAt: typeof record.updatedAt === "string" ? record.updatedAt : undefined,
         modelProvider: typeof record.modelProvider === "string" ? record.modelProvider : undefined,
@@ -2410,6 +2441,20 @@ export interface VersionInfo {
         agent: VersionModule;
         runtime: VersionModule;
     };
+}
+
+function revertExecuteBody(
+    sliceRef: string,
+    acknowledgeTypeChanges: string[],
+    acknowledgeNestedRepos: string[],
+    force: boolean,
+): Record<string, unknown> {
+    const body: Record<string, unknown> = { sliceRef, acknowledgeTypeChanges };
+    if (acknowledgeNestedRepos.length > 0) {
+        body.acknowledgeNestedRepos = acknowledgeNestedRepos;
+    }
+    if (force) body.force = true;
+    return body;
 }
 
 export const api = {
@@ -3887,18 +3932,31 @@ export const api = {
         if (!preview) throw new Error("Invalid checkpoint preview response");
         return preview;
     },
-    /** Execute a workspace restore after explicit type-change confirmations. */
+    /**
+     * PLAN-0641 M3 T4.2: force overrides the dirty-nested-repo gate; every head-drifted repo must be
+     * listed in acknowledgeNestedRepos (ruling (a)). Absent keys keep the pre-M3 wire shape so a
+     * caller with nothing to acknowledge sends exactly the old body.
+     */
     async executeWorkspaceCheckpointRevert(
         workspaceId: string,
         sliceRef: string,
         acknowledgeTypeChanges: string[] = [],
+        acknowledgeNestedRepos: string[] = [],
+        force = false,
     ): Promise<CheckpointResult> {
         const payload = await request<unknown>(
                 `/workspaces/${encodeURIComponent(workspaceId)}/checkpoints/revert`,
                 {
                     method: "POST",
                     headers: workspaceHeaders(workspaceId),
-                    body: JSON.stringify({ sliceRef, acknowledgeTypeChanges }),
+                    body: JSON.stringify(
+                        revertExecuteBody(
+                            sliceRef,
+                            acknowledgeTypeChanges,
+                            acknowledgeNestedRepos,
+                            force,
+                        ),
+                    ),
                 },
             ),
             result = normalizeCheckpointResult(payload);

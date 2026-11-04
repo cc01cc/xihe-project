@@ -138,7 +138,7 @@ test.describe("@host PLAN-0352 session delete closes SSE", () => {
         test.setTimeout(60000);
         const auth = await register(request, "v5-active-delete");
         const principalId = await provisionWorkspaceAgentPrincipal(request, auth, {
-            name: "V5 Active Delete Fixture",
+            name: "V5ActiveDeleteFixture",
         });
         const trace = installSseTrace(page);
         await openChat(page, auth, principalId);
@@ -188,7 +188,7 @@ test.describe("@host PLAN-0352 session delete closes SSE", () => {
         test.setTimeout(60000);
         const auth = await register(request, "v5-passive-close");
         const principalId = await provisionWorkspaceAgentPrincipal(request, auth, {
-            name: "V5 Passive Close Fixture",
+            name: "V5PassiveCloseFixture",
         });
         const trace = installSseTrace(page);
         await openChat(page, auth, principalId);

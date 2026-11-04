@@ -59,7 +59,7 @@ test.describe("@host PLAN-0572 tool card refresh", () => {
                 templates: JSON.stringify([
                     {
                         id: templateId,
-                        name: "PLAN-0572 Agent",
+                        name: "PLAN0572Agent",
                         description: "Workspace-bound fixture for the tool card refresh case",
                         systemPrompt: "Use only the Workspace tools provided by CP.",
                         toolMode: "workspace",
@@ -73,7 +73,7 @@ test.describe("@host PLAN-0572 tool card refresh", () => {
         expect(templateWrite.status(), await templateWrite.text()).toBe(200);
         const principalRes = await request.post(`${CP_URL}/api/v1/agent-principals`, {
             headers,
-            data: { scope: "WORKSPACE", name: "PLAN-0572 Agent", templateId },
+            data: { scope: "WORKSPACE", name: "PLAN0572Agent", templateId },
         });
         expect(principalRes.status(), await principalRes.text()).toBe(201);
         const principalId = ((await principalRes.json()) as { principalId: string }).principalId;

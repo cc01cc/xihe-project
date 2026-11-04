@@ -152,8 +152,8 @@ class AgentPrincipalHooksHttpTest extends AbstractIntegrationTest {
     @Test
     void workspaceAgentListProjectsHooksAsTheAdvisorsObject() {
         fixture();
-        UUID hooked = createPrincipal("Hooked agent", HOOKS_JSON);
-        UUID plain = createPrincipal("Plain agent", null);
+        UUID hooked = createPrincipal("HookedAgent", HOOKS_JSON);
+        UUID plain = createPrincipal("PlainAgent", null);
         bindToWorkspace(hooked);
         bindToWorkspace(plain);
 
@@ -179,7 +179,7 @@ class AgentPrincipalHooksHttpTest extends AbstractIntegrationTest {
     void createResponseCarriesHooksAndAllowedModelsAsDocuments() {
         fixture();
         Map<String, Object> body = new LinkedHashMap<>();
-        body.put("name", "Explicit hooks agent");
+        body.put("name", "ExplicitHooksAgent");
         body.put("scope", "PERSONAL");
         body.put("hooks", plainJson(HOOKS_JSON));
         body.put("allowedModels", List.of(Map.of("provider", "openai", "model", "gpt-4.1")));
@@ -203,7 +203,7 @@ class AgentPrincipalHooksHttpTest extends AbstractIntegrationTest {
     @Test
     void principalListCarriesHooksAsADocument() {
         fixture();
-        UUID hooked = createPrincipal("Listed hooks agent", HOOKS_JSON);
+        UUID hooked = createPrincipal("ListedHooksAgent", HOOKS_JSON);
 
         ResponseEntity<Map> response = exchange(HttpMethod.GET,
                 "/api/v1/agent-principals?scope=PERSONAL", globalToken(), null);
@@ -252,7 +252,7 @@ class AgentPrincipalHooksHttpTest extends AbstractIntegrationTest {
                 "Gap H: the real resolver dropped the template's hooks — the snapshot is what the "
                         + "create path reads its default subscription from");
 
-        UUID created = createPrincipal("Template hooked agent", null, templateId.toString());
+        UUID created = createPrincipal("TemplateHookedAgent", null, templateId.toString());
 
         JsonNode stored = principalRepository.findById(created).orElseThrow().getHooks();
         assertNotNull(stored, "Gap H: a guard created from a template with hooks must not land NULL");
@@ -272,7 +272,7 @@ class AgentPrincipalHooksHttpTest extends AbstractIntegrationTest {
         assertTrue(resolved.snapshot().path("hooks").isMissingNode(),
                 "no declaration ⇒ no hooks node at all (the create path reads absent as 'none')");
 
-        UUID created = createPrincipal("Plain agent", null, templateId.toString());
+        UUID created = createPrincipal("PlainAgent", null, templateId.toString());
 
         assertNull(principalRepository.findById(created).orElseThrow().getHooks(),
                 "a template without hooks must still create a principal without subscriptions");
@@ -285,7 +285,7 @@ class AgentPrincipalHooksHttpTest extends AbstractIntegrationTest {
     @Test
     void patchReplacesSubscriptionsAndWritesTheAuditTrail() {
         fixture();
-        UUID principalId = createPrincipal("Mutable agent", null);
+        UUID principalId = createPrincipal("MutableAgent", null);
 
         ResponseEntity<Map> response = patch(principalId, hooksBody(plainJson(HOOKS_JSON)),
                 globalToken());
@@ -307,7 +307,7 @@ class AgentPrincipalHooksHttpTest extends AbstractIntegrationTest {
     @Test
     void patchClearsSubscriptionsWithNull() {
         fixture();
-        UUID principalId = createPrincipal("Clearable agent", HOOKS_JSON);
+        UUID principalId = createPrincipal("ClearableAgent", HOOKS_JSON);
 
         ResponseEntity<Map> response = patch(principalId, hooksBody(null), globalToken());
 
@@ -330,7 +330,7 @@ class AgentPrincipalHooksHttpTest extends AbstractIntegrationTest {
     @Test
     void patchRefusesPresetGuardsWithTheirOwnCode() {
         fixture();
-        UUID guardId = seedPresetGuard("Preset guard");
+        UUID guardId = seedPresetGuard("PresetGuard");
 
         ResponseEntity<Map> response = patch(guardId, hooksBody(plainJson(HOOKS_JSON)), globalToken());
 
@@ -348,7 +348,7 @@ class AgentPrincipalHooksHttpTest extends AbstractIntegrationTest {
     @Test
     void patchRequiresTheTierAuthority() {
         fixture();
-        UUID principalId = createPrincipal("Owner only agent", HOOKS_JSON);
+        UUID principalId = createPrincipal("OwnerOnlyAgent", HOOKS_JSON);
 
         ResponseEntity<Map> response = patch(principalId, hooksBody(plainJson(HOOKS_JSON)),
                 tokenOf(strangerUserId));
@@ -364,7 +364,7 @@ class AgentPrincipalHooksHttpTest extends AbstractIntegrationTest {
     @Test
     void patchRejectsUnknownKeysAndUnknownActionClasses() {
         fixture();
-        UUID principalId = createPrincipal("Body shape agent", HOOKS_JSON);
+        UUID principalId = createPrincipal("BodyShapeAgent", HOOKS_JSON);
 
         Map<String, Object> extraKey = hooksBody(plainJson(HOOKS_JSON));
         extraKey.put("name", "renamed");

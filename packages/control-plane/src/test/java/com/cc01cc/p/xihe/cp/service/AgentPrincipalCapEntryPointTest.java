@@ -96,7 +96,7 @@ class AgentPrincipalCapEntryPointTest extends AbstractIntegrationTest {
         User owner = newUser("cap-scope");
         Workspace boundIn = workspace("Cap bound", owner);
         Workspace unboundIn = workspace("Cap unbound", owner);
-        AgentPrincipal principal = principal(owner, "Scoped agent");
+        AgentPrincipal principal = principal(owner, "ScopedAgent");
         bind(principal, boundIn, "[{\"actionClass\":\"read\"}]");
 
         JsonNode cap = agentPrincipalService.resolveCapFor(principal.getId(), boundIn.getId());
@@ -117,7 +117,7 @@ class AgentPrincipalCapEntryPointTest extends AbstractIntegrationTest {
     void capResolvesWithoutAnyRequestContext() throws Exception {
         User owner = newUser("cap-context");
         Workspace workspace = workspace("Cap context", owner);
-        AgentPrincipal principal = principal(owner, "Context-free agent");
+        AgentPrincipal principal = principal(owner, "ContextFreeAgent");
         bind(principal, workspace, "[{\"actionClass\":\"write\"}]");
 
         // This test thread never ran a request, so TenantContext is empty by construction.
@@ -134,7 +134,7 @@ class AgentPrincipalCapEntryPointTest extends AbstractIntegrationTest {
     void capIsRecomputedOnEveryCallWithoutCaching() throws Exception {
         User owner = newUser("cap-cache");
         Workspace workspace = workspace("Cap cache", owner);
-        AgentPrincipal principal = principal(owner, "Fresh agent");
+        AgentPrincipal principal = principal(owner, "FreshAgent");
         WorkspaceAgent binding = bind(principal, workspace, "[{\"actionClass\":\"read\"}]");
         assertEquals("read", agentPrincipalService.resolveCapFor(principal.getId(), workspace.getId())
                 .path(0).path("actionClass").asText());
@@ -154,7 +154,7 @@ class AgentPrincipalCapEntryPointTest extends AbstractIntegrationTest {
     void legacyEntryPointDelegatesToTheSingleComputation() throws Exception {
         User owner = newUser("cap-legacy");
         Workspace workspace = workspace("Cap legacy", owner);
-        AgentPrincipal principal = principal(owner, "Legacy agent");
+        AgentPrincipal principal = principal(owner, "LegacyAgent");
         bind(principal, workspace, "[{\"actionClass\":\"network\"}]");
 
         JsonNode viaNew = agentPrincipalService.resolveCapFor(principal.getId(), workspace.getId());
@@ -171,7 +171,7 @@ class AgentPrincipalCapEntryPointTest extends AbstractIntegrationTest {
     void disabledPrincipalIsAConflictOnTheEntry() throws Exception {
         User owner = newUser("cap-disabled");
         Workspace workspace = workspace("Cap disabled", owner);
-        AgentPrincipal principal = principal(owner, "Disabled agent");
+        AgentPrincipal principal = principal(owner, "DisabledAgent");
         bind(principal, workspace, "[]");
         principal.setDisabledAt(java.time.Instant.now());
         principalRepository.saveAndFlush(principal);

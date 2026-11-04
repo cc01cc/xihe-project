@@ -592,6 +592,21 @@ export type MessagePart =
           content: string;
       };
 
+/**
+ * PLAN-0659 T1.3：一条消息的**投递语义**（UI 本地视图，非 wire 契约）。
+ *
+ * 数据来源只有 composer 的发送参数（`asParticipantId` = 「发送」栏主体、`cc` = 抄送旁听
+ * 名单）；CP 的 messages DTO 不带投递信息，本 PLAN 明确不改 wire（README 非目标），所以
+ * 这是**发送态本地视图**：会话重载后 TO/CC 丢失，只有 `@`（可从正文 + 花名册重建）仍在。
+ * 不落 localStorage —— 投递是消息事实，不是用户偏好。
+ */
+export interface MessageDelivery {
+    /** 「发送」栏选中的参与者（本次消息的主要响应者）。 */
+    toParticipantId?: string | null;
+    /** 「抄送」旁听名单（参与者 id 数组）。 */
+    ccParticipantIds?: string[];
+}
+
 export interface Message {
     id: string;
     sessionId: string;
@@ -625,6 +640,11 @@ export interface Message {
      * UI must not fill it in from `role` or the session's PRIMARY participant.
      */
     participantId?: string | null;
+    /**
+     * PLAN-0659 T1.3: composer 发送时的投递语义（TO/CC）。**本地发送态视图**：历史 DTO
+     * 不携带，重载后只有 @（正文 + 花名册重建）仍可显示；见 `MessageDelivery`。
+     */
+    delivery?: MessageDelivery;
 }
 
 export interface ProviderConfig {
@@ -927,12 +947,25 @@ export interface CheckpointPreviewCounts {
 }
 
 /** `POST .../checkpoints/revert/preview` response. */
+/** PLAN-0641 M3 (T4.3): one undeclared nested repository touched by a restore. */
+export interface CheckpointNestedRepoAffected {
+    /** Workspace-relative POSIX path of the repository root. */
+    repoPath: string;
+    kind: string;
+    /** Uncommitted changes in the repo; a restore needs `force` to overwrite them. */
+    dirty: boolean;
+    /** Clean repo whose restored content differs from its current HEAD tree. */
+    headMoved: boolean;
+}
+
 export interface CheckpointPreview {
     sliceRef: string;
     counts: CheckpointPreviewCounts;
     entries: CheckpointPreviewEntry[];
     truncated: boolean;
     opaqueNestedRepos: string[];
+    /** PLAN-0641 M3 (T4.3): cross-root impact of this restore plan. */
+    nestedRepoAffected?: CheckpointNestedRepoAffected[];
 }
 
 export type CheckpointResultOutcome = "restored" | "deleted" | "failed" | "suspect";

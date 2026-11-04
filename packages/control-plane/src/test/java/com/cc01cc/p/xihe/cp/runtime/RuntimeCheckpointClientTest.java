@@ -215,7 +215,7 @@ class RuntimeCheckpointClientTest {
         assertEquals(RuntimeCheckpointClient.Outcome.INVALID_REQUEST, client.cleanup(" ").outcome());
         assertEquals(RuntimeCheckpointClient.Outcome.TRANSPORT, client.previewRevert("ws-1", " ").outcome());
         assertEquals(RuntimeCheckpointClient.Outcome.TRANSPORT,
-                client.revert(" ", "refs/xihe/slices/1-a", List.of()).outcome());
+                client.revert(" ", "refs/xihe/slices/1-a", List.of(), false, List.of()).outcome());
         assertEquals(RuntimeCheckpointClient.Outcome.INVALID_REQUEST,
                 client.checkpointBlob("ws-1", "refs/xihe/slices/1-a", " ").outcome());
         assertEquals(RuntimeCheckpointClient.Outcome.INVALID_REQUEST,
@@ -321,7 +321,7 @@ class RuntimeCheckpointClientTest {
         RuntimeCheckpointClient client = new RuntimeCheckpointClient(url, "test-token");
 
         RuntimeCheckpointClient.RevertResult result =
-                client.revert("ws-1", sliceRef, List.of("b.txt"));
+                client.revert("ws-1", sliceRef, List.of("b.txt"), false, List.of());
 
         assertEquals(RuntimeCheckpointClient.Outcome.OK, result.outcome());
         assertEquals(sliceRef, result.sliceRef());
@@ -343,7 +343,7 @@ class RuntimeCheckpointClientTest {
                 "{\"code\":\"CHECKPOINT_RESTORE_LOCKED\"}"));
         RuntimeCheckpointClient.RevertResult locked =
                 new RuntimeCheckpointClient(lockedUrl, "test-token")
-                        .revert("ws-1", "refs/xihe/slices/1-a", List.of());
+                        .revert("ws-1", "refs/xihe/slices/1-a", List.of(), false, List.of());
         assertEquals(RuntimeCheckpointClient.Outcome.RESTORE_LOCKED, locked.outcome());
 
         server.stop(0);
@@ -351,7 +351,7 @@ class RuntimeCheckpointClientTest {
                 "{\"code\":\"CHECKPOINT_TYPE_CHANGES_UNACKNOWLEDGED\",\"paths\":[\"a.txt\"]}"));
         RuntimeCheckpointClient.RevertResult conflicts =
                 new RuntimeCheckpointClient(conflictsUrl, "test-token")
-                        .revert("ws-1", "refs/xihe/slices/1-a", List.of());
+                        .revert("ws-1", "refs/xihe/slices/1-a", List.of(), false, List.of());
         assertEquals(RuntimeCheckpointClient.Outcome.TYPE_CHANGES_UNACKNOWLEDGED, conflicts.outcome());
         assertTrue(lastBody.get().contains("\"acknowledgeTypeChanges\":[]"));
 
@@ -360,7 +360,7 @@ class RuntimeCheckpointClientTest {
                 "{\"code\":\"CHECKPOINT_NOT_FOUND\"}"));
         assertEquals(RuntimeCheckpointClient.Outcome.NOT_FOUND,
                 new RuntimeCheckpointClient(notFoundUrl, "test-token")
-                        .revert("ws-1", "refs/xihe/slices/1-a", List.of()).outcome());
+                        .revert("ws-1", "refs/xihe/slices/1-a", List.of(), false, List.of()).outcome());
     }
 
     @Test
