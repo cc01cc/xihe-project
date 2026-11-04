@@ -32,6 +32,7 @@ import http from 'node:http';
 import net from 'node:net';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { cargoTargetForStack } from './lib/stack-cargo-target.mjs';
 import { deriveStack, normalizeStackArg } from './lib/stack-ports.mjs';
 
 const scriptPath = fileURLToPath(import.meta.url);
@@ -147,6 +148,97 @@ function looksLikeOurWrapper(pid) {
   const line = commandLine(pid);
   return /stack-run\.mjs/i.test(line);
 }
+
+/* ------------------------------------------------- orphan sweep (PLAN-0656 R3) */
+
+/**
+ * Service identity profiles. A listener is "ours" only when it BOTH listens on one of
+ * this stack's ports AND matches the service's name/cmdline profile: the port is the
+ * stack's SSOT identity (never shared), the profile is the guard against killing a
+ * stranger that happens to squat our port.
+ */
+const SERVICE_OWNER = {
+  runtime: /xihe-runtime/i,
+  cp: /spring-boot:run|control-plane|xihe-cp/i,
+  agent: /xihe_agent|xihe-agent/i,
+  ui: /dev-ui-host|vite\b|xihe-ui/i,
+};
+
+/** LISTEN processes on the given ports: [{port, pid, name, cmdline}] (Windows only). */
+function stackListeners(portList) {
+  if (!isWindows || portList.length === 0) return [];
+  const ps =
+    `$ports=@(${portList.join(',')});` +
+    'Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue |' +
+    ' Where-Object { $ports -contains $_.LocalPort } |' +
+    ' ForEach-Object { $proc = Get-Process -Id $_.OwningProcess -ErrorAction SilentlyContinue;' +
+    ' if ($proc) { $c = (Get-CimInstance Win32_Process -Filter "ProcessId=$($_.OwningProcess)").CommandLine;' +
+    ' [pscustomobject]@{ port=[int]$_.LocalPort; pid=[int]$_.OwningProcess; name=[string]$proc.ProcessName; cmdline=[string]$c } } }' +
+    ' | ConvertTo-Json -Compress';
+  const result = spawnSync('powershell.exe', ['-NoProfile', '-Command', ps], { encoding: 'utf8', windowsHide: true });
+  if (result.status !== 0) return [];
+  const text = String(result.stdout || '').trim();
+  if (text === '') return [];
+  try {
+    const parsed = JSON.parse(text);
+    return Array.isArray(parsed) ? parsed : [parsed];
+  } catch {
+    return [];
+  }
+}
+
+function serviceForPort(port) {
+  return Object.keys(ports).find((service) => ports[service] === port);
+}
+
+/**
+ * PLAN-0656 R3: kill ORPHANED processes of this stack (a crashed/partial stop leaves the
+ * runtime holding our port, so the next `start` fails with "port already in use").
+ * Ownership = listens on one of OUR ports + matches that service's profile; a foreign
+ * process on our port is reported and left untouched. Every outcome is logged with
+ * pid/profile/port so a later failure can be attributed without guessing.
+ */
+function sweepOrphanProcesses(reason) {
+  const killed = [];
+  const foreign = [];
+  for (const listener of stackListeners(Object.values(ports))) {
+    const service = serviceForPort(listener.port);
+    const profile = service ? SERVICE_OWNER[service] : undefined;
+    const identity = `${listener.name ?? ''} ${listener.cmdline ?? ''}`;
+    if (service && profile && profile.test(identity)) {
+      console.log(
+        `[dev-stack] ${reason}: orphan ${service} pid=${listener.pid} name=${listener.name} ` +
+          `port=${listener.port} (${derived.stackId}) — killing (stack port + service profile)`,
+      );
+      const result = spawnSync('taskkill', ['/PID', String(listener.pid), '/T', '/F'], { windowsHide: true });
+      if (result.status === 0) {
+        killed.push(listener);
+      } else {
+        console.error(`[dev-stack] ${reason}: taskkill pid=${listener.pid} failed (exit ${result.status})`);
+      }
+    } else {
+      console.warn(
+        `[dev-stack] ${reason}: WARN port ${listener.port} held by a FOREIGN process ` +
+          `(pid=${listener.pid} name=${listener.name}) — not ours to kill; stop it manually if the port stays busy`,
+      );
+      foreign.push(listener);
+    }
+  }
+  if (killed.length === 0 && foreign.length === 0) {
+    console.log(`[dev-stack] ${reason}: no orphan listeners on ${derived.stackId} ports`);
+  }
+  return { killed, foreign };
+}
+
+async function waitForPortFree(port, timeoutMs = 5000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (!(await isPortListening(port))) return true;
+    await sleep(250);
+  }
+  return !(await isPortListening(port));
+}
+
 
 function writeJson(file, value) {
   mkdirSync(dirname(file), { recursive: true });
@@ -327,6 +419,10 @@ async function start() {
     `[dev-stack] ${args.action} ${derived.stackId} cwd=${projectRoot} ports ui=${ports.ui} cp=${ports.cp} agent=${ports.agent} runtime=${ports.runtime} pg=${ports.postgres}`,
   );
   console.log(`[dev-stack] logs: ${logDir}`);
+  const cargoTarget = cargoTargetForStack({ stackId: derived.stackId, projectRoot, env: process.env });
+  console.log(
+    `[dev-stack] cargo target: ${cargoTarget ? `${cargoTarget} (per-stack)` : 'default .cargo/config.toml target (shared warm cache)'}`,
+  );
 
   const pg = await ensurePg();
   const previous = readJson(pidFile) ?? {};
@@ -346,9 +442,16 @@ async function start() {
       continue;
     }
     if (await isPortListening(ports[service])) {
-      throw new Error(
-        `${service}: port ${ports[service]} is already in use by another process; stop it or use a different --stack`,
-      );
+      // PLAN-0656 R3: a leftover process of THIS stack (e.g. the runtime orphaned by a
+      // crashed stop) is cleaned here instead of failing the whole start; foreign
+      // occupants are only reported, so the original error below still surfaces.
+      sweepOrphanProcesses('start');
+      if (!(await waitForPortFree(ports[service]))) {
+        throw new Error(
+          `${service}: port ${ports[service]} is already in use by another process; stop it or use a different --stack`,
+        );
+      }
+      console.log(`[dev-stack] ${service} port ${ports[service]} freed by the orphan sweep; continuing`);
     }
     const outPath = join(logDir, `${service}.out.log`);
     const errPath = join(logDir, `${service}.err.log`);
@@ -480,6 +583,11 @@ async function stop() {
       console.log(`[dev-stack] stopped ${service} (pid ${saved.pid}, tree)`);
     }
   }
+
+  // PLAN-0656 R3: after the recorded trees are down, sweep listeners that the pid file
+  // never knew (crashed stop / restart leftovers). Runs even when no pid file exists —
+  // that is exactly the orphan scenario that blocked the next start.
+  sweepOrphanProcesses('stop');
 
   const deadline = Date.now() + 15000;
   let remaining = SERVICES.filter((service) => ports[service]);

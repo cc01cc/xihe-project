@@ -18,6 +18,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { resolveHostRoot } from "./host-root.mjs";
 import { applySetToEnv, applyUrlSyncToEnv, parseStackSetArgs } from "./lib/stack-set.mjs";
+import { cargoTargetForStack } from "./lib/stack-cargo-target.mjs";
 import { DEFAULT_STACK_ID, STACK_IDS, deriveStack, normalizeStackArg, stackEnvDefaults } from "./lib/stack-ports.mjs";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
@@ -144,6 +145,13 @@ try {
 // unsupported key/value/target combination exits without starting a process,
 // and error messages never echo the provided value.
 const baseEnv = { ...process.env, ...stackEnvDefaults(derived, process.env) };
+// PLAN-0656 R1: every non-default stack gets its own cargo target so its
+// `cargo run --bin xihe-runtime` never overwrites the binary another stack is
+// executing (BL-221: `os error 5` on the shared target-dir). CARGO_TARGET_DIR
+// outranks `.cargo/config.toml`; the default stack and any pre-set override keep
+// their current behavior unchanged.
+const cargoTargetDir = cargoTargetForStack({ stackId: derived.stackId, projectRoot, env: baseEnv });
+if (cargoTargetDir) baseEnv.CARGO_TARGET_DIR = cargoTargetDir;
 const hostRootResolved = resolveStackHostRoot(derived, baseEnv);
 baseEnv.XIHE_WORKSPACE_HOST_ROOT = hostRootResolved;
 
@@ -167,8 +175,9 @@ if (target === "env-json") {
   const env = {
     ...stackEnvDefaults(derived, process.env),
     XIHE_WORKSPACE_HOST_ROOT: hostRootResolved,
+    ...(cargoTargetDir ? { CARGO_TARGET_DIR: cargoTargetDir } : {}),
   };
-  process.stdout.write(`${JSON.stringify({ ...derived, env, hostRootResolved }, null, 2)}\n`);
+  process.stdout.write(`${JSON.stringify({ ...derived, env, hostRootResolved, cargoTargetDir: cargoTargetDir ?? null }, null, 2)}\n`);
   process.exit(0);
 }
 
