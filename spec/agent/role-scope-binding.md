@@ -87,7 +87,11 @@ flowchart LR
    ⇒ **409 `AGENT_PRINCIPAL_FORBIDDEN_ATOMS`**；`detail` **只列原子名，不列资源**（不泄露实例资源面）。
    该集合由词汇表派生（instance-only 全集 + 全部 capability 原子 + `MANAGE_WORKSPACE_AGENTS` /
    `MANAGE_ROLES` / `MANAGE_WORKSPACE_MEMBERS`），**不得**在绑定入口被放宽；绑定入口拦截 + 物化后二次校验双保险。
-4. **绑定生命周期**：角色 `is_system=true`（种子角色）的绑定**不可删** ⇒ 409 `ROLE_BINDING_IMMUTABLE`；
+4. **绑定生命周期**：绑定的 `isSystem` **只表示 seed 绑定**（由 seeding/创建默认值写入的默认授予），
+   其 **不可删** ⇒ 409 `ROLE_BINDING_IMMUTABLE`；**用户通过 API 绑定系统角色**（角色行
+   `is_system=true`，如 `WS_EDITOR`/`AGENT_DELEGATOR`）⇒ 绑定行 `isSystem=false`、**可解绑（204）**。
+   不得把 `isSystem` 解释为"角色是系统角色"——那会让最常用的角色绑上即死结（2026-11-05 裁定，
+   `role_bindings.is_seed` 列区分两者）；
    同一 `(roleId, subject)` 重复绑定 ⇒ 409 `ROLE_BINDING_EXISTS`；不可见角色/技能/主体 ⇒ **404**（not-区分，不泄露存在性）。
 5. **即时生效**：绑定/解绑 MUST 在**同一事务内**重物化该主体的 grants（复用 `RoleGrantMaterializer.materializeSubject` 路径），
    使该 agent **新会话**的能力判定立即按新绑定生效；不得依赖缓存过期或后台任务。

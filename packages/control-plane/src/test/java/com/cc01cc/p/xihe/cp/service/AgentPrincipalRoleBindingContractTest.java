@@ -158,22 +158,52 @@ class AgentPrincipalRoleBindingContractTest extends AbstractIntegrationTest {
                 "the revoked atom must disappear from the materialized grants immediately");
     }
 
+    /**
+     * Lead ruling 2026-11-05: a binding the user creates for a **system role** is a user choice and
+     * must be deletable. Before the fix the immutability check read `roles.is_system`, so binding
+     * AGENT_DELEGATOR/WS_EDITOR to an agent was a one-way door (DELETE 409 forever).
+     */
     @Test
-    void seedRoleBindingIsImmutable() {
+    void userCreatedSystemRoleBindingIsDeletable() {
         fixture();
+        AccessRole delegator = roleRepository.findByName("AGENT_DELEGATOR").orElseThrow();
+        assertTrue(delegator.isSystem(), "AGENT_DELEGATOR is a seed role");
         int before = totalBindingCount();
-        AccessRole seed = roleRepository.findByName("WS_VIEWER").orElseThrow();
-        ResponseEntity<Map> created = post("/roles?workspaceId=" + workspace.getId(),
-                Map.of("roleId", seed.getId().toString()));
-        assertEquals(HttpStatus.CREATED, created.getStatusCode(), String.valueOf(created.getBody()));
-        assertEquals(true, created.getBody().get("isSystem"));
 
-        ResponseEntity<Map> refused = deleteProblem("/roles/" + created.getBody().get("bindingId")
+        ResponseEntity<Map> created = post("/roles?workspaceId=" + workspace.getId(),
+                Map.of("roleId", delegator.getId().toString()));
+        assertEquals(HttpStatus.CREATED, created.getStatusCode(), String.valueOf(created.getBody()));
+        assertEquals(false, created.getBody().get("isSystem"),
+                "isSystem now means 'seed binding', not 'system role'");
+        String bindingId = String.valueOf(created.getBody().get("bindingId"));
+        assertTrue(materializedAtoms().contains("SPAWN_AGENT"));
+
+        ResponseEntity<String> deleted = delete("/roles/" + bindingId
+                + "?workspaceId=" + workspace.getId());
+
+        assertEquals(HttpStatus.NO_CONTENT, deleted.getStatusCode(), String.valueOf(deleted.getBody()));
+        assertEquals(before, totalBindingCount(), "the user-created binding is gone");
+        assertTrue(!materializedAtoms().contains("SPAWN_AGENT"),
+                "the revoked atoms disappear immediately");
+    }
+
+    /** Seed bindings (default grants written by the seeding/creation path) stay immutable. */
+    @Test
+    void seedBindingIsImmutable() {
+        fixture();
+        AccessRole seedRole = roleRepository.findByName("WS_VIEWER").orElseThrow();
+        AccessRoleBinding seed = new AccessRoleBinding(seedRole.getId(), "agent_principal",
+                principal.getId(), "workspace", workspace.getId(), owner.getId());
+        seed.setSeed(true);
+        AccessRoleBinding saved = roleBindingRepository.saveAndFlush(seed);
+        int before = totalBindingCount();
+
+        ResponseEntity<Map> refused = deleteProblem("/roles/" + saved.getId()
                 + "?workspaceId=" + workspace.getId());
 
         assertEquals(HttpStatus.CONFLICT, refused.getStatusCode());
         assertEquals("ROLE_BINDING_IMMUTABLE", refused.getBody().get("code"));
-        assertEquals(before + 1, totalBindingCount(), "the seed binding is still there");
+        assertEquals(before, totalBindingCount(), "the seed binding is still there");
     }
 
     @Test

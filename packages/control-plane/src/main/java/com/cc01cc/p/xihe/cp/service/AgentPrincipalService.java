@@ -857,8 +857,12 @@ public class AgentPrincipalService {
             if (existing.contains(roleId)) {
                 continue;
             }
-            roleBindingRepository.save(new AccessRoleBinding(roleId,
-                    GrantPrincipalPathResolver.AGENT_PRINCIPAL, principalId, "instance", null, actorId));
+            // Lead ruling 2026-11-05: this is the creation-time DEFAULT grant ⇒ seed binding
+            // (immutable via ROLE_BINDING_IMMUTABLE). API bindings created later stay deletable.
+            AccessRoleBinding row = new AccessRoleBinding(roleId,
+                    GrantPrincipalPathResolver.AGENT_PRINCIPAL, principalId, "instance", null, actorId);
+            row.setSeed(true);
+            roleBindingRepository.save(row);
         }
         roleMaterializer.materializeSubject(GrantPrincipalPathResolver.AGENT_PRINCIPAL, principalId,
                 actorId, null);
@@ -977,9 +981,12 @@ public class AgentPrincipalService {
                 .orElseThrow(() -> new CpApiException(HttpStatus.INTERNAL_SERVER_ERROR,
                         "ROLE_CATALOG_INCONSISTENT",
                         "Seeded role " + DEFAULT_AGENT_WORKSPACE_ROLE + " is missing"));
-        roleBindingRepository.save(new AccessRoleBinding(defaultRole.getId(),
+        // Lead ruling 2026-11-05: workspace-binding default grant ⇒ seed binding (immutable).
+        AccessRoleBinding row = new AccessRoleBinding(defaultRole.getId(),
                 GrantPrincipalPathResolver.AGENT_PRINCIPAL, principalId, "workspace", workspaceId,
-                actorId));
+                actorId);
+        row.setSeed(true);
+        roleBindingRepository.save(row);
         roleMaterializer.materializeSubject(GrantPrincipalPathResolver.AGENT_PRINCIPAL, principalId,
                 actorId, workspaceId.toString());
     }
