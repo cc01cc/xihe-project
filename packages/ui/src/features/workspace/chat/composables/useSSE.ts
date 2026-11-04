@@ -423,7 +423,14 @@ export function useSSE(sessionId: MaybeRefOrGetter<string>) {
                                   ? data.name
                                   : null,
                         rawId = data.toolCallId ?? data.id,
-                        runId = typeof data.run_id === "string" ? data.run_id : undefined;
+                        runId = typeof data.run_id === "string" ? data.run_id : undefined,
+                        // BL-229: the live bubble is scoped by **CP's camelCase `runId`** (the
+                        // ChatRun id `token`/`done`/`error` also use); the Agent's snake_case
+                        // `run_id` above only joins a `tool_call` with its `tool_result`.
+                        scopeRunId =
+                            typeof data.runId === "string" && data.runId !== ""
+                                ? data.runId
+                                : undefined;
                     if (name) {
                         const id =
                                 rawId !== undefined && rawId !== null && rawId !== ""
@@ -449,6 +456,7 @@ export function useSSE(sessionId: MaybeRefOrGetter<string>) {
                                 startedAt: new Date().toISOString(),
                                 ...(runId ? { runId } : {}),
                             },
+                            scopeRunId,
                         );
                     }
                     currentCallbacks.onToolCall?.(
@@ -477,6 +485,12 @@ export function useSSE(sessionId: MaybeRefOrGetter<string>) {
                             // never render as "the reason".
                             refusalCode = normalizeRefusalCode(data.refusalCode),
                             diagnostics = normalizeDiagnostics(data.diagnostics),
+                            // BL-229: same rule as `tool_call` — the bubble scope is CP's camel
+                            // `runId`, while the snake `run_id` stays the merge key.
+                            scopeRunId =
+                                typeof data.runId === "string" && data.runId !== ""
+                                    ? data.runId
+                                    : undefined,
                             updates: Partial<ToolCall> = {
                                 status,
                                 completedAt: new Date().toISOString(),
@@ -490,6 +504,7 @@ export function useSSE(sessionId: MaybeRefOrGetter<string>) {
                         getChatStoreOrNull()?.upsertToolCall(
                             activeSessionId ?? toValue(sessionId),
                             { id, ...updates },
+                            scopeRunId,
                         );
                     }
                     currentCallbacks.onToolResult?.(data);

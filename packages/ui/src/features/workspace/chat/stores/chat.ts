@@ -471,12 +471,17 @@ export const useChatStore = defineStore("chat", () => {
      * result/diagnostics. Tool-first runs have no token yet, so the live
      * message is created on demand.
      */
-    function upsertToolCall(sessionId: string, call: ToolCallUpsert) {
-        // PLAN-0645 M2: a tool event belongs to its run's bubble (`call.runId`), so a tool card can
-        // never land in a sibling run's message.
-        const messageId =
-                streamingMessageId.value[resolveStreamKey(sessionId, call.runId)] ??
-                createStreamingMessage(sessionId, call.runId),
+    function upsertToolCall(sessionId: string, call: ToolCallUpsert, scopeRunId?: string) {
+        // PLAN-0645 M2 + BL-229: which bubble a tool event belongs to is decided by the **CP
+        // runId** (`scopeRunId` — the ChatRun id CP stamps on every event), never by the Agent's
+        // snake_case `run_id` (a LangChain callback id). `token`/`done`/`error` route by the
+        // former, so routing tools by the latter left an orphan live scope that `done` could not
+        // clear — `isStreaming()` stayed true and the composer kept the stop button.
+        // `call.runId` keeps its own meaning: the `tool_call`↔`tool_result` merge key.
+        const keyRunId = scopeRunId ?? call.runId,
+            messageId =
+                streamingMessageId.value[resolveStreamKey(sessionId, keyRunId)] ??
+                createStreamingMessage(sessionId, keyRunId),
             message = messages.value[sessionId]?.find((msg) => msg.id === messageId);
         if (!message) return;
 
