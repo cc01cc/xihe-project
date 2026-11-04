@@ -1,4 +1,4 @@
-import { ref, watch } from "vue";
+import { onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { api } from "../../../../composables/api";
 
@@ -52,6 +52,12 @@ export function useDelegationPermission(workspaceId: () => string) {
     }
 
     watch(workspaceId, () => void refresh(), { immediate: true });
+
+    // Re-read on window focus: granting SPAWN_AGENT happens in another route/tab (role bindings),
+    // and the button must un-grey when the user comes back — not only on a full reload.
+    const onFocus = () => void refresh();
+    onMounted(() => window.addEventListener("focus", onFocus));
+    onBeforeUnmount(() => window.removeEventListener("focus", onFocus));
 
     /** Resolved tooltip text for the current state. */
     function reason() {
