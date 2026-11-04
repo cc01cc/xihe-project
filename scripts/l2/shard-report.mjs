@@ -39,6 +39,7 @@ function suitesOf(reportDir) {
     };
     return {
       cls: attr('name').split('.').pop(),
+      fullClass: attr('name'),
       tests: Number(attr('tests')),
       failures: Number(attr('failures')),
       errors: Number(attr('errors')),
@@ -80,7 +81,7 @@ const { computeExpectedTestClasses } = await import('./lib/test-class-set.mjs');
 const expectedRaw = computeExpectedTestClasses({ repoRoot: ROOT });
 const expected = expectedRaw?.classes ?? expectedRaw?.classNames ?? [];
 const expectedSet = new Set(expected);
-const ran = shards.flatMap((shard) => shard.suites.map((suite) => suite.cls));
+const ran = shards.flatMap((shard) => shard.suites.map((suite) => suite.fullClass));
 const ranSet = new Set(ran);
 const duplicates = [...new Set(ran.filter((name, index) => ran.indexOf(name) !== index))];
 const coverage = {

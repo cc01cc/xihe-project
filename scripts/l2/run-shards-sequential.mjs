@@ -91,6 +91,7 @@ function suitesOf(reportDir) {
     const name = attr('name');
     return {
       simpleClass: name.split('.').pop(),
+      fullClass: name,
       tests: Number(attr('tests')),
       failures: Number(attr('failures')),
       errors: Number(attr('errors')),
@@ -141,7 +142,7 @@ const expectedNames = (() => {
   );
 })();
 const expectedSet = new Set(expectedNames);
-const ran = shards.flatMap((shard) => shard.suites.map((suite) => suite.simpleClass));
+const ran = shards.flatMap((shard) => shard.suites.map((suite) => suite.fullClass));
 const ranSet = new Set(ran);
 const duplicates = ran.filter((name, index) => ran.indexOf(name) !== index);
 const coverage = {
