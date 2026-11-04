@@ -1074,4 +1074,50 @@ describe("useChatStore per-run bubbles (0645 M2)", () => {
         expect(bubbles).toHaveLength(1);
         expect(bubbles[0].parts?.map((p) => p.content).join("")).toBe("earlymore");
     });
+
+    it("routes tool calls by the CP scope runId, not the Agent run_id (BL-229)", () => {
+        // 防复发：CP 的 camel `runId`（ChatRun id）与 Agent 的 snake `run_id`（LangChain 回调 id）
+        // 不是同一个 id，禁止写成同值。tool 事件必须落到 `runId` 的活 scope，`run_id` 只作
+        // `tool_call`↔`tool_result` 的归并键；否则 `done(runId)` 清不掉孤儿活 scope。
+        const store = useChatStore(),
+            sessionId = "s-tool-scope";
+
+        store.upsertToolCall(
+            sessionId,
+            { id: "tc-1", name: "run_command", arguments: "{}", status: "running", runId: "lc" },
+            "run-cp",
+        );
+
+        const bubbleId = store.getStreamingMessageId(sessionId, "run-cp");
+        expect(bubbleId).not.toBeNull();
+        expect(store.getStreamingMessageId(sessionId, "lc")).toBeNull();
+        expect(store.getMessages(sessionId)).toHaveLength(1);
+        expect(store.getMessages(sessionId)[0].runId).toBe("run-cp");
+        expect(store.getMessages(sessionId)[0].toolCalls?.[0]).toMatchObject({
+            id: "tc-1",
+            runId: "lc",
+            status: "running",
+        });
+
+        // tool_result merges into the same card through the shared Agent run_id.
+        store.upsertToolCall(
+            sessionId,
+            { id: "tc-1", status: "completed", result: "ok", runId: "lc" },
+            "run-cp",
+        );
+        expect(store.getMessages(sessionId)).toHaveLength(1);
+        expect(store.getMessages(sessionId)[0].toolCalls).toHaveLength(1);
+        expect(store.getMessages(sessionId)[0].toolCalls?.[0]).toMatchObject({
+            id: "tc-1",
+            status: "completed",
+            result: "ok",
+        });
+
+        // done carries the CP runId and must close the scope the tool opened.
+        store.finalizeStreaming(sessionId, "run-cp");
+        expect(store.isStreaming(sessionId)).toBe(false);
+        expect(store.getStreamingMessageId(sessionId, "run-cp")).toBeNull();
+        expect(store.getStreamingMessageId(sessionId, "lc")).toBeNull();
+        expect(store.getMessages(sessionId)[0].isStreaming).toBe(false);
+    });
 });
