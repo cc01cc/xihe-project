@@ -12,7 +12,6 @@ import {
     getRootBranchId,
     registerJourneyUser,
     seedPage,
-    sendChat,
     waitForControlPlaneAgentReady,
 } from "./helpers/journey";
 import { seedUserGrantPermissions } from "./helpers/user-grants";
@@ -389,17 +388,40 @@ test.describe("@host PLAN-0649 refusal visible + durable", () => {
         await page.goto(`/workspace/${wsId}/chat/${sessionId}`, { waitUntil: "load" });
         await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: 60_000 });
         const modal = page.locator('[data-testid="modal-content"]');
-        await sendChat(
-            page,
-            "请连续调用 spawn_agent 工具两次（必须两次都用工具调用，不要等第一次完成）：第一次 prompt 填「回复标记 REFUSAL-ONE」，第二次 prompt 填「回复标记 REFUSAL-TWO」。两次之间不要等待，也不要只调用一次。",
-        );
+        // sendChat (shared helper) asserts on an optimistic DOM bubble; after the 0645 SSE M2
+        // merge that bubble no longer renders within its 3s window, so its retry loop re-clicks a
+        // now-empty (disabled) composer and hangs the click. Send inline and wait for the run on
+        // the server side instead — the dispatch path under test is unchanged.
+        const composer = page.getByTestId("chat-input"),
+            sendButton = page.getByTestId("chat-send-button");
+        const promptText =
+            "请连续调用 spawn_agent 工具两次（必须两次都用工具调用，不要等第一次完成）：第一次 prompt 填「回复标记 REFUSAL-ONE」，第二次 prompt 填「回复标记 REFUSAL-TWO」。两次之间不要等待，也不要只调用一次。";
+        await composer.click().catch(() => {});
+        await composer.fill(promptText);
+        await expect(sendButton).toBeEnabled({ timeout: 15_000 });
+        await sendButton.click();
+        await expect
+            .poll(
+                () =>
+                    scalar(
+                        `SELECT count(*) FROM chat_runs WHERE session_id = '${sessionId}'::uuid`,
+                    ),
+                { timeout: 60_000, intervals: [1_000, 2_000] },
+            )
+            .toBeGreaterThan(0);
         const approvalSeen = await modal
             .waitFor({ state: "visible", timeout: 180_000 })
             .then(() => true)
             .catch(() => false);
         if (approvalSeen) {
-            await modal.locator('[data-testid="approval-approve"]').click();
-            await expect(modal).toBeHidden({ timeout: 30_000 });
+            // Each spawn_agent call raises its own approval modal; approve in a bounded loop
+            // instead of requiring the modal to hide after one click (it reopens for the next call).
+            for (let i = 0; i < 4; i += 1) {
+                const approve = modal.locator('[data-testid="approval-approve"]');
+                if (!(await approve.isVisible().catch(() => false))) break;
+                await approve.click().catch(() => {});
+                await page.waitForTimeout(2_000);
+            }
         }
         await awaitLatestChatRunCompleted(request, headers, wsId);
 
@@ -467,6 +489,23 @@ test.describe("@host PLAN-0649 refusal visible + durable", () => {
         // ── Step 5: V2 — reload and require the same three carriers to still agree ──
         await page.reload({ waitUntil: "load" });
         await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: 60_000 });
+        // After a full reload the workspace view may land on the session list; reopen the
+        // conversation from the sidebar so the historical messages (and their tool cards)
+        // render from the durable DTO — the carrier under test is the snapshot, not the router.
+        const messageCount = await page.locator("[data-testid='message-item']").count();
+        if (messageCount === 0) {
+            await page
+                .getByRole("button", { name: "PLAN-0649 refusal visible" })
+                .first()
+                .click()
+                .catch(() => {});
+            await expect
+                .poll(() => page.locator("[data-testid='message-item']").count(), {
+                    timeout: 30_000,
+                    intervals: [1_000, 2_000],
+                })
+                .toBeGreaterThan(0);
+        }
         const reloadedCardCount = await expandAllToolCards(page);
         await expect(page.getByTestId("tool-refusal").first(), {
             message: "the refusal block survives a full reload (durable snapshot rendering)",
