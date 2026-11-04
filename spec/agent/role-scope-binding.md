@@ -95,6 +95,11 @@ flowchart LR
    同一 `(roleId, subject)` 重复绑定 ⇒ 409 `ROLE_BINDING_EXISTS`；不可见角色/技能/主体 ⇒ **404**（not-区分，不泄露存在性）。
 5. **即时生效**：绑定/解绑 MUST 在**同一事务内**重物化该主体的 grants（复用 `RoleGrantMaterializer.materializeSubject` 路径），
    使该 agent **新会话**的能力判定立即按新绑定生效；不得依赖缓存过期或后台任务。
+   **cap 是硬上限（BL-287，2026-11-05 裁定）**：agent 的工作区 cap（`WorkspaceAgent.permissionsSnapshot`，
+   会话创建时写入 `agent_permissions_snapshot`）是授权交集的一环——绑定角色若含**超出该 cap** 的原子，
+   该原子实际不会被允许。因此绑定入口 MUST **fail-closed**：含超限原子 ⇒ **409 `ROLE_BINDING_EXCEEDS_CAP`**，
+   `detail` 只列超限原子名；**不得**先返回 201 再静默无效。"即时生效"仅指 cap 内的原子；
+   让 cap 随绑定扩展是产品语义变更（B 类），不在本面内做。
 6. **技能绑定（v1）**：复用 `skill_bindings`（`subject_type='agent_principal'`，嵌套端点写入
    `scope_type='instance'`、`scope_id=null`，即"该 agent 全局可用"）；技能定义不可见 ⇒ 404，重复 ⇒ 409。
 7. **审计**：每次绑定/解绑落 durable audit：`agent_principal_role_bind|agent_principal_role_unbind`、
