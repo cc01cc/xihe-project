@@ -275,7 +275,18 @@ test.describe("@host PLAN-0649 refusal visible + durable", () => {
 
         const principalResponse = await request.post(`${CP_URL}/api/v1/agent-principals`, {
             headers,
-            data: { scope: "WORKSPACE", name: "PLAN0649 Delegator", templateId },
+            data: {
+                scope: "WORKSPACE",
+                name: "PLAN0649 Delegator",
+                templateId,
+                // SessionProviderDefaults (2026-11-04 P0, task-24) resolves the agent-principal
+                // default model FIRST; without it session create falls through to the effective
+                // llm-provider profile, which cannot resolve for a fresh journey user and fails
+                // with 409 LLM_PROFILE_CONFLICT (attempt 5). The template's provider/model do NOT
+                // feed this path — the principal itself must carry the default model.
+                defaultModelProvider: "openai",
+                defaultModelName: MODEL_ID,
+            },
         });
         expect(principalResponse.status(), await principalResponse.text()).toBe(201);
         const principalId = requireUuid(
