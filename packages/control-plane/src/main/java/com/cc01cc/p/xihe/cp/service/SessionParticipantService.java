@@ -86,6 +86,32 @@ public class SessionParticipantService {
     private static final com.fasterxml.jackson.databind.ObjectReader PAYLOAD_READER =
             new com.fasterxml.jackson.databind.ObjectMapper().reader();
 
+    /** True when the unread aggregate may run as native PostgreSQL JSONB SQL (PLAN-0670 M2b T2b.2). */
+    private final boolean sqlUnreadAggregation;
+
+    /**
+     * PLAN-0670 M2b (T2b.2): Spring wires this constructor; {@code dataSource} decides whether the
+     * roster may aggregate unread mentions in PostgreSQL. On the H2 legacy unit lane the answer is
+     * {@code false} and the Java fallback keeps running — the two paths must produce identical
+     * counts, and the PostgreSQL path has its own integration test.
+     */
+    @org.springframework.beans.factory.annotation.Autowired
+    public SessionParticipantService(SessionParticipantRepository participantRepository,
+                                     SessionParticipantCursorRepository cursorRepository,
+                                     SessionRepository sessionRepository,
+                                     AgentPrincipalRepository agentPrincipalRepository,
+                                     UserRepository userRepository,
+                                     WorkspaceService workspaceService,
+                                     GrantAuthorizationService grantAuthorizationService,
+                com.cc01cc.p.xihe.cp.scheduled.WakeScheduleProjectionService wakeScheduleProjectionService,
+            EventStoreRepository eventStoreRepository,
+            javax.sql.DataSource dataSource) {
+        this(participantRepository, cursorRepository, sessionRepository, agentPrincipalRepository,
+                userRepository, workspaceService, grantAuthorizationService, wakeScheduleProjectionService,
+                eventStoreRepository, isPostgres(dataSource));
+    }
+
+    /** Legacy/H2 constructor: no {@code DataSource} ⇒ the Java aggregation path (see BL-273). */
     public SessionParticipantService(SessionParticipantRepository participantRepository,
                                      SessionParticipantCursorRepository cursorRepository,
                                      SessionRepository sessionRepository,
@@ -95,6 +121,20 @@ public class SessionParticipantService {
                                      GrantAuthorizationService grantAuthorizationService,
                 com.cc01cc.p.xihe.cp.scheduled.WakeScheduleProjectionService wakeScheduleProjectionService,
             EventStoreRepository eventStoreRepository) {
+        this(participantRepository, cursorRepository, sessionRepository, agentPrincipalRepository,
+                userRepository, workspaceService, grantAuthorizationService, wakeScheduleProjectionService,
+                eventStoreRepository, false);
+    }
+
+    private SessionParticipantService(SessionParticipantRepository participantRepository,
+                                      SessionParticipantCursorRepository cursorRepository,
+                                      SessionRepository sessionRepository,
+                                      AgentPrincipalRepository agentPrincipalRepository,
+                                      UserRepository userRepository,
+                                      WorkspaceService workspaceService,
+                                      GrantAuthorizationService grantAuthorizationService,
+                com.cc01cc.p.xihe.cp.scheduled.WakeScheduleProjectionService wakeScheduleProjectionService,
+            EventStoreRepository eventStoreRepository, boolean sqlUnreadAggregation) {
         this.wakeScheduleProjectionService = wakeScheduleProjectionService;
         this.eventStoreRepository = eventStoreRepository;
         this.participantRepository = participantRepository;
@@ -104,6 +144,27 @@ public class SessionParticipantService {
         this.userRepository = userRepository;
         this.workspaceService = workspaceService;
         this.grantAuthorizationService = grantAuthorizationService;
+        this.sqlUnreadAggregation = sqlUnreadAggregation;
+    }
+
+    private static boolean isPostgres(javax.sql.DataSource dataSource) {
+        if (dataSource == null) {
+            return false;
+        }
+        try (java.sql.Connection connection = dataSource.getConnection()) {
+            String product = connection.getMetaData().getDatabaseProductName();
+            return product != null && product.toLowerCase(java.util.Locale.ROOT).contains("postgresql");
+        } catch (java.sql.SQLException unreadable) {
+            // A read-only optimisation must never fail the roster: fall back to the Java path.
+            logger.warn("[LIFECYCLE] service=cp event=unread_aggregation_probe_failed reason={}",
+                    unreadable.getClass().getSimpleName());
+            return false;
+        }
+    }
+
+    /** Test/diagnostic seam: is the roster aggregating unread mentions in PostgreSQL right now? */
+    boolean usesSqlUnreadAggregation() {
+        return sqlUnreadAggregation;
     }
 
     // ------------------------------------------------------------------ read
@@ -676,6 +737,30 @@ public class SessionParticipantService {
         if (cursorSeqByParticipant == null || cursorSeqByParticipant.isEmpty()) {
             return Map.of();
         }
+        if (sqlUnreadAggregation) {
+            // PLAN-0670 M2b (T2b.2): aggregate in PostgreSQL. The response is a handful of
+            // (participantId, count) rows instead of every wake event of the session in Java.
+            Map<UUID, Integer> aggregated = new LinkedHashMap<>();
+            for (Object[] row : eventStoreRepository
+                    .countUnreadMentionsByParticipant(sessionId.toString())) {
+                if (row == null || row.length < 2 || !(row[0] instanceof UUID participant)
+                        || !(row[1] instanceof Number count)) {
+                    continue;
+                }
+                aggregated.put(participant, count.intValue());
+            }
+            return aggregated;
+        }
+        return derivedMentionCountsInJava(sessionId, cursorSeqByParticipant);
+    }
+
+    /**
+     * Java fallback for the derived aggregate — kept for the H2 legacy unit lane (BL-273) and as the
+     * parity reference for the PostgreSQL query. It loads every wake event of the session, so it must
+     * not be the production path for long sessions (PLAN-0670 M2b measured ~74 MB heap at 20k events).
+     */
+    private Map<UUID, Integer> derivedMentionCountsInJava(UUID sessionId,
+                                                         Map<UUID, Long> cursorSeqByParticipant) {
         List<ContextEvent> events = eventStoreRepository
                 .findBySessionIdAndEventTypeOrderBySequenceAsc(sessionId.toString(), EVENT_WAKE_DISPATCH);
         Map<UUID, Integer> counts = new LinkedHashMap<>();
