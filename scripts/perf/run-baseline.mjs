@@ -130,15 +130,20 @@ function seed() {
     const sql = `
 DO $$
 DECLARE sid uuid := '${sessionId}';
+DECLARE br uuid;
 BEGIN
-  INSERT INTO messages (id, session_id, role, content, created_at, run_id)
+  SELECT id INTO br FROM branches WHERE session_id = sid ORDER BY created_at LIMIT 1;
+  IF br IS NULL THEN
+    RAISE EXCEPTION 'session % has no branch; run seed-fixtures first (messages.branch_id NOT NULL)', sid;
+  END IF;
+  INSERT INTO messages (id, session_id, role, content, created_at, branch_id)
   SELECT gen_random_uuid(), sid,
          CASE WHEN i % 2 = 0 THEN 'human' ELSE 'assistant' END,
          CASE WHEN i % 20 = 0 THEN repeat('long-form text ', 320)
               WHEN i % 10 = 0 THEN '{"toolCallId":"t' || i || '","name":"search","result":"ok"}'
               ELSE 'message ' || i END,
          now() + (i || ' milliseconds')::interval,
-         NULL
+         br
   FROM generate_series(1, ${total}) AS i;
 END $$;
 `;
@@ -264,9 +269,68 @@ function teardown() {
     say({ phase: "teardown", note: "re-check: reserved ports FREE, containers 0, host root removed" });
 }
 
+/**
+ * M1 prerequisite (Lead ruling (A)): messages cannot be seeded into an empty stack — the read path
+ * needs a real session chain. Required NOT NULL columns (no default), read from the live schema:
+ *
+ *   workspaces        id, name            (+ direct_attach requires host_path: ck_workspaces_direct_attach_path)
+ *   agent_principals  id, name, created_by_user_id
+ *   sessions          id, workspace_id, user_id
+ *   branches          a branch row is REQUIRED: messages.branch_id is NOT NULL
+ *   messages          id, session_id, role, content, branch_id
+ *
+ * The branch requirement is precisely the gap that a schema read catches and a hand-written seed
+ * misses — the first version of this script would have failed on the FK at runtime.
+ */
+function seedFixtures() {
+    const apply = flag("apply");
+    const container = requireArg("container");
+    const db = requireArg("db");
+    const workspaceId = arg("workspace", crypto.randomUUID());
+    const principalId = arg("principal", crypto.randomUUID());
+    const sessionId = arg("session", crypto.randomUUID());
+    const branchId = arg("branch", crypto.randomUUID());
+    const sql = `
+DO $$
+DECLARE
+  ws uuid := '${workspaceId}';
+  pr uuid := '${principalId}';
+  sid uuid := '${sessionId}';
+  br uuid := '${branchId}';
+  uid uuid;
+BEGIN
+  SELECT id INTO uid FROM users ORDER BY created_at LIMIT 1;
+  IF uid IS NULL THEN
+    RAISE EXCEPTION 'perf stack has no user row to own the fixture';
+  END IF;
+  INSERT INTO workspaces (id, name, storage_backend, storage_mode, host_path, execution_mode,
+                          created_at, updated_at)
+  VALUES (ws, 'perf-ws', 'host_directory', 'direct_attach',
+          'C:/xihe-build/perf/' || ws, 'windows-host', now(), now())
+  ON CONFLICT (id) DO NOTHING;
+  INSERT INTO agent_principals (id, name, created_by_user_id)
+  VALUES (pr, 'perf-principal', uid) ON CONFLICT (id) DO NOTHING;
+  INSERT INTO sessions (id, workspace_id, user_id, title, agent_principal_id)
+  VALUES (sid, ws, uid, 'perf-session', pr) ON CONFLICT (id) DO NOTHING;
+  INSERT INTO branches (id, session_id, name, created_at)
+  SELECT br, sid, 'main', now()
+  WHERE NOT EXISTS (SELECT 1 FROM branches WHERE session_id = sid AND name = 'main');
+END $$;
+SELECT 'workspace=${workspaceId} principal=${principalId} session=${sessionId} branch=${branchId}';
+`;
+    if (!apply) {
+        say({ phase: "seed-fixtures", dryRun: true, workspaceId, principalId, sessionId, branchId });
+        return;
+    }
+    execFileSync("docker", ["exec", container, "psql", "-U", "xihe", "-d", db, "-v",
+        "ON_ERROR_STOP=1", "-c", sql], { stdio: "inherit" });
+    say({ phase: "seed-fixtures", workspaceId, principalId, sessionId, branchId });
+}
+
 const phase = process.argv[2];
 switch (phase) {
     case "boot": boot(); break;
+    case "seed-fixtures": seedFixtures(); break;
     case "seed": seed(); break;
     case "seed-attachment": seedAttachment(); break;
     case "run": await readLoop({ mode: "run" }); break;
