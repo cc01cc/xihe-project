@@ -156,6 +156,9 @@ mise run test:cp
 mise run dev:runtime
 mise run test:runtime
 
+# e2e fixture self-tests (fake LLM chain state machine; no stack, seconds) — part of `validate`
+mise run test:e2e:fixtures
+
 # [FROZEN 2026-10-07 — do not run; use dev:host for daily development]
 mise run test:e2e:compose
 mise run validate:full

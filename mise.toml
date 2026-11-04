@@ -143,6 +143,15 @@ description = "Run the UI unit test suite"
 dir = "packages/ui"
 alias = "test:ui"
 
+[tasks."test:e2e:fixtures"]
+# PLAN-0648: e2e 测试夹具自身的状态机（fake LLM mode=chain 的会话游标 / 重试重放 /
+# 耗尽回落）在真栈上只表现为"工具莫名不出现"，排障成本极高；这里用 node:test 直接
+# 守住状态机：不起栈、不开浏览器、秒级。改 e2e/fixtures 的模式机必须先跑这条。
+run = "pnpm run test:e2e:fixtures"
+description = "Run e2e fixture self-tests (fake LLM chain state machine; no stack, seconds)"
+dir = "packages/ui"
+alias = "test:e2e:fixtures"
+
 [tasks."test:agent"]
 run = "uv run pytest"
 description = "Run the agent test suite"
@@ -270,8 +279,10 @@ description = "Format code across modules"
 alias = "format"
 
 [tasks.validate]
-depends = ["lint", "typecheck", "build", "test", "lint:links"]
-description = "Run all quality gates — lint + typecheck + build + test (Docker auto-managed)"
+# test:e2e:fixtures 排在 UI 单测（test）之后、E2E 之前：它只跑 e2e 夹具自身的状态机
+# （不起栈/秒级），放在 E2E 车道前面能最早暴露"夹具坏了导致的假绿"。
+depends = ["lint", "typecheck", "build", "test", "test:e2e:fixtures", "lint:links"]
+description = "Run all quality gates — lint + typecheck + build + test + e2e fixture self-tests (Docker auto-managed)"
 alias = "validate"
 
 [tasks."validate:full"]

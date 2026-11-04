@@ -72,6 +72,7 @@
 
 - 跨服务契约按受影响边界跑真实集成链路；全量验证只在里程碑或 PLAN 收尾执行。
 - UI/浏览器消费者必须做真实 Playwright 验证。Sandbox/direct-attach/WorkspaceStorage 使用隔离 DB/root 的 host profile；每次结果都 teardown，不可达依赖必须失败而非静默通过。
+- **e2e 夹具自测是门禁的一部分**：`mise run test:e2e:fixtures`（= `packages/ui` 的 `node --test "e2e/fixtures/__tests__/*.test.mjs"`）已并入 `mise run validate`，排在 UI 单测之后、E2E 之前。它只跑夹具自身的状态机（fake LLM `mode=chain` 的会话游标 / 重试重放 / 耗尽回落），不起栈、不开浏览器、秒级；**改 `packages/ui/e2e/fixtures/` 下的模式机必须先跑这条**——夹具坏了在真栈上的表现是"工具莫名不出现"，排障成本远高于这条门。
 - Compose E2E 不证明 Runtime-created Sandbox 行为；Mock/Compose/Host E2E profile 串行运行，避免本机 Docker/浏览器资源 OOM。profile/命令见 DEV-020/021/022/023。
 - Route/SSE/Flyway/tool-surface 变更须同批更新 OpenAPI/inventory 和受影响包文档，按 `xc-cross-cutting-checklist` 执行。
 
