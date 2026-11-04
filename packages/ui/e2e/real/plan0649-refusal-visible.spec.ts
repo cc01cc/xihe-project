@@ -12,7 +12,6 @@ import {
     getRootBranchId,
     registerJourneyUser,
     seedPage,
-    sendChat,
     waitForControlPlaneAgentReady,
 } from "./helpers/journey";
 import { seedUserGrantPermissions } from "./helpers/user-grants";
