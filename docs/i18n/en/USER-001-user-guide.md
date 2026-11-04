@@ -63,7 +63,7 @@ mise run validate:full  # Unit + integration + E2E
 ### 2.1. Chat
 
 1. Click "+" in the sidebar to create a new session (navigating to `/chat/:sessionId` automatically opens a session-scoped persistent SSE: `GET /api/v1/events?sessionId=`).
-2. Enter a message in the input box, press Enter or click Send. Only one in-flight message per session is allowed (`CHAT_IN_PROGRESS`); if you see “a chat run is already active”, wait for the current reply to finish.
+2. Enter a message in the input box, press Enter or click Send. A session can generate up to 2 replies concurrently by default (`CHAT_IN_PROGRESS` only when that limit is reached); if you see “a chat run is already active”, wait for one of the replies to finish.
 3. Agent replies via SSE streaming: `token` increments are appended to the assistant bubble incrementally (separate `text`/`reasoning` parts), tool calls appear as collapsible cards.
 4. After the first reply finishes, the SSE stays open — you can send the next message **without refreshing** and still get incremental `token`s. `done` ends the turn only, not the session SSE.
 5. If the connection drops due to network jitter, the UI automatically reconnects with 250ms→5s backoff and shows “recovering”; after reconnect it reloads the canonical content.
@@ -169,7 +169,7 @@ The model selector shows only verified, chat-capable models. ASR/TTS models are 
 | Registration returns 400 | Password less than 8 characters | Use ≥8 character password |
 | 401 error | Not logged in or token expired | Re-login; the persistent SSE is closed before expiry and local token is cleared — re-login is required |
 | `409 SSE_SUBSCRIPTION_REQUIRED` | Sent without an active `GET /api/v1/events` subscription | Refresh the page or wait for `connected`, then retry; UI's `ensureConnected()` will attempt one reconnect |
-| `409 CHAT_IN_PROGRESS` | A run is already active in this session | Wait for the current `done` before sending; refreshing does not clear the server-side lease |
+| `409 CHAT_IN_PROGRESS` | This session already has the maximum number of replies generating (2 by default) | Wait for one of the `done` events before sending; refreshing does not clear the server-side state |
 | Sent but only user bubble, no assistant reply | Previously `SSE_SUBSCRIPTION_REQUIRED`; fixed by PLAN-230 (persistent SSE + generation isolation) | Verify `Network` shows `/events` as `200 text/event-stream` and `POST /api/v1/chat` as `202`; check `logs/cp.log` for `stale_cleanup_ignored` / `replaced` |
 | Long reply shows only one content change | Provider without streaming, single `token` fallback | Expected fallback — inspect `Network → events` `token` count; real MiMo should yield ≥2 `token`s |
 | SSE disconnect (jitter) | Network issue or heartbeat timeout | Auto-reconnect (backoff 250ms→5s); shows `recovering` and reloads `/messages` after `done` |

@@ -27,6 +27,7 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
+import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.web.client.RestTemplate;
 import com.cc01cc.p.xihe.cp.AbstractH2Test;
 import com.cc01cc.p.xihe.cp.auth.AuthResponse;
@@ -627,6 +628,79 @@ class ChatControllerTest extends AbstractH2Test {
                 org.mockito.ArgumentMatchers.argThat(payload -> payload instanceof Map<?, ?> map
                         && "agent-stated-run".equals(String.valueOf(map.get("runId")))),
                 any());
+    }
+
+    // ── PLAN-0645 V8 (D45-08): run attribution never crosses under concurrent runs ──────────
+
+    /**
+     * Two runs in one session with different responders, three relayed token events interleaved
+     * across them: every SSE envelope must carry the participant of the run that produced it, and
+     * the payload keeps the producing runId (PLAN-0645 M2 T2.1 stamping).
+     *
+     * <p>The agent stream is held open on purpose: `runParticipants` (the run → responder map) is
+     * cleared when a run terminates, so a finished run would attribute {@code null} and the test
+     * would prove nothing. Both runs stay non-terminal while the assertions run.</p>
+     */
+    @Test
+    void participantAttributionDoesNotCrossUnderConcurrentRuns() throws Exception {
+        String[] pair = seedMentionPair("Attribution Member");
+        assertFalse(pair[0].equals(pair[1]), "the two runs must have different responders");
+        java.util.concurrent.CountDownLatch release = new java.util.concurrent.CountDownLatch(1);
+        agentServer.createContext("/internal/v1/agent/chat", exchange -> {
+            exchange.getResponseHeaders().set("Content-Type", MediaType.TEXT_EVENT_STREAM_VALUE);
+            exchange.sendResponseHeaders(200, 0);
+            try (OutputStream out = exchange.getResponseBody()) {
+                out.write("event: token\ndata: {\"content\":\"live\"}\n\n".getBytes(StandardCharsets.UTF_8));
+                out.flush();
+                release.await(30, java.util.concurrent.TimeUnit.SECONDS);
+            } catch (IOException | InterruptedException gone) {
+                // the teardown closes the socket or interrupts the handler; the run is over anyway
+                Thread.currentThread().interrupt();
+            }
+        });
+
+        try {
+            ResponseEntity<Map> first = postChat("attribution A");
+            ResponseEntity<Map> second = postChat("attribution B", pair[1]);
+            assertEquals(HttpStatus.ACCEPTED, first.getStatusCode());
+            assertEquals(HttpStatus.ACCEPTED, second.getStatusCode());
+            String runA = (String) first.getBody().get("runId"),
+                runB = (String) second.getBody().get("runId");
+            assertFalse(runA.equals(runB), "the two submissions must be two distinct runs");
+            await().atMost(java.time.Duration.ofSeconds(10)).untilAsserted(() -> assertEquals(2,
+                    jdbcTemplate.queryForObject(
+                            "SELECT count(*) FROM chat_runs WHERE CAST(session_id AS VARCHAR) = ? "
+                                    + "AND status NOT IN ('succeeded','failed','cancelled','partial','ambiguous')",
+                            Integer.class, sessionId)));
+
+            // Interleave: A, B, A — attribution must follow the producing run, not the arrival order.
+            dispatchRelayedToken(runA, "from-a");
+            dispatchRelayedToken(runB, "from-b");
+            dispatchRelayedToken(runA, "from-a-again");
+
+            verify(sseEmitterManager, timeout(5000)).send(eq(sessionId), eq("token"),
+                    org.mockito.ArgumentMatchers.argThat(payload -> payload instanceof Map<?, ?> map
+                            && "from-a".equals(map.get("content"))
+                            && runA.equals(String.valueOf(map.get("runId")))),
+                    eq(pair[0]));
+            verify(sseEmitterManager, timeout(5000)).send(eq(sessionId), eq("token"),
+                    org.mockito.ArgumentMatchers.argThat(payload -> payload instanceof Map<?, ?> map
+                            && "from-b".equals(map.get("content"))
+                            && runB.equals(String.valueOf(map.get("runId")))),
+                    eq(pair[1]));
+            verify(sseEmitterManager, timeout(5000)).send(eq(sessionId), eq("token"),
+                    org.mockito.ArgumentMatchers.argThat(payload -> payload instanceof Map<?, ?> map
+                            && "from-a-again".equals(map.get("content"))
+                            && runA.equals(String.valueOf(map.get("runId")))),
+                    eq(pair[0]));
+        } finally {
+            release.countDown();
+        }
+    }
+
+    private void dispatchRelayedToken(String runId, String content) {
+        ReflectionTestUtils.invokeMethod(chatController, "dispatchRelayedEvent", sessionId, "token",
+                "{\"content\":\"" + content + "\"}", runId, "req-" + content, userId, workspaceId, null);
     }
 
     // ── PLAN-0507: session monitor aggregate ──────────────────────────────

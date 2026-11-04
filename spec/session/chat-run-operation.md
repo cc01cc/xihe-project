@@ -50,7 +50,7 @@ ChatRun 当前可经过 `accepted`、`queued`、`running`、`streaming`、`await
 
 - 队列是 CP-owned 的 durable 投影（V49 `session_follow_up_items`），不是 ChatRun；item 行是队列事实源，SSE/snapshot 只作刷新提示。
 - 入队（`POST /api/v1/sessions/{sessionId}/follow-ups`，`Idempotency-Key` 必带）返回 202 = durable 入队，不代表 child Run 已创建；普通 `POST /api/v1/chat` 在队列未清空时 MUST 409 `FOLLOW_UP_QUEUE_NOT_EMPTY`，Run 中排队必须走显式 Queue 动作。
-- 每 Session 至多一个 active child：`admitHead` 先锁 Session 行再锁 item 行，QueueItem 状态转换与 child ChatRun/Message 在同一 REQUIRES_NEW 事务写入，失败整体回滚；claim 与 withdraw 并发时至多一方转换成功，已 claim 后撤回返回 409 `FOLLOW_UP_ALREADY_ADMITTED`。
+- 每 Session 至多一个 active child：`admitHead` 先锁 Session 行再锁 item 行，QueueItem 状态转换与 child ChatRun/Message 在同一 REQUIRES_NEW 事务写入，失败整体回滚；claim 与 withdraw 并发时至多一方转换成功，已 claim 后撤回返回 409 `FOLLOW_UP_ALREADY_ADMITTED`。**队列单活 ≠ 会话单飞**：本条只约束队列自身的 active child 数；普通 `POST /api/v1/chat` 的并发上限是 `maxConcurrentRunsPerSession`（默认 2，PLAN-0645 M0/M1，cap 满才 409 `CHAT_IN_PROGRESS`），两者互不替代——回滚单飞只需把该键设回 `1`。
 - 父/child Run 进入终态由既有 settlement 路径同事务推进队列：succeeded/partial/failed → consumed child `completed` 并推进下一项；cancelled/ambiguous → 整队 `paused`（`parent_cancelled`/`child_cancelled`/`child_ambiguous`）。已 admission 的 cancelled/ambiguous child MUST NOT 重放；继续（`POST .../continue`）把已消耗 child 收敛为 `completed`，只放行其后项目。
 - admission 前重验附件所有权、branch 可见性与 binding，失败置 `paused`（如 `attachment_unavailable`）而非切换分支或放行。
 - Session 删除意图期间队列变更与普通 Chat 均 MUST 409 `SESSION_DELETING`；CP 启动恢复暂停 admitted-without-child 项并唤醒 queued head（幂等）。

@@ -135,7 +135,11 @@ async function ensureOpenAiCompatConnection(
             apiTypeId: "openai-chat-completions",
             apiTypeVersion: 1,
             apiKey,
-            connectionKey: "plan0630-to-cc",
+            // task-24 严格解析：instance 层 profile（runner 导入 `openai`/`default`/`mimo-v2.6-flash`）
+            // 在**消费用户自己**的 USER 连接里按 providerId+connectionKey 查 READY；key 不是
+            // `default` 时 `POST /sessions` 直接 409 LLM_PROFILE_CONFLICT。改名只动夹具标识，
+            // 断言与步骤不变。
+            connectionKey: "default",
             label: "PLAN-0630 to/cc walkthrough",
             scope: "USER",
             modelDiscovery: "manual",
@@ -332,16 +336,20 @@ test.describe("@host PLAN-0630 T5b.4 real to/cc walkthrough", () => {
         await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: 60_000 });
 
         // ── Step 1: to/cc bar initial state (to = A PRIMARY, cc empty, then add B) ──
-        const toSelect = page.getByTestId("speak-as-select");
-        await expect(toSelect).toBeVisible({ timeout: 30_000 });
-        await expect(toSelect, "to defaults to the PRIMARY participant A").toHaveValue(
+        // 现行 composer 用 RecipientField 的 chip 字段（不是 <select>）：`speak-as-chip` 带
+        // `data-participant-id`，`cc-input` 输入成员名后 Enter 落 chip。断言语义不变。
+        const speakAsChip = page.getByTestId("speak-as-chip");
+        await expect(speakAsChip).toBeVisible({ timeout: 30_000 });
+        await expect(speakAsChip, "to defaults to the PRIMARY participant A").toHaveAttribute(
+            "data-participant-id",
             participantAId,
             { timeout: 30_000 },
         );
         const ccBar = page.getByTestId("cc-bar");
         await expect(ccBar).toBeVisible({ timeout: 30_000 });
         await expect(page.getByTestId("cc-chip")).toHaveCount(0);
-        await page.getByTestId("cc-add-select").selectOption(participantBId);
+        await page.getByTestId("cc-input").fill(displayB);
+        await page.getByTestId("cc-input").press("Enter");
         const ccChip = page.getByTestId("cc-chip").filter({ hasText: displayB });
         await expect(ccChip).toBeVisible();
         await expect(page.getByTestId("cc-chip")).toHaveCount(1);
@@ -385,6 +393,13 @@ test.describe("@host PLAN-0630 T5b.4 real to/cc walkthrough", () => {
             scalar(`SELECT count(*) FROM chat_runs WHERE session_id = '${sessionId}'::uuid`),
             "the first submission created exactly one run",
         ).toBe(1);
+        // Pin the to=A run id now, while the session still holds exactly that one run.
+        const toRunId = requireUuid(
+            psql(
+                `SELECT id FROM chat_runs WHERE session_id = '${sessionId}'::uuid ORDER BY created_at LIMIT 1`,
+            ),
+            "to=A runId",
+        );
         // The responder identity row renders only once a message carries a persisted participant id
         // (PLAN-0631), so the attribution proof is the run rows above plus the answer content here.
         const assistantTextA = await page
@@ -420,7 +435,10 @@ test.describe("@host PLAN-0630 T5b.4 real to/cc walkthrough", () => {
 
         // ── Step 3: @B → B answers passively (to stays A) ──
         const markerB = `T5B4-AT-B-${Date.now().toString(36)}`;
-        await expect(toSelect, "to is still A before the mention").toHaveValue(participantAId);
+        await expect(speakAsChip, "to is still A before the mention").toHaveAttribute(
+            "data-participant-id",
+            participantAId,
+        );
         const submissionsBeforeMention = chatSubmissions.length;
         await input.click();
         await input.fill(
@@ -491,9 +509,18 @@ test.describe("@host PLAN-0630 T5b.4 real to/cc walkthrough", () => {
         for (const run of runs) sessionRuns.push(run);
         // R1 writes chat_runs.agent_principal_id only for participant-attributed runs; the legacy
         // NULL path is allowed, so the attribution invariant is "never B for the to=A submission".
+        // 该不变式只覆盖**第一条提交**那个 run（toRunId，第 2 步落库时锁定）：第 3 步 @B 触发的
+        // mention wake 本来就该由 B 作答（PLAN-0631 之后这个 run 会带 participantId=B），
+        // 对整体列表做"没有 run 属于 B"的全局否定会被它误伤。
+        const toRun = runs.find((run) => run.runId === toRunId);
         expect(sessionRuns.length).toBeGreaterThanOrEqual(2);
         expect(sessionRuns.some((run) => run.runId === mentionRunId)).toBe(true);
-        expect(sessionRuns.some((run) => run.principalId === principalB)).toBe(false);
+        expect(toRun, "the to=A submission run is present in the evidence list").toBeTruthy();
+        expect(
+            toRun!.principalId,
+            "the to=A run is never attributed to the cc observer B",
+        ).not.toBe(principalB);
+        expect(toRunId, "the mention wake produced a different run").not.toBe(mentionRunId);
 
         const messages = await request.get(
             `${CP_URL}/api/v1/sessions/${sessionId}/messages?branchId=${branchId}`,

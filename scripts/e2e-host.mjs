@@ -1523,7 +1523,8 @@ async function bootstrapFirstRunAccount() {
 // ⇒ goldpath admin 用 UI 建会话必 409 LLM_PROFILE_CONFLICT（窗口 3 G2-e :921 实测）。
 // 补齐：为 token 主体建一条 connectionKey='default' 的 USER 连接并 verify 到 READY。
 // 幂等：reuse/external 轮会重复进入——已存在则只补 verify。
-async function ensureDefaultFakeConnection({ cpBaseUrl, accessToken }) {
+// BL-204 之后 fake/real 两分支共用：real 分支传真实 key/model 与 MiMo baseUrl（不带 fakeLlmPort）。
+async function ensureDefaultFakeConnection({ cpBaseUrl, accessToken, apiKey, modelId, realBase }) {
   const headers = { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' }
   const list = await fetch(`${cpBaseUrl}/api/v1/provider-connections`, { headers })
   if (!list.ok) {
@@ -1542,13 +1543,13 @@ async function ensureDefaultFakeConnection({ cpBaseUrl, accessToken }) {
         providerId: 'openai',
         apiTypeId: 'openai-chat-completions',
         apiTypeVersion: 1,
-        apiKey: 'sk-fake-openai-key',
+        apiKey: apiKey ?? 'sk-fake-openai-key',
         connectionKey: 'default',
-        label: 'e2e fake LLM (default)',
+        label: realBase ? 'e2e real LLM (default)' : 'e2e fake LLM (default)',
         scope: 'USER',
         modelDiscovery: 'manual',
-        manualModels: ['fake-openai'],
-        baseUrl: `http://127.0.0.1:${fakeLlmPort}/openai/v1`,
+        manualModels: [modelId ?? 'fake-openai'],
+        ...(realBase ? { baseUrl: realBase } : { baseUrl: `http://127.0.0.1:${fakeLlmPort}/openai/v1` }),
       }),
     })
     if (!created.ok) {
@@ -1627,6 +1628,17 @@ async function configureFakeLlm() {
       throw new Error(`real provider config import failed: HTTP ${imported.status} ${problem.slice(0, 500)}`)
     }
     console.log(`[e2e-host] real provider configuration imported route=${realRoute} (key stays in the Agent env only)`)
+    // task-24 严格解析的另一半对 real lane 同样成立：instance profile 引用
+    // {providerId:openai, connectionKey:'default'}，而 strict resolve 要求消费用户自己有一条
+    // USER+READY+key='default' 的连接（PLAN-0648 fake 分支已修，real 分支同批补齐，否则
+    // spec 自建 key='plan0630-*' 的连接救不了解析）。幂等：已存在则只在非 READY 时补 verify。
+    await ensureDefaultFakeConnection({
+      cpBaseUrl,
+      accessToken,
+      apiKey: process.env.XIHE_E2E_REAL_XIAOMI_KEY,
+      modelId: 'mimo-v2.6-flash',
+      realBase: process.env.XIHE_E2E_REAL_OPENAI_BASE,
+    })
     return
   }
   // PLAN-0504: the default identity is the whole `profile` unit (providerId /
