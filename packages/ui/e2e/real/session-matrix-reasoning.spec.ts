@@ -58,14 +58,16 @@ interface MessageRow {
     role?: string;
     content?: string;
     runId?: string;
-    /** PLAN-0659 T1.2 的 actor 归因来源；durable 读面当前**不返回**该字段（BL-197 ①）。 */
+    /** PLAN-0659 T1.2 的 actor 归因来源；PLAN-0669 M1b（V121）起 durable 读面返回该字段。 */
     participantId?: string | null;
 }
 
 /**
- * 诊断（PLAN-0659 §2 混主体正例的归因证据）：durable 消息行里到底有没有 `participantId`。
- * 只写日志、不作断言 —— 缺口未补齐前 `actorView.hasMultipleActors` 恒 false，
- * actor 徽标不渲染就是这个原因（见 R9-4 fixme 说明）。
+ * 归因证据（PLAN-0659 §2 混主体正例）：durable 消息行里的 `participantId` 必须齐全。
+ *
+ * PLAN-0669 M1（V121）前该字段恒缺省（BL-197 ①：`actorView.hasMultipleActors` 因此恒 false，
+ * actor 徽标永不渲染）；M1b 起 CP 投影该字段，这里从"只记日志"升级为**断言**：
+ * R9-1 只有一条 assistant 行 ⇒ `withParticipantId=1`（Lead 2026-11-05 验收口径）。
  */
 async function logParticipantIdAvailability(request: APIRequestContext): Promise<void> {
     const response = await request.get(messagesPath(), { headers });
@@ -76,6 +78,9 @@ async function logParticipantIdAvailability(request: APIRequestContext): Promise
     const withId = assistantRows.filter((row) => Boolean(row.participantId));
     console.log(
         `[R9] durable assistant rows=${assistantRows.length} withParticipantId=${withId.length}`,
+    );
+    expect(withId.length, "每条 durable assistant 行都必须带 participantId（PLAN-0669 M1b）").toBe(
+        assistantRows.length,
     );
 }
 
@@ -355,18 +360,20 @@ test.describe("@host PLAN-0658 R9 reasoning 三段同值", () => {
      * 本用例再加入第二个 agent 参与者（as 它发送）产出第二条 reasoning 消息 ⇒ 线程里
      * 两个不同 `message.participantId` ⇒ `hasMultipleActors=true` ⇒ 两条过程行都带 actor 徽标。
      *
-     * **2026-11-04 实测：正例在真实读面不成立（B 类，BL-197 ① 延伸）** ——
+     * **2026-11-04 曾实测不成立（BL-197 ①），2026-11-05 已由 PLAN-0669 M1 补齐** ——
      * `actorView.actorOf` 从 `message.participantId` 派生徽标，`hasMultipleActors` 也只看这个字段；
-     * 而 durable 读面 `SessionMessage`（`docs/api/openapi.yaml` 的 schema）**没有 `participantId`**
-     * 字段（`ChatPanel.vue:938-943` 也只给"本地刚发出的那条"补 `participantId`，并注明
-     * "history DTO 不携带该字段"）。所以历史/刷新后的线程里 `hasMultipleActors` 恒 false ⇒
-     * **actor 徽标永远不渲染**（实测 `process-row-actor` count=0，而 `process-reasoning` count=2）。
-     * 注意：这同时说明 R9-2 的负例（单主体不出徽标）此前是**因为同一原因**才绿的 ——
-     * 只有正例才能把这个缺口暴露出来。
-     * 缺口需要 CP + OpenAPI + UI 跨层补字段（B 类，本 lane 不动产品），先 fixme 保留完整用例，
-     * 字段补齐后去掉 `.fixme` 即可验收。
+     * M1 之前 durable 读面 `SessionMessage` 没有 `participantId`，历史线程里 `hasMultipleActors`
+     * 恒 false ⇒ actor 徽标永不渲染（当时实测 `process-row-actor` count=0、`process-reasoning`=2）。
+     * **2026-11-05 真栈复验（PLAN-0669 M1 已合入 develop `ea26a672`，flyway 122）**：
+     * durable 归因已补齐 —— 两条 assistant 行各自带不同 `participantId`（SQL + API 双证），
+     * 消息身份行也按服务端归因正确渲染（`AgentR9… 主智能体` / `AgentR9Extra… 成员`）。
+     * **但 reasoning 过程行仍无 actor 徽标**：`ReasoningPart.vue` 渲染 `ProcessRow` 时
+     * 没有把 `actor` 透传下去（同一缺口只在 reasoning 行；thinking marker / tool card 已接）。
+     * **BL-286 已合入 develop（`935c9ff3` / `94a9830b`）**：`ReasoningPart` 现在把
+     * `actor` 从 `MessageItem.actorForRows` 透传到 `ProcessRow`，reasoning 行与 thinking/tool
+     * 行同一契约；本用例解除 `.fixme`，由真栈复验（stack-1，`runningCommit=79cca962`）。
      */
-    test.fixme("R9-4 混主体：两个 principal 各出过程行，actor 徽标 id 与顺序正确", async ({
+    test("R9-4 混主体：两个 principal 各出过程行，actor 徽标 id 与顺序正确", async ({
         page,
         request,
     }) => {
