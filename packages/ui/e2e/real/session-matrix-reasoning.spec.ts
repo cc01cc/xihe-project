@@ -217,6 +217,19 @@ test.describe("@host PLAN-0658 R9 reasoning 三段同值", () => {
         await expect(reasoningRows.first(), "reasoning 过程行").toBeVisible({
             timeout: 30_000,
         });
+        // PLAN-0659 T2.1 §2 · T1.2 渲染契约（real 链路，身份只认 data-*）：
+        // ① 过程行带 `data-process-kind`；
+        // ② 本会话是**单主体**（只有 PRIMARY agent 应答）⇒ 不得出现 `process-row-actor` 徽标；
+        // ③ 单 run 会话**无** `run-header`（只有分组态/多 run 才渲染）。
+        await expect(reasoningRows.first(), "过程行带 data-process-kind").toHaveAttribute(
+            "data-process-kind",
+            "reasoning",
+        );
+        await expect(
+            page.getByTestId("process-row-actor"),
+            "单主体线程不出现 process-row-actor",
+        ).toHaveCount(0);
+        await expect(page.getByTestId("run-header"), "单 run 会话无 run-header").toHaveCount(0);
         const toggle = reasoningRows.first().getByTestId("process-row-toggle");
         // 默认折叠：aria-expanded=false；折叠行只显示 summary（第一行），展开体里的第二段不渲染。
         await expect(toggle, "默认折叠").toHaveAttribute("aria-expanded", "false");
