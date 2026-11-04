@@ -1,17 +1,15 @@
 package com.cc01cc.p.xihe.cp.chat;
 
 import com.cc01cc.p.xihe.cp.config.CpApiException;
-import com.cc01cc.p.xihe.cp.config.ProblemDetailsHandler;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
 import com.cc01cc.p.xihe.cp.service.BranchPathService;
 import com.cc01cc.p.xihe.cp.service.SessionService;
+import jakarta.servlet.http.HttpServletResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.ContentDisposition;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
-import org.springframework.http.MediaType;
-import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -37,15 +35,21 @@ import java.util.UUID;
  * <p>BL-279 (A1): the read surface used to materialise the whole session, so the controller
  * prechecks the session-wide message count against {@link SessionExportService#MAX_MESSAGES} and
  * refuses with {@code 413 EXPORT_TOO_LARGE} **before reading any message**. The cap is on session
- * size (the memory driver), not on the visible branch path; the detail carries the actual count and
- * limit so the client can act, and the refusal is never a silent truncation.
+ * size (the memory driver), not on the visible branch path; the refusal is never a silent
+ * truncation and its problem body carries {@code messages}/{@code limit}.
  *
- * <p>PLAN-0670 M2c/B: the document is now prepared inside a short read-only transaction by
+ * <p>PLAN-0670 M2c/B: the document is prepared inside a short read-only transaction by
  * {@link SessionExportStreamRenderer} (cursor-backed read; document capped at {@code 2M} chars) and
  * the response is written with {@link StreamingResponseBody} in fixed-size chunks, so the body is
  * never buffered by the servlet layer and a client that disconnects stops the write immediately.
- * Wire format is unchanged: {@code text/markdown; charset=UTF-8} + attachment disposition, and the
+ * Wire format is unchanged ({@code text/markdown; charset=UTF-8} + attachment disposition) and the
  * Markdown bytes are identical to the pre-streaming implementation.
+ *
+ * <p>Why the headers are set on {@link HttpServletResponse} instead of a {@code ResponseEntity}:
+ * Spring MVC only dispatches {@link StreamingResponseBody} when it is the declared return type
+ * (a {@code ResponseEntity<StreamingResponseBody>} falls through to the message converters and
+ * fails with {@code HttpMessageNotWritableException}). Error faces therefore throw
+ * {@link CpApiException}; the problem body stays RFC 9457 with the same fields.
  */
 @RestController
 @RequestMapping("/api/v1/sessions")
@@ -73,32 +77,30 @@ public class SessionExportController {
 
     @PreAuthorize("isAuthenticated()")
     @GetMapping("/{sessionId}/export")
-    public ResponseEntity<?> export(@PathVariable String sessionId,
-                                    @RequestParam(value = "branchId", required = false) String branchId) {
+    public StreamingResponseBody export(@PathVariable String sessionId,
+                                        @RequestParam(value = "branchId", required = false) String branchId,
+                                        HttpServletResponse response) {
         String userId = TenantContext.getUserId();
         String workspaceId = TenantContext.getWorkspaceId();
         if (userId == null || workspaceId == null) {
-            return ProblemDetailsHandler.workspaceContextRequired();
+            throw CpApiException.workspaceContextRequired();
         }
         if (!isUuid(sessionId)) {
-            return ProblemDetailsHandler.problemResponse(
-                    HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "sessionId must be a UUID");
+            throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "sessionId must be a UUID");
         }
         try {
             sessionService.requireCurrent(sessionId, userId, workspaceId);
         } catch (CpApiException e) {
-            return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
+            throw e;
         }
         if (branchId == null || branchId.isBlank()) {
-            return ProblemDetailsHandler.problemResponse(HttpStatus.BAD_REQUEST, "INVALID_REQUEST",
-                    "branchId is required");
+            throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "branchId is required");
         }
         String canonicalBranchId;
         try {
             canonicalBranchId = UUID.fromString(branchId).toString();
         } catch (IllegalArgumentException invalidBranchId) {
-            return ProblemDetailsHandler.problemResponse(HttpStatus.BAD_REQUEST, "INVALID_REQUEST",
-                    "branchId must be a UUID");
+            throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "branchId must be a UUID");
         }
         BranchPathService.BranchVisibility visibility;
         String rootBranchId;
@@ -106,7 +108,7 @@ public class SessionExportController {
             visibility = branchPathService.resolveVisibility(sessionId, canonicalBranchId);
             rootBranchId = branchPathService.resolvePath(sessionId, canonicalBranchId);
         } catch (CpApiException e) {
-            return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
+            throw e;
         }
         // BL-279 A1: refuse before any message row is materialised. `MAX_MESSAGES` is the single
         // source of the export cap (shared with the renderer) — never introduce a second literal.
@@ -118,31 +120,25 @@ public class SessionExportController {
             Map<String, Object> extra = new LinkedHashMap<>();
             extra.put("messages", totalMessages);
             extra.put("limit", SessionExportService.MAX_MESSAGES);
-            return ProblemDetailsHandler.problemResponse(HttpStatus.PAYLOAD_TOO_LARGE,
-                    "EXPORT_TOO_LARGE",
+            throw new CpApiException(HttpStatus.PAYLOAD_TOO_LARGE, "EXPORT_TOO_LARGE",
                     "session has " + totalMessages + " messages, exceeding the export limit of "
                             + SessionExportService.MAX_MESSAGES
-                            + "; export a smaller session or split the history before exporting",
-                    extra);
+                            + "; export a smaller session or split the history before exporting")
+                    .withExtra(extra);
         }
-        SessionExportService.ExportResult result;
-        try {
-            result = streamRenderer.render(sessionId, workspaceId, rootBranchId, visibility);
-        } catch (CpApiException e) {
-            return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
-        }
+        SessionExportService.ExportResult result = streamRenderer.render(sessionId, workspaceId,
+                rootBranchId, visibility);
         logger.info("[LIFECYCLE] service=cp event=session_export sessionId={} messages={} messagesTruncated={} contentTruncated={}",
                 sessionId, result.messages(), result.messagesTruncated(), result.contentTruncated());
         byte[] payload = result.markdown().getBytes(StandardCharsets.UTF_8);
-        StreamingResponseBody body = output -> writeExport(output, payload, sessionId);
-        return ResponseEntity.ok()
-                .contentType(new MediaType("text", "markdown", StandardCharsets.UTF_8))
-                .header(HttpHeaders.CONTENT_DISPOSITION,
-                        ContentDisposition.attachment()
-                                .filename("session-" + sessionId + ".md", StandardCharsets.UTF_8)
-                                .build()
-                                .toString())
-                .body(body);
+        response.setStatus(HttpStatus.OK.value());
+        response.setContentType("text/markdown;charset=UTF-8");
+        response.setHeader(HttpHeaders.CONTENT_DISPOSITION,
+                ContentDisposition.attachment()
+                        .filename("session-" + sessionId + ".md", StandardCharsets.UTF_8)
+                        .build()
+                        .toString());
+        return output -> writeExport(output, payload, sessionId);
     }
 
     /**

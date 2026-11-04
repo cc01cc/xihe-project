@@ -1,5 +1,6 @@
 package com.cc01cc.p.xihe.cp.chat;
 
+import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
 import com.cc01cc.p.xihe.cp.service.BranchPathService;
 import com.cc01cc.p.xihe.cp.service.SessionService;
@@ -9,11 +10,9 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.http.HttpStatus;
-import org.springframework.http.ResponseEntity;
+import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBody;
 
-import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
@@ -41,10 +40,10 @@ import static org.mockito.Mockito.when;
  * {@link SessionExportService#MAX_MESSAGES} **before any message row is materialised**, and it must
  * use the same constant as the renderer (single source, no drifting second literal).
  *
- * <p>PLAN-0670 M2c/B: the success path is now a {@link StreamingResponseBody}. These tests execute
- * the body (exactly what the servlet container does) and assert on the produced Markdown bytes, so
- * "streaming" cannot silently change the document; they also assert that the precheck runs before
- * the renderer and that a client disconnect propagates instead of being swallowed.
+ * <p>PLAN-0670 M2c/B: the success face is a {@link StreamingResponseBody} (declared return type is
+ * required by Spring MVC to dispatch it, so error faces throw {@link CpApiException}). These tests
+ * drive the real body into a {@link MockHttpServletResponse} and assert on the produced Markdown
+ * bytes, chunked headers, precheck ordering and disconnect propagation.
  */
 @ExtendWith(MockitoExtension.class)
 class SessionExportControllerTest {
@@ -86,13 +85,10 @@ class SessionExportControllerTest {
         return dto;
     }
 
-    private static String bodyText(ResponseEntity<?> response) throws IOException {
-        Object body = response.getBody();
-        assertNotNull(body, "successful export must carry a body");
-        assertTrue(body instanceof StreamingResponseBody, "export body must be streamed");
-        ByteArrayOutputStream output = new ByteArrayOutputStream();
-        ((StreamingResponseBody) body).writeTo(output);
-        return output.toString(StandardCharsets.UTF_8);
+    private static String bodyText(StreamingResponseBody body) throws IOException {
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        body.writeTo(response.getOutputStream());
+        return response.getContentAsString(StandardCharsets.UTF_8);
     }
 
     @Test
@@ -104,15 +100,19 @@ class SessionExportControllerTest {
         when(streamRenderer.render(eq(SESSION), eq(workspaceId), eq(BRANCH), any()))
                 .thenReturn(exportService.render(SESSION,
                         List.of(message("user", "hello"), message("assistant", "world"))));
+        MockHttpServletResponse response = new MockHttpServletResponse();
 
-        ResponseEntity<?> response = controller.export(SESSION, BRANCH);
+        StreamingResponseBody body = controller.export(SESSION, BRANCH, response);
 
-        assertEquals(HttpStatus.OK, response.getStatusCode());
-        assertEquals(-1L, response.getHeaders().getContentLength(),
-                "streamed body must not carry a Content-Length (chunked transfer)");
-        assertEquals("text/markdown;charset=UTF-8",
-                String.valueOf(response.getHeaders().getContentType()));
-        String markdown = bodyText(response);
+        assertEquals(200, response.getStatus());
+        assertEquals("text/markdown;charset=UTF-8", response.getContentType());
+        assertNull(response.getHeader("Content-Length"),
+                "streamed export must not announce a Content-Length (chunked transfer)");
+        String disposition = response.getHeader("Content-Disposition");
+        assertNotNull(disposition);
+        assertTrue(disposition.startsWith("attachment;"), disposition);
+        assertTrue(disposition.contains("session-" + SESSION + ".md"), disposition);
+        String markdown = bodyText(body);
         assertTrue(markdown.startsWith("# Session export\n"), markdown);
         assertTrue(markdown.contains("- messages: 2"), markdown);
         assertTrue(markdown.contains("## 1. user"), markdown);
@@ -131,9 +131,9 @@ class SessionExportControllerTest {
         when(streamRenderer.render(eq(SESSION), eq(workspaceId), eq(BRANCH), any()))
                 .thenReturn(exportService.render(SESSION, List.of(message("user", "boundary"))));
 
-        ResponseEntity<?> response = controller.export(SESSION, BRANCH);
+        StreamingResponseBody body = controller.export(SESSION, BRANCH, new MockHttpServletResponse());
 
-        assertEquals(HttpStatus.OK, response.getStatusCode());
+        assertNotNull(body);
         verify(streamRenderer).render(eq(SESSION), eq(workspaceId), eq(BRANCH), any());
     }
 
@@ -145,17 +145,14 @@ class SessionExportControllerTest {
         long total = SessionExportService.MAX_MESSAGES + 1L;
         when(messageReadService.countSessionMessages(SESSION)).thenReturn(total);
 
-        ResponseEntity<?> response = controller.export(SESSION, BRANCH);
+        CpApiException refused = assertThrows(CpApiException.class,
+                () -> controller.export(SESSION, BRANCH, new MockHttpServletResponse()));
 
-        assertEquals(HttpStatus.PAYLOAD_TOO_LARGE, response.getStatusCode());
-        @SuppressWarnings("unchecked")
-        Map<String, Object> body = (Map<String, Object>) response.getBody();
-        assertEquals("EXPORT_TOO_LARGE", body.get("code"));
-        String detail = String.valueOf(body.get("detail"));
-        assertTrue(detail.contains(String.valueOf(total)), detail);
-        assertTrue(detail.contains(String.valueOf(SessionExportService.MAX_MESSAGES)), detail);
-        assertEquals(total, body.get("messages"));
-        assertEquals(SessionExportService.MAX_MESSAGES, body.get("limit"));
+        assertEquals(413, refused.getStatus().value());
+        assertEquals("EXPORT_TOO_LARGE", refused.getCode());
+        assertTrue(refused.getMessage().contains(String.valueOf(total)), refused.getMessage());
+        assertEquals(total, refused.getExtra().get("messages"));
+        assertEquals(SessionExportService.MAX_MESSAGES, refused.getExtra().get("limit"));
         verify(messageReadService).countSessionMessages(SESSION);
         verify(streamRenderer, never()).render(anyString(), anyString(), anyString(), any());
     }
@@ -169,7 +166,7 @@ class SessionExportControllerTest {
         when(streamRenderer.render(eq(SESSION), eq(workspaceId), eq(BRANCH), any()))
                 .thenReturn(exportService.render(SESSION, List.of(message("user", "ordered"))));
 
-        controller.export(SESSION, BRANCH);
+        controller.export(SESSION, BRANCH, new MockHttpServletResponse());
 
         InOrder order = inOrder(sessionService, messageReadService, streamRenderer);
         order.verify(sessionService).requireCurrent(SESSION, userId, workspaceId);
@@ -182,20 +179,18 @@ class SessionExportControllerTest {
         SessionExportController controller = new SessionExportController(sessionService,
                 messageReadService, branchPathService, streamRenderer);
 
-        ResponseEntity<?> response = controller.export(SESSION, BRANCH);
+        CpApiException refused = assertThrows(CpApiException.class,
+                () -> controller.export(SESSION, BRANCH, new MockHttpServletResponse()));
 
-        assertEquals(HttpStatus.CONFLICT, response.getStatusCode());
-        @SuppressWarnings("unchecked")
-        Map<String, Object> body = (Map<String, Object>) response.getBody();
-        assertEquals("WORKSPACE_CONTEXT_REQUIRED", body.get("code"));
+        assertEquals(409, refused.getStatus().value());
+        assertEquals("WORKSPACE_CONTEXT_REQUIRED", refused.getCode());
         verify(messageReadService, never()).countSessionMessages(anyString());
         verify(streamRenderer, never()).render(anyString(), anyString(), anyString(), any());
-        assertFalse(body.containsKey("messages"));
-        assertNull(body.get("limit"));
+        assertFalse(refused.getExtra().containsKey("messages"));
     }
 
     @Test
-    void clientDisconnectPropagatesAndStopsTheWrite() {
+    void clientDisconnectPropagatesAndStopsTheWrite() throws IOException {
         String userId = UUID.randomUUID().toString();
         String workspaceId = UUID.randomUUID().toString();
         SessionExportController controller = controllerWith(userId, workspaceId);
@@ -204,8 +199,8 @@ class SessionExportControllerTest {
         when(streamRenderer.render(eq(SESSION), eq(workspaceId), eq(BRANCH), any()))
                 .thenReturn(exportService.render(SESSION,
                         List.of(message("user", huge), message("assistant", huge))));
-        ResponseEntity<?> response = controller.export(SESSION, BRANCH);
-        StreamingResponseBody body = (StreamingResponseBody) response.getBody();
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        StreamingResponseBody body = controller.export(SESSION, BRANCH, response);
 
         IOException disconnected = assertThrows(IOException.class,
                 () -> body.writeTo(new OutputStream() {
@@ -220,5 +215,6 @@ class SessionExportControllerTest {
                     }
                 }));
         assertEquals("client went away", disconnected.getMessage());
+        assertNull(response.getHeader("Content-Length"));
     }
 }
