@@ -425,8 +425,8 @@ async function loadRbac(principalId: string) {
     rbacActionError.value = "";
     try {
         const [roles, skills] = await Promise.all([
-            api.getAgentRoles(principalId),
-            api.getAgentSkills(principalId),
+            api.getAgentRoles(props.workspaceId, principalId),
+            api.getAgentSkills(props.workspaceId, principalId),
         ]);
         if (generation !== rbacGeneration) return;
         agentRoles.value = roles;
@@ -473,7 +473,7 @@ async function bindSelectedRole(agent: WorkspaceAgentBinding) {
     rbacBusy.value = true;
     rbacActionError.value = "";
     try {
-        await api.bindAgentRole(agent.principalId, selectedRoleId.value);
+        await api.bindAgentRole(props.workspaceId, agent.principalId, selectedRoleId.value);
         selectedRoleId.value = "";
         await loadRbac(agent.principalId);
     } catch (cause) {
@@ -488,7 +488,7 @@ async function unbindRole(agent: WorkspaceAgentBinding, binding: AgentRoleBindin
     rbacBusy.value = true;
     rbacActionError.value = "";
     try {
-        await api.unbindAgentRole(agent.principalId, binding.bindingId);
+        await api.unbindAgentRole(props.workspaceId, agent.principalId, binding.bindingId);
         await loadRbac(agent.principalId);
     } catch (cause) {
         rbacActionError.value = rbacErrorMessage(cause);
@@ -502,7 +502,7 @@ async function bindSelectedSkill(agent: WorkspaceAgentBinding) {
     rbacBusy.value = true;
     rbacActionError.value = "";
     try {
-        await api.bindAgentSkill(agent.principalId, selectedSkillId.value);
+        await api.bindAgentSkill(props.workspaceId, agent.principalId, selectedSkillId.value);
         selectedSkillId.value = "";
         await loadRbac(agent.principalId);
     } catch (cause) {
@@ -517,7 +517,7 @@ async function unbindSkill(agent: WorkspaceAgentBinding, binding: AgentSkillBind
     rbacBusy.value = true;
     rbacActionError.value = "";
     try {
-        await api.unbindAgentSkill(agent.principalId, binding.bindingId);
+        await api.unbindAgentSkill(props.workspaceId, agent.principalId, binding.bindingId);
         await loadRbac(agent.principalId);
     } catch (cause) {
         rbacActionError.value = rbacErrorMessage(cause);
@@ -1870,13 +1870,15 @@ async function unbind(agent: WorkspaceAgentBinding) {
                                     :data-testid="`agent-role-item-${binding.bindingId}`"
                                 >
                                     <div class="flex flex-wrap items-center gap-1.5 text-[11px]">
-                                        <span class="text-xs font-medium">{{ binding.name }}</span>
+                                        <span class="text-xs font-medium">{{
+                                            binding.displayName || binding.name
+                                        }}</span>
                                         <span
-                                            v-if="binding.scope"
+                                            v-if="binding.scopeName || binding.scopeType"
                                             class="rounded-full border px-1.5 py-0.5 text-muted-foreground"
                                             :data-testid="`agent-role-scope-${binding.bindingId}`"
                                         >
-                                            {{ binding.scope }}
+                                            {{ binding.scopeName || binding.scopeType }}
                                         </span>
                                         <span
                                             v-if="binding.isSystem"
@@ -1904,6 +1906,7 @@ async function unbind(agent: WorkspaceAgentBinding) {
                                         {{
                                             t("workspace.agentRoleAtomsSummary", {
                                                 atoms: binding.atomSummary.join(" · "),
+                                                count: binding.atomCount,
                                             })
                                         }}
                                     </p>
@@ -2000,6 +2003,18 @@ async function unbind(agent: WorkspaceAgentBinding) {
                                     :data-testid="`agent-skill-item-${binding.bindingId}`"
                                 >
                                     <span class="text-xs font-medium">{{ binding.name }}</span>
+                                    <span v-if="binding.sourceName" class="text-muted-foreground">{{
+                                        binding.sourceName
+                                    }}</span>
+                                    <span
+                                        v-if="binding.tokenEstimate != null"
+                                        class="text-muted-foreground"
+                                        >{{
+                                            t("workspace.agentSkillTokens", {
+                                                tokens: binding.tokenEstimate,
+                                            })
+                                        }}</span
+                                    >
                                     <button
                                         type="button"
                                         class="ml-auto rounded-md border px-2 py-0.5 text-xs disabled:opacity-50"

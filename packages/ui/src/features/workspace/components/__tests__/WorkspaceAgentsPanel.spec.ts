@@ -1068,21 +1068,37 @@ describe("WorkspaceAgentsPanel PLAN-0667 roles & skills", () => {
                 bindingId: "binding-system",
                 roleId: "role-seed",
                 name: "AGENT_SPAWNER",
-                scope: "instance",
+                displayName: null,
+                scopeType: "instance",
+                scopeId: null,
+                scopeName: null,
                 isSystem: true,
                 atomSummary: ["读取", "执行"],
+                atomCount: 2,
+                atomsTruncated: false,
             },
             {
                 bindingId: "binding-editor",
                 roleId: "role-editor",
                 name: "WS_EDITOR",
-                scope: "workspace",
+                displayName: null,
+                scopeType: "workspace",
+                scopeId: WORKSPACE_ID,
+                scopeName: null,
                 isSystem: false,
                 atomSummary: ["读取", "写入", "执行"],
+                atomCount: 6,
+                atomsTruncated: true,
             },
         ]);
         apiMock.getAgentSkills.mockResolvedValue([
-            { bindingId: "skill-binding-1", skillId: "skill-1", name: "contract-review" },
+            {
+                bindingId: "skill-binding-1",
+                skillId: "skill-1",
+                name: "contract-review",
+                sourceName: "工作区技能库",
+                tokenEstimate: 1200,
+            },
         ]);
         apiMock.listRoles.mockResolvedValue([
             { id: "role-editor", name: "WS_EDITOR", displayName: "Workspace editor" },
@@ -1101,9 +1117,9 @@ describe("WorkspaceAgentsPanel PLAN-0667 roles & skills", () => {
         expect(system.text()).toContain("AGENT_SPAWNER");
         expect(system.text()).toContain("instance");
         expect(system.text()).toContain(i18n.global.t("workspace.agentRoleSystemBadge"));
-        // D5(b)：只渲染摘要，不展开全集。
+        // D5(b)：只渲染摘要（前 3 个）+ 总数，不展开全集。
         expect(system.text()).toContain(
-            i18n.global.t("workspace.agentRoleAtomsSummary", { atoms: "读取 · 执行" }),
+            i18n.global.t("workspace.agentRoleAtomsSummary", { atoms: "读取 · 执行", count: 2 }),
         );
         expect(wrapper.find('[data-testid="agent-role-unbind-binding-system"]').exists()).toBe(
             false,
@@ -1113,7 +1129,11 @@ describe("WorkspaceAgentsPanel PLAN-0667 roles & skills", () => {
         expect(editor.text()).toContain("WS_EDITOR");
         await wrapper.get('[data-testid="agent-role-unbind-binding-editor"]').trigger("click");
         await flushPromises();
-        expect(apiMock.unbindAgentRole).toHaveBeenCalledWith(PRINCIPAL_ID, "binding-editor");
+        expect(apiMock.unbindAgentRole).toHaveBeenCalledWith(
+            WORKSPACE_ID,
+            PRINCIPAL_ID,
+            "binding-editor",
+        );
     });
 
     it("binds the selected role and maps 409 AGENT_PRINCIPAL_FORBIDDEN_ATOMS to localized copy", async () => {
@@ -1128,7 +1148,11 @@ describe("WorkspaceAgentsPanel PLAN-0667 roles & skills", () => {
         await wrapper.get(`[data-testid="agent-role-bind-${PRINCIPAL_ID}"]`).trigger("click");
         await flushPromises();
 
-        expect(apiMock.bindAgentRole).toHaveBeenCalledWith(PRINCIPAL_ID, "role-editor");
+        expect(apiMock.bindAgentRole).toHaveBeenCalledWith(
+            WORKSPACE_ID,
+            PRINCIPAL_ID,
+            "role-editor",
+        );
         expect(wrapper.get('[data-testid="agent-rbac-action-error"]').text()).toBe(
             i18n.global.t("workspace.agentRoleForbiddenAtoms"),
         );
@@ -1144,7 +1168,11 @@ describe("WorkspaceAgentsPanel PLAN-0667 roles & skills", () => {
         );
         await wrapper.get('[data-testid="agent-skill-unbind-skill-binding-1"]').trigger("click");
         await flushPromises();
-        expect(apiMock.unbindAgentSkill).toHaveBeenCalledWith(PRINCIPAL_ID, "skill-binding-1");
+        expect(apiMock.unbindAgentSkill).toHaveBeenCalledWith(
+            WORKSPACE_ID,
+            PRINCIPAL_ID,
+            "skill-binding-1",
+        );
     });
 
     it("keeps the section read-only (with explanation) when the projection lacks MANAGE_WORKSPACE_AGENTS", async () => {
