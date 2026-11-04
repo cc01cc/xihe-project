@@ -147,7 +147,10 @@ async function ensureOpenAiCompatConnection(
             apiTypeId: "openai-chat-completions",
             apiTypeVersion: 1,
             apiKey,
-            connectionKey: "plan0630-delegation",
+            // task-24 严格解析：instance 层 profile（runner 导入 `openai`/`default`/`mimo-v2.6-flash`）
+            // 只在**消费用户自己**的 USER 连接里按 providerId+connectionKey 查 READY；key 不是
+            // `default` 时 `POST /sessions` 直接 409 LLM_PROFILE_CONFLICT。改名只动夹具标识。
+            connectionKey: "default",
             label: "PLAN-0630 delegation walkthrough",
             scope: "USER",
             modelDiscovery: "manual",
@@ -218,6 +221,9 @@ test.describe("@host PLAN-0630 T5.9 real delegation walkthrough", () => {
             { actionClass: "CREATE_ACCOUNT", resource: "*" },
             { actionClass: "MANAGE_WORKSPACE_AGENTS", resource: wsId },
             { actionClass: "SPAWN_AGENT", resource: "*" },
+            // user 层 agent-templates 写入走 CREATE_TEMPLATE（AgentTemplateService.requireUserAction），
+            // 旧的 `write` 原子已不再覆盖该动作；其余 real spec 同样按此播种。
+            { actionClass: "CREATE_TEMPLATE", resource: "*" },
             { actionClass: "write", resource: "*" },
         ]);
         const connection = await ensureOpenAiCompatConnection(request, headers, MODEL_ID);
@@ -265,6 +271,11 @@ test.describe("@host PLAN-0630 T5.9 real delegation walkthrough", () => {
             ((await principalResponse.json()) as { principalId: string }).principalId,
             "principalId",
         );
+        // 工作区 cap：spawn_agent 的执行门看的是这个 cap（只给 `write` 会让工具调用直接
+        // TOOL_GRANT_DENIED），而 AgentPrincipalService.setWorkspaceCap 要求 cap ⊆ principal
+        // 自身权限。当前模板角色生成的是**每原子一行**的 grants，principal 是否已带
+        // SPAWN_AGENT 取决于角色物化结果——0630 写此 spec 时的假设已随已收计划漂移，
+        // 见 0645 收尾报告（T4.2 阻塞项）。
         const boundAgent = await request.put(
             `${CP_URL}/api/v1/workspaces/${wsId}/agents/${principalId}`,
             {
