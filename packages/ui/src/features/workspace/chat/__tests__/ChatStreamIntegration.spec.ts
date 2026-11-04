@@ -10,14 +10,16 @@ describe("Chat Stream Integration: useStreamParser → store.appendToParts → M
     });
 
     function flushParser(
-        parser: ReturnType<typeof useStreamParser>,
-        store: ReturnType<typeof useChatStore>,
-        sessionId: string,
+        target: {
+            parser: ReturnType<typeof useStreamParser>;
+            store: ReturnType<typeof useChatStore>;
+            sessionId: string;
+        },
         lastSent: { count: number },
     ) {
-        const currentParts = parser.parts.value;
+        const currentParts = target.parser.parts.value;
         for (let i = lastSent.count; i < currentParts.length; i++) {
-            store.appendToParts(sessionId, currentParts[i]);
+            target.store.appendToParts(target.sessionId, currentParts[i]);
         }
         lastSent.count = currentParts.length;
     }
@@ -29,7 +31,7 @@ describe("Chat Stream Integration: useStreamParser → store.appendToParts → M
         const lastSent = { count: 0 };
 
         parser.handleToken("Hello");
-        flushParser(parser, store, "s1", lastSent);
+        flushParser({ parser, store, sessionId: "s1" }, lastSent);
 
         parser.handleToken(" world");
         parser.finalize();
@@ -71,7 +73,7 @@ describe("Chat Stream Integration: useStreamParser → store.appendToParts → M
         const lastSent = { count: 0 };
 
         parser.handleToken("Before <think>思考</think> After");
-        flushParser(parser, store, "s1", lastSent);
+        flushParser({ parser, store, sessionId: "s1" }, lastSent);
         parser.finalize();
 
         const msg = store.getMessages("s1")[0];

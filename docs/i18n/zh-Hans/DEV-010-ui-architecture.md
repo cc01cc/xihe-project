@@ -94,6 +94,12 @@ flowchart LR
 - **chatTransport**（`services/chatTransport.ts`）：按 `sessionId` 单飞连接（`connectionGeneration` + `intentionalStops`）；`onerror` 指数退避（250ms 起，上限 5s）；`onclose` 调度重连（无次数上限，`intentionalStops` 才停）；401 清 token 跳 `/login`。
 - **useSSE**（`features/workspace/chat/composables/useSSE.ts`，返回 `connect/disconnect/sendMessage`，未提供连接确保方法）：发送前由 `SSEStream` 手工确认连接（未连则 `connectSession` + 等待）；CP 侧 409（`SSE_SUBSCRIPTION_REQUIRED` / `CHAT_IN_PROGRESS`）由调用方处理，UI 无自动 409 重试分支。
 - **SSEStream**：带 hint（`reasoning`/`text`）的 token 走 `chatStore.appendToParts` 追加；无 hint 时经 `useStreamParser.handleToken` 再 `replaceStreamingParts` 整量替换；`done` 仅结束 run；`heartbeat` 15s 不进业务气泡。
+- **run 级分流（PLAN-0645 M2，2026-11-04）**：会话 SSE 是持久的，且同一连接可同时承载 **`maxConcurrentRunsPerSession`（默认 2）条 run**（M0/M1 已放开准入）。因此传输层到视图层全部按 `runId` 分流，禁止再假设"一个会话一个实时气泡"：
+  - 回调签名：`onStart(runId?)`、`onToken(token, hint?, runId?)`、`onDone(outcome?, runId?)`；`onStart` 每个 run 只触发一次（新气泡），`done`/`error` 只收敛**自己**那个 run。
+  - `useSSE` 的 scope 是 `Map<runId,{contentStarted}>`（`""` 为 runId-less 旧事件的兜底 scope，且永不抢占带 runId 的 token）；`isStreaming` 是会话级聚合（最后一个 scope 关闭才 false）。
+  - `chatStore` 的 live 气泡以 `(sessionId, runId)` 复合键寻址（`getStreamingMessageId(sessionId, runId?)`、`appendToParts(..., runId?)`、`finalizeStreaming(sessionId, runId?)`…）；`202` 迟到时 `adoptRunId` 把兜底 scope 的气泡 re-key 到真实 runId（否则会多出一个气泡）。
+  - `SSEStream.vue` 的 parser / 终态错误 / responder 归属都是 per-run（`parsers`/`terminalErrors`/`responders` 三个 Map）；envelope 的 `participantId` 不带 runId，由下一次 run 级回调消费并写进对应气泡。
+  - **wire 前提（T0.2 条款，见 OpenAPI `GET /api/v1/events`）**：run 级事件必带 `runId`，CP 在 relay/dispatch 出口补戳（producer 显式值优先）。新增 run 级事件时必须带 `runId`，否则客户端无法分流。
 - **useStreamParser**（`features/workspace/chat/composables/useStreamParser.ts`）：token 实时分类为 `MessagePart[]`（`text`/`reasoning`/`citation`/`artifact`）；`Message.parts` 替代旧 `marked`；代码渲染经 `MarkstreamCodeBlockAdapter` + `parts/TextPart`。
 
 ### 4.1 Workspace 级事件 SSE（PLAN-0350）

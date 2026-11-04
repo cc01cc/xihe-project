@@ -168,7 +168,7 @@ describe("useSSE", () => {
         connect({ onToken });
         await flushPromises();
         await transport.simulateMessage("token", JSON.stringify({ content: "hello" }));
-        expect(onToken).toHaveBeenCalledWith("hello", undefined);
+        expect(onToken).toHaveBeenCalledWith("hello", undefined, undefined);
     });
 
     it("does not start content lifecycle before the first token", async () => {
@@ -796,7 +796,7 @@ describe("useSSE run scope", () => {
         await transport.simulateMessage("token", JSON.stringify({ content: "second reply" }));
 
         expect(onStart).toHaveBeenCalledTimes(2);
-        expect(onToken).toHaveBeenLastCalledWith("second reply", undefined);
+        expect(onToken).toHaveBeenLastCalledWith("second reply", undefined, undefined);
     });
 
     it("opens a fresh bubble for a token of a different run on the same stream", async () => {
@@ -840,7 +840,7 @@ describe("useSSE run scope", () => {
         await transport.simulateMessage("token", JSON.stringify({ content: "retried reply" }));
 
         expect(onStart).toHaveBeenCalledTimes(2);
-        expect(onToken).toHaveBeenLastCalledWith("retried reply", undefined);
+        expect(onToken).toHaveBeenLastCalledWith("retried reply", undefined, undefined);
     });
 
     it("does not let a late done from another run close the live scope", async () => {
@@ -862,6 +862,89 @@ describe("useSSE run scope", () => {
         );
 
         expect(onStart).toHaveBeenCalledTimes(1);
+    });
+});
+
+// ── PLAN-0645 M2: per-run scopes (two concurrent runs on one session stream) ──────────────
+describe("useSSE per-run scopes (0645 M2)", () => {
+    it("routes interleaved tokens of two concurrent runs by runId and keeps both bubbles", async () => {
+        const transport = createTransportController(),
+            onStart = vi.fn<NonNullable<useSSEModule.SSECallbacks["onStart"]>>(),
+            onToken = vi.fn<NonNullable<useSSEModule.SSECallbacks["onToken"]>>(),
+            onDone = vi.fn<NonNullable<useSSEModule.SSECallbacks["onDone"]>>(),
+            { connect, isStreaming } = useSSE(SESSION_ID);
+        connect({ onStart, onToken, onDone });
+        await flushPromises();
+        await transport.simulateOpen();
+
+        // cap=2: run A and run B write at the same time. Each token names its run.
+        await transport.simulateMessage("token", JSON.stringify({ content: "a1", runId: RUN_ID }));
+        await transport.simulateMessage(
+            "token",
+            JSON.stringify({ content: "b1", runId: REQUEST_ID }),
+        );
+        await transport.simulateMessage("token", JSON.stringify({ content: "a2", runId: RUN_ID }));
+        await transport.simulateMessage(
+            "token",
+            JSON.stringify({ content: "b2", runId: REQUEST_ID }),
+        );
+
+        expect(onStart).toHaveBeenCalledTimes(2);
+        expect(onStart).toHaveBeenNthCalledWith(1, RUN_ID);
+        expect(onStart).toHaveBeenNthCalledWith(2, REQUEST_ID);
+        // The routing key is what the view uses to pick the bubble — no token crosses runs.
+        expect(onToken.mock.calls.map((call) => [call[0], call[2]])).toEqual([
+            ["a1", RUN_ID],
+            ["b1", REQUEST_ID],
+            ["a2", RUN_ID],
+            ["b2", REQUEST_ID],
+        ]);
+        expect(isStreaming.value).toBe(true);
+
+        // done(run A) finalizes A only; B is still streaming and the session stays busy.
+        await transport.simulateMessage(
+            "done",
+            JSON.stringify({ outcome: "success", runId: RUN_ID }),
+        );
+        expect(onDone).toHaveBeenLastCalledWith("success", RUN_ID);
+        expect(isStreaming.value).toBe(true);
+
+        await transport.simulateMessage(
+            "token",
+            JSON.stringify({ content: "b3", runId: REQUEST_ID }),
+        );
+        expect(onStart).toHaveBeenCalledTimes(2);
+
+        await transport.simulateMessage(
+            "done",
+            JSON.stringify({ outcome: "success", runId: REQUEST_ID }),
+        );
+        expect(isStreaming.value).toBe(false);
+    });
+
+    it("keeps a runId-less fallback scope from swallowing a runId-carrying run", async () => {
+        const transport = createTransportController(),
+            onStart = vi.fn<NonNullable<useSSEModule.SSECallbacks["onStart"]>>(),
+            onToken = vi.fn<NonNullable<useSSEModule.SSECallbacks["onToken"]>>(),
+            { connect } = useSSE(SESSION_ID);
+        connect({ onStart, onToken });
+        await flushPromises();
+        await transport.simulateOpen();
+
+        // Legacy/agent helper event without a runId → fallback scope.
+        await transport.simulateMessage("token", JSON.stringify({ content: "legacy" }));
+        // A real run starting while the fallback scope is live gets its own bubble.
+        await transport.simulateMessage("token", JSON.stringify({ content: "b1", runId: RUN_ID }));
+        await transport.simulateMessage("token", JSON.stringify({ content: "b2", runId: RUN_ID }));
+
+        expect(onStart).toHaveBeenCalledTimes(2);
+        expect(onStart).toHaveBeenNthCalledWith(1, undefined);
+        expect(onStart).toHaveBeenNthCalledWith(2, RUN_ID);
+        expect(onToken.mock.calls.map((call) => [call[0], call[2]])).toEqual([
+            ["legacy", undefined],
+            ["b1", RUN_ID],
+            ["b2", RUN_ID],
+        ]);
     });
 });
 

@@ -2474,7 +2474,7 @@ public class ChatController {
     private void dispatchRelayedEvent(String sessionId, String eventName, String payload,
                                       String runId, String requestId, String userId, String workspaceId,
                                       com.cc01cc.p.xihe.cp.mcp.McpRelayToolRecorder.RunState runState) {
-        Object parsedPayload = parsePayload(eventName, payload);
+        Object parsedPayload = stampRunIdIfAbsent(parsePayload(eventName, payload), runId);
         // PLAN-0508 T3.2: durable-before-forward transport persistence. Best-
         // effort by contract — malformed payloads and write failures are logged
         // and the SSE dispatch continues unchanged.
@@ -2513,6 +2513,26 @@ public class ChatController {
             logger.debug("Failed to parse SSE payload as JSON, falling back to raw text: {}", e.getMessage());
             return Map.of("content", payload, "type", eventName);
         }
+    }
+
+    /**
+     * PLAN-0645 M2 T2.1: every run-level SSE event must carry its {@code runId} so the client can
+     * route concurrent runs into separate bubbles without depending on which stream (out/err) the
+     * CP wrote to or on the Agent's payload honesty. The Agent payload usually already contains the
+     * field; an explicit value always wins (putIfAbsent semantics) because the payload is the
+     * record of what happened. Non-map payloads (bare strings) are forwarded unchanged — there is
+     * no object to stamp, and the envelope-level participantId already marks the producer.
+     */
+    private Object stampRunIdIfAbsent(Object payload, String runId) {
+        if (runId == null || payload == null) {
+            return payload;
+        }
+        if (payload instanceof Map<?, ?> map) {
+            java.util.LinkedHashMap<Object, Object> copy = new java.util.LinkedHashMap<>(map);
+            copy.putIfAbsent("runId", runId);
+            return copy;
+        }
+        return payload;
     }
 }
 

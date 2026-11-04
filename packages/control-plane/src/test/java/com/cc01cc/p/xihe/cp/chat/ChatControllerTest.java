@@ -591,6 +591,44 @@ class ChatControllerTest extends AbstractH2Test {
                 Integer.class, run.getId().toString()), "the terminal must write exactly one chat_run_history row");
     }
 
+    // ── PLAN-0645 M2 T2.1: run-level relayed events always carry the dispatch runId ─────────
+
+    @Test
+    void relayedTokenEvent_isStampedWithDispatchRunIdWhenTheAgentOmitsIt() {
+        stubAgentSuccessReply();
+
+        ResponseEntity<Map> response = postChat("hello");
+
+        assertEquals(HttpStatus.ACCEPTED, response.getStatusCode());
+        String runId = (String) response.getBody().get("runId");
+        verify(sseEmitterManager, timeout(5000)).send(eq(sessionId), eq("token"),
+                org.mockito.ArgumentMatchers.argThat(payload -> payload instanceof Map<?, ?> map
+                        && runId.equals(String.valueOf(map.get("runId")))),
+                any());
+    }
+
+    @Test
+    void relayedTokenEvent_keepsAnExplicitAgentRunId() {
+        String sseBody = "event: token\ndata: {\"content\":\"hello\",\"runId\":\"agent-stated-run\"}\n\n"
+                + "event: done\ndata: {\"type\":\"done\",\"outcome\":\"success\"}\n\n";
+        agentServer.createContext("/internal/v1/agent/chat", exchange -> {
+            byte[] responseBody = sseBody.getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "text/event-stream");
+            exchange.sendResponseHeaders(200, responseBody.length);
+            try (OutputStream output = exchange.getResponseBody()) {
+                output.write(responseBody);
+            }
+        });
+
+        ResponseEntity<Map> response = postChat("hello");
+
+        assertEquals(HttpStatus.ACCEPTED, response.getStatusCode());
+        verify(sseEmitterManager, timeout(5000)).send(eq(sessionId), eq("token"),
+                org.mockito.ArgumentMatchers.argThat(payload -> payload instanceof Map<?, ?> map
+                        && "agent-stated-run".equals(String.valueOf(map.get("runId")))),
+                any());
+    }
+
     // ── PLAN-0507: session monitor aggregate ──────────────────────────────
 
     @Test
