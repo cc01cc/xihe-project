@@ -7,6 +7,7 @@ import { rm } from 'node:fs/promises'
 import { createServer as createTcpServer, connect as connectTcp } from 'node:net'
 import { createServer as createHttpServer } from 'node:http'
 import { waitForAgentLlmReady } from './lib/agent-readiness.mjs'
+import { cpBuildRoot, resolveBuildTargetForStack } from './lib/cp-build-dir.mjs'
 import { cpTargetDir, externalCpBuildCheck, gitHead } from './lib/cp-build-info.mjs'
 import { llmEnv } from './lib/llm-env.mjs'
 import { decideCpBoot } from './lib/cp-boot-plan.mjs'
@@ -2323,15 +2324,39 @@ async function main() {
     // （隔离库名与 host root 都由它派生）。两者都打印，避免操作者误判。
     console.log(`[e2e-host] reuse: 传给 Playwright 的 XIHE_E2E_RUN_ID=${runIdForTests}（本次进程 runId=${e2eRunId} 仅用于日志）`)
   } else if (externalServer) {
-    // PLAN-0662 L5: an external stack is exactly the case where "which commit is CP actually
-    // running" is invisible — and where a stale build manufactures fake product bugs (BL-240:
-    // a 20:01 build was read as `develop` 11 merges later). Assert before any spec runs:
-    // expected = XIHE_E2E_EXPECT_CP_COMMIT when the caller declares one, else this checkout's
-    // HEAD. A **missing** stamp fails too — an unstamped CP must not slip through this gate.
+    // PLAN-0662 L5 (+ BL-253 L3): an external stack is exactly the case where "which commit is CP
+    // actually running" is invisible — and where a stale build manufactures fake product bugs
+    // (BL-240: a 20:01 build was read as `develop` 11 merges later). Assert before any spec runs.
+    //
+    // Which directory to check: with per-stack build dirs, "from env" is a guess. Ask the stack
+    // record instead — `XIHE_STACK_ID` → that stack's `.current` pointer (last start), then the
+    // newest build slot, then the computed path. It is still a record on disk, not JVM
+    // introspection; the log line names the source so the operator can see what was checked.
+    // Expected commit: XIHE_E2E_EXPECT_CP_COMMIT when declared, else this checkout's HEAD.
+    // A **missing** stamp fails too — an unstamped CP must not slip through this gate.
+    const externalStackId = (process.env.XIHE_STACK_ID ?? '').trim()
+    const cpBuildRootDir = cpBuildRoot({ env: process.env })
+    const headInfo = gitHead({ cwd: projectDir })
+    const target = externalStackId
+      ? resolveBuildTargetForStack({
+          root: cpBuildRootDir,
+          stackId: externalStackId,
+          env: process.env,
+          commit: headInfo.commit,
+          dirty: headInfo.dirty,
+        })
+      : {
+          targetDir: cpTargetDir({ projectRoot: projectDir, env: process.env }),
+          source: 'env',
+        }
+    console.log(
+      `[e2e-host] CP build dir check: ${target.targetDir} source=${target.source}`
+      + (externalStackId ? ` stack=${externalStackId}` : ' (no XIHE_STACK_ID: env-derived path)'),
+    )
     const cpBuildCheck = externalCpBuildCheck({
-      targetDir: cpTargetDir({ projectRoot: projectDir, env: process.env }),
+      targetDir: target.targetDir,
       expectedCommit: process.env.XIHE_E2E_EXPECT_CP_COMMIT,
-      headCommit: gitHead({ cwd: projectDir }).commit,
+      headCommit: headInfo.commit,
     })
     if (!cpBuildCheck.ok) {
       console.error(`[e2e-host] CP build check FAILED (${cpBuildCheck.verdict}): ${cpBuildCheck.message}`)

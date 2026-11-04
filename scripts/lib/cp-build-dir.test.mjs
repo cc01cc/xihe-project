@@ -22,6 +22,7 @@ import {
   listStacksUnderRoot,
   pointerPath,
   readPointer,
+  resolveBuildTargetForStack,
   resolveCpTargetDir,
   sameTargetDir,
   scanStackBuilds,
@@ -202,4 +203,51 @@ test('listStacksUnderRoot only returns stack-N dirs', (t) => {
   writeFileSync(join(root, 'stack-1', POINTER_FILE), '{}');
   assert.deepEqual(listStacksUnderRoot({ root }), ['stack-1', 'stack-2']);
   assert.deepEqual(listStacksUnderRoot({ root: join(projectRoot, 'no-such-root') }), []);
+});
+
+test('resolveBuildTargetForStack: pointer → newest → env → derived', (t) => {
+  const root = tempRoot(t);
+  const stackId = 'stack-1';
+
+  // 1) nothing on disk, no env ⇒ derived from HEAD.
+  const derived = resolveBuildTargetForStack({ root, stackId, env: {}, commit: SHA_A, platform: 'win32' });
+  assert.equal(derived.source, 'derived');
+  assert.equal(derived.targetDir, join(root, stackId, '0123456789ab'));
+
+  // 2) a build slot exists but no pointer ⇒ newest.
+  const newestDir = makeSlot(root, stackId, '0123456789ab', Date.parse('2026-11-04T20:00:00Z'));
+  const newest = resolveBuildTargetForStack({ root, stackId, env: {}, commit: SHA_A, platform: 'win32' });
+  assert.equal(newest.source, 'newest');
+  assert.equal(newest.targetDir, newestDir);
+
+  // 3) the launcher's last-start record wins over the newest slot.
+  const pointedDir = makeSlot(root, stackId, 'fedcba987654-dirty', Date.parse('2026-11-04T19:00:00Z'));
+  writePointer({ root, stackId, pointer: { targetDir: pointedDir, commit: SHA_B, dirty: true, verdict: 'fresh' } });
+  const pointed = resolveBuildTargetForStack({ root, stackId, env: {}, commit: SHA_A, platform: 'win32' });
+  assert.equal(pointed.source, 'pointer');
+  assert.equal(pointed.targetDir, pointedDir);
+  assert.equal(pointed.pointer.commit, SHA_B);
+
+  // 4) explicit XIHE_CP_TARGET_DIR wins when there is no record at all.
+  const stackId2 = 'stack-2';
+  const envTarget = resolveBuildTargetForStack({
+    root,
+    stackId: stackId2,
+    env: { XIHE_CP_TARGET_DIR: 'D:/hand-picked/cp' },
+    commit: SHA_A,
+    platform: 'win32',
+  });
+  assert.equal(envTarget.source, 'env');
+  assert.equal(envTarget.targetDir, resolve('D:/hand-picked/cp'));
+});
+
+test('resolveBuildTargetForStack: a corrupt pointer falls through to newest', (t) => {
+  const root = tempRoot(t);
+  const stackId = 'stack-3';
+  const dir = makeSlot(root, stackId, 'aaaaaaaaaaaa', Date.parse('2026-11-04T20:00:00Z'));
+  mkdirSync(join(root, stackId), { recursive: true });
+  writeFileSync(pointerPath({ root, stackId }), '{broken');
+  const target = resolveBuildTargetForStack({ root, stackId, env: {}, commit: SHA_A, platform: 'win32' });
+  assert.equal(target.source, 'newest');
+  assert.equal(target.targetDir, dir);
 });

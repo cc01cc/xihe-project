@@ -100,6 +100,18 @@ sequenceDiagram
 - **栈构建新鲜度（PLAN-0662）**：常驻栈不会自动跟随 `develop`，`health UP` 也不等于"跑的是最新代码"（BL-240 的误判就是这么来的）。构建产物带 `classes/META-INF/build-info.properties`（`commit`/`builtAt`/`dirty`），启动日志有一行 `cp.build commit=… built=… dirty=…`。运维口径：**重启前先看 verdict** ——`mise run dev:host:status`（加 `-- --json` 取固定字段，lane 脚本按此断言）；`verdict=fresh` 才说明这棵 classes 来自当前 HEAD。
   - `stale`/`missing` 时**默认重建**：`mise run dev:host:start:cp`、`dev:host`、`dev:stack` 都在 `mvn` 前比对 build-info 与 `git rev-parse HEAD`，不一致先 `clean compile` 再启动（单一实现 `scripts/stack-run.mjs`）。确实要"用旧类先把栈拉起来"时加 `--no-rebuild`，日志会留 `WARNING` 与旧 commit，事后可追。
   - 外部复用栈跑 E2E 时（`XIHE_E2E_EXTERNAL_SERVER=1`），runner 启动前断言 CP build commit == `XIHE_E2E_EXPECT_CP_COMMIT`（未声明则取本 checkout HEAD），不匹配或**读不到 build-info** 都 fail-fast，提示先重建/重启 CP——避免拿旧构建当产品缺陷（BL-240）。
+  - **构建目录按栈/按 commit 隔离（BL-253 L3，运维口径）**：每套栈编译进自己的目录
+    `C:/xihe-build/cp/<stackId>/<sha12>[-dirty]`（根可由 `XIHE_CP_BUILD_ROOT` 覆盖），旁边
+    `<stackId>/.current` 记录**该栈最后一次启动实际用的目录**——status/E2E 断言读它，所以
+    `cpBuild.targetDirSource` 会告诉你是 `pointer`（栈自己的记录，最可信）/`newest`（磁盘最新
+    构建槽）/`env`（显式 `XIHE_CP_TARGET_DIR`）/`derived`（还没构建，按 HEAD 推出来的路径）。
+    **重启前先看 verdict 与 source**：`pointer+fresh` 才是"这栈在跑当前代码"。
+  - 保留只走**显式清理**：`mise run dev:host:cp-build:clean` 默认 **dry-run** 打印每栈
+    `keep N / prune M`，确认后加 `-- --apply` 才删；每栈保留最新 3 个 + `.current` 指向的目录
+    永留，只扫 `cp/<stack-N>/<sha12>`，`dev-host`/`bl240-cp`/`e2e`/rust target 等 legacy 目录
+    永不匹配。**回滚通道**仍是显式 `XIHE_CP_TARGET_DIR`（优先级最高，原样透传）。
+  - 注意：切到隔离布局后，**某栈下一次重启**会首次编译进它自己的 `<sha12>`（约 60s，期间该栈
+    不可用）；谁重启谁负责核四端口 + `verdict=fresh`，不要为了"刷新"去重启别人的栈。
 
 常用命令：
 

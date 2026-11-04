@@ -228,3 +228,58 @@ export function listStacksUnderRoot({ root }, io = {}) {
     }
     return names.filter((name) => STACK_PATTERN.test(name)).sort();
 }
+
+/**
+ * Which build dir a stack's CP is using — for **read-only** consumers (`dev:host:status`, the
+ * external-E2E assertion). Resolution order:
+ *
+ * 1. `.current` — the launcher's record of this stack's **last start** → `source: 'pointer'`
+ * 2. newest `<sha12>[-dirty]` dir on disk → `source: 'newest'` (first start after L3, or a stack
+ *    whose pointer was removed)
+ * 3. computed target: explicit `XIHE_CP_TARGET_DIR` → `source: 'env'`, else derived from HEAD →
+ *    `source: 'derived'` (nothing built yet; the freshness row then reads `missing`)
+ *
+ * Still **not** JVM introspection: pointer and newest are records on disk. If a CP was hand-started
+ * with its own `XIHE_CP_TARGET_DIR`, `status` shows the pointer and the operator compares — that
+ * is the documented limit of this mechanism.
+ *
+ * @param {{
+ *   root: string,
+ *   stackId: string,
+ *   env?: Record<string, string|undefined>,
+ *   commit?: string|null,
+ *   dirty?: boolean,
+ *   platform?: string,
+ * }} input
+ * @returns {{targetDir: string|null, source: 'pointer'|'newest'|'env'|'derived', root: string, pointer: Record<string, unknown>|null}}
+ */
+export function resolveBuildTargetForStack({
+    root,
+    stackId,
+    env = process.env,
+    commit,
+    dirty = false,
+    platform,
+}) {
+    const pointer = readPointer({ root, stackId });
+    if (pointer && typeof pointer.targetDir === 'string' && pointer.targetDir) {
+        return { targetDir: pointer.targetDir, source: 'pointer', root, pointer };
+    }
+    const entries = scanStackBuilds({ root, stackId });
+    if (entries.length > 0) {
+        return { targetDir: entries[0].path, source: 'newest', root, pointer: null };
+    }
+    // Nothing on disk: report what a start *would* use. Keep the caller's `root` (a status call
+    // may be pointed at another root for verification), only the explicit env escapes it.
+    const override = trimmed(env.XIHE_CP_TARGET_DIR);
+    if (override) {
+        return { targetDir: resolve(override), source: 'env', root, pointer: null };
+    }
+    const slot = cpBuildSlot({ commit, dirty });
+    return {
+        targetDir: slot ? join(root, stackId, slot) : null,
+        source: 'derived',
+        root,
+        pointer: null,
+    };
+}

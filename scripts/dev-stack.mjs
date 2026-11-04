@@ -33,6 +33,7 @@ import net from 'node:net';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { cargoTargetForStack } from './lib/stack-cargo-target.mjs';
+import { cpBuildRoot, resolveBuildTargetForStack } from './lib/cp-build-dir.mjs';
 import { cpBuildStatus, cpTargetDir, gitHead, shortSha } from './lib/cp-build-info.mjs';
 import { sweepOrphanProcesses } from './lib/stack-orphan.mjs';
 import { STACK_IDS, deriveStack, normalizeStackArg } from './lib/stack-ports.mjs';
@@ -66,6 +67,9 @@ function usage(exitCode = 2) {
   console.log('  behind          git rev-list --count runningCommit..headCommit (null = unknown)');
   console.log('  stale           true when the classes are provably not from HEAD (verdict stale|missing)');
   console.log('  verdict         fresh | stale | missing | unverified (same vocabulary as the start gate)');
+  console.log('  targetDirSource pointer | newest | env | derived — where targetDir came from');
+  console.log('                  (pointer =该栈 .current 记录的最后一次启动目录；newest = 磁盘最新构建槽；');
+  console.log('                   env = 显式 XIHE_CP_TARGET_DIR；derived = 尚未构建时按 HEAD 推出的路径)');
   console.log('  builtAt, dirty, targetDir, file   stamp metadata / where it was read from');
   process.exit(exitCode);
 }
@@ -210,17 +214,31 @@ function tableRows(rows, columns) {
 }
 
 /**
- * PLAN-0662 L4: build freshness of the CP this checkout would start / is keeping alive.
+ * PLAN-0662 L4 + BL-253 L3: build freshness of **this stack's** CP build.
  *
- * Reads the same stamp the start gate reads — `cpTargetDir()` honours `XIHE_CP_TARGET_DIR`,
- * so status and start can never disagree about *where* the classes live. `status` is
- * read-only: it never rebuilds, it only reports `verdict` so the operator can decide
- * "restart it" before touching the stack.
+ * With per-stack build dirs a single env-derived path is no longer the answer, so this reads the
+ * same facts the launcher wrote: the stack's `.current` pointer first, then the newest build slot
+ * on disk, then the computed target (explicit `XIHE_CP_TARGET_DIR` or derived from HEAD).
+ * `targetDirSource` says which of those answered, so an operator can tell "the stack's last start
+ * used this dir" from "we guessed what a start *would* use".
+ *
+ * Read-only: it never rebuilds and never touches a stack — it only reports `verdict`.
  */
-function cpBuildFor(root = projectRoot) {
-  const targetDir = cpTargetDir({ projectRoot: root, env: process.env });
+function cpBuildFor(root = projectRoot, stackId = derived.stackId) {
   const head = gitHead({ cwd: root });
-  return cpBuildStatus({ targetDir, headCommit: head.commit, cwd: root });
+  const target = resolveBuildTargetForStack({
+    root: cpBuildRoot({ env: process.env }),
+    stackId,
+    env: process.env,
+    commit: head.commit,
+    dirty: head.dirty,
+  });
+  return cpBuildStatus({
+    targetDir: target.targetDir ?? cpTargetDir({ projectRoot: root, env: process.env }),
+    headCommit: head.commit,
+    cwd: root,
+    targetDirSource: target.source,
+  });
 }
 
 function formatCpBuild(cpBuild) {
@@ -230,6 +248,7 @@ function formatCpBuild(cpBuild) {
     + ` behind=${cpBuild.behind ?? '?'} stale=${cpBuild.stale} verdict=${cpBuild.verdict}`
     + ` built=${cpBuild.builtAt || '(none)'}`
     + ` dirty=${cpBuild.dirty === null ? '?' : cpBuild.dirty}`
+    + ` source=${cpBuild.targetDirSource}`
     + ` target=${cpBuild.targetDir}`
   );
 }
@@ -559,7 +578,7 @@ async function statusAll() {
       pidFile: stackPidFile,
       pidFileExists: existsSync(stackPidFile),
       cargoTargetDir: cargoTarget ?? null,
-      cpBuild: cpBuildFor(projectRoot),
+      cpBuild: cpBuildFor(projectRoot, d.stackId),
       pg: { port: p.postgres, listening: pgListening, database: d.database, composeProject: d.composeProject },
       services,
       ok: services.every((row) => row.listening) && pgListening,
