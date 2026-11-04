@@ -47,7 +47,10 @@ let sentRuns = 0;
 test.describe.configure({ mode: "serial", retries: 0 });
 test.use({ locale: "zh-CN", viewport: { width: 1440, height: 900 } });
 
-async function waitTerminalCount(page: import("@playwright/test").Page, expected: number): Promise<void> {
+async function waitTerminalCount(
+    page: import("@playwright/test").Page,
+    expected: number,
+): Promise<void> {
     const deadline = Date.now() + 180_000;
     let last = "";
     while (Date.now() < deadline) {
@@ -82,21 +85,16 @@ async function settle(page: import("@playwright/test").Page): Promise<void> {
 }
 
 async function shot(page: import("@playwright/test").Page, name: string): Promise<void> {
-    const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+    const overflow = await page.evaluate(
+        () => document.documentElement.scrollWidth - window.innerWidth,
+    );
     console.log(`[real-demo] shot=${name} hOverflow=${overflow}`);
     await page.screenshot({ path: join(SHOT_DIR, name), scale: "css" });
 }
 
-async function pickTo(page: import("@playwright/test").Page, name: string): Promise<void> {
-    const field = page.getByTestId("speak-as-input");
-    await field.fill(name);
-    await expect(page.getByTestId("speak-as-menu")).toBeVisible({ timeout: 15_000 });
-    await field.press("Enter");
-    await expect(page.getByTestId("speak-as-chip").first()).toContainText(name);
-}
-
 async function pickCc(page: import("@playwright/test").Page, name: string): Promise<void> {
-    if ((await page.getByTestId("cc-bar").count()) === 0) await page.getByTestId("cc-expand").click();
+    if ((await page.getByTestId("cc-bar").count()) === 0)
+        await page.getByTestId("cc-expand").click();
     await page.getByTestId("cc-input").fill(name);
     const menu = page.getByTestId("cc-menu");
     await expect(menu).toBeVisible({ timeout: 15_000 });
@@ -108,14 +106,9 @@ async function openMembersDock(page: import("@playwright/test").Page): Promise<v
     const toggle = page.getByTestId("workspace-toolbar-members");
     if ((await page.getByTestId("dock-tab-members").count()) === 0) await toggle.click();
     await expect(page.getByTestId("dock-tab-members")).toBeVisible({ timeout: 15_000 });
-    await expect(page.getByText("Reviewer", { exact: true }).first()).toBeVisible({ timeout: 15_000 });
-}
-
-async function send(page: import("@playwright/test").Page, text: string): Promise<void> {
-    sentRuns += 1;
-    await page.locator("textarea").first().fill(text);
-    await page.getByTestId("chat-send-button").click();
-    await expect(page.getByTestId("message-delivery").first()).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByText("Reviewer", { exact: true }).first()).toBeVisible({
+        timeout: 15_000,
+    });
 }
 
 test.describe("X 演示截图（真实数据：deepseek-flash）", () => {
@@ -133,9 +126,12 @@ test.describe("X 演示截图（真实数据：deepseek-flash）", () => {
         expect(login.status(), `demo login: ${login.status()}`).toBe(200);
         state.token = ((await login.json()) as { accessToken: string }).accessToken;
         // 断点续跑：先数已有 run（本轮只补 1 条正式消息，token 经济）。
-        const runs = await request.get(`${CP}/api/v1/chat/sessions/${state.sessionId}/runs?page=0&size=20`, {
-            headers: { Authorization: `Bearer ${state.token}` },
-        });
+        const runs = await request.get(
+            `${CP}/api/v1/chat/sessions/${state.sessionId}/runs?page=0&size=20`,
+            {
+                headers: { Authorization: `Bearer ${state.token}` },
+            },
+        );
         expect(runs.status(), `runs list: ${runs.status()}`).toBe(200);
         const rows = ((await runs.json()) as { runs?: unknown[] }).runs ?? [];
         state.baselineRuns = rows.length;
@@ -149,10 +145,13 @@ test.describe("X 演示截图（真实数据：deepseek-flash）", () => {
             (workspaceId) => localStorage.setItem("xihe-user", JSON.stringify({ workspaceId })),
             state.workspaceId,
         );
-        await page.addInitScript((workspace) => {
-            localStorage.setItem("xihe-workspace", JSON.stringify(workspace));
-            localStorage.setItem("xihe-theme", "light");
-        }, { id: state.workspaceId, name: "产品交付线" });
+        await page.addInitScript(
+            (workspace) => {
+                localStorage.setItem("xihe-workspace", JSON.stringify(workspace));
+                localStorage.setItem("xihe-theme", "light");
+            },
+            { id: state.workspaceId, name: "产品交付线" },
+        );
         const consoleErrors: string[] = [];
         page.on("console", (message) => {
             if (message.type() === "error") consoleErrors.push(message.text());
@@ -161,7 +160,9 @@ test.describe("X 演示截图（真实数据：deepseek-flash）", () => {
             consoleErrors.push(`${error.message}\n${(error.stack ?? "").slice(0, 1200)}`),
         );
         page.on("requestfailed", (request) =>
-            consoleErrors.push(`requestfailed ${request.url()} ${request.failure()?.errorText ?? ""}`),
+            consoleErrors.push(
+                `requestfailed ${request.url()} ${request.failure()?.errorText ?? ""}`,
+            ),
         );
 
         await page.goto(`/workspace/${state.workspaceId}/chat/${state.sessionId}`);
@@ -224,9 +225,7 @@ test.describe("X 演示截图（真实数据：deepseek-flash）", () => {
         await page.waitForTimeout(500);
         await shot(page, "04-run-grouping-actor.png");
 
-        console.log(
-            `[real-demo] total sends=${sentRuns} baselineRuns=${baseline} (probe only when baseline=0)`,
-        );
+        console.log(`[real-demo] total sends=${sentRuns} baselineRuns=${state.baselineRuns ?? 0}`);
     });
 
     /**
@@ -239,10 +238,13 @@ test.describe("X 演示截图（真实数据：deepseek-flash）", () => {
             (workspaceId) => localStorage.setItem("xihe-user", JSON.stringify({ workspaceId })),
             state.workspaceId,
         );
-        await page.addInitScript((workspace) => {
-            localStorage.setItem("xihe-workspace", JSON.stringify(workspace));
-            localStorage.setItem("xihe-theme", "light");
-        }, { id: state.workspaceId, name: "产品交付线" });
+        await page.addInitScript(
+            (workspace) => {
+                localStorage.setItem("xihe-workspace", JSON.stringify(workspace));
+                localStorage.setItem("xihe-theme", "light");
+            },
+            { id: state.workspaceId, name: "产品交付线" },
+        );
         // 卡构图：右栏 pinned + 480 宽（1440 视口默认 floating 会盖住聊天区），文件树收起。
         await page.addInitScript((workspaceId) => {
             localStorage.setItem(
@@ -265,7 +267,11 @@ test.describe("X 演示截图（真实数据：deepseek-flash）", () => {
             page.evaluate(async (sessionId) => {
                 const response = await fetch(
                     `/api/v1/chat/sessions/${sessionId}/runs?page=0&size=50`,
-                    { headers: { Authorization: `Bearer ${localStorage.getItem("xihe-token") ?? ""}` } },
+                    {
+                        headers: {
+                            Authorization: `Bearer ${localStorage.getItem("xihe-token") ?? ""}`,
+                        },
+                    },
                 );
                 const body = (await response.json()) as { runs?: unknown[] };
                 return (body.runs ?? []).length;
@@ -308,7 +314,3 @@ test.describe("X 演示截图（真实数据：deepseek-flash）", () => {
         console.log(`[real-demo] card-visual runsBefore=${runsBefore} runsAfter=${runsAfter}`);
     });
 });
-
-
-
-

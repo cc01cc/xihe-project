@@ -9,7 +9,11 @@ import {
     type AgentModelRef,
     type AgentPrincipalCreateResponse,
     type AgentPrincipalScope,
+    type AgentRoleBinding,
+    type AgentSkillBinding,
+    type AgentSkillSummary,
     type AgentTemplateSummary,
+    type ApiRole,
     type SelfPermissionsView,
     type WorkspaceAgentBinding,
     type WorkspaceAgentMemory,
@@ -79,6 +83,26 @@ const memoryToggleBusy = ref(false);
 const memoryToggleError = ref("");
 /** 「显示已归档」开关：默认只看 active。 */
 const showArchivedMemories = ref(false);
+
+/**
+ * PLAN-0667 M3：角色 / 技能区块（与记忆区同处，按 agent 展开；一次展开同时加载两者）。
+ * 写权限沿用 `MANAGE_WORKSPACE_AGENTS`（design §2 决策归属）；无权限只禁用并说明，不报错。
+ */
+const rbacPrincipalId = ref<string | null>(null);
+const agentRoles = ref<AgentRoleBinding[]>([]);
+const agentSkills = ref<AgentSkillBinding[]>([]);
+const rbacState = ref<"idle" | "loading" | "ready" | "failed">("idle");
+const rbacError = ref("");
+const roleCandidates = ref<ApiRole[]>([]);
+const skillCandidates = ref<AgentSkillSummary[]>([]);
+const selectedRoleId = ref("");
+const selectedSkillId = ref("");
+const rbacBusy = ref(false);
+const rbacActionError = ref("");
+let rbacGeneration = 0;
+
+/** 绑定/解绑的可用性：沿用工作区 agent 管理原子；`null` = 能力投影未回（禁用但不谎报）。 */
+const canBindRbac = computed<boolean | null>(() => canManageWorkspaceAgents.value);
 /** CP 未支持 `?status=` 时降级：开关置灰并说明，列表仍读 active（不报错、不造参数）。 */
 const archiveStatusSupported = ref(true);
 const unbindConfirmationId = ref<string | null>(null);
@@ -380,6 +404,127 @@ function toggleShowArchived(agent: WorkspaceAgentBinding) {
 const memoryAgent = computed<WorkspaceAgentBinding | null>(
     () => agents.value.find((entry) => entry.principalId === memoryPrincipalId.value) ?? null,
 );
+
+/**
+ * PLAN-0667 M3：展开/收起角色与技能区块（同一主体共用一个展开态）。
+ * 展开时并行加载绑定列表与候选清单；候选加载失败不阻塞列表展示（只是绑定入口禁用）。
+ */
+function toggleRbac(agent: WorkspaceAgentBinding) {
+    if (rbacPrincipalId.value === agent.principalId) {
+        rbacPrincipalId.value = null;
+        return;
+    }
+    rbacPrincipalId.value = agent.principalId;
+    void loadRbac(agent.principalId);
+}
+
+async function loadRbac(principalId: string) {
+    const generation = ++rbacGeneration;
+    rbacState.value = "loading";
+    rbacError.value = "";
+    rbacActionError.value = "";
+    try {
+        const [roles, skills] = await Promise.all([
+            api.getAgentRoles(principalId),
+            api.getAgentSkills(principalId),
+        ]);
+        if (generation !== rbacGeneration) return;
+        agentRoles.value = roles;
+        agentSkills.value = skills;
+        rbacState.value = "ready";
+        // 候选清单（roles 复用既有 /roles；skills 复用 /skills）——失败只影响"可绑定项"，不影响已绑定列表。
+        const [rolesCatalog, skillsCatalog] = await Promise.allSettled([
+            api.listRoles(),
+            api.getSkills(),
+        ]);
+        if (generation !== rbacGeneration) return;
+        roleCandidates.value = rolesCatalog.status === "fulfilled" ? rolesCatalog.value : [];
+        skillCandidates.value = skillsCatalog.status === "fulfilled" ? skillsCatalog.value : [];
+    } catch (cause) {
+        if (generation !== rbacGeneration) return;
+        rbacError.value = rbacErrorMessage(cause);
+        rbacState.value = "failed";
+    }
+}
+
+/** 409 三类码给可读文案；404 不当崩溃；其它沿用 CP problem message。 */
+function rbacErrorMessage(cause: unknown): string {
+    if (cause instanceof ApiError) {
+        switch (cause.problem.code) {
+            case "AGENT_PRINCIPAL_FORBIDDEN_ATOMS":
+                return t("workspace.agentRoleForbiddenAtoms");
+            case "ROLE_BINDING_EXISTS":
+                return t("workspace.agentRoleBindingExists");
+            case "ROLE_BINDING_IMMUTABLE":
+                return t("workspace.agentRoleBindingImmutable");
+            case "AGENT_PRINCIPAL_NOT_FOUND":
+            case "SKILL_NOT_FOUND":
+            case "ROLE_NOT_FOUND":
+                return t("workspace.agentRbacNotFound");
+            default:
+                return cause.message;
+        }
+    }
+    return t("workspace.agentRbacFailed");
+}
+
+async function bindSelectedRole(agent: WorkspaceAgentBinding) {
+    if (!selectedRoleId.value || rbacBusy.value) return;
+    rbacBusy.value = true;
+    rbacActionError.value = "";
+    try {
+        await api.bindAgentRole(agent.principalId, selectedRoleId.value);
+        selectedRoleId.value = "";
+        await loadRbac(agent.principalId);
+    } catch (cause) {
+        rbacActionError.value = rbacErrorMessage(cause);
+    } finally {
+        rbacBusy.value = false;
+    }
+}
+
+async function unbindRole(agent: WorkspaceAgentBinding, binding: AgentRoleBinding) {
+    if (binding.isSystem || rbacBusy.value) return;
+    rbacBusy.value = true;
+    rbacActionError.value = "";
+    try {
+        await api.unbindAgentRole(agent.principalId, binding.bindingId);
+        await loadRbac(agent.principalId);
+    } catch (cause) {
+        rbacActionError.value = rbacErrorMessage(cause);
+    } finally {
+        rbacBusy.value = false;
+    }
+}
+
+async function bindSelectedSkill(agent: WorkspaceAgentBinding) {
+    if (!selectedSkillId.value || rbacBusy.value) return;
+    rbacBusy.value = true;
+    rbacActionError.value = "";
+    try {
+        await api.bindAgentSkill(agent.principalId, selectedSkillId.value);
+        selectedSkillId.value = "";
+        await loadRbac(agent.principalId);
+    } catch (cause) {
+        rbacActionError.value = rbacErrorMessage(cause);
+    } finally {
+        rbacBusy.value = false;
+    }
+}
+
+async function unbindSkill(agent: WorkspaceAgentBinding, binding: AgentSkillBinding) {
+    if (rbacBusy.value) return;
+    rbacBusy.value = true;
+    rbacActionError.value = "";
+    try {
+        await api.unbindAgentSkill(agent.principalId, binding.bindingId);
+        await loadRbac(agent.principalId);
+    } catch (cause) {
+        rbacActionError.value = rbacErrorMessage(cause);
+    } finally {
+        rbacBusy.value = false;
+    }
+}
 
 /** 记忆是否注入上下文：`contextPolicy.memory.enabled !== false`（缺省=启用，UI 不自造默认）。 */
 const memoryEnabled = computed<boolean>(() => {
@@ -1655,6 +1800,254 @@ async function unbind(agent: WorkspaceAgentBinding) {
                                 </p>
                             </li>
                         </ul>
+                    </div>
+                </div>
+                <!-- PLAN-0667 M3：角色绑定（名称 / 作用域 / isSystem / 派生原子摘要；D5(b) 只给摘要） -->
+                <div class="border-t pt-3" data-testid="agent-roles-section">
+                    <div class="flex flex-wrap items-center gap-2">
+                        <button
+                            type="button"
+                            class="flex items-center gap-1 text-xs font-medium"
+                            :data-testid="`agent-roles-toggle-${agent.principalId}`"
+                            :aria-expanded="rbacPrincipalId === agent.principalId"
+                            :aria-controls="`agent-roles-panel-${agent.principalId}`"
+                            @click="toggleRbac(agent)"
+                        >
+                            <span aria-hidden="true">{{
+                                rbacPrincipalId === agent.principalId ? "▾" : "▸"
+                            }}</span>
+                            <span>{{ t("workspace.agentRolesTitle") }}</span>
+                        </button>
+                        <span
+                            v-if="canBindRbac === false"
+                            class="rounded-full border px-1.5 py-0.5 text-[10px] text-muted-foreground"
+                        >
+                            {{ t("workspace.agentRbacReadonlyBadge") }}
+                        </span>
+                    </div>
+                    <div
+                        v-if="rbacPrincipalId === agent.principalId"
+                        :id="`agent-roles-panel-${agent.principalId}`"
+                        class="mt-2 space-y-2"
+                        :data-testid="`agent-roles-panel-${agent.principalId}`"
+                    >
+                        <p
+                            v-if="rbacState === 'loading'"
+                            role="status"
+                            class="text-xs text-muted-foreground"
+                            data-testid="agent-rbac-loading"
+                        >
+                            {{ t("workspace.agentRbacLoading") }}
+                        </p>
+                        <div
+                            v-else-if="rbacState === 'failed'"
+                            class="space-y-1"
+                            data-testid="agent-rbac-failed"
+                        >
+                            <p role="alert" class="text-xs text-destructive">{{ rbacError }}</p>
+                            <button
+                                type="button"
+                                class="rounded-md border px-2 py-1 text-xs"
+                                data-testid="agent-rbac-retry"
+                                @click="loadRbac(agent.principalId)"
+                            >
+                                {{ t("workspace.agentRbacRetry") }}
+                            </button>
+                        </div>
+                        <template v-else>
+                            <p
+                                v-if="agentRoles.length === 0"
+                                class="rounded-md border border-dashed p-2 text-xs text-muted-foreground"
+                                data-testid="agent-roles-empty"
+                            >
+                                {{ t("workspace.agentRolesEmpty") }}
+                            </p>
+                            <ul v-else class="space-y-1.5" data-testid="agent-roles-list">
+                                <li
+                                    v-for="binding in agentRoles"
+                                    :key="binding.bindingId"
+                                    class="rounded-md border p-2"
+                                    :data-testid="`agent-role-item-${binding.bindingId}`"
+                                >
+                                    <div class="flex flex-wrap items-center gap-1.5 text-[11px]">
+                                        <span class="text-xs font-medium">{{ binding.name }}</span>
+                                        <span
+                                            v-if="binding.scope"
+                                            class="rounded-full border px-1.5 py-0.5 text-muted-foreground"
+                                            :data-testid="`agent-role-scope-${binding.bindingId}`"
+                                        >
+                                            {{ binding.scope }}
+                                        </span>
+                                        <span
+                                            v-if="binding.isSystem"
+                                            class="rounded-full border px-1.5 py-0.5 text-muted-foreground"
+                                            :data-testid="`agent-role-system-${binding.bindingId}`"
+                                        >
+                                            {{ t("workspace.agentRoleSystemBadge") }}
+                                        </span>
+                                        <button
+                                            v-if="!binding.isSystem"
+                                            type="button"
+                                            class="ml-auto rounded-md border px-2 py-0.5 text-xs disabled:opacity-50"
+                                            :disabled="rbacBusy || canBindRbac !== true"
+                                            :data-testid="`agent-role-unbind-${binding.bindingId}`"
+                                            @click="unbindRole(agent, binding)"
+                                        >
+                                            {{ t("workspace.agentRbacUnbind") }}
+                                        </button>
+                                    </div>
+                                    <p
+                                        v-if="binding.atomSummary.length > 0"
+                                        class="mt-1 text-[11px] text-muted-foreground"
+                                        :data-testid="`agent-role-atoms-${binding.bindingId}`"
+                                    >
+                                        {{
+                                            t("workspace.agentRoleAtomsSummary", {
+                                                atoms: binding.atomSummary.join(" · "),
+                                            })
+                                        }}
+                                    </p>
+                                </li>
+                            </ul>
+                            <div
+                                v-if="canBindRbac === true"
+                                class="flex flex-wrap items-center gap-2"
+                            >
+                                <select
+                                    v-model="selectedRoleId"
+                                    class="h-7 rounded-md border bg-background px-2 text-xs"
+                                    :data-testid="`agent-role-select-${agent.principalId}`"
+                                >
+                                    <option value="">
+                                        {{ t("workspace.agentRoleSelectPlaceholder") }}
+                                    </option>
+                                    <option
+                                        v-for="role in roleCandidates"
+                                        :key="role.id"
+                                        :value="role.id"
+                                    >
+                                        {{ role.displayName || role.name }}
+                                    </option>
+                                </select>
+                                <button
+                                    type="button"
+                                    class="rounded-md bg-action px-2 py-1 text-xs text-action-foreground disabled:opacity-50"
+                                    :disabled="rbacBusy || !selectedRoleId"
+                                    :data-testid="`agent-role-bind-${agent.principalId}`"
+                                    @click="bindSelectedRole(agent)"
+                                >
+                                    {{ t("workspace.agentRbacBind") }}
+                                </button>
+                            </div>
+                            <p
+                                v-else-if="canBindRbac === false"
+                                class="text-[11px] text-muted-foreground"
+                                data-testid="agent-rbac-readonly-hint"
+                            >
+                                {{ t("workspace.agentRbacReadonlyHint") }}
+                            </p>
+                            <p
+                                v-if="rbacActionError"
+                                role="alert"
+                                class="text-xs text-destructive"
+                                data-testid="agent-rbac-action-error"
+                            >
+                                {{ rbacActionError }}
+                            </p>
+                        </template>
+                    </div>
+                </div>
+                <!-- PLAN-0667 M3：技能绑定（principal 级，design D3(a)） -->
+                <div class="border-t pt-3" data-testid="agent-skills-section">
+                    <div class="flex flex-wrap items-center gap-2">
+                        <button
+                            type="button"
+                            class="flex items-center gap-1 text-xs font-medium"
+                            :data-testid="`agent-skills-toggle-${agent.principalId}`"
+                            :aria-expanded="rbacPrincipalId === agent.principalId"
+                            @click="toggleRbac(agent)"
+                        >
+                            <span aria-hidden="true">{{
+                                rbacPrincipalId === agent.principalId ? "▾" : "▸"
+                            }}</span>
+                            <span>{{ t("workspace.agentSkillsTitle") }}</span>
+                        </button>
+                        <span
+                            v-if="canBindRbac === false"
+                            class="rounded-full border px-1.5 py-0.5 text-[10px] text-muted-foreground"
+                        >
+                            {{ t("workspace.agentRbacReadonlyBadge") }}
+                        </span>
+                    </div>
+                    <div
+                        v-if="rbacPrincipalId === agent.principalId"
+                        class="mt-2 space-y-2"
+                        :data-testid="`agent-skills-panel-${agent.principalId}`"
+                    >
+                        <template v-if="rbacState === 'ready'">
+                            <p
+                                v-if="agentSkills.length === 0"
+                                class="rounded-md border border-dashed p-2 text-xs text-muted-foreground"
+                                data-testid="agent-skills-empty"
+                            >
+                                {{ t("workspace.agentSkillsEmpty") }}
+                            </p>
+                            <ul v-else class="space-y-1.5" data-testid="agent-skills-list">
+                                <li
+                                    v-for="binding in agentSkills"
+                                    :key="binding.bindingId"
+                                    class="flex flex-wrap items-center gap-1.5 rounded-md border p-2 text-[11px]"
+                                    :data-testid="`agent-skill-item-${binding.bindingId}`"
+                                >
+                                    <span class="text-xs font-medium">{{ binding.name }}</span>
+                                    <button
+                                        type="button"
+                                        class="ml-auto rounded-md border px-2 py-0.5 text-xs disabled:opacity-50"
+                                        :disabled="rbacBusy || canBindRbac !== true"
+                                        :data-testid="`agent-skill-unbind-${binding.bindingId}`"
+                                        @click="unbindSkill(agent, binding)"
+                                    >
+                                        {{ t("workspace.agentRbacUnbind") }}
+                                    </button>
+                                </li>
+                            </ul>
+                            <div
+                                v-if="canBindRbac === true"
+                                class="flex flex-wrap items-center gap-2"
+                            >
+                                <select
+                                    v-model="selectedSkillId"
+                                    class="h-7 rounded-md border bg-background px-2 text-xs"
+                                    :data-testid="`agent-skill-select-${agent.principalId}`"
+                                >
+                                    <option value="">
+                                        {{ t("workspace.agentSkillSelectPlaceholder") }}
+                                    </option>
+                                    <option
+                                        v-for="skill in skillCandidates"
+                                        :key="skill.skillId"
+                                        :value="skill.skillId"
+                                    >
+                                        {{ skill.name }}
+                                    </option>
+                                </select>
+                                <button
+                                    type="button"
+                                    class="rounded-md bg-action px-2 py-1 text-xs text-action-foreground disabled:opacity-50"
+                                    :disabled="rbacBusy || !selectedSkillId"
+                                    :data-testid="`agent-skill-bind-${agent.principalId}`"
+                                    @click="bindSelectedSkill(agent)"
+                                >
+                                    {{ t("workspace.agentRbacBind") }}
+                                </button>
+                            </div>
+                            <p
+                                v-else-if="canBindRbac === false"
+                                class="text-[11px] text-muted-foreground"
+                            >
+                                {{ t("workspace.agentRbacReadonlyHint") }}
+                            </p>
+                        </template>
                     </div>
                 </div>
             </article>
