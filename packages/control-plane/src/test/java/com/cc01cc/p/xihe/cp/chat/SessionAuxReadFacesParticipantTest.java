@@ -52,6 +52,7 @@ class SessionAuxReadFacesParticipantTest extends AbstractH2Test {
     private String ownerToken;
     private String participantToken;
     private String memberToken;
+    private String viewerToken;
     private String otherOwnerToken;
     private String sessionId;
 
@@ -60,11 +61,13 @@ class SessionAuxReadFacesParticipantTest extends AbstractH2Test {
         AuthResponse owner = register("bl299-owner");
         AuthResponse participant = register("bl299-participant");
         AuthResponse member = register("bl299-member");
+        AuthResponse viewer = register("bl299-viewer");
         AuthResponse otherOwner = register("bl299-other");
 
         ownerToken = owner.getAccessToken();
         participantToken = participant.getAccessToken();
         memberToken = member.getAccessToken();
+        viewerToken = viewer.getAccessToken();
         otherOwnerToken = otherOwner.getAccessToken();
 
         workspaceId = workspaceFixture.createOwnedWorkspace("BL299 ws", owner.getUser().getId())
@@ -75,8 +78,12 @@ class SessionAuxReadFacesParticipantTest extends AbstractH2Test {
         // The participant must be a workspace member first (requireReadable checks workspace
         // accessibility before the participant lookup); the member is a workspace member who is
         // NOT invited to the session and therefore must stay 404.
-        addWorkspaceMember(ownerToken, participant.getUser().getUsername());
-        addWorkspaceMember(ownerToken, member.getUser().getUsername());
+        addWorkspaceMember(ownerToken, participant.getUser().getUsername(), "EDITOR");
+        addWorkspaceMember(ownerToken, member.getUser().getUsername(), "EDITOR");
+        // BL-309: a VIEWER workspace member exercises the workspace write gate, which rejects a
+        // write verb with 403 WORKSPACE_READ_ONLY before the session owner-only guard can answer
+        // 404. The two denial codes are intentionally different (see the write test below).
+        addWorkspaceMember(ownerToken, viewer.getUser().getUsername(), "VIEWER");
 
         Session session = new Session();
         session.setId(UUID.randomUUID());
@@ -129,12 +136,34 @@ class SessionAuxReadFacesParticipantTest extends AbstractH2Test {
         assertNotFound(send(otherOwnerToken, "GET", policyModePath(), null, otherWorkspaceId));
     }
 
+    /**
+     * BL-309: the write face keeps two <b>intentionally different</b> denial codes because they
+     * answer different questions:
+     * <ul>
+     *   <li><b>EDITOR non-owner</b> (write-capable workspace member, not the session owner): the
+     *       session owner-only guard answers the single {@code 404 SESSION_NOT_FOUND}, so the face
+     *       is not an existence oracle;</li>
+     *   <li><b>VIEWER</b> (read-only workspace): the workspace write gate answers
+     *       {@code 403 WORKSPACE_READ_ONLY} before the controller runs, which is the actionable
+     *       answer for that caller.</li>
+     * </ul>
+     * Unifying the two would either leak existence (403 for everyone) or hide the actionable
+     * reason (404 for viewers).
+     */
     @Test
     void policyModeWriteStaysOwnerOnly() throws Exception {
         Reply refused = send(participantToken, "POST", "/api/v1/policy/mode",
                 """
                 {"sessionId":"%s","mode":"auto"}""".formatted(sessionId), workspaceId);
         assertNotFound(refused);
+
+        Reply viewerRefused = send(viewerToken, "POST", "/api/v1/policy/mode",
+                """
+                {"sessionId":"%s","mode":"auto"}""".formatted(sessionId), workspaceId);
+        assertEquals(403, viewerRefused.status(), viewerRefused.body().toString());
+        assertEquals("WORKSPACE_READ_ONLY", viewerRefused.body().path("code").asText(),
+                "a read-only workspace member gets the actionable write-gate answer: "
+                        + viewerRefused.body());
 
         Reply ownerWrite = send(ownerToken, "POST", "/api/v1/policy/mode",
                 """
@@ -144,10 +173,10 @@ class SessionAuxReadFacesParticipantTest extends AbstractH2Test {
                 .body().path("mode").asText());
     }
 
-    private void addWorkspaceMember(String token, String username) throws Exception {
+    private void addWorkspaceMember(String token, String username, String role) throws Exception {
         Reply added = send(token, "POST", "/api/v1/workspaces/" + workspaceId + "/members",
                 """
-                {"username":"%s","role":"EDITOR"}""".formatted(username), workspaceId);
+                {"username":"%s","role":"%s"}""".formatted(username, role), workspaceId);
         assertEquals(201, added.status(), added.body().toString());
     }
 

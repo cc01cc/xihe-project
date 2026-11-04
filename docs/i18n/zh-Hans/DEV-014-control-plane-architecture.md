@@ -366,8 +366,13 @@ PLAN-0416 Chat 消费：`ChatController` 仅在 admission snapshot 原始 native
     1. `GET /api/v1/sessions/{id}/follow-ups`：快照 items 直接带 `content`/`attachmentInfos`/`pauseReason`/`childRunId`，是 **owner 尚未发送的草稿队列**（写入也只按 owner 授权）；对 participant 开放等于泄漏未公开内容，不是"会话可见性"问题。
     2. `GET /api/v1/chat/sessions/{id}/monitor`：运维聚合（`providerConnectionId`/`connectionRevision`、agent health、transport attempt/failed/partial、readiness、history），属**管理/可观测面**，不是会话内容读面。
     3. `GET /api/v1/events`（SSE）：事件流含 `approval_request`（tool/action/details/**argumentsHash**）、`tool_exec_approval_required`、`run_checkpoint`、`usage`/transport；未声明 `asParticipantId` 时还是 **observer 全量广播** ⇒ **订阅权限 ≠ 消息读权限**，必须先按事件类型做 allowlist 再开（BL-304，另批）。
-- **写面边界**：`POST /api/v1/policy/mode` 仍 `requireOwned`（participant 404）；本轮测试显式钉住"读面开放 + 写面不开放"。
-- **测试**：`SessionAuxReadFacesParticipantTest` 对每个开放面覆盖 participant 200 / owner 200 / 非参与者 404 / 跨工作区 404，并额外断言 participant 的 `POST /policy/mode` 404。
+- **写面边界**：`POST /api/v1/policy/mode` 仍 `requireOwned`（owner-only）；本轮测试显式钉住"读面开放 + 写面不开放"。
+- **BL-309（拒绝码两态，2026-11-05 真栈发现 + Lead 裁定）**：写面的拒绝**按调用者的 workspace 写角色分成两种码，故意不统一**——
+  - **`VIEWER`（工作区只读）⇒ `403 WORKSPACE_READ_ONLY`**：`TenantContextInterceptor` 的 workspace 写门对非 GET 动词先拒（`WorkspaceWriteGuard`），比会话守卫更早、且对客户端更可操作；
+  - **`EDITOR` 非 owner ⇒ `404 SESSION_NOT_FOUND`**：写能力有了，但会话 owner-only 守卫用 not-区分 404，不泄漏会话存在性。
+  统一成一个码的代价：全 403 会丢 not-区分（对未被邀请者泄漏存在性）、全 404 会把"工作区只读"这一可操作原因藏掉。OpenAPI POST 已同批列 403/404 触发条件；`SessionAuxReadFacesParticipantTest` 覆盖两条路径（EDITOR participant ⇒ 404、VIEWER ⇒ 403 `WORKSPACE_READ_ONLY`、owner ⇒ 200）。
+  教训（与 BL-291 kind 大小写、BL-294 400→404 同族）：**拒绝码取决于调用者角色，而单测只钉了一种角色就以为钉住了契约**。BL-299 的测试把 participant 加为 workspace **EDITOR**（`POST /workspaces/{id}/members` role=EDITOR），所以只看得到 404；真栈成员是 **VIEWER**，才命中 403。角色来自 **workspace 成员表**（`/members` API），不是 `role_bindings`——用错表做夹具会造出"角色没变"的假象。
+- **测试**：`SessionAuxReadFacesParticipantTest` 对每个开放面覆盖 participant 200 / owner 200 / 非参与者 404 / 跨工作区 404，并额外断言写面的两条拒绝路径（BL-309）。
 
 ## 15. 同源 UI 静伺服（`cp.ui.static-root`，PLAN-0632 D32-06 / M2-3）
 

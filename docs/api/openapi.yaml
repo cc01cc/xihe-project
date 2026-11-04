@@ -1983,9 +1983,18 @@ paths:
       description: |
         Persists `manual` / `auto` on the session row (PLAN-0337 V24), so the choice survives a CP
         restart; a workspace-level default comes from the `approval-policy` config domain. An
-        unsupported mode is rejected with `400 INVALID_REQUEST`, an unknown/unowned session with
-        `404 SESSION_NOT_FOUND`. BL-299: this is a write face and stays owner-only (invited HUMAN
-        participants get 404); the GET sibling is the only widened read.
+        unsupported mode is rejected with `400 INVALID_REQUEST`. BL-299: this is a write face and
+        stays owner-only (the GET sibling is the only widened read).
+
+        BL-309 — the refusal has **two intentionally different codes**, decided by the caller's
+        workspace write role (the codes answer different questions; unifying them would either leak
+        session existence or hide the actionable reason):
+        - **`403 WORKSPACE_READ_ONLY`**: the caller is a `VIEWER` of the workspace. The workspace
+          write gate rejects any non-GET verb before the controller runs, e.g.
+          `{"code":"WORKSPACE_READ_ONLY","detail":"Viewer cannot modify this workspace"}`.
+        - **`404 SESSION_NOT_FOUND`**: the caller is a write-capable workspace member (`EDITOR`)
+          who is not the session owner, so the session owner-only guard answers the single
+          not-区分 404 and the face is not an existence oracle.
       security: [{ bearerAuth: [] }]
       requestBody:
         required: true
@@ -2001,8 +2010,8 @@ paths:
         '400': { $ref: '#/components/responses/Problem' }
         '401': { $ref: '#/components/responses/Problem' }
         '409': { $ref: '#/components/responses/WorkspaceContextRequired' }
-        '403': { $ref: '#/components/responses/Problem' }
-        '404': { $ref: '#/components/responses/Problem' }
+        '403': { description: 'WORKSPACE_READ_ONLY — the caller is a VIEWER workspace member; the workspace write gate rejects the verb before the session guard runs', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '404': { description: 'SESSION_NOT_FOUND — the caller is a write-capable (EDITOR) workspace member but not the session owner; owner-only not-区分 404 (no existence oracle)', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
   /api/v1/policy/domains:
     get:
       operationId: listPolicyDomains
