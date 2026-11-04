@@ -102,7 +102,18 @@ pub fn load(cli_overrides: &HashMap<String, String>) {
         apply_cli_overrides(cli_overrides);
         return;
     };
+    load_from_root(&root, cli_overrides);
+}
 
+/// Same as [`load`], but with the project root supplied by the caller instead of discovered
+/// through the process CWD.
+///
+/// BL-262: the test suite must not mutate the shared CWD (`std::env::set_current_dir`) — every
+/// `#[test]` in a binary shares one working directory, so a dotenv test that `chdir`s into a
+/// tempdir makes any concurrently running checkpoint test spawn `git` in the wrong repository.
+/// That produced a non-reproducible runtime gate (9/10 runs red, a different checkpoint test each
+/// time). Tests pass their tempdir here; production startup keeps using [`load`].
+fn load_from_root(root: &Path, cli_overrides: &HashMap<String, String>) {
     let env_name = cli_overrides
         .get(BOOTSTRAP_ENV_KEY)
         .cloned()
@@ -115,7 +126,7 @@ pub fn load(cli_overrides: &HashMap<String, String>) {
         .cloned()
         .or_else(|| std::env::var(ENV_FILE_KEY).ok());
     let files: Vec<PathBuf> = match env_file {
-        Some(value) => vec![resolve_env_file(&root, &value)],
+        Some(value) => vec![resolve_env_file(root, &value)],
         None => vec![
             root.join(".env"),
             root.join(format!(".env.{env_name}")),
@@ -233,7 +244,14 @@ fn parse_env_file(
 
 fn find_project_root() -> Option<PathBuf> {
     let cwd = std::env::current_dir().ok()?;
-    let mut dir = Some(cwd.as_path());
+    find_project_root_from(&cwd)
+}
+
+/// Walk up from `start` looking for the env chain root (≤ [`MAX_DEPTH`] levels; `.git` stops it).
+/// Split out for BL-262 so tests can exercise boundary cases with an explicit directory rather
+/// than changing the process CWD.
+fn find_project_root_from(start: &Path) -> Option<PathBuf> {
+    let mut dir = Some(start);
     for _ in 0..MAX_DEPTH {
         let current = dir?;
         if ROOT_MARKERS
@@ -333,13 +351,11 @@ mod tests {
         fs::write(root.join(".env.dev"), "XIHE_TEST_ALPHA=dev\n").unwrap();
         fs::write(root.join(".env.local"), "XIHE_TEST_ALPHA=local\n").unwrap();
 
-        let original = std::env::current_dir().unwrap();
-        std::env::set_current_dir(root).unwrap();
-        // snapshot: BETA already present → file must not override it
+        // BL-262: pass the root explicitly — never `set_current_dir` (process-wide CWD shared
+        // with the git-spawning checkpoint tests running in parallel).
         env_set("XIHE_TEST_BETA", "from_os");
         env_set("XIHE_ENV", "dev");
-        load(&HashMap::new());
-        std::env::set_current_dir(original).unwrap();
+        load_from_root(root, &HashMap::new());
 
         assert_eq!(std::env::var("XIHE_TEST_ALPHA").unwrap(), "local");
         assert_eq!(std::env::var("XIHE_TEST_BETA").unwrap(), "from_os");
@@ -358,11 +374,9 @@ mod tests {
         )
         .unwrap();
 
-        let original = std::env::current_dir().unwrap();
-        std::env::set_current_dir(root).unwrap();
+        // BL-262: explicit root instead of `set_current_dir` (see load_from_root docs).
         env_set("XIHE_ENV", "dev");
-        load(&HashMap::new());
-        std::env::set_current_dir(original).unwrap();
+        load_from_root(root, &HashMap::new());
 
         assert_eq!(
             std::env::var("XIHE_TEST_CHAIN").unwrap(),
@@ -380,19 +394,17 @@ mod tests {
         fs::write(root.join(".env.test"), "XIHE_TEST_ALPHA=test\n").unwrap();
         fs::write(root.join("custom.env"), "XIHE_TEST_ALPHA=custom\n").unwrap();
 
-        let original = std::env::current_dir().unwrap();
-        std::env::set_current_dir(root).unwrap();
         let mut overrides = HashMap::new();
         overrides.insert("XIHE_ENV".to_string(), "test".to_string());
         overrides.insert("XIHE_TEST_ALPHA".to_string(), "cli".to_string());
-        load(&overrides);
+        // BL-262: explicit root (no `set_current_dir`), incl. the relative XIHE_ENV_FILE case.
+        load_from_root(root, &overrides);
         assert_eq!(std::env::var("XIHE_TEST_ALPHA").unwrap(), "cli");
 
         overrides.remove("XIHE_TEST_ALPHA");
         overrides.insert("XIHE_ENV_FILE".to_string(), "custom.env".to_string());
         env_remove("XIHE_TEST_ALPHA");
-        load(&overrides);
-        std::env::set_current_dir(original).unwrap();
+        load_from_root(root, &overrides);
         assert_eq!(std::env::var("XIHE_TEST_ALPHA").unwrap(), "custom");
     }
 
@@ -400,7 +412,8 @@ mod tests {
     fn find_project_root_finds_env_dev() {
         let dir = tempfile::tempdir().unwrap();
         fs::write(dir.path().join(".env.dev"), "TEST=1").unwrap();
-        let result = in_dir(dir.path(), find_project_root);
+        // BL-262: walk from the given dir instead of chdir-ing the whole process.
+        let result = find_project_root_from(dir.path());
         assert_eq!(result, Some(dir.path().to_path_buf()));
     }
 
@@ -410,7 +423,7 @@ mod tests {
         fs::write(dir.path().join(".git"), "").unwrap();
         let sub = dir.path().join("sub").join("deep");
         fs::create_dir_all(&sub).unwrap();
-        let result = in_dir(&sub, find_project_root);
+        let result = find_project_root_from(&sub);
         assert_eq!(result, None);
     }
 
@@ -418,16 +431,7 @@ mod tests {
     fn find_project_root_returns_none_when_not_found() {
         let dir = tempfile::tempdir().unwrap();
         fs::write(dir.path().join(".git"), "").unwrap();
-        let result = in_dir(dir.path(), find_project_root);
+        let result = find_project_root_from(dir.path());
         assert_eq!(result, None);
-    }
-
-    fn in_dir<T>(d: &std::path::Path, f: fn() -> T) -> T {
-        let _guard = PROCESS_LOCK.lock().unwrap();
-        let orig = std::env::current_dir().unwrap();
-        std::env::set_current_dir(d).unwrap();
-        let r = f();
-        std::env::set_current_dir(orig).unwrap();
-        r
     }
 }

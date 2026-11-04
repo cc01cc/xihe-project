@@ -10,6 +10,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
@@ -49,10 +50,16 @@ public class RoleController {
         this.roleAdminService = roleAdminService;
     }
 
+    /**
+     * The atom vocabulary with server-resolved display labels (D51-37). {@code locale} is explicit
+     * ({@code zh-CN} default, {@code en-US} supported) so the UI never carries a label table of its
+     * own; an unknown value falls back to {@code zh-CN}.
+     */
     @GetMapping("/catalog")
     @PreAuthorize(MANAGE_ROLES_GATE)
-    public RoleAdminViews.CatalogView catalog() {
-        return roleAdminService.catalog();
+    public RoleAdminViews.CatalogView catalog(
+            @RequestParam(value = "locale", required = false) String locale) {
+        return roleAdminService.catalog(locale);
     }
 
     @GetMapping

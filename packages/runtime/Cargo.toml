@@ -180,3 +180,10 @@ debug = 0
 
 [profile.test.package."*"]
 debug = 0
+
+# D-46（2026-11-04 采纳，release 体积 -24%）：`opt-level = "s"` 按体积优化。
+# 实测（六配置对照）：构建 103.4→92.6s（−10%）、产物 24.13→18.34MB（−24%）、
+# 冷启动无差（19.1 vs 19.6ms）、热 relink 33.0→26.6s（−19%）；`z` 不采纳
+# （只再省 6.9%、构建无改善、启动略差）。dev/test profile 不受影响。
+[profile.release]
+opt-level = "s"

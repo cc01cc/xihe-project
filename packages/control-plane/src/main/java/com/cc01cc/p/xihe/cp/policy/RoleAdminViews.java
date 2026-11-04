@@ -17,12 +17,18 @@ public final class RoleAdminViews {
     private RoleAdminViews() {
     }
 
-    /** One permission atom as the catalog exposes it (SSOT: {@link PermissionAtomCatalog}). */
-    public record AtomView(String name, String scopeClass, boolean capability, String resource) {
+    /**
+     * One permission atom as the catalog exposes it (SSOT: {@link PermissionAtomCatalog}).
+     *
+     * <p>{@code displayName} is resolved server-side from the explicit {@code ?locale} (D51-37): the
+     * wire carries one string, never a {@code {zh, en}} pair, so the UI keeps no vocabulary.</p>
+     */
+    public record AtomView(String name, String scopeClass, boolean capability, String resource,
+                           String displayName) {
 
-        static AtomView of(PermissionAtomCatalog.Atom atom) {
+        static AtomView of(PermissionAtomCatalog.Atom atom, String locale) {
             return new AtomView(atom.name(), atom.scopeClass(), atom.capability(),
-                    atom.canonicalResource());
+                    atom.canonicalResource(), PermissionAtomLabels.label(atom.name(), locale));
         }
     }
 

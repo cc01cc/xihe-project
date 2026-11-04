@@ -56,6 +56,8 @@ class WorkspaceMemberControllerContractTest extends AbstractIntegrationTest {
     @Autowired private AccessRoleRepository accessRoleRepository;
     @Autowired private AccessRoleBindingRepository accessRoleBindingRepository;
     @Autowired private AuthzContext authzContext;
+    /** PLAN-0651 T1.3 (A7): the bypass is an action atom now, so the fixture must materialize. */
+    @Autowired private com.cc01cc.p.xihe.cp.policy.RoleGrantMaterializer roleGrantMaterializer;
 
     private UUID ownerId;
     private UUID workspaceId;
@@ -319,6 +321,10 @@ class WorkspaceMemberControllerContractTest extends AbstractIntegrationTest {
                     .orElseThrow();
             accessRoleBindingRepository.save(new AccessRoleBinding(role.getId(), "user",
                     adminUser.getId(), AccessScope.INSTANCE, null, null));
+            // PLAN-0651 T1.3 (A7): the service now evaluates the materialized
+            // MANAGE_WORKSPACE_MEMBERS atom instead of reading cap:instance:admin, so the fixture
+            // must materialize the role's atoms (the binding row alone is not enough).
+            roleGrantMaterializer.materializeSubject("user", adminUser.getId(), null, null);
             authzContext.invalidate(adminUser.getId());
         }
         return adminUser;

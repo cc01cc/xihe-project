@@ -18,10 +18,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class SkillReadFaceTest {
 
     /**
-     * 17 atoms before M2b: the last one is {@code MEMORY_WRITE} (PLAN-0629 M1). Frozen here so an
-     * added atom has to be an explicit, reviewed decision rather than an accident.
+     * 19 atoms after PLAN-0651 M1: {@code MANAGE_AGENT_PRINCIPALS} and
+     * {@code MANAGE_WORKSPACE_MEMBERS} (D51-26) replace the coarse isInstanceAdmin bypass on the
+     * agent-principal and member faces. Frozen here so an added atom has to be an explicit,
+     * reviewed decision rather than an accident.
      */
-    private static final int BUILTIN_ACTION_CLASS_COUNT = 17;
+    private static final int BUILTIN_ACTION_CLASS_COUNT = 19;
 
     @Test
     void skillReadResolvesToTheExistingReadFace() {

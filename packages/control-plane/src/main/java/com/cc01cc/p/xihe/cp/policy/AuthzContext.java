@@ -72,6 +72,25 @@ public class AuthzContext {
             return workspaceAdminAll
                     || (workspaceId != null && workspaceAdminWorkspaces.contains(workspaceId));
         }
+
+        /**
+         * PLAN-0651 T1.2 (D51-30): capability-atom holding, scope-aware. This is the single place a
+         * capability question is answered for the "may I grant this?" check, so
+         * {@code RequesterAuthority} no longer reads the instance-administrator flag directly.
+         */
+        public boolean holdsCapability(String atom, UUID workspaceId) {
+            return switch (atom) {
+                case PermissionAtomCatalog.CAP_INSTANCE_SUPER ->
+                        authorities.contains(PermissionAtomCatalog.authorityOf(
+                                PermissionAtomCatalog.CAP_INSTANCE_SUPER));
+                case PermissionAtomCatalog.CAP_INSTANCE_ADMIN ->
+                        authorities.contains(PermissionAtomCatalog.authorityOf(
+                                PermissionAtomCatalog.CAP_INSTANCE_ADMIN));
+                case PermissionAtomCatalog.CAP_WORKSPACE_ADMIN -> workspaceId == null
+                        ? workspaceAdminAll() : canWorkspaceAdmin(workspaceId);
+                default -> false;
+            };
+        }
     }
 
     private record Cached(Capabilities capabilities, long expiresAtNanos) {
@@ -125,14 +144,16 @@ public class AuthzContext {
     /**
      * Round-2 P1-4 / decision #15: workspace administration is a service-level question.
      *
-     * <p>{@code instance:admin} holders administer every workspace (this is the pre-existing
-     * "instance ADMIN bypasses the membership gate" behaviour, now expressed as a capability);
-     * {@code workspace:admin} bound at instance scope covers every workspace; the same atom bound
-     * at workspace scope covers that workspace only.</p>
+     * <p>PLAN-0651 T1.2 (D51-30): the {@code instance:admin} bypass is gone — "an instance
+     * administrator administers every workspace" is now a <b>default grant</b>
+     * ({@code workspace:admin} at instance scope, seeded by V111), not a code branch. A custom role
+     * that carries {@code instance:admin} without {@code workspace:admin} therefore does <b>not</b>
+     * imply workspace administration; that is the accepted trade-off of D51-30 (its holders are
+     * detected by the zero-gap query in the V111 header).</p>
      */
     public boolean canWorkspaceAdmin(UUID subjectId, UUID workspaceId) {
         Capabilities capabilities = capabilitiesFor(subjectId);
-        return capabilities.isInstanceAdmin() || capabilities.canWorkspaceAdmin(workspaceId);
+        return capabilities.canWorkspaceAdmin(workspaceId);
     }
 
     /** Current-request subject (from {@code TenantContext}); {@code false} without a subject. */
