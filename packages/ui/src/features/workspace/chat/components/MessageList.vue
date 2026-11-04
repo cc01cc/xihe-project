@@ -33,6 +33,13 @@ const props = defineProps<{
      * 状态/耗时。缺省时只用 message 自带的 `runStatus/terminalOutcome`，仍然能分组。
      */
     runs?: SessionRunSummary[];
+    /**
+     * PLAN-0670 M2d.1：CP 响应带 `nextCursor`/`truncated` 时才为 true（不硬编码假设）。
+     * 旧 CP 返回数组 ⇒ false ⇒ 入口不渲染，行为与改造前一致。
+     */
+    hasOlder?: boolean;
+    /** 向上取更旧一页进行中（按钮禁用 + 文案切换）。 */
+    loadingOlder?: boolean;
 }>();
 
 /**
@@ -75,6 +82,7 @@ const emit = defineEmits<{
     retry: [id: string];
     branch: [id: string];
     revert: [sliceRef: string];
+    loadOlder: [];
 }>();
 
 const showSearch = ref(false),
@@ -337,6 +345,21 @@ watch(
             <MessageScroller class="flex-1">
                 <MessageScrollerViewport preserve-scroll-on-prepend>
                     <MessageScrollerContent :class="showSearch ? 'pt-12' : undefined">
+                        <!--
+                            PLAN-0670 M2d.1：只有 CP 明确给出 `nextCursor/truncated` 才显示
+                            「加载更早」入口；旧 CP（数组响应）不渲染，行为不变。
+                        -->
+                        <div v-if="hasOlder" class="flex justify-center py-2">
+                            <button
+                                type="button"
+                                data-testid="load-older-messages"
+                                :disabled="loadingOlder"
+                                class="rounded-md border bg-background px-3 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60"
+                                @click="emit('loadOlder')"
+                            >
+                                {{ loadingOlder ? t("chat.loadingOlder") : t("chat.loadOlder") }}
+                            </button>
+                        </div>
                         <!-- 窗口化：窗口上方/下方的未渲染行用占位高度撑住 scrollHeight（PLAN-0670 M2d.2） -->
                         <div
                             v-if="virtualizationActive"

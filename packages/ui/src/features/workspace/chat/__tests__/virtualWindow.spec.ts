@@ -118,14 +118,14 @@ describe("useVirtualMessageWindow DOM adapter", () => {
         document.body.innerHTML = "";
     });
 
-    function setup(initialKeys: string[]) {
+    function setup(initialKeys: string[], enabledRef = ref(true)) {
         let api: ReturnType<typeof useVirtualMessageWindow> | undefined;
         const keys = ref(initialKeys);
         const Harness = defineComponent({
             setup() {
                 api = useVirtualMessageWindow({
                     rowKeys: computed(() => keys.value),
-                    enabled: computed(() => true),
+                    enabled: computed(() => enabledRef.value),
                     fallbackHeight: 100,
                     overscan: 2,
                 });
@@ -135,7 +135,7 @@ describe("useVirtualMessageWindow DOM adapter", () => {
         const wrapper = mount(Harness);
         mounted.push(wrapper);
         expect(api).toBeTruthy();
-        return { api: api!, keys };
+        return { api: api!, keys, enabled: enabledRef };
     }
 
     function fakeViewport(height: number, scrollTop = 0): HTMLElement {
@@ -189,6 +189,24 @@ describe("useVirtualMessageWindow DOM adapter", () => {
         expect(api.window.value.start).toBe(48);
         expect(api.window.value.end).toBe(56);
         expect(api.window.value.topPadding).toBe(4800);
+    });
+
+    it("keeps scrollTop when virtualization is disabled (search mode must not jump to top)", async () => {
+        const keys = Array.from({ length: 100 }, (_, index) => `k${index}`);
+        const { api, enabled } = setup(keys);
+        const viewport = fakeViewport(300, 5000);
+        api.attach(viewport);
+        viewport.dispatchEvent(new Event("scroll"));
+        await nextTick();
+        expect(api.window.value.start).toBe(48);
+
+        // 搜索态切换：窗口化关闭 ⇒ 全量渲染；scrollTop 不得被重置（切回时用户位置还在）。
+        enabled.value = false;
+        await nextTick();
+        expect(api.active.value).toBe(false);
+        expect(api.window.value.start).toBe(0);
+        expect(api.window.value.end).toBe(100);
+        expect(viewport.scrollTop).toBe(5000);
     });
 
     it("captures the first visible row as the anchor and restores it after a prepend", async () => {

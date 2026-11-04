@@ -225,6 +225,19 @@ export const useChatStore = defineStore("chat", () => {
         messages.value[sessionId].push(message);
     }
 
+    /**
+     * PLAN-0670 M2d.1：向上分页取到的更旧消息**前插**（保持时间序），按 id 去重。
+     * 与 `loadMessages` 的替换语义分开：分页加载绝不能覆盖当前窗口/在途流。
+     */
+    function prependMessages(sessionId: string, olderMessages: Message[]) {
+        if (olderMessages.length === 0) return;
+        const current = messages.value[sessionId] ?? [],
+            existing = new Set(current.map((message) => message.id)),
+            unique = olderMessages.filter((message) => !existing.has(message.id));
+        if (unique.length === 0) return;
+        messages.value[sessionId] = [...unique, ...current];
+    }
+
     function loadMessages(sessionId: string, sessionMessages: Message[]) {
         // An in-flight response is owned by the live SSE stream. Do not let a
         // slower history request replace its optimistic user/assistant messages.
@@ -1038,6 +1051,7 @@ export const useChatStore = defineStore("chat", () => {
         isStreaming,
         addMessage,
         loadMessages,
+        prependMessages,
         trackUnprojectedRun,
         markClientOwned,
         adoptRunId,

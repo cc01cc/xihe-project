@@ -13,6 +13,7 @@ import {
     ApiError,
     api,
     type ApiFollowUpQueueSnapshot,
+    type ApiSessionMessage,
     type WorkspaceAgentBinding,
 } from "../../../../composables/api";
 import { parseRawToParts } from "../composables/useStreamParser.ts";
@@ -229,6 +230,16 @@ const pendingBranchKeys = new Map<string, string>();
 let messageLoadRequestId = 0;
 
 /**
+ * PLAN-0670 M2d.1（Lead 2026-11-05 裁定 a）：分页参数可选、CP 未支持时自动退化。
+ * 只有响应带 `nextCursor`/`truncated` 才显示「加载更早」；不硬编码假设、不伪造分页。
+ */
+const MESSAGE_PAGE_SIZE = 50;
+const olderCursor = ref<string | null>(null);
+const hasOlderMessages = ref(false);
+const loadingOlder = ref(false);
+const olderExhausted = ref(false);
+
+/**
  * PLAN-0665 M2 D5：多路审批**串行**（按 run 创建序逐个弹；首卡显示「1/N 待批」）。
  * store 的 `pendingApprovals` 是 CP 按到达顺序推送的队列，所以这里保留其稳定顺序、只取队首；
  * 不做批量审批（批量语义单独立项）。
@@ -304,6 +315,52 @@ watch(pendingApproval, (approval, previous) => {
 /** Classification authority hint (server still enforces): workspace OWNER / instance ADMIN. */
 const canClassifyApproval = computed(() => authStore.canClassifyTools);
 
+/**
+ * 历史 DTO → 本地 Message 的唯一映射（首屏/刷新/向上分页共用，避免三份漂移）。
+ */
+function mapRawMessages(rawMessages: ApiSessionMessage[]): Message[] {
+    return rawMessages.map((message) => ({
+        id: message.id,
+        sessionId: message.sessionId,
+        role: message.role.toLowerCase() as Message["role"],
+        content: message.content,
+        parts:
+            message.role.toLowerCase() === "assistant"
+                ? parseRawToParts(message.content)
+                : undefined,
+        timestamp: message.createdAt,
+        runId: message.runId,
+        runStatus: message.runStatus as Message["runStatus"],
+        terminalOutcome: message.terminalOutcome as Message["terminalOutcome"],
+        errorCode: message.errorCode,
+        // PLAN-0492 T3.1: the messages DTO carries the terminal failure text as
+        // `errorDetail` (MessageReadService); map it so a history refresh keeps
+        // the exhausted-run reason instead of wiping the local error state.
+        error: message.errorDetail ?? message.error,
+        retryable: message.retryable,
+        // PLAN-0344 T1.4 / PLAN-0465 T2.2：刷新后 job 卡片唯一重建源
+        //（messages DTO 的 jobSummary ← workspace_jobs 投影）。
+        // PLAN-0572：优先用持久化的 toolCalls 快照，并按 toolCallId 与 jobSummary 合并。
+        toolCalls: mergeHistoryToolCalls(message.toolCalls, message.jobSummary),
+        // PLAN-0659 T1.3 / PLAN-0669 M1：历史消息的主体归属（可选）。缺失即 undefined ⇒
+        // 不渲染 identity 徽标（不猜 PRIMARY、不显示"未知"）；只多一个可选字段，
+        // 不影响 delivery 解析与 run 分组。
+        participantId: message.participantId ?? undefined,
+        // PLAN-0665 M2 / V120：durable 投递语义随历史 DTO 回来；`null` 落成 undefined，
+        // 让 `resolveDelivery` 走 legacy 回落而不是把徽标渲染成空行。
+        delivery: message.delivery ?? undefined,
+        attachments: message.attachments?.map((attachment) => ({
+            id: attachment.fileId,
+            fileId: attachment.fileId,
+            name: attachment.name,
+            type: attachment.type,
+            size: attachment.size,
+            url: `/api/v1/files/${encodeURIComponent(attachment.fileId)}`,
+            state: "done" as const,
+        })),
+    }));
+}
+
 async function loadSessionMessages(sessionId: string, requiredMessageIds?: ReadonlySet<string>) {
     const requestId = ++messageLoadRequestId;
     try {
@@ -313,54 +370,28 @@ async function loadSessionMessages(sessionId: string, requiredMessageIds?: Reado
             branchId = chatStore.getSelectedBranchId(sessionId);
         }
         if (!branchId) return;
-        const rawMessages = await api.getMessages(sessionId, branchId);
+        const rawPage = await api.getMessages(sessionId, branchId, {
+            limit: MESSAGE_PAGE_SIZE,
+        });
         if (
             props.sessionId !== sessionId ||
             requestId !== messageLoadRequestId ||
             chatStore.getSelectedBranchId(sessionId) !== branchId
         )
             return;
+        // 兼容两形态：旧 CP 返回数组（忽略 limit ⇒ 自动退化全量）；新 CP 返回
+        // { messages|items, nextCursor, truncated }。
+        const rawMessages = Array.isArray(rawPage)
+            ? rawPage
+            : (rawPage.messages ?? rawPage.items ?? []);
+        const pageMeta = Array.isArray(rawPage) ? null : rawPage;
         if (!Array.isArray(rawMessages)) return;
-        const loadedMessages = rawMessages.map((message) => ({
-            id: message.id,
-            sessionId: message.sessionId,
-            role: message.role.toLowerCase() as Message["role"],
-            content: message.content,
-            parts:
-                message.role.toLowerCase() === "assistant"
-                    ? parseRawToParts(message.content)
-                    : undefined,
-            timestamp: message.createdAt,
-            runId: message.runId,
-            runStatus: message.runStatus as Message["runStatus"],
-            terminalOutcome: message.terminalOutcome as Message["terminalOutcome"],
-            errorCode: message.errorCode,
-            // PLAN-0492 T3.1: the messages DTO carries the terminal failure text as
-            // `errorDetail` (MessageReadService); map it so a history refresh keeps
-            // the exhausted-run reason instead of wiping the local error state.
-            error: message.errorDetail ?? message.error,
-            retryable: message.retryable,
-            // PLAN-0344 T1.4 / PLAN-0465 T2.2：刷新后 job 卡片唯一重建源
-            //（messages DTO 的 jobSummary ← workspace_jobs 投影）。
-            // PLAN-0572：优先用持久化的 toolCalls 快照，并按 toolCallId 与 jobSummary 合并。
-            toolCalls: mergeHistoryToolCalls(message.toolCalls, message.jobSummary),
-            // PLAN-0659 T1.3 / PLAN-0669 M1：历史消息的主体归属（可选）。缺失即 undefined ⇒
-            // 不渲染 identity 徽标（不猜 PRIMARY、不显示"未知"）；只多一个可选字段，
-            // 不影响 delivery 解析与 run 分组。
-            participantId: message.participantId ?? undefined,
-            // PLAN-0665 M2 / V120：durable 投递语义随历史 DTO 回来；`null` 落成 undefined，
-            // 让 `resolveDelivery` 走 legacy 回落而不是把徽标渲染成空行。
-            delivery: message.delivery ?? undefined,
-            attachments: message.attachments?.map((attachment) => ({
-                id: attachment.fileId,
-                fileId: attachment.fileId,
-                name: attachment.name,
-                type: attachment.type,
-                size: attachment.size,
-                url: `/api/v1/files/${encodeURIComponent(attachment.fileId)}`,
-                state: "done" as const,
-            })),
-        }));
+        if (!olderExhausted.value) {
+            if (!olderCursor.value) olderCursor.value = pageMeta?.nextCursor ?? null;
+            if (pageMeta?.truncated && pageMeta?.nextCursor) hasOlderMessages.value = true;
+            else if (pageMeta === null) hasOlderMessages.value = false;
+        }
+        const loadedMessages = mapRawMessages(rawMessages);
         if (requiredMessageIds && chatStore.isStreaming(sessionId)) {
             for (const message of loadedMessages) {
                 if (!requiredMessageIds.has(message.id)) continue;
@@ -376,6 +407,45 @@ async function loadSessionMessages(sessionId: string, requiredMessageIds?: Reado
     } catch (cause) {
         if (cause instanceof ApiError && cause.problem.code === "MESSAGE_NOT_FOUND") return;
         logger.error("Failed to load session messages", cause);
+    }
+}
+
+/**
+ * PLAN-0670 M2d.1：向上加载更旧一页（`before` 游标由 CP 下发、客户端不解析）。
+ * 前插走 store `prependMessages`（去重、保序）；MessageList 的 `captureAnchor/restoreAnchor`
+ * 负责把用户正在读的那一行钉回原视觉位置。
+ */
+async function loadOlderMessages(): Promise<void> {
+    const sessionId = props.sessionId;
+    const branchId = sessionId ? chatStore.getSelectedBranchId(sessionId) : undefined;
+    if (
+        !sessionId ||
+        !branchId ||
+        !hasOlderMessages.value ||
+        loadingOlder.value ||
+        !olderCursor.value
+    ) {
+        return;
+    }
+    const cursor = olderCursor.value;
+    loadingOlder.value = true;
+    try {
+        const page = await api.getMessages(sessionId, branchId, {
+            limit: MESSAGE_PAGE_SIZE,
+            before: cursor,
+        });
+        if (props.sessionId !== sessionId) return;
+        const rawMessages = Array.isArray(page) ? page : (page.messages ?? page.items ?? []);
+        const meta = Array.isArray(page) ? null : page;
+        chatStore.prependMessages(sessionId, mapRawMessages(rawMessages));
+        olderCursor.value = meta?.nextCursor ?? null;
+        hasOlderMessages.value = Boolean(meta?.truncated && meta?.nextCursor);
+        if (!hasOlderMessages.value) olderExhausted.value = true;
+    } catch (cause) {
+        logger.error("Failed to load older messages", cause);
+        toast.error(t("chat.loadOlderFailed"));
+    } finally {
+        loadingOlder.value = false;
     }
 }
 
@@ -614,6 +684,10 @@ watch(
     () => props.sessionId,
     (sessionId) => {
         messageLoadRequestId += 1;
+        olderCursor.value = null;
+        hasOlderMessages.value = false;
+        loadingOlder.value = false;
+        olderExhausted.value = false;
         derivedStateRequestId += 1;
         waitingOnRequestId += 1;
         creatingBranchForMessageId.value = null;
@@ -1320,6 +1394,9 @@ watch(
             :messages="renderedMessages"
             :runs="sessionRuns"
             :branch-busy="creatingBranchForMessageId !== null"
+            :has-older="hasOlderMessages"
+            :loading-older="loadingOlder"
+            @load-older="loadOlderMessages"
             @approve="approveTool"
             @reject="rejectTool"
             @delete="handleDeleteMessage"

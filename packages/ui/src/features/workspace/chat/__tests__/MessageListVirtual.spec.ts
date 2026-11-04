@@ -38,9 +38,9 @@ function message(index: number): Message {
     } as unknown as Message;
 }
 
-function mountList(messages: Message[]) {
+function mountList(messages: Message[], extraProps: Record<string, unknown> = {}) {
     return mount(MessageList, {
-        props: { messages },
+        props: { messages, ...extraProps },
         global: {
             plugins: [i18n, createPinia()],
             stubs: {
@@ -76,5 +76,42 @@ describe("MessageList virtual window fallback (PLAN-0670 M2d.2)", () => {
         const wrapper = mountList(Array.from({ length: 20 }, (_, index) => message(index)));
         expect(wrapper.findAll('[data-testid="stub-message"]')).toHaveLength(20);
         expect(wrapper.find('[data-testid="virtual-top-spacer"]').exists()).toBe(false);
+    });
+
+    it("renders the load-older entry only when the server advertises more (PLAN-0670 M2d.1)", () => {
+        const legacy = mountList(Array.from({ length: 5 }, (_, index) => message(index)));
+        expect(legacy.find('[data-testid="load-older-messages"]').exists()).toBe(false);
+
+        const paged = mountList(
+            Array.from({ length: 5 }, (_, index) => message(index)),
+            {
+                hasOlder: true,
+            },
+        );
+        expect(paged.find('[data-testid="load-older-messages"]').exists()).toBe(true);
+    });
+
+    it("emits loadOlder on click and disables the entry while loading", async () => {
+        const wrapper = mountList(
+            Array.from({ length: 5 }, (_, index) => message(index)),
+            {
+                hasOlder: true,
+                loadingOlder: true,
+            },
+        );
+        const button = wrapper.get('[data-testid="load-older-messages"]');
+        expect(button.attributes("disabled")).toBeDefined();
+        await button.trigger("click");
+        // disabled 按钮点击不触发（浏览器语义；这里断言事件也未发出）。
+        expect(wrapper.emitted("loadOlder")).toBeUndefined();
+
+        const idle = mountList(
+            Array.from({ length: 5 }, (_, index) => message(index)),
+            {
+                hasOlder: true,
+            },
+        );
+        await idle.get('[data-testid="load-older-messages"]').trigger("click");
+        expect(idle.emitted("loadOlder")).toHaveLength(1);
     });
 });

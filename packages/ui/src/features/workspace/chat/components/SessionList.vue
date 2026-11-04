@@ -147,7 +147,10 @@ async function handleFork(id: string) {
         const visibleRoles = new Map(
             chatStore.getMessages(id).map((message) => [message.id, message.role]),
         );
-        const serverMessages = await api.getMessages(id, sourceBranchId);
+        const serverPage = await api.getMessages(id, sourceBranchId);
+        const serverMessages = Array.isArray(serverPage)
+            ? serverPage
+            : (serverPage.messages ?? serverPage.items ?? []);
         let anchorMessageId: string | undefined;
         for (let index = serverMessages.length - 1; index >= 0; index -= 1) {
             const message = serverMessages[index]!,
