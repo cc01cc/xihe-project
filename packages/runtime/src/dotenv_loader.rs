@@ -177,6 +177,7 @@ fn env_set(key: &str, value: &str) {
 
 #[cfg(test)]
 #[allow(unsafe_code)]
+// test-global-state: allow — test-only helper; every caller holds PROCESS_LOCK (see the tests below).
 fn env_remove(key: &str) {
     // SAFETY: caller guarantees single-threaded startup (see module docs).
     unsafe { std::env::remove_var(key) };
