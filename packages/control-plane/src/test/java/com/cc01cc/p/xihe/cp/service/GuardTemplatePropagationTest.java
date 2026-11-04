@@ -78,9 +78,12 @@ class GuardTemplatePropagationTest {
                 roles,
                     mock(com.cc01cc.p.xihe.cp.repository.AccessRolePermissionRepository.class),
                 mock(com.cc01cc.p.xihe.cp.policy.RoleGrantMaterializer.class),
-                // PLAN-0651 T1.4: this test never exercises A21/A22, so a default-deny fake is
-                // exact; the real atom path is covered by the four real-context principal tests.
-                new com.cc01cc.p.xihe.cp.policy.DeclaredAtomAuthority());
+                // PLAN-0651 T1.5-A1：建 principal 走共享内核 `RequesterAuthority.allowsForUser`
+                // （不是旧的 service 内联 evaluator 路径）。本测试创建 PERSONAL principal ⇒ 必须声明
+                // CREATE_OWN_AGENT；WORKSPACE 路径的 MANAGE_WORKSPACE_AGENTS 一并声明，保持与旧 stub
+                // （evaluator.union 返回两个 atom）同口径。真实 atom 路径仍由四个真上下文契约测试覆盖。
+                new com.cc01cc.p.xihe.cp.policy.DeclaredAtomAuthority(
+                        "CREATE_OWN_AGENT", "MANAGE_WORKSPACE_AGENTS"));
         // PLAN-0629（2026-11-04 裁定）：建 principal 现在总会解析默认实例角色并写角色绑定，
         // 所以纯 Mockito 测试必须提供角色目录桩——这不是放宽校验，而是补齐新依赖。
         when(roles.findByName(any())).thenReturn(java.util.Optional.of(new com.cc01cc.p.xihe.cp.entity.AccessRole(

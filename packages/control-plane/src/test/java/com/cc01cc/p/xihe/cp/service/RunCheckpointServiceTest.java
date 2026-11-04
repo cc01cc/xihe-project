@@ -55,6 +55,7 @@ class RunCheckpointServiceTest {
     private ChatRunRepository chatRunRepository;
     private SseEmitterManager sseManager;
     private com.cc01cc.p.xihe.cp.repository.WorkspaceRootRepository workspaceRootRepository;
+    private com.cc01cc.p.xihe.cp.repository.WorkspaceRepository workspaceRepository;
     private RunCheckpointService service;
     private final List<RunCheckpoint> rows = new CopyOnWriteArrayList<>();
 
@@ -124,6 +125,13 @@ class RunCheckpointServiceTest {
                 org.mockito.Mockito.mock(com.cc01cc.p.xihe.cp.repository.SessionRepository.class),
                 workspaceRootRepository, new ObjectMapper(), sseManager,
                 mock(WorkspaceNestedReposService.class));
+        // PLAN-0641 T7.2：legacy-slice gate 通过 @Autowired **字段**读 workspace 仓储（构造器签名
+        // 保持不变，真实 Spring 注入）。纯 Mockito 测试必须补这个字段，否则 revert 路径 NPE。
+        // 这里返回空 workspace（legacy hostPath 形态由合成主根兜底），与本测试对 runtime 调用的桩一致。
+        workspaceRepository = mock(com.cc01cc.p.xihe.cp.repository.WorkspaceRepository.class);
+        org.springframework.test.util.ReflectionTestUtils.setField(service, "workspaceRepository",
+                workspaceRepository);
+        when(workspaceRepository.findByIdAndDeletedAtIsNull(any())).thenReturn(Optional.empty());
     }
 
     @AfterEach
