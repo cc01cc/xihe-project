@@ -58,6 +58,25 @@ interface MessageRow {
     role?: string;
     content?: string;
     runId?: string;
+    /** PLAN-0659 T1.2 的 actor 归因来源；durable 读面当前**不返回**该字段（BL-197 ①）。 */
+    participantId?: string | null;
+}
+
+/**
+ * 诊断（PLAN-0659 §2 混主体正例的归因证据）：durable 消息行里到底有没有 `participantId`。
+ * 只写日志、不作断言 —— 缺口未补齐前 `actorView.hasMultipleActors` 恒 false，
+ * actor 徽标不渲染就是这个原因（见 R9-4 fixme 说明）。
+ */
+async function logParticipantIdAvailability(request: APIRequestContext): Promise<void> {
+    const response = await request.get(messagesPath(), { headers });
+    if (!response.ok()) return;
+    const payload = (await response.json()) as MessageRow[] | { messages?: MessageRow[] };
+    const rows = Array.isArray(payload) ? payload : (payload.messages ?? []);
+    const assistantRows = rows.filter((row) => row.role === "ASSISTANT");
+    const withId = assistantRows.filter((row) => Boolean(row.participantId));
+    console.log(
+        `[R9] durable assistant rows=${assistantRows.length} withParticipantId=${withId.length}`,
+    );
 }
 
 async function assistantContentForRun(
@@ -160,6 +179,7 @@ test.describe("@host PLAN-0658 R9 reasoning 三段同值", () => {
             .toContain(REASONING_STEP_1);
 
         durableContent = await assistantContentForRun(request, runId);
+        await logParticipantIdAvailability(request);
         expect(durableContent, "reasoning 开标签").toContain("<think>");
         expect(durableContent, "reasoning 闭标签").toContain("</think>");
         expect(durableContent, "reasoning 第二步").toContain(REASONING_STEP_2);
@@ -322,5 +342,146 @@ test.describe("@host PLAN-0658 R9 reasoning 三段同值", () => {
             reasoningRows.first().getByText(REASONING_STEP_2, { exact: false }),
             "展开体与 durable 读面第二行同值",
         ).toBeVisible({ timeout: 10_000 });
+    });
+
+    /**
+     * PLAN-0659 T2.1 §2 · T1.2 渲染契约**正例**：混主体线程里，过程行必须挂 actor 徽标，
+     * 且 `data-actor-principal-id` = 该过程行所属消息的参与者 id，**顺序与发言顺序一致**。
+     *
+     * 只证明"单主体不出徽标"（负例）不够 —— 那只能说明"不乱显示"；本用例证明
+     * "该显示时显示对了"（0659 的核心卖点：混主体可辨）。
+     *
+     * 构造：本会话已由 PRIMARY agent 产出 R9-1 的 reasoning 消息（participantId = PRIMARY 行）；
+     * 本用例再加入第二个 agent 参与者（as 它发送）产出第二条 reasoning 消息 ⇒ 线程里
+     * 两个不同 `message.participantId` ⇒ `hasMultipleActors=true` ⇒ 两条过程行都带 actor 徽标。
+     *
+     * **2026-11-04 实测：正例在真实读面不成立（B 类，BL-197 ① 延伸）** ——
+     * `actorView.actorOf` 从 `message.participantId` 派生徽标，`hasMultipleActors` 也只看这个字段；
+     * 而 durable 读面 `SessionMessage`（`docs/api/openapi.yaml` 的 schema）**没有 `participantId`**
+     * 字段（`ChatPanel.vue:938-943` 也只给"本地刚发出的那条"补 `participantId`，并注明
+     * "history DTO 不携带该字段"）。所以历史/刷新后的线程里 `hasMultipleActors` 恒 false ⇒
+     * **actor 徽标永远不渲染**（实测 `process-row-actor` count=0，而 `process-reasoning` count=2）。
+     * 注意：这同时说明 R9-2 的负例（单主体不出徽标）此前是**因为同一原因**才绿的 ——
+     * 只有正例才能把这个缺口暴露出来。
+     * 缺口需要 CP + OpenAPI + UI 跨层补字段（B 类，本 lane 不动产品），先 fixme 保留完整用例，
+     * 字段补齐后去掉 `.fixme` 即可验收。
+     */
+    test.fixme("R9-4 混主体：两个 principal 各出过程行，actor 徽标 id 与顺序正确", async ({
+        page,
+        request,
+    }) => {
+        expect(runId, "R9-1 必须先跑出第一条 reasoning 消息").not.toBe("");
+
+        // 第二个 agent 主体 + 加进本会话（as 它发送的第二条消息才是另一主体产出的过程行）。
+        const extraPrincipalId = await provisionWorkspaceAgentPrincipal(
+            request,
+            { accessToken: token, workspaceId },
+            {
+                name: agentName("R9Extra", NONCE),
+                actions: [],
+                defaultModelProvider: "openai",
+                defaultModelName: FAKE_LLM_MODEL,
+            },
+        );
+        const added = await request.post(`${CP_URL}/api/v1/sessions/${sessionId}/participants`, {
+            headers,
+            data: { principalKind: "AGENT", principalId: extraPrincipalId, role: "MEMBER" },
+        });
+        expect(added.status(), await added.text()).toBe(201);
+
+        // 名册里拿到两行的 participantId（断言只认 id）。
+        const rosterResponse = await request.get(
+            `${CP_URL}/api/v1/sessions/${sessionId}/participants`,
+            { headers },
+        );
+        expect(rosterResponse.status(), await rosterResponse.text()).toBe(200);
+        const roster = (await rosterResponse.json()) as {
+            participants?: Array<{
+                participantId: string;
+                principalId: string;
+                principalKind: string;
+            }>;
+        };
+        const agentRows = (roster.participants ?? []).filter(
+            (row) => row.principalKind === "AGENT",
+        );
+        const primaryRow = agentRows.find((row) => row.principalId !== extraPrincipalId);
+        const extraRow = agentRows.find((row) => row.principalId === extraPrincipalId);
+        expect(primaryRow, "PRIMARY agent 行").toBeTruthy();
+        expect(extraRow, "第二个 agent 行").toBeTruthy();
+
+        // 以第二个主体发送第二条 reasoning 消息，等它落 durable 读面。
+        const sent = await request.post(`${CP_URL}/api/v1/chat`, {
+            headers,
+            data: {
+                sessionId,
+                branchId: rootBranchId,
+                content: `${MARKER} 请给出混主体第二步 ${NONCE}`,
+                asParticipantId: extraRow!.participantId,
+            },
+        });
+        expect(sent.status(), await sent.text()).toBe(202);
+        const secondRunId = ((await sent.json()) as { runId?: string }).runId ?? "";
+        expect(secondRunId, "第二个 runId").toBeTruthy();
+        await expect
+            .poll(() => assistantContentForRun(request, secondRunId), {
+                timeout: 90_000,
+                intervals: [500, 1_000],
+            })
+            .toContain(REASONING_STEP_1);
+
+        // UI：两条过程行、两个 actor 徽标，id 与发言顺序一致。
+        await page.addInitScript(
+            ({ accessToken, ws }) => {
+                localStorage.setItem("xihe-token", accessToken);
+                localStorage.setItem(
+                    "xihe-user",
+                    JSON.stringify({
+                        id: "e2e-owner",
+                        email: "e2e-owner@test.com",
+                        name: "E2E Owner",
+                    }),
+                );
+                localStorage.setItem(
+                    "xihe-workspace",
+                    JSON.stringify({ id: ws, name: "R9 workspace" }),
+                );
+                sessionStorage.setItem(
+                    "xihe-workspace",
+                    JSON.stringify({
+                        id: ws,
+                        name: "R9 workspace",
+                        workspaceRole: "OWNER",
+                        ownerId: "x",
+                    }),
+                );
+            },
+            { accessToken: token, ws: workspaceId },
+        );
+        await page.goto(workspaceChatPath(workspaceId, sessionId));
+        await expect(page.getByTestId("chat-input"), "composer mounts").toBeVisible({
+            timeout: 30_000,
+        });
+
+        const reasoningRows = page.getByTestId("process-reasoning");
+        await expect(reasoningRows, "两条消息各一条 reasoning 过程行").toHaveCount(2, {
+            timeout: 30_000,
+        });
+        const actors = page.getByTestId("process-row-actor");
+        await expect(actors, "混主体线程：每条过程行都带 actor 徽标").toHaveCount(2, {
+            timeout: 30_000,
+        });
+        // 顺序 = 发言顺序：PRIMARY 的消息在前，第二个 agent 的在后。
+        await expect(actors.nth(0)).toHaveAttribute(
+            "data-actor-principal-id",
+            primaryRow!.participantId,
+        );
+        await expect(actors.nth(1)).toHaveAttribute(
+            "data-actor-principal-id",
+            extraRow!.participantId,
+        );
+        // 过程行本身也标了 has-actor（同一契约的第二处证据）。
+        await expect(reasoningRows.nth(0)).toHaveAttribute("data-has-actor", "true");
+        await expect(reasoningRows.nth(1)).toHaveAttribute("data-has-actor", "true");
     });
 });
