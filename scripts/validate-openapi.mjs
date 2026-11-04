@@ -45,13 +45,16 @@ const runtimeExecute = sliceBetween(
   '\n  /internal/v1/runtime/workspaces/{workspaceId}/checkpoints/revert:',
   '\n  /',
 )
-for (const [route, block] of [
-  ['public checkpoint revert', publicExecute],
-  ['runtime checkpoint revert', runtimeExecute],
-]) {
-  for (const code of ['NESTED_REPO_DIRTY', 'NESTED_REPO_UNCONFIRMED']) {
-    if (!block.includes(code)) throw new Error(`${route} must name ${code}`)
-  }
+// PLAN-0641 M4: the legacy-slice boundary is decided CP-side, so only the public operation
+// names CROSS_ROOT_LEGACY_SLICE and the legacyRoots body; the Runtime pair keeps the M3 codes.
+for (const code of ['NESTED_REPO_DIRTY', 'NESTED_REPO_UNCONFIRMED', 'CROSS_ROOT_LEGACY_SLICE']) {
+  if (!publicExecute.includes(code)) throw new Error(`public checkpoint revert must name ${code}`)
+}
+if (!publicExecute.includes('legacyRoots')) {
+  throw new Error('public checkpoint revert must document the legacyRoots body')
+}
+for (const code of ['NESTED_REPO_DIRTY', 'NESTED_REPO_UNCONFIRMED']) {
+  if (!runtimeExecute.includes(code)) throw new Error(`runtime checkpoint revert must name ${code}`)
 }
 
 console.log(`OpenAPI structural validation passed (${paths.length} paths)`)
