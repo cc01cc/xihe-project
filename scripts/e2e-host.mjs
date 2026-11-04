@@ -9,6 +9,7 @@ import { createServer as createHttpServer } from 'node:http'
 import { waitForAgentLlmReady } from './lib/agent-readiness.mjs'
 import { llmEnv } from './lib/llm-env.mjs'
 import { decideCpBoot } from './lib/cp-boot-plan.mjs'
+import { stopPidIfOwned, E2E_PORT_MIN, E2E_PORT_MAX } from './lib/kill-guard.mjs'
 import {
   buildBlankDatabaseResetSql,
   buildDatabaseExistsQuery,
@@ -813,7 +814,17 @@ async function listLeftoverListeners(ports) {
 }
 
 async function killPortListeners(ports) {
-  const targets = [...new Set(ports.map(Number).filter((port) => Number.isInteger(port) && port > 0))]
+  // PLAN-0648 端口白名单：只允许杀 e2e 块（27000-29999）内的监听者。state 文件若被
+  // 污染成 dev/stack-slot 端口（12630-34 / 12640-44 / …），这里必须拒绝而不是照杀——
+  // 这是"teardown 只动 e2e 自己的"硬断言的第二道（第一道在 kill-guard 的 PID 身份门）。
+  const requested = [...new Set(ports.map(Number).filter((port) => Number.isInteger(port) && port > 0))]
+  const outside = requested.filter((port) => port < E2E_PORT_MIN || port > E2E_PORT_MAX)
+  if (outside.length > 0) {
+    console.error(
+      `[e2e-host] refused to touch non-e2e port(s) ${outside.join(', ')} (allowed block: ${E2E_PORT_MIN}-${E2E_PORT_MAX})`,
+    )
+  }
+  const targets = requested.filter((port) => port >= E2E_PORT_MIN && port <= E2E_PORT_MAX)
   if (targets.length === 0) return
   for (let attempt = 0; attempt < 20; attempt += 1) {
     const found = await listLeftoverListeners(targets)
@@ -2071,15 +2082,34 @@ async function teardownPersistent() {
 }
 
 async function stopPersistentProcesses(state) {
+  // PLAN-0648（Lead 2026-11-04 批准）：state 过期后里面的 PID 会被系统复用给别的栈/
+  // 别的 lane 的进程，盲杀 = 越界杀人（当日两次同签名事故）。杀之前必须过 `kill-guard`
+  // 身份门（path-in-projectDir / runId-in-cmdline / listening-on-e2e-port 三信号任一），
+  // 证明不了就 `refused to kill foreign pid` 跳过——leak 比误杀安全（下次 preflight 的
+  // 端口扫描会把残留报出来）。
+  const ports = Object.values(state.ports || {})
+    .map(Number)
+    .filter((port) => Number.isInteger(port))
   for (const name of Object.keys(state.pids || {})) {
     const pid = state.pids[name]
     if (!pid) continue
-    if (process.platform === 'win32') {
-      await run('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore' })
-    } else {
-      await run('kill', ['-TERM', String(pid)], { stdio: 'ignore' })
+    const result = await stopPidIfOwned({
+      pid,
+      name,
+      projectDir,
+      runId: state.runId || '',
+      ports,
+      kill: async (target) => {
+        if (process.platform === 'win32') {
+          await run('taskkill', ['/PID', String(target), '/T', '/F'], { stdio: 'ignore' })
+        } else {
+          await run('kill', ['-TERM', String(target)], { stdio: 'ignore' })
+        }
+      },
+    })
+    if (result.outcome === 'absent') {
+      console.log(`[e2e-host] persistent ${name} (pid=${pid}) already gone`)
     }
-    console.log(`[e2e-host] stopped persistent ${name} (pid=${pid})`)
   }
 }
 
