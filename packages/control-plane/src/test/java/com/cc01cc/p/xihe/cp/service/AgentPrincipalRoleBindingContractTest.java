@@ -130,8 +130,9 @@ class AgentPrincipalRoleBindingContractTest extends AbstractIntegrationTest {
         assertEquals("workspace", body.get("scopeType"));
         assertEquals(workspace.getId().toString(), body.get("scopeId"));
         assertEquals(2, body.get("atomCount"));
-        assertTrue(((List<?>) body.get("atoms")).containsAll(List.of("network", "CREATE_SCHEDULED_TASK")));
-        assertNotNull(body.get("roleName"));
+        assertTrue(((List<?>) body.get("atoms")).containsAll(List.of("出网访问", "创建定时任务")));
+        assertTrue(String.valueOf(body.get("name")).startsWith("TEST_RB_"));
+        assertNotNull(body.get("displayName"));
 
         assertEquals(before + 1, totalBindingCount(), "exactly one binding row is written");
         List<String> atoms = materializedAtoms();
@@ -234,14 +235,33 @@ class AgentPrincipalRoleBindingContractTest extends AbstractIntegrationTest {
         ResponseEntity<Map> listed = get("/roles?workspaceId=" + workspace.getId());
 
         assertEquals(HttpStatus.OK, listed.getStatusCode(), String.valueOf(listed.getBody()));
-        List<Map<String, Object>> bindings = (List<Map<String, Object>>) listed.getBody().get("bindings");
+        List<Map<String, Object>> bindings = (List<Map<String, Object>>) listed.getBody().get("items");
         Map<String, Object> row = bindings.stream()
                 .filter(candidate -> roleId.toString().equals(String.valueOf(candidate.get("roleId"))))
                 .findFirst().orElseThrow();
         assertEquals(false, row.get("isSystem"));
         assertEquals("workspace", row.get("scopeType"));
+        assertEquals(workspace.getName(), row.get("scopeName"));
         assertEquals(2, row.get("atomCount"));
-        assertTrue(((List<?>) row.get("atoms")).containsAll(List.of("network", "CREATE_SCHEDULED_TASK")));
+        assertTrue(((List<?>) row.get("atoms")).containsAll(List.of("出网访问", "创建定时任务")));
+    }
+
+    @Test
+    void atomsAreLocalizedByAcceptLanguage() {
+        fixture();
+        UUID roleId = createCustomRole("network", "CREATE_SCHEDULED_TASK");
+        HttpHeaders headers = authHeaders();
+        headers.set(HttpHeaders.ACCEPT_LANGUAGE, "en-US");
+        ResponseEntity<Map> created = restTemplate.exchange(
+                url(pathFor("/roles?workspaceId=" + workspace.getId())), HttpMethod.POST,
+                new HttpEntity<>(Map.of("roleId", roleId.toString(), "scopeType", "workspace",
+                        "scopeId", workspace.getId().toString()), headers), Map.class);
+
+        assertEquals(HttpStatus.CREATED, created.getStatusCode(), String.valueOf(created.getBody()));
+        assertTrue(((List<?>) created.getBody().get("atoms"))
+                        .containsAll(List.of("Network access", "Create scheduled task")),
+                "labels follow Accept-Language, machine names never leave the server: "
+                        + created.getBody().get("atoms"));
     }
 
     @Test

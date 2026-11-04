@@ -87,20 +87,20 @@ class PermissionAtomCatalogAgentPrincipalForbiddenAtomsTest {
     }
 
     /**
-     * The rule re-derived from atom metadata only (never from {@code agentPrincipalForbiddenAtoms}),
-     * so a change in the implementation is visible instead of being compared with itself.
+     * The rule re-derived from the per-atom metadata flag only (never from
+     * {@code agentPrincipalForbiddenAtoms()}), so a change in the aggregate method is visible instead
+     * of being compared with itself. Adding/removing an atom from the forbidden set is therefore a
+     * one-line metadata edit whose effect this test sees automatically (Lead ruling 2026-11-05:
+     * derive by flag, not by a hand-written predicate — the predicate is what went stale when the
+     * set was narrowed 21&rarr;16).
      */
     private static Set<String> derivedForbiddenSet() {
         Set<String> derived = new TreeSet<>();
         for (String name : PermissionAtomCatalog.allAtomNames()) {
-            PermissionAtomCatalog.Atom atom = PermissionAtomCatalog.atom(name);
-            if (atom.capability()
-                    || PermissionAtomCatalog.SCOPE_CLASS_INSTANCE.equals(atom.scopeClass())) {
+            if (PermissionAtomCatalog.atom(name).agentPrincipalForbidden()) {
                 derived.add(name);
             }
         }
-        derived.add("MANAGE_WORKSPACE_AGENTS");
-        derived.add("MANAGE_WORKSPACE_MEMBERS");
         return derived;
     }
 
