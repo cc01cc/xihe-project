@@ -14,8 +14,8 @@ import { participantDisplayName } from "../components/participantInitials";
  * 未知 id/名字一律**不渲染**（不拿 UUID 上屏、不猜 PRIMARY，与 D31-08/DEV-032 同口径）。
  */
 export interface ResolvedDelivery {
-    /** 「发送→」主体显示名。 */
-    to?: string;
+    /** 「发送→」主体显示名（V120 起是集合：一条消息可定向多个 agent，各自起 run）。 */
+    to: string[];
     /** 被 @ 的主体显示名（消息头高亮）。 */
     mentions: string[];
     /** 抄送主体显示名（已排除 to 与 mentions，避免同一人出现两次）。 */
@@ -86,31 +86,44 @@ export interface ResolveDeliveryInput {
 /**
  * 一条消息的投递语义投影。没有任何一态时返回 `undefined`（非发送态消息不渲染投递行）。
  *
+ * **读侧优先级（PLAN-0665 M2 / BL-239）**：V120 durable 形状（`to[]`/`cc[]`，来自
+ * `SessionMessage.delivery`，刷新后仍在）优先；两个 durable 键都不存在时，才回落到
+ * legacy 本地发送态（`toParticipantId`/`ccParticipantIds`，V120 之前的乐观消息）。
+ * 回落是安全网：缺 durable 不许崩、也不许把旧消息的徽标凭空抹掉。
+ *
  * 只有 `role === "user"` 的消息做 @ 重建：agent 正文里出现的 `@xxx` 是对历史的引用/代码，
  * 不是本次投递意图，标成「被 @」会误导。
  */
 export function resolveDelivery(input: ResolveDeliveryInput): ResolvedDelivery | undefined {
     const { delivery, content, role, roster, unknownNameLabel } = input;
-    const to = nameOf(roster, delivery?.toParticipantId, unknownNameLabel);
+    const hasDurableShape = Array.isArray(delivery?.to) || Array.isArray(delivery?.cc);
+    const toIds = hasDurableShape
+        ? (delivery?.to ?? [])
+        : delivery?.toParticipantId
+          ? [delivery.toParticipantId]
+          : [];
+    const ccIdsRaw = hasDurableShape ? (delivery?.cc ?? []) : (delivery?.ccParticipantIds ?? []);
 
     const mentionIds =
         role === "user"
             ? mentionParticipantIds(content, roster).filter(
-                  (participantId) => participantId !== delivery?.toParticipantId,
+                  (participantId) => !toIds.includes(participantId),
               )
             : [];
     const mentions = mentionIds
         .map((participantId) => nameOf(roster, participantId, unknownNameLabel))
         .filter((name): name is string => Boolean(name));
 
-    const ccIds = (delivery?.ccParticipantIds ?? []).filter(
-        (participantId) =>
-            participantId !== delivery?.toParticipantId && !mentionIds.includes(participantId),
+    const ccIds = ccIdsRaw.filter(
+        (participantId) => !toIds.includes(participantId) && !mentionIds.includes(participantId),
     );
     const cc = ccIds
         .map((participantId) => nameOf(roster, participantId, unknownNameLabel))
         .filter((name): name is string => Boolean(name));
+    const to = toIds
+        .map((participantId) => nameOf(roster, participantId, unknownNameLabel))
+        .filter((name): name is string => Boolean(name));
 
-    if (!to && mentions.length === 0 && cc.length === 0) return undefined;
-    return { ...(to ? { to } : {}), mentions, cc };
+    if (to.length === 0 && mentions.length === 0 && cc.length === 0) return undefined;
+    return { to, mentions, cc };
 }

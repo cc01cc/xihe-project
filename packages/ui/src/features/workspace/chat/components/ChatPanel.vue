@@ -337,6 +337,13 @@ async function loadSessionMessages(sessionId: string, requiredMessageIds?: Reado
             //（messages DTO 的 jobSummary ← workspace_jobs 投影）。
             // PLAN-0572：优先用持久化的 toolCalls 快照，并按 toolCallId 与 jobSummary 合并。
             toolCalls: mergeHistoryToolCalls(message.toolCalls, message.jobSummary),
+            // PLAN-0659 T1.3 / PLAN-0669 M1：历史消息的主体归属（可选）。缺失即 undefined ⇒
+            // 不渲染 identity 徽标（不猜 PRIMARY、不显示"未知"）；只多一个可选字段，
+            // 不影响 delivery 解析与 run 分组。
+            participantId: message.participantId ?? undefined,
+            // PLAN-0665 M2 / V120：durable 投递语义随历史 DTO 回来；`null` 落成 undefined，
+            // 让 `resolveDelivery` 走 legacy 回落而不是把徽标渲染成空行。
+            delivery: message.delivery ?? undefined,
             attachments: message.attachments?.map((attachment) => ({
                 id: attachment.fileId,
                 fileId: attachment.fileId,

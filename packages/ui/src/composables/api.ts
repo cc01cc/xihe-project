@@ -2915,7 +2915,9 @@ export const api = {
     rolesCatalog(): Promise<ApiRoleCatalog> {
         // D51-37: the CP resolves the label server-side from an explicit locale; the UI keeps no
         // atom vocabulary. `<html lang>` is the locale SSOT written by applyLocale().
-        return request<ApiRoleCatalog>(`/roles/catalog?locale=${encodeURIComponent(catalogLocale())}`);
+        return request<ApiRoleCatalog>(
+            `/roles/catalog?locale=${encodeURIComponent(catalogLocale())}`,
+        );
     },
     listRoles(): Promise<ApiRole[]> {
         return request<ApiRole[]>("/roles");
@@ -3105,6 +3107,8 @@ export const api = {
                 role: string;
                 content: string;
                 createdAt: string;
+                /** PLAN-0669 M1：历史消息的主体归属（可选；缺失 = 未知，不渲染徽标）。 */
+                participantId?: string | null;
                 runId?: string;
                 runStatus?: string;
                 terminalOutcome?: string;
@@ -3113,6 +3117,12 @@ export const api = {
                 errorDetail?: string;
                 error?: string;
                 retryable?: boolean;
+                /**
+                 * PLAN-0665 M2 / V120: durable delivery audience written on the user Message.
+                 * `{to:[participantId],cc:[participantId]}`; `null` when the message had neither
+                 * (never an empty object), so the read side falls back to local composer state.
+                 */
+                delivery?: { to?: string[]; cc?: string[] } | null;
                 attachments?: Array<{ fileId: string; name: string; type: string; size: number }>;
                 /** PLAN-0572: persisted per-Run tool cards (V83 snapshot). */
                 toolCalls?: Array<{

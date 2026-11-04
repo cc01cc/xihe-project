@@ -667,7 +667,7 @@ describe("MessageItem delivery header (PLAN-0659 T1.3)", () => {
     it("renders 发送 / 抄送 / 被@ 三态: @ highlighted as its own chip", () => {
         const wrapper = mountDelivery(
             {},
-            { to: "Owner One", mentions: ["Member Two"], cc: ["Viewer Three"] },
+            { to: ["Owner One"], mentions: ["Member Two"], cc: ["Viewer Three"] },
         );
 
         const header = wrapper.get('[data-testid="message-delivery"]');
@@ -686,10 +686,26 @@ describe("MessageItem delivery header (PLAN-0659 T1.3)", () => {
     });
 
     it("renders mention-only delivery (history messages after BL-239 loses TO/CC)", () => {
-        const wrapper = mountDelivery({}, { mentions: ["Member Two"], cc: [] });
+        const wrapper = mountDelivery({}, { to: [], mentions: ["Member Two"], cc: [] });
         expect(wrapper.find('[data-testid="message-delivery-to"]').exists()).toBe(false);
         expect(wrapper.find('[data-testid="message-delivery-cc"]').exists()).toBe(false);
         expect(wrapper.get('[data-testid="message-delivery-mention"]').text()).toBe("@Member Two");
+        wrapper.unmount();
+    });
+
+    it("renders a multi-target TO set as one joined 发送 line (PLAN-0665 M2)", () => {
+        const wrapper = mountDelivery(
+            {},
+            {
+                to: ["Owner One", "Agent Alpha"],
+                mentions: [],
+                cc: [],
+            },
+        );
+        const header = wrapper.get('[data-testid="message-delivery"]');
+        expect(header.text()).toContain(
+            i18n.global.t("chat.delivery.to", { name: "Owner One、Agent Alpha" }),
+        );
         wrapper.unmount();
     });
 
