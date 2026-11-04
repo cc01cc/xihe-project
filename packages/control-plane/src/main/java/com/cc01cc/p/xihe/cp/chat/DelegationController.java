@@ -153,7 +153,7 @@ public class DelegationController {
                 userId, workspaceId, principalId.toString(), authorizationBody);
         AgentSpawnAuthorizationService.GateResult gate;
         try {
-            gate = spawnAuthorization.authorize(invocation, approvalRequestId);
+            gate = spawnAuthorization.authorizeUserSpawn(invocation, approvalRequestId);
         } catch (CpApiException e) {
             return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
         }

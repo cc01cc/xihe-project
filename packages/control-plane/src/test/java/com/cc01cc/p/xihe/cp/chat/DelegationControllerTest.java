@@ -110,7 +110,7 @@ class DelegationControllerTest {
 
     @Test
     void capabilityRefusalMapsToTheForbiddenProblem() {
-        when(authorization.authorize(any(), any()))
+        when(authorization.authorizeUserSpawn(any(), any()))
                 .thenThrow(new CpApiException(HttpStatus.FORBIDDEN, "FORBIDDEN",
                         "An explicit SPAWN_AGENT grant is required"));
 
@@ -123,7 +123,7 @@ class DelegationControllerTest {
 
     @Test
     void askAnswerTravelsAs202WithTheFrozenBodyKeys() {
-        when(authorization.authorize(any(), any()))
+        when(authorization.authorizeUserSpawn(any(), any()))
                 .thenReturn(AgentSpawnAuthorizationService.GateResult.pending("appr-1",
                         java.time.Instant.now()));
 
@@ -145,7 +145,7 @@ class DelegationControllerTest {
     void allowedAnswerCreatesDispatchesAndAnswers201WithTheBudget() {
         String childSessionId = UUID.randomUUID().toString();
         String childRunId = UUID.randomUUID().toString();
-        when(authorization.authorize(any(), any()))
+        when(authorization.authorizeUserSpawn(any(), any()))
                 .thenReturn(AgentSpawnAuthorizationService.GateResult.allowed(
                         new ChatSubmissionService.SpawnAuthorization("{canonical}", null, null)));
         when(submissions.createDelegation(eq(PARENT_RUN_ID), eq(PRINCIPAL_ID), eq("do it"),
