@@ -488,6 +488,138 @@ public class ChatSubmissionService {
                 childSession.getAgentPrincipalId(), parentRun.getWorkspaceId());
     }
 
+    /**
+     * PLAN-0655: the canonical spawn body for a human-authored delegation task. The same shape the
+     * MCP surface produces, so approval reuse keys (sessionId + tool + canonical hash) behave the
+     * same on both surfaces — one grant can approve either channel without a second mechanism.
+     */
+    public String delegationAuthorizationBody(String task) {
+        return createSpawnAuthorizationBody(task);
+    }
+
+    /**
+     * PLAN-0655: create the delegated child Session + its first Run (task as the user Message).
+     * INV-8 ordering mirrors createSpawnFromParent: idempotency replay, then the budget gate, then
+     * the one-shot approval consume, then the rows — so a replay never re-pays the budget and a
+     * budget refusal never burns the approval.
+     *
+     * <p>Provenance is complete by construction: the terminal-settlement path rejects a spawn child
+     * without {@code spawned_from_{session,run}_id} + a waiting link (ChatRunTerminalService.
+     * lockParentLink), so the child carries the parent session's latest run as its provenance anchor
+     * and the idempotency key as the waiting tool-call id. The waiting link is bookkeeping only — the
+     * human route never waits on the parent run.</p>
+     */
+    @Transactional
+    public SpawnResult createDelegation(String parentRunId, String agentPrincipalId, String task,
+                                        String idempotencyKey, SpawnAuthorization authorization) {
+        requireUuid(parentRunId, "parentRunId");
+        requireUuid(agentPrincipalId, "agentPrincipalId");
+        if (task == null || task.isBlank() || task.length() > 4000) {
+            throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST",
+                    "task must be 1..4000 characters");
+        }
+        if (authorization == null || authorization.authorizationBody() == null) {
+            throw new CpApiException(HttpStatus.FORBIDDEN, "FORBIDDEN", "Delegation authorization is required");
+        }
+
+        LockedSpawnParent lockedParent = lockSpawnParent(parentRunId, null, null, null,
+                () -> new CpApiException(HttpStatus.NOT_FOUND, "SPAWN_PARENT_RUN_NOT_FOUND",
+                        "Parent run or session not found"));
+        ChatRun parentRun = lockedParent.run();
+        Session parentSession = lockedParent.session();
+
+        // Idempotency replay first: a retry of the SAME key must not re-pay the budget.
+        ChatRun existing = chatRunRepository
+                .findByUserIdAndIdempotencyKeyAndOrigin(parentRun.getUserId(), idempotencyKey,
+                        ChatRun.ORIGIN_SPAWN)
+                .orElse(null);
+        if (existing != null) {
+            Session existingSession = sessionRepository
+                    .findByIdForUpdate(UUID.fromString(existing.getSessionId()))
+                    .orElseThrow(() -> new IllegalStateException("Delegation session is missing"));
+            return new SpawnResult(existingSession.getId().toString(), existing.getId().toString(),
+                    existingSession.getAgentPrincipalId(), existingSession.getWorkspaceId());
+        }
+
+        // INV-8: budget BEFORE the approval consume (below), inside the parent Session+Run locks.
+        DelegationRefusedException budget = null;
+        try {
+            delegationBudgetService.requireWithinBudget(parentSession, parentRun, idempotencyKey);
+        } catch (DelegationRefusedException refused) {
+            budget = refused;
+        }
+        if (budget != null) {
+            throw budget;
+        }
+
+        if (authorization.approvalGrantId() != null
+                && !approvalService.consumeApprovedGrant(authorization.approvalGrantId(),
+                        parentRun.getUserId(), parentRun.getWorkspaceId(),
+                        parentSession.getId().toString(), SPAWN_TOOL_NAME,
+                        authorization.authorizationBody())) {
+            throw new CpApiException(HttpStatus.FORBIDDEN, "APPROVAL_GRANT_INVALID",
+                    "Delegation approval grant is invalid or no longer usable");
+        }
+
+        // Chosen principal: must be visible/bound in this workspace; resolveCapFor fails closed with
+        // its own 404/409 code, which the contract maps verbatim.
+        JsonNode childPermissions = agentPrincipalService.resolveCapFor(
+                UUID.fromString(agentPrincipalId), UUID.fromString(parentRun.getWorkspaceId()));
+
+        String requestHash = ChatRequestHash.calculate(objectMapper, task,
+                parentRun.getProvider(), parentRun.getModel(), parentRun.getToolMode(),
+                List.of(), Map.of());
+
+        Session childSession = new Session(parentRun.getWorkspaceId(), parentRun.getUserId(),
+                parentSession.getTitle());
+        childSession.setId(UUID.randomUUID());
+        childSession.setKind(Session.KIND_SPAWN);
+        childSession.setSpawnedFromSessionId(parentSession.getId());
+        childSession.setSpawnedFromRunId(parentRun.getId());
+        childSession.setSpawnedAt(Instant.now());
+        childSession.setAgentPrincipalId(agentPrincipalId);
+        childSession.setAgentPermissionsSnapshot(childPermissions);
+        childSession.setModelProvider(parentSession.getModelProvider());
+        childSession.setModelName(parentSession.getModelName());
+        childSession.setProviderConnectionId(parentSession.getProviderConnectionId());
+        childSession.setConnectionRevision(parentSession.getConnectionRevision());
+        childSession.setApprovalMode(parentSession.getApprovalMode());
+        childSession.setContextTemplateLayer(parentSession.getContextTemplateLayer());
+        childSession.setContextTemplateId(parentSession.getContextTemplateId());
+        childSession.setContextTemplateVersion(parentSession.getContextTemplateVersion());
+        sessionRepository.save(childSession);
+        sessionParticipantService.ensurePrimaryParticipant(childSession.getId(), agentPrincipalId);
+
+        String requestId = UUID.randomUUID().toString();
+        String childRunId = UUID.randomUUID().toString();
+        String childBranchId = branchPathService.ensureRootBranchId(childSession.getId().toString());
+        Submission created = persist(ChatRun.ORIGIN_SPAWN, childRunId, childSession.getId().toString(),
+                parentRun.getUserId(), parentRun.getWorkspaceId(), childBranchId, idempotencyKey,
+                requestHash, parentRun.getProvider(), parentRun.getModel(), parentRun.getToolMode(),
+                parentRun.getProviderConnectionId(), parentRun.getConnectionRevision(), null, requestId,
+                task, "[]", List.of(), agentPrincipalId, false, Message.VISIBILITY_USER);
+        ChatRun childRun = created.run();
+        childRun.setWaitingOnRunId(parentRun.getId().toString());
+        childRun.setWaitingToolCallId(idempotencyKey);
+        chatRunRepository.save(childRun);
+
+        com.fasterxml.jackson.databind.node.ObjectNode detail = objectMapper.createObjectNode();
+        detail.put("authorizationAction", "SPAWN_AGENT");
+        detail.put("parentSessionId", parentSession.getId().toString());
+        detail.put("parentRunId", parentRun.getId().toString());
+        detail.put("childSessionId", childSession.getId().toString());
+        detail.put("childRunId", childRun.getId().toString());
+        detail.put("agentPrincipalId", agentPrincipalId);
+        if (authorization.approvalGrantId() != null) {
+            detail.put("approvalRequestId", authorization.approvalGrantId());
+        }
+        auditLogger.recordDurableChange(parentRun.getUserId(), parentRun.getWorkspaceId(),
+                "agent_delegation_created", "chat_session", childSession.getId().toString(), detail.toString());
+
+        return new SpawnResult(childSession.getId().toString(), childRun.getId().toString(),
+                agentPrincipalId, parentRun.getWorkspaceId());
+    }
+
     private LockedSpawnParent lockSpawnParent(String parentRunId,
                                               String expectedParentSessionId,
                                               String expectedUserId,
