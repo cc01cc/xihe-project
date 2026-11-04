@@ -1118,6 +1118,18 @@ impl ShadowGit {
                     store_entries = result.entry_count,
                     blobs_new = result.blobs_new,
                     blobs_dedup = result.blobs_dedup,
+                    phase_walk_ms = result.walk_ms,
+                    phase_blob_ms = result.blob_write_ms,
+                    phase_manifest_ms = result.manifest_ms,
+                    phase_slice_ms = result.slice_write_ms,
+                    phase_cache_read_ms = result.cache_read_ms,
+                    phase_cache_write_ms = result.cache_write_ms,
+                    phase_lock_ms = result.lock_ms,
+                    phase_entries_ms = result.entries_ms,
+                    phase_nested_scan_ms = result.nested_scan_ms,
+                    phase_tail_read_ms = result.tail_read_ms,
+                    cache_hits = result.cache_hits,
+                    hashed_files = result.hashed_files,
                     store_error = "none",
                     "checkpoint dual-write completed"
                 );
