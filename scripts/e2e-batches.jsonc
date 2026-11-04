@@ -209,13 +209,16 @@
       "specs": ["e2e/real/goldpath-first-run.spec.ts"]
     },
     "session-matrix": {
-      "description": "PLAN-0658 session matrix real lane on the fake LLM: R1 multi human accounts (mutual visibility / @ mention / cc / non-participant denial), R2 TO speak-as wire, R6 durable follow-up queue, R7 durable failure terminal, R9 reasoning durable parity",
+      "description": "PLAN-0658 session matrix real lane on the fake LLM: R1 multi human accounts (mutual visibility / @ mention / cc / non-participant denial), R2 TO speak-as wire, R3 three-role session visibility, R5 disabled-subject candidate/row filtering, R6 durable follow-up queue, R7 durable failure terminal, R8 refresh recovery (BL-228 guard), R9 reasoning durable parity",
       "llmMode": "success",
       "specs": [
         "e2e/real/session-matrix-multi-account.spec.ts",
         "e2e/real/session-matrix-to.spec.ts",
+        "e2e/real/session-matrix-roles.spec.ts",
+        "e2e/real/session-matrix-disabled.spec.ts",
         "e2e/real/session-matrix-concurrency.spec.ts",
         "e2e/real/session-matrix-failures.spec.ts",
+        "e2e/real/session-matrix-refresh.spec.ts",
         "e2e/real/session-matrix-reasoning.spec.ts"
       ]
     }

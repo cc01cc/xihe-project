@@ -202,14 +202,15 @@ test.describe("@host PLAN-0658 R9 reasoning 三段同值", () => {
             timeout: 30_000,
         });
 
-        // 诊断（失败时能看到现场，不必再跑一轮）：过程行数量 / 是否漏出原始标签。
+        // 诊断（失败时能看到现场）：过程行数量 / 是否漏出原始标签。**只作日志**，不作断言 ——
+        // 一次性快照会与流式收尾竞态（实测在冷栈上偶发），断言一律用 locator（自带重试）。
         const reasoningRows = page.getByTestId("process-reasoning");
         const rowCount = await reasoningRows.count();
-        const bodyText = await page.locator("body").innerText();
+        const bodySnapshot = await page.locator("body").innerText();
         console.log(
-            `[R9] rows=${rowCount} hasOpenTag=${String(bodyText.includes("<think>"))} ` +
-                `hasStep1=${String(bodyText.includes(REASONING_STEP_1))} ` +
-                `hasFinal=${String(bodyText.includes(FINAL_TEXT))}`,
+            `[R9] rows=${rowCount} hasOpenTag=${String(bodySnapshot.includes("<think>"))} ` +
+                `hasStep1=${String(bodySnapshot.includes(REASONING_STEP_1))} ` +
+                `hasFinal=${String(bodySnapshot.includes(FINAL_TEXT))}`,
         );
 
         await expect(reasoningRows.first(), "reasoning 过程行").toBeVisible({
@@ -227,8 +228,14 @@ test.describe("@host PLAN-0658 R9 reasoning 三段同值", () => {
             "折叠时不渲染 reasoning 全文（第二段只在展开体里）",
         ).toHaveCount(0);
         // 正文（消息 markdown 区）不得漏出原始标签 —— 否则说明没被解析成过程行。
-        expect(bodyText, "UI 不得显示原始 <think> 标签").not.toContain("<think>");
-        expect(bodyText, "正文结论可见").toContain(FINAL_TEXT);
+        await expect(
+            page.getByText("<think>", { exact: false }),
+            "UI 不得显示原始标签",
+        ).toHaveCount(0);
+        await expect(
+            page.getByText(FINAL_TEXT, { exact: false }).first(),
+            "正文结论可见",
+        ).toBeVisible({ timeout: 30_000 });
 
         // 展开：第二段（只在展开体里）出现 ⇒ 折叠/展开两态可区分（BL-231「展不开」若复现就在这失败）。
         await toggle.click();
