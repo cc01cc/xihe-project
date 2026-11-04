@@ -6,6 +6,7 @@ import {
     Folder,
     FolderOpen,
     FolderPlus,
+    GitBranch,
     LoaderCircle,
     PanelLeftClose,
     RefreshCw,
@@ -14,7 +15,8 @@ import {
     X,
 } from "@lucide/vue";
 import { useWorkspaceStore } from "../stores/workspace";
-import type { ApiWorkspaceRoot } from "../../../composables/api";
+import type { ApiNestedRepoItem, ApiWorkspaceRoot } from "../../../composables/api";
+import { api } from "../../../composables/api";
 import { useAuthStore } from "../../../stores/auth";
 import { toast } from "vue-sonner";
 import FileTree from "./FileTree.vue";
@@ -28,6 +30,15 @@ const emit = defineEmits<{
     collapse: [];
 }>();
 
+/**
+ * PLAN-0641 T2.5 (D41-14): the declare entry is on by default because the V9
+ * gate is green (T0.1+T0.2, D41-22). The prop keeps the greying path for
+ * regressions instead of deleting it.
+ */
+const props = withDefaults(defineProps<{ nestedRepoDeclareEnabled?: boolean }>(), {
+    nestedRepoDeclareEnabled: true,
+});
+
 const { t } = useI18n();
 const ws = useWorkspaceStore(),
     auth = useAuthStore();
@@ -35,10 +46,55 @@ const searchQuery = ref(""),
     creatingFile = ref(false),
     newFileName = ref("");
 
+/** PLAN-0641 T2.5: discovery list + the inline two-step confirm (B1: prompt then confirm). */
+const nestedRepos = ref<ApiNestedRepoItem[]>([]),
+    confirmingNestedRepo = ref<string | null>(null),
+    declaringNestedRepo = ref(false);
 const workspaceName = computed(() => auth.workspace?.name ?? t("sidebar.workspace"));
+
+const undeclaredNestedRepos = computed(() => nestedRepos.value.filter((repo) => !repo.declared));
+const canDeclareNestedRepo = computed(
+    () => props.nestedRepoDeclareEnabled && auth.canWriteWorkspace,
+);
+
+async function loadNestedRepos() {
+    const id = auth.currentWorkspaceId;
+    if (!id) return;
+    try {
+        nestedRepos.value = await api.listWorkspaceNestedRepos(id);
+    } catch {
+        // Discovery is advisory: a failure must not break the file tree.
+        nestedRepos.value = [];
+    }
+}
+
+function nestedRepoTypeLabel(kind: ApiNestedRepoItem["type"]): string {
+    return t(`workspace.nestedRepoType_${kind}`);
+}
+
+async function confirmDeclareNestedRepo(repo: ApiNestedRepoItem) {
+    const id = auth.currentWorkspaceId;
+    if (!id || !canDeclareNestedRepo.value || declaringNestedRepo.value) return;
+    declaringNestedRepo.value = true;
+    try {
+        await api.addWorkspaceRoot(id, { path: repo.path });
+        confirmingNestedRepo.value = null;
+        await Promise.all([ws.refreshTree(), loadNestedRepos()]);
+        toast.success(t("workspace.nestedRepoDeclared"));
+    } catch (error) {
+        const code =
+            typeof (error as { problem?: { code?: string } }).problem?.code === "string"
+                ? (error as { problem: { code: string } }).problem.code
+                : null;
+        toast.error(code ?? t("workspace.nestedRepoDeclareFailed"));
+    } finally {
+        declaringNestedRepo.value = false;
+    }
+}
 
 onMounted(() => {
     void ws.loadTree();
+    void loadNestedRepos();
 });
 
 const filteredTree = computed(() => {
@@ -195,6 +251,15 @@ function upload() {
             </button>
         </div>
 
+        <!-- PLAN-0641 B11: soft cost hint only, never a hard cap (>16 declared roots). -->
+        <p
+            v-if="ws.workspaceRoots.length > 16"
+            data-testid="roots-cost-hint"
+            class="shrink-0 border-b border-border-subtle px-2 py-1 text-[11px] text-muted-foreground"
+        >
+            {{ t("workspace.nestedReposCostHint") }}
+        </p>
+
         <!-- Search stays available, but is disabled while the tree is empty (P1-4). -->
         <div v-if="!isEmpty" class="flex shrink-0 items-center gap-1 px-2 py-1.5">
             <div class="relative flex-1">
@@ -232,6 +297,88 @@ function upload() {
                 @keydown.enter.prevent="confirmCreateFile"
                 @keydown.esc.prevent="cancelCreateFile"
             />
+        </div>
+
+        <!--
+          PLAN-0641 T2.5: undeclared nested git repos discovered by the Runtime probe
+          (contract F2). Advisory only — the tree below keeps working when discovery is
+          empty or unavailable. B12: the whole workspace-relative path is the label;
+          rootId, not the display name, is the key.
+        -->
+        <div
+            v-if="undeclaredNestedRepos.length > 0"
+            data-testid="nested-repos-panel"
+            class="shrink-0 border-b border-border-subtle px-2 py-1.5"
+        >
+            <p
+                class="flex items-center gap-1 text-[11px] font-semibold text-amber-800 dark:text-amber-200"
+            >
+                <GitBranch class="size-3" aria-hidden="true" />
+                {{ t("workspace.nestedReposTitle") }}
+            </p>
+            <ul class="mt-1 space-y-1">
+                <li
+                    v-for="repo in undeclaredNestedRepos"
+                    :key="repo.path"
+                    class="rounded border border-amber-500/30 bg-amber-500/5 p-1.5 text-xs"
+                    data-testid="nested-repo-row"
+                >
+                    <div class="flex min-w-0 items-center gap-1">
+                        <span
+                            class="truncate font-mono text-foreground"
+                            data-testid="nested-repo-path"
+                            :title="repo.path"
+                            >{{ repo.path }}</span
+                        >
+                        <span
+                            class="shrink-0 rounded bg-surface-content px-1 text-[10px] text-muted-foreground"
+                            data-testid="nested-repo-type"
+                            >{{ nestedRepoTypeLabel(repo.type) }}</span
+                        >
+                    </div>
+                    <div
+                        v-if="confirmingNestedRepo === repo.path"
+                        class="mt-1 flex items-center gap-1"
+                        data-testid="nested-repo-confirm"
+                    >
+                        <span class="min-w-0 flex-1 text-[11px] text-muted-foreground">
+                            {{ t("workspace.nestedRepoDeclareConfirm") }}
+                        </span>
+                        <button
+                            type="button"
+                            class="shrink-0 rounded px-1.5 py-0.5 text-[11px] font-medium text-amber-900 hover:bg-amber-500/20 disabled:opacity-50 dark:text-amber-100"
+                            data-testid="nested-repo-declare-confirm"
+                            :disabled="declaringNestedRepo"
+                            @click="confirmDeclareNestedRepo(repo)"
+                        >
+                            {{ t("workspace.nestedRepoDeclareYes") }}
+                        </button>
+                        <button
+                            type="button"
+                            class="shrink-0 rounded px-1.5 py-0.5 text-[11px] text-muted-foreground hover:bg-accent"
+                            data-testid="nested-repo-declare-cancel"
+                            @click="confirmingNestedRepo = null"
+                        >
+                            {{ t("workspace.nestedRepoDeclareCancel") }}
+                        </button>
+                    </div>
+                    <button
+                        v-else
+                        type="button"
+                        class="mt-1 rounded px-1.5 py-0.5 text-[11px] font-medium text-amber-900 hover:bg-amber-500/20 disabled:opacity-50 dark:text-amber-100"
+                        data-testid="nested-repo-declare"
+                        :disabled="!canDeclareNestedRepo || declaringNestedRepo"
+                        :title="
+                            canDeclareNestedRepo
+                                ? t('workspace.nestedRepoDeclare')
+                                : t('workspace.viewerReadOnly')
+                        "
+                        @click="confirmingNestedRepo = repo.path"
+                    >
+                        {{ t("workspace.nestedRepoDeclare") }}
+                    </button>
+                </li>
+            </ul>
         </div>
 
         <div

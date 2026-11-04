@@ -226,6 +226,20 @@ const messages = {
             rootGroupFallback: "根 {position}",
             rootEmpty: "该根暂无文件",
             rootLoadFailed: "该根文件列表加载失败",
+            // PLAN-0641 T2.5: undeclared nested git repositories (discovery read face).
+            nestedReposTitle: "发现未声明的嵌套 Git 仓库",
+            nestedRepoDeclare: "声明为根",
+            nestedRepoDeclareYes: "确认声明",
+            nestedRepoDeclareCancel: "取消",
+            nestedRepoDeclareConfirm: "声明后该目录将作为独立根参与快照与回滚。",
+            nestedRepoDeclared: "已声明为独立根",
+            nestedRepoDeclareFailed: "声明失败，请稍后重试",
+            nestedReposCostHint: "根数量较多：每个根都有独立的影子库与快照成本。",
+            nestedRepoType_nested: "嵌套仓",
+            nestedRepoType_gitdir: "worktree 指针",
+            nestedRepoType_submodule: "子模块",
+            nestedRepoType_bare: "裸仓库",
+            nestedRepoType_symlink: "符号链接",
             treeLoadFailed: "文件树加载失败，可重试或先继续使用聊天。",
             treeLoadFailedRuntime:
                 "工作区运行时未就绪（Runtime 不可达），请确认服务已启动后重试；若持续失败请联系管理员",
@@ -2432,6 +2446,22 @@ const messages = {
             rootGroupFallback: "Root {position}",
             rootEmpty: "No files in this root",
             rootLoadFailed: "Failed to load this root's files",
+            // PLAN-0641 T2.5: undeclared nested git repositories (discovery read face).
+            nestedReposTitle: "Undeclared nested git repositories",
+            nestedRepoDeclare: "Declare as root",
+            nestedRepoDeclareYes: "Confirm",
+            nestedRepoDeclareCancel: "Cancel",
+            nestedRepoDeclareConfirm:
+                "After declaring, this directory participates in snapshots and rollback as an independent root.",
+            nestedRepoDeclared: "Declared as an independent root",
+            nestedRepoDeclareFailed: "Declaration failed, try again later",
+            nestedReposCostHint:
+                "Many roots: each root adds an independent shadow repo and snapshot cost.",
+            nestedRepoType_nested: "Nested repo",
+            nestedRepoType_gitdir: "Linked worktree",
+            nestedRepoType_submodule: "Submodule",
+            nestedRepoType_bare: "Bare repo",
+            nestedRepoType_symlink: "Symlink",
             treeLoadFailed: "The file tree failed to load. Retry, or keep chatting meanwhile.",
             treeLoadFailedRuntime:
                 "The workspace runtime is unreachable. Start the service and retry; contact an admin if it keeps failing.",
