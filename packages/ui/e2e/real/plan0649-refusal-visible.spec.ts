@@ -335,6 +335,20 @@ test.describe("@host PLAN-0649 refusal visible + durable", () => {
             `delegationPolicy ${delegationPolicy.status()}: ${await delegationPolicy.text()}`,
         ).toBe(200);
 
+        // Re-materialize SPAWN_AGENT AFTER the workspace bind: the bind's grant re-materialization
+        // rebuilds the principal's rows from its role bindings and drops ad-hoc rows (attempt 6
+        // evidence: session snapshot was [{actionClass:write}] and the principal's grants had no
+        // SPAWN_AGENT after the bind). The pre-bind insert is still required for the bind's
+        // subset check; this second, idempotent insert is what the session snapshot freezes
+        // (resolveCapFor = cap ∩ principal atoms at session create).
+        psql(
+            `INSERT INTO grants (id, granter_type, granter_id, subject_type, subject_id, permissions, source, scope_type, scope_id, read_state, created_at)
+             SELECT gen_random_uuid(), 'user', '${userId}', 'agent_principal', '${principalId}',
+                    jsonb_build_array(jsonb_build_object('actionClass', 'SPAWN_AGENT', 'resource', '*')),
+                    'role', 'instance', NULL, 'read', now()
+             ON CONFLICT DO NOTHING`,
+        );
+
         const sessionResponse = await request.post(`${CP_URL}/api/v1/sessions`, {
             headers,
             data: { title: "PLAN-0649 refusal visible", agentPrincipalId: principalId },
