@@ -105,13 +105,21 @@ function boot() {
         process.exit(2);
     }
     const stream = createWriteStream(logPath, { flags: "a" });
-    const child = spawn(process.execPath, [E2E_HOST, "--persistent", "--skip-preflight"], {
+    // --jar-mode=rebuild: a perf baseline measured on a stale CP jar is worthless (Lead 2026-11-05,
+    // after a whole baseline round was invalidated by running on flyway=121 while develop had 122).
+    const child = spawn(process.execPath, [E2E_HOST, "--persistent", "--skip-preflight", "--jar-mode=rebuild"], {
         stdio: ["ignore", "pipe", "pipe"],
         env: process.env,
     });
     writeFileSync(`${logPath}.pid`, String(child.pid));
     child.stdout.pipe(stream);
     child.stderr.pipe(stream);
+    // The log stream keeps the event loop alive; close it and exit when the runner is done, so
+    // callers (chat-gate) can wait for this phase instead of dead-locking on an open stream.
+    child.on("exit", () => {
+        stream.end();
+        process.exit(0);
+    });
     say({
         phase: "boot",
         bootPid: child.pid,
@@ -132,13 +140,13 @@ DO $$
 DECLARE sid uuid := '${sessionId}';
 DECLARE br uuid;
 BEGIN
-  SELECT id INTO br FROM branches WHERE session_id = sid ORDER BY created_at LIMIT 1;
+  SELECT id INTO br FROM session_branches WHERE session_id = sid ORDER BY created_at LIMIT 1;
   IF br IS NULL THEN
     RAISE EXCEPTION 'session % has no branch; run seed-fixtures first (messages.branch_id NOT NULL)', sid;
   END IF;
   INSERT INTO messages (id, session_id, role, content, created_at, branch_id)
   SELECT gen_random_uuid(), sid,
-         CASE WHEN i % 2 = 0 THEN 'human' ELSE 'assistant' END,
+         CASE WHEN i % 2 = 0 THEN 'USER' ELSE 'ASSISTANT' END,
          CASE WHEN i % 20 = 0 THEN repeat('long-form text ', 320)
               WHEN i % 10 = 0 THEN '{"toolCallId":"t' || i || '","name":"search","result":"ok"}'
               ELSE 'message ' || i END,
@@ -189,6 +197,12 @@ async function readLoop({ mode }) {
     const sessionId = requireArg("session");
     const branchId = arg("branch");
     const cpPid = arg("cp-pid");
+    const workspaceId = arg("workspace");
+    const authHeaders = (extra = {}) => ({
+        Authorization: `Bearer ${token}`,
+        ...(workspaceId ? { "X-Workspace-Id": workspaceId } : {}),
+        ...extra,
+    });
     const iterations = Number(arg("n", "200"));
     const warmup = Number(arg("warmup", "20"));
     const url = `${base}/api/v1/sessions/${sessionId}/messages${branchId ? `?branchId=${branchId}` : ""}`;
@@ -217,7 +231,7 @@ async function readLoop({ mode }) {
         try {
             const response = await fetch(`${base}/api/v1/chat`, {
                 method: "POST",
-                headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+                headers: authHeaders({ "Content-Type": "application/json" }),
                 body: JSON.stringify({ sessionId, content: "perf probe", branchId: branchId ?? undefined }),
             });
             await response.arrayBuffer();
@@ -231,10 +245,10 @@ async function readLoop({ mode }) {
         for (let i = 0; i < iterations + warmup; i++) {
             const started = performance.now();
             try {
-                const response = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+                const response = await fetch(url, { headers: authHeaders() });
                 const body = await response.arrayBuffer();
                 if (!response.ok) failures++;
-                if (i >= warmup) bytes.push(body.length);
+                if (i >= warmup) bytes.push(body.byteLength);
             } catch (error) {
                 failures++;
                 console.error(`request ${i} failed: ${error.message}`);
@@ -321,6 +335,7 @@ BEGIN
   IF uid IS NULL THEN
     RAISE EXCEPTION 'perf stack has no user row to own the fixture';
   END IF;
+  -- V89 dropped workspaces.owner_id (ownership moved to role bindings), so no owner column here.
   INSERT INTO workspaces (id, name, storage_backend, storage_mode, host_path, execution_mode,
                           created_at, updated_at)
   VALUES (ws, 'perf-ws', 'host_directory', 'direct_attach',
@@ -330,9 +345,9 @@ BEGIN
   VALUES (pr, 'perf-principal', uid) ON CONFLICT (id) DO NOTHING;
   INSERT INTO sessions (id, workspace_id, user_id, title, agent_principal_id)
   VALUES (sid, ws, uid, 'perf-session', pr) ON CONFLICT (id) DO NOTHING;
-  INSERT INTO branches (id, session_id, name, created_at)
-  SELECT br, sid, 'main', now()
-  WHERE NOT EXISTS (SELECT 1 FROM branches WHERE session_id = sid AND name = 'main');
+  INSERT INTO session_branches (id, session_id, created_at)
+  SELECT br, sid, now()
+  WHERE NOT EXISTS (SELECT 1 FROM session_branches WHERE session_id = sid);
 END $$;
 SELECT 'workspace=${workspaceId} principal=${principalId} session=${sessionId} branch=${branchId}';
 `;
