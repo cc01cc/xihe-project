@@ -106,6 +106,36 @@ sequenceDiagram
 - Runtime 在 `<hostRoot>/.xihe-shadow/<workspaceId>.git` 维护影子库；位于 workspace 外、不 bind 进 Sandbox。`hostRoot` 是**进程级基目录**（managed 路径 = `hostRoot/storageRef`；direct_attach 内容路径在 `hostPath`），启动时解析为绝对路径，所有 `GIT_DIR/GIT_WORK_TREE/GIT_INDEX_FILE` 均为绝对路径；未知 workspace、Git 不可用或版本不足 → 显式 `CHECKPOINT_UNAVAILABLE`，不回退到宿主任意目录。
 - 嵌套仓库默认按 **L1 文件级展开**（`flatten`，PLAN-0361）：Runtime 自研 stage 决策层跳过子仓 `.git`（目录或 gitdir 指针），子仓文件（含未提交改动）作为**普通 blob 进父切片**，**可按文件恢复**；`opaqueNestedRepos[]` 在 L1 下为空。策略由 `XIHE_CHECKPOINT_NESTED_POLICY` 选择（`flatten` 默认 / `opaque` 旧 gitlink 行为 / `reject`）；`reject`（或 `XIHE_CHECKPOINT_REJECT_NESTED_REPOS=1`）时拒绝捕获并给 `NESTED_REPO_LIMIT` 降级原因。capture reason 词表为 `GIT_UNAVAILABLE/GIT_TOO_OLD/GIT_FAILED/WORKSPACE_UNKNOWN/NESTED_REPO_LIMIT`；CP 只在 `UNAVAILABLE` outcome 透传为 durable reason，未知/transport 归一 `UNAVAILABLE`；`EXPIRED`/`TOO_LARGE` 属 gate/blob，不在 capture 白名单。
 - **P1 dual-write（T1.9）**：`XIHE_CHECKPOINT_STORAGE=git|dual`（默认 `git`），store 路径 `XIHE_CHECKPOINT_STORE_PATH`（默认 `<hostRoot>/.xihe-store`）。`git` 模式**不创建/不打开** store；`dual` 启动时校验 store/VERSION，配置错误 fail-fast。capture 仍以 git 为权威，store 写失败只告警并累加 `storeFailures`（diagnostics 可读），不阻断、不 retry、不自动切回 git。`dual` + `Opaque` 时 store entries 镜像 git（nested 内容不展开），但 slice `nested_roots` 仍记录；`Flatten` 正常展开。读路径仍走 git，`self` 留给 T2。
+- **P2.4 self（D53-31，dev/灰度限定）**：`XIHE_CHECKPOINT_STORAGE=self` 必须显式设置，且 `XIHE_ENV` 为 `dev|staging`、`XIHE_CHECKPOINT_SELF_ACK=1`；否则启动分别失败 `SELF_ACK_REQUIRED` / `SELF_MODE_FORBIDDEN`。安装版默认仍是 `git`，禁止把 self 写入镜像/env 模板。self 启动顺序：store open + VERSION → 枚举 roots/shadow → `run_preflight`（回填 refs、fsck、unmapped/symlink）→ 全部通过才 ready；任何 blocker 退出，**不降级 git**。self 仍写 git shadow 作为回切备份。
+- **读路径**：list/diff/fsck 仅是 store 内部能力，**不新增 CP 内部端点**；preview/restore/blob 走既有 CP 端点，self 时内部切到 store adapter；`sliceRef` 仍是 git ref，未映射的 ref 返回 `STORE_SLICE_UNMAPPED`，不回退 git。
+- **错误 reason（开放集）**：HTTP 错误码外层不变；`reason` 使用动态字符串（内部 `Cow<'static, str>`），未知 token 原样透出，CP 必须走 default 分支，禁止归一成 `GIT_FAILED`。busy 只用 `STORE_BUSY` + Problem 的 `operation=capture|restore|gc|cleanup`（无 `STORE_GC_BUSY`）。self 读路径自身完整性失败用 `SELF_STORE_CORRUPT`；非 self store 层用 `STORE_CORRUPT`。缺 ACK 用 `SELF_ACK_REQUIRED`，环境不允许用 `SELF_MODE_FORBIDDEN`。
+- **P2.4 错误 token 表（CP 可见）**：
+
+| reason | HTTP | 触发 |
+| --- | --- | --- |
+| `SELF_MODE_FORBIDDEN` | 启动失败 | self 在 prod/安装版 |
+| `SELF_ACK_REQUIRED` | 启动失败 | 缺 `XIHE_CHECKPOINT_SELF_ACK=1` |
+| `SELF_PREFLIGHT_BLOCKED` | 启动失败 | blockers/unmapped/fsck/symlink |
+| `SELF_SHADOW_MISSING` | 启动失败 | 已有 root 的 shadow 缺失 |
+| `SELF_STORE_CORRUPT` | 503 | self 读路径完整性失败（优先于 STORE_CORRUPT） |
+| `SELF_REF_INVALID` / `SELF_REF_STORE_MISSING` | 503 | ref 非法/指向缺对象 |
+| `SELF_REF_CONFLICT` | 409 | ref 与 slice/store 冲突 |
+| `SELF_SYMLINK_BLOCKED` | 409 | 受限 root/符号链接 |
+| `SELF_READ_PATH_INCOMPLETE` | 503 | adapter 不完整（P2.2 后应为回归） |
+| `STORE_NOT_INITIALIZED` / `STORE_VERSION_MISMATCH` / `STORE_IO` | 503/启动失败 | store 未开/版本/IO |
+| `STORE_BUSY` | 409 | capture/restore/GC/cleanup 持锁；`operation` 区分 |
+| `STORE_CORRUPT` | 503 | 非 self store 层损坏 |
+| `STORE_SLICE_MISSING` / `STORE_SLICE_UNMAPPED` | 404/503 | slice 缺失 / ref 无映射，不回退 git |
+| `STORE_WRITE_FAILED` | 503 | capture 写 slice/ref 失败 |
+| `STORE_GC_DISABLED` | 409 | `XIHE_CHECKPOINT_GC=off` 时请求 GC |
+| `RESTORE_INCOMPLETE` / `RESTORE_MARKER_CORRUPT` | 409 | marker 未清/损坏 |
+| `RESTORE_UNSAFE_PATH` / `RESTORE_TYPE_CONFLICT` | 400/409 | 路径逃逸/类型冲突 |
+| `RESTORE_BLOB_MISSING` / `RESTORE_VERIFY_FAILED` / `RESTORE_QUARANTINE_FAILED` | 404/503 | blob/校验/quarantine 失败 |
+| 其他 `GC_*`/未知 token | 503 | 原样透出，不归一化 |
+
+- **GC 开关**：`XIHE_CHECKPOINT_GC=auto|off`（默认 `auto`）；`off` 时自动/显式 GC 均不删除，显式请求返回 `STORE_GC_DISABLED`（409），不得静默假装成功。
+- **diagnostics 契约**：`checkpoint` 增加 `fsck{ok,findings,repaired,lastRunAt}`、`incompleteRestore{incomplete,restoreId,trashEntries}`、`unmappedSlices`、`lastGc{at,dryRun,candidates,candidateBytes,deleted,bytesFreed,journal}`；保留 `checkpointStorage/storeFailures/active*Locks`。
+- **回切 runbook**：改 env（self→git）+ 重启 12633；`switch_ms≈1.5s` 包含 stop/start/readiness，**不是热切换**。运行期 store 不可用 → fail-closed，不回退 git；按 `STORE_*`/启动失败原因修复 store 后再启动。V5 已测 **1000 文件 / 3.0s / 0 差异**，该数字不等于 10k 数据。
 - `apply_patch` 为 Gateway-public 工具之一，走正常审批；捕获只在 Run 终止 / 异常补拍 / C0，不由派发前置触发；UI 回滚只经 CP public workspace route。
 
 ### 6.2 对象模型（Git 本体）

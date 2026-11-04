@@ -17,6 +17,8 @@
 //! The axum handlers in `main.rs` only map these outcomes to the frozen
 //! Problem+JSON shapes; no control-plane or UI concept lives here.
 
+use std::borrow::Cow;
+
 use serde::Serialize;
 use tracing::info;
 
@@ -118,7 +120,7 @@ pub enum RestoreFailure {
     },
     RestoreLocked,
     Unavailable {
-        reason: &'static str,
+        reason: Cow<'static, str>,
         detail: String,
     },
 }
@@ -138,7 +140,7 @@ pub enum BlobFailure {
         max: u64,
     },
     Unavailable {
-        reason: &'static str,
+        reason: Cow<'static, str>,
         detail: String,
     },
 }
@@ -150,7 +152,7 @@ pub enum GitStatusFailure {
         detail: String,
     },
     Unavailable {
-        reason: &'static str,
+        reason: Cow<'static, str>,
         detail: String,
     },
 }
@@ -265,7 +267,7 @@ impl CheckpointService {
             Err(CheckpointError::GitUnavailable(detail)) => {
                 let capability = self.engine().probe().await;
                 Err(GitStatusFailure::Unavailable {
-                    reason: unavailable_reason(&capability.version),
+                    reason: unavailable_reason(&capability.version).into(),
                     detail,
                 })
             }
@@ -273,11 +275,11 @@ impl CheckpointService {
                 Err(GitStatusFailure::Validation { detail })
             }
             Err(CheckpointError::WorkspaceMissing(detail)) => Err(GitStatusFailure::Unavailable {
-                reason: REASON_WORKSPACE_UNKNOWN,
+                reason: REASON_WORKSPACE_UNKNOWN.into(),
                 detail,
             }),
             Err(other) => Err(GitStatusFailure::Unavailable {
-                reason: REASON_GIT_FAILED,
+                reason: REASON_GIT_FAILED.into(),
                 detail: other.to_string(),
             }),
         }
@@ -296,7 +298,7 @@ impl CheckpointService {
             Err(CheckpointError::GitUnavailable(detail)) => {
                 let capability = self.engine().probe().await;
                 Err(GitStatusFailure::Unavailable {
-                    reason: unavailable_reason(&capability.version),
+                    reason: unavailable_reason(&capability.version).into(),
                     detail,
                 })
             }
@@ -304,11 +306,11 @@ impl CheckpointService {
                 Err(GitStatusFailure::Validation { detail })
             }
             Err(CheckpointError::WorkspaceMissing(detail)) => Err(GitStatusFailure::Unavailable {
-                reason: REASON_WORKSPACE_UNKNOWN,
+                reason: REASON_WORKSPACE_UNKNOWN.into(),
                 detail,
             }),
             Err(other) => Err(GitStatusFailure::Unavailable {
-                reason: REASON_GIT_FAILED,
+                reason: REASON_GIT_FAILED.into(),
                 detail: other.to_string(),
             }),
         }
@@ -385,11 +387,12 @@ fn restore_failure(error: RestoreError) -> RestoreFailure {
             RestoreFailure::TypeChangesUnacknowledged { paths }
         }
         RestoreError::RestoreLocked => RestoreFailure::RestoreLocked,
-        RestoreError::Unavailable { reason, detail } => {
-            RestoreFailure::Unavailable { reason, detail }
-        }
+        RestoreError::Unavailable { reason, detail } => RestoreFailure::Unavailable {
+            reason: reason.into(),
+            detail,
+        },
         other => RestoreFailure::Unavailable {
-            reason: REASON_GIT_FAILED,
+            reason: REASON_GIT_FAILED.into(),
             detail: other.to_string(),
         },
     }
@@ -405,9 +408,12 @@ fn blob_failure(error: RestoreError) -> BlobFailure {
         },
         RestoreError::InvalidRequest { detail } => BlobFailure::Invalid { detail },
         RestoreError::BlobTooLarge { path, size, max } => BlobFailure::TooLarge { path, size, max },
-        RestoreError::Unavailable { reason, detail } => BlobFailure::Unavailable { reason, detail },
+        RestoreError::Unavailable { reason, detail } => BlobFailure::Unavailable {
+            reason: reason.into(),
+            detail,
+        },
         other => BlobFailure::Unavailable {
-            reason: REASON_GIT_FAILED,
+            reason: REASON_GIT_FAILED.into(),
             detail: other.to_string(),
         },
     }
@@ -578,7 +584,7 @@ mod tests {
         assert!(matches!(
             restore_failure(RestoreError::Failed("boom".to_string())),
             RestoreFailure::Unavailable {
-                reason: REASON_GIT_FAILED,
+                reason: Cow::Borrowed(REASON_GIT_FAILED),
                 ..
             }
         ));

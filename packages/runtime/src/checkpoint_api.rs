@@ -16,6 +16,7 @@
 //! The axum handlers in `main.rs` only map these outcomes to the frozen
 //! Problem+JSON shapes; no control-plane or UI concept lives here.
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Mutex as StdMutex, PoisonError};
@@ -28,7 +29,11 @@ use crate::checkpoint::{
     DEFAULT_RETENTION_MAX_SLICES, DEFAULT_RETENTION_TTL_DAYS, NestedRepoPolicy, SHADOW_DIR_NAME,
     ShadowGit, validate_run_id, validate_workspace_id,
 };
-use crate::checkpoint_store::store::StoreError;
+use crate::checkpoint_store::fsck::fsck_store;
+use crate::checkpoint_store::preflight::{PreflightOptions, run_preflight};
+use crate::checkpoint_store::reads::list_slices;
+use crate::checkpoint_store::restore_full::restore_status;
+use crate::checkpoint_store::store::{Store, StoreError};
 
 /// Reserved capture id of the workspace materialization baseline (C0).
 ///
@@ -45,6 +50,16 @@ pub const REASON_WORKSPACE_UNKNOWN: &str = "WORKSPACE_UNKNOWN";
 /// Capture rejected because nested repositories are present and the opt-in
 /// hard limit (default off) is enabled; the detail lists the offending paths.
 pub const REASON_NESTED_REPO_LIMIT: &str = "NESTED_REPO_LIMIT";
+/// P2.4 store/self reasons. Unknown adapter reasons are carried through as
+/// `Cow::Owned`; these are only the known tokens used by this crate.
+pub const REASON_STORE_BUSY: &str = "STORE_BUSY";
+pub const REASON_STORE_CORRUPT: &str = "STORE_CORRUPT";
+pub const REASON_SELF_STORE_CORRUPT: &str = "SELF_STORE_CORRUPT";
+pub const REASON_STORE_SLICE_UNMAPPED: &str = "STORE_SLICE_UNMAPPED";
+pub const REASON_STORE_GC_DISABLED: &str = "STORE_GC_DISABLED";
+pub const REASON_SELF_ACK_REQUIRED: &str = "SELF_ACK_REQUIRED";
+pub const REASON_SELF_MODE_FORBIDDEN: &str = "SELF_MODE_FORBIDDEN";
+pub const REASON_SELF_PREFLIGHT_BLOCKED: &str = "SELF_PREFLIGHT_BLOCKED";
 
 /// `POST .../checkpoints/gc` 200 body.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -82,6 +97,43 @@ pub struct CheckpointDiagnostics {
     pub store_failures: u64,
     /// Configured store root; absent for `git` mode.
     pub store_root: Option<String>,
+    /// P2.4: last store fsck summary (non-mutating check).
+    pub fsck: FsckDiagnostics,
+    /// P2.4: incomplete restore marker/trash summary.
+    pub incomplete_restore: IncompleteRestoreDiagnostics,
+    /// P2.4: slices without an `index/refs` mapping.
+    pub unmapped_slices: usize,
+    /// P2.4: last GC attempt (retention or store GC).
+    pub last_gc: Option<LastGcDiagnostics>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FsckDiagnostics {
+    pub ok: bool,
+    pub findings: usize,
+    pub repaired: usize,
+    pub last_run_at_ms: u64,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IncompleteRestoreDiagnostics {
+    pub incomplete: bool,
+    pub restore_id: Option<String>,
+    pub trash_entries: usize,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LastGcDiagnostics {
+    pub at_ms: u64,
+    pub dry_run: bool,
+    pub candidates: usize,
+    pub candidate_bytes: u64,
+    pub deleted: usize,
+    pub bytes_freed: u64,
+    pub journal: Option<String>,
 }
 
 /// `capture` failure mapped to the frozen HTTP statuses (400/503).
@@ -91,19 +143,23 @@ pub enum CaptureFailure {
     Validation { detail: String },
     /// 503: git probe or workspace failure; `reason` is the frozen code.
     Unavailable {
-        reason: &'static str,
+        reason: Cow<'static, str>,
         detail: String,
     },
 }
 
-/// `gc` failure (400/503).
+/// `gc` failure (400/409/503).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GcFailure {
     Validation {
         detail: String,
     },
+    /// 409: GC is disabled at runtime (`XIHE_CHECKPOINT_GC=off`).
+    Disabled {
+        detail: String,
+    },
     Unavailable {
-        reason: &'static str,
+        reason: Cow<'static, str>,
         detail: String,
     },
 }
@@ -117,7 +173,7 @@ pub enum CleanupFailure {
     Busy,
     /// 503: git probe or workspace failure; `reason` is the frozen code.
     Unavailable {
-        reason: &'static str,
+        reason: Cow<'static, str>,
         detail: String,
     },
 }
@@ -138,6 +194,8 @@ pub struct CheckpointService {
     max_slices: usize,
     ttl_days: u64,
     auto_gc: bool,
+    gc_enabled: bool,
+    last_gc: StdMutex<Option<LastGcDiagnostics>>,
 }
 
 impl CheckpointService {
@@ -148,7 +206,17 @@ impl CheckpointService {
             max_slices: DEFAULT_RETENTION_MAX_SLICES,
             ttl_days: DEFAULT_RETENTION_TTL_DAYS,
             auto_gc: true,
+            gc_enabled: true,
+            last_gc: StdMutex::new(None),
         }
+    }
+
+    /// Runtime switch (`XIHE_CHECKPOINT_GC=off`): off must be explicit and
+    /// disables both the best-effort sweep and the explicit GC endpoint.
+    pub fn with_gc_enabled(mut self, enabled: bool) -> Self {
+        self.gc_enabled = enabled;
+        self.auto_gc = enabled && self.auto_gc;
+        self
     }
 
     /// Test/embedding hook: override the host git binary (probe failures).
@@ -190,6 +258,85 @@ impl CheckpointService {
 
     pub fn engine(&self) -> &ShadowGit {
         &self.engine
+    }
+
+    /// P2.4 fail-closed startup validation for `self`: open the store, discover
+    /// roots, verify every root's shadow exists, run preflight (including refs
+    /// backfill + fsck + read-path readiness), and reject if anything is incomplete.
+    /// This is deliberately synchronous and runs before the HTTP server starts.
+    pub fn validate_self_startup(&self) -> Result<(), String> {
+        let Some(store_root) = self.engine.store_root() else {
+            return Err("STORE_NOT_INITIALIZED: self mode has no store root".into());
+        };
+        let store = Store::open(store_root)
+            .map_err(|error| format!("STORE_IO: store open failed: {error}"))?;
+        let slices = store_root.join("slices");
+        let mut roots = Vec::new();
+        if slices.is_dir() {
+            for entry in std::fs::read_dir(&slices)
+                .map_err(|error| format!("STORE_IO: slices scan failed: {error}"))?
+            {
+                let entry = entry.map_err(|error| format!("STORE_IO: slices entry: {error}"))?;
+                if entry
+                    .file_type()
+                    .map_err(|error| format!("STORE_IO: slices type: {error}"))?
+                    .is_dir()
+                {
+                    roots.push(entry.file_name().to_string_lossy().to_string());
+                }
+            }
+        }
+        let mut shadows = std::collections::HashMap::new();
+        for root in &roots {
+            let work_tree = self
+                .engine
+                .work_tree_for_root(root)
+                .map_err(|error| format!("SELF_PREFLIGHT_BLOCKED: root {root}: {error}"))?;
+            if store.root().starts_with(&work_tree) {
+                return Err(format!(
+                    "SELF_PREFLIGHT_BLOCKED: store root {} is inside capture root {}",
+                    store.root().display(),
+                    work_tree.display()
+                ));
+            }
+            let shadow = self
+                .engine
+                .shadow_git_dir(root)
+                .map_err(|error| format!("SELF_SHADOW_MISSING: {root}: {error}"))?;
+            if !shadow.is_dir() {
+                return Err(format!(
+                    "SELF_SHADOW_MISSING: shadow for root {root} is missing at {}",
+                    shadow.display()
+                ));
+            }
+            shadows.insert(root.clone(), shadow);
+        }
+        let report = run_preflight(
+            &store,
+            &PreflightOptions {
+                roots: roots.clone(),
+                shadow_git_dirs: shadows,
+                enforce_read_paths: true,
+                ..PreflightOptions::default()
+            },
+        )
+        .map_err(|error| format!("SELF_PREFLIGHT_BLOCKED: preflight io: {error}"))?;
+        if !report.ok || !report.store_ok || !report.fsck_clean || !report.blockers.is_empty() {
+            return Err(format!(
+                "SELF_PREFLIGHT_BLOCKED: ok={} store_ok={} fsck_clean={} blockers={:?}",
+                report.ok, report.store_ok, report.fsck_clean, report.blockers
+            ));
+        }
+        if report
+            .roots
+            .iter()
+            .any(|root| !root.unmapped_slices.is_empty() || !root.symlink_blockers.is_empty())
+        {
+            return Err(format!(
+                "SELF_PREFLIGHT_BLOCKED: root report incomplete: {report:?}"
+            ));
+        }
+        Ok(())
     }
 
     /// PLAN-0470 (decision #17): refresh the effective work tree from the
@@ -267,7 +414,7 @@ impl CheckpointService {
         let capability = self.engine.probe().await;
         if !capability.available {
             return Err(CaptureFailure::Unavailable {
-                reason: unavailable_reason(&capability.version),
+                reason: unavailable_reason(&capability.version).into(),
                 detail: capability.detail,
             });
         }
@@ -334,6 +481,11 @@ impl CheckpointService {
         validate_workspace_id(workspace_id).map_err(|error| GcFailure::Validation {
             detail: error.to_string(),
         })?;
+        if !self.gc_enabled {
+            return Err(GcFailure::Disabled {
+                detail: "checkpoint GC is disabled by XIHE_CHECKPOINT_GC=off".into(),
+            });
+        }
         let report = self
             .engine
             .retention_gc(workspace_id, self.max_slices, self.ttl_days)
@@ -342,6 +494,16 @@ impl CheckpointService {
                 reason: engine_reason(&error),
                 detail: error.to_string(),
             })?;
+        let diagnostics = LastGcDiagnostics {
+            at_ms: now_ms(),
+            dry_run: false,
+            candidates: report.kept,
+            candidate_bytes: 0,
+            deleted: report.deleted_slices.len(),
+            bytes_freed: 0,
+            journal: None,
+        };
+        *self.last_gc.lock().unwrap_or_else(PoisonError::into_inner) = Some(diagnostics);
         Ok(GcOutcome {
             counts: GcCounts {
                 deleted: report.deleted_slices.len(),
@@ -349,7 +511,6 @@ impl CheckpointService {
             },
         })
     }
-
     /// Explicit cleanup (frozen plan B, Runtime side): remove the whole shadow
     /// repository of one workspace. A capture or restore in progress rejects the
     /// cleanup (409 busy, no queueing). CP-side projection invalidation, the
@@ -381,6 +542,62 @@ impl CheckpointService {
     /// Diagnostics projection used by `GET /internal/v1/runtime/diagnostics`.
     pub async fn diagnostics(&self) -> CheckpointDiagnostics {
         let capability = self.engine.probe().await;
+        let mut fsck = FsckDiagnostics::default();
+        let mut unmapped_slices = 0usize;
+        let mut incomplete_restore = IncompleteRestoreDiagnostics::default();
+        if let Some(store_root) = self.engine.store_root()
+            && let Ok(store) = Store::open(store_root)
+        {
+            if let Ok(report) = fsck_store(&store, false) {
+                fsck = FsckDiagnostics {
+                    ok: report.is_clean(),
+                    findings: report.findings.len(),
+                    repaired: report
+                        .findings
+                        .iter()
+                        .filter(|finding| finding.repaired)
+                        .count(),
+                    last_run_at_ms: now_ms(),
+                };
+            }
+            let slices = store.root().join("slices");
+            if let Ok(entries) = std::fs::read_dir(&slices) {
+                for entry in entries.flatten() {
+                    if !entry.file_type().map(|kind| kind.is_dir()).unwrap_or(false) {
+                        continue;
+                    }
+                    let root = entry.file_name().to_string_lossy().to_string();
+                    if let Ok(list) = list_slices(&store, &root) {
+                        unmapped_slices += list.unmapped_slices.len();
+                    }
+                }
+            }
+        }
+        if let Ok(entries) = std::fs::read_dir(self.engine.host_root()) {
+            for entry in entries.flatten() {
+                let name = entry.file_name().to_string_lossy().to_string();
+                if name.starts_with('.')
+                    || !entry.file_type().map(|kind| kind.is_dir()).unwrap_or(false)
+                {
+                    continue;
+                }
+                if let Ok(status) = restore_status(&entry.path())
+                    && status.incomplete
+                {
+                    incomplete_restore.incomplete = true;
+                    incomplete_restore.restore_id = status
+                        .marker
+                        .as_ref()
+                        .map(|marker| marker.restore_id.clone());
+                    incomplete_restore.trash_entries = status.trash_entries.len();
+                }
+            }
+        }
+        let last_gc = self
+            .last_gc
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone();
         CheckpointDiagnostics {
             git_version: capability.version,
             capable: capability.available,
@@ -399,6 +616,10 @@ impl CheckpointService {
                 .engine
                 .store_root()
                 .map(|root| root.to_string_lossy().replace('\\', "/")),
+            fsck,
+            incomplete_restore,
+            unmapped_slices,
+            last_gc,
         }
     }
 
@@ -444,11 +665,13 @@ pub(crate) fn unavailable_reason(version: &Option<String>) -> &'static str {
     }
 }
 
-pub(crate) fn engine_reason(error: &CheckpointError) -> &'static str {
+pub(crate) fn engine_reason(error: &CheckpointError) -> Cow<'static, str> {
     match error {
-        CheckpointError::WorkspaceMissing(_) => REASON_WORKSPACE_UNKNOWN,
-        CheckpointError::GitUnavailable(_) => REASON_GIT_UNAVAILABLE,
-        _ => REASON_GIT_FAILED,
+        CheckpointError::WorkspaceMissing(_) => Cow::Borrowed(REASON_WORKSPACE_UNKNOWN),
+        CheckpointError::GitUnavailable(_) => Cow::Borrowed(REASON_GIT_UNAVAILABLE),
+        CheckpointError::StoreFailure { reason, .. } => Cow::Owned(reason.clone()),
+        CheckpointError::StoreCaptureFailed { .. } => Cow::Borrowed(REASON_SELF_STORE_CORRUPT),
+        _ => Cow::Borrowed(REASON_GIT_FAILED),
     }
 }
 
@@ -457,22 +680,33 @@ fn capture_failure(error: CheckpointError) -> CaptureFailure {
     match error {
         CheckpointError::InvalidIdentifier { .. } => CaptureFailure::Validation { detail },
         CheckpointError::WorkspaceMissing(_) => CaptureFailure::Unavailable {
-            reason: REASON_WORKSPACE_UNKNOWN,
+            reason: Cow::Borrowed(REASON_WORKSPACE_UNKNOWN),
             detail,
         },
         CheckpointError::GitUnavailable(_) => CaptureFailure::Unavailable {
-            reason: REASON_GIT_UNAVAILABLE,
+            reason: Cow::Borrowed(REASON_GIT_UNAVAILABLE),
             detail,
         },
         CheckpointError::NestedRepoLimit { .. } => CaptureFailure::Unavailable {
-            reason: REASON_NESTED_REPO_LIMIT,
+            reason: Cow::Borrowed(REASON_NESTED_REPO_LIMIT),
+            detail,
+        },
+        CheckpointError::StoreFailure { reason, .. } => CaptureFailure::Unavailable {
+            reason: Cow::Owned(reason),
             detail,
         },
         _ => CaptureFailure::Unavailable {
-            reason: REASON_GIT_FAILED,
+            reason: Cow::Borrowed(REASON_GIT_FAILED),
             detail,
         },
     }
+}
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as u64)
+        .unwrap_or(0)
 }
 
 #[cfg(test)]
@@ -486,6 +720,63 @@ mod tests {
             unavailable_reason(&Some("git version 2.19.0".to_string())),
             REASON_GIT_TOO_OLD
         );
+    }
+
+    #[test]
+    fn off_table_store_reason_is_not_normalized_to_git_failed() {
+        let failure = capture_failure(CheckpointError::StoreFailure {
+            reason: "VENDOR_STORE_NEW_REASON".into(),
+            detail: "adapter detail".into(),
+        });
+        match failure {
+            CaptureFailure::Unavailable { reason, detail } => {
+                assert_eq!(reason, "VENDOR_STORE_NEW_REASON");
+                assert_ne!(reason, REASON_GIT_FAILED);
+                assert_eq!(
+                    detail,
+                    "checkpoint store failure [VENDOR_STORE_NEW_REASON]: adapter detail"
+                );
+            }
+            other => panic!("expected unavailable, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn self_startup_rejects_unmapped_store() {
+        use crate::checkpoint_store::capture::capture_root;
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        let host = temp.path().join("host");
+        let work = host.join("ws-1");
+        std::fs::create_dir_all(&work).expect("work");
+        std::fs::write(work.join("a.txt"), "a").expect("file");
+        let store_root = temp.path().join("store");
+        let store = Store::init(&store_root).expect("store");
+        capture_root(&store, &work, "ws-1", None, None).expect("slice");
+        let shadow = host.join(SHADOW_DIR_NAME).join("ws-1.git");
+        std::fs::create_dir_all(&shadow).expect("shadow dir");
+        let service = CheckpointService::new(&host)
+            .with_checkpoint_storage(CheckpointStorageMode::Self_, &store_root)
+            .expect("self service");
+        let error = service.validate_self_startup().expect_err("must block");
+        assert!(
+            error.contains("SELF_PREFLIGHT_BLOCKED") || error.contains("STORE_SLICE_UNMAPPED"),
+            "{error}"
+        );
+    }
+
+    #[tokio::test]
+    async fn gc_disabled_never_deletes_and_reports_store_gc_disabled() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let host = temp.path().join("host");
+        std::fs::create_dir_all(&host).expect("host");
+        let store_root = temp.path().join("store");
+        let service = CheckpointService::new(&host)
+            .with_checkpoint_storage(CheckpointStorageMode::Dual, &store_root)
+            .expect("dual")
+            .with_gc_enabled(false);
+        let error = service.gc("ws-1").await.expect_err("gc must be disabled");
+        assert!(matches!(error, GcFailure::Disabled { .. }), "{error:?}");
     }
 
     #[test]
@@ -520,14 +811,14 @@ mod tests {
         assert_eq!(
             capture_failure(CheckpointError::WorkspaceMissing("ws1".to_string())),
             CaptureFailure::Unavailable {
-                reason: REASON_WORKSPACE_UNKNOWN,
+                reason: REASON_WORKSPACE_UNKNOWN.into(),
                 detail: "workspace directory does not exist: ws1".to_string(),
             }
         );
         assert_eq!(
             capture_failure(CheckpointError::GitUnavailable("missing".to_string())),
             CaptureFailure::Unavailable {
-                reason: REASON_GIT_UNAVAILABLE,
+                reason: REASON_GIT_UNAVAILABLE.into(),
                 detail: "host git is unavailable for checkpointing: missing".to_string(),
             }
         );
@@ -537,7 +828,7 @@ mod tests {
                 detail: "exit code 1".to_string(),
             }),
             CaptureFailure::Unavailable {
-                reason: REASON_GIT_FAILED,
+                reason: REASON_GIT_FAILED.into(),
                 detail: "git command failed [add -A]: exit code 1".to_string(),
             }
         );

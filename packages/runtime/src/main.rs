@@ -2597,6 +2597,20 @@ fn checkpoint_problem_response(
     checkpoint_problem_response_with(status, code, reason, detail, serde_json::Map::new())
 }
 
+/// Single busy token for capture/restore/GC/cleanup contention. The operation
+/// is a separate Problem field so callers can retry/back off uniformly.
+fn checkpoint_busy_response(operation: &str) -> Response {
+    let mut extra = serde_json::Map::new();
+    extra.insert("operation".to_string(), serde_json::json!(operation));
+    checkpoint_problem_response_with(
+        StatusCode::CONFLICT,
+        "CHECKPOINT_BUSY",
+        Some("STORE_BUSY"),
+        "a checkpoint operation currently owns the store/workspace",
+        extra,
+    )
+}
+
 /// Same frozen Problem+JSON shape with additional contract fields (e.g. the
 /// unacknowledged type-change paths).
 fn checkpoint_problem_response_with(
@@ -2670,7 +2684,7 @@ async fn capture_checkpoint_handler(
         Err(CaptureFailure::Unavailable { reason, detail }) => checkpoint_problem_response(
             StatusCode::SERVICE_UNAVAILABLE,
             "CHECKPOINT_UNAVAILABLE",
-            Some(reason),
+            Some(reason.as_ref()),
             &detail,
         ),
     }
@@ -2689,10 +2703,16 @@ async fn checkpoint_gc_handler(
             None,
             &detail,
         ),
+        Err(GcFailure::Disabled { detail }) => checkpoint_problem_response(
+            StatusCode::CONFLICT,
+            "CHECKPOINT_GC_DISABLED",
+            Some("STORE_GC_DISABLED"),
+            &detail,
+        ),
         Err(GcFailure::Unavailable { reason, detail }) => checkpoint_problem_response(
             StatusCode::SERVICE_UNAVAILABLE,
             "CHECKPOINT_UNAVAILABLE",
-            Some(reason),
+            Some(reason.as_ref()),
             &detail,
         ),
     }
@@ -2710,16 +2730,11 @@ fn checkpoint_cleanup_failure_response(failure: CleanupFailure) -> Response {
             None,
             &detail,
         ),
-        CleanupFailure::Busy => checkpoint_problem_response(
-            StatusCode::CONFLICT,
-            "CHECKPOINT_BUSY",
-            None,
-            "a checkpoint capture or restore currently owns this workspace",
-        ),
+        CleanupFailure::Busy => checkpoint_busy_response("cleanup"),
         CleanupFailure::Unavailable { reason, detail } => checkpoint_problem_response(
             StatusCode::SERVICE_UNAVAILABLE,
             "CHECKPOINT_UNAVAILABLE",
-            Some(reason),
+            Some(reason.as_ref()),
             &detail,
         ),
     }
@@ -2769,7 +2784,7 @@ fn restore_failure_response(failure: RestoreFailure) -> Response {
         RestoreFailure::Unavailable { reason, detail } => checkpoint_problem_response(
             StatusCode::SERVICE_UNAVAILABLE,
             "CHECKPOINT_UNAVAILABLE",
-            Some(reason),
+            Some(reason.as_ref()),
             &detail,
         ),
     }
@@ -2872,7 +2887,7 @@ fn blob_failure_response(failure: BlobFailure) -> Response {
         BlobFailure::Unavailable { reason, detail } => checkpoint_problem_response(
             StatusCode::SERVICE_UNAVAILABLE,
             "CHECKPOINT_UNAVAILABLE",
-            Some(reason),
+            Some(reason.as_ref()),
             &detail,
         ),
     }
@@ -2938,7 +2953,7 @@ fn git_status_failure_response(failure: GitStatusFailure) -> Response {
         GitStatusFailure::Unavailable { reason, detail } => checkpoint_problem_response(
             StatusCode::SERVICE_UNAVAILABLE,
             "CHECKPOINT_UNAVAILABLE",
-            Some(reason),
+            Some(reason.as_ref()),
             &detail,
         ),
     }
@@ -3113,13 +3128,33 @@ fn runtime_checkpoint_storage(
     let mode = CheckpointStorageMode::parse(&raw)
         .map_err(|error| anyhow::anyhow!("invalid XIHE_CHECKPOINT_STORAGE: {error}"))?;
     if mode == CheckpointStorageMode::Self_ {
-        anyhow::bail!("XIHE_CHECKPOINT_STORAGE=self is reserved for T2 and is not implemented");
+        let environment = std::env::var("XIHE_ENV")
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        if environment != "dev" && environment != "staging" {
+            anyhow::bail!("SELF_MODE_FORBIDDEN: self mode requires XIHE_ENV=dev|staging");
+        }
+        if std::env::var("XIHE_CHECKPOINT_SELF_ACK").as_deref() != Ok("1") {
+            anyhow::bail!("SELF_ACK_REQUIRED: set XIHE_CHECKPOINT_SELF_ACK=1 to enable self mode");
+        }
     }
     let store_root = match std::env::var("XIHE_CHECKPOINT_STORE_PATH") {
         Ok(value) if !value.trim().is_empty() => PathBuf::from(value),
         _ => host_root.join(".xihe-store"),
     };
     Ok((mode, store_root))
+}
+
+fn runtime_checkpoint_gc_enabled() -> anyhow::Result<bool> {
+    match std::env::var("XIHE_CHECKPOINT_GC")
+        .unwrap_or_else(|_| "auto".to_string())
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "auto" => Ok(true),
+        "off" => Ok(false),
+        other => anyhow::bail!("invalid XIHE_CHECKPOINT_GC: {other:?} (expected auto|off)"),
+    }
 }
 
 /// Nested-repository capture policy (PLAN-0361). Default `flatten` (L1): nested
@@ -3457,9 +3492,16 @@ async fn run() -> anyhow::Result<()> {
     let checkpoint_host_root = runtime_checkpoint_host_root();
     let (checkpoint_storage, checkpoint_store_path) =
         runtime_checkpoint_storage(&checkpoint_host_root)?;
+    let checkpoint_gc_enabled = runtime_checkpoint_gc_enabled()?;
     let checkpoint_service = CheckpointService::new(checkpoint_host_root)
         .with_nested_repo_policy(runtime_checkpoint_nested_repo_policy())
-        .with_checkpoint_storage(checkpoint_storage, checkpoint_store_path)?;
+        .with_checkpoint_storage(checkpoint_storage, checkpoint_store_path)?
+        .with_gc_enabled(checkpoint_gc_enabled);
+    if checkpoint_storage == CheckpointStorageMode::Self_ {
+        checkpoint_service
+            .validate_self_startup()
+            .map_err(anyhow::Error::msg)?;
+    }
     let app_state = Arc::new(AppState {
         registry: registry.clone(),
         manager: manager.clone(),
@@ -5271,6 +5313,24 @@ mod checkpoint_handler_tests {
             serde_json::json!([{"status": "A", "path": "src/new.txt"}]),
             "the change set is the diff against the chain tail"
         );
+    }
+
+    /// Probe failure (no host git) → 503 GIT_UNAVAILABLE and degraded diagnostics.
+    #[tokio::test]
+    async fn off_table_store_reason_survives_problem_json() {
+        let response = checkpoint_problem_response(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "CHECKPOINT_UNAVAILABLE",
+            Some("VENDOR_STORE_NEW_REASON"),
+            "adapter detail",
+        );
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("body bytes");
+        let value: serde_json::Value = serde_json::from_slice(&body).expect("json");
+        assert_eq!(value["code"], "CHECKPOINT_UNAVAILABLE");
+        assert_eq!(value["reason"], "VENDOR_STORE_NEW_REASON");
+        assert_ne!(value["reason"], "GIT_FAILED");
     }
 
     /// Probe failure (no host git) → 503 GIT_UNAVAILABLE and degraded diagnostics.

@@ -252,6 +252,12 @@ pub enum CheckpointError {
     #[error("self-mode store capture failed: {detail}")]
     StoreCaptureFailed { detail: String },
 
+    /// Fail-closed store/self adapter failure with an open-set reason token.
+    /// Known values use `STORE_*`/`SELF_*`; unknown values are carried through
+    /// unchanged (never normalized to `GIT_FAILED`).
+    #[error("checkpoint store failure [{reason}]: {detail}")]
+    StoreFailure { reason: String, detail: String },
+
     #[error("checkpoint cleanup rejected: a capture or restore owns workspace {0}")]
     CleanupBusy(String),
 }
@@ -3776,6 +3782,102 @@ mod tests {
         eprintln!(
             "P2_REAL_BACKFILL {}",
             serde_json::to_string(&report).expect("report")
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "V6: three self->git->self rounds; every store slice restores"]
+    async fn v6_three_rounds_self_git_self_restore_history() {
+        use crate::checkpoint_store::restore_full::{FullRestoreOptions, restore_full};
+
+        let temp = TempDir::new().expect("tempdir");
+        let host = temp.path().join("host");
+        let store_root = temp.path().join("v6-store");
+        std::fs::create_dir_all(host.join("ws-v6")).expect("worktree");
+        let mut self_engine =
+            ShadowGit::new(&host).with_nested_repo_policy(NestedRepoPolicy::Opaque);
+        self_engine
+            .configure_checkpoint_storage(CheckpointStorageMode::Self_, &store_root)
+            .expect("self store");
+        let git_engine = ShadowGit::new(&host).with_nested_repo_policy(NestedRepoPolicy::Opaque);
+        if !require_git(&self_engine).await {
+            return;
+        }
+        let work = host.join("ws-v6");
+        let store = Store::open(&store_root).expect("store");
+        let mut store_slices = Vec::new();
+        let mut git_refs = Vec::new();
+        for round in 0..3usize {
+            let first = format!("round-{round}-self-a");
+            std::fs::write(work.join("version.txt"), &first).expect("a");
+            let first_capture = self_engine
+                .capture(
+                    "ws-v6",
+                    &format!("v6-{round}-a"),
+                    "v6",
+                    &format!("v6-call-{round}-a"),
+                    false,
+                )
+                .await
+                .expect("self capture a");
+            let first_ref = first_capture.slice_ref.expect("slice ref");
+            let first_record = refs::read_ref(&store, "ws-v6", &first_ref)
+                .expect("first ref read")
+                .expect("first ref exists");
+            store_slices.push((first_record.store_slice_id, first.clone()));
+
+            let git_version = format!("round-{round}-git");
+            std::fs::write(work.join("version.txt"), &git_version).expect("git");
+            let git_capture = git_engine
+                .capture(
+                    "ws-v6",
+                    &format!("v6-{round}-git"),
+                    "v6",
+                    &format!("v6-call-{round}-git"),
+                    false,
+                )
+                .await
+                .expect("git capture");
+            git_refs.push(git_capture.slice_ref.expect("git ref"));
+
+            let second = format!("round-{round}-self-b");
+            std::fs::write(work.join("version.txt"), &second).expect("b");
+            let second_capture = self_engine
+                .capture(
+                    "ws-v6",
+                    &format!("v6-{round}-b"),
+                    "v6",
+                    &format!("v6-call-{round}-b"),
+                    false,
+                )
+                .await
+                .expect("self capture b");
+            let second_ref = second_capture.slice_ref.expect("slice ref");
+            let second_record = refs::read_ref(&store, "ws-v6", &second_ref)
+                .expect("second ref read")
+                .expect("second ref exists");
+            store_slices.push((second_record.store_slice_id, second));
+        }
+        assert_eq!(store_slices.len(), 6);
+        assert_eq!(git_refs.len(), 3);
+        for (index, (slice_id, expected)) in store_slices.iter().enumerate() {
+            let target = temp.path().join(format!("restore-{index}"));
+            std::fs::create_dir_all(&target).expect("target");
+            restore_full(
+                &store,
+                "ws-v6",
+                slice_id,
+                &target,
+                &FullRestoreOptions::default(),
+            )
+            .unwrap_or_else(|error| panic!("restore {slice_id}: {error}"));
+            let actual = std::fs::read_to_string(target.join("version.txt")).expect("version");
+            assert_eq!(&actual, expected, "slice {slice_id}");
+        }
+        eprintln!(
+            "V6_ROUNDS store_slices={} git_refs={}",
+            store_slices.len(),
+            git_refs.len()
         );
     }
 

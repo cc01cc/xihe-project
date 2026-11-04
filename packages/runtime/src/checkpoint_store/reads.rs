@@ -217,7 +217,7 @@ mod tests {
         refs::write_ref(&store, &ref_record("ws-1", to, &second, &second_manifest)).expect("to");
         let diff = diff_refs(&store, "ws-1", from, to).expect("diff");
         assert_eq!(diff.added, vec!["b.txt"]);
-        assert!(diff.is_empty() == false);
+        assert!(!diff.is_empty());
         let error =
             diff_refs(&store, "ws-1", "refs/xihe/slices/missing", to).expect_err("unmapped");
         assert!(matches!(error, ReadError::UnmappedRef(_)), "{error:?}");
