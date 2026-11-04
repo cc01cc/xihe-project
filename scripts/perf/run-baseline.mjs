@@ -197,6 +197,18 @@ async function readLoop({ mode }) {
     const samples = [];
     const bytes = [];
     let failures = 0;
+    // M4 (T4.3): the gate judges the **peak**, not just before/after — sample every 20 requests.
+    let heapPeakMb = before.heapUsedMb;
+    let rssPeakMb = before.rssMb;
+    const sampleMemory = () => {
+        const snapshot = memorySnapshot(cpPid);
+        if (snapshot.heapUsedMb !== null) {
+            heapPeakMb = heapPeakMb === null ? snapshot.heapUsedMb : Math.max(heapPeakMb, snapshot.heapUsedMb);
+        }
+        if (snapshot.rssMb !== null) {
+            rssPeakMb = rssPeakMb === null ? snapshot.rssMb : Math.max(rssPeakMb, snapshot.rssMb);
+        }
+    };
 
     if (mode === "dispatch") {
         // One POST so the dispatch path (context projection + roster aggregation) runs with a 20k
@@ -229,9 +241,11 @@ async function readLoop({ mode }) {
                 continue;
             }
             if (i >= warmup) samples.push(performance.now() - started);
+            if (i % 20 === 0) sampleMemory();
         }
     }
     const after = memorySnapshot(cpPid);
+    sampleMemory();
     const pct = (p) => {
         if (samples.length === 0) return null;
         const sorted = [...samples].sort((a, b) => a - b);
@@ -252,10 +266,14 @@ async function readLoop({ mode }) {
             cpPid: cpPid ? Number(cpPid) : null,
             heapMbBefore: before.heapUsedMb,
             heapMbAfter: after.heapUsedMb,
+            heapPeakMb,
             heapDeltaMb: before.heapUsedMb !== null && after.heapUsedMb !== null
                 ? after.heapUsedMb - before.heapUsedMb : null,
             rssMbBefore: before.rssMb,
             rssMbAfter: after.rssMb,
+            rssPeakMb,
+            rssGrowthMb: rssPeakMb !== null && before.rssMb !== null
+                ? rssPeakMb - before.rssMb : null,
             rssDeltaMb: before.rssMb !== null && after.rssMb !== null
                 ? after.rssMb - before.rssMb : null,
             oom: failures > 0,

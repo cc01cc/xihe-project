@@ -268,8 +268,8 @@ description = "Check documentation links (no escape from docs/)"
 alias = "lint:links"
 
 [tasks."perf:chat"]
-run = "node scripts/perf/chat-load.mjs"
-description = "PLAN-0670 long-session capacity baseline (seed|run); zero dependencies, L2 only, isolated perf stack required (never stack-1/stack-2)"
+run = "node scripts/perf/chat-gate.mjs"
+description = "PLAN-0670 perf gate: one command boots the isolated perf stack, measures 1k/5k/20k, prints PASS/FAIL (p95/response bytes/heap peak/RSS growth) and always tears down; L2/release only, never stack-1/stack-2. Pass -- --dry-run / -- --self-check for a stack-free check, -- --with-ui for the WebUI stage"
 alias = "perf:chat"
 
 [tasks.typecheck]

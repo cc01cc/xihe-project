@@ -94,15 +94,43 @@ class ApiRequestTemplateServiceMergeTest {
         assertThat(template.path("components")).hasSize(1);
     }
 
+    /** BL-284 follow-up (Lead ruling): a shared type is not a conflict — the API side wins. */
     @Test
-    void differentManifests_failLoudlyInsteadOfGuessing() {
+    void sharedType_apiRequestComponentWins_andNoConflictIsRaised() {
+        ArrayNode contextManifest = json.createArrayNode();
+        ObjectNode contextMemory = component("agent_memory", true);
+        contextMemory.put("instanceId", "context-memory");
+        contextManifest.add(contextMemory);
+        contextManifest.add(component("skill_catalog", true));
+        contextManifest(contextManifest);
+        ObjectNode template = apiTemplate();
+        ArrayNode apiManifest = json.createArrayNode();
+        ObjectNode apiMemory = component("agent_memory", true);
+        apiMemory.put("instanceId", "api-memory");
+        apiManifest.add(apiMemory);
+        template.set("components", apiManifest);
+
+        service.mergeContextComponents(template, USER, WORKSPACE);
+
+        assertThat(template.path("components")).hasSize(2);
+        assertThat(template.path("components").get(0).path("instanceId").asText())
+                .as("context order is kept, the API component replaces the shared type")
+                .isEqualTo("api-memory");
+        assertThat(template.path("components").get(1).path("type").asText())
+                .as("context-only types are appended")
+                .isEqualTo("skill_catalog");
+    }
+
+    /** Only a duplicate type <i>inside one manifest</i> stays a hard error. */
+    @Test
+    void duplicateTypeWithinOneManifest_isStillAConflict() {
         ArrayNode contextManifest = json.createArrayNode();
         contextManifest.add(component("agent_memory", true));
-        contextManifest.add(component("skill_catalog", true));
         contextManifest( contextManifest);
         ObjectNode template = apiTemplate();
         ArrayNode apiManifest = json.createArrayNode();
-        apiManifest.add(component("agent_memory", true));
+        apiManifest.add(component("skill_catalog", true));
+        apiManifest.add(component("skill_catalog", true));
         template.set("components", apiManifest);
 
         assertThatThrownBy(() -> service.mergeContextComponents(template, USER, WORKSPACE))
@@ -111,7 +139,7 @@ class ApiRequestTemplateServiceMergeTest {
                     CpApiException conflict = (CpApiException) thrown;
                     assertThat(conflict.getCode()).isEqualTo("CONTEXT_TEMPLATE_COMPONENTS_CONFLICT");
                     assertThat(conflict.getStatus().value()).isEqualTo(409);
-                    assertThat(conflict.getMessage()).contains("contextTemplateOnly=");
+                    assertThat(conflict.getMessage()).contains("Duplicate component type in apiRequestTemplate");
                 });
     }
 

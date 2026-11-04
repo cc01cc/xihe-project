@@ -824,6 +824,7 @@ public class ChatController {
                 List<String> runIds = new ArrayList<>();
                 runIds.add(runId);
                 List<Map<String, String>> failedTargets = new ArrayList<>();
+                List<Map<String, String>> deferredTargets = new ArrayList<>();
                 if (toParticipantIds.size() > 1) {
                     WakeFanOutService.TargetedWake targeted = wakeFanOutService.targetedFanOut(
                             UUID.fromString(sessionId), workspaceId, userId, runId, content,
@@ -831,20 +832,34 @@ public class ChatController {
                     targeted.runIds().forEach(id -> runIds.add(id.toString()));
                     targeted.failedTargets().forEach(failure -> failedTargets.add(Map.of(
                             "participantId", failure.participantId(), "reason", failure.reason())));
+                    targeted.deferredTargets().forEach(deferred -> deferredTargets.add(Map.of(
+                            "participantId", deferred.participantId(), "reason", deferred.reason())));
                 }
                 acceptedBody.put("runIds", runIds);
-                // 2026-11-05 real-stack finding: a target that could not be dispatched must be
-                // reported, never silently dropped — runIds + failedTargets = requested targets.
+                // BL-283 (Lead ruling 2026-11-05): three explicit buckets, one invariant —
+                // runIds + failedTargets + deferredTargets = requested targets. Deferred = queued
+                // (a follow-up item waits for a slot); failed = a real dispatch error. Neither is
+                // ever silent.
+                if (!deferredTargets.isEmpty()) {
+                    acceptedBody.put("deferredTargets", deferredTargets);
+                    logger.info("[LIFECYCLE] service=cp event=to_fanout_deferred sessionId={} runId={} "
+                                    + "targets={} dispatched={} deferred={} failed={}", sessionId, runId,
+                            toParticipantIds.size(), runIds.size(), deferredTargets.size(),
+                            failedTargets.size());
+                }
                 if (!failedTargets.isEmpty()) {
                     acceptedBody.put("failedTargets", failedTargets);
                     logger.error("[LIFECYCLE] service=cp event=to_fanout_partial sessionId={} runId={} "
-                                    + "targets={} dispatched={} failed={}", sessionId, runId,
-                            toParticipantIds.size(), runIds.size(), failedTargets.size());
+                                    + "targets={} dispatched={} deferred={} failed={}", sessionId, runId,
+                            toParticipantIds.size(), runIds.size(), deferredTargets.size(),
+                            failedTargets.size());
                 }
-                if (runIds.size() + failedTargets.size() != toParticipantIds.size()) {
+                if (runIds.size() + failedTargets.size() + deferredTargets.size()
+                        != toParticipantIds.size()) {
                     logger.error("[LIFECYCLE] service=cp event=to_fanout_accounting_mismatch sessionId={} "
-                                    + "runId={} targets={} dispatched={} failed={}", sessionId, runId,
-                            toParticipantIds.size(), runIds.size(), failedTargets.size());
+                                    + "runId={} targets={} dispatched={} deferred={} failed={}", sessionId,
+                            runId, toParticipantIds.size(), runIds.size(), deferredTargets.size(),
+                            failedTargets.size());
                 }
             }
             return ResponseEntity.accepted().body(acceptedBody);

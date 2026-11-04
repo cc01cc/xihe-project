@@ -16,6 +16,7 @@ import com.cc01cc.p.xihe.cp.repository.AccessRolePermissionRepository;
 import com.cc01cc.p.xihe.cp.repository.AccessRoleRepository;
 import com.cc01cc.p.xihe.cp.repository.AgentPrincipalRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
+import com.fasterxml.jackson.databind.JsonNode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
@@ -25,9 +26,11 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -79,6 +82,7 @@ public class AgentPrincipalRoleBindingService {
     private final WorkspaceRepository workspaces;
     private final RoleGrantMaterializer materializer;
     private final AuditLogger audit;
+    private final AgentPrincipalService agentPrincipalService;
 
     public AgentPrincipalRoleBindingService(AccessRoleBindingRepository bindings,
                                             AccessRoleRepository roles,
@@ -86,7 +90,8 @@ public class AgentPrincipalRoleBindingService {
                                             AgentPrincipalRepository principals,
                                             WorkspaceRepository workspaces,
                                             RoleGrantMaterializer materializer,
-                                            AuditLogger audit) {
+                                            AuditLogger audit,
+                                            AgentPrincipalService agentPrincipalService) {
         this.bindings = bindings;
         this.roles = roles;
         this.permissions = permissions;
@@ -94,6 +99,7 @@ public class AgentPrincipalRoleBindingService {
         this.workspaces = workspaces;
         this.materializer = materializer;
         this.audit = audit;
+        this.agentPrincipalService = agentPrincipalService;
     }
 
     /**
@@ -142,6 +148,7 @@ public class AgentPrincipalRoleBindingService {
         AccessScope scope = deriveScope(authWorkspaceId, instanceTier, canManageWorkspace);
         String auditWorkspaceId = scope.id() == null ? null : scope.id().toString();
         requirePrincipal(principalId);
+        requireWithinCap(principalId, roleId, scope);
         boolean duplicate = bindings.findBySubjectTypeAndSubjectId(
                         GrantPrincipalPathResolver.AGENT_PRINCIPAL, principalId).stream()
                 .anyMatch(row -> roleId.equals(row.getRoleId())
@@ -224,8 +231,45 @@ public class AgentPrincipalRoleBindingService {
         }
     }
 
-    private void requireBindableAtoms(UUID roleId) {
-        List<String> forbidden = forbiddenAtomsOf(roleId);
+    /**
+     * BL-287 (Lead ruling 2026-11-05): the agent's workspace <b>cap is a hard ceiling</b>.
+     * A binding whose role atoms exceed that cap would pass this API and then be silently denied at
+     * authorization time ({@code GrantAuthorizationService.allows} intersects the session snapshot),
+     * so it is refused here instead with the offending atom names.
+     *
+     * <p>Only workspace-scoped bindings are checked: the cap is a per-workspace value and an
+     * instance-scoped binding has no single cap to compare against (it would need the intersection of
+     * every bound workspace). Seeds/default grants never pass through this method.</p>
+     */
+    private void requireWithinCap(UUID principalId, UUID roleId, AccessScope scope) {
+        if (scope.id() == null) {
+            return;
+        }
+        Set<String> capAtoms = new LinkedHashSet<>();
+        JsonNode cap = agentPrincipalService.resolveCapFor(principalId, scope.id());
+        if (cap != null && cap.isArray()) {
+            for (JsonNode atom : cap) {
+                JsonNode actionClass = atom.get("actionClass");
+                if (actionClass != null && actionClass.isTextual()) {
+                    capAtoms.add(actionClass.asText());
+                }
+            }
+        }
+        Set<String> exceeding = new LinkedHashSet<>();
+        for (AccessRolePermission permission : permissions.findByIdRoleId(roleId)) {
+            String atom = permission.actionClass();
+            if (atom != null && !capAtoms.contains(atom)) {
+                exceeding.add(atom);
+            }
+        }
+        if (!exceeding.isEmpty()) {
+            throw new CpApiException(HttpStatus.CONFLICT, "ROLE_BINDING_EXCEEDS_CAP",
+                    "role atoms exceed the agent's workspace cap: "
+                            + String.join(",", exceeding));
+        }
+    }
+
+    private void requireBindableAtoms(UUID roleId) {        List<String> forbidden = forbiddenAtomsOf(roleId);
         if (!forbidden.isEmpty()) {
             // Contract: atom NAMES only, never the resources they would open.
             throw new CpApiException(HttpStatus.CONFLICT, "AGENT_PRINCIPAL_FORBIDDEN_ATOMS",

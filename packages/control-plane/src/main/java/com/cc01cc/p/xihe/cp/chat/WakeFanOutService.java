@@ -216,18 +216,20 @@ public class WakeFanOutService {
      * <p><b>Never silent (2026-11-05 real-stack finding)</b>: a target that cannot be dispatched is
      * returned in {@link TargetedWake#failedTargets()} and logged at ERROR, so the caller can report
      * it in the 202 body. A DB constraint violation here used to be swallowed into a dropped log line
-     * while the response still looked complete — {@code runIds.size() + failedTargets.size()} must
-     * always equal the requested target count.</p>
+     * while the response still looked complete — {@code runIds.size() + failedTargets.size() +
+     * deferredTargets.size()} must always equal the requested target count (BL-283 split "queued"
+     * out of "failed").</p>
      */
     public TargetedWake targetedFanOut(UUID sessionId, String workspaceId, String userId,
                                        String rootRunId, String content,
                                        List<UUID> targetParticipantIds) {
         if (targetParticipantIds == null || targetParticipantIds.isEmpty()) {
-            return new TargetedWake(List.of(), List.of(), 0);
+            return new TargetedWake(List.of(), List.of(), List.of(), 0);
         }
         String wakeRoundId = "wake:to:" + rootRunId;
         List<UUID> runIds = new ArrayList<>();
         List<TargetedFailure> failedTargets = new ArrayList<>();
+        List<TargetedFailure> deferredTargets = new ArrayList<>();
         for (UUID participantId : targetParticipantIds) {
             WakeDispatchService.WakeFireResult result;
             try {
@@ -249,18 +251,28 @@ public class WakeFanOutService {
                 runIds.add(result.runId());
                 observeTerminalAsync(result.runId().toString(), waitSeconds());
             } else {
+                // BL-283 (Lead ruling 2026-11-05): deferred is QUEUED, not failed. The target has a
+                // follow-up item waiting for a slot, so it belongs in deferredTargets[] — counting it
+                // as a failure made "concurrency full" indistinguishable from a real dispatch error.
                 String reason = result.outcome() == null ? "not_dispatched" : result.outcome();
-                failedTargets.add(new TargetedFailure(participantId.toString(), reason));
-                logger.error("[LIFECYCLE] service=cp event=to_target_dispatch_failed sessionId={} "
-                                + "targetParticipantId={} round={} reason={} runIds={}", sessionId,
-                        participantId, wakeRoundId, reason, runIds);
+                if ("deferred".equals(reason)) {
+                    deferredTargets.add(new TargetedFailure(participantId.toString(), reason));
+                    logger.info("[LIFECYCLE] service=cp event=to_target_deferred sessionId={} "
+                                    + "targetParticipantId={} round={} runIds={}", sessionId,
+                            participantId, wakeRoundId, runIds);
+                } else {
+                    failedTargets.add(new TargetedFailure(participantId.toString(), reason));
+                    logger.error("[LIFECYCLE] service=cp event=to_target_dispatch_failed sessionId={} "
+                                    + "targetParticipantId={} round={} reason={} runIds={}", sessionId,
+                            participantId, wakeRoundId, reason, runIds);
+                }
             }
         }
         logger.info("[LIFECYCLE] service=cp event=wake_to_handoff sessionId={} round={} targets={} "
-                        + "dispatched={} failed={}", sessionId, wakeRoundId, targetParticipantIds.size(),
-                runIds.size(), failedTargets.size());
+                        + "dispatched={} deferred={} failed={}", sessionId, wakeRoundId,
+                targetParticipantIds.size(), runIds.size(), deferredTargets.size(), failedTargets.size());
         return new TargetedWake(List.copyOf(runIds), List.copyOf(failedTargets),
-                targetParticipantIds.size());
+                List.copyOf(deferredTargets), targetParticipantIds.size());
     }
 
     /**
@@ -268,15 +280,21 @@ public class WakeFanOutService {
      * and the targets that could not be dispatched (runtime failures — pre-validation failures reject
      * the whole request instead).
      */
-    public record TargetedWake(List<UUID> runIds, List<TargetedFailure> failedTargets, int targets) {
+    public record TargetedWake(List<UUID> runIds, List<TargetedFailure> failedTargets,
+                               List<TargetedFailure> deferredTargets, int targets) {
         public TargetedWake {
             runIds = List.copyOf(runIds);
             failedTargets = List.copyOf(failedTargets);
+            deferredTargets = List.copyOf(deferredTargets);
         }
 
-        /** Total targets accounted for: every requested target is either a run or a reported failure. */
+        /**
+         * Total targets accounted for: every requested target is exactly one of "dispatched (run)",
+         * "queued (deferred)" or "failed" — BL-283 made deferred a first-class outcome, so the
+         * conservation invariant is {@code runIds + failedTargets + deferredTargets == targets}.
+         */
         public int accounted() {
-            return runIds.size() + failedTargets.size();
+            return runIds.size() + failedTargets.size() + deferredTargets.size();
         }
     }
 

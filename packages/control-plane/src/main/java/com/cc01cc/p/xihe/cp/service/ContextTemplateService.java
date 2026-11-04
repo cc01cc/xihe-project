@@ -385,11 +385,14 @@ public class ContextTemplateService {
             // BL-285: skills listing joins the built-in manifest. The config keys are the ones
             // SkillCatalogSourceService.requestFrom reads (maxSkills/includeDescriptions/sort) —
             // CP owns the count bound, the Agent owns the token budget (PLAN-0628 D28-16).
+            // maxSkills MUST be the frozen default (40): adding the component must not change the
+            // value an omitted component used to fall back to ("no component means the frozen
+            // defaults", not a new number).
             ObjectNode skills = components.addObject();
             skills.put("instanceId", BUILTIN_SKILLS_COMPONENT.toString());
             skills.put("type", "skill_catalog");
             skills.put("enabled", true);
-            skills.set("config", objectMapper.createObjectNode().put("maxSkills", 24)
+            skills.set("config", objectMapper.createObjectNode().put("maxSkills", 40)
                     .put("includeDescriptions", true).put("sort", "binding"));
             ObjectNode history = components.addObject();
             history.put("instanceId", BUILTIN_HISTORY_COMPONENT.toString());
