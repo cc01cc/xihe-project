@@ -2,7 +2,6 @@ package com.cc01cc.p.xihe.cp.chat;
 
 import com.cc01cc.p.xihe.cp.config.ConfigService;
 import com.cc01cc.p.xihe.cp.context.service.EventStoreService;
-import com.cc01cc.p.xihe.cp.repository.SessionParticipantCursorRepository;
 import com.cc01cc.p.xihe.cp.service.WakeDispatchService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -213,8 +212,7 @@ class WakeFanOutServiceTest {
         // its first observable effect), and the round counters stay balanced.
         UUID ccObserver = UUID.randomUUID();
         EventStoreService eventStore = mock(EventStoreService.class);
-        SessionParticipantCursorRepository cursors = mock(SessionParticipantCursorRepository.class);
-        WakeFanOutService fanOutWithStore = new WakeFanOutService(dispatch, config, eventStore, cursors);
+        WakeFanOutService fanOutWithStore = new WakeFanOutService(dispatch, config, eventStore);
         when(dispatch.fire(eq(ANN), eq("mention"), anyString(), eq(SESSION_ID), isNull(), anyString()))
                 .thenThrow(new IllegalStateException("first recipient exploded"));
         when(dispatch.fire(eq(JOHN), eq("mention"), anyString(), eq(SESSION_ID), isNull(), anyString()))

@@ -81,6 +81,44 @@ public class SessionParticipantController {
         }
     }
 
+    /**
+     * PLAN-0660 T5.1: advance the caller's own read cursor for this session.
+     *
+     * <p>Advance-only + clamped + self-only (`spec/session/user-channel.md` §2). The response is the
+     * same {@code readCursor} shape the list endpoint returns, so the UI can render the derived
+     * unread count straight from it.</p>
+     */
+    @PatchMapping("/{participantId}/cursor")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<?> advanceCursor(@PathVariable String sessionId,
+                                           @PathVariable String participantId,
+                                           @RequestBody(required = false) Map<String, Object> body) {
+        String userId = TenantContext.getUserId();
+        String workspaceId = TenantContext.getWorkspaceId();
+        if (userId == null || userId.isBlank()) {
+            return ProblemDetailsHandler.missingPrincipal("Authentication required");
+        }
+        Long lastReadEventSeq = null;
+        if (body != null && body.get("lastReadEventSeq") != null) {
+            try {
+                lastReadEventSeq = Long.parseLong(String.valueOf(body.get("lastReadEventSeq")).trim());
+            } catch (NumberFormatException e) {
+                return ProblemDetailsHandler.problemResponse(HttpStatus.BAD_REQUEST, "INVALID_REQUEST",
+                        "lastReadEventSeq must be an integer");
+            }
+        }
+        if (lastReadEventSeq == null) {
+            return ProblemDetailsHandler.problemResponse(HttpStatus.BAD_REQUEST, "INVALID_REQUEST",
+                    "Body must contain lastReadEventSeq");
+        }
+        try {
+            return ResponseEntity.ok(participantService.advanceCursor(userId, workspaceId, sessionId,
+                    participantId, lastReadEventSeq));
+        } catch (CpApiException e) {
+            return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
+        }
+    }
+
     @PatchMapping("/{participantId}")
     @PreAuthorize("isAuthenticated()")
     public ResponseEntity<?> update(@PathVariable String sessionId,

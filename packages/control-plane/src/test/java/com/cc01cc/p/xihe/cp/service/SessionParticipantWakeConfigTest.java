@@ -55,7 +55,8 @@ class SessionParticipantWakeConfigTest {
                 mock(AgentPrincipalRepository.class), users,
                 mock(com.cc01cc.p.xihe.cp.service.WorkspaceService.class),
                 mock(GrantAuthorizationService.class),
-                mock(com.cc01cc.p.xihe.cp.scheduled.WakeScheduleProjectionService.class));
+                mock(com.cc01cc.p.xihe.cp.scheduled.WakeScheduleProjectionService.class),
+                mock(com.cc01cc.p.xihe.cp.context.repository.EventStoreRepository.class));
     }
 
     private SessionParticipantService.AddRequest scheduleRequest(Map<String, Object> config) {

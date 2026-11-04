@@ -1,6 +1,7 @@
 package com.cc01cc.p.xihe.cp.service;
 
 import com.cc01cc.p.xihe.cp.config.CpApiException;
+import com.cc01cc.p.xihe.cp.context.repository.EventStoreRepository;
 import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
 import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.entity.SessionParticipant;
@@ -73,6 +74,8 @@ public class SessionParticipantService {
     private final WorkspaceService workspaceService;
     private final GrantAuthorizationService grantAuthorizationService;
     private final com.cc01cc.p.xihe.cp.scheduled.WakeScheduleProjectionService wakeScheduleProjectionService;
+    /** PLAN-0660 T5.1/T5.2: session max sequence (clamp) + the derived unread aggregate. */
+    private final EventStoreRepository eventStoreRepository;
 
     public SessionParticipantService(SessionParticipantRepository participantRepository,
                                      SessionParticipantCursorRepository cursorRepository,
@@ -81,8 +84,10 @@ public class SessionParticipantService {
                                      UserRepository userRepository,
                                      WorkspaceService workspaceService,
                                      GrantAuthorizationService grantAuthorizationService,
-                com.cc01cc.p.xihe.cp.scheduled.WakeScheduleProjectionService wakeScheduleProjectionService) {
+                com.cc01cc.p.xihe.cp.scheduled.WakeScheduleProjectionService wakeScheduleProjectionService,
+            EventStoreRepository eventStoreRepository) {
         this.wakeScheduleProjectionService = wakeScheduleProjectionService;
+        this.eventStoreRepository = eventStoreRepository;
         this.participantRepository = participantRepository;
         this.cursorRepository = cursorRepository;
         this.sessionRepository = sessionRepository;
@@ -106,10 +111,13 @@ public class SessionParticipantService {
         }
         Map<UUID, String> humanNames = humanDisplayNames(rows);
         Map<UUID, AgentPrincipal> agents = agentPrincipals(rows);
+        // PLAN-0660 T5.2: unread is DERIVED once for the whole roster (one SQL, never N+1).
+        Map<UUID, Integer> unread = derivedMentionCounts(session.getId());
         List<ParticipantView> views = new ArrayList<>(rows.size());
         for (SessionParticipant row : rows) {
             views.add(toView(row, cursors.get(row.getId()), humanNames.get(row.getPrincipalId()),
-                    isSelfOwned(row, actorId, session, agents)));
+                    isSelfOwned(row, actorId, session, agents),
+                    unread.getOrDefault(row.getId(), 0)));
         }
         // The three capability keys the UI gates its buttons on (never "click then 403").
         Map<String, Boolean> capabilities = new LinkedHashMap<>();
@@ -122,6 +130,49 @@ public class SessionParticipantService {
     }
 
     // ------------------------------------------------------------------ write
+
+    /**
+     * PLAN-0660 T5.1: advance ONE human participant's read pointer — the only write the pointer
+     * ever gets from a client.
+     *
+     * <p>Semantics frozen in `spec/session/user-channel.md` §2: <b>advance-only</b>
+     * ({@code max(现值, 请求值)}), clamped to the session's current max sequence, and
+     * <b>self-only</b> (HUMAN row whose {@code principal_id} is the caller). A candidate who is not
+     * the row's own human gets {@code 403 CURSOR_SELF_ONLY}; the pointer never regresses and no
+     * counter is written (unread is derived, §3).</p>
+     */
+    @Transactional
+    public CursorView advanceCursor(String actorId, String workspaceId, String sessionId,
+                                    String participantId, Long requestedSeq) {
+        UUID sessionUuid = parseUuid(sessionId, "SESSION_NOT_FOUND");
+        UUID participantUuid = parseUuid(participantId, "PARTICIPANT_NOT_FOUND");
+        Session session = sessionRepository.findById(sessionUuid)
+                .filter(found -> found.getWorkspaceId() != null
+                        && found.getWorkspaceId().equals(workspaceId))
+                .orElseThrow(() -> new CpApiException(HttpStatus.NOT_FOUND, "SESSION_NOT_FOUND",
+                        "Session not found"));
+        SessionParticipant row = participantRepository.findByIdAndSessionId(participantUuid, session.getId())
+                .orElseThrow(() -> new CpApiException(HttpStatus.NOT_FOUND, "PARTICIPANT_NOT_FOUND",
+                        "Participant not found"));
+        boolean selfHuman = SessionParticipant.KIND_HUMAN.equals(row.getPrincipalKind())
+                && actorId != null
+                && row.getPrincipalId() != null
+                && actorId.equals(row.getPrincipalId().toString());
+        if (!selfHuman) {
+            throw new CpApiException(HttpStatus.FORBIDDEN, "CURSOR_SELF_ONLY",
+                    "The read cursor can only be advanced by its own human participant");
+        }
+        long requested = requestedSeq == null ? 0L : Math.max(0L, requestedSeq);
+        long clamped = Math.min(requested, lastEventSequence(session.getId()));
+        SessionParticipantCursor cursor = cursorRepository.findById(participantUuid)
+                .orElseGet(() -> new SessionParticipantCursor(participantUuid, 0L));
+        long current = cursor.getLastReadEventSeq() == null ? 0L : cursor.getLastReadEventSeq();
+        long next = Math.max(current, clamped);
+        cursor.setLastReadEventSeq(next);
+        SessionParticipantCursor saved = cursorRepository.save(cursor);
+        int unread = derivedMentionCounts(session.getId()).getOrDefault(participantUuid, 0);
+        return new CursorView(saved.getLastReadEventSeq(), unread, saved.getUpdatedAt());
+    }
 
     @Transactional
     public ParticipantView add(String actorId, String workspaceId, String sessionId, AddRequest request) {
@@ -158,9 +209,9 @@ public class SessionParticipantService {
         SessionParticipant saved = participantRepository.save(toSave);
         // R7: every participant gets a cursor; history counts as read (same rule as the V92 backfill).
         cursorRepository.save(new SessionParticipantCursor(saved.getId(),
-                lastEventSequence(session.getId()), 0));
+                lastEventSequence(session.getId())));
         return toView(saved, null, humanDisplayName(saved),
-                isSelfOwned(saved, actorId, session, agentPrincipals(List.of(saved))));
+                isSelfOwned(saved, actorId, session, agentPrincipals(List.of(saved))), 0);
     }
 
     /** D23-13: the PRIMARY row's fixed position — the V92 backfill and every creation path agree. */
@@ -192,7 +243,7 @@ public class SessionParticipantService {
                 SessionParticipant.ROLE_PRIMARY, PRIMARY_ORDER_INDEX,
                 SessionParticipant.WAKE_ALL_MESSAGES, SessionParticipant.RESPOND_ALWAYS));
         // R7: the PRIMARY reads from the beginning — the same rule the V92 backfill applies.
-        cursorRepository.save(new SessionParticipantCursor(saved.getId(), 0L, 0));
+        cursorRepository.save(new SessionParticipantCursor(saved.getId(), 0L));
     }
     @Transactional
     public ParticipantView update(String actorId, String workspaceId, String sessionId,
@@ -240,7 +291,8 @@ public class SessionParticipantService {
         }
         SessionParticipant saved = participantRepository.save(row);
         return toView(saved, cursorRepository.findById(saved.getId()).orElse(null), humanDisplayName(saved),
-                isSelfOwned(saved, actorId, session, agentPrincipals(List.of(saved))));
+                isSelfOwned(saved, actorId, session, agentPrincipals(List.of(saved))),
+                derivedMentionCounts(saved.getSessionId()).getOrDefault(saved.getId(), 0));
     }
 
     @Transactional
@@ -530,20 +582,44 @@ public class SessionParticipantService {
         }
     }
 
+    /**
+     * The session's current max {@code context_events.sequence} — 0 for a session with no events.
+     *
+     * <p>PLAN-0660 T5.1: this is the clamp ceiling for the read cursor. It also keeps the V92 rule
+     * ("a participant reads from the moment it joined") true on the runtime creation path, not just
+     * in the migration backfill.</p>
+     */
     private long lastEventSequence(UUID sessionId) {
-        // V92 backfills from MAX(context_events.sequence); participants created later start there too
-        // so "unread" means "events after the moment you joined", never the whole history.
-        return 0L;
+        return eventStoreRepository.findTopBySessionIdOrderBySequenceDesc(sessionId.toString())
+                .map(event -> event.getSequence() == null ? 0L : event.getSequence())
+                .orElse(0L);
+    }
+
+    /**
+     * PLAN-0660 T5.2: {@code participantId → unread mention count} for one session, in ONE query.
+     *
+     * <p>Unread is a <b>derived</b> value: notify rows whose {@code sequence} is past that
+     * participant's pointer. It is deliberately not a stored counter (D66-07 / B-4,
+     * `spec/session/user-channel.md` §3).</p>
+     */
+    private Map<UUID, Integer> derivedMentionCounts(UUID sessionId) {
+        Map<UUID, Integer> counts = new LinkedHashMap<>();
+        for (Object[] row : eventStoreRepository.countDerivedMentionsBySession(sessionId)) {
+            UUID participantId = (UUID) row[0];
+            long count = ((Number) row[1]).longValue();
+            counts.put(participantId, count > Integer.MAX_VALUE ? Integer.MAX_VALUE : (int) count);
+        }
+        return counts;
     }
 
     private ParticipantView toView(SessionParticipant row, SessionParticipantCursor cursor,
-                                     String humanDisplayName, boolean selfOwned) {
+                                     String humanDisplayName, boolean selfOwned, int unreadMentions) {
         AgentPrincipal principal = SessionParticipant.KIND_AGENT.equals(row.getPrincipalKind())
                 ? agentPrincipalRepository.findById(row.getPrincipalId()).orElse(null)
                 : null;
         CursorView cursorView = cursor == null
                 ? null
-                : new CursorView(cursor.getLastReadEventSeq(), cursor.getMentionCount(),
+                : new CursorView(cursor.getLastReadEventSeq(), unreadMentions,
                         cursor.getUpdatedAt());
         return new ParticipantView(row.getId(), row.getPrincipalKind(), row.getPrincipalId(),
                 row.getRole(), row.getOrderIndex(), row.getWakePolicy(), row.getRespondPolicy(),

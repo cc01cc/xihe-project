@@ -28,18 +28,15 @@ public class SessionParticipantCursor {
     @Column(name = "last_read_event_seq", nullable = false)
     private Long lastReadEventSeq;
 
-    @Column(name = "mention_count", nullable = false)
-    private Integer mentionCount;
-
     @Column(name = "updated_at", nullable = false)
     private Instant updatedAt;
 
     public SessionParticipantCursor() {}
 
-    public SessionParticipantCursor(UUID participantId, Long lastReadEventSeq, Integer mentionCount) {
+    /** PLAN-0660 T5.3: the pointer is the whole row — unread is derived, never stored (D66-07 / B-4). */
+    public SessionParticipantCursor(UUID participantId, Long lastReadEventSeq) {
         this.participantId = participantId;
         this.lastReadEventSeq = lastReadEventSeq;
-        this.mentionCount = mentionCount;
     }
 
     @PrePersist
@@ -53,9 +50,6 @@ public class SessionParticipantCursor {
 
     public Long getLastReadEventSeq() { return lastReadEventSeq; }
     public void setLastReadEventSeq(Long lastReadEventSeq) { this.lastReadEventSeq = lastReadEventSeq; }
-
-    public Integer getMentionCount() { return mentionCount; }
-    public void setMentionCount(Integer mentionCount) { this.mentionCount = mentionCount; }
 
     public Instant getUpdatedAt() { return updatedAt; }
     public void setUpdatedAt(Instant updatedAt) { this.updatedAt = updatedAt; }
