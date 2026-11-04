@@ -7,6 +7,7 @@ import { useSessionParticipantsStore } from "../../stores/sessionParticipants";
 import MessageItem from "./MessageItem.vue";
 import MessageSearch from "./MessageSearch.vue";
 import RunGroupHeader from "./RunGroupHeader.vue";
+import { hasMultipleActors } from "../actorView";
 import { Search } from "@lucide/vue";
 import { Marker } from "@/components/ui/marker";
 import {
@@ -145,6 +146,12 @@ function principalNameOf(groupMessages: Message[]): string | undefined {
     return responder?.displayName ?? undefined;
 }
 
+/**
+ * PLAN-0659 T1.2：线程是否混主体（≥2 个不同产出者）。只有混主体线程才给过程行挂 actor
+ * 徽标 —— 单主体线程里每行重复同一身份是噪音（与「单 run 不分组」同一反证口径）。
+ */
+const multiActor = computed(() => hasMultipleActors(props.messages));
+
 interface RunHeaderModel {
     runId: string;
     status?: string | null;
@@ -273,6 +280,7 @@ const rows = computed<Row[]>(() => {
                                     <MessageItem
                                         :message="row.msg"
                                         :responder="responderFor(row.msg)"
+                                        :show-actor="multiActor"
                                         :is-streaming="row.msg.isStreaming"
                                         :branch-busy="branchBusy"
                                         @approve="emit('approve', $event)"

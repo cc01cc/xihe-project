@@ -37,6 +37,7 @@ import {
 } from "@lucide/vue";
 import { Message as MessageRoot, MessageContent, MessageHeader } from "@/components/ui/message";
 import ProcessRow from "./ProcessRow.vue";
+import { actorOf } from "../actorView";
 
 const props = defineProps<{
     message: Message;
@@ -48,8 +49,22 @@ const props = defineProps<{
      * and then **no** identity row is rendered — PRIMARY is never assumed.
      */
     responder?: SessionParticipantView;
+    /**
+     * PLAN-0659 T1.2：给**过程行**挂 actor 徽标。只在混主体线程为 true（单主体线程重复
+     * 标注同一个人是噪音）；消息身份行不受此开关影响（它一直按服务端归因渲染）。
+     */
+    showActor?: boolean;
 }>();
 const { t } = useI18n();
+
+/**
+ * PLAN-0659 T1.2：该消息的产出主体。只从服务端归因派生（`responder`），没有归因就没有
+ * actor —— 与身份行同一口径，不猜 PRIMARY。颜色中立，靠首字母 + 名字。
+ */
+const actorOfMessage = computed(() =>
+    actorOf(props.responder, t("workspace.participantUnknownName")),
+);
+const actorForRows = computed(() => (props.showActor ? actorOfMessage.value : undefined));
 
 const emit = defineEmits<{
     approve: [id: string];
@@ -306,6 +321,7 @@ onUnmounted(() => {
         :label="markerLabel"
         :class="message.status === 'executing' ? 'shimmer' : ''"
         testid="process-thinking"
+        :actor="actorForRows"
         :expandable="false"
     />
 
@@ -335,6 +351,8 @@ onUnmounted(() => {
                 <span
                     class="flex size-4 shrink-0 items-center justify-center rounded-full border bg-muted text-[9px] font-medium text-foreground"
                     data-testid="message-responder-initials"
+                    :data-actor-principal-id="responder?.participantId"
+                    :data-actor-kind="responder?.principalKind"
                     aria-hidden="true"
                     >{{ responderInitials }}</span
                 >
@@ -456,6 +474,7 @@ onUnmounted(() => {
                     v-for="tc in message.toolCalls"
                     :key="tc.id"
                     :tool-call="tc"
+                    :actor="actorForRows"
                     @approve="emit('approve', $event)"
                     @reject="emit('reject', $event)"
                 />

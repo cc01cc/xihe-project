@@ -6,9 +6,12 @@ import { ApiError, api } from "../../../../composables/api";
 import { toolRefusalCopyKey } from "../../../../lib/errorMessages";
 import { LoaderCircle, CheckCircle, XCircle, Clock, Bot, ChevronDown } from "@lucide/vue";
 import ProcessRow from "./ProcessRow.vue";
+import type { ProcessRowActor } from "./ProcessRow.vue";
 
 const props = defineProps<{
     toolCall: ToolCall;
+    /** PLAN-0659 T1.2：产出主体徽标；由消息按「线程是否混主体」决定传不传。 */
+    actor?: ProcessRowActor;
 }>();
 
 const emit = defineEmits<{
@@ -278,6 +281,7 @@ async function loadJobOutput(reset: boolean) {
         :meta="duration ?? undefined"
         :status="statusLabel"
         :failed="Boolean(refusalCode) || toolCall.status === 'failed'"
+        :actor="actor"
         expandable
         testid="tool-card"
         toggle-testid="tool-card-toggle"
