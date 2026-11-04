@@ -442,7 +442,13 @@ public class ApprovalService {
                     "Approval grant could not be materialized as a policy rule", e);
         }
         try {
-            agentClient.respond(requestId, approved, decision.kind().wireName(), decision.feedback());
+            // PLAN-0655 T2: cp_gate rows are CP-internal (spawn gate / human delegation). There is
+            // no agent-side invocation to answer — relaying 404s (APPROVAL_NOT_FOUND) and would
+            // strand the row in dispatch_unknown. The continuation for a gate grant is the
+            // caller's retry with the approval header (consumeApprovedGrant), never an agent push.
+            if (!ChatApproval.ORIGIN_CP_GATE.equals(approval.getOrigin())) {
+                agentClient.respond(requestId, approved, decision.kind().wireName(), decision.feedback());
+            }
         } catch (CpApiException e) {
             int marked = approvalRepository.markDispatchUnknown(approval.getRequestId(), e.getCode(), Instant.now());
             if (marked == 0) {

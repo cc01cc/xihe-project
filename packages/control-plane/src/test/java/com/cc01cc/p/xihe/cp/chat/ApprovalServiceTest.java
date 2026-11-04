@@ -252,6 +252,28 @@ class ApprovalServiceTest {
     }
 
     @Test
+    void decideSkipsAgentRelayForCpGateApprovals() {
+        // PLAN-0655 T2 (real-stack finding): a cp_gate row (spawn gate / human delegation) has no
+        // agent-side counterpart; relaying the decision 404s and strands the row. The CP marks the
+        // decision locally and the caller retries with the approval grant header.
+        ChatApproval approval = pending(Instant.now().plusSeconds(60));
+        approval.setOrigin(ChatApproval.ORIGIN_CP_GATE);
+        when(approvals.findById(UUID.fromString(TEST_REQUEST_ID))).thenReturn(Optional.of(approval));
+        when(approvals.markDispatching(eq(UUID.fromString(TEST_REQUEST_ID)), eq(true), any(),
+                any(), any(), any(), any(Instant.class)))
+                .thenReturn(1);
+        when(approvals.markDecided(eq(UUID.fromString(TEST_REQUEST_ID)), eq("approved"), eq("once"), any(Instant.class)))
+                .thenReturn(1);
+
+        Map<String, Object> response = service.decide(TEST_REQUEST_ID, TEST_USER, TEST_WORKSPACE,
+                ApprovalDecision.once());
+
+        assertEquals("accepted", response.get("status"));
+        verify(agent, never()).respond(any(), anyBoolean(), any(), any());
+        verify(approvals).markDecided(eq(UUID.fromString(TEST_REQUEST_ID)), eq("approved"), eq("once"), any());
+    }
+
+    @Test
     void decideRejectsExpiredApprovalBeforeCallingAgent() {
         ChatApproval approval = pending(Instant.now().minusSeconds(1));
         when(approvals.findById(UUID.fromString(TEST_REQUEST_ID))).thenReturn(Optional.of(approval));
