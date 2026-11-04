@@ -548,7 +548,10 @@ paths:
         Refusals: a role carrying any `PermissionAtomCatalog.agentPrincipalForbiddenAtoms()` atom ⇒
         **409 `AGENT_PRINCIPAL_FORBIDDEN_ATOMS`** with only atom names in `detail`; an existing row
         for the same (role, principal, derived scope) ⇒ **409 `ROLE_BINDING_EXISTS`**; an
-        unknown/invisible role or principal ⇒ 404.
+        unknown/invisible role or principal ⇒ 404. The agent's workspace **cap is a hard ceiling**
+        (BL-287): a role carrying an atom outside that cap ⇒ **409 `ROLE_BINDING_EXCEEDS_CAP`** whose
+        `detail` names the exceeding atoms — a binding is never accepted while guaranteed to have no
+        effect in authorization.
       security: [{ bearerAuth: [] }]
       parameters:
         - { in: path, name: principalId, required: true, schema: { type: string, format: uuid } }

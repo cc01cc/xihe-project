@@ -599,7 +599,7 @@ export type WorkspaceAgentMemoryOrigin = "manual" | "run";
  * PLAN-0667 M3：agent 主体的**角色绑定**（`GET /api/v1/agent-principals/{id}/roles`）。
  *
  * 契约（Lead 2026-11-05 冻结，camelCase，信封 `{items:[…]}`）：
- * - `isSystem` 决定 🔒 与「无解绑按钮」（种子绑定由 CP 409 ROLE_BINDING_IMMUTABLE 兜底）；
+ * - `isSystem` 决定 🔒 与「无解绑按钮」（种子绑定由 CP 409 ROLE_BINDING_EXCEEDS_CAP | ROLE_BINDING_IMMUTABLE 兜底）；
  * - `atomSummary` = **字符串标签数组（≤3）**，`atomCount` = 总数，`atomsTruncated` 表示被截断；
  *   UI 只渲染「摘要 + 总数」，**不展开全集**（D5(b)）。
  */

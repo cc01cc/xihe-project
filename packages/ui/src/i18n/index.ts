@@ -408,6 +408,8 @@ const messages = {
             agentRoleSelectPlaceholder: "选择要绑定的角色",
             agentSkillSelectPlaceholder: "选择要绑定的技能",
             agentRoleForbiddenAtoms: "该角色含 agent 不可授予的原子，绑定被拒绝",
+            agentRoleExceedsCap: "该角色含超出此 agent 权限上限（cap）的原子，绑定被拒绝",
+            agentRoleCapHint: "权限上限是硬上限：角色绑定只能在上限内生效",
             agentRoleBindingExists: "该角色已绑定",
             agentRoleBindingImmutable: "系统种子绑定不可解绑",
             agentRbacNotFound: "角色或技能不存在，或无权查看",
@@ -2711,6 +2713,9 @@ const messages = {
             agentSkillSelectPlaceholder: "Select a skill to bind",
             agentRoleForbiddenAtoms:
                 "This role contains atoms an agent cannot hold; binding was refused",
+            agentRoleExceedsCap:
+                "This role carries atoms beyond the agent's permission cap; bind refused",
+            agentRoleCapHint: "The cap is a hard ceiling: role bindings only take effect within it",
             agentRoleBindingExists: "This role is already bound",
             agentRoleBindingImmutable: "System seed bindings cannot be unbound",
             agentRbacNotFound: "The role or skill does not exist, or you cannot view it",

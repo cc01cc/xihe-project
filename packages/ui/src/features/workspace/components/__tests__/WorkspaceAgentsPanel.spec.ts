@@ -1163,6 +1163,26 @@ describe("WorkspaceAgentsPanel PLAN-0667 roles & skills", () => {
         );
     });
 
+    it("maps 409 ROLE_BINDING_EXCEEDS_CAP to localized copy and shows the cap hint", async () => {
+        apiMock.bindAgentRole.mockRejectedValue(new ApiError("ROLE_BINDING_EXCEEDS_CAP"));
+        const wrapper = await mountOpenedPanel();
+        await wrapper.get(rolesToggle).trigger("click");
+        await flushPromises();
+
+        expect(wrapper.get(`[data-testid="agent-role-cap-hint-${PRINCIPAL_ID}"]`).text()).toBe(
+            i18n.global.t("workspace.agentRoleCapHint"),
+        );
+        await wrapper
+            .get(`[data-testid="agent-role-select-${PRINCIPAL_ID}"]`)
+            .setValue("role-editor");
+        await wrapper.get(`[data-testid="agent-role-bind-${PRINCIPAL_ID}"]`).trigger("click");
+        await flushPromises();
+
+        expect(wrapper.get('[data-testid="agent-rbac-action-error"]').text()).toBe(
+            i18n.global.t("workspace.agentRoleExceedsCap"),
+        );
+    });
+
     it("lists skills and unbinds one through the skill endpoint", async () => {
         const wrapper = await mountOpenedPanel();
         await wrapper.get(rolesToggle).trigger("click");

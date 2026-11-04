@@ -453,6 +453,8 @@ function rbacErrorMessage(cause: unknown): string {
         switch (cause.problem.code) {
             case "AGENT_PRINCIPAL_FORBIDDEN_ATOMS":
                 return t("workspace.agentRoleForbiddenAtoms");
+            case "ROLE_BINDING_EXCEEDS_CAP":
+                return t("workspace.agentRoleExceedsCap");
             case "ROLE_BINDING_EXISTS":
                 return t("workspace.agentRoleBindingExists");
             case "ROLE_BINDING_IMMUTABLE":
@@ -1923,6 +1925,12 @@ async function unbind(agent: WorkspaceAgentBinding) {
                                     </p>
                                 </li>
                             </ul>
+                            <p
+                                class="mt-1 text-[11px] text-muted-foreground"
+                                :data-testid="`agent-role-cap-hint-${agent.principalId}`"
+                            >
+                                {{ t("workspace.agentRoleCapHint") }}
+                            </p>
                             <div
                                 v-if="canBindRbac === true"
                                 class="flex flex-wrap items-center gap-2"
