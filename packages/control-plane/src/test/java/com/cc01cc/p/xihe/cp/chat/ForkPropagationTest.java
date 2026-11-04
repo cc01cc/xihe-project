@@ -403,7 +403,7 @@ class ForkPropagationTest extends AbstractIntegrationTest {
                         List.of(new org.springframework.security.core.authority.SimpleGrantedAuthority(
                                 "ROLE_USER"))));
         try {
-            return messageController.listMessages(sessionId, branchId);
+            return messageController.listMessages(sessionId, branchId, null, null);
         } finally {
             org.springframework.security.core.context.SecurityContextHolder.clearContext();
             com.cc01cc.p.xihe.cp.config.TenantContext.clear();

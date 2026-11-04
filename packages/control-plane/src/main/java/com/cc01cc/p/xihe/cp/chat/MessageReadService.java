@@ -66,8 +66,97 @@ public class MessageReadService {
         return result;
     }
 
-    Optional<DispatchMessage> findDispatchMessage(String messageId) {
-        return messageRepository.findById(UUID.fromString(messageId))
+    /** Hard upper bound of {@code ?limit=}; larger values are truncated (never rejected). */
+    public static final int MAX_PAGE_LIMIT = 200;
+
+    /** One page plus the envelope fields of PLAN-0670 M2. */
+    public record MessagePage(List<Map<String, Object>> messages, int limit, boolean truncated,
+                              String nextCursor) {
+    }
+
+    private record MessageCursor(java.time.Instant createdAt, UUID id) {
+    }
+
+    /**
+     * PLAN-0670 M2 cursor pagination.
+     *
+     * <p>Returns the newest {@code limit} visible messages of the branch path (ascending), or the
+     * page strictly older than {@code beforeCursor}. The cursor is opaque and encodes the composite
+     * {@code (createdAt, id)} boundary of the oldest returned row; a single timestamp key would
+     * skip/duplicate rows whenever several messages share the same millisecond.</p>
+     *
+     * <p>Visibility is a Java predicate (branch-path anchors), so rows are scanned newest-first in
+     * bounded batches and filtered before counting towards {@code limit}: memory stays bounded by
+     * the scanned window plus {@code limit}, never by the whole session.</p>
+     */
+    public MessagePage listVisibleMessagesPage(String sessionId, String workspaceId,
+                                               String rootBranchId,
+                                               BranchPathService.BranchVisibility visibility,
+                                               int limit, String beforeCursor) {
+        int effectiveLimit = Math.max(1, Math.min(limit, MAX_PAGE_LIMIT));
+        MessageCursor cursor = beforeCursor == null || beforeCursor.isBlank()
+                ? null : decodeCursor(beforeCursor);
+        List<Message> collected = new ArrayList<>();
+        int batch = Math.max(effectiveLimit + 1, 64);
+        while (true) {
+            List<Message> page = cursor == null
+                    ? messageRepository.findLatestPage(sessionId,
+                            org.springframework.data.domain.PageRequest.of(0, batch))
+                    : messageRepository.findPageBefore(sessionId, cursor.createdAt(), cursor.id(),
+                            org.springframework.data.domain.PageRequest.of(0, batch));
+            if (page.isEmpty()) {
+                break;
+            }
+            for (Message message : page) {
+                if (Message.VISIBILITY_USER.equals(message.getVisibility())
+                        && isVisibleOnPath(message, sessionId, workspaceId, rootBranchId, visibility)) {
+                    collected.add(message);
+                }
+                if (collected.size() > effectiveLimit) {
+                    break;
+                }
+            }
+            if (collected.size() > effectiveLimit || page.size() < batch) {
+                break;
+            }
+            Message oldest = page.get(page.size() - 1);
+            cursor = new MessageCursor(oldest.getCreatedAt(), oldest.getId());
+        }
+        boolean truncated = collected.size() > effectiveLimit;
+        List<Message> window = new ArrayList<>(
+                collected.subList(0, Math.min(effectiveLimit, collected.size())));
+        java.util.Collections.reverse(window);
+        List<Map<String, Object>> messages = new ArrayList<>(window.size());
+        for (Message message : window) {
+            messages.add(toMessageDto(message));
+        }
+        // Boundary for the next (older) page: the OLDEST row of the returned window.
+        String nextCursor = truncated && !window.isEmpty()
+                ? encodeCursor(window.get(0).getCreatedAt(), window.get(0).getId())
+                : null;
+        return new MessagePage(messages, effectiveLimit, truncated, nextCursor);
+    }
+
+    static String encodeCursor(java.time.Instant createdAt, UUID id) {
+        String raw = createdAt.toString() + "|" + id;
+        return java.util.Base64.getUrlEncoder().withoutPadding()
+                .encodeToString(raw.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+    }
+
+    private static MessageCursor decodeCursor(String cursor) {
+        try {
+            String raw = new String(java.util.Base64.getUrlDecoder().decode(cursor),
+                    java.nio.charset.StandardCharsets.UTF_8);
+            int split = raw.lastIndexOf('|');
+            return new MessageCursor(java.time.Instant.parse(raw.substring(0, split)),
+                    UUID.fromString(raw.substring(split + 1)));
+        } catch (RuntimeException invalid) {
+            throw new CpApiException(org.springframework.http.HttpStatus.BAD_REQUEST,
+                    "INVALID_CURSOR", "before must be an opaque cursor returned by this endpoint");
+        }
+    }
+
+    Optional<DispatchMessage> findDispatchMessage(String messageId) {        return messageRepository.findById(UUID.fromString(messageId))
                 .map(message -> new DispatchMessage(
                         message.getSessionId(), message.getRunId(), message.getContent(), message.getAttachments()));
     }
