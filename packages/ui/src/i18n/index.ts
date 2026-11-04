@@ -176,6 +176,7 @@ const messages = {
             panelMembers: "成员",
             panelContext: "会话设置",
             panelAgents: "智能体",
+            panelDelegation: "委派",
             diffTabTimeline: "切片时间线",
             diffTabPending: "待提交",
             diffDifferenceNote: "两个列表可能不一致：切片变更与待提交状态来源不同，二者不会合并。",
@@ -255,6 +256,7 @@ const messages = {
             toggleDiff: "打开或收起变更面板",
             toggleMonitor: "打开或收起监控面板",
             toggleMembers: "打开或收起成员面板",
+            toggleDelegation: "打开或收起委派面板",
             participantsEmptyNoSession: "先选择一个会话，再查看它的参与者。",
             participantsEmptyNone: "这个会话还没有参与者。",
             participantPrimaryImmutable: "主智能体（PRIMARY）的策略与成员关系不可修改。",
@@ -785,6 +787,14 @@ const messages = {
                 approvalPendingHint: "会话中已发起审批；批准后会用同一幂等键自动重试，无需重填",
                 approvalRejected: "委派审批被拒绝或已过期",
                 submitFailed: "委派创建失败，请稍后重试",
+                // PLAN-0659 T1.4：委派 DAG（右栏）。节点状态复用 derivedStateStatus/Outcome
+                // 两套既有词汇，这里只补面板自身文案。
+                dagTitle: "委派 DAG",
+                dagEmpty: "当前会话还没有委派子会话",
+                dagRefresh: "刷新委派图",
+                dagError: "委派图暂时加载失败（结构仍显示）",
+                dagTruncated: "节点过多，仅显示前 {count} 个",
+                dagBudget: "预算 {used}/{max} · 深度 {depth}/{maxDepth}",
             },
             // PLAN-0635 M1：`/` 命令与 `@` 提及的输入面文案（两者共用一个候选面）。
             input: {
@@ -2422,6 +2432,7 @@ const messages = {
             panelMembers: "Members",
             panelContext: "Session settings",
             panelAgents: "Agents",
+            panelDelegation: "Delegation",
             diffTabTimeline: "Slice timeline",
             diffTabPending: "Pending commit",
             diffDifferenceNote:
@@ -2508,6 +2519,7 @@ const messages = {
             toggleDiff: "Toggle the changes panel",
             toggleMonitor: "Toggle the monitor panel",
             toggleMembers: "Toggle the participants panel",
+            toggleDelegation: "Toggle the delegation panel",
             participantsEmptyNoSession: "Select a session to see its participants.",
             participantsEmptyNone: "This session has no participants yet.",
             participantPrimaryImmutable: "The PRIMARY agent policies and membership are immutable.",
@@ -3066,6 +3078,14 @@ const messages = {
                     "An approval was opened in this session; granting it replays the same idempotency key — no need to refill",
                 approvalRejected: "The delegation approval was rejected or expired",
                 submitFailed: "Could not create the delegation, try again later",
+                // PLAN-0659 T1.4: delegation DAG (right dock). Node statuses reuse the existing
+                // derivedStateStatus/Outcome vocabulary; only panel copy is added here.
+                dagTitle: "Delegation DAG",
+                dagEmpty: "This session has no delegated child sessions yet",
+                dagRefresh: "Refresh the delegation graph",
+                dagError: "The delegation graph could not be loaded (structure is still shown)",
+                dagTruncated: "Too many nodes — showing the first {count}",
+                dagBudget: "Budget {used}/{max} · depth {depth}/{maxDepth}",
             },
             placeholder: "Message · Enter to send · Shift+Enter for newline",
             // PLAN-0635 M1: input-surface copy for `/` commands and `@` mentions (one shared menu).

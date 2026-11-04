@@ -46,6 +46,8 @@ const i18n = createI18n({
                 panelMonitor: "Monitor",
                 panelContext: "Session settings",
                 panelAgents: "Agents",
+                panelDelegation: "Delegation",
+                toggleDelegation: "Toggle delegation",
                 closePanel: "Close the auxiliary panel",
                 dockTabs: "Workbench panels",
                 dockOverflow: "More panels",
@@ -85,6 +87,10 @@ const stubs = {
     WorkspaceAgentsPanel: {
         props: { workspaceId: { type: String, default: "" } },
         template: '<div data-testid="agents-panel-stub" />',
+    },
+    DelegationDagPanel: {
+        props: { sessionId: { type: String, default: "" } },
+        template: '<div data-testid="delegation-dag-stub" />',
     },
 };
 
@@ -169,6 +175,24 @@ describe("WorkspaceWorkbench skeleton (PLAN-0582 S2)", () => {
         expect(
             wrapper.get('[data-testid="workspace-toolbar-code"]').attributes("aria-pressed"),
         ).toBe("false");
+    });
+
+    it("opens the delegation DAG panel from the toolbar toggle (PLAN-0659 T1.4)", async () => {
+        const wrapper = mountWorkbench();
+        await flushPromises();
+
+        const toggle = wrapper.get('[data-testid="workspace-toolbar-delegation"]');
+        expect(toggle.attributes("aria-pressed")).toBe("false");
+        await toggle.trigger("click");
+
+        // dock 里多出 delegation tab，且渲染的是委派面板（不是别的面板的槽位）。
+        expect(wrapper.get('[data-testid="dock-tab-delegation"]').text()).toContain("Delegation");
+        expect(wrapper.find('[data-testid="delegation-dag-stub"]').exists()).toBe(true);
+        expect(toggle.attributes("aria-pressed")).toBe("true");
+        await expectStored(() => {
+            expect(storedLayout().dockTabs).toContain("delegation");
+            expect(storedLayout().activeDockTab).toBe("delegation");
+        });
     });
 
     it("collapses the dock from the active toolbar toggle but keeps the tab set", async () => {
