@@ -419,9 +419,14 @@ public class ApiRequestTemplateService {
      *
      * <p>The merge happens <b>here, at admission</b>, and the result is stored on the ChatRun, so the
      * same run always sees the same context (the fingerprint would be meaningless if the read side
-     * stitched it together later). If the API request template already carries a manifest it must be
-     * identical — two different manifests are a configuration contradiction, so we fail loudly
-     * instead of guessing which one wins.</p>
+     * stitched it together later).</p>
+     *
+     * <p><b>Merge rule (Lead ruling 2026-11-05, BL-284 follow-up):</b> the merged manifest is the
+     * <b>union of component types</b>. When both sides declare the same type, the <b>API request
+     * template's component wins</b> — it is the more specific artifact for that connection/session,
+     * while the context template is the default provider. A duplicate of the same type <b>inside one
+     * manifest</b> is illegal input and still fails with
+     * {@code 409 CONTEXT_TEMPLATE_COMPONENTS_CONFLICT}.</p>
      */
     void mergeContextComponents(ObjectNode template, UUID user, UUID workspace) {
         ContextTemplateService.TemplateBinding contextBinding = contextTemplates.getObject().defaultBinding(user, workspace);
@@ -430,35 +435,47 @@ public class ApiRequestTemplateService {
             return;
         }
         JsonNode existing = template.path("components");
-        if (existing.isArray() && !existing.isEmpty()) {
-            if (!existing.equals(contextComponents)) {
-                throw new CpApiException(HttpStatus.CONFLICT, "CONTEXT_TEMPLATE_COMPONENTS_CONFLICT",
-                        "API request template and context template declare different component manifests: "
-                                + componentDiff(existing, contextComponents));
-            }
+        if (!existing.isArray() || existing.isEmpty()) {
+            template.set("components", contextComponents.deepCopy());
             return;
         }
-        template.set("components", contextComponents.deepCopy());
+        template.set("components", mergeManifests(existing, contextComponents));
     }
 
-    /** Human-readable difference summary for {@code CONTEXT_TEMPLATE_COMPONENTS_CONFLICT}. */
-    private static String componentDiff(JsonNode left, JsonNode right) {
-        Set<String> leftKeys = componentKeys(left);
-        Set<String> rightKeys = componentKeys(right);
-        Set<String> onlyLeft = new TreeSet<>(leftKeys);
-        onlyLeft.removeAll(rightKeys);
-        Set<String> onlyRight = new TreeSet<>(rightKeys);
-        onlyRight.removeAll(leftKeys);
-        return "apiRequestOnly=" + onlyLeft + ", contextTemplateOnly=" + onlyRight;
-    }
-
-    private static Set<String> componentKeys(JsonNode components) {
-        Set<String> keys = new HashSet<>();
-        for (JsonNode component : components) {
-            keys.add(component.path("type").asText("") + ":" + component.path("instanceId").asText("")
-                    + ":" + component.path("enabled").asBoolean(false));
+    /**
+     * Union by component type; the API request template wins on a shared type. Order is stable:
+     * the context template's order first (shared types replaced in place), then API-only types in
+     * their own order — so two equal inputs always produce the same snapshot.
+     */
+    private ArrayNode mergeManifests(JsonNode apiManifest, JsonNode contextManifest) {
+        Map<String, JsonNode> apiByType = indexByType(apiManifest, "apiRequestTemplate");
+        Map<String, JsonNode> contextByType = indexByType(contextManifest, "contextTemplate");
+        ArrayNode merged = json.createArrayNode();
+        for (JsonNode contextComponent : contextManifest) {
+            String type = contextComponent.path("type").asText("");
+            JsonNode chosen = apiByType.getOrDefault(type, contextComponent);
+            merged.add(chosen.deepCopy());
         }
-        return keys;
+        for (Map.Entry<String, JsonNode> entry : apiByType.entrySet()) {
+            if (!contextByType.containsKey(entry.getKey())) {
+                merged.add(entry.getValue().deepCopy());
+            }
+        }
+        return merged;
+    }
+
+    /** Rejects a manifest that declares the same component type twice (illegal input, not a conflict). */
+    private Map<String, JsonNode> indexByType(JsonNode manifest, String side) {
+        Map<String, JsonNode> byType = new LinkedHashMap<>();
+        for (JsonNode component : manifest) {
+            String type = component.path("type").asText("");
+            JsonNode previous = byType.put(type, component);
+            if (previous != null) {
+                throw new CpApiException(HttpStatus.CONFLICT, "CONTEXT_TEMPLATE_COMPONENTS_CONFLICT",
+                        "Duplicate component type in " + side + ": " + type);
+            }
+        }
+        return byType;
     }
 
     public ObjectNode admissionSnapshot(Session session) {
