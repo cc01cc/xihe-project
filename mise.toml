@@ -131,8 +131,8 @@ description = "Run all tests"
 alias = "test"
 
 [tasks."test:cli"]
-run = "node --test scripts/xihe-cli.test.mjs scripts/xihe-cli/skill.test.mjs scripts/lib/stack-ports.test.mjs scripts/lib/env-file.test.mjs scripts/lib/service-supervisor.test.mjs scripts/lib/llm-env.test.mjs scripts/lib/cp-boot-plan.test.mjs scripts/lib/e2e-rounds.test.mjs scripts/lib/e2e-host-cli.test.mjs scripts/stack-run.test.mjs scripts/e2e-host-readiness.test.mjs scripts/test-wiring.test.mjs scripts/pkg/phase-parity.test.mjs scripts/pkg/ports-json.test.mjs scripts/pkg/launcher-security.test.mjs scripts/pkg/launcher-security-behavior.test.mjs scripts/env-log-level.test.mjs scripts/lib/stack-cargo-target.test.mjs scripts/lib/stack-orphan.test.mjs scripts/lib/kill-guard.test.mjs scripts/lib/cp-build-info.test.mjs scripts/lib/cp-build-dir.test.mjs scripts/__tests__/check-event-keys.test.mjs"
-description = "Run every scripts/**/*.test.mjs unit test — the file list is explicit and pinned by scripts/test-wiring.test.mjs (a new test file that is not listed turns that meta test red)"
+run = "node --test scripts/xihe-cli.test.mjs scripts/xihe-cli/skill.test.mjs scripts/lib/stack-ports.test.mjs scripts/lib/env-file.test.mjs scripts/lib/service-supervisor.test.mjs scripts/lib/llm-env.test.mjs scripts/lib/cp-boot-plan.test.mjs scripts/lib/e2e-rounds.test.mjs scripts/lib/e2e-host-cli.test.mjs scripts/stack-run.test.mjs scripts/e2e-host-readiness.test.mjs scripts/test-wiring.test.mjs scripts/pkg/phase-parity.test.mjs scripts/pkg/ports-json.test.mjs scripts/pkg/launcher-security.test.mjs scripts/pkg/launcher-security-behavior.test.mjs scripts/env-log-level.test.mjs scripts/lib/stack-cargo-target.test.mjs scripts/lib/stack-orphan.test.mjs scripts/lib/kill-guard.test.mjs scripts/lib/cp-build-info.test.mjs scripts/lib/cp-build-dir.test.mjs scripts/__tests__/check-event-keys.test.mjs scripts/check-test-global-state.test.mjs && node scripts/check-test-global-state.mjs"
+description = "Run every scripts/**/*.test.mjs unit test (explicit file list pinned by scripts/test-wiring.test.mjs) + BL-262 static guard: no unguarded process-global mutation in Rust test code"
 alias = "test:cli"
 
 [tasks."test:mock"]
@@ -187,6 +187,21 @@ run = "cargo test --lib"
 description = "Run runtime unit tests only (no Docker needed)"
 dir = "packages/runtime"
 alias = "test:runtime:lib"
+
+# BL-262（2026-11-04）：竞态复验门。串行 1 次证明"确定性绿"，并行 3 连跑逼调度变化——
+# 单次并行通过没有说服力，连跑才暴露抢全局状态。**故意不进 validate**：日常 validate 保持
+# 并行 ~5.5s 的手感，本任务只在里程碑 / 竞态类修复后跑（约 1 分钟，串行那趟 ~41s）。
+# 为什么不把日常那档改串行：串行跑不出并行能暴露的竞态 = 消灭证据（负例恒真同型陷阱）。
+[tasks."test:runtime:lib:gate"]
+run = [
+  "cargo test --locked --lib -- --test-threads=1",
+  "cargo test --locked --lib",
+  "cargo test --locked --lib",
+  "cargo test --locked --lib"
+]
+description = "BL-262 gate: serial once + parallel 3x (milestone / post-race-fix verification; not part of validate)"
+dir = "packages/runtime"
+alias = "test:runtime:lib:gate"
 
 # [FROZEN 2026-10-07] Compose lane 冻结，见文件头冻结说明
 # [tasks."test:e2e:compose"]
