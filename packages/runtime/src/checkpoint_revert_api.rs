@@ -18,17 +18,27 @@
 //! Problem+JSON shapes; no control-plane or UI concept lives here.
 
 use std::borrow::Cow;
+use std::path::PathBuf;
 
 use serde::Serialize;
 use tracing::info;
 
+use crate::checkpoint::CheckpointStorageMode;
 use crate::checkpoint::{CheckpointError, WorkspaceGitStatus, validate_workspace_id};
 use crate::checkpoint_api::{
     CheckpointService, REASON_GIT_FAILED, REASON_WORKSPACE_UNKNOWN, unavailable_reason,
 };
 use crate::checkpoint_revert::{
-    MAX_BLOB_BYTES, RestoreError, RestoreItemOutcome, RestorePreview, RestoreResult,
+    MAX_BLOB_BYTES, RestoreAction, RestoreEntryState, RestoreError, RestoreItemOutcome,
+    RestoreItemResult, RestorePreview, RestoreResult, RestoreResultCounts,
 };
+use crate::checkpoint_store::blob::read_blob;
+use crate::checkpoint_store::manifest::Manifest;
+use crate::checkpoint_store::refs;
+use crate::checkpoint_store::restore_full::{
+    self, FullRestoreError, FullRestoreOptions, FullRestoreState,
+};
+use crate::checkpoint_store::store::Store;
 
 /// Preview entry cap: the counts always cover the full plan, `truncated` marks a
 /// shortened `entries` list (response-size guard for very large plans).
@@ -176,6 +186,28 @@ impl CheckpointService {
         root_id: Option<&str>,
         slice_ref: &str,
     ) -> Result<RestorePreviewOutcome, RestoreFailure> {
+        self.restore_preview_for_root_path(workspace_id, root_id, slice_ref, None)
+            .await
+    }
+
+    /// T2.2: optional literal path/subtree scope. Only the self/store adapter
+    /// supports it; git mode keeps its legacy full-preview behavior.
+    pub async fn restore_preview_for_root_path(
+        &self,
+        workspace_id: &str,
+        root_id: Option<&str>,
+        slice_ref: &str,
+        path_prefix: Option<&str>,
+    ) -> Result<RestorePreviewOutcome, RestoreFailure> {
+        if self.engine().checkpoint_storage() == CheckpointStorageMode::Self_ {
+            return self.self_restore_preview(workspace_id, root_id, slice_ref, path_prefix);
+        }
+        if path_prefix.is_some() {
+            return Err(RestoreFailure::Unavailable {
+                reason: "RESTORE_PATH_UNSUPPORTED".into(),
+                detail: "path-scoped restore is available only in self mode".into(),
+            });
+        }
         let preview = self
             .engine()
             .restore_preview_for_root(workspace_id, root_id, slice_ref)
@@ -207,6 +239,39 @@ impl CheckpointService {
         slice_ref: &str,
         acknowledge_type_changes: &[String],
     ) -> Result<RestoreExecuteOutcome, RestoreFailure> {
+        self.restore_execute_for_root_path(
+            workspace_id,
+            root_id,
+            slice_ref,
+            acknowledge_type_changes,
+            None,
+        )
+        .await
+    }
+
+    pub async fn restore_execute_for_root_path(
+        &self,
+        workspace_id: &str,
+        root_id: Option<&str>,
+        slice_ref: &str,
+        acknowledge_type_changes: &[String],
+        path_prefix: Option<&str>,
+    ) -> Result<RestoreExecuteOutcome, RestoreFailure> {
+        if self.engine().checkpoint_storage() == CheckpointStorageMode::Self_ {
+            return self.self_restore_execute(
+                workspace_id,
+                root_id,
+                slice_ref,
+                acknowledge_type_changes,
+                path_prefix,
+            );
+        }
+        if path_prefix.is_some() {
+            return Err(RestoreFailure::Unavailable {
+                reason: "RESTORE_PATH_UNSUPPORTED".into(),
+                detail: "path-scoped restore is available only in self mode".into(),
+            });
+        }
         let result = self
             .engine()
             .restore_execute_for_root(workspace_id, root_id, slice_ref, acknowledge_type_changes)
@@ -243,6 +308,9 @@ impl CheckpointService {
         slice_ref: &str,
         path: &str,
     ) -> Result<BlobOutcome, BlobFailure> {
+        if self.engine().checkpoint_storage() == CheckpointStorageMode::Self_ {
+            return self.self_slice_blob(workspace_id, root_id, slice_ref, path);
+        }
         let blob = self
             .engine()
             .slice_blob_for_root(workspace_id, root_id, slice_ref, path, MAX_BLOB_BYTES)
@@ -252,6 +320,275 @@ impl CheckpointService {
             path: blob.path,
             content: blob.content,
         })
+    }
+
+    fn self_store(&self) -> Result<Store, RestoreFailure> {
+        let root = self
+            .engine()
+            .store_root()
+            .ok_or_else(|| RestoreFailure::Unavailable {
+                reason: "STORE_NOT_INITIALIZED".into(),
+                detail: "self mode has no store root".into(),
+            })?;
+        Store::open(root).map_err(|error| RestoreFailure::Unavailable {
+            reason: "STORE_IO".into(),
+            detail: error.to_string(),
+        })
+    }
+
+    fn self_ref(
+        &self,
+        store: &Store,
+        workspace_id: &str,
+        root_id: Option<&str>,
+        slice_ref: &str,
+    ) -> Result<refs::RefRecord, RestoreFailure> {
+        let root = root_id.unwrap_or(workspace_id);
+        refs::read_ref(store, root, slice_ref)
+            .map_err(|error| RestoreFailure::Unavailable {
+                reason: "STORE_IO".into(),
+                detail: error.to_string(),
+            })?
+            .ok_or_else(|| RestoreFailure::Unavailable {
+                reason: "STORE_SLICE_UNMAPPED".into(),
+                detail: format!("no store mapping for {slice_ref}"),
+            })
+    }
+
+    fn self_work_tree(&self, record: &refs::RefRecord) -> Result<PathBuf, RestoreFailure> {
+        self.engine()
+            .work_tree_for_root(&record.root_id)
+            .map_err(|error| RestoreFailure::Unavailable {
+                reason: "STORE_IO".into(),
+                detail: error.to_string(),
+            })
+    }
+
+    fn self_restore_preview(
+        &self,
+        workspace_id: &str,
+        root_id: Option<&str>,
+        slice_ref: &str,
+        path_prefix: Option<&str>,
+    ) -> Result<RestorePreviewOutcome, RestoreFailure> {
+        let store = self.self_store()?;
+        let record = self.self_ref(&store, workspace_id, root_id, slice_ref)?;
+        let work_tree = self.self_work_tree(&record)?;
+        let options = FullRestoreOptions {
+            path_prefix: path_prefix.map(str::to_owned),
+            ..FullRestoreOptions::default()
+        };
+        let preview = restore_full::preview_full(
+            &store,
+            &record.root_id,
+            &record.store_slice_id,
+            &work_tree,
+            &options,
+        )
+        .map_err(Self::self_full_restore_failure)?;
+        let mut entries = Vec::new();
+        let mut counts = RestorePreviewCounts::default();
+        for entry in &preview.entries {
+            let action = match entry.action {
+                restore_full::FullRestoreAction::Restore => RestoreAction::Restore,
+                restore_full::FullRestoreAction::Delete => RestoreAction::Delete,
+            };
+            let state = match entry.state {
+                FullRestoreState::Execute => RestoreEntryState::Execute,
+                FullRestoreState::SkippedModified | FullRestoreState::AlreadyAbsent => {
+                    RestoreEntryState::Noop
+                }
+            };
+            match action {
+                RestoreAction::Restore => counts.restore += 1,
+                RestoreAction::Delete => counts.delete += 1,
+            }
+            entries.push(RestorePreviewEntry {
+                path: entry.path.clone(),
+                action: action.as_str().to_string(),
+                state: match state {
+                    RestoreEntryState::Execute => "execute",
+                    RestoreEntryState::Noop => "noop",
+                    RestoreEntryState::TypeConflict => "type_conflict",
+                }
+                .to_string(),
+                reason: entry.detail.clone(),
+            });
+        }
+        let truncated = entries.len() > MAX_PREVIEW_ENTRIES;
+        entries.truncate(MAX_PREVIEW_ENTRIES);
+        Ok(RestorePreviewOutcome {
+            slice_ref: slice_ref.to_owned(),
+            counts,
+            entries,
+            truncated,
+        })
+    }
+
+    fn self_restore_execute(
+        &self,
+        workspace_id: &str,
+        root_id: Option<&str>,
+        slice_ref: &str,
+        _acknowledge_type_changes: &[String],
+        path_prefix: Option<&str>,
+    ) -> Result<RestoreExecuteOutcome, RestoreFailure> {
+        let store = self.self_store()?;
+        let record = self.self_ref(&store, workspace_id, root_id, slice_ref)?;
+        let work_tree = self.self_work_tree(&record)?;
+        let options = FullRestoreOptions {
+            path_prefix: path_prefix.map(str::to_owned),
+            ..FullRestoreOptions::default()
+        };
+        let preview = restore_full::preview_full(
+            &store,
+            &record.root_id,
+            &record.store_slice_id,
+            &work_tree,
+            &options,
+        )
+        .map_err(Self::self_full_restore_failure)?;
+        let stats = if let Some(prefix) = path_prefix {
+            restore_full::restore_path(
+                &store,
+                &record.root_id,
+                &record.store_slice_id,
+                &work_tree,
+                prefix,
+                &options,
+            )
+        } else {
+            restore_full::restore_full(
+                &store,
+                &record.root_id,
+                &record.store_slice_id,
+                &work_tree,
+                &options,
+            )
+        }
+        .map_err(Self::self_full_restore_failure)?;
+        let mut entries = Vec::new();
+        let mut suspects = Vec::new();
+        for entry in preview.entries {
+            let action = match entry.action {
+                restore_full::FullRestoreAction::Restore => RestoreAction::Restore,
+                restore_full::FullRestoreAction::Delete => RestoreAction::Delete,
+            };
+            let (outcome, reason) = match entry.state {
+                FullRestoreState::Execute => match action {
+                    RestoreAction::Restore => (RestoreItemOutcome::Restored, None),
+                    RestoreAction::Delete => (RestoreItemOutcome::Deleted, None),
+                },
+                FullRestoreState::SkippedModified => {
+                    suspects.push(entry.path.clone());
+                    (RestoreItemOutcome::Suspect, entry.detail.clone())
+                }
+                FullRestoreState::AlreadyAbsent => {
+                    (RestoreItemOutcome::Failed, entry.detail.clone())
+                }
+            };
+            entries.push(RestoreItemResult {
+                path: entry.path,
+                action,
+                outcome,
+                reason,
+            });
+        }
+        let result = RestoreResult {
+            slice_ref: slice_ref.to_owned(),
+            commit: record.git_tree.clone(),
+            entries,
+            counts: RestoreResultCounts {
+                restored: stats.restored,
+                deleted: stats.deleted,
+                failed: stats.skipped_already_absent,
+            },
+            duration_ms: stats.duration_ms,
+            suspects,
+        };
+        Ok(project_execute(result))
+    }
+
+    fn self_slice_blob(
+        &self,
+        workspace_id: &str,
+        root_id: Option<&str>,
+        slice_ref: &str,
+        path: &str,
+    ) -> Result<BlobOutcome, BlobFailure> {
+        let store = self
+            .self_store()
+            .map_err(|failure| BlobFailure::Unavailable {
+                reason: "STORE_NOT_INITIALIZED".into(),
+                detail: format!("{failure:?}"),
+            })?;
+        let record = self
+            .self_ref(&store, workspace_id, root_id, slice_ref)
+            .map_err(|failure| BlobFailure::Unavailable {
+                reason: "STORE_SLICE_UNMAPPED".into(),
+                detail: format!("{failure:?}"),
+            })?;
+        let manifest_bytes = std::fs::read(store.manifest_path(&record.store_manifest_id))
+            .map_err(|error| BlobFailure::NotFound {
+                detail: error.to_string(),
+            })?;
+        let manifest = Manifest::parse_verified(&manifest_bytes, &record.store_manifest_id)
+            .map_err(|error| BlobFailure::NotFound {
+                detail: error.to_string(),
+            })?;
+        let entry = manifest
+            .entries
+            .iter()
+            .find(|entry| entry.path == path)
+            .ok_or_else(|| BlobFailure::NotFound {
+                detail: format!("path {path} is not present in the slice tree"),
+            })?;
+        if entry.size > MAX_BLOB_BYTES {
+            return Err(BlobFailure::TooLarge {
+                path: path.to_owned(),
+                size: entry.size,
+                max: MAX_BLOB_BYTES,
+            });
+        }
+        let content = read_blob(store.root(), &entry.blob_hash).map_err(|error| {
+            BlobFailure::Unavailable {
+                reason: "RESTORE_BLOB_MISSING".into(),
+                detail: error.to_string(),
+            }
+        })?;
+        Ok(BlobOutcome {
+            path: path.to_owned(),
+            content,
+        })
+    }
+
+    fn self_full_restore_failure(error: FullRestoreError) -> RestoreFailure {
+        match error {
+            FullRestoreError::SliceMissing(_) => RestoreFailure::NotFound {
+                detail: "store slice is missing".into(),
+            },
+            FullRestoreError::UnsafePath(path) | FullRestoreError::SymlinkUnsupported(path) => {
+                RestoreFailure::Unavailable {
+                    reason: "RESTORE_UNSAFE_PATH".into(),
+                    detail: path,
+                }
+            }
+            FullRestoreError::RestoreIncomplete(_) => RestoreFailure::Unavailable {
+                reason: "RESTORE_INCOMPLETE".into(),
+                detail: "another restore is incomplete; rerun with resume".into(),
+            },
+            FullRestoreError::MarkerCorrupt(detail) => RestoreFailure::Unavailable {
+                reason: "RESTORE_MARKER_CORRUPT".into(),
+                detail,
+            },
+            FullRestoreError::TypeConflict { path, detail: _ } => {
+                RestoreFailure::TypeChangesUnacknowledged { paths: vec![path] }
+            }
+            other => RestoreFailure::Unavailable {
+                reason: "RESTORE_VERIFY_FAILED".into(),
+                detail: other.to_string(),
+            },
+        }
     }
 
     /// Read-only user-repository `git status` (dual-diff "待提交" side).
@@ -461,6 +798,79 @@ mod tests {
             state,
             reason: (state == RestoreEntryState::TypeConflict).then(|| "TYPE_CHANGE".to_string()),
         }
+    }
+
+    #[tokio::test]
+    async fn self_read_paths_use_store_adapter_for_preview_restore_and_blob() {
+        use crate::checkpoint_store::capture::capture_root;
+        use crate::checkpoint_store::refs::{self, RefRecord};
+        use crate::checkpoint_store::store::Store;
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        let host = temp.path().join("host");
+        let work = host.join("ws-1");
+        std::fs::create_dir_all(&work).expect("work");
+        std::fs::write(work.join("a.txt"), "store-a").expect("a");
+        std::fs::write(work.join("b.txt"), "store-b").expect("b");
+        let store_root = temp.path().join("store");
+        let store = Store::init(&store_root).expect("store");
+        let capture = capture_root(&store, &work, "ws-1", None, None).expect("capture");
+        let slice_ref = "refs/xihe/slices/self-read";
+        refs::write_ref(
+            &store,
+            &RefRecord {
+                v: 1,
+                root_id: "ws-1".into(),
+                git_ref: slice_ref.into(),
+                git_tree: "0".repeat(40),
+                store_slice_id: capture.slice_id.clone(),
+                store_manifest_id: capture.manifest_id.clone(),
+                source: "capture".into(),
+                created_at_ms: 0,
+            },
+        )
+        .expect("ref");
+        let service = CheckpointService::new(&host)
+            .with_checkpoint_storage(CheckpointStorageMode::Self_, &store_root)
+            .expect("self service");
+        std::fs::write(work.join("a.txt"), "changed").expect("mutate");
+        let preview = service
+            .restore_preview_for_root("ws-1", None, slice_ref)
+            .await
+            .expect("preview");
+        assert_eq!(preview.counts.restore, 2);
+        assert_eq!(preview.counts.delete, 0);
+        assert!(preview.entries.iter().any(|entry| entry.path == "a.txt"));
+        let blob = service
+            .slice_blob_for_root("ws-1", None, slice_ref, "a.txt")
+            .await
+            .expect("blob");
+        assert_eq!(blob.content, b"store-a");
+        let executed = service
+            .restore_execute_for_root("ws-1", None, slice_ref, &[])
+            .await
+            .expect("restore");
+        assert_eq!(executed.counts.restored, 2);
+        assert_eq!(
+            std::fs::read_to_string(work.join("a.txt")).expect("a"),
+            "store-a"
+        );
+        std::fs::write(work.join("a.txt"), "changed-again").expect("mutate a");
+        std::fs::write(work.join("b.txt"), "changed-b").expect("mutate b");
+        let scoped = service
+            .restore_execute_for_root_path("ws-1", None, slice_ref, &[], Some("a.txt"))
+            .await
+            .expect("path restore");
+        assert_eq!(scoped.counts.restored, 1);
+        assert_eq!(
+            std::fs::read_to_string(work.join("a.txt")).expect("a"),
+            "store-a"
+        );
+        assert_eq!(
+            std::fs::read_to_string(work.join("b.txt")).expect("b"),
+            "changed-b",
+            "path-scoped restore must not touch b.txt"
+        );
     }
 
     #[test]

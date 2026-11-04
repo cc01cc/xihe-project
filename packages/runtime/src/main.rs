@@ -2797,6 +2797,9 @@ struct RestorePreviewRequest {
     /// PLAN-0639 M8: slice of one declared root; absent = primary root.
     #[serde(default, rename = "rootId")]
     root_id: Option<String>,
+    /// T2.2 self-only literal path/subtree scope.
+    #[serde(default, rename = "pathPrefix")]
+    path_prefix: Option<String>,
 }
 
 async fn restore_preview_handler(
@@ -2807,7 +2810,12 @@ async fn restore_preview_handler(
     app.refresh_checkpoint_work_tree(&ws_id).await;
     match app
         .checkpoints
-        .restore_preview_for_root(&ws_id, request.root_id.as_deref(), &request.slice_ref)
+        .restore_preview_for_root_path(
+            &ws_id,
+            request.root_id.as_deref(),
+            &request.slice_ref,
+            request.path_prefix.as_deref(),
+        )
         .await
     {
         Ok(outcome) => AxumJson(outcome).into_response(),
@@ -2824,6 +2832,9 @@ struct RestoreExecuteRequest {
     /// PLAN-0639 M8: slice of one declared root; absent = primary root.
     #[serde(default, rename = "rootId")]
     root_id: Option<String>,
+    /// T2.2 self-only literal path/subtree scope.
+    #[serde(default, rename = "pathPrefix")]
+    path_prefix: Option<String>,
 }
 
 async fn restore_execute_handler(
@@ -2834,11 +2845,12 @@ async fn restore_execute_handler(
     app.refresh_checkpoint_work_tree(&ws_id).await;
     match app
         .checkpoints
-        .restore_execute_for_root(
+        .restore_execute_for_root_path(
             &ws_id,
             request.root_id.as_deref(),
             &request.slice_ref,
             &request.acknowledge_type_changes,
+            request.path_prefix.as_deref(),
         )
         .await
     {
