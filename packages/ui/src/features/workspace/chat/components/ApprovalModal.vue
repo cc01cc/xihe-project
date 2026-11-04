@@ -24,11 +24,17 @@ const props = withDefaults(
         error?: string | null;
         /** Workspace OWNER / instance ADMIN only; the server still rejects unauthorized writes. */
         canClassify?: boolean;
+        /**
+         * PLAN-0665 M2 D5: total actionable pending approvals for this session. Serial mode shows
+         * "1/N 待批"; batching is a separate plan (new audit/policy/rollback), not here.
+         */
+        queueTotal?: number;
     }>(),
     {
         busy: false,
         error: null,
         canClassify: false,
+        queueTotal: 0,
     },
 );
 
@@ -463,6 +469,13 @@ onBeforeUnmount(() => {
             <template v-if="approval">
                 <p class="mb-4 text-sm text-muted-foreground">
                     {{ t("chat.approvalDescription") }}
+                </p>
+                <p
+                    v-if="queueTotal > 1"
+                    data-testid="approval-queue-progress"
+                    class="mb-4 text-xs text-muted-foreground"
+                >
+                    {{ t("chat.approvalQueueProgress", { position: 1, total: queueTotal }) }}
                 </p>
                 <p
                     v-if="approval.state === 'dispatch_unknown'"

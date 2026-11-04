@@ -228,16 +228,21 @@ const loadingPrincipalChoices = ref(false),
 const pendingBranchKeys = new Map<string, string>();
 let messageLoadRequestId = 0;
 
-const pendingApproval = computed(
-    () =>
-        agentStore.agentState.pendingApprovals.find(
-            (approval) =>
-                approval.sessionId === props.sessionId &&
-                (approval.state === undefined ||
-                    approval.state === "pending" ||
-                    approval.state === "dispatch_unknown"),
-        ) ?? null,
+/**
+ * PLAN-0665 M2 D5：多路审批**串行**（按 run 创建序逐个弹；首卡显示「1/N 待批」）。
+ * store 的 `pendingApprovals` 是 CP 按到达顺序推送的队列，所以这里保留其稳定顺序、只取队首；
+ * 不做批量审批（批量语义单独立项）。
+ */
+const sessionPendingApprovals = computed(() =>
+    agentStore.agentState.pendingApprovals.filter(
+        (approval) =>
+            approval.sessionId === props.sessionId &&
+            (approval.state === undefined ||
+                approval.state === "pending" ||
+                approval.state === "dispatch_unknown"),
+    ),
 );
+const pendingApproval = computed(() => sessionPendingApprovals.value[0] ?? null);
 const approvalSubmitting = ref(false),
     approvalError = ref<string | null>(null);
 const dismissedRequestIds = ref(new Set<string>());
@@ -1395,6 +1400,7 @@ watch(
             :busy="approvalSubmitting"
             :error="approvalError"
             :can-classify="canClassifyApproval"
+            :queue-total="sessionPendingApprovals.length"
             @approve="decideApproval"
             @reject="decideApproval"
             @dismiss="handleApprovalDismiss"

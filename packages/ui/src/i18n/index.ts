@@ -1040,6 +1040,8 @@ const messages = {
             approve: "确认",
             reject: "拒绝",
             approvalDescription: "智能体请求执行以下操作，请确认后继续：",
+            // PLAN-0665 M2 D5：多路审批串行，首卡显示「1/N 待批」。
+            approvalQueueProgress: "第 {position}/{total} 张待批",
             approvalAction: "动作",
             approvalDetails: "参数预览",
             approvalEvidence: "策略依据",
@@ -3344,6 +3346,7 @@ const messages = {
             reject: "Reject",
             approvalDescription:
                 "The agent wants to perform the following action. Review it before continuing:",
+            approvalQueueProgress: "Approval {position} of {total} pending",
             approvalAction: "Action",
             approvalDetails: "Parameter preview",
             approvalEvidence: "Policy evidence",

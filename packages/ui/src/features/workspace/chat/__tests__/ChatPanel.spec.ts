@@ -220,6 +220,25 @@ describe("ChatPanel approval decision correlation (PLAN-0328 T1.14)", () => {
         expect(decideChatApproval).toHaveBeenCalledWith(REQUEST_ID, { decision: "once" });
     });
 
+    it("shows the serial queue progress (1/N) and only the first approval (PLAN-0665 M2 D5)", async () => {
+        const wrapper = mountPanel();
+        useAgentStore().addApprovalRequest(approval);
+        useAgentStore().addApprovalRequest({
+            ...approval,
+            requestId: "req-second",
+            runId: "run-second",
+        });
+        await nextTick();
+        await flushPromises();
+
+        const modal = wrapper.findComponent(ApprovalModal);
+        expect(modal.exists()).toBe(true);
+        // 只弹队首；第二张留在队列里等第一张决定后再弹（串行，不批量）。
+        expect(modal.props("approval")?.requestId).toBe(REQUEST_ID);
+        expect(modal.props("queueTotal")).toBe(2);
+        expect(wrapper.findAll('[data-testid="approval-tool"]')).toHaveLength(1);
+    });
+
     it("strips the requestId envelope before calling the decision API", async () => {
         const decideChatApproval = vi.mocked(api.decideChatApproval);
         decideChatApproval.mockResolvedValue({

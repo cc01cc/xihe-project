@@ -133,6 +133,32 @@ describe("MessageList run grouping (PLAN-0659 T1.1)", () => {
         ).toContain("b-assistant");
     });
 
+    it("keeps two fan-out runs apart even when their origin values are identical", () => {
+        // PLAN-0665 M1：同一条 TO 消息派生的 run `origin` 仍是 user_submission（不是 wake），
+        // 所以按 origin 合并会把两个 run 错误地并成一屏——分组只认 runId / durable delivery。
+        const runs = [
+            runSummary(RUN_A, "succeeded", "success"),
+            runSummary(RUN_B, "succeeded", "success"),
+        ];
+        expect(runs.map((run) => run.origin)).toEqual(["user_submission", "user_submission"]);
+
+        const wrapper = mountList(
+            [
+                {
+                    ...message("a-user", RUN_A, "user"),
+                    delivery: { to: ["part-alpha", "part-helper"] },
+                } as Message,
+                message("a-assistant", RUN_A, "assistant"),
+                message("b-assistant", RUN_B, "assistant"),
+            ],
+            runs,
+        );
+
+        const headers = wrapper.findAll('[data-testid="run-header"]');
+        expect(headers.map((header) => header.attributes("data-run-id"))).toEqual([RUN_A, RUN_B]);
+        expect(wrapper.findAll('[data-testid="run-group-body"]')).toHaveLength(3);
+    });
+
     it("does not group (no header, no indent) when the session has a single run", () => {
         const wrapper = mountList(
             [message("a-user", RUN_A, "user"), message("a-assistant", RUN_A, "assistant")],
