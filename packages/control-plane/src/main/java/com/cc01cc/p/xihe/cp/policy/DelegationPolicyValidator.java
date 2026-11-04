@@ -20,10 +20,12 @@ import java.util.Set;
  *
  * <ul>
  *   <li>both keys are optional — a missing key means "use the code default";</li>
- *   <li>each present value must be a <b>JSON integer ≥ 1</b>. {@code 0} is <b>not</b> "unlimited"
- *       here, unlike the {@code runMaxTurns} family ({@code ConfigService} run-budget comment): a
- *       zero delegation budget would mean "may never delegate", which is expressed by not granting
- *       {@code SPAWN_AGENT} at all, not by a policy value;</li>
+ *   <li>each present value must be a <b>JSON integer</b>. For {@code maxDepth} the floor is 1
+ *       (a tree must be allowed at least one hop or the key is nonsense). For {@code maxCount}
+ *       the floor is 0: <b>{@code 0} means "delegation disabled"</b> — the budget gate refuses
+ *       every {@code spawn_agent} under this principal with reason {@code delegation_disabled}
+ *       (PLAN-0648, user ruling A1). {@code 0} is <b>not</b> "unlimited", unlike the
+ *       {@code runMaxTurns} family;</li>
  *   <li>unknown keys are rejected ({@code additionalProperties:false}) so a typo cannot silently
  *       become a no-op setting;</li>
  *   <li>{@code null} = clear the column (falls back to the code defaults).</li>
@@ -98,32 +100,45 @@ public final class DelegationPolicyValidator {
             throw invalid(status, code, "delegationPolicy accepts only maxCount and maxDepth; unknown key(s): "
                     + String.join(", ", unknown));
         }
-        requirePositiveInteger(policy, KEY_MAX_COUNT, status, code);
-        requirePositiveInteger(policy, KEY_MAX_DEPTH, status, code);
+        requireCountInteger(policy, status, code);
+        requireDepthInteger(policy, status, code);
     }
 
-    private static void requirePositiveInteger(JsonNode policy, String key, HttpStatus status, String code) {
-        JsonNode value = policy.get(key);
+    private static void requireCountInteger(JsonNode policy, HttpStatus status, String code) {
+        JsonNode value = policy.get(KEY_MAX_COUNT);
         if (value == null || value.isNull()) {
             return;
         }
         if (!value.isIntegralNumber()) {
-            throw invalid(status, code, "delegationPolicy." + key + " must be an integer >= 1");
+            throw invalid(status, code, "delegationPolicy.maxCount must be an integer >= 0");
         }
-        if (value.asInt() < 1) {
-            throw invalid(status, code, "delegationPolicy." + key + " must be >= 1 (0 is not \"unlimited\"; "
-                    + "withdraw the SPAWN_AGENT authorisation instead)");
+        if (value.asInt() < 0) {
+            throw invalid(status, code, "delegationPolicy.maxCount must be >= 0 "
+                    + "(0 disables delegation; a negative budget is meaningless)");
         }
         // Refuse (rather than clamp) on the write face: silently storing a value that every read will
         // clamp is exactly the "writable but never effective" no-op this plan set out to remove.
-        if (value.asInt() > hardRail(key)) {
-            throw invalid(status, code, "delegationPolicy." + key + " must not exceed the hard ceiling "
-                    + hardRail(key));
+        if (value.asInt() > HARD_MAX_COUNT) {
+            throw invalid(status, code, "delegationPolicy.maxCount must not exceed the hard ceiling "
+                    + HARD_MAX_COUNT);
         }
     }
 
-    private static int hardRail(String key) {
-        return KEY_MAX_COUNT.equals(key) ? HARD_MAX_COUNT : HARD_MAX_DEPTH;
+    private static void requireDepthInteger(JsonNode policy, HttpStatus status, String code) {
+        JsonNode value = policy.get(KEY_MAX_DEPTH);
+        if (value == null || value.isNull()) {
+            return;
+        }
+        if (!value.isIntegralNumber()) {
+            throw invalid(status, code, "delegationPolicy.maxDepth must be an integer >= 1");
+        }
+        if (value.asInt() < 1) {
+            throw invalid(status, code, "delegationPolicy.maxDepth must be >= 1");
+        }
+        if (value.asInt() > HARD_MAX_DEPTH) {
+            throw invalid(status, code, "delegationPolicy.maxDepth must not exceed the hard ceiling "
+                    + HARD_MAX_DEPTH);
+        }
     }
 
     private static int readInt(JsonNode policy, String key, int fallback) {

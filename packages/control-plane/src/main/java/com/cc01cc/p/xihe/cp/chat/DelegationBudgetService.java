@@ -110,6 +110,12 @@ public class DelegationBudgetService {
 
         DelegationLimits limits = effectiveLimits(rootPrincipalId, audit);
         int childDepth = walk.depth() + 1;
+        // PLAN-0648 ruling A1: maxCount=0 is the explicit "delegation disabled" value. Refuse every
+        // spawn under this principal with a dedicated reason (the refusal envelope stays the same
+        // DELEGATION_LIMIT_EXCEEDED shape the client already handles).
+        if (limits.maxCount() == 0) {
+            throw DelegationRefusedException.disabled(audit, childDepth, limits.maxDepth());
+        }
         if (childDepth > limits.maxDepth()) {
             throw DelegationRefusedException.refused("depth_exceeded", audit, childDepth,
                     limits.maxDepth(), 0, limits.maxCount());

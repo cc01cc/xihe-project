@@ -244,7 +244,7 @@ class DelegationBudgetServiceTest {
 
     @Test
     void unreadableStoredPolicyFailsClosed() throws Exception {
-        policy("{\"maxCount\":0}");
+        policy("{\"maxCount\":\"x\"}");
         Session root = session(UUID.randomUUID(), null, null, ROOT_PRINCIPAL);
 
         DelegationRefusedException refused = assertThrows(DelegationRefusedException.class,
@@ -271,5 +271,27 @@ class DelegationBudgetServiceTest {
         Session root = session(UUID.randomUUID(), null, null, ROOT_PRINCIPAL);
 
         assertEquals(new DelegationLimits(8, 5), budget.requireWithinBudget(root, run(), "tc"));
+    }
+    @Test
+    void maxCountZeroDisablesDelegationWithTheDedicatedReason() throws Exception {
+        policy("{\"maxCount\":0}");
+        Session root = session(UUID.randomUUID(), null, null, ROOT_PRINCIPAL);
+
+        DelegationRefusedException refused = assertThrows(DelegationRefusedException.class,
+                () -> budget.requireWithinBudget(root, run(), "tc"));
+        assertEquals("DELEGATION_LIMIT_EXCEEDED", refused.getCode());
+        assertTrue(refused.getMessage().contains("delegationPolicy"),
+                "the refusal names the policy knob: " + refused.getMessage());
+        assertTrue(refused.auditDetail().contains("delegation_disabled"),
+                "the audit detail carries the dedicated reason: " + refused.auditDetail());
+    }
+
+    @Test
+    void maxCountOneStillAllowsTheFirstChild() throws Exception {
+        policy("{\"maxCount\":1}");
+        Session root = session(UUID.randomUUID(), null, null, ROOT_PRINCIPAL);
+
+        DelegationLimits limits = budget.requireWithinBudget(root, run(), "tc");
+        assertEquals(1, limits.maxCount(), "a single-child policy is unchanged");
     }
 }

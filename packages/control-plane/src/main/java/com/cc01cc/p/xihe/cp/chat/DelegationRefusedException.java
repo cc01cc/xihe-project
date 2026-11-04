@@ -47,6 +47,17 @@ public class DelegationRefusedException extends CpApiException {
     }
 
     /**
+     * PLAN-0648 ruling A1: the principal's {@code delegationPolicy.maxCount = 0} — delegation is
+     * explicitly disabled. Same {@code DELEGATION_LIMIT_EXCEEDED} envelope as the budget refusals;
+     * the {@code delegation_disabled} reason distinguishes it in the audit detail.
+     */
+    public static DelegationRefusedException disabled(DelegationAuditContext context, int depth, int maxDepth) {
+        return new DelegationRefusedException(ToolRefusalCodes.DELEGATION_LIMIT_EXCEEDED,
+                "delegation is disabled by this principal's delegationPolicy (maxCount=0)"
+                        + " — 该委派策略已禁用委派",
+                context.toAuditDetail("delegation_disabled", depth, maxDepth, 0, 0));
+    }
+    /**
      * @param reason {@code count_exceeded} | {@code depth_exceeded}
      * @param depth the depth the new child would have had
      * @param maxDepth the effective depth limit
