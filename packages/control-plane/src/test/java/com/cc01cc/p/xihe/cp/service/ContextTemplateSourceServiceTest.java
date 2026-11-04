@@ -23,6 +23,7 @@ import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
@@ -156,6 +157,32 @@ class ContextTemplateSourceServiceTest {
         assertEquals("truncated", ((Map<?, ?>) sources.get(firstId)).get("status"));
         assertEquals("truncated", ((Map<?, ?>) sources.get(secondId)).get("status"));
         verify(runtime, times(512)).listDirectory(eq(WORKSPACE), anyString());
+    }
+
+    @Test
+    void agentMemoryComponentResolvesForTheRunPrincipal() throws Exception {
+        // BL-284: once the admission snapshot carries the context template's components, the memory
+        // component must resolve with the RUN's principal (not the session owner) and echo the
+        // snapshot CP built — this is the CP half of "memory reaches outbound".
+        Map<String, Object> snapshot = Map.of(
+                "status", "ready",
+                "entries", List.of(Map.of("content", "remembered fact")),
+                "truncated", false,
+                "diagnostics", List.of());
+        when(memoryInjection.snapshot(any(), any(), anyInt(), anyInt())).thenReturn(snapshot);
+
+        String componentSnapshot = "{\"template\":{\"components\":[{\"instanceId\":\"memory-1\","
+                + "\"type\":\"agent_memory\",\"enabled\":true,\"config\":{\"maxEntries\":24,\"maxTokens\":4000}}]}}";
+        ContextTemplateSourceService.RunContext run = new ContextTemplateSourceService.RunContext(
+                RUN_ID, SESSION_ID, WORKSPACE, USER, mapper.readTree(componentSnapshot), null, USER);
+        Session session = new Session(WORKSPACE, USER, "memory test");
+        session.setId(UUID.fromString(SESSION_ID));
+
+        Map<String, Object> sources = new ContextTemplateSourceService(runtime, policy, mapper,
+                memoryInjection, skillCatalog).resolve(run, session);
+
+        assertEquals(snapshot, sources.get("memory-1"));
+        verify(memoryInjection).snapshot(UUID.fromString(USER), UUID.fromString(WORKSPACE), 24, 4000);
     }
 
     @Test
