@@ -666,9 +666,30 @@ public class ChatSubmissionService {
             JsonNode args = objectMapper.reader()
                     .with(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
                     .readTree(argumentsPreview);
-            JsonNode prompt = args == null ? null : args.get("prompt");
-            if (args == null || !args.isObject() || args.size() != 1
-                    || prompt == null || !prompt.isTextual() || prompt.textValue().isBlank()) {
+            if (args == null || !args.isObject()) {
+                throw invalidSpawnArguments();
+            }
+            JsonNode prompt = args.get("prompt");
+            boolean envelope = false;
+            if (prompt == null && args.has("params")) {
+                // BL-220 read-side tolerance: 旧行可能是整条 JSON-RPC 信封 —— CP MCP 代理侧
+                // （McpProxyController 的 gate 写入）曾把 raw body 写进 preview，与 Agent 事件侧
+                // 的纯参数双形状并存，导致本方法只认纯参数、预算闸永远到不了（0649 真栈实证）。
+                // 写侧已统一为纯参数；这里再容忍一层，防第三方路径再写信封。信封必须真是
+                // tools/call 且 params.arguments 是对象，method 不符即拒绝。
+                JsonNode params = args.get("params");
+                if (params != null && params.isObject()
+                        && "tools/call".equals(args.path("method").asText(""))) {
+                    JsonNode envelopeArguments = params.get("arguments");
+                    if (envelopeArguments != null && envelopeArguments.isObject()) {
+                        prompt = envelopeArguments.get("prompt");
+                        envelope = prompt != null;
+                    }
+                }
+            }
+            // 纯参数形态保持原有严格度：必须恰好像 {"prompt": "..."} 一个键。
+            if (prompt == null || !prompt.isTextual() || prompt.textValue().isBlank()
+                    || (!envelope && args.size() != 1)) {
                 throw invalidSpawnArguments();
             }
             return prompt.textValue();

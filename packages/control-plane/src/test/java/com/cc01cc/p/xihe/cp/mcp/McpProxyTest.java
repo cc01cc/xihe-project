@@ -327,6 +327,31 @@ class McpProxyTest {
 
     @Test
     @SuppressWarnings("unchecked")
+    void handleToolsCallRecordsPlainArgumentsPreviewNotTheJsonRpcEnvelope() throws Exception {
+        String body = "{\"jsonrpc\":\"2.0\",\"method\":\"tools/call\","
+                + "\"params\":{\"name\":\"read_file\",\"arguments\":{\"path\":\"a.md\"}},\"id\":35}";
+        String runId = "11111111-1111-1111-1111-111111111111";
+        String toolCallId = "33333333-3333-3333-3333-333333333333";
+        when(policyEngine.hasCurrentAgentToolCall("u-1", TEST_WS_UUID, "sess-1",
+                runId, toolCallId, "read_file")).thenReturn(false);
+        HttpHeaders headers = new HttpHeaders();
+        headers.set("X-Chat-Run-Id", runId);
+        headers.set("X-Tool-Call-Id", toolCallId);
+        seedToolCache("read_file", "__system__");
+
+        ReflectionTestUtils.invokeMethod(controller, "handleToolsCall", TEST_WS_UUID, body, headers,
+                "sess-1", internalAccessContext(TEST_WS_UUID, "u-1", "sess-1"));
+
+        // BL-220: preview 必须是纯参数对象（与 Agent 事件侧 McpRelayToolRecorder 一致），
+        // 不得是整条 JSON-RPC 信封 —— 双形状会让 deriveSpawnContent 永远到不了预算闸。
+        ArgumentCaptor<String> previewCaptor = ArgumentCaptor.forClass(String.class);
+        verify(mcpInvocationService).openAgentInvocation(eq(runId), eq(toolCallId), eq("read_file"),
+                isNull(), previewCaptor.capture());
+        assertEquals("{\"path\":\"a.md\"}", previewCaptor.getValue());
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
     void handleToolsCallRejectsAgentWithoutDurableRunToolCallBeforePolicy() throws Exception {
         String body = "{\"jsonrpc\":\"2.0\",\"method\":\"tools/call\","
                 + "\"params\":{\"name\":\"read_file\",\"arguments\":{\"path\":\"a.md\"}},\"id\":34}";
