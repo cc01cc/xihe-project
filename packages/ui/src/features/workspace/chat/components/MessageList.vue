@@ -268,8 +268,17 @@ const rows = computed<Row[]>(() => {
 const VIRTUAL_FALLBACK_ROW_HEIGHT = 120;
 const scrollerContext = inject<MessageScrollerContextValue | null>(MessageScrollerContextKey, null);
 const rowKeys = computed(() => rows.value.map((row) => row.key));
+/**
+ * prepend/丢最旧的一帧：临时关闭窗口化（全量渲染），让 provider 的
+ * `preserve-scroll-on-prepend` 用真实 DOM 锚点恢复位置；下一帧再恢复窗口化并由
+ * `restoreAnchor` 做精确校正。窗口化下直接按高度估算会因 fallback 误差跳位（实测 11k px）。
+ */
+const historyMutationPause = ref(false);
 const virtualEnabled = computed(
-    () => !searchQuery.value && rows.value.length > DEFAULT_VIRTUAL_MIN_ROWS,
+    () =>
+        !historyMutationPause.value &&
+        !searchQuery.value &&
+        rows.value.length > DEFAULT_VIRTUAL_MIN_ROWS,
 );
 const {
     window: virtualWindow,
@@ -319,7 +328,15 @@ watch(
     async (nextFirst, prevFirst) => {
         if (!virtualizationActive.value || !nextFirst || !prevFirst || nextFirst === prevFirst)
             return;
+        // 先在旧 DOM 上抓锚点，再临时全量渲染一帧，让 provider 的 prepend 恢复生效。
         const anchor = captureAnchor();
+        historyMutationPause.value = true;
+        try {
+            await nextTick();
+            await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+        } finally {
+            historyMutationPause.value = false;
+        }
         await nextTick();
         await restoreAnchor(anchor);
     },
