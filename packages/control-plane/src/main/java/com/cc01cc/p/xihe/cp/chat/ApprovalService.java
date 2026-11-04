@@ -442,21 +442,31 @@ public class ApprovalService {
                     "Approval grant could not be materialized as a policy rule", e);
         }
         try {
-            // PLAN-0655 T2: cp_gate rows are CP-internal (spawn gate / human delegation). There is
-            // no agent-side invocation to answer — relaying 404s (APPROVAL_NOT_FOUND) and would
-            // strand the row in dispatch_unknown. The continuation for a gate grant is the
-            // caller's retry with the approval header (consumeApprovedGrant), never an agent push.
-            if (!ChatApproval.ORIGIN_CP_GATE.equals(approval.getOrigin())) {
-                agentClient.respond(requestId, approved, decision.kind().wireName(), decision.feedback());
-            }
+            // BL-232: relay to the Agent for BOTH origins. A cp_gate row can absolutely have an
+            // Agent-side listener: the MCP gate answers the first tools/call with the 409 gate
+            // frame, the Agent registers a local waiter keyed by this request id (PLAN-0328 T1.9
+            // post-gate) and this push is the ONLY release path — without it the waiter sleeps
+            // until the approval TTL runs out and the run dies with CHAT_EXECUTION_FAILED
+            // (spawn_agent, 2026-11-04: decision at +1.2s, no retry ever observed).
+            // A cp_gate row with NO waiter (PLAN-0655 human delegation: CP talks to spawn
+            // directly) answers 404 APPROVAL_NOT_FOUND; that is expected and must not strand the
+            // row — the decision stays local and the caller's header retry continues.
+            agentClient.respond(requestId, approved, decision.kind().wireName(), decision.feedback());
         } catch (CpApiException e) {
-            int marked = approvalRepository.markDispatchUnknown(approval.getRequestId(), e.getCode(), Instant.now());
-            if (marked == 0) {
-                logger.warn("[LIFECYCLE] service=cp event=chat_approval_dispatch_unknown_skipped requestId={} state was no longer dispatching", requestId);
+            if (!ChatApproval.ORIGIN_CP_GATE.equals(approval.getOrigin())) {
+                // agent_relay rows keep the historical fail-closed behavior (untouched by BL-232).
+                int marked = approvalRepository.markDispatchUnknown(approval.getRequestId(), e.getCode(), Instant.now());
+                if (marked == 0) {
+                    logger.warn("[LIFECYCLE] service=cp event=chat_approval_dispatch_unknown_skipped requestId={} state was no longer dispatching", requestId);
+                }
+                appendApprovalHistoryQuietly(approval, ApprovalHistory.EVENT_DISPATCH_UNKNOWN,
+                        "dispatching", "dispatch_unknown", null, null, "system", e.getCode());
+                throw e;
             }
-            appendApprovalHistoryQuietly(approval, ApprovalHistory.EVENT_DISPATCH_UNKNOWN,
-                    "dispatching", "dispatch_unknown", null, null, "system", e.getCode());
-            throw e;
+            // BL-232: best-effort relay for gate rows — WARN and keep the local decision.
+            // Never mark dispatch_unknown (that was PLAN-0655 T2's intent and stays intact).
+            logger.warn("[LIFECYCLE] service=cp event=approval_gate_relay_skipped requestId={} code={}",
+                    requestId, e.getCode());
         }
         int decided = approvalRepository.markDecided(approval.getRequestId(),
                 approved ? "approved" : "rejected", decision.kind().wireName(), Instant.now());
