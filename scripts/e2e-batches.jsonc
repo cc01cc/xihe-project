@@ -207,6 +207,11 @@
       "bootstrapUser": "register",
       "registrationPolicy": "open",
       "specs": ["e2e/real/goldpath-first-run.spec.ts"]
+    },
+    "session-matrix": {
+      "description": "PLAN-0658 session matrix real lane: multi human accounts (mutual visibility / @ mention / cc / non-participant denial) on the fake LLM",
+      "llmMode": "success",
+      "specs": ["e2e/real/session-matrix-multi-account.spec.ts"]
     }
   }
 }
