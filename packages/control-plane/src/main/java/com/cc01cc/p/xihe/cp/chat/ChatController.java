@@ -1670,7 +1670,8 @@ public class ChatController {
                         relayResult.tokenCount(),
                         assistantContent == null ? 0 : assistantContent.length(),
                         relayResult.usageEnvelope(),
-                        exhaustedDimension);
+                        exhaustedDimension,
+                        relayResult.agentContextTruncation());
                 // PLAN-0352 V1: the session SSE must observe the terminal error/done
                 // BEFORE the connection closes. Two real orders exist around session
                 // delete (claim `cancelling` → settleCancellation durable `cancelled`):
@@ -1964,6 +1965,20 @@ public class ChatController {
                 errorCode, errorDetail, tokenCount, assistantChars, usagePayload, budgetDimension);
     }
 
+    /**
+     * PLAN-0670 M2c / BL-293: the relay's parsed {@code done.agentContextTruncation} node is carried
+     * into the same terminal transition that already carries the usage envelope; only the relay-owned
+     * terminal path passes a non-null node, every other caller uses the 10-arg overload.
+     */
+    private boolean transitionRun(String runId, List<String> expectedStatuses, String status,
+                                  String outcome, String errorCode, String errorDetail,
+                                  int tokenCount, int assistantChars, Object usagePayload,
+                                  String budgetDimension, JsonNode contextTruncation) {
+        return chatRunLifecycleService.transition(runId, expectedStatuses, status, outcome,
+                errorCode, errorDetail, tokenCount, assistantChars, usagePayload, budgetDimension,
+                contextTruncation);
+    }
+
     private String safeErrorCode(String code) {
         if (code == null) {
             return "AGENT_UNAVAILABLE";
@@ -2231,6 +2246,9 @@ public class ChatController {
         String outcome = "success";
         String errorCode = null;
         String budgetDimension = null;
+        // PLAN-0670 M2c / BL-293: parsed from the SAME `done` payload that is relayed to the UI; the
+        // terminal write persists exactly this node (no second parse/derivation).
+        JsonNode contextTruncation = null;
         int eventIndex = 0;
         var runState = com.cc01cc.p.xihe.cp.mcp.McpRelayToolRecorder.RunState.create();
         try (BufferedReader reader = new BufferedReader(new InputStreamReader(agentStream, StandardCharsets.UTF_8))) {
@@ -2293,6 +2311,7 @@ public class ChatController {
                         }
                     } else if (isDone) {
                         Map<?, ?> donePayload = asMap(parsePayload(eventName, data.toString()));
+                        contextTruncation = contextTruncationOf(donePayload, contextTruncation);
                         String doneOutcome = stringValue(donePayload, "outcome");
                         String doneErrorCode = stringValue(donePayload, "errorCode");
                         if (doneErrorCode != null) {
@@ -2356,6 +2375,7 @@ public class ChatController {
                         ? "ambiguous" : assistantContent.isEmpty() ? "error" : "partial";
             } else if (isDone) {
                 Map<?, ?> donePayload = asMap(parsePayload(eventName, data.toString()));
+                contextTruncation = contextTruncationOf(donePayload, contextTruncation);
                 String doneOutcome = stringValue(donePayload, "outcome");
                 String doneErrorCode = stringValue(donePayload, "errorCode");
                 if (doneErrorCode != null) {
@@ -2401,7 +2421,7 @@ public class ChatController {
                 : eventCounts.getOrDefault("token", 0);
         return new StreamRelayResult(
                 assistantContent.toString(), outcome, errorCode, budgetDimension,
-                usageTotal, List.copyOf(terminalEvents), runState, usageEnvelope);
+                usageTotal, List.copyOf(terminalEvents), runState, usageEnvelope, contextTruncation);
     }
 
     private static int intValue(Object value, int fallback) {
@@ -2550,7 +2570,9 @@ public class ChatController {
             int tokenCount,
             List<RelayedTerminalEvent> terminalEvents,
             com.cc01cc.p.xihe.cp.mcp.McpRelayToolRecorder.RunState runState,
-            Map<?, ?> usageEnvelope
+            Map<?, ?> usageEnvelope,
+            /** PLAN-0670 M2c / BL-293: same parsed done object the UI receives; null = no truncation. */
+            JsonNode agentContextTruncation
     ) {}
 
     private record ContinuationDispatchContext(
@@ -2661,6 +2683,17 @@ public class ChatController {
             logger.debug("Failed to parse SSE payload as JSON, falling back to raw text: {}", e.getMessage());
             return Map.of("content", payload, "type", eventName);
         }
+    }
+
+    /**
+     * PLAN-0670 M2c / BL-293: extract the inbound truncation marker from the parsed {@code done}
+     * payload. The node is built from the SAME map used for the terminal-outcome fields and for the
+     * relayed SSE payload, so the durable value cannot drift from what the UI received. A malformed /
+     * absent marker keeps {@code fallback} (null unless a valid object was seen earlier in the stream).
+     */
+    private JsonNode contextTruncationOf(Map<?, ?> donePayload, JsonNode fallback) {
+        Object raw = donePayload.get("agentContextTruncation");
+        return raw instanceof Map<?, ?> ? objectMapper.valueToTree(raw) : fallback;
     }
 
     /**

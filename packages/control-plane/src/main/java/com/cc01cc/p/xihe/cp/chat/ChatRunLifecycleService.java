@@ -1,6 +1,7 @@
 package com.cc01cc.p.xihe.cp.chat;
 
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
+import com.fasterxml.jackson.databind.JsonNode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -28,7 +29,7 @@ public class ChatRunLifecycleService {
                               String outcome, String errorCode, String errorDetail,
                               int tokenCount, int assistantChars, Object usagePayload) {
         return transition(runId, expectedStatuses, status, outcome, errorCode, errorDetail,
-                tokenCount, assistantChars, usagePayload, null);
+                tokenCount, assistantChars, usagePayload, null, null);
     }
 
     /**
@@ -40,6 +41,19 @@ public class ChatRunLifecycleService {
                               String outcome, String errorCode, String errorDetail,
                               int tokenCount, int assistantChars, Object usagePayload,
                               String budgetDimension) {
+        return transition(runId, expectedStatuses, status, outcome, errorCode, errorDetail,
+                tokenCount, assistantChars, usagePayload, budgetDimension, null);
+    }
+
+    /**
+     * PLAN-0670 M2c / BL-293: {@code contextTruncation} is the Agent's inbound truncation marker,
+     * parsed from the same terminal {@code done} payload CP relays to the UI; it is persisted into
+     * {@code chat_runs.context_truncation} by the terminal owner. Non-relay terminal paths pass null.
+     */
+    public boolean transition(String runId, List<String> expectedStatuses, String status,
+                              String outcome, String errorCode, String errorDetail,
+                              int tokenCount, int assistantChars, Object usagePayload,
+                              String budgetDimension, JsonNode contextTruncation) {
         if (runId == null || runId.isBlank()) {
             return false;
         }
@@ -48,7 +62,7 @@ public class ChatRunLifecycleService {
                     new ChatRunTerminalService.TerminalRequest(runId, expectedStatuses, status,
                             outcome, errorCode, errorDetail, tokenCount, assistantChars,
                             ChatRunTerminalService.TerminalSource.STREAM, usagePayload,
-                            budgetDimension));
+                            budgetDimension, contextTruncation));
             if (!result.committed()) {
                 logger.debug("[LIFECYCLE] service=cp event=chat_run_transition_ignored runId={} targetStatus={} outcome={}",
                         runId, status, result.outcome());
