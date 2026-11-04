@@ -235,14 +235,23 @@ export function commitDistance({ cwd, from, to, run = spawnSync }) {
  * - `behind`        `git rev-list --count runningCommit..headCommit` (`null` when unknown)
  * - `stale`         provably not from HEAD (`verdict` is `stale` or `missing`)
  * - `verdict`       `fresh` | `stale` | `missing` | `unverified` (same vocabulary as the gate)
+ * - `targetDirSource` **additive (BL-253 L3)**: `pointer` | `newest` | `env` | `derived` — where
+ *   `targetDir` came from. Existing fields keep their meaning unchanged.
  *
- * @param {{targetDir: string, headCommit: string|null, cwd: string, run?: typeof spawnSync}} input
+ * @param {{
+ *   targetDir: string,
+ *   headCommit: string|null,
+ *   cwd: string,
+ *   run?: typeof spawnSync,
+ *   targetDirSource?: 'pointer'|'newest'|'env'|'derived',
+ * }} input
  */
-export function cpBuildStatus({ targetDir, headCommit, cwd, run = spawnSync }) {
+export function cpBuildStatus({ targetDir, headCommit, cwd, run = spawnSync, targetDirSource = 'derived' }) {
   const verdict = evaluateCpFreshness({ targetDir, headCommit });
   const head = typeof headCommit === 'string' && headCommit.trim() ? headCommit.trim() : null;
   return {
     targetDir,
+    targetDirSource,
     file: verdict.file,
     runningCommit: verdict.fileCommit,
     headCommit: head,
