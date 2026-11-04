@@ -2055,6 +2055,7 @@ const messages = {
             principalNameRequired: "名称不能为空",
             principalNameWhitespace: "名称前后不能有空格",
             principalNamePattern: "只能使用英文字母、中文汉字或数字，且不能以数字开头（不含空格）",
+            usernameTooLong: "用户名最长 32 个字符",
             nameAllowed: "允许：英文字母 / 中文汉字 / 数字，且不能以数字开头",
         },
         common: {
@@ -4414,6 +4415,7 @@ const messages = {
             principalNameWhitespace: "No leading or trailing spaces allowed",
             principalNamePattern:
                 "Use only letters, Chinese characters or digits, and do not start with a digit (no spaces)",
+            usernameTooLong: "Username must be at most 32 characters",
             nameAllowed:
                 "Allowed: letters / Chinese characters / digits, not starting with a digit",
         },
