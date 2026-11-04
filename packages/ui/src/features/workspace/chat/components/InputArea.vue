@@ -4,6 +4,7 @@ import { useI18n } from "vue-i18n";
 import { useSessionParticipantsStore } from "../../stores/sessionParticipants";
 import { useWorkspaceStore } from "../../stores/workspace";
 import { useAuthStore } from "../../../../stores/auth";
+import { useAgentStore } from "../../../../stores/agent";
 import { useChatStore } from "../stores/chat";
 import type { AttachmentFile, FileNode } from "../../../../types";
 import { toast } from "vue-sonner";
@@ -98,6 +99,7 @@ const participantsStore = useSessionParticipantsStore();
 /** PLAN-0635 M2: already-loaded workspace tree feeds `@文件/目录` candidates (no request here). */
 const workspaceStore = useWorkspaceStore();
 const authStore = useAuthStore();
+const delegationAgentStore = useAgentStore();
 // PLAN-0655 T1.2: capability-atom read (SPAWN_AGENT in this workspace) — grey vs. clickable only;
 // the spawn POST re-evaluates the same atom server-side.
 const delegationPermission = useDelegationPermission(() => authStore.currentWorkspaceId ?? "");
@@ -105,11 +107,29 @@ const delegationOpen = ref(false);
 const delegationSubmitting = ref(false);
 const delegationPrincipals = ref<DelegationPrincipal[]>([]);
 const delegationBudget = ref<DelegationBudgetView | null>(null);
+/** Bound to one pending spawn attempt so the 202 replay reuses the SAME Idempotency-Key. */
+const delegationIdempotencyKey = ref<string | null>(null);
+const pendingApprovalRequestId = ref<string | null>(null);
+/** The payload waiting behind an approval (re-posted with its grant header when approved). */
+const delegationPending = ref<{ principalId: string; task: string } | null>(null);
+
+async function refreshDelegationBudget() {
+    try {
+        delegationBudget.value = await api.delegationUsage(props.sessionId);
+    } catch (error) {
+        logger.warn("failed to read delegation usage", error);
+        delegationBudget.value = null;
+    }
+}
 
 async function openDelegation() {
     delegationOpen.value = true;
-    // T1.4 adds the budget read (GET /delegation-usage) for the open session; the skeleton only
-    // loads the delegable principals so the picker shows the real workspace roster.
+    delegationIdempotencyKey.value = null;
+    pendingApprovalRequestId.value = null;
+    delegationPending.value = null;
+    void refreshDelegationBudget();
+    // Principals for the picker (bound && enabled); the budget row reads GET /delegation-usage
+    // above so the dialog opens with the real usage of this Session's delegation root.
     try {
         const workspaceId = authStore.currentWorkspaceId;
         if (!workspaceId) return;
@@ -123,16 +143,69 @@ async function openDelegation() {
     }
 }
 
-async function handleDelegationSubmit() {
-    // T1.4: POST /api/v1/sessions/{sessionId}/delegation-spawn (201/202 + approval replay).
+/**
+ * PLAN-0655 T1.4: POST /delegation-spawn with a stable Idempotency-Key per attempt. 201 finishes
+ * the delegation; 202 parks it behind the existing approval flow (CP already emits the SSE
+ * approval_request on this session, so the normal approval card renders it) and the watcher below
+ * replays with the grant header once the card resolves it.
+ */
+async function submitDelegation(
+    payload: { principalId: string; task: string },
+    approvalRequestId?: string,
+) {
     delegationSubmitting.value = true;
     try {
-        toast.success(t("chat.delegation.mockSubmitted"));
+        delegationIdempotencyKey.value ??= crypto.randomUUID();
+        const answer = await api.delegationSpawn(
+            props.sessionId,
+            { agentPrincipalId: payload.principalId, task: payload.task },
+            delegationIdempotencyKey.value,
+            approvalRequestId,
+        );
+        if ("approvalRequestId" in answer) {
+            pendingApprovalRequestId.value = answer.approvalRequestId;
+            delegationPending.value = payload;
+            toast.info(t("chat.delegation.approvalPending"));
+            return;
+        }
+        toast.success(t("chat.delegation.created"));
+        delegationIdempotencyKey.value = null;
+        pendingApprovalRequestId.value = null;
+        delegationPending.value = null;
         delegationOpen.value = false;
+        void refreshDelegationBudget();
+        // T1.5: answer.childSessionId / rootSessionId feed the session tree + badge surface.
+    } catch (error) {
+        logger.error("delegation spawn failed", error);
+        toast.error(t("chat.delegation.submitFailed"));
     } finally {
         delegationSubmitting.value = false;
     }
 }
+
+function handleDelegationSubmit(payload: { principalId: string; task: string }) {
+    void submitDelegation(payload);
+}
+
+// The approval card resolves decisions into the agent store; watch OUR pending id so the human
+// never repeats the form after granting (same Idempotency-Key => no second budget spend).
+watch(
+    () =>
+        pendingApprovalRequestId.value
+            ? delegationAgentStore.resolvedApprovals[pendingApprovalRequestId.value]?.state
+            : undefined,
+    (state) => {
+        if (!pendingApprovalRequestId.value) return;
+        if (state === "approved" && delegationPending.value) {
+            void submitDelegation(delegationPending.value, pendingApprovalRequestId.value);
+        } else if (state === "rejected" || state === "expired") {
+            pendingApprovalRequestId.value = null;
+            delegationPending.value = null;
+            delegationIdempotencyKey.value = null;
+            toast.error(t("chat.delegation.approvalRejected"));
+        }
+    },
+);
 /** PLAN-0635 M3: `/export` and `/compact` are branch-scoped — read the selected branch here. */
 const chatStore = useChatStore();
 const speakAsId = ref("");
@@ -1178,6 +1251,7 @@ defineExpose({ clearDraft, insertMention });
                             :principals="delegationPrincipals"
                             :budget="delegationBudget"
                             :submitting="delegationSubmitting"
+                            :approval-pending="pendingApprovalRequestId !== null"
                             @submit="handleDelegationSubmit"
                         />
                     </template>

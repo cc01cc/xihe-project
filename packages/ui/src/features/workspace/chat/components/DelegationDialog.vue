@@ -32,6 +32,8 @@ const props = defineProps<{
         principals: DelegationPrincipal[];
         budget: DelegationBudgetView | null;
         submitting: boolean;
+        /** A pending approval for this attempt is tracked (CP answered 202). */
+        approvalPending?: boolean;
     }>(),
     emit = defineEmits<{
         "update:open": [value: boolean];
@@ -55,7 +57,8 @@ const canSubmit = computed(
         Boolean(task.value.trim()) &&
         task.value.length <= 4000 &&
         !budgetDisabled.value &&
-        !props.submitting,
+        !props.submitting &&
+        !props.approvalPending,
 );
 
 watch(
@@ -149,6 +152,13 @@ function submit() {
                                 ? t("chat.delegation.budgetDisabled")
                                 : t("chat.delegation.budgetHint")
                         }}
+                    </p>
+                    <p
+                        v-if="approvalPending"
+                        class="text-xs text-brand"
+                        data-testid="delegation-approval-pending"
+                    >
+                        {{ t("chat.delegation.approvalPendingHint") }}
                     </p>
                 </div>
             </div>

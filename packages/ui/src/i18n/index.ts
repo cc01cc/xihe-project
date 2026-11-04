@@ -742,7 +742,11 @@ const messages = {
                 budgetDisabled: "该主体的委派策略已禁用委派",
                 cancel: "取消",
                 submit: "创建委派",
-                mockSubmitted: "委派已创建（骨架态：T1.4 接线后创建真实子会话）",
+                created: "委派已创建，子会话已就绪",
+                approvalPending: "审批已发起，批准后将自动创建委派",
+                approvalPendingHint: "会话中已发起审批；批准后会用同一幂等键自动重试，无需重填",
+                approvalRejected: "委派审批被拒绝或已过期",
+                submitFailed: "委派创建失败，请稍后重试",
             },
             // PLAN-0635 M1：`/` 命令与 `@` 提及的输入面文案（两者共用一个候选面）。
             input: {
@@ -2955,7 +2959,13 @@ const messages = {
                 budgetDisabled: "That principal's delegation policy disables delegation",
                 cancel: "Cancel",
                 submit: "Create delegation",
-                mockSubmitted: "Delegation created (skeleton: T1.4 wires the real child session)",
+                created: "Delegation created, child session is ready",
+                approvalPending:
+                    "Approval requested; it will be created automatically once granted",
+                approvalPendingHint:
+                    "An approval was opened in this session; granting it replays the same idempotency key — no need to refill",
+                approvalRejected: "The delegation approval was rejected or expired",
+                submitFailed: "Could not create the delegation, try again later",
             },
             placeholder: "Type a message, Enter to send, Shift+Enter for new line...",
             // PLAN-0635 M1: input-surface copy for `/` commands and `@` mentions (one shared menu).
