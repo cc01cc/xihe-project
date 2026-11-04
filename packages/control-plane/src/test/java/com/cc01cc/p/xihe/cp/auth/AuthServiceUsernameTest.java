@@ -42,11 +42,37 @@ class AuthServiceUsernameTest {
     }
 
     @Test
-    void selfFilledUsername_uppercase_is400UsernameInvalid() {
-        AuthService service = service(repository());
-        CpApiException e = assertThrows(CpApiException.class, () -> service.registerUser(
-                new RegisterRequest("zhang@example.com", "pw-12345678", "Zhang", "Zhang")));
-        assertEquals("USERNAME_INVALID", e.getCode());
+    void selfFilledUsername_uppercaseAndChinese_areAcceptedSinceV29() {
+        // 决策 v29（2026-11-04）：username 与 agent 主体名/昵称同规则 —— 允许大写与中文汉字。
+        User english = service(repository()).registerUser(
+                new RegisterRequest("zhang@example.com", "pw-12345678", "Zhang", "Zhang"));
+        assertEquals("Zhang", english.getUsername());
+
+        User chinese = service(repository()).registerUser(
+                new RegisterRequest("li@example.com", "pw-12345678", "Li", "李小明"));
+        assertEquals("李小明", chinese.getUsername());
+    }
+
+    @Test
+    void selfFilledUsername_spacesAndSymbols_are400UsernameInvalid() {
+        // v23/v29：不得含空格与符号；含前后空格也不再 trim 放行（静默 trim 会掩盖非法输入）。
+        for (String invalid : new String[] {" zhang", "zhang ", "zhang san", "zhang-san", "zhang_san", "zhang.san"}) {
+            AuthService service = service(repository());
+            CpApiException e = assertThrows(CpApiException.class,
+                    () -> service.registerUser(new RegisterRequest(
+                            "zhang@example.com", "pw-12345678", "Zhang", invalid)),
+                    invalid + " must be rejected");
+            assertEquals(HttpStatus.BAD_REQUEST, e.getStatus());
+            assertEquals("USERNAME_INVALID", e.getCode());
+        }
+    }
+
+    @Test
+    void selfFilledUsername_uppercase_isNoLongerRejected() {
+        // 保留这条明确的回归断言：v29 之前大写会被 400，现在必须通过。
+        User user = service(repository()).registerUser(
+                new RegisterRequest("zhang@example.com", "pw-12345678", "Zhang", "ZhangSan"));
+        assertEquals("ZhangSan", user.getUsername());
     }
 
     @Test
@@ -55,6 +81,14 @@ class AuthServiceUsernameTest {
         CpApiException e = assertThrows(CpApiException.class, () -> service.registerUser(
                 new RegisterRequest("zhang@example.com", "pw-12345678", "Zhang", "a".repeat(33))));
         assertEquals("USERNAME_INVALID", e.getCode());
+    }
+
+    @Test
+    void selfFilledUsername_exactly32chars_isAccepted() {
+        String username = "a".repeat(32);
+        User user = service(repository()).registerUser(
+                new RegisterRequest("zhang@example.com", "pw-12345678", "Zhang", username));
+        assertEquals(username, user.getUsername());
     }
 
     @Test

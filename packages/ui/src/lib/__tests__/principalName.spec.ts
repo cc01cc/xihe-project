@@ -6,7 +6,12 @@
  * 前后空格单独给 "whitespace" 码，让调用方提示"前后不能有空格"，而不是静默吞掉。
  */
 import { describe, expect, it } from "vitest";
-import { PRINCIPAL_NAME_PATTERN, principalNameError } from "../principalName";
+import {
+    PRINCIPAL_NAME_PATTERN,
+    USERNAME_MAX_LENGTH,
+    principalNameError,
+    usernameError,
+} from "../principalName";
 
 describe("principalNameError (2026-11-04 name-format ruling)", () => {
     it.each(["Zoe", "zoe", "张三", "zoe2026", "Agent2", "李明2", "中", "a"])(
@@ -38,5 +43,35 @@ describe("principalNameError (2026-11-04 name-format ruling)", () => {
         expect(PRINCIPAL_NAME_PATTERN.source).toBe(
             "^[A-Za-z\\u4e00-\\u9fff][A-Za-z0-9\\u4e00-\\u9fff]*$",
         );
+    });
+});
+
+describe("usernameError (v29: username 与主体名同规则 + 列宽 32)", () => {
+    it("接受大写与中文汉字（v29 放宽的两类）", () => {
+        expect(usernameError("ZhangSan")).toBeNull();
+        expect(usernameError("李小明")).toBeNull();
+        expect(usernameError("Zoe2026")).toBeNull();
+    });
+
+    it("前后空格单独报 whitespace（不静默 trim）", () => {
+        expect(usernameError(" abc ")).toBe("whitespace");
+        expect(usernameError("abc ")).toBe("whitespace");
+    });
+
+    it("符号 / 数字开头 / 中间空格报 pattern", () => {
+        expect(usernameError("abc-def")).toBe("pattern");
+        expect(usernameError("abc_def")).toBe("pattern");
+        expect(usernameError("1abc")).toBe("pattern");
+        expect(usernameError("abc def")).toBe("pattern");
+    });
+
+    it("超过 32 报 length，32 恰好合法（CP 列宽 VARCHAR(32)）", () => {
+        expect(USERNAME_MAX_LENGTH).toBe(32);
+        expect(usernameError("a".repeat(32))).toBeNull();
+        expect(usernameError("a".repeat(33))).toBe("length");
+    });
+
+    it("空串报 required（注册页留空由 CP 从邮箱派生，属调用方语义）", () => {
+        expect(usernameError("")).toBe("required");
     });
 });

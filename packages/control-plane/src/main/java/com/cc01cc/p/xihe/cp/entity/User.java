@@ -26,9 +26,11 @@ public class User {
     private String email;
 
     /**
-     * PLAN-0565 ruling #7: unique account handle, {@code ^[a-z][a-z0-9]{0,31}$}
-     * (letter-first). Backfilled/generated from the email local part when not
-     * supplied at registration.
+     * PLAN-0565 ruling #7 + 决策 v29: unique account handle. Character rule is the shared
+     * name-format rule ({@code NameFormat.PATTERN_SOURCE}: letters any case / Chinese
+     * characters / digits, no leading digit, no spaces or symbols), capped at this column's
+     * width (32). Backfilled/generated from the email local part when not supplied at
+     * registration; generated handles stay inside the rule (lowercase alphanumerics).
      */
     @Column(nullable = false, unique = true, length = 32)
     private String username;
@@ -110,6 +112,9 @@ public class User {
      * PLAN-0565: deterministic username fallback derived from the email local
      * part — lowercase, non-alphanumerics stripped, truncated to 32; an empty
      * or digit-leading result gets the {@code user} prefix (ruling #7).
+     * 决策 v29 (2026-11-04) only widens the character set for *caller-supplied* usernames; the
+     * derived value stays lowercase ASCII, which is a strict subset of the shared rule, so it
+     * needs no extra validation here.
      * Uniqueness is ensured by callers (registration loop / V82 backfill).
      */
     public static String defaultUsernameFromEmail(String email) {
