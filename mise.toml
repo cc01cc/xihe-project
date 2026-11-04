@@ -126,7 +126,7 @@ description = "Run all tests"
 alias = "test"
 
 [tasks."test:cli"]
-run = "node --test scripts/xihe-cli.test.mjs scripts/xihe-cli/skill.test.mjs scripts/lib/stack-ports.test.mjs scripts/lib/env-file.test.mjs scripts/lib/service-supervisor.test.mjs scripts/lib/llm-env.test.mjs scripts/lib/cp-boot-plan.test.mjs scripts/lib/e2e-rounds.test.mjs scripts/stack-run.test.mjs scripts/e2e-host-readiness.test.mjs scripts/test-wiring.test.mjs scripts/pkg/phase-parity.test.mjs scripts/pkg/ports-json.test.mjs scripts/pkg/launcher-security.test.mjs scripts/pkg/launcher-security-behavior.test.mjs scripts/env-log-level.test.mjs scripts/lib/stack-cargo-target.test.mjs scripts/lib/stack-orphan.test.mjs scripts/lib/kill-guard.test.mjs scripts/lib/cp-build-info.test.mjs"
+run = "node --test scripts/xihe-cli.test.mjs scripts/xihe-cli/skill.test.mjs scripts/lib/stack-ports.test.mjs scripts/lib/env-file.test.mjs scripts/lib/service-supervisor.test.mjs scripts/lib/llm-env.test.mjs scripts/lib/cp-boot-plan.test.mjs scripts/lib/e2e-rounds.test.mjs scripts/stack-run.test.mjs scripts/e2e-host-readiness.test.mjs scripts/test-wiring.test.mjs scripts/pkg/phase-parity.test.mjs scripts/pkg/ports-json.test.mjs scripts/pkg/launcher-security.test.mjs scripts/pkg/launcher-security-behavior.test.mjs scripts/env-log-level.test.mjs scripts/lib/stack-cargo-target.test.mjs scripts/lib/stack-orphan.test.mjs scripts/lib/kill-guard.test.mjs scripts/lib/cp-build-info.test.mjs scripts/lib/cp-build-dir.test.mjs"
 description = "Run every scripts/**/*.test.mjs unit test — the file list is explicit and pinned by scripts/test-wiring.test.mjs (a new test file that is not listed turns that meta test red)"
 alias = "test:cli"
 
@@ -360,10 +360,20 @@ alias = "dev:host:start:pg"
 
 [tasks."dev:host:start:cp"]
 run = "node ../../scripts/stack-run.mjs cp"
-description = "Start Control Plane (port from XIHE_STACK_ID)"
+description = "Start Control Plane (port from XIHE_STACK_ID); build dir is per-stack/per-commit (BL-253 L3)"
 dir = "packages/control-plane"
-env = { XIHE_ENV = "dev", XIHE_CP_TARGET_DIR = "C:/xihe-build/dev-host" }
+# BL-253 L3: no hardcoded XIHE_CP_TARGET_DIR any more — stack-run derives
+# `<root>/<stackId>/<sha12>[-dirty]` (root default C:/xihe-build/cp, override XIHE_CP_BUILD_ROOT).
+# 显式 XIHE_CP_TARGET_DIR 仍是最优先逃生口（原样透传，回滚通道）。
+env = { XIHE_ENV = "dev" }
 alias = "dev:host:start:cp"
+
+# BL-253 L3: explicit-only retention. Dry-run by default; `-- --apply` deletes the listed dirs.
+[tasks."dev:host:cp-build:clean"]
+run = "node scripts/cp-build-clean.mjs --all"
+description = "Dry-run list of prunable CP build dirs per stack (keep newest 3 + pointer); pass -- --apply to delete"
+dir = "."
+alias = "dev:host:cp-build:clean"
 
 [tasks."dev:host:start:agent"]
 run = "node ../../scripts/stack-run.mjs agent"
