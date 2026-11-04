@@ -3321,7 +3321,8 @@ impl ShadowGit {
         })
     }
 
-    fn null_config_env(&self) -> Vec<(String, String)> {
+    /// PLAN-0641 M3: shared with the restore-side nested-repo probe (`checkpoint_revert`).
+    pub(crate) fn null_config_env(&self) -> Vec<(String, String)> {
         let mut env = platform_env();
         env.push(("GIT_CONFIG_GLOBAL".to_string(), null_device().to_string()));
         env.push(("GIT_CONFIG_SYSTEM".to_string(), null_device().to_string()));

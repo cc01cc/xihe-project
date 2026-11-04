@@ -111,6 +111,9 @@ public class RunCheckpointService {
 
     private final RunCheckpointRepository checkpoints;
     private final RuntimeCheckpointClient runtime;
+    /** PLAN-0641 M3 T4.2: durable audit for forced (dirty-nested-repo) reverts. */
+    @org.springframework.beans.factory.annotation.Autowired
+    private com.cc01cc.p.xihe.cp.audit.AuditLogger auditLogger;
     private final ChatRunRepository chatRuns;
     private final SessionRepository sessions;
     private final WorkspaceRootRepository workspaceRoots;
@@ -121,8 +124,7 @@ public class RunCheckpointService {
     private final ExecutorService captureExecutor;
 
     /** PLAN-0641 F1 warm (contract §3): best-effort cache warm from primary-root captures. */
-    @org.springframework.beans.factory.annotation.Autowired
-    private WorkspaceNestedReposService nestedReposService;
+    private final WorkspaceNestedReposService nestedReposService;
 
     public RunCheckpointService(RunCheckpointRepository checkpoints,
                                 RuntimeCheckpointClient runtime,
@@ -130,7 +132,8 @@ public class RunCheckpointService {
                                 SessionRepository sessions,
                                 WorkspaceRootRepository workspaceRoots,
                                 ObjectMapper objectMapper,
-                                SseEmitterManager sseManager) {
+                                SseEmitterManager sseManager,
+                                WorkspaceNestedReposService nestedReposService) {
         this.checkpoints = checkpoints;
         this.runtime = runtime;
         this.chatRuns = chatRuns;
@@ -138,6 +141,7 @@ public class RunCheckpointService {
         this.workspaceRoots = workspaceRoots;
         this.objectMapper = objectMapper;
         this.sseManager = sseManager;
+        this.nestedReposService = nestedReposService;
         this.captureExecutor = Executors.newSingleThreadExecutor(runnable -> {
             Thread thread = new Thread(runnable, "xihe-checkpoint-capture-" + captureSequence.incrementAndGet());
             thread.setDaemon(true);
@@ -398,7 +402,11 @@ public class RunCheckpointService {
         /** 503 CHECKPOINT_UNAVAILABLE {reason} — Runtime slice refs unreachable. */
         UNAVAILABLE,
         /** 409 CHECKPOINT_BUSY — Runtime cleanup overlaps capture or restore. */
-        CLEANUP_BUSY
+        CLEANUP_BUSY,
+        /** 409 NESTED_REPO_DIRTY — undeclared nested repos have uncommitted changes (force overrides). */
+        NESTED_REPO_DIRTY,
+        /** 409 NESTED_REPO_UNCONFIRMED — head-drifted nested repos not fully acknowledged. */
+        NESTED_REPO_UNCONFIRMED
     }
 
     /** Revert projection of the checkpoint view ({state,at,counts,ref,attemptCount}). */
@@ -550,7 +558,9 @@ public class RunCheckpointService {
      * {@code reverted_at} plus the attempt counter under a captured-state guard;
      * bookkeeping is best-effort and never rewrites the Runtime's result.
      */
-    public RevertOutcome revert(String workspaceId, String sliceRef, List<String> acknowledgeTypeChanges) {
+    public RevertOutcome revert(String workspaceId, String sliceRef,
+                                List<String> acknowledgeTypeChanges, boolean force,
+                                List<String> acknowledgeNestedRepos) {
         if (hasActiveRun(workspaceId)) {
             return new RevertOutcome(Gate.RUN_ACTIVE, "RUN_ACTIVE", null, Map.of());
         }
@@ -570,16 +580,38 @@ public class RunCheckpointService {
         }
         String revertRoot = wireRootId(capturedRow);
         RuntimeCheckpointClient.RevertResult result = revertRoot == null
-                ? runtime.revert(workspaceId, sliceRef, acknowledgeTypeChanges)
-                : runtime.revert(workspaceId, revertRoot, sliceRef, acknowledgeTypeChanges);
+                ? runtime.revert(workspaceId, sliceRef, acknowledgeTypeChanges, force,
+                        acknowledgeNestedRepos)
+                : runtime.revert(workspaceId, revertRoot, sliceRef, acknowledgeTypeChanges, force,
+                        acknowledgeNestedRepos);
         return switch (result.outcome()) {
             case OK -> {
                 recordRevert(capturedRow, result);
+                // PLAN-0641 M3 T4.2: a forced revert over dirty nested repos is audited
+                // with the repository roots (never file content / arguments).
+                if (force) {
+                    List<String> dirtyRepos = result.nestedRepoAffected().stream()
+                            .filter(RuntimeCheckpointClient.NestedRepoAffected::dirty)
+                            .map(RuntimeCheckpointClient.NestedRepoAffected::repoPath)
+                            .toList();
+                    if (!dirtyRepos.isEmpty()) {
+                        auditLogger.recordDurableChange(null,
+                                workspaceId, "nested_repo_force_revert", "run_checkpoint",
+                                String.valueOf(capturedRow.getId()),
+                                "sliceRef=" + sliceRef + " repos=" + dirtyRepos);
+                    }
+                }
                 yield new RevertOutcome(Gate.OK, null, result,
                         Map.of("descendantsAffected", computeDescendantsAffected(capturedRow)));
             }
             case TYPE_CHANGES_UNACKNOWLEDGED -> new RevertOutcome(Gate.TYPE_CHANGES_UNACKNOWLEDGED,
                     "TYPE_CHANGES_UNACKNOWLEDGED", null, Map.of());
+            // PLAN-0641 M3 T4.2: the Runtime names the repo roots in the problem's `nestedRepos`;
+            // the client keeps the parsed problem, so pass the list through for the UI.
+            case NESTED_REPO_DIRTY -> new RevertOutcome(Gate.NESTED_REPO_DIRTY,
+                    "NESTED_REPO_DIRTY", null, problemDetails(result.problem(), "nestedRepos"));
+            case NESTED_REPO_UNCONFIRMED -> new RevertOutcome(Gate.NESTED_REPO_UNCONFIRMED,
+                    "NESTED_REPO_UNCONFIRMED", null, problemDetails(result.problem(), "nestedRepos"));
             case RESTORE_LOCKED -> new RevertOutcome(Gate.RESTORE_LOCKED, "RESTORE_LOCKED", null, Map.of());
             case UNAVAILABLE -> new RevertOutcome(Gate.UNAVAILABLE,
                     valueOrDefault(result.reason(), REASON_UNAVAILABLE), null, Map.of());

@@ -72,6 +72,16 @@ function nestedRepoTypeLabel(kind: ApiNestedRepoItem["type"]): string {
     return t(`workspace.nestedRepoType_${kind}`);
 }
 
+/**
+ * PLAN-0641 T4.4 (positive allowlist): only a real nested repo / linked worktree can be
+ * declared as an independent root. Submodule is the user's own nesting declaration and
+ * is never offered (design §6.3 row 4, B6=(a)); symlink stays classification-only
+ * (design:108 "不进入本机制", contract F4); bare is warn-only in v1 (B6=(a), §6.1).
+ */
+function isDeclarableNestedRepo(repo: ApiNestedRepoItem): boolean {
+    return repo.type === "nested" || repo.type === "gitdir";
+}
+
 /** PLAN-0641 M2 T3.1: localized declaration failure — never the raw CP detail. */
 function nestedRepoDeclareError(code: string | null): string {
     switch (code) {
@@ -383,7 +393,7 @@ function upload() {
                         </button>
                     </div>
                     <button
-                        v-else
+                        v-else-if="isDeclarableNestedRepo(repo)"
                         type="button"
                         class="mt-1 rounded px-1.5 py-0.5 text-[11px] font-medium text-amber-900 hover:bg-amber-500/20 disabled:opacity-50 dark:text-amber-100"
                         data-testid="nested-repo-declare"

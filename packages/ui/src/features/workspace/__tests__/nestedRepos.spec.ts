@@ -129,6 +129,34 @@ describe("nested repos panel", () => {
         expect(apiStub.listWorkspaceNestedRepos).toHaveBeenCalledWith("workspace-a");
     });
 
+    it("never offers a declare entry for submodules, symlinks or bare repos (T4.4)", async () => {
+        // Positive allowlist: only `nested` / `gitdir` are declarable. Submodule is the
+        // user's own nesting declaration (design §6.3 row 4), symlink never enters this
+        // mechanism (design:108, contract F4), bare is warn-only in v1 (B6=(a), §6.1).
+        apiStub.listWorkspaceNestedRepos.mockResolvedValue([
+            { path: "vendor/lib", type: "nested", declared: false },
+            { path: "linked-wt", type: "gitdir", declared: false },
+            { path: "deep/tools/helper", type: "submodule", declared: false },
+            { path: "linked", type: "symlink", declared: false },
+            { path: "mirror", type: "bare", declared: false },
+        ]);
+        const wrapper = mountPanel();
+        await flushPromises();
+
+        const rows = wrapper.findAll('[data-testid="nested-repo-row"]');
+        expect(rows).toHaveLength(5);
+        expect(rows[0]!.find('[data-testid="nested-repo-declare"]').exists()).toBe(true);
+        expect(rows[1]!.find('[data-testid="nested-repo-declare"]').exists()).toBe(true);
+        // Still surfaced (marked by type label) so the user sees why there is no entry.
+        for (const row of rows.slice(2)) {
+            expect(row.find('[data-testid="nested-repo-declare"]').exists()).toBe(false);
+            expect(row.find('[data-testid="nested-repo-type"]').exists()).toBe(true);
+        }
+        expect(rows[2]!.find('[data-testid="nested-repo-type"]').text()).toBe("Submodule");
+        expect(rows[3]!.find('[data-testid="nested-repo-type"]').text()).toBe("Symlink");
+        expect(rows[4]!.find('[data-testid="nested-repo-type"]').text()).toBe("Bare repo");
+    });
+
     it("hides the section when nothing undeclared remains", async () => {
         apiStub.listWorkspaceNestedRepos.mockResolvedValue([
             { path: "vendor/lib", type: "nested", declared: true },

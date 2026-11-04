@@ -384,13 +384,17 @@ describe("tool events → live message toolCalls (PLAN-0342 T1.5)", () => {
         await flushPromises();
         const chatStore = useChatStore();
 
+        // 防复发（BL-229）：CP 盖章的 camelCase `runId`（ChatRun id）与 Agent 的 snake_case
+        // `run_id`（LangChain 回调 id）**不是同一个 id**，禁止互相替代、更禁止写成同值——写成同值
+        // 会让「tool 事件按 run_id 分流」的错误实现看起来是对的。
         await transport.simulateMessage(
             "tool_call",
             JSON.stringify({
                 type: "tool_call",
                 tool: "run_command",
                 arguments: { command: "pnpm build" },
-                run_id: RUN_ID,
+                run_id: "lc-tool-1",
+                runId: RUN_ID,
                 toolCallId: "tc-1",
             }),
         );
@@ -408,7 +412,8 @@ describe("tool events → live message toolCalls (PLAN-0342 T1.5)", () => {
                 type: "tool_result",
                 tool: "run_command",
                 result: "src/a.ts:3:7: error: unexpected token",
-                run_id: RUN_ID,
+                run_id: "lc-tool-1",
+                runId: RUN_ID,
                 toolCallId: "tc-1",
                 diagnostics: {
                     items: [
@@ -541,6 +546,79 @@ describe("tool events → live message toolCalls (PLAN-0342 T1.5)", () => {
         const call = chatStore.getMessages(SESSION_ID)[0].toolCalls?.[0];
         expect(call?.status).toBe("failed");
         expect(call?.diagnostics).toBeUndefined();
+    });
+
+    it("keeps a tool-carrying run in one scope when run_id ≠ runId (BL-229)", async () => {
+        // BL-229 真实 wire 形状：Agent 的 `run_id`（LangChain 回调 id）与 CP 盖章的 `runId`
+        // （ChatRun id）是**两个不同 UUID**。token/done/error 只用 camel `runId`，所以 tool 事件
+        // 也必须按它分流；按 `run_id` 分流会在 `streamingMessageId` 留下孤儿活 scope，`done`
+        // 清不掉 ⇒ `isStreaming()` 恒 true ⇒ composer 把发送键换成停止键（62s 拿不到发送键）。
+        const transport = createTransportController(),
+            chatStore = useChatStore(),
+            { connect } = useSSE(SESSION_ID);
+        // Minimal SSEStream wiring: `onStart` opens the run bubble, `onDone` finalizes it —
+        // exactly the two store calls the real consumer makes, so "done clears the scope" is
+        // exercised end to end at the composable level.
+        connect({
+            onStart: (runId?: string) => {
+                chatStore.createStreamingMessage(SESSION_ID, runId);
+            },
+            onDone: (_outcome?: string, runId?: string) => {
+                chatStore.finalizeStreaming(SESSION_ID, runId);
+            },
+        });
+        await flushPromises();
+
+        await transport.simulateMessage(
+            "tool_call",
+            JSON.stringify({
+                type: "tool_call",
+                tool: "run_command",
+                arguments: { command: "ls" },
+                run_id: "lc-tool-1",
+                runId: RUN_ID,
+                toolCallId: "lc-tool-1",
+            }),
+        );
+        await transport.simulateMessage(
+            "tool_result",
+            JSON.stringify({
+                type: "tool_result",
+                tool: "run_command",
+                result: "a.txt",
+                run_id: "lc-tool-1",
+                runId: RUN_ID,
+                toolCallId: "lc-tool-1",
+            }),
+        );
+        await transport.simulateMessage(
+            "token",
+            JSON.stringify({ content: "done", runId: RUN_ID }),
+        );
+
+        // One bubble for the run; the Agent callback id never becomes a store scope key.
+        expect(chatStore.getStreamingMessageId(SESSION_ID, RUN_ID)).not.toBeNull();
+        expect(chatStore.getStreamingMessageId(SESSION_ID, "lc-tool-1")).toBeNull();
+
+        await transport.simulateMessage(
+            "done",
+            JSON.stringify({ outcome: "success", runId: RUN_ID }),
+        );
+
+        expect(chatStore.isStreaming(SESSION_ID)).toBe(false);
+        expect(chatStore.getStreamingMessageId(SESSION_ID, RUN_ID)).toBeNull();
+        expect(chatStore.getStreamingMessageId(SESSION_ID, "lc-tool-1")).toBeNull();
+        const assistants = chatStore
+            .getMessages(SESSION_ID)
+            .filter((message) => message.role === "assistant");
+        expect(assistants).toHaveLength(1);
+        expect(assistants[0].runId).toBe(RUN_ID);
+        expect(assistants[0].isStreaming).toBe(false);
+        expect(assistants[0].toolCalls?.[0]).toMatchObject({
+            id: "lc-tool-1",
+            status: "completed",
+            result: "a.txt",
+        });
     });
 });
 

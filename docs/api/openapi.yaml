@@ -2596,6 +2596,9 @@ paths:
           `409 RUN_ACTIVE` while a ChatRun is active in the workspace (checked before slice
           resolution), plus `CHECKPOINT_NOT_AVAILABLE` / `CHECKPOINT_TYPE_CHANGES_UNACKNOWLEDGED` /
           `CHECKPOINT_RESTORE_LOCKED` as applicable.
+          The `nestedRepoAffected[]` block (PLAN-0641 M3) lists the undeclared nested repositories
+          this plan touches, each with `repoPath` / `kind` / `dirty` / `headMoved`. It is
+          informational on the preview face; the execute face enforces the matching gates.
         security: [{ bearerAuth: [] }]
         parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }]
         requestBody:
@@ -2621,6 +2624,11 @@ paths:
           preview and may be discarded. The response reports each path and any concurrent-write suspects.
           Returns `409 RUN_ACTIVE` while a ChatRun is active in the workspace (checked before slice
           resolution).
+          PLAN-0641 M3 risk grading over undeclared nested repositories: a dirty repo answers
+          `409 NESTED_REPO_DIRTY` unless `force=true`; a head-drifted repo must be listed in
+          `acknowledgeNestedRepos`, otherwise `409 NESTED_REPO_UNCONFIRMED`. Both nested-repo
+          bodies carry `nestedRepos[]` (the affected workspace-relative repo roots), and a forced
+          revert that actually covers dirty repos writes one `nested_repo_force_revert` audit row.
         security: [{ bearerAuth: [] }]
         parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }]
         requestBody:
@@ -3186,7 +3194,7 @@ paths:
   /internal/v1/runtime/workspaces/{workspaceId}/checkpoints/revert/preview:
     post:
       operationId: runtimeCheckpointRevertPreview
-      description: 'Read-only restore plan from one slice to the current workspace. Entries are bounded and `truncated` is explicit; counts cover the complete plan.'
+      description: 'Read-only restore plan from one slice to the current workspace. Entries are bounded and `truncated` is explicit; counts cover the complete plan. PLAN-0641 M3: `nestedRepoAffected[]` reports undeclared nested repositories the plan touches (`repoPath` / `kind` / `dirty` / `headMoved`) without gating the preview; the execute route enforces the gates.'
       security: [{ bearerAuth: [] }]
       parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }]
       requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/CheckpointRevertPreviewRequest' } } } }
@@ -3200,7 +3208,7 @@ paths:
   /internal/v1/runtime/workspaces/{workspaceId}/checkpoints/revert:
     post:
       operationId: runtimeCheckpointRevert
-      description: 'Restores the workspace to one slice. Only type-change paths need acknowledgement; the restore lock rejects a second concurrent restore.'
+      description: 'Restores the workspace to one slice. Only type-change paths need acknowledgement; the restore lock rejects a second concurrent restore. PLAN-0641 M3: undeclared nested repositories are graded — a dirty repo answers 409 NESTED_REPO_DIRTY unless `force` is true, and a head-drifted repo must be listed in `acknowledgeNestedRepos` or the call answers 409 NESTED_REPO_UNCONFIRMED; both nested-repo bodies add `nestedRepos[]` with the affected repo roots.'
       security: [{ bearerAuth: [] }]
       parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }]
       requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/CheckpointRevertRequest' } } } }
@@ -4139,6 +4147,8 @@ components:
        properties:
          sliceRef: { type: string }
          acknowledgeTypeChanges: { type: array, items: { type: string }, description: Type-change paths confirmed from the preview }
+         force: { type: boolean, default: false, description: 'PLAN-0641 M3: overwrite undeclared nested repositories that carry uncommitted changes. Without it those repos answer 409 NESTED_REPO_DIRTY. A forced revert that actually covers dirty repos writes one `nested_repo_force_revert` audit row.' }
+         acknowledgeNestedRepos: { type: array, items: { type: string }, description: 'PLAN-0641 M3: every head-drifted repo root listed by the preview `nestedRepoAffected[]` (workspace-relative POSIX paths). A missing entry answers 409 NESTED_REPO_UNCONFIRMED (ruling (a): the acknowledgement is explicit, never assumed).' }
     CheckpointRevertPreviewEntry:
        type: object
        additionalProperties: false
@@ -4151,14 +4161,24 @@ components:
     CheckpointRevertPreviewResponse:
        type: object
        additionalProperties: false
-       required: [sliceRef, counts, entries, truncated, opaqueNestedRepos, descendantsAffected]
+       required: [sliceRef, counts, entries, truncated, opaqueNestedRepos, nestedRepoAffected, descendantsAffected]
        properties:
          sliceRef: { type: string }
          counts: { type: object, required: [restore, delete, typeConflict], properties: { restore: { type: integer }, delete: { type: integer }, typeConflict: { type: integer } } }
          entries: { type: array, items: { $ref: '#/components/schemas/CheckpointRevertPreviewEntry' } }
          truncated: { type: boolean }
          opaqueNestedRepos: { type: array, items: { type: string } }
+         nestedRepoAffected: { type: array, items: { $ref: '#/components/schemas/CheckpointNestedRepoAffected' }, description: 'PLAN-0641 M3 (T4.3): undeclared nested repositories this plan touches, with the two gates each one triggers. Informational on the preview face; the execute face enforces them.' }
          descendantsAffected: { type: array, items: { $ref: '#/components/schemas/CheckpointDescendantImpact' }, description: Spawn-descendant sessions whose work after the target slice overlaps the rollback paths; informational only, never blocks the restore }
+    CheckpointNestedRepoAffected:
+       type: object
+       additionalProperties: false
+       required: [repoPath, kind, dirty, headMoved]
+       properties:
+         repoPath: { type: string, description: Workspace-relative POSIX path of the undeclared nested repository root. }
+         kind: { type: string, enum: [nested, gitdir, submodule, bare, symlink], description: 'PLAN-0641 T2.2 five-kind classification of the affected repo.' }
+         dirty: { type: boolean, description: 'Uncommitted changes in the repo: execute-revert answers 409 NESTED_REPO_DIRTY unless force=true.' }
+         headMoved: { type: boolean, description: 'Clean repo whose restored content would differ from its current HEAD tree: the repo root must be listed in acknowledgeNestedRepos, otherwise execute-revert answers 409 NESTED_REPO_UNCONFIRMED.' }
     CheckpointDescendantImpact:
        type: object
        additionalProperties: false
@@ -4177,13 +4197,14 @@ components:
     CheckpointRevertResponse:
        type: object
        additionalProperties: false
-       required: [sliceRef, counts, entries, durationMs, suspects, descendantsAffected]
+       required: [sliceRef, counts, entries, durationMs, suspects, nestedRepoAffected, descendantsAffected]
        properties:
          sliceRef: { type: string }
          counts: { type: object, required: [restored, deleted, failed], properties: { restored: { type: integer }, deleted: { type: integer }, failed: { type: integer } } }
          entries: { type: array, items: { $ref: '#/components/schemas/CheckpointRevertEntry' } }
          durationMs: { type: integer, minimum: 0 }
          suspects: { type: array, items: { type: string } }
+         nestedRepoAffected: { type: array, items: { $ref: '#/components/schemas/CheckpointNestedRepoAffected' }, description: 'PLAN-0641 M3 (T4.3): undeclared nested repositories this revert covered, echoed so the client can see which gates were explicitly overridden.' }
          descendantsAffected: { type: array, items: { $ref: '#/components/schemas/CheckpointDescendantImpact' }, description: Spawn-descendant sessions whose work after the target slice overlaps the rollback paths; informational only, never blocks the restore }
     CheckpointCleanupRequest:
        type: object

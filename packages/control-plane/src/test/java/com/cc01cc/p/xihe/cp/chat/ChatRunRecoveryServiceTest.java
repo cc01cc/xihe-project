@@ -163,7 +163,8 @@ class ChatRunRecoveryServiceTest {
                 mock(com.cc01cc.p.xihe.cp.repository.SessionRepository.class),
                 mock(com.cc01cc.p.xihe.cp.repository.WorkspaceRootRepository.class),
                 new ObjectMapper(),
-                mock(com.cc01cc.p.xihe.cp.chat.SseEmitterManager.class));
+                mock(com.cc01cc.p.xihe.cp.chat.SseEmitterManager.class),
+                mock(com.cc01cc.p.xihe.cp.service.WorkspaceNestedReposService.class));
         ChatRunRecoveryService recovery = new ChatRunRecoveryService(chatRunRepository,
                 approvalRepository, activeRunRegistry, terminalService, historyWriter, realService);
         try {
