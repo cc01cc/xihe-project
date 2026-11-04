@@ -39,7 +39,6 @@ import java.util.UUID;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -154,8 +153,12 @@ class SkillSnapshotPrincipalContrastTest extends AbstractIntegrationTest {
         ChatSubmissionService.SpawnResult child = spawnDirect(parent.runId(), parent.toolCallId());
 
         ChatRun childRun = chatRuns.findById(UUID.fromString(child.runId())).orElseThrow();
-        assertNull(childRun.getAgentPrincipalId(),
-                "spawn persists without stamping a responder — the responder is not the capture identity");
+        // BL-280: spawn carriers are now stamped at admission with the Session-bound principal (the
+        // agent that executes the child Run), so the dispatch-side context sources (memory /
+        // skill_catalog) can resolve it. The **skill capture identity** is still the Session binding,
+        // never a responder — that part of D28-39 is unchanged.
+        assertEquals(fixture.sessionPrincipal().getId(), childRun.getAgentPrincipalId(),
+                "spawn runs carry the Session-bound principal for dispatch context (BL-280)");
         assertEquals(fixture.sessionPrincipal().getId().toString(),
                 sessions.findById(UUID.fromString(childRun.getSessionId())).orElseThrow()
                         .getAgentPrincipalId(),
