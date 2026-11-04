@@ -321,7 +321,7 @@ onUnmounted(() => {
     <MessageRoot
         v-else
         :align="isOwnMessage ? 'end' : 'start'"
-        class="px-3 py-1.5"
+        class="px-3 py-1"
         data-testid="message-item"
         :data-message-role="message.role"
     >
@@ -329,20 +329,27 @@ onUnmounted(() => {
             <!-- PLAN-0631 D31-10: initials identify the responder; no per-participant color. -->
             <div
                 v-if="showResponder"
-                class="flex size-8 items-center justify-center rounded-full border bg-muted text-[11px] font-medium text-foreground"
+                class="flex size-6 items-center justify-center rounded-full border bg-muted text-[10px] font-medium text-foreground"
                 data-testid="message-responder-initials"
                 aria-hidden="true"
             >
                 {{ responderInitials }}
             </div>
-            <div v-else class="flex size-8 items-center justify-center rounded-full bg-primary/10">
-                <Bot class="size-4 text-primary" />
+            <div
+                v-else
+                class="flex size-6 items-center justify-center rounded-full bg-primary/10"
+                aria-hidden="true"
+            >
+                <Bot class="size-3.5 text-primary" />
             </div>
         </MessageAvatar>
 
         <MessageAvatar v-if="isOwnMessage">
-            <div class="flex size-8 items-center justify-center rounded-full bg-secondary">
-                <User class="size-4 text-secondary-foreground" />
+            <div
+                class="flex size-6 items-center justify-center rounded-full bg-secondary"
+                aria-hidden="true"
+            >
+                <User class="size-3.5 text-secondary-foreground" />
             </div>
         </MessageAvatar>
 
@@ -354,7 +361,7 @@ onUnmounted(() => {
             -->
             <MessageHeader
                 v-if="showResponder"
-                class="mb-1 gap-1.5 px-0.5"
+                class="mb-0.5 gap-1 px-0.5"
                 data-testid="message-responder"
                 :data-participant-id="responder?.participantId"
             >

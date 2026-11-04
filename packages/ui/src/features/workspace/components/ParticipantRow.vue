@@ -144,12 +144,12 @@ const disabled = computed(() => Boolean(props.participant.disabledAt));
 
 <template>
     <li
-        class="flex items-start gap-2 rounded-md border px-2 py-1.5 text-xs"
+        class="flex items-start gap-2 rounded-md border px-2 py-1 text-xs"
         :class="disabled ? 'opacity-60' : ''"
         :data-testid="`participant-row-${participant.participantId}`"
     >
         <span
-            class="flex size-7 shrink-0 items-center justify-center rounded-full border text-[11px] font-medium"
+            class="flex size-6 shrink-0 items-center justify-center rounded-full border text-[10px] font-medium"
             :data-testid="`participant-initials-${participant.participantId}`"
             aria-hidden="true"
             >{{ initials }}</span
