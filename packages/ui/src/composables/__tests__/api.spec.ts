@@ -2705,8 +2705,8 @@ describe("OpenAPI Session contract guard (PLAN-0668 M2)", () => {
                             workspaceId: WORKSPACE_ID,
                             archived: false,
                         },
-                        // `archived` is contract-required but missing on purpose.
-                        { id: "88888888-8888-4888-8888-888888888888", title: "bad" },
+                        // `id` is SessionSummary-required but missing on purpose.
+                        { title: "bad" },
                     ],
                 }),
         } as Response);
@@ -2717,7 +2717,7 @@ describe("OpenAPI Session contract guard (PLAN-0668 M2)", () => {
         const logged = warn.mock.calls
             .map((call) => call.map((value) => JSON.stringify(value)).join(" "))
             .join(" ");
-        expect(logged).toContain("archived");
+        expect(logged).toContain("id");
         warn.mockRestore();
     });
 
