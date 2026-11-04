@@ -23,10 +23,14 @@ class ComponentResult:
     estimated_tokens: int = 0
     truncated: bool = False
     diagnostics: tuple[str, ...] = ()
-    #: PLAN-0670 M2c / BL-289: the inbound-cap marker for this component in its already-approved wire
-    #: shape (``Truncation.to_wire()``), or ``None`` when nothing was dropped. A run's terminal payload
-    #: carries at most one object (``agentContextTruncation``); when future stages add more, this
-    #: becomes ``truncations[] + stage`` and the wire name is versioned then.
+    #: PLAN-0670 M2c / BL-289 — **component-layer contract only.** This is the inbound-cap marker for
+    #: this component in its approved wire shape (``Truncation.to_wire()``), or ``None`` when nothing
+    #: was dropped. The **real truncation point is ``api/chat.py``** (``context.messages``, applied
+    #: after prune and before ``native_history``/runner); ``context/builder.py`` has no production
+    #: caller today (BL-289), so a non-None value here proves the component contract, NOT that a real
+    #: run was capped. A run's terminal payload carries at most one object
+    #: (``agentContextTruncation``); when future stages add more, this becomes ``truncations[] + stage``
+    #: and the wire name is versioned then.
     truncation: dict[str, Any] | None = None
 
 

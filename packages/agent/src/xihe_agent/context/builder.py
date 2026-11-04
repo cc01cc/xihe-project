@@ -62,8 +62,9 @@ def _limit_inbound_history(messages: Any) -> tuple[list[Any], Any]:
     BL-289: the WARN and the ``Truncation`` object are produced by
     ``inbound_limits.truncate_for_run`` — the same call the real chat path uses — so a component
     build and a real run can never report different numbers. This builder has no production caller
-    today (the real path is ``api/chat.py``); the function is kept because the component contract
-    still needs to be tested.
+    today; the **real truncation point is ``api/chat.py``** (``context.messages``), so do not read a
+    component's ``truncation`` as evidence that a real run was capped. The function is kept because
+    the component contract still needs to be tested.
     """
     from xihe_agent.context.inbound_limits import truncate_for_run
 
