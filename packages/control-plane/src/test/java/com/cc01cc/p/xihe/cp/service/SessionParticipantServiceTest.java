@@ -69,7 +69,8 @@ class SessionParticipantServiceTest {
         grants = mock(GrantAuthorizationService.class);
         service = new SessionParticipantService(participants, cursors, sessions, agents, users,
                 workspaces, grants,
-                mock(com.cc01cc.p.xihe.cp.scheduled.WakeScheduleProjectionService.class));
+                mock(com.cc01cc.p.xihe.cp.scheduled.WakeScheduleProjectionService.class),
+                mock(com.cc01cc.p.xihe.cp.context.repository.EventStoreRepository.class));
 
         session = mock(Session.class);
         when(session.getId()).thenReturn(SESSION_ID);

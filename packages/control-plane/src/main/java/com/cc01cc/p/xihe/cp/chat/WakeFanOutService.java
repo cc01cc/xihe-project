@@ -2,7 +2,6 @@ package com.cc01cc.p.xihe.cp.chat;
 
 import com.cc01cc.p.xihe.cp.config.ConfigService;
 import com.cc01cc.p.xihe.cp.context.service.EventStoreService;
-import com.cc01cc.p.xihe.cp.repository.SessionParticipantCursorRepository;
 import com.cc01cc.p.xihe.cp.service.WakeDispatchService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -49,7 +48,6 @@ public class WakeFanOutService {
     private final ConfigService configService;
     /** PLAN-0630 M5b: cc observer notifications; {@code null} in the legacy 2-arg construction. */
     private final EventStoreService eventStoreService;
-    private final SessionParticipantCursorRepository cursorRepository;
     private final Map<String, CompletableFuture<Void>> terminalAwaiters = new ConcurrentHashMap<>();
     /** PLAN-0648 task-34: shared dispatch pool (replaces the per-session single thread). */
     private static final java.util.concurrent.ExecutorService WAKE_POOL =
@@ -77,17 +75,20 @@ public class WakeFanOutService {
 
     /** Legacy test seam (WakeFanOutServiceTest builds with dispatch + config only). */
     public WakeFanOutService(WakeDispatchService wakeDispatchService, ConfigService configService) {
-        this(wakeDispatchService, configService, null, null);
+        this(wakeDispatchService, configService, null);
     }
 
+    /**
+     * PLAN-0660 T5.3: the cc notify no longer touches a cursor — unread is derived from
+     * {@code wake_dispatch ∧ outcome=notify ∧ sequence > last_read_event_seq}
+     * (`spec/session/user-channel.md` §3). The 4-arg shape drops its cursor repository with it.
+     */
     @Autowired
     public WakeFanOutService(WakeDispatchService wakeDispatchService, ConfigService configService,
-                             EventStoreService eventStoreService,
-                             SessionParticipantCursorRepository cursorRepository) {
+                             EventStoreService eventStoreService) {
         this.wakeDispatchService = wakeDispatchService;
         this.configService = configService;
         this.eventStoreService = eventStoreService;
-        this.cursorRepository = cursorRepository;
     }
 
     /** Test/observer seam: is a terminal awaiter registered for this run right now. */
@@ -298,8 +299,10 @@ public class WakeFanOutService {
     /**
      * PLAN-0630 M5b: the cc notify — durable {@code wake_dispatch} outcome {@code notify}
      * (fields mirror {@code WakeDispatchService}'s audit envelope: wakeRoundId, participantId,
-     * triggerSource, outcome) plus the cursor {@code mention_count} advance that surfaces the
-     * "@N" unread badge. No Run is created and nothing speaks as the observer.
+     * triggerSource, outcome). No Run is created and nothing speaks as the observer.
+     *
+     * <p>PLAN-0660 T5.3: the cursor advance is gone on purpose — the "@N" unread badge is a
+     * derived value (`spec/session/user-channel.md` §3), so this path only records the notify.</p>
      */
     private void notifyObserver(UUID sessionId, String workspaceId, String userId, String wakeRoundId,
                                 MentionParser.RosterEntry observer) {
@@ -310,12 +313,6 @@ public class WakeFanOutService {
             payload.put("triggerSource", "cc");
             payload.put("outcome", "notify");
             eventStoreService.append(sessionId.toString(), workspaceId, userId, EVENT_WAKE_DISPATCH, payload);
-        }
-        if (cursorRepository != null) {
-            cursorRepository.findById(observer.participantId()).ifPresent(cursor -> {
-                cursor.setMentionCount((cursor.getMentionCount() == null ? 0 : cursor.getMentionCount()) + 1);
-                cursorRepository.save(cursor);
-            });
         }
         logger.info("[LIFECYCLE] service=cp event=wake_dispatch triggerSource=cc outcome=notify "
                         + "sessionId={} participantId={} round={}",

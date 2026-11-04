@@ -1,0 +1,34 @@
+-- PLAN-0660 T5.3 (D66-07 / B-4, see decisions-2026-11-03.md:281): unread mentions are DERIVED.
+--
+-- The pointer (`last_read_event_seq`) stays the only stored fact: the unread count is recomputed as
+--   count(context_events where event_type='wake_dispatch' and payload->>'outcome'='notify'
+--         and payload->>'participantId' = participant_id and sequence > last_read_event_seq)
+-- (contract: spec/session/user-channel.md §3). A stored counter would be a second fact source and
+-- the very thing V92/DEV-032 froze against ("指针不是计数器").
+--
+-- ROLLBACK / REBUILD RECIPE — the column is derived data, so it can be reconstructed at any time:
+--   ALTER TABLE session_participant_cursors ADD COLUMN mention_count BIGINT NOT NULL DEFAULT 0;
+--   UPDATE session_participant_cursors c
+--      SET mention_count = sub.n
+--     FROM (
+--       SELECT p.id AS participant_id, COUNT(e.id) AS n
+--         FROM session_participants p
+--         LEFT JOIN context_events e
+--                ON e.session_id = CAST(p.session_id AS text)
+--               AND e.event_type = 'wake_dispatch'
+--               AND e.payload->>'outcome' = 'notify'
+--               AND e.payload->>'participantId' = CAST(p.id AS text)
+--        GROUP BY p.id
+--     ) sub
+--    WHERE sub.participant_id = c.participant_id;
+-- (That value starts drifting the moment it is written back — the reason the runtime derives it.)
+--
+-- Index decision (EXPLAIN evidence, plans/PLAN-0660-xh-wake-notify-gate/evidence/m5-g1-gate.md §2):
+-- the existing UNIQUE index uq_context_events_session_sequence (session_id, sequence) already gives
+-- the derived aggregate its access path -- the plan is an Index Scan with
+-- Index Cond (session_id = ... AND sequence > last_read_event_seq), and the wake_dispatch/notify
+-- predicates ride a cheap Filter over that session's own slice. So this migration deliberately does
+-- NOT add a second expression index: one more index would tax every event append for a filter that
+-- already runs over a handful of rows per session.
+
+ALTER TABLE session_participant_cursors DROP COLUMN mention_count;
