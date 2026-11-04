@@ -461,17 +461,49 @@ async function bindToolCapableFakeLlmConnection(page: Page, sessionId: string): 
     expect((await bindResponse).status()).toBe(200);
 
     // 关掉模态框：`modal-backdrop` 会拦住后续点击（G2-c 把它当最后一步所以之前没人管）。
+    //
+    // 2026-11-04（PLAN-0648 窗口 1 实测）：原实现是「点一次 Close → toBeHidden(20s)」，
+    // G2-e 在这里挂了 5 分钟（整条用例超时），而失败信息只有一句 toBeHidden —— 无法判断
+    // 是"按钮没点中"还是"产品真的不关"。改成显式等待：每轮先尝试 Close（含中文标签），
+    // 再退到 Escape，轮询到关闭为止；仍未关就**把对话框可见文本带进失败信息**（供 BL 判定），
+    // 不用 retries 掩盖。
     const dialog = page.getByTestId("workspace-agent-management-dialog");
-    if (await dialog.isVisible().catch(() => false)) {
-        await page
-            .getByTestId("modal-content")
-            .getByRole("button", { name: "Close" })
-            .click()
-            .catch(() => {
-                // 某些实现绑定后自动关闭；已关闭时上面的可见性检查就会为 false。
-            });
+    try {
+        await expect
+            .poll(
+                async () => {
+                    if (!(await dialog.isVisible().catch(() => false))) return "closed";
+                    await page
+                        .getByTestId("modal-content")
+                        .getByRole("button", { name: /^(close|关闭|关闭对话框)$/i })
+                        .first()
+                        .click({ timeout: 2_000 })
+                        .catch(async () => {
+                            await page.keyboard.press("Escape").catch(() => {});
+                        });
+                    return (await dialog.isVisible().catch(() => false)) ? "open" : "closed";
+                },
+                {
+                    message: "agent management dialog must close after binding",
+                    timeout: 30_000,
+                    intervals: [250, 500, 1_000],
+                },
+            )
+            .toBe("closed");
+    } catch (cause) {
+        const visibleText = await dialog
+            .innerText()
+            .catch(() => "")
+            .then((text) => text.slice(0, 400));
+        const buttons = await dialog
+            .getByRole("button")
+            .allInnerTexts()
+            .catch(() => [] as string[]);
+        throw new Error(
+            `agent management dialog did not close after bind (visible text=${JSON.stringify(visibleText)}, buttons=${JSON.stringify(buttons.slice(0, 12))})`,
+            { cause },
+        );
     }
-    await expect(dialog).toBeHidden({ timeout: 20000 });
     return principalId;
 }
 
