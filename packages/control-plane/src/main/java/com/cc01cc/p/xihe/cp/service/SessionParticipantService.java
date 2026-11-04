@@ -28,6 +28,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 
@@ -377,6 +378,21 @@ public class SessionParticipantService {
 
     /** The responder triple: participant, its kind, and the principal that actually answers. */
     public record Responder(UUID participantId, String principalKind, UUID principalId) {}
+
+    /**
+     * PLAN-0669 D2: the participant row for a (session, principal) pair — used by the single
+     * assistant-write point to stamp durable message attribution. Empty when the pair has no row, so
+     * the caller persists NULL instead of guessing a participant (an attribution that is wrong is
+     * worse than an absent one).
+     */
+    @Transactional(readOnly = true)
+    public Optional<UUID> participantIdForPrincipal(UUID sessionId, UUID principalId) {
+        if (sessionId == null || principalId == null) {
+            return Optional.empty();
+        }
+        return participantRepository.findFirstBySessionIdAndPrincipalId(sessionId, principalId)
+                .map(SessionParticipant::getId);
+    }
 
 /**
      * Authorization for {@code POST /api/v1/chat} with {@code asParticipantId}.

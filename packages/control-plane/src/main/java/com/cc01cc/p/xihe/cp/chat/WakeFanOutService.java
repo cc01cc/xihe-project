@@ -133,6 +133,18 @@ public class WakeFanOutService {
     public WakeHandoff fanOut(UUID sessionId, String workspaceId, String userId, String rootRunId,
                               String content, List<MentionParser.RosterEntry> roster,
                               List<UUID> ccParticipantIds) {
+        return fanOut(sessionId, workspaceId, userId, rootRunId, content, roster, ccParticipantIds, null);
+    }
+
+    /**
+     * PLAN-0665 M1: a TO request owns its targets. When the same participant is both {@code @}-mentioned
+     * and TO-selected, the TO path must be the only one that creates a run — otherwise one message
+     * would produce two runs for one participant and {@code runIds[] + failedTargets[]} would no
+     * longer add up to the requested target count. The mention round therefore skips TO targets.
+     */
+    public WakeHandoff fanOut(UUID sessionId, String workspaceId, String userId, String rootRunId,
+                              String content, List<MentionParser.RosterEntry> roster,
+                              List<UUID> ccParticipantIds, Set<UUID> skipParticipantIds) {
         // PLAN-0648 task-33: every branch of this method reports what it did. The suppression path
         // promises a hand-off ("I do not answer" must never mean "nobody answers"), so a round that
         // silently finds nothing is a lost message — it used to be unobservable, which is exactly how
@@ -144,16 +156,22 @@ public class WakeFanOutService {
             return WakeHandoff.skipped("empty_roster");
         }
         MentionParser.ParseResult parsed = MentionParser.parse(content, roster);
-        List<MentionParser.RosterEntry> recipients = parsed.all()
+        Set<UUID> skip = skipParticipantIds == null ? Set.of() : skipParticipantIds;
+        List<MentionParser.RosterEntry> recipients = (parsed.all()
                 ? roster.stream().filter(MentionParser.RosterEntry::enabled).toList()
                 : parsed.mentions().stream()
                         .map(mention -> roster.stream()
                                 .filter(entry -> entry.participantId().equals(mention.participantId()))
                                 .findFirst().orElse(null))
                         .filter(entry -> entry != null && entry.enabled())
-                        .toList();
+                        .toList())
+                .stream()
+                .filter(entry -> !skip.contains(entry.participantId()))
+                .toList();
         List<MentionParser.RosterEntry> ccObservers = resolveCcObservers(sessionId, ccParticipantIds,
-                roster, recipients);
+                roster, recipients).stream()
+                .filter(entry -> !skip.contains(entry.participantId()))
+                .toList();
         String wakeRoundId = "wake:mention:" + rootRunId;
         if (recipients.isEmpty() && parsed.unresolvedTokens().isEmpty() && ccObservers.isEmpty()) {
             logger.warn("[LIFECYCLE] service=cp event=wake_handoff_skipped sessionId={} round={} "
@@ -195,60 +213,75 @@ public class WakeFanOutService {
      * NULL on purpose — it carries delegation-chain semantics (Q2), and fan-out targets are siblings
      * of one user submission, not delegates.</p>
      *
-     * @param excludeParticipantIds targets already woken by this submission's mention round (so one
-     *                              message never creates two runs for the same participant)
+     * <p><b>Never silent (2026-11-05 real-stack finding)</b>: a target that cannot be dispatched is
+     * returned in {@link TargetedWake#failedTargets()} and logged at ERROR, so the caller can report
+     * it in the 202 body. A DB constraint violation here used to be swallowed into a dropped log line
+     * while the response still looked complete — {@code runIds.size() + failedTargets.size()} must
+     * always equal the requested target count.</p>
      */
     public TargetedWake targetedFanOut(UUID sessionId, String workspaceId, String userId,
                                        String rootRunId, String content,
-                                       List<UUID> targetParticipantIds,
-                                       Set<UUID> excludeParticipantIds) {
+                                       List<UUID> targetParticipantIds) {
         if (targetParticipantIds == null || targetParticipantIds.isEmpty()) {
-            return new TargetedWake(List.of(), 0, 0);
+            return new TargetedWake(List.of(), List.of(), 0);
         }
         String wakeRoundId = "wake:to:" + rootRunId;
         List<UUID> runIds = new ArrayList<>();
-        int skipped = 0;
+        List<TargetedFailure> failedTargets = new ArrayList<>();
         for (UUID participantId : targetParticipantIds) {
-            if (excludeParticipantIds != null && excludeParticipantIds.contains(participantId)) {
-                skipped++;
-                logger.info("[LIFECYCLE] service=cp event=wake_to_deduped sessionId={} participantId={} "
-                        + "round={} reason=already_woken_by_mention", sessionId, participantId, wakeRoundId);
-                continue;
-            }
             WakeDispatchService.WakeFireResult result;
             try {
-                result = wakeDispatchService.fire(participantId, "to", wakeRoundId, sessionId, null, content);
+                // Column value "user" (a TO target run IS user-triggered; chat_runs.trigger_source
+                // CHECK only allows user/mention/schedule/judge/guard/chain), audit label "to".
+                result = wakeDispatchService.fire(participantId, "user", "to", wakeRoundId, sessionId,
+                        null, content);
             } catch (RuntimeException failure) {
                 // Q3 (task-34 invariant): one target's failure never aborts the fan-out round, but it
-                // is never silent either.
-                skipped++;
-                logger.error("[LIFECYCLE] service=cp event=wake_handoff_dropped sessionId={} "
-                                + "participantId={} round={} triggerSource=to reason={}", sessionId,
-                        participantId, wakeRoundId, failure.getClass().getSimpleName(), failure);
+                // is never silent either — the caller reports it as failedTargets[].
+                failedTargets.add(new TargetedFailure(participantId.toString(),
+                        failure.getClass().getSimpleName()));
+                logger.error("[LIFECYCLE] service=cp event=to_target_dispatch_failed sessionId={} "
+                                + "targetParticipantId={} round={} reason={} runIds={}", sessionId,
+                        participantId, wakeRoundId, failure.getClass().getSimpleName(), runIds, failure);
                 continue;
             }
             if (result.dispatched() && result.runId() != null) {
                 runIds.add(result.runId());
                 observeTerminalAsync(result.runId().toString(), waitSeconds());
             } else {
-                skipped++;
-                logger.info("[LIFECYCLE] service=cp event=wake_dispatch_outcome sessionId={} "
-                                + "participantId={} round={} triggerSource=to outcome={}", sessionId,
-                        participantId, wakeRoundId, result.outcome());
+                String reason = result.outcome() == null ? "not_dispatched" : result.outcome();
+                failedTargets.add(new TargetedFailure(participantId.toString(), reason));
+                logger.error("[LIFECYCLE] service=cp event=to_target_dispatch_failed sessionId={} "
+                                + "targetParticipantId={} round={} reason={} runIds={}", sessionId,
+                        participantId, wakeRoundId, reason, runIds);
             }
         }
         logger.info("[LIFECYCLE] service=cp event=wake_to_handoff sessionId={} round={} targets={} "
-                        + "dispatched={} skipped={}", sessionId, wakeRoundId, targetParticipantIds.size(),
-                runIds.size(), skipped);
-        return new TargetedWake(List.copyOf(runIds), targetParticipantIds.size(), skipped);
+                        + "dispatched={} failed={}", sessionId, wakeRoundId, targetParticipantIds.size(),
+                runIds.size(), failedTargets.size());
+        return new TargetedWake(List.copyOf(runIds), List.copyOf(failedTargets),
+                targetParticipantIds.size());
     }
 
-    /** What one explicit TO fan-out did: the created run ids, in selection order (Q1 {@code runIds[]}). */
-    public record TargetedWake(List<UUID> runIds, int targets, int skipped) {
+    /**
+     * What one explicit TO fan-out did: the created run ids, in selection order (Q1 {@code runIds[]}),
+     * and the targets that could not be dispatched (runtime failures — pre-validation failures reject
+     * the whole request instead).
+     */
+    public record TargetedWake(List<UUID> runIds, List<TargetedFailure> failedTargets, int targets) {
         public TargetedWake {
             runIds = List.copyOf(runIds);
+            failedTargets = List.copyOf(failedTargets);
+        }
+
+        /** Total targets accounted for: every requested target is either a run or a reported failure. */
+        public int accounted() {
+            return runIds.size() + failedTargets.size();
         }
     }
+
+    /** One TO target that did not get a run: {@code reason} is the outcome/exception simple name. */
+    public record TargetedFailure(String participantId, String reason) {}
 
     /**
      * What one fan-out did. Callers on the suppression path assert {@code enqueued} so a message

@@ -19,6 +19,7 @@ import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.util.UUID;
 
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -183,8 +184,13 @@ class SessionPrimaryParticipantTest extends AbstractIntegrationTest {
 
         assertEquals(principalId, primaryAnswered.run().getAgentPrincipalId().toString(),
                 "without asParticipantId the PRIMARY answers");
-        assertEquals(ownerId, humanAnswered.run().getAgentPrincipalId().toString(),
-                "with asParticipantId the run is attributed to that participant's principal");
+        // PLAN-0669 M1: `chat_runs.agent_principal_id` has a FK to agent_principals (V92), so a HUMAN
+        // responder cannot be recorded there — it would violate fk_chat_runs_agent_principal at commit
+        // (the pre-0669 code never flushed the detached entity, which is why this gap stayed hidden).
+        // Human identity is carried by the Message's participant attribution (PLAN-0669) instead;
+        // durable human authorship of *user* messages is BL-277.
+        assertNull(humanAnswered.run().getAgentPrincipalId(),
+                "a HUMAN responder keeps the agent-only run column NULL");
     }
 
     /**

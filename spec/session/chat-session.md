@@ -56,7 +56,11 @@ Session 负责连续对话上下文、消息、附件引用、模型绑定和 Ch
    durable `delivery` 归组，**不得**按 `origin` 推断「同一消息」。
 4. **单一入口**：单目标与多目标 MUST 走同一个 `TargetedWake` 入口，只差目标集合大小（禁止两条路径）。
 5. **显式 TO 优先于 @ 抑制**：带 `toParticipantIds` 的提交 MUST NOT 被 `@` 抑制成
-   `suppressed_no_responder`；`@` 与 TO 命中同一参与者时 MUST 去重（一条消息不为其开两个 run）。
+   `suppressed_no_responder`；`@` 与 TO 命中同一参与者时 MUST 由 **TO 路径唯一建 run**（mention 轮跳过 TO 目标），一条消息不得为其开两个 run。
+5b. **运行时失败不得静默**（2026-11-05 真栈实锤）：目标在**运行时**派发失败（DB 约束、网络、Agent 不可用）MUST 部分成功并
+   在 202 响应回报 `failedTargets:[{participantId,reason}]`，且 `runIds.length + failedTargets.length` MUST 等于请求目标数；
+   失败 MUST 以 ERROR 级 `event=to_target_dispatch_failed` 留痕（可 grep 计数）。**前置校验失败**（目标不存在/无权限/已停用/非 AGENT）
+   则 MUST 整条拒绝（400/403），两类情形不得混用同一处理。
 6. **幂等身份含集合**：排序后的 TO 集合与 `asParticipantId` MUST 进入 `Idempotency-Key` 的
    request hash（同内容不同收件人 MUST NOT 判为重复）；`cc` 仍不入哈希（notify-only）。
 
@@ -67,6 +71,22 @@ Session 负责连续对话上下文、消息、附件引用、模型绑定和 Ch
 2. 读取面 MUST 在消息 DTO 中回传 `delivery`；缺字段（V120 之前的消息、内部 wake 提示）MUST 视为
    「无投递记录」，不得伪造默认受众。
 3. 本载体 MUST 终结 BL-239（刷新后 TO/CC 不再丢失），UI 不得再以「本地发送态」作为唯一来源。
+
+### 消息主体归属的持久载体（PLAN-0669 D1/D2 / V121）
+
+1. **归属 = 谁说的，且只存 id**：`messages.participant_id`（UUID，可空，`ON DELETE SET NULL`）MUST 存
+   **会话参与者 id**（`session_participants.id`），MUST NOT 存名字（重命名不得留下陈旧文案）。
+2. **写入方唯一**：assistant 消息 MUST 在单一写入点（`ChatSubmissionService.persistAssistantResponse`）
+   按回退链 `chat_runs.agent_principal_id → sessions.agent_principal_id → 参与者行` 落值；仍解析不到
+   ⇒ MUST 保持 NULL（MUST NOT 猜 PRIMARY —— 错误归属比没有归属更糟）。
+3. **用户消息 v1 不归属**：composer 的 `asParticipantId` 是**目标身份**（默认 PRIMARY 是 AGENT），
+   MUST NOT 当作作者写入；human 作者归属属 BL-277（需拆 author/target 或加 wire 字段）。
+4. **老数据语义**：V121 之前的消息 MUST 保持 NULL、**不回填**；读面 MUST 省略该字段（而非发 null），
+   UI MUST 在字段缺失或花名册无该行时**不渲染**徽标（MUST NOT 显示"未知"、MUST NOT 上屏裸 UUID）。
+5. **归属与 run 一致**：assistant 消息的 `participant_id` MUST 等于该 run 的 responding participant
+   （单测 + 真栈断言；run responder principal 与 participant 行 MUST 同一行）。
+6. **契约面**：OpenAPI `SessionMessage.participantId` 可空；fork/复制消息 MUST NOT 复制归属
+   （子会话花名册未复制，父 id 会悬空/撞 FK）。
 
 ## 恢复与失败
 

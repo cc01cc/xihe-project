@@ -138,6 +138,10 @@ class ChatRunContinuationService {
                 idempotencyKey, requestHash, source.getProvider(), source.getModel(), source.getToolMode(), "accepted");
         child.setOrigin(ChatRun.ORIGIN_USER_SUBMISSION);
         child.setBranchId(branchId);
+        // BL-280: continuation children are created here, not through ChatSubmissionService.persist(),
+        // so they inherit the source Run's responder stamp directly (same conversation identity).
+        // Pre-fix sources stay NULL — the dispatch read then keeps its pre-existing degraded behavior.
+        child.setAgentPrincipalId(source.getAgentPrincipalId());
         child.setContextTemplateSnapshot(source.getContextTemplateSnapshot());
         // PLAN-0628 M2a (D28-39 ②): the child inherits the parent listing verbatim instead of
         // re-resolving it — a binding added while the parent ran must NOT appear here, otherwise the
@@ -167,6 +171,8 @@ class ChatRunContinuationService {
             Message userMessage = new Message(source.getSessionId(), MessageRole.USER, request.content());
             userMessage.setRunId(child.getId().toString());
             userMessage.setBranchId(branchId);
+            // PLAN-0669 D2: user turns carry no durable attribution in v1 (the composer's
+            // `asParticipantId` is a target identity, not the author) — NULL is the contract.
             messages.save(userMessage);
             child.setUserMessageId(userMessage.getId().toString());
             runs.save(child);
