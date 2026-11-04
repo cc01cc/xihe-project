@@ -1,8 +1,65 @@
 import { createServer } from "node:http";
 
+import { CHAIN_SCRIPTS } from "./chain-scripts.mjs";
+
 const port = Number(process.env.XIHE_FAKE_LLM_PORT ?? "13642"),
     mode = process.env.XIHE_FAKE_LLM_MODE ?? "success";
 const pendingSpawnResponses = new Set();
+
+// PLAN-0648 (mode=chain): run a scripted sequence of existing modes for one
+// conversation. The script name comes from XIHE_FAKE_LLM_MODE ("chain:<name>");
+// each step is just an existing mode name — per-step parameters stay with each
+// mode's marker convention (the spec embeds the marker in the matching turn's
+// user message). The cursor is keyed by the conversation fingerprint (first
+// system + first user message — both fixed in the session's first round, so
+// later assistant/tool turns cannot drift it); separate sessions never share
+// a cursor. An exact retry of the served turn (same full-messages
+// fingerprint) replays the same step instead of advancing, so agent-side LLM
+// retries cannot desync the chain. Exhaustion serves "text" (plain success).
+const chainName = mode.startsWith("chain:") ? mode.slice("chain:".length) : "";
+const chainScript = chainName ? (CHAIN_SCRIPTS[chainName] ?? null) : null;
+const chainSessions = new Map();
+if (chainName && !chainScript) {
+    console.error(
+        `[fake-llm] unknown chain script "${chainName}"; every request falls back to success`,
+    );
+}
+function resolveChainMode(requestBody) {
+    if (!chainScript) return null;
+    const messages = Array.isArray(requestBody.messages) ? requestBody.messages : [];
+    // 会话指纹取「首条 system + 首条 user」——两条都在会话第一轮就固定，
+    // 不随后续 assistant/tool 轮次漂移（messages[0..2] 在首轮无 system 时会漂）。
+    const systemMsg = messages.find((m) => m.role === "system");
+    const firstUser = messages.find((m) => m.role === "user");
+    const sessionFp = JSON.stringify([
+        systemMsg ? String(systemMsg.content ?? "").slice(0, 400) : null,
+        firstUser ? String(firstUser.content ?? "").slice(0, 400) : null,
+    ]);
+    const turnFp = JSON.stringify(
+        messages.map((m) => [m.role, String(m.content ?? "").slice(0, 200)]),
+    );
+    let state = chainSessions.get(sessionFp);
+    if (!state) {
+        state = { served: 0, lastTurnFp: "" };
+        chainSessions.set(sessionFp, state);
+    }
+    let index;
+    if (turnFp === state.lastTurnFp) {
+        index = state.served - 1; // exact retry of the served turn: replay its step
+    } else {
+        index = state.served;
+        state.served += 1;
+        state.lastTurnFp = turnFp;
+    }
+    if (index < 0) index = 0;
+    if (index >= chainScript.length) {
+        console.log(
+            `[fake-llm] chain "${chainName}" exhausted after ${chainScript.length} steps → success fallback`,
+        );
+        return "text";
+    }
+    return chainScript[index];
+}
 
 const providers = {
     openai: {
@@ -46,63 +103,69 @@ async function sendCompletion(response, provider, requestBody) {
         return;
     }
 
+    // PLAN-0648 (mode=chain): the scripted per-conversation mode overrides the
+    // startup mode. Exhaustion resolves to "text" here, which falls through the
+    // dispatch below into the default success path (plain prose, no tool call).
+    const chainResolved = resolveChainMode(requestBody);
+    const effectiveMode = chainResolved ?? mode;
+
     response.writeHead(200, {
         "Content-Type": "text/event-stream",
         "Cache-Control": "no-cache",
         Connection: "keep-alive",
     });
 
-    if (mode === "spawn_agent") {
+    if (effectiveMode === "spawn_agent") {
         sendSpawnAgentCompletion(response, requestBody);
         return;
     }
 
-    if (mode === "approval") {
+    if (effectiveMode === "approval") {
         sendApprovalCompletion(response, requestBody);
         return;
     }
 
-    if (mode === "credential_acquire") {
+    if (effectiveMode === "credential_acquire") {
         sendCredentialAcquireCompletion(response, requestBody);
         return;
     }
 
-    if (mode === "write_file") {
+    if (effectiveMode === "write_file") {
         sendWriteFileCompletion(response, requestBody);
         return;
     }
 
-    if (mode === "checkpoint_resume") {
+    if (effectiveMode === "checkpoint_resume") {
         sendCheckpointResumeCompletion(response, requestBody);
         return;
     }
 
-    if (mode === "exec_command") {
+    if (effectiveMode === "exec_command") {
         sendExecCommandCompletion(response, requestBody);
         return;
     }
 
-    if (mode === "read_file") {
+    if (effectiveMode === "read_file") {
         sendReadFileCompletion(response, requestBody);
         return;
     }
 
-    if (mode === "repeat") {
+    if (effectiveMode === "repeat") {
         sendRepeatCompletion(response, requestBody);
         return;
     }
 
-    if (mode === "job") {
+    if (effectiveMode === "job") {
         sendJobCompletion(response, requestBody);
         return;
     }
 
-    if (mode === "job-cancel") {
+    if (effectiveMode === "job-cancel") {
         sendJobCancelCompletion(response, requestBody);
         return;
     }
 
-    if (mode === "history-marker") {
+    if (effectiveMode === "history-marker") {
         sendHistoryMarkerCompletion(response, requestBody);
         return;
     }
