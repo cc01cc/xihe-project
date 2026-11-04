@@ -14,11 +14,13 @@
  * deriveStack()（PLAN-0612：端口事实源归 A03，不再向上查找 one 工作区）。
  */
 import { spawn, spawnSync } from "node:child_process";
+import net from "node:net";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { resolveHostRoot } from "./host-root.mjs";
 import { applySetToEnv, applyUrlSyncToEnv, parseStackSetArgs } from "./lib/stack-set.mjs";
 import { cargoTargetForStack } from "./lib/stack-cargo-target.mjs";
+import { recordedServiceAlive, sweepOrphanProcesses } from "./lib/stack-orphan.mjs";
 import { DEFAULT_STACK_ID, STACK_IDS, deriveStack, normalizeStackArg, stackEnvDefaults } from "./lib/stack-ports.mjs";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
@@ -292,6 +294,54 @@ if (target === "pg") {
 
   console.log(`[stack] postgres OK: ${derived.stackId} project=${derived.composeProject} port=${derived.ports.postgres} db=${derived.database}`);
   process.exit(0);
+}
+
+function isPortListening(port, timeoutMs = 500) {
+  return new Promise((done) => {
+    const socket = net.connect({ host: "127.0.0.1", port });
+    const finish = (value) => {
+      socket.removeAllListeners();
+      socket.destroy();
+      done(value);
+    };
+    socket.setTimeout(timeoutMs);
+    socket.once("connect", () => finish(true));
+    socket.once("timeout", () => finish(false));
+    socket.once("error", () => finish(false));
+  });
+}
+
+// PLAN-0656 R5: `mise run dev:host` (and any direct `stack-run <service>`) launches
+// services through THIS script, not through dev-stack — the R3 sweep in dev-stack never
+// ran on this path, and a leftover runtime from a crashed stop blocked the port (0648
+// lane, second incident). Guard every service launch the same way: if our port is busy,
+// a healthy dev-stack-managed service is reported and left alone; anything else that
+// matches this stack's service profile is an orphan and is swept.
+const GUARDED_TARGETS = ["cp", "runtime", "agent", "ui"];
+if (GUARDED_TARGETS.includes(target) && process.platform === "win32") {
+  const envPort = Number(env[`XIHE_${target.toUpperCase()}_PORT`]);
+  const port = Number.isInteger(envPort) && envPort > 0 ? envPort : derived.ports[target];
+  if (await isPortListening(port)) {
+    if (recordedServiceAlive(projectRoot, derived, target)) {
+      console.error(
+        `[stack] ${derived.stackId} ${target} port ${port} is already running under dev-stack; ` +
+          "not killing a healthy service — use `mise run dev:stack -- status` / stop it first, or start it via dev:stack",
+      );
+      process.exit(2);
+    }
+    sweepOrphanProcesses({ derived, reason: `stack-run ${target}`, services: [target], quietWhenIdle: true });
+    let freed = !(await isPortListening(port));
+    const sweepDeadline = Date.now() + 3000;
+    while (!freed && Date.now() < sweepDeadline) {
+      await new Promise((done) => setTimeout(done, 250));
+      freed = !(await isPortListening(port));
+    }
+    if (!freed) {
+      console.error(`[stack] ${derived.stackId} ${target} port ${port} is still busy after the orphan sweep; see the WARN lines above`);
+      process.exit(2);
+    }
+    console.error(`[stack] ${derived.stackId} ${target} port ${port} freed by the orphan sweep; continuing`);
+  }
 }
 
 launch({ ...factory(), env });
