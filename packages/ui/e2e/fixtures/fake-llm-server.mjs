@@ -25,7 +25,6 @@ if (chainName && !chainScript) {
     );
 }
 function resolveChainMode(requestBody) {
-    if (!chainScript) return null;
     const messages = Array.isArray(requestBody.messages) ? requestBody.messages : [];
     // 会话指纹取「首条 system + 首条 user」——两条都在会话第一轮就固定，
     // 不随后续 assistant/tool 轮次漂移（messages[0..2] 在首轮无 system 时会漂）。
@@ -35,6 +34,21 @@ function resolveChainMode(requestBody) {
         systemMsg ? String(systemMsg.content ?? "").slice(0, 400) : null,
         firstUser ? String(firstUser.content ?? "").slice(0, 400) : null,
     ]);
+    // 两条激活通道：① 启动期 env `XIHE_FAKE_LLM_MODE=chain:<name>`（整机一条链）；
+    // ② spec 在首条 user 消息里写 `XIHE-E2E-CHAIN <name>`（按会话激活，无需改 runner
+    //    的 --llm-mode，多个 spec 可在一个栈上共存）。env 优先。
+    let script = chainScript;
+    if (!script && firstUser) {
+        const marker = String(firstUser.content ?? "").match(/XIHE-E2E-CHAIN\s+([A-Za-z0-9_-]+)/);
+        if (marker) script = CHAIN_SCRIPTS[marker[1]] ?? null;
+        if (marker && !script) {
+            console.error(
+                `[fake-llm] unknown chain script "${marker[1]}" from XIHE-E2E-CHAIN marker`,
+            );
+        }
+    }
+    if (!script) return null;
+    const activeChainName = script === chainScript && chainName ? chainName : "marker";
     const turnFp = JSON.stringify(
         messages.map((m) => [m.role, String(m.content ?? "").slice(0, 200)]),
     );
@@ -52,13 +66,13 @@ function resolveChainMode(requestBody) {
         state.lastTurnFp = turnFp;
     }
     if (index < 0) index = 0;
-    if (index >= chainScript.length) {
+    if (index >= script.length) {
         console.log(
-            `[fake-llm] chain "${chainName}" exhausted after ${chainScript.length} steps → success fallback`,
+            `[fake-llm] chain "${activeChainName}" exhausted after ${script.length} steps → success fallback`,
         );
         return "text";
     }
-    return chainScript[index];
+    return script[index];
 }
 
 const providers = {

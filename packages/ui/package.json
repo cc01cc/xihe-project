@@ -13,7 +13,8 @@
         "lint:oxfmt": "oxfmt --check .",
         "preview": "vite preview",
         "test:unit": "vitest run",
-        "test:e2e": "playwright test --config e2e/playwright.config.ts"
+        "test:e2e": "playwright test --config e2e/playwright.config.ts",
+        "test:e2e:fixtures": "node --test \"e2e/fixtures/__tests__/*.test.mjs\""
     },
     "dependencies": {
         "@iconify/vue": "^5.0.1",
