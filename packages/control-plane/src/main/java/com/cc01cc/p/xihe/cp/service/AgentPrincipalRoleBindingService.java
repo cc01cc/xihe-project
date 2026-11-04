@@ -106,7 +106,7 @@ public class AgentPrincipalRoleBindingService {
      */
     public record AgentRoleBindingView(UUID bindingId, UUID principalId, UUID roleId, String name,
                                        String displayName, String description, String scopeType,
-                                       UUID scopeId, String scopeName, boolean isSystem, int atomCount,
+                                       UUID scopeId, String scopeName, boolean isSeed, int atomCount,
                                        List<String> atoms, UUID grantedBy, Instant grantedAt) {
     }
 
@@ -155,6 +155,9 @@ public class AgentPrincipalRoleBindingService {
                 GrantPrincipalPathResolver.AGENT_PRINCIPAL, principalId, scope.type(), scope.id(), actorUserId);
         row.setId(UUID.randomUUID());
         row.setGrantedAt(Instant.now());
+        // Lead ruling 2026-11-05: a binding created through this API is a user choice — deletable
+        // even when the role itself is a system role. Immutability belongs to seed/default rows.
+        row.setSeed(false);
         AccessRoleBinding saved = bindings.saveAndFlush(row);
 
         materializer.materializeSubject(GrantPrincipalPathResolver.AGENT_PRINCIPAL, principalId,
@@ -185,11 +188,12 @@ public class AgentPrincipalRoleBindingService {
             throw new CpApiException(HttpStatus.FORBIDDEN, "FORBIDDEN",
                     "MANAGE_WORKSPACE_AGENTS is required in this binding's workspace");
         }
-        AccessRole role = roles.findById(row.getRoleId()).orElseThrow(() -> new CpApiException(
-                HttpStatus.NOT_FOUND, "ROLE_NOT_FOUND", "Role not found"));
-        if (role.isSystem()) {
+        // Lead ruling 2026-11-05: immutability is a row property (seed/default binding), NOT
+        // roles.is_system — a user-created binding of WS_EDITOR/AGENT_DELEGATOR must be deletable,
+        // otherwise binding the most useful roles becomes a one-way door.
+        if (row.isSeed()) {
             throw new CpApiException(HttpStatus.CONFLICT, "ROLE_BINDING_IMMUTABLE",
-                    "a seed role binding cannot be removed from an agent principal");
+                    "a seed binding (created by default grants) cannot be removed from an agent principal");
         }
         bindings.delete(row);
         bindings.flush();
@@ -308,7 +312,7 @@ public class AgentPrincipalRoleBindingService {
                 : null;
         return new AgentRoleBindingView(row.getId(), row.getSubjectId(), row.getRoleId(), role.getName(),
                 role.getDisplayName(), role.getDescription(), row.getScopeType(), row.getScopeId(),
-                scopeName, role.isSystem(), atomCount, List.copyOf(summary), row.getGrantedBy(),
+                scopeName, row.isSeed(), atomCount, List.copyOf(summary), row.getGrantedBy(),
                 row.getGrantedAt());
     }
 
