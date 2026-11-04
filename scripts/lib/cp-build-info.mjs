@@ -204,3 +204,107 @@ export function evaluateCpFreshness({ targetDir, headCommit, read = readFileSync
     reason: fresh ? 'stamped commit == HEAD' : `stamped commit != HEAD`,
   };
 }
+
+/**
+ * Commits between `from` and `to` (`git rev-list --count from..to`).
+ * Null when either side is unknown or `from` is not a commit in this clone (e.g. a stamp
+ * written on another checkout) — a number would be a guess, and status is read by scripts.
+ *
+ * @param {{cwd: string, from: string|null, to: string|null, run?: typeof spawnSync}} input
+ * @returns {number|null}
+ */
+export function commitDistance({ cwd, from, to, run = spawnSync }) {
+  const base = typeof from === 'string' ? from.trim() : '';
+  const head = typeof to === 'string' ? to.trim() : '';
+  if (!base || !head) return null;
+  if (base === head) return 0;
+  const result = run('git', ['rev-list', '--count', `${base}..${head}`], { cwd, encoding: 'utf8' });
+  if (result.status !== 0) return null;
+  const count = Number.parseInt(String(result.stdout ?? '').trim(), 10);
+  return Number.isInteger(count) && count >= 0 ? count : null;
+}
+
+/**
+ * PLAN-0662 L4: the per-stack build-freshness row.
+ *
+ * **Field names are a contract** (`dev:host:status --json` / `ports.mjs status --json`);
+ * lane scripts assert on them, so renaming is a breaking change:
+ *
+ * - `runningCommit` stamped commit of the classes the stack's CP uses (`null` = no stamp)
+ * - `headCommit`    `git rev-parse HEAD` of this checkout (`null` = git unavailable)
+ * - `behind`        `git rev-list --count runningCommit..headCommit` (`null` when unknown)
+ * - `stale`         provably not from HEAD (`verdict` is `stale` or `missing`)
+ * - `verdict`       `fresh` | `stale` | `missing` | `unverified` (same vocabulary as the gate)
+ *
+ * @param {{targetDir: string, headCommit: string|null, cwd: string, run?: typeof spawnSync}} input
+ */
+export function cpBuildStatus({ targetDir, headCommit, cwd, run = spawnSync }) {
+  const verdict = evaluateCpFreshness({ targetDir, headCommit });
+  const head = typeof headCommit === 'string' && headCommit.trim() ? headCommit.trim() : null;
+  return {
+    targetDir,
+    file: verdict.file,
+    runningCommit: verdict.fileCommit,
+    headCommit: head,
+    behind: commitDistance({ cwd, from: verdict.fileCommit, to: head, run }),
+    stale: verdict.status === 'stale' || verdict.status === 'missing',
+    verdict: verdict.status,
+    builtAt: verdict.builtAt,
+    dirty: verdict.dirty,
+  };
+}
+
+/**
+ * PLAN-0662 L5: the external-server E2E gate. Running specs against a CP whose classes
+ * predate the commit under test produces "product bugs" that are really stale-build
+ * artefacts (BL-240), so the runner refuses to start instead of failing mysteriously later.
+ *
+ * Expected commit: `XIHE_E2E_EXPECT_CP_COMMIT` when the caller declares one, else HEAD.
+ * A **missing stamp is a failure**, not a pass: an old CP without build-info would
+ * otherwise slip through exactly the gate this plan adds.
+ *
+ * @param {{targetDir: string, expectedCommit?: string|null, headCommit?: string|null}} input
+ * @returns {{ok: boolean, verdict: string, expectedCommit: string|null, runningCommit: string|null, message: string}}
+ */
+export function externalCpBuildCheck({ targetDir, expectedCommit, headCommit }) {
+  const declared = typeof expectedCommit === 'string' ? expectedCommit.trim().toLowerCase() : '';
+  const head = typeof headCommit === 'string' && headCommit.trim() ? headCommit.trim().toLowerCase() : '';
+  const expected = declared || head || null;
+  const { file, info } = readBuildInfo(targetDir);
+  if (!expected) {
+    return {
+      ok: false,
+      verdict: 'unverified',
+      expectedCommit: null,
+      runningCommit: info?.commit ?? null,
+      message:
+        'cannot determine the expected CP commit (no XIHE_E2E_EXPECT_CP_COMMIT and git HEAD is unknown)'
+        + ` — build-info: ${file}`,
+    };
+  }
+  if (!info) {
+    return {
+      ok: false,
+      verdict: 'missing',
+      expectedCommit: expected,
+      runningCommit: null,
+      message:
+        `no CP build-info at ${file}; the running CP cannot prove it was built from ${shortSha(expected)}.`
+        + ' Rebuild and restart CP first: `mise run dev:host:start:cp` (or `node scripts/stack-run.mjs cp`)',
+    };
+  }
+  const ok = sameCommit(expected, info.commit);
+  return {
+    ok,
+    verdict: ok ? 'fresh' : 'stale',
+    expectedCommit: expected,
+    runningCommit: info.commit,
+    message: ok
+      ? `CP build commit ${shortSha(info.commit)} matches expected ${shortSha(expected)}`
+      : `CP build commit ${shortSha(info.commit)} does not match expected ${shortSha(expected)};`
+        + ' the running CP was built from a different commit. Rebuild and restart CP first:'
+        + ' `mise run dev:host:start:cp` (or `node scripts/stack-run.mjs cp`)'
+        + ` — stamp: ${file}`,
+  };
+}
+

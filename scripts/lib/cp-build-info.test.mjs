@@ -16,8 +16,11 @@ import { fileURLToPath } from 'node:url';
 
 import {
   buildInfoPath,
+  commitDistance,
+  cpBuildStatus,
   cpTargetDir,
   evaluateCpFreshness,
+  externalCpBuildCheck,
   formatBuildInfo,
   gitHead,
   parseBuildInfo,
@@ -166,4 +169,109 @@ test('gitHead yields a full 40-char sha for this checkout', () => {
   assert.equal(head.error, null, head.error ?? '');
   assert.match(head.commit, /^[0-9a-f]{40}$/u);
   assert.equal(typeof head.dirty, 'boolean');
+});
+
+/* ------------------------------------------- L4 status row / L5 runner assertion */
+
+const fakeRun = (stdout, status = 0) => () => ({ status, stdout, stderr: status === 0 ? '' : 'boom' });
+
+test('commitDistance counts commits, and reports 0 / null instead of guessing', () => {
+  assert.equal(commitDistance({ cwd: projectRoot, from: HEAD_A, to: HEAD_A }), 0);
+  assert.equal(commitDistance({ cwd: projectRoot, from: HEAD_B, to: HEAD_A, run: fakeRun('3\n') }), 3);
+  assert.equal(commitDistance({ cwd: projectRoot, from: null, to: HEAD_A }), null);
+  assert.equal(commitDistance({ cwd: projectRoot, from: HEAD_B, to: null }), null);
+  assert.equal(commitDistance({ cwd: projectRoot, from: HEAD_B, to: HEAD_A, run: fakeRun('', 128) }), null);
+  assert.equal(commitDistance({ cwd: projectRoot, from: HEAD_B, to: HEAD_A, run: fakeRun('not-a-number') }), null);
+});
+
+test('cpBuildStatus: a missing stamp is stale-with-unknown-behind, never fresh', () => {
+  const row = cpBuildStatus({
+    targetDir: join(projectRoot, 'target-status-missing'),
+    headCommit: HEAD_A,
+    cwd: projectRoot,
+  });
+  assert.equal(row.verdict, 'missing');
+  assert.equal(row.stale, true);
+  assert.equal(row.behind, null);
+  assert.equal(row.runningCommit, null);
+  assert.equal(row.headCommit, HEAD_A);
+});
+
+test('cpBuildStatus: fresh stamp has stale=false and behind=0', (t) => {
+  const targetDir = tempTarget(t);
+  writeBuildInfo({ targetDir, commit: HEAD_A, builtAt: '2026-11-04T21:00:00.000Z', dirty: false });
+  const row = cpBuildStatus({ targetDir, headCommit: HEAD_A, cwd: projectRoot });
+  assert.equal(row.verdict, 'fresh');
+  assert.equal(row.stale, false);
+  assert.equal(row.behind, 0);
+  assert.equal(row.runningCommit, HEAD_A);
+  assert.equal(row.headCommit, HEAD_A);
+  assert.equal(row.dirty, false);
+  assert.equal(row.targetDir, targetDir);
+  assert.equal(row.file, buildInfoPath(targetDir));
+});
+
+test('cpBuildStatus: an older stamp is stale with behind > 0', (t) => {
+  const targetDir = tempTarget(t);
+  writeBuildInfo({ targetDir, commit: HEAD_B, builtAt: '2026-11-04T12:00:00.000Z', dirty: false });
+  const row = cpBuildStatus({
+    targetDir,
+    headCommit: HEAD_A,
+    cwd: projectRoot,
+    run: fakeRun('7\n'),
+  });
+  assert.equal(row.verdict, 'stale');
+  assert.equal(row.stale, true);
+  assert.equal(row.behind, 7);
+  assert.equal(row.runningCommit, HEAD_B);
+});
+
+test('externalCpBuildCheck: matching commit passes and names both sides', (t) => {
+  const targetDir = tempTarget(t);
+  writeBuildInfo({ targetDir, commit: HEAD_A, builtAt: '', dirty: false });
+  const result = externalCpBuildCheck({ targetDir, expectedCommit: HEAD_A, headCommit: HEAD_A });
+  assert.equal(result.ok, true);
+  assert.equal(result.verdict, 'fresh');
+  assert.equal(result.expectedCommit, HEAD_A);
+  assert.equal(result.runningCommit, HEAD_A);
+  assert.match(result.message, /matches expected/u);
+});
+
+test('externalCpBuildCheck: mismatch fails fast with an actionable rebuild hint', (t) => {
+  const targetDir = tempTarget(t);
+  writeBuildInfo({ targetDir, commit: HEAD_B, builtAt: '', dirty: false });
+  const result = externalCpBuildCheck({ targetDir, expectedCommit: HEAD_A, headCommit: HEAD_A });
+  assert.equal(result.ok, false);
+  assert.equal(result.verdict, 'stale');
+  assert.match(result.message, /does not match expected/u);
+  assert.match(result.message, /Rebuild and restart CP first/u);
+  assert.match(result.message, /mise run dev:host:start:cp/u);
+});
+
+test('externalCpBuildCheck: a missing stamp fails instead of silently passing', () => {
+  const result = externalCpBuildCheck({
+    targetDir: join(projectRoot, 'target-never-built-external'),
+    expectedCommit: HEAD_A,
+    headCommit: HEAD_A,
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.verdict, 'missing');
+  assert.match(result.message, /no CP build-info/u);
+  assert.match(result.message, /Rebuild and restart CP first/u);
+});
+
+test('externalCpBuildCheck: no expectation and no HEAD is unverified, never a pass', (t) => {
+  const targetDir = tempTarget(t);
+  const result = externalCpBuildCheck({ targetDir, expectedCommit: '', headCommit: null });
+  assert.equal(result.ok, false);
+  assert.equal(result.verdict, 'unverified');
+  assert.match(result.message, /XIHE_E2E_EXPECT_CP_COMMIT/u);
+});
+
+test('externalCpBuildCheck: a declared expectation wins over HEAD', (t) => {
+  const targetDir = tempTarget(t);
+  writeBuildInfo({ targetDir, commit: HEAD_A, builtAt: '', dirty: false });
+  const result = externalCpBuildCheck({ targetDir, expectedCommit: HEAD_A, headCommit: HEAD_B });
+  assert.equal(result.ok, true, 'caller-declared expected commit is authoritative');
+  assert.equal(result.expectedCommit, HEAD_A);
 });

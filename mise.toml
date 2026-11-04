@@ -307,6 +307,14 @@ run = "node scripts/dev-stack.mjs start"
 description = "Start CP/Agent/Runtime/UI detached for the current stack (--stack N; --with-pg to include PostgreSQL)"
 alias = "dev:stack"
 
+# PLAN-0662 L4: read-only build-freshness view (每栈 cpBuild: runningCommit/headCommit/
+# behind/stale/verdict). 只读，不重建、不重启；`-- --json` 是 lane 脚本消费的固定契约。
+[tasks."dev:host:status"]
+run = "node scripts/dev-stack.mjs status --all"
+description = "Per-stack CP build freshness (commit/head/behind/stale/verdict) + service health; pass -- --json for the fixed contract"
+dir = "."
+alias = "dev:host:status"
+
 [tasks."dev:host:import-config"]
 run = "node scripts/xihe.mjs config import config.import.local.jsonc"
 description = "Explicitly import non-secret local config after CP is ready; not part of dev:host startup"
