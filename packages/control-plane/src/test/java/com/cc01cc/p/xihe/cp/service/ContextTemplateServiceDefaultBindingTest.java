@@ -86,7 +86,7 @@ class ContextTemplateServiceDefaultBindingTest {
         }
         assertThat(skills).as("built-in manifest must contain skill_catalog").isNotNull();
         assertThat(skills.path("enabled").asBoolean()).isTrue();
-        assertThat(skills.path("config").path("maxSkills").asInt()).isEqualTo(24);
+        assertThat(skills.path("config").path("maxSkills").asInt()).isEqualTo(40);
         assertThat(skills.path("config").path("includeDescriptions").asBoolean()).isTrue();
         assertThat(skills.path("config").path("sort").asText()).isEqualTo("binding");
         assertThat(binding.snapshot().path("template").path("document").asText())
