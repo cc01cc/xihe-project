@@ -470,6 +470,7 @@ onUnmounted(() => {
                             <ReasoningPart
                                 v-if="part.type === 'reasoning'"
                                 :content="part.content"
+                                :actor="actorForRows"
                             />
                             <ArtifactPart v-if="part.type === 'artifact'" :part="part" />
                             <CitationPart v-if="part.type === 'citation'" :index="part.index" />

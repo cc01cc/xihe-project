@@ -41,7 +41,7 @@ ConfigService 按三层作用域 × 领域（Domain）组织配置；域集合�
 | `approval-policy` | ✅（平台 ADMIN） | ❌ | ✅ | 审批模式 `mode`（`manual` / `auto`）与要问清单 `askActionClasses[]`（actionClass 数组，PLAN-0407 T2.8：缺省 = 代码默认 8 项 `write`/`exec`/`delete`/`credential`/`CREATE_ACCOUNT`/`CREATE_TEMPLATE`/`MANAGE_WORKSPACE_AGENTS`/`SPAWN_AGENT`；在册 + `manual` → 弹审批、在册 + `auto` → 放行记 `allowed_by`、不在册 → 授权过后直过；缺配置回退默认清单，显式空数组 = 什么都不问）；**instance 层可写默认、workspace 可覆盖**，user 层不可写（显式例外）；审计来源层由 `DbPolicyContextProvider` 按 `ConfigService.effective(...).source` 回填（PLAN-0364 决策 #9，supersede PLAN-0337 选项①；env 命中视为 instance 钉死） |
 | `job-policy` | ✅（平台 ADMIN） | ❌ | ✅ | `defaultTimeoutSecs` / `maxTimeoutSecs`（job 运行时限默认与硬上限，PLAN-0373 BL-22）；**instance 默认+上限权威、workspace 上限内下调、user 不可写**（与 approval-policy 同构的第二显式例外，决策 #1）；`maxTimeoutSecs=0`=上限未设不钳制（决策 #8），执行点在 CP `tools/call` 路由分叉前无条件覆写工具 `timeout`（决策 #5） |
 | `agent-templates` | ✅ | ✅ | ✅ | Agent 角色模板域（PLAN-0374，细则见 §3a） |
-| `context-templates` | ✅ | ✅ | ✅ | 上下文模板修订（PLAN-0414）；`id+version` 修订追加式不可变，只能按显式层读取 |
+| `context-templates` | ✅ | ✅ | ✅ | 上下文模板修订（PLAN-0414）；`id+version` 修订追加式不可变，只能按显式层读取。**运维口径（BL-284/285）**：已发布过模板的部署**不会自动获得**新版本内置默认（`agent_memory` / `skill_catalog` 组件），需重新发布一版含该组件的模板并切换 `defaultTemplate`；全新安装（实例层无存储）直接使用内置默认 |
 | `api-request-templates` | ✅ | ✅ | ✅ | API Request 模板域（PLAN-0439，细则见 §3b）：`templates` / `connectionDefaultTemplates` / `providerModelBindings`；发布版本不可变，模型 override 仅 user 层 |
 
 已裁撤域：`infrastructure`（→ env）、`workspace-config`（→ env / 工作区 API）、`mcp`（→ `mcp_stdio_servers` / `mcp_remote_servers` 表，决策 #27）；键迁移：`llm-provider.contextPolicy` → `context-policy`、`user-preference.{defaultModel,maxTokens,temperature}` → `llm-provider`（决策 #13/#16/#39）。

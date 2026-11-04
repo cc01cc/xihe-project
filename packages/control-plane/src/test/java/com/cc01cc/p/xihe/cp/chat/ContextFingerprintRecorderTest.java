@@ -2,6 +2,7 @@ package com.cc01cc.p.xihe.cp.chat;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.cc01cc.p.xihe.cp.config.ConfigService;
 import com.cc01cc.p.xihe.cp.context.service.ContextProjectionService;
@@ -15,6 +16,7 @@ import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
@@ -220,5 +222,100 @@ class ContextFingerprintRecorderTest {
                 Map.of(), null, Map.of(), Map.of(), Map.of());
         recorder.recordFirstDispatch(blank);
         verify(chatRunRepository, never()).recordContextFingerprint(org.mockito.ArgumentMatchers.any(), anyString());
+    }
+
+    /**
+     * BL-285 follow-up: the long-term guard for the whole class of "volatile field in a layer" bugs.
+     * Two dispatches over the SAME context state — only timestamps differ — must produce identical
+     * layer hashes; any future payload field that changes per dispatch fails here instead of silently
+     * turning a layer into "always changed".
+     */
+    @Test
+    void identicalStateProducesIdenticalLayerHashes_evenWhenTimestampsDiffer() throws Exception {
+        ObjectNode template = mapper().createObjectNode();
+        ArrayNode components = template.putObject("template").putArray("components");
+        components.addObject().put("instanceId", "memory-1").put("type", "agent_memory");
+        components.addObject().put("instanceId", "skills-1").put("type", "skill_catalog");
+
+        ObjectNode skillsFirst = mapper().createObjectNode().put("status", "ready")
+                .put("capturedAt", "2026-11-05T01:00:00Z");
+        skillsFirst.putArray("items").addObject().put("name", "alpha");
+        ObjectNode skillsSecond = mapper().createObjectNode().put("status", "ready")
+                .put("capturedAt", "2026-11-05T09:30:00Z");
+        skillsSecond.putArray("items").addObject().put("name", "alpha");
+
+        Map<String, Object> sourcesFirst = new LinkedHashMap<>();
+        sourcesFirst.put("memory-1", Map.of("status", "ready",
+                "entries", List.of(Map.of("content", "fact", "updatedAt", "2026-11-05T01:00:00Z"))));
+        sourcesFirst.put("skills-1", Map.of("status", "ready", "items", List.of("alpha")));
+        Map<String, Object> sourcesSecond = new LinkedHashMap<>();
+        sourcesSecond.put("memory-1", Map.of("status", "ready",
+                "entries", List.of(Map.of("content", "fact", "updatedAt", "2026-11-05T09:30:00Z"))));
+        sourcesSecond.put("skills-1", Map.of("status", "ready", "items", List.of("alpha")));
+
+        ArrayNode historyFirst = mapper().createArrayNode();
+        historyFirst.addObject().put("role", "human").put("content", "hi")
+                .put("createdAt", "2026-11-05T01:00:00Z");
+        ArrayNode historySecond = mapper().createArrayNode();
+        historySecond.addObject().put("role", "human").put("content", "hi")
+                .put("createdAt", "2026-11-05T09:30:00Z");
+        when(projectionService.currentHistoryMessages(SESSION_ID, BRANCH_ID))
+                .thenReturn(historyFirst)
+                .thenReturn(historySecond);
+
+        ObjectNode first = recorder.buildDocument(input(template, skillsFirst, sourcesFirst));
+        ObjectNode second = recorder.buildDocument(input(template, skillsSecond, sourcesSecond));
+
+        assertEquals(first, second, "same context state must hash identically");
+        for (String layer : List.of("template", "skills", "history", "memory", "userInput",
+                "attachments", "config")) {
+            assertEquals(first.path("layers").path(layer).path("hash").asText(),
+                    second.path("layers").path(layer).path("hash").asText(),
+                    layer + " must not change when only timestamps change");
+        }
+    }
+
+    /** BL-285 follow-up (F1): a skills change belongs to the skills layer only. */
+    @Test
+    void skillsChangeDoesNotPolluteTheMemoryLayer() throws Exception {
+        ObjectNode template = mapper().createObjectNode();
+        ArrayNode components = template.putObject("template").putArray("components");
+        components.addObject().put("instanceId", "memory-1").put("type", "agent_memory");
+        components.addObject().put("instanceId", "skills-1").put("type", "skill_catalog");
+
+        ObjectNode skillsFirst = mapper().createObjectNode().put("status", "ready");
+        skillsFirst.putArray("items").addObject().put("name", "alpha");
+        ObjectNode skillsSecond = mapper().createObjectNode().put("status", "ready");
+        skillsSecond.putArray("items").addObject().put("name", "alpha");
+        skillsSecond.withArray("items").addObject().put("name", "beta");
+
+        Map<String, Object> memorySource = Map.of("status", "ready", "entries", List.of("fact"));
+        Map<String, Object> sourcesFirst = new LinkedHashMap<>();
+        sourcesFirst.put("memory-1", memorySource);
+        sourcesFirst.put("skills-1", Map.of("status", "ready", "items", List.of("alpha")));
+        Map<String, Object> sourcesSecond = new LinkedHashMap<>();
+        sourcesSecond.put("memory-1", memorySource);
+        sourcesSecond.put("skills-1", Map.of("status", "ready", "items", List.of("alpha", "beta")));
+
+        ObjectNode first = recorder.buildDocument(input(template, skillsFirst, sourcesFirst));
+        ObjectNode second = recorder.buildDocument(input(template, skillsSecond, sourcesSecond));
+
+        assertEquals(first.path("layers").path("memory").path("hash").asText(),
+                second.path("layers").path("memory").path("hash").asText(),
+                "the memory layer must ignore skill component sources");
+        assertNotEquals(first.path("layers").path("skills").path("hash").asText(),
+                second.path("layers").path("skills").path("hash").asText(),
+                "the skills layer must record the skills change");
+    }
+
+    private static com.fasterxml.jackson.databind.ObjectMapper mapper() {
+        return new com.fasterxml.jackson.databind.ObjectMapper();
+    }
+
+    private static ContextFingerprintRecorder.RecordInput input(ObjectNode template, ObjectNode skills,
+                                                               Map<String, Object> componentSources) {
+        return new ContextFingerprintRecorder.RecordInput(
+                RUN_ID, SESSION_ID, BRANCH_ID, USER_ID, WORKSPACE_ID, template, skills, "hello",
+                componentSources, "system instructions", Map.of(), Map.of(), Map.of());
     }
 }
