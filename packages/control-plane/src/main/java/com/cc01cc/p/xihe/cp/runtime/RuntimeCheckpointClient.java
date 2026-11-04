@@ -118,6 +118,10 @@ public class RuntimeCheckpointClient {
 
     public record PreviewCounts(int restore, int delete, int typeConflict) {}
 
+    /** PLAN-0641 M3: one undeclared nested repo touched by a revert (T4.3). */
+    public record NestedRepoAffected(String repoPath, String kind, boolean dirty,
+                                     boolean headMoved) {}
+
     /**
      * `revert/preview` result. {@code problem} carries the parsed RFC 9457 body of a
      * failed call (empty on success) so callers can inspect fields such as
@@ -125,7 +129,8 @@ public class RuntimeCheckpointClient {
      */
     public record RevertPreview(Outcome outcome, String sliceRef, PreviewCounts counts,
                                 List<PreviewEntry> entries, boolean truncated,
-                                Map<String, Object> problem, String reason) {}
+                                Map<String, Object> problem, String reason,
+                                List<NestedRepoAffected> nestedRepoAffected) {}
 
     /** One executed revert item ({@code outcome} = restored|deleted|failed). */
     public record ExecuteEntry(String path, String outcome, String reason) {}
@@ -138,6 +143,7 @@ public class RuntimeCheckpointClient {
      */
     public record RevertResult(Outcome outcome, String sliceRef, ExecuteCounts counts,
                                List<ExecuteEntry> entries, long durationMs, List<String> suspects,
+                               List<NestedRepoAffected> nestedRepoAffected,
                                Map<String, Object> problem, String reason) {}
 
     /** One plain-text blob of a slice tree; {@code problem} as in {@link RevertPreview}. */
@@ -310,12 +316,13 @@ public class RuntimeCheckpointClient {
             if (status / 100 != 2) {
                 Map<String, Object> problem = parseBody(response.body());
                 return new RevertPreview(failureOutcome(status, problem), null, null, List.of(),
-                        false, problem, errorReason(status, response.body()));
+                        false, problem, errorReason(status, response.body()), List.of());
             }
             Map<String, Object> body = parseBody(response.body());
             return new RevertPreview(Outcome.OK, stringValue(body, "sliceRef"),
                     parsePreviewCounts(body.get("counts")), parsePreviewEntries(body.get("entries")),
-                    Boolean.TRUE.equals(body.get("truncated")), Map.of(), null);
+                    Boolean.TRUE.equals(body.get("truncated")), Map.of(), null,
+                    parseNestedRepoAffected(body.get("nestedRepoAffected")));
         } catch (Exception e) {
             logger.warn("[LIFECYCLE] service=cp event=runtime_checkpoint_revert_preview_unreachable "
                             + "workspaceId={} sliceRef={} error={}",
@@ -330,8 +337,10 @@ public class RuntimeCheckpointClient {
      * type changes must be acknowledged explicitly in {@code acknowledgeTypeChanges}.
      */
     public RevertResult revert(String workspaceId, String sliceRef,
-                               List<String> acknowledgeTypeChanges) {
-        return revert(workspaceId, null, sliceRef, acknowledgeTypeChanges);
+                               List<String> acknowledgeTypeChanges, boolean force,
+                               List<String> acknowledgeNestedRepos) {
+        return revert(workspaceId, null, sliceRef, acknowledgeTypeChanges, force,
+                acknowledgeNestedRepos);
     }
 
     /**
@@ -339,7 +348,8 @@ public class RuntimeCheckpointClient {
      * Runtime resolves that root's own shadow repo and work tree.
      */
     public RevertResult revert(String workspaceId, String rootId, String sliceRef,
-                               List<String> acknowledgeTypeChanges) {
+                               List<String> acknowledgeTypeChanges, boolean force,
+                               List<String> acknowledgeNestedRepos) {
         if (isBlank(workspaceId) || isBlank(sliceRef)) {
             return transportRevert("invalid_request");
         }
@@ -351,19 +361,27 @@ public class RuntimeCheckpointClient {
         }
         payload.put("acknowledgeTypeChanges",
                 acknowledgeTypeChanges == null ? List.of() : acknowledgeTypeChanges);
+        // PLAN-0641 M3 (T4.2): force overrides the dirty gate; the acknowledgement
+        // list must cover every head-drifted nested repo (lead ruling (a)).
+        if (force) {
+            payload.put("force", true);
+        }
+        if (acknowledgeNestedRepos != null && !acknowledgeNestedRepos.isEmpty()) {
+            payload.put("acknowledgeNestedRepos", acknowledgeNestedRepos);
+        }
         try {
             HttpResponse<String> response = send("revert_execute", url, payload, REVERT_TIMEOUT);
             int status = response.statusCode();
             if (status / 100 != 2) {
                 Map<String, Object> problem = parseBody(response.body());
                 return new RevertResult(failureOutcome(status, problem), null, null, List.of(), 0L,
-                        List.of(), problem, errorReason(status, response.body()));
+                        List.of(), List.of(), problem, errorReason(status, response.body()));
             }
             Map<String, Object> body = parseBody(response.body());
             return new RevertResult(Outcome.OK, stringValue(body, "sliceRef"),
                     parseExecuteCounts(body.get("counts")), parseExecuteEntries(body.get("entries")),
                     longValue(body.get("durationMs")), parseStringList(body.get("suspects")),
-                    Map.of(), null);
+                    parseNestedRepoAffected(body.get("nestedRepoAffected")), Map.of(), null);
         } catch (Exception e) {
             logger.warn("[LIFECYCLE] service=cp event=runtime_checkpoint_revert_unreachable "
                             + "workspaceId={} sliceRef={} error={}",
@@ -540,11 +558,32 @@ public class RuntimeCheckpointClient {
     }
 
     private RevertPreview transportPreview(String reason) {
-        return new RevertPreview(Outcome.TRANSPORT, null, null, List.of(), false, Map.of(), reason);
+        return new RevertPreview(Outcome.TRANSPORT, null, null, List.of(), false, Map.of(), reason,
+                List.of());
     }
 
     private RevertResult transportRevert(String reason) {
-        return new RevertResult(Outcome.TRANSPORT, null, null, List.of(), 0L, List.of(), Map.of(), reason);
+        return new RevertResult(Outcome.TRANSPORT, null, null, List.of(), 0L, List.of(), List.of(),
+                Map.of(), reason);
+    }
+
+    /** PLAN-0641 M3: parse the `nestedRepoAffected` array of preview/execute bodies. */
+    private List<NestedRepoAffected> parseNestedRepoAffected(Object raw) {
+        if (!(raw instanceof List<?> items)) {
+            return List.of();
+        }
+        List<NestedRepoAffected> parsed = new ArrayList<>();
+        for (Object item : items) {
+            if (!(item instanceof Map<?, ?> map)) {
+                continue;
+            }
+            parsed.add(new NestedRepoAffected(
+                    map.get("repoPath") == null ? "" : String.valueOf(map.get("repoPath")),
+                    map.get("kind") == null ? "" : String.valueOf(map.get("kind")),
+                    Boolean.TRUE.equals(map.get("dirty")),
+                    Boolean.TRUE.equals(map.get("headMoved"))));
+        }
+        return parsed;
     }
 
     /**

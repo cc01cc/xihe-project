@@ -29,8 +29,8 @@ use crate::checkpoint_api::{
     CheckpointService, REASON_GIT_FAILED, REASON_WORKSPACE_UNKNOWN, unavailable_reason,
 };
 use crate::checkpoint_revert::{
-    MAX_BLOB_BYTES, RestoreAction, RestoreEntryState, RestoreError, RestoreItemOutcome,
-    RestoreItemResult, RestorePreview, RestoreResult, RestoreResultCounts,
+    MAX_BLOB_BYTES, NestedRepoAffected, RestoreAction, RestoreEntryState, RestoreError,
+    RestoreItemOutcome, RestoreItemResult, RestorePreview, RestoreResult, RestoreResultCounts,
 };
 use crate::checkpoint_store::blob::read_blob;
 use crate::checkpoint_store::manifest::Manifest;
@@ -69,6 +69,32 @@ pub struct RestorePreviewCounts {
     pub type_conflict: usize,
 }
 
+/// PLAN-0641 M3 (T4.3): one undeclared nested repository touched by a restore.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NestedRepoAffectedView {
+    /// Workspace-relative POSIX path of the repository root.
+    pub repo_path: String,
+    /// `nested|gitdir|submodule|bare|symlink`.
+    pub kind: String,
+    /// The repository has uncommitted changes (blocks unless `force`).
+    pub dirty: bool,
+    /// Clean repository whose restored content differs from its HEAD tree.
+    pub head_moved: bool,
+}
+
+fn nested_repo_views(affected: Vec<NestedRepoAffected>) -> Vec<NestedRepoAffectedView> {
+    affected
+        .into_iter()
+        .map(|repo| NestedRepoAffectedView {
+            repo_path: repo.repo_path,
+            kind: repo.kind.to_string(),
+            dirty: repo.dirty,
+            head_moved: repo.head_moved,
+        })
+        .collect()
+}
+
 /// `POST .../checkpoints/revert/preview` 200 body.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -78,6 +104,8 @@ pub struct RestorePreviewOutcome {
     pub entries: Vec<RestorePreviewEntry>,
     /// `true` when `entries` was cut at [`MAX_PREVIEW_ENTRIES`].
     pub truncated: bool,
+    /// PLAN-0641 M3 (T4.3): undeclared nested repos this revert touches.
+    pub nested_repo_affected: Vec<NestedRepoAffectedView>,
 }
 
 /// One entry of the restore execution result.
@@ -110,6 +138,8 @@ pub struct RestoreExecuteOutcome {
     pub duration_ms: u64,
     /// Executed paths that no longer match the target slice (concurrent write).
     pub suspects: Vec<String>,
+    /// PLAN-0641 M3 (T4.3): undeclared nested repos this revert touched.
+    pub nested_repo_affected: Vec<NestedRepoAffectedView>,
 }
 
 /// One blob read result; `content` is raw (text policy lives in the handler).
@@ -129,6 +159,14 @@ pub enum RestoreFailure {
         paths: Vec<String>,
     },
     RestoreLocked,
+    /// PLAN-0641 M3 (T4.2): dirty undeclared nested repos; `force` overrides.
+    NestedRepoDirty {
+        repos: Vec<String>,
+    },
+    /// PLAN-0641 M3 (T4.2): head-drifted repos missing from `acknowledgeNestedRepos`.
+    NestedReposUnacknowledged {
+        repos: Vec<String>,
+    },
     Unavailable {
         reason: Cow<'static, str>,
         detail: String,
@@ -247,24 +285,38 @@ impl CheckpointService {
         slice_ref: &str,
         acknowledge_type_changes: &[String],
     ) -> Result<RestoreExecuteOutcome, RestoreFailure> {
-        self.restore_execute_for_root(workspace_id, None, slice_ref, acknowledge_type_changes)
-            .await
+        self.restore_execute_for_root(
+            workspace_id,
+            None,
+            slice_ref,
+            acknowledge_type_changes,
+            false,
+            &[],
+        )
+        .await
     }
 
     /// PLAN-0639 M8: execute the restore of a slice of **one declared root**, so the
     /// shadow repo and work tree come from that root instead of the primary root.
+    ///
+    /// PLAN-0641 M3: `force` overrides the dirty-nested-repo gate;
+    /// `acknowledge_nested_repos` must cover every head-drifted repo.
     pub async fn restore_execute_for_root(
         &self,
         workspace_id: &str,
         root_id: Option<&str>,
         slice_ref: &str,
         acknowledge_type_changes: &[String],
+        force: bool,
+        acknowledge_nested_repos: &[String],
     ) -> Result<RestoreExecuteOutcome, RestoreFailure> {
         self.restore_execute_for_root_path(
             workspace_id,
             root_id,
             slice_ref,
             acknowledge_type_changes,
+            force,
+            acknowledge_nested_repos,
             None,
         )
         .await
@@ -276,6 +328,8 @@ impl CheckpointService {
         root_id: Option<&str>,
         slice_ref: &str,
         acknowledge_type_changes: &[String],
+        force: bool,
+        acknowledge_nested_repos: &[String],
         path_prefix: Option<&str>,
     ) -> Result<RestoreExecuteOutcome, RestoreFailure> {
         if self.engine().checkpoint_storage() == CheckpointStorageMode::Self_ {
@@ -296,7 +350,14 @@ impl CheckpointService {
         }
         let result = self
             .engine()
-            .restore_execute_for_root(workspace_id, root_id, slice_ref, acknowledge_type_changes)
+            .restore_execute_for_root(
+                workspace_id,
+                root_id,
+                slice_ref,
+                acknowledge_type_changes,
+                force,
+                acknowledge_nested_repos,
+            )
             .await
             .map_err(restore_failure)?;
         info!(
@@ -318,6 +379,8 @@ impl CheckpointService {
         root_id: Option<&str>,
         slice_ref: &str,
         acknowledge_type_changes: &[String],
+        force: bool,
+        acknowledge_nested_repos: &[String],
         paths: &[String],
     ) -> Result<RestoreExecuteOutcome, RestoreFailure> {
         if self.engine().checkpoint_storage() == CheckpointStorageMode::Self_ {
@@ -336,8 +399,15 @@ impl CheckpointService {
                 detail: "batch path restore is available only in self mode".into(),
             });
         }
-        self.restore_execute_for_root(workspace_id, root_id, slice_ref, acknowledge_type_changes)
-            .await
+        self.restore_execute_for_root(
+            workspace_id,
+            root_id,
+            slice_ref,
+            acknowledge_type_changes,
+            force,
+            acknowledge_nested_repos,
+        )
+        .await
     }
 
     /// Read one regular file out of the slice tree.
@@ -475,6 +545,8 @@ impl CheckpointService {
             counts,
             entries,
             truncated,
+            // Self/store previews never probe user repos (gates stay git-path-only in M3).
+            nested_repo_affected: Vec::new(),
         })
     }
 
@@ -569,6 +641,7 @@ impl CheckpointService {
             },
             duration_ms: stats.duration_ms,
             suspects,
+            nested_repo_affected: Vec::new(),
         };
         Ok(project_execute(result))
     }
@@ -743,6 +816,7 @@ fn project_preview(preview: RestorePreview) -> RestorePreviewOutcome {
         },
         entries,
         truncated,
+        nested_repo_affected: nested_repo_views(preview.nested_repo_affected),
     }
 }
 
@@ -766,6 +840,7 @@ fn project_execute(result: RestoreResult) -> RestoreExecuteOutcome {
             .collect(),
         duration_ms: result.duration_ms,
         suspects: result.suspects,
+        nested_repo_affected: nested_repo_views(result.nested_repo_affected),
     }
 }
 
@@ -786,6 +861,10 @@ fn restore_failure(error: RestoreError) -> RestoreFailure {
         },
         RestoreError::TypeChangesUnacknowledged { paths } => {
             RestoreFailure::TypeChangesUnacknowledged { paths }
+        }
+        RestoreError::NestedRepoDirty { repos } => RestoreFailure::NestedRepoDirty { repos },
+        RestoreError::NestedReposUnacknowledged { repos } => {
+            RestoreFailure::NestedReposUnacknowledged { repos }
         }
         RestoreError::RestoreLocked => RestoreFailure::RestoreLocked,
         RestoreError::Unavailable { reason, detail } => RestoreFailure::Unavailable {

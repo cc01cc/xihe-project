@@ -111,6 +111,9 @@ public class RunCheckpointService {
 
     private final RunCheckpointRepository checkpoints;
     private final RuntimeCheckpointClient runtime;
+    /** PLAN-0641 M3 T4.2: durable audit for forced (dirty-nested-repo) reverts. */
+    @org.springframework.beans.factory.annotation.Autowired
+    private com.cc01cc.p.xihe.cp.audit.AuditLogger auditLogger;
     private final ChatRunRepository chatRuns;
     private final SessionRepository sessions;
     private final WorkspaceRootRepository workspaceRoots;
@@ -550,7 +553,9 @@ public class RunCheckpointService {
      * {@code reverted_at} plus the attempt counter under a captured-state guard;
      * bookkeeping is best-effort and never rewrites the Runtime's result.
      */
-    public RevertOutcome revert(String workspaceId, String sliceRef, List<String> acknowledgeTypeChanges) {
+    public RevertOutcome revert(String workspaceId, String sliceRef,
+                                List<String> acknowledgeTypeChanges, boolean force,
+                                List<String> acknowledgeNestedRepos) {
         if (hasActiveRun(workspaceId)) {
             return new RevertOutcome(Gate.RUN_ACTIVE, "RUN_ACTIVE", null, Map.of());
         }
@@ -570,11 +575,27 @@ public class RunCheckpointService {
         }
         String revertRoot = wireRootId(capturedRow);
         RuntimeCheckpointClient.RevertResult result = revertRoot == null
-                ? runtime.revert(workspaceId, sliceRef, acknowledgeTypeChanges)
-                : runtime.revert(workspaceId, revertRoot, sliceRef, acknowledgeTypeChanges);
+                ? runtime.revert(workspaceId, sliceRef, acknowledgeTypeChanges, force,
+                        acknowledgeNestedRepos)
+                : runtime.revert(workspaceId, revertRoot, sliceRef, acknowledgeTypeChanges, force,
+                        acknowledgeNestedRepos);
         return switch (result.outcome()) {
             case OK -> {
                 recordRevert(capturedRow, result);
+                // PLAN-0641 M3 T4.2: a forced revert over dirty nested repos is audited
+                // with the repository roots (never file content / arguments).
+                if (force) {
+                    List<String> dirtyRepos = result.nestedRepoAffected().stream()
+                            .filter(RuntimeCheckpointClient.NestedRepoAffected::dirty)
+                            .map(RuntimeCheckpointClient.NestedRepoAffected::repoPath)
+                            .toList();
+                    if (!dirtyRepos.isEmpty()) {
+                        auditLogger.recordDurableChange(null,
+                                workspaceId, "nested_repo_force_revert", "run_checkpoint",
+                                String.valueOf(capturedRow.getId()),
+                                "sliceRef=" + sliceRef + " repos=" + dirtyRepos);
+                    }
+                }
                 yield new RevertOutcome(Gate.OK, null, result,
                         Map.of("descendantsAffected", computeDescendantsAffected(capturedRow)));
             }

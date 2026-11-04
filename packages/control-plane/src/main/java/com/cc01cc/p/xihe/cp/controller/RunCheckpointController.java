@@ -77,6 +77,8 @@ public class RunCheckpointController {
         body.put("counts", preview.counts());
         body.put("entries", preview.entries());
         body.put("truncated", preview.truncated());
+        // PLAN-0641 M3 (T4.3): cross-root impact block on the preview face.
+        body.put("nestedRepoAffected", preview.nestedRepoAffected());
         body.put("opaqueNestedRepos", outcome.details().getOrDefault("opaqueNestedRepos", List.of()));
         body.put("descendantsAffected",
                 outcome.details().getOrDefault("descendantsAffected", List.of()));
@@ -104,8 +106,19 @@ public class RunCheckpointController {
         if (rawAcknowledgements instanceof List<?> values && values.size() != acknowledgeTypeChanges.size()) {
             return invalidRequest("acknowledgeTypeChanges must contain only non-empty strings");
         }
+        // PLAN-0641 M3 (T4.2): force overrides the dirty-nested-repo gate; every
+        // head-drifted repo must be listed in acknowledgeNestedRepos (ruling (a)).
+        boolean force = Boolean.TRUE.equals(request == null ? null : request.get("force"));
+        List<String> acknowledgeNestedRepos = List.of();
+        Object rawNested = request == null ? null : request.get("acknowledgeNestedRepos");
+        if (rawNested instanceof List<?> nestedValues) {
+            acknowledgeNestedRepos = stringList(nestedValues);
+            if (nestedValues.size() != acknowledgeNestedRepos.size()) {
+                return invalidRequest("acknowledgeNestedRepos must contain only non-empty strings");
+            }
+        }
         RunCheckpointService.RevertOutcome outcome = checkpoints.revert(
-                workspaceId, sliceRef, acknowledgeTypeChanges);
+                workspaceId, sliceRef, acknowledgeTypeChanges, force, acknowledgeNestedRepos);
         if (outcome.gate() != Gate.OK) {
             return gateResponse(outcome.gate(), outcome.reason(), outcome.details());
         }
@@ -116,6 +129,8 @@ public class RunCheckpointController {
         body.put("entries", result.entries());
         body.put("durationMs", result.durationMs());
         body.put("suspects", result.suspects());
+        // PLAN-0641 M3 (T4.3): cross-root impact of this revert.
+        body.put("nestedRepoAffected", result.nestedRepoAffected());
         body.put("descendantsAffected",
                 outcome.details().getOrDefault("descendantsAffected", List.of()));
         logger.info("[LIFECYCLE] service=cp event=run_checkpoint_revert_completed workspaceId={} sliceRef={} "
