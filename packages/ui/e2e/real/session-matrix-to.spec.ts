@@ -26,6 +26,7 @@ import {
 } from "./helpers/agent-principal";
 import { agentName } from "./helpers/agent-name";
 import { openSessionSse } from "./helpers/sse";
+import { workspaceChatPath } from "../../src/lib/routes";
 
 const NONCE = Date.now().toString(36);
 const PASSWORD = process.env.XIHE_E2E_PASSWORD ?? "XhE2e!matrix1";
@@ -68,6 +69,8 @@ let extraPrincipalId = "";
 let memberUserId = "";
 let memberParticipantId = "";
 let extraAgentParticipantId = "";
+/** PLAN-0659 T1.3：消息头「发送→<显示名>」断言用的显示名（身份判定仍只用 id）。 */
+let extraAgentDisplayName = "";
 let ownerHeaders: Record<string, string> = {};
 let closeSse: (() => void) | null = null;
 
@@ -197,6 +200,7 @@ test.describe("@host PLAN-0658 R2 TO（发送）wire 面", () => {
                 defaultModelName: FAKE_LLM_MODEL,
             },
         );
+        extraAgentDisplayName = agentName("R2Extra", NONCE);
         sessionId = await createSessionWithPrincipal(
             request,
             { accessToken: token, workspaceId },
@@ -327,6 +331,85 @@ test.describe("@host PLAN-0658 R2 TO（发送）wire 面", () => {
         });
         expect(denied.status(), "impersonation must be refused").toBe(403);
         expect(await problemCode(denied), "稳定错误码").toBe("PARTICIPANT_CAP_DENIED");
+    });
+
+    /**
+     * PLAN-0659 T2.1 §2（real 段）· T1.3 投递语义：**发送→<显示名>** 在真实链路上成立。
+     *
+     * 只在真栈能验的两件事：①composer 选中的 `asParticipantId` 真的随发送落到该消息的本地
+     * 发送态视图（BL-239：TO/CC 无持久载体 ⇒ **刷新前**断言，刷新后按设计消失）；
+     * ②`message-delivery-to` 的显示名来自花名册真实数据（不是 mock 桩）。
+     * 本用例必须排在 R2-5 之前 —— R2-5 会把该 agent 停用。
+     */
+    test("R2-6 UI 发送→：composer 选 as 后发送，消息头 message-delivery-to 指向该 agent", async ({
+        page,
+    }) => {
+        await page.addInitScript(
+            ({ accessToken, ws }) => {
+                localStorage.setItem("xihe-token", accessToken);
+                localStorage.setItem(
+                    "xihe-user",
+                    JSON.stringify({
+                        id: "e2e-owner",
+                        email: "e2e-owner@test.com",
+                        name: "E2E Owner",
+                    }),
+                );
+                localStorage.setItem(
+                    "xihe-workspace",
+                    JSON.stringify({ id: ws, name: "R2 workspace" }),
+                );
+                sessionStorage.setItem(
+                    "xihe-workspace",
+                    JSON.stringify({
+                        id: ws,
+                        name: "R2 workspace",
+                        workspaceRole: "OWNER",
+                        ownerId: "x",
+                    }),
+                );
+            },
+            { accessToken: token, ws: workspaceId },
+        );
+        await page.goto(workspaceChatPath(workspaceId, sessionId));
+        await expect(page.getByTestId("chat-input"), "composer mounts").toBeVisible({
+            timeout: 30_000,
+        });
+
+        // 「发送」栏：先移除默认预选（PRIMARY 已选 ⇒ 候选里不会再出现），再挑 extra agent。
+        const field = page.getByTestId("speak-as-input");
+        await expect(field, "capabilities.speakAs=true ⇒ 发送栏渲染").toBeVisible({
+            timeout: 20_000,
+        });
+        const chipRemove = page.getByTestId("speak-as-chip-remove");
+        if ((await chipRemove.count()) > 0) await chipRemove.first().click();
+        await field.click();
+        await field.pressSequentially(extraAgentDisplayName.slice(0, 6));
+        await expect(page.getByTestId("speak-as-menu"), "候选面打开").toBeVisible({
+            timeout: 10_000,
+        });
+        const option = page.locator(`#speak-as-option-${extraAgentParticipantId}`);
+        await expect(option, "目标 agent 在候选里").toHaveCount(1);
+        await option.click();
+        await expect(
+            page.getByTestId("speak-as-chip").first(),
+            "选中后落 chip，且 chip 的 participantId 与候选一致",
+        ).toHaveAttribute("data-participant-id", extraAgentParticipantId);
+
+        const content = `R2 delivery-to ${NONCE}`;
+        await page.getByTestId("chat-input").fill(content);
+        await page.getByTestId("chat-send-button").click();
+        await expect(page.getByText(content, { exact: true }), "用户气泡出现").toBeVisible({
+            timeout: 30_000,
+        });
+
+        // 投递行三态：只有 TO（发送），没有 @、没有抄送。
+        const deliveryTo = page.getByTestId("message-delivery-to");
+        await expect(deliveryTo, "message-delivery-to 恰好一条").toHaveCount(1);
+        await expect(deliveryTo, "文案 = 发送→<显示名>").toContainText("发送→");
+        await expect(deliveryTo, "显示名来自真实花名册").toContainText(extraAgentDisplayName);
+        await expect(page.getByTestId("message-delivery-mention"), "未 @ 任何人").toHaveCount(0);
+        await expect(page.getByTestId("message-delivery-cc"), "未抄送任何人").toHaveCount(0);
     });
 
     test("R2-5 停用主体：名册 disabledAt 非空且 as 它被拒", async ({ request }) => {

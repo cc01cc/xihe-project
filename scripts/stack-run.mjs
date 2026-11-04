@@ -18,6 +18,15 @@ import net from "node:net";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { resolveHostRoot } from "./host-root.mjs";
+import {
+  buildInfoPath,
+  cpTargetDir,
+  evaluateCpFreshness,
+  gitHead,
+  shortSha,
+  writeBuildInfo,
+} from "./lib/cp-build-info.mjs";
+import { cpBuildRoot, resolveCpTargetDir, writePointer } from "./lib/cp-build-dir.mjs";
 import { applySetToEnv, applyUrlSyncToEnv, parseStackSetArgs } from "./lib/stack-set.mjs";
 import { cargoTargetForStack } from "./lib/stack-cargo-target.mjs";
 import { recordedServiceAlive, sweepOrphanProcesses } from "./lib/stack-orphan.mjs";
@@ -90,6 +99,23 @@ function launch({ command, args, cwd, env }) {
   });
 }
 
+/** Same launcher shape as `launch()`, but blocking — used by the CP freshness rebuild. */
+function runToolSync(command, args, options) {
+  const isWindows = process.platform === "win32";
+  const direct = command === process.execPath || /\.exe$/i.test(command);
+  return isWindows && !direct
+    ? spawnSync(process.env.ComSpec ?? "cmd.exe", ["/d", "/s", "/c", [command, ...args].map(quoteArg).join(" ")], options)
+    : spawnSync(command, args, options);
+}
+
+function describeBuildVerdict(verdict, head) {
+  return (
+    `file=${verdict.file} commit=${shortSha(verdict.fileCommit) || "(none)"}`
+    + ` built=${verdict.builtAt || "(none)"} dirty=${verdict.dirty === null ? "?" : verdict.dirty}`
+    + ` head=${shortSha(head.commit) || "(unknown)"} verdict=${verdict.status}`
+  );
+}
+
 function describeTarget(target, derived, hostRoot) {
   const ports = derived.ports;
   console.error(
@@ -100,13 +126,16 @@ function describeTarget(target, derived, hostRoot) {
 
 const targets = {
   pg: () => ({ command: "docker", args: ["compose", "up", "-d", "--wait", "postgres"], cwd: projectRoot }),
-  cp: () => ({
+  cp: (effectiveEnv) => ({
     command: "mvn",
-    // XIHE_CP_TARGET_DIR：把 CP 的构建输出（target/）放到快卷上（默认不设 = 行为不变）。
+    // -Dxihe.target.dir：把 CP 的构建输出（target/）放到快卷上。
     // 背景：H: 是 ReFS，每文件写 56-170ms，CP 冷编译在 H: 上要 ~8 分钟；C: 上 ~15s。
+    // BL-253 L3：值来自本脚本的派生（每栈每 commit 一个目录），显式 env 仍最优先。
     args: [
       "spring-boot:run",
-      ...(process.env.XIHE_CP_TARGET_DIR ? ["-Dxihe.target.dir=" + process.env.XIHE_CP_TARGET_DIR] : []),
+      ...(effectiveEnv.XIHE_CP_TARGET_DIR
+        ? ["-Dxihe.target.dir=" + effectiveEnv.XIHE_CP_TARGET_DIR]
+        : []),
     ],
     cwd: join(projectRoot, "packages", "control-plane"),
   }),
@@ -125,10 +154,13 @@ const [target, ...rest] = process.argv.slice(2);
 
 if (!target || target === "--help" || target === "-h") {
   console.log("usage: stack-run.mjs <pg|cp|agent|runtime|ui|watch|dev-host> [--stack N] [--set KEY=VALUE ...]");
+  console.log("       stack-run.mjs cp [--no-rebuild] [--stack N]");
   console.log("       stack-run.mjs env-json [--stack N]");
   console.log("       stack-run.mjs slots-json");
   console.log("       --set accepts only XIHE_CP_PORT / XIHE_AGENT_PORT / XIHE_RUNTIME_PORT (1..65535),");
   console.log("       injected into the subprocess env of the target that consumes the key.");
+  console.log("       cp gate (PLAN-0662): compares classes/META-INF/build-info.properties `commit` with");
+  console.log("       git HEAD; stale/missing ⇒ rebuild from HEAD. --no-rebuild keeps the old classes (WARN).");
   process.exit(target ? 0 : 2);
 }
 
@@ -344,4 +376,116 @@ if (GUARDED_TARGETS.includes(target) && process.platform === "win32") {
   }
 }
 
-launch({ ...factory(), env });
+// PLAN-0662 L2: **the** dev-stack build freshness gate, and the only one.
+//
+// `mise run dev:host:start:cp`, `mise run dev:host` and the detached `dev:stack` supervisor all
+// end up here (`dev-stack.mjs` spawns `stack-run.mjs cp`), so the decision lives in exactly one
+// place. Before Maven boots the service we compare the stamp the previous build left in
+// `classes/META-INF/build-info.properties` with `git rev-parse HEAD`:
+//
+//   fresh   → boot as-is (hot restart stays fast; BL-240 came from *pretending* an old tree was
+//             current, not from restarting)
+//   stale   → default **rebuild** from HEAD, so "restart" always means "latest"
+//   missing → same as stale: a tree nobody stamped cannot be proven current
+//   HEAD unknown (no git) → WARN and boot; rebuilding forever would not fix it
+//
+// `--no-rebuild` downgrades stale/missing to a WARN and continues — the escape hatch for
+// "I know the tree is old and I need this stack up now", which must stay visible in the log.
+if (target === "cp") {
+  const cpDir = join(projectRoot, "packages", "control-plane"),
+    head = gitHead({ cwd: projectRoot }),
+    noRebuild = rest.includes("--no-rebuild");
+  // BL-253 L3: derive this stack's own build dir **before** Maven runs, so two stacks never
+  // compile into one directory again. Priority: explicit XIHE_CP_TARGET_DIR (rollback channel,
+  // untouched) → `<root>/<stackId>/<sha12>[-dirty]`. Setting it on the effective env here is what
+  // also fixes the old `dev-stack` gap: detached stacks spawn this script, so they get the same
+  // derivation as `mise run dev:host:start:cp` — no second implementation, no in-checkout target/.
+  const layout = resolveCpTargetDir({
+    stackId: derived.stackId,
+    env,
+    commit: head.commit,
+    dirty: head.dirty,
+  });
+  if (layout.source === "derived") {
+    env.XIHE_CP_TARGET_DIR = layout.targetDir;
+  }
+  const targetDir = cpTargetDir({ projectRoot, env });
+  console.error(
+    `[stack] cp build dir (BL-253 L3): ${targetDir} source=${layout.source}`
+    + ` stack=${derived.stackId} commit=${shortSha(head.commit) || "(unknown)"} dirty=${head.dirty}`,
+  );
+  if (layout.source === "unresolved") {
+    console.error(
+      `[stack] WARNING: ${layout.reason}; falling back to the in-checkout target/ (no isolation)`,
+    );
+  }
+  let verdict = evaluateCpFreshness({ targetDir, headCommit: head.commit });
+  console.error(`[stack] cp build-info: ${describeBuildVerdict(verdict, head)}`);
+  if (verdict.status === "stale" || verdict.status === "missing") {
+    if (noRebuild) {
+      console.error(
+        `[stack] WARNING: cp classes are not from HEAD (${verdict.reason}); --no-rebuild keeps them —`
+        + " this CP may serve code that develop already fixed",
+      );
+    } else {
+      console.error(
+        `[stack] cp classes are not from HEAD (${verdict.reason}); rebuilding from HEAD`
+        + " (mvn -q -DskipTests clean compile) — pass --no-rebuild to skip this",
+      );
+      const rebuild = runToolSync(
+        "mvn",
+        [
+          "-q",
+          "-DskipTests",
+          "clean",
+          "compile",
+          ...(env.XIHE_CP_TARGET_DIR ? [`-Dxihe.target.dir=${env.XIHE_CP_TARGET_DIR}`] : []),
+        ],
+        { cwd: cpDir, env, stdio: "inherit" },
+      );
+      if (rebuild.status !== 0) {
+        console.error(
+          `[stack] ERROR: cp rebuild failed (exit ${rebuild.status ?? "null"}); refusing to boot a stale CP`,
+        );
+        process.exit(rebuild.status ?? 1);
+      }
+      // Stamp only after a successful compile: a failed build keeps the previous stamp, so the
+      // next start sees stale classes instead of a false "fresh".
+      if (head.commit) {
+        writeBuildInfo({ targetDir, commit: head.commit, dirty: head.dirty });
+        console.error(`[stack] cp rebuild OK; stamped ${buildInfoPath(targetDir)}`);
+      }
+      verdict = evaluateCpFreshness({ targetDir, headCommit: head.commit });
+      console.error(`[stack] cp build-info after rebuild: ${describeBuildVerdict(verdict, head)}`);
+    }
+  } else if (verdict.status === "unverified") {
+    console.error(`[stack] WARNING: cp freshness unverified (${verdict.reason}); booting as-is`);
+  }
+  // PLAN-0662 L1: one line in the stack log naming the build about to serve traffic.
+  console.error(
+    `[stack] cp.build commit=${shortSha(verdict.fileCommit) || "(none)"}`
+    + ` built=${verdict.builtAt || "(none)"}`
+    + ` dirty=${verdict.dirty === null ? "?" : verdict.dirty}`,
+  );
+  // BL-253 L3: record which dir this start uses. This is a **launcher-written fact about the last
+  // start** (status + external-E2E assertion read it) — not an introspection of the running JVM.
+  try {
+    writePointer({
+      root: layout.root ?? cpBuildRoot({ env }),
+      stackId: derived.stackId,
+      pointer: {
+        targetDir,
+        commit: verdict.fileCommit ?? head.commit ?? null,
+        dirty: verdict.dirty ?? head.dirty ?? null,
+        verdict: verdict.status,
+        builtAt: verdict.builtAt ?? null,
+        startedAt: new Date().toISOString(),
+        source: layout.source,
+      },
+    });
+  } catch (error) {
+    console.error(`[stack] WARNING: could not write the cp build pointer: ${error.message}`);
+  }
+}
+
+launch({ ...factory(env), env });

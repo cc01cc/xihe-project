@@ -76,4 +76,28 @@ class NameFormatTest {
         assertEquals("张三", NameFormat.require("张三", "name"));
         assertEquals("Zoe2026", NameFormat.require("Zoe2026", "username"));
     }
+
+    @Test
+    void username_surface_uses_its_own_32_limit_not_the_agent_name_64() {
+        // 决策 v29：username 与主体名同 pattern，但列宽 VARCHAR(32) ⇒ 长度上限 32。
+        assertEquals(32, NameFormat.USERNAME_MAX_LENGTH);
+        assertTrue(NameFormat.isValidUsername("a".repeat(32)));
+        assertFalse(NameFormat.isValidUsername("a".repeat(33)));
+        assertEquals(NameFormat.CODE, assertThrows(CpApiException.class,
+                () -> NameFormat.require("a".repeat(33), "username",
+                        NameFormat.USERNAME_MAX_LENGTH)).getCode());
+        // 主体名仍以 64 为上限（两边上限互不串用）。
+        assertTrue(NameFormat.isValid("a".repeat(64)));
+        assertEquals(NameFormat.MAX_LENGTH, 64);
+    }
+
+    @Test
+    void username_surface_accepts_uppercase_and_chinese_since_v29() {
+        assertTrue(NameFormat.isValidUsername("Zhang"));
+        assertTrue(NameFormat.isValidUsername("李小明"));
+        assertTrue(NameFormat.isValidUsername("Zoe2026"));
+        assertFalse(NameFormat.isValidUsername("Zhang San"));
+        assertFalse(NameFormat.isValidUsername("zhang-san"));
+        assertFalse(NameFormat.isValidUsername("1zhang"));
+    }
 }

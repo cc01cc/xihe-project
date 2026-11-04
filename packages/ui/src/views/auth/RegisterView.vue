@@ -4,7 +4,7 @@ import { ref, computed } from "vue";
 import { useRouter } from "vue-router";
 import { useAuthStore } from "../../stores/auth";
 import { Sun } from "@lucide/vue";
-import { principalNameError } from "../../lib/principalName";
+import { usernameError } from "../../lib/principalName";
 
 const { t } = useI18n(),
     router = useRouter(),
@@ -23,14 +23,15 @@ const passwordMismatch = computed(() => {
 });
 
 /**
- * 2026-11-04 用户裁定：agent 主体名与 username 统一为「字母 / 中文汉字 / 数字，不得以数字开头、
- * 不得含空格」（规则见 `lib/principalName.ts`，CP 侧另行落地）。长度仍按 CP 现有 32 上限拦截。
+ * 2026-11-04 用户裁定（v23 + v29）：username 与 agent 主体名/昵称共用一条字符规范 ——
+ * 字母（含大写）/ 中文汉字 / 数字，不得数字开头、不得含空格与符号，≤32（CP 列宽 VARCHAR(32)）。
+ * 规则**单一来源** `lib/principalName.ts#usernameError`（不要在组件里再写正则或长度判断）；
+ * 对**原始输入**判定（不 trim，与 CP 一致——静默 trim 会让 `" abc "` 在前端放行、到 CP 才 400）。
  * 留空合法 —— 由 CP 从邮箱派生。前端**前置拦截**，错误文案走 i18n。
  */
-const usernameInvalid = computed(() => {
-    const value = username.value.trim();
-    return value !== "" && (principalNameError(value) !== null || value.length > 32);
-});
+const usernameInvalid = computed(
+    () => username.value !== "" && usernameError(username.value) !== null,
+);
 
 function rateLimitMessage(): string | null {
     if (auth.lastError?.code !== "AUTH_RATE_LIMITED") return null;

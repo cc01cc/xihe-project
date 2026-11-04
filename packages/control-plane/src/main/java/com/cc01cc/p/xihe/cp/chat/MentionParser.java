@@ -18,7 +18,11 @@ import java.util.UUID;
  *       never re-interpret history;</li>
  *   <li><b>Greedy longest match</b>: names may contain spaces, so the longest roster name that
  *       prefixes the token (followed by whitespace or end of text) wins — "John" vs
- *       "John Doe" both present resolves to "John Doe";</li>
+ *       "John Doe" both present resolves to "John Doe". <b>Historical-compatibility only</b>:
+ *       决策 v23/v29 (2026-11-04) forbid spaces in every new name surface (username / agent
+ *       subject name / displayName), so newly created participants cannot carry a spaced name;
+ *       the greedy path is kept so mentions inside <em>pre-ruling</em> messages still resolve,
+ *       and it stays fail-closed (a tie or a miss leaves the token literal);</li>
  *   <li>{@code @all} is a reserved token (case-insensitive); a participant may not carry the
  *       display name "all" (application-layer validation in SessionParticipantService);</li>
  *   <li><b>Ambiguity and misses fail closed</b>: a token matching zero or multiple enabled

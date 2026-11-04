@@ -41,7 +41,7 @@ flowchart LR
 - 认证入口为 `/api/v1/auth/**`（permitAll）：`register`/`login`/`refresh`/`me`。PLAN-0526 新增 `GET /bootstrap-status`（恒 200，`{initialized, localMode}`）、`POST /local-login`、`POST /local-password-reset`，并允许 register 在本地模式省略密码（服务端生成、201）。
 - 单机本地模式由 `LocalModeService` 门禁：仅 `XIHE_LOCAL_MODE=true` + 回环来源 + `Origin`/`Host` 回环时可用，且签发对象必须是**唯一可登录用户（任意角色，含 ADMIN）**（否则 409）；本地模式跳过默认 admin seed，首用户获得实例级 `SUPER_ADMIN` **绑定**（PLAN-0610 起不再用 `ADMIN` 层级表述，见 `AuthController.java:58`）；其余一律 404 且不签发 token。门禁在应用层，`SecurityConfig` 不放开通配。
 - PLAN-0558 登录防护：`/login` 按规范化账号 + 客户端 IP 双维度做固定窗口失败计数，达到阈值返回 429 `AUTH_RATE_LIMITED` + `Retry-After`；未知账号同计数并执行 dummy BCrypt；失败写 AUDIT JSONL，锁定/解锁写 `audit_logs`。计数为 CP 进程内有界表（单实例语义，重启清锁）；`X-Forwarded-For` 默认忽略，仅 `cp.auth.login.trusted-proxies` 命中的 `remoteAddr` 才解析；本地模式与 `/refresh` v1 不限流，`/register` 按 IP 限流且默认豁免回环。
-- PLAN-0565 账号标识（裁定 #7）：`users.username` NOT NULL UNIQUE（`^[a-z][a-z0-9]{0,31}$`，字母开头，V82 回填）；注册可选自填（留空由 email 本地部分生成默认、冲突加序号，非法 400 `USERNAME_INVALID`/占用 409 `USERNAME_TAKEN`）；`LoginRequest` 字段由 `email` 改为 `identifier`——含 `@` 按 email 解析、否则按 username 解析，登录限流键与失败审计同步改口径（email 值仍 mask、username 公开可明文）。
+- PLAN-0565 账号标识（裁定 #7）+ 决策 v29：`users.username` NOT NULL UNIQUE（V82 回填；字符规则与 agent 主体名/昵称共用 `NameFormat.PATTERN_SOURCE`＝英文字母（含大写）/ 中文汉字 / 数字，不得数字开头、不得含空格与符号，长度按列宽 ≤32）；注册可选自填（留空由 email 本地部分生成默认、冲突加序号，非法 400 `USERNAME_INVALID`/占用 409 `USERNAME_TAKEN`）；`LoginRequest` 字段由 `email` 改为 `identifier`——含 `@` 按 email 解析、否则按 username 解析，登录限流键与失败审计同步改口径（email 值仍 mask、username 公开可明文）。
 - 契约见 [`spec/security/authentication.md`](../../../spec/security/authentication.md) §4/§5 与 `docs/api/inventory.md`。
 - 新手首跑的完整链路（三条件 → onboarding → 建 Agent → 首条回复）与逐条可见判据见 [DEV-033](DEV-033-first-run-gold-path.md)。
 

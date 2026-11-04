@@ -3592,7 +3592,7 @@ paths:
     post:
       operationId: createUser
       summary: Admin account creation (PLAN-0581)
-      description: 'ADMIN only; the only account source when XIHE_AUTH_REGISTRATION_POLICY=closed. Body {email, username?, password?, name?}. When password is omitted the server generates a strong one and returns it once as temporaryPassword (never logged, never audited). 409 EMAIL_TAKEN / USERNAME_TAKEN, 400 USERNAME_INVALID (^[a-z][a-z0-9]{0,31}$). Audited as user_created.'
+      description: 'ADMIN only; the only account source when XIHE_AUTH_REGISTRATION_POLICY=closed. Body {email, username?, password?, name?}. When password is omitted the server generates a strong one and returns it once as temporaryPassword (never logged, never audited). 409 EMAIL_TAKEN / USERNAME_TAKEN, 400 USERNAME_INVALID (v29 name rule: letters any case / Chinese characters / digits, must not start with a digit, no spaces or symbols, 1-32 chars). Audited as user_created.'
       security: [{ bearerAuth: [] }]
       requestBody:
         required: true
@@ -3947,7 +3947,7 @@ components:
       required: [email]
       properties:
         email: { type: string, format: email }
-        username: { type: string, description: 'optional; ^[a-z][a-z0-9]{0,31}$, derived from the email when absent' }
+        username: { type: string, minLength: 1, maxLength: 32, pattern: '^[A-Za-z\u4e00-\u9fff][A-Za-z0-9\u4e00-\u9fff]*$', description: 'optional; v29 (2026-11-04) name rule shared with agent subject names: letters any case / Chinese characters / digits, must not start with a digit, no spaces or symbols, 1-32 chars; derived from the email when absent; invalid shape is 400 USERNAME_INVALID' }
         password: { type: string, description: 'optional; when absent the server generates a one-time password' }
         name: { type: string }
     UserCreatedResponse:
@@ -4077,7 +4077,7 @@ components:
     RuntimeReadFileResult: { type: object, required: [found, content, truncated], properties: { found: { type: boolean, description: 'false = path resolved to no content (missing file or unmaterialized root); true = content authoritative even when empty string.' }, content: { type: string, description: 'File content; empty string when found=false or the file is empty (distinguish via found).' }, truncated: { type: boolean } } }
     AgentSpawnRequest: { type: object, required: [parentRunId, toolCallId], additionalProperties: false, properties: { parentRunId: { type: string, format: uuid }, toolCallId: { type: string, format: uuid, description: 'Canonical MCP tool-call correlation ID for the spawn invocation.' } } }
     AgentSpawnResponse: { type: object, required: [sessionId, runId, principalId, workspaceId], properties: { sessionId: { type: string, format: uuid }, runId: { type: string, format: uuid }, principalId: { type: string, format: uuid, description: 'Stable AgentPrincipal resolved from the durable parent Session; never taken from the request' }, workspaceId: { type: string, format: uuid } } }
-    RegisterRequest: { type: object, required: [email, name], properties: { email: { type: string }, password: { type: string, description: 'Optional in local mode (server generates one); required otherwise' }, name: { type: string }, username: { type: string, pattern: '^[a-z][a-z0-9]{0,31}$', description: 'PLAN-0565 ruling #7: optional; blank derives a unique default from the email local part (letter-first).' } } }
+    RegisterRequest: { type: object, required: [email, name], properties: { email: { type: string }, password: { type: string, description: 'Optional in local mode (server generates one); required otherwise' }, name: { type: string }, username: { type: string, maxLength: 32, pattern: '^[A-Za-z\u4e00-\u9fff][A-Za-z0-9\u4e00-\u9fff]*$', description: 'PLAN-0565 ruling #7 + 决策 v29 (2026-11-04): optional; blank derives a unique default from the email local part. Explicit values follow the shared name rule (letters any case / Chinese characters / digits, no leading digit, no spaces or symbols, 1-32 chars); invalid shape is 400 USERNAME_INVALID, taken is 409 USERNAME_TAKEN.' } } }
     LocalPasswordResetRequest: { type: object, required: [newPassword], properties: { newPassword: { type: string, minLength: 8, maxLength: 128 } } }
     LoginRequest: { type: object, required: [identifier, password], properties: { identifier: { type: string, description: 'PLAN-0565 ruling #7: email (contains @) or username; renamed from the former email field.' }, password: { type: string } } }
     MemberView: { type: object, required: [userId, username, email, role, createdAt], properties: { userId: { type: string, format: uuid }, username: { type: string }, email: { type: string }, name: { type: [string, 'null'] }, role: { type: string, enum: [OWNER, EDITOR, VIEWER], description: 'Canonical role; legacy ADMIN/MEMBER rows project as EDITOR (PLAN-0559).' }, createdAt: { type: string, format: date-time, description: 'Membership creation time (the joined-at value).' } } }
