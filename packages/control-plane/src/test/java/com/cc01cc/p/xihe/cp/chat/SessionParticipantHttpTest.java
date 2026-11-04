@@ -82,6 +82,60 @@ class SessionParticipantHttpTest extends AbstractIntegrationTest {
                 "the UI distinguishes 'no permission' from 'no members' by the code, not by an empty list");
     }
 
+    /**
+     * PLAN-0651 regression (0660's only failing shape): the participant view capability is computed
+     * for <b>every</b> reader, so a workspace member who is not the session owner used to enter the
+     * instance-scope authorization probe with a {@code null} workspace and die with an NPE ⇒ 500.
+     *
+     * <p>Both directions are asserted on purpose: the member must get 200 with
+     * {@code capabilities.manage=false}, and the owner must still get 200 with
+     * {@code capabilities.manage=true}. Asserting only the false side would stay green if the
+     * capability were ever computed as a constant false.</p>
+     */
+    @Test
+    void aWorkspaceMemberWhoIsNotTheOwnerReadsTheRosterWithoutAnError() throws Exception {
+        AuthResponse member = register("p623member");
+        String memberToken = member.getAccessToken();
+        String memberId = member.getUser().getId();
+
+        // Real API (not a fixture shortcut): the owner adds the account as an EDITOR.
+        Reply addedMember = send(ownerToken, "POST", "/api/v1/workspaces/" + workspaceId + "/members",
+                """
+                {"username":"%s","role":"EDITOR"}""".formatted(member.getUser().getUsername()));
+        assertEquals(201, addedMember.status(), addedMember.body().toString());
+
+        // …and invites it to the session, exactly like the 0660 fixture did.
+        assertEquals(201, send(ownerToken, "POST", participantsPath(),
+                """
+                {"principalKind":"HUMAN","principalId":"%s","role":"MEMBER"}"""
+                        .formatted(memberId)).status());
+
+        Reply memberRead = send(memberToken, "GET", participantsPath(), null);
+
+        assertEquals(200, memberRead.status(), memberRead.body().toString());
+        assertFalse(memberRead.body().path("capabilities").path("manage").asBoolean(),
+                "a member who is not the session owner must not manage the roster: " + memberRead.body());
+
+        // Reverse guard: "always false" must fail this test.
+        Reply ownerRead = send(ownerToken, "GET", participantsPath(), null);
+        assertEquals(200, ownerRead.status(), ownerRead.body().toString());
+        assertTrue(ownerRead.body().path("capabilities").path("manage").asBoolean(),
+                "the owner keeps the manage capability: " + ownerRead.body());
+    }
+
+    /**
+     * The third input face of {@code canManage}: not the owner, not a member, not a participant.
+     * It must be refused with a problem document — never a 5xx.
+     */
+    @Test
+    void aStrangerWhoIsNeitherMemberNorParticipantIsRefusedWithoutAnError() throws Exception {
+        Reply reply = send(strangerToken, "GET", participantsPath(), null);
+
+        assertEquals(403, reply.status(), reply.body().toString());
+        assertTrue(reply.status() < 500, "a refused read is a 4xx, never a 5xx: " + reply.body());
+        assertFalse(reply.body().path("code").isMissingNode(), reply.body().toString());
+    }
+
     @Test
     void deleteSoftDisablesAndTheRowStaysVisible() throws Exception {
         Reply added = send(ownerToken, "POST", participantsPath(),

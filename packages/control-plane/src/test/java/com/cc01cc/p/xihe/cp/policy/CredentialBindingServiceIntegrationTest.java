@@ -117,6 +117,12 @@ class CredentialBindingServiceIntegrationTest extends AbstractIntegrationTest {
 
     @Test
     void bindRejectsWhenOperatorLacksManageForTheCredential() {
+        // REFACTOR-GUARD(null-workspace): this denial comes from
+        // CredentialBindingService#requireCredentialManage, which evaluates a PolicyRequest with a
+        // null workspace through evaluator.allows(...) directly (no UUID parsing) and throws 403
+        // FORBIDDEN. ASSERT THE EXACT STATUS — if that method is ever refactored onto
+        // GrantAuthorizationService#allowsUserOnly, the null workspace reaches UUID.fromString and
+        // the call becomes a 500. (rg 'REFACTOR-GUARD' finds every such guard.)
         Fixture fixture = fixture("credential:" + UUID.randomUUID(), "credential:*", true);
         Credential second = createCredential("second");
         String secondResource = "credential:" + second.getId();
