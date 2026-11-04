@@ -77,6 +77,16 @@ public class Message {
     @Column(name = "visibility", nullable = false, length = 16)
     private String visibility = VISIBILITY_USER;
 
+    /**
+     * PLAN-0669 M1 (V121): durable actor attribution — the session participant that produced this
+     * Message. Assistant rows carry the Run's responder participant (resolved once at the single
+     * assistant-write point); user rows stay NULL in v1 because the composer's {@code asParticipantId}
+     * is a target identity (PRIMARY is an AGENT participant), not the author. Rows written before
+     * V121 also keep NULL: "no attribution" renders no badge, never "unknown" (DEV-032: no UUID on wire).
+     */
+    @Column(name = "participant_id", columnDefinition = "uuid")
+    private UUID participantId;
+
     public Message() {}
 
     public Message(String sessionId, MessageRole role, String content) {
@@ -120,6 +130,10 @@ public class Message {
 
     public String getDelivery() { return delivery; }
     public void setDelivery(String delivery) { this.delivery = delivery; }
+
+    /** PLAN-0669 M1: the participant that produced this Message; {@code null} = no attribution. */
+    public UUID getParticipantId() { return participantId; }
+    public void setParticipantId(UUID participantId) { this.participantId = participantId; }
 
     public String getVisibility() { return visibility; }
     public void setVisibility(String visibility) { this.visibility = visibility; }
