@@ -489,6 +489,23 @@ test.describe("@host PLAN-0649 refusal visible + durable", () => {
         // ── Step 5: V2 — reload and require the same three carriers to still agree ──
         await page.reload({ waitUntil: "load" });
         await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: 60_000 });
+        // After a full reload the workspace view may land on the session list; reopen the
+        // conversation from the sidebar so the historical messages (and their tool cards)
+        // render from the durable DTO — the carrier under test is the snapshot, not the router.
+        const messageCount = await page.locator("[data-testid='message-item']").count();
+        if (messageCount === 0) {
+            await page
+                .getByRole("button", { name: "PLAN-0649 refusal visible" })
+                .first()
+                .click()
+                .catch(() => {});
+            await expect
+                .poll(() => page.locator("[data-testid='message-item']").count(), {
+                    timeout: 30_000,
+                    intervals: [1_000, 2_000],
+                })
+                .toBeGreaterThan(0);
+        }
         const reloadedCardCount = await expandAllToolCards(page);
         await expect(page.getByTestId("tool-refusal").first(), {
             message: "the refusal block survives a full reload (durable snapshot rendering)",
