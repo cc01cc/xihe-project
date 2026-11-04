@@ -77,7 +77,10 @@ class GuardTemplatePropagationTest {
                 mock(com.cc01cc.p.xihe.cp.repository.AccessRoleBindingRepository.class),
                 roles,
                     mock(com.cc01cc.p.xihe.cp.repository.AccessRolePermissionRepository.class),
-                mock(com.cc01cc.p.xihe.cp.policy.RoleGrantMaterializer.class));
+                mock(com.cc01cc.p.xihe.cp.policy.RoleGrantMaterializer.class),
+                // PLAN-0651 T1.4: this test never exercises A21/A22, so a default-deny fake is
+                // exact; the real atom path is covered by the four real-context principal tests.
+                new com.cc01cc.p.xihe.cp.policy.DeclaredAtomAuthority());
         // PLAN-0629（2026-11-04 裁定）：建 principal 现在总会解析默认实例角色并写角色绑定，
         // 所以纯 Mockito 测试必须提供角色目录桩——这不是放宽校验，而是补齐新依赖。
         when(roles.findByName(any())).thenReturn(java.util.Optional.of(new com.cc01cc.p.xihe.cp.entity.AccessRole(
