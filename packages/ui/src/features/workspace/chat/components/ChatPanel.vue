@@ -45,7 +45,7 @@ import {
     type ProviderBindingGuideReason,
 } from "../composables/ensureProviderBinding";
 import ProviderBindingGuideDialog from "./ProviderBindingGuideDialog.vue";
-import { chatErrorToastText } from "../../../../lib/errorMessages";
+import { chatErrorToastText, problemDetailText } from "../../../../lib/errorMessages";
 import { isTerminalRunStatus, runStateLabelKey } from "../runStateView";
 import { Marker, MarkerContent, MarkerIcon } from "@/components/ui/marker";
 import { Clock, ShieldAlert } from "@lucide/vue";
@@ -422,6 +422,8 @@ async function loadSessionMessages(sessionId: string, requiredMessageIds?: Reado
     } catch (cause) {
         if (cause instanceof ApiError && cause.problem.code === "MESSAGE_NOT_FOUND") return;
         logger.error("Failed to load session messages", cause);
+        // BL-288：413 PAGINATION_REQUIRED 的 detail 带条数/上限/建议，不能再静默吞掉。
+        toast.error(problemDetailText(cause, t("chat.loadMessagesFailed")));
     }
 }
 
@@ -459,7 +461,7 @@ async function loadOlderMessages(): Promise<void> {
         if (!hasOlderMessages.value) olderExhausted.value = true;
     } catch (cause) {
         logger.error("Failed to load older messages", cause);
-        toast.error(t("chat.loadOlderFailed"));
+        toast.error(problemDetailText(cause, t("chat.loadOlderFailed")));
     } finally {
         loadingOlder.value = false;
     }

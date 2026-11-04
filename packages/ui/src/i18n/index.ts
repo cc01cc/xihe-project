@@ -742,6 +742,14 @@ const messages = {
             environmentState: "环境状态",
         },
         chat: {
+            loadOlder: "加载更早的消息",
+            loadingOlder: "正在加载更早的消息…",
+            loadOlderFailed: "加载更早的消息失败",
+            foldedOlder: "更早的 {count} 条消息已折叠，点击加载",
+            loadMessagesFailed: "加载消息失败，请重试",
+            contextTruncationNotice:
+                "本次回答基于被截断的历史（丢弃 {dropped} 条 / 保留 {kept} 条）",
+            contextTruncationDismiss: "关闭截断提示",
             send: "发送",
             // PLAN-0659 T1.1：run 头的折叠开关 aria-label（run 短码仅展示）。
             runHeader: {
@@ -806,13 +814,6 @@ const messages = {
                 // PLAN-0665 M2（Q3）：M1 只允许 AGENT 作为 TO；人类作答受 BL-238 阻塞，单独立项。
                 toTargetsLabel: "定向发送",
                 toAgentsOnlyHint: "人类成员请用抄送；人类作答待后续版本",
-                loadOlder: "加载更早的消息",
-                loadingOlder: "正在加载更早的消息…",
-                loadOlderFailed: "加载更早的消息失败",
-                foldedOlder: "更早的 {count} 条消息已折叠，点击加载",
-                contextTruncationNotice:
-                    "本次回答基于被截断的历史（丢弃 {dropped} 条 / 保留 {kept} 条）",
-                contextTruncationDismiss: "关闭截断提示",
                 ccLabel: "抄送",
                 ccAdd: "添加…",
                 ccRemove: "移除抄送",
@@ -3048,6 +3049,14 @@ const messages = {
             environmentState: "Environment",
         },
         chat: {
+            loadOlder: "Load earlier messages",
+            loadingOlder: "Loading earlier messages…",
+            loadOlderFailed: "Failed to load earlier messages",
+            foldedOlder: "{count} earlier messages are folded; click to load",
+            loadMessagesFailed: "Failed to load messages; please retry",
+            contextTruncationNotice:
+                "This answer used a truncated history ({dropped} dropped / {kept} kept)",
+            contextTruncationDismiss: "Dismiss truncation notice",
             send: "Send",
             runHeader: {
                 toggle: "Expand or collapse run {run}",
@@ -3112,13 +3121,6 @@ const messages = {
                 toLabel: "To",
                 toTargetsLabel: "Send to",
                 toAgentsOnlyHint: "Humans use Cc; human replies come in a later version",
-                loadOlder: "Load earlier messages",
-                loadingOlder: "Loading earlier messages…",
-                loadOlderFailed: "Failed to load earlier messages",
-                foldedOlder: "{count} earlier messages are folded; click to load",
-                contextTruncationNotice:
-                    "This answer used a truncated history ({dropped} dropped / {kept} kept)",
-                contextTruncationDismiss: "Dismiss truncation notice",
                 ccLabel: "Cc",
                 ccAdd: "Add…",
                 ccRemove: "Remove cc",

@@ -2,6 +2,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { flushPromises, mount } from "@vue/test-utils";
 import { createI18n } from "vue-i18n";
 import { createPinia, setActivePinia } from "pinia";
+import { toast } from "vue-sonner";
+import { api, ApiError } from "../../../../composables/api";
+import { useChatStore } from "../stores/chat.ts";
 import InputArea from "../components/InputArea.vue";
 import type { AttachmentFile } from "../../../../types";
 
@@ -17,6 +20,31 @@ const mockedUpload = vi.hoisted(() =>
     >(),
 );
 
+vi.mock("vue-sonner", () => ({
+    toast: {
+        error: vi.fn<(message: string) => void>(),
+        success: vi.fn<(message: string) => void>(),
+    },
+}));
+
+vi.mock("../composables/useSessionCommands", async () => {
+    const { ref } = await import("vue");
+    return {
+        commandReasonKey: () => "chat.commands.reason.unknown",
+        useSessionCommands: () => ({
+            commands: ref([
+                {
+                    key: "/export",
+                    descriptionKey: "chat.commands.description.export",
+                    available: true,
+                    reason: null,
+                    disabled: false,
+                },
+            ]),
+        }),
+    };
+});
+
 vi.mock("../../../../services/attachmentService", () => ({
     uploadAttachments: mockedUpload,
     validateAttachment: () => ({ valid: true }),
@@ -26,6 +54,7 @@ const messages = {
     "zh-CN": {
         chat: {
             placeholder: "输入消息...",
+            commands: { failed: "命令执行失败", description: { export: "导出会话" } },
             send: "发送",
             stop: "停止",
             followUpEnqueue: "排队发送",
@@ -252,5 +281,27 @@ describe("InputArea", () => {
             globalThis.URL.createObjectURL = originalCreate;
             globalThis.URL.revokeObjectURL = originalRevoke;
         }
+    });
+});
+describe("BL-288 Problem detail for /export", () => {
+    it("shows the 413 EXPORT_TOO_LARGE detail instead of the generic command copy", async () => {
+        vi.mocked(toast.error).mockClear();
+        const store = useChatStore();
+        vi.spyOn(store, "getSelectedBranchId").mockReturnValue("branch-1");
+        vi.spyOn(api, "exportSession").mockRejectedValue(
+            new ApiError({
+                status: 413,
+                code: "EXPORT_TOO_LARGE",
+                requestId: "req-288",
+                detail: "会话 20001 条超过导出上限 20000；请先删除旧会话或分批导出",
+            }),
+        );
+        const wrapper = mountInputArea();
+        const textarea = wrapper.find('[data-testid="chat-input"]');
+        await textarea.setValue("/export");
+        await textarea.trigger("keydown", { key: "Enter", shiftKey: false, isComposing: false });
+        await flushPromises();
+        expect(toast.error).toHaveBeenCalledWith(expect.stringContaining("20001"));
+        vi.restoreAllMocks();
     });
 });
