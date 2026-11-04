@@ -118,6 +118,22 @@ export interface ApiWorkspaceRoot {
     position: number;
 }
 
+/** PLAN-0641 F4: one discovery entry of the nested-repos read face. */
+export type ApiNestedRepoKind = "nested" | "gitdir" | "submodule" | "bare" | "symlink";
+
+export interface ApiNestedRepoItem {
+    /** Workspace-relative POSIX path (B12: display it whole — rootId is the key, not the name). */
+    path: string;
+    type: ApiNestedRepoKind;
+    declared: boolean;
+}
+
+export interface ApiNestedReposView {
+    workspaceId: string;
+    cachedAt: string;
+    items: ApiNestedRepoItem[];
+}
+
 export interface ApiWorkspace {
     id: string;
     name: string;
@@ -3535,6 +3551,15 @@ export const api = {
             headers: workspaceHeaders(wsId),
             body: JSON.stringify(input),
         });
+    },
+
+    /** PLAN-0641 T2.5: undeclared nested git repositories (TTL-cached CP read face). */
+    async listWorkspaceNestedRepos(wsId: string): Promise<ApiNestedRepoItem[]> {
+        const view = await request<ApiNestedReposView>(
+            `/workspaces/${encodeURIComponent(wsId)}/nested-repos`,
+            { method: "GET", headers: workspaceHeaders(wsId) },
+        );
+        return Array.isArray(view.items) ? view.items : [];
     },
 
     /** PLAN-0639 M1: patch a root's alias or position. */
