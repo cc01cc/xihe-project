@@ -2881,6 +2881,9 @@ struct RestorePreviewRequest {
     /// T2.2 self-only literal path/subtree scope.
     #[serde(default, rename = "pathPrefix")]
     path_prefix: Option<String>,
+    /// T2.2 self-only batch literal paths; chunked at 64 by the store.
+    #[serde(default)]
+    paths: Vec<String>,
 }
 
 async fn restore_preview_handler(
@@ -2889,6 +2892,29 @@ async fn restore_preview_handler(
     AxumJson(request): AxumJson<RestorePreviewRequest>,
 ) -> Response {
     app.refresh_checkpoint_work_tree(&ws_id).await;
+    if request.path_prefix.is_some() && !request.paths.is_empty() {
+        return checkpoint_problem_response(
+            StatusCode::BAD_REQUEST,
+            "CHECKPOINT_INVALID_REQUEST",
+            None,
+            "pathPrefix and paths are mutually exclusive",
+        );
+    }
+    if !request.paths.is_empty() {
+        return match app
+            .checkpoints
+            .restore_preview_for_root_paths(
+                &ws_id,
+                request.root_id.as_deref(),
+                &request.slice_ref,
+                &request.paths,
+            )
+            .await
+        {
+            Ok(outcome) => AxumJson(outcome).into_response(),
+            Err(failure) => restore_failure_response(failure),
+        };
+    }
     match app
         .checkpoints
         .restore_preview_for_root_path(
@@ -2916,6 +2942,9 @@ struct RestoreExecuteRequest {
     /// T2.2 self-only literal path/subtree scope.
     #[serde(default, rename = "pathPrefix")]
     path_prefix: Option<String>,
+    /// T2.2 self-only batch literal paths; chunked at 64 by the store.
+    #[serde(default)]
+    paths: Vec<String>,
 }
 
 async fn restore_execute_handler(
@@ -2924,6 +2953,30 @@ async fn restore_execute_handler(
     AxumJson(request): AxumJson<RestoreExecuteRequest>,
 ) -> Response {
     app.refresh_checkpoint_work_tree(&ws_id).await;
+    if request.path_prefix.is_some() && !request.paths.is_empty() {
+        return checkpoint_problem_response(
+            StatusCode::BAD_REQUEST,
+            "CHECKPOINT_INVALID_REQUEST",
+            None,
+            "pathPrefix and paths are mutually exclusive",
+        );
+    }
+    if !request.paths.is_empty() {
+        return match app
+            .checkpoints
+            .restore_execute_for_root_paths(
+                &ws_id,
+                request.root_id.as_deref(),
+                &request.slice_ref,
+                &request.acknowledge_type_changes,
+                &request.paths,
+            )
+            .await
+        {
+            Ok(outcome) => AxumJson(outcome).into_response(),
+            Err(failure) => restore_failure_response(failure),
+        };
+    }
     match app
         .checkpoints
         .restore_execute_for_root_path(

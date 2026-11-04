@@ -19,6 +19,7 @@ use super::store::{Store, StoreError};
 
 pub const RESTORE_MARKER: &str = ".xhs-restore-inprogress";
 pub const RESTORE_TRASH: &str = ".xhs-restore-trash";
+pub const RESTORE_CHECKOUT_CHUNK: usize = 64;
 
 #[derive(Debug, Clone, Default)]
 pub struct FullRestoreOptions {
@@ -30,6 +31,9 @@ pub struct FullRestoreOptions {
     /// T2.2 subtree scope: `None` = full workspace; `Some("dir")` = that path
     /// and its children (literal path semantics, no wildcard).
     pub path_prefix: Option<String>,
+    /// T2.2 batch scope: all listed paths (literal, no wildcard). Chunked at
+    /// [`RESTORE_CHECKOUT_CHUNK`] by [`restore_paths`].
+    pub paths: Vec<String>,
     /// Test-only fault injection after the destructive deletion phase.
     #[cfg(test)]
     pub fail_after_deletes: bool,
@@ -106,6 +110,7 @@ pub struct FullRestoreStats {
     pub skipped_modified_deletions: Vec<String>,
     pub bytes: u64,
     pub duration_ms: u64,
+    pub chunks_executed: usize,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -512,6 +517,28 @@ fn in_scope(path: &str, prefix: Option<&str>) -> bool {
     }
 }
 
+fn scope_ok(path: &str, options: &FullRestoreOptions) -> bool {
+    let prefix_match = options
+        .path_prefix
+        .as_deref()
+        .is_some_and(|prefix| in_scope(path, Some(prefix)));
+    match (options.path_prefix.is_some(), options.paths.is_empty()) {
+        (false, true) => true,
+        (true, true) => prefix_match,
+        (false, false) => options
+            .paths
+            .iter()
+            .any(|prefix| in_scope(path, Some(prefix))),
+        (true, false) => {
+            prefix_match
+                || options
+                    .paths
+                    .iter()
+                    .any(|prefix| in_scope(path, Some(prefix)))
+        }
+    }
+}
+
 fn build_plan(
     store: &Store,
     root_id: &str,
@@ -528,6 +555,9 @@ fn build_plan(
     if let Some(prefix) = options.path_prefix.as_deref() {
         validate_path(prefix)?;
     }
+    for path in &options.paths {
+        validate_path(path)?;
+    }
     let (target, _manifest_id) = read_target_manifest(store, root_id, slice_id)?;
     let tail_slice = tail_slice(store, root_id).map_err(|error| {
         FullRestoreError::SliceCorrupt(format!("tail slice read failed: {error}"))
@@ -539,16 +569,15 @@ fn build_plan(
         None => None,
     };
     preflight(store, &target, tail_manifest.as_ref())?;
-    let prefix = options.path_prefix.as_deref();
     let target_paths: BTreeSet<&str> = target
         .entries
         .iter()
-        .filter(|entry| in_scope(&entry.path, prefix))
+        .filter(|entry| scope_ok(&entry.path, options))
         .map(|entry| entry.path.as_str())
         .collect();
     let mut writes = Vec::new();
     for entry in &target.entries {
-        if !in_scope(&entry.path, prefix) {
+        if !scope_ok(&entry.path, options) {
             continue;
         }
         check_ancestors(work_tree, &entry.path)?;
@@ -571,7 +600,7 @@ fn build_plan(
     let mut already_absent = Vec::new();
     if let Some(tail) = &tail_manifest {
         for entry in &tail.entries {
-            if target_paths.contains(entry.path.as_str()) || !in_scope(&entry.path, prefix) {
+            if target_paths.contains(entry.path.as_str()) || !scope_ok(&entry.path, options) {
                 continue;
             }
             validate_path(&entry.path)?;
@@ -640,10 +669,10 @@ pub fn preview_full(
     }
     // The plan also carries skipped/missing decisions; recompute their labels
     // from the same tail/worktree inputs without another mutation pass.
-    if let Some(prefix) = options.path_prefix.as_deref() {
+    if options.path_prefix.is_some() || !options.paths.is_empty() {
         preview
             .entries
-            .retain(|entry| in_scope(&entry.path, Some(prefix)));
+            .retain(|entry| scope_ok(&entry.path, options));
     }
     for path in &plan.skipped_modified {
         preview.skipped_modified.push(path.clone());
@@ -684,6 +713,43 @@ pub fn restore_path(
     let mut scoped = options.clone();
     scoped.path_prefix = Some(path.to_owned());
     restore_full(store, root_id, slice_id, work_tree, &scoped)
+}
+
+/// T2.2 batch restore: literal paths are restored in chunks of
+/// [`RESTORE_CHECKOUT_CHUNK`], in deterministic order. No git subprocess is
+/// spawned; chunking is only the semantic boundary used by the git fallback.
+pub fn restore_paths(
+    store: &Store,
+    root_id: &str,
+    slice_id: &str,
+    work_tree: &Path,
+    paths: &[String],
+    options: &FullRestoreOptions,
+) -> Result<FullRestoreStats, FullRestoreError> {
+    let mut ordered = paths.to_vec();
+    ordered.sort();
+    ordered.dedup();
+    for path in &ordered {
+        validate_path(path)?;
+    }
+    let mut total = FullRestoreStats::default();
+    for chunk in ordered.chunks(RESTORE_CHECKOUT_CHUNK) {
+        let mut scoped = options.clone();
+        scoped.path_prefix = None;
+        scoped.paths = chunk.to_vec();
+        let part = restore_full(store, root_id, slice_id, work_tree, &scoped)?;
+        total.restored += part.restored;
+        total.deleted += part.deleted;
+        total.pruned_dirs += part.pruned_dirs;
+        total.skipped_already_absent += part.skipped_already_absent;
+        total
+            .skipped_modified_deletions
+            .extend(part.skipped_modified_deletions);
+        total.bytes = total.bytes.saturating_add(part.bytes);
+        total.duration_ms = total.duration_ms.saturating_add(part.duration_ms);
+        total.chunks_executed += 1;
+    }
+    Ok(total)
 }
 
 /// Full restore of one slice into `work_tree`.
@@ -728,6 +794,7 @@ pub fn restore_full(
     let mut stats = FullRestoreStats {
         skipped_already_absent: plan.already_absent.len(),
         skipped_modified_deletions: plan.skipped_modified.clone(),
+        chunks_executed: 1,
         ..FullRestoreStats::default()
     };
     let result = (|| -> Result<(), FullRestoreError> {
@@ -1421,6 +1488,49 @@ mod tests {
                 "temp leftover: {name:?}"
             );
         }
+    }
+
+    #[test]
+    fn batch_restore_chunks_at_checkout_chunk_size() {
+        let workspace = workspace();
+        let root = workspace.path().join("ws");
+        fs::create_dir_all(&root).expect("root");
+        let mut paths = Vec::new();
+        for index in 0..70 {
+            let relative = format!("files/f{index:02}.txt");
+            write(&root.join(&relative), &format!("content-{index}"));
+            paths.push(relative);
+        }
+        let store = Store::init(workspace.path().join("store")).expect("store");
+        let capture = capture_root(&store, &root, "ws-1", None, None).expect("capture");
+        let selected = paths[..65].to_vec();
+        for relative in &paths {
+            fs::write(root.join(relative), "mutated").expect("mutate");
+        }
+        let stats = restore_paths(
+            &store,
+            "ws-1",
+            &capture.slice_id,
+            &root,
+            &selected,
+            &FullRestoreOptions::default(),
+        )
+        .expect("batch restore");
+        assert_eq!(stats.restored, 65);
+        assert_eq!(stats.chunks_executed, 2);
+        assert_eq!(
+            fs::read_to_string(root.join(&paths[0])).expect("first"),
+            "content-0"
+        );
+        assert_eq!(
+            fs::read_to_string(root.join(&paths[64])).expect("65th"),
+            "content-64"
+        );
+        assert_eq!(
+            fs::read_to_string(root.join(&paths[65])).expect("unselected"),
+            "mutated",
+            "paths outside the batch must stay untouched"
+        );
     }
 
     #[test]
