@@ -401,6 +401,10 @@ function catchUpInFlightRunProjection(sessionId: string): void {
             }
             const hasActiveRun = response.runs.some((run) => !isTerminalRunStatus(run.status));
             if (hasActiveRun) sawActiveRun = true;
+            // PLAN-0659 T1.1：run 摘要（run 头的状态/耗时）由**这个**唯一的会话激活期消费者
+            // 落盘；会话切换时不再另发一次 `listSessionRuns`（同一事件两个消费者会让
+            // BL-228 的调用次数语义漂移，也是白打一次请求）。
+            sessionRuns.value = response.runs;
             if (sawActiveRun) await loadSessionMessages(sessionId);
             if (!hasActiveRun || exhausted) stopRunCatchup(sessionId);
         } catch (cause) {
@@ -612,7 +616,8 @@ watch(
             void loadSessionMessages(sessionId);
             void refreshDerivedState(sessionId);
             void refreshFollowUpQueue(sessionId);
-            void refreshSessionRuns(sessionId);
+            // run 摘要不在这里单独拉：`catchUpInFlightRunProjection` 的首个 tick 就是一次
+            // `listSessionRuns`，并在拿到结果时写 `sessionRuns`（同一会话激活期只打一次）。
             catchUpInFlightRunProjection(sessionId);
         }
     },
@@ -634,7 +639,9 @@ watch(isStreaming, (streaming, previous) => {
     if (streaming !== previous && props.sessionId) {
         if (previous && !streaming) {
             void loadSessionMessages(props.sessionId);
-            void refreshSessionRuns(props.sessionId);
+            // 追平循环在跑时它每个 tick 都会写 `sessionRuns`，终态点不再重复拉一次
+            // （同一 run 的终态只留一个消费者）；没有循环时才由这里刷新。
+            if (!runCatchupTimers.has(props.sessionId)) void refreshSessionRuns(props.sessionId);
             guidancePanelRef.value?.refetch();
         }
         void refreshFollowUpQueue(props.sessionId);
@@ -929,6 +936,12 @@ async function submitMessage(input: {
         // PLAN-0631 D31-08: a `speakAs` message is attributed to the participant whose
         // identity the caller chose (CP validates it). Absent = the caller's own words.
         ...(asParticipantId ? { participantId: asParticipantId } : {}),
+        // PLAN-0659 T1.3：投递语义（发送/抄送）只有 composer 这一层知道，**UI 本地视图**，
+        // 与 `participantId` 同一口径：history DTO 不携带该字段 ⇒ 刷新后消失（BL-239：
+        // 投递语义暂无持久载体，P3）。不落 localStorage、不进 wire（本 PLAN 非目标）。
+        ...(asParticipantId || (cc?.length ?? 0) > 0
+            ? { delivery: { toParticipantId: asParticipantId ?? null, ccParticipantIds: cc ?? [] } }
+            : {}),
     });
     inputComponent.value?.clearDraft();
 }
