@@ -1023,3 +1023,38 @@ describe("BL-228: 刷新重开（冷启动）在途 run 的投影追平", () => 
         }
     });
 });
+describe("Problem detail surfacing (BL-288)", () => {
+    it("shows the 413 PAGINATION_REQUIRED detail instead of the generic load copy", async () => {
+        vi.mocked(toast.error).mockClear();
+        vi.mocked(api.getMessages).mockRejectedValueOnce(
+            new ApiError({
+                status: 413,
+                code: "PAGINATION_REQUIRED",
+                requestId: "req-288",
+                detail: "会话 20001 条超过单次读取上限 20000；请改用分页读取或导出",
+            }),
+        );
+        mountPanel();
+        await flushPromises();
+        await nextTick();
+        expect(toast.error).toHaveBeenCalledWith(expect.stringContaining("20001"));
+    });
+
+    it("falls back to the localized generic copy when the Problem has no detail", async () => {
+        vi.mocked(toast.error).mockClear();
+        vi.mocked(api.getMessages).mockRejectedValueOnce(
+            new ApiError({
+                status: 413,
+                code: "PAGINATION_REQUIRED",
+                requestId: "req-288b",
+            }),
+        );
+        mountPanel();
+        await flushPromises();
+        await nextTick();
+        const calls = vi.mocked(toast.error).mock.calls.map(([message]) => String(message));
+        expect(calls.some((message) => /加载消息失败|Failed to load messages/.test(message))).toBe(
+            true,
+        );
+    });
+});
