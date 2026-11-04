@@ -279,9 +279,13 @@ export interface ApiSession {
     agentPrincipalId?: string | null;
     createdAt?: string;
     updatedAt?: string;
+    /** OpenAPI `Session.required`: archived is contract-required (PLAN-0668 M2). */
+    archived?: boolean;
     /** PLAN-0655 T1.5: delegation projection — `SPAWN` = delegated child session. */
     kind?: string | null;
     spawnedFromSessionId?: string | null;
+    /** PLAN-0668 D3: optional lineage (exists on the wire/DB, not required by UI). */
+    spawnedFromRunId?: string | null;
     spawnedAt?: string | null;
     modelProvider?: string;
     modelName?: string;
@@ -464,6 +468,8 @@ export interface SessionBranchCreateResponse {
 }
 
 export interface SessionResponse extends ApiSession {
+    /** Normalized Session always carries the contract-required boolean (D4 fail-closed). */
+    archived: boolean;
     workspace?: ApiWorkspace;
 }
 
@@ -1957,18 +1963,69 @@ export function isExecutionModeSwitchProbeFailure(code: string | null | undefine
     );
 }
 
+/**
+ * PLAN-0668 D4: a wire row that is missing a contract-required field is not a usable session
+ * projection. The list face drops the row with a WARN; single-item faces throw this typed error
+ * instead of silently serving a half-shaped Session to the conversation tree.
+ */
+export class InvalidSessionProjectionError extends Error {
+    readonly field: string;
+
+    constructor(field: string, detail: string) {
+        super(`Invalid session projection: missing/invalid required field '${field}' (${detail})`);
+        this.name = "InvalidSessionProjectionError";
+        this.field = field;
+    }
+}
+
+/** OpenAPI `Session.required` names that `normalizeSession` cannot synthesize. */
+function requireSessionField(
+    record: Record<string, unknown>,
+    field: string,
+    kind: "string",
+): string;
+function requireSessionField(
+    record: Record<string, unknown>,
+    field: string,
+    kind: "boolean",
+): boolean;
+function requireSessionField(
+    record: Record<string, unknown>,
+    field: string,
+    kind: "string" | "boolean",
+): string | boolean {
+    const value = record[field];
+    if (kind === "boolean" ? typeof value !== "boolean" : typeof value !== "string") {
+        throw new InvalidSessionProjectionError(field, `expected ${kind}`);
+    }
+    return value as string | boolean;
+}
+
 function normalizeSession(value: unknown): SessionResponse {
     const root = asRecord(value),
         record = asRecord(root?.session) ?? root;
-    if (!record || typeof record.id !== "string") {
-        throw new Error("Invalid session response: missing id");
+    if (!record) {
+        throw new InvalidSessionProjectionError("id", "expected object with id");
     }
+    const id = requireSessionField(record, "id", "string"),
+        archived = requireSessionField(record, "archived", "boolean");
     const workspace = normalizeWorkspace(root?.workspace) ?? normalizeWorkspace(record.workspace);
+    const workspaceId =
+        typeof record.workspaceId === "string" && record.workspaceId.length > 0
+            ? record.workspaceId
+            : workspace?.id;
+    if (!workspaceId) {
+        throw new InvalidSessionProjectionError(
+            "workspaceId",
+            "expected string (no workspace fallback either)",
+        );
+    }
     return {
-        id: record.id,
+        id,
+        archived,
         title:
             typeof record.title === "string" && record.title.length > 0 ? record.title : "Untitled",
-        workspaceId: typeof record.workspaceId === "string" ? record.workspaceId : workspace?.id,
+        workspaceId,
         agentPrincipalId:
             typeof record.agentPrincipalId === "string" ? record.agentPrincipalId : null,
         // PLAN-0655 T1.5 / PLAN-0659 T1.4：委派 lineage 必须在 list 投影里透传。
@@ -1979,6 +2036,8 @@ function normalizeSession(value: unknown): SessionResponse {
         kind: typeof record.kind === "string" ? record.kind : null,
         spawnedFromSessionId:
             typeof record.spawnedFromSessionId === "string" ? record.spawnedFromSessionId : null,
+        spawnedFromRunId:
+            typeof record.spawnedFromRunId === "string" ? record.spawnedFromRunId : null,
         spawnedAt: typeof record.spawnedAt === "string" ? record.spawnedAt : null,
         createdAt: typeof record.createdAt === "string" ? record.createdAt : undefined,
         updatedAt: typeof record.updatedAt === "string" ? record.updatedAt : undefined,
@@ -2540,8 +2599,26 @@ export const api = {
                   ? payload
                   : null;
         if (!rawSessions) throw new Error("Invalid sessions response: missing sessions");
+        // D4 list policy: one malformed row is dropped and named in a WARN; the rest of the list
+        // (and the session tree) still renders. Single-item faces below keep throwing.
+        const sessions: SessionResponse[] = [];
+        for (const raw of rawSessions) {
+            try {
+                sessions.push(normalizeSession(raw));
+            } catch (error) {
+                const field =
+                    error instanceof InvalidSessionProjectionError ? error.field : "unknown";
+                const rowId =
+                    asRecord(asRecord(raw)?.session)?.id ?? asRecord(raw)?.id ?? "<unknown>";
+                console.warn("[sessions] dropping malformed row", {
+                    field,
+                    rowId,
+                    message: error instanceof Error ? error.message : String(error),
+                });
+            }
+        }
         return {
-            sessions: rawSessions.map(normalizeSession),
+            sessions,
             workspace: normalizeWorkspace(root?.workspace),
         };
     },

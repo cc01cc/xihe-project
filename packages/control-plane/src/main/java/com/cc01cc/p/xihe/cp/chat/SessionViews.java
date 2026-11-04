@@ -31,6 +31,12 @@ public final class SessionViews {
         view.put("contextTemplateLayer", session.getContextTemplateLayer());
         view.put("contextTemplateId", session.getContextTemplateId());
         view.put("contextTemplateVersion", session.getContextTemplateVersion());
+        // PLAN-0668 M2: detail symmetry with SessionSummary — list and detail both carry the
+        // delegation lineage now that the wire contract declares it on Session as well.
+        view.put("kind", session.getKind());
+        view.put("spawnedFromSessionId", session.getSpawnedFromSessionId());
+        view.put("spawnedFromRunId", session.getSpawnedFromRunId());
+        view.put("spawnedAt", session.getSpawnedAt() == null ? null : session.getSpawnedAt().toString());
         view.put("archived", session.isArchived());
         view.put("createdAt", session.getCreatedAt() == null ? null : session.getCreatedAt().toString());
         view.put("updatedAt", session.getUpdatedAt() == null ? null : session.getUpdatedAt().toString());

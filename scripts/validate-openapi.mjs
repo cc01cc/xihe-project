@@ -57,4 +57,21 @@ for (const code of ['NESTED_REPO_DIRTY', 'NESTED_REPO_UNCONFIRMED']) {
   if (!runtimeExecute.includes(code)) throw new Error(`runtime checkpoint revert must name ${code}`)
 }
 
+// PLAN-0668 M2: the session read projection is a cross-layer contract. Lineage must be declared
+// on `Session` (detail view) and required on `SessionSummary` (list view, already declared by
+// BL-270); `archived` stays required on `Session`. Assertions are schema-scoped so a same-named
+// field elsewhere in the document cannot satisfy them.
+const sessionBlock = sliceBetween('\n    Session: {', '\n    SessionForkResponse:')
+for (const field of ['kind:', 'spawnedFromSessionId:', 'spawnedFromRunId:', 'spawnedAt:']) {
+  if (!sessionBlock.includes(field)) throw new Error(`Session must declare lineage field ${field}`)
+}
+if (!/required: \[[^\]]*\barchived\b/.test(sessionBlock)) {
+  throw new Error('Session.required must include archived')
+}
+const sessionSummaryBlock = sliceBetween('\n    SessionSummary:', '\n    Session: {')
+for (const field of ['kind', 'spawnedFromSessionId', 'spawnedAt']) {
+  if (!new RegExp(`required: \\[[^\\]]*\\b${field}\\b`).test(sessionSummaryBlock)) {
+    throw new Error(`SessionSummary.required must include ${field}`)
+  }
+}
 console.log(`OpenAPI structural validation passed (${paths.length} paths)`)
