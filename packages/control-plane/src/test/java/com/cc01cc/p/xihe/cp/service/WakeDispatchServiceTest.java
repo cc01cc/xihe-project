@@ -96,6 +96,24 @@ class WakeDispatchServiceTest {
     }
 
     @Test
+    void agentRefusalIsAResultNotAnException() {
+        // PLAN-0660 T3.2: the refusal must come back as a value — no exception may leave fire(), and
+        // the durable refused row must be written in the same (still committable) transaction.
+        // Deliberately no assertThrows here: the signature of this test IS the criterion.
+        when(participantService.judgeSpeakAs(anyString(), anyString(), anyString(), anyString()))
+                .thenReturn(SessionParticipantService.SpeakDecision.refused("PARTICIPANT_CAP_DENIED"));
+
+        WakeDispatchService.WakeFireResult result = service.fire(PARTICIPANT_ID, "mention", ROUND, SESSION_ID, null);
+
+        assertEquals("refused", result.outcome());
+        assertFalse(result.dispatched());
+        verify(wakeupService, never()).wakeupAs(anyString(), anyString(), anyString(), anyString(),
+                anyString(), any(), anyString(), any());
+        verifyNoInteractions(chatRuns);
+        assertAuditOutcome("refused");
+    }
+
+    @Test
     void systemTriggeredStillNeedsAuthorization() {
         // PLAN-0660 T2.1: the gate answers with a refusal VALUE (it used to throw across the
         // transactional boundary, which is what poisoned the shared transaction).
