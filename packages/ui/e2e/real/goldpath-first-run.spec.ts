@@ -346,77 +346,87 @@ async function openOrCreateWorkspace(page: Page, request: APIRequestContext): Pr
  *    工具 ⇒ agent 在发请求前抛 `LLM_TOOL_ROUTE_UNSUPPORTED`。
  *
  * 所以这里用 provider `openai`（目录里工具可用）+ fake LLM 的 `/openai/v1`，显式绑定后再发消息。
- * 走页面内 fetch（与既有 `ensureChatBinding` 同一手法），不使用 `addInitScript`。
+ *
+ * BL-204 实证修复（2026-11-04）：旧实现用 `page.evaluate(fetch(...))` 直接 PATCH 会话完成绑定，
+ * 绕过产品 UI ⇒ E2E 绿不能证明"用户能绑上"。本实现全部走产品路径：
+ * 1. 连接创建走 ProviderHub 表单（与 G3-a 同一手法）；
+ * 2. verify 走 `page.request.post`（本文件 G3-a 的既有夹具手法，非产品路径）；
+ * 3. **会话绑定走 ModelPopover**：点击模型项触发 `ModelPopover.vue` 选中处理器
+ *    （`sessionStore.updateSession` → PATCH `/api/v1/sessions/{id}`），即产品 UI 的真实请求。
  */
-async function bindToolCapableFakeLlmConnection(
-    page: Page,
-    workspaceId: string,
-    sessionId: string,
-): Promise<void> {
+async function bindToolCapableFakeLlmConnection(page: Page, sessionId: string): Promise<void> {
     const fakeLlmPort = FAKE_LLM_PORT;
     expect(fakeLlmPort, "needs XIHE_FAKE_LLM_PORT (runner-provided fake LLM)").not.toBe("");
-    const baseUrl = `http://127.0.0.1:${fakeLlmPort}/openai/v1`;
-    const outcome = await page.evaluate(
-        async ({ sid, wsId, chatBaseUrl, model, apiKey }) => {
-            const token = localStorage.getItem("xihe-token") ?? "";
-            // 会话是**工作区作用域**的：CP 的 TenantContextInterceptor 从 `X-Workspace-Id` 解析租户，
-            // 缺这个 header 时 PATCH /api/v1/sessions/{id} 会 404 SESSION_NOT_FOUND（本轮实测）。
-            const headers: Record<string, string> = {
-                Authorization: `Bearer ${token}`,
-                "Content-Type": "application/json",
-                "X-Workspace-Id": wsId,
-            };
-            const created = await fetch("/api/v1/provider-connections", {
-                method: "POST",
-                headers,
-                body: JSON.stringify({
-                    providerId: "openai",
-                    apiTypeId: "openai-chat-completions",
-                    apiTypeVersion: 1,
-                    apiKey,
-                    connectionKey: `goldpath-tools-${Date.now()}`,
-                    label: "Gold path chat binding (tool-capable)",
-                    scope: "USER",
-                    modelDiscovery: "manual",
-                    manualModels: [model],
-                    baseUrl: chatBaseUrl,
-                }),
-            });
-            if (!created.ok) return `create ${created.status} ${await created.text()}`;
-            const connection = (await created.json()) as { id: string; revision: number };
-            const verified = await fetch(`/api/v1/provider-connections/${connection.id}/verify`, {
-                method: "POST",
-                headers,
-            });
-            if (!verified.ok) return `verify ${verified.status} ${await verified.text()}`;
-            const verifiedBody = (await verified.json()) as {
-                connection: { id: string; revision: number; status: string; providerId: string };
-            };
-            if (verifiedBody.connection.status !== "READY") {
-                return `verify-not-ready:${verifiedBody.connection.status}`;
-            }
-            const bound = await fetch(`/api/v1/sessions/${sid}`, {
-                method: "PATCH",
-                headers,
-                body: JSON.stringify({
-                    providerConnectionId: verifiedBody.connection.id,
-                    modelProvider: verifiedBody.connection.providerId,
-                    modelName: model,
-                    connectionRevision: verifiedBody.connection.revision,
-                }),
-            });
-            if (!bound.ok) return `bind ${bound.status} ${await bound.text()}`;
-            return "bound";
-        },
-        {
-            sid: sessionId,
-            wsId: workspaceId,
-            chatBaseUrl: baseUrl,
-            model: FAKE_LLM_MODEL,
-            apiKey: FAKE_LLM_API_KEY,
-        },
+    const chatUrl = page.url();
+
+    // 1) 经产品 UI（ProviderHub 表单）创建连接。
+    await page.goto("/settings/config", { waitUntil: "load" });
+    await page.getByTestId("config-tab-user").click();
+    await page.getByTestId("provider-hub-connect").click();
+    await expect(page.getByTestId("provider-picker-modal")).toBeVisible({ timeout: 20000 });
+    await page.getByTestId("provider-picker-search").fill("open");
+    await page.locator('button[data-testid^="provider-picker-"]').first().click();
+
+    const label = `goldpath-tools-${Date.now()}`;
+    await page.getByTestId("provider-connection-form-label").fill(label);
+    await page.getByTestId("provider-connection-form-key").fill(`goldpath-${Date.now()}`);
+    const form = page
+        .locator("form")
+        .filter({ has: page.getByTestId("provider-connection-form-label") });
+    await form.locator('input[type="password"]').first().fill(FAKE_LLM_API_KEY);
+    await form
+        .locator('input[type="url"]')
+        .first()
+        .fill(`http://127.0.0.1:${fakeLlmPort}/openai/v1`);
+    // 表单里有多个 select（第 1 个是 API Type），按带 `manual` 选项值定位，不依赖顺序。
+    for (const select of await form.locator("select").all()) {
+        const values = await select
+            .locator("option")
+            .evaluateAll((options) => options.map((option) => (option as HTMLOptionElement).value));
+        if (values.includes("manual")) {
+            await select.selectOption("manual");
+            break;
+        }
+    }
+    await form.locator("textarea").first().fill(FAKE_LLM_MODEL);
+
+    const createResponse = page.waitForResponse(
+        (response) =>
+            response.url().endsWith("/api/v1/provider-connections") &&
+            response.request().method() === "POST",
     );
-    expect(outcome, "explicit tool-capable connection binding").toBe("bound");
+    await form.locator('button[type="submit"]').click();
+    const created = await createResponse;
+    expect(created.status(), await created.text()).toBe(201);
+    const connectionId = ((await created.json()) as { id: string }).id;
+
+    // 2) verify（夹具级准备；与本文件 G3-a 的既有手法一致，不走页面内 fetch）。
+    const token = await tokenOf(page);
+    const verified = await page.request.post(
+        `${CP_URL}/api/v1/provider-connections/${connectionId}/verify`,
+        { headers: bearer(token) },
+    );
+    expect(verified.ok(), await verified.text()).toBe(true);
+    expect(
+        ((await verified.json()) as { connection?: { status?: string } }).connection?.status,
+    ).toBe("READY");
+
+    // 3) 回到会话，经 ModelPopover 产品路径完成绑定（BL-204 修复点）。
+    await page.goto(chatUrl, { waitUntil: "load" });
+    await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: 25000 });
+    await page.getByTestId("model-popover-trigger").click();
+    const modelItem = page
+        .locator(`[data-testid^="model-item-"][data-testid$="/${FAKE_LLM_MODEL}"]`)
+        .first();
+    await expect(modelItem).toBeVisible({ timeout: 20000 });
+    const bindResponse = page.waitForResponse(
+        (response) =>
+            new URL(response.url()).pathname.endsWith(`/api/v1/sessions/${sessionId}`) &&
+            response.request().method() === "PATCH",
+    );
+    await modelItem.click();
+    const bound = await bindResponse;
+    expect(bound.status(), await bound.text()).toBe(200);
 }
 
 /** 在**当前**工作区里经 UI 建一个 Agent principal 并绑定（G2-c 的步骤，供 G2-e 复用）。 */ async function createAndBindAgentInCurrentWorkspace(
@@ -921,7 +931,7 @@ test.describe("@host gold path G2 — zero to first reply through the UI", () =>
         const chatUrl = page.url();
         const chatSessionId = chatUrl.match(/\/chat\/([0-9a-f-]{36})/i)?.[1] ?? "";
         expect(chatSessionId, "the created session id").toMatch(/^[0-9a-f-]{36}$/i);
-        await bindToolCapableFakeLlmConnection(page, workspaceId, chatSessionId);
+        await bindToolCapableFakeLlmConnection(page, chatSessionId);
         await page.reload({ waitUntil: "load" });
         await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: 25000 });
         await expect(page.getByTestId("model-popover-trigger")).toBeVisible({ timeout: 25000 });
