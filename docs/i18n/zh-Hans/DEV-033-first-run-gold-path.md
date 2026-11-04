@@ -154,7 +154,7 @@ runner 的三个 gold path flag（`scripts/e2e-host.mjs:438-440`，默认**全�
 
 ### 5.5 截图对照（7 张，与断言同源）
 
-截图目录（不在 A03 仓库内，按需打开）：[t5.2-screenshots](../../../../plans/PLAN-0611-XH-first-run-goldpath/evidence/t5.2-screenshots/)
+截图目录（不在 A03 仓库内，按需打开）：[t5.2-screenshots](../../../../plans/archive/PLAN-0611-XH-first-run-goldpath/evidence/t5.2-screenshots/)
 
 | 文件 | 对应判据 / 用例 | 截到的关键画面 |
 |---|---|---|

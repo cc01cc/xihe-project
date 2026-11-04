@@ -152,9 +152,10 @@ Per-feature status, progress markers, and the current boundary of each capabilit
 ## 5. Testing
 
 ```bash
-mise run validate        # lint + typecheck + build + test
-mise run validate:full   # adds integration and E2E (needs Docker); compose E2E itself is frozen
-mise run test:e2e:host   # host E2E: stop dev:host first (DEV-002 §5); each round uses an isolated environment
+mise run validate             # lint + typecheck + build + test (+ e2e fixture self-tests)
+mise run validate:full        # adds integration and E2E (needs Docker); compose E2E itself is frozen
+mise run test:e2e:fixtures    # e2e fixture self-tests only (fake LLM chain state machine; no stack, seconds)
+mise run test:e2e:host        # host E2E: stop dev:host first (DEV-002 §5); each round uses an isolated environment
 ```
 
 Strategy: DEV-020/021/022/023. Environment cleanup and host-run requirements: [DEV-002](docs/i18n/zh-Hans/DEV-002-developer-guide.md).

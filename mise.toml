@@ -126,7 +126,7 @@ description = "Run all tests"
 alias = "test"
 
 [tasks."test:cli"]
-run = "node --test scripts/xihe-cli.test.mjs scripts/xihe-cli/skill.test.mjs scripts/lib/stack-ports.test.mjs scripts/lib/env-file.test.mjs scripts/lib/service-supervisor.test.mjs scripts/lib/llm-env.test.mjs scripts/lib/cp-boot-plan.test.mjs scripts/lib/e2e-rounds.test.mjs scripts/stack-run.test.mjs scripts/e2e-host-readiness.test.mjs scripts/test-wiring.test.mjs scripts/pkg/phase-parity.test.mjs scripts/pkg/ports-json.test.mjs scripts/pkg/launcher-security.test.mjs scripts/pkg/launcher-security-behavior.test.mjs scripts/env-log-level.test.mjs scripts/lib/stack-cargo-target.test.mjs scripts/lib/stack-orphan.test.mjs"
+run = "node --test scripts/xihe-cli.test.mjs scripts/xihe-cli/skill.test.mjs scripts/lib/stack-ports.test.mjs scripts/lib/env-file.test.mjs scripts/lib/service-supervisor.test.mjs scripts/lib/llm-env.test.mjs scripts/lib/cp-boot-plan.test.mjs scripts/lib/e2e-rounds.test.mjs scripts/stack-run.test.mjs scripts/e2e-host-readiness.test.mjs scripts/test-wiring.test.mjs scripts/pkg/phase-parity.test.mjs scripts/pkg/ports-json.test.mjs scripts/pkg/launcher-security.test.mjs scripts/pkg/launcher-security-behavior.test.mjs scripts/env-log-level.test.mjs scripts/lib/stack-cargo-target.test.mjs scripts/lib/stack-orphan.test.mjs scripts/lib/kill-guard.test.mjs"
 description = "Run every scripts/**/*.test.mjs unit test — the file list is explicit and pinned by scripts/test-wiring.test.mjs (a new test file that is not listed turns that meta test red)"
 alias = "test:cli"
 
@@ -142,6 +142,15 @@ run = "pnpm run test:unit"
 description = "Run the UI unit test suite"
 dir = "packages/ui"
 alias = "test:ui"
+
+[tasks."test:e2e:fixtures"]
+# PLAN-0648: e2e 测试夹具自身的状态机（fake LLM mode=chain 的会话游标 / 重试重放 /
+# 耗尽回落）在真栈上只表现为"工具莫名不出现"，排障成本极高；这里用 node:test 直接
+# 守住状态机：不起栈、不开浏览器、秒级。改 e2e/fixtures 的模式机必须先跑这条。
+run = "pnpm run test:e2e:fixtures"
+description = "Run e2e fixture self-tests (fake LLM chain state machine; no stack, seconds)"
+dir = "packages/ui"
+alias = "test:e2e:fixtures"
 
 [tasks."test:agent"]
 run = "uv run pytest"
@@ -270,8 +279,10 @@ description = "Format code across modules"
 alias = "format"
 
 [tasks.validate]
-depends = ["lint", "typecheck", "build", "test", "lint:links"]
-description = "Run all quality gates — lint + typecheck + build + test (Docker auto-managed)"
+# test:e2e:fixtures 排在 UI 单测（test）之后、E2E 之前：它只跑 e2e 夹具自身的状态机
+# （不起栈/秒级），放在 E2E 车道前面能最早暴露"夹具坏了导致的假绿"。
+depends = ["lint", "typecheck", "build", "test", "test:e2e:fixtures", "lint:links"]
+description = "Run all quality gates — lint + typecheck + build + test + e2e fixture self-tests (Docker auto-managed)"
 alias = "validate"
 
 [tasks."validate:full"]

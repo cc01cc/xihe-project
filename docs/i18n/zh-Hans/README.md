@@ -169,9 +169,10 @@ flowchart LR
 ## 5. 测试
 
 ```bash
-mise run validate        # lint + typecheck + build + test
-mise run validate:full   # 增加集成与 E2E（需要 Docker）
-mise run test:e2e:host   # Host E2E：先停 dev:host（见 DEV-002 §5），每轮使用隔离环境
+mise run validate             # lint + typecheck + build + test（+ e2e 夹具自测）
+mise run validate:full        # 增加集成与 E2E（需要 Docker）
+mise run test:e2e:fixtures    # 只跑 e2e 夹具自测（fake LLM 链式状态机；不起栈、秒级）
+mise run test:e2e:host        # Host E2E：先停 dev:host（见 DEV-002 §5），每轮使用隔离环境
 ```
 
 测试策略见 DEV-020/021/022/023；环境清理与 host 运行要求见 [DEV-002](DEV-002-developer-guide.md)。
