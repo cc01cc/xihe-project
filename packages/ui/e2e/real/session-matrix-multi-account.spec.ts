@@ -92,7 +92,7 @@ test.describe("@host PLAN-0658 R1 多人类账户", () => {
             `${CP_URL}/api/v1/workspaces/${owner.workspaceId}/members`,
             {
                 headers: owner.headers,
-                data: { username: member.username, role: "MEMBER" },
+                data: { username: member.username, role: "EDITOR" }, // PLAN-0565: 规范角色 OWNER/EDITOR/VIEWER（legacy MEMBER 已废）
             },
         );
         expect(add.status(), `add member: ${add.status()} ${await add.text()}`).toBe(201);
