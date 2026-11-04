@@ -414,8 +414,14 @@ test.describe("@host PLAN-0649 refusal visible + durable", () => {
             .then(() => true)
             .catch(() => false);
         if (approvalSeen) {
-            await modal.locator('[data-testid="approval-approve"]').click();
-            await expect(modal).toBeHidden({ timeout: 30_000 });
+            // Each spawn_agent call raises its own approval modal; approve in a bounded loop
+            // instead of requiring the modal to hide after one click (it reopens for the next call).
+            for (let i = 0; i < 4; i += 1) {
+                const approve = modal.locator('[data-testid="approval-approve"]');
+                if (!(await approve.isVisible().catch(() => false))) break;
+                await approve.click().catch(() => {});
+                await page.waitForTimeout(2_000);
+            }
         }
         await awaitLatestChatRunCompleted(request, headers, wsId);
 
