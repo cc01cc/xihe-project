@@ -131,7 +131,7 @@ description = "Run all tests"
 alias = "test"
 
 [tasks."test:cli"]
-run = "node --test scripts/xihe-cli.test.mjs scripts/xihe-cli/skill.test.mjs scripts/lib/stack-ports.test.mjs scripts/lib/env-file.test.mjs scripts/lib/service-supervisor.test.mjs scripts/lib/llm-env.test.mjs scripts/lib/cp-boot-plan.test.mjs scripts/lib/e2e-rounds.test.mjs scripts/lib/e2e-host-cli.test.mjs scripts/stack-run.test.mjs scripts/e2e-host-readiness.test.mjs scripts/test-wiring.test.mjs scripts/pkg/phase-parity.test.mjs scripts/pkg/ports-json.test.mjs scripts/pkg/launcher-security.test.mjs scripts/pkg/launcher-security-behavior.test.mjs scripts/env-log-level.test.mjs scripts/lib/stack-cargo-target.test.mjs scripts/lib/stack-orphan.test.mjs scripts/lib/kill-guard.test.mjs scripts/lib/cp-build-info.test.mjs scripts/lib/cp-build-dir.test.mjs"
+run = "node --test scripts/xihe-cli.test.mjs scripts/xihe-cli/skill.test.mjs scripts/lib/stack-ports.test.mjs scripts/lib/env-file.test.mjs scripts/lib/service-supervisor.test.mjs scripts/lib/llm-env.test.mjs scripts/lib/cp-boot-plan.test.mjs scripts/lib/e2e-rounds.test.mjs scripts/lib/e2e-host-cli.test.mjs scripts/stack-run.test.mjs scripts/e2e-host-readiness.test.mjs scripts/test-wiring.test.mjs scripts/pkg/phase-parity.test.mjs scripts/pkg/ports-json.test.mjs scripts/pkg/launcher-security.test.mjs scripts/pkg/launcher-security-behavior.test.mjs scripts/env-log-level.test.mjs scripts/lib/stack-cargo-target.test.mjs scripts/lib/stack-orphan.test.mjs scripts/lib/kill-guard.test.mjs scripts/lib/cp-build-info.test.mjs scripts/lib/cp-build-dir.test.mjs scripts/__tests__/check-event-keys.test.mjs"
 description = "Run every scripts/**/*.test.mjs unit test — the file list is explicit and pinned by scripts/test-wiring.test.mjs (a new test file that is not listed turns that meta test red)"
 alias = "test:cli"
 
@@ -450,3 +450,10 @@ alias = "check:standalone"
 run = "node scripts/check-ports-parity.mjs"
 description = "Compare the built-in xihe port table with ONE's allocation table (skips with a reason when ONE is absent)"
 alias = "check:ports"
+
+# BL-303 Phase 3: 事件名扫描器（默认 report-only，永不非零退出；观察期结束后再考虑接入 validate）。
+# 基线/语义登记见 config/event-keys-baseline.json / config/event-keys-semantics.json。
+[tasks."check:event-keys"]
+run = "node scripts/check-event-keys.mjs --report-only"
+description = "Report-only audit of log/SSE/AgentEvent names against the BL-303 baseline + semantics registry (never fails; use --enforce manually)"
+alias = "check:event-keys"
