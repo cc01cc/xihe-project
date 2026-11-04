@@ -129,6 +129,29 @@ describe("nested repos panel", () => {
         expect(apiStub.listWorkspaceNestedRepos).toHaveBeenCalledWith("workspace-a");
     });
 
+    it("never offers a declare entry for submodules or symlinks (T4.4)", async () => {
+        // design §6.3 row 4: submodules are marked and confirmed at revert time, never
+        // declared; contract F4: symlinks are classification-only (no declare flow).
+        apiStub.listWorkspaceNestedRepos.mockResolvedValue([
+            { path: "vendor/lib", type: "nested", declared: false },
+            { path: "deep/tools/helper", type: "submodule", declared: false },
+            { path: "linked", type: "symlink", declared: false },
+        ]);
+        const wrapper = mountPanel();
+        await flushPromises();
+
+        const rows = wrapper.findAll('[data-testid="nested-repo-row"]');
+        expect(rows).toHaveLength(3);
+        // The plain nested repo keeps the entry; the other two stay listed but inert.
+        expect(rows[0]!.find('[data-testid="nested-repo-declare"]').exists()).toBe(true);
+        expect(rows[1]!.find('[data-testid="nested-repo-declare"]').exists()).toBe(false);
+        expect(rows[2]!.find('[data-testid="nested-repo-declare"]').exists()).toBe(false);
+        // Still surfaced (marked) so the user can see why they are not declarable.
+        expect(rows[1]!.find('[data-testid="nested-repo-type"]').text()).toBe("Submodule");
+        expect(rows[2]!.find('[data-testid="nested-repo-type"]').text()).toBe("Symlink");
+        expect(rows[1]!.find('[data-testid="nested-repo-path"]').text()).toBe("deep/tools/helper");
+    });
+
     it("hides the section when nothing undeclared remains", async () => {
         apiStub.listWorkspaceNestedRepos.mockResolvedValue([
             { path: "vendor/lib", type: "nested", declared: true },

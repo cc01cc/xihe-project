@@ -72,6 +72,15 @@ function nestedRepoTypeLabel(kind: ApiNestedRepoItem["type"]): string {
     return t(`workspace.nestedRepoType_${kind}`);
 }
 
+/**
+ * PLAN-0641 T4.4 (design §6.3 row 4): a submodule is marked and confirmed at revert
+ * time, never declared — the nested declaration is the user's call, not XH's. A
+ * symlink is classification-only and never enters the declare flow (contract F4).
+ */
+function isDeclarableNestedRepo(repo: ApiNestedRepoItem): boolean {
+    return repo.type !== "submodule" && repo.type !== "symlink";
+}
+
 /** PLAN-0641 M2 T3.1: localized declaration failure — never the raw CP detail. */
 function nestedRepoDeclareError(code: string | null): string {
     switch (code) {
@@ -383,7 +392,7 @@ function upload() {
                         </button>
                     </div>
                     <button
-                        v-else
+                        v-else-if="isDeclarableNestedRepo(repo)"
                         type="button"
                         class="mt-1 rounded px-1.5 py-0.5 text-[11px] font-medium text-amber-900 hover:bg-amber-500/20 disabled:opacity-50 dark:text-amber-100"
                         data-testid="nested-repo-declare"
