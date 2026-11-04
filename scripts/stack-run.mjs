@@ -18,6 +18,14 @@ import net from "node:net";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { resolveHostRoot } from "./host-root.mjs";
+import {
+  buildInfoPath,
+  cpTargetDir,
+  evaluateCpFreshness,
+  gitHead,
+  shortSha,
+  writeBuildInfo,
+} from "./lib/cp-build-info.mjs";
 import { applySetToEnv, applyUrlSyncToEnv, parseStackSetArgs } from "./lib/stack-set.mjs";
 import { cargoTargetForStack } from "./lib/stack-cargo-target.mjs";
 import { recordedServiceAlive, sweepOrphanProcesses } from "./lib/stack-orphan.mjs";
@@ -90,6 +98,23 @@ function launch({ command, args, cwd, env }) {
   });
 }
 
+/** Same launcher shape as `launch()`, but blocking — used by the CP freshness rebuild. */
+function runToolSync(command, args, options) {
+  const isWindows = process.platform === "win32";
+  const direct = command === process.execPath || /\.exe$/i.test(command);
+  return isWindows && !direct
+    ? spawnSync(process.env.ComSpec ?? "cmd.exe", ["/d", "/s", "/c", [command, ...args].map(quoteArg).join(" ")], options)
+    : spawnSync(command, args, options);
+}
+
+function describeBuildVerdict(verdict, head) {
+  return (
+    `file=${verdict.file} commit=${shortSha(verdict.fileCommit) || "(none)"}`
+    + ` built=${verdict.builtAt || "(none)"} dirty=${verdict.dirty === null ? "?" : verdict.dirty}`
+    + ` head=${shortSha(head.commit) || "(unknown)"} verdict=${verdict.status}`
+  );
+}
+
 function describeTarget(target, derived, hostRoot) {
   const ports = derived.ports;
   console.error(
@@ -125,10 +150,13 @@ const [target, ...rest] = process.argv.slice(2);
 
 if (!target || target === "--help" || target === "-h") {
   console.log("usage: stack-run.mjs <pg|cp|agent|runtime|ui|watch|dev-host> [--stack N] [--set KEY=VALUE ...]");
+  console.log("       stack-run.mjs cp [--no-rebuild] [--stack N]");
   console.log("       stack-run.mjs env-json [--stack N]");
   console.log("       stack-run.mjs slots-json");
   console.log("       --set accepts only XIHE_CP_PORT / XIHE_AGENT_PORT / XIHE_RUNTIME_PORT (1..65535),");
   console.log("       injected into the subprocess env of the target that consumes the key.");
+  console.log("       cp gate (PLAN-0662): compares classes/META-INF/build-info.properties `commit` with");
+  console.log("       git HEAD; stale/missing ⇒ rebuild from HEAD. --no-rebuild keeps the old classes (WARN).");
   process.exit(target ? 0 : 2);
 }
 
@@ -342,6 +370,76 @@ if (GUARDED_TARGETS.includes(target) && process.platform === "win32") {
     }
     console.error(`[stack] ${derived.stackId} ${target} port ${port} freed by the orphan sweep; continuing`);
   }
+}
+
+// PLAN-0662 L2: **the** dev-stack build freshness gate, and the only one.
+//
+// `mise run dev:host:start:cp`, `mise run dev:host` and the detached `dev:stack` supervisor all
+// end up here (`dev-stack.mjs` spawns `stack-run.mjs cp`), so the decision lives in exactly one
+// place. Before Maven boots the service we compare the stamp the previous build left in
+// `classes/META-INF/build-info.properties` with `git rev-parse HEAD`:
+//
+//   fresh   → boot as-is (hot restart stays fast; BL-240 came from *pretending* an old tree was
+//             current, not from restarting)
+//   stale   → default **rebuild** from HEAD, so "restart" always means "latest"
+//   missing → same as stale: a tree nobody stamped cannot be proven current
+//   HEAD unknown (no git) → WARN and boot; rebuilding forever would not fix it
+//
+// `--no-rebuild` downgrades stale/missing to a WARN and continues — the escape hatch for
+// "I know the tree is old and I need this stack up now", which must stay visible in the log.
+if (target === "cp") {
+  const cpDir = join(projectRoot, "packages", "control-plane"),
+    targetDir = cpTargetDir({ projectRoot, env }),
+    head = gitHead({ cwd: projectRoot }),
+    noRebuild = rest.includes("--no-rebuild");
+  let verdict = evaluateCpFreshness({ targetDir, headCommit: head.commit });
+  console.error(`[stack] cp build-info: ${describeBuildVerdict(verdict, head)}`);
+  if (verdict.status === "stale" || verdict.status === "missing") {
+    if (noRebuild) {
+      console.error(
+        `[stack] WARNING: cp classes are not from HEAD (${verdict.reason}); --no-rebuild keeps them —`
+        + " this CP may serve code that develop already fixed",
+      );
+    } else {
+      console.error(
+        `[stack] cp classes are not from HEAD (${verdict.reason}); rebuilding from HEAD`
+        + " (mvn -q -DskipTests clean compile) — pass --no-rebuild to skip this",
+      );
+      const rebuild = runToolSync(
+        "mvn",
+        [
+          "-q",
+          "-DskipTests",
+          "clean",
+          "compile",
+          ...(env.XIHE_CP_TARGET_DIR ? [`-Dxihe.target.dir=${env.XIHE_CP_TARGET_DIR}`] : []),
+        ],
+        { cwd: cpDir, env, stdio: "inherit" },
+      );
+      if (rebuild.status !== 0) {
+        console.error(
+          `[stack] ERROR: cp rebuild failed (exit ${rebuild.status ?? "null"}); refusing to boot a stale CP`,
+        );
+        process.exit(rebuild.status ?? 1);
+      }
+      // Stamp only after a successful compile: a failed build keeps the previous stamp, so the
+      // next start sees stale classes instead of a false "fresh".
+      if (head.commit) {
+        writeBuildInfo({ targetDir, commit: head.commit, dirty: head.dirty });
+        console.error(`[stack] cp rebuild OK; stamped ${buildInfoPath(targetDir)}`);
+      }
+      verdict = evaluateCpFreshness({ targetDir, headCommit: head.commit });
+      console.error(`[stack] cp build-info after rebuild: ${describeBuildVerdict(verdict, head)}`);
+    }
+  } else if (verdict.status === "unverified") {
+    console.error(`[stack] WARNING: cp freshness unverified (${verdict.reason}); booting as-is`);
+  }
+  // PLAN-0662 L1: one line in the stack log naming the build about to serve traffic.
+  console.error(
+    `[stack] cp.build commit=${shortSha(verdict.fileCommit) || "(none)"}`
+    + ` built=${verdict.builtAt || "(none)"}`
+    + ` dirty=${verdict.dirty === null ? "?" : verdict.dirty}`,
+  );
 }
 
 launch({ ...factory(), env });
