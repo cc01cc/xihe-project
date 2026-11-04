@@ -157,6 +157,18 @@ const suggestions = computed(() =>
 );
 
 const messages = computed(() => chatStore.getMessages(props.sessionId));
+
+// PLAN-0670 M2d.3：超过 500 条时从最旧端丢弃并累计"已折叠"计数（显式呈现，不静默丢）。
+// 丢弃造成的 scrollHeight 变化由 MessageList 的 captureAnchor/restoreAnchor 补偿。
+watch(
+    () => messages.value.length,
+    (length) => {
+        if (length <= MAX_LOADED_MESSAGES) return;
+        const dropped = chatStore.trimMessages(props.sessionId, MAX_LOADED_MESSAGES);
+        if (dropped > 0) foldedMessageCount.value += dropped;
+    },
+    { flush: "post" },
+);
 const isStreaming = computed(() => chatStore.isStreaming(props.sessionId));
 const currentSession = computed(() =>
     sessionStore.sessions.find((session) => session.id === props.sessionId),
@@ -238,6 +250,9 @@ const olderCursor = ref<string | null>(null);
 const hasOlderMessages = ref(false);
 const loadingOlder = ref(false);
 const olderExhausted = ref(false);
+/** PLAN-0670 M2d.3（Lead 2026-11-05 批准）：内存内消息上限 500；丢弃最旧必须显式折叠。 */
+const MAX_LOADED_MESSAGES = 500;
+const foldedMessageCount = ref(0);
 
 /**
  * PLAN-0665 M2 D5：多路审批**串行**（按 run 创建序逐个弹；首卡显示「1/N 待批」）。
@@ -437,7 +452,8 @@ async function loadOlderMessages(): Promise<void> {
         if (props.sessionId !== sessionId) return;
         const rawMessages = Array.isArray(page) ? page : (page.messages ?? page.items ?? []);
         const meta = Array.isArray(page) ? null : page;
-        chatStore.prependMessages(sessionId, mapRawMessages(rawMessages));
+        const restored = chatStore.prependMessages(sessionId, mapRawMessages(rawMessages));
+        foldedMessageCount.value = Math.max(0, foldedMessageCount.value - restored);
         olderCursor.value = meta?.nextCursor ?? null;
         hasOlderMessages.value = Boolean(meta?.truncated && meta?.nextCursor);
         if (!hasOlderMessages.value) olderExhausted.value = true;
@@ -688,6 +704,7 @@ watch(
         hasOlderMessages.value = false;
         loadingOlder.value = false;
         olderExhausted.value = false;
+        foldedMessageCount.value = 0;
         derivedStateRequestId += 1;
         waitingOnRequestId += 1;
         creatingBranchForMessageId.value = null;
@@ -1396,6 +1413,7 @@ watch(
             :branch-busy="creatingBranchForMessageId !== null"
             :has-older="hasOlderMessages"
             :loading-older="loadingOlder"
+            :folded-count="foldedMessageCount"
             @load-older="loadOlderMessages"
             @approve="approveTool"
             @reject="rejectTool"

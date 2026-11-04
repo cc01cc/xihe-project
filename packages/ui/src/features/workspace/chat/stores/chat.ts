@@ -229,13 +229,28 @@ export const useChatStore = defineStore("chat", () => {
      * PLAN-0670 M2d.1：向上分页取到的更旧消息**前插**（保持时间序），按 id 去重。
      * 与 `loadMessages` 的替换语义分开：分页加载绝不能覆盖当前窗口/在途流。
      */
-    function prependMessages(sessionId: string, olderMessages: Message[]) {
-        if (olderMessages.length === 0) return;
+    function prependMessages(sessionId: string, olderMessages: Message[]): number {
+        if (olderMessages.length === 0) return 0;
         const current = messages.value[sessionId] ?? [],
             existing = new Set(current.map((message) => message.id)),
             unique = olderMessages.filter((message) => !existing.has(message.id));
-        if (unique.length === 0) return;
+        if (unique.length === 0) return 0;
         messages.value[sessionId] = [...unique, ...current];
+        return unique.length;
+    }
+
+    /**
+     * PLAN-0670 M2d.3：内存内消息上限（默认 500，Lead 2026-11-05 批准）。
+     * 从**最旧**端丢弃并返回丢弃条数 —— 调用方必须把丢掉的条数显式呈现为"已折叠"，
+     * 不允许静默丢（静默丢会让用户以为消息丢了）。丢弃造成的 scrollHeight 变化由
+     * MessageList 的 `captureAnchor/restoreAnchor` 补偿（与 prepend 同一套）。
+     */
+    function trimMessages(sessionId: string, maxCount: number): number {
+        const current = messages.value[sessionId];
+        if (!current || current.length <= maxCount) return 0;
+        const dropCount = current.length - maxCount;
+        messages.value[sessionId] = current.slice(dropCount);
+        return dropCount;
     }
 
     function loadMessages(sessionId: string, sessionMessages: Message[]) {
@@ -1052,6 +1067,7 @@ export const useChatStore = defineStore("chat", () => {
         addMessage,
         loadMessages,
         prependMessages,
+        trimMessages,
         trackUnprojectedRun,
         markClientOwned,
         adoptRunId,

@@ -22,6 +22,9 @@ const i18n = createI18n({
                 runHeader: { toggle: "展开或折叠 run {run}" },
                 followUpStatusCompleted: "已完成",
                 followUpStatusFailed: "失败",
+                loadOlder: "加载更早的消息",
+                loadingOlder: "正在加载更早的消息…",
+                foldedOlder: "更早的 {count} 条消息已折叠，点击加载",
             },
         },
     },
@@ -89,6 +92,19 @@ describe("MessageList virtual window fallback (PLAN-0670 M2d.2)", () => {
             },
         );
         expect(paged.find('[data-testid="load-older-messages"]').exists()).toBe(true);
+    });
+
+    it("shows the explicit folded banner when the 500-message cap dropped older messages (PLAN-0670 M2d.3)", () => {
+        const wrapper = mountList(
+            Array.from({ length: 5 }, (_, index) => message(index)),
+            {
+                hasOlder: false,
+                foldedCount: 37,
+            },
+        );
+        const button = wrapper.get('[data-testid="load-older-messages"]');
+        expect(button.text()).toContain("37");
+        expect(button.text()).toContain("已折叠");
     });
 
     it("emits loadOlder on click and disables the entry while loading", async () => {

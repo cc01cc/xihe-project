@@ -40,6 +40,8 @@ const props = defineProps<{
     hasOlder?: boolean;
     /** 向上取更旧一页进行中（按钮禁用 + 文案切换）。 */
     loadingOlder?: boolean;
+    /** PLAN-0670 M2d.3：因 500 条上限被折叠（已从内存丢弃）的最旧消息条数；0 = 无折叠。 */
+    foldedCount?: number;
 }>();
 
 /**
@@ -349,7 +351,10 @@ watch(
                             PLAN-0670 M2d.1：只有 CP 明确给出 `nextCursor/truncated` 才显示
                             「加载更早」入口；旧 CP（数组响应）不渲染，行为不变。
                         -->
-                        <div v-if="hasOlder" class="flex justify-center py-2">
+                        <div
+                            v-if="hasOlder || (foldedCount ?? 0) > 0"
+                            class="flex justify-center py-2"
+                        >
                             <button
                                 type="button"
                                 data-testid="load-older-messages"
@@ -357,7 +362,13 @@ watch(
                                 class="rounded-md border bg-background px-3 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60"
                                 @click="emit('loadOlder')"
                             >
-                                {{ loadingOlder ? t("chat.loadingOlder") : t("chat.loadOlder") }}
+                                {{
+                                    loadingOlder
+                                        ? t("chat.loadingOlder")
+                                        : (foldedCount ?? 0) > 0
+                                          ? t("chat.foldedOlder", { count: foldedCount })
+                                          : t("chat.loadOlder")
+                                }}
                             </button>
                         </div>
                         <!-- 窗口化：窗口上方/下方的未渲染行用占位高度撑住 scrollHeight（PLAN-0670 M2d.2） -->

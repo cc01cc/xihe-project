@@ -209,6 +209,29 @@ describe("useVirtualMessageWindow DOM adapter", () => {
         expect(viewport.scrollTop).toBe(5000);
     });
 
+    it("keeps the visible row in place when the oldest rows are dropped (cap 500 scrollHeight shrink)", async () => {
+        // PLAN-0670 M2d.3：丢最旧会缩短 scrollHeight；必须与 prepend 走同一套锚点补偿，
+        // 否则用户正在读中间时会突然跳位（Lead 2026-11-05 点名的坑）。
+        const keys = Array.from({ length: 100 }, (_, index) => `k${index}`);
+        const { api, keys: keysRef } = setup(keys);
+        const viewport = fakeViewport(300, 5000);
+        api.attach(viewport);
+        viewport.dispatchEvent(new Event("scroll"));
+        await nextTick();
+
+        const anchorRow = fakeRow(0, 100);
+        api.measure("k50", anchorRow);
+        expect(api.captureAnchor()).toEqual({ key: "k50", offset: 0 });
+
+        // 丢弃最旧 10 行（1000px）：内容整体上移 1000px，滚动位置不变的话 k50 会跳到视口上方。
+        keysRef.value = keysRef.value.slice(10);
+        await nextTick();
+        const shifted = fakeRow(-1000, 100);
+        api.measure("k50", shifted);
+        await api.restoreAnchor({ key: "k50", offset: 0 });
+        expect(viewport.scrollTop).toBe(4000);
+    });
+
     it("captures the first visible row as the anchor and restores it after a prepend", async () => {
         const keys = Array.from({ length: 100 }, (_, index) => `k${index}`);
         const { api } = setup(keys);

@@ -658,6 +658,31 @@ describe("useChatStore", () => {
             "m4",
         ]);
     });
+
+    it("trims the oldest messages over the cap and reports the dropped count (PLAN-0670 M2d.3)", () => {
+        const store = useChatStore();
+        const sessionId = "session-cap";
+        const make = (index: number) =>
+            ({
+                id: `m${index}`,
+                sessionId,
+                role: "user",
+                content: `m${index}`,
+                timestamp: "2026-11-05T00:00:00Z",
+            }) as unknown as Parameters<typeof store.loadMessages>[1][number];
+
+        store.loadMessages(
+            sessionId,
+            Array.from({ length: 503 }, (_, index) => make(index)),
+        );
+        expect(store.trimMessages(sessionId, 500)).toBe(3);
+        expect(store.getMessages(sessionId).map((message) => message.id)).toEqual(
+            Array.from({ length: 500 }, (_, index) => `m${index + 3}`),
+        );
+        // 未超限/未知会话不丢。
+        expect(store.trimMessages(sessionId, 500)).toBe(0);
+        expect(store.trimMessages("missing", 500)).toBe(0);
+    });
 });
 
 describe("refreshRunRecovery tri-state (PLAN-292 M3 C2/C3)", () => {
