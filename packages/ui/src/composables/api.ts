@@ -202,11 +202,22 @@ export interface ApiRoleAtom {
     scopeClass: ApiAtomScopeClass;
     capability: boolean;
     resource: string;
+    /**
+     * 服务端按 `?locale` 解析好的显示标签（PLAN-0651 D51-37）。UI 不自建原子词表，
+     * 只渲染这个字段；缺省时回退到 `name`（服务端保证非空）。
+     */
+    displayName?: string;
 }
 
 export interface ApiRoleCatalog {
     atoms: ApiRoleAtom[];
     scopes: string[];
+}
+
+/** 当前 locale（`<html lang>` 由 `applyLocale` 写入，是 UI 侧唯一 SSOT），用于服务端解析标签。 */
+function catalogLocale(): string {
+    const lang = typeof document === "undefined" ? "" : document.documentElement.lang;
+    return (lang ?? "").toLowerCase().startsWith("en") ? "en-US" : "zh-CN";
 }
 
 export interface ApiRole {
@@ -2893,7 +2904,9 @@ export const api = {
      * `rolesCatalog()` is the only source, so a new atom appears without a front-end change.
      */
     rolesCatalog(): Promise<ApiRoleCatalog> {
-        return request<ApiRoleCatalog>("/roles/catalog");
+        // D51-37: the CP resolves the label server-side from an explicit locale; the UI keeps no
+        // atom vocabulary. `<html lang>` is the locale SSOT written by applyLocale().
+        return request<ApiRoleCatalog>(`/roles/catalog?locale=${encodeURIComponent(catalogLocale())}`);
     },
     listRoles(): Promise<ApiRole[]> {
         return request<ApiRole[]>("/roles");
