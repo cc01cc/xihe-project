@@ -50,13 +50,15 @@ class SessionParticipantWakeConfigTest {
         UserRepository users = mock(UserRepository.class);
         when(users.existsById(HUMAN_ID)).thenReturn(true);
         when(participants.save(any(SessionParticipant.class))).thenAnswer(call -> call.getArgument(0));
+        com.cc01cc.p.xihe.cp.service.WorkspaceService workspaces = mock(com.cc01cc.p.xihe.cp.service.WorkspaceService.class);
+        GrantAuthorizationService grants = mock(GrantAuthorizationService.class);
+        SessionReadAccess access = new SessionReadAccess(sessions, participants, workspaces, grants);
         service = new SessionParticipantService(participants,
                 mock(SessionParticipantCursorRepository.class), sessions,
                 mock(AgentPrincipalRepository.class), users,
-                mock(com.cc01cc.p.xihe.cp.service.WorkspaceService.class),
-                mock(GrantAuthorizationService.class),
+                workspaces, grants,
                 mock(com.cc01cc.p.xihe.cp.scheduled.WakeScheduleProjectionService.class),
-                mock(com.cc01cc.p.xihe.cp.context.repository.EventStoreRepository.class));
+                mock(com.cc01cc.p.xihe.cp.context.repository.EventStoreRepository.class), access);
     }
 
     private SessionParticipantService.AddRequest scheduleRequest(Map<String, Object> config) {

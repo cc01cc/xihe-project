@@ -130,6 +130,25 @@ Session 负责连续对话上下文、消息、附件引用、模型绑定和 Ch
 - **隐私**：只含 hash/计数/字节与闭集枚举，不含内容片段；敏感工作区用工作区开关（`context-policy.defaults.fingerprintEnabled=false`）关闭。
 - **与 Run Trace 的关系**：trace 是事件时间线（cursor/asOf 分页），指纹是下发上下文快照摘要（一列、无分页）；互补不合并。
 
+## 读面可见性（PLAN-0668）
+
+> 本计划把"谁能读会话"从两套漂移的判定收敛为一个 primitive（`SessionReadAccess`）。
+> 以下为**断言**；实现与真栈证据见 PLAN-0668 `design.md` §D1–D5 与 `evidence/m3-read-face.md`。
+
+1. **内容读面 = owner ∨ 受邀 HUMAN**：`GET /sessions/{id}`、`GET /sessions/{id}/messages`、
+   `GET /sessions/{id}/derived-state`、`GET /sessions`（列表）MUST 仅对 **Session owner** 或
+   **未 disabled 的 HUMAN participant** 可见。
+2. **管理者不获得内容读**：`MANAGE_WORKSPACE_AGENTS`（workspace scope）与
+   `MANAGE_WORKSPACE_MEMBERS`（instance scope）MUST NOT 单独构成内容读授权；管理者保留既有
+   **名册**读面（owner ∨ 受邀 ∨ manager）。
+3. **错误形状按面冻结**：内容读面不可见 MUST `404 SESSION_NOT_FOUND`（不区分"不存在/无权"，
+   防存在性 oracle）；名册不可见 MUST `403 SESSION_ACCESS_DENIED`；跨 Workspace MUST 404；
+   未认证 MUST 401；workspace 非成员 MUST 403 `WORKSPACE_FORBIDDEN`。
+4. **写面不随读面放宽**：`requireCurrent` / `requireOwned` MUST 保持 owner-only；会话写路径
+   （dispatch、fork、delegation、MCP、scheduled 等）不得因读面放宽而接受受邀参与者。
+5. **投影契约**：列表投影 MUST 使用 `SessionSummary`（`required` 含
+   `kind/spawnedFromSessionId/spawnedAt`）；单会话 `Session` MUST 声明同一 lineage（optional）。
+   UI 投影 MUST 保留 OpenAPI `required` 字段；列表缺字段逐行丢弃 + WARN，单条读抛 typed error。
 ## 承接与验证
 
 - Session 固定 Workspace 与跨 Session 延续：PLAN-0348。条款 1–2（固定绑定、不 rebind）已负向验证：CP 跨 Workspace 作用域拒绝（404）+ Agent 跨 workspace `fail-closed`；跨 Session 延续入口**未实施**（退 backlog）。证据见 PLAN-0348 `evidence/`。

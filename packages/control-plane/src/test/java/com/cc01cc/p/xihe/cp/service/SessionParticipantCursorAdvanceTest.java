@@ -60,7 +60,8 @@ class SessionParticipantCursorAdvanceTest {
         service = new SessionParticipantService(participants, cursors, sessions,
                 mock(AgentPrincipalRepository.class), mock(UserRepository.class),
                 mock(WorkspaceService.class), mock(com.cc01cc.p.xihe.cp.policy.GrantAuthorizationService.class),
-                mock(WakeScheduleProjectionService.class), events);
+                mock(WakeScheduleProjectionService.class), events,
+                mock(SessionReadAccess.class));
 
         session = mock(Session.class);
         when(session.getId()).thenReturn(SESSION_ID);

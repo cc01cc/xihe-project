@@ -1,4 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { existsSync, readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import {
     api,
     apiAuthHeaders,
@@ -362,8 +364,8 @@ describe("api.getSessions", () => {
     it("sends GET to /api/v1/sessions and returns session list", async () => {
         const mockSessions = {
             sessions: [
-                { id: "1", title: "Chat 1" },
-                { id: "2", title: "Chat 2" },
+                { id: "1", title: "Chat 1", archived: false, workspaceId: WORKSPACE_ID },
+                { id: "2", title: "Chat 2", archived: false, workspaceId: WORKSPACE_ID },
             ],
         };
         fetchSpy.mockResolvedValueOnce({
@@ -384,7 +386,12 @@ describe("api.getSessions", () => {
 
 describe("api.createSession", () => {
     it("sends POST to /api/v1/sessions with title", async () => {
-        const mockSession = { id: "3", title: "New Chat" };
+        const mockSession = {
+            id: "3",
+            title: "New Chat",
+            archived: false,
+            workspaceId: WORKSPACE_ID,
+        };
         fetchSpy.mockResolvedValueOnce({
             ok: true,
             json: () => Promise.resolve(mockSession),
@@ -406,7 +413,13 @@ describe("api.createSession", () => {
     it("sends POST with the selected principal when title is omitted", async () => {
         fetchSpy.mockResolvedValueOnce({
             ok: true,
-            json: () => Promise.resolve({ id: "4", title: "Untitled" }),
+            json: () =>
+                Promise.resolve({
+                    id: "4",
+                    title: "Untitled",
+                    archived: false,
+                    workspaceId: WORKSPACE_ID,
+                }),
         } as Response);
 
         await api.createSession("principal-1");
@@ -748,6 +761,7 @@ describe("Session branch APIs", () => {
                     id: RUN_ID,
                     title: "Forked session",
                     workspaceId: WORKSPACE_ID,
+                    archived: false,
                 }),
         } as Response);
 
@@ -2511,6 +2525,7 @@ describe("api.getSessions delegation lineage (PLAN-0659 T1.4)", () => {
                             createdAt: "2026-11-04T10:00:00.000Z",
                             updatedAt: "2026-11-04T10:00:00.000Z",
                             workspaceId: WORKSPACE_ID,
+                            archived: false,
                             kind: null,
                             spawnedFromSessionId: null,
                             spawnedAt: null,
@@ -2521,6 +2536,7 @@ describe("api.getSessions delegation lineage (PLAN-0659 T1.4)", () => {
                             createdAt: "2026-11-04T10:01:00.000Z",
                             updatedAt: "2026-11-04T10:01:00.000Z",
                             workspaceId: WORKSPACE_ID,
+                            archived: false,
                             kind: "SPAWN",
                             spawnedFromSessionId: SESSION_ID,
                             spawnedAt: "2026-11-04T10:01:00.000Z",
@@ -2548,7 +2564,14 @@ describe("api.getSessions delegation lineage (PLAN-0659 T1.4)", () => {
             ok: true,
             json: () =>
                 Promise.resolve({
-                    sessions: [{ id: SESSION_ID, title: "legacy" }],
+                    sessions: [
+                        {
+                            id: SESSION_ID,
+                            title: "legacy",
+                            archived: false,
+                            workspaceId: WORKSPACE_ID,
+                        },
+                    ],
                 }),
         } as Response);
 
@@ -2559,5 +2582,176 @@ describe("api.getSessions delegation lineage (PLAN-0659 T1.4)", () => {
             spawnedFromSessionId: null,
             spawnedAt: null,
         });
+    });
+
+    it("normalizes the CP lowercase `spawn` wire kind to the UI canonical uppercase", async () => {
+        // M3 real stack 2026-11-05: CP emits `spawn` (Session.KIND_SPAWN / OpenAPI enum), while
+        // every UI consumer (tree/badge/DAG) keys on `SPAWN`; without this the child rendered as a
+        // root session in the real UI even though the wire lineage was present.
+        fetchSpy.mockResolvedValueOnce({
+            ok: true,
+            json: () =>
+                Promise.resolve({
+                    sessions: [
+                        {
+                            id: SESSION_ID,
+                            title: "父会话",
+                            workspaceId: WORKSPACE_ID,
+                            archived: false,
+                            kind: null,
+                            spawnedFromSessionId: null,
+                            spawnedAt: null,
+                        },
+                        {
+                            id: "99999999-9999-4999-8999-999999999999",
+                            title: "子会话",
+                            workspaceId: WORKSPACE_ID,
+                            archived: false,
+                            kind: "spawn",
+                            spawnedFromSessionId: SESSION_ID,
+                            spawnedAt: "2026-11-05T00:01:00Z",
+                        },
+                    ],
+                }),
+        } as Response);
+
+        const response = await api.getSessions();
+
+        expect(response.sessions[1]).toMatchObject({
+            kind: "SPAWN",
+            spawnedFromSessionId: SESSION_ID,
+        });
+    });
+});
+// PLAN-0668 M2: contract-driven guard. The required field names are PARSED from the published
+// OpenAPI document — not hand-kept here — so a future contract addition fails this test instead
+// of silently disappearing from the UI projection.
+function openapiText(): string {
+    // jsdom/Vitest gives an http(s) import.meta.url, so resolve from the UI package cwd instead.
+    const candidates = [
+        resolve(process.cwd(), "../../docs/api/openapi.yaml"),
+        resolve(process.cwd(), "docs/api/openapi.yaml"),
+    ];
+    for (const candidate of candidates) {
+        if (existsSync(candidate)) return readFileSync(candidate, "utf8");
+    }
+    throw new Error(`openapi.yaml not found; tried: ${candidates.join(", ")}`);
+}
+
+function openapiRequired(schema: string): string[] {
+    const text = openapiText();
+    const marker = `\n    ${schema}:`;
+    const start = text.indexOf(marker);
+    if (start < 0) throw new Error(`openapi schema ${schema} not found`);
+    const afterMarker = start + marker.length;
+    const next = text.slice(afterMarker).search(/\n    [A-Z][A-Za-z0-9]*:/);
+    const block = next < 0 ? text.slice(start) : text.slice(start, afterMarker + next);
+    const required = block.match(/required:\s*\[([^\]]*)\]/);
+    if (!required) throw new Error(`openapi schema ${schema} has no required list`);
+    return required[1]
+        .split(",")
+        .map((name) => name.trim())
+        .filter(Boolean);
+}
+
+describe("OpenAPI Session contract guard (PLAN-0668 M2)", () => {
+    it("keeps every required field of Session + SessionSummary in the normalized projection", async () => {
+        const required = [
+            ...new Set([...openapiRequired("Session"), ...openapiRequired("SessionSummary")]),
+        ];
+        fetchSpy.mockResolvedValueOnce({
+            ok: true,
+            json: () =>
+                Promise.resolve({
+                    sessions: [
+                        {
+                            id: SESSION_ID,
+                            title: "contract guard",
+                            workspaceId: WORKSPACE_ID,
+                            archived: false,
+                            agentPrincipalId: null,
+                            kind: null,
+                            spawnedFromSessionId: null,
+                            spawnedAt: null,
+                            contextTemplateLayer: null,
+                            contextTemplateId: null,
+                            contextTemplateVersion: null,
+                            providerConnectionId: null,
+                            modelProvider: null,
+                            modelName: null,
+                        },
+                    ],
+                }),
+        } as Response);
+
+        const response = await api.getSessions();
+        const missing = required.filter((field) => !(field in response.sessions[0]));
+        expect(
+            missing,
+            `missing required field(s) from OpenAPI Session/SessionSummary: ${missing.join(", ")}`,
+        ).toEqual([]);
+    });
+
+    it("drops a malformed list row and names the missing required field in the WARN (D4)", async () => {
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+        fetchSpy.mockResolvedValueOnce({
+            ok: true,
+            json: () =>
+                Promise.resolve({
+                    sessions: [
+                        {
+                            id: SESSION_ID,
+                            title: "good",
+                            workspaceId: WORKSPACE_ID,
+                            archived: false,
+                        },
+                        // `archived` is contract-required but missing on purpose.
+                        { id: "88888888-8888-4888-8888-888888888888", title: "bad" },
+                    ],
+                }),
+        } as Response);
+
+        const response = await api.getSessions();
+
+        expect(response.sessions.map((row) => row.id)).toEqual([SESSION_ID]);
+        const logged = warn.mock.calls
+            .map((call) => call.map((value) => JSON.stringify(value)).join(" "))
+            .join(" ");
+        expect(logged).toContain("archived");
+        warn.mockRestore();
+    });
+
+    it("single getSession throws the typed projection error instead of serving a half-shaped row", async () => {
+        fetchSpy.mockResolvedValueOnce({
+            ok: true,
+            json: () =>
+                Promise.resolve({ id: SESSION_ID, title: "half", workspaceId: WORKSPACE_ID }),
+        } as Response);
+
+        await expect(api.getSession(SESSION_ID)).rejects.toMatchObject({
+            name: "InvalidSessionProjectionError",
+            field: "archived",
+        });
+    });
+
+    it("keeps the real M3 session response satisfying every Session.required field", async () => {
+        // Real response captured from stack-1 (PLAN-0668 M3, CP 9b249e35): not hand-built.
+        const real = JSON.parse(
+            readFileSync(
+                resolve(process.cwd(), "src/composables/__tests__/fixtures/sessions-real.json"),
+                "utf8",
+            ),
+        );
+        fetchSpy.mockResolvedValueOnce({
+            ok: true,
+            json: () => Promise.resolve(real),
+        } as Response);
+
+        const session = await api.getSession(real.id);
+        const missing = openapiRequired("Session").filter((field) => !(field in session));
+        expect(
+            missing,
+            `M3 real response missing Session.required field(s): ${missing.join(", ")}`,
+        ).toEqual([]);
     });
 });

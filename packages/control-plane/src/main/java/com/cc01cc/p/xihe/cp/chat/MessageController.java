@@ -49,7 +49,7 @@ public class MessageController {
             return ProblemDetailsHandler.workspaceContextRequired();
         }
         try {
-            sessionService.requireCurrent(sessionId, userId, workspaceId);
+            sessionService.requireReadable(sessionId, userId, workspaceId);
         } catch (CpApiException e) {
             return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
         }
