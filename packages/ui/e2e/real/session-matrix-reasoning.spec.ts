@@ -21,6 +21,7 @@ import {
     createSessionWithPrincipal,
     provisionWorkspaceAgentPrincipal,
 } from "./helpers/agent-principal";
+import { agentName } from "./helpers/agent-name";
 import { openSessionSse } from "./helpers/sse";
 import { workspaceChatPath } from "../../src/lib/routes";
 
@@ -115,7 +116,7 @@ test.describe("@host PLAN-0658 R9 reasoning 三段同值", () => {
             request,
             { accessToken: token, workspaceId },
             {
-                name: `r9-agent-${NONCE}`,
+                name: agentName("R9", NONCE),
                 actions: [],
                 defaultModelProvider: "openai",
                 defaultModelName: FAKE_LLM_MODEL,
