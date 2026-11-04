@@ -56,6 +56,16 @@ public class ToolFaceRegistry {
     // Neither may ever be granted to an agent principal (see agentPrincipalForbiddenAtoms()).
     public static final String ACTION_MANAGE_AGENT_PRINCIPALS = "MANAGE_AGENT_PRINCIPALS";
     public static final String ACTION_MANAGE_WORKSPACE_MEMBERS = "MANAGE_WORKSPACE_MEMBERS";
+    // PLAN-0651 M2 T2.1 (D51-27): the remaining P1 atoms. Each answers one administrative face;
+    // all of them are forbidden to agent principals, and N2/N3/N4 are instance-bindable only.
+    public static final String ACTION_READ_INSTANCE_CONTENT = "READ_INSTANCE_CONTENT";
+    public static final String ACTION_WRITE_INSTANCE_CONTENT = "WRITE_INSTANCE_CONTENT";
+    public static final String ACTION_VIEW_SECRET_CONTENT = "VIEW_SECRET_CONTENT";
+    public static final String ACTION_MANAGE_SKILL_LIBRARY = "MANAGE_SKILL_LIBRARY";
+    public static final String ACTION_MANAGE_PROVIDER_CONNECTIONS = "MANAGE_PROVIDER_CONNECTIONS";
+    public static final String ACTION_USE_WORKSPACE_RUNTIME = "USE_WORKSPACE_RUNTIME";
+    public static final String ACTION_MANAGE_WORKSPACE_RUNTIME = "MANAGE_WORKSPACE_RUNTIME";
+    public static final String ACTION_MANAGE_WORKSPACE_POLICY = "MANAGE_WORKSPACE_POLICY";
 
     /** PLAN-0496 #2: the credential resource namespace ({@code credential:<uuid>} / {@code credential:*}).
      */
@@ -173,7 +183,14 @@ public class ToolFaceRegistry {
                 // PLAN-0651 M1 (D51-26): management atoms. They join the built-in vocabulary because
                 // it is the catalog's action-class set (PermissionAtomCatalog.actionAtoms() must stay
                 // equal to it, see MemoryWriteAtomTest); they are not attached to any tool face.
-                ACTION_MANAGE_AGENT_PRINCIPALS, ACTION_MANAGE_WORKSPACE_MEMBERS);
+                ACTION_MANAGE_AGENT_PRINCIPALS, ACTION_MANAGE_WORKSPACE_MEMBERS,
+                // PLAN-0651 M2 T2.1: the P1 atoms join the action-class set in the same batch
+                // (D51-36 — GrantIntersectionEvaluator snapshots this list, and
+                // MemoryWriteAtomTest asserts actionAtoms() == builtinActionClasses()).
+                ACTION_READ_INSTANCE_CONTENT, ACTION_WRITE_INSTANCE_CONTENT,
+                ACTION_VIEW_SECRET_CONTENT, ACTION_MANAGE_SKILL_LIBRARY,
+                ACTION_MANAGE_PROVIDER_CONNECTIONS, ACTION_USE_WORKSPACE_RUNTIME,
+                ACTION_MANAGE_WORKSPACE_RUNTIME, ACTION_MANAGE_WORKSPACE_POLICY);
     }
 
     /** PLAN-0496 #2: credential-namespace action classes (the three atoms share resource rules). */

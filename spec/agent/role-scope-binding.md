@@ -61,6 +61,33 @@ flowchart LR
 
 图下注释：Agent 是传播者和执行者，不是授权权威；Approval 通过不能跳过 Security 或 Runtime capability。
 
+## Agent 主体角色/技能绑定配置面（PLAN-0667，proposed）
+
+> 本节只定义"**谁来给 agent 主体绑定角色/技能**"的配置面；agent 的授权判定仍归
+> `spec/security/authorization.md`（角色 → grants → 原子），本节不新增权限模型。
+> 现行实现事实以 CP 代码 + `docs/api/openapi.yaml` 为准。
+
+1. **端点归属**：绑定面挂在主体子资源下，与既有记忆面同一路径风格：
+   `GET/POST /api/v1/agent-principals/{principalId}/roles`、`DELETE …/roles/{bindingId}`；
+   `GET/POST /api/v1/agent-principals/{principalId}/skills`、`DELETE …/skills/{bindingId}`。
+   **既有 user-only 的 `/api/v1/bindings` 保持不变**（不放开 `subjectType`），避免把 agent 语义混进用户绑定面。
+2. **谁能绑**：`MANAGE_AGENT_PRINCIPALS`（N1，instance 层原子）**或** `MANAGE_WORKSPACE_AGENTS`
+   （在 `?workspaceId=` 授权上下文中求值）。工作区层的求值沿用记忆面的同一模式：`workspaceId`
+   只作**授权上下文**，不是绑定的存储键（角色绑定自带 `scope_type/scope_id`）。
+   **actor ≠ subject**：agent 不得给自己绑定（由 `MANAGE_*` 原子与"仅真人 principal 可作 actor"共同保证，禁止新增旁路）。
+3. **禁授原子（不可变）**：角色若含 `PermissionAtomCatalog.agentPrincipalForbiddenAtoms()` 中任一原子
+   ⇒ **409 `AGENT_PRINCIPAL_FORBIDDEN_ATOMS`**；`detail` **只列原子名，不列资源**（不泄露实例资源面）。
+   该集合由词汇表派生（instance-only 全集 + 全部 capability 原子 + `MANAGE_WORKSPACE_AGENTS` /
+   `MANAGE_ROLES` / `MANAGE_WORKSPACE_MEMBERS`），**不得**在绑定入口被放宽；绑定入口拦截 + 物化后二次校验双保险。
+4. **绑定生命周期**：角色 `is_system=true`（种子角色）的绑定**不可删** ⇒ 409 `ROLE_BINDING_IMMUTABLE`；
+   同一 `(roleId, subject)` 重复绑定 ⇒ 409 `ROLE_BINDING_EXISTS`；不可见角色/技能/主体 ⇒ **404**（not-区分，不泄露存在性）。
+5. **即时生效**：绑定/解绑 MUST 在**同一事务内**重物化该主体的 grants（复用 `RoleGrantMaterializer.materializeSubject` 路径），
+   使该 agent **新会话**的能力判定立即按新绑定生效；不得依赖缓存过期或后台任务。
+6. **技能绑定（v1）**：复用 `skill_bindings`（`subject_type='agent_principal'`，嵌套端点写入
+   `scope_type='instance'`、`scope_id=null`，即"该 agent 全局可用"）；技能定义不可见 ⇒ 404，重复 ⇒ 409。
+7. **审计**：每次绑定/解绑落 durable audit：`agent_principal_role_bind|agent_principal_role_unbind`、
+   `agent_principal_skill_bind|agent_principal_skill_unbind`，字段 `roleId|skillId / actorId / workspaceId / result`。
+
 ## 当前差距与承接
 
 - 当前 Agent metadata 只有 request/run/session/workspace/operation 关联信息，没有独立 principal/role/scope schema；按 design #6 这是边界选择，不是待补字段的缺口。

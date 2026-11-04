@@ -505,6 +505,142 @@ paths:
     get: { operationId: getWorkspaceImport, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: importId, required: true, schema: { type: string } }], responses: { '200': { description: Import status }, '404': { $ref: '#/components/responses/Problem' } } }
   /api/v1/workspace-imports/{importId}/cancel:
     post: { operationId: cancelWorkspaceImport, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: importId, required: true, schema: { type: string } }], responses: { '200': { description: Import cancellation state }, '404': { $ref: '#/components/responses/Problem' } } }
+  /api/v1/agent-principals/{principalId}/roles:
+    get:
+      operationId: listAgentPrincipalRoles
+      summary: List one agent principal's role bindings (PLAN-0667)
+      description: |
+        PLAN-0667: the agent-principal role binding surface. It reads the `role_bindings` rows whose
+        `subject_type='agent_principal'` and `subject_id={principalId}`; user bindings keep using
+        `GET /api/v1/bindings` (that surface stays user-only and unchanged).
+        Gate: `MANAGE_AGENT_PRINCIPALS` (N1, instance tier) **or** `MANAGE_WORKSPACE_AGENTS` evaluated
+        in the optional `workspaceId` authorization context; without either the answer is 403. A
+        principal the caller cannot see answers 404 `AGENT_PRINCIPAL_NOT_FOUND` (same body as a
+        missing id — no existence oracle).
+        `atoms` is a bounded summary of the role's derived atoms (first 12 names) with `atomCount`
+        carrying the real size (D5: show what the role can do, never dump the whole permission surface).
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: principalId, required: true, schema: { type: string, format: uuid } }
+        - { in: query, name: workspaceId, required: false, schema: { type: string, format: uuid }, description: 'Authorization context only: when present the workspace-tier atom is evaluated in this workspace; absent means only the instance-tier atom can authorize the read.' }
+      responses:
+        '200': { description: 'Role bindings of this principal', content: { application/json: { schema: { $ref: '#/components/schemas/AgentPrincipalRoleBindingListResponse' } } } }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { description: 'FORBIDDEN (neither MANAGE_AGENT_PRINCIPALS nor MANAGE_WORKSPACE_AGENTS in the authorization context)', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '404': { description: 'AGENT_PRINCIPAL_NOT_FOUND (also for a principal the caller cannot see)', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+    post:
+      operationId: bindAgentPrincipalRole
+      summary: Bind one role to an agent principal (PLAN-0667)
+      description: |
+        PLAN-0667. Adds one `role_bindings` row with `subject_type='agent_principal'` and
+        re-materializes the subject's grants **in the same transaction**, so the agent's next session
+        already sees the new capability (no cache warm-up, no background job).
+        Gates: `MANAGE_AGENT_PRINCIPALS` (instance tier) or `MANAGE_WORKSPACE_AGENTS` in `workspaceId`;
+        the actor can never be the subject itself (an agent cannot bind itself).
+        Refusals: a role carrying any `PermissionAtomCatalog.agentPrincipalForbiddenAtoms()` atom (and,
+        for a workspace binding, any instance-only atom) ⇒ **409 `AGENT_PRINCIPAL_FORBIDDEN_ATOMS`**
+        with only atom names in `detail`; an existing row for the same (role, principal) ⇒
+        **409 `ROLE_BINDING_EXISTS`**; an unknown/invisible role or principal ⇒ 404.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: principalId, required: true, schema: { type: string, format: uuid } }
+        - { in: query, name: workspaceId, required: false, schema: { type: string, format: uuid }, description: 'Authorization context only (see GET).' }
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/AgentPrincipalRoleBindRequest' } } }
+      responses:
+        '201': { description: 'The created binding', content: { application/json: { schema: { $ref: '#/components/schemas/AgentPrincipalRoleBindingView' } } } }
+        '400': { description: 'INVALID_REQUEST (bad body / unknown keys) or ROLE_SCOPE_MISMATCH (instance-only atom in a workspace binding)', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { description: 'FORBIDDEN (no binding authority, or actor == subject)', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '404': { description: 'AGENT_PRINCIPAL_NOT_FOUND / ROLE_NOT_FOUND', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '409': { description: 'AGENT_PRINCIPAL_FORBIDDEN_ATOMS / ROLE_BINDING_EXISTS', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+  /api/v1/agent-principals/{principalId}/roles/{bindingId}:
+    delete:
+      operationId: unbindAgentPrincipalRole
+      summary: Remove one role binding from an agent principal (PLAN-0667)
+      description: |
+        PLAN-0667. Deletes the binding row and re-materializes the subject's grants in the same
+        transaction (the capability disappears for the agent's next session). A binding of a system
+        seed role (`roles.is_system=true`) cannot be removed ⇒ **409 `ROLE_BINDING_IMMUTABLE`**.
+        An id that does not exist, or belongs to another subject, answers 404 `ROLE_BINDING_NOT_FOUND`
+        (no cross-subject probe).
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: principalId, required: true, schema: { type: string, format: uuid } }
+        - { in: path, name: bindingId, required: true, schema: { type: string, format: uuid } }
+        - { in: query, name: workspaceId, required: false, schema: { type: string, format: uuid }, description: 'Authorization context only (see GET).' }
+      responses:
+        '204': { description: 'Binding removed' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { description: 'FORBIDDEN (no binding authority)', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '404': { description: 'AGENT_PRINCIPAL_NOT_FOUND / ROLE_BINDING_NOT_FOUND', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '409': { description: ROLE_BINDING_IMMUTABLE, content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+  /api/v1/agent-principals/{principalId}/skills:
+    get:
+      operationId: listAgentPrincipalSkills
+      summary: List one agent principal's skill bindings (PLAN-0667)
+      description: |
+        PLAN-0667: reads `skill_bindings` rows with `subject_type='agent_principal'` and
+        `subject_id={principalId}`. Same authorization shape as the roles listing
+        (`MANAGE_AGENT_PRINCIPALS` or `MANAGE_WORKSPACE_AGENTS` in `workspaceId`), same
+        404-for-invisible-principal rule.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: principalId, required: true, schema: { type: string, format: uuid } }
+        - { in: query, name: workspaceId, required: false, schema: { type: string, format: uuid }, description: 'Authorization context only (see GET roles).' }
+      responses:
+        '200': { description: 'Skill bindings of this principal', content: { application/json: { schema: { $ref: '#/components/schemas/AgentPrincipalSkillBindingListResponse' } } } }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { description: 'AGENT_PRINCIPAL_NOT_FOUND (also for a principal the caller cannot see)', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+    post:
+      operationId: bindAgentPrincipalSkill
+      summary: Bind one skill to an agent principal (PLAN-0667)
+      description: |
+        PLAN-0667 v1: one skill per principal, written as a `skill_bindings` row with
+        `subject_type='agent_principal'`, `scope_type='instance'`, `scope_id=null` (D3(a): the agent
+        carries the skill everywhere it is usable). The nested body carries only `skillId`; scope is
+        server-decided so a caller cannot push a principal binding into a workspace.
+        A definition the caller cannot see answers 404 `SKILL_NOT_FOUND`; a duplicate answers
+        409 `SKILL_BINDING_EXISTS`; a disabled principal answers 404 `AGENT_PRINCIPAL_NOT_FOUND`.
+        The skill catalog of the agent's next session includes the binding immediately (catalog is
+        read from `skill_bindings` per request).
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: principalId, required: true, schema: { type: string, format: uuid } }
+        - { in: query, name: workspaceId, required: false, schema: { type: string, format: uuid }, description: 'Authorization context only (see GET roles).' }
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/AgentPrincipalSkillBindRequest' } } }
+      responses:
+        '201': { description: 'The created binding', content: { application/json: { schema: { $ref: '#/components/schemas/AgentPrincipalSkillBindingView' } } } }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { description: 'FORBIDDEN (no binding authority, or actor == subject)', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '404': { description: 'AGENT_PRINCIPAL_NOT_FOUND / SKILL_NOT_FOUND', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '409': { description: SKILL_BINDING_EXISTS, content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+  /api/v1/agent-principals/{principalId}/skills/{bindingId}:
+    delete:
+      operationId: unbindAgentPrincipalSkill
+      summary: Remove one skill binding from an agent principal (PLAN-0667)
+      description: |
+        PLAN-0667. Deletes the row; the agent's next session catalog no longer contains the skill.
+        An id that does not exist, or belongs to another subject, answers 404 `SKILL_BINDING_NOT_FOUND`.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: principalId, required: true, schema: { type: string, format: uuid } }
+        - { in: path, name: bindingId, required: true, schema: { type: string, format: uuid } }
+        - { in: query, name: workspaceId, required: false, schema: { type: string, format: uuid }, description: 'Authorization context only (see GET roles).' }
+      responses:
+        '204': { description: 'Binding removed' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { description: 'AGENT_PRINCIPAL_NOT_FOUND / SKILL_BINDING_NOT_FOUND', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
   /api/v1/agent-principals:
     get:
       operationId: listAgentPrincipals
@@ -1295,6 +1431,47 @@ paths:
           description: 'PARTICIPANT_ALREADY_EXISTS | PARTICIPANT_PRIMARY_EXISTS | PARTICIPANT_ORDER_CONFLICT'
           content:
             application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } }
+  /api/v1/sessions/{sessionId}/participants/{participantId}/cursor:
+    patch:
+      operationId: advanceParticipantCursor
+      summary: Advance the caller's own read cursor for this session
+      description: |
+        PLAN-0660 T5.1 (contract `spec/session/user-channel.md` §2): advance-only
+        (`max(current, requested)`), clamped to the Session's current max `context_events.sequence`.
+        Self-only — the row must be a HUMAN participant whose `principal_id` is the caller;
+        otherwise **403 `CURSOR_SELF_ONLY`**. No counter is written: the response's
+        `readCursor.mentionCount` is derived from `wake_dispatch` notify rows past the pointer (§3).
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: sessionId, required: true, schema: { type: string } }
+        - { in: path, name: participantId, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [lastReadEventSeq]
+              properties:
+                lastReadEventSeq: { type: integer, minimum: 0, description: 'Target read position; advance-only + clamped to the session max sequence.' }
+      responses:
+        '200':
+          description: The updated cursor view (same CursorView shape the list endpoint returns)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  lastReadEventSeq: { type: integer }
+                  mentionCount: { type: integer, description: 'DERIVED from wake_dispatch notify rows past the pointer (PLAN-0660 T5.2); not a stored column.' }
+                  updatedAt: { type: string, format: date-time }
+        '400':
+          description: Body missing or lastReadEventSeq not an integer (400 INVALID_REQUEST)
+        '403':
+          description: Not the row's own human participant (403 CURSOR_SELF_ONLY)
+        '404':
+          description: Session or participant not found (404 SESSION_NOT_FOUND / PARTICIPANT_NOT_FOUND)
+
   /api/v1/sessions/{sessionId}/participants/{participantId}:
     patch:
       operationId: updateSessionParticipant
@@ -1563,6 +1740,43 @@ paths:
         '403': { $ref: '#/components/responses/Problem' }
         '404': { $ref: '#/components/responses/Problem' }
         '503': { $ref: '#/components/responses/Problem' }
+  /api/v1/chat/runs/{runId}/context-fingerprint:
+    get:
+      operationId: getChatRunContextFingerprint
+      summary: Read a run's context fingerprint, optionally diffed against another run
+      description: |
+        PLAN-0666 (BL-269): returns the layered fingerprint recorded when this run was
+        **first dispatched** (`dispatchAttempt: 1`). A context-overflow re-dispatch of the
+        same run produces a second outbound document that is **not** recorded; attempt-level
+        fingerprints are v2. `tools` is not observable from CP and is always
+        `{"unavailable":"agent_side"}` (v2: reported by the Agent).
+
+        **Two-level model (assertion A1):** a stored document has `status` in exactly
+        `ok|disabled|error`; `not_dispatched` is a read-side synthetic state and is never
+        stored. A run with no document returns `available=false + reason`, and that absence
+        must **never** be mapped to `disabled` or `error` (`pre_plan` = row predates the plan;
+        `not_dispatched` = never dispatched). **Assertion A2:** a layer that is unavailable is
+        reported as `unavailable`, never downgraded to `unchanged`.
+
+        With `against`, both runs must belong to the same Session (`409 DIFF_SESSION_MISMATCH`).
+        Authorization reuses the run-trace path (run identity + current Session); no new bypass.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: runId, required: true, schema: { type: string, format: uuid } }
+        - { in: query, name: against, required: false, description: Baseline run id (same Session only)., schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Fingerprint envelope, or fingerprint diff when `against` is supplied
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/ContextFingerprintView'
+                  - $ref: '#/components/schemas/ContextFingerprintDiffView'
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
   /api/v1/chat/runs/{runId}/guidance:
     post:
       operationId: submitChatRunGuidance
@@ -3903,6 +4117,107 @@ components:
           schema: { type: string, enum: [no-store] }
       content: { application/problem+json: { schema: { $ref: '#/components/schemas/ResourceExhaustedProblem' } } }
   schemas:
+    ContextFingerprintView:
+      type: object
+      description: |
+        PLAN-0666 read-side envelope (assertion A1). `available=false` means no stored document
+        exists — it is never re-encoded as `disabled`/`error`.
+      required: [runId, available]
+      properties:
+        runId: { type: string, format: uuid }
+        available: { type: boolean }
+        reason:
+          type: string
+          nullable: true
+          enum: [pre_plan, not_dispatched]
+          description: Present iff `available=false`. `not_dispatched` is read-side only.
+        fingerprint:
+          nullable: true
+          allOf: [{ $ref: '#/components/schemas/ContextFingerprint' }]
+    ContextFingerprint:
+      type: object
+      description: |
+        Stored document (assertion A1): `status` is exactly one of `ok`/`disabled`/`error`;
+        `disabled` is the only state with `enabled=false`; `error` stays enabled (fail-open).
+      required: [enabled, status]
+      properties:
+        enabled: { type: boolean }
+        status: { type: string, enum: [ok, disabled, error] }
+        reason: { type: string, nullable: true, enum: [workspace_disabled] }
+        reasonCode: { type: string, nullable: true, description: 'Closed set, e.g. HASH_FAILED.' }
+        algo: { type: string, example: sha256 }
+        dispatchAttempt: { type: integer, minimum: 1, description: 'v1 is always 1 (first dispatch only).' }
+        layers:
+          type: object
+          additionalProperties:
+            oneOf:
+              - $ref: '#/components/schemas/ContextFingerprintLayer'
+              - $ref: '#/components/schemas/ContextFingerprintUnavailableLayer'
+        outbound:
+          oneOf:
+            - $ref: '#/components/schemas/ContextFingerprintLayer'
+            - $ref: '#/components/schemas/ContextFingerprintUnavailableLayer'
+    ContextFingerprintLayer:
+      type: object
+      required: [hash, count, bytes]
+      properties:
+        hash: { type: string, description: sha256 hex over canonical JSON. }
+        count: { type: integer }
+        bytes: { type: integer }
+        templateId: { type: string }
+        version: { type: integer }
+        layer: { type: string }
+    ContextFingerprintUnavailableLayer:
+      type: object
+      required: [unavailable]
+      properties:
+        unavailable: { type: string, description: 'Closed reasons: agent_side | not_provided.' }
+    ContextFingerprintDiffView:
+      type: object
+      required: [againstRunId, runId, status]
+      properties:
+        againstRunId: { type: string, format: uuid }
+        runId: { type: string, format: uuid }
+        status: { type: string, enum: [comparable, unavailable] }
+        sides:
+          type: array
+          items:
+            type: object
+            properties:
+              side: { type: string, enum: [against, current] }
+              reason: { type: string, nullable: true }
+              status: { type: string, nullable: true }
+        layers:
+          type: object
+          additionalProperties: { $ref: '#/components/schemas/ContextFingerprintLayerDiff' }
+        outbound:
+          type: object
+          properties:
+            status: { type: string, enum: [unchanged, changed, added, removed, unavailable, absent] }
+            bytesDelta: { type: integer }
+        dispatchAttempt:
+          type: object
+          properties:
+            against: { type: integer }
+            current: { type: integer }
+        summary:
+          type: object
+          properties:
+            changedLayers: { type: array, items: { type: string } }
+            unavailableLayers: { type: array, items: { type: string } }
+    ContextFingerprintLayerDiff:
+      type: object
+      required: [layer, status]
+      description: 'Assertion A2: unavailable is never downgraded to unchanged.'
+      properties:
+        layer: { type: string }
+        status:
+          type: string
+          enum: [unchanged, 'changed(sameShape)', 'changed(grew)', 'changed(shrank)', added, removed, unavailable, absent]
+        countDelta: { type: integer }
+        bytesDelta: { type: integer }
+        againstReason: { type: string, nullable: true }
+        currentReason: { type: string, nullable: true }
     UserCapabilities:
       type: object
       description: 'PLAN-0610 W3-2b: binding-backed capability projection that replaces the retired role string (decision #22).'
@@ -4102,6 +4417,12 @@ components:
     AgentMemoryCreateRequest: { type: object, additionalProperties: false, required: [content], properties: { content: { type: string, minLength: 1, maxLength: 8000, description: 'Normalised server-side (NFC -> trim -> collapse whitespace -> drop zero-width); 1..8000 characters after normalisation.' }, pinned: { type: boolean, default: false, description: 'Only the ui/cli channels may pin; this endpoint is the ui channel.' } } }
     AgentMemoryUpdateRequest: { type: object, additionalProperties: false, minProperties: 1, properties: { content: { type: string, minLength: 1, maxLength: 8000 }, pinned: { type: boolean } } }
     AgentMemoryResponse: { type: object, additionalProperties: false, required: [memory], properties: { memory: { $ref: '#/components/schemas/AgentMemoryView' } } }
+    AgentPrincipalRoleBindingView: { type: object, additionalProperties: false, required: [bindingId, principalId, roleId, roleName, scopeType, isSystem, atomCount, atoms, grantedAt], description: 'PLAN-0667: one role binding of an agent principal. `atoms` is a bounded summary (first 12 derived atom names) with `atomCount` carrying the real size (D5).', properties: { bindingId: { type: string, format: uuid }, principalId: { type: string, format: uuid }, roleId: { type: string, format: uuid }, roleName: { type: string }, roleDisplayName: { type: [string, 'null'] }, description: { type: [string, 'null'] }, scopeType: { type: string, enum: [instance, workspace] }, scopeId: { type: [string, 'null'], format: uuid }, isSystem: { type: boolean, description: 'roles.is_system: a seed role; its binding answers 409 ROLE_BINDING_IMMUTABLE on delete.' }, atomCount: { type: integer }, atoms: { type: array, items: { type: string } }, grantedBy: { type: [string, 'null'], format: uuid }, grantedAt: { type: string, format: date-time } } }
+    AgentPrincipalRoleBindingListResponse: { type: object, additionalProperties: false, required: [bindings], properties: { bindings: { type: array, items: { $ref: '#/components/schemas/AgentPrincipalRoleBindingView' } } } }
+    AgentPrincipalRoleBindRequest: { type: object, additionalProperties: false, required: [roleId, scopeType], description: 'PLAN-0667. `scopeId` is present exactly for scopeType=workspace; instance scope must omit it (otherwise 400 INVALID_REQUEST).', properties: { roleId: { type: string, format: uuid }, scopeType: { type: string, enum: [instance, workspace] }, scopeId: { type: [string, 'null'], format: uuid } } }
+    AgentPrincipalSkillBindingView: { type: object, additionalProperties: false, required: [bindingId, principalId, skillId, skillName, scopeType, createdAt], description: 'PLAN-0667 v1: one skill binding of an agent principal (scope is always instance, i.e. the agent carries it everywhere).', properties: { bindingId: { type: string, format: uuid }, principalId: { type: string, format: uuid }, skillId: { type: string, format: uuid }, skillName: { type: string }, description: { type: [string, 'null'] }, scopeType: { type: string, enum: [instance] }, createdByUserId: { type: [string, 'null'], format: uuid }, createdAt: { type: string, format: date-time } } }
+    AgentPrincipalSkillBindingListResponse: { type: object, additionalProperties: false, required: [bindings], properties: { bindings: { type: array, items: { $ref: '#/components/schemas/AgentPrincipalSkillBindingView' } } } }
+    AgentPrincipalSkillBindRequest: { type: object, additionalProperties: false, required: [skillId], properties: { skillId: { type: string, format: uuid } } }
     AgentModelRef: { type: object, additionalProperties: false, required: [provider, model], properties: { provider: { type: string, minLength: 1 }, model: { type: string, minLength: 1 } } }
     AgentPrincipalCreateRequest: { type: object, additionalProperties: false, required: [name], properties: { name: { type: string, minLength: 1, maxLength: 64, pattern: '^[A-Za-z\u4e00-\u9fff][A-Za-z0-9\u4e00-\u9fff]*$', description: 'Agent subject name. 2026-11-03 name-format ruling: letters / Chinese characters (U+4E00-U+9FFF) / digits only, must not start with a digit, no spaces or symbols; any other shape is rejected with 400 INVALID_NAME_FORMAT (not the generic INVALID_REQUEST).' }, templateId: { type: [string, 'null'], format: uuid }, roleIds: { type: [array, 'null'], items: { type: string, format: uuid }, description: 'PLAN-0629 task-12: the roles the new principal is bound to. Absent or null means the defaults (instance scope USER; a workspace binding additionally gets WS_EDITOR). Every id is validated once before the row is written: an unknown id, an instance-administrator role (any atom in PermissionAtomCatalog.agentPrincipalForbiddenAtoms, e.g. ADMIN/SUPER_ADMIN), or a role wider than the caller itself holds is refused with 403 ROLE_NOT_GRANTABLE — never a generic 400. The built-in delegation role for agent principals is AGENT_DELEGATOR (workspace scope, single atom SPAWN_AGENT, V109); WS_OWNER/WS_EDITOR deliberately do not carry SPAWN_AGENT.' }, scope: { type: string, enum: [PERSONAL, WORKSPACE, INSTANCE], default: WORKSPACE, deprecated: true, description: 'DEPRECATED (PLAN-0629, user ruling 2026-11-04): read-only compatibility field. Permission comes from role bindings, not from a tier — accessibility is decided by workspace-scoped role_bindings rows (V108 backfills them from existing workspace bindings). Accepted on create for older clients and ignored; the column keeps its WORKSPACE default.' }, defaultModelProvider: { type: [string, 'null'], description: 'Model intent only; the principal never holds a provider connection.' }, defaultModelName: { type: [string, 'null'] }, allowedModels: { type: [array, 'null'], items: { $ref: '#/components/schemas/AgentModelRef' }, description: 'null = unrestricted.' }, hooks: { type: [object, 'null'], description: 'PLAN-0625 M2 (D25-12/14): hook subscriptions {advisors:[{kind,on:[actionClass]}]}; on must hit the frozen action-class whitelist (today: approval.ask) or the write is rejected 400. A preset guard (origin=SYSTEM_PRESET) refuses subscription changes with 403 GUARD_HOOKS_IMMUTABLE.' } } }
     AgentPrincipalCreateView: { type: object, required: [principalId, createdAt, scope, ownerUserId, defaultModelProvider, defaultModelName, allowedModels, roleIds], properties: { roleIds: { type: array, items: { type: string, format: uuid }, description: 'The bindings that were actually written (echo, so the caller does not have to re-read).' }, principalId: { type: string, format: uuid }, templateId: { type: [string, 'null'], format: uuid }, templateName: { type: [string, 'null'] }, scope: { type: string, enum: [PERSONAL, WORKSPACE, INSTANCE], deprecated: true, description: 'DEPRECATED (PLAN-0629, user ruling 2026-11-04): kept so older clients keep parsing the payload. It no longer participates in authorization — an agent principal is visible and usable in a workspace when it holds a workspace-scoped role binding there.' }, ownerUserId: { type: [string, 'null'], format: uuid, description: 'The PERSONAL owner; null for WORKSPACE/INSTANCE.' }, defaultModelProvider: { type: [string, 'null'] }, defaultModelName: { type: [string, 'null'] }, allowedModels: { type: [array, 'null'], items: { $ref: '#/components/schemas/AgentModelRef' } }, createdAt: { type: string, format: date-time }, hooks: { type: [object, 'null'], description: 'PLAN-0625 M2: the stored subscription document {advisors:[{kind,on:[actionClass]}]} (null = none) — serialised as plain JSON (Gap J).' }, contextPolicy: { type: [object, 'null'], description: 'PLAN-0629 M1 (D29-21): the memory policy of the new principal (null = off). A create never sets it — the subject starts with memory off — but the view carries it so the caller sees the state immediately.' } } }

@@ -45,6 +45,21 @@ public interface ChatRunRepository extends JpaRepository<ChatRun, UUID> {
     @Query("select r.id from ChatRun r where r.status in :statuses")
     List<UUID> findIdsByStatusIn(@Param("statuses") Collection<String> statuses);
 
+    /**
+     * PLAN-0666 M1b: write the context fingerprint once, at the first dispatch.
+     *
+     * <p>The {@code context_fingerprint IS NULL} guard makes the write genuinely write-once in the
+     * database: a context-overflow re-dispatch of the same run cannot replace the first document
+     * (design §2.2; v1 records the first dispatch only). Returns the number of updated rows so the
+     * caller can log a no-op without treating it as an error.
+     */
+    @Modifying(flushAutomatically = true, clearAutomatically = true)
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    @Query(value = "UPDATE chat_runs SET context_fingerprint = CAST(:fingerprint AS jsonb), "
+            + "updated_at = CURRENT_TIMESTAMP "
+            + "WHERE id = :runId AND context_fingerprint IS NULL", nativeQuery = true)
+    int recordContextFingerprint(@Param("runId") UUID runId, @Param("fingerprint") String fingerprint);
+
     Optional<ChatRun> findByUserIdAndSessionIdAndIdempotencyKey(
             String userId, String sessionId, String idempotencyKey);
 

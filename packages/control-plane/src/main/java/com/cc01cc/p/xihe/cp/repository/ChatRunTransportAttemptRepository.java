@@ -20,6 +20,9 @@ public interface ChatRunTransportAttemptRepository
 
     List<ChatRunTransportAttempt> findByRunIdOrderBySequenceAsc(String runId);
 
+    /** PLAN-0666 M1b: read-side dispatch hint — "did this run ever reach transport?" */
+    boolean existsByRunId(String runId);
+
     @Query(value = "SELECT COUNT(*) AS attempt_count, "
             + "COALESCE(SUM(CASE WHEN outcome IN ('error', 'timeout') THEN 1 ELSE 0 END), 0) AS failed_count, "
             + "COALESCE(SUM(CASE WHEN outcome IN ('aborted', 'partial') THEN 1 ELSE 0 END), 0) AS partial_count "

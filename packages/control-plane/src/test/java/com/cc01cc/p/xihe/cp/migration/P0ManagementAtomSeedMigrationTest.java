@@ -169,8 +169,9 @@ class P0ManagementAtomSeedMigrationTest {
 
     @Test
     void atomCountsStayConsistentWithTheCatalog() {
-        assertEquals(19, PermissionAtomCatalog.actionAtoms().size(),
-                "M1 adds exactly two atoms (17 -> 19); M2 brings the total to 27");
+        assertEquals(27, PermissionAtomCatalog.actionAtoms().size(),
+                "17 original + N1/N10 (M1) + N2-N9 (M2 T2.1) = 27; the same arithmetic is frozen in"
+                        + " SkillReadFaceTest.BUILTIN_ACTION_CLASS_COUNT");
         assertEquals(3, PermissionAtomCatalog.capabilityAtoms().size());
         assertEquals(PermissionAtomCatalog.actionAtoms().size(),
                 ToolFaceRegistry.builtinActionClasses().size(),

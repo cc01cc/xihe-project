@@ -1,0 +1,123 @@
+{
+  "epoch": {
+    "env_cwd": null,
+    "sources": [],
+    "env_head": "",
+    "epoch_id": "",
+    "env_shell": null,
+    "l1_status": "missing",
+    "env_branch": "",
+    "env_status": "not_repository",
+    "l1_sources": [],
+    "l1_rendered": "",
+    "source_hash": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "env_platform": "windows",
+    "summary_hash": "",
+    "env_observed_at": "2026-11-04T15:04:42Z",
+    "system_messages": [],
+    "env_is_repository": false
+  },
+  "messages": [
+    {
+      "role": "human",
+      "content": "xxxxx",
+      "sequence": 6
+    },
+    {
+      "role": "ai",
+      "content": "xxxxxxxxxxxxxxxxxxxxxx",
+      "sequence": 7
+    },
+    {
+      "role": "human",
+      "content": "xxxxx",
+      "sequence": 12
+    },
+    {
+      "role": "ai",
+      "content": "xxxxxxxx",
+      "sequence": 13
+    },
+    {
+      "role": "human",
+      "content": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "sequence": 18
+    },
+    {
+      "role": "ai",
+      "content": "x",
+      "tool_calls": [
+        {
+          "call_id": "00000000-0000-4000-8000-000000014605",
+          "arguments": {
+            "path": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+            "pattern": "README*"
+          },
+          "tool_name": "glob"
+        },
+        {
+          "call_id": "00000000-0000-4000-8000-000000023610",
+          "arguments": {
+            "path": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+          },
+          "tool_name": "list_directory"
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "status": "completed",
+      "content": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "sequence": 21,
+      "tool_name": "glob",
+      "tool_call_id": "00000000-0000-4000-8000-000000014605"
+    },
+    {
+      "role": "tool",
+      "status": "completed",
+      "content": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "sequence": 22,
+      "tool_name": "list_directory",
+      "tool_call_id": "00000000-0000-4000-8000-000000023610"
+    },
+    {
+      "role": "ai",
+      "content": "x",
+      "tool_calls": [
+        {
+          "call_id": "00000000-0000-4000-8000-000000070674",
+          "arguments": {
+            "command": "pwd && ls -la",
+            "timeout": null,
+            "truncate_limit": null
+          },
+          "tool_name": "execute_command"
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "status": "failed",
+      "content": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "sequence": 24,
+      "tool_name": "execute_command",
+      "tool_call_id": "00000000-0000-4000-8000-000000070674"
+    },
+    {
+      "role": "ai",
+      "content": "xxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "sequence": 25
+    }
+  ],
+  "metadata": {
+    "context_sources": {
+      "status": "missing",
+      "updated_at": "2026-11-04T15:38:02.488148100Z",
+      "source_hash": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    }
+  },
+  "branch_id": "00000000-0000-4000-8000-000000073728",
+  "aggregate_id": "00000000-0000-4000-8000-000000038191",
+  "runtime_state": {},
+  "latest_sequence": 29
+}

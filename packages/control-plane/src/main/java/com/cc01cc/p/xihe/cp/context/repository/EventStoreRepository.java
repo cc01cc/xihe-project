@@ -33,26 +33,12 @@ public interface EventStoreRepository extends JpaRepository<ContextEvent, UUID> 
     long deleteBySessionId(String sessionId);
 
     /**
-     * PLAN-0660 T5.2: unread mentions for a whole roster in **one** statement — the derived
-     * counterpart of the retired {@code session_participant_cursors.mention_count} column.
+     * PLAN-0660 T5.2 (BL-273): every {@code wake_dispatch} row of one session, in sequence order.
      *
-     * <p>Rows: {@code [0] = participant id (UUID), [1] = notify count (Long)}. The pointer
-     * ({@code last_read_event_seq}) is the only stored fact; the count is recomputed from
-     * {@code wake_dispatch ∧ outcome=notify ∧ sequence > pointer}
-     * ({@code spec/session/user-channel.md} §3, D66-07 / B-4).</p>
+     * <p>Deliberately a plain derived query — the JSON interpretation lives in Java, so the same code
+     * runs on PostgreSQL and on H2. (The earlier native version used {@code payload->>'outcome'},
+     * which H2 rejects with {@code SQL 42000}; mocked unit tests hid that. Rule: a new native query
+     * needs a test that really executes it on the test database's dialect.)</p>
      */
-    @Query(value = """
-            SELECT c.participant_id AS participant_id, COUNT(e.id) AS notify_count
-              FROM session_participant_cursors c
-              JOIN session_participants p ON p.id = c.participant_id
-              LEFT JOIN context_events e
-                     ON e.session_id = p.session_id
-                    AND e.event_type = 'wake_dispatch'
-                    AND e.payload->>'outcome' = 'notify'
-                    AND e.payload->>'participantId' = CAST(c.participant_id AS text)
-                    AND e.sequence > c.last_read_event_seq
-             WHERE p.session_id = CAST(:sessionId AS uuid)
-             GROUP BY c.participant_id
-            """, nativeQuery = true)
-    List<Object[]> countDerivedMentionsBySession(@Param("sessionId") UUID sessionId);
+    List<ContextEvent> findBySessionIdAndEventTypeOrderBySequenceAsc(String sessionId, String eventType);
 }
