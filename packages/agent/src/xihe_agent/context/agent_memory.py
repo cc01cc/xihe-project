@@ -21,6 +21,7 @@ slots reach the provider body (same finding as PLAN-0635 M2 and PLAN-0628 M1).
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
@@ -94,6 +95,22 @@ def entry_tokens(entry: Mapping[str, Any]) -> int:
     return estimate
 
 
+def _entry_key(entry: Mapping[str, Any]) -> str:
+    """Stable ledger key of one memory entry: the content hash, not its position.
+
+    CP dedupes writes per ``(principal, content_sha256)`` (``AgentMemoryRepository``), so the
+    content is unique within one subject's memory and the hash is an order-independent identity.
+    A positional key (``agent_memory:{index}``) drifts whenever CP's ordering changes between
+    renders — same text, new key, charged twice. ``try_charge`` is not idempotent
+    (``InjectionLedger`` doc), so the key must be stable *and* already-booked keys must be skipped
+    by the caller (the 805dc9fd skills twin does both; this module now does too).
+    """
+    content = entry.get("content")
+    text = content.strip() if isinstance(content, str) else ""
+    digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
+    return f"agent_memory:{digest}"
+
+
 def render_memory_block(entries: Sequence[Mapping[str, Any]]) -> str:
     """Render admitted memory entries in CP order; pinned/profile rows are already first."""
     lines: list[str] = []
@@ -150,6 +167,14 @@ def render_agent_memory(
             band instead of rendering an empty block.
     """
     diagnostics: list[str] = []
+    # 2026-11-04（PLAN-0629 收尾，镜像 805dc9fd skills 计费模式）：同一个 run 内二次渲染
+    # （retry / 中断后重放）不得重复扣池。账本只在 run 内存在（``injection_budget`` 明确
+    # never persisted），跨进程重放不属于本修复范围。幂等两条：
+    #   1) 每条的 ledger 键是内容哈希（``_entry_key``），与 CP 的顺序无关；
+    #   2) 渲染前读 ``charged_keys("memory")``，已入账的键一律跳过计费 ——
+    #      ``try_charge`` 非幂等，跳过是调用方的责任（ledger 不猜"同键"语义）。
+    before = ledger.by_source["memory"]
+    already = ledger.charged_keys("memory")
     # Degenerate ledger: no window was supplied, so the cap is the absolute fallback. Say so
     # instead of silently pretending the numbers are window-derived.
     if ledger.limits.window_tokens <= 0:
@@ -163,51 +188,58 @@ def render_agent_memory(
     if not entries:
         if not notes:
             return AgentMemoryBlock(diagnostics=tuple([*diagnostics, DIAG_EMPTY]))
-        charged, texts = _charge_notes(notes, ledger, count_tokens)
+        _charged, texts = _charge_notes(notes, ledger, count_tokens, already)
         return AgentMemoryBlock(
             content="\n".join(texts),
             status=STATUS_FAILED,
-            charged=charged,
+            charged=ledger.by_source["memory"] - before,
             diagnostics=tuple(diagnostics),
         )
 
     header_tokens = count_tokens(MEMORY_HEADER)
     pairs: list[tuple[str, int, float]] = [
         # Salience = CP's own order (earlier outranks later), so a tight pool keeps the pinned and
-        # profile rows first and only ever drops the tail.
-        (f"agent_memory:{index}", entry_tokens(entry), float(len(entries) - index))
+        # profile rows first and only ever drops the tail. The KEY is the content hash, not the
+        # index — admission on a re-render must recognise the same rows CP already sent.
+        (_entry_key(entry), entry_tokens(entry), float(len(entries) - index))
         for index, entry in enumerate(entries)
     ]
 
     # Reserve the truncation sentence BEFORE the entries are charged (D28-41: whoever renders the
     # final text reserves the budget for it). Charging it afterwards would drop it exactly when the
-    # cap is already full — i.e. exactly when it is needed.
+    # cap is already full — i.e. exactly when it is needed. An already-booked note is not charged
+    # again; it stays payable for the text below.
     note_tokens = count_tokens(MEMORY_TRUNCATION_NOTE + "\n")
     room = ledger.limits.caps["memory"] - ledger.by_source["memory"]
     may_truncate = cp_truncated or sum(tokens for _, tokens, _ in pairs) + header_tokens > room
-    reserved_note = may_truncate and ledger.try_charge(
-        "memory", TRUNCATION_NOTE_KEY, note_tokens, priority=True
-    )
+    note_booked = TRUNCATION_NOTE_KEY in already
+    reserved_note = False
+    if may_truncate and not note_booked:
+        reserved_note = ledger.try_charge("memory", TRUNCATION_NOTE_KEY, note_tokens, priority=True)
 
-    charged_notes, note_texts = _charge_notes(notes, ledger, count_tokens)
+    _charged_notes, note_texts = _charge_notes(notes, ledger, count_tokens, already)
 
     # The header is charged like an entry and must fit first: without it the lines are a mystery
-    # list of sentences attributed to nobody.
-    header_charged = ledger.try_charge("memory", HEADER_KEY, header_tokens, priority=True)
-    charge = charge_assembly(ledger, memory=pairs) if header_charged else None
-    admitted = [
-        entry
-        for index, entry in enumerate(entries)
-        if charge is not None and f"agent_memory:{index}" in charge.memory
-    ]
+    # list of sentences attributed to nobody. A header booked by an earlier render stays booked.
+    header_booked = HEADER_KEY in already
+    header_charged = header_booked or ledger.try_charge(
+        "memory", HEADER_KEY, header_tokens, priority=True
+    )
+    fresh = [(key, tokens, salience) for key, tokens, salience in pairs if key not in already]
+    charge = charge_assembly(ledger, memory=fresh) if header_charged else None
+    # Admission addresses the union: what this call booked plus what an earlier render booked —
+    # a re-render re-uses the same rows instead of paying for the same text twice.
+    booked = (set(charge.memory) if charge is not None else set()) | already
+    admitted = [entry for index, entry in enumerate(entries) if pairs[index][0] in booked]
 
     truncated = cp_truncated or len(admitted) < len(entries)
     budget_cut = charge is not None and charge.memory_truncated
     if (truncated or budget_cut) and DIAG_BUDGET_TRUNCATED not in diagnostics:
         diagnostics.append(DIAG_BUDGET_TRUNCATED)
 
-    note_suffix = note_texts + ([MEMORY_TRUNCATION_NOTE] if reserved_note and truncated else [])
-    charged_notes_total = charged_notes + (note_tokens if reserved_note else 0)
+    note_suffix = note_texts + (
+        [MEMORY_TRUNCATION_NOTE] if (reserved_note or note_booked) and truncated else []
+    )
 
     if charge is None or not admitted:
         # Nothing fit: an empty slot plus a diagnostic is the honest answer, and the in-band note
@@ -215,7 +247,7 @@ def render_agent_memory(
         return AgentMemoryBlock(
             content="\n".join(note_suffix),
             status=STATUS_TRUNCATED if truncated else STATUS_EMPTY,
-            charged=charged_notes_total,
+            charged=ledger.by_source["memory"] - before,
             truncated=truncated,
             diagnostics=tuple(diagnostics),
         )
@@ -223,15 +255,12 @@ def render_agent_memory(
     content = render_memory_block(admitted)
     if note_suffix:
         content = content + "\n" + "\n".join(note_suffix)
-    charged = (
-        header_tokens
-        + charged_notes_total
-        + sum(tokens for key, tokens, _ in pairs if key in charge.memory)
-    )
+    # A ledger reading, never a second sum: on a re-render the delta is 0, and the diagnostics
+    # number always equals what ``ledger.snapshot()["bySource"]["memory"]`` gained this call.
     return AgentMemoryBlock(
         content=content,
         status=STATUS_TRUNCATED if truncated else STATUS_READY,
-        charged=charged,
+        charged=ledger.by_source["memory"] - before,
         truncated=truncated,
         diagnostics=tuple(diagnostics),
     )
@@ -241,12 +270,21 @@ def _charge_notes(
     notes: Sequence[tuple[str, str]],
     ledger: InjectionLedger,
     count_tokens: Callable[[str], int],
+    already: set[str],
 ) -> tuple[int, list[str]]:
-    """Charge the explanatory notes; return ``(tokens, texts that fit)``."""
+    """Charge the explanatory notes; return ``(tokens, texts that fit)``.
+
+    A note whose key was booked by an earlier render in the same run is not charged again, but its
+    text is still returned — the sentence must render on every render, it just must not spend the
+    pool twice (``try_charge`` is not idempotent; ``injection_budget`` doc).
+    """
     charged = 0
     texts: list[str] = []
     for key, text in notes:
         tokens = count_tokens(text + "\n")
+        if key in already:
+            texts.append(text)
+            continue
         if ledger.try_charge("memory", key, tokens, priority=True):
             charged += tokens
             texts.append(text)
@@ -285,9 +323,10 @@ def render_from_component_sources(
         if str(entry.get("status")) == STATUS_FAILED:
             unavailable = True
 
+    ledger = ledger_for_context(context)
     block = render_agent_memory(
         entries,
-        ledger=ledger_for_context(context),
+        ledger=ledger,
         count_tokens=count_tokens,
         cp_truncated=cp_truncated,
         unavailable=unavailable,
@@ -308,5 +347,9 @@ def render_from_component_sources(
         "charged": block.charged,
         "truncated": block.truncated,
         "diagnostics": list(block.diagnostics),
+        # Operator view of the ledger after this charge (no injected text) — the same shape the
+        # 0628 skills diagnostics carry, so a test can assert the idempotency invariant without
+        # reaching into ``context.metadata``.
+        "ledger": ledger.snapshot(),
     }
     return block.content, diagnostics
