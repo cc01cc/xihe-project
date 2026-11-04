@@ -11,6 +11,7 @@ import com.cc01cc.p.xihe.cp.entity.RunCheckpoint;
 import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
+import com.cc01cc.p.xihe.cp.entity.WorkspaceRoot;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
 import com.cc01cc.p.xihe.cp.integration.TestDataFactory;
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
@@ -18,6 +19,7 @@ import com.cc01cc.p.xihe.cp.repository.RunCheckpointRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
+import com.cc01cc.p.xihe.cp.repository.WorkspaceRootRepository;
 import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeEach;
@@ -60,6 +62,9 @@ class RunCheckpointControllerTest extends AbstractH2Test {
     private static final String SLICE_REF = "refs/xihe/slices/1757980000000-ab12cd";
     private static final String RAW_REQUEST_MARKER = "secret-revert-request-marker";
 
+    /** PLAN-0641 M4 T5.2: a child root declared after the seeded slice was captured. */
+    private static final String CHILD_ROOT_ID = "66666666-6666-4666-8666-666666666666";
+
     @Autowired
     private UserRepository userRepository;
     @Autowired
@@ -75,6 +80,8 @@ class RunCheckpointControllerTest extends AbstractH2Test {
 
     @Autowired
     private com.cc01cc.p.xihe.cp.repository.AuditLogRepository auditLogRepository;
+    @Autowired
+    private WorkspaceRootRepository workspaceRootRepository;
     @Autowired
     private JwtTokenProvider jwtTokenProvider;
     @LocalServerPort
@@ -153,6 +160,7 @@ class RunCheckpointControllerTest extends AbstractH2Test {
     private String workspaceId;
     private String sessionId;
     private String runId;
+    private String workspaceHostPath;
 
     @BeforeEach
     void setUpCheckpointFixtures() {
@@ -168,6 +176,7 @@ class RunCheckpointControllerTest extends AbstractH2Test {
         userId = user.getId().toString();
         Workspace workspace = workspaceFixture.createOwnedWorkspace("cp-test-workspace", userId);
         workspaceId = workspace.getId().toString();
+        workspaceHostPath = workspace.getHostPath();
         workspaceFixture.bindWorkspaceRole(workspaceId, userId, WorkspaceRole.OWNER);
         authToken = jwtTokenProvider.createAccessToken(userId, email, "USER", workspaceId, 0);
 
@@ -392,6 +401,62 @@ class RunCheckpointControllerTest extends AbstractH2Test {
         String detail = auditRows.get(0).getDetails();
         assertTrue(detail.contains("repos=[vendor/lib]"), "audit detail lists the dirty repo roots: " + detail);
         assertTrue(detail.contains("sliceRef=" + SLICE_REF), "audit detail names the slice");
+    }
+
+    /** Seeds the primary root row plus one child root declared under it (both active). */
+    private void seedPrimaryAndChildRoots() {
+        workspaceRootRepository.saveAndFlush(new WorkspaceRoot(UUID.fromString(workspaceId),
+                UUID.fromString(workspaceId), 0, workspaceHostPath, "user:" + userId));
+        workspaceRootRepository.saveAndFlush(new WorkspaceRoot(UUID.fromString(CHILD_ROOT_ID),
+                UUID.fromString(workspaceId), 1, workspaceHostPath + "/vendor/lib",
+                "user:" + userId));
+    }
+
+    @Test
+    void revertRefusesALegacySliceCapturedBeforeAChildRootWasDeclared() {
+        // PLAN-0641 M4 T5.2 / B4=(a): the slice predates the child declaration, so this root's
+        // shadow slice still carries the child path flat; a restore would write into the child
+        // root's host directory. The gate answers before any Runtime call and lists the roots.
+        seedCheckpoint(RunCheckpoint.STATE_CAPTURED);
+        seedPrimaryAndChildRoots();
+
+        ResponseEntity<Map> response = post("/api/v1/workspaces/" + workspaceId
+                + "/checkpoints/revert",
+                Map.of("sliceRef", SLICE_REF, "acknowledgeTypeChanges", List.of()));
+
+        assertEquals(HttpStatus.CONFLICT, response.getStatusCode(),
+                String.valueOf(response.getBody()));
+        assertEquals("CROSS_ROOT_LEGACY_SLICE", response.getBody().get("code"));
+        List<?> legacyRoots = (List<?>) response.getBody().get("legacyRoots");
+        assertEquals(1, legacyRoots.size(), String.valueOf(response.getBody()));
+        Map<?, ?> child = (Map<?, ?>) legacyRoots.get(0);
+        assertEquals(CHILD_ROOT_ID, child.get("rootId"));
+        assertEquals("vendor/lib", child.get("path"));
+        assertEquals(0, calls("revert"), "the CP-side boundary gate never reaches Runtime");
+        RunCheckpoint row = checkpointRepository.findByWorkspaceIdAndSliceRef(workspaceId, SLICE_REF)
+                .orElseThrow();
+        assertEquals(RunCheckpoint.REVERT_NONE, row.getRevertState(),
+                "a refused legacy slice leaves the bookkeeping untouched");
+    }
+
+    @Test
+    void revertAllowsASliceCapturedAfterTheChildRootDeclaration() {
+        // Same root set, but the slice is captured strictly after the declaration: the parent
+        // capture already excluded the child path, so the restore is a normal per-root revert.
+        seedCheckpoint(RunCheckpoint.STATE_CAPTURED);
+        seedPrimaryAndChildRoots();
+        RunCheckpoint row = checkpointRepository.findByWorkspaceIdAndSliceRef(workspaceId, SLICE_REF)
+                .orElseThrow();
+        row.setCapturedAt(Instant.now().plusSeconds(3600));
+        checkpointRepository.saveAndFlush(row);
+        RESPONSES.put("revert", new AtomicReference<>(json(200, revertBody())));
+
+        ResponseEntity<Map> response = post("/api/v1/workspaces/" + workspaceId
+                + "/checkpoints/revert",
+                Map.of("sliceRef", SLICE_REF, "acknowledgeTypeChanges", List.of()));
+
+        assertEquals(HttpStatus.OK, response.getStatusCode(), String.valueOf(response.getBody()));
+        assertEquals(1, calls("revert"));
     }
 
     @Test
