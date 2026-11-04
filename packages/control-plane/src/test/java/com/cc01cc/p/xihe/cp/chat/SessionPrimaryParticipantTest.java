@@ -186,6 +186,38 @@ class SessionPrimaryParticipantTest extends AbstractIntegrationTest {
         assertEquals(ownerId, humanAnswered.run().getAgentPrincipalId().toString(),
                 "with asParticipantId the run is attributed to that participant's principal");
     }
+
+    /**
+     * BL-270 (P1, 2026-11-04): the UI's provider-binding guard reads the session **list** row
+     * (`hasBinding` = providerConnectionId). The list projection used to omit the chat binding
+     * fields that the single-session GET carried, so a bound session looked unbound on a real stack
+     * and every send re-ran `POST bind-defaults` and toasted. The three fields must be projected by
+     * the list with the same values as the single GET.
+     */
+    @Test
+    void theSessionListProjectsTheChatBindingFields() {
+        String sessionId = send(ownerToken, "POST", "/api/v1/sessions",
+                """
+                {"agentPrincipalId":"%s"%s}""".formatted(principalId, bindingFields)).body().path("id").asText();
+
+        JsonNode single = send(ownerToken, "GET", "/api/v1/sessions/" + sessionId, null).body();
+        JsonNode rows = send(ownerToken, "GET", "/api/v1/sessions", null).body().path("sessions");
+        JsonNode row = null;
+        for (JsonNode candidate : rows) {
+            if (sessionId.equals(candidate.path("id").asText())) {
+                row = candidate;
+                break;
+            }
+        }
+        assertNotNull(row, "list must contain the created session: " + rows);
+        for (String field : java.util.List.of("providerConnectionId", "modelProvider", "modelName")) {
+            assertFalse(row.path(field).isMissingNode() || row.path(field).isNull(),
+                    "BL-270: list projection must carry " + field + ": " + row);
+            assertEquals(single.path(field), row.path(field),
+                    "BL-270: list projection must match the single GET for " + field);
+        }
+    }
+
     private AuthResponse register(String label) {
         var response = restTemplate.postForEntity(url("/api/v1/auth/register"),
                 new RegisterRequest(label + "-" + UUID.randomUUID() + "@test.com",

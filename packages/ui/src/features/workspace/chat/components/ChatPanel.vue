@@ -89,6 +89,16 @@ const providerBindingGuide = ref<{
 
 async function guardProviderBinding(id: string): Promise<boolean> {
     const session = sessionStore.sessions.find((item) => item.id === id);
+    // BL-270 (P1): `hasBinding` reads the session row (C1), so a list projection that omits
+    // `providerConnectionId` looks unbound even when the session is bound — the send then re-runs
+    // bind-defaults and toasts on every message. Warn here (no extra request) so the next projection
+    // gap shows up in the console instead of hiding behind a "successful" bind.
+    if (!session?.providerConnectionId) {
+        logger.warn(
+            "session list projection has no providerConnectionId; falling back to bind-defaults",
+            { sessionId: id },
+        );
+    }
     return ensureProviderBinding({
         hasBinding: Boolean(session?.providerConnectionId),
         bindDefaults: () => api.bindSessionDefaults(id),

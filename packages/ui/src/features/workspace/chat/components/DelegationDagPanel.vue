@@ -44,8 +44,11 @@ const graph = computed(() =>
 const hasChildren = computed(() => graph.value.edges.length > 0);
 
 // —— 布局（纯几何，单位 px；与判据无关，测试只钉 DOM/testid） ——
+// PLAN-0659 T1.4 缺陷修复（A 类，2026-11-04）：480px 右栏下 `(maxDepth+1)×COL_W` + `p-3`
+// 内边距超过可用宽度 ⇒ 面板出现横向滚动条（`(232×2)+24 > 456`）。`COL_W` 232→224 且滚动
+// 容器 `p-3`→`p-2`：两层 depth 时画布 448px，可用宽 ≈464px，留 16px 余量；比例几乎不变。
 const ROW_H = 44;
-const COL_W = 232;
+const COL_W = 224;
 const NODE_W = 200;
 const NODE_H = 34;
 interface PositionedNode {
@@ -243,7 +246,7 @@ watch(
             {{ t("chat.delegation.dagEmpty") }}
         </p>
 
-        <div v-else class="min-h-0 flex-1 overflow-auto p-3">
+        <div v-else class="min-h-0 flex-1 overflow-auto p-2">
             <div
                 class="relative"
                 :style="{ width: `${canvas.width}px`, height: `${canvas.height}px` }"

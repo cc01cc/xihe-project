@@ -815,7 +815,7 @@ paths:
         '403': { $ref: '#/components/responses/Problem' }
         '404': { $ref: '#/components/responses/Problem' }
   /api/v1/sessions:
-    get: { operationId: listSessions, security: [{ bearerAuth: [] }], parameters: [{ in: header, name: X-Workspace-Id, required: false, schema: { type: string, format: uuid } }], responses: { '200': { description: Sessions }, '400': { $ref: '#/components/responses/Problem' }, '403': { $ref: '#/components/responses/Problem' } } }
+    get: { operationId: listSessions, security: [{ bearerAuth: [] }], parameters: [{ in: header, name: X-Workspace-Id, required: false, schema: { type: string, format: uuid } }], responses: { '200': { description: Sessions, content: { application/json: { schema: { type: object, required: [sessions], properties: { sessions: { type: array, items: { $ref: '#/components/schemas/SessionSummary' } } } } } } }, '400': { $ref: '#/components/responses/Problem' }, '403': { $ref: '#/components/responses/Problem' } } }
     post: { operationId: createSession, security: [{ bearerAuth: [] }], parameters: [{ in: header, name: X-Workspace-Id, required: false, schema: { type: string, format: uuid } }], requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/SessionCreateRequest' } } } }, responses: { '201': { description: Created Agent Session, content: { application/json: { schema: { $ref: '#/components/schemas/Session' } } } }, '400': { $ref: '#/components/responses/Problem' }, '401': { $ref: '#/components/responses/Problem' }, '403': { $ref: '#/components/responses/Problem' }, '404': { $ref: '#/components/responses/Problem' }, '409': { $ref: '#/components/responses/Problem' }, '503': { description: 'BACKEND_DISABLED — the workspace runs on the frozen docker execution backend, so session creation is refused before any row is written (create a direct_attach workspace instead; PLAN-0618 / BL-178)', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } } } }
   /api/v1/workspaces/{workspaceId}/sessions:
     post:
@@ -4259,6 +4259,25 @@ components:
        required: [counts]
        properties:
          counts: { type: object, required: [deleted, kept], properties: { deleted: { type: integer }, kept: { type: integer } } }
+    SessionSummary:
+      type: object
+      additionalProperties: true
+      description: 'BL-270 (2026-11-04): one row of `GET /api/v1/sessions`. The list projection carries the chat binding (`providerConnectionId` / `modelProvider` / `modelName`) with the same values as the single-session `Session` view, so a client can decide whether a Session is already bound from the list alone. Do not drop these fields: the UI provider guard reads them and a missing field makes every send re-run `POST bind-defaults`.'
+      required: [id, title, kind, spawnedFromSessionId, spawnedAt, workspaceId, agentPrincipalId, contextTemplateLayer, contextTemplateId, contextTemplateVersion, providerConnectionId, modelProvider, modelName]
+      properties:
+        id: { type: string }
+        title: { type: [string, 'null'] }
+        kind: { type: [string, 'null'], description: '`SPAWN` = delegated child session (PLAN-0655).' }
+        spawnedFromSessionId: { type: [string, 'null'], format: uuid }
+        spawnedAt: { type: [string, 'null'], format: date-time }
+        workspaceId: { type: string }
+        agentPrincipalId: { type: [string, 'null'], format: uuid }
+        contextTemplateLayer: { type: [string, 'null'], enum: [instance, user, workspace, null] }
+        contextTemplateId: { type: [string, 'null'], format: uuid }
+        contextTemplateVersion: { type: [integer, 'null'] }
+        providerConnectionId: { type: [string, 'null'], format: uuid }
+        modelProvider: { type: [string, 'null'] }
+        modelName: { type: [string, 'null'] }
     Session: { type: object, required: [id, workspaceId, title, archived, agentPrincipalId], properties: { id: { type: string }, workspaceId: { type: string }, agentPrincipalId: { type: [string, 'null'], format: uuid }, title: { type: [string, 'null'] }, modelProvider: { type: [string, 'null'] }, modelName: { type: [string, 'null'] }, providerConnectionId: { type: [string, 'null'], readOnly: true }, connectionRevision: { type: [integer, 'null'], readOnly: true }, contextTemplateLayer: { type: [string, 'null'], enum: [instance, user, workspace, null], readOnly: true, description: All three pin fields are present together or null; null requires explicit rebind. }, contextTemplateId: { type: [string, 'null'], format: uuid, readOnly: true }, contextTemplateVersion: { type: [integer, 'null'], readOnly: true }, archived: { type: boolean }, createdAt: { type: [string, 'null'], format: date-time }, updatedAt: { type: [string, 'null'], format: date-time } } }
     SessionForkResponse:
       allOf:

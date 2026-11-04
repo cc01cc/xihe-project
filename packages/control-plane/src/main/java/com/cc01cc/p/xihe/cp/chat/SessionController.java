@@ -329,6 +329,14 @@ public class SessionController {
         view.put("contextTemplateLayer", session.getContextTemplateLayer());
         view.put("contextTemplateId", session.getContextTemplateId());
         view.put("contextTemplateVersion", session.getContextTemplateVersion());
+        // BL-270 (P1, 2026-11-04): chat binding must be projected on the LIST too. The UI's provider
+        // guard reads the session row (`hasBinding` = providerConnectionId); a missing field made every
+        // send re-run `POST bind-defaults` + toast on a real stack although the session was already
+        // bound (the single-session GET carried the fields). Same three fields/values as
+        // `SessionViews.toView` — do not extend this projection further.
+        view.put("providerConnectionId", session.getProviderConnectionId());
+        view.put("modelProvider", session.getModelProvider());
+        view.put("modelName", session.getModelName());
         return view;
     }
 
