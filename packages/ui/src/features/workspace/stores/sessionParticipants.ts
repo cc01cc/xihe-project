@@ -25,7 +25,7 @@ const FALLBACK_CAPABILITIES: SessionParticipantCapabilities = {
  * - `forbidden` = 403 / `view === false`；
  * - `error` = 其它失败（可重试）。
  */
-import { createHintCoalescer } from '../chat/userChannelHintCoalescer'
+import { createHintCoalescer } from "../chat/userChannelHintCoalescer";
 
 export const useSessionParticipantsStore = defineStore("sessionParticipants", () => {
     const sessionId = ref<string | null>(null);

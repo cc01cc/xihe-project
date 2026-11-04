@@ -29,12 +29,16 @@ export interface HintCoalescer {
     dispose: () => void;
 }
 
-export function createHintCoalescer(currentSessionId: () => string | null,
-                                    options: HintCoalescerOptions): HintCoalescer {
+export function createHintCoalescer(
+    currentSessionId: () => string | null,
+    options: HintCoalescerOptions,
+): HintCoalescer {
     const delayMs = options.delayMs ?? 300;
-    const schedule = options.schedule
-        ?? ((callback: () => void, ms: number) => setTimeout(callback, ms));
-    const cancel = options.cancel ?? ((handle: unknown) => clearTimeout(handle as ReturnType<typeof setTimeout>));
+    const schedule =
+        options.schedule ?? ((callback: () => void, ms: number) => setTimeout(callback, ms));
+    const cancel =
+        options.cancel ??
+        ((handle: unknown) => clearTimeout(handle as ReturnType<typeof setTimeout>));
     let pending: unknown = null;
 
     return {
