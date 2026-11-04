@@ -3125,6 +3125,77 @@ async fn workspace_git_status_handler(
     }
 }
 
+/// PLAN-0641 T2.3 (contract F3): discovery response body `{items:[…]}`.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct NestedReposBody {
+    items: Vec<xihe_runtime::nested_repo_kind::NestedRepoItem>,
+}
+
+/// T2.3 classify-only request (contract F1 warm path): explicit paths, no staging.
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ClassifyNestedReposRequest {
+    paths: Vec<String>,
+}
+
+fn nested_repos_failure_response(failure: xihe_runtime::checkpoint::CheckpointError) -> Response {
+    match failure {
+        xihe_runtime::checkpoint::CheckpointError::WorkspaceMissing(path) => {
+            checkpoint_problem_response(
+                StatusCode::NOT_FOUND,
+                "WORKSPACE_NOT_FOUND",
+                None,
+                &format!("workspace directory is unavailable: {}", path),
+            )
+        }
+        xihe_runtime::checkpoint::CheckpointError::InvalidIdentifier { detail, .. } => {
+            checkpoint_problem_response(
+                StatusCode::BAD_REQUEST,
+                "CHECKPOINT_INVALID_REQUEST",
+                None,
+                &detail,
+            )
+        }
+        other => checkpoint_problem_response(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "CHECKPOINT_UNAVAILABLE",
+            None,
+            &other.to_string(),
+        ),
+    }
+}
+
+/// PLAN-0641 T2.3: cold probe — one throwaway staging pass + bare readdir,
+/// five-kind classification. The TTL cache lives CP-side (contract §3).
+async fn nested_repos_handler(
+    Path(ws_id): Path<String>,
+    State(app): State<Arc<AppState>>,
+) -> Response {
+    app.refresh_checkpoint_work_tree(&ws_id).await;
+    match app.checkpoints.detect_nested_repos(&ws_id).await {
+        Ok(items) => AxumJson(NestedReposBody { items }).into_response(),
+        Err(failure) => nested_repos_failure_response(failure),
+    }
+}
+
+/// T2.3 classify-only: warm the CP cache from a capture's `nestedRepos`
+/// without staging (contract F1 + §3.1).
+async fn classify_nested_repos_handler(
+    Path(ws_id): Path<String>,
+    State(app): State<Arc<AppState>>,
+    AxumJson(request): AxumJson<ClassifyNestedReposRequest>,
+) -> Response {
+    app.refresh_checkpoint_work_tree(&ws_id).await;
+    match app
+        .checkpoints
+        .classify_nested_repos(&ws_id, &request.paths)
+    {
+        Ok(items) => AxumJson(NestedReposBody { items }).into_response(),
+        Err(failure) => nested_repos_failure_response(failure),
+    }
+}
+
 /// PLAN-0382 T1.1: workspace facts = git half (owned by the checkpoint
 /// engine) + execution env half composed here per the frozen value-source
 /// table (spec §2.1). `null` env fields mean "unknown, do not guess":
@@ -3447,6 +3518,14 @@ fn build_app_router(app_state: &Arc<AppState>) -> Router {
         .route(
             "/internal/v1/runtime/workspaces/{ws_id}/git-facts",
             get(workspace_git_facts_handler),
+        )
+        .route(
+            "/internal/v1/runtime/workspaces/{ws_id}/nested-repos",
+            get(nested_repos_handler),
+        )
+        .route(
+            "/internal/v1/runtime/workspaces/{ws_id}/nested-repos/classify",
+            post(classify_nested_repos_handler),
         )
         .route(
             "/internal/v1/runtime/diagnostics",

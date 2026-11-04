@@ -71,6 +71,24 @@ paths:
     get: { operationId: getWorkspace, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }], responses: { '200': { description: Workspace, content: { application/json: { schema: { $ref: '#/components/schemas/Workspace' } } } }, '404': { $ref: '#/components/responses/Problem' } } }
     patch: { operationId: updateWorkspace, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }], requestBody: { required: false, content: { application/json: { schema: { $ref: '#/components/schemas/WorkspaceUpdateRequest' } } } }, responses: { '200': { description: Updated, content: { application/json: { schema: { $ref: '#/components/schemas/Workspace' } } } }, '404': { $ref: '#/components/responses/Problem' } } }
     delete: { operationId: deleteWorkspace, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }], responses: { '204': { description: Logically deleted }, '404': { $ref: '#/components/responses/Problem' } } }
+  /api/v1/workspaces/{workspaceId}/nested-repos:
+    get:
+      operationId: listWorkspaceNestedRepos
+      summary: Nested git repositories discovered in a workspace (PLAN-0641 T2.3, TTL-cached)
+      description: |
+        PLAN-0641 M1 discovery read face (contract F2): `{path,type,declared}` items,
+        depth-ascending. CP keeps a 30 s TTL cache (contract §3) warmed by the
+        classify-only path after primary-root captures; declaring a root evicts the
+        cache so `declared` labels re-project immediately. `type` =
+        nested|gitdir|submodule|bare|symlink.
+      security: [{ bearerAuth: [] }]
+      parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: Nested repositories, content: { application/json: { schema: { $ref: '#/components/schemas/WorkspaceNestedRepos' } } } }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '503': { description: RUNTIME_UNAVAILABLE (Runtime unreachable for the read-only probe) }
   /api/v1/workspaces/{workspaceId}/roots:
     post:
       operationId: addWorkspaceRoot
@@ -5645,6 +5663,20 @@ components:
         id: { type: string, format: uuid, description: 'Root key. root[0].id == workspace.id (primary root invariant).' }
         alias: { type: [string, 'null'], maxLength: 128 }
         position: { type: integer, minimum: 0 }
+    WorkspaceNestedRepos:
+      type: object
+      required: [workspaceId, cachedAt, items]
+      properties:
+        workspaceId: { type: string, format: uuid }
+        cachedAt: { type: string, format: date-time, description: 'When this answer was produced (contract F2).' }
+        items: { type: array, items: { $ref: '#/components/schemas/NestedRepoItem' } }
+    NestedRepoItem:
+      type: object
+      required: [path, type, declared]
+      properties:
+        path: { type: string, description: 'Workspace-relative POSIX path.' }
+        type: { type: string, enum: [nested, gitdir, submodule, bare, symlink] }
+        declared: { type: boolean, description: 'Whether the path is already a declared root of this workspace.' }
     WorkspaceEnvironment: { type: object, required: [workspaceId, status, storageBackend, storageRef, storageMode, executionMode, capability, jobCapability, runtime], properties: { workspaceId: { type: string }, status: { type: string }, storageBackend: { type: string }, storageRef: { type: string }, storageMode: { type: string, enum: [managed_import, direct_attach] }, hostPath: { type: [string, 'null'], description: 'Canonical host path only for the owner/admin; null for ordinary members.' }, executionMode: { type: string, enum: [docker, windows-mxc, windows-host] }, capability: { $ref: '#/components/schemas/BackendCapabilitySnapshot' }, jobCapability: { $ref: '#/components/schemas/WorkspaceJobCapability' }, executionSpec: { type: object, additionalProperties: true }, runtime: { type: object, additionalProperties: true, description: 'Runtime view. PLAN-0391 additive keys: activeJobCount (integer), releaseOperationId (string|null), reason (USER_RELEASED|AUTO_EVICT|DESTROYED|CLEANUP_FAILED|RUNTIME_UNAVAILABLE|null).' } } }
     WorkspaceJob:
       type: object

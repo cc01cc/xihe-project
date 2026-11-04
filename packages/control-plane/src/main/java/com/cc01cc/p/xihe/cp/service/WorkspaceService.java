@@ -71,6 +71,10 @@ public class WorkspaceService {
     private final AuthzContext authzContext;
     private final jakarta.persistence.EntityManager entityManager;
 
+    /** PLAN-0641 T2.3/T2.4: evict the nested-repos TTL cache when roots change. */
+    @org.springframework.beans.factory.annotation.Autowired
+    private WorkspaceNestedReposCache nestedReposCache;
+
     public WorkspaceService(WorkspaceRepository workspaceRepository,
                             WorkspaceRootRepository workspaceRootRepository,
                             WorkspaceMembershipService memberships,
@@ -728,6 +732,8 @@ public class WorkspaceService {
 
         // Bump execution spec so Runtime picks up the new root.
         executionSpecService.createExecutionSpec(workspaceId, "{}", actorId, "root_added");
+        // PLAN-0641 T2.4: the new root must re-project into the discovery face immediately.
+        nestedReposCache.evict(workspaceId);
         return root;
     }
 
@@ -770,6 +776,8 @@ public class WorkspaceService {
         root.setDeletedAt(Instant.now());
         workspaceRootRepository.save(root);
         executionSpecService.createExecutionSpec(workspaceId, "{}", actorId, "root_deleted");
+        // PLAN-0641 T2.4: undeleted roots must re-enter the discovery face.
+        nestedReposCache.evict(workspaceId);
     }
 
     /**
@@ -816,6 +824,8 @@ public class WorkspaceService {
         }
 
         workspaceRootRepository.save(root);
+        // PLAN-0641 T2.4: alias/position changes must not keep stale discovery answers.
+        nestedReposCache.evict(workspaceId);
         return root;
     }
 

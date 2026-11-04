@@ -24,6 +24,7 @@ pub mod job_mxc_adapter;
 pub mod lifecycle;
 pub mod log_redact;
 pub mod mcp_session;
+pub mod nested_repo_kind;
 pub mod process_guard;
 pub mod remote_mcp;
 pub mod sandbox;

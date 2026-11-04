@@ -42,6 +42,9 @@ use crate::checkpoint_store::refs::{self, RefRecord};
 use crate::checkpoint_store::store::{Store, StoreError};
 use crate::checkpoint_store::walk::{WalkEntryKind, walk_workspace};
 use crate::error::RuntimeError;
+use crate::nested_repo_kind::{
+    NestedRepoItem, classify as classify_nested_path, has_git_marker, sort_items_depth_ascending,
+};
 use crate::storage;
 
 /// Directory under `hostRoot` that holds all shadow repositories.
@@ -330,6 +333,14 @@ pub struct CaptureOutcome {
     /// Sub-directories recorded as opaque gitlinks (mode 160000); their contents
     /// are not captured and cannot be restored.
     pub opaque_nested_repos: Vec<String>,
+    /// PLAN-0641 T2.1 (D41-24): every nested repository this capture discovered —
+    /// the staged gitlink candidates regardless of policy (flattened, opaque, or
+    /// declared-root-excluded), depth-ascending (parents before children).
+    /// Internal wire only (contract-draft F1): CP warms its TTL cache from this
+    /// and never persists it — zero durable migration. `skip_serializing_if`
+    /// keeps pre-M1 readers and fixtures byte-identical when nothing is found.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub nested_repos: Vec<String>,
     /// Slice ref this capture was compared against / created on top of.
     pub predecessor: Option<String>,
 }
@@ -1605,7 +1616,7 @@ impl ShadowGit {
         // The temp index starts from the chain tail so the size cap and the
         // exclusion rules only judge genuinely new (untracked) paths: paths the
         // previous slice already indexed stay included even when they grew.
-        let (tree, opaque_nested_repos) = self
+        let (tree, opaque_nested_repos, nested_repos) = self
             .stage_workspace(&shadow, &work_tree, &index, &excludes, tail_tree.as_deref())
             .await?;
         self.save_last_index(&shadow, &index).await?;
@@ -1657,6 +1668,9 @@ impl ShadowGit {
                     state: state.to_string(),
                     changed_files: Vec::new(),
                     opaque_nested_repos: Vec::new(),
+                    // PLAN-0641 T2.1: discovery still reports what staging found —
+                    // a no-change run must warm the same cache as a changed one.
+                    nested_repos,
                     predecessor,
                 },
                 tree,
@@ -1717,6 +1731,8 @@ impl ShadowGit {
                 state: state.to_string(),
                 changed_files,
                 opaque_nested_repos,
+                // PLAN-0641 T2.1: per-capture discovery list (internal wire, F1).
+                nested_repos,
                 predecessor,
             },
             tree,
@@ -1855,6 +1871,9 @@ impl ShadowGit {
                 state: state.to_owned(),
                 changed_files: Vec::new(),
                 opaque_nested_repos: Vec::new(),
+                // PLAN-0641 T2.1: the self-store path has no gitlink staging in v1,
+                // so discovery reports empty (F1 stays the git-path fact source).
+                nested_repos: Vec::new(),
                 predecessor,
             });
         }
@@ -1991,6 +2010,8 @@ impl ShadowGit {
             state: state.to_owned(),
             changed_files,
             opaque_nested_repos: Vec::new(),
+            // PLAN-0641 T2.1: self-store path has no gitlink staging in v1 (F1 = git path).
+            nested_repos: Vec::new(),
             predecessor,
         })
     }
@@ -2662,6 +2683,10 @@ impl ShadowGit {
     ///
     /// Both capture and restore planning go through this so the "current" tree
     /// they compare is built identically.
+    ///
+    /// PLAN-0641 T2.1: the third element is the discovery list (every gitlink
+    /// candidate regardless of policy, depth-ascending) that feeds `nestedRepos`
+    /// — internal wire only, never persisted (contract-draft F1 / D41-24).
     pub(crate) async fn stage_workspace(
         &self,
         shadow: &Path,
@@ -2669,11 +2694,19 @@ impl ShadowGit {
         index: &Path,
         excludes: &Path,
         reference_tree: Option<&str>,
-    ) -> Result<(String, Vec<String>)> {
+    ) -> Result<(String, Vec<String>, Vec<String>)> {
         self.stage_index(shadow, work_tree, index, excludes, reference_tree)
             .await?;
         let index_env = self.isolated_env(shadow, work_tree, Some(index));
         let detected = self.staged_gitlinks(&index_env).await?;
+        // PLAN-0641 T2.1: discovery is a fact of staging, independent of the
+        // policy below. Depth-ascending (parents before children), then
+        // lexicographic so two siblings keep a stable order.
+        let mut nested_repos = detected.clone();
+        nested_repos.sort_by(|left, right| {
+            (left.matches('/').count(), left.as_str())
+                .cmp(&(right.matches('/').count(), right.as_str()))
+        });
         let opaque = match self.nested_repo_policy {
             NestedRepoPolicy::Reject if !detected.is_empty() => {
                 return Err(CheckpointError::NestedRepoLimit { paths: detected });
@@ -2687,7 +2720,151 @@ impl ShadowGit {
             NestedRepoPolicy::Opaque | NestedRepoPolicy::Reject => detected,
         };
         let tree = self.write_tree(&index_env).await?;
-        Ok((tree, opaque))
+        Ok((tree, opaque, nested_repos))
+    }
+
+    /// PLAN-0641 T2.3 (contract F3): read-only discovery for the on-demand
+    /// endpoint. One cold staging pass into a **throwaway shadow** (no object,
+    /// tree or ref ever reaches the real shadow store) plus a single-level
+    /// readdir for bare repos (gitlink never lists them; design §6.1「一次
+    /// readdir 启发式」—— never a recursive walk, D41-7), then five-kind
+    /// classification.
+    ///
+    /// [`Self::stage_index`] already excludes declared roots through the same
+    /// `core.excludesFile` capture uses, so gitlink results are undeclared
+    /// candidates; declared roots that ARE repositories are appended from the
+    /// hydrated declared set with `declared=true` so the read face can label —
+    /// never re-offer — an already declared path (cache-staleness defence).
+    pub async fn detect_nested_repos(&self, workspace_id: &str) -> Result<Vec<NestedRepoItem>> {
+        validate_workspace_id(workspace_id)?;
+        let work_tree = self.work_tree_for_root(workspace_id)?;
+        if !work_tree.is_dir() {
+            return Err(CheckpointError::WorkspaceMissing(normalize_path_for_git(
+                &work_tree,
+            )));
+        }
+        self.require_git().await?;
+
+        let scratch = tempfile::TempDir::new()?;
+        let shadow = scratch
+            .path()
+            .join(SHADOW_DIR_NAME)
+            .join(format!("{workspace_id}.git"));
+        self.ensure_initialized(&shadow, &work_tree).await?;
+        let token = format!(
+            "nestedprobe-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|elapsed| elapsed.as_millis())
+                .unwrap_or_default()
+        );
+        let index = scratch_index_path(&shadow, &token);
+        let excludes = scratch_excludes_path(&shadow, &token);
+        let _scratch = ScratchFiles::new(vec![index.clone(), excludes.clone()]);
+        self.stage_index(&shadow, &work_tree, &index, &excludes, None)
+            .await?;
+        let env = self.isolated_env(&shadow, &work_tree, Some(&index));
+        let mut detected = self.staged_gitlinks(&env).await?;
+
+        if let Ok(entries) = std::fs::read_dir(&work_tree) {
+            for entry in entries.flatten() {
+                let name = entry.file_name().to_string_lossy().into_owned();
+                if name.starts_with('.') {
+                    continue; // .git / .xihe-shadow are never discovery candidates
+                }
+                let file_type = match entry.file_type() {
+                    Ok(file_type) => file_type,
+                    Err(_) => continue,
+                };
+                if !file_type.is_dir() && !file_type.is_symlink() {
+                    continue;
+                }
+                if detected.contains(&name) {
+                    continue;
+                }
+                if classify_nested_path(&work_tree, &name)
+                    == crate::nested_repo_kind::NestedRepoKind::Bare
+                {
+                    detected.push(name);
+                }
+            }
+        }
+
+        let declared_prefixes = self.nested_declared_root_prefixes(&work_tree);
+        let mut items: Vec<NestedRepoItem> = detected
+            .iter()
+            .map(|path| {
+                NestedRepoItem::new(
+                    path.clone(),
+                    classify_nested_path(&work_tree, path),
+                    Self::is_declared_prefix(&declared_prefixes, path),
+                )
+            })
+            .collect();
+
+        // Declared roots never surface from staging (the excludes file skipped
+        // them); append the ones that are real repositories so the UI can label
+        // `declared=true`. A declared plain directory (0639 allows those) has no
+        // `.git` marker and is not a nested repo — skipped by design.
+        for prefix in &declared_prefixes {
+            if detected.contains(prefix) {
+                continue;
+            }
+            if !has_git_marker(&work_tree, prefix) {
+                continue;
+            }
+            items.push(NestedRepoItem::new(
+                prefix.clone(),
+                classify_nested_path(&work_tree, prefix),
+                true,
+            ));
+        }
+
+        sort_items_depth_ascending(&mut items);
+        Ok(items)
+    }
+
+    /// T2.3 classify-only mode (contract F1 warm path, §3.1): classify explicit
+    /// workspace-relative paths — the capture-time `nestedRepos` list — without
+    /// staging anything. CP uses this to warm its TTL cache after a capture at
+    /// the cost of one `stat` per path.
+    pub fn classify_nested_repos(
+        &self,
+        workspace_id: &str,
+        paths: &[String],
+    ) -> Result<Vec<NestedRepoItem>> {
+        validate_workspace_id(workspace_id)?;
+        let work_tree = self.work_tree_for_root(workspace_id)?;
+        if !work_tree.is_dir() {
+            return Err(CheckpointError::WorkspaceMissing(normalize_path_for_git(
+                &work_tree,
+            )));
+        }
+        let declared_prefixes = self.nested_declared_root_prefixes(&work_tree);
+        let mut items: Vec<NestedRepoItem> = paths
+            .iter()
+            .filter(|path| !path.is_empty())
+            .map(|path| {
+                NestedRepoItem::new(
+                    path.clone(),
+                    classify_nested_path(&work_tree, path),
+                    Self::is_declared_prefix(&declared_prefixes, path),
+                )
+            })
+            .collect();
+        sort_items_depth_ascending(&mut items);
+        Ok(items)
+    }
+
+    /// Whether `path` (workspace-relative POSIX) sits inside a declared root.
+    /// [`Self::nested_declared_root_prefixes`] returns lowercase prefixes, so the
+    /// candidate is lowercased too (Windows FS case-tolerance, same as capture's
+    /// flatten-time comparison intent).
+    fn is_declared_prefix(declared_prefixes: &[String], path: &str) -> bool {
+        let lowered = path.to_ascii_lowercase();
+        declared_prefixes
+            .iter()
+            .any(|prefix| lowered == *prefix || lowered.starts_with(&format!("{prefix}/")))
     }
 
     /// L1 (PLAN-0361): flatten each detected nested repository into the parent

@@ -8,6 +8,7 @@ import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceRoot;
 import com.cc01cc.p.xihe.cp.service.WorkspaceBackendPolicy;
+import com.cc01cc.p.xihe.cp.service.WorkspaceNestedReposService;
 import com.cc01cc.p.xihe.cp.service.WorkspaceService;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -32,10 +33,13 @@ public class WorkspaceController {
 
     private final WorkspaceService workspaceService;
     private final WorkspaceBackendPolicy backendPolicy;
+    private final WorkspaceNestedReposService nestedReposService;
 
-    public WorkspaceController(WorkspaceService workspaceService, WorkspaceBackendPolicy backendPolicy) {
+    public WorkspaceController(WorkspaceService workspaceService, WorkspaceBackendPolicy backendPolicy,
+                               WorkspaceNestedReposService nestedReposService) {
         this.workspaceService = workspaceService;
         this.backendPolicy = backendPolicy;
+        this.nestedReposService = nestedReposService;
     }
 
     @GetMapping("/current")
@@ -75,6 +79,22 @@ public class WorkspaceController {
         String userId = TenantContext.getUserId();
         try {
             return toView(workspaceService.requireAccessibleWorkspace(workspaceId, userId), userId, isAdmin());
+        } catch (CpApiException e) {
+            return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
+        }
+    }
+
+    /**
+     * PLAN-0641 T2.3: nested-repository discovery read face (TTL-cached CP-side;
+     * contract F2). Unknown/inaccessible workspace → the same 404/403 problem as
+     * {@link #get}, decided before the Runtime is touched.
+     */
+    @GetMapping("/{workspaceId}/nested-repos")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<?> nestedRepos(@PathVariable String workspaceId) {
+        String userId = TenantContext.getUserId();
+        try {
+            return ResponseEntity.ok(nestedReposService.listNestedRepos(workspaceId, userId));
         } catch (CpApiException e) {
             return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
         }

@@ -505,6 +505,26 @@ impl CheckpointService {
         Ok(outcome)
     }
 
+    /// PLAN-0641 T2.3 (contract F3): on-demand nested-repo discovery — delegates
+    /// to the engine's read-only probe (throwaway staging + bare readdir +
+    /// five-kind classification). The TTL cache lives CP-side; this facade stays
+    /// stateless so a cold probe is always fresh.
+    pub async fn detect_nested_repos(
+        &self,
+        workspace_id: &str,
+    ) -> crate::checkpoint::Result<Vec<crate::nested_repo_kind::NestedRepoItem>> {
+        self.engine.detect_nested_repos(workspace_id).await
+    }
+
+    /// T2.3 classify-only mode (contract F1 warm path): explicit paths, no staging.
+    pub fn classify_nested_repos(
+        &self,
+        workspace_id: &str,
+        paths: &[String],
+    ) -> crate::checkpoint::Result<Vec<crate::nested_repo_kind::NestedRepoItem>> {
+        self.engine.classify_nested_repos(workspace_id, paths)
+    }
+
     /// Retention sweep (decision #10, slice model). Counts slices; abnormal
     /// slices participate exactly like normal ones.
     pub async fn gc(&self, workspace_id: &str) -> Result<GcOutcome, GcFailure> {
