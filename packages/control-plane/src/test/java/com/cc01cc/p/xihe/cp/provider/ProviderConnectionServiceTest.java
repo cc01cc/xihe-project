@@ -46,9 +46,12 @@ class ProviderConnectionServiceTest {
             mock(org.springframework.beans.factory.ObjectProvider.class);
     private final com.cc01cc.p.xihe.cp.repository.ProviderConnectionModelLimitRepository modelLimitRepository =
             mock(com.cc01cc.p.xihe.cp.repository.ProviderConnectionModelLimitRepository.class);
+    private final com.cc01cc.p.xihe.cp.policy.RequesterAuthority requesterAuthority =
+            mock(com.cc01cc.p.xihe.cp.policy.RequesterAuthority.class);
     private final ProviderConnectionService service = new ProviderConnectionService(
             repository, auditRepository, leaseRepository, catalog, apiTypes, credentialService,
-            credentialAccess, new ObjectMapper(), requestTemplates, configService, modelLimitRepository);
+            credentialAccess, new ObjectMapper(), requestTemplates, configService, modelLimitRepository,
+            requesterAuthority);
 
     @org.junit.jupiter.api.BeforeEach
     void wireLockedConnectionDelegation() {
@@ -544,7 +547,8 @@ class ProviderConnectionServiceTest {
         pair.put("modelDiscovery", "manual");
         ProviderConnectionService pairService = new ProviderConnectionService(
                 repository, auditRepository, leaseRepository, realCatalog, apiTypes, credentialService,
-                credentialAccess, mapper, requestTemplates, configService, modelLimitRepository);
+                credentialAccess, mapper, requestTemplates, configService, modelLimitRepository,
+                requesterAuthority);
         when(repository.saveAndFlush(any(ProviderConnection.class)))
                 .thenAnswer(invocation -> invocation.getArgument(0));
 

@@ -1,6 +1,7 @@
 package com.cc01cc.p.xihe.cp.service;
 
 import com.cc01cc.p.xihe.cp.config.CpApiException;
+import com.cc01cc.p.xihe.cp.policy.RequesterAuthority;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ArrayNode;
@@ -37,7 +38,7 @@ class ApiRequestTemplateServiceMergeTest {
     ApiRequestTemplateServiceMergeTest() {
         when(contextProvider.getObject()).thenReturn(contextTemplates);
         service = new ApiRequestTemplateService(null, null, null, null, json, null, null, null, null,
-                contextProvider);
+                contextProvider, mock(RequesterAuthority.class));
     }
 
     private void contextManifest(JsonNode components) {
