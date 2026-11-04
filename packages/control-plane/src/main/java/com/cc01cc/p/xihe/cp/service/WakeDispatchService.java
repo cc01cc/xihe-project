@@ -61,6 +61,13 @@ public class WakeDispatchService {
     private final DbLockTimeout dbLockTimeout;
     private final DelegationChainWalker chainWalker;
 
+    /**
+     * PLAN-0660 T5.5 (D-102): the user-channel hint port. Optional on purpose — the dispatch path must
+     * behave identically when no user channel exists (unit tests, headless contexts).
+     */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.cc01cc.p.xihe.cp.event.UserChannelPort userChannel;
+
     public WakeDispatchService(SessionParticipantRepository participantRepository,
                                SessionRepository sessionRepository,
                                SessionParticipantService participantService,
@@ -336,16 +343,30 @@ public class WakeDispatchService {
     }
 
     /**
-     * 人=通知：只写 durable {@code wake_dispatch} notify 行。
+     * 人=通知：写 durable {@code wake_dispatch} notify 行 + 推一条最小化 hint（T5.5）。
      *
      * <p>PLAN-0660 T5.3：未读**不再**在这里自增 —— 它是从
      * {@code wake_dispatch ∧ outcome=notify ∧ sequence > last_read_event_seq} 派生的值
-     * （`spec/session/user-channel.md` §3，D66-07 / B-4）；此方法只负责把通知这件事记账。</p>
+     * （`spec/session/user-channel.md` §3，D66-07 / B-4）。</p>
+     *
+     * <p>PLAN-0660 T5.5：hint 只带 `{sessionId, participantId}`（`spec/session/user-channel.md` §4）
+     * —— 不含计数、不含正文；端口可空注入（null ⇒ no-op，既有行为不变）；失败只记
+     * `event=user_channel_push_failed` 可计数日志，**不在 dispatch 路径重试**。</p>
      */
     private void notifyHuman(UUID sessionId, SessionParticipant participant,
                              String triggerSource, String wakeRoundId, String parentRunId) {
         audit(sessionId, participant.getId(), triggerSource, wakeRoundId, "notify",
                 null, null, parentRunId);
+        if (userChannel != null && participant.getPrincipalId() != null) {
+            try {
+                userChannel.participantNotified(participant.getPrincipalId().toString(),
+                        sessionId.toString(), participant.getId().toString());
+            } catch (RuntimeException failure) {
+                logger.warn("[LIFECYCLE] service=cp event=user_channel_push_failed userId={} "
+                                + "reason={} sessionId={}", participant.getPrincipalId(),
+                        failure.getClass().getSimpleName(), sessionId);
+            }
+        }
     }
 
     /**
