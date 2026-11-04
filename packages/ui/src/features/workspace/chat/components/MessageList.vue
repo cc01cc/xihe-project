@@ -364,6 +364,14 @@ watch(
         }
         await nextTick();
         await restoreAnchor(anchor);
+        if (!anchor) return;
+        // provider 的 MutationObserver 在“全量渲染 → 恢复窗口化”两次 DOM 变更后仍可能用
+        // 旧锚点再纠正一次（实测中间位置 prepend 会被它拉到贴底）；连续几帧把锚点按回原视觉位置，
+        // 谁最后写 scrollTop 谁生效，直到稳定为止。
+        for (let frame = 0; frame < 6; frame += 1) {
+            await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+            await restoreAnchor(anchor);
+        }
     },
     { flush: "pre" },
 );
