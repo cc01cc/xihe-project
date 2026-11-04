@@ -30,6 +30,13 @@ public class ContextTemplateService {
     public static final UUID BUILTIN_TEMPLATE_ID = UUID.fromString("00000000-0000-4000-8000-000000000001");
     private static final UUID BUILTIN_PROMPT_COMPONENT = UUID.fromString("00000000-0000-4000-8000-000000000011");
     private static final UUID BUILTIN_HISTORY_COMPONENT = UUID.fromString("00000000-0000-4000-8000-000000000012");
+    /**
+     * BL-284: the built-in context template carries the memory component by default. Without it the
+     * component manifest has no {@code agent_memory} entry, so CP never resolves a memory source and
+     * the Agent's {@code ${xh.agent_memory}} slot stays empty even when the principal is correct —
+     * that was the second half of BL-281 ("fix landed but memory still never reaches outbound").
+     */
+    private static final UUID BUILTIN_MEMORY_COMPONENT = UUID.fromString("00000000-0000-4000-8000-000000000013");
     private static final Pattern COMPONENT_MARKER = Pattern.compile("\\{\\{component:([0-9a-fA-F-]{36})}}");
 
     private final ConfigService configService;
@@ -114,6 +121,35 @@ public class ContextTemplateService {
         snapshot.put("source", source);
         snapshot.set("template", template);
         return new TemplateBinding(layer, templateUuid.toString(), version, snapshot);
+    }
+
+    /**
+     * BL-284: the context-template revision that supplies the <b>component manifest</b> for a run's
+     * admission snapshot.
+     *
+     * <p>Resolution order is fixed and deterministic — {@code workspace → user → instance → built-in} —
+     * because the API request template (which supplies {@code bodySource}) and the context template
+     * (which supplies {@code components}) are two different domains with different refs. A broken
+     * layer (ref points at a missing revision) fails the admission instead of silently falling back:
+     * a silent empty manifest is exactly what kept BL-281's memory invisible.</p>
+     */
+    public TemplateBinding defaultBinding(UUID userId, UUID workspaceId) {
+        for (String layer : List.of("workspace", "user", "instance")) {
+            if ("workspace".equals(layer) && workspaceId == null) {
+                continue;
+            }
+            if ("user".equals(layer) && userId == null) {
+                continue;
+            }
+            ObjectNode config = parseEntries(readLayer(layer, userId, workspaceId));
+            JsonNode ref = config.path("defaultTemplate");
+            if (!ref.isObject() || !ref.path("templateId").isTextual() || !ref.path("version").isInt()) {
+                continue;
+            }
+            return binding(layer, ref.path("templateId").asText(), ref.path("version").asInt(),
+                    "default", userId, workspaceId);
+        }
+        return binding("instance", BUILTIN_TEMPLATE_ID.toString(), 1, "builtin-default", userId, workspaceId);
     }
 
     private ObjectNode findTemplateOrNull(String layer, String templateId, int version,
@@ -324,7 +360,7 @@ public class ContextTemplateService {
             template.put("name", "默认上下文");
             template.put("description", "平台内置上下文模板");
             template.put("document", "{{component:" + BUILTIN_PROMPT_COMPONENT + "}}\n\n{{component:"
-                    + BUILTIN_HISTORY_COMPONENT + "}}");
+                    + BUILTIN_MEMORY_COMPONENT + "}}\n\n{{component:" + BUILTIN_HISTORY_COMPONENT + "}}");
             ArrayNode components = objectMapper.createArrayNode();
             ObjectNode prompt = components.addObject();
             prompt.put("instanceId", BUILTIN_PROMPT_COMPONENT.toString());
@@ -332,6 +368,13 @@ public class ContextTemplateService {
             prompt.put("enabled", true);
             prompt.set("config", objectMapper.createObjectNode().put("source", "system")
                     .put("includeAgentPrompt", true));
+            // BL-284: memory is part of the built-in manifest (defaults mirror
+            // AgentMemoryInjectionService.DEFAULT_MAX_ENTRIES / DEFAULT_MAX_TOKENS).
+            ObjectNode memory = components.addObject();
+            memory.put("instanceId", BUILTIN_MEMORY_COMPONENT.toString());
+            memory.put("type", "agent_memory");
+            memory.put("enabled", true);
+            memory.set("config", objectMapper.createObjectNode().put("maxEntries", 24).put("maxTokens", 4000));
             ObjectNode history = components.addObject();
             history.put("instanceId", BUILTIN_HISTORY_COMPONENT.toString());
             history.put("type", "conversation_history");
