@@ -865,8 +865,20 @@ public class ChatController {
                             view.role(), view.respondPolicy(), view.disabledAt()))
                     .toList();
         } catch (RuntimeException noRoster) {
+            // BL-273: a roster failure must be VISIBLE — silently returning an empty roster degrades a
+            // DB/permission fault into "@mention suppression quietly stopped working" with no alert.
+            // The dispatch still proceeds (chat must not die because the roster is unreadable), but the
+            // warn line is greppable: event=mention_roster_unavailable.
+            logger.warn("[LIFECYCLE] service=cp event=mention_roster_unavailable sessionId={} "
+                            + "requestId={} reason={}", sessionId, requestIdOrNull(),
+                    noRoster.getClass().getSimpleName());
             return List.of();
         }
+    }
+
+    /** The current request's correlation id, or {@code null} outside a request scope. */
+    private static String requestIdOrNull() {
+        return org.slf4j.MDC.get(com.cc01cc.p.xihe.cp.logging.RequestIdFilter.MDC_KEY);
     }
 
     /**
