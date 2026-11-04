@@ -118,15 +118,40 @@ public class WakeDispatchService {
     @Transactional
     public WakeFireResult fire(UUID participantId, String triggerSource, String wakeRoundId,
                                UUID sessionId, String parentRunId, String triggeringContent) {
+        return fire(participantId, triggerSource, triggerSource, wakeRoundId, sessionId, parentRunId,
+                triggeringContent);
+    }
+
+    /**
+     * PLAN-0665 (A, 2026-11-05 real-stack finding): explicit TO wake. Two different facts must not
+     * share one string —
+     * <ul>
+     *   <li>{@code triggerSource} is the <b>run classification</b> written to
+     *       {@code chat_runs.trigger_source}, whose CHECK only allows
+     *       {@code user/mention/schedule/judge/guard/chain}. A TO-selected target run IS
+     *       user-triggered (the user named that target), so TO passes {@code "user"}.</li>
+     *   <li>{@code auditTriggerSource} is the <b>diagnostic label</b> of the {@code wake_dispatch}
+     *       audit event and the wake prompt ({@code "to"} for TO fan-out).</li>
+     * </ul>
+     * Writing {@code "to"} into the column raised {@code ConstraintViolationException} on the real
+     * stack while mock-based unit tests stayed green: the derived run was dropped and the 202
+     * response silently reported one runId less.
+     */
+    @Transactional
+    public WakeFireResult fire(UUID participantId, String triggerSource, String auditTriggerSource,
+                               String wakeRoundId, UUID sessionId, String parentRunId,
+                               String triggeringContent) {
+        String auditLabel = auditTriggerSource == null || auditTriggerSource.isBlank()
+                ? triggerSource : auditTriggerSource;
         SessionParticipant participant = participantRepository.findById(participantId).orElse(null);
         if (participant == null || participant.getDisabledAt() != null) {
-            audit(sessionId, participantId, triggerSource, wakeRoundId, "refused",
+            audit(sessionId, participantId, auditLabel, wakeRoundId, "refused",
                     "participant is gone or disabled", null, parentRunId);
             return new WakeFireResult(false, null, "refused");
         }
         Session session = sessionRepository.findById(sessionId).orElse(null);
         if (session == null) {
-            audit(sessionId, participantId, triggerSource, wakeRoundId, "refused",
+            audit(sessionId, participantId, auditLabel, wakeRoundId, "refused",
                     "session is gone", null, parentRunId);
             return new WakeFireResult(false, null, "refused");
         }
@@ -135,7 +160,7 @@ public class WakeDispatchService {
         // HUMAN recipients no longer pass through it, so the binding is checked here — a foreign
         // participantId must never be notified, counted, or audited into another session's round.
         if (!sessionId.equals(participant.getSessionId())) {
-            audit(sessionId, participantId, triggerSource, wakeRoundId, "refused",
+            audit(sessionId, participantId, auditLabel, wakeRoundId, "refused",
                     "cross_session: participant does not belong to this session", null, parentRunId);
             return new WakeFireResult(false, null, "refused");
         }
@@ -143,7 +168,7 @@ public class WakeDispatchService {
         // "the delivery target exists, is enabled and lives in this session" (above) — NOT "may this
         // subject speak", which is what D23-08 answers and is always false for another human.
         if (SessionParticipant.KIND_HUMAN.equals(participant.getPrincipalKind())) {
-            notifyHuman(sessionId, participant, triggerSource, wakeRoundId, parentRunId);
+            notifyHuman(sessionId, participant, auditLabel, wakeRoundId, parentRunId);
             return new WakeFireResult(false, null, "notify");
         }
 
@@ -156,7 +181,7 @@ public class WakeDispatchService {
                 session.getUserId(), session.getWorkspaceId(), sessionId.toString(),
                 participantId.toString());
         if (!speak.allowed()) {
-            audit(sessionId, participantId, triggerSource, wakeRoundId, "refused",
+            audit(sessionId, participantId, auditLabel, wakeRoundId, "refused",
                     "authorization: " + speak.code(), null, parentRunId);
             return new WakeFireResult(false, null, "refused");
         }
@@ -164,7 +189,7 @@ public class WakeDispatchService {
         String policy = participant.getRespondPolicy() == null
                 ? SessionParticipant.RESPOND_WHEN_MENTIONED : participant.getRespondPolicy();
         if (SessionParticipant.RESPOND_MUTED.equals(policy)) {
-            audit(sessionId, participantId, triggerSource, wakeRoundId, "skipped_muted",
+            audit(sessionId, participantId, auditLabel, wakeRoundId, "skipped_muted",
                     null, null, parentRunId);
             return new WakeFireResult(false, null, "skipped_muted");
         }
@@ -188,13 +213,13 @@ public class WakeDispatchService {
             }
         }
         if (SessionParticipant.RESPOND_JUDGE.equals(policy)
-                && !judgeSaysSpeak(session, participant, triggerSource, wakeRoundId)) {
-            audit(sessionId, participantId, triggerSource, wakeRoundId, "judged_no",
+                && !judgeSaysSpeak(session, participant, auditLabel, wakeRoundId)) {
+            audit(sessionId, participantId, auditLabel, wakeRoundId, "judged_no",
                     null, null, parentRunId);
             return new WakeFireResult(false, null, "judged_no");
         }
 
-        String prompt = buildWakePrompt(triggerSource, wakeRoundId, sessionId, triggeringContent);
+        String prompt = buildWakePrompt(auditLabel, wakeRoundId, sessionId, triggeringContent);
         // The responder stamped on the run is the participant's PRINCIPAL id — chat_runs.agent_principal_id
         // carries an FK to agent_principals (V92 R1); the D23-08 gate above has just verified the row.
         SessionWakeupService.WakeupResult result = sessionWakeupService.wakeupAs(
@@ -203,7 +228,7 @@ public class WakeDispatchService {
         // PLAN-0630 M5b / D2: a dispatch refusal downstream terminalizes the Run with its own
         // error_code (ChatController listener); this wake-level audit keeps "submitted/deferred",
         // so a reviewer can join the two facts instead of guessing from a stuck Run.
-        audit(sessionId, participantId, triggerSource, wakeRoundId,
+        audit(sessionId, participantId, auditLabel, wakeRoundId,
                 result.started() ? "submitted" : "deferred", null, result.runId(), parentRunId);
         return new WakeFireResult(result.started(), result.runId(),
                 result.started() ? "submitted" : "deferred");
