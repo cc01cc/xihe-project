@@ -5586,8 +5586,12 @@ mod checkpoint_handler_tests {
             "{body}"
         );
 
-        let opaque_state =
-            state_with(CheckpointService::new(temp.path()).with_auto_gc(false)).await;
+        let opaque_state = state_with(
+            CheckpointService::new(temp.path())
+                .with_nested_repo_policy(NestedRepoPolicy::Opaque)
+                .with_auto_gc(false),
+        )
+        .await;
         let (ok_status, ok_body) = capture_checkpoint(&opaque_state, WS, "run-1", false).await;
         assert_eq!(ok_status, StatusCode::OK, "{ok_body}");
         assert_eq!(
