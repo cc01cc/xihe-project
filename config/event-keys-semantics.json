@@ -1,0 +1,35 @@
+{
+  "_note": "BL-303 语义登记表（供 scripts/check-event-keys.mjs 使用）。canonical 是目标名；aliases 是迁移期旧名，过了 retireAfter 仍出现即 RED。新增/修改本文件需要 review（owner + 原因）。",
+  "owner": "BL-303",
+  "updatedAt": "2026-11-05",
+  "groups": [
+    {
+      "canonical": "context_truncated",
+      "aliases": [
+        {
+          "key": "agent_context_truncated",
+          "retireAfter": "2026-11-19"
+        }
+      ],
+      "owner": "BL-303",
+      "note": "上下文截断事件/日志名。alias 是 Agent 日志旧名；wire 字段 agentContextTruncation→contextTruncated 另行双写，不在此扫描器范围。"
+    },
+    {
+      "canonical": "messages_page_required",
+      "aliases": [
+        {
+          "key": "session_messages_pagination_required",
+          "retireAfter": "2026-11-19"
+        }
+      ],
+      "owner": "BL-303",
+      "note": "消息全量读被拒日志名。Problem code PAGINATION_REQUIRED 与响应字段 truncated/nextCursor 冻结，不属事件名。"
+    },
+    {
+      "canonical": "run_completed",
+      "aliases": [],
+      "owner": "BL-303",
+      "note": "仅用于新增内部事件；done（SSE 协议事件）/terminal_outcome（DB 名词列）/outcome（载荷枚举）冻结，不设 alias。"
+    }
+  ]
+}
