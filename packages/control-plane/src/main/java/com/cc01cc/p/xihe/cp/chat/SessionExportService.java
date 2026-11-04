@@ -20,7 +20,14 @@ import java.util.Map;
 @Service
 public class SessionExportService {
 
-    /** Hard ceiling on exported messages (the read surface returns the visible branch path). */
+    /**
+     * Hard ceiling on exported messages (the read surface returns the visible branch path).
+     *
+     * <p>BL-279: this constant is the **single source** of the export cap — {@code
+     * SessionExportController} prechecks the session-wide message count against it and refuses with
+     * {@code 413 EXPORT_TOO_LARGE} before reading any message, so a huge session is never
+     * materialised just to be truncated here. Do not duplicate the number.
+     */
     static final int MAX_MESSAGES = 2_000;
     /** Per-message content ceiling in characters (long tool results / pastes). */
     static final int MAX_MESSAGE_CHARS = 20_000;
