@@ -288,14 +288,17 @@ test.describe("@host PLAN-0649 refusal visible + durable", () => {
         // the bind validates cap ⊆ principal atoms AND ⊆ operator atoms
         // (AgentPrincipalService: AGENT_PERMISSION_SCOPE_EXCEEDED), and a freshly created
         // principal only has the agent_default atoms — SPAWN_AGENT has to be materialized first.
-        const principalGrantId = requireUuid(
-            psql(
-                `SELECT id FROM grants WHERE subject_type = 'agent_principal' AND subject_id = '${principalId}'::uuid ORDER BY created_at DESC LIMIT 1`,
-            ),
-            "principal grant id",
-        );
+        // One atom per row: the materializer's ledger shape. The earlier UPDATE-append put a
+        // second atom into an existing row and the workspace bind then violated
+        // uq_grants_role_atom (subject, atom, scope) on re-materialization (attempt 4). An
+        // instance-scope row mirrors a role grant; the bind writes workspace-scope rows, so the
+        // unique key never collides and the subset check reads the union across scopes.
         psql(
-            `UPDATE grants SET permissions = permissions || '[{"actionClass":"SPAWN_AGENT","resource":"*"}]'::jsonb WHERE id = '${principalGrantId}'::uuid AND NOT (permissions @> '[{"actionClass":"SPAWN_AGENT","resource":"*"}]'::jsonb)`,
+            `INSERT INTO grants (id, granter_type, granter_id, subject_type, subject_id, permissions, source, scope_type, scope_id, read_state, created_at)
+             SELECT gen_random_uuid(), 'user', '${userId}', 'agent_principal', '${principalId}',
+                    jsonb_build_array(jsonb_build_object('actionClass', 'SPAWN_AGENT', 'resource', '*')),
+                    'role', 'instance', NULL, 'read', now()
+             ON CONFLICT DO NOTHING`,
         );
         const boundAgent = await request.put(
             `${CP_URL}/api/v1/workspaces/${wsId}/agents/${principalId}`,
