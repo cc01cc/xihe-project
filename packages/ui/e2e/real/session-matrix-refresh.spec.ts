@@ -12,7 +12,7 @@
  *  3. R8-3〔fixme · BL-237〕第二人类账户 B 刷新后应能看到同一条消息 —— 当前读面 owner-only，
  *     受阻于 BL-237，不用放宽断言换绿。
  */
-import { expect, test, type APIRequestContext } from "@playwright/test";
+import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
 import { CP_URL, getRootBranchId } from "./helpers/journey";
 import { ensureWorkspace } from "./helpers/workspace";
 import {
@@ -35,6 +35,8 @@ interface Account {
     username: string;
     userId: string;
     workspaceId: string;
+    /** Real login credentials (BL-237 seed fix: product login path instead of fake storage). */
+    email: string;
 }
 
 let owner: Account;
@@ -67,6 +69,7 @@ async function registerAccount(request: APIRequestContext, label: string): Promi
         username: profile.username ?? "",
         userId: auth.user.id,
         workspaceId,
+        email,
     };
 }
 
@@ -96,36 +99,22 @@ function seedOwnerPage(page: import("@playwright/test").Page): void {
     );
 }
 
-function seedMemberPage(page: import("@playwright/test").Page): void {
-    page.addInitScript(
-        ({ accessToken, ws }) => {
-            localStorage.setItem("xihe-token", accessToken);
-            localStorage.setItem(
-                "xihe-user",
-                JSON.stringify({
-                    id: "e2e-member",
-                    email: "e2e-member@test.com",
-                    name: "E2E Member",
-                }),
-            );
-            localStorage.setItem(
-                "xihe-workspace",
-                JSON.stringify({ id: ws, name: "R8 workspace" }),
-            );
-            sessionStorage.setItem(
-                "xihe-workspace",
-                JSON.stringify({
-                    id: ws,
-                    name: "R8 workspace",
-                    workspaceRole: "EDITOR",
-                    ownerId: "x",
-                }),
-            );
-        },
-        { accessToken: member.token, ws: owner.workspaceId },
-    );
+/**
+ * PLAN-0668 BL-299 前置（R8-3 seed 修复）：真实登录，和 UI 用户路径一致；假 storage seed
+ * （假 user id、无 refresh token）与真实登录不等价，会让读面 spec 永远红。
+ */
+async function loginMemberInBrowser(page: Page): Promise<void> {
+    await page.goto("/login");
+    const boxes = page.getByRole("textbox");
+    await boxes.nth(0).fill(member.email);
+    await boxes.nth(1).fill(PASSWORD);
+    // 某些浏览器/动画下 Enter 不触发提交（Playwright 实测），直接 requestSubmit。
+    await page
+        .locator("form")
+        .first()
+        .evaluate((form) => (form as HTMLFormElement).requestSubmit());
+    await page.waitForURL(/\/workspace/, { timeout: 30_000 });
 }
-
 test.describe("@host PLAN-0658 R8 刷新恢复（BL-228 守护）", () => {
     test.beforeAll(async ({ request }) => {
         expect(FAKE_LLM_PORT, "needs XIHE_FAKE_LLM_PORT (runner fake LLM)").not.toBe("");
@@ -287,7 +276,7 @@ test.describe("@host PLAN-0658 R8 刷新恢复（BL-228 守护）", () => {
     // BL-237：会话读面 owner-only（`SessionService.requireCurrent` 按 session.user_id 过滤）⇒
     // 受邀人类参与者刷新后读不到消息。本项记录**期望行为**：读面加参与者分支后自动转绿。
     test("R8-3 第二人类账户刷新后应能看到同一条消息（BL-237）", async ({ page }) => {
-        seedMemberPage(page);
+        await loginMemberInBrowser(page);
         await page.goto(workspaceChatPath(owner.workspaceId, sessionId));
         await expect(page.getByTestId("chat-input"), "composer mounts").toBeVisible({
             timeout: 30_000,

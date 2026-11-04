@@ -29,7 +29,13 @@
  * SSE 门：`POST /api/v1/chat` 要求会话已有活跃 SSE 订阅（DEV-014），否则 409
  * `SSE_SUBSCRIPTION_REQUIRED`。本 spec 在 beforeAll 起一条订阅并保活到 afterAll。
  */
-import { expect, test, type APIRequestContext, type APIResponse } from "@playwright/test";
+import {
+    expect,
+    test,
+    type APIRequestContext,
+    type APIResponse,
+    type Page,
+} from "@playwright/test";
 import { CP_URL, getRootBranchId } from "./helpers/journey";
 import { ensureWorkspace } from "./helpers/workspace";
 import {
@@ -49,6 +55,8 @@ const FAKE_LLM_API_KEY = "sk-fake-openai-key";
 interface Account {
     token: string;
     userId: string;
+    /** Real login credentials (BL-237 seed fix: use the product login path in UI tests). */
+    email: string;
     /** 加工作区成员按 username 寻址（`POST /workspaces/{id}/members`）。 */
     username: string;
     /** 人类参与者的 echo displayName（@ 提及按 displayName 解析，见 MentionParser）。 */
@@ -99,6 +107,7 @@ async function registerAccount(request: APIRequestContext, label: string): Promi
     return {
         token: auth.accessToken,
         userId: auth.user.id,
+        email,
         username: profile.username!,
         displayName: profile.name ?? profile.username!,
         workspaceId,
@@ -108,6 +117,23 @@ async function registerAccount(request: APIRequestContext, label: string): Promi
             "X-Workspace-Id": workspaceId,
         },
     };
+}
+
+/**
+ * PLAN-0668 BL-299 前置（R1-e/R8-3 seed 修复）：走**产品真实登录**而不是假 storage seed。
+ * 假 seed（`xihe-user.id="e2e-member"`、无 refresh token）与真实登录不等价，导致读面验证永远红。
+ */
+async function loginMemberInBrowser(page: Page): Promise<void> {
+    await page.goto("/login");
+    const boxes = page.getByRole("textbox");
+    await boxes.nth(0).fill(member.email);
+    await boxes.nth(1).fill(PASSWORD);
+    // 某些浏览器/动画下 Enter 不触发提交（Playwright 实测），直接 requestSubmit。
+    await page
+        .locator("form")
+        .first()
+        .evaluate((form) => (form as HTMLFormElement).requestSubmit());
+    await page.waitForURL(/\/workspace/, { timeout: 30_000 });
 }
 
 /** 以某账户身份访问 owner 的 workspace（跨工作区成员需要显式上下文头）。 */
@@ -415,41 +441,14 @@ test.describe("@host PLAN-0658 R1 多人类账户", () => {
     test("R1-e B 登录后 UI 可见消息气泡（BL-237 下游：消息投影被 owner-only gate 挡住）", async ({
         page,
     }) => {
-        // 第二人类账户的浏览器上下文种子（PLAN-0560：角色只认 sessionStorage，
-        // localStorage 只留 legacy 形状）。
-        await page.addInitScript(
-            ({ token, ws }) => {
-                localStorage.setItem("xihe-token", token);
-                localStorage.setItem(
-                    "xihe-user",
-                    JSON.stringify({
-                        id: "e2e-member",
-                        email: "e2e-member@test.com",
-                        name: "E2E Member",
-                    }),
-                );
-                localStorage.setItem(
-                    "xihe-workspace",
-                    JSON.stringify({ id: ws, name: "R1 workspace" }),
-                );
-                sessionStorage.setItem(
-                    "xihe-workspace",
-                    JSON.stringify({
-                        id: ws,
-                        name: "R1 workspace",
-                        workspaceRole: "EDITOR",
-                        ownerId: "x",
-                    }),
-                );
-            },
-            { token: member.token, ws: owner.workspaceId },
-        );
+        // 真实登录（BL-237 seed 修复）：假 storage seed 与真实登录不等价，会让本 spec 永远红。
+        await loginMemberInBrowser(page);
         await page.goto(workspaceChatPath(owner.workspaceId, sessionId));
         await expect(page.getByTestId("chat-input"), "member composer mounts").toBeVisible({
             timeout: 30_000,
         });
         await expect(
-            page.getByText(`R1 互见 ${NONCE}`, { exact: false }),
+            page.getByText(`R1 互见 ${NONCE}`, { exact: true }),
             "message bubble visible to the second human",
         ).toBeVisible({ timeout: 30_000 });
     });
