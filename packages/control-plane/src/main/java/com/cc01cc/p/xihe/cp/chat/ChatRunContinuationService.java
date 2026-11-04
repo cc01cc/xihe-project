@@ -167,6 +167,8 @@ class ChatRunContinuationService {
             Message userMessage = new Message(source.getSessionId(), MessageRole.USER, request.content());
             userMessage.setRunId(child.getId().toString());
             userMessage.setBranchId(branchId);
+            // PLAN-0669 D2: user turns carry no durable attribution in v1 (the composer's
+            // `asParticipantId` is a target identity, not the author) — NULL is the contract.
             messages.save(userMessage);
             child.setUserMessageId(userMessage.getId().toString());
             runs.save(child);
