@@ -468,8 +468,8 @@ export interface SessionBranchCreateResponse {
 }
 
 export interface SessionResponse extends ApiSession {
-    /** Normalized Session always carries the contract-required boolean (D4 fail-closed). */
-    archived: boolean;
+    /** Detail Session requires it; list SessionSummary does not (M2: both shapes share normalize). */
+    archived?: boolean;
     workspace?: ApiWorkspace;
 }
 
@@ -2043,14 +2043,21 @@ function requireSessionField(
     return value as string | boolean;
 }
 
-function normalizeSession(value: unknown): SessionResponse {
+function normalizeSession(
+    value: unknown,
+    options: { requireDetailFields?: boolean } = {},
+): SessionResponse {
     const root = asRecord(value),
         record = asRecord(root?.session) ?? root;
     if (!record) {
         throw new InvalidSessionProjectionError("id", "expected object with id");
     }
+    const detailContract = options.requireDetailFields !== false;
     const id = requireSessionField(record, "id", "string"),
-        archived = requireSessionField(record, "archived", "boolean");
+        archived = typeof record.archived === "boolean" ? record.archived : undefined;
+    if (detailContract && archived === undefined) {
+        throw new InvalidSessionProjectionError("archived", "expected boolean");
+    }
     const workspace = normalizeWorkspace(root?.workspace) ?? normalizeWorkspace(record.workspace);
     const workspaceId =
         typeof record.workspaceId === "string" && record.workspaceId.length > 0
@@ -2064,7 +2071,7 @@ function normalizeSession(value: unknown): SessionResponse {
     }
     return {
         id,
-        archived,
+        ...(archived === undefined ? {} : { archived }),
         title:
             typeof record.title === "string" && record.title.length > 0 ? record.title : "Untitled",
         workspaceId,
@@ -2701,7 +2708,7 @@ export const api = {
         const sessions: SessionResponse[] = [];
         for (const raw of rawSessions) {
             try {
-                sessions.push(normalizeSession(raw));
+                sessions.push(normalizeSession(raw, { requireDetailFields: false }));
             } catch (error) {
                 const field =
                     error instanceof InvalidSessionProjectionError ? error.field : "unknown";
