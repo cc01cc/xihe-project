@@ -400,9 +400,11 @@ fn fast_no_change(
 }
 
 fn exclusion_patterns(root: &Path) -> (Vec<String>, Vec<String>) {
-    let mut patterns: Vec<String> = crate::checkpoint::STATIC_EXCLUDE_PATTERNS
-        .iter()
-        .map(|pattern| (*pattern).to_owned())
+    // PLAN-0641 M5: the store capture (self mode) keeps the primary-root table; per-root
+    // grading is applied on the git-path capture surface (T6.1 scope).
+    let mut patterns: Vec<String> = crate::checkpoint::ExcludeProfile::PrimaryRoot
+        .patterns()
+        .map(str::to_owned)
         .collect();
     let mut gitignore_files = Vec::new();
     if root.join(".gitignore").is_file() {
