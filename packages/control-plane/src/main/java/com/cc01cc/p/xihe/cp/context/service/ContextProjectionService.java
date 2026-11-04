@@ -143,6 +143,131 @@ public class ContextProjectionService {
     }
 
     /**
+     * BL-305: event types whose projection effect is strictly "append a message" or "replace a
+     * whole top-level slot" — safe to apply on top of a stored projection. Everything else
+     * (carrier-mode {@code assistant.responded}, compaction, prune, fork, unknown types) can
+     * rewrite earlier facts and therefore forces the full replay.
+     */
+    private static final java.util.Set<String> APPEND_ONLY_EVENT_TYPES = java.util.Set.of(
+            "prompt.admitted", "llm.token", "assistant.responded", "tool.called", "tool.result",
+            "context.source_changed", "context.env_updated", "epoch.started", "epoch.replaced",
+            "runtime.state_cleared");
+
+    /** BL-305: the stored projection plus the number of suffix events replayed onto it. */
+    public record IncrementalProjection(ObjectNode context, int suffixEvents) {
+    }
+
+    /**
+     * BL-305 (P1): build the snapshot from the stored projection plus the event suffix instead of
+     * replaying the whole visible history. {@link Optional#empty()} means "the stored projection
+     * cannot be trusted for an incremental append" (missing, carrier-bearing, unparsable, ahead of
+     * the event log, or the suffix can rewrite earlier facts) — the caller then does the full
+     * replay, so correctness never depends on this fast path.
+     *
+     * <p>Why it is safe: {@link #apply} is deterministic and, for the append-only whitelist, reads
+     * only the current context. Carrier bookkeeping lives in {@link ReplayState} and can name
+     * earlier events, so a carrier anywhere (stored payload or suffix) forces the full replay.</p>
+     */
+    public Optional<IncrementalProjection> tryIncrementalProjection(
+            String sessionId, String branchId,
+            com.cc01cc.p.xihe.cp.service.BranchPathService.BranchVisibility visibility) {
+        Optional<ContextProjection> stored = projectionRepository
+                .findBySessionIdAndProjectionTypeAndBranchId(sessionId, AGENT_CONTEXT_TYPE, branchId);
+        if (stored.isEmpty()) {
+            return Optional.empty();
+        }
+        ContextProjection projection = stored.get();
+        long storedSequence = projection.getLatestSequence() == null ? 0L : projection.getLatestSequence();
+        if (storedSequence <= 0) {
+            return Optional.empty();
+        }
+        Long latestSequence = eventStoreService.getLatestSequence(sessionId);
+        long latest = latestSequence == null ? 0L : latestSequence;
+        if (storedSequence > latest) {
+            logger.warn("[LIFECYCLE] service=cp event=projection_incremental_skip sessionId={}"
+                    + " reason=projection_ahead storedSequence={} latestSequence={}",
+                    sessionId, storedSequence, latest);
+            return Optional.empty();
+        }
+        ObjectNode context;
+        try {
+            JsonNode parsed = objectMapper.readTree(projection.getPayload());
+            if (!(parsed instanceof ObjectNode parsedObject)) {
+                return Optional.empty();
+            }
+            context = parsedObject;
+        } catch (com.fasterxml.jackson.core.JsonProcessingException invalidPayload) {
+            logger.warn("[LIFECYCLE] service=cp event=projection_incremental_skip sessionId={}"
+                    + " reason=invalid_payload", sessionId, invalidPayload);
+            return Optional.empty();
+        }
+        JsonNode messages = context.get("messages");
+        if (messages == null || !messages.isArray()) {
+            return Optional.empty();
+        }
+        if (containsNativeRecords(messages)) {
+            return Optional.empty();
+        }
+        List<ContextEvent> suffix = eventStoreService.read(sessionId, storedSequence, visibility);
+        if (suffix.isEmpty()) {
+            return Optional.of(new IncrementalProjection(context, 0));
+        }
+        for (ContextEvent event : suffix) {
+            String type = event.getEventType();
+            boolean carrier = "assistant.responded".equals(type)
+                    && parsePayload(event.getPayload()).path("message").has("nativeRecords");
+            if (carrier || !APPEND_ONLY_EVENT_TYPES.contains(type)) {
+                logger.debug("projection incremental skip session={} reason=suffix_rewrites_history type={}",
+                        sessionId, type);
+                return Optional.empty();
+            }
+        }
+        ReplayState replay = new ReplayState();
+        ObjectNode incremental = context;
+        for (ContextEvent event : suffix) {
+            incremental = apply(incremental, event, replay);
+        }
+        return Optional.of(new IncrementalProjection(incremental, suffix.size()));
+    }
+
+    /**
+     * BL-305 (P1): the stored payload when the projection is exactly at the event-log head.
+     *
+     * <p>This is the read path for a dispatch that has nothing new to fold in: the caller can write
+     * the stored JSON straight to the response instead of reparsing and re-serializing it. Any other
+     * state (missing, behind, ahead) returns empty so the caller falls back to
+     * {@link #projectAndSave}.</p>
+     */
+    @Transactional(readOnly = true)
+    public Optional<String> currentSnapshotPayload(String sessionId, String branchId) {
+        Optional<ContextProjection> stored = projectionRepository
+                .findBySessionIdAndProjectionTypeAndBranchId(sessionId, AGENT_CONTEXT_TYPE, branchId);
+        if (stored.isEmpty()) {
+            return Optional.empty();
+        }
+        ContextProjection projection = stored.get();
+        long storedSequence = projection.getLatestSequence() == null ? 0L : projection.getLatestSequence();
+        if (storedSequence <= 0) {
+            return Optional.empty();
+        }
+        Long latestSequence = eventStoreService.getLatestSequence(sessionId);
+        long latest = latestSequence == null ? 0L : latestSequence;
+        if (storedSequence != latest) {
+            return Optional.empty();
+        }
+        return Optional.of(projection.getPayload());
+    }
+
+    private static boolean containsNativeRecords(JsonNode messages) {
+        for (JsonNode message : messages) {
+            if (message.has("nativeRecords")) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
      * PLAN-0410 T2.1/T2.3: projection upsert keyed by
      * (session_id, projection_type, branch_id) — the cache key carries the
      * branchId. A null branchId bootstraps the Session root (legacy callers);
@@ -163,9 +288,28 @@ public class ContextProjectionService {
         branchPathService.lockSessionRow(sessionId);
         com.cc01cc.p.xihe.cp.service.BranchPathService.BranchVisibility visibility =
                 branchPathService.resolveVisibility(sessionId, effectiveBranch);
-        ObjectNode context = project(sessionId, afterSequence, visibility);
+        // BL-305: reuse the stored projection and replay only the suffix when that is provably
+        // equivalent to a full replay; otherwise fall back to the historical full rebuild.
+        Optional<IncrementalProjection> incremental =
+                tryIncrementalProjection(sessionId, effectiveBranch, visibility);
+        ObjectNode context;
+        int suffixEvents = 0;
+        if (incremental.isPresent()) {
+            context = incremental.get().context();
+            suffixEvents = incremental.get().suffixEvents();
+            logger.debug("[LIFECYCLE] service=cp event=projection_incremental sessionId={} suffixEvents={}",
+                    sessionId, suffixEvents);
+        } else {
+            context = project(sessionId, afterSequence, visibility);
+        }
         long latestSequence = context.get("latest_sequence").asLong();
         context.put("branch_id", effectiveBranch);
+
+        if (incremental.isPresent() && suffixEvents == 0) {
+            // Nothing was appended: the stored row already equals the requested snapshot, so the
+            // hot read path must not re-serialize a multi-megabyte payload just to rewrite it.
+            return context;
+        }
 
         // PLAN-0410 field-matrix §2 #6: explicit three-key lookup + insert.
         Optional<ContextProjection> existing =
