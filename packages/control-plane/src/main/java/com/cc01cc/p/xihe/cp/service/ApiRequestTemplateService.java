@@ -51,10 +51,17 @@ public class ApiRequestTemplateService {
     private final ApiRequestValidator validator;
     private final org.springframework.beans.factory.ObjectProvider<WorkspaceService> workspaces;
     private final DbLockTimeout timeout;
+    /**
+     * BL-284: supplies the component manifest merged into the frozen admission snapshot. Resolved
+     * lazily through a provider because ConfigService (needed by ContextTemplateService) already
+     * depends back on this service — a direct field would close a Spring dependency cycle.
+     */
+    private final org.springframework.beans.factory.ObjectProvider<ContextTemplateService> contextTemplates;
 
     public ApiRequestTemplateService(ConfigJpaRepository configs, ConfigAuditRepository audits, ProviderConnectionRepository connections,
                                      EntityManager em, ObjectMapper json, ApiInputTypeService types,
-                                     ApiRequestValidator validator, org.springframework.beans.factory.ObjectProvider<WorkspaceService> workspaces, DbLockTimeout timeout) {
+                                     ApiRequestValidator validator, org.springframework.beans.factory.ObjectProvider<WorkspaceService> workspaces, DbLockTimeout timeout,
+                                     org.springframework.beans.factory.ObjectProvider<ContextTemplateService> contextTemplates) {
         this.configs = configs;
         this.audits = audits;
         this.connections = connections;
@@ -64,6 +71,7 @@ public class ApiRequestTemplateService {
         this.validator = validator;
         this.workspaces = workspaces;
         this.timeout = timeout;
+        this.contextTemplates = contextTemplates;
     }
 
     public static CpApiException invalid(String message) {
@@ -387,6 +395,7 @@ public class ApiRequestTemplateService {
         }
         ObjectNode template = resolveRef(ref, user, workspace, "", json.createArrayNode());
         compatible(connection, template);
+        mergeContextComponents(template, user, workspace);
         ObjectNode snapshot = json.createObjectNode();
         snapshot.setAll((ObjectNode) ref);
         snapshot.put("source", source);
@@ -398,6 +407,58 @@ public class ApiRequestTemplateService {
         snapshot.put("connectionKey", connection.getConnectionKey());
         snapshot.put("connectionScope", connection.getOwnerType());
         return snapshot;
+    }
+
+    /**
+     * BL-284: the admission snapshot freezes BOTH halves of the context:
+     * <ul>
+     *   <li>{@code bodySource} — the wire template, owned by the API request template;</li>
+     *   <li>{@code components} — the component manifest, owned by the context template
+     *       ({@code context-templates} domain, resolved workspace → user → instance → built-in).</li>
+     * </ul>
+     *
+     * <p>The merge happens <b>here, at admission</b>, and the result is stored on the ChatRun, so the
+     * same run always sees the same context (the fingerprint would be meaningless if the read side
+     * stitched it together later). If the API request template already carries a manifest it must be
+     * identical — two different manifests are a configuration contradiction, so we fail loudly
+     * instead of guessing which one wins.</p>
+     */
+    void mergeContextComponents(ObjectNode template, UUID user, UUID workspace) {
+        ContextTemplateService.TemplateBinding contextBinding = contextTemplates.getObject().defaultBinding(user, workspace);
+        JsonNode contextComponents = contextBinding.snapshot().path("template").path("components");
+        if (!contextComponents.isArray() || contextComponents.isEmpty()) {
+            return;
+        }
+        JsonNode existing = template.path("components");
+        if (existing.isArray() && !existing.isEmpty()) {
+            if (!existing.equals(contextComponents)) {
+                throw new CpApiException(HttpStatus.CONFLICT, "CONTEXT_TEMPLATE_COMPONENTS_CONFLICT",
+                        "API request template and context template declare different component manifests: "
+                                + componentDiff(existing, contextComponents));
+            }
+            return;
+        }
+        template.set("components", contextComponents.deepCopy());
+    }
+
+    /** Human-readable difference summary for {@code CONTEXT_TEMPLATE_COMPONENTS_CONFLICT}. */
+    private static String componentDiff(JsonNode left, JsonNode right) {
+        Set<String> leftKeys = componentKeys(left);
+        Set<String> rightKeys = componentKeys(right);
+        Set<String> onlyLeft = new TreeSet<>(leftKeys);
+        onlyLeft.removeAll(rightKeys);
+        Set<String> onlyRight = new TreeSet<>(rightKeys);
+        onlyRight.removeAll(leftKeys);
+        return "apiRequestOnly=" + onlyLeft + ", contextTemplateOnly=" + onlyRight;
+    }
+
+    private static Set<String> componentKeys(JsonNode components) {
+        Set<String> keys = new HashSet<>();
+        for (JsonNode component : components) {
+            keys.add(component.path("type").asText("") + ":" + component.path("instanceId").asText("")
+                    + ":" + component.path("enabled").asBoolean(false));
+        }
+        return keys;
     }
 
     public ObjectNode admissionSnapshot(Session session) {
