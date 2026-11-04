@@ -2,6 +2,7 @@
 import { computed, onMounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { useAuthStore } from "../../../stores/auth";
+import { principalNameError } from "../../../lib/principalName";
 import {
     ApiError,
     api,
@@ -181,9 +182,12 @@ const defaultModelError = computed(() => {
     return "";
 });
 
+/** 2026-11-04 用户裁定：主体名不得含空格、不得数字开头，只允许字母/汉字/数字。 */
+const agentNameError = computed(() => principalNameError(name.value));
+
 const createBlocked = computed(
     () =>
-        !name.value.trim() ||
+        !!agentNameError.value ||
         saving.value ||
         !!createdPrincipal.value ||
         canCreatePrincipal.value !== true ||
@@ -815,7 +819,24 @@ async function unbind(agent: WorkspaceAgentBinding) {
                     maxlength="120"
                     data-testid="agent-principal-name"
                     class="w-full rounded-md border bg-background px-3 py-2"
+                    :aria-invalid="agentNameError ? 'true' : undefined"
+                    :aria-describedby="agentNameError ? 'agent-principal-name-error' : undefined"
                 />
+                <span
+                    v-if="agentNameError"
+                    id="agent-principal-name-error"
+                    class="block text-xs text-destructive"
+                    data-testid="agent-principal-name-error"
+                >
+                    {{
+                        agentNameError === "required"
+                            ? t("validation.principalNameRequired")
+                            : t("validation.principalNamePattern")
+                    }}
+                </span>
+                <span v-else class="block text-xs text-muted-foreground">
+                    {{ t("validation.nameAllowed") }}
+                </span>
             </label>
             <label class="block space-y-1 text-sm">
                 <span>{{ t("workspace.agentTemplateChoice") }}</span>

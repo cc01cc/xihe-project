@@ -569,17 +569,9 @@ test.describe("@host PLAN-0509 Run trace browser acceptance", () => {
         await ensureChatReady(page);
 
         // The route-matched real connection was reused or verified from the
-        // host-injected key in beforeAll. Select that concrete catalog model in
-        // the UI; do not call sendChat(), whose helper creates a fake connection.
-        const modelTrigger = page.getByTestId("model-popover-trigger");
-        await expect(modelTrigger).toBeVisible();
-        await modelTrigger.click();
-        const modelSearch = page.getByTestId("model-popover-search");
-        await modelSearch.fill(REAL_MODEL);
-        await expect(page.getByTestId(`model-item-${REAL_PROVIDER}/${REAL_MODEL}`)).toBeVisible({
-            timeout: 15000,
-        });
-        await modelSearch.press("Enter");
+        // host-injected key in beforeAll. 2026-11-04 用户裁定移除 composer 模型选择器：
+        // 绑定改走产品 PATCH API（bindRealProvider 内部就是这个端点），do not call sendChat().
+        await bindRealProvider(request, sessionId, ctx);
         await expect
             .poll(() => sessionModel(request), { timeout: 15000 })
             .toBe(`${REAL_PROVIDER}/${REAL_MODEL}`);

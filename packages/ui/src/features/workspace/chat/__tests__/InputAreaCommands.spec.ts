@@ -101,7 +101,6 @@ const messages = {
 };
 
 const stubs = {
-    ModelPopover: { template: "<div />" },
     LoaderCircle: { template: "<span />" },
     ImageUpload: { template: "<div />" },
     FileUpload: { template: "<div />" },

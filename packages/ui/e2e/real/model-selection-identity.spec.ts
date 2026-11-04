@@ -12,6 +12,7 @@ import {
     createSessionWithPrincipal,
     provisionWorkspaceAgentPrincipal,
 } from "./helpers/agent-principal";
+import { bindSessionViaApi } from "./helpers/session-binding";
 
 const LLM_MODE = process.env.XIHE_E2E_LLM_MODE ?? "mock";
 
@@ -40,18 +41,16 @@ test.describe("@host PLAN-0438 model selection connection identity", () => {
         await page.goto(`/workspace/${ctx.workspaceId}/chat/${sessionId}`, { waitUntil: "load" });
         await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: 15000 });
 
-        // Open the model popover and pick the fake deepseek model through the
-        // connection-scoped catalog (legacy provider/model selector contract).
-        const trigger = page.getByTestId("model-popover-trigger");
-        await expect(trigger).toBeVisible();
-        await trigger.click();
-        const search = page.getByTestId("model-popover-search");
-        await expect(search).toBeVisible();
-        await search.fill("fake-deepseek");
-        const item = page.getByTestId("model-item-deepseek/fake-deepseek");
-        await expect(item).toBeVisible({ timeout: 10000 });
-        // First filter match selects on plain Enter (same guard as chat-availability).
-        await search.press("Enter");
+        // 2026-11-04 用户裁定移除 composer 模型选择器：绑定改走产品 PATCH API。
+        // 下面的断言（持久化的是真实 provider id `deepseek`，不是 catalog 键）保持不变。
+        await bindSessionViaApi(
+            request,
+            CP_URL,
+            ctx.headers,
+            sessionId,
+            "deepseek",
+            "fake-deepseek",
+        );
 
         // The session must persist the REAL provider id (deepseek), never the
         // connectionId-keyed catalog map key.

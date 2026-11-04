@@ -60,7 +60,6 @@ const stubs = {
     FileUpload: { template: "<div />" },
     ScreenshotCapture: { template: "<div />" },
     VoiceInput: { template: "<div />" },
-    ModelPopover: { template: "<div />" },
     LoaderCircle: { template: "<span />" },
     Image: { template: "<span />" },
     Camera: { template: "<span />" },

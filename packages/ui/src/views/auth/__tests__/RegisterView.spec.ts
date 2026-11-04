@@ -95,7 +95,7 @@ describe("RegisterView submission lock", () => {
     });
 });
 
-// PLAN-0621 F-05：用户名规则（1–32 位小写字母/数字、字母开头）必须在**前端**拦住，
+// 2026-11-04 用户裁定：用户名规则（字母/中文汉字/数字、不得数字开头、不含空格、≤32 位）必须在**前端**拦住，
 // 否则用户填完提交才被 CP 以 400 USERNAME_INVALID 打回（且 detail 是英文）。
 describe("RegisterView username validation (PLAN-0621 F-05)", () => {
     async function fillWithUsername(wrapper: ReturnType<typeof mountView>, username: string) {
@@ -107,7 +107,7 @@ describe("RegisterView username validation (PLAN-0621 F-05)", () => {
         await flushPromises();
     }
 
-    it.each(["Headed Second", "1abc", "ab-c", "a".repeat(33), "王小明"])(
+    it.each(["Headed Second", "1abc", "ab-c", "a".repeat(33), "ab_c", "1王小明"])(
         "blocks %s before any request and shows the rule hint",
         async (username) => {
             authMock.register.mockResolvedValue(true);
@@ -119,6 +119,23 @@ describe("RegisterView username validation (PLAN-0621 F-05)", () => {
                 "invalid username must not reach the CP",
             ).not.toHaveBeenCalled();
             expect(wrapper.text()).toContain("register.usernameInvalid");
+        },
+    );
+
+    it.each(["王小明", "HeadedSecond", "abc123"])(
+        "accepts %s under the 2026-11-04 naming rule",
+        async (username) => {
+            authMock.register.mockResolvedValue(true);
+            pushMock.mockResolvedValue(undefined);
+            const wrapper = mountView();
+            await fillWithUsername(wrapper, username);
+
+            expect(authMock.register).toHaveBeenCalledWith(
+                "a@test.com",
+                "pw-12345678",
+                "a",
+                username,
+            );
         },
     );
 

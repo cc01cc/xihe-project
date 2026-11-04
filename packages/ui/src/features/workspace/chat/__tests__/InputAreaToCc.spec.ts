@@ -54,7 +54,6 @@ const stubs = {
     FileUpload: { template: "<div />" },
     ScreenshotCapture: { template: "<div />" },
     VoiceInput: { template: "<div />" },
-    ModelPopover: { template: "<div />" },
     LoaderCircle: { template: "<span />" },
     Image: { template: "<span />" },
     Camera: { template: "<span />" },
@@ -126,47 +125,88 @@ beforeEach(() => {
 });
 
 describe("InputArea to/cc (PLAN-0630 M5b, D30-14)", () => {
-    it("to 默认选中 PRIMARY participant", async () => {
+    // 2026-11-04 用户裁定：「发送 / 抄送」都是「输入 + 候选浮层」，空格结束一个名字。
+    it("发送栏默认选中 PRIMARY participant", async () => {
         storeState.canSpeakAs = true;
         storeState.speakAsCandidates = roster().filter((item) => item.selfOwned);
         const wrapper = mountInputArea();
         await flushPromises();
 
-        expect(
-            (wrapper.get('[data-testid="speak-as-select"]').element as HTMLSelectElement).value,
-        ).toBe(PRIMARY_ID);
+        expect(wrapper.get('[data-testid="speak-as-chip"]').attributes("data-participant-id")).toBe(
+            PRIMARY_ID,
+        );
+        expect(wrapper.get('[data-testid="speak-as-chip"]').text()).toContain("Alpha");
     });
 
-    it("cc 初始为空（无 chips、无待选残留）", async () => {
+    it("抄送初始为空（无 chips）", async () => {
         storeState.participants = roster();
         const wrapper = mountInputArea();
         await flushPromises();
 
         expect(wrapper.find('[data-testid="cc-chip"]').exists()).toBe(false);
-        expect(wrapper.findAll('[data-testid="cc-add-select"] option')).toHaveLength(
-            // placeholder + 全部未停用参与者（to 栏未渲染，无排除项）
-            roster().length + 1,
-        );
+        expect(wrapper.find('[data-testid="cc-input"]').exists()).toBe(true);
     });
 
-    it("cc chips 可添加与移除", async () => {
+    it("抄送 chips 可输入添加、可 × 移除、可再次添加", async () => {
         storeState.participants = roster();
         const wrapper = mountInputArea();
         await flushPromises();
 
-        await wrapper.get('[data-testid="cc-add-select"]').setValue(HELPER_ID);
-        let chips = wrapper.findAll('[data-testid="cc-chip"]');
-        expect(chips.map((chip) => chip.attributes("data-participant-id"))).toEqual([HELPER_ID]);
+        const field = wrapper.get('[data-testid="cc-input"]');
+        await field.setValue("Helper");
+        await field.trigger("keydown", { key: " " });
+        await flushPromises();
+        expect(
+            wrapper
+                .findAll('[data-testid="cc-chip"]')
+                .map((chip) => chip.attributes("data-participant-id")),
+        ).toEqual([HELPER_ID]);
 
         await wrapper.get('[data-testid="cc-chip-remove"]').trigger("click");
-        chips = wrapper.findAll('[data-testid="cc-chip"]');
-        expect(chips).toHaveLength(0);
-        // 移除后回到候选列表，可再次添加。
-        const options = wrapper.findAll('[data-testid="cc-add-select"] option');
-        expect(options.some((option) => option.attributes("value") === HELPER_ID)).toBe(true);
+        await flushPromises();
+        expect(wrapper.findAll('[data-testid="cc-chip"]')).toHaveLength(0);
+
+        // 移除后候选里还能再选回同一个人。
+        await wrapper.get('[data-testid="cc-input"]').setValue("Helper");
+        await wrapper.get('[data-testid="cc-input"]').trigger("keydown", { key: "Enter" });
+        await flushPromises();
+        expect(
+            wrapper
+                .findAll('[data-testid="cc-chip"]')
+                .map((chip) => chip.attributes("data-participant-id")),
+        ).toEqual([HELPER_ID]);
     });
 
-    it("to 改变不写回 Session 绑定（store 数据源不被触碰）", async () => {
+    it("多个名字用空格分隔，一次可以加入多条抄送", async () => {
+        storeState.participants = roster();
+        const wrapper = mountInputArea();
+        await flushPromises();
+
+        await wrapper.get('[data-testid="cc-input"]').setValue("Helper Alpha");
+        await wrapper.get('[data-testid="cc-input"]').trigger("keydown", { key: " " });
+        await flushPromises();
+        expect(
+            wrapper
+                .findAll('[data-testid="cc-chip"]')
+                .map((chip) => chip.attributes("data-participant-id"))
+                .sort(),
+        ).toEqual([HELPER_ID, PRIMARY_ID].sort());
+    });
+
+    it("输入不存在的人名时不落 chip，并给出提示", async () => {
+        storeState.participants = roster();
+        const wrapper = mountInputArea();
+        await flushPromises();
+
+        await wrapper.get('[data-testid="cc-input"]').setValue("Nobody");
+        await wrapper.get('[data-testid="cc-input"]').trigger("keydown", { key: " " });
+        await flushPromises();
+
+        expect(wrapper.findAll('[data-testid="cc-chip"]')).toHaveLength(0);
+        expect(wrapper.find('[data-testid="cc-unknown"]').exists()).toBe(true);
+    });
+
+    it("发送栏改变不写回 Session 绑定（store 数据源不被触碰）", async () => {
         storeState.canSpeakAs = true;
         storeState.speakAsCandidates = roster().filter((item) => item.selfOwned);
         storeState.participants = roster();
@@ -175,9 +215,13 @@ describe("InputArea to/cc (PLAN-0630 M5b, D30-14)", () => {
 
         const participantsBefore = storeState.participants;
         const callsBefore = storeState.ensureLoaded.mock.calls.length;
-        await wrapper.get('[data-testid="speak-as-select"]').setValue(SELF_ID);
+        await wrapper.get('[data-testid="speak-as-input"]').setValue("Ada Lovelace");
+        await wrapper.get('[data-testid="speak-as-input"]').trigger("keydown", { key: "Enter" });
         await flushPromises();
 
+        expect(wrapper.get('[data-testid="speak-as-chip"]').attributes("data-participant-id")).toBe(
+            SELF_ID,
+        );
         expect(storeState.participants).toBe(participantsBefore);
         expect(storeState.ensureLoaded.mock.calls.length).toBe(callsBefore);
     });
@@ -187,7 +231,9 @@ describe("InputArea to/cc (PLAN-0630 M5b, D30-14)", () => {
         const wrapper = mountInputArea();
         await flushPromises();
 
-        await wrapper.get('[data-testid="cc-add-select"]').setValue(HELPER_ID);
+        await wrapper.get('[data-testid="cc-input"]').setValue("Helper");
+        await wrapper.get('[data-testid="cc-input"]').trigger("keydown", { key: " " });
+        await flushPromises();
         await wrapper.get('[data-testid="chat-input"]').setValue("hello");
         await wrapper.get('[data-testid="chat-send-button"]').trigger("click");
         await flushPromises();

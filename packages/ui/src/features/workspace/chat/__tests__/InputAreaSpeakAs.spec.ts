@@ -53,7 +53,6 @@ const stubs = {
     FileUpload: { template: "<div />" },
     ScreenshotCapture: { template: "<div />" },
     VoiceInput: { template: "<div />" },
-    ModelPopover: { template: "<div />" },
     LoaderCircle: { template: "<span />" },
     Image: { template: "<span />" },
     Camera: { template: "<span />" },
@@ -108,9 +107,10 @@ describe("InputArea speak-as entry (PLAN-0623 D23-27)", () => {
         await flushPromises();
 
         expect(wrapper.find('[data-testid="speak-as-bar"]').exists()).toBe(false);
-        expect(wrapper.find('[data-testid="speak-as-select"]').exists()).toBe(false);
+        expect(wrapper.find('[data-testid="speak-as-input"]').exists()).toBe(false);
     });
 
+    // 2026-11-04 用户裁定：原生 select 换成「输入 + 候选浮层」，候选在打字/↓ 后才出现。
     it("lists only the candidates the store exposes", async () => {
         storeState.canSpeakAs = true;
         storeState.speakAsCandidates = [
@@ -120,11 +120,24 @@ describe("InputArea speak-as entry (PLAN-0623 D23-27)", () => {
         const wrapper = mountInputArea();
         await flushPromises();
 
-        const options = wrapper.findAll('[data-testid="speak-as-select"] option');
-        expect(options.map((option) => option.attributes("data-participant-id"))).toEqual([
-            "self",
-            "agent",
-        ]);
+        const field = wrapper.get('[data-testid="speak-as-input"]');
+        // 已选中的（默认 self）不进候选，避免把自己再选一次。
+        await field.setValue("h");
+        await flushPromises();
+        expect(
+            wrapper
+                .findAll('[data-testid="speak-as-option"]')
+                .map((option) => option.attributes("data-participant-id")),
+        ).toEqual(["agent"]);
+
+        await field.setValue("");
+        await field.trigger("keydown", { key: "ArrowDown" });
+        await flushPromises();
+        expect(
+            wrapper
+                .findAll('[data-testid="speak-as-option"]')
+                .map((option) => option.attributes("data-participant-id")),
+        ).toEqual(["agent"]);
     });
 
     it("defaults to my own HUMAN row, never to somebody else", async () => {
@@ -136,9 +149,9 @@ describe("InputArea speak-as entry (PLAN-0623 D23-27)", () => {
         const wrapper = mountInputArea();
         await flushPromises();
 
-        expect(
-            (wrapper.get('[data-testid="speak-as-select"]').element as HTMLSelectElement).value,
-        ).toBe("self");
+        const chip = wrapper.get('[data-testid="speak-as-chip"]');
+        expect(chip.attributes("data-participant-id")).toBe("self");
+        expect(chip.text()).toContain("Ada Lovelace");
     });
 
     it("sends the selected participant id as the third argument", async () => {
@@ -150,7 +163,15 @@ describe("InputArea speak-as entry (PLAN-0623 D23-27)", () => {
         const wrapper = mountInputArea();
         await flushPromises();
 
-        await wrapper.get('[data-testid="speak-as-select"]').setValue("agent");
+        // 空格结束一个名字：不必点候选，敲完名字 + 空格即可换人。
+        const field = wrapper.get('[data-testid="speak-as-input"]');
+        await field.setValue("Helper");
+        await field.trigger("keydown", { key: " " });
+        await flushPromises();
+        expect(wrapper.get('[data-testid="speak-as-chip"]').attributes("data-participant-id")).toBe(
+            "agent",
+        );
+
         await wrapper.get('[data-testid="chat-input"]').setValue("hello");
         await wrapper.get('[data-testid="chat-send-button"]').trigger("click");
         await flushPromises();
