@@ -17,14 +17,16 @@ both WARN'd and attached to the run's terminal `done` payload as ``agentContextT
 component builder's ``_limit_inbound_history`` delegates to :func:`truncate_for_run` too, so the
 WARN line and the wire object can never drift apart.
 
-Relationship to ``HISTORY_TRUNCATION_LIMIT`` (``agent_runner/langgraph_runner.py``)
-----------------------------------------------------------------------------------
-That constant (20) is an **assembly fuse** (PLAN-0341 T1.2), not a second governance cap: it only
-bounds the LangGraph message list the runner assembles and exists so the graph never assembles an
-unbounded history (and never orphans a tool result). It is intentionally *tighter* than the inbound
-cap, so for the runner's own history it is the binding limit; the inbound cap is the governance layer
-that bounds what the process materialises (count + bytes) and what the provider body may contain
-(``native_history`` is built before the runner). Order: prune → inbound cap → fuse → token budget.
+Relationship to ``ASSEMBLY_FUSE_LIMIT`` (``agent_runner/langgraph_runner.py``)
+------------------------------------------------------------------------------
+That constant (20, renamed from ``HISTORY_TRUNCATION_LIMIT``) is an **assembly fuse**
+(PLAN-0341 T1.2), not a second governance cap: it only bounds the LangGraph message list the runner
+assembles and exists so the graph never assembles an unbounded history (and never orphans a tool
+result). It is intentionally *tighter* than the inbound cap, so for the runner's own history it is
+the binding limit; the inbound cap is the governance layer that bounds what the process materialises
+(count + bytes) and what the provider body may contain (``native_history`` is built before the
+runner). Order: prune → inbound cap → fuse → token budget. Neither constant may be merged into the
+other: they govern different layers.
 
 Contract (frozen with the Lead, PLAN-0670 M2c):
 - defaults: **2000 messages** and **8 MiB** of serialised JSON, both overridable by env;
