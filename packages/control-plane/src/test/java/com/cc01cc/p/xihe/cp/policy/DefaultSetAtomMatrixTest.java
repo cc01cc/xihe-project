@@ -116,12 +116,34 @@ class DefaultSetAtomMatrixTest {
     }
 
     @Test
-    void everyPlanAtomIsForbiddenToAgentPrincipals() {
-        // D51-27: the forbidden set must cover all ten; a new atom that forgets to join it would
-        // let an agent principal inherit an administrative face.
-        for (String atom : PLAN_ATOMS) {
+    void onlyTheInstanceAndManagementFacesAreForbiddenToAgentPrincipals() {
+        // PLAN-0651 M2 (Lead ruling 2026-11-05): forbidden = instance-domain administration plus the
+        // workspace management faces (16 atoms). N5–N9 are workspace capabilities the owner hands
+        // out through roles, so an agent CAN hold them — forbidding them made every WS_EDITOR role
+        // unbindable and would have forbidden an agent from running code.
+        Set<String> forbiddenByRuling = Set.of(
+                ToolFaceRegistry.ACTION_READ_INSTANCE_CONTENT,
+                ToolFaceRegistry.ACTION_WRITE_INSTANCE_CONTENT,
+                ToolFaceRegistry.ACTION_VIEW_SECRET_CONTENT,
+                ToolFaceRegistry.ACTION_MANAGE_AGENT_PRINCIPALS,
+                ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_MEMBERS);
+        Set<String> bindableByRuling = Set.of(
+                ToolFaceRegistry.ACTION_MANAGE_SKILL_LIBRARY,
+                ToolFaceRegistry.ACTION_MANAGE_PROVIDER_CONNECTIONS,
+                ToolFaceRegistry.ACTION_USE_WORKSPACE_RUNTIME,
+                ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_RUNTIME,
+                ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_POLICY);
+
+        for (String atom : forbiddenByRuling) {
             assertFalse(PermissionAtomCatalog.canBindToAgentPrincipal(List.of(atom)),
-                    "atom must be forbidden to agent principals: " + atom);
+                    "must be forbidden to agent principals: " + atom);
         }
+        for (String atom : bindableByRuling) {
+            assertTrue(PermissionAtomCatalog.canBindToAgentPrincipal(List.of(atom)),
+                    "must be grantable to agent principals (workspace capability): " + atom);
+        }
+        // The aggregate is the single source of truth 0667 derives from.
+        assertEquals(16, PermissionAtomCatalog.agentPrincipalForbiddenAtoms().size(),
+                "Lead ruling 2026-11-05: exactly 16 forbidden atoms");
     }
 }
