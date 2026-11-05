@@ -62,7 +62,8 @@ class ApprovalDecisionTierTest {
             historyWriter, grantWriter, audit, policySummary, pendingStore, sessionPolicyState,
             sessionApprovalMode, policyRevision, workspaceRepository,
             new AnswererChain(List.of(new UserAnswerer(), new AutoReviewAnswerer())),
-            org.mockito.Mockito.mock(GuardAdviceService.class));
+            org.mockito.Mockito.mock(GuardAdviceService.class),
+            org.mockito.Mockito.mock(com.cc01cc.p.xihe.cp.chat.SseEmitterManager.class));
 
     private static final String TEST_RUN_ID = "11111111-1111-1111-1111-111111111111";
     private static final String TEST_REQUEST_ID = "22222222-2222-2222-2222-222222222222";

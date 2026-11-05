@@ -279,6 +279,35 @@ describe("useSharedEventLeader", () => {
         tabs.forEach((tab) => tab.stop());
     });
 
+    it("with Web Locks but no BroadcastChannel it still opens the upstream and warns", async () => {
+        // Lead 在 T2 复审时点名的组合：T1 曾被"无 BC 时预置 degraded-local"短路掉连接，
+        // 这条用例把这个组合钉住（有锁 ⇒ 能当选；无通道 ⇒ 只能自己连 + 一条 warn）。
+        const storage = new FakeStorage();
+        const logger = fakeLogger();
+        const upstream = makeUpstream();
+        const leader = useSharedEventLeader("ws:nine", upstream.connect, {
+            ...makeOptions(new ChannelBus(), storage, logger),
+            deps: {
+                locks: {
+                    request: (_name, _options, callback) => callback().then(() => undefined),
+                },
+                storage: null,
+                channelFactory: () => null,
+                now: () => Date.now(),
+            },
+        });
+
+        leader.start();
+        await vi.advanceTimersByTimeAsync(50);
+
+        expect(leader.role.value).toBe("leader");
+        expect(upstream.contexts).toHaveLength(1);
+        expect(leader.isConnected.value).toBe(false);
+        upstream.contexts[0]!.setConnected(true);
+        expect(leader.isConnected.value).toBe(true);
+        leader.stop();
+    });
+
     it("with no BroadcastChannel at all it degrades to local and warns once", async () => {
         const storage = new FakeStorage();
         const logger = fakeLogger();

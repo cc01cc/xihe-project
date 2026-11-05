@@ -339,9 +339,13 @@ describe("ScheduledTasksView workspace events", () => {
         await mountView();
         expect(mockedApi.listScheduledTasks).toHaveBeenCalledTimes(1);
 
-        expect(chatTransport.sendMessages).toHaveBeenCalledWith(
-            "workspace:ws-1",
-            expect.objectContaining({ url: "/api/v1/workspaces/ws-1/events" }),
+        // PLAN-0676 T2：上游连接现在由 leader 层建立（选举含 50–150ms 抢占抖动），所以这里
+        // 用 waitFor 轮询而不是假设"挂载后立即连"——断言本身不变，只是不再与实现时序耦合。
+        await vi.waitFor(() =>
+            expect(chatTransport.sendMessages).toHaveBeenCalledWith(
+                "workspace:ws-1",
+                expect.objectContaining({ url: "/api/v1/workspaces/ws-1/events" }),
+            ),
         );
         const options = vi.mocked(chatTransport.sendMessages).mock.calls[0]![1];
         await options.onmessage?.({
