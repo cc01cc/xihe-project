@@ -176,6 +176,15 @@ const messages = {
             // BL-335：SSE 订阅上限（429）常驻横幅。语义是"通道停了"，所以文案说清**已停止刷新 + 怎么恢复**。
             sseSubscriberLimitTitle: "实时更新已停止。",
             sseSubscriberLimitHint: "该页数据已停止刷新，请关掉不用的标签页后刷新本页。",
+            // PLAN-0676 T2：同一横幅的三态（t56 的 limit 态保留在上面两条，语义不变）。
+            sseDisconnectedTitle: "与实时更新的连接已断开。",
+            sseDisconnectedHint: "本页数据可能已过期。点重试立即重连；仍失败时刷新本页。",
+            sseReconnectingTitle: "正在切换实时更新连接。",
+            sseReconnectingHint: "其它窗口正在接管，期间数据可能延迟更新，无需操作。",
+            sseNoticeRetry: "重试",
+            approvalResolvedElsewhere: "这条审批已在其他窗口处理。",
+            approvalResolvedElsewhereDraftKept: "你已经写的内容已保留，可以复制留用；提交已禁用。",
+            sseNoticeHelp: "查看帮助",
             // BL-317b：移动端成员主入口（标题区）与独立成员 sheet。
             membersEntryLabel: "会话成员，{count} 人",
             membersEntryLabelWithMentions: "会话成员，{count} 人，{mentions} 个未读提及",
@@ -2419,15 +2428,15 @@ const messages = {
                 },
             },
             trace: {
-                title: "Run trace",
-                runLabel: "Select Run",
-                runPlaceholder: "Choose a Run to inspect",
+                title: "Turn trace",
+                runLabel: "Select turn",
+                runPlaceholder: "Choose a turn to inspect",
                 runOption: "{runId} · {label}",
-                noRuns: "No Run is available to inspect",
+                noRuns: "No turn is available to inspect",
                 loading: "Loading execution trace…",
                 failed: "The execution trace is temporarily unavailable.",
                 retry: "Retry",
-                empty: "This Run has no events to display.",
+                empty: "This turn has no events to display.",
                 timeUnknown: "Time unknown",
                 unknown: "Unknown",
                 completenessLabel: "Completeness: {value}",
@@ -2491,6 +2500,18 @@ const messages = {
             sseSubscriberLimitTitle: "Live updates stopped.",
             sseSubscriberLimitHint:
                 "This page has stopped refreshing. Close the tabs you no longer use, then reload this page.",
+            // PLAN-0676 T2: the same banner's other two states.
+            sseDisconnectedTitle: "Live updates are disconnected.",
+            sseDisconnectedHint:
+                "This page may be out of date. Retry to reconnect now, or reload the page if it keeps failing.",
+            sseReconnectingTitle: "Switching the live-update connection.",
+            sseReconnectingHint:
+                "Another window is taking over; data may briefly lag. No action needed.",
+            sseNoticeRetry: "Retry",
+            approvalResolvedElsewhere: "This approval was handled in another window.",
+            approvalResolvedElsewhereDraftKept:
+                "Your draft is kept so you can copy it, but submitting is disabled.",
+            sseNoticeHelp: "Learn more",
             // BL-317b: mobile members entry (title area) + standalone members sheet.
             membersEntryLabel: "Session members, {count} total",
             membersEntryLabelWithMentions:
@@ -3288,20 +3309,21 @@ const messages = {
             followUpStatusAmbiguous: "Outcome uncertain",
             followUpStatusWithdrawn: "Withdrawn",
             followUpPausedCancelled:
-                "Queue paused · the previous Run was cancelled. Continue to resume FIFO order.",
+                "Queue paused · the previous turn was cancelled. Continue to resume FIFO order.",
             followUpPausedAmbiguous:
-                "Queue paused · the previous Run has an uncertain outcome. Confirm to continue.",
+                "Queue paused · the previous turn has an uncertain outcome. Confirm to continue.",
             followUpPausedAttachment:
                 "Queue paused · an attachment is unavailable. Fix it before continuing.",
             followUpPausedBranch:
                 "Queue paused · the target Branch is unavailable. Select a valid Branch to continue.",
             followUpPausedStale:
-                "Queue paused · Session binding or child Run state changed. Review before continuing.",
-            followUpPausedGeneric: "Queue paused · review the previous Run before continuing FIFO.",
+                "Queue paused · Session binding or child run state changed. Review before continuing.",
+            followUpPausedGeneric:
+                "Queue paused · review the previous turn before continuing FIFO.",
             followUpContentUnavailable: "Content is available in the conversation history",
             guidancePanelTitle: "Guide current run",
             guidancePanelHint: "Inject explicit user intent into the next planning round",
-            guidancePlaceholder: "Inject guidance into the current Run...",
+            guidancePlaceholder: "Inject guidance into the current turn...",
             guidanceSubmit: "Submit guidance",
             guidanceSubmitting: "Submitting...",
             guidanceEmpty: "No guidance submitted yet",
@@ -3313,9 +3335,9 @@ const messages = {
             guidanceConsumedAt: "Consumed at {time}",
             guidanceExpiredAt: "Expired at {time}",
             guidanceAuthorSuffix: "by {id}",
-            guidanceErrorNotActive: "Run has ended or no longer accepts guidance",
-            guidanceErrorForbidden: "No permission to guide this Run",
-            guidanceErrorNotFound: "Run not found or has been cleaned up",
+            guidanceErrorNotActive: "The turn has ended or no longer accepts guidance",
+            guidanceErrorForbidden: "No permission to guide this turn",
+            guidanceErrorNotFound: "Turn not found or has been cleaned up",
             guidanceErrorNetwork: "Network error, please retry later",
             guidanceErrorTooLong: "Content too long or empty",
             guidanceErrorBadRequest: "Submission failed, please retry",
@@ -4085,9 +4107,9 @@ const messages = {
             fieldInstructions: "System Prompt",
             fieldSystemToolTimeout: "System tool exec budget (seconds)",
             fieldToolOutputLimit: "Tool output limit (bytes)",
-            fieldRunMaxTurns: "Run max turns",
-            fieldRunMaxElapsedSeconds: "Run max elapsed time (seconds)",
-            fieldRunMaxTokens: "Run max tokens (0 = observe only)",
+            fieldRunMaxTurns: "Max turns",
+            fieldRunMaxElapsedSeconds: "Max elapsed time (seconds)",
+            fieldRunMaxTokens: "Max tokens (0 = observe only)",
             fieldRunMaxTurnsCeiling: "Turns hard ceiling (instance only, 0 = no clamp)",
             fieldRunMaxElapsedSecondsCeiling: "Elapsed hard ceiling (instance only, 0 = no clamp)",
             fieldRunMaxTokensCeiling: "Tokens hard ceiling (instance only, 0 = no clamp)",

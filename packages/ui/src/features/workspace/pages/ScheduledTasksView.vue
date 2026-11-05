@@ -25,6 +25,7 @@ import {
 } from "../../../components/ui/alert-dialog";
 import { LoaderCircle, Plus, RefreshCw } from "@lucide/vue";
 import type { ScheduledTask, ScheduledTaskStatus } from "../../../types";
+import SseSubscriberLimitNotice from "../components/SseSubscriberLimitNotice.vue";
 
 const route = useRoute(),
     auth = useAuthStore(),
@@ -178,8 +179,14 @@ async function load(force = false) {
     await store.fetchScheduledTasks(workspaceId.value, { force });
 }
 
-useWorkspaceSSE(workspaceId, {
+const workspaceEvents = useWorkspaceSSE(workspaceId, {
     onEvent: (event) => store.applyWorkspaceEvent(workspaceId.value, event),
+});
+
+/** PLAN-0676 T2：`limit` 态归壳级横幅，页面只补另外两态（避免叠两个横幅）。 */
+const pageNoticeState = computed(() => {
+    const state = workspaceEvents.noticeState.value;
+    return state && state !== "limit" ? state : undefined;
 });
 
 watch(
@@ -262,6 +269,13 @@ function openCreate() {
 <template>
     <section class="min-h-full bg-background px-4 py-8 sm:px-8">
         <div class="mx-auto max-w-5xl">
+            <!-- PLAN-0676 T2：与工作区页共用同一个三态横幅（不新建第二个组件）。 -->
+            <SseSubscriberLimitNotice
+                :state="pageNoticeState"
+                :code="workspaceEvents.connectionErrorCode.value ?? undefined"
+                :on-retry="workspaceEvents.retry"
+                class="-mx-4 mb-4 sm:-mx-8"
+            />
             <header class="mb-6 flex flex-wrap items-start justify-between gap-4">
                 <div>
                     <h1
