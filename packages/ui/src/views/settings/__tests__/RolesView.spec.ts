@@ -22,6 +22,11 @@ vi.mock("../../../composables/api", async (importOriginal) => {
             replaceBindings: vi.fn<typeof apiModule.api.replaceBindings>(),
             listAdminUsers: vi.fn<typeof apiModule.api.listAdminUsers>(),
             listWorkspaces: vi.fn<typeof apiModule.api.listWorkspaces>(),
+            getWorkspaceAgents: vi.fn<typeof apiModule.api.getWorkspaceAgents>(),
+            listAgentPrincipals: vi.fn<typeof apiModule.api.listAgentPrincipals>(),
+            getAgentRoles: vi.fn<typeof apiModule.api.getAgentRoles>(),
+            bindAgentRole: vi.fn<typeof apiModule.api.bindAgentRole>(),
+            unbindAgentRole: vi.fn<typeof apiModule.api.unbindAgentRole>(),
         },
     };
 });
@@ -95,7 +100,9 @@ const SYSTEM_ROLE = role({
 });
 
 function problemError(status: number, code: string): ApiError {
-    return new ApiError({ status, code, detail: `${code} english detail`, requestId: "test" });
+    // The page's localized fallback is the contract here; actionably detailed problems are
+    // covered separately (see roleErrorMessages / AgentRoleBindingsSection).
+    return new ApiError({ status, code, detail: undefined, requestId: "test" });
 }
 
 let wrappers: VueWrapper[] = [];
@@ -133,6 +140,9 @@ beforeEach(() => {
     mockedApi.listWorkspaces.mockResolvedValue([]);
     mockedApi.listAdminUsers.mockResolvedValue([]);
     mockedApi.getBindings.mockResolvedValue({ scopeType: "instance", scopeId: null, bindings: [] });
+    mockedApi.getWorkspaceAgents.mockResolvedValue([]);
+    mockedApi.listAgentPrincipals.mockResolvedValue([]);
+    mockedApi.getAgentRoles.mockResolvedValue([]);
 });
 
 afterEach(() => {
@@ -438,6 +448,29 @@ describe("RoleBindingsPanel", () => {
         expect(
             wrapper.get('[data-testid="role-bindings-role-option-AUDITOR"]').attributes("disabled"),
         ).toBeUndefined();
+    });
+
+    it("switches to the agent-principal subject and renders the isolated agent section", async () => {
+        mockedApi.listWorkspaces.mockResolvedValue([
+            { id: "ws-1", name: "Workspace One" },
+        ] as never);
+        mockedApi.listAgentPrincipals.mockResolvedValue([
+            { principalId: "agent-1", name: "Research Agent", scope: "INSTANCE" },
+        ]);
+        mockedApi.getAgentRoles.mockResolvedValue([]);
+        const wrapper = await openBindings();
+
+        const subjectType = (await bodyEl(
+            '[data-testid="role-bindings-subject-type"]',
+        )) as HTMLSelectElement;
+        subjectType.value = "agent_principal";
+        subjectType.dispatchEvent(new Event("change", { bubbles: true }));
+        await flushPromises();
+
+        expect(wrapper.find('[data-testid="agent-role-bindings-section"]').exists()).toBe(true);
+        await vi.waitFor(() =>
+            expect(mockedApi.getAgentRoles).toHaveBeenCalledWith(null, "agent-1"),
+        );
     });
 });
 

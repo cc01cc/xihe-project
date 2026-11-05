@@ -12,6 +12,7 @@ import {
 } from "../../composables/api";
 import { logger } from "../../lib/logger";
 import { roleErrorMessage } from "./roleErrorMessages";
+import AgentRoleBindingsSection from "./AgentRoleBindingsSection.vue";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Badge } from "../ui/badge";
@@ -40,6 +41,7 @@ const { t } = useI18n();
 
 const scope = ref<ApiBindingScope>("instance"),
     scopeId = ref<string>("");
+const subjectType = ref<"user" | "agent_principal">("user");
 const bindingSet = ref<ApiBindingSet | null>(null),
     loading = ref(false),
     saving = ref(false),
@@ -108,6 +110,10 @@ function syncRows(next: ApiBindingSet) {
 }
 
 async function load() {
+    if (subjectType.value !== "user") {
+        // The agent section owns its own read path (and its own error surface).
+        return;
+    }
     if (scope.value === "workspace" && !workspaceId.value) {
         bindingSet.value = null;
         rows.value = [];
@@ -191,7 +197,7 @@ async function save() {
     }
 }
 
-watch([scope, scopeId], () => {
+watch([scope, scopeId, subjectType], () => {
     void load();
 });
 
@@ -260,6 +266,19 @@ defineExpose({ load });
                 <LoaderCircle v-if="loading" class="animate-spin" aria-hidden="true" />
                 {{ t("settings.rolesBindingsReload") }}
             </Button>
+            <label class="flex flex-col gap-1 text-xs text-muted-foreground">
+                {{ t("settings.rolesBindingsSubjectType") }}
+                <select
+                    v-model="subjectType"
+                    data-testid="role-bindings-subject-type"
+                    class="rounded border bg-background px-2 py-1 text-sm text-foreground"
+                >
+                    <option value="user">{{ t("settings.rolesBindingsSubjectTypeUser") }}</option>
+                    <option value="agent_principal">
+                        {{ t("settings.rolesBindingsSubjectTypeAgent") }}
+                    </option>
+                </select>
+            </label>
         </div>
 
         <p
@@ -270,7 +289,11 @@ defineExpose({ load });
             {{ error }}
         </p>
 
-        <table class="w-full text-left text-sm" data-testid="role-bindings-table">
+        <table
+            v-if="subjectType === 'user'"
+            class="w-full text-left text-sm"
+            data-testid="role-bindings-table"
+        >
             <thead class="text-xs text-muted-foreground">
                 <tr>
                     <th class="py-1">{{ t("settings.rolesBindingsSubject") }}</th>
@@ -317,7 +340,10 @@ defineExpose({ load });
             </tbody>
         </table>
 
-        <div class="flex flex-wrap items-end gap-2 rounded border p-3">
+        <div
+            v-if="subjectType === 'user'"
+            class="flex flex-wrap items-end gap-2 rounded border p-3"
+        >
             <label class="flex flex-col gap-1 text-xs text-muted-foreground">
                 {{ t("settings.rolesBindingsSubjectSearch") }}
                 <Input
@@ -380,13 +406,18 @@ defineExpose({ load });
             </Button>
         </div>
 
-        <Button data-testid="role-bindings-save" :disabled="saving" @click="save">
+        <Button
+            v-if="subjectType === 'user'"
+            data-testid="role-bindings-save"
+            :disabled="saving"
+            @click="save"
+        >
             <LoaderCircle v-if="saving" class="animate-spin" aria-hidden="true" />
             {{ t("settings.rolesBindingsSave") }}
         </Button>
 
         <div
-            v-if="effectiveSummary.length > 0"
+            v-if="subjectType === 'user' && effectiveSummary.length > 0"
             data-testid="role-bindings-effective"
             class="rounded border bg-muted/30 p-3 text-xs"
         >
@@ -400,5 +431,14 @@ defineExpose({ load });
                 </li>
             </ul>
         </div>
+
+        <AgentRoleBindingsSection
+            v-if="subjectType === 'agent_principal'"
+            :scope="scope"
+            :scope-id="scopeId"
+            :workspace-id="workspaceId"
+            :roles="roles"
+            @notice="emit('notice', $event)"
+        />
     </section>
 </template>

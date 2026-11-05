@@ -310,9 +310,9 @@ const messages = {
                 "创建智能体主体，并管理其在此工作区的权限上限。创建与绑定分别授权。",
             createAgentPrincipal: "创建智能体",
             agentCreatePermissionNote:
-                "需要 CREATE_ACCOUNT；创建本身不会自动绑定到工作区。无权限时请联系管理员在「设置 → 角色与绑定」授予含该原子的角色。",
+                "需要 MANAGE_WORKSPACE_AGENTS；创建默认进入当前工作区。无权限时请联系管理员在「设置 → 角色与绑定」授予含该原子的角色。",
             agentCreateForbidden:
-                "缺少 CREATE_ACCOUNT 权限：请让管理员在「设置 → 角色与绑定」为你的账号绑定含该原子的角色后重试。",
+                "缺少 MANAGE_WORKSPACE_AGENTS 权限：请让管理员在「设置 → 角色与绑定」为该工作区绑定含该原子的角色后重试。",
             agentBindForbidden:
                 "缺少 MANAGE_WORKSPACE_AGENTS 权限：请让管理员在「设置 → 角色与绑定」为该工作区绑定含该原子的角色后重试。",
             agentGrantPanelLink: "打开角色与绑定",
@@ -1813,6 +1813,18 @@ const messages = {
             rolesBindingsAdd: "添加绑定",
             rolesBindingsSave: "保存绑定（整体替换）",
             rolesBindingsSaved: "已保存，该作用域现有 {count} 条绑定",
+            rolesBindingsSubjectType: "主体类型",
+            rolesBindingsSubjectTypeUser: "账号",
+            rolesBindingsSubjectTypeAgent: "智能体主体",
+            rolesBindingsAgentTitle: "智能体角色绑定",
+            rolesBindingsAgentHint:
+                "为智能体主体绑定/解绑角色；保存后写入 role_bindings。种子绑定不可解绑。",
+            rolesBindingsAgentPick: "选择智能体主体",
+            rolesBindingsAgentNoAgents: "当前作用域没有可管理的智能体主体。",
+            rolesBindingsAgentLoading: "正在读取智能体角色绑定…",
+            rolesBindingsAgentSave: "保存智能体角色",
+            rolesBindingsAgentSaved: "已保存，智能体现有 {count} 条角色绑定",
+            rolesBindingsAgentSeed: "种子",
             rolesBindingsEffectiveTitle: "有效能力摘要（按绑定角色本地推导）",
             rolesBindingsEffectiveHint:
                 "服务端响应只包含绑定行，不含能力回显；这里按角色原子求并集推导，以服务端判定为准。",
@@ -2615,9 +2627,9 @@ const messages = {
                 "Create Agent principals and manage their permission caps in this Workspace. Creation and binding require separate grants.",
             createAgentPrincipal: "Create Agent",
             agentCreatePermissionNote:
-                "Requires CREATE_ACCOUNT. Creation does not bind the principal to this Workspace. Without it, ask an administrator to grant a role carrying that atom under Settings → Roles & bindings.",
+                "Requires MANAGE_WORKSPACE_AGENTS; creation targets the current workspace. Without it, ask an administrator to grant a role carrying that atom under Settings → Roles & bindings.",
             agentCreateForbidden:
-                "CREATE_ACCOUNT is required: ask an administrator to bind a role carrying that atom to your account under Settings → Roles & bindings, then retry.",
+                "MANAGE_WORKSPACE_AGENTS is required: ask an administrator to bind a role carrying that atom for this workspace under Settings → Roles & bindings, then retry.",
             agentBindForbidden:
                 "MANAGE_WORKSPACE_AGENTS is required: ask an administrator to bind a role carrying that atom for this workspace under Settings → Roles & bindings, then retry.",
             agentGrantPanelLink: "Open roles & bindings",
@@ -4204,6 +4216,18 @@ const messages = {
             rolesBindingsAdd: "Add binding",
             rolesBindingsSave: "Save bindings (full replacement)",
             rolesBindingsSaved: "Saved; the scope now has {count} bindings.",
+            rolesBindingsSubjectType: "Subject type",
+            rolesBindingsSubjectTypeUser: "Account",
+            rolesBindingsSubjectTypeAgent: "Agent principal",
+            rolesBindingsAgentTitle: "Agent role bindings",
+            rolesBindingsAgentHint:
+                "Bind or unbind roles for an agent principal; saving writes role_bindings. Seed bindings cannot be removed.",
+            rolesBindingsAgentPick: "Pick an agent principal",
+            rolesBindingsAgentNoAgents: "No manageable agent principals in this scope.",
+            rolesBindingsAgentLoading: "Loading agent role bindings…",
+            rolesBindingsAgentSave: "Save agent roles",
+            rolesBindingsAgentSaved: "Saved; the agent now has {count} role bindings.",
+            rolesBindingsAgentSeed: "Seed",
             rolesBindingsEffectiveTitle: "Effective capability summary (derived locally)",
             rolesBindingsEffectiveHint:
                 "The server response carries binding rows only, without a capability echo; this unions the bound roles' atoms. CP remains authoritative.",

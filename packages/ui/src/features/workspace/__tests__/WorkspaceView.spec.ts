@@ -177,9 +177,15 @@ beforeEach(() => {
     mockedApi.getWorkspaceAgents.mockResolvedValue([]);
     mockedApi.getSelfPermissions.mockResolvedValue({
         userId: "user-1",
-        instanceCapabilities: ["CREATE_ACCOUNT"],
-        instancePermissions: [{ actionClass: "CREATE_ACCOUNT", resource: "*" }],
-        workspaces: [],
+        instanceCapabilities: [],
+        instancePermissions: [],
+        workspaces: [
+            {
+                workspaceId: "workspace-1",
+                workspaceAdmin: true,
+                permissions: [{ actionClass: "MANAGE_WORKSPACE_AGENTS", resource: "workspace-1" }],
+            },
+        ],
     } as never);
     mockedApi.getAgentTemplates.mockImplementation(async (layer) => ({
         layer,

@@ -625,6 +625,16 @@ export interface AgentRoleBinding {
     atomsTruncated: boolean;
 }
 
+/**
+ * PLAN-0651 M5 T5.2: minimal agent-principal option for the role binding subject picker.
+ * Only the fields the picker needs; the CP list view carries more.
+ */
+export interface AgentPrincipalOption {
+    principalId: string;
+    name: string;
+    scope?: string;
+}
+
 /** PLAN-0667 M3：agent 主体的**技能绑定**（`GET /api/v1/agent-principals/{id}/skills`，v1 principal 级）。 */
 export interface AgentSkillBinding {
     bindingId: string;
@@ -2959,6 +2969,36 @@ export const api = {
             { method: "POST", headers, body: JSON.stringify(input) },
         );
     },
+    /**
+     * PLAN-0651 M5 T5.2: agent-principal options for the role-binding subject picker.
+     * `scope` is the same enum as the CP list route; workspace scope also needs `workspaceId`.
+     */
+    async listAgentPrincipals(
+        scope: "PERSONAL" | "WORKSPACE" | "INSTANCE",
+        workspaceId?: string,
+    ): Promise<AgentPrincipalOption[]> {
+        const query = new URLSearchParams({ scope });
+        if (scope === "WORKSPACE" && workspaceId) query.set("workspaceId", workspaceId);
+        const raw = await request<{ principals?: Array<Record<string, unknown>> }>(
+            `/agent-principals?${query.toString()}`,
+        );
+        if (!Array.isArray(raw.principals)) {
+            console.warn("[bindings] agent principal envelope malformed; treated as empty");
+            return [];
+        }
+        return raw.principals.flatMap((row) => {
+            const principalId = typeof row.principalId === "string" ? row.principalId : "";
+            const name = typeof row.name === "string" ? row.name : "";
+            if (!principalId || !name) return [];
+            return [
+                {
+                    principalId,
+                    name,
+                    scope: typeof row.scope === "string" ? row.scope : undefined,
+                },
+            ];
+        });
+    },
     async getWorkspaceAgents(workspaceId: string): Promise<WorkspaceAgentBinding[]> {
         const raw = await request<{ agents: Array<Record<string, unknown>> }>(
             `/workspaces/${encodeURIComponent(workspaceId)}/agents`,
@@ -3032,12 +3072,16 @@ export const api = {
      * D5(b)：只消费 CP 给的摘要（`atomSummary` ≤3 + `atomCount`），不请求、不展开全集；
      * `isSystem` 缺失按 `false`（fail-closed：不把未知当只读，但解绑仍由 CP 409 兜底）。
      */
-    async getAgentRoles(workspaceId: string, principalId: string): Promise<AgentRoleBinding[]> {
+    async getAgentRoles(
+        workspaceId: string | null | undefined,
+        principalId: string,
+    ): Promise<AgentRoleBinding[]> {
+        const workspaceQuery = workspaceId ? `workspaceId=${encodeURIComponent(workspaceId)}&` : "";
         const raw = await request<{
             items?: Array<Record<string, unknown>>;
             bindings?: Array<Record<string, unknown>>;
         }>(
-            `/agent-principals/${encodeURIComponent(principalId)}/roles?workspaceId=${encodeURIComponent(workspaceId)}&locale=${encodeURIComponent(catalogLocale())}`,
+            `/agent-principals/${encodeURIComponent(principalId)}/roles?${workspaceQuery}locale=${encodeURIComponent(catalogLocale())}`,
         );
         // 实际 CP wire（2026-11-05 联调实测）用 `{bindings:[…]}`；冻结稿写的是 `{items:[…]}`。
         // 两种信封都接受，字段同时兼容 roleName/roleDisplayName 与 name/displayName。
@@ -3092,9 +3136,14 @@ export const api = {
         });
     },
     /** 绑定角色（body `{roleId}`；`workspaceId` 是授权上下文，2026-11-05 联调实测必需）。 */
-    async bindAgentRole(workspaceId: string, principalId: string, roleId: string): Promise<void> {
+    async bindAgentRole(
+        workspaceId: string | null | undefined,
+        principalId: string,
+        roleId: string,
+    ): Promise<void> {
+        const workspaceQuery = workspaceId ? `?workspaceId=${encodeURIComponent(workspaceId)}` : "";
         await request<void>(
-            `/agent-principals/${encodeURIComponent(principalId)}/roles?workspaceId=${encodeURIComponent(workspaceId)}`,
+            `/agent-principals/${encodeURIComponent(principalId)}/roles${workspaceQuery}`,
             {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
@@ -3103,12 +3152,13 @@ export const api = {
         );
     },
     async unbindAgentRole(
-        workspaceId: string,
+        workspaceId: string | null | undefined,
         principalId: string,
         bindingId: string,
     ): Promise<void> {
+        const workspaceQuery = workspaceId ? `?workspaceId=${encodeURIComponent(workspaceId)}` : "";
         await request<void>(
-            `/agent-principals/${encodeURIComponent(principalId)}/roles/${encodeURIComponent(bindingId)}?workspaceId=${encodeURIComponent(workspaceId)}`,
+            `/agent-principals/${encodeURIComponent(principalId)}/roles/${encodeURIComponent(bindingId)}${workspaceQuery}`,
             { method: "DELETE" },
         );
     },

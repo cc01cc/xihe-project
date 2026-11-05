@@ -34,12 +34,6 @@ const apiMock = vi.hoisted(() => ({
     getSkills: vi.fn<() => Promise<unknown[]>>(),
 }));
 
-const CREATE_ACCOUNT_GRANTED = {
-    userId: "99999999-9999-4999-8999-999999999999",
-    instanceCapabilities: ["CREATE_ACCOUNT"],
-    instancePermissions: [{ actionClass: "CREATE_ACCOUNT", resource: "*" }],
-    workspaces: [],
-};
 const CREATE_ACCOUNT_MISSING = {
     userId: "99999999-9999-4999-8999-999999999999",
     instanceCapabilities: [],
@@ -110,7 +104,7 @@ beforeEach(() => {
     });
     apiMock.updateWorkspaceAgentCap.mockResolvedValue({});
     apiMock.deleteWorkspaceAgent.mockResolvedValue(undefined);
-    apiMock.getSelfPermissions.mockResolvedValue(CREATE_ACCOUNT_GRANTED);
+    apiMock.getSelfPermissions.mockResolvedValue(WORKSPACE_ONLY);
     apiMock.getWorkspaceAgentMemories.mockResolvedValue([]);
 });
 
@@ -167,7 +161,7 @@ describe("WorkspaceAgentsPanel F-02 grant hint (PLAN-0585 M2 / PLAN-0610 W5c)", 
         await flushPromises();
 
         const text = document.body.textContent ?? "";
-        expect(text).toContain("缺少 CREATE_ACCOUNT 权限");
+        expect(text).toContain("缺少 MANAGE_WORKSPACE_AGENTS 权限");
         expect(text).toContain("角色与绑定");
         expect(text).not.toContain("CREATE_ACCOUNT permission is required");
     });
@@ -182,9 +176,9 @@ describe("WorkspaceAgentsPanel F-02 grant hint (PLAN-0585 M2 / PLAN-0610 W5c)", 
     });
 });
 
-// PLAN-0621 F-01：没有 CREATE_ACCOUNT 的用户在**点击之前**就该知道结果。
-describe("WorkspaceAgentsPanel F-01 create gating (PLAN-0621)", () => {
-    it("disables creation and points at the role surface when the CP projection lacks CREATE_ACCOUNT", async () => {
+// PLAN-0621 F-01 / PLAN-0651 T5.1：没有工作区智能体管理权限的用户在**点击之前**就该知道结果。
+describe("WorkspaceAgentsPanel create gating (T5.1 default WORKSPACE)", () => {
+    it("disables creation and points at the role surface when the projection lacks MANAGE_WORKSPACE_AGENTS", async () => {
         admin.value = false;
         apiMock.getSelfPermissions.mockResolvedValue(CREATE_ACCOUNT_MISSING);
         const wrapper = await mountOpenedPanel();
@@ -195,16 +189,16 @@ describe("WorkspaceAgentsPanel F-01 create gating (PLAN-0621)", () => {
         expect(button.attributes("disabled")).toBeDefined();
         // 复用既有文案，不新写一份（概念/文案膨胀门）。
         expect(wrapper.find('[data-testid="agent-create-forbidden-hint"]').exists()).toBe(true);
-        expect(wrapper.text()).toContain("CREATE_ACCOUNT");
+        expect(wrapper.text()).toContain("MANAGE_WORKSPACE_AGENTS");
         const link = wrapper.find('[data-testid="agent-grant-panel-link"]');
         expect(link.exists()).toBe(true);
         expect(link.attributes("href")).toBe("/settings/roles");
         expect(wrapper.html()).not.toContain("/settings/principal-grants");
     });
 
-    it("keeps creation enabled when the CP projection grants CREATE_ACCOUNT", async () => {
+    it("keeps creation enabled when the projection grants MANAGE_WORKSPACE_AGENTS", async () => {
         admin.value = false;
-        apiMock.getSelfPermissions.mockResolvedValue(CREATE_ACCOUNT_GRANTED);
+        apiMock.getSelfPermissions.mockResolvedValue(WORKSPACE_ONLY);
         apiMock.createAgentPrincipal.mockResolvedValue({
             principalId: "77777777-7777-4777-8777-777777777777",
             templateId: null,
@@ -250,12 +244,6 @@ const WORKSPACE_ONLY = {
         },
     ],
 };
-const INSTANCE_ONLY = {
-    userId: "99999999-9999-4999-8999-999999999999",
-    instanceCapabilities: ["CREATE_ACCOUNT"],
-    instancePermissions: [{ actionClass: "CREATE_ACCOUNT", resource: "*" }],
-    workspaces: [],
-};
 const NOTHING = {
     userId: "99999999-9999-4999-8999-999999999999",
     instanceCapabilities: [],
@@ -263,50 +251,33 @@ const NOTHING = {
     workspaces: [],
 };
 
-function scopeOptions(wrapper: Awaited<ReturnType<typeof mountOpenedPanel>>): string[] {
-    const select = wrapper.find('[data-testid="agent-principal-scope"]');
-    if (!select.exists()) return [];
-    return select.findAll("option").map((option) => option.attributes("value") ?? "");
-}
-
-describe("WorkspaceAgentsPanel PLAN-0622 scope visibility (4 states)", () => {
-    it("offers only PERSONAL when the projection grants just CREATE_OWN_AGENT", async () => {
-        apiMock.getSelfPermissions.mockResolvedValue(PERSONAL_ONLY);
-        const wrapper = await mountOpenedPanel();
-        expect(scopeOptions(wrapper)).toEqual(["PERSONAL"]);
-        // 术语对账：文案必须带「智能体」限定，不能与"连接作用域"撞词。
-        expect(wrapper.text()).toContain("个人智能体");
-    });
-
-    it("offers only WORKSPACE when MANAGE_WORKSPACE_AGENTS is granted for this Workspace", async () => {
+// ── PLAN-0651 M5 T5.1：作用域写面退出（UI 不再提供 scope 选择）────────────────────────
+describe("WorkspaceAgentsPanel T5.1 scope write exit", () => {
+    it("does not render a scope write control", async () => {
         apiMock.getSelfPermissions.mockResolvedValue(WORKSPACE_ONLY);
         const wrapper = await mountOpenedPanel();
-        expect(scopeOptions(wrapper)).toEqual(["WORKSPACE"]);
-        expect(wrapper.text()).toContain("工作区智能体");
+        expect(wrapper.text()).not.toContain(i18n.global.t("workspace.agentScopeTitle"));
     });
 
-    it("offers only INSTANCE when the projection grants CREATE_ACCOUNT", async () => {
-        apiMock.getSelfPermissions.mockResolvedValue(INSTANCE_ONLY);
-        const wrapper = await mountOpenedPanel();
-        expect(scopeOptions(wrapper)).toEqual(["INSTANCE"]);
-        expect(wrapper.text()).toContain("实例智能体");
-    });
-
-    it("offers nothing and keeps creation disabled when no atom is granted (fail-closed)", async () => {
-        admin.value = false;
-        apiMock.getSelfPermissions.mockResolvedValue(NOTHING);
-        const wrapper = await mountOpenedPanel();
-        expect(wrapper.find('[data-testid="agent-principal-scope"]').exists()).toBe(false);
-        expect(wrapper.find('[data-testid="agent-scope-unavailable"]').exists()).toBe(true);
+    it("gates creation on MANAGE_WORKSPACE_AGENTS because CP defaults to WORKSPACE", async () => {
+        apiMock.getSelfPermissions.mockResolvedValue(PERSONAL_ONLY);
+        const personal = await mountOpenedPanel();
         expect(
-            wrapper.find('[data-testid="agent-principal-create"]').attributes("disabled"),
+            personal.find('[data-testid="agent-principal-create"]').attributes("disabled"),
+        ).toBeDefined();
+        expect(personal.find('[data-testid="agent-create-forbidden-hint"]').exists()).toBe(true);
+
+        apiMock.getSelfPermissions.mockResolvedValue(NOTHING);
+        const none = await mountOpenedPanel();
+        expect(
+            none.find('[data-testid="agent-principal-create"]').attributes("disabled"),
         ).toBeDefined();
     });
 });
 
 describe("WorkspaceAgentsPanel PLAN-0622 model intent", () => {
     it("blocks creation until an allowed-model row has both provider and model", async () => {
-        apiMock.getSelfPermissions.mockResolvedValue(PERSONAL_ONLY);
+        apiMock.getSelfPermissions.mockResolvedValue(WORKSPACE_ONLY);
         const wrapper = await mountOpenedPanel();
         await wrapper.find('[data-testid="agent-principal-name"]').setValue("delegate");
         expect(
@@ -328,7 +299,7 @@ describe("WorkspaceAgentsPanel PLAN-0622 model intent", () => {
     });
 
     it("rejects duplicate provider+model pairs", async () => {
-        apiMock.getSelfPermissions.mockResolvedValue(PERSONAL_ONLY);
+        apiMock.getSelfPermissions.mockResolvedValue(WORKSPACE_ONLY);
         const wrapper = await mountOpenedPanel();
         await wrapper.find('[data-testid="agent-principal-name"]').setValue("delegate");
         for (const [index, provider, model] of [
@@ -345,7 +316,7 @@ describe("WorkspaceAgentsPanel PLAN-0622 model intent", () => {
     });
 
     it("requires the default model pair to be complete and sends the whole intent", async () => {
-        apiMock.getSelfPermissions.mockResolvedValue(PERSONAL_ONLY);
+        apiMock.getSelfPermissions.mockResolvedValue(WORKSPACE_ONLY);
         apiMock.createAgentPrincipal.mockResolvedValue({
             principalId: "88888888-8888-4888-8888-888888888888",
             templateId: null,
@@ -363,7 +334,6 @@ describe("WorkspaceAgentsPanel PLAN-0622 model intent", () => {
         await flushPromises();
         expect(apiMock.createAgentPrincipal).toHaveBeenCalledWith({
             name: "delegate",
-            scope: "PERSONAL",
             defaultModelProvider: "openai",
             defaultModelName: "gpt-4o-mini",
         });

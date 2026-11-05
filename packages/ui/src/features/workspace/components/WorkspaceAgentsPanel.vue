@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { useAuthStore } from "../../../stores/auth";
 import { principalNameError } from "../../../lib/principalName";
@@ -8,7 +8,6 @@ import {
     api,
     type AgentModelRef,
     type AgentPrincipalCreateResponse,
-    type AgentPrincipalScope,
     type AgentRoleBinding,
     type AgentSkillBinding,
     type AgentSkillSummary,
@@ -121,45 +120,15 @@ const capabilityState = ref<"loading" | "ready" | "failed">("loading");
 const instanceAtoms = ref<string[]>([]);
 const workspaceAtoms = ref<string[]>([]);
 
-const SCOPE_ORDER: AgentPrincipalScope[] = ["PERSONAL", "WORKSPACE", "INSTANCE"];
-// Lead 术语对账（2026-11-02）：UI 里 `scope` 已被"连接作用域"占用，agent 侧文案必须自带
-// `agent` 限定，且 key 不复用 `scopeUserTitle`/`scopeWorkspaceTitle`。
-const scopeLabels: Record<AgentPrincipalScope, string> = {
-    PERSONAL: "workspace.agentScopePersonalTitle",
-    WORKSPACE: "workspace.agentScopeWorkspaceTitle",
-    INSTANCE: "workspace.agentScopeInstanceTitle",
-};
-const scopeHintKeys: Record<AgentPrincipalScope, string> = {
-    PERSONAL: "workspace.agentScopeHintPersonal",
-    WORKSPACE: "workspace.agentScopeHintWorkspace",
-    INSTANCE: "workspace.agentScopeHintInstance",
-};
-
-function scopeRequiredAtom(scope: AgentPrincipalScope): string | null {
-    if (scope === "PERSONAL") return "CREATE_OWN_AGENT";
-    if (scope === "WORKSPACE") return "MANAGE_WORKSPACE_AGENTS";
-    return "CREATE_ACCOUNT";
-}
-
-/** 单个 scope 是否可用；`null` = 投影还没回来（未知）。 */
-function scopeAvailability(scope: AgentPrincipalScope): boolean | null {
-    if (capabilityState.value === "loading") return null;
-    if (capabilityState.value === "failed") return false;
-    const atom = scopeRequiredAtom(scope);
-    if (!atom) return false;
-    if (scope === "WORKSPACE") return workspaceAtoms.value.includes(atom);
-    return instanceAtoms.value.includes(atom);
-}
-
-const availableScopes = computed(() =>
-    SCOPE_ORDER.filter((scope) => scopeAvailability(scope) === true),
-);
-
-/** 创建入口是否可用：`null` = 未知（禁用但不算"无权限"）。 */
+/**
+ * 创建入口是否可用：作用域写面已退出（T5.1），创建走 CP 默认 WORKSPACE；
+ * 因此只认工作区级 MANAGE_WORKSPACE_AGENTS，不再让 UI 选择 scope。
+ * `null` = 未知（禁用但不算"无权限"）。
+ */
 const canCreatePrincipal = computed<boolean | null>(() => {
     if (capabilityState.value === "loading") return null;
     if (capabilityState.value === "failed") return false;
-    return availableScopes.value.length > 0;
+    return workspaceAtoms.value.includes("MANAGE_WORKSPACE_AGENTS");
 });
 
 /** 绑定 / 编辑 cap / 禁用都需要工作区级 MANAGE_WORKSPACE_AGENTS（个人 agent 的属主另论）。 */
@@ -179,7 +148,6 @@ const canWriteMemories = computed<boolean | null>(() => {
     return workspaceAtoms.value.includes("MEMORY_WRITE");
 });
 
-const selectedScope = ref<AgentPrincipalScope | null>(null);
 const defaultModelProvider = ref("");
 const defaultModelName = ref("");
 const allowedModels = ref<AgentModelRef[]>([]);
@@ -230,7 +198,6 @@ const createBlocked = computed(
         saving.value ||
         !!createdPrincipal.value ||
         canCreatePrincipal.value !== true ||
-        !selectedScope.value ||
         !!allowedModelsError.value ||
         !!defaultModelError.value,
 );
@@ -242,16 +209,6 @@ onMounted(() => {
     void loadAgents();
     void loadTemplates();
     void loadCreateCapability();
-});
-
-watch(availableScopes, (scopes) => {
-    if (scopes.length === 0) {
-        selectedScope.value = null;
-        return;
-    }
-    if (!selectedScope.value || !scopes.includes(selectedScope.value)) {
-        selectedScope.value = scopes[0];
-    }
 });
 
 async function loadCreateCapability() {
@@ -775,7 +732,6 @@ async function createPrincipal() {
         createdPrincipal.value = await api.createAgentPrincipal({
             name: name.value.trim(),
             ...(templateId.value ? { templateId: templateId.value } : {}),
-            ...(selectedScope.value ? { scope: selectedScope.value } : {}),
             ...(defaultModelProvider.value.trim()
                 ? { defaultModelProvider: defaultModelProvider.value.trim() }
                 : {}),
@@ -1034,34 +990,6 @@ async function unbind(agent: WorkspaceAgentBinding) {
                         templates.find((item) => item.template.id === templateId)?.template.model ??
                         t("settings.notSet")
                     }}
-                </span>
-            </label>
-            <label class="block space-y-1 text-sm">
-                <span>{{ t("workspace.agentScopeTitle") }}</span>
-                <!-- PLAN-0622：scope 按 CP 能力投影显隐（4 态：personal/workspace/instance/都不可用）。 -->
-                <select
-                    v-if="availableScopes.length > 0"
-                    v-model="selectedScope"
-                    data-testid="agent-principal-scope"
-                    class="w-full rounded-md border bg-background px-3 py-2"
-                >
-                    <option v-for="scope in availableScopes" :key="scope" :value="scope">
-                        {{ t(scopeLabels[scope]) }}
-                    </option>
-                </select>
-                <p
-                    v-else
-                    data-testid="agent-scope-unavailable"
-                    class="text-xs text-muted-foreground"
-                >
-                    {{
-                        capabilityState === "loading"
-                            ? t("workspace.agentScopeLoading")
-                            : t("workspace.agentScopeNone")
-                    }}
-                </p>
-                <span v-if="selectedScope" class="block text-xs text-muted-foreground">
-                    {{ t(scopeHintKeys[selectedScope]) }}
                 </span>
             </label>
             <div class="grid grid-cols-2 gap-2">
