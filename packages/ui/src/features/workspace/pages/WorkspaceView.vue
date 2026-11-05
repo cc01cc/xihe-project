@@ -19,6 +19,8 @@ import WorkspaceAgentManagementDialog from "../components/WorkspaceAgentManageme
 import MobileWorkspaceSheet from "../components/MobileWorkspaceSheet.vue";
 import MobileChatSheet from "../components/MobileChatSheet.vue";
 import MobileChangesSheet from "../components/MobileChangesSheet.vue";
+import MobileMembersSheet from "../components/MobileMembersSheet.vue";
+import { useSessionParticipantsStore } from "../stores/sessionParticipants";
 import FileImportDialog from "../components/FileImportDialog.vue";
 import WorkspaceSourceImportDialog from "../components/WorkspaceSourceImportDialog.vue";
 import ChatPanel from "../chat/components/ChatPanel.vue";
@@ -66,6 +68,7 @@ const showCreateDialog = ref(false),
 const showSourceImportDialog = ref(false),
     showMobileFiles = ref(false),
     showMobileChanges = ref(false),
+    showMobileMembers = ref(false),
     mobileAuxTab = ref<"monitor" | "changes" | "members">("monitor");
 const showAgentSelection = ref(false),
     workspaceAgents = ref<WorkspaceAgentBinding[]>([]);
@@ -100,10 +103,18 @@ function handleToggleMonitor() {
 }
 
 /**
- * BL-317 / D-198：移动端成员面板入口（桌面由 dock 的 `members` 标签承担，不经过这里）。
+ * BL-317b（IM 调研 §1/§3）：成员入口从「aux tab 的一页」升级为**独立高 sheet**。
  *
- * 与 monitor/changes 完全同形：同一 tab 再点一次 = 收起，切到别的 tab = 换页。
- * 面板体复用 `SessionParticipantsPanel`（未读徽标、游标推进、只读禁用都在那份里）。
+ * 面板形态变了但入口不变：溢出菜单的 `members` 项**保留**（BL-317 的兜底，照顾习惯用户），
+ * 只是打开目标从 aux tab 换成 `MobileMembersSheet`；标题区另加「头像堆叠 + 人数 + @N」主入口。
+ * `MobileChangesSheet` 从此只服务 monitor/changes（三个 tab 不再需要 members 那一页）。
+ */
+/**
+ * BL-317 / D-198：溢出菜单的成员入口（**保留作兜底**，BL-317b 不改它的落点）。
+ *
+ * BL-317b 的新主入口是标题区的「头像堆叠 + 人数 + @N」→ `MobileMembersSheet`（独立高 sheet）。
+ * 这里刻意仍走 aux tab：`e2e/mock/bl317-mobile-members.spec.ts` 覆盖了这条既有路径，
+ * Lead 的验收口径要求它「跑通不改」——两个入口最终复用**同一个** `SessionParticipantsPanel`。
  */
 function handleToggleMembers() {
     if (isMobileViewport.value) {
@@ -115,6 +126,37 @@ function handleToggleMembers() {
         showMobileChanges.value = true;
     }
 }
+
+/** BL-317b 主入口：标题区按钮 → 独立成员 sheet（不与 aux tab 抢状态）。 */
+function toggleMobileMembersSheet() {
+    showMobileMembers.value = !showMobileMembers.value;
+}
+
+/**
+ * BL-317b：标题区主入口的数据 —— **全部来自 CP 投影**（同一份 `sessionParticipants` store）：
+ * - 人数 = roster 行数；
+ * - `@N` = 各行 `readCursor.mentionCount` 之和（服务端派生，本地不计算"谁未读"）。
+ * 未加载时不编数字：`memberCount === 0` 时入口只显示图标与「成员」，等 `ensureLoaded` 回来再补。
+ */
+const membersStore = useSessionParticipantsStore();
+const memberRows = computed(() => membersStore.participants ?? []);
+const memberCount = computed(() => memberRows.value.length);
+const memberMentionTotal = computed(() =>
+    memberRows.value.reduce((sum, row) => sum + (row.readCursor?.mentionCount ?? 0), 0),
+);
+const memberAvatarInitials = computed(() =>
+    memberRows.value
+        .slice(0, 3)
+        .map((row) => (row.displayName ?? "").trim().slice(0, 1).toUpperCase() || "?"),
+);
+const membersEntryLabel = computed(() =>
+    memberMentionTotal.value > 0
+        ? t("workspace.membersEntryLabelWithMentions", {
+              count: memberCount.value,
+              mentions: memberMentionTotal.value,
+          })
+        : t("workspace.membersEntryLabel", { count: memberCount.value }),
+);
 
 function handleWorkspaceCreated(id: string) {
     router.push(`/workspace/${id}`);
@@ -181,6 +223,18 @@ const activeAgentPrincipalId = computed(
     () =>
         sessionStore.sessions.find((session) => session.id === sessionId.value)?.agentPrincipalId ??
         null,
+);
+
+/**
+ * BL-317b：标题区入口要显示真实人数/`@N`，所以会话确定后读一次 roster（`ensureLoaded` 幂等，
+ * ChatPanel 自己的加载不会被重复请求）。
+ */
+watch(
+    sessionId,
+    (id) => {
+        if (id) void membersStore.ensureLoaded(id);
+    },
+    { immediate: true },
 );
 
 /** P1-2: the center header shows the session, never the workspace name again. */
@@ -413,6 +467,44 @@ watch(isMobileViewport, (mobile) => {
                             :title="sessionTitle"
                             >{{ sessionTitle }}</span
                         >
+                        <!--
+                            BL-317b（IM 调研 §1）：会话标题区是成员的**主入口**（主流 IM 都是
+                            「点标题 → 会话详情」）。头像堆叠 + 人数 + 聚合 `@N`；溢出菜单入口保留作兜底。
+                            只在移动端出现（`md:hidden`）——桌面有 dock 的 members 标签，零回归。
+                        -->
+                        <button
+                            v-if="sessionId"
+                            type="button"
+                            class="md:hidden flex min-h-[44px] min-w-[44px] items-center gap-1.5 rounded px-1 text-xs text-muted-foreground transition-colors hover:bg-accent"
+                            data-testid="members-entry-mobile"
+                            :aria-label="membersEntryLabel"
+                            :title="membersEntryLabel"
+                            :aria-haspopup="'dialog'"
+                            :aria-expanded="showMobileMembers"
+                            @click="toggleMobileMembersSheet"
+                        >
+                            <span class="flex -space-x-1.5" aria-hidden="true">
+                                <span
+                                    v-for="(initial, index) in memberAvatarInitials"
+                                    :key="`avatar-${index}`"
+                                    data-testid="members-entry-avatar"
+                                    class="flex size-5 items-center justify-center rounded-full border bg-muted text-[10px] font-medium text-foreground/70"
+                                    >{{ initial }}</span
+                                >
+                            </span>
+                            <span
+                                v-if="memberCount > 0"
+                                class="tabular-nums"
+                                data-testid="members-entry-count"
+                                >{{ memberCount }}</span
+                            >
+                            <span
+                                v-if="memberMentionTotal > 0"
+                                class="rounded-full bg-primary px-1.5 py-0.5 text-[10px] leading-none text-primary-foreground"
+                                data-testid="members-entry-mentions"
+                                >@{{ memberMentionTotal }}</span
+                            >
+                        </button>
                         <span
                             v-if="!auth.canWriteWorkspace"
                             data-testid="workspace-viewer-badge"
@@ -544,6 +636,12 @@ watch(isMobileViewport, (mobile) => {
             :tab="mobileAuxTab"
             @update:tab="mobileAuxTab = $event"
             @close="showMobileChanges = false"
+        />
+
+        <MobileMembersSheet
+            :open="showMobileMembers"
+            :session-id="sessionId"
+            @close="showMobileMembers = false"
         />
 
         <MobileChatSheet v-if="sessionId" :session-id="sessionId" />

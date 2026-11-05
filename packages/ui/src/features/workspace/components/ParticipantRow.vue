@@ -11,7 +11,7 @@
  *
  * 模型意图（`defaultModelProvider/Name`）契约里还没有，行内暂不显示；等 M1a 联表补字段。
  */
-import { computed, ref } from "vue";
+import { computed, ref, watch } from "vue";
 import { Shield } from "@lucide/vue";
 import { useI18n } from "vue-i18n";
 import { participantDisplayName, participantInitials } from "./participantInitials";
@@ -41,9 +41,28 @@ const props = withDefaults(
         saving?: boolean;
         /** PLAN-0660 T5.6：本人已读游标推进中（避免重复提交）。 */
         advancing?: boolean;
+        /**
+         * BL-317b（IM 调研 §4「行密度」）：移动端默认只露 头像/名字、HUMAN/AGENT 徽标、
+         * PRIMARY/MEMBER/GUARD、`@我 N`；策略/模型/移除收进**展开区**（`summary`）。
+         * 缺省 `full` = 桌面既有行为，一行都不改。
+         */
+        density?: "full" | "summary";
     }>(),
-    { canWrite: true },
+    { canWrite: true, density: "full" },
 );
+
+/**
+ * 展开态：`full` 恒展开；`summary` 由行内「更多」控制。
+ * 切密度时重置（例如从桌面切到移动，别把上一轮展开态带过去）。
+ */
+const expanded = ref(props.density !== "summary");
+watch(
+    () => props.density,
+    (density) => {
+        expanded.value = density !== "summary";
+    },
+);
+const showDetails = computed(() => props.density !== "summary" || expanded.value);
 
 function emitWake(wakePolicy: ParticipantWakePolicy): void {
     emit("policy", props.participant, { wakePolicy });
@@ -228,62 +247,84 @@ function requestAdvance(): void {
                 >
             </p>
             <!-- 策略：只读文字 + （有 manage 时）可编辑下拉。**先渲染，保存成功后才改值**。 -->
-            <p class="mt-1 flex flex-wrap items-center gap-2 text-[10px] text-muted-foreground">
-                <span :data-testid="`participant-wake-indicator-${participant.participantId}`">
-                    {{ t("workspace.participantWakeLabel") }}:
-                </span>
-                <select
-                    v-if="canManage && participant.role !== 'PRIMARY'"
-                    class="rounded border bg-background px-1 py-0.5 text-[10px] disabled:opacity-50"
-                    :data-testid="`participant-wake-select-${participant.participantId}`"
-                    :value="participant.wakePolicy"
-                    :disabled="saving"
-                    @change="
-                        emitWake(
-                            ($event.target as HTMLSelectElement).value as ParticipantWakePolicy,
-                        )
-                    "
+            <template v-if="showDetails">
+                <p class="mt-1 flex flex-wrap items-center gap-2 text-[10px] text-muted-foreground">
+                    <span :data-testid="`participant-wake-indicator-${participant.participantId}`">
+                        {{ t("workspace.participantWakeLabel") }}:
+                    </span>
+                    <select
+                        v-if="canManage && participant.role !== 'PRIMARY'"
+                        class="rounded border bg-background px-1 py-0.5 text-[10px] disabled:opacity-50"
+                        :data-testid="`participant-wake-select-${participant.participantId}`"
+                        :value="participant.wakePolicy"
+                        :disabled="saving"
+                        @change="
+                            emitWake(
+                                ($event.target as HTMLSelectElement).value as ParticipantWakePolicy,
+                            )
+                        "
+                    >
+                        <option value="ALL_MESSAGES">
+                            {{ t("workspace.participantWakeAllMessages") }}
+                        </option>
+                        <option value="MENTION">{{ t("workspace.participantWakeMention") }}</option>
+                    </select>
+                    <span v-else>{{ wakeLabel }}</span>
+                    <span
+                        :data-testid="`participant-respond-indicator-${participant.participantId}`"
+                    >
+                        {{ t("workspace.participantRespondLabel") }}:
+                    </span>
+                    <select
+                        v-if="canManage && participant.role !== 'PRIMARY'"
+                        class="rounded border bg-background px-1 py-0.5 text-[10px] disabled:opacity-50"
+                        :data-testid="`participant-respond-select-${participant.participantId}`"
+                        :value="participant.respondPolicy"
+                        :disabled="saving"
+                        @change="
+                            emitRespond(
+                                ($event.target as HTMLSelectElement)
+                                    .value as ParticipantRespondPolicy,
+                            )
+                        "
+                    >
+                        <option value="ALWAYS">
+                            {{ t("workspace.participantRespondAlways") }}
+                        </option>
+                        <option value="WHEN_MENTIONED">
+                            {{ t("workspace.participantRespondWhenMentioned") }}
+                        </option>
+                        <option value="JUDGE">{{ t("workspace.participantRespondJudge") }}</option>
+                        <option value="MUTED">{{ t("workspace.participantRespondMuted") }}</option>
+                    </select>
+                    <span v-else>{{ respondLabel }}</span>
+                </p>
+                <!-- M1a：仅 AGENT 有模型意图（契约字段，缺失不猜）。 -->
+                <p
+                    v-if="modelIntent"
+                    class="mt-1 text-[10px] text-muted-foreground"
+                    :data-testid="`participant-model-${participant.participantId}`"
                 >
-                    <option value="ALL_MESSAGES">
-                        {{ t("workspace.participantWakeAllMessages") }}
-                    </option>
-                    <option value="MENTION">{{ t("workspace.participantWakeMention") }}</option>
-                </select>
-                <span v-else>{{ wakeLabel }}</span>
-                <span :data-testid="`participant-respond-indicator-${participant.participantId}`">
-                    {{ t("workspace.participantRespondLabel") }}:
-                </span>
-                <select
-                    v-if="canManage && participant.role !== 'PRIMARY'"
-                    class="rounded border bg-background px-1 py-0.5 text-[10px] disabled:opacity-50"
-                    :data-testid="`participant-respond-select-${participant.participantId}`"
-                    :value="participant.respondPolicy"
-                    :disabled="saving"
-                    @change="
-                        emitRespond(
-                            ($event.target as HTMLSelectElement).value as ParticipantRespondPolicy,
-                        )
-                    "
-                >
-                    <option value="ALWAYS">{{ t("workspace.participantRespondAlways") }}</option>
-                    <option value="WHEN_MENTIONED">
-                        {{ t("workspace.participantRespondWhenMentioned") }}
-                    </option>
-                    <option value="JUDGE">{{ t("workspace.participantRespondJudge") }}</option>
-                    <option value="MUTED">{{ t("workspace.participantRespondMuted") }}</option>
-                </select>
-                <span v-else>{{ respondLabel }}</span>
-            </p>
-            <!-- M1a：仅 AGENT 有模型意图（契约字段，缺失不猜）。 -->
-            <p
-                v-if="modelIntent"
-                class="mt-1 text-[10px] text-muted-foreground"
-                :data-testid="`participant-model-${participant.participantId}`"
-            >
-                {{ modelIntent }}
-            </p>
+                    {{ modelIntent }}
+                </p>
+            </template>
         </div>
-        <div class="flex shrink-0 flex-col items-end gap-1">
+        <!--
+            BL-317b：摘要行只留「更多」；展开后才出现策略/模型/移除。
+            `aria-expanded` + 44px 触控区，键盘可达。
+        -->
+        <button
+            v-if="density === 'summary' && !expanded"
+            type="button"
+            class="shrink-0 rounded border px-2 py-1 text-[10px] text-muted-foreground max-md:min-h-[44px] max-md:min-w-[44px]"
+            :data-testid="`participant-expand-${participant.participantId}`"
+            :aria-expanded="expanded"
+            :aria-label="t('workspace.participantMoreAction')"
+            @click="expanded = true"
+        >
+            {{ t("workspace.participantMoreAction") }}
+        </button>
+        <div v-if="showDetails" class="flex shrink-0 flex-col items-end gap-1">
             <!--
                 PLAN-0660 T5.6：本人行的已读推进。上限由 CP 夹取（advance-only + session max），
                 这里不显示/不计算任何数字，成功后徽标直接由服务端返回的 mentionCount 派生。
