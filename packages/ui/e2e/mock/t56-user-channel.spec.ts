@@ -39,6 +39,9 @@ import { test, expect } from "@playwright/test";
 import type { Page } from "@playwright/test";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
 import type { MatrixParticipant } from "./helpers/session-matrix";
+import { collectPageFailures, expectNoPageFailures } from "./helpers/page-failures";
+import type { PageFailures } from "./helpers/page-failures";
+import { FONT_ORIGIN_FAILURE, stubSessionProjections } from "./helpers/session-projections";
 
 const WORKSPACE_ID = "workspace-1";
 const SESSION_ID = "t56-session";
@@ -152,6 +155,8 @@ async function setupT56Lane(page: Page): Promise<T56LaneState> {
 
     await setupMockAuth(page);
     await setupMockSessions(page, { sessions: [{ id: SESSION_ID, title: "T5.6 user channel" }] });
+    // 聊天列挂载后会拉这三个侧投影；不桩就是真 404 + console error（夹具缺口，不是产品缺陷）。
+    await stubSessionProjections(page, SESSION_ID);
 
     // 参与者名单：严格信封；读 `state.roster`，因此用例改完再被 GET 就能观察到变化。
     await page.route(`**/api/v1/sessions/${SESSION_ID}/participants`, async (route) => {
@@ -296,6 +301,19 @@ async function openMembersPanel(page: Page): Promise<void> {
 }
 
 test.describe("PLAN-0660 T5.6 — user-channel 与已读游标的产品 UI 路径", () => {
+    let failures: PageFailures;
+    /** 逐条放行"有意为之"的错误信号（目前只有第 5 条故意桩出来的 403）。 */
+    let allowFailures: RegExp[];
+
+    test.beforeEach(({ page }) => {
+        failures = collectPageFailures(page);
+        allowFailures = [];
+    });
+    test.afterEach(() => {
+        // 唯一无条件放行的是外部字体请求（离线环境信号，与本 lane 判据无关）。
+        expectNoPageFailures(failures, [FONT_ORIGIN_FAILURE, ...allowFailures]);
+    });
+
     test("1) 登录壳挂载即订阅 user-channel（Bearer + text/event-stream，恰好 1 条）", async ({
         page,
     }) => {
@@ -405,6 +423,9 @@ test.describe("PLAN-0660 T5.6 — user-channel 与已读游标的产品 UI 路�
     test("5) 403 CURSOR_SELF_ONLY → 本地化文案，本地状态不变", async ({ page }) => {
         const state = await setupT56Lane(page);
         state.cursorStatus = 403;
+        // 这条用例**故意**让 PATCH 回 403：它是产品要正确处理的分支，不是环境故障，
+        // 所以只放行 cursor 端点上的失败信号（`afterEach` 的其它判据照旧生效）。
+        allowFailures = [/\/participants\/[^/]+\/cursor/];
         await openMembersPanel(page);
 
         const badge = page.getByTestId(`participant-mention-badge-${OWNER_PARTICIPANT_ID}`);
@@ -442,14 +463,36 @@ test.describe("PLAN-0660 T5.6 — user-channel 与已读游标的产品 UI 路�
         });
         expect((await readUserChannel(page)).connections, "still exactly one").toHaveLength(1);
 
-        await page.getByTestId("sidebar-logout").click();
-        await expect(page, "logout leaves the authenticated shell").toHaveURL(/\/login/, {
-            timeout: 15_000,
-        });
+        // 登出入口：mock 车道的侧栏只渲染 56px 导航条（面板默认收起），所以用 rail 上的
+        // `nav-rail-logout`（`NavRail.vue:124`）。它与面板版 `sidebar-logout` 共用同一个
+        // `auth.logout()` → 同一个 SPA 跳转 → 同一个壳卸载路径。
+        await page.getByTestId("nav-rail-logout").click();
+
+        // 登出后的落点由路由守卫决定：mock 车道里是 `/onboarding?redirect=…`（不是 `/login`），
+        // 关键是**离开了登录后的壳**（AppLayout 卸载）——所以断言"壳里的元素消失"而不是某个具体 URL。
+        await expect(page, "left the authenticated shell").toHaveURL(
+            /\/(login|onboarding|register)/,
+            { timeout: 15_000 },
+        );
+        await expect(
+            page.getByTestId("workspace-toolbar-members"),
+            "the authenticated shell is gone",
+        ).toHaveCount(0);
+        const afterLogout = await readUserChannel(page);
+        // 防真空通过：`[].every()` 也是 true，所以先钉住"仍是同一文档 + 恰好 1 条连接"。
+        // （若登出变成整页重载，records 会被重置为空数组，那就什么也证明不了。）
+        expect(afterLogout.boots, "logout must be an SPA transition, not a reload").toBe(1);
+        expect(afterLogout.connections, "same single subscription is still recorded").toHaveLength(
+            1,
+        );
         await expect
-            .poll(async () => (await readUserChannel(page)).connections.every((c) => c.aborted), {
-                timeout: 15_000,
-            })
+            .poll(
+                async () => {
+                    const channel = await readUserChannel(page);
+                    return channel.connections.length === 1 && channel.connections[0].aborted;
+                },
+                { timeout: 15_000 },
+            )
             .toBe(true);
     });
 });
@@ -458,6 +501,14 @@ test.describe("PLAN-0660 T5.6 — 窄桌面不溢出（7）", () => {
     // 移动 390×844 不适用：`WorkspaceWorkbench.vue:499` 在 isMobile 时 members-open 恒 false，
     // 成员面板在移动端不可达（详见文件头）。这里用窄桌面替代，保证多一个按钮后行不被裁切。
     test.use({ viewport: { width: 1280, height: 720 } });
+
+    let failures: PageFailures;
+    test.beforeEach(({ page }) => {
+        failures = collectPageFailures(page);
+    });
+    test.afterEach(() => {
+        expectNoPageFailures(failures, [FONT_ORIGIN_FAILURE]);
+    });
 
     test("7) 1280×720 下推进控件不裁切、行内无横向溢出", async ({ page }) => {
         await setupT56Lane(page);
