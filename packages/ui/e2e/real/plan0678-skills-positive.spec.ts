@@ -6,7 +6,11 @@
  * （`AgentPrincipalSkillBindingController:35-37`），而
  * `AgentPrincipalSkillBindingService:39/110` 明确"workspace-private 技能定义不可绑，答 400
  * `SKILL_DEFINITION_OUT_OF_SCOPE`" ⇒ 工作区私有技能只能导入/列出，**不能进主体快照**。
- * 因此本 spec 在隔离库里给注册用户授 **`SUPER_ADMIN`**（`role_bindings` 一行）后**重新登录**，
+ * 因此本 spec 在隔离库里给注册用户写**两行**（缺一不可，`host-e2e` 坑表 §19）：
+ *   ① `role_bindings`（`SUPER_ADMIN`, instance）——只是角色绑定记录；
+ *   ② **`grants`**（`MANAGE_SKILL_LIBRARY`@`*`, `source=role`, instance）——**真正生效的物化授权**：
+ *      `RequesterAuthority.holdsActionAtom` 读的是 `grants`，只写 ① 会 403 `SKILL_IMPORT_FORBIDDEN`。
+ * 写完后**重新登录**，
  * 再用新 token 做 instance 导入。**这是"绕过 API 的提权"，仅对 `XIHE_E2E_PG_*` 指向的隔离库执行，
  * 随栈销毁** —— 报告里必须单列这一句（与 `0673` lab 的处理同口径）。
  *
