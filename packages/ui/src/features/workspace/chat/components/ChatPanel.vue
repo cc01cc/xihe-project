@@ -704,14 +704,16 @@ const inputComponent = ref<InstanceType<typeof InputArea> | null>(null);
 useComposeDeeplink({
     sessionId: () => props.sessionId,
     ready: () => Boolean(inputComponent.value?.prefillDraft),
-    apply: (payload) =>
-        Boolean(
-            inputComponent.value?.prefillDraft?.({
-                text: payload.text,
-                to: payload.to,
-                cc: payload.cc,
-            }),
-        ),
+    // 三态语义：`applied`/`idle` 都算"已消费"（清参），只有 `blocked`（目标位被用户内容占住）
+    // 才保留参数，等用户清空草稿后再打开同一链接仍能预填。
+    apply: (payload) => {
+        const result = inputComponent.value?.prefillDraft?.({
+            text: payload.text,
+            to: payload.to,
+            cc: payload.cc,
+        });
+        return result === "applied" || result === "idle";
+    },
 });
 
 /**
