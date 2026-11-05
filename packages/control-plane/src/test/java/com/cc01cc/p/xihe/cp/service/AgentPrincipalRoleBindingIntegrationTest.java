@@ -142,6 +142,36 @@ class AgentPrincipalRoleBindingIntegrationTest extends AbstractIntegrationTest {
                 "no 404: the code must not leak which roles exist");
     }
 
+    /**
+     * PLAN-0673 V3.2 缺口闭合（audit-1 §5.2）：创建路径的**默认角色**（{@code AGENT_USER}）也是一次
+     * 授予，creator 不持有它的原子时必须被拒 —— 且在任何 principal 行写入之前。
+     *
+     * <p>为什么单列：{@code SetWorkspaceCapGate#grantorWithoutDefaultRoleAtomsIsRefusedWithZeroWrites}
+     * 只覆盖 workspace 侧的结构性默认绑定，覆盖不到"创建路径的实例级默认角色"；而默认授予集恰好是
+     * 最容易悄悄放水的地方（creator 被收窄后仍能造出带默认权限的 agent）。</p>
+     */
+    @Test
+    void creatingAPrincipalWhoseDefaultRoleAtomsTheCreatorLacksIsRefused() {
+        User weakCreator = userRepository.saveAndFlush(new User(
+                "audit-weak-" + UUID.randomUUID().toString().substring(0, 8) + "@test.com",
+                "hash", "Weak creator"));
+        var snapshot = objectMapper.createObjectNode();
+        snapshot.set("permissions", objectMapper.createArrayNode());
+        long principalsBefore = agentPrincipalRepository.count();
+
+        CpApiException refused = assertThrows(CpApiException.class,
+                () -> agentPrincipalService.createPrincipal(weakCreator.getId().toString(),
+                        "WeakCreatorAgent", null, snapshot));
+
+        assertEquals(HttpStatus.FORBIDDEN, refused.getStatus(), refused.getMessage());
+        assertEquals("PRIVILEGE_ESCALATION", refused.getCode(),
+                "the default role is a grant: the creator must hold its atoms at the instance scope");
+        assertTrue(refused.getMessage().contains("read"),
+                "the refusal names the default-role atoms it cannot grant: " + refused.getMessage());
+        assertEquals(principalsBefore, agentPrincipalRepository.count(),
+                "a refused creation writes no principal row (zero partial write)");
+    }
+
     @Test
     void principalWithoutRoleRowsStillWorksThroughTheLegacyCeiling() {
         AgentPrincipal principal = createPlainPrincipal("legacyFallback");
