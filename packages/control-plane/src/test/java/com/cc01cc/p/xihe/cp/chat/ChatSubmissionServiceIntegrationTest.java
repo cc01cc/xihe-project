@@ -828,6 +828,77 @@ class ChatSubmissionServiceIntegrationTest extends AbstractIntegrationTest {
     private record PendingInboxFixture(User user, Workspace workspace, Session session,
                                        AgentPrincipal principal, UUID inboxId) {}
 
+    /**
+     * PLAN-0678 T2.1 (BL-284 / BL-285 anti-regression): a real admission must freeze BOTH the
+     * memory ({@code agent_memory}) and the skills ({@code skill_catalog}) component in
+     * {@code chat_runs.context_template_snapshot}. The 11-05 fixes that merged the component
+     * manifest were never asserted on the DB path — a revert of {@code 1dfab579} (BL-284) or
+     * {@code 939c8e6b} (BL-285) would otherwise pass every mock.
+     */
+    @Test
+    void admissionSnapshotFreezesMemoryAndSkillComponents() {
+        ChatFixture fixture = createChatFixture("bl284-285");
+        String runId = UUID.randomUUID().toString();
+        ChatSubmissionService.Submission submission = submit(runId, fixture.session(), fixture.user(),
+                fixture.workspace(), "snapshot guard", fixture.principal().getId().toString());
+
+        var snapshot = submission.run().getContextTemplateSnapshot();
+        var components = snapshot.path("template").path("components");
+        assertTrue(components.isArray(), "the frozen snapshot must carry a component manifest: " + snapshot);
+        java.util.Set<String> types = new java.util.HashSet<>();
+        components.forEach(component -> types.add(component.path("type").asText()));
+        assertTrue(types.contains("agent_memory"),
+                "missing agent_memory — someone reverted BL-284 (1dfab579): the memory component "
+                        + "dropped out of the admission snapshot; components=" + types);
+        assertTrue(types.contains("skill_catalog"),
+                "missing skill_catalog — someone reverted BL-285 (939c8e6b): the skills component "
+                        + "dropped out of the admission snapshot; components=" + types);
+
+        ChatRun persisted = chatRunRepository.findById(UUID.fromString(runId)).orElseThrow();
+        assertTrue(persisted.getContextTemplateSnapshot().path("template").path("components")
+                        .findValuesAsText("type").containsAll(java.util.List.of("agent_memory", "skill_catalog")),
+                "the persisted row is the contract; an in-memory snapshot alone proves nothing");
+    }
+
+    /**
+     * PLAN-0678 T2.2 (BL-347): a NULL-principal parent must be refused explicitly on the human
+     * delegation route too — the child would otherwise inherit an unowned derived chain.
+     */
+    @Test
+    void delegationRefusesParentSessionWithoutAgentPrincipal() throws Exception {
+        User user = userRepository.save(new User("deleg-null-" + UUID.randomUUID() + "@test.com",
+                "hash", "Delegation null principal"));
+        Workspace workspace = workspaceFixture.createOwnedWorkspace("Delegation Null Workspace",
+                user.getId().toString());
+        workspaceFixture.bindWorkspaceRole(workspace.getId().toString(), user.getId().toString(),
+                WorkspaceRole.OWNER);
+        AgentPrincipal principal = savePrincipal(user);
+        workspaceAgentRepository.saveAndFlush(new WorkspaceAgent(principal.getId().toString(),
+                workspace.getId().toString(), objectMapper.createArrayNode()));
+
+        Session parent = new Session(workspace.getId().toString(), user.getId().toString(),
+                "Null principal parent");
+        parent.setId(UUID.randomUUID());
+        parent.setAgentPrincipalId(null);
+        parent.setAgentPermissionsSnapshot(objectMapper.createArrayNode());
+        saveBoundChatSession(parent, user);
+        String parentRunId = UUID.randomUUID().toString();
+        chatRunRepository.saveAndFlush(new ChatRun(parentRunId, parent.getId().toString(),
+                user.getId().toString(), workspace.getId().toString(), "parent-null-" + parentRunId,
+                "parent-hash", "provider", "model", "workspace", "succeeded"));
+
+        String idempotencyKey = "deleg-null-" + UUID.randomUUID();
+        String authorizationBody = submissionService.delegationAuthorizationBody("task");
+        CpApiException refused = assertThrows(CpApiException.class, () -> submissionService.createDelegation(
+                parentRunId, principal.getId().toString(), "task", idempotencyKey,
+                new ChatSubmissionService.SpawnAuthorization(authorizationBody, null, null)));
+        assertEquals("SPAWN_PARENT_PRINCIPAL_MISSING", refused.getCode());
+        assertEquals(HttpStatus.CONFLICT, refused.getStatus());
+        assertTrue(chatRunRepository.findAll().stream()
+                        .noneMatch(run -> idempotencyKey.equals(run.getIdempotencyKey())),
+                "no derived run may be written for a NULL-principal parent");
+    }
+
     // ---------------------------------------------------------- PLAN-0655 human delegation
 
     /**

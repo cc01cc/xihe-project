@@ -532,7 +532,15 @@ public class ChatSubmissionService {
         // 拒绝路径零写入。PLAN-0464 把同一门提到 invocation 读取之前，使死 run
         // 报 admission conflict 而不是 lookup miss（行锁内状态不可能并发变化）。
 
-        if (parentSession.getAgentPrincipalId() == null || parentSession.getAgentPermissionsSnapshot() == null) {
+        // PLAN-0678 T2.2 (BL-347): a NULL-principal parent must be refused explicitly. Before this,
+        // the child copied the parent's NULL principal and persist() stamped NULL again, so the spawn
+        // chain produced runs no memory/skill component could resolve. Same guard shape as the other
+        // derived path, but with its own diagnostic code so the refusal is not mistaken for a
+        // permission/approval problem.
+        if (parentSession.getAgentPrincipalId() == null) {
+            throw parentPrincipalMissing();
+        }
+        if (parentSession.getAgentPermissionsSnapshot() == null) {
             throw agentSessionForbidden();
         }
 
@@ -659,6 +667,13 @@ public class ChatSubmissionService {
         ChatRun parentRun = lockedParent.run();
         Session parentSession = lockedParent.session();
 
+        // PLAN-0678 T2.2 (BL-347): the same refusal on the human delegation route. The child names
+        // its own principal, but a NULL-principal parent still means the derived chain has no
+        // trustworthy owner; refuse with the shared diagnostic code instead of deriving silently.
+        if (parentSession.getAgentPrincipalId() == null) {
+            throw parentPrincipalMissing();
+        }
+
         // Idempotency replay first: a retry of the SAME key must not re-pay the budget.
         ChatRun existing = chatRunRepository
                 .findByUserIdAndIdempotencyKeyAndOrigin(parentRun.getUserId(), idempotencyKey,
@@ -754,6 +769,12 @@ public class ChatSubmissionService {
 
         return new SpawnResult(childSession.getId().toString(), childRun.getId().toString(),
                 agentPrincipalId, parentRun.getWorkspaceId());
+    }
+
+    /** PLAN-0678 T2.2: the one refusal for "parent has no agent principal". */
+    private static CpApiException parentPrincipalMissing() {
+        return new CpApiException(HttpStatus.CONFLICT, "SPAWN_PARENT_PRINCIPAL_MISSING",
+                "Parent Session has no agent principal; spawn would persist a NULL-principal run");
     }
 
     private LockedSpawnParent lockSpawnParent(String parentRunId,
@@ -875,9 +896,6 @@ public class ChatSubmissionService {
     private void requireWorkspaceSpawn(ChatRun parentRun, Session parentSession) {
         if (!"workspace".equals(parentRun.getToolMode())) {
             throw agentSpawnForbidden("spawn_agent is available only to workspace-mode runs");
-        }
-        if (parentSession.getAgentPrincipalId() == null || parentSession.getAgentPermissionsSnapshot() == null) {
-            throw agentSessionForbidden();
         }
     }
 
