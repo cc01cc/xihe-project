@@ -167,6 +167,8 @@ curl -X PUT "http://localhost:12631/api/v1/config/workspace/rag?workspaceId=$WS"
 
 **llm-provider 默认身份（PLAN-0504/0552，决策 #2/#4/#11/#12）**：默认身份是整单元 `profile` = `{providerId, connectionKey, model}`（JSON 字符串或对象），按 workspace > user > instance **首存在层**解析、整单元覆盖、不合并字段；写入必须是完整单元（部分 profile 400 `INVALID_REQUEST`）。`profile.providerId` 的写时接受集 = CP provider catalog 全量 id（`provider-catalog/providers.json`，经 `ProviderCatalogService.providerIds()` 派生，`GET /api/v1/provider-catalog` 同源）：catalog 增删 provider 无需改代码；catalog 外值以 `profile.providerId is unsupported` 拒绝。instance 层不校验连接（运行期由消费方 scope 解析到消费用户的 USER 连接）；**workspace 层只接受本 workspace 的 WORKSPACE 连接，user 层只接受本人的 USER 连接**（PLAN-0552 关闭 workspace→user 隐式回退）。legacy 键（`defaultProvider`/`defaultModel`/`*Model`/`*ApiBase`/`baseUrl`）已退役，写入即被 schema 拒绝（400，无兼容映射）。解析到已删/不可用连接时报 `LLM_PROFILE_CONFLICT`（409），不静默降层。配置页默认模型 = 连接选择 + 模型候选（scoped 目录），见 §3b。
 
+**llm-provider 就绪判定按 instance 层求值（BL-350，2026-11-06 lab 实测）**：Agent 的 LLM 就绪门只读 **instance 层**有效配置（`config_client` 是无层视图，决策 #19），**用户层 profile 不驱动 Agent 就绪**；只写 `PUT /api/v1/config/user/llm-provider` 时 `POST /chat` 仍返回 503 `LLM_NOT_CONFIGURED`。该 503 的 `detail`/`reason` 现在区分三种原因：`instance_profile_missing`（两层都没有 profile）、`user_profile_only`（仅检测到用户层配置——请由实例管理员补 instance 层）、`credential_missing`（instance 层有 profile 但凭据不可用）；wire `code` 保持 `LLM_NOT_CONFIGURED` 不变。按 actor/session 求值有效层级属架构调整（(A) 方案），不在本修复范围。
+
 凭证**不写 config 层**（`rejectProviderSecrets` 会以 403 拒绝任何 `*ApiKey`/secret/password/token 类键），统一走凭据域：`credentials` 保存加密密钥，`provider_connections.credential_id` 只做引用（PLAN-0553 硬切后连接不再有密文列）：
 
 `isProviderSecretKey` 对通用 `token` 键名匹配必须排除 `maxTokens`：它是 `llm-provider` 的数值配置，不是凭证；`ConfigServiceTest.importJsonc_acceptsNumericValues` 覆盖该行为。

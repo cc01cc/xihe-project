@@ -1069,6 +1069,9 @@ class ChatControllerTest extends AbstractH2Test {
 
             assertEquals(HttpStatus.SERVICE_UNAVAILABLE, response.getStatusCode());
             assertEquals("LLM_NOT_CONFIGURED", response.getBody().get("code"));
+            // BL-350: the body now names the missing layer (reason) without changing the code.
+            assertTrue(response.getBody().get("reason") != null,
+                    "LLM_NOT_CONFIGURED must carry a reason: " + response.getBody());
             assertEquals(before, messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId).size());
         } finally {
             AGENT_HEALTH.set("{\"status\":\"ok\",\"liveness\":\"up\",\"llmReady\":\"ready\",\"configRevision\":\"test-revision\"}");
