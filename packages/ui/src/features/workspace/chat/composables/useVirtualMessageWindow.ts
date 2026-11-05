@@ -106,7 +106,9 @@ export function useVirtualMessageWindow({
 
     const active = computed(() => enabled.value && viewportHeight.value > 0);
 
-    const window = computed<VirtualWindow>(() => {
+    // 不要命名为 window：会遮蔽全局 window，使同作用域的 window.setTimeout 运行时报
+    // TypeError（BL-353）。`vue-tsc` 拦不住（VirtualWindow 上没有 setTimeout），只有运行时炸。
+    const virtualWindow = computed<VirtualWindow>(() => {
         const keys = rowKeys.value;
         if (!active.value) {
             const heights = buildRowHeights(keys, measured.value, fallbackHeight);
@@ -242,7 +244,8 @@ export function useVirtualMessageWindow({
     });
 
     return {
-        window,
+        // 对外字段名保持 `window`（调用方不改；BL-353 只改本地标识符）。
+        window: virtualWindow,
         viewportHeight,
         scrollTop,
         attach,
