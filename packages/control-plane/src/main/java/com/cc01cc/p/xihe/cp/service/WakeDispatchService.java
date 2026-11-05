@@ -18,6 +18,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.util.UUID;
 
@@ -383,13 +385,32 @@ public class WakeDispatchService {
         audit(sessionId, participant.getId(), triggerSource, wakeRoundId, "notify",
                 null, null, parentRunId);
         if (userChannel != null && participant.getPrincipalId() != null) {
-            try {
-                userChannel.participantNotified(participant.getPrincipalId().toString(),
-                        sessionId.toString(), participant.getId().toString());
-            } catch (RuntimeException failure) {
-                logger.warn("[LIFECYCLE] service=cp event=user_channel_push_failed userId={} "
-                                + "reason={} sessionId={}", participant.getPrincipalId(),
-                        failure.getClass().getSimpleName(), sessionId);
+            String userId = participant.getPrincipalId().toString();
+            String hintSessionId = sessionId.toString();
+            String hintParticipantId = participant.getId().toString();
+            Runnable push = () -> {
+                try {
+                    userChannel.participantNotified(userId, hintSessionId, hintParticipantId);
+                } catch (RuntimeException failure) {
+                    logger.warn("[LIFECYCLE] service=cp event=user_channel_push_failed userId={} "
+                                    + "reason={} sessionId={}", userId,
+                            failure.getClass().getSimpleName(), sessionId);
+                }
+            };
+            // PLAN-0660 T5.5 (timing gap): the hint is only a hint — it may never precede the
+            // durable notify row. Registering afterCommit makes "commit first, push second" the
+            // ordering the receiver relies on; on rollback the synchronization never fires, so a
+            // rolled-back notify reaches nobody. Without an active synchronization (direct or
+            // non-transactional calls) the push stays synchronous — the port is fire-and-forget.
+            if (TransactionSynchronizationManager.isSynchronizationActive()) {
+                TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                    @Override
+                    public void afterCommit() {
+                        push.run();
+                    }
+                });
+            } else {
+                push.run();
             }
         }
     }
