@@ -143,7 +143,12 @@ test("@host PLAN-0678 V3 技能正向：instance 导入 2 技能 → 绑定 → 
         [200, 201],
         `注册应 2xx，实际 ${registered.status()}：${await registered.text()}`,
     ).toContain(registered.status());
-    const regBody = (await registered.json()) as { id?: string; accessToken: string };
+    const regBody = (await registered.json()) as {
+        id?: string;
+        userId?: string;
+        accessToken: string;
+        user?: { id?: string };
+    };
     const workspaceId = await ensureWorkspace(request, regBody.accessToken);
     await ensureFakeUserProvider(request, { accessToken: regBody.accessToken, workspaceId });
 
@@ -158,7 +163,9 @@ test("@host PLAN-0678 V3 技能正向：instance 导入 2 技能 → 绑定 → 
     // ④b 隔离库授予 SUPER_ADMIN（绕过 API 的提权，仅本隔离库、随栈销毁），再重新登录取新 token
     const userId =
         regBody.id ??
-        queryIsolatedPostgres(`SELECT id FROM users WHERE identifier = '${email}' LIMIT 1`);
+        regBody.userId ??
+        regBody.user?.id ??
+        queryIsolatedPostgres(`SELECT id FROM users WHERE email = '${email}' LIMIT 1`);
     expect(userId, `应能定位注册用户（注册响应 id 或按 identifier 查库）`).toMatch(UUID);
     queryIsolatedPostgres(
         `INSERT INTO role_bindings (id, role_id, subject_type, subject_id, scope_type, scope_id, granted_by) ` +
