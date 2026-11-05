@@ -19,7 +19,6 @@ function participant(overrides: Partial<SessionParticipantView> = {}): SessionPa
         orderIndex: 40,
         wakePolicy: "ALL_MESSAGES",
         respondPolicy: "ALWAYS",
-        source: "workspace",
         ...overrides,
     };
 }

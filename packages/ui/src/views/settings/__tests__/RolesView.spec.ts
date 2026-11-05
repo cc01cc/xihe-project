@@ -455,7 +455,7 @@ describe("RoleBindingsPanel", () => {
             { id: "ws-1", name: "Workspace One" },
         ] as never);
         mockedApi.listAgentPrincipals.mockResolvedValue([
-            { principalId: "agent-1", name: "Research Agent", scope: "INSTANCE" },
+            { principalId: "agent-1", name: "Research Agent" },
         ]);
         mockedApi.getAgentRoles.mockResolvedValue([]);
         const wrapper = await openBindings();

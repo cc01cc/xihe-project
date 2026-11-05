@@ -339,7 +339,6 @@ describe("MessageItem responder identity", () => {
             orderIndex: 20,
             wakePolicy: "MENTION",
             respondPolicy: "WHEN_MENTIONED",
-            source: "workspace",
             ...overrides,
         };
     }
@@ -400,7 +399,6 @@ describe("MessageItem responder identity", () => {
                 principalId: "other-user",
                 displayName: "Other Human",
                 selfOwned: false,
-                source: null,
             }),
         );
         expect(wrapper.get('[data-slot="message"]').attributes("data-align")).toBe("start");
@@ -417,7 +415,6 @@ describe("MessageItem responder identity", () => {
                 principalId: "me",
                 displayName: "Me",
                 selfOwned: true,
-                source: null,
             }),
         );
         expect(wrapper.get('[data-slot="message"]').attributes("data-align")).toBe("end");
@@ -536,7 +533,6 @@ describe("MessageItem actor badges (PLAN-0659 T1.2)", () => {
             orderIndex: 40,
             wakePolicy: "ALL_MESSAGES",
             respondPolicy: "ALWAYS",
-            source: "workspace",
             ...overrides,
         };
     }
