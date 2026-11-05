@@ -40,7 +40,9 @@ function handleClick(event: MouseEvent) {
     if (props.direction === "start") {
         scrollToStart({ behavior: props.behavior });
     } else {
-        scrollToEnd({ behavior: props.behavior });
+        // BL-340：用户点"回到最新"是**用户意图**，允许它把模式声明为 following-bottom；
+        // 跟随路径里的 `scrollToEnd()` 不再写 mode（mode 是观测结果，不是命令副作用）。
+        scrollToEnd({ behavior: props.behavior, reason: "user" });
     }
 }
 </script>
