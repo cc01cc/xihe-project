@@ -179,14 +179,14 @@ watch(selectedAgentId, resetForSelection, { immediate: true });
             <p
                 v-if="error"
                 data-testid="preview-agent-role-bindings-error"
-                class="rounded border border-rose-500/40 bg-rose-500/10 px-2 py-1 text-xs text-rose-700"
+                class="rounded border border-destructive/40 bg-destructive/10 px-2 py-1 text-xs text-destructive"
             >
                 <span v-if="demo409" class="mr-1 font-medium">演示 409：</span>{{ error }}
             </p>
             <p
                 v-if="notice"
                 data-testid="preview-agent-role-bindings-notice"
-                class="rounded border border-emerald-500/40 bg-emerald-500/10 px-2 py-1 text-xs text-emerald-700"
+                class="rounded border border-brand/40 bg-brand/10 px-2 py-1 text-xs text-brand-accent"
             >
                 {{ notice }}
             </p>
