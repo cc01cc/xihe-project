@@ -1,9 +1,9 @@
 {
   "_note": "BL-303 check:event-keys baseline (grandfather). 只登记当前存量名，不代表推荐名；新键不在这里才会被 namingRuleViolation 检查。由 `node scripts/check-event-keys.mjs --write-baseline` 生成，review 后提交。",
-  "generatedAt": "2026-11-04T22:36:30.880Z",
-  "a03Commit": "a91c856ce517",
+  "generatedAt": "2026-11-05T00:50:54.320Z",
+  "a03Commit": "a8171cee5302",
   "counts": {
-    "logEventKeys": 530,
+    "logEventKeys": 533,
     "sseEventNames": 11,
     "agentEventTypes": 6
   },
@@ -153,6 +153,9 @@
     "context_overflow_preflight",
     "context_policy_max_input_tokens_unresolved",
     "context_policy_resolved",
+    "context_projection_incremental",
+    "context_projection_incremental_skip",
+    "context_projection_window_migrate",
     "continuation_dispatch_failed",
     "continuation_dispatch_result",
     "credential_acquire_failed",
