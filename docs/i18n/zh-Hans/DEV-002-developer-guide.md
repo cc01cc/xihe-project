@@ -271,6 +271,7 @@ node scripts/stack-run.mjs env-json --stack 2
 - 建议同时最多 2 套栈（每栈一套 PG + 四个服务）。
 - **端口事实源（PLAN-0612）**：默认端口的唯一事实源在本仓库 `scripts/lib/stack-ports.mjs`（`STACK_PORTS` + `deriveStack()`）；ONE 工作区的 `config/ports.mjs` 只是编排镜像。改任一侧必须在**同批**改另一侧，并用 `mise run check:ports`（`mise.toml:401`，逐栈 × 逐端口 + 派生字段 + `.env.dev` 自洽性）校验；ONE 不存在时该门**显式 skip**（不是失败），保证单独 clone 可用。
 - **单 clone 自检**：`mise run check:standalone`（`mise.toml:395`）导出无父级副本并验证启动/自检不依赖 one 根。
+- **OpenAPI 契约门（BL-162）**：`mise run check:openapi` 校验 `docs/api/openapi.yaml`（3.1 文档头、path 唯一性、路径参数声明、Problem Details，以及 checkpoint revert / session 读面的冻结契约切片）。它是 **`test:cp` 的依赖**，所以跑 CP 测试就会查契约；PLAN 收尾/波次验收必须显式过一遍。失败时输出 path 数、首个失败点与修复提示（`docs/api/openapi.yaml` 就是唯一事实源）。注意它**不做**路由 ↔ 契约双向比对（"实现有路由但契约没写"属已知盲区，另立 BL）。
 
 ### 模式 E：打包产物（PLAN-0632，`pkg:launcher` / `pkg:installer`）
 
