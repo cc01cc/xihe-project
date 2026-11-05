@@ -130,14 +130,15 @@ class PolicyControllerModeTest {
     }
 
     /**
-     * PLAN-0651 M3 T3.3 (A13 → {@code MANAGE_ROLES}, instance-only): the controller's "admin" flag
-     * now comes from the action atom. The capability fallback is still asserted elsewhere by the
-     * integration matrix; here we pin that the atom alone is sufficient (a custom role holding
-     * MANAGE_ROLES is a tool-face manager) and that the resolved flag is what the service receives.
+     * PLAN-0651 M3 T3.3 + D-165 (Lead ruling 2026-11-05): A13's admin flag is the N9
+     * {@code MANAGE_WORKSPACE_POLICY} atom (instance-scope evaluation), NOT {@code MANAGE_ROLES}
+     * (that shared atom also gates role/binding administration and is deliberately not granted to
+     * ADMIN). This pins that the resolved flag is what the service receives.
      */
     @Test
-    void listFacesPassesTheManageRolesAtomAsTheAdminFlag() {
-        when(requesterAuthority.holdsActionAtom(ToolFaceRegistry.ACTION_MANAGE_ROLES)).thenReturn(true);
+    void listFacesPassesTheInstancePolicyAtomAsTheAdminFlag() {
+        when(requesterAuthority.holdsActionAtom(ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_POLICY))
+                .thenReturn(true);
         List<ToolFaceService.FaceView> expected = List.of(
                 new ToolFaceService.FaceView(null, "builtin", null, "read_file", "read", "structured"));
         when(faceService.list("workspace", null, null, true)).thenReturn(expected);
