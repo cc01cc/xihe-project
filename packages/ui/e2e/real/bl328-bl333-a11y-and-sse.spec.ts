@@ -18,7 +18,12 @@ import { randomUUID } from "node:crypto";
 
 import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
 
-import { CP_URL, registerJourneyUser, waitForControlPlaneAgentReady } from "./helpers/journey";
+import {
+    CP_URL,
+    ensureAgentWorkspaceBinding,
+    registerJourneyUser,
+    waitForControlPlaneAgentReady,
+} from "./helpers/journey";
 import { seedUserGrant } from "./helpers/user-grants";
 
 test.describe.configure({ retries: 0 });
@@ -109,6 +114,9 @@ test("@host BL-328 Escape 关闭审批卡 ⇒ 焦点回到重开 pill；点 pill
     expect(me.ok(), await me.text()).toBeTruthy();
     const userId = ((await me.json()) as { id: string }).id;
     const principalId = await createApprovalAgent(request, userId, owner.workspaceId, headers);
+    // 与既有 approval 车道（chat-follow-up-queue）同款：Agent 进程必须先绑该工作区，
+    // 否则 UI 建会话拿不到可用 Agent（实测首轮就卡在这一步）。
+    await ensureAgentWorkspaceBinding(owner.workspaceId);
     await waitForControlPlaneAgentReady(request, headers);
 
     await page.addInitScript((token) => localStorage.setItem("xihe-token", token), owner.authToken);
