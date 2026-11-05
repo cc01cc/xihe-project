@@ -150,7 +150,7 @@ public class RequesterAuthority {
                 }
             }
         } catch (RuntimeException e) {
-            logger.warn("[POLICY] event=atom_source_lookup_failed subject={} atom={} failureType={}",
+            logger.warn("[POLICY] event=workspace_atom_source_lookup_failed subject={} atom={} failureType={}",
                     subjectId, actionClass, e.getClass().getSimpleName());
             return Set.of();
         }
