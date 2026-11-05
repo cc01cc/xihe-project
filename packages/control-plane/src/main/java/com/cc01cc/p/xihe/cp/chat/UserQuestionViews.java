@@ -15,6 +15,11 @@ import java.util.UUID;
  * difference between the two readers is the right to answer (addressee only); the answer body itself
  * is session content, exactly like a message.
  *
+ * <p><b>Lead ruling D-197 (2026-11-05)</b>: one projection, no per-role field masking — the question
+ * and its answer end up as messages in the session stream (T5.11 relay), so hiding {@code answer}
+ * from a session-visible reader would contradict that stream. Frozen in
+ * {@code spec/session/user-channel.md} §5.5; per-role masking must change that section first.</p>
+ *
  * <p>Wire names are camelCase; {@code settledAt} is the frozen {@code settled_at} stamp, i.e. the
  * "answered at" instant for an answered question (no extra column, no derived field).
  */
