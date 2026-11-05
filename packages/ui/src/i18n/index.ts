@@ -185,6 +185,11 @@ const messages = {
             approvalResolvedElsewhere: "这条审批已在其他窗口处理。",
             approvalResolvedElsewhereDraftKept: "你已经写的内容已保留，可以复制留用；提交已禁用。",
             sseNoticeHelp: "查看帮助",
+            // BL-317b：移动端成员主入口（标题区）与独立成员 sheet。
+            membersEntryLabel: "会话成员，{count} 人",
+            membersEntryLabelWithMentions: "会话成员，{count} 人，{mentions} 个未读提及",
+            mobileMembersHint: "点「更多」看策略、模型与移除。",
+            participantMoreAction: "更多",
             panelMembers: "成员",
             panelContext: "会话设置",
             panelAgents: "智能体",
@@ -2507,6 +2512,12 @@ const messages = {
             approvalResolvedElsewhereDraftKept:
                 "Your draft is kept so you can copy it, but submitting is disabled.",
             sseNoticeHelp: "Learn more",
+            // BL-317b: mobile members entry (title area) + standalone members sheet.
+            membersEntryLabel: "Session members, {count} total",
+            membersEntryLabelWithMentions:
+                "Session members, {count} total, {mentions} unread mentions",
+            mobileMembersHint: "Open “More” for policy, model and removal.",
+            participantMoreAction: "More",
             panelMembers: "Members",
             panelContext: "Session settings",
             panelAgents: "Agents",

@@ -101,10 +101,11 @@ function handleToggleMonitor() {
 }
 
 /**
- * BL-317 / D-198：移动端成员面板入口（桌面由 dock 的 `members` 标签承担，不经过这里）。
+ * BL-317 / D-198：溢出菜单的成员入口（**保留作兜底**，BL-317b 不改它的落点）。
  *
- * 与 monitor/changes 完全同形：同一 tab 再点一次 = 收起，切到别的 tab = 换页。
- * 面板体复用 `SessionParticipantsPanel`（未读徽标、游标推进、只读禁用都在那份里）。
+ * BL-317b 的新主入口是标题区的「头像堆叠 + 人数 + @N」→ `MobileMembersSheet`（独立高 sheet）。
+ * 这里刻意仍走 aux tab：`e2e/mock/bl317-mobile-members.spec.ts` 覆盖了这条既有路径，
+ * Lead 的验收口径要求它「跑通不改」——两个入口最终复用**同一个** `SessionParticipantsPanel`。
  */
 function handleToggleMembers() {
     if (isMobileViewport.value) {
