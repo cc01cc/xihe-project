@@ -14,6 +14,11 @@
  *
  * 纪律：**不依赖 `__xhVirtualDebug`**（DEV hook 不进生产构建）；heap 取不到就**跳过并注明**，
  * 不 fake、不估算。失败信息给**实测值 + 阈值**两个数。
+ *
+ * 方法学（2026-11-06 首版教训 + Lead 裁定）：
+ * - **首版把 120MB 当断言直接红 ⇒ 那才是拿错误口径造假红**；**判据宁可不写，也不要写假红**。
+ * - 反之**宽阈值也是"绿了但没证明任何事"**：所以断言贴在基线上一档（120 行 / 3000 节点），
+ *   而不是灾难线（200 / 5000）。实测 7 行 / 471 节点，二者仍有一个数量级余量。
  */
 import { expect, test } from "./helpers/mock-test";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
@@ -98,12 +103,10 @@ test.describe("BL-329 长会话窗口化预算", () => {
         });
 
         const atBottom = await measure(page);
-        expectWithinBudget(
-            "渲染行数（滚到底）",
-            atBottom.renderedRows,
-            BUDGET.renderedRowsHardFail,
-        );
-        expectWithinBudget("DOM 节点数（滚到底）", atBottom.domNodes, BUDGET.domNodesHardFail);
+        // 判据贴在**基线上一档**（实测 7 行 / 471 节点 ⇒ ≤120 / ≤3000 仍有一个数量级余量），
+        // 灾难线（200 行 / 5000 节点）只作为注释里的"再往上就是彻底失效"说明，不作断言。
+        expectWithinBudget("渲染行数（滚到底）", atBottom.renderedRows, BUDGET.renderedRows);
+        expectWithinBudget("DOM 节点数（滚到底）", atBottom.domNodes, BUDGET.domNodes);
         // heap：**故意不做绝对阈值**。本车道跑的是 Vite dev server + Playwright，
         // `performance.memory.usedJSHeapSize` 含 dev 运行时与源码映射，实测 359–413MB，
         // 与 BL-329 人工基线（54MB）不是同一口径 ⇒ 绝对值不可比（记为"未验证"）。
@@ -124,11 +127,7 @@ test.describe("BL-329 长会话窗口化预算", () => {
         });
         await page.waitForTimeout(500);
         const atMiddle = await measure(page);
-        expectWithinBudget(
-            "渲染行数（滚到中部）",
-            atMiddle.renderedRows,
-            BUDGET.renderedRowsHardFail,
-        );
+        expectWithinBudget("渲染行数（滚到中部）", atMiddle.renderedRows, BUDGET.renderedRows);
 
         // 连续滚动 4s 内的 long task 数（FPS 的廉价代理）。
         const longTasks = await page.evaluate(async () => {
