@@ -169,6 +169,7 @@ mise run validate             # lint + typecheck + build + test (+ e2e fixture s
 mise run validate:full        # adds integration and E2E (needs Docker); compose E2E itself is frozen
 mise run test:e2e:fixtures    # e2e fixture self-tests only (fake LLM chain state machine; no stack, seconds)
 mise run test:runtime:lib:gate  # BL-262 race gate: serial 1 + parallel 3; milestone only, not part of validate
+mise run test:cp:baseline       # BL-368: classify CP failures against scripts/cp-known-baseline.json (run after test:cp; baseline only shrinks)
 mise run ledger:validate      # read-only ledger (BL/PLAN) validation; run from the ONE workspace root; report-only
 mise run test:e2e:host        # host E2E: stop dev:host first (DEV-002 §5); each round uses an isolated environment
 ```
