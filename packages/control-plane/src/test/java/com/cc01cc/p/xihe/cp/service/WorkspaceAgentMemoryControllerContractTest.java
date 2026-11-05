@@ -254,7 +254,10 @@ class WorkspaceAgentMemoryControllerContractTest extends AbstractIntegrationTest
     @Test
     void selfAtomWritesOwnPrincipalWithoutAnyMemoryWriteGrant() throws Exception {
         fixture();
-        // EDITOR carries MEMORY_WRITE_SELF by default (BL-345); no MEMORY_WRITE grant is added.
+        // BL-349: WS_* roles no longer carry SELF (they are agent-bindable). The human USER role
+        // carries it; this fixture uses a bare user + workspace role, so grant the human-tier atom
+        // explicitly and add NO MEMORY_WRITE (any subject) grant.
+        addGrant("MEMORY_WRITE_SELF", "*");
         ResponseEntity<Map> own = createMemory(principalId.toString(),
                 Map.of("content", "Own principal memory"));
         assertEquals(HttpStatus.CREATED, own.getStatusCode(), String.valueOf(own.getBody()));

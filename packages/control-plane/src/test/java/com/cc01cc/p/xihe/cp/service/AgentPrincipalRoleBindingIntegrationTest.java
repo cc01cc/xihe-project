@@ -10,6 +10,8 @@ import com.cc01cc.p.xihe.cp.entity.AuthorizationGrant;
 import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.policy.GrantPrincipalPathResolver;
+import com.cc01cc.p.xihe.cp.policy.PermissionAtomCatalog;
+import com.cc01cc.p.xihe.cp.policy.ToolFaceRegistry;
 import com.cc01cc.p.xihe.cp.policy.GrantSources;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
 import com.cc01cc.p.xihe.cp.repository.AccessRoleBindingRepository;
@@ -105,6 +107,26 @@ class AgentPrincipalRoleBindingIntegrationTest extends AbstractIntegrationTest {
                                 GrantPrincipalPathResolver.AGENT_PRINCIPAL, "workspace", workspaceId)
                         .stream().anyMatch(row -> principal.getId().equals(row.getSubjectId())),
                 "the workspace role binding is the source of that effect");
+    }
+
+    /**
+     * BL-349 (P0 regression guard): BL-345 put MEMORY_WRITE_SELF on WS_* roles, which turned every
+     * "bind an agent to a workspace with a default workspace role" call into 403 ROLE_NOT_GRANTABLE
+     * (the atom is agent-forbidden). This test binds the editor role and asserts both halves of the
+     * fix: the binding succeeds, and the materialized agent atoms never contain SELF.
+     */
+    @Test
+    void defaultWorkspaceRoleBindsToAgentAndCarriesNoAgentForbiddenAtom() {
+        AgentPrincipal principal = createPlainPrincipal("bl349Bindable");
+        bindToWorkspace(principal.getId());
+
+        List<String> atoms = roleAtomNames(principal.getId());
+        assertTrue(atoms.containsAll(List.of("read", "write", "exec")),
+                "the editor binding must take effect: " + atoms);
+        assertFalse(atoms.contains(ToolFaceRegistry.ACTION_MEMORY_WRITE_SELF),
+                "BL-349: a workspace role must not hand MEMORY_WRITE_SELF (agent-forbidden) to an agent");
+        assertTrue(PermissionAtomCatalog.canBindToAgentPrincipal(atoms),
+                "every atom materialized from a workspace role must be agent-bindable");
     }
 
     @Test

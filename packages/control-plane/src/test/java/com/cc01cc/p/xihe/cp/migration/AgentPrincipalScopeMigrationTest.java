@@ -162,9 +162,15 @@ class AgentPrincipalScopeMigrationTest {
         // binding below. The invariant is a subset one: every pre-existing row must still be present
         // (V129 may only add), so "delete 3 and add 5" cannot pass as "net growth".
         Set<String> afterGrants = tierGrantRows();
-        assertTrue(afterGrants.containsAll(grantRowsBefore),
-                "V126/V129 must not delete existing grants (V129 may only add role grants); missing: "
-                        + difference(grantRowsBefore, afterGrants));
+        // BL-349 (P0): V130 deliberately deletes MEMORY_WRITE_SELF rows from workspace roles. That is
+        // the one sanctioned deletion; every other pre-existing grant must still be present.
+        Set<String> beforeElsewhere = new HashSet<>(grantRowsBefore);
+        beforeElsewhere.removeIf(row -> row.contains("MEMORY_WRITE_SELF"));
+        Set<String> afterElsewhere = new HashSet<>(afterGrants);
+        afterElsewhere.removeIf(row -> row.contains("MEMORY_WRITE_SELF"));
+        assertTrue(afterElsewhere.containsAll(beforeElsewhere),
+                "only MEMORY_WRITE_SELF rows may disappear (BL-349); other grants are never deleted; "
+                        + "missing: " + difference(beforeElsewhere, afterElsewhere));
         assertTrue(afterGrants.size() >= grantRowsBefore.size(),
                 "grants rows may only grow across V126/V129");
         assertEquals(3, grantsBefore, "fixture: one grant per tier principal");
