@@ -173,6 +173,9 @@ const messages = {
             panelCode: "代码",
             panelChanges: "变更",
             panelMonitor: "监控",
+            // BL-335：SSE 订阅上限（429）常驻横幅。语义是"通道停了"，所以文案说清**已停止刷新 + 怎么恢复**。
+            sseSubscriberLimitTitle: "实时更新已停止。",
+            sseSubscriberLimitHint: "该页数据已停止刷新，请关掉不用的标签页后刷新本页。",
             panelMembers: "成员",
             panelContext: "会话设置",
             panelAgents: "智能体",
@@ -2479,6 +2482,10 @@ const messages = {
             panelCode: "Code",
             panelChanges: "Changes",
             panelMonitor: "Monitor",
+            // BL-335: SSE subscriber limit (429) persistent banner.
+            sseSubscriberLimitTitle: "Live updates stopped.",
+            sseSubscriberLimitHint:
+                "This page has stopped refreshing. Close the tabs you no longer use, then reload this page.",
             panelMembers: "Members",
             panelContext: "Session settings",
             panelAgents: "Agents",

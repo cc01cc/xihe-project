@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
@@ -307,16 +307,22 @@ const showReopenPill = computed(() => {
     );
 });
 
+/**
+ * BL-328：Escape/遮罩关闭审批卡后，焦点必须**回到触发控件**（重开 pill），而不是掉到 `<body>`。
+ * 之前只把 requestId 记进 dismissed 集合，键盘用户关掉卡就丢失落点，只能靠 Tab 从头摸回来。
+ */
 function handleApprovalDismiss() {
     const approval = pendingApproval.value;
     if (!approval) return;
     dismissedRequestIds.value.add(approval.requestId);
+    void nextTick(() => reopenPillRef.value?.focus());
 }
 
 function reopenApproval() {
     const approval = pendingApproval.value;
     if (!approval) return;
     dismissedRequestIds.value.delete(approval.requestId);
+    // 卡片自身在 `show` 变 true 时把焦点放到主操作（ApprovalModal.focusMainAction），这里不抢。
 }
 
 watch(pendingApproval, (approval, previous) => {
@@ -639,6 +645,8 @@ function handleDerivedStateRefresh() {
 }
 
 const guidancePanelRef = ref<InstanceType<typeof GuidancePanel> | null>(null);
+/** BL-328：Escape 关闭审批卡后的焦点落点（触发控件）。 */
+const reopenPillRef = ref<HTMLButtonElement | null>(null);
 const currentRunId = computed(() => chatStore.getSessionRunId(props.sessionId));
 const currentRunStatus = computed(() => chatStore.getSessionRunState(props.sessionId).status);
 
@@ -1463,6 +1471,7 @@ watch(
 
         <button
             v-if="showReopenPill"
+            ref="reopenPillRef"
             type="button"
             data-testid="pending-approval-reopen-pill"
             class="mx-4 mb-2 flex items-center justify-between gap-3 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm transition hover:bg-amber-500/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
