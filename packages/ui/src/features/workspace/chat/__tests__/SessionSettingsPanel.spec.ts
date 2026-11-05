@@ -9,6 +9,7 @@ import { api } from "../../../../composables/api";
 import type * as apiModule from "../../../../composables/api";
 import { usePolicyStore } from "../../../../stores/policy";
 import { useSessionStore } from "../../../../stores/session";
+import { useAuthStore } from "../../../../stores/auth";
 
 vi.mock("../../../../composables/api", async (importOriginal) => {
     const actual = await importOriginal<typeof apiModule>();
@@ -310,6 +311,60 @@ describe("SessionSettingsPanel expansion", () => {
         const risk = wrapper.get('[data-testid="session-settings-risk-template"]');
         expect(risk.isVisible()).toBe(true);
         expect(risk.text()).toContain("模板加载失败");
+        wrapper.unmount();
+    });
+});
+
+/**
+ * BL-311：VIEWER 只读工作区里，「关闭自动放行」不能是可点按钮再吃 403 `WORKSPACE_READ_ONLY`。
+ * 但自动放行是**安全状态**：横幅与当前模式必须继续可见，否则 VIEWER 会以为工作区没有自动放行。
+ * 判定源 = 既有投影 `auth.canWriteWorkspace`（CP `WorkspaceView.canWrite`）；CP 守卫不变。
+ */
+describe("SessionSettingsPanel read-only workspace (BL-311)", () => {
+    function seedWorkspace(workspace: { workspaceRole?: string; canWrite?: boolean }) {
+        useAuthStore().$patch({
+            workspace: { id: "workspace-1", name: "Workspace", ...workspace },
+        });
+    }
+
+    it("keeps the auto-approval warning readable but disables the close action for a VIEWER", async () => {
+        setPolicyMode("auto");
+        seedWorkspace({ workspaceRole: "VIEWER" });
+        const wrapper = mountPanel();
+        await flushPromises();
+
+        const banner = wrapper.get('[data-testid="session-policy-auto-banner"]');
+        expect(banner.isVisible(), "read-only status must stay visible").toBe(true);
+        expect(banner.text()).toContain("自动放行已开启");
+
+        const close = wrapper.get('[data-testid="session-policy-auto-close"]');
+        expect(
+            close.attributes("disabled"),
+            "write entry point disabled before click",
+        ).toBeDefined();
+        expect(close.attributes("title")).toBe(i18n.global.t("workspace.viewerReadOnly"));
+
+        // 点击不产生写请求、横幅也不乐观隐藏（去掉 `disabled` 时这两条会红）。
+        await close.trigger("click");
+        await flushPromises();
+        expect(api.setPolicyMode, "read-only must not attempt a write").not.toHaveBeenCalled();
+        expect(wrapper.get('[data-testid="session-policy-auto-banner"]').isVisible()).toBe(true);
+        wrapper.unmount();
+    });
+
+    it("keeps the one-click remediation for an EDITOR (unchanged behaviour)", async () => {
+        setPolicyMode("auto");
+        seedWorkspace({ workspaceRole: "EDITOR" });
+        const wrapper = mountPanel();
+        await flushPromises();
+
+        const close = wrapper.get('[data-testid="session-policy-auto-close"]');
+        expect(close.attributes("disabled")).toBeUndefined();
+        expect(close.attributes("title")).toBeUndefined();
+
+        await close.trigger("click");
+        await flushPromises();
+        expect(api.setPolicyMode).toHaveBeenCalledWith(SESSION_ID, "manual");
         wrapper.unmount();
     });
 });

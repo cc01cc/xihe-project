@@ -32,6 +32,8 @@ const props = defineProps<{
     removing?: boolean;
     /** 策略保存中（避免重复提交）。 */
     saving?: boolean;
+    /** PLAN-0660 T5.6：本人已读游标推进中（避免重复提交）。 */
+    advancing?: boolean;
 }>();
 
 function emitWake(wakePolicy: ParticipantWakePolicy): void {
@@ -49,6 +51,8 @@ const emit = defineEmits<{
         participant: SessionParticipantView,
         change: { wakePolicy?: ParticipantWakePolicy; respondPolicy?: ParticipantRespondPolicy },
     ];
+    /** PLAN-0660 T5.6：把**本人**的已读游标推进到服务端允许的最新位置（PATCH 由父级发出）。 */
+    advanceCursor: [participant: SessionParticipantView];
 }>();
 
 /** 破坏性操作走两次点击确认（与 0622 的禁用 Agent 同一形状），不做 alertdialog。 */
@@ -134,6 +138,28 @@ const mentionCount = computed(() => {
 });
 
 const disabled = computed(() => Boolean(props.participant.disabledAt));
+
+/**
+ * PLAN-0660 T5.6：「标记已读」只出现在**本人的那一行**。
+ *
+ * 身份判断沿用契约既有来源：CP 归约的 `selfOwned` + `principalKind`（`PATCH …/cursor` 只接受
+ * HUMAN 且 `principal_id` 是调用者的行，其余 403 `CURSOR_SELF_ONLY`）。**不按角色名特判**——
+ * PRIMARY/MEMBER/GUARD 说的是会话内职责，与"这个游标是不是我的"无关；也没有新增能力位：
+ * 游标的所有权就是行自己的 `selfOwned`，再加一个 capability 只是把同一事实抄两份。
+ * 停用行不显示：CP 侧游标虽还在，但替停用行做"已读"动作没有意义。
+ */
+const canAdvanceOwnCursor = computed(
+    () =>
+        props.participant.selfOwned === true &&
+        props.participant.principalKind === "HUMAN" &&
+        !disabled.value,
+);
+
+/** 父级负责发 PATCH（与移除/改策略同一条路径），本组件只报告意图。 */
+function requestAdvance(): void {
+    if (!canAdvanceOwnCursor.value || props.advancing) return;
+    emit("advanceCursor", props.participant);
+}
 </script>
 
 <template>
@@ -242,6 +268,21 @@ const disabled = computed(() => Boolean(props.participant.disabledAt));
             </p>
         </div>
         <div class="flex shrink-0 flex-col items-end gap-1">
+            <!--
+                PLAN-0660 T5.6：本人行的已读推进。上限由 CP 夹取（advance-only + session max），
+                这里不显示/不计算任何数字，成功后徽标直接由服务端返回的 mentionCount 派生。
+            -->
+            <button
+                v-if="canAdvanceOwnCursor"
+                type="button"
+                class="rounded border px-1.5 py-0.5 text-[10px] disabled:opacity-50"
+                data-testid="participant-cursor-advance"
+                :disabled="advancing === true"
+                :title="t('workspace.participantCursorAdvanceHint')"
+                @click="requestAdvance"
+            >
+                {{ t("workspace.participantCursorAdvance") }}
+            </button>
             <!-- U2/F-01：无权限时**点击前**禁用，并给出原因，而不是点了才 403。 -->
             <button
                 type="button"
