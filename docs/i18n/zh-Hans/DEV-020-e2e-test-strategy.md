@@ -304,6 +304,17 @@ node scripts/e2e-host-detached.mjs --timeout-min 25 --auth-lane=ratelimit \
 - **浏览器网络瞬态不登记为产品缺陷**：合并后首次启动时 Vite 会 `Re-optimizing dependencies`，此时偶发 `net::ERR_NO_BUFFER_SPACE`（普通 GET 经 dev proxy，非 SSE）。判据=同栈复跑不复现 + CP/agent 侧无断流日志 ⇒ 记观察项，**不得**加白名单或放宽断言。
 - mock 车道的 `XIHE_EVIDENCE_DIR` 未设时由 `e2e/helpers/evidence.ts` 回退 `<repo>/.local/evidence/e2e-auto` 并 WARN 一次（此前 4 条用例因此判红，属环境前置非回归）。
 
+## mode 门控 spec 的漂移风险与夹具前提（2026-11-06 实测）
+
+- **风险**：受 `--llm-mode` 门控的 spec 在日常 mock 车道恒 skip ⇒ **无人跑 ⇒ 随契约漂移**（`BL-358`：`chat-follow-up-queue.spec.ts` 的 approval 路径缺必需 `X-Workspace-Id`，撞 `409 WORKSPACE_CONTEXT_REQUIRED`）。这是"低频路径静默腐烂"的 E2E 版本（同 `BL-357`）。
+- **机制**：`--llm-mode` **不经 env 透传给 Playwright**（spec 内读不到 `XIHE_E2E_LLM_MODE`）⇒ 用 `test.skip(process.env.XIHE_E2E_LLM_MODE !== ...)` 做前置门控的 spec，在 runner 直跑下**恒 skip**。
+- **要求**：
+  1. mode 门控**不要用 env 前置 `test.skip`**，改**运行时探测**（连上后按车道/夹具特征判定可测性）。
+  2. 受门控的 spec 必须**定期在对应模式下整跑一次**：每次改动该路径时 + 每周一次（记入该次改动备注或运行记录）。
+  3. **UI 建会话夹具前置**：先 `ensureFakeUserProvider` 建 READY provider，再建会话；断言匹配**路径形式** `POST /api/v1/workspaces/{id}/sessions`，不要把字面量焊死。
+- **排查顺序**（卡在"建会话"段时）：①READY provider → ②请求路径形态/头（`X-Workspace-Id`）→ **最后**才怀疑车道能力。实测 mock 与 approval 两车道**均支持** UI 建会话（对照探针均 201）。
+
+
 ## 4. 参考
 
 - XH E2E profile、readiness 和实际结果矩阵：维护在 workspace 私有 internal 层（不在本仓库分发）

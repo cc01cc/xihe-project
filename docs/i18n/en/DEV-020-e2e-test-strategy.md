@@ -184,6 +184,17 @@ node scripts/e2e-host.mjs --llm-mode=disconnect e2e/real/chat-availability.spec.
 - **Agent readiness measurement**: under full-batch load `spawn → health+llmReady` measured 5.1–7.6 s across 6 samples (with n=6, p95 equals the max 7.6 s); the 30 s default budget stays (override with `XIHE_E2E_AGENT_READY_TIMEOUT_MS`), and failures must report waited time + last state + agent log path.
 - **Cleanup cost**: a workspace DELETE with an import job takes ≈11 s (29 ms when idle); batch cleanups must run concurrently, not serially. The runner's zero-residue teardown check is unchanged.
 
+## Drift risk of mode-gated specs, and fixture prerequisites (measured 2026-11-06)
+
+- **Risk**: a spec gated by `--llm-mode` is skipped on the everyday mock lane ⇒ **nobody runs it ⇒ it drifts** (`BL-358`: the approval path of `chat-follow-up-queue.spec.ts` was missing the required `X-Workspace-Id` header and hit `409 WORKSPACE_CONTEXT_REQUIRED`). This is the E2E version of "low-frequency paths rot silently" (same class as `BL-357`).
+- **Mechanism**: `--llm-mode` is **not passed to Playwright through env** (specs cannot read `XIHE_E2E_LLM_MODE`), so a `test.skip(process.env.XIHE_E2E_LLM_MODE !== ...)` guard **always skips** under a direct runner invocation.
+- **Requirements**:
+  1. Do not gate on env with a leading `test.skip`; use **runtime detection** instead (decide testability from lane/fixture characteristics after connecting).
+  2. Run every gated spec **once in its own mode on a schedule**: whenever that path is changed, and once per week (record it in the change note or run log).
+  3. **UI session fixture prerequisite**: call `ensureFakeUserProvider` and wait for a READY provider *before* creating a session; assert on the **path shape** `POST /api/v1/workspaces/{id}/sessions`, not on the literal string.
+- **Triage order** (when stuck at "create session"): ① READY provider → ② request path/headers (`X-Workspace-Id`) → **only then** suspect lane capability. Both the mock and approval lanes were measured to **support** UI session creation (control probes returned 201 in both).
+
+
 ## 4. References
 
 - Test strategy decision framework is maintained as a workspace skill.
