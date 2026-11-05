@@ -31,6 +31,7 @@ import {
 } from "../../../composables/useWorkspaceLayout";
 import { useLiveResize } from "../../../composables/useLiveResize";
 import { useWorkspaceStore } from "../stores/workspace";
+import { useSessionParticipantsStore } from "../stores/sessionParticipants";
 import WorkspaceToolbar from "./WorkspaceToolbar.vue";
 import WorkspaceDock from "./WorkspaceDock.vue";
 import FileTreePanel from "./FileTreePanel.vue";
@@ -62,7 +63,7 @@ const props = defineProps<{
     agentPrincipalId?: string | null;
     isMobile: boolean;
     mobileChangesOpen?: boolean;
-    mobileAuxTab?: "monitor" | "changes";
+    mobileAuxTab?: "monitor" | "changes" | "members";
 }>();
 
 const emit = defineEmits<{
@@ -72,12 +73,45 @@ const emit = defineEmits<{
     files: [];
     "mobile-toggle-changes": [];
     "mobile-toggle-monitor": [];
+    /** BL-317 / D-198：移动端没有 dock，成员面板走 worksheet 的 tab 入口（与 monitor/changes 同形）。 */
+    "mobile-toggle-members": [];
     /** PLAN-0623：参与者面板的「提及」冒泡到页面层，由它转给 composer。 */
     mention: [name: string];
 }>();
 
 const { t } = useI18n();
 const ws = useWorkspaceStore();
+
+/**
+ * BL-317 / D-198 —— 移动端成员入口的未读徽标（**只用服务端值**）。
+ *
+ * 数值来源：`GET …/participants` 响应里的 `readCursor.mentionCount`（store 解析后的 `participants`），
+ * 这里只对"本人 HUMAN 行"求和。**前端不累加、不本地持久化、不做增量推断**。
+ *
+ * 为什么在 workbench 里预热一次：store 平时由面板挂载时拉取，而移动端入口在**打开面板之前**
+ * 就要显示徽标；所以只在移动端（`isMobile`）随会话变化预热，桌面不预热（桌面入口在 dock 上，零变化）。
+ */
+const participantsStore = useSessionParticipantsStore();
+watch(
+    [() => props.isMobile, () => props.sessionId],
+    ([mobile, sessionId]) => {
+        if (!mobile || !sessionId) return;
+        void participantsStore.load(sessionId);
+    },
+    { immediate: true },
+);
+
+const membersUnread = computed(() =>
+    (participantsStore.participants ?? [])
+        .filter(
+            (participant) =>
+                participant.selfOwned === true && participant.principalKind === "HUMAN",
+        )
+        .reduce(
+            (sum, participant) => sum + Math.max(0, participant.readCursor?.mentionCount ?? 0),
+            0,
+        ),
+);
 
 const { width: viewportWidth } = useWindowSize();
 
@@ -465,6 +499,21 @@ function handleToggleMonitor(): void {
     toggleDockTab("monitor");
 }
 
+/**
+ * BL-317 / D-198：成员面板的移动端入口。
+ *
+ * 桌面走 dock 的 `members` 标签（`toggleDockTab`）；移动端没有 dock，同一个工具栏按钮改为
+ * 通知页面打开 aux sheet 的 `members` 页 —— 与 `handleToggleChanges`/`handleToggleMonitor` 同形，
+ * 页面侧负责"再点一次收起"的语义。
+ */
+function handleToggleMembers(): void {
+    if (props.isMobile) {
+        emit("mobile-toggle-members");
+        return;
+    }
+    toggleDockTab("members");
+}
+
 // PLAN-0365 (root cause B): selecting a file must surface the editor. The editor
 // now lives in the dock's `code` tab, which is closed by default.
 watch(
@@ -497,6 +546,7 @@ defineExpose({ openDockTab });
                 isMobile ? (mobileChangesOpen ?? false) && mobileAuxTab === 'monitor' : monitorOpen
             "
             :members-open="isMobile ? false : membersOpen"
+            :members-unread="membersUnread"
             :delegation-open="isMobile ? false : delegationOpen"
             @import-source="emit('importSource')"
             @agents="emit('agents')"
@@ -505,7 +555,7 @@ defineExpose({ openDockTab });
             @toggle-code="handleToggleCode"
             @toggle-changes="handleToggleChanges"
             @toggle-monitor="handleToggleMonitor"
-            @toggle-members="toggleDockTab('members')"
+            @toggle-members="handleToggleMembers"
             @toggle-delegation="toggleDockTab('delegation')"
         />
 

@@ -22,19 +22,28 @@ import type {
     SessionParticipantView,
 } from "../../../types/participant";
 
-const props = defineProps<{
-    participant: SessionParticipantView;
-    /** U2：`capabilities.manage` —— false 时移除/改策略在**点击前**就禁用（F-01 形状）。 */
-    canManage: boolean;
-    /** U2：`capabilities.mention` —— false 时 @ 入口禁用。 */
-    canMention: boolean;
-    /** 正在移除该行（请求在途），避免重复点击。 */
-    removing?: boolean;
-    /** 策略保存中（避免重复提交）。 */
-    saving?: boolean;
-    /** PLAN-0660 T5.6：本人已读游标推进中（避免重复提交）。 */
-    advancing?: boolean;
-}>();
+const props = withDefaults(
+    defineProps<{
+        participant: SessionParticipantView;
+        /** U2：`capabilities.manage` —— false 时移除/改策略在**点击前**就禁用（F-01 形状）。 */
+        canManage: boolean;
+        /** U2：`capabilities.mention` —— false 时 @ 入口禁用。 */
+        canMention: boolean;
+        /**
+         * BL-317：工作区写能力（`auth.canWriteWorkspace` 投影）。false（VIEWER）时
+         * 「标记已读」在**点击前**禁用并给出只读原因 —— 否则点击必然 403 `WORKSPACE_READ_ONLY`。
+         * 缺省 true：既有调用方/单测不传时行为不变。
+         */
+        canWrite?: boolean;
+        /** 正在移除该行（请求在途），避免重复点击。 */
+        removing?: boolean;
+        /** 策略保存中（避免重复提交）。 */
+        saving?: boolean;
+        /** PLAN-0660 T5.6：本人已读游标推进中（避免重复提交）。 */
+        advancing?: boolean;
+    }>(),
+    { canWrite: true },
+);
 
 function emitWake(wakePolicy: ParticipantWakePolicy): void {
     emit("policy", props.participant, { wakePolicy });
@@ -155,9 +164,16 @@ const canAdvanceOwnCursor = computed(
         !disabled.value,
 );
 
+/**
+ * BL-317：只读工作区（VIEWER）里「标记已读」在点击前禁用。
+ * 判定源是既有写能力投影（`auth.canWriteWorkspace`），不是角色名特判 —— 与
+ * `SessionPolicyControls` 对模式写入的做法同源；CP 的 403 `WORKSPACE_READ_ONLY` 不变。
+ */
+const readOnly = computed(() => props.canWrite === false);
+
 /** 父级负责发 PATCH（与移除/改策略同一条路径），本组件只报告意图。 */
 function requestAdvance(): void {
-    if (!canAdvanceOwnCursor.value || props.advancing) return;
+    if (!canAdvanceOwnCursor.value || readOnly.value || props.advancing) return;
     emit("advanceCursor", props.participant);
 }
 </script>
@@ -275,10 +291,14 @@ function requestAdvance(): void {
             <button
                 v-if="canAdvanceOwnCursor"
                 type="button"
-                class="rounded border px-1.5 py-0.5 text-[10px] disabled:opacity-50"
+                class="rounded border px-1.5 py-0.5 text-[10px] disabled:opacity-50 max-md:min-h-[44px] max-md:min-w-[44px]"
                 data-testid="participant-cursor-advance"
-                :disabled="advancing === true"
-                :title="t('workspace.participantCursorAdvanceHint')"
+                :disabled="advancing === true || readOnly"
+                :title="
+                    readOnly
+                        ? t('workspace.viewerReadOnly')
+                        : t('workspace.participantCursorAdvanceHint')
+                "
                 @click="requestAdvance"
             >
                 {{ t("workspace.participantCursorAdvance") }}

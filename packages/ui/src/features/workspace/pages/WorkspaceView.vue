@@ -66,7 +66,7 @@ const showCreateDialog = ref(false),
 const showSourceImportDialog = ref(false),
     showMobileFiles = ref(false),
     showMobileChanges = ref(false),
-    mobileAuxTab = ref<"monitor" | "changes">("monitor");
+    mobileAuxTab = ref<"monitor" | "changes" | "members">("monitor");
 const showAgentSelection = ref(false),
     workspaceAgents = ref<WorkspaceAgentBinding[]>([]);
 const selectedAgentPrincipalId = ref(""),
@@ -95,6 +95,23 @@ function handleToggleMonitor() {
             return;
         }
         mobileAuxTab.value = "monitor";
+        showMobileChanges.value = true;
+    }
+}
+
+/**
+ * BL-317 / D-198：移动端成员面板入口（桌面由 dock 的 `members` 标签承担，不经过这里）。
+ *
+ * 与 monitor/changes 完全同形：同一 tab 再点一次 = 收起，切到别的 tab = 换页。
+ * 面板体复用 `SessionParticipantsPanel`（未读徽标、游标推进、只读禁用都在那份里）。
+ */
+function handleToggleMembers() {
+    if (isMobileViewport.value) {
+        if (showMobileChanges.value && mobileAuxTab.value === "members") {
+            showMobileChanges.value = false;
+            return;
+        }
+        mobileAuxTab.value = "members";
         showMobileChanges.value = true;
     }
 }
@@ -367,6 +384,7 @@ watch(isMobileViewport, (mobile) => {
             @files="showMobileFiles = true"
             @mobile-toggle-changes="handleToggleChanges"
             @mobile-toggle-monitor="handleToggleMonitor"
+            @mobile-toggle-members="handleToggleMembers"
             @mention="handleParticipantMention"
         >
             <template #center>
