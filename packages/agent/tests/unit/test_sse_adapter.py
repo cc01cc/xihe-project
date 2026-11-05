@@ -382,6 +382,36 @@ async def test_request_approval_tool_call_also_suppressed():
     assert [e for raw in events for e in _as_list(adapter.translate(raw))] == []
 
 
+@pytest.mark.asyncio
+async def test_ask_user_tool_call_is_suppressed():
+    # PLAN-0660 M5-C: the question body must never ride a tool_call frame into the session stream.
+    adapter = LangGraphEventAdapter(local_tool_names={"request_approval", "ask_user", "generate_image"})
+    events = [
+        {
+            "event": "on_tool_start",
+            "name": "ask_user",
+            "data": {"input": {"question": "secret question?"}},
+            "run_id": "run-13",
+        },
+    ]
+    assert [e for raw in events for e in _as_list(adapter.translate(raw))] == []
+
+
+@pytest.mark.asyncio
+async def test_ask_user_tool_result_is_suppressed():
+    # The answer travels only on the internal respond wire; no tool_result frame leaks it.
+    adapter = LangGraphEventAdapter(local_tool_names={"request_approval", "ask_user", "generate_image"})
+    events = [
+        {
+            "event": "on_tool_end",
+            "name": "ask_user",
+            "data": {"output": ToolMessage(content="the answer", tool_call_id="call-q")},
+            "run_id": "run-14",
+        },
+    ]
+    assert [e for raw in events for e in _as_list(adapter.translate(raw))] == []
+
+
 def _as_list(value):
     if value is None:
         return []

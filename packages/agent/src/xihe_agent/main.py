@@ -335,7 +335,7 @@ async def lifespan(app: FastAPI):
         from xihe_agent.registry.watcher import start_watcher
 
         model = create_llm(state.llm_config)
-        custom_tools = [state.approval_tool, state.generate_image_tool]
+        custom_tools = [state.approval_tool, state.user_question_tool, state.generate_image_tool]
         # Registry startup must not initialize MCP. Workspace/tool requests
         # discover tools lazily in the request-scoped workspace path.
         mcp_tools: list[Any] = []

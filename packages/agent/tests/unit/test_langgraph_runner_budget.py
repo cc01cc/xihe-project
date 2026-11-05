@@ -17,6 +17,7 @@ from langchain_core.messages import AIMessage
 
 import xihe_agent.agent_runner.langgraph_runner as langgraph_runner_module
 from xihe_agent.adapters.approval_tool import APPROVAL_EVENT_SINK_KEY
+from xihe_agent.adapters.user_question_tool import USER_QUESTION_EVENT_SINK_KEY
 from xihe_agent.agent_runner import LangGraphRunner
 from xihe_agent.agent_runner.langgraph_runner import _exceeded_budget_dimension
 from xihe_agent.interfaces.agent_runner import RunBudget, RunnerConfig
@@ -198,3 +199,40 @@ async def test_elapsed_budget_excludes_approval_wait(monkeypatch):
     assert wall_seconds > 1.0
     # ...yet the approval wait was excluded, so no dimension was exhausted.
     assert _trigger_dimensions(events) == []
+
+
+@pytest.mark.asyncio
+async def test_elapsed_budget_excludes_user_question_wait(monkeypatch):
+    """PLAN-0660 T5.15: an ask_user wait is a human wait too — it must not consume elapsed."""
+    context = AgentContext.empty("session-budget-question")
+
+    class FakeAgent:
+        async def astream_events(self, _inputs, version, **kwargs):
+            await asyncio.sleep(0.2)
+            yield _llm_usage_event("m0")
+            sink = context.metadata.get(USER_QUESTION_EVENT_SINK_KEY)
+            if sink is not None:
+                await sink({"question": "Continue?"})
+                await asyncio.sleep(1.5)
+            yield _llm_usage_event("m1")
+
+    monkeypatch.setattr(langgraph_runner_module, "build_react_graph", lambda _model, tools, **_kwargs: FakeAgent())
+    runner = LangGraphRunner(model_factory=lambda _model: object())
+    config = RunnerConfig(
+        model="fake",
+        system_prompt="",
+        tools=[],
+        context=context,
+        budget=RunBudget(max_elapsed_seconds=1),
+    )
+
+    started = time.monotonic()
+    events = await _collect(runner, config)
+    wall_seconds = time.monotonic() - started
+
+    assert wall_seconds > 1.0
+    assert _trigger_dimensions(events) == []
+    # The canonical question event reached the caller's ordered stream (not a tool_call frame).
+    assert [e.type for e in events if e.type in {"approval_request", "user_question"}] == [
+        "user_question"
+    ]

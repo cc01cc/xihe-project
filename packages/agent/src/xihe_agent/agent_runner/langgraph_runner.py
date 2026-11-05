@@ -23,6 +23,7 @@ from loguru import logger
 
 from xihe_agent.adapters.approval_tool import APPROVAL_EVENT_SINK_KEY, ApprovalTerminalError
 from xihe_agent.adapters.sse_adapter import LangGraphEventAdapter
+from xihe_agent.adapters.user_question_tool import USER_QUESTION_EVENT_SINK_KEY
 from xihe_agent.agent_runner.credential_handoff import RunScopedCredentialHandoff
 from xihe_agent.agent_runner.graph_builder import build_react_graph
 from xihe_agent.agent_runner.guidance import GuidanceInjectionModel
@@ -229,7 +230,7 @@ class LangGraphRunner(AgentRunner):
         # PLAN-0326 决策 #9：本地（非网关路由）工具名集合——事件 origin 判别的依据。
         # approval 是控制流原语（事件被抑制），generate_image 是本地执行工具。
         self._event_adapter = event_adapter or LangGraphEventAdapter(
-            local_tool_names={"request_approval", "generate_image"}
+            local_tool_names={"request_approval", "ask_user", "generate_image"}
         )
 
     async def stream(
@@ -286,12 +287,23 @@ class LangGraphRunner(AgentRunner):
             await self._append_prompt_admitted(prompt_events, context)
 
         usage = RunUsage()
-        approval_events: asyncio.Queue[AgentEvent] = asyncio.Queue()
+        # PLAN-0660 M5-C: approvals and user questions are both human waits; they share the
+        # pause/boundary mechanism below but keep their own event types and their own waiters
+        # (each sink only ever publishes its own canonical event — no "is this an approval?"
+        # branching anywhere in the wait path).
+        human_wait_events: asyncio.Queue[AgentEvent] = asyncio.Queue()
+
+        async def publish_human_wait(event: AgentEvent) -> None:
+            await human_wait_events.put(event)
 
         async def publish_approval(payload: dict[str, Any]) -> None:
-            await approval_events.put(AgentEvent(type="approval_request", data=payload))
+            await publish_human_wait(AgentEvent(type="approval_request", data=payload))
+
+        async def publish_user_question(payload: dict[str, Any]) -> None:
+            await publish_human_wait(AgentEvent(type="user_question", data=payload))
 
         context.metadata[APPROVAL_EVENT_SINK_KEY] = publish_approval
+        context.metadata[USER_QUESTION_EVENT_SINK_KEY] = publish_user_question
         # PLAN-0508: provider transport telemetry arrives on the caller-owned
         # queue (the model's collector sink is bound at construction); the loop
         # below fans it into the same ordered event stream. ``transport_task`` is
@@ -399,7 +411,7 @@ class LangGraphRunner(AgentRunner):
             # ensure_future accepts the Awaitable returned by __anext__ (typeshed
             # types it as Awaitable, not Coroutine; asyncio still schedules it).
             raw_task: asyncio.Future[Any] = asyncio.ensure_future(raw_stream.__anext__())
-            approval_task = asyncio.create_task(approval_events.get())
+            human_wait_task = asyncio.create_task(human_wait_events.get())
             transport_task = (
                 asyncio.create_task(transport_events.get()) if transport_events is not None else None
             )
@@ -408,7 +420,7 @@ class LangGraphRunner(AgentRunner):
             )
             try:
                 while True:
-                    wait_set: set[asyncio.Future[Any]] = {raw_task, approval_task}
+                    wait_set: set[asyncio.Future[Any]] = {raw_task, human_wait_task}
                     if transport_task is not None:
                         wait_set.add(transport_task)
                     if cancel_wait_task is not None:
@@ -423,20 +435,20 @@ class LangGraphRunner(AgentRunner):
                         cancelled = True
                         logger.info("LangGraph stream cancelled via cancel_event")
                         break
-                    if approval_task in completed:
+                    if human_wait_task in completed:
                         # PLAN-0492 T1.3: the elapsed clock pauses while we wait
-                        # for a human (approval requests arrive through this
-                        # queue, not the raw event stream).
+                        # for a human (the canonical approval_request / user_question
+                        # events arrive through this queue, not the raw stream).
                         pause_started_at = datetime.now(UTC)
-                        # PLAN-0493 T2.1: a human approval pause is an
-                        # intervention boundary — consecutive counters reset
-                        # (window history is kept), so an authorized/approved
-                        # silent retry never counts as a repeat (verify V3).
+                        # PLAN-0493 T2.1: a human wait is an intervention boundary —
+                        # consecutive counters reset (window history is kept), so an
+                        # authorized/approved silent retry never counts as a repeat (V3).
+                        human_wait_event = human_wait_task.result()
                         window = context.metadata.get(LOOP_WINDOW_KEY)
                         if isinstance(window, LoopObservationWindow):
-                            window.mark_boundary("approval")
-                        yield approval_task.result()
-                        approval_task = asyncio.create_task(approval_events.get())
+                            window.mark_boundary(human_wait_event.type)
+                        yield human_wait_event
+                        human_wait_task = asyncio.create_task(human_wait_events.get())
                     if transport_task is not None and transport_task in completed:
                         # PLAN-0508: fan the telemetry in as it happens; drain the
                         # burst (progress + terminal summary arrive back-to-back)
@@ -506,10 +518,10 @@ class LangGraphRunner(AgentRunner):
                             break
                         raw_task = asyncio.ensure_future(raw_stream.__anext__())
             finally:
-                for task in (raw_task, approval_task, cancel_wait_task, transport_task):
+                for task in (raw_task, human_wait_task, cancel_wait_task, transport_task):
                     if task is not None and not task.done():
                         task.cancel()
-                join_tasks = [task for task in (raw_task, approval_task, transport_task) if task is not None]
+                join_tasks = [task for task in (raw_task, human_wait_task, transport_task) if task is not None]
                 await asyncio.gather(*join_tasks, return_exceptions=True)
                 if cancel_wait_task is not None:
                     await asyncio.gather(cancel_wait_task, return_exceptions=True)
@@ -566,6 +578,7 @@ class LangGraphRunner(AgentRunner):
                 while not transport_events.empty():
                     yield transport_events.get_nowait()
             context.metadata.pop(APPROVAL_EVENT_SINK_KEY, None)
+            context.metadata.pop(USER_QUESTION_EVENT_SINK_KEY, None)
             context.metadata.pop(LOOP_WINDOW_KEY, None)
             usage.finish()
             # PLAN-294 M1 (decisions #2/#6): persist the assistant reply into
