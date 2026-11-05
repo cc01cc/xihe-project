@@ -2123,7 +2123,7 @@ public class ChatController {
                         && !userEntries.getOrDefault("provider", "").isBlank();
             }
         } catch (RuntimeException e) {
-            logger.warn("[LIFECYCLE] service=cp event=llm_diagnosis_unavailable failureType={}",
+            logger.warn("[LIFECYCLE] service=cp event=run_llm_diagnosis_unavailable failureType={}",
                     e.getClass().getSimpleName());
         }
         return LlmReadinessReason.diagnose(instanceProfiled, userProfiled);
