@@ -363,7 +363,10 @@ test.describe("PLAN-0622 M4 有头走查：PERSONAL agent 生命周期 + 429 提
 
         await expect(page.getByTestId("agent-principal-scope")).toHaveCount(0);
 
-        const name = `Headed Personal ${randomUUID().slice(0, 8)}`;
+        // 2026-11-04 主体名规则（`src/lib/principalName.ts`：不得含空格、不得数字开头，CP 同源）：
+        // 原用例名 `Headed Personal <hex>` 带空格 ⇒ `createBlocked` 在点击前就禁用创建按钮，
+        // `click()` 在 `element is not enabled` 上重试到 180 s 超时（S1「create 超时」的真实原因）。
+        const name = `HeadedPersonal${randomUUID().replaceAll("-", "").slice(0, 8)}`;
         await page.getByTestId("agent-principal-name").fill(name);
         await page.getByTestId("agent-default-model-provider").fill("openai");
         await page.getByTestId("agent-default-model-name").fill(FAKE_LLM_MODEL);
@@ -381,9 +384,16 @@ test.describe("PLAN-0622 M4 有头走查：PERSONAL agent 生命周期 + 429 提
         expect(principalId).toMatch(/^[0-9a-f-]{36}$/i);
         expect(createdBody).not.toHaveProperty("scope");
 
-        await expect(page.getByTestId(`workspace-agent-${principalId}`)).toBeVisible({
-            timeout: 20000,
-        });
+        // 2026-11-05 口径（Lead 裁定 + D-177）：**创建与绑定是两个授权动作**
+        // （`CREATE_ACCOUNT` / `MANAGE_WORKSPACE_AGENTS`）。创建不回填 owner、也不自动绑 workspace，
+        // 因此创建成功后主体出现在「已创建，尚未绑定到此工作区」区（`unbound-agent-principal`），
+        // 而 `workspace-agent-<id>` 是**已绑定行**（WorkspaceAgentsPanel.vue:1186-1193 vs :1299），
+        // 要等 S2 的绑定动作之后才出现。这里断言「创建结果对用户可见」，并显式断言它**不在**
+        // 已绑定区 —— "创建不自动绑定"是预期行为，不是"看不见"。
+        const unboundSection = page.getByTestId("unbound-agent-principal");
+        await expect(unboundSection).toBeVisible({ timeout: 20000 });
+        await expect(unboundSection).toContainText(principalId);
+        await expect(page.getByTestId(`workspace-agent-${principalId}`)).toHaveCount(0);
         expect(await page.locator("[data-agent-scope]").count()).toBe(0);
         await shot(page, {
             id: "S1",
@@ -420,6 +430,12 @@ test.describe("PLAN-0622 M4 有头走查：PERSONAL agent 生命周期 + 429 提
             const bound = await bindResponse;
             expect([200, 201, 204], await bound.text()).toContain(bound.status());
             boundInUi = true;
+            // 2026-11-05（Lead 批准，加严）：绑定成功后主体必须出现在"已绑定智能体"区
+            // （`workspace-agent-<id>` 是已绑定行；S1 已把"创建后落在 unbound 区"作为预期断言，
+            // 这条把「绑定后可见」补成硬断言，不再只靠截图）。
+            await expect(page.getByTestId(`workspace-agent-${principalId}`)).toBeVisible({
+                timeout: 15_000,
+            });
         } else {
             recordNotCovered(
                 "S2-bind",

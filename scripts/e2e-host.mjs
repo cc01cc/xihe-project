@@ -1962,6 +1962,11 @@ async function runPlaywright() {
       ...(realXiaomiKey
         ? {
             XIHE_E2E_REAL_KEY: realXiaomiKey,
+            // 2026-11-05（Lead A 类授权）：real-Xiaomi 车道的历史 spec 直接读这个变量名
+            // （`plan0630-delegation-walkthrough.spec.ts:126/:189`、`agent-spawn-caller.spec.ts` 等），
+            // 只传 XIHE_E2E_REAL_KEY 会让它们自我 skip / 报 "real provider key is required"。
+            // 只进 Playwright 子进程环境：不打印、不落盘、不进 argv。
+            XIHE_E2E_REAL_XIAOMI_KEY: realXiaomiKey,
             XIHE_E2E_REAL_PROVIDER: realRoute === 'openai-compat' ? 'openai' : 'xiaomi',
             XIHE_E2E_REAL_API_TYPE_ID: realRoute === 'openai-compat' ? 'openai-chat-completions' : 'mimo-responses',
             XIHE_E2E_REAL_API_TYPE_VERSION: '1',
