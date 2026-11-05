@@ -199,17 +199,24 @@
  * A/C 是 opt-in 覆盖（`?variant=a|c`），仅用于对比与回归，非发布默认。
  */
 :root {
-    --background: #ffffff;
-    --foreground: #1b1e24;
-    --surface-canvas: #f3f4f6;
+    /*
+     * PLAN-0673 UI 视觉 token 实验（A″ = A 几何 + B 色彩，2026-11-05 用户批准）：
+     * 只改亮色 token；`--spacing` 不动（密度保持 B 密集）；`.dark` 段本轮不动。
+     * 对照度：正文 #16181d/#fbfbfc 16.9:1、次要 #64686f/#f5f6f8 5.18:1、
+     * 填充蓝 #3b5bd0 白字 5.84:1（详见 .local/evidence/xh-ui-refresh/token-experiment.md）。
+     */
+    --background: #fbfbfc;
+    --foreground: #16181d;
+    --surface-canvas: #f5f6f8;
     --surface-content: #ffffff;
-    --border-subtle: #d5d9e0;
-    --brand: #2450c8;
+    --border-subtle: rgba(22, 24, 29, 0.09);
+    --brand: #3b5bd0;
+    --brand-accent: #4c6ef5;
     --brand-foreground: #ffffff;
     --card: #ffffff;
-    --card-foreground: #1b1e24;
+    --card-foreground: #16181d;
     --popover: #ffffff;
-    --popover-foreground: #1b1e24;
+    --popover-foreground: #16181d;
     /*
      * PLAN-0631 M0：accent 进 --primary。M2（B）：唯一强调色 #2450c8，
      * 白字压其上实测 6.87:1（WCAG AA✓）。--brand 保留为同源别名
@@ -228,21 +235,27 @@
      * 要求"弱化而非消失"；白底按钮另有 13px 深字（16.70:1）承担可识别性。
      */
     --action: #ffffff;
-    --action-foreground: #1b1e24;
+    --action-foreground: #16181d;
     --action-border: #c9cfd6;
-    --action-hover: #f3f4f6;
+    --action-hover: #f1f3f7;
     --bubble: var(--brand);
     --bubble-foreground: var(--brand-foreground);
-    --link: var(--brand);
+    --link: var(--brand-accent);
     --badge: var(--secondary);
     --badge-foreground: var(--secondary-foreground);
     --badge-border: transparent;
-    --secondary: #eef0f3;
-    --secondary-foreground: #1b1e24;
-    --muted: #eef0f3;
-    --muted-foreground: #4f5661;
-    --accent: #e9ecf0;
-    --accent-foreground: #1b1e24;
+    --secondary: #f1f3f7;
+    --secondary-foreground: #16181d;
+    --muted: #f1f3f7;
+    --muted-foreground: #64686f;
+    --foreground-subtle: #6b6f76;
+    --accent: #f1f3f7;
+    --accent-foreground: #16181d;
+    /*
+     * 卡片浮起：A″ 新增。卡片/浮层用「圆角 + 阴影」取代 1px 硬描边分层
+     * （对应的 `--border` 已降到 9% 黑，行分隔仍可见）。
+     */
+    --shadow-card: 0 1px 2px rgba(16, 24, 40, 0.05), 0 8px 24px -16px rgba(16, 24, 40, 0.18);
     --destructive: oklch(0.577 0.245 27.325);
     /*
      * PLAN-0631 M0 边框三级（使用规则）：
@@ -250,41 +263,42 @@
      *   --border-strong hover/聚焦加深档（可点行、卡片 hover 边框）——不得用于静态装饰；
      *   --border-subtle 两级表面之间的 1px 分隔（分组列表内行间），最弱。
      * M2（B）：边框显式一档（#d5d9e0），静态分隔也看得见 —— 分隔靠线而不只靠留白。
+     * A″（PLAN-0673 实验）：降到 9% 黑（≈1.16:1），并用 `--shadow-card` 承担卡片分层。
      */
     --border: var(--border-subtle);
-    --border-strong: #b0b7c2;
-    --input: #cdd3dc;
-    --ring: var(--brand);
+    --border-strong: rgba(22, 24, 29, 0.16);
+    --input: rgba(22, 24, 29, 0.12);
+    --ring: var(--brand-accent);
     --chart-1: oklch(0.87 0 0);
     --chart-2: oklch(0.556 0 0);
     --chart-3: oklch(0.439 0 0);
     --chart-4: oklch(0.371 0 0);
     --chart-5: oklch(0.269 0 0);
-    /* B 主档 4px；`rounded-sm` 档（calc(radius - 4px)）因此收到 0，小控件方正。 */
-    --radius: 0.25rem;
+    /* A″ 主档 10px；`rounded-sm` 档（calc(radius - 4px)）= 6px，小控件不再方正。 */
+    --radius: 0.625rem;
     /* 消息气泡（BubbleContent 的 rounded-3xl）：B = 8px，不做胶囊。 */
     --radius-3xl: 0.5rem;
     /*
-     * B 的密度：3.5px 步进（0.25rem × 0.875）。Tailwind 的 `p-*` / `gap-*` 都从
-     * `--spacing` 派生，所以改这一处即可整体收紧；正文 13px / 行高 1.45。
+     * 密度：3.5px 步进（0.25rem × 0.875）**保持不变**（A″ 只改视觉年龄，不放松信息密度）。
+     * 正文档 A″：13px / 1.45 → 14px / 1.55。
      */
     --spacing: 0.21875rem;
     --text-xs: 0.75rem;
     --text-xs--line-height: 1.4;
-    --text-sm: 0.8125rem;
-    --text-sm--line-height: 1.45;
+    --text-sm: 0.875rem;
+    --text-sm--line-height: 1.55;
     --text-base: 0.9375rem;
     --text-base--line-height: 1.5;
     /* 气泡正文用 `leading-relaxed`（`--tw-leading` 优先于 `--text-sm--line-height`）。 */
-    --leading-relaxed: 1.45;
+    --leading-relaxed: 1.55;
     --sidebar: var(--surface-canvas);
-    --sidebar-foreground: #1b1e24;
+    --sidebar-foreground: #16181d;
     --sidebar-primary: oklch(0.205 0 0);
     --sidebar-primary-foreground: oklch(0.985 0 0);
-    --sidebar-accent: #e9ecf0;
-    --sidebar-accent-foreground: #1b1e24;
-    --sidebar-border: #d5d9e0;
-    --sidebar-ring: var(--brand);
+    --sidebar-accent: #f1f3f7;
+    --sidebar-accent-foreground: #16181d;
+    --sidebar-border: rgba(22, 24, 29, 0.09);
+    --sidebar-ring: var(--brand-accent);
 }
 
 /*
