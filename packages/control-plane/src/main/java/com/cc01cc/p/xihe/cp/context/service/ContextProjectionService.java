@@ -200,7 +200,7 @@ public class ContextProjectionService {
         Long latestSequence = eventStoreService.getLatestSequence(sessionId);
         long latest = latestSequence == null ? 0L : latestSequence;
         if (storedSequence > latest) {
-            logger.warn("[LIFECYCLE] service=cp event=projection_incremental_skip sessionId={}"
+            logger.warn("[LIFECYCLE] service=cp event=context_projection_incremental_skip sessionId={}"
                     + " reason=projection_ahead storedSequence={} latestSequence={}",
                     sessionId, storedSequence, latest);
             return Optional.empty();
@@ -213,7 +213,7 @@ public class ContextProjectionService {
             }
             context = parsedObject;
         } catch (com.fasterxml.jackson.core.JsonProcessingException invalidPayload) {
-            logger.warn("[LIFECYCLE] service=cp event=projection_incremental_skip sessionId={}"
+            logger.warn("[LIFECYCLE] service=cp event=context_projection_incremental_skip sessionId={}"
                     + " reason=invalid_payload", sessionId, invalidPayload);
             return Optional.empty();
         }
@@ -279,7 +279,7 @@ public class ContextProjectionService {
         // multi-megabyte body, so the caller falls back to projectAndSave, which re-windows the
         // stored context in place (no DB row is deleted or recreated).
         if (!hasCurrentWindow(projection.getPayload())) {
-            logger.debug("[LIFECYCLE] service=cp event=projection_window_migrate sessionId={} branchId={}",
+            logger.debug("[LIFECYCLE] service=cp event=context_projection_window_migrate sessionId={} branchId={}",
                     sessionId, branchId);
             return Optional.empty();
         }
@@ -451,7 +451,7 @@ public class ContextProjectionService {
         if (incremental.isPresent()) {
             context = incremental.get().context();
             suffixEvents = incremental.get().suffixEvents();
-            logger.debug("[LIFECYCLE] service=cp event=projection_incremental sessionId={} suffixEvents={}",
+            logger.debug("[LIFECYCLE] service=cp event=context_projection_incremental sessionId={} suffixEvents={}",
                     sessionId, suffixEvents);
         } else {
             context = project(sessionId, afterSequence, visibility);
