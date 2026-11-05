@@ -1,6 +1,8 @@
 package com.cc01cc.p.xihe.cp.context;
 
 import com.cc01cc.p.xihe.cp.AbstractH2Test;
+import com.cc01cc.p.xihe.cp.context.entity.ContextEvent;
+import com.cc01cc.p.xihe.cp.context.repository.EventStoreRepository;
 import com.cc01cc.p.xihe.cp.context.service.ContextProjectionService;
 import com.cc01cc.p.xihe.cp.context.service.ContextService;
 import com.cc01cc.p.xihe.cp.context.service.EventStoreService;
@@ -29,6 +31,9 @@ class ContextProjectionServiceTest extends AbstractH2Test {
 
     @Autowired
     private ContextProjectionService projectionService;
+
+    @Autowired
+    private EventStoreRepository eventStoreRepository;
 
     @Test
     void projectEmptySessionReturnsEmptyContext() {
@@ -414,9 +419,13 @@ class ContextProjectionServiceTest extends AbstractH2Test {
         // keep masking the matching result.
         String sessionId = "aaaaaaad-0000-0000-0000-000000000000";
         String content = "legacy prune target";
-        contextService.appendEvent(sessionId, TEST_WS, TEST_USER, "tool.result", Map.of(
-                "result", content
-        ));
+        // BL-371: a pre-0416 row. ContextEventPayloadSafety (PLAN-0628) now withholds unregistered
+        // tool bodies at write time, so appendEvent would store the placeholder and the legacy hash
+        // would match nothing. A real legacy database still has the raw result, so the fixture writes
+        // the raw row directly (same pattern as
+        // EventStoreServiceIntegrationTest.forkDoesNotCopyLegacyRawToolResultRows).
+        eventStoreRepository.save(new ContextEvent(sessionId, TEST_WS, TEST_USER, "tool.result", 1L,
+                "{\"toolCallId\":\"legacy-call-1\",\"result\":\"" + content + "\"}"));
 
         contextService.appendEvent(sessionId, TEST_WS, TEST_USER, "context.prune", Map.of(
                 "tombstones", java.util.List.of(Map.of(
