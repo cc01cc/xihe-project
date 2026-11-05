@@ -294,9 +294,7 @@ test("@host V6 Workspace Agent management uses CP grants and persists isolated c
         }>;
     };
     expect(Array.isArray(bindingBEnvelope.agents), "响应应为 {agents:[…]} 封套").toBe(true);
-    const bindingB = bindingBEnvelope.agents.find(
-        (binding) => binding.principalId === principalId,
-    );
+    const bindingB = bindingBEnvelope.agents.find((binding) => binding.principalId === principalId);
     expect(bindingB?.permissionsSnapshot).toEqual([{ actionClass: "write", resource: "docs/*" }]);
     const principalGrantsAfter = queryIsolatedPostgres(
         `SELECT source || ':' || permissions::text FROM grants ` +
