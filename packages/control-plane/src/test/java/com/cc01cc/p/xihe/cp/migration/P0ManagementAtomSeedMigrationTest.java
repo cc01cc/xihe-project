@@ -169,9 +169,11 @@ class P0ManagementAtomSeedMigrationTest {
 
     @Test
     void atomCountsStayConsistentWithTheCatalog() {
-        assertEquals(28, PermissionAtomCatalog.actionAtoms().size(),
+        // V129/V130 added MEMORY_WRITE_SELF (27 → 28) and BL-345's follow-up keeps the total at 29;
+        // update together with SkillReadFaceTest.BUILTIN_ACTION_CLASS_COUNT.
+        assertEquals(29, PermissionAtomCatalog.actionAtoms().size(),
                 "17 original + N1/N10 (M1) + N2-N9 (M2 T2.1) + GRANT_ANY_ATOM (PLAN-0673 M2, D-166)"
-                        + " = 28; the same arithmetic is frozen in SkillReadFaceTest.BUILTIN_ACTION_CLASS_COUNT");
+                        + " = 29; the same arithmetic is frozen in SkillReadFaceTest.BUILTIN_ACTION_CLASS_COUNT");
         assertEquals(3, PermissionAtomCatalog.capabilityAtoms().size());
         assertEquals(PermissionAtomCatalog.actionAtoms().size(),
                 ToolFaceRegistry.builtinActionClasses().size(),

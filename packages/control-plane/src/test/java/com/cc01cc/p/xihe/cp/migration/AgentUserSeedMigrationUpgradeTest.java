@@ -80,8 +80,10 @@ class AgentUserSeedMigrationUpgradeTest extends AbstractIntegrationTest {
         assertEquals(0, permissionRepository.findByIdRoleId(SystemAccessRoleCatalog.AGENT_USER_ID).stream()
                         .filter(row -> "CREATE_OWN_AGENT".equals(row.getId().getActionClass())).count(),
                 "the agent-forbidden atom is never part of AGENT_USER");
-        assertEquals(6, permissionRepository.findByIdRoleId(SystemAccessRoleCatalog.USER_ID).size(),
-                "human USER keeps its six registration atoms (5 base + CREATE_OWN_AGENT)");
+        // V129/V130 (BL-345/BL-349, 2026-11-06) added MEMORY_WRITE_SELF to the human USER default:
+        // 5 base + CREATE_OWN_AGENT + SELF = 7. Not a regression — the atom is agent-forbidden only.
+        assertEquals(7, permissionRepository.findByIdRoleId(SystemAccessRoleCatalog.USER_ID).size(),
+                "human USER keeps its registration atoms + the V129 SELF atom (5 base + CREATE_OWN_AGENT + SELF)");
         assertTrue(permissionRepository.findByIdRoleId(SystemAccessRoleCatalog.USER_ID).stream()
                         .anyMatch(row -> "CREATE_OWN_AGENT".equals(row.getId().getActionClass())),
                 "the human USER seed is untouched");
@@ -129,7 +131,10 @@ class AgentUserSeedMigrationUpgradeTest extends AbstractIntegrationTest {
         assertEquals(LEGACY_AGENT_SEEDS, forbiddenGrantCount(agentIds),
                 "legacy fixture: CREATE_OWN_AGENT materialized for every agent");
 
-        runV127();
+        runMigration("V127__plan0651_agent_user_default_role.sql");
+        // Upgrade path continues past V127: BL-367's forward migration strips the instance-scope SELF
+        // row that V129's backfill materialized on legacy agent bindings.
+        runMigration("V131__bl367_remove_agent_memory_write_self.sql");
 
         assertEquals(LEGACY_AGENT_SEEDS, seedBindingCount(SystemAccessRoleCatalog.AGENT_USER_ID),
                 "40 → 40: every legacy seed is rebound to AGENT_USER");
@@ -143,6 +148,17 @@ class AgentUserSeedMigrationUpgradeTest extends AbstractIntegrationTest {
                             + " AND source='role' AND scope_type='instance'", Integer.class,
                     agentId.toString()), "each agent materializes exactly AGENT_USER's five atoms");
         }
+        // BL-367 处置③: no upgraded agent may hold any AGENT_FORBIDDEN_ATOMS atom. This is the
+        // structural guard against a future migration re-materializing SELF (or another forbidden atom).
+        for (UUID agentId : agentIds) {
+            List<String> atoms = jdbcTemplate.queryForList(
+                    "SELECT DISTINCT permissions -> 0 ->> 'actionClass' FROM grants"
+                            + " WHERE subject_type='agent_principal' AND subject_id=CAST(? AS UUID)",
+                    String.class, agentId.toString());
+            assertNull(PermissionAtomCatalog.firstForbiddenAgentPrincipalAtom(atoms),
+                    "upgraded agent holds an agent-forbidden atom: " + atoms);
+        }
+
         // Seed/granted_by/scope survive the in-place UPDATE (spot check one row).
         AccessRoleBinding sample = bindingRepository.findBySubjectTypeAndSubjectId(
                 "agent_principal", agentIds.get(0)).get(0);
@@ -155,10 +171,10 @@ class AgentUserSeedMigrationUpgradeTest extends AbstractIntegrationTest {
                 "human USER grants are untouched by V127");
     }
 
-    private void runV127() throws Exception {
+    private void runMigration(String resource) throws Exception {
         String sql = new String(AgentUserSeedMigrationUpgradeTest.class
                 .getClassLoader()
-                .getResourceAsStream("db/migration/V127__plan0651_agent_user_default_role.sql")
+                .getResourceAsStream("db/migration/" + resource)
                 .readAllBytes(), StandardCharsets.UTF_8);
         StringBuilder statement = new StringBuilder();
         for (String line : sql.split("\n")) {

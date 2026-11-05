@@ -87,6 +87,9 @@ class GrantDefaultBootstrapIntegrationTest extends AbstractIntegrationTest {
     private static Set<String> userDefaultAtoms() {
         Set<String> atoms = new LinkedHashSet<>(USER_ALLOW_ATOMS);
         atoms.add(OWN_AGENT_ATOM);
+        // V129/V130 (BL-345/BL-349, 2026-11-06) added MEMORY_WRITE_SELF to the human USER default;
+        // the atom is agent-forbidden, so it never applies to agent subjects.
+        atoms.add("MEMORY_WRITE_SELF");
         return Set.copyOf(atoms);
     }
 
