@@ -112,6 +112,12 @@ updated: 2026-10-25
   - **`epoch.*`/`session.created` 无 producer 与 `session.created` 消费分支线上不可达 — 仍待裁定**（登记 known issue 不改 spec／修订 spec 声明为未实现／另立「接上 producer」任务）。
   - **`epoch.*` 的 payload 键映射等价性 — 无测试覆盖**，待真正接上 producer 时补。
 
+## BL-349 / BL-352 / BL-354 处置（2026-11-06）
+
+- **BL-349 已修**：`WS_OWNER/WS_EDITOR/WS_VIEWER` 曾携带 `MEMORY_WRITE_SELF`（agent 禁授原子）⇒ 任何"默认工作区角色绑 agent"403 `ROLE_NOT_GRANTABLE`；V130 删行 + HTTP 回归（`8f9774ff` / `5cf349f8`），真栈 bind 200。
+- **BL-352 已修（不是死锁）**：首绑与 roles 端点顺序未文档化 + 被 BL-349 掩盖；门 1（创建者可见性）保留、`resolveCapFor`/cap 不变量一行未改；正确顺序与授权口径见 `DEV-014 §14b`（反指）。
+- **BL-354 部分**：派生 run 的 NULL principal 已加**日志型**诊断 `run_principal_stamp`（`be388e70`）；**翻硬失败待 `BL-355` 裁定，条目未关闭**。
+
 ## 已修复 — Chat SSE 生命周期与真实流式（PLAN-230 已完成 M1-M4）
 
 - **会话 SSE 一次性连接导致连续消息 409**：已修复。原因有二：CP 在每轮末尾无条件 `complete(sessionId)` 使会话 SSE 一次性，且旧 emitter `onCompletion` 按 sessionId 清理可能误删新连接；UI 侧 `onclose` 未重连。修复：CP 改持久会话 SSE（`SseEmitterManager` 按 `{sessionId, generation, emitter}` 存储 + `removeIfCurrent` 身份比对，误删记 `stale_cleanup_ignored`；`complete` 由客户端断开/发送失败等内部清理触发，服务端主动收尾仅会话删除成功路径，见下节 PLAN-0352）；UI `chatTransport` 单飞 + 指数退避重连，`SSEStream` 发送前手工确认连接。验证：同一页面连续两条 `POST /api/v1/chat` 均 202 且助手回复不空；多 `token` 事件在 `done` 前多次增长。
