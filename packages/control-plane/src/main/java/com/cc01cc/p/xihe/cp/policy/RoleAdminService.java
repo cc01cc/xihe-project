@@ -5,11 +5,14 @@ import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.config.DbLockTimeout;
 import com.cc01cc.p.xihe.cp.entity.AccessRole;
 import com.cc01cc.p.xihe.cp.entity.AccessRolePermission;
+import com.cc01cc.p.xihe.cp.entity.AccessRoleBinding;
+import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
 import com.cc01cc.p.xihe.cp.entity.InstanceOwner;
 import com.cc01cc.p.xihe.cp.repository.AccessRoleBindingRepository;
 import com.cc01cc.p.xihe.cp.repository.AccessRolePermissionRepository;
 import com.cc01cc.p.xihe.cp.repository.AccessRoleRepository;
 import com.cc01cc.p.xihe.cp.repository.InstanceOwnerRepository;
+import com.cc01cc.p.xihe.cp.repository.AgentPrincipalRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
@@ -22,6 +25,7 @@ import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.regex.Pattern;
 
@@ -65,6 +69,8 @@ public class RoleAdminService {
     private final AuditLogger audit;
     private final DbLockTimeout dbLockTimeout;
     private final GrantabilityGuard grantability;
+    private final AgentBindingAtomPolicy agentAtomPolicy;
+    private final AgentPrincipalRepository principals;
 
     public RoleAdminService(AccessRoleRepository roles,
                             AccessRolePermissionRepository permissions,
@@ -73,7 +79,9 @@ public class RoleAdminService {
                             RoleGrantMaterializer materializer,
                             AuditLogger audit,
                             DbLockTimeout dbLockTimeout,
-                            GrantabilityGuard grantability) {
+                            GrantabilityGuard grantability,
+                            AgentBindingAtomPolicy agentAtomPolicy,
+                            AgentPrincipalRepository principals) {
         this.roles = roles;
         this.permissions = permissions;
         this.bindings = bindings;
@@ -82,6 +90,8 @@ public class RoleAdminService {
         this.audit = audit;
         this.dbLockTimeout = dbLockTimeout;
         this.grantability = grantability;
+        this.agentAtomPolicy = agentAtomPolicy;
+        this.principals = principals;
     }
 
     /** Default-locale overload (callers that do not carry a request locale). */
@@ -232,15 +242,53 @@ public class RoleAdminService {
         if (descriptionRequested) {
             role.setDescription(trimToNull(request.description()));
         }
-        AccessRole saved = roles.save(role);
-
         List<String> effectiveAtoms = currentAtoms;
         if (atomsRequested) {
             effectiveAtoms = requireAtoms(request.atoms());
-            // PLAN-0673 M1 T1.2: same any-scope definition judgement as create.
-            grantability.assertGrantable(new LinkedHashSet<>(effectiveAtoms), null);
+            Set<String> added = new LinkedHashSet<>(effectiveAtoms);
+            added.removeAll(currentAtoms);
+            List<AccessRoleBinding> roleBindings = bindings.findByRoleId(roleId);
+            // PLAN-0673 M1: the subset gate runs over EVERY binding scope of the role, not only
+            // agent bindings — materializeRole() re-materialises every holder (users included), so
+            // an atom the author holds only in workspace A must not land in workspace B or in the
+            // instance through a user binding either. The agent-only filter below applies to the
+            // forbidden/cap recheck, which is agent-specific.
+            List<AccessScope> targetScopes = roleBindings.stream()
+                    .map(binding -> AccessScope.WORKSPACE.equals(binding.getScopeType())
+                            ? AccessScope.workspace(binding.getScopeId()) : AccessScope.instance())
+                    .distinct().toList();
+            List<AccessRolePermission> prospective = effectiveAtoms.stream().map(atom -> {
+                PermissionAtomCatalog.Atom ref = PermissionAtomCatalog.atom(atom);
+                return new AccessRolePermission(roleId, ref.name(), ref.canonicalResource());
+            }).toList();
+            List<AccessRolePermission> addedRows = prospective.stream()
+                    .filter(row -> added.contains(row.actionClass())).toList();
+            if (!addedRows.isEmpty()) {
+                agentAtomPolicy.assertAddedRowsGrantableInEveryBindingScope(addedRows, targetScopes);
+            }
+            // Forbidden atoms are a property of the prospective definition, not of one binding:
+            // evaluate once, before any principal lock, so the gate cannot depend on loop order.
+            boolean boundToAgent = roleBindings.stream().anyMatch(binding ->
+                    GrantPrincipalPathResolver.AGENT_PRINCIPAL.equals(binding.getSubjectType()));
+            if (boundToAgent) {
+                agentAtomPolicy.assertAgentBindable(prospective);
+            }
+            for (AccessRoleBinding binding : roleBindings) {
+                if (!GrantPrincipalPathResolver.AGENT_PRINCIPAL.equals(binding.getSubjectType())) {
+                    continue;
+                }
+                AgentPrincipal principal = principals.findByIdForUpdate(binding.getSubjectId())
+                        .orElseThrow(() -> new CpApiException(HttpStatus.CONFLICT,
+                                "AGENT_PRINCIPAL_NOT_FOUND", "Bound agent principal no longer exists"));
+                agentAtomPolicy.assertWithinCap(principal.getId(), prospective,
+                        AccessScope.WORKSPACE.equals(binding.getScopeType()) ? binding.getScopeId() : null);
+            }
+            AccessRole saved = roles.save(role);
             replaceAtoms(saved.getId(), effectiveAtoms);
+        } else {
+            roles.save(role);
         }
+        AccessRole saved = role;
         int materialized = materializer.materializeRole(saved.getId(), actorUuid(), null);
         audit.recordDurableChange(actorId(), null, "access_role_updated", RESOURCE_TYPE,
                 saved.getId().toString(), "name=" + saved.getName() + " atoms="
@@ -367,5 +415,3 @@ public class RoleAdminService {
         return actor == null ? null : UUID.fromString(actor);
     }
 }
-
-

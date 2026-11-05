@@ -11,6 +11,10 @@ import com.cc01cc.p.xihe.cp.policy.GrantPrincipalPathResolver;
 import com.cc01cc.p.xihe.cp.policy.PermissionAtomCatalog;
 import com.cc01cc.p.xihe.cp.policy.PermissionAtomLabels;
 import com.cc01cc.p.xihe.cp.policy.RoleGrantMaterializer;
+import com.cc01cc.p.xihe.cp.policy.GrantabilityGuard;
+import com.cc01cc.p.xihe.cp.policy.AgentBindingAtomPolicy;
+import com.cc01cc.p.xihe.cp.entity.InstanceOwner;
+import com.cc01cc.p.xihe.cp.repository.InstanceOwnerRepository;
 import com.cc01cc.p.xihe.cp.repository.AccessRoleBindingRepository;
 import com.cc01cc.p.xihe.cp.repository.AccessRolePermissionRepository;
 import com.cc01cc.p.xihe.cp.repository.AccessRoleRepository;
@@ -83,6 +87,9 @@ public class AgentPrincipalRoleBindingService {
     private final RoleGrantMaterializer materializer;
     private final AuditLogger audit;
     private final AgentPrincipalService agentPrincipalService;
+    private final GrantabilityGuard grantability;
+    private final AgentBindingAtomPolicy atomPolicy;
+    private final InstanceOwnerRepository owners;
 
     public AgentPrincipalRoleBindingService(AccessRoleBindingRepository bindings,
                                             AccessRoleRepository roles,
@@ -91,7 +98,10 @@ public class AgentPrincipalRoleBindingService {
                                             WorkspaceRepository workspaces,
                                             RoleGrantMaterializer materializer,
                                             AuditLogger audit,
-                                            AgentPrincipalService agentPrincipalService) {
+                                            AgentPrincipalService agentPrincipalService,
+                                            GrantabilityGuard grantability,
+                                            AgentBindingAtomPolicy atomPolicy,
+                                            InstanceOwnerRepository owners) {
         this.bindings = bindings;
         this.roles = roles;
         this.permissions = permissions;
@@ -100,6 +110,9 @@ public class AgentPrincipalRoleBindingService {
         this.materializer = materializer;
         this.audit = audit;
         this.agentPrincipalService = agentPrincipalService;
+        this.grantability = grantability;
+        this.atomPolicy = atomPolicy;
+        this.owners = owners;
     }
 
     /**
@@ -141,14 +154,22 @@ public class AgentPrincipalRoleBindingService {
                                      UUID authWorkspaceId, boolean instanceTier,
                                      java.util.function.Predicate<UUID> canManageWorkspace,
                                      String locale) {
-        AccessRole role = roles.findById(roleId).orElseThrow(() -> new CpApiException(
+        owners.lockSingleton().orElseGet(() -> owners.save(new InstanceOwner()));
+        AccessRole role = roles.findByIdForUpdate(roleId).orElseThrow(() -> new CpApiException(
                 HttpStatus.NOT_FOUND, "ROLE_NOT_FOUND", "Role not found"));
         // Forbidden atoms first: 409 must not depend on which scope the caller can authorize.
         requireBindableAtoms(roleId);
         AccessScope scope = deriveScope(authWorkspaceId, instanceTier, canManageWorkspace);
         String auditWorkspaceId = scope.id() == null ? null : scope.id().toString();
-        requirePrincipal(principalId);
-        requireWithinCap(principalId, roleId, scope);
+        AgentPrincipal principal = principals.findByIdForUpdate(principalId)
+                .filter(found -> found.getDisabledAt() == null)
+                .orElseThrow(AgentPrincipalRoleBindingService::principalNotFound);
+        atomPolicy.assertAgentBindable(roleId);
+        atomPolicy.assertWithinCap(principal.getId(), roleId, scope.id());
+        grantability.assertGrantableRows(permissions.findByIdRoleId(roleId).stream()
+                .map(permission -> new com.cc01cc.p.xihe.cp.policy.GrantIntersectionEvaluator.PermissionAtom(
+                        permission.actionClass(), permission.resourcePattern()))
+                .collect(java.util.stream.Collectors.toSet()), scope);
         boolean duplicate = bindings.findBySubjectTypeAndSubjectId(
                         GrantPrincipalPathResolver.AGENT_PRINCIPAL, principalId).stream()
                 .anyMatch(row -> roleId.equals(row.getRoleId())
@@ -184,6 +205,20 @@ public class AgentPrincipalRoleBindingService {
     @Transactional
     public void unbind(UUID principalId, UUID bindingId, UUID actorUserId, String auditWorkspaceId,
                        boolean instanceTier, java.util.function.Predicate<UUID> canManageWorkspace) {
+        AccessRoleBinding peek = bindings.findById(bindingId)
+                .filter(candidate -> GrantPrincipalPathResolver.AGENT_PRINCIPAL.equals(
+                        candidate.getSubjectType()))
+                .filter(candidate -> principalId.equals(candidate.getSubjectId()))
+                .orElseThrow(() -> new CpApiException(HttpStatus.NOT_FOUND, "ROLE_BINDING_NOT_FOUND",
+                        "Role binding not found"));
+        // PLAN-0673 M1 lock protocol: unbind takes the SAME locks in the SAME order as bind and as
+        // RoleAdminService.update — instance mutex → role row — so a role definition change and a
+        // binding write cannot interleave (TOCTOU on the atoms read for materialisation).
+        owners.lockSingleton().orElseGet(() -> owners.save(new InstanceOwner()));
+        roles.findByIdForUpdate(peek.getRoleId()).orElseThrow(() -> new CpApiException(
+                HttpStatus.NOT_FOUND, "ROLE_NOT_FOUND", "Role not found"));
+        // Re-read under the role lock: a concurrent unbind of the same row may have committed
+        // between the peek and the lock, and deleting a stale entity would be a silent no-op.
         AccessRoleBinding row = bindings.findById(bindingId)
                 .filter(candidate -> GrantPrincipalPathResolver.AGENT_PRINCIPAL.equals(
                         candidate.getSubjectType()))

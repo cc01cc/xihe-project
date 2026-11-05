@@ -123,6 +123,28 @@ class GrantabilityGuardIntegrationTest extends AbstractIntegrationTest {
         assertTrue(denied.getMessage().contains("write"), denied.getMessage());
     }
 
+    @Test
+    void concreteResourceGrantCannotAuthorizeWildcardRoleResource() {
+        User holder = newUser("guard-resource-bound");
+        String credentialId = UUID.randomUUID().toString();
+        AccessRole narrow = accessRoleRepository.saveAndFlush(new AccessRole(UUID.randomUUID(),
+                "NARROW_" + UUID.randomUUID().toString().substring(0, 8).toUpperCase(),
+                "Narrow credential", null, false));
+        accessRolePermissionRepository.saveAndFlush(new AccessRolePermission(narrow.getId(),
+                ToolFaceRegistry.ACTION_CREDENTIAL_MANAGE, "credential:" + credentialId));
+        bindingRepository.saveAndFlush(new AccessRoleBinding(narrow.getId(), "user", holder.getId(),
+                "instance", null, holder.getId()));
+        materializer.materializeSubject("user", holder.getId(), holder.getId(), null);
+        actAs(holder);
+
+        CpApiException denied = assertThrows(CpApiException.class, () -> guard.assertGrantableRows(
+                Set.of(new GrantIntersectionEvaluator.PermissionAtom(
+                        ToolFaceRegistry.ACTION_CREDENTIAL_MANAGE,
+                        ToolFaceRegistry.CREDENTIAL_RESOURCE_WILDCARD)), AccessScope.instance()));
+        assertEquals(HttpStatus.FORBIDDEN, denied.getStatus());
+        assertEquals("PRIVILEGE_ESCALATION", denied.getCode());
+    }
+
     // V4.1 — the subset gate answers 403 (grantor lacks the atom); the target-cap gate stays 409
     // (BL-287, asserted by AgentPrincipalRoleBindingContractTest#bindingAtomsOutsideTheCapIsRefused…).
     @Test
@@ -150,7 +172,9 @@ class GrantabilityGuardIntegrationTest extends AbstractIntegrationTest {
         String detail = jdbcTemplate.queryForObject("SELECT details FROM audit_logs WHERE action ="
                 + " 'role_grant_guard_bypassed' AND user_id = ? ORDER BY created_at DESC LIMIT 1",
                 String.class, bypassHolder.getId());
-        assertTrue(detail != null && detail.contains("bypass=true") && detail.contains("skipped=[write]"),
+        // PLAN-0673: the audit names the exact ROW (action+resource), not just the action — the
+        // whole point of the fix is that `write` and `write@*` are different grants.
+        assertTrue(detail != null && detail.contains("bypass=true") && detail.contains("skipped=[write@*]"),
                 "the bypass audit names exactly what was skipped: " + detail);
     }
 
@@ -190,6 +214,37 @@ class GrantabilityGuardIntegrationTest extends AbstractIntegrationTest {
                 + " WHERE action = 'role_grant_guard_bypassed' AND user_id = ?", Integer.class,
                 superAdmin.getId());
         assertTrue(bypassed != null && bypassed >= 1, "the SUPER_ADMIN bypass is audited");
+    }
+
+    // PLAN-0673 (Lead review): the NAME path must request the catalog's canonical resource —
+    // a literal "*" made every credential request wider than the rows materialised from
+    // role_permissions, so a legitimate holder of (credential_use, credential:*) was denied by the
+    // "concrete does not cover wildcard" rule. Positive + negative, no bypass atom involved.
+    @Test
+    void namePathAllowsAHolderOfTheCanonicalCredentialResource() {
+        User manager = newUser("guard-cred-ok");
+        createInstanceRole("CRED_OK", List.of(ToolFaceRegistry.ACTION_CREDENTIAL_MANAGE));
+        bindInstanceRole(manager.getId(), "CRED_OK");
+        actAs(manager);
+
+        // Must NOT throw: the holder's row is (credential_manage, credential:*), and the request
+        // resolves to exactly that row now that the name path uses canonicalResource().
+        guard.assertGrantable(Set.of(ToolFaceRegistry.ACTION_CREDENTIAL_MANAGE), AccessScope.instance());
+    }
+
+    @Test
+    void namePathDeniesANonHolderOfCredentialAtoms() {
+        User outsider = newUser("guard-cred-no");
+        actAs(outsider);
+
+        CpApiException denied = assertThrows(CpApiException.class, () -> guard.assertGrantable(
+                Set.of(ToolFaceRegistry.ACTION_CREDENTIAL_MANAGE), AccessScope.instance()));
+        assertEquals(HttpStatus.FORBIDDEN, denied.getStatus());
+        assertEquals("PRIVILEGE_ESCALATION", denied.getCode());
+        assertEquals(0, jdbcTemplate.queryForObject("SELECT count(*) FROM grants"
+                        + " WHERE subject_type = 'user' AND subject_id = ?", Integer.class,
+                outsider.getId()),
+                "a subset denial grants nothing (zero partial write)");
     }
 
     private void actAs(User user) {
