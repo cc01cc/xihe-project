@@ -262,7 +262,7 @@ const headStable = before.head === after.head && shards.every((shard) => shard.p
 //   ok = 收尾无脏 + coverage 完整 + 头稳定 + 每个 shard 的守卫通过。
 //   测试失败（基线红）由 `failingSuites` 表达，**不影响 ok**——否则每个含基线红的轮次都会被误判为无效。
 const roundOk = afterDirty.length === 0
-  && coverage.ok
+  && (COMPILE_ONLY || coverage.ok) // --compile-only 不跑测试，coverage 天然为 false：那是模式差异，不是测量缺陷
   && headStable
   && shards.every((shard) => shard.guard?.ok !== false);
 const summary = {
