@@ -321,4 +321,8 @@ test("@host PLAN-0678 V3 技能正向：instance 导入 2 技能 → 绑定 → 
             `snapshot1Bytes=${snapshot.length} snapshot2Bytes=${snapshot2.length} ` +
             `grantedSuperAdmin=${granted}`,
     );
+    // 证据：把两次快照原文打出来，供 .local/evidence 归档直接引用（1028 字节量级，不刷屏）
+    console.log(`[p0678-skills] snapshot1=${snapshot}`);
+    console.log(`[p0678-skills] snapshot2=${snapshot2}`);
+    );
 });
