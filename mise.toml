@@ -292,7 +292,7 @@ alias = "format"
 [tasks.validate]
 # test:e2e:fixtures 排在 UI 单测（test）之后、E2E 之前：它只跑 e2e 夹具自身的状态机
 # （不起栈/秒级），放在 E2E 车道前面能最早暴露"夹具坏了导致的假绿"。
-depends = ["check:openapi", "lint", "typecheck", "build", "test", "test:e2e:fixtures", "lint:links"]
+depends = ["check:openapi", "check:commit-msg", "lint", "typecheck", "build", "test", "test:e2e:fixtures", "lint:links"]
 description = "Run all quality gates — contract + lint + typecheck + build + test + e2e fixture self-tests (Docker auto-managed)"
 alias = "validate"
 
@@ -498,9 +498,9 @@ run = "node scripts/pkg/build-installer.mjs"
 description = "Build the NSIS installer from existing service artifacts (rerunnable; --stage-only skips makensis; artifacts stay under .tmp/pkg)"
 alias = "pkg:installer"
 
-# 提交信息门禁（2026-11-06）：**观察期 report-only，永不非零退出**。翻阻断的判据按**提交次数**：
-# 自 a632de77 起累计 30 条提交为观察窗（12h 为上限，先到为准）；窗内 E_* 违规率 ≤10%
-# 且 merge 提交零 E_SUBJECT_TOO_WIDE ⇒ 改为 --enforce 并接入 validate（见决策 D-213）。
+# 提交信息门禁（2026-11-06 起）：**已阻断**（D-213 的观察窗判据已满足：自 a632de77 起 32 条提交、
+# E_* 违规率 0%、merge 零超宽 ⇒ 由 report-only 翻 --enforce 并接入 validate，见决策 D-216）。
+# 历史提交豁免：基线段 a632de77 之前不检查。手写提交前的本地校验走 scripts/hooks/commit-msg。
 [tasks."check:commit-msg"]
-run = "node scripts/check-commit-msg.mjs --range a632de77..HEAD --report-only"
+run = "node scripts/check-commit-msg.mjs --range a632de77..HEAD --enforce"
 description = "Report-only audit of commit messages (type/scope, display-width <=72 cols, Why/What/Verify body). Never fails; observe by commit count before enforcing"

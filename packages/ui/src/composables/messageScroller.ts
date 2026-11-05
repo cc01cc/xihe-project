@@ -352,17 +352,17 @@ export function useMessageScrollerController({
                 return;
             }
 
-            // 窗口换页（数据没变、只是渲染了另一段）：位置由用户/浏览器掌握。
-            // 绝不能走下面的 `getNewScrollAnchor` / `scrollToElement`（"新消息到达"路径）——
-            // 那条路会把正在上滚的用户一次一次拽回底部（BL-316 实测：25→5219→…→71967）。
-            // 例外：本来就在贴底跟随时仍要贴底，否则高度修正会让人离开底部。
+            // 窗口换页（数据没变、只是渲染了另一段）：**位置由用户/浏览器掌握，一律不动**。
+            //
+            // BL-340：这里**不再**调 `scrollToEnd()`。换页是"窗口投影变化"，与"有没有新内容"
+            // 无关；旧实现在本分支里"若在贴底跟随就 scrollToEnd"，而 `scrollToEnd()` 又会把
+            // `modeRef` 写回 `following-bottom`（见 `messageScrollerCommands.ts`）⇒ 换页 ↔ 贴底
+            // 闭环自激：用户在底部附近上滚（wheel 已发出、scroll 处理尚未改模式）会被立刻拽回底部，
+            // 实测 8×500px 上滚里应用侧写了 40 次 `scrollTop`，40×2000px 判据因此一直红。
+            // 贴底跟随只属于"数据变化"路径（下面的 `items.length` 分支），不属于换页。
             if (projectionOnly) {
-                if (modeRef.value === "following-bottom" && autoScrollRef.value) {
-                    scrollToEnd({ behavior: "auto" });
-                } else {
-                    commitScrollState();
-                    scheduleVisibilitySync();
-                }
+                commitScrollState();
+                scheduleVisibilitySync();
                 return;
             }
 

@@ -38,6 +38,12 @@ export interface MessageScrollerScrollOptions {
     align?: MessageScrollerScrollAlign;
     behavior?: ScrollBehavior;
     scrollMargin?: number;
+    /**
+     * BL-340：动作意图。只有 `"user"`（用户显式动作，如「回到最新」按钮）允许改写
+     * `modeRef`；跟随/贴底语义由几何判据派生，不由命令的副作用维持。
+     * 目前仅 `scrollToEnd()` 消费该字段。
+     */
+    reason?: "user" | "follow";
 }
 
 export interface MessageScrollerScrollable {

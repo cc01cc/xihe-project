@@ -132,7 +132,20 @@ export function useMessageScrollerCommands({
         return true;
     }
 
-    function scrollToEnd({ behavior = "auto" }: MessageScrollerScrollOptions = {}) {
+    /**
+     * 滚到底部。
+     *
+     * **不变式（BL-340）：`mode` 是"观测结果"，不是命令的副作用。**
+     * 只有**用户显式动作**（如"回到最新"按钮，`reason: "user"`）才允许把模式声明为
+     * `following-bottom`；跟随/贴底语义由"当前是否真的在底部"的几何判据派生。
+     * 背景：旧实现无条件 `modeRef = following-bottom`，于是任何一次贴底都会让下一次
+     * 窗口换页再次命中"贴底跟随例外"⇒ 换页 ↔ 贴底 闭环自激（实测 8×500px 上滚里 40 次
+     * 应用侧 `scrollTop` 写入全部来自本函数）。
+     */
+    function scrollToEnd({
+        behavior = "auto",
+        reason = "follow",
+    }: MessageScrollerScrollOptions & { reason?: "user" | "follow" } = {}) {
         const viewport = viewportRef.value;
 
         if (!viewport) {
@@ -141,7 +154,9 @@ export function useMessageScrollerCommands({
 
         setTailSpacerHeight(0);
         streamingTurnRef.value = null;
-        modeRef.value = autoScrollRef.value ? "following-bottom" : "free-scrolling";
+        if (reason === "user") {
+            modeRef.value = autoScrollRef.value ? "following-bottom" : "free-scrolling";
+        }
         scrollToPosition(getMaxScrollTop(viewport), {
             autoscrolling: true,
             behavior,
