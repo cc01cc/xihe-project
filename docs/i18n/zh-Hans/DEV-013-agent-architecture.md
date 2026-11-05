@@ -124,7 +124,7 @@ flowchart TD
 | `compaction.applied` | 上下文压缩——自动/overflow 触发，ChatRun-scoped（correlation=Run，PLAN-0410 §4）；PLAN-0341：`messages` 不再写入摘要，摘要仅 `epoch.system_messages`/`summary_hash` |
 | `compaction.manual_applied` | 上下文压缩——**手动触发（无 Run）**，branch-targeted：correlation 恒 NULL、branch 为 CP 校验的显式值（PLAN-0410 D7-B1=C）；payload 与应用语义同 `compaction.applied` |
 | `context.prune` | prune 墓碑（PLAN-0341 T1.2：`tool_call_id`/hash/size/首尾 + `pruned`；读模型按 hash 原地替换，防复活） |
-| `context.compaction_circuit` | 恢复带熔断开/关（PLAN-0341 T1.3：`state=open|closed`；overflow 强制压缩绕过熔断） |
+| `context.compaction_circuit` | 恢复带熔断开/关（PLAN-0341 T1.3：`state=open\|closed`；overflow 强制压缩绕过熔断） |
 | `context.overflow_retry` | 溢出重跑审计（PLAN-0341 T1.1：runId + 预检 maxInputTokens） |
 | `assistant.responded` | assistant 回复持久化（PLAN-294 M1；runner 流成功终态 append，读模型映射为 ai 消息） |
 | `llm.usage` | run 用量镜像（PLAN-294 M3；CP relay 写入，压缩门信号源。PLAN-0343：payload 增 `model`（`provider/model`，pricing 查表键）与 `cost/costCurrency/costSource/costNote`（CP 终态一次映射；unmapped→`cost=null`+告警，禁 0） |

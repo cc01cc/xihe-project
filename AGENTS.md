@@ -103,6 +103,7 @@
 - 遵循 workspace `plan-mode`（收尾验收见其 `references/plan-completion/` 分册）；PLAN 工作包统一存放在 workspace 根 `plans/`，不在本仓库另设；XH Spec Impact 和 DEV/OpenAPI 同批同步按 `spec/README.md`、DEV-030 执行。PLAN 是目录工作包，不是单文件 `PLAN-XXX.md`。
 - **XH PLAN 隔离实施复用固定 worktree 池**（`worktree-lifecycle` skill 为 SSOT；池表见项目私有层 `.local/xh-d28/worktree-pool.md`）：一个 lane 领一个**已存在**的槽位，`git switch develop && git merge develop && git switch -c task/<topic>` 开工，合并后回 `develop` 休息态。**禁止 `git worktree add` 新建**——H: 卷建树实测 470s 且会在 checkout 未完成时留下 0 MB 半成品目录（2026-11-05 实测一天新建 34 个 + 14 个空残留）；只有池内 6 个槽位全忙、且用户明确授权时才可新建，**新建必须同批登记进池表**。**禁止**用 Kilo / Agent Manager 的 worktree 模式代劳（两者是不同机制，2026-10-14 用户再次纠正；工作区硬规则见 `../AGENTS.md` §Git 操作约束）。
 - 本指南不授权 package 发布、版本 bump、commit 或 push；任何 release 动作先核对当前项目依据并遵循 workspace permissions。
+- **开发期数据无迁移包袱（D-215，2026-11-06 用户裁定）**：**XH 尚未上线**，本地/隔离栈的开发数据属可丢弃物 —— **旧数据不得成为开发与设计的阻碍**。schema 变更可以**直接清库重建**（`mise run dev:reset` 或删库重跑 Flyway），**不写回填脚本、不做双读/双写/灰度开关、不保留"新旧快照并存"的兼容分支**，也不把"存量行数对照"当验收判据。边界：①仅限**开发期数据**（lane/隔离栈/dev 栈）；②任何用户可见的发布产物、备份、`.local/evidence/` 证据、仓库历史不在此列；③清库前必须声明**目标栈与库身份**（避免误清他人 lane），不可逆动作执行前留一句"将清哪些库"的说明。
 
 ## Skills
 
@@ -122,5 +123,5 @@
 - **摘要显示宽度 ≤72 列（CJK 记 2 列，约 ≤36 汉字）；merge 提交 ≤100 列**。超过就说明细节该进 body——实测历史中位 85 列、p90 114 列，正是"越写越长"的量化证据。
 - 首行不带 emoji、不以句号结尾、不以「更新/修改/调整/优化/处理/完善/整理」开头（写清"改了什么"）。
 - 空行后写 body；非 merge 提交必须在首行或 body 引用 `PLAN-####` / `BL-###` / `D-###`。body 建议 `Why:` / `What:` / `Verify:` / `Risk:` 四段，只写**为什么与怎么验**，不重复 diff 内容。
-- **校验**：`node scripts/check-commit-msg.mjs --file .git/COMMIT_EDITMSG`（hook 用）或 `--range develop~5..develop`；`--json` 给 agent。退出码 0/1/2。历史提交豁免（默认 `--since 1dd57056`）。
+- **校验**：`mise run check:commit-msg`（**观察期 report-only，永不失败**）或 `node scripts/check-commit-msg.mjs --file .git/COMMIT_EDITMSG`（hook）/`--range a..b --enforce`（阻断）；`--stats` 出观察窗统计、`--json` 给 agent。历史提交豁免（默认 `--since 1dd57056`）。**翻阻断按提交次数**：自 `a632de77` 起 30 条（12h 上限）内违规率 ≤10% 且 merge 零超宽 ⇒ 改 `--enforce` 并接入 validate（D-213）。
 - 可选本地 hook（不改仓库）：`git config core.hooksPath scripts/hooks`（仓库内 `scripts/hooks/commit-msg` 已提供）。
