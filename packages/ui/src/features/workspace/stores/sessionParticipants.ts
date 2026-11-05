@@ -2,6 +2,7 @@ import { defineStore } from "pinia";
 import { computed, ref } from "vue";
 import { ApiError, api } from "../../../composables/api";
 import type {
+    ParticipantReadCursor,
     SessionParticipantCapabilities,
     SessionParticipantView,
 } from "../../../types/participant";
@@ -118,6 +119,21 @@ export const useSessionParticipantsStore = defineStore("sessionParticipants", ()
         return hintCoalescer.push(hintSessionId, participantId);
     }
 
+    /**
+     * PLAN-0660 T5.6: adopt the cursor `PATCH …/cursor` returned for a row already on screen. The
+     * number is the **server-clamped** one (`advance-only` + ceiling = session max sequence), so this
+     * never computes unread itself — it replaces the row's `readCursor` and lets the badge derive
+     * from it again.
+     *
+     * A row that is no longer in the list (session switched under us) is left alone: the roster is a
+     * CP projection, so a cursor without a row would be a locally invented participant.
+     */
+    function applyCursor(participantId: string, cursor: ParticipantReadCursor): void {
+        const row = participants.value?.find((item) => item.participantId === participantId);
+        if (!row) return;
+        row.readCursor = { ...cursor };
+    }
+
     return {
         sessionId,
         participants,
@@ -132,5 +148,6 @@ export const useSessionParticipantsStore = defineStore("sessionParticipants", ()
         reload,
         invalidate,
         onUserChannelHint,
+        applyCursor,
     };
 });
