@@ -890,13 +890,15 @@ public class AgentPrincipalService {
      * </ul>
      */
     public boolean disablePrincipal(String actorUserId, UUID principalId) {
-        // D22 order: context first (kills the 404-vs-403 existence oracle), then existence, then authority.
-        requireExplicitWorkspaceContext();
         UUID actorId = parseUuid(actorUserId, "INVALID_ACTOR");
         requireUser(actorId);
         AgentPrincipal principal = agentPrincipalRepository.findById(principalId)
                 .orElseThrow(() -> new CpApiException(HttpStatus.NOT_FOUND,
                         "AGENT_PRINCIPAL_NOT_FOUND", "Agent principal not found"));
+        // D-196/BL-336 order (revises D22): existence (404) → scope-aware context (409) → authority
+        // (403). The lookup is here only to learn the subject's scope; nothing from it is echoed in
+        // the 409 branch, and the residual 404-vs-409 oracle is documented on the method below.
+        requireWorkspaceContextFor(principal);
         requireDisableAuthority(actorId, principal);
         if (principal.getDisabledAt() != null) {
             // Idempotent: disabling twice is not an error, and it must not add a second audit row.
@@ -925,12 +927,53 @@ public class AgentPrincipalService {
      * caller exactly the same thing. The ratified order is therefore:
      * context (409) → existence (404) → owner/atom authority (403).</p>
      */
-    private static void requireExplicitWorkspaceContext() {
+    /**
+     * D-196 / BL-336 (2026-11-06 Lead ruling, <b>revises D22</b>): the workspace-context requirement is
+     * <b>scope-aware</b>, not unconditional.
+     *
+     * <p>D22 answered {@code 409 WORKSPACE_CONTEXT_REQUIRED} before anything else, for every principal.
+     * That closed the existence oracle but silently took a real capability away: an <b>instance-scope</b>
+     * principal (a user's own agent, and preset guards) has no workspace by construction, so demanding a
+     * workspace context makes its {@code disable} / {@code PATCH} unreachable from the API — a product
+     * regression, not a test-only artifact.</p>
+     *
+     * <p>So the gate is now keyed on the <b>subject's scope</b>:</p>
+     * <ul>
+     *   <li><b>workspace-scope</b> principal ({@code owner_user_id} null, i.e. the D-174 "owner =
+     *       workspace" rows; preset guards excluded — they are instance assets) ⇒ a context is required,
+     *       because only then can "not found" and "not in your workspace" be told apart;</li>
+     *   <li><b>instance-scope</b> principal (personal rows, preset guards) ⇒ <b>no</b> context required;
+     *       authority is the owner / instance-atom matrix as before.</li>
+     * </ul>
+     *
+     * <p><b>Residual oracle, stated instead of denied</b>: because existence is now resolved first (the
+     * row must be read to learn its scope), a context-less caller can distinguish {@code 404} (no such
+     * id) from {@code 409} (exists and is workspace-scoped). Accepted: ids are UUIDv4 and unguessable,
+     * and before D22 the same caller could distinguish 404 from 403 anyway, which leaked strictly more
+     * (existence <i>plus</i> ownership). What D22 bought — "never reveal a workspace-scoped row's
+     * existence to a caller with no workspace" — would cost every personal principal its write surface,
+     * so the trade goes the other way. See {@code docs/api/inventory.md} for the same statement on the
+     * wire contract.</p>
+     */
+    private static void requireWorkspaceContextFor(AgentPrincipal principal) {
+        if (!isWorkspaceScoped(principal)) {
+            return;
+        }
         String workspaceId = TenantContext.getWorkspaceId();
         if (workspaceId == null || workspaceId.isBlank()) {
             throw new CpApiException(HttpStatus.CONFLICT, "WORKSPACE_CONTEXT_REQUIRED",
-                    "Changing an agent principal requires a workspace context");
+                    "Changing a workspace-scoped agent principal requires a workspace context");
         }
+    }
+
+    /**
+     * The D-174 scope rule, in one place: a principal is <b>workspace-scoped</b> when it has no owning
+     * user (creation stopped writing {@code owner_user_id}; the workspace owns the row) and it is not a
+     * preset guard (a system asset that lives at the instance level even though it has no owner either).
+     */
+    private static boolean isWorkspaceScoped(AgentPrincipal principal) {
+        return principal.getOwnerUserId() == null
+                && !AgentPrincipal.ORIGIN_SYSTEM_PRESET.equals(principal.getOrigin());
     }
 
     /**
@@ -1104,12 +1147,11 @@ public class AgentPrincipalService {
     @Transactional
     public PrincipalSettings applyPrincipalSettings(String actorUserId, UUID principalId,
                                                     PrincipalSettingsPatch patch) {
-        // D22 order: context first — same reasoning as disablePrincipal (no existence oracle).
-        requireExplicitWorkspaceContext();
         UUID actorId = parseUuid(actorUserId, "INVALID_ACTOR");
         requireUser(actorId);
         // Validate before the lookup: a malformed document must never need a row to be rejected
-        // (the pre-0629 contract asserted by AgentPrincipalHooksServiceTest).
+        // (the pre-0629 contract asserted by AgentPrincipalHooksServiceTest). D-196 keeps that order:
+        // body shape is a 400 regardless of context, so this stays ahead of the scope-aware 409.
         JsonNode checkedHooks = patch.hooksPresent()
                 ? HookAdvisorRegistry.validateSubscriptions(patch.hooks()) : null;
         JsonNode checkedPolicy = patch.contextPolicyPresent()
@@ -1119,6 +1161,9 @@ public class AgentPrincipalService {
         AgentPrincipal principal = agentPrincipalRepository.findById(principalId)
                 .orElseThrow(() -> new CpApiException(HttpStatus.NOT_FOUND,
                         "AGENT_PRINCIPAL_NOT_FOUND", "Agent principal not found"));
+        // D-196/BL-336: same scope-aware gate as disable — a personal (instance-scope) principal stays
+        // writable without a workspace context; a workspace-scoped one needs the explicit context.
+        requireWorkspaceContextFor(principal);
         if (patch.hooksPresent()) {
             requireMutableHooks(principal);
         }

@@ -726,12 +726,19 @@ paths:
         family as the cap `PUT`/`DELETE` faces — a workspace that owns the binding owns the lifecycle
         write). A single Workspace's management right still never reaches principals it does not bind.
 
-        **Gate order (BL-326 / D22, 2026-11-05 Lead ruling)**: explicit workspace context
-        (`409 WORKSPACE_CONTEXT_REQUIRED`) → existence (`404 AGENT_PRINCIPAL_NOT_FOUND`) →
-        owner-or-N1 (`403 AGENT_PRINCIPAL_OWNER_MISMATCH`). The order is load-bearing: with the
-        lookup first, a context-less caller could tell "no such principal" from "exists but is not
-        yours" — an existence oracle. Because the context check comes first, an **unknown**
-        principal id without a context answers 409, never 404.
+        **Gate order (BL-326 / D22, revised by D-196 / BL-336, 2026-11-06)**: the context gate is
+        **scope-aware** — existence (`404 AGENT_PRINCIPAL_NOT_FOUND`) → *only for a workspace-scoped row*
+        a missing explicit workspace context (`409 WORKSPACE_CONTEXT_REQUIRED`) → authority
+        (`403 AGENT_PRINCIPAL_OWNER_MISMATCH`).
+        A **personal** (instance-scope) principal — including preset guards — needs **no** workspace
+        context: it has no workspace by construction, and demanding one made its write surface
+        unreachable (the D22 regression). For a **workspace-scoped** row (no `ownerUserId`, i.e. the
+        D-174 "owner = workspace" shape) a context-less caller is still refused before any authority
+        evaluation, so it learns nothing about the row beyond its existence.
+        **Residual oracle, stated on purpose**: the row must be read to learn its scope, so a
+        context-less caller can still tell `404` (unknown id) from `409` (exists and is workspace-scoped).
+        Accepted — ids are UUIDv4 and unguessable, and before D22 the same caller could distinguish
+        `404` from `403`, which leaked strictly more. See `inventory.md` for the same statement.
       security: [{ bearerAuth: [] }]
       parameters: [{ in: path, name: principalId, required: true, schema: { type: string, format: uuid } }]
       responses:
@@ -791,7 +798,7 @@ paths:
         '401': { $ref: '#/components/responses/Problem' }
         '403': { description: 'FORBIDDEN — the caller lacks the tier authority; or GUARD_HOOKS_IMMUTABLE — a preset guard owns its subscriptions through the template, not the API; or GUARD_CONTEXT_POLICY_IMMUTABLE — a preset guard is a system asset, so its memory policy is not a user setting', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
         '404': { description: AGENT_PRINCIPAL_NOT_FOUND, content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
-        '409': { description: 'WORKSPACE_CONTEXT_REQUIRED — same gate order as disable (BL-326 / D22): context → existence → owner-or-N1. An unknown principal id without a workspace context answers 409, never 404, so the endpoint cannot be used as an existence oracle.', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '409': { description: 'WORKSPACE_CONTEXT_REQUIRED — raised **only for a workspace-scoped subject** (no `ownerUserId`) and only when the request carries no explicit workspace context (D-196 / BL-336, which revises D22''s unconditional gate). Presence of the row is resolved first, so an unknown id answers 404 and the accepted residual 404-vs-409 oracle is documented on the operation above.', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
   /api/v1/agent-templates:
     get:
       operationId: listAgentTemplates

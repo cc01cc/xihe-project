@@ -170,36 +170,72 @@ class AgentPrincipalControllerContractTest extends AbstractIntegrationTest {
     }
 
     /**
-     * BL-326 / D22 (2026-11-05 Lead ruling): the ratified gate order is
-     * <b>context (409) → existence (404) → authority (403)</b>.
+     * BL-326 / D22 → <b>revised by D-196 / BL-336 (2026-11-06 Lead ruling)</b>: the context gate is
+     * <b>scope-aware</b>, so the ratified order is now
+     * <b>existence (404) → scope-aware context (409) → authority (403)</b> for a subject that turns out
+     * to be workspace-scoped, and <b>existence → authority</b> for a personal (instance-scope) one.
      *
-     * <p>The load-bearing detail is the <b>unknown</b> id: without a workspace context both an
-     * existing-but-foreign principal and a nonexistent one must answer the same 409. If the lookup
-     * ran first, a context-less caller could tell 404 from 403 — an existence oracle. With a valid
-     * context the 404/403 distinction is fine (the caller has already proven tenant context), and the
-     * three reverse pins in {@code AgentPrincipalContextPolicyHttpTest} / {@code AgentPrincipalHooksHttpTest} /
-     * {@code AgentPrincipalScopeContractTest} keep asserting exactly that.</p>
+     * <p>Two consequences this test pins deliberately:</p>
+     * <ol>
+     *   <li>an <b>unknown</b> id without a context now answers <b>404</b> — the residual oracle Lead
+     *       accepted and asked to be stated rather than denied (the id must be read to learn its scope;
+     *       UUIDv4 is unguessable, and pre-D22 the same caller got 403-vs-404 anyway, which leaked more);</li>
+     *   <li>a <b>workspace-scoped</b> row without a context answers <b>409</b>, which is the property that
+     *       actually matters: a context-less caller never learns anything about a workspace row.</li>
+     * </ol>
      */
     @org.junit.jupiter.params.ParameterizedTest
     @org.junit.jupiter.params.provider.ValueSource(strings = {"disable", "update"})
-    void mutationWithoutWorkspaceContextAnswers409EvenForAnUnknownPrincipal(String operation) {
+    void mutationWithoutWorkspaceContextOnAnUnknownIdAnswersNotFound(String operation) {
         fixture();
         // 关键：这个调用者**没有任何 workspace membership**。否则 TenantContextInterceptor 会走
-        // "first active membership" 兜底把一个上下文造出来，409 就退化成 404（本测试的意义就没了）。
-        User contextless = userRepository.saveAndFlush(new User(
-                "principal-create-contextless-" + UUID.randomUUID() + "@test.com", "hash", "Contextless"));
-        String contextlessToken = TestDataFactory.createGlobalToken(
-                contextless.getId().toString(), contextless.getEmail(), "USER", 0);
+        // "first active membership" 兜底造出上下文，下面的 409 分支就测不到了。
+        String contextlessToken = contextlessToken();
         UUID unknown = UUID.randomUUID();
         ResponseEntity<Map> response = operation.equals("disable")
                 ? mutate(HttpMethod.POST, "/api/v1/agent-principals/" + unknown + "/disable", null, contextlessToken)
                 : mutate(HttpMethod.PATCH, "/api/v1/agent-principals/" + unknown,
-                        Map.of("hooks", Map.of("advisors", List.of())), contextlessToken);
+                        Map.of("contextPolicy", Map.of("memory", Map.of("enabled", true))), contextlessToken);
+
+        assertEquals(HttpStatus.NOT_FOUND, response.getStatusCode(),
+                "D-196: existence is resolved first, so an unknown id is a 404 even without a context "
+                        + "(the accepted residual oracle) (" + operation + "): " + response.getBody());
+        assertEquals("AGENT_PRINCIPAL_NOT_FOUND", response.getBody().get("code"));
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"disable", "update"})
+    void mutationWithoutWorkspaceContextOnAWorkspaceScopedRowAnswers409(String operation) {
+        fixture();
+        String contextlessToken = contextlessToken();
+        // D-174 shape: no owning user ⇒ workspace-scoped ⇒ the 409 gate applies.
+        com.cc01cc.p.xihe.cp.entity.AgentPrincipal principal =
+                new com.cc01cc.p.xihe.cp.entity.AgentPrincipal();
+        principal.setName("ws-scoped-" + UUID.randomUUID());
+        principal.setCreatedByUserId(userId.toString());
+        principal.setTemplateId("template-1");
+        principal.setTemplateSnapshot(objectMapper.createObjectNode());
+        UUID principalId = principalRepository.saveAndFlush(principal).getId();
+
+        ResponseEntity<Map> response = operation.equals("disable")
+                ? mutate(HttpMethod.POST, "/api/v1/agent-principals/" + principalId + "/disable",
+                        null, contextlessToken)
+                : mutate(HttpMethod.PATCH, "/api/v1/agent-principals/" + principalId,
+                        Map.of("contextPolicy", Map.of("memory", Map.of("enabled", true))), contextlessToken);
 
         assertEquals(HttpStatus.CONFLICT, response.getStatusCode(),
-                "D22: no workspace context ⇒ 409 before any lookup (" + operation + "): " + response.getBody());
+                "D-196: a workspace-scoped subject without a context is a 409 (" + operation + "): "
+                        + response.getBody());
         assertEquals("WORKSPACE_CONTEXT_REQUIRED", response.getBody().get("code"),
-                "an unknown id must not be distinguishable from a foreign one (" + operation + ")");
+                "the body must not reveal any field of the row it only read to learn the scope");
+    }
+
+    /** A caller with no workspace membership at all — no interceptor fallback can invent a context. */
+    private String contextlessToken() {
+        User contextless = userRepository.saveAndFlush(new User(
+                "principal-create-contextless-" + UUID.randomUUID() + "@test.com", "hash", "Contextless"));
+        return TestDataFactory.createGlobalToken(
+                contextless.getId().toString(), contextless.getEmail(), "USER", 0);
     }
 
     private ResponseEntity<Map> mutate(HttpMethod method, String path, Map<String, Object> body, String token) {
