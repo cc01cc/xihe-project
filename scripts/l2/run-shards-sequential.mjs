@@ -12,11 +12,29 @@
 // missCounts. That is the same counter used by the instrumented runs, so the two-shard sum is directly
 // comparable with the 2026-11-02 baseline (A 67 + B 66 = 133).
 //
+// HARDENING (BL-326, 2026-11-05 — a whole L2 round was invalidated by exactly the hole these close):
+//   1. ISOLATED BUILD DIR. Every shard compiles into `--target-root/<runTag>-<shard>` (default under
+//      H:/zeotmp). The main checkout's `target/` is never used: a sibling lane's probe had compiled a
+//      "gate removed" class into it, and a round that ran `surefire:test` on those stale classes looked
+//      like 34 real failures. The compile now happens HERE, per shard, so build == what was measured.
+//   2. PROVENANCE GATE. `git status --short` must be empty before the compile and before EACH shard
+//      (else fail-fast: a dirty tree means "I cannot tell you which tree I measured").
+//   3. RECORDED PROVENANCE. The result JSON carries `rev-parse HEAD` before/after, the dirty snapshot,
+//      each shard's targetDir, the compile exit code, and the `build-info.properties` commit/dirty when
+//      the build emits it. A round that cannot answer "which tree, which sha, dirty?" is not evidence.
+//   4. GUARD LITERAL. After compiling, a load-bearing literal (default `instance-admin`, the hard gate
+//      that the BL-326 probe removed) must exist inside the compiled class; absent ⇒ fail-fast, because
+//      build and source have drifted apart.
+//
 // USAGE
-//   node scripts/l2/run-shards-sequential.mjs [--root <worktree>] [--out <dir>]
+//   node scripts/l2/run-shards-sequential.mjs [--root <worktree>] [--out <dir>] [--run-tag <tag>]
+//                                            [--target-root <dir>] [--guard-literal <s>]...
+//                                            [--allow-dirty] [--compile-only]
 // Env: JAVA_TOOL_OPTIONS must carry the heap cap (e.g. -Xmx4g); this script does not set it silently.
+// The old contract ("caller compiled first, runner only runs surefire") is gone on purpose: the caller's
+// compile is precisely what could not be trusted.
 
-import { spawn } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
@@ -25,9 +43,22 @@ const flag = (name, fallback) => {
   const index = argv.indexOf(`--${name}`);
   return index >= 0 ? argv[index + 1] : fallback;
 };
+const flags = (name) => {
+  const values = [];
+  for (let index = 0; index < argv.length; index += 1) {
+    if (argv[index] === `--${name}` && index + 1 < argv.length) values.push(argv[index + 1]);
+  }
+  return values;
+};
 
 const ROOT = resolve(flag('root', 'H:/zeogit/one/A03-xihe/.worktrees/plan-l2-phase3'));
 const OUT = resolve(flag('out', 'H:/zeogit/one/.tmp/plan-l2-p3'));
+const TARGET_ROOT = resolve(flag('target-root', 'H:/zeotmp'));
+const RUN_TAG = flag('run-tag', `l2-${new Date().toISOString().replace(/[:.]/gu, '-')}`);
+const ALLOW_DIRTY = argv.includes('--allow-dirty');
+const COMPILE_ONLY = argv.includes('--compile-only');
+const GUARD_LITERALS = flags('guard-literal').length ? flags('guard-literal') : ['instance-admin'];
+const GUARD_CLASS = flag('guard-class', 'com/cc01cc/p/xihe/cp/service/AgentPrincipalService.class');
 const MODULE = join(ROOT, 'packages/control-plane');
 const PYTHON = [
   join(ROOT, 'packages/agent/.venv/Scripts/python.exe'),
@@ -36,10 +67,31 @@ const PYTHON = [
 
 mkdirSync(OUT, { recursive: true });
 
-function runOne(shard) {
-  const logPath = join(OUT, `clean-shard-${shard}.log`);
-  const command = `mvn -o surefire:test -Pl2-shard-${shard}`
-    + (PYTHON ? ` -Dxihe.context.python=${PYTHON}` : '');
+function git(...args) {
+  try {
+    return execFileSync('git', ['-C', ROOT, ...args], { encoding: 'utf8' }).trim();
+  } catch (error) {
+    return `GIT-FAILED: ${error.message}`;
+  }
+}
+
+function provenance(label) {
+  return {
+    label,
+    head: git('rev-parse', 'HEAD'),
+    dirty: git('status', '--short', '--untracked-files=all').split('\n').filter(Boolean),
+    at: new Date().toISOString(),
+  };
+}
+
+function assertClean(snapshot) {
+  if (ALLOW_DIRTY || snapshot.dirty.length === 0) return;
+  console.error(`[preflight] ${snapshot.label}: working tree is DIRTY (${snapshot.dirty.length} entries) — refusing to measure.`);
+  for (const line of snapshot.dirty.slice(0, 10)) console.error(`  ${line}`);
+  throw new Error(`dirty working tree at ${snapshot.label}; a round that cannot name the tree it measured is not evidence`);
+}
+
+function run(command, logPath) {
   const startedAt = Date.now();
   return new Promise((done) => {
     const shell = process.platform === 'win32' ? (process.env.ComSpec || 'cmd.exe') : 'sh';
@@ -50,21 +102,32 @@ function runOne(shard) {
     child.on('close', (code) => {
       const text = Buffer.concat(chunks).toString('utf8');
       writeFileSync(logPath, text, 'utf8');
-      done({
-        shard,
-        command,
-        exitCode: code,
-        wallSeconds: Number(((Date.now() - startedAt) / 1000).toFixed(1)),
-        logPath,
-        reportDir: join(MODULE, `target/surefire-reports-shard-${shard}`),
-      });
+      done({ command, exitCode: code, wallSeconds: Number(((Date.now() - startedAt) / 1000).toFixed(1)), logPath });
     });
   });
 }
 
+function guardCheck(targetDir) {
+  const classFile = join(targetDir, 'classes', GUARD_CLASS);
+  if (!existsSync(classFile)) {
+    return { ok: false, reason: `guard class missing: ${classFile}`, literals: GUARD_LITERALS };
+  }
+  const bytes = readFileSync(classFile);
+  const missing = GUARD_LITERALS.filter((literal) => !bytes.includes(Buffer.from(literal, 'utf8')));
+  return { ok: missing.length === 0, reason: missing.length ? `literals absent: ${missing.join(',')}` : 'ok', literals: GUARD_LITERALS, classFile };
+}
+
+function buildInfo(targetDir) {
+  const file = join(targetDir, 'classes', 'META-INF', 'build-info.properties');
+  if (!existsSync(file)) return null;
+  const text = readFileSync(file, 'utf8');
+  const pick = (key) => new RegExp(`^${key}=(.*)$`, 'mu').exec(text)?.[1]?.trim() ?? null;
+  return { commit: pick('build.commit') ?? pick('git.commit.id') ?? pick('commit'), dirty: pick('build.dirty') ?? pick('git.dirty'), builtAt: pick('build.time') ?? pick('git.build.time') };
+}
+
 function lastCacheStats(logPath) {
   const text = readFileSync(logPath, 'utf8');
-  const matches = [...text.matchAll(/DefaultContextCache@[0-9a-f]+ size = (\d+), maxSize = \d+, contextUsageCount = \d+, parentContextCount = \d+, hitCount = (\d+), missCount = (\d+), failureCount = (\d+)/g)];
+  const matches = [...text.matchAll(/DefaultContextCache@[0-9a-f]+ size = (\d+), maxSize = \d+, contextUsageCount = \d+, parentContextCount = \d+, hitCount = (\d+), missCount = (\d+), failureCount = (\d+)/gu)];
   if (!matches.length) return null;
   const last = matches[matches.length - 1];
   return { size: Number(last[1]), hitCount: Number(last[2]), missCount: Number(last[3]) };
@@ -83,9 +146,9 @@ function suitesOf(reportDir) {
   walk(reportDir);
   return files.map((file) => {
     const head = readFileSync(file, 'utf8').slice(0, 4000);
-    const tag = /<testsuite\b[^>]*>/.exec(head)?.[0] ?? '';
+    const tag = /<testsuite\b[^>]*>/u.exec(head)?.[0] ?? '';
     const attr = (name) => {
-      const found = new RegExp(`${name}="([^"]*)"`).exec(tag);
+      const found = new RegExp(`${name}="([^"]*)"`, 'u').exec(tag);
       return found ? found[1] : '0';
     };
     const name = attr('name');
@@ -100,26 +163,57 @@ function suitesOf(reportDir) {
   });
 }
 
-const head = (() => {
-  try {
-    return readFileSync(join(ROOT, '.git', 'HEAD'), 'utf8').trim();
-  } catch {
-    return null;
-  }
-})();
+const before = provenance('before');
+assertClean(before);
 
 const shards = [];
 for (const shard of ['a', 'b']) {
-  console.log(`[shard ${shard}] start`);
-  const result = await runOne(shard);
-  result.cache = lastCacheStats(result.logPath);
+  const targetDir = join(TARGET_ROOT, `${RUN_TAG}-${shard}`);
+  mkdirSync(targetDir, { recursive: true });
+  // Forward slashes and no quoting: `cmd /c` mangles nested double quotes ("-Dprop=H:\a\b" breaks).
+  const targetArg = targetDir.replaceAll('\\', '/');
+  console.log(`[shard ${shard}] compile -> ${targetDir}`);
+  const compile = await run(
+    `mvn -o -q -Dxihe.target.dir=${targetArg} clean test-compile`,
+    join(OUT, `compile-shard-${shard}.log`),
+  );
+  const guard = guardCheck(targetDir);
+  const info = buildInfo(targetDir);
+  const shardProvenance = provenance(`shard-${shard}`);
+  assertClean(shardProvenance);
+  if (compile.exitCode !== 0) {
+    throw new Error(`shard ${shard}: test-compile failed (exit ${compile.exitCode}); see ${compile.logPath}`);
+  }
+  if (!guard.ok) {
+    throw new Error(`shard ${shard}: guard literal check failed (${guard.reason}); build/source have drifted — refusing to measure`);
+  }
+  if (COMPILE_ONLY) {
+    shards.push({ shard, targetDir, compile, guard, buildInfo: info, provenance: shardProvenance, skippedRun: true, exitCode: null, wallSeconds: 0, tests: 0, failures: 0, cache: null, suites: [] });
+    console.log(`[shard ${shard}] compile+guard OK (compile-only) guard=${guard.literals.join(',')} buildInfo=${info ? `${info.commit ?? '?'}/${info.dirty ?? '?'}` : 'absent'}`);
+    continue;
+  }
+  console.log(`[shard ${shard}] start (targetDir=${targetDir})`);
+  const command = `mvn -o surefire:test -Pl2-shard-${shard} -Dxihe.target.dir=${targetArg}`
+    + (PYTHON ? ` -Dxihe.context.python=${PYTHON.replaceAll('\\', '/')}` : '');
+  const result = await run(command, join(OUT, `clean-shard-${shard}.log`));
+  result.reportDir = join(targetDir, `surefire-reports-shard-${shard}`);
   result.suites = suitesOf(result.reportDir);
   result.tests = result.suites.reduce((sum, suite) => sum + suite.tests, 0);
   result.failures = result.suites.reduce((sum, suite) => sum + suite.failures + suite.errors, 0);
+  result.cache = lastCacheStats(result.logPath);
+  result.targetDir = targetDir;
+  result.compile = compile;
+  result.guard = guard;
+  result.buildInfo = info;
+  result.provenance = shardProvenance;
   shards.push(result);
   console.log(`[shard ${shard}] exit=${result.exitCode} wall=${result.wallSeconds}s `
-    + `tests=${result.tests} failures+errors=${result.failures} missCount=${result.cache?.missCount ?? 'n/a'}`);
+    + `tests=${result.tests} failures+errors=${result.failures} missCount=${result.cache?.missCount ?? 'n/a'} `
+    + `guard=${guard.ok ? 'ok' : 'FAIL'} head=${shardProvenance.head.slice(0, 8)} dirty=${shardProvenance.dirty.length}`);
 }
+
+const after = provenance('after');
+assertClean(after);
 
 const { computeExpectedTestClasses } = await import('./lib/test-class-set.mjs');
 const expected = computeExpectedTestClasses({ repoRoot: ROOT });
@@ -154,12 +248,20 @@ const coverage = {
 };
 coverage.ok = coverage.missing.length === 0 && coverage.unexpected.length === 0 && coverage.duplicates.length === 0;
 
+const headStable = before.head === after.head && shards.every((shard) => shard.provenance?.head === before.head);
 const summary = {
   generatedAt: new Date().toISOString(),
   mode: 'sequential (memory-constrained; parallel wall clock NOT re-measured)',
-  head,
+  runTag: RUN_TAG,
+  root: ROOT,
+  targetRoot: TARGET_ROOT,
+  // legacy field kept for old readers; now a real sha instead of `ref: refs/heads/develop`
+  head: before.head,
+  headStable,
+  provenance: { before, after, shards: shards.map((shard) => shard.provenance) },
   javaToolOptions: process.env.JAVA_TOOL_OPTIONS ?? null,
   instrumented: false,
+  compileOnly: COMPILE_ONLY,
   shards: shards.map((shard) => ({
     shard: shard.shard,
     exitCode: shard.exitCode,
@@ -167,8 +269,12 @@ const summary = {
     tests: shard.tests,
     failuresAndErrors: shard.failures,
     cache: shard.cache,
+    targetDir: shard.targetDir,
     reportDir: shard.reportDir,
     logPath: shard.logPath,
+    compile: shard.compile && { exitCode: shard.compile.exitCode, wallSeconds: shard.compile.wallSeconds, logPath: shard.compile.logPath },
+    guard: shard.guard,
+    buildInfo: shard.buildInfo,
   })),
   creationsShardSum: shards.reduce((sum, shard) => sum + (shard.cache?.missCount ?? 0), 0),
   totalTests: shards.reduce((sum, shard) => sum + shard.tests, 0),
@@ -179,4 +285,11 @@ const summary = {
 };
 
 writeFileSync(join(OUT, 'clean-sequential-result.json'), `${JSON.stringify(summary, null, 2)}\n`, 'utf8');
-console.log(JSON.stringify({ shards: summary.shards.map(({ shard, wallSeconds, tests, failuresAndErrors }) => ({ shard, wallSeconds, tests, failuresAndErrors })), creationsShardSum: summary.creationsShardSum, coverage: { ok: coverage.ok, expected: coverage.expected, ran: coverage.ran, missing: coverage.missing.length, unexpected: coverage.unexpected.length, duplicates: coverage.duplicates.length } }, null, 1));
+console.log(JSON.stringify({
+  runTag: RUN_TAG,
+  head: summary.head,
+  headStable,
+  shards: summary.shards.map(({ shard, wallSeconds, tests, failuresAndErrors, targetDir }) => ({ shard, wallSeconds, tests, failuresAndErrors, targetDir })),
+  creationsShardSum: summary.creationsShardSum,
+  coverage: { ok: coverage.ok, expected: coverage.expected, ran: coverage.ran, missing: coverage.missing.length, unexpected: coverage.unexpected.length, duplicates: coverage.duplicates.length },
+}, null, 1));
