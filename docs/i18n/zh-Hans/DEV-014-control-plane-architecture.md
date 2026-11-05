@@ -228,6 +228,40 @@ flowchart LR
 - **作用域判定统一**：`AccessScopeResolver` 的成员校验新增 `AuthzContext.canWorkspaceAdmin` 回落（round-4 P2），使「实例管理员不是工作区成员」不再被成员门挡住；回落本身不授权，后续原子评估仍决定动作是否放行。
 - **`users.role` 清零（PLAN-0610 W4a，V89 前置）**：账号实体不再映射该列，产品代码 0 读 0 写——建号（注册/管理员建号/`DataSeeder`）只写账号行，实例 tier 由 `GrantDefaultService.ensureUserDefault` 写 `USER` 绑定（本地单用户的 `SUPER_ADMIN` 仍由 `AuthController`/`DataSeeder` 的 bootstrap 路径绑定）；`GrantDefaultService.ensureInstanceTierBinding` 只补空缺、**不再按列改 tier**（tier 变更只走绑定 API 或 owner 交接）；`AgentTemplateService` 实例层模板 ACL 由 `actor.getRole()==ADMIN` 改为 `AuthzContext.isInstanceAdmin(actorId)`（round-3 P1-4），超管因 `SUPER_ADMIN` 种子含全部能力原子同样满足；`UserAdminService` 的「最后一个可用管理员」守卫改判**实例 `ADMIN`/`SUPER_ADMIN` 绑定的 ACTIVE 持有者计数**（`countActiveUsersWithInstanceRoles`）。副作用（已写进测试断言）：活跃调用者自身的管理员绑定必然计入，因此经该 API 已无法把实例降到 0 个可用管理员，`409 LAST_ADMIN` 保留为对陈旧能力/绕过写入的纵深防御。列本身与 `ck_users_role` 由 V89 删除。
 
+### 权限模型定位：scoped RBAC + ARBAC，不是 plain RBAC（2026-11-05）
+
+**一句话**：本系统权限模型是 **带作用域的 RBAC（scoped RBAC）+ 管理型 RBAC（ARBAC）+ 每主体边界（permissions boundary）**，
+不是教科书里"角色 → 权限"的 flat RBAC0。读权限相关章节前请先建立这个心智模型。
+
+**对照 NIST RBAC（ANSI INCITS 359-2004）**
+
+| 组件 | 本项目 | 说明 |
+|---|---|---|
+| Core RBAC（用户-角色-权限） | ✅ | 主体 / 系统角色+自定义角色 / 能力原子 |
+| Hierarchical RBAC（角色继承） | ✅ | `implies()` 链：`instance:super ⇒ instance:admin ⇒ workspace:admin` |
+| Static / Dynamic SoD | ❌ | 未实现 |
+| **ARBAC**（管理角色管理角色） | ✅ | `MANAGE_ROLES` + `RoleAdminService`/`BindingAdminService`；护栏见 PLAN-0673 |
+| **额外**：per-principal 边界 | ✅ | `agent_permissions_snapshot`（agent 的 cap）= AWS permissions boundary 概念 |
+
+**为什么"作用域"不构成"超出 RBAC"**
+- NIST 的权限定义就是 **(operation, object)** 对 —— object 自带资源边界；
+- NIST 管理模型明确讨论 *"how to scope the administrative authority vested in administrative roles"*（Sandhu 1996）；
+- Kubernetes RBAC 本身就是 **namespace-scoped**（`Role` vs `ClusterRole`），与本项目 workspace / instance **同构**。
+
+**三道闸门**（详见 `plans/PLAN-0673-xh-role-delegation-no-escalation/design.md`）
+
+| 闸门 | 约束谁 | 判据 | 拒绝码 |
+|---|---|---|---|
+| ① `cap` | 目标（agent） | 角色原子 ⊆ agent 的 cap | 409 `ROLE_BINDING_EXCEEDS_CAP` |
+| ② 子集规则 | 授予者 | 原子 ⊆ 调用者已持有（**绑定按目标 scope**，instance ⊇ workspace） | 403 `PRIVILEGE_ESCALATION`（点名超限原子） |
+| ③ 绕过原子 | 授予者 | `holdsActionAtom(GRANT_ANY_ATOM)`（默认只种 SUPER_ADMIN，使用留审计） | — |
+
+**有意偏离（必须知道）**：NIST 建议"管理角色与普通角色应当分离"，而本项目 `ADMIN` **既是普通角色也是管理角色**。
+这是有意选择（云 IAM 普遍如此），含义是：**ADMIN 的权限同时是"能做什么"和"能授予什么"的边界** ——
+改 ADMIN 默认集时两者同时变化，需同批复核。
+
+**什么时候才算 ABAC**：当授权决策开始依赖**请求上下文属性**（时间/IP/资源标签/风险评分/MFA）或**资源属性**时。
+当前决策只依赖"角色 → 原子 + 作用域"，**因此仍是 RBAC**；引入条件表达式前必须先补模型说明与测试基建。
 ### 权限原子默认授予集（PLAN-0651，2026-11-05）
 
 十个原子（N1–N10）在**代码侧**的默认集（`SystemAccessRoleCatalog` 是权威，迁移 V111/V114/V115 是它的物化）。

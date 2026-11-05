@@ -182,6 +182,17 @@ class AgentPrincipalScopeMigrationTest {
                             + "'::uuid AND action_class = 'CREATE_OWN_AGENT'"),
                     "CREATE_OWN_AGENT is seeded on " + roleId);
         }
+        // D-165 (Lead ruling 2026-11-05): A13 reuses N9 MANAGE_WORKSPACE_POLICY, so ADMIN keeps its
+        // V115 N9 default and deliberately does NOT gain MANAGE_ROLES (that atom also gates role/
+        // binding administration — out of the user-approved scope).
+        assertEquals(1, scalarInt("SELECT count(*) FROM role_permissions WHERE role_id = '"
+                        + SystemAccessRoleCatalog.ADMIN_ID + "'::uuid"
+                        + " AND action_class = 'MANAGE_WORKSPACE_POLICY'"),
+                "ADMIN default set carries N9 (V115), the atom A13 now uses");
+        assertEquals(0, scalarInt("SELECT count(*) FROM role_permissions WHERE role_id = '"
+                        + SystemAccessRoleCatalog.ADMIN_ID + "'::uuid"
+                        + " AND action_class = 'MANAGE_ROLES'"),
+                "ADMIN must not gain MANAGE_ROLES (role/binding administration stays SUPER_ADMIN-only)");
     }
 
     @Test

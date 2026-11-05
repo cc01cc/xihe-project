@@ -102,7 +102,10 @@ describe("BUG-3: /events SSE connection", () => {
             "test-session",
             expect.objectContaining({
                 url: "/api/v1/events?sessionId=test-session",
-                headers: { Authorization: "Bearer test-jwt-token" },
+                headers: expect.objectContaining({
+                    Authorization: "Bearer test-jwt-token",
+                    "X-XH-SSE-Connection-Id": expect.any(String),
+                }),
             }),
         );
     });

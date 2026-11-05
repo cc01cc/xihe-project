@@ -64,6 +64,7 @@ public class RoleAdminService {
     private final RoleGrantMaterializer materializer;
     private final AuditLogger audit;
     private final DbLockTimeout dbLockTimeout;
+    private final GrantabilityGuard grantability;
 
     public RoleAdminService(AccessRoleRepository roles,
                             AccessRolePermissionRepository permissions,
@@ -71,7 +72,8 @@ public class RoleAdminService {
                             InstanceOwnerRepository owners,
                             RoleGrantMaterializer materializer,
                             AuditLogger audit,
-                            DbLockTimeout dbLockTimeout) {
+                            DbLockTimeout dbLockTimeout,
+                            GrantabilityGuard grantability) {
         this.roles = roles;
         this.permissions = permissions;
         this.bindings = bindings;
@@ -79,6 +81,7 @@ public class RoleAdminService {
         this.materializer = materializer;
         this.audit = audit;
         this.dbLockTimeout = dbLockTimeout;
+        this.grantability = grantability;
     }
 
     /** Default-locale overload (callers that do not carry a request locale). */
@@ -159,6 +162,10 @@ public class RoleAdminService {
                     "A role with this name already exists");
         }
         List<String> atomNames = requireAtoms(request.atoms());
+        // PLAN-0673 M1 T1.2 (闸门②): a role definition may only contain atoms the caller holds in
+        // ANY scope (binding re-checks at the concrete target scope). 403 PRIVILEGE_ESCALATION names
+        // the offending atoms; the cap gate (BL-287) stays a separate 409.
+        grantability.assertGrantable(new LinkedHashSet<>(atomNames), null);
         String displayName = requireDisplayName(request.displayName(), name);
         AccessRole role = new AccessRole(UUID.randomUUID(), name, displayName,
                 trimToNull(request.description()), false);
@@ -230,6 +237,8 @@ public class RoleAdminService {
         List<String> effectiveAtoms = currentAtoms;
         if (atomsRequested) {
             effectiveAtoms = requireAtoms(request.atoms());
+            // PLAN-0673 M1 T1.2: same any-scope definition judgement as create.
+            grantability.assertGrantable(new LinkedHashSet<>(effectiveAtoms), null);
             replaceAtoms(saved.getId(), effectiveAtoms);
         }
         int materialized = materializer.materializeRole(saved.getId(), actorUuid(), null);

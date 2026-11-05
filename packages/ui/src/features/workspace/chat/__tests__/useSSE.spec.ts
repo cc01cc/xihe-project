@@ -99,8 +99,30 @@ describe("useSSE", () => {
             SESSION_ID,
             expect.objectContaining({
                 url: `/api/v1/events?sessionId=${SESSION_ID}`,
+                headers: expect.objectContaining({
+                    "X-XH-SSE-Connection-Id": expect.any(String),
+                }),
             }),
         );
+    });
+
+    it("reuses the same per-tab connectionId across reconnects", async () => {
+        const { connect } = useSSE(SESSION_ID);
+        connect();
+        await flushPromises();
+        connect();
+        await flushPromises();
+        const connectionIds = vi
+            .mocked(chatTransport.sendMessages)
+            .mock.calls.map(
+                (call) =>
+                    (call[1] as { headers?: Record<string, string> }).headers?.[
+                        "X-XH-SSE-Connection-Id"
+                    ],
+            );
+        expect(connectionIds).toHaveLength(2);
+        expect(connectionIds[0]).toBeTruthy();
+        expect(connectionIds[1]).toBe(connectionIds[0]);
     });
 
     it("sets isConnected to true when transport opens", async () => {
@@ -156,7 +178,10 @@ describe("useSSE", () => {
             SESSION_ID,
             expect.objectContaining({
                 url: `/api/v1/events?sessionId=${SESSION_ID}`,
-                headers: { Authorization: "Bearer my-token" },
+                headers: expect.objectContaining({
+                    Authorization: "Bearer my-token",
+                    "X-XH-SSE-Connection-Id": expect.any(String),
+                }),
             }),
         );
     });
