@@ -570,7 +570,7 @@ export function useSSE(sessionId: MaybeRefOrGetter<string>) {
 
             // PLAN-0676 T3（BL-333）：同一会话的其它标签页/浏览器已做出决定 —— 撤掉本页的卡，
             // 而不是让它继续可点（继续点只会拿到幂等 200 或 409，用户无法理解）。
-            case "approval_resolved":
+            case "approval_decided":
                 resetStreamTimeout();
                 try {
                     const resolved = JSON.parse(msg.data) as Record<string, unknown>,
@@ -593,7 +593,7 @@ export function useSSE(sessionId: MaybeRefOrGetter<string>) {
                         if (agentStore) void agentStore.refreshPendingApprovals(true);
                     }
                 } catch {
-                    logger.warn("Failed to parse SSE approval_resolved event");
+                    logger.warn("Failed to parse SSE approval_decided event");
                 }
                 break;
 

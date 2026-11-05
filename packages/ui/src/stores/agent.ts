@@ -203,7 +203,7 @@ export const useAgentStore = defineStore("agent", () => {
      *
      * <p>为什么需要：审批请求是会话级广播，每个标签页都握着同一张卡。此前决定后没有任何事件，
      * B 页继续点会拿到幂等 200（看着成功、其实什么都没发生）或 409 冲突。CP 现在在决定成功后发
-     * `approval_resolved`，本方法把这个事实落成本页的状态。</p>
+     * `approval_decided`，本方法把这个事实落成本页的状态。</p>
      *
      * <p>幂等与顺序安全：本页没有这张卡（已处理 / 从未收到 / 广播重复）⇒ 返回 false，不产生任何
      * 副作用；命中 ⇒ 按终态退役（`resolvedApprovals` 的 tombstone 保证后到的 `approval_request`

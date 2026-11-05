@@ -4,7 +4,7 @@ import { useAgentStore } from "../agent";
 import type { ApprovalRequest } from "../../types";
 
 /**
- * PLAN-0676 T3（BL-333）：`approval_resolved` 的存储侧语义。
+ * PLAN-0676 T3（BL-333）：`approval_decided` 的存储侧语义。
  *
  * 三条性质：①命中待办卡 ⇒ 撤卡；②重复/乱序广播 ⇒ 幂等（返回 false，不改状态）；
  * ③撤掉的卡不会被后到的 `approval_request` 重放复活（tombstone）。

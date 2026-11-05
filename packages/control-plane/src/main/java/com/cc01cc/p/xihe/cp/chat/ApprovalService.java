@@ -513,14 +513,14 @@ public class ApprovalService {
             payload.put("decision", decision.kind().wireName());
             payload.put("decidedBy", userId);
             payload.put("decidedAt", Instant.now().toString());
-            boolean delivered = sseManager.send(approval.getSessionId(), "approval_resolved", payload);
+            boolean delivered = sseManager.send(approval.getSessionId(), "approval_decided", payload);
             if (!delivered) {
                 // 没有活跃订阅是正常情况（用户可能已关页），不升级成错误。
-                logger.debug("[LIFECYCLE] service=cp event=chat_approval_resolved_undelivered requestId={}",
+                logger.debug("[LIFECYCLE] service=cp event=approval_delivery_failed requestId={}",
                         requestId);
             }
         } catch (RuntimeException e) {
-            logger.warn("[LIFECYCLE] service=cp event=chat_approval_resolved_broadcast_failed requestId={} code={}",
+            logger.warn("[LIFECYCLE] service=cp event=approval_broadcast_failed requestId={} code={}",
                     requestId, e.getClass().getSimpleName());
         }
     }

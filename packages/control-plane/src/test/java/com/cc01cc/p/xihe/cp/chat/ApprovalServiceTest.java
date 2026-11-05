@@ -62,7 +62,7 @@ class ApprovalServiceTest {
     private final AnswererChain answererChain = new AnswererChain(
             List.of(new UserAnswerer(), new AutoReviewAnswerer()));
     private final GuardAdviceService guardAdviceService = org.mockito.Mockito.mock(GuardAdviceService.class);
-    /** PLAN-0676 T3：审批已决广播的出口，只断言"发了一条 approval_resolved"。 */
+    /** PLAN-0676 T3：审批已决广播的出口，只断言"发了一条 approval_decided"。 */
     private final SseEmitterManager sse = mock(SseEmitterManager.class);
     private final ApprovalService service = new ApprovalService(approvals, runs, agent, new ObjectMapper(),
             historyWriter, grantWriter, audit, policySummary, pendingStore, sessionPolicyState,
@@ -266,13 +266,13 @@ class ApprovalServiceTest {
                 .thenReturn(1);
         when(agent.respond(TEST_REQUEST_ID, true, "once", null))
                 .thenReturn(Map.of("status", "accepted", "requestId", TEST_REQUEST_ID, "approved", true));
-        when(sse.send(org.mockito.ArgumentMatchers.anyString(), eq("approval_resolved"), any()))
+        when(sse.send(org.mockito.ArgumentMatchers.anyString(), eq("approval_decided"), any()))
                 .thenReturn(true);
 
         service.decide(TEST_REQUEST_ID, TEST_USER, TEST_WORKSPACE, ApprovalDecision.once());
 
         ArgumentCaptor<Object> payload = ArgumentCaptor.forClass(Object.class);
-        verify(sse).send(eq(approval.getSessionId()), eq("approval_resolved"), payload.capture());
+        verify(sse).send(eq(approval.getSessionId()), eq("approval_decided"), payload.capture());
         @SuppressWarnings("unchecked")
         Map<String, Object> body = (Map<String, Object>) payload.getValue();
         assertEquals(TEST_REQUEST_ID, body.get("approvalId"));
