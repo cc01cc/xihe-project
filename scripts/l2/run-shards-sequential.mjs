@@ -212,6 +212,13 @@ for (const shard of ['a', 'b']) {
     + `guard=${guard.ok ? 'ok' : 'FAIL'} head=${shardProvenance.head.slice(0, 8)} dirty=${shardProvenance.dirty.length}`);
 }
 
+// 自测钩子（仅验证"收尾脏"分支）：在最后一个 shard 断言之后、after 快照之前写一个临时文件，
+// 精确复现 2026-11-06 的真实故障窗口（第三方在收尾时刻写 docs）。生产用法不传这个参数。
+const DIRTY_PROBE = flag('after-dirty-probe', null);
+if (DIRTY_PROBE) {
+  writeFileSync(join(ROOT, DIRTY_PROBE), `after-dirty probe ${new Date().toISOString()}\n`, 'utf8');
+  console.log(`[self-test] wrote probe ${DIRTY_PROBE} (simulates a third-party write in the after window)`);
+}
 const after = provenance('after');
 // BL-326 收尾缺陷修复（2026-11-06，Lead 批准）：`after` 变脏 **不再抛错丢弃整轮证据**。
 // 判据是"measure 时刻 clean"：before / shard-a / shard-b 三处断言仍致命（脏了就不测），但收尾那一刻
