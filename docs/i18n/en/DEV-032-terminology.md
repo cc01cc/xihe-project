@@ -25,25 +25,25 @@ updated: 2026-11-06
 
 ## 1. Polysemy → distinct canonical names
 
-| Bare token | Sense | **Canonical** | Do not |
-|---|---|---|---|
-| **owner** | RBAC role on workspace | `workspace role owner` | bare `owner` for operation-lock holder |
-| | Lifecycle operation-lock holder | **`workspace operation lock holder`** | bare `owner` / unqualified `active owner`; `execution lease holder` (retired name) |
-| **L1/L2/L3** | Context injection slots | **`context L1`** | bare `L1` |
-| | Diagnostics layers | **`diagnostic L0/L1/L2`** | bare `L1` |
-| | Checkpoint restore layers | **`checkpoint L1`** | bare `L1` |
-| **resume** | Session / ChatRun recovery | **`run resume`** | bare `resume` for unpause |
-| | Leave workspace `paused` | **`unpause`** | bare `resume` / sole name “recovery consumer” |
-| **scope** | Job lifetime boundary | **`job scope`** (`run/session/workspace`) | bare `scope` for the policy layer |
-| | Policy / tool-face layer | **`policy scope`** (`instance/workspace/user`; tool faces also `builtin`) | bare `scope` for a Job |
-| **interrupted** | Job terminal caused by Runtime restart or unconfirmed start | **`job interrupted`** | blend with run `ambiguous`; call it “recovered/replayed” |
-| **runtimeBootId** | Runtime per-process boot id | **`runtimeBootId`** | treat as a business identity |
-| **job** | Current background job | **`durable job`** | mix with deleted table |
-| | Historical table | **`runtime_jobs` (legacy, deleted)** | treat as live |
-| **snapshot** | Current pre-write restore point | **`checkpoint`** | active docs using `snapshot` for restore point |
-| | Retired mechanism | **`legacy snapshot`** | blend with checkpoint |
-| **收敛 / 收口** | Many paths → one authority | **converge** | use “close” for state-machine merge |
-| | Scattered entries → one seam | **route-to-seam** (“收口”) | use “converge” for REST→executor |
+| Bare token | Sense | **Canonical** | Do not | Notes |
+|---|---|---|---|---|
+| **owner** | RBAC role on workspace | `workspace role owner` | bare `owner` for operation-lock holder | |
+| | Lifecycle operation-lock holder | **`workspace operation lock holder`** | bare `owner` / unqualified `active owner`; `execution lease holder` (retired name) | |
+| **L1/L2/L3** | Context injection slots | **`context L1`** | bare `L1` | |
+| | Diagnostics layers | **`diagnostic L0/L1/L2`** | bare `L1` | |
+| | Checkpoint restore layers | **`checkpoint L1`** | bare `L1` | |
+| **resume** | Session / ChatRun recovery | **`run resume`** | bare `resume` for unpause | |
+| | Leave workspace `paused` | **`unpause`** | bare `resume` / sole name “recovery consumer” | |
+| **scope** | Job lifetime boundary | **`job scope`** (`run/session/workspace`) | bare `scope` for the policy layer | |
+| | Policy / tool-face layer | **`policy scope`** (`instance/workspace/user`; tool faces also `builtin`) | bare `scope` for a Job | |
+| **interrupted** | Job terminal caused by Runtime restart or unconfirmed start | **`job interrupted`** | blend with run `ambiguous`; call it “recovered/replayed” | |
+| **runtimeBootId** | Runtime per-process boot id | **`runtimeBootId`** | treat as a business identity | |
+| **job** | Current background job | **`durable job`** | mix with deleted table | |
+| | Historical table | **`runtime_jobs` (legacy, deleted)** | treat as live | |
+| **snapshot** | Current pre-write restore point | **`checkpoint`** | active docs using `snapshot` for restore point | |
+| | Retired mechanism | **`legacy snapshot`** | blend with checkpoint | |
+| **收敛 / 收口** | Many paths → one authority | **converge** | use “close” for state-machine merge | |
+| | Scattered entries → one seam | **route-to-seam** (“收口”) | use “converge” for REST→executor | |
 | **projection** | A. CP durable authoritative record | **`<domain> durable record`** (Job durable record = Job source of truth; checkpoint slice record) | `projection` for sense A; call B a source of truth | 0426; not rebuildable |
 | | B. CP rebuildable read model | **`Context projection`** (first use: rebuilt by CP from `context_events`; not a source of truth; never executes tools) | bare `projection`; `ContextProjectionService` / `context_projections` stay as identifiers | 0426; `checkpoint projection` retired → checkpoint slice record |
 | | C. API response data shape | **`<object> response` / `<object> response view`** | `<object> projection` | 0426 |
@@ -78,7 +78,7 @@ updated: 2026-11-06
 | agent principal | `agent principal` (`agent_principals`; `agentPrincipalId`) | An independently authorizable subject with its own grants/cap; may be bound to many Workspaces and used by many Sessions; not owned by a user (`created_by_user_id` only records the creator) | a spawn instance; an `agent-templates` template; "an actor acting for a user"; "a user account of another kind"; **a disabled principal is not a crashed process** (see agent runtime) |
 | agent runtime | `agent runtime` (Python package `packages/agent`; log module `moduleAgent`) | The **process component** running orchestration / tool calls | **Two words, two things**: a disabled/removed/unauthorized principal leaves the runtime process alive and well, and a live process does not make the principal usable. Never say "the agent is down" for a disabled principal; never "restart the agent" for re-enabling one |
 | agent management | `agent management` (UI surface `agentManagement`, zh label 「智能体管理」) | The UI/API surface managing agent principals (create/bind/cap/disable) within a scope | Not a new capability: it is the management surface of agent principals; "manage" ≠ "speak as" (`MANAGE_WORKSPACE_AGENTS` vs `speakAs` are independent, D23-08) |
-| human principal | `human principal` (`users`; JWT `role=USER|ADMIN`; there is **no `humanPrincipal` class**) | A human account with login credentials; one of the three authorizable subject kinds | a Workspace member (that is `membership`); an Agent-path reader of `user_id` |
+| human principal | `human principal` (`users`; JWT `role=USER\|ADMIN`; there is **no `humanPrincipal` class**) | A human account with login credentials; one of the three authorizable subject kinds | a Workspace member (that is `membership`); an Agent-path reader of `user_id` |
 | service principal | `service principal` (capability **`CAP_INTERNAL_SERVICE`**; `ROLE_INTERNAL_SERVICE` is a legacy alias) | Internal pipeline identity between CP/Agent/Runtime: not a collaborator, cannot log in, produces no user-visible behavior | an agent principal; a "super user" token |
 | session participant | `session participant` (table **`session_participants`**, `V92__session_participants.sql:50`; polymorphic `principalKind` (`HUMAN`/`AGENT`) + `principalId`, **no FK** — `role_bindings` precedent) | A subject's participation in one session: the same principal may hold different roles/policies per session; a session may have several participants | Workspace `membership`; bare `participant` (Mermaid keyword); "session owner" (`sessions.user_id` is ownership only) |
 | wake policy | `wake policy` (`wakePolicy`; enum **`ALL_MESSAGES`** / **`MENTION`**, default `MENTION`) | Which events wake this participant (every message, or only on @); **visible ≠ woken** | visibility/permission; respond policy; notification settings |

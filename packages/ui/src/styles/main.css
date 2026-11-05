@@ -331,21 +331,23 @@ html:not([data-xh-color]) :is(button, a)[class*="bg-action"]:hover {
 }
 
 .dark {
-    --background: oklch(0.145 0 0);
-    --foreground: oklch(0.985 0 0);
-    --surface-canvas: oklch(0.185 0 0);
-    --surface-content: oklch(0.145 0 0);
-    --border-subtle: oklch(1 0 0 / 12%);
-    --brand: oklch(0.62 0.19 264);
-    --brand-foreground: oklch(0.985 0 0);
-    --card: oklch(0.205 0 0);
-    --card-foreground: oklch(0.985 0 0);
-    --popover: oklch(0.205 0 0);
-    --popover-foreground: oklch(0.985 0 0);
-    /* PLAN-0631 M0 dark：accent 进 --primary（同源 --brand）。对比度 6.92（WCAG AA✓）、
-       饱和度 73%（<80%）。--primary-foreground 维持近白。 */
+    --background: #111318;
+    --foreground: #f1f3f6;
+    --surface-canvas: #181b22;
+    --surface-content: #1d2129;
+    --border-subtle: rgba(255, 255, 255, 0.1);
+    --brand: #3b5bd0;
+    --brand-accent: #849cff;
+    --brand-foreground: #ffffff;
+    --card: #222730;
+    --card-foreground: #f1f3f6;
+    --popover: #222730;
+    --popover-foreground: #f1f3f6;
+    --shadow-card:
+        0 1px 2px rgba(0, 0, 0, 0.32), 0 12px 28px -14px rgba(0, 0, 0, 0.72),
+        inset 0 1px 0 rgba(255, 255, 255, 0.045);
     --primary: var(--brand);
-    --primary-foreground: oklch(0.985 0 0);
+    --primary-foreground: var(--brand-foreground);
     /*
      * C2′ 的 action/bubble 在浅色 :root 里是字面值（白底描边），深色下必须显式回落：
      * action 跟随 --primary（深色主按钮维持品牌蓝实心，描边透明），
@@ -354,29 +356,31 @@ html:not([data-xh-color]) :is(button, a)[class*="bg-action"]:hover {
     --action: var(--primary);
     --action-foreground: var(--primary-foreground);
     --action-border: transparent;
-    --action-hover: oklch(0.269 0 0);
-    --secondary: oklch(0.269 0 0);
-    --secondary-foreground: oklch(0.985 0 0);
-    --muted: oklch(0.269 0 0);
-    --muted-foreground: oklch(0.708 0 0);
-    --accent: oklch(0.269 0 0);
-    --accent-foreground: oklch(0.985 0 0);
-    --destructive: oklch(0.704 0.191 22.216);
+    --action-hover: #303744;
+    --secondary: #292e38;
+    --secondary-foreground: #f1f3f6;
+    --muted: #292e38;
+    --muted-foreground: #b4bdca;
+    --foreground-subtle: #a5afbd;
+    --accent: #303744;
+    --accent-foreground: #f1f3f6;
+    --link: var(--brand-accent);
+    --destructive: #ff7770;
     --border: var(--border-subtle);
-    --border-strong: oklch(1 0 0 / 22%);
-    --input: oklch(1 0 0 / 15%);
-    --ring: var(--brand);
+    --border-strong: rgba(255, 255, 255, 0.18);
+    --input: rgba(255, 255, 255, 0.16);
+    --ring: var(--brand-accent);
     --chart-1: oklch(0.87 0 0);
     --chart-2: oklch(0.556 0 0);
     --chart-3: oklch(0.439 0 0);
     --chart-4: oklch(0.371 0 0);
     --chart-5: oklch(0.269 0 0);
     --sidebar: var(--surface-canvas);
-    --sidebar-foreground: oklch(0.985 0 0);
-    --sidebar-primary: oklch(0.488 0.243 264.376);
-    --sidebar-primary-foreground: oklch(0.985 0 0);
-    --sidebar-accent: oklch(0.269 0 0);
-    --sidebar-accent-foreground: oklch(0.985 0 0);
+    --sidebar-foreground: #f1f3f6;
+    --sidebar-primary: var(--brand);
+    --sidebar-primary-foreground: var(--brand-foreground);
+    --sidebar-accent: #292e38;
+    --sidebar-accent-foreground: #f1f3f6;
     --sidebar-border: var(--border-subtle);
-    --sidebar-ring: var(--brand);
+    --sidebar-ring: var(--brand-accent);
 }

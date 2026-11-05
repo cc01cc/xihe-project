@@ -497,7 +497,9 @@ export function useSharedEventLeader<T>(
 
         const locks = locksAvailable();
         if (locks) {
-            role.value = channel ? "follower" : "degraded-local";
+            // 有通道 ⇒ 等锁期间就是 follower；没通道 ⇒ 只能等锁（acquiring），**不能**预置
+            // `degraded-local`：那是 leader 家族，会让 becomeLeader 直接短路、连接永远不开。
+            role.value = channel ? "follower" : "acquiring";
             void locks
                 .request(lockName(), { mode: "exclusive" }, async () => {
                     lockHeld = true;

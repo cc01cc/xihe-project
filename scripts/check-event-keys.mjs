@@ -44,6 +44,8 @@ export const PROTOCOL_WHITELIST = new Set([
 
 /** Past participles / terminal-state facts accepted by the model. */
 export const PAST_VERBS = [
+    // 2026-11-06 (PLAN-0676 T3): approval terminal event is approval_decided -- decided is the canonical past participle.
+    "decided",
     "created",
     "updated",
     "deleted",

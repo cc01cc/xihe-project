@@ -71,6 +71,8 @@ public class ApprovalService {
     private final WorkspaceRepository workspaceRepository;
     private final AnswererChain answererChain;
     private final GuardAdviceService guardAdviceService;
+    /** PLAN-0676 T3（BL-333）：审批已决后向会话 SSE 广播，多标签页/多浏览器据此撤卡。 */
+    private final SseEmitterManager sseManager;
 
     public ApprovalService(ChatApprovalRepository approvalRepository,
                            ChatRunRepository chatRunRepository,
@@ -86,7 +88,8 @@ public class ApprovalService {
                            PolicyRevision policyRevision,
                            WorkspaceRepository workspaceRepository,
                            AnswererChain answererChain,
-                           GuardAdviceService guardAdviceService) {
+                           GuardAdviceService guardAdviceService,
+                           SseEmitterManager sseManager) {
         this.approvalRepository = approvalRepository;
         this.chatRunRepository = chatRunRepository;
         this.agentClient = agentClient;
@@ -104,6 +107,7 @@ public class ApprovalService {
         this.workspaceRepository = workspaceRepository;
         this.answererChain = answererChain;
         this.guardAdviceService = guardAdviceService;
+        this.sseManager = sseManager;
     }
 
     /**
@@ -479,9 +483,46 @@ public class ApprovalService {
         returnRunFromAwaitingApproval(approval.getRunId());
         audit.record(approval.getSessionId(), approval.getTool(), "approval_decision",
                 decision.kind().wireName() + (decision.feedback() == null ? "" : " feedback=" + safeFeedback(decision.feedback())));
+        broadcastResolved(approval, requestId, userId, decision, approved);
         int propagated = propagate(approval, decision);
         return decisionResponse(requestId, "accepted", approved, decision.kind().wireName(), propagated,
                 plan, modeAtGrant);
+    }
+
+    /**
+     * PLAN-0676 T3（BL-333）：把"这张审批已被决定"广播给会话的所有连接。
+     *
+     * <p>为什么需要：审批请求本身是会话级广播（`ChatController` 的 `sseManager.send(sessionId,
+     * "approval_request", …)`），所以同一会话的每个标签页/浏览器都握着同一张待办卡。此前决定后
+     * **没有任何事件**通知其它页——B 页的卡片仍可点：同 kind 再点会拿到幂等的 200 `accepted`
+     * （看起来成功、实际什么都没发生），异 kind 拿到 409 `APPROVAL_DECISION_CONFLICT`。两种都不是
+     * 用户能理解的"这张卡已经被处理了"。</p>
+     *
+     * <p><b>只发事件，不改状态机</b>：决定已在前面落库；本方法只做 best-effort 广播，失败只记
+     * WARN（与 `approval_gate_relay_skipped` 同风格），绝不影响决定本身的结果。</p>
+     *
+     * <p>载荷刻意只带"谁、什么决定、什么时候"：不带工具参数、不带反馈正文（反馈可能含敏感上下文，
+     * 需要看的人自己拉 `GET /approvals/{id}`）。`decidedBy` 只给 userId，不给 email/name。</p>
+     */
+    private void broadcastResolved(ChatApproval approval, String requestId, String userId,
+                                   ApprovalDecision decision, boolean approved) {
+        try {
+            Map<String, Object> payload = new LinkedHashMap<>();
+            payload.put("approvalId", requestId);
+            payload.put("approved", approved);
+            payload.put("decision", decision.kind().wireName());
+            payload.put("decidedBy", userId);
+            payload.put("decidedAt", Instant.now().toString());
+            boolean delivered = sseManager.send(approval.getSessionId(), "approval_decided", payload);
+            if (!delivered) {
+                // 没有活跃订阅是正常情况（用户可能已关页），不升级成错误。
+                logger.debug("[LIFECYCLE] service=cp event=approval_delivery_failed requestId={}",
+                        requestId);
+            }
+        } catch (RuntimeException e) {
+            logger.warn("[LIFECYCLE] service=cp event=approval_broadcast_failed requestId={} code={}",
+                    requestId, e.getClass().getSimpleName());
+        }
     }
 
     private void returnRunFromAwaitingApproval(String runId) {

@@ -186,9 +186,9 @@ MVP uses the following protocols, each with a clear purpose:
 | Protocol | Purpose | Link | Key contract |
 |----------|---------|------|--------------|
 | persistent SSE + `POST /api/v1/chat` | Chat messages: `GET /api/v1/events?sessionId=` builds a session long-lived connection (reused); `POST /api/v1/chat` (`202`) triggers a run; `token` streaming → `done` ends the run, SSE retained | UI ↔ CP ↔ Agent | `done` ≠ close SSE; `heartbeat` 15s not in bubble; one live emitter + `generation`; up to `maxConcurrentRunsPerSession` (default 2) concurrent runs per session (PLAN-0645) |
-| MCP Streamable HTTP | Agent tool invocation: JSON-RPC over HTTP, unified through CP reverse proxy | Agent → CP → Runtime / External MCP Server |
-| MCP notification | State synchronization: Runtime events distributed through CP to UI and Agent | Runtime → CP → UI / Agent |
-| **HTTP (REST)** | **File operations/upload/management command-type operations: binary direct transfer** | **UI → CP → Runtime** |
+| MCP Streamable HTTP | Agent tool invocation: JSON-RPC over HTTP, unified through CP reverse proxy | Agent → CP → Runtime / External MCP Server | — |
+| MCP notification | State synchronization: Runtime events distributed through CP to UI and Agent | Runtime → CP → UI / Agent | — |
+| **HTTP (REST)** | **File operations/upload/management command-type operations: binary direct transfer** | **UI → CP → Runtime** | — |
 
 > Runtime dual interface design: Agent tool invocation goes through MCP, UI file operations go through REST. State flow maintains MCP notification (§3.2), unchanged by the introduction of REST API.
 >

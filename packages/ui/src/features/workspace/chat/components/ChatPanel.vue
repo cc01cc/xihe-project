@@ -40,6 +40,7 @@ import RevertPreviewDialog from "./RevertPreviewDialog.vue";
 import RevertResultDialog from "./RevertResultDialog.vue";
 import BaseModal from "../../../../components/shared/BaseModal.vue";
 import { useSessionBranches } from "../composables/useSessionBranches";
+import { useComposeDeeplink } from "../composables/useComposeDeeplink";
 import {
     ensureProviderBinding,
     type ProviderBindingGuideReason,
@@ -324,6 +325,17 @@ function reopenApproval() {
     dismissedRequestIds.value.delete(approval.requestId);
     // 卡片自身在 `show` 变 true 时把焦点放到主操作（ApprovalModal.focusMainAction），这里不抢。
 }
+
+// PLAN-0676 T3（BL-333）：另一页/另一个浏览器已经决定了这张审批 —— 本页刚把卡片撤掉，
+// 这里补一句可见的解释。否则卡片"凭空消失"会让用户以为是 bug。
+watch(
+    () => agentStore.approvalResolvedElsewhere,
+    (signal) => {
+        if (!signal) return;
+        toast.info(t("workspace.approvalResolvedElsewhere"));
+        agentStore.approvalResolvedElsewhere = null;
+    },
+);
 
 watch(pendingApproval, (approval, previous) => {
     if (previous && (!approval || approval.requestId !== previous.requestId)) {
@@ -694,6 +706,26 @@ watch(
 
 const streamComponent = ref<InstanceType<typeof SSEStream> | null>(null);
 const inputComponent = ref<InstanceType<typeof InputArea> | null>(null);
+
+/**
+ * BL-339：外部入口用 `?compose=<base64url(JSON)>` 把「要发的内容 + 目标主体」带进来。
+ * 只预填 composer（正文 + 空位的 to/cc），**绝不代发**；预填成功后本组件让 composable
+ * 用 `router.replace` 抹掉参数，刷新或后退都不会重复预填。
+ */
+useComposeDeeplink({
+    sessionId: () => props.sessionId,
+    ready: () => Boolean(inputComponent.value?.prefillDraft),
+    // 三态语义：`applied`/`idle` 都算"已消费"（清参），只有 `blocked`（目标位被用户内容占住）
+    // 才保留参数，等用户清空草稿后再打开同一链接仍能预填。
+    apply: (payload) => {
+        const result = inputComponent.value?.prefillDraft?.({
+            text: payload.text,
+            to: payload.to,
+            cc: payload.cc,
+        });
+        return result === "applied" || result === "idle";
+    },
+});
 
 /**
  * PLAN-0623：把「提及」转交给输入框（`@displayName` 插入草稿，不发送）。
@@ -1507,6 +1539,11 @@ watch(
             :error="approvalError"
             :can-classify="canClassifyApproval"
             :queue-total="sessionPendingApprovals.length"
+            :draft="agentStore.approvalDrafts[pendingApproval?.requestId ?? ''] ?? ''"
+            :resolved-elsewhere="
+                agentStore.resolvedElsewhereRequests[pendingApproval?.requestId ?? ''] === true
+            "
+            @update:draft="agentStore.setApprovalDraft(pendingApproval?.requestId ?? '', $event)"
             @approve="decideApproval"
             @reject="decideApproval"
             @dismiss="handleApprovalDismiss"
