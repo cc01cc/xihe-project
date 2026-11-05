@@ -8,7 +8,7 @@ import { expect, test } from "@playwright/test";
 
 import { provisionWorkspaceAgentPrincipal } from "./helpers/agent-principal";
 import { ensureFakeUserProvider } from "./helpers/fake-provider";
-import { CP_URL, registerJourneyUser } from "./helpers/journey";
+import { registerJourneyUser } from "./helpers/journey";
 
 test.describe.configure({ retries: 0 });
 
@@ -28,7 +28,12 @@ test("@host BL-328 探针：UI 建会话（mock/approval 同段）", async ({ pa
     const sessionCalls: string[] = [];
     page.on("response", (res) => {
         const url = new URL(res.url());
-        if (!url.pathname.endsWith("/api/v1/sessions") || res.request().method() !== "POST") return;
+        // 会话创建走**路径形式** `POST /api/v1/workspaces/{id}/sessions`（也可能有 instance 形式）
+        const isSessionCreate =
+            res.request().method() === "POST" &&
+            (url.pathname.endsWith("/api/v1/sessions") ||
+                /^\/api\/v1\/workspaces\/[^/]+\/sessions$/u.test(url.pathname));
+        if (!isSessionCreate) return;
         void res
             .text()
             .then((body) => sessionCalls.push(`HTTP ${res.status()} ${body.slice(0, 400)}`))
@@ -36,8 +41,8 @@ test("@host BL-328 探针：UI 建会话（mock/approval 同段）", async ({ pa
     });
     page.on("requestfailed", (req) => {
         const url = new URL(req.url());
-        if (url.pathname.endsWith("/api/v1/sessions"))
-            sessionCalls.push(`FAILED ${req.failure()?.errorText ?? "?"}`);
+        if (url.pathname.endsWith("/api/v1/sessions") || url.pathname.includes("/sessions"))
+            sessionCalls.push(`FAILED ${url.pathname} ${req.failure()?.errorText ?? "?"}`);
     });
 
     await page.addInitScript((token) => localStorage.setItem("xihe-token", token), owner.authToken);
