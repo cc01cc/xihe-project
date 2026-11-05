@@ -220,8 +220,8 @@ flowchart LR
 
 ## 8e-2. 访问角色与绑定 API（PLAN-0610 W3-2a）
 
-- **模型**：`roles` + `role_permissions`（只存原子名）+ `role_bindings`（role × subject × scope）。`scope_class`（`instance`/`both`）的 SSOT 在代码 `PermissionAtomCatalog`，`GET /api/v1/roles/catalog` 只是它的投影（18 原子 = 15 动作 + 3 能力）；API 不复制词表，新增原子自动出现在目录与写入校验里。
-- **门是动作原子，不是 authority**：`/roles*` 与 `/bindings` 的 `@PreAuthorize` 写 `@requesterAuthority.holdsActionAtom('MANAGE_ROLES')`——`MANAGE_ROLES` 是动作原子，按决策 #23 只有**能力原子**才成为 `cap:<atom>` authority（`instance:super`/`instance:admin`/`workspace:admin`），因此它从 `source='role'` 的 grant 行用评估内核同一套 scoped 读评估（`RequesterAuthority`）。实例 ADMIN（有 `cap:instance:admin`、无 `MANAGE_ROLES`）因此**不能**管角色；工作区作用域的绑定写入还要求该工作区的 `MANAGE_WORKSPACE_AGENTS`。
+- **模型**：`roles` + `role_permissions`（只存原子名）+ `role_bindings`（role × subject × scope）。`scope_class`（`instance`/`both`）的 SSOT 在代码 `PermissionAtomCatalog`，`GET /api/v1/roles/catalog` 只是它的投影（**31 原子 = 28 动作 + 3 能力**；PLAN-0651 增 N1–N10，PLAN-0673 M2 增 `GRANT_ANY_ATOM`）；API 不复制词表，新增原子自动出现在目录与写入校验里。
+- **门是动作原子，不是 authority**：`/roles*` 与 `/bindings` 的 `@PreAuthorize` 写 `@requesterAuthority.holdsActionAtom('MANAGE_ROLES')`——`MANAGE_ROLES` 是动作原子，按决策 #23 只有**能力原子**才成为 `cap:<atom>` authority（`instance:super`/`instance:admin`/`workspace:admin`），因此它从 `source='role'` 的 grant 行用评估内核同一套 scoped 读评估（`RequesterAuthority`）。**PLAN-0673 D-168（V125）起 ADMIN 默认也持 `MANAGE_ROLES`**，即 ADMIN 可管理角色/绑定，但每一次授予都必须通过子集闸门（见下）；工作区作用域的绑定写入还要求该工作区的 `MANAGE_WORKSPACE_AGENTS`。
 - **agent 主体绑定面（PLAN-0667）与 cap 硬上限（BL-287）**：`/api/v1/agent-principals/{id}/roles|skills` 的绑定/解绑同事务重物化该主体 grants，但 agent 的**工作区 cap**（`WorkspaceAgent.permissionsSnapshot`，会话创建时写入 `Session.agentPermissionsSnapshot`）是授权交集的一环：角色原子超出 cap ⇒ 绑定入口返回 **409 `ROLE_BINDING_EXCEEDS_CAP`**（detail 只列超限原子名），不静默接受一个注定无效的绑定；`isSystem` 只表示 seed 绑定（V122 `role_bindings.is_seed`），用户自绑系统角色可解绑。
 - **写入语义**：角色改原子 = 同事务 `RoleGrantMaterializer.materializeRole`（重算全部持有者 `source='role'` 行、能力缓存「立即 + afterCompletion」双失效、原子集真变化的持有者 `token_version+1`）；`PUT /bindings` 是**全量替换**（diff 写入，同 body 重发为真 no-op），提交前校验作用域兼容（400 `ROLE_SCOPE_MISMATCH`）、最小权限（403 `PRIVILEGE_ESCALATION`，只对**新增**绑定对判定）、以及实例「仍有 ≥1 个可用超管」（409 `LAST_SUPER_ADMIN`）。锁序沿用 `instance_owner → users`（角色编辑在 `instance_owner` 之后取 role 行锁，物化器再按 id 升序锁 users）。
 - **错误映射**：并发死锁/序列化失败（`40P01`/`40001`）在 API 边缘统一映射为 409 `CONCURRENT_MODIFICATION`（可重试），与锁等待超时（`55P03` → 503 `OPERATION_LOCK_TIMEOUT`）区分开——两者都是 `PessimisticLockingFailureException` 的子类，靠异常类型特异性保序。
@@ -256,6 +256,17 @@ flowchart LR
 | ② 子集规则 | 授予者 | 原子 ⊆ 调用者已持有（**绑定按目标 scope**，instance ⊇ workspace） | 403 `PRIVILEGE_ESCALATION`（点名超限原子） |
 | ③ 绕过原子 | 授予者 | `holdsActionAtom(GRANT_ANY_ATOM)`（默认只种 SUPER_ADMIN，使用留审计） | — |
 
+**`GRANT_ANY_ATOM`（PLAN-0673 M2 / D-166）**：**instance-only** 动作原子，默认只授予 `SUPER_ADMIN`（ADMIN **不**持有）；
+它是子集规则的**唯一**旁路（K8s `escalate` + `bind` 的合并简化）。判定在 `GrantabilityGuard.assertGrantable` **首行**：
+持有者跳过子集检查，但**每次使用都写 `role_grant_guard_bypassed` 审计**，detail 必须列出
+**调用者未持有的原子清单**（`bypass=true skipped=[…]`）——不是"记一笔有人绕过了"，而是"记清楚绕过了什么"。
+代码里**永不出现** `role == "SUPER_ADMIN"` 判定：绕过是原子，不是角色名。
+
+**403 与 409 的分工**：`403 PRIVILEGE_ESCALATION` = **授予者**权限不足（子集闸门；detail 点名超限原子）；
+`409 ROLE_BINDING_EXCEEDS_CAP` = **目标 agent 的 cap** 不足（BL-287，detail 同样点名原子）；两者是并列闸门，
+`PUT /bindings` 的 409 只用于 `USER_DELETED`/`LAST_SUPER_ADMIN`/`LAST_OWNER`/`CONCURRENT_MODIFICATION`，
+**不是** cap 门（cap 门在 agent-principal 角色绑定端点）。
+
 **有意偏离（必须知道）**：NIST 建议"管理角色与普通角色应当分离"，而本项目 `ADMIN` **既是普通角色也是管理角色**。
 这是有意选择（云 IAM 普遍如此），含义是：**ADMIN 的权限同时是"能做什么"和"能授予什么"的边界** ——
 改 ADMIN 默认集时两者同时变化，需同批复核。
@@ -280,7 +291,7 @@ flowchart LR
 | N9 `MANAGE_WORKSPACE_POLICY` | both | ✓ | ✓ | — | ✓ | ✓ | — | — | **可** |
 | N10 `MANAGE_WORKSPACE_MEMBERS` | both | ✓ | ✓ | — | — | — | — | — | 禁 |
 
-**agent principal 禁授集合 = 16 项**（2026-11-05 裁定）：N1/N2/N3/N4/N10 + 三个凭证原子 + `CREATE_ACCOUNT`/`CREATE_TEMPLATE`/`MANAGE_ROLES`/`CREATE_OWN_AGENT` + `MANAGE_WORKSPACE_AGENTS` + 三个能力原子。
+**agent principal 禁授集合 = 17 项**（2026-11-05 裁定；PLAN-0673 M2 增 `GRANT_ANY_ATOM`）：N1/N2/N3/N4/N10 + 三个凭证原子 + `CREATE_ACCOUNT`/`CREATE_TEMPLATE`/`MANAGE_ROLES`/`CREATE_OWN_AGENT` + `GRANT_ANY_ATOM` + `MANAGE_WORKSPACE_AGENTS` + 三个能力原子。
 判据一句话：**实例域的东西 agent 不能碰；工作区域的东西由 owner 通过角色授予**（N5–N9 因此**可授**——禁掉会让所有 `WS_EDITOR` 绑定非法，且 agent 无法跑代码）。
 唯一真相是 `PermissionAtomCatalog.ATOMS` 上每个原子的 `agentPrincipalForbidden` 标记，聚合函数从它派生（别再维护第二份清单）。
 

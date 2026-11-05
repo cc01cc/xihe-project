@@ -3,7 +3,7 @@
   "generatedAt": "2026-11-04T22:36:30.880Z",
   "a03Commit": "a91c856ce517",
   "counts": {
-    "logEventKeys": 527,
+    "logEventKeys": 530,
     "sseEventNames": 11,
     "agentEventTypes": 6
   },
@@ -296,6 +296,9 @@
     "role_bindings_rejected",
     "role_bindings_replaced",
     "role_bindings_unchanged",
+    "role_grant_guard_audit_failed",
+    "role_grant_guard_bypassed",
+    "role_grant_guard_denied",
     "role_grant_materialized",
     "role_materialization_epoch_bump",
     "run_budget_clamp",
