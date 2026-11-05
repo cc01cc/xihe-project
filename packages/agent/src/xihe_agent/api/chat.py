@@ -14,6 +14,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from litellm import get_llm_provider as _litellm_get_llm_provider  # noqa: F401  (provider util parity)
 from loguru import logger
 
+from xihe_agent import app_state
 from xihe_agent.adapters.api_chat_model import ApiChatModel, native_history, native_tools
 from xihe_agent.adapters.approval_tool import ApprovalExecutorUnsupportedError, ApprovalTerminalError
 from xihe_agent.adapters.sse_adapter import render_sse
@@ -42,7 +43,6 @@ from xihe_agent.app_state import (
     config_client,
     context_provider,
     cp_event_store_client,
-    generate_image_tool,
     run_cancel_registry,
     run_config_resolver,
     user_question_tool,
@@ -569,7 +569,7 @@ async def chat(request: Request):
                 all_tools = (
                     []
                     if tool_mode == "none"
-                    else [approval_tool, user_question_tool, generate_image_tool]
+                    else [approval_tool, user_question_tool, app_state.generate_image_tool]
                 )
                 if mcp_tools:
                     all_tools = list(mcp_tools) + all_tools
