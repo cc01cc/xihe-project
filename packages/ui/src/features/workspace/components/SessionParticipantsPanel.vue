@@ -23,6 +23,7 @@ import { useI18n } from "vue-i18n";
 import { ApiError, PARTICIPANT_CURSOR_ADVANCE_TO_LATEST, api } from "../../../composables/api";
 import ParticipantRow from "./ParticipantRow.vue";
 import { useSessionParticipantsStore } from "../stores/sessionParticipants";
+import { useAuthStore } from "../../../stores/auth";
 import type {
     ParticipantRespondPolicy,
     ParticipantWakePolicy,
@@ -41,6 +42,13 @@ const { t } = useI18n();
  * 避免两份 `GET` 各自过期（症状：面板有某行、下拉里没有它）。
  */
 const store = useSessionParticipantsStore();
+/**
+ * BL-317：工作区写能力（既有投影 `auth.canWriteWorkspace`，CP `WorkspaceView.canWrite`）。
+ * VIEWER 的「标记已读」必须在**点击前**禁用 —— 否则点击必然 403 `WORKSPACE_READ_ONLY`。
+ * 判定源沿用既有投影，不新增能力位、也不按角色名特判（与 `SessionPolicyControls` 同源）。
+ */
+const authStore = useAuthStore();
+const canWriteWorkspace = computed(() => authStore.canWriteWorkspace);
 const participants = computed(() => store.participants);
 const capabilities = computed(() => store.capabilities);
 const loading = computed(() => store.loading);
@@ -205,6 +213,7 @@ async function removeParticipant(participant: SessionParticipantView): Promise<v
                     :participant="participant"
                     :can-manage="capabilities.manage"
                     :can-mention="capabilities.mention"
+                    :can-write="canWriteWorkspace"
                     :removing="removingId === participant.participantId"
                     :saving="savingId === participant.participantId"
                     :advancing="advancingId === participant.participantId"
