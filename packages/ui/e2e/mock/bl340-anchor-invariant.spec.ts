@@ -155,14 +155,16 @@ test.describe("BL-340：上滚时窗口换页不得回跳", () => {
         }
     }
 
-    // BL-340 修复中：第三条 scrollTop 写入者待定位（见 .local/evidence/bl340-anchor-jump-locate.md §9）；
-    // 本用例为最终守卫，绿之前不得改为 test()。
-    test.fixme("最小复现 8×500px：上滚单调 + scrollHeight 抖动被吸收", async ({ page }) => {
+    /**
+     * BL-340 **观测项**（不 assert）：上滚期 `scrollHeight` 抖动比与单调违例数。
+     *
+     * 为什么降级（证据 §18）：固定 §18.1 口径后，同一代码三次测得
+     * `swaps=7 / heightChanges=7 / ratio=1.00`（**方差 0**）且判 3 恒 PASS ⇒
+     * `scrollHeight` 变化次数对"抖动"不敏感（稳定点采样把换页与高度变化同步吸收），
+     * 不能作验收判据。保留为观测：数值异常时（ratio 明显 >1）仍能从日志看出来。
+     */
+    test("观测：scrollHeight 抖动比与单调违例（不 assert）", async ({ page }) => {
         const { sequence, heights, firstRows } = await scrollUpSequence(page, 8, 500);
-        expectMonotonicUp(sequence);
-        // 判据 3（BL-340）：上滚期间的 `scrollHeight` 变化次数必须 ≤ 换页次数。
-        // 因果链：窗口滑动 ⇒ 新行挂载用 fallback ⇒ 测高漂移 ⇒ `totalHeight` 重算 ⇒ `scrollHeight` 变
-        // ⇒ 浏览器静默钳 `scrollTop`。若"每次换页都再抖一轮"，该计数会显著大于换页次数。
         const countChanges = (values: Array<string | number>): number =>
             values.reduce<number>(
                 (acc, value, index) => (index > 0 && value !== values[index - 1] ? acc + 1 : acc),
@@ -170,11 +172,52 @@ test.describe("BL-340：上滚时窗口换页不得回跳", () => {
             );
         const swapCount = countChanges(firstRows);
         const heightChangeCount = countChanges(heights);
-        expect(
-            heightChangeCount,
-            `scrollHeight 变化次数(${heightChangeCount}) 应 ≤ 换页次数(${swapCount})+1；` +
-                `heights=${heights.join(" → ")} firstRows=${firstRows.join(" ")}`,
-        ).toBeLessThanOrEqual(swapCount + 1);
+        const ratio = heightChangeCount / Math.max(1, swapCount);
+        const violations = sequence.reduce<number>(
+            (acc, value, index) =>
+                index > 0 && value > sequence[index - 1] + TOLERANCE_PX ? acc + 1 : acc,
+            0,
+        );
+        console.log(
+            `[BL-340 观测] swaps=${swapCount} heightChanges=${heightChangeCount} ` +
+                `ratio=${ratio.toFixed(2)} violations=${violations} heights=${heights.join(",")}`,
+        );
+    });
+
+    // 判 1（单调不增）：BL-340 修复中，保持 fixme —— 需要"写入后被静默钳制"的处理。
+    test.fixme("判 1：8×500px 上滚序列单调不增", async ({ page }) => {
+        const { sequence } = await scrollUpSequence(page, 8, 500);
+        expectMonotonicUp(sequence);
+    });
+
+    /**
+     * BL-340 **主判据**：`8×500px` 上滚 3 次，**首跳（单步最大回跳 px）中位 ≤ 600px**。
+     *
+     * 依据（证据 §17/§18）：首跳是唯一对"抖动"敏感的指标——baseline 三次中位 **1488px**
+     * （645/1911/1488），`freeze`（滚动中冻结测量）三次中位 **525px**（161/525/525）。
+     * 跨会话比较必须**同栈同构建**（§17 同代码曾测得 2055，与 §18 的 1488 存在系统差异）。
+     * 修复中，保持 fixme。
+     */
+    test.fixme("主判据：8×500px 上滚 3 次首跳中位 ≤ 600px", async ({ page }) => {
+        const chat = new ChatPage(page);
+        const firstJumps: number[] = [];
+        for (let run = 0; run < 3; run += 1) {
+            await chat.goto(SESSION_ID);
+            const { sequence } = await scrollUpSequence(page, 8, 500);
+            let firstJump = 0;
+            for (let index = 1; index < sequence.length; index += 1) {
+                const delta = sequence[index] - sequence[index - 1];
+                if (delta > TOLERANCE_PX) {
+                    firstJump = delta;
+                    break;
+                }
+            }
+            firstJumps.push(firstJump);
+        }
+        const sorted = [...firstJumps].sort((left, right) => left - right);
+        const median = sorted[1] ?? sorted[0] ?? 0;
+        console.log(`[BL-340 主判据] 首跳三次=${firstJumps.join(",")} 中位=${median}px`);
+        expect(median, `首跳中位应 ≤600px：${firstJumps.join(",")}`).toBeLessThanOrEqual(600);
     });
 
     // BL-340 修复中：同上（最终守卫，绿之前不得改为 test()）。
