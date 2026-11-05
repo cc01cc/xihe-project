@@ -5993,7 +5993,7 @@ components:
       type: object
       required: [answer]
       properties:
-        answer: { type: string, minLength: 1, description: 'The human answer. Blank/whitespace-only is 400 INVALID_REQUEST. Untrusted text: shown in the projection, never written to a log, audit detail or problem detail.' }
+        answer: { type: string, minLength: 1, maxLength: 2000, description: 'The human answer. Blank/whitespace-only is 400 INVALID_REQUEST. Untrusted text: shown in the projection, never written to a log, audit detail or problem detail.' }
     UserQuestionView:
       type: object
       required: [id, sessionId, runId, state, prompt, createdAt]

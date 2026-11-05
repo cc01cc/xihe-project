@@ -76,6 +76,10 @@ public class ChatController {
     private final ObjectMapper objectMapper;
     private final SseEmitterManager sseManager;
     private final ApprovalService approvalService;
+    /** PLAN-0660 T5.11: the relay's durable side for {@code user_question} events. */
+    private final UserQuestionService userQuestionService;
+    /** PLAN-0660 T5.11: the user-level refresh hint ({@code {questionId, sessionId, state}} only). */
+    private final com.cc01cc.p.xihe.cp.event.UserChannelPort userChannel;
     private final com.cc01cc.p.xihe.cp.context.service.ContextService contextService;
     private final ChatSubmissionService chatSubmissionService;
     private final FollowUpQueueService followUpQueueService;
@@ -186,7 +190,10 @@ public class ChatController {
               // PLAN-0635 M2: appended last so the many positional constructions stay stable.
               com.cc01cc.p.xihe.cp.context.service.MentionPathResolver mentionPathResolver,
               // PLAN-0666 M1b: appended last for the same reason.
-              ContextFingerprintRecorder contextFingerprintRecorder) {
+              ContextFingerprintRecorder contextFingerprintRecorder,
+              // PLAN-0660 T5.11: the user_question relay (durable row + user-channel hint).
+              UserQuestionService userQuestionService,
+              com.cc01cc.p.xihe.cp.event.UserChannelPort userChannel) {
         this.agentHttpClient = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(10))
             .build();
@@ -211,6 +218,8 @@ public class ChatController {
         this.requestValidator = requestValidator;
         this.mentionPathResolver = mentionPathResolver;
         this.contextFingerprintRecorder = contextFingerprintRecorder;
+        this.userQuestionService = userQuestionService;
+        this.userChannel = userChannel;
         this.configService = configService;
         this.mcpRelayToolRecorder = mcpRelayToolRecorder;
         this.mcpToolTimeoutService = mcpToolTimeoutService;
@@ -2678,7 +2687,65 @@ public class ChatController {
                     participantIdFor(runId));
             return;
         }
+        if ("user_question".equals(eventName)) {
+            relayUserQuestion(sessionId, runId, userId, workspaceId, asMap(parsedPayload));
+            return;
+        }
         sseManager.send(sessionId, eventName, parsedPayload, participantIdFor(runId));
+    }
+
+    /**
+     * PLAN-0660 T5.11 — the {@code user_question} relay: the Agent asked its user a question.
+     *
+     * <p>Durable first (the {@code user_questions} row is the fact), then a <b>user-channel hint</b>
+     * ({@code {questionId, sessionId, state}} only — the UI reloads the projection), and
+     * <b>deliberately not</b> the session SSE: the question body must never enter a session stream
+     * (T5.11 judgement: grepping the session stream for the body finds nothing). The addressee is the
+     * run owner, resolved inside the service.</p>
+     *
+     * <p>A refused relay (one pending question per run, a child run, a live approval) is logged and
+     * <b>does not break the stream</b>: it is an invariant decision, not a transport failure, and the
+     * Agent's own wait/deadline owns what happens next. Nothing is pushed for a refused ask, so the UI
+     * can never see a card for a row that does not exist.</p>
+     */
+    private void relayUserQuestion(String sessionId, String runId, String userId, String workspaceId,
+                                   Map<?, ?> payload) {
+        Object rawPrompt = payload == null ? null : payload.get("question");
+        Instant expiresAt = optionalInstant(payload == null ? null : payload.get("expiresAt"));
+        UUID askedByParticipant = optionalUuid(payload == null ? null : payload.get("askedByParticipantId"));
+        com.cc01cc.p.xihe.cp.entity.UserQuestion stored;
+        try {
+            stored = userQuestionService.recordPending(sessionId, runId, userId, workspaceId,
+                    rawPrompt == null ? null : String.valueOf(rawPrompt), expiresAt, askedByParticipant);
+        } catch (CpApiException refused) {
+            logger.info("[LIFECYCLE] service=cp event=run_question_relay_refused runId={} code={}",
+                    runId, refused.getCode());
+            return;
+        }
+        userChannel.questionChanged(stored.getAddresseeUserId().toString(),
+                stored.getId().toString(), sessionId, stored.getState());
+    }
+
+    private static Instant optionalInstant(Object raw) {
+        if (raw instanceof String text && !text.isBlank()) {
+            try {
+                return Instant.parse(text.trim());
+            } catch (RuntimeException malformed) {
+                return null;
+            }
+        }
+        return null;
+    }
+
+    private static UUID optionalUuid(Object raw) {
+        if (raw instanceof String text && !text.isBlank()) {
+            try {
+                return UUID.fromString(text.trim());
+            } catch (RuntimeException malformed) {
+                return null;
+            }
+        }
+        return null;
     }
 
     private Object parsePayload(String eventName, String payload) {

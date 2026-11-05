@@ -71,6 +71,12 @@ public class UserQuestionService {
     /** PLAN-0648 §6: the write-side prompt limit; a writer rule, deliberately not a DB CHECK. */
     public static final int MAX_PROMPT_LENGTH = 2000;
 
+    /**
+     * Lead ruling ⑧-2 (2026-11-05): the answer limit is symmetric with the prompt limit. Same shape as
+     * {@link #MAX_PROMPT_LENGTH} — a writer rule, not a DB CHECK, so V128's frozen schema is untouched.
+     */
+    public static final int MAX_ANSWER_LENGTH = 2000;
+
     /** Default and maximum window of one projection page (the route supplies {@code limit}). */
     private static final int DEFAULT_PROJECTION_LIMIT = 20;
     private static final int MAX_PROJECTION_LIMIT = 100;
@@ -424,6 +430,10 @@ public class UserQuestionService {
         if (body.isEmpty()) {
             throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST",
                     "answer is required");
+        }
+        if (body.length() > MAX_ANSWER_LENGTH) {
+            throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST",
+                    "answer exceeds the " + MAX_ANSWER_LENGTH + " character limit");
         }
         return body;
     }
