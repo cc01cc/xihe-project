@@ -255,6 +255,23 @@ node scripts/dev-stack.mjs stop --stack 4 --with-pg       # explicitly stop the 
 - **Parallel worktrees must use different stacks** (the same stack shares the PG database `xihe_<n>`); first run in a worktree needs `pnpm install --offline` for `packages/ui`. Inside the ONE workspace the external-cache convention for `CARGO_TARGET_DIR` / `UV_PROJECT_ENVIRONMENT` is documented on the ONE side; a standalone clone just uses the default cache.
 - `stop` only kills process trees recorded in the PID file whose command line matches `stack-run.mjs`; it never kills by port blindly.
 
+#### Packaged product (PLAN-0632, `pkg:launcher` / `pkg:installer`)
+
+The distribution shape ("double-click the installer → services start → browser opens localhost"), not the daily dev path (that stays Mode A).
+
+```bash
+mise run pkg:launcher -- start --install <install-dir>  # order: PG(TCP) -> CP(/actuator/health 200) -> Agent -> Runtime -> UI(same-origin /)
+mise run pkg:launcher -- status --stack 1 --json        # read-only state (health/ports/PIDs)
+mise run pkg:launcher -- stop                           # reverse-order tree kill + residual port check
+mise run pkg:installer                                  # NSIS build from the four existing service artifacts (-- --stage-only skips makensis)
+```
+
+- **The order is the contract**: PG must accept TCP (the CP runs Flyway on boot), then CP `/actuator/health` 200, then Agent (its startup config sync is fail-closed on `llm-provider`), then Runtime, then UI (D32-06 same-origin serving). Every step is a readiness probe with an explicit timeout — **no fixed sleeps** (implementation: `scripts/lib/service-supervisor.mjs`).
+- Extra arguments go after `--` (`--install`, `--stack`, `--exe <service>=<path>`, `--skip <service>`), the same convention as `dev:stack` and `dev:host:provider-init`.
+- **Artifacts only land in `.tmp/pkg/` (gitignored) and are never committed.**
+- On a dev machine `pkg:launcher status` reports the `dev:host` listeners as `foreignListeners` and returns `ok:false` (exit 1): that is the correct answer to "this is not a packaged install", not a failure.
+- Capabilities deliberately not included (auto-update, autostart, code signing, per-machine service install): `plans/PLAN-0632-xh-mvp-self-contained-packaging/installer-scope.md`.
+
 #### Rust build cache and worktree isolation (PLAN-0596)
 
 - **Default: one `CARGO_TARGET_DIR` per worktree.** Inside the ONE workspace, the ONE-side worktree convention externalizes it under `one/.local/cargo-target/<name>` (and `UV_PROJECT_ENVIRONMENT` under `one/.local/venvs/<name>`); a standalone clone keeps the in-tree default. Do not point several worktrees at the same target: concurrent builds serialize on the target lock, and on Windows a running service holds the exe, so the other worktree's build fails.
