@@ -40,6 +40,12 @@ const ATTEMPT_2 = "55555555-5555-4555-8555-555555555555";
 
 let wrapper: VueWrapper | null = null;
 
+/**
+ * ⚠️ **真实墙钟等待（经验值，不是推导值）**：本文件 3 处 `await sleep(650)` 合计约 1.95 s 真实时间，
+ * 用于「等刷新定时器自然触发」。650 ms 只是**当时机器上够用**的数字，慢机/CI 可能不足而假红——
+ * 它的脆弱点是「用时间阈值替代事件信号」。若开始 flake：改用 `vi.useFakeTimers()` +
+ * `advanceTimersByTimeAsync()` 推进，或等显式事件。（2026-11-06 稳定性审计留注）
+ */
 function sleep(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
 }

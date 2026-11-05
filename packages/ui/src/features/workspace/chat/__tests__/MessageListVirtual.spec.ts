@@ -386,6 +386,7 @@ describe("MessageList windowed rendering actually engages (BL-316)", () => {
         return Number.parseFloat(spacer.attributes("style")?.replace(/[^\d.]/g, "") ?? "0");
     }
 
+    // ⚠️ 固定 4 轮是**经验值**（非推导）：改渲染链路时先确认仍够用，否则会间歇性假红（同类：BL-340 六帧盲补）。
     async function settle() {
         for (let round = 0; round < 4; round += 1) await nextTick();
     }
@@ -618,6 +619,7 @@ describe("MessageList window swap vs new message (BL-316 step 2)", () => {
         return mount(ScrollerHarness, { props, global: { plugins: [i18n] } });
     }
 
+    // ⚠️ 固定 4 轮是**经验值**（非推导）：改渲染链路时先确认仍够用，否则会间歇性假红（同类：BL-340 六帧盲补）。
     async function settle() {
         for (let round = 0; round < 4; round += 1) await nextTick();
     }
