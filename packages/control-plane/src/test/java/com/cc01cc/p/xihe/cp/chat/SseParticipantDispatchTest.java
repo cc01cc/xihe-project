@@ -163,6 +163,37 @@ class SseParticipantDispatchTest extends AbstractIntegrationTest {
                 "even the connected event exposes the participantId field");
     }
 
+    /**
+     * BL-306: owner observer and a declared participant view are two independent connections.
+     * Before BL-306 the second subscribe replaced the first (single session key); now both stay
+     * alive and receive their own view.
+     */
+    @Test
+    void ownerAndDeclaredParticipantConnectionsCoexist() throws Exception {
+        List<String> observer = collect(baseUrl + "/api/v1/events?sessionId=" + sessionId
+                + "&connectionId=owner-tab");
+        List<String> declared = collect(baseUrl + "/api/v1/events?sessionId=" + sessionId
+                + "&asParticipantId=" + humanParticipantId + "&connectionId=participant-tab");
+
+        assertEquals(2, sseManager.activeConnectionCount(sessionId.toString()),
+                "second subscribe must not kick the first one");
+
+        emitRunScoped();
+        waitUntil(observer, p -> p.contains("\"runId\":\"r2\""), 10_000);
+        waitUntil(declared, p -> p.contains("\"runId\":\"r1\""), 10_000);
+
+        assertTrue(observer.stream().anyMatch(p -> p.contains("\"runId\":\"r1\"")
+                && p.contains("\"participantId\":\"" + humanParticipantId + "\"")));
+        assertTrue(observer.stream().anyMatch(p -> p.contains("\"runId\":\"r2\"")
+                && p.contains("\"participantId\":\"" + agentParticipantId + "\"")),
+                "observer keeps receiving every producer");
+        assertTrue(declared.stream().anyMatch(p -> p.contains("\"runId\":\"r1\"")
+                && p.contains("\"participantId\":\"" + humanParticipantId + "\"")));
+        assertFalse(declared.stream().anyMatch(p -> p.contains("\"runId\":\"r2\"")
+                        && p.contains("\"participantId\":\"" + agentParticipantId + "\"")),
+                "declared view must not receive another participant's output");
+    }
+
     private AuthResponse register(String label) {
         var response = restTemplate.postForEntity(baseUrl + "/api/v1/auth/register",
                 new com.cc01cc.p.xihe.cp.auth.RegisterRequest(label.toLowerCase(java.util.Locale.ROOT)
