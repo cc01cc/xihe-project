@@ -125,3 +125,4 @@
 - 空行后写 body；非 merge 提交必须在首行或 body 引用 `PLAN-####` / `BL-###` / `D-###`。body 建议 `Why:` / `What:` / `Verify:` / `Risk:` 四段，只写**为什么与怎么验**，不重复 diff 内容。
 - **校验**：`mise run check:commit-msg`（**已阻断，且是 `mise run validate` 的依赖**；D-216）或 `node scripts/check-commit-msg.mjs --file .git/COMMIT_EDITMSG`（hook）/`--range a..b --enforce`（阻断）；`--stats` 出观察窗统计、`--json` 给 agent。历史提交豁免（默认 `--since 1dd57056`）。**观察窗已结**（自 `a632de77` 起 32 条、违规率 0% ⇒ 已翻 `--enforce` 并接入 validate，D-216）；历史提交豁免。
 - 可选本地 hook（不改仓库）：`git config core.hooksPath scripts/hooks`（仓库内 `scripts/hooks/commit-msg` 已提供）。
+**合并分支前先校验分支自身**：`node scripts/check-commit-msg.mjs --range develop..<branch> --enforce`。门禁只校验 develop 上的历史，**分支里的超宽/缺引用的提交要到合并后才被发现**（2026-11-06 实际发生过一次，已按 `scripts/commit-msg-allowlist.json` 显式豁免并留痕）。白名单只接受"已进 develop、不可改写"的既成事实，每条必须带 reason，禁止批量塞历史提交。

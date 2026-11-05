@@ -1,0 +1,9 @@
+{
+  "_comment": "显式历史豁免白名单：每条必须带 reason，只允许“合入时才发现超宽”这类既成事实（合并后不可改写历史）。新增条目须在台账留痕，禁止批量塞历史提交。",
+  "entries": [
+    {
+      "sha": "e69e06c874c9d4b68e6dafcd7323492f08d825f4",
+      "reason": "2026-11-06 合并 task/bl352-evidence-note 时才发现首行 75 列超宽（限制 72）；该提交已进 develop 历史且不可改写。流程修复：合并分支前先对分支跑 --range develop..HEAD --enforce。"
+    }
+  ]
+}

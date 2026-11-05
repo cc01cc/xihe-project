@@ -126,6 +126,17 @@ const file = get("--file");
 const range = get("--range");
 const since = get("--since") ?? DEFAULT_SINCE;
 
+// 显式历史豁免白名单（每条必须带 reason）：用于"合入时才发现违规、且已进 develop 不可改写"的既成事实。
+// 禁止批量塞历史提交；新增条目须在台账留痕。
+const ALLOWLIST = new Map();
+{
+  const p = new URL("./commit-msg-allowlist.json", import.meta.url);
+  if (fs.existsSync(p)) {
+    const parsed = JSON.parse(fs.readFileSync(p, "utf8"));
+    for (const e of parsed.entries ?? []) ALLOWLIST.set(e.sha, e);
+  }
+}
+
 let bad = 0;
 if (file) {
   if (!fs.existsSync(file)) {
@@ -154,6 +165,13 @@ if (file) {
   for (const e of entries) {
     const [sha, ...rest] = e.split("\x1f");
     const res = checkMessage(rest.join("\x1f"));
+    const allow = ALLOWLIST.get(sha) ?? ALLOWLIST.get(sha.slice(0, 8));
+    if (allow) {
+      for (const x of res.errors) {
+        res.warns.push({ code: "W_GRANDFATHERED", message: `${x.code} 已豁免（${x.message}）：${allow.reason}` });
+      }
+      res.errors.length = 0;
+    }
     if (res.errors.length) { errCount += res.errors.length; violating++; }
     warnCount += res.warns.length;
     for (const x of res.errors) byCode[x.code] = (byCode[x.code] ?? 0) + 1;
