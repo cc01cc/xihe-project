@@ -6,7 +6,6 @@ import {
     ChevronDown,
     CircleHelp,
     Info,
-    Lock,
     Plus,
     Shield,
     Sparkles,
@@ -21,15 +20,16 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import SectionShell from "../SectionShell.vue";
+import AgentRoleBindingsSection from "./AgentRoleBindingsSection.vue";
 import { principalNameError } from "../../lib/principalName";
 import { mockAgents } from "../mockData";
 
 /**
  * Target shape of the agent panel: `Card` sections, a collapsible create form (with its
- * own "advanced" sub-collapsible), `Badge` for scope/permission/built-in, `Tooltip` for
+ * own "advanced" sub-collapsible), `Badge` for read-only scope/permission/built-in, `Tooltip` for
  * implementation detail that must not occupy permanent space, `Skeleton` for the loading
- * row and a CTA-driven empty state. `Collapsible` comes straight from `reka-ui` — the
- * product has no `components/ui/collapsible` primitive yet (see report).
+ * row and a CTA-driven empty state. M5 sync: no scope write entry in the mock create form,
+ * and the agent role-binding block is a preview-only twin of the real T5.2 child component.
  */
 const { t } = useI18n();
 const formOpen = ref(true);
@@ -225,19 +225,6 @@ const scopeLabel = (scope?: string) =>
                                         <ChevronDown class="size-4 text-muted-foreground" />
                                     </div>
                                 </label>
-                                <label class="block space-y-1">
-                                    <span class="text-xs font-medium text-muted-foreground"
-                                        >作用域</span
-                                    >
-                                    <div class="flex gap-2">
-                                        <Button variant="outline" size="sm">个人</Button>
-                                        <Button variant="secondary" size="sm">工作区</Button>
-                                        <Button variant="ghost" size="sm" disabled>
-                                            <Lock class="size-3.5" />
-                                            实例
-                                        </Button>
-                                    </div>
-                                </label>
 
                                 <CollapsibleRoot v-model:open="advancedOpen">
                                     <CollapsibleTrigger as-child>
@@ -290,6 +277,8 @@ const scopeLabel = (scope?: string) =>
                     </div>
                 </Card>
             </div>
+
+            <AgentRoleBindingsSection />
         </TooltipProvider>
     </SectionShell>
 </template>
