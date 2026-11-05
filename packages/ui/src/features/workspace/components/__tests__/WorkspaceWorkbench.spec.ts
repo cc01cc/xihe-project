@@ -127,6 +127,9 @@ async function expectStored(check: () => void): Promise<void> {
 beforeEach(() => {
     setActivePinia(createPinia());
     localStorage.clear();
+    // BL-359：清掉 toast 警告的**调用记录**。`not.toHaveBeenCalled()` 断的是"本用例没触发警告"，
+    // 但前一条用例的调用残留在同一个 mock 上 ⇒ 用例顺序一变就红。
+    toastWarning.mockClear();
     const auth = useAuthStore();
     auth.$patch({
         token: "token",
