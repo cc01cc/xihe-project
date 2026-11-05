@@ -147,17 +147,24 @@ public class PolicyController {
     }
 
     /**
-     * PLAN-0651 M3 T3.3 (A13 → {@code MANAGE_ROLES}, instance-only).
+     * PLAN-0651 M3 T3.3 (A13 → N9 {@code MANAGE_WORKSPACE_POLICY}) + D-165 (Lead ruling
+     * 2026-11-05: reuse N9, no new atom, no migration).
      *
-     * <p>The atom is the target judgement. The {@code cap:instance:admin} fallback is deliberate and
-     * temporary: ADMIN does not carry {@code MANAGE_ROLES} in the V87 seed, so removing the capability
-     * path here would change a visible behaviour (matrix cell S1: instance ADMIN can manage tool
-     * faces) — that is a B-class narrowing and needs a Lead ruling, not a silent edit. Refusal shape
-     * (403 {@code FORBIDDEN} from the service) is unchanged.</p>
+     * <p>N9 is the only existing atom whose contract text names the tool face
+     * ({@code atom-contract.md}: "workspace 层策略规则 / 工具面"), and its {@code scope_class=both}
+     * lets the same atom answer both faces at their own scope. A13 is the <b>instance</b> face, so
+     * the evaluation is instance-scope ({@code workspaceId = null}): only ADMIN/SUPER_ADMIN's
+     * instance N9 rows participate. A WS_OWNER's workspace-scoped N9 row is deliberately invisible
+     * here — otherwise A14's workspace permission would leak into the instance face (pinned by
+     * {@code ToolFaceAdminAtomScopeIntegrationTest}).</p>
+     *
+     * <p>Why not the role-administration atom (the original target): it is a shared atom that also gates
+     * {@code /api/v1/roles} and {@code /api/v1/bindings}; granting it to ADMIN would hand role
+     * administration to ADMIN, which the user ruling (D-161) did not approve (D-165 supersedes).
+     * Refusal shape (403 {@code FORBIDDEN} from the service) is unchanged.</p>
      */
     private boolean isAdmin() {
-        return requesterAuthority.holdsActionAtom(ToolFaceRegistry.ACTION_MANAGE_ROLES)
-                || TenantContext.hasCapability(CapabilityAuthorities.CAP_INSTANCE_ADMIN);
+        return requesterAuthority.holdsActionAtom(ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_POLICY);
     }
 
     private static ResponseEntity<?> problem(CpApiException e) {
