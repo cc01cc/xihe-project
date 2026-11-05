@@ -168,7 +168,15 @@ describe("WorkspaceMembersPanel", () => {
         wrapper.unmount();
 
         const readonlyWrapper = await mountPanel(true);
-        expect(readonlyWrapper.find('[data-testid="ws-members-add"]').exists()).toBe(false);
+        // BL-344 残留：只读不再"隐藏表单"，而是**保留节点 + 禁用控件**（否则节点替换会让
+        // host E2E 的 fill→click 命中 detached 节点）。
+        expect(readonlyWrapper.find('[data-testid="ws-members-add"]').exists()).toBe(true);
+        expect(
+            (
+                readonlyWrapper.get('[data-testid="ws-members-add-input"]')
+                    .element as HTMLInputElement
+            ).disabled,
+        ).toBe(true);
         expect(readonlyWrapper.text()).toContain("仅工作区所有者可以管理成员。");
         expect(readonlyWrapper.findAll('[data-testid="ws-members-row"]')).toHaveLength(2);
         expect(apiMock.removeWorkspaceMember).not.toHaveBeenCalled();
@@ -193,6 +201,57 @@ describe("WorkspaceMembersPanel", () => {
 
         expect(apiMock.removeWorkspaceMember).toHaveBeenCalledWith(WORKSPACE_ID, EDITOR.userId);
         expect(apiMock.listWorkspaceMembers).toHaveBeenCalledTimes(2);
+        wrapper.unmount();
+    });
+
+    /**
+     * BL-344 残留（首帧竞态）：`readonly` 三态。修前 `readonly` 是 boolean，首帧
+     * `workspaceRole === undefined ⇒ canManageWorkspace=false ⇒ readonly=true` ⇒ 加人表单
+     * **不渲染**，role 解析后才挂载 ⇒ host E2E 的 `fill()` 落在随后被替换的节点上（detached）。
+     */
+    it("三态：readonly 未解析（undefined）时加人表单已挂载但控件禁用", async () => {
+        const wrapper = await mountPanel();
+        await wrapper.setProps({ readonly: undefined });
+
+        const input = wrapper.get('[data-testid="ws-members-add-input"]');
+        expect(input.exists(), "readonly 未知时表单必须已挂载（修前首帧不渲染）").toBe(true);
+        expect((input.element as HTMLInputElement).disabled, "未知态按不可用渲染").toBe(true);
+        expect(
+            (wrapper.get('[data-testid="ws-members-add-btn"]').element as HTMLButtonElement)
+                .disabled,
+        ).toBe(true);
+        wrapper.unmount();
+    });
+
+    it("三态：确定只读时表单仍存在但禁用（禁用而非卸载）", async () => {
+        const wrapper = await mountPanel(true);
+
+        const input = wrapper.get('[data-testid="ws-members-add-input"]');
+        expect(input.exists(), "确定只读时也不卸载，避免节点被替换").toBe(true);
+        expect((input.element as HTMLInputElement).disabled).toBe(true);
+        wrapper.unmount();
+    });
+
+    it("列表刷新后加人表单节点 identity 与已填草稿都保持不变", async () => {
+        const wrapper = await mountPanel();
+        const inputBefore = wrapper.get('[data-testid="ws-members-add-input"]')
+            .element as HTMLInputElement;
+        await wrapper.get('[data-testid="ws-members-add-input"]').setValue("membereditor");
+        expect(inputBefore.value).toBe("membereditor");
+
+        // 模拟"成员列表刷新"：换一份数据 + 换 workspaceId 触发一次重新加载。
+        apiMock.listWorkspaceMembers.mockResolvedValue([
+            structuredClone(OWNER),
+            structuredClone(EDITOR),
+            { ...structuredClone(EDITOR), userId: "22222222-2222-4222-8222-222222222222" },
+        ]);
+        await wrapper.setProps({ workspaceId: "77777777-7777-4777-8777-777777777777" });
+        await flushPromises();
+
+        const inputAfter = wrapper.get('[data-testid="ws-members-add-input"]')
+            .element as HTMLInputElement;
+        expect(inputAfter, "刷新后 input 必须是同一个 DOM 节点（不被销毁重建）").toBe(inputBefore);
+        expect(inputAfter.value, "刷新后草稿不能被清空").toBe("membereditor");
         wrapper.unmount();
     });
 });
