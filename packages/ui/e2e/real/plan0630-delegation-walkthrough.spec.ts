@@ -230,6 +230,11 @@ test.describe("@host PLAN-0630 T5.9 real delegation walkthrough", () => {
             // 旧的 `write` 原子已不再覆盖该动作；其余 real spec 同样按此播种。
             { actionClass: "CREATE_TEMPLATE", resource: "*" },
             { actionClass: "write", resource: "*" },
+            // 2026-11-05（Lead A 类授权）：`PATCH /api/v1/agent-principals/{id}` 改 delegationPolicy 走
+            // `requireDisableAuthority`（AgentPrincipalService.java:1061-1064 → :914-919），要求
+            // 「owner == actor」或持有 MANAGE_AGENT_PRINCIPALS；而 `createPrincipal` 只写
+            // createdByUserId、不写 owner（:306-320；真栈 DB 实测 owner_user_id=NULL）⇒ 夹具必须自播该原子。
+            { actionClass: "MANAGE_AGENT_PRINCIPALS", resource: "*" },
         ]);
         const connection = await ensureOpenAiCompatConnection(request, headers, MODEL_ID);
 
@@ -403,7 +408,20 @@ test.describe("@host PLAN-0630 T5.9 real delegation walkthrough", () => {
             fullPage: false,
         });
         await modal.locator('[data-testid="approval-approve"]').click();
-        await expect(modal).toBeHidden({ timeout: 30_000 });
+        // PLAN-0663 §r3 定性：`toBeHidden()` 是一次性 DOM 快照，而审批模态是 portal 渲染并被 SSE
+        // 重渲染（BaseModal.vue:44/48/57）——快照可能读到被替换/脱离的节点（`Received: undefined`），
+        // 或与常驻 dock panel 的重渲染竞争，产生假红。改用本文件 :366-389 已定的可见性轮询：
+        // 「absent 或 hidden」都算"不再显示"，只有仍然可见才红。
+        await expectNoApprovalModal("the spawn approval modal must disappear after approving", {
+            timeout: 30_000,
+        });
+        // 更强的收口：真正吃点击的是遮罩，遮罩必须消失；且 composer 必须重新可交互——
+        // 若模态仍在拦截，下面的 click 会被 overlay 吞掉并超时（这是"不再拦截交互"的直接证据）。
+        await expect(page.getByTestId("modal-backdrop")).toHaveCount(0);
+        const composer = page.getByTestId("chat-input");
+        await composer.click({ timeout: 10_000 });
+        await expect(composer).toBeEditable();
+        await expect(composer).toBeFocused();
 
         let childSessionId = "";
         await expect
@@ -651,20 +669,41 @@ test.describe("@host PLAN-0630 T5.9 real delegation walkthrough", () => {
         // V1 (DOM): the durable facts are asserted above and persisted first; the modal must not be on
         // screen either (single-shot read — the DOM is re-rendered by SSE, so a polled locator can
         // observe a detached node mid-update and flake).
-        expect(
-            await modal
-                .first()
-                .isVisible()
-                .catch(() => false),
-            "an over-budget spawn must not leave (or open) an approval modal on screen",
-        ).toBe(false);
+        // 同类 portal + SSE 重渲染风险（与 :406 同源）：一次性 `isVisible()` 快照可能读到
+        // 重渲染中的节点。改成时间窗轮询：absent/hidden 都算"屏幕上没有审批模态"，只有仍可见才红。
+        await expect
+            .poll(
+                async () =>
+                    (await modal.count()) === 0
+                        ? false
+                        : await modal
+                              .first()
+                              .isVisible()
+                              .catch(() => false),
+                {
+                    message:
+                        "an over-budget spawn must not leave (or open) an approval modal on screen",
+                    timeout: 10_000,
+                    intervals: [200, 400, 800],
+                },
+            )
+            .toBe(false);
 
         // V14/T5.9 criterion: the refusal must be visible in the UI, not a silent failure.
-        // Expand every tool card so a persisted result/error slab is rendered, then read the
-        // rendered text of the conversation.
+        // 2026-11-05 第 2 次实跑实证：`page.reload()` 后消息列表是**异步渲染**（窗口化列表首屏更晚），
+        // 原先只等 `chat-input` 就读 DOM ⇒ `conversationText=[]` 假红（截图证明拒绝当时已可见）。
+        // 因此先等消息列表真正渲染，再展开工具卡；"拒绝可见"改用轮询断言（判据不降级）。
         await page.reload({ waitUntil: "load" });
         await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: 60_000 });
+        await expect(page.getByTestId("message-item").first()).toBeVisible({ timeout: 60_000 });
         const cardToggles = page.getByTestId("tool-card-toggle");
+        await expect
+            .poll(() => cardToggles.count(), {
+                message: "the reloaded conversation must render its tool cards",
+                timeout: 60_000,
+                intervals: [500, 1_000],
+            })
+            .toBeGreaterThanOrEqual(2);
         const cardCount = await cardToggles.count();
         for (let index = 0; index < cardCount; index++) {
             await cardToggles
@@ -673,6 +712,27 @@ test.describe("@host PLAN-0630 T5.9 real delegation walkthrough", () => {
                 .catch(() => {});
         }
         const conversationText = await page.getByTestId("message-item").allInnerTexts();
+        // 强判据一：两次超预算 spawn 都必须各自留下**失败/拒绝**工具卡（截图实证为两张
+        // `spawn_agent … 被拒绝`；`data-failed="true"` 由 ProcessRow 在失败/拒绝态挂出）。
+        const refusedToolCards = page.locator(
+            '[data-testid="tool-card"][data-failed="true"]:has-text("spawn_agent")',
+        );
+        await expect
+            .poll(() => refusedToolCards.count(), {
+                message:
+                    "both over-budget spawn attempts must render a failed/refused tool card (>=2)",
+                timeout: 60_000,
+                intervals: [500, 1_000],
+            })
+            .toBeGreaterThanOrEqual(2);
+        // 强判据二：拒绝码必须在渲染文本里可见（轮询，而不是一次性读）。
+        await expect
+            .poll(() => page.getByText("DELEGATION_LIMIT_EXCEEDED", { exact: false }).count(), {
+                message: "the refusal code must be visible in the rendered conversation",
+                timeout: 60_000,
+                intervals: [500, 1_000],
+            })
+            .toBeGreaterThan(0);
         const refusalVisible =
             conversationText.some((text) => text.includes("DELEGATION_LIMIT_EXCEEDED")) ||
             (await page
@@ -684,6 +744,7 @@ test.describe("@host PLAN-0630 T5.9 real delegation walkthrough", () => {
         steps.step4 = {
             ...(steps.step4 as Record<string, unknown>),
             toolCardCount: cardCount,
+            refusedToolCardCount: await refusedToolCards.count(),
             conversationText,
             refusalVisible,
             screenshot: step4Shot,
