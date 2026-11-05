@@ -243,4 +243,39 @@ test.describe("BL-340 判 2：滚动跟随语义", () => {
             `判 2#3 被拽回：S=0，推帧后稳定点=${Math.round(after.scrollTop)}，序列=${after.series.join(" → ")}`,
         ).toBeLessThan(40);
     });
+
+    /**
+     * 判 2#4 · **探针，只记录不断言**（键盘用户是否会"读到一半被拽回底部"属无障碍可用性问题，
+     * 先看事实再决定立不立 BL）。绿也要有数字：`console.log` 输出 S、推帧后稳定点与序列。
+     *
+     * 已知机制：跟随状态机靠 **wheel 事件**标记"离开底部"、不看位置（`ChatPage.ts:49-56` 注释）。
+     * 键盘 `PageUp`/`Home` 通常不产生 wheel ⇒ 若被拽回，即键盘入口缺同样的标记。
+     */
+    for (const key of ["PageUp", "Home"] as const) {
+        test(`判 2#4 探针：${key} 离开底部后推帧（只记录）`, async ({ page }) => {
+            await scrollTo(page, "bottom");
+            await readStableScroll(page);
+            const box = await page
+                .locator('[data-testid="message-scroller-viewport"]')
+                .first()
+                .boundingBox();
+            if (box) await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+            for (let index = 0; index < (key === "PageUp" ? 3 : 1); index++) {
+                await page.keyboard.press(key);
+            }
+            const before = await readStableScroll(page);
+            await page.evaluate(
+                (text) =>
+                    (window as unknown as { __pushToken: (t: string) => void }).__pushToken(text),
+                PUSHED_TEXT,
+            );
+            await page.waitForTimeout(300);
+            const after = await readStableScroll(page);
+            console.log(
+                `[BL-340 判 2#4 ${key}] S=${Math.round(before.scrollTop)} ` +
+                    `离底=${Math.round(before.distanceToBottom)}px → 推帧后=${Math.round(after.scrollTop)} ` +
+                    `离底=${Math.round(after.distanceToBottom)}px | 序列 ${after.series.join(" → ")}`,
+            );
+        });
+    }
 });
