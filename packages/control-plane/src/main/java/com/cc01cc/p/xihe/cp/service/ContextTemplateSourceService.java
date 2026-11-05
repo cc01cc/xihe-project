@@ -32,6 +32,8 @@ public class ContextTemplateSourceService {
     private static final int DEFAULT_MAX_DEPTH = 8;
     private static final int DEFAULT_MAX_ENTRIES = 2000;
     private static final List<String> DEFAULT_AGENTS_FILES = List.of("AGENTS.md");
+    /** PLAN-0678 T2.3: the run's frozen template carries neither memory nor skill component. */
+    public static final String DIAGNOSTIC_NO_COMPONENTS = "no_components";
 
     private final RuntimeContextSourceClient runtimeClient;
     private final PolicyEngine policyEngine;
@@ -63,9 +65,12 @@ public class ContextTemplateSourceService {
         JsonNode components = run.contextTemplateSnapshot() == null ? null
                 : run.contextTemplateSnapshot().path("template").path("components");
         if (components == null || !components.isArray()) {
+            logger.warn("[INJECTION] service=cp event=injection_components_absent runId={} reason={}",
+                    run.runId(), DIAGNOSTIC_NO_COMPONENTS);
             return result;
         }
         int[] remainingRequests = {HARD_REQUEST_LIMIT};
+        boolean seenEligible = false;
         for (JsonNode component : components) {
             String type = component.path("type").asText();
             if (!component.path("enabled").asBoolean(false)
@@ -73,25 +78,50 @@ public class ContextTemplateSourceService {
                     || "agent_memory".equals(type) || "skill_catalog".equals(type))) {
                 continue;
             }
+            seenEligible = true;
             String instanceId = component.path("instanceId").asText();
             if (instanceId.isBlank()) {
                 continue;
             }
             if ("agent_memory".equals(type)) {
                 // PLAN-0629 M1-4: the memory snapshot is read per run and never cached across runs.
-                result.put(instanceId, resolveMemory(component.path("config"), run, validBinding));
+                Map<String, Object> memory = resolveMemory(component.path("config"), run, validBinding);
+                result.put(instanceId, memory);
+                logSkippedSource(run, AgentMemoryInjectionService.SOURCE, memory);
                 continue;
             }
             if ("skill_catalog".equals(type)) {
                 // PLAN-0628 M1: the listing subset — a count bound here, the token budget in Agent.
-                result.put(instanceId,
-                        resolveSkillCatalog(component.path("config"), run, validBinding));
+                Map<String, Object> skills = resolveSkillCatalog(component.path("config"), run, validBinding);
+                result.put(instanceId, skills);
+                logSkippedSource(run, SkillCatalogSourceService.SOURCE, skills);
                 continue;
             }
             result.put(instanceId, resolveTree(
                     component.path("config"), type, run, session, validBinding, remainingRequests));
         }
+        if (!seenEligible) {
+            logger.warn("[INJECTION] service=cp event=injection_components_absent runId={} reason={}",
+                    run.runId(), DIAGNOSTIC_NO_COMPONENTS);
+        }
         return result;
+    }
+
+    /**
+     * PLAN-0678 T2.3: a skipped injection must never be silent. The component view already carries
+     * the machine-readable diagnostics ({@code missing_agent_principal} / {@code no_memories} /
+     * {@code budget_trimmed} / {@code skill_snapshot_absent} ...); this mirrors them into the log so
+     * an empty slot is distinguishable from a component that never ran.
+     */
+    private void logSkippedSource(RunContext run, String source, Map<String, Object> view) {
+        Object status = view.get("status");
+        if (status == null || "ready".equals(status.toString())) {
+            return;
+        }
+        Object diagnostics = view.get("diagnostics");
+        logger.warn("[INJECTION] service=cp event=injection_component_skipped runId={} source={}"
+                        + " status={} diagnostics={}", run.runId(), source, status,
+                diagnostics == null ? List.of() : diagnostics);
     }
 
     /**

@@ -80,6 +80,8 @@ class AgentMemoryInjectionTest extends AbstractIntegrationTest {
         assertEquals(AgentMemoryInjectionService.STATUS_EMPTY, view.get("status"));
         assertTrue(entries(view).isEmpty());
         assertEquals(false, view.get("truncated"));
+        assertTrue(diagnostics(view).contains(AgentMemoryInjectionService.DIAGNOSTIC_NO_MEMORIES),
+                "PLAN-0678 T2.3: an empty injection must say `no_memories`, not stay silent");
     }
 
     @Test
@@ -103,6 +105,7 @@ class AgentMemoryInjectionTest extends AbstractIntegrationTest {
         Map<String, Object> view = injection.snapshot(principalId, workspaceId, 24, 4_000);
         assertEquals(AgentMemoryInjectionService.STATUS_EMPTY, view.get("status"));
         assertTrue(entries(view).isEmpty(), "a candidate is not part of the injected memory");
+        assertTrue(diagnostics(view).contains(AgentMemoryInjectionService.DIAGNOSTIC_NO_MEMORIES));
     }
 
     @Test
@@ -126,6 +129,8 @@ class AgentMemoryInjectionTest extends AbstractIntegrationTest {
         assertEquals(AgentMemoryInjectionService.STATUS_TRUNCATED, view.get("status"));
         assertEquals(2, entries(view).size());
         assertTrue(diagnostics(view).contains(AgentMemoryInjectionService.DIAGNOSTIC_ENTRY_CAP));
+        assertTrue(diagnostics(view).contains(AgentMemoryInjectionService.DIAGNOSTIC_BUDGET_TRIMMED),
+                "PLAN-0678 T2.3: trimming has a distinguishable `budget_trimmed` code");
     }
 
     @Test
@@ -138,6 +143,7 @@ class AgentMemoryInjectionTest extends AbstractIntegrationTest {
         assertEquals(AgentMemoryInjectionService.STATUS_TRUNCATED, view.get("status"));
         assertEquals(1, entries(view).size());
         assertTrue(diagnostics(view).contains(AgentMemoryInjectionService.DIAGNOSTIC_TOKEN_CAP));
+        assertTrue(diagnostics(view).contains(AgentMemoryInjectionService.DIAGNOSTIC_BUDGET_TRIMMED));
         assertTrue((Integer) view.get("usedTokens") <= 150);
     }
 

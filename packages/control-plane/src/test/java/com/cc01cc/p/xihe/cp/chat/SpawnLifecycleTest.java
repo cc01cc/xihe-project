@@ -1,5 +1,6 @@
 package com.cc01cc.p.xihe.cp.chat;
 
+import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
 
 import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
@@ -25,6 +26,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.PessimisticLockingFailureException;
+import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.util.ReflectionTestUtils;
 
@@ -322,6 +324,39 @@ class SpawnLifecycleTest extends AbstractIntegrationTest {
 
     private record ParentFixture(String parentSessionId, String parentRunId,
                                  String toolCallId, UUID invocationId) {}
+
+    /**
+     * PLAN-0678 T2.2 (BL-347): the spawn path must refuse a NULL-principal parent explicitly —
+     * before this, the child Session copied the NULL principal and persist() stamped NULL again, so
+     * the derived run carried a principal no memory/skill component could resolve.
+     */
+    @Test
+    void spawnRefusesParentSessionWithoutAgentPrincipal() {
+        ensureWorkspace();
+        Session parent = new Session(workspaceId, userId, "Spawn null-principal parent");
+        parent.setId(UUID.randomUUID());
+        parent.setAgentPermissionsSnapshot(capNode());
+        ChatBindingTestSupport.bindNewChatConnection(parent, providerConnectionRepository,
+                apiRequestTemplates, userId);
+        sessionRepository.saveAndFlush(parent);
+        String parentRunId = saveRun(parent, "running");
+        String toolCallId = UUID.randomUUID().toString();
+        SpawnTestSupport.seedAgentInvocation(mcpInvocationRepository, parent.getId().toString(),
+                parentRunId, workspaceId, userId, toolCallId, ChatSubmissionService.SPAWN_TOOL_NAME,
+                "{\"prompt\":\"child task\"}");
+
+        ChatSubmissionService.SpawnInvocation invocation =
+                submissionService.prepareSpawnInvocation(parentRunId, toolCallId);
+        CpApiException refused = assertThrows(CpApiException.class,
+                () -> submissionService.createSpawnFromParent(parentRunId, toolCallId,
+                        new ChatSubmissionService.SpawnAuthorization(invocation.authorizationBody(),
+                                null, null)));
+        assertEquals("SPAWN_PARENT_PRINCIPAL_MISSING", refused.getCode());
+        assertEquals(HttpStatus.CONFLICT, refused.getStatus());
+        assertTrue(chatRunRepository.findAll().stream()
+                        .noneMatch(run -> ChatRun.ORIGIN_SPAWN.equals(run.getOrigin())),
+                "no NULL-principal spawn run may be written");
+    }
 
     private ParentFixture fixture(String toolName, String argumentsPreview) {
         ensureWorkspace();

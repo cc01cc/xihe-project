@@ -62,6 +62,8 @@ public class AgentMemoryInjectionService {
     public static final String SOURCE = "agent_memory";
 
     public static final String DIAGNOSTIC_MISSING_PRINCIPAL = "missing_agent_principal";
+    public static final String DIAGNOSTIC_NO_MEMORIES = "no_memories";
+    public static final String DIAGNOSTIC_BUDGET_TRIMMED = "budget_trimmed";
     public static final String DIAGNOSTIC_ENTRY_CAP = "memory_entry_cap";
     public static final String DIAGNOSTIC_TOKEN_CAP = "memory_token_cap";
 
@@ -100,6 +102,8 @@ public class AgentMemoryInjectionService {
                 .findByPrincipalIdAndStatusAndDeletedAtIsNullOrderByPinnedDescUpdatedAtDesc(
                         principalId, AgentMemory.STATUS_ACTIVE);
         if (rows.isEmpty()) {
+            // PLAN-0678 T2.3: "nothing to inject" must be distinguishable from "injection skipped".
+            diagnostics.add(DIAGNOSTIC_NO_MEMORIES);
             return view(STATUS_EMPTY, List.of(), false, diagnostics, maxEntries, maxTokens, 0);
         }
         // The repository orders by (pinned, updated_at); the final order is decided here, once, so
@@ -112,12 +116,14 @@ public class AgentMemoryInjectionService {
         for (AgentMemory memory : ordered) {
             if (entries.size() >= maxEntries) {
                 truncated = true;
+                diagnostics.add(DIAGNOSTIC_BUDGET_TRIMMED);
                 diagnostics.add(DIAGNOSTIC_ENTRY_CAP);
                 break;
             }
             int tokens = estimateTokens(memory.getContent());
             if (used + tokens > maxTokens) {
                 truncated = true;
+                diagnostics.add(DIAGNOSTIC_BUDGET_TRIMMED);
                 diagnostics.add(DIAGNOSTIC_TOKEN_CAP);
                 break;
             }
