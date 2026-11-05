@@ -126,4 +126,75 @@ describe("useUserChannelSSE", () => {
         expect(onNotified).not.toHaveBeenCalled();
         expect(client.attempts()).toBe(0);
     });
+
+    /**
+     * BL-335：**上限码是持续态，不许退避重试**。
+     *
+     * 这条用例把"停止重连"钉在测试里：`429 USER_CHANNEL_FULL` ⇒ 回调一次 + **不再 schedule 重连**
+     * （否则每 1s/2s/4s… 都去撞同一个已满通道，持续占配额，用户侧看起来只是"网络抖动"）。
+     * 未来若有人把这里"优化"回退避重试，这条会红。
+     */
+    it("stops reconnecting on 429 USER_CHANNEL_FULL and reports the limit once", async () => {
+        const delays: number[] = [];
+        const onSubscriberLimit = vi.fn<(code: string, detail: string | null) => void>();
+        const fetchImpl = vi.fn<typeof fetch>(
+            async () =>
+                new Response(
+                    JSON.stringify({
+                        status: 429,
+                        code: "USER_CHANNEL_FULL",
+                        detail: "too many tabs",
+                    }),
+                    { status: 429, headers: { "content-type": "application/problem+json" } },
+                ),
+        );
+        const client = createUserChannelSse({
+            getToken: () => "token-1",
+            onNotified: vi.fn<(sessionId: string, participantId: string) => void>(),
+            onSubscriberLimit,
+            fetchImpl,
+            schedule: (callback, delayMs) => {
+                delays.push(delayMs);
+                void callback;
+                return delays.length;
+            },
+            cancel: () => undefined,
+        });
+
+        client.start();
+        await vi.waitFor(() => expect(onSubscriberLimit).toHaveBeenCalledTimes(1));
+
+        expect(onSubscriberLimit).toHaveBeenCalledWith("USER_CHANNEL_FULL", "too many tabs");
+        // 上限不是可恢复失败：一次都不该排重连（对照上一条用例的 1s/2s/4s… 序列）。
+        expect(delays).toEqual([]);
+        // 再 start() 也不会复活（disposed 后的 start 是 no-op）。
+        client.start();
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        expect(delays).toEqual([]);
+    });
+
+    /** 对照：非上限的 5xx 仍走退避重连（别把"上限停连"误伤成"所有失败都停"）。 */
+    it("keeps reconnecting on a plain 503 (limit handling must not swallow recoverable errors)", async () => {
+        const delays: number[] = [];
+        const onSubscriberLimit = vi.fn<(code: string, detail: string | null) => void>();
+        const client = createUserChannelSse({
+            getToken: () => "token-1",
+            onNotified: vi.fn<(sessionId: string, participantId: string) => void>(),
+            onSubscriberLimit,
+            fetchImpl: async () => new Response("{}", { status: 503 }),
+            schedule: (callback, delayMs) => {
+                delays.push(delayMs);
+                void callback;
+                return delays.length;
+            },
+            cancel: () => undefined,
+        });
+
+        client.start();
+        await vi.waitFor(() => expect(delays.length).toBeGreaterThan(0));
+
+        expect(onSubscriberLimit).not.toHaveBeenCalled();
+        expect(delays[0]).toBe(1_000);
+        client.dispose();
+    });
 });

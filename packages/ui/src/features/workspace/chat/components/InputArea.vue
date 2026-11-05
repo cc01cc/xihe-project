@@ -1120,7 +1120,8 @@ defineExpose({ clearDraft, insertMention, setDraft });
 </script>
 
 <template>
-    <div class="min-w-0 border-t bg-background px-4 py-2">
+    <!-- BL-328：给 composer 一个稳定锚点，供焦点/Tab 顺序判据使用（原来只能靠 class 猜）。 -->
+    <div class="min-w-0 border-t bg-background px-4 py-2" data-testid="chat-composer">
         <div class="mx-auto w-full max-w-4xl space-y-1.5">
             <!--
                 D23-27 / PLAN-0630 M5b (D30-14)：`发送`栏（speak-as 升级版）——本次消息的主要响应者
@@ -1381,7 +1382,7 @@ defineExpose({ clearDraft, insertMention, setDraft });
                     ref="textareaRef"
                     v-model="input"
                     data-testid="chat-input"
-                    class="w-full min-h-[36px] max-h-[180px] px-1 py-0.5 bg-transparent resize-none text-[13px] leading-5 placeholder:text-[12px] placeholder:text-muted-foreground/70 focus:outline-none focus-visible:ring-1 focus-visible:ring-ring/60 focus-visible:ring-offset-0 field-sizing-content"
+                    class="w-full min-h-[36px] max-h-[180px] px-1 py-0.5 bg-transparent resize-none text-sm leading-relaxed placeholder:text-[12px] placeholder:text-muted-foreground/70 focus:outline-none focus-visible:ring-1 focus-visible:ring-ring/60 focus-visible:ring-offset-0 field-sizing-content"
                     :placeholder="queueMode ? t('chat.followUpPlaceholder') : t('chat.placeholder')"
                     rows="1"
                     :style="{ fieldSizing: 'content' }"

@@ -1,5 +1,9 @@
-import { test, expect } from "@playwright/test";
+import { DEFAULT_MOCK_ALLOW, expect, test } from "./helpers/mock-test";
 import { setupMockAuth } from "./helpers/auth";
+
+// BL-318：本文件有两条**故意**制造成员写失败（409 已存在 / 404 未知用户名）以验裁定 #6 文案，
+// 逐条放行成员端点的失败信号。
+test.use({ mockAllow: [...DEFAULT_MOCK_ALLOW, String.raw`/workspaces/[^/]+/members`] });
 
 // PLAN-0565：工作区设置页「成员」tab（裁定 #2/#3/#6/#7 的 UI 侧验收）。
 const WORKSPACE_ID = "workspace-1";

@@ -1,6 +1,10 @@
-import { test, expect } from "@playwright/test";
+import { DEFAULT_MOCK_ALLOW, expect, test } from "./helpers/mock-test";
 import type { Page } from "@playwright/test";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
+
+// BL-318：`a failed agent list resets the loading state…` 故意桩 500（验失败态 + 重试恢复），
+// 逐条放行 `/workspaces/*/agents` 的失败信号。
+test.use({ mockAllow: [...DEFAULT_MOCK_ALLOW, String.raw`/workspaces/[^/]+/agents`] });
 
 test("new Workspace Session is created only after selecting a bound Agent", async ({ page }) => {
     await setupMockAuth(page);

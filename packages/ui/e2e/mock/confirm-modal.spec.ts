@@ -1,11 +1,11 @@
-import { test } from "@playwright/test";
+import { test } from "./helpers/mock-test";
+import { setupMockAuth } from "./helpers/auth";
 import { expectPlatformScreenshot } from "../helpers/visual";
 
 test.describe("ConfirmModal", () => {
     test.beforeEach(async ({ page }) => {
-        await page.addInitScript(() => {
-            localStorage.setItem("xihe-token", "mock-token-for-testing");
-        });
+        // BL-318：同上（`base-modal.spec.ts`）—— 只塞 token 不桩接口会让首屏打真实请求吃 401。
+        await setupMockAuth(page);
     });
 
     test("renders confirm dialog and captures snapshot", async ({ page }) => {

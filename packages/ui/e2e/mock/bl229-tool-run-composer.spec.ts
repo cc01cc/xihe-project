@@ -13,7 +13,8 @@
  *
  * 事件通道：installContextEventStream + pushContextEvent（同 session-matrix-tools.spec）。
  */
-import { test, expect, type Page } from "@playwright/test";
+import { type Page } from "@playwright/test";
+import { expect, test } from "./helpers/mock-test";
 import { randomUUID } from "node:crypto";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
 import { setupMockParticipants, setupMockProviderBinding } from "./helpers/session-matrix";

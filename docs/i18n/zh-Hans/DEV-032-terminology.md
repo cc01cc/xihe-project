@@ -6,7 +6,7 @@ lang: zh-Hans
 sidebar_group: "开发指南"
 status: active
 created: 2026-09-16
-updated: 2026-10-25
+updated: 2026-11-06
 ---
 
 # DEV-032: 术语规范（一词多义与多词一义）
@@ -65,6 +65,8 @@ updated: 2026-10-25
 | | B. credential 域主密钥更替（key ring） | **`credential 主密钥轮换`（key ring rotation）** | 与 A 混用 | 0495；两阶段 + CAS + 按 key_version 列计数（退役校验） |
 | **attempt** | A. MCP 执行域的工具尝试 | **`tool attempt`**（表 **`mcp_attempts`**，`V50__mcp_execution_domain.sql:46`；Java 侧 `McpAttemptRepository`） | 裸 `attempt` 指传输尝试；**不要把 `operation_attempts`（V2 跨模块旧账本）当工具尝试表**；也不存在 `agent_tool_attempts` 这个名字（2026-11-02 标识对账实测 0 命中） | 0464 执行域 |
 | | B. provider HTTP 传输尝试（单次 LLM HTTP dispatch） | **`transport attempt`（传输尝试）**；表 `chat_run_transport_attempts`，正名事件 `transport_progress`/`transport_attempt` | 与 tool attempt 混用；称「请求记录/HTTP 调用记录」 | 0508；outcome `success/error/timeout/aborted/partial`；阶段 `attempt_started/first_chunk/streaming/attempt_finished` |
+| **ChatRun** | 机读执行实体：一次执行 | **`ChatRun` / `run`**（内部/API/DB 一律用 `run`，不改名） | 把 `ChatRun`/`chat_runs` 改名 `round`；在 UI 主标题裸露 `Run` | PLAN-0674；**为什么叫 run**：`chat_runs` 自建库第一个迁移 `V1__init_schema.sql` 就在（初始设计命名，非后来附会）；一次执行含多次 LLM 调用、多次工具调用、多条消息、checkpoint、预算、租约，可从 `ambiguous`/`CP_RESTARTED` 源续跑为 **child run**（`docs/api/openapi.yaml:1624 continueChatRun`）；改名面 113 文件引用表 / 253 文件引用类 / 82 事件键，收益只是「名字顺」。用户可见说法见下一行 |
+| **回合 / turn** | 用户可见的一次完整交互（用户消息 → 系统给出可读结果） | **`回合`（英文 *turn*）** | 裸 `Run` 当回合；把 run 当回合（continuation / wake / follow-up / retry 时 1 回合可能跨多个 run）；另造「轮次」等同义词 | PLAN-0674；**为什么用「回合」**：这是用户感知的单位，与既有「本轮」先例一致；**映射与例外**：常见 **1 回合 = 1 run**，continuation / wake / follow-up / retry 时 **1 回合 ≠ 1 run**（可能跨多个 run）；`Run #id` 只作详情/hover 附注，不替代「回合」 |
 
 ### 1.1 主体与角色（2026-09-17 增补）
 

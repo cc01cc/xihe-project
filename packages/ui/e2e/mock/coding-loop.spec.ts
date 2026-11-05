@@ -1,5 +1,9 @@
-import { test, expect } from "@playwright/test";
+import { DEFAULT_MOCK_ALLOW, expect, test } from "./helpers/mock-test";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
+
+// BL-318：`cancel mock returns 409 for terminal run` 故意桩 409（验取消终态 run 的降级路径），
+// 逐条放行 cancel 端点。
+test.use({ mockAllow: [...DEFAULT_MOCK_ALLOW, String.raw`/chat/runs/[^/]+/cancel`] });
 
 const SESSION_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
     WORKSPACE_ID = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";

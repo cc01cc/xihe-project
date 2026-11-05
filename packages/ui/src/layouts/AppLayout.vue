@@ -5,7 +5,12 @@ import { useI18n } from "vue-i18n";
 import { PanelLeftOpen } from "@lucide/vue";
 import Sidebar from "../components/sidebar/Sidebar.vue";
 import WorkspaceTabBar from "../features/workspace/components/WorkspaceTabBar.vue";
+import SseSubscriberLimitNotice from "../features/workspace/components/SseSubscriberLimitNotice.vue";
 import { createUserChannelSse } from "../features/workspace/chat/useUserChannelSSE";
+import {
+    clearSseSubscriberLimit,
+    reportSseSubscriberLimit,
+} from "../features/workspace/composables/sseSubscriberLimit";
 import { useSessionParticipantsStore } from "../features/workspace/stores/sessionParticipants";
 import { useAgentStore } from "../stores/agent";
 import { useAuthStore } from "../stores/auth";
@@ -159,6 +164,11 @@ const userChannel = createUserChannelSse({
     onNotified: (sessionId, participantId) => {
         participantsStore.onUserChannelHint(sessionId, participantId);
     },
+    // BL-335：撞上 `429 USER_CHANNEL_FULL` 时通道自己停掉重连（上限是持续态），这里只负责
+    // 把"该页数据已停止刷新"的指引交给壳级横幅。
+    onSubscriberLimit: (code) => {
+        reportSseSubscriberLimit(code);
+    },
 });
 
 onMounted(() => {
@@ -179,6 +189,8 @@ onMounted(() => {
 onUnmounted(() => {
     // PLAN-0660 T5.6：成对卸载 —— dispose 会 abort 在途 fetch 并清掉退避定时器，不留重连循环。
     userChannel.dispose();
+    // BL-335：壳卸载（登出/切账号）时清掉订阅上限状态，避免下一个人看到上一个会话的横幅。
+    clearSseSubscriberLimit();
     if (pendingPollTimer) {
         clearInterval(pendingPollTimer);
         pendingPollTimer = null;
@@ -222,6 +234,9 @@ onUnmounted(() => {
             "
             :style="{ marginLeft: mainMargin }"
         >
+            <!-- BL-335：SSE 订阅上限（429）是持续态，用壳级横幅常驻；重新连上后自动消失。 -->
+            <SseSubscriberLimitNotice />
+
             <div
                 v-if="firstPendingOtherSession"
                 data-testid="global-pending-approval-banner"

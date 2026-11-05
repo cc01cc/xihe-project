@@ -1,0 +1,9 @@
+#!/bin/sh
+# A03 commit-msg hook —— 校验提交信息（宽度感知）。启用：git config core.hooksPath scripts/hooks
+msg_file="$1"
+node "$(dirname "$0")/../check-commit-msg.mjs" --file "$msg_file" || {
+  echo ""
+  echo "提交被拒绝：请按 AGENTS.md §提交信息 修正（摘要显示宽度 ≤72 列，CJK 记 2 列）。"
+  echo "细节移到 body，并引用 PLAN-####/BL-###/D-###。"
+  exit 1
+}

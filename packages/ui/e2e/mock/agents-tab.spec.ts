@@ -1,4 +1,5 @@
-import { test, expect, type Page } from "@playwright/test";
+import { type Page } from "@playwright/test";
+import { expect, test } from "./helpers/mock-test";
 import { mkdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
@@ -174,21 +175,9 @@ test.describe("PLAN-0626 M3: workspace Agent management in the dock `agents` tab
     test("opens the tab, mounts the panel once, keeps the read-only memory block, and logs no errors", async ({
         page,
     }) => {
-        const consoleErrors: string[] = [],
-            pageErrors: string[] = [],
-            failedResponses: string[] = [];
-        page.on("console", (message) => {
-            if (message.type() === "error") consoleErrors.push(message.text());
-        });
-        page.on("pageerror", (error) => pageErrors.push(error.message));
-        // A 404 surfaces in the console only as "Failed to load resource", with no URL —
-        // keep the status+URL list so a failure names the endpoint instead of the symptom.
-        page.on("response", (response) => {
-            if (response.status() >= 400) {
-                failedResponses.push(`${response.status()} ${response.url()}`);
-            }
-        });
-
+        // BL-318：三条"失败信号"通道的收集与断言已收敛到公共门禁（`helpers/mock-test.ts` 的
+        // auto fixture，带逐条 allow 清单）。这里不再自建第二份收集器 —— 之前每个 spec 抄一遍，
+        // 一旦夹具补桩就要逐份改，且 allow 清单会各自漂移。
         await setupAgentsLane(page);
         await page.goto(`/workspace/${WORKSPACE_ID}`);
 
@@ -239,9 +228,7 @@ test.describe("PLAN-0626 M3: workspace Agent management in the dock `agents` tab
             )
             .toBe("agents");
 
-        expect(pageErrors, `pageErrors=${JSON.stringify(pageErrors)}`).toEqual([]);
-        expect(failedResponses, `failedResponses=${JSON.stringify(failedResponses)}`).toEqual([]);
-        expect(consoleErrors, `consoleErrors=${JSON.stringify(consoleErrors)}`).toEqual([]);
+        // 失败信号断言由 `helpers/mock-test.ts` 的 auto fixture 在用例结束时统一执行。
 
         // Evidence only (all assertions are done): the workbench row renders 36px taller
         // than a 1080px viewport on develop as well, so the last line of the 0629 C memory

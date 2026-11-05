@@ -30,7 +30,8 @@
  * 彩色像素占比由 `node .local/xh-d28/color-area.mjs`（PNG 解码 + 色度阈值）从这些
  * 截图统计，数字写进 `.local/xh-d28/0631-color-options.md`。
  */
-import { test, expect, type Page } from "@playwright/test";
+import { type Page } from "@playwright/test";
+import { expect, test } from "./helpers/mock-test";
 import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";

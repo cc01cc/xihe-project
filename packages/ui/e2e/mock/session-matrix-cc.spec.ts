@@ -9,7 +9,7 @@
  *  - @ 自动入抄送 + 手动移除抑制（同一 @ 还挂在草稿里时不自动加回）；
  *  - 无客户端上限：连续 3 枚 chip 不报错（上限在 CP 侧，real-lane R2 覆盖）。
  */
-import { test, expect } from "@playwright/test";
+import { expect, test } from "./helpers/mock-test";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
 import { setupMockParticipants } from "./helpers/session-matrix";
 

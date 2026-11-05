@@ -115,3 +115,12 @@
 
 - **Allowed**：在已批准 PLAN 范围内修改本项目文档、源码和配置；本规则不豁免 workspace 授权与验证流程。
 - **Require Approval**：架构级变更（新增模块/通信协议）、破坏式 API 变更、生产部署。
+
+### 提交信息（2026-11-06 起，机读门禁）
+
+- 首行 `<type>(<scope>): <摘要>`；`type` ∈ feat|fix|docs|test|chore|refactor|perf|build|ci|style|revert；`scope` 如 `cp`/`agent`/`ui`/`runtime`/`l2`/`docs`/`spec`。
+- **摘要显示宽度 ≤72 列（CJK 记 2 列，约 ≤36 汉字）；merge 提交 ≤100 列**。超过就说明细节该进 body——实测历史中位 85 列、p90 114 列，正是"越写越长"的量化证据。
+- 首行不带 emoji、不以句号结尾、不以「更新/修改/调整/优化/处理/完善/整理」开头（写清"改了什么"）。
+- 空行后写 body；非 merge 提交必须在首行或 body 引用 `PLAN-####` / `BL-###` / `D-###`。body 建议 `Why:` / `What:` / `Verify:` / `Risk:` 四段，只写**为什么与怎么验**，不重复 diff 内容。
+- **校验**：`node scripts/check-commit-msg.mjs --file .git/COMMIT_EDITMSG`（hook 用）或 `--range develop~5..develop`；`--json` 给 agent。退出码 0/1/2。历史提交豁免（默认 `--since 1dd57056`）。
+- 可选本地 hook（不改仓库）：`git config core.hooksPath scripts/hooks`（仓库内 `scripts/hooks/commit-msg` 已提供）。

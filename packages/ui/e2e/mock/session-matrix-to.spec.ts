@@ -9,7 +9,8 @@
  *
  * 断言口径：UI 候选列表内容 + chip 文本（wire 面由 real-lane R2 覆盖）。
  */
-import { test, expect, type Page } from "@playwright/test";
+import { type Page } from "@playwright/test";
+import { expect, test } from "./helpers/mock-test";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
 import { setupMockParticipants } from "./helpers/session-matrix";
 

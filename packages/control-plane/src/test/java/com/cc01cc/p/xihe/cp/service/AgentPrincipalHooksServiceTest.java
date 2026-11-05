@@ -1,10 +1,12 @@
 package com.cc01cc.p.xihe.cp.service;
 
 import com.cc01cc.p.xihe.cp.config.CpApiException;
+import com.cc01cc.p.xihe.cp.config.TenantContext;
 import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.http.HttpStatus;
@@ -36,6 +38,27 @@ class AgentPrincipalHooksServiceTest {
     private static final ObjectMapper MAPPER = new ObjectMapper();
     private static final UUID ACTOR = UUID.randomUUID();
 
+    @AfterEach
+    void clearTenantContext() {
+        TenantContext.clear();
+    }
+
+    /**
+     * D-196 / BL-336: the workspace-context gate is <b>scope-aware</b>. Only a workspace-scoped row
+     * (D-174: no owning user) needs an explicit context; a personal row must stay writable without one.
+     */
+    private static AgentPrincipal workspaceScopedPrincipal() {
+        AgentPrincipal principal = new AgentPrincipal();
+        principal.setId(UUID.randomUUID());
+        principal.setOwnerUserId(null);
+        principal.setOrigin(AgentPrincipal.ORIGIN_USER);
+        return principal;
+    }
+
+    private static void legalWorkspaceContext() {
+        TenantContext.setWorkspaceId(UUID.randomUUID().toString());
+    }
+
     private static JsonNode hooksJson(String json) throws Exception {
         return MAPPER.readTree(json);
     }
@@ -50,6 +73,8 @@ class AgentPrincipalHooksServiceTest {
 
     @Test
     void ownerResubscribesPersonalPrincipalHooks() throws Exception {
+        // Deliberately NO TenantContext: a personal (instance-scope) principal must stay writable
+        // without a workspace context — D22's unconditional gate made this unreachable (BL-336).
         AgentPrincipalTestSupport.Env env = AgentPrincipalTestSupport.workspaceManager();
         AgentPrincipal principal = personalPrincipal(ACTOR);
         when(env.principals().findById(principal.getId())).thenReturn(Optional.of(principal));
@@ -64,6 +89,8 @@ class AgentPrincipalHooksServiceTest {
 
     @Test
     void clearingHooksStoresNull() throws Exception {
+        // Same as above: no context, personal row (clearing is a subject-level edit, not a
+        // workspace operation).
         AgentPrincipalTestSupport.Env env = AgentPrincipalTestSupport.workspaceManager();
         AgentPrincipal principal = personalPrincipal(ACTOR);
         principal.setHooks(hooksJson("{\"advisors\":[{\"kind\":\"guard\",\"on\":[\"approval.ask\"]}]}"));
@@ -78,6 +105,9 @@ class AgentPrincipalHooksServiceTest {
 
     @Test
     void strangerCannotResubscribeAnotherOwnersPersonalPrincipal() throws Exception {
+        // D-196: a legal context is supplied so the 403 below is the *authority* refusal, not an
+        // early 409 — the assertion is about who may write, and must not be satisfied by "no context".
+        legalWorkspaceContext();
         AgentPrincipalTestSupport.Env env = AgentPrincipalTestSupport.workspaceManager();
         AgentPrincipal principal = personalPrincipal(UUID.randomUUID());
         when(env.principals().findById(principal.getId())).thenReturn(Optional.of(principal));
@@ -91,6 +121,9 @@ class AgentPrincipalHooksServiceTest {
 
     @Test
     void presetGuardHooksAreImmutable() throws Exception {
+        // D-196: preset guards are instance-level assets, so no context is required — one is supplied
+        // anyway to prove the GUARD_HOOKS_IMMUTABLE branch is reached with a legal context in place.
+        legalWorkspaceContext();
         AgentPrincipalTestSupport.Env env = AgentPrincipalTestSupport.workspaceManager();
         AgentPrincipal preset = new AgentPrincipal();
         preset.setId(UUID.randomUUID());
@@ -109,6 +142,9 @@ class AgentPrincipalHooksServiceTest {
 
     @Test
     void malformedHooksAreRejectedBeforeAnyLookup() {
+        // D-196 keeps body validation ahead of the scope-aware context gate: a malformed document is
+        // a 400 with or without a context, never a 409 (that would lose "shape before authority").
+        legalWorkspaceContext();
         AgentPrincipalTestSupport.Env env = AgentPrincipalTestSupport.workspaceManager();
 
         CpApiException error = assertThrows(CpApiException.class, () -> env.service()
@@ -152,6 +188,47 @@ class AgentPrincipalHooksServiceTest {
                 "hooked", "tpl-1", snapshot, null, null, null,
                 MAPPER.createObjectNode().put("advisors", "not-an-array"),
                 AgentPrincipal.ORIGIN_USER, null, null));
+        verify(env.principals(), never()).saveAndFlush(any());
+    }
+
+    /**
+     * D-196 / BL-336: the 409 is reserved for <b>workspace-scoped</b> rows with no explicit context.
+     * Pinning it explicitly means nobody can "helpfully" move the gate behind the authority check again
+     * (that would reopen the oracle this whole discussion was about) or in front of it for everyone
+     * (that is the regression D22 shipped).
+     */
+    @Test
+    void workspaceScopedPrincipalNeedsAContextBeforeAnyAuthorityCheck() throws Exception {
+        AgentPrincipalTestSupport.Env env = AgentPrincipalTestSupport.workspaceManager();
+        AgentPrincipal principal = workspaceScopedPrincipal();
+        when(env.principals().findById(principal.getId())).thenReturn(Optional.of(principal));
+
+        CpApiException error = assertThrows(CpApiException.class, () -> env.service()
+                .updatePrincipalHooks(ACTOR.toString(), principal.getId(),
+                        hooksJson("{\"advisors\":[{\"kind\":\"guard\",\"on\":[\"approval.ask\"]}]}")));
+
+        assertEquals(HttpStatus.CONFLICT, error.getStatus(),
+                "D-196: a workspace-scoped row without a context is a 409");
+        assertEquals("WORKSPACE_CONTEXT_REQUIRED", error.getCode());
+        verify(env.principals(), never()).saveAndFlush(any());
+    }
+
+    /** With a context the same call reaches the authority gate — the 409 was only about the context. */
+    @Test
+    void workspaceScopedPrincipalReachesTheAuthorityGateOnceAContextExists() throws Exception {
+        legalWorkspaceContext();
+        AgentPrincipalTestSupport.Env env = AgentPrincipalTestSupport.workspaceManager();
+        AgentPrincipal principal = workspaceScopedPrincipal();
+        when(env.principals().findById(principal.getId())).thenReturn(Optional.of(principal));
+
+        CpApiException error = assertThrows(CpApiException.class, () -> env.service()
+                .updatePrincipalHooks(ACTOR.toString(), principal.getId(),
+                        hooksJson("{\"advisors\":[{\"kind\":\"guard\",\"on\":[\"approval.ask\"]}]}")));
+
+        assertEquals(HttpStatus.FORBIDDEN, error.getStatus(),
+                "context present ⇒ no 409; authorisation decides (actor holds neither the owner column "
+                        + "nor a workspace binding for this row)");
+        assertEquals("AGENT_PRINCIPAL_OWNER_MISMATCH", error.getCode());
         verify(env.principals(), never()).saveAndFlush(any());
     }
 }

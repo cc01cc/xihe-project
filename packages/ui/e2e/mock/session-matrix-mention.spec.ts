@@ -10,7 +10,7 @@
  *
  * 断言口径：UI testid 状态（listbox/option/aria-selected/chip），不碰 wire。
  */
-import { test, expect } from "@playwright/test";
+import { expect, test } from "./helpers/mock-test";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
 import { setupMockParticipants } from "./helpers/session-matrix";
 

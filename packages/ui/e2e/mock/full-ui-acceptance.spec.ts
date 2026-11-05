@@ -1,9 +1,19 @@
-import { expect, test } from "@playwright/test";
+import { DEFAULT_MOCK_ALLOW, expect, test } from "./helpers/mock-test";
 import type { Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
 import { expectPlatformScreenshot } from "../helpers/visual";
+
+// BL-318：`invalid login keeps the form and renders a user-safe error` 故意桩 401 登录（验错误文案），
+// 逐条放行登录端点与该行 logger 输出；其它通道不放行。
+test.use({
+    mockAllow: [
+        ...DEFAULT_MOCK_ALLOW,
+        String.raw`/auth/login`,
+        String.raw`Login failed: Invalid credentials`,
+    ],
+});
 
 const providerCatalog = {
     catalogRevision: "mock-revision",

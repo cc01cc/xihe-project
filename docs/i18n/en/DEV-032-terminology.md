@@ -6,7 +6,7 @@ lang: en
 sidebar_group: "Developer Guide"
 status: active
 created: 2026-09-16
-updated: 2026-10-25
+updated: 2026-11-06
 ---
 
 # DEV-032: Terminology (Polysemy and Synonyms)
@@ -51,6 +51,8 @@ updated: 2026-10-25
 | | E. State / field mapping | **`state mapping` / `field mapping`** | projection fold-back, capability projection | 0426 |
 | | F1. Length/time-bounded presentation | **`bounded preview`** | verbatim projection | 0426 |
 | | F2. Permission/field-redacted presentation | **`redacted summary`** | security projection | 0426; F1 and F2 may stack, not exclusive |
+| **ChatRun** | Machine-readable execution entity: one execution | **`ChatRun` / `run`** (code/API/DB stay `run`; never renamed) | renaming `ChatRun`/`chat_runs` to `round`; bare `Run` in primary UI copy | **Why "run"**: `chat_runs` exists since the first migration (`V1__init_schema.sql`), the original design name; one execution spans multiple LLM calls, tool calls, messages, checkpoints, budget and lease, and can continue as a **child run** from an `ambiguous`/`CP_RESTARTED` source (`docs/api/openapi.yaml:1624 continueChatRun`); rename cost = 113 files for the table / 253 for the class / 82 event keys — only for a nicer name. User-facing wording: next row |
+| **turn** | One complete user-perceived interaction (their message → a readable result) | **`turn`** (zh: 回合) | treating a run as a turn; coining another synonym; `Run` in primary UI narrative | **Why "turn"**: it is the unit users perceive, matching the existing “本轮” wording; **mapping and exceptions**: commonly **1 turn = 1 run**, while continuation / wake / follow-up / retry may span several runs; keep `Run #id` as a detail/hover footnote only |
 
 ### 1.1 Workspace storage and checkpoints (2026-10-25)
 

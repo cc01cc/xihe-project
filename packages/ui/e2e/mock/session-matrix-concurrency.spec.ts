@@ -10,7 +10,7 @@
  *
  * 断言口径：UI affordance + wire 请求体（不依赖队列快照形状）。
  */
-import { test, expect } from "@playwright/test";
+import { expect, test } from "./helpers/mock-test";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
 import { setupMockProviderBinding } from "./helpers/session-matrix";
 

@@ -14,7 +14,8 @@
  *   $env:XIHE_E2E_HEADED = "1"; $env:XIHE_EVIDENCE_DIR = "<one>/plans/PLAN-0659-.../evidence"
  *   pnpm exec playwright test --config e2e/playwright.config.ts e2e/mock/plan0659-run-grouping.spec.ts
  */
-import { test, expect, type Page } from "@playwright/test";
+import { type Page } from "@playwright/test";
+import { expect, test } from "./helpers/mock-test";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
 import { setupMockParticipants } from "./helpers/session-matrix";
 import { captureEvidence } from "../helpers/evidence";
