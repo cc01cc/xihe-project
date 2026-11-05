@@ -1,8 +1,18 @@
-import { expect, test } from "./helpers/mock-test";
+import { DEFAULT_MOCK_ALLOW, expect, test } from "./helpers/mock-test";
 import type { Page } from "@playwright/test";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
 import { expectPlatformScreenshot } from "../helpers/visual";
 import { contextPanel, openContextPanel } from "../helpers/context-panel";
+
+// BL-328 家族：`expired decision` 用例**故意**让 decision 端点回 410（验"过期后卡片不关闭 + 可见错误"），
+// 逐条放行该端点与它的 logger 输出；其余通道不放行。
+test.use({
+    mockAllow: [
+        ...DEFAULT_MOCK_ALLOW,
+        String.raw`/approvals/[^/]+/decision`,
+        String.raw`Failed to submit chat approval decision`,
+    ],
+});
 
 const SESSION_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
     SECOND_SESSION_ID = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
@@ -637,13 +647,54 @@ test.describe("Chat approval flow", () => {
         const pillName =
             (await pill.getAttribute("aria-label")) ?? (await pill.textContent()) ?? "";
         expect(pillName.trim().length).toBeGreaterThan(0);
-        await page.locator('[data-testid="chat-input"]').focus();
-        await page.keyboard.press("Shift+Tab");
-        await expect(pill).toBeFocused();
 
-        await pill.click();
+        // BL-328：判据用 `document.activeElement`，不是"卡可见"。
+        // ① Escape 关闭后焦点必须**回到触发控件**（重开 pill），不能掉到 <body>。
+        await expect
+            .poll(
+                async () =>
+                    page.evaluate(
+                        () =>
+                            document.activeElement?.getAttribute("data-testid") ??
+                            document.activeElement?.tagName ??
+                            "",
+                    ),
+                { timeout: 5000, message: "Escape 后焦点应回到 pending-approval-reopen-pill" },
+            )
+            .toBe("pending-approval-reopen-pill");
+
+        // ② Tab 顺序不跳：从 pill 往前一个 Tab 落在输入框（pill 紧邻 composer，且不经过 <body>）。
+        await page.keyboard.press("Tab");
+        await expect
+            .poll(
+                async () =>
+                    page.evaluate(() => {
+                        const active = document.activeElement;
+                        if (!(active instanceof HTMLElement)) return "";
+                        return active.closest('[data-testid="chat-composer"]')
+                            ? "composer"
+                            : (active.getAttribute("data-testid") ?? active.tagName);
+                    }),
+                { timeout: 5000, message: "pill 之后一个 Tab 应落在 composer 内" },
+            )
+            .toBe("composer");
+
+        // ③ 重开：键盘 Enter 触发 pill（而不是只点鼠标），焦点进入卡内首个可交互元素。
+        await pill.focus();
+        await page.keyboard.press("Enter");
         await expect(dialog).toBeVisible({ timeout: 5000 });
         await expect(pill).toHaveCount(0);
+        await expect
+            .poll(
+                async () =>
+                    page.evaluate(
+                        () =>
+                            document.activeElement?.closest('[data-testid="modal-content"]') !==
+                            null,
+                    ),
+                { timeout: 5000, message: "重开后焦点应在审批卡内" },
+            )
+            .toBe(true);
 
         await dialog.locator('[data-testid="approval-reject"]').click();
         await expect(dialog).toBeHidden({ timeout: 5000 });

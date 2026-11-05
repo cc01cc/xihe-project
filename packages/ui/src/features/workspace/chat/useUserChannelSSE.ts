@@ -19,6 +19,7 @@
  */
 
 import { logger } from "@/lib/logger";
+import { SSE_SUBSCRIBER_LIMIT_CODES } from "../composables/sseSubscriberLimit";
 
 export interface SseFrame {
     event: string;
@@ -70,6 +71,11 @@ export interface UserChannelSseOptions {
     onNotified: (sessionId: string, participantId: string) => void;
     /** `user_question` — projection hint (M5-B); optional until that lands. */
     onQuestion?: (questionId: string, sessionId: string, state: string) => void;
+    /**
+     * BL-335：撞上"订阅者上限"（`429 USER_CHANNEL_FULL`）时回调一次，然后**停止重连**
+     * —— 上限是持续态，按 1s/2s/4s… 无限重试只会持续占用配额、且在用户看来像"网络抖动"。
+     */
+    onSubscriberLimit?: (code: string, detail: string | null) => void;
     /** Test seams. */
     fetchImpl?: typeof fetch;
     schedule?: (callback: () => void, delayMs: number) => unknown;
@@ -153,6 +159,18 @@ export function createUserChannelSse(options: UserChannelSseOptions): UserChanne
                 signal: controller.signal,
             });
             if (!response.ok || !response.body) {
+                // BL-335：429 + 订阅者上限码 ⇒ 明确告诉用户"这条通道停了、要关标签页"，且不再重连。
+                // 其它失败保持既有退避重连（网络抖动属可恢复）。
+                const limit = await readSubscriberLimit(response);
+                if (limit) {
+                    disposed = true;
+                    logger.warn("user_channel_sse_subscriber_limit", {
+                        code: limit.code,
+                        detail: limit.detail,
+                    });
+                    options.onSubscriberLimit?.(limit.code, limit.detail);
+                    return;
+                }
                 planReconnect();
                 return;
             }
@@ -198,6 +216,29 @@ export function createUserChannelSse(options: UserChannelSseOptions): UserChanne
             return attempts;
         },
     };
+}
+
+/**
+ * BL-335：读出 429 的 problem code，只认"订阅者上限"（其它 429 交回既有重连路径）。
+ *
+ * ⚠️ 调用方拿到上限后必须**停止重连**，不要"优化"回退避重试：上限是**持续态**（同一用户/工作区的
+ * 并发订阅数），退避重试每 1s/2s/4s… 都会再撞一次同一个已满通道 —— 持续占配额，且用户侧只看到
+ * "页面不刷新"。该约束由 `__tests__/useUserChannelSSE.spec.ts` 的两条用例钉住
+ * （上限 ⇒ 零重连；普通 503 ⇒ 仍退避）。
+ */
+async function readSubscriberLimit(
+    response: Response,
+): Promise<{ code: string; detail: string | null } | null> {
+    if (response.status !== 429) return null;
+    let problem: Record<string, unknown> | null = null;
+    try {
+        problem = (await response.clone().json()) as Record<string, unknown>;
+    } catch {
+        return null;
+    }
+    const code = typeof problem?.code === "string" ? problem.code : null;
+    if (!code || !(SSE_SUBSCRIBER_LIMIT_CODES as readonly string[]).includes(code)) return null;
+    return { code, detail: typeof problem?.detail === "string" ? problem.detail : null };
 }
 
 function safeJson(raw: string): Record<string, unknown> | null {
