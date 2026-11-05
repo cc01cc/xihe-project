@@ -86,7 +86,7 @@
 
 1. 「一 run 至多一个未决 human interaction」（问答 ∩ 审批）跨两张表，约束无法表达 ⇒ 服务层 CAS + 409（T5.9），并发断言见 T5.13。
 2. 正文长度上限（写侧 ≤2000 字符）是 writer 规则，不进 CHECK —— schema 不替模型决定能问多长。
-3. `answer` 仅 `answered` 非空这一配对由 `pending → answered` 单一路径保证（T5.9）；若要 DB 兜底，加 `CHECK (answer IS NULL OR state = 'answered')` 即可（未实施，待裁定）。
+3. `answer` 仅 `answered` 非空这一配对由 `pending → answered` 单一路径保证（T5.9）。**裁定不加 DB CHECK（2026-11-05 Lead）**：冻结清单是 1:1 契约，额外加 CHECK 会让 schema 比本节多一条（实现漂移），而它只能强一个方向。真实保证 = T5.9 的单一路径 + T5.13 的断言「任何非 `answered` 终态的行 `answer IS NULL`」（expired/cancelled 路径）。
 
 **回滚**：`DROP TABLE user_questions;`（3 索引与 4 个 FK 随表，无其它对象依赖）。
 

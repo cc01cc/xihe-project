@@ -472,9 +472,9 @@ erDiagram
 
 > 索引：`idx_user_questions_addressee_pending (addressee_user_id, created_at DESC) WHERE state='pending'`（投影主查询与 `pendingCount`）；`idx_user_questions_session_created (session_id, created_at)`（会话可见者读投影）；`uq_user_questions_run_pending (run_id) WHERE state='pending'`（一 run 至多一个未决问句，已结算行不阻塞下一次提问）。
 >
-> Entity `entity/UserQuestion.java` + `repository/UserQuestionRepository.java`（T5.8 只做持久化，状态机 CAS 归 T5.9）。契约清单见 [`spec/session/user-channel.md`](../../../spec/session/user-channel.md) §6。
+> Entity `entity/UserQuestion.java` + `repository/UserQuestionRepository.java` + `chat/UserQuestionService.java`（T5.9 状态机：`recordPending` / `answer` CAS / `settle` / `cancelPendingForTerminalRun`）。契约清单见 [`spec/session/user-channel.md`](../../../spec/session/user-channel.md) §6。
 >
-> 未落 DDL 的口径：跨表的「一 run 至多一个未决 human interaction（问答 ∩ 审批）」由服务层 CAS + 409 保证；正文长度上限（≤2000 字符）在 writer；`answer` 与 `state` 的配对由单一路径保证（如需 DB 兜底见 SPEC §6 第 3 条）。回滚：`DROP TABLE user_questions;`。
+> 未落 DDL 的口径：跨表的「一 run 至多一个未决 human interaction（问答 ∩ 审批）」由服务层保证——`recordPending` 先锁 `chat_runs` 行（frozen 锁序 Session → Run 的第二把，与审批写路径同序），再查 `approval_requests` 与 `user_questions` 两表后插入，违反 409；正文长度上限（≤2000 字符）在 writer；`answer` 与 `state` 的配对由 `pending → answered` 单一路径保证，**裁定不加 DB CHECK**（2026-11-05 Lead，见 SPEC §6 第 3 条），另由 T5.13 断言「非 answered 终态的行 `answer IS NULL`」。回滚：`DROP TABLE user_questions;`。
 
 ### 3.3 Workspace 执行（workspace_execution_specs / workspace_lifecycle_operations）
 
