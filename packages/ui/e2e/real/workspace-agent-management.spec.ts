@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 import { expect, test } from "@playwright/test";
 import { isSessionCreateRequest } from "./helpers/agent-principal";
 import { CP_URL, registerJourneyUser, seedPage } from "./helpers/journey";
+import { ensureFakeUserProvider } from "./helpers/fake-provider";
 import {
     replaceUserGrantPermissions,
     replaceWorkspaceRole,
@@ -73,6 +74,16 @@ test("@host V6 Workspace Agent management uses CP grants and persists isolated c
     seedUserGrantPermissions(secondUserId, [
         { actionClass: "MANAGE_WORKSPACE_AGENTS", resource: workspaceB },
     ]);
+
+    // BL-343：本 spec 的 owner 用户此前**从未配置 provider connection / llm profile**，而
+    // `POST /api/v1/sessions` 在解析不出可用 profile 时会 409 `LLM_PROFILE_CONFLICT`。
+    // 用既有夹具补齐（`registerJourneyUser` 不做这一步，plan0670-* 系列都是显式补的）。
+    // 实测依据（BL-346 探针）：**有** ready 连接 + **无** model intent ⇒ 开会话 201；
+    // 无连接时才会 409/400 —— 所以阻塞点是连接/profile，不是 model intent。
+    await ensureFakeUserProvider(request, {
+        accessToken: owner.authToken,
+        workspaceId: owner.workspaceId,
+    });
 
     const pageErrors: string[] = [],
         apiRequestFailures: string[] = [];
@@ -207,10 +218,6 @@ test("@host V6 Workspace Agent management uses CP grants and persists isolated c
     expect(Object.keys(principalSnapshot).some((key) => /secret|token|api.?key/i.test(key))).toBe(
         false,
     );
-    const principalGrantsBefore = queryIsolatedPostgres(
-        `SELECT source || ':' || permissions::text FROM grants ` +
-            `WHERE subject_type = 'agent_principal' AND subject_id = '${principalId}'::uuid ORDER BY source`,
-    );
 
     await page.getByTestId("agent-cap-read").check();
     await page.getByTestId("agent-resource-read").fill("src/*");
@@ -243,6 +250,15 @@ test("@host V6 Workspace Agent management uses CP grants and persists isolated c
     );
     expect(bindBResponse.status(), await bindBResponse.text()).toBe(200);
 
+    // BL-343：绑定期望账本的**基线点**必须移到绑定动作之后。PLAN-0651 D-174 起，主体绑定/加角色会
+    // 通过 `RoleGrantMaterializer` materialize `source='role'` 的 grants 行（`GrantSources.ROLE`）——
+    // 这是新语义，不是"改能力时偷偷发授权"。原先在创建后就取基线，导致 `role:` 行一出现就判红。
+    // 守卫的原意（改能力不产生 grant 行）不变：基线之后只做 UI 能力编辑，再比对账本必须逐字相同。
+    const principalGrantsBefore = queryIsolatedPostgres(
+        `SELECT source || ':' || permissions::text FROM grants ` +
+            `WHERE subject_type = 'agent_principal' AND subject_id = '${principalId}'::uuid ORDER BY source`,
+    );
+
     await bindingA.getByTestId(`workspace-agent-edit-cap-${principalId}`).click();
     await page.getByTestId("agent-cap-write").check();
     await page.getByTestId("agent-resource-write").fill("reports/*");
@@ -265,12 +281,23 @@ test("@host V6 Workspace Agent management uses CP grants and persists isolated c
         headers: secondOwner.headers,
     });
     expect(bindingBResponse.status()).toBe(200);
-    const bindingsB = (await bindingBResponse.json()) as Array<{
-        principalId: string;
-        permissions: Array<{ actionClass: string; resource?: string }>;
-    }>;
-    const bindingB = bindingsB.find((binding) => binding.principalId === principalId);
-    expect(bindingB?.permissions).toEqual([{ actionClass: "write", resource: "docs/*" }]);
+    // BL-343：`GET /api/v1/workspaces/{id}/agents` 自 PLAN-0622 M1.2（`474c2153`）起返回**冻结封套**
+    // `{agents:[…]}`（此前是裸数组）。按封套解析，不做"数组/封套都兼容"的宽松解析——宽松解析会让
+    // 下次契约再变时又静默通过。
+    const bindingBEnvelope = (await bindingBResponse.json()) as {
+        agents: Array<{
+            principalId: string;
+            // 封套内成员的权限字段是 **`permissionsSnapshot`**（CP `WorkspaceAgentView` 的对外投影名，
+            // 见 `AgentPrincipalService.listWorkspaceAgents`）。旧 spec 读的是 `permissions`——那是
+            // **绑定请求体**的字段名，与列表响应体不同名，所以 `.permissions` 永远是 undefined。
+            permissionsSnapshot: Array<{ actionClass: string; resource?: string }>;
+        }>;
+    };
+    expect(Array.isArray(bindingBEnvelope.agents), "响应应为 {agents:[…]} 封套").toBe(true);
+    const bindingB = bindingBEnvelope.agents.find(
+        (binding) => binding.principalId === principalId,
+    );
+    expect(bindingB?.permissionsSnapshot).toEqual([{ actionClass: "write", resource: "docs/*" }]);
     const principalGrantsAfter = queryIsolatedPostgres(
         `SELECT source || ':' || permissions::text FROM grants ` +
             `WHERE subject_type = 'agent_principal' AND subject_id = '${principalId}'::uuid ORDER BY source`,
@@ -282,6 +309,13 @@ test("@host V6 Workspace Agent management uses CP grants and persists isolated c
     const reloadedBinding = page.getByTestId(`workspace-agent-${principalId}`);
     await expect(reloadedBinding).toContainText("reports/*");
 
+    // BL-343：这里曾经稳定红，真因是**夹具缺 provider 连接/profile**（不是产品缺陷，也不是 model intent）：
+    // `registerJourneyUser` 只建用户与 workspace，不建 `provider-connections`，而 `POST /sessions`
+    // 在解析不出可用 profile 时必 409 `LLM_PROFILE_CONFLICT`。实测（BL-346 探针，2026-11-06）：
+    //   · 无连接 + 无 model intent ⇒ 409 LLM_PROFILE_CONFLICT
+    //   · 无连接 + 有 model intent ⇒ 400 PROVIDER_REQUIRED（说明"有 intent"只是换了一道门）
+    //   · **有** ready 连接 + **无** model intent ⇒ **201**（profile 从 user llm-provider 解析成功）
+    // ⇒ 在测试前置里补 `ensureFakeUserProvider` 即可（见本 spec 开头），断言保持严格不变。
     const historicalSessionResponse = await request.post(`${CP_URL}/api/v1/sessions`, {
         headers: owner.headers,
         data: { title: "History before unbind", agentPrincipalId: principalId },
@@ -300,7 +334,10 @@ test("@host V6 Workspace Agent management uses CP grants and persists isolated c
     );
     await unbindButton.click();
     expect((await deleteResponsePromise).status()).toBe(204);
-    await expect(page.getByText("此工作区尚未绑定 Agent")).toBeVisible();
+    // BL-343：DEV-032 正名（`1fe40636` "agent → 智能体" zh sweep）后文案变了，旧断言停在历史文案上。
+    // 这里按**当前** i18n 文案断言（`i18n/index.ts` `noBoundAgent: "此工作区尚未绑定智能体"`），
+    // 不做"两种文案都接受"的宽松匹配——文案再变就该再改，而不是让断言静默通过。
+    await expect(page.getByText("此工作区尚未绑定智能体")).toBeVisible();
 
     expect(
         scalarCount(
@@ -323,8 +360,10 @@ test("@host V6 Workspace Agent management uses CP grants and persists isolated c
                 `AND user_id = '${ownerUserId}'::uuid AND resource_id = '${principalId}'`,
         ),
     ) as Record<string, unknown>;
+    // BL-343：D-174（`51d3fa95`）"create 单 workspace 授权路径"之后，创建主体命中的原子是
+    // `MANAGE_WORKSPACE_AGENTS`（审计记录的是**实际授权原子**），不再是旧的 `CREATE_ACCOUNT`。
     expect(principalAudit).toMatchObject({
-        authorizationAction: "CREATE_ACCOUNT",
+        authorizationAction: "MANAGE_WORKSPACE_AGENTS",
         templateId,
         permissions: [{ actionClass: "read", resource: "src/*" }, { actionClass: "write" }],
     });
@@ -471,7 +510,10 @@ test("@host V6 Workspace Agent management uses CP grants and persists isolated c
     );
     await page.goto(`/workspace/${workspaceA}?newChat=1`, { waitUntil: "load" });
     expect((await emptyBindingReload).status()).toBe(200);
-    await expect(page.getByText("此工作区尚未绑定 Agent")).toBeVisible();
+    // BL-343：DEV-032 正名（`1fe40636` "agent → 智能体" zh sweep）后文案变了，旧断言停在历史文案上。
+    // 这里按**当前** i18n 文案断言（`i18n/index.ts` `noBoundAgent: "此工作区尚未绑定智能体"`），
+    // 不做"两种文案都接受"的宽松匹配——文案再变就该再改，而不是让断言静默通过。
+    await expect(page.getByText("此工作区尚未绑定智能体")).toBeVisible();
     expect(attemptedSessionPosts).toEqual([]);
 
     const unboundSessionAttempt = await request.post(`${CP_URL}/api/v1/sessions`, {
