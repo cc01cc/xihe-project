@@ -134,7 +134,7 @@ public class RequesterAuthority {
             return evaluator.union(grantRepository.findScopedGrants(AuthzContext.SUBJECT_USER,
                     subjectId, GrantSources.EVALUATION_SOURCES, workspaceId));
         } catch (RuntimeException e) {
-            logger.error("[POLICY] event=action_permission_evaluation_failed subject={} workspaceId={}"
+            logger.error("[POLICY] event=tool_permission_evaluation_failed subject={} workspaceId={}"
                     + " failureType={}", subjectId, workspaceId, e.getClass().getSimpleName(), e);
             return Set.of();
         }
