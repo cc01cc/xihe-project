@@ -6,6 +6,12 @@
  * 主体"的请求都会 403 `ROLE_NOT_GRANTABLE`。当时靠一条**临时**冒烟 spec 在 41.9–58.6 秒内
  * 判定"P0 修复是否生效、要不要进全量"。本文件把那条临时 spec 正式化。
  *
+ * **必须经 `scripts/e2e-host.mjs` 运行**：本 spec 用 `docker exec … psql` 查隔离库，依赖
+ * `XIHE_E2E_PG_CONTAINER/DATABASE/USER` 三个由 runner 注入的环境变量；缺变量时**抛错而非 skip**
+ * 是**刻意的 fail-fast**（不是 bug）——单独 `pnpm exec playwright test` 直跑会以这条错误结束，
+ * 这正是提醒你"走错入口了"。全仓另有 5 个 host spec 同款约定（`credential-manager`、
+ * `agent-mcp-durable-provenance` 等），保持一致比"优雅降级"重要。
+ *
  * 用法（冻结流程的 `[0]` 步；10–60 秒定判，红就不进全量）：
  *   XIHE_E2E_EXPECT_CP_COMMIT=<靶 SHA> node scripts/e2e-host.mjs --llm-mode=mock --retries=0 \
  *     --report-name=bl349-guard.json e2e/real/bl349-agent-bind-guard.spec.ts
