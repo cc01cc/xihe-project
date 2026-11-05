@@ -103,6 +103,14 @@ function mountInputArea(props = {}, stubOverrides: Record<string, unknown> = {})
     });
 }
 
+// BL-359：`setActivePinia` 是**全局单例**，写在 `describe("InputArea")` 内的 `beforeEach` 只对
+// 该作用域生效；兄弟 `describe("BL-288 …")` 会"白蹭"前面用例设过的值 ⇒ 默认顺序绿、
+// `--sequence.shuffle.tests` 红（`getActivePinia()` called but there was no active Pinia）。
+// 因此把 Pinia 的建立提到文件级，任何用例（含兄弟 describe）都自带 active Pinia。
+beforeEach(() => {
+    setActivePinia(createPinia());
+});
+
 describe("InputArea", () => {
     beforeEach(() => {
         setActivePinia(createPinia());
