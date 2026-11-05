@@ -89,6 +89,8 @@ export interface SSECallbacks {
     onToolCall?: (name: string, args: Record<string, unknown>) => void;
     onToolResult?: (data: Record<string, unknown>) => void;
     onApprovalRequest?: (data: Record<string, unknown>) => void;
+    /** PLAN-0676 T3：另一页已决定这张审批（本页刚撤掉卡）时回调，用来提示"已在其他窗口处理"。 */
+    onApprovalResolved?: (data: Record<string, unknown>) => void;
     onStatus?: (status: string) => void;
     /** PLAN-0631 D31-08: the session participant CP attributed this event to. */
     onParticipant?: (participantId: string | null) => void;
@@ -563,6 +565,35 @@ export function useSSE(sessionId: MaybeRefOrGetter<string>) {
                     currentCallbacks.onToolResult?.(data);
                 } catch {
                     logger.warn("Failed to parse SSE tool_result event");
+                }
+                break;
+
+            // PLAN-0676 T3（BL-333）：同一会话的其它标签页/浏览器已做出决定 —— 撤掉本页的卡，
+            // 而不是让它继续可点（继续点只会拿到幂等 200 或 409，用户无法理解）。
+            case "approval_decided":
+                resetStreamTimeout();
+                try {
+                    const resolved = JSON.parse(msg.data) as Record<string, unknown>,
+                        handled = agentStore?.applyApprovalResolved({
+                            approvalId:
+                                typeof resolved.approvalId === "string"
+                                    ? resolved.approvalId
+                                    : undefined,
+                            decision:
+                                typeof resolved.decision === "string"
+                                    ? resolved.decision
+                                    : undefined,
+                            approved:
+                                typeof resolved.approved === "boolean"
+                                    ? resolved.approved
+                                    : undefined,
+                        });
+                    if (handled) {
+                        currentCallbacks.onApprovalResolved?.(resolved);
+                        if (agentStore) void agentStore.refreshPendingApprovals(true);
+                    }
+                } catch {
+                    logger.warn("Failed to parse SSE approval_decided event");
                 }
                 break;
 

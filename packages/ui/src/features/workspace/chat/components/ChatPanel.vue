@@ -326,6 +326,17 @@ function reopenApproval() {
     // 卡片自身在 `show` 变 true 时把焦点放到主操作（ApprovalModal.focusMainAction），这里不抢。
 }
 
+// PLAN-0676 T3（BL-333）：另一页/另一个浏览器已经决定了这张审批 —— 本页刚把卡片撤掉，
+// 这里补一句可见的解释。否则卡片"凭空消失"会让用户以为是 bug。
+watch(
+    () => agentStore.approvalResolvedElsewhere,
+    (signal) => {
+        if (!signal) return;
+        toast.info(t("workspace.approvalResolvedElsewhere"));
+        agentStore.approvalResolvedElsewhere = null;
+    },
+);
+
 watch(pendingApproval, (approval, previous) => {
     if (previous && (!approval || approval.requestId !== previous.requestId)) {
         dismissedRequestIds.value.delete(previous.requestId);
@@ -1528,6 +1539,11 @@ watch(
             :error="approvalError"
             :can-classify="canClassifyApproval"
             :queue-total="sessionPendingApprovals.length"
+            :draft="agentStore.approvalDrafts[pendingApproval?.requestId ?? ''] ?? ''"
+            :resolved-elsewhere="
+                agentStore.resolvedElsewhereRequests[pendingApproval?.requestId ?? ''] === true
+            "
+            @update:draft="agentStore.setApprovalDraft(pendingApproval?.requestId ?? '', $event)"
             @approve="decideApproval"
             @reject="decideApproval"
             @dismiss="handleApprovalDismiss"

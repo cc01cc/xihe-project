@@ -92,6 +92,21 @@ export const useAgentStore = defineStore("agent", () => {
         }
     }
 
+    /** T3：一次性提示信号（本页因外部决定撤卡时置位，ChatPanel 消费后 toast 并清空）。 */
+    const approvalResolvedElsewhere = ref<{ requestId: string; approved: boolean } | null>(null);
+    /**
+     * T3：按 requestId 的反馈草稿（唯一来源）。被决策/撤卡都不清空它，避免"另一页决定"
+     * 顺手把用户正在写的复核意见抹掉（BL-344 同类产品病）。
+     */
+    const approvalDrafts = ref<Record<string, string>>({});
+    /** T3：外部已决但本页**保留**了卡片（因为有草稿）的 requestId 集合。 */
+    const resolvedElsewhereRequests = ref<Record<string, boolean>>({});
+
+    function setApprovalDraft(requestId: string, value: string) {
+        if (!requestId) return;
+        approvalDrafts.value = { ...approvalDrafts.value, [requestId]: value };
+    }
+
     function rememberResolved(request: ApprovalRequest, state: ApprovalRequestState) {
         resolvedApprovals.value[request.requestId] = { ...request, state };
     }
@@ -181,6 +196,55 @@ export const useAgentStore = defineStore("agent", () => {
         ) {
             agentState.value.status = "thinking";
         }
+    }
+
+    /**
+     * PLAN-0676 T3（BL-333）：**另一页/另一个浏览器已经决定了这张审批**。
+     *
+     * <p>为什么需要：审批请求是会话级广播，每个标签页都握着同一张卡。此前决定后没有任何事件，
+     * B 页继续点会拿到幂等 200（看着成功、其实什么都没发生）或 409 冲突。CP 现在在决定成功后发
+     * `approval_decided`，本方法把这个事实落成本页的状态。</p>
+     *
+     * <p>幂等与顺序安全：本页没有这张卡（已处理 / 从未收到 / 广播重复）⇒ 返回 false，不产生任何
+     * 副作用；命中 ⇒ 按终态退役（`resolvedApprovals` 的 tombstone 保证后到的 `approval_request`
+     * 重放不会把它复活）。</p>
+     */
+    function applyApprovalResolved(payload: {
+        approvalId?: string;
+        decision?: string;
+        approved?: boolean;
+    }): boolean {
+        const requestId = payload.approvalId;
+        if (!requestId) return false;
+        const exists = agentState.value.pendingApprovals.some(
+            (item) => item.requestId === requestId,
+        );
+        if (!exists) return false;
+        // `decision` 是 CP 的 wire 名（once/always/reject…），`approved` 是权威布尔值；
+        // 只有布尔缺失时才回退到字符串判定，避免把将来的新 wire 名误判成"批准"。
+        const approved =
+            typeof payload.approved === "boolean"
+                ? payload.approved
+                : !/reject|deny|denied/i.test(payload.decision ?? "");
+        const terminalState = approved ? "approved" : "rejected";
+        const existing = agentState.value.pendingApprovals.find(
+            (item) => item.requestId === requestId,
+        );
+        const hasDraft = (approvalDrafts.value[requestId] ?? "").trim().length > 0;
+        if (hasDraft && existing) {
+            // 有草稿 ⇒ **保留卡片**，只把它标成"已在其他窗口处理"：撤卡会连同用户正在写的
+            // 复核意见一起丢掉（BL-344 同一类产品病，不得用"重填"掩盖）。
+            // tombstone 仍写：后到的 approval_request 重放不会把它复活成可提交状态。
+            rememberResolved(existing, terminalState);
+            resolvedElsewhereRequests.value = {
+                ...resolvedElsewhereRequests.value,
+                [requestId]: true,
+            };
+            return true;
+        }
+        removeApprovalRequest(requestId, terminalState);
+        approvalResolvedElsewhere.value = { requestId, approved };
+        return true;
     }
 
     async function refreshPendingApprovals(
@@ -411,6 +475,11 @@ export const useAgentStore = defineStore("agent", () => {
         updateToolCall,
         addApprovalRequest,
         removeApprovalRequest,
+        applyApprovalResolved,
+        approvalResolvedElsewhere,
+        approvalDrafts,
+        resolvedElsewhereRequests,
+        setApprovalDraft,
         approveTool,
         rejectTool,
         resolveApprovalsForRun,

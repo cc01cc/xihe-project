@@ -30,10 +30,18 @@ import type {
     SessionParticipantView,
 } from "../../../types/participant";
 
-const props = defineProps<{
-    /** null = 当前没有打开的会话（与 monitor tab 同构）。 */
-    sessionId: string | null;
-}>();
+const props = withDefaults(
+    defineProps<{
+        /** null = 当前没有打开的会话（与 monitor tab 同构）。 */
+        sessionId: string | null;
+        /**
+         * BL-317b：行密度透传（`summary` = 移动端成员 sheet 的默认，策略/模型/移除收进展开区）。
+         * 缺省 `full`，桌面与既有调用方行为不变。
+         */
+        density?: "full" | "summary";
+    }>(),
+    { density: "full" },
+);
 
 const { t } = useI18n();
 
@@ -217,6 +225,7 @@ async function removeParticipant(participant: SessionParticipantView): Promise<v
                     :removing="removingId === participant.participantId"
                     :saving="savingId === participant.participantId"
                     :advancing="advancingId === participant.participantId"
+                    :density="density"
                     @remove="removeParticipant"
                     @mention="emit('mention', $event)"
                     @policy="updatePolicy"

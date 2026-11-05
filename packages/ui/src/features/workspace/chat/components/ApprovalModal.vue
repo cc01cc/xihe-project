@@ -29,12 +29,22 @@ const props = withDefaults(
          * "1/N 待批"; batching is a separate plan (new audit/policy/rollback), not here.
          */
         queueTotal?: number;
+        /**
+         * PLAN-0676 T3（BL-333）：反馈草稿提升到父层（ChatPanel → store）。这样"另一页已决定"
+         * 时既能留住用户已输入的内容，又能阻止继续提交 —— 与 BL-344 的裁定同源
+         * （禁止用"让用户重填"掩盖"组件卸载把输入清空"这类产品病）。
+         */
+        draft?: string;
+        /** 另一窗口已经决定了这张审批：禁用提交并显示提示，但草稿仍可选中复制。 */
+        resolvedElsewhere?: boolean;
     }>(),
     {
         busy: false,
         error: null,
         canClassify: false,
         queueTotal: 0,
+        draft: "",
+        resolvedElsewhere: false,
     },
 );
 
@@ -42,6 +52,7 @@ const emit = defineEmits<{
     approve: [decision: ApprovalDecisionEnvelope];
     reject: [decision: ApprovalDecisionEnvelope];
     dismiss: [];
+    "update:draft": [value: string];
 }>();
 
 const { t } = useI18n();
@@ -52,8 +63,15 @@ const saveConfirming = ref(false),
     savedLayer = ref<"workspace" | "user">("workspace"),
     resource = ref("");
 const wildcardConfirmed = ref(false),
-    feedback = ref(""),
     submitted = ref(false);
+/**
+ * 反馈草稿的唯一来源是父层 `props.draft`：本地不再持有副本，因此"卡片被撤/重渲染"不会丢内容
+ * （PLAN-0676 T3）。写入走 `update:draft`，父层把它落到 store 的按 requestId 草稿表。
+ */
+const feedback = computed({
+    get: () => props.draft ?? "",
+    set: (value: string) => emit("update:draft", value),
+});
 const saveValidationError = ref<string | null>(null),
     onceButton = ref<HTMLButtonElement | null>(null);
 const sessionButton = ref<HTMLButtonElement | null>(null),
@@ -126,7 +144,12 @@ const shapeWarning = computed(() => {
 });
 
 const canSubmit = computed(
-    () => Boolean(props.approval) && !props.busy && !submitted.value && canWriteWorkspace.value,
+    () =>
+        Boolean(props.approval) &&
+        !props.busy &&
+        !submitted.value &&
+        !props.resolvedElsewhere &&
+        canWriteWorkspace.value,
 );
 const isStructuredPolicy = computed(() => props.approval?.policy?.shape === "structured");
 /** O-face: the tool has no registered action class, so reuse rules cannot be granted. */
@@ -674,6 +697,18 @@ onBeforeUnmount(() => {
                         role="status"
                     >
                         {{ t("chat.approvalUnclassifiedNotice") }}
+                    </p>
+
+                    <p
+                        v-if="resolvedElsewhere"
+                        data-testid="approval-resolved-elsewhere"
+                        class="mb-4 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm"
+                        role="status"
+                    >
+                        {{ t("workspace.approvalResolvedElsewhere") }}
+                        <span class="block text-xs text-muted-foreground">
+                            {{ t("chat.approvalResolvedElsewhereDraftKept") }}
+                        </span>
                     </p>
 
                     <div class="mb-4 space-y-1.5">

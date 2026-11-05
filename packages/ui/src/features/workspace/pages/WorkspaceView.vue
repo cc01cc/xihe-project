@@ -22,6 +22,7 @@ import MobileChangesSheet from "../components/MobileChangesSheet.vue";
 import FileImportDialog from "../components/FileImportDialog.vue";
 import WorkspaceSourceImportDialog from "../components/WorkspaceSourceImportDialog.vue";
 import ChatPanel from "../chat/components/ChatPanel.vue";
+import SseSubscriberLimitNotice from "../components/SseSubscriberLimitNotice.vue";
 import { workspaceChatPath } from "../../../lib/routes";
 import BaseModal from "../../../components/shared/BaseModal.vue";
 
@@ -100,10 +101,11 @@ function handleToggleMonitor() {
 }
 
 /**
- * BL-317 / D-198：移动端成员面板入口（桌面由 dock 的 `members` 标签承担，不经过这里）。
+ * BL-317 / D-198：溢出菜单的成员入口（**保留作兜底**，BL-317b 不改它的落点）。
  *
- * 与 monitor/changes 完全同形：同一 tab 再点一次 = 收起，切到别的 tab = 换页。
- * 面板体复用 `SessionParticipantsPanel`（未读徽标、游标推进、只读禁用都在那份里）。
+ * BL-317b 的新主入口是标题区的「头像堆叠 + 人数 + @N」→ `MobileMembersSheet`（独立高 sheet）。
+ * 这里刻意仍走 aux tab：`e2e/mock/bl317-mobile-members.spec.ts` 覆盖了这条既有路径，
+ * Lead 的验收口径要求它「跑通不改」——两个入口最终复用**同一个** `SessionParticipantsPanel`。
  */
 function handleToggleMembers() {
     if (isMobileViewport.value) {
@@ -193,6 +195,15 @@ const workspaceId = computed(() => routeWorkspaceId.value || auth.currentWorkspa
 
 const workspaceEvents = useWorkspaceSSE(workspaceId, {
     onEvent: (event) => ws.applyWorkspaceEvent(event),
+});
+
+/**
+ * PLAN-0676 T2：`limit` 态由壳级横幅（`AppLayout` 里的 `<SseSubscriberLimitNotice />`，读模块级
+ * 状态）负责，页面只补 `disconnected` / `reconnecting`——否则同一条链路会上下叠两个横幅。
+ */
+const pageNoticeState = computed(() => {
+    const state = workspaceEvents.noticeState.value;
+    return state && state !== "limit" ? state : undefined;
 });
 
 let workspaceLoadSequence = 0;
@@ -398,6 +409,15 @@ watch(isMobileViewport, (mobile) => {
                     class="flex min-h-0 min-w-0 flex-1 flex-col"
                     data-testid="workspace-conversation"
                 >
+                    <!-- PLAN-0676 T2：SSE 链路三态横幅（limit / disconnected / reconnecting）。
+                       这是「事件流出问题但页面看起来正常」的唯一可见出口——t56 的 BL-335 只覆盖
+                       了 limit 态，disconnected/reconnecting 之前完全不可见。 -->
+                    <SseSubscriberLimitNotice
+                        :state="pageNoticeState"
+                        :code="workspaceEvents.connectionErrorCode.value ?? undefined"
+                        :workspace-name="auth.workspace?.name"
+                        :on-retry="workspaceEvents.retry"
+                    />
                     <div
                         class="h-9 shrink-0 border-b px-3 flex items-center gap-2 text-xs text-muted-foreground bg-muted/5"
                         :title="`workspace=${workspaceId}`"

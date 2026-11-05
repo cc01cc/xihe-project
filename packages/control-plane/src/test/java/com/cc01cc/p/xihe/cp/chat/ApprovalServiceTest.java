@@ -62,10 +62,12 @@ class ApprovalServiceTest {
     private final AnswererChain answererChain = new AnswererChain(
             List.of(new UserAnswerer(), new AutoReviewAnswerer()));
     private final GuardAdviceService guardAdviceService = org.mockito.Mockito.mock(GuardAdviceService.class);
+    /** PLAN-0676 T3：审批已决广播的出口，只断言"发了一条 approval_decided"。 */
+    private final SseEmitterManager sse = mock(SseEmitterManager.class);
     private final ApprovalService service = new ApprovalService(approvals, runs, agent, new ObjectMapper(),
             historyWriter, grantWriter, audit, policySummary, pendingStore, sessionPolicyState,
             sessionApprovalMode, policyRevision, workspaceRepository, answererChain,
-            guardAdviceService);
+            guardAdviceService, sse);
 
     private static final String TEST_RUN_ID = "11111111-1111-1111-1111-111111111111";
     private static final String TEST_REQUEST_ID = "22222222-2222-2222-2222-222222222222";
@@ -113,14 +115,14 @@ class ApprovalServiceTest {
                 historyWriter, grantWriter, audit, summary,
                 new ApprovalPendingStore(approvals, new ObjectMapper(), summary), sessionPolicyState,
                 sessionApprovalMode, policyRevision, workspaceRepository, answererChain,
-                guardAdviceService);
+                guardAdviceService, sse);
     }
 
     private ApprovalService serviceWithAnswerers(ApprovalAnswerer... answerers) {
         return new ApprovalService(approvals, runs, agent, new ObjectMapper(),
                 historyWriter, grantWriter, audit, policySummary, pendingStore, sessionPolicyState,
                 sessionApprovalMode, policyRevision, workspaceRepository, new AnswererChain(List.of(answerers)),
-                guardAdviceService);
+                guardAdviceService, sse);
     }
 
     @Test
@@ -249,6 +251,38 @@ class ApprovalServiceTest {
         verify(historyWriter).append(eq(UUID.fromString(TEST_REQUEST_ID)), any(), any(),
                 eq("decided"), any(), eq("approved"), eq(true), any(), any(), any());
         verify(approvals, never()).saveAndFlush(any());
+    }
+
+    @Test
+    void decideBroadcastsApprovalResolvedToEveryConnectionOfTheSession() {
+        // PLAN-0676 T3（BL-333）：A 页决定后必须让同会话的其它页知道"这张卡已处理"，
+        // 否则 B 页再点会拿到幂等 200（看起来成功、实际什么都没发生）或 409 冲突。
+        ChatApproval approval = pending(Instant.now().plusSeconds(60));
+        when(approvals.findById(UUID.fromString(TEST_REQUEST_ID))).thenReturn(Optional.of(approval));
+        when(approvals.markDispatching(eq(UUID.fromString(TEST_REQUEST_ID)), eq(true), any(),
+                any(), any(), any(), any(Instant.class)))
+                .thenReturn(1);
+        when(approvals.markDecided(eq(UUID.fromString(TEST_REQUEST_ID)), eq("approved"), eq("once"), any(Instant.class)))
+                .thenReturn(1);
+        when(agent.respond(TEST_REQUEST_ID, true, "once", null))
+                .thenReturn(Map.of("status", "accepted", "requestId", TEST_REQUEST_ID, "approved", true));
+        when(sse.send(org.mockito.ArgumentMatchers.anyString(), eq("approval_decided"), any()))
+                .thenReturn(true);
+
+        service.decide(TEST_REQUEST_ID, TEST_USER, TEST_WORKSPACE, ApprovalDecision.once());
+
+        ArgumentCaptor<Object> payload = ArgumentCaptor.forClass(Object.class);
+        verify(sse).send(eq(approval.getSessionId()), eq("approval_decided"), payload.capture());
+        @SuppressWarnings("unchecked")
+        Map<String, Object> body = (Map<String, Object>) payload.getValue();
+        assertEquals(TEST_REQUEST_ID, body.get("approvalId"));
+        assertEquals("once", body.get("decision"));
+        assertEquals(true, body.get("approved"));
+        assertEquals(TEST_USER, body.get("decidedBy"));
+        assertTrue(body.get("decidedAt") instanceof String);
+        // 载荷只带"谁、什么决定、什么时候"：不带工具参数、不带反馈正文（可能含敏感上下文）。
+        assertFalse(body.containsKey("arguments"));
+        assertFalse(body.containsKey("feedback"));
     }
 
     @Test
