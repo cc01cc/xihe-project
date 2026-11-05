@@ -18,8 +18,6 @@ from xihe_agent.interfaces.context import AgentContext
 from xihe_agent.interfaces.tool import BaseAgentTool, ToolSpec
 from xihe_agent.registry.registry import WorkerRegistry
 
-pytestmark = [pytest.mark.integration]
-
 
 class FakeAgentTool(BaseAgentTool):
     def __init__(self, name: str, description: str = ""):
