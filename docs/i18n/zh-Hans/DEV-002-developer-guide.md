@@ -126,6 +126,7 @@ sequenceDiagram
 | `mise run dev:host:provider-init` | 创建或复用 Provider Connection |
 | `mise run test:e2e:host:real` | 运行指定真实 MiMo 用例 |
 | `mise run test:e2e:fixtures` | e2e 夹具自测（fake LLM `mode=chain` 状态机；不起栈、秒级；已并入 `validate`） |
+| `mise run ledger:validate` | 只读校验台账（BL/PLAN 结构，在 ONE 工作区根运行）；**报告不阻断**，保留工具退出码 |
 | `mise run dev:host:watch` | 健康监督 + 故障重启任务组 |
 | `mise run dev:host:stop` | 停 PG；先 Ctrl+C 停原生任务 |
 | `mise run dev:reset` | 默认 dry-run；`-Reset` 后备份重建 dev 数据，workspace 进回收站，不删 device identity |
