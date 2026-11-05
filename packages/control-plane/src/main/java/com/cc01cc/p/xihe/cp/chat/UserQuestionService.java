@@ -6,7 +6,9 @@ import com.cc01cc.p.xihe.cp.entity.ChatRun;
 import com.cc01cc.p.xihe.cp.entity.UserQuestion;
 import com.cc01cc.p.xihe.cp.repository.ChatApprovalRepository;
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
+import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.repository.UserQuestionRepository;
+import com.cc01cc.p.xihe.cp.service.SessionReadAccess;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.data.domain.PageRequest;
@@ -91,17 +93,22 @@ public class UserQuestionService {
     private final UserQuestionRepository questions;
     private final ChatRunRepository runs;
     private final ChatApprovalRepository approvals;
+    private final SessionRepository sessions;
     private final UserQuestionAgentClient agentClient;
+    private final SessionReadAccess sessionReadAccess;
     private final AuditLogger audit;
     private final TransactionTemplate transactionTemplate;
 
     public UserQuestionService(UserQuestionRepository questions, ChatRunRepository runs,
-            ChatApprovalRepository approvals, UserQuestionAgentClient agentClient, AuditLogger audit,
+            ChatApprovalRepository approvals, SessionRepository sessions,
+            UserQuestionAgentClient agentClient, SessionReadAccess sessionReadAccess, AuditLogger audit,
             PlatformTransactionManager transactionManager) {
         this.questions = questions;
         this.runs = runs;
         this.approvals = approvals;
+        this.sessions = sessions;
         this.agentClient = agentClient;
+        this.sessionReadAccess = sessionReadAccess;
         this.audit = audit;
         this.transactionTemplate = new TransactionTemplate(transactionManager);
     }
@@ -191,13 +198,17 @@ public class UserQuestionService {
      * method itself is not {@code @Transactional}: with {@code TransactionTemplate} the transactional
      * scope is explicit at any call site (precedent: {@code ChatRunCancellationService:76},
      * {@code AuthController:121}), and it cannot accidentally cover the 409 branch.</p>
+     *
+     * <p>Visibility is checked <b>before</b> the body is validated: a non-addressee gets the uniform
+     * 404 even when the payload is blank or malformed. Answering a stranger's question can therefore
+     * never be used as a body-validation oracle ("400 vs 404"), which is what "same 404, no 403
+     * branch" means for this route.</p>
      */
     public UserQuestion answer(UUID questionId, String userId, String answer) {
-        String body = requireAnswer(answer);
         UUID addressee = parseUserId(userId);
         Instant now = Instant.now();
         UserQuestion delivered = transactionTemplate.execute(status -> deliverAnswer(
-                questionId, userId, addressee, body, now));
+                questionId, userId, addressee, answer, now));
         if (delivered != null) {
             return delivered;
         }
@@ -225,13 +236,17 @@ public class UserQuestionService {
      * @return the answered row, or {@code null} when the CAS lost (nothing was written, so nothing to
      *         roll back and the caller owns the 409 vocabulary)
      */
-    private UserQuestion deliverAnswer(UUID questionId, String userId, UUID addressee, String body,
+    private UserQuestion deliverAnswer(UUID questionId, String userId, UUID addressee, String rawAnswer,
             Instant now) {
         UserQuestion row = questions.findById(questionId).orElseThrow(UserQuestionService::notFound);
         if (!addressee.equals(row.getAddresseeUserId())) {
-            // 404, never 403: "not yours" and "does not exist" must be indistinguishable here.
+            // 404, never 403: "not yours" and "does not exist" must be indistinguishable here — and
+            // this check runs before any body validation, so a stranger never sees a 400.
             throw notFound();
         }
+        // Only the addressee reaches this point, so a blank/absent body is now honestly a validation
+        // error about *this* caller's request (400), not an existence oracle.
+        String body = requireAnswer(rawAnswer);
         if (questions.markAnswered(questionId, body, now) != 1) {
             return null;
         }
@@ -333,6 +348,58 @@ public class UserQuestionService {
     public UserQuestion findForAddressee(UUID questionId, String userId) {
         return questions.findByIdAndAddresseeUserId(questionId, parseUserId(userId))
                 .orElseThrow(UserQuestionService::notFound);
+    }
+
+    /**
+     * T5.10 single read for {@code GET /api/v1/user-questions/{id}}: the addressee, <b>or</b> a
+     * session-visible reader (owner / invited enabled HUMAN participant — the frozen
+     * {@link SessionReadAccess} read rule, so this face agrees with the session read face instead of
+     * inventing a second visibility predicate).
+     *
+     * <p>Everybody else gets the <b>same</b> {@code 404 QUESTION_NOT_FOUND} as a nonexistent id:
+     * there is no 403 branch, and a session-level refusal must not become a different code either
+     * (otherwise the route leaks that the row exists). The reader is never granted the answer right
+     * here — that is {@link #answer}'s addressee-only check.</p>
+     */
+    @Transactional(readOnly = true)
+    public UserQuestion findReadable(UUID questionId, String userId) {
+        UserQuestion row = questions.findById(questionId).orElseThrow(UserQuestionService::notFound);
+        if (isAddressee(row, userId)) {
+            return row;
+        }
+        if (!isSessionVisible(row, userId)) {
+            throw notFound();
+        }
+        return row;
+    }
+
+    /** True when this question is addressed to {@code userId} (the only principal that may answer). */
+    public static boolean isAddressee(UserQuestion row, String userId) {
+        return row.getAddresseeUserId() != null && userId != null
+                && row.getAddresseeUserId().toString().equalsIgnoreCase(userId.trim());
+    }
+
+    /**
+     * Session-visible = the frozen D1/D1b read rule ({@code SessionReadAccess}), applied to the
+     * session the question belongs to. Any refusal (unknown/archived session, missing workspace
+     * context) collapses into "not visible" so the caller can answer with one uniform 404.
+     */
+    private boolean isSessionVisible(UserQuestion row, String userId) {
+        if (userId == null || userId.isBlank() || row.getSessionId() == null) {
+            return false;
+        }
+        try {
+            var session = sessions.findById(row.getSessionId()).orElse(null);
+            if (session == null) {
+                return false;
+            }
+            return sessionReadAccess
+                    .resolve(userId, session.getWorkspaceId(), row.getSessionId().toString())
+                    .access()
+                    .readAllowed();
+        } catch (CpApiException notVisible) {
+            return false;
+        }
     }
 
     // ---------------------------------------------------------------------------------------
