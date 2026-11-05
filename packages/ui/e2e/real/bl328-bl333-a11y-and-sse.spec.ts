@@ -88,6 +88,7 @@ interface BootstrapSession {
     branchId: string;
     principalId: string;
     workspaceId: string;
+    accessToken: string;
 }
 
 async function bootstrapSession(request: APIRequestContext, page: Page): Promise<BootstrapSession> {
@@ -155,7 +156,14 @@ async function bootstrapSession(request: APIRequestContext, page: Page): Promise
     expect(sessions.length).toBeGreaterThan(0);
     const sessionId = sessions[0]!.id,
         branchId = await getRootBranchId(request, sessionId, headers);
-    return { headers, sessionId, branchId, principalId, workspaceId: auth.workspaceId };
+    return {
+        headers,
+        sessionId,
+        branchId,
+        principalId,
+        workspaceId: auth.workspaceId,
+        accessToken: auth.accessToken,
+    };
 }
 
 // ── BL-328 ────────────────────────────────────────────────────────────────────────────────
@@ -222,4 +230,100 @@ test("@host BL-328 Escape 关闭审批卡 ⇒ 焦点回到重开 pill；点 pill
         `[bl328] OK workspace=${session.workspaceId} session=${session.sessionId} ` +
             `principal=${session.principalId} pillFocus=ok reopened=true focusInsideCard=true`,
     );
+});
+
+// ── BL-333 ────────────────────────────────────────────────────────────────────────────────
+
+test("@host BL-333 A 页决定 ⇒ B 页卡片消失且再点不发请求、草稿保留", async ({
+    browser,
+    request,
+}) => {
+    test.setTimeout(300_000);
+    const context = await browser.newContext();
+    const pageA = await context.newPage();
+    const session = await bootstrapSession(request, pageA);
+
+    // B 页：同 context（共享 workspace SSE 广播）+ 深链到同一 session
+    const pageB = await context.newPage();
+    await pageB.addInitScript(
+        (token) => localStorage.setItem("xihe-token", token),
+        session.accessToken,
+    );
+    await pageB.addInitScript(
+        (value) => localStorage.setItem("xihe-user", value),
+        JSON.stringify({ workspaceId: session.workspaceId }),
+    );
+    await pageB.addInitScript(
+        (workspace) => localStorage.setItem("xihe-workspace", JSON.stringify(workspace)),
+        { id: session.workspaceId, name: "Default Workspace" },
+    );
+    await pageB.goto(`/workspace/${session.workspaceId}/chat/${session.sessionId}`, {
+        waitUntil: "domcontentloaded",
+    });
+    await expect(pageB.getByTestId("chat-input")).toBeVisible({ timeout: 30_000 });
+
+    // A 页发一条需要审批的消息 ⇒ 两页都应出现审批卡
+    const approvalA = pageA.getByTestId("approval-modal-content");
+    const approvalB = pageB.getByTestId("approval-modal-content");
+    await pageA.getByTestId("chat-input").fill("please delete README.md");
+    await pageA.getByTestId("chat-send-button").click();
+    try {
+        await expect(approvalA).toBeVisible({ timeout: 75_000 });
+        await expect(approvalB).toBeVisible({ timeout: 30_000 });
+    } catch {
+        test.skip(true, "本车道未让两页都出现审批卡（需 approval 车道 + 同 context 广播）");
+    }
+
+    // B 页写一段未提交草稿（判据 3：决定后草稿必须保留）
+    const draft = `BL-333 draft ${Date.now().toString(36)}`;
+    await pageB.getByTestId("chat-input").fill(draft);
+
+    // B 页的「决定」请求计数（判据 2：再点不发请求）
+    const bDecisions: string[] = [];
+    pageB.on("request", (req) => {
+        const url = new URL(req.url());
+        if (req.method() !== "POST") return;
+        if (/\/api\/v1\/chat\/approvals\/[^/]+\/decision$/u.test(url.pathname))
+            bDecisions.push(url.pathname);
+    });
+
+    // A 页决定（允许）
+    const decidedAt = Date.now();
+    await pageA.getByTestId("approval-approve").click();
+    await expect(approvalA).toBeHidden({ timeout: 15_000 });
+
+    // 判据 1：B 页卡片消失（1s 级别；实测 elapsed 会打进日志）
+    await expect(approvalB).toBeHidden({ timeout: 5_000 });
+    const elapsed = Date.now() - decidedAt;
+    expect(
+        elapsed,
+        `B 页卡片应在 1s 级别消失（实测 ${elapsed} ms；含轮询间隔，>1500ms 视为不达标）`,
+    ).toBeLessThanOrEqual(1500);
+
+    // 判据 2：B 页再点（pill 重开 + 尝试点决定）都不应发出 decision 请求
+    const pillB = pageB.getByTestId("pending-approval-reopen-pill");
+    if (await pillB.isVisible().catch(() => false)) await pillB.click().catch(() => {});
+    const approveB = pageB.getByTestId("approval-approve");
+    if (await approveB.isVisible().catch(() => false)) await approveB.click().catch(() => {});
+    // 给"可能发出去的请求"一个观察窗（轮询而非固定 sleep 的语义等价物）
+    await expect.poll(() => bDecisions.length, { timeout: 2_000, intervals: [250, 500] }).toBe(0);
+
+    // 判据 3：B 页草稿保留（先打印 elapsed/请求数，便于"元素在但内容没了"这类现场定位）
+    console.log(
+        `[bl333] 前置观察 session=${session.sessionId} bCardHiddenMs=${elapsed} ` +
+            `bDecisionRequests=${bDecisions.length} bDraftAfterDecision=` +
+            JSON.stringify(
+                await pageB
+                    .getByTestId("chat-input")
+                    .inputValue()
+                    .catch(() => "<read-failed>"),
+            ),
+    );
+    await expect(pageB.getByTestId("chat-input")).toHaveValue(draft, { timeout: 10_000 });
+
+    console.log(
+        `[bl333] OK session=${session.sessionId} bCardHiddenMs=${elapsed} ` +
+            `bDecisionRequests=${bDecisions.length} draftKept=true`,
+    );
+    await context.close();
 });
