@@ -74,7 +74,9 @@ test.describe("PLAN-0667 M3 真栈三块同屏", () => {
         expect(zhCount, "至少两条真实角色绑定").toBeGreaterThanOrEqual(2);
         const systemBadges = await page.locator('[data-testid^="agent-role-system-"]').count();
         expect(systemBadges, "种子绑定带系统徽标").toBeGreaterThanOrEqual(2);
-        await expect(page.locator('[data-testid^="agent-role-atoms-"]').first()).toContainText("共");
+        await expect(page.locator('[data-testid^="agent-role-atoms-"]').first()).toContainText(
+            "共",
+        );
         await expect(page.getByTestId("agent-skills-section").first()).toBeVisible();
         await page.waitForTimeout(400);
         await page.screenshot({ path: join(OUT, "agent-config-real-zh.png"), scale: "css" });
@@ -97,7 +99,3 @@ test.describe("PLAN-0667 M3 真栈三块同屏", () => {
         await page.screenshot({ path: join(OUT, "agent-config-real-en.png"), scale: "css" });
     });
 });
-
-
-
-

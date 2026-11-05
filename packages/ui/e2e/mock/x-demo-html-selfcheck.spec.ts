@@ -9,14 +9,25 @@ import { mkdirSync } from "node:fs";
 
 const DEMO = process.env.XIHE_E2E_DEMO === "1" || process.env.XIHE_E2E_DEMO_REAL === "1";
 const VARIANT_RAW = process.env.DEMO_VARIANT ?? "mock";
-const VARIANT = VARIANT_RAW === "real" || VARIANT_RAW === "real-en" ? VARIANT_RAW : VARIANT_RAW === "en" ? "en" : "mock";
+const VARIANT =
+    VARIANT_RAW === "real" || VARIANT_RAW === "real-en"
+        ? VARIANT_RAW
+        : VARIANT_RAW === "en"
+          ? "en"
+          : "mock";
 const LANG = VARIANT === "en" || VARIANT === "real-en" ? "en" : "zh";
 const IS_REAL = VARIANT === "real" || VARIANT === "real-en";
 const EXPECTED_IMAGES = IS_REAL ? 4 : 5;
 const SHOT_DIR = process.env.XIHE_E2E_DEMO_DIR ?? "";
 const HTML = join(
     dirname(SHOT_DIR),
-    IS_REAL ? (LANG === "en" ? "xh-to-cc-multi-principal-real-en.html" : "xh-to-cc-multi-principal-real.html") : LANG === "en" ? "xh-to-cc-multi-principal-en.html" : "xh-to-cc-multi-principal.html",
+    IS_REAL
+        ? LANG === "en"
+            ? "xh-to-cc-multi-principal-real-en.html"
+            : "xh-to-cc-multi-principal-real.html"
+        : LANG === "en"
+          ? "xh-to-cc-multi-principal-en.html"
+          : "xh-to-cc-multi-principal.html",
 );
 
 test.describe("X 图文自测", () => {
@@ -51,7 +62,10 @@ test.describe("X 图文自测", () => {
             })),
         );
         expect(images, "图片全部可见").toHaveLength(EXPECTED_IMAGES);
-        expect(images.every((image) => image.ok), JSON.stringify(images)).toBe(true);
+        expect(
+            images.every((image) => image.ok),
+            JSON.stringify(images),
+        ).toBe(true);
         // 每张图必须互不相同（2026-11-04 Lead 实测 02/03 同图 ⇒ 构图退化，加门禁）。
         const sources = await page.evaluate(() =>
             Array.from(document.images).map((image) => image.getAttribute("src") ?? ""),
@@ -74,9 +88,7 @@ test.describe("X 图文自测", () => {
             await expect(page.getByText("工程稿").first()).toBeVisible();
             await expect(page.getByText("非最终发布形态").first()).toBeVisible();
             await expect(
-                page
-                    .getByText(IS_REAL ? "会话数据与模型调用为真实运行" : "数据为演示数据")
-                    .first(),
+                page.getByText(IS_REAL ? "会话数据与模型调用为真实运行" : "数据为演示数据").first(),
             ).toBeVisible();
         }
         for (const tag of ["BL-239", "BL-197", "BL-237"]) {
@@ -151,5 +163,3 @@ test.describe("X 图文自测", () => {
         );
     });
 });
-
-

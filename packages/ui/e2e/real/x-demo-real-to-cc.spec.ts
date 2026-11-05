@@ -42,7 +42,9 @@ const PROMPTS = {
 };
 
 let state: DemoState;
-let sentRuns = 0;
+// Demo-only counter: currently a constant (the promo spec reports 0 sends); kept read-only so the
+// lint baseline (prefer-const) stays at zero.
+const sentRuns = 0;
 
 test.describe.configure({ mode: "serial", retries: 0 });
 test.use({ locale: "zh-CN", viewport: { width: 1440, height: 900 } });

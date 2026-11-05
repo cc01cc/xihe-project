@@ -9,7 +9,12 @@ import { pathToFileURL } from "node:url";
 import { mkdirSync, readFileSync } from "node:fs";
 
 const DEMO = process.env.XIHE_E2E_DEMO === "1" || process.env.XIHE_E2E_DEMO_REAL === "1";
-const VARIANT = process.env.DEMO_VARIANT === "real" ? "real" : process.env.DEMO_VARIANT === "en" ? "en" : "mock";
+const VARIANT =
+    process.env.DEMO_VARIANT === "real"
+        ? "real"
+        : process.env.DEMO_VARIANT === "en"
+          ? "en"
+          : "mock";
 const LANG = VARIANT === "en" ? "en" : "zh";
 const DIR = process.env.XIHE_E2E_DEMO_DIR ?? "";
 
@@ -22,7 +27,11 @@ test.describe("X 宣传卡", () => {
         const base = dirname(DIR);
         const html = join(
             base,
-            VARIANT === "real" ? "xh-to-cc-card-real.html" : VARIANT === "en" ? "xh-to-cc-card-en.html" : "xh-to-cc-card.html",
+            VARIANT === "real"
+                ? "xh-to-cc-card-real.html"
+                : VARIANT === "en"
+                  ? "xh-to-cc-card-en.html"
+                  : "xh-to-cc-card.html",
         );
         const png = join(
             base,
@@ -78,7 +87,9 @@ test.describe("X 宣传卡", () => {
         expect(text).toContain(LANG === "en" ? "Directed dispatch" : "定向分派");
         // 用户追加：未实现的方向只能以「开发中 / in development」出现在 Roadmap 行里
         expect(text).toContain(LANG === "en" ? "(in development)" : "开发中");
-        expect(text).toContain(LANG === "en" ? "multiple agents respond in parallel" : "多个 agent 并行回应");
+        expect(text).toContain(
+            LANG === "en" ? "multiple agents respond in parallel" : "多个 agent 并行回应",
+        );
         // v4：slogan + 项目地址 + 博客（纯文本，不超链）
         expect(text).toContain(LANG === "en" ? "Explore & Create" : "探索 & 创造");
         expect(text).toContain("github.com/cc01cc/xihe-project");
