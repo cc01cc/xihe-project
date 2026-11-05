@@ -337,7 +337,10 @@ test("@host V6 Workspace Agent management uses CP grants and persists isolated c
     // BL-343：DEV-032 正名（`1fe40636` "agent → 智能体" zh sweep）后文案变了，旧断言停在历史文案上。
     // 这里按**当前** i18n 文案断言（`i18n/index.ts` `noBoundAgent: "此工作区尚未绑定智能体"`），
     // 不做"两种文案都接受"的宽松匹配——文案再变就该再改，而不是让断言静默通过。
-    await expect(page.getByText("此工作区尚未绑定智能体")).toBeVisible();
+    // 作用域限定在**代理管理面板**内：同屏还有「诊断提示元素」与 toast 两处相同文案（UX 冗余、
+    // 非缺陷），不收窄会触发 Playwright strict-mode（3 个命中）。不用 `.first()`——那是掩盖 strict 问题。
+    const agentPanel = page.getByTestId("workspace-agent-management-dialog");
+    await expect(agentPanel.getByText("此工作区尚未绑定智能体")).toBeVisible();
 
     expect(
         scalarCount(
@@ -510,10 +513,12 @@ test("@host V6 Workspace Agent management uses CP grants and persists isolated c
     );
     await page.goto(`/workspace/${workspaceA}?newChat=1`, { waitUntil: "load" });
     expect((await emptyBindingReload).status()).toBe(200);
-    // BL-343：DEV-032 正名（`1fe40636` "agent → 智能体" zh sweep）后文案变了，旧断言停在历史文案上。
-    // 这里按**当前** i18n 文案断言（`i18n/index.ts` `noBoundAgent: "此工作区尚未绑定智能体"`），
-    // 不做"两种文案都接受"的宽松匹配——文案再变就该再改，而不是让断言静默通过。
-    await expect(page.getByText("此工作区尚未绑定智能体")).toBeVisible();
+    // BL-343：DEV-032 正名后文案为「此工作区尚未绑定智能体」。此处页面是聊天视图（`?newChat=1`），
+    // 该状态由**官方诊断提示元素** `workspace-agent-unavailable-hint` 承载（`WorkspaceView.vue:492`）——
+    // 用 testid 断言比中文文案稳（文案改动不该让本断言失效），也不用 `.first()` 掩盖 strict 冲突。
+    await expect(page.getByTestId("workspace-agent-unavailable-hint")).toContainText(
+        "此工作区尚未绑定智能体",
+    );
     expect(attemptedSessionPosts).toEqual([]);
 
     const unboundSessionAttempt = await request.post(`${CP_URL}/api/v1/sessions`, {
