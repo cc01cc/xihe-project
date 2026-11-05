@@ -518,7 +518,15 @@ async function toggleMemoryEnabled(agent: WorkspaceAgentBinding, next: boolean) 
     try {
         const merged = { ...base, memory: { ...currentMemory, enabled: next } };
         await api.updateAgentPrincipalContextPolicy(agent.principalId, merged);
-        agent.contextPolicy = merged;
+        // BL-364/365：不可变更新。原先直接给入参对象的 `contextPolicy` 赋值，就地改写父层/store
+        // 交来的对象 ⇒ 测试夹具与所有持有同一引用的消费方都会被污染（BL-359 实测）。
+        // 注：注释里不要写成 `xxx.field = yyy` 的形式，GREP 门按文本匹配会把它当命中。
+        const index = agents.value.findIndex((entry) => entry.principalId === agent.principalId);
+        if (index >= 0) {
+            const nextAgents = [...agents.value];
+            nextAgents[index] = { ...agents.value[index]!, contextPolicy: merged };
+            agents.value = nextAgents;
+        }
     } catch (cause) {
         memoryToggleError.value =
             cause instanceof ApiError ? cause.message : t("workspace.agentMemoryToggleFailed");

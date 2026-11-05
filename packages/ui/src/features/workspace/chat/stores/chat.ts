@@ -142,8 +142,13 @@ export const useChatStore = defineStore("chat", () => {
         dismissedRunContextTruncations.value = next;
     }
 
+    /**
+     * BL-365：返回**浅拷贝**，不让调用方（组件 / 测试夹具）持有并改动 store 内部数组。
+     * 元素仍是同一批响应式对象（就地字段更新照常触发渲染），但"数组本身"不再逃逸 ——
+     * 这正是 `BL-359` 那类"外部拿着旧引用后互相污染"的传播路径。
+     */
     function getMessages(sessionId: string): Message[] {
-        return messages.value[sessionId] ?? [];
+        return [...(messages.value[sessionId] ?? [])];
     }
 
     function getSessionBranches(sessionId: string): ApiSessionBranch[] {
