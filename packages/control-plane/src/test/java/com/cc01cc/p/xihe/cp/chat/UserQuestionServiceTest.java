@@ -12,6 +12,10 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.data.domain.Pageable;
 import org.springframework.http.HttpStatus;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.TransactionStatus;
+import org.springframework.transaction.support.SimpleTransactionStatus;
 
 import java.time.Instant;
 import java.util.List;
@@ -55,8 +59,22 @@ class UserQuestionServiceTest {
     private final ChatRunRepository runs = mock(ChatRunRepository.class);
     private final ChatApprovalRepository approvals = mock(ChatApprovalRepository.class);
     private final AuditLogger audit = mock(AuditLogger.class);
-    private final UserQuestionService service =
-            new UserQuestionService(questions, runs, approvals, audit);
+    private final UserQuestionAgentClient agentClient = mock(UserQuestionAgentClient.class);
+    /** No-op transaction manager: this lane asserts branch behaviour, not rollback semantics. */
+    private static final PlatformTransactionManager TX_MANAGER = new PlatformTransactionManager() {
+        @Override
+        public TransactionStatus getTransaction(TransactionDefinition definition) {
+            return new SimpleTransactionStatus();
+        }
+
+        @Override
+        public void commit(TransactionStatus status) { }
+
+        @Override
+        public void rollback(TransactionStatus status) { }
+    };
+    private final UserQuestionService service = new UserQuestionService(questions, runs, approvals,
+            agentClient, audit, TX_MANAGER);
 
     // ---------------------------------------------------------------------------------------
     // recordPending
@@ -227,6 +245,55 @@ class UserQuestionServiceTest {
         assertEquals(HttpStatus.BAD_REQUEST, blank.getStatus());
         assertEquals("INVALID_REQUEST", blank.getCode());
         verify(questions, never()).findById(any());
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // T5.12: the callback is part of the answer
+    // ---------------------------------------------------------------------------------------
+
+    @Test
+    void answer_deliversToTheAgentOnlyAfterTheCasWins() {
+        UserQuestion row = pendingRow();
+        when(questions.findById(row.getId())).thenReturn(Optional.of(row));
+        when(questions.markAnswered(eq(row.getId()), eq(ANSWER), any())).thenReturn(1);
+
+        service.answer(row.getId(), USER_ID, ANSWER);
+
+        ArgumentCaptor<String> delivered = ArgumentCaptor.forClass(String.class);
+        verify(agentClient).respond(eq(row.getId().toString()), eq(SESSION_ID), eq(RUN_ID),
+                delivered.capture());
+        assertEquals(ANSWER, delivered.getValue(),
+                "the internal call carries the body — that is its whole purpose");
+    }
+
+    @Test
+    void answer_doesNotCallTheAgentWhenTheCasLost() {
+        UserQuestion row = pendingRow();
+        when(questions.findById(row.getId())).thenReturn(Optional.of(row));
+        when(questions.markAnswered(eq(row.getId()), anyString(), any())).thenReturn(0);
+        when(questions.findStateById(row.getId())).thenReturn(Optional.of(UserQuestion.STATE_ANSWERED));
+
+        assertThrows(CpApiException.class, () -> service.answer(row.getId(), USER_ID, ANSWER));
+
+        verify(agentClient, never()).respond(any(), any(), any(), any());
+    }
+
+    @Test
+    void answer_surfacesADeliveryFailureAndWritesNoAudit() {
+        UserQuestion row = pendingRow();
+        when(questions.findById(row.getId())).thenReturn(Optional.of(row));
+        when(questions.markAnswered(eq(row.getId()), eq(ANSWER), any())).thenReturn(1);
+        org.mockito.Mockito.doThrow(new CpApiException(HttpStatus.BAD_GATEWAY,
+                        "AGENT_QUESTION_DELIVERY_FAILED", "Agent did not accept the answer (status 500)"))
+                .when(agentClient).respond(any(), any(), any(), any());
+
+        CpApiException failure = assertThrows(CpApiException.class,
+                () -> service.answer(row.getId(), USER_ID, ANSWER));
+
+        assertEquals("AGENT_QUESTION_DELIVERY_FAILED", failure.getCode());
+        assertEquals(HttpStatus.BAD_GATEWAY, failure.getStatus());
+        verify(audit, never()).recordDurableChange(any(), any(), any(), any(), any(), any());
+        // The real rollback (row stays pending) is asserted on PostgreSQL in the integration test.
     }
 
     // ---------------------------------------------------------------------------------------

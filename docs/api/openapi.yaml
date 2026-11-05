@@ -3064,6 +3064,18 @@ paths:
     post: { operationId: runtimeMcp, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }], responses: { '200': { description: MCP JSON-RPC response } } }
   /internal/v1/runtime/remote-mcp/{workspaceId}/{serverId}/call:
     post: { operationId: runtimeRemoteMcpCall, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }, { in: path, name: serverId, required: true, schema: { type: string } }], responses: { '200': { description: 'MCP response (result body). PLAN-0654: non-2xx carries a Problem body with a fine-grained code while the HTTP status stays 502 for every upstream/transport class: REMOTE_MCP_PROTOCOL_NOT_ACCEPTABLE (upstream 406), REMOTE_MCP_UPSTREAM_NOT_FOUND (404), REMOTE_MCP_UPSTREAM_STATUS_ERROR (other, with upstreamStatus), REMOTE_MCP_INVALID_RESPONSE, REMOTE_MCP_DNS_FAILED / REMOTE_MCP_CONNECT_REFUSED / REMOTE_MCP_TLS_FAILED / REMOTE_MCP_TRANSPORT_FAILED, plus the pre-existing 401 AUTHORIZATION_REQUIRED and 408 TIMEOUT. The upstream response body is never copied; only status/category/upstreamStatus ride along.' }, '401': { $ref: '#/components/responses/Problem' } } }
+  /internal/v1/agent/user-question/respond:
+    post:
+      operationId: agentUserQuestionRespond
+      summary: Deliver the user's answer to the Agent's blocked ask_user wait
+      description: 'PLAN-0660 T5.12: service-to-service only (same Bearer as the other /internal/v1/agent/* routes); the browser never calls this. 200 = accepted, or already_delivered for a replayed delivery (idempotent). Every other outcome — 4xx/5xx/transport failure — is fail-closed on the CP side: the durable question stays pending and no answer is recorded (never a fabricated answered; CP surfaces 502 AGENT_QUESTION_DELIVERY_FAILED and the user retries). The answer body travels only on this wire: never logs, audit detail, problem detail or SSE.'
+      security: [{ bearerAuth: [] }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/UserQuestionRespondRequest' } } } }
+      responses:
+        '200': { description: 'Delivered (accepted | already_delivered)', content: { application/json: { schema: { type: object, properties: { status: { type: string, enum: [accepted, already_delivered] } } } } } }
+        '401': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
   /internal/v1/agent/chat:
     post:
       operationId: agentChat
@@ -5910,6 +5922,15 @@ components:
          scope: { type: string, enum: [USER, WORKSPACE, SYSTEM] }
          displayName: { type: string }
          connectionRevision: { type: integer, minimum: 1 }
+    UserQuestionRespondRequest:
+      type: object
+      required: [questionId, sessionId, runId, answer]
+      description: 'PLAN-0660 T5.12: CP → Agent delivery of one human answer to the blocked ask_user wait. Internal only (service Bearer); the browser never calls this route. A non-2xx or transport failure is fail-closed on the CP side: the durable question stays pending and no answer is recorded.'
+      properties:
+        questionId: { type: string, format: uuid, description: 'The durable question id (user_questions.id); the Agent matches its wait on it.' }
+        sessionId: { type: string, format: uuid }
+        runId: { type: string, format: uuid, description: 'The root run that asked; the Agent rejects a wait it does not own.' }
+        answer: { type: string, description: 'The human answer. Untrusted text: CP keeps it out of logs, audit detail and problem detail.' }
     AgentChatRequest:
       type: object
       required: [runId, sessionId, content, stream, provider, model, providerConnectionId, connectionRevision, credentialLease, contextTemplateSnapshot]
