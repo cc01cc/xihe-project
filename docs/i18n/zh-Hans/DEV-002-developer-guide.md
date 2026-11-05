@@ -285,6 +285,7 @@ mise run pkg:installer                                 # 从既有四个服务�
 
 - **顺序是契约**：PG 必须先接受 TCP（CP 启动即跑 Flyway，没有 PG 起不来）→ CP `/actuator/health` 200 → Agent（其启动 config sync 对 `llm-provider` fail-closed）→ Runtime → UI（D32-06 同源伺服）。每一步都是 readiness probe + 显式 timeout，**没有固定 sleep**（实现见 `scripts/lib/service-supervisor.mjs`）。
 - 参数用 `--` 透传（`--install` / `--stack` / `--exe <service>=<path>` / `--skip <service>`），与 `dev:stack`、`dev:host:provider-init` 同惯例。
+- **两条 launcher 的分工（别混）**：`mise run pkg:launcher`（Node，`scripts/pkg/launcher.mjs`）是**开发/冒烟 supervisor**，按 install-relative manifest 起五个阶段，**不做 first-run**（数据目录未初始化会直接报 `PostgreSQL data directory is not initialized`）；**产品首启**（解压 PG / initdb / secrets / 数据根 / JDBC 引导 / 打开浏览器）由**随包 Java Launcher** 负责（`scripts/pkg/launcher/src/com/cc01cc/xihe/pkg/Launcher.java`，由 `build-installer.mjs` 编进安装包）。
 - **产物只落 `.tmp/pkg/`（gitignored），不入库**；安装包不进主仓发行目录。
 - 开发机上 `pkg:launcher status` 会把 `dev:host` 的监听报成 `foreignListeners` 并返回 `ok:false`（exit 1）—— 这是"当前不是打包安装"的正确回答，不是故障。
 - 未覆盖的能力清单（本版不做自动更新/开机自启/代码签名/多用户服务安装）见 `plans/PLAN-0632-xh-mvp-self-contained-packaging/installer-scope.md`。
