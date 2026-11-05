@@ -108,11 +108,28 @@ public class AgentPrincipalBindingAuthority {
             return;
         }
         boolean visible = agentPrincipalService.listWorkspaceAgents(actor, workspace).stream()
-                .anyMatch(view -> principal.equals(view.principalId()));
+                .anyMatch(view -> principal.equals(view.principalId()))
+                // 创建者首绑权（BL-352）：放宽的是**可见性**，不是**管理权**；原子门在前，见 require() :61-68。
+                // 起因：创建出来的主体既没有 ownerUserId（D-174：create 不自动归属）也没有任何工作区绑定，
+                // 于是"绑定要求可见、可见由绑定产生"形成死锁 —— workspace OWNER 无法用纯 API 给自己的
+                // 新主体完成首次绑定（lab 实测 404 AGENT_PRINCIPAL_NOT_FOUND）。
+                // 只用 createdByUserId 比较：不写行、不授角色、不跨 scope 求值。
+                || isCreator(principal, actor);
         if (!visible) {
             throw new CpApiException(HttpStatus.NOT_FOUND, "AGENT_PRINCIPAL_NOT_FOUND",
                     "Agent principal not found");
         }
+    }
+
+    /** BL-352: the creator may see (and therefore first-bind) the principal it created. */
+    private boolean isCreator(UUID principalId, String actor) {
+        if (actor == null || actor.isBlank()) {
+            return false;
+        }
+        AgentPrincipal principal = agentPrincipalRepository.findById(principalId).orElse(null);
+        return principal != null
+                && principal.getCreatedByUserId() != null
+                && principal.getCreatedByUserId().equals(actor);
     }
 
     /** Shared 404 shape: missing and disabled are indistinguishable on purpose. */
