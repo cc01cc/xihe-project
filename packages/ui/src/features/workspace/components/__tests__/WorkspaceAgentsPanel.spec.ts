@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { flushPromises, mount } from "@vue/test-utils";
+import type { VueWrapper } from "@vue/test-utils";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { i18n } from "../../../../i18n";
@@ -75,7 +76,7 @@ import WorkspaceAgentManagementDialog from "../WorkspaceAgentManagementDialog.vu
  * 加载时机是 `onMounted`。测试照这个生命周期挂载，不再用 `setProps({ open: true })`。
  */
 async function mountOpenedPanel() {
-    const wrapper = mount(WorkspaceAgentsPanel, {
+    const wrapper = mountTracked({
         attachTo: document.body,
         props: { workspaceId: WORKSPACE_ID },
         global: {
@@ -88,7 +89,7 @@ async function mountOpenedPanel() {
 }
 
 function mountPanel() {
-    return mount(WorkspaceAgentsPanel, {
+    return mountTracked({
         attachTo: document.body,
         props: { workspaceId: WORKSPACE_ID },
         global: {
@@ -101,6 +102,12 @@ function mountPanel() {
 beforeEach(() => {
     admin.value = true;
     localStorage.removeItem("xihe-pending-agent-principals");
+    // BL-359：`clearAllMocks` 只清调用记录，**不清 `mockResolvedValueOnce`/`mockRejectedValueOnce`
+    // 的未消费队列**；一旦上一条用例留下的 once 值排到本用例，行为就随顺序变化
+    // （`toHaveBeenCalledTimes(2)` 因此红）。这里用 `mockReset` 把队列一并清空，再重设默认值。
+    apiMock.getWorkspaceAgentMemories.mockReset();
+    apiMock.createAgentMemory.mockReset();
+    apiMock.deleteAgentMemory.mockReset();
     apiMock.getWorkspaceAgents.mockResolvedValue([]);
     apiMock.getAgentTemplates.mockResolvedValue({
         layer: "instance",
@@ -114,10 +121,22 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+    // BL-359：teleport 到 body 的 Dialog 必须 unmount 才会重置 open 状态；清 innerHTML 不够
+    // （`document.body.innerHTML = ""` 只删 DOM 节点，Vue 的 `open` 仍是 true ⇒ 下一条用例
+    //  挂载时"上一个对话框还开着"，`wrapper.get(...)` 会取到别的对话框里的元素）。
+    for (const wrapper of mountedWrappers.splice(0)) wrapper.unmount();
     vi.clearAllMocks();
     document.body.innerHTML = "";
 });
 
+/** BL-359：所有挂载都登记，`afterEach` 统一 `unmount()`（teleport 组件的 open 状态只能靠卸载重置）。 */
+const mountedWrappers: VueWrapper[] = [];
+
+function mountTracked(options: Parameters<typeof mount>[1]): VueWrapper {
+    const wrapper = mount(WorkspaceAgentsPanel, options) as VueWrapper;
+    mountedWrappers.push(wrapper);
+    return wrapper;
+}
 describe("WorkspaceAgentsPanel principal naming (2026-11-04)", () => {
     it("blocks a name with a space and explains the rule", async () => {
         const wrapper = await mountOpenedPanel();
@@ -1157,6 +1176,9 @@ describe("WorkspaceAgentsPanel memory write surface", () => {
         await wrapper
             .get(`[data-testid="agent-memory-create-open-${PRINCIPAL_ID}"]`)
             .trigger("click");
+        // BL-359：对话框是 `v-if`，点击后还需一次 flush 才挂载；原先靠"上一条用例已经等过"才碰巧可用，
+        // 顺序一变就取不到元素。改为本用例自己等它出现。
+        await flushPromises();
         await wrapper
             .get(`[data-testid="agent-memory-create-content-${PRINCIPAL_ID}"]`)
             .setValue("本仓库使用 pnpm");
@@ -1177,6 +1199,8 @@ describe("WorkspaceAgentsPanel memory write surface", () => {
         apiMock.deleteAgentMemory.mockResolvedValue(undefined);
 
         await wrapper.get('[data-testid="agent-memory-archive-memory-1"]').trigger("click");
+        // BL-359：确认卡片是条件渲染，点开后需 flush 再断言；不依赖兄弟用例留下的渲染时机。
+        await flushPromises();
         expect(
             wrapper.get('[data-testid="agent-memory-archive-confirm-memory-1"]').text(),
         ).toContain("显示已归档");
@@ -1200,6 +1224,8 @@ describe("WorkspaceAgentsPanel memory write surface", () => {
         await wrapper
             .get(`[data-testid="agent-memory-create-open-${PRINCIPAL_ID}"]`)
             .trigger("click");
+        // BL-359：同上——自等对话框挂载，不依赖兄弟用例的 flush。
+        await flushPromises();
         await wrapper
             .get(`[data-testid="agent-memory-create-content-${PRINCIPAL_ID}"]`)
             .setValue("会失败的写入");

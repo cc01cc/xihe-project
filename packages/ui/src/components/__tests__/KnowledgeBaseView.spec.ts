@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { mount } from "@vue/test-utils";
+import { flushPromises, mount } from "@vue/test-utils";
 import { createI18n } from "vue-i18n";
 import { createRouter, createWebHistory } from "vue-router";
 import { createPinia, setActivePinia } from "pinia";
@@ -62,6 +62,10 @@ describe("KnowledgeBaseView", () => {
 
     it("shows error state with retry when fetch fails and logs warning", async () => {
         const wrapper = mountKnowledgeView();
+        // BL-359：本用例原先依赖同文件兄弟用例的副作用（`beforeEach` 里 spy 的 `logger.warn`
+        // 只由"挂载后 fetch 失败"触发，而这里没等它跑完就断言 ⇒ 顺序一变就红）。
+        // 改为**本用例自触发**：等挂载期的失败请求走完，让 warn 由本用例自己触发。
+        await flushPromises();
         wrapper.vm.loading = false;
         wrapper.vm.loadError = "HTTP 500";
         await wrapper.vm.$nextTick();

@@ -120,6 +120,11 @@ beforeEach(() => {
     sessionStorage.clear();
     localStorage.setItem("xihe-token", "mock-token");
     setActivePinia(createPinia());
+    // BL-359：清掉**调用记录**（`mockResolvedValue` 不清调用历史）。否则断言
+    // `expect(updateWorkspaceExecutionMode).not.toHaveBeenCalled()` 会看到前一条用例的调用，
+    // 用例顺序一变就红（`--sequence.shuffle.tests` 可稳定复现）。
+    mockedApi.updateWorkspaceExecutionMode.mockClear();
+    mockedApi.releaseWorkspaceRuntime.mockClear();
     mockedApi.getWorkspaceEnvironment.mockResolvedValue(environment("docker") as never);
     mockedApi.getWorkspaceJobs.mockResolvedValue([] as never);
     mockedApi.updateWorkspaceExecutionMode.mockResolvedValue(undefined as never);
