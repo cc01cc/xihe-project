@@ -213,7 +213,16 @@ for (const shard of ['a', 'b']) {
 }
 
 const after = provenance('after');
-assertClean(after);
+// BL-326 收尾缺陷修复（2026-11-06，Lead 批准）：`after` 变脏 **不再抛错丢弃整轮证据**。
+// 判据是"measure 时刻 clean"：before / shard-a / shard-b 三处断言仍致命（脏了就不测），但收尾那一刻
+// 若第三方在冻结窗口写了文件（2026-11-06 实测：跑完最后一例后被 lane 写入 3 个 docs 文件），
+// 正确做法是把 `ok` 降级为 false、把脏清单记进 `afterDirty`、**保留两 shard 全部测量数据**，
+// 让归档读者自己判断；而不是把 13 分钟的有效测量换成一句异常。
+const afterDirty = after.dirty;
+if (afterDirty.length > 0) {
+  console.error(`[after] working tree became DIRTY after the last measurement (${afterDirty.length} entries) — evidence kept, ok=false`);
+  for (const line of afterDirty.slice(0, 10)) console.error(`  ${line}`);
+}
 
 const { computeExpectedTestClasses } = await import('./lib/test-class-set.mjs');
 const expected = computeExpectedTestClasses({ repoRoot: ROOT });
@@ -249,7 +258,16 @@ const coverage = {
 coverage.ok = coverage.missing.length === 0 && coverage.unexpected.length === 0 && coverage.duplicates.length === 0;
 
 const headStable = before.head === after.head && shards.every((shard) => shard.provenance?.head === before.head);
+// `ok` 的语义（Lead 2026-11-06 定死）：**测量有效性**，不是"测试全绿"。
+//   ok = 收尾无脏 + coverage 完整 + 头稳定 + 每个 shard 的守卫通过。
+//   测试失败（基线红）由 `failingSuites` 表达，**不影响 ok**——否则每个含基线红的轮次都会被误判为无效。
+const roundOk = afterDirty.length === 0
+  && coverage.ok
+  && headStable
+  && shards.every((shard) => shard.guard?.ok !== false);
 const summary = {
+  ok: roundOk,
+  afterDirty,
   generatedAt: new Date().toISOString(),
   mode: 'sequential (memory-constrained; parallel wall clock NOT re-measured)',
   runTag: RUN_TAG,
@@ -287,9 +305,14 @@ const summary = {
 writeFileSync(join(OUT, 'clean-sequential-result.json'), `${JSON.stringify(summary, null, 2)}\n`, 'utf8');
 console.log(JSON.stringify({
   runTag: RUN_TAG,
+  ok: roundOk,
+  afterDirty: afterDirty.length,
   head: summary.head,
   headStable,
   shards: summary.shards.map(({ shard, wallSeconds, tests, failuresAndErrors, targetDir }) => ({ shard, wallSeconds, tests, failuresAndErrors, targetDir })),
   creationsShardSum: summary.creationsShardSum,
   coverage: { ok: coverage.ok, expected: coverage.expected, ran: coverage.ran, missing: coverage.missing.length, unexpected: coverage.unexpected.length, duplicates: coverage.duplicates.length },
 }, null, 1));
+
+// 退出码：测量无效（收尾脏 / coverage 不全 / 头不稳 / 守卫失败）⇒ 非零；基线红不影响退出码。
+process.exit(roundOk ? 0 : 1);
