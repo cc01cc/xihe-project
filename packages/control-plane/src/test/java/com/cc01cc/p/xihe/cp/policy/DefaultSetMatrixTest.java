@@ -71,7 +71,8 @@ class DefaultSetMatrixTest extends AbstractIntegrationTest {
             // These are action atoms and therefore materialize; workspace:admin does NOT (capability).
             "MANAGE_AGENT_PRINCIPALS", "MANAGE_WORKSPACE_MEMBERS",
             // PLAN-0651 M2 T2.1: the eight P1 atoms are part of the fixed instance-administrator
-            // set (D51-27). 19 action atoms + these 8 = 27 (see SkillReadFaceTest for the count).
+            // set (D51-27). 19 action atoms + these 8 = 27, plus GRANT_ANY_ATOM (PLAN-0673 M2,
+            // D-166) = 28 (see SkillReadFaceTest for the count).
             "READ_INSTANCE_CONTENT", "WRITE_INSTANCE_CONTENT", "VIEW_SECRET_CONTENT",
             "MANAGE_SKILL_LIBRARY", "MANAGE_PROVIDER_CONNECTIONS", "USE_WORKSPACE_RUNTIME",
             "MANAGE_WORKSPACE_RUNTIME", "MANAGE_WORKSPACE_POLICY");
