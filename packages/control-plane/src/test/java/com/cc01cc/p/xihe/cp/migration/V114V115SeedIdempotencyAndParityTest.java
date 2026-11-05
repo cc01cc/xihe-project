@@ -1,7 +1,6 @@
 package com.cc01cc.p.xihe.cp.migration;
 
 import com.cc01cc.p.xihe.cp.integration.TestDatabaseProvider;
-import com.cc01cc.p.xihe.cp.policy.PermissionAtomCatalog;
 import com.cc01cc.p.xihe.cp.policy.ToolFaceRegistry;
 import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.BeforeAll;
@@ -86,12 +85,37 @@ class V114V115SeedIdempotencyAndParityTest {
 
     @Test
     void reRunningTheSeedInsertsZeroRowsAndLeavesEveryCountUnchanged() throws Exception {
-        long rolePermissionsBefore = count("SELECT count(*) FROM role_permissions");
-        long grantsBefore = count("SELECT count(*) FROM grants");
+        // A fresh Flyway-only database has no role_bindings, so a re-run would be vacuous for both
+        // backfills (they would insert nothing on the FIRST run too). Seed one representative subject
+        // per face — instance scope (ADMIN: V114 §2 + V115 §2a) and workspace scope (WS_OWNER:
+        // V115 §2b) — so the first replay really inserts rows and the second replay is what the guard
+        // is judged on.
+        UUID subject = UUID.randomUUID();
+        UUID workspace = UUID.randomUUID();
+        insertUser(subject);
+        insertHostWorkspace(workspace, subject);
+        insertBinding(ADMIN_ID, subject, "instance", null);
+        insertBinding(WS_OWNER_ID, subject, "workspace", workspace);
 
-        int affectedOnSecondRun = 0;
-        affectedOnSecondRun += executeMigrationAgain("V114__plan0651_instance_face_atoms.sql");
-        affectedOnSecondRun += executeMigrationAgain("V115__plan0651_workspace_face_atoms.sql");
+        long rolePermissionsBefore = count("SELECT count(*) FROM role_permissions");
+
+        int affectedOnFirstReplay = executeMigrationAgain("V114__plan0651_instance_face_atoms.sql")
+                + executeMigrationAgain("V115__plan0651_workspace_face_atoms.sql");
+
+        assertEquals(13, affectedOnFirstReplay,
+                "the fixture must make the replay non-vacuous: 3 instance-face atoms (V114 §2) + 5"
+                        + " workspace-face atoms at instance scope (V115 §2a) + 5 at workspace scope"
+                        + " (V115 §2b) = 13 rows on the first replay");
+        assertEquals(8, count("SELECT count(*) FROM grants WHERE subject_id = '" + subject
+                        + "' AND source = 'role' AND scope_type = 'instance'"),
+                "instance scope: N2/N3/N4 (V114) + N5–N9 (V115 §2a) = 8");
+        assertEquals(5, count("SELECT count(*) FROM grants WHERE subject_id = '" + subject
+                        + "' AND source = 'role' AND scope_type = 'workspace'"),
+                "workspace scope: WS_OWNER's five atoms (V115 §2b) = 5");
+        long grantsAfterFirstReplay = count("SELECT count(*) FROM grants");
+
+        int affectedOnSecondRun = executeMigrationAgain("V114__plan0651_instance_face_atoms.sql")
+                + executeMigrationAgain("V115__plan0651_workspace_face_atoms.sql");
 
         assertEquals(0, affectedOnSecondRun,
                 "the second execution must insert nothing — ON CONFLICT DO NOTHING / NOT EXISTS are"
@@ -100,8 +124,8 @@ class V114V115SeedIdempotencyAndParityTest {
                         + " the affected-row count, not the totals, is the assertion)");
         assertEquals(rolePermissionsBefore, count("SELECT count(*) FROM role_permissions"),
                 "role_permissions row count must not move on a re-run");
-        assertEquals(grantsBefore, count("SELECT count(*) FROM grants"),
-                "grants row count must not move on a re-run");
+        assertEquals(grantsAfterFirstReplay, count("SELECT count(*) FROM grants"),
+                "grants row count must not move on the second re-run (no duplicate materialization)");
     }
 
     /** Replays a migration file's statements and returns the summed affected-row count. */
@@ -212,54 +236,32 @@ class V114V115SeedIdempotencyAndParityTest {
     // ---------------------------------------------------------------------------------------
 
     @Test
-    void twoRolesOverlappingOnTheSameAtomsBackfillOneRowPerAtom() throws SQLException {
+    void twoRolesOverlappingOnTheSameAtomsBackfillOneRowPerAtom() throws Exception {
         UUID subject = UUID.randomUUID();
         UUID workspace = UUID.randomUUID();
         insertUser(subject);
         insertHostWorkspace(workspace, subject);
         // uq_role_bindings forbids binding the SAME role twice, so the real overlap risk is two
         // different roles granting the same atoms in one workspace: WS_OWNER (N5..N9) and WS_EDITOR
-        // (N6, N7, N9) share three atoms. Without DISTINCT ON (subject_id, scope_id, atom) the
-        // backfill would write six rows and duplicate the shared ones.
+        // (N6, N7, N9) share three atoms. Without DISTINCT ON (subject_id, scope_id, atom) the real
+        // §2b backfill would write 5 + 3 = 8 rows and duplicate the shared three.
         insertBinding(WS_OWNER_ID, subject, "workspace", workspace);
         insertBinding(WS_EDITOR_ID, subject, "workspace", workspace);
-        long before = count("SELECT count(*) FROM grants WHERE subject_id = '" + subject + "'");
-        assertEquals(0, before, "no grant rows before the backfill runs");
+        long subjectGrantsBefore = count("SELECT count(*) FROM grants WHERE subject_id = '"
+                + subject + "'");
+        assertEquals(0, subjectGrantsBefore, "no grant rows before the backfill runs");
 
-        reRunBackfillForWorkspaceAtoms();
+        // Replay the REAL V115 file rather than a copy of §2b: the dedupe claim is about the
+        // migration, so a missing DISTINCT ON there must turn this red.
+        executeMigrationAgain("V115__plan0651_workspace_face_atoms.sql");
 
-        assertEquals(5, count("SELECT count(*) FROM grants WHERE subject_id = '" + subject + "'"),
-                "union of WS_OWNER (N5..N9) and WS_EDITOR (N6/N7/N9) is five atoms; the three shared"
-                        + " ones must NOT be written twice");
+        assertEquals(5, count("SELECT count(*) FROM grants WHERE subject_id = '" + subject + "'")
+                        - subjectGrantsBefore,
+                "the replay must add exactly the five deduped rows: union of WS_OWNER (N5..N9) and"
+                        + " WS_EDITOR (N6/N7/N9) is five atoms; the three shared ones must NOT be"
+                        + " written twice (that would be 5 + 3 = 8 rows)");
         assertEquals(5, count("SELECT count(DISTINCT permissions->0->>'actionClass') FROM grants"
                 + " WHERE subject_id = '" + subject + "'"), "one row per distinct atom");
-    }
-
-    private static void reRunBackfillForWorkspaceAtoms() throws SQLException {
-        // Only the workspace-scope backfill of V115 is exercised here; the instance one has its own
-        // dedupe shape asserted elsewhere.
-        execute("""
-                INSERT INTO grants (id, granter_type, granter_id, subject_type, subject_id, permissions,
-                                    source, scope_type, scope_id, read_state)
-                SELECT DISTINCT ON (b.subject_id, b.scope_id, rp.action_class)
-                       gen_random_uuid(), 'user', b.subject_id, 'user', b.subject_id,
-                       jsonb_build_array(jsonb_build_object('actionClass', rp.action_class)),
-                       'role', 'workspace', b.scope_id, 'read'
-                FROM role_bindings b
-                JOIN role_permissions rp ON rp.role_id = b.role_id
-                WHERE b.subject_type = 'user' AND b.scope_type = 'workspace' AND b.scope_id IS NOT NULL
-                  AND b.role_id IN ('00000000-0000-4000-8000-000000000004',
-                                    '00000000-0000-4000-8000-000000000005',
-                                    '00000000-0000-4000-8000-000000000006')
-                  AND rp.action_class IN ('MANAGE_SKILL_LIBRARY', 'MANAGE_PROVIDER_CONNECTIONS',
-                                          'USE_WORKSPACE_RUNTIME', 'MANAGE_WORKSPACE_RUNTIME',
-                                          'MANAGE_WORKSPACE_POLICY')
-                  AND NOT EXISTS (SELECT 1 FROM grants g
-                                  WHERE g.subject_type = 'user' AND g.subject_id = b.subject_id
-                                    AND g.source = 'role' AND g.scope_type = 'workspace'
-                                    AND g.scope_id = b.scope_id
-                                    AND g.permissions->0->>'actionClass' = rp.action_class)
-                """);
     }
 
     // ---------------------------------------------------------------------------------------
@@ -310,7 +312,7 @@ class V114V115SeedIdempotencyAndParityTest {
             throws SQLException {
         execute("INSERT INTO role_bindings (id, role_id, subject_type, subject_id, scope_type,"
                 + " scope_id, granted_by) VALUES ('" + UUID.randomUUID() + "', '" + roleId
-                + "', 'user', '" + subjectId + "', '" + scopeType + "', '" + scopeId + "', '"
-                + subjectId + "')");
+                + "', 'user', '" + subjectId + "', '" + scopeType + "', "
+                + (scopeId == null ? "NULL" : "'" + scopeId + "'") + ", '" + subjectId + "')");
     }
 }
