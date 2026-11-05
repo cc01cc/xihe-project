@@ -15,6 +15,9 @@ import uuid
 import httpx
 import pytest
 
+pytestmark = [pytest.mark.integration]
+
+
 CP_PORT = int(os.environ.get("XIHE_CP_PORT", "12631"))
 CP_URL = f"http://localhost:{CP_PORT}"
 AGENT_PORT = int(os.environ.get("XIHE_AGENT_PORT", "12632"))

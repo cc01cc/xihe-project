@@ -56,6 +56,11 @@ disallow_untyped_defs = false
 disallow_incomplete_defs = false
 
 [tool.pytest.ini_options]
+# BL-361 (2026-11-06): host-only integration tests (test_vector_store.py) hard-fail by design when
+# XIHE_E2E_PG_* is absent. Keep them out of the default gate; the isolated host runner opts back in
+# with `uv run pytest -m integration`. The meta test tests/unit/test_integration_markers.py prevents
+# an unmarked tests/integration file from silently escaping both lanes.
+addopts = '-m "not integration"'
 asyncio_mode = "auto"
 markers = [
     "integration: CP integration tests (require running CP)",
