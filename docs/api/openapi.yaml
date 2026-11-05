@@ -530,7 +530,7 @@ paths:
         - { in: query, name: locale, required: false, schema: { type: string, enum: [zh-CN, en-US] }, description: 'Label locale for atoms (zh-CN default; en-US supported). Falls back to Accept-Language, then zh-CN.' }
       responses:
         '200': { description: 'Role bindings of this principal', content: { application/json: { schema: { $ref: '#/components/schemas/AgentPrincipalRoleBindingListResponse' } } } }
-        '400': { $ref: '#/components/responses/Problem' }
+        '400': { description: 'INVALID_REQUEST; X-Workspace-Id conflicts with ?workspaceId (send only one) ⇒ WORKSPACE_CONTEXT_CONFLICT', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
         '401': { $ref: '#/components/responses/Problem' }
         '403': { description: 'FORBIDDEN (neither MANAGE_AGENT_PRINCIPALS nor MANAGE_WORKSPACE_AGENTS in the authorization context)', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
         '404': { description: 'AGENT_PRINCIPAL_NOT_FOUND (also for a principal the caller cannot see)', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
@@ -564,7 +564,7 @@ paths:
         content: { application/json: { schema: { $ref: '#/components/schemas/AgentPrincipalRoleBindRequest' } } }
       responses:
         '201': { description: 'The created binding', content: { application/json: { schema: { $ref: '#/components/schemas/AgentPrincipalRoleBindingView' } } } }
-        '400': { description: 'INVALID_REQUEST (body must contain only roleId; a client-supplied scope is rejected)', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '400': { description: 'INVALID_REQUEST (body must contain only roleId; a client-supplied scope is rejected); X-Workspace-Id conflicts with ?workspaceId (send only one) ⇒ WORKSPACE_CONTEXT_CONFLICT', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
         '401': { $ref: '#/components/responses/Problem' }
         '403': { description: 'FORBIDDEN (no binding authority, or actor == subject)', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
         '404': { description: 'AGENT_PRINCIPAL_NOT_FOUND / ROLE_NOT_FOUND', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
@@ -589,7 +589,7 @@ paths:
         - { in: query, name: workspaceId, required: false, schema: { type: string, format: uuid }, description: 'Authorization context only (see GET).' }
       responses:
         '204': { description: 'Binding removed' }
-        '400': { $ref: '#/components/responses/Problem' }
+        '400': { description: 'INVALID_REQUEST; X-Workspace-Id conflicts with ?workspaceId (send only one) ⇒ WORKSPACE_CONTEXT_CONFLICT', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
         '401': { $ref: '#/components/responses/Problem' }
         '403': { description: 'FORBIDDEN (no binding authority)', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
         '404': { description: 'AGENT_PRINCIPAL_NOT_FOUND / ROLE_BINDING_NOT_FOUND', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
@@ -609,7 +609,7 @@ paths:
         - { in: query, name: workspaceId, required: false, schema: { type: string, format: uuid }, description: 'Authorization context only (see GET roles).' }
       responses:
         '200': { description: 'Skill bindings of this principal', content: { application/json: { schema: { $ref: '#/components/schemas/AgentPrincipalSkillBindingListResponse' } } } }
-        '400': { $ref: '#/components/responses/Problem' }
+        '400': { description: 'INVALID_REQUEST; X-Workspace-Id conflicts with ?workspaceId (send only one) ⇒ WORKSPACE_CONTEXT_CONFLICT', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
         '401': { $ref: '#/components/responses/Problem' }
         '403': { $ref: '#/components/responses/Problem' }
         '404': { description: 'AGENT_PRINCIPAL_NOT_FOUND (also for a principal the caller cannot see)', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
@@ -634,7 +634,7 @@ paths:
         content: { application/json: { schema: { $ref: '#/components/schemas/AgentPrincipalSkillBindRequest' } } }
       responses:
         '201': { description: 'The created binding', content: { application/json: { schema: { $ref: '#/components/schemas/AgentPrincipalSkillBindingView' } } } }
-        '400': { $ref: '#/components/responses/Problem' }
+        '400': { description: 'INVALID_REQUEST; X-Workspace-Id conflicts with ?workspaceId (send only one) ⇒ WORKSPACE_CONTEXT_CONFLICT', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
         '401': { $ref: '#/components/responses/Problem' }
         '403': { description: 'FORBIDDEN (no binding authority, or actor == subject)', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
         '404': { description: 'AGENT_PRINCIPAL_NOT_FOUND / SKILL_NOT_FOUND', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
@@ -653,7 +653,7 @@ paths:
         - { in: query, name: workspaceId, required: false, schema: { type: string, format: uuid }, description: 'Authorization context only (see GET roles).' }
       responses:
         '204': { description: 'Binding removed' }
-        '400': { $ref: '#/components/responses/Problem' }
+        '400': { description: 'INVALID_REQUEST; X-Workspace-Id conflicts with ?workspaceId (send only one) ⇒ WORKSPACE_CONTEXT_CONFLICT', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
         '401': { $ref: '#/components/responses/Problem' }
         '403': { $ref: '#/components/responses/Problem' }
         '404': { description: 'AGENT_PRINCIPAL_NOT_FOUND / SKILL_BINDING_NOT_FOUND', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
