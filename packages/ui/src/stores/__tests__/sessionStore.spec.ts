@@ -30,6 +30,8 @@ function mockSessionResponse(record: {
         id: record.id,
         title: record.title ?? "New Chat",
         workspaceId: "ws-test",
+        // PLAN-0668：详情投影的必需字段；创建/更新响应沿用真实 Session 契约。
+        archived: false,
         createdAt: record.createdAt ?? new Date().toISOString(),
         updatedAt: record.updatedAt ?? new Date().toISOString(),
     };

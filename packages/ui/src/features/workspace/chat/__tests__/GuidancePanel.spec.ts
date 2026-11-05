@@ -86,7 +86,8 @@ describe("GuidancePanel draft handling", () => {
         await submitText(wrapper, "race guidance");
 
         const banner = wrapper.get('[data-testid="guidance-banner-error"]');
-        expect(banner.text()).toContain("Run 已结束或不再接受指导");
+        // PLAN-0674：产品面向用户统一使用「回合」术语。
+        expect(banner.text()).toContain("回合已结束或不再接受指导");
         expect(
             (wrapper.get('[data-testid="guidance-input"]').element as HTMLTextAreaElement).value,
         ).toBe("");

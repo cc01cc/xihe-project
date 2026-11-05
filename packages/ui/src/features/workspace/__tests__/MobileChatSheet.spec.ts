@@ -1,6 +1,7 @@
 import { mount } from "@vue/test-utils";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { reactive } from "vue";
+import { createPinia } from "pinia";
 
 const agentState = reactive({
     status: "idle",
@@ -42,6 +43,10 @@ vi.mock("../../../components/ui/sheet/SheetDescription.vue", () => ({
 vi.mock("../chat/components/ChatPanel.vue", () => ({
     default: { template: "<div />" },
 }));
+// 成员面板不属于审批关闭行为；其深层图标与列表由对应组件测试覆盖。
+vi.mock("../components/MobileMembersSheet.vue", () => ({
+    default: { template: "<div />" },
+}));
 vi.mock("@lucide/vue", () => ({
     MessageCircle: { template: "<i />" },
 }));
@@ -58,7 +63,11 @@ describe("MobileChatSheet approval dismissal guard", () => {
     });
 
     function mountOpen(sessionId: string) {
-        const wrapper = mount(MobileChatSheet, { props: { sessionId } });
+        const wrapper = mount(MobileChatSheet, {
+            props: { sessionId },
+            // MobileChatSheet 新增参与者 store 后需要与应用相同的 Pinia 注入。
+            global: { plugins: [createPinia()] },
+        });
         (wrapper.vm as unknown as { toggle: () => void }).toggle();
         return wrapper;
     }

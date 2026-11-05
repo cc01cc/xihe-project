@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { flushPromises, mount } from "@vue/test-utils";
-import { nextTick } from "vue";
+import { defineComponent, h, nextTick, ref } from "vue";
+import { createPinia } from "pinia";
 import { createI18n } from "vue-i18n";
 import ApprovalModal from "../components/ApprovalModal.vue";
 import { ApiError, api } from "../../../../composables/api";
@@ -141,7 +142,26 @@ function mountModal(props: {
     error?: string | null;
     canClassify?: boolean;
 }) {
-    return mount(ApprovalModal, { props, global: { plugins: [i18n] } });
+    // PLAN-0676 T3：审批反馈草稿属于父层；测试挂载需模拟 v-model:draft 回写。
+    const Host = defineComponent({
+        props: Object.keys(props),
+        emits: ["approve", "reject", "dismiss"],
+        setup(hostProps, { emit }) {
+            const draft = ref("");
+            return () =>
+                h(ApprovalModal, {
+                    ...hostProps,
+                    draft: draft.value,
+                    "onUpdate:draft": (value: string) => {
+                        draft.value = value;
+                    },
+                    onApprove: (value) => emit("approve", value),
+                    onReject: (value) => emit("reject", value),
+                    onDismiss: () => emit("dismiss"),
+                });
+        },
+    });
+    return mount(Host, { props, global: { plugins: [i18n, createPinia()] } });
 }
 
 const unclassifiedPolicy = {

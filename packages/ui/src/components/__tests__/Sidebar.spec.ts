@@ -69,11 +69,13 @@ function mockAuth(workspaceId = "ws-test") {
     return auth;
 }
 
+// PLAN-0668：成功的 Session 详情响应必须包含 archived；列表摘要夹具不能冒充详情。
 function stubSessionResponse(record: { id: string; title?: string; createdAt?: string }) {
     return {
         id: record.id,
         title: record.title ?? "New Chat",
         workspaceId: "ws-test",
+        archived: false,
         createdAt: record.createdAt ?? new Date().toISOString(),
         updatedAt: record.createdAt ?? new Date().toISOString(),
     };
