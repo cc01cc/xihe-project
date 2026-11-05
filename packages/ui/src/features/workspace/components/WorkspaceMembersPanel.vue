@@ -27,10 +27,21 @@ import AlertDialogCancel from "../../../components/ui/alert-dialog/AlertDialogCa
 const props = withDefaults(
     defineProps<{
         workspaceId: string;
+        /**
+         * BL-344 残留：**三态**。`undefined` = 能力还没解析出来（首帧）——此时加人表单
+         * **照样挂载但控件禁用**，绝不"先不渲染、解析后再挂载"：那会在 `fill()` 与 `click()`
+         * 之间把 input/button 节点换掉（host E2E 的 4 次采样 3 失败正是这个首帧竞态）。
+         */
         readonly?: boolean;
     }>(),
-    { readonly: false },
+    { readonly: undefined },
 );
+
+/**
+ * 表单是否可交互：只有"确定可管理"才启用；`undefined`（未解析）与 `true`（确定只读）都禁用。
+ * 表单本身**永远挂载**（见模板：无 `v-if`）—— 这是本修复的核心：节点不随能力解析/列表刷新被替换。
+ */
+const addFormInteractive = computed(() => props.readonly === false);
 
 const { t } = useI18n();
 
@@ -286,15 +297,14 @@ onMounted(() => {
             </p>
         </div>
 
-        <div
-            v-if="!props.readonly"
-            class="border rounded-lg p-4 space-y-3"
-            data-testid="ws-members-add"
-        >
+        <!-- BL-344 残留：加人表单**常驻挂载**（无 v-if），只读/未知时用 :disabled 降级，
+             保证列表刷新与能力解析都不会替换 input/button 节点（host E2E 首帧竞态的根因）。 -->
+        <div class="border rounded-lg p-4 space-y-3" data-testid="ws-members-add">
             <div class="text-sm font-medium">{{ t("workspace.membersAddTitle") }}</div>
             <div class="grid gap-2 sm:grid-cols-[1fr_auto_auto]">
                 <Input
                     v-model="addUsername"
+                    :disabled="!addFormInteractive"
                     :placeholder="t('workspace.membersAddUsernamePlaceholder')"
                     maxlength="32"
                     data-testid="ws-members-add-input"
@@ -302,14 +312,15 @@ onMounted(() => {
                 />
                 <select
                     v-model="addRole"
-                    class="text-sm border rounded px-2 py-1 bg-background"
+                    class="text-sm border rounded px-2 py-1 bg-background disabled:opacity-50"
+                    :disabled="!addFormInteractive"
                     data-testid="ws-members-add-role"
                 >
                     <option value="EDITOR">{{ t("workspace.membersRoleEditor") }}</option>
                     <option value="VIEWER">{{ t("workspace.membersRoleViewer") }}</option>
                 </select>
                 <Button
-                    :disabled="adding || !addUsername || !!addUsernameError"
+                    :disabled="!addFormInteractive || adding || !addUsername || !!addUsernameError"
                     data-testid="ws-members-add-btn"
                     @click="() => void handleAdd()"
                 >

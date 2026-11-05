@@ -435,7 +435,11 @@ onMounted(() => {
                 >
                     <WorkspaceMembersPanel
                         :workspace-id="workspaceId"
-                        :readonly="!auth.canManageWorkspace"
+                        :readonly="
+                            auth.workspace?.workspaceRole === undefined
+                                ? undefined
+                                : !auth.canManageWorkspace
+                        "
                     />
                 </div>
 
