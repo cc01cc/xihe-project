@@ -273,10 +273,12 @@ flowchart LR
 
 **什么时候才算 ABAC**：当授权决策开始依赖**请求上下文属性**（时间/IP/资源标签/风险评分/MFA）或**资源属性**时。
 当前决策只依赖"角色 → 原子 + 作用域"，**因此仍是 RBAC**；引入条件表达式前必须先补模型说明与测试基建。
-### 权限原子默认授予集（PLAN-0651，2026-11-05）
+### 权限原子默认授予集（PLAN-0651，2026-11-05；V125 扩充）
 
-十个原子（N1–N10）在**代码侧**的默认集（`SystemAccessRoleCatalog` 是权威，迁移 V111/V114/V115 是它的物化）。
-与 `DefaultSetAtomMatrixTest` 的硬编码矩阵**同源**——改这张表必须同批改测试，否则测试会红。
+N1–N10 + `GRANT_ANY_ATOM`（PLAN-0673，V125）在**代码侧**的默认集（`SystemAccessRoleCatalog` 是权威，
+迁移 V111/V114/V115/V125 是它的物化）。与 `DefaultSetAtomMatrixTest` 的硬编码矩阵**同源**——改这张表必须同批改测试，
+否则测试会红。`MANAGE_ROLES` 不是 0651 新增原子，但 V125 把它授给 ADMIN（D-168），因此也在"受治理原子"口径内
+（一致性测试按 12 原子 × 7 角色核对，见本节末尾）。
 
 | 原子 | scope | SUPER_ADMIN | ADMIN | USER | WS_OWNER | WS_EDITOR | WS_VIEWER | AGENT_DELEGATOR | agent 可持 |
 |---|---|---|---|---|---|---|---|---|---|
@@ -290,6 +292,14 @@ flowchart LR
 | N8 `MANAGE_WORKSPACE_RUNTIME` | both | ✓ | ✓ | — | ✓ | — | — | — | **可** |
 | N9 `MANAGE_WORKSPACE_POLICY` | both | ✓ | ✓ | — | ✓ | ✓ | — | — | **可** |
 | N10 `MANAGE_WORKSPACE_MEMBERS` | both | ✓ | ✓ | — | — | — | — | — | 禁 |
+| `GRANT_ANY_ATOM`（V125，D-166） | instance | ✓ | — | — | — | — | — | — | 禁 |
+| `MANAGE_ROLES`（V125 授 ADMIN，D-168） | instance | ✓ | ✓ | — | — | — | — | — | 禁 |
+
+**一致性核对（T2.3）**：`DefaultSetMigrationParityTest` 在 **Flyway-only fresh 库**上逐原子逐角色比较
+`role_permissions` 与 `SystemAccessRoleCatalog.roleSeeds()`（集合相等，含 resource pattern），并核对
+12 原子 × 7 角色 = 84 格矩阵与 V125 两行（`SUPER_ADMIN × GRANT_ANY_ATOM` 有、`ADMIN × GRANT_ANY_ATOM` 无、
+`ADMIN × MANAGE_ROLES` 有）；`DefaultSetAtomMatrixTest` 继续钉住 N1–N10 的硬编码契约（10×7）。
+迁移面变更（V111/V114/V115/V125 任一）必须让这两个测试同批绿。
 
 **agent principal 禁授集合 = 17 项**（2026-11-05 裁定；PLAN-0673 M2 增 `GRANT_ANY_ATOM`）：N1/N2/N3/N4/N10 + 三个凭证原子 + `CREATE_ACCOUNT`/`CREATE_TEMPLATE`/`MANAGE_ROLES`/`CREATE_OWN_AGENT` + `GRANT_ANY_ATOM` + `MANAGE_WORKSPACE_AGENTS` + 三个能力原子。
 判据一句话：**实例域的东西 agent 不能碰；工作区域的东西由 owner 通过角色授予**（N5–N9 因此**可授**——禁掉会让所有 `WS_EDITOR` 绑定非法，且 agent 无法跑代码）。
