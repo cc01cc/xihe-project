@@ -20,10 +20,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
-import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Locale;
+import java.util.ArrayList;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -560,8 +559,10 @@ public class SessionParticipantService {
         }
         AgentPrincipal principal = agentPrincipalRepository.findById(row.getPrincipalId())
                 .orElseThrow(SessionParticipantService::principalNotFound);
-        if ("PERSONAL".equals(principal.getScope())
-                && !actorUuid.equals(principal.getOwnerUserId())) {
+        // D-174 (scope-tier removal): an owned principal may only be spoken for by its owner; an
+        // owner-less (workspace-shared) principal follows the conversation owner — derived from the
+        // owner column, never from a legacy tier value.
+        if (principal.getOwnerUserId() != null && !actorUuid.equals(principal.getOwnerUserId())) {
             throw capDenied();
         }
         if (principal.getDisabledAt() != null) {
@@ -632,8 +633,9 @@ public class SessionParticipantService {
      *
      * <p>Mirrors {@link #authorizeAsParticipant} exactly; that method stays the authority and this one
      * only predicts it: speaking is the conversation owner's right (a workspace administrator is
-     * never allowed), a HUMAN may speak as themselves, a PERSONAL agent only by its owner, and a
-     * WORKSPACE/INSTANCE agent by the conversation owner (it has no single human owner).</p>
+     * never allowed), a HUMAN may speak as themselves, an owned agent only by its owner, and an
+     * owner-less (workspace-shared) agent by the conversation owner (D-174: derived from the owner
+     * column, never from a legacy tier value).</p>
      */
     private boolean isSelfOwned(SessionParticipant row, String actorId, Session session,
                                 Map<UUID, AgentPrincipal> agents) {
@@ -649,7 +651,7 @@ public class SessionParticipantService {
         if (agent == null || agent.getDisabledAt() != null) {
             return false;
         }
-        return !"PERSONAL".equals(agent.getScope()) || actor.equals(agent.getOwnerUserId());
+        return agent.getOwnerUserId() == null || actor.equals(agent.getOwnerUserId());
     }
 
     private boolean canManage(String actorId, String workspaceId, Session session) {
@@ -859,9 +861,12 @@ public class SessionParticipantService {
         return localPart.isBlank() ? null : localPart;
     }
 
+    /**
+     * D-174 (scope-tier removal): the participant `source` badge is now derived from the owner
+     * column (owned ⇒ personal, owner-less ⇒ workspace) instead of reading the dropped tier.
+     */
     private static String sourceOf(AgentPrincipal principal) {
-        String scope = principal.getScope();
-        return scope == null ? null : scope.toLowerCase(Locale.ROOT);
+        return principal.getOwnerUserId() == null ? "workspace" : "personal";
     }
 
     private static String requireKind(String value) {

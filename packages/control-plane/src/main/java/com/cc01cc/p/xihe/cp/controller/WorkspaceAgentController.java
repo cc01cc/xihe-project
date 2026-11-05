@@ -292,7 +292,6 @@ public class WorkspaceAgentController {
         result.put("createdAt", view.createdAt().toString());
         // PLAN-0622 M1.2: `permissions` -> `permissionsSnapshot`, plus the mandatory `source`.
         result.put("permissionsSnapshot", toValue(view.permissions()));
-        result.put("source", view.source());
         // D26: whether this row is bound to the workspace (visible-without-binding rows are false).
         result.put("bound", view.bound());
         // task-83 Gap D: hook subscriptions — the subscription row must light up on the wire.

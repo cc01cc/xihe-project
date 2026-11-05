@@ -44,15 +44,6 @@ public class AgentPrincipal {
     @Column(name = "disabled_at")
     private Instant disabledAt;
 
-    /**
-     * PLAN-0622 (T0.2/V90): the sharing tier. {@code PERSONAL} principals belong to exactly one
-     * human ({@link #ownerUserId}); {@code WORKSPACE} ones are shared inside a workspace through a
-     * {@code workspace_agents} row; {@code INSTANCE} ones are visible instance-wide and may only be
-     * bound by instance administration.
-     */
-    @Column(name = "scope", nullable = false, length = 16)
-    private String scope = "WORKSPACE";
-
     /** PLAN-0625 (V95): USER = human-created; SYSTEM_PRESET = builtin guard preset. */
     public static final String ORIGIN_USER = "USER";
     public static final String ORIGIN_SYSTEM_PRESET = "SYSTEM_PRESET";
@@ -146,7 +137,6 @@ public class AgentPrincipal {
     public Instant getDisabledAt() { return disabledAt; }
     public void setDisabledAt(Instant disabledAt) { this.disabledAt = disabledAt; }
 
-    public String getScope() { return scope; }
     public String getOrigin() { return origin; }
     public void setOrigin(String origin) { this.origin = origin; }
     public String getPresetId() { return presetId; }
@@ -157,7 +147,6 @@ public class AgentPrincipal {
     public void setContextPolicy(JsonNode contextPolicy) { this.contextPolicy = contextPolicy; }
     public JsonNode getDelegationPolicy() { return delegationPolicy; }
     public void setDelegationPolicy(JsonNode delegationPolicy) { this.delegationPolicy = delegationPolicy; }
-    public void setScope(String scope) { this.scope = scope; }
 
     public UUID getOwnerUserId() { return ownerUserId; }
     public void setOwnerUserId(UUID ownerUserId) { this.ownerUserId = ownerUserId; }
