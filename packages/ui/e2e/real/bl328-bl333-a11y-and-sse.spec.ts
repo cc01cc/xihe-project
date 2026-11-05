@@ -308,7 +308,17 @@ test("@host BL-333 A 页决定 ⇒ B 页卡片消失且再点不发请求、草�
     // 给"可能发出去的请求"一个观察窗（轮询而非固定 sleep 的语义等价物）
     await expect.poll(() => bDecisions.length, { timeout: 2_000, intervals: [250, 500] }).toBe(0);
 
-    // 判据 3：B 页草稿保留
+    // 判据 3：B 页草稿保留（先打印 elapsed/请求数，便于"元素在但内容没了"这类现场定位）
+    console.log(
+        `[bl333] 前置观察 session=${session.sessionId} bCardHiddenMs=${elapsed} ` +
+            `bDecisionRequests=${bDecisions.length} bDraftAfterDecision=` +
+            JSON.stringify(
+                await pageB
+                    .getByTestId("chat-input")
+                    .inputValue()
+                    .catch(() => "<read-failed>"),
+            ),
+    );
     await expect(pageB.getByTestId("chat-input")).toHaveValue(draft, { timeout: 10_000 });
 
     console.log(
