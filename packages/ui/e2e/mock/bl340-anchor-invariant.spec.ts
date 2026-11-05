@@ -64,7 +64,7 @@ test.describe("BL-340：上滚时窗口换页不得回跳", () => {
         page: import("@playwright/test").Page,
         steps: number,
         stepPx: number,
-    ): Promise<number[]> {
+    ): Promise<{ sequence: number[]; heights: number[]; firstRows: string[] }> {
         const chat = new ChatPage(page);
         await chat.goto(SESSION_ID);
         await page
@@ -97,20 +97,28 @@ test.describe("BL-340：上滚时窗口换页不得回跳", () => {
             .toBe(true);
 
         const sequence: number[] = [];
+        const heights: number[] = [];
+        const firstRows: string[] = [];
         for (let step = 0; step < steps; step += 1) {
-            sequence.push(
-                await page.evaluate((delta) => {
-                    const viewport = document.querySelector(
-                        '[data-testid="message-scroller-viewport"]',
-                    ) as HTMLElement;
-                    // 真实滚轮意图（scroller 据此把模式切成 free-scrolling），再上滚一段。
-                    viewport.dispatchEvent(
-                        new WheelEvent("wheel", { bubbles: true, deltaY: -120 }),
-                    );
-                    viewport.scrollTop = Math.max(0, viewport.scrollTop - delta);
-                    return Math.round(viewport.scrollTop);
-                }, stepPx),
-            );
+            const sample = await page.evaluate((delta) => {
+                const viewport = document.querySelector(
+                    '[data-testid="message-scroller-viewport"]',
+                ) as HTMLElement;
+                // 真实滚轮意图（scroller 据此把模式切成 free-scrolling），再上滚一段。
+                viewport.dispatchEvent(new WheelEvent("wheel", { bubbles: true, deltaY: -120 }));
+                viewport.scrollTop = Math.max(0, viewport.scrollTop - delta);
+                const firstRow =
+                    (viewport.querySelector("[data-message-id]") as HTMLElement | null)?.dataset
+                        .messageId ?? "";
+                return {
+                    scrollTop: Math.round(viewport.scrollTop),
+                    scrollHeight: viewport.scrollHeight,
+                    firstRow,
+                };
+            }, stepPx);
+            sequence.push(sample.scrollTop);
+            heights.push(sample.scrollHeight);
+            firstRows.push(sample.firstRow);
             // 等"换页 + 任何补偿"落地：连续两次采样 scrollTop 相同再继续（不用固定 sleep）。
             let previous = -1;
             for (let attempt = 0; attempt < 20; attempt += 1) {
@@ -128,7 +136,7 @@ test.describe("BL-340：上滚时窗口换页不得回跳", () => {
                 previous = current;
             }
         }
-        return sequence;
+        return { sequence, heights, firstRows };
     }
 
     function expectMonotonicUp(sequence: number[]) {
@@ -142,14 +150,29 @@ test.describe("BL-340：上滚时窗口换页不得回跳", () => {
 
     // BL-340 修复中：第三条 scrollTop 写入者待定位（见 .local/evidence/bl340-anchor-jump-locate.md §9）；
     // 本用例为最终守卫，绿之前不得改为 test()。
-    test.fixme("最小复现 8×500px：上滚序列单调不增", async ({ page }) => {
-        const sequence = await scrollUpSequence(page, 8, 500);
+    test.fixme("最小复现 8×500px：上滚单调 + scrollHeight 抖动被吸收", async ({ page }) => {
+        const { sequence, heights, firstRows } = await scrollUpSequence(page, 8, 500);
         expectMonotonicUp(sequence);
+        // 判据 3（BL-340）：上滚期间的 `scrollHeight` 变化次数必须 ≤ 换页次数。
+        // 因果链：窗口滑动 ⇒ 新行挂载用 fallback ⇒ 测高漂移 ⇒ `totalHeight` 重算 ⇒ `scrollHeight` 变
+        // ⇒ 浏览器静默钳 `scrollTop`。若"每次换页都再抖一轮"，该计数会显著大于换页次数。
+        const countChanges = (values: Array<string | number>): number =>
+            values.reduce<number>(
+                (acc, value, index) => (index > 0 && value !== values[index - 1] ? acc + 1 : acc),
+                0,
+            );
+        const swapCount = countChanges(firstRows);
+        const heightChangeCount = countChanges(heights);
+        expect(
+            heightChangeCount,
+            `scrollHeight 变化次数(${heightChangeCount}) 应 ≤ 换页次数(${swapCount})+1；` +
+                `heights=${heights.join(" → ")} firstRows=${firstRows.join(" ")}`,
+        ).toBeLessThanOrEqual(swapCount + 1);
     });
 
     // BL-340 修复中：同上（最终守卫，绿之前不得改为 test()）。
     test.fixme("BL-316 原判据 40×2000px：单调不增且能到顶", async ({ page }) => {
-        const sequence = await scrollUpSequence(page, 40, 2000);
+        const { sequence } = await scrollUpSequence(page, 40, 2000);
         expectMonotonicUp(sequence);
         expect(
             sequence[sequence.length - 1],
