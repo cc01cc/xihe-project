@@ -76,18 +76,22 @@ function git(...args) {
 }
 
 function provenance(label) {
+  const raw = git('status', '--short', '--untracked-files=all').split('\n').filter(Boolean);
   return {
     label,
     head: git('rev-parse', 'HEAD'),
-    dirty: git('status', '--short', '--untracked-files=all').split('\n').filter(Boolean),
+    // JSON 里只放路径（Lead 2026-11-06 定死 `afterDirty: ["docs/…"]` 的形状）；原始 `M`/`??` 前缀另存
+    // 供控制台报错用，避免把 git 状态码混进机器可读字段。
+    dirty: raw.map((line) => line.replace(/^.{2}\s+/u, '').trim()),
+    rawDirty: raw,
     at: new Date().toISOString(),
   };
 }
 
 function assertClean(snapshot) {
-  if (ALLOW_DIRTY || snapshot.dirty.length === 0) return;
-  console.error(`[preflight] ${snapshot.label}: working tree is DIRTY (${snapshot.dirty.length} entries) — refusing to measure.`);
-  for (const line of snapshot.dirty.slice(0, 10)) console.error(`  ${line}`);
+  if (ALLOW_DIRTY || (snapshot.rawDirty ?? snapshot.dirty).length === 0) return;
+  console.error(`[preflight] ${snapshot.label}: working tree is DIRTY (${(snapshot.rawDirty ?? snapshot.dirty).length} entries) — refusing to measure.`);
+  for (const line of (snapshot.rawDirty ?? snapshot.dirty).slice(0, 10)) console.error(`  ${line}`);
   throw new Error(`dirty working tree at ${snapshot.label}; a round that cannot name the tree it measured is not evidence`);
 }
 
