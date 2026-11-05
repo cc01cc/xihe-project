@@ -90,13 +90,12 @@ beforeEach(() => {
             templateName: null,
             createdAt: "2026-11-05T00:00:00Z",
             permissionsSnapshot: [],
-            source: "workspace",
             bound: true,
             disabled: false,
         },
     ]);
     mockedApi.listAgentPrincipals.mockResolvedValue([
-        { principalId: "agent-1", name: "Research Agent", scope: "INSTANCE" },
+        { principalId: "agent-1", name: "Research Agent" },
     ]);
     mockedApi.getAgentRoles.mockResolvedValue([binding("role-seed", "seed-1", true)]);
     mockedApi.bindAgentRole.mockResolvedValue(undefined);
@@ -174,7 +173,7 @@ describe("AgentRoleBindingsSection (PLAN-0651 T5.2)", () => {
         mountSection("instance");
         await flushPromises();
 
-        expect(mockedApi.listAgentPrincipals).toHaveBeenCalledWith("INSTANCE");
+        expect(mockedApi.listAgentPrincipals).toHaveBeenCalledWith();
         expect(mockedApi.getWorkspaceAgents).not.toHaveBeenCalled();
         expect(mockedApi.getAgentRoles).toHaveBeenCalledWith(null, "agent-1");
     });

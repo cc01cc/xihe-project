@@ -345,6 +345,12 @@ public class RoleGrantMaterializer {
 
         if (!toDelete.isEmpty()) {
             grantRepository.deleteAll(toDelete);
+            // BL-313 / D-182: the unique key (uq_grants_role_atom) can collide when a malformed
+            // multi-atom row for the same (subject, scope, actionClass) is deleted and rewritten in
+            // the same flush — Hibernate orders the INSERT before the DELETE (reproduced red as
+            // 23505 on the e2e runner shape, requestId 8891fb74-…). Flush the deletions first so
+            // the repair path actually repairs (the rewrite is then a plain insert).
+            grantRepository.flush();
         }
         if (!toCreate.isEmpty()) {
             grantRepository.saveAll(toCreate);

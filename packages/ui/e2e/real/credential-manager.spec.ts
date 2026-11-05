@@ -347,7 +347,6 @@ test("@host credential manager — UI registration, role block, binding, lease u
     const principalResponse = await request.post(`${CP_URL}/api/v1/agent-principals`, {
         headers: authHeaders,
         data: {
-            scope: "WORKSPACE",
             name: agentName("E2EManagerPrincipal", Date.now()),
             templateId,
         },
@@ -357,7 +356,6 @@ test("@host credential manager — UI registration, role block, binding, lease u
     const secondPrincipalResponse = await request.post(`${CP_URL}/api/v1/agent-principals`, {
         headers: authHeaders,
         data: {
-            scope: "WORKSPACE",
             name: agentName("E2EManagerPrincipalB", Date.now()),
             templateId,
         },

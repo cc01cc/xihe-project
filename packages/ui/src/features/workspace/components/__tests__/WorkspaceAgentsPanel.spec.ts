@@ -59,7 +59,11 @@ vi.mock("../../../../composables/api", async (importOriginal) => {
 
 const admin = { value: true };
 vi.mock("../../../../stores/auth", () => ({
-    useAuthStore: () => ({ isAdmin: admin.value, canManageWorkspace: true }),
+    useAuthStore: () => ({
+        isAdmin: admin.value,
+        canManageWorkspace: true,
+        user: { id: "99999999-9999-4999-8999-999999999999" },
+    }),
 }));
 
 import { ApiError } from "../../../../composables/api";
@@ -96,6 +100,7 @@ function mountPanel() {
 
 beforeEach(() => {
     admin.value = true;
+    localStorage.removeItem("xihe-pending-agent-principals");
     apiMock.getWorkspaceAgents.mockResolvedValue([]);
     apiMock.getAgentTemplates.mockResolvedValue({
         layer: "instance",
@@ -256,7 +261,8 @@ describe("WorkspaceAgentsPanel T5.1 scope write exit", () => {
     it("does not render a scope write control", async () => {
         apiMock.getSelfPermissions.mockResolvedValue(WORKSPACE_ONLY);
         const wrapper = await mountOpenedPanel();
-        expect(wrapper.text()).not.toContain(i18n.global.t("workspace.agentScopeTitle"));
+        expect(wrapper.find('[data-testid="agent-principal-scope"]').exists()).toBe(false);
+        expect(wrapper.html()).not.toContain("data-agent-scope");
     });
 
     it("gates creation on MANAGE_WORKSPACE_AGENTS because CP defaults to WORKSPACE", async () => {
@@ -350,22 +356,20 @@ describe("WorkspaceAgentsPanel PLAN-0622 list rows", () => {
         permissionsSnapshot: [],
         bound: true,
         disabled: false,
-        source: "personal",
-        ownerUserId: "99999999-9999-4999-8999-999999999999",
         defaultModelProvider: "openai",
         defaultModelName: "gpt-4o-mini",
         allowedModels: [{ provider: "openai", model: "gpt-4o-mini" }],
     };
 
-    it("shows the source badge and the default model for each row", async () => {
+    it("renders the default model without a tier/scope badge for each row", async () => {
         apiMock.getWorkspaceAgents.mockResolvedValue([boundAgent]);
         const wrapper = await mountOpenedPanel();
-        const badge = wrapper.find(
-            '[data-testid="agent-scope-badge-77777777-7777-4777-8777-777777777777"]',
-        );
-        expect(badge.exists()).toBe(true);
-        expect(badge.attributes("data-agent-scope")).toBe("personal");
-        expect(badge.text()).toBe("个人智能体");
+        expect(
+            wrapper
+                .find('[data-testid="agent-scope-badge-77777777-7777-4777-8777-777777777777"]')
+                .exists(),
+        ).toBe(false);
+        expect(wrapper.html()).not.toContain("data-agent-scope");
         expect(
             wrapper
                 .find('[data-testid="agent-default-model-77777777-7777-4777-8777-777777777777"]')
@@ -413,7 +417,6 @@ describe("WorkspaceAgentsPanel list refresh after create", () => {
             templateId: null,
             templateName: null,
             createdAt: "2026-11-02T00:00:00Z",
-            source: "personal",
             permissionsSnapshot: [],
             bound: true,
             disabled: false,
@@ -425,24 +428,110 @@ describe("WorkspaceAgentsPanel list refresh after create", () => {
             templateId: null,
             templateName: null,
             createdAt: created.createdAt,
-            scope: "PERSONAL",
-            ownerUserId: "99999999-9999-4999-8999-999999999999",
         });
         const wrapper = await mountOpenedPanel();
         expect(
-            wrapper.find(`[data-testid="agent-scope-badge-${created.principalId}"]`).exists(),
+            wrapper.find(`[data-testid="workspace-agent-${created.principalId}"]`).exists(),
         ).toBe(false);
 
         await wrapper.find('[data-testid="agent-principal-name"]').setValue("FreshAgent");
         await wrapper.find('[data-testid="agent-principal-create-form"]').trigger("submit");
         await flushPromises();
 
-        const badge = wrapper.find(`[data-testid="agent-scope-badge-${created.principalId}"]`);
-        expect(badge.exists(), "the created principal must appear in the list immediately").toBe(
+        const row = wrapper.find(`[data-testid="workspace-agent-${created.principalId}"]`);
+        expect(row.exists(), "the created principal must appear in the list immediately").toBe(
             true,
         );
-        expect(badge.attributes("data-agent-scope")).toBe("personal");
+        expect(wrapper.find('[data-testid="unbound-agent-principal"]').text()).toContain(
+            created.principalId,
+        );
+        expect(wrapper.html()).not.toContain("data-agent-scope");
         expect(apiMock.getWorkspaceAgents).toHaveBeenCalledTimes(2);
+        wrapper.unmount();
+    });
+});
+
+// ── PLAN-0651 recovery: principalId 按 userId+workspaceId 本地保存，绑定成功才清 ─────────
+describe("WorkspaceAgentsPanel pending principal recovery", () => {
+    const STORAGE_KEY = "xihe-pending-agent-principals";
+    const pendingKey = `99999999-9999-4999-8999-999999999999/${WORKSPACE_ID}`;
+    const PENDING_ID = "aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa";
+
+    function pendingCard(wrapper: Awaited<ReturnType<typeof mountOpenedPanel>>) {
+        return wrapper.find('[data-testid="unbound-agent-principal"]');
+    }
+
+    it("restores the pending principal after a remount and clears it only after a successful PUT", async () => {
+        apiMock.createAgentPrincipal.mockResolvedValue({
+            principalId: PENDING_ID,
+            templateId: null,
+            templateName: null,
+            createdAt: "2026-11-05T00:00:00Z",
+        });
+        apiMock.updateWorkspaceAgentCap.mockResolvedValue({});
+
+        const first = await mountOpenedPanel();
+        await first.find('[data-testid="agent-principal-name"]').setValue("PendingAgent");
+        await first.find('[data-testid="agent-principal-create-form"]').trigger("submit");
+        await flushPromises();
+
+        expect(pendingCard(first).text()).toContain(PENDING_ID);
+        expect(pendingCard(first).text()).toContain(
+            i18n.global.t("workspace.agentPendingRecoveryNote"),
+        );
+        const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "{}") as Record<
+            string,
+            string
+        >;
+        expect(saved[pendingKey]).toBe(PENDING_ID);
+        first.unmount();
+
+        // Close/reopen simulation: the pending card must come back from local storage.
+        apiMock.getWorkspaceAgents.mockResolvedValue([]);
+        const restored = await mountOpenedPanel();
+        expect(pendingCard(restored).text()).toContain(PENDING_ID);
+        expect(pendingCard(restored).text()).toContain(
+            i18n.global.t("workspace.agentPendingRecoveryNote"),
+        );
+
+        await restored.find('[data-testid="agent-principal-bind"]').trigger("click");
+        await flushPromises();
+
+        expect(apiMock.updateWorkspaceAgentCap).toHaveBeenCalledWith(WORKSPACE_ID, PENDING_ID, []);
+        expect(pendingCard(restored).exists()).toBe(false);
+        expect(JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "{}")).not.toHaveProperty(
+            pendingKey,
+        );
+        restored.unmount();
+    });
+
+    it("keeps the pending card and surfaces the CP detail when PUT returns 409", async () => {
+        apiMock.createAgentPrincipal.mockResolvedValue({
+            principalId: PENDING_ID,
+            templateId: null,
+            templateName: null,
+            createdAt: "2026-11-05T00:00:00Z",
+        });
+        apiMock.updateWorkspaceAgentCap.mockRejectedValue(
+            new ApiError("ROLE_BINDING_EXCEEDS_CAP", "role atoms exceed cap: workspace.write"),
+        );
+
+        const wrapper = await mountOpenedPanel();
+        await wrapper.find('[data-testid="agent-principal-name"]').setValue("PendingAgent");
+        await wrapper.find('[data-testid="agent-principal-create-form"]').trigger("submit");
+        await flushPromises();
+        await wrapper.find('[data-testid="agent-principal-bind"]').trigger("click");
+        await flushPromises();
+
+        expect(wrapper.find('[data-testid="agent-error"]').text()).toContain(
+            "role atoms exceed cap: workspace.write",
+        );
+        expect(pendingCard(wrapper).exists()).toBe(true);
+        const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "{}") as Record<
+            string,
+            string
+        >;
+        expect(saved[pendingKey]).toBe(PENDING_ID);
         wrapper.unmount();
     });
 });
@@ -458,7 +547,6 @@ describe("WorkspaceAgentsPanel bind an existing agent row", () => {
         templateId: null,
         templateName: null,
         createdAt: "2026-11-02T00:00:00Z",
-        source: "personal",
         permissionsSnapshot: [],
         bound: true,
         disabled: false,
@@ -510,7 +598,6 @@ describe("WorkspaceAgentsPanel unbound badge", () => {
                 templateId: null,
                 templateName: null,
                 createdAt: "2026-11-02T00:00:00Z",
-                source: "personal",
                 permissionsSnapshot: [],
                 bound: false,
                 disabled: false,
@@ -521,7 +608,6 @@ describe("WorkspaceAgentsPanel unbound badge", () => {
                 templateId: null,
                 templateName: null,
                 createdAt: "2026-11-02T00:00:00Z",
-                source: "workspace",
                 permissionsSnapshot: [],
                 bound: true,
                 disabled: false,
@@ -555,7 +641,6 @@ describe("WorkspaceAgentsPanel disabled row", () => {
                 templateId: null,
                 templateName: null,
                 createdAt: "2026-11-02T00:00:00Z",
-                source: "personal",
                 permissionsSnapshot: [],
                 bound: true,
                 disabled: true,
@@ -594,7 +679,6 @@ describe("WorkspaceAgentsPanel hook subscriptions (PLAN-0625 M3, read-only)", ()
         permissionsSnapshot: [],
         bound: true,
         disabled: false,
-        source: "workspace",
         hooks: { advisors: [{ kind: "guard", on: ["approval.ask"] }] },
     };
 
@@ -659,8 +743,6 @@ describe("WorkspaceAgentsPanel PLAN-0629 read-only memory", () => {
         permissionsSnapshot: [],
         bound: true,
         disabled: false,
-        source: "personal",
-        ownerUserId: "99999999-9999-4999-8999-999999999999",
     };
     const toggle = `[data-testid="agent-memory-toggle-${PRINCIPAL_ID}"]`;
 
@@ -874,8 +956,6 @@ describe("WorkspaceAgentsPanel memory write surface", () => {
         permissionsSnapshot: [],
         bound: true,
         disabled: false,
-        source: "workspace",
-        ownerUserId: null,
         // 「启用记忆」开关必须与现值合并且不丢其它 key。
         contextPolicy: { window: 5, memory: { policyVersion: 1 } },
     };
@@ -1013,8 +1093,6 @@ describe("WorkspaceAgentsPanel PLAN-0667 roles & skills", () => {
         permissionsSnapshot: [],
         bound: true,
         disabled: false,
-        source: "personal",
-        ownerUserId: "99999999-9999-4999-8999-999999999999",
     };
     const WORKSPACE_MANAGE = {
         userId: "99999999-9999-4999-8999-999999999999",

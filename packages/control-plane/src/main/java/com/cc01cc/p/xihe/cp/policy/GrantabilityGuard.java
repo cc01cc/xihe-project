@@ -76,29 +76,144 @@ public class GrantabilityGuard {
      *     {@link AccessScope} for a <b>binding</b> (target-scope judgement)
      */
     public void assertGrantable(Set<String> atoms, AccessScope scope) {
+        Set<String> requestedNames = atoms == null ? Set.of() : new LinkedHashSet<>(atoms);
+        if (requestedNames.stream().anyMatch(PermissionAtomCatalog::isCapabilityAtom)) {
+            UUID subjectId = requester.currentSubjectId();
+            if (subjectId == null) {
+                throw new CpApiException(HttpStatus.FORBIDDEN, "FORBIDDEN", "Authentication required");
+            }
+            List<String> exceeding = scope == null
+                    ? exceedingInAnyScope(subjectId, requestedNames)
+                    : exceedingInScope(subjectId, requestedNames, scope);
+            if (requester.holdsActionAtom(subjectId, ToolFaceRegistry.ACTION_GRANT_ANY_ATOM, null)) {
+                auditBypass(subjectId, requestedNames, exceeding, scope);
+                return;
+            }
+            if (!exceeding.isEmpty()) {
+                auditDenied(subjectId, requestedNames, exceeding, scope);
+                throw new CpApiException(HttpStatus.FORBIDDEN, "PRIVILEGE_ESCALATION",
+                        "Cannot grant atoms the caller does not hold: " + String.join(",", exceeding));
+            }
+            auditAllowed(subjectId, requestedNames, scope);
+            return;
+        }
+        assertGrantableRows(atoms == null ? Set.of() : atoms.stream()
+                .map(name -> new GrantIntersectionEvaluator.PermissionAtom(name,
+                        canonicalResourceOf(name)))
+                .collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new)), scope);
+    }
+
+    /**
+     * The resource a name-path request really carries: the catalog's canonical resource for that
+     * atom ({@code *} for ordinary actions, {@code credential:*} for the credential family).
+     *
+     * <p>PLAN-0673: the name path used a literal {@code "*"}, which made every credential atom
+     * request <b>wider</b> than the rows materialised from {@code role_permissions} — a legitimate
+     * holder of {@code (credential_use, credential:*)} was then denied by the very
+     * "concrete-does-not-cover-wildcard" rule this fix introduced (the {@code *} here was a
+     * conversion artefact, not a real wildcard request). Unknown names keep the wildcard shape so
+     * they still fail the subset judgement with 403 instead of turning into a 400.</p>
+     */
+    private static String canonicalResourceOf(String name) {
+        try {
+            return PermissionAtomCatalog.atom(name).canonicalResource();
+        } catch (RuntimeException unknownAtom) {
+            return "*";
+        }
+    }
+
+    /** Resource-aware variant used when canonical role rows are materialized into a binding scope. */
+    public void assertGrantableRows(Set<GrantIntersectionEvaluator.PermissionAtom> requestedRows,
+                                   AccessScope scope) {
         UUID subjectId = requester.currentSubjectId();
         if (subjectId == null) {
             throw new CpApiException(HttpStatus.FORBIDDEN, "FORBIDDEN", "Authentication required");
         }
-        Set<String> requested = atoms == null ? Set.of() : new LinkedHashSet<>(atoms);
+        Set<GrantIntersectionEvaluator.PermissionAtom> requested = requestedRows == null
+                ? Set.of() : new LinkedHashSet<>(requestedRows);
         // PLAN-0673 M2 / D-166: the single bypass. It is an ATOM, never a role-name check; every use
         // is audited with the exact list of atoms the caller does not hold ("bypassed what").
         if (requester.holdsActionAtom(subjectId, ToolFaceRegistry.ACTION_GRANT_ANY_ATOM, null)) {
-            List<String> skipped = scope == null
-                    ? exceedingInAnyScope(subjectId, requested)
-                    : exceedingInScope(subjectId, requested, scope);
-            auditBypass(subjectId, requested, skipped, scope);
+            List<String> skipped = exceedingRows(subjectId, requested, scope);
+            auditBypass(subjectId, atomRows(requested), skipped, scope);
             return;
         }
-        List<String> exceeding = scope == null
-                ? exceedingInAnyScope(subjectId, requested)
-                : exceedingInScope(subjectId, requested, scope);
+        List<String> exceeding = exceedingRows(subjectId, requested, scope);
         if (!exceeding.isEmpty()) {
-            auditDenied(subjectId, requested, exceeding, scope);
+            auditDenied(subjectId, atomRows(requested), exceeding, scope);
             throw new CpApiException(HttpStatus.FORBIDDEN, "PRIVILEGE_ESCALATION",
                     "Cannot grant atoms the caller does not hold: " + String.join(",", exceeding));
         }
-        auditAllowed(subjectId, requested, scope);
+        auditAllowed(subjectId, atomRows(requested), scope);
+    }
+
+    private List<String> exceedingRows(UUID subjectId,
+            Set<GrantIntersectionEvaluator.PermissionAtom> requested, AccessScope scope) {
+        if (scope == null) {
+            // Definition judgement: "held anywhere" = instance ∪ every workspace the caller is bound
+            // in — but compared as action+RESOURCE rows, not names. A caller holding only
+            // `read@file1` must not be able to define a role carrying the catalog's `read@*` row,
+            // otherwise the definition itself is the escalation (PLAN-0673 resource granularity).
+            // Capability atoms keep the capability-projection branch.
+            AuthzContext.Capabilities capabilities = authzContext.capabilitiesFor(subjectId);
+            List<UUID> scopes = new ArrayList<>();
+            scopes.add(null);
+            for (AccessRoleBinding binding : bindings.findBySubjectTypeAndSubjectIdAndScopeType(
+                    AuthzContext.SUBJECT_USER, subjectId, AccessScope.WORKSPACE)) {
+                scopes.add(binding.getScopeId());
+            }
+            List<String> denied = new ArrayList<>();
+            for (GrantIntersectionEvaluator.PermissionAtom atom : requested) {
+                boolean allowed = scopes.stream().anyMatch(workspaceId -> heldCovers(
+                        requester.actionPermissions(subjectId, workspaceId), capabilities,
+                        workspaceId, atom));
+                if (!allowed) {
+                    denied.add(atom.actionClass() + "@" + atom.resource());
+                }
+            }
+            return denied;
+        }
+        Set<GrantIntersectionEvaluator.PermissionAtom> held = requester.actionPermissions(subjectId, scope.id());
+        AuthzContext.Capabilities capabilities = authzContext.capabilitiesFor(subjectId);
+        List<String> denied = new ArrayList<>();
+        for (GrantIntersectionEvaluator.PermissionAtom atom : requested) {
+            if (!heldCovers(held, capabilities, scope.id(), atom)) {
+                denied.add(atom.actionClass() + "@" + atom.resource());
+            }
+        }
+        return denied;
+    }
+
+    /**
+     * Does one held grant set cover the requested action+resource row?
+     *
+     * <p>{@code held} is the caller's row set at exactly {@code workspaceId} ({@code null} =
+     * instance). Coverage is directional: a held <b>wildcard</b> covers a concrete request, a held
+     * <b>concrete</b> resource never covers {@code *} — that direction is the whole point of the
+     * PLAN-0673 fix. Capability atoms are answered from the capability projection instead of rows.
+     */
+    private boolean heldCovers(Set<GrantIntersectionEvaluator.PermissionAtom> held,
+            AuthzContext.Capabilities capabilities, UUID workspaceId,
+            GrantIntersectionEvaluator.PermissionAtom atom) {
+        if (PermissionAtomCatalog.isCapabilityAtom(atom.actionClass())) {
+            return capabilityHeld(capabilities, atom.actionClass(), workspaceId);
+        }
+        if ("*".equals(atom.resource())) {
+            return held.contains(atom);
+        }
+        return held.stream().anyMatch(grant -> grant.actionClass().equals(atom.actionClass())
+                && (grant.resource().equals(atom.resource())
+                || LayeredPolicyResolver.matches(grant.resource(), atom.resource(), ToolShape.OPAQUE)));
+    }
+
+    private static Set<String> atomNames(Set<GrantIntersectionEvaluator.PermissionAtom> atoms) {
+        return atoms.stream().map(GrantIntersectionEvaluator.PermissionAtom::actionClass)
+                .collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
+    }
+
+    private static Set<String> atomRows(Set<GrantIntersectionEvaluator.PermissionAtom> atoms) {
+        return atoms.stream().map(atom -> atom.actionClass() + "@" + atom.resource())
+                .collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
     }
 
     private List<String> exceedingInScope(UUID subjectId, Set<String> requested, AccessScope scope) {

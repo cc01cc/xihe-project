@@ -251,7 +251,7 @@ test.describe("@host PLAN-0630 T5b.4 real to/cc walkthrough", () => {
         async function createBoundPrincipal(name: string): Promise<string> {
             const created = await request.post(`${CP_URL}/api/v1/agent-principals`, {
                 headers,
-                data: { scope: "WORKSPACE", name, templateId },
+                data: { name, templateId },
             });
             expect(created.status(), await created.text()).toBe(201);
             const principalId = requireUuid(

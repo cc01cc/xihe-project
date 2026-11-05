@@ -177,7 +177,7 @@ class AgentPrincipalRoleBindingIntegrationTest extends AbstractIntegrationTest {
     private AgentPrincipal createPlainPrincipal(String name, List<UUID> roleIds) {
         var template = agentTemplateService.resolveForCreation(userId, workspaceId.toString(), null);
         return agentPrincipalService.createPrincipal(userId, name, null, template.snapshot(),
-                null, null, null, null, null, null, null, null, roleIds);
+                null, null, null, null, null, null, roleIds);
     }
 
     /** A minimal cap that both the principal and the actor hold — the binding is optional narrowing. */

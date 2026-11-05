@@ -75,11 +75,10 @@ async function loadAgents() {
                     .map((row) => ({
                         principalId: row.principalId,
                         name: row.name,
-                        scope: row.scope,
                     }));
             }
         } else {
-            agents.value = await api.listAgentPrincipals("INSTANCE");
+            agents.value = await api.listAgentPrincipals();
         }
         const previousSelection = selectedPrincipalId.value;
         if (!agents.value.some((agent) => agent.principalId === selectedPrincipalId.value)) {

@@ -127,12 +127,6 @@ const roleLabel = computed(() => t(ROLE_KEYS[props.participant.role]));
 const wakeLabel = computed(() => t(WAKE_KEYS[props.participant.wakePolicy]));
 const respondLabel = computed(() => t(RESPOND_KEYS[props.participant.respondPolicy]));
 
-const sourceLabel = computed(() => {
-    const source = props.participant.source;
-    if (!source) return "";
-    return t(`workspace.agentSource${source[0].toUpperCase()}${source.slice(1)}`);
-});
-
 /** R7：服务端游标是唯一真相；缺失即为"未知"，不渲染徽标、不当成 0。 */
 const mentionCount = computed(() => {
     const count = props.participant.readCursor?.mentionCount;
@@ -184,12 +178,6 @@ const disabled = computed(() => Boolean(props.participant.disabledAt));
                     <Shield v-if="participant.role === 'GUARD'" class="size-3" aria-hidden="true" />
                     {{ roleLabel }}
                 </span>
-                <span
-                    v-if="sourceLabel"
-                    class="rounded border px-1.5 py-0.5 text-[10px]"
-                    :data-testid="`participant-source-badge-${participant.participantId}`"
-                    >{{ sourceLabel }}</span
-                >
                 <span
                     v-if="disabled"
                     class="rounded border border-destructive/40 px-1.5 py-0.5 text-[10px] text-destructive"

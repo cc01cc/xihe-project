@@ -101,7 +101,7 @@ test.describe("@host PLAN-0366 MCP status + single job cancel", () => {
 
         const principalRes = await request.post(`${CP_URL}/api/v1/agent-principals`, {
             headers: bootHeaders,
-            data: { scope: "WORKSPACE", name: "Plan0366Agent", templateId },
+            data: { name: "Plan0366Agent", templateId },
         });
         expect(principalRes.status(), await principalRes.text()).toBe(201);
         const principalId = ((await principalRes.json()) as { principalId: string }).principalId;

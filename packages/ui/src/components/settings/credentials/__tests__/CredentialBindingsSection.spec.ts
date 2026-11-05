@@ -56,7 +56,6 @@ beforeEach(() => {
             templateId: null,
             templateName: null,
             createdAt: "2026-10-13T00:00:00Z",
-            source: "workspace",
             permissionsSnapshot: [
                 { actionClass: "credential_use", resource: `credential:${CREDENTIAL_ID}` },
             ],
@@ -67,7 +66,6 @@ beforeEach(() => {
             templateId: null,
             templateName: null,
             createdAt: "2026-10-13T00:00:00Z",
-            source: "workspace",
             permissionsSnapshot: [],
             bound: true,
         },

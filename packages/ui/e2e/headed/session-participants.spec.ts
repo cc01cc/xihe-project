@@ -82,12 +82,6 @@ const RECORDED_TESTIDS: Array<{ id: string; scene: string; status: TestIdStatus;
         note: "ParticipantRow.vue:173（`data-session-role`）",
     },
     {
-        id: "participant-source-badge-*",
-        scene: "S2",
-        status: "asserted",
-        note: "ParticipantRow.vue:181（仅 AGENT 有 source）",
-    },
-    {
         id: "participant-model-*",
         scene: "S2",
         status: "asserted",
@@ -729,10 +723,8 @@ test.describe("PLAN-0623 有头走查：会话参与者 dock tab", () => {
             humanRow.getByTestId(`participant-initials-${humanParticipantId}`),
         ).not.toBeEmpty();
 
-        // AGENT：来源徽标 + 模型段；HUMAN：两者都不该有。
-        await expect(
-            agentRow.getByTestId(`participant-source-badge-${agentRowParticipantId}`),
-        ).toBeVisible();
+        // 主体 tier/source 徽标已随 D-174 移除；AGENT 的模型段仍必须渲染。
+        expect(await page.locator("[data-testid^='participant-source-badge-']").count()).toBe(0);
         // 有值时**必须**渲染，且文本是"provider / model"（ParticipantRow.vue 的 modelIntent）：
         // 这条同时证明 ① 模型意图能存 ② 经 participants 视图传到 UI ③ 格式正确。
         await expect(agentRow.getByTestId(`participant-model-${agentRowParticipantId}`)).toHaveText(
@@ -742,15 +734,12 @@ test.describe("PLAN-0623 有头走查：会话参与者 dock tab", () => {
             await humanRow.getByTestId(`participant-model-${humanParticipantId}`).count(),
             "a HUMAN participant has no model intent",
         ).toBe(0);
-        expect(
-            await humanRow.getByTestId(`participant-source-badge-${humanParticipantId}`).count(),
-            "a HUMAN participant has no agent source",
-        ).toBe(0);
 
         await shot(page, {
             id: "S2",
             name: "s2-participant-rows",
-            assertion: "AGENT 行有来源徽标与模型段；HUMAN 行两者皆无；两行都有首字母与角色徽标",
+            assertion:
+                "主体 source 徽标已移除；AGENT 行有模型段，HUMAN 行无；两行都有首字母与角色徽标",
         });
     });
 

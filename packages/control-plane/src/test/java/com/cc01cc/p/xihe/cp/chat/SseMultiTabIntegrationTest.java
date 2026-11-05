@@ -48,7 +48,6 @@ class SseMultiTabIntegrationTest extends AbstractIntegrationTest {
 
         AgentPrincipal principal = new AgentPrincipal();
         principal.setName("BL306 sse agent");
-        principal.setScope("WORKSPACE");
         principal.setCreatedByUserId(ownerId);
         principal = principals.saveAndFlush(principal);
 

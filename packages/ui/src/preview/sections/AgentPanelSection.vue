@@ -26,9 +26,9 @@ import { mockAgents } from "../mockData";
 
 /**
  * Target shape of the agent panel: `Card` sections, a collapsible create form (with its
- * own "advanced" sub-collapsible), `Badge` for read-only scope/permission/built-in, `Tooltip` for
+ * own "advanced" sub-collapsible), `Badge` for permissions and binding status, `Tooltip` for
  * implementation detail that must not occupy permanent space, `Skeleton` for the loading
- * row and a CTA-driven empty state. M5 sync: no scope write entry in the mock create form,
+ * row and a CTA-driven empty state. M5 sync: no principal scope in the mock create form,
  * and the agent role-binding block is a preview-only twin of the real T5.2 child component.
  */
 const { t } = useI18n();
@@ -51,9 +51,6 @@ const nameErrorMessage = computed(() => {
 });
 const advancedOpen = ref(true);
 const showEmpty = ref(true);
-
-const scopeLabel = (scope?: string) =>
-    scope === "WORKSPACE" ? "工作区" : scope === "PERSONAL" ? "个人" : "实例";
 </script>
 
 <template>
@@ -61,7 +58,7 @@ const scopeLabel = (scope?: string) =>
         id="agent-panel"
         index="03"
         title="智能体面板（改造后形态）"
-        description="Card 分区 + Collapsible 创建表单（含「高级」子折叠）+ Badge（作用域 / 权限 / 内置）+ Tooltip（实现细节）+ Skeleton 加载行 + 空态 CTA；主 CTA 固定在卡片底部。"
+        description="Card 分区 + Collapsible 创建表单（含「高级」子折叠）+ Badge（权限 / 绑定状态）+ Tooltip（实现细节）+ Skeleton 加载行 + 空态 CTA；主 CTA 固定在卡片底部。"
     >
         <TooltipProvider>
             <div class="grid grid-cols-[1.25fr_1fr] gap-6">
@@ -94,10 +91,6 @@ const scopeLabel = (scope?: string) =>
                                     <Bot class="size-4 text-muted-foreground" />
                                 </div>
                                 <span class="text-sm font-medium">{{ agent.name }}</span>
-                                <Badge variant="outline">{{ scopeLabel(agent.scope) }}</Badge>
-                                <Badge v-if="agent.source === 'instance'" variant="secondary"
-                                    >内置</Badge
-                                >
                                 <Badge v-if="!agent.bound" variant="secondary">未绑定</Badge>
                                 <Badge v-if="agent.disabled" variant="secondary">已停用</Badge>
                                 <Tooltip>

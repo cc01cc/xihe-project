@@ -51,7 +51,7 @@ async function createBoundAgent(
 
     const principalResponse = await request.post(`${CP_URL}/api/v1/agent-principals`, {
         headers,
-        data: { scope: "WORKSPACE", name: "FollowUpApprovalAgent", templateId },
+        data: { name: "FollowUpApprovalAgent", templateId },
     });
     expect(principalResponse.status(), await principalResponse.text()).toBe(201);
     const principalId = ((await principalResponse.json()) as { principalId: string }).principalId;

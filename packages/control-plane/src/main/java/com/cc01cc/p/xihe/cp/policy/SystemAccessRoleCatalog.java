@@ -37,6 +37,12 @@ public class SystemAccessRoleCatalog {
     public static final UUID WS_VIEWER_ID = UUID.fromString("00000000-0000-4000-8000-000000000006");
     /** 2026-11-04 ruling (task-25): the non-administrative delegation role for agent principals. */
     public static final UUID AGENT_DELEGATOR_ID = UUID.fromString("00000000-0000-4000-8000-000000000007");
+    /**
+     * D-174 (user ruling): the default instance role bound to a freshly created agent principal =
+     * the human USER registration set minus {@code CREATE_OWN_AGENT} (agent-forbidden). Human USER
+     * stays untouched; migration V127 rebinds the legacy agent seed bindings (stack-1: 40 rows).
+     */
+    public static final UUID AGENT_USER_ID = UUID.fromString("00000000-0000-4000-8000-000000000008");
 
     public static final String SUPER_ADMIN = "SUPER_ADMIN";
     public static final String ADMIN = "ADMIN";
@@ -45,6 +51,8 @@ public class SystemAccessRoleCatalog {
     public static final String WS_EDITOR = "WS_EDITOR";
     public static final String WS_VIEWER = "WS_VIEWER";
     public static final String AGENT_DELEGATOR = "AGENT_DELEGATOR";
+    /** D-174: agent default instance role (human USER minus the agent-forbidden CREATE_OWN_AGENT). */
+    public static final String AGENT_USER = "AGENT_USER";
 
     /** The three instance-level system roles, used to keep one tier binding per user. */
     public static final List<String> INSTANCE_TIER_ROLES = List.of(SUPER_ADMIN, ADMIN, USER);
@@ -189,7 +197,14 @@ public class SystemAccessRoleCatalog {
                 new RoleSeed(AGENT_DELEGATOR_ID, AGENT_DELEGATOR, "Agent Delegator",
                         "Workspace scope: delegate by creating child Sessions/Runs inside the same "
                                 + "workspace. Intended for agent principals; bound explicitly.",
-                        List.of(AtomRef.wildcard(ToolFaceRegistry.ACTION_SPAWN_AGENT))));
+                        List.of(AtomRef.wildcard(ToolFaceRegistry.ACTION_SPAWN_AGENT))),
+                // D-174 (user ruling 2026-11-05): the agent's default INSTANCE role — human USER's
+                // registration set WITHOUT CREATE_OWN_AGENT (agent-principal-forbidden, 17-item set).
+                // Migration V127 rebinds legacy agent seed bindings (stack-1 measured 40) to it.
+                new RoleSeed(AGENT_USER_ID, AGENT_USER, "Agent User (default)",
+                        "Instance scope: read/write/delete/exec/network — the human USER set "
+                                + "minus the agent-forbidden CREATE_OWN_AGENT.",
+                        BASE_ATOMS));
     }
 
     private static List<AtomRef> superAdminAtoms() {

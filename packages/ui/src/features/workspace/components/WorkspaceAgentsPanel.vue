@@ -3,11 +3,11 @@ import { computed, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { useAuthStore } from "../../../stores/auth";
 import { principalNameError } from "../../../lib/principalName";
+import { logger } from "../../../lib/logger";
 import {
     ApiError,
     api,
     type AgentModelRef,
-    type AgentPrincipalCreateResponse,
     type AgentRoleBinding,
     type AgentSkillBinding,
     type AgentSkillSummary,
@@ -50,7 +50,20 @@ const saving = ref(false),
     status = ref(""),
     name = ref(""),
     templateId = ref("");
-const createdPrincipal = ref<AgentPrincipalCreateResponse | null>(null);
+/**
+ * Plan-0651 recovery note: principal creation is only locally recoverable until it is bound
+ * to this workspace. Key by `userId/workspaceId` (never by owner/creator semantics), keep it
+ * out of the auth purge path, and make the UI state that only this browser can restore it.
+ */
+const PENDING_PRINCIPAL_STORAGE_KEY = "xihe-pending-agent-principals";
+const createdPrincipalId = ref<string | null>(null);
+/** Same-tab create metadata only; refresh restores the id from local storage. */
+const createdPrincipalMeta = ref<{
+    templateId?: string | null;
+    templateName?: string | null;
+    createdAt?: string;
+} | null>(null);
+const recoveryUnavailable = ref(false);
 const permissions = ref<WorkspaceAgentPermission[]>([]),
     editingPrincipalId = ref<string | null>(null);
 /**
@@ -196,7 +209,7 @@ const createBlocked = computed(
     () =>
         !!agentNameError.value ||
         saving.value ||
-        !!createdPrincipal.value ||
+        !!createdPrincipalId.value ||
         canCreatePrincipal.value !== true ||
         !!allowedModelsError.value ||
         !!defaultModelError.value,
@@ -206,6 +219,7 @@ onMounted(() => {
     // Every open is a fresh mount (dock activation or mobile modal), so the loads run once
     // per open — the same cadence the dialog had via `watch(open)`.
     resetMemoryPanel();
+    createdPrincipalId.value = restorePendingPrincipalId();
     void loadAgents();
     void loadTemplates();
     void loadCreateCapability();
@@ -231,12 +245,6 @@ async function loadCreateCapability() {
     }
 }
 
-/** 列表行上的来源标签（本工作区/个人/实例）。 */
-function agentSourceLabel(agent: WorkspaceAgentBinding): string {
-    const source = agent.source;
-    return t(`workspace.agentSource${source[0].toUpperCase()}${source.slice(1)}`);
-}
-
 function agentDefaultModel(agent: WorkspaceAgentBinding): string {
     const provider = agent.defaultModelProvider,
         model = agent.defaultModelName;
@@ -244,12 +252,9 @@ function agentDefaultModel(agent: WorkspaceAgentBinding): string {
     return `${provider ?? "—"} / ${model ?? "—"}`;
 }
 
-/** 个人 agent 的属主本人可以自己禁用；其余行需要工作区级 MANAGE_WORKSPACE_AGENTS。 */
-function canDisable(agent: WorkspaceAgentBinding): boolean {
-    if (canManageWorkspaceAgents.value === null) return false;
-    if (canManageWorkspaceAgents.value) return true;
-    if (agent.source !== "personal") return false;
-    return Boolean(agent.ownerUserId) && agent.ownerUserId === authStore.user?.id;
+/** 可操作性来自能力投影；CP 对每次写入作最终授权。 */
+function canDisable(): boolean {
+    return canManageWorkspaceAgents.value === true;
 }
 
 /**
@@ -712,13 +717,71 @@ function setPermissionResource(actionClass: string, resource: string) {
 /**
  * PLAN-0585 M2 / F-02: a missing grant must read as an actionable localized hint that points at
  * the admin grant panel, never as the CP's raw English detail (`CREATE_ACCOUNT permission is
- * required`).
+ * required`). Binding failures additionally surface the CP's actionable `detail` (BL-288),
+ * so a 409 cap/atom refusal names the offending atom instead of a generic copy.
  */
 function agentErrorMessage(cause: unknown, forbiddenKey: string, fallbackKey: string): string {
     if (cause instanceof ApiError && cause.problem.code === "FORBIDDEN") {
         return t(forbiddenKey);
     }
+    const detail = problemDetailText(cause, "");
+    if (detail) return detail;
     return t(fallbackKey);
+}
+
+function readPendingPrincipals(): Record<string, string> {
+    try {
+        const raw = localStorage.getItem(PENDING_PRINCIPAL_STORAGE_KEY);
+        if (!raw) return {};
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+            return parsed as Record<string, string>;
+        }
+    } catch (cause) {
+        logger.warn("Failed to read pending agent principals", cause);
+    }
+    return {};
+}
+
+function writePendingPrincipals(value: Record<string, string>): void {
+    try {
+        const remaining = Object.values(value).filter((principalId) => principalId);
+        if (remaining.length === 0) {
+            localStorage.removeItem(PENDING_PRINCIPAL_STORAGE_KEY);
+        } else {
+            localStorage.setItem(PENDING_PRINCIPAL_STORAGE_KEY, JSON.stringify(value));
+        }
+    } catch (cause) {
+        logger.warn("Failed to persist pending agent principals", cause);
+    }
+}
+
+function restorePendingPrincipalId(): string | null {
+    const userId = authStore.user?.id;
+    if (!userId || !props.workspaceId) return null;
+    const principals = readPendingPrincipals();
+    return principals[`${userId}/${props.workspaceId}`] ?? null;
+}
+
+function savePendingPrincipalId(principalId: string): void {
+    const userId = authStore.user?.id;
+    if (!userId || !props.workspaceId) {
+        recoveryUnavailable.value = true;
+        return;
+    }
+    const principals = readPendingPrincipals();
+    principals[`${userId}/${props.workspaceId}`] = principalId;
+    writePendingPrincipals(principals);
+    recoveryUnavailable.value = false;
+}
+
+function clearPendingPrincipalId(): void {
+    const userId = authStore.user?.id;
+    if (!userId || !props.workspaceId) return;
+    const principals = readPendingPrincipals();
+    delete principals[`${userId}/${props.workspaceId}`];
+    writePendingPrincipals(principals);
+    recoveryUnavailable.value = false;
 }
 
 async function createPrincipal() {
@@ -729,7 +792,7 @@ async function createPrincipal() {
         const allowed = allowedModels.value
             .map((entry) => ({ provider: entry.provider.trim(), model: entry.model.trim() }))
             .filter((entry) => entry.provider && entry.model);
-        createdPrincipal.value = await api.createAgentPrincipal({
+        const created = await api.createAgentPrincipal({
             name: name.value.trim(),
             ...(templateId.value ? { templateId: templateId.value } : {}),
             ...(defaultModelProvider.value.trim()
@@ -740,15 +803,20 @@ async function createPrincipal() {
                 : {}),
             ...(allowed.length > 0 ? { allowedModels: allowed } : {}),
         });
+        createdPrincipalId.value = created.principalId;
+        createdPrincipalMeta.value = {
+            templateId: created.templateId,
+            templateName: created.templateName,
+            createdAt: created.createdAt,
+        };
+        savePendingPrincipalId(created.principalId);
         name.value = "";
         templateId.value = "";
         defaultModelProvider.value = "";
         defaultModelName.value = "";
         allowedModels.value = [];
         permissions.value = [];
-        // 真栈 bug（2026-11-02）：创建成功后必须重新拉列表，否则用户要关掉重开面板才看到新主体
-        // （bind/unbind/disable 三处都调了 loadAgents，创建这处漏了）。放在 status 之前，
-        // 因为 loadAgents 会清空 status。
+        await loadCreateCapability();
         await loadAgents();
         status.value = t("workspace.agentPrincipalCreated");
     } catch (cause) {
@@ -764,7 +832,7 @@ async function createPrincipal() {
 
 /** PLAN-0622：禁用是两步确认（第一步只换文案），并要求调用方先看清后果。 */
 async function disableAgent(agent: WorkspaceAgentBinding) {
-    if (!canDisable(agent) || saving.value) return;
+    if (!canDisable() || saving.value) return;
     if (disableConfirmationId.value !== agent.principalId) {
         disableConfirmationId.value = agent.principalId;
         unbindConfirmationId.value = null;
@@ -818,21 +886,27 @@ async function bindExistingAgent(agent: WorkspaceAgentBinding) {
 }
 
 async function bindCreatedPrincipal() {
-    const principal = createdPrincipal.value;
-    if (!principal || saving.value) return;
+    const principalId = createdPrincipalId.value;
+    if (!principalId || saving.value) return;
     saving.value = true;
     error.value = "";
     try {
-        await api.updateWorkspaceAgentCap(
-            props.workspaceId,
-            principal.principalId,
-            permissions.value,
-        );
-        createdPrincipal.value = null;
+        await loadCreateCapability();
+        // Keep loadCreateCapability's own failure reason (do not turn it into a fake 403).
+        if (capabilityState.value === "failed") return;
+        if (canManageWorkspaceAgents.value !== true) {
+            error.value = t("workspace.agentBindForbidden");
+            return;
+        }
+        await api.updateWorkspaceAgentCap(props.workspaceId, principalId, permissions.value);
+        createdPrincipalId.value = null;
+        createdPrincipalMeta.value = null;
+        clearPendingPrincipalId();
         permissions.value = [];
         await loadAgents();
         status.value = t("workspace.agentBound");
     } catch (cause) {
+        // 403/409 都如实展示：FORBIDDEN 给可操作文案，其余优先 CP detail（BL-288）。
         error.value = agentErrorMessage(
             cause,
             "workspace.agentBindForbidden",
@@ -1096,20 +1170,31 @@ async function unbind(agent: WorkspaceAgentBinding) {
         </form>
 
         <section
-            v-if="createdPrincipal"
+            v-if="createdPrincipalId"
             class="space-y-3 rounded-lg border border-amber-500/40 p-3"
             data-testid="unbound-agent-principal"
         >
             <div>
                 <h3 class="text-sm font-semibold">{{ t("workspace.agentCreatedUnbound") }}</h3>
                 <p class="mt-1 break-all font-mono text-xs text-muted-foreground">
-                    {{ createdPrincipal.principalId }}
+                    {{ createdPrincipalId }}
+                </p>
+                <p v-if="createdPrincipalMeta" class="mt-1 text-xs text-muted-foreground">
+                    {{ createdPrincipalMeta.templateName ?? t("workspace.defaultAgentTemplate") }} ·
+                    {{ t("workspace.agentTemplateId") }}:
+                    {{ createdPrincipalMeta.templateId ?? "—" }} ·
+                    {{ t("workspace.agentCreatedAt") }}:
+                    {{ new Date(createdPrincipalMeta.createdAt ?? Date.now()).toLocaleString() }}
                 </p>
                 <p class="mt-1 text-xs text-muted-foreground">
-                    {{ createdPrincipal.templateName ?? t("workspace.defaultAgentTemplate") }} ·
-                    {{ t("workspace.agentTemplateId") }}: {{ createdPrincipal.templateId ?? "—" }} ·
-                    {{ t("workspace.agentCreatedAt") }}:
-                    {{ new Date(createdPrincipal.createdAt).toLocaleString() }}
+                    {{ t("workspace.agentPendingRecoveryNote") }}
+                </p>
+                <p
+                    v-if="recoveryUnavailable"
+                    data-testid="agent-pending-recovery-unavailable"
+                    class="mt-1 text-xs text-amber-700"
+                >
+                    {{ t("workspace.agentPendingRecoveryUnavailable") }}
                 </p>
             </div>
             <p class="text-xs text-muted-foreground">{{ t("workspace.agentCapNote") }}</p>
@@ -1204,14 +1289,6 @@ async function unbind(agent: WorkspaceAgentBinding) {
                     <div class="min-w-0">
                         <h4 class="truncate text-sm font-semibold">{{ agent.name }}</h4>
                         <p class="mt-1 flex flex-wrap items-center gap-1.5">
-                            <!-- PLAN-0622：来源与 scope 徽标（本工作区/个人/实例）。 -->
-                            <span
-                                class="rounded border px-1.5 py-0.5 text-[11px]"
-                                :data-testid="`agent-scope-badge-${agent.principalId}`"
-                                :data-agent-scope="agent.source"
-                            >
-                                {{ agentSourceLabel(agent) }}
-                            </span>
                             <!-- PLAN-0622 D26：未绑定的行必须显式标注，否则用户以为它已经能用。 -->
                             <span
                                 v-if="agent.bound === false"
@@ -1286,7 +1363,7 @@ async function unbind(agent: WorkspaceAgentBinding) {
                             type="button"
                             class="rounded-md border px-2 py-1 text-xs text-destructive disabled:opacity-50"
                             :data-testid="`workspace-agent-disable-${agent.principalId}`"
-                            :disabled="saving || !canDisable(agent) || agent.disabled === true"
+                            :disabled="saving || !canDisable() || agent.disabled === true"
                             @click="disableAgent(agent)"
                         >
                             {{

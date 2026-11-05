@@ -404,7 +404,7 @@ test.describe("@host PLAN-0493 T0.2 loop observation", () => {
         expect(templateWrite.status(), await templateWrite.text()).toBe(200);
         const principalRes = await request.post(`${CP_URL}/api/v1/agent-principals`, {
             headers,
-            data: { scope: "WORKSPACE", name: "LoopObservationAgent", templateId },
+            data: { name: "LoopObservationAgent", templateId },
         });
         expect(principalRes.status(), await principalRes.text()).toBe(201);
         const principalId = ((await principalRes.json()) as { principalId: string }).principalId;

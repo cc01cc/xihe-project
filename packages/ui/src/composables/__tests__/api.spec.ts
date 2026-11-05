@@ -463,7 +463,6 @@ describe("Workspace Agent management API", () => {
                             templateId: null,
                             templateName: null,
                             createdAt: "2026-11-02T00:00:00Z",
-                            source: "personal",
                             permissionsSnapshot: [],
                             bound: true,
                         },
@@ -478,8 +477,33 @@ describe("Workspace Agent management API", () => {
             expect.objectContaining({ headers: expect.any(Object) }),
         );
         expect(agents).toHaveLength(1);
-        expect(agents[0].source).toBe("personal");
+        expect(agents[0]).not.toHaveProperty("source");
         expect(agents[0].permissionsSnapshot).toEqual([]);
+    });
+
+    it("lists agent principals without a tier scope query and never reads response tier scope", async () => {
+        fetchSpy.mockResolvedValueOnce({
+            ok: true,
+            json: () =>
+                Promise.resolve({
+                    principals: [
+                        {
+                            principalId: "principal-1",
+                            name: "Role-bound agent",
+                            scope: "INSTANCE",
+                            source: "instance",
+                        },
+                    ],
+                }),
+        } as Response);
+
+        const principals = await api.listAgentPrincipals();
+
+        expect(fetchSpy).toHaveBeenCalledWith(
+            "/api/v1/agent-principals",
+            expect.objectContaining({ headers: expect.any(Object) }),
+        );
+        expect(principals).toEqual([{ principalId: "principal-1", name: "Role-bound agent" }]);
     });
 
     it("degrades a row without permissionsSnapshot instead of handing the panel a crash", async () => {
@@ -497,7 +521,6 @@ describe("Workspace Agent management API", () => {
                             templateId: null,
                             templateName: null,
                             createdAt: "2026-11-02T00:00:00Z",
-                            source: "workspace",
                             bound: true,
                             disabled: false,
                         },
@@ -2261,7 +2284,6 @@ describe("getSessionParticipants strict envelope (PLAN-0623 D23-25)", () => {
         orderIndex: 10,
         wakePolicy: "ALL_MESSAGES",
         respondPolicy: "ALWAYS",
-        source: "workspace",
         disabledAt: null,
         readCursor: null,
     };
@@ -2426,7 +2448,6 @@ describe("getWorkspaceAgents principal hooks (PLAN-0625 M3, fail-closed)", () =>
                             templateId: null,
                             templateName: null,
                             createdAt: "2026-11-02T00:00:00Z",
-                            source: "workspace",
                             permissionsSnapshot: [],
                             bound: true,
                             hooks,

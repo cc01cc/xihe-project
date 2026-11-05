@@ -479,17 +479,6 @@ export interface SessionListResponse {
 }
 
 /**
- * PLAN-0622 冻结契约：agent 主体三档共享范围。
- * - `PERSONAL`：属于某个用户的私有 agent（创建需 `CREATE_OWN_AGENT`）；
- * - `WORKSPACE`：工作区共享（创建/绑定需 `MANAGE_WORKSPACE_AGENTS`）；
- * - `INSTANCE`：实例通用（创建需 `CREATE_ACCOUNT`，仅 ADMIN）。
- */
-export type AgentPrincipalScope = "PERSONAL" | "WORKSPACE" | "INSTANCE";
-
-/** 列表行上的来源标签：这条绑定是"本工作区/个人/实例"的 agent。 */
-export type WorkspaceAgentSource = "workspace" | "personal" | "instance";
-
-/**
  * PLAN-0625 M2（D25-09/14）：agent 主体的 hook 订阅（V96 `agent_principals.hooks`）。
  *
  * **wire 形状（单一事实源：CP `HookAdvisorRegistry`）**：
@@ -551,18 +540,12 @@ export interface WorkspaceAgentBinding {
     templateId: string | null;
     templateName: string | null;
     createdAt: string;
-    /** PLAN-0622（CP `13e54cad`）：`permissions` 已改名 `permissionsSnapshot`，且 `source` 必填。 */
+    /** 工作区绑定的权限上限；角色绑定的 scope 与主体无关。 */
     permissionsSnapshot: Array<{ actionClass: string; resource?: string }>;
-    source: WorkspaceAgentSource;
-    /**
-     * PLAN-0622 D26（CP `4dbd3e92`）：该行是否已绑定到本工作区。列表是"三类并集"，
-     * 未绑定的 PERSONAL/INSTANCE 也会出现，但它们**不能**用来建会话（CP 403 not bound）。
-     */
+    /** 是否存在该工作区的 cap 绑定；角色绑定可使未绑定行可见。 */
     bound: boolean;
-    /** PLAN-0622 D27（CP `f6d66e0d`）：该主体是否已被禁用；禁用后不能建会话（409）。 */
+    /** 主体被禁用后不能用于新会话。 */
     disabled: boolean;
-    scope?: AgentPrincipalScope;
-    ownerUserId?: string | null;
     defaultModelProvider?: string | null;
     defaultModelName?: string | null;
     /** `null`/缺省 = 不限制可用模型集。 */
@@ -632,7 +615,6 @@ export interface AgentRoleBinding {
 export interface AgentPrincipalOption {
     principalId: string;
     name: string;
-    scope?: string;
 }
 
 /** PLAN-0667 M3：agent 主体的**技能绑定**（`GET /api/v1/agent-principals/{id}/skills`，v1 principal 级）。 */
@@ -670,7 +652,6 @@ export type WorkspaceAgentMemoryStatus = "active" | "retired" | "all";
 export interface AgentPrincipalCreateInput {
     name: string;
     templateId?: string;
-    scope?: AgentPrincipalScope;
     defaultModelProvider?: string;
     defaultModelName?: string;
     /** `undefined` = 不限制；空数组也按"不限制"处理，避免误锁死。 */
@@ -682,8 +663,6 @@ export interface AgentPrincipalCreateResponse {
     templateId: string | null;
     templateName: string | null;
     createdAt: string;
-    scope?: AgentPrincipalScope;
-    ownerUserId?: string | null;
     defaultModelProvider?: string | null;
     defaultModelName?: string | null;
     allowedModels?: AgentModelRef[] | null;
@@ -2969,18 +2948,10 @@ export const api = {
             { method: "POST", headers, body: JSON.stringify(input) },
         );
     },
-    /**
-     * PLAN-0651 M5 T5.2: agent-principal options for the role-binding subject picker.
-     * `scope` is the same enum as the CP list route; workspace scope also needs `workspaceId`.
-     */
-    async listAgentPrincipals(
-        scope: "PERSONAL" | "WORKSPACE" | "INSTANCE",
-        workspaceId?: string,
-    ): Promise<AgentPrincipalOption[]> {
-        const query = new URLSearchParams({ scope });
-        if (scope === "WORKSPACE" && workspaceId) query.set("workspaceId", workspaceId);
+    /** Agent-principal options visible to the current caller. */
+    async listAgentPrincipals(): Promise<AgentPrincipalOption[]> {
         const raw = await request<{ principals?: Array<Record<string, unknown>> }>(
-            `/agent-principals?${query.toString()}`,
+            "/agent-principals",
         );
         if (!Array.isArray(raw.principals)) {
             console.warn("[bindings] agent principal envelope malformed; treated as empty");
@@ -2990,13 +2961,7 @@ export const api = {
             const principalId = typeof row.principalId === "string" ? row.principalId : "";
             const name = typeof row.name === "string" ? row.name : "";
             if (!principalId || !name) return [];
-            return [
-                {
-                    principalId,
-                    name,
-                    scope: typeof row.scope === "string" ? row.scope : undefined,
-                },
-            ];
+            return [{ principalId, name }];
         });
     },
     async getWorkspaceAgents(workspaceId: string): Promise<WorkspaceAgentBinding[]> {
@@ -3375,14 +3340,13 @@ export const api = {
         return request<AgentTemplateLayerResponse>(`/agent-templates?${query.toString()}`);
     },
     /**
-     * PLAN-0622 冻结契约 body：`{name, templateId?, scope?, defaultModelProvider?,
-     * defaultModelName?, allowedModels?}`。只发传进来的字段——`undefined` 表示"不设置"，
+     * 创建 body：`{name, templateId?, defaultModelProvider?, defaultModelName?, allowedModels?}`。
+     * 只发传进来的字段——`undefined` 表示"不设置"，
      * 由 CP 决定默认（不要把空字符串/空数组硬塞进去）。
      */
     createAgentPrincipal(input: AgentPrincipalCreateInput): Promise<AgentPrincipalCreateResponse> {
         const body: Record<string, unknown> = { name: input.name };
         if (input.templateId) body.templateId = input.templateId;
-        if (input.scope) body.scope = input.scope;
         if (input.defaultModelProvider) body.defaultModelProvider = input.defaultModelProvider;
         if (input.defaultModelName) body.defaultModelName = input.defaultModelName;
         if (input.allowedModels && input.allowedModels.length > 0) {
