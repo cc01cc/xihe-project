@@ -257,6 +257,103 @@ class AgentPrincipalRoleBindingIntegrationTest extends AbstractIntegrationTest {
                 "a principal without role rows keeps the legacy ceiling (rollback path): " + cap);
     }
 
+    /**
+     * BL-352：**首绑的正确入口是 PUT**（结构化默认绑定，不受 cap 门约束），roles 端点只在有 cap 后可用。
+     * 这条闭环同时证明：①纯 API 自举可行 ②严格路径（会话/派发前置）未被放宽 ③cap 不变量仍然生效。
+     */
+    @Test
+    void workspaceOwnerBootstrapsWithPutThenRolesBindAndStrictPathStaysIntact() {
+        AgentPrincipal principal = createPlainPrincipal("bl352putbootstrap");
+        assertFalse(workspaceAgentRepository.findById(
+                new com.cc01cc.p.xihe.cp.entity.WorkspaceAgentId(principal.getId(), workspaceId)).isPresent(),
+                "precondition: a fresh principal has no workspace binding yet");
+
+        ResponseEntity<Map> put = putWorkspaceAgent(principal.getId(), token, List.of());
+        assertEquals(HttpStatus.OK, put.getStatusCode(), String.valueOf(put.getBody()));
+
+        var cap = agentPrincipalService.resolveCapFor(principal.getId(), workspaceId);
+        assertTrue(cap.isArray(), "strict resolveCapFor must succeed after the PUT bootstrap: " + cap);
+
+        // ③ cap 不变量仍然生效：PUT 给的是**空 cap**，所以 roles 端点加角色必须被拒（409 设计行为，
+        //    这正是"roles 不能当首绑入口"的代码依据，也是我们**没有**放宽 cap 的证明）。
+        ResponseEntity<Map> roles = bindRoleAs(principal.getId(), token);
+        assertEquals(HttpStatus.CONFLICT, roles.getStatusCode(), String.valueOf(roles.getBody()));
+        assertEquals("ROLE_BINDING_EXCEEDS_CAP", roles.getBody().get("code"));
+    }
+
+    /** BL-352 负例 1：**非创建者 + 有原子但未绑定** ⇒ 404（不放宽成"同工作区管理员想绑谁绑谁"）。 */
+    @Test
+    void nonCreatorWithAtomButUnboundIsStillNotFound() {
+        AgentPrincipal principal = createPlainPrincipal("bl352notcreator");
+        Bl352Caller other = registerWithRole("bl352-other", WorkspaceRole.OWNER);
+
+        ResponseEntity<Map> response = bindRoleAs(principal.getId(), other.token());
+
+        assertEquals(HttpStatus.NOT_FOUND, response.getStatusCode(), String.valueOf(response.getBody()));
+        assertEquals("AGENT_PRINCIPAL_NOT_FOUND", response.getBody().get("code"));
+    }
+
+    /** BL-352 负例 2：**创建者本人但没有 MANAGE_WORKSPACE_AGENTS** ⇒ 403（创建者身份不能替代原子）。 */
+    @Test
+    void creatorWithoutManagementAtomIsForbidden() {
+        Bl352Caller viewer = registerWithRole("bl352-viewercreator", WorkspaceRole.VIEWER);
+        var template = agentTemplateService.resolveForCreation(viewer.userId(), workspaceId.toString(), null);
+        AgentPrincipal principal = agentPrincipalService.createPrincipal(viewer.userId(), "bl352viewer",
+                null, template.snapshot(), null, null, null, null, null, null, List.of());
+
+        ResponseEntity<Map> response = bindRoleAs(principal.getId(), viewer.token());
+
+        assertEquals(HttpStatus.FORBIDDEN, response.getStatusCode(), String.valueOf(response.getBody()));
+        assertEquals("FORBIDDEN", response.getBody().get("code"));
+    }
+
+    /** BL-352 负例 3：**非创建者且无原子** ⇒ 403（原子门先拦，不是"看不见"）。 */
+    @Test
+    void nonCreatorWithoutAtomIsForbidden() {
+        AgentPrincipal principal = createPlainPrincipal("bl352noatom");
+        Bl352Caller nobody = registerWithRole("bl352-nobody", WorkspaceRole.VIEWER);
+
+        ResponseEntity<Map> response = bindRoleAs(principal.getId(), nobody.token());
+
+        assertEquals(HttpStatus.FORBIDDEN, response.getStatusCode(), String.valueOf(response.getBody()));
+    }
+
+    private record Bl352Caller(String token, String userId) {}
+
+    /** 注册一个新用户并给它在该工作区的角色（OWNER 持有 MANAGE_WORKSPACE_AGENTS，VIEWER 不持有）。 */
+    private Bl352Caller registerWithRole(String prefix, WorkspaceRole role) {
+        String email = prefix + "-" + UUID.randomUUID().toString().substring(0, 8) + "@test.com";
+        ResponseEntity<AuthResponse> registered = restTemplate.postForEntity(
+                baseUrl + "/api/v1/auth/register",
+                new RegisterRequest(email, TestDataFactory.PASSWORD, "Bl352"), AuthResponse.class);
+        assertEquals(HttpStatus.CREATED, registered.getStatusCode());
+        User user = userRepository.findByEmail(email).orElseThrow();
+        workspaceFixture.bindWorkspaceRole(workspaceId, user.getId(), role);
+        return new Bl352Caller(registered.getBody().getAccessToken(), user.getId().toString());
+    }
+
+    private ResponseEntity<Map> putWorkspaceAgent(UUID principalId, String callerToken,
+            List<Map<String, Object>> permissions) {
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(callerToken);
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        headers.add("X-Workspace-Id", workspaceId.toString());
+        return restTemplate.exchange(
+                baseUrl + "/api/v1/workspaces/" + workspaceId + "/agents/" + principalId,
+                org.springframework.http.HttpMethod.PUT,
+                new HttpEntity<>(Map.of("permissions", permissions), headers), Map.class);
+    }
+
+    private ResponseEntity<Map> bindRoleAs(UUID principalId, String callerToken) {
+        Map<String, Object> body = Map.of("roleId",
+                roleRepository.findByName("WS_EDITOR").orElseThrow().getId().toString());
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(callerToken);
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        return restTemplate.exchange(
+                baseUrl + "/api/v1/agent-principals/" + principalId + "/roles?workspaceId=" + workspaceId,
+                org.springframework.http.HttpMethod.POST, new HttpEntity<>(body, headers), Map.class);
+    }
     private AgentPrincipal createPlainPrincipal(String name) {
         return createPlainPrincipal(name, List.of());
     }

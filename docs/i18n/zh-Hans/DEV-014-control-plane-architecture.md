@@ -448,3 +448,28 @@ PLAN-0416 Chat 消费：`ChatController` 仅在 admission snapshot 原始 native
 **判据不变**：拒绝发生在 dispatch 之前 —— 不建 invocation、不起 attempt、不建 approval、不向 Runtime 转发。
 
 > 排查提示：若测试或客户端出现"预期 403 却是 200"，先确认是不是这条（自 `92aa7ebd` 起形态变更）。
+
+## 14b. Agent 主体与工作区绑定的正确顺序（BL-352，2026-11-06）
+
+> 背景：`POST /agent-principals` 是 **instance 面**（建主体，**不绑工作区**），而"主体必须在工作区可见且有 cap"是会话/派发的前置。这两件事之间**有固定顺序**，写错就会撞 404/403/409 —— 曾经因为缺这段文档，lab 里把"顺序问题"误判成"死锁"。
+
+**顺序（唯一正确路径）**
+
+1. **`POST /api/v1/agent-principals`** —— 建主体（instance 面；不写 `workspace_agents`，`roleIds` 只落 **instance** 作用域绑定）。
+2. **`PUT /api/v1/workspaces/{workspaceId}/agents/{principalId}`** —— **首绑入口**：写 `workspace_agents` 行（携带 cap 快照）＋ 由 `ensureWorkspaceRoleBinding` 写入**默认工作区角色**（`WS_EDITOR`）的结构化绑定。**结构化默认绑定不受 cap 门约束**（否则任何新主体都无法获得初始能力）。
+3. **`POST /api/v1/workspaces/{workspaceId}/sessions`** —— 此时主体已在该工作区可见且有 cap，会话可建、run 可派发。
+4. **之后**才用 **`POST` / `DELETE /api/v1/agent-principals/{principalId}/roles`** 增删角色 —— 这条端点**受 cap 约束**（角色原子必须落在主体在该工作区的 cap 之内），因此：
+
+**`roles` 端点不能作为首绑入口**：新主体没有 cap，直接调它会返回
+`409 ROLE_BINDING_EXCEEDS_CAP`（`role atoms exceed the agent's workspace cap: …`）。**这是设计，不是缺陷** —— 放宽它等于允许"角色可无 cap 授予"，会破坏 PLAN-0629 的 cap 不变量。
+
+**授权口径（两处不同，别混）**
+
+| 动作 | 授权 | workspace 上下文怎么传 |
+|---|---|---|
+| 建主体（①） | instance 级 `MANAGE_AGENT_PRINCIPALS` | 无（instance 面） |
+| 首绑（②） | 该 workspace 的 `MANAGE_WORKSPACE_AGENTS` | **请求头 `X-Workspace-Id`** + 路径里的 `{workspaceId}` |
+| 增删角色（④） | 该 workspace 的 `MANAGE_WORKSPACE_AGENTS`（或 instance 级） | **query 参数 `?workspaceId=`**（注意：不是头，见 BL-351；两端点不一致属已知债） |
+| 会话/派发前置 | 主体必须已在该工作区绑定（`resolveCapFor` 严格路径） | 路径 `{workspaceId}` |
+
+**相关 BL**：`BL-349`（`WS_*` 曾携带 `MEMORY_WRITE_SELF` ⇒ 首绑 403 `ROLE_NOT_GRANTABLE`，已修 —— 正是它让正确路径看起来"不通"）· `BL-351`（roles 端点 workspace 走 query 而非头）· `BL-352`（本段来源：不是死锁，是顺序未文档化 + BL-349 掩盖正路）· `BL-344`（成员面板能力位三态）。
