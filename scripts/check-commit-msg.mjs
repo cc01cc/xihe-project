@@ -49,8 +49,9 @@ function checkMessage(raw) {
   // 1. 首行格式
   let m;
   if (isMerge) {
-    m = subject.match(/^(merge(?:\([A-Za-z0-9._/-]+\))?): (.+)$/);
-    if (!m) errors.push({ code: "E_SUBJECT_FORMAT", message: "merge 提交应为 `merge(<target>): <摘要>` 或 `Merge branch …`" });
+    // 接受三种：`merge(<target>): <摘要>` / `merge: <摘要>` / git 默认 `Merge branch 'x' into y`
+    m = subject.match(/^(merge(?:\([A-Za-z0-9._/-]+\))?): (.+)$/) || subject.match(/^Merge (?:branch|remote-tracking branch|pull request) .+$/);
+    if (!m) errors.push({ code: "E_SUBJECT_FORMAT", message: "merge 提交应为 `merge(<target>): <摘要>` 或 git 默认的 `Merge branch '<src>' into <dst>`" });
   } else {
     m = subject.match(/^([a-z]+)(?:\(([A-Za-z0-9._/-]+)\))?(!)?: (.+)$/);
     if (!m) {
