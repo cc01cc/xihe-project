@@ -65,7 +65,7 @@ public class ContextTemplateSourceService {
         JsonNode components = run.contextTemplateSnapshot() == null ? null
                 : run.contextTemplateSnapshot().path("template").path("components");
         if (components == null || !components.isArray()) {
-            logger.warn("[INJECTION] service=cp event=injection_components_absent runId={} reason={}",
+            logger.warn("[INJECTION] service=cp event=context_injection_components_unavailable runId={} reason={}",
                     run.runId(), DIAGNOSTIC_NO_COMPONENTS);
             return result;
         }
@@ -101,7 +101,7 @@ public class ContextTemplateSourceService {
                     component.path("config"), type, run, session, validBinding, remainingRequests));
         }
         if (!seenEligible) {
-            logger.warn("[INJECTION] service=cp event=injection_components_absent runId={} reason={}",
+            logger.warn("[INJECTION] service=cp event=context_injection_components_unavailable runId={} reason={}",
                     run.runId(), DIAGNOSTIC_NO_COMPONENTS);
         }
         return result;
@@ -119,7 +119,7 @@ public class ContextTemplateSourceService {
             return;
         }
         Object diagnostics = view.get("diagnostics");
-        logger.warn("[INJECTION] service=cp event=injection_component_skipped runId={} source={}"
+        logger.warn("[INJECTION] service=cp event=context_injection_component_skipped runId={} source={}"
                         + " status={} diagnostics={}", run.runId(), source, status,
                 diagnostics == null ? List.of() : diagnostics);
     }
