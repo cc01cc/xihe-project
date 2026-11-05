@@ -295,7 +295,7 @@ mise run pkg:installer                                 # 从既有四个服务�
 - **两条 launcher 的分工（别混）**：`mise run pkg:launcher`（Node，`scripts/pkg/launcher.mjs`）是**开发/冒烟 supervisor**，按 install-relative manifest 起五个阶段，**不做 first-run**（数据目录未初始化会直接报 `PostgreSQL data directory is not initialized`）；**产品首启**（解压 PG / initdb / secrets / 数据根 / JDBC 引导 / 打开浏览器）由**随包 Java Launcher** 负责（`scripts/pkg/launcher/src/com/cc01cc/xihe/pkg/Launcher.java`，由 `build-installer.mjs` 编进安装包）。
 - **产物只落 `.tmp/pkg/`（gitignored），不入库**；安装包不进主仓发行目录。
 - 开发机上 `pkg:launcher status` 会把 `dev:host` 的监听报成 `foreignListeners` 并返回 `ok:false`（exit 1）—— 这是"当前不是打包安装"的正确回答，不是故障。
-- 未覆盖的能力清单（本版不做自动更新/开机自启/代码签名/多用户服务安装）见 `plans/PLAN-0632-xh-mvp-self-contained-packaging/installer-scope.md`。
+- 未覆盖的能力清单（本版不做自动更新/开机自启/代码签名/多用户服务安装）见 `plans/archive/PLAN-0632-xh-mvp-self-contained-packaging/installer-scope.md`。
 
 ## 4. 全栈调试（自 DEV-005-fullstack 并入）
 

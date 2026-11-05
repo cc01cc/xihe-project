@@ -284,7 +284,7 @@ mise run pkg:installer                                  # NSIS build from the fo
 - **Two launchers, two jobs (do not mix them)**: `mise run pkg:launcher` (Node, `scripts/pkg/launcher.mjs`) is the **dev/smoke supervisor** — it starts the five stages from an install-relative manifest and **does no first-run work** (an uninitialized data directory fails with `PostgreSQL data directory is not initialized`); the **product first run** (extract PG, `initdb`, secrets, data root, JDBC bootstrap, open the browser) belongs to the **bundled Java launcher** (`scripts/pkg/launcher/src/com/cc01cc/xihe/pkg/Launcher.java`, compiled into the installer by `build-installer.mjs`).
 - **Artifacts only land in `.tmp/pkg/` (gitignored) and are never committed.**
 - On a dev machine `pkg:launcher status` reports the `dev:host` listeners as `foreignListeners` and returns `ok:false` (exit 1): that is the correct answer to "this is not a packaged install", not a failure.
-- Capabilities deliberately not included (auto-update, autostart, code signing, per-machine service install): `plans/PLAN-0632-xh-mvp-self-contained-packaging/installer-scope.md`.
+- Capabilities deliberately not included (auto-update, autostart, code signing, per-machine service install): `plans/archive/PLAN-0632-xh-mvp-self-contained-packaging/installer-scope.md`.
 
 #### Rust build cache and worktree isolation (PLAN-0596)
 
