@@ -535,19 +535,45 @@ test("@host V6 Workspace Agent management uses CP grants and persists isolated c
         principalId,
     );
 
-    // PLAN-0610 W6/T6.1: narrow the owner's seeded access-role ceiling to CREATE_ACCOUNT only
-    // (the retired direct-row UPDATE is gone; the helper recomputes the materialized role union).
+    // ── PLAN-0610 W6/T6.1（2026-11-06 BL-343 校正）─────────────────────────────────────────────
+    // create 与 bind 是**两个独立原子**，但方向与旧用例相反：
+    //   · 建 agent principal 需要 **`MANAGE_WORKSPACE_AGENTS`（workspace 作用域、必须是具体 UUID）**；
+    //     `AgentPrincipalService.requireCreationAction()` 注释写明这是 "the original default creation
+    //     authorization"，即原始设计，不是后来收紧。
+    //   · **实例级 `CREATE_ACCOUNT` 只接受 `resource:"*"`**（`PrincipalGrantActionCatalog`），管的是
+    //     「建账号（用户）」，**不构成建工作区 agent 的授权**。
+    // 旧用例假设「有 CREATE_ACCOUNT 就能建（201）、只是绑不了」，方向正好相反，故改写为**反向隔离**：
+    //   ①④ 实例 CREATE_ACCOUNT + 工作区仅 WS_EDITOR ⇒ 建 = **403**，且错误指向 MANAGE_WORKSPACE_AGENTS；
+    //   ②  工作区恢复 WS_OWNER（携带 MANAGE_WORKSPACE_AGENTS@该 ws）⇒ 建 = **201**；
+    //   ③  保留「能建 ≠ 能绑」整组断言：用 ② 建出的主体，降级回 WS_EDITOR 后再绑 ⇒ 403 + 未绑定行仍在。
+    // 注意：工作区角色只有 WS_OWNER / WS_EDITOR / WS_VIEWER，没有 WS_ADMIN（SystemAccessRoleCatalog）。
     replaceUserGrantPermissions(ownerUserId, [{ actionClass: "CREATE_ACCOUNT", resource: "*" }]);
-    // PLAN-0610 W3-3: the workspace creator is now bound to WS_OWNER automatically, and WS_OWNER
-    // carries MANAGE_WORKSPACE_AGENTS at workspace scope — so narrowing the instance-level ceiling
-    // above no longer removes the bind permission. The negative case needs a member that really
-    // lacks it: downgrade the same account to WS_EDITOR in this workspace (explicit workspace-role
-    // replacement) instead of switching the whole browser session to a second owner, which would
-    // test the same atom gate with more moving parts. The binding is restored at the end of the
-    // block so the remaining assertions keep an owner.
+
+    // ①/④ 实例级 CREATE_ACCOUNT 不足以建工作区 agent：WS_EDITOR 无 MANAGE_WORKSPACE_AGENTS ⇒ 403
     replaceWorkspaceRole(ownerUserId, workspaceA, "WS_EDITOR");
     await page.getByTestId("workspace-toolbar-agents").click();
-    await page.getByTestId("agent-principal-name").fill("CreateOnlyNoBindPermission");
+    await page.getByTestId("agent-principal-name").fill("EditorWithCreateAccountCannotCreate");
+    const deniedCreatePromise = page.waitForResponse(
+        (response) =>
+            response.url().endsWith("/api/v1/agent-principals") &&
+            response.request().method() === "POST",
+    );
+    await page.getByTestId("agent-principal-create").click();
+    const deniedCreateResponse = await deniedCreatePromise;
+    expect(deniedCreateResponse.status()).toBe(403);
+    expect(await deniedCreateResponse.text()).toContain("MANAGE_WORKSPACE_AGENTS");
+    // 该主体确实没被建出来（错误不是"建了但没绑"）
+    expect(
+        scalarCount(
+            `SELECT count(*) FROM agent_principals WHERE name = 'EditorWithCreateAccountCannotCreate'`,
+        ),
+    ).toBe(0);
+
+    // ② 恢复工作区管理权（WS_OWNER 携带 MANAGE_WORKSPACE_AGENTS@workspaceA）⇒ 建 = 201
+    replaceWorkspaceRole(ownerUserId, workspaceA, "WS_OWNER");
+    await page.goto(`/workspace/${workspaceA}`, { waitUntil: "load" });
+    await page.getByTestId("workspace-toolbar-agents").click();
+    await page.getByTestId("agent-principal-name").fill("CreatedButNotBindable");
     const createOnlyResponsePromise = page.waitForResponse(
         (response) =>
             response.url().endsWith("/api/v1/agent-principals") &&
@@ -558,11 +584,20 @@ test("@host V6 Workspace Agent management uses CP grants and persists isolated c
     expect(createOnlyResponse.status()).toBe(201);
     const unboundOnly = (await createOnlyResponse.json()) as { principalId: string };
     const unboundOnlyId = requireUuid(unboundOnly.principalId);
-    await page.getByTestId("agent-principal-bind").click();
-    // W5c rewrote the F-02 copy to point at「设置 → 角色与绑定」; assert the stable atom code
-    // instead of one locale's sentence so the spec survives copy changes.
-    await expect(page.getByRole("alert")).toContainText("MANAGE_WORKSPACE_AGENTS");
-    await expect(page.getByTestId("unbound-agent-principal")).toContainText(unboundOnlyId);
+
+    // ③ 能建 ≠ 能绑：降级回 WS_EDITOR 后再绑同一主体 ⇒ 403（绑定需要一次独立的原子授权）
+    // 注：WS_EDITOR 在 UI 上不渲染「未绑定主体」的操作面（能力位驱动的只读态），所以这一步走 API
+    // 打绑定接口——断言的对象是**授权门**（403 + 指向 MANAGE_WORKSPACE_AGENTS），不是渲染细节。
+    replaceWorkspaceRole(ownerUserId, workspaceA, "WS_EDITOR");
+    const bindDeniedResponse = await request.put(
+        `${CP_URL}/api/v1/workspaces/${workspaceA}/agents/${unboundOnlyId}`,
+        {
+            headers: owner.headers,
+            data: { permissions: [{ actionClass: "read", resource: "src/*" }] },
+        },
+    );
+    expect(bindDeniedResponse.status()).toBe(403);
+    expect(await bindDeniedResponse.text()).toContain("MANAGE_WORKSPACE_AGENTS");
     expect(
         scalarCount(
             `SELECT count(*) FROM workspace_agents WHERE principal_id = '${unboundOnlyId}'::uuid`,
