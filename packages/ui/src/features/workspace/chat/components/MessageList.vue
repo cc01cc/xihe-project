@@ -1,5 +1,13 @@
 <script setup lang="ts">
-import { ref, computed, nextTick, watch, inject, onMounted, onBeforeUnmount } from "vue";
+import {
+    ref,
+    computed,
+    nextTick,
+    watch,
+    onMounted,
+    onBeforeUnmount,
+    type ComponentPublicInstance,
+} from "vue";
 import { useI18n } from "vue-i18n";
 
 import type { Message, SessionRunSummary } from "../../../../types";
@@ -15,8 +23,6 @@ import { hasMultipleActors } from "../actorView";
 import { resolveDelivery, type ResolvedDelivery } from "../deliveryView";
 import { DEFAULT_VIRTUAL_MIN_ROWS } from "../composables/virtualWindow";
 import { useVirtualMessageWindow } from "../composables/useVirtualMessageWindow";
-import { MessageScrollerContextKey } from "@/composables/messageScroller";
-import type { MessageScrollerContextValue } from "@/lib/messageScrollerTypes";
 import { Search } from "@lucide/vue";
 import { Marker } from "@/components/ui/marker";
 import {
@@ -291,7 +297,29 @@ const rows = computed<Row[]>(() => {
  * - 向上加载历史（未来分页）用 `captureAnchor/restoreAnchor` 钉住用户正在读的那行。
  */
 const VIRTUAL_FALLBACK_ROW_HEIGHT = 120;
-const scrollerContext = inject<MessageScrollerContextValue | null>(MessageScrollerContextKey, null);
+/**
+ * BL-316 —— 滚动视口元素的来源（**不是** context，见下）。
+ *
+ * 原实现用 `inject(MessageScrollerContextKey, null).viewportRef` 取滚动容器，但提供该 context 的
+ * `MessageScrollerProvider` 是**本组件的子节点**（模板里包着整块内容），而 Vue 的 provide/inject
+ * 只沿祖先链向下查找 ⇒ `inject` 恒为 `null` ⇒ `attachViewport(null)` ⇒ `viewportHeight` 恒 0 ⇒
+ * `active` 恒 false ⇒ 窗口化渲染在产品里从未生效（长会话仍全量渲染，这也是 BL-315 自触发循环
+ * 长期没被窗口化掩盖/暴露的直接原因之一）。
+ *
+ * 现在改从**组件 ref** 取：`MessageScrollerViewport` 是单根组件，根节点就是那个 `overflow-y-auto`
+ * 的滚动 div。再用 `data-slot` 复核一层——将来若组件加了包裹层，这里退回内部那一层而不是把
+ * 外层元素当视口（认错元素的后果是静默失效，比报错更难查）。
+ */
+const viewportComponent = ref<ComponentPublicInstance | null>(null);
+
+function resolveViewportElement(): HTMLElement | null {
+    const root = viewportComponent.value?.$el;
+    if (!(root instanceof HTMLElement)) return null;
+    return root.dataset.slot === "message-scroller-viewport"
+        ? root
+        : root.querySelector<HTMLElement>('[data-slot="message-scroller-viewport"]');
+}
+
 const rowKeys = computed(() => rows.value.map((row) => row.key));
 /**
  * prepend/丢最旧的一帧：临时关闭窗口化（全量渲染），让 provider 的
@@ -320,7 +348,7 @@ const {
 
 onMounted(async () => {
     await nextTick();
-    attachViewport(scrollerContext?.viewportRef.current ?? null);
+    attachViewport(resolveViewportElement());
 });
 onBeforeUnmount(() => attachViewport(null));
 
@@ -378,7 +406,17 @@ watch(
 </script>
 
 <template>
-    <MessageScrollerProvider auto-scroll default-scroll-position="last-anchor">
+    <!--
+        BL-316 第二步：`source-item-count` 声明"这块 DOM 是全部行的投影"（rows.length = 数据层行数）。
+        **只在窗口化真正生效时声明**：窗口化关闭时 DOM 就是数据本身，任何子节点变化都是数据变化，
+        必须走改造前的原有语义（否则会把"消息内容变长"这类 DOM 变化误判成纯投影而漏掉锚定）。
+        scroller 据此把"窗口换页"与"新消息到达"区分开 —— 否则窗口换页会被当成新消息、把上滚拽回底部。
+    -->
+    <MessageScrollerProvider
+        auto-scroll
+        default-scroll-position="last-anchor"
+        :source-item-count="virtualizationActive ? rows.length : undefined"
+    >
         <div data-testid="message-list" class="relative flex flex-1 flex-col min-h-0">
             <div v-if="showSearch" class="absolute right-12 top-2 z-10">
                 <MessageSearch v-model="searchQuery" @close="showSearch = false" />
@@ -395,7 +433,7 @@ watch(
             </button>
 
             <MessageScroller class="flex-1">
-                <MessageScrollerViewport preserve-scroll-on-prepend>
+                <MessageScrollerViewport ref="viewportComponent" preserve-scroll-on-prepend>
                     <MessageScrollerContent :class="showSearch ? 'pt-12' : undefined">
                         <!--
                             PLAN-0670 M2d.1：只有 CP 明确给出 `nextCursor/truncated` 才显示

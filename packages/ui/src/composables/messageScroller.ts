@@ -37,13 +37,25 @@ export {
     useMessageScrollerVisibility,
 } from "./messageScrollerVisibility";
 
+/**
+ * BL-316 第二步：控制器选项 = Provider props + 投影声明。
+ *
+ * `projectedItemCount` 用 getter 而不是普通值：它来自父组件的响应式状态
+ * （`MessageList` 的 `rows.length`），每次内容变化都要读到**最新**值。
+ */
+export interface MessageScrollerControllerOptions extends MessageScrollerProviderProps {
+    /** 投影声明：内容 DOM 所投影的底层完整条目数；undefined = 不是投影。 */
+    projectedItemCount?: () => number | undefined;
+}
+
 export function useMessageScrollerController({
     autoScroll = false,
     defaultScrollPosition = "end",
     scrollEdgeThreshold = DEFAULT_SCROLL_EDGE_THRESHOLD,
     scrollPreviousItemPeek = DEFAULT_SCROLL_PREVIOUS_ITEM_PEEK,
     scrollMargin = DEFAULT_SCROLL_MARGIN,
-}: MessageScrollerProviderProps) {
+    projectedItemCount,
+}: MessageScrollerControllerOptions) {
     const refs = useMessageScrollerRefs({
         autoScroll,
         scrollEdgeThreshold,
@@ -82,6 +94,9 @@ export function useMessageScrollerController({
     } = refs;
 
     const previousDefaultScrollPositionRef = { current: defaultScrollPosition };
+
+    /** BL-316 第二步：上一次看到的"底层完整条目数"（见 `handleContentChange` 的投影判定）。 */
+    const previousProjectedCountRef = { current: undefined as number | undefined };
 
     if (previousDefaultScrollPositionRef.current !== defaultScrollPosition) {
         previousDefaultScrollPositionRef.current = defaultScrollPosition;
@@ -313,13 +328,41 @@ export function useMessageScrollerController({
                 (item) => item.dataset.messageId,
             ),
             previousItemCount = itemCountRef.value,
-            previousFirstItem = firstItemRef.value;
+            previousFirstItem = firstItemRef.value,
+            /**
+             * BL-316 第二步 —— 判定这次 DOM 变化是不是**窗口换页**。
+             *
+             * 判据是**数据层的事实**（`MessageList` 声明的 `sourceItemCount` = 全部行数），不是
+             * 从 DOM 猜 itemCount 差值：窗口换页时首行/末行都会变，但底层行数不变；真新消息到达时
+             * 行数一定变。两者在 DOM 计数上不可区分，在数据层声明上可区分。
+             */
+            projectedCount = projectedItemCount?.(),
+            previousProjectedCount = previousProjectedCountRef.current,
+            projectionOnly =
+                projectedCount !== undefined &&
+                previousProjectedCount !== undefined &&
+                projectedCount === previousProjectedCount;
 
+        previousProjectedCountRef.current = projectedCount;
         itemCountRef.value = items.length;
         firstItemRef.value = items[0] ?? null;
 
         const reconcileScrollPosition = () => {
             if (flushPendingScrollToMessage()) {
+                return;
+            }
+
+            // 窗口换页（数据没变、只是渲染了另一段）：位置由用户/浏览器掌握。
+            // 绝不能走下面的 `getNewScrollAnchor` / `scrollToElement`（"新消息到达"路径）——
+            // 那条路会把正在上滚的用户一次一次拽回底部（BL-316 实测：25→5219→…→71967）。
+            // 例外：本来就在贴底跟随时仍要贴底，否则高度修正会让人离开底部。
+            if (projectionOnly) {
+                if (modeRef.value === "following-bottom" && autoScrollRef.value) {
+                    scrollToEnd({ behavior: "auto" });
+                } else {
+                    commitScrollState();
+                    scheduleVisibilitySync();
+                }
                 return;
             }
 
