@@ -12,7 +12,9 @@ import org.slf4j.LoggerFactory;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Instant;
 import java.util.List;
@@ -89,14 +91,19 @@ public class UserQuestionService {
     private final UserQuestionRepository questions;
     private final ChatRunRepository runs;
     private final ChatApprovalRepository approvals;
+    private final UserQuestionAgentClient agentClient;
     private final AuditLogger audit;
+    private final TransactionTemplate transactionTemplate;
 
     public UserQuestionService(UserQuestionRepository questions, ChatRunRepository runs,
-            ChatApprovalRepository approvals, AuditLogger audit) {
+            ChatApprovalRepository approvals, UserQuestionAgentClient agentClient, AuditLogger audit,
+            PlatformTransactionManager transactionManager) {
         this.questions = questions;
         this.runs = runs;
         this.approvals = approvals;
+        this.agentClient = agentClient;
         this.audit = audit;
+        this.transactionTemplate = new TransactionTemplate(transactionManager);
     }
 
     // ---------------------------------------------------------------------------------------
@@ -171,34 +178,31 @@ public class UserQuestionService {
      * deadline passed (that row is settled to {@code expired} on the way out — lazy settlement, the
      * same shape as the approval expiry path).</p>
      *
-     * <p>Deliberately <b>not</b> one surrounding transaction (mirrors {@code ApprovalService.decide}):
-     * the decision itself is a single conditional statement, while the lazy expiry on the losing path
-     * must survive the 409. Inside one transaction the thrown 409 would roll that settle back and
-     * leave a pending row nobody can answer — the exact bug the PostgreSQL lane caught when this
-     * method was still {@code @Transactional}.</p>
+     * <p>Ordering (T5.12, claim-then-dispatch with a rollback, mirroring {@code ApprovalService}'s
+     * claim-before-deliver shape): the CAS advance and the callback to the waiting Agent happen
+     * inside <b>one</b> transaction, so a delivery that the Agent did not accept rolls the advance
+     * back and the row stays {@code pending}. Only a 2xx from the Agent makes an answer durable — a
+     * failed callback must never fabricate {@code answered}. The answer body travels on that internal
+     * call (that is its purpose) but never into a log/audit/problem detail.</p>
+     *
+     * <p>The losing-CAS path deliberately sits <b>outside</b> that transaction: the lazy expiry there
+     * must survive the thrown 409 (inside a transaction it would be rolled back and leave a pending
+     * row nobody can answer — the exact bug the PostgreSQL lane caught in T5.9). Same reason the
+     * method itself is not {@code @Transactional}: with {@code TransactionTemplate} the transactional
+     * scope is explicit at any call site (precedent: {@code ChatRunCancellationService:76},
+     * {@code AuthController:121}), and it cannot accidentally cover the 409 branch.</p>
      */
     public UserQuestion answer(UUID questionId, String userId, String answer) {
         String body = requireAnswer(answer);
         UUID addressee = parseUserId(userId);
-        UserQuestion row = questions.findById(questionId).orElseThrow(UserQuestionService::notFound);
-        if (!addressee.equals(row.getAddresseeUserId())) {
-            // 404, never 403: "not yours" and "does not exist" must be indistinguishable here.
-            throw notFound();
-        }
         Instant now = Instant.now();
-        if (questions.markAnswered(questionId, body, now) == 1) {
-            row.setState(UserQuestion.STATE_ANSWERED);
-            row.setAnswer(body);
-            row.setSettledAt(now);
-            audit.recordDurableChange(userId, null, "user_question_answered", "user_question",
-                    questionId.toString(), auditDetail(row, body.length()));
-            logger.info("[LIFECYCLE] service=cp event=run_question_answered questionId={}"
-                            + " sessionId={} runId={} answerLength={}", questionId, row.getSessionId(),
-                    row.getRunId(), body.length());
-            return row;
+        UserQuestion delivered = transactionTemplate.execute(status -> deliverAnswer(
+                questionId, userId, addressee, body, now));
+        if (delivered != null) {
+            return delivered;
         }
         // CAS lost. findStateById is a scalar projection, so it sees the committed state even though
-        // the entity read above is still cached in the persistence context.
+        // an earlier read of the same row may still be cached in the persistence context.
         String state = questions.findStateById(questionId).orElse(null);
         if (state == null) {
             throw notFound();
@@ -209,10 +213,41 @@ public class UserQuestionService {
         }
         // Still pending ⇒ the only predicate that can have failed is the deadline.
         questions.settlePending(questionId, UserQuestion.STATE_EXPIRED, Instant.now());
-        logger.info("[LIFECYCLE] service=cp event=run_question_expired questionId={} runId={}"
-                + " reason=answer_after_deadline", questionId, row.getRunId());
+        logger.info("[LIFECYCLE] service=cp event=run_question_expired questionId={}"
+                + " reason=answer_after_deadline", questionId);
         throw new CpApiException(HttpStatus.CONFLICT, "QUESTION_EXPIRED",
                 "This question has expired");
+    }
+
+    /**
+     * The transactional half of {@link #answer}: advance, deliver, audit.
+     *
+     * @return the answered row, or {@code null} when the CAS lost (nothing was written, so nothing to
+     *         roll back and the caller owns the 409 vocabulary)
+     */
+    private UserQuestion deliverAnswer(UUID questionId, String userId, UUID addressee, String body,
+            Instant now) {
+        UserQuestion row = questions.findById(questionId).orElseThrow(UserQuestionService::notFound);
+        if (!addressee.equals(row.getAddresseeUserId())) {
+            // 404, never 403: "not yours" and "does not exist" must be indistinguishable here.
+            throw notFound();
+        }
+        if (questions.markAnswered(questionId, body, now) != 1) {
+            return null;
+        }
+        // Fail-closed: if this call throws, the transaction rolls the advance back and the question
+        // stays pending for another attempt.
+        agentClient.respond(questionId.toString(), row.getSessionId().toString(),
+                row.getRunId().toString(), body);
+        row.setState(UserQuestion.STATE_ANSWERED);
+        row.setAnswer(body);
+        row.setSettledAt(now);
+        audit.recordDurableChange(userId, null, "user_question_answered", "user_question",
+                questionId.toString(), auditDetail(row, body.length()));
+        logger.info("[LIFECYCLE] service=cp event=run_question_answered questionId={}"
+                        + " sessionId={} runId={} answerLength={}", questionId, row.getSessionId(),
+                row.getRunId(), body.length());
+        return row;
     }
 
     // ---------------------------------------------------------------------------------------

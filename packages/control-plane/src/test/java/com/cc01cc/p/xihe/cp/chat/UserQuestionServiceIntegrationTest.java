@@ -14,11 +14,19 @@ import com.cc01cc.p.xihe.cp.repository.ChatApprovalRepository;
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.repository.UserQuestionRepository;
+import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
 
+import java.io.IOException;
+import java.io.OutputStream;
+import java.net.InetSocketAddress;
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
@@ -28,10 +36,12 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -47,9 +57,47 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  *   <li>the run row lock makes the two-table "one pending human interaction" gate atomic against a
  *       real {@code approval_requests} row;</li>
  *   <li>terminal cleanup is idempotent and can never overwrite an {@code answered} row.</li>
+ *   <li>a callback the Agent refuses leaves the question <b>pending</b> (T5.12 fail-closed: no
+ *       fabricated {@code answered}, and a later retry can still deliver).</li>
  * </ul>
  */
 class UserQuestionServiceIntegrationTest extends AbstractIntegrationTest {
+
+    /** Local stand-in for the Agent's {@code /internal/v1/agent/user-question/respond} route. */
+    private static com.sun.net.httpserver.HttpServer agentServer;
+    private static final AtomicReference<Integer> AGENT_STATUS = new AtomicReference<>(200);
+    private static final AtomicReference<String> AGENT_AUTH = new AtomicReference<>("");
+    private static final AtomicReference<String> AGENT_BODY = new AtomicReference<>("");
+
+    @DynamicPropertySource
+    static void configureAgent(DynamicPropertyRegistry registry) {
+        try {
+            agentServer = com.sun.net.httpserver.HttpServer.create(new InetSocketAddress(0), 0);
+            agentServer.createContext("/internal/v1/agent/user-question/respond", exchange -> {
+                String auth = exchange.getRequestHeaders().getFirst("Authorization");
+                AGENT_AUTH.set(auth == null ? "" : auth);
+                AGENT_BODY.set(new String(exchange.getRequestBody().readAllBytes(),
+                        StandardCharsets.UTF_8));
+                byte[] body = "{\"status\":\"accepted\"}".getBytes(StandardCharsets.UTF_8);
+                exchange.getResponseHeaders().set("Content-Type", MediaType.APPLICATION_JSON_VALUE);
+                exchange.sendResponseHeaders(AGENT_STATUS.get(), body.length);
+                try (OutputStream output = exchange.getResponseBody()) {
+                    output.write(body);
+                }
+            });
+            agentServer.start();
+        } catch (IOException e) {
+            throw new ExceptionInInitializerError(e);
+        }
+        registry.add("cp.agent-base-url", () -> "http://localhost:" + agentServer.getAddress().getPort());
+    }
+
+    @AfterAll
+    static void stopAgentServer() {
+        if (agentServer != null) {
+            agentServer.stop(0);
+        }
+    }
 
     @Autowired private WorkspaceFixture workspaceFixture;
     @Autowired private UserQuestionService service;
@@ -63,6 +111,9 @@ class UserQuestionServiceIntegrationTest extends AbstractIntegrationTest {
 
     @BeforeEach
     void fixture() {
+        AGENT_STATUS.set(200);
+        AGENT_AUTH.set("");
+        AGENT_BODY.set("");
         ownerId = register("p660-question-" + UUID.randomUUID()).getUser().getId();
         workspaceId = workspaceFixture
                 .createOwnedWorkspace("P660 question ws " + UUID.randomUUID(), ownerId).getId().toString();
@@ -140,6 +191,41 @@ class UserQuestionServiceIntegrationTest extends AbstractIntegrationTest {
         assertEquals("QUESTION_NOT_FOUND", assertThrows(CpApiException.class,
                 () -> service.answer(asked.getId(), stranger, "let me answer")).getCode(),
                 "a non-addressee must not learn the row exists");
+    }
+
+    @Test
+    void aRefusedCallbackLeavesTheQuestionPending() {
+        ChatRun run = newRun(newSession(), null);
+        UserQuestion asked = ask(run, null);
+        AGENT_STATUS.set(500);
+
+        CpApiException failure = assertThrows(CpApiException.class,
+                () -> service.answer(asked.getId(), ownerId, "rebase onto develop"));
+
+        assertEquals(HttpStatus.BAD_GATEWAY, failure.getStatus());
+        assertEquals("AGENT_QUESTION_DELIVERY_FAILED", failure.getCode());
+        assertEquals(UserQuestion.STATE_PENDING, service.stateOf(asked.getId()).orElseThrow(),
+                "a failed callback must not fabricate answered — the CAS rolls back with the transaction");
+        assertNull(questions.findById(asked.getId()).orElseThrow().getAnswer(),
+                "no answer becomes durable before the waiting run received it");
+
+        // The question is still answerable: the retry succeeds once the Agent accepts again.
+        AGENT_STATUS.set(200);
+        assertEquals(UserQuestion.STATE_ANSWERED,
+                service.answer(asked.getId(), ownerId, "rebase onto develop").getState());
+    }
+
+    @Test
+    void theCallbackCarriesTheQuestionAndTheServiceBearer() {
+        ChatRun run = newRun(newSession(), null);
+        UserQuestion asked = ask(run, null);
+
+        service.answer(asked.getId(), ownerId, "use develop");
+
+        assertTrue(AGENT_AUTH.get().startsWith("Bearer "), "service auth: " + AGENT_AUTH.get());
+        assertTrue(AGENT_BODY.get().contains(asked.getId().toString()),
+                "the Agent matches its wait on questionId: " + AGENT_BODY.get());
+        assertTrue(AGENT_BODY.get().contains("use develop"), "the body travels on the internal wire");
     }
 
     @Test
