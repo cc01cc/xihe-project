@@ -29,10 +29,11 @@
 
 ## Commands
 
-- 单文件/包级命令见对应包指南；里程碑和 PLAN 收尾运行 `mise run validate`，仅按改动边界增加集成/E2E profile（DEV-020/021/022/023）。`validate` 若被存量环境性基线失败 fail-fast 挡住（白名单见 workspace 私有技术债文档《xh-backlog-and-debt》的「环境性基线失败白名单」），改按组件级补跑（lint:links / runtime / test:cp / test:agent / test:ui / build:ui）并逐红点做基线对照，不因存量红点阻塞收尾。
+- 单文件/包级命令见对应包指南；里程碑和 PLAN 收尾运行 `mise run validate`，仅按改动边界增加集成/E2E profile（DEV-020/021/022/023）。`validate` 若被存量环境性基线失败 fail-fast 挡住（白名单见 workspace 私有技术债文档《xh-backlog-and-debt》的「环境性基线失败白名单」），改按组件级补跑（lint:links / runtime / test:cp / test:agent / test:ui / build:ui）并逐红点做基线对照，不因存量红点阻塞收尾。**契约面必须过 `mise run check:openapi`**（BL-162：它已是 `test:cp` 与 `validate` 的依赖，契约漂移会让 CP 测试波次直接红，不允许绕过）。
 - Agent 质量回归门（PLAN-0512/0540，本地 lane）：`mise run gate:agent-quality -- --report <invariant.json> --report <behavior.json> --baseline <baseline.json>` 只读消费每个 lane 一份的评测报告（v2 gate 合并判定），退出码 `0/1/2/3` = `PASS/FAIL/NOT_EVALUATED/GATE_ERROR`（仅 PASS 退出 0）；阈值、required/expected task 集在 `packages/agent/evaluation/gate-v2.json`（含证据溯源），契约见 DEV-025，未接 CI。
 - Compose E2E（`mise run test:e2e:compose`，旧名 `test:e2e`）**已冻结注释（2026-10-07 docker 冻结裁定）**，不得用于验收或临时验证；Sandbox/host E2E 使用 `mise run test:e2e:host`，由 host runner 管理每轮隔离环境。清理/就绪要求见 [`DEV-020`](docs/i18n/zh-Hans/DEV-020-e2e-test-strategy.md) / [`DEV-021`](docs/i18n/zh-Hans/DEV-021-integration-test-strategy.md)。
 - 环境搭建、模块任务、资源清理和全栈排障见 [`DEV-002`](docs/i18n/zh-Hans/DEV-002-developer-guide.md)。
+- **打包产物入口（PLAN-0632 M2）**：`mise run pkg:launcher -- start|status|stop`（随包 supervisor，顺序 **PG(TCP) → CP(`/actuator/health` 200) → Agent → Runtime → UI**，每步 readiness 门 + 探针日志；参数照旧用 `--` 透传）与 `mise run pkg:installer`（可重跑的 NSIS 构建，`-- --stage-only` 只组装 stage）。产物只写 `.tmp/pkg/`（gitignored），不入库；开发机上 `pkg:launcher status` 报 `ok:false`（把 `dev:host` 的监听视为 foreignListeners）属预期，不是打包安装的健康检查失败。
 - **栈构建新鲜度（PLAN-0662，运维口径）**：`health UP` 不代表跑的是当前代码；**重启/复用栈前先看 verdict** ——`mise run dev:host:status`（`-- --json` 字段 `runningCommit`/`headCommit`/`behind`/`stale`/`verdict` 是 lane 脚本的固定契约）。`verdict` 非 `fresh` 时 `stack-run.mjs cp` 会在 `mvn` 前默认 `clean compile` 重建（`--no-rebuild` 显式跳过并 WARN）；外部复用栈跑 E2E 时 runner 会断言 CP build commit == `XIHE_E2E_EXPECT_CP_COMMIT`（缺省取 HEAD），不匹配或读不到 `build-info` 一律 fail-fast。构建戳在 `classes/META-INF/build-info.properties`，启动日志有 `cp.build commit=… built=… dirty=…`。判据与实测见 `plans/PLAN-0662-dev-stack-freshness/`。
 - 根 `README.md`（英文 GitHub 门面）与 `docs/i18n/zh-Hans/README.md`（中文文档页）独立维护；架构图、Quick Start 命令、端口和技术栈摘要同批同步，功能状态表仅在中文版维护。`scripts/sync-readmes.sh` 只管理包 README symlink，不管理根 README。
 - **CP 构建目录按栈隔离（BL-253 L3）**：每栈一个 `C:/xihe-build/cp/<stackId>/<sha12>[-dirty]`（`XIHE_CP_BUILD_ROOT` 可改根），`.current` 记录该栈**最后一次启动**所用目录；`cpBuild.targetDirSource` = `pointer`/`newest`/`env`/`derived`（**新增字段，旧字段契约不变**）。保留只走显式清理 `mise run dev:host:cp-build:clean`（默认 dry-run，`-- --apply` 才删；每栈留最新 3 个 + 指针目标；绝不碰 legacy 目录）。回滚通道 = 显式 `XIHE_CP_TARGET_DIR`（优先级最高）。切布局后各栈**下次重启**首建约 60s，谁重启谁核 `verdict=fresh`+四端口。
@@ -100,7 +101,7 @@
 ## Plan and Release Rules
 
 - 遵循 workspace `plan-mode`（收尾验收见其 `references/plan-completion/` 分册）；PLAN 工作包统一存放在 workspace 根 `plans/`，不在本仓库另设；XH Spec Impact 和 DEV/OpenAPI 同批同步按 `spec/README.md`、DEV-030 执行。PLAN 是目录工作包，不是单文件 `PLAN-XXX.md`。
-- XH PLAN 隔离实施统一在**本仓库内**建 git worktree（如 `git worktree add .worktrees/<name> -b <branch> develop`）；**禁止**用 Kilo / Agent Manager 的 worktree 模式代劳——两者是不同机制（2026-10-14 用户再次纠正；工作区硬规则见 `../AGENTS.md` §Git 操作约束）。
+- **XH PLAN 隔离实施复用固定 worktree 池**（`worktree-lifecycle` skill 为 SSOT；池表见项目私有层 `.local/xh-d28/worktree-pool.md`）：一个 lane 领一个**已存在**的槽位，`git switch develop && git merge develop && git switch -c task/<topic>` 开工，合并后回 `develop` 休息态。**禁止 `git worktree add` 新建**——H: 卷建树实测 470s 且会在 checkout 未完成时留下 0 MB 半成品目录（2026-11-05 实测一天新建 34 个 + 14 个空残留）；只有池内 6 个槽位全忙、且用户明确授权时才可新建，**新建必须同批登记进池表**。**禁止**用 Kilo / Agent Manager 的 worktree 模式代劳（两者是不同机制，2026-10-14 用户再次纠正；工作区硬规则见 `../AGENTS.md` §Git 操作约束）。
 - 本指南不授权 package 发布、版本 bump、commit 或 push；任何 release 动作先核对当前项目依据并遵循 workspace permissions。
 
 ## Skills

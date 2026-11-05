@@ -1939,6 +1939,73 @@ paths:
         '409': { $ref: '#/components/responses/Problem' }
         '410': { $ref: '#/components/responses/Problem' }
         '502': { $ref: '#/components/responses/Problem' }
+  /api/v1/user-questions:
+    get:
+      operationId: listUserQuestions
+      summary: The caller's own inbound questions (the asker's inbox)
+      description: 'PLAN-0660 T5.10. **Addressee-only list**: rows where `addressee_user_id` = the caller — not every question in sessions the caller can see. `pendingCount` is computed with the *same* filter as `items` (badge and list can never disagree) and is derived from rows, never stored. No workspace context is required (the same shape as `GET /api/v1/user-events`). `state` currently accepts only `pending`: any other value is 400 rather than silently ignored. An oversized `limit` is clamped to 100, `limit < 1` is 400.'
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: query
+          name: state
+          required: false
+          schema: { type: string, enum: [pending], default: pending }
+        - in: query
+          name: limit
+          required: false
+          schema: { type: integer, minimum: 1, default: 20, maximum: 100 }
+      responses:
+        '200':
+          description: The caller's questions plus the pending count of the same filter
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UserQuestionListResponse' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+  /api/v1/user-questions/{id}:
+    get:
+      operationId: getUserQuestion
+      summary: One question — addressee, or a session-visible reader (read-only)
+      description: 'PLAN-0660 T5.10. Readable by the addressee, and additionally by a session-visible reader (session owner / invited enabled HUMAN participant — the frozen SessionReadAccess read rule, PLAN-0668 D1/D1b). Both get the **same projection**; the reader is never granted the answer right. Everybody else gets the *same* 404 `QUESTION_NOT_FOUND` as a nonexistent id: there is no 403 branch, and a malformed (non-UUID) id is a 404 too, never a 400.'
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: The question projection
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UserQuestionView' }
+        '404': { $ref: '#/components/responses/Problem' }
+  /api/v1/user-questions/{id}/answer:
+    post:
+      operationId: answerUserQuestion
+      summary: Answer a pending question (addressee only)
+      description: 'PLAN-0660 T5.10/T5.12. Addressee only: any other caller — including a session-visible reader — gets the uniform 404 `QUESTION_NOT_FOUND`, and visibility is decided *before* body validation so the route cannot be used as a validation oracle. On success the response is the **settled projection** (`state=answered` plus the `settledAt` stamp), not an empty body. The answer is durable only if the waiting run received it: a failed CP→Agent callback is `502 AGENT_QUESTION_DELIVERY_FAILED` and the row stays `pending` (fail-closed, retryable). Conflicts keep their frozen codes: `409 QUESTION_ALREADY_SETTLED`, `409 QUESTION_EXPIRED`.'
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UserQuestionAnswerRequest' }
+      responses:
+        '200':
+          description: The settled projection
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UserQuestionView' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+        '502': { $ref: '#/components/responses/Problem' }
   /api/v1/approvals/pending:
     get:
       operationId: listPendingApprovals
@@ -5922,6 +5989,32 @@ components:
          scope: { type: string, enum: [USER, WORKSPACE, SYSTEM] }
          displayName: { type: string }
          connectionRevision: { type: integer, minimum: 1 }
+    UserQuestionAnswerRequest:
+      type: object
+      required: [answer]
+      properties:
+        answer: { type: string, minLength: 1, maxLength: 2000, description: 'The human answer. Blank/whitespace-only is 400 INVALID_REQUEST. Untrusted text: shown in the projection, never written to a log, audit detail or problem detail.' }
+    UserQuestionView:
+      type: object
+      required: [id, sessionId, runId, state, prompt, createdAt]
+      description: 'PLAN-0660 T5.10: one question. The same shape for the addressee and for a session-visible reader; `answer` is only non-null for `answered` (spec/session/user-channel.md §6).'
+      properties:
+        id: { type: string, format: uuid }
+        sessionId: { type: string, format: uuid }
+        runId: { type: string, format: uuid }
+        state: { type: string, enum: [pending, answered, expired, cancelled] }
+        prompt: { type: string, description: 'The question body (untrusted).' }
+        answer: { type: string, nullable: true, description: 'Only set by the pending → answered transition.' }
+        expiresAt: { type: string, format: date-time, nullable: true, description: 'null = blocking ask; otherwise the askTimed deadline.' }
+        createdAt: { type: string, format: date-time }
+        firstDeliveredAt: { type: string, format: date-time, nullable: true }
+        settledAt: { type: string, format: date-time, nullable: true, description: 'Terminal stamp; the "answered at" instant for an answered question (frozen column settled_at).' }
+    UserQuestionListResponse:
+      type: object
+      required: [items, pendingCount]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/UserQuestionView' } }
+        pendingCount: { type: integer, description: 'Count of rows under the same filter as items (derived, never stored).' }
     UserQuestionRespondRequest:
       type: object
       required: [questionId, sessionId, runId, answer]

@@ -105,6 +105,8 @@ class UserQuestionServiceIntegrationTest extends AbstractIntegrationTest {
     @Autowired private ChatRunRepository runs;
     @Autowired private ChatApprovalRepository approvals;
     @Autowired private SessionRepository sessions;
+    @Autowired private ChatRunTerminalService terminalService;
+    @Autowired private org.springframework.jdbc.core.JdbcTemplate jdbcTemplate;
 
     private String ownerId;
     private String workspaceId;
@@ -294,6 +296,64 @@ class UserQuestionServiceIntegrationTest extends AbstractIntegrationTest {
         assertEquals(UserQuestion.STATE_ANSWERED,
                 service.findProjection(ownerId, UserQuestion.STATE_ANSWERED, 10).getFirst().getState());
         assertFalse(service.findProjection(ownerId, null, 10).isEmpty());
+    }
+
+    @Test
+    void aTerminalRunSettlesItsPendingQuestionThroughTheWiredTerminalPath() {
+        ChatRun run = newRun(newSession(), null);
+        UserQuestion asked = ask(run, null);
+        assertEquals(UserQuestion.STATE_PENDING, service.stateOf(asked.getId()).orElseThrow());
+
+        // The real terminal choke point — this exercises the T5.11 wiring, not a direct service call.
+        terminalService.terminalize(new ChatRunTerminalService.TerminalRequest(
+                run.getId().toString(), List.of("streaming"), "succeeded", "success", null, null,
+                0, 0, ChatRunTerminalService.TerminalSource.STREAM, null));
+
+        assertEquals(UserQuestion.STATE_EXPIRED, service.stateOf(asked.getId()).orElseThrow(),
+                "a finished run must never leave a question waiting");
+    }
+
+    @Test
+    void answerOverTheLengthLimitIsRejectedBeforeAnyStateChange() {
+        ChatRun run = newRun(newSession(), null);
+        UserQuestion asked = ask(run, null);
+
+        CpApiException tooLong = assertThrows(CpApiException.class, () -> service.answer(asked.getId(),
+                ownerId, "x".repeat(UserQuestionService.MAX_ANSWER_LENGTH + 1)));
+
+        assertEquals(HttpStatus.BAD_REQUEST, tooLong.getStatus());
+        assertEquals("INVALID_REQUEST", tooLong.getCode());
+        assertEquals(UserQuestion.STATE_PENDING, service.stateOf(asked.getId()).orElseThrow(),
+                "an invalid answer must not touch the row");
+        assertNull(questions.findById(asked.getId()).orElseThrow().getAnswer());
+    }
+
+    /**
+     * V14（问答与审批不互串）的 SQL 半边：走完"发问 + 作答"整条问答路径后，审批域与策略域的表行数必须
+     * **一字不变** —— 问答不写 rule/grant/approval_requests。这是真实计数，不是依赖面论证。
+     */
+    @Test
+    void theQuestionPathWritesNothingIntoTheApprovalOrPolicyDomain() {
+        long approvalsBefore = countRows("approval_requests");
+        long rulesBefore = countRows("policy_rules");
+        long grantsBefore = countRows("grants");
+
+        ChatRun run = newRun(newSession(), null);
+        UserQuestion asked = ask(run, null);
+        service.answer(asked.getId(), ownerId, "rebase onto develop");
+
+        assertEquals(approvalsBefore, countRows("approval_requests"),
+                "the question path must not create approval rows");
+        assertEquals(rulesBefore, countRows("policy_rules"),
+                "the question path must not create policy rules");
+        assertEquals(grantsBefore, countRows("grants"),
+                "the question path must not create grants");
+        assertEquals(UserQuestion.STATE_ANSWERED, service.stateOf(asked.getId()).orElseThrow());
+    }
+
+    private long countRows(String table) {
+        Long count = jdbcTemplate.queryForObject("SELECT count(*) FROM " + table, Long.class);
+        return count == null ? -1L : count;
     }
 
     // ---------------------------------------------------------------------------------------

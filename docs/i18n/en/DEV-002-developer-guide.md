@@ -235,6 +235,7 @@ node scripts/stack-run.mjs env-json --stack 2      # print that stack's derived 
 - Two concurrent stacks at most are recommended.
 - **Port source of truth (PLAN-0612)**: default ports live in this repository (`scripts/lib/stack-ports.mjs`, `STACK_PORTS` + `deriveStack()`); the ONE workspace `config/ports.mjs` is only a mirror for orchestration. Changing one side requires changing the other **in the same batch**, verified by `mise run check:ports` (`mise.toml:401`: per stack × per port, derived fields, and `.env.dev` self-consistency); when ONE is absent that gate **skips explicitly** (not a failure), so a standalone clone stays usable.
 - **Single-clone self-check**: `mise run check:standalone` (`mise.toml:395`) exports a parent-less copy and verifies startup/self-check do not depend on the one root.
+- **OpenAPI contract gate (BL-162)**: `mise run check:openapi` validates `docs/api/openapi.yaml` (3.1 header, unique paths, path-parameter declarations, Problem Details, plus the frozen checkpoint-revert and session-read contract slices). It is a **dependency of `test:cp`**, so running the CP test suite checks the contract; PLAN closeout / wave acceptance must run it explicitly. A failure prints the parsed path count, the first failure and a fix hint (`docs/api/openapi.yaml` stays the single source of truth). It deliberately does **not** diff Spring routes against the contract — "route implemented but undocumented" is a known blind spot tracked as a separate BL.
 
 #### Detached full-stack supervisor (PLAN-0603)
 
@@ -254,6 +255,24 @@ node scripts/dev-stack.mjs stop --stack 4 --with-pg       # explicitly stop the 
 - `mise run dev:stack -- --stack N` forwards to this supervisor; **`--next` is not supported for xihe** (use `--stack`).
 - **Parallel worktrees must use different stacks** (the same stack shares the PG database `xihe_<n>`); first run in a worktree needs `pnpm install --offline` for `packages/ui`. Inside the ONE workspace the external-cache convention for `CARGO_TARGET_DIR` / `UV_PROJECT_ENVIRONMENT` is documented on the ONE side; a standalone clone just uses the default cache.
 - `stop` only kills process trees recorded in the PID file whose command line matches `stack-run.mjs`; it never kills by port blindly.
+
+#### Packaged product (PLAN-0632, `pkg:launcher` / `pkg:installer`)
+
+The distribution shape ("double-click the installer → services start → browser opens localhost"), not the daily dev path (that stays Mode A).
+
+```bash
+mise run pkg:launcher -- start --install <install-dir>  # order: PG(TCP) -> CP(/actuator/health 200) -> Agent -> Runtime -> UI(same-origin /)
+mise run pkg:launcher -- status --stack 1 --json        # read-only state (health/ports/PIDs)
+mise run pkg:launcher -- stop                           # reverse-order tree kill + residual port check
+mise run pkg:installer                                  # NSIS build from the four existing service artifacts (-- --stage-only skips makensis)
+```
+
+- **The order is the contract**: PG must accept TCP (the CP runs Flyway on boot), then CP `/actuator/health` 200, then Agent (its startup config sync is fail-closed on `llm-provider`), then Runtime, then UI (D32-06 same-origin serving). Every step is a readiness probe with an explicit timeout — **no fixed sleeps** (implementation: `scripts/lib/service-supervisor.mjs`).
+- Extra arguments go after `--` (`--install`, `--stack`, `--exe <service>=<path>`, `--skip <service>`), the same convention as `dev:stack` and `dev:host:provider-init`.
+- **Two launchers, two jobs (do not mix them)**: `mise run pkg:launcher` (Node, `scripts/pkg/launcher.mjs`) is the **dev/smoke supervisor** — it starts the five stages from an install-relative manifest and **does no first-run work** (an uninitialized data directory fails with `PostgreSQL data directory is not initialized`); the **product first run** (extract PG, `initdb`, secrets, data root, JDBC bootstrap, open the browser) belongs to the **bundled Java launcher** (`scripts/pkg/launcher/src/com/cc01cc/xihe/pkg/Launcher.java`, compiled into the installer by `build-installer.mjs`).
+- **Artifacts only land in `.tmp/pkg/` (gitignored) and are never committed.**
+- On a dev machine `pkg:launcher status` reports the `dev:host` listeners as `foreignListeners` and returns `ok:false` (exit 1): that is the correct answer to "this is not a packaged install", not a failure.
+- Capabilities deliberately not included (auto-update, autostart, code signing, per-machine service install): `plans/PLAN-0632-xh-mvp-self-contained-packaging/installer-scope.md`.
 
 #### Rust build cache and worktree isolation (PLAN-0596)
 

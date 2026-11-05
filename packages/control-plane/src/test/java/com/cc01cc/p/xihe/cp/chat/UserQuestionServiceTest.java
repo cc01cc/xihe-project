@@ -7,7 +7,9 @@ import com.cc01cc.p.xihe.cp.entity.ChatRun;
 import com.cc01cc.p.xihe.cp.entity.UserQuestion;
 import com.cc01cc.p.xihe.cp.repository.ChatApprovalRepository;
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
+import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.repository.UserQuestionRepository;
+import com.cc01cc.p.xihe.cp.service.SessionReadAccess;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.data.domain.Pageable;
@@ -58,6 +60,8 @@ class UserQuestionServiceTest {
     private final UserQuestionRepository questions = mock(UserQuestionRepository.class);
     private final ChatRunRepository runs = mock(ChatRunRepository.class);
     private final ChatApprovalRepository approvals = mock(ChatApprovalRepository.class);
+    private final SessionRepository sessions = mock(SessionRepository.class);
+    private final SessionReadAccess sessionReadAccess = mock(SessionReadAccess.class);
     private final AuditLogger audit = mock(AuditLogger.class);
     private final UserQuestionAgentClient agentClient = mock(UserQuestionAgentClient.class);
     /** No-op transaction manager: this lane asserts branch behaviour, not rollback semantics. */
@@ -74,7 +78,7 @@ class UserQuestionServiceTest {
         public void rollback(TransactionStatus status) { }
     };
     private final UserQuestionService service = new UserQuestionService(questions, runs, approvals,
-            agentClient, audit, TX_MANAGER);
+            sessions, agentClient, sessionReadAccess, audit, TX_MANAGER);
 
     // ---------------------------------------------------------------------------------------
     // recordPending
@@ -238,13 +242,25 @@ class UserQuestionServiceTest {
     }
 
     @Test
-    void answer_rejectsABlankBodyBeforeTouchingTheRow() {
+    void answer_validatesTheBodyOnlyForTheAddressee() {
+        UserQuestion row = pendingRow();
+        when(questions.findById(row.getId())).thenReturn(Optional.of(row));
+
+        // The addressee with a blank body: an honest 400 about their own request, nothing written.
         CpApiException blank = assertThrows(CpApiException.class,
-                () -> service.answer(UUID.randomUUID(), USER_ID, "  "));
+                () -> service.answer(row.getId(), USER_ID, "  "));
 
         assertEquals(HttpStatus.BAD_REQUEST, blank.getStatus());
         assertEquals("INVALID_REQUEST", blank.getCode());
-        verify(questions, never()).findById(any());
+        verify(questions, never()).markAnswered(any(), anyString(), any());
+        verify(agentClient, never()).respond(any(), any(), any(), any());
+
+        // A stranger with the same blank body: still the uniform 404 — visibility is decided first,
+        // so the route can never be used as a body-validation oracle.
+        CpApiException stranger = assertThrows(CpApiException.class,
+                () -> service.answer(row.getId(), OTHER_USER_ID, "  "));
+        assertEquals(HttpStatus.NOT_FOUND, stranger.getStatus());
+        assertEquals("QUESTION_NOT_FOUND", stranger.getCode());
     }
 
     // ---------------------------------------------------------------------------------------

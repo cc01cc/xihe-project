@@ -271,6 +271,25 @@ node scripts/stack-run.mjs env-json --stack 2
 - 建议同时最多 2 套栈（每栈一套 PG + 四个服务）。
 - **端口事实源（PLAN-0612）**：默认端口的唯一事实源在本仓库 `scripts/lib/stack-ports.mjs`（`STACK_PORTS` + `deriveStack()`）；ONE 工作区的 `config/ports.mjs` 只是编排镜像。改任一侧必须在**同批**改另一侧，并用 `mise run check:ports`（`mise.toml:401`，逐栈 × 逐端口 + 派生字段 + `.env.dev` 自洽性）校验；ONE 不存在时该门**显式 skip**（不是失败），保证单独 clone 可用。
 - **单 clone 自检**：`mise run check:standalone`（`mise.toml:395`）导出无父级副本并验证启动/自检不依赖 one 根。
+- **OpenAPI 契约门（BL-162）**：`mise run check:openapi` 校验 `docs/api/openapi.yaml`（3.1 文档头、path 唯一性、路径参数声明、Problem Details，以及 checkpoint revert / session 读面的冻结契约切片）。它是 **`test:cp` 的依赖**，所以跑 CP 测试就会查契约；PLAN 收尾/波次验收必须显式过一遍。失败时输出 path 数、首个失败点与修复提示（`docs/api/openapi.yaml` 就是唯一事实源）。注意它**不做**路由 ↔ 契约双向比对（"实现有路由但契约没写"属已知盲区，另立 BL）。
+
+### 模式 E：打包产物（PLAN-0632，`pkg:launcher` / `pkg:installer`）
+
+面向"双击安装包 → 服务自启 → 浏览器访问 localhost"的分发形态（不是日常开发路径；日常仍用模式 A）。
+
+```bash
+mise run pkg:launcher -- start --install <安装目录>   # 顺序 PG(TCP) -> CP(/actuator/health 200) -> Agent -> Runtime -> UI(同源 /)
+mise run pkg:launcher -- status --stack 1 --json      # 只读状态（健康/端口/PID）
+mise run pkg:launcher -- stop                          # 逆序树 kill + 残留端口复核
+mise run pkg:installer                                 # 从既有四个服务产物构建 NSIS（-- --stage-only 只组装 stage）
+```
+
+- **顺序是契约**：PG 必须先接受 TCP（CP 启动即跑 Flyway，没有 PG 起不来）→ CP `/actuator/health` 200 → Agent（其启动 config sync 对 `llm-provider` fail-closed）→ Runtime → UI（D32-06 同源伺服）。每一步都是 readiness probe + 显式 timeout，**没有固定 sleep**（实现见 `scripts/lib/service-supervisor.mjs`）。
+- 参数用 `--` 透传（`--install` / `--stack` / `--exe <service>=<path>` / `--skip <service>`），与 `dev:stack`、`dev:host:provider-init` 同惯例。
+- **两条 launcher 的分工（别混）**：`mise run pkg:launcher`（Node，`scripts/pkg/launcher.mjs`）是**开发/冒烟 supervisor**，按 install-relative manifest 起五个阶段，**不做 first-run**（数据目录未初始化会直接报 `PostgreSQL data directory is not initialized`）；**产品首启**（解压 PG / initdb / secrets / 数据根 / JDBC 引导 / 打开浏览器）由**随包 Java Launcher** 负责（`scripts/pkg/launcher/src/com/cc01cc/xihe/pkg/Launcher.java`，由 `build-installer.mjs` 编进安装包）。
+- **产物只落 `.tmp/pkg/`（gitignored），不入库**；安装包不进主仓发行目录。
+- 开发机上 `pkg:launcher status` 会把 `dev:host` 的监听报成 `foreignListeners` 并返回 `ok:false`（exit 1）—— 这是"当前不是打包安装"的正确回答，不是故障。
+- 未覆盖的能力清单（本版不做自动更新/开机自启/代码签名/多用户服务安装）见 `plans/PLAN-0632-xh-mvp-self-contained-packaging/installer-scope.md`。
 
 ## 4. 全栈调试（自 DEV-005-fullstack 并入）
 

@@ -154,6 +154,13 @@ public class ChatRunTerminalService {
     private final ChatRunRepository chatRuns;
     private final SessionRepository sessions;
     private final ApprovalService approvalService;
+    /**
+     * PLAN-0660 T5.11: a terminal run must never leave a question waiting. Wired here (not in T5.9)
+     * because questions only start existing with this batch's relay. Same ordering rule as
+     * {@link ApprovalService}'s terminal expiry: the settle runs inside the winner's terminal
+     * transaction, so a rolled-back termination rolls the settle back too.
+     */
+    private final UserQuestionService userQuestionService;
     private final ChatRunHistoryWriter historyWriter;
     private final EventStoreService eventStoreService;
     private final McpInvocationService mcpInvocationService;
@@ -174,6 +181,7 @@ public class ChatRunTerminalService {
             ChatRunRepository chatRuns,
             SessionRepository sessions,
             ApprovalService approvalService,
+            UserQuestionService userQuestionService,
             ChatRunHistoryWriter historyWriter,
             EventStoreService eventStoreService,
             McpInvocationService mcpInvocationService,
@@ -196,6 +204,7 @@ public class ChatRunTerminalService {
         this.chatRuns = chatRuns;
         this.sessions = sessions;
         this.approvalService = approvalService;
+        this.userQuestionService = userQuestionService;
         this.historyWriter = historyWriter;
         this.eventStoreService = eventStoreService;
         this.mcpInvocationService = mcpInvocationService;
@@ -282,6 +291,10 @@ public class ChatRunTerminalService {
         releaseGovernorSlotsOnCommit(request.runId());
 
         approvalService.expirePendingForTerminalRun(runId.toString(), request.status());
+        // PLAN-0660 T5.11: the question counterpart — same transaction, same terminal winner. A run
+        // that ends (or is cancelled) must not leave a question that can never be answered; the
+        // settle itself is pending-only and idempotent, so a replay changes nothing.
+        userQuestionService.cancelPendingForTerminalRun(runId, request.status());
 
         historyWriter.append(request.source().eventType(), request.source().source(), "system",
                 runId, sessionId, fromStatus, request.status(), request.terminalOutcome(),
