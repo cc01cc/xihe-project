@@ -100,11 +100,17 @@ public class SystemAccessRoleCatalog {
                         superAdminAtoms()),
                 new RoleSeed(ADMIN_ID, ADMIN, "Administrator",
                         "Instance scope: the user default set plus the three credential atoms, "
-                                + "instance:admin, workspace:admin and the PLAN-0651 management "
-                                + "atoms (agent principals, workspace members).",
+                                + "instance:admin, workspace:admin, the PLAN-0651 management "
+                                + "atoms (agent principals, workspace members) and MANAGE_ROLES "
+                                + "(PLAN-0673 D-168: ADMIN may delegate role management, bounded by "
+                                + "the subset rule).",
                         concat(USER_DEFAULT_ATOMS, CREDENTIAL_ATOMS,
                                 List.of(AtomRef.wildcard(PermissionAtomCatalog.CAP_INSTANCE_ADMIN),
                                         AtomRef.wildcard(PermissionAtomCatalog.CAP_WORKSPACE_ADMIN),
+                                        // PLAN-0673 M3 (D-168, migration V125): ADMIN administers
+                                        // roles/bindings, but only within its own atom set (the
+                                        // subset guard answers 403 PRIVILEGE_ESCALATION otherwise).
+                                        AtomRef.wildcard(ToolFaceRegistry.ACTION_MANAGE_ROLES),
                                         AtomRef.wildcard(
                                                 ToolFaceRegistry.ACTION_MANAGE_AGENT_PRINCIPALS),
                                         AtomRef.wildcard(

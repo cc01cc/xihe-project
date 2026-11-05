@@ -183,16 +183,30 @@ class AgentPrincipalScopeMigrationTest {
                     "CREATE_OWN_AGENT is seeded on " + roleId);
         }
         // D-165 (Lead ruling 2026-11-05): A13 reuses N9 MANAGE_WORKSPACE_POLICY, so ADMIN keeps its
-        // V115 N9 default and deliberately does NOT gain MANAGE_ROLES (that atom also gates role/
-        // binding administration — out of the user-approved scope).
+        // V115 N9 default.
         assertEquals(1, scalarInt("SELECT count(*) FROM role_permissions WHERE role_id = '"
                         + SystemAccessRoleCatalog.ADMIN_ID + "'::uuid"
                         + " AND action_class = 'MANAGE_WORKSPACE_POLICY'"),
                 "ADMIN default set carries N9 (V115), the atom A13 now uses");
-        assertEquals(0, scalarInt("SELECT count(*) FROM role_permissions WHERE role_id = '"
+        // D-168 (user ruling 2026-11-05, migration V125): ADMIN gains MANAGE_ROLES — but only
+        // together with the subset guard (PLAN-0673 M1), so it can never delegate beyond itself.
+        assertEquals(1, scalarInt("SELECT count(*) FROM role_permissions WHERE role_id = '"
                         + SystemAccessRoleCatalog.ADMIN_ID + "'::uuid"
                         + " AND action_class = 'MANAGE_ROLES'"),
-                "ADMIN must not gain MANAGE_ROLES (role/binding administration stays SUPER_ADMIN-only)");
+                "ADMIN holds MANAGE_ROLES since V125 (D-168)");
+        // D-166: the subset bypass is SUPER_ADMIN-only; ADMIN must never hold it.
+        assertEquals(1, scalarInt("SELECT count(*) FROM role_permissions WHERE role_id = '"
+                        + SystemAccessRoleCatalog.SUPER_ADMIN_ID + "'::uuid"
+                        + " AND action_class = 'GRANT_ANY_ATOM'"),
+                "SUPER_ADMIN holds the bypass atom (V125)");
+        assertEquals(0, scalarInt("SELECT count(*) FROM role_permissions WHERE role_id = '"
+                        + SystemAccessRoleCatalog.ADMIN_ID + "'::uuid"
+                        + " AND action_class = 'GRANT_ANY_ATOM'"),
+                "ADMIN must not hold the subset bypass");
+        // The migration itself is part of the fresh-database contract (V125 success).
+        assertEquals(1, scalarInt("SELECT count(*) FROM flyway_schema_history"
+                        + " WHERE version = '125' AND success"),
+                "V125 (GRANT_ANY_ATOM + ADMIN MANAGE_ROLES) applied successfully");
     }
 
     @Test

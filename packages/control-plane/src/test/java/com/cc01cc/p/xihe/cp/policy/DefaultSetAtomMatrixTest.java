@@ -143,7 +143,7 @@ class DefaultSetAtomMatrixTest {
                     "must be grantable to agent principals (workspace capability): " + atom);
         }
         // The aggregate is the single source of truth 0667 derives from.
-        assertEquals(16, PermissionAtomCatalog.agentPrincipalForbiddenAtoms().size(),
-                "Lead ruling 2026-11-05: exactly 16 forbidden atoms");
+        assertEquals(17, PermissionAtomCatalog.agentPrincipalForbiddenAtoms().size(),
+                "Lead ruling 2026-11-05: exactly 17 forbidden atoms (GRANT_ANY_ATOM added by PLAN-0673 M2)");
     }
 }

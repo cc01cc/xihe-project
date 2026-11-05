@@ -39,6 +39,10 @@ public class ToolFaceRegistry {
     // PLAN-0610 (T1.2): the fifteenth action atom — who may create/edit access roles and
     // bindings. It is a normal action atom (evaluated through grants), not a capability atom.
     public static final String ACTION_MANAGE_ROLES = "MANAGE_ROLES";
+    // PLAN-0673 M2 (D-166): the bypass atom for the grant-side subset rule ("escalate"/"bind" in
+    // Kubernetes terms). Instance-only; default SUPER_ADMIN only; every use must be audited.
+    // Never a role-name check — the bypass is an atom like any other.
+    public static final String ACTION_GRANT_ANY_ATOM = "GRANT_ANY_ATOM";
     // PLAN-0622 (D8, M0.3): the sixteenth action atom — a user tier action that lets an
     // ordinary account create its own PERSONAL agent principal. It is never alias-merged with
     // CREATE_ACCOUNT (instance tier) or MANAGE_WORKSPACE_AGENTS (workspace tier).
@@ -190,7 +194,10 @@ public class ToolFaceRegistry {
                 ACTION_READ_INSTANCE_CONTENT, ACTION_WRITE_INSTANCE_CONTENT,
                 ACTION_VIEW_SECRET_CONTENT, ACTION_MANAGE_SKILL_LIBRARY,
                 ACTION_MANAGE_PROVIDER_CONNECTIONS, ACTION_USE_WORKSPACE_RUNTIME,
-                ACTION_MANAGE_WORKSPACE_RUNTIME, ACTION_MANAGE_WORKSPACE_POLICY);
+                ACTION_MANAGE_WORKSPACE_RUNTIME, ACTION_MANAGE_WORKSPACE_POLICY,
+                // PLAN-0673 M2 (D-166): the subset-bypass atom joins the built-in action-class set
+                // in the same batch (MemoryWriteAtomTest asserts actionAtoms() == this set).
+                ACTION_GRANT_ANY_ATOM);
     }
 
     /** PLAN-0496 #2: credential-namespace action classes (the three atoms share resource rules). */
