@@ -270,23 +270,24 @@ onUnmounted(() => {
                 :session-id="workspaceTabBarSessionId"
             />
             <!--
-                The routed workspace page must own exactly the space **below** the tab bar.
-                A bare `<router-view />` as a sibling of the 36px bar made every workspace
-                page `h-full` = 100% of `main` while starting 36px lower, so the page (and the
-                workbench row inside it, and the dock pinned to that row's bottom edge) hung
-                36px past the fold — the "dock bottom clipped by 36px" defect. As a flex child
-                of a flex-column `main` the page now gets the remaining height; it keeps its
-                own scroll container for pages that are taller than the viewport
-                (`min-h-full` sections such as environment / scheduled tasks).
+                BL-344 残留（根治）：这里**只能有一个 `<router-view>`**。
+                历史上是 `v-if` 分支里一个 + `v-else` 一个 —— 两个不同的 outlet 实例，
+                当视口跨断点切换（`workspaceTabBarVisible` 随 `isMobile` 翻转）时，被路由的页面
+                会**整体卸载重挂**（`e2e` 观测：被观察容器内 `mutations=0`、输入被清空，
+                因为旧节点是连根移除的）。用户可见后果：正在填的表单草稿丢失。
+                现在统一为一个 outlet，只切换外层容器是否参与布局：
+                - 有页签栏（桌面 /workspace）：flex 列，页面拿到页签栏以下的剩余高度；
+                - 无页签栏（移动）：`contents`（display:contents）让子节点等价于 `main` 的直接子节点，
+                  布局与旧的 `v-else` 分支逐像素一致，但**不换实例**。
             -->
+            <!-- 单一 router-view：断点切换不得换实例（否则路由页面整体重挂、草稿丢失；见 BL-344）。 -->
             <div
-                v-if="workspaceTabBarVisible"
                 class="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto"
+                :class="workspaceTabBarVisible ? '' : 'contents'"
                 data-testid="workspace-route-viewport"
             >
                 <router-view />
             </div>
-            <router-view v-else />
         </main>
     </div>
 </template>
