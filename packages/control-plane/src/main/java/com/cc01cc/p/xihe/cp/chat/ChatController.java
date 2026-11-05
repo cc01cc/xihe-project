@@ -628,7 +628,8 @@ public class ChatController {
         boolean transportOnlyFailure = "down".equals(agentHealth.status())
                 && "ready".equals(agentHealth.llmReady());
         if (!transportOnlyFailure && !healthMonitor.isAgentLlmReady()) {
-            return llmNotReadyResponse(requestId, runId, healthMonitor.getAgentLlmReady());
+            return llmNotReadyResponse(requestId, runId, healthMonitor.getAgentLlmReady(),
+                    userId, workspaceId);
         }
 
         Session session;
@@ -2066,7 +2067,7 @@ public class ChatController {
     }
 
     private ResponseEntity<Map<String, Object>> llmNotReadyResponse(
-            String requestId, String runId, String readiness) {
+            String requestId, String runId, String readiness, String userId, String workspaceId) {
         String code = switch (readiness) {
             case "missing_credentials" -> "LLM_NOT_CONFIGURED";
             case "invalid_credentials" -> "LLM_CREDENTIALS_INVALID";
@@ -2077,19 +2078,66 @@ public class ChatController {
         String detail = "unknown".equals(readiness)
                 ? "Agent LLM readiness is unknown"
                 : "Agent LLM is not ready: " + readiness;
+        Map<String, Object> body = new java.util.LinkedHashMap<>();
+        body.put("type", "https://xihe.dev/problems/llm-not-ready");
+        body.put("title", "LLM is not ready");
+        body.put("status", 503);
+        body.put("code", code);
+        if ("LLM_NOT_CONFIGURED".equals(code)) {
+            // BL-350 (B): say WHICH layer is missing. The Agent gate is instance-layer-only, so this
+            // classification needs CP's view of both layers; the wire code stays LLM_NOT_CONFIGURED.
+            LlmReadinessReason.Diagnosis diagnosis = llmConfigurationDiagnosis(userId, workspaceId);
+            body.put("detail", diagnosis.detail());
+            body.put("reason", diagnosis.reason());
+        } else {
+            body.put("detail", detail);
+        }
+        body.put("retryable", true);
+        body.put("requestId", requestId);
+        body.put("runId", runId);
         return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
                 .header("Retry-After", "5")
                 .contentType(MediaType.parseMediaType("application/problem+json"))
                 .header("X-Request-Id", requestId)
-                .body(Map.of(
-                        "type", "https://xihe.dev/problems/llm-not-ready",
-                        "title", "LLM is not ready",
-                        "status", 503,
-                        "code", code,
-                        "detail", detail,
-                        "retryable", true,
-                        "requestId", requestId,
-                        "runId", runId));
+                .body(body);
+    }
+
+    /**
+     * BL-350 (B): instance-layer presence vs the caller's effective (user-layer-merged) presence.
+     * Any read failure degrades to "not profiled" (the 503 still answers; no new 500 path).
+     */
+    private LlmReadinessReason.Diagnosis llmConfigurationDiagnosis(String userId, String workspaceId) {
+        boolean instanceProfiled = false;
+        boolean userProfiled = false;
+        try {
+            Map<String, String> instanceEntries = configService
+                    .effective("llm-provider", null, null).entries();
+            instanceProfiled = instanceEntries != null
+                    && !instanceEntries.getOrDefault("provider", "").isBlank();
+            UUID actor = parseUuidOrNull(userId);
+            UUID workspace = parseUuidOrNull(workspaceId);
+            if (actor != null) {
+                Map<String, String> userEntries = configService
+                        .effective("llm-provider", actor, workspace).entries();
+                userProfiled = userEntries != null
+                        && !userEntries.getOrDefault("provider", "").isBlank();
+            }
+        } catch (RuntimeException e) {
+            logger.warn("[LIFECYCLE] service=cp event=llm_diagnosis_unavailable failureType={}",
+                    e.getClass().getSimpleName());
+        }
+        return LlmReadinessReason.diagnose(instanceProfiled, userProfiled);
+    }
+
+    private static UUID parseUuidOrNull(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        try {
+            return UUID.fromString(value);
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
     }
 
     /**
