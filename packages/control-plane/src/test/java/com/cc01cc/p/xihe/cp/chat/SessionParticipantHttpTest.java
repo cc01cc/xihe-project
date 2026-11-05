@@ -60,7 +60,6 @@ class SessionParticipantHttpTest extends AbstractIntegrationTest {
 
         AgentPrincipal principal = new AgentPrincipal();
         principal.setName("P623 agent");
-        principal.setScope("WORKSPACE");
         principal.setCreatedByUserId(ownerId);
         principal = principals.saveAndFlush(principal);
 

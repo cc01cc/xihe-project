@@ -59,6 +59,7 @@ class AgentPrincipalRoleBindingContractTest extends AbstractIntegrationTest {
     @Autowired private AgentPrincipalRepository principalRepository;
     @Autowired private AgentPrincipalService agentPrincipalService;
     @Autowired private AgentTemplateService agentTemplateService;
+    @Autowired private com.cc01cc.p.xihe.cp.policy.GrantDefaultService grantDefaultService;
     @Autowired private AccessRoleRepository roleRepository;
     @Autowired private AccessRolePermissionRepository permissionRepository;
     @Autowired private AccessRoleBindingRepository roleBindingRepository;
@@ -374,6 +375,9 @@ class AgentPrincipalRoleBindingContractTest extends AbstractIntegrationTest {
     private void fixture() {
         owner = userRepository.saveAndFlush(new User(
                 "rb-owner-" + UUID.randomUUID() + "@test.com", "hash", "Binding owner"));
+        // Real registration users carry the USER instance default; this fixture emulates the same
+        // baseline (the subset guard now evaluates the default AGENT_USER role against it).
+        grantDefaultService.ensureUserDefault(owner);
         ownerToken = TestDataFactory.createGlobalToken(owner.getId().toString(), owner.getEmail(), "USER", 0);
         // The binding API's instance tier: a test-only role with the N1 atom, materialized the
         // post-V88 way (role binding + materializer), never a direct grant row.
@@ -396,7 +400,7 @@ class AgentPrincipalRoleBindingContractTest extends AbstractIntegrationTest {
                 owner.getId().toString(), workspace.getId().toString(), null);
         principal = agentPrincipalService.createPrincipal(owner.getId().toString(),
                 "rbTarget" + shortId(), null, template.snapshot(),
-                null, null, null, null, null, null, null, null, List.of());
+                null, null, null, null, null, null, List.of());
         JsonNode cap = objectMapper.createArrayNode()
                 .add(objectMapper.createObjectNode().put("actionClass", "read").put("resource", "*"));
         agentPrincipalService.setWorkspaceCap(owner.getId().toString(), workspace.getId(),

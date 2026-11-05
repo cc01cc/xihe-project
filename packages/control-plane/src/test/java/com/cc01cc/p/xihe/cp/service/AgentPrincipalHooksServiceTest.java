@@ -43,7 +43,6 @@ class AgentPrincipalHooksServiceTest {
     private static AgentPrincipal personalPrincipal(UUID ownerId) {
         AgentPrincipal principal = new AgentPrincipal();
         principal.setId(UUID.randomUUID());
-        principal.setScope("PERSONAL");
         principal.setOwnerUserId(ownerId);
         principal.setOrigin(AgentPrincipal.ORIGIN_USER);
         return principal;
@@ -95,7 +94,6 @@ class AgentPrincipalHooksServiceTest {
         AgentPrincipalTestSupport.Env env = AgentPrincipalTestSupport.workspaceManager();
         AgentPrincipal preset = new AgentPrincipal();
         preset.setId(UUID.randomUUID());
-        preset.setScope("WORKSPACE");
         preset.setOrigin(AgentPrincipal.ORIGIN_SYSTEM_PRESET);
         preset.setPresetId("guard-v1");
         when(env.principals().findById(preset.getId())).thenReturn(Optional.of(preset));
@@ -134,8 +132,9 @@ class AgentPrincipalHooksServiceTest {
         });
 
         env.service().createPrincipal(ACTOR.toString(), "hooked", "tpl-1", snapshot,
-                "WORKSPACE", null, null, null, null,
-                hooksJson("{\"advisors\":[{\"kind\":\"guard\",\"on\":[\"approval.ask\"]}]}"));
+                null, null, null,
+                hooksJson("{\"advisors\":[{\"kind\":\"guard\",\"on\":[\"approval.ask\"]}]}"),
+                AgentPrincipal.ORIGIN_USER, null, null);
 
         ArgumentCaptor<AgentPrincipal> saved = ArgumentCaptor.forClass(AgentPrincipal.class);
         verify(env.principals()).saveAndFlush(saved.capture());
@@ -150,8 +149,9 @@ class AgentPrincipalHooksServiceTest {
         snapshot.putArray("permissions");
 
         assertThrows(CpApiException.class, () -> env.service().createPrincipal(ACTOR.toString(),
-                "hooked", "tpl-1", snapshot, "WORKSPACE", null, null, null, null,
-                MAPPER.createObjectNode().put("advisors", "not-an-array")));
+                "hooked", "tpl-1", snapshot, null, null, null,
+                MAPPER.createObjectNode().put("advisors", "not-an-array"),
+                AgentPrincipal.ORIGIN_USER, null, null));
         verify(env.principals(), never()).saveAndFlush(any());
     }
 }
