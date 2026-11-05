@@ -195,6 +195,21 @@ describe("useChatStore", () => {
         expect(store.getStreamingMessageId("s1")).toBe(messageId);
     });
 
+    // BL-365：`getMessages()` 返回**副本**——调用方（组件/测试夹具）拿到的数组不再是 store 内部数组，
+    // 这样"外部持有并改动"不会写回 store（BL-359 那类污染的传播路径之一）。
+    it("BL-365: getMessages 每次返回新数组，改动它不写回 store", () => {
+        const store = useChatStore();
+        store.createStreamingMessage("s1");
+
+        const first = store.getMessages("s1");
+        const second = store.getMessages("s1");
+        expect(second).not.toBe(first); // 每次新数组
+        expect(second).toEqual(first); // 内容仍相等
+
+        first.push({ id: "injected" } as never);
+        expect(store.getMessages("s1")).toHaveLength(1); // 数组本身没逃逸
+    });
+
     // BL-365 结构性护栏：终态收尾**不得就地改写**既有的消息数组/对象。
     // 这类就地写是 BL-359 测试污染的结构性根因（夹具/共享对象被改后，后续用例看到脏数据）。
     // 现在它守的是"未来谁把 .filter() 改成 .splice()"这一种回归，不需要先做不可变重构。
