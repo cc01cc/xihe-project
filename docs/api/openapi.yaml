@@ -3943,7 +3943,7 @@ paths:
     get:
       operationId: getRoleCatalog
       summary: Access-role atom catalog (PLAN-0610 W3-2a; labels PLAN-0651 D51-37)
-      description: 'The permission vocabulary of the access-role model: 19 atoms = 16 action atoms + 3 capability atoms (PLAN-0651 M1 adds MANAGE_AGENT_PRINCIPALS and MANAGE_WORKSPACE_MEMBERS). scope_class (instance|both) is the SSOT of PermissionAtomCatalog — the API projects it and never carries its own table (R2-10); capability=true marks the three atoms that become cap:<atom> authorities (instance:super, instance:admin, workspace:admin) and are never materialized into grants (decision #23). Each atom carries displayName resolved server-side from the explicit locale (zh-CN default, en-US supported, unknown ⇒ zh-CN) so the UI keeps no vocabulary of its own (D51-19/D51-37). Gate: MANAGE_ROLES — an action atom, evaluated from the grant rows because only capability atoms are authorities (R2-5).'
+      description: 'The permission vocabulary of the access-role model: 31 atoms = 28 action atoms + 3 capability atoms (PLAN-0651 adds N1–N10; PLAN-0673 M2 adds GRANT_ANY_ATOM, instance-only). scope_class (instance|both) is the SSOT of PermissionAtomCatalog — the API projects it and never carries its own table (R2-10); capability=true marks the three atoms that become cap:<atom> authorities (instance:super, instance:admin, workspace:admin) and are never materialized into grants (decision #23). Each atom carries displayName resolved server-side from the explicit locale (zh-CN default, en-US supported, unknown ⇒ zh-CN) so the UI keeps no vocabulary of its own (D51-19/D51-37). Gate: MANAGE_ROLES — an action atom, evaluated from the grant rows because only capability atoms are authorities (R2-5). Since migration V125 (PLAN-0673 D-168) the built-in ADMIN role holds MANAGE_ROLES as well.'
       parameters:
         - name: locale
           in: query
@@ -3979,7 +3979,7 @@ paths:
     post:
       operationId: createRole
       summary: Create a custom access role (PLAN-0610 W3-2a)
-      description: 'Gate: MANAGE_ROLES. name must match ^[A-Za-z][A-Za-z0-9_.:-]{1,63}$ (400 INVALID_ROLE_NAME) and be unique (409 ROLE_NAME_EXISTS); atoms must be a non-empty set of catalog atoms (400 INVALID_ROLE_ATOMS / 400 UNKNOWN_ACTION_CLASS), duplicates are removed. A custom role may combine any atoms; whether an atom may be bound at a given scope is decided by the binding API (400 ROLE_SCOPE_MISMATCH there), not here. Audited as access_role_created.'
+      description: 'Gate: MANAGE_ROLES (ADMIN and SUPER_ADMIN hold it since V125). name must match ^[A-Za-z][A-Za-z0-9_.:-]{1,63}$ (400 INVALID_ROLE_NAME) and be unique (409 ROLE_NAME_EXISTS); atoms must be a non-empty set of catalog atoms (400 INVALID_ROLE_ATOMS / 400 UNKNOWN_ACTION_CLASS), duplicates are removed. Grant-side subset rule (PLAN-0673 M1): a role DEFINITION may only contain atoms the caller holds in some scope — otherwise 403 PRIVILEGE_ESCALATION naming the exceeding atoms (that is the grantor gate; it is NOT the target-cap 409). The bypass atom GRANT_ANY_ATOM (instance-only, default SUPER_ADMIN) skips the subset check and is audited with the skipped atom list. A custom role may combine any atoms; whether an atom may be bound at a given scope is decided by the binding API (400 ROLE_SCOPE_MISMATCH there), not here. Audited as access_role_created.'
       security: [{ bearerAuth: [] }]
       requestBody:
         required: true
@@ -3988,13 +3988,13 @@ paths:
         '201': { description: 'Created role', content: { application/json: { schema: { $ref: '#/components/schemas/RoleView' } } } }
         '400': { $ref: '#/components/responses/Problem' }
         '401': { $ref: '#/components/responses/Problem' }
-        '403': { $ref: '#/components/responses/Problem' }
+        '403': { description: 'FORBIDDEN (endpoint gate MANAGE_ROLES) or PRIVILEGE_ESCALATION (an atom outside the caller''s own set — detail names it; bypassed only by GRANT_ANY_ATOM)', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
         '409': { $ref: '#/components/responses/Problem' }
   /api/v1/roles/{roleId}:
     patch:
       operationId: updateRole
       summary: Update an access role (PLAN-0610 W3-2a)
-      description: 'Gate: MANAGE_ROLES. A custom role may change name (409 ROLE_NAME_EXISTS), displayName, description and atoms; an atom change re-materializes every holder in the same transaction (source=role rows reconciled, capability cache invalidated immediately and after completion, token_version + 1 per holder whose set changed). A system role accepts ONLY displayName — any other field answers 409 SYSTEM_ROLE_IMMUTABLE. Audited as access_role_updated, which includes the holder count.'
+      description: 'Gate: MANAGE_ROLES. A custom role may change name (409 ROLE_NAME_EXISTS), displayName, description and atoms; an atom change re-materializes every holder in the same transaction (source=role rows reconciled, capability cache invalidated immediately and after completion, token_version + 1 per holder whose set changed). Atom changes obey the same grant-side subset rule as create: 403 PRIVILEGE_ESCALATION names any atom outside the caller''s own set (GRANT_ANY_ATOM bypasses, audited with the skipped atom list). A system role accepts ONLY displayName — any other field answers 409 SYSTEM_ROLE_IMMUTABLE. Audited as access_role_updated, which includes the holder count.'
       security: [{ bearerAuth: [] }]
       parameters:
         - { in: path, name: roleId, required: true, schema: { type: string, format: uuid } }
@@ -4005,7 +4005,7 @@ paths:
         '200': { description: 'Updated role', content: { application/json: { schema: { $ref: '#/components/schemas/RoleView' } } } }
         '400': { $ref: '#/components/responses/Problem' }
         '401': { $ref: '#/components/responses/Problem' }
-        '403': { $ref: '#/components/responses/Problem' }
+        '403': { description: 'FORBIDDEN (endpoint gate MANAGE_ROLES) or PRIVILEGE_ESCALATION (atom change outside the caller''s own set — detail names it; bypassed only by GRANT_ANY_ATOM)', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
         '404': { $ref: '#/components/responses/Problem' }
         '409': { $ref: '#/components/responses/Problem' }
     delete:
@@ -4018,7 +4018,7 @@ paths:
       responses:
         '204': { description: 'Deleted' }
         '401': { $ref: '#/components/responses/Problem' }
-        '403': { $ref: '#/components/responses/Problem' }
+        '403': { description: 'FORBIDDEN (endpoint gate MANAGE_ROLES)', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
         '404': { $ref: '#/components/responses/Problem' }
         '409': { $ref: '#/components/responses/Problem' }
   /api/v1/bindings:
@@ -4039,7 +4039,8 @@ paths:
     put:
       operationId: replaceRoleBindings
       summary: Replace the binding set of one scope (PLAN-0610 W3-2a)
-      description: 'Full replacement, not a delta: the body is the complete desired set, absent rows are deleted and new pairs inserted, so a retry with the same body is a true no-op (no epoch bump, no audit row, no re-materialization). Gates: MANAGE_ROLES (endpoint) and, for a workspace scope, MANAGE_WORKSPACE_AGENTS in that workspace. Validation before the first write, in order: subject exists (404 USER_NOT_FOUND) and is not soft-deleted (409 USER_DELETED), subjectType must be user (400 INVALID_BINDING), role exists (404 ROLE_NOT_FOUND), atom scope compatibility for the added pairs (400 ROLE_SCOPE_MISMATCH), least privilege for the added pairs (403 PRIVILEGE_ESCALATION — the caller must already hold every atom it hands out, capability atoms compared against the caller capabilities). Removing the last usable SUPER_ADMIN instance binding answers 409 LAST_SUPER_ADMIN and removing the last usable WS_OWNER binding of a workspace answers 409 LAST_OWNER (both change nothing). Every affected subject is re-materialized in the same transaction; an instance-tier change also bumps the subject token_version, a workspace-tier change only invalidates the capability cache (W3-3: the access token carries no workspace role, so bumping would log the subject out for a claim it never had). A concurrent deadlock/serialization failure answers 409 CONCURRENT_MODIFICATION (retryable). Lock order: instance_owner -> users. Audited as role_bindings_replaced (scope, added, removed, subject count).'
+      description: 'Full replacement, not a delta: the body is the complete desired set, absent rows are deleted and new pairs inserted, so a retry with the same body is a true no-op (no epoch bump, no audit row, no re-materialization). Gates: MANAGE_ROLES (endpoint; ADMIN holds it since V125/D-168) and, for a workspace scope, MANAGE_WORKSPACE_AGENTS in that workspace. Validation before the first write, in order: subject exists (404 USER_NOT_FOUND) and is not soft-deleted (409 USER_DELETED), subjectType must be user (400 INVALID_BINDING), role exists (404 ROLE_NOT_FOUND), atom scope compatibility for the added pairs (400 ROLE_SCOPE_MISMATCH), grant-side subset rule for the added pairs (403 PRIVILEGE_ESCALATION — the caller must hold every handed-out atom in the TARGET scope: instance rows cover every workspace, a workspace row never covers instance; capability atoms are compared against the caller capabilities). GRANT_ANY_ATOM (instance-only, SUPER_ADMIN default) bypasses the subset check and is audited with the skipped atom list. 409 on this endpoint is NOT the target-cap gate: it is USER_DELETED / LAST_SUPER_ADMIN / LAST_OWNER / CONCURRENT_MODIFICATION. The agent-cap 409 ROLE_BINDING_EXCEEDS_CAP belongs to the agent-principal binding endpoint (BL-287). Removing the last usable SUPER_ADMIN instance binding answers 409 LAST_SUPER_ADMIN and removing the last usable WS_OWNER binding of a workspace answers 409 LAST_OWNER (both change nothing). Every affected subject is re-materialized in the same transaction; an instance-tier change also bumps the subject token_version, a workspace-tier change only invalidates the capability cache (W3-3: the access token carries no workspace role, so bumping would log the subject out for a claim it never had). A concurrent deadlock/serialization failure answers 409 CONCURRENT_MODIFICATION (retryable). Lock order: instance_owner -> users. Audited as role_bindings_replaced (scope, added, removed, subject count).'
+
       security: [{ bearerAuth: [] }]
       parameters:
         - { in: query, name: scope, required: false, schema: { type: string, enum: [instance, workspace], default: instance } }
@@ -4051,9 +4052,9 @@ paths:
         '200': { description: 'Resulting binding set', content: { application/json: { schema: { $ref: '#/components/schemas/BindingSetView' } } } }
         '400': { $ref: '#/components/responses/Problem' }
         '401': { $ref: '#/components/responses/Problem' }
-        '403': { $ref: '#/components/responses/Problem' }
+        '403': { description: 'FORBIDDEN (endpoint gate MANAGE_ROLES, or MANAGE_WORKSPACE_AGENTS for a workspace scope) or PRIVILEGE_ESCALATION (an added pair carries an atom the caller does not hold in the TARGET scope — detail names the atoms; GRANT_ANY_ATOM bypasses, audited with the skipped atom list)', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
         '404': { $ref: '#/components/responses/Problem' }
-        '409': { $ref: '#/components/responses/Problem' }
+        '409': { description: 'USER_DELETED / LAST_SUPER_ADMIN / LAST_OWNER / CONCURRENT_MODIFICATION — NOT the agent-cap gate (that one is 409 ROLE_BINDING_EXCEEDS_CAP on the agent-principal role-binding endpoint)', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
         '503': { $ref: '#/components/responses/Problem' }
   /api/v1/skills/import:
     post:
