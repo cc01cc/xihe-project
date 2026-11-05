@@ -469,7 +469,7 @@ PLAN-0416 Chat 消费：`ChatController` 仅在 admission snapshot 原始 native
 |---|---|---|
 | 建主体（①） | instance 级 `MANAGE_AGENT_PRINCIPALS` | 无（instance 面） |
 | 首绑（②） | 该 workspace 的 `MANAGE_WORKSPACE_AGENTS` | **请求头 `X-Workspace-Id`** + 路径里的 `{workspaceId}` |
-| 增删角色（④） | 该 workspace 的 `MANAGE_WORKSPACE_AGENTS`（或 instance 级） | **query 参数 `?workspaceId=`**（注意：不是头，见 BL-351；两端点不一致属已知债） |
+| 增删角色（④） | 该 workspace 的 `MANAGE_WORKSPACE_AGENTS`（或 instance 级） | **`X-Workspace-Id` 头优先、`?workspaceId=` 兼容**；两者冲突 ⇒ 400 `WORKSPACE_CONTEXT_CONFLICT`（BL-351 已修） |
 | 会话/派发前置 | 主体必须已在该工作区绑定（`resolveCapFor` 严格路径） | 路径 `{workspaceId}` |
 
-**相关 BL**：`BL-349`（`WS_*` 曾携带 `MEMORY_WRITE_SELF` ⇒ 首绑 403 `ROLE_NOT_GRANTABLE`，已修 —— 正是它让正确路径看起来"不通"）· `BL-351`（roles 端点 workspace 走 query 而非头）· `BL-352`（本段来源：不是死锁，是顺序未文档化 + BL-349 掩盖正路）· `BL-344`（成员面板能力位三态）。
+**相关 BL**：`BL-349`（`WS_*` 曾携带 `MEMORY_WRITE_SELF` ⇒ 首绑 403 `ROLE_NOT_GRANTABLE`，已修 —— 正是它让正确路径看起来"不通"）· `BL-351`（roles/skills 端点曾只认 query、忽略头；已修：头优先 + 冲突 400）· `BL-352`（本段来源：不是死锁，是顺序未文档化 + BL-349 掩盖正路）· `BL-344`（成员面板能力位三态）。（en 侧暂无本文档，翻译随批次补齐）
