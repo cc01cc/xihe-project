@@ -12,7 +12,8 @@
  * 诚实限制（写进 HTML）：TO/CC 是本地发送态（BL-239，刷新不保留）；受邀人类读面仍在完善
  * （BL-237）；durable 历史无 `participantId`（BL-197 ①），actor 徽标只在**实时态**可见。
  */
-import { test, expect, type Page } from "@playwright/test";
+import { type Page } from "@playwright/test";
+import { expect, test } from "./helpers/mock-test";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";

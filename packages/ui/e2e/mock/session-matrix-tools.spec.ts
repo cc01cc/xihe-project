@@ -11,7 +11,8 @@
  * 失败态走产品自身规则（useSSE.toolResultStatus）：result 以 `Tool error:` 开头 ⇒ failed。
  * 事件通道：installContextEventStream + pushContextEvent（同 diagnostics.spec）。
  */
-import { test, expect, type Page } from "@playwright/test";
+import { type Page } from "@playwright/test";
+import { expect, test } from "./helpers/mock-test";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
 import { setupMockParticipants, setupMockProviderBinding } from "./helpers/session-matrix";
 import { installContextEventStream, pushContextEvent } from "./helpers/context-events";

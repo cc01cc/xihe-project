@@ -15,7 +15,7 @@
  * （`src/composables/api.ts:3665-3676`），不是 PATCH；GET 是 `/policy/mode?sessionId=…`，
  * 响应必须严格匹配 `{sessionId, mode, sessionRules?}`，写响应必须带 `scope: "session"`。
  */
-import { test, expect } from "@playwright/test";
+import { expect, test } from "./helpers/mock-test";
 import type { Page } from "@playwright/test";
 import { openContextPanel } from "../helpers/context-panel";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";

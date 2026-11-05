@@ -1,5 +1,9 @@
-import { test, expect } from "@playwright/test";
+import { DEFAULT_MOCK_ALLOW, expect, test } from "./helpers/mock-test";
 import { expectPlatformScreenshot } from "../helpers/visual";
+
+// BL-318：`shows an error banner when layer config cannot be loaded` 用
+// `route.abort("connectionrefused")` **故意**制造网络失败（验"保存失败"横幅），逐条放行该信号。
+test.use({ mockAllow: [...DEFAULT_MOCK_ALLOW, String.raw`net::ERR_CONNECTION_REFUSED`] });
 
 const CONFIG_DOMAINS: Record<string, Record<string, string>> = {
     "llm-provider": {

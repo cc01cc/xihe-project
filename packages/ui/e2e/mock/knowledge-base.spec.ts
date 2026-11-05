@@ -1,5 +1,9 @@
-import { test, expect } from "@playwright/test";
+import { DEFAULT_MOCK_ALLOW, expect, test } from "./helpers/mock-test";
 import { expectPlatformScreenshot } from "../helpers/visual";
+
+// BL-318：`shows error state with retry button` 故意桩 500（验知识库错误态 + 重试），
+// 逐条放行 `/rag/stats` 的失败信号。
+test.use({ mockAllow: [...DEFAULT_MOCK_ALLOW, String.raw`/rag/stats`] });
 
 const DOCS = [
     { id: "doc-1", filename: "requirements.pdf", chunks: 5 },

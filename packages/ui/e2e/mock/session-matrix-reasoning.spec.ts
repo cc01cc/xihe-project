@@ -17,7 +17,8 @@
  * 事件通道：installContextEventStream + pushContextEvent（同 diagnostics.spec），
  * 命令式推送、无定时器竞态。
  */
-import { test, expect, type Page } from "@playwright/test";
+import { type Page } from "@playwright/test";
+import { expect, test } from "./helpers/mock-test";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
 import { setupMockParticipants, setupMockProviderBinding } from "./helpers/session-matrix";
 import { installContextEventStream, pushContextEvent } from "./helpers/context-events";

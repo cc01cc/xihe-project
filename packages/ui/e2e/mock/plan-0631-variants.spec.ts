@@ -32,7 +32,8 @@
  * 产物落在 git 之外（默认 `<repo>/../.local/xh-d28/shots/0631/`，可用 env 覆盖），
  * 每张图旁边有 `measure/<name>.json`，对比表里的数字全部来自这些文件。
  */
-import { test, expect, type Page } from "@playwright/test";
+import { type Page } from "@playwright/test";
+import { expect, test } from "./helpers/mock-test";
 import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";

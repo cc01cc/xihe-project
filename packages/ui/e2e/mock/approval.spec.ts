@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { expect, test } from "./helpers/mock-test";
 import type { Page } from "@playwright/test";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
 import { expectPlatformScreenshot } from "../helpers/visual";

@@ -1,4 +1,5 @@
-import { expect, test, type Page } from "@playwright/test";
+import { type Page } from "@playwright/test";
+import { expect, test } from "./helpers/mock-test";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
 
 const SESSION_ID = "a1a1a1a1-a1a1-41a1-81a1-a1a1a1a1a1a1",
@@ -179,6 +180,16 @@ function installPolicyApi(page: Page) {
             };
             state.faces.push(created);
             return json(200, created);
+        }
+        // BL-318：审批卡挂载会读 `GET /policy/mode?sessionId=…`（真实响应
+        // `{sessionId, mode:"manual", sessionRules:0}`）。本夹具此前只桩 domains/rules/faces，
+        // 落到下面的 fail-closed 404 默认分支 ⇒ 门禁接上后变成噪声红。
+        if (url.pathname.endsWith("/policy/mode") && method === "GET") {
+            return json(200, {
+                sessionId: url.searchParams.get("sessionId") ?? "mock-session",
+                mode: "manual",
+                sessionRules: 0,
+            });
         }
         return json(404, {
             code: "NOT_FOUND",

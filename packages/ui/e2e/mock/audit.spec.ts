@@ -1,5 +1,10 @@
-import { expect, test, type Page } from "@playwright/test";
+import { type Page } from "@playwright/test";
+import { DEFAULT_MOCK_ALLOW, expect, test } from "./helpers/mock-test";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
+
+// BL-318：本文件有**故意**桩 503 的用例（`renders a recoverable API error` 验审计后端不可用时的降级
+// 横幅），逐条放行该端点的失败信号；其它端点不放行（allow 按来源加，不整体跳过判据）。
+test.use({ mockAllow: [...DEFAULT_MOCK_ALLOW, String.raw`/audit/entries`] });
 
 // Audit entries mirror the four-domain `v_audit_entries` user tier (PLAN-0466):
 // type tag + native status/summary/source, no internal fields.

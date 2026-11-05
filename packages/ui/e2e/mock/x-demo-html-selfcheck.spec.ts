@@ -2,7 +2,7 @@
  * X 图文（单文件 HTML）自测：`file://` 打开、零外链、5 图全部可见、打印媒体不塌。
  * 只有 `XIHE_E2E_DEMO=1` 时执行；HTML 路径取 `XIHE_E2E_DEMO_DIR` 的上一级。
  */
-import { test, expect } from "@playwright/test";
+import { expect, test } from "./helpers/mock-test";
 import { join, dirname } from "node:path";
 import { pathToFileURL } from "node:url";
 import { mkdirSync } from "node:fs";
