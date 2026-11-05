@@ -35,8 +35,8 @@ describe("useUserChannelSSE", () => {
     });
 
     it("dispatches participant_notified and ignores unknown/connected events", async () => {
-        const onNotified = vi.fn();
-        const onQuestion = vi.fn();
+        const onNotified = vi.fn<(sessionId: string, participantId: string) => void>();
+        const onQuestion = vi.fn<(questionId: string, sessionId: string, state: string) => void>();
         const client = createUserChannelSse({
             getToken: () => "token-1",
             onNotified,
@@ -63,12 +63,12 @@ describe("useUserChannelSSE", () => {
 
     it("reconnects with exponential backoff capped at 30s (no replay request)", async () => {
         const delays: number[] = [];
-        const fetchImpl = vi.fn(async () => {
+        const fetchImpl = vi.fn<typeof fetch>(async () => {
             throw new Error("boom");
         });
         const client = createUserChannelSse({
             getToken: () => "token-1",
-            onNotified: vi.fn(),
+            onNotified: vi.fn<(sessionId: string, participantId: string) => void>(),
             fetchImpl,
             schedule: (callback, delayMs) => {
                 delays.push(delayMs);
@@ -99,7 +99,7 @@ describe("useUserChannelSSE", () => {
     });
 
     it("stops delivering after dispose (abort + no timers left)", async () => {
-        const onNotified = vi.fn();
+        const onNotified = vi.fn<(sessionId: string, participantId: string) => void>();
         let scheduled = 0;
         const client = createUserChannelSse({
             getToken: () => "token-1",

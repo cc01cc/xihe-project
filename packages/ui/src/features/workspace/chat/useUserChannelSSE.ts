@@ -18,6 +18,8 @@
  * (`userChannelHintCoalescer`), and the badge itself is re-read from CP.
  */
 
+import { logger } from "@/lib/logger";
+
 export interface SseFrame {
     event: string;
     data: string;
@@ -170,6 +172,10 @@ export function createUserChannelSse(options: UserChannelSseOptions): UserChanne
             planReconnect();
         } catch (failure) {
             if (disposed) return;
+            // The spec wants a reconnect loop, not a silent swallow: record why before backing off.
+            logger.warn("user_channel_sse_disconnected", {
+                reason: failure instanceof Error ? failure.message : String(failure),
+            });
             planReconnect();
         }
     }

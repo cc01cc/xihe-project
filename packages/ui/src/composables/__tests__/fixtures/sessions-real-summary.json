@@ -1,34 +1,34 @@
 {
-  "sessions": [
-    {
-      "id": "c40ceac5-7eaa-4ab4-836f-eef1377c7159",
-      "title": "M2 子会话（真实 lineage 数据）",
-      "kind": "spawn",
-      "spawnedFromSessionId": "7677f416-85d1-4bb9-99c6-5a3777fffdb3",
-      "spawnedAt": "2026-11-04T20:39:10.843077Z",
-      "workspaceId": "ae30f0e8-9baa-497d-88be-91e5bcf89cc8",
-      "agentPrincipalId": "d6006f32-54f1-4ad1-b7c6-cc6cc05504c1",
-      "contextTemplateLayer": "instance",
-      "contextTemplateId": "30470dde-b371-384f-b948-946da5f48796",
-      "contextTemplateVersion": 2,
-      "providerConnectionId": "023efc70-2fb0-485f-bfca-66b4fa79db63",
-      "modelProvider": "openai",
-      "modelName": "fake-openai"
-    },
-    {
-      "id": "7677f416-85d1-4bb9-99c6-5a3777fffdb3",
-      "title": "M2 父会话 v3 mw2kpmba",
-      "kind": null,
-      "spawnedFromSessionId": null,
-      "spawnedAt": null,
-      "workspaceId": "ae30f0e8-9baa-497d-88be-91e5bcf89cc8",
-      "agentPrincipalId": "d6006f32-54f1-4ad1-b7c6-cc6cc05504c1",
-      "contextTemplateLayer": "instance",
-      "contextTemplateId": "30470dde-b371-384f-b948-946da5f48796",
-      "contextTemplateVersion": 2,
-      "providerConnectionId": "023efc70-2fb0-485f-bfca-66b4fa79db63",
-      "modelProvider": "openai",
-      "modelName": "fake-openai"
-    }
-  ]
+    "sessions": [
+        {
+            "id": "c40ceac5-7eaa-4ab4-836f-eef1377c7159",
+            "title": "M2 子会话（真实 lineage 数据）",
+            "kind": "spawn",
+            "spawnedFromSessionId": "7677f416-85d1-4bb9-99c6-5a3777fffdb3",
+            "spawnedAt": "2026-11-04T20:39:10.843077Z",
+            "workspaceId": "ae30f0e8-9baa-497d-88be-91e5bcf89cc8",
+            "agentPrincipalId": "d6006f32-54f1-4ad1-b7c6-cc6cc05504c1",
+            "contextTemplateLayer": "instance",
+            "contextTemplateId": "30470dde-b371-384f-b948-946da5f48796",
+            "contextTemplateVersion": 2,
+            "providerConnectionId": "023efc70-2fb0-485f-bfca-66b4fa79db63",
+            "modelProvider": "openai",
+            "modelName": "fake-openai"
+        },
+        {
+            "id": "7677f416-85d1-4bb9-99c6-5a3777fffdb3",
+            "title": "M2 父会话 v3 mw2kpmba",
+            "kind": null,
+            "spawnedFromSessionId": null,
+            "spawnedAt": null,
+            "workspaceId": "ae30f0e8-9baa-497d-88be-91e5bcf89cc8",
+            "agentPrincipalId": "d6006f32-54f1-4ad1-b7c6-cc6cc05504c1",
+            "contextTemplateLayer": "instance",
+            "contextTemplateId": "30470dde-b371-384f-b948-946da5f48796",
+            "contextTemplateVersion": 2,
+            "providerConnectionId": "023efc70-2fb0-485f-bfca-66b4fa79db63",
+            "modelProvider": "openai",
+            "modelName": "fake-openai"
+        }
+    ]
 }

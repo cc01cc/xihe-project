@@ -105,18 +105,28 @@ async function installDemoRuntime(page: Page, workspaceId: string): Promise<void
             const rounds = [
                 {
                     tokens: ["三段风险已核对：游标边界、幂等键复用，", "这两处需与 Planner 确认。"],
-                    toolCall: { tool: "exec_command", toolCallId: "tc-contract", arguments: { command: "npm run test:e2e -- --grep contract" } },
+                    toolCall: {
+                        tool: "exec_command",
+                        toolCallId: "tc-contract",
+                        arguments: { command: "npm run test:e2e -- --grep contract" },
+                    },
                 },
                 {
                     tokens: ["收到。契约确认后 3 个工作日联调，", "另留 2 天缓冲。"],
-                    toolCall: { tool: "exec_command", toolCallId: "tc-plan", arguments: { command: "npm run plan:check" } },
+                    toolCall: {
+                        tool: "exec_command",
+                        toolCallId: "tc-plan",
+                        arguments: { command: "npm run plan:check" },
+                    },
                 },
             ];
             let chatController: ReadableStreamDefaultController<Uint8Array> | null = null;
             let roundIndex = 0;
             const push = (name: string, data: unknown) => {
                 try {
-                    chatController?.enqueue(enc(`event: ${name}\ndata: ${JSON.stringify(data)}\n\n`));
+                    chatController?.enqueue(
+                        enc(`event: ${name}\ndata: ${JSON.stringify(data)}\n\n`),
+                    );
                 } catch {
                     /* stream closed */
                 }
@@ -337,7 +347,12 @@ async function stubBoundSession(page: Page): Promise<void> {
 
 async function stubDelegation(page: Page): Promise<void> {
     const now = "2026-11-04T14:00:00.000Z";
-    const session = (id: string, title: string, parent: string | null, spawnedAt: string | null) => ({
+    const session = (
+        id: string,
+        title: string,
+        parent: string | null,
+        spawnedAt: string | null,
+    ) => ({
         id,
         title,
         createdAt: now,
@@ -408,7 +423,9 @@ async function stubDelegation(page: Page): Promise<void> {
 
 async function openSession(page: Page): Promise<void> {
     await page.goto(`/workspace/workspace-1/chat/${SESSION_ID}`);
-    await expect(page.getByTestId("chat-input"), "composer mounts").toBeVisible({ timeout: 20_000 });
+    await expect(page.getByTestId("chat-input"), "composer mounts").toBeVisible({
+        timeout: 20_000,
+    });
 }
 
 /** 演示图只接受"稳定态"：run 已终态、toast 已消失、工具卡不再「执行中」、右栏已关。 */
@@ -600,8 +617,7 @@ test.describe("X 演示截图（mock 数据 + 12630 develop 真组件）", () =>
         await page.getByTestId("chat-input").fill("@Planner 排期也一起看一眼。");
         // 用户裁定：会话列表侧栏"不是核心" ⇒ 采集前隐藏侧栏与导航 rail（纯展示隐藏，不改产品）。
         await page.addStyleTag({
-            content:
-                '[data-testid="sidebar"],[data-testid="nav-rail"]{display:none!important}',
+            content: '[data-testid="sidebar"],[data-testid="nav-rail"]{display:none!important}',
         });
         await page.waitForTimeout(400);
         await page.screenshot({ path: join(SHOT_DIR, "06-card-visual.png"), scale: "device" });
@@ -634,4 +650,3 @@ test.describe("X 演示截图（mock 数据 + 12630 develop 真组件）", () =>
         await shot(page, "05-delegation-dag.png");
     });
 });
-

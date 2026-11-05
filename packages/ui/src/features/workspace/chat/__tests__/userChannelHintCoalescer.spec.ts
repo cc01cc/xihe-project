@@ -15,7 +15,7 @@ describe("userChannelHintCoalescer", () => {
     it("collapses three hints of one session into a single flush", () => {
         vi.useFakeTimers();
         try {
-            const onFlush = vi.fn();
+            const onFlush = vi.fn<() => void>();
             const coalescer = createHintCoalescer(() => sessionA, { delayMs: 300, onFlush });
 
             expect(coalescer.push(sessionA, "participant-1")).toBe(true);
@@ -31,7 +31,7 @@ describe("userChannelHintCoalescer", () => {
     });
 
     it("ignores hints for a session that is not on screen", () => {
-        const onFlush = vi.fn();
+        const onFlush = vi.fn<() => void>();
         const coalescer = createHintCoalescer(() => sessionA, { delayMs: 300, onFlush });
 
         expect(coalescer.push("session-b", "participant-1")).toBe(false);
@@ -43,7 +43,7 @@ describe("userChannelHintCoalescer", () => {
     it("opens a fresh window after the previous flush", () => {
         vi.useFakeTimers();
         try {
-            const onFlush = vi.fn();
+            const onFlush = vi.fn<() => void>();
             const coalescer = createHintCoalescer(() => sessionA, { delayMs: 300, onFlush });
 
             coalescer.push(sessionA, "participant-1");
@@ -60,7 +60,7 @@ describe("userChannelHintCoalescer", () => {
     it("dispose drops a pending flush", () => {
         vi.useFakeTimers();
         try {
-            const onFlush = vi.fn();
+            const onFlush = vi.fn<() => void>();
             const coalescer = createHintCoalescer(() => sessionA, { delayMs: 300, onFlush });
             coalescer.push(sessionA, "participant-1");
 
