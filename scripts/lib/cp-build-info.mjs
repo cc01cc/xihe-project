@@ -153,13 +153,16 @@ export function sameCommit(head, recorded) {
 /**
  * The gate's whole decision, as a pure function (the launcher only logs and acts on it).
  *
- * `fresh` is the "may boot without rebuilding" answer: only an exact commit match is fresh;
- * a missing stamp and an unresolvable HEAD both default to **rebuild** (fail-safe — the cost of
- * one compile is far below the cost of debugging pre-fix code, which is what BL-240 was).
+ * `fresh` is the "may boot without rebuilding" answer: only an exact commit match **and a clean
+ * build stamp** is fresh; a missing stamp and an unresolvable HEAD both default to **rebuild**
+ * (fail-safe — the cost of one compile is far below the cost of debugging pre-fix code, which is
+ * what BL-240 was). BL-325: a stamp whose commit matches HEAD but whose `dirty=true` gets its own
+ * verdict (`dirty`) instead of `fresh`, because "commit right, tree dirty" is a real state that
+ * must be nameable in the monitor rather than hidden behind `fresh`.
  *
  * @param {{targetDir: string, headCommit: string|null, read?: typeof readFileSync}} input
  * @returns {{
- *   status: 'fresh'|'stale'|'missing'|'unverified',
+ *   status: 'fresh'|'stale'|'dirty'|'missing'|'unverified',
  *   fresh: boolean,
  *   file: string,
  *   fileCommit: string|null,
@@ -193,15 +196,25 @@ export function evaluateCpFreshness({ targetDir, headCommit, read = readFileSync
       reason: 'HEAD is unknown (git rev-parse failed); cannot prove freshness',
     };
   }
-  const fresh = sameCommit(head, info.commit);
+  const commitMatch = sameCommit(head, info.commit);
+  const dirty = info.dirty === true;
+  const fresh = commitMatch && !dirty;
+  // BL-325: `dirty` is deliberately a separate verdict, not folded into `stale` — a dirty build is
+  // from the right commit but not provably from the committed tree, and callers that only know
+  // fresh/stale treat anything other than `fresh` as "not fresh".
+  const status = !commitMatch ? 'stale' : dirty ? 'dirty' : 'fresh';
   return {
-    status: fresh ? 'fresh' : 'stale',
+    status,
     fresh,
     file,
     fileCommit: info.commit,
     builtAt: info.builtAt,
     dirty: info.dirty,
-    reason: fresh ? 'stamped commit == HEAD' : `stamped commit != HEAD`,
+    reason: !commitMatch
+      ? 'stamped commit != HEAD'
+      : dirty
+        ? 'stamped commit == HEAD but the stamp says the tree was dirty at build time'
+        : 'stamped commit == HEAD',
   };
 }
 
@@ -256,6 +269,9 @@ export function cpBuildStatus({ targetDir, headCommit, cwd, run = spawnSync, tar
     runningCommit: verdict.fileCommit,
     headCommit: head,
     behind: commitDistance({ cwd, from: verdict.fileCommit, to: head, run }),
+    // `stale` keeps its narrow documented meaning ("provably not from HEAD"); a `dirty` verdict
+    // means "from the right commit, dirty tree" and is reported via `verdict` (BL-325). Consumers
+    // that gate on freshness must require `verdict === 'fresh'`, never `!stale`.
     stale: verdict.status === 'stale' || verdict.status === 'missing',
     verdict: verdict.status,
     builtAt: verdict.builtAt,
@@ -302,18 +318,29 @@ export function externalCpBuildCheck({ targetDir, expectedCommit, headCommit }) 
         + ' Rebuild and restart CP first: `mise run dev:host:start:cp` (or `node scripts/stack-run.mjs cp`)',
     };
   }
-  const ok = sameCommit(expected, info.commit);
+  // BL-325: the E2E gate is a *verification* gate, so it must require fresh (clean tree), not just
+  // a matching commit — a dirty build can contain uncommitted product code that is not the commit
+  // under test. Dirty therefore fails with its own verdict/message.
+  const commitMatch = sameCommit(expected, info.commit);
+  const dirty = info.dirty === true;
+  const ok = commitMatch && !dirty;
   return {
     ok,
-    verdict: ok ? 'fresh' : 'stale',
+    verdict: !commitMatch ? 'stale' : dirty ? 'dirty' : 'fresh',
     expectedCommit: expected,
     runningCommit: info.commit,
     message: ok
-      ? `CP build commit ${shortSha(info.commit)} matches expected ${shortSha(expected)}`
-      : `CP build commit ${shortSha(info.commit)} does not match expected ${shortSha(expected)};`
-        + ' the running CP was built from a different commit. Rebuild and restart CP first:'
-        + ' `mise run dev:host:start:cp` (or `node scripts/stack-run.mjs cp`)'
-        + ` — stamp: ${file}`,
+      ? `CP build commit ${shortSha(info.commit)} matches expected ${shortSha(expected)} (clean)`
+      : dirty
+        ? `CP build commit ${shortSha(info.commit)} matches expected ${shortSha(expected)} but the`
+          + ' stamp says the tree was dirty at build time; the running CP may contain uncommitted code.'
+          + ' Rebuild from a clean tree and restart CP first:'
+          + ' `mise run dev:host:start:cp` (or `node scripts/stack-run.mjs cp`)'
+          + ` — stamp: ${file}`
+        : `CP build commit ${shortSha(info.commit)} does not match expected ${shortSha(expected)};`
+          + ' the running CP was built from a different commit. Rebuild and restart CP first:'
+          + ' `mise run dev:host:start:cp` (or `node scripts/stack-run.mjs cp`)'
+          + ` — stamp: ${file}`,
   };
 }
 
