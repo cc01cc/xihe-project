@@ -68,6 +68,8 @@ public final class PermissionAtomLabels {
         put(labels, ToolFaceRegistry.ACTION_MANAGE_ROLES, "管理角色与绑定", "Manage roles & bindings");
         put(labels, ToolFaceRegistry.ACTION_OWN_AGENT, "创建个人智能体", "Create personal agent");
         put(labels, ToolFaceRegistry.ACTION_MEMORY_WRITE, "写入智能体记忆", "Write agent memory");
+        put(labels, ToolFaceRegistry.ACTION_MEMORY_WRITE_SELF,
+                "写入自己的智能体记忆", "Write own agent memory");
         put(labels, ToolFaceRegistry.ACTION_MANAGE_AGENT_PRINCIPALS,
                 "管理智能体主体（实例）", "Manage agent principals (instance)");
         put(labels, ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_MEMBERS,

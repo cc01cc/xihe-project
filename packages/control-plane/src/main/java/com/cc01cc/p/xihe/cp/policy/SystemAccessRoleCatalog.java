@@ -89,7 +89,10 @@ public class SystemAccessRoleCatalog {
      * CREATE_ACCOUNT (three independent actions, never alias-merged).
      */
     private static final List<AtomRef> USER_DEFAULT_ATOMS = concat(BASE_ATOMS,
-            List.of(AtomRef.wildcard(ToolFaceRegistry.ACTION_OWN_AGENT)));
+            List.of(AtomRef.wildcard(ToolFaceRegistry.ACTION_OWN_AGENT),
+                    // BL-345 (user ruling 2026-11-06): every registered account may write the
+                    // memory of a principal it owns. MEMORY_WRITE (any subject) is NOT here.
+                    AtomRef.wildcard(ToolFaceRegistry.ACTION_MEMORY_WRITE_SELF)));
 
     private final AccessRoleRepository roleRepository;
     private final AccessRolePermissionRepository permissionRepository;
@@ -155,6 +158,11 @@ public class SystemAccessRoleCatalog {
                                         AtomRef.wildcard(ToolFaceRegistry.ACTION_EXEC)),
                                 List.of(AtomRef.wildcard(ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_AGENTS),
                                         AtomRef.wildcard(PermissionAtomCatalog.CAP_WORKSPACE_ADMIN),
+                                        // BL-345 (user ruling 2026-11-06, B): workspace administrators
+                                        // write ANY subject's memory; MEMORY_WRITE implies the self
+                                        // face, so evaluation checks MEMORY_WRITE first.
+                                        AtomRef.wildcard(ToolFaceRegistry.ACTION_MEMORY_WRITE_SELF),
+                                        AtomRef.wildcard(ToolFaceRegistry.ACTION_MEMORY_WRITE),
                                         // PLAN-0651 M2 T2.1: owner manages skills, providers, runtime
                                         // and workspace policy; N10 (members) stays unassigned by
                                         // ruling D51-26.
@@ -180,11 +188,17 @@ public class SystemAccessRoleCatalog {
                                 AtomRef.wildcard(
                                         ToolFaceRegistry.ACTION_MANAGE_PROVIDER_CONNECTIONS),
                                 AtomRef.wildcard(ToolFaceRegistry.ACTION_USE_WORKSPACE_RUNTIME),
+                                // BL-345: an editor writes memory of the principals it owns, never
+                                // of other subjects (that stays owner-level MEMORY_WRITE).
+                                AtomRef.wildcard(ToolFaceRegistry.ACTION_MEMORY_WRITE_SELF),
                                 AtomRef.wildcard(
                                         ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_POLICY))),
                 new RoleSeed(WS_VIEWER_ID, WS_VIEWER, "Workspace Viewer",
                         "Workspace scope: read only.",
                         List.of(AtomRef.wildcard(ToolFaceRegistry.ACTION_READ),
+                                // BL-345: even a viewer may write memory of the principals it owns;
+                                // reads stay read-only and arbitrary subjects stay owner-level.
+                                AtomRef.wildcard(ToolFaceRegistry.ACTION_MEMORY_WRITE_SELF),
                                 // PLAN-0651 M2 T2.1: a viewer may use the workspace runtime (read the
                                 // environment snapshot) but never manage it.
                                 AtomRef.wildcard(

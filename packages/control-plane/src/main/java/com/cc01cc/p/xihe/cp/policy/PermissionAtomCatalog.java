@@ -108,6 +108,10 @@ public final class PermissionAtomCatalog {
             ToolFaceRegistry.ACTION_MANAGE_ROLES,
             // PLAN-0673 M2 (D-166): an agent principal may never hold the human grant bypass.
             ToolFaceRegistry.ACTION_GRANT_ANY_ATOM,
+            // BL-345 (user ruling 2026-11-06): "write my own subject's memory" is a human-account
+            // capability. An agent principal is a grantee, not an owner of user data — letting it
+            // hold this atom would let tool writes target the human's own subject memory.
+            ToolFaceRegistry.ACTION_MEMORY_WRITE_SELF,
             ToolFaceRegistry.ACTION_OWN_AGENT,
             ToolFaceRegistry.ACTION_MANAGE_AGENT_PRINCIPALS,
             // caps
@@ -142,6 +146,11 @@ public final class PermissionAtomCatalog {
             // (principal, workspace), so a workspace-scoped grant is meaningful (an instance-scoped
             // one means "in every workspace", the same shape as workspace:admin).
             ToolFaceRegistry.ACTION_MEMORY_WRITE,
+            // BL-345 (user ruling 2026-11-06): user-tier atom for writing a principal the actor owns.
+            // Scope class stays `both` like MEMORY_WRITE (memory is keyed by principal, the grant is
+            // evaluated in a workspace). Default-granted to USER/ADMIN/WS_*; MEMORY_WRITE (any
+            // subject) stays SUPER_ADMIN + WS_OWNER only.
+            ToolFaceRegistry.ACTION_MEMORY_WRITE_SELF,
             // PLAN-0651 M1 (D51-26/D51-27): management atoms replacing the coarse
             // instance-administrator bypass on the agent-principal and member faces.
             ToolFaceRegistry.ACTION_MANAGE_AGENT_PRINCIPALS,
@@ -237,7 +246,7 @@ public final class PermissionAtomCatalog {
                 : WILDCARD;
     }
 
-    /** The 17 action atoms, in canonical order. */
+    /** The action atoms, in canonical order (29 after BL-345). */
     public static List<String> actionAtoms() {
         return ACTION_ATOM_NAMES;
     }

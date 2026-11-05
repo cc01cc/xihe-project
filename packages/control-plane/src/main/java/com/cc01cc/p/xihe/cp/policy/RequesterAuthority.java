@@ -2,6 +2,7 @@ package com.cc01cc.p.xihe.cp.policy;
 
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
+import com.cc01cc.p.xihe.cp.entity.AuthorizationGrant;
 import com.cc01cc.p.xihe.cp.repository.AuthorizationGrantRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -122,6 +123,38 @@ public class RequesterAuthority {
         Set<String> names = new LinkedHashSet<>();
         atoms.forEach(atom -> names.add(atom.actionClass()));
         return Set.copyOf(names);
+    }
+
+    /**
+     * BL-345: which grant <b>sources</b> currently carry {@code actionClass} for this subject at the
+     * evaluator's scope. The audit detail uses this so a memory-write decision can say where its atom
+     * came from ({@code role} for a catalog grant, {@code direct} for an explicit grant, ...) instead
+     * of an opaque "allowed".
+     */
+    public Set<String> atomSources(UUID subjectId, String actionClass, UUID workspaceId) {
+        if (subjectId == null || actionClass == null) {
+            return Set.of();
+        }
+        LinkedHashSet<String> sources = new LinkedHashSet<>();
+        try {
+            for (AuthorizationGrant grant : grantRepository.findScopedGrants(
+                    AuthzContext.SUBJECT_USER, subjectId, GrantSources.EVALUATION_SOURCES, workspaceId)) {
+                if (grant.getPermissions() == null) {
+                    continue;
+                }
+                for (com.fasterxml.jackson.databind.JsonNode permission : grant.getPermissions()) {
+                    if (actionClass.equals(permission.path("actionClass").asText())) {
+                        sources.add(grant.getSource());
+                        break;
+                    }
+                }
+            }
+        } catch (RuntimeException e) {
+            logger.warn("[POLICY] event=atom_source_lookup_failed subject={} atom={} failureType={}",
+                    subjectId, actionClass, e.getClass().getSimpleName());
+            return Set.of();
+        }
+        return Set.copyOf(sources);
     }
 
     /** Canonical action/resource rows at the evaluator's exact scope, retaining resource bounds. */

@@ -4,9 +4,8 @@ import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.config.ProblemDetailsHandler;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
 import com.cc01cc.p.xihe.cp.entity.AgentMemory;
-import com.cc01cc.p.xihe.cp.policy.RequesterAuthority;
-import com.cc01cc.p.xihe.cp.policy.ToolFaceRegistry;
 import com.cc01cc.p.xihe.cp.service.AgentMemoryService;
+import com.cc01cc.p.xihe.cp.service.AgentMemoryWriteAuthorizer;
 import com.cc01cc.p.xihe.cp.service.AgentPrincipalService;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -63,14 +62,14 @@ public class AgentPrincipalMemoryController {
 
     private final AgentPrincipalService agentPrincipalService;
     private final AgentMemoryService agentMemoryService;
-    private final RequesterAuthority requesterAuthority;
+    private final AgentMemoryWriteAuthorizer memoryWriteAuthorizer;
 
     public AgentPrincipalMemoryController(AgentPrincipalService agentPrincipalService,
                                           AgentMemoryService agentMemoryService,
-                                          RequesterAuthority requesterAuthority) {
+                                          AgentMemoryWriteAuthorizer memoryWriteAuthorizer) {
         this.agentPrincipalService = agentPrincipalService;
         this.agentMemoryService = agentMemoryService;
-        this.requesterAuthority = requesterAuthority;
+        this.memoryWriteAuthorizer = memoryWriteAuthorizer;
     }
 
     @PreAuthorize("isAuthenticated()")
@@ -184,13 +183,9 @@ public class AgentPrincipalMemoryController {
      * face has always used (404 for a principal outside the authorizing workspace).
      */
     private void requireMemoryWrite(UUID workspace, UUID principal) {
-        UUID subject = requesterAuthority.currentSubjectId();
-        if (subject == null || !requesterAuthority.holdsActionAtom(subject,
-                ToolFaceRegistry.ACTION_MEMORY_WRITE, workspace)) {
-            throw new CpApiException(HttpStatus.FORBIDDEN, "FORBIDDEN",
-                    "MEMORY_WRITE is required to write agent memory in this workspace");
-        }
-        requireVisible(workspace, principal);
+        // BL-345: MEMORY_WRITE (any subject) first, then MEMORY_WRITE_SELF + ownership; both in the
+        // shared authorizer so this route and the deprecated forwarder cannot drift apart.
+        memoryWriteAuthorizer.require(workspace, principal);
     }
 
     private void requireVisible(UUID workspace, UUID principal) {

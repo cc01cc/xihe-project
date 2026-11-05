@@ -146,7 +146,9 @@ class DefaultSetAtomMatrixTest {
                 ToolFaceRegistry.ACTION_WRITE_INSTANCE_CONTENT,
                 ToolFaceRegistry.ACTION_VIEW_SECRET_CONTENT,
                 ToolFaceRegistry.ACTION_MANAGE_AGENT_PRINCIPALS,
-                ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_MEMBERS);
+                ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_MEMBERS,
+                // BL-345: the human ownership capability — an agent is a grantee, not an owner.
+                ToolFaceRegistry.ACTION_MEMORY_WRITE_SELF);
         Set<String> bindableByRuling = Set.of(
                 ToolFaceRegistry.ACTION_MANAGE_SKILL_LIBRARY,
                 ToolFaceRegistry.ACTION_MANAGE_PROVIDER_CONNECTIONS,
@@ -163,7 +165,7 @@ class DefaultSetAtomMatrixTest {
                     "must be grantable to agent principals (workspace capability): " + atom);
         }
         // The aggregate is the single source of truth 0667 derives from.
-        assertEquals(17, PermissionAtomCatalog.agentPrincipalForbiddenAtoms().size(),
-                "Lead ruling 2026-11-05: exactly 17 forbidden atoms (GRANT_ANY_ATOM added by PLAN-0673 M2)");
+        assertEquals(18, PermissionAtomCatalog.agentPrincipalForbiddenAtoms().size(),
+                "17 from the 2026-11-05 ruling + MEMORY_WRITE_SELF (BL-345, 2026-11-06)");
     }
 }

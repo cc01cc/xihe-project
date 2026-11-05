@@ -52,6 +52,10 @@ public class ToolFaceRegistry {
     // but seeded into NO default role (USER/ADMIN included), so an account can only use it after
     // an explicit grant. The UI/CLI channels do not consume this atom (they act as the user).
     public static final String ACTION_MEMORY_WRITE = "MEMORY_WRITE";
+    // BL-345 (user ruling 2026-11-06): writing memory of a principal the actor owns. Kept separate
+    // from MEMORY_WRITE on purpose: MEMORY_WRITE means "any subject" (workspace administrators), this
+    // atom means "my own subject" (every registered user). An agent principal may never hold it.
+    public static final String ACTION_MEMORY_WRITE_SELF = "MEMORY_WRITE_SELF";
     // PLAN-0651 M1 (D51-26/D51-27): two management atoms replacing the coarse
     // instance-administrator bypass on the agent-principal face and the member face.
     // MANAGE_AGENT_PRINCIPALS is instance-only (it acts on the instance);
@@ -183,7 +187,7 @@ public class ToolFaceRegistry {
                 ACTION_CREDENTIAL_USE, ACTION_CREDENTIAL_REVEAL, ACTION_CREDENTIAL_MANAGE,
                 ACTION_CREATE_ACCOUNT, ACTION_CREATE_TEMPLATE, ACTION_MANAGE_WORKSPACE_AGENTS, ACTION_SPAWN_AGENT,
                 ACTION_CREATE_SCHEDULED_TASK, ACTION_MANAGE_SCHEDULED_TASK, ACTION_MANAGE_ROLES,
-                ACTION_OWN_AGENT, ACTION_MEMORY_WRITE,
+                ACTION_OWN_AGENT, ACTION_MEMORY_WRITE, ACTION_MEMORY_WRITE_SELF,
                 // PLAN-0651 M1 (D51-26): management atoms. They join the built-in vocabulary because
                 // it is the catalog's action-class set (PermissionAtomCatalog.actionAtoms() must stay
                 // equal to it, see MemoryWriteAtomTest); they are not attached to any tool face.
