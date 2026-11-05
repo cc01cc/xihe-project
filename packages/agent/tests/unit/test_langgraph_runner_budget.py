@@ -233,6 +233,6 @@ async def test_elapsed_budget_excludes_user_question_wait(monkeypatch):
     assert wall_seconds > 1.0
     assert _trigger_dimensions(events) == []
     # The canonical question event reached the caller's ordered stream (not a tool_call frame).
-    assert [e.type for e in events if e.type in {"approval_request", "user_question"}] == [
-        "user_question"
+    assert [e.type for e in events if e.type in {"approval_request", "session_question_asked"}] == [
+        "session_question_asked"
     ]

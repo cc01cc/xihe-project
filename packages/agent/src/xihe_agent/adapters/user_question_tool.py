@@ -6,7 +6,7 @@ waiter or branching on "is this an approval?":
 * same wait primitive (``asyncio.Event``) and the same run-scoped pause boundary — the runner
   binds one shared human-wait queue, so a blocked question pauses the elapsed budget clock
   exactly like a blocked approval;
-* a **separate** tool name (``ask_user``), a **separate** event type (``user_question``) and a
+* a **separate** tool name (``ask_user``), a **separate** event type (``session_question_asked``) and a
   separate coordinator — approval and question waiters never resolve each other.
 
 Wire shape (CP relay consumer, ``ChatController.relayUserQuestion``): the published payload

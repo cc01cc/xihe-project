@@ -300,7 +300,9 @@ class LangGraphRunner(AgentRunner):
             await publish_human_wait(AgentEvent(type="approval_request", data=payload))
 
         async def publish_user_question(payload: dict[str, Any]) -> None:
-            await publish_human_wait(AgentEvent(type="user_question", data=payload))
+            # BL-303 naming: AgentEvent types must be `domain_past_verb`; the durable question
+            # itself stays in `user_questions` (V128) — only this event name changed.
+            await publish_human_wait(AgentEvent(type="session_question_asked", data=payload))
 
         context.metadata[APPROVAL_EVENT_SINK_KEY] = publish_approval
         context.metadata[USER_QUESTION_EVENT_SINK_KEY] = publish_user_question
@@ -437,7 +439,7 @@ class LangGraphRunner(AgentRunner):
                         break
                     if human_wait_task in completed:
                         # PLAN-0492 T1.3: the elapsed clock pauses while we wait
-                        # for a human (the canonical approval_request / user_question
+                        # for a human (the canonical approval_request / session_question_asked
                         # events arrive through this queue, not the raw stream).
                         pause_started_at = datetime.now(UTC)
                         # PLAN-0493 T2.1: a human wait is an intervention boundary —

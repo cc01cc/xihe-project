@@ -19,7 +19,7 @@ from xihe_agent.interfaces.tool import (
 FINAL_CHAIN_NAME = "LangGraph"
 # Control-flow primitives that publish a canonical event of their own and therefore must not
 # also surface a tool_call/tool_result frame: request_approval → approval_request,
-# ask_user → user_question (the question/answer bodies never enter the session stream).
+# ask_user → session_question_asked (the question/answer bodies never enter the session stream).
 SUPPRESSED_HUMAN_WAIT_TOOLS = frozenset({"request_approval", "ask_user"})
 
 
