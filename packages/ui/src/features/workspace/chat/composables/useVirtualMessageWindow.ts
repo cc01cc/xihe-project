@@ -64,25 +64,45 @@ export function useVirtualMessageWindow({
         viewportHeight = ref(0),
         scrollTop = ref(0),
         measured = ref(new Map<string, number>()),
+        // 非响应式镜像：`measure()` 由行上的函数 ref 在**渲染期**调用（见 MessageList 的
+        // `rowElementRef`），渲染期的响应式读会被登记成该组件的渲染依赖、随后的响应式写又会
+        // 让同一个渲染 effect 重跑，形成自触发循环（真实链路 E2E 的
+        // `Maximum recursive updates exceeded in component <MessageScrollerContent>`）。
+        // 因此比较基准放在普通 Map 里，只有高度**真的变了**才写一次 `measured` 通知窗口重算。
+        measuredHeights = new Map<string, number>(),
         rowElements = new Map<string, HTMLElement>(),
         resizeObserver =
             typeof ResizeObserver === "undefined"
                 ? null
                 : new ResizeObserver((entries) => {
-                      let changed = false;
-                      const next = new Map(measured.value);
+                      const heights: Array<readonly [string, number]> = [];
                       for (const entry of entries) {
                           const key = (entry.target as HTMLElement).dataset.virtualRowKey;
                           if (!key) continue;
-                          const height = entry.contentRect.height;
-                          if (height <= 0) continue;
-                          if (Math.abs((next.get(key) ?? 0) - height) > ELEMENT_HEIGHT_EPSILON) {
-                              next.set(key, height);
-                              changed = true;
-                          }
+                          heights.push([key, entry.contentRect.height] as const);
                       }
-                      if (changed) measured.value = next;
+                      recordHeights(heights);
                   });
+
+    /**
+     * 记录行高：幂等，只有变化超过 `ELEMENT_HEIGHT_EPSILON` 才写响应式 `measured`。
+     * 渲染期调用也不得触发本组件的渲染 effect 重跑（见上方 `measuredHeights` 的说明）。
+     */
+    function recordHeights(entries: Iterable<readonly [string, number]>): void {
+        let changed = false;
+
+        for (const [key, height] of entries) {
+            if (height <= 0) continue;
+            const previous = measuredHeights.get(key);
+            if (previous !== undefined && Math.abs(previous - height) <= ELEMENT_HEIGHT_EPSILON) {
+                continue;
+            }
+            measuredHeights.set(key, height);
+            changed = true;
+        }
+
+        if (changed) measured.value = new Map(measuredHeights);
+    }
 
     const active = computed(() => enabled.value && viewportHeight.value > 0);
 
@@ -156,12 +176,7 @@ export function useVirtualMessageWindow({
         element.dataset.virtualRowKey = key;
         rowElements.set(key, element);
         resizeObserver?.observe(element);
-        const height = element.getBoundingClientRect().height;
-        if (height > 0) {
-            const next = new Map(measured.value);
-            next.set(key, height);
-            measured.value = next;
-        }
+        recordHeights([[key, element.getBoundingClientRect().height]]);
     }
 
     function captureAnchor(): ScrollAnchor | null {
@@ -201,10 +216,11 @@ export function useVirtualMessageWindow({
         (keys) => {
             const allowed = new Set(keys);
             let changed = false;
-            const next = new Map<string, number>();
-            for (const [key, height] of measured.value) {
-                if (allowed.has(key)) next.set(key, height);
-                else changed = true;
+            for (const key of Array.from(measuredHeights.keys())) {
+                if (!allowed.has(key)) {
+                    measuredHeights.delete(key);
+                    changed = true;
+                }
             }
             for (const key of Array.from(rowElements.keys())) {
                 if (!allowed.has(key)) {
@@ -213,7 +229,7 @@ export function useVirtualMessageWindow({
                     rowElements.delete(key);
                 }
             }
-            if (changed) measured.value = next;
+            if (changed) measured.value = new Map(measuredHeights);
         },
         { flush: "post" },
     );
@@ -222,6 +238,7 @@ export function useVirtualMessageWindow({
         detach();
         resizeObserver?.disconnect();
         rowElements.clear();
+        measuredHeights.clear();
     });
 
     return {
