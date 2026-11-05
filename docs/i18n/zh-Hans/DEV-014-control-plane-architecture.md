@@ -473,3 +473,58 @@ PLAN-0416 Chat 消费：`ChatController` 仅在 admission snapshot 原始 native
 | 会话/派发前置 | 主体必须已在该工作区绑定（`resolveCapFor` 严格路径） | 路径 `{workspaceId}` |
 
 **相关 BL**：`BL-349`（`WS_*` 曾携带 `MEMORY_WRITE_SELF` ⇒ 首绑 403 `ROLE_NOT_GRANTABLE`，已修 —— 正是它让正确路径看起来"不通"）· `BL-351`（roles/skills 端点曾只认 query、忽略头；已修：头优先 + 冲突 400）· `BL-352`（本段来源：不是死锁，是顺序未文档化 + BL-349 掩盖正路）· `BL-344`（成员面板能力位三态）。（en 侧暂无本文档，翻译随批次补齐）
+
+## 14c. agent 主体的作用域边界（2026-11-06 真栈实测）
+
+> **本节描述的是 2026-11-06 的现状**；`BL-355`/`BL-356` 的双轴口径（候选 C：角色/技能按轴求值 cap）**尚待裁定**，裁定后本节将被改写成"模型说明"。在此之前，**按下文描述的行为使用即可**，不要按"应该能绑"去试。
+> 本节全部结论来自真栈实测（隔离栈、同栈同构建），证据原件：`.local/evidence/bl355-bl356-status-statement.md`（13 格中 12 格实测，第 14 格如实标"未实测"）。
+
+### 14c.1 两道独立门（先禁授、再 cap，顺序不可颠倒）
+
+绑定一个角色到 agent 主体，`AgentPrincipalRoleBindingService#bind` 依次过两道门：
+
+1. **禁授原子门** `requireBindableAtoms(roleId)`（`AgentPrincipalRoleBindingService:161`）
+   —— 角色若携带"agent 主体**永不可持有**"的原子（如 `MANAGE_WORKSPACE_AGENTS`、`workspace:admin`），
+   直接 **`409 AGENT_PRINCIPAL_FORBIDDEN_ATOMS`**，**先于** cap 比较。
+2. **cap 门** `atomPolicy.assertWithinCap(...)`（`:168`）
+   —— 通过第一道后，若角色原子集 **不 ⊆** 主体自身的原子集（`retainCovered(bindingPermissions, principalEffectiveAtoms)`，`AgentPrincipalService:602-614`），
+   返回 **`409 ROLE_BINDING_EXCEEDS_CAP`**，detail 点名越界原子。
+
+> **两类 409 必须分开看**：`AGENT_PRINCIPAL_FORBIDDEN_ATOMS` 是**设计性拒绝**（该原子永不授予 agent），
+> `ROLE_BINDING_EXCEEDS_CAP` 是**上限性拒绝**（主体当前能力不够）。把两者当同一件事，会误判成"权限 bug"。
+
+### 14c.2 当前能力上限：由主体的 **instance 角色**决定
+
+- 主体的原子集来自它绑定的 **instance 作用域角色**；`POST /agent-principals` 默认绑 `AGENT_USER`，
+  其原子 = `BASE_ATOMS`：`read`/`write`/`delete`/`exec`/`network`（`SystemAccessRoleCatalog:78-83`）。
+- 系统工作区角色 **都带 `USE_WORKSPACE_RUNTIME`**（`SystemAccessRoleCatalog:196-204`），因此：
+  - `WS_VIEWER`、`WS_EDITOR` ⇒ **恒撞 cap 门**（`409 ROLE_BINDING_EXCEEDS_CAP`）；
+  - `WS_OWNER` ⇒ **更早**被禁授原子门拒（detail 点名 `MANAGE_WORKSPACE_AGENTS,workspace:admin`）。
+- **`AGENT_USER` 本身在工作区作用域可以绑**（真栈 201）—— 也就是说"能给 agent 绑工作区角色"这件事是通的，
+  通的范围是"原子集 ⊆ 主体 instance 原子集"的角色。
+
+### 14c.3 技能作用域：绑给 agent 的主体级技能**恒为 instance 作用域**
+
+- `POST /api/v1/agent-principals/{principalId}/skills` 的请求体**只带 `skillId`**，服务端固定写
+  `scope_type='instance'`/`scope_id=null`（`controller/AgentPrincipalSkillBindingController:35-37`，设计 `D3(a)`）——
+  调用方**无法**把 workspace 作用域夹带进来。
+- 因此 **工作区私有技能（`definition_scope_type='workspace'`）可导入（200）、可列出（200），但绑给 agent 恒
+  `400 SKILL_DEFINITION_OUT_OF_SCOPE`**（`AgentPrincipalSkillBindingService:39/110`）。
+- 后果（用户可见）：工作区管理员会看到"技能导入成功"，但该技能**永远不会进入** agent 的 `skills_snapshot`。
+  ⇒ 想要 agent 用上技能，必须走 **instance 作用域**技能库（且导入需 `MANAGE_SKILL_LIBRARY`，无 instance 管理员者 **403 `SKILL_IMPORT_FORBIDDEN`**）。
+
+### 14c.4 实测证据（4 行速查，完整矩阵见证据文件）
+
+| 操作 | 现状结果 | 依据 |
+|---|---|---|
+| 绑 `AGENT_USER`（原子 ⊆ `BASE_ATOMS`）到 agent，工作区作用域 | **201** | runId `host-1793906981984-c2b5` |
+| 绑 `WS_VIEWER` / `WS_EDITOR`（含 `USE_WORKSPACE_RUNTIME`） | **409 `ROLE_BINDING_EXCEEDS_CAP`** | runId `host-1793909094482-5cd4`；`AgentPrincipalRoleBindingService:168` |
+| 绑 `WS_OWNER`（含 `MANAGE_WORKSPACE_AGENTS`/`workspace:admin`） | **409 `AGENT_PRINCIPAL_FORBIDDEN_ATOMS`** | runId `host-1793909094482-5cd4`；`:161` |
+| 把 **workspace 私有技能**绑到 agent（可导入/可列出） | **400 `SKILL_DEFINITION_OUT_OF_SCOPE`** | runId `host-1793907459805-5560`；`AgentPrincipalSkillBindingService:39/110` |
+
+### 14c.5 相关台账
+
+`BL-355`（cap 天花板 = 主体 instance 原子集）· `BL-356`（工作区私有技能不可绑 agent）· `BL-352`（首绑顺序见 §14b）· `PLAN-0678`（V3 技能正向与 V9 反证；技能可用面 = instance 作用域）。
+**口径待裁定项**：是否改为双轴求值（角色/技能按轴各带 cap），以及"谁能给 agent 在工作区加原子"的授权归属 —— 见 `.local/evidence/spec-topic-agent-principal-scope.md` §7、`.local/evidence/spec-draft-outline-agent-principal-scope.md`。
+
+（en 侧暂无本文档：`docs/i18n/en/` 下无 `DEV-014` 对应文件。）
