@@ -54,7 +54,6 @@ class SseParticipantDispatchTest extends AbstractIntegrationTest {
 
         AgentPrincipal principal = new AgentPrincipal();
         principal.setName("P623 sse agent");
-        principal.setScope("WORKSPACE");
         principal.setCreatedByUserId(ownerId);
         principal = principals.saveAndFlush(principal);
 

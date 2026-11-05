@@ -386,9 +386,9 @@ class AgentPrincipalContextPolicyHttpTest extends AbstractIntegrationTest {
     private Map<String, Object> createPrincipalResponse(String name) {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("name", name);
-        body.put("scope", "PERSONAL");
+        // D-174: no tier field; the single creation path is workspace-authorized.
         ResponseEntity<Map> response = exchange(HttpMethod.POST, "/api/v1/agent-principals",
-                globalToken(), body);
+                workspaceToken(), body);
         assertEquals(HttpStatus.CREATED, response.getStatusCode(), String.valueOf(response.getBody()));
         principalIds.add(UUID.fromString(String.valueOf(response.getBody().get("principalId"))));
         return response.getBody();
@@ -401,9 +401,12 @@ class AgentPrincipalContextPolicyHttpTest extends AbstractIntegrationTest {
         snapshot.put("templateName", "守卫 Guard");
         snapshot.putArray("permissions");
         AgentPrincipal guard = agentPrincipalService.createPrincipal(
-                adminUserId.toString(), name, null, snapshot, "PERSONAL", adminUserId,
+                adminUserId.toString(), name, null, snapshot,
                 null, null, null, null,
-                AgentPrincipal.ORIGIN_SYSTEM_PRESET, "00000000-0000-4000-8000-0000000000a2");
+                AgentPrincipal.ORIGIN_SYSTEM_PRESET, "00000000-0000-4000-8000-0000000000a2", null);
+        // D-174: tiers are gone; the seed keeps its legacy owner column (data preserved).
+        guard.setOwnerUserId(adminUserId);
+        guard = principalRepository.saveAndFlush(guard);
         principalIds.add(guard.getId());
         return guard.getId();
     }

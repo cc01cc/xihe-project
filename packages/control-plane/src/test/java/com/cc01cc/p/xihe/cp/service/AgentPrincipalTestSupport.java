@@ -44,9 +44,13 @@ public final class AgentPrincipalTestSupport {
             // 纯 Mockito 测试必须提供角色目录桩（补齐新依赖，不是放宽校验）。
             com.cc01cc.p.xihe.cp.repository.AccessRoleRepository roles =
                     mock(com.cc01cc.p.xihe.cp.repository.AccessRoleRepository.class);
-            when(roles.findByName(any())).thenReturn(java.util.Optional.of(
+            com.cc01cc.p.xihe.cp.entity.AccessRole fixtureRole =
                     new com.cc01cc.p.xihe.cp.entity.AccessRole(UUID.randomUUID(), "USER", "User",
-                            "test fixture role", true)));
+                            "test fixture role", true);
+            when(roles.findByName(any())).thenReturn(java.util.Optional.of(fixtureRole));
+            when(roles.findById(any())).thenReturn(java.util.Optional.of(fixtureRole));
+            // D-180 锁序：默认角色改走 findByIdForUpdate 行锁（mock 直通同一夹具行）。
+            when(roles.findByIdForUpdate(any())).thenReturn(java.util.Optional.of(fixtureRole));
             return new AgentPrincipalService(principals, grants, authService, workspaceService,
                     mock(com.cc01cc.p.xihe.cp.policy.GrantDefaultService.class),
                     mock(WorkspaceAgentRepository.class), evaluator,
@@ -60,7 +64,12 @@ public final class AgentPrincipalTestSupport {
                     mock(com.cc01cc.p.xihe.cp.policy.RoleGrantMaterializer.class),
                     // PLAN-0651 T1.4: default-deny fake — a test that needs the management atom
                     // must declare it (see DeclaredAtomAuthority's coverage contract).
-                    new com.cc01cc.p.xihe.cp.policy.DeclaredAtomAuthority());
+                    new com.cc01cc.p.xihe.cp.policy.DeclaredAtomAuthority(),
+                    // D-180: unit envs pass a permissive guard mock; the guard's decisions are
+                    // covered by the Spring/integration contract tests.
+                    mock(com.cc01cc.p.xihe.cp.policy.GrantabilityGuard.class),
+                    // D-180 锁序：unit envs pass a permissive instance-mutex mock.
+                    mock(com.cc01cc.p.xihe.cp.repository.InstanceOwnerRepository.class));
         }
     }
 

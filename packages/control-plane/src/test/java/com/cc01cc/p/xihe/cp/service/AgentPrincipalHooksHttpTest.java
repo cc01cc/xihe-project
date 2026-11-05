@@ -180,12 +180,11 @@ class AgentPrincipalHooksHttpTest extends AbstractIntegrationTest {
         fixture();
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("name", "ExplicitHooksAgent");
-        body.put("scope", "PERSONAL");
         body.put("hooks", plainJson(HOOKS_JSON));
         body.put("allowedModels", List.of(Map.of("provider", "openai", "model", "gpt-4.1")));
 
         ResponseEntity<Map> response = exchange(HttpMethod.POST, "/api/v1/agent-principals",
-                globalToken(), body);
+                workspaceToken(), body);
 
         assertEquals(HttpStatus.CREATED, response.getStatusCode(), String.valueOf(response.getBody()));
         Map<String, Object> created = response.getBody();
@@ -419,9 +418,12 @@ class AgentPrincipalHooksHttpTest extends AbstractIntegrationTest {
         snapshot.put("templateName", "守卫 Guard");
         snapshot.putArray("permissions");
         AgentPrincipal guard = agentPrincipalService.createPrincipal(
-                adminUserId.toString(), name, null, snapshot, "PERSONAL", adminUserId,
+                adminUserId.toString(), name, null, snapshot,
                 null, null, null, null,
-                AgentPrincipal.ORIGIN_SYSTEM_PRESET, "00000000-0000-4000-8000-0000000000a2");
+                AgentPrincipal.ORIGIN_SYSTEM_PRESET, "00000000-0000-4000-8000-0000000000a2", null);
+        // D-174: tiers are gone; the seed keeps its legacy owner column (data preserved).
+        guard.setOwnerUserId(adminUserId);
+        guard = principalRepository.saveAndFlush(guard);
         principalIds.add(guard.getId());
         return guard.getId();
     }
@@ -501,15 +503,15 @@ class AgentPrincipalHooksHttpTest extends AbstractIntegrationTest {
     private UUID createPrincipal(String name, String hooksJson, String templateId) {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("name", name);
-        body.put("scope", "PERSONAL");
         if (templateId != null) {
             body.put("templateId", templateId);
         }
         if (hooksJson != null) {
             body.put("hooks", plainJson(hooksJson));
         }
+        // D-174: the tier field is gone and creation runs the workspace-authorized path.
         ResponseEntity<Map> response = exchange(HttpMethod.POST, "/api/v1/agent-principals",
-                globalToken(), body);
+                workspaceToken(), body);
         assertEquals(HttpStatus.CREATED, response.getStatusCode(), String.valueOf(response.getBody()));
         UUID principalId = UUID.fromString(String.valueOf(response.getBody().get("principalId")));
         principalIds.add(principalId);

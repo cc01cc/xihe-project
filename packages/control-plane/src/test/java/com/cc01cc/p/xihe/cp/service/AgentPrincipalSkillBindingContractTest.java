@@ -267,7 +267,7 @@ class AgentPrincipalSkillBindingContractTest extends AbstractIntegrationTest {
                 owner.getId().toString(), workspace.getId().toString(), null);
         principal = agentPrincipalService.createPrincipal(owner.getId().toString(),
                 "skTarget" + shortId(), null, template.snapshot(),
-                null, null, null, null, null, null, null, null, List.of());
+                null, null, null, null, null, null, List.of());
         JsonNode cap = objectMapper.createArrayNode()
                 .add(objectMapper.createObjectNode().put("actionClass", "read").put("resource", "*"));
         agentPrincipalService.setWorkspaceCap(owner.getId().toString(), workspace.getId(),

@@ -15,9 +15,6 @@ public interface AgentPrincipalRepository extends JpaRepository<AgentPrincipal, 
     java.util.Optional<AgentPrincipal> findByIdForUpdate(
             @org.springframework.data.repository.query.Param("id") UUID id);
 
-    /** PLAN-0622 M1.2: PERSONAL principals are only ever listed for their owner (O5). */
-    List<AgentPrincipal> findByScopeAndOwnerUserId(String scope, UUID ownerUserId);
-
-    /** PLAN-0622 M1.2: INSTANCE principals are visible instance-wide. */
-    List<AgentPrincipal> findByScope(String scope);
+    /** Existing owner associations remain authoritative after removing principal tiers. */
+    List<AgentPrincipal> findByOwnerUserId(UUID ownerUserId);
 }

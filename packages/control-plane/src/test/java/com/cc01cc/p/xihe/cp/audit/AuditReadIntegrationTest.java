@@ -567,7 +567,6 @@ class AuditReadIntegrationTest extends AbstractIntegrationTest {
         job.setSessionId(UUID.fromString(sessionId));
         job.setRunId(chatRunId);
         job.setSource("mcp");
-        job.setScope("run");
         job.setStatus("pending");
         Map<String, Object> initial = new LinkedHashMap<>();
         initial.put("jobId", "runtime-job-audit-1");

@@ -125,40 +125,50 @@ class AgentPrincipalScopeContractTest extends AbstractIntegrationTest {
         User owner = newUser("plain-user");
         grantDefaultService.ensureUserDefault(owner);
 
-        ResponseEntity<Map> personal = create(globalToken(owner),
+        // D-174: the scope field left the wire. Any value is rejected before authorization.
+        ResponseEntity<Map> tierField = create(globalToken(owner),
                 Map.of("name", "MyOwnAgent", "scope", "PERSONAL"));
-        assertEquals(HttpStatus.CREATED, personal.getStatusCode(), String.valueOf(personal.getBody()));
-        Map<String, Object> body = personal.getBody();
+        assertEquals(HttpStatus.BAD_REQUEST, tierField.getStatusCode(),
+                "the create body no longer accepts a scope field: "
+                        + String.valueOf(tierField.getBody()));
+
+        ResponseEntity<Map> created = create(workspaceToken(owner, workspaceFor(owner).getId(),
+                        WorkspaceRole.OWNER), Map.of("name", "MyOwnAgent"));
+        assertEquals(HttpStatus.CREATED, created.getStatusCode(), String.valueOf(created.getBody()));
+        Map<String, Object> body = created.getBody();
         assertNotNull(body);
-        assertEquals("PERSONAL", body.get("scope"));
-        assertEquals(owner.getId().toString(), body.get("ownerUserId"));
+        assertNull(body.get("scope"), "the tier no longer exists on the wire");
+        // Lead ruling: creation never auto-owns (no new tier, no guessed owner).
+        assertNull(body.get("ownerUserId"));
         assertNull(body.get("defaultModelProvider"));
         assertNull(body.get("allowedModels"));
 
         UUID principalId = UUID.fromString((String) body.get("principalId"));
         principals.add(principalId);
         AgentPrincipal stored = principalRepository.findById(principalId).orElseThrow();
-        assertEquals("PERSONAL", stored.getScope());
-        assertEquals(owner.getId(), stored.getOwnerUserId());
-        // Audit must carry the tier (checklist risk #7: `agent_principal_created` details include scope).
-        assertEquals("PERSONAL", objectMapper.readTree(auditDetail(principalId)).path("scope").asText());
+        assertNull(stored.getOwnerUserId());
+        // Audit carries the authorizing action, not a tier (checklist risk #7).
+        assertEquals("MANAGE_WORKSPACE_AGENTS",
+                objectMapper.readTree(auditDetail(principalId)).path("authorizationAction").asText());
         assertEquals(1, auditCount(owner.getId(), "agent_principal_created"));
 
         int principalCount = principalRepository.findAll().size();
 
-        ResponseEntity<Map> workspaceScope = create(globalToken(owner),
-                Map.of("name", "SharedAgent", "scope", "WORKSPACE"));
-        assertEquals(HttpStatus.FORBIDDEN, workspaceScope.getStatusCode(),
-                "a plain USER must not create WORKSPACE-scope principals: "
-                        + String.valueOf(workspaceScope.getBody()));
-
-        ResponseEntity<Map> instanceScope = create(globalToken(owner),
-                Map.of("name", "InstanceAgent", "scope", "INSTANCE"));
-        assertEquals(HttpStatus.FORBIDDEN, instanceScope.getStatusCode(),
-                "a plain USER must not create INSTANCE-scope principals: "
-                        + String.valueOf(instanceScope.getBody()));
+        ResponseEntity<Map> withoutContext = create(globalToken(owner),
+                Map.of("name", "SharedAgent"));
+        assertEquals(HttpStatus.CONFLICT, withoutContext.getStatusCode(),
+                "creating without a workspace context fails explicitly: "
+                        + String.valueOf(withoutContext.getBody()));
+        assertEquals("WORKSPACE_CONTEXT_REQUIRED", withoutContext.getBody().get("code"));
 
         assertEquals(principalCount, principalRepository.findAll().size());
+    }
+
+    private Workspace workspaceFor(User owner) {
+        Workspace workspace = workspaceFixture.createOwnedWorkspace("D-174 ws " + owner.getId(),
+                owner.getId().toString());
+        workspaces.add(workspace.getId());
+        return workspace;
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -175,35 +185,32 @@ class AgentPrincipalScopeContractTest extends AbstractIntegrationTest {
         workspaces.add(workspace.getId());
 
         ResponseEntity<Map> withoutContext = create(globalToken(owner),
-                Map.of("name", "NoContext", "scope", "WORKSPACE"));
+                Map.of("name", "NoContext"));
         assertEquals(HttpStatus.CONFLICT, withoutContext.getStatusCode(),
-                "WORKSPACE creation without a workspace context must fail explicitly: "
+                "creation without a workspace context must fail explicitly: "
                         + String.valueOf(withoutContext.getBody()));
         assertEquals("WORKSPACE_CONTEXT_REQUIRED", withoutContext.getBody().get("code"));
 
         ResponseEntity<Map> created = create(workspaceToken(owner, workspace.getId(),
-                        WorkspaceRole.OWNER), Map.of("name", "TeamAgent", "scope", "WORKSPACE"));
+                        WorkspaceRole.OWNER), Map.of("name", "TeamAgent"));
         assertEquals(HttpStatus.CREATED, created.getStatusCode(), String.valueOf(created.getBody()));
         UUID principalId = UUID.fromString((String) created.getBody().get("principalId"));
         principals.add(principalId);
         AgentPrincipal stored = principalRepository.findById(principalId).orElseThrow();
-        assertEquals("WORKSPACE", stored.getScope());
-        assertNull(stored.getOwnerUserId(), "non-PERSONAL principals must not carry an owner");
+        assertNull(stored.getOwnerUserId(), "a create-by-owner principal still carries no caller-chosen owner");
+        assertNull(created.getBody().get("scope"), "D-174: no tier on the wire");
 
-        ResponseEntity<Map> instanceDenied = create(globalToken(owner),
-                Map.of("name", "InstanceAgent", "scope", "INSTANCE"));
-        assertEquals(HttpStatus.FORBIDDEN, instanceDenied.getStatusCode(),
-                String.valueOf(instanceDenied.getBody()));
+        int rowsBeforeTierBodies = principalRepository.findAll().size();
 
-        addInstanceActionGrant(owner.getId(), "CREATE_ACCOUNT", "*");
-        ResponseEntity<Map> instanceCreated = create(globalToken(owner),
-                Map.of("name", "InstanceAgent", "scope", "INSTANCE"));
-        assertEquals(HttpStatus.CREATED, instanceCreated.getStatusCode(),
-                String.valueOf(instanceCreated.getBody()));
-        UUID instancePrincipalId = UUID.fromString((String) instanceCreated.getBody().get("principalId"));
-        principals.add(instancePrincipalId);
-        assertEquals("INSTANCE",
-                principalRepository.findById(instancePrincipalId).orElseThrow().getScope());
+        // D-174: every legacy tier value is rejected at the wire edge (no compat branch).
+        for (String tier : new String[] {"WORKSPACE", "PERSONAL", "INSTANCE"}) {
+            ResponseEntity<Map> rejected = create(workspaceToken(owner, workspace.getId(),
+                    WorkspaceRole.OWNER), java.util.Map.of("name", "Tiered" + tier, "scope", tier));
+            assertEquals(HttpStatus.BAD_REQUEST, rejected.getStatusCode(),
+                    "scope=" + tier + " must be rejected: " + String.valueOf(rejected.getBody()));
+        }
+        assertEquals(rowsBeforeTierBodies, principalRepository.findAll().size(),
+                "rejected tier bodies must not create rows");
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -220,22 +227,26 @@ class AgentPrincipalScopeContractTest extends AbstractIntegrationTest {
 
         int principalCount = principalRepository.findAll().size();
 
+        // D-174: neither ownerUserId nor a tier field exists on the create body any more.
         ResponseEntity<Map> injected = create(globalToken(admin), Map.of(
                 "name", "ForgedOwner",
                 "scope", "PERSONAL",
                 "ownerUserId", victim.toString()));
         assertEquals(HttpStatus.BAD_REQUEST, injected.getStatusCode(),
-                "the frozen create body has no ownerUserId: " + String.valueOf(injected.getBody()));
+                "the frozen create body has no ownerUserId or scope: " + String.valueOf(injected.getBody()));
         assertEquals(principalCount, principalRepository.findAll().size());
 
-        ResponseEntity<Map> created = create(globalToken(admin),
-                Map.of("name", "AdminPersonal", "scope", "PERSONAL"));
+        Workspace adminWs = workspaceFixture.createOwnedWorkspace("D-174 owner-injection ws",
+                admin.getId().toString());
+        workspaces.add(adminWs.getId());
+        ResponseEntity<Map> created = create(workspaceToken(admin, adminWs.getId(), WorkspaceRole.OWNER),
+                Map.of("name", "AdminCreated"));
         assertEquals(HttpStatus.CREATED, created.getStatusCode(), String.valueOf(created.getBody()));
         UUID principalId = UUID.fromString((String) created.getBody().get("principalId"));
         principals.add(principalId);
-        assertEquals(admin.getId(), principalRepository.findById(principalId).orElseThrow()
-                .getOwnerUserId());
-        assertEquals(admin.getId().toString(), created.getBody().get("ownerUserId"));
+        // Lead ruling: creation never auto-owns (no new tier, no guessed owner).
+        assertNull(principalRepository.findById(principalId).orElseThrow().getOwnerUserId());
+        assertNull(created.getBody().get("ownerUserId"));
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -253,66 +264,78 @@ class AgentPrincipalScopeContractTest extends AbstractIntegrationTest {
         workspaces.add(aliceWs.getId());
         workspaceFixture.bindWorkspaceRole(aliceWs.getId(), bob.getId(), WorkspaceRole.EDITOR);
 
-        UUID bobPersonal = createPersonal(bob, "BobPrivate");
-        UUID alicePersonal = createPersonal(alice, "AlicePrivate");
+        // D-174: creation no longer auto-owns; the owner column survives only on legacy/fixture rows,
+        // and those rows keep their owner-only protection (data preserved ⇒ protection preserved).
+        UUID bobOwned = createOwnedPrincipal(bob, "BobOwned");
+        UUID alicePrincipal = createPersonal(alice, "AliceMade");
 
-        ResponseEntity<Map> stolen = putCap(alice, aliceWs.getId(), bobPersonal, List.of());
+        ResponseEntity<Map> stolen = putCap(alice, aliceWs.getId(), bobOwned, List.of());
         assertEquals(HttpStatus.FORBIDDEN, stolen.getStatusCode(),
-                "A must not bind B's PERSONAL principal: " + String.valueOf(stolen.getBody()));
+                "A must not bind Bob's owned principal: " + String.valueOf(stolen.getBody()));
         assertEquals("AGENT_PRINCIPAL_OWNER_MISMATCH", stolen.getBody().get("code"));
         assertEquals(false, bindingRepository.existsById(
-                new WorkspaceAgentId(bobPersonal, aliceWs.getId())));
+                new WorkspaceAgentId(bobOwned, aliceWs.getId())));
 
-        ResponseEntity<Map> editorOwn = putCap(bob, aliceWs.getId(), bobPersonal, List.of());
+        ResponseEntity<Map> editorOwn = putCap(bob, aliceWs.getId(), bobOwned, List.of());
         assertEquals(HttpStatus.FORBIDDEN, editorOwn.getStatusCode(),
                 "binding still requires MANAGE_WORKSPACE_AGENTS: "
                         + String.valueOf(editorOwn.getBody()));
 
         Workspace bobWs = workspaceFixture.createOwnedWorkspace("Bob ws", bob.getId().toString());
         workspaces.add(bobWs.getId());
-        ResponseEntity<Map> ownBinding = putCap(bob, bobWs.getId(), bobPersonal, List.of());
+        ResponseEntity<Map> ownBinding = putCap(bob, bobWs.getId(), bobOwned, List.of());
         assertEquals(HttpStatus.OK, ownBinding.getStatusCode(), String.valueOf(ownBinding.getBody()));
         assertEquals(true, bindingRepository.existsById(
-                new WorkspaceAgentId(bobPersonal, bobWs.getId())));
+                new WorkspaceAgentId(bobOwned, bobWs.getId())));
 
-        ResponseEntity<Map> aliceOwnBinding = putCap(alice, aliceWs.getId(), alicePersonal, List.of());
+        ResponseEntity<Map> aliceOwnBinding = putCap(alice, aliceWs.getId(), alicePrincipal, List.of());
         assertEquals(HttpStatus.OK, aliceOwnBinding.getStatusCode(),
                 String.valueOf(aliceOwnBinding.getBody()));
     }
 
+    /** A direct row with a legacy owner column value (creation no longer writes owners). */
+    private UUID createOwnedPrincipal(User owner, String name) {
+        AgentPrincipal principal = new AgentPrincipal();
+        principal.setName(name);
+        principal.setTemplateSnapshot(objectMapper.createObjectNode());
+        principal.setCreatedByUserId(owner.getId().toString());
+        principal.setOwnerUserId(owner.getId());
+        UUID principalId = principalRepository.saveAndFlush(principal).getId();
+        principals.add(principalId);
+        return principalId;
+    }
+
     // ---------------------------------------------------------------------------------------------
-    // M1.1 "INSTANCE 仅 ADMIN": an INSTANCE principal may only be bound by instance administration,
-    // even when the caller already holds MANAGE_WORKSPACE_AGENTS for that Workspace.
+    // D-174: the tier rule is gone. An owner-less principal binds through the workspace gate alone
+    // (no instance administration); a member without MANAGE_WORKSPACE_AGENTS still cannot.
     // ---------------------------------------------------------------------------------------------
 
     @Test
     void instanceScopedPrincipalBindingRequiresInstanceAdmin() throws Exception {
         User owner = newUser("ws-owner2");
-        User admin = newUser("instance-admin2");
+        User viewer = newUser("ws-viewer2");
         grantDefaultService.ensureUserDefault(owner);
-        grantDefaultService.ensureUserDefault(admin);
+        grantDefaultService.ensureUserDefault(viewer);
         Workspace workspace = workspaceFixture.createOwnedWorkspace("Instance bind ws",
                 owner.getId().toString());
         workspaces.add(workspace.getId());
-        workspaceFixture.bindWorkspaceRole(workspace.getId(), admin.getId(), WorkspaceRole.EDITOR);
-        addInstanceAdminTier(admin.getId());
-        addInstanceActionGrant(admin.getId(), "MANAGE_WORKSPACE_AGENTS",
-                workspace.getId().toString());
+        workspaceFixture.bindWorkspaceRole(workspace.getId(), viewer.getId(), WorkspaceRole.EDITOR);
 
-        UUID instancePrincipal = createInstancePrincipal(admin);
+        UUID ownerlessPrincipal = createInstancePrincipal(owner);
 
-        ResponseEntity<Map> denied = putCap(owner, workspace.getId(), instancePrincipal, List.of());
+        // A ws member without MANAGE_WORKSPACE_AGENTS (WS_EDITOR) still fails the action gate.
+        ResponseEntity<Map> denied = putCap(viewer, workspace.getId(), ownerlessPrincipal, List.of());
         assertEquals(HttpStatus.FORBIDDEN, denied.getStatusCode(),
-                "a Workspace owner is not automatically instance administration: "
-                        + String.valueOf(denied.getBody()));
-        assertEquals("INSTANCE_ADMIN_REQUIRED", denied.getBody().get("code"));
+                "the workspace action gate is unchanged: " + String.valueOf(denied.getBody()));
         assertEquals(false, bindingRepository.existsById(
-                new WorkspaceAgentId(instancePrincipal, workspace.getId())));
+                new WorkspaceAgentId(ownerlessPrincipal, workspace.getId())));
 
-        ResponseEntity<Map> allowed = putCap(admin, workspace.getId(), instancePrincipal, List.of());
+        // The principal carries no owner and no tier any more — the workspace owner binds it
+        // without needing instance administration (tier removal, decision D-174).
+        ResponseEntity<Map> allowed = putCap(owner, workspace.getId(), ownerlessPrincipal, List.of());
         assertEquals(HttpStatus.OK, allowed.getStatusCode(), String.valueOf(allowed.getBody()));
         assertEquals(true, bindingRepository.existsById(
-                new WorkspaceAgentId(instancePrincipal, workspace.getId())));
+                new WorkspaceAgentId(ownerlessPrincipal, workspace.getId())));
     }
 
 
@@ -334,10 +357,13 @@ class AgentPrincipalScopeContractTest extends AbstractIntegrationTest {
         // 403 — if that method is ever refactored onto GrantAuthorizationService#allowsUserOnly, the
         // null workspace goes through UUID.fromString and the caller turns into a 500; this
         // assertion must go red, not silent. (rg 'REFACTOR-GUARD' finds every such guard.)
+        // D-174: one create path, checked context-first — a contextless create answers 409 (the old
+        // "403 via requireUserAction with a null workspace" branch no longer exists on this face).
         ResponseEntity<Map> denied = create(globalToken(plain), Map.of("name", "LegacyBody"));
-        assertEquals(HttpStatus.FORBIDDEN, denied.getStatusCode(),
-                "an omitted scope must not fall back to the pre-0622 CREATE_ACCOUNT path: "
+        assertEquals(HttpStatus.CONFLICT, denied.getStatusCode(),
+                "an omitted scope must not fall back to any legacy path: "
                         + String.valueOf(denied.getBody()));
+        assertEquals("WORKSPACE_CONTEXT_REQUIRED", denied.getBody().get("code"));
         assertEquals(principalCount, principalRepository.findAll().size());
 
         User owner = newUser("omitted-scope-owner");
@@ -352,8 +378,8 @@ class AgentPrincipalScopeContractTest extends AbstractIntegrationTest {
         assertEquals(HttpStatus.CREATED, created.getStatusCode(), String.valueOf(created.getBody()));
         UUID principalId = UUID.fromString((String) created.getBody().get("principalId"));
         principals.add(principalId);
-        assertEquals("WORKSPACE", created.getBody().get("scope"));
-        assertEquals("WORKSPACE", principalRepository.findById(principalId).orElseThrow().getScope());
+        assertNull(created.getBody().get("scope"), "D-174: no tier on the wire");
+        assertNull(principalRepository.findById(principalId).orElseThrow().getOwnerUserId());
         assertNull(created.getBody().get("ownerUserId"));
     }
     // ---------------------------------------------------------------------------------------------
@@ -368,8 +394,11 @@ class AgentPrincipalScopeContractTest extends AbstractIntegrationTest {
     }
 
     private UUID createPersonal(User user, String name) {
-        ResponseEntity<Map> response = create(globalToken(user),
-                Map.of("name", name, "scope", "PERSONAL"));
+        // D-174: creation is workspace-authorized for everyone; the helper gives the user their own
+        // workspace context (no tier, no auto-owner beyond the created row's owner column).
+        Workspace workspace = workspaceFor(user);
+        ResponseEntity<Map> response = create(
+                workspaceToken(user, workspace.getId(), WorkspaceRole.OWNER), Map.of("name", name));
         assertEquals(HttpStatus.CREATED, response.getStatusCode(), String.valueOf(response.getBody()));
         UUID principalId = UUID.fromString((String) response.getBody().get("principalId"));
         principals.add(principalId);
@@ -379,7 +408,6 @@ class AgentPrincipalScopeContractTest extends AbstractIntegrationTest {
     private UUID createInstancePrincipal(User creator) {
         AgentPrincipal principal = new AgentPrincipal();
         principal.setName("InstanceSharedAgent");
-        principal.setScope("INSTANCE");
         principal.setTemplateSnapshot(objectMapper.createObjectNode());
         // Fixture hygiene: created_by_user_id has a FK to users; a random UUID violates it.
         principal.setCreatedByUserId(creator.getId().toString());

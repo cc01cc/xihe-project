@@ -114,7 +114,6 @@ class WorkspaceJobCancelIntegrationTest extends AbstractIntegrationTest {
         job.setUserId(UUID.fromString(userId));
         job.setSessionId(UUID.fromString(sessionId));
         job.setSource("ui");
-        job.setScope("workspace");
         job.setStatus(status);
         Map<String, Object> state = new LinkedHashMap<>();
         state.put("workspaceId", workspaceId);

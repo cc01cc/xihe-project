@@ -140,7 +140,6 @@ class RuntimeWorkspaceIntegrationTest extends AbstractWireMockTest {
         job.setWorkspaceId(UUID.fromString(workspaceId));
         job.setUserId(UUID.fromString(userId));
         job.setSource("system");
-        job.setScope("workspace");
         job.setStatus("running");
         Map<String, Object> initialState = new LinkedHashMap<>();
         initialState.put("jobId", runtimeJobId);

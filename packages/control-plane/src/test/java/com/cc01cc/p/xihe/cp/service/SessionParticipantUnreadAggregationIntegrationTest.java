@@ -69,7 +69,6 @@ class SessionParticipantUnreadAggregationIntegrationTest extends AbstractIntegra
 
         AgentPrincipal principal = new AgentPrincipal();
         principal.setName("P670 agent");
-        principal.setScope("WORKSPACE");
         principal.setCreatedByUserId(ownerId);
         principal = principals.saveAndFlush(principal);
 
