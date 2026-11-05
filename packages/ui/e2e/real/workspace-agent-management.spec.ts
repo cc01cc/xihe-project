@@ -459,12 +459,12 @@ test("@host V6 Workspace Agent management uses CP grants and persists isolated c
     });
     expect(unbindAudit).not.toHaveProperty("permissionsAfter");
 
-    await page
-        .getByTestId("modal-content")
-        .getByRole("button", { name: "Close", exact: true })
-        .click();
-    await expect(page.getByTestId("workspace-agent-management-dialog")).toHaveCount(0);
+    // BL-343：`workspace-agent-management-dialog` 已**不是弹窗**——`WorkspaceAgentsPanel.vue:980`
+    // 的注释写明「relocation. It is now the panel body, not a modal」，所以旧 spec 那套
+    // `modal-content` + `Close` 按钮 + 关闭后计数为 0 的路径已不存在。改按当前结构：离开该路由后
+    // 面板随之消失，并仍**严格**断言它已不在（不是把断言删掉，只是换到正确的时机）。
     await page.goto("/settings/config", { waitUntil: "load" });
+    await expect(page.getByTestId("workspace-agent-management-dialog")).toHaveCount(0);
     await page.getByTestId("config-tab-user").click();
     const deleteTemplateButton = page.getByTestId(`agent-template-delete-${templateId}`);
     await deleteTemplateButton.click();
