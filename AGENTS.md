@@ -122,5 +122,5 @@
 - **摘要显示宽度 ≤72 列（CJK 记 2 列，约 ≤36 汉字）；merge 提交 ≤100 列**。超过就说明细节该进 body——实测历史中位 85 列、p90 114 列，正是"越写越长"的量化证据。
 - 首行不带 emoji、不以句号结尾、不以「更新/修改/调整/优化/处理/完善/整理」开头（写清"改了什么"）。
 - 空行后写 body；非 merge 提交必须在首行或 body 引用 `PLAN-####` / `BL-###` / `D-###`。body 建议 `Why:` / `What:` / `Verify:` / `Risk:` 四段，只写**为什么与怎么验**，不重复 diff 内容。
-- **校验**：`node scripts/check-commit-msg.mjs --file .git/COMMIT_EDITMSG`（hook 用）或 `--range develop~5..develop`；`--json` 给 agent。退出码 0/1/2。历史提交豁免（默认 `--since 1dd57056`）。
+- **校验**：`mise run check:commit-msg`（**观察期 report-only，永不失败**）或 `node scripts/check-commit-msg.mjs --file .git/COMMIT_EDITMSG`（hook）/`--range a..b --enforce`（阻断）；`--stats` 出观察窗统计、`--json` 给 agent。历史提交豁免（默认 `--since 1dd57056`）。**翻阻断按提交次数**：自 `a632de77` 起 30 条（12h 上限）内违规率 ≤10% 且 merge 零超宽 ⇒ 改 `--enforce` 并接入 validate（D-213）。
 - 可选本地 hook（不改仓库）：`git config core.hooksPath scripts/hooks`（仓库内 `scripts/hooks/commit-msg` 已提供）。

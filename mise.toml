@@ -497,3 +497,10 @@ alias = "pkg:launcher"
 run = "node scripts/pkg/build-installer.mjs"
 description = "Build the NSIS installer from existing service artifacts (rerunnable; --stage-only skips makensis; artifacts stay under .tmp/pkg)"
 alias = "pkg:installer"
+
+# 提交信息门禁（2026-11-06）：**观察期 report-only，永不非零退出**。翻阻断的判据按**提交次数**：
+# 自 a632de77 起累计 30 条提交为观察窗（12h 为上限，先到为准）；窗内 E_* 违规率 ≤10%
+# 且 merge 提交零 E_SUBJECT_TOO_WIDE ⇒ 改为 --enforce 并接入 validate（见决策 D-213）。
+[tasks."check:commit-msg"]
+run = "node scripts/check-commit-msg.mjs --range a632de77..HEAD --report-only"
+description = "Report-only audit of commit messages (type/scope, display-width <=72 cols, Why/What/Verify body). Never fails; observe by commit count before enforcing"

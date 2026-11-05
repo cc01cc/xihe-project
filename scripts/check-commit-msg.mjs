@@ -11,6 +11,8 @@
  *   node scripts/check-commit-msg.mjs --file .git/COMMIT_EDITMSG      # commit-msg hook 用
  *   node scripts/check-commit-msg.mjs --range develop~5..develop     # 复查最近若干条
  *   node scripts/check-commit-msg.mjs --range 1dd57056..HEAD --json
+ *   node scripts/check-commit-msg.mjs --range a632de77..HEAD --stats     # 观察窗统计（翻阻断判据）
+ *   node scripts/check-commit-msg.mjs --range a632de77..HEAD --report-only # 只打印永不失败（mise 任务用）
  *
  * 退出码：0 通过 / 1 违规 / 2 用法错误
  *
@@ -49,8 +51,9 @@ function checkMessage(raw) {
   // 1. 首行格式
   let m;
   if (isMerge) {
-    m = subject.match(/^(merge(?:\([A-Za-z0-9._/-]+\))?): (.+)$/);
-    if (!m) errors.push({ code: "E_SUBJECT_FORMAT", message: "merge 提交应为 `merge(<target>): <摘要>` 或 `Merge branch …`" });
+    // 接受三种：`merge(<target>): <摘要>` / `merge: <摘要>` / git 默认 `Merge branch 'x' into y`
+    m = subject.match(/^(merge(?:\([A-Za-z0-9._/-]+\))?): (.+)$/) || subject.match(/^Merge (?:branch|remote-tracking branch|pull request) .+$/);
+    if (!m) errors.push({ code: "E_SUBJECT_FORMAT", message: "merge 提交应为 `merge(<target>): <摘要>` 或 git 默认的 `Merge branch '<src>' into <dst>`" });
   } else {
     m = subject.match(/^([a-z]+)(?:\(([A-Za-z0-9._/-]+)\))?(!)?: (.+)$/);
     if (!m) {
@@ -117,6 +120,8 @@ const get = (k) => {
   return i >= 0 ? argv[i + 1] : undefined;
 };
 const json = argv.includes("--json");
+const reportOnly = argv.includes("--report-only");
+const stats = argv.includes("--stats");
 const file = get("--file");
 const range = get("--range");
 const since = get("--since") ?? DEFAULT_SINCE;
@@ -144,13 +149,22 @@ if (file) {
     console.log(`[PASS] ${span} 内没有提交（或全部豁免）`);
   }
   let errCount = 0;
+  let warnCount = 0, violating = 0;
+  const byCode = {};
   for (const e of entries) {
     const [sha, ...rest] = e.split("\x1f");
     const res = checkMessage(rest.join("\x1f"));
-    if (res.errors.length) errCount += res.errors.length;
-    print(`${sha.slice(0, 8)}`, res, json);
+    if (res.errors.length) { errCount += res.errors.length; violating++; }
+    warnCount += res.warns.length;
+    for (const x of res.errors) byCode[x.code] = (byCode[x.code] ?? 0) + 1;
+    if (!stats) print(`${sha.slice(0, 8)}`, res, json);
   }
-  if (entries.length) console.log(`\n共 ${entries.length} 条，错误 ${errCount}，警告见上`);
-  bad = errCount ? 1 : 0;
+  if (stats) {
+    const rate = entries.length ? (violating / entries.length) * 100 : 0;
+    console.log(JSON.stringify({ span, commits: entries.length, violating, rate: Number(rate.toFixed(1)), errors: errCount, warns: warnCount, byCode }, null, 2));
+  } else if (entries.length) {
+    console.log(`\n共 ${entries.length} 条，错误 ${errCount}，警告 ${warnCount}`);
+  }
+  bad = reportOnly ? 0 : errCount ? 1 : 0;
 }
 process.exit(bad);
