@@ -180,7 +180,10 @@ test("@host PLAN-0678 V3 技能正向：工作区导入 2 技能 → 绑定 → 
         const bindText = await bind.text();
         expect(
             bind.status(),
-            `绑定技能 ${skillId} 应 201，实际 ${bind.status()}：${bindText}`,
+            `绑定技能 ${skillId} 应 201，实际 ${bind.status()}：${bindText}` +
+                "；若 400 SKILL_DEFINITION_OUT_OF_SCOPE ⇒ **这是设计**：主体技能绑定恒为 instance 作用域，" +
+                "工作区私有技能定义不可绑（AgentPrincipalSkillBindingService:39/110）⇒ 需 instance 作用域导入" +
+                "（需 instance admin，见 AgentPrincipalSkillBindingController:35-37），不要改断言凑绿",
         ).toBe(201);
         bindingIds.push((JSON.parse(bindText) as { id?: string }).id ?? "");
     }
