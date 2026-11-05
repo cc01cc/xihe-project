@@ -534,6 +534,45 @@ describe("WorkspaceAgentsPanel pending principal recovery", () => {
         expect(saved[pendingKey]).toBe(PENDING_ID);
         wrapper.unmount();
     });
+
+    // CP `77120b87`：带 workspaceId 的列表现在会以 `bound=false` 返回本人 owner 的未绑定主体。
+    // 因此重挂载后（本地 key 仍在）列表里同一 principalId 会以「未绑定」行出现 —— 待绑定卡与
+    // 行级入口并存，绑定走任一路径都收敛（成功的 PUT 清 key/卡）。
+    it("shows the row-level unbound entry next to the pending card after a remount (CP list recovery)", async () => {
+        const ownerUnboundRow = {
+            principalId: PENDING_ID,
+            name: "Recovered owner agent",
+            templateId: null,
+            templateName: null,
+            createdAt: "2026-11-05T00:00:00Z",
+            permissionsSnapshot: [],
+            bound: false,
+            disabled: false,
+        };
+        localStorage.setItem(STORAGE_KEY, JSON.stringify({ [pendingKey]: PENDING_ID }));
+        apiMock.getWorkspaceAgents.mockResolvedValue([ownerUnboundRow]);
+
+        const wrapper = await mountOpenedPanel();
+
+        // CP 列表恢复：未绑定 owner 行带显式徽标与行级绑定入口（不再依赖本地 key 才有入口）。
+        const row = wrapper.get(`[data-testid="workspace-agent-${PENDING_ID}"]`);
+        expect(row.find(`[data-testid="agent-unbound-badge-${PENDING_ID}"]`).exists()).toBe(true);
+        const bindRow = row.find(`[data-testid="agent-bind-row-${PENDING_ID}"]`);
+        expect(bindRow.exists(), "the recovered row must offer a row-level bind").toBe(true);
+        expect(bindRow.attributes("disabled")).toBeUndefined();
+        // 本地恢复卡仍在（同一主体在两个恢复面里收敛，绑定成功任一路径都会清 key/卡）。
+        expect(pendingCard(wrapper).text()).toContain(PENDING_ID);
+
+        apiMock.updateWorkspaceAgentCap.mockResolvedValue({});
+        await bindRow.trigger("click");
+        await flushPromises();
+
+        expect(apiMock.updateWorkspaceAgentCap).toHaveBeenCalledWith(WORKSPACE_ID, PENDING_ID, []);
+        expect(JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "{}")).not.toHaveProperty(
+            pendingKey,
+        );
+        wrapper.unmount();
+    });
 });
 
 // ── 真栈 S2 bug（Lead 2026-11-02）：已存在的（未绑定）agent 在面板里没有绑定入口 ────────────────
@@ -585,6 +624,132 @@ describe("WorkspaceAgentsPanel bind an existing agent row", () => {
         const bindRow = wrapper.find(`[data-testid="agent-bind-row-${existing.principalId}"]`);
         expect(bindRow.attributes("disabled")).toBeDefined();
         wrapper.unmount();
+    });
+});
+
+// ── D-160 ④/③ UI 差距收口：cap 编辑入口与错误呈现 ─────────────────────────────────────
+describe("WorkspaceAgentsPanel cap editing (D-160 ④/③)", () => {
+    const capAgent = {
+        principalId: "ffffffff-ffff-4fff-8fff-ffffffffffff",
+        name: "capped agent",
+        templateId: null,
+        templateName: null,
+        createdAt: "2026-11-05T00:00:00Z",
+        permissionsSnapshot: [],
+        bound: true,
+        disabled: false,
+    };
+    const editCap = () =>
+        wrapper?.get(`[data-testid="workspace-agent-edit-cap-${capAgent.principalId}"]`);
+    const saveCap = () =>
+        wrapper?.get(`[data-testid="workspace-agent-save-cap-${capAgent.principalId}"]`);
+
+    let wrapper: Awaited<ReturnType<typeof mountOpenedPanel>> | null = null;
+
+    afterEach(() => {
+        wrapper?.unmount();
+        wrapper = null;
+    });
+
+    it("keeps the edit entry disabled without MANAGE_WORKSPACE_AGENTS and fires no request", async () => {
+        admin.value = false;
+        apiMock.getWorkspaceAgents.mockResolvedValue([capAgent]);
+        apiMock.getSelfPermissions.mockResolvedValue(PERSONAL_ONLY);
+        wrapper = await mountOpenedPanel();
+
+        expect(editCap().attributes("disabled")).toBeDefined();
+        // 早退保护：即使通过 DOM 绕过禁用态触发 handler，也不能发请求或进入编辑态。
+        await editCap().trigger("click");
+        expect(
+            wrapper
+                .find(`[data-testid="workspace-agent-save-cap-${capAgent.principalId}"]`)
+                .exists(),
+        ).toBe(false);
+        expect(apiMock.updateWorkspaceAgentCap).not.toHaveBeenCalled();
+    });
+
+    it("saves an edited cap after the projection grants MANAGE_WORKSPACE_AGENTS", async () => {
+        apiMock.getWorkspaceAgents.mockResolvedValue([capAgent]);
+        apiMock.getSelfPermissions.mockResolvedValue(WORKSPACE_ONLY);
+        apiMock.updateWorkspaceAgentCap.mockResolvedValue({});
+        wrapper = await mountOpenedPanel();
+
+        await editCap().trigger("click");
+        expect(
+            saveCap().attributes("disabled"),
+            "the save button follows the same capability gate",
+        ).toBeUndefined();
+
+        await wrapper.get(`[data-testid="agent-cap-write"]`).setChecked(true);
+        await wrapper.get(`[data-testid="agent-resource-write"]`).setValue("src/*");
+        await saveCap().trigger("click");
+        await flushPromises();
+
+        expect(apiMock.updateWorkspaceAgentCap).toHaveBeenCalledWith(
+            WORKSPACE_ID,
+            capAgent.principalId,
+            [{ actionClass: "write", resource: "src/*" }],
+        );
+        expect(wrapper.get('[role="status"]').text()).toContain(
+            i18n.global.t("workspace.agentCapSaved"),
+        );
+    });
+
+    it("keeps the D-160 ③ two-sided atom detail for 403 AGENT_PERMISSION_SCOPE_EXCEEDED", async () => {
+        apiMock.getWorkspaceAgents.mockResolvedValue([capAgent]);
+        apiMock.getSelfPermissions.mockResolvedValue(WORKSPACE_ONLY);
+        apiMock.updateWorkspaceAgentCap.mockRejectedValue(
+            new ApiError(
+                "AGENT_PERMISSION_SCOPE_EXCEEDED",
+                "Workspace cap exceeds held permissions: principal-exceeding=[write@*] actor-exceeding=[write@src/*]",
+            ),
+        );
+        wrapper = await mountOpenedPanel();
+
+        await editCap().trigger("click");
+        await saveCap().trigger("click");
+        await flushPromises();
+
+        // D-160 ③ 的点名本身就是可操作文案（授权者要看原子清单），不走 FORBIDDEN 掩蔽。
+        expect(wrapper.find('[data-testid="agent-error"]').text()).toContain(
+            "principal-exceeding=[write@*] actor-exceeding=[write@src/*]",
+        );
+    });
+
+    it("maps a plain FORBIDDEN to the localized actionable hint, never the raw detail", async () => {
+        apiMock.getWorkspaceAgents.mockResolvedValue([capAgent]);
+        apiMock.getSelfPermissions.mockResolvedValue(WORKSPACE_ONLY);
+        const ErrorCtor = ApiError as unknown as new (code: string) => Error;
+        apiMock.updateWorkspaceAgentCap.mockRejectedValue(new ErrorCtor("FORBIDDEN"));
+        wrapper = await mountOpenedPanel();
+
+        await editCap().trigger("click");
+        await saveCap().trigger("click");
+        await flushPromises();
+
+        const text = wrapper.find('[data-testid="agent-error"]').text();
+        expect(text).toContain(i18n.global.t("workspace.agentBindForbidden"));
+        expect(text).not.toContain("CREATE_ACCOUNT permission is required");
+    });
+
+    it("keeps the CP atom naming detail when the refusal is another code (D-160 ③ display)", async () => {
+        apiMock.getWorkspaceAgents.mockResolvedValue([capAgent]);
+        apiMock.getSelfPermissions.mockResolvedValue(WORKSPACE_ONLY);
+        apiMock.updateWorkspaceAgentCap.mockRejectedValue(
+            new ApiError(
+                "ROLE_BINDING_EXCEEDS_CAP",
+                "principal-exceeding=[write@*] actor-exceeding=[]",
+            ),
+        );
+        wrapper = await mountOpenedPanel();
+
+        await editCap().trigger("click");
+        await saveCap().trigger("click");
+        await flushPromises();
+
+        expect(wrapper.find('[data-testid="agent-error"]').text()).toContain(
+            "principal-exceeding=[write@*] actor-exceeding=[]",
+        );
     });
 });
 

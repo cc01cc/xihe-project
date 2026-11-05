@@ -872,6 +872,12 @@ async function bindExistingAgent(agent: WorkspaceAgentBinding) {
             agent.principalId,
             agent.permissionsSnapshot ?? [],
         );
+        // 该行若同时是本地待绑定主体，行级绑定成功也必须收敛恢复状态（同一 PUT 口径）。
+        if (createdPrincipalId.value === agent.principalId) {
+            createdPrincipalId.value = null;
+            createdPrincipalMeta.value = null;
+            clearPendingPrincipalId();
+        }
         await loadAgents();
         status.value = t("workspace.agentBound");
     } catch (cause) {
@@ -918,13 +924,14 @@ async function bindCreatedPrincipal() {
 }
 
 function startEditing(agent: WorkspaceAgentBinding) {
+    if (canManageWorkspaceAgents.value !== true) return;
     editingPrincipalId.value = agent.principalId;
     permissions.value = agent.permissionsSnapshot.map((permission) => ({ ...permission }));
     error.value = "";
 }
 
 async function saveCap(agent: WorkspaceAgentBinding) {
-    if (saving.value) return;
+    if (saving.value || canManageWorkspaceAgents.value !== true) return;
     saving.value = true;
     error.value = "";
     try {
@@ -933,7 +940,13 @@ async function saveCap(agent: WorkspaceAgentBinding) {
         await loadAgents();
         status.value = t("workspace.agentCapSaved");
     } catch (cause) {
-        error.value = cause instanceof ApiError ? cause.message : t("workspace.agentSaveFailed");
+        // D-160 ③：403 双侧点名（principal-exceeding/actor-exceeding）必须原样到 UI ——
+        // 与 create/bind 同口径（FORBIDDEN 走可操作文案，其余保留 CP detail）。
+        error.value = agentErrorMessage(
+            cause,
+            "workspace.agentBindForbidden",
+            "workspace.agentSaveFailed",
+        );
     } finally {
         saving.value = false;
     }
@@ -1398,8 +1411,9 @@ async function unbind(agent: WorkspaceAgentBinding) {
                     </span>
                     <button
                         type="button"
-                        class="ml-auto text-xs underline"
+                        class="ml-auto text-xs underline disabled:opacity-50"
                         :data-testid="`workspace-agent-edit-cap-${agent.principalId}`"
+                        :disabled="saving || canManageWorkspaceAgents !== true"
                         @click="startEditing(agent)"
                     >
                         {{ t("workspace.editAgentCap") }}
