@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { flushPromises, mount } from "@vue/test-utils";
 import { nextTick } from "vue";
 import { createPinia, setActivePinia } from "pinia";
+import { createMemoryHistory, createRouter } from "vue-router";
 import { useSessionStore } from "../../../../stores/session";
 import ChatPanel from "../components/ChatPanel.vue";
 import ApprovalModal from "../components/ApprovalModal.vue";
@@ -108,7 +109,26 @@ const approval: ApprovalRequest = {
     },
 };
 
-function mountPanel() {
+/**
+ * 挂载 ChatPanel。
+ *
+ * `attachedTo` 只在**焦点用例**里传 `document.body`：jsdom 对脱离文档树的元素调用 `focus()`
+ * 不会改变 `document.activeElement`，不挂载就测不到"焦点去哪了"（BL-328）。
+ */
+/**
+ * 最小 router：`useComposeDeeplink`（BL-339）在 setup 期调用 `useRouter()`，
+ * 缺注入会让整个 spec 的 28 个用例在 mount 阶段抛
+ * `TypeError: Cannot read properties of undefined (reading 'currentRoute')`（2026-11-06 实测基线红）。
+ * 这里给一个内存 router 兜住注入，路由能力本身不在本 spec 的验证范围内。
+ */
+function testRouter() {
+    return createRouter({
+        history: createMemoryHistory(),
+        routes: [{ path: "/:pathMatch(.*)*", component: { template: "<div />" } }],
+    });
+}
+
+function mountPanel(attachedTo?: HTMLElement) {
     // C1：这些用例钉 enqueue/branch 契约，不是"未绑定引导"——种子一个已绑会话，让守卫零开销放行
     // （未绑定路径由 ensureProviderBinding.spec / mock e2e 单独覆盖）。
     useSessionStore().applySessionRecord({
@@ -126,8 +146,11 @@ function mountPanel() {
 
     return mount(ChatPanel, {
         props: { sessionId: SESSION_ID },
+        // BL-328：焦点用例必须挂到 `document`，否则 jsdom 里 `element.focus()` 不生效
+        // （脱离文档树的元素调用 focus 后 `document.activeElement` 仍是 body）。
+        attachTo: attachedTo,
         global: {
-            plugins: [i18n],
+            plugins: [i18n, testRouter()],
             stubs: {
                 SSEStream: true,
                 InputArea: true,
@@ -575,6 +598,37 @@ describe("ChatPanel approval dismiss and reopen pill (PLAN-0404)", () => {
 
         // Unknown/live is never treated as terminal — the shortcut must stay.
         expect(wrapper.find('[data-testid="pending-approval-reopen-pill"]').exists()).toBe(true);
+    });
+
+    it("moves focus to the reopen pill when the approval card is dismissed (BL-328)", async () => {
+        const wrapper = mountPanel(document.body);
+        try {
+            await flushPromises();
+
+            useChatStore().addMessage(SESSION_ID, {
+                id: "message-focus",
+                sessionId: SESSION_ID,
+                role: "assistant",
+                content: "waiting for a decision",
+                timestamp: "2026-11-02T00:00:00Z",
+                runId: RUN_ID,
+                runStatus: "awaiting_approval",
+            });
+            useAgentStore().addApprovalRequest(approval);
+            await nextTick();
+            await flushPromises();
+
+            wrapper.findComponent(ApprovalModal).vm.$emit("dismiss");
+            // 焦点在 `nextTick` 里落到 pill：多等一次 tick，模拟浏览器渲染完成。
+            await nextTick();
+            await nextTick();
+
+            const pill = wrapper.get('[data-testid="pending-approval-reopen-pill"]');
+            // 关掉的是"可恢复的"卡 ⇒ 焦点必须回到恢复入口；掉到 body 等于键盘用户丢失落点。
+            expect(document.activeElement).toBe(pill.element);
+        } finally {
+            wrapper.unmount();
+        }
     });
 
     it("drops the local dismiss record once the pending approval disappears", async () => {
