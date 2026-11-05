@@ -3,6 +3,8 @@
 This inventory is the implementation baseline for PLAN-222 + PLAN-230. It records the
 current canonical routes after the targeted WorkspaceExecutionSpec migration and the PLAN-230 Chat SSE lifecycle freeze.
 
+
+Terminology (PLAN-0674): one execution is a `ChatRun` (machine-readable run; code/API/DB keep `run`). The UI calls it a turn (zh「回合」/ en `turn`); continuation / wake / follow-up / retry may make one turn span several runs.
 ## Workspace context (PLAN-0559)
 
 - Workspace-scoped user requests carry `X-Workspace-Id: <uuid>`. The header is authoritative; a missing header falls back to the legacy access-token claim, then the caller's default workspace.
