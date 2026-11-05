@@ -35,7 +35,8 @@ import java.util.UUID;
  *       could not speak as.</li>
  *   <li><b>人=通知，agent=唤醒</b> (SPRINT iron rule): a HUMAN recipient never gets a run —
  *       the fan-out records a {@code wake_dispatch} outcome {@code notify} event (SSE =
- *       the v1 站内 channel) and advances the cursor's {@code mention_count}.</li>
+ *       the v1 站内 channel); the recipient's unread count is <b>derived</b> from those events
+ *       past its read pointer (V112 dropped the {@code mention_count} column).</li>
  *   <li><b>respond_policy branches</b>: ALWAYS/WHEN_MENTIONED submit a run via
  *       {@link SessionWakeupService#wakeupAs} (responder attribution + trigger_source inside
  *       one transaction); JUDGE asks {@link JudgeDecisionService} (throttled per

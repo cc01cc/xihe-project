@@ -354,11 +354,12 @@ test.describe("@host PLAN-0658 R1 多人类账户", () => {
     // `authorizeAsParticipant(session.getUserId(), …, 参与人 id)` 做唤醒授权，即拿**会话 owner
     // 的身份**判断"能否以该参与者身份发言"；D23-08 对人类参与者的规则是"以别人身份发言 =
     // 冒充"⇒ 必然 `PARTICIPANT_CAP_DENIED`，`fire` 捕获后返回 refused，**`notifyHuman`
-    // （人=通知：wake_dispatch notify + mention_count++）根本走不到**。更糟的是捕获发生在
+    // （人=通知：`wake_dispatch` notify，读面上表现为派生未读 +1 —— V112 起没有 `mention_count`
+    // 列）根本走不到**。更糟的是捕获发生在
     // `@Transactional` 外层方法里、内层事务已被标记 rollback-only，实测 CP 记
     // `wake_handoff_dropped reason=UnexpectedRollbackException`（round
     // `wake:mention:d87ba33c…`：recipients=1 started=0 deferred=0 dropped=1），整轮 fan-out
-    // 直接中断。BL-214（`mention_count` 恒 0）是这条链的**症状**，不是独立缺陷。
+    // 直接中断。BL-214（派生未读恒 0）是这条链的**症状**，不是独立缺陷。
     test("R1-b @ 对方：B 的提及游标累计（BL-238：wake 授权用 owner 身份 ⇒ 人类参与者恒 refused）", async ({
         request,
     }) => {
@@ -399,7 +400,8 @@ test.describe("@host PLAN-0658 R1 多人类账户", () => {
         });
         expect(sent.status(), await sent.text()).toBe(202);
 
-        // 旁听语义（PLAN-0630 D30-14）：通知信号推进 mention_count，但不额外起 run。
+        // 旁听语义（PLAN-0630 D30-14）：通知信号推进派生未读（`wake_dispatch` notify；V112 起无
+        // `mention_count` 列），但不额外起 run。
         await expect
             .poll(() => memberMentionCount(request), { timeout: 30_000, intervals: [500, 1_000] })
             .toBeGreaterThan(before);
