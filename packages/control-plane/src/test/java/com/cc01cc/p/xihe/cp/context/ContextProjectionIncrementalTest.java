@@ -7,6 +7,7 @@ import com.cc01cc.p.xihe.cp.context.service.ContextProjectionService;
 import com.cc01cc.p.xihe.cp.context.service.ContextProjectionService.IncrementalProjection;
 import com.cc01cc.p.xihe.cp.context.service.ContextService;
 import com.cc01cc.p.xihe.cp.service.BranchPathService;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -207,10 +208,16 @@ class ContextProjectionIncrementalTest extends AbstractH2Test {
         return projectionService.project(sessionId, 0L);
     }
 
-    /** Full replay as the HTTP/internal snapshot would serialize it: replay + resolved branch id. */
+    /**
+     * Full replay as the HTTP/internal snapshot would serialize it: replay + resolved branch id,
+     * then the BL-302 ② window (the stored/served snapshot is the windowed view, so the incremental
+     * catch-up must equal the windowed full replay byte for byte).
+     */
     private String expected(String sessionId, String branchId) {
         ObjectNode replay = projectionService.project(sessionId, 0L);
         replay.put("branch_id", branchId);
+        ContextProjectionService.applyWindow(replay, new ObjectMapper(),
+                ContextProjectionService.WINDOW_MAX_MESSAGES, ContextProjectionService.WINDOW_MAX_BYTES);
         return replay.toString();
     }
 
