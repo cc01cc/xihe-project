@@ -99,10 +99,30 @@ export const useAuthStore = defineStore("auth", () => {
     const canManageWorkspace = computed(() => workspaceRole.value === "OWNER");
 
     /**
+     * BL-344：能力位**三态**。`undefined` = 还不知道（工作区仍在加载/刷新），
+     * 只有真正拿到工作区（有角色投影，或有 ownerId 可推)才算"已确定"。
+     *
+     * 之前只有一个布尔（`workspaceRole !== "VIEWER"`，而 `workspaceRole` 在
+     * `workspace === null` 时回落到 `EDITOR`），加载/刷新期间每一帧都像"已确定"：
+     * 成员 tab 的面板被**卸载再重挂**，用户填进 `addUsername` 的内容随之清空
+     * （host E2E `workspace-members` 30s 超时的根因）。
+     */
+    const workspaceRoleKnown = computed(
+        () =>
+            workspace.value !== null &&
+            Boolean(workspace.value.workspaceRole || (workspace.value.ownerId && user.value?.id)),
+    );
+
+    /**
      * PLAN-0565 ruling #2: the members tab is visible to OWNER/EDITOR and hidden
      * for VIEWER. CP stays authoritative (list returns 403 for VIEWER anyway).
+     *
+     * BL-344：`undefined`（未知）**不等于**无权 —— 调用方"未知时不销毁子树、不回落 tab"，
+     * 只有确定 `false` 才隐藏/回落。
      */
-    const canViewMembers = computed(() => workspaceRole.value !== "VIEWER");
+    const canViewMembers = computed<boolean | undefined>(() =>
+        workspaceRoleKnown.value ? workspaceRole.value !== "VIEWER" : undefined,
+    );
 
     /**
      * PLAN-0328 decision #56 / PLAN-0559: workspace OWNER (or instance ADMIN) may

@@ -49,7 +49,9 @@ const tabs = computed<{ key: SettingsTab; label: string }[]>(() => {
         { key: "general", label: t("workspace.settingsTabGeneral") },
         { key: "config", label: t("workspace.settingsTabConfig") },
     ];
-    if (auth.canViewMembers) {
+    // BL-344：`canViewMembers` 是三态 —— 未知（`undefined`）时**保留**成员 tab，
+    // 只有确定无权（`false`）才隐藏；否则能力位一抖动 tab 就会消失再回来。
+    if (auth.canViewMembers !== false) {
         base.push({ key: "members", label: t("workspace.settingsTabMembers") });
     }
     base.push({ key: "mcp", label: t("workspace.settingsTabMcp") });
@@ -58,10 +60,12 @@ const tabs = computed<{ key: SettingsTab; label: string }[]>(() => {
 
 // PLAN-0565: VIEWER 若直接落在已隐藏的成员 tab（含 ?tab=members 直链与载入后
 // 角色刷新），回退到常规 tab；载入前 workspaceRole 为空视为可见，由面板自行处理 403。
+// BL-344：回退判据从 `!visible` 收紧为 `visible === false` —— 未知不回落（否则面板
+// 会被卸载重挂，`addUsername` 里用户已经输入的内容会丢）。
 watch(
     () => auth.canViewMembers,
     (visible) => {
-        if (!visible && activeTab.value === "members") activeTab.value = "general";
+        if (visible === false && activeTab.value === "members") activeTab.value = "general";
     },
     { immediate: true },
 );
@@ -426,7 +430,7 @@ onMounted(() => {
                 </div>
 
                 <div
-                    v-else-if="activeTab === 'members' && auth.canViewMembers"
+                    v-else-if="activeTab === 'members' && auth.canViewMembers !== false"
                     data-testid="ws-settings-members"
                 >
                     <WorkspaceMembersPanel
