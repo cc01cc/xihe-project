@@ -79,16 +79,89 @@ test("@host BL-332 同 context 两页共享一条 workspace 上游 SSE", async (
     await context.close();
 });
 
-test("@host BL-335 用户通道订阅上限提示（skipped：真栈单 context 9 页不可靠）", async () => {
-    test.skip(
-        true,
-        "实测尝试（runId host-1793910878260-d341）：单 context 顺序开 9 页时第 9 页 goto 直接 " +
-            "ERR_ABORTED/30s 超时 —— 页数一多导航即不可靠，无法据此判 USER_CHANNEL_FULL。" +
-            "要判需要 9 个独立 context（各自 leader/连接）或 headed 手动多窗口；本轮盒内标 skipped，不伪绿。" +
-            "组件级证据见 SseSubscriberLimitNotice.spec.ts，事件级见 useUserChannelSSE.spec.ts。",
+test("@host BL-335 第 9 条并发订阅触发上限横幅（9 个独立 context）", async ({
+    browser,
+    request,
+}) => {
+    test.setTimeout(240_000);
+    const nonce = Date.now().toString(36);
+    const registered = await request.post(`${CP_URL}/api/v1/auth/register`, {
+        data: {
+            email: `bl335-${nonce}@test.com`,
+            password: process.env.XIHE_E2E_PASSWORD ?? "XhE2e!bl335limit1",
+            name: `bl335${nonce}`,
+        },
+    });
+    expect([200, 201], `注册应 2xx：${registered.status()} ${await registered.text()}`).toContain(
+        registered.status(),
     );
-});
+    const { accessToken } = (await registered.json()) as { accessToken: string };
+    const workspaceId = await ensureWorkspace(request, accessToken);
 
+    // 共享 leader 只在**同 context**内生效（navigator.locks + localStorage + BroadcastChannel）
+    // ⇒ 要压过 CP 的订阅上限必须用**独立 context**（各自 storage ⇒ 各自 leader ⇒ 各自上游连接）。
+    // CP 上限：第 9 条并发订阅回 429 USER_CHANNEL_FULL（UserChannelSseManager.java:103/136）。
+    const contexts: Awaited<ReturnType<typeof browser.newContext>>[] = [];
+    const upstreamPerContext: number[] = [];
+    const limitResponses: string[] = [];
+    const pages: Awaited<ReturnType<Awaited<ReturnType<typeof browser.newContext>>["newPage"]>>[] =
+        [];
+
+    for (let index = 0; index < 9; index += 1) {
+        const context = await browser.newContext();
+        await context.addInitScript((token) => {
+            window.localStorage.setItem("xihe-token", token as string);
+        }, accessToken);
+        let upstream = 0;
+        context.on("request", (req) => {
+            let url: URL;
+            try {
+                url = new URL(req.url());
+            } catch {
+                return;
+            }
+            // workspace 通道：/api/v1/workspaces/{id}/events（useWorkspaceSSE.ts:111）
+            if (url.pathname === `/api/v1/workspaces/${workspaceId}/events`) upstream += 1;
+        });
+        context.on("response", (res) => {
+            if (res.status() === 429) limitResponses.push(`${res.status()} ${res.url()}`);
+        });
+        const page = await context.newPage();
+        await page.goto(`/workspace/${workspaceId}`, { waitUntil: "load" });
+        // 每一页都等到自己的上游请求出现再继续 —— 避免并发导航 ERR_ABORTED（上一轮失败形态）
+        await expect
+            .poll(() => upstream, { timeout: 45_000, intervals: [250, 500, 1_000] })
+            .toBeGreaterThan(0);
+        contexts.push(context);
+        pages.push(page);
+        upstreamPerContext.push(upstream);
+    }
+
+    // 判据（缺一不可）：
+    //  ① 第 9 页的 UI 出现三态横幅的 limit 态（`data-testid` + `:data-state="limit"`）
+    //  ② 至少有一条 429 被观测到（上限信号真的发出过）
+    const last = pages[8];
+    // 同屏可能同时挂两个横幅实例（壳级 AppLayout + 页面级 WorkspaceView，设计如此），
+    // 因此用属性过滤 + count 判定，不用 `.first()` 掩盖 strict-mode。
+    const limitNotice = last.locator(
+        '[data-testid="sse-subscriber-limit-notice"][data-state="limit"]',
+    );
+    await expect
+        .poll(() => limitNotice.count(), { timeout: 60_000, intervals: [500, 1_000, 2_000] })
+        .toBeGreaterThan(0);
+    expect(
+        limitResponses.length,
+        `应观测到至少一条 429 上限响应；实际 upstreamPerContext=${JSON.stringify(upstreamPerContext)}`,
+    ).toBeGreaterThan(0);
+    console.log(
+        `[bl335] OK contexts=${contexts.length} upstreamPerContext=${JSON.stringify(upstreamPerContext)} ` +
+            `limitResponses=${JSON.stringify(limitResponses.slice(0, 5))} ` +
+            `noticeCount=${await limitNotice.count()} ` +
+            `state=${await limitNotice.first().getAttribute("data-state")} ` +
+            `reason=${await limitNotice.first().getAttribute("data-reason")}`,
+    );
+    for (const context of contexts) await context.close();
+});
 test("@host BL-328 Escape 关闭审批卡后焦点回 pill（skipped：需真审批卡夹具）", async () => {
     test.skip(
         true,
