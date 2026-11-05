@@ -126,6 +126,8 @@ sequenceDiagram
 | `mise run dev:host:provider-init` | 创建或复用 Provider Connection |
 | `mise run test:e2e:host:real` | 运行指定真实 MiMo 用例 |
 | `mise run test:e2e:fixtures` | e2e 夹具自测（fake LLM `mode=chain` 状态机；不起栈、秒级；已并入 `validate`） |
+| `mise run test:runtime:lib:gate` | BL-262 竞态复验门：串行 1 + 并行 3 连跑（里程碑/竞态修复后跑；**不进 `validate`**） |
+| `mise run test:runtime:lib:ignored:isolated` / `:functional` | BL-262 ignored 套件两档（显式列名 + 实测超时；**不进 `validate`**） |
 | `mise run ledger:validate` | 只读校验台账（BL/PLAN 结构，在 ONE 工作区根运行）；**报告不阻断**，保留工具退出码 |
 | `mise run dev:host:watch` | 健康监督 + 故障重启任务组 |
 | `mise run dev:host:stop` | 停 PG；先 Ctrl+C 停原生任务 |

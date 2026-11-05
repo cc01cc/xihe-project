@@ -30,6 +30,7 @@
 ## Commands
 
 - 台账只读校验（PLAN-0677）：在 ONE 工作区根运行 `mise run ledger:validate`，只读校验 BL/PLAN 结构；**报告不阻断**（保留工具退出码，未并入 `validate`），观察无新增违规后再议阻断。
+- BL-262 防再犯门（2026-11-04）：`mise run test:runtime:lib:gate`（串行 1 + 并行 3 竞态复验）、`test:runtime:lib:ignored:isolated|functional`（ignored 两档，显式列名 + 实测超时）均**不进 `validate`**；`test:cli` 内嵌 `scripts/check-test-global-state.mjs` 静态扫描（测试代码不得裸改进程级全局状态）。
 - 单文件/包级命令见对应包指南；里程碑和 PLAN 收尾运行 `mise run validate`，仅按改动边界增加集成/E2E profile（DEV-020/021/022/023）。`validate` 若被存量环境性基线失败 fail-fast 挡住（白名单见 workspace 私有技术债文档《xh-backlog-and-debt》的「环境性基线失败白名单」），改按组件级补跑（lint:links / runtime / test:cp / test:agent / test:ui / build:ui）并逐红点做基线对照，不因存量红点阻塞收尾。**契约面必须过 `mise run check:openapi`**（BL-162：它已是 `test:cp` 与 `validate` 的依赖，契约漂移会让 CP 测试波次直接红，不允许绕过）。
 - Agent 质量回归门（PLAN-0512/0540，本地 lane）：`mise run gate:agent-quality -- --report <invariant.json> --report <behavior.json> --baseline <baseline.json>` 只读消费每个 lane 一份的评测报告（v2 gate 合并判定），退出码 `0/1/2/3` = `PASS/FAIL/NOT_EVALUATED/GATE_ERROR`（仅 PASS 退出 0）；阈值、required/expected task 集在 `packages/agent/evaluation/gate-v2.json`（含证据溯源），契约见 DEV-025，未接 CI。
 - Compose E2E（`mise run test:e2e:compose`，旧名 `test:e2e`）**已冻结注释（2026-10-07 docker 冻结裁定）**，不得用于验收或临时验证；Sandbox/host E2E 使用 `mise run test:e2e:host`，由 host runner 管理每轮隔离环境。清理/就绪要求见 [`DEV-020`](docs/i18n/zh-Hans/DEV-020-e2e-test-strategy.md) / [`DEV-021`](docs/i18n/zh-Hans/DEV-021-integration-test-strategy.md)。
