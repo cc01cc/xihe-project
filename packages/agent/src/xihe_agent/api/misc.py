@@ -21,6 +21,7 @@ from xihe_agent.app_state import (
     get_llm_initialization_status,
     run_cancel_registry,
     run_config_resolver,
+    user_question_tool,
 )
 from xihe_agent.config_snapshot import ConfigSnapshotUnavailableError, RunConfigSnapshot
 from xihe_agent.llm.base import LLMConfig, parse_model_params
@@ -289,7 +290,10 @@ async def list_tools(workspace_id: str | None = Query(default=None, alias="works
     """Authenticated tool face: one shard when addressed, else the env shard."""
     registry = app_state.mcp_shard_registry
     payload: dict[str, Any] = {
-        "customTools": [{"name": approval_tool.name, "description": approval_tool.description}],
+        "customTools": [
+            {"name": approval_tool.name, "description": approval_tool.description},
+            {"name": user_question_tool.name, "description": user_question_tool.description},
+        ],
     }
     if workspace_id:
         tools = registry.tools_for(workspace_id)

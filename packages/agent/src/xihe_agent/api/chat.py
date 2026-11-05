@@ -45,6 +45,7 @@ from xihe_agent.app_state import (
     generate_image_tool,
     run_cancel_registry,
     run_config_resolver,
+    user_question_tool,
 )
 from xihe_agent.config_client import ProviderLeaseError
 from xihe_agent.config_snapshot import ConfigSnapshotUnavailableError, RunConfigSnapshot
@@ -565,7 +566,11 @@ async def chat(request: Request):
                     }
                 )
 
-                all_tools = [] if tool_mode == "none" else [approval_tool, generate_image_tool]
+                all_tools = (
+                    []
+                    if tool_mode == "none"
+                    else [approval_tool, user_question_tool, generate_image_tool]
+                )
                 if mcp_tools:
                     all_tools = list(mcp_tools) + all_tools
 

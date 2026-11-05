@@ -24,6 +24,7 @@ from loguru import logger
 
 from xihe_agent.adapters.approval_tool import ApprovalAgentTool, ApprovalTool
 from xihe_agent.adapters.mcp_client import MCPClientManager
+from xihe_agent.adapters.user_question_tool import UserQuestionTool
 from xihe_agent.cancel_registry import RunCancelRegistry
 from xihe_agent.config_client import ConfigClient, SyncReport
 from xihe_agent.config_snapshot import (
@@ -69,6 +70,7 @@ __all__ = [
     "RunConfigSnapshot",
     "run_config_resolver",
     "approval_tool",
+    "user_question_tool",
     "legacy_approval_tool",
     "mcp_manager",
     "mcp_shard_registry",
@@ -162,6 +164,9 @@ def _parse_recover_session_ids() -> list[str]:
 
 
 approval_tool = ApprovalAgentTool()
+# PLAN-0660 M5-C (T5.14): the ask_user primitive is a sibling singleton, never the approval
+# waiter — the two tools keep separate pending maps and separate event types.
+user_question_tool = UserQuestionTool()
 
 
 class McpShardNotFoundError(RuntimeError):

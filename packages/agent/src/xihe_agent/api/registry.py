@@ -77,7 +77,7 @@ async def registry_enable_worker(
     if registry is None:
         raise HTTPException(status_code=404, detail="Registry mode is not enabled")
     model = create_llm(app_state.llm_config)
-    custom_tools = [app_state.approval_tool, app_state.generate_image_tool]
+    custom_tools = [app_state.approval_tool, app_state.user_question_tool, app_state.generate_image_tool]
     # PLAN-0588 decision #16: a worker is a process-level unit with no workspace
     # identity, so it no longer inherits the (first) MCP shard's tool face.
     ok = registry.enable(worker_id, model, [], custom_tools)

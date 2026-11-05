@@ -17,6 +17,10 @@ from xihe_agent.interfaces.tool import (
 )
 
 FINAL_CHAIN_NAME = "LangGraph"
+# Control-flow primitives that publish a canonical event of their own and therefore must not
+# also surface a tool_call/tool_result frame: request_approval → approval_request,
+# ask_user → user_question (the question/answer bodies never enter the session stream).
+SUPPRESSED_HUMAN_WAIT_TOOLS = frozenset({"request_approval", "ask_user"})
 
 
 def render_sse(event: str, data: dict[str, Any]) -> str:
@@ -99,9 +103,9 @@ class LangGraphEventAdapter(EventAdapter):
             return AgentEvent(type="done", data={"type": "done", "run_id": run_id})
 
         if event_type == "on_tool_start":
-            if name == "request_approval":
-                # ApprovalAgentTool publishes a canonical request before it
-                # blocks; do not emit a second legacy tool_call event here.
+            if name in SUPPRESSED_HUMAN_WAIT_TOOLS:
+                # The matching tool publishes a canonical human-wait event before it blocks;
+                # do not emit a second legacy tool_call frame here.
                 return None
             tool_input = data.get("input", "")
             # PLAN-0407 T2.10: LangChain's callback run_id is shared with
@@ -120,9 +124,10 @@ class LangGraphEventAdapter(EventAdapter):
             )
 
         if event_type == "on_tool_end":
-            if name == "request_approval":
+            if name in SUPPRESSED_HUMAN_WAIT_TOOLS:
                 # PLAN-0326：审批原语的 tool_result 由审批项承载（spec §0.6/§1.2
-                # 排除清单），抑制孤儿事件，避免 CP 中继 unmatched 噪声。
+                # 排除清单），抑制孤儿事件，避免 CP 中继 unmatched 噪声。PLAN-0660 M5-C
+                # 的 ask_user 同口径：问题/回答正文不得进入会话事件流。
                 return None
             tool_output = data.get("output")
             # PLAN-0649 M1 (spec §1): the tool adapter publishes the authoritative
