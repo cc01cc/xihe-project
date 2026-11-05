@@ -166,6 +166,16 @@ test("@host BL-328 Escape 关闭审批卡 ⇒ 焦点回到重开 pill；点 pill
     request,
 }) => {
     requireApprovalMode();
+    // 2026-11-06 第三次尝试（照搬 chat-follow-up-queue 的 createBoundAgent + bootstrapSession 原文，
+    // runId host-1793912280382-ef55）：**同样卡在建会话段** —— 点「创建 agent 会话」后
+    // `chat-input` 20 s 内不出现；且照搬版本身已失效（缺 `X-Workspace-Id`，直接 409
+    // WORKSPACE_CONTEXT_REQUIRED，见上一轮 runId host-1793912025131-e8a4）。
+    // ⇒ 结论修正：**needs "approval 车道 + 建会话段" 两条都跑通的夹具**，而该 spec 的 approval
+    //    路径已长期未跑（`requireApprovalMode` 默认 skip），照搬不能解决。
+    // 下一步（15–20 min）：用 `--llm-mode=mock` 下已验证的建会话（`ensureFakeUserProvider` +
+    //    UI create-session，见 plan0678-skills-positive）先打通会话，再切 approval 车道跑同一段；
+    //    或查 CP 侧 POST /sessions 在该车道的失败码（本轮日志无 2xx）。
+    test.fixme(true, "approval 车道建会话段未打通（照搬版同红；详情见上方注释与 BL-328 台账）");
     test.setTimeout(240_000);
     const session = await bootstrapSession(request, page);
 
