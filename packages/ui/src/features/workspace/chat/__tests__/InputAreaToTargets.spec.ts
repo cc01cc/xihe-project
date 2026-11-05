@@ -82,7 +82,6 @@ function participant(overrides: Partial<SessionParticipantView>): SessionPartici
         orderIndex: 20,
         wakePolicy: "MENTION",
         respondPolicy: "WHEN_MENTIONED",
-        source: "workspace",
         disabledAt: null,
         readCursor: null,
         selfOwned: true,

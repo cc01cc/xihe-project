@@ -17,7 +17,6 @@ const OWNER: SessionParticipantView = {
     orderIndex: 10,
     wakePolicy: "ALL_MESSAGES",
     respondPolicy: "ALWAYS",
-    source: null,
 };
 
 const MEMBER: SessionParticipantView = {
@@ -29,7 +28,6 @@ const MEMBER: SessionParticipantView = {
     orderIndex: 20,
     wakePolicy: "MENTION",
     respondPolicy: "WHEN_MENTIONED",
-    source: null,
 };
 
 const ALPHA: SessionParticipantView = {
@@ -41,7 +39,6 @@ const ALPHA: SessionParticipantView = {
     orderIndex: 40,
     wakePolicy: "ALL_MESSAGES",
     respondPolicy: "ALWAYS",
-    source: "workspace",
 };
 
 const VIEWER: SessionParticipantView = {
@@ -53,7 +50,6 @@ const VIEWER: SessionParticipantView = {
     orderIndex: 30,
     wakePolicy: "MENTION",
     respondPolicy: "WHEN_MENTIONED",
-    source: null,
 };
 
 const ROSTER = [OWNER, MEMBER, ALPHA, VIEWER];

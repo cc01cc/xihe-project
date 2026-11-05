@@ -156,7 +156,7 @@ async function provisionPlainChatPrincipal(
 
     const created = await request.post(`${CP_URL}/api/v1/agent-principals`, {
         headers,
-        data: { scope: "WORKSPACE", name, templateId },
+        data: { name, templateId },
     });
     expect(created.status(), await created.text()).toBe(201);
     const { principalId } = (await created.json()) as { principalId: string };
