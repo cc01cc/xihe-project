@@ -40,6 +40,9 @@
 | N8 | `MANAGE_WORKSPACE_RUNTIME` | 切换执行模式（owner 语义） | `both` | SUPER_ADMIN, ADMIN + WS_OWNER | **禁** | 404 掩蔽 |
 | N9 | `MANAGE_WORKSPACE_POLICY` | workspace 层策略规则 / 工具面 | `both` | SUPER_ADMIN, ADMIN + WS_OWNER, WS_EDITOR | **禁** | 403 `FORBIDDEN` |
 | N10 | `MANAGE_WORKSPACE_MEMBERS` | 成员列表 / 增 / 改 / 移除（含紧急移除） | `both` | SUPER_ADMIN, ADMIN（instance 行）；**WS_OWNER 不授**（产品待定） | **禁** | 403 `FORBIDDEN`；成员域名 404 掩蔽 |
+| **N11** | `GRANT_ANY_ATOM`（2026-11-05 由 PLAN-0673 T4.4 补录） | **授予侧子集绕过**：持有者可授予自己未持有的原子（"授予任意原子"能力） | `instance` | **仅 SUPER_ADMIN**（V125 起；ADMIN 不授） | **禁**（不得授予 agent 主体） | 授予者无该原子且无 `GRANT_ANY_ATOM` ⇒ 403 `PRIVILEGE_ESCALATION`；**不绕过其他门** —— 上限 cap 超限仍 409 `ROLE_BINDING_EXCEEDS_CAP`、禁授原子仍 409 `AGENT_PRINCIPAL_FORBIDDEN_ATOMS` |
+
+> **N11 说明**：本节原称"10 个新 action atom"，`GRANT_ANY_ATOM` 实为紧随其后的第 11 个（PLAN-0673 M1 引入代码与 OpenAPI/inventory/DEV-014，当时漏补本节）。它与 `MANAGE_ROLES` 的区别：`MANAGE_ROLES` = **能改角色定义与绑定**；`GRANT_ANY_ATOM` = **能突破"授予者必须持有该原子"的子集校验**，是纯度更高的提权面，故 scope 限 `instance`、默认授予集只到 SUPER_ADMIN、且对 agent 主体禁授（V4.2 已断言它不构成禁授旁路）。
 
 **复用（不新增）**：实例层角色/工具面 = `MANAGE_ROLES`（instance-only）；会话参与者管理 = `MANAGE_WORKSPACE_AGENTS`（both，已知瑕疵：A8 借用成员管理原子，后续拆原子时再收）；"管理员 ⇒ workspace admin" = `workspace:admin` 进默认授予集。
 
