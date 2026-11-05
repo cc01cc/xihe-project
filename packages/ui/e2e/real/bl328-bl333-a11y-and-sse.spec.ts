@@ -306,19 +306,50 @@ test("@host BL-333 A 页决定 ⇒ B 页卡片 1s 级消失且再点不发请求
     await context.close();
 });
 
-test("@host BL-360 远端审批决定不得清空他页 chat-input 草稿", async ({ browser, request }) => {
+test("@host BL-333 判据③ 远端决定后他页 chat-input 草稿保留（草稿先写、审批后到）", async ({
+    browser,
+    request,
+}) => {
     test.setTimeout(300_000);
-    // P1（2026-11-06 立）：实测两次稳定复现——A 页点允许后 B 页卡片 357ms 消失，
-    // 但 B 页 chat-input 里未提交的草稿被清空（""）。本条是它的回归用例，修好后去掉 fixme。
-    test.fixme(true, "P1 BL-360 未修：远端决定会清空他页 chat-input 草稿（两次稳定复现）");
-    const { context, pageA, pageB, session, approvalA, approvalB } = await openApprovalOnBothPages(
-        browser,
-        request,
-    );
+    // ⚠️ 2026-11-06 23:5x 诊断修正：**原判断（"远端决定清空草稿"）是错的**。
+    // 探针证据：B 页在审批卡已打开时 `fill()`，`inputValue()` 立刻为 ""（`fillSeries=["0ms=\"\"", …]`），
+    // 且 value setter 探针捕获到 **0 次写入** ⇒ 草稿从未进入 DOM（该状态下 composer 不接受输入），
+    // 与"远端决定"无关。真实用户时序应是：**先在 B 写草稿 → 审批随后到来 → A 决定** ⇒ 草稿必须保留。
+    const context = await browser.newContext();
+    const pageA = await context.newPage();
+    const session = await bootstrapSession(request, pageA);
 
+    const pageB = await context.newPage();
+    await pageB.addInitScript(
+        (token) => localStorage.setItem("xihe-token", token),
+        session.accessToken,
+    );
+    await pageB.addInitScript(
+        (value) => localStorage.setItem("xihe-user", value),
+        JSON.stringify({ workspaceId: session.workspaceId }),
+    );
+    await pageB.addInitScript(
+        (workspace) => localStorage.setItem("xihe-workspace", JSON.stringify(workspace)),
+        { id: session.workspaceId, name: "Default Workspace" },
+    );
+    await pageB.goto(`/workspace/${session.workspaceId}/chat/${session.sessionId}`, {
+        waitUntil: "domcontentloaded",
+    });
+    await expect(pageB.getByTestId("chat-input")).toBeVisible({ timeout: 30_000 });
+
+    // 正确时序：先在 B 页写草稿（此时无审批卡）
     const draft = `BL-360 draft ${Date.now().toString(36)}`;
     await pageB.getByTestId("chat-input").fill(draft);
-    // 诊断：决定前后各取一次 DOM 引用 —— 不同对象 ⇒ 重挂；相同对象 ⇒ 值被清（赋值点问题）
+    await expect(pageB.getByTestId("chat-input")).toHaveValue(draft, { timeout: 5_000 });
+
+    // 然后 A 页才发需要审批的消息 ⇒ 两页出现审批卡
+    const approvalA = pageA.getByTestId("approval-modal-content");
+    const approvalB = pageB.getByTestId("approval-modal-content");
+    await pageA.getByTestId("chat-input").fill("please delete README.md");
+    await pageA.getByTestId("chat-send-button").click();
+    await expect(approvalA).toBeVisible({ timeout: 75_000 });
+    await expect(approvalB).toBeVisible({ timeout: 30_000 });
+
     const before = await pageB.evaluateHandle(() =>
         document.querySelector('[data-testid="chat-input"]'),
     );
@@ -336,7 +367,7 @@ test("@host BL-360 远端审批决定不得清空他页 chat-input 草稿", asyn
     );
     await expect(
         pageB.getByTestId("chat-input"),
-        "远端决定后他页 chat-input 草稿必须保留（BL-360）",
+        "远端决定后他页 chat-input 草稿必须保留（BL-333 判据③，正确时序）",
     ).toHaveValue(draft, { timeout: 10_000 });
     await context.close();
 });
