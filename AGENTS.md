@@ -18,7 +18,7 @@
 ## Setup
 
 - 使用 `mise install` 和 `mise run setup` 安装固定工具链与依赖；前置条件及模块命令见 DEV-002。
-- 日常 host 开发运行 `mise run dev:host`：仅 PostgreSQL 在 Docker 中，CP、Agent、Runtime、UI 由 mise 原生启动；该命令不导入配置或创建 Provider Connection。启动前会先跑一次 `mise run check:runtime-target`（watch 只打印，FORCE 线 ≥20GB 或 H 余量 <5GB 会阻止启动）。项目开发/运维命令见 DEV-002 与 `mise run xihe -- --help`。
+- 日常 host 开发运行 `mise run dev:host`：仅 PostgreSQL 在 Docker 中，CP、Agent、Runtime、UI 由 mise 原生启动；该命令不导入配置或创建 Provider Connection。启动前会先跑一次 `mise run check:runtime-target`（watch 只打印，FORCE 线 ≥20GB 或 H 余量 <5GB 会阻止启动）。**启动顺序（PLAN-0632 T4.4）**：cp/runtime/ui 仍并行，但 Agent 会先等 CP `/actuator/health`==200（`dev:host:wait-for-cp`，上限 60 s，`XIHE_WAIT_FOR_CP_TIMEOUT` 可覆盖），超时**显式失败并给 CP 日志路径**而不是把 Agent 起成 degraded。项目开发/运维命令见 DEV-002 与 `mise run xihe -- --help`。
 - 并行开发（PLAN-0533）：`mise run dev:stack -- --stack 2`（或 `XIHE_STACK_ID=stack-2 mise run dev:host`）起第二套栈；`stack-1` 端口/路径与单栈时逐项相同，stack-2 起使用独立段位、compose project、PG 库与 `.xihe-stacks/<n>/` 路径，详见 DEV-002「模式 D」。非法/未登记 `XIHE_STACK_ID` 启动即失败；`dev:host:stop`/`dev:reset` 只作用于当前栈。
 - **Runtime target 缓存（PLAN-0596）**：worktree 默认保持**独立** `CARGO_TARGET_DIR`（自行用环境变量外置；若你在 one workspace 内，one 侧另有 `worktree-env.ps1` 统一外置），不共享同一 target——并发构建会在 target 锁上串行，且 Windows 上服务进程占用 exe 会让另一 worktree 构建失败；共享仅在源码/工具链/profile 完全一致时有收益。`clean:runtime-sweep` 只作用当前 `cargo metadata` 的单个 target；`--maxsize 12GB` 无单位按 MiB（≈11.18 GiB）。`mise run clean` 是 `rm -rf` 的**永久删除**入口（不进回收站、无警告），执行前确认无构建/服务占用；缓存按「删除 + 重建」处理，不做跨盘搬运。
 - **docker 冻结（2026-10-07 用户裁定，2026-10-09 强化；工作区后端面由 PLAN-0618 收口为完全冻结）**：

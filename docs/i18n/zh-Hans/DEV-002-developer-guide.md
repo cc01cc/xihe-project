@@ -72,6 +72,8 @@ mise run dev:host
 ```
 
 > 首次接触 XH（空白实例 → 首条回复）请直接看 [DEV-033](DEV-033-first-run-gold-path.md)：本文只讲环境与运行模式，DEV-033 讲本地模式三条件、onboarding 步骤与「看到什么算成功」的逐条判据。
+>
+> **启动顺序（PLAN-0632 T4.4）**：`dev:host` 里 cp/runtime/ui 仍并行，但 **Agent 会先等 CP readiness** —— `dev:host:wait-for-cp` 轮询 CP `/actuator/health` 到 200（默认上限 **60 s**，`XIHE_WAIT_FOR_CP_TIMEOUT` 可覆盖），等不到就**显式失败并打印 CP 日志路径**，**不会**在 CP 缺席时把 Agent 起成 degraded（旧行为会白跑约 2.8 s 启动 config sync）。单独起 Agent 仍用 `mise run dev:host:start:agent`（它已自动带这个等待）。
 
 ```mermaid
 %%{init: {'theme': 'neutral'}}%%
