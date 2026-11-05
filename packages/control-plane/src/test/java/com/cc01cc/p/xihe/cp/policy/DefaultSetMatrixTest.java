@@ -58,7 +58,10 @@ class DefaultSetMatrixTest extends AbstractIntegrationTest {
      * credential atoms stay denied.
      */
     private static final Set<String> USER_MATRIX = Set.of(
-            "read", "write", "delete", "exec", "network", "CREATE_OWN_AGENT");
+            "read", "write", "delete", "exec", "network", "CREATE_OWN_AGENT",
+            // BL-345 (user ruling 2026-11-06): every account may write memory of the principals
+            // it owns; writing arbitrary subjects stays an owner/SUPER_ADMIN atom.
+            "MEMORY_WRITE_SELF");
 
     /**
      * spec §4.1 ADMIN row / evidence matrix full-allow column: five rows plus the
@@ -71,15 +74,18 @@ class DefaultSetMatrixTest extends AbstractIntegrationTest {
             // These are action atoms and therefore materialize; workspace:admin does NOT (capability).
             "MANAGE_AGENT_PRINCIPALS", "MANAGE_WORKSPACE_MEMBERS",
             // PLAN-0651 M2 T2.1: the eight P1 atoms are part of the fixed instance-administrator
-            // set (D51-27). 19 action atoms + these 8 = 27, plus GRANT_ANY_ATOM (PLAN-0673 M2,
-            // D-166) = 28 (see SkillReadFaceTest for the count).
+            // set (D51-27). 20 action atoms + these 8 = 28, plus GRANT_ANY_ATOM (PLAN-0673 M2,
+            // D-166) = 29 (see SkillReadFaceTest for the count). MEMORY_WRITE_SELF (BL-345) is in
+            // USER's set above and therefore inherited here.
             "READ_INSTANCE_CONTENT", "WRITE_INSTANCE_CONTENT", "VIEW_SECRET_CONTENT",
             "MANAGE_SKILL_LIBRARY", "MANAGE_PROVIDER_CONNECTIONS", "USE_WORKSPACE_RUNTIME",
             "MANAGE_WORKSPACE_RUNTIME", "MANAGE_WORKSPACE_POLICY",
             // D-168 (2026-11-05 user ruling) + migration V125: ADMIN administers roles/bindings, so
             // MANAGE_ROLES is part of its default set. The subset guard (PLAN-0673 M1) still bounds
             // what it can delegate, and GRANT_ANY_ATOM stays SUPER_ADMIN-only (D-166).
-            "MANAGE_ROLES");
+            "MANAGE_ROLES",
+            // BL-345: ADMIN inherits the USER default set (SELF), but not MEMORY_WRITE (any subject).
+            "MEMORY_WRITE_SELF");
 
     /** spec §2.1: vocabulary members that never enter a built-in default set. */
     private static final List<String> OUT_OF_DEFAULT_VOCABULARY = List.of(

@@ -63,10 +63,12 @@ class WorkspaceAgentMemoryControllerContractTest extends AbstractIntegrationTest
     @Autowired private JdbcTemplate jdbcTemplate;
 
     private UUID userId;
+    private UUID otherUserId;
     private UUID workspaceId;
     private UUID otherWorkspaceId;
     private UUID otherPrincipalId;
     private UUID principalId;
+    private UUID adminTargetPrincipalId;
     private String token;
     private RestTemplate patchClient;
 
@@ -94,6 +96,10 @@ class WorkspaceAgentMemoryControllerContractTest extends AbstractIntegrationTest
         if (otherPrincipalId != null && otherWorkspaceId != null) {
             bindingRepository.deleteById(new WorkspaceAgentId(otherPrincipalId, otherWorkspaceId));
         }
+        if (adminTargetPrincipalId != null && workspaceId != null) {
+            bindingRepository.deleteById(new WorkspaceAgentId(adminTargetPrincipalId, workspaceId));
+            principalRepository.deleteById(adminTargetPrincipalId);
+        }
         if (workspaceId != null) {
             grantRepository.deleteAll(grantRepository.findBySubjectTypeAndSubjectId("user", userId));
             jdbcTemplate.update("DELETE FROM audit_logs WHERE CAST(workspace_id AS VARCHAR) = ?",
@@ -113,6 +119,9 @@ class WorkspaceAgentMemoryControllerContractTest extends AbstractIntegrationTest
         if (userId != null) {
             jdbcTemplate.update("DELETE FROM audit_logs WHERE user_id = CAST(? AS UUID)", userId.toString());
             userRepository.deleteById(userId);
+        }
+        if (otherUserId != null) {
+            userRepository.deleteById(otherUserId);
         }
     }
 
@@ -242,6 +251,43 @@ class WorkspaceAgentMemoryControllerContractTest extends AbstractIntegrationTest
         assertFalse(rewrittenId.equals(id), "the archive freed the dedupe key");
     }
 
+    @Test
+    void selfAtomWritesOwnPrincipalWithoutAnyMemoryWriteGrant() throws Exception {
+        fixture();
+        // EDITOR carries MEMORY_WRITE_SELF by default (BL-345); no MEMORY_WRITE grant is added.
+        ResponseEntity<Map> own = createMemory(principalId.toString(),
+                Map.of("content", "Own principal memory"));
+        assertEquals(HttpStatus.CREATED, own.getStatusCode(), String.valueOf(own.getBody()));
+
+        // A principal created by another user is not "mine": 403 even though SELF is held.
+        ResponseEntity<Map> foreign = createMemory(otherPrincipalId.toString(),
+                Map.of("content", "Foreign memory"));
+        assertEquals(HttpStatus.FORBIDDEN, foreign.getStatusCode(), String.valueOf(foreign.getBody()));
+        assertEquals("FORBIDDEN", foreign.getBody().get("code"));
+
+        // The audit trail names the atom and its grant provenance (role → MEMORY_WRITE_SELF).
+        Integer hits = jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM audit_logs WHERE action = 'authorization_atom_hit'"
+                        + " AND CAST(workspace_id AS VARCHAR) = ? AND details LIKE '%MEMORY_WRITE_SELF%'",
+                Integer.class, workspaceId.toString());
+        assertNotNull(hits);
+        assertEquals(1, hits.intValue(), "the self write must record atom → grant source");
+    }
+
+    @Test
+    void workspaceAdminWritesAnySubjectInTheWorkspace() throws Exception {
+        fixture();
+        // WS_OWNER carries MEMORY_WRITE (ruling B), so any visible subject is writable.
+        workspaceFixture.bindWorkspaceRole(workspaceId.toString(), userId.toString(), WorkspaceRole.OWNER);
+        adminTargetPrincipalId = newPrincipal("Admin target", otherUserId);
+        bindingRepository.saveAndFlush(new WorkspaceAgent(adminTargetPrincipalId.toString(),
+                workspaceId.toString(), objectMapper.readTree("[{\"actionClass\":\"read\"}]")));
+
+        ResponseEntity<Map> created = createMemory(adminTargetPrincipalId.toString(),
+                Map.of("content", "Admin writes another owner's subject"));
+        assertEquals(HttpStatus.CREATED, created.getStatusCode(), String.valueOf(created.getBody()));
+    }
+
     // ── fixtures / helpers ────────────────────────────────────────────────────────────────
 
     private void fixture() throws Exception {
@@ -254,10 +300,12 @@ class WorkspaceAgentMemoryControllerContractTest extends AbstractIntegrationTest
         workspaceFixture.bindWorkspaceRole(workspaceId.toString(), userId.toString(), WorkspaceRole.EDITOR);
         workspaceFixture.bindWorkspaceRole(otherWorkspaceId.toString(), userId.toString(), WorkspaceRole.EDITOR);
 
-        principalId = newPrincipal("MemoryAgent");
+        otherUserId = userRepository.saveAndFlush(new User(
+                "memory-other-" + UUID.randomUUID() + "@test.com", "hash", "Other User")).getId();
+        principalId = newPrincipal("MemoryAgent", userId);
         bindingRepository.saveAndFlush(new WorkspaceAgent(principalId.toString(), workspaceId.toString(),
                 objectMapper.readTree("[{\"actionClass\":\"read\"}]")));
-        otherPrincipalId = newPrincipal("OtherWorkspaceAgent");
+        otherPrincipalId = newPrincipal("OtherWorkspaceAgent", otherUserId);
         bindingRepository.saveAndFlush(new WorkspaceAgent(otherPrincipalId.toString(), otherWorkspaceId.toString(),
                 objectMapper.readTree("[{\"actionClass\":\"read\"}]")));
         addGrant("read", "*");
@@ -265,10 +313,10 @@ class WorkspaceAgentMemoryControllerContractTest extends AbstractIntegrationTest
                 workspaceId.toString(), 0);
     }
 
-    private UUID newPrincipal(String name) throws Exception {
+    private UUID newPrincipal(String name, UUID creatorId) throws Exception {
         AgentPrincipal principal = new AgentPrincipal();
         principal.setName(name);
-        principal.setCreatedByUserId(userId.toString());
+        principal.setCreatedByUserId(creatorId.toString());
         principal.setTemplateId("template-1");
         principal.setTemplateSnapshot(objectMapper.createObjectNode());
         return principalRepository.saveAndFlush(principal).getId();
@@ -399,9 +447,12 @@ class WorkspaceAgentMemoryControllerContractTest extends AbstractIntegrationTest
     void subjectLevelWriteKeepsTheAtomGateBeforeExistence() throws Exception {
         fixture();
 
-        // No atom yet: 403 even for a principal id that does not exist (no existence oracle).
+        // No atom yet: 403 even for a principal that is not mine (no existence oracle). The own
+        // principal would be allowed by MEMORY_WRITE_SELF since BL-345, so this uses another user's
+        // principal to keep proving the "any subject" gate.
         ResponseEntity<Map> denied = exchange(HttpMethod.POST,
-                subjectBasePath() + "?workspaceId=" + workspaceId, Map.of("content", "x"));
+                "/api/v1/agent-principals/" + otherPrincipalId + "/memories?workspaceId=" + workspaceId,
+                Map.of("content", "x"));
         assertEquals(HttpStatus.FORBIDDEN, denied.getStatusCode(), String.valueOf(denied.getBody()));
 
         addGrant("MEMORY_WRITE", "*");

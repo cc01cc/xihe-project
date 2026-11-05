@@ -5,9 +5,8 @@ import com.cc01cc.p.xihe.cp.config.ProblemDetailsHandler;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceAgent;
 import com.cc01cc.p.xihe.cp.entity.AgentMemory;
-import com.cc01cc.p.xihe.cp.policy.RequesterAuthority;
-import com.cc01cc.p.xihe.cp.policy.ToolFaceRegistry;
 import com.cc01cc.p.xihe.cp.service.AgentMemoryService;
+import com.cc01cc.p.xihe.cp.service.AgentMemoryWriteAuthorizer;
 import com.cc01cc.p.xihe.cp.service.AgentPrincipalService;
 import com.cc01cc.p.xihe.cp.util.JacksonNodeExit;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -42,16 +41,16 @@ public class WorkspaceAgentController {
 
     private final AgentPrincipalService agentPrincipalService;
     private final AgentMemoryService agentMemoryService;
-    private final RequesterAuthority requesterAuthority;
+    private final AgentMemoryWriteAuthorizer memoryWriteAuthorizer;
     private final ObjectMapper objectMapper;
 
     public WorkspaceAgentController(AgentPrincipalService agentPrincipalService,
                                     AgentMemoryService agentMemoryService,
-                                    RequesterAuthority requesterAuthority,
+                                    AgentMemoryWriteAuthorizer memoryWriteAuthorizer,
                                     ObjectMapper objectMapper) {
         this.agentPrincipalService = agentPrincipalService;
         this.agentMemoryService = agentMemoryService;
-        this.requesterAuthority = requesterAuthority;
+        this.memoryWriteAuthorizer = memoryWriteAuthorizer;
         this.objectMapper = objectMapper;
     }
 
@@ -232,18 +231,9 @@ public class WorkspaceAgentController {
      * read face already uses (404 for a principal outside this workspace).
      */
     private void requireMemoryWrite(UUID workspace, UUID principal) {
-        UUID subject = requesterAuthority.currentSubjectId();
-        if (subject == null || !requesterAuthority.holdsActionAtom(subject,
-                ToolFaceRegistry.ACTION_MEMORY_WRITE, workspace)) {
-            throw new CpApiException(HttpStatus.FORBIDDEN, "FORBIDDEN",
-                    "MEMORY_WRITE is required to write agent memory in this workspace");
-        }
-        boolean visible = agentPrincipalService.listWorkspaceAgents(requireActor(), workspace).stream()
-                .anyMatch(view -> view.principalId().equals(principal));
-        if (!visible) {
-            throw new CpApiException(HttpStatus.NOT_FOUND, "AGENT_PRINCIPAL_NOT_FOUND",
-                    "Agent principal not found");
-        }
+        // BL-345: same shared gate as the canonical subject route (MEMORY_WRITE first, then
+        // MEMORY_WRITE_SELF + ownership); this deprecated alias must not keep the old semantics.
+        memoryWriteAuthorizer.require(workspace, principal);
     }
 
     @PreAuthorize("isAuthenticated()")

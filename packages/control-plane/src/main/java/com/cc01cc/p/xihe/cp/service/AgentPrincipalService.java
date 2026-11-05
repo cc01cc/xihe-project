@@ -443,6 +443,30 @@ public class AgentPrincipalService {
     }
 
     /**
+     * BL-345 (user ruling 2026-11-06): true when {@code userId} owns {@code principalId}.
+     *
+     * <p>Two stable links exist on the principal row and both count as "mine": the PERSONAL
+     * {@code owner_user_id} (the user-facing notion of ownership, set for PERSONAL principals) and
+     * {@code created_by_user_id} (always set, the audit trail's creator). No second ownership table
+     * is introduced — the relation is already persisted here.</p>
+     */
+    @Transactional(readOnly = true)
+    public boolean isOwnedBy(UUID principalId, UUID userId) {
+        if (principalId == null || userId == null) {
+            return false;
+        }
+        AgentPrincipal principal = agentPrincipalRepository.findById(principalId).orElse(null);
+        if (principal == null) {
+            return false;
+        }
+        if (userId.equals(principal.getOwnerUserId())) {
+            return true;
+        }
+        return principal.getCreatedByUserId() != null
+                && principal.getCreatedByUserId().equalsIgnoreCase(userId.toString());
+    }
+
+    /**
      * PLAN-0622 M1.2 / V4 / D26: the union of the workspace's bindings, the caller's own PERSONAL
      * principals and every INSTANCE principal. Every row carries {@code source} (what the principal
      * <i>is</i>) and {@code bound} (whether it is bound to this workspace).
