@@ -131,7 +131,10 @@ export async function provisionWorkspaceAgentPrincipal(
         data: {
             name,
             templateId,
-            scope: "WORKSPACE",
+            // BL-343：D-174（`51d3fa95`）起 create 的 body 白名单不再收 `scope`
+            // （"body 去 scope，旧值 400，无兼容分支"）；主体归属改由**工作区上下文**
+            // （上面的 `X-Workspace-Id`）表达。这里既不送 `scope`，也不做"兼容旧值"分支——
+            // 契约变了就在夹具侧同步，而不是放宽断言。
             // 只在调用方显式给了模型意图时才带上这两个键（不传 ⇒ 体与旧行为一致）。
             ...(defaultModelProvider ? { defaultModelProvider } : {}),
             ...(defaultModelName ? { defaultModelName } : {}),
