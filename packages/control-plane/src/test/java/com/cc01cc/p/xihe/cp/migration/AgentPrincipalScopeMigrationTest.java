@@ -13,6 +13,8 @@ import java.sql.DriverManager;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -84,7 +86,7 @@ class AgentPrincipalScopeMigrationTest {
     private static int grantsBefore;
     private static String workspaceBindingsBefore;
     private static String roleBindingSnapshotBefore;
-    private static String grantSnapshotBefore;
+    private static Set<String> grantRowsBefore;
 
     @BeforeAll
     static void replayBothSides() throws SQLException {
@@ -157,12 +159,15 @@ class AgentPrincipalScopeMigrationTest {
 
         assertEquals(3, grantsBefore, "fixture: one grant per tier principal");
         // BL-345 (V129) legitimately materializes one extra MEMORY_WRITE_SELF grant for the USER-role
-        // binding below; V126 itself deletes nothing, so the original rows must survive verbatim and
-        // the total may only grow.
-        assertTrue(scalarInt(connection,
-                        "SELECT count(*) FROM grants WHERE subject_id IN (" + TIER_PRINCIPALS + ")")
-                        >= grantsBefore,
-                "grants rows are not deleted by V126 (V129 may add role grants)");
+        // binding below. The invariant is a subset one: every pre-existing row must still be present
+        // (V129 may only add), so "delete 3 and add 5" cannot pass as "net growth".
+        Set<String> afterGrants = tierGrantRows();
+        assertTrue(afterGrants.containsAll(grantRowsBefore),
+                "V126/V129 must not delete existing grants (V129 may only add role grants); missing: "
+                        + difference(grantRowsBefore, afterGrants));
+        assertTrue(afterGrants.size() >= grantRowsBefore.size(),
+                "grants rows may only grow across V126/V129");
+        assertEquals(3, grantsBefore, "fixture: one grant per tier principal");
         assertGrantSurvives(PERSONAL_GRANT_ID, "read", "instance", null);
         assertGrantSurvives(WORKSPACE_GRANT_ID, "write", "workspace", WORKSPACE_ID);
         assertGrantSurvives(INSTANCE_GRANT_ID, "exec", "instance", null);
@@ -449,7 +454,7 @@ class AgentPrincipalScopeMigrationTest {
                 "SELECT count(*) FROM grants WHERE subject_id IN (" + TIER_PRINCIPALS + ")");
         workspaceBindingsBefore = tierWorkspaceBindingSnapshot();
         roleBindingSnapshotBefore = tierRoleBindingSnapshot();
-        grantSnapshotBefore = tierGrantSnapshot();
+        grantRowsBefore = tierGrantRows();
     }
 
     // ------------------------------------------------------------------ assertions on the fixture
@@ -530,10 +535,25 @@ class AgentPrincipalScopeMigrationTest {
                 + ") ORDER BY id");
     }
 
-    private static String tierGrantSnapshot() throws SQLException {
-        return snapshot(connection, "SELECT id::text || '|' || subject_id::text || '|' || source || '|'"
-                + " || scope_type || '|' || COALESCE(scope_id::text, '-') || '|' || permissions::text || '|'"
-                + " || read_state FROM grants WHERE subject_id IN (" + TIER_PRINCIPALS + ") ORDER BY id");
+    private static Set<String> tierGrantRows() throws SQLException {
+        Set<String> rows = new HashSet<>();
+        try (Statement statement = connection.createStatement();
+             ResultSet result = statement.executeQuery(
+                     "SELECT id::text || '|' || subject_id::text || '|' || source || '|'"
+                             + " || scope_type || '|' || COALESCE(scope_id::text, '-') || '|'"
+                             + " || permissions::text || '|' || read_state FROM grants"
+                             + " WHERE subject_id IN (" + TIER_PRINCIPALS + ") ORDER BY id")) {
+            while (result.next()) {
+                rows.add(result.getString(1));
+            }
+        }
+        return rows;
+    }
+
+    private static Set<String> difference(Set<String> expected, Set<String> actual) {
+        Set<String> missing = new HashSet<>(expected);
+        missing.removeAll(actual);
+        return missing;
     }
 
     // ------------------------------------------------------------------ fixture writers
