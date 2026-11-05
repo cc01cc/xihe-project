@@ -76,18 +76,22 @@ function git(...args) {
 }
 
 function provenance(label) {
+  const raw = git('status', '--short', '--untracked-files=all').split('\n').filter(Boolean);
   return {
     label,
     head: git('rev-parse', 'HEAD'),
-    dirty: git('status', '--short', '--untracked-files=all').split('\n').filter(Boolean),
+    // JSON 里只放路径（Lead 2026-11-06 定死 `afterDirty: ["docs/…"]` 的形状）；原始 `M`/`??` 前缀另存
+    // 供控制台报错用，避免把 git 状态码混进机器可读字段。
+    dirty: raw.map((line) => line.replace(/^.{2}\s+/u, '').trim()),
+    rawDirty: raw,
     at: new Date().toISOString(),
   };
 }
 
 function assertClean(snapshot) {
-  if (ALLOW_DIRTY || snapshot.dirty.length === 0) return;
-  console.error(`[preflight] ${snapshot.label}: working tree is DIRTY (${snapshot.dirty.length} entries) — refusing to measure.`);
-  for (const line of snapshot.dirty.slice(0, 10)) console.error(`  ${line}`);
+  if (ALLOW_DIRTY || (snapshot.rawDirty ?? snapshot.dirty).length === 0) return;
+  console.error(`[preflight] ${snapshot.label}: working tree is DIRTY (${(snapshot.rawDirty ?? snapshot.dirty).length} entries) — refusing to measure.`);
+  for (const line of (snapshot.rawDirty ?? snapshot.dirty).slice(0, 10)) console.error(`  ${line}`);
   throw new Error(`dirty working tree at ${snapshot.label}; a round that cannot name the tree it measured is not evidence`);
 }
 
@@ -212,8 +216,24 @@ for (const shard of ['a', 'b']) {
     + `guard=${guard.ok ? 'ok' : 'FAIL'} head=${shardProvenance.head.slice(0, 8)} dirty=${shardProvenance.dirty.length}`);
 }
 
+// 自测钩子（仅验证"收尾脏"分支）：在最后一个 shard 断言之后、after 快照之前写一个临时文件，
+// 精确复现 2026-11-06 的真实故障窗口（第三方在收尾时刻写 docs）。生产用法不传这个参数。
+const DIRTY_PROBE = flag('after-dirty-probe', null);
+if (DIRTY_PROBE) {
+  writeFileSync(join(ROOT, DIRTY_PROBE), `after-dirty probe ${new Date().toISOString()}\n`, 'utf8');
+  console.log(`[self-test] wrote probe ${DIRTY_PROBE} (simulates a third-party write in the after window)`);
+}
 const after = provenance('after');
-assertClean(after);
+// BL-326 收尾缺陷修复（2026-11-06，Lead 批准）：`after` 变脏 **不再抛错丢弃整轮证据**。
+// 判据是"measure 时刻 clean"：before / shard-a / shard-b 三处断言仍致命（脏了就不测），但收尾那一刻
+// 若第三方在冻结窗口写了文件（2026-11-06 实测：跑完最后一例后被 lane 写入 3 个 docs 文件），
+// 正确做法是把 `ok` 降级为 false、把脏清单记进 `afterDirty`、**保留两 shard 全部测量数据**，
+// 让归档读者自己判断；而不是把 13 分钟的有效测量换成一句异常。
+const afterDirty = after.dirty;
+if (afterDirty.length > 0) {
+  console.error(`[after] working tree became DIRTY after the last measurement (${afterDirty.length} entries) — evidence kept, ok=false`);
+  for (const line of afterDirty.slice(0, 10)) console.error(`  ${line}`);
+}
 
 const { computeExpectedTestClasses } = await import('./lib/test-class-set.mjs');
 const expected = computeExpectedTestClasses({ repoRoot: ROOT });
@@ -249,7 +269,16 @@ const coverage = {
 coverage.ok = coverage.missing.length === 0 && coverage.unexpected.length === 0 && coverage.duplicates.length === 0;
 
 const headStable = before.head === after.head && shards.every((shard) => shard.provenance?.head === before.head);
+// `ok` 的语义（Lead 2026-11-06 定死）：**测量有效性**，不是"测试全绿"。
+//   ok = 收尾无脏 + coverage 完整 + 头稳定 + 每个 shard 的守卫通过。
+//   测试失败（基线红）由 `failingSuites` 表达，**不影响 ok**——否则每个含基线红的轮次都会被误判为无效。
+const roundOk = afterDirty.length === 0
+  && (COMPILE_ONLY || coverage.ok) // --compile-only 不跑测试，coverage 天然为 false：那是模式差异，不是测量缺陷
+  && headStable
+  && shards.every((shard) => shard.guard?.ok !== false);
 const summary = {
+  ok: roundOk,
+  afterDirty,
   generatedAt: new Date().toISOString(),
   mode: 'sequential (memory-constrained; parallel wall clock NOT re-measured)',
   runTag: RUN_TAG,
@@ -287,9 +316,14 @@ const summary = {
 writeFileSync(join(OUT, 'clean-sequential-result.json'), `${JSON.stringify(summary, null, 2)}\n`, 'utf8');
 console.log(JSON.stringify({
   runTag: RUN_TAG,
+  ok: roundOk,
+  afterDirty: afterDirty.length,
   head: summary.head,
   headStable,
   shards: summary.shards.map(({ shard, wallSeconds, tests, failuresAndErrors, targetDir }) => ({ shard, wallSeconds, tests, failuresAndErrors, targetDir })),
   creationsShardSum: summary.creationsShardSum,
   coverage: { ok: coverage.ok, expected: coverage.expected, ran: coverage.ran, missing: coverage.missing.length, unexpected: coverage.unexpected.length, duplicates: coverage.duplicates.length },
 }, null, 1));
+
+// 退出码：测量无效（收尾脏 / coverage 不全 / 头不稳 / 守卫失败）⇒ 非零；基线红不影响退出码。
+process.exit(roundOk ? 0 : 1);
