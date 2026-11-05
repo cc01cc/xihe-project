@@ -159,6 +159,38 @@ class ContextTemplateSourceServiceTest {
         verify(runtime, times(512)).listDirectory(eq(WORKSPACE), anyString());
     }
 
+    /**
+     * PLAN-0678 V4：**没有 components 时必须说 `no_components`，不能静默**。
+     * 迁移期会话（D-215 不迁移）的 `context_template_snapshot` 没有 components 数组，
+     * 旧行为是"返回空 map 就完事"—— 排查时看起来像"记忆没生效"而不是"快照缺清单"。
+     */
+    @Test
+    void noComponentsSnapshotLogsTheDiagnosticInsteadOfStayingSilent() throws Exception {
+        ch.qos.logback.classic.Logger logger = (ch.qos.logback.classic.Logger) org.slf4j.LoggerFactory
+                .getLogger(ContextTemplateSourceService.class);
+        ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> appender =
+                new ch.qos.logback.core.read.ListAppender<>();
+        appender.start();
+        logger.addAppender(appender);
+        try {
+            ContextTemplateSourceService.RunContext run = new ContextTemplateSourceService.RunContext(
+                    RUN_ID, SESSION_ID, WORKSPACE, USER,
+                    mapper.readTree("{\"template\":{\"document\":\"{{component:x}}\"}}"), null, USER);
+            Session session = new Session(WORKSPACE, USER, "no components");
+            session.setId(UUID.fromString(SESSION_ID));
+
+            Map<String, Object> sources = new ContextTemplateSourceService(runtime, policy, mapper,
+                    memoryInjection, skillCatalog).resolve(run, session);
+
+            assertTrue(sources.isEmpty(), "no manifest means no injected source: " + sources);
+            assertTrue(appender.list.stream()
+                            .map(ch.qos.logback.classic.spi.ILoggingEvent::getFormattedMessage)
+                            .anyMatch(message -> message.contains(ContextTemplateSourceService.DIAGNOSTIC_NO_COMPONENTS)),
+                    "PLAN-0678 V4: a missing component manifest must say `no_components`");
+        } finally {
+            logger.detachAppender(appender);
+        }
+    }
     @Test
     void agentMemoryComponentResolvesForTheRunPrincipal() throws Exception {
         // BL-284: once the admission snapshot carries the context template's components, the memory
