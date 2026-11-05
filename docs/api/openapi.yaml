@@ -724,6 +724,13 @@ paths:
         owned rows) or a holder of the instance-tier `MANAGE_AGENT_PRINCIPALS`
         may disable; a single Workspace's management right never reaches shared
         rows across Workspaces (workspace-level removal stays `unbind`).
+
+        **Gate order (BL-326 / D22, 2026-11-05 Lead ruling)**: explicit workspace context
+        (`409 WORKSPACE_CONTEXT_REQUIRED`) → existence (`404 AGENT_PRINCIPAL_NOT_FOUND`) →
+        owner-or-N1 (`403 AGENT_PRINCIPAL_OWNER_MISMATCH`). The order is load-bearing: with the
+        lookup first, a context-less caller could tell "no such principal" from "exists but is not
+        yours" — an existence oracle. Because the context check comes first, an **unknown**
+        principal id without a context answers 409, never 404.
       security: [{ bearerAuth: [] }]
       parameters: [{ in: path, name: principalId, required: true, schema: { type: string, format: uuid } }]
       responses:
@@ -782,6 +789,7 @@ paths:
         '401': { $ref: '#/components/responses/Problem' }
         '403': { description: 'FORBIDDEN — the caller lacks the tier authority; or GUARD_HOOKS_IMMUTABLE — a preset guard owns its subscriptions through the template, not the API; or GUARD_CONTEXT_POLICY_IMMUTABLE — a preset guard is a system asset, so its memory policy is not a user setting', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
         '404': { description: AGENT_PRINCIPAL_NOT_FOUND, content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '409': { description: 'WORKSPACE_CONTEXT_REQUIRED — same gate order as disable (BL-326 / D22): context → existence → owner-or-N1. An unknown principal id without a workspace context answers 409, never 404, so the endpoint cannot be used as an existence oracle.', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
   /api/v1/agent-templates:
     get:
       operationId: listAgentTemplates
@@ -1337,6 +1345,25 @@ paths:
               example: { type: "https://xihe.dev/problems/approval-required", title: "Approval required", status: 409, code: "APPROVAL_REQUIRED", detail: "Tool execution requires approval before dispatch", requestId: "req-..." }
     get: { operationId: mcpStream, security: [{ bearerAuth: [] }], responses: { '200': { description: MCP SSE stream, content: { text/event-stream: {} } } } }
     delete: { operationId: mcpDisconnect, security: [{ bearerAuth: [] }], responses: { '204': { description: Disconnected } } }
+  /internal/v1/attachments/{attachmentId}/content:
+    get:
+      operationId: internalAttachmentContent
+      summary: Stream one attachment's stored bytes to the Agent (internal, run-bound)
+      description: 'PLAN-0605 — the byte channel the Agent uses to render image content parts (BL-320 批 1：此前缺失）。Service-authenticated (`/internal/v1/**`, Bearer) and **run-bound**: `runId` must own the attachment (an unrelated/unknown run answers 404, never a 403 oracle). The response body is the stored bytes only — no metadata beyond `Content-Type`/`Content-Length`, `Cache-Control: no-store`, `X-Content-Type-Options: nosniff`; never cached, never re-encoded, no redirect.'
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: attachmentId, required: true, schema: { type: string, format: uuid } }
+        - { in: query, name: runId, required: true, schema: { type: string, format: uuid }, description: 'Run that owns the attachment; the binding is checked, not trusted.' }
+        - { in: header, name: X-Workspace-Id, required: false, schema: { type: string, format: uuid }, description: 'Optional workspace echo; when present it must match the attachment workspace.' }
+      responses:
+        '200':
+          description: 'Raw attachment bytes in the stored content type'
+          content:
+            '*/*':
+              schema: { type: string, format: binary }
+              description: 'The stored MIME type (image/*, text/*, …) — set from the resolved row, never guessed from the path.'
+        '401': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
   /internal/v1/config/effective/{domain}:
     get:
       operationId: getEffectiveConfig
@@ -2165,6 +2192,35 @@ paths:
         '401': { $ref: '#/components/responses/Problem' }
         '409': { $ref: '#/components/responses/WorkspaceContextRequired' }
         '403': { $ref: '#/components/responses/Problem' }
+  /api/v1/user-events:
+    get:
+      operationId: userEvents
+      summary: Subscribe to the user-level persistent SSE channel
+      description: |
+        PLAN-0660 T5.4 — the **user-level** SSE channel (contract `spec/session/user-channel.md` §4). BL-320 批 1：此前只在该文件的其他描述里被提到，没有 path 条目。
+        * Authenticated by the user's Bearer token only: **no `X-Workspace-Id` is required** — the channel is per user and survives workspace switching. Missing/invalid credentials answer `401 AUTHORIZATION_REQUIRED` before any stream opens.
+        * The first frame is always `connected` with `{serverTime}` (ISO-8601 instant). There is **no replay** (the session channel's `Last-Event-ID` semantics do not apply), so a reconnect is a fresh subscription.
+        * Event names are a **closed public set** — `connected` / `participant_notified` / `user_question` — deliberately independent of the internal `wake_*` names:
+          * `participant_notified` = `{sessionId, participantId}` — a notify signal only (it never creates a Run);
+          * `user_question` = `{questionId, sessionId, state}` — an interactive question addressed to this user changed state (`pending`/`answered`/`expired`), the same filter as `GET /api/v1/user-questions`.
+        * This channel is the delivery path for the badge/unread surface; the durable sources stay `GET /api/v1/user-questions` and the per-participant derived unread count.
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: 'SSE stream — user-scoped notify + question events'
+          content:
+            text/event-stream:
+              schema: { type: string }
+              example: |
+                event: connected
+                data: {"serverTime":"2026-11-05T14:03:11.482Z"}
+
+                event: participant_notified
+                data: {"sessionId":"8c2a5c1e-0d9a-4d63-8a2e-6f6d5f7c1b11","participantId":"6f1c0c4e-9a41-4c33-9d5e-71a2b3c4d5e6"}
+
+                event: user_question
+                data: {"questionId":"a71e2f30-6b0e-42b7-9e55-2f8b1c0d9a77","sessionId":"8c2a5c1e-0d9a-4d63-8a2e-6f6d5f7c1b11","state":"pending"}
+        '401': { $ref: '#/components/responses/Problem' }
   /api/v1/events:
     get:
       operationId: chatEvents
@@ -2336,6 +2392,7 @@ paths:
   /api/v1/config/api-request-templates:
     get:
       operationId: listApiRequestTemplates
+      description: 'BL-320 批 3（**有意保留 / kept-by-design**）：这不是单独注册的路由，而是 `GET /api/v1/config/{domain}` 在 `domain=api-request-templates` 时的**具体示例写法**（带本域专属的 query 与响应说明）。控制器只注册 `/api/v1/config/{domain}`；保留本条目是为了让调用方不必去翻通用路由的 domain 表，**不属于实现缺口**。'
       security: [{ bearerAuth: [] }]
       parameters: [{ in: query, name: layer, required: true, schema: { type: string, enum: [instance, user, workspace] } }, { in: query, name: workspaceId, schema: { type: string, format: uuid } }, { in: query, name: includeMeta, schema: { type: boolean, default: false } }]
       responses:
@@ -2344,6 +2401,7 @@ paths:
   /api/v1/config/{layer}/api-request-templates:
     put:
       operationId: saveApiRequestTemplates
+      description: 'BL-320 批 3（**有意保留 / kept-by-design**）：同上，`{layer}` ∈ `instance|user|workspace` 分别对应已注册的 `PUT /api/v1/config/{layer}/{domain}` 且 `domain=api-request-templates` 的具体示例，不是独立路径。'
       security: [{ bearerAuth: [] }]
       parameters: [{ in: path, name: layer, required: true, schema: { type: string, enum: [instance, user, workspace] } }]
       requestBody: { required: true, content: { application/json: { schema: { type: object, additionalProperties: { type: string }, description: 'templates, connectionDefaultTemplates and providerModelBindings are JSON strings. Published versions are immutable; drafts preserve invalid raw source.' } } } }
@@ -3211,6 +3269,111 @@ paths:
     post: { operationId: enableWorker, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workerId, required: true, schema: { type: string } }], responses: { '200': { description: Enabled } } }
   /internal/v1/agent/registry/workers/{workerId}/disable:
     post: { operationId: disableWorker, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workerId, required: true, schema: { type: string } }], responses: { '200': { description: Disabled } } }
+  /internal/v1/agent/checkpoints/lineages:
+    post:
+      operationId: createAgentCheckpointLineage
+      summary: Create (or return) the CP-owned lineage for one LangGraph thread
+      description: 'Agent-only (service Bearer). BL-320 批 1：这 6 条此前实现存在但契约缺失。The body carries the owner triple `{sessionId,userId,workspaceId}`; CP validates the scope before touching checkpoint storage. Creating a lineage for a thread that already has one returns the existing row (idempotent) rather than duplicating it.'
+      security: [{ bearerAuth: [] }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/AgentCheckpointLineageRequest' } } } }
+      responses:
+        '201': { description: Created (or already existing) lineage, content: { application/json: { schema: { $ref: '#/components/schemas/AgentCheckpointLineageView' } } } }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+  /internal/v1/agent/checkpoints/lineages/{threadId}:
+    get:
+      operationId: getAgentCheckpointLineage
+      summary: Read one thread's lineage (owner-scoped)
+      description: 'Lookup by thread + full owner triple; `sourceRunId` / `probeId` narrow the owner scope when the caller has them. A thread outside the caller-supplied owner answers 404 (no cross-owner read).'
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: threadId, required: true, schema: { type: string, format: uuid } }
+        - { in: query, name: sessionId, required: true, schema: { type: string, format: uuid } }
+        - { in: query, name: userId, required: true, schema: { type: string, format: uuid } }
+        - { in: query, name: workspaceId, required: true, schema: { type: string, format: uuid } }
+        - { in: query, name: sourceRunId, required: false, schema: { type: string, format: uuid } }
+        - { in: query, name: probeId, required: false, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: Lineage, content: { application/json: { schema: { $ref: '#/components/schemas/AgentCheckpointLineageView' } } } }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+  /internal/v1/agent/checkpoints/{threadId}:
+    delete:
+      operationId: deleteAgentCheckpointThread
+      summary: Delete one thread's checkpoint state for the given owner
+      description: 'Removes the thread''s checkpoints and pending writes. Idempotent: deleting a thread that stored nothing still answers 204.'
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: threadId, required: true, schema: { type: string, format: uuid } }
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/AgentCheckpointOwnerRequest' } } } }
+      responses:
+        '204': { description: Deleted (idempotent) }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+  /internal/v1/agent/checkpoints/{threadId}/checkpoints:
+    put:
+      operationId: putAgentCheckpoint
+      summary: Store one checkpoint (owner-scoped, idempotent by checkpointId)
+      description: 'Upsert of one serialized LangGraph checkpoint (base64 payload + metadata) under `checkpointNs`; the parent link is validated against the same thread. Re-putting the same `checkpointId` overwrites rather than duplicating.'
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: threadId, required: true, schema: { type: string, format: uuid } }
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/AgentCheckpointPutRequest' } } } }
+      responses:
+        '204': { description: Stored }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+    get:
+      operationId: listAgentCheckpoints
+      summary: List a thread's checkpoints (owner-scoped, newest first)
+      description: 'Bounded listing; `beforeCheckpointId` pages backwards, `limit` is server-clamped, `filterSource`/`filterStep` narrow the metadata filter. Results never cross the owner triple in the query.'
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: threadId, required: true, schema: { type: string, format: uuid } }
+        - { in: query, name: sessionId, required: true, schema: { type: string, format: uuid } }
+        - { in: query, name: userId, required: true, schema: { type: string, format: uuid } }
+        - { in: query, name: workspaceId, required: true, schema: { type: string, format: uuid } }
+        - { in: query, name: checkpointNs, required: false, schema: { type: string, default: '' } }
+        - { in: query, name: beforeCheckpointId, required: false, schema: { type: [string, 'null'], format: uuid } }
+        - { in: query, name: limit, required: false, schema: { type: [integer, 'null'] } }
+        - { in: query, name: filterSource, required: false, schema: { type: [string, 'null'] } }
+        - { in: query, name: filterStep, required: false, schema: { type: [integer, 'null'] } }
+      responses:
+        '200': { description: Checkpoints, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/AgentCheckpointView' } } } } }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+  /internal/v1/agent/checkpoints/{threadId}/checkpoints/{checkpointId}:
+    get:
+      operationId: getAgentCheckpoint
+      summary: Read one checkpoint (owner-scoped)
+      description: 'Single checkpoint incl. pending writes; a checkpoint that does not exist for this owner/thread answers `404 CHECKPOINT_NOT_FOUND`.'
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: threadId, required: true, schema: { type: string, format: uuid } }
+        - { in: path, name: checkpointId, required: true, schema: { type: string, format: uuid } }
+        - { in: query, name: sessionId, required: true, schema: { type: string, format: uuid } }
+        - { in: query, name: userId, required: true, schema: { type: string, format: uuid } }
+        - { in: query, name: workspaceId, required: true, schema: { type: string, format: uuid } }
+        - { in: query, name: checkpointNs, required: false, schema: { type: string, default: '' } }
+      responses:
+        '200': { description: Checkpoint, content: { application/json: { schema: { $ref: '#/components/schemas/AgentCheckpointView' } } } }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+  /internal/v1/agent/checkpoints/{threadId}/writes:
+    post:
+      operationId: putAgentCheckpointWrites
+      summary: Store pending writes for one checkpoint (owner-scoped)
+      description: 'Persists the pending writes of the checkpoint''s next tasks (`taskId`/`taskPath` + `writes[]`). Idempotent per `(checkpointId, taskPath, channel)`: a re-post replaces the same write instead of appending.'
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: threadId, required: true, schema: { type: string, format: uuid } }
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/AgentCheckpointPutWritesRequest' } } } }
+      responses:
+        '204': { description: Stored }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
   /internal/v1/context/{sessionId}/snapshot:
     get:
       operationId: contextSnapshot
@@ -4026,6 +4189,39 @@ paths:
         '404': { $ref: '#/components/responses/Problem' }
         '409': { $ref: '#/components/responses/Problem' }
         '503': { $ref: '#/components/responses/Problem' }
+  /api/v1/principal-grants/{username}:
+    get:
+      operationId: readPrincipalGrants
+      deprecated: true
+      summary: '[RETIRED — 410 tombstone] 管理员直授写面 (PLAN-0585) 的只读入口'
+      description: |
+        **BL-320 批 2（2026-11-05 Lead 批准）：保留为 410 tombstone，不是可用接口。**
+        PLAN-0610 W2（决策 #28）/ V88 已退役该面：V88 把 `ck_grants_source` 收窄为五值后 `source='direct'`
+        不再合法，`PrincipalGrantAdminService` 两个入口统一返回 `410 PRINCIPAL_GRANTS_RETIRED`（先于目标解析与校验，
+        不写 grant/audit 行）；能力改由访问角色绑定授予 —— `/api/v1/roles/**` 与 `/api/v1/bindings`。
+        控制器保留的唯一目的是**回归锁**：4 个套件断言"退役面不会复活"（`PrincipalGrantAdminControllerContractTest`、
+        `PrincipalGrantAuthorizationIntegrationTest`、`PrincipalGrantLockTimeoutContractTest`、real E2E
+        `plan-0585-principal-grants.spec.ts`）。因此显式 `deprecated` 而不是删除路由。
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: username, required: true, schema: { type: string }, description: 'Path username 是唯一目标权威；退役后不解引用。' }
+      responses:
+        '410': { description: 'PRINCIPAL_GRANTS_RETIRED — 该写面已退役（能力已迁 /api/v1/roles 与 /api/v1/bindings）', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+    patch:
+      operationId: patchPrincipalGrants
+      deprecated: true
+      summary: '[RETIRED — 410 tombstone] 管理员直授写面 (PLAN-0585) 的写入入口'
+      description: '同 GET：恒 `410 PRINCIPAL_GRANTS_RETIRED`。请求体形状仅为历史记录（`{add:[{actionClass,resource}], remove:[...]}`），不再解析。'
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: username, required: true, schema: { type: string } }
+      requestBody: { required: false, content: { application/json: { schema: { type: object, additionalProperties: true, properties: { add: { type: array, items: { type: object } }, remove: { type: array, items: { type: object } } } } } } }
+      responses:
+        '410': { description: 'PRINCIPAL_GRANTS_RETIRED', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
   /api/v1/roles/catalog:
     get:
       operationId: getRoleCatalog
@@ -4550,6 +4746,14 @@ components:
     RuntimeReadFileRequest: { type: object, required: [path], additionalProperties: false, properties: { path: { type: string, description: 'Workspace-relative path.' }, max_bytes: { type: integer, description: 'Truncate content to N bytes; truncated=true marks an applied cut.' } } }
     WorkspaceFactsResult: { type: object, required: [isRepository, cwd, platform, shell, observedAt], properties: { isRepository: { type: boolean }, branch: { type: string, description: 'Omitted when non-repo or detached.' }, head: { type: string }, cwd: { type: string, nullable: true, description: 'Logical sandbox cwd (/workspace in docker); null = unknown (host/mxc never report host paths).' }, platform: { type: string, nullable: true, description: 'Execution-face OS (container OS in docker, Runtime host OS otherwise).' }, shell: { type: string, nullable: true, description: 'Tool-exec shell entry (xihe-shell in docker); null = no shell layer or unknown.' }, observedAt: { type: string, format: date-time, description: 'Report time (RFC3339 UTC); diagnostics only, never an idempotency key.' } } }
     RuntimeReadFileResult: { type: object, required: [found, content, truncated], properties: { found: { type: boolean, description: 'false = path resolved to no content (missing file or unmaterialized root); true = content authoritative even when empty string.' }, content: { type: string, description: 'File content; empty string when found=false or the file is empty (distinguish via found).' }, truncated: { type: boolean } } }
+    AgentCheckpointOwnerRequest: { type: object, additionalProperties: false, required: [sessionId, userId, workspaceId], description: 'BL-320 批 1: owner scope of one checkpoint thread. CP validates the triple before every read/write — a checkpoint is never addressable across owners (an unrelated thread answers 404, never a 403 oracle).', properties: { sessionId: { type: string, format: uuid }, userId: { type: string, format: uuid }, workspaceId: { type: string, format: uuid } } }
+    AgentCheckpointLineageRequest: { type: object, additionalProperties: false, required: [sessionId, userId, workspaceId], properties: { sessionId: { type: string, format: uuid }, userId: { type: string, format: uuid }, workspaceId: { type: string, format: uuid }, sourceRunId: { type: [string, 'null'], format: uuid, description: 'Run that produced the graph; recorded on the lineage and used to narrow the owner scope.' }, probeId: { type: [string, 'null'], format: uuid, description: 'Probe identity when the lineage belongs to a probe run.' }, producerVersion: { type: [string, 'null'], description: 'Producer checkpoint-format version (diagnostic only).' } } }
+    AgentCheckpointLineageView: { type: object, additionalProperties: false, required: [lineageId, threadId, sessionId, schemaVersion, createdAt], properties: { lineageId: { type: string, format: uuid }, threadId: { type: string, format: uuid }, sessionId: { type: string, format: uuid }, sourceRunId: { type: [string, 'null'], format: uuid }, probeId: { type: [string, 'null'], format: uuid }, branchId: { type: [string, 'null'], format: uuid }, userId: { type: [string, 'null'], format: uuid }, workspaceId: { type: [string, 'null'], format: uuid }, schemaVersion: { type: integer }, createdAt: { type: string, format: date-time }, producerVersion: { type: [string, 'null'] } } }
+    AgentCheckpointPutRequest: { type: object, additionalProperties: false, required: [sessionId, userId, workspaceId, checkpointNs, checkpointId, payloadType, payloadBase64], description: 'One serialized checkpoint. `payloadBase64` is opaque to CP (it stores bytes, it never parses graph state); re-putting the same checkpointId overwrites rather than duplicating.', properties: { sessionId: { type: string, format: uuid }, userId: { type: string, format: uuid }, workspaceId: { type: string, format: uuid }, checkpointNs: { type: string, description: 'LangGraph checkpoint namespace (empty string is valid).' }, checkpointId: { type: string, format: uuid }, parentCheckpointId: { type: [string, 'null'], format: uuid, description: 'Parent link; validated against the same thread.' }, payloadType: { type: string }, payloadBase64: { type: string, contentEncoding: base64 }, metadata: { type: [object, 'null'], additionalProperties: true, description: 'Caller metadata (step/source/…); stored as JSONB, never interpreted by CP.' } } }
+    AgentCheckpointWriteValue: { type: object, additionalProperties: false, required: [channel, payloadType, payloadBase64], properties: { channel: { type: string }, payloadType: { type: string }, payloadBase64: { type: string, contentEncoding: base64 }, writeIndex: { type: [integer, 'null'] } } }
+    AgentCheckpointWritesView: { type: object, additionalProperties: false, required: [taskId, channel, payloadType, payloadBase64, writeIndex], properties: { taskId: { type: string }, channel: { type: string }, payloadType: { type: string }, payloadBase64: { type: string, contentEncoding: base64 }, writeIndex: { type: integer } } }
+    AgentCheckpointPutWritesRequest: { type: object, additionalProperties: false, required: [sessionId, userId, workspaceId, checkpointNs, checkpointId, taskId, writes], description: 'Pending writes of the checkpoint''s next tasks. Idempotent per (checkpointId, taskPath, channel): a re-post replaces the same write instead of appending.', properties: { sessionId: { type: string, format: uuid }, userId: { type: string, format: uuid }, workspaceId: { type: string, format: uuid }, checkpointNs: { type: string }, checkpointId: { type: string, format: uuid }, taskId: { type: string }, taskPath: { type: [string, 'null'] }, writes: { type: array, items: { $ref: '#/components/schemas/AgentCheckpointWriteValue' } } } }
+    AgentCheckpointView: { type: object, additionalProperties: false, required: [threadId, checkpointNs, checkpointId, payloadType, payloadBase64, sessionId, schemaVersion, createdAt], description: 'BL-320 批 1: one stored checkpoint plus its still-pending writes. `payloadBase64` is the opaque graph state; `pendingWrites` are the un-consumed writes attached to it.', properties: { threadId: { type: string, format: uuid }, checkpointNs: { type: string }, checkpointId: { type: string, format: uuid }, parentCheckpointId: { type: [string, 'null'], format: uuid }, payloadType: { type: string }, payloadBase64: { type: string, contentEncoding: base64 }, lineageId: { type: [string, 'null'], format: uuid }, sourceRunId: { type: [string, 'null'], format: uuid }, sessionId: { type: string, format: uuid }, branchId: { type: [string, 'null'], format: uuid }, userId: { type: [string, 'null'], format: uuid }, workspaceId: { type: [string, 'null'], format: uuid }, schemaVersion: { type: integer }, createdAt: { type: string, format: date-time }, producerVersion: { type: [string, 'null'] }, metadata: { type: [object, 'null'], additionalProperties: true }, pendingWrites: { type: array, items: { $ref: '#/components/schemas/AgentCheckpointWritesView' } } } }
     AgentSpawnRequest: { type: object, required: [parentRunId, toolCallId], additionalProperties: false, properties: { parentRunId: { type: string, format: uuid }, toolCallId: { type: string, format: uuid, description: 'Canonical MCP tool-call correlation ID for the spawn invocation.' } } }
     AgentSpawnResponse: { type: object, required: [sessionId, runId, principalId, workspaceId], properties: { sessionId: { type: string, format: uuid }, runId: { type: string, format: uuid }, principalId: { type: string, format: uuid, description: 'Stable AgentPrincipal resolved from the durable parent Session; never taken from the request' }, workspaceId: { type: string, format: uuid } } }
     RegisterRequest: { type: object, required: [email, name], properties: { email: { type: string }, password: { type: string, description: 'Optional in local mode (server generates one); required otherwise' }, name: { type: string }, username: { type: string, maxLength: 32, pattern: '^[A-Za-z\u4e00-\u9fff][A-Za-z0-9\u4e00-\u9fff]*$', description: 'PLAN-0565 ruling #7 + 决策 v29 (2026-11-04): optional; blank derives a unique default from the email local part. Explicit values follow the shared name rule (letters any case / Chinese characters / digits, no leading digit, no spaces or symbols, 1-32 chars); invalid shape is 400 USERNAME_INVALID, taken is 409 USERNAME_TAKEN.' } } }

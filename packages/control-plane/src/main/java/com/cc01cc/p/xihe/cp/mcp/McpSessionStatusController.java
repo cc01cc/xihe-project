@@ -51,19 +51,19 @@ public class McpSessionStatusController {
             "WORKSPACE_MATERIALIZATION_FAILED", HttpStatus.SERVICE_UNAVAILABLE);
 
     @PreAuthorize("isAuthenticated()")
-    @GetMapping("/api/v1/workspaces/{wsId}/mcp/servers")
-    public ResponseEntity<?> mcpServers(@PathVariable String wsId) {
+    @GetMapping("/api/v1/workspaces/{workspaceId}/mcp/servers")
+    public ResponseEntity<?> mcpServers(@PathVariable String workspaceId) {
         String userId = TenantContext.getUserId();
         if (userId == null) {
             return ProblemDetailsHandler.missingPrincipal("Authentication context is required");
         }
         try {
-            workspaceService.requireAccessibleWorkspace(wsId, userId);
+            workspaceService.requireAccessibleWorkspace(workspaceId, userId);
         } catch (CpApiException e) {
             return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
         }
 
-        RuntimeMcpSessionClient.Result result = runtimeMcpSessionClient.fetchServers(wsId);
+        RuntimeMcpSessionClient.Result result = runtimeMcpSessionClient.fetchServers(workspaceId);
         if (result.unreachable()) {
             return ProblemDetailsHandler.problemResponse(
                     HttpStatus.BAD_GATEWAY, "RUNTIME_UNAVAILABLE", "Runtime MCP session query failed");
