@@ -90,6 +90,15 @@ function expectWithinBudget(label: string, actual: number, threshold: number) {
 test.describe("BL-329 长会话窗口化预算", () => {
     test.use({ viewport: { width: 1440, height: 900 } });
 
+    /**
+     * BL-340 §20 语义判定（2026-11-06 读码审计）：**本用例的滚动全部是"程序化滚动"**，
+     * 且**其断言不依赖用户意图语义**，因此保持现状即可——
+     * - 初始到底（app 的 `defaultScrollPosition`）、滚到中部、往返到顶/到底：只关心**几何**（窗口换页后行数/DOM 是否回收），
+     *   不关心 `mode`；脚本设 `scrollTop` 不置用户意图（`messageScrollerViewport.vue` 的 wheel/touchmove/键盘白名单才会置位）。
+     * - **潜在坑（不是当前缺陷）**：若将来在此用例里加"流式内容到达时是否保持跟随"这类断言，
+     *   **必须先 `dispatchEvent(new WheelEvent("wheel", { deltaY: -120 }))`** 再改位置，否则测到的是程序化滚动语义（会被跟随逻辑拽回）。
+     * - long-task 采集用的是脚本滚动循环，**不含 wheel 事件处理成本**，因此是真实滚动的**下界**（结论偏乐观，勿当上限引用）。
+     */
     test("2k 消息：渲染行 / DOM / heap / long task 都在预算内，往返后回收", async ({ page }) => {
         test.setTimeout(120_000);
         await setupMockAuth(page);
