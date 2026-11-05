@@ -320,6 +320,10 @@ const messages = {
             agentTemplateChoice: "模板快照",
             agentTemplateLoadFailed: "加载可见智能体模板失败",
             agentCreatedUnbound: "已创建，尚未绑定到此工作区",
+            agentPendingRecoveryNote:
+                "仅当前浏览器可恢复；关闭/刷新后可回到这张卡，换设备或换浏览器请重新创建。",
+            agentPendingRecoveryUnavailable:
+                "无法在本浏览器保存待绑定引用；请保持当前页面打开，或重新创建主体。",
             agentCapNote:
                 "选择工作区权限上限。默认不授予工具权限；权限仍受角色绑定与操作者授权约束。",
             bindAgent: "绑定到此工作区",
@@ -343,16 +347,6 @@ const messages = {
             agentBound: "智能体已绑定到工作区",
             agentCapSaved: "权限上限已保存",
             agentUnboundSuccess: "智能体已从工作区解绑",
-            agentScopeTitle: "共享范围（智能体）",
-            agentScopePersonalTitle: "个人智能体（仅自己可用）",
-            agentScopeWorkspaceTitle: "工作区智能体（本工作区共享）",
-            agentScopeInstanceTitle: "实例智能体（全实例可见）",
-            agentScopeHintPersonal: "创建在你名下；需要 CREATE_OWN_AGENT。绑定到工作区后成员可用。",
-            agentScopeHintWorkspace: "属于本工作区；需要 MANAGE_WORKSPACE_AGENTS。",
-            agentScopeHintInstance: "所有工作区可见；需要 CREATE_ACCOUNT（仅管理员）。",
-            agentScopeLoading: "正在读取你的权限…",
-            agentScopeNone:
-                "你没有创建智能体的权限（需要 CREATE_OWN_AGENT / MANAGE_WORKSPACE_AGENTS / CREATE_ACCOUNT 之一）。请联系管理员在「设置 → 角色与绑定」授予含该原子的角色。",
             agentDefaultModelProvider: "默认模型 provider",
             agentDefaultModelName: "默认模型名",
             agentModelProviderPlaceholder: "例如 openai",
@@ -368,9 +362,6 @@ const messages = {
             agentAllowedModelNameAria: "允许模型的模型名",
             agentAllowedModelsIncomplete: "允许模型集里每一行都要填 provider 与模型名",
             agentAllowedModelsDuplicate: "允许模型集里存在重复的 provider + 模型",
-            agentSourceWorkspace: "本工作区智能体",
-            agentSourcePersonal: "个人智能体",
-            agentSourceInstance: "实例智能体",
             agentDisabledBadge: "已禁用",
             agentUnboundBadge: "未绑定",
             disableAgent: "禁用",
@@ -2637,6 +2628,10 @@ const messages = {
             agentTemplateChoice: "Template snapshot",
             agentTemplateLoadFailed: "Failed to load visible Agent templates",
             agentCreatedUnbound: "Created, not bound to this Workspace",
+            agentPendingRecoveryNote:
+                "Only this browser can restore it. After a close/refresh you return to this card; on another device or browser, create the principal again.",
+            agentPendingRecoveryUnavailable:
+                "This browser could not store the pending reference. Keep this page open, or create the principal again.",
             agentCapNote:
                 "Choose the Workspace permission cap. No tool permissions are granted by default; principal and operator grants still apply.",
             bindAgent: "Bind to this Workspace",
@@ -2660,18 +2655,6 @@ const messages = {
             agentBound: "Agent bound to the Workspace",
             agentCapSaved: "Permission cap saved",
             agentUnboundSuccess: "Agent unbound from the Workspace",
-            agentScopeTitle: "Shared scope (agent)",
-            agentScopePersonalTitle: "Personal agent (only you)",
-            agentScopeWorkspaceTitle: "Workspace agent (shared with this Workspace)",
-            agentScopeInstanceTitle: "Instance agent (visible to every Workspace)",
-            agentScopeHintPersonal:
-                "Owned by you; requires CREATE_OWN_AGENT. Members can use it once bound to a Workspace.",
-            agentScopeHintWorkspace: "Belongs to this Workspace; requires MANAGE_WORKSPACE_AGENTS.",
-            agentScopeHintInstance:
-                "Visible to every Workspace; requires CREATE_ACCOUNT (administrators only).",
-            agentScopeLoading: "Reading your permissions…",
-            agentScopeNone:
-                "You cannot create an Agent (needs one of CREATE_OWN_AGENT / MANAGE_WORKSPACE_AGENTS / CREATE_ACCOUNT). Ask an administrator to bind a role carrying that atom under Settings → Roles & bindings.",
             agentDefaultModelProvider: "Default model provider",
             agentDefaultModelName: "Default model name",
             agentModelProviderPlaceholder: "e.g. openai",
@@ -2690,9 +2673,6 @@ const messages = {
             agentAllowedModelsIncomplete:
                 "Every allowed-model row needs both a provider and a model name",
             agentAllowedModelsDuplicate: "Duplicate provider + model in the allowed set",
-            agentSourceWorkspace: "Workspace agent",
-            agentSourcePersonal: "Personal agent",
-            agentSourceInstance: "Instance agent",
             agentDisabledBadge: "Disabled",
             agentUnboundBadge: "Not bound",
             disableAgent: "Disable",
