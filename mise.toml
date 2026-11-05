@@ -385,9 +385,21 @@ description = "Dry-run list of prunable CP build dirs per stack (keep newest 3 +
 dir = "."
 alias = "dev:host:cp-build:clean"
 
+# PLAN-0632 T4.4（方案 C，2026-11-05）：起 Agent 之前先等 CP readiness。
+# 只约束 agent（cp/runtime/ui 仍在同一并行 group）；等待有界（默认 60s，`XIHE_WAIT_FOR_CP_TIMEOUT` 可覆盖），
+# 超时由 wait-for-cp.mjs **显式失败**（exit 1 + 最后状态 + CP 日志路径）⇒ mise depends 中止，不会起 agent。
+# 依据：CP 不可达时 Agent 启动 config sync 白跑 2.81s 并 degraded 到下次刷新（D32-22/D32-27；实测见
+# `one/.local/evidence/plan-0632-closeout.md` §T4.4）。
+[tasks."dev:host:wait-for-cp"]
+run = "node scripts/wait-for-cp.mjs"
+description = "Wait for CP /actuator/health == 200 before starting the Agent (bounded; default 60s, XIHE_WAIT_FOR_CP_TIMEOUT override; timeout fails loudly)"
+dir = "."
+alias = "dev:host:wait-for-cp"
+
 [tasks."dev:host:start:agent"]
+depends = ["dev:host:wait-for-cp"]
 run = "node ../../scripts/stack-run.mjs agent"
-description = "Start Agent (port from XIHE_STACK_ID)"
+description = "Start Agent (port from XIHE_STACK_ID); waits for CP readiness first (PLAN-0632 T4.4)"
 dir = "packages/agent"
 env = { XIHE_ENV = "dev" }
 alias = "dev:host:start:agent"

@@ -212,6 +212,8 @@ mvn spring-boot:run -f packages/control-plane/pom.xml
 
 `.env.dev` file records two database configurations (PostgreSQL is default, H2 is commented out). Uncomment to switch.
 
+**Startup order (PLAN-0632 T4.4)**: in `dev:host`, cp/runtime/ui still start in parallel, but the **Agent waits for CP readiness first** — `dev:host:wait-for-cp` polls `/actuator/health` until 200 (default cap **60 s**, override with `XIHE_WAIT_FOR_CP_TIMEOUT`); on timeout it **fails loudly and prints the CP log path** instead of starting the Agent into `degraded` (the old behaviour burned ~2.8 s of startup config sync for nothing). Starting the Agent on its own still works via `mise run dev:host:start:agent` (it carries the wait).
+
 #### Parallel host stacks (PLAN-0533)
 
 `XIHE_STACK_ID` (`stack-1`..`stack-8`, default `stack-1`) selects a stack. The launcher derives ports, compose project, PG database, sandbox container prefix and the log/host-root/state dirs; modules only read the derived `XIHE_*_PORT` env. **Every 1263X port elsewhere in this guide is the stack-1 default.**
