@@ -19,7 +19,8 @@
 //      like 34 real failures. The compile now happens HERE, per shard, so build == what was measured.
 //   2. PROVENANCE GATE. `git status --short` must be empty before the compile and before EACH shard
 //      (else fail-fast: a dirty tree means "I cannot tell you which tree I measured").
-//   3. RECORDED PROVENANCE. The result JSON carries `rev-parse HEAD` before/after, the dirty snapshot,
+//   3. RECORDED PROVENANCE. The result JSON carries `rev-parse HEAD` before/after, the dirty snapshot
+//      (`.local/` evidence writes excluded so a measuring lane stays "clean"; they stay in `rawDirty`),
 //      each shard's targetDir, the compile exit code, and the `build-info.properties` commit/dirty when
 //      the build emits it. A round that cannot answer "which tree, which sha, dirty?" is not evidence.
 //   4. GUARD LITERAL. After compiling, a load-bearing literal (default `instance-admin`, the hard gate
@@ -77,12 +78,19 @@ function git(...args) {
 
 function provenance(label) {
   const raw = git('status', '--short', '--untracked-files=all').split('\n').filter(Boolean);
+  const paths = raw.map((line) => line.replace(/^.{2}\s+/u, '').trim());
+  // BL-326: evidence/bookkeeping writes under `.local/` must not make a measurement round look dirty —
+  // the lane writes evidence while it measures, so counting `.local/` would make every round "cannot
+  // name its tree". They are still kept verbatim in `rawDirty` for audit (nothing is hidden).
+  const isLocalNoise = (path) => path === '.local' || path.startsWith('.local/') || path.startsWith('.local\\');
+  const dirty = paths.filter((path) => !isLocalNoise(path));
   return {
     label,
     head: git('rev-parse', 'HEAD'),
     // JSON 里只放路径（Lead 2026-11-06 定死 `afterDirty: ["docs/…"]` 的形状）；原始 `M`/`??` 前缀另存
     // 供控制台报错用，避免把 git 状态码混进机器可读字段。
-    dirty: raw.map((line) => line.replace(/^.{2}\s+/u, '').trim()),
+    dirty,
+    localNoise: paths.filter(isLocalNoise),
     rawDirty: raw,
     at: new Date().toISOString(),
   };
@@ -286,6 +294,13 @@ const summary = {
   targetRoot: TARGET_ROOT,
   // legacy field kept for old readers; now a real sha instead of `ref: refs/heads/develop`
   head: before.head,
+  // BL-326: the three keys a reader needs to answer "which tree was measured?", mirrored at the top
+  // level because that is where consumers look first. They are mirrors, not new measurements:
+  // `headCommit` === `head`; `dirty` === the (non-`.local/`) before/after union captured below;
+  // `targetDir` === `targetRoot` (each shard's own dir stays in `shards[].targetDir`).
+  headCommit: before.head,
+  targetDir: TARGET_ROOT,
+  dirty: afterDirty,
   headStable,
   provenance: { before, after, shards: shards.map((shard) => shard.provenance) },
   javaToolOptions: process.env.JAVA_TOOL_OPTIONS ?? null,
