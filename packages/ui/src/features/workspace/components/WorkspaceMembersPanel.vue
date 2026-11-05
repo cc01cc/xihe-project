@@ -297,9 +297,15 @@ onMounted(() => {
             </p>
         </div>
 
-        <!-- BL-344 残留：加人表单**常驻挂载**（无 v-if），只读/未知时用 :disabled 降级，
-             保证列表刷新与能力解析都不会替换 input/button 节点（host E2E 首帧竞态的根因）。 -->
-        <div class="border rounded-lg p-4 space-y-3" data-testid="ws-members-add">
+        <!-- BL-344 残留：加人表单**常驻挂载**（无 v-if），保证列表刷新与能力解析都不替换
+             input/button 节点。可见性用 `hidden` 类而不是 `v-if`：
+             - `readonly === true`（确定只读）⇒ 不可见但留在 DOM（只读用户不该看到一排禁用控件）；
+             - `readonly === undefined`（未知/首帧）⇒ 可见但控件 disabled（未解析 ≠ 只读）。 -->
+        <div
+            class="border rounded-lg p-4 space-y-3"
+            :class="{ hidden: props.readonly === true }"
+            data-testid="ws-members-add"
+        >
             <div class="text-sm font-medium">{{ t("workspace.membersAddTitle") }}</div>
             <div class="grid gap-2 sm:grid-cols-[1fr_auto_auto]">
                 <Input

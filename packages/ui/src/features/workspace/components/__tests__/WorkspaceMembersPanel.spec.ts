@@ -168,9 +168,11 @@ describe("WorkspaceMembersPanel", () => {
         wrapper.unmount();
 
         const readonlyWrapper = await mountPanel(true);
-        // BL-344 残留：只读不再"隐藏表单"，而是**保留节点 + 禁用控件**（否则节点替换会让
-        // host E2E 的 fill→click 命中 detached 节点）。
-        expect(readonlyWrapper.find('[data-testid="ws-members-add"]').exists()).toBe(true);
+        // BL-344 残留：只读不再"隐藏表单"（v-if），而是**保留节点 + hidden 类 + 禁用控件**
+        // （否则节点替换会让 host E2E 的 fill→click 命中 detached 节点）。
+        const readonlyForm = readonlyWrapper.get('[data-testid="ws-members-add"]');
+        expect(readonlyForm.exists()).toBe(true);
+        expect(readonlyForm.classes()).toContain("hidden");
         expect(
             (
                 readonlyWrapper.get('[data-testid="ws-members-add-input"]')
@@ -209,12 +211,14 @@ describe("WorkspaceMembersPanel", () => {
      * `workspaceRole === undefined ⇒ canManageWorkspace=false ⇒ readonly=true` ⇒ 加人表单
      * **不渲染**，role 解析后才挂载 ⇒ host E2E 的 `fill()` 落在随后被替换的节点上（detached）。
      */
-    it("三态：readonly 未解析（undefined）时加人表单已挂载但控件禁用", async () => {
+    it("三态：readonly 未解析（undefined）时加人表单可见但控件禁用", async () => {
         const wrapper = await mountPanel();
         await wrapper.setProps({ readonly: undefined });
 
+        const form = wrapper.get('[data-testid="ws-members-add"]');
+        expect(form.exists(), "readonly 未知时表单必须已挂载（修前首帧不渲染）").toBe(true);
+        expect(form.classes(), "未知 ≠ 只读：容器可见").not.toContain("hidden");
         const input = wrapper.get('[data-testid="ws-members-add-input"]');
-        expect(input.exists(), "readonly 未知时表单必须已挂载（修前首帧不渲染）").toBe(true);
         expect((input.element as HTMLInputElement).disabled, "未知态按不可用渲染").toBe(true);
         expect(
             (wrapper.get('[data-testid="ws-members-add-btn"]').element as HTMLButtonElement)
@@ -223,12 +227,16 @@ describe("WorkspaceMembersPanel", () => {
         wrapper.unmount();
     });
 
-    it("三态：确定只读时表单仍存在但禁用（禁用而非卸载）", async () => {
+    it("三态：确定只读时表单仍挂载但视觉隐藏（hidden 类，不卸载）", async () => {
         const wrapper = await mountPanel(true);
 
-        const input = wrapper.get('[data-testid="ws-members-add-input"]');
-        expect(input.exists(), "确定只读时也不卸载，避免节点被替换").toBe(true);
-        expect((input.element as HTMLInputElement).disabled).toBe(true);
+        const form = wrapper.get('[data-testid="ws-members-add"]');
+        expect(form.exists(), "确定只读时也不卸载，避免节点被替换").toBe(true);
+        expect(form.classes(), "只读 ⇒ 视觉隐藏（hidden 类），不是 v-if").toContain("hidden");
+        expect(
+            (wrapper.get('[data-testid="ws-members-add-input"]').element as HTMLInputElement)
+                .disabled,
+        ).toBe(true);
         wrapper.unmount();
     });
 
