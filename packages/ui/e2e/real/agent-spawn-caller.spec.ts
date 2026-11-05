@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { isSessionCreateRequest } from "./helpers/agent-principal";
@@ -62,36 +63,35 @@ function seedUserSpawnPermissions(userId: string, workspaceId: string): void {
     ]);
 }
 
-// D-174 e2e 归因（2026-11-05，Lead 裁定 option A）：旧 fixture 用 SQL 把 SPAWN_AGENT 拼进
-// "最新一条"grant（多原子行 → 违反 uq_grants_role_atom 每行单原子不变量，setWorkspaceCap 重算撞键
-// → 500，P1 证据 .local/evidence/p1-agent-cap-500-evidence）；source='direct' 行被否决
-//（GrantSources.EVALUATION_SOURCES 不含 direct，行是惰性的，spawn 会假红）。改为走公开 API 绑定内置
-// AGENT_DELEGATOR 角色（单原子 SPAWN_AGENT、source=role 且有 role_bindings 背书，materializeSubject
-// 按 desired set 重算时保留）；granter 已 seed SPAWN_AGENT + MANAGE_WORKSPACE_AGENTS（守卫齐备）。
-const AGENT_DELEGATOR_ROLE_ID = "00000000-0000-4000-8000-000000000007";
-
-async function bindSpawnRole(
-    principalId: string,
-    workspaceId: string,
-    headers: Record<string, string>,
-): Promise<void> {
-    const bound = await fetch(
-        `${CP_URL}/api/v1/agent-principals/${principalId}/roles?workspaceId=${workspaceId}`,
-        {
-            method: "POST",
-            headers: { ...headers, "Content-Type": "application/json" },
-            body: JSON.stringify({ roleId: AGENT_DELEGATOR_ROLE_ID }),
-        },
+// BL-314 定性（2026-11-05 18:16，Lead 源码核对 + 真栈 spawn11 实证）：
+// **给 agent 增加能力的合法入口是 instance 面角色绑定**，不是 workspace 角色绑定。
+//   - `AgentBindingAtomPolicy.assertWithinCap` / `AgentPrincipalRoleBindingService.requireWithinCap`
+//     对 instance 绑定（workspaceId == null）直接放行（"pass by construction"）；
+//   - `AgentPrincipalService.validateGrantableRoles` 只查「角色存在 / 非 agent 禁授原子 /
+//     调用者在实例面可授」，**不含 cap 门**，所以创建时带 roleIds 就能把能力物化到主体；
+//   - workspace 角色绑定按 D-180「role=reach」只表达可达性，扩能力必 409 ROLE_BINDING_EXCEEDS_CAP。
+// 因此 fixture 建一条只含 SPAWN_AGENT 的角色，创建主体时用 roleIds 绑到 instance 面，再设 workspace cap。
+function createSpawnCapabilityRole(): string {
+    const suffix = randomUUID().replaceAll("-", "").slice(0, 8).toUpperCase();
+    const roleId = requireUuid(
+        queryIsolatedPostgres(`
+    INSERT INTO roles (id, name, display_name, description, is_system)
+    VALUES (gen_random_uuid(), 'E2E_SPAWN_${suffix}', 'E2E spawn ${suffix}',
+            'E2E fixture: single SPAWN_AGENT atom (BL-314)', FALSE)
+    ON CONFLICT (name) DO UPDATE SET updated_at = NOW()
+    RETURNING id
+  `),
     );
-    if (!bound.ok) {
-        throw new Error(
-            `AGENT_DELEGATOR role binding failed: HTTP ${bound.status} ${(await bound.text()).slice(0, 300)}`,
-        );
-    }
+    queryIsolatedPostgres(`
+    INSERT INTO role_permissions (role_id, action_class, resource_pattern)
+    VALUES ('${roleId}'::uuid, 'SPAWN_AGENT', '*')
+    ON CONFLICT DO NOTHING
+  `);
+    return roleId;
 }
 
-/** setWorkspaceCap/重算之后：SPAWN_AGENT 必须仍以"单原子 + source=role + 有 role_binding 背书"存在。 */
-function assertSpawnGrantSurvivedCapPut(principalId: string): void {
+/** setWorkspaceCap/重算之后：SPAWN_AGENT 必须仍以"单原子 + source=role + role_binding 背书"存在。 */
+function assertSpawnGrantSurvivedCapPut(principalId: string, roleId: string): void {
     const rows = scalarCount(`
     SELECT count(*) FROM grants g
     WHERE g.subject_type = 'agent_principal' AND g.subject_id = '${principalId}'::uuid
@@ -101,7 +101,7 @@ function assertSpawnGrantSurvivedCapPut(principalId: string): void {
       AND EXISTS (
         SELECT 1 FROM role_bindings b
         WHERE b.subject_type = 'agent_principal' AND b.subject_id = g.subject_id
-          AND b.role_id = '${AGENT_DELEGATOR_ROLE_ID}'::uuid)
+          AND b.role_id = '${roleId}'::uuid)
   `);
     if (rows !== 1) {
         throw new Error(
@@ -269,26 +269,18 @@ test("@host Agent spawn uses CP logical MCP, approval retry, and child terminal 
     const workspaceHeaders = { ...owner.headers, "X-Workspace-Id": workspaceId };
     seedUserSpawnPermissions(userId, workspaceId);
 
+    // BL-314：能力走 instance 面角色绑定（创建时 roleIds）→ 再设 workspace cap。
+    // 不再需要「空 cap 建绑定行 → workspace 绑角色」的三段顺序：那是 D-180「role=reach」下
+    // 唯一会被 cap 门拒绝的走法（409 ROLE_BINDING_EXCEEDS_CAP，spawn11 实证）。
+    const spawnRoleId = createSpawnCapabilityRole();
     const principalResponse = await request.post(`${CP_URL}/api/v1/agent-principals`, {
         headers: workspaceHeaders,
-        data: { name: "CPMCPSpawnE2E" },
+        data: { name: "CPMCPSpawnE2E", roleIds: [spawnRoleId] },
     });
     expect(principalResponse.status(), await principalResponse.text()).toBe(201);
     const principalId = requireUuid(
         ((await principalResponse.json()) as { principalId: string }).principalId,
     );
-    // D-180 三门 + 可见性实测（spawn7/8）定的三段顺序：
-    //   ① 空 cap PUT —— upsert workspace_agents 绑定行（POST roles 的可见性来自该行，缺它 404
-    //      AGENT_PRINCIPAL_NOT_FOUND）；空 cap 不触发 principal-held 门；
-    //   ② 绑 AGENT_DELEGATOR —— 物化 principal 的 SPAWN_AGENT grants（source=role + binding 背书）；
-    //   ③ 真 cap PUT —— principal 已持有 SPAWN_AGENT，principal-exceeding 门通过。
-    const bindOnly = await request.put(
-        `${CP_URL}/api/v1/workspaces/${workspaceId}/agents/${principalId}`,
-        { headers: workspaceHeaders, data: { permissions: [] } },
-    );
-    expect(bindOnly.status(), await bindOnly.text()).toBe(200);
-
-    await bindSpawnRole(principalId, workspaceId, workspaceHeaders);
 
     const bindingResponse = await request.put(
         `${CP_URL}/api/v1/workspaces/${workspaceId}/agents/${principalId}`,
@@ -298,7 +290,7 @@ test("@host Agent spawn uses CP logical MCP, approval retry, and child terminal 
         },
     );
     expect(bindingResponse.status(), await bindingResponse.text()).toBe(200);
-    assertSpawnGrantSurvivedCapPut(principalId);
+    assertSpawnGrantSurvivedCapPut(principalId, spawnRoleId);
     await ensureAgentWorkspaceBinding(workspaceId);
 
     seedPage(page, owner);
