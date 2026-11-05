@@ -116,7 +116,7 @@ updated: 2026-10-25
 
 - **BL-349 已修**：`WS_OWNER/WS_EDITOR/WS_VIEWER` 曾携带 `MEMORY_WRITE_SELF`（agent 禁授原子）⇒ 任何"默认工作区角色绑 agent"403 `ROLE_NOT_GRANTABLE`；V130 删行 + HTTP 回归（`8f9774ff` / `5cf349f8`），真栈 bind 200。
 - **BL-352 已修（不是死锁）**：首绑与 roles 端点顺序未文档化 + 被 BL-349 掩盖；门 1（创建者可见性）保留、`resolveCapFor`/cap 不变量一行未改；正确顺序与授权口径见 `DEV-014 §14b`（反指）。
-- **BL-354 部分**：派生 run 的 NULL principal 已加**日志型**诊断 `run_principal_stamp`（`be388e70`）；**翻硬失败待 `BL-355` 裁定，条目未关闭**。
+- **BL-354 部分**：派生 run 的 NULL principal 已加**日志型**诊断 `run_principal_stamp`（`be388e70`）；**翻硬失败待 `BL-355` 裁定，条目未关闭**。（en 侧暂无本文档，翻译随批次补齐）
 
 ## 已修复 — Chat SSE 生命周期与真实流式（PLAN-230 已完成 M1-M4）
 
