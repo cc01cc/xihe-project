@@ -4,6 +4,10 @@
     {
       "sha": "e69e06c874c9d4b68e6dafcd7323492f08d825f4",
       "reason": "2026-11-06 合并 task/bl352-evidence-note 时才发现首行 75 列超宽（限制 72）；该提交已进 develop 历史且不可改写。流程修复：合并分支前先对分支跑 --range develop..HEAD --enforce。"
+    },
+    {
+      "sha": "0c8d8f7ec6470a4c88f64cd5c7e8b5174062c203",
+      "reason": "2026-11-06 合并 task/bl352-evidence-note 时才发现首行 77 列超宽（限制 72）；已进 develop 不可改写。流程要求：提交前跑 node scripts/check-commit-msg.mjs --file <msg>，合并前对分支跑 --range develop..HEAD --enforce。"
     }
   ]
 }
