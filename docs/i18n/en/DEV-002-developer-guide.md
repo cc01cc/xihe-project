@@ -156,6 +156,12 @@ mise run test:cp
 mise run dev:runtime
 mise run test:runtime
 
+# BL-262 race gate: serial once + parallel 3x (milestone / post-race-fix; NOT part of validate)
+mise run test:runtime:lib:gate
+# BL-262 ignored-suite tiers: explicit test names + measured timeouts (NOT part of validate)
+mise run test:runtime:lib:ignored:isolated
+mise run test:runtime:lib:ignored:functional
+
 # e2e fixture self-tests (fake LLM chain state machine; no stack, seconds) — part of `validate`
 mise run test:e2e:fixtures
 

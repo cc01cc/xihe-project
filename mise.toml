@@ -131,8 +131,8 @@ description = "Run all tests"
 alias = "test"
 
 [tasks."test:cli"]
-run = "node --test scripts/xihe-cli.test.mjs scripts/xihe-cli/skill.test.mjs scripts/lib/stack-ports.test.mjs scripts/lib/env-file.test.mjs scripts/lib/service-supervisor.test.mjs scripts/lib/llm-env.test.mjs scripts/lib/cp-boot-plan.test.mjs scripts/lib/e2e-rounds.test.mjs scripts/lib/e2e-host-cli.test.mjs scripts/stack-run.test.mjs scripts/e2e-host-readiness.test.mjs scripts/test-wiring.test.mjs scripts/pkg/phase-parity.test.mjs scripts/pkg/ports-json.test.mjs scripts/pkg/launcher-security.test.mjs scripts/pkg/launcher-security-behavior.test.mjs scripts/env-log-level.test.mjs scripts/lib/stack-cargo-target.test.mjs scripts/lib/stack-orphan.test.mjs scripts/lib/kill-guard.test.mjs scripts/lib/cp-build-info.test.mjs scripts/lib/cp-build-dir.test.mjs scripts/__tests__/check-event-keys.test.mjs"
-description = "Run every scripts/**/*.test.mjs unit test — the file list is explicit and pinned by scripts/test-wiring.test.mjs (a new test file that is not listed turns that meta test red)"
+run = "node --test scripts/xihe-cli.test.mjs scripts/xihe-cli/skill.test.mjs scripts/lib/stack-ports.test.mjs scripts/lib/env-file.test.mjs scripts/lib/service-supervisor.test.mjs scripts/lib/llm-env.test.mjs scripts/lib/cp-boot-plan.test.mjs scripts/lib/e2e-rounds.test.mjs scripts/lib/e2e-host-cli.test.mjs scripts/stack-run.test.mjs scripts/e2e-host-readiness.test.mjs scripts/test-wiring.test.mjs scripts/pkg/phase-parity.test.mjs scripts/pkg/ports-json.test.mjs scripts/pkg/launcher-security.test.mjs scripts/pkg/launcher-security-behavior.test.mjs scripts/env-log-level.test.mjs scripts/lib/stack-cargo-target.test.mjs scripts/lib/stack-orphan.test.mjs scripts/lib/kill-guard.test.mjs scripts/lib/cp-build-info.test.mjs scripts/lib/cp-build-dir.test.mjs scripts/__tests__/check-event-keys.test.mjs scripts/check-test-global-state.test.mjs scripts/run-with-timeout.test.mjs && node scripts/check-test-global-state.mjs"
+description = "Run every scripts/**/*.test.mjs unit test (explicit file list pinned by scripts/test-wiring.test.mjs) + BL-262 static guard: no unguarded process-global mutation in Rust test code"
 alias = "test:cli"
 
 [tasks."test:mock"]
@@ -187,6 +187,56 @@ run = "cargo test --lib"
 description = "Run runtime unit tests only (no Docker needed)"
 dir = "packages/runtime"
 alias = "test:runtime:lib"
+
+# BL-262（2026-11-04）：竞态复验门。串行 1 次证明"确定性绿"，并行 3 连跑逼调度变化——
+# 单次并行通过没有说服力，连跑才暴露抢全局状态。**故意不进 validate**：日常 validate 保持
+# 并行 ~5.5s 的手感，本任务只在里程碑 / 竞态类修复后跑（约 1 分钟，串行那趟 ~41s）。
+# 为什么不把日常那档改串行：串行跑不出并行能暴露的竞态 = 消灭证据（负例恒真同型陷阱）。
+[tasks."test:runtime:lib:gate"]
+run = [
+  "cargo test --locked --lib -- --test-threads=1",
+  "cargo test --locked --lib",
+  "cargo test --locked --lib",
+  "cargo test --locked --lib"
+]
+description = "BL-262 gate: serial once + parallel 3x (milestone / post-race-fix verification; not part of validate)"
+dir = "packages/runtime"
+alias = "test:runtime:lib:gate"
+
+# BL-262 ignored 套件两档（2026-11-04 Lead 批准；**都不进 validate**）。
+# 19 条 `--ignored` 里 0 条需要 Docker；盲跑 `--ignored` 会挂：2 条子进程 helper（单独跑无意义）、
+# 10 条 200x/10k 基准或手动诊断（分钟级）、3 条读真实 dev store（env 驱动）、1 条 symlink 需特权。
+# 故按**显式列名**分两档，其余保持手动；分类表见 one/.local/bl229-evidence/ignored-suite-triage.md。
+#
+# 共同前置：host git ≥ 2.20（`require_git()` 是 assert，缺失即 FAIL 而非 skip）。
+# 幂等性：全部用 tempdir，不写真实 dev store / home；V3_REPORT_PATH / V3_SYMLINK_REPORT_PATH 只在
+# 显式设置时写报告文件。
+# timeout 取值 = 实测基线 × ~3（2026-11-04 在 bl232 e2e 并行负载下测得，属上限）：
+#   t3_5_no_git_full_chain_smoke 0.13s→60s；p3_migration_tool 1.83s→60s；
+#   p3_migration_verify 1.44s→60s；v6_three_rounds 3.47s→60s；
+#   v3_git_checkout_parity 38.12s→180s；v5_1000_file_restore 13.51s→90s。
+# `cargo test --no-run` 先单独编译，避免冷编译时间被算进被测超时。
+[tasks."test:runtime:lib:ignored:isolated"]
+run = [
+  "cargo test --locked --lib --no-run",
+  "node ../../scripts/run-with-timeout.mjs --timeout-sec 60 -- cargo test --locked --lib -- --ignored --exact checkpoint_api::tests::t3_5_no_git_full_chain_smoke --test-threads=1"
+]
+description = "BL-262 ignored tier 1/2: PATH-stripped no-git smoke, isolated (--test-threads=1); not part of validate"
+dir = "packages/runtime"
+alias = "test:runtime:lib:ignored:isolated"
+
+[tasks."test:runtime:lib:ignored:functional"]
+run = [
+  "cargo test --locked --lib --no-run",
+  "node ../../scripts/run-with-timeout.mjs --timeout-sec 60 -- cargo test --locked --lib -- --ignored --exact checkpoint::tests::p3_migration_tool_backfills_git_only_history --test-threads=1",
+  "node ../../scripts/run-with-timeout.mjs --timeout-sec 60 -- cargo test --locked --lib -- --ignored --exact checkpoint::tests::p3_migration_verify_store_matches_shadow --test-threads=1",
+  "node ../../scripts/run-with-timeout.mjs --timeout-sec 60 -- cargo test --locked --lib -- --ignored --exact checkpoint::tests::v6_three_rounds_self_git_self_restore_history --test-threads=1",
+  "node ../../scripts/run-with-timeout.mjs --timeout-sec 180 -- cargo test --locked --lib -- --ignored --exact checkpoint_store::restore_full::tests::v3_git_checkout_parity --test-threads=1",
+  "node ../../scripts/run-with-timeout.mjs --timeout-sec 90 -- cargo test --locked --lib -- --ignored --exact checkpoint_store::restore_full::tests::v5_1000_file_restore_zero_diff --test-threads=1"
+]
+description = "BL-262 ignored tier 2/2: 5 functional ignored tests, serial + measured timeouts; not part of validate"
+dir = "packages/runtime"
+alias = "test:runtime:lib:ignored:functional"
 
 # [FROZEN 2026-10-07] Compose lane 冻结，见文件头冻结说明
 # [tasks."test:e2e:compose"]
