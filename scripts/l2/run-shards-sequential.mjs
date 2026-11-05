@@ -31,7 +31,12 @@
 //   node scripts/l2/run-shards-sequential.mjs [--root <worktree>] [--out <dir>] [--run-tag <tag>]
 //                                            [--target-root <dir>] [--guard-literal <s>]...
 //                                            [--allow-dirty] [--compile-only]
+//   --root 默认取当前 checkout 的 `git rev-parse --show-toplevel`（BL-362：不再硬编码某个 worktree，
+//   也不再在目录不存在时"只打印一行 fatal 就继续"——启动自检会直接退出并打印实测值）。
 // Env: JAVA_TOOL_OPTIONS must carry the heap cap (e.g. -Xmx4g); this script does not set it silently.
+// Env: 需要能启动 shell 的环境（BL-362）。spawn 用 `shell: true`；若在受限沙箱里仍然 ENOENT，
+//   脚本会打印可操作提示（改在宿主跑 / 或只跑 mvn 后用 solo-rerun.mjs 消费既有结果），
+//   并把 `spawnError` 写进结果 JSON，而不是让整轮静默失败。
 // The old contract ("caller compiled first, runner only runs surefire") is gone on purpose: the caller's
 // compile is precisely what could not be trusted.
 
@@ -52,7 +57,17 @@ const flags = (name) => {
   return values;
 };
 
-const ROOT = resolve(flag('root', 'H:/zeogit/one/A03-xihe/.worktrees/plan-l2-phase3'));
+// BL-362 (bug 1): 不再硬编码一个可能已不存在的 worktree —— 不传 --root 时取当前 checkout 的
+// `git rev-parse --show-toplevel`。实际使用的 ROOT 一律打印（见下方 preflight）：量错树比跑不起来更危险。
+function readToplevel() {
+  try {
+    return execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd: process.cwd(), encoding: 'utf8' }).trim();
+  } catch {
+    return null;
+  }
+}
+const ROOT_ARG = flag('root', null);
+const ROOT = resolve(ROOT_ARG ?? readToplevel() ?? process.cwd());
 const OUT = resolve(flag('out', 'H:/zeogit/one/.tmp/plan-l2-p3'));
 const TARGET_ROOT = resolve(flag('target-root', 'H:/zeotmp'));
 const RUN_TAG = flag('run-tag', `l2-${new Date().toISOString().replace(/[:.]/gu, '-')}`);
@@ -67,6 +82,34 @@ const PYTHON = [
 ].find((candidate) => existsSync(candidate));
 
 mkdirSync(OUT, { recursive: true });
+
+// BL-362: 启动自检 —— 下面三件事任何一件不成立，后面的测量都不可能是证据。上一版在 ROOT 不存在时
+// 只打印 `fatal: cannot change to …` 然后继续跑（最坏情况：量到了错误的树）。现在直接退出，
+// 并把**实测值**打印出来，让人一眼看出错在哪。
+function preflightFail(message, details) {
+  console.error('[preflight] ' + message);
+  for (const line of details) console.error('  ' + line);
+  process.exit(2);
+}
+if (!existsSync(ROOT)) {
+  preflightFail('--root 指向的目录不存在，拒绝测量', [
+    'root    = ' + ROOT,
+    'rootArg = ' + (ROOT_ARG ?? '(未传，取自 git rev-parse --show-toplevel)'),
+    'cwd     = ' + process.cwd(),
+    'usage   = node scripts/l2/run-shards-sequential.mjs --root <存在的 checkout> ...',
+  ]);
+}
+if (!existsSync(MODULE)) {
+  preflightFail('ROOT 下没有 packages/control-plane，拒绝测量', ['root = ' + ROOT, 'module = ' + MODULE]);
+}
+const HEAD_PROBE = git('rev-parse', 'HEAD');
+if (!/^[0-9a-f]{7,40}$/u.test(HEAD_PROBE)) {
+  preflightFail('git rev-parse HEAD 不可用，拒绝测量（无法命名被测的树）', [
+    'root = ' + ROOT,
+    'git  = ' + HEAD_PROBE,
+  ]);
+}
+console.log('[preflight] root=' + ROOT + ' head=' + HEAD_PROBE + ' module=' + MODULE + ' python=' + (PYTHON ?? '(none)'));
 
 function git(...args) {
   try {
@@ -103,18 +146,43 @@ function assertClean(snapshot) {
   throw new Error(`dirty working tree at ${snapshot.label}; a round that cannot name the tree it measured is not evidence`);
 }
 
+// BL-362 (bug 2): 旧写法 spawn(ComSpec, ['/c', command]) 在受限环境里会 ENOENT（cmd.exe 明明存在却
+// 起不来），且失败没有任何可操作提示。现在用 shell: true 让 Node 自己选 shell；spawn 失败会记进
+// 结果（exitCode=-1 + spawnError）并打印可操作提示，不静默、也不伪装成"测试失败"。
 function run(command, logPath) {
   const startedAt = Date.now();
   return new Promise((done) => {
-    const shell = process.platform === 'win32' ? (process.env.ComSpec || 'cmd.exe') : 'sh';
-    const child = spawn(shell, ['/c', command], { cwd: MODULE, stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn(command, { cwd: MODULE, shell: true, stdio: ['ignore', 'pipe', 'pipe'] });
     const chunks = [];
+    let settled = false;
+    const elapsed = () => Number(((Date.now() - startedAt) / 1000).toFixed(1));
+    const finish = (payload) => {
+      if (settled) return;
+      settled = true;
+      done(payload);
+    };
     child.stdout.on('data', (buffer) => chunks.push(buffer));
     child.stderr.on('data', (buffer) => chunks.push(buffer));
+    child.on('error', (error) => {
+      const text = Buffer.concat(chunks).toString('utf8');
+      const hint = error.code === 'ENOENT'
+        ? 'spawn 失败（ENOENT）：本脚本需要能启动 shell 的环境。请在宿主 PowerShell/Terminal 运行；'
+          + '若在受限沙箱内，请在沙箱外执行，或只跑 mvn 后用 solo-rerun.mjs 消费既有结果。'
+        : 'spawn 失败：' + error.message;
+      writeFileSync(logPath, text + '\n[spawn-error] ' + hint + '\n', 'utf8');
+      console.error('[spawn] ' + hint);
+      finish({
+        command,
+        exitCode: -1,
+        wallSeconds: elapsed(),
+        logPath,
+        spawnError: { code: error.code ?? null, message: error.message, hint },
+      });
+    });
     child.on('close', (code) => {
       const text = Buffer.concat(chunks).toString('utf8');
       writeFileSync(logPath, text, 'utf8');
-      done({ command, exitCode: code, wallSeconds: Number(((Date.now() - startedAt) / 1000).toFixed(1)), logPath });
+      finish({ command, exitCode: code, wallSeconds: elapsed(), logPath });
     });
   });
 }
