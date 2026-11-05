@@ -369,15 +369,17 @@ public class AgentPrincipalService {
         // unscoped reads let A's workspace-A write reach into workspace B.
         Set<GrantIntersectionEvaluator.PermissionAtom> principalPermissions =
                 principalEffectiveAtoms(principalId, workspaceId);
-        // D-174 + D-180: BOTH sides evaluate in the TARGET workspace (instance rows participate
-        // everywhere, a workspace row only for its own workspace) — the pre-fix unscoped
-        // `findBySubjectTypeAndSubjectId` reads let A's workspace-A write reach into workspace B.
         Set<GrantIntersectionEvaluator.PermissionAtom> actorPermissions = evaluator.union(
                 grantRepository.findScopedGrants(GrantPrincipalPathResolver.USER, actorId,
                         GrantSources.EVALUATION_SOURCES, workspaceId));
-        if (!isSubset(cap, principalPermissions) || !isSubset(cap, actorPermissions)) {
+        List<String> overPrincipal = exceeding(cap, principalPermissions);
+        List<String> overActor = exceeding(cap, actorPermissions);
+        if (!overPrincipal.isEmpty() || !overActor.isEmpty()) {
+            // D-160 ③: the refusal names the exceeding atoms per side, in the 409 naming style
+            // (atom@resource) — the grantor must already hold every atom it raises the cap to.
             throw new CpApiException(HttpStatus.FORBIDDEN, "AGENT_PERMISSION_SCOPE_EXCEEDED",
-                    "Workspace cap exceeds current principal or operator permissions");
+                    "Workspace cap exceeds held permissions: principal-exceeding="
+                            + overPrincipal + " actor-exceeding=" + overActor);
         }
 
         WorkspaceAgentId bindingId = new WorkspaceAgentId(principalId, workspaceId);
@@ -1221,6 +1223,14 @@ public class AgentPrincipalService {
     private boolean isSubset(Set<GrantIntersectionEvaluator.PermissionAtom> candidate,
                              Set<GrantIntersectionEvaluator.PermissionAtom> ceiling) {
         return candidate.stream().allMatch(atom -> isCoveredBy(atom, ceiling));
+    }
+
+    /** D-160 ③: the exceeding atoms in the 409 naming style (`atom@resource`), sorted, deduped. */
+    private List<String> exceeding(Set<GrantIntersectionEvaluator.PermissionAtom> cap,
+                                   Set<GrantIntersectionEvaluator.PermissionAtom> ceiling) {
+        return cap.stream().filter(atom -> !isCoveredBy(atom, ceiling))
+                .map(atom -> atom.actionClass() + "@" + atom.resource())
+                .distinct().sorted().toList();
     }
 
     private boolean isCoveredBy(GrantIntersectionEvaluator.PermissionAtom candidate,

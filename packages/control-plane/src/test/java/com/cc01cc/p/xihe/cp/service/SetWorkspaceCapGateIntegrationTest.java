@@ -92,6 +92,13 @@ class SetWorkspaceCapGateIntegrationTest extends AbstractIntegrationTest {
                 () -> agentPrincipalService.setWorkspaceCap(actor.getId().toString(),
                         wsB.getId(), principal, cap));
         assertEquals("AGENT_PERMISSION_SCOPE_EXCEEDED", denied.getCode());
+        // D-160 ③: the refusal names the exceeding atoms per side (409 naming style). The principal
+        // side is clean here (its instance N9 covers B) — the actor's wsA-only N9 is the named gap.
+        assertTrue(denied.getMessage().contains("principal-exceeding=[]"),
+                "principal side holds N9 everywhere: " + denied.getMessage());
+        assertTrue(denied.getMessage().contains("actor-exceeding=["
+                        + ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_POLICY + "@*]"),
+                "the actor-side exceeding atom is named: " + denied.getMessage());
         assertFalse(workspaceAgentRepository.existsById(new WorkspaceAgentId(principal, wsB.getId())),
                 "a refused cap write must leave zero rows");
     }
