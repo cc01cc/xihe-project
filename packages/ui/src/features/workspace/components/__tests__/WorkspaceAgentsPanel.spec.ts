@@ -105,6 +105,10 @@ beforeEach(() => {
     // BL-359：`clearAllMocks` 只清调用记录，**不清 `mockResolvedValueOnce`/`mockRejectedValueOnce`
     // 的未消费队列**；一旦上一条用例留下的 once 值排到本用例，行为就随顺序变化
     // （`toHaveBeenCalledTimes(2)` 因此红）。这里用 `mockReset` 把队列一并清空，再重设默认值。
+    // BL-359：`getWorkspaceAgents` 也有 `mockResolvedValueOnce`（L445 等）——未消费的 once 队列会
+    // 优先于 `mockResolvedValue` 生效，让本用例拿到"另一个智能体"（例如 `memory.enabled=false`），
+    // 于是「新建记忆」按钮 `:disabled` 为 true、点击无效、`v-if` 永不渲染。
+    apiMock.getWorkspaceAgents.mockReset();
     apiMock.getWorkspaceAgentMemories.mockReset();
     apiMock.createAgentMemory.mockReset();
     apiMock.deleteAgentMemory.mockReset();
@@ -1147,7 +1151,11 @@ describe("WorkspaceAgentsPanel memory write surface", () => {
 
     async function mountWithMemory() {
         apiMock.getSelfPermissions.mockResolvedValue(MEMORY_WRITE_GRANTED);
-        apiMock.getWorkspaceAgents.mockResolvedValue([agentWithWritableMemory]);
+        // BL-359：给每次挂载**独立的深拷贝**。组件在「启用记忆」开关里会就地改
+        // `agent.contextPolicy`（`toggleMemoryEnabled` 里 `agent.contextPolicy = merged`），
+        // 若直接把模块级 fixture 交给 mock，上一条用例把 `memory.enabled` 改成 `false` 后会
+        // 永久污染后续用例 ⇒ 「新建记忆」按钮 `:disabled`、点击无效、表单永不渲染。
+        apiMock.getWorkspaceAgents.mockResolvedValue([structuredClone(agentWithWritableMemory)]);
         apiMock.getWorkspaceAgentMemories.mockResolvedValue([
             {
                 id: "memory-1",
