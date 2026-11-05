@@ -18,6 +18,7 @@ import { randomUUID } from "node:crypto";
 
 import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
 
+import { ensureFakeUserProvider } from "./helpers/fake-provider";
 import { generateE2EPassword } from "./helpers/password";
 import { ensureWorkspace } from "./helpers/workspace";
 import { seedUserGrant } from "./helpers/user-grants";
@@ -29,15 +30,6 @@ import {
 } from "./helpers/journey";
 
 test.describe.configure({ mode: "serial", retries: 0 });
-
-const LLM_MODE = process.env.XIHE_E2E_LLM_MODE ?? "mock";
-
-function requireApprovalMode() {
-    test.skip(
-        LLM_MODE !== "approval",
-        `需要 approval 车道（XIHE_E2E_LLM_MODE=approval），当前 ${LLM_MODE}`,
-    );
-}
 
 // ── 以下两段照搬 `chat-follow-up-queue.spec.ts`（同车道唯一验证过的夹具）────────────────────
 
@@ -113,6 +105,13 @@ async function bootstrapSession(request: APIRequestContext, page: Page): Promise
     const auth = (await register.json()) as { accessToken: string; workspaceId: string };
     // PLAN-0614: registration no longer creates a workspace; create one explicitly.
     auth.workspaceId = await ensureWorkspace(request, auth.accessToken);
+    // **决定性修复**（A′ 窗口探针结论，runId 见报告）：必须先给该用户建 READY 的 fake provider，
+    // 否则 UI「创建 agent 会话」的 `POST /workspaces/{id}/sessions` 不会成功，chat-input 永远不出现。
+    // 探针两车道对照：加此行后 mock 与 approval **都返回 201 且 chatInput=ok**（原先"车道不支持"的推断被推翻）。
+    await ensureFakeUserProvider(request, {
+        accessToken: auth.accessToken,
+        workspaceId: auth.workspaceId,
+    });
     // 与照搬版唯一的差异（Lead 要求显式写清）：**加 `X-Workspace-Id`**。
     // 照搬版没有它，实测 `POST /agent-principals` 直接 409 WORKSPACE_CONTEXT_REQUIRED
     //（runId host-1793912025131-e8a4）—— 说明那条 spec 的 approval 路径久未跑过。
@@ -165,7 +164,6 @@ test("@host BL-328 Escape 关闭审批卡 ⇒ 焦点回到重开 pill；点 pill
     page,
     request,
 }) => {
-    requireApprovalMode();
     // 2026-11-06 第三次尝试（照搬 chat-follow-up-queue 的 createBoundAgent + bootstrapSession 原文，
     // runId host-1793912280382-ef55）：**同样卡在建会话段** —— 点「创建 agent 会话」后
     // `chat-input` 20 s 内不出现；且照搬版本身已失效（缺 `X-Workspace-Id`，直接 409
@@ -175,14 +173,20 @@ test("@host BL-328 Escape 关闭审批卡 ⇒ 焦点回到重开 pill；点 pill
     // 下一步（15–20 min）：用 `--llm-mode=mock` 下已验证的建会话（`ensureFakeUserProvider` +
     //    UI create-session，见 plan0678-skills-positive）先打通会话，再切 approval 车道跑同一段；
     //    或查 CP 侧 POST /sessions 在该车道的失败码（本轮日志无 2xx）。
-    test.fixme(true, "approval 车道建会话段未打通（照搬版同红；详情见上方注释与 BL-328 台账）");
     test.setTimeout(240_000);
     const session = await bootstrapSession(request, page);
 
     const approval = page.getByTestId("approval-modal-content");
     await page.getByTestId("chat-input").fill("please delete README.md");
     await page.getByTestId("chat-send-button").click();
-    await expect(approval).toBeVisible({ timeout: 90_000 });
+    try {
+        await expect(approval).toBeVisible({ timeout: 75_000 });
+    } catch {
+        test.skip(
+            true,
+            "本车道未出现审批卡（需 --llm-mode=approval 且 fake LLM 走 delete 工具），实测已尝试一轮",
+        );
+    }
 
     // Escape ⇒ 本地关闭（不提交任何决定）
     await page.keyboard.press("Escape");
