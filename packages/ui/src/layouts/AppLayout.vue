@@ -280,6 +280,7 @@ onUnmounted(() => {
                 - 无页签栏（移动）：`contents`（display:contents）让子节点等价于 `main` 的直接子节点，
                   布局与旧的 `v-else` 分支逐像素一致，但**不换实例**。
             -->
+            <!-- 单一 router-view：断点切换不得换实例（否则路由页面整体重挂、草稿丢失；见 BL-344）。 -->
             <div
                 class="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto"
                 :class="workspaceTabBarVisible ? '' : 'contents'"
