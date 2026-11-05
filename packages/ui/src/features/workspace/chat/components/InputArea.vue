@@ -1116,7 +1116,58 @@ function setDraft(text: string) {
     input.value = text;
 }
 
-defineExpose({ clearDraft, insertMention, setDraft });
+/**
+ * BL-339：深链预填（不代发）。只填空位、不覆盖用户已有输入与已选收件人，
+ * 收件人按本会话候选过滤（未知 id 直接丢弃，不做"猜一个"）。
+ * @param next - 预填载荷：正文 + 可选 to/cc（AGENT 参与者 id）。
+ * @returns 三态：`applied` 已写入；`blocked` 目标位被用户内容占用（保留深链参数，稍后可能生效）；
+ *          `idle` 没有可写内容（例如 id 不在候选里）—— 视为已消费，调用方应清参。
+ */
+function prefillDraft(next: {
+    text: string;
+    to?: string[];
+    cc?: string[];
+}): "applied" | "idle" | "blocked" {
+    let applied = false;
+    let blocked = false;
+    if (next.text) {
+        if (input.value.trim()) {
+            blocked = true;
+        } else {
+            input.value = next.text;
+            applied = true;
+        }
+    }
+    if (next.to?.length) {
+        if (toTargetIds.value.length > 0) {
+            blocked = true;
+        } else {
+            const allowed = new Set(agentParticipants.value.map((item) => item.participantId));
+            const ids = next.to.filter((id) => allowed.has(id));
+            if (ids.length) {
+                toTargetIds.value = ids;
+                applied = true;
+            }
+        }
+    }
+    if (next.cc?.length) {
+        if (ccIds.value.length > 0) {
+            blocked = true;
+        } else {
+            const allowed = new Set(ccCandidates.value.map((item) => item.participantId));
+            const ids = next.cc.filter((id) => allowed.has(id));
+            if (ids.length) {
+                ccIds.value = ids;
+                for (const id of ids) ccSuppressed.delete(id);
+                applied = true;
+            }
+        }
+    }
+    if (applied) return "applied";
+    return blocked ? "blocked" : "idle";
+}
+
+defineExpose({ clearDraft, insertMention, setDraft, prefillDraft });
 </script>
 
 <template>
