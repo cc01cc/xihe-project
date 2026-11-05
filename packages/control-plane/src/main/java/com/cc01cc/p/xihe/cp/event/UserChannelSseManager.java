@@ -1,17 +1,25 @@
 package com.cc01cc.p.xihe.cp.event;
 
 import com.cc01cc.p.xihe.cp.config.CpApiException;
+import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
+import org.springframework.jdbc.core.ConnectionCallback;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.io.IOException;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
 import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -48,9 +56,12 @@ public class UserChannelSseManager implements UserChannelPort {
     static final String EVENT_USER_QUESTION = "user_question";
 
     private final Map<String, Set<Subscriber>> subscribers = new ConcurrentHashMap<>();
+    private final JdbcTemplate jdbc;
+    private final ScheduledExecutorService heartbeat;
 
-    public UserChannelSseManager() {
-        ScheduledExecutorService heartbeat = Executors.newSingleThreadScheduledExecutor(runnable -> {
+    public UserChannelSseManager(JdbcTemplate jdbc) {
+        this.jdbc = jdbc;
+        heartbeat = Executors.newSingleThreadScheduledExecutor(runnable -> {
             Thread thread = new Thread(runnable, "user-channel-heartbeat");
             thread.setDaemon(true);
             return thread;
@@ -59,17 +70,26 @@ public class UserChannelSseManager implements UserChannelPort {
                 TimeUnit.SECONDS);
     }
 
-    /** One live connection of one user (a tab). */
+    @PreDestroy
+    void stopHeartbeat() {
+        heartbeat.shutdown();
+    }
+
+    private record UserState(int tokenVersion, int sessionVersion, boolean usable) { }
+
+    /** One live connection of one user (a tab), bound to the versions at registration. */
     static final class Subscriber {
+        private final UUID userId;
+        private final int tokenVersion;
+        private final int sessionVersion;
         private final SseEmitter emitter;
         private final AtomicBoolean closed = new AtomicBoolean(false);
 
-        Subscriber(SseEmitter emitter) {
+        Subscriber(UUID userId, int tokenVersion, int sessionVersion, SseEmitter emitter) {
+            this.userId = userId;
+            this.tokenVersion = tokenVersion;
+            this.sessionVersion = sessionVersion;
             this.emitter = emitter;
-        }
-
-        SseEmitter emitter() {
-            return emitter;
         }
 
         boolean closeOnce() {
@@ -83,33 +103,46 @@ public class UserChannelSseManager implements UserChannelPort {
      * <p>Refuses the 9th concurrent subscriber with {@code 429 USER_CHANNEL_FULL}: the UI must know
      * the difference between "too many tabs" and a broken connection.</p>
      */
-    public SseEmitter register(String userId) {
-        return subscribe(userId, new SseEmitter(0L));
+    public SseEmitter register(String userId, int tokenVersion) {
+        return subscribe(userId, tokenVersion, new SseEmitter(0L));
     }
 
-    /** Test seam: same cap/invariants, but the caller supplies the emitter. */
-    SseEmitter registerForTest(String userId, SseEmitter emitter) {
-        return subscribe(userId, emitter);
+    /** Test seam: same authentication state and cap, but the caller supplies the emitter. */
+    SseEmitter registerForTest(String userId, int tokenVersion, SseEmitter emitter) {
+        return subscribe(userId, tokenVersion, emitter);
     }
 
-    private SseEmitter subscribe(String userId, SseEmitter emitter) {
-        if (userId == null || userId.isBlank()) {
+    private SseEmitter subscribe(String userId, int tokenVersion, SseEmitter emitter) {
+        UUID userUuid;
+        try {
+            userUuid = UUID.fromString(userId);
+        } catch (IllegalArgumentException | NullPointerException failure) {
             throw new CpApiException(HttpStatus.UNAUTHORIZED, "UNAUTHENTICATED",
                     "The user channel needs an authenticated user");
         }
-        Subscriber subscriber = new Subscriber(emitter);
-        Set<Subscriber> perUser = subscribers.computeIfAbsent(userId, key -> ConcurrentHashMap.newKeySet());
-        if (perUser.size() >= MAX_SUBSCRIBERS_PER_USER) {
-            throw new CpApiException(HttpStatus.TOO_MANY_REQUESTS, "USER_CHANNEL_FULL",
-                    "At most " + MAX_SUBSCRIBERS_PER_USER + " user-channel connections per user");
+        UserState state = readUserState(userUuid);
+        if (state == null || !state.usable() || state.tokenVersion() != tokenVersion) {
+            throw new CpApiException(HttpStatus.UNAUTHORIZED, "UNAUTHENTICATED",
+                    "The user channel needs an authenticated user");
         }
-        perUser.add(subscriber);
+        Subscriber subscriber = new Subscriber(userUuid, tokenVersion, state.sessionVersion(), emitter);
         emitter.onCompletion(() -> remove(userId, subscriber));
         emitter.onTimeout(() -> remove(userId, subscriber));
         emitter.onError(error -> remove(userId, subscriber));
-        sendOne(userId, subscriber, EVENT_CONNECTED, Map.of("serverTime", Instant.now().toString()));
+        synchronized (subscriber) {
+            subscribers.compute(userId, (key, current) -> {
+                Set<Subscriber> perUser = current == null ? ConcurrentHashMap.newKeySet() : current;
+                if (perUser.size() >= MAX_SUBSCRIBERS_PER_USER) {
+                    throw new CpApiException(HttpStatus.TOO_MANY_REQUESTS, "USER_CHANNEL_FULL",
+                            "At most " + MAX_SUBSCRIBERS_PER_USER + " user-channel connections per user");
+                }
+                perUser.add(subscriber);
+                return perUser;
+            });
+            sendOne(userId, subscriber, EVENT_CONNECTED, Map.of("serverTime", Instant.now().toString()));
+        }
         logger.info("[LIFECYCLE] service=cp event=user_channel_connected userId={} connections={}",
-                userId, perUser.size());
+                userId, connectionCount(userId));
         return emitter;
     }
 
@@ -150,19 +183,55 @@ public class UserChannelSseManager implements UserChannelPort {
     }
 
     private void sendOne(String userId, Subscriber subscriber, String event, Object payload) {
-        try {
-            subscriber.emitter().send(SseEmitter.event().name(event).data(payload));
-        } catch (IOException | IllegalStateException failure) {
-            logger.info("[LIFECYCLE] service=cp event=user_channel_send_failed userId={} event={} "
-                    + "reason={}", userId, event, failure.getClass().getSimpleName());
-            remove(userId, subscriber);
-            if (subscriber.closeOnce()) {
-                subscriber.emitter().complete();
+        synchronized (subscriber) {
+            if (subscriber.closed.get()) {
+                return;
+            }
+            try {
+                UserState state = readUserState(subscriber.userId);
+                if (state == null || !state.usable() || state.tokenVersion() != subscriber.tokenVersion
+                        || state.sessionVersion() != subscriber.sessionVersion) {
+                    close(userId, subscriber);
+                    return;
+                }
+                subscriber.emitter.send(SseEmitter.event().name(event).data(payload));
+            } catch (IOException | RuntimeException failure) {
+                logger.info("[LIFECYCLE] service=cp event=user_channel_send_failed userId={} event={} "
+                        + "reason={}", userId, event, failure.getClass().getSimpleName());
+                close(userId, subscriber);
             }
         }
     }
 
-    private void sendHeartbeats() {
+    /**
+     * Read scalar columns, not a potentially stale managed User. JdbcTemplate joins any caller
+     * transaction, avoiding an extra pool connection while WakeDispatchService holds one. At
+     * READ_COMMITTED each statement sees the latest committed row. An existing snapshot transaction
+     * cannot provide that guarantee, so it fails closed instead of sending with stale credentials.
+     * No database row lock is held across the network write; the read is the send's decision point.
+     */
+    private UserState readUserState(UUID userId) {
+        return jdbc.execute((ConnectionCallback<UserState>) connection -> {
+            if (!connection.getAutoCommit()
+                    && connection.getTransactionIsolation() != Connection.TRANSACTION_READ_COMMITTED) {
+                throw new SQLException("User channel requires a current committed user state");
+            }
+            try (PreparedStatement query = connection.prepareStatement(
+                    "SELECT token_version, session_version, status, deleted_at FROM users WHERE id = ?")) {
+                query.setQueryTimeout(2);
+                query.setObject(1, userId);
+                try (ResultSet result = query.executeQuery()) {
+                    if (!result.next()) {
+                        return null;
+                    }
+                    return new UserState(result.getInt("token_version"), result.getInt("session_version"),
+                            "ACTIVE".equals(result.getString("status")) && result.getObject("deleted_at") == null);
+                }
+            }
+        });
+    }
+
+    void sendHeartbeats() {
         for (Map.Entry<String, Set<Subscriber>> entry : subscribers.entrySet()) {
             for (Subscriber subscriber : entry.getValue()) {
                 sendOne(entry.getKey(), subscriber, EVENT_CONNECTED,
@@ -171,13 +240,25 @@ public class UserChannelSseManager implements UserChannelPort {
         }
     }
 
+    private void close(String userId, Subscriber subscriber) {
+        if (subscriber.closeOnce()) {
+            removeFromRegistry(userId, subscriber);
+            subscriber.emitter.complete();
+        }
+    }
+
     private void remove(String userId, Subscriber subscriber) {
-        Set<Subscriber> perUser = subscribers.get(userId);
-        if (perUser != null) {
-            perUser.remove(subscriber);
-            if (perUser.isEmpty()) {
-                subscribers.remove(userId, perUser);
+        synchronized (subscriber) {
+            if (subscriber.closeOnce()) {
+                removeFromRegistry(userId, subscriber);
             }
         }
+    }
+
+    private void removeFromRegistry(String userId, Subscriber subscriber) {
+        subscribers.computeIfPresent(userId, (key, perUser) -> {
+            perUser.remove(subscriber);
+            return perUser.isEmpty() ? null : perUser;
+        });
     }
 }
