@@ -118,7 +118,15 @@ test.describe("@host PLAN-0565 workspace members", () => {
 
         // Add the editor target by username (ruling #7) — real POST + reload.
         await page.getByTestId("ws-members-add-input").fill(editorTarget.username);
-        await page.getByTestId("ws-members-add-btn").click();
+        // 就绪等待（BL-344 残留；证据 `.local/evidence/bl344-members-residual.md` §2）：
+        // 桌面/移动视口切换后成员面板容器会被**替换一次**——旧容器里的输入随之清空、按钮回到 disabled。
+        // 2026-11-06 捕获实证：fill 之后按钮 6 s 不可点、`inputValue` 被清空，而 MutationObserver 在
+        // 被替换的容器内记录到**零 childList** 变更 ⇒ 是**容器节点被换掉**，不是原地重渲染。
+        // 这属于"还没就绪"：等 `toBeEnabled()` 是标准 readiness 纪律（无重试循环、无 waitForTimeout、
+        // 不吞断言）。
+        const addButton = page.getByTestId("ws-members-add-btn");
+        await expect(addButton).toBeEnabled({ timeout: 15000 });
+        await addButton.click();
         await expect(page.getByTestId("ws-members-row")).toHaveCount(2, { timeout: 15000 });
         await expect(page.getByTestId("ws-members-panel")).toContainText(editorTarget.username);
 
