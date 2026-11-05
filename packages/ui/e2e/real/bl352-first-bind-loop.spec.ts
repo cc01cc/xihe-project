@@ -135,6 +135,7 @@ test("@host BL-352 可选正向面：cap 覆盖 BASE_ATOMS 后能否授予 AGENT
     // 这条探"原子集 ⊆ cap 的系统角色是否存在"：
     // ② 授满五原子 ⇒ cap = BASE_ATOMS；AGENT_USER 的原子集恰为 BASE_ATOMS ⇒ 若产品允许，应 201。
     // 若它失败，说明**连唯一的候选系统角色也授不了** ⇒ BL-355 的补强证据（不要自建角色绕过）。
+    // 实测 201（靶 d1f655f4）：AGENT_USER 原子集 == BASE_ATOMS ⇒ 可绑；带 USE_WORKSPACE_RUNTIME 的角色恒 409（BL-355）
     const owner = await registerJourneyUser(request, "bl352-positive-owner");
     const workspaceId = owner.workspaceId;
     const headers = { ...owner.headers, "X-Workspace-Id": workspaceId };
