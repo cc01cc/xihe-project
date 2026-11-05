@@ -159,9 +159,10 @@ public class SystemAccessRoleCatalog {
                                 List.of(AtomRef.wildcard(ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_AGENTS),
                                         AtomRef.wildcard(PermissionAtomCatalog.CAP_WORKSPACE_ADMIN),
                                         // BL-345 (user ruling 2026-11-06, B): workspace administrators
-                                        // write ANY subject's memory; MEMORY_WRITE implies the self
-                                        // face, so evaluation checks MEMORY_WRITE first.
-                                        AtomRef.wildcard(ToolFaceRegistry.ACTION_MEMORY_WRITE_SELF),
+                                        // write ANY subject's memory; MEMORY_WRITE implies the self face.
+                                        // BL-349 (P0): WS_* roles are bindable to agent principals, so they
+                                        // must NOT carry the agent-forbidden self atom — the human USER /
+                                        // ADMIN roles provide "write my own" instead.
                                         AtomRef.wildcard(ToolFaceRegistry.ACTION_MEMORY_WRITE),
                                         // PLAN-0651 M2 T2.1: owner manages skills, providers, runtime
                                         // and workspace policy; N10 (members) stays unassigned by
@@ -188,17 +189,15 @@ public class SystemAccessRoleCatalog {
                                 AtomRef.wildcard(
                                         ToolFaceRegistry.ACTION_MANAGE_PROVIDER_CONNECTIONS),
                                 AtomRef.wildcard(ToolFaceRegistry.ACTION_USE_WORKSPACE_RUNTIME),
-                                // BL-345: an editor writes memory of the principals it owns, never
-                                // of other subjects (that stays owner-level MEMORY_WRITE).
-                                AtomRef.wildcard(ToolFaceRegistry.ACTION_MEMORY_WRITE_SELF),
+                                // BL-349: no MEMORY_WRITE_SELF here — WS_* is agent-bindable and the
+                                // atom is agent-forbidden; the human USER role carries the self face.
                                 AtomRef.wildcard(
                                         ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_POLICY))),
                 new RoleSeed(WS_VIEWER_ID, WS_VIEWER, "Workspace Viewer",
                         "Workspace scope: read only.",
                         List.of(AtomRef.wildcard(ToolFaceRegistry.ACTION_READ),
-                                // BL-345: even a viewer may write memory of the principals it owns;
-                                // reads stay read-only and arbitrary subjects stay owner-level.
-                                AtomRef.wildcard(ToolFaceRegistry.ACTION_MEMORY_WRITE_SELF),
+                                // BL-349: WS_VIEWER is agent-bindable too; the self atom lives on the
+                                // human USER role, never on a workspace role.
                                 // PLAN-0651 M2 T2.1: a viewer may use the workspace runtime (read the
                                 // environment snapshot) but never manage it.
                                 AtomRef.wildcard(

@@ -69,12 +69,24 @@ class MemoryWriteAtomTest {
     }
 
     @Test
-    void selfIsDefaultForEveryHumanRole() {
+    void selfIsDefaultForHumanInstanceRolesOnly() {
         for (String role : List.of(SystemAccessRoleCatalog.USER, SystemAccessRoleCatalog.ADMIN,
-                SystemAccessRoleCatalog.WS_OWNER, SystemAccessRoleCatalog.WS_EDITOR,
-                SystemAccessRoleCatalog.WS_VIEWER)) {
+                SystemAccessRoleCatalog.SUPER_ADMIN)) {
             assertTrue(atomsOf(role).contains(MEMORY_WRITE_SELF),
                     role + " must be able to write memory of the principals it owns");
+        }
+        // BL-349 (P0): WS_* roles are bindable to agent principals, so they may not carry the
+        // agent-forbidden self atom — that combination made every agent workspace binding 403.
+        for (String role : List.of(SystemAccessRoleCatalog.WS_OWNER, SystemAccessRoleCatalog.WS_EDITOR,
+                SystemAccessRoleCatalog.WS_VIEWER)) {
+            assertFalse(atomsOf(role).contains(MEMORY_WRITE_SELF),
+                    role + " must not carry MEMORY_WRITE_SELF (BL-349: agent-bindable roles)");
+        }
+        // WS_OWNER additionally carries the workspace:admin CAPABILITY (agent-forbidden by design and
+        // filtered by the binding gate), so only the action-only roles are fully bindable here.
+        for (String role : List.of(SystemAccessRoleCatalog.WS_EDITOR, SystemAccessRoleCatalog.WS_VIEWER)) {
+            assertTrue(PermissionAtomCatalog.canBindToAgentPrincipal(atomsOf(role)),
+                    role + " must stay bindable to an agent principal (BL-349 regression)");
         }
     }
 

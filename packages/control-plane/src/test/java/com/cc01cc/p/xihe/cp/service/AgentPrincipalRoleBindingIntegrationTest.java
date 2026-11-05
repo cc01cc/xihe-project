@@ -10,6 +10,8 @@ import com.cc01cc.p.xihe.cp.entity.AuthorizationGrant;
 import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.policy.GrantPrincipalPathResolver;
+import com.cc01cc.p.xihe.cp.policy.PermissionAtomCatalog;
+import com.cc01cc.p.xihe.cp.policy.ToolFaceRegistry;
 import com.cc01cc.p.xihe.cp.policy.GrantSources;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
 import com.cc01cc.p.xihe.cp.repository.AccessRoleBindingRepository;
@@ -25,9 +27,13 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -73,6 +79,7 @@ class AgentPrincipalRoleBindingIntegrationTest extends AbstractIntegrationTest {
     private ObjectMapper objectMapper;
 
     private String userId;
+    private String token;
     private UUID workspaceId;
 
     @BeforeEach
@@ -84,6 +91,7 @@ class AgentPrincipalRoleBindingIntegrationTest extends AbstractIntegrationTest {
         assertEquals(HttpStatus.CREATED, registered.getStatusCode());
         User user = userRepository.findByEmail(email).orElseThrow();
         userId = user.getId().toString();
+        token = registered.getBody().getAccessToken();
         Workspace workspace = workspaceFixture.ensureOwnedWorkspace(user.getId());
         workspaceId = workspace.getId();
         workspaceFixture.bindWorkspaceRole(workspaceId.toString(), userId, WorkspaceRole.OWNER);
@@ -105,6 +113,55 @@ class AgentPrincipalRoleBindingIntegrationTest extends AbstractIntegrationTest {
                                 GrantPrincipalPathResolver.AGENT_PRINCIPAL, "workspace", workspaceId)
                         .stream().anyMatch(row -> principal.getId().equals(row.getSubjectId())),
                 "the workspace role binding is the source of that effect");
+    }
+
+    /**
+     * BL-349 (P0 regression guard): BL-345 put MEMORY_WRITE_SELF on WS_* roles, which turned every
+     * "bind an agent to a workspace with a default workspace role" call into 403 ROLE_NOT_GRANTABLE
+     * (the atom is agent-forbidden). This test binds the editor role and asserts both halves of the
+     * fix: the binding succeeds, and the materialized agent atoms never contain SELF.
+     */
+    @Test
+    void defaultWorkspaceRoleBindsToAgentAndCarriesNoAgentForbiddenAtom() {
+        AgentPrincipal principal = createPlainPrincipal("bl349Bindable");
+        bindToWorkspace(principal.getId());
+
+        List<String> atoms = roleAtomNames(principal.getId());
+        assertTrue(atoms.containsAll(List.of("read", "write", "exec")),
+                "the editor binding must take effect: " + atoms);
+        assertFalse(atoms.contains(ToolFaceRegistry.ACTION_MEMORY_WRITE_SELF),
+                "BL-349: a workspace role must not hand MEMORY_WRITE_SELF (agent-forbidden) to an agent");
+        assertTrue(PermissionAtomCatalog.canBindToAgentPrincipal(atoms),
+                "every atom materialized from a workspace role must be agent-bindable");
+    }
+
+    /**
+     * BL-349 end-to-end at the HTTP boundary (the exact call e2e made):
+     * {@code PUT /api/v1/workspaces/{ws}/agents/{principal}} with the default workspace role must
+     * return 200 — before the fix it was 403 ROLE_NOT_GRANTABLE because WS_EDITOR (the default agent
+     * workspace role) carried the agent-forbidden MEMORY_WRITE_SELF. Also asserts the materialized
+     * atoms of the agent no longer contain that atom.
+     */
+    @Test
+    void httpWorkspaceBindingOfDefaultRoleSucceedsAndCarriesNoSelfAtom() {
+        AgentPrincipal principal = createPlainPrincipal("bl349Http");
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(token);
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        headers.add("X-Workspace-Id", workspaceId.toString());
+        Map<String, Object> body = Map.of("permissions",
+                List.of(Map.of("actionClass", "read", "resource", "*")));
+        ResponseEntity<Map> response = restTemplate.exchange(
+                baseUrl + "/api/v1/workspaces/" + workspaceId + "/agents/" + principal.getId(),
+                org.springframework.http.HttpMethod.PUT, new HttpEntity<>(body, headers), Map.class);
+
+        assertEquals(HttpStatus.OK, response.getStatusCode(), String.valueOf(response.getBody()));
+        assertEquals(principal.getId().toString(), response.getBody().get("principalId"));
+        assertEquals(workspaceId.toString(), response.getBody().get("workspaceId"));
+        List<String> atoms = roleAtomNames(principal.getId());
+        assertFalse(atoms.contains(ToolFaceRegistry.ACTION_MEMORY_WRITE_SELF),
+                "BL-349: binding must not hand the agent the agent-forbidden SELF atom: " + atoms);
     }
 
     @Test
