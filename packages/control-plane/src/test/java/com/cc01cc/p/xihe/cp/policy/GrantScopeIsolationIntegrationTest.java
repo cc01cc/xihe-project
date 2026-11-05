@@ -161,7 +161,7 @@ class GrantScopeIsolationIntegrationTest extends AbstractH2Test {
         List<AuthorizationGrant> rows = grantRepository
                 .findBySubjectTypeAndSubjectIdAndSource("user", fixture.userId(), GrantSources.ROLE);
         assertEquals(PermissionAtomCatalog.actionAtoms().size(), rows.size(),
-                "SUPER_ADMIN materializes its 15 action atoms (design #27 makes the workspace "
+                "SUPER_ADMIN materializes its full action atom set (design #27 makes the workspace "
                         + "usage atoms instance-bindable)");
         for (AuthorizationGrant row : rows) {
             String atom = row.getPermissions().get(0).get("actionClass").asText();

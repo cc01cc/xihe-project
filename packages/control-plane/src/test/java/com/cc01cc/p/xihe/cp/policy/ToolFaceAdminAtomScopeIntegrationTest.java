@@ -51,7 +51,7 @@ class ToolFaceAdminAtomScopeIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void adminInstanceN9AuthorizesTheInstanceFaceButNotRoleAdministration() {
+    void adminInstanceN9AuthorizesTheInstanceFaceAndRoleAdministrationAfterV125() {
         User admin = newUser("toolface-scope-admin");
         UUID adminRoleId = accessRoleRepository.findByName(SystemAccessRoleCatalog.ADMIN)
                 .orElseThrow().getId();
@@ -62,9 +62,16 @@ class ToolFaceAdminAtomScopeIntegrationTest extends AbstractIntegrationTest {
         assertTrue(requesterAuthority.holdsActionAtom(admin.getId(),
                         ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_POLICY, null),
                 "ADMIN's instance N9 row authorizes the instance tool-face face (matrix S1)");
-        assertFalse(requesterAuthority.holdsActionAtom(admin.getId(),
+        // D-168 (user ruling 2026-11-05, migration V125): ADMIN now administers roles/bindings, so
+        // MANAGE_ROLES is part of its materialized instance set. The delegation bound is enforced
+        // by the subset guard (PLAN-0673 M1), not by absence of the atom — see
+        // GrantabilityGuardIntegrationTest for the escalation counter-proofs.
+        assertTrue(requesterAuthority.holdsActionAtom(admin.getId(),
                         ToolFaceRegistry.ACTION_MANAGE_ROLES, null),
-                "ADMIN deliberately does not hold MANAGE_ROLES: role/binding administration is out of D-165 scope");
+                "ADMIN holds MANAGE_ROLES since V125 (D-168): role/binding administration is in scope");
+        assertFalse(requesterAuthority.holdsActionAtom(admin.getId(),
+                        ToolFaceRegistry.ACTION_GRANT_ANY_ATOM, null),
+                "GRANT_ANY_ATOM stays SUPER_ADMIN-only (D-166): ADMIN must not hold the bypass");
     }
 
     private User newUser(String prefix) {
