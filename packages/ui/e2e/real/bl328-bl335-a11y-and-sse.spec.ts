@@ -79,12 +79,13 @@ test("@host BL-332 同 context 两页共享一条 workspace 上游 SSE", async (
     await context.close();
 });
 
-test("@host BL-335 订阅者上限提示（skipped：触发需 ≥9 个独立 context）", async () => {
+test("@host BL-335 用户通道订阅上限提示（skipped：真栈单 context 9 页不可靠）", async () => {
     test.skip(
         true,
-        "真栈触发 USER_CHANNEL_FULL 需要把同一用户并发订阅推过 8（CP UserChannelSseManager.java:103/136），" +
-            "而共享 leader 让同 context 内不会撞限 ⇒ 需 ≥9 个独立 context（各自 storage/leader）；" +
-            "本轮盒内不做，标 skipped 而非降级为 mock。",
+        "实测尝试（runId host-1793910878260-d341）：单 context 顺序开 9 页时第 9 页 goto 直接 " +
+            "ERR_ABORTED/30s 超时 —— 页数一多导航即不可靠，无法据此判 USER_CHANNEL_FULL。" +
+            "要判需要 9 个独立 context（各自 leader/连接）或 headed 手动多窗口；本轮盒内标 skipped，不伪绿。" +
+            "组件级证据见 SseSubscriberLimitNotice.spec.ts，事件级见 useUserChannelSSE.spec.ts。",
     );
 });
 
