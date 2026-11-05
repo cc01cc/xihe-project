@@ -217,6 +217,7 @@ Terminology (PLAN-0674): one execution is a `ChatRun` (machine-readable run; cod
 
 ## Chat SSE Contract (PLAN-230)
 
+- **Workspace SSE 上限与断连（BL-332/BL-335, PLAN-0676）**：workspace 事件流为 `GET /api/v1/workspaces/{id}/events`。连接上限按 **workspace** 计数（非按用户），触顶/断连时 CP 以 429 或中断告知；**UI 不再静默**——`SseSubscriberLimitNotice` 渲染三态（`limit`/`disconnected`/`reconnecting`）并给重试入口，解析逻辑在 `features/workspace/composables/sseSubscriberLimit`。多标签页共用一条上游连接（`useSharedEventLeader`，Web Locks 主路径 + `storage-leader` 降级）。契约（路径/结构）不变，本条仅说明既有行为。
 - **Persistence**: `GET /api/v1/events?sessionId=` is a session-scoped long-lived SSE. `done` terminates a *run*, not the SSE. Only client disconnect, session deletion, or explicit server termination closes it. Heartbeat `event: heartbeat` every 15s; never enters UI `MessagePart`.
 - **Identity**: One active emitter per `sessionId` (v1). `SseEmitterManager` stores `{sessionId, generation, emitter}` and uses `compareAndRemove`; new connection replaces old (`chat_sse_replaced`) and old `onCompletion`/`onTimeout`/`onError` that no longer own the entry are logged as `chat_sse_stale_cleanup_ignored`.
 - **Gate**: `POST /api/v1/chat` checks `hasEmitter(sessionId)` *before* persisting the user message. On miss: `409 SSE_SUBSCRIPTION_REQUIRED`; when the session is already at `maxConcurrentRunsPerSession` (default 2, PLAN-0645 M0/M1): `409 CHAT_IN_PROGRESS` — below the cap the submissions are admitted concurrently; Agent circuit open returns `503 AGENT_CIRCUIT_OPEN`.
