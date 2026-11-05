@@ -424,6 +424,47 @@ class RoleAdminApiIntegrationTest extends AbstractIntegrationTest {
                 call(HttpMethod.GET, "/api/v1/roles/catalog", null, managerToken).getStatusCode());
     }
 
+    /**
+     * PLAN-0673 V3.1 身份级正例（audit-1 §5.2 的整改项）：“ADMIN 能绑定”是产品承诺，而此前只有
+     * 自定义 {@code ROLE_MANAGER}（同持 {@code MANAGE_ROLES}）的 HTTP 正/负例。
+     *
+     * <p>设计不变式是“门是原子不是角色名”，所以原子级证明是主证；本用例是**防退化**锁：一旦 ADMIN
+     * 的原子集被收窄，这条会直接红，而不是让产品承诺悄悄消失。同时覆盖“绑定行真的落库”和
+     * “ADMIN 仍不能绑定它没有的原子（{@code GRANT_ANY_ATOM}，仅 SUPER_ADMIN）”。</p>
+     */
+    @Test
+    void adminBindsAUserRoleWithinItsOwnSubsetAndTheRowLands() throws Exception {
+        String superToken = superAdmin("bind-super@test.com");
+        String adminId = userIdOf(register("bind-admin@test.com"));
+        grantInstanceRole(adminId, "ADMIN");
+        String adminToken = login("bind-admin@test.com");
+        String readerRoleId = createRole(superToken, "ADMIN_BIND_READER", List.of("read"));
+        String subjectId = userIdOf(register("bind-subject@test.com"));
+        int rowsBefore = bindingRows(subjectId);
+
+        ResponseEntity<String> bound = appendInstanceBinding(adminToken, subjectId, readerRoleId);
+
+        assertEquals(HttpStatus.OK, bound.getStatusCode(),
+                "ADMIN holds MANAGE_ROLES + read ⇒ binding a read-only role is inside its subset: "
+                        + bound.getBody());
+        assertEquals(rowsBefore + 1, bindingRows(subjectId),
+                "the binding row really landed (not just a 2xx)");
+        assertTrue(instanceBindings(adminToken).stream().anyMatch(pair ->
+                                subjectId.equals(pair.get("subjectId"))
+                                        && readerRoleId.equals(pair.get("roleId"))),
+                "the instance binding set reports the new pair");
+        assertTrue(grantRows(subjectId, "instance", null) >= 1,
+                "the subject's role atoms were materialized in the same transaction");
+
+        // Same identity, outside its subset: GRANT_ANY_ATOM is SUPER_ADMIN-only (V2.1 fresh assertion).
+        String bypassRoleId = createRole(superToken, "ADMIN_BIND_BYPASS", List.of("GRANT_ANY_ATOM"));
+        ResponseEntity<String> denied = appendInstanceBinding(adminToken, subjectId, bypassRoleId);
+        assertEquals(HttpStatus.FORBIDDEN, denied.getStatusCode(), denied.getBody());
+        assertTrue(denied.getBody().contains("PRIVILEGE_ESCALATION"), denied.getBody());
+        assertEquals(rowsBefore + 1, bindingRows(subjectId),
+                "a refused bind inside the same identity writes nothing");
+    }
+
     @Test
     void grantingAtomsTheCallerDoesNotHoldIsAPrivilegeEscalation() throws Exception {
         String superToken = superAdmin("escalation-admin@test.com");
