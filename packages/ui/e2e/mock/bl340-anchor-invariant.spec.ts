@@ -119,10 +119,17 @@ test.describe("BL-340：上滚时窗口换页不得回跳", () => {
             sequence.push(sample.scrollTop);
             heights.push(sample.scrollHeight);
             firstRows.push(sample.firstRow);
-            // 等"换页 + 任何补偿"落地：连续两次采样 scrollTop 相同再继续（不用固定 sleep）。
-            let previous = -1;
-            for (let attempt = 0; attempt < 20; attempt += 1) {
-                await page.waitForTimeout(80);
+            // ── BL-340 §18：**唯一采样口径**（探针 `bl340-protocol-experiment.spec.ts` 同口径）──
+            // 每步滚动后轮询 `scrollTop`：**间隔固定 50ms、上限 1s，直到连续两次读数相同**；
+            // 该稳定点即本步的采样点，**换页（swap）判定也用稳定点**（相邻稳定点 firstRow 不同 = 1 次换页）。
+            // 为什么钉死：§15 与 §17 用不同轮询间隔时，同一代码的 swaps 在 5 与 6–7 之间漂移，ratio 给出
+            // 1.40 与 1.00 的相反结论。改口径前，判 3 不能当验收判据（详见证据 §18）。
+            const STABLE_POLL_MS = 50;
+            const STABLE_TIMEOUT_MS = 1_000;
+            let previous = Number.NaN;
+            const stableStartedAt = Date.now();
+            while (Date.now() - stableStartedAt < STABLE_TIMEOUT_MS) {
+                await page.waitForTimeout(STABLE_POLL_MS);
                 const current = await page.evaluate(() =>
                     Math.round(
                         (
