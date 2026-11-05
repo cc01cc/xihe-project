@@ -85,6 +85,7 @@ public class BindingAdminService {
     private final RequesterAuthority requester;
     private final AuditLogger audit;
     private final DbLockTimeout dbLockTimeout;
+    private final GrantabilityGuard grantability;
 
     public BindingAdminService(AccessRoleRepository roles,
                                AccessRolePermissionRepository permissions,
@@ -95,7 +96,8 @@ public class BindingAdminService {
                                RoleGrantMaterializer materializer,
                                RequesterAuthority requester,
                                AuditLogger audit,
-                               DbLockTimeout dbLockTimeout) {
+                               DbLockTimeout dbLockTimeout,
+                               GrantabilityGuard grantability) {
         this.roles = roles;
         this.permissions = permissions;
         this.bindings = bindings;
@@ -106,6 +108,7 @@ public class BindingAdminService {
         this.requester = requester;
         this.audit = audit;
         this.dbLockTimeout = dbLockTimeout;
+        this.grantability = grantability;
     }
 
     /** Resolves the {@code scope}/{@code scopeId} selector into a validated {@link AccessScope}. */
@@ -324,7 +327,10 @@ public class BindingAdminService {
         for (String atom : atoms) {
             PermissionAtomCatalog.requireScopeCompatible(atom, scope.type());
         }
-        requester.requireMayGrant(atoms, scope.id());
+        // PLAN-0673 M1 T1.3 (闸门②): binding atoms must be a subset of what the caller holds in the
+        // TARGET scope (instance rows always participate; workspace rows only for that workspace).
+        // 403 PRIVILEGE_ESCALATION names the offending atoms; the target-cap gate stays 409 (BL-287).
+        grantability.assertGrantable(atoms, scope);
     }
 
     // ── read helpers ────────────────────────────────────────────────────────

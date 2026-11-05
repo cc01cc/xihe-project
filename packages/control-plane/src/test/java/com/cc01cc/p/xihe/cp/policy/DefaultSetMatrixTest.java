@@ -42,7 +42,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * {@code source='default'} row, it is the union of {@code source='role'} rows (one row per atom,
  * V87 {@code uq_grants_role_atom}) produced by {@link RoleGrantMaterializer}. Capability atoms are
  * part of the role definition and are <b>not</b> materialized (design #23), which is why ADMIN's
- * nine action atoms and not ten appear in {@code grants}.</p>
+ * action atoms (and not its capability atoms) appear in {@code grants}.</p>
  *
  * <p>Deliberately NOT duplicated here: bootstrap idempotency and concurrency
  * ({@code GrantDefaultBootstrapIntegrationTest}), scope isolation
@@ -71,10 +71,15 @@ class DefaultSetMatrixTest extends AbstractIntegrationTest {
             // These are action atoms and therefore materialize; workspace:admin does NOT (capability).
             "MANAGE_AGENT_PRINCIPALS", "MANAGE_WORKSPACE_MEMBERS",
             // PLAN-0651 M2 T2.1: the eight P1 atoms are part of the fixed instance-administrator
-            // set (D51-27). 19 action atoms + these 8 = 27 (see SkillReadFaceTest for the count).
+            // set (D51-27). 19 action atoms + these 8 = 27, plus GRANT_ANY_ATOM (PLAN-0673 M2,
+            // D-166) = 28 (see SkillReadFaceTest for the count).
             "READ_INSTANCE_CONTENT", "WRITE_INSTANCE_CONTENT", "VIEW_SECRET_CONTENT",
             "MANAGE_SKILL_LIBRARY", "MANAGE_PROVIDER_CONNECTIONS", "USE_WORKSPACE_RUNTIME",
-            "MANAGE_WORKSPACE_RUNTIME", "MANAGE_WORKSPACE_POLICY");
+            "MANAGE_WORKSPACE_RUNTIME", "MANAGE_WORKSPACE_POLICY",
+            // D-168 (2026-11-05 user ruling) + migration V125: ADMIN administers roles/bindings, so
+            // MANAGE_ROLES is part of its default set. The subset guard (PLAN-0673 M1) still bounds
+            // what it can delegate, and GRANT_ANY_ATOM stays SUPER_ADMIN-only (D-166).
+            "MANAGE_ROLES");
 
     /** spec §2.1: vocabulary members that never enter a built-in default set. */
     private static final List<String> OUT_OF_DEFAULT_VOCABULARY = List.of(

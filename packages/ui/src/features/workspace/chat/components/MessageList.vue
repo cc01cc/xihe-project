@@ -1,15 +1,22 @@
 <script setup lang="ts">
-import { ref, computed, nextTick, watch } from "vue";
+import { ref, computed, nextTick, watch, inject, onMounted, onBeforeUnmount } from "vue";
 import { useI18n } from "vue-i18n";
 
 import type { Message, SessionRunSummary } from "../../../../types";
 import type { SessionParticipantView } from "../../../../types/participant";
 import { useSessionParticipantsStore } from "../../stores/sessionParticipants";
+import { useChatStore } from "../stores/chat.ts";
 import MessageItem from "./MessageItem.vue";
+import ContextTruncationNotice from "./ContextTruncationNotice.vue";
 import MessageSearch from "./MessageSearch.vue";
 import RunGroupHeader from "./RunGroupHeader.vue";
+import type { AgentContextTruncation } from "../composables/useSSE";
 import { hasMultipleActors } from "../actorView";
 import { resolveDelivery, type ResolvedDelivery } from "../deliveryView";
+import { DEFAULT_VIRTUAL_MIN_ROWS } from "../composables/virtualWindow";
+import { useVirtualMessageWindow } from "../composables/useVirtualMessageWindow";
+import { MessageScrollerContextKey } from "@/composables/messageScroller";
+import type { MessageScrollerContextValue } from "@/lib/messageScrollerTypes";
 import { Search } from "@lucide/vue";
 import { Marker } from "@/components/ui/marker";
 import {
@@ -29,6 +36,15 @@ const props = defineProps<{
      * 状态/耗时。缺省时只用 message 自带的 `runStatus/terminalOutcome`，仍然能分组。
      */
     runs?: SessionRunSummary[];
+    /**
+     * PLAN-0670 M2d.1：CP 响应带 `nextCursor`/`truncated` 时才为 true（不硬编码假设）。
+     * 旧 CP 返回数组 ⇒ false ⇒ 入口不渲染，行为与改造前一致。
+     */
+    hasOlder?: boolean;
+    /** 向上取更旧一页进行中（按钮禁用 + 文案切换）。 */
+    loadingOlder?: boolean;
+    /** PLAN-0670 M2d.3：因 500 条上限被折叠（已从内存丢弃）的最旧消息条数；0 = 无折叠。 */
+    foldedCount?: number;
 }>();
 
 /**
@@ -39,6 +55,28 @@ const props = defineProps<{
  * only lookup, PRIMARY is never assumed.
  */
 const participantsStore = useSessionParticipantsStore();
+const chatStore = useChatStore();
+
+/** PLAN-0670 M2c / BL-292：run 级截断提示（按 runId 取，不按会话全局）。 */
+const truncationSessionId = computed(() => props.messages[0]?.sessionId ?? "");
+const truncationRunIds = computed(() => [
+    ...new Set(props.messages.map((message) => message.runId).filter((id): id is string => !!id)),
+]);
+const singleTruncationRunId = computed(() =>
+    truncationRunIds.value.length === 1 ? truncationRunIds.value[0] : undefined,
+);
+function truncationFor(runId: string | undefined): AgentContextTruncation | undefined {
+    if (!runId || !truncationSessionId.value) return undefined;
+    if (chatStore.isRunContextTruncationDismissed(truncationSessionId.value, runId)) {
+        return undefined;
+    }
+    return chatStore.getRunContextTruncation(truncationSessionId.value, runId);
+}
+function dismissTruncation(runId: string): void {
+    if (truncationSessionId.value) {
+        chatStore.dismissRunContextTruncation(truncationSessionId.value, runId);
+    }
+}
 const { t } = useI18n();
 const responderById = computed(() => {
     const byId = new Map<string, SessionParticipantView>();
@@ -71,6 +109,7 @@ const emit = defineEmits<{
     retry: [id: string];
     branch: [id: string];
     revert: [sliceRef: string];
+    loadOlder: [];
 }>();
 
 const showSearch = ref(false),
@@ -239,6 +278,103 @@ const rows = computed<Row[]>(() => {
     }
     return result;
 });
+
+/**
+ * PLAN-0670 M2d.2 —— 窗口化渲染（虚拟滚动）。
+ *
+ * 现状（PLAN-0670 实测）：全量渲染 5k 条 ⇒ 102,940 DOM / 16.8 FPS，20k 条直接渲染不出来。
+ * 这里只减少 **DOM**：行仍是同一套 `RunGroupHeader` / `Marker` / `MessageScrollerItem` /
+ * `MessageItem`，窗口外行用上下占位高度撑住 scrollHeight，所以：
+ * - 滚动条长度与位置语义不变（占位 = 未渲染行的高度和）；
+ * - 新消息贴底由 `MessageScrollerProvider auto-scroll` 负责（窗口在底部时 end=count）；
+ * - 搜索态**关闭窗口化**（过滤结果通常很小，且搜索后滚到顶的既有行为保持不变）；
+ * - 向上加载历史（未来分页）用 `captureAnchor/restoreAnchor` 钉住用户正在读的那行。
+ */
+const VIRTUAL_FALLBACK_ROW_HEIGHT = 120;
+const scrollerContext = inject<MessageScrollerContextValue | null>(MessageScrollerContextKey, null);
+const rowKeys = computed(() => rows.value.map((row) => row.key));
+/**
+ * prepend/丢最旧的一帧：临时关闭窗口化（全量渲染），让 provider 的
+ * `preserve-scroll-on-prepend` 用真实 DOM 锚点恢复位置；下一帧再恢复窗口化并由
+ * `restoreAnchor` 做精确校正。窗口化下直接按高度估算会因 fallback 误差跳位（实测 11k px）。
+ */
+const historyMutationPause = ref(false);
+const virtualEnabled = computed(
+    () =>
+        !historyMutationPause.value &&
+        !searchQuery.value &&
+        rows.value.length > DEFAULT_VIRTUAL_MIN_ROWS,
+);
+const {
+    window: virtualWindow,
+    active: virtualizationActive,
+    attach: attachViewport,
+    measure: measureRow,
+    captureAnchor,
+    restoreAnchor,
+} = useVirtualMessageWindow({
+    rowKeys,
+    enabled: virtualEnabled,
+    fallbackHeight: VIRTUAL_FALLBACK_ROW_HEIGHT,
+});
+
+onMounted(async () => {
+    await nextTick();
+    attachViewport(scrollerContext?.viewportRef.current ?? null);
+});
+onBeforeUnmount(() => attachViewport(null));
+
+/** 只渲染窗口内的行；未启用窗口化时保持全量（搜索/小列表语义逐字节不变）。 */
+const visibleRows = computed(() => {
+    if (!virtualizationActive.value) return rows.value;
+    return rows.value.slice(virtualWindow.value.start, virtualWindow.value.end);
+});
+const topSpacerHeight = computed(() =>
+    virtualizationActive.value ? `${virtualWindow.value.topPadding}px` : "0px",
+);
+const bottomSpacerHeight = computed(() =>
+    virtualizationActive.value ? `${virtualWindow.value.bottomPadding}px` : "0px",
+);
+
+function rowElementRef(key: string, element: unknown): void {
+    const el =
+        element instanceof HTMLElement
+            ? element
+            : ((element as { $el?: HTMLElement } | null)?.$el ?? null);
+    measureRow(key, el instanceof HTMLElement ? el : null);
+}
+
+/**
+ * 向上加载历史（分页就绪后由 ChatPanel prepend）时，prepend 前抓锚点、DOM 更新后恢复：
+ * 用户正在读的那一行保持原视觉位置（与 `preserve-scroll-on-prepend` 同源，虚拟列表必须显式做）。
+ */
+watch(
+    () => props.messages[0]?.id,
+    async (nextFirst, prevFirst) => {
+        if (!virtualizationActive.value || !nextFirst || !prevFirst || nextFirst === prevFirst)
+            return;
+        // 先在旧 DOM 上抓锚点，再临时全量渲染一帧，让 provider 的 prepend 恢复生效。
+        const anchor = captureAnchor();
+        historyMutationPause.value = true;
+        try {
+            await nextTick();
+            await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+        } finally {
+            historyMutationPause.value = false;
+        }
+        await nextTick();
+        await restoreAnchor(anchor);
+        if (!anchor) return;
+        // provider 的 MutationObserver 在“全量渲染 → 恢复窗口化”两次 DOM 变更后仍可能用
+        // 旧锚点再纠正一次（实测中间位置 prepend 会被它拉到贴底）；连续几帧把锚点按回原视觉位置，
+        // 谁最后写 scrollTop 谁生效，直到稳定为止。
+        for (let frame = 0; frame < 6; frame += 1) {
+            await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+            await restoreAnchor(anchor);
+        }
+    },
+    { flush: "pre" },
+);
 </script>
 
 <template>
@@ -261,18 +397,61 @@ const rows = computed<Row[]>(() => {
             <MessageScroller class="flex-1">
                 <MessageScrollerViewport preserve-scroll-on-prepend>
                     <MessageScrollerContent :class="showSearch ? 'pt-12' : undefined">
-                        <template v-for="row in rows" :key="row.key">
-                            <RunGroupHeader
-                                v-if="row.type === 'header'"
-                                :run-id="row.header.runId"
-                                :status="row.header.status"
-                                :terminal-outcome="row.header.terminalOutcome"
-                                :created-at="row.header.createdAt"
-                                :terminal-at="row.header.terminalAt"
-                                :principal-name="row.header.principalName"
-                                :collapsed="row.header.collapsed"
-                                @toggle="toggleRun(row.header.runId, row.groupMessages)"
-                            />
+                        <!--
+                            PLAN-0670 M2d.1：只有 CP 明确给出 `nextCursor/truncated` 才显示
+                            「加载更早」入口；旧 CP（数组响应）不渲染，行为不变。
+                        -->
+                        <div
+                            v-if="hasOlder || (foldedCount ?? 0) > 0"
+                            class="flex justify-center py-2"
+                        >
+                            <button
+                                type="button"
+                                data-testid="load-older-messages"
+                                :disabled="loadingOlder"
+                                class="rounded-md border bg-background px-3 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60"
+                                @click="emit('loadOlder')"
+                            >
+                                {{
+                                    loadingOlder
+                                        ? t("chat.loadingOlder")
+                                        : (foldedCount ?? 0) > 0
+                                          ? t("chat.foldedOlder", { count: foldedCount })
+                                          : t("chat.loadOlder")
+                                }}
+                            </button>
+                        </div>
+                        <!-- 单 run（无分组头）时提示仍要可见，且只挂在这一个 run 上。 -->
+                        <ContextTruncationNotice
+                            :truncation="truncationFor(singleTruncationRunId)"
+                            @dismiss="
+                                singleTruncationRunId && dismissTruncation(singleTruncationRunId)
+                            "
+                        />
+                        <!-- 窗口化：窗口上方/下方的未渲染行用占位高度撑住 scrollHeight（PLAN-0670 M2d.2） -->
+                        <div
+                            v-if="virtualizationActive"
+                            aria-hidden="true"
+                            data-testid="virtual-top-spacer"
+                            :style="{ height: topSpacerHeight }"
+                        />
+                        <template v-for="row in visibleRows" :key="row.key">
+                            <div v-if="row.type === 'header'" :data-run-block="row.header.runId">
+                                <RunGroupHeader
+                                    :run-id="row.header.runId"
+                                    :status="row.header.status"
+                                    :terminal-outcome="row.header.terminalOutcome"
+                                    :created-at="row.header.createdAt"
+                                    :terminal-at="row.header.terminalAt"
+                                    :principal-name="row.header.principalName"
+                                    :collapsed="row.header.collapsed"
+                                    @toggle="toggleRun(row.header.runId, row.groupMessages)"
+                                />
+                                <ContextTruncationNotice
+                                    :truncation="truncationFor(row.header.runId)"
+                                    @dismiss="dismissTruncation(row.header.runId)"
+                                />
+                            </div>
 
                             <Marker
                                 v-else-if="row.type === 'date'"
@@ -284,6 +463,7 @@ const rows = computed<Row[]>(() => {
 
                             <MessageScrollerItem
                                 v-else
+                                :ref="(el) => rowElementRef(row.key, el)"
                                 :message-id="row.msg.id"
                                 :scroll-anchor="row.msg.role === 'user'"
                             >
@@ -312,6 +492,12 @@ const rows = computed<Row[]>(() => {
                                 </div>
                             </MessageScrollerItem>
                         </template>
+                        <div
+                            v-if="virtualizationActive"
+                            aria-hidden="true"
+                            data-testid="virtual-bottom-spacer"
+                            :style="{ height: bottomSpacerHeight }"
+                        />
                     </MessageScrollerContent>
                 </MessageScrollerViewport>
             </MessageScroller>

@@ -113,7 +113,7 @@ class RoleGrantMaterializerTest {
 
         List<AuthorizationGrant> saved = savedRows();
         assertEquals(PermissionAtomCatalog.actionAtoms().size(), saved.size(),
-                "all 15 action atoms are instance-bindable (decision #27); the 3 capability atoms "
+                "all action atoms are instance-bindable (decision #27; count frozen in SkillReadFaceTest); the 3 capability atoms "
                         + "are resolved at authentication time");
         List<String> writtenAtoms = new ArrayList<>();
         saved.forEach(row -> writtenAtoms.add(row.getPermissions().get(0).get("actionClass").asText()));
@@ -230,7 +230,7 @@ class RoleGrantMaterializerTest {
             return List.of("read", "write", "delete", "exec");
         }
         if (roleId.equals(INSTANCE_ADMIN_ROLE)) {
-            // SUPER_ADMIN-shaped role: all 15 action atoms plus the three capability atoms.
+            // SUPER_ADMIN-shaped role: the full action atom set plus the three capability atoms.
             List<String> atoms = new ArrayList<>(PermissionAtomCatalog.actionAtoms());
             atoms.addAll(PermissionAtomCatalog.capabilityAtoms());
             return List.copyOf(atoms);

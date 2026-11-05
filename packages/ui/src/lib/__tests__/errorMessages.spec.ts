@@ -4,6 +4,8 @@ import {
     humanizeErrorCode,
     mappedErrorCopy,
     normalizeRefusalCode,
+    problemDetailText,
+    PROBLEM_DETAIL_MAX_LENGTH,
     toolRefusalCopyKey,
 } from "../errorMessages";
 
@@ -102,6 +104,52 @@ describe("toolRefusalCopyKey (PLAN-0649 M3 / B5)", () => {
         expect(toolRefusalCopyKey("SOME_FUTURE_CODE")).toBeNull();
         expect(toolRefusalCopyKey("")).toBeNull();
         expect(toolRefusalCopyKey(undefined)).toBeNull();
+    });
+});
+
+describe("problemDetailText (BL-288)", () => {
+    const problem = (detail?: string) => ({
+        problem: { status: 413, code: "EXPORT_TOO_LARGE", requestId: "req-1", detail },
+    });
+
+    it("prefers the server Problem detail over the generic fallback", () => {
+        const text = problemDetailText(
+            problem("会话 20001 条，超过 20000 条上限；请先删除旧会话或分批导出"),
+            "导出失败",
+        );
+        expect(text).toContain("20001");
+        expect(text).toContain("20000");
+        expect(text).not.toBe("导出失败");
+    });
+
+    it("falls back to the caller's generic copy when the Problem has no detail", () => {
+        expect(problemDetailText(problem(undefined), "导出失败")).toBe("导出失败");
+        expect(problemDetailText(problem("   "), "导出失败")).toBe("导出失败");
+        expect(problemDetailText(new Error("boom"), "导出失败")).toBe("导出失败");
+    });
+
+    it("truncates an over-long detail at 200 code points with an ellipsis", () => {
+        const text = problemDetailText(problem("x".repeat(500)), "导出失败");
+        expect(text).toHaveLength(PROBLEM_DETAIL_MAX_LENGTH);
+        expect(text.endsWith("…")).toBe(true);
+        expect(problemDetailText(problem("y".repeat(150)), "导出失败")).toHaveLength(150);
+    });
+
+    it("collapses newlines/tabs into one line and never leaks extra fields", () => {
+        const text = problemDetailText(
+            {
+                problem: {
+                    status: 409,
+                    code: "ROLE_BINDING_EXCEEDS_CAP",
+                    requestId: "req-1",
+                    detail: "超过上限：\n\tCREATE_ACCOUNT, MANAGE_WORKSPACE_AGENTS\r\n最多 3 个",
+                    stack: "at secret.Internal",
+                },
+            },
+            "绑定失败",
+        );
+        expect(text).toBe("超过上限： CREATE_ACCOUNT, MANAGE_WORKSPACE_AGENTS 最多 3 个");
+        expect(text).not.toContain("secret.Internal");
     });
 });
 

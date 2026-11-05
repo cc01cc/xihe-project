@@ -426,7 +426,6 @@ class AgentMemoryServiceTest extends AbstractIntegrationTest {
         principal.setName(name);
         principal.setCreatedByUserId(owner.toString());
         principal.setOwnerUserId(owner);
-        principal.setScope("PERSONAL");
         principal.setTemplateSnapshot(objectMapper.createObjectNode());
         return principalRepository.saveAndFlush(principal).getId();
     }

@@ -3,9 +3,7 @@
  *
  * 严格对齐 `docs/api/openapi.yaml:3637` 的 wire 契约 —— **不要**在前端私自加字段或改名。
  *
- * 已知缺口（已报 Lead，等 M1a 联表补）：agent 的**模型意图**（`defaultModelProvider` /
- * `defaultModelName`）不在参与者 view 里；在那之前行内不显示模型段（不猜、不逐个查
- * `/agent-principals` —— 那会 N+1 且 PERSONAL 可见性会打架）。
+ * 模型意图由参与者 view 提供；UI 不按主体 ID 额外推断授权或可见性。
  */
 
 export type ParticipantPrincipalKind = "HUMAN" | "AGENT";
@@ -16,8 +14,6 @@ export type SessionParticipantRole = "PRIMARY" | "MEMBER" | "GUARD";
 export type ParticipantWakePolicy = "ALL_MESSAGES" | "MENTION";
 
 export type ParticipantRespondPolicy = "ALWAYS" | "WHEN_MENTIONED" | "JUDGE" | "MUTED";
-
-export type ParticipantSource = "workspace" | "personal" | "instance";
 
 /** R7：只读游标，由服务端在事件流上推进；客户端不得累计、不得伪造。 */
 export interface ParticipantReadCursor {
@@ -37,14 +33,11 @@ export interface SessionParticipantView {
     orderIndex: number;
     wakePolicy: ParticipantWakePolicy;
     respondPolicy: ParticipantRespondPolicy;
-    /** 仅 AGENT 有来源（主张量所属层级）；HUMAN 为 null。 */
-    source?: ParticipantSource | null;
     disabledAt?: string | null;
     readCursor?: ParticipantReadCursor | null;
     /**
      * 调用者是否**拥有**这个参与者（D23-27 / M1c，required）：
-     * HUMAN → principalId == 调用者；AGENT → PERSONAL 需 ownerUserId == 调用者，WORKSPACE/INSTANCE → true；
-     * 会话 owner 不是调用者、或该行已停用 ⇒ false（CP 侧已算好，UI 不重算）。
+     * CP 根据当前会话和主体关系计算；UI 不按主体档位推断。
      */
     selfOwned?: boolean;
     /** PLAN-0623 M1a：仅 AGENT 非空；HUMAN 为 null（CP 联表 agent_principals 提供）。 */

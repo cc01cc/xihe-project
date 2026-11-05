@@ -305,7 +305,13 @@ export function useMessageScrollerController({
             return;
         }
 
-        const items = getMessageScrollerItems(content, spacerRef.value),
+        // 只统计真正的消息行：MessageList 顶部还有「加载更早」按钮、截断提示、窗口占位等
+        // 兄弟节点；把它们算进 items 会让 prepend 检测失效（首个 child 永远是按钮 ⇒
+        // previousFirstItemIndex 恒为 0 ⇒ didPrepend=false，provider 改用 getNewScrollAnchor
+        // 把列表滚到某条消息，实测中间位置 prepend 会直接跳底 4k px）。
+        const items = getMessageScrollerItems(content, spacerRef.value).filter(
+                (item) => item.dataset.messageId,
+            ),
             previousItemCount = itemCountRef.value,
             previousFirstItem = firstItemRef.value;
 

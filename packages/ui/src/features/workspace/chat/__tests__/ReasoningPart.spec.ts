@@ -13,8 +13,11 @@ const i18n = createI18n({
     messages: { zh: { chat: { reasoning: "思考" } } },
 });
 
-function mountPart(content: string) {
-    return mount(ReasoningPart, { props: { content }, global: { plugins: [i18n] } });
+function mountPart(
+    content: string,
+    actor?: { name: string; initials: string; kind?: "HUMAN" | "AGENT"; principalId?: string },
+) {
+    return mount(ReasoningPart, { props: { content, actor }, global: { plugins: [i18n] } });
 }
 
 describe("ReasoningPart", () => {
@@ -42,5 +45,29 @@ describe("ReasoningPart", () => {
     it("renders empty content without crashing", () => {
         const wrapper = mountPart("");
         expect(wrapper.find('[data-testid="process-reasoning"]').exists()).toBe(true);
+    });
+
+    it("renders the actor badge when an actor is given (BL-286)", () => {
+        // 推理行必须和 thinking/tool 行一样带 actor —— 它曾是唯一丢 actor 的过程行。
+        const wrapper = mountPart("推理内容", {
+            name: "Alpha",
+            initials: "AL",
+            kind: "AGENT",
+            principalId: "participant-alpha",
+        });
+        const row = wrapper.get('[data-testid="process-reasoning"]');
+        expect(row.attributes("data-has-actor")).toBe("true");
+        const actor = wrapper.get('[data-testid="process-row-actor"]');
+        expect(actor.text()).toContain("Alpha");
+        expect(actor.attributes("data-actor-principal-id")).toBe("participant-alpha");
+        expect(actor.attributes("data-actor-kind")).toBe("AGENT");
+    });
+
+    it("renders no actor badge without an actor (single-subject thread, BL-286)", () => {
+        const wrapper = mountPart("推理内容");
+        expect(wrapper.find('[data-testid="process-row-actor"]').exists()).toBe(false);
+        expect(
+            wrapper.get('[data-testid="process-reasoning"]').attributes("data-has-actor"),
+        ).toBeUndefined();
     });
 });

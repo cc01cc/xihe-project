@@ -22,6 +22,9 @@ import java.util.UUID;
 @RequestMapping("/api/v1/sessions/{sessionId}/messages")
 public class MessageController {
 
+    private static final org.slf4j.Logger logger =
+            org.slf4j.LoggerFactory.getLogger(MessageController.class);
+
     private final SessionService sessionService;
     private final BranchPathService branchPathService;
     private final MessageReadService messageReadService;
@@ -40,14 +43,16 @@ public class MessageController {
     @PreAuthorize("isAuthenticated()")
     @GetMapping
     public ResponseEntity<?> listMessages(@PathVariable String sessionId,
-                                          @RequestParam(value = "branchId", required = false) String branchId) {
+                                          @RequestParam(value = "branchId", required = false) String branchId,
+                                          @RequestParam(value = "limit", required = false) Integer limit,
+                                          @RequestParam(value = "before", required = false) String before) {
         String userId = TenantContext.getUserId();
         String workspaceId = TenantContext.getWorkspaceId();
         if (userId == null || workspaceId == null) {
             return ProblemDetailsHandler.workspaceContextRequired();
         }
         try {
-            sessionService.requireCurrent(sessionId, userId, workspaceId);
+            sessionService.requireReadable(sessionId, userId, workspaceId);
         } catch (CpApiException e) {
             return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
         }
@@ -71,9 +76,58 @@ public class MessageController {
             return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
         }
 
-        return ResponseEntity.ok(messageReadService.listVisibleMessages(
-                sessionId, workspaceId, rootBranchId, visibility));
+        // PLAN-0670 M2: no pagination parameter keeps the legacy full-list contract byte-for-byte
+        // (old clients must not suddenly receive only 50 rows). Any pagination parameter switches to
+        // the cursor envelope; an absent `limit` then defaults to 50 and values above 200 are
+        // truncated (the effective limit is echoed in the response).
+        if (limit == null && before == null) {
+            // PLAN-0670 M2b: compatibility must not mean unbounded memory. Refuse BEFORE reading a
+            // single row (same "count first" pattern as the BL-279 A1 export guard, same 2000 cap):
+            // a normal session keeps the old byte-for-byte response, a long one gets an actionable
+            // 413 instead of a ~90 MB heap spike. Never silently truncate the legacy contract.
+            long totalMessages = messageReadService.countSessionMessages(sessionId);
+            if (totalMessages > MessageReadService.MAX_FULL_READ_MESSAGES) {
+                logger.warn("[LIFECYCLE] service=cp event=session_messages_pagination_required "
+                                + "sessionId={} messages={} limit={}", sessionId, totalMessages,
+                        MessageReadService.MAX_FULL_READ_MESSAGES);
+                Map<String, Object> extra = new java.util.LinkedHashMap<>();
+                extra.put("messages", totalMessages);
+                extra.put("limit", MessageReadService.MAX_FULL_READ_MESSAGES);
+                return ProblemDetailsHandler.problemResponse(HttpStatus.PAYLOAD_TOO_LARGE,
+                        "PAGINATION_REQUIRED",
+                        "session has " + totalMessages + " messages, exceeding the full-read limit of "
+                                + MessageReadService.MAX_FULL_READ_MESSAGES
+                                + "; request a page with limit/before (the paginated response returns nextCursor)",
+                        extra);
+            }
+            return ResponseEntity.ok(messageReadService.listVisibleMessages(
+                    sessionId, workspaceId, rootBranchId, visibility));
+        }
+        if (limit != null && limit < 1) {
+            return ProblemDetailsHandler.problemResponse(HttpStatus.BAD_REQUEST, "INVALID_REQUEST",
+                    "limit must be a positive integer");
+        }
+        int effectiveLimit = limit == null ? DEFAULT_PAGE_LIMIT : Math.min(limit,
+                MessageReadService.MAX_PAGE_LIMIT);
+        MessageReadService.MessagePage page;
+        try {
+            page = messageReadService.listVisibleMessagesPage(
+                    sessionId, workspaceId, rootBranchId, visibility, effectiveLimit, before);
+        } catch (CpApiException e) {
+            return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
+        }
+        Map<String, Object> response = new java.util.LinkedHashMap<>();
+        response.put("messages", page.messages());
+        response.put("limit", page.limit());
+        response.put("truncated", page.truncated());
+        if (page.nextCursor() != null) {
+            response.put("nextCursor", page.nextCursor());
+        }
+        return ResponseEntity.ok(response);
     }
+
+    /** PLAN-0670 M2 default page size when a pagination parameter is present but `limit` is not. */
+    private static final int DEFAULT_PAGE_LIMIT = 50;
 
     @PreAuthorize("isAuthenticated()")
     @DeleteMapping("/{messageId}")

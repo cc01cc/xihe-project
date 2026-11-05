@@ -17,6 +17,11 @@
 
 [env]
 NODE_OPTIONS = "--max-old-space-size=2048"
+# sccache 试点结论（2026-11-05，**未启用**）：sccache 0.19.0 已装入 mise 全局，
+# 但在本机（rustup shim + Windows）实测**每个编译都返回 `UnhandledCompile`**（`SCCACHE_LOG=debug` 实证），
+# 换 target 目录与直接调 rustc 均 0 命中 ⇒ **零收益**，故不写入 `RUSTC_WRAPPER`。
+# 另：无条件设置 RUSTC_WRAPPER 会让未安装 sccache 的机器直接构建失败，属可移植性回归。
+# 需要继续诊断时按 `scripts/worktree-env.ps1 -EnableSccache` 单次开启，不要改回本文件。
 # uv cache: 使用 uv 自身默认位置（不再写死盘符）。需要与其它项目共享缓存的人
 # 自行在外层 shell 设置 UV_CACHE_DIR；本仓库不替用户决定机器布局。
 
@@ -126,7 +131,7 @@ description = "Run all tests"
 alias = "test"
 
 [tasks."test:cli"]
-run = "node --test scripts/xihe-cli.test.mjs scripts/xihe-cli/skill.test.mjs scripts/lib/stack-ports.test.mjs scripts/lib/env-file.test.mjs scripts/lib/service-supervisor.test.mjs scripts/lib/llm-env.test.mjs scripts/lib/cp-boot-plan.test.mjs scripts/lib/e2e-rounds.test.mjs scripts/lib/e2e-host-cli.test.mjs scripts/stack-run.test.mjs scripts/e2e-host-readiness.test.mjs scripts/test-wiring.test.mjs scripts/pkg/phase-parity.test.mjs scripts/pkg/ports-json.test.mjs scripts/pkg/launcher-security.test.mjs scripts/pkg/launcher-security-behavior.test.mjs scripts/env-log-level.test.mjs scripts/lib/stack-cargo-target.test.mjs scripts/lib/stack-orphan.test.mjs scripts/lib/kill-guard.test.mjs scripts/lib/cp-build-info.test.mjs scripts/lib/cp-build-dir.test.mjs"
+run = "node --test scripts/xihe-cli.test.mjs scripts/xihe-cli/skill.test.mjs scripts/lib/stack-ports.test.mjs scripts/lib/env-file.test.mjs scripts/lib/service-supervisor.test.mjs scripts/lib/llm-env.test.mjs scripts/lib/cp-boot-plan.test.mjs scripts/lib/e2e-rounds.test.mjs scripts/lib/e2e-host-cli.test.mjs scripts/stack-run.test.mjs scripts/e2e-host-readiness.test.mjs scripts/test-wiring.test.mjs scripts/pkg/phase-parity.test.mjs scripts/pkg/ports-json.test.mjs scripts/pkg/launcher-security.test.mjs scripts/pkg/launcher-security-behavior.test.mjs scripts/env-log-level.test.mjs scripts/lib/stack-cargo-target.test.mjs scripts/lib/stack-orphan.test.mjs scripts/lib/kill-guard.test.mjs scripts/lib/cp-build-info.test.mjs scripts/lib/cp-build-dir.test.mjs scripts/__tests__/check-event-keys.test.mjs"
 description = "Run every scripts/**/*.test.mjs unit test — the file list is explicit and pinned by scripts/test-wiring.test.mjs (a new test file that is not listed turns that meta test red)"
 alias = "test:cli"
 
@@ -261,6 +266,11 @@ alias = "lint:runtime"
 run = "node scripts/mise/run-posix.mjs scripts/check-doc-links-entry.sh ."
 description = "Check documentation links (no escape from docs/)"
 alias = "lint:links"
+
+[tasks."perf:chat"]
+run = "node scripts/perf/chat-gate.mjs"
+description = "PLAN-0670 perf gate: one command boots the isolated perf stack, measures 1k/5k/20k, prints PASS/FAIL (p95/response bytes/heap peak/RSS growth) and always tears down; L2/release only, never stack-1/stack-2. Pass -- --dry-run / -- --self-check for a stack-free check, -- --with-ui for the WebUI stage"
+alias = "perf:chat"
 
 [tasks.typecheck]
 depends = ["typecheck:ui"]
@@ -440,3 +450,10 @@ alias = "check:standalone"
 run = "node scripts/check-ports-parity.mjs"
 description = "Compare the built-in xihe port table with ONE's allocation table (skips with a reason when ONE is absent)"
 alias = "check:ports"
+
+# BL-303 Phase 3: 事件名扫描器（默认 report-only，永不非零退出；观察期结束后再考虑接入 validate）。
+# 基线/语义登记见 config/event-keys-baseline.json / config/event-keys-semantics.json。
+[tasks."check:event-keys"]
+run = "node scripts/check-event-keys.mjs --report-only"
+description = "Report-only audit of log/SSE/AgentEvent names against the BL-303 baseline + semantics registry (never fails; use --enforce manually)"
+alias = "check:event-keys"

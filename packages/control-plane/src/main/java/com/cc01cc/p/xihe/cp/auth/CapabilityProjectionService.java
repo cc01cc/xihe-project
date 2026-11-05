@@ -74,7 +74,12 @@ public class CapabilityProjectionService {
         }
         AuthzContext.Capabilities capabilities = authzContext.capabilitiesFor(userId);
         Set<UUID> adminWorkspaces = new LinkedHashSet<>();
-        if (capabilities.workspaceAdminAll() || capabilities.isInstanceAdmin()) {
+        // PLAN-0651 T4.2 / C1 (Lead ruling 2026-11-05): the instance-admin fallback is gone; "admin of
+        // every workspace" is now exactly the instance-bound `workspace:admin` capability
+        // (workspaceAdminAll). The V114 seeds give ADMIN/SUPER_ADMIN that capability, so the built-in
+        // matrix is unchanged; a custom role holding `instance:admin` without `workspace:admin` is
+        // deliberately not covered (R9-5, pending D51-11).
+        if (capabilities.workspaceAdminAll()) {
             // PLAN-0610 W4b: memberships are role bindings now (workspace_users is gone).
             for (WorkspaceMembershipService.WorkspaceRoleRef ref
                     : memberships.workspaceRolesOf(userId)) {

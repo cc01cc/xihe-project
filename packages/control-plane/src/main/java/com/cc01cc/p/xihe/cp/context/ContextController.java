@@ -6,7 +6,6 @@ import com.cc01cc.p.xihe.cp.context.service.ContextService;
 import com.cc01cc.p.xihe.cp.context.service.ContextSourceRefreshService;
 import com.cc01cc.p.xihe.cp.context.service.EventStoreService;
 import com.cc01cc.p.xihe.cp.context.service.NestedAgentsMdResolver;
-import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
@@ -142,7 +141,9 @@ public class ContextController {
         if (!verifyAccess(sessionId)) {
             return forbidden();
         }
-        ObjectNode snapshot = contextService.getSnapshot(
+        // BL-305 (P1): the service returns the already-stored payload when the projection is at
+        // the event-log head, otherwise the incremental-or-full build; both are the JSON body.
+        String snapshot = contextService.getSnapshotJson(
                 sessionId, resolveWorkspaceId(sessionId), resolveUserId(sessionId), afterSequence,
                 branchId, runId);
         // Jackson tree types from the legacy mapper are serialized as bean
@@ -150,7 +151,7 @@ public class ContextController {
         // explicitly so Agent receives the projected context object.
         return ResponseEntity.ok()
                 .contentType(MediaType.APPLICATION_JSON)
-                .body(snapshot.toString());
+                .body(snapshot);
     }
 
     @PreAuthorize("hasRole('INTERNAL_SERVICE')")

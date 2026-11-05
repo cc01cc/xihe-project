@@ -14,6 +14,7 @@ import com.cc01cc.p.xihe.cp.repository.InboxRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.service.RunCheckpointService;
 import jakarta.persistence.EntityManager;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.slf4j.Logger;
@@ -96,7 +97,13 @@ public class ChatRunTerminalService {
              * when the run converged via {@code RUN_BUDGET_EXHAUSTED}; recorded in the
              * durable history payload, {@code null} for every other terminal path.
              */
-            String budgetDimension) {
+            String budgetDimension,
+            /**
+             * PLAN-0670 M2c / BL-293: the Agent's inbound truncation marker, parsed from the same
+             * {@code done} payload that is relayed to the UI; persisted verbatim into
+             * {@code chat_runs.context_truncation}. {@code null} = nothing was dropped (never {}).
+             */
+            JsonNode contextTruncation) {
         public TerminalRequest {
             expectedStatuses = expectedStatuses == null ? List.of() : List.copyOf(expectedStatuses);
         }
@@ -104,14 +111,26 @@ public class ChatRunTerminalService {
         /**
          * Convenience for every non-budget terminal path (recovery, reconciliation,
          * cancellation, follow-up dispatch): the canonical constructor keeps
-         * {@code budgetDimension} last and this overload supplies {@code null}.
+         * {@code budgetDimension}/{@code contextTruncation} last and this overload supplies null.
          */
         public TerminalRequest(String runId, Collection<String> expectedStatuses, String status,
                                String terminalOutcome, String errorCode, String errorDetail,
                                int tokenCount, int assistantChars, TerminalSource source,
                                Object usagePayload) {
             this(runId, expectedStatuses, status, terminalOutcome, errorCode, errorDetail,
-                    tokenCount, assistantChars, source, usagePayload, null);
+                    tokenCount, assistantChars, source, usagePayload, null, null);
+        }
+
+        /**
+         * Budget-aware convenience for the non-relay terminal paths (cancellation / reconciliation /
+         * recovery): they never carry an inbound truncation marker, so it stays null.
+         */
+        public TerminalRequest(String runId, Collection<String> expectedStatuses, String status,
+                               String terminalOutcome, String errorCode, String errorDetail,
+                               int tokenCount, int assistantChars, TerminalSource source,
+                               Object usagePayload, String budgetDimension) {
+            this(runId, expectedStatuses, status, terminalOutcome, errorCode, errorDetail,
+                    tokenCount, assistantChars, source, usagePayload, budgetDimension, null);
         }
     }
 
@@ -250,6 +269,12 @@ public class ChatRunTerminalService {
             return new TerminalResult(Outcome.LOST, run.getStatus());
         }
         entityManager.refresh(run);
+
+        // PLAN-0670 M2c / BL-293: persist the inbound truncation marker that CP already relayed to
+        // the UI. It is the SAME parsed done payload, not a re-read/re-derivation (BL-293 hardening);
+        // `run` is managed here, so the dirty field is flushed with the terminal transaction. NULL
+        // stays NULL when the run did not truncate — never write an empty object or all-zero stats.
+        run.setContextTruncation(request.contextTruncation());
 
         // PLAN-0622 D28: the chat admission path borrows governor slots on the request thread; the
         // terminal owner that wins this write releases them, whichever path produced the terminal

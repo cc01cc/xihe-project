@@ -25,23 +25,29 @@ public class SessionBranchActionService {
     private final ChatRunRepository chatRunRepository;
     private final BranchPathService branchPathService;
     private final DbLockTimeout dbLockTimeout;
+    /** PLAN-0668 BL-298: branch list is a read face; same primitive as session/messages reads. */
+    private final SessionReadAccess sessionReadAccess;
 
     public SessionBranchActionService(SessionService sessionService,
                                       SessionBranchRepository sessionBranchRepository,
                                       ChatRunRepository chatRunRepository,
                                       BranchPathService branchPathService,
-                                      DbLockTimeout dbLockTimeout) {
+                                      DbLockTimeout dbLockTimeout,
+                                      SessionReadAccess sessionReadAccess) {
         this.sessionService = sessionService;
         this.sessionBranchRepository = sessionBranchRepository;
         this.chatRunRepository = chatRunRepository;
         this.branchPathService = branchPathService;
         this.dbLockTimeout = dbLockTimeout;
+        this.sessionReadAccess = sessionReadAccess;
     }
 
     @Transactional(readOnly = true)
     public BranchList list(String sessionId, String userId, String workspaceId) {
         String canonicalSessionId = parseSessionId(sessionId).toString();
-        sessionService.requireCurrent(canonicalSessionId, userId, workspaceId);
+        // BL-298: invited HUMAN participants legitimately read branches (UI needs the branch path
+        // before it can load messages). Write/branch-creation paths below stay owner-only.
+        sessionReadAccess.requireReadable(userId, workspaceId, canonicalSessionId);
         List<BranchView> items = sessionBranchRepository
                 .findBySessionIdOrderByCreatedAtAscIdAsc(canonicalSessionId).stream()
                 .map(SessionBranchActionService::toView)

@@ -28,4 +28,10 @@ public interface SessionParticipantRepository extends JpaRepository<SessionParti
     boolean existsBySessionIdAndPrincipalKindAndPrincipalIdAndDisabledAtIsNull(UUID sessionId,
                                                                               String principalKind,
                                                                               UUID principalId);
+
+    /**
+     * PLAN-0669 D2: the participant row for a (session, principal) pair — the write side resolves a
+     * Message's durable attribution through it. Empty when no row exists (never invent one).
+     */
+    Optional<SessionParticipant> findFirstBySessionIdAndPrincipalId(UUID sessionId, UUID principalId);
 }

@@ -11,6 +11,7 @@ import type { AttachmentFile, CredentialSummary, Message, Session } from "../typ
 import type { SessionParticipantView } from "../types/participant";
 import type { ApiTypePair, ProviderConnection } from "../types/providerConnection";
 import type {
+    AgentRoleBinding,
     ApiBindingSet,
     ApiRole,
     WorkspaceAgentBinding,
@@ -71,7 +72,6 @@ export const mockParticipants: SessionParticipantView[] = [
         orderIndex: 10,
         wakePolicy: "ALL_MESSAGES",
         respondPolicy: "ALWAYS",
-        source: "workspace",
         disabledAt: null,
         selfOwned: true,
         defaultModelProvider: "anthropic",
@@ -85,7 +85,6 @@ export const mockParticipants: SessionParticipantView[] = [
         orderIndex: 20,
         wakePolicy: "MENTION",
         respondPolicy: "WHEN_MENTIONED",
-        source: "personal",
         disabledAt: null,
         selfOwned: true,
         defaultModelProvider: "openai",
@@ -237,10 +236,8 @@ export const mockAgents: WorkspaceAgentBinding[] = [
             { actionClass: "file_read", resource: "workspace" },
             { actionClass: "shell_exec", resource: "workspace" },
         ],
-        source: "workspace",
         bound: true,
         disabled: false,
-        scope: "WORKSPACE",
         defaultModelProvider: "anthropic",
         defaultModelName: "claude-sonnet-4.5",
         allowedModels: null,
@@ -253,10 +250,8 @@ export const mockAgents: WorkspaceAgentBinding[] = [
         templateName: "实现",
         createdAt: "2026-10-25T11:30:00Z",
         permissionsSnapshot: [{ actionClass: "file_write", resource: "workspace" }],
-        source: "personal",
         bound: true,
         disabled: false,
-        scope: "PERSONAL",
         defaultModelProvider: "openai",
         defaultModelName: "gpt-5.1",
         allowedModels: [{ provider: "openai", model: "gpt-5.1" }],
@@ -269,14 +264,56 @@ export const mockAgents: WorkspaceAgentBinding[] = [
         templateName: null,
         createdAt: "2026-09-02T02:10:00Z",
         permissionsSnapshot: [],
-        source: "instance",
         bound: false,
         disabled: true,
-        scope: "INSTANCE",
         allowedModels: null,
         hooks: null,
     },
 ];
+
+/**
+ * Mock agent-principal role bindings for the M5 T5.2 preview block.
+ * `a1` has one editable row plus one seed row; `a2` is deliberately unbound.
+ */
+export const mockAgentRoleBindings: Record<string, AgentRoleBinding[]> = {
+    "7a10c3e0-0000-4000-8000-0000000000a1": [
+        {
+            bindingId: "arb-a1-1",
+            roleId: "role-viewer",
+            name: "viewer",
+            displayName: "只读",
+            scopeType: "workspace",
+            scopeId: PREVIEW_WORKSPACE_ID,
+            scopeName: "预览工作区",
+            isSystem: false,
+            grantedBy: "3c55d2b0-0000-4000-8000-0000000000b1",
+            atomSummary: ["workspace.file.read"],
+            atomCount: 1,
+            atomsTruncated: false,
+        },
+        {
+            bindingId: "arb-a1-seed",
+            roleId: "role-agent-default",
+            name: "agent-default",
+            displayName: "默认智能体角色",
+            scopeType: "workspace",
+            scopeId: PREVIEW_WORKSPACE_ID,
+            scopeName: "预览工作区",
+            isSystem: true,
+            grantedBy: "system:seed",
+            atomSummary: ["workspace.file.read"],
+            atomCount: 1,
+            atomsTruncated: false,
+        },
+    ],
+    "7a10c3e0-0000-4000-8000-0000000000a2": [],
+};
+
+/** Hard cap per mock agent — used only to demonstrate the 409 ROLE_BINDING_EXCEEDS_CAP state. */
+export const mockAgentRoleCapByAgent: Record<string, string[]> = {
+    "7a10c3e0-0000-4000-8000-0000000000a1": ["workspace.file.read", "workspace.file.write"],
+    "7a10c3e0-0000-4000-8000-0000000000a2": ["workspace.file.write"],
+};
 
 /** Rows follow the current `WorkspaceAgentMemory` wire: `pinned`, `updatedAt`, `content`, `origin`
  *  （V106 删掉了 `type` 分类列，来源字段是 `origin`: manual/run）。 */

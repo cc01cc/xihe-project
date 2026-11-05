@@ -83,6 +83,7 @@ import type {
     ScheduledTaskListPage,
 } from "../types";
 import type {
+    ParticipantReadCursor,
     ParticipantRespondPolicy as RespondPolicy,
     ParticipantWakePolicy as WakePolicy,
     SessionParticipantCapabilities,
@@ -279,9 +280,13 @@ export interface ApiSession {
     agentPrincipalId?: string | null;
     createdAt?: string;
     updatedAt?: string;
+    /** OpenAPI `Session.required`: archived is contract-required (PLAN-0668 M2). */
+    archived?: boolean;
     /** PLAN-0655 T1.5: delegation projection — `SPAWN` = delegated child session. */
     kind?: string | null;
     spawnedFromSessionId?: string | null;
+    /** PLAN-0668 D3: optional lineage (exists on the wire/DB, not required by UI). */
+    spawnedFromRunId?: string | null;
     spawnedAt?: string | null;
     modelProvider?: string;
     modelName?: string;
@@ -464,6 +469,8 @@ export interface SessionBranchCreateResponse {
 }
 
 export interface SessionResponse extends ApiSession {
+    /** Detail Session requires it; list SessionSummary does not (M2: both shapes share normalize). */
+    archived?: boolean;
     workspace?: ApiWorkspace;
 }
 
@@ -471,17 +478,6 @@ export interface SessionListResponse {
     sessions: SessionResponse[];
     workspace?: ApiWorkspace;
 }
-
-/**
- * PLAN-0622 冻结契约：agent 主体三档共享范围。
- * - `PERSONAL`：属于某个用户的私有 agent（创建需 `CREATE_OWN_AGENT`）；
- * - `WORKSPACE`：工作区共享（创建/绑定需 `MANAGE_WORKSPACE_AGENTS`）；
- * - `INSTANCE`：实例通用（创建需 `CREATE_ACCOUNT`，仅 ADMIN）。
- */
-export type AgentPrincipalScope = "PERSONAL" | "WORKSPACE" | "INSTANCE";
-
-/** 列表行上的来源标签：这条绑定是"本工作区/个人/实例"的 agent。 */
-export type WorkspaceAgentSource = "workspace" | "personal" | "instance";
 
 /**
  * PLAN-0625 M2（D25-09/14）：agent 主体的 hook 订阅（V96 `agent_principals.hooks`）。
@@ -545,18 +541,12 @@ export interface WorkspaceAgentBinding {
     templateId: string | null;
     templateName: string | null;
     createdAt: string;
-    /** PLAN-0622（CP `13e54cad`）：`permissions` 已改名 `permissionsSnapshot`，且 `source` 必填。 */
+    /** 工作区绑定的权限上限；角色绑定的 scope 与主体无关。 */
     permissionsSnapshot: Array<{ actionClass: string; resource?: string }>;
-    source: WorkspaceAgentSource;
-    /**
-     * PLAN-0622 D26（CP `4dbd3e92`）：该行是否已绑定到本工作区。列表是"三类并集"，
-     * 未绑定的 PERSONAL/INSTANCE 也会出现，但它们**不能**用来建会话（CP 403 not bound）。
-     */
+    /** 是否存在该工作区的 cap 绑定；角色绑定可使未绑定行可见。 */
     bound: boolean;
-    /** PLAN-0622 D27（CP `f6d66e0d`）：该主体是否已被禁用；禁用后不能建会话（409）。 */
+    /** 主体被禁用后不能用于新会话。 */
     disabled: boolean;
-    scope?: AgentPrincipalScope;
-    ownerUserId?: string | null;
     defaultModelProvider?: string | null;
     defaultModelName?: string | null;
     /** `null`/缺省 = 不限制可用模型集。 */
@@ -596,6 +586,57 @@ export interface WorkspaceAgentMemory {
 export type WorkspaceAgentMemoryOrigin = "manual" | "run";
 
 /**
+ * PLAN-0667 M3：agent 主体的**角色绑定**（`GET /api/v1/agent-principals/{id}/roles`）。
+ *
+ * 契约（Lead 2026-11-05 冻结，camelCase，信封 `{items:[…]}`）：
+ * - `isSystem` 决定 🔒 与「无解绑按钮」（种子绑定由 CP 409 ROLE_BINDING_EXCEEDS_CAP | ROLE_BINDING_IMMUTABLE 兜底）；
+ * - `atomSummary` = **字符串标签数组（≤3）**，`atomCount` = 总数，`atomsTruncated` 表示被截断；
+ *   UI 只渲染「摘要 + 总数」，**不展开全集**（D5(b)）。
+ */
+export interface AgentRoleBinding {
+    bindingId: string;
+    roleId: string;
+    name: string;
+    displayName?: string | null;
+    scopeType: string;
+    scopeId?: string | null;
+    scopeName?: string | null;
+    isSystem: boolean;
+    /** 绑定的授予者（wire 已有；UI 只展示短 ID，不请求用户资料）。 */
+    grantedBy?: string | null;
+    atomSummary: string[];
+    atomCount: number;
+    atomsTruncated: boolean;
+}
+
+/**
+ * PLAN-0651 M5 T5.2: minimal agent-principal option for the role binding subject picker.
+ * Only the fields the picker needs; the CP list view carries more.
+ */
+export interface AgentPrincipalOption {
+    principalId: string;
+    name: string;
+}
+
+/** PLAN-0667 M3：agent 主体的**技能绑定**（`GET /api/v1/agent-principals/{id}/skills`，v1 principal 级）。 */
+export interface AgentSkillBinding {
+    bindingId: string;
+    skillId: string;
+    name: string;
+    description?: string | null;
+    sourceType?: string | null;
+    sourceName?: string | null;
+    tokenEstimate?: number | null;
+}
+
+/** 可绑定技能（`GET /api/v1/skills` 的 `items[]` 投影，仅取 UI 需要的最小字段）。 */
+export interface AgentSkillSummary {
+    skillId: string;
+    name: string;
+    definitionScope?: { type: string; workspaceId?: string | null } | null;
+}
+
+/**
  * 记忆写入入参（`{content, pinned}`；`type` 随 CP 删列一并去掉）。
  *
  * 写成功与否**不看响应体**：成功后调用方重新 GET 列表（权威源是 CP 的读取面），
@@ -612,7 +653,6 @@ export type WorkspaceAgentMemoryStatus = "active" | "retired" | "all";
 export interface AgentPrincipalCreateInput {
     name: string;
     templateId?: string;
-    scope?: AgentPrincipalScope;
     defaultModelProvider?: string;
     defaultModelName?: string;
     /** `undefined` = 不限制；空数组也按"不限制"处理，避免误锁死。 */
@@ -624,8 +664,6 @@ export interface AgentPrincipalCreateResponse {
     templateId: string | null;
     templateName: string | null;
     createdAt: string;
-    scope?: AgentPrincipalScope;
-    ownerUserId?: string | null;
     defaultModelProvider?: string | null;
     defaultModelName?: string | null;
     allowedModels?: AgentModelRef[] | null;
@@ -1957,18 +1995,76 @@ export function isExecutionModeSwitchProbeFailure(code: string | null | undefine
     );
 }
 
-function normalizeSession(value: unknown): SessionResponse {
+/**
+ * PLAN-0668 D4: a wire row that is missing a contract-required field is not a usable session
+ * projection. The list face drops the row with a WARN; single-item faces throw this typed error
+ * instead of silently serving a half-shaped Session to the conversation tree.
+ */
+export class InvalidSessionProjectionError extends Error {
+    readonly field: string;
+
+    constructor(field: string, detail: string) {
+        super(`Invalid session projection: missing/invalid required field '${field}' (${detail})`);
+        this.name = "InvalidSessionProjectionError";
+        this.field = field;
+    }
+}
+
+/** OpenAPI `Session.required` names that `normalizeSession` cannot synthesize. */
+function requireSessionField(
+    record: Record<string, unknown>,
+    field: string,
+    kind: "string",
+): string;
+function requireSessionField(
+    record: Record<string, unknown>,
+    field: string,
+    kind: "boolean",
+): boolean;
+function requireSessionField(
+    record: Record<string, unknown>,
+    field: string,
+    kind: "string" | "boolean",
+): string | boolean {
+    const value = record[field];
+    if (kind === "boolean" ? typeof value !== "boolean" : typeof value !== "string") {
+        throw new InvalidSessionProjectionError(field, `expected ${kind}`);
+    }
+    return value as string | boolean;
+}
+
+function normalizeSession(
+    value: unknown,
+    options: { requireDetailFields?: boolean } = {},
+): SessionResponse {
     const root = asRecord(value),
         record = asRecord(root?.session) ?? root;
-    if (!record || typeof record.id !== "string") {
-        throw new Error("Invalid session response: missing id");
+    if (!record) {
+        throw new InvalidSessionProjectionError("id", "expected object with id");
+    }
+    const detailContract = options.requireDetailFields !== false;
+    const id = requireSessionField(record, "id", "string"),
+        archived = typeof record.archived === "boolean" ? record.archived : undefined;
+    if (detailContract && archived === undefined) {
+        throw new InvalidSessionProjectionError("archived", "expected boolean");
     }
     const workspace = normalizeWorkspace(root?.workspace) ?? normalizeWorkspace(record.workspace);
+    const workspaceId =
+        typeof record.workspaceId === "string" && record.workspaceId.length > 0
+            ? record.workspaceId
+            : workspace?.id;
+    if (!workspaceId) {
+        throw new InvalidSessionProjectionError(
+            "workspaceId",
+            "expected string (no workspace fallback either)",
+        );
+    }
     return {
-        id: record.id,
+        id,
+        ...(archived === undefined ? {} : { archived }),
         title:
             typeof record.title === "string" && record.title.length > 0 ? record.title : "Untitled",
-        workspaceId: typeof record.workspaceId === "string" ? record.workspaceId : workspace?.id,
+        workspaceId,
         agentPrincipalId:
             typeof record.agentPrincipalId === "string" ? record.agentPrincipalId : null,
         // PLAN-0655 T1.5 / PLAN-0659 T1.4：委派 lineage 必须在 list 投影里透传。
@@ -1976,9 +2072,16 @@ function normalizeSession(value: unknown): SessionResponse {
         // spawnedAt]`）与 `stores/session.ts#toSession` 都消费这三个字段；此前 normalize 把
         // 它们丢了 ⇒ 会话树的父子嵌套与「委派」徽标在真实链路上永远看不到（单测直接塞
         // store 状态，故一直没暴露）。这是投影层缺陷，不是夹具问题。
-        kind: typeof record.kind === "string" ? record.kind : null,
+        // Contract/CP wire uses lowercase `spawn` / `fork` (Session.KIND_* and the OpenAPI
+        // SessionSummary enum), while every UI consumer (session tree, badge, DAG) keys on the
+        // canonical uppercase form. Normalize here so a real list response actually nests children.
+        // M3 real stack 2026-11-05: before this, GET /sessions emitted `spawn` and the tree/badge
+        // silently treated the child as a root session.
+        kind: typeof record.kind === "string" ? record.kind.toUpperCase() : null,
         spawnedFromSessionId:
             typeof record.spawnedFromSessionId === "string" ? record.spawnedFromSessionId : null,
+        spawnedFromRunId:
+            typeof record.spawnedFromRunId === "string" ? record.spawnedFromRunId : null,
         spawnedAt: typeof record.spawnedAt === "string" ? record.spawnedAt : null,
         createdAt: typeof record.createdAt === "string" ? record.createdAt : undefined,
         updatedAt: typeof record.updatedAt === "string" ? record.updatedAt : undefined,
@@ -2468,6 +2571,69 @@ function revertExecuteBody(
     return body;
 }
 
+export type ApiSessionMessage = {
+    id: string;
+    sessionId: string;
+    role: string;
+    content: string;
+    createdAt: string;
+    /** PLAN-0669 M1：历史消息的主体归属（可选；缺失 = 未知，不渲染徽标）。 */
+    participantId?: string | null;
+    runId?: string;
+    runStatus?: string;
+    terminalOutcome?: string;
+    errorCode?: string;
+    /** CP `MessageReadService` field name for the terminal error text. */
+    errorDetail?: string;
+    error?: string;
+    retryable?: boolean;
+    /**
+     * PLAN-0665 M2 / V120: durable delivery audience written on the user Message.
+     * `{to:[participantId],cc:[participantId]}`; `null` when the message had neither
+     * (never an empty object), so the read side falls back to local composer state.
+     */
+    delivery?: { to?: string[]; cc?: string[] } | null;
+    attachments?: Array<{ fileId: string; name: string; type: string; size: number }>;
+    /** PLAN-0572: persisted per-Run tool cards (V83 snapshot). */
+    toolCalls?: Array<{
+        id: string;
+        name: string;
+        arguments: string;
+        status: "running" | "completed" | "failed" | "pending" | "cancelled";
+        startedAt: string;
+        completedAt?: string;
+        result?: string;
+        truncated?: boolean;
+        /** PLAN-0649: CP refusal code; the durable body stays a placeholder. */
+        refusalCode?: string;
+    }>;
+    toolCallsTruncated?: boolean;
+    toolCallsTotal?: number;
+    jobSummary?: Array<{
+        jobId: string;
+        workspaceId: string;
+        toolCallId?: string;
+        toolName?: string;
+        status: string;
+        scope?: string;
+        startedAt?: string | null;
+        endedAt?: string | null;
+    }>;
+};
+
+/**
+ * PLAN-0660 T5.6 — "advance to the latest" sentinel for `PATCH …/participants/{id}/cursor`.
+ *
+ * The upper bound belongs to the server: CP applies `max(current, requested)` and then clamps to the
+ * session's current max `context_events.sequence` (openapi `advanceParticipantCursor`,
+ * `SessionParticipantService.advanceCursor`). The roster projection carries **no** session max seq,
+ * so the UI has no authoritative ceiling to send — and must not invent one by counting messages
+ * (that would guess a wire-level number the client cannot see). Sending this sentinel is the
+ * contract-sanctioned way to say "as far as you allow": it fits in a signed 64-bit
+ * `lastReadEventSeq`, and the server's clamp turns it into the real maximum.
+ */
+export const PARTICIPANT_CURSOR_ADVANCE_TO_LATEST = Number.MAX_SAFE_INTEGER;
+
 export const api = {
     // PLAN-0565 ruling #7: identifier is email (contains '@') or username.
     login(identifier: string, password: string) {
@@ -2540,8 +2706,26 @@ export const api = {
                   ? payload
                   : null;
         if (!rawSessions) throw new Error("Invalid sessions response: missing sessions");
+        // D4 list policy: one malformed row is dropped and named in a WARN; the rest of the list
+        // (and the session tree) still renders. Single-item faces below keep throwing.
+        const sessions: SessionResponse[] = [];
+        for (const raw of rawSessions) {
+            try {
+                sessions.push(normalizeSession(raw, { requireDetailFields: false }));
+            } catch (error) {
+                const field =
+                    error instanceof InvalidSessionProjectionError ? error.field : "unknown";
+                const rowId =
+                    asRecord(asRecord(raw)?.session)?.id ?? asRecord(raw)?.id ?? "<unknown>";
+                console.warn("[sessions] dropping malformed row", {
+                    field,
+                    rowId,
+                    message: error instanceof Error ? error.message : String(error),
+                });
+            }
+        }
         return {
-            sessions: rawSessions.map(normalizeSession),
+            sessions,
             workspace: normalizeWorkspace(root?.workspace),
         };
     },
@@ -2751,6 +2935,53 @@ export const api = {
             { method: "DELETE" },
         );
     },
+    /**
+     * PLAN-0660 T5.1/T5.6：推进**本人**的已读游标 —— `PATCH …/participants/{id}/cursor`。
+     *
+     * 服务端语义（openapi `advanceParticipantCursor`）：advance-only（`max(现值, 请求值)`）+ 夹取到
+     * 会话当前最大 `context_events.sequence`；只允许行内 HUMAN 且 `principal_id` 是调用者，否则
+     * **403 `CURSOR_SELF_ONLY`**。响应就是列表里那个 `readCursor` 形状，调用方直接拿它渲染未读，
+     * 不需要（也不应该）重新拉一次全量名单。
+     *
+     * `value` 用 `PARTICIPANT_CURSOR_ADVANCE_TO_LATEST` 表示"推进到服务端允许的最新位置"——
+     * 上限由服务端夹取，前端不自己算。
+     */
+    async advanceParticipantCursor(
+        sessionId: string,
+        participantId: string,
+        value: number,
+    ): Promise<ParticipantReadCursor> {
+        const raw = await request<unknown>(
+            `/sessions/${encodeURIComponent(sessionId)}/participants/${encodeURIComponent(participantId)}/cursor`,
+            {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ lastReadEventSeq: value }),
+            },
+        );
+        if (!raw || typeof raw !== "object") {
+            throw new Error(
+                `advanceParticipantCursor: unexpected payload (received ${raw === null ? "null" : typeof raw}; ` +
+                    `expected an object with lastReadEventSeq/mentionCount)`,
+            );
+        }
+        const record = raw as Record<string, unknown>;
+        const lastReadEventSeq = record.lastReadEventSeq,
+            mentionCount = record.mentionCount;
+        if (typeof lastReadEventSeq !== "number" || typeof mentionCount !== "number") {
+            // 形状不符就抛错：用 0 冒充"没有未读"会把"契约破了"显示成"已读完"，是最坏的一种静默。
+            throw new Error(
+                `advanceParticipantCursor: unexpected payload (lastReadEventSeq=${String(lastReadEventSeq)}, ` +
+                    `mentionCount=${String(mentionCount)}; expected both to be numbers)`,
+            );
+        }
+        return {
+            lastReadEventSeq,
+            mentionCount,
+            // 时间戳缺失就留空串（"未知"），不用当前时间伪造一个 CP 没给的时刻。
+            updatedAt: typeof record.updatedAt === "string" ? record.updatedAt : "",
+        };
+    },
     /** PLAN-0655: the budget view used by the delegation dialog's read-only row. */
     async delegationUsage(sessionId: string): Promise<DelegationUsageView> {
         return request<DelegationUsageView>(
@@ -2777,6 +3008,22 @@ export const api = {
             `/sessions/${encodeURIComponent(sessionId)}/delegation-spawn`,
             { method: "POST", headers, body: JSON.stringify(input) },
         );
+    },
+    /** Agent-principal options visible to the current caller. */
+    async listAgentPrincipals(): Promise<AgentPrincipalOption[]> {
+        const raw = await request<{ principals?: Array<Record<string, unknown>> }>(
+            "/agent-principals",
+        );
+        if (!Array.isArray(raw.principals)) {
+            console.warn("[bindings] agent principal envelope malformed; treated as empty");
+            return [];
+        }
+        return raw.principals.flatMap((row) => {
+            const principalId = typeof row.principalId === "string" ? row.principalId : "";
+            const name = typeof row.name === "string" ? row.name : "";
+            if (!principalId || !name) return [];
+            return [{ principalId, name }];
+        });
     },
     async getWorkspaceAgents(workspaceId: string): Promise<WorkspaceAgentBinding[]> {
         const raw = await request<{ agents: Array<Record<string, unknown>> }>(
@@ -2845,6 +3092,189 @@ export const api = {
      * 返回 `void`：调用方成功后重读列表（见 `WorkspaceAgentMemoryInput` 的说明），
      * 因此 CP 的 201/200 返回体形状不构成契约耦合。
      */
+    /**
+     * PLAN-0667 M3：agent 主体角色绑定列表（**信封 `{items:[…]}`**，Lead 2026-11-05 冻结）。
+     *
+     * D5(b)：只消费 CP 给的摘要（`atomSummary` ≤3 + `atomCount`），不请求、不展开全集；
+     * `isSystem` 缺失按 `false`（fail-closed：不把未知当只读，但解绑仍由 CP 409 兜底）。
+     */
+    async getAgentRoles(
+        workspaceId: string | null | undefined,
+        principalId: string,
+    ): Promise<AgentRoleBinding[]> {
+        const workspaceQuery = workspaceId ? `workspaceId=${encodeURIComponent(workspaceId)}&` : "";
+        const raw = await request<{
+            items?: Array<Record<string, unknown>>;
+            bindings?: Array<Record<string, unknown>>;
+        }>(
+            `/agent-principals/${encodeURIComponent(principalId)}/roles?${workspaceQuery}locale=${encodeURIComponent(catalogLocale())}`,
+        );
+        // 实际 CP wire（2026-11-05 联调实测）用 `{bindings:[…]}`；冻结稿写的是 `{items:[…]}`。
+        // 两种信封都接受，字段同时兼容 roleName/roleDisplayName 与 name/displayName。
+        const rows = raw?.items ?? raw?.bindings;
+        if (!Array.isArray(rows)) {
+            console.warn("[agents] role envelope malformed; treated as empty");
+            return [];
+        }
+        return rows.flatMap((row) => {
+            const bindingId = typeof row.bindingId === "string" ? row.bindingId : "";
+            const roleId = typeof row.roleId === "string" ? row.roleId : "";
+            const name =
+                typeof row.roleName === "string"
+                    ? row.roleName
+                    : typeof row.name === "string"
+                      ? row.name
+                      : "";
+            if (!bindingId || !roleId || !name) return [];
+            const rawAtoms = Array.isArray(row.atoms)
+                ? row.atoms
+                : Array.isArray(row.atomSummary)
+                  ? row.atomSummary
+                  : [];
+            const atoms = rawAtoms.filter((atom): atom is string => typeof atom === "string");
+            // D5(b)：UI 只展示前 3 个 + 总数，不铺全集。
+            const atomSummary = atoms.slice(0, 3);
+            const atomCount =
+                typeof row.atomCount === "number" && Number.isFinite(row.atomCount)
+                    ? row.atomCount
+                    : atoms.length;
+            return [
+                {
+                    bindingId,
+                    roleId,
+                    name,
+                    displayName:
+                        typeof row.roleDisplayName === "string"
+                            ? row.roleDisplayName
+                            : typeof row.displayName === "string"
+                              ? row.displayName
+                              : null,
+                    scopeType: typeof row.scopeType === "string" ? row.scopeType : "",
+                    scopeId: typeof row.scopeId === "string" ? row.scopeId : null,
+                    scopeName: typeof row.scopeName === "string" ? row.scopeName : null,
+                    isSystem: row.isSystem === true,
+                    grantedBy: typeof row.grantedBy === "string" ? row.grantedBy : null,
+                    atomSummary,
+                    atomCount,
+                    atomsTruncated: row.atomsTruncated === true || atomCount > atomSummary.length,
+                },
+            ];
+        });
+    },
+    /** 绑定角色（body `{roleId}`；`workspaceId` 是授权上下文，2026-11-05 联调实测必需）。 */
+    async bindAgentRole(
+        workspaceId: string | null | undefined,
+        principalId: string,
+        roleId: string,
+    ): Promise<void> {
+        const workspaceQuery = workspaceId ? `?workspaceId=${encodeURIComponent(workspaceId)}` : "";
+        await request<void>(
+            `/agent-principals/${encodeURIComponent(principalId)}/roles${workspaceQuery}`,
+            {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ roleId }),
+            },
+        );
+    },
+    async unbindAgentRole(
+        workspaceId: string | null | undefined,
+        principalId: string,
+        bindingId: string,
+    ): Promise<void> {
+        const workspaceQuery = workspaceId ? `?workspaceId=${encodeURIComponent(workspaceId)}` : "";
+        await request<void>(
+            `/agent-principals/${encodeURIComponent(principalId)}/roles/${encodeURIComponent(bindingId)}${workspaceQuery}`,
+            { method: "DELETE" },
+        );
+    },
+    /** PLAN-0667 M3：agent 主体技能绑定列表（信封 `{items:[…]}`，CP M2 待合入；两种信封都接受）。 */
+    async getAgentSkills(workspaceId: string, principalId: string): Promise<AgentSkillBinding[]> {
+        const raw = await request<{
+            items?: Array<Record<string, unknown>>;
+            bindings?: Array<Record<string, unknown>>;
+        }>(
+            `/agent-principals/${encodeURIComponent(principalId)}/skills?workspaceId=${encodeURIComponent(workspaceId)}`,
+        );
+        const rows = raw?.items ?? raw?.bindings;
+        if (!Array.isArray(rows)) {
+            console.warn("[agents] skill envelope malformed; treated as empty");
+            return [];
+        }
+        return rows.flatMap((row) => {
+            const bindingId = typeof row.bindingId === "string" ? row.bindingId : "";
+            const skillId = typeof row.skillId === "string" ? row.skillId : "";
+            const name = typeof row.name === "string" ? row.name : "";
+            if (!bindingId || !skillId || !name) return [];
+            return [
+                {
+                    bindingId,
+                    skillId,
+                    name,
+                    description: typeof row.description === "string" ? row.description : null,
+                    sourceType: typeof row.sourceType === "string" ? row.sourceType : null,
+                    sourceName: typeof row.sourceName === "string" ? row.sourceName : null,
+                    tokenEstimate:
+                        typeof row.tokenEstimate === "number" && Number.isFinite(row.tokenEstimate)
+                            ? row.tokenEstimate
+                            : null,
+                },
+            ];
+        });
+    },
+    /** 绑定技能（body `{skillId}`）。 */
+    async bindAgentSkill(workspaceId: string, principalId: string, skillId: string): Promise<void> {
+        await request<void>(
+            `/agent-principals/${encodeURIComponent(principalId)}/skills?workspaceId=${encodeURIComponent(workspaceId)}`,
+            {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ skillId }),
+            },
+        );
+    },
+    async unbindAgentSkill(
+        workspaceId: string,
+        principalId: string,
+        bindingId: string,
+    ): Promise<void> {
+        await request<void>(
+            `/agent-principals/${encodeURIComponent(principalId)}/skills/${encodeURIComponent(bindingId)}?workspaceId=${encodeURIComponent(workspaceId)}`,
+            { method: "DELETE" },
+        );
+    },
+    /**
+     * 可绑定技能候选（复用 CP 既有 `GET /api/v1/skills` → `{items:[…]}`，不新增契约）。
+     * 只取 UI 需要的最小字段；缺字段的行丢弃（fail-closed）。
+     */
+    async getSkills(): Promise<AgentSkillSummary[]> {
+        const raw = await request<{ items?: Array<Record<string, unknown>> }>("/skills");
+        if (!Array.isArray(raw?.items)) return [];
+        return raw.items.flatMap((row) => {
+            const skillId = typeof row.skillId === "string" ? row.skillId : "";
+            const name = typeof row.name === "string" ? row.name : "";
+            if (!skillId || !name) return [];
+            const scope = row.definitionScope as
+                | { type?: unknown; workspaceId?: unknown }
+                | undefined;
+            return [
+                {
+                    skillId,
+                    name,
+                    definitionScope:
+                        scope && typeof scope.type === "string"
+                            ? {
+                                  type: scope.type,
+                                  workspaceId:
+                                      typeof scope.workspaceId === "string"
+                                          ? scope.workspaceId
+                                          : null,
+                              }
+                            : null,
+                },
+            ];
+        });
+    },
     async createAgentMemory(
         workspaceId: string,
         principalId: string,
@@ -2915,10 +3345,14 @@ export const api = {
     rolesCatalog(): Promise<ApiRoleCatalog> {
         // D51-37: the CP resolves the label server-side from an explicit locale; the UI keeps no
         // atom vocabulary. `<html lang>` is the locale SSOT written by applyLocale().
-        return request<ApiRoleCatalog>(`/roles/catalog?locale=${encodeURIComponent(catalogLocale())}`);
+        return request<ApiRoleCatalog>(
+            `/roles/catalog?locale=${encodeURIComponent(catalogLocale())}`,
+        );
     },
-    listRoles(): Promise<ApiRole[]> {
-        return request<ApiRole[]>("/roles");
+    listRoles(workspaceId?: string): Promise<ApiRole[]> {
+        // PLAN-0667 M3：候选角色按 workspace 授权上下文过滤（Lead 2026-11-05 冻结：不新增候选端点）。
+        const query = workspaceId ? `?workspaceId=${encodeURIComponent(workspaceId)}` : "";
+        return request<ApiRole[]>(`/roles${query}`);
     },
     createRole(input: ApiRoleWrite): Promise<ApiRole> {
         return request<ApiRole>("/roles", { method: "POST", body: JSON.stringify(input) });
@@ -2967,14 +3401,13 @@ export const api = {
         return request<AgentTemplateLayerResponse>(`/agent-templates?${query.toString()}`);
     },
     /**
-     * PLAN-0622 冻结契约 body：`{name, templateId?, scope?, defaultModelProvider?,
-     * defaultModelName?, allowedModels?}`。只发传进来的字段——`undefined` 表示"不设置"，
+     * 创建 body：`{name, templateId?, defaultModelProvider?, defaultModelName?, allowedModels?}`。
+     * 只发传进来的字段——`undefined` 表示"不设置"，
      * 由 CP 决定默认（不要把空字符串/空数组硬塞进去）。
      */
     createAgentPrincipal(input: AgentPrincipalCreateInput): Promise<AgentPrincipalCreateResponse> {
         const body: Record<string, unknown> = { name: input.name };
         if (input.templateId) body.templateId = input.templateId;
-        if (input.scope) body.scope = input.scope;
         if (input.defaultModelProvider) body.defaultModelProvider = input.defaultModelProvider;
         if (input.defaultModelName) body.defaultModelName = input.defaultModelName;
         if (input.allowedModels && input.allowedModels.length > 0) {
@@ -3097,52 +3530,26 @@ export const api = {
             { method: "POST" },
         );
     },
-    getMessages(sessionId: string, branchId: string) {
+    getMessages(
+        sessionId: string,
+        branchId: string,
+        options: { limit?: number; before?: string } = {},
+    ) {
+        // PLAN-0670 M2d.1（Lead 2026-11-05 裁定 a）：分页参数**可选**；CP 未支持时忽略未知
+        // query（继续返回全量数组），调用方据此自动退化 —— 行为与改造前逐字节一致。
+        // 只有响应带 `nextCursor`/`truncated` 时 UI 才显示「加载更早」入口（不硬编码假设）。
+        const query = new URLSearchParams({ branchId });
+        if (options.limit !== undefined) query.set("limit", String(options.limit));
+        if (options.before) query.set("before", options.before);
         return request<
-            Array<{
-                id: string;
-                sessionId: string;
-                role: string;
-                content: string;
-                createdAt: string;
-                runId?: string;
-                runStatus?: string;
-                terminalOutcome?: string;
-                errorCode?: string;
-                /** CP `MessageReadService` field name for the terminal error text. */
-                errorDetail?: string;
-                error?: string;
-                retryable?: boolean;
-                attachments?: Array<{ fileId: string; name: string; type: string; size: number }>;
-                /** PLAN-0572: persisted per-Run tool cards (V83 snapshot). */
-                toolCalls?: Array<{
-                    id: string;
-                    name: string;
-                    arguments: string;
-                    status: "running" | "completed" | "failed" | "pending" | "cancelled";
-                    startedAt: string;
-                    completedAt?: string;
-                    result?: string;
-                    truncated?: boolean;
-                    /** PLAN-0649: CP refusal code; the durable body stays a placeholder. */
-                    refusalCode?: string;
-                }>;
-                toolCallsTruncated?: boolean;
-                toolCallsTotal?: number;
-                jobSummary?: Array<{
-                    jobId: string;
-                    workspaceId: string;
-                    toolCallId?: string;
-                    toolName?: string;
-                    status: string;
-                    scope?: string;
-                    startedAt?: string | null;
-                    endedAt?: string | null;
-                }>;
-            }>
-        >(
-            `/sessions/${encodeURIComponent(sessionId)}/messages?branchId=${encodeURIComponent(branchId)}`,
-        );
+            | ApiSessionMessage[]
+            | {
+                  messages?: ApiSessionMessage[];
+                  items?: ApiSessionMessage[];
+                  nextCursor?: string | null;
+                  truncated?: boolean;
+              }
+        >(`/sessions/${encodeURIComponent(sessionId)}/messages?${query.toString()}`);
     },
     /**
      * PLAN-0465 T2.1：durable job 输出续看（canonical 路径

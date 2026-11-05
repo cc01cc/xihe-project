@@ -294,4 +294,68 @@ describe("SessionList delegation tree (PLAN-0655 T1.5)", () => {
         expect(rows[0].attributes("style") ?? "").not.toContain("padding-left");
         wrapper.unmount();
     });
+
+    // PLAN-0668 T2.4：三处消费点（会话树层级 / 委派徽标 / DAG 数据源）必须从
+    // api.getSessions 的真实投影链路拿到 lineage，而不是靠测试直接塞 store 状态。
+    it("keeps the api projection → session tree chain for delegated children (PLAN-0668 T2.4)", async () => {
+        const wire = {
+            sessions: [
+                {
+                    id: PARENT_ID,
+                    title: "Promo 启动",
+                    workspaceId: WORKSPACE_ID,
+                    archived: false,
+                    kind: null,
+                    spawnedFromSessionId: null,
+                    spawnedAt: null,
+                    createdAt: "2026-11-05T00:00:00Z",
+                    updatedAt: "2026-11-05T00:00:00Z",
+                },
+                {
+                    id: DELEGATED_ID,
+                    title: "翻译校对",
+                    workspaceId: WORKSPACE_ID,
+                    archived: false,
+                    kind: "SPAWN",
+                    spawnedFromSessionId: PARENT_ID,
+                    spawnedAt: "2026-11-05T00:01:00Z",
+                    createdAt: "2026-11-05T00:01:00Z",
+                    updatedAt: "2026-11-05T00:01:00Z",
+                },
+            ],
+        };
+        const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce({
+            ok: true,
+            json: () => Promise.resolve(wire),
+        } as Response);
+        const response = await api.getSessions();
+        fetchSpy.mockRestore();
+
+        expect(response.sessions[1]).toMatchObject({
+            id: DELEGATED_ID,
+            kind: "SPAWN",
+            spawnedFromSessionId: PARENT_ID,
+            spawnedAt: "2026-11-05T00:01:00Z",
+        });
+
+        setActivePinia(createPinia());
+        const sessionStore = useSessionStore();
+        sessionStore.sessions = response.sessions;
+        const usageSpy = vi.spyOn(api, "delegationUsage").mockResolvedValue(usage());
+
+        const wrapper = mount(SessionList, {
+            global: { plugins: [i18n], stubs: { Teleport: true } },
+        });
+        await flushPromises();
+
+        const rows = wrapper.findAll('[data-testid="session-item"]');
+        expect(rows).toHaveLength(2);
+        expect(rows[1].get('[data-testid="session-delegated-badge"]').exists()).toBe(true);
+        expect(rows[1].get('[data-testid="session-delegation-chip"]').text()).toContain(
+            "Promo Agent B",
+        );
+        expect(rows[1].attributes("style") ?? "").toContain("padding-left: 2rem");
+        expect(usageSpy).toHaveBeenCalledWith(DELEGATED_ID);
+        wrapper.unmount();
+    });
 });

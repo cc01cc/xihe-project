@@ -247,8 +247,9 @@ class RoleAdminApiIntegrationTest extends AbstractIntegrationTest {
                 "the workspace owner binding plus the granted viewer");
         int epochAfterFirst = tokenVersion(subjectId);
         int auditsAfterFirst = auditCount("role_bindings_replaced");
-        assertEquals(1, grantRows(subjectId, "workspace", workspaceId),
-                "WS_VIEWER materializes its single read atom in that workspace");
+        assertEquals(RoleAtomExpectations.materializedAtomCount(SystemAccessRoleCatalog.WS_VIEWER),
+                grantRows(subjectId, "workspace", workspaceId),
+                "WS_VIEWER materializes one row per catalog atom (0651 M2 added USE_WORKSPACE_RUNTIME)");
         assertEquals(0, epochAfterFirst,
                 "PLAN-0610 W3-3: a workspace-tier binding does not move the epoch — the token "
                         + "carries no workspace role, so only the capability cache is invalidated");
@@ -367,24 +368,46 @@ class RoleAdminApiIntegrationTest extends AbstractIntegrationTest {
 
     // ── gates ───────────────────────────────────────────────────────────────
 
+    /**
+     * D-168 (user ruling 2026-11-05, migration V125): ADMIN now holds {@code MANAGE_ROLES}, so the
+     * old "ADMIN has no MANAGE_ROLES ⇒ blanket 403" assertion is a fact this round deliberately
+     * changed. Recorded here as an approved semantic change (not a masked failure): the gate is
+     * still the action atom, and the subset guard is now what bounds ADMIN.
+     *
+     * <p>Core negative (V3.3): ADMIN cannot create a role carrying {@code GRANT_ANY_ATOM} — it does
+     * not hold the bypass atom, so {@code GrantabilityGuard} answers 403 {@code PRIVILEGE_ESCALATION}
+     * and names it.</p>
+     */
     @Test
-    void theGateIsTheManageRolesAtomNotTheInstanceAdminCapability() throws Exception {
+    void theGateIsTheManageRolesAtomWhichAdminNowHoldsBoundedByTheSubset() throws Exception {
         String superToken = superAdmin("gate-admin@test.com");
-        // Instance ADMIN: cap:instance:admin but no MANAGE_ROLES (R2-4).
         String adminId = userIdOf(register("gate-instance-admin@test.com"));
-        // PLAN-0610 W4b: only the binding matters (users.role and the legacy table are gone).
         grantInstanceRole(adminId, "ADMIN");
         String adminToken = login("gate-instance-admin@test.com");
         assertTrue(authzContext.isInstanceAdmin(UUID.fromString(adminId)));
 
-        for (String path : List.of("/api/v1/roles/catalog", "/api/v1/roles",
+        for (String path : List.of("/api/v1/roles/catalog",
                 "/api/v1/bindings?scope=instance")) {
-            ResponseEntity<String> denied = call(HttpMethod.GET, path, null, adminToken);
-            assertEquals(HttpStatus.FORBIDDEN, denied.getStatusCode(),
-                    "instance ADMIN has no MANAGE_ROLES: " + path);
+            assertEquals(HttpStatus.OK,
+                    call(HttpMethod.GET, path, null, adminToken).getStatusCode(),
+                    "ADMIN holds MANAGE_ROLES since V125 (D-168): " + path);
         }
-        assertEquals(HttpStatus.FORBIDDEN, call(HttpMethod.POST, "/api/v1/roles",
-                Map.of("name", "NOPE", "atoms", List.of("read")), adminToken).getStatusCode());
+        assertEquals(HttpStatus.OK,
+                call(HttpMethod.GET, "/api/v1/roles", null, adminToken).getStatusCode());
+
+        // Positive (V3.1): within its own atom set (read is a USER-default atom) ADMIN may create.
+        assertEquals(HttpStatus.CREATED, call(HttpMethod.POST, "/api/v1/roles",
+                        Map.of("name", "ADMIN_MADE", "atoms", List.of("read")), adminToken)
+                        .getStatusCode(),
+                "ADMIN may delegate atoms it holds");
+
+        // Negative (V3.2 / M2+M3 core): GRANT_ANY_ATOM is SUPER_ADMIN-only ⇒ 403 + atom named.
+        ResponseEntity<String> escalated = call(HttpMethod.POST, "/api/v1/roles",
+                Map.of("name", "ADMIN_ESCALATED", "atoms", List.of("GRANT_ANY_ATOM")), adminToken);
+        assertEquals(HttpStatus.FORBIDDEN, escalated.getStatusCode(),
+                "ADMIN cannot grant the subset bypass it does not hold: " + escalated.getBody());
+        assertTrue(String.valueOf(escalated.getBody()).contains("GRANT_ANY_ATOM"),
+                "the refusal names the exceeding atom: " + escalated.getBody());
 
         String plainToken = register("gate-plain@test.com");
         assertEquals(HttpStatus.FORBIDDEN,

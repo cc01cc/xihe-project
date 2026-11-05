@@ -40,10 +40,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
-import java.util.ArrayList;
 import java.util.Comparator;
-import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.LinkedHashSet;
 import java.util.Set;
 import java.util.UUID;
 
@@ -61,18 +60,14 @@ import java.util.UUID;
 @Service
 public class AgentPrincipalService {
 
-    /** PLAN-0622: the three sharing tiers (frozen wire vocabulary). */
-    public static final String SCOPE_PERSONAL = "PERSONAL";
-    public static final String SCOPE_WORKSPACE = "WORKSPACE";
-    public static final String SCOPE_INSTANCE = "INSTANCE";
     /**
      * PLAN-0629 (user ruling 2026-11-04): the default role an agent principal is bound to when a
      * workspace binding is created without an explicit role set. `WS_EDITOR` is the seeded workspace
      * role that keeps a fresh agent usable (read/write/delete/exec) without handing out management.
      */
     private static final String DEFAULT_AGENT_WORKSPACE_ROLE = "WS_EDITOR";
-    /** PLAN-0629: the instance-scope role a fresh principal is bound to (no frozen ceiling anymore). */
-    private static final String DEFAULT_AGENT_INSTANCE_ROLE = "USER";
+    /** D-174 (AGENT_USER seed): the instance role a fresh principal is bound to (no frozen ceiling). */
+    private static final String DEFAULT_AGENT_INSTANCE_ROLE = "AGENT_USER";
 
     private final AgentPrincipalRepository agentPrincipalRepository;
     private final AuthorizationGrantRepository grantRepository;
@@ -87,6 +82,10 @@ public class AgentPrincipalService {
     private final AuthzContext authzContext;
     /** PLAN-0651 T1.4 (A21/A22): the instance-administrator bypass is an action atom (N1). */
     private final RequesterAuthority requesterAuthority;
+    /** D-180: the structural default workspace binding passes the grant-side subset guard. */
+    private final com.cc01cc.p.xihe.cp.policy.GrantabilityGuard grantability;
+    /** D-180 锁序：instance mutex → role 行（稳定序）→ 主体/绑定/用户（RoleAdmin 同协议）。 */
+    private final com.cc01cc.p.xihe.cp.repository.InstanceOwnerRepository owners;
     /** PLAN-0629: roles are the permission source, so bindings and materialization live here. */
     private final AccessRoleBindingRepository roleBindingRepository;
     private final AccessRoleRepository roleRepository;
@@ -108,7 +107,9 @@ public class AgentPrincipalService {
                                  AccessRoleRepository roleRepository,
                                  AccessRolePermissionRepository rolePermissionRepository,
                                  RoleGrantMaterializer roleMaterializer,
-                                 RequesterAuthority requesterAuthority) {
+                                 RequesterAuthority requesterAuthority,
+                                 com.cc01cc.p.xihe.cp.policy.GrantabilityGuard grantability,
+                                 com.cc01cc.p.xihe.cp.repository.InstanceOwnerRepository owners) {
         this.agentPrincipalRepository = agentPrincipalRepository;
         this.grantRepository = grantRepository;
         this.authService = authService;
@@ -125,72 +126,20 @@ public class AgentPrincipalService {
         this.rolePermissionRepository = rolePermissionRepository;
         this.roleMaterializer = roleMaterializer;
         this.requesterAuthority = requesterAuthority;
+        this.grantability = grantability;
+        this.owners = owners;
     }
-    /** Authorizes, resolves a caller-readable snapshot, and creates a principal atomically. */
+    /** Authorizes and creates the principal and its role bindings in one transaction. */
     @Transactional
-    /**
-     * PLAN-0622 M1.1: creation is one of three tiers, and each tier has its **own** action atom
-     * (D8: never alias-merged).
-     *
-     * <ul>
-     *   <li>{@code PERSONAL} — user tier, {@code CREATE_OWN_AGENT}; the owner is always the caller
-     *       (the frozen body has no {@code ownerUserId}, so an admin can never mint one "for
-     *       somebody else");</li>
-     *   <li>{@code WORKSPACE} — workspace tier, {@code MANAGE_WORKSPACE_AGENTS} for the request
-     *       workspace; without a workspace context this fails explicitly with
-     *       {@code 409 WORKSPACE_CONTEXT_REQUIRED} instead of guessing;</li>
-     *   <li>{@code INSTANCE} — instance tier, {@code CREATE_ACCOUNT}.</li>
-     * </ul>
-     *
-     * <p>An omitted {@code scope} keeps the pre-0622 behaviour: instance-wide creation when the
-     * caller has no workspace context, workspace-tier creation when it does. The wire contract
-     * documents {@code WORKSPACE} as the DB default, but the historical callers (UI before M3,
-     * e2e helpers) create principals with an instance token and no scope field.</p>
-     */
     public AgentPrincipal createPrincipalFromTemplate(String actorUserId, String name, String templateId,
-                                                      String requestedScope, String defaultModelProvider,
-                                                      String defaultModelName, JsonNode allowedModels) {
-        return createPrincipalFromTemplate(actorUserId, name, templateId, requestedScope,
-                defaultModelProvider, defaultModelName, allowedModels, null,
-                AgentPrincipal.ORIGIN_USER, null);
-    }
-
-    /** PLAN-0625 M2: caller-supplied subscriptions; provenance still derives from the template. */
-    public AgentPrincipal createPrincipalFromTemplate(String actorUserId, String name, String templateId,
-                                                      String requestedScope, String defaultModelProvider,
-                                                      String defaultModelName, JsonNode allowedModels, JsonNode hooks) {
-        return createPrincipalFromTemplate(actorUserId, name, templateId, requestedScope,
-                defaultModelProvider, defaultModelName, allowedModels, hooks,
-                AgentPrincipal.ORIGIN_USER, null);
-    }
-
-    public AgentPrincipal createPrincipalFromTemplate(String actorUserId, String name, String templateId,
-                                                      String requestedScope, String defaultModelProvider,
-                                                      String defaultModelName, JsonNode allowedModels, JsonNode hooks,
-                                                      String origin, String presetId) {
-        return createPrincipalFromTemplate(actorUserId, name, templateId, requestedScope,
-                defaultModelProvider, defaultModelName, allowedModels, hooks, origin, presetId, null);
-    }
-
-    /**
-     * PLAN-0629 task-12: the same create, plus the roles the new principal is bound to.
-     *
-     * <p>{@code roleIds} is the only permission input now — a null/empty list means "use the default
-     * role", i.e. the instance-scope {@code USER} role here and {@code WS_EDITOR} when the principal
-     * is bound to a workspace later. Every id is validated once, before the row is written
-     * ({@code 403 ROLE_NOT_GRANTABLE} on failure), and the binding goes through the existing
-     * materializer so there is exactly one write path.</p>
-     */
-    public AgentPrincipal createPrincipalFromTemplate(String actorUserId, String name, String templateId,
-                                                      String requestedScope, String defaultModelProvider,
+                                                      String defaultModelProvider,
                                                       String defaultModelName, JsonNode allowedModels, JsonNode hooks,
                                                       String origin, String presetId,
                                                       List<UUID> roleIds) {
         UUID actorId = parseUuid(actorUserId, "INVALID_ACTOR");
         requireUser(actorId);
         UUID workspaceContext = currentWorkspaceContext();
-        String scope = resolveCreationScope(requestedScope);
-        requireCreationAction(actorId, scope, workspaceContext);
+        requireCreationAction(actorId, workspaceContext);
         AgentTemplateService.ResolvedTemplate resolved = agentTemplateService.resolveForCreation(
                 actorUserId, null, templateId);
         String resolvedTemplateId = optionalText(resolved.snapshot(), "templateId");
@@ -202,69 +151,21 @@ public class AgentPrincipalService {
         JsonNode templateHooks = resolved.snapshot().path("hooks");
         JsonNode effectiveHooks = hooks != null ? hooks
                 : (templateHooks.isMissingNode() || templateHooks.isNull()) ? null : templateHooks.deepCopy();
-        return createPrincipal(actorUserId, name, resolvedTemplateId, resolved.snapshot(), scope,
-                "PERSONAL".equals(scope) ? actorId : null,
+        return createPrincipal(actorUserId, name, resolvedTemplateId, resolved.snapshot(),
                 defaultModelProvider, defaultModelName, allowedModels, effectiveHooks,
                 builtinPreset ? AgentPrincipal.ORIGIN_SYSTEM_PRESET
                         : (origin == null || origin.isBlank() ? AgentPrincipal.ORIGIN_USER : origin),
                 builtinPreset ? resolvedTemplateId : presetId, roleIds);
     }
 
-    /** Legacy signature kept for the pre-0622 callers; same semantics as an omitted scope. */
-    public AgentPrincipal createPrincipalFromTemplate(String actorUserId, String name, String templateId) {
-        return createPrincipalFromTemplate(actorUserId, name, templateId, null, null, null, null);
-    }
-
-    /**
-     * Omitted {@code scope} resolves to {@code WORKSPACE} — the same default M0's migration applied
-     * to every pre-existing row (V90 backfill). The legacy authorization (CREATE_ACCOUNT) is kept
-     * separately in {@link #requireCreationAction} so a pre-0622 caller keeps its old gate.
-     */
-    private String resolveCreationScope(String requestedScope) {
-        if (requestedScope == null || requestedScope.isBlank()) {
-            return SCOPE_WORKSPACE;
+    /** Retains the original default creation authorization. */
+    private void requireCreationAction(UUID actorId, UUID workspaceContext) {
+        if (workspaceContext == null) {
+            throw new CpApiException(HttpStatus.CONFLICT, "WORKSPACE_CONTEXT_REQUIRED",
+                    "Creating an agent principal requires a workspace context");
         }
-        String normalized = requestedScope.trim().toUpperCase(java.util.Locale.ROOT);
-        if (!SCOPE_PERSONAL.equals(normalized) && !SCOPE_WORKSPACE.equals(normalized)
-                && !SCOPE_INSTANCE.equals(normalized)) {
-            throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_AGENT_SCOPE",
-                    "scope must be one of PERSONAL, WORKSPACE, INSTANCE");
-        }
-        return normalized;
-    }
-
-    /**
-     * D21 (Lead ruling 2026-11-02): an omitted {@code scope} is the WORKSPACE tier and takes the
-     * <b>same</b> authorization path as an explicit {@code scope=WORKSPACE}. There is deliberately no
-     * second, legacy {@code CREATE_ACCOUNT} path: one tier, one authority.
-     */
-    private void requireCreationAction(UUID actorId, String scope, UUID workspaceContext) {
-        if (SCOPE_PERSONAL.equals(scope)) {
-            requireUserAction(actorId, ToolFaceRegistry.ACTION_OWN_AGENT, "*", null);
-            return;
-        }
-        if (SCOPE_WORKSPACE.equals(scope)) {
-            if (workspaceContext == null) {
-                // Never guess a workspace: an ambiguous create would land in the wrong tenant.
-                // The status distinguishes "you may create in some workspace but did not name one"
-                // (409, actionable: send X-Workspace-Id) from "you have no workspace-tier authority
-                // at all" (403) — the capability projection decides, never an unscoped grant read.
-                AuthzContext.Capabilities capabilities = authzContext.capabilitiesFor(actorId);
-                boolean adminsSomeWorkspace = capabilities.workspaceAdminAll()
-                        || !capabilities.workspaceAdminWorkspaces().isEmpty();
-                throw new CpApiException(
-                        adminsSomeWorkspace ? HttpStatus.CONFLICT : HttpStatus.FORBIDDEN,
-                        adminsSomeWorkspace ? "WORKSPACE_CONTEXT_REQUIRED" : "FORBIDDEN",
-                        adminsSomeWorkspace
-                                ? "Creating a WORKSPACE-scope agent principal requires a workspace context"
-                                : ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_AGENTS
-                                        + " permission is required");
-            }
-            requireUserAction(actorId, ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_AGENTS,
-                    workspaceContext.toString(), workspaceContext);
-            return;
-        }
-        requireUserAction(actorId, ToolFaceRegistry.ACTION_CREATE_ACCOUNT, "*", null);
+        requireUserAction(actorId, ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_AGENTS,
+                workspaceContext.toString(), workspaceContext);
     }
 
     /**
@@ -340,65 +241,24 @@ public class AgentPrincipalService {
                 ? instructions.asText() : null;
     }
 
-    /**
-     * The caller authorizes CREATE_ACCOUNT and supplies a server-resolved immutable template
-     * snapshot. The tier defaults to {@code WORKSPACE} (M0's backfill default); a caller that wants
-     * an INSTANCE principal passes the scope through {@link #createPrincipalFromTemplate}.
-     */
+    /** Persists a principal from an already authorized server-resolved snapshot. */
     @Transactional
     public AgentPrincipal createPrincipal(String actorUserId, String name, String templateId,
                                           JsonNode templateSnapshot) {
-        return createPrincipal(actorUserId, name, templateId, templateSnapshot, SCOPE_WORKSPACE, null,
-                null, null, null);
+        return createPrincipal(actorUserId, name, templateId, templateSnapshot, null, null, null,
+                null, AgentPrincipal.ORIGIN_USER, null, null);
     }
 
-    /**
-     * PLAN-0622 M1.1: the tier, the owner and the model intent are decided by
-     * {@link #createPrincipalFromTemplate} (authorization) and written here; this method only
-     * enforces the invariants that must hold for **every** write path.
-     */
+    /** Validates and writes the principal and its instance role bindings atomically. */
     @Transactional
     public AgentPrincipal createPrincipal(String actorUserId, String name, String templateId,
-                                          JsonNode templateSnapshot, String scope, UUID ownerUserId,
-                                          String defaultModelProvider, String defaultModelName,
-                                          JsonNode allowedModels) {
-        return createPrincipal(actorUserId, name, templateId, templateSnapshot, scope, ownerUserId,
-                defaultModelProvider, defaultModelName, allowedModels, null);
-    }
-
-    /** PLAN-0625 M2: hooks variant — validation happens in this one write-side gate. */
-    public AgentPrincipal createPrincipal(String actorUserId, String name, String templateId,
-                                          JsonNode templateSnapshot, String scope, UUID ownerUserId,
-                                          String defaultModelProvider, String defaultModelName,
-                                          JsonNode allowedModels, JsonNode hooks) {
-        return createPrincipal(actorUserId, name, templateId, templateSnapshot, scope, ownerUserId,
-                defaultModelProvider, defaultModelName, allowedModels, hooks,
-                AgentPrincipal.ORIGIN_USER, null);
-    }
-
-    /**
-     * PLAN-0625 task-92: the full write path carries template provenance — {@code origin} +
-     * {@code presetId} come from the resolved template (builtin preset ⇒ SYSTEM_PRESET + preset_id,
-     * everything else USER + null), matching the V95 CHECK contract.
-     */
-    public AgentPrincipal createPrincipal(String actorUserId, String name, String templateId,
-                                          JsonNode templateSnapshot, String scope, UUID ownerUserId,
-                                          String defaultModelProvider, String defaultModelName,
-                                          JsonNode allowedModels, JsonNode hooks,
-                                          String origin, String presetId) {
-        return createPrincipal(actorUserId, name, templateId, templateSnapshot, scope, ownerUserId,
-                defaultModelProvider, defaultModelName, allowedModels, hooks, origin, presetId, null);
-    }
-
-    /**
-     * PLAN-0629 task-12 core: {@code roleIds} is validated once up front and then bound through
-     * {@link #bindInstanceRoles}, i.e. the only permission source this method has.
-     */
-    public AgentPrincipal createPrincipal(String actorUserId, String name, String templateId,
-                                          JsonNode templateSnapshot, String scope, UUID ownerUserId,
+                                          JsonNode templateSnapshot,
                                           String defaultModelProvider, String defaultModelName,
                                           JsonNode allowedModels, JsonNode hooks,
                                           String origin, String presetId, List<UUID> roleIds) {
+        // D-180 锁序：instance mutex 是第一把锁（RoleAdmin/BindingAdmin 同协议），之后才
+        // ①锁角色行（validateGrantableRoles，稳定序）②写主体/绑定/用户。
+        lockInstanceMutex();
         JsonNode checkedHooks = HookAdvisorRegistry.validateSubscriptions(hooks);
         UUID actorId = parseUuid(actorUserId, "INVALID_ACTOR");
         if (!authService.userExists(actorId)) {
@@ -414,17 +274,6 @@ public class AgentPrincipalService {
         if (!java.util.Objects.equals(templateId, optionalText(templateSnapshot, "templateId"))) {
             throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_TEMPLATE_SNAPSHOT",
                     "Template ID does not match the frozen snapshot");
-        }
-        String resolvedScope = scope == null || scope.isBlank() ? SCOPE_WORKSPACE : scope;
-        // Invariant mirror of ck_agent_principals_owner: PERSONAL owns exactly one human, every
-        // other tier owns nobody. The DB constraint is the backstop, not the only guard.
-        if (SCOPE_PERSONAL.equals(resolvedScope) && ownerUserId == null) {
-            throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_AGENT_PRINCIPAL",
-                    "A PERSONAL agent principal requires an owner");
-        }
-        if (!SCOPE_PERSONAL.equals(resolvedScope) && ownerUserId != null) {
-            throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_AGENT_PRINCIPAL",
-                    "Only PERSONAL agent principals carry an owner");
         }
         JsonNode modelIntent = normalizeModelIntent(defaultModelProvider, defaultModelName, allowedModels);
 
@@ -459,8 +308,6 @@ public class AgentPrincipalService {
         principal.setTemplateId(templateId);
         principal.setTemplateSnapshot(templateSnapshot.deepCopy());
         principal.setCreatedByUserId(actorId.toString());
-        principal.setScope(resolvedScope);
-        principal.setOwnerUserId(ownerUserId);
         principal.setDefaultModelProvider(defaultModelProvider);
         principal.setDefaultModelName(defaultModelName);
         principal.setAllowedModels(modelIntent);
@@ -487,14 +334,7 @@ public class AgentPrincipalService {
         bindInstanceRoles(savedPrincipal.getId(), actorId, roleIds);
 
         ObjectNode detail = objectMapper.createObjectNode();
-        // PLAN-0622 M1.1: the audit record carries the tier (checklist risk #7) and the action that
-        // authorized it, so a reviewer can tell a PERSONAL create from an INSTANCE one.
-        detail.put("authorizationAction", switch (resolvedScope) {
-            case SCOPE_PERSONAL -> ToolFaceRegistry.ACTION_OWN_AGENT;
-            case SCOPE_WORKSPACE -> ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_AGENTS;
-            default -> ToolFaceRegistry.ACTION_CREATE_ACCOUNT;
-        });
-        detail.put("scope", resolvedScope);
+        detail.put("authorizationAction", ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_AGENTS);
         if (templateId != null) {
             detail.put("templateId", templateId);
         }
@@ -510,6 +350,8 @@ public class AgentPrincipalService {
                                           JsonNode requestedPermissions) {
         UUID actorId = parseUuid(actorUserId, "INVALID_ACTOR");
         requireUser(actorId);
+        // D-180 锁序：mutex 先于默认角色行锁与 binding/principal 写入（同 create）。
+        lockInstanceMutex();
         workspaceService.requireActiveWorkspace(workspaceId.toString());
         requireWorkspaceMember(actorId, workspaceId);
         AgentPrincipal principal = requireActivePrincipal(principalId);
@@ -519,17 +361,25 @@ public class AgentPrincipalService {
         // resolveCapFor stays the single entry, untouched.
         requireMutableCap(principal);
         requireWorkspaceAgentManagement(actorId, workspaceId);
-        requireBindingAuthorityForScope(actorId, principal);
+        requireBindingAuthority(actorId, principal);
 
         Set<GrantIntersectionEvaluator.PermissionAtom> cap = parsePermissions(requestedPermissions);
-        Set<GrantIntersectionEvaluator.PermissionAtom> principalPermissions = evaluator.union(
-                grantRepository.findBySubjectTypeAndSubjectId(
-                        GrantPrincipalPathResolver.AGENT_PRINCIPAL, principalId));
+        // D-174 + PLAN-0673 D-180: BOTH sides evaluate in the TARGET workspace (instance rows
+        // participate everywhere, a workspace row only for its own workspace) — the pre-fix
+        // unscoped reads let A's workspace-A write reach into workspace B.
+        Set<GrantIntersectionEvaluator.PermissionAtom> principalPermissions =
+                principalEffectiveAtoms(principalId, workspaceId);
         Set<GrantIntersectionEvaluator.PermissionAtom> actorPermissions = evaluator.union(
-                grantRepository.findBySubjectTypeAndSubjectId(GrantPrincipalPathResolver.USER, actorId));
-        if (!isSubset(cap, principalPermissions) || !isSubset(cap, actorPermissions)) {
+                grantRepository.findScopedGrants(GrantPrincipalPathResolver.USER, actorId,
+                        GrantSources.EVALUATION_SOURCES, workspaceId));
+        List<String> overPrincipal = exceeding(cap, principalPermissions);
+        List<String> overActor = exceeding(cap, actorPermissions);
+        if (!overPrincipal.isEmpty() || !overActor.isEmpty()) {
+            // D-160 ③: the refusal names the exceeding atoms per side, in the 409 naming style
+            // (atom@resource) — the grantor must already hold every atom it raises the cap to.
             throw new CpApiException(HttpStatus.FORBIDDEN, "AGENT_PERMISSION_SCOPE_EXCEEDED",
-                    "Workspace cap exceeds current principal or operator permissions");
+                    "Workspace cap exceeds held permissions: principal-exceeding="
+                            + overPrincipal + " actor-exceeding=" + overActor);
         }
 
         WorkspaceAgentId bindingId = new WorkspaceAgentId(principalId, workspaceId);
@@ -615,7 +465,7 @@ public class AgentPrincipalService {
                         .map(principal -> new WorkspaceAgentView(principal.getId(), principal.getName(),
                                 principal.getTemplateId(), optionalText(principal.getTemplateSnapshot(), "templateName"),
                                 principal.getCreatedAt(), binding.getPermissionsSnapshot().deepCopy(),
-                                sourceOf(principal), true, principal.getDisabledAt() != null,
+                                true, principal.getDisabledAt() != null,
                                 principal.getHooks() == null ? null : principal.getHooks().deepCopy(),
                                 principal.getContextPolicy() == null
                                         ? null : principal.getContextPolicy().deepCopy(),
@@ -631,7 +481,12 @@ public class AgentPrincipalService {
                 .map(agentPrincipalRepository::findById)
                 .flatMap(java.util.Optional::stream)
                 .forEach(principal -> merged.put(principal.getId(),
-                        unboundView(principal, principalOnlyCap(principal.getId()),
+                        unboundView(principal, toJson(principalEffectiveAtoms(principal.getId(), workspaceId)),
+                                rolesByPrincipal.getOrDefault(principal.getId(), List.of()))));
+        agentPrincipalRepository.findByOwnerUserId(actorId).stream()
+                .filter(principal -> !merged.containsKey(principal.getId()))
+                .forEach(principal -> merged.put(principal.getId(),
+                        unboundView(principal, toJson(principalEffectiveAtoms(principal.getId(), workspaceId)),
                                 rolesByPrincipal.getOrDefault(principal.getId(), List.of()))));
         return merged.values().stream().sorted(WORKSPACE_AGENT_LIST_ORDER).toList();
     }
@@ -646,20 +501,16 @@ public class AgentPrincipalService {
                 .collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
     }
 
-    /** Stable list order: workspace → personal → instance, then name, then id (D24). */
-    private static final java.util.Map<String, Integer> SOURCE_ORDER =
-            java.util.Map.of("workspace", 0, "personal", 1, "instance", 2);
-
     static final java.util.Comparator<WorkspaceAgentView> WORKSPACE_AGENT_LIST_ORDER = java.util.Comparator
-            .comparingInt((WorkspaceAgentView view) -> SOURCE_ORDER.getOrDefault(view.source(), 9))
-            .thenComparing(view -> view.name() == null ? "" : view.name().toLowerCase(java.util.Locale.ROOT))
+            .comparing((WorkspaceAgentView view) -> view.name() == null
+                    ? "" : view.name().toLowerCase(java.util.Locale.ROOT))
             .thenComparing(view -> view.principalId().toString());
 
     private WorkspaceAgentView unboundView(AgentPrincipal principal, JsonNode cap,
                                            List<UUID> roleIds) {
         return new WorkspaceAgentView(principal.getId(), principal.getName(), principal.getTemplateId(),
                 optionalText(principal.getTemplateSnapshot(), "templateName"), principal.getCreatedAt(), cap,
-                sourceOf(principal), false, principal.getDisabledAt() != null,
+                false, principal.getDisabledAt() != null,
                 principal.getHooks() == null ? null : principal.getHooks().deepCopy(),
                 principal.getContextPolicy() == null ? null : principal.getContextPolicy().deepCopy(),
                 roleIds);
@@ -677,69 +528,20 @@ public class AgentPrincipalService {
                                 java.util.stream.Collectors.toList())));
     }
 
-    /** Without a binding there is no narrowing cap: the principal's own atoms are the whole cap. */
-    private JsonNode principalOnlyCap(UUID principalId) {
-        return toJson(evaluator.union(grantRepository.findBySubjectTypeAndSubjectId(
-                GrantPrincipalPathResolver.AGENT_PRINCIPAL, principalId)));
-    }
-
-    /** Wire vocabulary of the list projection: {@code workspace|personal|instance}. */
-    private String sourceOf(AgentPrincipal principal) {
-        String scope = principal.getScope() == null ? SCOPE_WORKSPACE : principal.getScope();
-        return switch (scope) {
-            case SCOPE_PERSONAL -> "personal";
-            case SCOPE_INSTANCE -> "instance";
-            default -> "workspace";
-        };
-    }
-
-    /**
-     * PLAN-0622 M1.2 / O5: {@code GET /agent-principals?scope=…}.
-     *
-     * <ul>
-     *   <li>{@code PERSONAL} — only the caller's own principals (never somebody else's name or
-     *       template);</li>
-     *   <li>{@code INSTANCE} — visible instance-wide, so every authenticated caller sees them;</li>
-     *   <li>{@code WORKSPACE} — requires a workspace id and membership; returns the principals bound
-     *       in that workspace.</li>
-     * </ul>
-     */
+    /** Lists only owner-visible principals, or all principals for instance management. */
     @Transactional(readOnly = true)
-    public List<AgentPrincipalView> listPrincipals(String actorUserId, String scope, String workspaceIdValue) {
+    public List<AgentPrincipalView> listPrincipals(String actorUserId, String workspaceIdValue) {
         UUID actorId = parseUuid(actorUserId, "INVALID_ACTOR");
         requireUser(actorId);
-        String requested = scope == null || scope.isBlank() ? null : scope.trim().toUpperCase(java.util.Locale.ROOT);
-        if (requested == null) {
-            List<AgentPrincipalView> all = new ArrayList<>();
-            agentPrincipalRepository.findByScopeAndOwnerUserId(SCOPE_PERSONAL, actorId)
-                    .forEach(principal -> all.add(toPrincipalView(principal)));
-            agentPrincipalRepository.findByScope(SCOPE_INSTANCE)
-                    .forEach(principal -> all.add(toPrincipalView(principal)));
-            return all;
-        }
-        if (SCOPE_PERSONAL.equals(requested)) {
-            return agentPrincipalRepository.findByScopeAndOwnerUserId(SCOPE_PERSONAL, actorId).stream()
-                    .map(this::toPrincipalView).toList();
-        }
-        if (SCOPE_INSTANCE.equals(requested)) {
-            return agentPrincipalRepository.findByScope(SCOPE_INSTANCE).stream()
-                    .map(this::toPrincipalView).toList();
-        }
-        if (!SCOPE_WORKSPACE.equals(requested)) {
-            throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_AGENT_SCOPE",
-                    "scope must be one of PERSONAL, WORKSPACE, INSTANCE");
-        }
         if (workspaceIdValue == null || workspaceIdValue.isBlank()) {
-            throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST",
-                    "scope=WORKSPACE requires a workspaceId");
+            List<AgentPrincipal> visible = holdsAgentPrincipalManagementAtom(actorId)
+                    ? agentPrincipalRepository.findAll() : agentPrincipalRepository.findByOwnerUserId(actorId);
+            return visible.stream().map(this::toPrincipalView).toList();
         }
         UUID workspaceId = parseUuid(workspaceIdValue, "INVALID_WORKSPACE_CONTEXT");
-        workspaceService.requireActiveWorkspace(workspaceId.toString());
-        requireWorkspaceMember(actorId, workspaceId);
-        return workspaceAgentRepository.findByIdWorkspaceId(workspaceId).stream()
-                .map(binding -> agentPrincipalRepository.findById(binding.getId().getPrincipalId()))
+        return listWorkspaceAgents(actorUserId, workspaceId).stream()
+                .map(view -> agentPrincipalRepository.findById(view.principalId()))
                 .flatMap(java.util.Optional::stream)
-                .filter(principal -> SCOPE_WORKSPACE.equals(principal.getScope()))
                 .map(this::toPrincipalView)
                 .toList();
     }
@@ -747,7 +549,7 @@ public class AgentPrincipalService {
     private AgentPrincipalView toPrincipalView(AgentPrincipal principal) {
         return new AgentPrincipalView(principal.getId(), principal.getName(), principal.getTemplateId(),
                 optionalText(principal.getTemplateSnapshot(), "templateName"), principal.getCreatedAt(),
-                principal.getScope(), principal.getOwnerUserId(), principal.getDefaultModelProvider(),
+                principal.getOwnerUserId(), principal.getDefaultModelProvider(),
                 principal.getDefaultModelName(),
                 principal.getAllowedModels() == null ? null : principal.getAllowedModels().deepCopy(),
                 principal.getDisabledAt(),
@@ -857,8 +659,12 @@ public class AgentPrincipalService {
             if (existing.contains(roleId)) {
                 continue;
             }
-            roleBindingRepository.save(new AccessRoleBinding(roleId,
-                    GrantPrincipalPathResolver.AGENT_PRINCIPAL, principalId, "instance", null, actorId));
+            // Lead ruling 2026-11-05: this is the creation-time DEFAULT grant ⇒ seed binding
+            // (immutable via ROLE_BINDING_IMMUTABLE). API bindings created later stay deletable.
+            AccessRoleBinding row = new AccessRoleBinding(roleId,
+                    GrantPrincipalPathResolver.AGENT_PRINCIPAL, principalId, "instance", null, actorId);
+            row.setSeed(true);
+            roleBindingRepository.save(row);
         }
         roleMaterializer.materializeSubject(GrantPrincipalPathResolver.AGENT_PRINCIPAL, principalId,
                 actorId, null);
@@ -884,16 +690,17 @@ public class AgentPrincipalService {
      * reintroduce the creator coupling the 2026-11-04 ruling removed.</p>
      */
     private void validateGrantableRoles(UUID actorId, List<UUID> roleIds) {
-        if (roleIds == null || roleIds.isEmpty()) {
-            return;
+        // D-180: ids null-checked first, then locked in STABLE (sorted) order — the mutex comes
+        // from the create entry, so the order is mutex → role rows → principal/binding writes.
+        List<UUID> effective = roleIds == null || roleIds.isEmpty()
+                ? List.of(requireRole(DEFAULT_AGENT_INSTANCE_ROLE).getId())
+                : roleIds;
+        if (effective.stream().anyMatch(java.util.Objects::isNull)) {
+            throw notGrantable("roleIds must not contain null");
         }
-        Set<GrantIntersectionEvaluator.PermissionAtom> actorAtoms = evaluator.union(
-                grantRepository.findBySubjectTypeAndSubjectId(GrantPrincipalPathResolver.USER, actorId));
-        for (UUID roleId : new java.util.LinkedHashSet<>(roleIds)) {
-            if (roleId == null) {
-                throw notGrantable("roleIds must not contain null");
-            }
-            AccessRole role = roleRepository.findById(roleId)
+        for (UUID roleId : new java.util.LinkedHashSet<>(
+                effective.stream().sorted().toList())) {
+            AccessRole role = roleRepository.findByIdForUpdate(roleId)
                     .orElseThrow(() -> notGrantable("roleId is not bindable"));
             List<String> atomNames = roleAtomNames(roleId);
             String forbidden = PermissionAtomCatalog.firstForbiddenAgentPrincipalAtom(atomNames);
@@ -901,15 +708,30 @@ public class AgentPrincipalService {
                 throw notGrantable("instance-admin role cannot be bound to an agent principal ("
                         + forbidden + ")");
             }
-            Set<GrantIntersectionEvaluator.PermissionAtom> roleAtoms = new LinkedHashSet<>();
-            for (String atomName : atomNames) {
-                if (PermissionAtomCatalog.isActionAtom(atomName)) {
-                    roleAtoms.add(new GrantIntersectionEvaluator.PermissionAtom(atomName, "*"));
-                }
-            }
-            if (!isSubset(roleAtoms, actorAtoms)) {
-                throw notGrantable("actor cannot grant role " + role.getName()
-                        + ": it grants more than the actor holds");
+            // PLAN-0673 ④: the subset decision is the shared guard at the INSTANCE target scope —
+            // the caller's instance rows cover every workspace; a workspace-only hold does not
+            // (workspace ⊉ instance). GRANT_ANY_ATOM bypasses with an audit (guard-side).
+            grantabilityAs(actorId, new LinkedHashSet<>(atomNames),
+                    com.cc01cc.p.xihe.cp.policy.AccessScope.instance());
+        }
+    }
+
+    /**
+     * D-180: run the shared guard with the explicit service actor (the C6 "no TenantContext in
+     * service internals" contract keeps tests and non-request callers honest) — same subject, no
+     * context smuggling; the caller's context is restored afterwards.
+     */
+    private void grantabilityAs(UUID actorId, Set<String> atoms,
+                                com.cc01cc.p.xihe.cp.policy.AccessScope scope) {
+        String previous = TenantContext.getUserId();
+        try {
+            TenantContext.setUserId(actorId.toString());
+            grantability.assertGrantable(atoms, scope);
+        } finally {
+            if (previous == null || previous.isBlank()) {
+                TenantContext.clear();
+            } else {
+                TenantContext.setUserId(previous);
             }
         }
     }
@@ -923,6 +745,14 @@ public class AgentPrincipalService {
 
     private static CpApiException notGrantable(String detail) {
         return new CpApiException(HttpStatus.FORBIDDEN, "ROLE_NOT_GRANTABLE", detail);
+    }
+
+    /**
+     * D-180 锁序（与 RoleAdminService/BindingAdminService 同协议）：instance_owner 写互斥是第一把锁，
+     * 其后才允许 role 行锁（稳定序）与主体/绑定/用户写入。
+     */
+    private void lockInstanceMutex() {
+        owners.lockSingleton().orElseGet(() -> owners.save(new com.cc01cc.p.xihe.cp.entity.InstanceOwner()));
     }
 
     private AccessRole requireRole(String name) {
@@ -949,8 +779,9 @@ public class AgentPrincipalService {
         if (!roleRows.isEmpty()) {
             return evaluator.union(roleRows);
         }
-        return evaluator.union(grantRepository.findBySubjectTypeAndSubjectId(
-                GrantPrincipalPathResolver.AGENT_PRINCIPAL, principalId));
+        return evaluator.union(grantRepository.findScopedGrants(
+                GrantPrincipalPathResolver.AGENT_PRINCIPAL, principalId,
+                GrantSources.EVALUATION_SOURCES, workspaceId));
     }
 
     /** PLAN-0629: the workspace-scoped role ids bound to this principal (read-only view field). */
@@ -977,9 +808,33 @@ public class AgentPrincipalService {
                 .orElseThrow(() -> new CpApiException(HttpStatus.INTERNAL_SERVER_ERROR,
                         "ROLE_CATALOG_INCONSISTENT",
                         "Seeded role " + DEFAULT_AGENT_WORKSPACE_ROLE + " is missing"));
-        roleBindingRepository.save(new AccessRoleBinding(defaultRole.getId(),
+        // D-180 锁序：role 行锁在 mutex 之后（上层已取），写入前持锁防并发改原子（TOCTOU）。
+        defaultRole = roleRepository.findByIdForUpdate(defaultRole.getId())
+                .orElseThrow(() -> new CpApiException(HttpStatus.INTERNAL_SERVER_ERROR,
+                        "ROLE_CATALOG_INCONSISTENT",
+                        "Seeded role " + DEFAULT_AGENT_WORKSPACE_ROLE + " vanished under lock"));
+        // D-180: the structural default binding must still clear BOTH gates before any write —
+        // ① the agent-principal forbidden hard gate (GRANT_ANY_ATOM bypass never skips it) and
+        // ② the grant-side subset guard in the TARGET scope (grantor must hold every atom of the
+        //    default role here; instance rows cover all workspaces, a workspace row covers only its
+        //    own). A refusal throws inside the transaction ⇒ binding/workspace_agents/grants stay
+        //    at zero rows (403 grantor gate — never the cap's 409).
+        List<String> defaultRoleAtoms = rolePermissionRepository.findByIdRoleId(defaultRole.getId())
+                .stream().map(row -> row.getId().getActionClass()).toList();
+        String forbidden = PermissionAtomCatalog.firstForbiddenAgentPrincipalAtom(defaultRoleAtoms);
+        if (forbidden != null) {
+            throw new CpApiException(HttpStatus.FORBIDDEN, "ROLE_NOT_GRANTABLE",
+                    "default workspace role carries an atom that cannot be granted to an agent: "
+                            + forbidden);
+        }
+        grantabilityAs(actorId, new LinkedHashSet<>(defaultRoleAtoms),
+                com.cc01cc.p.xihe.cp.policy.AccessScope.workspace(workspaceId));
+        // Lead ruling 2026-11-05: workspace-binding default grant ⇒ seed binding (immutable).
+        AccessRoleBinding row = new AccessRoleBinding(defaultRole.getId(),
                 GrantPrincipalPathResolver.AGENT_PRINCIPAL, principalId, "workspace", workspaceId,
-                actorId));
+                actorId);
+        row.setSeed(true);
+        roleBindingRepository.save(row);
         roleMaterializer.materializeSubject(GrantPrincipalPathResolver.AGENT_PRINCIPAL, principalId,
                 actorId, workspaceId.toString());
     }
@@ -1057,31 +912,11 @@ public class AgentPrincipalService {
     }
 
     private void requireDisableAuthority(UUID actorId, AgentPrincipal principal) {
-        // PLAN-0651 T1.4 (D51-26): the instance-administrator bypass is the instance-scope
-        // MANAGE_AGENT_PRINCIPALS atom (ADMIN/SUPER_ADMIN hold it through the seeded role, V111).
-        boolean instanceAdministrator = holdsAgentPrincipalManagementAtom(actorId);
-        String scope = principal.getScope() == null ? SCOPE_WORKSPACE : principal.getScope();
-        if (SCOPE_PERSONAL.equals(scope)) {
-            if (instanceAdministrator || actorId.equals(principal.getOwnerUserId())) {
-                return;
-            }
-            throw new CpApiException(HttpStatus.FORBIDDEN, "AGENT_PRINCIPAL_OWNER_MISMATCH",
-                    "Only the owner or instance administration may disable a PERSONAL agent principal");
-        }
-        if (instanceAdministrator) {
+        if (actorId.equals(principal.getOwnerUserId()) || holdsAgentPrincipalManagementAtom(actorId)) {
             return;
         }
-        if (SCOPE_INSTANCE.equals(scope)) {
-            throw new CpApiException(HttpStatus.FORBIDDEN, "INSTANCE_ADMIN_REQUIRED",
-                    "An INSTANCE-scope agent principal may only be disabled by instance administration");
-        }
-        UUID workspaceContext = currentWorkspaceContext();
-        if (workspaceContext == null) {
-            throw new CpApiException(HttpStatus.CONFLICT, "WORKSPACE_CONTEXT_REQUIRED",
-                    "Disabling a WORKSPACE-scope agent principal requires a workspace context");
-        }
-        requireUserAction(actorId, ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_AGENTS,
-                workspaceContext.toString(), workspaceContext);
+        throw new CpApiException(HttpStatus.FORBIDDEN, "AGENT_PRINCIPAL_OWNER_MISMATCH",
+                "Only the owner or a holder of MANAGE_AGENT_PRINCIPALS may change this agent principal");
     }
 
     private void requireUser(UUID userId) {
@@ -1119,18 +954,10 @@ public class AgentPrincipalService {
      * disclosing whether the principal exists (the caller already reached this point with a valid
      * workspace gate, so the principal id is theirs).</p>
      */
-    private void requireBindingAuthorityForScope(UUID actorId, AgentPrincipal principal) {
-        String scope = principal.getScope() == null ? SCOPE_WORKSPACE : principal.getScope();
-        if (SCOPE_PERSONAL.equals(scope)) {
-            if (!actorId.equals(principal.getOwnerUserId())) {
-                throw new CpApiException(HttpStatus.FORBIDDEN, "AGENT_PRINCIPAL_OWNER_MISMATCH",
-                        "A PERSONAL agent principal may only be bound by its owner");
-            }
-            return;
-        }
-        if (SCOPE_INSTANCE.equals(scope) && !holdsAgentPrincipalManagementAtom(actorId)) {
-            throw new CpApiException(HttpStatus.FORBIDDEN, "INSTANCE_ADMIN_REQUIRED",
-                    "An INSTANCE-scope agent principal may only be bound by instance administration");
+    private void requireBindingAuthority(UUID actorId, AgentPrincipal principal) {
+        if (principal.getOwnerUserId() != null && !actorId.equals(principal.getOwnerUserId())) {
+            throw new CpApiException(HttpStatus.FORBIDDEN, "AGENT_PRINCIPAL_OWNER_MISMATCH",
+                    "An owned agent principal may only be bound by its owner");
         }
     }
 
@@ -1398,6 +1225,14 @@ public class AgentPrincipalService {
         return candidate.stream().allMatch(atom -> isCoveredBy(atom, ceiling));
     }
 
+    /** D-160 ③: the exceeding atoms in the 409 naming style (`atom@resource`), sorted, deduped. */
+    private List<String> exceeding(Set<GrantIntersectionEvaluator.PermissionAtom> cap,
+                                   Set<GrantIntersectionEvaluator.PermissionAtom> ceiling) {
+        return cap.stream().filter(atom -> !isCoveredBy(atom, ceiling))
+                .map(atom -> atom.actionClass() + "@" + atom.resource())
+                .distinct().sorted().toList();
+    }
+
     private boolean isCoveredBy(GrantIntersectionEvaluator.PermissionAtom candidate,
                                 Set<GrantIntersectionEvaluator.PermissionAtom> ceiling) {
         return ceiling.stream().anyMatch(atom -> atom.actionClass().equals(candidate.actionClass())
@@ -1455,14 +1290,14 @@ public class AgentPrincipalService {
 
     /** PLAN-0622 M1.2 wire projection of a principal (list route, not the workspace binding). */
     public record AgentPrincipalView(UUID principalId, String name, String templateId, String templateName,
-                                     Instant createdAt, String scope, UUID ownerUserId,
+                                     Instant createdAt, UUID ownerUserId,
                                      String defaultModelProvider, String defaultModelName,
                                      JsonNode allowedModels, Instant disabledAt, JsonNode hooks,
                                      JsonNode contextPolicy) {}
 
     public record WorkspaceAgentView(UUID principalId, String name, String templateId,
                                      String templateName, Instant createdAt, JsonNode permissions,
-                                     String source, boolean bound, boolean disabled, JsonNode hooks,
+                                     boolean bound, boolean disabled, JsonNode hooks,
                                      JsonNode contextPolicy,
                                      // PLAN-0629: the workspace-scoped roles that authorize this row.
                                      java.util.List<UUID> roleIds) {}

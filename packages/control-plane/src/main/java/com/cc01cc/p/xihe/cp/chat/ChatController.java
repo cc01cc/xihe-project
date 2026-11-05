@@ -410,7 +410,9 @@ public class ChatController {
     @PreAuthorize("isAuthenticated()")
     @GetMapping(path = "/api/v1/events", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public SseEmitter events(@RequestParam(name = "sessionId") String sessionId,
-                             @RequestParam(name = "asParticipantId", required = false) String asParticipantId) {
+                             @RequestParam(name = "asParticipantId", required = false) String asParticipantId,
+                             @RequestHeader(name = "X-XH-SSE-Connection-Id", required = false)
+                             String connectionId) {
         if (sessionId == null || sessionId.isBlank()) {
             throw new com.cc01cc.p.xihe.cp.config.CpApiException(
                     HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "sessionId is required");
@@ -427,7 +429,7 @@ public class ChatController {
         if (declaredView != null) {
             sessionParticipantService.authorizeAsParticipant(userId, workspaceId, sessionId, declaredView);
         }
-        SseEmitter emitter = sseManager.createEmitter(sessionId, declaredView);
+        SseEmitter emitter = sseManager.createEmitter(sessionId, declaredView, connectionId);
         sseManager.send(sessionId, "connected", Map.of("sessionId", sessionId, "type", "connected"));
         for (Map<String, Object> approval : approvalService.replayPending(sessionId, userId, workspaceId)) {
             sseManager.send(sessionId, "approval_request", approval);
@@ -506,6 +508,27 @@ public class ChatController {
             }
             ccParticipantIds = parsedCc;
         }
+        // PLAN-0665 M1 (D6/Q3): explicit TO target set. Shape is validated here (fail-closed
+        // 400 INVALID_REQUEST; never silently dropped); roster authz + AGENT-only classification
+        // runs with the other participant gates further down. Empty/absent ⇒ today's single-TO path.
+        List<UUID> toParticipantIds;
+        try {
+            toParticipantIds = ChatToTargets.parse(request.get(ChatToTargets.FIELD));
+        } catch (com.cc01cc.p.xihe.cp.config.CpApiException e) {
+            return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
+        }
+        if (!toParticipantIds.isEmpty()) {
+            // PLAN-0665 M1/Q1: the FIRST target owns the user_submission Run (runId = runIds[0]);
+            // the remaining targets become sibling runs through the single TargetedWake entry.
+            // `asParticipantId` may not contradict the explicit selection.
+            String firstTarget = toParticipantIds.get(0).toString();
+            if (asParticipantId != null && !asParticipantId.isBlank()
+                    && !asParticipantId.equalsIgnoreCase(firstTarget)) {
+                return ProblemDetailsHandler.problemResponse(HttpStatus.BAD_REQUEST, "INVALID_REQUEST",
+                        "asParticipantId conflicts with toParticipantIds[0]");
+            }
+            asParticipantId = firstTarget;
+        }
         String provider = (String) request.get("provider");
         String model = (String) request.get("model");
         String toolMode = (String) request.getOrDefault("toolMode", "none");
@@ -542,6 +565,16 @@ public class ChatController {
         if (asParticipantId != null && !asParticipantId.isBlank()) {
             try {
                 sessionParticipantService.authorizeAsParticipant(userId, workspaceId, sessionId, asParticipantId);
+            } catch (com.cc01cc.p.xihe.cp.config.CpApiException e) {
+                return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
+            }
+        }
+        // PLAN-0665 M1/Q3: every explicit TO target passes the SAME D23-08 gate as `asParticipantId`
+        // (a fan-out selector must never become an authorization bypass). M1 accepts AGENT
+        // participants only; human TO is a later plan (blocked on BL-238).
+        if (!toParticipantIds.isEmpty()) {
+            try {
+                sessionParticipantService.authorizeToTargets(userId, workspaceId, sessionId, toParticipantIds);
             } catch (com.cc01cc.p.xihe.cp.config.CpApiException e) {
                 return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
             }
@@ -635,7 +668,8 @@ public class ChatController {
         }
 
         String requestHash = requestHash(content, provider, model, toolMode, attachmentIds,
-                perCallTimeouts.values(), agentPrincipalId, branchId);
+                perCallTimeouts.values(), agentPrincipalId, branchId,
+                ChatToTargets.canonical(toParticipantIds), asParticipantId);
         try {
             var replay = chatSubmissionService.findSubmissionReplay(
                     userId, sessionId, idempotencyKey, requestHash);
@@ -677,7 +711,8 @@ public class ChatController {
             ChatSubmissionService.Submission submission = chatSubmissionService.create(
                     runId, sessionId, userId, workspaceId, branchId, agentPrincipalId, idempotencyKey, requestHash,
                     provider, model, toolMode, session.getProviderConnectionId(), session.getConnectionRevision(),
-                    instanceId(), requestId, content, attachmentsJson, attachmentIds, asParticipantId);
+                    instanceId(), requestId, content, attachmentsJson, attachmentIds, asParticipantId,
+                    ChatDeliveryPayload.toJson(objectMapper, toParticipantIds, asParticipantId, ccParticipantIds));
             ChatRun chatRun = submission.run();
             if (!admission.isEmpty() && !admission.covers(chatRun.getProviderConnectionId(),
                     chatRun.getProvider(), chatRun.getModel())) {
@@ -731,8 +766,11 @@ public class ChatController {
             // stays observable (a silent non-dispatch would look like a stuck Run).
             List<MentionParser.RosterEntry> roster = mentionRoster(userId, workspaceId, sessionId);
             MentionParser.ParseResult mentions = MentionParser.parse(content, roster);
-            boolean suppressPrimary = MentionParser.suppressesPrimary(mentions,
-                    responder == null ? null : responder.participantId(), explicitAsParticipant);
+            // PLAN-0665 M1: an explicit TO selection outranks the mention suppression — the caller
+            // named exactly who should answer, so the first target always owns this run.
+            boolean suppressPrimary = toParticipantIds.isEmpty()
+                    && MentionParser.suppressesPrimary(mentions,
+                            responder == null ? null : responder.participantId(), explicitAsParticipant);
             if (suppressPrimary) {
                 List<String> mentionedNames = mentions.mentions().stream().map(MentionParser.Mention::displayName)
                         .toList();
@@ -773,11 +811,60 @@ public class ChatController {
             // recipients answer serially on the session executor, never on this thread.
             // PLAN-0630 M5b (D30-14): the composer's cc observer list rides the same round —
             // observers get a notify signal only, never a run of their own.
+            // PLAN-0665 M1: TO targets own their run — the mention/cc round skips them so one
+            // message can never create two runs for the same participant.
+            Set<UUID> toTargetIds = toParticipantIds.isEmpty() ? Set.of() : new HashSet<>(toParticipantIds);
             wakeFanOutService.fanOut(UUID.fromString(sessionId), workspaceId, userId, runId,
-                    content, roster, ccParticipantIds);
+                    content, roster, ccParticipantIds, toTargetIds);
             handedOff = true;
-            return ResponseEntity.accepted().body(runAcceptedBody(chatRun, "accepted", sessionId,
-                userMessage.getId(), runId, null));
+            Map<String, Object> acceptedBody = runAcceptedBody(chatRun, "accepted", sessionId,
+                    userMessage.getId(), runId, null);
+            if (!toParticipantIds.isEmpty()) {
+                // PLAN-0665 Q1: runId = runIds[0] (this Run = the first target); the remaining
+                // targets are dispatched through the SINGLE TargetedWake entry and answered as
+                // sibling runs. Explicit TO (not @) drives the wake, so `triggerSource="to"`.
+                List<String> runIds = new ArrayList<>();
+                runIds.add(runId);
+                List<Map<String, String>> failedTargets = new ArrayList<>();
+                List<Map<String, String>> deferredTargets = new ArrayList<>();
+                if (toParticipantIds.size() > 1) {
+                    WakeFanOutService.TargetedWake targeted = wakeFanOutService.targetedFanOut(
+                            UUID.fromString(sessionId), workspaceId, userId, runId, content,
+                            toParticipantIds.subList(1, toParticipantIds.size()));
+                    targeted.runIds().forEach(id -> runIds.add(id.toString()));
+                    targeted.failedTargets().forEach(failure -> failedTargets.add(Map.of(
+                            "participantId", failure.participantId(), "reason", failure.reason())));
+                    targeted.deferredTargets().forEach(deferred -> deferredTargets.add(Map.of(
+                            "participantId", deferred.participantId(), "reason", deferred.reason())));
+                }
+                acceptedBody.put("runIds", runIds);
+                // BL-283 (Lead ruling 2026-11-05): three explicit buckets, one invariant —
+                // runIds + failedTargets + deferredTargets = requested targets. Deferred = queued
+                // (a follow-up item waits for a slot); failed = a real dispatch error. Neither is
+                // ever silent.
+                if (!deferredTargets.isEmpty()) {
+                    acceptedBody.put("deferredTargets", deferredTargets);
+                    logger.info("[LIFECYCLE] service=cp event=to_fanout_deferred sessionId={} runId={} "
+                                    + "targets={} dispatched={} deferred={} failed={}", sessionId, runId,
+                            toParticipantIds.size(), runIds.size(), deferredTargets.size(),
+                            failedTargets.size());
+                }
+                if (!failedTargets.isEmpty()) {
+                    acceptedBody.put("failedTargets", failedTargets);
+                    logger.error("[LIFECYCLE] service=cp event=to_fanout_partial sessionId={} runId={} "
+                                    + "targets={} dispatched={} deferred={} failed={}", sessionId, runId,
+                            toParticipantIds.size(), runIds.size(), deferredTargets.size(),
+                            failedTargets.size());
+                }
+                if (runIds.size() + failedTargets.size() + deferredTargets.size()
+                        != toParticipantIds.size()) {
+                    logger.error("[LIFECYCLE] service=cp event=to_fanout_accounting_mismatch sessionId={} "
+                                    + "runId={} targets={} dispatched={} deferred={} failed={}", sessionId,
+                            runId, toParticipantIds.size(), runIds.size(), deferredTargets.size(),
+                            failedTargets.size());
+                }
+            }
+            return ResponseEntity.accepted().body(acceptedBody);
         } finally {
             if (!handedOff) {
                 // D28: a run that never reached dispatch must not keep the admission slots.
@@ -810,8 +897,20 @@ public class ChatController {
                             view.role(), view.respondPolicy(), view.disabledAt()))
                     .toList();
         } catch (RuntimeException noRoster) {
+            // BL-273: a roster failure must be VISIBLE — silently returning an empty roster degrades a
+            // DB/permission fault into "@mention suppression quietly stopped working" with no alert.
+            // The dispatch still proceeds (chat must not die because the roster is unreadable), but the
+            // warn line is greppable: event=mention_roster_unavailable.
+            logger.warn("[LIFECYCLE] service=cp event=mention_roster_unavailable sessionId={} "
+                            + "requestId={} reason={}", sessionId, requestIdOrNull(),
+                    noRoster.getClass().getSimpleName());
             return List.of();
         }
+    }
+
+    /** The current request's correlation id, or {@code null} outside a request scope. */
+    private static String requestIdOrNull() {
+        return org.slf4j.MDC.get(com.cc01cc.p.xihe.cp.logging.RequestIdFilter.MDC_KEY);
     }
 
     /**
@@ -916,7 +1015,10 @@ public class ChatController {
         if (userId == null || workspaceId == null) {
             return ProblemDetailsHandler.workspaceContextRequired();
         }
-        Session session = sessionService.requireCurrent(sessionId, userId, workspaceId);
+        // BL-299: the run list is read-only metadata (runId/status/origin/terminal outcome/error
+        // code/timestamps/waiting links). The messages read surface already exposes the same run
+        // fields to an invited participant; there is no owner-only content here.
+        Session session = sessionService.requireReadable(sessionId, userId, workspaceId);
         int safePage = Math.max(page, 0);
         int safeSize = Math.min(Math.max(size, 1), 200);
         return ResponseEntity.ok(chatRunReadService.listSessionRuns(
@@ -1573,7 +1675,8 @@ public class ChatController {
                         relayResult.tokenCount(),
                         assistantContent == null ? 0 : assistantContent.length(),
                         relayResult.usageEnvelope(),
-                        exhaustedDimension);
+                        exhaustedDimension,
+                        relayResult.agentContextTruncation());
                 // PLAN-0352 V1: the session SSE must observe the terminal error/done
                 // BEFORE the connection closes. Two real orders exist around session
                 // delete (claim `cancelling` → settleCancellation durable `cancelled`):
@@ -1867,6 +1970,20 @@ public class ChatController {
                 errorCode, errorDetail, tokenCount, assistantChars, usagePayload, budgetDimension);
     }
 
+    /**
+     * PLAN-0670 M2c / BL-293: the relay's parsed {@code done.agentContextTruncation} node is carried
+     * into the same terminal transition that already carries the usage envelope; only the relay-owned
+     * terminal path passes a non-null node, every other caller uses the 10-arg overload.
+     */
+    private boolean transitionRun(String runId, List<String> expectedStatuses, String status,
+                                  String outcome, String errorCode, String errorDetail,
+                                  int tokenCount, int assistantChars, Object usagePayload,
+                                  String budgetDimension, JsonNode contextTruncation) {
+        return chatRunLifecycleService.transition(runId, expectedStatuses, status, outcome,
+                errorCode, errorDetail, tokenCount, assistantChars, usagePayload, budgetDimension,
+                contextTruncation);
+    }
+
     private String safeErrorCode(String code) {
         if (code == null) {
             return "AGENT_UNAVAILABLE";
@@ -2061,6 +2178,21 @@ public class ChatController {
     }
 
     /**
+     * PLAN-0665 D6: identity-bearing overload — the TO target set (canonical, order-insensitive) and
+     * the explicit responder (`asParticipantId`) are part of the request hash. Fixes a pre-existing
+     * bug where the same content sent as two different participants under one Idempotency-Key
+     * replayed the first run (design §2.2 supersede row).
+     */
+    private String requestHash(String content, String provider, String model,
+                               String toolMode, List<String> attachmentIds,
+                               Map<String, Integer> toolTimeouts, String agentPrincipalId, String branchId,
+                               List<String> toParticipantIds, String asParticipantId) {
+        return ChatRequestHash.calculate(objectMapper, content, provider, model,
+                toolMode, attachmentIds, toolTimeouts, agentPrincipalId, branchId,
+                toParticipantIds, asParticipantId);
+    }
+
+    /**
      * R1 (PLAN-0623): the accepted/queued body carries the run's responder so a client that just spoke
      * as somebody sees the attribution without a second read. null is a real value (a legacy Session
      * without participants), hence a mutable map instead of Map.of.
@@ -2119,6 +2251,9 @@ public class ChatController {
         String outcome = "success";
         String errorCode = null;
         String budgetDimension = null;
+        // PLAN-0670 M2c / BL-293: parsed from the SAME `done` payload that is relayed to the UI; the
+        // terminal write persists exactly this node (no second parse/derivation).
+        JsonNode contextTruncation = null;
         int eventIndex = 0;
         var runState = com.cc01cc.p.xihe.cp.mcp.McpRelayToolRecorder.RunState.create();
         try (BufferedReader reader = new BufferedReader(new InputStreamReader(agentStream, StandardCharsets.UTF_8))) {
@@ -2181,6 +2316,7 @@ public class ChatController {
                         }
                     } else if (isDone) {
                         Map<?, ?> donePayload = asMap(parsePayload(eventName, data.toString()));
+                        contextTruncation = contextTruncationOf(donePayload, contextTruncation);
                         String doneOutcome = stringValue(donePayload, "outcome");
                         String doneErrorCode = stringValue(donePayload, "errorCode");
                         if (doneErrorCode != null) {
@@ -2244,6 +2380,7 @@ public class ChatController {
                         ? "ambiguous" : assistantContent.isEmpty() ? "error" : "partial";
             } else if (isDone) {
                 Map<?, ?> donePayload = asMap(parsePayload(eventName, data.toString()));
+                contextTruncation = contextTruncationOf(donePayload, contextTruncation);
                 String doneOutcome = stringValue(donePayload, "outcome");
                 String doneErrorCode = stringValue(donePayload, "errorCode");
                 if (doneErrorCode != null) {
@@ -2289,7 +2426,7 @@ public class ChatController {
                 : eventCounts.getOrDefault("token", 0);
         return new StreamRelayResult(
                 assistantContent.toString(), outcome, errorCode, budgetDimension,
-                usageTotal, List.copyOf(terminalEvents), runState, usageEnvelope);
+                usageTotal, List.copyOf(terminalEvents), runState, usageEnvelope, contextTruncation);
     }
 
     private static int intValue(Object value, int fallback) {
@@ -2438,7 +2575,9 @@ public class ChatController {
             int tokenCount,
             List<RelayedTerminalEvent> terminalEvents,
             com.cc01cc.p.xihe.cp.mcp.McpRelayToolRecorder.RunState runState,
-            Map<?, ?> usageEnvelope
+            Map<?, ?> usageEnvelope,
+            /** PLAN-0670 M2c / BL-293: same parsed done object the UI receives; null = no truncation. */
+            JsonNode agentContextTruncation
     ) {}
 
     private record ContinuationDispatchContext(
@@ -2549,6 +2688,17 @@ public class ChatController {
             logger.debug("Failed to parse SSE payload as JSON, falling back to raw text: {}", e.getMessage());
             return Map.of("content", payload, "type", eventName);
         }
+    }
+
+    /**
+     * PLAN-0670 M2c / BL-293: extract the inbound truncation marker from the parsed {@code done}
+     * payload. The node is built from the SAME map used for the terminal-outcome fields and for the
+     * relayed SSE payload, so the durable value cannot drift from what the UI received. A malformed /
+     * absent marker keeps {@code fallback} (null unless a valid object was seen earlier in the stream).
+     */
+    private JsonNode contextTruncationOf(Map<?, ?> donePayload, JsonNode fallback) {
+        Object raw = donePayload.get("agentContextTruncation");
+        return raw instanceof Map<?, ?> ? objectMapper.valueToTree(raw) : fallback;
     }
 
     /**

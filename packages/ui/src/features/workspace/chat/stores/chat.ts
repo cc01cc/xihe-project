@@ -9,6 +9,7 @@ import type {
 } from "../../../../types";
 import { ApiError, api, type ApiSessionBranch } from "../../../../composables/api";
 import { logger } from "../../../../lib/logger";
+import type { AgentContextTruncation } from "../composables/useSSE";
 import { useAgentStore } from "../../../../stores/agent";
 
 export const XIHE_STORAGE_KEYS = ["xihe-token", "xihe-user", "xihe-workspace"] as const;
@@ -100,6 +101,45 @@ export const useChatStore = defineStore("chat", () => {
         if (runId !== undefined) return streamKey(sessionId, runId);
         const live = liveStreamKeys(sessionId);
         return live.length === 1 ? live[0] : streamKey(sessionId);
+    }
+
+    /**
+     * PLAN-0670 M2c / BL-292：run 级上下文截断标记（sessionId → runId → marker）。
+     * 必须按 runId 索引：多 run 同屏时用一个全局单值会把 A 的截断提示串到 B 上。
+     */
+    const runContextTruncations = ref<Record<string, Record<string, AgentContextTruncation>>>({});
+    const dismissedRunContextTruncations = ref(new Set<string>());
+
+    function runTruncationKey(sessionId: string, runId: string): string {
+        return `${sessionId}:${runId}`;
+    }
+
+    function setRunContextTruncation(
+        sessionId: string,
+        runId: string,
+        truncation: AgentContextTruncation,
+    ) {
+        const sessionMap = runContextTruncations.value[sessionId] ?? {};
+        sessionMap[runId] = truncation;
+        runContextTruncations.value = { ...runContextTruncations.value, [sessionId]: sessionMap };
+    }
+
+    function getRunContextTruncation(
+        sessionId: string,
+        runId: string | undefined,
+    ): AgentContextTruncation | undefined {
+        if (!runId) return undefined;
+        return runContextTruncations.value[sessionId]?.[runId];
+    }
+
+    function isRunContextTruncationDismissed(sessionId: string, runId: string): boolean {
+        return dismissedRunContextTruncations.value.has(runTruncationKey(sessionId, runId));
+    }
+
+    function dismissRunContextTruncation(sessionId: string, runId: string) {
+        const next = new Set(dismissedRunContextTruncations.value);
+        next.add(runTruncationKey(sessionId, runId));
+        dismissedRunContextTruncations.value = next;
     }
 
     function getMessages(sessionId: string): Message[] {
@@ -223,6 +263,34 @@ export const useChatStore = defineStore("chat", () => {
             messages.value[sessionId] = [];
         }
         messages.value[sessionId].push(message);
+    }
+
+    /**
+     * PLAN-0670 M2d.1：向上分页取到的更旧消息**前插**（保持时间序），按 id 去重。
+     * 与 `loadMessages` 的替换语义分开：分页加载绝不能覆盖当前窗口/在途流。
+     */
+    function prependMessages(sessionId: string, olderMessages: Message[]): number {
+        if (olderMessages.length === 0) return 0;
+        const current = messages.value[sessionId] ?? [],
+            existing = new Set(current.map((message) => message.id)),
+            unique = olderMessages.filter((message) => !existing.has(message.id));
+        if (unique.length === 0) return 0;
+        messages.value[sessionId] = [...unique, ...current];
+        return unique.length;
+    }
+
+    /**
+     * PLAN-0670 M2d.3：内存内消息上限（默认 500，Lead 2026-11-05 批准）。
+     * 从**最旧**端丢弃并返回丢弃条数 —— 调用方必须把丢掉的条数显式呈现为"已折叠"，
+     * 不允许静默丢（静默丢会让用户以为消息丢了）。丢弃造成的 scrollHeight 变化由
+     * MessageList 的 `captureAnchor/restoreAnchor` 补偿（与 prepend 同一套）。
+     */
+    function trimMessages(sessionId: string, maxCount: number): number {
+        const current = messages.value[sessionId];
+        if (!current || current.length <= maxCount) return 0;
+        const dropCount = current.length - maxCount;
+        messages.value[sessionId] = current.slice(dropCount);
+        return dropCount;
     }
 
     function loadMessages(sessionId: string, sessionMessages: Message[]) {
@@ -1038,6 +1106,12 @@ export const useChatStore = defineStore("chat", () => {
         isStreaming,
         addMessage,
         loadMessages,
+        prependMessages,
+        setRunContextTruncation,
+        getRunContextTruncation,
+        isRunContextTruncationDismissed,
+        dismissRunContextTruncation,
+        trimMessages,
         trackUnprojectedRun,
         markClientOwned,
         adoptRunId,

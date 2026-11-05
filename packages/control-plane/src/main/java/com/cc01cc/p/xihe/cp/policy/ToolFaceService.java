@@ -37,11 +37,14 @@ public class ToolFaceService {
     private final ToolFaceRepository repository;
     private final PolicyRevision policyRevision;
     private final AuditLogger audit;
+    private final RequesterAuthority requesterAuthority;
 
-    public ToolFaceService(ToolFaceRepository repository, PolicyRevision policyRevision, AuditLogger audit) {
+    public ToolFaceService(ToolFaceRepository repository, PolicyRevision policyRevision, AuditLogger audit,
+                           RequesterAuthority requesterAuthority) {
         this.repository = repository;
         this.policyRevision = policyRevision;
         this.audit = audit;
+        this.requesterAuthority = requesterAuthority;
     }
 
     public record FaceInput(String tool, String actionClass, String shape) {}
@@ -143,7 +146,7 @@ public class ToolFaceService {
         return value.trim();
     }
 
-    private static String ownerFor(String scope, String workspaceId, boolean admin, boolean requireOwner) {
+    private String ownerFor(String scope, String workspaceId, boolean admin, boolean requireOwner) {
         if (scope == null || !SCOPES.contains(scope)) {
             throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST",
                     "scope must be one of instance/workspace");
@@ -165,10 +168,31 @@ public class ToolFaceService {
         return workspaceId;
     }
 
-    private static boolean workspaceManager() {
+    /**
+     * PLAN-0651 M3 T3.3 (A14 → N9 {@code MANAGE_WORKSPACE_POLICY}).
+     *
+     * <p>D51-28: the {@code WorkspaceRole.canManage(role)} check is a <b>retained role judgement</b>
+     * (today's A14 is OWNER-only; N9 defaults also include WS_EDITOR, so replacing the role check
+     * with the atom would widen A14 — a B-class change pending a ruling). Only the old instance
+     * bypass is migrated, and it is evaluated at <b>instance scope</b> so a workspace-scoped N9 row
+     * (WS_OWNER/WS_EDITOR) cannot silently become the bypass. ADMIN/SUPER_ADMIN hold N9 at instance
+     * scope, so matrix cell S1 is unchanged; the 403 message/shape stays the same.</p>
+     */
+    private boolean workspaceManager() {
         String role = TenantContext.getWorkspaceRole();
-        // PLAN-0610 W1b (R2-9): capability projection, not the role string.
-        return WorkspaceRole.canManage(role) || CapabilityAuthorities.isInstanceAdmin();
+        if (WorkspaceRole.canManage(role)) {
+            return true;
+        }
+        String actor = TenantContext.getUserId();
+        if (actor == null || actor.isBlank()) {
+            return false;
+        }
+        try {
+            return requesterAuthority.holdsActionAtom(UUID.fromString(actor),
+                    ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_POLICY, null);
+        } catch (IllegalArgumentException invalidSubject) {
+            return false;
+        }
     }
 }
 

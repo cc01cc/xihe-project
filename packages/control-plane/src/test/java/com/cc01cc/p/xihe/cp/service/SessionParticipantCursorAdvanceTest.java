@@ -15,7 +15,6 @@ import com.cc01cc.p.xihe.cp.scheduled.WakeScheduleProjectionService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
-import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -23,6 +22,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -60,7 +60,8 @@ class SessionParticipantCursorAdvanceTest {
         service = new SessionParticipantService(participants, cursors, sessions,
                 mock(AgentPrincipalRepository.class), mock(UserRepository.class),
                 mock(WorkspaceService.class), mock(com.cc01cc.p.xihe.cp.policy.GrantAuthorizationService.class),
-                mock(WakeScheduleProjectionService.class), events);
+                mock(WakeScheduleProjectionService.class), events,
+                mock(SessionReadAccess.class));
 
         session = mock(Session.class);
         when(session.getId()).thenReturn(SESSION_ID);
@@ -88,15 +89,27 @@ class SessionParticipantCursorAdvanceTest {
                 .thenReturn(Optional.of(row));
     }
 
-    private void givenDerivedUnread(int mentions) {
-        when(events.countDerivedMentionsBySession(SESSION_ID))
-                .thenReturn(List.<Object[]>of(new Object[] {PARTICIPANT_ID, (long) mentions}));
+    /**
+     * BL-273: the derived aggregate is dialect-neutral now — {@code wake_dispatch} rows are fetched
+     * and the payload is interpreted in Java, so the stub returns real events with real sequences.
+     */
+    private void givenNotifyEvents(long... sequences) {
+        java.util.List<ContextEvent> rows = new java.util.ArrayList<>();
+        for (long sequence : sequences) {
+            ContextEvent event = mock(ContextEvent.class);
+            when(event.getSequence()).thenReturn(sequence);
+            when(event.getPayload()).thenReturn("{\"outcome\":\"notify\",\"participantId\":\""
+                    + PARTICIPANT_ID + "\"}");
+            rows.add(event);
+        }
+        when(events.findBySessionIdAndEventTypeOrderBySequenceAsc(anyString(), anyString()))
+                .thenReturn(rows);
     }
 
     @Test
     void advanceMovesThePointerForward() {
         givenHuman(HUMAN_ID);
-        givenDerivedUnread(2);
+        givenNotifyEvents(9L, 10L);
 
         SessionParticipantService.CursorView view = service.advanceCursor(HUMAN_ID.toString(),
                 WORKSPACE, SESSION_ID.toString(), PARTICIPANT_ID.toString(), 8L);
@@ -109,7 +122,7 @@ class SessionParticipantCursorAdvanceTest {
     @Test
     void repeatedAdvanceIsIdempotent() {
         givenHuman(HUMAN_ID);
-        givenDerivedUnread(0);
+        givenNotifyEvents();
 
         service.advanceCursor(HUMAN_ID.toString(), WORKSPACE, SESSION_ID.toString(),
                 PARTICIPANT_ID.toString(), 8L);
@@ -122,7 +135,7 @@ class SessionParticipantCursorAdvanceTest {
     @Test
     void aBackwardsRequestNeverRegressesThePointer() {
         givenHuman(HUMAN_ID);
-        givenDerivedUnread(1);
+        givenNotifyEvents(6L, 7L, 9L);
         service.advanceCursor(HUMAN_ID.toString(), WORKSPACE, SESSION_ID.toString(),
                 PARTICIPANT_ID.toString(), 8L);
 
@@ -135,7 +148,7 @@ class SessionParticipantCursorAdvanceTest {
     @Test
     void thePointerIsClampedToTheSessionMaxSequence() {
         givenHuman(HUMAN_ID);
-        givenDerivedUnread(0);
+        givenNotifyEvents();
 
         SessionParticipantService.CursorView view = service.advanceCursor(HUMAN_ID.toString(),
                 WORKSPACE, SESSION_ID.toString(), PARTICIPANT_ID.toString(), 99L);
@@ -178,17 +191,17 @@ class SessionParticipantCursorAdvanceTest {
     @Test
     void advancingOnlyEverLowersTheDerivedUnread() {
         givenHuman(HUMAN_ID);
-        givenDerivedUnread(3);
+        givenNotifyEvents(6L, 7L, 9L);
         SessionParticipantService.CursorView before = service.advanceCursor(HUMAN_ID.toString(),
                 WORKSPACE, SESSION_ID.toString(), PARTICIPANT_ID.toString(), 5L);
 
         // The aggregate no longer counts the two notifies the pointer just passed (T5.2 derivation).
-        givenDerivedUnread(1);
+        givenNotifyEvents(6L, 7L, 9L);
         SessionParticipantService.CursorView after = service.advanceCursor(HUMAN_ID.toString(),
                 WORKSPACE, SESSION_ID.toString(), PARTICIPANT_ID.toString(), 9L);
 
         assertEquals(3, before.mentionCount());
-        assertEquals(1, after.mentionCount(), "unread is derived from the pointer, so it can only drop");
+        assertEquals(0, after.mentionCount(), "unread is derived from the pointer, so it can only drop");
         assertTrue(after.mentionCount() < before.mentionCount(),
                 "a counter would stay flat or grow here; the derived value must fall");
     }

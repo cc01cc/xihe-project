@@ -166,12 +166,14 @@ paths:
   /api/v1/workspaces/{workspaceId}/agents:
     get:
       operationId: listWorkspaceAgents
-      summary: List the Agent principals a Workspace can use (three sources)
+      summary: List the Agent principals a Workspace can use
       description: |
-        PLAN-0622 M1.2: merges the three sources a Workspace member may use — the
-        Workspace's own bindings (`source=workspace`), the caller's own PERSONAL
-        principals (`source=personal`) and instance-wide INSTANCE principals
-        (`source=instance`, usable without a binding). Non-members get 403
+        D-174 (tier and `source` badge removed): the list merges the reach a
+        Workspace member may use — principals bound here (`workspace_agents` row
+        or a workspace-scoped agent role binding) unioned with the caller's own
+        owned rows, which appear with `bound: false` until a cap binding exists.
+        The row shape carries `permissionsSnapshot/bound/disabled/hooks/contextPolicy/roleIds`
+        and no longer a `source` or `scope` field. Non-members get 403
         WORKSPACE_FORBIDDEN; prompts and provider secrets are never returned.
       security: [{ bearerAuth: [] }]
       parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string, format: uuid } }]
@@ -505,26 +507,176 @@ paths:
     get: { operationId: getWorkspaceImport, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: importId, required: true, schema: { type: string } }], responses: { '200': { description: Import status }, '404': { $ref: '#/components/responses/Problem' } } }
   /api/v1/workspace-imports/{importId}/cancel:
     post: { operationId: cancelWorkspaceImport, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: importId, required: true, schema: { type: string } }], responses: { '200': { description: Import cancellation state }, '404': { $ref: '#/components/responses/Problem' } } }
+  /api/v1/agent-principals/{principalId}/roles:
+    get:
+      operationId: listAgentPrincipalRoles
+      summary: List one agent principal's role bindings (PLAN-0667)
+      description: |
+        PLAN-0667: the agent-principal role binding surface. It reads the `role_bindings` rows whose
+        `subject_type='agent_principal'` and `subject_id={principalId}`; user bindings keep using
+        `GET /api/v1/bindings` (that surface stays user-only and unchanged).
+        Gate: `MANAGE_AGENT_PRINCIPALS` (N1, instance tier) **or** `MANAGE_WORKSPACE_AGENTS` evaluated
+        in the optional `workspaceId` authorization context; without either the answer is 403. A
+        principal the caller cannot see answers 404 `AGENT_PRINCIPAL_NOT_FOUND` (same body as a
+        missing id — no existence oracle).
+        `atoms` are **localized short labels** of the role's derived atoms (PermissionAtomLabels, at most 12;
+        `atomCount` carries the real distinct count, so the UI shows `slice(0,3)` plus "共 N 个"). Label
+        locale comes from `?locale=` (zh-CN default, en-US supported), else the Accept-Language header; machine
+        atom names never leave the server (D5: show what the role can do, never dump the whole permission surface).
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: principalId, required: true, schema: { type: string, format: uuid } }
+        - { in: query, name: workspaceId, required: false, schema: { type: string, format: uuid }, description: 'Authorization context only: when present the workspace-tier atom is evaluated in this workspace; absent means only the instance-tier atom can authorize the read.' }
+        - { in: query, name: locale, required: false, schema: { type: string, enum: [zh-CN, en-US] }, description: 'Label locale for atoms (zh-CN default; en-US supported). Falls back to Accept-Language, then zh-CN.' }
+      responses:
+        '200': { description: 'Role bindings of this principal', content: { application/json: { schema: { $ref: '#/components/schemas/AgentPrincipalRoleBindingListResponse' } } } }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { description: 'FORBIDDEN (neither MANAGE_AGENT_PRINCIPALS nor MANAGE_WORKSPACE_AGENTS in the authorization context)', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '404': { description: 'AGENT_PRINCIPAL_NOT_FOUND (also for a principal the caller cannot see)', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+    post:
+      operationId: bindAgentPrincipalRole
+      summary: Bind one role to an agent principal (PLAN-0667)
+      description: |
+        PLAN-0667. Adds one `role_bindings` row with `subject_type='agent_principal'` and
+        re-materializes the subject's grants **in the same transaction**, so the agent's next session
+        already sees the new capability (no cache warm-up, no background job).
+        Gates: `MANAGE_AGENT_PRINCIPALS` (instance tier) or `MANAGE_WORKSPACE_AGENTS` in `workspaceId`;
+        the actor can never be the subject itself (an agent cannot bind itself).
+        Scope is **server-derived** (Lead ruling 2026-11-05, real-stack gap 2): the body carries
+        only `roleId`; a `workspaceId` authorization context derives workspace scope, no context
+        derives the instance scope (which requires `MANAGE_AGENT_PRINCIPALS`). The caller can never
+        choose a scope it cannot authorize, so `scopeType`/`scopeId` in the body are rejected.
+        Refusals: a role carrying any `PermissionAtomCatalog.agentPrincipalForbiddenAtoms()` atom ⇒
+        **409 `AGENT_PRINCIPAL_FORBIDDEN_ATOMS`** with only atom names in `detail`; an existing row
+        for the same (role, principal, derived scope) ⇒ **409 `ROLE_BINDING_EXISTS`**; an
+        unknown/invisible role or principal ⇒ 404. The agent's workspace **cap is a hard ceiling**
+        (BL-287): a role carrying an atom outside that cap ⇒ **409 `ROLE_BINDING_EXCEEDS_CAP`** whose
+        `detail` names the exceeding atoms — a binding is never accepted while guaranteed to have no
+        effect in authorization.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: principalId, required: true, schema: { type: string, format: uuid } }
+        - { in: query, name: workspaceId, required: false, schema: { type: string, format: uuid }, description: 'Authorization context only (see GET).' }
+        - { in: query, name: locale, required: false, schema: { type: string, enum: [zh-CN, en-US] }, description: 'Label locale for the response atoms (see GET).' }
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/AgentPrincipalRoleBindRequest' } } }
+      responses:
+        '201': { description: 'The created binding', content: { application/json: { schema: { $ref: '#/components/schemas/AgentPrincipalRoleBindingView' } } } }
+        '400': { description: 'INVALID_REQUEST (body must contain only roleId; a client-supplied scope is rejected)', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { description: 'FORBIDDEN (no binding authority, or actor == subject)', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '404': { description: 'AGENT_PRINCIPAL_NOT_FOUND / ROLE_NOT_FOUND', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '409': { description: 'AGENT_PRINCIPAL_FORBIDDEN_ATOMS / ROLE_BINDING_EXISTS', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+  /api/v1/agent-principals/{principalId}/roles/{bindingId}:
+    delete:
+      operationId: unbindAgentPrincipalRole
+      summary: Remove one role binding from an agent principal (PLAN-0667)
+      description: |
+        PLAN-0667. Deletes the binding row and re-materializes the subject's grants in the same
+        transaction (the capability disappears for the agent's next session). Only a **seed
+        binding** (`is_seed=true`, written by the seeding/creation defaults) is immutable ⇒
+        **409 `ROLE_BINDING_IMMUTABLE`**; a user-created binding of a system role is deletable.
+        Before the Lead ruling of 2026-11-05 the check read `roles.is_system`, so binding the most
+        useful roles (WS_EDITOR etc.) to an agent principal could never be undone.
+        An id that does not exist, or belongs to another subject, answers 404 `ROLE_BINDING_NOT_FOUND`
+        (no cross-subject probe).
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: principalId, required: true, schema: { type: string, format: uuid } }
+        - { in: path, name: bindingId, required: true, schema: { type: string, format: uuid } }
+        - { in: query, name: workspaceId, required: false, schema: { type: string, format: uuid }, description: 'Authorization context only (see GET).' }
+      responses:
+        '204': { description: 'Binding removed' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { description: 'FORBIDDEN (no binding authority)', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '404': { description: 'AGENT_PRINCIPAL_NOT_FOUND / ROLE_BINDING_NOT_FOUND', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '409': { description: ROLE_BINDING_IMMUTABLE, content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+  /api/v1/agent-principals/{principalId}/skills:
+    get:
+      operationId: listAgentPrincipalSkills
+      summary: List one agent principal's skill bindings (PLAN-0667)
+      description: |
+        PLAN-0667: reads `skill_bindings` rows with `subject_type='agent_principal'` and
+        `subject_id={principalId}`. Same authorization shape as the roles listing
+        (`MANAGE_AGENT_PRINCIPALS` or `MANAGE_WORKSPACE_AGENTS` in `workspaceId`), same
+        404-for-invisible-principal rule.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: principalId, required: true, schema: { type: string, format: uuid } }
+        - { in: query, name: workspaceId, required: false, schema: { type: string, format: uuid }, description: 'Authorization context only (see GET roles).' }
+      responses:
+        '200': { description: 'Skill bindings of this principal', content: { application/json: { schema: { $ref: '#/components/schemas/AgentPrincipalSkillBindingListResponse' } } } }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { description: 'AGENT_PRINCIPAL_NOT_FOUND (also for a principal the caller cannot see)', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+    post:
+      operationId: bindAgentPrincipalSkill
+      summary: Bind one skill to an agent principal (PLAN-0667)
+      description: |
+        PLAN-0667 v1: one skill per principal, written as a `skill_bindings` row with
+        `subject_type='agent_principal'`, `scope_type='instance'`, `scope_id=null` (D3(a): the agent
+        carries the skill everywhere it is usable). The nested body carries only `skillId`; scope is
+        server-decided so a caller cannot push a principal binding into a workspace.
+        A definition the caller cannot see answers 404 `SKILL_NOT_FOUND`; a duplicate answers
+        409 `SKILL_BINDING_EXISTS`; a disabled principal answers 404 `AGENT_PRINCIPAL_NOT_FOUND`.
+        The skill catalog of the agent's next session includes the binding immediately (catalog is
+        read from `skill_bindings` per request).
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: principalId, required: true, schema: { type: string, format: uuid } }
+        - { in: query, name: workspaceId, required: false, schema: { type: string, format: uuid }, description: 'Authorization context only (see GET roles).' }
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/AgentPrincipalSkillBindRequest' } } }
+      responses:
+        '201': { description: 'The created binding', content: { application/json: { schema: { $ref: '#/components/schemas/AgentPrincipalSkillBindingView' } } } }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { description: 'FORBIDDEN (no binding authority, or actor == subject)', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '404': { description: 'AGENT_PRINCIPAL_NOT_FOUND / SKILL_NOT_FOUND', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '409': { description: SKILL_BINDING_EXISTS, content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+  /api/v1/agent-principals/{principalId}/skills/{bindingId}:
+    delete:
+      operationId: unbindAgentPrincipalSkill
+      summary: Remove one skill binding from an agent principal (PLAN-0667)
+      description: |
+        PLAN-0667. Deletes the row; the agent's next session catalog no longer contains the skill.
+        An id that does not exist, or belongs to another subject, answers 404 `SKILL_BINDING_NOT_FOUND`.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: principalId, required: true, schema: { type: string, format: uuid } }
+        - { in: path, name: bindingId, required: true, schema: { type: string, format: uuid } }
+        - { in: query, name: workspaceId, required: false, schema: { type: string, format: uuid }, description: 'Authorization context only (see GET roles).' }
+      responses:
+        '204': { description: 'Binding removed' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { description: 'AGENT_PRINCIPAL_NOT_FOUND / SKILL_BINDING_NOT_FOUND', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
   /api/v1/agent-principals:
     get:
       operationId: listAgentPrincipals
-      summary: List Agent principals by sharing scope
+      summary: List Agent principals visible to the caller
       description: |
-        PLAN-0622 M1.2: PERSONAL returns only the caller's own principals,
-        WORKSPACE requires `workspaceId` and membership (returns that Workspace's
-        bound principals), INSTANCE requires instance administration and returns
-        every instance principal. `scope` is optional; omitting it returns the
-        caller-usable union for the given workspace context.
+        D-174 (user ruling 2026-11-05, tier removed): the `scope` query is gone. Visibility is:
+        - without `workspaceId` — a holder of the instance-tier `MANAGE_AGENT_PRINCIPALS` (N1)
+          sees every principal; any other caller sees only rows whose `owner_user_id` is their own;
+        - with `workspaceId` — Workspace membership plus the **real reach**: principals bound in
+          that Workspace (`workspace_agents` row or a workspace-scoped agent role binding) unioned
+          with the caller's own owned rows (an owned, unbound row appears with `bound: false` so a
+          fresh create stays discoverable; `created_by_user_id` is never an authorization source).
 
         PLAN-0629 (user ruling 2026-11-04, B-class change): an agent principal's permission is a
         **role binding**, exactly like a human account's — permissions live in the config surface
-        (`roles` / `role_permissions`) and subjects only get bound to roles. `scope` is kept as a
-        read-only compatibility field and takes no part in authorization; workspace visibility
+        (`roles` / `role_permissions`) and subjects only get bound to roles; workspace visibility
         (`GET /api/v1/workspaces/{workspaceId}/agents`) is computed from workspace-scoped role
         bindings (`role_bindings.subject_type = 'agent_principal'`).
       security: [{ bearerAuth: [] }]
       parameters:
-        - { in: query, name: scope, required: false, schema: { type: string, enum: [PERSONAL, WORKSPACE, INSTANCE] } }
         - { in: query, name: workspaceId, required: false, schema: { type: string, format: uuid } }
       responses:
         '200': { description: Agent principals, content: { application/json: { schema: { $ref: '#/components/schemas/AgentPrincipalListResponse' } } } }
@@ -536,14 +688,19 @@ paths:
       operationId: createAgentPrincipal
       summary: Create an Agent principal from a readable template snapshot
       description: |
-        PLAN-0622 M1: creation is split by sharing scope and each tier keeps its own
-        independent action (never alias-merged, default deny) — `PERSONAL` requires
-        the user-tier `CREATE_OWN_AGENT`, `WORKSPACE` requires
-        `MANAGE_WORKSPACE_AGENTS` on that Workspace, `INSTANCE` requires the
-        instance-tier `CREATE_ACCOUNT`. `scope` defaults to `WORKSPACE`. Resolves an
-        optional template only from caller-readable config layers, freezes the
-        snapshot and grants in one transaction, and does not create a Workspace
-        binding.
+        D-174 (tier removed, one creation path): the request is **workspace-authorized** —
+        a missing workspace context answers 409 `WORKSPACE_CONTEXT_REQUIRED` and the caller must
+        hold `MANAGE_WORKSPACE_AGENTS` in that Workspace (403). The legacy `scope` body field is
+        rejected with 400 `INVALID_REQUEST` (no compatibility branch), the caller never assigns an
+        owner (`ownerUserId` stays NULL unless the row already carried one), and **no Workspace
+        binding is created** — reach is granted later through the existing bind surface.
+
+        `roleIds` defaults to the instance seed role `AGENT_USER` (the human USER registration set
+        minus the agent-forbidden `CREATE_OWN_AGENT`); every id is validated once before the row is
+        written (unknown / agent-principal-forbidden / wider than the caller holds ⇒ 403
+        `ROLE_NOT_GRANTABLE`; the grant-side subset guard answers 403 `PRIVILEGE_ESCALATION` and
+        names the atoms). Resolves an optional template only from caller-readable config layers and
+        freezes the snapshot in one transaction.
       security: [{ bearerAuth: [] }]
       requestBody:
         required: true
@@ -560,12 +717,13 @@ paths:
       operationId: disableAgentPrincipal
       summary: Disable an Agent principal (bodies are never hard-deleted)
       description: |
-        PLAN-0622 M1: disabling is terminal for new Sessions and writes the durable
-        audit `agent_principal_disabled`; the row itself is never deleted (FK
-        ON DELETE RESTRICT keeps historical references intact). A PERSONAL
-        principal may be disabled by its owner, a Workspace-bound principal by a
-        holder of `MANAGE_WORKSPACE_AGENTS` on that Workspace, and an INSTANCE
-        principal by instance administration.
+        PLAN-0622 M1 + D-174 (tier removed): disabling is terminal for new Sessions
+        and writes the durable audit `agent_principal_disabled`; the row itself is
+        never deleted (FK ON DELETE RESTRICT keeps historical references intact).
+        The authority is now **owner-or-N1**: the row's `owner_user_id` (legacy
+        owned rows) or a holder of the instance-tier `MANAGE_AGENT_PRINCIPALS`
+        may disable; a single Workspace's management right never reaches shared
+        rows across Workspaces (workspace-level removal stays `unbind`).
       security: [{ bearerAuth: [] }]
       parameters: [{ in: path, name: principalId, required: true, schema: { type: string, format: uuid } }]
       responses:
@@ -579,11 +737,11 @@ paths:
       operationId: updateAgentPrincipalDocuments
       summary: Replace an Agent principal's hook subscriptions and/or memory policy
       description: |
-        PLAN-0625 M2 (D25-14) + PLAN-0629 M1 (D29-21): there is no separate `/hooks` or
+        PLAN-0625 M2 (D25-14) + PLAN-0629 M1 (D29-21) + D-174: there is no separate `/hooks` or
         `/context-policy` sub-resource — the principal's own update surface accepts the
-        subject-level documents, so the tier authority that guards `disable` is reused
-        verbatim (PERSONAL=owner, WORKSPACE=`MANAGE_WORKSPACE_AGENTS` on the bound
-        Workspace, INSTANCE=instance administration).
+        subject-level documents, so the same **owner-or-N1** authority that guards `disable` is
+        reused verbatim (the row's `owner_user_id` or a holder of the instance-tier
+        `MANAGE_AGENT_PRINCIPALS`; a Workspace management right alone is not enough).
 
         The body is `{hooks?, contextPolicy?}` with `additionalProperties:false`: at least
         one key is required, any other key is a 400 `INVALID_REQUEST`, and an explicit
@@ -981,6 +1139,8 @@ paths:
         reason is null when available, otherwise one of approval_required, denied,
         policy_unavailable, branch_locked. The browser renders this list plus its two local-only
         commands (/clear and /help) and never filters availability itself.
+        BL-299 read access: the session owner or an enabled invited HUMAN participant (managers are
+        excluded); everyone else gets 404 SESSION_NOT_FOUND. Read only — this route has no write face.
       security: [{ bearerAuth: [] }]
       parameters: [{ in: path, name: sessionId, required: true, schema: { type: string, format: uuid } }]
       responses:
@@ -1012,16 +1172,20 @@ paths:
       operationId: exportSessionMarkdown
       description: |
         PLAN-0635 M3: the real /export. Generates a Markdown document from the existing session
-        message read surface (no Agent, no provider, no run). Bounded: at most 2000 messages,
-        20000 characters per message and 2000000 characters per document; every cap is disclosed
-        in the document header via messagesTruncated and contentTruncated.
+        message read surface (no Agent, no provider, no run). Export is a **bounded artifact**, not
+        an error face: at most 2000 visible messages, 20000 characters per message and 2000000
+        characters per document; every cut is disclosed in the document header via
+        messagesTruncated and contentTruncated, and the response is always 200 for an authorised
+        session/branch. BL-295: the former 413 EXPORT_TOO_LARGE precheck was removed — it counted
+        ALL session rows (every branch/visibility) and wrongly refused a small branch of a large
+        session; the streaming read keeps memory independent of the session's total size.
       security: [{ bearerAuth: [] }]
       parameters:
         - { in: path, name: sessionId, required: true, schema: { type: string, format: uuid } }
         - { in: query, name: branchId, required: true, schema: { type: string, format: uuid } }
       responses:
         '200':
-          description: Markdown export
+          description: Markdown export (truncation disclosed in the document header; 413 was removed by BL-295)
           content:
             text/markdown:
               schema: { type: string }
@@ -1295,6 +1459,47 @@ paths:
           description: 'PARTICIPANT_ALREADY_EXISTS | PARTICIPANT_PRIMARY_EXISTS | PARTICIPANT_ORDER_CONFLICT'
           content:
             application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } }
+  /api/v1/sessions/{sessionId}/participants/{participantId}/cursor:
+    patch:
+      operationId: advanceParticipantCursor
+      summary: Advance the caller's own read cursor for this session
+      description: |
+        PLAN-0660 T5.1 (contract `spec/session/user-channel.md` §2): advance-only
+        (`max(current, requested)`), clamped to the Session's current max `context_events.sequence`.
+        Self-only — the row must be a HUMAN participant whose `principal_id` is the caller;
+        otherwise **403 `CURSOR_SELF_ONLY`**. No counter is written: the response's
+        `readCursor.mentionCount` is derived from `wake_dispatch` notify rows past the pointer (§3).
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: sessionId, required: true, schema: { type: string } }
+        - { in: path, name: participantId, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [lastReadEventSeq]
+              properties:
+                lastReadEventSeq: { type: integer, minimum: 0, description: 'Target read position; advance-only + clamped to the session max sequence.' }
+      responses:
+        '200':
+          description: The updated cursor view (same CursorView shape the list endpoint returns)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  lastReadEventSeq: { type: integer }
+                  mentionCount: { type: integer, description: 'DERIVED from wake_dispatch notify rows past the pointer (PLAN-0660 T5.2); not a stored column.' }
+                  updatedAt: { type: string, format: date-time }
+        '400':
+          description: Body missing or lastReadEventSeq not an integer (400 INVALID_REQUEST)
+        '403':
+          description: Not the row's own human participant (403 CURSOR_SELF_ONLY)
+        '404':
+          description: Session or participant not found (404 SESSION_NOT_FOUND / PARTICIPANT_NOT_FOUND)
+
   /api/v1/sessions/{sessionId}/participants/{participantId}:
     patch:
       operationId: updateSessionParticipant
@@ -1347,6 +1552,7 @@ paths:
         otherwise the request is rejected with `409 SSE_SUBSCRIPTION_REQUIRED`.
         Each request must identify its selected branch with `branchId`; the branch is validated before durable Run/Message creation and remains bound through Run ID recovery.
         A session admits up to `maxConcurrentRunsPerSession` (default 2) concurrent runs (PLAN-0645 M0/M1); only when that cap is already full is the next submission rejected with `409 CHAT_IN_PROGRESS`.
+        PLAN-0665 M1: an explicit `toParticipantIds` selection (1..N AGENT participants) makes every selected target answer with its own run. The FIRST target owns this submission's `user_submission` run (`runId` = `runIds[0]`); the remaining targets are created as derived runs whose wake audit carries `triggerSource="to"`. Their `origin` is whatever the wake carrier classifies the run as (real stack 2026-11-05: `scheduled`) and `parent_run_id` stays NULL on purpose, so **read sides must not infer "same message" from `origin`** — group by runId / the durable `SessionMessage.delivery` / `trigger_source`. Explicit TO outranks `@`-mention suppression: the run answers instead of being terminalized as `suppressed_no_responder`. Targets beyond the concurrency cap are dispatched as starts become available; a target that cannot start is audited rather than silently dropped. Human TO targets answer `400 INVALID_REQUEST` until a later plan (blocked on BL-238). The sorted TO set and `asParticipantId` are part of the Idempotency-Key hash.
         Rollback: set `agent-runtime.maxConcurrentRunsPerSession` back to `1` to restore the frozen single-flight behaviour (PLAN-0645 V3 equivalence) — no code change is needed.
         The accepted run streams `token` events followed by a terminal `done` over the persistent session SSE —
         `done` ends the run, not the SSE connection. The SSE remains reusable for the next chat.
@@ -1649,6 +1855,8 @@ paths:
         status/terminal fields plus `waitingOnRunId`/`waitingToolCallId` (the spawn
         waiting link owned by the child ChatRun). ChatPanel uses this endpoint as
         its refresh-recovery source.
+        BL-299 read access: the session owner or an enabled invited HUMAN participant (managers are
+        excluded); everyone else gets 404 SESSION_NOT_FOUND. Read-only metadata only.
       security: [{ bearerAuth: [] }]
       parameters:
         - in: path
@@ -1757,6 +1965,9 @@ paths:
     get:
       operationId: getPolicyMode
       summary: Get the session-scoped policy mode
+      description: |
+        BL-299 read access: the session owner or an enabled invited HUMAN participant (managers are
+        excluded); everyone else gets 404 SESSION_NOT_FOUND. The POST below stays owner-only.
       security: [{ bearerAuth: [] }]
       parameters:
         - in: query
@@ -1780,8 +1991,18 @@ paths:
       description: |
         Persists `manual` / `auto` on the session row (PLAN-0337 V24), so the choice survives a CP
         restart; a workspace-level default comes from the `approval-policy` config domain. An
-        unsupported mode is rejected with `400 INVALID_REQUEST`, an unknown/unowned session with
-        `404 SESSION_NOT_FOUND`.
+        unsupported mode is rejected with `400 INVALID_REQUEST`. BL-299: this is a write face and
+        stays owner-only (the GET sibling is the only widened read).
+
+        BL-309 — the refusal has **two intentionally different codes**, decided by the caller's
+        workspace write role (the codes answer different questions; unifying them would either leak
+        session existence or hide the actionable reason):
+        - **`403 WORKSPACE_READ_ONLY`**: the caller is a `VIEWER` of the workspace. The workspace
+          write gate rejects any non-GET verb before the controller runs, e.g.
+          `{"code":"WORKSPACE_READ_ONLY","detail":"Viewer cannot modify this workspace"}`.
+        - **`404 SESSION_NOT_FOUND`**: the caller is a write-capable workspace member (`EDITOR`)
+          who is not the session owner, so the session owner-only guard answers the single
+          not-区分 404 and the face is not an existence oracle.
       security: [{ bearerAuth: [] }]
       requestBody:
         required: true
@@ -1797,8 +2018,8 @@ paths:
         '400': { $ref: '#/components/responses/Problem' }
         '401': { $ref: '#/components/responses/Problem' }
         '409': { $ref: '#/components/responses/WorkspaceContextRequired' }
-        '403': { $ref: '#/components/responses/Problem' }
-        '404': { $ref: '#/components/responses/Problem' }
+        '403': { description: 'WORKSPACE_READ_ONLY — the caller is a VIEWER workspace member; the workspace write gate rejects the verb before the session guard runs', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '404': { description: 'SESSION_NOT_FOUND — the caller is a write-capable (EDITOR) workspace member but not the session owner; owner-only not-区分 404 (no existence oracle)', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
   /api/v1/policy/domains:
     get:
       operationId: listPolicyDomains
@@ -2477,12 +2698,30 @@ paths:
       parameters:
         - { in: path, name: sessionId, required: true, schema: { type: string, format: uuid } }
         - { in: query, name: branchId, required: true, schema: { type: string, format: uuid }, description: Returns only messages visible on this server-resolved branch path. }
+        - { in: query, name: limit, required: false, schema: { type: integer, minimum: 1 }, description: 'PLAN-0670 M2 page size. Only meaningful together with pagination: an absent `limit` with `before` present defaults to 50; values above 200 are truncated to 200 (never rejected) and the effective value is echoed in the response. Negative/zero ⇒ 400 INVALID_REQUEST.' }
+        - { in: query, name: before, required: false, schema: { type: string }, description: 'PLAN-0670 M2 opaque cursor returned as `nextCursor`; asks for the page strictly OLDER than that boundary. Clients must not parse it. An invalid cursor ⇒ 400 INVALID_CURSOR.' }
       responses:
-        '200': { description: Messages visible on the selected branch path, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/SessionMessage' } } } } }
+        '200':
+          description: |
+            PLAN-0670 M2. Without `limit`/`before` the legacy contract is unchanged for normal
+            sessions: a bare array of all visible messages (ascending). PLAN-0670 M2b adds a hard
+            ceiling to that legacy path — above 2000 messages it answers 413 PAGINATION_REQUIRED
+            **before reading any row** (compatibility must not mean unbounded memory; the legacy body
+            is never silently truncated). When either pagination parameter is present the response
+            is a page envelope `{messages, limit, truncated, nextCursor}`: `messages` ascending
+            (newest window reversed for rendering), `truncated=true` when older messages remain and
+            `nextCursor` is then present, otherwise `nextCursor` is omitted (never an empty string).
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - { type: array, items: { $ref: '#/components/schemas/SessionMessage' } }
+                  - $ref: '#/components/schemas/SessionMessagePage'
         '400': { $ref: '#/components/responses/Problem' }
         '401': { $ref: '#/components/responses/Problem' }
         '403': { $ref: '#/components/responses/Problem' }
         '404': { $ref: '#/components/responses/Problem' }
+        '413': { description: 'PAGINATION_REQUIRED (PLAN-0670 M2b) — the legacy full read was refused because the session exceeds 2000 messages (same cap as the BL-279 A1 export guard); the body carries messages (actual count) and limit (the cap) and asks the caller to page with limit/before. Refused before any message row is read.', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
   /api/v1/sessions/{sessionId}/messages/{messageId}:
     delete: { operationId: deleteMessage, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: sessionId, required: true, schema: { type: string } }, { in: path, name: messageId, required: true, schema: { type: string } }], responses: { '204': { description: Deleted }, '409': { description: FORK_REQUEST_IN_PROGRESS while the Session snapshot is copying / SESSION_DELETING while a delete intent is recorded (V47), content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } } } }
   /api/v1/sessions/{sessionId}/attachments:
@@ -2825,6 +3064,18 @@ paths:
     post: { operationId: runtimeMcp, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }], responses: { '200': { description: MCP JSON-RPC response } } }
   /internal/v1/runtime/remote-mcp/{workspaceId}/{serverId}/call:
     post: { operationId: runtimeRemoteMcpCall, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: workspaceId, required: true, schema: { type: string } }, { in: path, name: serverId, required: true, schema: { type: string } }], responses: { '200': { description: 'MCP response (result body). PLAN-0654: non-2xx carries a Problem body with a fine-grained code while the HTTP status stays 502 for every upstream/transport class: REMOTE_MCP_PROTOCOL_NOT_ACCEPTABLE (upstream 406), REMOTE_MCP_UPSTREAM_NOT_FOUND (404), REMOTE_MCP_UPSTREAM_STATUS_ERROR (other, with upstreamStatus), REMOTE_MCP_INVALID_RESPONSE, REMOTE_MCP_DNS_FAILED / REMOTE_MCP_CONNECT_REFUSED / REMOTE_MCP_TLS_FAILED / REMOTE_MCP_TRANSPORT_FAILED, plus the pre-existing 401 AUTHORIZATION_REQUIRED and 408 TIMEOUT. The upstream response body is never copied; only status/category/upstreamStatus ride along.' }, '401': { $ref: '#/components/responses/Problem' } } }
+  /internal/v1/agent/user-question/respond:
+    post:
+      operationId: agentUserQuestionRespond
+      summary: Deliver the user's answer to the Agent's blocked ask_user wait
+      description: 'PLAN-0660 T5.12: service-to-service only (same Bearer as the other /internal/v1/agent/* routes); the browser never calls this. 200 = accepted, or already_delivered for a replayed delivery (idempotent). Every other outcome — 4xx/5xx/transport failure — is fail-closed on the CP side: the durable question stays pending and no answer is recorded (never a fabricated answered; CP surfaces 502 AGENT_QUESTION_DELIVERY_FAILED and the user retries). The answer body travels only on this wire: never logs, audit detail, problem detail or SSE.'
+      security: [{ bearerAuth: [] }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/UserQuestionRespondRequest' } } } }
+      responses:
+        '200': { description: 'Delivered (accepted | already_delivered)', content: { application/json: { schema: { type: object, properties: { status: { type: string, enum: [accepted, already_delivered] } } } } } }
+        '401': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
   /internal/v1/agent/chat:
     post:
       operationId: agentChat
@@ -3712,7 +3963,7 @@ paths:
     get:
       operationId: getRoleCatalog
       summary: Access-role atom catalog (PLAN-0610 W3-2a; labels PLAN-0651 D51-37)
-      description: 'The permission vocabulary of the access-role model: 19 atoms = 16 action atoms + 3 capability atoms (PLAN-0651 M1 adds MANAGE_AGENT_PRINCIPALS and MANAGE_WORKSPACE_MEMBERS). scope_class (instance|both) is the SSOT of PermissionAtomCatalog — the API projects it and never carries its own table (R2-10); capability=true marks the three atoms that become cap:<atom> authorities (instance:super, instance:admin, workspace:admin) and are never materialized into grants (decision #23). Each atom carries displayName resolved server-side from the explicit locale (zh-CN default, en-US supported, unknown ⇒ zh-CN) so the UI keeps no vocabulary of its own (D51-19/D51-37). Gate: MANAGE_ROLES — an action atom, evaluated from the grant rows because only capability atoms are authorities (R2-5).'
+      description: 'The permission vocabulary of the access-role model: 31 atoms = 28 action atoms + 3 capability atoms (PLAN-0651 adds N1–N10; PLAN-0673 M2 adds GRANT_ANY_ATOM, instance-only). scope_class (instance|both) is the SSOT of PermissionAtomCatalog — the API projects it and never carries its own table (R2-10); capability=true marks the three atoms that become cap:<atom> authorities (instance:super, instance:admin, workspace:admin) and are never materialized into grants (decision #23). Each atom carries displayName resolved server-side from the explicit locale (zh-CN default, en-US supported, unknown ⇒ zh-CN) so the UI keeps no vocabulary of its own (D51-19/D51-37). Gate: MANAGE_ROLES — an action atom, evaluated from the grant rows because only capability atoms are authorities (R2-5). Since migration V125 (PLAN-0673 D-168) the built-in ADMIN role holds MANAGE_ROLES as well.'
       parameters:
         - name: locale
           in: query
@@ -3727,9 +3978,20 @@ paths:
   /api/v1/roles:
     get:
       operationId: listRoles
-      summary: List access-role definitions (PLAN-0610 W3-2a)
-      description: 'Every role definition (the seven system roles: the six V87 seeds plus AGENT_DELEGATOR from V109, plus custom ones), system roles first and then by name. Each row carries its atom set and bindingCount so the UI can disable a delete it cannot perform. Gate: MANAGE_ROLES.'
+      summary: List access-role definitions (PLAN-0610 W3-2a; PLAN-0667 gap-1 read path)
+      description: |
+        Two views share this endpoint. A caller holding `MANAGE_ROLES` gets every role definition
+        (PLAN-0610 admin view, unchanged). A caller who may manage an agent's bindings
+        (`MANAGE_WORKSPACE_AGENTS` in the `workspaceId` context, or the instance-tier
+        `MANAGE_AGENT_PRINCIPALS`) gets the **agent-bindable subset**: roles carrying any
+        `agentPrincipalForbidden` atom are omitted, because binding them would always answer 409
+        (Lead ruling 2026-11-05, real-stack gap 1: the OWNER previously received 403 and the
+        binding picker had no candidates). Role definitions are instance-wide — scope lives on the
+        binding — so no workspace-owned role can leak through this filter. Rows keep the same
+        RoleView shape (system roles first, then by name, atoms + bindingCount included).
       security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: query, name: workspaceId, required: false, schema: { type: string, format: uuid }, description: 'Authorization context for the agent-binding view: MANAGE_WORKSPACE_AGENTS is evaluated in this workspace. Ignored by the MANAGE_ROLES admin view. A workspace-tier caller cannot read candidates without it (403).' }
       responses:
         '200': { description: 'Role definitions', content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/RoleView' } } } } }
         '401': { $ref: '#/components/responses/Problem' }
@@ -3737,7 +3999,7 @@ paths:
     post:
       operationId: createRole
       summary: Create a custom access role (PLAN-0610 W3-2a)
-      description: 'Gate: MANAGE_ROLES. name must match ^[A-Za-z][A-Za-z0-9_.:-]{1,63}$ (400 INVALID_ROLE_NAME) and be unique (409 ROLE_NAME_EXISTS); atoms must be a non-empty set of catalog atoms (400 INVALID_ROLE_ATOMS / 400 UNKNOWN_ACTION_CLASS), duplicates are removed. A custom role may combine any atoms; whether an atom may be bound at a given scope is decided by the binding API (400 ROLE_SCOPE_MISMATCH there), not here. Audited as access_role_created.'
+      description: 'Gate: MANAGE_ROLES (ADMIN and SUPER_ADMIN hold it since V125). name must match ^[A-Za-z][A-Za-z0-9_.:-]{1,63}$ (400 INVALID_ROLE_NAME) and be unique (409 ROLE_NAME_EXISTS); atoms must be a non-empty set of catalog atoms (400 INVALID_ROLE_ATOMS / 400 UNKNOWN_ACTION_CLASS), duplicates are removed. Grant-side subset rule (PLAN-0673 M1): a role DEFINITION may only contain atoms the caller holds in some scope — otherwise 403 PRIVILEGE_ESCALATION naming the exceeding atoms (that is the grantor gate; it is NOT the target-cap 409). The bypass atom GRANT_ANY_ATOM (instance-only, default SUPER_ADMIN) skips the subset check and is audited with the skipped atom list. A custom role may combine any atoms; whether an atom may be bound at a given scope is decided by the binding API (400 ROLE_SCOPE_MISMATCH there), not here. Audited as access_role_created.'
       security: [{ bearerAuth: [] }]
       requestBody:
         required: true
@@ -3746,13 +4008,13 @@ paths:
         '201': { description: 'Created role', content: { application/json: { schema: { $ref: '#/components/schemas/RoleView' } } } }
         '400': { $ref: '#/components/responses/Problem' }
         '401': { $ref: '#/components/responses/Problem' }
-        '403': { $ref: '#/components/responses/Problem' }
+        '403': { description: 'FORBIDDEN (endpoint gate MANAGE_ROLES) or PRIVILEGE_ESCALATION (an atom outside the caller''s own set — detail names it; bypassed only by GRANT_ANY_ATOM)', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
         '409': { $ref: '#/components/responses/Problem' }
   /api/v1/roles/{roleId}:
     patch:
       operationId: updateRole
       summary: Update an access role (PLAN-0610 W3-2a)
-      description: 'Gate: MANAGE_ROLES. A custom role may change name (409 ROLE_NAME_EXISTS), displayName, description and atoms; an atom change re-materializes every holder in the same transaction (source=role rows reconciled, capability cache invalidated immediately and after completion, token_version + 1 per holder whose set changed). A system role accepts ONLY displayName — any other field answers 409 SYSTEM_ROLE_IMMUTABLE. Audited as access_role_updated, which includes the holder count.'
+      description: 'Gate: MANAGE_ROLES. A custom role may change name (409 ROLE_NAME_EXISTS), displayName, description and atoms; an atom change re-materializes every holder in the same transaction (source=role rows reconciled, capability cache invalidated immediately and after completion, token_version + 1 per holder whose set changed). Atom changes obey the same grant-side subset rule as create: 403 PRIVILEGE_ESCALATION names any atom outside the caller''s own set (GRANT_ANY_ATOM bypasses, audited with the skipped atom list). A system role accepts ONLY displayName — any other field answers 409 SYSTEM_ROLE_IMMUTABLE. Audited as access_role_updated, which includes the holder count.'
       security: [{ bearerAuth: [] }]
       parameters:
         - { in: path, name: roleId, required: true, schema: { type: string, format: uuid } }
@@ -3763,7 +4025,7 @@ paths:
         '200': { description: 'Updated role', content: { application/json: { schema: { $ref: '#/components/schemas/RoleView' } } } }
         '400': { $ref: '#/components/responses/Problem' }
         '401': { $ref: '#/components/responses/Problem' }
-        '403': { $ref: '#/components/responses/Problem' }
+        '403': { description: 'FORBIDDEN (endpoint gate MANAGE_ROLES) or PRIVILEGE_ESCALATION (atom change outside the caller''s own set — detail names it; bypassed only by GRANT_ANY_ATOM)', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
         '404': { $ref: '#/components/responses/Problem' }
         '409': { $ref: '#/components/responses/Problem' }
     delete:
@@ -3776,7 +4038,7 @@ paths:
       responses:
         '204': { description: 'Deleted' }
         '401': { $ref: '#/components/responses/Problem' }
-        '403': { $ref: '#/components/responses/Problem' }
+        '403': { description: 'FORBIDDEN (endpoint gate MANAGE_ROLES)', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
         '404': { $ref: '#/components/responses/Problem' }
         '409': { $ref: '#/components/responses/Problem' }
   /api/v1/bindings:
@@ -3797,7 +4059,8 @@ paths:
     put:
       operationId: replaceRoleBindings
       summary: Replace the binding set of one scope (PLAN-0610 W3-2a)
-      description: 'Full replacement, not a delta: the body is the complete desired set, absent rows are deleted and new pairs inserted, so a retry with the same body is a true no-op (no epoch bump, no audit row, no re-materialization). Gates: MANAGE_ROLES (endpoint) and, for a workspace scope, MANAGE_WORKSPACE_AGENTS in that workspace. Validation before the first write, in order: subject exists (404 USER_NOT_FOUND) and is not soft-deleted (409 USER_DELETED), subjectType must be user (400 INVALID_BINDING), role exists (404 ROLE_NOT_FOUND), atom scope compatibility for the added pairs (400 ROLE_SCOPE_MISMATCH), least privilege for the added pairs (403 PRIVILEGE_ESCALATION — the caller must already hold every atom it hands out, capability atoms compared against the caller capabilities). Removing the last usable SUPER_ADMIN instance binding answers 409 LAST_SUPER_ADMIN and removing the last usable WS_OWNER binding of a workspace answers 409 LAST_OWNER (both change nothing). Every affected subject is re-materialized in the same transaction; an instance-tier change also bumps the subject token_version, a workspace-tier change only invalidates the capability cache (W3-3: the access token carries no workspace role, so bumping would log the subject out for a claim it never had). A concurrent deadlock/serialization failure answers 409 CONCURRENT_MODIFICATION (retryable). Lock order: instance_owner -> users. Audited as role_bindings_replaced (scope, added, removed, subject count).'
+      description: 'Full replacement, not a delta: the body is the complete desired set, absent rows are deleted and new pairs inserted, so a retry with the same body is a true no-op (no epoch bump, no audit row, no re-materialization). Gates: MANAGE_ROLES (endpoint; ADMIN holds it since V125/D-168) and, for a workspace scope, MANAGE_WORKSPACE_AGENTS in that workspace. Validation before the first write, in order: subject exists (404 USER_NOT_FOUND) and is not soft-deleted (409 USER_DELETED), subjectType must be user (400 INVALID_BINDING), role exists (404 ROLE_NOT_FOUND), atom scope compatibility for the added pairs (400 ROLE_SCOPE_MISMATCH), grant-side subset rule for the added pairs (403 PRIVILEGE_ESCALATION — the caller must hold every handed-out atom in the TARGET scope: instance rows cover every workspace, a workspace row never covers instance; capability atoms are compared against the caller capabilities). GRANT_ANY_ATOM (instance-only, SUPER_ADMIN default) bypasses the subset check and is audited with the skipped atom list. 409 on this endpoint is NOT the target-cap gate: it is USER_DELETED / LAST_SUPER_ADMIN / LAST_OWNER / CONCURRENT_MODIFICATION. The agent-cap 409 ROLE_BINDING_EXCEEDS_CAP belongs to the agent-principal binding endpoint (BL-287). Removing the last usable SUPER_ADMIN instance binding answers 409 LAST_SUPER_ADMIN and removing the last usable WS_OWNER binding of a workspace answers 409 LAST_OWNER (both change nothing). Every affected subject is re-materialized in the same transaction; an instance-tier change also bumps the subject token_version, a workspace-tier change only invalidates the capability cache (W3-3: the access token carries no workspace role, so bumping would log the subject out for a claim it never had). A concurrent deadlock/serialization failure answers 409 CONCURRENT_MODIFICATION (retryable). Lock order: instance_owner -> users. Audited as role_bindings_replaced (scope, added, removed, subject count).'
+
       security: [{ bearerAuth: [] }]
       parameters:
         - { in: query, name: scope, required: false, schema: { type: string, enum: [instance, workspace], default: instance } }
@@ -3809,9 +4072,9 @@ paths:
         '200': { description: 'Resulting binding set', content: { application/json: { schema: { $ref: '#/components/schemas/BindingSetView' } } } }
         '400': { $ref: '#/components/responses/Problem' }
         '401': { $ref: '#/components/responses/Problem' }
-        '403': { $ref: '#/components/responses/Problem' }
+        '403': { description: 'FORBIDDEN (endpoint gate MANAGE_ROLES, or MANAGE_WORKSPACE_AGENTS for a workspace scope) or PRIVILEGE_ESCALATION (an added pair carries an atom the caller does not hold in the TARGET scope — detail names the atoms; GRANT_ANY_ATOM bypasses, audited with the skipped atom list)', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
         '404': { $ref: '#/components/responses/Problem' }
-        '409': { $ref: '#/components/responses/Problem' }
+        '409': { description: 'USER_DELETED / LAST_SUPER_ADMIN / LAST_OWNER / CONCURRENT_MODIFICATION — NOT the agent-cap gate (that one is 409 ROLE_BINDING_EXCEEDS_CAP on the agent-principal role-binding endpoint)', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
         '503': { $ref: '#/components/responses/Problem' }
   /api/v1/skills/import:
     post:
@@ -4233,17 +4496,23 @@ components:
     WorkspaceCreateRequest: { type: object, required: [name, storageMode], properties: { name: { type: string }, description: { type: [string, 'null'] }, profile: { type: string, enum: [strict, coding, isolated], default: coding, description: 'Docker-only sandbox profile (requires the frozen docker backend).' }, image: { type: string, description: 'Docker-only allowlisted image (requires the frozen docker backend).' }, storageMode: { type: string, enum: [managed_import, direct_attach], description: 'Required. The docker backend is frozen, so the only usable value is direct_attach (with hostPath + executionMode windows-mxc|windows-host); managed_import is rejected with 409 BACKEND_DISABLED while the backend stays frozen and is kept only for the future thaw.' }, hostPath: { type: string, description: 'Required for direct_attach (legacy single-root form); mutually exclusive with roots[]. Runtime validates the absolute directory. This request field is never echoed to ordinary members.' }, roots: { type: array, minItems: 1, description: 'PLAN-0639 multi-root: ordered root list. Mutually exclusive with hostPath. Each root.path is an absolute host directory (direct_attach). Root[0] is the primary root. Nested roots (fully-contained) are allowed; partial overlap is rejected 400 INVALID_ROOT_OVERLAP.' }, executionMode: { type: string, enum: [docker, windows-mxc, windows-host] } } }
     WorkspaceUpdateRequest: { type: object, properties: { name: { type: string }, description: { type: [string, 'null'] } } }
     WorkspaceAgentPermission: { type: object, additionalProperties: false, required: [actionClass], properties: { actionClass: { type: string }, resource: { type: string, default: '*' } } }
-    WorkspaceAgentView: { type: object, required: [principalId, name, createdAt, source, permissionsSnapshot, bound, disabled, roleIds], properties: { roleIds: { type: array, items: { type: string, format: uuid }, description: 'PLAN-0629 (user ruling 2026-11-04): the workspace-scoped roles that authorize this row; empty = listed because of a legacy binding cap only.' }, principalId: { type: string, format: uuid }, name: { type: string }, templateId: { type: [string, 'null'] }, templateName: { type: [string, 'null'] }, createdAt: { type: string, format: date-time }, source: { type: string, enum: [workspace, personal, instance], description: 'PLAN-0622: the sharing tier that makes this principal usable in this Workspace.' }, bound: { type: boolean, description: 'D26: whether the principal is bound to this Workspace. false = listed here (personal/instance are visible without a binding) but a Session still needs a binding before it is usable.' }, disabled: { type: boolean, description: 'D27: the principal is disabled (disabledAt set); the UI must block selection and show the disabled badge.' }, hooks: { type: [object, 'null'], description: 'PLAN-0625 V96/D25-09: the subscription document {advisors:[{kind,on:[actionClass]}]}, copied from the template at creation and mutable through PATCH /api/v1/agent-principals/{principalId}; null = no subscriptions (never an array — Gap I).' }, contextPolicy: { type: [object, 'null'], description: 'PLAN-0629 M1 (D29-21): the subject memory policy {memory:{enabled,writeMode,types}}; null = no policy (memory off). The workspace agent list carries it so the UI can show/manage memory.' }, permissionsSnapshot: { type: array, items: { $ref: '#/components/schemas/WorkspaceAgentPermission' }, description: 'Frozen cap stored on the Workspace binding; empty for personal/instance sources, whose cap resolves per run.' } } }
+    WorkspaceAgentView: { type: object, required: [principalId, name, createdAt, permissionsSnapshot, bound, disabled, roleIds], properties: { roleIds: { type: array, items: { type: string, format: uuid }, description: 'PLAN-0629 (user ruling 2026-11-04): the workspace-scoped roles that authorize this row; empty = listed because of a legacy binding cap only.' }, principalId: { type: string, format: uuid }, name: { type: string }, templateId: { type: [string, 'null'] }, templateName: { type: [string, 'null'] }, createdAt: { type: string, format: date-time }, bound: { type: boolean, description: 'D26 + D-174: whether an explicit cap binding (`workspace_agents` row) exists for this Workspace. false = no cap binding yet (the caller''s own owned rows merge in as discoverable) — a seeded workspace role binding still provides reach, and effective rights are always role ∩ cap.' }, disabled: { type: boolean, description: 'D27: the principal is disabled (disabledAt set); the UI must block selection and show the disabled badge.' }, hooks: { type: [object, 'null'], description: 'PLAN-0625 V96/D25-09: the subscription document {advisors:[{kind,on:[actionClass]}]}, copied from the template at creation and mutable through PATCH /api/v1/agent-principals/{principalId}; null = no subscriptions (never an array — Gap I).' }, contextPolicy: { type: [object, 'null'], description: 'PLAN-0629 M1 (D29-21): the subject memory policy {memory:{enabled,writeMode,types}}; null = no policy (memory off). The workspace agent list carries it so the UI can show/manage memory.' }, permissionsSnapshot: { type: array, items: { $ref: '#/components/schemas/WorkspaceAgentPermission' }, description: 'Frozen cap stored on the Workspace binding (D-174: always read from the binding row); empty = the structural default — reach comes from the seeded workspace role binding and the effective rights are role ∩ cap.' } } }
     WorkspaceAgentListResponse: { type: object, required: [agents], properties: { agents: { type: array, items: { $ref: '#/components/schemas/WorkspaceAgentView' } } } }
     AgentMemoryView: { type: object, additionalProperties: false, required: [id, pinned, createdAt, updatedAt, origin, archived, deletedAt, content], properties: { id: { type: string, format: uuid }, origin: { type: string, enum: [manual, run], description: 'PLAN-0629 M1-5 (Lead 2026-11-03): where the assertion came from, in UI vocabulary — manual = a person wrote it (stored origin ui/cli), run = an agent run produced it (stored origin tool/passive.*).' }, pinned: { type: boolean, description: 'Only the ui/cli channels can pin (V99 CHECK); pinned rows are injected first.' }, createdAt: { type: string, format: date-time, description: 'PLAN-0629 M1-5: when the assertion was first written; an edit keeps it.' }, updatedAt: { type: string, format: date-time }, archived: { type: boolean, description: 'PLAN-0629 M1-5 (Lead 2026-11-03): true for a soft-deleted row. "删除" is an archive, so the UI labels it 归档 and reads it back with status=retired|all.' }, deletedAt: { type: [string, 'null'], format: date-time, description: 'When it was archived; null while live.' }, content: { type: string, description: 'Stored (normalized) content; the UI truncates for display.' } } }
     AgentMemoryListResponse: { type: object, additionalProperties: false, required: [memories], properties: { memories: { type: array, items: { $ref: '#/components/schemas/AgentMemoryView' } } } }
     AgentMemoryCreateRequest: { type: object, additionalProperties: false, required: [content], properties: { content: { type: string, minLength: 1, maxLength: 8000, description: 'Normalised server-side (NFC -> trim -> collapse whitespace -> drop zero-width); 1..8000 characters after normalisation.' }, pinned: { type: boolean, default: false, description: 'Only the ui/cli channels may pin; this endpoint is the ui channel.' } } }
     AgentMemoryUpdateRequest: { type: object, additionalProperties: false, minProperties: 1, properties: { content: { type: string, minLength: 1, maxLength: 8000 }, pinned: { type: boolean } } }
     AgentMemoryResponse: { type: object, additionalProperties: false, required: [memory], properties: { memory: { $ref: '#/components/schemas/AgentMemoryView' } } }
+    AgentPrincipalRoleBindingView: { type: object, additionalProperties: false, required: [bindingId, principalId, roleId, name, scopeType, isSystem, atomCount, atoms, grantedAt], description: 'PLAN-0667: one role binding of an agent principal. `name`/`displayName` identify the role, `scopeName` carries the workspace name for workspace-scope rows; `atoms` are localized short labels (PermissionAtomLabels, at most 12) and `atomCount` is the real distinct atom count, so the UI can show the first three plus 共 N 个 without exposing the whole permission set (D5). Labels follow `?locale=` (zh-CN default, en-US supported) or the Accept-Language header; machine atom names never leave the server.', properties: { bindingId: { type: string, format: uuid }, principalId: { type: string, format: uuid }, roleId: { type: string, format: uuid }, name: { type: string, description: 'roles.name, e.g. WS_EDITOR' }, displayName: { type: [string, 'null'] }, description: { type: [string, 'null'] }, scopeType: { type: string, enum: [instance, workspace] }, scopeId: { type: [string, 'null'], format: uuid }, scopeName: { type: [string, 'null'], description: 'workspace name when scopeType=workspace, else null' }, isSystem: { type: boolean, description: 'PLAN-0667 (Lead ruling 2026-11-05): true only for a **seed binding** — a default grant written by the seeding/creation path, immutable (DELETE answers 409 ROLE_BINDING_IMMUTABLE). It does NOT mean "the role is a system role": a user-created binding of WS_EDITOR/AGENT_DELEGATOR reports false and is deletable (204).' }, atomCount: { type: integer, description: 'distinct derived atom count of the role' }, atoms: { type: array, maxItems: 12, items: { type: string }, description: 'localized short labels (PermissionAtomLabels); slice(0,3) for display' }, grantedBy: { type: [string, 'null'], format: uuid }, grantedAt: { type: string, format: date-time } } }
+    AgentPrincipalRoleBindingListResponse: { type: object, additionalProperties: false, required: [items], properties: { items: { type: array, items: { $ref: '#/components/schemas/AgentPrincipalRoleBindingView' } } } }
+    AgentPrincipalRoleBindRequest: { type: object, additionalProperties: false, required: [roleId], description: 'PLAN-0667 (Lead ruling 2026-11-05, gap 2): the body carries only roleId. The binding scope is server-derived from the authorization context — `workspaceId` present ⇒ workspace scope, absent ⇒ instance scope (requires MANAGE_AGENT_PRINCIPALS). Sending scopeType/scopeId is rejected with 400 INVALID_REQUEST, because scope is an authorization decision, not a client choice.', properties: { roleId: { type: string, format: uuid } } }
+    AgentPrincipalSkillBindingView: { type: object, additionalProperties: false, required: [bindingId, principalId, skillId, name, tokenEstimate, createdAt], description: 'PLAN-0667 v1: one skill binding of an agent principal. The server writes scope_type=instance/scope_id=NULL (the agent carries the skill in every workspace) and the request body only accepts skillId. sourceType=workspace means the definition is workspace-private (sourceName=that workspace); sourceType=personal means the instance library definition. tokenEstimate mirrors skills.body_tokens_est.', properties: { bindingId: { type: string, format: uuid }, principalId: { type: string, format: uuid }, skillId: { type: string, format: uuid }, name: { type: string }, description: { type: [string, 'null'] }, sourceType: { type: string, enum: [workspace, personal] }, sourceName: { type: [string, 'null'] }, tokenEstimate: { type: integer }, createdBy: { type: [string, 'null'], format: uuid }, createdAt: { type: string, format: date-time } } }
+    AgentPrincipalSkillBindingListResponse: { type: object, additionalProperties: false, required: [items], properties: { items: { type: array, items: { $ref: '#/components/schemas/AgentPrincipalSkillBindingView' } } } }
+    AgentPrincipalSkillBindRequest: { type: object, additionalProperties: false, required: [skillId], properties: { skillId: { type: string, format: uuid } } }
     AgentModelRef: { type: object, additionalProperties: false, required: [provider, model], properties: { provider: { type: string, minLength: 1 }, model: { type: string, minLength: 1 } } }
-    AgentPrincipalCreateRequest: { type: object, additionalProperties: false, required: [name], properties: { name: { type: string, minLength: 1, maxLength: 64, pattern: '^[A-Za-z\u4e00-\u9fff][A-Za-z0-9\u4e00-\u9fff]*$', description: 'Agent subject name. 2026-11-03 name-format ruling: letters / Chinese characters (U+4E00-U+9FFF) / digits only, must not start with a digit, no spaces or symbols; any other shape is rejected with 400 INVALID_NAME_FORMAT (not the generic INVALID_REQUEST).' }, templateId: { type: [string, 'null'], format: uuid }, roleIds: { type: [array, 'null'], items: { type: string, format: uuid }, description: 'PLAN-0629 task-12: the roles the new principal is bound to. Absent or null means the defaults (instance scope USER; a workspace binding additionally gets WS_EDITOR). Every id is validated once before the row is written: an unknown id, an instance-administrator role (any atom in PermissionAtomCatalog.agentPrincipalForbiddenAtoms, e.g. ADMIN/SUPER_ADMIN), or a role wider than the caller itself holds is refused with 403 ROLE_NOT_GRANTABLE — never a generic 400. The built-in delegation role for agent principals is AGENT_DELEGATOR (workspace scope, single atom SPAWN_AGENT, V109); WS_OWNER/WS_EDITOR deliberately do not carry SPAWN_AGENT.' }, scope: { type: string, enum: [PERSONAL, WORKSPACE, INSTANCE], default: WORKSPACE, deprecated: true, description: 'DEPRECATED (PLAN-0629, user ruling 2026-11-04): read-only compatibility field. Permission comes from role bindings, not from a tier — accessibility is decided by workspace-scoped role_bindings rows (V108 backfills them from existing workspace bindings). Accepted on create for older clients and ignored; the column keeps its WORKSPACE default.' }, defaultModelProvider: { type: [string, 'null'], description: 'Model intent only; the principal never holds a provider connection.' }, defaultModelName: { type: [string, 'null'] }, allowedModels: { type: [array, 'null'], items: { $ref: '#/components/schemas/AgentModelRef' }, description: 'null = unrestricted.' }, hooks: { type: [object, 'null'], description: 'PLAN-0625 M2 (D25-12/14): hook subscriptions {advisors:[{kind,on:[actionClass]}]}; on must hit the frozen action-class whitelist (today: approval.ask) or the write is rejected 400. A preset guard (origin=SYSTEM_PRESET) refuses subscription changes with 403 GUARD_HOOKS_IMMUTABLE.' } } }
-    AgentPrincipalCreateView: { type: object, required: [principalId, createdAt, scope, ownerUserId, defaultModelProvider, defaultModelName, allowedModels, roleIds], properties: { roleIds: { type: array, items: { type: string, format: uuid }, description: 'The bindings that were actually written (echo, so the caller does not have to re-read).' }, principalId: { type: string, format: uuid }, templateId: { type: [string, 'null'], format: uuid }, templateName: { type: [string, 'null'] }, scope: { type: string, enum: [PERSONAL, WORKSPACE, INSTANCE], deprecated: true, description: 'DEPRECATED (PLAN-0629, user ruling 2026-11-04): kept so older clients keep parsing the payload. It no longer participates in authorization — an agent principal is visible and usable in a workspace when it holds a workspace-scoped role binding there.' }, ownerUserId: { type: [string, 'null'], format: uuid, description: 'The PERSONAL owner; null for WORKSPACE/INSTANCE.' }, defaultModelProvider: { type: [string, 'null'] }, defaultModelName: { type: [string, 'null'] }, allowedModels: { type: [array, 'null'], items: { $ref: '#/components/schemas/AgentModelRef' } }, createdAt: { type: string, format: date-time }, hooks: { type: [object, 'null'], description: 'PLAN-0625 M2: the stored subscription document {advisors:[{kind,on:[actionClass]}]} (null = none) — serialised as plain JSON (Gap J).' }, contextPolicy: { type: [object, 'null'], description: 'PLAN-0629 M1 (D29-21): the memory policy of the new principal (null = off). A create never sets it — the subject starts with memory off — but the view carries it so the caller sees the state immediately.' } } }
-    AgentPrincipalView: { type: object, required: [principalId, name, createdAt, scope, ownerUserId, defaultModelProvider, defaultModelName, allowedModels], properties: { principalId: { type: string, format: uuid }, name: { type: string }, templateId: { type: [string, 'null'], format: uuid }, templateName: { type: [string, 'null'] }, scope: { type: string, enum: [PERSONAL, WORKSPACE, INSTANCE], deprecated: true, description: 'DEPRECATED (PLAN-0629, user ruling 2026-11-04): kept so older clients keep parsing the payload. It no longer participates in authorization — an agent principal is visible and usable in a workspace when it holds a workspace-scoped role binding there.' }, ownerUserId: { type: [string, 'null'], format: uuid }, defaultModelProvider: { type: [string, 'null'] }, defaultModelName: { type: [string, 'null'] }, allowedModels: { type: [array, 'null'], items: { $ref: '#/components/schemas/AgentModelRef' } }, createdAt: { type: string, format: date-time }, disabledAt: { type: [string, 'null'], format: date-time }, hooks: { type: [object, 'null'], description: 'PLAN-0625 V96/D25-09: the subscription document {advisors:[{kind,on:[actionClass]}]} — copied from the template at creation, mutable via PATCH /api/v1/agent-principals/{principalId}; null = no subscriptions. The runtime single-read surface for the approval gate.' }, contextPolicy: { type: [object, 'null'], description: 'PLAN-0629 M1 (D29-21/D29-25): the subject memory policy {memory:{enabled,writeMode,types}} stored in agent_principals.context_policy; null = no policy (memory off). See the PATCH /api/v1/agent-principals/{principalId} description for the frozen v1 shape and value rules.' }, delegationPolicy: { type: [object, 'null'], description: 'PLAN-0630 M1 + PLAN-0648 ruling A1: the delegation budget {maxCount,maxDepth} stored in agent_principals.delegation_policy (V100); null = code defaults (8/3). maxCount=0 means delegation disabled (every spawn_agent under this principal is refused with reason delegation_disabled); maxDepth stays >= 1. Only the root subject of a delegation tree is read at spawn time.' } } }
+    AgentPrincipalCreateRequest: { type: object, additionalProperties: false, required: [name], properties: { name: { type: string, minLength: 1, maxLength: 64, pattern: '^[A-Za-z\u4e00-\u9fff][A-Za-z0-9\u4e00-\u9fff]*$', description: 'Agent subject name. 2026-11-03 name-format ruling: letters / Chinese characters (U+4E00-U+9FFF) / digits only, must not start with a digit, no spaces or symbols; any other shape is rejected with 400 INVALID_NAME_FORMAT (not the generic INVALID_REQUEST).' }, templateId: { type: [string, 'null'], format: uuid }, roleIds: { type: [array, 'null'], items: { type: string, format: uuid }, description: 'PLAN-0629 task-12 + D-174/V127: the roles the new principal is bound to. Absent or null means the defaults (instance seed `AGENT_USER` = the human USER registration set minus the agent-forbidden CREATE_OWN_AGENT; a workspace binding additionally gets WS_EDITOR). Every id is validated once before the row is written: an unknown id, an instance-administrator role (any atom in PermissionAtomCatalog.agentPrincipalForbiddenAtoms, e.g. ADMIN/SUPER_ADMIN), or a role wider than the caller itself holds is refused with 403 ROLE_NOT_GRANTABLE / 403 PRIVILEGE_ESCALATION — never a generic 400. The built-in delegation role for agent principals is AGENT_DELEGATOR (workspace scope, single atom SPAWN_AGENT, V109); WS_OWNER/WS_EDITOR deliberately do not carry SPAWN_AGENT.' }, defaultModelProvider: { type: [string, 'null'], description: 'Model intent only; the principal never holds a provider connection.' }, defaultModelName: { type: [string, 'null'] }, allowedModels: { type: [array, 'null'], items: { $ref: '#/components/schemas/AgentModelRef' }, description: 'null = unrestricted.' }, hooks: { type: [object, 'null'], description: 'PLAN-0625 M2 (D25-12/14): hook subscriptions {advisors:[{kind,on:[actionClass]}]}; on must hit the frozen action-class whitelist (today: approval.ask) or the write is rejected 400. A preset guard (origin=SYSTEM_PRESET) refuses subscription changes with 403 GUARD_HOOKS_IMMUTABLE.' } } }
+    AgentPrincipalCreateView: { type: object, required: [principalId, createdAt, ownerUserId, defaultModelProvider, defaultModelName, allowedModels, roleIds], properties: { roleIds: { type: array, items: { type: string, format: uuid }, description: 'The bindings that were actually written (echo, so the caller does not have to re-read).' }, principalId: { type: string, format: uuid }, templateId: { type: [string, 'null'], format: uuid }, templateName: { type: [string, 'null'] }, ownerUserId: { type: [string, 'null'], format: uuid, description: 'D-174: the owner column (legacy owned rows keep their owner; creation never auto-owns) — null for owner-less shared rows.' }, defaultModelProvider: { type: [string, 'null'] }, defaultModelName: { type: [string, 'null'] }, allowedModels: { type: [array, 'null'], items: { $ref: '#/components/schemas/AgentModelRef' } }, createdAt: { type: string, format: date-time }, hooks: { type: [object, 'null'], description: 'PLAN-0625 M2: the stored subscription document {advisors:[{kind,on:[actionClass]}]} (null = none) — serialised as plain JSON (Gap J).' }, contextPolicy: { type: [object, 'null'], description: 'PLAN-0629 M1 (D29-21): the memory policy of the new principal (null = off). A create never sets it — the subject starts with memory off — but the view carries it so the caller sees the state immediately.' } } }
+    AgentPrincipalView: { type: object, required: [principalId, name, createdAt, ownerUserId, defaultModelProvider, defaultModelName, allowedModels], properties: { principalId: { type: string, format: uuid }, name: { type: string }, templateId: { type: [string, 'null'], format: uuid }, templateName: { type: [string, 'null'] }, ownerUserId: { type: [string, 'null'], format: uuid }, defaultModelProvider: { type: [string, 'null'] }, defaultModelName: { type: [string, 'null'] }, allowedModels: { type: [array, 'null'], items: { $ref: '#/components/schemas/AgentModelRef' } }, createdAt: { type: string, format: date-time }, disabledAt: { type: [string, 'null'], format: date-time }, hooks: { type: [object, 'null'], description: 'PLAN-0625 V96/D25-09: the subscription document {advisors:[{kind,on:[actionClass]}]} — copied from the template at creation, mutable via PATCH /api/v1/agent-principals/{principalId}; null = no subscriptions. The runtime single-read surface for the approval gate.' }, contextPolicy: { type: [object, 'null'], description: 'PLAN-0629 M1 (D29-21/D29-25): the subject memory policy {memory:{enabled,writeMode,types}} stored in agent_principals.context_policy; null = no policy (memory off). See the PATCH /api/v1/agent-principals/{principalId} description for the frozen v1 shape and value rules.' }, delegationPolicy: { type: [object, 'null'], description: 'PLAN-0630 M1 + PLAN-0648 ruling A1: the delegation budget {maxCount,maxDepth} stored in agent_principals.delegation_policy (V100); null = code defaults (8/3). maxCount=0 means delegation disabled (every spawn_agent under this principal is refused with reason delegation_disabled); maxDepth stays >= 1. Only the root subject of a delegation tree is read at spawn time.' } } }
     AgentPrincipalListResponse: { type: object, required: [principals], properties: { principals: { type: array, items: { $ref: '#/components/schemas/AgentPrincipalView' } } } }
     AgentPrincipalUpdateRequest: { type: object, additionalProperties: false, minProperties: 1, description: 'PLAN-0625 M2 (D25-14) + PLAN-0629 M1 (D29-21) + PLAN-0630 M1: the subject-document update body. Every key is optional, at least one is required, and an explicit null clears that document while an absent key leaves it untouched.', properties: { hooks: { type: [object, 'null'], description: 'D25-12: {advisors:[{kind,on:[actionClass]}]} or null (clears every subscription). Each advisors[].kind is a non-blank open string (implementing HookAdvisor is the plugin contract) and each advisors[].on value must hit the frozen action-class whitelist (today approval.ask) — otherwise the write is rejected 400 INVALID_REQUEST instead of storing a subscription that can never fire.' }, contextPolicy: { type: [object, 'null'], description: 'PLAN-0629 D29-25/D29-26 memory policy {memory:{enabled?,writeMode?,passive?,types?}} or null (clears the column). enabled: boolean (default false = no memory until the user switches it on). writeMode: off|tool; judge is reserved for M2 and answers 400 with an explicit detail. passive: off|summary|judge (default off) = the system-side write path; summary derives one memory from the existing compaction summary, judge additionally asks the existing judge seam, and both only ever land status=candidate (never injected, never listed as active until an explicit channel promotes the content). types: subset of profile|fact (empty array = no type, i.e. memory effectively off); the passive writer additionally requires fact in types. Unknown keys at either level are 400 (additionalProperties:false). There is no auto write channel that takes effect: D29-24 rejected auto-summarising writes, and the durable origin enum is tool|ui|cli plus the candidate-only passive.summary|passive.judge.' }, delegationPolicy: { type: [object, 'null'], description: 'PLAN-0630 M1: the delegation budget {maxCount:int>=1,maxDepth:int>=1} stored in agent_principals.delegation_policy (V100), or null (clears it -> code defaults 8/3). 0 is NOT unlimited: each present value must be >= 1 and unknown keys are 400 (additionalProperties:false). Only the ROOT subject of a delegation tree is ever read; a sub-agent own limits are inert as a subagent.' } } }
     AgentPrincipalUpdateView: { type: object, required: [principalId, hooks, contextPolicy, delegationPolicy], description: 'PLAN-0625 M2 + PLAN-0629 M1 + PLAN-0630 M1: every persisted document is echoed (read back from the row), never the caller raw input. An untouched document reports its stored value, not a stale null.', properties: { principalId: { type: string, format: uuid }, hooks: { type: [object, 'null'], description: 'The stored subscription document; null when none / after a clear.' }, contextPolicy: { type: [object, 'null'], description: 'The stored memory policy; null when none / after a clear.' }, delegationPolicy: { type: [object, 'null'], description: 'The stored delegation budget; null when none / after a clear (code defaults then apply).' } } }
@@ -4416,7 +4685,7 @@ components:
         providerConnectionId: { type: [string, 'null'], format: uuid }
         modelProvider: { type: [string, 'null'] }
         modelName: { type: [string, 'null'] }
-    Session: { type: object, required: [id, workspaceId, title, archived, agentPrincipalId], properties: { id: { type: string }, workspaceId: { type: string }, agentPrincipalId: { type: [string, 'null'], format: uuid }, title: { type: [string, 'null'] }, modelProvider: { type: [string, 'null'] }, modelName: { type: [string, 'null'] }, providerConnectionId: { type: [string, 'null'], readOnly: true }, connectionRevision: { type: [integer, 'null'], readOnly: true }, contextTemplateLayer: { type: [string, 'null'], enum: [instance, user, workspace, null], readOnly: true, description: All three pin fields are present together or null; null requires explicit rebind. }, contextTemplateId: { type: [string, 'null'], format: uuid, readOnly: true }, contextTemplateVersion: { type: [integer, 'null'], readOnly: true }, archived: { type: boolean }, createdAt: { type: [string, 'null'], format: date-time }, updatedAt: { type: [string, 'null'], format: date-time } } }
+    Session: { type: object, required: [id, workspaceId, title, archived, agentPrincipalId], properties: { id: { type: string }, workspaceId: { type: string }, agentPrincipalId: { type: [string, 'null'], format: uuid }, title: { type: [string, 'null'] }, modelProvider: { type: [string, 'null'] }, modelName: { type: [string, 'null'] }, providerConnectionId: { type: [string, 'null'], readOnly: true }, connectionRevision: { type: [integer, 'null'], readOnly: true }, contextTemplateLayer: { type: [string, 'null'], enum: [instance, user, workspace, null], readOnly: true, description: All three pin fields are present together or null; null requires explicit rebind. }, contextTemplateId: { type: [string, 'null'], format: uuid, readOnly: true }, contextTemplateVersion: { type: [integer, 'null'], readOnly: true }, archived: { type: boolean }, createdAt: { type: [string, 'null'], format: date-time }, updatedAt: { type: [string, 'null'], format: date-time }, kind: { type: [string, 'null'], enum: [spawn, fork, null], description: 'PLAN-0668 M2: detail projection aligned with SessionSummary lineage.' }, spawnedFromSessionId: { type: [string, 'null'], format: uuid }, spawnedFromRunId: { type: [string, 'null'], format: uuid }, spawnedAt: { type: [string, 'null'], format: date-time } } }
     SessionForkResponse:
       allOf:
         - { $ref: '#/components/schemas/Session' }
@@ -4446,7 +4715,17 @@ components:
     SessionBranchCreatedResponse: { type: object, additionalProperties: false, required: [branchId, parentBranchId, forkPointMessageId], properties: { branchId: { type: string, format: uuid }, parentBranchId: { type: string, format: uuid }, forkPointMessageId: { type: string, format: uuid } } }
     SessionCompactRequest: { type: object, additionalProperties: false, required: [branchId], properties: { branchId: { type: string, format: uuid }, upToSequence: { type: integer, format: int64, minimum: 0 } } }
     SessionCompactResponse: { type: object, additionalProperties: false, required: [sequence, eventType, createdAt], properties: { sequence: { type: integer, format: int64 }, eventType: { type: string, const: compaction.manual_applied }, createdAt: { type: string, format: date-time } } }
-    SessionMessage: { type: object, required: [id, sessionId, role, content, createdAt, attachments], properties: { id: { type: string, format: uuid }, sessionId: { type: string, format: uuid }, role: { type: string, enum: [USER, ASSISTANT] }, content: { type: string }, createdAt: { type: string, format: date-time }, runId: { type: string, format: uuid }, runStatus: { type: string }, terminalOutcome: { type: string }, errorCode: { type: string }, errorDetail: { type: string }, partial: { type: boolean }, jobSummary: { type: array, items: { type: object } }, toolCalls: { type: array, description: 'PLAN-0572: bounded snapshot of the Run tool calls persisted with this assistant Message. Absent for Messages written before V83; result bodies are the same CP-sanitized placeholder shown during the Run.', items: { type: object, additionalProperties: false, required: [id, name, arguments, status, startedAt, truncated], properties: { id: { type: string, description: Tool-call id; same value as the live SSE toolCallId. }, name: { type: string }, arguments: { type: string, description: 'Compact JSON string; bounded to 4096 chars with a self-describing truncation marker.' }, status: { type: string, enum: [running, completed, failed, cancelled, pending] }, startedAt: { type: string, format: date-time }, completedAt: { type: string, format: date-time }, result: { type: string, description: 'CP-sanitized placeholder; raw tool output is never persisted.' }, refusalCode: { type: string, pattern: '^[A-Z][A-Z0-9_]{0,63}$', description: 'PLAN-0649 M2: CP-decided refusal code, present only when the tool call was refused by CP (absent otherwise). Shape-checked metadata — never tool output. The pattern is the shape gate; the vocabulary is an open set of known codes owned by CP (`cp/chat/ToolRefusalCodes.java`), not a whitelist — currently `DELEGATION_LIMIT_EXCEEDED` | `DELEGATION_POLICY_INVALID` | `SPAWN_ARGUMENTS_INVALID` | `SPAWN_EXECUTION_FAILED` | `ACQUIRE_EXECUTION_FAILED` | `TOOL_GRANT_DENIED` | `TOOL_CONTEXT_MISMATCH`. The three pre-dispatch refusals all answer with this envelope instead of a bare 403 so the model gets a code instead of an opaque HTTP error: `TOOL_GRANT_DENIED` = no authorization or policy DENY (ask for the grant), `TOOL_CONTEXT_MISMATCH` = the Session/Run/Invocation/ToolCall context does not match anything durable (retrying is useless — fix the context first). Clients must render an unmapped code verbatim rather than hiding or dropping it.' }, truncated: { type: boolean, description: 'Arguments were truncated.' } } } }, toolCallsTruncated: { type: boolean, description: 'Present when the snapshot dropped tool calls beyond the card cap.' }, toolCallsTotal: { type: integer, minimum: 1, description: 'Total cards before the cap; only present with toolCallsTruncated.' }, attachments: { type: array, items: { type: object } } } }
+    SessionMessage: { type: object, required: [id, sessionId, role, content, createdAt, attachments], properties: { id: { type: string, format: uuid }, sessionId: { type: string, format: uuid }, role: { type: string, enum: [USER, ASSISTANT] }, content: { type: string }, createdAt: { type: string, format: date-time }, runId: { type: string, format: uuid }, runStatus: { type: string }, terminalOutcome: { type: string }, errorCode: { type: string }, errorDetail: { type: string }, partial: { type: boolean }, participantId: { type: string, format: uuid, description: 'PLAN-0669 M1 (V121): durable actor attribution — the session participant that produced this Message (assistant rows carry the Run responder participant). Omitted for Messages written before V121 and for user Messages in v1; names resolve from the session roster, the UUID is never rendered (DEV-032).' }, jobSummary: { type: array, items: { type: object } }, toolCalls: { type: array, description: 'PLAN-0572: bounded snapshot of the Run tool calls persisted with this assistant Message. Absent for Messages written before V83; result bodies are the same CP-sanitized placeholder shown during the Run.', items: { type: object, additionalProperties: false, required: [id, name, arguments, status, startedAt, truncated], properties: { id: { type: string, description: Tool-call id; same value as the live SSE toolCallId. }, name: { type: string }, arguments: { type: string, description: 'Compact JSON string; bounded to 4096 chars with a self-describing truncation marker.' }, status: { type: string, enum: [running, completed, failed, cancelled, pending] }, startedAt: { type: string, format: date-time }, completedAt: { type: string, format: date-time }, result: { type: string, description: 'CP-sanitized placeholder; raw tool output is never persisted.' }, refusalCode: { type: string, pattern: '^[A-Z][A-Z0-9_]{0,63}$', description: 'PLAN-0649 M2: CP-decided refusal code, present only when the tool call was refused by CP (absent otherwise). Shape-checked metadata — never tool output. The pattern is the shape gate; the vocabulary is an open set of known codes owned by CP (`cp/chat/ToolRefusalCodes.java`), not a whitelist — currently `DELEGATION_LIMIT_EXCEEDED` | `DELEGATION_POLICY_INVALID` | `SPAWN_ARGUMENTS_INVALID` | `SPAWN_EXECUTION_FAILED` | `ACQUIRE_EXECUTION_FAILED` | `TOOL_GRANT_DENIED` | `TOOL_CONTEXT_MISMATCH`. The three pre-dispatch refusals all answer with this envelope instead of a bare 403 so the model gets a code instead of an opaque HTTP error: `TOOL_GRANT_DENIED` = no authorization or policy DENY (ask for the grant), `TOOL_CONTEXT_MISMATCH` = the Session/Run/Invocation/ToolCall context does not match anything durable (retrying is useless — fix the context first). Clients must render an unmapped code verbatim rather than hiding or dropping it.' }, truncated: { type: boolean, description: 'Arguments were truncated.' } } } }, toolCallsTruncated: { type: boolean, description: 'Present when the snapshot dropped tool calls beyond the card cap.' }, toolCallsTotal: { type: integer, minimum: 1, description: 'Total cards before the cap; only present with toolCallsTruncated.' }, delivery: { type: object, description: 'PLAN-0665 D3 (V120): durable delivery audience of a user Message — the composer TO / CC selection survives refreshes (ends BL-239). Participant ids only; display names resolve from the roster. @mentions are NOT stored here (they are rebuilt from the body + roster). Absent for Messages written before V120 and for non-composer/internal messages.' }, attachments: { type: array, items: { type: object } } } }
+    SessionMessagePage:
+      type: object
+      additionalProperties: false
+      required: [messages, limit, truncated]
+      description: 'PLAN-0670 M2 pagination envelope (only returned when `limit` or `before` is present; otherwise the legacy bare array is returned). `messages` is ascending by (createdAt, id); `truncated=true` means older messages remain and `nextCursor` is then present. `nextCursor` is omitted (not an empty string) on the last page and is an opaque composite (createdAt, id) cursor.'
+      properties:
+        messages: { type: array, items: { $ref: '#/components/schemas/SessionMessage' } }
+        limit: { type: integer, minimum: 1, maximum: 200, description: Effective page size (default 50, truncated to 200 when the request asks for more). }
+        truncated: { type: boolean, description: 'true when older messages remain (the next page exists).' }
+        nextCursor: { type: string, description: 'Opaque cursor for the next (older) page; absent on the last page.' }
     SessionUpdateRequest: { type: object, description: "Metadata-only edits retain the pin. Binding edits require modelProvider/modelName/providerConnectionId/connectionRevision together; omitted template triple resolves the target default once; partial or null bindings fail. Cross-Type changes require confirmedTypeChange.", properties: { title: { type: [string, 'null'] }, modelProvider: { type: string }, modelName: { type: string }, providerConnectionId: { type: string, format: uuid }, connectionRevision: { type: integer, minimum: 1 }, confirmedTypeChange: { type: boolean }, contextTemplateLayer: { type: string, enum: [instance, user, workspace] }, contextTemplateId: { type: string, format: uuid }, contextTemplateVersion: { type: integer, minimum: 1 } } }
     ApiRequestTemplateBindingRequest: { type: object, additionalProperties: false, required: [layer, templateId, version, connectionRevision], properties: { connectionRevision: { type: integer, minimum: 1 }, layer: { type: string, enum: [instance, user, workspace] }, templateId: { type: string, format: uuid }, version: { type: integer, minimum: 1, description: Must address an existing immutable revision in the given layer, otherwise 404 API_REQUEST_TEMPLATE_NOT_FOUND. } } }
     SessionDerivedStateResponse:
@@ -4516,7 +4795,7 @@ components:
          name: { type: [string, 'null'] }
          state: { type: string, enum: [success, error, partial, ambiguous, cancelled] }
          terminalAt: { type: string, format: date-time }
-    ChatRequest: { type: object, required: [sessionId, branchId, content], properties: { sessionId: { type: string }, branchId: { type: string, format: uuid, description: Required selected branch; included in Chat idempotency request hash. }, content: { type: string }, agentPrincipalId: { type: [string, 'null'], format: uuid, description: Required to bind a principal-null empty placeholder; if supplied for a bound Session it must match the persisted principal. }, asParticipantId: { type: [string, 'null'], format: uuid, description: 'PLAN-0623 D23-08: speak as an added participant — the Run and its messages answer under that identity. Adding a member never grants this; the caller must own the conversation and may only speak as themselves (HUMAN) or as an AGENT they own. Unauthorized use answers 403 PARTICIPANT_CAP_DENIED.' }, cc: { type: array, items: { type: string, format: uuid }, description: 'PLAN-0630 M5b (D30-14): optional composer cc observer list — session participantIds. Semantics = 旁听名单: each observer gets a notify signal (wake_dispatch outcome=notify + mention_count advance) but never a Run of their own; an agent observer still answers when actually @-mentioned (WHEN_MENTIONED equivalent). Non-UUID entries are rejected with 400 INVALID_REQUEST; ids that are not enabled session participants are ignored (fail-closed, same as mentions). Notify-only: cc is NOT part of the idempotency request hash.' }, provider: { type: string, description: 'Legacy display hint; CP resolves the server-side Session connection.' }, model: { type: string, description: 'Legacy display hint; CP resolves the server-side Session connection.' }, toolMode: { type: string, enum: [none, workspace], default: none }, attachments: { type: array, items: { type: string } }, toolTimeouts: { type: object, description: 'PLAN-0308 T1.9/T3.1: optional per-tool timeout request (per-call), the highest-priority input to the CP-computed tool budget. Values are positive integer seconds, max 30 (code constant MAX_BUDGET_SECONDS, shared with the DB config ceiling); invalid or oversized values are rejected with 400 INVALID_REQUEST (never silently clamped); sync waits >30s belong to async jobs.', additionalProperties: { type: integer, minimum: 1, maximum: 30 }, example: { execute_command: 20 } } } }
+    ChatRequest: { type: object, required: [sessionId, branchId, content], properties: { sessionId: { type: string }, branchId: { type: string, format: uuid, description: Required selected branch; included in Chat idempotency request hash. }, content: { type: string }, agentPrincipalId: { type: [string, 'null'], format: uuid, description: Required to bind a principal-null empty placeholder; if supplied for a bound Session it must match the persisted principal. }, toParticipantIds: { type: array, items: { type: string, format: uuid }, description: 'PLAN-0665 M1: explicit TO selection — 1..N AGENT session participants; every selected target answers with its own run. The FIRST target owns this submission''s user_submission run (runId = runIds[0]); the remaining targets are created as derived runs whose wake audit carries triggerSource="to" (their origin is the wake carrier''s own classification — real stack 2026-11-05: scheduled — and parent_run_id stays NULL; read sides MUST NOT group messages by origin; group by runId/delivery/trigger_source). Omitted/empty keeps the legacy single-responder path. Human targets answer 400 INVALID_REQUEST (later plan; blocked on BL-238). The sorted set and asParticipantId are part of the Idempotency-Key request hash (PLAN-0665 D6).' }, asParticipantId: { type: [string, 'null'], format: uuid, description: 'PLAN-0623 D23-08: speak as an added participant — the Run and its messages answer under that identity. Adding a member never grants this; the caller must own the conversation and may only speak as themselves (HUMAN) or as an AGENT they own. Unauthorized use answers 403 PARTICIPANT_CAP_DENIED.' }, cc: { type: array, items: { type: string, format: uuid }, description: 'PLAN-0630 M5b (D30-14): optional composer cc observer list — session participantIds. Semantics = 旁听名单: each observer gets a notify signal (wake_dispatch outcome=notify, which is the only source of the derived readCursor.mentionCount; the mention_count column was dropped by V112) but never a Run of their own; an agent observer still answers when actually @-mentioned (WHEN_MENTIONED equivalent). Non-UUID entries are rejected with 400 INVALID_REQUEST; ids that are not enabled session participants are ignored (fail-closed, same as mentions). Notify-only: cc is NOT part of the idempotency request hash.' }, provider: { type: string, description: 'Legacy display hint; CP resolves the server-side Session connection.' }, model: { type: string, description: 'Legacy display hint; CP resolves the server-side Session connection.' }, toolMode: { type: string, enum: [none, workspace], default: none }, attachments: { type: array, items: { type: string } }, toolTimeouts: { type: object, description: 'PLAN-0308 T1.9/T3.1: optional per-tool timeout request (per-call), the highest-priority input to the CP-computed tool budget. Values are positive integer seconds, max 30 (code constant MAX_BUDGET_SECONDS, shared with the DB config ceiling); invalid or oversized values are rejected with 400 INVALID_REQUEST (never silently clamped); sync waits >30s belong to async jobs.', additionalProperties: { type: integer, minimum: 1, maximum: 30 }, example: { execute_command: 20 } } } }
     ChatRunResumePendingRequest:
       type: object
       additionalProperties: false
@@ -4563,7 +4842,7 @@ components:
         displayName: { type: string, description: 'PLAN-0623: AGENT → agent_principals.name; HUMAN → the user display name (name → username → email local part); null only when the subject cannot be resolved — the UI then shows an unknown-user placeholder, never a UUID.' }
         defaultModelProvider: { type: [string, 'null'], description: 'AGENT participants only: the participant agent model intent; null for HUMAN.' }
         defaultModelName: { type: [string, 'null'], description: 'AGENT participants only: the participant agent model intent; null for HUMAN.' }
-        selfOwned: { type: boolean, description: 'PLAN-0623 D23-27: the caller may send as this row (mirrors the asParticipantId gate), so the UI can list only legal targets. HUMAN = principalId is the caller; AGENT = PERSONAL owned by the caller, or WORKSPACE/INSTANCE (spoken for by the conversation owner). false for every row when the caller does not own the conversation.' }
+        selfOwned: { type: boolean, description: 'PLAN-0623 D23-27 + D-174: the caller may send as this row (mirrors the asParticipantId gate), so the UI can list only legal targets. HUMAN = principalId is the caller; AGENT = owned by the caller (`owner_user_id`), or owner-less (spoken for by the conversation owner). false for every row when the caller does not own the conversation.' }
         readCursor:
           type: [object, 'null']
           description: 'R7 — read-only in 0623; advanced by the server off the event stream. null when the participant has no cursor row yet — the UI relies on null rather than an empty object.'
@@ -4606,7 +4885,7 @@ components:
         wakeConfig: { type: [object, 'null'], description: 'PLAN-0624 Q4: per-participant schedule parameters, required when wakePolicy=SCHEDULE; jitterSeconds defaults to [0, interval*0.1), maxConcurrent defaults to the governor JOB ceiling', properties: { intervalSeconds: { type: integer }, jitterSeconds: { type: integer }, maxConcurrent: { type: integer } } }
         respondPolicy: { type: string, enum: [ALWAYS, WHEN_MENTIONED, JUDGE, MUTED] }
         disabled: { type: boolean, description: Soft disable keeps the row and its cursor for audit/history }
-    ChatRunResponse: { type: object, required: [status, origin, sessionId, runId], properties: { agentPrincipalId: { type: [string, 'null'], readOnly: true, description: 'PLAN-0623 R1: the agent principal that responded in this run; null on runs admitted before V92' }, triggerSource: { type: string, readOnly: true, enum: [user, mention, schedule, judge, guard, chain], default: user, description: 'PLAN-0624 G-24: who triggered this run; runs admitted before V93 read as user' }, status: { type: string, enum: [accepted, queued, running, streaming, awaiting_approval, dispatching, cancelling, succeeded, failed, partial, ambiguous, cancelled] }, origin: { type: string, enum: [user_submission], readOnly: true, description: Public POST /chat only returns user_submission; spawn is visible through GET run status }, sessionId: { type: string }, messageId: { type: string }, runId: { type: string }, providerConnectionId: { type: [string, 'null'], readOnly: true }, connectionRevision: { type: [integer, 'null'], readOnly: true }, outcome: { type: string, enum: [success, error, partial, ambiguous] }, errorCode: { type: string }, reason: { type: string } } }
+    ChatRunResponse: { type: object, required: [status, origin, sessionId, runId], properties: { agentPrincipalId: { type: [string, 'null'], readOnly: true, description: 'PLAN-0623 R1: the agent principal that responded in this run; null on runs admitted before V92' }, triggerSource: { type: string, readOnly: true, enum: [user, mention, schedule, judge, guard, chain], default: user, description: 'PLAN-0624 G-24: who triggered this run; runs admitted before V93 read as user' }, status: { type: string, enum: [accepted, queued, running, streaming, awaiting_approval, dispatching, cancelling, succeeded, failed, partial, ambiguous, cancelled] }, origin: { type: string, enum: [user_submission], readOnly: true, description: Public POST /chat only returns user_submission; spawn is visible through GET run status }, sessionId: { type: string }, messageId: { type: string }, runId: { type: string, description: 'PLAN-0665 Q1: the FIRST target run (= runIds[0]); older clients that only read runId keep working unchanged.' }, runIds: { type: array, items: { type: string }, description: 'PLAN-0665 Q1: every run created by this submission, in selection order (first element equals runId). Present only for toParticipantIds requests; absent on the legacy single-responder path.' }, failedTargets: { type: array, items: { type: object, required: [participantId, reason], properties: { participantId: { type: string }, reason: { type: string, description: 'Failure reason, e.g. skipped_muted / IllegalStateException / ConstraintViolationException. Deferred targets are NOT failures (BL-283) — they are reported in deferredTargets.' } } }, description: 'PLAN-0665 (2026-11-05 real-stack finding): TO targets that could NOT be dispatched at runtime because of a real error. Never silent: runIds.length + failedTargets.length + deferredTargets.length always equals the requested toParticipantIds count (BL-283 split queued out of failed). Pre-validation failures (unknown / unauthorized / disabled / non-AGENT target) still reject the whole request with 400/403 instead.' }, deferredTargets: { type: array, items: { type: object, required: [participantId, reason], properties: { participantId: { type: string }, reason: { type: string, description: 'Always deferred for now: the Session was at its run cap and the target was queued as a follow-up item.' } } }, description: 'BL-283 (Lead ruling 2026-11-05): TO targets that were QUEUED instead of started because the Session hit maxConcurrentRunsPerSession. The wake returns deferred as a value (never an exception), the follow-up item waits for a slot, and the wake_dispatch audit keeps outcome=deferred. Counting these as failed made concurrency-full indistinguishable from a real dispatch error.' }, providerConnectionId: { type: [string, 'null'], readOnly: true }, connectionRevision: { type: [integer, 'null'], readOnly: true }, outcome: { type: string, enum: [success, error, partial, ambiguous] }, errorCode: { type: string }, reason: { type: string } } }
     SessionRunSummary:
       type: object
       additionalProperties: false
@@ -5643,6 +5922,15 @@ components:
          scope: { type: string, enum: [USER, WORKSPACE, SYSTEM] }
          displayName: { type: string }
          connectionRevision: { type: integer, minimum: 1 }
+    UserQuestionRespondRequest:
+      type: object
+      required: [questionId, sessionId, runId, answer]
+      description: 'PLAN-0660 T5.12: CP → Agent delivery of one human answer to the blocked ask_user wait. Internal only (service Bearer); the browser never calls this route. A non-2xx or transport failure is fail-closed on the CP side: the durable question stays pending and no answer is recorded.'
+      properties:
+        questionId: { type: string, format: uuid, description: 'The durable question id (user_questions.id); the Agent matches its wait on it.' }
+        sessionId: { type: string, format: uuid }
+        runId: { type: string, format: uuid, description: 'The root run that asked; the Agent rejects a wait it does not own.' }
+        answer: { type: string, description: 'The human answer. Untrusted text: CP keeps it out of logs, audit detail and problem detail.' }
     AgentChatRequest:
       type: object
       required: [runId, sessionId, content, stream, provider, model, providerConnectionId, connectionRevision, credentialLease, contextTemplateSnapshot]

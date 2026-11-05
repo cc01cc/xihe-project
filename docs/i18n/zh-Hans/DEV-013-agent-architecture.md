@@ -171,6 +171,8 @@ PLAN-0509 Run Trace 将耐久 `prompt.admitted` 独立投影为不含消息正�
 | SSE 协议 `AgentEvent` | `token` / `tool_call` / `tool_result` / `status` / `error` / `done`；工具事件携带 `toolCallId` + `origin`（`local`/`mcp`）供 CP 按通道事实记账，`request_approval` 工具事件抑制、以审批事件为正规记录。**PLAN-0649**：`tool_result` 另带权威 `status`（`completed`/`failed`，由 Agent 判定，不再由正文推断）与可选 `refusalCode`（仅当 CP 在 tool error 信封的 `structuredContent.code` 给出形状合规的码；Agent 不解析 `Tool error:` 文本，缺省不加键）。durable `tool.result` 同口径：**所有 `is_error` 均为 `failed`**（M2 裁定），正文仍恒为占位符 |
 | 持久化域 `Event` | 见 §3.2 事件表 |
 
+- **入站截断统计（PLAN-0670 M2c / BL-289）**：`done` 事件可带 `agentContextTruncation` —— **内部 SSE 字段**（Agent → CP → UI 原样透传；CP 只补 `runId`，不做字段白名单裁剪），语义 = 本次 run 的**入站截断统计**（`droppedMessages` / `keptMessages` / `keptBytes` / `droppedBytes` / `limitMessages` / `limitBytes` / `strategy`），自校验 `droppedMessages + keptMessages == 入站条数`；**未截断时该键缺席**（不是全 0 对象）。截断点：`api/chat.py` 在 tool-result prune 之后、`native_history(...)`/runner 之前调用 `inbound_limits.truncate_for_run`；`ASSEMBLY_FUSE_LIMIT` 是另一层的装配保险丝，不是本字段来源。**当前 UI 尚未消费该字段（BL-292）；CP 已将其持久化到 `chat_runs.context_truncation`（jsonb，V124/BL-293），但读面未暴露** —— 不要把本行读成"截断已对用户可见"。
+
 ### 3.3 AgentContext 读模型
 
 `AgentContext` 由 CP `ContextProjectionService` 从事件流生成，包含：

@@ -108,6 +108,19 @@ public class ChatRun {
     @Column(name = "context_fingerprint", columnDefinition = "jsonb")
     private JsonNode contextFingerprint;
 
+    /**
+     * PLAN-0670 M2c / BL-293: the Agent's inbound truncation marker for this run, in the same wire
+     * shape as the terminal {@code done.agentContextTruncation} object ({@code Truncation.to_wire()}:
+     * dropped/kept messages+bytes, limits, strategy).
+     *
+     * <p>Nullable on purpose: {@code NULL} means "this run did not truncate" (never an empty object or
+     * all-zero stats). Written once at the terminal transition from the SAME parsed done payload that
+     * is relayed to the UI — the audit value must equal the SSE value, not a re-derivation.
+     */
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "context_truncation", columnDefinition = "jsonb")
+    private JsonNode contextTruncation;
+
     @Column(name = "user_message_id", length = 36)
     @Convert(converter = UuidStringConverter.class)
     private String userMessageId;
@@ -288,6 +301,10 @@ public class ChatRun {
     public JsonNode getContextFingerprint() { return contextFingerprint; }
     public void setContextFingerprint(JsonNode contextFingerprint) {
         this.contextFingerprint = contextFingerprint == null ? null : contextFingerprint.deepCopy();
+    }
+    public JsonNode getContextTruncation() { return contextTruncation; }
+    public void setContextTruncation(JsonNode contextTruncation) {
+        this.contextTruncation = contextTruncation == null ? null : contextTruncation.deepCopy();
     }
     public String getUserMessageId() { return userMessageId; }
     public void setUserMessageId(String userMessageId) { this.userMessageId = userMessageId; }

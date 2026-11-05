@@ -12,6 +12,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
@@ -23,6 +24,21 @@ public class ContextProjectionService {
 
     /** Durable projection type of {@link ContextProjection}'s default. */
     private static final String AGENT_CONTEXT_TYPE = "agent_context";
+
+    /**
+     * BL-302 ② (D-163, 2026-11-05): the durable payload carries a *window* view of the conversation
+     * tail. Nothing in the database is deleted — older content stays in the event log (and in the
+     * rows that predate this change); the window only decides what is materialized into the stored
+     * and served payload, and the read path rebuilds earlier content from the event log on demand.
+     *
+     * <p>Budget: serialized UTF-8 bytes of the {@code messages} array is the primary budget
+     * ({@link #WINDOW_MAX_BYTES}); the message count is a hard cap ({@link #WINDOW_MAX_MESSAGES})
+     * except for a single turn larger than the budget (a turn is never split, so its tool pairs
+     * never break).</p>
+     */
+    public static final int WINDOW_VERSION = 1;
+    public static final int WINDOW_MAX_MESSAGES = 1000;
+    public static final long WINDOW_MAX_BYTES = 1024L * 1024L;
 
     private final EventStoreService eventStoreService;
     private final ContextProjectionRepository projectionRepository;
@@ -143,6 +159,269 @@ public class ContextProjectionService {
     }
 
     /**
+     * BL-305: event types whose projection effect is strictly "append a message" or "replace a
+     * whole top-level slot" — safe to apply on top of a stored projection. Everything else
+     * (carrier-mode {@code assistant.responded}, compaction, prune, fork, unknown types) can
+     * rewrite earlier facts and therefore forces the full replay.
+     */
+    private static final java.util.Set<String> APPEND_ONLY_EVENT_TYPES = java.util.Set.of(
+            "prompt.admitted", "llm.token", "assistant.responded", "tool.called", "tool.result",
+            "context.source_changed", "context.env_updated", "epoch.started", "epoch.replaced",
+            "runtime.state_cleared");
+
+    /** BL-305: the stored projection plus the number of suffix events replayed onto it. */
+    public record IncrementalProjection(ObjectNode context, int suffixEvents) {
+    }
+
+    /**
+     * BL-305 (P1): build the snapshot from the stored projection plus the event suffix instead of
+     * replaying the whole visible history. {@link Optional#empty()} means "the stored projection
+     * cannot be trusted for an incremental append" (missing, carrier-bearing, unparsable, ahead of
+     * the event log, or the suffix can rewrite earlier facts) — the caller then does the full
+     * replay, so correctness never depends on this fast path.
+     *
+     * <p>Why it is safe: {@link #apply} is deterministic and, for the append-only whitelist, reads
+     * only the current context. Carrier bookkeeping lives in {@link ReplayState} and can name
+     * earlier events, so a carrier anywhere (stored payload or suffix) forces the full replay.</p>
+     */
+    public Optional<IncrementalProjection> tryIncrementalProjection(
+            String sessionId, String branchId,
+            com.cc01cc.p.xihe.cp.service.BranchPathService.BranchVisibility visibility) {
+        Optional<ContextProjection> stored = projectionRepository
+                .findBySessionIdAndProjectionTypeAndBranchId(sessionId, AGENT_CONTEXT_TYPE, branchId);
+        if (stored.isEmpty()) {
+            return Optional.empty();
+        }
+        ContextProjection projection = stored.get();
+        long storedSequence = projection.getLatestSequence() == null ? 0L : projection.getLatestSequence();
+        if (storedSequence <= 0) {
+            return Optional.empty();
+        }
+        Long latestSequence = eventStoreService.getLatestSequence(sessionId);
+        long latest = latestSequence == null ? 0L : latestSequence;
+        if (storedSequence > latest) {
+            logger.warn("[LIFECYCLE] service=cp event=context_projection_incremental_skip sessionId={}"
+                    + " reason=projection_ahead storedSequence={} latestSequence={}",
+                    sessionId, storedSequence, latest);
+            return Optional.empty();
+        }
+        ObjectNode context;
+        try {
+            JsonNode parsed = objectMapper.readTree(projection.getPayload());
+            if (!(parsed instanceof ObjectNode parsedObject)) {
+                return Optional.empty();
+            }
+            context = parsedObject;
+        } catch (com.fasterxml.jackson.core.JsonProcessingException invalidPayload) {
+            logger.warn("[LIFECYCLE] service=cp event=context_projection_incremental_skip sessionId={}"
+                    + " reason=invalid_payload", sessionId, invalidPayload);
+            return Optional.empty();
+        }
+        JsonNode messages = context.get("messages");
+        if (messages == null || !messages.isArray()) {
+            return Optional.empty();
+        }
+        if (containsNativeRecords(messages)) {
+            return Optional.empty();
+        }
+        List<ContextEvent> suffix = eventStoreService.read(sessionId, storedSequence, visibility);
+        if (suffix.isEmpty()) {
+            return Optional.of(new IncrementalProjection(context, 0));
+        }
+        for (ContextEvent event : suffix) {
+            String type = event.getEventType();
+            boolean carrier = "assistant.responded".equals(type)
+                    && parsePayload(event.getPayload()).path("message").has("nativeRecords");
+            if (carrier || !APPEND_ONLY_EVENT_TYPES.contains(type)) {
+                logger.debug("projection incremental skip session={} reason=suffix_rewrites_history type={}",
+                        sessionId, type);
+                return Optional.empty();
+            }
+        }
+        ReplayState replay = new ReplayState();
+        ObjectNode incremental = context;
+        for (ContextEvent event : suffix) {
+            incremental = apply(incremental, event, replay);
+        }
+        // BL-302 ②: the returned context is the same windowed view projectAndSave persists/serves, so
+        // incremental catch-up stays byte-identical to a windowed full replay (idempotent re-window).
+        applyWindow(incremental);
+        return Optional.of(new IncrementalProjection(incremental, suffix.size()));
+    }
+
+    /**
+     * BL-305 (P1): the stored payload when the projection is exactly at the event-log head.
+     *
+     * <p>This is the read path for a dispatch that has nothing new to fold in: the caller can write
+     * the stored JSON straight to the response instead of reparsing and re-serializing it. Any other
+     * state (missing, behind, ahead) returns empty so the caller falls back to
+     * {@link #projectAndSave}.</p>
+     */
+    @Transactional(readOnly = true)
+    public Optional<String> currentSnapshotPayload(String sessionId, String branchId) {
+        Optional<ContextProjection> stored = projectionRepository
+                .findBySessionIdAndProjectionTypeAndBranchId(sessionId, AGENT_CONTEXT_TYPE, branchId);
+        if (stored.isEmpty()) {
+            return Optional.empty();
+        }
+        ContextProjection projection = stored.get();
+        long storedSequence = projection.getLatestSequence() == null ? 0L : projection.getLatestSequence();
+        if (storedSequence <= 0) {
+            return Optional.empty();
+        }
+        Long latestSequence = eventStoreService.getLatestSequence(sessionId);
+        long latest = latestSequence == null ? 0L : latestSequence;
+        if (storedSequence != latest) {
+            return Optional.empty();
+        }
+        // BL-302 ②: a payload without the current window metadata predates the windowing change
+        // (or was written by an older build). Returning it verbatim would keep serving the old
+        // multi-megabyte body, so the caller falls back to projectAndSave, which re-windows the
+        // stored context in place (no DB row is deleted or recreated).
+        if (!hasCurrentWindow(projection.getPayload())) {
+            logger.debug("[LIFECYCLE] service=cp event=context_projection_window_migrate sessionId={} branchId={}",
+                    sessionId, branchId);
+            return Optional.empty();
+        }
+        return Optional.of(projection.getPayload());
+    }
+
+    /**
+     * BL-302 ②: apply the conversation window to {@code context} in place.
+     *
+     * <p>The window is the largest suffix of whole turns whose serialized messages fit
+     * {@code maxBytes} and {@code maxMessages}; turns are delimited by {@code human} messages so an
+     * assistant tool-call declaration and its tool results always stay in the same window. Nothing
+     * is mutated inside a kept message — the kept rows are byte-identical to the full replay's
+     * corresponding suffix. {@code droppedMessages} accumulates across incremental rebuilds
+     * (dropped content is still in the DB, it is simply not materialized any more).</p>
+     */
+    public static ObjectNode applyWindow(ObjectNode context, ObjectMapper mapper,
+                                         int maxMessages, long maxBytes) {
+        JsonNode node = context.get("messages");
+        if (!(node instanceof ArrayNode messages)) {
+            return context;
+        }
+        int size = messages.size();
+        JsonNode previousWindow = context.get("window");
+        long previousDropped = previousWindow == null ? 0L : previousWindow.path("droppedMessages").asLong(0L);
+        JsonNode previousRange = previousWindow == null ? null : previousWindow.get("droppedRange");
+        Long previousFrom = sequenceOrNull(previousRange, "fromSequence");
+        Long previousTo = sequenceOrNull(previousRange, "toSequence");
+
+        long[] suffixBytes = new long[size + 1];
+        for (int i = size - 1; i >= 0; i--) {
+            suffixBytes[i] = utf8Length(messages.get(i).toString())
+                    + (i + 1 < size ? 1L : 0L) + suffixBytes[i + 1];
+        }
+        java.util.List<Integer> boundaries = new java.util.ArrayList<>();
+        boundaries.add(0);
+        for (int i = 1; i < size; i++) {
+            if ("human".equals(messages.get(i).path("role").asText(""))) {
+                boundaries.add(i);
+            }
+        }
+        // Largest suffix of whole turns within budget; the last turn is kept even when alone it
+        // exceeds the budget (a turn / tool pair is never split).
+        int start = boundaries.get(boundaries.size() - 1);
+        for (int boundary : boundaries) {
+            int kept = size - boundary;
+            long bytes = 2L + suffixBytes[boundary];
+            if (kept <= maxMessages && bytes <= maxBytes) {
+                start = boundary;
+                break;
+            }
+        }
+        Long droppedFirst = start > 0 ? sequenceOf(messages.get(0)) : null;
+        Long droppedLast = start > 0 ? sequenceOf(messages.get(start - 1)) : null;
+        if (start > 0) {
+            ArrayNode kept = mapper.createArrayNode();
+            for (int i = start; i < size; i++) {
+                kept.add(messages.get(i));
+            }
+            context.set("messages", kept);
+        }
+        ArrayNode keptMessages = (ArrayNode) context.get("messages");
+        ObjectNode window = mapper.createObjectNode();
+        window.put("version", WINDOW_VERSION);
+        window.put("keptMessages", keptMessages.size());
+        window.put("keptBytes", utf8Length(keptMessages.toString()));
+        window.put("droppedMessages", previousDropped + start);
+        ObjectNode droppedRange = mapper.createObjectNode();
+        Long rangeFrom = previousFrom != null ? previousFrom : droppedFirst;
+        Long rangeTo = previousTo;
+        if (droppedLast != null) {
+            rangeTo = rangeTo == null ? droppedLast : Math.max(rangeTo, droppedLast);
+        }
+        if (rangeFrom != null) {
+            droppedRange.put("fromSequence", rangeFrom);
+        }
+        if (rangeTo != null) {
+            droppedRange.put("toSequence", rangeTo);
+        }
+        window.set("droppedRange", droppedRange);
+        if (keptMessages.size() > 0) {
+            Long firstKept = sequenceOf(keptMessages.get(0));
+            if (firstKept != null) {
+                window.put("firstKeptSequence", firstKept);
+            }
+        }
+        window.put("windowHash", sha256Hex(keptMessages.toString()));
+        context.set("window", window);
+        return context;
+    }
+
+    private void applyWindow(ObjectNode context) {
+        applyWindow(context, objectMapper, WINDOW_MAX_MESSAGES, WINDOW_MAX_BYTES);
+    }
+
+    private static boolean hasCurrentWindow(ObjectNode context) {
+        JsonNode window = context.get("window");
+        return window != null && window.isObject() && window.path("version").asInt(-1) == WINDOW_VERSION;
+    }
+
+    private boolean hasCurrentWindow(String payload) {
+        if (payload == null || payload.isBlank()) {
+            return false;
+        }
+        try {
+            JsonNode parsed = objectMapper.readTree(payload);
+            return parsed instanceof ObjectNode object && hasCurrentWindow(object);
+        } catch (com.fasterxml.jackson.core.JsonProcessingException invalidPayload) {
+            return false;
+        }
+    }
+
+    private static Long sequenceOrNull(JsonNode node, String field) {
+        if (node == null || !node.isObject()) {
+            return null;
+        }
+        JsonNode value = node.get(field);
+        return value != null && value.isNumber() ? value.asLong() : null;
+    }
+
+    private static Long sequenceOf(JsonNode message) {
+        if (message == null || !message.isObject()) {
+            return null;
+        }
+        JsonNode sequence = message.get("sequence");
+        return sequence != null && sequence.isNumber() ? sequence.asLong() : null;
+    }
+
+    private static long utf8Length(String value) {
+        return value.getBytes(StandardCharsets.UTF_8).length;
+    }
+
+    private static boolean containsNativeRecords(JsonNode messages) {
+        for (JsonNode message : messages) {
+            if (message.has("nativeRecords")) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
      * PLAN-0410 T2.1/T2.3: projection upsert keyed by
      * (session_id, projection_type, branch_id) — the cache key carries the
      * branchId. A null branchId bootstraps the Session root (legacy callers);
@@ -163,9 +442,32 @@ public class ContextProjectionService {
         branchPathService.lockSessionRow(sessionId);
         com.cc01cc.p.xihe.cp.service.BranchPathService.BranchVisibility visibility =
                 branchPathService.resolveVisibility(sessionId, effectiveBranch);
-        ObjectNode context = project(sessionId, afterSequence, visibility);
+        // BL-305: reuse the stored projection and replay only the suffix when that is provably
+        // equivalent to a full replay; otherwise fall back to the historical full rebuild.
+        Optional<IncrementalProjection> incremental =
+                tryIncrementalProjection(sessionId, effectiveBranch, visibility);
+        ObjectNode context;
+        int suffixEvents = 0;
+        if (incremental.isPresent()) {
+            context = incremental.get().context();
+            suffixEvents = incremental.get().suffixEvents();
+            logger.debug("[LIFECYCLE] service=cp event=context_projection_incremental sessionId={} suffixEvents={}",
+                    sessionId, suffixEvents);
+        } else {
+            context = project(sessionId, afterSequence, visibility);
+        }
         long latestSequence = context.get("latest_sequence").asLong();
         context.put("branch_id", effectiveBranch);
+        // BL-302 ②: materialize only the conversation tail; latest_sequence stays the event-log head
+        // and window.firstKeptSequence records where the materialized window starts.
+        boolean alreadyWindowed = hasCurrentWindow(context);
+        applyWindow(context);
+
+        if (incremental.isPresent() && suffixEvents == 0 && alreadyWindowed) {
+            // Nothing was appended and the stored row already carries the current window: the hot
+            // read path must not re-serialize a multi-megabyte payload just to rewrite it.
+            return context;
+        }
 
         // PLAN-0410 field-matrix §2 #6: explicit three-key lookup + insert.
         Optional<ContextProjection> existing =

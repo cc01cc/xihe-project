@@ -15,10 +15,16 @@ const contentEl = ref<HTMLDivElement | null>(null),
 
 watch(contentEl, (el) => {
     setContentElement(el);
+    // `onMounted` 里首次 handleContentChange 时 contentRef 可能尚未写入（template ref 的
+    // watch 回调晚于 mounted），provider 的 itemCount/首项会停在 0；下一次 DOM 变更（例如
+    // 加载更早）就被当成"首次内容"，走 defaultScrollPosition=last-anchor 直接贴底。
+    // 元素一可用就立刻登记一次，保证 prepend 分支拿到正确的 previousItemCount。
+    if (el) handleContentChange();
 });
 
 watch(spacerEl, (el) => {
     setSpacerElement(el);
+    if (el) handleContentChange();
 });
 
 let mutationObserver: MutationObserver | null = null,

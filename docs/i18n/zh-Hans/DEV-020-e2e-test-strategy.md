@@ -295,6 +295,15 @@ node scripts/e2e-host-detached.mjs --timeout-min 25 --auth-lane=ratelimit \
 - **Agent readiness 实测**：整批负载下 `spawn → health+llmReady` 6 次样本 5.1–7.6 s（n=6 时 p95 等价于 max，即 7.6 s），默认预算 30 s 保留（`XIHE_E2E_AGENT_READY_TIMEOUT_MS` 可覆盖）；失败信息必须带「已等待时长 + 最后状态 + agent 日志路径」便于定位。
 - **清理耗时**：带 import 作业的 workspace DELETE ≈11 s/次（空闲工作区 29 ms），批量清理必须并发而不是串行；runner teardown 的零残留复核不变。
 
+### 3.5 隔离栈复用纪律（2026-11-05 实测新增）
+
+`--persistent` 起的隔离栈**不是**可任意换模式的沙箱：`llm-provider` profile 与 fake 连接都落在该栈自己的 PG 行里，换一次 profile 就污染后续所有轮次。
+
+- **真实 provider 轮与 fake 夹具轮不得在同一栈先后跑**。实测（PLAN-0630 S6 真实 key 轮之后紧接 `real/agent-spawn-caller`）：真实轮把 instance 层 profile 换成真实模型（`mimo-v2.6-flash`），而 fake 夹具连接只注册了 `fake-openai` ⇒ 后续建会话 `400 "Model is not registered under this Connection"`；反向切换（real→fake）还会出现 `POST /chat 503` 瞬态。**要么换栈，要么重新 `--first-run=local --bootstrap-user=register` 且不带 real key 重导 fake profile，并等 agent `llmReady=ready`。**
+- **每次换代码后必须重建 CP 并落戳**：`scripts/e2e-host.mjs --jar-mode=rebuild` **不写** `build-info.properties`，外部复用栈（`XIHE_E2E_EXTERNAL_SERVER=1`）会因此 fail-fast。正确做法：`mvn -q -DskipTests clean package -Dxihe.target.dir=<target>`，再用 `scripts/lib/cp-build-info.mjs` 的 `writeBuildInfo` 落戳（`gitHead()` 取当前 worktree HEAD）。
+- **浏览器网络瞬态不登记为产品缺陷**：合并后首次启动时 Vite 会 `Re-optimizing dependencies`，此时偶发 `net::ERR_NO_BUFFER_SPACE`（普通 GET 经 dev proxy，非 SSE）。判据=同栈复跑不复现 + CP/agent 侧无断流日志 ⇒ 记观察项，**不得**加白名单或放宽断言。
+- mock 车道的 `XIHE_EVIDENCE_DIR` 未设时由 `e2e/helpers/evidence.ts` 回退 `<repo>/.local/evidence/e2e-auto` 并 WARN 一次（此前 4 条用例因此判红，属环境前置非回归）。
+
 ## 4. 参考
 
 - XH E2E profile、readiness 和实际结果矩阵：维护在 workspace 私有 internal 层（不在本仓库分发）

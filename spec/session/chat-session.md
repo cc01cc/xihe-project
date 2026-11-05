@@ -42,6 +42,59 @@ Session 负责连续对话上下文、消息、附件引用、模型绑定和 Ch
 6. **失败不静默**：每次投递 MUST 以 `started`/`deferred`/`dropped`/`notify`/`refused`/`skipped_*` 之一收口并留可查留痕；不得因事务回滚而只剩日志行。
 7. **不扩契约**：本节点不新增事件名、计数维度或 API 路由；新增语义 MUST 复用既有 `wake_dispatch` 信封的 `outcome` / `reason` 字段。
 
+### 显式 TO 多目标（fan-out，PLAN-0665）
+
+> 来源：PLAN-0665 M1。语义 = 「这条消息由**被点名的这些主体**各自回应」（TO 从单值扩到集合）。
+
+1. **目标集合 = AGENT 参与者**：`toParticipantIds` MUST 只接受本 Session 的 **AGENT** 参与者；
+   人类目标 MUST 以 `400 INVALID_REQUEST` 显式拒绝（人类作答受 BL-238 wake 授权缺陷阻塞，另立计划）。
+2. **第一个目标承载提交**：集合首个目标 MUST 拥有本次 `user_submission` run（`runId` = `runIds[0]`）；
+   其余目标 MUST 作为派生 run 派发，其 wake 审计 `triggerSource="to"`；MUST NOT 为未选中主体
+   虚构 PRIMARY run。
+3. **origin 不得当分组依据**：派生 run 的 `origin` MUST 取**该 run 载体的既有分类**（2026-11-05 真栈实测：
+   wake 载体为 `scheduled`；用户提交为 `user_submission`），`parent_run_id` MUST 保持 NULL（委派链语义不得复用）。
+   MUST NOT 新增 origin 枚举或列；读侧 MUST 按 `runId` / 消息的 durable `delivery` / `trigger_source` 归组，
+   **不得**按 `origin` 推断「同一消息」。
+4. **单一入口**：单目标与多目标 MUST 走同一个 `TargetedWake` 入口，只差目标集合大小（禁止两条路径）。
+5. **显式 TO 优先于 @ 抑制**：带 `toParticipantIds` 的提交 MUST NOT 被 `@` 抑制成
+   `suppressed_no_responder`；`@` 与 TO 命中同一参与者时 MUST 由 **TO 路径唯一建 run**（mention 轮跳过 TO 目标），一条消息不得为其开两个 run。
+5b. **运行时失败不得静默**（2026-11-05 真栈实锤）：目标在**运行时**派发失败（DB 约束、网络、Agent 不可用）MUST 部分成功并
+   在 202 响应回报 `failedTargets:[{participantId,reason}]`，且 `runIds.length + failedTargets.length + deferredTargets.length`
+   MUST 等于请求目标数；失败 MUST 以 ERROR 级 `event=to_target_dispatch_failed` 留痕（可 grep 计数）。**前置校验失败**
+   （目标不存在/无权限/已停用/非 AGENT）则 MUST 整条拒绝（400/403），两类情形不得混用同一处理。
+5c. **deferred 是排队，不是失败**（BL-283，Lead 2026-11-05 裁定）：目标因 Session 并发满
+   （`maxConcurrentRunsPerSession`）被顺延入 follow-up 队列时 MUST 在 202 响应回报
+   `deferredTargets:[{participantId,reason:"deferred"}]`（**MUST NOT** 计入 `failedTargets`），
+   且唤醒 MUST 以**返回值**（`deferred`）结束而非抛异常 —— 准入拒绝若以异常穿过 REQUIRED 事务边界，
+   会把调用方共享事务标成 rollback-only，导致 deferred 入队与 `wake_dispatch` 审计一起回滚
+   （`UnexpectedRollbackException`）。审计 MUST 保留 `outcome=deferred`，INFO 级 `event=to_target_deferred` 留痕。
+6. **幂等身份含集合**：排序后的 TO 集合与 `asParticipantId` MUST 进入 `Idempotency-Key` 的
+   request hash（同内容不同收件人 MUST NOT 判为重复）；`cc` 仍不入哈希（notify-only）。
+
+### 投递语义的持久载体（PLAN-0665 D3 / V120）
+
+1. composer 的 TO / CC 受众 MUST 落 `messages.delivery`（JSONB，可空）——`{"to":[...],"cc":[...]}`，
+   只存 participantId；`@` 仍由正文 + 花名册重建，不重复存。
+2. 读取面 MUST 在消息 DTO 中回传 `delivery`；缺字段（V120 之前的消息、内部 wake 提示）MUST 视为
+   「无投递记录」，不得伪造默认受众。
+3. 本载体 MUST 终结 BL-239（刷新后 TO/CC 不再丢失），UI 不得再以「本地发送态」作为唯一来源。
+
+### 消息主体归属的持久载体（PLAN-0669 D1/D2 / V121）
+
+1. **归属 = 谁说的，且只存 id**：`messages.participant_id`（UUID，可空，`ON DELETE SET NULL`）MUST 存
+   **会话参与者 id**（`session_participants.id`），MUST NOT 存名字（重命名不得留下陈旧文案）。
+2. **写入方唯一**：assistant 消息 MUST 在单一写入点（`ChatSubmissionService.persistAssistantResponse`）
+   按回退链 `chat_runs.agent_principal_id → sessions.agent_principal_id → 参与者行` 落值；仍解析不到
+   ⇒ MUST 保持 NULL（MUST NOT 猜 PRIMARY —— 错误归属比没有归属更糟）。
+3. **用户消息 v1 不归属**：composer 的 `asParticipantId` 是**目标身份**（默认 PRIMARY 是 AGENT），
+   MUST NOT 当作作者写入；human 作者归属属 BL-277（需拆 author/target 或加 wire 字段）。
+4. **老数据语义**：V121 之前的消息 MUST 保持 NULL、**不回填**；读面 MUST 省略该字段（而非发 null），
+   UI MUST 在字段缺失或花名册无该行时**不渲染**徽标（MUST NOT 显示"未知"、MUST NOT 上屏裸 UUID）。
+5. **归属与 run 一致**：assistant 消息的 `participant_id` MUST 等于该 run 的 responding participant
+   （单测 + 真栈断言；run responder principal 与 participant 行 MUST 同一行）。
+6. **契约面**：OpenAPI `SessionMessage.participantId` 可空；fork/复制消息 MUST NOT 复制归属
+   （子会话花名册未复制，父 id 会悬空/撞 FK）。
+
 ## 恢复与失败
 
 - Chat SSE 断线由 UI transport 按 session generation 和 `Last-Event-ID` 恢复；恢复不创建新的 Session。
@@ -77,6 +130,25 @@ Session 负责连续对话上下文、消息、附件引用、模型绑定和 Ch
 - **隐私**：只含 hash/计数/字节与闭集枚举，不含内容片段；敏感工作区用工作区开关（`context-policy.defaults.fingerprintEnabled=false`）关闭。
 - **与 Run Trace 的关系**：trace 是事件时间线（cursor/asOf 分页），指纹是下发上下文快照摘要（一列、无分页）；互补不合并。
 
+## 读面可见性（PLAN-0668）
+
+> 本计划把"谁能读会话"从两套漂移的判定收敛为一个 primitive（`SessionReadAccess`）。
+> 以下为**断言**；实现与真栈证据见 PLAN-0668 `design.md` §D1–D5 与 `evidence/m3-read-face.md`。
+
+1. **内容读面 = owner ∨ 受邀 HUMAN**：`GET /sessions/{id}`、`GET /sessions/{id}/messages`、
+   `GET /sessions/{id}/derived-state`、`GET /sessions`（列表）MUST 仅对 **Session owner** 或
+   **未 disabled 的 HUMAN participant** 可见。
+2. **管理者不获得内容读**：`MANAGE_WORKSPACE_AGENTS`（workspace scope）与
+   `MANAGE_WORKSPACE_MEMBERS`（instance scope）MUST NOT 单独构成内容读授权；管理者保留既有
+   **名册**读面（owner ∨ 受邀 ∨ manager）。
+3. **错误形状按面冻结**：内容读面不可见 MUST `404 SESSION_NOT_FOUND`（不区分"不存在/无权"，
+   防存在性 oracle）；名册不可见 MUST `403 SESSION_ACCESS_DENIED`；跨 Workspace MUST 404；
+   未认证 MUST 401；workspace 非成员 MUST 403 `WORKSPACE_FORBIDDEN`。
+4. **写面不随读面放宽**：`requireCurrent` / `requireOwned` MUST 保持 owner-only；会话写路径
+   （dispatch、fork、delegation、MCP、scheduled 等）不得因读面放宽而接受受邀参与者。
+5. **投影契约**：列表投影 MUST 使用 `SessionSummary`（`required` 含
+   `kind/spawnedFromSessionId/spawnedAt`）；单会话 `Session` MUST 声明同一 lineage（optional）。
+   UI 投影 MUST 保留 OpenAPI `required` 字段；列表缺字段逐行丢弃 + WARN，单条读抛 typed error。
 ## 承接与验证
 
 - Session 固定 Workspace 与跨 Session 延续：PLAN-0348。条款 1–2（固定绑定、不 rebind）已负向验证：CP 跨 Workspace 作用域拒绝（404）+ Agent 跨 workspace `fail-closed`；跨 Session 延续入口**未实施**（退 backlog）。证据见 PLAN-0348 `evidence/`。
@@ -84,3 +156,14 @@ Session 负责连续对话上下文、消息、附件引用、模型绑定和 Ch
 - Agent principal Workspace scope：PLAN-0374。
 - 当前实现对账：PLAN-0387 `evidence/current-state.md`。
 - 真实 delete/recovery/SSE 验证：PLAN-0387 V7，尚未完成。
+
+### 消息读面分页（PLAN-0670 M2，proposed）
+
+1. `GET /api/v1/sessions/{sessionId}/messages` MUST 支持游标分页：`?limit=`（默认 50，上限 200；
+   超上限截断到 200 并在响应回显实际值，**不得**静默返回全集）与 `?before=`（**不透明**游标，客户端 MUST NOT 解析）。
+2. 游标 MUST 基于复合 `(created_at, id)`：单时间戳键在批量写入同毫秒时会跳过或重复消息。
+   返回消息 MUST 按 `(created_at, id)` 正序；`nextCursor` 取本次窗口**最旧**一条的边界。
+3. 响应 MUST 提供 `truncated`（还有更旧消息）与 `nextCursor`（无更旧时**省略**，不得为空串）；
+   旧客户端（不带 `limit`/`before`）MUST 保持既有"返回全部可见消息的数组"契约不变。
+4. 分页 MUST **在可见性过滤之后**计数（内部 wake 消息、branch path 之外的消息不占页大小），
+   且 MUST 使用游标而非 OFFSET（深分页禁止）。

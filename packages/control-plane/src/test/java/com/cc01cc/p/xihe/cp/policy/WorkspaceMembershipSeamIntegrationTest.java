@@ -108,8 +108,9 @@ class WorkspaceMembershipSeamIntegrationTest extends AbstractIntegrationTest {
         assertTrue(objectMapper.readTree(workspaces.getBody()).findValuesAsText("id")
                         .contains(workspaceId),
                 "the workspace appears in the subject's workspace list");
-        assertEquals(4, grantRows(memberId, workspaceId),
-                "WS_EDITOR materializes its four workspace-tier atoms (read/write/delete/exec)");
+        assertEquals(RoleAtomExpectations.materializedAtomCount(SystemAccessRoleCatalog.WS_EDITOR),
+                grantRows(memberId, workspaceId),
+                "WS_EDITOR materializes one row per catalog action atom (0651 M2 widened 4→7)");
     }
 
     @Test

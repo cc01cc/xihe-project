@@ -5,10 +5,11 @@ resolution, event translation, and terminal-outcome semantics unchanged.
 """
 
 import asyncio
+import json
 from typing import Any
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from litellm import get_llm_provider as _litellm_get_llm_provider  # noqa: F401  (provider util parity)
 from loguru import logger
@@ -50,6 +51,12 @@ from xihe_agent.config_snapshot import ConfigSnapshotUnavailableError, RunConfig
 from xihe_agent.config_state import ConfigUnavailableError, ensure_config_ready
 from xihe_agent.context.agent_memory import (
     render_from_component_sources as render_memory_from_component_sources,
+)
+from xihe_agent.context.inbound_limits import (
+    InboundTooLargeError,
+    Truncation,
+    read_body_with_limit,
+    truncate_for_run,
 )
 from xihe_agent.context.path_mentions import (
     append_to_user_input,
@@ -221,7 +228,28 @@ async def _close_guidance_consumer(consumer: GuidanceConsumer | None) -> None:
 
 @router.post("/internal/v1/agent/chat", dependencies=[Depends(verify_api_token)])
 async def chat(request: Request):
-    data = await request.json()
+    try:
+        body_bytes = await read_body_with_limit(request)
+    except InboundTooLargeError as too_large:
+        logger.warning(
+            "event=agent_context_too_large limitBytes={} observedBytes={} requestId={}",
+            too_large.limit_bytes,
+            too_large.observed_bytes,
+            request.headers.get("X-Request-Id") or "unknown",
+        )
+        # A bare HTTPException would be rewritten by the app-level handler to the generic
+        # AGENT_REQUEST_FAILED code; the 413 is a documented, actionable contract (BL-289), so return
+        # the problem+json directly with its own code.
+        return problem_details(
+            request.headers.get("X-Request-Id") or "unknown",
+            413,
+            "AGENT_CONTEXT_TOO_LARGE",
+            f"Agent context body exceeds {too_large.limit_bytes} bytes",
+        )
+    try:
+        data = json.loads(body_bytes)
+    except ValueError as malformed:
+        raise HTTPException(status_code=400, detail={"code": "INVALID_REQUEST"}) from malformed
     content: str = data.get("content", "")
     session_id: str = data.get("sessionId", "default")
     workspace_id: str | None = data.get("workspaceId") or None
@@ -486,6 +514,10 @@ async def chat(request: Request):
         assistant_chars = 0
         event_index = 0
         guidance_consumer: GuidanceConsumer | None = None
+        # PLAN-0670 M2c / BL-289: the inbound-cap marker of this run (None = nothing dropped). Set at
+        # the production truncation point below (after prune) and carried into the terminal `done`
+        # payload both by RunnerConfig (real done) and by the synthetic fallback below.
+        inbound_truncation: Truncation | None = None
 
         def correlated_data(event_data: dict[str, Any]) -> dict[str, Any]:
             payload = dict(event_data)
@@ -618,6 +650,13 @@ async def chat(request: Request):
                         context.set_latest_sequence(max(context.latest_sequence, persisted.sequence))
                 if pruned is not None:
                     context.messages = pruned.messages
+                    # PLAN-0670 T2c.1 / BL-289 — the production truncation point. Order is
+                    # prune → inbound cap: prune replaces stale tool-result bodies first, so the cap
+                    # measures the payload the run would actually send (capping pre-prune would drop
+                    # by the larger, unpruned size). This runs before `native_history(...)` and before
+                    # the runner, so both the provider body and the graph history are bounded; the
+                    # same `Truncation` object feeds the WARN and the terminal payload.
+                    context.messages, inbound_truncation = truncate_for_run(context.messages)
 
                 # PLAN-0508: the model's transport collector publishes bounded
                 # provider-attempt telemetry into this queue; the runner fans it
@@ -777,6 +816,11 @@ async def chat(request: Request):
                     # PLAN-0529: Guidance consumer for the frozen consumption
                     # point (model-call pre-injection); PLAN-0543 owns its close.
                     guidance=guidance_consumer,
+                    # PLAN-0670 M2c / BL-289: the runner merges this into the terminal `done`
+                    # payload (wire shape already approved; absent when nothing was dropped).
+                    agent_context_truncation=(
+                        inbound_truncation.to_wire() if inbound_truncation is not None else None
+                    ),
                 )
 
                 llm_request_started = True
@@ -838,6 +882,10 @@ async def chat(request: Request):
                         done_data = {**event.data, "type": "done", "outcome": terminal_outcome}
                         if terminal_error_code:
                             done_data["errorCode"] = terminal_error_code
+                        # BL-289: the runner already merged it on `done`; this is the belt-and-braces
+                        # for any done event that bypassed the runner merge (never double-attached).
+                        if inbound_truncation is not None and "agentContextTruncation" not in done_data:
+                            done_data["agentContextTruncation"] = inbound_truncation.to_wire()
                         yield render_sse("done", correlated_data(done_data))
                     elif event.type == "usage":
                         # PLAN-0416 T2.3: the estimate is the final serialized
@@ -990,6 +1038,8 @@ async def chat(request: Request):
             }
             if error_seen and terminal_error_code:
                 done_data["errorCode"] = terminal_error_code
+            if inbound_truncation is not None:
+                done_data["agentContextTruncation"] = inbound_truncation.to_wire()
             yield render_sse("done", correlated_data(done_data))
 
         logger.info(

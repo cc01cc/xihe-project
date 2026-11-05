@@ -91,6 +91,7 @@ function suitesOf(reportDir) {
     const name = attr('name');
     return {
       simpleClass: name.split('.').pop(),
+      fullClass: name,
       tests: Number(attr('tests')),
       failures: Number(attr('failures')),
       errors: Number(attr('errors')),
@@ -120,7 +121,7 @@ for (const shard of ['a', 'b']) {
     + `tests=${result.tests} failures+errors=${result.failures} missCount=${result.cache?.missCount ?? 'n/a'}`);
 }
 
-const { computeExpectedTestClasses } = await import('file:///H:/zeogit/one/.tmp/plan-eff-l2/lib/test-class-set.mjs');
+const { computeExpectedTestClasses } = await import('./lib/test-class-set.mjs');
 const expected = computeExpectedTestClasses({ repoRoot: ROOT });
 // `computeExpectedTestClasses` 的返回形状随 helper 演进而变：现在是
 // `{ repoRoot, sourceFileCount, expected: [...classNames], excludedAbstract, ... }`，
@@ -141,7 +142,7 @@ const expectedNames = (() => {
   );
 })();
 const expectedSet = new Set(expectedNames);
-const ran = shards.flatMap((shard) => shard.suites.map((suite) => suite.simpleClass));
+const ran = shards.flatMap((shard) => shard.suites.map((suite) => suite.fullClass));
 const ranSet = new Set(ran);
 const duplicates = ran.filter((name, index) => ran.indexOf(name) !== index);
 const coverage = {

@@ -124,6 +124,22 @@ public class RequesterAuthority {
         return Set.copyOf(names);
     }
 
+    /** Canonical action/resource rows at the evaluator's exact scope, retaining resource bounds. */
+    public Set<GrantIntersectionEvaluator.PermissionAtom> actionPermissions(UUID subjectId,
+                                                                            UUID workspaceId) {
+        if (subjectId == null) {
+            return Set.of();
+        }
+        try {
+            return evaluator.union(grantRepository.findScopedGrants(AuthzContext.SUBJECT_USER,
+                    subjectId, GrantSources.EVALUATION_SOURCES, workspaceId));
+        } catch (RuntimeException e) {
+            logger.error("[POLICY] event=action_permission_evaluation_failed subject={} workspaceId={}"
+                    + " failureType={}", subjectId, workspaceId, e.getClass().getSimpleName(), e);
+            return Set.of();
+        }
+    }
+
     /**
      * W3-2a {@code MANAGE_ROLES} gate as a service call, for the paths whose decision needs the
      * resource row first (for example a workspace-scoped binding write).

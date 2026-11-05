@@ -292,6 +292,10 @@ const messages = {
             participantRespondMuted: "静音",
             participantDisabledBadge: "已停用",
             participantMentionBadge: "待读提及 {count} 条",
+            participantCursorAdvance: "标记已读",
+            participantCursorAdvanceHint: "把我在本会话的已读位置推进到最新（上限由服务端决定）",
+            participantCursorSelfOnly: "只能推进你自己的已读位置。",
+            participantCursorAdvanceFailed: "标记已读失败，请稍后重试。",
             noSession: "暂无活动会话",
             createSession: "新建对话",
             chooseAgentTitle: "选择智能体",
@@ -310,9 +314,9 @@ const messages = {
                 "创建智能体主体，并管理其在此工作区的权限上限。创建与绑定分别授权。",
             createAgentPrincipal: "创建智能体",
             agentCreatePermissionNote:
-                "需要 CREATE_ACCOUNT；创建本身不会自动绑定到工作区。无权限时请联系管理员在「设置 → 角色与绑定」授予含该原子的角色。",
+                "需要 MANAGE_WORKSPACE_AGENTS；创建默认进入当前工作区。无权限时请联系管理员在「设置 → 角色与绑定」授予含该原子的角色。",
             agentCreateForbidden:
-                "缺少 CREATE_ACCOUNT 权限：请让管理员在「设置 → 角色与绑定」为你的账号绑定含该原子的角色后重试。",
+                "缺少 MANAGE_WORKSPACE_AGENTS 权限：请让管理员在「设置 → 角色与绑定」为该工作区绑定含该原子的角色后重试。",
             agentBindForbidden:
                 "缺少 MANAGE_WORKSPACE_AGENTS 权限：请让管理员在「设置 → 角色与绑定」为该工作区绑定含该原子的角色后重试。",
             agentGrantPanelLink: "打开角色与绑定",
@@ -320,6 +324,10 @@ const messages = {
             agentTemplateChoice: "模板快照",
             agentTemplateLoadFailed: "加载可见智能体模板失败",
             agentCreatedUnbound: "已创建，尚未绑定到此工作区",
+            agentPendingRecoveryNote:
+                "仅当前浏览器可恢复；关闭/刷新后可回到这张卡，换设备或换浏览器请重新创建。",
+            agentPendingRecoveryUnavailable:
+                "无法在本浏览器保存待绑定引用；请保持当前页面打开，或重新创建主体。",
             agentCapNote:
                 "选择工作区权限上限。默认不授予工具权限；权限仍受角色绑定与操作者授权约束。",
             bindAgent: "绑定到此工作区",
@@ -343,16 +351,6 @@ const messages = {
             agentBound: "智能体已绑定到工作区",
             agentCapSaved: "权限上限已保存",
             agentUnboundSuccess: "智能体已从工作区解绑",
-            agentScopeTitle: "共享范围（智能体）",
-            agentScopePersonalTitle: "个人智能体（仅自己可用）",
-            agentScopeWorkspaceTitle: "工作区智能体（本工作区共享）",
-            agentScopeInstanceTitle: "实例智能体（全实例可见）",
-            agentScopeHintPersonal: "创建在你名下；需要 CREATE_OWN_AGENT。绑定到工作区后成员可用。",
-            agentScopeHintWorkspace: "属于本工作区；需要 MANAGE_WORKSPACE_AGENTS。",
-            agentScopeHintInstance: "所有工作区可见；需要 CREATE_ACCOUNT（仅管理员）。",
-            agentScopeLoading: "正在读取你的权限…",
-            agentScopeNone:
-                "你没有创建智能体的权限（需要 CREATE_OWN_AGENT / MANAGE_WORKSPACE_AGENTS / CREATE_ACCOUNT 之一）。请联系管理员在「设置 → 角色与绑定」授予含该原子的角色。",
             agentDefaultModelProvider: "默认模型 provider",
             agentDefaultModelName: "默认模型名",
             agentModelProviderPlaceholder: "例如 openai",
@@ -368,9 +366,6 @@ const messages = {
             agentAllowedModelNameAria: "允许模型的模型名",
             agentAllowedModelsIncomplete: "允许模型集里每一行都要填 provider 与模型名",
             agentAllowedModelsDuplicate: "允许模型集里存在重复的 provider + 模型",
-            agentSourceWorkspace: "本工作区智能体",
-            agentSourcePersonal: "个人智能体",
-            agentSourceInstance: "实例智能体",
             agentDisabledBadge: "已禁用",
             agentUnboundBadge: "未绑定",
             disableAgent: "禁用",
@@ -386,6 +381,33 @@ const messages = {
             agentMemoryLoadFailed: "记忆加载失败",
             agentMemoryNotFound: "无权限查看该主体的记忆，或该主体不存在",
             agentMemoryRetry: "重试",
+            // PLAN-0667 M3：agent 主体角色 / 技能区块（D5(b) 派生原子只给摘要）。
+            agentRolesTitle: "角色",
+            agentSkillsTitle: "技能",
+            agentRbacReadonlyBadge: "只读",
+            agentRbacReadonlyHint:
+                "当前只有查看权限；绑定/解绑角色与技能需要 MANAGE_WORKSPACE_AGENTS 授权。",
+            agentRbacLoading: "正在加载角色与技能…",
+            agentRbacFailed: "角色与技能加载失败",
+            agentRbacRetry: "重试",
+            agentRbacBind: "绑定",
+            agentRbacUnbind: "解绑",
+            agentRolesEmpty: "该主体暂无角色绑定",
+            agentSkillsEmpty: "该主体暂无技能绑定",
+            agentRoleSystemBadge: "种子绑定",
+            agentRoleAtomsSummary: "派生原子：{atoms} · 共 {count} 个",
+            agentRoleGrantedBy: "创建者：{id}",
+            agentSkillTokens: "约 {tokens} tokens",
+            agentSkillSourceWorkspace: "工作区技能",
+            agentSkillSourcePersonal: "个人技能",
+            agentRoleSelectPlaceholder: "选择要绑定的角色",
+            agentSkillSelectPlaceholder: "选择要绑定的技能",
+            agentRoleForbiddenAtoms: "该角色含 agent 不可授予的原子，绑定被拒绝",
+            agentRoleExceedsCap: "该角色含超出此 agent 权限上限（cap）的原子，绑定被拒绝",
+            agentRoleCapHint: "权限上限是硬上限：角色绑定只能在上限内生效",
+            agentRoleBindingExists: "该角色已绑定",
+            agentRoleBindingImmutable: "系统种子绑定不可解绑",
+            agentRbacNotFound: "角色或技能不存在，或无权查看",
             agentMemoryTypeProfile: "画像",
             agentMemoryTypeFact: "事实",
             agentMemoryPinned: "置顶",
@@ -742,6 +764,14 @@ const messages = {
             environmentState: "环境状态",
         },
         chat: {
+            loadOlder: "加载更早的消息",
+            loadingOlder: "正在加载更早的消息…",
+            loadOlderFailed: "加载更早的消息失败",
+            foldedOlder: "更早的 {count} 条消息已折叠，点击加载",
+            loadMessagesFailed: "加载消息失败，请重试",
+            contextTruncationNotice:
+                "本次回答基于被截断的历史（丢弃 {dropped} 条 / 保留 {kept} 条）",
+            contextTruncationDismiss: "关闭截断提示",
             send: "发送",
             // PLAN-0659 T1.1：run 头的折叠开关 aria-label（run 短码仅展示）。
             runHeader: {
@@ -803,6 +833,9 @@ const messages = {
                 filesTitle: "文件与目录",
                 // PLAN-0630 M5b (D30-14)：composer to/cc 栏（邮箱隐喻：to = 主要响应者，cc = 旁听名单）。
                 toLabel: "发送",
+                // PLAN-0665 M2（Q3）：M1 只允许 AGENT 作为 TO；人类作答受 BL-238 阻塞，单独立项。
+                toTargetsLabel: "定向发送",
+                toAgentsOnlyHint: "人类成员请用抄送；人类作答待后续版本",
                 ccLabel: "抄送",
                 ccAdd: "添加…",
                 ccRemove: "移除抄送",
@@ -1037,6 +1070,8 @@ const messages = {
             approve: "确认",
             reject: "拒绝",
             approvalDescription: "智能体请求执行以下操作，请确认后继续：",
+            // PLAN-0665 M2 D5：多路审批串行，首卡显示「1/N 待批」。
+            approvalQueueProgress: "第 {position}/{total} 张待批",
             approvalAction: "动作",
             approvalDetails: "参数预览",
             approvalEvidence: "策略依据",
@@ -1773,6 +1808,18 @@ const messages = {
             rolesBindingsAdd: "添加绑定",
             rolesBindingsSave: "保存绑定（整体替换）",
             rolesBindingsSaved: "已保存，该作用域现有 {count} 条绑定",
+            rolesBindingsSubjectType: "主体类型",
+            rolesBindingsSubjectTypeUser: "账号",
+            rolesBindingsSubjectTypeAgent: "智能体主体",
+            rolesBindingsAgentTitle: "智能体角色绑定",
+            rolesBindingsAgentHint:
+                "为智能体主体绑定/解绑角色；保存后写入 role_bindings。种子绑定不可解绑。",
+            rolesBindingsAgentPick: "选择智能体主体",
+            rolesBindingsAgentNoAgents: "当前作用域没有可管理的智能体主体。",
+            rolesBindingsAgentLoading: "正在读取智能体角色绑定…",
+            rolesBindingsAgentSave: "保存智能体角色",
+            rolesBindingsAgentSaved: "已保存，智能体现有 {count} 条角色绑定",
+            rolesBindingsAgentSeed: "种子",
             rolesBindingsEffectiveTitle: "有效能力摘要（按绑定角色本地推导）",
             rolesBindingsEffectiveHint:
                 "服务端响应只包含绑定行，不含能力回显；这里按角色原子求并集推导，以服务端判定为准。",
@@ -2556,6 +2603,11 @@ const messages = {
             participantRespondMuted: "Muted",
             participantDisabledBadge: "Disabled",
             participantMentionBadge: "{count} unread mentions",
+            participantCursorAdvance: "Mark as read",
+            participantCursorAdvanceHint:
+                "Advance my read position in this session to the latest (the server decides the ceiling)",
+            participantCursorSelfOnly: "You can only advance your own read position.",
+            participantCursorAdvanceFailed: "Could not mark as read. Please try again.",
             noSession: "No active session",
             createSession: "New chat",
             chooseAgentTitle: "Choose an Agent",
@@ -2575,9 +2627,9 @@ const messages = {
                 "Create Agent principals and manage their permission caps in this Workspace. Creation and binding require separate grants.",
             createAgentPrincipal: "Create Agent",
             agentCreatePermissionNote:
-                "Requires CREATE_ACCOUNT. Creation does not bind the principal to this Workspace. Without it, ask an administrator to grant a role carrying that atom under Settings → Roles & bindings.",
+                "Requires MANAGE_WORKSPACE_AGENTS; creation targets the current workspace. Without it, ask an administrator to grant a role carrying that atom under Settings → Roles & bindings.",
             agentCreateForbidden:
-                "CREATE_ACCOUNT is required: ask an administrator to bind a role carrying that atom to your account under Settings → Roles & bindings, then retry.",
+                "MANAGE_WORKSPACE_AGENTS is required: ask an administrator to bind a role carrying that atom for this workspace under Settings → Roles & bindings, then retry.",
             agentBindForbidden:
                 "MANAGE_WORKSPACE_AGENTS is required: ask an administrator to bind a role carrying that atom for this workspace under Settings → Roles & bindings, then retry.",
             agentGrantPanelLink: "Open roles & bindings",
@@ -2585,6 +2637,10 @@ const messages = {
             agentTemplateChoice: "Template snapshot",
             agentTemplateLoadFailed: "Failed to load visible Agent templates",
             agentCreatedUnbound: "Created, not bound to this Workspace",
+            agentPendingRecoveryNote:
+                "Only this browser can restore it. After a close/refresh you return to this card; on another device or browser, create the principal again.",
+            agentPendingRecoveryUnavailable:
+                "This browser could not store the pending reference. Keep this page open, or create the principal again.",
             agentCapNote:
                 "Choose the Workspace permission cap. No tool permissions are granted by default; principal and operator grants still apply.",
             bindAgent: "Bind to this Workspace",
@@ -2608,18 +2664,6 @@ const messages = {
             agentBound: "Agent bound to the Workspace",
             agentCapSaved: "Permission cap saved",
             agentUnboundSuccess: "Agent unbound from the Workspace",
-            agentScopeTitle: "Shared scope (agent)",
-            agentScopePersonalTitle: "Personal agent (only you)",
-            agentScopeWorkspaceTitle: "Workspace agent (shared with this Workspace)",
-            agentScopeInstanceTitle: "Instance agent (visible to every Workspace)",
-            agentScopeHintPersonal:
-                "Owned by you; requires CREATE_OWN_AGENT. Members can use it once bound to a Workspace.",
-            agentScopeHintWorkspace: "Belongs to this Workspace; requires MANAGE_WORKSPACE_AGENTS.",
-            agentScopeHintInstance:
-                "Visible to every Workspace; requires CREATE_ACCOUNT (administrators only).",
-            agentScopeLoading: "Reading your permissions…",
-            agentScopeNone:
-                "You cannot create an Agent (needs one of CREATE_OWN_AGENT / MANAGE_WORKSPACE_AGENTS / CREATE_ACCOUNT). Ask an administrator to bind a role carrying that atom under Settings → Roles & bindings.",
             agentDefaultModelProvider: "Default model provider",
             agentDefaultModelName: "Default model name",
             agentModelProviderPlaceholder: "e.g. openai",
@@ -2638,9 +2682,6 @@ const messages = {
             agentAllowedModelsIncomplete:
                 "Every allowed-model row needs both a provider and a model name",
             agentAllowedModelsDuplicate: "Duplicate provider + model in the allowed set",
-            agentSourceWorkspace: "Workspace agent",
-            agentSourcePersonal: "Personal agent",
-            agentSourceInstance: "Instance agent",
             agentDisabledBadge: "Disabled",
             agentUnboundBadge: "Not bound",
             disableAgent: "Disable",
@@ -2658,6 +2699,35 @@ const messages = {
             agentMemoryLoadFailed: "Failed to load memory",
             agentMemoryNotFound: "You cannot view this agent's memory, or the agent does not exist",
             agentMemoryRetry: "Retry",
+            // PLAN-0667 M3: agent role / skill sections (D5(b): derived atoms as a summary only).
+            agentRolesTitle: "Roles",
+            agentSkillsTitle: "Skills",
+            agentRbacReadonlyBadge: "Read-only",
+            agentRbacReadonlyHint:
+                "View only for now; binding and unbinding roles/skills require MANAGE_WORKSPACE_AGENTS.",
+            agentRbacLoading: "Loading roles and skills…",
+            agentRbacFailed: "Failed to load roles and skills",
+            agentRbacRetry: "Retry",
+            agentRbacBind: "Bind",
+            agentRbacUnbind: "Unbind",
+            agentRolesEmpty: "This agent has no role binding yet",
+            agentSkillsEmpty: "This agent has no skill binding yet",
+            agentRoleSystemBadge: "Seed binding",
+            agentRoleAtomsSummary: "Derived atoms: {atoms} · {count} total",
+            agentRoleGrantedBy: "Granted by: {id}",
+            agentSkillTokens: "~{tokens} tokens",
+            agentSkillSourceWorkspace: "Workspace skill",
+            agentSkillSourcePersonal: "Personal skill",
+            agentRoleSelectPlaceholder: "Select a role to bind",
+            agentSkillSelectPlaceholder: "Select a skill to bind",
+            agentRoleForbiddenAtoms:
+                "This role contains atoms an agent cannot hold; binding was refused",
+            agentRoleExceedsCap:
+                "This role carries atoms beyond the agent's permission cap; bind refused",
+            agentRoleCapHint: "The cap is a hard ceiling: role bindings only take effect within it",
+            agentRoleBindingExists: "This role is already bound",
+            agentRoleBindingImmutable: "System seed bindings cannot be unbound",
+            agentRbacNotFound: "The role or skill does not exist, or you cannot view it",
             agentMemoryTypeProfile: "Profile",
             agentMemoryTypeFact: "Fact",
             agentMemoryPinned: "Pinned",
@@ -3036,6 +3106,14 @@ const messages = {
             environmentState: "Environment",
         },
         chat: {
+            loadOlder: "Load earlier messages",
+            loadingOlder: "Loading earlier messages…",
+            loadOlderFailed: "Failed to load earlier messages",
+            foldedOlder: "{count} earlier messages are folded; click to load",
+            loadMessagesFailed: "Failed to load messages; please retry",
+            contextTruncationNotice:
+                "This answer used a truncated history ({dropped} dropped / {kept} kept)",
+            contextTruncationDismiss: "Dismiss truncation notice",
             send: "Send",
             runHeader: {
                 toggle: "Expand or collapse run {run}",
@@ -3098,6 +3176,8 @@ const messages = {
                 filesTitle: "Files and folders",
                 // PLAN-0630 M5b (D30-14): composer to/cc bars (email metaphor: to = primary responder, cc = observers).
                 toLabel: "To",
+                toTargetsLabel: "Send to",
+                toAgentsOnlyHint: "Humans use Cc; human replies come in a later version",
                 ccLabel: "Cc",
                 ccAdd: "Add…",
                 ccRemove: "Remove cc",
@@ -3339,6 +3419,7 @@ const messages = {
             reject: "Reject",
             approvalDescription:
                 "The agent wants to perform the following action. Review it before continuing:",
+            approvalQueueProgress: "Approval {position} of {total} pending",
             approvalAction: "Action",
             approvalDetails: "Parameter preview",
             approvalEvidence: "Policy evidence",
@@ -4124,6 +4205,18 @@ const messages = {
             rolesBindingsAdd: "Add binding",
             rolesBindingsSave: "Save bindings (full replacement)",
             rolesBindingsSaved: "Saved; the scope now has {count} bindings.",
+            rolesBindingsSubjectType: "Subject type",
+            rolesBindingsSubjectTypeUser: "Account",
+            rolesBindingsSubjectTypeAgent: "Agent principal",
+            rolesBindingsAgentTitle: "Agent role bindings",
+            rolesBindingsAgentHint:
+                "Bind or unbind roles for an agent principal; saving writes role_bindings. Seed bindings cannot be removed.",
+            rolesBindingsAgentPick: "Pick an agent principal",
+            rolesBindingsAgentNoAgents: "No manageable agent principals in this scope.",
+            rolesBindingsAgentLoading: "Loading agent role bindings…",
+            rolesBindingsAgentSave: "Save agent roles",
+            rolesBindingsAgentSaved: "Saved; the agent now has {count} role bindings.",
+            rolesBindingsAgentSeed: "Seed",
             rolesBindingsEffectiveTitle: "Effective capability summary (derived locally)",
             rolesBindingsEffectiveHint:
                 "The server response carries binding rows only, without a capability echo; this unions the bound roles' atoms. CP remains authoritative.",

@@ -1,6 +1,7 @@
 package com.cc01cc.p.xihe.cp.provider;
 
-import com.cc01cc.p.xihe.cp.policy.CapabilityAuthorities;
+import com.cc01cc.p.xihe.cp.policy.RequesterAuthority;
+import com.cc01cc.p.xihe.cp.policy.ToolFaceRegistry;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
 import com.cc01cc.p.xihe.cp.entity.ProviderConnection;
 import com.cc01cc.p.xihe.cp.entity.ProviderConnectionAudit;
@@ -58,6 +59,7 @@ public class ProviderConnectionService {
     private final org.springframework.beans.factory.ObjectProvider<com.cc01cc.p.xihe.cp.config.ConfigService> configService;
     private final HttpClient httpClient;
     private final com.cc01cc.p.xihe.cp.repository.ProviderConnectionModelLimitRepository modelLimitRepository;
+    private final RequesterAuthority requesterAuthority;
 
     public ProviderConnectionService(
             ProviderConnectionRepository repository,
@@ -70,7 +72,8 @@ public class ProviderConnectionService {
             ObjectMapper objectMapper,
             com.cc01cc.p.xihe.cp.service.ApiRequestTemplateService requestTemplates,
             org.springframework.beans.factory.ObjectProvider<com.cc01cc.p.xihe.cp.config.ConfigService> configService,
-            com.cc01cc.p.xihe.cp.repository.ProviderConnectionModelLimitRepository modelLimitRepository) {
+            com.cc01cc.p.xihe.cp.repository.ProviderConnectionModelLimitRepository modelLimitRepository,
+            RequesterAuthority requesterAuthority) {
         this.repository = repository;
         this.auditRepository = auditRepository;
         this.leaseRepository = leaseRepository;
@@ -82,6 +85,7 @@ public class ProviderConnectionService {
         this.requestTemplates = requestTemplates;
         this.configService = configService;
         this.modelLimitRepository = modelLimitRepository;
+        this.requesterAuthority = requesterAuthority;
         this.httpClient = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(5))
                 .followRedirects(HttpClient.Redirect.NEVER)
@@ -463,7 +467,7 @@ public class ProviderConnectionService {
             // PLAN-0610 W1b (R2-9): the instance-level bypass is a capability.
             if (!connection.getOwnerId().equals(TenantContext.getWorkspaceId())
                     || !(WorkspaceRole.canWrite(role)
-                    || CapabilityAuthorities.isInstanceAdmin())) {
+                    || canManageProviderConnections())) {
                 throw new IllegalArgumentException("Workspace provider connection is not writable");
             }
             return;
@@ -510,6 +514,30 @@ public class ProviderConnectionService {
         return repository.saveAndFlush(updated);
     }
 
+    /**
+     * PLAN-0651 M3 T3.4 (A16/A17): the workspace provider-connection face is the N6 atom,
+     * {@code MANAGE_PROVIDER_CONNECTIONS}, evaluated at workspace scope (instance rows always
+     * participate, so the built-in ADMIN/SUPER_ADMIN bypass is preserved). The existing
+     * {@code WorkspaceRole.canWrite(role)} judgement is kept (D51-28) so a plain EDITOR keeps
+     * today's reach even without an explicit atom grant.
+     */
+    private boolean canManageProviderConnections() {
+        String actor = TenantContext.getUserId();
+        if (actor == null) {
+            return false;
+        }
+        try {
+            UUID subject = UUID.fromString(actor);
+            String workspace = TenantContext.getWorkspaceId();
+            UUID workspaceUuid = workspace == null || workspace.isBlank()
+                    ? null : UUID.fromString(workspace);
+            return requesterAuthority.holdsActionAtom(subject,
+                    ToolFaceRegistry.ACTION_MANAGE_PROVIDER_CONNECTIONS, workspaceUuid);
+        } catch (IllegalArgumentException invalidIdentity) {
+            return false;
+        }
+    }
+
     private String resolveOwnerId(String scope, String userId) {
         if (ProviderConnection.OWNER_USER.equals(scope)) {
             return userId;
@@ -519,7 +547,7 @@ public class ProviderConnectionService {
             String role = TenantContext.getWorkspaceRole();
             // PLAN-0610 W1b (R2-9): the instance-level bypass is a capability.
             if (workspaceId == null || !(WorkspaceRole.canWrite(role)
-                    || CapabilityAuthorities.isInstanceAdmin())) {
+                    || canManageProviderConnections())) {
                 throw new IllegalArgumentException("Workspace editor permission is required");
             }
             return workspaceId;

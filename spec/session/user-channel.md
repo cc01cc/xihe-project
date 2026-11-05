@@ -6,7 +6,7 @@
 > Owner：CP Notification / UserChannel  
 > 消费者：CP、Agent、UI、后续 PLAN（问答组件、未读徽标）  
 > 来源：PLAN-0648（并入 PLAN-0660 M5）  
-> 更新日期：2026-11-04
+> 更新日期：2026-11-05
 
 ## 1 范围与边界
 
@@ -52,13 +52,51 @@
 3. **不泄露存在性**：问答读面对外统一 `404`（非 addressee 的 `GET`/`answer` 同样 404，不区分「不存在」与「无权」）。
 4. **端口可空注入**：`UserChannelPort` 无实现时（单测/无 SSE 场景）投递为 no-op，业务行为不变。
 
-## 6 不扩契约
+## 6 数据模型（user_questions，V128）
+
+> 本节就是 T5.8 要求「表结构在本 SPEC 内重建一份可核对清单」的落点：PLAN-0648 已归档，冻结清单不能只靠归档文档的节号。
+> 下表逐项对应 `V128__user_questions.sql`；**任何列/约束/索引的增删，先改本节再改迁移**。
+
+**新表只一张**；不新建 `read_cursors`（mention 已读复用 §2 的 `session_participant_cursors`，问题待答数由 `state` 派生，与 §3 同口径）。不落 `workspace_id`：0647 后 session 可无 workspace，join 即可得，冗余列会是第二事实源。
+
+| 列 | 类型/约束 | 说明 |
+|---|---|---|
+| `id` | UUID PK | — |
+| `session_id` | UUID NOT NULL → `sessions(id)` `ON DELETE CASCADE` | 发起上下文 |
+| `run_id` | UUID NOT NULL → `chat_runs(id)` `ON DELETE CASCADE` | 与 `approval_requests.run_id` 同口径（`V1:409`） |
+| `asked_by_participant_id` | UUID NULL → `session_participants(id)` `ON DELETE SET NULL` | 代问者（agent 参与者行）；无则为 NULL |
+| `addressee_user_id` | UUID NOT NULL → `users(id)`（默认 NO ACTION） | 唯一有作答权的人，也是唯一可能收到 hint 的人 |
+| `prompt` | TEXT NOT NULL | 问题正文；**不建任何索引**（禁 trigram/全文），不进日志/审计/problem detail |
+| `state` | TEXT NOT NULL，`CHECK ∈ pending/answered/expired/cancelled` | 唯一状态真相 |
+| `expires_at` | TIMESTAMPTZ NULL | NULL = `ask`（阻塞等，deadline 归 Agent）；非空 = `askTimed` |
+| `answer` | TEXT NULL | 仅 `pending → answered` 写；不建索引；出 wire 前按不可信文本处理 |
+| `created_at` | TIMESTAMPTZ NOT NULL DEFAULT NOW() | 提问时间 |
+| `first_delivered_at` | TIMESTAMPTZ NULL | hint 首次交给用户通道；NULL = 尚未投递 |
+| `settled_at` | TIMESTAMPTZ NULL | 到达终态的时间 |
+
+索引（3 条，全部在 V128 内建）：
+
+| 索引 | 定义 | 用途 |
+|---|---|---|
+| `idx_user_questions_addressee_pending` | `(addressee_user_id, created_at DESC) WHERE state='pending'` | 投影主查询与 `pendingCount` |
+| `idx_user_questions_session_created` | `(session_id, created_at)` | 会话可见者读投影（非 addressee，无作答权） |
+| `uq_user_questions_run_pending` | UNIQUE `(run_id) WHERE state='pending'` | 一 run 至多一个未决问句；已结算行不阻塞下一次提问 |
+
+**刻意不落 DDL 的三条**（不是遗漏，写明由谁保证）：
+
+1. 「一 run 至多一个未决 human interaction」（问答 ∩ 审批）跨两张表，约束无法表达 ⇒ 服务层 CAS + 409（T5.9），并发断言见 T5.13。
+2. 正文长度上限（写侧 ≤2000 字符）是 writer 规则，不进 CHECK —— schema 不替模型决定能问多长。
+3. `answer` 仅 `answered` 非空这一配对由 `pending → answered` 单一路径保证（T5.9）。**裁定不加 DB CHECK（2026-11-05 Lead）**：冻结清单是 1:1 契约，额外加 CHECK 会让 schema 比本节多一条（实现漂移），而它只能强一个方向。真实保证 = T5.9 的单一路径 + T5.13 的断言「任何非 `answered` 终态的行 `answer IS NULL`」（expired/cancelled 路径）。
+
+**回滚**：`DROP TABLE user_questions;`（3 索引与 4 个 FK 随表，无其它对象依赖）。
+
+## 7 不扩契约
 
 - 本文件冻结的三类面之外**不新增**事件名、计数维度或路由；用户通道之外若有新面，必须先改本文件再落码。
 - 路由总量（M5 批）：**4 条 public**（`user-events` + 3 条问答）+ **1 条 internal**（Agent 回传）；`docs/api/inventory.md` 与 OpenAPI 同批登记。
 - `FrozenWakeEventNameScanTest` 守护的是 `wake_*` 事件名集合，**不覆盖** `user-events` 通道；故用户通道事件名在本文件冻结，并由契约测试断言（防止后续静默新增）。
 
-## 7 承接与验证
+## 8 承接与验证
 
 - 实现任务：PLAN-0660 M5-A `T5.1`（游标端点）/ `T5.2`（未读派生）/ `T5.3`（撤只增写点）/ `T5.4`（SSE 底座）/ `T5.5`（推送接入）/ `T5.6`（UI 回接）；M5-B `T5.8–T5.13`（问答组件 CP 侧）。
 - 验收：`verify.md` V14（游标推进与 clamp）/ V15（用户级可见性与跨用户隔离）/ V16–V18（问答与 UI 面，原 0648 迁入）。

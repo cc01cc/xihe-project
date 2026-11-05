@@ -116,8 +116,13 @@ flowchart LR
 - **权限权威源（2026-11-04 裁定「role 行是唯一权威源」）**：主体能力在**角色层**求值——`agent_principals` 的 role 绑定物化成 `source='role'` 的 grant 行，一原子一行；`createPrincipal(templateSnapshot)` 写下的 `source='template'` 行降级为 **legacy-only**（仅老库/老主体的求值回退），新主体不因模板原子获得能力，`setWorkspaceCap` 也不会接受只有模板原子支撑的 cap（403 `AGENT_PERMISSION_SCOPE_EXCEEDED`）。
 - **委派的权限面（2026-11-04 裁定，task-25）**：`SPAWN_AGENT` 是 **workspace 作用域**动作原子，不是 instance-only —— 其效果是「在同一工作区内创建子 Session/Run」，且授权解析的是会话的 agent 主体 grants（`GrantAuthorizationService.allows(userPrincipalOnly=false)`），而非人类角色。agent 主体经内置角色 `AGENT_DELEGATOR`（V109，workspace 作用域，单原子 `SPAWN_AGENT`）**显式授予**；实例管理角色（含 capability 原子的 `SUPER_ADMIN`/`ADMIN`）对 agent 主体仍然禁绑（`PermissionAtomCatalog.agentPrincipalForbiddenAtoms`，capability 并集按原子判定、保留不动）。注意**会话快照在建会话时冻结**：先授予、后建会话才生效，事后授予不会改写已存在会话的快照。
 - **子代理委派与持久链（PLAN-0630 M1-M3，已交付）**：委派边沿用 `sessions.{kind, spawned_from_session_id, spawned_from_run_id}` + `chat_runs.waiting_on_run_id`（不新增同义列，D30-01）；唤醒边是 `chat_runs.parent_run_id`（V105，UUID 可空、无 FK、自引用 CHECK + 部分索引；spawn run 不写此列）。`DelegationChainWalker` 一次 walk 同时给出路径、spawn 深度与 principal 路径（wake 边、spawn 边与 spawn session provenance 混合，512 节点遍历护栏），深度每次现算、不落库；祖先行缺失 fail-closed 为 `ancestor_missing`（结构断裂为 `tree_broken`）。`DelegationBudgetService` 只读 root 主体的 `delegation_policy`（V100，`DelegationPolicyValidator` 校验 `{maxCount,maxDepth}`；子代理自身的限额在其作为 subagent 时不生效），拒绝 `409 DELEGATION_LIMIT_EXCEEDED`/`DELEGATION_POLICY_INVALID` 并在回滚事务外写 `agent_spawn_refused` 审计；授权原子复用 `SPAWN_AGENT`，不新增 `DELEGATE`（D30-04）。唤醒链沿同一 walk 取代内存 `WakeChainRegistry`（已删除），环 key = 每跳 run responder principal（缺省回落 session principal），refusal payload 增 `parentRunId/rootRunId/wakeDepth/spawnDepth`。
-- **Composer to/cc（PLAN-0630 M5b，D30-14）**：`POST /api/v1/chat` 接受可选 `cc: string[]`（participantId UUID）；cc 是旁听名单，非 UUID `400 INVALID_REQUEST`，非参与者/已禁用 id fail-closed 忽略，命中的 observer 只收 `wake_dispatch outcome=notify` 并推进 `mention_count`（不创建 run；被 `@` 的仍走 mention 路径正常响应），且不进入幂等 request hash。
+- **Composer to/cc（PLAN-0630 M5b，D30-14）**：`POST /api/v1/chat` 接受可选 `cc: string[]`（participantId UUID）；cc 是旁听名单，非 UUID `400 INVALID_REQUEST`，非参与者/已禁用 id fail-closed 忽略，命中的 observer 只收 `wake_dispatch outcome=notify`（该事件是**派生未读**的唯一来源——V112 已 drop `session_participant_cursors.mention_count`，读侧的 `readCursor.mentionCount` 按「本 participant 的 notify 事件中 `sequence > last_read_event_seq` 的行数」现算）（不创建 run；被 `@` 的仍走 mention 路径正常响应），且不进入幂等 request hash。
+- **显式 TO 多目标（PLAN-0665 M1）**：`toParticipantIds: string[]` 只接受本 Session 的 **AGENT** 参与者（人类目标 `400 INVALID_REQUEST`，待后续计划）；首个目标拥有本次 `user_submission` run（`runId` = `runIds[0]`），其余目标经**唯一** `TargetedWake` 入口派发为派生 run（wake 审计 `triggerSource="to"`、`trigger_source` 列写 `user`、`origin` 取 wake 载体既有分类 `scheduled`（真栈实测）、`parent_run_id` 恒 NULL）；响应新增 `runIds[]`（加法字段）。**读侧不得按 `origin` 归组同一消息**，按 `runId` / `messages.delivery` 归组。
+- **运行时派发结果三桶（BL-283，2026-11-05 裁定）**：202 响应对每个 TO 目标恰好归入一类 —— `runIds[]`（已派发）、`deferredTargets[]`（**并发满顺延入队**，`reason="deferred"`）、`failedTargets[]`（**真失败**：DB 约束/网络/Agent 不可用），不变量 `runIds + failedTargets + deferredTargets == targets`。**deferred 不是失败**（原实现把它塞进 `failedTargets`，使"并发满"与"真派发错误"不可区分）。配套**事务边界**：唤醒准入（`ChatSubmissionService.tryCreateScheduled`）把 `409 CHAT_IN_PROGRESS` 作为**返回值**（空 `Optional`）而不是异常抛出 —— 异常穿过 REQUIRED 边界会把调用方（`WakeDispatchService.fire`）的共享事务标 rollback-only，deferred 入队与 `wake_dispatch` 审计随事务回滚、提交时变成 `UnexpectedRollbackException`（BL-283 根因；`ScheduledTaskDispatcher` 无外层事务故不触发，是其旁证）。同族先例见 PLAN-0660 T2.1 的 `judgeSpeakAs` 值化。
+- **请求哈希与幂等（PLAN-0665 D6，supersede）**：`request_hash` 现覆盖**排序后的 `toParticipantIds`** 与 `asParticipantId`（后者此前遗漏，属既有缺陷：同内容换主体 + 同 `Idempotency-Key` 会 replay 旧主体的 run）。哈希值因此变化 ⇒ 升级前旧 `Idempotency-Key` 重放会得到 `409 IDEMPOTENCY_KEY_CONFLICT`（预期行为，非回归）；`cc` 仍不入哈希（notify-only）。投递受众随 user `Message` 落 `messages.delivery`（V120，JSONB 可空），刷新后可恢复（终结 BL-239）。
 - Agent provider failure 进入 `failed`/`partial`，流断开或缺少终态进入 `ambiguous`；`ambiguous` 不自动 retry，人工确认后使用新的幂等键。
+- **入站截断的 durable 痕迹（PLAN-0670 M2c / BL-293，V124）**：`chat_runs.context_truncation`（jsonb，可空）在**终态写**（`ChatRunTerminalService.terminalize`，唯一终态 owner）落库，值 = Agent `done.agentContextTruncation` 对象（`{droppedMessages, droppedBytes, keptMessages, keptBytes, limitMessages, limitBytes, strategy}`），与 UI 收到的 SSE 字段来自**同一次 `done` 解析**，不重新推导。未截断（或字段缺席/格式非法）保持 **NULL** —— 不写 `{}`、不写全 0；迁移/写入失败不改变终态列（`terminal_outcome`/`error_code`/`token_count` 等）。本批**不暴露读面**；UI 展示属 BL-292。
+- **上下文模板合并（BL-284，2026-11-05）**：准入快照（`chat_runs.context_template_snapshot`）= API request template 的 `bodySource` + **context template**（`context-templates` 域，按 `workspace → user → instance → built-in` 确定性解析）的 `components`，两者在 `ApiRequestTemplateService.resolve(...)` 处**一次性合并并冻结**（读侧不得临时拼接，否则同一 run 的上下文会随时间变化、指纹失去意义）。职责分离：`bodySource` 只来自 API request template、`components` 由两侧合并。**合并规则（2026-11-05 裁定，supersede 首版"逐项相等否则 409"）**：组件**类型取并集**；**同一类型两侧都声明 ⇒ API request template 的配置优先**（它是该会话更具体的产物，context template 只是默认提供者）；顺序稳定（context template 顺序优先，共享类型就地替换为 API 版本，API 独有类型追加）——这样同一份输入的快照可复现。`409 CONTEXT_TEMPLATE_COMPONENTS_CONFLICT` **只保留给同一 manifest 内部重复声明同一类型**（非法输入）。内置上下文模板默认含 `agent_memory`（`maxEntries=24/maxTokens=4000`）与 `skill_catalog`（`maxSkills=40/includeDescriptions=true/sort=binding`，其中 40 = 组件缺省时的既有冻结默认，**加组件不得改默认值**）组件（BL-284/BL-285）。**部署口径（必须对外准确）**：上下文模板是 **append-only 不可变**的，**已发布过模板的部署不会自动获得新的内置默认** ⇒ 需重新发布一版含上述组件的模板并切换 `defaultTemplate`；**全新安装（实例层无存储）默认生效**——否则"修了但老环境没生效"会被误报成缺陷。
 - **Run Trace 只读读面（PLAN-0509）**：`GET /api/v1/chat/runs/{runId}/trace` 校验当前用户对 Run 的所有权及其 Session 关联；首屏确定 `asOf`，不透明 cursor 固定水位并分页读取有界安全投影。若同 Session、Run 时间窗内发现 `run_id` 为空的 Runtime Job 候选，只将 `runtime_job` source 与整体 `completeness` 标为 `unknown`，不把该 Job 归属或投影为 Run 事件。完整 wire schema 见 [`OpenAPI`](../../api/openapi.yaml) 与 [`API inventory`](../../api/inventory.md)。
 - `/api/v1/exec` 已删除，所有聊天 caller 统一迁移至 `/api/v1/chat`。
 - **健康**：`/actuator/health`；方法级 `@PreAuthorize`（禁类级，避免与 `/health` 冲突）。
@@ -185,10 +190,10 @@ flowchart LR
 
 ## 8c. Agent principal / Workspace Agent API（PLAN-0374）
 
-- `POST /api/v1/agent-principals`（human `CREATE_ACCOUNT`，body `{name, templateId?}`）只建 principal+snapshot、不建 binding；`GET/PUT/DELETE /api/v1/workspaces/{workspaceId}/agents[/{principalId}]`：读=Workspace member，写=独立 `MANAGE_WORKSPACE_AGENTS`，PUT 仅改本 Workspace cap 且不超操作者/principal grants。创建/绑定/改 cap/解绑分别写 `agent_principal_created`、`workspace_agent_bound`/`workspace_agent_cap_updated`/`workspace_agent_unbound` audit。
+- `POST /api/v1/agent-principals`（**D-174 tier 移除后的唯一路径**：需 workspace 上下文，缺 ⇒ 409 `WORKSPACE_CONTEXT_REQUIRED`；调用者持该 ws `MANAGE_WORKSPACE_AGENTS`；body 带旧 `scope` ⇒ 400 无兼容分支；不写 owner、**不建 binding**）；`GET/PUT/DELETE /api/v1/workspaces/{workspaceId}/agents[/{principalId}]`：读=Workspace member（真实绑定 ∪ 本人 owner 行 `bound=false`），写=独立 `MANAGE_WORKSPACE_AGENTS`，PUT 仅改本 Workspace cap 且不超操作者/principal grants（**D-180：双侧按目标 workspace 作用域求值**）。创建/绑定/改 cap/解绑分别写 `agent_principal_created`、`workspace_agent_bound`/`workspace_agent_cap_updated`/`workspace_agent_unbound` audit。
 - `POST /internal/v1/agents/spawn` 仅 service Bearer，body 严格 `{parentRunId, toolCallId}`；仅 CP internal service surface，主体/Workspace/chain 全部由 durable 数据派生（400/401/403/404/409）。Agent 生产 caller 通过 CP logical MCP tool `spawn_agent`，不直调该 route。`POST /api/v1/sessions` 要求显式 `agentPrincipalId`；principal-null 空 Session 首绑走 Chat admission CAS（403/409），无 lazy-create。
-- 三个授权 action（`CREATE_ACCOUNT`/`CREATE_TEMPLATE`/`MANAGE_WORKSPACE_AGENTS`）默认 deny、彼此独立；wire 字段与错误码以 `docs/api/openapi.yaml`/`inventory.md` 为准，契约见 [`spec/agent/principal-workspace-binding.md`](../../../spec/agent/principal-workspace-binding.md)。
-- **目标态：scope 三档 + 三段授权（PLAN-0622，未实现）**：`agent_principals.scope` ∈ `PERSONAL`/`WORKSPACE`/`INSTANCE`（存量回填 `WORKSPACE`），**scope 是"这是谁的主体"的归属标注，不是 principal 自带的授权范围**（BL-29 绑定式 scope；有效范围来自绑定位置 ∩ grants/cap）。创建按档分三个独立 action——`PERSONAL`=新增 `CREATE_OWN_AGENT`（user）、`WORKSPACE`=`MANAGE_WORKSPACE_AGENTS`（workspace）、`INSTANCE`=`CREATE_ACCOUNT`（instance）；**绑定**仍只认 `MANAGE_WORKSPACE_AGENTS` + 具体 workspace UUID（禁 `*`），且 `PERSONAL` 必须由 `owner_user_id` 本人绑定；**使用**无新增原子（成员 + 可见性 + cap）。契约正文见 [`spec/agent/principal-workspace-binding.md`](../../../spec/agent/principal-workspace-binding.md) 与 [`spec/security/principal-workspace-scope.md`](../../../spec/security/principal-workspace-scope.md)，术语见 [DEV-032 §1.1a](DEV-032-terminology.md)。
+- 三个授权 action（`CREATE_ACCOUNT`/`CREATE_TEMPLATE`/`MANAGE_WORKSPACE_AGENTS`）默认 deny、彼此独立（**D-174 起 agent 创建不再绑档位动作**——唯一创建/绑定/cap 动作是 `MANAGE_WORKSPACE_AGENTS` + workspace 上下文；`CREATE_ACCOUNT` 保留给账号面）；wire 字段与错误码以 `docs/api/openapi.yaml`/`inventory.md` 为准，契约见 [`spec/agent/principal-workspace-binding.md`](../../../spec/agent/principal-workspace-binding.md)。
+- **scope 三档已移除（D-174，用户裁定 2026-11-05；V126 删列与两 CHECK）**：`agent_principals` 不再有 `PERSONAL/WORKSPACE/INSTANCE`——wire（body/query/响应）、实体与仓储全部无 tier；**owner_user_id 列保留**（遗留 PERSONAL 行的 owner 原样、创建不再自动写 owner、无回填），可见性与代言按 owner 列派生（无 `workspaceId`：N1 全量 / 其他仅自己 owner 行；带 `workspaceId`：真实绑定 ∪ 本人 owner 行 `bound=false`）；**disable/PATCH = owner 本人 or 实例 `MANAGE_AGENT_PRINCIPALS`(N1)**（单 ws 管理权不再够，workspace 域退出走既有 unbind）；**绑定/可达性仍只认 role binding**（`MANAGE_WORKSPACE_AGENTS` + 具体 workspace UUID，禁 `*`）；**使用**无新增原子（成员 + 可见性 + cap）。迁移 `V126`（删 tier 列/约束，owner 列零回填）、`V127`（agent 默认实例角色 `USER`→`AGENT_USER`，40 条 seed 原位改绑、剥离禁授 `CREATE_OWN_AGENT`，人侧 USER 不动）。契约正文见 [`spec/agent/principal-workspace-binding.md`](../../../spec/agent/principal-workspace-binding.md) 与 [`spec/security/principal-workspace-scope.md`](../../../spec/security/principal-workspace-scope.md)，术语见 [DEV-032 §1.1a](DEV-032-terminology.md)。
 - **管理员授权写面（PLAN-0585，已退役）**：`GET/PATCH /api/v1/principal-grants/{username}` 随 PLAN-0610 W2（决策 #28）与 V88 同批退役：原实现把 `CREATE_ACCOUNT`/`MANAGE_WORKSPACE_AGENTS` 写进 `source='direct'` 行，V88 收窄 `ck_grants_source` 后该源不再合法；服务层两个入口统一返回 `410 PRINCIPAL_GRANTS_RETIRED`（先于目标解析/校验，不写 grant 与 audit 行；controller 类级 `hasRole('ADMIN')` 仍先拦非管理员）。能力改由访问角色绑定授予（W3：`/api/v1/roles`、`/api/v1/bindings`）；controller 路由在 W3 删除，UI 页 `/settings/principal-grants` 在 W5 删除（过渡态登记于 PLAN-0610 `evidence/w2-migration.md`）。历史实现：`PrincipalGrantController` + `PrincipalGrantAdminService`（现为退役门面）+ `PrincipalGrantActionCatalog`。
 - **hook 订阅面（PLAN-0625 M2，D25-09/12/14）**：订阅文档是主体能力面的一段数据 `{"advisors":[{"kind","on":[actionClass]}]}`，落在 `agent_principals.hooks`（jsonb，`NULL`=无订阅），读面在 principal 视图与 `GET /workspaces/{id}/agents` 的 `hooks` 字段（对象；**不是数组**）。声明源是 config 域 `agent-templates` 的模板 `hooks`：创建主体时模板值作**缺省**，调用方在创建体里给出即覆盖（`AgentTemplateService.snapshotFromTemplate` 负责把它冻结进快照）。创建后由 `PATCH /api/v1/agent-principals/{principalId}` 维护（`null` 清空），校验只有一处（`HookAdvisorRegistry.validateSubscriptions`：`kind` 开放串、`on` 命中冻结白名单，未命中 400）。协商标识：预设守卫（`origin=SYSTEM_PRESET`）的订阅属于模板数据，改它得 `403 GUARD_HOOKS_IMMUTABLE`（与 `GUARD_CAP_IMMUTABLE` 分码）。**纪律**：顾问输出只呈现、不自动拒——D25-04/D25-16 的延伸，写在这里的目的是防止把 hook 读成"执行/放行面"。
 - **主体记忆策略（PLAN-0629 M1，D29-21/D29-25）**：V92 建的 `agent_principals.context_policy`（jsonb，D23-20 明确它**不**属于 `context-policy` 配置域，而是主体上的一列）在本期接上实体映射、写面与读面。文档形状为 `{"memory":{"enabled":false,"writeMode":"off","passive":"off","types":["profile","fact"]}}`：`enabled` 默认 false（新主体默认无记忆）；`writeMode` 只接受 `off|tool`，**`judge` 是 M2 预留值**（出现即 400，detail 写明 planned for M2）；`passive` 只接受 `off|summary|judge`（默认 `off`，M1-6/D29-26）；`types` 是 `profile|fact` 的子集，空数组等同关闭；两层 `additionalProperties:false`，未知键 400；`null` = 清空（写 SQL NULL）。写面复用同一条 `PATCH /api/v1/agent-principals/{principalId}`（body 取 `{hooks?, contextPolicy?}`，至少一键，多余键 400，未出现的键保持原值），授权复用 disable 的 owner/workspace/instance 分档，**守卫的两份主体文档都锁**（守卫是系统资产，D25-03 同源）：改订阅得 `403 GUARD_HOOKS_IMMUTABLE`、改记忆策略得**新码 `403 GUARD_CONTEXT_POLICY_IMMUTABLE`**——记忆会影响裁决时的已知信息，属绕过路径。校验单一写点 `policy.ContextPolicyValidator.validate`，审计按面分记 `agent_principal_hooks_updated` / `agent_principal_context_policy_updated`。投影面三处一致：`AgentPrincipalView`、创建响应（新建为 `null`=关闭）、`WorkspaceAgentView`（工作区 agents 列表）。**纪律**：没有"直接生效的自动写"——D29-24 否决了会话结束/每 N 轮自动摘要写，显式写入只有 agent 工具（`MEMORY_WRITE` + 审批门）、UI、CLI 三条通道，durable `origin` 枚举 `tool|ui|cli` **无 auto 值**（机械防静默写）。**V99 落地**：记忆行落 `agent_memories`（**V107 起属于主体、不再按工作区分区**：行只有 `principal_id`，工作区仅作请求的授权上下文；列/约束/索引见迁移文件与 `AgentMemory`），去重键 `(principal, content_sha256)` 带 `WHERE deleted_at IS NULL`（命中只刷 `updated_at`，`source_ref` 保留首次出处）；`status` 与 `origin` 由两条 CHECK 双向锁死（`active ⇔ 非 passive`、`candidate ⇔ passive`，v1 只写 active）；`pinned` 只能由 `ui|cli` 设置且仅 active 行可置顶；`MEMORY_WRITE` 原子**只存目录、不进 USER/ADMIN/WS_* 默认集**（工具写默认拒，SUPER_ADMIN 按"全部 action 原子"定义持有）。服务层单一入口 `AgentMemoryService`（dedupe/软删/单一 normalizer），**M1-3 前无 API/UI**。**M1-6 被动写（D29-26/27）**：`passive=summary|judge` 打开系统侧写路径——`summary` 复用压缩已产出的摘要（不新增摘要 LLM 调用）、`judge` 再经既有 judge 缝（`JudgeModelClient`，与 `JudgeDecisionService` 同一个模型缝）判定"这段值不值得记"；两条路径**只写 `status=candidate`**（`origin=passive.summary|passive.judge`，V99 双向 CHECK 兜底，service 侧 `rememberPassive` 是唯一入口且拒绝显式 origin）；候选不进注入、不进 listing，只有显式通道（tool/UI/CLI）写入相同断言时才把它 promote 成 active（`audit_logs` 记 `memory_promoted`）。幂等键 = `source_ref`（`passive.<mode>:<sessionId>:<compactionCursor>`，写前存在性检查），因此同一次压缩重试不会重复写；被动写失败只记 `service=cp event=agent_memory_passive_write outcome=failed`，**绝不让压缩/会话失败**。**V107（用户裁定 2026-11-04）**：记忆跟**主体**走、不跟工作区走——同一 agent principal 跨工作区共享一份记忆，工作区只作为请求的**授权上下文**（`MEMORY_WRITE` 在该工作区求值、审计按该工作区落账），数据面去掉 `agent_memories.workspace_id`、去重键改为 `(principal_id, content_sha256)`；API 规范路径为 `/api/v1/agent-principals/{principalId}/memories?workspaceId=…`（`workspaceId` 必填），旧的 `/workspaces/{ws}/agents/{pid}/memories` 保留为 deprecated 别名；工作区层面的"指导文本"不叫记忆，叫**规范（AGENTS.md 类）**，另行设计。
@@ -215,12 +220,90 @@ flowchart LR
 
 ## 8e-2. 访问角色与绑定 API（PLAN-0610 W3-2a）
 
-- **模型**：`roles` + `role_permissions`（只存原子名）+ `role_bindings`（role × subject × scope）。`scope_class`（`instance`/`both`）的 SSOT 在代码 `PermissionAtomCatalog`，`GET /api/v1/roles/catalog` 只是它的投影（18 原子 = 15 动作 + 3 能力）；API 不复制词表，新增原子自动出现在目录与写入校验里。
-- **门是动作原子，不是 authority**：`/roles*` 与 `/bindings` 的 `@PreAuthorize` 写 `@requesterAuthority.holdsActionAtom('MANAGE_ROLES')`——`MANAGE_ROLES` 是动作原子，按决策 #23 只有**能力原子**才成为 `cap:<atom>` authority（`instance:super`/`instance:admin`/`workspace:admin`），因此它从 `source='role'` 的 grant 行用评估内核同一套 scoped 读评估（`RequesterAuthority`）。实例 ADMIN（有 `cap:instance:admin`、无 `MANAGE_ROLES`）因此**不能**管角色；工作区作用域的绑定写入还要求该工作区的 `MANAGE_WORKSPACE_AGENTS`。
+- **模型**：`roles` + `role_permissions`（只存原子名）+ `role_bindings`（role × subject × scope）。`scope_class`（`instance`/`both`）的 SSOT 在代码 `PermissionAtomCatalog`，`GET /api/v1/roles/catalog` 只是它的投影（**31 原子 = 28 动作 + 3 能力**；PLAN-0651 增 N1–N10，PLAN-0673 M2 增 `GRANT_ANY_ATOM`）；API 不复制词表，新增原子自动出现在目录与写入校验里。
+- **门是动作原子，不是 authority**：`/roles*` 与 `/bindings` 的 `@PreAuthorize` 写 `@requesterAuthority.holdsActionAtom('MANAGE_ROLES')`——`MANAGE_ROLES` 是动作原子，按决策 #23 只有**能力原子**才成为 `cap:<atom>` authority（`instance:super`/`instance:admin`/`workspace:admin`），因此它从 `source='role'` 的 grant 行用评估内核同一套 scoped 读评估（`RequesterAuthority`）。**PLAN-0673 D-168（V125）起 ADMIN 默认也持 `MANAGE_ROLES`**，即 ADMIN 可管理角色/绑定，但每一次授予都必须通过子集闸门（见下）；工作区作用域的绑定写入还要求该工作区的 `MANAGE_WORKSPACE_AGENTS`。
+- **agent 主体绑定面（PLAN-0667）与 cap 硬上限（BL-287）**：`/api/v1/agent-principals/{id}/roles|skills` 的绑定/解绑同事务重物化该主体 grants，但 agent 的**工作区 cap**（`WorkspaceAgent.permissionsSnapshot`，会话创建时写入 `Session.agentPermissionsSnapshot`）是授权交集的一环：角色原子超出 cap ⇒ 绑定入口返回 **409 `ROLE_BINDING_EXCEEDS_CAP`**（detail 只列超限原子名），不静默接受一个注定无效的绑定；`isSystem` 只表示 seed 绑定（V122 `role_bindings.is_seed`），用户自绑系统角色可解绑。
 - **写入语义**：角色改原子 = 同事务 `RoleGrantMaterializer.materializeRole`（重算全部持有者 `source='role'` 行、能力缓存「立即 + afterCompletion」双失效、原子集真变化的持有者 `token_version+1`）；`PUT /bindings` 是**全量替换**（diff 写入，同 body 重发为真 no-op），提交前校验作用域兼容（400 `ROLE_SCOPE_MISMATCH`）、最小权限（403 `PRIVILEGE_ESCALATION`，只对**新增**绑定对判定）、以及实例「仍有 ≥1 个可用超管」（409 `LAST_SUPER_ADMIN`）。锁序沿用 `instance_owner → users`（角色编辑在 `instance_owner` 之后取 role 行锁，物化器再按 id 升序锁 users）。
 - **错误映射**：并发死锁/序列化失败（`40P01`/`40001`）在 API 边缘统一映射为 409 `CONCURRENT_MODIFICATION`（可重试），与锁等待超时（`55P03` → 503 `OPERATION_LOCK_TIMEOUT`）区分开——两者都是 `PessimisticLockingFailureException` 的子类，靠异常类型特异性保序。
 - **作用域判定统一**：`AccessScopeResolver` 的成员校验新增 `AuthzContext.canWorkspaceAdmin` 回落（round-4 P2），使「实例管理员不是工作区成员」不再被成员门挡住；回落本身不授权，后续原子评估仍决定动作是否放行。
 - **`users.role` 清零（PLAN-0610 W4a，V89 前置）**：账号实体不再映射该列，产品代码 0 读 0 写——建号（注册/管理员建号/`DataSeeder`）只写账号行，实例 tier 由 `GrantDefaultService.ensureUserDefault` 写 `USER` 绑定（本地单用户的 `SUPER_ADMIN` 仍由 `AuthController`/`DataSeeder` 的 bootstrap 路径绑定）；`GrantDefaultService.ensureInstanceTierBinding` 只补空缺、**不再按列改 tier**（tier 变更只走绑定 API 或 owner 交接）；`AgentTemplateService` 实例层模板 ACL 由 `actor.getRole()==ADMIN` 改为 `AuthzContext.isInstanceAdmin(actorId)`（round-3 P1-4），超管因 `SUPER_ADMIN` 种子含全部能力原子同样满足；`UserAdminService` 的「最后一个可用管理员」守卫改判**实例 `ADMIN`/`SUPER_ADMIN` 绑定的 ACTIVE 持有者计数**（`countActiveUsersWithInstanceRoles`）。副作用（已写进测试断言）：活跃调用者自身的管理员绑定必然计入，因此经该 API 已无法把实例降到 0 个可用管理员，`409 LAST_ADMIN` 保留为对陈旧能力/绕过写入的纵深防御。列本身与 `ck_users_role` 由 V89 删除。
+
+### 权限模型定位：scoped RBAC + ARBAC，不是 plain RBAC（2026-11-05）
+
+**一句话**：本系统权限模型是 **带作用域的 RBAC（scoped RBAC）+ 管理型 RBAC（ARBAC）+ 每主体边界（permissions boundary）**，
+不是教科书里"角色 → 权限"的 flat RBAC0。读权限相关章节前请先建立这个心智模型。
+
+**对照 NIST RBAC（ANSI INCITS 359-2004）**
+
+| 组件 | 本项目 | 说明 |
+|---|---|---|
+| Core RBAC（用户-角色-权限） | ✅ | 主体 / 系统角色+自定义角色 / 能力原子 |
+| Hierarchical RBAC（角色继承） | ✅ | `implies()` 链：`instance:super ⇒ instance:admin ⇒ workspace:admin` |
+| Static / Dynamic SoD | ❌ | 未实现 |
+| **ARBAC**（管理角色管理角色） | ✅ | `MANAGE_ROLES` + `RoleAdminService`/`BindingAdminService`；护栏见 PLAN-0673 |
+| **额外**：per-principal 边界 | ✅ | `agent_permissions_snapshot`（agent 的 cap）= AWS permissions boundary 概念 |
+
+**为什么"作用域"不构成"超出 RBAC"**
+- NIST 的权限定义就是 **(operation, object)** 对 —— object 自带资源边界；
+- NIST 管理模型明确讨论 *"how to scope the administrative authority vested in administrative roles"*（Sandhu 1996）；
+- Kubernetes RBAC 本身就是 **namespace-scoped**（`Role` vs `ClusterRole`），与本项目 workspace / instance **同构**。
+
+**三道闸门**（详见 `plans/PLAN-0673-xh-role-delegation-no-escalation/design.md`）
+
+| 闸门 | 约束谁 | 判据 | 拒绝码 |
+|---|---|---|---|
+| ① `cap` | 目标（agent） | 角色原子 ⊆ agent 的 cap | 409 `ROLE_BINDING_EXCEEDS_CAP` |
+| ② 子集规则 | 授予者 | 原子 ⊆ 调用者已持有（**绑定按目标 scope**，instance ⊇ workspace） | 403 `PRIVILEGE_ESCALATION`（点名超限原子） |
+| ③ 绕过原子 | 授予者 | `holdsActionAtom(GRANT_ANY_ATOM)`（默认只种 SUPER_ADMIN，使用留审计） | — |
+
+**`GRANT_ANY_ATOM`（PLAN-0673 M2 / D-166）**：**instance-only** 动作原子，默认只授予 `SUPER_ADMIN`（ADMIN **不**持有）；
+它是子集规则的**唯一**旁路（K8s `escalate` + `bind` 的合并简化）。判定在 `GrantabilityGuard.assertGrantable` **首行**：
+持有者跳过子集检查，但**每次使用都写 `role_grant_guard_bypassed` 审计**，detail 必须列出
+**调用者未持有的原子清单**（`bypass=true skipped=[…]`）——不是"记一笔有人绕过了"，而是"记清楚绕过了什么"。
+代码里**永不出现** `role == "SUPER_ADMIN"` 判定：绕过是原子，不是角色名。
+
+**403 与 409 的分工**：`403 PRIVILEGE_ESCALATION` = **授予者**权限不足（子集闸门；detail 点名超限原子）；
+`409 ROLE_BINDING_EXCEEDS_CAP` = **目标 agent 的 cap** 不足（BL-287，detail 同样点名原子）；两者是并列闸门，
+`PUT /bindings` 的 409 只用于 `USER_DELETED`/`LAST_SUPER_ADMIN`/`LAST_OWNER`/`CONCURRENT_MODIFICATION`，
+**不是** cap 门（cap 门在 agent-principal 角色绑定端点）。
+
+**有意偏离（必须知道）**：NIST 建议"管理角色与普通角色应当分离"，而本项目 `ADMIN` **既是普通角色也是管理角色**。
+这是有意选择（云 IAM 普遍如此），含义是：**ADMIN 的权限同时是"能做什么"和"能授予什么"的边界** ——
+改 ADMIN 默认集时两者同时变化，需同批复核。
+
+**什么时候才算 ABAC**：当授权决策开始依赖**请求上下文属性**（时间/IP/资源标签/风险评分/MFA）或**资源属性**时。
+当前决策只依赖"角色 → 原子 + 作用域"，**因此仍是 RBAC**；引入条件表达式前必须先补模型说明与测试基建。
+### 权限原子默认授予集（PLAN-0651，2026-11-05；V125 扩充）
+
+N1–N10 + `GRANT_ANY_ATOM`（PLAN-0673，V125）在**代码侧**的默认集（`SystemAccessRoleCatalog` 是权威，
+迁移 V111/V114/V115/V125 是它的物化）。与 `DefaultSetAtomMatrixTest` 的硬编码矩阵**同源**——改这张表必须同批改测试，
+否则测试会红。`MANAGE_ROLES` 不是 0651 新增原子，但 V125 把它授给 ADMIN（D-168），因此也在"受治理原子"口径内
+（一致性测试按 12 原子 × 7 角色核对，见本节末尾）。
+
+| 原子 | scope | SUPER_ADMIN | ADMIN | USER | WS_OWNER | WS_EDITOR | WS_VIEWER | AGENT_DELEGATOR | agent 可持 |
+|---|---|---|---|---|---|---|---|---|---|
+| N1 `MANAGE_AGENT_PRINCIPALS` | instance | ✓ | ✓ | — | — | — | — | — | 禁 |
+| N2 `READ_INSTANCE_CONTENT` | instance | ✓ | ✓ | — | — | — | — | — | 禁 |
+| N3 `WRITE_INSTANCE_CONTENT` | instance | ✓ | ✓ | — | — | — | — | — | 禁 |
+| N4 `VIEW_SECRET_CONTENT` | instance | ✓ | ✓ | — | — | — | — | — | 禁 |
+| N5 `MANAGE_SKILL_LIBRARY` | both | ✓ | ✓ | — | ✓ | — | — | — | **可** |
+| N6 `MANAGE_PROVIDER_CONNECTIONS` | both | ✓ | ✓ | — | ✓ | ✓ | — | — | **可** |
+| N7 `USE_WORKSPACE_RUNTIME` | both | ✓ | ✓ | — | ✓ | ✓ | ✓ | — | **可** |
+| N8 `MANAGE_WORKSPACE_RUNTIME` | both | ✓ | ✓ | — | ✓ | — | — | — | **可** |
+| N9 `MANAGE_WORKSPACE_POLICY` | both | ✓ | ✓ | — | ✓ | ✓ | — | — | **可** |
+| N10 `MANAGE_WORKSPACE_MEMBERS` | both | ✓ | ✓ | — | — | — | — | — | 禁 |
+| `GRANT_ANY_ATOM`（V125，D-166） | instance | ✓ | — | — | — | — | — | — | 禁 |
+| `MANAGE_ROLES`（V125 授 ADMIN，D-168） | instance | ✓ | ✓ | — | — | — | — | — | 禁 |
+
+**一致性核对（T2.3）**：`DefaultSetMigrationParityTest` 在 **Flyway-only fresh 库**上逐原子逐角色比较
+`role_permissions` 与 `SystemAccessRoleCatalog.roleSeeds()`（集合相等，含 resource pattern），并核对
+12 原子 × 7 角色 = 84 格矩阵与 V125 两行（`SUPER_ADMIN × GRANT_ANY_ATOM` 有、`ADMIN × GRANT_ANY_ATOM` 无、
+`ADMIN × MANAGE_ROLES` 有）；`DefaultSetAtomMatrixTest` 继续钉住 N1–N10 的硬编码契约（10×7）。
+迁移面变更（V111/V114/V115/V125 任一）必须让这两个测试同批绿。
+
+**agent principal 禁授集合 = 17 项**（2026-11-05 裁定；PLAN-0673 M2 增 `GRANT_ANY_ATOM`）：N1/N2/N3/N4/N10 + 三个凭证原子 + `CREATE_ACCOUNT`/`CREATE_TEMPLATE`/`MANAGE_ROLES`/`CREATE_OWN_AGENT` + `GRANT_ANY_ATOM` + `MANAGE_WORKSPACE_AGENTS` + 三个能力原子。
+判据一句话：**实例域的东西 agent 不能碰；工作区域的东西由 owner 通过角色授予**（N5–N9 因此**可授**——禁掉会让所有 `WS_EDITOR` 绑定非法，且 agent 无法跑代码）。
+唯一真相是 `PermissionAtomCatalog.ATOMS` 上每个原子的 `agentPrincipalForbidden` 标记，聚合函数从它派生（别再维护第二份清单）。
 
 ## 8f. 上下文模板与 Session 绑定（PLAN-0414）
 
@@ -323,8 +406,28 @@ PLAN-0416 Chat 消费：`ChatController` 仅在 admission snapshot 原始 native
 - **三档结果的呈现**：`ALLOW` ⇒ `available=true`；`ASK` ⇒ `available=false, reason=approval_required`（**不隐藏**——用户必须知道能力存在，UI 灰显 + 文案）；`DENY` ⇒ `reason=denied`；策略上下文读不出 ⇒ `reason=policy_unavailable`（fail-closed，不影响 run）。
 - **`/compact` 不用 policy 门**，改**镜像其端点前置条件**：`POST /api/v1/sessions/{sessionId}/compact` 在活动 run 时返回 `409 BRANCH_LOCK` ⇒ 注册表对应 `reason=branch_locked`。原则：**UI 不得提供必然失败的命令**。该命令本身不新造端点（PLAN-294 decision #15 的既有入口）。
 - **`/export` 是真产出**：`GET /api/v1/sessions/{sessionId}/export?branchId=` 由 `SessionExportService` 用既有消息读面（`MessageReadService.listVisibleMessages`）生成 Markdown，`text/markdown` + `Content-Disposition: attachment`；**不经 Agent、不调模型、不产生 run**（M1 桩的"发一句固定英文给模型"是反面）。有界：≤2000 条消息 / 单条 ≤20000 字符 / 整篇 ≤2000000 字符，截断在文档头以 `messagesTruncated`/`contentTruncated` 披露。
+- **BL-295（2026-11-05，supersede BL-279 A1）**：**移除导出 413 预检**，导出语义收敛为"**有界导出**"而非"超限报错"。原因：BL-279 A1 的内存动机已被 **BL-279 B 流式**（`StreamingResponseBody` + 游标读 + 2M 字符 body）消除；而预检数的是 **session 全量行数**（不分 branch/可见性），实际会误挡"20k 会话里某分支只有 50 条可见"的合法导出。现在：对已授权 session/branch **恒 200**，唯一上限表达 = renderer `SessionExportService.MAX_MESSAGES=2000` + 文档头 `messagesTruncated`（及单条/整篇字符上限的 `contentTruncated`）；流式读取使内存与会话总条数解耦。被移除的 code/detail/日志：`413 EXPORT_TOO_LARGE`/`event=session_export_refused`。`MessageReadService.countSessionMessages` 仍保留给 `/messages` 的 `PAGINATION_REQUIRED` 天花板（PLAN-0670 M2b），与导出无关。
+- **`/messages` 旧全量路径的硬天花板（PLAN-0670 M2b，2026-11-05）**：`limit`/`before` 都不带时保留旧契约（裸数组、不静默截断），但**兼容 ≠ 无界内存** —— 读取前先 `countBySessionId`，**> 2000** 条 ⇒ **`413 PAGINATION_REQUIRED`**（body 带 `messages`/`limit`，detail 指向 `limit`/`before` + `nextCursor`），**不读取任何消息行**；`≤ 2000` 仍走原全量路径（20k 夹具实测该路径单请求 ≈92 MB 堆、10 并发 873 MB，属 OOM 风险）。上限常量 `MessageReadService.MAX_FULL_READ_MESSAGES` **直接引用** `SessionExportService.MAX_MESSAGES`，两处守卫（导出/消息）共用同一个 2000 与同一套 `messages`/`limit` detail 结构，禁止出现第二个字面量。
+- **堆水位诊断（PLAN-0670 M2b T2b.4）**：`SessionReadMemoryGuard` 在整段会话读面（`GET /messages` 旧全量路径、`/export`）估算响应字节约 2×内容字符数 + 每行 256B，超过阈值打一条 `event=session_read_memory_guard endpoint=… messages=… estBytes=… thresholdBytes=…`。**默认关闭**（`cp.read-memory-guard.enabled=false`，阈值 `cp.read-memory-guard.threshold-bytes` 默认 8 MiB），**日志不含任何消息内容/正文**。
 - **v1 不含 skill 命令**：`/skill:<name>` 的候选必须来自 PLAN-0628 的 run 快照 listing（`skills_snapshot`）与按需正文（`skill_read`），两者在 0628 M2 前不落地（D35-07）；M3 只交付其形态设计。
 - **C1 门**：两条路由均返回**纯标量 / 纯文本**，不经 Jackson-2 `JsonNode`（无 `JacksonNodeExit` 调用即无泄露面）。
+
+## 14a. 受邀 HUMAN 的辅助读面（BL-298 / BL-299，2026-11-05）
+
+- **统一原语**：`SessionReadAccess.requireReadable` = **owner 或 enabled invited HUMAN participant**；**manager 不含**（D1b：不能让 instance admin 读所有会话）；其余一律 404 `SESSION_NOT_FOUND`（not-区分，无存在性预言机）。写面/管理面一律继续 `requireOwned`，读面放宽不得外溢。
+- **BL-299 逐面裁定（开放 3 / 保持 404 3）**：
+  - **开放**：`GET /api/v1/chat/sessions/{id}/runs` —— 只读 run 元数据（`runId/status/origin/terminalOutcome/errorCode/时间戳/waiting*`），`messages` 读面已对 participant 暴露同一 run 的 `runId/status/terminalOutcome/errorCode`，**同域无新增泄露**；`GET /api/v1/sessions/{id}/commands` —— 只有命令名 + `available/reason`，是交互能力面；`GET /api/v1/policy/mode` —— 只有 session `mode` + `sessionRules` 数量，UI 需要它决定行为。
+  - **保持 404（即"不是缺陷"的显式登记，禁止下次重复登记为漏开）**：
+    1. `GET /api/v1/sessions/{id}/follow-ups`：快照 items 直接带 `content`/`attachmentInfos`/`pauseReason`/`childRunId`，是 **owner 尚未发送的草稿队列**（写入也只按 owner 授权）；对 participant 开放等于泄漏未公开内容，不是"会话可见性"问题。
+    2. `GET /api/v1/chat/sessions/{id}/monitor`：运维聚合（`providerConnectionId`/`connectionRevision`、agent health、transport attempt/failed/partial、readiness、history），属**管理/可观测面**，不是会话内容读面。
+    3. `GET /api/v1/events`（SSE）：事件流含 `approval_request`（tool/action/details/**argumentsHash**）、`tool_exec_approval_required`、`run_checkpoint`、`usage`/transport；未声明 `asParticipantId` 时还是 **observer 全量广播** ⇒ **订阅权限 ≠ 消息读权限**，必须先按事件类型做 allowlist 再开（BL-304，另批）。
+- **写面边界**：`POST /api/v1/policy/mode` 仍 `requireOwned`（owner-only）；本轮测试显式钉住"读面开放 + 写面不开放"。
+- **BL-309（拒绝码两态，2026-11-05 真栈发现 + Lead 裁定）**：写面的拒绝**按调用者的 workspace 写角色分成两种码，故意不统一**——
+  - **`VIEWER`（工作区只读）⇒ `403 WORKSPACE_READ_ONLY`**：`TenantContextInterceptor` 的 workspace 写门对非 GET 动词先拒（`WorkspaceWriteGuard`），比会话守卫更早、且对客户端更可操作；
+  - **`EDITOR` 非 owner ⇒ `404 SESSION_NOT_FOUND`**：写能力有了，但会话 owner-only 守卫用 not-区分 404，不泄漏会话存在性。
+  统一成一个码的代价：全 403 会丢 not-区分（对未被邀请者泄漏存在性）、全 404 会把"工作区只读"这一可操作原因藏掉。OpenAPI POST 已同批列 403/404 触发条件；`SessionAuxReadFacesParticipantTest` 覆盖两条路径（EDITOR participant ⇒ 404、VIEWER ⇒ 403 `WORKSPACE_READ_ONLY`、owner ⇒ 200）。
+  教训（与 BL-291 kind 大小写、BL-294 400→404 同族）：**拒绝码取决于调用者角色，而单测只钉了一种角色就以为钉住了契约**。BL-299 的测试把 participant 加为 workspace **EDITOR**（`POST /workspaces/{id}/members` role=EDITOR），所以只看得到 404；真栈成员是 **VIEWER**，才命中 403。角色来自 **workspace 成员表**（`/members` API），不是 `role_bindings`——用错表做夹具会造出"角色没变"的假象。
+- **测试**：`SessionAuxReadFacesParticipantTest` 对每个开放面覆盖 participant 200 / owner 200 / 非参与者 404 / 跨工作区 404，并额外断言写面的两条拒绝路径（BL-309）。
 
 ## 15. 同源 UI 静伺服（`cp.ui.static-root`，PLAN-0632 D32-06 / M2-3）
 

@@ -47,19 +47,42 @@ class FrozenWakeEventNameScanTest {
             Path.of("com/cc01cc/p/xihe/cp/chat/WakeFanOutService.java"),
             Path.of("com/cc01cc/p/xihe/cp/service/WakeDispatchService.java"));
 
-    /** The event names that existed before PLAN-0630 M3/M5b — the frozen contract surface. */
+    /**
+     * The frozen observable event-name surface.
+     *
+     * <p>Baseline = the eleven names that existed before PLAN-0630 M3/M5b. PLAN-0660 M1/M2
+     * (wake handoff / deferred delivery / user-channel push diagnostics, 2026-11-04) deliberately
+     * added the {@code wake_handoff_*} / {@code to_target_*} / {@code wake_to_handoff} /
+     * {@code user_channel_push_failed} / {@code wake_observe_failed} /
+     * {@code wake_await_*_terminal} names; they are <b>registered here explicitly</b> — the gate's
+     * purpose is that a new name is a contract change which has to be argued and recorded, not that
+     * the set can never grow. The same change renamed {@code wake_recipient_failed} to
+     * {@code to_target_dispatch_failed}.</p>
+     */
     private static final Set<String> FROZEN_EVENT_NAMES = Set.of(
-            "wake_dispatch",
-            "wake_chain_link",
-            "wake_chain_refused",
+            "to_target_deferred",
+            "to_target_dispatch_failed",
+            "user_channel_push_failed",
+            "wake_await_already_terminal",
+            "wake_await_interrupted",
+            "wake_await_raced_terminal",
+            "wake_await_timeout",
             "wake_chain_depth_invalid",
             "wake_chain_depth_unreadable",
-            "wake_roster_unreadable",
-            "wake_mention_unresolved",
-            "wake_recipient_failed",
+            "wake_chain_link",
+            "wake_chain_refused",
+            "wake_dispatch",
+            "wake_handoff_completed",
+            "wake_handoff_deferred",
+            "wake_handoff_dropped",
+            "wake_handoff_enqueued",
+            "wake_handoff_queued",
+            "wake_handoff_skipped",
             "wake_judge_failed",
-            "wake_await_interrupted",
-            "wake_await_timeout");
+            "wake_mention_unresolved",
+            "wake_observe_failed",
+            "wake_roster_unreadable",
+            "wake_to_handoff");
 
     /** The eight names the implementation invented; V12 collapsed every one of them. */
     private static final Set<String> RETIRED_EVENT_NAMES = Set.of(

@@ -435,6 +435,47 @@ erDiagram
 >
 > 语义注记：硬上限 5 统计全部未结束项（queued/paused/admitted），完成/撤回后释放；QueueItem 状态转换与 child ChatRun/Message 在同一事务原子写入，执行事实归 ChatRun；claim/withdraw 以 Session 行锁 + item 行锁串行（并发至多一方成功）。API 与状态机见 [`spec/session/chat-run-operation.md`](../../../spec/session/chat-run-operation.md) §Follow-up 队列 与 DEV-017 §1.3。
 
+### 3.2b 参与者已读游标（session_participant_cursors，PLAN-0623 R7 / PLAN-0660 T5.3）
+
+| 列 | 类型 | 约束 | 说明 |
+|---|---|---|---|
+| participant_id | UUID | PK，FK `session_participants(id)` `ON DELETE CASCADE` | 一行一参与者 |
+| last_read_event_seq | BIGINT | NOT NULL DEFAULT 0 | **唯一存储事实**：已读位置（指向 `context_events.sequence`）；参与者加入时初始化为当时会话最大 sequence |
+| updated_at | TIMESTAMPTZ | NOT NULL DEFAULT NOW() | 推进时间 |
+
+> **V112（PLAN-0660 T5.3）已 drop `mention_count`**：未读是**派生值** ——
+> `count(context_events where event_type='wake_dispatch' and payload->>'outcome'='notify'
+> and payload->>'participantId'=<participant_id> and sequence > last_read_event_seq)`，整册一条 SQL 算完
+> （契约见 [`spec/session/user-channel.md`](../../../spec/session/user-channel.md) §3，裁定 `decisions-2026-11-03.md:281`）。
+> 回滚重建配方（`ADD COLUMN` + 从 `wake_dispatch` 聚合的 `UPDATE`）写在 `V112__plan0660_derived_unread.sql` 注释里。
+>
+> 索引现状：`uq_context_events_session_sequence (session_id, sequence)` 已为派生聚合提供访问路径（EXPLAIN 见
+> PLAN-0660 `evidence/m5-g1-gate.md` §2），故 V112 **未**新增表达式索引。推进端点 `PATCH …/participants/{id}/cursor`
+> 语义（advance-only + clamp + self-only）见 [_inventory.md_](../../api/inventory.md)。
+
+### 3.2c 用户问答（user_questions，PLAN-0660 T5.8 / V128）
+
+| 列 | 类型 | 约束 | 说明 |
+|---|---|---|---|
+| id | UUID | PK | — |
+| session_id | UUID | NOT NULL，FK `sessions(id)` `ON DELETE CASCADE` | 发起上下文；**不落 workspace_id**（0647 后 session 可无 workspace，join 可得） |
+| run_id | UUID | NOT NULL，FK `chat_runs(id)` `ON DELETE CASCADE` | 等待回答的那个 run（与 `approval_requests.run_id` 同口径） |
+| asked_by_participant_id | UUID | nullable，FK `session_participants(id)` `ON DELETE SET NULL` | 代问的 agent 参与者行 |
+| addressee_user_id | UUID | NOT NULL，FK `users(id)`（NO ACTION） | 唯一有作答权的人，也是唯一可能收到 hint 的人 |
+| prompt | TEXT | NOT NULL | 问题正文；**无任何索引**（正文不得成为可检索面），不进日志/审计/problem detail |
+| state | TEXT | NOT NULL，CHECK ∈ `pending/answered/expired/cancelled` | 唯一状态真相 |
+| expires_at | TIMESTAMPTZ | nullable | NULL = `ask`（阻塞等，deadline 归 Agent）；非空 = `askTimed` |
+| answer | TEXT | nullable | 仅 `pending → answered` 写入；无索引 |
+| created_at | TIMESTAMPTZ | NOT NULL DEFAULT NOW() | 提问时间 |
+| first_delivered_at | TIMESTAMPTZ | nullable | hint 首次交给用户通道；NULL = 尚未投递 |
+| settled_at | TIMESTAMPTZ | nullable | 到达终态的时间 |
+
+> 索引：`idx_user_questions_addressee_pending (addressee_user_id, created_at DESC) WHERE state='pending'`（投影主查询与 `pendingCount`）；`idx_user_questions_session_created (session_id, created_at)`（会话可见者读投影）；`uq_user_questions_run_pending (run_id) WHERE state='pending'`（一 run 至多一个未决问句，已结算行不阻塞下一次提问）。
+>
+> Entity `entity/UserQuestion.java` + `repository/UserQuestionRepository.java` + `chat/UserQuestionService.java`（T5.9 状态机：`recordPending` / `answer` CAS / `settle` / `cancelPendingForTerminalRun`）。契约清单见 [`spec/session/user-channel.md`](../../../spec/session/user-channel.md) §6。
+>
+> 未落 DDL 的口径：跨表的「一 run 至多一个未决 human interaction（问答 ∩ 审批）」由服务层保证——`recordPending` 先锁 `chat_runs` 行（frozen 锁序 Session → Run 的第二把，与审批写路径同序），再查 `approval_requests` 与 `user_questions` 两表后插入，违反 409；正文长度上限（≤2000 字符）在 writer；`answer` 与 `state` 的配对由 `pending → answered` 单一路径保证，**裁定不加 DB CHECK**（2026-11-05 Lead，见 SPEC §6 第 3 条），另由 T5.13 断言「非 answered 终态的行 `answer IS NULL`」。回滚：`DROP TABLE user_questions;`。
+
 ### 3.3 Workspace 执行（workspace_execution_specs / workspace_lifecycle_operations）
 
 **workspace_execution_specs**（`V1` 内建；旧链溯源：旧 V11 建 `workspace_assignments`、旧 V12 加唯一、旧 V13 重命名；Entity `entity/WorkspaceExecutionSpec.java`）：期望执行规格（非调度绑定，旧 V13 注释原名误导已纠正）。

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, markRaw, nextTick, watch } from "vue";
+import { ref, computed, markRaw, nextTick, onBeforeUnmount, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { useSessionParticipantsStore } from "../../stores/sessionParticipants";
 import { useWorkspaceStore } from "../../stores/workspace";
@@ -8,6 +8,7 @@ import { useAgentStore } from "../../../../stores/agent";
 import { useChatStore } from "../stores/chat";
 import type { AttachmentFile, FileNode } from "../../../../types";
 import { toast } from "vue-sonner";
+import { problemDetailText } from "../../../../lib/errorMessages";
 import { Send, Square, LoaderCircle, CornerUpRight, Plus } from "@lucide/vue";
 import ImageUpload from "../../../../components/multimodal/ImageUpload.vue";
 import FileUpload from "../../../../components/multimodal/FileUpload.vue";
@@ -76,12 +77,14 @@ const emit = defineEmits<{
         attachments?: AttachmentFile[],
         asParticipantId?: string,
         cc?: string[],
+        toParticipantIds?: string[],
     ];
     queue: [
         content: string,
         attachments?: AttachmentFile[],
         asParticipantId?: string,
         cc?: string[],
+        toParticipantIds?: string[],
     ];
     stop: [];
 }>();
@@ -223,6 +226,32 @@ const activeSpeakAsId = computed(() =>
 );
 
 /**
+ * PLAN-0665 M2（Q3，D4）：**定向发送多选**。与上面的「代发」是两件事：
+ * - 候选只列会话里的 AGENT 参与者（人类作答受 BL-238 阻塞，M1 不开放）；
+ * - 选中 1..N 个 ⇒ 随消息以 `toParticipantIds` 发出，CP 为每个目标各起一个 run；
+ * - 默认不选（空集 = 旧单响应者路径），不写回 Session 绑定、不落 localStorage。
+ */
+const toTargetIds = ref<string[]>([]);
+
+const agentParticipants = computed(() =>
+    (participantsStore.participants ?? []).filter(
+        (item) => item.principalKind === "AGENT" && !item.disabledAt && Boolean(item.displayName),
+    ),
+);
+
+const showToTargets = computed(() => agentParticipants.value.length > 0);
+
+const activeToTargetIds = computed(() =>
+    toTargetIds.value.filter((id) =>
+        agentParticipants.value.some((item) => item.participantId === id),
+    ),
+);
+
+function onToTargetsFieldChange(ids: string[]): void {
+    toTargetIds.value = [...ids];
+}
+
+/**
  * PLAN-0630 M5b (D30-14)：`抄送`栏 = 旁听名单（多选 chips，2026-11-04 起为「输入 + 候选浮层」）。
  * - 候选 = 会话的未停用参与者（store 的单一数据源），排除 to 已选中的那个；
  * - 纯前端状态：不写回任何绑定，只随本条消息以 `cc`（participantId 数组）发出；
@@ -245,7 +274,8 @@ const ccCandidates = computed(() =>
         (item) =>
             !item.disabledAt &&
             Boolean(item.displayName) &&
-            item.participantId !== activeSpeakAsId.value,
+            item.participantId !== activeSpeakAsId.value &&
+            !activeToTargetIds.value.includes(item.participantId),
     ),
 );
 
@@ -389,6 +419,27 @@ watch(
 const input = ref(""),
     isComposing = ref(false),
     attachments = ref<File[]>([]);
+
+/**
+ * PLAN-0670 M2d.4：本地图片预览的 object URL 必须**创建必配对释放**。
+ * 之前模板里 `attachmentObjectUrl(file)` 每次渲染都 `URL.createObjectURL`，从不 revoke ——
+ * 选过图后整个 Blob 常驻内存。这里按 File 缓存（同一文件只建一次），移除/清空/卸载时 revoke。
+ */
+const attachmentObjectUrls = new Map<File, string>();
+
+function revokeAttachmentUrl(file: File): void {
+    const url = attachmentObjectUrls.get(file);
+    if (!url) return;
+    URL.revokeObjectURL(url);
+    attachmentObjectUrls.delete(file);
+}
+
+function revokeAllAttachmentUrls(): void {
+    for (const url of attachmentObjectUrls.values()) URL.revokeObjectURL(url);
+    attachmentObjectUrls.clear();
+}
+
+onBeforeUnmount(revokeAllAttachmentUrls);
 
 // T5b.2「@ 自动入抄送」：草稿变化时把 @命中 的参与者放进抄送 chips（解析规则见 mentionedParticipantIds）。
 watch(input, (text) => {
@@ -739,6 +790,7 @@ async function handleSend() {
             uploadedForSubmit.length > 0 ? uploadedForSubmit : undefined,
             activeSpeakAsId.value,
             ccIds.value.length > 0 ? [...ccIds.value] : undefined,
+            activeToTargetIds.value.length > 0 ? [...activeToTargetIds.value] : undefined,
         );
     else
         emit(
@@ -747,6 +799,7 @@ async function handleSend() {
             uploadedForSubmit.length > 0 ? uploadedForSubmit : undefined,
             activeSpeakAsId.value,
             ccIds.value.length > 0 ? [...ccIds.value] : undefined,
+            activeToTargetIds.value.length > 0 ? [...activeToTargetIds.value] : undefined,
         );
 }
 
@@ -813,7 +866,8 @@ async function downloadSessionExport(): Promise<void> {
         anchor.remove();
     } catch (error) {
         logCommandFailure({ command: "/export", sessionId: props.sessionId }, error);
-        toast.error(t("chat.commands.failed"));
+        // BL-288：413 EXPORT_TOO_LARGE 的 detail 带实际条数/上限/建议，优先展示它。
+        toast.error(problemDetailText(error, t("chat.commands.failed")));
     } finally {
         // The click has already handed the blob to the browser; a leaked object URL would pin the
         // whole session export in memory.
@@ -1008,6 +1062,7 @@ function removeAttachment(index: number) {
         const nextErrors = { ...attachmentErrors.value };
         delete nextErrors[file.name];
         attachmentErrors.value = nextErrors;
+        revokeAttachmentUrl(file);
     }
     attachments.value.splice(index, 1);
 }
@@ -1017,7 +1072,11 @@ function handleTranscript(text: string) {
 }
 
 function attachmentObjectUrl(file: File): string {
-    return URL.createObjectURL(file);
+    const existing = attachmentObjectUrls.get(file);
+    if (existing) return existing;
+    const url = URL.createObjectURL(file);
+    attachmentObjectUrls.set(file, url);
+    return url;
 }
 
 function focusInput(): void {
@@ -1027,6 +1086,7 @@ function focusInput(): void {
 
 function clearDraft() {
     input.value = "";
+    revokeAllAttachmentUrls();
     attachments.value = [];
     uploadedByFile = new WeakMap<File, Map<string, AttachmentFile>>();
     attachmentErrors.value = {};
@@ -1078,6 +1138,28 @@ defineExpose({ clearDraft, insertMention, setDraft });
                 data-testid="speak-as-bar"
                 @update:model-value="onSpeakAsFieldChange"
             />
+            <!--
+                PLAN-0665 M2（Q3/D4）：定向发送多选（1..N 个 AGENT）——与上面的「代发」栏分开，
+                因为一个消息只能有一个发言身份，但可以有多个响应者。默认空集 = 旧单响应者路径。
+            -->
+            <RecipientField
+                v-if="showToTargets"
+                :label="t('chat.input.toTargetsLabel')"
+                :model-value="toTargetIds"
+                :candidates="agentParticipants"
+                :multiple="true"
+                :placeholder="t('chat.input.recipientPlaceholder')"
+                testid="to-targets"
+                data-testid="to-targets-bar"
+                @update:model-value="onToTargetsFieldChange"
+            />
+            <p
+                v-if="showToTargets"
+                class="px-2 text-[11px] text-muted-foreground"
+                data-testid="to-agents-only-hint"
+            >
+                {{ t("chat.input.toAgentsOnlyHint") }}
+            </p>
             <!--
                 PLAN-0630 M5b (D30-14)：cc 栏 = 旁听名单（多选 chips）。被 @ 的参与者会自动
                 出现在这里；点 × 移除（同一个 @ 不再自动加回，直到它从文本里消失）；+ 下拉手动添加。

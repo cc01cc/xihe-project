@@ -56,6 +56,20 @@ def _tokens(messages: list[TextMessage], counter: Any) -> int:
     return counter.estimate_messages(payload) if counter is not None else sum(len(item["content"]) // 4 for item in payload)
 
 
+def _limit_inbound_history(messages: Any) -> tuple[list[Any], Any]:
+    """Component-layer entry for the inbound caps (delegates to the one production helper).
+
+    BL-289: the WARN and the ``Truncation`` object are produced by
+    ``inbound_limits.truncate_for_run`` — the same call the real chat path uses — so a component
+    build and a real run can never report different numbers. This builder has no production caller
+    today; the **real truncation point is ``api/chat.py``** (``context.messages``), so do not read a
+    component's ``truncation`` as evidence that a real run was capped. The function is kept because
+    the component contract still needs to be tested.
+    """
+    from xihe_agent.context.inbound_limits import truncate_for_run
+
+    return truncate_for_run(messages)
+
 def _take_newest(groups: list[list[TextMessage]], budget: int, counter: Any) -> tuple[list[TextMessage], bool]:
     chosen: list[list[TextMessage]] = []
     for group in reversed(groups):
@@ -76,6 +90,10 @@ def _render(component: dict[str, Any], run: ChatRunContext, tools: list[Any], to
     items: tuple[Any, ...] = ()
     source: Any = {"kind": "context_projection"}
     diagnostics: tuple[str, ...] = ()
+    # PLAN-0670 M2c / BL-289: the inbound cap marker (wire shape) of THIS component, or None when the
+    # component did not truncate. `conversation_history` wins when both history components truncate
+    # (same inbound object today; the comment is the upgrade rule for future stages).
+    truncation: dict[str, Any] | None = None
     status = "ready"
     cut = False
     if kind == "text":
@@ -179,9 +197,16 @@ def _render(component: dict[str, Any], run: ChatRunContext, tools: list[Any], to
         source = {"kind": "agent_memory", "entries": len(items)}
     elif kind == "conversation_history":
         cfg = _config(component, ("selection", "maxTokens", "includeCompaction"), {"selection": {"recent", "all_within_budget"}})
+        # PLAN-0670 T2c.1 (second line of defence): trim the inbound history BEFORE it is grouped and
+        # handed to ``_take_newest``. The three lines deliberately differ: CP sends a window (first),
+        # this count/byte cap bounds what the process ever materialises (second), and the token budget
+        # in ``_take_newest`` stays the third line for what the model can actually read.
+        inbound_messages, inbound_truncation = _limit_inbound_history(run.agent_context.messages)
+        if inbound_truncation is not None:
+            truncation = inbound_truncation.to_wire()
         groups: list[list[TextMessage]] = []
         pending: list[TextMessage] = []
-        for message in run.agent_context.messages:
+        for message in inbound_messages:
             if message.role == "human":
                 if pending:
                     groups.append(pending)
@@ -209,7 +234,11 @@ def _render(component: dict[str, Any], run: ChatRunContext, tools: list[Any], to
         )
         groups = []
         artifact_diagnostics: list[str] = []
-        history = run.agent_context.messages
+        # PLAN-0670 T2c.1: the tool-history branch gets the same inbound caps as the conversation
+        # branch — two branches with different limits would be a new silent difference.
+        history, inbound_truncation = _limit_inbound_history(run.agent_context.messages)
+        if inbound_truncation is not None and truncation is None:
+            truncation = inbound_truncation.to_wire()
         index = 0
         while index < len(history):
             assistant = history[index]
@@ -375,7 +404,8 @@ def _render(component: dict[str, Any], run: ChatRunContext, tools: list[Any], to
     if status not in _STATUSES:
         status = "unknown"
     tokens = _tokens(messages, token_counter)
-    return ComponentResult(iid, kind, status, source, content, items, tokens, cut or status == "truncated", diagnostics), messages
+    return ComponentResult(iid, kind, status, source, content, items, tokens,
+                           cut or status == "truncated", diagnostics, truncation), messages
 
 
 def _injection_ledger(run: ChatRunContext) -> InjectionLedger:

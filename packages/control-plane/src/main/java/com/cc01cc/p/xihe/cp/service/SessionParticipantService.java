@@ -1,16 +1,15 @@
 package com.cc01cc.p.xihe.cp.service;
 
 import com.cc01cc.p.xihe.cp.config.CpApiException;
+import com.cc01cc.p.xihe.cp.context.entity.ContextEvent;
 import com.cc01cc.p.xihe.cp.context.repository.EventStoreRepository;
 import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
 import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.entity.SessionParticipant;
 import com.cc01cc.p.xihe.cp.entity.SessionParticipantCursor;
 import com.cc01cc.p.xihe.cp.entity.User;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.cc01cc.p.xihe.cp.policy.GrantAuthorizationService;
-import com.cc01cc.p.xihe.cp.policy.PolicyRequest;
-import com.cc01cc.p.xihe.cp.policy.ToolFaceRegistry;
-import com.cc01cc.p.xihe.cp.policy.ToolShape;
 import com.cc01cc.p.xihe.cp.repository.AgentPrincipalRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionParticipantCursorRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionParticipantRepository;
@@ -21,11 +20,11 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
-import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Locale;
+import java.util.ArrayList;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 
@@ -73,10 +72,28 @@ public class SessionParticipantService {
     private final UserRepository userRepository;
     private final WorkspaceService workspaceService;
     private final GrantAuthorizationService grantAuthorizationService;
+    /** PLAN-0668 D1: the single visibility primitive (also used by SessionService). */
+    private final SessionReadAccess sessionReadAccess;
     private final com.cc01cc.p.xihe.cp.scheduled.WakeScheduleProjectionService wakeScheduleProjectionService;
     /** PLAN-0660 T5.1/T5.2: session max sequence (clamp) + the derived unread aggregate. */
     private final EventStoreRepository eventStoreRepository;
 
+    private static final org.slf4j.Logger logger =
+            org.slf4j.LoggerFactory.getLogger(SessionParticipantService.class);
+    private static final String EVENT_WAKE_DISPATCH = "wake_dispatch";
+    private static final com.fasterxml.jackson.databind.ObjectReader PAYLOAD_READER =
+            new com.fasterxml.jackson.databind.ObjectMapper().reader();
+
+    /** True when the unread aggregate may run as native PostgreSQL JSONB SQL (PLAN-0670 M2b T2b.2). */
+    private final boolean sqlUnreadAggregation;
+
+    /**
+     * PLAN-0670 M2b (T2b.2): Spring wires this constructor; {@code dataSource} decides whether the
+     * roster may aggregate unread mentions in PostgreSQL. On the H2 legacy unit lane the answer is
+     * {@code false} and the Java fallback keeps running — the two paths must produce identical
+     * counts, and the PostgreSQL path has its own integration test.
+     */
+    @org.springframework.beans.factory.annotation.Autowired
     public SessionParticipantService(SessionParticipantRepository participantRepository,
                                      SessionParticipantCursorRepository cursorRepository,
                                      SessionRepository sessionRepository,
@@ -85,7 +102,40 @@ public class SessionParticipantService {
                                      WorkspaceService workspaceService,
                                      GrantAuthorizationService grantAuthorizationService,
                 com.cc01cc.p.xihe.cp.scheduled.WakeScheduleProjectionService wakeScheduleProjectionService,
-            EventStoreRepository eventStoreRepository) {
+            EventStoreRepository eventStoreRepository,
+            SessionReadAccess sessionReadAccess,
+            javax.sql.DataSource dataSource) {
+        this(participantRepository, cursorRepository, sessionRepository, agentPrincipalRepository,
+                userRepository, workspaceService, grantAuthorizationService, wakeScheduleProjectionService,
+                eventStoreRepository, isPostgres(dataSource), sessionReadAccess);
+    }
+
+    /** Legacy/H2 constructor: no {@code DataSource} ⇒ the Java aggregation path (see BL-273). */
+    public SessionParticipantService(SessionParticipantRepository participantRepository,
+                                     SessionParticipantCursorRepository cursorRepository,
+                                     SessionRepository sessionRepository,
+                                     AgentPrincipalRepository agentPrincipalRepository,
+                                     UserRepository userRepository,
+                                     WorkspaceService workspaceService,
+                                     GrantAuthorizationService grantAuthorizationService,
+                com.cc01cc.p.xihe.cp.scheduled.WakeScheduleProjectionService wakeScheduleProjectionService,
+            EventStoreRepository eventStoreRepository,
+            SessionReadAccess sessionReadAccess) {
+        this(participantRepository, cursorRepository, sessionRepository, agentPrincipalRepository,
+                userRepository, workspaceService, grantAuthorizationService, wakeScheduleProjectionService,
+                eventStoreRepository, false, sessionReadAccess);
+    }
+
+    private SessionParticipantService(SessionParticipantRepository participantRepository,
+                                      SessionParticipantCursorRepository cursorRepository,
+                                      SessionRepository sessionRepository,
+                                      AgentPrincipalRepository agentPrincipalRepository,
+                                      UserRepository userRepository,
+                                      WorkspaceService workspaceService,
+                                      GrantAuthorizationService grantAuthorizationService,
+                com.cc01cc.p.xihe.cp.scheduled.WakeScheduleProjectionService wakeScheduleProjectionService,
+            EventStoreRepository eventStoreRepository, boolean sqlUnreadAggregation,
+            SessionReadAccess sessionReadAccess) {
         this.wakeScheduleProjectionService = wakeScheduleProjectionService;
         this.eventStoreRepository = eventStoreRepository;
         this.participantRepository = participantRepository;
@@ -95,6 +145,28 @@ public class SessionParticipantService {
         this.userRepository = userRepository;
         this.workspaceService = workspaceService;
         this.grantAuthorizationService = grantAuthorizationService;
+        this.sqlUnreadAggregation = sqlUnreadAggregation;
+        this.sessionReadAccess = sessionReadAccess;
+    }
+
+    private static boolean isPostgres(javax.sql.DataSource dataSource) {
+        if (dataSource == null) {
+            return false;
+        }
+        try (java.sql.Connection connection = dataSource.getConnection()) {
+            String product = connection.getMetaData().getDatabaseProductName();
+            return product != null && product.toLowerCase(java.util.Locale.ROOT).contains("postgresql");
+        } catch (java.sql.SQLException unreadable) {
+            // A read-only optimisation must never fail the roster: fall back to the Java path.
+            logger.warn("[LIFECYCLE] service=cp event=unread_aggregation_probe_failed reason={}",
+                    unreadable.getClass().getSimpleName());
+            return false;
+        }
+    }
+
+    /** Test/diagnostic seam: is the roster aggregating unread mentions in PostgreSQL right now? */
+    boolean usesSqlUnreadAggregation() {
+        return sqlUnreadAggregation;
     }
 
     // ------------------------------------------------------------------ read
@@ -111,8 +183,8 @@ public class SessionParticipantService {
         }
         Map<UUID, String> humanNames = humanDisplayNames(rows);
         Map<UUID, AgentPrincipal> agents = agentPrincipals(rows);
-        // PLAN-0660 T5.2: unread is DERIVED once for the whole roster (one SQL, never N+1).
-        Map<UUID, Integer> unread = derivedMentionCounts(session.getId());
+        // PLAN-0660 T5.2: unread is DERIVED once for the whole roster (one query + Java aggregation).
+        Map<UUID, Integer> unread = derivedMentionCounts(session.getId(), cursorThresholds(cursors));
         List<ParticipantView> views = new ArrayList<>(rows.size());
         for (SessionParticipant row : rows) {
             views.add(toView(row, cursors.get(row.getId()), humanNames.get(row.getPrincipalId()),
@@ -170,7 +242,9 @@ public class SessionParticipantService {
         long next = Math.max(current, clamped);
         cursor.setLastReadEventSeq(next);
         SessionParticipantCursor saved = cursorRepository.save(cursor);
-        int unread = derivedMentionCounts(session.getId()).getOrDefault(participantUuid, 0);
+        long threshold = saved.getLastReadEventSeq() == null ? 0L : saved.getLastReadEventSeq();
+        int unread = derivedMentionCounts(session.getId(), Map.of(participantUuid, threshold))
+                .getOrDefault(participantUuid, 0);
         return new CursorView(saved.getLastReadEventSeq(), unread, saved.getUpdatedAt());
     }
 
@@ -290,9 +364,13 @@ public class SessionParticipantService {
             row.setDisabledAt(Boolean.TRUE.equals(request.disabled()) ? Instant.now() : null);
         }
         SessionParticipant saved = participantRepository.save(row);
-        return toView(saved, cursorRepository.findById(saved.getId()).orElse(null), humanDisplayName(saved),
+        SessionParticipantCursor savedCursor = cursorRepository.findById(saved.getId()).orElse(null);
+        long savedThreshold = savedCursor == null || savedCursor.getLastReadEventSeq() == null
+                ? 0L : savedCursor.getLastReadEventSeq();
+        return toView(saved, savedCursor, humanDisplayName(saved),
                 isSelfOwned(saved, actorId, session, agentPrincipals(List.of(saved))),
-                derivedMentionCounts(saved.getSessionId()).getOrDefault(saved.getId(), 0));
+                derivedMentionCounts(saved.getSessionId(), Map.of(saved.getId(), savedThreshold))
+                        .getOrDefault(saved.getId(), 0));
     }
 
     @Transactional
@@ -364,6 +442,21 @@ public class SessionParticipantService {
     /** The responder triple: participant, its kind, and the principal that actually answers. */
     public record Responder(UUID participantId, String principalKind, UUID principalId) {}
 
+    /**
+     * PLAN-0669 D2: the participant row for a (session, principal) pair — used by the single
+     * assistant-write point to stamp durable message attribution. Empty when the pair has no row, so
+     * the caller persists NULL instead of guessing a participant (an attribution that is wrong is
+     * worse than an absent one).
+     */
+    @Transactional(readOnly = true)
+    public Optional<UUID> participantIdForPrincipal(UUID sessionId, UUID principalId) {
+        if (sessionId == null || principalId == null) {
+            return Optional.empty();
+        }
+        return participantRepository.findFirstBySessionIdAndPrincipalId(sessionId, principalId)
+                .map(SessionParticipant::getId);
+    }
+
 /**
      * Authorization for {@code POST /api/v1/chat} with {@code asParticipantId}.
      *
@@ -408,6 +501,38 @@ public class SessionParticipantService {
         }
     }
 
+    /**
+     * PLAN-0665 Q3: gate every explicit TO target ({@code toParticipantIds}) through the <b>same</b>
+     * D23-08 judgment as {@code asParticipantId} — a fan-out selector must not become an
+     * authorization bypass.
+     *
+     * <p>M1 accepts <b>AGENT participants only</b>: a human target is refused with
+     * {@code 400 INVALID_REQUEST} (not 403 — the caller may legitimately speak as themselves; this
+     * is a selector that is not supported yet). Human TO is blocked on BL-238 (the wake path refuses
+     * every human participant) and is a separate plan.</p>
+     *
+     * @return authorized rows in the caller's selection order (first-seen, already de-duplicated)
+     */
+    @Transactional(readOnly = true)
+    public List<SessionParticipant> authorizeToTargets(String actorId, String workspaceId,
+                                                       String sessionId, List<UUID> targetParticipantIds) {
+        if (targetParticipantIds == null || targetParticipantIds.isEmpty()) {
+            return List.of();
+        }
+        List<SessionParticipant> authorized = new ArrayList<>(targetParticipantIds.size());
+        for (UUID target : targetParticipantIds) {
+            SessionParticipant row = authorizeAsParticipantInTransaction(actorId, workspaceId,
+                    sessionId, target.toString());
+            if (!SessionParticipant.KIND_AGENT.equals(row.getPrincipalKind())) {
+                throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST",
+                        "toParticipantIds currently accepts AGENT participants only; "
+                                + "human targets are a later plan");
+            }
+            authorized.add(row);
+        }
+        return authorized;
+    }
+
     private SessionParticipant authorizeAsParticipantInTransaction(String actorId, String workspaceId,
                                                                    String sessionId,
                                                                    String asParticipantId) {
@@ -434,8 +559,10 @@ public class SessionParticipantService {
         }
         AgentPrincipal principal = agentPrincipalRepository.findById(row.getPrincipalId())
                 .orElseThrow(SessionParticipantService::principalNotFound);
-        if ("PERSONAL".equals(principal.getScope())
-                && !actorUuid.equals(principal.getOwnerUserId())) {
+        // D-174 (scope-tier removal): an owned principal may only be spoken for by its owner; an
+        // owner-less (workspace-shared) principal follows the conversation owner — derived from the
+        // owner column, never from a legacy tier value.
+        if (principal.getOwnerUserId() != null && !actorUuid.equals(principal.getOwnerUserId())) {
             throw capDenied();
         }
         if (principal.getDisabledAt() != null) {
@@ -448,28 +575,14 @@ public class SessionParticipantService {
     // ------------------------------------------------------------------ helpers
 
     private Session requireVisibleSession(String actorId, String workspaceId, String sessionId) {
-        if (workspaceId == null || workspaceId.isBlank()) {
-            throw new CpApiException(HttpStatus.CONFLICT, "WORKSPACE_CONTEXT_REQUIRED",
-                    "A workspace context is required to read session participants");
-        }
-        Session session = sessionRepository.findById(parseUuid(sessionId, "SESSION_NOT_FOUND"))
-                .filter(found -> !found.isArchived() && workspaceId.equals(found.getWorkspaceId()))
-                .orElseThrow(() -> new CpApiException(HttpStatus.NOT_FOUND, "SESSION_NOT_FOUND",
-                        "Session not found"));
-        boolean owner = actorId != null && actorId.equals(session.getUserId());
-        boolean invited = actorId != null && participantRepository
-                .existsBySessionIdAndPrincipalKindAndPrincipalIdAndDisabledAtIsNull(
-                        session.getId(), SessionParticipant.KIND_HUMAN,
-                        parseUuid(actorId, "SESSION_ACCESS_DENIED"));
-        // D23-08: an administrator who may manage this workspace's agents must also be able to add
-        // people to a conversation they do not own, so "manage authority" counts as visibility here;
-        // it never implies "speak as" (see authorizeAsParticipant).
-        boolean manager = !owner && !invited && canManage(actorId, workspaceId, session);
-        if (!owner && !invited && !manager) {
+        // PLAN-0668 D1/D2: same SessionReadAccess decision as the read faces; the roster face
+        // keeps its shipped 403 SESSION_ACCESS_DENIED shape (error shape is frozen per face).
+        SessionReadAccess.Resolved resolved = sessionReadAccess.resolve(actorId, workspaceId, sessionId);
+        if (!resolved.access().rosterAllowed()) {
             throw new CpApiException(HttpStatus.FORBIDDEN, "SESSION_ACCESS_DENIED",
                     "Only the session owner or an invited participant may read the participant list");
         }
-        return session;
+        return resolved.session();
     }
 
     /** D24-12: "all" is the reserved @all token; no participant may claim it as a display name. */
@@ -520,8 +633,9 @@ public class SessionParticipantService {
      *
      * <p>Mirrors {@link #authorizeAsParticipant} exactly; that method stays the authority and this one
      * only predicts it: speaking is the conversation owner's right (a workspace administrator is
-     * never allowed), a HUMAN may speak as themselves, a PERSONAL agent only by its owner, and a
-     * WORKSPACE/INSTANCE agent by the conversation owner (it has no single human owner).</p>
+     * never allowed), a HUMAN may speak as themselves, an owned agent only by its owner, and an
+     * owner-less (workspace-shared) agent by the conversation owner (D-174: derived from the owner
+     * column, never from a legacy tier value).</p>
      */
     private boolean isSelfOwned(SessionParticipant row, String actorId, Session session,
                                 Map<UUID, AgentPrincipal> agents) {
@@ -537,34 +651,12 @@ public class SessionParticipantService {
         if (agent == null || agent.getDisabledAt() != null) {
             return false;
         }
-        return !"PERSONAL".equals(agent.getScope()) || actor.equals(agent.getOwnerUserId());
+        return agent.getOwnerUserId() == null || actor.equals(agent.getOwnerUserId());
     }
 
     private boolean canManage(String actorId, String workspaceId, Session session) {
-        if (actorId == null) {
-            return false;
-        }
-        if (actorId.equals(session.getUserId())) {
-            return true;
-        }
-        // PLAN-0651 T1.3 (D51-29): the instance-administrator bypass is an action atom now —
-        // MANAGE_WORKSPACE_MEMBERS at instance scope (ADMIN holds it through the seeded role).
-        // A8 deliberately keeps MANAGE_WORKSPACE_AGENTS for the workspace-scope branch so WS_OWNER
-        // keeps managing participants exactly as today.
-        boolean instanceAdministrator = grantAuthorizationService.allowsUserOnly(new PolicyRequest(
-                "manage_session_participants_instance",
-                List.of(ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_MEMBERS), List.of("*"),
-                ToolShape.OPAQUE, actorId, null, session.getId().toString()));
-        if (instanceAdministrator) {
-            return true;
-        }
-        if (!workspaceService.isWorkspaceMember(workspaceId, actorId)) {
-            return false;
-        }
-        PolicyRequest request = new PolicyRequest("manage_session_participants",
-                List.of(ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_AGENTS), List.of("*"),
-                ToolShape.OPAQUE, actorId, workspaceId, session.getId().toString());
-        return grantAuthorizationService.allowsUserOnly(request);
+        // PLAN-0668 D1: one implementation (SessionReadAccess), no duplicate manager predicate.
+        return sessionReadAccess.canManage(actorId, workspaceId, session);
     }
 
     private void requirePrincipalExists(String kind, UUID principalId) {
@@ -596,20 +688,99 @@ public class SessionParticipantService {
     }
 
     /**
-     * PLAN-0660 T5.2: {@code participantId → unread mention count} for one session, in ONE query.
+     * PLAN-0660 T5.2 (BL-273): {@code participantId → unread mention count} for one session.
      *
      * <p>Unread is a <b>derived</b> value: notify rows whose {@code sequence} is past that
      * participant's pointer. It is deliberately not a stored counter (D66-07 / B-4,
      * `spec/session/user-channel.md` §3).</p>
+     *
+     * <p><b>Dialect-neutral on purpose (BL-273):</b> the events are fetched with a plain derived
+     * query and the {@code payload} JSON is interpreted in Java. The first implementation pushed
+     * {@code payload->>'outcome'} into native SQL — PostgreSQL-only syntax that H2
+     * ({@code MODE=PostgreSQL}) rejects with {@code SQL 42000}, which broke the roster on the H2 lane
+     * while the unit tests stayed green because the repository was mocked. The rule that came out of
+     * it: <em>any new native SQL needs a test that really executes it on the test database's dialect</em>.</p>
      */
-    private Map<UUID, Integer> derivedMentionCounts(UUID sessionId) {
+    private Map<UUID, Integer> derivedMentionCounts(UUID sessionId,
+                                                    Map<UUID, Long> cursorSeqByParticipant) {
+        if (cursorSeqByParticipant == null || cursorSeqByParticipant.isEmpty()) {
+            return Map.of();
+        }
+        if (sqlUnreadAggregation) {
+            // PLAN-0670 M2b (T2b.2): aggregate in PostgreSQL. The response is a handful of
+            // (participantId, count) rows instead of every wake event of the session in Java.
+            Map<UUID, Integer> aggregated = new LinkedHashMap<>();
+            for (Object[] row : eventStoreRepository
+                    .countUnreadMentionsByParticipant(sessionId.toString())) {
+                if (row == null || row.length < 2 || !(row[0] instanceof UUID participant)
+                        || !(row[1] instanceof Number count)) {
+                    continue;
+                }
+                aggregated.put(participant, count.intValue());
+            }
+            return aggregated;
+        }
+        return derivedMentionCountsInJava(sessionId, cursorSeqByParticipant);
+    }
+
+    /**
+     * Java fallback for the derived aggregate — kept for the H2 legacy unit lane (BL-273) and as the
+     * parity reference for the PostgreSQL query. It loads every wake event of the session, so it must
+     * not be the production path for long sessions (PLAN-0670 M2b measured ~74 MB heap at 20k events).
+     */
+    private Map<UUID, Integer> derivedMentionCountsInJava(UUID sessionId,
+                                                         Map<UUID, Long> cursorSeqByParticipant) {
+        List<ContextEvent> events = eventStoreRepository
+                .findBySessionIdAndEventTypeOrderBySequenceAsc(sessionId.toString(), EVENT_WAKE_DISPATCH);
         Map<UUID, Integer> counts = new LinkedHashMap<>();
-        for (Object[] row : eventStoreRepository.countDerivedMentionsBySession(sessionId)) {
-            UUID participantId = (UUID) row[0];
-            long count = ((Number) row[1]).longValue();
-            counts.put(participantId, count > Integer.MAX_VALUE ? Integer.MAX_VALUE : (int) count);
+        for (ContextEvent event : events) {
+            String participantId = notifyTargetParticipant(event.getPayload());
+            if (participantId == null || event.getSequence() == null) {
+                continue;
+            }
+            UUID participant;
+            try {
+                participant = UUID.fromString(participantId);
+            } catch (IllegalArgumentException malformed) {
+                continue;
+            }
+            Long threshold = cursorSeqByParticipant.get(participant);
+            if (threshold == null || event.getSequence() <= threshold) {
+                continue;
+            }
+            counts.merge(participant, 1, Integer::sum);
         }
         return counts;
+    }
+
+    /**
+     * The {@code participantId} of a {@code wake_dispatch} row whose outcome is {@code notify}, or
+     * {@code null} for every other row (other outcomes are not unread mentions).
+     */
+    private static String notifyTargetParticipant(String payloadJson) {
+        if (payloadJson == null || payloadJson.isBlank()) {
+            return null;
+        }
+        try {
+            JsonNode payload = PAYLOAD_READER.readTree(payloadJson);
+            if (!"notify".equals(payload.path("outcome").asText())) {
+                return null;
+            }
+            String participantId = payload.path("participantId").asText(null);
+            return participantId == null || participantId.isBlank() ? null : participantId;
+        } catch (java.io.IOException malformed) {
+            // A payload we cannot parse cannot be attributed to a participant — log it, never guess.
+            logger.warn("[LIFECYCLE] service=cp event=wake_dispatch_payload_unparsable reason={}",
+                    malformed.getClass().getSimpleName());
+            return null;
+        }
+    }
+
+    private static Map<UUID, Long> cursorThresholds(Map<UUID, SessionParticipantCursor> cursors) {
+        Map<UUID, Long> thresholds = new LinkedHashMap<>();
+        cursors.forEach((participantId, cursor) -> thresholds.put(participantId,
+                cursor.getLastReadEventSeq() == null ? 0L : cursor.getLastReadEventSeq()));
+        return thresholds;
     }
 
     private ParticipantView toView(SessionParticipant row, SessionParticipantCursor cursor,
@@ -690,9 +861,12 @@ public class SessionParticipantService {
         return localPart.isBlank() ? null : localPart;
     }
 
+    /**
+     * D-174 (scope-tier removal): the participant `source` badge is now derived from the owner
+     * column (owned ⇒ personal, owner-less ⇒ workspace) instead of reading the dropped tier.
+     */
     private static String sourceOf(AgentPrincipal principal) {
-        String scope = principal.getScope();
-        return scope == null ? null : scope.toLowerCase(Locale.ROOT);
+        return principal.getOwnerUserId() == null ? "workspace" : "personal";
     }
 
     private static String requireKind(String value) {

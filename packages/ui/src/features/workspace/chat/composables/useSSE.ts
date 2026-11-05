@@ -19,6 +19,20 @@ import {
 import type { EventSourceMessage } from "@microsoft/fetch-event-source";
 import type { ChatRunResponse, Diagnostic, DiagnosticsBundle, ToolCall } from "../../../../types";
 
+/**
+ * BL-306: per-tab SSE connection instance (in-memory **only** — never sessionStorage:
+ * a duplicated tab copies sessionStorage and would then share one server-side entry).
+ * Stable across reconnects within this tab so the server replaces the same entry instead of
+ * leaking a new one on every retry.
+ */
+const SSE_CONNECTION_ID = (() => {
+    const cryptoObject = globalThis.crypto;
+    if (cryptoObject && typeof cryptoObject.randomUUID === "function") {
+        return cryptoObject.randomUUID();
+    }
+    return `sse-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+})();
+
 interface LangChainTextBlock {
     type: string;
     text?: string;
@@ -90,7 +104,44 @@ export interface SSECallbacks {
     /** PLAN-0343: run-terminal usage snapshot (cost-mapped by CP, once per run). */
     onUsage?: (data: Record<string, unknown>) => void;
     onError?: (error: SSEErrorPayload) => void;
-    onDone?: (outcome?: string, runId?: string) => void;
+    onDone?: (outcome?: string, runId?: string, truncation?: AgentContextTruncation) => void;
+}
+
+/** PLAN-0670 M2c / BL-292：Agent `done` 载荷里的入站截断标记（wire JSON，CP 原样透传）。 */
+export interface AgentContextTruncation {
+    droppedMessages: number;
+    droppedBytes?: number;
+    keptMessages: number;
+    keptBytes?: number;
+    limitMessages?: number;
+    limitBytes?: number;
+    strategy?: string;
+}
+
+/**
+ * 解析 `done.agentContextTruncation`：**键缺席 = 未截断**（不是全 0）；形状不合法或
+ * `droppedMessages <= 0` 同样视为未截断，避免把噪音渲染成提示。
+ * 形状来自 Agent `Truncation.to_wire()`（见 agent/context/inbound_limits.py），
+ * 不是手造：`droppedMessages/droppedBytes/keptMessages/keptBytes/limitMessages/limitBytes/strategy`。
+ */
+export function parseAgentContextTruncation(value: unknown): AgentContextTruncation | undefined {
+    if (!value || typeof value !== "object") return undefined;
+    const record = value as Record<string, unknown>;
+    if (typeof record.droppedMessages !== "number" || typeof record.keptMessages !== "number") {
+        return undefined;
+    }
+    if (record.droppedMessages <= 0 || record.keptMessages < 0) return undefined;
+    const numberOrUndefined = (key: string): number | undefined =>
+        typeof record[key] === "number" ? (record[key] as number) : undefined;
+    return {
+        droppedMessages: record.droppedMessages,
+        droppedBytes: numberOrUndefined("droppedBytes"),
+        keptMessages: record.keptMessages,
+        keptBytes: numberOrUndefined("keptBytes"),
+        limitMessages: numberOrUndefined("limitMessages"),
+        limitBytes: numberOrUndefined("limitBytes"),
+        strategy: typeof record.strategy === "string" ? record.strategy : undefined,
+    };
 }
 
 export interface SSEErrorPayload {
@@ -118,6 +169,8 @@ export interface SendMessageOptions {
     asParticipantId?: string;
     /** PLAN-0630 M5b (D30-14)：composer 的 cc 旁听名单（participantId UUID 数组）。 */
     cc?: string[];
+    /** PLAN-0665 M1：TO 目标集合（AGENT participantId）；每个目标各自起 run。 */
+    toParticipantIds?: string[];
     provider?: string;
     toolMode?: "none" | "workspace";
     idempotencyKey?: string;
@@ -632,11 +685,19 @@ export function useSSE(sessionId: MaybeRefOrGetter<string>) {
                 clearStreamTimeout();
                 try {
                     const data = msg.data
-                        ? (JSON.parse(msg.data) as { outcome?: string; runId?: string })
+                        ? (JSON.parse(msg.data) as {
+                              outcome?: string;
+                              runId?: string;
+                              agentContextTruncation?: unknown;
+                          })
                         : {};
                     // PLAN-0645 M2: finalize only this run; a concurrent run keeps streaming.
                     endRunScope(data.runId);
-                    currentCallbacks.onDone?.(data.outcome, data.runId);
+                    currentCallbacks.onDone?.(
+                        data.outcome,
+                        data.runId,
+                        parseAgentContextTruncation(data.agentContextTruncation),
+                    );
                 } catch {
                     logger.warn("Failed to parse SSE done event payload");
                     endRunScope();
@@ -728,11 +789,15 @@ export function useSSE(sessionId: MaybeRefOrGetter<string>) {
         activeApprovalEpoch = agentStore?.getApprovalEpoch(currentSessionId) ?? null;
 
         const url = `/api/v1/events?sessionId=${encodeURIComponent(currentSessionId)}`;
+        const headers = {
+            ...apiAuthHeaders(undefined, false),
+            "X-XH-SSE-Connection-Id": SSE_CONNECTION_ID,
+        };
 
         chatTransport
             .sendMessages(currentSessionId, {
                 url,
-                headers: apiAuthHeaders(undefined, false),
+                headers,
                 onopen: () => {
                     if (generation !== connectionGeneration) return;
                     isConnected.value = true;
@@ -794,6 +859,7 @@ export function useSSE(sessionId: MaybeRefOrGetter<string>) {
         agentPrincipalId,
         asParticipantId,
         cc,
+        toParticipantIds,
     }: SendMessageOptions): Promise<ChatRunResponse | null> {
         const generation = connectionGeneration;
         error.value = null;
@@ -815,6 +881,10 @@ export function useSSE(sessionId: MaybeRefOrGetter<string>) {
             if (asParticipantId) body.asParticipantId = asParticipantId;
             // PLAN-0630 M5b (D30-14)：cc 旁听名单；服务端对非 UUID 条目 400，非本会话参与者 fail-closed 忽略。
             if (cc && cc.length > 0) body.cc = cc;
+            // PLAN-0665 M1：显式 TO 集合 ⇒ 每个被选 AGENT 各自起 run（排序由 CP 负责）。
+            if (toParticipantIds && toParticipantIds.length > 0) {
+                body.toParticipantIds = toParticipantIds;
+            }
             if (model) {
                 body.model = model;
             }

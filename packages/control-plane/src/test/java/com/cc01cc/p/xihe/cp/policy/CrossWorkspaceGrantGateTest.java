@@ -148,9 +148,14 @@ class CrossWorkspaceGrantGateTest extends AbstractH2Test {
         assertFalse(inB.stream().anyMatch(row -> ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_AGENTS
                         .equals(row.getPermissions().get(0).get("actionClass").asText())),
                 "workspace B sees no agent-management row (only its own WS_VIEWER read)");
-        assertTrue(inB.stream().allMatch(row -> ToolFaceRegistry.ACTION_READ
-                        .equals(row.getPermissions().get(0).get("actionClass").asText())),
-                "everything workspace B sees comes from its own WS_VIEWER binding");
+        // PLAN-0651 M2 T2.1: WS_VIEWER also carries USE_WORKSPACE_RUNTIME, so "B only sees read"
+        // became "B only sees WS_VIEWER atoms". Derive the set from the catalog: the assertion is
+        // about the workspace scope, not about the exact atom count.
+        java.util.Set<String> viewerAtoms = RoleAtomExpectations.materializedAtoms(
+                SystemAccessRoleCatalog.WS_VIEWER);
+        assertTrue(inB.stream().allMatch(row -> viewerAtoms.contains(
+                        row.getPermissions().get(0).get("actionClass").asText())),
+                "everything workspace B sees comes from its own WS_VIEWER binding: " + viewerAtoms);
     }
 
     // ---------------------------------------------------------------- helpers

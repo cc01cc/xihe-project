@@ -1,6 +1,8 @@
 package com.cc01cc.p.xihe.cp.controller;
 
 import com.cc01cc.p.xihe.cp.policy.CapabilityAuthorities;
+import com.cc01cc.p.xihe.cp.policy.RequesterAuthority;
+import com.cc01cc.p.xihe.cp.policy.ToolFaceRegistry;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.config.ProblemDetailsHandler;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
@@ -46,6 +48,7 @@ public class WorkspaceEnvironmentController {
     private final RuntimeWorkspaceClient runtimeWorkspaceClient;
     private final JobStateService jobStateService;
     private final WorkspaceRuntimeReleaseService releaseService;
+    private final RequesterAuthority requesterAuthority;
 
     public WorkspaceEnvironmentController(
             WorkspaceService workspaceService,
@@ -55,7 +58,8 @@ public class WorkspaceEnvironmentController {
             RuntimeJobClient runtimeJobClient,
             RuntimeWorkspaceClient runtimeWorkspaceClient,
             JobStateService jobStateService,
-            WorkspaceRuntimeReleaseService releaseService) {
+            WorkspaceRuntimeReleaseService releaseService,
+            RequesterAuthority requesterAuthority) {
         this.workspaceService = workspaceService;
         this.backendPolicy = backendPolicy;
         this.executionSpecService = executionSpecService;
@@ -64,6 +68,7 @@ public class WorkspaceEnvironmentController {
         this.runtimeWorkspaceClient = runtimeWorkspaceClient;
         this.jobStateService = jobStateService;
         this.releaseService = releaseService;
+        this.requesterAuthority = requesterAuthority;
     }
 
     @GetMapping("/api/v1/workspaces/{workspaceId}/environment")
@@ -78,9 +83,11 @@ public class WorkspaceEnvironmentController {
         }
 
         String userId = authentication == null ? TenantContext.getUserId() : authentication.getName();
-        // PLAN-0610 W1b (R2-9): capability projection, never the ROLE_ADMIN authority.
-        boolean isAdmin = CapabilityAuthorities.isInstanceAdmin(authentication);
-        if (!isAdmin && !workspaceService.isWorkspaceMember(workspaceId, userId)) {
+        // PLAN-0651 M3 T3.5 (A3): "may use this workspace's runtime" is the N7 atom, evaluated at
+        // workspace scope (instance rows always participate, so the instance-admin bypass is kept).
+        boolean canUseRuntime = requesterAuthority.holdsActionAtom(
+                parseUuid(userId), ToolFaceRegistry.ACTION_USE_WORKSPACE_RUNTIME, parseUuid(workspaceId));
+        if (!canUseRuntime && !workspaceService.isWorkspaceMember(workspaceId, userId)) {
             return ResponseEntity.status(HttpStatus.NOT_FOUND)
                     .body(Map.of("code", "WORKSPACE_NOT_FOUND", "detail", "Workspace not found"));
         }
@@ -103,8 +110,12 @@ public class WorkspaceEnvironmentController {
         response.put("storageBackend", valueOrDefault(workspace.getStorageBackend(), "host_directory"));
         response.put("storageRef", valueOrDefault(workspace.getStorageRef(), workspaceId));
         response.put("storageMode", valueOrDefault(workspace.getStorageMode(), "direct_attach"));
+        // A2 (hostPath visibility) is explicitly deferred by PLAN-0651 M3: keep today's
+        // admin-capability-or-owner rule, expressed through the capability vocabulary.
+        boolean canSeeHostPath = CapabilityAuthorities.hasCapability(authentication,
+                CapabilityAuthorities.CAP_INSTANCE_ADMIN);
         response.put("hostPath", visibleHostPath(workspace,
-                workspaceService.ownerIdOf(workspace.getId()), userId, isAdmin));
+                workspaceService.ownerIdOf(workspace.getId()), userId, canSeeHostPath));
         response.put("executionMode", valueOrDefault(workspace.getExecutionMode(), "docker"));
         response.put("capability", workspaceService.capabilitySnapshot(workspace));
         // PLAN-0396：Job 可用性来自 Runtime capabilities（单一事实源），
@@ -154,13 +165,15 @@ public class WorkspaceEnvironmentController {
             @RequestBody(required = false) ExecutionModeRequest request,
             Authentication authentication) {
         String userId = authentication == null ? TenantContext.getUserId() : authentication.getName();
-        // PLAN-0610 W1b (R2-9): capability projection, never the ROLE_ADMIN authority.
-        boolean isAdmin = CapabilityAuthorities.isInstanceAdmin(authentication);
+        // PLAN-0651 M3 T3.5 (A4): "may switch this workspace's execution mode" is the N8 atom
+        // (owner semantics; the service-side owner branch is untouched, D51-28).
+        boolean canManageRuntime = requesterAuthority.holdsActionAtom(
+                parseUuid(userId), ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_RUNTIME, parseUuid(workspaceId));
         try {
             Workspace workspace = workspaceService.changeExecutionMode(
                     workspaceId,
                     userId,
-                    isAdmin,
+                    canManageRuntime,
                     request == null ? null : request.executionMode());
             return ResponseEntity.ok(Map.of(
                     "workspaceId", workspace.getId(),

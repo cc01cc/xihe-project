@@ -114,9 +114,19 @@ class PrincipalGrantAuthorizationIntegrationTest extends AbstractIntegrationTest
     @Test
     void agentPrincipalCreationWithoutTheAtomStillFailsClosed() {
         fixture();
+        // PLAN-0651 M1 `f261a5cf` (D51-11) seeds workspace:admin into ADMIN, so an *administrator*
+        // without a workspace context now gets 409 WORKSPACE_CONTEXT_REQUIRED instead of 403 (see the
+        // explicit ADMIN case below). The default-deny baseline this test protects must therefore be
+        // asserted with a principal that holds neither workspace:admin nor the management atoms: a
+        // plain USER token with no workspace context.
+        User plain = userRepository.saveAndFlush(new User(
+                "grant-auth-plain-" + UUID.randomUUID() + "@test.com", "hash",
+                "Grant auth plain", "grantplain" + shortId()));
+        String plainToken = TestDataFactory.createGlobalToken(
+                plain.getId().toString(), plain.getEmail(), "USER", 0);
 
         HttpHeaders headers = new HttpHeaders();
-        headers.setBearerAuth(adminToken);
+        headers.setBearerAuth(plainToken);
         headers.setContentType(MediaType.APPLICATION_JSON);
         ResponseEntity<Map> created = patchClient.exchange(
                 url("/api/v1/agent-principals"), HttpMethod.POST,
@@ -124,6 +134,24 @@ class PrincipalGrantAuthorizationIntegrationTest extends AbstractIntegrationTest
 
         assertEquals(HttpStatus.FORBIDDEN, created.getStatusCode(),
                 "the default-deny baseline is unchanged after the retirement");
+    }
+
+    @Test
+    void administratorWithoutWorkspaceContextIsToldTheContextIsRequired() {
+        fixture();
+        // PLAN-0651 M1 `f261a5cf` (D51-11): workspace:admin is now part of ADMIN, so the same request
+        // that used to fall through to 403 now hits the explicit CONTEXT-REQUIRED branch
+        // (AgentPrincipalService:250-262). Pin that new semantics instead of letting it drift back.
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(adminToken);
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        ResponseEntity<Map> created = patchClient.exchange(
+                url("/api/v1/agent-principals"), HttpMethod.POST,
+                new HttpEntity<>(Map.of("name", "adminNoContextProbe"), headers), Map.class);
+
+        assertEquals(HttpStatus.CONFLICT, created.getStatusCode(),
+                "ADMIN holds workspace:admin but sent no workspace context: explicit 409");
+        assertEquals("WORKSPACE_CONTEXT_REQUIRED", created.getBody().get("code"));
     }
 
     private ResponseEntity<Map> patch(Object body) {

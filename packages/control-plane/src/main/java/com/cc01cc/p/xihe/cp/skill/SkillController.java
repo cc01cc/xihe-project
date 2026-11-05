@@ -60,7 +60,7 @@ public class SkillController {
                 throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST",
                         "workspaceId is required for a workspace definition scope");
             }
-            boolean instanceAdmin = guard.isInstanceAdmin();
+            boolean instanceAdmin = guard.canManageInstanceLibrary();
             boolean authorized = guard.canWriteDefinitionScope(scope.type(), scope.id());
             SkillImportService.ImportResult result = importService.importSkills(
                     request.skills(), scope, actor, authorized, instanceAdmin);

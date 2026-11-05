@@ -552,17 +552,29 @@ class OpenApiYamlContractTest {
             Map<?, ?> schemas = (Map<?, ?>) ((Map<?, ?>) document.get("components")).get("schemas");
             Map<?, ?> responses = (Map<?, ?>) ((Map<?, ?>) document.get("components")).get("responses");
 
-            // 1: create + scoped list + disable routes.
+            // 1: create + list + disable routes (D-174: the tier `scope` query is gone).
             Map<?, ?> principals = (Map<?, ?>) paths.get("/api/v1/agent-principals");
             assertInstanceOf(Map.class, principals, "agent-principals collection is contracted");
             assertTrue(principals.containsKey("post"), "create is contracted");
-            assertTrue(principals.containsKey("get"), "the scoped list is contracted (M1.2)");
+            assertTrue(principals.containsKey("get"), "the list is contracted (M1.2)");
             List<?> listParams = (List<?>) ((Map<?, ?>) principals.get("get")).get("parameters");
-            for (String name : List.of("scope", "workspaceId")) {
-                assertTrue(listParams.stream().anyMatch(candidate -> "query".equals(((Map<?, ?>) candidate).get("in"))
-                                && name.equals(((Map<?, ?>) candidate).get("name"))),
-                        "scoped list must carry the " + name + " query parameter");
-            }
+            assertTrue(listParams.stream().anyMatch(candidate -> "query".equals(((Map<?, ?>) candidate).get("in"))
+                            && "workspaceId".equals(((Map<?, ?>) candidate).get("name"))),
+                    "the list must keep the workspaceId query parameter");
+            assertTrue(listParams.stream().noneMatch(candidate -> "scope".equals(((Map<?, ?>) candidate).get("name"))),
+                    "D-174: the tier scope query must not be contracted");
+            Map<?, ?> createRequest = (Map<?, ?>) schemas.get("AgentPrincipalCreateRequest");
+            assertTrue(((Map<?, ?>) createRequest.get("properties")).keySet().stream()
+                            .noneMatch(key -> "scope".equals(key)),
+                    "D-174: the create body no longer contracts a scope field");
+            Map<?, ?> createView = (Map<?, ?>) schemas.get("AgentPrincipalCreateView");
+            assertTrue(((Map<?, ?>) createView.get("properties")).keySet().stream()
+                            .noneMatch(key -> "scope".equals(key)),
+                    "D-174: the create response no longer contracts a scope field");
+            Map<?, ?> workspaceAgentView = (Map<?, ?>) schemas.get("WorkspaceAgentView");
+            assertTrue(((Map<?, ?>) workspaceAgentView.get("properties")).keySet().stream()
+                            .noneMatch(key -> "source".equals(key)),
+                    "D-174: the tier source badge left the workspace-agent view");
             Map<?, ?> disable = (Map<?, ?>) paths.get("/api/v1/agent-principals/{principalId}/disable");
             assertInstanceOf(Map.class, disable, "disable route is contracted");
             Map<?, ?> disableResponses = (Map<?, ?>) ((Map<?, ?>) disable.get("post")).get("responses");
@@ -606,42 +618,42 @@ class OpenApiYamlContractTest {
             assertTrue(raw.contains("status=candidate"),
                     "the wire contract states that passive writes only land as candidates");
 
-            // 2: the create request carries the frozen scope / model-intent fields.
+            // 2: the create request carries the frozen name/model-intent fields (D-174: NO scope).
             Map<?, ?> createProps = (Map<?, ?>) ((Map<?, ?>) schemas.get("AgentPrincipalCreateRequest"))
                     .get("properties");
-            for (String field : List.of("name", "templateId", "scope", "defaultModelProvider",
+            for (String field : List.of("name", "templateId", "defaultModelProvider",
                     "defaultModelName", "allowedModels")) {
                 assertTrue(createProps.containsKey(field), "create request must carry " + field);
             }
+            assertFalse(createProps.containsKey("scope"),
+                    "D-174: the create request no longer carries a scope field");
 
-            // 3: both principal views carry scope/owner/model intent with the three-tier enum, plus the
-            // PLAN-0629 memory policy (a create answers it too, so the caller sees "memory off" at once).
+            // 3: both principal views carry owner/model intent, plus the PLAN-0629 memory policy
+            // (a create answers it too, so the caller sees "memory off" at once). D-174: NO scope.
             for (String schemaName : List.of("AgentPrincipalCreateView", "AgentPrincipalView")) {
                 Map<?, ?> view = (Map<?, ?>) schemas.get(schemaName);
                 assertInstanceOf(Map.class, view, schemaName + " is contracted");
                 Map<?, ?> properties = (Map<?, ?>) view.get("properties");
-                for (String field : List.of("principalId", "scope", "ownerUserId", "defaultModelProvider",
+                for (String field : List.of("principalId", "ownerUserId", "defaultModelProvider",
                         "defaultModelName", "allowedModels", "contextPolicy")) {
                     assertTrue(properties.containsKey(field), schemaName + " must carry " + field);
                 }
-                String scope = String.valueOf(properties.get("scope"));
-                assertTrue(scope.contains("PERSONAL") && scope.contains("WORKSPACE") && scope.contains("INSTANCE"),
-                        schemaName + ".scope must be the three tiers: " + scope);
+                assertFalse(properties.containsKey("scope"),
+                        schemaName + " no longer carries a scope field (D-174)");
             }
 
-            // 4: the workspace agent list is a three-source envelope carrying source + the snapshot.
+            // 4: the workspace agent envelope carries the snapshot, and no tier source badge (D-174).
             Map<?, ?> list = (Map<?, ?>) schemas.get("WorkspaceAgentListResponse");
             assertInstanceOf(Map.class, list, "WorkspaceAgentListResponse is contracted");
             assertTrue(((Map<?, ?>) list.get("properties")).containsKey("agents"),
                     "the list is delivered as {agents:[...]}");
             Map<?, ?> agentProps = (Map<?, ?>) ((Map<?, ?>) schemas.get("WorkspaceAgentView")).get("properties");
             for (String field : List.of("principalId", "name", "templateId", "templateName", "createdAt",
-                    "source", "permissionsSnapshot", "hooks", "contextPolicy")) {
+                    "permissionsSnapshot", "hooks", "contextPolicy")) {
                 assertTrue(agentProps.containsKey(field), "WorkspaceAgentView must carry " + field);
             }
-            String source = String.valueOf(agentProps.get("source"));
-            assertTrue(source.contains("workspace") && source.contains("personal") && source.contains("instance"),
-                    "WorkspaceAgentView.source must be the three tiers: " + source);
+            assertFalse(agentProps.containsKey("source"),
+                    "WorkspaceAgentView no longer carries the tier source badge (D-174)");
 
             // 5: connection-level and model-level resource limits.
             Map<?, ?> updateProps = (Map<?, ?>) ((Map<?, ?>) schemas.get("ProviderConnectionUpdateRequest"))

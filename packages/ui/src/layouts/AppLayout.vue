@@ -5,6 +5,8 @@ import { useI18n } from "vue-i18n";
 import { PanelLeftOpen } from "@lucide/vue";
 import Sidebar from "../components/sidebar/Sidebar.vue";
 import WorkspaceTabBar from "../features/workspace/components/WorkspaceTabBar.vue";
+import { createUserChannelSse } from "../features/workspace/chat/useUserChannelSSE";
+import { useSessionParticipantsStore } from "../features/workspace/stores/sessionParticipants";
 import { useAgentStore } from "../stores/agent";
 import { useAuthStore } from "../stores/auth";
 import { useSessionStore } from "../stores/session";
@@ -30,6 +32,7 @@ const { t } = useI18n();
 const agentStore = useAgentStore();
 const auth = useAuthStore();
 const sessionStore = useSessionStore();
+const participantsStore = useSessionParticipantsStore();
 const pendingPollIntervalMs = 10_000;
 let pendingPollTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -135,6 +138,29 @@ watch(
     },
 );
 
+/**
+ * PLAN-0660 T5.6 —— user-channel（`GET /api/v1/user-events`）的**唯一生产挂载点**。
+ *
+ * 为什么选 AppLayout，而不是 App/tab/面板：
+ * - 频道是**用户级**的（`spec/session/user-channel.md` §4：只按 Bearer 认证、无 workspace 上下文），
+ *   所以只要登录着就该有一条连接，而不是每个会话或每个面板各开一条；挂在某个 tab 里会让"切走
+ *   tab 就收不到通知"变成设计缺陷。
+ * - AppLayout 是登录后的壳（`/login`、`/register`、`/onboarding` 都不用它），生命周期天然与
+ *   "已登录会话"对齐：`onMounted` 开、`onUnmounted`（登出跳转 / 壳销毁）关，成对且不在未登录
+ *   状态下空转。再往上是 App，那里没有卸载点，反而要自己造一次性 flag。
+ * - 与下方 pending-approval 轮询同一形状（挂载开、卸载停），不用再造一套生命周期抽象。
+ *
+ * hint 只做一件事：交给 `sessionParticipants` store 的合并器，由它决定"是不是当前会话"并
+ * 至多触发一次名单重读（顺序/去重/重连全在已有实现里，这里不重复判定）。因此重连时服务端重投
+ * 同一帧是幂等的，多标签页也只是各自多读一次名单。
+ */
+const userChannel = createUserChannelSse({
+    getToken: () => auth.token,
+    onNotified: (sessionId, participantId) => {
+        participantsStore.onUserChannelHint(sessionId, participantId);
+    },
+});
+
 onMounted(() => {
     if (mobileMediaQuery) {
         if (typeof mobileMediaQuery.addEventListener === "function") {
@@ -144,11 +170,15 @@ onMounted(() => {
         }
     }
     void auth.hydrateWorkspace();
+    // PLAN-0660 T5.6：已登录才开流（未登录的壳不该对着空 token 起一轮退避重连）。
+    if (auth.isAuthenticated) userChannel.start();
     refreshPendingApprovals();
     pendingPollTimer = setInterval(refreshPendingApprovals, pendingPollIntervalMs);
 });
 
 onUnmounted(() => {
+    // PLAN-0660 T5.6：成对卸载 —— dispose 会 abort 在途 fetch 并清掉退避定时器，不留重连循环。
+    userChannel.dispose();
     if (pendingPollTimer) {
         clearInterval(pendingPollTimer);
         pendingPollTimer = null;

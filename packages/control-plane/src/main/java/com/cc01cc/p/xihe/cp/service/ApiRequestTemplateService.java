@@ -1,6 +1,7 @@
 package com.cc01cc.p.xihe.cp.service;
 
-import com.cc01cc.p.xihe.cp.policy.CapabilityAuthorities;
+import com.cc01cc.p.xihe.cp.policy.RequesterAuthority;
+import com.cc01cc.p.xihe.cp.policy.ToolFaceRegistry;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.config.DbLockTimeout;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
@@ -51,10 +52,19 @@ public class ApiRequestTemplateService {
     private final ApiRequestValidator validator;
     private final org.springframework.beans.factory.ObjectProvider<WorkspaceService> workspaces;
     private final DbLockTimeout timeout;
+    /**
+     * BL-284: supplies the component manifest merged into the frozen admission snapshot. Resolved
+     * lazily through a provider because ConfigService (needed by ContextTemplateService) already
+     * depends back on this service — a direct field would close a Spring dependency cycle.
+     */
+    private final org.springframework.beans.factory.ObjectProvider<ContextTemplateService> contextTemplates;
+    private final RequesterAuthority requesterAuthority;
 
     public ApiRequestTemplateService(ConfigJpaRepository configs, ConfigAuditRepository audits, ProviderConnectionRepository connections,
                                      EntityManager em, ObjectMapper json, ApiInputTypeService types,
-                                     ApiRequestValidator validator, org.springframework.beans.factory.ObjectProvider<WorkspaceService> workspaces, DbLockTimeout timeout) {
+                                     ApiRequestValidator validator, org.springframework.beans.factory.ObjectProvider<WorkspaceService> workspaces, DbLockTimeout timeout,
+                                     org.springframework.beans.factory.ObjectProvider<ContextTemplateService> contextTemplates,
+                                     RequesterAuthority requesterAuthority) {
         this.configs = configs;
         this.audits = audits;
         this.connections = connections;
@@ -64,6 +74,8 @@ public class ApiRequestTemplateService {
         this.validator = validator;
         this.workspaces = workspaces;
         this.timeout = timeout;
+        this.contextTemplates = contextTemplates;
+        this.requesterAuthority = requesterAuthority;
     }
 
     public static CpApiException invalid(String message) {
@@ -74,9 +86,41 @@ public class ApiRequestTemplateService {
         return new CpApiException(HttpStatus.CONFLICT, code, message);
     }
 
-    /** PLAN-0610 W1b (R2-9): capability projection, not the ROLE_ADMIN authority. */
-    public static boolean admin() {
-        return CapabilityAuthorities.isInstanceAdmin();
+    /**
+     * PLAN-0651 M3 T3.1 (A23): the instance-layer read surface is the N2 atom,
+     * {@code READ_INSTANCE_CONTENT}, evaluated at instance scope.
+     */
+    private boolean canReadInstanceContent() {
+        return holdsInstanceAtom(ToolFaceRegistry.ACTION_READ_INSTANCE_CONTENT);
+    }
+
+    /**
+     * PLAN-0651 M3 T3.1 (A23): the instance-layer write surface is the N3 atom,
+     * {@code WRITE_INSTANCE_CONTENT}, evaluated at instance scope.
+     */
+    private boolean canWriteInstanceContent() {
+        return holdsInstanceAtom(ToolFaceRegistry.ACTION_WRITE_INSTANCE_CONTENT);
+    }
+
+    /**
+     * PLAN-0651 M3 T3.1 (A23): the cross-user / cross-workspace support bypass keeps the
+     * privileged-operator meaning: either instance-content atom qualifies, so the built-in
+     * ADMIN/SUPER_ADMIN roles keep today's reach while a custom role can be granted it explicitly.
+     */
+    private boolean canManageAnyTemplateLayer() {
+        return canReadInstanceContent() || canWriteInstanceContent();
+    }
+
+    private boolean holdsInstanceAtom(String actionClass) {
+        String actor = TenantContext.getUserId();
+        if (actor == null) {
+            return false;
+        }
+        try {
+            return requesterAuthority.holdsActionAtom(UUID.fromString(actor), actionClass, null);
+        } catch (IllegalArgumentException invalidActor) {
+            return false;
+        }
     }
 
     private void access(String layer, UUID user, UUID workspace, boolean write) {
@@ -86,12 +130,13 @@ public class ApiRequestTemplateService {
         }
         switch (layer) {
             case "instance" -> {
-                if (write && !admin()) {
+                if (write && !canWriteInstanceContent()) {
                     throw new CpApiException(HttpStatus.FORBIDDEN, "FORBIDDEN", "Instance writes require admin");
                 }
             }
             case "user" -> {
-                if (user == null || (!actor.equals(user.toString()) && !admin())) {
+                if (user == null || (!actor.equals(user.toString())
+                        && !(write ? canWriteInstanceContent() : canReadInstanceContent()))) {
                     throw new CpApiException(HttpStatus.FORBIDDEN, "FORBIDDEN", "User scope is not accessible");
                 }
             }
@@ -103,7 +148,7 @@ public class ApiRequestTemplateService {
                 if (write) {
                     // PLAN-0559: workspace-layer writes require EDITOR or OWNER.
                     String role = TenantContext.getWorkspaceRole();
-                    if (!admin() && !(workspace.toString().equals(TenantContext.getWorkspaceId())
+                    if (!canManageAnyTemplateLayer() && !(workspace.toString().equals(TenantContext.getWorkspaceId())
                             && WorkspaceRole.canWrite(role))) {
                         throw new CpApiException(HttpStatus.FORBIDDEN, "FORBIDDEN", "Workspace editor permission required");
                     }
@@ -118,7 +163,7 @@ public class ApiRequestTemplateService {
         Map<String, String> result = raw(layer, user, workspace);
         ArrayNode templates = array(result.getOrDefault("templates", "[]"));
         if (layer.equals("instance")) {
-            if (!admin()) {
+            if (!canReadInstanceContent()) {
                 result.clear();
                 ArrayNode visible = json.createArrayNode();
                 for (JsonNode template : templates) {
@@ -387,6 +432,7 @@ public class ApiRequestTemplateService {
         }
         ObjectNode template = resolveRef(ref, user, workspace, "", json.createArrayNode());
         compatible(connection, template);
+        mergeContextComponents(template, user, workspace);
         ObjectNode snapshot = json.createObjectNode();
         snapshot.setAll((ObjectNode) ref);
         snapshot.put("source", source);
@@ -398,6 +444,75 @@ public class ApiRequestTemplateService {
         snapshot.put("connectionKey", connection.getConnectionKey());
         snapshot.put("connectionScope", connection.getOwnerType());
         return snapshot;
+    }
+
+    /**
+     * BL-284: the admission snapshot freezes BOTH halves of the context:
+     * <ul>
+     *   <li>{@code bodySource} — the wire template, owned by the API request template;</li>
+     *   <li>{@code components} — the component manifest, owned by the context template
+     *       ({@code context-templates} domain, resolved workspace → user → instance → built-in).</li>
+     * </ul>
+     *
+     * <p>The merge happens <b>here, at admission</b>, and the result is stored on the ChatRun, so the
+     * same run always sees the same context (the fingerprint would be meaningless if the read side
+     * stitched it together later).</p>
+     *
+     * <p><b>Merge rule (Lead ruling 2026-11-05, BL-284 follow-up):</b> the merged manifest is the
+     * <b>union of component types</b>. When both sides declare the same type, the <b>API request
+     * template's component wins</b> — it is the more specific artifact for that connection/session,
+     * while the context template is the default provider. A duplicate of the same type <b>inside one
+     * manifest</b> is illegal input and still fails with
+     * {@code 409 CONTEXT_TEMPLATE_COMPONENTS_CONFLICT}.</p>
+     */
+    void mergeContextComponents(ObjectNode template, UUID user, UUID workspace) {
+        ContextTemplateService.TemplateBinding contextBinding = contextTemplates.getObject().defaultBinding(user, workspace);
+        JsonNode contextComponents = contextBinding.snapshot().path("template").path("components");
+        if (!contextComponents.isArray() || contextComponents.isEmpty()) {
+            return;
+        }
+        JsonNode existing = template.path("components");
+        if (!existing.isArray() || existing.isEmpty()) {
+            template.set("components", contextComponents.deepCopy());
+            return;
+        }
+        template.set("components", mergeManifests(existing, contextComponents));
+    }
+
+    /**
+     * Union by component type; the API request template wins on a shared type. Order is stable:
+     * the context template's order first (shared types replaced in place), then API-only types in
+     * their own order — so two equal inputs always produce the same snapshot.
+     */
+    private ArrayNode mergeManifests(JsonNode apiManifest, JsonNode contextManifest) {
+        Map<String, JsonNode> apiByType = indexByType(apiManifest, "apiRequestTemplate");
+        Map<String, JsonNode> contextByType = indexByType(contextManifest, "contextTemplate");
+        ArrayNode merged = json.createArrayNode();
+        for (JsonNode contextComponent : contextManifest) {
+            String type = contextComponent.path("type").asText("");
+            JsonNode chosen = apiByType.getOrDefault(type, contextComponent);
+            merged.add(chosen.deepCopy());
+        }
+        for (Map.Entry<String, JsonNode> entry : apiByType.entrySet()) {
+            if (!contextByType.containsKey(entry.getKey())) {
+                merged.add(entry.getValue().deepCopy());
+            }
+        }
+        return merged;
+    }
+
+    /** Rejects a manifest that declares the same component type twice (illegal input, not a conflict). */
+    private Map<String, JsonNode> indexByType(JsonNode manifest, String side) {
+        Map<String, JsonNode> byType = new LinkedHashMap<>();
+        for (JsonNode component : manifest) {
+            String type = component.path("type").asText("");
+            JsonNode previous = byType.put(type, component);
+            if (previous != null) {
+                throw new CpApiException(HttpStatus.CONFLICT, "CONTEXT_TEMPLATE_COMPONENTS_CONFLICT",
+                        "Duplicate component type in " + side + ": " + type);
+            }
+        }
+        return byType;
     }
 
     public ObjectNode admissionSnapshot(Session session) {

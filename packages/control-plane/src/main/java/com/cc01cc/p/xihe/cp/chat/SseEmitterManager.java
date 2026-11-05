@@ -1,13 +1,20 @@
 package com.cc01cc.p.xihe.cp.chat;
 
+import com.cc01cc.p.xihe.cp.config.CpApiException;
+import com.cc01cc.p.xihe.cp.config.TenantContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
 import org.springframework.web.context.request.async.AsyncRequestNotUsableException;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.io.IOException;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -19,9 +26,24 @@ import java.util.concurrent.atomic.AtomicLong;
 import com.cc01cc.p.xihe.cp.context.service.CompactionNoticePort;
 
 /**
- * SseEmitterManager manages one reusable SSE connection per UI session.
- * A connection generation protects a newer emitter from stale callbacks
- * belonging to a replaced connection.
+ * SseEmitterManager manages the SSE connections of a UI session.
+ *
+ * <p>BL-306: a session is no longer one connection. Multiple viewers (owner tabs, declared
+ * participant views) must coexist, so the registry is keyed by
+ * {@code sessionId -> connectionKey}, where
+ * {@code connectionKey = viewerKey + "\0" + connectionInstance}:
+ *
+ * <ul>
+ *   <li>{@code viewerKey} is derived from the authenticated caller ({@code owner:<userId>} or
+ *       {@code participant:<callerUserId>:<asParticipantId>}) — never from a client-supplied
+ *       participant id alone;</li>
+ *   <li>{@code connectionInstance} comes from the client header {@code X-XH-SSE-Connection-Id}
+ *       (per browser tab, in-memory); a missing value gets a server-generated UUID. Reconnecting
+ *       with the same instance replaces only that entry.</li>
+ * </ul>
+ *
+ * <p>{@code sse.multiConnection.enabled=false} switches back to the legacy single-entry behaviour
+ * (server-side rollback; changing only the UI does not roll back).
  *
  * <p>PLAN-0470 #24/D1b: also implements {@link CompactionNoticePort} so the
  * Context domain can surface compaction-circuit notices without depending on
@@ -34,12 +56,19 @@ public class SseEmitterManager implements CompactionNoticePort {
     private static final Logger logger = LoggerFactory.getLogger(SseEmitterManager.class);
     private static final ScheduledExecutorService HEARTBEATS = Executors.newScheduledThreadPool(
             1, new DaemonThreadFactory());
+    private static final int MAX_CONNECTION_INSTANCE_LENGTH = 64;
 
-    private final Map<String, EmitterEntry> emitters = new ConcurrentHashMap<>();
+    private final Map<String, Map<String, EmitterEntry>> emitters = new ConcurrentHashMap<>();
     private final Map<String, AtomicLong> generations = new ConcurrentHashMap<>();
 
+    @Value("${sse.multiConnection.enabled:true}")
+    private boolean multiConnectionEnabled = true;
+
+    @Value("${sse.multiConnection.maxPerSession:8}")
+    private int maxConnectionsPerSession = 8;
+
     public SseEmitter createEmitter(String sessionId) {
-        return createEmitter(sessionId, null);
+        return createEmitter(sessionId, null, null);
     }
 
     /**
@@ -49,17 +78,42 @@ public class SseEmitterManager implements CompactionNoticePort {
      * never by visibility — system events are broadcast to every view.
      */
     public SseEmitter createEmitter(String sessionId, String asParticipantId) {
-        SseEmitter emitter = new SseEmitter(0L);
+        return createEmitter(sessionId, asParticipantId, null);
+    }
+
+    /**
+     * BL-306: {@code connectionId} is the client's per-tab connection instance (header
+     * {@code X-XH-SSE-Connection-Id}). Same instance ⇒ replace that entry; different instance ⇒
+     * coexist (up to the per-session limit, 409 {@code SSE_CONNECTION_LIMIT} when exceeded).
+     */
+    public SseEmitter createEmitter(String sessionId, String asParticipantId, String connectionId) {
+        String viewerKey = viewerKey(asParticipantId);
+        String instance = normalizeInstance(connectionId);
+        String connectionKey = connectionKey(viewerKey, instance);
+
         long generation = generations
                 .computeIfAbsent(sessionId, ignored -> new AtomicLong())
                 .incrementAndGet();
-        EmitterEntry entry = new EmitterEntry(sessionId, generation, emitter, asParticipantId);
+        SseEmitter emitter = new SseEmitter(0L);
+        EmitterEntry entry = new EmitterEntry(sessionId, viewerKey, instance, connectionKey,
+                generation, emitter, asParticipantId);
 
         emitter.onCompletion(() -> removeIfCurrent(entry, "completion"));
         emitter.onTimeout(() -> removeIfCurrent(entry, "timeout"));
         emitter.onError(e -> removeIfCurrent(entry, "error"));
 
-        EmitterEntry previous = emitters.put(sessionId, entry);
+        Map<String, EmitterEntry> sessionEmitters =
+                emitters.computeIfAbsent(sessionId, ignored -> new ConcurrentHashMap<>());
+        EmitterEntry previous;
+        synchronized (sessionEmitters) {
+            previous = sessionEmitters.get(connectionKey);
+            if (previous == null && multiConnectionEnabled && liveCount(sessionEmitters) >= maxConnectionsPerSession) {
+                throw new CpApiException(HttpStatus.CONFLICT, "SSE_CONNECTION_LIMIT",
+                        "session has reached the SSE connection limit of " + maxConnectionsPerSession
+                                + "; close an unused tab or reconnect with the same connection id");
+            }
+            sessionEmitters.put(connectionKey, entry);
+        }
         if (previous != null) {
             closeReplaced(previous, entry);
         }
@@ -69,8 +123,9 @@ public class SseEmitterManager implements CompactionNoticePort {
                 HEARTBEAT_INTERVAL_MS,
                 HEARTBEAT_INTERVAL_MS,
                 java.util.concurrent.TimeUnit.MILLISECONDS);
-        logger.info("[LIFECYCLE] service=cp event=chat_sse_registered sessionId={} connectionGeneration={} outcome=ok",
-                sessionId, generation);
+        logger.info("[LIFECYCLE] service=cp event=chat_sse_registered sessionId={} viewerKey={} "
+                        + "connectionInstance={} connectionGeneration={} outcome=ok",
+                sessionId, viewerKey, instance, generation);
         return emitter;
     }
 
@@ -85,39 +140,49 @@ public class SseEmitterManager implements CompactionNoticePort {
      * The payload is enriched with the field so undeclared (observer) consumers can still tell
      * multi-subject streams apart. Delivery to a declared view is skipped (not an error) when
      * the producer is another participant.
+     *
+     * <p>BL-306: the event is fanned out to every live connection of the session; a failed
+     * connection only removes its own entry and never aborts the rest of the broadcast.
      */
     public boolean send(String sessionId, String eventName, Object data, String participantId) {
-        EmitterEntry entry = emitters.get(sessionId);
-        if (entry != null && !entry.closed.get()) {
+        List<EmitterEntry> entries = snapshot(sessionId);
+        if (entries.isEmpty()) {
+            logger.debug("[LIFECYCLE] service=cp event=chat_sse_unavailable sessionId={} eventName={} errorCode=SSE_SUBSCRIPTION_REQUIRED",
+                    sessionId, eventName);
+            return false;
+        }
+        boolean anyAccepted = false;
+        for (EmitterEntry entry : entries) {
+            if (entry.closed.get()) {
+                continue;
+            }
             if (!entry.accepts(participantId)) {
                 logger.debug("[LIFECYCLE] service=cp event=chat_sse_event_filtered sessionId={} connectionGeneration={} eventName={} view={} producer={}",
                         sessionId, entry.generation, eventName, entry.asParticipantId, participantId);
-                return true;
+                anyAccepted = true;
+                continue;
             }
             try {
                 entry.emitter.send(SseEmitter.event()
                     .name(eventName)
                     .data(enrichWithParticipantId(data, participantId)));
+                anyAccepted = true;
                 logger.debug("[LIFECYCLE] service=cp event=chat_sse_event_sent sessionId={} connectionGeneration={} eventName={}",
                         sessionId, entry.generation, eventName);
-                return true;
             } catch (IOException | IllegalStateException e) {
+                // One broken connection must not take the whole broadcast down.
                 if (isClientDisconnect(e)) {
                     logger.info("[LIFECYCLE] service=cp event=chat_sse_client_closed sessionId={} connectionGeneration={} reason=client_disconnect",
                             sessionId, entry.generation);
                     removeIfCurrent(entry, "client_closed");
-                    return false;
+                } else {
+                    logger.warn("[LIFECYCLE] service=cp event=chat_sse_send_failed sessionId={} connectionGeneration={} eventName={} errorCode=SSE_SEND_FAILED",
+                            sessionId, entry.generation, eventName, e);
+                    removeIfCurrent(entry, "send_failed");
                 }
-                logger.warn("[LIFECYCLE] service=cp event=chat_sse_send_failed sessionId={} connectionGeneration={} eventName={} errorCode=SSE_SEND_FAILED",
-                        sessionId, entry.generation, eventName, e);
-                removeIfCurrent(entry, "send_failed");
-                return false;
             }
-        } else {
-            logger.debug("[LIFECYCLE] service=cp event=chat_sse_unavailable sessionId={} eventName={} errorCode=SSE_SUBSCRIPTION_REQUIRED",
-                    sessionId, eventName);
-            return false;
         }
+        return anyAccepted;
     }
 
     /**
@@ -138,10 +203,12 @@ public class SseEmitterManager implements CompactionNoticePort {
         }
     }
 
+    /** Closes every connection of the session (session deletion / hard cleanup). */
     public void complete(String sessionId) {
-        EmitterEntry entry = emitters.get(sessionId);
-        if (entry != null && removeIfCurrent(entry, "completed")) {
-            entry.emitter.complete();
+        for (EmitterEntry entry : snapshot(sessionId)) {
+            if (removeIfCurrent(entry, "completed")) {
+                entry.emitter.complete();
+            }
         }
     }
 
@@ -165,9 +232,10 @@ public class SseEmitterManager implements CompactionNoticePort {
         return data;
     }
 
+    /** Closes one specific connection (by emitter identity), leaving the others untouched. */
     public boolean complete(String sessionId, SseEmitter expectedEmitter) {
-        EmitterEntry entry = emitters.get(sessionId);
-        if (entry == null || entry.emitter != expectedEmitter) {
+        EmitterEntry entry = entryFor(sessionId, expectedEmitter);
+        if (entry == null) {
             return false;
         }
         if (!removeIfCurrent(entry, "completed")) {
@@ -177,14 +245,62 @@ public class SseEmitterManager implements CompactionNoticePort {
         return true;
     }
 
+    /** BL-306: any live entry counts — /chat only needs "at least one subscriber". */
     public boolean hasEmitter(String sessionId) {
-        EmitterEntry entry = emitters.get(sessionId);
-        return entry != null && !entry.closed.get();
+        return snapshot(sessionId).stream().anyMatch(entry -> !entry.closed.get());
+    }
+
+    /** Test/observability hook: number of live connections registered for a session. */
+    public int activeConnectionCount(String sessionId) {
+        return (int) snapshot(sessionId).stream().filter(entry -> !entry.closed.get()).count();
     }
 
     long connectionGeneration(String sessionId) {
-        EmitterEntry entry = emitters.get(sessionId);
-        return entry == null ? 0L : entry.generation;
+        AtomicLong generation = generations.get(sessionId);
+        return generation == null ? 0L : generation.get();
+    }
+
+    private List<EmitterEntry> snapshot(String sessionId) {
+        Map<String, EmitterEntry> sessionEmitters = emitters.get(sessionId);
+        return sessionEmitters == null ? List.of() : new ArrayList<>(sessionEmitters.values());
+    }
+
+    private EmitterEntry entryFor(String sessionId, SseEmitter expectedEmitter) {
+        for (EmitterEntry entry : snapshot(sessionId)) {
+            if (entry.emitter == expectedEmitter) {
+                return entry;
+            }
+        }
+        return null;
+    }
+
+    private static long liveCount(Map<String, EmitterEntry> sessionEmitters) {
+        return sessionEmitters.values().stream().filter(entry -> !entry.closed.get()).count();
+    }
+
+    private String viewerKey(String asParticipantId) {
+        String callerId = TenantContext.getUserId();
+        String caller = callerId == null || callerId.isBlank() ? "anonymous" : callerId;
+        if (asParticipantId == null || asParticipantId.isBlank()) {
+            return "owner:" + caller;
+        }
+        return "participant:" + caller + ":" + asParticipantId;
+    }
+
+    private String connectionKey(String viewerKey, String instance) {
+        return multiConnectionEnabled ? viewerKey + "\u0000" + instance : "legacy";
+    }
+
+    private static String normalizeInstance(String connectionId) {
+        if (connectionId == null || connectionId.isBlank()) {
+            return UUID.randomUUID().toString();
+        }
+        String trimmed = connectionId.trim();
+        if (trimmed.length() > MAX_CONNECTION_INSTANCE_LENGTH
+                || !trimmed.matches("[A-Za-z0-9._-]+")) {
+            return UUID.randomUUID().toString();
+        }
+        return trimmed;
     }
 
     private void closeReplaced(EmitterEntry previous, EmitterEntry replacement) {
@@ -200,7 +316,16 @@ public class SseEmitterManager implements CompactionNoticePort {
             return false;
         }
         cancelHeartbeat(entry);
-        boolean removed = emitters.remove(entry.sessionId, entry);
+        Map<String, EmitterEntry> sessionEmitters = emitters.get(entry.sessionId);
+        boolean removed = false;
+        if (sessionEmitters != null) {
+            synchronized (sessionEmitters) {
+                removed = sessionEmitters.remove(entry.connectionKey, entry);
+                if (sessionEmitters.isEmpty()) {
+                    emitters.remove(entry.sessionId, sessionEmitters);
+                }
+            }
+        }
         if (removed) {
             logger.info("[LIFECYCLE] service=cp event={} sessionId={} connectionGeneration={} reason={}",
                     closeEventName(reason), entry.sessionId, entry.generation, reason);
@@ -222,7 +347,9 @@ public class SseEmitterManager implements CompactionNoticePort {
     }
 
     private void sendHeartbeat(EmitterEntry entry) {
-        if (entry.closed.get() || emitters.get(entry.sessionId) != entry) {
+        Map<String, EmitterEntry> sessionEmitters = emitters.get(entry.sessionId);
+        EmitterEntry current = sessionEmitters == null ? null : sessionEmitters.get(entry.connectionKey);
+        if (entry.closed.get() || current != entry) {
             cancelHeartbeat(entry);
             return;
         }
@@ -265,14 +392,22 @@ public class SseEmitterManager implements CompactionNoticePort {
 
     private static final class EmitterEntry {
         private final String sessionId;
+        private final String viewerKey;
+        private final String connectionInstance;
+        private final String connectionKey;
         private final long generation;
         private final SseEmitter emitter;
         private final String asParticipantId;
         private final AtomicBoolean closed = new AtomicBoolean(false);
         private volatile ScheduledFuture<?> heartbeat;
 
-        private EmitterEntry(String sessionId, long generation, SseEmitter emitter, String asParticipantId) {
+        private EmitterEntry(String sessionId, String viewerKey, String connectionInstance,
+                             String connectionKey, long generation, SseEmitter emitter,
+                             String asParticipantId) {
             this.sessionId = sessionId;
+            this.viewerKey = viewerKey;
+            this.connectionInstance = connectionInstance;
+            this.connectionKey = connectionKey;
             this.generation = generation;
             this.emitter = emitter;
             this.asParticipantId = asParticipantId;

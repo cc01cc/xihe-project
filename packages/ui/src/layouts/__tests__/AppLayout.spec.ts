@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { flushPromises, mount } from "@vue/test-utils";
 import { createMemoryHistory, createRouter } from "vue-router";
 import { createI18n } from "vue-i18n";
@@ -82,6 +82,13 @@ async function mountLayout(
 beforeEach(async () => {
     setActivePinia(createPinia());
     localStorage.clear();
+    // PLAN-0660 T5.6：AppLayout 现在挂载时就会订阅 user-channel。本套用例考的是布局与审批 IA，
+    // 所以这里把 `fetch` 停在一个**永不完结**的请求上：既不真的出网，也不触发退避重连定时器，
+    // 输出里就不会混进与本套件无关的连接噪音（`AppLayoutUserChannel.spec.ts` 专测那条链路）。
+    vi.stubGlobal(
+        "fetch",
+        vi.fn<typeof fetch>(() => new Promise<Response>(() => undefined)),
+    );
     // PLAN-0608 I6（预期变更，判据未削弱）：`hydrateWorkspace` 不再用
     // `/workspaces/current` 回填回退值，所以「已有 workspace」必须由 tab 上下文提供。
     // 本组用例考的是审批 banner/轮询，不是上下文解析 ⇒ 显式播种上下文即可，
@@ -97,6 +104,10 @@ beforeEach(async () => {
         user: { id: "user-1", email: "test@xihe.local" },
         workspace: { id: "workspace-1", name: "Workspace" },
     });
+});
+
+afterEach(() => {
+    vi.unstubAllGlobals();
 });
 
 describe("AppLayout navigation IA (PLAN-0582 S1/S2)", () => {

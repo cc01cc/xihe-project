@@ -50,12 +50,6 @@ const EXPECTED_TESTIDS: Array<{
 }> = [
     // ── asserted：develop 已存在且本次走查断言过 ─────────────────────────────────────────
     {
-        id: "agent-principal-scope",
-        scene: "S1",
-        status: "asserted",
-        note: "scope 下拉选 PERSONAL（S1 PASS）",
-    },
-    {
         id: "agent-principal-name",
         scene: "S1",
         status: "asserted",
@@ -78,12 +72,6 @@ const EXPECTED_TESTIDS: Array<{
         scene: "S1",
         status: "asserted",
         note: "默认模型 name 填写（S1 PASS）",
-    },
-    {
-        id: "agent-scope-badge-",
-        scene: "S1/S2",
-        status: "asserted",
-        note: "data-agent-scope=personal + 文案含「个人」（S1/S2 PASS）",
     },
     {
         id: "workspace-agent-management-dialog",
@@ -137,12 +125,6 @@ const EXPECTED_TESTIDS: Array<{
     },
 
     // ── exists-unasserted：develop 已存在，本 spec 未断言（原因见 note）──────────────────
-    {
-        id: "agent-scope-unavailable",
-        scene: "S1",
-        status: "exists-unasserted",
-        note: "只在「权限投影未就绪」时渲染；走查账号是 OWNER，走不到该分支",
-    },
     {
         id: "agent-default-model-error",
         scene: "S1",
@@ -295,10 +277,6 @@ async function openAgentDialog(page: Page): Promise<void> {
     });
 }
 
-function scopeBadge(page: Page, id: string) {
-    return page.getByTestId(`agent-scope-badge-${id}`);
-}
-
 test.describe.configure({ mode: "serial", timeout: 180_000 });
 
 test.describe("PLAN-0622 M4 有头走查：PERSONAL agent 生命周期 + 429 提示", () => {
@@ -371,7 +349,7 @@ test.describe("PLAN-0622 M4 有头走查：PERSONAL agent 生命周期 + 429 提
         );
     });
 
-    test("S1@host 建 PERSONAL agent：scope 选个人 → 填名 + 默认模型 → 列表出现且 data-agent-scope=personal", async ({
+    test("S1@host 建 agent：无 tier scope 选择器 → 填名 + 默认模型 → 列表出现该主体", async ({
         page,
         request,
     }) => {
@@ -383,12 +361,12 @@ test.describe("PLAN-0622 M4 有头走查：PERSONAL agent 生命周期 + 429 提
         await expect(page.getByTestId("workspace-toolbar-agents")).toBeVisible({ timeout: 45000 });
         await openAgentDialog(page);
 
-        // scope 下拉只列有权限的档；PERSONAL 是 S1 的目标档（无权限时 UI fail-closed，直接失败）。
-        const scopeSelect = page.getByTestId("agent-principal-scope");
-        await expect(scopeSelect).toBeVisible({ timeout: 20000 });
-        await scopeSelect.selectOption("PERSONAL");
+        await expect(page.getByTestId("agent-principal-scope")).toHaveCount(0);
 
-        const name = `Headed Personal ${randomUUID().slice(0, 8)}`;
+        // 2026-11-04 主体名规则（`src/lib/principalName.ts`：不得含空格、不得数字开头，CP 同源）：
+        // 原用例名 `Headed Personal <hex>` 带空格 ⇒ `createBlocked` 在点击前就禁用创建按钮，
+        // `click()` 在 `element is not enabled` 上重试到 180 s 超时（S1「create 超时」的真实原因）。
+        const name = `HeadedPersonal${randomUUID().replaceAll("-", "").slice(0, 8)}`;
         await page.getByTestId("agent-principal-name").fill(name);
         await page.getByTestId("agent-default-model-provider").fill("openai");
         await page.getByTestId("agent-default-model-name").fill(FAKE_LLM_MODEL);
@@ -401,23 +379,30 @@ test.describe("PLAN-0622 M4 有头走查：PERSONAL agent 生命周期 + 429 提
         await page.getByTestId("agent-principal-create").click();
         const created = await createResponse;
         expect(created.status(), await created.text()).toBe(201);
-        const createdBody = (await created.json()) as { principalId?: string; scope?: string };
+        const createdBody = (await created.json()) as { principalId?: string };
         principalId = createdBody.principalId ?? "";
         expect(principalId).toMatch(/^[0-9a-f-]{36}$/i);
-        expect(createdBody.scope, "CP must echo scope=PERSONAL").toBe("PERSONAL");
+        expect(createdBody).not.toHaveProperty("scope");
 
-        const badge = scopeBadge(page, principalId);
-        await expect(badge).toBeVisible({ timeout: 20000 });
-        await expect(badge).toHaveAttribute("data-agent-scope", "personal");
-        await expect(badge).toHaveText(/个人|Personal/i);
+        // 2026-11-05 口径（Lead 裁定 + D-177）：**创建与绑定是两个授权动作**
+        // （`CREATE_ACCOUNT` / `MANAGE_WORKSPACE_AGENTS`）。创建不回填 owner、也不自动绑 workspace，
+        // 因此创建成功后主体出现在「已创建，尚未绑定到此工作区」区（`unbound-agent-principal`），
+        // 而 `workspace-agent-<id>` 是**已绑定行**（WorkspaceAgentsPanel.vue:1186-1193 vs :1299），
+        // 要等 S2 的绑定动作之后才出现。这里断言「创建结果对用户可见」，并显式断言它**不在**
+        // 已绑定区 —— "创建不自动绑定"是预期行为，不是"看不见"。
+        const unboundSection = page.getByTestId("unbound-agent-principal");
+        await expect(unboundSection).toBeVisible({ timeout: 20000 });
+        await expect(unboundSection).toContainText(principalId);
+        await expect(page.getByTestId(`workspace-agent-${principalId}`)).toHaveCount(0);
+        expect(await page.locator("[data-agent-scope]").count()).toBe(0);
         await shot(page, {
             id: "S1",
             name: "s1-personal-agent-row",
-            assertion: `PERSONAL agent 创建 201；行徽标 data-agent-scope=personal；principal=${principalId}`,
+            assertion: `agent 创建 201；无 tier scope 写入/徽标；principal=${principalId}`,
         });
     });
 
-    test("S2@host 绑到工作区：source 徽标=个人 agent → 会话空态可选它建会话（或 403 且有可操作文案）", async ({
+    test("S2@host 绑到工作区：无 tier/source 徽标 → 会话空态可选它建会话（或 403 且有可操作文案）", async ({
         page,
     }) => {
         attachPageDiagnostics(page);
@@ -445,6 +430,12 @@ test.describe("PLAN-0622 M4 有头走查：PERSONAL agent 生命周期 + 429 提
             const bound = await bindResponse;
             expect([200, 201, 204], await bound.text()).toContain(bound.status());
             boundInUi = true;
+            // 2026-11-05（Lead 批准，加严）：绑定成功后主体必须出现在"已绑定智能体"区
+            // （`workspace-agent-<id>` 是已绑定行；S1 已把"创建后落在 unbound 区"作为预期断言，
+            // 这条把「绑定后可见」补成硬断言，不再只靠截图）。
+            await expect(page.getByTestId(`workspace-agent-${principalId}`)).toBeVisible({
+                timeout: 15_000,
+            });
         } else {
             recordNotCovered(
                 "S2-bind",
@@ -452,14 +443,11 @@ test.describe("PLAN-0622 M4 有头走查：PERSONAL agent 生命周期 + 429 提
             );
         }
 
-        const badge = scopeBadge(page, principalId);
-        await expect(badge).toBeVisible({ timeout: 20000 });
-        await expect(badge).toHaveAttribute("data-agent-scope", "personal");
-        await expect(badge).toHaveText(/个人|Personal/i);
+        expect(await page.locator("[data-agent-scope]").count()).toBe(0);
         await shot(page, {
             id: "S2a",
-            name: "s2a-source-badge-personal",
-            assertion: "绑定后来源徽标显示「个人 agent」",
+            name: "s2a-agent-row-bound",
+            assertion: "绑定后列表不出现 tier/source 徽标",
         });
 
         await page.keyboard.press("Escape");

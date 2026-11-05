@@ -4,6 +4,7 @@ import { createPinia } from "pinia";
 import { i18n } from "../../../../i18n";
 import SessionParticipantsPanel from "../SessionParticipantsPanel.vue";
 import type {
+    ParticipantReadCursor,
     SessionParticipantCapabilities,
     SessionParticipantListResponse,
     SessionParticipantView,
@@ -18,15 +19,17 @@ vi.mock("../../../../composables/api", async (importOriginal) => {
             getSessionParticipants: vi.fn<() => Promise<SessionParticipantListResponse>>(),
             removeSessionParticipant: vi.fn<() => Promise<void>>(),
             updateSessionParticipant: vi.fn<() => Promise<void>>(),
+            advanceParticipantCursor: vi.fn<() => Promise<ParticipantReadCursor>>(),
         },
     };
 });
 
-import { api } from "../../../../composables/api";
+import { api, PARTICIPANT_CURSOR_ADVANCE_TO_LATEST } from "../../../../composables/api";
 
 const getParticipants = vi.mocked(api.getSessionParticipants);
 const removeParticipant = vi.mocked(api.removeSessionParticipant);
 const apiUpdate = vi.mocked(api.updateSessionParticipant);
+const apiAdvanceCursor = vi.mocked(api.advanceParticipantCursor);
 
 const ALL_CAPS: SessionParticipantCapabilities = { view: true, manage: true, mention: true };
 
@@ -39,7 +42,6 @@ const AGENT: SessionParticipantView = {
     orderIndex: 10,
     wakePolicy: "ALL_MESSAGES",
     respondPolicy: "ALWAYS",
-    source: "workspace",
     disabledAt: null,
     readCursor: { lastReadEventSeq: 12, mentionCount: 3, updatedAt: "2026-11-02T00:00:00Z" },
     defaultModelProvider: "openai",
@@ -55,7 +57,6 @@ const HUMAN: SessionParticipantView = {
     orderIndex: 20,
     wakePolicy: "MENTION",
     respondPolicy: "WHEN_MENTIONED",
-    source: null,
     disabledAt: null,
     readCursor: null,
     defaultModelProvider: null,
@@ -441,5 +442,117 @@ describe("GUARD role badge (PLAN-0625 M3, icon not color)", () => {
         expect(
             plain.get('[data-testid="participant-role-badge-p-human"]').find("svg").exists(),
         ).toBe(false);
+    });
+});
+
+/**
+ * PLAN-0660 T5.6 —— 参数行上的"标记已读"。产品路径是**控件 → 新增 api client → PATCH**；
+ * 这些用例同时也是"控件没接线就会红"的门：不点控件不会调 `advanceParticipantCursor`，
+ * 点了之后徽标必须真的按**服务端**返回的 `mentionCount` 归零（不是本地减一、也不是再拉一次名单）。
+ */
+describe("participant read cursor advance (PLAN-0660 T5.6)", () => {
+    const CURSOR = (mentionCount: number, lastReadEventSeq = 12): ParticipantReadCursor => ({
+        lastReadEventSeq,
+        mentionCount,
+        updatedAt: "2026-11-05T00:00:00Z",
+    });
+
+    /** 我自己的那一行（CP 归约 `selfOwned` + HUMAN）—— 唯一该出现控件的地方。 */
+    function myRow(mentionCount = 3): SessionParticipantView {
+        return {
+            ...HUMAN,
+            participantId: "p-me",
+            displayName: "Me Myself",
+            selfOwned: true,
+            readCursor: CURSOR(mentionCount),
+        };
+    }
+
+    it("renders the advance control only on the caller's own human row", async () => {
+        getParticipants.mockResolvedValueOnce({
+            participants: [
+                // 我拥有的 AGENT 主体同样是 selfOwned，但游标是人的，不该出现控件。
+                { ...AGENT, participantId: "p-my-agent", selfOwned: true },
+                myRow(),
+                HUMAN,
+            ],
+            capabilities: ALL_CAPS,
+        });
+        const wrapper = mountPanel();
+        await flushPromises();
+
+        const controls = wrapper.findAll('[data-testid="participant-cursor-advance"]');
+        expect(controls).toHaveLength(1);
+        expect(
+            wrapper
+                .find(
+                    '[data-testid="participant-row-p-me"] [data-testid="participant-cursor-advance"]',
+                )
+                .exists(),
+        ).toBe(true);
+        expect(
+            wrapper
+                .find(
+                    '[data-testid="participant-row-p-my-agent"] [data-testid="participant-cursor-advance"]',
+                )
+                .exists(),
+        ).toBe(false);
+        expect(
+            wrapper
+                .find(
+                    '[data-testid="participant-row-p-human"] [data-testid="participant-cursor-advance"]',
+                )
+                .exists(),
+        ).toBe(false);
+    });
+
+    it("PATCHes the sentinel ceiling and zeroes the badge from the response (no refetch)", async () => {
+        getParticipants.mockResolvedValueOnce({ participants: [myRow(3)], capabilities: ALL_CAPS });
+        apiAdvanceCursor.mockResolvedValueOnce(CURSOR(0, 42));
+
+        const wrapper = mountPanel();
+        await flushPromises();
+        expect(wrapper.find('[data-testid="participant-mention-badge-p-me"]').exists()).toBe(true);
+
+        await wrapper.get('[data-testid="participant-cursor-advance"]').trigger("click");
+        await flushPromises();
+
+        // 上限由 CP 夹取：前端只传哨兵值，不自己算会话最大 sequence。
+        expect(apiAdvanceCursor).toHaveBeenCalledWith(
+            "session-1",
+            "p-me",
+            PARTICIPANT_CURSOR_ADVANCE_TO_LATEST,
+        );
+        // 徽标来自服务端返回的 mentionCount=0 ⇒ 立即消失，且**没有**重拉整份名单。
+        expect(wrapper.find('[data-testid="participant-mention-badge-p-me"]').exists()).toBe(false);
+        expect(getParticipants).toHaveBeenCalledTimes(1);
+        expect(wrapper.find('[data-testid="participants-error-detail"]').exists()).toBe(false);
+    });
+
+    it("maps 403 CURSOR_SELF_ONLY to readable copy and keeps the badge untouched", async () => {
+        const { ApiError } = await import("../../../../composables/api");
+        getParticipants.mockResolvedValueOnce({ participants: [myRow(3)], capabilities: ALL_CAPS });
+        apiAdvanceCursor.mockRejectedValueOnce(
+            new ApiError({
+                status: 403,
+                code: "CURSOR_SELF_ONLY",
+                detail: "The read cursor can only be advanced by its own human participant",
+                requestId: "req-cursor",
+            }),
+        );
+
+        const wrapper = mountPanel();
+        await flushPromises();
+
+        await wrapper.get('[data-testid="participant-cursor-advance"]').trigger("click");
+        await flushPromises();
+
+        // 本地化文案（不是 CP 的英文 detail）。
+        expect(wrapper.get('[data-testid="participants-error-detail"]').text()).toBe(
+            i18n.global.t("workspace.participantCursorSelfOnly"),
+        );
+        // 失败不改本地状态：徽标仍是服务端的 3。
+        expect(wrapper.get('[data-testid="participant-mention-badge-p-me"]').text()).toContain("3");
+        expect(getParticipants).toHaveBeenCalledTimes(1);
     });
 });

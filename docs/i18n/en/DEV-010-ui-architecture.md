@@ -5,13 +5,23 @@ lang: en
 sidebar_group: "Developer Guide"
 sidebar_order: 10
 created: 2026-10-10
-updated: 2026-10-31
+updated: 2026-11-05
 status: active
 ---
 
-# UI Architecture
+# DEV-010: UI Architecture
 
-This English companion records the current route map and Workspace/Chat UI ownership. The zh-Hans DEV-010 remains the detailed UI architecture reference.
+> Vue 3 + Pinia + vue-router + Vite + Tailwind CSS 4 + reka-ui. The UI only talks to CP (`fetch POST` + persistent SSE); it never calls the Agent or Runtime directly. Boundary with DEV-017 is "UI implementation vs Session domain": routing/views/components/transport live here; store responsibility boundaries and cross-view sync live in DEV-017.
+
+### SPEC pointer
+
+Cross-page interaction state, design system, and accessibility contracts live in the root-level proposed SPECs:
+
+- [`spec/ui/interaction-model.md`](../../../spec/ui/interaction-model.md)
+- [`spec/ui/design-system.md`](../../../spec/ui/design-system.md)
+- [`spec/ui/accessibility.md`](../../../spec/ui/accessibility.md)
+
+These SPECs neither copy the OpenAPI/SSE schemas nor replace the concrete page flows of a feature PLAN.
 
 ## 0.1 Workspace context (PLAN-0559)
 
@@ -20,37 +30,124 @@ This English companion records the current route map and Workspace/Chat UI owner
 - Roles: OWNER/EDITOR/VIEWER. VIEWER write affordances are hidden; CP remains authoritative with 403.
 - Cross-tab logout uses BroadcastChannel + storage fallback; workspace switches are not broadcast.
 
+## 1. Routing and layout
 
-## 1. Routing
+`packages/ui/src/router/index.ts`:
 
-| Route | View | Behavior |
+| Route | Component | Behavior |
 |---|---|---|
-| `/` | redirect | Redirects to `/workspace`. |
-| `/workspace` | `WorkspacePicker` (inside `AppLayout`, when no tab context) | **Explicit workspace picker** (PLAN-0608); roles come from the authoritative `GET /workspaces`. With a tab context the guard redirects to `/workspace/{id}`. |
-| `/workspace/:workspaceId` | `WorkspaceView` | Workbench (file tree / main area / dock); may show the no-Session empty state. |
-| `/workspace/:workspaceId/chat/:sessionId` | `WorkspaceView` | Selects a Session belonging to the Workspace and displays Chat. |
-| `/workspace/:workspaceId/environment` | `WorkspaceEnvironmentView` | Workspace execution environment. |
-| `/workspace/:workspaceId/settings` | `WorkspaceSettingsView` (PLAN-0560) | General (OWNER rename/delete) / Config (workspace-layer domains) / MCP sections; `?tab=config\|mcp` deep links. |
-| `/workspace/:workspaceId/scheduled-tasks` | `WorkspaceScheduledTasksView` | Scheduled tasks; participates in routing as one tab of the **middle route tab bar** (`router/index.ts`). |
+| `/` | redirect | → `/workspace` |
+| `/workspace` | `WorkspacePicker` (inside `AppLayout`, when no tab context) | **Explicit workspace picker** (PLAN-0608): roles come from the authoritative `GET /workspaces`; with a tab context the guard redirects to `/workspace/{id}` |
+| `/workspace/:workspaceId` | `WorkspaceView` (inside `AppLayout`) | Workbench (file tree / main area / dock); may show the no-Session empty state |
+| `/workspace/:workspaceId/chat/:sessionId` | `WorkspaceView` (inside `AppLayout`) | Selects a Session belonging to the Workspace and displays Chat |
+| `/workspace/:workspaceId/environment` | `WorkspaceEnvironmentView` (inside `AppLayout`) | Workspace execution environment |
+| `/workspace/:workspaceId/settings` | `WorkspaceSettingsView` (inside `AppLayout`, PLAN-0560) | General (OWNER rename/delete) / Config (workspace-layer 9 domains) / MCP sections; `?tab=config\|mcp` deep links |
+| `/workspace/:workspaceId/scheduled-tasks` | `WorkspaceScheduledTasksView` (inside `AppLayout`) | Scheduled tasks; participates in routing as one tab of the **middle route tab bar** (`router/index.ts`) |
 
-There is no standalone `/chat` route. Workspace routes share `AppLayout`, which is **two-tier left nav + main area**: leftmost `NavRail` (fixed **56px**, icons only, no text labels) + navigation panel (default **280px**, collapsible and draggable 220–360) + main area. Workbench content is owned by `WorkspaceWorkbench` (structure see below), with the **middle route tab bar** `WorkspaceTabBar` on top (a projection of the existing routes — no new routes; `chat` is always open, the other three are a per-workspace persisted open set). Visiting `/workspace` with no tab context renders the **explicit workspace picker** `WorkspacePicker` (PLAN-0608). A Session ID does not replace a Workspace ID.
+All Workspace routes share `AppLayout`. `AppLayout` is **two-tier left nav + main area**: leftmost `NavRail` (fixed **56px**, icons only, no text labels) + navigation panel (default **280px**, collapsible and draggable 220–360) + main area. Workbench content is owned by `WorkspaceWorkbench` (structure see next section), with the **middle route tab bar** `WorkspaceTabBar` on top (a projection of the existing routes — no new routes; `chat` is always open, the other three are a per-workspace persisted open set). Visiting `/workspace` with no tab context renders the **explicit workspace picker** `WorkspacePicker` (PLAN-0608). Chat is a Session view inside the Workspace feature, so there is no standalone `/chat` route; unmatched paths fall back to `/workspace`. A Session ID does not replace a Workspace ID (PLAN-222).
 
-## 2. Feature Ownership
+## 2. View layering
 
-- `src/features/workspace/` owns Workspace pages, components, store, and interactions.
-- `WorkspaceView` is an **assembly layer**: it only wires routing/layout; the workbench body is owned by `WorkspaceWorkbench` (rail 56 + navigation panel + file tree / main area / dock). On `400 WORKSPACE_CONTEXT_CONFLICT` / `409 WORKSPACE_CONTEXT_REQUIRED` it falls back to the `WorkspacePicker` selection surface (PLAN-0608) instead of a dead-end toast.
-- `src/features/workspace/chat/` owns Workspace Chat UI, `ChatStore`, Session list UI, and Chat SSE/parser composables.
-- `src/stores/session.ts` remains shared UI state for Session selection and metadata. The Control Plane remains canonical for Session, Message, and ChatRun lifecycle and durable records.
-- Shared API facades, cross-feature types, and shared stores remain outside the Workspace feature.
-- The unused full-screen `ChatView` and its standalone route are removed. Auth cleanup reaches Workspace Chat only through its public lifecycle entry point; it does not move Session or Control Plane ownership.
+- **WorkspaceView** (`features/workspace/pages/WorkspaceView.vue`): an **assembly layer** — it only wires routing/layout; the workbench body is owned by `WorkspaceWorkbench` (rail 56 + navigation panel + file tree / main area / dock, see §1 and this bullet). It mounts Chat when a Session is selected, otherwise shows the create-Session empty state; on `400 WORKSPACE_CONTEXT_CONFLICT` / `409 WORKSPACE_CONTEXT_REQUIRED` it falls back to the workspace picker `WorkspacePicker` (PLAN-0608) instead of a dead-end toast. The single workspace-creation entry is `WorkspaceCreateDialog` (PLAN-0384: empty-state entry + toolbar "Add Workspace" share one dialog). Flow = storage mode (managed copy / direct use of a directory) → Runtime-visible source browser for direct-attach only → execution-mode cards gated by real capability probes (MXC experimental / windows-host high risk / docker disabled later) → confirmation summary and host-risk confirmation → create (`Idempotency-Key`). Managed copy v1 is file-import only (docker execution comes later) and offers no execution-mode choice; workspace rename/delete go through `WorkspaceSettingsView` (`features/workspace/pages/WorkspaceSettingsView.vue`, PLAN-0560: general section lets OWNER edit/delete with a second confirmation; config section reuses `ConfigLayerPanels`; MCP is `WorkspaceMcpPanel`; the old `WorkspaceSettingsDialog` is retired); mobile (<768px) uses a separate IA (§7: tree Sheet + Chat bottom drawer).
+- **ChatPanel** (`features/workspace/chat/components/ChatPanel.vue`): the embedded conversation component for Workspace Chat (message list + input + `SSEStream`); receives a `sessionId` prop; the attachment write entry is `handleSend`.
+- **FollowUpQueuePanel** (`features/workspace/chat/components/FollowUpQueuePanel.vue`, PLAN-0442): the inline durable Follow-up queue surface inside ChatPanel, driven purely by snapshots — FIFO count (hard cap 5), per-item withdraw, whole-queue Continue while paused, capacity footer; admitted children cannot be withdrawn, and attempted `child_ambiguous` completed items are echoed via message status. While a Run is in progress, `InputArea` exposes an explicit "Queue" action (`chat-queue-button`, `POST /api/v1/sessions/{sessionId}/follow-ups` with an Idempotency-Key) that is distinct from normal send semantics — while the queue is non-empty CP rejects normal sends with 409. Refresh/reconnect restores from snapshot rather than SSE memory; design preview and user visual approval are in `plans/PLAN-0442-XH-run-guidance-follow-up/design.md` decision #24.
+- **GuidancePanel** (`features/workspace/chat/components/GuidancePanel.vue` + `composables/useGuidance.ts`, PLAN-0530): a separate "guide the running run" surface for in-flight Runs, fully separated from Send/Follow-up/Stop (own i18n namespace `chat.guidance*`). Its single data source is the CP snapshot `GET /api/v1/chat/runs/{runId}/guidance` (no Guidance SSE event — option ① of the ruling); submission goes through `POST .../guidance` + `Idempotency-Key`. It lists source/time/status (`pending`/`consumed`/`terminal_expired`) in ascending CP `sequence` order. Input is enabled only when the UI-projected state ∈ `{executing, thinking, awaiting_approval}` (mapping CP `{running, streaming, awaiting_approval}`); after a Run reaches a terminal state the input hides but the **list stays** (`ChatPanel.lastRunId`) and clears on Session switch. Refresh triggers: mount, after submission, streaming stop, the `runRecovery` signal, and session SSE reconnect (`handleDerivedStateRefresh`). Terminal convergence is in `spec/session/chat-run-operation.md` §Run Guidance. Error recovery (PLAN-0536): `409 GUIDANCE_RUN_NOT_ACTIVE` → inline banner + **clear the draft** (`useGuidance.submit` returns `ok|clear|keep`); other errors keep the draft. The former cannot be asserted in a browser (by the time the 409 arrives the Run is not active and the input is unmounted per §3.1), so `__tests__/GuidancePanel.spec.ts` covers it.
+- **WorkspaceToolbar**: keeps only **chat-level** controls (upload/refresh); **the session dropdown is removed** (PLAN-0582 T4.1/S1) — session switching only happens through the navigation panel; page-level entries (Environment / Settings / scheduled tasks) moved to the **middle route tab bar** (`WorkspaceTabBar`, S3a) instead of full-page jumps from the toolbar; on mobile it collapses to + (new chat) and a ⋯ overflow menu.
+- **FileNodeMenu** (`features/workspace/components/FileNodeMenu.vue`): reka-ui `ContextMenu` wrapper; files: Rename/Move/Duplicate/Copy Path/Delete; directories: New File/New Directory/Rename/Move; text goes through `write_file` MCP, binaries through `POST /api/v1/files/upload` FormData (PLAN-262 M0/B-3).
+- **Sidebar (navigation panel)**: panel head = **workspace row** (current workspace name/switch/create/import/members entry) + new chat + session search box + session tree; "New Chat" opens the create-Session flow in the current Workspace; clicking a Session navigates to `/workspace/:workspaceId/chat/:sessionId`. The **orphan bottom "Workspace" nav item is removed** (PLAN-0582 S1): workspace entry only exists in the panel head, `<1024` collapses the panel into a sheet drawer, and a missing workspace fails closed.
 
-## 3. Invariants
+## 3. Five component families
 
-- Preserve route behavior, public component/store contracts, API/SSE payloads, authorization, and cross-service ownership during UI organization changes.
-- Workspace Chat uses the existing `toolMode=workspace` and current-Session guard; no new route, API, or SSE bridge is introduced.
-- Create Workspace Chat Sessions from the Workspace UI with a Workspace-bound Agent principal.
+Located in `packages/ui/src/components/ui/` — chat UI components developed in-house (replacing the old third-party virtual-list approach):
 
-## 4. Reference
+Design lessons (cross-checked against official shadcn-vue components; details in PLAN-243 appendix A):
 
-- [Detailed zh-Hans UI architecture](../zh-Hans/DEV-010-ui-architecture.md)
-- [Session and Chat ownership](../zh-Hans/DEV-017-session-architecture.md) (zh-Hans canonical; the English DEV-017 file is superseded)
+- **Layering discipline**: alignment/avatar/timestamp belong to Message; Bubble only owns the surface (already done in-house — confirmed).
+- **Explicit state**: upload state is driven by a `state` prop, never derived from the service.
+- **Accessibility baseline**: decorative icons `aria-hidden`, disabled buttons `inert` + `tabindex=-1`, thinking state `role=status` (missing items are filled during the a11y pass).
+- **BubbleGroup**: merges consecutive sends by the same sender, preventing tool-call bursts from flooding.
+- **Footer actions slot**: the standard position for copy/retry/feedback; the hover bar converges there.
+- **Coupling verdict**: the five families themselves have zero store references (verified); container-level coupling is normal separation; MessageItem holding three roles is an observed candidate for splitting.
+
+| Family | Purpose |
+|---|---|
+| `message-scroller/` | Scroll container: following-bottom → free-scrolling → anchored-to-message → settling-jump state machine; `shallowRef` + `data-*` to avoid high-frequency reactivity |
+| `message/` | Message cards: Message / MessageGroup / Avatar / Content / Header / Footer |
+| `bubble/` | user / assistant / system bubbles, managed by cva |
+| `attachment/` | Media/file/action buttons with state/size/orientation variants |
+| `marker/` | Time/status separators |
+
+## 4. Transport layer (persistent session-level SSE, PLAN-230)
+
+> Layering principle: **all transport primitives are third-party; in-house code only handles session semantics**. Primitives: `@microsoft/fetch-event-source` (UI), Spring `SseEmitter` (CP), HTTP SSE; about 800 in-house lines: chatTransport (single-flight/backoff) + useSSE + SSEStream + useStreamParser, plus CP `SseEmitterManager` (single active/generation/lease/409). Off-the-shelf options (AI SDK useChat, TanStack ChatClient) solve generic chat over standard protocols; the bespoke session semantics have no off-the-shelf implementation. Tracking TanStack AI (PLAN-243 TD-2); re-evaluate when multi-device/multi-session arrives.
+
+```mermaid
+%%{init: {'theme': 'neutral'}}%%
+flowchart LR
+    T["chatTransport<br/>(single-flight + backoff)"] --> S["SSEStream<br/>(hint routing / parser swap)"]
+    S --> P["useStreamParser<br/>(MessagePart classification)"]
+    P --> C["chatStore<br/>(Message.parts)"]
+    C --> V["Message bubble rendering"]
+```
+
+- **chatTransport** (`services/chatTransport.ts`): single-flight connection per `sessionId` (`connectionGeneration` + `intentionalStops`); `onerror` applies exponential backoff (from 250ms, capped at 5s); `onclose` schedules reconnects (no retry cap; stops only on `intentionalStops`); 401 clears the token and redirects to `/login`.
+- **useSSE** (`features/workspace/chat/composables/useSSE.ts`, returns `connect/disconnect/sendMessage`; no ensure-connected method): before sending, `SSEStream` manually confirms the connection (if not connected: `connectSession` + wait); CP-side 409 (`SSE_SUBSCRIPTION_REQUIRED` / `CHAT_IN_PROGRESS`) is handled by the caller — the UI has no automatic 409 retry branch.
+- **SSEStream**: tokens carrying a hint (`reasoning`/`text`) append via `chatStore.appendToParts`; tokens without a hint go through `useStreamParser.handleToken` and then a full `replaceStreamingParts` replacement; `done` only ends the run; `heartbeat` (15s) never enters a business bubble.
+- **Run-level fan-out (PLAN-0645 M2, 2026-11-04)**: the session SSE is persistent and one connection may carry **`maxConcurrentRunsPerSession` (default 2) runs** at once (admission was opened in M0/M1). Therefore the entire path from transport to view fans out by `runId` — no assumption of "one live bubble per session" is allowed:
+  - Callback signatures: `onStart(runId?)`, `onToken(token, hint?, runId?)`, `onDone(outcome?, runId?)`; `onStart` fires once per run (new bubble) and `done`/`error` only converge **their own** run.
+  - `useSSE` scope is `Map<runId,{contentStarted}>` (the `""` key is the fallback scope for runId-less legacy events and never preempts runId-carrying tokens); `isStreaming` is a session-level aggregate (false only when the last scope closes).
+  - `chatStore` live bubbles are addressed by the composite key `(sessionId, runId)` (`getStreamingMessageId(sessionId, runId?)`, `appendToParts(..., runId?)`, `finalizeStreaming(sessionId, runId?)`…); when `202` arrives late, `adoptRunId` re-keys the fallback-scope bubble to the real runId (otherwise an extra bubble appears).
+  - `SSEStream.vue` parser / terminal errors / responder attribution are all per-run (three Maps: `parsers`/`terminalErrors`/`responders`); the envelope's `participantId` carries no runId and is consumed by the next run-level callback into the corresponding bubble.
+  - **Wire prerequisite (T0.2 clause, see OpenAPI `GET /api/v1/events`)**: run-level events must carry `runId`; CP stamps it at the relay/dispatch exit (an explicit producer value wins). Any new run-level event must carry `runId`, otherwise clients cannot fan out.
+- **useStreamParser** (`features/workspace/chat/composables/useStreamParser.ts`): classifies tokens in real time into `MessagePart[]` (`text`/`reasoning`/`citation`/`artifact`); `Message.parts` replaces the old `marked`; code rendering goes through `MarkstreamCodeBlockAdapter` + `parts/TextPart`.
+
+### 4.2 Multi-principal thread rendering (PLAN-0659)
+
+A session is **multi-principal** (human participants + multiple Agent principals), so one thread mixes producers. Four UI contracts (all **presentation-layer projections** — no SSE wire change, no delivery-backend change, no new design tokens):
+
+- **Run grouping (T1.1)**: `chat/runView.ts` provides `runShortCode` (**display only** — any assertion or identity uses the full `runId`) and `formatRunDuration` (`createdAt → terminalAt`; no duration while in flight and no timers). `MessageList` segments by adjacent `runId`: in grouped mode each run gets a `RunGroupHeader` (run short code · principal name · status · duration) and member messages are indented (`run-group-body` left border); **runs ≤1 are not grouped** (no extra noise for a single run); **failed/cancelled runs collapse by default** into a one-line run header, expandable on click. Sources: `GET /chat/sessions/{id}/runs` summaries + each message's own `runStatus/terminalOutcome` fallback; `ChatPanel.sessionRuns` has **only the catch-up loop as consumer while a session is active** (each tick writes summaries; terminal-point fetches happen only when no catch-up loop is running) — two consumers of the same event would drift call-count semantics (BL-228 lesson).
+- **Actor badge (T1.2)**: `chat/actorView.ts#actorOf` derives only from **server-side attribution** (`Message.participantId` → session participant roster row); no attribution ⇒ render nothing, never guess PRIMARY. `hasMultipleActors` (≥2 distinct producers) decides whether **process rows** (thinking/tool cards in `ProcessRow`) carry a badge: initial-letter dot + name, with `data-actor-principal-id`/`data-actor-kind` as DOM assertion surfaces. **Color-neutral** (no per-principal colors — D31-10): legibility comes from initial + name + kind.
+- **Delivery semantics (T1.3)**: `chat/deliveryView.ts` emits the three-state message header `Send→(A) · @mentioned(highlighted chip) · CC→(B,C)`. TO/CC come from composer send parameters (`asParticipantId` / `cc`) and are turned by `ChatPanel` into a **local send-state view** on `Message.delivery` (not persisted to localStorage, not on the wire); `@` is rebuilt from the body + roster (longest name first, full tokens only). The three states are de-duplicated (@ never enters the CC list); only `role=user` does @ rebuilding. **Limitation (BL-239, P3)**: delivery semantics have no durable carrier ⇒ TO/CC is lost after a session reload, while `@` survives.
+- **Delegation DAG (T1.4)**: `chat/delegationGraph.ts` projects sessions into a parent→child graph (`kind=SPAWN` + `spawnedFromSessionId`, same source as the 0655 session tree); node status comes from the parent session's derived state and budgets from the root session's delegation usage. `DelegationDagPanel` lives in the right dock (tab `delegation`, toolbar entry) and draws edges with SVG (no graph library); **truncated/orphan/cycle dirty data is made explicit** (a `truncated` hint, orphans are not force-attached, cycles are rooted at the current session with recursion protection). Root = the top of the current session's ancestor chain; DFS order, `depth` starts at 0.
+- **Projection prerequisites**: session lists must pass through `kind`/`spawnedFromSessionId`/`spawnedAt` (required in the OpenAPI `Session` contract; `api.ts#normalizeSession` once dropped all three, making the 0655 tree / 0659 DAG permanently empty on the real path — fixed in `d880d705`). When historical messages have no `participantId` attribution (**BL-197**), neither the identity row nor the actor badge is rendered — no guessing.
+
+### 4.1 Workspace-level event SSE (PLAN-0350)
+
+- `useWorkspaceSSE` opens a separate subscription per `workspaceId`, also active when the Workspace has no Session; the connection key uses `workspace:<id>` and never shares Session semantics with Chat SSE.
+- `WorkspaceEvent` only carries relative paths, change type, source, and the Workspace-local `sequence`; `Last-Event-ID` is saved by `chatTransport` and sent on reconnect.
+- `file_changed` triggers a Workspace store refresh; unmodified open files are re-read, and files with unsaved local edits only show a conflict hint; `snapshot_required` triggers the existing HTTP/MCP file-tree compensation.
+- File contents, directory trees, and large payloads never enter SSE; the full contract is `docs/api/inventory.md` and `plans/PLAN-0350-XH-channel-heartbeat/spec/`.
+
+## 5. Attachments UI flow / i18n / theme
+
+- **Attachments**: `services/attachmentService.ts` (function module) batch-uploads via `POST /api/v1/sessions/{sessionId}/attachments` with front-end whitelist/500 MiB size validation; the upload entry is `InputArea` (`ChatPanel.handleSend` only sends the message + passes fileIds through); with text, attachments are merged into the send, without text it is an attachment-only message; `MessageItem` renders via `/api/v1/files/{fileId}`; workspace files are writable through `POST /api/v1/files/upload` with a 64 MiB per-file limit (attachment read-only convention in DEV-017).
+- **Images**: drag/select triggers automatic Canvas compression (`maxDimension(file, 2048)`); PDFs preview via pdfjs-dist (dynamic import) plus text extraction.
+- **i18n**: `t()` based, `zh-CN`/`en-US` locales; convention: `t()` messages must avoid `{...}` placeholders (some historical copy still contains them — known exception).
+- **Theme**: dark / light / system (`ConfigSettings` dropdown); reka-ui (coexisting with the shadcn-vue wrapper layer) + Tailwind v4 HSL variables. **Default visual language = B (dense, D31-M2)**: tokens live in `:root` of `packages/ui/src/styles/main.css` (body 13px/1.45, 3.5px step, primary radius 4px, single accent `#2450c8`); A/C exist only via `?variant=a|c` for comparison and regression, and components must not scatter new color values.
+- **Feedback**: Toast (vue-sonner) is the primary channel; plus confirm dialogs (ApprovalModal/ConfirmModal) and inline form errors; console / IndexedDB 10k log paths both work, telemetry sending is currently disabled (see DEV-004).
+
+## 6. ChatRun and toolMode
+
+`ChatPanel` defaults to `toolMode=none`; `WorkspaceView` explicitly passes `toolMode=workspace`. `SSEStream` submits `provider`, `model`, `toolMode`, and a fresh `Idempotency-Key` together. Chat UI, ChatStore, and Chat lifecycle UI adaptation live in `features/workspace/chat/`; SessionStore and CP's canonical Session/Message/ChatRun lifecycle do not move with the UI feature.
+
+Send state has two layers — transport run and assistant content: a user message is added only after CP returns `runId`, and an assistant message is created only on the first token/reasoning/artifact. `error`, `partial`, and `ambiguous` end the send state while keeping recoverable state; an empty assistant is removed; inline errors and toasts use the same payload.
+
+## 7. Workspace mobile standalone IA (PLAN-262 decision 15)
+
+Mobile (`<768px`, Tailwind `md:` breakpoint) is not a responsive compression of the desktop three-column layout but a separate information architecture:
+
+- **Single-column stack**: top bar hamburger button (opens the file-tree Sheet) + breadcrumbs + Environment entry; editor full screen; desktop left/right columns hidden via `hidden md:flex`.
+- **File tree**: `Sheet side="left"` full-height drawer (`features/workspace/components/MobileWorkspaceSheet.vue`); the tree component is shared with desktop `FileTree` (same store/controlled expanded).
+- **Chat**: bottom drawer (`features/workspace/components/MobileChatSheet.vue`, `Sheet side="bottom"` `h-[75vh]`) + floating Chat button at bottom right; shares the Session store with the desktop ChatPanel.
+- **Context menu**: long-press triggers ContextMenu on mobile (reka-ui native semantics); complex operations use a bottom action Sheet.
+- **Dialogs**: Create/Settings/Prepare become full-screen Sheets on mobile (`SheetContent side="bottom"`).
+- **Acceptance**: desktop 1440 is the M3/M4 Visual baseline; mobile 390px uses an independent Playwright viewport + screenshot acceptance (PLAN-262 §5.1).
+
+## 8. Workspace complex-UI foundation (PLAN-262 decision 14)
+
+The workspace file-management UI is built on reka-ui headless primitives plus local vendored wrappers (`components/ui/context-menu/`, `components/ui/tree/`); component sources follow shadcn-vue design conventions without depending on the shadcn-vue CLI package:
+
+- **ContextMenu** (`ContextMenu/ContextMenuTrigger/Content/Item/Separator`): keyboard navigation/focus management/ARIA/submenus built in; `@select` is the selection event (`preventDefault` prevents closing); long-press = right-click on mobile.
+- **Tree** (`TreeRoot/TreeItem`, controlled `v-model:expanded`): `getKey=node.path`, `getChildren=node.children`; `expandedPaths` (a store `Set`) ↔ array two-way mapping; `update:expanded` is not written back while searching (search expansion is a temporary union).
+- **Constraints**: the `TreeVirtualizer` wrapper exists but is disabled by default (trees currently load fully recursively; virtualization gains await large-data validation); `AlertDialogAction` closes unconditionally on click — scenarios needing "stay open on validation failure" (e.g. delete confirmation) must use a plain destructive `Button` (PLAN-262 E-3).
+- **Test constraints**: programmatic MenuItem selection in reka-ui is not feasible under jsdom (the internal armed ref cannot be set by synthetic events; six combinations verified); component interaction wiring is covered by Playwright, unit tests only cover menu content decisions and store branches (PLAN-262 §5.1 note).

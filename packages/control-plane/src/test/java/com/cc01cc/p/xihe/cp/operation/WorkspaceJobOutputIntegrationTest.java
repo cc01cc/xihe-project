@@ -98,7 +98,6 @@ class WorkspaceJobOutputIntegrationTest extends AbstractIntegrationTest {
         job.setUserId(UUID.fromString(userId));
         job.setSessionId(UUID.fromString(sessionId));
         job.setSource("ui");
-        job.setScope("workspace");
         job.setIdempotencyKey("output-" + jobId);
         job.setInputHash("output-hash");
         job.setStatus("running");

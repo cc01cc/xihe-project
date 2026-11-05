@@ -76,7 +76,7 @@ public class SessionController {
         if (userId == null || workspaceId == null) {
             return ProblemDetailsHandler.workspaceContextRequired();
         }
-        List<Map<String, Object>> sessions = sessionService.list(userId, workspaceId).stream()
+        List<Map<String, Object>> sessions = sessionService.listReadable(userId, workspaceId).stream()
                 .map(SessionController::toSummary)
                 .toList();
         return ResponseEntity.ok(Map.of("sessions", sessions));
@@ -165,7 +165,7 @@ public class SessionController {
         String userId = TenantContext.getUserId();
         String workspaceId = TenantContext.getWorkspaceId();
         try {
-            return ResponseEntity.ok(SessionViews.toView(sessionService.requireCurrent(sessionId, userId, workspaceId)));
+            return ResponseEntity.ok(SessionViews.toView(sessionService.requireReadable(sessionId, userId, workspaceId)));
         } catch (CpApiException e) {
             return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
         }
@@ -181,7 +181,7 @@ public class SessionController {
                     HttpStatus.NOT_FOUND, "SESSION_NOT_FOUND", "Session not found");
         }
         try {
-            Session parent = sessionService.requireCurrent(
+            Session parent = sessionService.requireReadable(
                     sessionId, TenantContext.getUserId(), TenantContext.getWorkspaceId());
             return ResponseEntity.ok(derivedStateService.project(parent));
         } catch (CpApiException e) {

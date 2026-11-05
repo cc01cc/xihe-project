@@ -13,6 +13,7 @@ import com.cc01cc.p.xihe.cp.entity.McpInvocation;
 import com.cc01cc.p.xihe.cp.entity.Message;
 import com.cc01cc.p.xihe.cp.entity.MessageRole;
 import com.cc01cc.p.xihe.cp.entity.Session;
+import com.cc01cc.p.xihe.cp.entity.SessionParticipant;
 import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceAgent;
@@ -336,6 +337,68 @@ class ChatSubmissionServiceIntegrationTest extends AbstractIntegrationTest {
             assertEquals(1, messages.size());
             assertEquals("first message", messages.get(0).getContent());
             assertTrue(chatRunRepository.findById(UUID.fromString(rejectedRunId)).isEmpty());
+        } finally {
+            configService.deleteKey("instance", "agent-runtime",
+                    "maxConcurrentRunsPerSession", "test", null, null);
+        }
+    }
+
+    /**
+     * BL-283（PLAN-0660 T2.1 同族）：唤醒路径用**返回值**问准入要 slot。cap 满时答案是一个空
+     * Optional，而关键点是**调用方事务仍可提交** —— 原先 `createScheduled` 抛出的 409 会穿过它
+     * 自己的 REQUIRED 事务边界，把共享事务标成 rollback-only，deferred 入队与 wake 审计随事务一起
+     * 回滚，提交时变成 `UnexpectedRollbackException`（BL-283：该唤醒既没跑也没留下"顺延"事实）。
+     *
+     * <p>本用例把 `tryCreateScheduled` 放进一个真实事务：cap 满 ⇒ 返回空；随后在同一事务里做一次
+     * 可观测写入并提交。若事务被标脏，`execute` 会在提交时抛 `UnexpectedRollbackException`；若没被
+     * 标脏，写入必须持久化。</p>
+     */
+    @Test
+    void tryCreateScheduled_returnsEmptyWhenTheCapIsFull_andTheCallerTransactionStillCommits() {
+        configService.putLayer("instance", "agent-runtime",
+                Map.of("maxConcurrentRunsPerSession", "1"), "test", null, null);
+        try {
+            User user = userRepository.save(new User("bl283-deferred-" + UUID.randomUUID() + "@test.com", "hash", "BL-283 deferred test"));
+            Workspace workspace = workspaceFixture.createOwnedWorkspace("BL-283 Deferred Workspace", user.getId().toString());
+            workspaceFixture.bindWorkspaceRole(workspace.getId().toString(), user.getId().toString(), WorkspaceRole.OWNER);
+            Session session = new Session(workspace.getId().toString(), user.getId().toString(), "BL-283 Deferred Session");
+            session.setId(UUID.randomUUID());
+            Session persistedSession = saveBoundChatSession(session, user);
+            AgentPrincipal principal = savePrincipal(user);
+            sessionRepository.saveAndFlush(boundSession(persistedSession, principal));
+            workspaceAgentRepository.saveAndFlush(new WorkspaceAgent(principal.getId().toString(),
+                    workspace.getId().toString(), objectMapper.createArrayNode()));
+
+            // Occupy the only slot.
+            ChatSubmissionService.Submission first = submit(UUID.randomUUID().toString(),
+                    persistedSession, user, workspace, "first message", principal.getId().toString());
+            assertTrue(chatRunRepository.findById(first.run().getId()).isPresent());
+
+            String sessionId = persistedSession.getId().toString();
+            String deferredRunId = UUID.randomUUID().toString();
+            TransactionTemplate transaction = new TransactionTemplate(transactionManager);
+            transaction.executeWithoutResult(status -> {
+                String branchId = branchPathService.ensureRootBranchId(sessionId);
+                var deferred = submissionService.tryCreateScheduled(deferredRunId, sessionId,
+                        user.getId().toString(), workspace.getId().toString(), branchId,
+                        "idem-" + deferredRunId, "request-hash", "provider", "model", "none", null, null,
+                        "lease-owner", UUID.randomUUID().toString(), "deferred wake prompt", "[]",
+                        java.util.List.of(), principal.getId().toString(),
+                        com.cc01cc.p.xihe.cp.entity.Message.VISIBILITY_INTERNAL);
+                assertTrue(deferred.isEmpty(),
+                        "a full cap must answer as a value (empty), not as a thrown exception");
+                jdbcTemplate.update("UPDATE sessions SET title = ? WHERE id = CAST(? AS UUID)",
+                        "bl283-committed", sessionId);
+            });
+
+            assertEquals("bl283-committed", jdbcTemplate.queryForObject(
+                    "SELECT title FROM sessions WHERE id = CAST(? AS UUID)", String.class, sessionId),
+                    "the caller transaction must commit — a rollback-only marker would have thrown "
+                            + "UnexpectedRollbackException instead");
+            assertEquals(1, jdbcTemplate.queryForObject(
+                    "SELECT count(*) FROM chat_runs WHERE CAST(session_id AS VARCHAR) = ?",
+                    Integer.class, sessionId), "the deferred attempt must not create a run row");
+            assertTrue(chatRunRepository.findById(UUID.fromString(deferredRunId)).isEmpty());
         } finally {
             configService.deleteKey("instance", "agent-runtime",
                     "maxConcurrentRunsPerSession", "test", null, null);
@@ -869,5 +932,175 @@ class ChatSubmissionServiceIntegrationTest extends AbstractIntegrationTest {
         assertEquals(1, chatRunRepository.findAll().stream()
                 .filter(run -> idempotencyKey.equals(run.getIdempotencyKey())).count(),
                 "the replay never inserts a second Run");
+    }
+
+    // ------------------------------------------- PLAN-0669 M1 (V121): durable message attribution
+
+    /** PLAN-0669 D2 acceptance: the assistant Message must name the Run's responding participant. */
+    @Test
+    void assistantMessageIsAttributedToTheRunsResponderParticipant() {
+        ChatFixture fixture = createChatFixture("attribution");
+        sessionRepository.saveAndFlush(boundSession(fixture.session(), fixture.principal()));
+        UUID participantId = addPrimaryParticipant(fixture.session(), fixture.principal());
+
+        String runId = UUID.randomUUID().toString();
+        submit(runId, fixture.session(), fixture.user(), fixture.workspace(), "attribute me",
+                fixture.principal().getId().toString());
+        ChatRun run = chatRunRepository.findById(UUID.fromString(runId)).orElseThrow();
+        assertEquals(fixture.principal().getId(), run.getAgentPrincipalId(),
+                "admission recorded the responder principal (the attribution source of truth)");
+
+        String assistantId = submissionService.persistAssistantResponse(
+                fixture.session().getId().toString(), runId, "hello");
+        assertNotNull(assistantId);
+        Message stored = messageRepository.findById(UUID.fromString(assistantId)).orElseThrow();
+        assertEquals(participantId, stored.getParticipantId(),
+                "assistant Message carries the responder participant (same identity the live SSE badge uses)");
+        assertEquals(participantId, sessionParticipantRepository
+                        .findFirstBySessionIdAndPrincipalId(fixture.session().getId(),
+                                run.getAgentPrincipalId()).orElseThrow().getId(),
+                "the invariant is one row: run responder principal ⇔ message participant");
+    }
+
+    /** PLAN-0669 D2 fallback: derived runs (follow-up/continuation) answer as the Session binding. */
+    @Test
+    void assistantMessageFallsBackToTheSessionBindingWhenTheRunHasNoResponder() {
+        ChatFixture fixture = createChatFixture("attribution-fallback");
+        sessionRepository.saveAndFlush(boundSession(fixture.session(), fixture.principal()));
+        UUID participantId = addPrimaryParticipant(fixture.session(), fixture.principal());
+
+        String runId = UUID.randomUUID().toString();
+        chatRunRepository.saveAndFlush(new ChatRun(runId, fixture.session().getId().toString(),
+                fixture.user().getId().toString(), fixture.workspace().getId().toString(),
+                "fallback-key-" + runId, "fallback-hash", "provider", "model", "none", "accepted"));
+
+        String assistantId = submissionService.persistAssistantResponse(
+                fixture.session().getId().toString(), runId, "derived run reply");
+        assertNotNull(assistantId);
+        assertEquals(participantId,
+                messageRepository.findById(UUID.fromString(assistantId)).orElseThrow().getParticipantId(),
+                "follow-up/continuation children never persist a run responder; attribution follows the "
+                        + "Session-bound principal instead of going dark");
+    }
+
+    /** PLAN-0669 D2: no participant row ⇒ NULL (no guessing PRIMARY — absent beats wrong). */
+    @Test
+    void assistantMessageKeepsNoAttributionWhenNoParticipantExists() {
+        ChatFixture fixture = createChatFixture("attribution-none");
+        // Bound Session, but deliberately no session_participants row: admission is legal, yet the
+        // fallback chain has nothing to resolve — the Message must stay NULL instead of guessing.
+        sessionRepository.saveAndFlush(boundSession(fixture.session(), fixture.principal()));
+        String runId = UUID.randomUUID().toString();
+        submit(runId, fixture.session(), fixture.user(), fixture.workspace(), "no roster row");
+
+        String assistantId = submissionService.persistAssistantResponse(
+                fixture.session().getId().toString(), runId, "reply without roster");
+        assertNotNull(assistantId);
+        assertNull(messageRepository.findById(UUID.fromString(assistantId)).orElseThrow().getParticipantId(),
+                "no participant row ⇒ NULL; the read face then omits the field and the UI renders no badge");
+    }
+
+    /** PLAN-0669 M1b: the durable listing projects participantId only when attributed. */
+    @Test
+    void messageListingProjectsParticipantIdOnlyWhenAttributed() {
+        ChatFixture fixture = createChatFixture("attribution-read");
+        sessionRepository.saveAndFlush(boundSession(fixture.session(), fixture.principal()));
+        UUID participantId = addPrimaryParticipant(fixture.session(), fixture.principal());
+        String runId = UUID.randomUUID().toString();
+        submit(runId, fixture.session(), fixture.user(), fixture.workspace(), "read me",
+                fixture.principal().getId().toString());
+        String assistantId = submissionService.persistAssistantResponse(
+                fixture.session().getId().toString(), runId, "reply");
+        assertNotNull(assistantId);
+
+        String branchId = branchPathService.ensureRootBranchId(fixture.session().getId().toString());
+        BranchPathService.BranchVisibility visibility = branchPathService.resolveVisibility(
+                fixture.session().getId().toString(), branchId);
+        String rootBranchId = branchPathService.resolvePath(fixture.session().getId().toString(), branchId);
+        List<Map<String, Object>> messages = messageReadService.listVisibleMessages(
+                fixture.session().getId().toString(), fixture.workspace().getId().toString(),
+                rootBranchId, visibility);
+
+        Map<String, Object> assistant = messages.stream()
+                .filter(message -> assistantId.equals(String.valueOf(message.get("id"))))
+                .findFirst().orElseThrow();
+        assertEquals(participantId.toString(), String.valueOf(assistant.get("participantId")),
+                "assistant rows expose the durable actor to the history DTO");
+        Map<String, Object> user = messages.stream()
+                .filter(message -> "USER".equals(String.valueOf(message.get("role"))))
+                .findFirst().orElseThrow();
+        assertFalse(user.containsKey("participantId"),
+                "user rows carry no v1 attribution — the field is omitted, not null");
+    }
+
+    // ------------------------------------------------- BL-280: derived runs stamp the agent principal
+
+    @Test
+    void derivedRunsStampTheSessionBoundPrincipal() {
+        ChatFixture main = createChatFixture("stamp-main");
+        sessionRepository.saveAndFlush(boundSession(main.session(), main.principal()));
+        addPrimaryParticipant(main.session(), main.principal());
+        String mainRunId = UUID.randomUUID().toString();
+        submit(mainRunId, main.session(), main.user(), main.workspace(), "main",
+                main.principal().getId().toString());
+        assertEquals(main.principal().getId(),
+                chatRunRepository.findById(UUID.fromString(mainRunId)).orElseThrow().getAgentPrincipalId(),
+                "main submission stamps the responder");
+
+        ChatFixture followUp = createChatFixture("stamp-follow-up");
+        sessionRepository.saveAndFlush(boundSession(followUp.session(), followUp.principal()));
+        addPrimaryParticipant(followUp.session(), followUp.principal());
+        String followUpRunId = UUID.randomUUID().toString();
+        submissionService.createFollowUp(followUpRunId, followUp.session().getId().toString(),
+                followUp.user().getId().toString(), followUp.workspace().getId().toString(),
+                branchPathService.ensureRootBranchId(followUp.session().getId().toString()),
+                "follow-up-" + followUpRunId, "hash-follow-up", "provider", "model", "none", null, null,
+                "lease", UUID.randomUUID().toString(), "queued prompt", "[]", List.of(),
+                followUp.principal().getId().toString());
+        assertEquals(followUp.principal().getId(),
+                chatRunRepository.findById(UUID.fromString(followUpRunId)).orElseThrow().getAgentPrincipalId(),
+                "follow-up children are stamped at admission (BL-280)");
+
+        ChatFixture scheduled = createChatFixture("stamp-scheduled");
+        sessionRepository.saveAndFlush(boundSession(scheduled.session(), scheduled.principal()));
+        addPrimaryParticipant(scheduled.session(), scheduled.principal());
+        String scheduledRunId = UUID.randomUUID().toString();
+        submissionService.createScheduled(scheduledRunId, scheduled.session().getId().toString(),
+                scheduled.user().getId().toString(), scheduled.workspace().getId().toString(),
+                branchPathService.ensureRootBranchId(scheduled.session().getId().toString()),
+                "scheduled-" + scheduledRunId, "hash-scheduled", "provider", "model", "none", null,
+                null, null, UUID.randomUUID().toString(), "wake prompt", "[]", List.of(),
+                scheduled.principal().getId().toString());
+        assertEquals(scheduled.principal().getId(),
+                chatRunRepository.findById(UUID.fromString(scheduledRunId)).orElseThrow().getAgentPrincipalId(),
+                "scheduled wake carriers are stamped at admission (BL-280)");
+    }
+
+    @Test
+    void humanResponderKeepsTheAgentOnlyColumnNull() {
+        ChatFixture fixture = createChatFixture("stamp-human");
+        sessionRepository.saveAndFlush(boundSession(fixture.session(), fixture.principal()));
+        addPrimaryParticipant(fixture.session(), fixture.principal());
+        SessionParticipant human = sessionParticipantRepository.saveAndFlush(new SessionParticipant(
+                fixture.session().getId(), SessionParticipant.KIND_HUMAN, fixture.user().getId(),
+                SessionParticipant.ROLE_MEMBER, 20, SessionParticipant.WAKE_MENTION,
+                SessionParticipant.RESPOND_WHEN_MENTIONED));
+
+        String runId = UUID.randomUUID().toString();
+        submissionService.create(runId, fixture.session().getId().toString(),
+                fixture.user().getId().toString(), fixture.workspace().getId().toString(),
+                branchPathService.ensureRootBranchId(fixture.session().getId().toString()),
+                fixture.principal().getId().toString(), "human-" + runId, "hash-human", "provider", "model",
+                "none", null, null, "lease", UUID.randomUUID().toString(), "hi", "[]", List.of(),
+                human.getId().toString());
+        assertNull(chatRunRepository.findById(UUID.fromString(runId)).orElseThrow().getAgentPrincipalId(),
+                "a HUMAN responder keeps the agent-only column NULL — no stamp, and no FK violation");
+    }
+
+    private UUID addPrimaryParticipant(Session session, AgentPrincipal principal) {
+        SessionParticipant participant = new SessionParticipant(session.getId(),
+                SessionParticipant.KIND_AGENT, principal.getId(), SessionParticipant.ROLE_PRIMARY, 10,
+                SessionParticipant.WAKE_ALL_MESSAGES, SessionParticipant.RESPOND_ALWAYS);
+        return sessionParticipantRepository.saveAndFlush(participant).getId();
     }
 }

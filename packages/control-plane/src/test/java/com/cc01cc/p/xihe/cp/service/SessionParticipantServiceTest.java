@@ -67,10 +67,11 @@ class SessionParticipantServiceTest {
         users = mock(UserRepository.class);
         workspaces = mock(WorkspaceService.class);
         grants = mock(GrantAuthorizationService.class);
+        SessionReadAccess access = new SessionReadAccess(sessions, participants, workspaces, grants);
         service = new SessionParticipantService(participants, cursors, sessions, agents, users,
                 workspaces, grants,
                 mock(com.cc01cc.p.xihe.cp.scheduled.WakeScheduleProjectionService.class),
-                mock(com.cc01cc.p.xihe.cp.context.repository.EventStoreRepository.class));
+                mock(com.cc01cc.p.xihe.cp.context.repository.EventStoreRepository.class), access);
 
         session = mock(Session.class);
         when(session.getId()).thenReturn(SESSION_ID);
@@ -284,7 +285,6 @@ class SessionParticipantServiceTest {
         when(participants.findByIdAndSessionId(agentRow.getId(), SESSION_ID))
                 .thenReturn(Optional.of(agentRow));
         AgentPrincipal personal = mock(AgentPrincipal.class);
-        when(personal.getScope()).thenReturn("PERSONAL");
         when(personal.getOwnerUserId()).thenReturn(UUID.fromString(OWNER));
         when(agents.findById(AGENT_ID)).thenReturn(Optional.of(personal));
 
@@ -311,7 +311,7 @@ class SessionParticipantServiceTest {
                 .thenReturn(List.of(agentRow, humanRow));
         AgentPrincipal principal = mock(AgentPrincipal.class);
         when(principal.getName()).thenReturn("ResearchAgent");
-        when(principal.getScope()).thenReturn("WORKSPACE");
+        when(principal.getOwnerUserId()).thenReturn(null);
         when(principal.getDefaultModelProvider()).thenReturn("openai");
         when(principal.getDefaultModelName()).thenReturn("gpt-5");
         when(agents.findById(AGENT_ID)).thenReturn(Optional.of(principal));

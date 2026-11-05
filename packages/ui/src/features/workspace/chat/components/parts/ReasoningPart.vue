@@ -6,10 +6,16 @@
 import { computed } from "vue";
 import { Brain } from "@lucide/vue";
 import { useI18n } from "vue-i18n";
-import ProcessRow from "../ProcessRow.vue";
+import ProcessRow, { type ProcessRowActor } from "../ProcessRow.vue";
 
 const props = defineProps<{
     content: string;
+    /**
+     * PLAN-0659 T1.2 / BL-286: the actor that produced this reasoning block. The reasoning row
+     * must carry the same actor badge as thinking/tool rows — it used to be the only process row
+     * without one because this component dropped the prop.
+     */
+    actor?: ProcessRowActor;
 }>();
 
 const { t } = useI18n();
@@ -29,6 +35,7 @@ const summary = computed(() => {
         :summary="summary"
         expandable
         testid="process-reasoning"
+        :actor="actor"
     >
         <div class="whitespace-pre-wrap leading-relaxed text-muted-foreground">{{ content }}</div>
     </ProcessRow>

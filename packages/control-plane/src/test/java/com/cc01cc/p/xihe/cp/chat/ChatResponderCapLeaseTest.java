@@ -56,7 +56,6 @@ class ChatResponderCapLeaseTest extends AbstractIntegrationTest {
 
         AgentPrincipal primary = new AgentPrincipal();
         primary.setName("P623 primary");
-        primary.setScope("WORKSPACE");
         primary.setCreatedByUserId(ownerId);
         primary.setDefaultModelProvider("alpha");
         primary.setDefaultModelName("m1");
@@ -66,7 +65,6 @@ class ChatResponderCapLeaseTest extends AbstractIntegrationTest {
 
         AgentPrincipal guard = new AgentPrincipal();
         guard.setName("P623 guard agent");
-        guard.setScope("WORKSPACE");
         guard.setCreatedByUserId(ownerId);
         guard.setDefaultModelProvider("beta");
         guard.setDefaultModelName("m2");

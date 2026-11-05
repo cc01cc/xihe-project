@@ -17,6 +17,27 @@ public interface SessionRepository extends JpaRepository<Session, UUID> {
     List<Session> findByWorkspaceIdAndArchivedFalseOrderByCreatedAtDesc(String workspaceId);
     List<Session> findByWorkspaceIdAndUserIdAndArchivedFalseOrderByCreatedAtDesc(
             String workspaceId, String userId);
+
+    /**
+     * PLAN-0668 D1/D5: the read-face list — owned sessions plus sessions where the caller is an
+     * enabled HUMAN participant. Managers are deliberately absent (D1b: no content read), and the
+     * roster guard remains the only manager-facing read.
+     */
+    @Query("""
+            select s from Session s
+             where s.workspaceId = :workspaceId
+               and s.archived = false
+               and (s.userId = :userId
+                    or exists (select p.id from SessionParticipant p
+                                where p.sessionId = s.id
+                                  and p.principalKind = 'HUMAN'
+                                  and p.principalId = :actorId
+                                  and p.disabledAt is null))
+             order by s.createdAt desc
+            """)
+    List<Session> findReadableByWorkspaceIdAndActor(@Param("workspaceId") String workspaceId,
+                                                    @Param("userId") String userId,
+                                                    @Param("actorId") UUID actorId);
     Optional<Session> findByIdAndUserIdAndWorkspaceIdAndArchivedFalse(
             UUID id, String userId, String workspaceId);
 

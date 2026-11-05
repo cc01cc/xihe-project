@@ -4,6 +4,39 @@
  * `null` means "this code has no dedicated copy" — callers then choose their own wording
  * instead of surfacing the CP's raw English `detail` to the user.
  */
+/** BL-288：Problem `detail` 展示上限（单行化后按 Unicode 码点截断）。 */
+export const PROBLEM_DETAIL_MAX_LENGTH = 200;
+
+/**
+ * BL-288 —— 统一 error→用户文案：**优先后端 Problem `detail`**，没有才回退调用方的通用文案。
+ *
+ * - 只读 `problem.detail`（不展示 stack/内部字段；code 由日志/上报保留）；
+ * - 换行/控制字符折叠为单空格 ⇒ 单行；
+ * - 超过 `maxLength` 个码点截断并加省略号；
+ * - detail 为空/非字符串 ⇒ `fallback`。
+ *
+ * 不 import `ApiError`（避免 lib ↔ composables 循环依赖）：按结构读取，任何带
+ * `{ problem: { detail } }` 形状的错误都适用。
+ */
+export function problemDetailText(
+    cause: unknown,
+    fallback: string,
+    maxLength = PROBLEM_DETAIL_MAX_LENGTH,
+): string {
+    const problem = (cause as { problem?: { detail?: unknown } } | null | undefined)?.problem;
+    const raw = typeof problem?.detail === "string" ? problem.detail : "";
+    const singleLine = raw
+        // eslint-disable-next-line no-control-regex
+        .replace(/[\u0000-\u001f\u007f]+/g, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+    if (!singleLine) return fallback;
+    const chars = Array.from(singleLine);
+    if (chars.length <= maxLength) return singleLine;
+    const cut = Math.max(1, maxLength - 1);
+    return `${chars.slice(0, cut).join("").trimEnd()}…`;
+}
+
 export function mappedErrorCopy(code: string | undefined | null): string | null {
     const key = (code ?? "").trim();
     switch (key) {

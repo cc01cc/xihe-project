@@ -28,8 +28,9 @@ class PolicyControllerModeTest {
     private final SessionPolicyState sessionState = mock(SessionPolicyState.class);
     private final SessionApprovalMode sessionApprovalMode = mock(SessionApprovalMode.class);
     private final SessionService sessionService = mock(SessionService.class);
+    private final RequesterAuthority requesterAuthority = mock(RequesterAuthority.class);
     private final PolicyController controller = new PolicyController(
-            ruleService, faceService, sessionState, sessionApprovalMode, sessionService);
+            ruleService, faceService, sessionState, sessionApprovalMode, sessionService, requesterAuthority);
 
     @AfterEach
     void clearTenant() {
@@ -46,7 +47,10 @@ class PolicyControllerModeTest {
 
         ResponseEntity<?> response = controller.getMode("s1");
 
-        verify(sessionService).requireCurrent("s1", "u1", "ws1");
+        // BL-299: GET /policy/mode is the read face — it uses requireReadable (owner or invited
+        // HUMAN), while setMode below keeps the owner-only requireCurrent. The old verification
+        // predates BL-299 and was the only stale assertion in this class.
+        verify(sessionService).requireReadable("s1", "u1", "ws1");
         assertEquals(200, response.getStatusCode().value());
         assertEquals("auto", ((Map<?, ?>) response.getBody()).get("mode"));
     }
@@ -68,6 +72,8 @@ class PolicyControllerModeTest {
     void modeMapsMissingSessionTo404() {
         TenantContext.setUserId("u1");
         TenantContext.setWorkspaceId("ws1");
+        when(sessionService.requireReadable("s1", "u1", "ws1"))
+                .thenThrow(new CpApiException(HttpStatus.NOT_FOUND, "SESSION_NOT_FOUND", "Session not found"));
         when(sessionService.requireCurrent("s1", "u1", "ws1"))
                 .thenThrow(new CpApiException(HttpStatus.NOT_FOUND, "SESSION_NOT_FOUND", "Session not found"));
 
@@ -121,5 +127,26 @@ class PolicyControllerModeTest {
 
         assertEquals(400, response.getStatusCode().value());
         assertEquals("INVALID_REQUEST", ((Map<?, ?>) response.getBody()).get("code"));
+    }
+
+    /**
+     * PLAN-0651 M3 T3.3 + D-165 (Lead ruling 2026-11-05): A13's admin flag is the N9
+     * {@code MANAGE_WORKSPACE_POLICY} atom (instance-scope evaluation), NOT {@code MANAGE_ROLES}
+     * (that shared atom also gates role/binding administration and is deliberately not granted to
+     * ADMIN). This pins that the resolved flag is what the service receives.
+     */
+    @Test
+    void listFacesPassesTheInstancePolicyAtomAsTheAdminFlag() {
+        when(requesterAuthority.holdsActionAtom(ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_POLICY))
+                .thenReturn(true);
+        List<ToolFaceService.FaceView> expected = List.of(
+                new ToolFaceService.FaceView(null, "builtin", null, "read_file", "read", "structured"));
+        when(faceService.list("workspace", null, null, true)).thenReturn(expected);
+
+        ResponseEntity<?> response = controller.listFaces("workspace");
+
+        assertEquals(200, response.getStatusCode().value());
+        assertSame(expected, response.getBody());
+        verify(faceService).list("workspace", null, null, true);
     }
 }

@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { flushPromises, mount } from "@vue/test-utils";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { i18n } from "../../../../i18n";
 
 const WORKSPACE_ID = "66666666-6666-4666-8666-666666666666";
@@ -21,14 +23,17 @@ const apiMock = vi.hoisted(() => ({
     updateAgentMemory: vi.fn<() => Promise<void>>(),
     deleteAgentMemory: vi.fn<() => Promise<void>>(),
     updateAgentPrincipalContextPolicy: vi.fn<() => Promise<void>>(),
+    // PLAN-0667 M3：角色 / 技能区块（六条 agent 子资源 + 两条候选清单）。
+    getAgentRoles: vi.fn<() => Promise<unknown[]>>(),
+    getAgentSkills: vi.fn<() => Promise<unknown[]>>(),
+    bindAgentRole: vi.fn<() => Promise<void>>(),
+    unbindAgentRole: vi.fn<() => Promise<void>>(),
+    bindAgentSkill: vi.fn<() => Promise<void>>(),
+    unbindAgentSkill: vi.fn<() => Promise<void>>(),
+    listRoles: vi.fn<() => Promise<unknown[]>>(),
+    getSkills: vi.fn<() => Promise<unknown[]>>(),
 }));
 
-const CREATE_ACCOUNT_GRANTED = {
-    userId: "99999999-9999-4999-8999-999999999999",
-    instanceCapabilities: ["CREATE_ACCOUNT"],
-    instancePermissions: [{ actionClass: "CREATE_ACCOUNT", resource: "*" }],
-    workspaces: [],
-};
 const CREATE_ACCOUNT_MISSING = {
     userId: "99999999-9999-4999-8999-999999999999",
     instanceCapabilities: [],
@@ -43,10 +48,10 @@ vi.mock("../../../../composables/api", async (importOriginal) => {
         api: apiMock,
         ApiError: class MockApiError extends Error {
             problem: { code: string; detail?: string };
-            constructor(code: string) {
-                super("CREATE_ACCOUNT permission is required");
+            constructor(code: string, detail = "CREATE_ACCOUNT permission is required") {
+                super(detail);
                 this.name = "MockApiError";
-                this.problem = { code, detail: "CREATE_ACCOUNT permission is required" };
+                this.problem = { code, detail };
             }
         },
     };
@@ -54,7 +59,11 @@ vi.mock("../../../../composables/api", async (importOriginal) => {
 
 const admin = { value: true };
 vi.mock("../../../../stores/auth", () => ({
-    useAuthStore: () => ({ isAdmin: admin.value, canManageWorkspace: true }),
+    useAuthStore: () => ({
+        isAdmin: admin.value,
+        canManageWorkspace: true,
+        user: { id: "99999999-9999-4999-8999-999999999999" },
+    }),
 }));
 
 import { ApiError } from "../../../../composables/api";
@@ -91,6 +100,7 @@ function mountPanel() {
 
 beforeEach(() => {
     admin.value = true;
+    localStorage.removeItem("xihe-pending-agent-principals");
     apiMock.getWorkspaceAgents.mockResolvedValue([]);
     apiMock.getAgentTemplates.mockResolvedValue({
         layer: "instance",
@@ -99,7 +109,7 @@ beforeEach(() => {
     });
     apiMock.updateWorkspaceAgentCap.mockResolvedValue({});
     apiMock.deleteWorkspaceAgent.mockResolvedValue(undefined);
-    apiMock.getSelfPermissions.mockResolvedValue(CREATE_ACCOUNT_GRANTED);
+    apiMock.getSelfPermissions.mockResolvedValue(WORKSPACE_ONLY);
     apiMock.getWorkspaceAgentMemories.mockResolvedValue([]);
 });
 
@@ -156,7 +166,7 @@ describe("WorkspaceAgentsPanel F-02 grant hint (PLAN-0585 M2 / PLAN-0610 W5c)", 
         await flushPromises();
 
         const text = document.body.textContent ?? "";
-        expect(text).toContain("缺少 CREATE_ACCOUNT 权限");
+        expect(text).toContain("缺少 MANAGE_WORKSPACE_AGENTS 权限");
         expect(text).toContain("角色与绑定");
         expect(text).not.toContain("CREATE_ACCOUNT permission is required");
     });
@@ -171,9 +181,9 @@ describe("WorkspaceAgentsPanel F-02 grant hint (PLAN-0585 M2 / PLAN-0610 W5c)", 
     });
 });
 
-// PLAN-0621 F-01：没有 CREATE_ACCOUNT 的用户在**点击之前**就该知道结果。
-describe("WorkspaceAgentsPanel F-01 create gating (PLAN-0621)", () => {
-    it("disables creation and points at the role surface when the CP projection lacks CREATE_ACCOUNT", async () => {
+// PLAN-0621 F-01 / PLAN-0651 T5.1：没有工作区智能体管理权限的用户在**点击之前**就该知道结果。
+describe("WorkspaceAgentsPanel create gating (T5.1 default WORKSPACE)", () => {
+    it("disables creation and points at the role surface when the projection lacks MANAGE_WORKSPACE_AGENTS", async () => {
         admin.value = false;
         apiMock.getSelfPermissions.mockResolvedValue(CREATE_ACCOUNT_MISSING);
         const wrapper = await mountOpenedPanel();
@@ -184,16 +194,16 @@ describe("WorkspaceAgentsPanel F-01 create gating (PLAN-0621)", () => {
         expect(button.attributes("disabled")).toBeDefined();
         // 复用既有文案，不新写一份（概念/文案膨胀门）。
         expect(wrapper.find('[data-testid="agent-create-forbidden-hint"]').exists()).toBe(true);
-        expect(wrapper.text()).toContain("CREATE_ACCOUNT");
+        expect(wrapper.text()).toContain("MANAGE_WORKSPACE_AGENTS");
         const link = wrapper.find('[data-testid="agent-grant-panel-link"]');
         expect(link.exists()).toBe(true);
         expect(link.attributes("href")).toBe("/settings/roles");
         expect(wrapper.html()).not.toContain("/settings/principal-grants");
     });
 
-    it("keeps creation enabled when the CP projection grants CREATE_ACCOUNT", async () => {
+    it("keeps creation enabled when the projection grants MANAGE_WORKSPACE_AGENTS", async () => {
         admin.value = false;
-        apiMock.getSelfPermissions.mockResolvedValue(CREATE_ACCOUNT_GRANTED);
+        apiMock.getSelfPermissions.mockResolvedValue(WORKSPACE_ONLY);
         apiMock.createAgentPrincipal.mockResolvedValue({
             principalId: "77777777-7777-4777-8777-777777777777",
             templateId: null,
@@ -239,12 +249,6 @@ const WORKSPACE_ONLY = {
         },
     ],
 };
-const INSTANCE_ONLY = {
-    userId: "99999999-9999-4999-8999-999999999999",
-    instanceCapabilities: ["CREATE_ACCOUNT"],
-    instancePermissions: [{ actionClass: "CREATE_ACCOUNT", resource: "*" }],
-    workspaces: [],
-};
 const NOTHING = {
     userId: "99999999-9999-4999-8999-999999999999",
     instanceCapabilities: [],
@@ -252,50 +256,34 @@ const NOTHING = {
     workspaces: [],
 };
 
-function scopeOptions(wrapper: Awaited<ReturnType<typeof mountOpenedPanel>>): string[] {
-    const select = wrapper.find('[data-testid="agent-principal-scope"]');
-    if (!select.exists()) return [];
-    return select.findAll("option").map((option) => option.attributes("value") ?? "");
-}
-
-describe("WorkspaceAgentsPanel PLAN-0622 scope visibility (4 states)", () => {
-    it("offers only PERSONAL when the projection grants just CREATE_OWN_AGENT", async () => {
-        apiMock.getSelfPermissions.mockResolvedValue(PERSONAL_ONLY);
-        const wrapper = await mountOpenedPanel();
-        expect(scopeOptions(wrapper)).toEqual(["PERSONAL"]);
-        // 术语对账：文案必须带「智能体」限定，不能与"连接作用域"撞词。
-        expect(wrapper.text()).toContain("个人智能体");
-    });
-
-    it("offers only WORKSPACE when MANAGE_WORKSPACE_AGENTS is granted for this Workspace", async () => {
+// ── PLAN-0651 M5 T5.1：作用域写面退出（UI 不再提供 scope 选择）────────────────────────
+describe("WorkspaceAgentsPanel T5.1 scope write exit", () => {
+    it("does not render a scope write control", async () => {
         apiMock.getSelfPermissions.mockResolvedValue(WORKSPACE_ONLY);
         const wrapper = await mountOpenedPanel();
-        expect(scopeOptions(wrapper)).toEqual(["WORKSPACE"]);
-        expect(wrapper.text()).toContain("工作区智能体");
-    });
-
-    it("offers only INSTANCE when the projection grants CREATE_ACCOUNT", async () => {
-        apiMock.getSelfPermissions.mockResolvedValue(INSTANCE_ONLY);
-        const wrapper = await mountOpenedPanel();
-        expect(scopeOptions(wrapper)).toEqual(["INSTANCE"]);
-        expect(wrapper.text()).toContain("实例智能体");
-    });
-
-    it("offers nothing and keeps creation disabled when no atom is granted (fail-closed)", async () => {
-        admin.value = false;
-        apiMock.getSelfPermissions.mockResolvedValue(NOTHING);
-        const wrapper = await mountOpenedPanel();
         expect(wrapper.find('[data-testid="agent-principal-scope"]').exists()).toBe(false);
-        expect(wrapper.find('[data-testid="agent-scope-unavailable"]').exists()).toBe(true);
+        expect(wrapper.html()).not.toContain("data-agent-scope");
+    });
+
+    it("gates creation on MANAGE_WORKSPACE_AGENTS because CP defaults to WORKSPACE", async () => {
+        apiMock.getSelfPermissions.mockResolvedValue(PERSONAL_ONLY);
+        const personal = await mountOpenedPanel();
         expect(
-            wrapper.find('[data-testid="agent-principal-create"]').attributes("disabled"),
+            personal.find('[data-testid="agent-principal-create"]').attributes("disabled"),
+        ).toBeDefined();
+        expect(personal.find('[data-testid="agent-create-forbidden-hint"]').exists()).toBe(true);
+
+        apiMock.getSelfPermissions.mockResolvedValue(NOTHING);
+        const none = await mountOpenedPanel();
+        expect(
+            none.find('[data-testid="agent-principal-create"]').attributes("disabled"),
         ).toBeDefined();
     });
 });
 
 describe("WorkspaceAgentsPanel PLAN-0622 model intent", () => {
     it("blocks creation until an allowed-model row has both provider and model", async () => {
-        apiMock.getSelfPermissions.mockResolvedValue(PERSONAL_ONLY);
+        apiMock.getSelfPermissions.mockResolvedValue(WORKSPACE_ONLY);
         const wrapper = await mountOpenedPanel();
         await wrapper.find('[data-testid="agent-principal-name"]').setValue("delegate");
         expect(
@@ -317,7 +305,7 @@ describe("WorkspaceAgentsPanel PLAN-0622 model intent", () => {
     });
 
     it("rejects duplicate provider+model pairs", async () => {
-        apiMock.getSelfPermissions.mockResolvedValue(PERSONAL_ONLY);
+        apiMock.getSelfPermissions.mockResolvedValue(WORKSPACE_ONLY);
         const wrapper = await mountOpenedPanel();
         await wrapper.find('[data-testid="agent-principal-name"]').setValue("delegate");
         for (const [index, provider, model] of [
@@ -334,7 +322,7 @@ describe("WorkspaceAgentsPanel PLAN-0622 model intent", () => {
     });
 
     it("requires the default model pair to be complete and sends the whole intent", async () => {
-        apiMock.getSelfPermissions.mockResolvedValue(PERSONAL_ONLY);
+        apiMock.getSelfPermissions.mockResolvedValue(WORKSPACE_ONLY);
         apiMock.createAgentPrincipal.mockResolvedValue({
             principalId: "88888888-8888-4888-8888-888888888888",
             templateId: null,
@@ -352,7 +340,6 @@ describe("WorkspaceAgentsPanel PLAN-0622 model intent", () => {
         await flushPromises();
         expect(apiMock.createAgentPrincipal).toHaveBeenCalledWith({
             name: "delegate",
-            scope: "PERSONAL",
             defaultModelProvider: "openai",
             defaultModelName: "gpt-4o-mini",
         });
@@ -369,22 +356,20 @@ describe("WorkspaceAgentsPanel PLAN-0622 list rows", () => {
         permissionsSnapshot: [],
         bound: true,
         disabled: false,
-        source: "personal",
-        ownerUserId: "99999999-9999-4999-8999-999999999999",
         defaultModelProvider: "openai",
         defaultModelName: "gpt-4o-mini",
         allowedModels: [{ provider: "openai", model: "gpt-4o-mini" }],
     };
 
-    it("shows the source badge and the default model for each row", async () => {
+    it("renders the default model without a tier/scope badge for each row", async () => {
         apiMock.getWorkspaceAgents.mockResolvedValue([boundAgent]);
         const wrapper = await mountOpenedPanel();
-        const badge = wrapper.find(
-            '[data-testid="agent-scope-badge-77777777-7777-4777-8777-777777777777"]',
-        );
-        expect(badge.exists()).toBe(true);
-        expect(badge.attributes("data-agent-scope")).toBe("personal");
-        expect(badge.text()).toBe("个人智能体");
+        expect(
+            wrapper
+                .find('[data-testid="agent-scope-badge-77777777-7777-4777-8777-777777777777"]')
+                .exists(),
+        ).toBe(false);
+        expect(wrapper.html()).not.toContain("data-agent-scope");
         expect(
             wrapper
                 .find('[data-testid="agent-default-model-77777777-7777-4777-8777-777777777777"]')
@@ -432,7 +417,6 @@ describe("WorkspaceAgentsPanel list refresh after create", () => {
             templateId: null,
             templateName: null,
             createdAt: "2026-11-02T00:00:00Z",
-            source: "personal",
             permissionsSnapshot: [],
             bound: true,
             disabled: false,
@@ -444,24 +428,149 @@ describe("WorkspaceAgentsPanel list refresh after create", () => {
             templateId: null,
             templateName: null,
             createdAt: created.createdAt,
-            scope: "PERSONAL",
-            ownerUserId: "99999999-9999-4999-8999-999999999999",
         });
         const wrapper = await mountOpenedPanel();
         expect(
-            wrapper.find(`[data-testid="agent-scope-badge-${created.principalId}"]`).exists(),
+            wrapper.find(`[data-testid="workspace-agent-${created.principalId}"]`).exists(),
         ).toBe(false);
 
         await wrapper.find('[data-testid="agent-principal-name"]').setValue("FreshAgent");
         await wrapper.find('[data-testid="agent-principal-create-form"]').trigger("submit");
         await flushPromises();
 
-        const badge = wrapper.find(`[data-testid="agent-scope-badge-${created.principalId}"]`);
-        expect(badge.exists(), "the created principal must appear in the list immediately").toBe(
+        const row = wrapper.find(`[data-testid="workspace-agent-${created.principalId}"]`);
+        expect(row.exists(), "the created principal must appear in the list immediately").toBe(
             true,
         );
-        expect(badge.attributes("data-agent-scope")).toBe("personal");
+        expect(wrapper.find('[data-testid="unbound-agent-principal"]').text()).toContain(
+            created.principalId,
+        );
+        expect(wrapper.html()).not.toContain("data-agent-scope");
         expect(apiMock.getWorkspaceAgents).toHaveBeenCalledTimes(2);
+        wrapper.unmount();
+    });
+});
+
+// ── PLAN-0651 recovery: principalId 按 userId+workspaceId 本地保存，绑定成功才清 ─────────
+describe("WorkspaceAgentsPanel pending principal recovery", () => {
+    const STORAGE_KEY = "xihe-pending-agent-principals";
+    const pendingKey = `99999999-9999-4999-8999-999999999999/${WORKSPACE_ID}`;
+    const PENDING_ID = "aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa";
+
+    function pendingCard(wrapper: Awaited<ReturnType<typeof mountOpenedPanel>>) {
+        return wrapper.find('[data-testid="unbound-agent-principal"]');
+    }
+
+    it("restores the pending principal after a remount and clears it only after a successful PUT", async () => {
+        apiMock.createAgentPrincipal.mockResolvedValue({
+            principalId: PENDING_ID,
+            templateId: null,
+            templateName: null,
+            createdAt: "2026-11-05T00:00:00Z",
+        });
+        apiMock.updateWorkspaceAgentCap.mockResolvedValue({});
+
+        const first = await mountOpenedPanel();
+        await first.find('[data-testid="agent-principal-name"]').setValue("PendingAgent");
+        await first.find('[data-testid="agent-principal-create-form"]').trigger("submit");
+        await flushPromises();
+
+        expect(pendingCard(first).text()).toContain(PENDING_ID);
+        expect(pendingCard(first).text()).toContain(
+            i18n.global.t("workspace.agentPendingRecoveryNote"),
+        );
+        const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "{}") as Record<
+            string,
+            string
+        >;
+        expect(saved[pendingKey]).toBe(PENDING_ID);
+        first.unmount();
+
+        // Close/reopen simulation: the pending card must come back from local storage.
+        apiMock.getWorkspaceAgents.mockResolvedValue([]);
+        const restored = await mountOpenedPanel();
+        expect(pendingCard(restored).text()).toContain(PENDING_ID);
+        expect(pendingCard(restored).text()).toContain(
+            i18n.global.t("workspace.agentPendingRecoveryNote"),
+        );
+
+        await restored.find('[data-testid="agent-principal-bind"]').trigger("click");
+        await flushPromises();
+
+        expect(apiMock.updateWorkspaceAgentCap).toHaveBeenCalledWith(WORKSPACE_ID, PENDING_ID, []);
+        expect(pendingCard(restored).exists()).toBe(false);
+        expect(JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "{}")).not.toHaveProperty(
+            pendingKey,
+        );
+        restored.unmount();
+    });
+
+    it("keeps the pending card and surfaces the CP detail when PUT returns 409", async () => {
+        apiMock.createAgentPrincipal.mockResolvedValue({
+            principalId: PENDING_ID,
+            templateId: null,
+            templateName: null,
+            createdAt: "2026-11-05T00:00:00Z",
+        });
+        apiMock.updateWorkspaceAgentCap.mockRejectedValue(
+            new ApiError("ROLE_BINDING_EXCEEDS_CAP", "role atoms exceed cap: workspace.write"),
+        );
+
+        const wrapper = await mountOpenedPanel();
+        await wrapper.find('[data-testid="agent-principal-name"]').setValue("PendingAgent");
+        await wrapper.find('[data-testid="agent-principal-create-form"]').trigger("submit");
+        await flushPromises();
+        await wrapper.find('[data-testid="agent-principal-bind"]').trigger("click");
+        await flushPromises();
+
+        expect(wrapper.find('[data-testid="agent-error"]').text()).toContain(
+            "role atoms exceed cap: workspace.write",
+        );
+        expect(pendingCard(wrapper).exists()).toBe(true);
+        const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "{}") as Record<
+            string,
+            string
+        >;
+        expect(saved[pendingKey]).toBe(PENDING_ID);
+        wrapper.unmount();
+    });
+
+    // CP `77120b87`：带 workspaceId 的列表现在会以 `bound=false` 返回本人 owner 的未绑定主体。
+    // 因此重挂载后（本地 key 仍在）列表里同一 principalId 会以「未绑定」行出现 —— 待绑定卡与
+    // 行级入口并存，绑定走任一路径都收敛（成功的 PUT 清 key/卡）。
+    it("shows the row-level unbound entry next to the pending card after a remount (CP list recovery)", async () => {
+        const ownerUnboundRow = {
+            principalId: PENDING_ID,
+            name: "Recovered owner agent",
+            templateId: null,
+            templateName: null,
+            createdAt: "2026-11-05T00:00:00Z",
+            permissionsSnapshot: [],
+            bound: false,
+            disabled: false,
+        };
+        localStorage.setItem(STORAGE_KEY, JSON.stringify({ [pendingKey]: PENDING_ID }));
+        apiMock.getWorkspaceAgents.mockResolvedValue([ownerUnboundRow]);
+
+        const wrapper = await mountOpenedPanel();
+
+        // CP 列表恢复：未绑定 owner 行带显式徽标与行级绑定入口（不再依赖本地 key 才有入口）。
+        const row = wrapper.get(`[data-testid="workspace-agent-${PENDING_ID}"]`);
+        expect(row.find(`[data-testid="agent-unbound-badge-${PENDING_ID}"]`).exists()).toBe(true);
+        const bindRow = row.find(`[data-testid="agent-bind-row-${PENDING_ID}"]`);
+        expect(bindRow.exists(), "the recovered row must offer a row-level bind").toBe(true);
+        expect(bindRow.attributes("disabled")).toBeUndefined();
+        // 本地恢复卡仍在（同一主体在两个恢复面里收敛，绑定成功任一路径都会清 key/卡）。
+        expect(pendingCard(wrapper).text()).toContain(PENDING_ID);
+
+        apiMock.updateWorkspaceAgentCap.mockResolvedValue({});
+        await bindRow.trigger("click");
+        await flushPromises();
+
+        expect(apiMock.updateWorkspaceAgentCap).toHaveBeenCalledWith(WORKSPACE_ID, PENDING_ID, []);
+        expect(JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "{}")).not.toHaveProperty(
+            pendingKey,
+        );
         wrapper.unmount();
     });
 });
@@ -477,7 +586,6 @@ describe("WorkspaceAgentsPanel bind an existing agent row", () => {
         templateId: null,
         templateName: null,
         createdAt: "2026-11-02T00:00:00Z",
-        source: "personal",
         permissionsSnapshot: [],
         bound: true,
         disabled: false,
@@ -519,6 +627,132 @@ describe("WorkspaceAgentsPanel bind an existing agent row", () => {
     });
 });
 
+// ── D-160 ④/③ UI 差距收口：cap 编辑入口与错误呈现 ─────────────────────────────────────
+describe("WorkspaceAgentsPanel cap editing (D-160 ④/③)", () => {
+    const capAgent = {
+        principalId: "ffffffff-ffff-4fff-8fff-ffffffffffff",
+        name: "capped agent",
+        templateId: null,
+        templateName: null,
+        createdAt: "2026-11-05T00:00:00Z",
+        permissionsSnapshot: [],
+        bound: true,
+        disabled: false,
+    };
+    const editCap = () =>
+        wrapper?.get(`[data-testid="workspace-agent-edit-cap-${capAgent.principalId}"]`);
+    const saveCap = () =>
+        wrapper?.get(`[data-testid="workspace-agent-save-cap-${capAgent.principalId}"]`);
+
+    let wrapper: Awaited<ReturnType<typeof mountOpenedPanel>> | null = null;
+
+    afterEach(() => {
+        wrapper?.unmount();
+        wrapper = null;
+    });
+
+    it("keeps the edit entry disabled without MANAGE_WORKSPACE_AGENTS and fires no request", async () => {
+        admin.value = false;
+        apiMock.getWorkspaceAgents.mockResolvedValue([capAgent]);
+        apiMock.getSelfPermissions.mockResolvedValue(PERSONAL_ONLY);
+        wrapper = await mountOpenedPanel();
+
+        expect(editCap().attributes("disabled")).toBeDefined();
+        // 早退保护：即使通过 DOM 绕过禁用态触发 handler，也不能发请求或进入编辑态。
+        await editCap().trigger("click");
+        expect(
+            wrapper
+                .find(`[data-testid="workspace-agent-save-cap-${capAgent.principalId}"]`)
+                .exists(),
+        ).toBe(false);
+        expect(apiMock.updateWorkspaceAgentCap).not.toHaveBeenCalled();
+    });
+
+    it("saves an edited cap after the projection grants MANAGE_WORKSPACE_AGENTS", async () => {
+        apiMock.getWorkspaceAgents.mockResolvedValue([capAgent]);
+        apiMock.getSelfPermissions.mockResolvedValue(WORKSPACE_ONLY);
+        apiMock.updateWorkspaceAgentCap.mockResolvedValue({});
+        wrapper = await mountOpenedPanel();
+
+        await editCap().trigger("click");
+        expect(
+            saveCap().attributes("disabled"),
+            "the save button follows the same capability gate",
+        ).toBeUndefined();
+
+        await wrapper.get(`[data-testid="agent-cap-write"]`).setChecked(true);
+        await wrapper.get(`[data-testid="agent-resource-write"]`).setValue("src/*");
+        await saveCap().trigger("click");
+        await flushPromises();
+
+        expect(apiMock.updateWorkspaceAgentCap).toHaveBeenCalledWith(
+            WORKSPACE_ID,
+            capAgent.principalId,
+            [{ actionClass: "write", resource: "src/*" }],
+        );
+        expect(wrapper.get('[role="status"]').text()).toContain(
+            i18n.global.t("workspace.agentCapSaved"),
+        );
+    });
+
+    it("keeps the D-160 ③ two-sided atom detail for 403 AGENT_PERMISSION_SCOPE_EXCEEDED", async () => {
+        apiMock.getWorkspaceAgents.mockResolvedValue([capAgent]);
+        apiMock.getSelfPermissions.mockResolvedValue(WORKSPACE_ONLY);
+        apiMock.updateWorkspaceAgentCap.mockRejectedValue(
+            new ApiError(
+                "AGENT_PERMISSION_SCOPE_EXCEEDED",
+                "Workspace cap exceeds held permissions: principal-exceeding=[write@*] actor-exceeding=[write@src/*]",
+            ),
+        );
+        wrapper = await mountOpenedPanel();
+
+        await editCap().trigger("click");
+        await saveCap().trigger("click");
+        await flushPromises();
+
+        // D-160 ③ 的点名本身就是可操作文案（授权者要看原子清单），不走 FORBIDDEN 掩蔽。
+        expect(wrapper.find('[data-testid="agent-error"]').text()).toContain(
+            "principal-exceeding=[write@*] actor-exceeding=[write@src/*]",
+        );
+    });
+
+    it("maps a plain FORBIDDEN to the localized actionable hint, never the raw detail", async () => {
+        apiMock.getWorkspaceAgents.mockResolvedValue([capAgent]);
+        apiMock.getSelfPermissions.mockResolvedValue(WORKSPACE_ONLY);
+        const ErrorCtor = ApiError as unknown as new (code: string) => Error;
+        apiMock.updateWorkspaceAgentCap.mockRejectedValue(new ErrorCtor("FORBIDDEN"));
+        wrapper = await mountOpenedPanel();
+
+        await editCap().trigger("click");
+        await saveCap().trigger("click");
+        await flushPromises();
+
+        const text = wrapper.find('[data-testid="agent-error"]').text();
+        expect(text).toContain(i18n.global.t("workspace.agentBindForbidden"));
+        expect(text).not.toContain("CREATE_ACCOUNT permission is required");
+    });
+
+    it("keeps the CP atom naming detail when the refusal is another code (D-160 ③ display)", async () => {
+        apiMock.getWorkspaceAgents.mockResolvedValue([capAgent]);
+        apiMock.getSelfPermissions.mockResolvedValue(WORKSPACE_ONLY);
+        apiMock.updateWorkspaceAgentCap.mockRejectedValue(
+            new ApiError(
+                "ROLE_BINDING_EXCEEDS_CAP",
+                "principal-exceeding=[write@*] actor-exceeding=[]",
+            ),
+        );
+        wrapper = await mountOpenedPanel();
+
+        await editCap().trigger("click");
+        await saveCap().trigger("click");
+        await flushPromises();
+
+        expect(wrapper.find('[data-testid="agent-error"]').text()).toContain(
+            "principal-exceeding=[write@*] actor-exceeding=[]",
+        );
+    });
+});
+
 // PLAN-0622 D26：未绑定的行要显式标「未绑定」，否则用户以为它已经能用。
 describe("WorkspaceAgentsPanel unbound badge", () => {
     it("marks a row without a workspace binding", async () => {
@@ -529,7 +763,6 @@ describe("WorkspaceAgentsPanel unbound badge", () => {
                 templateId: null,
                 templateName: null,
                 createdAt: "2026-11-02T00:00:00Z",
-                source: "personal",
                 permissionsSnapshot: [],
                 bound: false,
                 disabled: false,
@@ -540,7 +773,6 @@ describe("WorkspaceAgentsPanel unbound badge", () => {
                 templateId: null,
                 templateName: null,
                 createdAt: "2026-11-02T00:00:00Z",
-                source: "workspace",
                 permissionsSnapshot: [],
                 bound: true,
                 disabled: false,
@@ -574,7 +806,6 @@ describe("WorkspaceAgentsPanel disabled row", () => {
                 templateId: null,
                 templateName: null,
                 createdAt: "2026-11-02T00:00:00Z",
-                source: "personal",
                 permissionsSnapshot: [],
                 bound: true,
                 disabled: true,
@@ -613,7 +844,6 @@ describe("WorkspaceAgentsPanel hook subscriptions (PLAN-0625 M3, read-only)", ()
         permissionsSnapshot: [],
         bound: true,
         disabled: false,
-        source: "workspace",
         hooks: { advisors: [{ kind: "guard", on: ["approval.ask"] }] },
     };
 
@@ -678,8 +908,6 @@ describe("WorkspaceAgentsPanel PLAN-0629 read-only memory", () => {
         permissionsSnapshot: [],
         bound: true,
         disabled: false,
-        source: "personal",
-        ownerUserId: "99999999-9999-4999-8999-999999999999",
     };
     const toggle = `[data-testid="agent-memory-toggle-${PRINCIPAL_ID}"]`;
 
@@ -893,8 +1121,6 @@ describe("WorkspaceAgentsPanel memory write surface", () => {
         permissionsSnapshot: [],
         bound: true,
         disabled: false,
-        source: "workspace",
-        ownerUserId: null,
         // 「启用记忆」开关必须与现值合并且不丢其它 key。
         contextPolicy: { window: 5, memory: { policyVersion: 1 } },
     };
@@ -1017,5 +1243,233 @@ describe("WorkspaceAgentsPanel memory write surface", () => {
             PRINCIPAL_ID,
             "all",
         );
+    });
+});
+
+// ── PLAN-0667 M3：角色 / 技能区块（列表 + 绑定/解绑 + 409 三类码 + 无硬编码中文） ──────────
+describe("WorkspaceAgentsPanel PLAN-0667 roles & skills", () => {
+    const PRINCIPAL_ID = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
+    const rbacAgent = {
+        principalId: PRINCIPAL_ID,
+        name: "rbac agent",
+        templateId: null,
+        templateName: null,
+        createdAt: "2026-11-02T00:00:00Z",
+        permissionsSnapshot: [],
+        bound: true,
+        disabled: false,
+    };
+    const WORKSPACE_MANAGE = {
+        userId: "99999999-9999-4999-8999-999999999999",
+        instanceCapabilities: [],
+        instancePermissions: [],
+        workspaces: [
+            {
+                workspaceId: WORKSPACE_ID,
+                workspaceAdmin: true,
+                permissions: [{ actionClass: "MANAGE_WORKSPACE_AGENTS", resource: WORKSPACE_ID }],
+            },
+        ],
+    };
+    const rolesToggle = `[data-testid="agent-roles-toggle-${PRINCIPAL_ID}"]`;
+
+    beforeEach(() => {
+        apiMock.getWorkspaceAgents.mockResolvedValue([rbacAgent]);
+        apiMock.getSelfPermissions.mockResolvedValue(WORKSPACE_MANAGE);
+        apiMock.getAgentRoles.mockResolvedValue([
+            {
+                bindingId: "binding-system",
+                roleId: "role-seed",
+                name: "AGENT_SPAWNER",
+                displayName: null,
+                scopeType: "instance",
+                scopeId: null,
+                scopeName: null,
+                isSystem: true,
+                grantedBy: "99999999-9999-4999-8999-999999999999",
+                atomSummary: ["读取", "执行"],
+                atomCount: 2,
+                atomsTruncated: false,
+            },
+            {
+                bindingId: "binding-editor",
+                roleId: "role-editor",
+                name: "WS_EDITOR",
+                displayName: null,
+                scopeType: "workspace",
+                scopeId: WORKSPACE_ID,
+                scopeName: null,
+                isSystem: false,
+                atomSummary: ["读取", "写入", "执行"],
+                atomCount: 6,
+                atomsTruncated: true,
+            },
+        ]);
+        apiMock.getAgentSkills.mockResolvedValue([
+            {
+                bindingId: "skill-binding-1",
+                skillId: "skill-1",
+                name: "contract-review",
+                sourceType: "workspace",
+                sourceName: "工作区技能库",
+                tokenEstimate: 1200,
+            },
+        ]);
+        apiMock.listRoles.mockResolvedValue([
+            { id: "role-editor", name: "WS_EDITOR", displayName: "Workspace editor" },
+        ]);
+        apiMock.getSkills.mockResolvedValue([
+            { skillId: "skill-2", name: "test-case-writing", definitionScope: null },
+        ]);
+    });
+
+    it("lists name / scope / system badge / derived-atom summary and never unbinds a system binding", async () => {
+        const wrapper = await mountOpenedPanel();
+        await wrapper.get(rolesToggle).trigger("click");
+        await flushPromises();
+
+        const system = wrapper.get('[data-testid="agent-role-item-binding-system"]');
+        expect(system.text()).toContain("AGENT_SPAWNER");
+        expect(system.text()).toContain(
+            i18n.global.t("workspace.agentRoleGrantedBy", { id: "99999999" }),
+        );
+        expect(system.text()).toContain("instance");
+        expect(system.text()).toContain(i18n.global.t("workspace.agentRoleSystemBadge"));
+        // D5(b)：只渲染摘要（前 3 个）+ 总数，不展开全集。
+        expect(system.text()).toContain(
+            i18n.global.t("workspace.agentRoleAtomsSummary", { atoms: "读取 · 执行", count: 2 }),
+        );
+        expect(wrapper.find('[data-testid="agent-role-unbind-binding-system"]').exists()).toBe(
+            false,
+        );
+
+        const editor = wrapper.get('[data-testid="agent-role-item-binding-editor"]');
+        expect(editor.text()).toContain("WS_EDITOR");
+        await wrapper.get('[data-testid="agent-role-unbind-binding-editor"]').trigger("click");
+        await flushPromises();
+        expect(apiMock.unbindAgentRole).toHaveBeenCalledWith(
+            WORKSPACE_ID,
+            PRINCIPAL_ID,
+            "binding-editor",
+        );
+    });
+
+    it("binds the selected role and maps 409 AGENT_PRINCIPAL_FORBIDDEN_ATOMS to localized copy", async () => {
+        apiMock.bindAgentRole.mockRejectedValue(
+            new ApiError(
+                "AGENT_PRINCIPAL_FORBIDDEN_ATOMS",
+                "role carries atoms an agent principal may never hold: INSTANCE_ADMIN",
+            ),
+        );
+        const wrapper = await mountOpenedPanel();
+        await wrapper.get(rolesToggle).trigger("click");
+        await flushPromises();
+
+        await wrapper
+            .get(`[data-testid="agent-role-select-${PRINCIPAL_ID}"]`)
+            .setValue("role-editor");
+        await wrapper.get(`[data-testid="agent-role-bind-${PRINCIPAL_ID}"]`).trigger("click");
+        await flushPromises();
+
+        expect(apiMock.bindAgentRole).toHaveBeenCalledWith(
+            WORKSPACE_ID,
+            PRINCIPAL_ID,
+            "role-editor",
+        );
+        expect(wrapper.get('[data-testid="agent-rbac-action-error"]').text()).toContain(
+            "INSTANCE_ADMIN",
+        );
+    });
+
+    it("maps 409 ROLE_BINDING_EXCEEDS_CAP to localized copy and shows the cap hint", async () => {
+        apiMock.bindAgentRole.mockRejectedValue(
+            new ApiError(
+                "ROLE_BINDING_EXCEEDS_CAP",
+                "role atoms exceed the agent's workspace cap: CREATE_ACCOUNT,MANAGE_WORKSPACE_AGENTS",
+            ),
+        );
+        const wrapper = await mountOpenedPanel();
+        await wrapper.get(rolesToggle).trigger("click");
+        await flushPromises();
+
+        expect(wrapper.get(`[data-testid="agent-role-cap-hint-${PRINCIPAL_ID}"]`).text()).toBe(
+            i18n.global.t("workspace.agentRoleCapHint"),
+        );
+        await wrapper
+            .get(`[data-testid="agent-role-select-${PRINCIPAL_ID}"]`)
+            .setValue("role-editor");
+        await wrapper.get(`[data-testid="agent-role-bind-${PRINCIPAL_ID}"]`).trigger("click");
+        await flushPromises();
+
+        expect(wrapper.get('[data-testid="agent-rbac-action-error"]').text()).toContain(
+            "CREATE_ACCOUNT,MANAGE_WORKSPACE_AGENTS",
+        );
+    });
+
+    it("falls back to localized copy when the role binding Problem has no detail", async () => {
+        apiMock.bindAgentRole.mockRejectedValue(new ApiError("ROLE_BINDING_EXCEEDS_CAP", ""));
+        const wrapper = await mountOpenedPanel();
+        await wrapper.get(rolesToggle).trigger("click");
+        await flushPromises();
+        await wrapper
+            .get(`[data-testid="agent-role-select-${PRINCIPAL_ID}"]`)
+            .setValue("role-editor");
+        await wrapper.get(`[data-testid="agent-role-bind-${PRINCIPAL_ID}"]`).trigger("click");
+        await flushPromises();
+        expect(wrapper.get('[data-testid="agent-rbac-action-error"]').text()).toBe(
+            i18n.global.t("workspace.agentRoleExceedsCap"),
+        );
+    });
+
+    it("lists skills and unbinds one through the skill endpoint", async () => {
+        const wrapper = await mountOpenedPanel();
+        await wrapper.get(rolesToggle).trigger("click");
+        await flushPromises();
+
+        expect(wrapper.get('[data-testid="agent-skills-list"]').text()).toContain(
+            "contract-review",
+        );
+        // 三列：来源类型 / 来源名 / token 估算（M2 契约字段）。
+        expect(wrapper.get('[data-testid="agent-skill-source-skill-binding-1"]').text()).toBe(
+            i18n.global.t("workspace.agentSkillSourceWorkspace"),
+        );
+        expect(wrapper.get('[data-testid="agent-skill-item-skill-binding-1"]').text()).toContain(
+            "工作区技能库",
+        );
+        expect(wrapper.get('[data-testid="agent-skill-item-skill-binding-1"]').text()).toContain(
+            i18n.global.t("workspace.agentSkillTokens", { tokens: 1200 }),
+        );
+        await wrapper.get('[data-testid="agent-skill-unbind-skill-binding-1"]').trigger("click");
+        await flushPromises();
+        expect(apiMock.unbindAgentSkill).toHaveBeenCalledWith(
+            WORKSPACE_ID,
+            PRINCIPAL_ID,
+            "skill-binding-1",
+        );
+    });
+
+    it("keeps the section read-only (with explanation) when the projection lacks MANAGE_WORKSPACE_AGENTS", async () => {
+        apiMock.getSelfPermissions.mockResolvedValue(CREATE_ACCOUNT_MISSING);
+        const wrapper = await mountOpenedPanel();
+        await wrapper.get(rolesToggle).trigger("click");
+        await flushPromises();
+
+        expect(wrapper.find(`[data-testid="agent-role-bind-${PRINCIPAL_ID}"]`).exists()).toBe(
+            false,
+        );
+        expect(wrapper.find('[data-testid="agent-rbac-readonly-hint"]').exists()).toBe(true);
+    });
+
+    it("has no hardcoded CJK copy outside comments (i18n is the single source)", () => {
+        const source = readFileSync(
+            resolve(process.cwd(), "src/features/workspace/components/WorkspaceAgentsPanel.vue"),
+            "utf8",
+        );
+        const stripped = source
+            .replace(/<!--[\s\S]*?-->/g, "")
+            .replace(/\/\*[\s\S]*?\*\//g, "")
+            .replace(/\/\/[^\n]*/g, "");
+        const cjk = stripped.match(/[\u4e00-\u9fff]/g);
+        expect(cjk, `hardcoded CJK: ${cjk?.slice(0, 6).join("") ?? ""}`).toBeNull();
     });
 });

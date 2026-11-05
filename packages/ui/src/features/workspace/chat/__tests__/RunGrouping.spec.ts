@@ -133,6 +133,36 @@ describe("MessageList run grouping (PLAN-0659 T1.1)", () => {
         ).toContain("b-assistant");
     });
 
+    it("keeps two fan-out runs apart even though their origin values differ (scheduled wake)", () => {
+        // PLAN-0665 M1 真栈实测（2026-11-05）：TO 双目标消息派生出两条 run ——
+        //   首条（用户提交）：origin = user_submission
+        //   派生（wake 载体）：origin = scheduled（wake 的既有分类，不是 user_submission）
+        // 两者 trigger_source 都是 user、parent_run_id 都是 NULL。所以"按 origin 分组"会拆错/并错：
+        // 分组只认 runId / durable delivery；origin 不同也不能合并，相同也不能合并。
+        const groupA = runSummary(RUN_A, "succeeded", "success");
+        const groupB = { ...runSummary(RUN_B, "succeeded", "success"), origin: "scheduled" };
+        expect(groupA.origin).toBe("user_submission");
+        expect(groupB.origin).toBe("scheduled");
+        expect(groupA.origin).not.toBe(groupB.origin);
+
+        const runs = [groupA, groupB];
+        const wrapper = mountList(
+            [
+                {
+                    ...message("a-user", RUN_A, "user"),
+                    delivery: { to: ["part-alpha", "part-helper"] },
+                } as Message,
+                message("a-assistant", RUN_A, "assistant"),
+                message("b-assistant", RUN_B, "assistant"),
+            ],
+            runs,
+        );
+
+        const headers = wrapper.findAll('[data-testid="run-header"]');
+        expect(headers.map((header) => header.attributes("data-run-id"))).toEqual([RUN_A, RUN_B]);
+        expect(wrapper.findAll('[data-testid="run-group-body"]')).toHaveLength(3);
+    });
+
     it("does not group (no header, no indent) when the session has a single run", () => {
         const wrapper = mountList(
             [message("a-user", RUN_A, "user"), message("a-assistant", RUN_A, "assistant")],

@@ -1,8 +1,9 @@
 import { execFileSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { isSessionCreateRequest } from "./helpers/agent-principal";
-import { test, expect } from "@playwright/test";
+import { test, expect, type APIRequestContext, type Page } from "@playwright/test";
 import {
     CP_URL,
     ensureAgentWorkspaceBinding,
@@ -54,6 +55,83 @@ function scalarCount(sql: string): number {
     return Number(value);
 }
 
+/**
+ * 建会话前给本 spec 的 owner 补一条 READY 的 fake-LLM USER 连接。
+ *
+ * `SessionProviderDefaults.resolve` 走「agent 默认模型 → 生效 llm-provider profile → 400
+ * PROVIDER_REQUIRED」。真栈上实例层 profile 是 `openai/default/fake-openai`，而
+ * `ConfigService.strictResolveConnection` 对 **instance 层 profile 解析到"消费方自己的 USER
+ * 连接"**；runner 只为 admin 账号建了那条连接，spec 自注册的用户看不见 ⇒ 建会话 409
+ * `LLM_PROFILE_CONFLICT`（spawn12d 实测）。这里按同一 providerId/connectionKey/model 给 owner
+ * 建一条（写法同 `config-run-effective.spec.ts`，已存在则复用）。
+ */
+async function ensureFakeChatConnection(
+    request: APIRequestContext,
+    headers: Record<string, string>,
+): Promise<void> {
+    const existing = await request.get(`${CP_URL}/api/v1/provider-connections`, { headers });
+    expect(existing.ok(), await existing.text()).toBeTruthy();
+    const listed = (await existing.json()) as {
+        connections?: Array<{ id: string; providerId?: string; status?: string }>;
+    };
+    const ready = (listed.connections ?? []).find(
+        (item) => item.providerId === "openai" && item.status === "READY",
+    );
+    if (ready) return;
+    const created = await request.post(`${CP_URL}/api/v1/provider-connections`, {
+        headers,
+        data: {
+            providerId: "openai",
+            apiTypeId: "openai-chat-completions",
+            apiTypeVersion: 1,
+            apiKey: "sk-fake-openai-key",
+            connectionKey: "default",
+            label: "E2E spawn fake LLM",
+            scope: "USER",
+            modelDiscovery: "manual",
+            manualModels: ["fake-openai"],
+            baseUrl: `${FAKE_LLM_URL}/openai/v1`,
+        },
+    });
+    expect(created.status(), await created.text()).toBe(201);
+    const connection = (await created.json()) as { id: string };
+    const verified = await request.post(
+        `${CP_URL}/api/v1/provider-connections/${connection.id}/verify`,
+        { headers },
+    );
+    expect(verified.ok(), await verified.text()).toBeTruthy();
+}
+
+/**
+ * 单次发送，不套 `sendChat` 的"用户气泡可见"成功判据。
+ *
+ * `sendChat` 的健壮性循环以「乐观用户气泡出现」为成功标志：本 spec 发送后 UI 立刻弹出常驻审批模态
+ * （覆盖层挡住气泡判定），循环会反复重试点击、被模态拦截，直到 240s 超时——而模态里已经是本次请求
+ * 的参数（spawn12e 实测：发送其实成功）。真正的判据在调用方：审批模态必须在 60s 内出现且能批准，
+ * 这一条比"气泡可见"更强，因此这里只做一次可靠点击。
+ */
+async function sendSpawnMessage(page: Page, text: string): Promise<void> {
+    const input = page.getByTestId("chat-input"),
+        send = page.getByTestId("chat-send-button");
+    // 不用固定 sleep（packages/ui/AGENTS.md 禁 waitForTimeout）：每次 fill 后轮询「发送按钮已可用」
+    // 作为"fill 已落到 store"的就绪信号；未就绪才重填，最多 6 次，仍不就绪交给下面的显式 timeout 报错。
+    for (let attempt = 0; attempt < 6; attempt++) {
+        await input.click().catch(() => {});
+        await input.fill(text);
+        const ready = await expect
+            .poll(() => send.isEnabled().catch(() => false), {
+                timeout: 3_000,
+                intervals: [200, 400, 800],
+            })
+            .toBe(true)
+            .then(() => true)
+            .catch(() => false);
+        if (ready) break;
+    }
+    await expect(send).toBeEnabled({ timeout: 15_000 });
+    await send.click();
+}
+
 function seedUserSpawnPermissions(userId: string, workspaceId: string): void {
     seedUserGrantPermissions(userId, [
         { actionClass: "CREATE_ACCOUNT", resource: "*" },
@@ -62,27 +140,61 @@ function seedUserSpawnPermissions(userId: string, workspaceId: string): void {
     ]);
 }
 
-function addPrincipalSpawnGrant(principalId: string): void {
-    const grantId = requireUuid(
+// BL-314 定性（2026-11-05 18:16，Lead 源码核对 + 真栈 spawn11 实证）：
+// **给 agent 增加能力的合法入口是 instance 面角色绑定**，不是 workspace 角色绑定。
+//   - `AgentBindingAtomPolicy.assertWithinCap` / `AgentPrincipalRoleBindingService.requireWithinCap`
+//     对 instance 绑定（workspaceId == null）直接放行（"pass by construction"）；
+//   - `AgentPrincipalService.validateGrantableRoles` 只查「角色存在 / 非 agent 禁授原子 /
+//     调用者在实例面可授」，**不含 cap 门**，所以创建时带 roleIds 就能把能力物化到主体；
+//   - workspace 角色绑定按 D-180「role=reach」只表达可达性，扩能力必 409 ROLE_BINDING_EXCEEDS_CAP。
+// 因此 fixture 建一条只含 SPAWN_AGENT 的角色，创建主体时用 roleIds 绑到 instance 面，再设 workspace cap。
+function createSpawnCapabilityRole(): string {
+    const suffix = randomUUID().replaceAll("-", "").slice(0, 8).toUpperCase();
+    // 用 CTE + 顶层 SELECT 取回 id：`psql -c "INSERT … RETURNING id"` 除结果行外还会打印
+    // 命令标签 `INSERT 0 1`，`requireUuid` 会因此拿到两行而失败（spawn12 实测）。顶层是
+    // SELECT 时标签不再输出，`ON CONFLICT DO UPDATE` 走到更新分支也能拿回同一 id。
+    const roleId = requireUuid(
         queryIsolatedPostgres(`
-    SELECT id FROM grants
-    WHERE subject_type = 'agent_principal' AND subject_id = '${principalId}'::uuid
-    ORDER BY created_at DESC LIMIT 1
+    WITH upserted AS (
+      INSERT INTO roles (id, name, display_name, description, is_system)
+      VALUES (gen_random_uuid(), 'E2E_SPAWN_${suffix}', 'E2E spawn ${suffix}',
+              'E2E fixture: single SPAWN_AGENT atom (BL-314)', FALSE)
+      ON CONFLICT (name) DO UPDATE SET updated_at = NOW()
+      RETURNING id)
+    SELECT id FROM upserted
   `),
     );
     queryIsolatedPostgres(`
-    UPDATE grants
-    SET permissions = permissions || '[{"actionClass":"SPAWN_AGENT","resource":"*"}]'::jsonb
-    WHERE id = '${grantId}'::uuid
-      AND NOT (permissions @> '[{"actionClass":"SPAWN_AGENT","resource":"*"}]'::jsonb)
+    INSERT INTO role_permissions (role_id, action_class, resource_pattern)
+    VALUES ('${roleId}'::uuid, 'SPAWN_AGENT', '*')
+    ON CONFLICT DO NOTHING
   `);
-    if (
-        scalarCount(`
-    SELECT count(*) FROM grants WHERE id = '${grantId}'::uuid
-      AND permissions @> '[{"actionClass":"SPAWN_AGENT","resource":"*"}]'::jsonb
-  `) !== 1
-    ) {
-        throw new Error("The Agent principal fixture grant does not include SPAWN_AGENT");
+    return roleId;
+}
+
+/**
+ * setWorkspaceCap/重算之后：SPAWN_AGENT 必须仍以"单原子 + source=role + role_binding 背书"存在。
+ *
+ * 资源维度注意：`RoleGrantMaterializer` 对 `resource_pattern = '*'` 会**省略** `resource` 键，canonical
+ * 形态是 `{"actionClass":"SPAWN_AGENT"}`（同 `helpers/user-grants.ts` 的播种说明）。所以这里不能要求
+ * `resource:"*"` —— spawn12 实测该行确实存在，却因多要求一个键而被判 0 行。
+ */
+function assertSpawnGrantSurvivedCapPut(principalId: string, roleId: string): void {
+    const rows = scalarCount(`
+    SELECT count(*) FROM grants g
+    WHERE g.subject_type = 'agent_principal' AND g.subject_id = '${principalId}'::uuid
+      AND g.source = 'role'
+      AND g.permissions @> '[{"actionClass":"SPAWN_AGENT"}]'::jsonb
+      AND jsonb_array_length(g.permissions) = 1
+      AND EXISTS (
+        SELECT 1 FROM role_bindings b
+        WHERE b.subject_type = 'agent_principal' AND b.subject_id = g.subject_id
+          AND b.role_id = '${roleId}'::uuid)
+  `);
+    if (rows !== 1) {
+        throw new Error(
+            "SPAWN_AGENT grant did not survive setWorkspaceCap as a bound single-atom role row",
+        );
     }
 }
 
@@ -244,16 +356,21 @@ test("@host Agent spawn uses CP logical MCP, approval retry, and child terminal 
     const workspaceId = requireUuid(owner.workspaceId);
     const workspaceHeaders = { ...owner.headers, "X-Workspace-Id": workspaceId };
     seedUserSpawnPermissions(userId, workspaceId);
+    // 会话创建要解析到"本用户的"READY chat 连接（instance 层 profile → 消费方 USER 连接）。
+    await ensureFakeChatConnection(request, workspaceHeaders);
 
+    // BL-314：能力走 instance 面角色绑定（创建时 roleIds）→ 再设 workspace cap。
+    // 不再需要「空 cap 建绑定行 → workspace 绑角色」的三段顺序：那是 D-180「role=reach」下
+    // 唯一会被 cap 门拒绝的走法（409 ROLE_BINDING_EXCEEDS_CAP，spawn11 实证）。
+    const spawnRoleId = createSpawnCapabilityRole();
     const principalResponse = await request.post(`${CP_URL}/api/v1/agent-principals`, {
         headers: workspaceHeaders,
-        data: { scope: "WORKSPACE", name: "CPMCPSpawnE2E" },
+        data: { name: "CPMCPSpawnE2E", roleIds: [spawnRoleId] },
     });
     expect(principalResponse.status(), await principalResponse.text()).toBe(201);
     const principalId = requireUuid(
         ((await principalResponse.json()) as { principalId: string }).principalId,
     );
-    addPrincipalSpawnGrant(principalId);
 
     const bindingResponse = await request.put(
         `${CP_URL}/api/v1/workspaces/${workspaceId}/agents/${principalId}`,
@@ -263,6 +380,7 @@ test("@host Agent spawn uses CP logical MCP, approval retry, and child terminal 
         },
     );
     expect(bindingResponse.status(), await bindingResponse.text()).toBe(200);
+    assertSpawnGrantSurvivedCapPut(principalId, spawnRoleId);
     await ensureAgentWorkspaceBinding(workspaceId);
 
     seedPage(page, owner);
@@ -401,7 +519,7 @@ test("@host Agent spawn uses CP logical MCP, approval retry, and child terminal 
         const token = `spawn-${Date.now().toString(36)}`,
             derivedResponsesBeforeSpawn = derivedStateResponses.length;
         childReleaseNeeded = true;
-        await sendChat(page, `XIHE-E2E-SPAWN ${token}`);
+        await sendSpawnMessage(page, `XIHE-E2E-SPAWN ${token}`);
         const approvalModal = page.locator('[data-testid="modal-content"]');
         await expect(approvalModal, "spawn must use the existing MCP approval gate").toBeVisible({
             timeout: 60_000,
@@ -881,10 +999,37 @@ test("@host Agent spawn uses CP logical MCP, approval retry, and child terminal 
             1,
         );
 
+        // BL-315（2026-11-05 定性，Lead 裁定 A 类）：父会话被删 ⇒ 子会话委派树"断根"，read-only
+        // 预算视图按设计 fail-closed：CP `DelegationBudgetService.treeBroken()`
+        // （DelegationBudgetService.java:425-429）返回 409 DELEGATION_POLICY_INVALID，UI
+        // `SessionList.vue:106-119` 已 catch+warn（不抛错、不渲染预算 chip）。这是**预期失败**，
+        // 因此这里显式断言它的形态，并在文末把它单独登记进噪声白名单；其余噪声仍要求为空。
+        const childDelegationUsagePath = `/api/v1/sessions/${childSessionId}/delegation-usage`;
+        const expectedDelegationUsage409 = page.waitForResponse(
+            (response) =>
+                response.request().method() === "GET" &&
+                new URL(response.url()).pathname === childDelegationUsagePath,
+            { timeout: 30_000 },
+        );
         await page.goto(workspaceChatPath(workspaceId, childSessionId), { waitUntil: "load" });
         await expect(page).toHaveURL(workspaceChatPath(workspaceId, childSessionId));
         await expect(page.getByTestId("chat-input")).toBeVisible();
         await expect(page.getByTestId("workspace-tree-loading")).toBeHidden({ timeout: 30_000 });
+        const delegationUsageResponse = await expectedDelegationUsage409;
+        expect(delegationUsageResponse.status(), "the budget view fails closed").toBe(409);
+        const delegationUsageProblem = (await delegationUsageResponse.json()) as {
+            code?: string;
+            detail?: string;
+        };
+        expect(delegationUsageProblem.code).toBe("DELEGATION_POLICY_INVALID");
+        // wire 上的 detail 形态（spawn15 实测）：
+        // 「Delegation ancestor is missing: spawn ancestor session <uuid>」。
+        expect(delegationUsageProblem.detail ?? "").toMatch(/Delegation ancestor is missing/i);
+        // UI 降级可见性：子会话行照常渲染（delegated 徽标在），但预算 chip 不得出现。
+        await expect(page.getByTestId("session-delegated-badge").first()).toBeVisible({
+            timeout: 15_000,
+        });
+        await expect(page.getByTestId("session-delegation-chip")).toHaveCount(0);
         const childAfterDeleteScreenshotPath = test
             .info()
             .outputPath("child-after-parent-delete.png");
@@ -900,11 +1045,46 @@ test("@host Agent spawn uses CP logical MCP, approval retry, and child terminal 
 
         await Promise.allSettled(httpFailureCaptures);
         expect(browserChatRequests).toContain("POST");
-        expect(pageErrors).toEqual([]);
-        expect(consoleErrors).toEqual([]);
+        /**
+         * 噪声白名单（全文件唯一登记项）：父会话删除后子会话 `delegation-usage` 的 fail-closed 409。
+         * 依据＝CP 设计行为 `DelegationBudgetService.treeBroken()`（DelegationBudgetService.java:425-429；
+         * CP 日志 `event=delegation_tree_broken reason=ancestor_missing`）+ UI `SessionList.vue:106-119`
+         * 已 catch 并降级（不渲染 budget chip、不抛未捕获错误）。
+         * **不是**"忽略所有 409"、也不是"忽略 /delegation-usage"：只有
+         * `GET /api/v1/sessions/<本次 childSessionId>/delegation-usage` 且 status=409 这一条匹配，
+         * 任何其它失败一律判红。
+         */
+        const isExpectedDelegationUsageAfterParentDelete = (failure: {
+            method: string;
+            url: string;
+            status: number;
+        }): boolean =>
+            failure.method === "GET" &&
+            failure.status === 409 &&
+            new URL(failure.url).pathname === childDelegationUsagePath;
+        const expectedHttpFailures = browserHttpFailures.filter(
+            isExpectedDelegationUsageAfterParentDelete,
+        );
+        expect(
+            expectedHttpFailures.length,
+            "the fail-closed delegation-usage 409 must still be observed (else the whitelist is stale)",
+        ).toBeGreaterThanOrEqual(1);
+        const unexpectedHttpFailures = browserHttpFailures.filter(
+            (failure) => !isExpectedDelegationUsageAfterParentDelete(failure),
+        );
+        expect(unexpectedHttpFailures, JSON.stringify(unexpectedHttpFailures, null, 2)).toEqual([]);
+        const isExpectedConsoleError = (event: (typeof consoleErrorEvents)[number]): boolean =>
+            event.sourceUrl.endsWith(childDelegationUsagePath) && /409/.test(event.text);
+        const unexpectedConsoleErrors = consoleErrorEvents
+            .filter((event) => !isExpectedConsoleError(event))
+            .map((event) => event.text);
+        expect(unexpectedConsoleErrors, JSON.stringify(unexpectedConsoleErrors, null, 2)).toEqual(
+            [],
+        );
         expect(apiFailures).toEqual([]);
-        expect(browserHttpFailures, JSON.stringify(browserHttpFailures, null, 2)).toEqual([]);
         expect(derivedStateResponses.every((item) => item.status === 200)).toBe(true);
+        // 放在最后：BL-315（`<MessageScrollerContent>` 递归）由 lane-mscroll 修，修好后本行即绿。
+        expect(pageErrors).toEqual([]);
 
         await test.info().attach("agent-spawn-evidence.json", {
             body: Buffer.from(
@@ -917,6 +1097,17 @@ test("@host Agent spawn uses CP logical MCP, approval retry, and child terminal 
                         childRunId,
                         principalId,
                         browserChatRequests,
+                        // BL-315 证据：删父后子会话预算视图的 fail-closed 409（预期，已显式登记）。
+                        delegationUsageAfterParentDelete: {
+                            path: childDelegationUsagePath,
+                            status: delegationUsageResponse.status(),
+                            code: delegationUsageProblem.code,
+                            detail: delegationUsageProblem.detail,
+                            requestId: expectedHttpFailures[0]?.requestId ?? null,
+                            observedFailures: expectedHttpFailures.length,
+                            whitelistedConsoleErrors:
+                                consoleErrorEvents.filter(isExpectedConsoleError).length,
+                        },
                     },
                     null,
                     2,

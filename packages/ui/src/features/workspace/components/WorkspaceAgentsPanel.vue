@@ -1,20 +1,24 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { useAuthStore } from "../../../stores/auth";
 import { principalNameError } from "../../../lib/principalName";
+import { logger } from "../../../lib/logger";
 import {
     ApiError,
     api,
     type AgentModelRef,
-    type AgentPrincipalCreateResponse,
-    type AgentPrincipalScope,
+    type AgentRoleBinding,
+    type AgentSkillBinding,
+    type AgentSkillSummary,
     type AgentTemplateSummary,
+    type ApiRole,
     type SelfPermissionsView,
     type WorkspaceAgentBinding,
     type WorkspaceAgentMemory,
     type WorkspaceAgentPermission,
 } from "../../../composables/api";
+import { problemDetailText } from "../../../lib/errorMessages";
 // 用户裁定（2026-11-03）：二态统一用项目 Switch（reka-ui），不混用 checkbox。
 import { Switch } from "../../../components/ui/switch";
 
@@ -46,7 +50,20 @@ const saving = ref(false),
     status = ref(""),
     name = ref(""),
     templateId = ref("");
-const createdPrincipal = ref<AgentPrincipalCreateResponse | null>(null);
+/**
+ * Plan-0651 recovery note: principal creation is only locally recoverable until it is bound
+ * to this workspace. Key by `userId/workspaceId` (never by owner/creator semantics), keep it
+ * out of the auth purge path, and make the UI state that only this browser can restore it.
+ */
+const PENDING_PRINCIPAL_STORAGE_KEY = "xihe-pending-agent-principals";
+const createdPrincipalId = ref<string | null>(null);
+/** Same-tab create metadata only; refresh restores the id from local storage. */
+const createdPrincipalMeta = ref<{
+    templateId?: string | null;
+    templateName?: string | null;
+    createdAt?: string;
+} | null>(null);
+const recoveryUnavailable = ref(false);
 const permissions = ref<WorkspaceAgentPermission[]>([]),
     editingPrincipalId = ref<string | null>(null);
 /**
@@ -79,6 +96,26 @@ const memoryToggleBusy = ref(false);
 const memoryToggleError = ref("");
 /** 「显示已归档」开关：默认只看 active。 */
 const showArchivedMemories = ref(false);
+
+/**
+ * PLAN-0667 M3：角色 / 技能区块（与记忆区同处，按 agent 展开；一次展开同时加载两者）。
+ * 写权限沿用 `MANAGE_WORKSPACE_AGENTS`（design §2 决策归属）；无权限只禁用并说明，不报错。
+ */
+const rbacPrincipalId = ref<string | null>(null);
+const agentRoles = ref<AgentRoleBinding[]>([]);
+const agentSkills = ref<AgentSkillBinding[]>([]);
+const rbacState = ref<"idle" | "loading" | "ready" | "failed">("idle");
+const rbacError = ref("");
+const roleCandidates = ref<ApiRole[]>([]);
+const skillCandidates = ref<AgentSkillSummary[]>([]);
+const selectedRoleId = ref("");
+const selectedSkillId = ref("");
+const rbacBusy = ref(false);
+const rbacActionError = ref("");
+let rbacGeneration = 0;
+
+/** 绑定/解绑的可用性：沿用工作区 agent 管理原子；`null` = 能力投影未回（禁用但不谎报）。 */
+const canBindRbac = computed<boolean | null>(() => canManageWorkspaceAgents.value);
 /** CP 未支持 `?status=` 时降级：开关置灰并说明，列表仍读 active（不报错、不造参数）。 */
 const archiveStatusSupported = ref(true);
 const unbindConfirmationId = ref<string | null>(null);
@@ -96,45 +133,15 @@ const capabilityState = ref<"loading" | "ready" | "failed">("loading");
 const instanceAtoms = ref<string[]>([]);
 const workspaceAtoms = ref<string[]>([]);
 
-const SCOPE_ORDER: AgentPrincipalScope[] = ["PERSONAL", "WORKSPACE", "INSTANCE"];
-// Lead 术语对账（2026-11-02）：UI 里 `scope` 已被"连接作用域"占用，agent 侧文案必须自带
-// `agent` 限定，且 key 不复用 `scopeUserTitle`/`scopeWorkspaceTitle`。
-const scopeLabels: Record<AgentPrincipalScope, string> = {
-    PERSONAL: "workspace.agentScopePersonalTitle",
-    WORKSPACE: "workspace.agentScopeWorkspaceTitle",
-    INSTANCE: "workspace.agentScopeInstanceTitle",
-};
-const scopeHintKeys: Record<AgentPrincipalScope, string> = {
-    PERSONAL: "workspace.agentScopeHintPersonal",
-    WORKSPACE: "workspace.agentScopeHintWorkspace",
-    INSTANCE: "workspace.agentScopeHintInstance",
-};
-
-function scopeRequiredAtom(scope: AgentPrincipalScope): string | null {
-    if (scope === "PERSONAL") return "CREATE_OWN_AGENT";
-    if (scope === "WORKSPACE") return "MANAGE_WORKSPACE_AGENTS";
-    return "CREATE_ACCOUNT";
-}
-
-/** 单个 scope 是否可用；`null` = 投影还没回来（未知）。 */
-function scopeAvailability(scope: AgentPrincipalScope): boolean | null {
-    if (capabilityState.value === "loading") return null;
-    if (capabilityState.value === "failed") return false;
-    const atom = scopeRequiredAtom(scope);
-    if (!atom) return false;
-    if (scope === "WORKSPACE") return workspaceAtoms.value.includes(atom);
-    return instanceAtoms.value.includes(atom);
-}
-
-const availableScopes = computed(() =>
-    SCOPE_ORDER.filter((scope) => scopeAvailability(scope) === true),
-);
-
-/** 创建入口是否可用：`null` = 未知（禁用但不算"无权限"）。 */
+/**
+ * 创建入口是否可用：作用域写面已退出（T5.1），创建走 CP 默认 WORKSPACE；
+ * 因此只认工作区级 MANAGE_WORKSPACE_AGENTS，不再让 UI 选择 scope。
+ * `null` = 未知（禁用但不算"无权限"）。
+ */
 const canCreatePrincipal = computed<boolean | null>(() => {
     if (capabilityState.value === "loading") return null;
     if (capabilityState.value === "failed") return false;
-    return availableScopes.value.length > 0;
+    return workspaceAtoms.value.includes("MANAGE_WORKSPACE_AGENTS");
 });
 
 /** 绑定 / 编辑 cap / 禁用都需要工作区级 MANAGE_WORKSPACE_AGENTS（个人 agent 的属主另论）。 */
@@ -154,7 +161,6 @@ const canWriteMemories = computed<boolean | null>(() => {
     return workspaceAtoms.value.includes("MEMORY_WRITE");
 });
 
-const selectedScope = ref<AgentPrincipalScope | null>(null);
 const defaultModelProvider = ref("");
 const defaultModelName = ref("");
 const allowedModels = ref<AgentModelRef[]>([]);
@@ -203,9 +209,8 @@ const createBlocked = computed(
     () =>
         !!agentNameError.value ||
         saving.value ||
-        !!createdPrincipal.value ||
+        !!createdPrincipalId.value ||
         canCreatePrincipal.value !== true ||
-        !selectedScope.value ||
         !!allowedModelsError.value ||
         !!defaultModelError.value,
 );
@@ -214,19 +219,10 @@ onMounted(() => {
     // Every open is a fresh mount (dock activation or mobile modal), so the loads run once
     // per open — the same cadence the dialog had via `watch(open)`.
     resetMemoryPanel();
+    createdPrincipalId.value = restorePendingPrincipalId();
     void loadAgents();
     void loadTemplates();
     void loadCreateCapability();
-});
-
-watch(availableScopes, (scopes) => {
-    if (scopes.length === 0) {
-        selectedScope.value = null;
-        return;
-    }
-    if (!selectedScope.value || !scopes.includes(selectedScope.value)) {
-        selectedScope.value = scopes[0];
-    }
 });
 
 async function loadCreateCapability() {
@@ -249,12 +245,6 @@ async function loadCreateCapability() {
     }
 }
 
-/** 列表行上的来源标签（本工作区/个人/实例）。 */
-function agentSourceLabel(agent: WorkspaceAgentBinding): string {
-    const source = agent.source;
-    return t(`workspace.agentSource${source[0].toUpperCase()}${source.slice(1)}`);
-}
-
 function agentDefaultModel(agent: WorkspaceAgentBinding): string {
     const provider = agent.defaultModelProvider,
         model = agent.defaultModelName;
@@ -262,12 +252,9 @@ function agentDefaultModel(agent: WorkspaceAgentBinding): string {
     return `${provider ?? "—"} / ${model ?? "—"}`;
 }
 
-/** 个人 agent 的属主本人可以自己禁用；其余行需要工作区级 MANAGE_WORKSPACE_AGENTS。 */
-function canDisable(agent: WorkspaceAgentBinding): boolean {
-    if (canManageWorkspaceAgents.value === null) return false;
-    if (canManageWorkspaceAgents.value) return true;
-    if (agent.source !== "personal") return false;
-    return Boolean(agent.ownerUserId) && agent.ownerUserId === authStore.user?.id;
+/** 可操作性来自能力投影；CP 对每次写入作最终授权。 */
+function canDisable(): boolean {
+    return canManageWorkspaceAgents.value === true;
 }
 
 /**
@@ -380,6 +367,132 @@ function toggleShowArchived(agent: WorkspaceAgentBinding) {
 const memoryAgent = computed<WorkspaceAgentBinding | null>(
     () => agents.value.find((entry) => entry.principalId === memoryPrincipalId.value) ?? null,
 );
+
+/**
+ * PLAN-0667 M3：展开/收起角色与技能区块（同一主体共用一个展开态）。
+ * 展开时并行加载绑定列表与候选清单；候选加载失败不阻塞列表展示（只是绑定入口禁用）。
+ */
+function toggleRbac(agent: WorkspaceAgentBinding) {
+    if (rbacPrincipalId.value === agent.principalId) {
+        rbacPrincipalId.value = null;
+        return;
+    }
+    rbacPrincipalId.value = agent.principalId;
+    void loadRbac(agent.principalId);
+}
+
+async function loadRbac(principalId: string) {
+    const generation = ++rbacGeneration;
+    rbacState.value = "loading";
+    rbacError.value = "";
+    rbacActionError.value = "";
+    try {
+        const [roles, skills] = await Promise.all([
+            api.getAgentRoles(props.workspaceId, principalId),
+            api.getAgentSkills(props.workspaceId, principalId),
+        ]);
+        if (generation !== rbacGeneration) return;
+        agentRoles.value = roles;
+        agentSkills.value = skills;
+        rbacState.value = "ready";
+        // 候选清单（roles 复用既有 /roles；skills 复用 /skills）——失败只影响"可绑定项"，不影响已绑定列表。
+        const [rolesCatalog, skillsCatalog] = await Promise.allSettled([
+            api.listRoles(props.workspaceId),
+            api.getSkills(),
+        ]);
+        if (generation !== rbacGeneration) return;
+        roleCandidates.value = rolesCatalog.status === "fulfilled" ? rolesCatalog.value : [];
+        skillCandidates.value = skillsCatalog.status === "fulfilled" ? skillsCatalog.value : [];
+    } catch (cause) {
+        if (generation !== rbacGeneration) return;
+        rbacError.value = rbacErrorMessage(cause);
+        rbacState.value = "failed";
+    }
+}
+
+/** 409 三类码给可读文案；404 不当崩溃；其它沿用 CP problem message。 */
+function rbacErrorMessage(cause: unknown): string {
+    if (cause instanceof ApiError) {
+        // BL-288：可行动 detail（具体原子名/条数/上限）优先；无 detail 才回退本地化文案。
+        const detail = problemDetailText(cause, "");
+        if (detail) return detail;
+        switch (cause.problem.code) {
+            case "AGENT_PRINCIPAL_FORBIDDEN_ATOMS":
+                return t("workspace.agentRoleForbiddenAtoms");
+            case "ROLE_BINDING_EXCEEDS_CAP":
+                return t("workspace.agentRoleExceedsCap");
+            case "ROLE_BINDING_EXISTS":
+                return t("workspace.agentRoleBindingExists");
+            case "ROLE_BINDING_IMMUTABLE":
+                return t("workspace.agentRoleBindingImmutable");
+            case "AGENT_PRINCIPAL_NOT_FOUND":
+            case "SKILL_NOT_FOUND":
+            case "ROLE_NOT_FOUND":
+                return t("workspace.agentRbacNotFound");
+            default:
+                return cause.message;
+        }
+    }
+    return t("workspace.agentRbacFailed");
+}
+
+async function bindSelectedRole(agent: WorkspaceAgentBinding) {
+    if (!selectedRoleId.value || rbacBusy.value) return;
+    rbacBusy.value = true;
+    rbacActionError.value = "";
+    try {
+        await api.bindAgentRole(props.workspaceId, agent.principalId, selectedRoleId.value);
+        selectedRoleId.value = "";
+        await loadRbac(agent.principalId);
+    } catch (cause) {
+        rbacActionError.value = rbacErrorMessage(cause);
+    } finally {
+        rbacBusy.value = false;
+    }
+}
+
+async function unbindRole(agent: WorkspaceAgentBinding, binding: AgentRoleBinding) {
+    if (binding.isSystem || rbacBusy.value) return;
+    rbacBusy.value = true;
+    rbacActionError.value = "";
+    try {
+        await api.unbindAgentRole(props.workspaceId, agent.principalId, binding.bindingId);
+        await loadRbac(agent.principalId);
+    } catch (cause) {
+        rbacActionError.value = rbacErrorMessage(cause);
+    } finally {
+        rbacBusy.value = false;
+    }
+}
+
+async function bindSelectedSkill(agent: WorkspaceAgentBinding) {
+    if (!selectedSkillId.value || rbacBusy.value) return;
+    rbacBusy.value = true;
+    rbacActionError.value = "";
+    try {
+        await api.bindAgentSkill(props.workspaceId, agent.principalId, selectedSkillId.value);
+        selectedSkillId.value = "";
+        await loadRbac(agent.principalId);
+    } catch (cause) {
+        rbacActionError.value = rbacErrorMessage(cause);
+    } finally {
+        rbacBusy.value = false;
+    }
+}
+
+async function unbindSkill(agent: WorkspaceAgentBinding, binding: AgentSkillBinding) {
+    if (rbacBusy.value) return;
+    rbacBusy.value = true;
+    rbacActionError.value = "";
+    try {
+        await api.unbindAgentSkill(props.workspaceId, agent.principalId, binding.bindingId);
+        await loadRbac(agent.principalId);
+    } catch (cause) {
+        rbacActionError.value = rbacErrorMessage(cause);
+    } finally {
+        rbacBusy.value = false;
+    }
+}
 
 /** 记忆是否注入上下文：`contextPolicy.memory.enabled !== false`（缺省=启用，UI 不自造默认）。 */
 const memoryEnabled = computed<boolean>(() => {
@@ -604,13 +717,71 @@ function setPermissionResource(actionClass: string, resource: string) {
 /**
  * PLAN-0585 M2 / F-02: a missing grant must read as an actionable localized hint that points at
  * the admin grant panel, never as the CP's raw English detail (`CREATE_ACCOUNT permission is
- * required`).
+ * required`). Binding failures additionally surface the CP's actionable `detail` (BL-288),
+ * so a 409 cap/atom refusal names the offending atom instead of a generic copy.
  */
 function agentErrorMessage(cause: unknown, forbiddenKey: string, fallbackKey: string): string {
     if (cause instanceof ApiError && cause.problem.code === "FORBIDDEN") {
         return t(forbiddenKey);
     }
+    const detail = problemDetailText(cause, "");
+    if (detail) return detail;
     return t(fallbackKey);
+}
+
+function readPendingPrincipals(): Record<string, string> {
+    try {
+        const raw = localStorage.getItem(PENDING_PRINCIPAL_STORAGE_KEY);
+        if (!raw) return {};
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+            return parsed as Record<string, string>;
+        }
+    } catch (cause) {
+        logger.warn("Failed to read pending agent principals", cause);
+    }
+    return {};
+}
+
+function writePendingPrincipals(value: Record<string, string>): void {
+    try {
+        const remaining = Object.values(value).filter((principalId) => principalId);
+        if (remaining.length === 0) {
+            localStorage.removeItem(PENDING_PRINCIPAL_STORAGE_KEY);
+        } else {
+            localStorage.setItem(PENDING_PRINCIPAL_STORAGE_KEY, JSON.stringify(value));
+        }
+    } catch (cause) {
+        logger.warn("Failed to persist pending agent principals", cause);
+    }
+}
+
+function restorePendingPrincipalId(): string | null {
+    const userId = authStore.user?.id;
+    if (!userId || !props.workspaceId) return null;
+    const principals = readPendingPrincipals();
+    return principals[`${userId}/${props.workspaceId}`] ?? null;
+}
+
+function savePendingPrincipalId(principalId: string): void {
+    const userId = authStore.user?.id;
+    if (!userId || !props.workspaceId) {
+        recoveryUnavailable.value = true;
+        return;
+    }
+    const principals = readPendingPrincipals();
+    principals[`${userId}/${props.workspaceId}`] = principalId;
+    writePendingPrincipals(principals);
+    recoveryUnavailable.value = false;
+}
+
+function clearPendingPrincipalId(): void {
+    const userId = authStore.user?.id;
+    if (!userId || !props.workspaceId) return;
+    const principals = readPendingPrincipals();
+    delete principals[`${userId}/${props.workspaceId}`];
+    writePendingPrincipals(principals);
+    recoveryUnavailable.value = false;
 }
 
 async function createPrincipal() {
@@ -621,10 +792,9 @@ async function createPrincipal() {
         const allowed = allowedModels.value
             .map((entry) => ({ provider: entry.provider.trim(), model: entry.model.trim() }))
             .filter((entry) => entry.provider && entry.model);
-        createdPrincipal.value = await api.createAgentPrincipal({
+        const created = await api.createAgentPrincipal({
             name: name.value.trim(),
             ...(templateId.value ? { templateId: templateId.value } : {}),
-            ...(selectedScope.value ? { scope: selectedScope.value } : {}),
             ...(defaultModelProvider.value.trim()
                 ? { defaultModelProvider: defaultModelProvider.value.trim() }
                 : {}),
@@ -633,15 +803,20 @@ async function createPrincipal() {
                 : {}),
             ...(allowed.length > 0 ? { allowedModels: allowed } : {}),
         });
+        createdPrincipalId.value = created.principalId;
+        createdPrincipalMeta.value = {
+            templateId: created.templateId,
+            templateName: created.templateName,
+            createdAt: created.createdAt,
+        };
+        savePendingPrincipalId(created.principalId);
         name.value = "";
         templateId.value = "";
         defaultModelProvider.value = "";
         defaultModelName.value = "";
         allowedModels.value = [];
         permissions.value = [];
-        // 真栈 bug（2026-11-02）：创建成功后必须重新拉列表，否则用户要关掉重开面板才看到新主体
-        // （bind/unbind/disable 三处都调了 loadAgents，创建这处漏了）。放在 status 之前，
-        // 因为 loadAgents 会清空 status。
+        await loadCreateCapability();
         await loadAgents();
         status.value = t("workspace.agentPrincipalCreated");
     } catch (cause) {
@@ -657,7 +832,7 @@ async function createPrincipal() {
 
 /** PLAN-0622：禁用是两步确认（第一步只换文案），并要求调用方先看清后果。 */
 async function disableAgent(agent: WorkspaceAgentBinding) {
-    if (!canDisable(agent) || saving.value) return;
+    if (!canDisable() || saving.value) return;
     if (disableConfirmationId.value !== agent.principalId) {
         disableConfirmationId.value = agent.principalId;
         unbindConfirmationId.value = null;
@@ -697,6 +872,12 @@ async function bindExistingAgent(agent: WorkspaceAgentBinding) {
             agent.principalId,
             agent.permissionsSnapshot ?? [],
         );
+        // 该行若同时是本地待绑定主体，行级绑定成功也必须收敛恢复状态（同一 PUT 口径）。
+        if (createdPrincipalId.value === agent.principalId) {
+            createdPrincipalId.value = null;
+            createdPrincipalMeta.value = null;
+            clearPendingPrincipalId();
+        }
         await loadAgents();
         status.value = t("workspace.agentBound");
     } catch (cause) {
@@ -711,21 +892,27 @@ async function bindExistingAgent(agent: WorkspaceAgentBinding) {
 }
 
 async function bindCreatedPrincipal() {
-    const principal = createdPrincipal.value;
-    if (!principal || saving.value) return;
+    const principalId = createdPrincipalId.value;
+    if (!principalId || saving.value) return;
     saving.value = true;
     error.value = "";
     try {
-        await api.updateWorkspaceAgentCap(
-            props.workspaceId,
-            principal.principalId,
-            permissions.value,
-        );
-        createdPrincipal.value = null;
+        await loadCreateCapability();
+        // Keep loadCreateCapability's own failure reason (do not turn it into a fake 403).
+        if (capabilityState.value === "failed") return;
+        if (canManageWorkspaceAgents.value !== true) {
+            error.value = t("workspace.agentBindForbidden");
+            return;
+        }
+        await api.updateWorkspaceAgentCap(props.workspaceId, principalId, permissions.value);
+        createdPrincipalId.value = null;
+        createdPrincipalMeta.value = null;
+        clearPendingPrincipalId();
         permissions.value = [];
         await loadAgents();
         status.value = t("workspace.agentBound");
     } catch (cause) {
+        // 403/409 都如实展示：FORBIDDEN 给可操作文案，其余优先 CP detail（BL-288）。
         error.value = agentErrorMessage(
             cause,
             "workspace.agentBindForbidden",
@@ -737,13 +924,14 @@ async function bindCreatedPrincipal() {
 }
 
 function startEditing(agent: WorkspaceAgentBinding) {
+    if (canManageWorkspaceAgents.value !== true) return;
     editingPrincipalId.value = agent.principalId;
     permissions.value = agent.permissionsSnapshot.map((permission) => ({ ...permission }));
     error.value = "";
 }
 
 async function saveCap(agent: WorkspaceAgentBinding) {
-    if (saving.value) return;
+    if (saving.value || canManageWorkspaceAgents.value !== true) return;
     saving.value = true;
     error.value = "";
     try {
@@ -752,7 +940,13 @@ async function saveCap(agent: WorkspaceAgentBinding) {
         await loadAgents();
         status.value = t("workspace.agentCapSaved");
     } catch (cause) {
-        error.value = cause instanceof ApiError ? cause.message : t("workspace.agentSaveFailed");
+        // D-160 ③：403 双侧点名（principal-exceeding/actor-exceeding）必须原样到 UI ——
+        // 与 create/bind 同口径（FORBIDDEN 走可操作文案，其余保留 CP detail）。
+        error.value = agentErrorMessage(
+            cause,
+            "workspace.agentBindForbidden",
+            "workspace.agentSaveFailed",
+        );
     } finally {
         saving.value = false;
     }
@@ -885,34 +1079,6 @@ async function unbind(agent: WorkspaceAgentBinding) {
                     }}
                 </span>
             </label>
-            <label class="block space-y-1 text-sm">
-                <span>{{ t("workspace.agentScopeTitle") }}</span>
-                <!-- PLAN-0622：scope 按 CP 能力投影显隐（4 态：personal/workspace/instance/都不可用）。 -->
-                <select
-                    v-if="availableScopes.length > 0"
-                    v-model="selectedScope"
-                    data-testid="agent-principal-scope"
-                    class="w-full rounded-md border bg-background px-3 py-2"
-                >
-                    <option v-for="scope in availableScopes" :key="scope" :value="scope">
-                        {{ t(scopeLabels[scope]) }}
-                    </option>
-                </select>
-                <p
-                    v-else
-                    data-testid="agent-scope-unavailable"
-                    class="text-xs text-muted-foreground"
-                >
-                    {{
-                        capabilityState === "loading"
-                            ? t("workspace.agentScopeLoading")
-                            : t("workspace.agentScopeNone")
-                    }}
-                </p>
-                <span v-if="selectedScope" class="block text-xs text-muted-foreground">
-                    {{ t(scopeHintKeys[selectedScope]) }}
-                </span>
-            </label>
             <div class="grid grid-cols-2 gap-2">
                 <label class="block space-y-1 text-sm">
                     <span>{{ t("workspace.agentDefaultModelProvider") }}</span>
@@ -1017,20 +1183,31 @@ async function unbind(agent: WorkspaceAgentBinding) {
         </form>
 
         <section
-            v-if="createdPrincipal"
+            v-if="createdPrincipalId"
             class="space-y-3 rounded-lg border border-amber-500/40 p-3"
             data-testid="unbound-agent-principal"
         >
             <div>
                 <h3 class="text-sm font-semibold">{{ t("workspace.agentCreatedUnbound") }}</h3>
                 <p class="mt-1 break-all font-mono text-xs text-muted-foreground">
-                    {{ createdPrincipal.principalId }}
+                    {{ createdPrincipalId }}
+                </p>
+                <p v-if="createdPrincipalMeta" class="mt-1 text-xs text-muted-foreground">
+                    {{ createdPrincipalMeta.templateName ?? t("workspace.defaultAgentTemplate") }} ·
+                    {{ t("workspace.agentTemplateId") }}:
+                    {{ createdPrincipalMeta.templateId ?? "—" }} ·
+                    {{ t("workspace.agentCreatedAt") }}:
+                    {{ new Date(createdPrincipalMeta.createdAt ?? Date.now()).toLocaleString() }}
                 </p>
                 <p class="mt-1 text-xs text-muted-foreground">
-                    {{ createdPrincipal.templateName ?? t("workspace.defaultAgentTemplate") }} ·
-                    {{ t("workspace.agentTemplateId") }}: {{ createdPrincipal.templateId ?? "—" }} ·
-                    {{ t("workspace.agentCreatedAt") }}:
-                    {{ new Date(createdPrincipal.createdAt).toLocaleString() }}
+                    {{ t("workspace.agentPendingRecoveryNote") }}
+                </p>
+                <p
+                    v-if="recoveryUnavailable"
+                    data-testid="agent-pending-recovery-unavailable"
+                    class="mt-1 text-xs text-amber-700"
+                >
+                    {{ t("workspace.agentPendingRecoveryUnavailable") }}
                 </p>
             </div>
             <p class="text-xs text-muted-foreground">{{ t("workspace.agentCapNote") }}</p>
@@ -1125,14 +1302,6 @@ async function unbind(agent: WorkspaceAgentBinding) {
                     <div class="min-w-0">
                         <h4 class="truncate text-sm font-semibold">{{ agent.name }}</h4>
                         <p class="mt-1 flex flex-wrap items-center gap-1.5">
-                            <!-- PLAN-0622：来源与 scope 徽标（本工作区/个人/实例）。 -->
-                            <span
-                                class="rounded border px-1.5 py-0.5 text-[11px]"
-                                :data-testid="`agent-scope-badge-${agent.principalId}`"
-                                :data-agent-scope="agent.source"
-                            >
-                                {{ agentSourceLabel(agent) }}
-                            </span>
                             <!-- PLAN-0622 D26：未绑定的行必须显式标注，否则用户以为它已经能用。 -->
                             <span
                                 v-if="agent.bound === false"
@@ -1207,7 +1376,7 @@ async function unbind(agent: WorkspaceAgentBinding) {
                             type="button"
                             class="rounded-md border px-2 py-1 text-xs text-destructive disabled:opacity-50"
                             :data-testid="`workspace-agent-disable-${agent.principalId}`"
-                            :disabled="saving || !canDisable(agent) || agent.disabled === true"
+                            :disabled="saving || !canDisable() || agent.disabled === true"
                             @click="disableAgent(agent)"
                         >
                             {{
@@ -1242,8 +1411,9 @@ async function unbind(agent: WorkspaceAgentBinding) {
                     </span>
                     <button
                         type="button"
-                        class="ml-auto text-xs underline"
+                        class="ml-auto text-xs underline disabled:opacity-50"
                         :data-testid="`workspace-agent-edit-cap-${agent.principalId}`"
+                        :disabled="saving || canManageWorkspaceAgents !== true"
                         @click="startEditing(agent)"
                     >
                         {{ t("workspace.editAgentCap") }}
@@ -1655,6 +1825,298 @@ async function unbind(agent: WorkspaceAgentBinding) {
                                 </p>
                             </li>
                         </ul>
+                    </div>
+                </div>
+                <!-- PLAN-0667 M3：角色绑定（名称 / 作用域 / isSystem / 派生原子摘要；D5(b) 只给摘要） -->
+                <div class="border-t pt-3" data-testid="agent-roles-section">
+                    <div class="flex flex-wrap items-center gap-2">
+                        <button
+                            type="button"
+                            class="flex items-center gap-1 text-xs font-medium"
+                            :data-testid="`agent-roles-toggle-${agent.principalId}`"
+                            :aria-expanded="rbacPrincipalId === agent.principalId"
+                            :aria-controls="`agent-roles-panel-${agent.principalId}`"
+                            @click="toggleRbac(agent)"
+                        >
+                            <span aria-hidden="true">{{
+                                rbacPrincipalId === agent.principalId ? "▾" : "▸"
+                            }}</span>
+                            <span>{{ t("workspace.agentRolesTitle") }}</span>
+                        </button>
+                        <span
+                            v-if="canBindRbac === false"
+                            class="rounded-full border px-1.5 py-0.5 text-[10px] text-muted-foreground"
+                        >
+                            {{ t("workspace.agentRbacReadonlyBadge") }}
+                        </span>
+                    </div>
+                    <div
+                        v-if="rbacPrincipalId === agent.principalId"
+                        :id="`agent-roles-panel-${agent.principalId}`"
+                        class="mt-2 space-y-2"
+                        :data-testid="`agent-roles-panel-${agent.principalId}`"
+                    >
+                        <p
+                            v-if="rbacState === 'loading'"
+                            role="status"
+                            class="text-xs text-muted-foreground"
+                            data-testid="agent-rbac-loading"
+                        >
+                            {{ t("workspace.agentRbacLoading") }}
+                        </p>
+                        <div
+                            v-else-if="rbacState === 'failed'"
+                            class="space-y-1"
+                            data-testid="agent-rbac-failed"
+                        >
+                            <p role="alert" class="text-xs text-destructive">{{ rbacError }}</p>
+                            <button
+                                type="button"
+                                class="rounded-md border px-2 py-1 text-xs"
+                                data-testid="agent-rbac-retry"
+                                @click="loadRbac(agent.principalId)"
+                            >
+                                {{ t("workspace.agentRbacRetry") }}
+                            </button>
+                        </div>
+                        <template v-else>
+                            <p
+                                v-if="agentRoles.length === 0"
+                                class="rounded-md border border-dashed p-2 text-xs text-muted-foreground"
+                                data-testid="agent-roles-empty"
+                            >
+                                {{ t("workspace.agentRolesEmpty") }}
+                            </p>
+                            <ul v-else class="space-y-1.5" data-testid="agent-roles-list">
+                                <li
+                                    v-for="binding in agentRoles"
+                                    :key="binding.bindingId"
+                                    class="rounded-md border p-2"
+                                    :data-testid="`agent-role-item-${binding.bindingId}`"
+                                >
+                                    <div class="flex flex-wrap items-center gap-1.5 text-[11px]">
+                                        <span class="text-xs font-medium">{{
+                                            binding.displayName || binding.name
+                                        }}</span>
+                                        <span
+                                            v-if="binding.scopeName || binding.scopeType"
+                                            class="rounded-full border px-1.5 py-0.5 text-muted-foreground"
+                                            :data-testid="`agent-role-scope-${binding.bindingId}`"
+                                        >
+                                            {{ binding.scopeName || binding.scopeType }}
+                                        </span>
+                                        <span
+                                            v-if="binding.isSystem"
+                                            class="rounded-full border px-1.5 py-0.5 text-muted-foreground"
+                                            :data-testid="`agent-role-system-${binding.bindingId}`"
+                                        >
+                                            {{ t("workspace.agentRoleSystemBadge") }}
+                                        </span>
+                                        <button
+                                            v-if="!binding.isSystem"
+                                            type="button"
+                                            class="ml-auto rounded-md border px-2 py-0.5 text-xs disabled:opacity-50"
+                                            :disabled="rbacBusy || canBindRbac !== true"
+                                            :data-testid="`agent-role-unbind-${binding.bindingId}`"
+                                            @click="unbindRole(agent, binding)"
+                                        >
+                                            {{ t("workspace.agentRbacUnbind") }}
+                                        </button>
+                                    </div>
+                                    <p
+                                        v-if="binding.atomSummary.length > 0"
+                                        class="mt-1 text-[11px] text-muted-foreground"
+                                        :data-testid="`agent-role-atoms-${binding.bindingId}`"
+                                    >
+                                        {{
+                                            t("workspace.agentRoleAtomsSummary", {
+                                                atoms: binding.atomSummary.join(" · "),
+                                                count: binding.atomCount,
+                                            })
+                                        }}
+                                    </p>
+                                    <p
+                                        v-if="binding.grantedBy"
+                                        class="mt-0.5 text-[11px] text-muted-foreground"
+                                        :data-testid="`agent-role-granted-by-${binding.bindingId}`"
+                                    >
+                                        {{
+                                            t("workspace.agentRoleGrantedBy", {
+                                                id: binding.grantedBy.slice(0, 8),
+                                            })
+                                        }}
+                                    </p>
+                                </li>
+                            </ul>
+                            <p
+                                class="mt-1 text-[11px] text-muted-foreground"
+                                :data-testid="`agent-role-cap-hint-${agent.principalId}`"
+                            >
+                                {{ t("workspace.agentRoleCapHint") }}
+                            </p>
+                            <div
+                                v-if="canBindRbac === true"
+                                class="flex flex-wrap items-center gap-2"
+                            >
+                                <select
+                                    v-model="selectedRoleId"
+                                    class="h-7 rounded-md border bg-background px-2 text-xs"
+                                    :data-testid="`agent-role-select-${agent.principalId}`"
+                                >
+                                    <option value="">
+                                        {{ t("workspace.agentRoleSelectPlaceholder") }}
+                                    </option>
+                                    <option
+                                        v-for="role in roleCandidates"
+                                        :key="role.id"
+                                        :value="role.id"
+                                    >
+                                        {{ role.displayName || role.name }}
+                                    </option>
+                                </select>
+                                <button
+                                    type="button"
+                                    class="rounded-md bg-action px-2 py-1 text-xs text-action-foreground disabled:opacity-50"
+                                    :disabled="rbacBusy || !selectedRoleId"
+                                    :data-testid="`agent-role-bind-${agent.principalId}`"
+                                    @click="bindSelectedRole(agent)"
+                                >
+                                    {{ t("workspace.agentRbacBind") }}
+                                </button>
+                            </div>
+                            <p
+                                v-else-if="canBindRbac === false"
+                                class="text-[11px] text-muted-foreground"
+                                data-testid="agent-rbac-readonly-hint"
+                            >
+                                {{ t("workspace.agentRbacReadonlyHint") }}
+                            </p>
+                            <p
+                                v-if="rbacActionError"
+                                role="alert"
+                                class="text-xs text-destructive"
+                                data-testid="agent-rbac-action-error"
+                            >
+                                {{ rbacActionError }}
+                            </p>
+                        </template>
+                    </div>
+                </div>
+                <!-- PLAN-0667 M3：技能绑定（principal 级，design D3(a)） -->
+                <div class="border-t pt-3" data-testid="agent-skills-section">
+                    <div class="flex flex-wrap items-center gap-2">
+                        <button
+                            type="button"
+                            class="flex items-center gap-1 text-xs font-medium"
+                            :data-testid="`agent-skills-toggle-${agent.principalId}`"
+                            :aria-expanded="rbacPrincipalId === agent.principalId"
+                            @click="toggleRbac(agent)"
+                        >
+                            <span aria-hidden="true">{{
+                                rbacPrincipalId === agent.principalId ? "▾" : "▸"
+                            }}</span>
+                            <span>{{ t("workspace.agentSkillsTitle") }}</span>
+                        </button>
+                        <span
+                            v-if="canBindRbac === false"
+                            class="rounded-full border px-1.5 py-0.5 text-[10px] text-muted-foreground"
+                        >
+                            {{ t("workspace.agentRbacReadonlyBadge") }}
+                        </span>
+                    </div>
+                    <div
+                        v-if="rbacPrincipalId === agent.principalId"
+                        class="mt-2 space-y-2"
+                        :data-testid="`agent-skills-panel-${agent.principalId}`"
+                    >
+                        <template v-if="rbacState === 'ready'">
+                            <p
+                                v-if="agentSkills.length === 0"
+                                class="rounded-md border border-dashed p-2 text-xs text-muted-foreground"
+                                data-testid="agent-skills-empty"
+                            >
+                                {{ t("workspace.agentSkillsEmpty") }}
+                            </p>
+                            <ul v-else class="space-y-1.5" data-testid="agent-skills-list">
+                                <li
+                                    v-for="binding in agentSkills"
+                                    :key="binding.bindingId"
+                                    class="flex flex-wrap items-center gap-1.5 rounded-md border p-2 text-[11px]"
+                                    :data-testid="`agent-skill-item-${binding.bindingId}`"
+                                >
+                                    <span class="text-xs font-medium">{{ binding.name }}</span>
+                                    <span
+                                        v-if="binding.sourceType"
+                                        class="rounded border px-1 py-0.5 text-[10px] text-muted-foreground"
+                                        :data-testid="`agent-skill-source-${binding.bindingId}`"
+                                        >{{
+                                            t(
+                                                binding.sourceType === "workspace"
+                                                    ? "workspace.agentSkillSourceWorkspace"
+                                                    : "workspace.agentSkillSourcePersonal",
+                                            )
+                                        }}</span
+                                    >
+                                    <span v-if="binding.sourceName" class="text-muted-foreground">{{
+                                        binding.sourceName
+                                    }}</span>
+                                    <span
+                                        v-if="binding.tokenEstimate != null"
+                                        class="text-muted-foreground"
+                                        >{{
+                                            t("workspace.agentSkillTokens", {
+                                                tokens: binding.tokenEstimate,
+                                            })
+                                        }}</span
+                                    >
+                                    <button
+                                        type="button"
+                                        class="ml-auto rounded-md border px-2 py-0.5 text-xs disabled:opacity-50"
+                                        :disabled="rbacBusy || canBindRbac !== true"
+                                        :data-testid="`agent-skill-unbind-${binding.bindingId}`"
+                                        @click="unbindSkill(agent, binding)"
+                                    >
+                                        {{ t("workspace.agentRbacUnbind") }}
+                                    </button>
+                                </li>
+                            </ul>
+                            <div
+                                v-if="canBindRbac === true"
+                                class="flex flex-wrap items-center gap-2"
+                            >
+                                <select
+                                    v-model="selectedSkillId"
+                                    class="h-7 rounded-md border bg-background px-2 text-xs"
+                                    :data-testid="`agent-skill-select-${agent.principalId}`"
+                                >
+                                    <option value="">
+                                        {{ t("workspace.agentSkillSelectPlaceholder") }}
+                                    </option>
+                                    <option
+                                        v-for="skill in skillCandidates"
+                                        :key="skill.skillId"
+                                        :value="skill.skillId"
+                                    >
+                                        {{ skill.name }}
+                                    </option>
+                                </select>
+                                <button
+                                    type="button"
+                                    class="rounded-md bg-action px-2 py-1 text-xs text-action-foreground disabled:opacity-50"
+                                    :disabled="rbacBusy || !selectedSkillId"
+                                    :data-testid="`agent-skill-bind-${agent.principalId}`"
+                                    @click="bindSelectedSkill(agent)"
+                                >
+                                    {{ t("workspace.agentRbacBind") }}
+                                </button>
+                            </div>
+                            <p
+                                v-else-if="canBindRbac === false"
+                                class="text-[11px] text-muted-foreground"
+                            >
+                                {{ t("workspace.agentRbacReadonlyHint") }}
+                            </p>
+                        </template>
                     </div>
                 </div>
             </article>

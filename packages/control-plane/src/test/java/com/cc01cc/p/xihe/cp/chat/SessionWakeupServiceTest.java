@@ -104,7 +104,7 @@ class SessionWakeupServiceTest {
         Session session = new Session(WORKSPACE_ID, USER_ID, "wakeup target");
         when(sessionService.requireCurrent(SESSION_ID, USER_ID, WORKSPACE_ID)).thenReturn(session);
         when(branchPathService.ensureRootBranchId(SESSION_ID)).thenReturn(BRANCH_ID);
-        when(chatSubmissionService.createScheduled(anyString(), anyString(), anyString(), anyString(),
+        when(chatSubmissionService.tryCreateScheduled(anyString(), anyString(), anyString(), anyString(),
                 anyString(), anyString(), anyString(), any(), any(), eq("none"), any(), any(),
                 any(), anyString(), eq("hi"), eq("[]"), eq(List.of()), any(), eq(com.cc01cc.p.xihe.cp.entity.Message.VISIBILITY_INTERNAL)))
                 .thenAnswer(invocation -> {
@@ -113,7 +113,7 @@ class SessionWakeupServiceTest {
                             "sched-wakeup-1", "hash", null, null, "none", "accepted");
                     scheduledRun.setOrigin(ChatRun.ORIGIN_SCHEDULED);
                     Message userMessage = new Message(SESSION_ID, MessageRole.USER, "hi");
-                    return new ChatSubmissionService.Submission(scheduledRun, userMessage);
+                    return java.util.Optional.of(new ChatSubmissionService.Submission(scheduledRun, userMessage));
                 });
 
         SessionWakeupService.WakeupResult result =
@@ -121,7 +121,7 @@ class SessionWakeupServiceTest {
 
         assertTrue(result.started());
         ArgumentCaptor<String> runIdCaptor = ArgumentCaptor.forClass(String.class);
-        verify(chatSubmissionService).createScheduled(runIdCaptor.capture(), eq(SESSION_ID), eq(USER_ID),
+        verify(chatSubmissionService).tryCreateScheduled(runIdCaptor.capture(), eq(SESSION_ID), eq(USER_ID),
                 eq(WORKSPACE_ID), eq(BRANCH_ID), eq("sched-wakeup-1"), anyString(), any(), any(),
                 eq("none"), any(), any(), isNull(), anyString(), eq("hi"), eq("[]"), eq(List.of()), any(), eq(com.cc01cc.p.xihe.cp.entity.Message.VISIBILITY_INTERNAL));
         assertEquals(runIdCaptor.getValue(), result.runId().toString(),
@@ -140,10 +140,10 @@ class SessionWakeupServiceTest {
         Session session = new Session(WORKSPACE_ID, USER_ID, "wakeup target");
         when(sessionService.requireCurrent(SESSION_ID, USER_ID, WORKSPACE_ID)).thenReturn(session);
         when(branchPathService.ensureRootBranchId(SESSION_ID)).thenReturn(BRANCH_ID);
-        when(chatSubmissionService.createScheduled(anyString(), anyString(), anyString(), anyString(),
+        when(chatSubmissionService.tryCreateScheduled(anyString(), anyString(), anyString(), anyString(),
                 anyString(), anyString(), anyString(), any(), any(), any(), any(), any(), any(),
                 anyString(), anyString(), anyString(), any(), any(), any()))
-                .thenThrow(new CpApiException(HttpStatus.CONFLICT, "CHAT_IN_PROGRESS", "cap reached"));
+                .thenReturn(java.util.Optional.empty());
 
         SessionWakeupService.WakeupResult result =
                 service.wakeup(SESSION_ID, USER_ID, WORKSPACE_ID, "hi", "sched-wakeup-1");
@@ -155,6 +155,25 @@ class SessionWakeupServiceTest {
         assertNull(TenantContext.getUserId(), "tenant context must be cleared after enqueue");
     }
 
+    /** BL-283: only CHAT_IN_PROGRESS is turned into a value — real failures still propagate. */
+    @Test
+    void a_real_admission_failure_still_propagates_and_is_not_deferred() {
+        Session session = new Session(WORKSPACE_ID, USER_ID, "wakeup target");
+        when(sessionService.requireCurrent(SESSION_ID, USER_ID, WORKSPACE_ID)).thenReturn(session);
+        when(branchPathService.ensureRootBranchId(SESSION_ID)).thenReturn(BRANCH_ID);
+        when(chatSubmissionService.tryCreateScheduled(anyString(), anyString(), anyString(), anyString(),
+                anyString(), anyString(), anyString(), any(), any(), any(), any(), any(), any(),
+                anyString(), anyString(), anyString(), any(), any(), any()))
+                .thenThrow(new IllegalStateException("database is down"));
+
+        IllegalStateException failure = assertThrows(IllegalStateException.class,
+                () -> service.wakeup(SESSION_ID, USER_ID, WORKSPACE_ID, "hi", "sched-wakeup-1"));
+
+        assertEquals("database is down", failure.getMessage());
+        verify(followUpQueueService, never()).enqueue(anyString(), anyString(), anyString(), anyString(),
+                any(FollowUpCreateRequest.class));
+    }
+
     @Test
     void a_run_in_flight_no_longer_defers_the_wake() {
         // PLAN-0645 D45-06: the old "busy" precheck called existsBySessionIdAndStatusIn and deferred
@@ -163,7 +182,7 @@ class SessionWakeupServiceTest {
         Session session = new Session(WORKSPACE_ID, USER_ID, "wakeup target");
         when(sessionService.requireCurrent(SESSION_ID, USER_ID, WORKSPACE_ID)).thenReturn(session);
         when(branchPathService.ensureRootBranchId(SESSION_ID)).thenReturn(BRANCH_ID);
-        when(chatSubmissionService.createScheduled(anyString(), anyString(), anyString(), anyString(),
+        when(chatSubmissionService.tryCreateScheduled(anyString(), anyString(), anyString(), anyString(),
                 anyString(), anyString(), anyString(), any(), any(), eq("none"), any(), any(),
                 any(), anyString(), eq("wake up"), eq("[]"), eq(List.of()), any(), eq(com.cc01cc.p.xihe.cp.entity.Message.VISIBILITY_INTERNAL)))
                 .thenAnswer(invocation -> {
@@ -172,7 +191,7 @@ class SessionWakeupServiceTest {
                             "sched-wakeup-1", "hash", null, null, "none", "accepted");
                     scheduledRun.setOrigin(ChatRun.ORIGIN_SCHEDULED);
                     Message userMessage = new Message(SESSION_ID, MessageRole.USER, "wake up");
-                    return new ChatSubmissionService.Submission(scheduledRun, userMessage);
+                    return java.util.Optional.of(new ChatSubmissionService.Submission(scheduledRun, userMessage));
                 });
 
         SessionWakeupService.WakeupResult result =

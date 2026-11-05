@@ -220,6 +220,25 @@ describe("ChatPanel approval decision correlation (PLAN-0328 T1.14)", () => {
         expect(decideChatApproval).toHaveBeenCalledWith(REQUEST_ID, { decision: "once" });
     });
 
+    it("shows the serial queue progress (1/N) and only the first approval (PLAN-0665 M2 D5)", async () => {
+        const wrapper = mountPanel();
+        useAgentStore().addApprovalRequest(approval);
+        useAgentStore().addApprovalRequest({
+            ...approval,
+            requestId: "req-second",
+            runId: "run-second",
+        });
+        await nextTick();
+        await flushPromises();
+
+        const modal = wrapper.findComponent(ApprovalModal);
+        expect(modal.exists()).toBe(true);
+        // 只弹队首；第二张留在队列里等第一张决定后再弹（串行，不批量）。
+        expect(modal.props("approval")?.requestId).toBe(REQUEST_ID);
+        expect(modal.props("queueTotal")).toBe(2);
+        expect(wrapper.findAll('[data-testid="approval-tool"]')).toHaveLength(1);
+    });
+
     it("strips the requestId envelope before calling the decision API", async () => {
         const decideChatApproval = vi.mocked(api.decideChatApproval);
         decideChatApproval.mockResolvedValue({
@@ -409,7 +428,11 @@ describe("ChatPanel branch actions", () => {
         await nextTick();
         await flushPromises();
 
-        expect(api.getMessages).toHaveBeenLastCalledWith(SESSION_ID, ROOT_BRANCH_ID);
+        expect(api.getMessages).toHaveBeenLastCalledWith(
+            SESSION_ID,
+            ROOT_BRANCH_ID,
+            expect.objectContaining({ limit: expect.any(Number) }),
+        );
         expect(store.getMessages(SESSION_ID).map((message) => message.id)).toEqual([canonicalId]);
         wrapper.unmount();
     });
@@ -751,7 +774,11 @@ describe("ChatPanel Follow-up queue", () => {
         await flushPromises();
 
         expect(api.getFollowUpQueue).toHaveBeenCalledTimes(2);
-        expect(api.getMessages).toHaveBeenCalledWith(SESSION_ID, ROOT_BRANCH_ID);
+        expect(api.getMessages).toHaveBeenCalledWith(
+            SESSION_ID,
+            ROOT_BRANCH_ID,
+            expect.objectContaining({ limit: expect.any(Number) }),
+        );
         expect(
             wrapper.find('[data-testid="follow-up-item-status"]').attributes("data-status"),
         ).toBe("admitted");
@@ -994,5 +1021,40 @@ describe("BL-228: 刷新重开（冷启动）在途 run 的投影追平", () => 
         } finally {
             vi.useRealTimers();
         }
+    });
+});
+describe("Problem detail surfacing (BL-288)", () => {
+    it("shows the 413 PAGINATION_REQUIRED detail instead of the generic load copy", async () => {
+        vi.mocked(toast.error).mockClear();
+        vi.mocked(api.getMessages).mockRejectedValueOnce(
+            new ApiError({
+                status: 413,
+                code: "PAGINATION_REQUIRED",
+                requestId: "req-288",
+                detail: "会话 20001 条超过单次读取上限 20000；请改用分页读取或导出",
+            }),
+        );
+        mountPanel();
+        await flushPromises();
+        await nextTick();
+        expect(toast.error).toHaveBeenCalledWith(expect.stringContaining("20001"));
+    });
+
+    it("falls back to the localized generic copy when the Problem has no detail", async () => {
+        vi.mocked(toast.error).mockClear();
+        vi.mocked(api.getMessages).mockRejectedValueOnce(
+            new ApiError({
+                status: 413,
+                code: "PAGINATION_REQUIRED",
+                requestId: "req-288b",
+            }),
+        );
+        mountPanel();
+        await flushPromises();
+        await nextTick();
+        const calls = vi.mocked(toast.error).mock.calls.map(([message]) => String(message));
+        expect(calls.some((message) => /加载消息失败|Failed to load messages/.test(message))).toBe(
+            true,
+        );
     });
 });

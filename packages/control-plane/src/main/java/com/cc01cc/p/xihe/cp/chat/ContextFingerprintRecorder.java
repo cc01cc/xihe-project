@@ -32,9 +32,6 @@ public class ContextFingerprintRecorder {
 
     private static final Logger log = LoggerFactory.getLogger(ContextFingerprintRecorder.class);
 
-    /** Fields that must never enter the outbound hash: they change per dispatch, not per context. */
-    private static final List<String> VOLATILE_OUTBOUND_KEYS = List.of("runId", "requestId", "credentialLease");
-
     private static final String CONTEXT_POLICY_DOMAIN = "context-policy";
     private static final String FINGERPRINT_FLAG = "fingerprintEnabled";
 
@@ -89,15 +86,26 @@ public class ContextFingerprintRecorder {
         }
     }
 
-    private ObjectNode buildDocument(RecordInput input) {
+    /**
+     * BL-285 follow-up (2026-11-05): every layer payload goes through
+     * {@link FingerprintPayloadNormalizer} before hashing —
+     * volatile fields ({@code capturedAt} and friends) are stripped, and the {@code memory} layer is
+     * narrowed to the memory/tree component sources so a skills change cannot pollute it. The stored
+     * snapshots are untouched; only the hashed payload is normalized.
+     *
+     * <p>Package-private so the determinism test can build the document without a database.</p>
+     */
+    ObjectNode buildDocument(RecordInput input) {
         Map<String, Object> layers = new LinkedHashMap<>();
-        layers.put("template", input.templateSnapshot());
-        layers.put("skills", input.skillsSnapshot());
-        layers.put("history", historyLayer(input.sessionId(), input.branchId()));
-        layers.put("memory", input.componentSources());
+        layers.put("template", FingerprintPayloadNormalizer.normalize(input.templateSnapshot()));
+        layers.put("skills", FingerprintPayloadNormalizer.normalize(input.skillsSnapshot()));
+        layers.put("history", FingerprintPayloadNormalizer.normalize(
+                historyLayer(input.sessionId(), input.branchId())));
+        layers.put("memory", FingerprintPayloadNormalizer.memorySources(
+                input.componentSources(), input.templateSnapshot()));
         layers.put("userInput", Map.of("content", input.content() == null ? "" : input.content()));
-        layers.put("attachments", attachments(input.outbound()));
-        layers.put("config", configLayer(input));
+        layers.put("attachments", FingerprintPayloadNormalizer.normalize(attachments(input.outbound())));
+        layers.put("config", FingerprintPayloadNormalizer.normalize(configLayer(input)));
         layers.put("tools", new ContextFingerprintCalculator.Unavailable("agent_side"));
         return ContextFingerprintCalculator.calculate(layers, outboundForHash(input.outbound()), 1);
     }
@@ -146,14 +154,17 @@ public class ContextFingerprintRecorder {
         return config;
     }
 
-    /** Copy without the per-dispatch volatile fields (token/run id/request id) before hashing. */
+    /**
+     * Copy without the per-dispatch volatile fields (token/run id/request id/timestamps) before
+     * hashing. Delegates to the shared normalizer so the outbound hash and the layer payloads cannot
+     * drift apart in what they consider volatile.
+     */
+    @SuppressWarnings("unchecked")
     private static Map<String, Object> outboundForHash(Map<String, Object> outbound) {
         if (outbound == null) {
             return null;
         }
-        Map<String, Object> sanitized = new LinkedHashMap<>(outbound);
-        VOLATILE_OUTBOUND_KEYS.forEach(sanitized::remove);
-        return sanitized;
+        return (Map<String, Object>) FingerprintPayloadNormalizer.normalize(outbound);
     }
 
     /**

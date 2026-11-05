@@ -6,6 +6,7 @@ import { toast } from "vue-sonner";
 import { logger } from "../../../../lib/logger";
 import { usePolicyStore } from "../../../../stores/policy";
 import { useSessionStore } from "../../../../stores/session";
+import { useAuthStore } from "../../../../stores/auth";
 import type { SessionPolicyMode } from "../../../../types";
 import SessionContextTemplate from "./SessionContextTemplate.vue";
 import SessionContextPanel from "../../components/SessionContextPanel.vue";
@@ -42,6 +43,16 @@ const emit = defineEmits<{
 const { t } = useI18n();
 const policyStore = usePolicyStore();
 const sessionStore = useSessionStore();
+/**
+ * BL-311：只读工作区（VIEWER）的「关闭自动放行」不能是可点按钮再吃 403 `WORKSPACE_READ_ONLY`。
+ * 判定源沿用既有投影 `useAuthStore().canWriteWorkspace`（`stores/auth.ts:96-98`，与 composer
+ * 发送守卫、文件树写操作、审批操作同一来源）—— CP 仍是权威，这里只决定 affordance。
+ *
+ * 按钮**保留可见但禁用**（不是藏掉）：自动放行开启是安全状态，横幅与"当前不可操作"必须同时可见，
+ * 否则 VIEWER 会以为工作区没有自动放行；这也是项目既有纪律（点击前给不可用状态 + 原因）。
+ */
+const authStore = useAuthStore();
+const canWriteWorkspace = computed(() => authStore.canWriteWorkspace);
 
 const open = ref(false),
     closingAuto = ref(false);
@@ -151,7 +162,9 @@ function handleSummaryClick(): void {
 
 async function closeAutoApproval() {
     const sessionId = props.sessionId;
-    if (!sessionId || closingAuto.value) return;
+    // BL-311：只读工作区不发写请求。按钮已 `disabled`（真实浏览器不会派发激活事件），
+    // 这层是防守：将来有人只改模板、忘了语义时，写仍然不会被发出去。
+    if (!sessionId || closingAuto.value || !canWriteWorkspace.value) return;
     closingAuto.value = true;
     try {
         await policyStore.change(sessionId, "manual");
@@ -260,7 +273,8 @@ async function closeAutoApproval() {
                 type="button"
                 data-testid="session-policy-auto-close"
                 class="shrink-0 rounded-md border border-amber-500/40 px-2 py-0.5 text-[11px] font-medium transition hover:bg-amber-500/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
-                :disabled="closingAuto || Boolean(policyState?.changing)"
+                :disabled="closingAuto || Boolean(policyState?.changing) || !canWriteWorkspace"
+                :title="canWriteWorkspace ? undefined : t('workspace.viewerReadOnly')"
                 @click="closeAutoApproval"
             >
                 {{ t("chat.approvalAutoClose") }}

@@ -230,10 +230,16 @@ public class ProblemDetailsHandler {
     public ResponseEntity<Map<String, Object>> badRequest(Exception exception, HttpServletRequest request) {
         if (exception instanceof CpApiException apiException) {
             logger.warn("Domain failure at {}: {}", request.getRequestURI(), apiException.getMessage());
-            return apiException.getRequestId() == null
+            ResponseEntity<Map<String, Object>> response = apiException.getRequestId() == null
                     ? problem(apiException.getStatus(), apiException.getCode(), apiException.getMessage(), request)
                     : problem(apiException.getStatus(), apiException.getCode(), apiException.getMessage(),
                     apiException.getRequestId());
+            // PLAN-0670 M2c/B: faces that must throw (streaming return type) still publish their
+            // machine-readable extra fields (e.g. export messages/limit) through the same body.
+            if (!apiException.getExtra().isEmpty() && response.getBody() != null) {
+                response.getBody().putAll(apiException.getExtra());
+            }
+            return response;
         }
         logger.warn("Bad request at {}", request.getRequestURI(), exception);
         return problem(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "Request validation failed", request);

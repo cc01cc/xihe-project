@@ -28,7 +28,8 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 
-import com.cc01cc.p.xihe.cp.policy.CapabilityAuthorities;
+import com.cc01cc.p.xihe.cp.policy.RequesterAuthority;
+import com.cc01cc.p.xihe.cp.policy.ToolFaceRegistry;
 import com.cc01cc.p.xihe.cp.mcp.McpProxyCatalogService;
 import com.cc01cc.p.xihe.cp.service.AgentTemplateService;
 import com.cc01cc.p.xihe.cp.service.ContextTemplateService;
@@ -54,6 +55,7 @@ public class ConfigController {
     private final com.cc01cc.p.xihe.cp.audit.AuditLogger auditLogger;
     private final AgentTemplateService agentTemplateService;
     private final ContextTemplateService contextTemplateService;
+    private final RequesterAuthority requesterAuthority;
 
     public ConfigController(ConfigService configService,
                             WorkspaceService workspaceService,
@@ -61,7 +63,8 @@ public class ConfigController {
                             McpProxyCatalogService mcpProxyCatalogService,
                             com.cc01cc.p.xihe.cp.audit.AuditLogger auditLogger,
                             AgentTemplateService agentTemplateService,
-                            ContextTemplateService contextTemplateService) {
+                            ContextTemplateService contextTemplateService,
+                            RequesterAuthority requesterAuthority) {
         this.configService = configService;
         this.workspaceService = workspaceService;
         this.objectMapper = objectMapper;
@@ -69,18 +72,36 @@ public class ConfigController {
         this.auditLogger = auditLogger;
         this.agentTemplateService = agentTemplateService;
         this.contextTemplateService = contextTemplateService;
+        this.requesterAuthority = requesterAuthority;
     }
 
     /** Decision #33: agent-runtime (instructions / workersDir) is not readable by non-admins. */
     private static final Set<String> ADMIN_ONLY_READ_DOMAINS = Set.of("agent-runtime");
 
-    /** PLAN-0610 W1b (R2-9): instance administration is a capability, never a role name. */
-    private static boolean isAdmin() {
-        return CapabilityAuthorities.isInstanceAdmin();
+    /**
+     * PLAN-0651 M3 T3.6 (A1): the instance-layer read surface is the N2 atom,
+     * {@code READ_INSTANCE_CONTENT}, evaluated at instance scope.
+     */
+    private boolean canReadInstanceContent() {
+        return holdsInstanceAtom(ToolFaceRegistry.ACTION_READ_INSTANCE_CONTENT);
     }
 
-    private static String maskIfNotAdmin(String key, String value) {
-        if (value == null || value.isEmpty() || isAdmin()) {
+    /**
+     * PLAN-0651 M3 T3.6 (A1): unmasked secret values are the N4 atom,
+     * {@code VIEW_SECRET_CONTENT}, evaluated at instance scope. Not holding it masks (never rejects),
+     * so the 200-with-mask shape of decision #33 is preserved.
+     */
+    private boolean canViewSecretContent() {
+        return holdsInstanceAtom(ToolFaceRegistry.ACTION_VIEW_SECRET_CONTENT);
+    }
+
+    private boolean holdsInstanceAtom(String actionClass) {
+        UUID subject = currentUserId();
+        return subject != null && requesterAuthority.holdsActionAtom(subject, actionClass, null);
+    }
+
+    private String maskIfNotAdmin(String key, String value) {
+        if (value == null || value.isEmpty() || canViewSecretContent()) {
             return value;
         }
         if (key.toLowerCase().contains("apikey") || key.toLowerCase().contains("secret")) {
@@ -142,7 +163,7 @@ public class ConfigController {
             return ProblemDetailsHandler.problemResponse(
                     HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "Context templates require an explicit config layer");
         }
-        if (!isAdmin()) {
+        if (!canReadInstanceContent()) {
             if ("instance".equals(layer) && !ConfigService.isExplicitOnlyDomain(domain)) {
                 return ProblemDetailsHandler.problemResponse(
                         HttpStatus.FORBIDDEN, "FORBIDDEN", "Instance config is not readable by this user");
@@ -157,11 +178,11 @@ public class ConfigController {
             }
         }
         UUID userId = currentUserId();
-        if ("agent-templates".equals(domain) && "instance".equals(layer) && !isAdmin()) {
+        if ("agent-templates".equals(domain) && "instance".equals(layer) && !canReadInstanceContent()) {
             return ProblemDetailsHandler.problemResponse(
                     HttpStatus.FORBIDDEN, "FORBIDDEN", "Instance Agent templates are not readable by this user");
         }
-        if ("context-templates".equals(domain) && "instance".equals(layer) && !isAdmin()) {
+        if ("context-templates".equals(domain) && "instance".equals(layer) && !canReadInstanceContent()) {
             return ProblemDetailsHandler.problemResponse(
                     HttpStatus.FORBIDDEN, "FORBIDDEN", "Instance Context templates are not readable by this user");
         }
@@ -190,12 +211,12 @@ public class ConfigController {
             return ProblemDetailsHandler.problemResponse(
                     HttpStatus.FORBIDDEN, "FORBIDDEN", "Configuration layer is not readable");
         }
-        if (!isAdmin()) {
+        if (!canReadInstanceContent()) {
             raw = filterNonAdminEntries(domain, raw);
         }
 
         Map<String, Object> shaped = new LinkedHashMap<>();
-        boolean hideAll = !isAdmin() && ADMIN_ONLY_READ_DOMAINS.contains(domain);
+        boolean hideAll = !canReadInstanceContent() && ADMIN_ONLY_READ_DOMAINS.contains(domain);
         for (Map.Entry<String, String> e : raw.entrySet()) {
             if (hideAll) {
                 shaped.put(e.getKey(), "****");
@@ -211,7 +232,7 @@ public class ConfigController {
             // be able to render the lock state.
             Map<String, String> envOverridden = new LinkedHashMap<>();
             for (Map.Entry<String, String> e : configService.envOverridden(domain).entrySet()) {
-                if (!isAdmin() && (!ConfigService.isReadableByNonAdmin(domain)
+                if (!canReadInstanceContent() && (!ConfigService.isReadableByNonAdmin(domain)
                         || ConfigService.isInstanceOnlyKey(domain, e.getKey()))) {
                     continue;
                 }
@@ -254,7 +275,7 @@ public class ConfigController {
             return ProblemDetailsHandler.problemResponse(
                     HttpStatus.BAD_REQUEST, "INVALID_LAYER", "Unknown config layer");
         }
-        if ("instance".equals(layer) && !isAdmin()) {
+        if ("instance".equals(layer) && !canReadInstanceContent()) {
             return ProblemDetailsHandler.problemResponse(
                     HttpStatus.FORBIDDEN, "FORBIDDEN", "Instance config metadata is not readable by this user");
         }
@@ -318,7 +339,7 @@ public class ConfigController {
     // Write (UI)
     // ------------------------------------------------------------------
 
-    @PreAuthorize("hasAuthority('cap:instance:admin')")
+    @PreAuthorize("@requesterAuthority.holdsActionAtom('WRITE_INSTANCE_CONTENT')")
     @PutMapping("/api/v1/config/instance/{domain}")
     public ResponseEntity<Map<String, Object>> putInstanceConfig(
             @PathVariable String domain,
@@ -326,7 +347,7 @@ public class ConfigController {
         return writeLayer("instance", domain, body, "admin", null, null);
     }
 
-    @PreAuthorize("hasAuthority('cap:instance:admin')")
+    @PreAuthorize("@requesterAuthority.holdsActionAtom('WRITE_INSTANCE_CONTENT')")
     @DeleteMapping("/api/v1/config/instance/{domain}/{key}")
     public ResponseEntity<Map<String, Object>> deleteInstanceConfig(
             @PathVariable String domain,
@@ -429,7 +450,7 @@ public class ConfigController {
     // Import / export (management plane, instance layer)
     // ------------------------------------------------------------------
 
-    @PreAuthorize("hasAuthority('cap:instance:admin')")
+    @PreAuthorize("@requesterAuthority.holdsActionAtom('WRITE_INSTANCE_CONTENT')")
     @PostMapping("/api/v1/config/import")
     public ResponseEntity<Map<String, Object>> importConfig(
             @RequestParam(value = "layer", defaultValue = "instance") String layer,
@@ -464,6 +485,9 @@ public class ConfigController {
         }
     }
 
+    // PLAN-0651 M3 T3.6: the export face is a management-plane read that can include secrets
+    // (READ_INSTANCE_CONTENT ∧ VIEW_SECRET_CONTENT); no single action atom expresses that
+    // composite, so the capability gate is kept unchanged rather than widening secrets to N2.
     @PreAuthorize("hasAuthority('cap:instance:admin')")
     @GetMapping("/api/v1/config/export")
     public ResponseEntity<?> exportConfig(

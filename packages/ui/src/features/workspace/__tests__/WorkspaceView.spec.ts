@@ -177,9 +177,15 @@ beforeEach(() => {
     mockedApi.getWorkspaceAgents.mockResolvedValue([]);
     mockedApi.getSelfPermissions.mockResolvedValue({
         userId: "user-1",
-        instanceCapabilities: ["CREATE_ACCOUNT"],
-        instancePermissions: [{ actionClass: "CREATE_ACCOUNT", resource: "*" }],
-        workspaces: [],
+        instanceCapabilities: [],
+        instancePermissions: [],
+        workspaces: [
+            {
+                workspaceId: "workspace-1",
+                workspaceAdmin: true,
+                permissions: [{ actionClass: "MANAGE_WORKSPACE_AGENTS", resource: "workspace-1" }],
+            },
+        ],
     } as never);
     mockedApi.getAgentTemplates.mockImplementation(async (layer) => ({
         layer,
@@ -349,7 +355,6 @@ describe("WorkspaceView workbench layout (PLAN-0582 S2)", () => {
                 templateId: null,
                 templateName: null,
                 createdAt: new Date().toISOString(),
-                source: "workspace",
                 permissionsSnapshot: [],
                 bound: true,
                 disabled: false,
@@ -393,7 +398,6 @@ describe("WorkspaceView workbench layout (PLAN-0582 S2)", () => {
                 templateId: null,
                 templateName: null,
                 createdAt: new Date().toISOString(),
-                source: "workspace",
                 permissionsSnapshot: [],
                 bound: true,
                 disabled: false,
@@ -465,7 +469,6 @@ it("lists only bound and enabled agents in the session selector", async () => {
             templateId: null,
             templateName: null,
             createdAt: new Date().toISOString(),
-            source: "personal",
             permissionsSnapshot: [],
             bound: true,
             disabled: false,
@@ -476,7 +479,6 @@ it("lists only bound and enabled agents in the session selector", async () => {
             templateId: null,
             templateName: null,
             createdAt: new Date().toISOString(),
-            source: "personal",
             permissionsSnapshot: [],
             bound: false,
             disabled: false,
@@ -487,7 +489,6 @@ it("lists only bound and enabled agents in the session selector", async () => {
             templateId: null,
             templateName: null,
             createdAt: new Date().toISOString(),
-            source: "personal",
             permissionsSnapshot: [],
             bound: true,
             disabled: true,
@@ -517,7 +518,6 @@ it("explains that the bound agents are disabled instead of claiming nothing is b
             templateId: null,
             templateName: null,
             createdAt: new Date().toISOString(),
-            source: "personal",
             permissionsSnapshot: [],
             bound: true,
             disabled: true,

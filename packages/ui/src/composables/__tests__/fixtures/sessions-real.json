@@ -1,0 +1,16 @@
+{
+    "id": "50871f07-78ef-477f-9e12-2e23791160a3",
+    "workspaceId": "1a91c0d5-dcf3-458d-80b5-dcd9980f28aa",
+    "agentPrincipalId": "02f443a3-cde8-4297-9c73-707350e9ab95",
+    "title": "m3-read-face-mw2hkzf6",
+    "modelProvider": "custom-openai-compatible",
+    "modelName": "m3-model",
+    "providerConnectionId": "41560252-672a-4975-9765-5b061457aa95",
+    "connectionRevision": 1,
+    "contextTemplateLayer": "instance",
+    "contextTemplateId": "30470dde-b371-384f-b948-946da5f48796",
+    "contextTemplateVersion": 2,
+    "archived": false,
+    "createdAt": "2026-11-04T19:05:10.428472Z",
+    "updatedAt": "2026-11-04T19:05:10.428472Z"
+}

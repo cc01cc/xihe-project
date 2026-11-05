@@ -44,7 +44,8 @@ class MessageReadServiceVisibilityTest {
                 Mockito.mock(McpInvocationService.class),
                 Mockito.mock(JobStateService.class),
                 Mockito.mock(BranchPathService.class),
-                new ObjectMapper());
+                new ObjectMapper(),
+                com.cc01cc.p.xihe.cp.chat.SessionReadMemoryGuard.disabled());
     }
 
     private static Message message(MessageRole role, String content, String visibility) {

@@ -52,7 +52,10 @@ public class SessionCommandController {
                     HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "sessionId must be a UUID");
         }
         try {
-            sessionService.requireCurrent(sessionId, userId, workspaceId);
+            // BL-299: command availability is a session read face — owner or invited enabled
+            // HUMAN participant (SessionReadAccess, BL-298). Managers stay excluded; this
+            // controller has no write route, so no write face is widened here.
+            sessionService.requireReadable(sessionId, userId, workspaceId);
         } catch (CpApiException e) {
             return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
         }

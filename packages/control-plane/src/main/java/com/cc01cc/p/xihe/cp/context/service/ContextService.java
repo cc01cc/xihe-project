@@ -18,6 +18,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 @Service
 public class ContextService {
@@ -141,6 +142,26 @@ public class ContextService {
         long effectiveAfter = afterSequence != null ? afterSequence : 0L;
         String scopeBranch = resolveScopeBranch(sessionId, runId, branchId);
         return projectionService.projectAndSave(sessionId, workspaceId, userId, effectiveAfter, scopeBranch);
+    }
+
+    /**
+     * BL-305 (P1): the snapshot body. When the stored projection is already at the event-log head the
+     * body is the stored payload itself — no event replay and no re-serialization of a multi-megabyte
+     * JSON tree. Every other state (missing/behind) goes through the incremental-or-full build.
+     */
+    @Transactional
+    public String getSnapshotJson(String sessionId, String workspaceId, String userId, Long afterSequence,
+                                  String branchId, String runId) {
+        long effectiveAfter = afterSequence != null ? afterSequence : 0L;
+        String scopeBranch = resolveScopeBranch(sessionId, runId, branchId);
+        if (effectiveAfter <= 0) {
+            Optional<String> current = projectionService.currentSnapshotPayload(sessionId, scopeBranch);
+            if (current.isPresent()) {
+                return current.get();
+            }
+        }
+        return projectionService.projectAndSave(sessionId, workspaceId, userId, effectiveAfter, scopeBranch)
+                .toString();
     }
 
     /**
