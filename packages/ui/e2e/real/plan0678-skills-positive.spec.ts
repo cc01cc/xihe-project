@@ -178,7 +178,10 @@ test("@host PLAN-0678 V3 技能正向：instance 导入 2 技能 → 绑定 → 
     );
     expect(granted, `SUPER_ADMIN 授权行应存在（实际 count=${granted}）`).toBe("1");
 
-    const login = await request.post(`${CP_URL}/api/v1/auth/login`, { data: { email, password } });
+    const login = await request.post(`${CP_URL}/api/v1/auth/login`, {
+        // PLAN-0565 ruling #7: 登录字段是 `identifier`（email 或 username），不是 `email`
+        data: { identifier: email, password },
+    });
     const loginText = await login.text();
     expect(login.status(), `重新登录应 200，实际 ${login.status()}：${loginText}`).toBe(200);
     const { accessToken } = JSON.parse(loginText) as { accessToken: string };
