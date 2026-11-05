@@ -43,6 +43,16 @@ export async function ensureFakeUserProvider(
         { headers },
     );
     expect(verified.ok(), `provider connection verify: ${await verified.text()}`).toBe(true);
+    // 契约（cp-tests 在 stack-3 一手实测，2026-11-06）：`verify` 的响应是 `{connection, models}`，
+    // **顶层没有 `status`**；成功判据是 `body.connection.status === "READY"`（枚举
+    // UNVERIFIED|VERIFYING|READY|INVALID_CREDENTIALS|UNREACHABLE|DISABLED）。
+    // 只断言 HTTP ok 会把"verify 返回 200 但状态不是 READY"放过去，后续在更深的地方（会话/profile
+    // 解析）才炸；这里把判据钉在正确字段上。
+    const verifiedBody = (await verified.json()) as { connection?: { status?: string } };
+    expect(
+        verifiedBody.connection?.status,
+        `provider connection verify body: ${JSON.stringify(verifiedBody)}`,
+    ).toBe("READY");
     const profile = await request.put(`${CP_URL}/api/v1/config/user/llm-provider`, {
         headers,
         data: {
