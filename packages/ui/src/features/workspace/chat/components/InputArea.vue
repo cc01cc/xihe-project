@@ -1116,7 +1116,39 @@ function setDraft(text: string) {
     input.value = text;
 }
 
-defineExpose({ clearDraft, insertMention, setDraft });
+/**
+ * BL-339：深链预填（不代发）。只填空位、不覆盖用户已有输入与已选收件人，
+ * 收件人按本会话候选过滤（未知 id 直接丢弃，不做"猜一个"）。
+ * @param next - 预填载荷：正文 + 可选 to/cc（AGENT 参与者 id）。
+ * @returns 是否真的填了内容（`false` 时调用方保留深链参数）。
+ */
+function prefillDraft(next: { text: string; to?: string[]; cc?: string[] }): boolean {
+    let applied = false;
+    if (!input.value.trim() && next.text) {
+        input.value = next.text;
+        applied = true;
+    }
+    if (toTargetIds.value.length === 0 && next.to?.length) {
+        const allowed = new Set(agentParticipants.value.map((item) => item.participantId));
+        const ids = next.to.filter((id) => allowed.has(id));
+        if (ids.length) {
+            toTargetIds.value = ids;
+            applied = true;
+        }
+    }
+    if (ccIds.value.length === 0 && next.cc?.length) {
+        const allowed = new Set(ccCandidates.value.map((item) => item.participantId));
+        const ids = next.cc.filter((id) => allowed.has(id));
+        if (ids.length) {
+            ccIds.value = ids;
+            for (const id of ids) ccSuppressed.delete(id);
+            applied = true;
+        }
+    }
+    return applied;
+}
+
+defineExpose({ clearDraft, insertMention, setDraft, prefillDraft });
 </script>
 
 <template>
