@@ -12,7 +12,7 @@
 import { expect, test } from "./helpers/mock-test";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
 import { stubSessionProjections } from "./helpers/session-projections";
-import type { Page } from "@playwright/test";
+import type { CDPSession, Page } from "@playwright/test";
 import { writeFileSync } from "node:fs";
 
 const SESSION_ID = "bl348-heap-sample";
@@ -61,10 +61,7 @@ type RawSample = {
     heapMb: number;
 };
 
-async function sampleOnce(
-    page: Page,
-    cdp: Awaited<ReturnType<Page["context"]>["newCDPSession"]>,
-): Promise<RawSample> {
+async function sampleOnce(page: Page, cdp: CDPSession): Promise<RawSample> {
     for (let round = 0; round < PROTOCOL.gcRounds; round += 1) {
         await cdp.send("HeapProfiler.collectGarbage");
     }
