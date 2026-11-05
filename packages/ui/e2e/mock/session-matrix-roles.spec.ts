@@ -9,7 +9,8 @@
  * 角色来源：`setupMockAuth` 的会话上下文种子（sessionStorage xh-workspace 的
  * workspaceRole；auth store 由它派生 canViewMembers/canManageWorkspace）。
  */
-import { test, expect, type Page } from "@playwright/test";
+import { type Page } from "@playwright/test";
+import { expect, test } from "./helpers/mock-test";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
 
 const WORKSPACE_ID = "workspace-1";

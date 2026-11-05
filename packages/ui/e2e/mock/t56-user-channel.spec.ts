@@ -35,13 +35,19 @@
  *   `pnpm exec playwright test --config e2e/playwright.config.ts e2e/mock/t56-user-channel.spec.ts`
  * 预期：7 个用例全绿（前 6 个无 skip），且 Console 无 error/pageerror。
  */
-import { test, expect } from "@playwright/test";
+import { DEFAULT_MOCK_ALLOW, expect, test } from "./helpers/mock-test";
 import type { Page } from "@playwright/test";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
 import type { MatrixParticipant } from "./helpers/session-matrix";
 import { collectPageFailures, expectNoPageFailures } from "./helpers/page-failures";
 import type { PageFailures } from "./helpers/page-failures";
 import { FONT_ORIGIN_FAILURE, stubSessionProjections } from "./helpers/session-projections";
+
+// BL-318：用例 5 故意桩 `403 CURSOR_SELF_ONLY`（验"别人的游标不能推进"的本地化文案），
+// 逐条放行游标端点；本文件已有自己的 `expectNoPageFailures` 断言，公共门禁的 allow 也要同步。
+test.use({
+    mockAllow: [...DEFAULT_MOCK_ALLOW, "participants/[^/]+/cursor"],
+});
 
 const WORKSPACE_ID = "workspace-1";
 const SESSION_ID = "t56-session";

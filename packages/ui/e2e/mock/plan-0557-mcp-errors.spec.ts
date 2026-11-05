@@ -1,8 +1,11 @@
-import { test, expect } from "@playwright/test";
+import { DEFAULT_MOCK_ALLOW, expect, test } from "./helpers/mock-test";
 import type { Page } from "@playwright/test";
 import fs from "node:fs";
 import path from "node:path";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
+
+// BL-318：本文件验的就是 MCP 侧错误码（503 运行时不可用 / 400 未知工具），逐条放行 `/api/v1/mcp`。
+test.use({ mockAllow: [...DEFAULT_MOCK_ALLOW, String.raw`/api/v1/mcp`] });
 
 /**
  * PLAN-0557/BL-109 browser evidence: the workspace file panel must distinguish

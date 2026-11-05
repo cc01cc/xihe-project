@@ -10,11 +10,16 @@
  * 数据全部走现有投影接口（sessions 列表 + derived-state + delegation-usage），
  * 不新造 wire —— 图是 UI 投影，不是新的持久化面。
  */
-import { test, expect, type Page } from "@playwright/test";
+import { type Page } from "@playwright/test";
+import { DEFAULT_MOCK_ALLOW, expect, test } from "./helpers/mock-test";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
 import { setupMockParticipants } from "./helpers/session-matrix";
 import { captureEvidence } from "../helpers/evidence";
 import { closeMonitorDockTab, openMockSession } from "./helpers/plan0659";
+
+// BL-318：本文件自建的 `sessions/{id}/delegation-usage` 桩是 **fail-closed** 的（只回答根会话，
+// 子会话故意 404 —— 子会话没有独立预算投影），逐条放行这两个子会话的 404。
+test.use({ mockAllow: [...DEFAULT_MOCK_ALLOW, String.raw`/delegation-usage`] });
 
 const SESSION_ID = "test-session";
 const CHILD_A = "aaaaaaaa-1111-4222-8333-444444444444";

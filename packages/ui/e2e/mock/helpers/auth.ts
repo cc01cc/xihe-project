@@ -1,5 +1,10 @@
 import type { Page } from "@playwright/test";
 import { randomUUID } from "node:crypto";
+import {
+    participantRoster,
+    stubSessionProjectionsForAllSessions,
+    type SessionProjectionOptions,
+} from "./session-projections";
 
 export interface MockSSEStream {
     tokens: string[];
@@ -38,6 +43,11 @@ export interface MockAuthOptions {
      * Fields the caller does not set keep the existing fixture values.
      */
     workspace?: Record<string, unknown>;
+    /**
+     * BL-318：四类会话投影默认挂（形状照抄真实 CP 响应）。传 `false` 关掉，用于极少数要断言
+     * "投影不可用"降级路径的用例；传对象可覆盖参与者花名册 / capabilities。
+     */
+    projections?: SessionProjectionOptions | false;
 }
 
 export interface MockSessionRecord {
@@ -54,6 +64,14 @@ export interface MockSessionOptions {
     workspaceId?: string;
     messages?: Record<string, Array<Record<string, unknown>>>;
     createSession?: boolean;
+    /**
+     * BL-318：四类会话投影（derived-state / follow-ups / commands / participants）**默认挂**，
+     * 因为它们不桩就是真 404 + console error（夹具缺口，会让 "0 console error" 门禁假红）。
+     * - 传对象 = 覆盖参与者花名册 / capabilities；
+     * - 传 `false` = 不挂（极少数要断言"投影不可用"降级路径的用例）；
+     * - 想只覆盖其中一条：在本函数**之后**再 `page.route`（后注册优先）或 `route.fallback()`。
+     */
+    projections?: SessionProjectionOptions | false;
 }
 
 const MOCK_ROOT_BRANCH_ID = "00000000-0000-4000-8000-000000000001";
@@ -512,6 +530,98 @@ export async function setupMockAuth(page: Page, options: MockAuthOptions = {}) {
             body: JSON.stringify({}),
         });
     });
+
+    // BL-318：`setupMockAuth` 是**每条 mock 用例都会调**的入口，所以会话侧投影与工作区智能体清单
+    // 必须在这里也有默认值 —— 只在 `setupMockSessions` 挂的话，只调 `setupMockAuth` 的 spec
+    // （如 `chat.spec.ts` 的 beforeeach）仍会拿到兜底的 `200 {}`，UI 解析 `activeChildren.map` /
+    // `agents.map` 直接 TypeError，被判成"夹具噪声红"。
+    //
+    // 形状来源同 `session-projections.ts` 头注释（2026-11-05 对 stack-1 真实 CP 记录）：
+    //   GET /api/v1/workspaces/{id}/agents → { agents: [{ principalId, name, templateId,
+    //        templateName, createdAt, permissionsSnapshot[], bound, hooks, contextPolicy, disabled }] }
+    await page.route("**/api/v1/workspaces/*/agents", async (route) => {
+        if (route.request().method() !== "GET") {
+            await route.fallback();
+            return;
+        }
+        await route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify({ agents: [] }),
+        });
+    });
+
+    // BL-318：`/settings/monitoring` 读 `versionInfo.modules.cp.version`，不桩就是 `200 {}` ⇒
+    // `Cannot read properties of undefined (reading 'cp')` 未捕获 pageerror（`full-ui-acceptance`
+    // 的保护路由矩阵实测）。形状照抄真实 CP（2026-11-05 stack-1 `GET /api/v1/version`）。
+    await page.route("**/api/v1/version", async (route) => {
+        await route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify({
+                stackId: "stack-1",
+                releaseChannel: "dev",
+                startedAt: "2026-11-05T00:00:00.000Z",
+                commit: null,
+                modules: {
+                    cp: { version: "0.1.0", commit: null },
+                    agent: { version: "0.1.0", commit: null, framework: "langgraph" },
+                    runtime: { version: "0.1.0", commit: null },
+                },
+            }),
+        });
+    });
+
+    if (options.projections !== false) {
+        await stubSessionProjectionsForAllSessions(page, {
+            participants: participantRoster({ agentPrincipalId: MOCK_BOUND_PRINCIPAL_ID }),
+            ...(options.projections ?? {}),
+        });
+    }
+
+    // BL-318：会话 run 列表与委派预算投影的默认桩（不桩就是 `**/api/v1/**` 的 `200 {}`，
+    // UI 侧 `runs.runs` 不是可迭代对象直接 TypeError：`plan0659-delegation-dag` 实测
+    // `Failed to load durable child wait links {runs.runs is not iterable}`）。
+    // 形状照抄真实 CP（2026-11-05 stack-1）：
+    //   GET /api/v1/chat/sessions/{id}/runs → { sessionId, page, size, runs[] }
+    //   GET /api/v1/sessions/{id}/delegation-usage → { rootSessionId, usedSessions, maxCount,
+    //        currentDepth, maxDepth, principalId, principalName, policySource, disabled }
+    // 注意用 **regex** 而不是 glob：glob 要匹配整个 URL，带 `?page=0&size=100` 的请求用
+    // `…/runs` 结尾的 glob 是匹配不上的（实测 `runs.runs is not iterable` 依旧出现）。
+    await page.route(/\/api\/v1\/chat\/sessions\/[^/]+\/runs(?:\?.*)?$/, async (route) => {
+        const url = new URL(route.request().url());
+        const sessionId = url.pathname.split("/").filter(Boolean).slice(-2, -1)[0] ?? "";
+        await route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify({
+                sessionId,
+                page: Number(url.searchParams.get("page") ?? 0),
+                size: Number(url.searchParams.get("size") ?? 20),
+                runs: [],
+            }),
+        });
+    });
+    await page.route(/\/api\/v1\/sessions\/[^/]+\/delegation-usage(?:\?.*)?$/, async (route) => {
+        const rootSessionId =
+            new URL(route.request().url()).pathname.split("/").filter(Boolean).slice(-2, -1)[0] ??
+            "";
+        await route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify({
+                rootSessionId,
+                usedSessions: 0,
+                maxCount: 8,
+                currentDepth: 0,
+                maxDepth: 3,
+                principalId: MOCK_BOUND_PRINCIPAL_ID,
+                principalName: "Mock Agent",
+                policySource: "code-defaults",
+                disabled: false,
+            }),
+        });
+    });
 }
 
 export async function setupMockSessions(page: Page, options: MockSessionOptions = {}) {
@@ -730,4 +840,15 @@ export async function setupMockSessions(page: Page, options: MockSessionOptions 
             body: JSON.stringify(session ?? {}),
         });
     });
+
+    // BL-318：四类会话投影默认桩。注册在本函数**最后**——Playwright 后注册者优先，所以它们会
+    // 盖过上面的 `**/api/v1/sessions/**` 兜底；未知后缀仍按上面的规则落 404（本段只匹配这四条
+    // 固定后缀，不做通配 200）。
+    // BL-318 取证用临时开关：默认 true。跑"先红"对照时置 false（关掉公共投影桩，露出真 404 噪声）。
+    if (options.projections !== false && process.env.XIHE_MOCK_PROJECTIONS !== "0") {
+        await stubSessionProjectionsForAllSessions(page, {
+            participants: participantRoster({ agentPrincipalId: MOCK_BOUND_PRINCIPAL_ID }),
+            ...(options.projections ?? {}),
+        });
+    }
 }

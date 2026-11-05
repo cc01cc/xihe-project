@@ -1,4 +1,5 @@
-import { test, expect, type Page } from "@playwright/test";
+import { type Page } from "@playwright/test";
+import { expect, test } from "./helpers/mock-test";
 import { setupMockAuth } from "./helpers/auth";
 
 // PLAN-0560：工作区设置页 IA（B#6 不做兼容、VIEWER 只读、移动端入口）。
@@ -29,6 +30,17 @@ test.describe("PLAN-0560 workspace settings", () => {
         await page.route("**/api/v1/**", (route) =>
             route.fulfill({ status: 200, contentType: "application/json", body: "{}" }),
         );
+        // BL-318：上面的兜底把 `/sessions` 也答成 `{}`，会话列表解析报
+        // `Invalid sessions response: missing sessions`（真产品错误日志）并让工作区加载失败。
+        // 这条桩必须**注册在兜底之后**（后注册优先），给列表一个合法信封。
+        await page.route(/\/api\/v1\/(?:workspaces\/[^/]+\/)?sessions(?:\?.*)?$/, (route) => {
+            if (route.request().method() !== "GET") return route.fallback();
+            return route.fulfill({
+                status: 200,
+                contentType: "application/json",
+                body: JSON.stringify({ sessions: [] }),
+            });
+        });
         await page.route("**/api/v1/workspaces/workspace-1", (route) =>
             route.fulfill({
                 status: 200,

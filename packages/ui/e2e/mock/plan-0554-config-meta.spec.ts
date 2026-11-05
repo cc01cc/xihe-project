@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { expect, test } from "./helpers/mock-test";
 
 const META: Record<string, Record<string, unknown>> = {
     chunkSize: {

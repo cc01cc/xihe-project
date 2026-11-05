@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { expect, test } from "./helpers/mock-test";
 import { ChatPage } from "../page-objects/ChatPage";
 import { setupMockAuth } from "./helpers/auth";
 

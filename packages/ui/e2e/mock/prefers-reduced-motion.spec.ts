@@ -1,4 +1,4 @@
-import { test } from "@playwright/test";
+import { test } from "./helpers/mock-test";
 
 test.describe("Accessibility — prefers-reduced-motion", () => {
     test("animations are disabled when prefers-reduced-motion is set", async ({ page }) => {

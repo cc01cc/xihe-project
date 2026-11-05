@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { expect, test } from "./helpers/mock-test";
 import type { Page } from "@playwright/test";
 import { resolve } from "node:path";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";

@@ -1,12 +1,13 @@
-import { test, expect } from "@playwright/test";
+import { expect, test } from "./helpers/mock-test";
+import { setupMockAuth } from "./helpers/auth";
 import { BaseModalPage } from "../page-objects/BaseModalPage";
 import { expectPlatformScreenshot } from "../helpers/visual";
 
 test.describe("BaseModal", () => {
     test("opens and closes via backdrop click", async ({ page }) => {
-        await page.addInitScript(() => {
-            localStorage.setItem("xihe-token", "mock-token-for-testing");
-        });
+        // BL-318：这条用例只验模态行为，之前只塞 token、不桩接口 —— `/workspace` 首屏会打
+        // `/workspaces`、`/auth/me`、`/user-events` 等真实请求并吃 401（门禁接上后才暴露）。
+        await setupMockAuth(page);
         await page.goto("/workspace");
         await page.waitForLoadState("load");
 

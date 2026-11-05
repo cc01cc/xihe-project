@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { DEFAULT_MOCK_ALLOW, expect, test } from "./helpers/mock-test";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
 import { contextPanel, openContextPanel } from "../helpers/context-panel";
 import { expectPlatformScreenshot } from "../helpers/visual";
@@ -293,43 +293,57 @@ test.describe("Chat", () => {
         await expectPlatformScreenshot(page, "chat-voice-transcript.png");
     });
 
-    test("attachment upload failure keeps the draft and shows a toast", async ({
-        page,
-    }, testInfo) => {
-        await setupMockAuth(page);
-        await setupMockSessions(page, {
-            sessions: [{ id: "upload-failure-session", title: "Upload Failure" }],
+    // 这条用例**故意**桩出 500（验的就是上传失败后的草稿保留 + toast），所以它的失败信号
+    // 要逐条放行 attachments 端点 —— 用 allow 正则而不是整体跳过判据（BL-318 §allow 纪律）。
+    test.describe("attachment failure path", () => {
+        test.use({
+            // 两条通道都要放行：①响应本身 500（`/attachments`）；②UI 用 logger.error 记录
+            // `Attachment upload failed`（loggern 走 console.error，行内不带请求 URL）。
+            mockAllow: [
+                ...DEFAULT_MOCK_ALLOW,
+                String.raw`/attachments($|\?)`,
+                String.raw`Attachment upload failed`,
+            ],
         });
-        await page.route("**/api/v1/sessions/upload-failure-session/attachments", (route) =>
-            route.fulfill({
-                status: 500,
-                contentType: "application/problem+json",
-                body: JSON.stringify({
-                    code: "ATTACHMENT_UPLOAD_FAILED",
-                    detail: "Attachment service unavailable",
-                }),
-            }),
-        );
 
-        await page.goto("/workspace/workspace-1/chat/upload-failure-session");
-        await page.getByTestId("file-upload-input").setInputFiles({
-            name: "notes.md",
-            mimeType: "text/markdown",
-            buffer: Buffer.from("# Notes"),
+        test("attachment upload failure keeps the draft and shows a toast", async ({
+            page,
+        }, testInfo) => {
+            await setupMockAuth(page);
+            await setupMockSessions(page, {
+                sessions: [{ id: "upload-failure-session", title: "Upload Failure" }],
+            });
+            await page.route("**/api/v1/sessions/upload-failure-session/attachments", (route) =>
+                route.fulfill({
+                    status: 500,
+                    contentType: "application/problem+json",
+                    body: JSON.stringify({
+                        code: "ATTACHMENT_UPLOAD_FAILED",
+                        detail: "Attachment service unavailable",
+                    }),
+                }),
+            );
+
+            await page.goto("/workspace/workspace-1/chat/upload-failure-session");
+            await page.getByTestId("file-upload-input").setInputFiles({
+                name: "notes.md",
+                mimeType: "text/markdown",
+                buffer: Buffer.from("# Notes"),
+            });
+            await page.getByTestId("chat-input").fill("Keep this draft");
+            await page.getByTestId("chat-input").press("Enter");
+            await expect(page.getByTestId("chat-input")).toHaveValue("Keep this draft");
+            await expect(page.getByTestId("attachment-upload-error")).toBeVisible();
+            await expect(page.getByTestId("attachment-retry-button")).toBeVisible();
+            await expect(page.getByTestId("attachment-error-remove-button")).toBeVisible();
+            await expect(page.locator("[data-sonner-toast]")).toContainText(
+                "Attachment service unavailable",
+            );
+            await page.screenshot({
+                path: testInfo.outputPath("plan-269-attachment-failure-full.png"),
+            });
+            await expectPlatformScreenshot(page, "chat-attachment-upload-failure.png");
         });
-        await page.getByTestId("chat-input").fill("Keep this draft");
-        await page.getByTestId("chat-input").press("Enter");
-        await expect(page.getByTestId("chat-input")).toHaveValue("Keep this draft");
-        await expect(page.getByTestId("attachment-upload-error")).toBeVisible();
-        await expect(page.getByTestId("attachment-retry-button")).toBeVisible();
-        await expect(page.getByTestId("attachment-error-remove-button")).toBeVisible();
-        await expect(page.locator("[data-sonner-toast]")).toContainText(
-            "Attachment service unavailable",
-        );
-        await page.screenshot({
-            path: testInfo.outputPath("plan-269-attachment-failure-full.png"),
-        });
-        await expectPlatformScreenshot(page, "chat-attachment-upload-failure.png");
     });
 
     test("new user message is marked as scroll anchor", async ({ page }) => {

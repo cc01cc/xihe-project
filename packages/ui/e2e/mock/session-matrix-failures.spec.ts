@@ -8,7 +8,7 @@
  *
  * 断言口径：UI（banner/错误码/重试入口）；durable 终态由 real-lane R7 覆盖。
  */
-import { test, expect } from "@playwright/test";
+import { expect, test } from "./helpers/mock-test";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
 import { setupMockProviderBinding } from "./helpers/session-matrix";
 

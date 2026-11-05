@@ -7,7 +7,8 @@
  *
  * 截图落 `XIHE_EVIDENCE_DIR`（见 `helpers/evidence.ts`）。
  */
-import { test, expect, type Page } from "@playwright/test";
+import { type Page } from "@playwright/test";
+import { expect, test } from "./helpers/mock-test";
 import { randomUUID } from "node:crypto";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
 import { setupMockParticipants } from "./helpers/session-matrix";

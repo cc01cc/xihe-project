@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { expect, test } from "./helpers/mock-test";
 
 test.describe("Accessibility — aria-label", () => {
     test.beforeEach(async ({ page }) => {
