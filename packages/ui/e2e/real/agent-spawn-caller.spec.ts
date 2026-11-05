@@ -62,27 +62,51 @@ function seedUserSpawnPermissions(userId: string, workspaceId: string): void {
     ]);
 }
 
-function addPrincipalSpawnGrant(principalId: string): void {
-    const grantId = requireUuid(
-        queryIsolatedPostgres(`
-    SELECT id FROM grants
-    WHERE subject_type = 'agent_principal' AND subject_id = '${principalId}'::uuid
-    ORDER BY created_at DESC LIMIT 1
-  `),
+// D-174 e2e 归因（2026-11-05，Lead 裁定 option A）：旧 fixture 用 SQL 把 SPAWN_AGENT 拼进
+// "最新一条"grant（多原子行 → 违反 uq_grants_role_atom 每行单原子不变量，setWorkspaceCap 重算撞键
+// → 500，P1 证据 .local/evidence/p1-agent-cap-500-evidence）；source='direct' 行被否决
+//（GrantSources.EVALUATION_SOURCES 不含 direct，行是惰性的，spawn 会假红）。改为走公开 API 绑定内置
+// AGENT_DELEGATOR 角色（单原子 SPAWN_AGENT、source=role 且有 role_bindings 背书，materializeSubject
+// 按 desired set 重算时保留）；granter 已 seed SPAWN_AGENT + MANAGE_WORKSPACE_AGENTS（守卫齐备）。
+const AGENT_DELEGATOR_ROLE_ID = "00000000-0000-4000-8000-000000000007";
+
+async function bindSpawnRole(
+    principalId: string,
+    workspaceId: string,
+    headers: Record<string, string>,
+): Promise<void> {
+    const bound = await fetch(
+        `${CP_URL}/api/v1/agent-principals/${principalId}/roles?workspaceId=${workspaceId}`,
+        {
+            method: "POST",
+            headers: { ...headers, "Content-Type": "application/json" },
+            body: JSON.stringify({ roleId: AGENT_DELEGATOR_ROLE_ID }),
+        },
     );
-    queryIsolatedPostgres(`
-    UPDATE grants
-    SET permissions = permissions || '[{"actionClass":"SPAWN_AGENT","resource":"*"}]'::jsonb
-    WHERE id = '${grantId}'::uuid
-      AND NOT (permissions @> '[{"actionClass":"SPAWN_AGENT","resource":"*"}]'::jsonb)
+    if (!bound.ok) {
+        throw new Error(
+            `AGENT_DELEGATOR role binding failed: HTTP ${bound.status} ${(await bound.text()).slice(0, 300)}`,
+        );
+    }
+}
+
+/** setWorkspaceCap/重算之后：SPAWN_AGENT 必须仍以"单原子 + source=role + 有 role_binding 背书"存在。 */
+function assertSpawnGrantSurvivedCapPut(principalId: string): void {
+    const rows = scalarCount(`
+    SELECT count(*) FROM grants g
+    WHERE g.subject_type = 'agent_principal' AND g.subject_id = '${principalId}'::uuid
+      AND g.source = 'role'
+      AND g.permissions @> '[{"actionClass":"SPAWN_AGENT","resource":"*"}]'::jsonb
+      AND jsonb_array_length(g.permissions) = 1
+      AND EXISTS (
+        SELECT 1 FROM role_bindings b
+        WHERE b.subject_type = 'agent_principal' AND b.subject_id = g.subject_id
+          AND b.role_id = '${AGENT_DELEGATOR_ROLE_ID}'::uuid)
   `);
-    if (
-        scalarCount(`
-    SELECT count(*) FROM grants WHERE id = '${grantId}'::uuid
-      AND permissions @> '[{"actionClass":"SPAWN_AGENT","resource":"*"}]'::jsonb
-  `) !== 1
-    ) {
-        throw new Error("The Agent principal fixture grant does not include SPAWN_AGENT");
+    if (rows !== 1) {
+        throw new Error(
+            "SPAWN_AGENT grant did not survive setWorkspaceCap as a bound single-atom role row",
+        );
     }
 }
 
@@ -247,14 +271,12 @@ test("@host Agent spawn uses CP logical MCP, approval retry, and child terminal 
 
     const principalResponse = await request.post(`${CP_URL}/api/v1/agent-principals`, {
         headers: workspaceHeaders,
-        data: { scope: "WORKSPACE", name: "CPMCPSpawnE2E" },
+        data: { name: "CPMCPSpawnE2E" },
     });
     expect(principalResponse.status(), await principalResponse.text()).toBe(201);
     const principalId = requireUuid(
         ((await principalResponse.json()) as { principalId: string }).principalId,
     );
-    addPrincipalSpawnGrant(principalId);
-
     const bindingResponse = await request.put(
         `${CP_URL}/api/v1/workspaces/${workspaceId}/agents/${principalId}`,
         {
@@ -263,6 +285,8 @@ test("@host Agent spawn uses CP logical MCP, approval retry, and child terminal 
         },
     );
     expect(bindingResponse.status(), await bindingResponse.text()).toBe(200);
+    await bindSpawnRole(principalId, workspaceId, workspaceHeaders);
+    assertSpawnGrantSurvivedCapPut(principalId);
     await ensureAgentWorkspaceBinding(workspaceId);
 
     seedPage(page, owner);
