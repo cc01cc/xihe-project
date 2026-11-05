@@ -176,6 +176,13 @@ const messages = {
             // BL-335：SSE 订阅上限（429）常驻横幅。语义是"通道停了"，所以文案说清**已停止刷新 + 怎么恢复**。
             sseSubscriberLimitTitle: "实时更新已停止。",
             sseSubscriberLimitHint: "该页数据已停止刷新，请关掉不用的标签页后刷新本页。",
+            // PLAN-0676 T2：同一横幅的三态（t56 的 limit 态保留在上面两条，语义不变）。
+            sseDisconnectedTitle: "与实时更新的连接已断开。",
+            sseDisconnectedHint: "本页数据可能已过期。点重试立即重连；仍失败时刷新本页。",
+            sseReconnectingTitle: "正在切换实时更新连接。",
+            sseReconnectingHint: "其它窗口正在接管，期间数据可能延迟更新，无需操作。",
+            sseNoticeRetry: "重试",
+            sseNoticeHelp: "查看帮助",
             panelMembers: "成员",
             panelContext: "会话设置",
             panelAgents: "智能体",
@@ -2486,6 +2493,15 @@ const messages = {
             sseSubscriberLimitTitle: "Live updates stopped.",
             sseSubscriberLimitHint:
                 "This page has stopped refreshing. Close the tabs you no longer use, then reload this page.",
+            // PLAN-0676 T2: the same banner's other two states.
+            sseDisconnectedTitle: "Live updates are disconnected.",
+            sseDisconnectedHint:
+                "This page may be out of date. Retry to reconnect now, or reload the page if it keeps failing.",
+            sseReconnectingTitle: "Switching the live-update connection.",
+            sseReconnectingHint:
+                "Another window is taking over; data may briefly lag. No action needed.",
+            sseNoticeRetry: "Retry",
+            sseNoticeHelp: "Learn more",
             panelMembers: "Members",
             panelContext: "Session settings",
             panelAgents: "Agents",
