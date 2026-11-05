@@ -66,7 +66,9 @@ function usage(exitCode = 2) {
   console.log('  headCommit      git rev-parse HEAD of this checkout (null = git unavailable)');
   console.log('  behind          git rev-list --count runningCommit..headCommit (null = unknown)');
   console.log('  stale           true when the classes are provably not from HEAD (verdict stale|missing)');
-  console.log('  verdict         fresh | stale | missing | unverified (same vocabulary as the start gate)');
+  console.log('  verdict         fresh | stale | dirty | missing | unverified (same vocabulary as the start gate)');
+  console.log('                  dirty = commit matches HEAD but the stamp says the tree was dirty at build time;'
+    + ' BL-325: treat it as NOT fresh (never as stale)');
   console.log('  targetDirSource pointer | newest | env | derived — where targetDir came from');
   console.log('                  (pointer =该栈 .current 记录的最后一次启动目录；newest = 磁盘最新构建槽；');
   console.log('                   env = 显式 XIHE_CP_TARGET_DIR；derived = 尚未构建时按 HEAD 推出的路径)');

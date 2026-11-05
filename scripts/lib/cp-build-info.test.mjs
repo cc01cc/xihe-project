@@ -118,7 +118,8 @@ test('evaluateCpFreshness: fresh only when the stamp equals HEAD', () => {
     headCommit: HEAD_A,
     read: () => formatBuildInfo({ commit: HEAD_A.slice(0, 7), builtAt: '', dirty: true }),
   });
-  assert.equal(shortStamp.status, 'fresh', 'a short stamp still proves the same commit');
+  assert.equal(shortStamp.status, 'dirty', 'BL-325: matching commit + dirty stamp is its own verdict');
+  assert.equal(shortStamp.fresh, false, 'dirty is NOT fresh: callers must not boot it as clean HEAD');
   assert.equal(shortStamp.dirty, true);
 });
 
@@ -154,8 +155,8 @@ test('writeBuildInfo creates classes/META-INF and stamps HEAD', (t) => {
   assert.equal(file, buildInfoPath(targetDir));
   const { info } = readBuildInfo(targetDir);
   assert.deepEqual(info, { commit: HEAD_A, builtAt: '2026-11-04T21:30:00.000Z', dirty: true });
-  // The stamp the launcher writes must satisfy its own gate.
-  assert.equal(evaluateCpFreshness({ targetDir, headCommit: HEAD_A }).status, 'fresh');
+  // BL-325: a dirty stamp must NOT be read back as fresh — the same file round-trips to `dirty`.
+  assert.equal(evaluateCpFreshness({ targetDir, headCommit: HEAD_A }).status, 'dirty');
 });
 
 test('shortSha is display-only and never truncates a short value oddly', () => {
@@ -274,4 +275,32 @@ test('externalCpBuildCheck: a declared expectation wins over HEAD', (t) => {
   const result = externalCpBuildCheck({ targetDir, expectedCommit: HEAD_A, headCommit: HEAD_B });
   assert.equal(result.ok, true, 'caller-declared expected commit is authoritative');
   assert.equal(result.expectedCommit, HEAD_A);
+});
+
+test('BL-325 verdict: fresh / dirty / stale are three distinct answers', () => {
+  const targetDir = join(projectRoot, 'target-verdict-dirty-test');
+  const clean = evaluateCpFreshness({
+    targetDir,
+    headCommit: HEAD_A,
+    read: () => formatBuildInfo({ commit: HEAD_A, builtAt: '', dirty: false }),
+  });
+  assert.equal(clean.status, 'fresh');
+  assert.equal(clean.fresh, true);
+
+  const dirty = evaluateCpFreshness({
+    targetDir,
+    headCommit: HEAD_A,
+    read: () => formatBuildInfo({ commit: HEAD_A, builtAt: '', dirty: true }),
+  });
+  assert.equal(dirty.status, 'dirty');
+  assert.equal(dirty.fresh, false);
+  assert.match(dirty.reason, /dirty/u);
+
+  const stale = evaluateCpFreshness({
+    targetDir,
+    headCommit: HEAD_B,
+    read: () => formatBuildInfo({ commit: HEAD_A, builtAt: '', dirty: true }),
+  });
+  assert.equal(stale.status, 'stale');
+  assert.equal(stale.fresh, false);
 });

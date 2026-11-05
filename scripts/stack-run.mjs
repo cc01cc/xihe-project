@@ -421,15 +421,21 @@ if (target === "cp") {
   }
   let verdict = evaluateCpFreshness({ targetDir, headCommit: head.commit });
   console.error(`[stack] cp build-info: ${describeBuildVerdict(verdict, head)}`);
-  if (verdict.status === "stale" || verdict.status === "missing") {
+  // BL-325: `dirty` joins stale/missing in the rebuild set — a build stamped from the right commit
+  // but a dirty tree is not what HEAD says. Consumers must branch on `!== "fresh"` here.
+  if (verdict.status === "stale" || verdict.status === "missing" || verdict.status === "dirty") {
+    const notFromHead =
+      verdict.status === "dirty"
+        ? `cp classes were built from a dirty tree (${verdict.reason})`
+        : `cp classes are not from HEAD (${verdict.reason})`;
     if (noRebuild) {
       console.error(
-        `[stack] WARNING: cp classes are not from HEAD (${verdict.reason}); --no-rebuild keeps them —`
+        `[stack] WARNING: ${notFromHead}; --no-rebuild keeps them —`
         + " this CP may serve code that develop already fixed",
       );
     } else {
       console.error(
-        `[stack] cp classes are not from HEAD (${verdict.reason}); rebuilding from HEAD`
+        `[stack] ${notFromHead}; rebuilding from HEAD`
         + " (mvn -q -DskipTests clean compile) — pass --no-rebuild to skip this",
       );
       const rebuild = runToolSync(
