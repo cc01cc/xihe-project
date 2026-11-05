@@ -3,11 +3,14 @@ package com.cc01cc.p.xihe.cp.policy;
 import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
+import com.cc01cc.p.xihe.cp.entity.AccessRole;
 import com.cc01cc.p.xihe.cp.entity.AccessRoleBinding;
+import com.cc01cc.p.xihe.cp.entity.AccessRolePermission;
 import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
 import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
 import com.cc01cc.p.xihe.cp.repository.AccessRoleBindingRepository;
+import com.cc01cc.p.xihe.cp.repository.AccessRolePermissionRepository;
 import com.cc01cc.p.xihe.cp.repository.AccessRoleRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import org.junit.jupiter.api.AfterEach;
@@ -17,10 +20,12 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
 
+import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -37,9 +42,11 @@ class GrantabilityGuardIntegrationTest extends AbstractIntegrationTest {
     @Autowired private UserRepository userRepository;
     @Autowired private WorkspaceFixture workspaceFixture;
     @Autowired private AccessRoleRepository accessRoleRepository;
+    @Autowired private AccessRolePermissionRepository accessRolePermissionRepository;
     @Autowired private AccessRoleBindingRepository bindingRepository;
     @Autowired private RoleGrantMaterializer materializer;
     @Autowired private GrantabilityGuard guard;
+    @Autowired private RequesterAuthority requesterAuthority;
     @Autowired private JdbcTemplate jdbcTemplate;
 
     @AfterEach
@@ -128,6 +135,63 @@ class GrantabilityGuardIntegrationTest extends AbstractIntegrationTest {
         assertEquals("PRIVILEGE_ESCALATION", denied.getCode());
     }
 
+    // V2.2/V2.4 (D-166) — the bypass atom skips the subset AND the audit records WHAT was skipped.
+    @Test
+    void grantAnyAtomBypassesTheSubsetAndAuditsTheSkippedAtoms() {
+        User bypassHolder = newUser("guard-bypass");
+        createInstanceRole("BYPASS_ONLY", List.of(ToolFaceRegistry.ACTION_GRANT_ANY_ATOM));
+        bindInstanceRole(bypassHolder.getId(), "BYPASS_ONLY");
+        actAs(bypassHolder);
+
+        assertTrue(requesterAuthority.holdsActionAtom(bypassHolder.getId(),
+                ToolFaceRegistry.ACTION_GRANT_ANY_ATOM, null), "the holder carries the bypass atom");
+        // `write` is NOT held by this caller, yet the bypass lets the definition through.
+        guard.assertGrantable(Set.of("write"), null);
+        String detail = jdbcTemplate.queryForObject("SELECT details FROM audit_logs WHERE action ="
+                + " 'role_grant_guard_bypassed' AND user_id = ? ORDER BY created_at DESC LIMIT 1",
+                String.class, bypassHolder.getId());
+        assertTrue(detail != null && detail.contains("bypass=true") && detail.contains("skipped=[write]"),
+                "the bypass audit names exactly what was skipped: " + detail);
+    }
+
+    // V2.1/V2.3 + V3.1/V3.2 (D-166/D-168) — ADMIN holds MANAGE_ROLES, not the bypass atom.
+    @Test
+    void adminDelegatesWithinItsSubsetButCannotGrantTheBypassAtom() {
+        User admin = newUser("guard-admin");
+        bindInstanceRole(admin.getId(), SystemAccessRoleCatalog.ADMIN);
+        actAs(admin);
+
+        RequesterAuthority authority = requesterAuthority;
+        assertTrue(authority.holdsActionAtom(admin.getId(),
+                ToolFaceRegistry.ACTION_MANAGE_ROLES, null), "ADMIN holds MANAGE_ROLES since V125");
+        assertFalse(authority.holdsActionAtom(admin.getId(),
+                ToolFaceRegistry.ACTION_GRANT_ANY_ATOM, null), "ADMIN must not hold the bypass atom");
+
+        guard.assertGrantable(Set.of("read"), null);
+        CpApiException denied = assertThrows(CpApiException.class,
+                () -> guard.assertGrantable(Set.of(ToolFaceRegistry.ACTION_GRANT_ANY_ATOM), null));
+        assertEquals(HttpStatus.FORBIDDEN, denied.getStatus());
+        assertEquals("PRIVILEGE_ESCALATION", denied.getCode());
+        assertTrue(denied.getMessage().contains("GRANT_ANY_ATOM"), denied.getMessage());
+    }
+
+    // V2.2 — SUPER_ADMIN (V125 default holder) goes through the bypass branch, and even an
+    // "all atoms held" request leaves an audit row (skipped=[] is still a bypass decision).
+    @Test
+    void superAdminGoesThroughTheBypassBranchAndItIsAudited() {
+        User superAdmin = newUser("guard-super");
+        bindInstanceRole(superAdmin.getId(), SystemAccessRoleCatalog.SUPER_ADMIN);
+        actAs(superAdmin);
+
+        assertTrue(requesterAuthority.holdsActionAtom(superAdmin.getId(),
+                ToolFaceRegistry.ACTION_GRANT_ANY_ATOM, null), "SUPER_ADMIN holds the bypass atom");
+        guard.assertGrantable(Set.of("read", "write"), null);
+        Integer bypassed = jdbcTemplate.queryForObject("SELECT count(*) FROM audit_logs"
+                + " WHERE action = 'role_grant_guard_bypassed' AND user_id = ?", Integer.class,
+                superAdmin.getId());
+        assertTrue(bypassed != null && bypassed >= 1, "the SUPER_ADMIN bypass is audited");
+    }
+
     private void actAs(User user) {
         TenantContext.setUserId(user.getId().toString());
     }
@@ -137,6 +201,15 @@ class GrantabilityGuardIntegrationTest extends AbstractIntegrationTest {
         bindingRepository.save(new AccessRoleBinding(roleId, "user", userId,
                 AccessScope.INSTANCE, null, userId));
         materializer.materializeSubject("user", userId, userId, null);
+    }
+
+    private void createInstanceRole(String name, List<String> atoms) {
+        AccessRole role = accessRoleRepository.saveAndFlush(new AccessRole(
+                UUID.randomUUID(), name, name, null, false));
+        for (String atom : atoms) {
+            accessRolePermissionRepository.saveAndFlush(new AccessRolePermission(
+                    role.getId(), atom, PermissionAtomCatalog.atom(atom).canonicalResource()));
+        }
     }
 
     private User newUser(String prefix) {

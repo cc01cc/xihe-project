@@ -106,6 +106,8 @@ public final class PermissionAtomCatalog {
             ToolFaceRegistry.ACTION_CREATE_ACCOUNT,
             ToolFaceRegistry.ACTION_CREATE_TEMPLATE,
             ToolFaceRegistry.ACTION_MANAGE_ROLES,
+            // PLAN-0673 M2 (D-166): an agent principal may never hold the human grant bypass.
+            ToolFaceRegistry.ACTION_GRANT_ANY_ATOM,
             ToolFaceRegistry.ACTION_OWN_AGENT,
             ToolFaceRegistry.ACTION_MANAGE_AGENT_PRINCIPALS,
             // caps
@@ -153,7 +155,10 @@ public final class PermissionAtomCatalog {
             ToolFaceRegistry.ACTION_MANAGE_PROVIDER_CONNECTIONS,
             ToolFaceRegistry.ACTION_USE_WORKSPACE_RUNTIME,
             ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_RUNTIME,
-            ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_POLICY);
+            ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_POLICY,
+            // PLAN-0673 M2 (D-166): the grant-side subset bypass. Instance-only, SUPER_ADMIN-only
+            // default, audited on every use — never a role-name special case.
+            ToolFaceRegistry.ACTION_GRANT_ANY_ATOM);
 
     private static final List<String> CAPABILITY_ATOM_NAMES = List.of(
             CAP_INSTANCE_SUPER, CAP_INSTANCE_ADMIN, CAP_WORKSPACE_ADMIN);
@@ -166,6 +171,8 @@ public final class PermissionAtomCatalog {
             ToolFaceRegistry.ACTION_CREATE_ACCOUNT,
             ToolFaceRegistry.ACTION_CREATE_TEMPLATE,
             ToolFaceRegistry.ACTION_MANAGE_ROLES,
+            // PLAN-0673 M2 (D-166): bypassing the subset rule is instance-wide authority.
+            ToolFaceRegistry.ACTION_GRANT_ANY_ATOM,
             // PLAN-0622 D8: "create your own agent" is a user capability; a workspace-scoped
             // binding of it would be meaningless, so it is instance-bindable only.
             ToolFaceRegistry.ACTION_OWN_AGENT,

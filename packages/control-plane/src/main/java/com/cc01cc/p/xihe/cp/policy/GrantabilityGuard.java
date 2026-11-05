@@ -80,9 +80,16 @@ public class GrantabilityGuard {
         if (subjectId == null) {
             throw new CpApiException(HttpStatus.FORBIDDEN, "FORBIDDEN", "Authentication required");
         }
-        // TODO(PLAN-0673 M2 / D-166): if (requester.holdsActionAtom(subjectId, "GRANT_ANY_ATOM",
-        // null)) { auditBypass(...); return; } — deliberately not implemented in M1 (no atom yet).
         Set<String> requested = atoms == null ? Set.of() : new LinkedHashSet<>(atoms);
+        // PLAN-0673 M2 / D-166: the single bypass. It is an ATOM, never a role-name check; every use
+        // is audited with the exact list of atoms the caller does not hold ("bypassed what").
+        if (requester.holdsActionAtom(subjectId, ToolFaceRegistry.ACTION_GRANT_ANY_ATOM, null)) {
+            List<String> skipped = scope == null
+                    ? exceedingInAnyScope(subjectId, requested)
+                    : exceedingInScope(subjectId, requested, scope);
+            auditBypass(subjectId, requested, skipped, scope);
+            return;
+        }
         List<String> exceeding = scope == null
                 ? exceedingInAnyScope(subjectId, requested)
                 : exceedingInScope(subjectId, requested, scope);
@@ -153,6 +160,15 @@ public class GrantabilityGuard {
     private void auditAllowed(UUID subjectId, Set<String> atoms, AccessScope scope) {
         audit.recordDurableChange(subjectId.toString(), scopeId(scope), "role_grant_guard_allowed",
                 "role_grant", auditResourceId(scope), detail(atoms, scope, false));
+    }
+
+    private void auditBypass(UUID subjectId, Set<String> requested, List<String> skipped,
+                             AccessScope scope) {
+        logger.warn("[POLICY] event=role_grant_guard_bypassed actor={} scope={} atoms={} skipped={}",
+                subjectId, scopeKey(scope), requested, skipped);
+        audit.recordDurableChange(subjectId.toString(), scopeId(scope), "role_grant_guard_bypassed",
+                "role_grant", auditResourceId(scope),
+                detail(requested, scope, true) + " skipped=" + skipped);
     }
 
     private void auditDenied(UUID subjectId, Set<String> requested, List<String> exceeding,
