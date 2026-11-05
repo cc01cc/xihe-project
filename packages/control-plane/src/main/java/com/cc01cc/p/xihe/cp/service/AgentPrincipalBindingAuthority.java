@@ -56,8 +56,7 @@ public class AgentPrincipalBindingAuthority {
         }
         UUID actorUuid = parseUuid(actor, "Authentication required");
         UUID principal = parseUuid(principalIdValue, "A valid principal id is required");
-        UUID workspace = isBlank(workspaceIdValue)
-                ? null : parseUuid(workspaceIdValue, "A valid workspaceId is required");
+        UUID workspace = resolveAuthorizingWorkspace(workspaceIdValue);
         boolean instanceTier = requesterAuthority.holdsActionAtom(
                 ToolFaceRegistry.ACTION_MANAGE_AGENT_PRINCIPALS);
         boolean workspaceTier = workspace != null && requesterAuthority.holdsActionAtom(actorUuid,
@@ -75,6 +74,24 @@ public class AgentPrincipalBindingAuthority {
     }
 
     /** True when the caller may act in that workspace (used for row-scope decisions on delete). */
+    /**
+     * BL-351: the authorizing workspace may arrive as {@code X-Workspace-Id} (preferred, resolved by
+     * {@link com.cc01cc.p.xihe.cp.config.TenantContextInterceptor}) or as the legacy {@code ?workspaceId}
+     * query parameter. Header wins; a conflicting pair is a client error (400), never a silent pick —
+     * the two values name different authorization scopes, so choosing one could broaden authority.
+     */
+    private static UUID resolveAuthorizingWorkspace(String workspaceIdValue) {
+        String header = "header".equals(TenantContext.getWorkspaceSource())
+                ? TenantContext.getWorkspaceId() : null;
+        String query = isBlank(workspaceIdValue) ? null : workspaceIdValue.trim();
+        if (header != null && query != null && !header.equalsIgnoreCase(query)) {
+            throw new CpApiException(HttpStatus.BAD_REQUEST, "WORKSPACE_CONTEXT_CONFLICT",
+                    "X-Workspace-Id conflicts with ?workspaceId; send only one of them");
+        }
+        String effective = header != null ? header : query;
+        return effective == null ? null : parseUuid(effective, "A valid workspaceId is required");
+    }
+
     public boolean canManageWorkspace(UUID actorUuid, UUID workspaceId) {
         return requesterAuthority.holdsActionAtom(actorUuid,
                 ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_AGENTS, workspaceId);
