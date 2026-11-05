@@ -715,7 +715,7 @@ class ChatControllerTest extends AbstractH2Test {
     }
 
     /**
-     * PLAN-0660 T5.11: the {@code user_question} relay writes the durable row, pushes a user-channel
+     * PLAN-0660 T5.11: the {@code session_question_asked} relay writes the durable row, pushes a user-channel
      * hint — and <b>never</b> puts the question (or its body) on the session stream. A second ask for
      * the same run is refused as {@code QUESTION_ALREADY_PENDING} without duplicating the row or
      * breaking the relay.
@@ -728,7 +728,7 @@ class ChatControllerTest extends AbstractH2Test {
                 "idem-" + UUID.randomUUID(), "hash", "openai", "gpt-test", "workspace", "streaming"));
 
         ReflectionTestUtils.invokeMethod(chatController, "dispatchRelayedEvent", sessionId,
-                "user_question", "{\"question\":\"" + questionBody + "\"}", runUuid.toString(),
+                "session_question_asked", "{\"question\":\"" + questionBody + "\"}", runUuid.toString(),
                 "req-uq-1", userId, workspaceId, null);
 
         var pending = userQuestionRepository.findByRunIdAndStateIn(runUuid,
@@ -738,11 +738,11 @@ class ChatControllerTest extends AbstractH2Test {
         assertEquals(userId, pending.getFirst().getAddresseeUserId().toString(),
                 "the addressee is the run owner (v1)");
         org.mockito.Mockito.verify(sseEmitterManager, org.mockito.Mockito.never())
-                .send(eq(sessionId), eq("user_question"), any(), any());
+                .send(eq(sessionId), eq("session_question_asked"), any(), any());
 
         // The real 409 trigger: a second question for a run that still has one pending.
         ReflectionTestUtils.invokeMethod(chatController, "dispatchRelayedEvent", sessionId,
-                "user_question", "{\"question\":\"second question\"}", runUuid.toString(),
+                "session_question_asked", "{\"question\":\"second question\"}", runUuid.toString(),
                 "req-uq-2", userId, workspaceId, null);
         assertEquals(1, userQuestionRepository.findByRunIdAndStateIn(runUuid,
                         List.of(com.cc01cc.p.xihe.cp.entity.UserQuestion.STATE_PENDING)).size(),

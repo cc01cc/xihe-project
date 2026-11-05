@@ -76,7 +76,7 @@ public class ChatController {
     private final ObjectMapper objectMapper;
     private final SseEmitterManager sseManager;
     private final ApprovalService approvalService;
-    /** PLAN-0660 T5.11: the relay's durable side for {@code user_question} events. */
+    /** PLAN-0660 T5.11: the relay's durable side for {@code session_question_asked} events. */
     private final UserQuestionService userQuestionService;
     /** PLAN-0660 T5.11: the user-level refresh hint ({@code {questionId, sessionId, state}} only). */
     private final com.cc01cc.p.xihe.cp.event.UserChannelPort userChannel;
@@ -191,7 +191,7 @@ public class ChatController {
               com.cc01cc.p.xihe.cp.context.service.MentionPathResolver mentionPathResolver,
               // PLAN-0666 M1b: appended last for the same reason.
               ContextFingerprintRecorder contextFingerprintRecorder,
-              // PLAN-0660 T5.11: the user_question relay (durable row + user-channel hint).
+              // PLAN-0660 T5.11: the session_question_asked relay (durable row + user-channel hint).
               UserQuestionService userQuestionService,
               com.cc01cc.p.xihe.cp.event.UserChannelPort userChannel) {
         this.agentHttpClient = HttpClient.newBuilder()
@@ -2687,7 +2687,7 @@ public class ChatController {
                     participantIdFor(runId));
             return;
         }
-        if ("user_question".equals(eventName)) {
+        if ("session_question_asked".equals(eventName)) {
             relayUserQuestion(sessionId, runId, userId, workspaceId, asMap(parsedPayload));
             return;
         }
@@ -2695,7 +2695,7 @@ public class ChatController {
     }
 
     /**
-     * PLAN-0660 T5.11 — the {@code user_question} relay: the Agent asked its user a question.
+     * PLAN-0660 T5.11 — the {@code session_question_asked} relay: the Agent asked its user a question.
      *
      * <p>Durable first (the {@code user_questions} row is the fact), then a <b>user-channel hint</b>
      * ({@code {questionId, sessionId, state}} only — the UI reloads the projection), and
