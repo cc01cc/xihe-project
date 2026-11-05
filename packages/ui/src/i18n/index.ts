@@ -182,6 +182,7 @@ const messages = {
             sseReconnectingTitle: "正在切换实时更新连接。",
             sseReconnectingHint: "其它窗口正在接管，期间数据可能延迟更新，无需操作。",
             sseNoticeRetry: "重试",
+            approvalResolvedElsewhere: "这条审批已在其他窗口处理。",
             sseNoticeHelp: "查看帮助",
             panelMembers: "成员",
             panelContext: "会话设置",
@@ -2501,6 +2502,7 @@ const messages = {
             sseReconnectingHint:
                 "Another window is taking over; data may briefly lag. No action needed.",
             sseNoticeRetry: "Retry",
+            approvalResolvedElsewhere: "This approval was handled in another window.",
             sseNoticeHelp: "Learn more",
             panelMembers: "Members",
             panelContext: "Session settings",
