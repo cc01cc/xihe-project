@@ -49,8 +49,9 @@ test("@host BL-332 同 context 两页共享一条 workspace 上游 SSE", async (
         } catch {
             return;
         }
-        if (url.pathname !== "/api/v1/events") return;
-        if (url.searchParams.get("workspaceId") === workspaceId) upstream.push(req.url());
+        // workspace 通道是路径形式：/api/v1/workspaces/{id}/events（useWorkspaceSSE.ts:111）
+        if (url.pathname !== `/api/v1/workspaces/${workspaceId}/events`) return;
+        upstream.push(req.url());
     });
 
     const pageA = await context.newPage();
