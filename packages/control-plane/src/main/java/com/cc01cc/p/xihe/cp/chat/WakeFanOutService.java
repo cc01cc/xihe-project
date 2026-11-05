@@ -124,11 +124,12 @@ public class WakeFanOutService {
     /**
      * PLAN-0630 M5b (D30-14): the composer's optional {@code cc} observer list rides the same
      * wake round. Semantics = 旁听名单: an observer gets the durable notify signal
-     * ({@code wake_dispatch} outcome {@code notify} + the unread {@code mention_count}
-     * advance — the same signal a human mention produces) but <b>never a Run</b>; an agent
-     * observer still answers when actually {@code @}-mentioned (WHEN_MENTIONED equivalent),
-     * which the mention fan-out above already handles. Observers already woken as mention
-     * recipients this round are not notified twice.
+     * ({@code wake_dispatch} outcome {@code notify}) — which advances the participant's
+     * <b>derived</b> unread count (V112 dropped the {@code mention_count} column; the count is
+     * re-derived from these events past the read pointer), the same signal a human mention
+     * produces — but <b>never a Run</b>; an agent observer still answers when actually
+     * {@code @}-mentioned (WHEN_MENTIONED equivalent), which the mention fan-out above already
+     * handles. Observers already woken as mention recipients this round are not notified twice.
      */
     public WakeHandoff fanOut(UUID sessionId, String workspaceId, String userId, String rootRunId,
                               String content, List<MentionParser.RosterEntry> roster,

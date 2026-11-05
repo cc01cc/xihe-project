@@ -413,10 +413,12 @@ test.describe("@host PLAN-0630 T5b.4 real to/cc walkthrough", () => {
             `SELECT count(*) FROM context_events WHERE session_id = '${sessionId}'::uuid AND event_type = 'wake_dispatch' AND payload->>'participantId' = '${participantBId}' AND payload->>'outcome' = 'notify' AND payload->>'triggerSource' = 'cc'`,
         );
         expect(notifyCount, "B receives the cc notify (wake_dispatch outcome=notify)").toBe(1);
+        // V112 dropped `session_participant_cursors.mention_count`: unread is DERIVED from the event
+        // stream (inventory §Session Participants M5-A). Same assertion, derived read.
         const mentionCountB = scalar(
-            `SELECT COALESCE(mention_count, 0) FROM session_participant_cursors WHERE participant_id = '${participantBId}'::uuid`,
+            `SELECT count(*) FROM context_events e LEFT JOIN session_participant_cursors c ON c.participant_id = '${participantBId}'::uuid WHERE e.session_id = '${sessionId}'::uuid AND e.event_type = 'wake_dispatch' AND e.payload->>'outcome' = 'notify' AND e.payload->>'participantId' = '${participantBId}' AND e.sequence > COALESCE(c.last_read_event_seq, 0)`,
         );
-        expect(mentionCountB, "the cc notify advances B's mention_count cursor").toBe(1);
+        expect(mentionCountB, "the cc notify advances B's derived unread mention count").toBe(1);
         expect(
             scalar(
                 `SELECT count(*) FROM chat_runs WHERE session_id = '${sessionId}'::uuid AND agent_principal_id = '${principalB}'::uuid`,

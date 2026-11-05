@@ -61,7 +61,7 @@ class SessionPrimaryParticipantTest extends AbstractIntegrationTest {
 
         JsonNode created = send(ownerToken, "POST", "/api/v1/agent-principals",
                 """
-                {"name":"PrimaryAgent","scope":"PERSONAL"}""").body();
+                {"name":"PrimaryAgent"}""").body();
         principalId = created.path("principalId").asText();
         // Bind with an empty cap: the session only needs a binding, and the cap is intersected with
         // the principal's grants, so an empty ceiling keeps the fixture free of grant seeding.

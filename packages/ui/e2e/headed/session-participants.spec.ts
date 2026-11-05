@@ -886,7 +886,7 @@ test.describe("PLAN-0623 有头走查：会话参与者 dock tab", () => {
             timeout: 20000,
         });
 
-        // 0624 的核心可见效果：服务端推进 mention_count ⇒ 未读徽标出现（只有 >0 才渲染）。
+        // 0624 的核心可见效果：服务端推进派生未读（notify 事件 − 读指针；V112 起无 mention_count 列）⇒ 未读徽标出现（只有 >0 才渲染）。
         const badge = page.getByTestId(`participant-mention-badge-${humanParticipantId}`);
         await expect
             .poll(
