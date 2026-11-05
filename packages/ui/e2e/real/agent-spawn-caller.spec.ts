@@ -277,6 +277,11 @@ test("@host Agent spawn uses CP logical MCP, approval retry, and child terminal 
     const principalId = requireUuid(
         ((await principalResponse.json()) as { principalId: string }).principalId,
     );
+    // D-180 三门实测（spawn7 403 AGENT_PERMISSION_SCOPE_EXCEEDED principal-exceeding=[SPAWN_AGENT@*]）：
+    // cap PUT 要求 principal 先持有 SPAWN_AGENT ⇒ 必须先绑 AGENT_DELEGATOR（物化 principal 的 grants）
+    // 再 setWorkspaceCap；顺序以门的实测语义为准。
+    await bindSpawnRole(principalId, workspaceId, workspaceHeaders);
+
     const bindingResponse = await request.put(
         `${CP_URL}/api/v1/workspaces/${workspaceId}/agents/${principalId}`,
         {
@@ -285,7 +290,6 @@ test("@host Agent spawn uses CP logical MCP, approval retry, and child terminal 
         },
     );
     expect(bindingResponse.status(), await bindingResponse.text()).toBe(200);
-    await bindSpawnRole(principalId, workspaceId, workspaceHeaders);
     assertSpawnGrantSurvivedCapPut(principalId);
     await ensureAgentWorkspaceBinding(workspaceId);
 
