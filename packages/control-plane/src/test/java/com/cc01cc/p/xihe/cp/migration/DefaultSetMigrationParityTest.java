@@ -26,12 +26,17 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /**
  * PLAN-0651 M2 T2.3: the <b>code catalog vs migration materialization</b> consistency check.
  *
- * <p>{@code DefaultSetAtomMatrixTest} pins the reviewed contract (hard-coded 10×7 matrix) against the
- * code catalog. This class covers the other half: a <b>fresh, Flyway-only</b> PostgreSQL database
- * (no booted Spring context, so nothing seeds from the code catalog) must materialize exactly the
- * same {@code role_permissions} rows as {@link SystemAccessRoleCatalog#roleSeeds()} — every atom of
- * every built-in role, including the newest rows from V125
- * ({@code SUPER_ADMIN × GRANT_ANY_ATOM}, {@code ADMIN × MANAGE_ROLES}).</p>
+ * <p>{@code DefaultSetAtomMatrixTest} pins the reviewed contract (hard-coded governed-atom matrix)
+ * against the code catalog. This class covers the other half: a <b>fresh, Flyway-only</b> PostgreSQL
+ * database (no booted Spring context, so nothing seeds from the code catalog) must materialize
+ * exactly the same {@code role_permissions} rows as {@link SystemAccessRoleCatalog#roleSeeds()} —
+ * every atom of every built-in role, including the newest rows from V125
+ * ({@code SUPER_ADMIN × GRANT_ANY_ATOM}, {@code ADMIN × MANAGE_ROLES}) and the V127 role
+ * {@code AGENT_USER} (D-174 agent default instance role).</p>
+ *
+ * <p><b>BL-326 (2026-11-05):</b> role-set assertions compare <b>by name</b> against the reviewed
+ * {@code EXPECTED} table, never by a bare count — the literal {@code 7} silently broke the moment
+ * V127 intentionally added an eighth default role.</p>
  *
  * <p>Why Flyway-only matters: a booted context calls {@code ensureSeeded()} and would copy the code
  * catalog into the DB, making the comparison self-fulfilling.</p>
@@ -86,6 +91,9 @@ class DefaultSetMigrationParityTest {
         table.put(SystemAccessRoleCatalog.WS_VIEWER, Set.of(
                 ToolFaceRegistry.ACTION_USE_WORKSPACE_RUNTIME));
         table.put(SystemAccessRoleCatalog.AGENT_DELEGATOR, Set.of());
+        // V127 / D-174: the agent default INSTANCE role (read/write/delete/exec/network, all `*`) —
+        // none of the governed atoms, so every governance cell is false.
+        table.put(SystemAccessRoleCatalog.AGENT_USER, Set.of());
         return table;
     }
 
@@ -142,7 +150,12 @@ class DefaultSetMigrationParityTest {
         Map<String, Set<String>> code = codeAtoms();
         Map<String, Set<String>> db = dbAtoms();
 
-        assertEquals(7, code.size(), "the catalog must still have exactly seven built-in roles");
+        // BL-326 (2026-11-05): no bare role count. EXPECTED is the frozen, hand-reviewed side, so
+        // comparing BY NAME keeps the freeze while surviving a migration that intentionally adds a
+        // role (V127 added AGENT_USER; the literal `7` was the only thing that broke).
+        assertEquals(EXPECTED.keySet(), code.keySet(),
+                "the code catalog must hold exactly the reviewed built-in roles — review a new role "
+                        + "into EXPECTED instead of raising a count");
         assertEquals(code.keySet(), db.keySet(), "migrated system roles must match the catalog role names");
 
         for (Map.Entry<String, Set<String>> role : code.entrySet()) {
@@ -161,12 +174,14 @@ class DefaultSetMigrationParityTest {
     }
 
     @Test
-    void twelveBySevenMatrixMatchesTheContractOnAFreshDatabase() throws SQLException {
-        assertEquals(7, EXPECTED.size(), "the table must cover all seven built-in roles");
+    void governedAtomMatrixMatchesTheContractOnAFreshDatabase() throws SQLException {
+        Map<String, Set<String>> db = dbAtoms();
+        assertEquals(db.keySet(), EXPECTED.keySet(),
+                "the matrix must cover exactly the migrated built-in roles (BL-326: compare by name, "
+                        + "never by a hard-coded count)");
         assertEquals(12, GOVERNED_ATOMS.size(),
                 "N1–N10 + GRANT_ANY_ATOM (11 governance atoms) + MANAGE_ROLES (V125)");
 
-        Map<String, Set<String>> db = dbAtoms();
         int checked = 0;
         for (Map.Entry<String, Set<String>> role : EXPECTED.entrySet()) {
             Set<String> held = actionClasses(db.get(role.getKey()));
@@ -181,7 +196,9 @@ class DefaultSetMigrationParityTest {
                 checked++;
             }
         }
-        assertEquals(84, checked, "12 atoms × 7 roles = 84 cells; a shrunken table proves less");
+        // Derived from the two lists (governed atoms × reviewed roles), never a literal count.
+        assertEquals(GOVERNED_ATOMS.size() * EXPECTED.size(), checked,
+                "every atom × role cell must be visited; a shrunken table proves less");
     }
 
     @Test

@@ -2,7 +2,10 @@ package com.cc01cc.p.xihe.cp.policy;
 
 import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
 import com.cc01cc.p.xihe.cp.entity.User;
+import com.cc01cc.p.xihe.cp.entity.Workspace;
+import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
 import com.cc01cc.p.xihe.cp.integration.TestDataFactory;
+import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
 import com.cc01cc.p.xihe.cp.repository.AuthorizationGrantRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -32,8 +35,16 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
  * it existed for, and it must not write anything on the way out.
  *
  * <p>The old scenario (admin grants {@code CREATE_ACCOUNT} → agent-principal creation becomes 201)
- * is replaced by access-role bindings in W3; this test only asserts the retirement contract and
- * that the untouched baseline (creating an agent principal without the atom) still answers 403.</p>
+ * is replaced by access-role bindings in W3; this test only asserts the retirement contract and the
+ * untouched default-deny baseline around agent-principal creation.</p>
+ *
+ * <p><b>BL-326 (2026-11-05 Lead ruling):</b> agent-principal creation is gated in <b>two layers</b>,
+ * and both must stay pinned — (1) <b>precondition</b>: no resolvable workspace context ⇒
+ * {@code 409 WORKSPACE_CONTEXT_REQUIRED} (the request never reaches an authorization decision,
+ * because without a context there is nothing to decide); (2) <b>atom gate</b>: with a valid context,
+ * a subject lacking {@code MANAGE_WORKSPACE_AGENTS} ⇒ {@code 403}. Asserting only the 409 would let
+ * the atom gate disappear unnoticed; asserting only the 403 would let the context precondition drift
+ * behind it.</p>
  */
 class PrincipalGrantAuthorizationIntegrationTest extends AbstractIntegrationTest {
 
@@ -51,8 +62,12 @@ class PrincipalGrantAuthorizationIntegrationTest extends AbstractIntegrationTest
     @Autowired
     private AuthzContext authzContext;
 
+    @Autowired
+    private WorkspaceFixture workspaceFixture;
+
     private String adminToken;
     private String targetUsername;
+    private UUID adminUserId;
 
     @BeforeEach
     void usePatchCapableClient() {
@@ -71,6 +86,7 @@ class PrincipalGrantAuthorizationIntegrationTest extends AbstractIntegrationTest
         User target = userRepository.saveAndFlush(new User("grant-auth-target-" + UUID.randomUUID() + "@test.com", "hash",
                 "Grant auth target", "granttarget" + shortId()));
         targetUsername = target.getUsername();
+        adminUserId = admin.getId();
         grantInstanceAdmin(admin.getId());
         adminToken = TestDataFactory.createGlobalToken(admin.getId().toString(), admin.getEmail(), "ADMIN", 0);
     }
@@ -112,13 +128,12 @@ class PrincipalGrantAuthorizationIntegrationTest extends AbstractIntegrationTest
     }
 
     @Test
-    void agentPrincipalCreationWithoutTheAtomStillFailsClosed() {
+    void withoutWorkspaceContextTheRequestStopsBeforeTheAtomGate() {
         fixture();
-        // PLAN-0651 M1 `f261a5cf` (D51-11) seeds workspace:admin into ADMIN, so an *administrator*
-        // without a workspace context now gets 409 WORKSPACE_CONTEXT_REQUIRED instead of 403 (see the
-        // explicit ADMIN case below). The default-deny baseline this test protects must therefore be
-        // asserted with a principal that holds neither workspace:admin nor the management atoms: a
-        // plain USER token with no workspace context.
+        // Layer 1 of 2 (BL-326): a principal with neither workspace:admin nor the management atoms
+        // still answers 409 WORKSPACE_CONTEXT_REQUIRED — the precondition check fires before any
+        // authorization decision. Contract: docs/api/openapi.yaml → components/responses/
+        // WorkspaceContextRequired ("a request-state conflict, never a 401").
         User plain = userRepository.saveAndFlush(new User(
                 "grant-auth-plain-" + UUID.randomUUID() + "@test.com", "hash",
                 "Grant auth plain", "grantplain" + shortId()));
@@ -130,10 +145,39 @@ class PrincipalGrantAuthorizationIntegrationTest extends AbstractIntegrationTest
         headers.setContentType(MediaType.APPLICATION_JSON);
         ResponseEntity<Map> created = patchClient.exchange(
                 url("/api/v1/agent-principals"), HttpMethod.POST,
-                new HttpEntity<>(Map.of("name", "retiredGrantProbe"), headers), Map.class);
+                new HttpEntity<>(Map.of("name", "noContextProbe"), headers), Map.class);
+
+        assertEquals(HttpStatus.CONFLICT, created.getStatusCode(),
+                "no workspace context ⇒ the precondition layer fails closed (409), not the atom gate");
+        assertEquals("WORKSPACE_CONTEXT_REQUIRED", created.getBody().get("code"));
+    }
+
+    @Test
+    void withWorkspaceContextTheAtomGateStillFailsClosedForAPlainMember() {
+        fixture();
+        // Layer 2 of 2 (BL-326): the security intent of the original test. The caller now HAS a valid
+        // workspace context (member of the admin's workspace), so the request reaches the atom gate
+        // and must be refused for lacking MANAGE_WORKSPACE_AGENTS — a 201 here would mean the atom
+        // gate disappeared while the context precondition still answered 409 above.
+        User plain = userRepository.saveAndFlush(new User(
+                "grant-auth-member-" + UUID.randomUUID() + "@test.com", "hash",
+                "Grant auth member", "grantmember" + shortId()));
+        Workspace workspace = workspaceFixture.createOwnedWorkspace("grant-auth-ctx-ws", adminUserId.toString());
+        workspaceFixture.bindWorkspaceRole(workspace.getId(), plain.getId(), WorkspaceRole.MEMBER);
+        String plainToken = TestDataFactory.createGlobalToken(
+                plain.getId().toString(), plain.getEmail(), "USER", 0);
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(plainToken);
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        headers.set("X-Workspace-Id", workspace.getId().toString());
+        ResponseEntity<Map> created = patchClient.exchange(
+                url("/api/v1/agent-principals"), HttpMethod.POST,
+                new HttpEntity<>(Map.of("name", "atomGateProbe"), headers), Map.class);
 
         assertEquals(HttpStatus.FORBIDDEN, created.getStatusCode(),
-                "the default-deny baseline is unchanged after the retirement");
+                "a workspace MEMBER holds no MANAGE_WORKSPACE_AGENTS: the atom gate must refuse, "
+                        + "not the context precondition");
     }
 
     @Test

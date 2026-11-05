@@ -52,6 +52,10 @@ class GrantAuthorizationServiceIntegrationTest extends AbstractIntegrationTest {
     @Autowired
     private GrantAuthorizationService grantAuthorizationService;
 
+    /** B 类夹具单一来源（BL-326）：生产注册路径就是 ensureUserDefault。 */
+    @Autowired
+    private GrantDefaultService grantDefaultService;
+
     @Autowired
     private PolicyEngine policyEngine;
 
@@ -390,15 +394,22 @@ class GrantAuthorizationServiceIntegrationTest extends AbstractIntegrationTest {
 
     @Test
     void principalLifecycleAndWorkspaceCapsAreAuditedWithoutChangingGlobalGrants() {
-        User user = userRepository.save(new User("principal-lifecycle-" + UUID.randomUUID() + "@test.com",
+        User user = userRepository.saveAndFlush(new User("principal-lifecycle-" + UUID.randomUUID() + "@test.com",
                 "hash", "Principal lifecycle test"));
         userId = user.getId().toString();
+        // B 类根因（BL-326）：该账号随后 createPrincipal，默认 AGENT_USER 原子必须由调用者自身持有；
+        // 走生产同一路径 ensureUserDefault，不手写原子名。
+        grantDefaultService.ensureUserDefault(user);
         Workspace workspace = workspaceFixture.createOwnedWorkspace("Principal lifecycle", userId);
         workspaceId = workspace.getId();
         workspaceFixture.bindWorkspaceRole(workspaceId.toString(), userId, WorkspaceRole.OWNER);
-        addGrant("user", UUID.fromString(userId), "role", null, null, atoms("read", "write"));
+        // read@*/write@* 已由 ensureUserDefault 的 USER 角色物化（uq_grants_role_atom 唯一约束），无需再手插。
         addGrant("user", UUID.fromString(userId), "role", null, null,
                 atoms("MANAGE_WORKSPACE_AGENTS"));
+        // BL-326/D22：`requireDisableAuthority` 只认 owner 或 MANAGE_AGENT_PRINCIPALS；0651 tier 移除后
+        // workspace 作用域 principal 的 ownerUserId 为 null，所以"授权路径可用"必须由这个原子证明。
+        addGrant("user", UUID.fromString(userId), "role", null, null,
+                atoms("MANAGE_AGENT_PRINCIPALS"));
 
         ObjectNode snapshot = objectMapper.createObjectNode();
         snapshot.put("templateId", "template-code");
@@ -413,11 +424,11 @@ class GrantAuthorizationServiceIntegrationTest extends AbstractIntegrationTest {
         // 2026-11-04 裁定（PLAN-0629「role 行是唯一权威源」）：creation 不再写 template 快照行
         // （createAgentPrincipalGrant 已删除），权限只来自绑定角色 —— 原断言"creation intersects
         // template capabilities with creator grants"已过时。新规则：每个原子一行，集合 = 绑定角色原子集。
-        java.util.Set<String> expectedRoleAtoms = SystemAccessRoleCatalog.roleSeeds().stream()
-                .filter(seed -> SystemAccessRoleCatalog.USER.equals(seed.name()))
-                .flatMap(seed -> seed.atoms().stream())
-                .map(SystemAccessRoleCatalog.AtomRef::actionClass)
-                .collect(java.util.stream.Collectors.toSet());
+        // B 类（BL-326，2026-11-05）：V127/D-174 之后 agent principal 的默认 instance 角色是
+        // **AGENT_USER**（human USER 去掉 agent 禁用的 CREATE_OWN_AGENT），不再是 USER。
+        // 期望集合从角色目录单一来源派生，不写字面量。
+        java.util.Set<String> expectedRoleAtoms =
+                RoleAtomExpectations.declaredAtoms(SystemAccessRoleCatalog.AGENT_USER);
         java.util.Set<String> grantedAtoms = new java.util.LinkedHashSet<>();
         grantRepository.findBySubjectTypeAndSubjectId(
                         GrantPrincipalPathResolver.AGENT_PRINCIPAL, principalId).stream()
@@ -474,8 +485,12 @@ class GrantAuthorizationServiceIntegrationTest extends AbstractIntegrationTest {
                 + "WHERE action = 'workspace_agent_cap_updated' AND workspace_id = ? AND resource_id = ?",
                 Integer.class, workspaceId, principalId.toString()));
 
+        // B 类（BL-326，2026-11-05）：夹具改走 ensureUserDefault 后，调用者已持有完整 instance USER
+        // 默认集（含 network@*），旧用例用 "network" 已不再"超出调用者持有"。改用 CREATE_OWN_AGENT：
+        // 调用者作为 human USER 持有它，而 agent principal（AGENT_USER）按 V127/D-174 明确**不**持有
+        // —— 这正是"cap 不得超出被绑定 principal 的授权"的原意。
         assertThrows(CpApiException.class, () -> agentPrincipalService.setWorkspaceCap(
-                userId, workspaceId, principalId, atoms("network")),
+                userId, workspaceId, principalId, atoms("CREATE_OWN_AGENT")),
                 "binding caps cannot exceed the principal or operator's current grants");
         assertTrue(grantAuthorizationService.allows(request(workspaceId, userId,
                         session, "write", "src/main.java")),
@@ -518,13 +533,15 @@ class GrantAuthorizationServiceIntegrationTest extends AbstractIntegrationTest {
 
     @Test
     void agentTemplateResolverUsesAuthorizedRawLayersAndFreezesTheResolvedSnapshot() throws Exception {
-        User user = userRepository.save(new User("template-scope-" + UUID.randomUUID() + "@test.com",
+        User user = userRepository.saveAndFlush(new User("template-scope-" + UUID.randomUUID() + "@test.com",
                 "hash", "Template scope test"));
         userId = user.getId().toString();
+        // B 类根因（BL-326）：同上 —— createPrincipal 需要调用者持有 instance USER 默认集。
+        grantDefaultService.ensureUserDefault(user);
         Workspace workspace = workspaceFixture.createOwnedWorkspace("Template scope workspace", userId);
         workspaceId = workspace.getId();
         workspaceFixture.bindWorkspaceRole(workspaceId.toString(), userId, WorkspaceRole.OWNER);
-        addGrant("user", UUID.fromString(userId), "role", null, null, atoms("read", "write"));
+        // read@*/write@* 已由 ensureUserDefault 物化（uq_grants_role_atom），此测试不再手插。
 
         String userRoleId = UUID.randomUUID().toString();
         String workspaceRoleId = UUID.randomUUID().toString();
@@ -570,9 +587,15 @@ class GrantAuthorizationServiceIntegrationTest extends AbstractIntegrationTest {
         java.util.Set<String> defaultAtoms = new java.util.LinkedHashSet<>();
         defaultTemplate.snapshot().path("permissions")
                 .forEach(atom -> defaultAtoms.add(atom.path("actionClass").asText()));
-        assertEquals(RoleAtomExpectations.materializedAtoms(SystemAccessRoleCatalog.WS_OWNER),
-                defaultAtoms,
-                "no selected template preserves the bare-default grant behavior (catalog-derived set)");
+        // B 类（BL-326）：夹具现在走生产注册路径（ensureUserDefault），调用者同时持有 instance USER
+        // 默认集与 WS_OWNER 工作区环，default 快照就是两者的并集。期望从目录派生（不写字面量）。
+        java.util.Set<String> expectedDefaultAtoms = new java.util.LinkedHashSet<>(
+                RoleAtomExpectations.materializedAtoms(SystemAccessRoleCatalog.USER));
+        expectedDefaultAtoms.addAll(
+                RoleAtomExpectations.materializedAtoms(SystemAccessRoleCatalog.WS_OWNER));
+        assertEquals(expectedDefaultAtoms, defaultAtoms,
+                "no selected template preserves the bare-default grant behavior (catalog-derived set: "
+                        + "instance USER ∪ workspace WS_OWNER)");
 
         AgentPrincipal principal = agentPrincipalService.createPrincipal(
                 userId, "TemplateBoundPrincipal", userTemplateId, userTemplate.snapshot());
@@ -678,11 +701,17 @@ class GrantAuthorizationServiceIntegrationTest extends AbstractIntegrationTest {
         bindingRepository.flush();
         bindingRepository.save(new AccessRoleBinding(adminRole.getId(), "user", userId,
                 AccessScope.INSTANCE, null, userId));
-        // No materialization: this fixture already owns hand-written rows for the same atoms, and
-        // uq_grants_role_atom (subject, scope, atom) ignores the source. The capability behind
-        // cap:instance:admin is resolved from the binding, never from a grant row (decision #23).
+        // B 类（BL-326，2026-11-05）：必须**物化** ADMIN 的行动作原子（N2 READ_INSTANCE_CONTENT 等）。
+        // 旧注释说"夹具已手写同原子行、capability 从绑定解析"——但 cap:instance:admin 是 capability，
+        // 而实例层模板读取判定的是**行动作原子** `READ_INSTANCE_CONTENT`（AgentTemplateService:249 →
+        // requesterAuthority.holdsActionAtom），它只认 grants 行；夹具只手写过 read/write，于是判定为
+        // 不可读 → "No readable Agent template matches the selected ID"。物化是生产同一路径。
+        materializer.materializeSubject("user", userId, userId, null);
         bindingRepository.flush();
         authzContext.invalidate(userId);
+        // B 类（BL-326）：本测试在换绑定**之前**已经求值过 capability（第 571 行的默认模板解析），
+        // 单主体 invalidate 不一定覆盖动作原子缓存 ⇒ 全量失效，否则实例层读取仍拿旧结果。
+        authzContext.invalidateAll();
     }
 
     private ArrayNode roleConfig(String id, String name, ArrayNode permissions) {

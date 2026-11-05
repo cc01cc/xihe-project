@@ -405,6 +405,9 @@ class AgentPrincipalHooksHttpTest extends AbstractIntegrationTest {
                 "hooks-http-stranger-" + UUID.randomUUID() + "@test.com", "hash", "Hooks HTTP stranger"));
         strangerUserId = stranger.getId();
         grantDefaultService.ensureUserDefault(stranger);
+        // D22：stranger 必须是本 workspace 成员，才能"上下文合法但不是 owner" ⇒ 403 OWNER_MISMATCH。
+        workspaceFixture.bindWorkspaceRole(workspaceId, strangerUserId,
+                com.cc01cc.p.xihe.cp.entity.WorkspaceRole.MEMBER);
     }
 
     private UUID createPrincipal(String name, String hooksJson) {
@@ -441,6 +444,9 @@ class AgentPrincipalHooksHttpTest extends AbstractIntegrationTest {
         headers.setContentType(MediaType.APPLICATION_JSON);
         // PATCH needs an HTTP client that supports the method; the shared RestTemplate uses
         // HttpURLConnection, which does not.
+        // D22（2026-11-05 Lead 裁定）：agent-principal 写面改为"上下文最先" ⇒ 必须带显式上下文，
+        // 否则会被 409 WORKSPACE_CONTEXT_REQUIRED 拦在授权判定之前。
+        headers.set("X-Workspace-Id", workspaceId.toString());
         return patchClient.exchange(url("/api/v1/agent-principals/" + principalId),
                 HttpMethod.PATCH, new HttpEntity<>(body, headers), Map.class);
     }

@@ -14,13 +14,19 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * PLAN-0651 T2.3: the default-grant matrix for the ten atoms this plan adds (N1–N10) across the
- * seven built-in roles, as a <b>hard-coded table</b>.
+ * built-in roles, as a <b>hard-coded table</b>.
  *
  * <p>Why hard-coded: generating the expectation from {@code SystemAccessRoleCatalog} would compare
  * the catalog with itself (self-fulfilling). The table below is the reviewed contract (spec
  * {@code atom-contract.md} §3 "默认授予集"); the test asserts the code matches it cell by cell and
  * names the offending atom × role, so a wrong default points at the exact cell instead of
  * "matrix mismatch".</p>
+ *
+ * <p><b>No bare role counts</b> (BL-326, 2026-11-05): the earlier version pinned
+ * {@code assertEquals(7, EXPECTED.size())}, which went stale the moment V127 added a default role.
+ * The role set is now compared <b>by name</b> against {@code SystemAccessRoleCatalog.roleSeeds()}, so
+ * a new built-in role fails until it is reviewed into this table — the check bites, and it never
+ * needs a magic number again.</p>
  *
  * <p>The migration side of the parity check (DB {@code role_permissions} == this table) belongs to
  * T2.2's verifier: it must run on a <b>Flyway-only</b> database, because a booted context seeds the
@@ -65,7 +71,17 @@ class DefaultSetAtomMatrixTest {
         table.put(SystemAccessRoleCatalog.WS_VIEWER, Set.of(
                 ToolFaceRegistry.ACTION_USE_WORKSPACE_RUNTIME));
         table.put(SystemAccessRoleCatalog.AGENT_DELEGATOR, Set.of());
+        // V127 / D-174: the agent default INSTANCE role — human USER's registration set minus
+        // CREATE_OWN_AGENT, so none of N1–N10 (all cells false).
+        table.put(SystemAccessRoleCatalog.AGENT_USER, Set.of());
         return table;
+    }
+
+    /** The built-in role names the code catalog declares — the single source the table must match. */
+    private static Set<String> catalogRoleNames() {
+        Set<String> names = new LinkedHashSet<>();
+        SystemAccessRoleCatalog.roleSeeds().forEach(seed -> names.add(seed.name()));
+        return names;
     }
 
     /** The atoms a built-in role carries according to the code catalog. */
@@ -81,8 +97,10 @@ class DefaultSetAtomMatrixTest {
     }
 
     @Test
-    void everyCellOfTheTenBySevenMatrixMatchesTheContract() {
-        assertEquals(7, EXPECTED.size(), "the table must cover all seven built-in roles");
+    void everyCellOfTheGovernedAtomMatrixMatchesTheContract() {
+        assertEquals(catalogRoleNames(), EXPECTED.keySet(),
+                "the matrix must cover exactly the built-in roles — review a new role into EXPECTED "
+                        + "instead of raising a count (V127 added AGENT_USER this way)");
         assertEquals(10, PLAN_ATOMS.size(), "N1–N10 must all be in the matrix");
 
         int checked = 0;
@@ -99,7 +117,9 @@ class DefaultSetAtomMatrixTest {
                 checked++;
             }
         }
-        assertEquals(70, checked, "10 atoms × 7 roles = 70 cells; a shrunken table proves less");
+        // Derived from the two lists, never a literal: atoms × roles.
+        assertEquals(PLAN_ATOMS.size() * EXPECTED.size(), checked,
+                "every atom × role cell must be visited; a shrunken table proves less");
     }
 
     @Test

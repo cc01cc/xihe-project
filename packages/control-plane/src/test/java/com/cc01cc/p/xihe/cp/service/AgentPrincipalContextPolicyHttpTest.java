@@ -377,6 +377,10 @@ class AgentPrincipalContextPolicyHttpTest extends AbstractIntegrationTest {
                 "memory-http-stranger-" + UUID.randomUUID() + "@test.com", "hash", "Memory stranger"));
         strangerUserId = stranger.getId();
         grantDefaultService.ensureUserDefault(stranger);
+        // D22（2026-11-05 Lead 裁定）：agent-principal 写面改为"上下文最先"。stranger 仍需能证明
+        // "上下文合法但不是 owner" ⇒ 必须真的是本 workspace 成员，否则会先在租户层被 403 拦下。
+        workspaceFixture.bindWorkspaceRole(workspaceId, strangerUserId,
+                com.cc01cc.p.xihe.cp.entity.WorkspaceRole.MEMBER);
     }
 
     private UUID createPrincipal(String name) {
@@ -451,6 +455,8 @@ class AgentPrincipalContextPolicyHttpTest extends AbstractIntegrationTest {
         HttpHeaders headers = new HttpHeaders();
         headers.setBearerAuth(token);
         headers.setContentType(MediaType.APPLICATION_JSON);
+        // D22：写面必须带显式 workspace 上下文（否则 409 WORKSPACE_CONTEXT_REQUIRED）。
+        headers.set("X-Workspace-Id", workspaceId.toString());
         return patchClient.exchange(url("/api/v1/agent-principals/" + principalId),
                 HttpMethod.PATCH, new HttpEntity<>(body, headers), Map.class);
     }

@@ -98,6 +98,8 @@ class WorkspaceJobOutputIntegrationTest extends AbstractIntegrationTest {
         job.setUserId(UUID.fromString(userId));
         job.setSessionId(UUID.fromString(sessionId));
         job.setSource("ui");
+        // BL-326（2026-11-05）：同 WorkspaceJobCancelIntegrationTest —— `scope` NOT NULL，取值走 JobStateService 单一来源。
+        job.setScope(JobStateService.SCOPE_WORKSPACE);
         job.setIdempotencyKey("output-" + jobId);
         job.setInputHash("output-hash");
         job.setStatus("running");
