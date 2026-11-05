@@ -17,6 +17,7 @@
  */
 import { test, expect } from "@playwright/test";
 import type { Page } from "@playwright/test";
+import { openContextPanel } from "../helpers/context-panel";
 import { setupMockAuth, setupMockSessions } from "./helpers/auth";
 import { collectPageFailures, expectNoPageFailures } from "./helpers/page-failures";
 import type { PageFailures } from "./helpers/page-failures";
@@ -107,13 +108,16 @@ async function setupPolicyLane(
     return state;
 }
 
-/** 进会话 → 点 summary 行打开 dock 的 `context` 面板（策略控件就在那里面）。 */
-async function openContextPanel(page: Page): Promise<void> {
+/**
+ * 进会话 → 打开 dock 的 `context` 面板（策略控件就在那里面）。
+ *
+ * "开面板"这一步交给全仓唯一的 `openContextPanel`（幂等、pinned/floating/收起三形态都走、
+ * 失败时带一份 dock 快照）；本 spec 只叠两件自己的事：导航到目标会话，以及断言策略控件已就绪。
+ * 面板本体一律用可见过滤的那份 —— `session-context-panel` 可能出现两份副本（dock + 移动 sheet）。
+ */
+async function openPolicyPanel(page: Page): Promise<void> {
     await page.goto(`/workspace/${WORKSPACE_ID}/chat/${SESSION_ID}`);
-    const summary = page.getByTestId("session-settings-summary");
-    await expect(summary).toBeVisible({ timeout: 15_000 });
-    await summary.click();
-    await expect(page.getByTestId("session-context-panel")).toBeVisible({ timeout: 15_000 });
+    await openContextPanel(page);
     await expect(page.getByTestId("session-policy-mode")).toBeVisible({ timeout: 15_000 });
 }
 
@@ -130,7 +134,7 @@ test.describe("BL-311 VIEWER 只读：policy/mode 写入口点击前不可用", 
 
     test("A) 模式与 summary 仍可读，但写控件 disabled 且给出只读原因", async ({ page }) => {
         const state = await setupPolicyLane(page, { workspaceRole: "VIEWER", canWrite: false });
-        await openContextPanel(page);
+        await openPolicyPanel(page);
 
         // 投影真的读了：否则"显示当前模式"只是碰巧的空下拉。
         expect(state.reads, "the mode projection must be fetched for a VIEWER too").toBeGreaterThan(
@@ -161,7 +165,7 @@ test.describe("BL-311 VIEWER 只读：policy/mode 写入口点击前不可用", 
             }
         });
 
-        await openContextPanel(page);
+        await openPolicyPanel(page);
 
         // 自动放行状态与"不可操作"必须同时可见（安全信息不能因为只读而消失）。
         const banner = page.getByTestId("session-policy-auto-banner");
@@ -207,16 +211,15 @@ test.describe("BL-311 VIEWER 只读：policy/mode 写入口点击前不可用", 
         // 仍是 auto（写请求断言已为 0），两者互为印证。
         await page.reload();
         await expect(page.getByTestId("session-settings-summary")).toBeVisible({ timeout: 15_000 });
-        if ((await page.getByTestId("session-context-panel").count()) === 0) {
-            await page.getByTestId("session-settings-summary").click();
-        }
-        await expect(page.getByTestId("session-context-panel")).toBeVisible({ timeout: 15_000 });
+        // 重载后 dock 的收起/展开与活动标签是**持久化**的（`xihe-layout-ws:<id>`），所以这里
+        // 不能假设"面板一定没开、点一下摘要行就行"；`openContextPanel` 的幂等分支正好覆盖两种情况。
+        await openContextPanel(page);
         await expect(page.getByTestId("session-policy-mode")).toHaveValue("auto");
     });
 
     test("C) EDITOR 不受影响：控件可用、可切换（现状回归）", async ({ page }) => {
         const state = await setupPolicyLane(page, { workspaceRole: "EDITOR", canWrite: true });
-        await openContextPanel(page);
+        await openPolicyPanel(page);
 
         const select = page.getByTestId("session-policy-mode");
         await expect(select).toBeEnabled();
@@ -245,7 +248,7 @@ test.describe("BL-311 VIEWER 只读：policy/mode 写入口点击前不可用", 
 
     test("D) OWNER 不受影响：控件可用、可切换（现状回归）", async ({ page }) => {
         const state = await setupPolicyLane(page, { workspaceRole: "OWNER", canWrite: true });
-        await openContextPanel(page);
+        await openPolicyPanel(page);
 
         const select = page.getByTestId("session-policy-mode");
         await expect(select).toBeEnabled();
