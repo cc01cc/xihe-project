@@ -168,7 +168,7 @@ public class AgentBindingAtomPolicy {
             }
         }
         if (!exceeding.isEmpty()) {
-            logger.warn("[POLICY] event=role_atom_exceeds_agent_cap principal={} role={} atoms={}",
+            logger.warn("[POLICY] event=workspace_role_atom_cap_rejected principal={} role={} atoms={}",
                     principalId, roleId, exceeding);
             throw new CpApiException(HttpStatus.CONFLICT, "ROLE_BINDING_EXCEEDS_CAP",
                     "role atoms exceed the agent's workspace cap: " + String.join(",", exceeding));
