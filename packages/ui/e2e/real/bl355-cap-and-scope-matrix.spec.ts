@@ -34,9 +34,24 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u;
 const TERMINAL = /^(succeeded|failed|cancelled|ambiguous)$/u;
 /** `SystemAccessRoleCatalog`：三个系统工作区角色。VIEWER 已在 BL-355 实测，串行补 EDITOR/OWNER。 */
 const WORKSPACE_ROLES = [
-    { name: "WS_VIEWER", id: "00000000-0000-4000-8000-000000000006" },
-    { name: "WS_EDITOR", id: "00000000-0000-4000-8000-000000000005" },
-    { name: "WS_OWNER", id: "00000000-0000-4000-8000-000000000004" },
+    // VIEWER/EDITOR：原子都在 cap 之外 ⇒ 撞 cap 门（ROLE_BINDING_EXCEEDS_CAP）
+    {
+        name: "WS_VIEWER",
+        id: "00000000-0000-4000-8000-000000000006",
+        code: "ROLE_BINDING_EXCEEDS_CAP",
+    },
+    {
+        name: "WS_EDITOR",
+        id: "00000000-0000-4000-8000-000000000005",
+        code: "ROLE_BINDING_EXCEEDS_CAP",
+    },
+    // OWNER：带 MANAGE_WORKSPACE_AGENTS / workspace:admin —— **更早的**禁授原子门先拒
+    // （AgentPrincipalRoleBindingService:161 requireBindableAtoms 在 :168 cap 之前）⇒ 错误码不同
+    {
+        name: "WS_OWNER",
+        id: "00000000-0000-4000-8000-000000000004",
+        code: "AGENT_PRINCIPAL_FORBIDDEN_ATOMS",
+    },
 ];
 
 function queryIsolatedPostgres(sql: string): string {
@@ -92,7 +107,7 @@ async function newIdentity(request: APIRequestContext, label: string): Promise<I
     return { email, password, userId, accessToken: body.accessToken, workspaceId };
 }
 
-test("@host BL-355 矩阵 A：绑 WS_VIEWER / WS_EDITOR / WS_OWNER 均 409 ROLE_BINDING_EXCEEDS_CAP", async ({
+test("@host BL-355 矩阵 A：绑三个系统工作区角色均 409（两个 cap 门 / 一个禁授原子门）", async ({
     request,
 }) => {
     const identity = await newIdentity(request, "bl355-roles");
@@ -119,13 +134,8 @@ test("@host BL-355 矩阵 A：绑 WS_VIEWER / WS_EDITOR / WS_OWNER 均 409 ROLE_
         const text = await bind.text();
         const code = (JSON.parse(text) as { code?: string }).code ?? "";
         observed.push({ role: role.name, status: bind.status(), code });
-        expect(
-            bind.status(),
-            `绑 ${role.name} 应 409（cap 天花板），实际 ${bind.status()}：${text}`,
-        ).toBe(409);
-        expect(text, `绑 ${role.name} 应命中 ROLE_BINDING_EXCEEDS_CAP，实际：${text}`).toContain(
-            "ROLE_BINDING_EXCEEDS_CAP",
-        );
+        expect(bind.status(), `绑 ${role.name} 应 409，实际 ${bind.status()}：${text}`).toBe(409);
+        expect(text, `绑 ${role.name} 应命中 ${role.code}，实际：${text}`).toContain(role.code);
     }
     console.log(`[bl355-roles] OK observed=${JSON.stringify(observed)}`);
 });
@@ -215,14 +225,24 @@ test("@host BL-354 矩阵 C：HUMAN responder 提交 ⇒ run 的 agent_principal
         participants.status(),
         `列出参与者应 200，实际 ${participants.status()}：${participantsText}`,
     ).toBe(200);
-    const human = (
-        JSON.parse(participantsText) as {
-            items?: Array<{ participantId?: string; id?: string; principalKind?: string }>;
-        }
-    ).items?.find((row) => row.principalKind === "HUMAN");
-    expect(human, `参与者里应有 HUMAN；实际：${participantsText}`).toBeTruthy();
-    const humanParticipantId = (human!.participantId ?? human!.id) as string;
-    expect(humanParticipantId).toMatch(UUID);
+    // 注意：会话用 agentPrincipalId 创建时，PRIMARY 是 **AGENT**，参与者里没有 HUMAN
+    // （实测：`{"participants":[{principalKind:"AGENT", role:"PRIMARY"}]}`）⇒ 需要自己加一个 HUMAN。
+    const added = await request.post(`${CP_URL}/api/v1/sessions/${sessionId}/participants`, {
+        headers,
+        data: {
+            principalKind: "HUMAN",
+            principalId: identity.userId,
+            role: "MEMBER",
+            respondPolicy: "ALWAYS",
+        },
+    });
+    const addedText = await added.text();
+    expect(added.status(), `加入 HUMAN 参与者应 201，实际 ${added.status()}：${addedText}`).toBe(
+        201,
+    );
+    const humanParticipantId = (JSON.parse(addedText) as { participantId?: string; id?: string })
+        .participantId;
+    expect(humanParticipantId, `参与者视图应含 participantId：${addedText}`).toMatch(UUID);
 
     // SSE + 以 HUMAN 身份提交
     const branchId = await getRootBranchId(request, sessionId, headers);
