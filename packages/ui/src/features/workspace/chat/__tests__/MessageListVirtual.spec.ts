@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { defineComponent, h, nextTick } from "vue";
 import { mount } from "@vue/test-utils";
 import { createI18n } from "vue-i18n";
 import { createPinia, setActivePinia } from "pinia";
@@ -129,5 +130,128 @@ describe("MessageList virtual window fallback (PLAN-0670 M2d.2)", () => {
         );
         await idle.get('[data-testid="load-older-messages"]').trigger("click");
         expect(idle.emitted("loadOlder")).toHaveLength(1);
+    });
+});
+
+/**
+ * 回归：真实滚动层（不 stub `message-scroller/*`）下的自触发循环。
+ *
+ * 缺陷现场：真实链路 E2E 的 `expect(pageErrors).toEqual([])` 被 29 条同一 pageError 打红 ——
+ * `Maximum recursive updates exceeded in component <MessageScrollerContent>`（开发构建 100 次
+ * 迭代后 handleError；生产构建无此护栏，等于每次渲染都自触发、永不收敛）。
+ *
+ * 因果链：`MessageScrollerContent` 的渲染 effect 负责渲染插槽（`MessageList` 的行都在里面），
+ * 行上的行内箭头函数 ref `:ref="(el) => rowElementRef(...)"` 每次渲染都是**新函数身份**，Vue
+ * 每次 patch 都会重新 `setRef` → `measureRow` → `useVirtualMessageWindow.measure()`；而
+ * `measure()` 在渲染期内**读** `measured.value`（登记成该 effect 的依赖）并**无条件写**
+ * `measured.value = new Map(...)`（即使高度没变）→ 触发自己 → 重渲染 → 再 setRef → 再写……
+ *
+ * 断言口径（两条，互不替代）：
+ * 1. 不出现递归更新错误 —— 直接对齐 E2E 的 pageErrors 判据；
+ * 2. 渲染次数有界 —— 一次挂载 + 一次流式追加各自的渲染轮数都有上限，即使将来 Vue 挪走
+ *    RECURSION_LIMIT 护栏，改动重新引入自触发也会在这里红灯。
+ */
+describe("MessageList real scroller stack: no self-triggering updates (pageErrors regression)", () => {
+    const ROW_HEIGHT = 80;
+    const originalGetBoundingClientRect = Element.prototype.getBoundingClientRect;
+
+    // jsdom 没有布局：伪造行高，否则 `measure()` 因 height<=0 直接跳过写入，缺陷无法复现。
+    function stubRowLayout() {
+        Element.prototype.getBoundingClientRect = function getBoundingClientRect() {
+            return {
+                x: 0,
+                y: 0,
+                top: 0,
+                left: 0,
+                right: 100,
+                bottom: ROW_HEIGHT,
+                width: 100,
+                height: ROW_HEIGHT,
+                toJSON() {
+                    return {};
+                },
+            } as DOMRect;
+        };
+    }
+
+    function restoreRowLayout() {
+        Element.prototype.getBoundingClientRect = originalGetBoundingClientRect;
+    }
+
+    function mountWithRealScroller(messages: Message[], onRender: () => void) {
+        const RowProbe = defineComponent({
+            props: { message: { type: Object, required: false } },
+            render() {
+                onRender();
+                return h("div", { "data-testid": "stub-message" }, String(this.message?.id ?? ""));
+            },
+        });
+
+        return mount(MessageList, {
+            props: { messages },
+            global: {
+                plugins: [i18n, createPinia()],
+                stubs: {
+                    MessageSearch: true,
+                    Marker: { template: "<div><slot /></div>" },
+                    RunGroupHeader: true,
+                    MessageItem: RowProbe,
+                },
+            },
+        });
+    }
+
+    /** 把当前挂起的更新全部冲干净；返回是否冒出递归更新错误。 */
+    async function flushUpdates(): Promise<string | undefined> {
+        try {
+            for (let round = 0; round < 3; round += 1) {
+                await nextTick();
+            }
+            return undefined;
+        } catch (error) {
+            return String((error as Error)?.message ?? error);
+        }
+    }
+
+    it("mounting and streaming into the transcript never recurses (bounded render passes)", async () => {
+        stubRowLayout();
+        const renders = { count: 0 };
+        const onRender = () => {
+            renders.count += 1;
+        };
+
+        try {
+            const wrapper = mountWithRealScroller(
+                Array.from({ length: 3 }, (_, index) => ({ ...message(index), runId: "run-1" })),
+                onRender,
+            );
+            const mountError = await flushUpdates();
+            const mountRenders = renders.count;
+            // 3 行 × 每轮 1 次；允许 3 轮（=9），递归时这里是 ~300 并伴随 RECURSION_LIMIT。
+            expect(mountError).toBeUndefined();
+            expect(mountRenders).toBeLessThanOrEqual(3 * 3);
+
+            // 流式：追加一条（行增删正是 E2E 的触发时机）。
+            renders.count = 0;
+            await wrapper.setProps({
+                messages: [
+                    ...Array.from({ length: 3 }, (_, index) => ({
+                        ...message(index),
+                        runId: "run-1",
+                    })),
+                    { ...message(3), runId: "run-1", isStreaming: true },
+                ],
+            });
+            const streamError = await flushUpdates();
+            const streamRenders = renders.count;
+            expect(streamError).toBeUndefined();
+            expect(streamRenders).toBeLessThanOrEqual(4 * 3);
+
+            // 真实 DOM 语义不变：所有行仍然渲染出来。
+            expect(wrapper.findAll('[data-testid="stub-message"]')).toHaveLength(4);
+            wrapper.unmount();
+        } finally {
+            restoreRowLayout();
+        }
     });
 });
