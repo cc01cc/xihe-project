@@ -28,6 +28,7 @@
  * Exit codes: 0 = all failures covered by a fresh baseline; 1 = new failure or expired baseline;
  * 2 = usage / missing reports or baseline (a gate that cannot read evidence must never pass).
  */
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -38,13 +39,51 @@ const DEFAULT_BASELINE = path.join(ROOT, 'scripts/cp-known-baseline.json');
 const FAILURE_LINE = /^([\w.$]+) -- Time elapsed: .*<<< (FAILURE|ERROR)!$/;
 
 function parseArgs(argv) {
-  const out = { reports: DEFAULT_REPORTS, baseline: DEFAULT_BASELINE, json: false };
+  const out = {
+    reports: DEFAULT_REPORTS,
+    baseline: DEFAULT_BASELINE,
+    json: false,
+    allowStaleReports: false,
+    headTime: null,
+  };
   for (let i = 0; i < argv.length; i += 1) {
     if (argv[i] === '--reports') out.reports = path.resolve(argv[++i]);
     else if (argv[i] === '--baseline') out.baseline = path.resolve(argv[++i]);
     else if (argv[i] === '--json') out.json = true;
+    else if (argv[i] === '--allow-stale-reports') out.allowStaleReports = true;
+    else if (argv[i] === '--head-time') out.headTime = Number(argv[++i]);
   }
   return out;
+}
+
+/** Newest mtime (seconds) among surefire reports, or null when the directory has none. */
+export function newestReportTime(reportsDir) {
+  if (!fs.existsSync(reportsDir)) return null;
+  let newest = null;
+  for (const name of fs.readdirSync(reportsDir)) {
+    if (!name.endsWith('.txt')) continue;
+    const { mtimeMs } = fs.statSync(path.join(reportsDir, name));
+    if (newest === null || mtimeMs > newest) newest = mtimeMs;
+  }
+  return newest === null ? null : Math.floor(newest / 1000);
+}
+
+/**
+ * Reports produced *before* the current HEAD cannot describe it: a stale run would report failures the
+ * working tree no longer has (or miss ones it now has), and the verdict would be about the wrong tree.
+ * 2026-11-06: this exact case produced a false "1 new failure" verdict right after a baseline shrink.
+ */
+export function reportsAreStale({ reportsDir, headTime }) {
+  if (!headTime) return { stale: false };
+  const newest = newestReportTime(reportsDir);
+  if (newest === null) return { stale: false };
+  if (newest >= headTime) return { stale: false };
+  return {
+    stale: true,
+    reportTime: newest,
+    headTime,
+    hint: 'surefire reports predate HEAD; run `mise run test:cp` first (or pass --allow-stale-reports)',
+  };
 }
 
 /** Surefire .txt shape: one `Test set:` header, then `<test id> -- Time elapsed: ... <<< FAILURE!`. */
@@ -93,8 +132,27 @@ export function checkBaseline({ reportsDir, baselineFile, today = todayIso() }) 
   return { ok, code: ok ? 0 : 1, failures, entries, newFailures, greenEntries, expired, today };
 }
 
+function headCommitTime() {
+  try {
+    const raw = execFileSync('git', ['log', '-1', '--format=%ct', 'HEAD'], { cwd: ROOT, encoding: 'utf8' });
+    const parsed = Number(raw.trim());
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
 function main(argv) {
   const args = parseArgs(argv);
+  const headTime = args.headTime ?? headCommitTime();
+  const staleness = reportsAreStale({ reportsDir: args.reports, headTime });
+  if (staleness.stale && !args.allowStaleReports) {
+    console.error(`[cp-baseline] STALE: ${staleness.hint}`);
+    console.error(`[cp-baseline]   newest report=${new Date(staleness.reportTime * 1000).toLocaleString()} `
+      + `head commit=${new Date(staleness.headTime * 1000).toLocaleString()}`);
+    process.exitCode = 2;
+    return;
+  }
   const result = checkBaseline({ reportsDir: args.reports, baselineFile: args.baseline });
   if (result.error) {
     console.error(`[cp-baseline] ERROR: ${result.error}`);

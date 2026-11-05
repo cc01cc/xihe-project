@@ -73,3 +73,53 @@ test('an expired reviewBy exits 1 even if every failure is covered', () => {
   assert.equal(out.status, 1, out.stdout);
   assert.match(out.stderr, /EXPIRED: com\.acme\.FooTest\.known/u);
 });
+
+// BL-368 follow-up (2026-11-06): stale surefire reports must not produce a verdict about a tree that no
+// longer exists. A run that predates HEAD reported a failure that had already been fixed, and the gate
+// answered "1 new failure" — a false red about the wrong tree.
+test('stale surefire reports (older than HEAD) exit 2', () => {
+  const fx = fixture({
+    report: reportFor(['com.acme.FooTest.known']),
+    baseline: {
+      entries: [
+        { test: 'com.acme.FooTest.known', kind: 'fail', reason: 'known', reviewBy: '2999-01-01' },
+      ],
+    },
+  });
+  const futureHead = Math.floor(Date.now() / 1000) + 3600;
+  const out = spawnSync(
+    process.execPath,
+    [SCRIPT, '--reports', fx.reports, '--baseline', fx.baselineFile, '--head-time', String(futureHead)],
+    { encoding: 'utf8' },
+  );
+  assert.equal(out.status, 2);
+  assert.match(out.stderr, /STALE:/);
+});
+
+test('--allow-stale-reports is an explicit escape hatch', () => {
+  const fx = fixture({
+    report: reportFor(['com.acme.FooTest.known']),
+    baseline: {
+      entries: [
+        { test: 'com.acme.FooTest.known', kind: 'fail', reason: 'known', reviewBy: '2999-01-01' },
+      ],
+    },
+  });
+  const futureHead = Math.floor(Date.now() / 1000) + 3600;
+  const out = spawnSync(
+    process.execPath,
+    [
+      SCRIPT,
+      '--reports',
+      fx.reports,
+      '--baseline',
+      fx.baselineFile,
+      '--head-time',
+      String(futureHead),
+      '--allow-stale-reports',
+    ],
+    { encoding: 'utf8' },
+  );
+  assert.equal(out.status, 0);
+  assert.match(out.stdout, /baseline OK/);
+});

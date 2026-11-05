@@ -30,7 +30,7 @@
 ## Commands
 
 - 台账只读校验（PLAN-0677）：在 ONE 工作区根运行 `mise run ledger:validate`，只读校验 BL/PLAN 结构；**报告不阻断**（保留工具退出码，未并入 `validate`），观察无新增违规后再议阻断。
-- CP 已知基线门（BL-368，2026-11-06）：先跑 `mise run test:cp`（当前会红 2 条已登记基线），再独立跑 `mise run test:cp:baseline` 判定"失败 ⊆ `scripts/cp-known-baseline.json`"；基线**只许缩小**、条目转绿必须删、`reviewBy` 过期即失败，**不接 `validate`**（避免吞 Maven 输出）。
+- CP 已知基线门（BL-368，2026-11-06）：先跑 `mise run test:cp`（当前会红 2 条已登记基线），再独立跑 `mise run test:cp:baseline` 判定"失败 ⊆ `scripts/cp-known-baseline.json`"；基线**只许缩小**、条目转绿必须删、`reviewBy` 过期即失败，**不接 `validate`**（避免吞 Maven 输出）。**报告新鲜度门（2026-11-06 实测补）**：脚本会比较 surefire 报告最新 mtime 与 `HEAD` 提交时间，**报告早于 HEAD ⇒ exit 2 并要求重跑**（否则会拿旧树的失败去判新树 —— 实测曾在缩基线后误报"1 个新失败"）；显式 `--allow-stale-reports` 才可绕过。
 - BL-262 防再犯门（2026-11-04）：`mise run test:runtime:lib:gate`（串行 1 + 并行 3 竞态复验）、`test:runtime:lib:ignored:isolated|functional`（ignored 两档，显式列名 + 实测超时）均**不进 `validate`**；`test:cli` 内嵌 `scripts/check-test-global-state.mjs` 静态扫描（测试代码不得裸改进程级全局状态）。
 - 单文件/包级命令见对应包指南；里程碑和 PLAN 收尾运行 `mise run validate`，仅按改动边界增加集成/E2E profile（DEV-020/021/022/023）。`validate` 若被存量环境性基线失败 fail-fast 挡住（白名单见 workspace 私有技术债文档《xh-backlog-and-debt》的「环境性基线失败白名单」），改按组件级补跑（lint:links / runtime / test:cp / test:agent / test:ui / build:ui）并逐红点做基线对照，不因存量红点阻塞收尾。**契约面必须过 `mise run check:openapi`**（BL-162：它已是 `test:cp` 与 `validate` 的依赖，契约漂移会让 CP 测试波次直接红，不允许绕过）。
 - Agent 质量回归门（PLAN-0512/0540，本地 lane）：`mise run gate:agent-quality -- --report <invariant.json> --report <behavior.json> --baseline <baseline.json>` 只读消费每个 lane 一份的评测报告（v2 gate 合并判定），退出码 `0/1/2/3` = `PASS/FAIL/NOT_EVALUATED/GATE_ERROR`（仅 PASS 退出 0）；阈值、required/expected task 集在 `packages/agent/evaluation/gate-v2.json`（含证据溯源），契约见 DEV-025，未接 CI。
