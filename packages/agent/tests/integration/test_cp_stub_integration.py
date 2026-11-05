@@ -15,6 +15,8 @@ import pytest
 
 from xihe_agent.config_client import ConfigClient
 
+pytestmark = [pytest.mark.integration]
+
 
 def _effective(entries: dict, revision: str = "rev-1", source: str = "instance") -> dict:
     return {"revision": revision, "source": source, "entries": entries}

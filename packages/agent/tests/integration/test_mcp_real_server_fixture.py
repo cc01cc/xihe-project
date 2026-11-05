@@ -30,6 +30,8 @@ from xihe_agent.adapters.mcp_client import (
     MCPClientManager,
 )
 
+pytestmark = [pytest.mark.integration]
+
 
 def _free_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:

@@ -12,6 +12,8 @@ import pytest
 
 from xihe_agent.adapters.mcp_client import MCPClientManager
 
+pytestmark = [pytest.mark.integration]
+
 
 class LocalCPFixture:
     def __init__(self) -> None:

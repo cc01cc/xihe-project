@@ -9,6 +9,9 @@ import time
 import httpx
 import pytest
 
+pytestmark = [pytest.mark.integration]
+
+
 CP_URL = "http://localhost:8080"
 
 
