@@ -1381,7 +1381,7 @@ defineExpose({ clearDraft, insertMention, setDraft });
                     ref="textareaRef"
                     v-model="input"
                     data-testid="chat-input"
-                    class="w-full min-h-[36px] max-h-[180px] px-1 py-0.5 bg-transparent resize-none text-[13px] leading-5 placeholder:text-[12px] placeholder:text-muted-foreground/70 focus:outline-none focus-visible:ring-1 focus-visible:ring-ring/60 focus-visible:ring-offset-0 field-sizing-content"
+                    class="w-full min-h-[36px] max-h-[180px] px-1 py-0.5 bg-transparent resize-none text-sm leading-relaxed placeholder:text-[12px] placeholder:text-muted-foreground/70 focus:outline-none focus-visible:ring-1 focus-visible:ring-ring/60 focus-visible:ring-offset-0 field-sizing-content"
                     :placeholder="queueMode ? t('chat.followUpPlaceholder') : t('chat.placeholder')"
                     rows="1"
                     :style="{ fieldSizing: 'content' }"
