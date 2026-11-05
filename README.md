@@ -149,6 +149,19 @@ Per-feature status, progress markers, and the current boundary of each capabilit
 
 - A downloadable installer. The fastest way to run XH today is local dev mode: mise + Docker for PostgreSQL only + four native processes.
 
+### Packaged product (PLAN-0632)
+
+The packaged distribution has two rerunnable entry points (artifacts stay under `.tmp/`, never committed):
+
+```bash
+mise run pkg:launcher -- start --install <install-dir>  # PG -> CP -> Agent -> Runtime -> UI, each step readiness-gated
+mise run pkg:launcher -- status --stack 1 --json        # read-only; on a dev machine `ok:false` = "not a packaged install"
+mise run pkg:launcher -- stop
+mise run pkg:installer                                  # NSIS build from existing service artifacts (-- --stage-only skips makensis)
+```
+
+The supervisor's order is the product contract, not a preference: PostgreSQL must accept TCP before the CP boots (Flyway runs on boot), the CP must answer `/actuator/health` 200 before the Agent starts (its config sync is fail-closed on `llm-provider`), and the UI is served same-origin by the CP.
+
 ## 5. Testing
 
 ```bash

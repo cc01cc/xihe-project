@@ -223,6 +223,78 @@ def test_periodic_blip_does_not_demote_a_ready_process():
     assert config_state.get_state() is ConfigState.READY
 
 
+# ── PLAN-0632 收尾补强（2026-11-05）：把 D32-27 的两条验收口径量化 ────────────────────
+# ① 并发 N 个首访问只产生 1 次加载（N=100，计数而非假设）；
+# ② CP 重启期间是 degraded 且可自愈，不是永久卡死（连续失败各自只多 1 次加载，CP 回来后
+#    下一次请求再 +1 次即恢复 READY）；③ READY 期间 CP 重启不把进程拉回 degraded（沿用
+#    上一份 good snapshot，周期刷新负责收敛）。
+
+
+async def test_hundred_concurrent_first_requests_load_exactly_once():
+    """100 concurrent first accesses -> exactly ONE load (single flight under real contention)."""
+    calls = {"n": 0}
+
+    async def loader() -> dict[str, Any]:
+        calls["n"] += 1
+        await asyncio.sleep(0.05)  # wide enough that all 100 callers pile onto the same flight
+        return OK_REPORT
+
+    config_state.set_loader(loader)
+    results = await asyncio.gather(
+        *(ensure_config_ready(trigger=f"chat-{index}") for index in range(100))
+    )
+
+    assert calls["n"] == 1, f"single-flight broke under 100 concurrent callers: {calls['n']} loads"
+    assert config_state.snapshot()["loads"] == 1, "the state machine counted more than one load"
+    assert all(result is results[0] for result in results), "callers saw different reports"
+    assert config_state.get_state() is ConfigState.READY
+
+
+async def test_cp_down_is_degraded_not_wedged_and_recovers_once_cp_returns():
+    """CP restart: each attempt fails closed and retries; CP back -> one load -> READY."""
+    cp_up = {"value": False}
+    calls = {"n": 0}
+
+    async def loader() -> dict[str, Any]:
+        calls["n"] += 1
+        return OK_REPORT if cp_up["value"] else BAD_REPORT
+
+    config_state.set_loader(loader)
+
+    for attempt in range(3):
+        with pytest.raises(ConfigUnavailableError):
+            await ensure_config_ready(trigger="chat")
+        assert config_state.get_state() is ConfigState.FAILED
+        # Each failure is one bounded attempt, never a wedged lock: no loader call is reused.
+        assert calls["n"] == attempt + 1
+
+    cp_up["value"] = True  # CP finished restarting
+    healed = await ensure_config_ready(trigger="chat")
+    assert healed["ok"] is True
+    assert config_state.get_state() is ConfigState.READY
+    assert calls["n"] == 4, "recovery must add exactly one load"
+    assert config_state.snapshot()["loads"] == 4
+
+
+async def test_ready_process_keeps_serving_while_cp_restarts():
+    """A READY process serves the last known good config during a CP restart (no demotion)."""
+    cp_up = {"value": True}
+    calls = {"n": 0}
+
+    async def loader() -> dict[str, Any]:
+        calls["n"] += 1
+        return OK_REPORT if cp_up["value"] else BAD_REPORT
+
+    config_state.set_loader(loader)
+    first = await ensure_config_ready(trigger="chat")
+    cp_up["value"] = False  # CP restarting behind us
+    again = await ensure_config_ready(trigger="chat")
+
+    assert again is first, "the carried-over snapshot must keep serving"
+    assert calls["n"] == 1, "no reload while READY (the periodic refresh owns that path)"
+    assert config_state.get_state() is ConfigState.READY
+
+
 async def test_loader_missing_fails_closed_instead_of_hanging():
     """No loader wired (e.g. a mis-ordered import) must fail loudly, not block forever."""
     assert LAZY_LOAD_DEADLINE_S >= 1.0

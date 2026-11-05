@@ -166,6 +166,19 @@ flowchart LR
 2. **memory / skills 尚未接入模型可见面**：memory 已有表、服务层与注入快照（数据就绪层），skills 还未开工；两者都还不会出现在模型上下文里。
 3. **暂不提供下载安装包**：原生打包进行中，当前最快路径是本地 dev 模式（mise + Docker 仅跑 PostgreSQL + 四个原生进程），不能双击即用。
 
+### 打包产物（PLAN-0632）
+
+打包分发有两个可重跑入口（产物只落 `.tmp/`，不入库）：
+
+```bash
+mise run pkg:launcher -- start --install <安装目录>   # 顺序 PG -> CP -> Agent -> Runtime -> UI，每步 readiness 门
+mise run pkg:launcher -- status --stack 1 --json     # 只读；开发机上 ok:false = "不是打包安装"
+mise run pkg:launcher -- stop
+mise run pkg:installer                               # 从既有服务产物构建 NSIS（-- --stage-only 只组装 stage）
+```
+
+顺序是产品契约而非偏好：PostgreSQL 必须先接受 TCP（CP 启动即跑 Flyway），CP 必须 `/actuator/health` 200 之后才起 Agent（其 config sync 对 `llm-provider` fail-closed），UI 由 CP 同源伺服。
+
 ## 5. 测试
 
 ```bash

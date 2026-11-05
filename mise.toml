@@ -457,3 +457,22 @@ alias = "check:ports"
 run = "node scripts/check-event-keys.mjs --report-only"
 description = "Report-only audit of log/SSE/AgentEvent names against the BL-303 baseline + semantics registry (never fails; use --enforce manually)"
 alias = "check:event-keys"
+
+# PLAN-0632 T4.3: 打包产物入口接线（此前只有脚本、mise 无命中 —— 2026-11-04 归档审计 C 类项）。
+# 只做「接线」：不改变两个脚本的 CLI 语义，参数一律用 `--` 透传（与 dev:stack / dev:host:provider-init 同惯例）。
+#   mise run pkg:launcher -- start --install <安装目录>
+#   mise run pkg:launcher -- status --stack 1 --json
+#   mise run pkg:launcher -- stop
+# 顺序与门：PG(TCP) -> CP(/actuator/health 200) -> Agent(/internal/v1/agent/health) -> Runtime(/health) -> UI(同源 /)
+[tasks."pkg:launcher"]
+run = "node scripts/pkg/launcher.mjs"
+description = "Packaged-product supervisor: start|status|stop (args after `--`); readiness-gated order PG -> CP -> Agent -> Runtime -> UI"
+alias = "pkg:launcher"
+
+# 安装包构建（一条命令可重跑：渲染 ports.json + 编 Java launcher + 组装 payload + makensis + 体积报告）。
+# 不编译四个服务（各自构建车道负责）；产物只写 <repo>/.tmp/pkg/（gitignored），不入库。
+#   mise run pkg:installer -- --stage-only     # 只组装/校验 stage，不跑 makensis
+[tasks."pkg:installer"]
+run = "node scripts/pkg/build-installer.mjs"
+description = "Build the NSIS installer from existing service artifacts (rerunnable; --stage-only skips makensis; artifacts stay under .tmp/pkg)"
+alias = "pkg:installer"
