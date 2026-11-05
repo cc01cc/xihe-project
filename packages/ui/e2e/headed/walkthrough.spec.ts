@@ -495,30 +495,8 @@ test.describe.serial("@host headed walkthrough — real user scenarios S1–S8",
         await landOnWorkspacePicker(page);
         await shot(page, "S5", "s5-plain-account-landing", "普通账号进入后的落点");
 
-        const token = await tokenOf(page);
-
-        // D8 后的 F-01 语义：普通账号默认拥有 CREATE_OWN_AGENT ⇒ 可以建 **PERSONAL**，
-        // 但不能建 WORKSPACE（无 MANAGE_WORKSPACE_AGENTS）/ INSTANCE（无 CREATE_ACCOUNT）。
-        // API 侧两条拒绝都要有可读 code；不允许用"任意状态码都接受"的万能断言。
-        const deniedScopes: Array<{ scope: string; status: number; code: string | null }> = [];
-        for (const scope of ["WORKSPACE", "INSTANCE"] as const) {
-            const denied = await request.post(`${CP_URL}/api/v1/agent-principals`, {
-                headers: { ...bearer(token), "X-Workspace-Id": s5WorkspaceId },
-                data: { scope, name: agentName(`headedF01${scope}`, Date.now()) },
-            });
-            const problem = (await denied.json().catch(() => ({}))) as { code?: string };
-            deniedScopes.push({ scope, status: denied.status(), code: problem.code ?? null });
-            test.info().annotations.push({
-                type: `headed-f01-api-${scope.toLowerCase()}`,
-                description: `POST /agent-principals (scope=${scope}) → ${denied.status()}${problem.code ? ` ${problem.code}` : ""}`,
-            });
-            expect(
-                [403, 409],
-                `scope=${scope} must be denied, got ${denied.status()} ${problem.code ?? ""}`,
-            ).toContain(denied.status());
-        }
-
-        // UI 侧：打开 Agent 管理面板 —— 普通账号应能建 PERSONAL，且 scope 下拉只出现 PERSONAL。
+        // UI 侧：打开 Agent 管理面板 —— tier scope 写入已彻底退出；普通账号（无
+        // MANAGE_WORKSPACE_AGENTS）必须在点击前被禁用，并给出授权提示。
         const toolbarVisible = await page
             .getByTestId("workspace-toolbar-agents")
             .isVisible()
@@ -528,48 +506,23 @@ test.describe.serial("@host headed walkthrough — real user scenarios S1–S8",
         await expect(page.getByTestId("workspace-agent-management-dialog")).toBeVisible({
             timeout: 20000,
         });
-        const scopeSelect = page.getByTestId("agent-principal-scope");
-        await expect(scopeSelect).toBeVisible({ timeout: 20000 });
-        // 只出现 PERSONAL：WORKSPACE / INSTANCE 因缺少对应授权不渲染。
-        await expect
-            .poll(
-                async () =>
-                    scopeSelect
-                        .locator("option")
-                        .evaluateAll((options) => options.map((o) => o.getAttribute("value"))),
-                {
-                    timeout: 20000,
-                    intervals: [250, 500],
-                },
-            )
-            .toEqual(["PERSONAL"]);
-        await expect(page.getByTestId("agent-create-forbidden-hint")).toHaveCount(0);
+        await expect(page.getByTestId("agent-principal-scope")).toHaveCount(0);
+        await expect(page.getByTestId("agent-create-forbidden-hint")).toHaveCount(1);
         await page.getByTestId("agent-principal-name").fill(agentName("HeadedPlain", Date.now()));
-        await expect(page.getByTestId("agent-principal-create")).toBeEnabled();
-        const personalCreateResponse = page.waitForResponse(
-            (response) =>
-                new URL(response.url()).pathname === "/api/v1/agent-principals" &&
-                response.request().method() === "POST",
-        );
-        await page.getByTestId("agent-principal-create").click();
-        const personalCreated = await personalCreateResponse;
-        expect(personalCreated.status(), await personalCreated.text()).toBe(201);
-        const personalBody = (await personalCreated.json()) as { scope?: string };
-        expect(personalBody.scope, "PERSONAL create must echo scope=PERSONAL").toBe("PERSONAL");
+        await expect(page.getByTestId("agent-principal-create")).toBeDisabled();
         await shot(
             page,
             "S5b",
             "s5b-agent-dialog-plain-account",
-            "普通账号只能建 PERSONAL：scope 仅 PERSONAL、创建可用、无 forbidden hint",
+            "普通账号无 tier scope 写入口；无 MANAGE_WORKSPACE_AGENTS 时创建禁用并提示授权",
         );
         test.info().annotations.push({
             type: "headed-f01-ui",
             description: JSON.stringify({
                 toolbarVisible,
-                scopeOptions: ["PERSONAL"],
-                forbiddenHintCount: 0,
-                personalCreateStatus: personalCreated.status(),
-                deniedScopes,
+                scopeSelectCount: 0,
+                forbiddenHintCount: 1,
+                createDisabled: true,
             }),
         });
     });

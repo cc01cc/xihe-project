@@ -275,7 +275,6 @@ test.describe("@host PLAN-0649 refusal visible + durable", () => {
         const principalResponse = await request.post(`${CP_URL}/api/v1/agent-principals`, {
             headers,
             data: {
-                scope: "WORKSPACE",
                 name: "PLAN0649Delegator",
                 templateId,
                 // SessionProviderDefaults (2026-11-04 P0, task-24) resolves the agent-principal

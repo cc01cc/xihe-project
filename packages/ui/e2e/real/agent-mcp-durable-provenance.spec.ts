@@ -104,7 +104,7 @@ test("@host PLAN-0387 T3.2 — CP checks durable Agent MCP tool-call provenance"
 
     const principalResponse = await request.post(`${CP_URL}/api/v1/agent-principals`, {
         headers,
-        data: { name: "ProvenanceWriter", templateId, scope: "WORKSPACE" },
+        data: { name: "ProvenanceWriter", templateId },
     });
     expect(principalResponse.status(), await principalResponse.text()).toBe(201);
     const principalId = ((await principalResponse.json()) as { principalId: string }).principalId;

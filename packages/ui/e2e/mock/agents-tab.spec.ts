@@ -45,11 +45,9 @@ function agentBinding(): Record<string, unknown> {
         templateId: null,
         templateName: "Ops",
         createdAt: "2026-11-02T00:00:00Z",
-        source: "workspace",
         permissionsSnapshot: [{ actionClass: "read", resource: "*" }],
         bound: true,
         disabled: false,
-        ownerUserId: "user-1",
     };
 }
 
@@ -58,7 +56,7 @@ async function setupAgentsLane(page: Page): Promise<void> {
     await setupMockSessions(page, { sessions: [{ id: SESSION_ID, title: "Session 1" }] });
 
     // CP capability projection: MANAGE_WORKSPACE_AGENTS for this workspace (+ instance
-    // CREATE_ACCOUNT so the scope select renders and the create form is usable).
+    // CREATE_ACCOUNT so the create form and management affordances are usable).
     await page.route("**/api/v1/me/permissions", async (route) => {
         await route.fulfill({
             status: 200,
