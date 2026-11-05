@@ -2,31 +2,33 @@
  * BL-328 真栈复核（`@host` + **approval 车道**）：`Escape` 本地关闭审批卡后，
  * 焦点必须落到 `pending-approval-reopen-pill`；点 pill 重开 ⇒ 卡恢复。
  *
- * 依据（产品实现）：`ChatPanel.vue:312-322`（Escape/遮罩关闭后 `nextTick` 把焦点交给 pill 的
- * `reopenPillRef`）、`:1505-1517`（pill 本体）。单测 `ChatPanel.spec.ts:514/600/626` 已覆盖组件层。
+ * 产品依据：`ChatPanel.vue:312-322`（Escape/遮罩关闭后 `nextTick` 把焦点交给 `reopenPillRef`）、
+ * `:1505-1517`（pill 本体）；组件层单测 `ChatPanel.spec.ts:514/600/626`。
  *
- * 夹具：复用现有"approval 车道"（`chat-follow-up-queue.spec.ts` 同款）——用户 grant + agent 模板
- * （role 带 `delete` 原子 + `toolMode: workspace`）+ 主体 + 工作区绑定，然后发
- * "please delete README.md"；fake LLM 的 approval 模式会走需要审批的工具调用 ⇒ 真栈出现审批卡。
- * **不新造夹具**（膨胀门：先答"被否决的更简方案" = 自建 approval 夹具，成本 20–30 min 且与既有车道重复）。
+ * **夹具来源（照搬，不重写）**：`e2e/real/chat-follow-up-queue.spec.ts` 的
+ * `createBoundAgent()` + `bootstrapSession()` 原文——那是本仓唯一在 approval 车道拿到过真审批卡的
+ * 建会话路径（`ensureAgentWorkspaceBinding` → init script 三键 → `workspace-create-session` →
+ * `selectOption` → `create-agent-session`，且**等 `agentSelect` 可见**而不是等 `chat-input`）。
+ * 前两次自建版本失败的原因就是"照抄一半"（等错了元素），故本文件以照搬为准。
  *
- * 车道要求：`--llm-mode=approval`（否则 `test.skip` 并写明当前 mode）。
- * 焦点判据：headless 下 `document.activeElement` 可用，但如果整轮为 headless，报告需标注
- * "焦点判据未经 headed 复核"。
+ * 车道：`--llm-mode=approval`（其它 mode 自动 skip）。
+ * 焦点判据：headless 下 `document.activeElement` 可用，但报告须标注"未经 headed 复核"。
  */
 import { randomUUID } from "node:crypto";
 
 import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
 
+import { generateE2EPassword } from "./helpers/password";
+import { ensureWorkspace } from "./helpers/workspace";
+import { seedUserGrant } from "./helpers/user-grants";
 import {
     CP_URL,
     ensureAgentWorkspaceBinding,
-    registerJourneyUser,
+    getRootBranchId,
     waitForControlPlaneAgentReady,
 } from "./helpers/journey";
-import { seedUserGrant } from "./helpers/user-grants";
 
-test.describe.configure({ retries: 0 });
+test.describe.configure({ mode: "serial", retries: 0 });
 
 const LLM_MODE = process.env.XIHE_E2E_LLM_MODE ?? "mock";
 
@@ -37,31 +39,32 @@ function requireApprovalMode() {
     );
 }
 
-/** 造一个"会触发审批"的 agent 并首绑到工作区（与 chat-follow-up-queue 同款最小夹具）。 */
-async function createApprovalAgent(
+// ── 以下两段照搬 `chat-follow-up-queue.spec.ts`（同车道唯一验证过的夹具）────────────────────
+
+async function createBoundAgent(
     request: APIRequestContext,
     userId: string,
     workspaceId: string,
     headers: Record<string, string>,
 ): Promise<string> {
     seedUserGrant(userId, workspaceId, [{ actionClass: "delete", resource: "*" }]);
-    const roleId = randomUUID();
-    const templateId = randomUUID();
+    const roleId = randomUUID(),
+        templateId = randomUUID();
     const templateWrite = await request.put(`${CP_URL}/api/v1/config/user/agent-templates`, {
         headers,
         data: {
             roles: JSON.stringify([
                 {
                     id: roleId,
-                    name: "BL328 Approval Role",
+                    name: "Follow-up Approval Role",
                     permissions: [{ actionClass: "delete", resource: "*" }],
                 },
             ]),
             templates: JSON.stringify([
                 {
                     id: templateId,
-                    name: "BL328ApprovalAgent",
-                    description: "BL-328 approval fixture",
+                    name: "FollowUpApprovalAgent",
+                    description: "Bounded Agent for real Follow-up queue verification",
                     systemPrompt: "Use only the Workspace tools provided by CP.",
                     toolMode: "workspace",
                     provider: "openai",
@@ -75,10 +78,10 @@ async function createApprovalAgent(
 
     const principalResponse = await request.post(`${CP_URL}/api/v1/agent-principals`, {
         headers,
-        data: { name: "BL328ApprovalAgent", templateId },
+        data: { name: "FollowUpApprovalAgent", templateId },
     });
     expect(principalResponse.status(), await principalResponse.text()).toBe(201);
-    const { principalId } = (await principalResponse.json()) as { principalId: string };
+    const principalId = ((await principalResponse.json()) as { principalId: string }).principalId;
     const bindResponse = await request.put(
         `${CP_URL}/api/v1/workspaces/${workspaceId}/agents/${principalId}`,
         { headers, data: { permissions: [{ actionClass: "delete", resource: "*" }] } },
@@ -87,59 +90,80 @@ async function createApprovalAgent(
     return principalId;
 }
 
-/** 打开工作区 → 用 UI 建一个绑定该主体的会话 → 返回 sessionId。 */
-async function createApprovalSession(page: Page, principalId: string) {
+interface BootstrapSession {
+    headers: Record<string, string>;
+    sessionId: string;
+    branchId: string;
+    principalId: string;
+    workspaceId: string;
+}
+
+async function bootstrapSession(request: APIRequestContext, page: Page): Promise<BootstrapSession> {
+    const password = process.env.XIHE_E2E_PASSWORD ?? generateE2EPassword();
+    const register = await request.post(`${CP_URL}/api/v1/auth/register`, {
+        data: {
+            email: `bl328-${Date.now()}-${randomUUID().slice(0, 8)}@test.com`,
+            password,
+            name: "BL328 Approval E2E",
+        },
+    });
+    expect([200, 201], `register failed: ${register.status()} ${await register.text()}`).toContain(
+        register.status(),
+    );
+    const auth = (await register.json()) as { accessToken: string; workspaceId: string };
+    // PLAN-0614: registration no longer creates a workspace; create one explicitly.
+    auth.workspaceId = await ensureWorkspace(request, auth.accessToken);
+    const headers = {
+        Authorization: `Bearer ${auth.accessToken}`,
+        "Content-Type": "application/json",
+    };
+    const me = await request.get(`${CP_URL}/api/v1/auth/me`, { headers });
+    expect(me.ok(), await me.text()).toBeTruthy();
+    const userId = ((await me.json()) as { id: string }).id;
+    const principalId = await createBoundAgent(request, userId, auth.workspaceId, headers);
+
+    await ensureAgentWorkspaceBinding(auth.workspaceId);
+    await waitForControlPlaneAgentReady(request, headers);
+    await page.addInitScript(
+        (token) => localStorage.setItem("xihe-token", token),
+        auth.accessToken,
+    );
+    await page.addInitScript(
+        (value) => localStorage.setItem("xihe-user", value),
+        JSON.stringify({ workspaceId: auth.workspaceId }),
+    );
+    await page.addInitScript(
+        (workspace) => localStorage.setItem("xihe-workspace", JSON.stringify(workspace)),
+        { id: auth.workspaceId, name: "Default Workspace" },
+    );
+
+    await page.goto(`/workspace/${auth.workspaceId}`, { waitUntil: "domcontentloaded" });
     await page.getByTestId("workspace-create-session").click();
     const agentSelect = page.getByTestId("workspace-agent-principal-select");
     await expect(agentSelect).toBeVisible();
     await agentSelect.selectOption(principalId);
     await page.getByTestId("workspace-create-agent-session").click();
     await expect(page.getByTestId("chat-input")).toBeVisible({ timeout: 20_000 });
+
+    const sessionResponse = await request.get(`${CP_URL}/api/v1/sessions`, { headers });
+    expect(sessionResponse.ok(), await sessionResponse.text()).toBeTruthy();
+    const sessions = ((await sessionResponse.json()) as { sessions: Array<{ id: string }> })
+        .sessions;
+    expect(sessions.length).toBeGreaterThan(0);
+    const sessionId = sessions[0]!.id,
+        branchId = await getRootBranchId(request, sessionId, headers);
+    return { headers, sessionId, branchId, principalId, workspaceId: auth.workspaceId };
 }
+
+// ── BL-328 ────────────────────────────────────────────────────────────────────────────────
 
 test("@host BL-328 Escape 关闭审批卡 ⇒ 焦点回到重开 pill；点 pill 重开", async ({
     page,
     request,
 }) => {
     requireApprovalMode();
-    // 夹具未打通（2026-11-06 两次真栈尝试，runId host-1793911690692-62e8 / host-1793911787921-2a22）：
-    // approval 车道已能造出「用户 grant + agent 模板(delete) + 主体 + 工作区绑定」，
-    // 但 UI 点「创建 agent 会话」后 chat-input 不出现（页面仍停在 workspace 选择面），
-    // 原因待查：会话创建请求未见 2xx（日志里没有 POST /sessions 的成功记录）。
-    // 下一步最省成本路径：直接复用 `chat-follow-up-queue.spec.ts` 的 `bootstrapSession()` 原文，
-    // 而不是自己重写建会话段（预计 15–20 min）。在此之前用 fixme 明确"预期失败"，不伪绿。
-    test.fixme(
-        true,
-        "approval 夹具的建会话段未打通（chat-input 不出现；详见本文件注释与 BL-328 台账）",
-    );
     test.setTimeout(240_000);
-
-    const owner = await registerJourneyUser(request, "bl328-focus");
-    const headers = {
-        Authorization: `Bearer ${owner.authToken}`,
-        "Content-Type": "application/json",
-        "X-Workspace-Id": owner.workspaceId,
-    };
-    const me = await request.get(`${CP_URL}/api/v1/auth/me`, { headers });
-    expect(me.ok(), await me.text()).toBeTruthy();
-    const userId = ((await me.json()) as { id: string }).id;
-    const principalId = await createApprovalAgent(request, userId, owner.workspaceId, headers);
-    // 与既有 approval 车道（chat-follow-up-queue）同款：Agent 进程必须先绑该工作区，
-    // 否则 UI 建会话拿不到可用 Agent（实测首轮就卡在这一步）。
-    await ensureAgentWorkspaceBinding(owner.workspaceId);
-    await waitForControlPlaneAgentReady(request, headers);
-
-    await page.addInitScript((token) => localStorage.setItem("xihe-token", token), owner.authToken);
-    await page.addInitScript(
-        (value) => localStorage.setItem("xihe-user", value),
-        JSON.stringify({ workspaceId: owner.workspaceId }),
-    );
-    await page.addInitScript(
-        (workspace) => localStorage.setItem("xihe-workspace", JSON.stringify(workspace)),
-        { id: owner.workspaceId, name: "Default Workspace" },
-    );
-    await page.goto(`/workspace/${owner.workspaceId}`, { waitUntil: "domcontentloaded" });
-    await createApprovalSession(page, principalId);
+    const session = await bootstrapSession(request, page);
 
     const approval = page.getByTestId("approval-modal-content");
     await page.getByTestId("chat-input").fill("please delete README.md");
@@ -173,11 +197,11 @@ test("@host BL-328 Escape 关闭审批卡 ⇒ 焦点回到重开 pill；点 pill
     });
     expect(
         focusInsideCard,
-        "重开后焦点应位于审批卡内（与组件层单测一致；headless 下此判据可信度下降，报告需标注）",
+        "重开后焦点应位于审批卡内（headless 下此判据可信度下降，报告需标注）",
     ).toBe(true);
 
     console.log(
-        `[bl328] OK workspace=${owner.workspaceId} principal=${principalId} ` +
-            `pillFocus=pending-approval-reopen-pill reopened=true focusInsideCard=true`,
+        `[bl328] OK workspace=${session.workspaceId} session=${session.sessionId} ` +
+            `principal=${session.principalId} pillFocus=ok reopened=true focusInsideCard=true`,
     );
 });
