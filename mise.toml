@@ -131,7 +131,7 @@ description = "Run all tests"
 alias = "test"
 
 [tasks."test:cli"]
-run = "node --test scripts/xihe-cli.test.mjs scripts/xihe-cli/skill.test.mjs scripts/lib/stack-ports.test.mjs scripts/lib/env-file.test.mjs scripts/lib/service-supervisor.test.mjs scripts/lib/llm-env.test.mjs scripts/lib/cp-boot-plan.test.mjs scripts/lib/e2e-rounds.test.mjs scripts/lib/e2e-host-cli.test.mjs scripts/stack-run.test.mjs scripts/e2e-host-readiness.test.mjs scripts/test-wiring.test.mjs scripts/pkg/phase-parity.test.mjs scripts/pkg/ports-json.test.mjs scripts/pkg/launcher-security.test.mjs scripts/pkg/launcher-security-behavior.test.mjs scripts/env-log-level.test.mjs scripts/lib/stack-cargo-target.test.mjs scripts/lib/stack-orphan.test.mjs scripts/lib/kill-guard.test.mjs scripts/lib/cp-build-info.test.mjs scripts/lib/cp-build-dir.test.mjs scripts/__tests__/check-event-keys.test.mjs scripts/check-test-global-state.test.mjs scripts/run-with-timeout.test.mjs scripts/check-provider-catalog.test.mjs scripts/check-ui-inplace-mutation.test.mjs && node scripts/check-test-global-state.mjs"
+run = "node --test scripts/xihe-cli.test.mjs scripts/xihe-cli/skill.test.mjs scripts/lib/stack-ports.test.mjs scripts/lib/env-file.test.mjs scripts/lib/service-supervisor.test.mjs scripts/lib/llm-env.test.mjs scripts/lib/cp-boot-plan.test.mjs scripts/lib/e2e-rounds.test.mjs scripts/lib/e2e-host-cli.test.mjs scripts/stack-run.test.mjs scripts/e2e-host-readiness.test.mjs scripts/test-wiring.test.mjs scripts/pkg/phase-parity.test.mjs scripts/pkg/ports-json.test.mjs scripts/pkg/launcher-security.test.mjs scripts/pkg/launcher-security-behavior.test.mjs scripts/env-log-level.test.mjs scripts/lib/stack-cargo-target.test.mjs scripts/lib/stack-orphan.test.mjs scripts/lib/kill-guard.test.mjs scripts/lib/cp-build-info.test.mjs scripts/lib/cp-build-dir.test.mjs scripts/__tests__/check-event-keys.test.mjs scripts/check-test-global-state.test.mjs scripts/run-with-timeout.test.mjs scripts/check-provider-catalog.test.mjs scripts/check-ui-inplace-mutation.test.mjs scripts/check-cp-baseline.test.mjs && node scripts/check-test-global-state.mjs"
 description = "Run every scripts/**/*.test.mjs unit test (explicit file list pinned by scripts/test-wiring.test.mjs) + BL-262 static guard: no unguarded process-global mutation in Rust test code"
 alias = "test:cli"
 
@@ -175,6 +175,13 @@ run = "mvn test"
 description = "Run the control plane test suite (contract gate check:openapi runs first)"
 dir = "packages/control-plane"
 alias = "test:cp"
+
+# BL-368 (2026-11-06): CP 全量当前有 2 条已登记已知基线（scripts/cp-known-baseline.json）。这条是
+# 独立任务，不接进 test:cp（否则会吞掉 mvn 输出）；用法：先跑 `mise run test:cp`（红），再跑本任务读
+# 它刚写的 surefire 报告。基线只许缩小、转绿必须删、reviewBy 过期即失败。
+[tasks."test:cp:baseline"]
+run = "node scripts/check-cp-baseline.mjs"
+description = "Classify CP surefire failures against scripts/cp-known-baseline.json (exit 0 only if every failure is a fresh known baseline; run after mise run test:cp)"
 
 [tasks."test:runtime"]
 run = "cargo test"

@@ -152,6 +152,9 @@ mise run test:integration
 
 mise run dev:cp
 mise run test:cp
+# BL-368 known-baseline gate: reads the reports written by test:cp; exits 0 only when every
+# failure is a fresh entry in scripts/cp-known-baseline.json (run it AFTER test:cp, NOT part of validate)
+mise run test:cp:baseline
 
 mise run dev:runtime
 mise run test:runtime

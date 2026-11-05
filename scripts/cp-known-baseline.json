@@ -1,0 +1,17 @@
+{
+  "reviewedAt": "2026-11-06",
+  "entries": [
+    {
+      "test": "com.cc01cc.p.xihe.cp.context.ContextProjectionServiceTest.legacyHashOnlyTombstoneStillReplays",
+      "kind": "fail",
+      "reason": "Stale legacy fixture: the test appends tool.result through ContextService, which now withholds the body (PLAN-0628), so the pre-0416 hash tombstone has nothing to match. Fixing it means writing the legacy row directly; deferred until the architecture baseline is cleared so one change does not mask the other.",
+      "reviewBy": "2026-12-06"
+    },
+    {
+      "test": "com.cc01cc.p.xihe.cp.architecture.CpArchitectureTest",
+      "kind": "error",
+      "reason": "ArchUnit import fails on an unassigned mixed-package type (service.LegacySliceBoundary from PLAN-0641). Assigning it exposes the pending controllers→repositories violations, which are a real refactor (DEV-014/architecture work), not a one-line test fix; the class stays a known baseline until that refactor lands.",
+      "reviewBy": "2026-12-06"
+    }
+  ]
+}
