@@ -6,6 +6,7 @@ import com.cc01cc.p.xihe.cp.entity.AccessRole;
 import com.cc01cc.p.xihe.cp.entity.AccessRoleBinding;
 import com.cc01cc.p.xihe.cp.entity.AccessRolePermission;
 import com.cc01cc.p.xihe.cp.entity.User;
+import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
 import com.cc01cc.p.xihe.cp.integration.TestDataFactory;
 import com.cc01cc.p.xihe.cp.policy.AccessScope;
 import com.cc01cc.p.xihe.cp.policy.RoleGrantMaterializer;
@@ -50,9 +51,12 @@ class AgentPrincipalControllerContractTest extends AbstractIntegrationTest {
     @Autowired private RoleGrantMaterializer materializer;
     @Autowired private ObjectMapper objectMapper;
     @Autowired private JdbcTemplate jdbcTemplate;
+    @Autowired private com.cc01cc.p.xihe.cp.integration.WorkspaceFixture workspaceFixture;
+    @Autowired private com.cc01cc.p.xihe.cp.policy.GrantDefaultService grantDefaultService;
 
     private UUID userId;
     private String token;
+    private UUID workspaceId;
     private final List<UUID> testRoleIds = new java.util.ArrayList<>();
 
     @AfterEach
@@ -85,14 +89,21 @@ class AgentPrincipalControllerContractTest extends AbstractIntegrationTest {
         int principalCount = principalRepository.findAll().size();
 
         ResponseEntity<Map> denied = create(Map.of("name", "NoGrant"));
-        assertEquals(HttpStatus.FORBIDDEN, denied.getStatusCode());
+        // Layer 1 of 2: no workspace context ⇒ the precondition fails closed (409), not the atom gate.
+        assertEquals(HttpStatus.CONFLICT, denied.getStatusCode(), String.valueOf(denied.getBody()));
+        assertEquals("WORKSPACE_CONTEXT_REQUIRED", denied.getBody().get("code"));
+        // Layer 2 of 2: valid workspace context, no MANAGE_WORKSPACE_AGENTS ⇒ 403 (the original intent;
+        // asserting only the 409 above would let the atom gate disappear unnoticed).
+        ResponseEntity<Map> forbidden = create(Map.of("name", "NoGrantInContext"), workspaceId);
+        assertEquals(HttpStatus.FORBIDDEN, forbidden.getStatusCode(), String.valueOf(forbidden.getBody()));
         assertEquals(principalCount, principalRepository.findAll().size());
         assertEquals(0, auditCount());
 
-        addGrant("CREATE_ACCOUNT", "*");
-        // PLAN-0622 D21: the tier is explicit on the wire now; an INSTANCE principal still needs no
-        // workspace binding, which is exactly what this case pins.
-        ResponseEntity<Map> created = create(Map.of("name", "BareDefaultAgent", "scope", "INSTANCE"));
+        addGrant("MANAGE_WORKSPACE_AGENTS", "*");
+        // B 类（BL-326，2026-11-05）：PLAN-0651 D-174 / 51d3fa95 已经**从 create 体里删掉 `scope`**
+        // （tier 移除；`AgentPrincipalCreateRequest` 是 additionalProperties:false，未知字段 400），
+        // 旧的 `{"scope":"INSTANCE"}` 现在会被判 INVALID_REQUEST。契约里 scope 也不再是视图字段。
+        ResponseEntity<Map> created = create(Map.of("name", "BareDefaultAgent"), workspaceId);
         assertEquals(HttpStatus.CREATED, created.getStatusCode(), String.valueOf(created.getBody()));
         Map<String, Object> body = created.getBody();
         assertNotNull(body);
@@ -100,9 +111,8 @@ class AgentPrincipalControllerContractTest extends AbstractIntegrationTest {
         assertEquals(null, body.get("templateId"));
         assertEquals(null, body.get("templateName"));
         assertFalse(body.containsKey("permissions"));
-        assertEquals("INSTANCE", body.get("scope"));
-        assertEquals(null, body.get("ownerUserId"));
-        assertEquals("INSTANCE", body.get("scope"));
+        assertFalse(body.containsKey("scope"),
+                "D-174 removed the principal tier from the wire (no `scope` in AgentPrincipalView)");
         assertEquals(null, body.get("ownerUserId"));
         assertFalse(body.containsKey("systemPrompt"));
         assertFalse(body.containsKey("provider"));
@@ -112,16 +122,24 @@ class AgentPrincipalControllerContractTest extends AbstractIntegrationTest {
         assertEquals("BareDefaultAgent", principal.getName());
         assertEquals(userId.toString(), principal.getCreatedByUserId());
         assertTrue(principal.getTemplateSnapshot().path("templateName").isNull());
-        assertEquals(List.of("CREATE_ACCOUNT"), actionClasses(principal.getTemplateSnapshot().path("permissions")));
+        // 默认模板快照 = 调用者物化原子集（instance USER 默认集 ∪ workspace 环 ∪ 本次授予的管理原子），
+        // 集合全部从角色目录派生，不写字面量。注意：夹具把被测用户绑成 MEMBER，而 PLAN-0559 起
+        // MEMBER/ADMIN 规范化为 **EDITOR**，所以工作区环是 WS_EDITOR 的原子集。
+        java.util.Set<String> expectedDefaultAtoms = new java.util.HashSet<>(
+                com.cc01cc.p.xihe.cp.policy.RoleAtomExpectations.materializedAtoms(
+                        SystemAccessRoleCatalog.USER));
+        expectedDefaultAtoms.addAll(com.cc01cc.p.xihe.cp.policy.RoleAtomExpectations.materializedAtoms(
+                SystemAccessRoleCatalog.WS_EDITOR));
+        expectedDefaultAtoms.add(com.cc01cc.p.xihe.cp.policy.ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_AGENTS);
+        assertEquals(expectedDefaultAtoms,
+                new java.util.HashSet<>(actionClasses(principal.getTemplateSnapshot().path("permissions"))),
+                "the default template snapshot is the caller's materialized atom set");
         assertTrue(bindingRepository.findByIdPrincipalId(principalId).isEmpty());
         // 2026-11-04 裁定（PLAN-0629「role 行是唯一权威源」）：creation 会物化默认实例角色，
-        // 一原子一行（uq_grants_role_atom）。断言规则（行集合 == USER 角色的原子集）而不是字面量，
-        // 这样以后角色原子集变化不会假红。
-        java.util.Set<String> expectedAtoms = SystemAccessRoleCatalog.roleSeeds().stream()
-                .filter(seed -> SystemAccessRoleCatalog.USER.equals(seed.name()))
-                .flatMap(seed -> seed.atoms().stream())
-                .map(SystemAccessRoleCatalog.AtomRef::actionClass)
-                .collect(java.util.stream.Collectors.toSet());
+        // 一原子一行（uq_grants_role_atom）。B 类（BL-326）：V127/D-174 之后 agent 的默认 instance
+        // 角色是 **AGENT_USER**（不是 USER），期望从角色目录单一来源派生，不写字面量。
+        java.util.Set<String> expectedAtoms =
+                com.cc01cc.p.xihe.cp.policy.RoleAtomExpectations.declaredAtoms(SystemAccessRoleCatalog.AGENT_USER);
         java.util.Set<String> actualAtoms = new java.util.HashSet<>(jdbcTemplate.queryForList(
                 "SELECT jsonb_array_elements(permissions)->>'actionClass' FROM grants"
                         + " WHERE subject_type = 'agent_principal' AND subject_id = ?::uuid",
@@ -137,7 +155,7 @@ class AgentPrincipalControllerContractTest extends AbstractIntegrationTest {
     @Test
     void createRejectsInjectedFieldsBeforeWriting() throws Exception {
         fixture();
-        addGrant("CREATE_ACCOUNT", "*");
+        addGrant("MANAGE_WORKSPACE_AGENTS", "*");
         int principalCount = principalRepository.findAll().size();
         ResponseEntity<Map> response = create(Map.of(
                 "name", "Injected", "templateId", UUID.randomUUID().toString(), "createdByUserId", UUID.randomUUID().toString()));
@@ -151,10 +169,74 @@ class AgentPrincipalControllerContractTest extends AbstractIntegrationTest {
         assertEquals(0, auditCount());
     }
 
+    /**
+     * BL-326 / D22 (2026-11-05 Lead ruling): the ratified gate order is
+     * <b>context (409) → existence (404) → authority (403)</b>.
+     *
+     * <p>The load-bearing detail is the <b>unknown</b> id: without a workspace context both an
+     * existing-but-foreign principal and a nonexistent one must answer the same 409. If the lookup
+     * ran first, a context-less caller could tell 404 from 403 — an existence oracle. With a valid
+     * context the 404/403 distinction is fine (the caller has already proven tenant context), and the
+     * three reverse pins in {@code AgentPrincipalContextPolicyHttpTest} / {@code AgentPrincipalHooksHttpTest} /
+     * {@code AgentPrincipalScopeContractTest} keep asserting exactly that.</p>
+     */
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"disable", "update"})
+    void mutationWithoutWorkspaceContextAnswers409EvenForAnUnknownPrincipal(String operation) {
+        fixture();
+        // 关键：这个调用者**没有任何 workspace membership**。否则 TenantContextInterceptor 会走
+        // "first active membership" 兜底把一个上下文造出来，409 就退化成 404（本测试的意义就没了）。
+        User contextless = userRepository.saveAndFlush(new User(
+                "principal-create-contextless-" + UUID.randomUUID() + "@test.com", "hash", "Contextless"));
+        String contextlessToken = TestDataFactory.createGlobalToken(
+                contextless.getId().toString(), contextless.getEmail(), "USER", 0);
+        UUID unknown = UUID.randomUUID();
+        ResponseEntity<Map> response = operation.equals("disable")
+                ? mutate(HttpMethod.POST, "/api/v1/agent-principals/" + unknown + "/disable", null, contextlessToken)
+                : mutate(HttpMethod.PATCH, "/api/v1/agent-principals/" + unknown,
+                        Map.of("hooks", Map.of("advisors", List.of())), contextlessToken);
+
+        assertEquals(HttpStatus.CONFLICT, response.getStatusCode(),
+                "D22: no workspace context ⇒ 409 before any lookup (" + operation + "): " + response.getBody());
+        assertEquals("WORKSPACE_CONTEXT_REQUIRED", response.getBody().get("code"),
+                "an unknown id must not be distinguishable from a foreign one (" + operation + ")");
+    }
+
+    private ResponseEntity<Map> mutate(HttpMethod method, String path, Map<String, Object> body, String token) {
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(token);
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        // PATCH 需要 JDK client（URLConnection 不支持 PATCH）；4xx 不抛异常，便于断言状态码。
+        org.springframework.web.client.RestTemplate client = new org.springframework.web.client.RestTemplate(
+                new org.springframework.http.client.JdkClientHttpRequestFactory());
+        client.setErrorHandler(new org.springframework.web.client.DefaultResponseErrorHandler() {
+            @Override
+            public boolean hasError(org.springframework.http.client.ClientHttpResponse response)
+                    throws java.io.IOException {
+                return response.getStatusCode().is5xxServerError();
+            }
+        });
+        return client.exchange(url(path), method, new HttpEntity<>(body, headers), Map.class);
+    }
+
     private void fixture() {
         User user = userRepository.saveAndFlush(new User("principal-create-" + UUID.randomUUID() + "@test.com", "hash", "Principal create test"));
         userId = user.getId();
         token = TestDataFactory.createGlobalToken(userId.toString(), user.getEmail(), "USER", 0);
+        // B 类根因（BL-326）：create 会给新 agent 默认 AGENT_USER 原子，GrantabilityGuard 要求调用者
+        // 自己持有 ⇒ 走生产注册路径申领 instance USER 默认集（与 AuthService 同一句），不手写原子名。
+        grantDefaultService.ensureUserDefault(user);
+        // BL-326（2026-11-05 Lead 裁定）：agent-principal 创建有两层门，两层都要能测到 ——
+        // (1) 前置层：无 workspace 上下文 ⇒ 409 WORKSPACE_CONTEXT_REQUIRED；
+        // (2) 原子层：有上下文但主体缺 MANAGE_WORKSPACE_AGENTS ⇒ 403。
+        // 这个 Workspace 只为第 (2) 层提供合法上下文，且**不能由被测算用户自己拥有**：
+        // WS_OWNER 会物化 MANAGE_WORKSPACE_AGENTS（workspace:admin），那样第 (2) 层就永远绿。
+        // 所以让一个独立账号当 owner，被测用户只做 MEMBER。
+        User workspaceOwner = userRepository.saveAndFlush(new User(
+                "principal-create-wsowner-" + UUID.randomUUID() + "@test.com", "hash", "Workspace owner"));
+        workspaceId = workspaceFixture.createOwnedWorkspace(
+                "principal-create-ctx", workspaceOwner.getId().toString()).getId();
+        workspaceFixture.bindWorkspaceRole(workspaceId, userId, WorkspaceRole.MEMBER);
     }
 
     /**
@@ -189,9 +271,16 @@ class AgentPrincipalControllerContractTest extends AbstractIntegrationTest {
     }
 
     private ResponseEntity<Map> create(Map<String, Object> body) {
+        return create(body, null);
+    }
+
+    private ResponseEntity<Map> create(Map<String, Object> body, UUID withWorkspace) {
         HttpHeaders headers = new HttpHeaders();
         headers.setBearerAuth(token);
         headers.setContentType(MediaType.APPLICATION_JSON);
+        if (withWorkspace != null) {
+            headers.set("X-Workspace-Id", withWorkspace.toString());
+        }
         return restTemplate.exchange(url("/api/v1/agent-principals"), HttpMethod.POST,
                 new HttpEntity<>(body, headers), Map.class);
     }

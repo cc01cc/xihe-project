@@ -114,6 +114,9 @@ class WorkspaceJobCancelIntegrationTest extends AbstractIntegrationTest {
         job.setUserId(UUID.fromString(userId));
         job.setSessionId(UUID.fromString(sessionId));
         job.setSource("ui");
+        // BL-326（2026-11-05）：`workspace_jobs.scope` 是 NOT NULL（V53 ck_workspace_jobs_scope ∈ run|session|workspace），
+        // 本夹具的建档行曾随 0e1dc095（PLAN-0651 D-174/D-180「tier 移除」）被误删，导致 11 个 E。取值走 JobStateService 单一来源。
+        job.setScope(JobStateService.SCOPE_WORKSPACE);
         job.setStatus(status);
         Map<String, Object> state = new LinkedHashMap<>();
         state.put("workspaceId", workspaceId);

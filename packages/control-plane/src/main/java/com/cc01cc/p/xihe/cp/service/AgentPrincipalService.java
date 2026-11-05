@@ -889,6 +889,8 @@ public class AgentPrincipalService {
      * </ul>
      */
     public boolean disablePrincipal(String actorUserId, UUID principalId) {
+        // D22 order: context first (kills the 404-vs-403 existence oracle), then existence, then authority.
+        requireExplicitWorkspaceContext();
         UUID actorId = parseUuid(actorUserId, "INVALID_ACTOR");
         requireUser(actorId);
         AgentPrincipal principal = agentPrincipalRepository.findById(principalId)
@@ -909,6 +911,25 @@ public class AgentPrincipalService {
         auditLogger.recordDurableChange(actorId.toString(), null,
                 "agent_principal_disabled", "agent_principal", principalId.toString(), detail.toString());
         return true;
+    }
+
+    /**
+     * BL-326 (2026-11-05 Lead ruling, D22): every <b>agent-principal write</b> must be answered only
+     * inside an explicit workspace context, and this check is deliberately the <b>first</b> thing a
+     * mutation does — before {@code findById}.
+     *
+     * <p>Order matters for security, not style: with the lookup first, a caller without a context
+     * could distinguish "no such principal" (404) from "exists but is not yours" (403) — an existence
+     * oracle. Answering {@code 409 WORKSPACE_CONTEXT_REQUIRED} up front tells every out-of-context
+     * caller exactly the same thing. The ratified order is therefore:
+     * context (409) → existence (404) → owner/atom authority (403).</p>
+     */
+    private static void requireExplicitWorkspaceContext() {
+        String workspaceId = TenantContext.getWorkspaceId();
+        if (workspaceId == null || workspaceId.isBlank()) {
+            throw new CpApiException(HttpStatus.CONFLICT, "WORKSPACE_CONTEXT_REQUIRED",
+                    "Changing an agent principal requires a workspace context");
+        }
     }
 
     private void requireDisableAuthority(UUID actorId, AgentPrincipal principal) {
@@ -1039,6 +1060,8 @@ public class AgentPrincipalService {
     @Transactional
     public PrincipalSettings applyPrincipalSettings(String actorUserId, UUID principalId,
                                                     PrincipalSettingsPatch patch) {
+        // D22 order: context first — same reasoning as disablePrincipal (no existence oracle).
+        requireExplicitWorkspaceContext();
         UUID actorId = parseUuid(actorUserId, "INVALID_ACTOR");
         requireUser(actorId);
         // Validate before the lookup: a malformed document must never need a row to be rejected

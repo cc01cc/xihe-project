@@ -62,15 +62,12 @@ class RouteContractParityTest extends AbstractIntegrationTest {
     private static final String AGENT_SERVICE = "agent-service";       // served by packages/agent (Python)
     private static final String SPRINGDOC = "springdoc";              // springdoc framework endpoints
     private static final String BOOT_ERROR = "spring-boot-error";     // BasicErrorController
-    private static final String CONFIG_CONVENIENCE = "config-convenience"; // resolves onto /api/v1/config/{domain}
-    private static final String MISSING_CONTRACT = "missing-contract"; // BL-320 batch 1: contract must be written
-    private static final String RETIRED_IMPL = "retired-implementation"; // BL-320 batch 2: controller residue to delete
-    private static final String PARAM_NAME_ONLY = "param-name-only";   // shape matches, variable name differs
+    private static final String KEPT_BY_DESIGN = "kept-by-design";     // contract convenience spelling, intentionally kept
 
     /** Implemented by CP but intentionally not contracted (framework surfaces). */
     private static final Map<String, String> EXEMPT_IMPLEMENTED = new LinkedHashMap<>();
 
-    /** Contracted but not implemented by this service (cross-service) or not registered as such. */
+    /** Contracted but implemented outside this service (cross-service) or kept-by-design spellings. */
     private static final Map<String, String> EXEMPT_DOCUMENTED = new LinkedHashMap<>();
 
     /** BL-320 backlog: implemented-but-uncontracted routes, frozen until the batches land. */
@@ -143,26 +140,21 @@ class RouteContractParityTest extends AbstractIntegrationTest {
         EXEMPT_DOCUMENTED.put("/internal/v1/agent/tools", AGENT_SERVICE);
         EXEMPT_DOCUMENTED.put("/internal/v1/agent/user-question/respond", AGENT_SERVICE);
 
-        // ---- contract convenience paths: the real routes are GET /api/v1/config/{domain} and
-        //      PUT /api/v1/config/{instance,user,workspace}/{domain}; these are documented spellings
-        //      of the same operation, not separately registered paths (BL-320 batch 3) ----
-        EXEMPT_DOCUMENTED.put("/api/v1/config/api-request-templates", CONFIG_CONVENIENCE);
-        EXEMPT_DOCUMENTED.put("/api/v1/config/{}/api-request-templates", CONFIG_CONVENIENCE);
+        // ---- 有意保留（kept-by-design，BL-320 批 3 / 2026-11-05 Lead 裁定）：契约里这两条不是
+        //      独立注册的路由，而是 GET /api/v1/config/{domain} 与 PUT /api/v1/config/{layer}/{domain}
+        //      在 domain=api-request-templates 时的具体示例写法。它们的价值是把该 domain 的专属 query /
+        //      响应/不可变修订语义写清楚 —— 删掉反而是把"契约更详细"当缺陷。契约里已各自标注 ----
+        EXEMPT_DOCUMENTED.put("/api/v1/config/api-request-templates", KEPT_BY_DESIGN);
+        EXEMPT_DOCUMENTED.put("/api/v1/config/{}/api-request-templates", KEPT_BY_DESIGN);
 
-        // ---- BL-320 backlog (batch 1 = contract must be written; batch 2 = controller residue) ----
-        KNOWN_GAPS.put("/api/v1/user-events", MISSING_CONTRACT);
-        KNOWN_GAPS.put("/internal/v1/agent/checkpoints/lineages", MISSING_CONTRACT);
-        KNOWN_GAPS.put("/internal/v1/agent/checkpoints/lineages/{}", MISSING_CONTRACT);
-        KNOWN_GAPS.put("/internal/v1/agent/checkpoints/{}", MISSING_CONTRACT);
-        KNOWN_GAPS.put("/internal/v1/agent/checkpoints/{}/checkpoints", MISSING_CONTRACT);
-        KNOWN_GAPS.put("/internal/v1/agent/checkpoints/{}/checkpoints/{}", MISSING_CONTRACT);
-        KNOWN_GAPS.put("/internal/v1/agent/checkpoints/{}/writes", MISSING_CONTRACT);
-        KNOWN_GAPS.put("/internal/v1/attachments/{}/content", MISSING_CONTRACT);
-        KNOWN_GAPS.put("/api/v1/principal-grants/{}", RETIRED_IMPL);
+        // ---- BL-320 冻结清单当前**为空**：批 1 把 8 条真缺契约补进 openapi.yaml，批 2 把
+        //      principal-grants 退役面记为 deprecated 契约。空表是**目标态**，不是"没有机制"：
+        //      新缺口必须按 `BL-320 批 N` 逐条登记在这里，而不是去放宽断言 ----
+        // KNOWN_GAPS.put("<shape>", "<batch token>");
 
-        // ---- same route, different variable name: Spring matches by position so this is
-        //      runtime-equivalent; it still leaks into generated clients, hence named here ----
-        PARAM_NAME_EXEMPT.put("/api/v1/workspaces/{}/mcp/servers", PARAM_NAME_ONLY);
+        // ---- 参数名豁免当前**为空**：批 2 已把 /api/v1/workspaces/{wsId}/mcp/servers 统一为
+        //      {workspaceId}。若再出现"同形状不同变量名"，必须逐条登记并写清"为何运行时等价" ----
+        // PARAM_NAME_EXEMPT.put("<shape>", "<reason token>");
     }
 
     @Test
@@ -180,7 +172,7 @@ class RouteContractParityTest extends AbstractIntegrationTest {
         System.out.println("[bl320] implemented=" + implemented.size() + " documented=" + documented.size()
                 + " | missing: total=" + missing.size() + " framework=" + countIn(missing, EXEMPT_IMPLEMENTED)
                 + " frozen-gap=" + KNOWN_GAPS.size() + " unexpected=" + unexpectedMissing.size()
-                + " | extra: total=" + extra.size() + " cross-service/convenience="
+                + " | extra: total=" + extra.size() + " cross-service/kept-by-design="
                 + countIn(extra, EXEMPT_DOCUMENTED) + " unexpected=" + unexpectedExtra.size()
                 + " | param-name-exempt=" + PARAM_NAME_EXEMPT.size());
 

@@ -68,6 +68,7 @@ class AgentPrincipalSkillBindingContractTest extends AbstractIntegrationTest {
     @Autowired private AccessRoleBindingRepository roleBindingRepository;
     @Autowired private WorkspaceAgentRepository workspaceAgentRepository;
     @Autowired private RoleGrantMaterializer materializer;
+    @Autowired private com.cc01cc.p.xihe.cp.policy.GrantDefaultService grantDefaultService;
     @Autowired private SkillRepository skillRepository;
     @Autowired private SkillBindingRepository skillBindingRepository;
     @Autowired private ObjectMapper objectMapper;
@@ -247,6 +248,11 @@ class AgentPrincipalSkillBindingContractTest extends AbstractIntegrationTest {
     private void fixture() {
         owner = userRepository.saveAndFlush(new User(
                 "sk-owner-" + UUID.randomUUID() + "@test.com", "hash", "Skill owner"));
+        // B 类根因（BL-326）：`createPrincipal` 会给新 agent 默认 AGENT_USER（read/write/delete/exec/
+        // network @ *），GrantabilityGuard 要求调用者自己也持有这些原子 ⇒ 直接用 userRepository 造
+        // 账号会让 creator 缺 instance USER 默认集。走生产同一条路径（AuthService/UserAdminService
+        // 也是这一句），不手写原子名。
+        grantDefaultService.ensureUserDefault(owner);
         ownerToken = TestDataFactory.createGlobalToken(owner.getId().toString(), owner.getEmail(), "USER", 0);
         UUID authorityRole = UUID.randomUUID();
         roleRepository.save(new AccessRole(authorityRole, "TEST_SK_AUTH_" + shortId(),

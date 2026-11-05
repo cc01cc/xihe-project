@@ -78,6 +78,7 @@ class AgentTemplateSnapshotIntegrationTest extends AbstractIntegrationTest {
     @Autowired private AccessRoleBindingRepository bindingRepository;
 
     @Autowired private RoleGrantMaterializer materializer;
+    @Autowired private com.cc01cc.p.xihe.cp.policy.GrantDefaultService grantDefaultService;
     @Autowired private WorkspaceFixture workspaceFixture;
     @Autowired private ConfigJpaRepository configJpaRepository;
     @Autowired private AuthorizationGrantRepository grantRepository;
@@ -519,6 +520,10 @@ class AgentTemplateSnapshotIntegrationTest extends AbstractIntegrationTest {
         User member = userRepository.saveAndFlush(new User("tpl-snapshot-member-" + UUID.randomUUID() + "@test.com",
                 "hash", "Template read member"));
         memberUserId = member.getId();
+        // B 类根因（BL-326）：member 是这里创建 agent principal 的人，必须持有 instance USER 默认集，
+        // 否则给新 agent 的默认 AGENT_USER 原子会触发 GrantabilityGuard（read/write/… 超出调用者持有）。
+        // 单一来源：与 AuthService/UserAdminService 相同的 ensureUserDefault。
+        grantDefaultService.ensureUserDefault(member);
         User admin = userRepository.saveAndFlush(new User("tpl-snapshot-admin-" + UUID.randomUUID() + "@test.com",
                 "hash", "Template read admin"));
         adminUserId = admin.getId();
