@@ -81,7 +81,9 @@ class ChatControllerContinuationDispatchTest {
                 Mockito.mock(ApplicationEventPublisher.class),
                 new com.cc01cc.p.xihe.cp.policy.ResourceGovernor(),
                 Mockito.mock(com.cc01cc.p.xihe.cp.context.service.MentionPathResolver.class),
-                Mockito.mock(ContextFingerprintRecorder.class));
+                Mockito.mock(ContextFingerprintRecorder.class),
+                Mockito.mock(com.cc01cc.p.xihe.cp.chat.UserQuestionService.class),
+                Mockito.mock(com.cc01cc.p.xihe.cp.event.UserChannelPort.class));
     }
 
     @Test

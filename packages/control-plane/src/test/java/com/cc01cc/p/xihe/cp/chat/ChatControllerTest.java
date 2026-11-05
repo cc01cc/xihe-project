@@ -143,6 +143,10 @@ class ChatControllerTest extends AbstractH2Test {
     @Autowired
     private ChatRunRepository chatRunRepository;
 
+    /** PLAN-0660 T5.11: the relay's durable side. */
+    @org.springframework.beans.factory.annotation.Autowired
+    private com.cc01cc.p.xihe.cp.repository.UserQuestionRepository userQuestionRepository;
+
     @Autowired
     private com.cc01cc.p.xihe.cp.status.RequestQueue requestQueue;
 
@@ -708,6 +712,41 @@ class ChatControllerTest extends AbstractH2Test {
     private void dispatchRelayedToken(String runId, String content) {
         ReflectionTestUtils.invokeMethod(chatController, "dispatchRelayedEvent", sessionId, "token",
                 "{\"content\":\"" + content + "\"}", runId, "req-" + content, userId, workspaceId, null);
+    }
+
+    /**
+     * PLAN-0660 T5.11: the {@code user_question} relay writes the durable row, pushes a user-channel
+     * hint — and <b>never</b> puts the question (or its body) on the session stream. A second ask for
+     * the same run is refused as {@code QUESTION_ALREADY_PENDING} without duplicating the row or
+     * breaking the relay.
+     */
+    @Test
+    void userQuestionRelayStoresTheRowAndKeepsTheBodyOffTheSessionStream() {
+        String questionBody = "which branch should I rebase onto?";
+        UUID runUuid = UUID.randomUUID();
+        chatRunRepository.saveAndFlush(new ChatRun(runUuid.toString(), sessionId, userId, workspaceId,
+                "idem-" + UUID.randomUUID(), "hash", "openai", "gpt-test", "workspace", "streaming"));
+
+        ReflectionTestUtils.invokeMethod(chatController, "dispatchRelayedEvent", sessionId,
+                "user_question", "{\"question\":\"" + questionBody + "\"}", runUuid.toString(),
+                "req-uq-1", userId, workspaceId, null);
+
+        var pending = userQuestionRepository.findByRunIdAndStateIn(runUuid,
+                List.of(com.cc01cc.p.xihe.cp.entity.UserQuestion.STATE_PENDING));
+        assertEquals(1, pending.size(), "the relay writes exactly one durable question");
+        assertEquals(questionBody, pending.getFirst().getPrompt());
+        assertEquals(userId, pending.getFirst().getAddresseeUserId().toString(),
+                "the addressee is the run owner (v1)");
+        org.mockito.Mockito.verify(sseEmitterManager, org.mockito.Mockito.never())
+                .send(eq(sessionId), eq("user_question"), any(), any());
+
+        // The real 409 trigger: a second question for a run that still has one pending.
+        ReflectionTestUtils.invokeMethod(chatController, "dispatchRelayedEvent", sessionId,
+                "user_question", "{\"question\":\"second question\"}", runUuid.toString(),
+                "req-uq-2", userId, workspaceId, null);
+        assertEquals(1, userQuestionRepository.findByRunIdAndStateIn(runUuid,
+                        List.of(com.cc01cc.p.xihe.cp.entity.UserQuestion.STATE_PENDING)).size(),
+                "QUESTION_ALREADY_PENDING is refused at the relay instead of duplicating the row");
     }
 
     // ── PLAN-0507: session monitor aggregate ──────────────────────────────

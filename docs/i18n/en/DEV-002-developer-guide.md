@@ -237,6 +237,7 @@ node scripts/stack-run.mjs env-json --stack 2      # print that stack's derived 
 - Two concurrent stacks at most are recommended.
 - **Port source of truth (PLAN-0612)**: default ports live in this repository (`scripts/lib/stack-ports.mjs`, `STACK_PORTS` + `deriveStack()`); the ONE workspace `config/ports.mjs` is only a mirror for orchestration. Changing one side requires changing the other **in the same batch**, verified by `mise run check:ports` (`mise.toml:401`: per stack × per port, derived fields, and `.env.dev` self-consistency); when ONE is absent that gate **skips explicitly** (not a failure), so a standalone clone stays usable.
 - **Single-clone self-check**: `mise run check:standalone` (`mise.toml:395`) exports a parent-less copy and verifies startup/self-check do not depend on the one root.
+- **OpenAPI contract gate (BL-162)**: `mise run check:openapi` validates `docs/api/openapi.yaml` (3.1 header, unique paths, path-parameter declarations, Problem Details, plus the frozen checkpoint-revert and session-read contract slices). It is a **dependency of `test:cp`**, so running the CP test suite checks the contract; PLAN closeout / wave acceptance must run it explicitly. A failure prints the parsed path count, the first failure and a fix hint (`docs/api/openapi.yaml` stays the single source of truth). It deliberately does **not** diff Spring routes against the contract — "route implemented but undocumented" is a known blind spot tracked as a separate BL.
 
 #### Detached full-stack supervisor (PLAN-0603)
 
