@@ -92,6 +92,9 @@ public final class PermissionAtomLabels {
                 "管理工作区运行态", "Manage workspace runtime");
         put(labels, ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_POLICY,
                 "管理工作区策略", "Manage workspace policy");
+        // PLAN-0673 M2 (D-166, 2026-11-05): the subset-bypass atom — SUPER_ADMIN-only by default.
+        put(labels, ToolFaceRegistry.ACTION_GRANT_ANY_ATOM,
+                "授予任意原子（旁路）", "Grant any atom (bypass)");
         return labels;
     }
 
