@@ -113,9 +113,13 @@ async function bootstrapSession(request: APIRequestContext, page: Page): Promise
     const auth = (await register.json()) as { accessToken: string; workspaceId: string };
     // PLAN-0614: registration no longer creates a workspace; create one explicitly.
     auth.workspaceId = await ensureWorkspace(request, auth.accessToken);
+    // 与照搬版唯一的差异（Lead 要求显式写清）：**加 `X-Workspace-Id`**。
+    // 照搬版没有它，实测 `POST /agent-principals` 直接 409 WORKSPACE_CONTEXT_REQUIRED
+    //（runId host-1793912025131-e8a4）—— 说明那条 spec 的 approval 路径久未跑过。
     const headers = {
         Authorization: `Bearer ${auth.accessToken}`,
         "Content-Type": "application/json",
+        "X-Workspace-Id": auth.workspaceId,
     };
     const me = await request.get(`${CP_URL}/api/v1/auth/me`, { headers });
     expect(me.ok(), await me.text()).toBeTruthy();
