@@ -35,6 +35,14 @@ pnpm run build
 
 `test:unit -- ...` 后接实际测试文件或 Vitest 参数。完整 `pnpm run test:unit` 与全量 E2E 只在测试波次或里程碑执行；不要把全套验证当作每次小改默认动作。
 
+### UI 单测稳定性判据（2026-11-06 实测基线）
+
+- **判据**：同 commit、同机、`CI=1`、串行连跑 **3 轮** —— ①`Test Files`/`Tests` 计数一致 ②`failed` 三轮恒 0 ③`skipped` 恒等 ④`Duration` 极差 ≤5%。四条同时满足才叫"本机稳定"，**一次全绿不算**。
+- **基线（`39a8e929` 口径，2026-11-06 实测）**：`165 files / 1720 passed / 3 skipped / 151–153 s`（细分：transform ~4.3 · setup ~7.7 · import ~27 · tests ~21.7 · environment ~75.5 s）。
+- **能测出**：顺序性/随机 flake、明显性能回归、"修完只跑一次"的假绿。**测不出**：慢机器/CI（真实 `sleep` 类等待会先崩）、并发与分片 flake（`BL-308` 记过分片敏感）、时区/日期/随机种子边界、跨文件全局状态污染、真实网络/DB（全 mock）。
+- **进阶检查**：`--sequence.shuffle`（随机顺序，可配 `--sequence.seed=<n>` 复现）与 `--maxWorkers=1`（单 worker）。2026-11-06 实测：**shuffle 暴露 5 文件 / 8–9 用例的顺序依赖（可复现）**，而 `--maxWorkers=1` 全绿 ⇒ 污染只在多 worker 场景；隔离单跑那 5 个文件也全绿。
+- **经验值 ≠ 推导值**：`SessionMonitorPanel.spec.ts` 的 `sleep(650)`（真墙钟）与 `MessageListVirtual.spec.ts` 的 `for (round < 4) nextTick()`（"够用"的轮数）都是经验值，慢机会崩；改它们前先看文件内注释。
+
 ## 跨层与交互规则
 
 - API、SSE 事件、TypeScript types、Pinia store、i18n 四层必须同波次同步；字段以 API/inventory 契约为准，不在 UI 私自重命名或猜测。
