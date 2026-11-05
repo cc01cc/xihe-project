@@ -315,7 +315,20 @@ public class WorkspaceController {
         return view;
     }
 
-    /** PLAN-0610 W1b (R2-9): capability projection, never the ROLE_ADMIN authority. */
+    /**
+     * PLAN-0610 W1b (R2-9): capability projection, never the ROLE_ADMIN authority.
+     *
+     * <p>PLAN-0651 M3 T3.7 / A2 <b>defer</b> (D51-06, verify V1 whitelist row 13): {@code hostPath}
+     * (and the workspace-relative roots {@code path}) visibility keeps the today's
+     * admin-capability-or-owner rule and is <b>not</b> atomized in this plan. Official reason
+     * (D51-06): exposing host paths is a <b>product behaviour decision</b> ("should an administrator
+     * see the host filesystem path?"), not a permission-refactor step; the rejected alternative —
+     * owner-only — would silently remove an existing administrator capability. Atomizing it here
+     * would be worse: N7 ({@code USE_WORKSPACE_RUNTIME}, the runtime read face) is held by every
+     * workspace role, so reusing it would widen host paths to EDITOR/VIEWER, while a dedicated atom
+     * would be a new product concept outside M3. Deferred to M5/backlog with this row as the single
+     * authoritative residue in the V1 whitelist.
+     */
     private boolean isAdmin() {
         return CapabilityAuthorities.isInstanceAdmin();
     }
