@@ -1518,6 +1518,11 @@ watch(
             :error="approvalError"
             :can-classify="canClassifyApproval"
             :queue-total="sessionPendingApprovals.length"
+            :draft="agentStore.approvalDrafts[pendingApproval?.requestId ?? ''] ?? ''"
+            :resolved-elsewhere="
+                agentStore.resolvedElsewhereRequests[pendingApproval?.requestId ?? ''] === true
+            "
+            @update:draft="agentStore.setApprovalDraft(pendingApproval?.requestId ?? '', $event)"
             @approve="decideApproval"
             @reject="decideApproval"
             @dismiss="handleApprovalDismiss"

@@ -76,6 +76,27 @@ describe("agent store · applyApprovalResolved", () => {
         expect(store.resolvedApprovals["req-3"]?.state).toBe("approved");
     });
 
+    it("keeps the card and the draft when the user had typed feedback (BL-344 class)", () => {
+        const store = useAgentStore();
+        store.addApprovalRequest(pendingApproval("req-draft"));
+        store.setApprovalDraft("req-draft", "这段复核意见不能丢");
+
+        expect(store.applyApprovalResolved({ approvalId: "req-draft", approved: false })).toBe(
+            true,
+        );
+
+        // 卡片留存（不撤），这样用户已输入的内容不会因为"另一页决定了"被清空。
+        expect(store.agentState.pendingApprovals).toHaveLength(1);
+        expect(store.resolvedElsewhereRequests["req-draft"]).toBe(true);
+        expect(store.approvalDrafts["req-draft"]).toBe("这段复核意见不能丢");
+        // tombstone 仍写：后到的 approval_request 重放不会把它变回可提交。
+        expect(store.resolvedApprovals["req-draft"]?.state).toBe("rejected");
+        store.addApprovalRequest(pendingApproval("req-draft"));
+        expect(store.agentState.pendingApprovals).toHaveLength(1);
+        // 无一次性 toast 信号：卡片上有内联提示，不需要再弹一条。
+        expect(store.approvalResolvedElsewhere).toBeNull();
+    });
+
     it("falls back to the wire decision only when the boolean is absent", () => {
         const store = useAgentStore();
         store.addApprovalRequest(pendingApproval("req-4"));

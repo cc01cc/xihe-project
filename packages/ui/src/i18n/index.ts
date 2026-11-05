@@ -183,6 +183,7 @@ const messages = {
             sseReconnectingHint: "其它窗口正在接管，期间数据可能延迟更新，无需操作。",
             sseNoticeRetry: "重试",
             approvalResolvedElsewhere: "这条审批已在其他窗口处理。",
+            approvalResolvedElsewhereDraftKept: "你已经写的内容已保留，可以复制留用；提交已禁用。",
             sseNoticeHelp: "查看帮助",
             panelMembers: "成员",
             panelContext: "会话设置",
@@ -2503,6 +2504,8 @@ const messages = {
                 "Another window is taking over; data may briefly lag. No action needed.",
             sseNoticeRetry: "Retry",
             approvalResolvedElsewhere: "This approval was handled in another window.",
+            approvalResolvedElsewhereDraftKept:
+                "Your draft is kept so you can copy it, but submitting is disabled.",
             sseNoticeHelp: "Learn more",
             panelMembers: "Members",
             panelContext: "Session settings",

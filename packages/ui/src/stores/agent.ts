@@ -94,6 +94,18 @@ export const useAgentStore = defineStore("agent", () => {
 
     /** T3：一次性提示信号（本页因外部决定撤卡时置位，ChatPanel 消费后 toast 并清空）。 */
     const approvalResolvedElsewhere = ref<{ requestId: string; approved: boolean } | null>(null);
+    /**
+     * T3：按 requestId 的反馈草稿（唯一来源）。被决策/撤卡都不清空它，避免"另一页决定"
+     * 顺手把用户正在写的复核意见抹掉（BL-344 同类产品病）。
+     */
+    const approvalDrafts = ref<Record<string, string>>({});
+    /** T3：外部已决但本页**保留**了卡片（因为有草稿）的 requestId 集合。 */
+    const resolvedElsewhereRequests = ref<Record<string, boolean>>({});
+
+    function setApprovalDraft(requestId: string, value: string) {
+        if (!requestId) return;
+        approvalDrafts.value = { ...approvalDrafts.value, [requestId]: value };
+    }
 
     function rememberResolved(request: ApprovalRequest, state: ApprovalRequestState) {
         resolvedApprovals.value[request.requestId] = { ...request, state };
@@ -214,7 +226,23 @@ export const useAgentStore = defineStore("agent", () => {
             typeof payload.approved === "boolean"
                 ? payload.approved
                 : !/reject|deny|denied/i.test(payload.decision ?? "");
-        removeApprovalRequest(requestId, approved ? "approved" : "rejected");
+        const terminalState = approved ? "approved" : "rejected";
+        const existing = agentState.value.pendingApprovals.find(
+            (item) => item.requestId === requestId,
+        );
+        const hasDraft = (approvalDrafts.value[requestId] ?? "").trim().length > 0;
+        if (hasDraft && existing) {
+            // 有草稿 ⇒ **保留卡片**，只把它标成"已在其他窗口处理"：撤卡会连同用户正在写的
+            // 复核意见一起丢掉（BL-344 同一类产品病，不得用"重填"掩盖）。
+            // tombstone 仍写：后到的 approval_request 重放不会把它复活成可提交状态。
+            rememberResolved(existing, terminalState);
+            resolvedElsewhereRequests.value = {
+                ...resolvedElsewhereRequests.value,
+                [requestId]: true,
+            };
+            return true;
+        }
+        removeApprovalRequest(requestId, terminalState);
         approvalResolvedElsewhere.value = { requestId, approved };
         return true;
     }
@@ -449,6 +477,9 @@ export const useAgentStore = defineStore("agent", () => {
         removeApprovalRequest,
         applyApprovalResolved,
         approvalResolvedElsewhere,
+        approvalDrafts,
+        resolvedElsewhereRequests,
+        setApprovalDraft,
         approveTool,
         rejectTool,
         resolveApprovalsForRun,
