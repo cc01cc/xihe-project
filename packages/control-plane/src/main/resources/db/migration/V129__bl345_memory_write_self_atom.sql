@@ -31,6 +31,17 @@ ON CONFLICT (role_id, action_class, resource_pattern) DO NOTHING;
 -- 2. Backfill the materialized `source='role'` grants for existing bindings, so granted subjects get
 --    exactly the atoms their role now defines (one row per subject/atom/scope). Guarded by NOT
 --    EXISTS so a re-run inserts nothing.
+--
+--    Upgrade-path dedupe (BL-366, 2026-11-06): NOT EXISTS only sees rows committed before this
+--    statement, so it cannot de-duplicate rows produced by this same INSERT … SELECT. A subject can
+--    hold more than one tier binding (e.g. instance USER + ADMIN) that both declare these atoms, and
+--    uq_grants_role_atom is an EXPRESSION index on
+--    (subject_type, subject_id, scope_type, scope_id, actionClass, COALESCE(resource,'*'))
+--    ⇒ the second row raises 23505 and the whole upgrade aborts (fresh DBs never see it because
+--    role_bindings is empty there). V91:38-42 documented the same pitfall for its own backfill.
+--    ON CONFLICT DO NOTHING (no target) is used instead of DISTINCT ON: with an expression index the
+--    conflict arbiter would have to repeat the index expression (easy to get wrong); the untargeted
+--    form lets PostgreSQL use uq_grants_role_atom directly.
 INSERT INTO grants (id, granter_type, granter_id, subject_type, subject_id, permissions, source,
                     scope_type, scope_id, read_state)
 SELECT gen_random_uuid(), 'user', b.subject_id, b.subject_type, b.subject_id,
@@ -46,4 +57,5 @@ WHERE rp.action_class IN ('MEMORY_WRITE_SELF', 'MEMORY_WRITE')
         AND g.source = 'role'
         AND g.scope_type = b.scope_type
         AND g.scope_id IS NOT DISTINCT FROM b.scope_id
-        AND g.permissions @> jsonb_build_array(jsonb_build_object('actionClass', rp.action_class)));
+        AND g.permissions @> jsonb_build_array(jsonb_build_object('actionClass', rp.action_class)))
+ON CONFLICT DO NOTHING;

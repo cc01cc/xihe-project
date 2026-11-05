@@ -28,7 +28,8 @@ class SkillReadFaceTest {
      * {@code GRANT_ANY_ATOM} (27 → 28). Frozen here so an added atom has to be an explicit,
      * reviewed decision.
      */
-    private static final int BUILTIN_ACTION_CLASS_COUNT = 28;
+    // BL-345/V129 (2026-11-06) added MEMORY_WRITE_SELF (28 → 29); keep in sync with the catalog.
+    private static final int BUILTIN_ACTION_CLASS_COUNT = 29;
 
     @Test
     void skillReadResolvesToTheExistingReadFace() {
