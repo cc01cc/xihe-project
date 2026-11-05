@@ -226,14 +226,25 @@ class AgentPrincipalVisibilityContractTest extends AbstractIntegrationTest {
 
         // D-174: the authority is owner-or-N1; a workspace administrator is NOT enough (recorded
         // tightening: one workspace's manage right never reaches other workspaces' shared rows).
+        //
+        // D-196 / BL-336 (2026-11-06): a row with no owning user is *workspace-scoped*, so this call
+        // now needs an explicit workspace context to get past the scope-aware 409 gate — otherwise the
+        // assertion below would be satisfied by the context check instead of by the authority check.
+        // The actor is a plain MEMBER of that workspace and holds no MANAGE_WORKSPACE_AGENTS, so the
+        // D-206 workspace channel is not satisfied either: 403 is still the correct answer.
         User wsAdmin = newUser("disable-authority-wsadmin");
         grantDefaultService.ensureUserDefault(wsAdmin);
+        Workspace shared = workspaceFixture.createOwnedWorkspace(
+                "disable-authority shared ws", owner.getId().toString());
+        workspaceFixture.bindWorkspaceRole(shared.getId(), wsAdmin.getId(), WorkspaceRole.MEMBER);
         UUID ownerless = createInstancePrincipal(owner);
         assertFalse(ownerless.toString().isEmpty());
         ResponseEntity<Map> wsAdminDenied = exchange(HttpMethod.POST,
-                "/api/v1/agent-principals/" + ownerless + "/disable", globalToken(wsAdmin), null);
+                "/api/v1/agent-principals/" + ownerless + "/disable", globalToken(wsAdmin), null,
+                shared.getId());
         assertEquals(HttpStatus.FORBIDDEN, wsAdminDenied.getStatusCode(),
                 String.valueOf(wsAdminDenied.getBody()));
+        assertEquals("AGENT_PRINCIPAL_OWNER_MISMATCH", wsAdminDenied.getBody().get("code"));
         assertNull(principalRepository.findById(ownerless).orElseThrow().getDisabledAt());
     }
 
@@ -494,9 +505,18 @@ class AgentPrincipalVisibilityContractTest extends AbstractIntegrationTest {
     }
 
     private ResponseEntity<Map> exchange(HttpMethod method, String path, String token, Object body) {
+        return exchange(method, path, token, body, null);
+    }
+
+    /** Same, with an explicit {@code X-Workspace-Id} — required by workspace-scoped subjects (D-196). */
+    private ResponseEntity<Map> exchange(HttpMethod method, String path, String token, Object body,
+                                         UUID workspaceContext) {
         HttpHeaders headers = new HttpHeaders();
         headers.setBearerAuth(token);
         headers.setContentType(MediaType.APPLICATION_JSON);
+        if (workspaceContext != null) {
+            headers.set("X-Workspace-Id", workspaceContext.toString());
+        }
         return restTemplate.exchange(url(path), method, new HttpEntity<>(body, headers), Map.class);
     }
 }
