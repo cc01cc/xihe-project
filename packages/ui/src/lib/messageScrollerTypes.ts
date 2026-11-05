@@ -57,6 +57,16 @@ export interface MessageScrollerProviderProps {
     scrollEdgeThreshold?: number;
     scrollPreviousItemPeek?: number;
     scrollMargin?: number;
+    /**
+     * BL-316 第二步：当内容 DOM 是**投影**（虚拟窗口只渲染窗口内的行）时，声明底层完整条目数
+     * （`MessageList` 传 `rows.length`）。不传 = 不是投影，行为与改造前逐字一致。
+     *
+     * 用途：区分「窗口换页」与「新消息到达」。窗口换页时 DOM 子节点的首行与末行都会变，
+     * 但**底层条目数不变**；据此可以判定这次变化不携带新数据，从而跳过后面的
+     * `getNewScrollAnchor` / `scrollToElement`（那条路径会把正在上滚的用户拽回底部）。
+     * 这是**显式声明的事实**（数据层行数），不是从 DOM 猜测 itemCount 差值。
+     */
+    sourceItemCount?: number;
 }
 
 export interface MessageScrollerViewportProps {

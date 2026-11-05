@@ -18,6 +18,8 @@ const { context, registerMessage } = useMessageScrollerController({
     scrollEdgeThreshold: props.scrollEdgeThreshold,
     scrollPreviousItemPeek: props.scrollPreviousItemPeek,
     scrollMargin: props.scrollMargin,
+    // BL-316 第二步：用 getter 传，内容变化时要读到**最新**的声明行数（props 是响应式的）。
+    projectedItemCount: () => props.sourceItemCount,
 });
 
 provide(MessageScrollerContextKey, context);
