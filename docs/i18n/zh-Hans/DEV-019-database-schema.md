@@ -453,6 +453,29 @@ erDiagram
 > PLAN-0660 `evidence/m5-g1-gate.md` §2），故 V112 **未**新增表达式索引。推进端点 `PATCH …/participants/{id}/cursor`
 > 语义（advance-only + clamp + self-only）见 [_inventory.md_](../../api/inventory.md)。
 
+### 3.2c 用户问答（user_questions，PLAN-0660 T5.8 / V128）
+
+| 列 | 类型 | 约束 | 说明 |
+|---|---|---|---|
+| id | UUID | PK | — |
+| session_id | UUID | NOT NULL，FK `sessions(id)` `ON DELETE CASCADE` | 发起上下文；**不落 workspace_id**（0647 后 session 可无 workspace，join 可得） |
+| run_id | UUID | NOT NULL，FK `chat_runs(id)` `ON DELETE CASCADE` | 等待回答的那个 run（与 `approval_requests.run_id` 同口径） |
+| asked_by_participant_id | UUID | nullable，FK `session_participants(id)` `ON DELETE SET NULL` | 代问的 agent 参与者行 |
+| addressee_user_id | UUID | NOT NULL，FK `users(id)`（NO ACTION） | 唯一有作答权的人，也是唯一可能收到 hint 的人 |
+| prompt | TEXT | NOT NULL | 问题正文；**无任何索引**（正文不得成为可检索面），不进日志/审计/problem detail |
+| state | TEXT | NOT NULL，CHECK ∈ `pending/answered/expired/cancelled` | 唯一状态真相 |
+| expires_at | TIMESTAMPTZ | nullable | NULL = `ask`（阻塞等，deadline 归 Agent）；非空 = `askTimed` |
+| answer | TEXT | nullable | 仅 `pending → answered` 写入；无索引 |
+| created_at | TIMESTAMPTZ | NOT NULL DEFAULT NOW() | 提问时间 |
+| first_delivered_at | TIMESTAMPTZ | nullable | hint 首次交给用户通道；NULL = 尚未投递 |
+| settled_at | TIMESTAMPTZ | nullable | 到达终态的时间 |
+
+> 索引：`idx_user_questions_addressee_pending (addressee_user_id, created_at DESC) WHERE state='pending'`（投影主查询与 `pendingCount`）；`idx_user_questions_session_created (session_id, created_at)`（会话可见者读投影）；`uq_user_questions_run_pending (run_id) WHERE state='pending'`（一 run 至多一个未决问句，已结算行不阻塞下一次提问）。
+>
+> Entity `entity/UserQuestion.java` + `repository/UserQuestionRepository.java`（T5.8 只做持久化，状态机 CAS 归 T5.9）。契约清单见 [`spec/session/user-channel.md`](../../../spec/session/user-channel.md) §6。
+>
+> 未落 DDL 的口径：跨表的「一 run 至多一个未决 human interaction（问答 ∩ 审批）」由服务层 CAS + 409 保证；正文长度上限（≤2000 字符）在 writer；`answer` 与 `state` 的配对由单一路径保证（如需 DB 兜底见 SPEC §6 第 3 条）。回滚：`DROP TABLE user_questions;`。
+
 ### 3.3 Workspace 执行（workspace_execution_specs / workspace_lifecycle_operations）
 
 **workspace_execution_specs**（`V1` 内建；旧链溯源：旧 V11 建 `workspace_assignments`、旧 V12 加唯一、旧 V13 重命名；Entity `entity/WorkspaceExecutionSpec.java`）：期望执行规格（非调度绑定，旧 V13 注释原名误导已纠正）。
