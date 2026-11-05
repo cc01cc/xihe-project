@@ -12,10 +12,15 @@
  * Report-only: exit code is always 0 so it can be observed before it ever blocks a lane.
  *
  * Usage:
- *   node scripts/check-ui-inplace-mutation.mjs                 # scan the repo
- *   node scripts/check-ui-inplace-mutation.mjs --json          # {findings,count,reportOnly:true}
+ *   node scripts/check-ui-inplace-mutation.mjs                 # scan the repo (stores out of scope)
+ *   node scripts/check-ui-inplace-mutation.mjs --json          # {findings,count,reportOnly:true,scope}
  *   node scripts/check-ui-inplace-mutation.mjs --root <dir>    # scan another root (tests)
  *   node scripts/check-ui-inplace-mutation.mjs --file <path>   # scan one file (tests/debug)
+ *   node scripts/check-ui-inplace-mutation.mjs --include-stores # also scan `stores/**` (BL-365 migration)
+ *
+ * Coverage is part of the result: the default scope **skips `stores/**`**, so "0 findings" does NOT
+ * mean "no in-place writes in the store layer" — BL-365's 48 store-side sites were only visible via
+ * `--include-stores` / `--file`. The `scope` field in `--json` and the summary line state this.
  *
  * Exit codes: always 0 (report-only); usage problems print help and still exit 0.
  */
@@ -28,6 +33,8 @@ const DEFAULT_ROOT = path.resolve(SELF_DIR, '..');
 const TARGETS = ['agent', 'row', 'item', 'record', 'session', 'message', 'file'];
 const ASSIGN = new RegExp(`\\b(${TARGETS.join('|')})\\.(?!value\\b)\\w+\\s*=(?!=|>)`);
 const SKIP_DIR = new Set(['__tests__', 'stores', 'node_modules', 'dist', 'coverage']);
+/** BL-365: `--include-stores` widens the scope to the store layer (still skips tests/build dirs). */
+const SKIP_DIR_WITH_STORES = new Set([...SKIP_DIR].filter((dir) => dir !== 'stores'));
 const DECL = /^\s*(?:const|let|var)\s/;
 
 /** Keep this list shrinking-only: each entry needs a reason and is excluded by path+line. */
@@ -35,10 +42,10 @@ const ALLOWLIST = [
   // { file: 'packages/ui/src/...', line: 123, reason: '...' },
 ];
 
-function walk(dir, out = []) {
+function walk(dir, out = [], skip = SKIP_DIR) {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
     if (entry.isDirectory()) {
-      if (!SKIP_DIR.has(entry.name)) walk(path.join(dir, entry.name), out);
+      if (!skip.has(entry.name)) walk(path.join(dir, entry.name), out, skip);
     } else if (/\.(vue|ts|tsx|js|mjs)$/.test(entry.name) && !/\.(spec|test)\./.test(entry.name)) {
       out.push(path.join(dir, entry.name));
     }
@@ -67,19 +74,26 @@ function main(argv) {
   const root = path.resolve(arg('--root') ?? DEFAULT_ROOT);
   const single = arg('--file');
   const json = argv.includes('--json');
+  const includeStores = argv.includes('--include-stores');
+  const scope = includeStores
+    ? 'packages/ui/src (incl. stores/**)'
+    : 'packages/ui/src (excl. stores/**)';
   let findings = [];
   if (single) {
     findings = scanFile(path.resolve(single), root);
   } else if (fs.existsSync(path.join(root, 'packages/ui/src'))) {
     const src = path.join(root, 'packages/ui/src');
-    for (const file of walk(src)) findings.push(...scanFile(file, root));
+    const skip = includeStores ? SKIP_DIR_WITH_STORES : SKIP_DIR;
+    for (const file of walk(src, [], skip)) findings.push(...scanFile(file, root));
   }
 
   if (json) {
-    process.stdout.write(`${JSON.stringify({ findings, count: findings.length, reportOnly: true })}\n`);
+    process.stdout.write(
+      `${JSON.stringify({ findings, count: findings.length, reportOnly: true, scope })}\n`,
+    );
   } else {
     for (const f of findings) process.stdout.write(`[ui-inplace] ${f.file}:${f.line} ${f.code}\n`);
-    process.stdout.write(`${findings.length} finding(s) — report only (exit 0)\n`);
+    process.stdout.write(`${findings.length} finding(s) — report only (exit 0), scope: ${scope}\n`);
   }
   process.exitCode = 0;
 }

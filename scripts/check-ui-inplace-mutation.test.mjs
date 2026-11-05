@@ -59,3 +59,31 @@ test('stores and test directories are out of scope', () => {
   const out = run(root, '--json');
   assert.equal(JSON.parse(out.stdout).count, 0);
 });
+
+test('--include-stores widens the scope to the store layer and says so', () => {
+  const root = fixture({
+    'packages/ui/src/stores/chat.ts': 'message.runStatus = "succeeded";\n',
+    'packages/ui/src/components/panel.vue': 'agent.contextPolicy = merged;\n',
+  });
+  const def = JSON.parse(run(root, '--json').stdout);
+  assert.equal(def.count, 1, JSON.stringify(def.findings)); // 默认口径看不到 store
+  assert.match(def.scope, /excl\. stores/);
+
+  const wide = JSON.parse(run(root, '--include-stores', '--json').stdout);
+  assert.equal(wide.count, 2, JSON.stringify(wide.findings)); // 带参数才扫到 stores/**
+  assert.match(wide.scope, /incl\. stores/);
+  assert.ok(
+    wide.findings.some((f) => f.file.endsWith('stores/chat.ts')),
+    JSON.stringify(wide.findings),
+  );
+});
+
+test('--include-stores still skips test files and reports scope in text mode', () => {
+  const root = fixture({
+    'packages/ui/src/stores/chat.ts': 'message.error = detail;\n',
+    'packages/ui/src/__tests__/x.spec.ts': 'agent.contextPolicy = merged;\n',
+  });
+  const out = run(root, '--include-stores');
+  assert.equal(out.status, 0);
+  assert.match(out.stdout, /1 finding\(s\) — report only \(exit 0\), scope: .*incl\. stores/);
+});
