@@ -43,6 +43,7 @@ import java.time.Instant;
 import java.util.Comparator;
 import java.util.List;
 import java.util.LinkedHashSet;
+import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 
@@ -932,12 +933,55 @@ public class AgentPrincipalService {
         }
     }
 
+    /**
+     * BL-331 / D-206 (方案 A, 2026-11-05 user ruling): who may <b>change</b> an existing agent principal.
+     *
+     * <p>Three disjoint grants, evaluated as a <b>union</b> — none replaces another:</p>
+     * <ol>
+     *   <li><b>instance override</b> — a holder of {@code MANAGE_AGENT_PRINCIPALS} (N1) may manage any
+     *       principal, in any workspace. This is the cross-workspace channel and stays exactly as
+     *       before (not a replacement for the workspace channel below);</li>
+     *   <li><b>legacy owner</b> — {@code agent_principals.owner_user_id} still authorizes its own row
+     *       (PLAN-0622 rows). D-174 stopped writing the column, so this is a historical path only;</li>
+     *   <li><b>workspace management</b> — an actor holding {@code MANAGE_WORKSPACE_AGENTS} in a
+     *       workspace that <b>binds</b> this principal may manage it. This is the D-206 addition and it
+     *       puts {@code disable}/{@code PATCH} in the same family as {@code setWorkspaceCap} /
+     *       {@code unbindWorkspace}: a workspace that owns the binding also owns the lifecycle write.
+     *       Before it, a workspace-scope principal (owner column null by design) could only be changed
+     *       by an instance administrator — the P1 gap BL-331 recorded.</li>
+     * </ol>
+     *
+     * <p>Deliberately <b>not</b> here: any {@code owner_user_id} snapshot write (方案 C was rejected)
+     * and any change to "owner = workspace" semantics; the gate order stays
+     * context (409) → existence (404) → authority (403) as ratified in D22.</p>
+     */
     private void requireDisableAuthority(UUID actorId, AgentPrincipal principal) {
-        if (actorId.equals(principal.getOwnerUserId()) || holdsAgentPrincipalManagementAtom(actorId)) {
+        if (holdsAgentPrincipalManagementAtom(actorId)) {
+            // (1) instance override channel
             return;
         }
+        if (actorId.equals(principal.getOwnerUserId())) {
+            // (2) legacy owned row
+            return;
+        }
+        for (UUID workspaceId : boundWorkspaceIds(principal.getId())) {
+            // (3) the workspace that binds this principal manages it through its own atom
+            if (requesterAuthority.holdsActionAtom(actorId,
+                    ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_AGENTS, workspaceId)) {
+                return;
+            }
+        }
         throw new CpApiException(HttpStatus.FORBIDDEN, "AGENT_PRINCIPAL_OWNER_MISMATCH",
-                "Only the owner or a holder of MANAGE_AGENT_PRINCIPALS may change this agent principal");
+                "Only the owner, a holder of MANAGE_AGENT_PRINCIPALS, or an administrator of a "
+                        + "workspace that binds this agent principal may change it");
+    }
+
+    /** The workspaces whose {@code workspace_agents} row binds this principal (D-206 authority set). */
+    private List<UUID> boundWorkspaceIds(UUID principalId) {
+        return workspaceAgentRepository.findByIdPrincipalId(principalId).stream()
+                .map(binding -> binding.getId().getWorkspaceId())
+                .filter(Objects::nonNull)
+                .toList();
     }
 
     private void requireUser(UUID userId) {

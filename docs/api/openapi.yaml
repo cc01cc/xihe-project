@@ -720,10 +720,11 @@ paths:
         PLAN-0622 M1 + D-174 (tier removed): disabling is terminal for new Sessions
         and writes the durable audit `agent_principal_disabled`; the row itself is
         never deleted (FK ON DELETE RESTRICT keeps historical references intact).
-        The authority is now **owner-or-N1**: the row's `owner_user_id` (legacy
-        owned rows) or a holder of the instance-tier `MANAGE_AGENT_PRINCIPALS`
-        may disable; a single Workspace's management right never reaches shared
-        rows across Workspaces (workspace-level removal stays `unbind`).
+        The authority is **owner-or-N1-or-workspace**: the row's `owner_user_id` (legacy
+        owned rows), a holder of the instance-tier `MANAGE_AGENT_PRINCIPALS`, **or** an actor holding
+        `MANAGE_WORKSPACE_AGENTS` in a workspace that **binds** this principal (BL-331 / D-206, same
+        family as the cap `PUT`/`DELETE` faces — a workspace that owns the binding owns the lifecycle
+        write). A single Workspace's management right still never reaches principals it does not bind.
 
         **Gate order (BL-326 / D22, 2026-11-05 Lead ruling)**: explicit workspace context
         (`409 WORKSPACE_CONTEXT_REQUIRED`) → existence (`404 AGENT_PRINCIPAL_NOT_FOUND`) →
@@ -746,9 +747,10 @@ paths:
       description: |
         PLAN-0625 M2 (D25-14) + PLAN-0629 M1 (D29-21) + D-174: there is no separate `/hooks` or
         `/context-policy` sub-resource — the principal's own update surface accepts the
-        subject-level documents, so the same **owner-or-N1** authority that guards `disable` is
-        reused verbatim (the row's `owner_user_id` or a holder of the instance-tier
-        `MANAGE_AGENT_PRINCIPALS`; a Workspace management right alone is not enough).
+        subject-level documents, so the same **owner-or-N1-or-workspace** authority that guards
+        `disable` is reused verbatim (the row's `owner_user_id`, a holder of the instance-tier
+        `MANAGE_AGENT_PRINCIPALS`, or `MANAGE_WORKSPACE_AGENTS` in a workspace that binds this
+        principal — BL-331 / D-206; a workspace right still does not reach principals it never binds).
 
         The body is `{hooks?, contextPolicy?}` with `additionalProperties:false`: at least
         one key is required, any other key is a 400 `INVALID_REQUEST`, and an explicit
