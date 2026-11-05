@@ -195,6 +195,26 @@ describe("useChatStore", () => {
         expect(store.getStreamingMessageId("s1")).toBe(messageId);
     });
 
+    // BL-365 结构性护栏：终态收尾**不得就地改写**既有的消息数组/对象。
+    // 这类就地写是 BL-359 测试污染的结构性根因（夹具/共享对象被改后，后续用例看到脏数据）。
+    // 现在它守的是"未来谁把 .filter() 改成 .splice()"这一种回归，不需要先做不可变重构。
+    it("BL-365: 内部流错误清理不就地修改既有消息数组与对象", () => {
+        const store = useChatStore();
+        store.createStreamingMessage("s1");
+
+        const beforeList = store.getMessages("s1");
+        const beforeMessage = beforeList[0];
+        const snapshot = JSON.parse(JSON.stringify(beforeMessage)); // 不能 structuredClone：Vue 响应式 proxy 不可克隆
+
+        // 无内容 + 内部流错误码 ⇒ 走"删气泡"清理路径（chat.ts 的 INTERNAL_STREAM_ERROR_CODES 分支）。
+        store.markStreamingError("s1", { code: "AGENT_STREAM_FAILED", detail: "boom" });
+
+        expect(store.getMessages("s1")).toHaveLength(0);
+        expect(beforeList).toHaveLength(1); // 旧数组未被 splice/shift 就地清空
+        expect(beforeList[0]).toBe(beforeMessage); // 旧元素引用仍在原位
+        expect(beforeMessage).toEqual(snapshot); // 旧对象字段也未被改写
+    });
+
     it("keeps a tool-only message when the stream fails", () => {
         const store = useChatStore();
         store.createStreamingMessage("s1");
