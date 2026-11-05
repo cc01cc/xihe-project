@@ -19,6 +19,20 @@ import {
 import type { EventSourceMessage } from "@microsoft/fetch-event-source";
 import type { ChatRunResponse, Diagnostic, DiagnosticsBundle, ToolCall } from "../../../../types";
 
+/**
+ * BL-306: per-tab SSE connection instance (in-memory **only** — never sessionStorage:
+ * a duplicated tab copies sessionStorage and would then share one server-side entry).
+ * Stable across reconnects within this tab so the server replaces the same entry instead of
+ * leaking a new one on every retry.
+ */
+const SSE_CONNECTION_ID = (() => {
+    const cryptoObject = globalThis.crypto;
+    if (cryptoObject && typeof cryptoObject.randomUUID === "function") {
+        return cryptoObject.randomUUID();
+    }
+    return `sse-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+})();
+
 interface LangChainTextBlock {
     type: string;
     text?: string;
@@ -775,11 +789,15 @@ export function useSSE(sessionId: MaybeRefOrGetter<string>) {
         activeApprovalEpoch = agentStore?.getApprovalEpoch(currentSessionId) ?? null;
 
         const url = `/api/v1/events?sessionId=${encodeURIComponent(currentSessionId)}`;
+        const headers = {
+            ...apiAuthHeaders(undefined, false),
+            "X-XH-SSE-Connection-Id": SSE_CONNECTION_ID,
+        };
 
         chatTransport
             .sendMessages(currentSessionId, {
                 url,
-                headers: apiAuthHeaders(undefined, false),
+                headers,
                 onopen: () => {
                     if (generation !== connectionGeneration) return;
                     isConnected.value = true;

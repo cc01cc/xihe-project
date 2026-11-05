@@ -410,7 +410,9 @@ public class ChatController {
     @PreAuthorize("isAuthenticated()")
     @GetMapping(path = "/api/v1/events", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public SseEmitter events(@RequestParam(name = "sessionId") String sessionId,
-                             @RequestParam(name = "asParticipantId", required = false) String asParticipantId) {
+                             @RequestParam(name = "asParticipantId", required = false) String asParticipantId,
+                             @RequestHeader(name = "X-XH-SSE-Connection-Id", required = false)
+                             String connectionId) {
         if (sessionId == null || sessionId.isBlank()) {
             throw new com.cc01cc.p.xihe.cp.config.CpApiException(
                     HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "sessionId is required");
@@ -427,7 +429,7 @@ public class ChatController {
         if (declaredView != null) {
             sessionParticipantService.authorizeAsParticipant(userId, workspaceId, sessionId, declaredView);
         }
-        SseEmitter emitter = sseManager.createEmitter(sessionId, declaredView);
+        SseEmitter emitter = sseManager.createEmitter(sessionId, declaredView, connectionId);
         sseManager.send(sessionId, "connected", Map.of("sessionId", sessionId, "type", "connected"));
         for (Map<String, Object> approval : approvalService.replayPending(sessionId, userId, workspaceId)) {
             sseManager.send(sessionId, "approval_request", approval);
