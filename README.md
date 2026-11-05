@@ -168,6 +168,7 @@ The supervisor's order is the product contract, not a preference: PostgreSQL mus
 mise run validate             # lint + typecheck + build + test (+ e2e fixture self-tests)
 mise run validate:full        # adds integration and E2E (needs Docker); compose E2E itself is frozen
 mise run test:e2e:fixtures    # e2e fixture self-tests only (fake LLM chain state machine; no stack, seconds)
+mise run ledger:validate      # read-only ledger (BL/PLAN) validation; run from the ONE workspace root; report-only
 mise run test:e2e:host        # host E2E: stop dev:host first (DEV-002 §5); each round uses an isolated environment
 ```
 

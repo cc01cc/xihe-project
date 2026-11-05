@@ -159,6 +159,9 @@ mise run test:runtime
 # e2e fixture self-tests (fake LLM chain state machine; no stack, seconds) — part of `validate`
 mise run test:e2e:fixtures
 
+# read-only ledger (BL/PLAN) validation, run from the ONE workspace root; report-only (not part of `validate`)
+mise run ledger:validate
+
 # [FROZEN 2026-10-07 — do not run; use dev:host for daily development]
 mise run test:e2e:compose
 mise run validate:full
