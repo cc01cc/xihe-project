@@ -989,6 +989,9 @@ public class ChatSubmissionService {
         } catch (DataIntegrityViolationException e) {
             throw admissionConflict(e);
         }
+        // BL-354: derived runs with a NULL principal stay readable (log-only; see class doc for why
+        // this is not a hard failure — continuation NULL is pre-existing accepted semantics).
+        RunPrincipalStampDiagnostics.logIfDerivedNull(logger, chatRun);
 
         Message userMessage = new Message(sessionId, MessageRole.USER, content);
         // PLAN-0630 M5b / D3: the wake instruction is model input, not a user-facing turn.

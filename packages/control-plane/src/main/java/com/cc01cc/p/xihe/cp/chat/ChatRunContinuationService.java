@@ -166,6 +166,9 @@ class ChatRunContinuationService {
             throw new CpApiException(HttpStatus.CONFLICT, "IDEMPOTENCY_KEY_REUSED",
                     "Idempotency-Key already belongs to a different ChatRun", e);
         }
+        // BL-354: a continuation of a human-responder source inherits NULL by accepted semantics;
+        // log it (run_principal_stamp) instead of silently degrading, and never fail here.
+        RunPrincipalStampDiagnostics.logIfDerivedNull(logger, child);
 
         if (ChatRunContinuationRequest.APPEND_USER_TURN.equals(request.mode())) {
             Message userMessage = new Message(source.getSessionId(), MessageRole.USER, request.content());
