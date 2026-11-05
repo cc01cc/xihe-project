@@ -1,12 +1,15 @@
 package com.cc01cc.p.xihe.cp.event;
 
+import com.cc01cc.p.xihe.cp.config.AccessTokenAuthenticator;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.config.ProblemDetailsHandler;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
@@ -23,20 +26,27 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 public class UserChannelController {
 
     private final UserChannelSseManager channel;
+    private final AccessTokenAuthenticator tokenAuthenticator;
 
-    public UserChannelController(UserChannelSseManager channel) {
+    public UserChannelController(UserChannelSseManager channel, AccessTokenAuthenticator tokenAuthenticator) {
         this.channel = channel;
+        this.tokenAuthenticator = tokenAuthenticator;
     }
 
     @GetMapping(path = "/api/v1/user-events", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     @PreAuthorize("isAuthenticated()")
-    public ResponseEntity<?> subscribe() {
+    public ResponseEntity<?> subscribe(@RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false)
+                                       String authorization) {
         String userId = TenantContext.getUserId();
-        if (userId == null || userId.isBlank()) {
+        String token = authorization != null && authorization.startsWith("Bearer ")
+                ? authorization.substring(7) : null;
+        var authenticated = tokenAuthenticator.authenticate(token);
+        if (userId == null || userId.isBlank() || authenticated.isEmpty()
+                || !userId.equals(authenticated.get().userId())) {
             return ProblemDetailsHandler.missingPrincipal("Authentication required");
         }
         try {
-            SseEmitter emitter = channel.register(userId);
+            SseEmitter emitter = channel.register(userId, authenticated.get().tokenVersion());
             return ResponseEntity.ok(emitter);
         } catch (CpApiException e) {
             return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
