@@ -20,7 +20,7 @@
  */
 import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
-import { ApiError, api } from "../../../composables/api";
+import { ApiError, PARTICIPANT_CURSOR_ADVANCE_TO_LATEST, api } from "../../../composables/api";
 import ParticipantRow from "./ParticipantRow.vue";
 import { useSessionParticipantsStore } from "../stores/sessionParticipants";
 import type {
@@ -47,13 +47,18 @@ const loading = computed(() => store.loading);
 const forbidden = computed(() => store.forbidden);
 const error = computed(() => store.error);
 
-/** 改策略/移除的失败：留在列表内提示，不摧毁列表。 */
-const policyError = ref("");
+/**
+ * 行内动作（改策略 / 移除 / 推进已读游标）的失败：留在列表内提示，不摧毁列表：
+ * 一旦换成错误页，用户就看不到自己刚操作的那一行的旧值了。
+ */
+const actionError = ref("");
 
 /** store 的 load 由 sessionId 变化驱动（面板与 composer 共用同一份数据）。 */
 watch(() => props.sessionId, load, { immediate: true });
 const removingId = ref<string | null>(null);
 const savingId = ref<string | null>(null);
+/** PLAN-0660 T5.6：游标 PATCH 在途的行（避免重复提交）。 */
+const advancingId = ref<string | null>(null);
 
 const emit = defineEmits<{
     /** `@` 提及：把 `@displayName` 插到输入框（发送路径由父级接线，面板不发消息）。 */
@@ -73,16 +78,49 @@ async function updatePolicy(
 ): Promise<void> {
     if (!props.sessionId || !capabilities.value.manage || savingId.value) return;
     savingId.value = participant.participantId;
-    policyError.value = "";
+    actionError.value = "";
     try {
         await api.updateSessionParticipant(props.sessionId, participant.participantId, change);
         await store.reload();
     } catch (cause) {
         // PRIMARY 不可改 / 其它 4xx：显示本地化提示，行内下拉仍显示旧值（props 未变）。
-        policyError.value = policyErrorMessage(cause);
+        actionError.value = policyErrorMessage(cause);
     } finally {
         savingId.value = null;
     }
+}
+
+/**
+ * PLAN-0660 T5.6：把**本人**的已读游标推进到服务端允许的最新位置。
+ *
+ * 上限不在这里算：请求带 `PARTICIPANT_CURSOR_ADVANCE_TO_LATEST`，CP 负责 advance-only + 夹取
+ * 到会话最大 sequence；成功后**直接采用响应里的 `readCursor`**（不再额外 `reload()`）——
+ * 徽标立刻归零，且不会因为一次点击重拉整份名单。失败只用本地化文案提示，行内数据保持原样。
+ */
+async function advanceCursor(participant: SessionParticipantView): Promise<void> {
+    if (!props.sessionId || advancingId.value) return;
+    advancingId.value = participant.participantId;
+    actionError.value = "";
+    try {
+        const cursor = await api.advanceParticipantCursor(
+            props.sessionId,
+            participant.participantId,
+            PARTICIPANT_CURSOR_ADVANCE_TO_LATEST,
+        );
+        store.applyCursor(participant.participantId, cursor);
+    } catch (cause) {
+        // `403 CURSOR_SELF_ONLY`（行不属于调用者）必须可读；其它失败给通用提示，不直显英文 detail。
+        actionError.value = cursorErrorMessage(cause);
+    } finally {
+        advancingId.value = null;
+    }
+}
+
+/** CP 错误码 → 本地化文案（游标推进）。 */
+function cursorErrorMessage(cause: unknown): string {
+    const code = cause instanceof ApiError ? cause.problem.code : "";
+    if (code === "CURSOR_SELF_ONLY") return t("workspace.participantCursorSelfOnly");
+    return t("workspace.participantCursorAdvanceFailed");
 }
 
 /** CP 错误码 → 本地化提示；不直显英文 detail。 */
@@ -101,13 +139,13 @@ function policyErrorMessage(cause: unknown): string {
 async function removeParticipant(participant: SessionParticipantView): Promise<void> {
     if (!props.sessionId || !capabilities.value.manage || removingId.value) return;
     removingId.value = participant.participantId;
-    policyError.value = "";
+    actionError.value = "";
     try {
         await api.removeSessionParticipant(props.sessionId, participant.participantId);
         await store.reload();
     } catch (cause) {
         // 移除失败同样留在列表里提示，不把列表换成错误页。
-        policyError.value = cause instanceof ApiError ? cause.message : String(cause);
+        actionError.value = cause instanceof ApiError ? cause.message : String(cause);
     } finally {
         removingId.value = null;
     }
@@ -152,13 +190,13 @@ async function removeParticipant(participant: SessionParticipantView): Promise<v
             {{ t("workspace.participantsEmptyNone") }}
         </p>
         <template v-else>
-            <!-- 改策略失败：**留在列表里**提示，不把整个列表换成错误页（否则用户看不到旧值）。 -->
+            <!-- 行内动作失败：**留在列表里**提示，不把整个列表换成错误页（否则用户看不到旧值）。 -->
             <p
-                v-if="policyError"
+                v-if="actionError"
                 class="mb-2 break-all text-destructive"
                 data-testid="participants-error-detail"
             >
-                {{ policyError }}
+                {{ actionError }}
             </p>
             <ul class="space-y-1.5" data-testid="participants-list">
                 <ParticipantRow
@@ -169,9 +207,11 @@ async function removeParticipant(participant: SessionParticipantView): Promise<v
                     :can-mention="capabilities.mention"
                     :removing="removingId === participant.participantId"
                     :saving="savingId === participant.participantId"
+                    :advancing="advancingId === participant.participantId"
                     @remove="removeParticipant"
                     @mention="emit('mention', $event)"
                     @policy="updatePolicy"
+                    @advance-cursor="advanceCursor"
                 />
             </ul>
         </template>

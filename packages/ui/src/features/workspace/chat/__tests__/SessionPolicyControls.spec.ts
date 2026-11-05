@@ -4,6 +4,7 @@ import { createPinia, setActivePinia } from "pinia";
 import SessionPolicyControls from "../components/SessionPolicyControls.vue";
 import { i18n } from "../../../../i18n";
 import { ApiError, api } from "../../../../composables/api";
+import { useAuthStore } from "../../../../stores/auth";
 import type * as apiModule from "../../../../composables/api";
 
 const { toastSuccess } = vi.hoisted(() => ({
@@ -124,6 +125,92 @@ describe("SessionPolicyControls", () => {
         expect(api.setPolicyMode).toHaveBeenCalledTimes(2);
         expect(api.setPolicyMode).toHaveBeenLastCalledWith(SESSION_ID, "auto");
         expect(toastSuccess).toHaveBeenCalled();
+        wrapper.unmount();
+    });
+});
+
+/**
+ * BL-311：VIEWER 只读工作区里，policy/mode 的**写入口**必须在点击前就不可用（不是点了才吃
+ * 403 `WORKSPACE_READ_ONLY`），而模式**状态仍要可读**。判定源是既有投影 `auth.canWriteWorkspace`
+ * （`stores/auth.ts:96-98` = CP `WorkspaceView.canWrite`，旧响应回退 `workspaceRole !== "VIEWER"`）。
+ * CP 守卫与 BL-309 的 403/404 契约不变 —— 前端只是 affordance。
+ */
+describe("SessionPolicyControls read-only workspace (BL-311)", () => {
+    function seedWorkspace(workspace: { workspaceRole?: string; canWrite?: boolean }) {
+        useAuthStore().$patch({
+            workspace: { id: "workspace-1", name: "Workspace", ...workspace },
+        });
+    }
+
+    it("keeps the mode readable but not operable for a VIEWER", async () => {
+        seedWorkspace({ workspaceRole: "VIEWER" });
+        vi.mocked(api.getPolicyMode).mockResolvedValue({
+            sessionId: SESSION_ID,
+            mode: "auto",
+            sessionRules: 0,
+        });
+        const wrapper = mountControls();
+        await flushPromises();
+
+        const select = wrapper.get('[data-testid="session-policy-mode"]');
+        expect(
+            select.attributes("disabled"),
+            "write entry point disabled before click",
+        ).toBeDefined();
+        // 状态仍可读：下拉值仍是服务端返回的 auto，旁边给出只读原因。
+        expect((select.element as HTMLSelectElement).value).toBe("auto");
+        expect(select.attributes("title")).toBe(i18n.global.t("workspace.viewerReadOnly"));
+        expect(wrapper.get('[data-testid="session-policy-mode-readonly"]').text()).toBe(
+            i18n.global.t("workspace.viewerReadOnly"),
+        );
+
+        // 改值也不产生写请求（后继若把 `disabled` 去掉，这里会变成红：见组件内的早退守卫）。
+        (select.element as HTMLSelectElement).value = "manual";
+        await select.trigger("change");
+        await flushPromises();
+        expect(api.setPolicyMode, "read-only must not attempt a write").not.toHaveBeenCalled();
+        wrapper.unmount();
+    });
+
+    it("treats CP's canWrite=false as read-only even when the role string says EDITOR", async () => {
+        seedWorkspace({ workspaceRole: "EDITOR", canWrite: false });
+        vi.mocked(api.getPolicyMode).mockResolvedValue({
+            sessionId: SESSION_ID,
+            mode: "manual",
+            sessionRules: 0,
+        });
+        const wrapper = mountControls();
+        await flushPromises();
+
+        expect(
+            wrapper.get('[data-testid="session-policy-mode"]').attributes("disabled"),
+            "CP projection wins over the legacy role fallback",
+        ).toBeDefined();
+        wrapper.unmount();
+    });
+
+    it("keeps the mode editable for an EDITOR (unchanged behaviour)", async () => {
+        seedWorkspace({ workspaceRole: "EDITOR" });
+        vi.mocked(api.getPolicyMode).mockResolvedValue({
+            sessionId: SESSION_ID,
+            mode: "manual",
+            sessionRules: 0,
+        });
+        vi.mocked(api.setPolicyMode).mockResolvedValue({
+            sessionId: SESSION_ID,
+            mode: "auto",
+            scope: "session",
+        });
+        const wrapper = mountControls();
+        await flushPromises();
+
+        const select = wrapper.get('[data-testid="session-policy-mode"]');
+        expect(select.attributes("disabled")).toBeUndefined();
+        expect(wrapper.find('[data-testid="session-policy-mode-readonly"]').exists()).toBe(false);
+
+        await select.setValue("auto");
+        await flushPromises();
+        expect(api.setPolicyMode).toHaveBeenCalledWith(SESSION_ID, "auto");
         wrapper.unmount();
     });
 });

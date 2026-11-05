@@ -83,6 +83,7 @@ import type {
     ScheduledTaskListPage,
 } from "../types";
 import type {
+    ParticipantReadCursor,
     ParticipantRespondPolicy as RespondPolicy,
     ParticipantWakePolicy as WakePolicy,
     SessionParticipantCapabilities,
@@ -2620,6 +2621,19 @@ export type ApiSessionMessage = {
     }>;
 };
 
+/**
+ * PLAN-0660 T5.6 — "advance to the latest" sentinel for `PATCH …/participants/{id}/cursor`.
+ *
+ * The upper bound belongs to the server: CP applies `max(current, requested)` and then clamps to the
+ * session's current max `context_events.sequence` (openapi `advanceParticipantCursor`,
+ * `SessionParticipantService.advanceCursor`). The roster projection carries **no** session max seq,
+ * so the UI has no authoritative ceiling to send — and must not invent one by counting messages
+ * (that would guess a wire-level number the client cannot see). Sending this sentinel is the
+ * contract-sanctioned way to say "as far as you allow": it fits in a signed 64-bit
+ * `lastReadEventSeq`, and the server's clamp turns it into the real maximum.
+ */
+export const PARTICIPANT_CURSOR_ADVANCE_TO_LATEST = Number.MAX_SAFE_INTEGER;
+
 export const api = {
     // PLAN-0565 ruling #7: identifier is email (contains '@') or username.
     login(identifier: string, password: string) {
@@ -2920,6 +2934,53 @@ export const api = {
             `/sessions/${encodeURIComponent(sessionId)}/participants/${encodeURIComponent(participantId)}`,
             { method: "DELETE" },
         );
+    },
+    /**
+     * PLAN-0660 T5.1/T5.6：推进**本人**的已读游标 —— `PATCH …/participants/{id}/cursor`。
+     *
+     * 服务端语义（openapi `advanceParticipantCursor`）：advance-only（`max(现值, 请求值)`）+ 夹取到
+     * 会话当前最大 `context_events.sequence`；只允许行内 HUMAN 且 `principal_id` 是调用者，否则
+     * **403 `CURSOR_SELF_ONLY`**。响应就是列表里那个 `readCursor` 形状，调用方直接拿它渲染未读，
+     * 不需要（也不应该）重新拉一次全量名单。
+     *
+     * `value` 用 `PARTICIPANT_CURSOR_ADVANCE_TO_LATEST` 表示"推进到服务端允许的最新位置"——
+     * 上限由服务端夹取，前端不自己算。
+     */
+    async advanceParticipantCursor(
+        sessionId: string,
+        participantId: string,
+        value: number,
+    ): Promise<ParticipantReadCursor> {
+        const raw = await request<unknown>(
+            `/sessions/${encodeURIComponent(sessionId)}/participants/${encodeURIComponent(participantId)}/cursor`,
+            {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ lastReadEventSeq: value }),
+            },
+        );
+        if (!raw || typeof raw !== "object") {
+            throw new Error(
+                `advanceParticipantCursor: unexpected payload (received ${raw === null ? "null" : typeof raw}; ` +
+                    `expected an object with lastReadEventSeq/mentionCount)`,
+            );
+        }
+        const record = raw as Record<string, unknown>;
+        const lastReadEventSeq = record.lastReadEventSeq,
+            mentionCount = record.mentionCount;
+        if (typeof lastReadEventSeq !== "number" || typeof mentionCount !== "number") {
+            // 形状不符就抛错：用 0 冒充"没有未读"会把"契约破了"显示成"已读完"，是最坏的一种静默。
+            throw new Error(
+                `advanceParticipantCursor: unexpected payload (lastReadEventSeq=${String(lastReadEventSeq)}, ` +
+                    `mentionCount=${String(mentionCount)}; expected both to be numbers)`,
+            );
+        }
+        return {
+            lastReadEventSeq,
+            mentionCount,
+            // 时间戳缺失就留空串（"未知"），不用当前时间伪造一个 CP 没给的时刻。
+            updatedAt: typeof record.updatedAt === "string" ? record.updatedAt : "",
+        };
     },
     /** PLAN-0655: the budget view used by the delegation dialog's read-only row. */
     async delegationUsage(sessionId: string): Promise<DelegationUsageView> {
