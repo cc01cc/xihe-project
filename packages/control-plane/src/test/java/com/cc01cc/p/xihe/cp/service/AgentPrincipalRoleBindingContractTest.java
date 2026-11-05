@@ -481,6 +481,46 @@ class AgentPrincipalRoleBindingContractTest extends AbstractIntegrationTest {
                 new HttpEntity<>(authHeaders()), Map.class);
     }
 
+    /**
+     * BL-351: the bind endpoint must accept the workspace from {@code X-Workspace-Id} alone (the
+     * sibling endpoints' conventions). Before the fix the query parameter was the only source, so a
+     * header-only caller silently fell back to the instance tier and failed with 403.
+     */
+    @Test
+    void bindWithOnlyTheWorkspaceHeaderSucceeds() {
+        fixture();
+        UUID roleId = createCustomRole("read");
+        HttpHeaders headers = authHeaders();
+        headers.add("X-Workspace-Id", workspace.getId().toString());
+
+        ResponseEntity<Map> created = restTemplate.exchange(
+                url(pathFor("/roles")), HttpMethod.POST,
+                new HttpEntity<>(Map.of("roleId", roleId.toString()), headers), Map.class);
+
+        assertEquals(HttpStatus.CREATED, created.getStatusCode(), String.valueOf(created.getBody()));
+        assertEquals("workspace", created.getBody().get("scopeType"));
+        assertEquals(workspace.getId().toString(), created.getBody().get("scopeId"));
+    }
+
+    /**
+     * BL-351: header and query naming different workspaces is a 400 — silently honoring one could
+     * broaden the authorization scope (header resolved to workspace A, query asked for B).
+     */
+    @Test
+    void conflictingHeaderAndQueryIsA400NotASilentPick() {
+        fixture();
+        UUID roleId = createCustomRole("read");
+        HttpHeaders headers = authHeaders();
+        headers.add("X-Workspace-Id", workspace.getId().toString());
+
+        ResponseEntity<Map> response = restTemplate.exchange(
+                url(pathFor("/roles?workspaceId=" + UUID.randomUUID())), HttpMethod.POST,
+                new HttpEntity<>(Map.of("roleId", roleId.toString()), headers), Map.class);
+
+        assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode(), String.valueOf(response.getBody()));
+        assertEquals("WORKSPACE_CONTEXT_CONFLICT", response.getBody().get("code"));
+    }
+
     private ResponseEntity<Map> post(String suffix, Map<String, Object> body) {
         return restTemplate.exchange(url(pathFor(suffix)), HttpMethod.POST,
                 new HttpEntity<>(body, authHeaders()), Map.class);
