@@ -170,8 +170,9 @@ dir = "packages/agent"
 alias = "gate:agent-quality"
 
 [tasks."test:cp"]
+depends = ["check:openapi"]
 run = "mvn test"
-description = "Run the control plane test suite"
+description = "Run the control plane test suite (contract gate check:openapi runs first)"
 dir = "packages/control-plane"
 alias = "test:cp"
 
@@ -291,8 +292,8 @@ alias = "format"
 [tasks.validate]
 # test:e2e:fixtures 排在 UI 单测（test）之后、E2E 之前：它只跑 e2e 夹具自身的状态机
 # （不起栈/秒级），放在 E2E 车道前面能最早暴露"夹具坏了导致的假绿"。
-depends = ["lint", "typecheck", "build", "test", "test:e2e:fixtures", "lint:links"]
-description = "Run all quality gates — lint + typecheck + build + test + e2e fixture self-tests (Docker auto-managed)"
+depends = ["check:openapi", "lint", "typecheck", "build", "test", "test:e2e:fixtures", "lint:links"]
+description = "Run all quality gates — contract + lint + typecheck + build + test + e2e fixture self-tests (Docker auto-managed)"
 alias = "validate"
 
 [tasks."validate:full"]
@@ -457,3 +458,11 @@ alias = "check:ports"
 run = "node scripts/check-event-keys.mjs --report-only"
 description = "Report-only audit of log/SSE/AgentEvent names against the BL-303 baseline + semantics registry (never fails; use --enforce manually)"
 alias = "check:event-keys"
+
+# BL-162: OpenAPI 契约门。BL-162 之前 `validate-openapi.mjs` 只被人手跑（mise.toml/pom.xml/scripts 里 0 引用），
+# 契约漂移能一路合进 develop。现在它是 `test:cp` / `validate` 的依赖 ⇒ 跑 CP 测试就会查契约。
+# 失败时输出 path 数 + 首个失败点 + 修复提示；成功侧输出 path 数与校验面统计。
+[tasks."check:openapi"]
+run = "node scripts/validate-openapi.mjs"
+description = "Validate docs/api/openapi.yaml (structure + frozen contract slices); dependency of test:cp and validate"
+alias = "check:openapi"
