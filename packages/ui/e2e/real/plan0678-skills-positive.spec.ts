@@ -172,11 +172,23 @@ test("@host PLAN-0678 V3 技能正向：instance 导入 2 技能 → 绑定 → 
             `VALUES (gen_random_uuid(), '${SUPER_ADMIN_ROLE_ID}', 'user', '${userId}', 'instance', NULL, NULL) ` +
             `ON CONFLICT DO NOTHING`,
     );
-    const granted = queryIsolatedPostgres(
-        `SELECT count(*) FROM role_bindings WHERE subject_id = '${userId}'::uuid ` +
-            `AND role_id = '${SUPER_ADMIN_ROLE_ID}'::uuid`,
+    // 关键：`RequesterAuthority.holdsActionAtom` 读的是**物化后的 `grants` 表**
+    // （`RequesterAuthority` 依赖 `AuthorizationGrantRepository`），插 `role_bindings` 不会自动物化，
+    // 所以还需要直接写一行 instance 作用域的 MANAGE_SKILL_LIBRARY grant
+    //（JSON 形状 `{actionClass, resource}`，见 `GrantIntersectionEvaluator.PermissionAtom`）。
+    queryIsolatedPostgres(
+        `INSERT INTO grants (id, subject_type, subject_id, permissions, source, scope_type, scope_id) ` +
+            `VALUES (gen_random_uuid(), 'user', '${userId}', ` +
+            `'[{"actionClass":"MANAGE_SKILL_LIBRARY","resource":"*"}]'::jsonb, 'role', 'instance', NULL)`,
     );
-    expect(granted, `SUPER_ADMIN 授权行应存在（实际 count=${granted}）`).toBe("1");
+    const granted = queryIsolatedPostgres(
+        `SELECT count(*) FROM grants WHERE subject_id = '${userId}'::uuid ` +
+            `AND permissions::text LIKE '%MANAGE_SKILL_LIBRARY%' AND scope_type = 'instance'`,
+    );
+    expect(
+        granted,
+        `instance 作用域 MANAGE_SKILL_LIBRARY grant 应存在（实际 count=${granted}）`,
+    ).toBe("1");
 
     const login = await request.post(`${CP_URL}/api/v1/auth/login`, {
         // PLAN-0565 ruling #7: 登录字段是 `identifier`（email 或 username），不是 `email`
