@@ -11,7 +11,11 @@ import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
 import com.cc01cc.p.xihe.cp.repository.MessageRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import jakarta.persistence.EntityManager;
+import org.slf4j.LoggerFactory;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -26,6 +30,8 @@ import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -279,6 +285,60 @@ class ChatRunContinuationServiceTest {
         child.setContinuationEventSequence(7L);
         child.setContinuationMode(mode);
         return child;
+    }
+
+    /**
+     * BL-354: a continuation child that inherits a NULL principal (human-responder source) must be
+     * visible in the log as {@code run_principal_stamp} — but the call must still succeed (log-only,
+     * because NULL is the accepted existing semantics for this derived chain).
+     */
+    @Test
+    void continuationWithInheritedNullPrincipalLogsRunPrincipalStampWithoutFailing() {
+        stubNewChildCreation();
+        ListAppender<ILoggingEvent> appender = new ListAppender<>();
+        appender.start();
+        Logger logger = (Logger) LoggerFactory.getLogger(ChatRunContinuationService.class);
+        logger.addAppender(appender);
+        try {
+            ChatRunContinuationService.ContinuationResult result = service.continueRun(
+                    SOURCE_RUN_ID, USER_ID, WORKSPACE_ID, "continuation-key",
+                    new ChatRunContinuationRequest(ChatRunContinuationRequest.RESUME_PENDING, null));
+            assertNotNull(result.runId(), "log-only: the continuation itself must still succeed");
+            assertNull(savedChild().getAgentPrincipalId(), "fixture: human-responder source has NULL principal");
+
+            String stamped = appender.list.stream()
+                    .map(ILoggingEvent::getFormattedMessage)
+                    .filter(message -> message.contains("event=run_principal_stamp"))
+                    .findFirst().orElseThrow(() -> new AssertionError(
+                            "no run_principal_stamp log: " + appender.list.stream()
+                                    .map(ILoggingEvent::getFormattedMessage).toList()));
+            assertTrue(stamped.contains("origin=user_submission"), stamped);
+            assertTrue(stamped.contains("runId=" + result.runId()), stamped);
+            assertTrue(stamped.contains("sessionId=" + SESSION_ID), stamped);
+            assertTrue(stamped.contains("sourceRunId=" + SOURCE_RUN_ID), stamped);
+        } finally {
+            logger.detachAppender(appender);
+        }
+    }
+
+    /** BL-354: the main-submission HUMAN responder NULL is intentional and must NOT be logged. */
+    @Test
+    void aStampedDerivedRunDoesNotLog() {
+        stubNewChildCreation();
+        source.setAgentPrincipalId(UUID.randomUUID());
+        ListAppender<ILoggingEvent> appender = new ListAppender<>();
+        appender.start();
+        Logger logger = (Logger) LoggerFactory.getLogger(ChatRunContinuationService.class);
+        logger.addAppender(appender);
+        try {
+            service.continueRun(SOURCE_RUN_ID, USER_ID, WORKSPACE_ID, "continuation-key",
+                    new ChatRunContinuationRequest(ChatRunContinuationRequest.RESUME_PENDING, null));
+            assertTrue(appender.list.stream().map(ILoggingEvent::getFormattedMessage)
+                            .noneMatch(message -> message.contains("event=run_principal_stamp")),
+                    "a stamped derived run must not produce the diagnostic");
+        } finally {
+            logger.detachAppender(appender);
+        }
     }
 
     private void stubNewChildCreation() {
