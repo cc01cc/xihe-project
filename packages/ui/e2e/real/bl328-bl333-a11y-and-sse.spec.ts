@@ -31,8 +31,6 @@ import {
 
 test.describe.configure({ mode: "serial", retries: 0 });
 
-const LLM_MODE = process.env.XIHE_E2E_LLM_MODE ?? "mock";
-
 // ── 以下两段照搬 `chat-follow-up-queue.spec.ts`（同车道唯一验证过的夹具）────────────────────
 
 async function createBoundAgent(
