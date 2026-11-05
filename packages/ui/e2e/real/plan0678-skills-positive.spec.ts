@@ -243,7 +243,12 @@ test("@host PLAN-0678 V3 技能正向：instance 导入 2 技能 → 绑定 → 
                 "；若 400 SKILL_DEFINITION_OUT_OF_SCOPE ⇒ 说明 skillId 不是 instance 作用域定义" +
                 "（绑定恒为 instance 作用域，见 AgentPrincipalSkillBindingService:39/110）",
         ).toBe(201);
-        bindingIds.push((JSON.parse(bindText) as { id?: string }).id ?? "");
+        const bound = JSON.parse(bindText) as { bindingId?: string };
+        expect(
+            bound.bindingId,
+            `绑定响应应含 bindingId（toView 字段名），实际：${bindText}`,
+        ).toMatch(UUID);
+        bindingIds.push(bound.bindingId as string);
     }
 
     // ⑦ 建会话（agentPrincipalId 必须显式携带）
