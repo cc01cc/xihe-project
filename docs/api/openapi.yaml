@@ -2909,7 +2909,23 @@ paths:
     get: { operationId: getAttachment, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: sessionId, required: true, schema: { type: string } }, { in: path, name: fileId, required: true, schema: { type: string } }], responses: { '200': { description: Attachment metadata } } }
     delete: { operationId: deleteAttachment, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: sessionId, required: true, schema: { type: string } }, { in: path, name: fileId, required: true, schema: { type: string } }], responses: { '204': { description: Deleted } } }
   /api/v1/files/{fileId}:
-    get: { operationId: getFile, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: fileId, required: true, schema: { type: string } }], responses: { '200': { description: File content } } }
+    get:
+      operationId: getFile
+      security: [{ bearerAuth: [] }]
+      description: >-
+        Attachment/workspace file content. A single RFC 9110 `bytes` range is supported
+        with a server-side preview budget (PLAN-0683 / BL-381): the 206 body is clamped to
+        at most 8 MiB, `Content-Range` always reports the real file length, multi-range and
+        non-`bytes`/malformed headers are rejected with 400, and an unsatisfiable range
+        returns 416. Requests without `Range` keep the historical 200 full-body response.
+      parameters:
+        - { in: path, name: fileId, required: true, schema: { type: string } }
+        - { in: header, name: Range, required: false, schema: { type: string }, description: 'Single byte range, e.g. `bytes=0-8388607`; multi-range (`bytes=0-9,20-29`) and non-bytes units are rejected with 400.' }
+      responses:
+        '200': { description: Full file content (no Range header); `Accept-Ranges: bytes` is still advertised }
+        '206': { description: 'Single byte range; body length ≤ 8 MiB (`end = min(end, start + 8388608 - 1)`) and Content-Range carries the real total, e.g. `bytes 0-8388607/16777216`' }
+        '400': { description: 'INVALID_RANGE — malformed Range header, non-bytes unit, or multi-range request; Content-Range is `bytes */total`', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '416': { description: 'RANGE_NOT_SATISFIABLE — range start is at/after EOF or start > end; Content-Range is `bytes */total`', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
     delete: { operationId: deleteFile, security: [{ bearerAuth: [] }], parameters: [{ in: path, name: fileId, required: true, schema: { type: string } }], responses: { '204': { description: Deleted } } }
   /api/v1/files/upload:
     post: { operationId: uploadFile, security: [{ bearerAuth: [] }], description: WorkspaceStorage file upload (maximum 64 MiB; Chat attachments use a separate route and limit). Refused with 503 BACKEND_DISABLED while the workspace runs on the frozen docker backend (PLAN-0612)., responses: { '201': { description: Uploaded }, '413': { description: Workspace file exceeds 64 MiB limit }, '503': { description: BACKEND_DISABLED (docker execution backend frozen; use direct_attach) } } }
