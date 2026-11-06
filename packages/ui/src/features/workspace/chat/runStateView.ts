@@ -74,3 +74,24 @@ export function runStateLabelKey(status: string | undefined | null): string | nu
 export function isTerminalRunStatus(status: string | undefined | null): boolean {
     return runStateTier(status) === "terminal";
 }
+
+/** The two end states that get a visible row-end chip (D31-02: success is silent). */
+export type TerminalMarker = "partial" | "cancelled";
+
+/**
+ * PLAN-0631 M1-C / BL-406: which terminal chip (if any) a run earns, from the wire status
+ * plus the terminal outcome. Kept here so the message row and the collapsed run shell
+ * cannot disagree about which runs are marked.
+ *
+ * Deliberately only these two:
+ *  - `succeeded` stays silent (no news is good news, D31-02);
+ *  - `failed` / `ambiguous` already have the error box + recovery banner (D31-02/05).
+ */
+export function terminalMarkerOf(
+    status: string | undefined | null,
+    terminalOutcome: string | undefined | null,
+): TerminalMarker | null {
+    if (status === "partial" || terminalOutcome === "partial") return "partial";
+    if (status === "cancelled" || terminalOutcome === "cancelled") return "cancelled";
+    return null;
+}

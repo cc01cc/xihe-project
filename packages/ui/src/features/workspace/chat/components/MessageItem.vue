@@ -5,7 +5,8 @@ import type { AttachmentFile, Message } from "../../../../types";
 import type { SessionParticipantRole, SessionParticipantView } from "../../../../types/participant";
 import { participantDisplayName, participantInitials } from "../../components/participantInitials";
 import { mappedErrorCopy } from "../../../../lib/errorMessages";
-import { runStateLabelKey } from "../runStateView";
+import { terminalMarkerOf } from "../runStateView";
+import RunTerminalChip from "./RunTerminalChip.vue";
 import TextPart from "./parts/TextPart.vue";
 import ReasoningPart from "./parts/ReasoningPart.vue";
 import ArtifactPart from "./parts/ArtifactPart.vue";
@@ -24,17 +25,7 @@ import {
     AttachmentTitle,
 } from "@/components/ui/attachment";
 import { Bubble, BubbleContent } from "@/components/ui/bubble";
-import {
-    Download,
-    Brain,
-    LoaderCircle,
-    Clock,
-    Trash2,
-    GitBranch,
-    Shield,
-    CircleAlert,
-    XCircle,
-} from "@lucide/vue";
+import { Download, Brain, LoaderCircle, Clock, Trash2, GitBranch, Shield } from "@lucide/vue";
 import { Message as MessageRoot, MessageContent, MessageHeader } from "@/components/ui/message";
 import ProcessRow from "./ProcessRow.vue";
 import { actorOf } from "../actorView";
@@ -189,7 +180,7 @@ const hasBubbleContent = computed(
 );
 
 /**
- * PLAN-0631 D31-02 (M1-C): the two end states that left the transcript without any
+ * PLAN-0631 D31-02 (M1-C) / BL-406: the two end states that left the transcript without any
  * visible conclusion. A `partial` or `cancelled` run keeps whatever it produced and then
  * just stops, so the message row used to read like a finished answer.
  *
@@ -197,21 +188,13 @@ const hasBubbleContent = computed(
  *  - `succeeded` stays silent (no news is good news, D31-02);
  *  - `failed` / `ambiguous` already have the error box + recovery banner (D31-02/05).
  *
- * Wording comes from `runStateLabelKey` (D31-01) — no new status names, and no new color
- * values: `partial` reuses the repo's existing amber warning classes, `cancelled` uses the
- * neutral border/muted surface (distinction is icon + label, never color alone).
+ * The resolver (`terminalMarkerOf`) is shared with the collapsed run shell in `MessageList`,
+ * so both surfaces mark exactly the same runs. Wording/colour live in `RunTerminalChip`
+ * (`runStateLabelKey`, D31-01): no new status names and no new colour values.
  */
-const terminalMarker = computed<"partial" | "cancelled" | null>(() => {
-    const { runStatus, terminalOutcome } = props.message;
-    if (runStatus === "partial" || terminalOutcome === "partial") return "partial";
-    if (runStatus === "cancelled" || terminalOutcome === "cancelled") return "cancelled";
-    return null;
-});
-const terminalMarkerLabel = computed(() => {
-    const status = terminalMarker.value;
-    const key = status ? runStateLabelKey(status) : null;
-    return key ? t(key) : "";
-});
+const terminalMarker = computed(() =>
+    terminalMarkerOf(props.message.runStatus, props.message.terminalOutcome),
+);
 
 function isImage(type: string) {
     return type.startsWith("image/");
@@ -550,34 +533,16 @@ onUnmounted(() => {
             />
 
             <!--
-                PLAN-0631 M1-C: visible row-end conclusion for a run that stopped without
-                being an error and without being a success. Status text/icon are the only
-                signals; the hover meta row stays hover-only, so this one is always visible.
-                ARIA: `aria-label` + `title` rather than `role="status"` — the state already
-                happened, so a live region would re-announce it on every history load.
+                PLAN-0631 M1-C / BL-406: visible row-end conclusion for a run that stopped
+                without being an error and without being a success. The chip is a shared
+                component so the collapsed run shell in `MessageList` renders the same DOM
+                (same testid/outcome/wording); hover-only meta stays hover-only.
             -->
-            <span
+            <RunTerminalChip
                 v-if="terminalMarker"
-                data-testid="message-terminated"
-                :data-run-outcome="terminalMarker"
-                class="mt-0.5 flex w-fit items-center gap-1.5 rounded border px-1.5 py-0.5 text-[10px] leading-none"
-                :class="[
-                    isOwnMessage ? 'self-end' : 'self-start',
-                    terminalMarker === 'partial'
-                        ? 'border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300'
-                        : 'border-border bg-muted text-foreground',
-                ]"
-                :aria-label="terminalMarkerLabel"
-                :title="terminalMarkerLabel"
-            >
-                <CircleAlert
-                    v-if="terminalMarker === 'partial'"
-                    class="size-3"
-                    aria-hidden="true"
-                />
-                <XCircle v-else class="size-3" aria-hidden="true" />
-                {{ terminalMarkerLabel }}
-            </span>
+                :outcome="terminalMarker"
+                :class="isOwnMessage ? 'self-end' : 'self-start'"
+            />
 
             <div
                 class="invisible mt-0.5 flex items-center gap-2 opacity-0 transition-opacity group-hover/message:visible group-hover/message:opacity-100 group-focus-within/message:visible group-focus-within/message:opacity-100"

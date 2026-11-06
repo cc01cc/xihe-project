@@ -21,6 +21,9 @@ const i18n = createI18n({
                 runHeader: { toggle: "展开或折叠 run {run}" },
                 followUpStatusCompleted: "已完成",
                 followUpStatusFailed: "失败",
+                // BL-406：折叠 run 的摘要行也要渲染终态芯片，文案走同一 resolver。
+                followUpStatusCancelled: "已取消",
+                derivedStateOutcome: { partial: "部分完成" },
             },
         },
     },
@@ -174,5 +177,76 @@ describe("MessageList run grouping (PLAN-0659 T1.1)", () => {
             wrapper.find('[data-testid="run-group-body"]').attributes("class") ?? "",
         ).not.toContain("border-l");
         expect(wrapper.findAll('[data-testid="stub-message"]')).toHaveLength(2);
+    });
+});
+
+/**
+ * BL-406（PLAN-0631 W11 判据「终态芯片常显」）：`defaultCollapsed` 让失败/取消 run 只剩 run 头，
+ * 消息行（含行尾芯片）整体不渲染 ⇒ 修复前"常显"不成立。修复后折叠摘要行补渲染同一枚芯片，
+ * 且不在折叠体/隐藏容器内；`succeeded`/`failed` 仍然没有该芯片（D31-02）。
+ */
+describe("MessageList terminal chip under default collapse (BL-406)", () => {
+    function twoRuns(bStatus: string, bOutcome: string) {
+        return mountList(
+            [
+                message("a-user", RUN_A, "user"),
+                message("a-assistant", RUN_A, "assistant"),
+                message("b-user", RUN_B, "user"),
+                message("b-assistant", RUN_B, "assistant"),
+            ],
+            [runSummary(RUN_A, "succeeded", "success"), runSummary(RUN_B, bStatus, bOutcome)],
+        );
+    }
+
+    it("keeps the cancelled chip queryable while the run is collapsed by default", async () => {
+        const wrapper = twoRuns("cancelled", "cancelled");
+
+        // 前置：RUN_B 确实默认折叠（消息体未渲染、toggle 声明 aria-expanded=false）。
+        const cancelledHeader = wrapper
+            .findAll('[data-testid="run-header"]')
+            .find((header) => header.attributes("data-run-id") === RUN_B)!;
+        expect(
+            cancelledHeader.get('[data-testid="run-header-toggle"]').attributes("aria-expanded"),
+        ).toBe("false");
+        expect(wrapper.findAll('[data-testid="stub-message"]').map((node) => node.text())).toEqual([
+            "a-user",
+            "a-assistant",
+        ]);
+
+        // 判据：不展开也能查到芯片，文案 / title / aria-label 一字不差。
+        const chip = wrapper.get('[data-testid="message-terminated"]');
+        expect(chip.attributes("data-run-outcome")).toBe("cancelled");
+        expect(chip.text()).toBe("已取消");
+        expect(chip.attributes("title")).toBe("已取消");
+        expect(chip.attributes("aria-label")).toBe("已取消");
+
+        // 芯片必须在折叠体之外：不是 run-group-body 的子节点，也不在任何 hidden/关闭 details 里。
+        expect(chip.element.closest('[data-testid="run-group-body"]')).toBeNull();
+        expect(chip.element.closest("[hidden], details:not([open])")).toBeNull();
+        expect(chip.element.closest('[aria-expanded="false"]')).toBeNull();
+        expect(
+            chip.element.closest(`[data-run-block="${RUN_B}"]`),
+            "折叠摘要行属于该 run 的 block",
+        ).not.toBeNull();
+
+        // 展开后由消息行尾的芯片接手（MessageItem.spec 覆盖行尾语义），摘要行不再重复渲染。
+        await cancelledHeader.get('[data-testid="run-header-toggle"]').trigger("click");
+        expect(
+            wrapper.find(`[data-run-block="${RUN_B}"] [data-testid="message-terminated"]`).exists(),
+        ).toBe(false);
+        wrapper.unmount();
+    });
+
+    it("does not add the chip for a collapsed failed run or a succeeded one", () => {
+        const wrapper = twoRuns("failed", "error");
+
+        expect(
+            wrapper.find(`[data-run-block="${RUN_A}"] [data-testid="message-terminated"]`).exists(),
+        ).toBe(false);
+        expect(
+            wrapper.find(`[data-run-block="${RUN_B}"] [data-testid="message-terminated"]`).exists(),
+        ).toBe(false);
+        expect(wrapper.find('[data-testid="message-terminated"]').exists()).toBe(false);
+        wrapper.unmount();
     });
 });
