@@ -3,7 +3,7 @@
 //
 // Sources of truth:
 //   * command registry: `scripts/xihe.mjs` dispatch (`group === '…'` / `command === '…'` blocks)
-//     plus the usage lines in `helpText()` (the only evidence for 3-level commands such as
+//     plus the usage lines in `xihe-cli/help.mjs` (the only evidence for 3-level commands such as
 //     `session participants list`).
 //   * contract snapshot: `plans/PLAN-0643-…/spec/cli-contract.md` §1 (16 existing groups +
 //     auth/api) and §2 (the "本期" command column). The snapshot is frozen here on purpose: the
@@ -100,11 +100,19 @@ for (const line of chatSessionSource.split('\n')) {
     }
     if (/^}/.test(line)) moduleGroup = null;
 }
-// 3-level commands only appear in helpText() usage lines (`xihe <g> <cmd> <sub>`).
-const helpText = cliSource.slice(cliSource.indexOf('function helpText()'), cliSource.indexOf('export async function runCommand'));
+// 3-level commands only appear in the help registry (`xihe-cli/help.mjs`, PLAN-0643 T4.7);
+// the registry replaced the `helpText()` string array, so import it instead of slicing a
+// function body by string index.
+const { HELP_GROUPS } = await import('./help.mjs');
 const usageCommands = new Set();
-for (const m of helpText.matchAll(/xihe(?:\.mjs)? ([a-z][\w-]*)(?: ([a-z][\w-]*))?/g)) {
-    usageCommands.add(m[2] ? `${m[1]} ${m[2]}` : m[1]);
+for (const group of HELP_GROUPS) {
+    for (const command of group.commands) {
+        const prefix = `${group.name} `;
+        const rest = command.name.startsWith(prefix) ? command.name.slice(prefix.length) : command.name;
+        // `chat approve|reject` contributes `chat approve`, matching the old regex's first token.
+        const head = rest.split(/[ |]/)[0];
+        usageCommands.add(head === '' || head === group.name ? group.name : `${group.name} ${head}`);
+    }
 }
 
 const groupPresent = (group) => groups.has(group);
