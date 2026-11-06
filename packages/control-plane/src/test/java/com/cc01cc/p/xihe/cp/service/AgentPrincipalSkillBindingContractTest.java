@@ -7,6 +7,7 @@ import com.cc01cc.p.xihe.cp.entity.AccessRolePermission;
 import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
 import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
+import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
 import com.cc01cc.p.xihe.cp.integration.TestDataFactory;
 import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
 import com.cc01cc.p.xihe.cp.policy.AccessScope;
@@ -46,10 +47,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /**
  * PLAN-0667 M2/T2.4: the agent-principal skill binding API over real HTTP + PostgreSQL.
  *
- * <p>Besides the CRUD contract, the test pins the two properties the plan cares about:</p>
+ * <p>PLAN-0680 makes the surface dual-axis. The tests pin the two properties the plan cares
+ * about:</p>
  * <ul>
- *   <li>the server, not the caller, decides {@code scope_type='instance'} / {@code scope_id=null}
- *       (a request cannot smuggle a workspace scope through the nested endpoint);</li>
+ *   <li>the server, not the caller, decides the scope: a workspace authorization context writes
+ *       {@code scope_type='workspace'} / {@code scope_id=thatWorkspace}, its absence writes
+ *       {@code instance}/{@code null}; the request body still carries only {@code skillId};</li>
  *   <li>the agent-session resolution query ({@link SkillBindingRepository#findResolvable}) sees the
  *       new binding immediately — that is the "agent's skill catalog contains the skill" requirement,
  *       asserted at the same layer the session actually reads.</li>
@@ -114,6 +117,10 @@ class AgentPrincipalSkillBindingContractTest extends AbstractIntegrationTest {
             userRepository.deleteById(owner.getId());
         }
         for (UUID id : extraUsers) {
+            jdbcTemplate.update("DELETE FROM grants WHERE subject_type = 'user'"
+                    + " AND subject_id = ?::uuid", id.toString());
+            jdbcTemplate.update("DELETE FROM role_bindings WHERE subject_type = 'user'"
+                    + " AND subject_id = ?::uuid", id.toString());
             userRepository.deleteById(id);
         }
         for (UUID id : extraWorkspaceIds) {
@@ -208,12 +215,13 @@ class AgentPrincipalSkillBindingContractTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void workspacePrivateSkillIsNotBindableThroughTheInstanceSurface() {
+    void workspacePrivateSkillIsInvisibleWithoutAWorkspaceContext() {
         fixture();
         UUID visiblePrivate = createWorkspaceSkill("skill-private-visible", workspace.getId());
         ResponseEntity<Map> visible = post("/skills", Map.of("skillId", visiblePrivate.toString()));
-        assertEquals(HttpStatus.BAD_REQUEST, visible.getStatusCode(), String.valueOf(visible.getBody()));
-        assertEquals("SKILL_DEFINITION_OUT_OF_SCOPE", visible.getBody().get("code"));
+        assertEquals(HttpStatus.NOT_FOUND, visible.getStatusCode(), String.valueOf(visible.getBody()));
+        assertEquals("SKILL_NOT_FOUND", visible.getBody().get("code"),
+                "without a workspace context a private definition is indistinguishable from missing");
 
         Workspace invisibleWorkspace = workspaceFixture.createWorkspace("skInvisible" + shortId());
         extraWorkspaceIds.add(invisibleWorkspace.getId());
@@ -222,6 +230,137 @@ class AgentPrincipalSkillBindingContractTest extends AbstractIntegrationTest {
         assertEquals(HttpStatus.NOT_FOUND, invisible.getStatusCode());
         assertEquals("SKILL_NOT_FOUND", invisible.getBody().get("code"),
                 "a workspace the caller cannot see is indistinguishable from a missing skill");
+    }
+
+    @Test
+    void workspaceContextBindsPrivateSkillOnWorkspaceAxis() {
+        fixture();
+        UUID skillId = createWorkspaceSkill("skill-ws", workspace.getId());
+
+        ResponseEntity<Map> created = post("/skills", Map.of("skillId", skillId.toString()),
+                workspace.getId());
+
+        assertEquals(HttpStatus.CREATED, created.getStatusCode(), String.valueOf(created.getBody()));
+        assertEquals("workspace", created.getBody().get("sourceType"));
+        List<SkillBinding> rows = bindingsOfPrincipal();
+        assertEquals(1, rows.size());
+        assertEquals("workspace", rows.get(0).getScopeType());
+        assertEquals(workspace.getId(), rows.get(0).getScopeId());
+        assertTrue(resolvableSkillIds().contains(skillId),
+                "the agent-session resolver must see the workspace-axis binding immediately");
+
+        ResponseEntity<Map> duplicate = post("/skills", Map.of("skillId", skillId.toString()),
+                workspace.getId());
+        assertEquals(HttpStatus.CONFLICT, duplicate.getStatusCode(), String.valueOf(duplicate.getBody()));
+        assertEquals("SKILL_BINDING_EXISTS", duplicate.getBody().get("code"));
+
+        ResponseEntity<Map> noContext = post("/skills", Map.of("skillId", skillId.toString()));
+        assertEquals(HttpStatus.NOT_FOUND, noContext.getStatusCode(), String.valueOf(noContext.getBody()));
+        assertEquals("SKILL_NOT_FOUND", noContext.getBody().get("code"));
+        assertEquals(1, bindingsOfPrincipal().size(), "a rejected bind must not write a row");
+    }
+
+    @Test
+    void instanceLibraryBindsOnBothAxesAndTheRowsCoexist() {
+        fixture();
+        UUID skillId = createInstanceSkill("skill-both", 9);
+
+        ResponseEntity<Map> workspaceAxis = post("/skills", Map.of("skillId", skillId.toString()),
+                workspace.getId());
+        assertEquals(HttpStatus.CREATED, workspaceAxis.getStatusCode(),
+                String.valueOf(workspaceAxis.getBody()));
+        ResponseEntity<Map> instanceAxis = post("/skills", Map.of("skillId", skillId.toString()));
+        assertEquals(HttpStatus.CREATED, instanceAxis.getStatusCode(),
+                String.valueOf(instanceAxis.getBody()));
+
+        List<SkillBinding> rows = bindingsOfPrincipal();
+        assertEquals(2, rows.size(), "an instance row and a workspace row may coexist (B-3)");
+        SkillBinding workspaceRow = rows.stream()
+                .filter(row -> "workspace".equals(row.getScopeType())).findFirst().orElseThrow();
+        SkillBinding instanceRow = rows.stream()
+                .filter(row -> "instance".equals(row.getScopeType())).findFirst().orElseThrow();
+        assertEquals(workspace.getId(), workspaceRow.getScopeId());
+        assertEquals(null, instanceRow.getScopeId());
+
+        ResponseEntity<Map> duplicateInstance = post("/skills", Map.of("skillId", skillId.toString()));
+        assertEquals(HttpStatus.CONFLICT, duplicateInstance.getStatusCode());
+        assertEquals("SKILL_BINDING_EXISTS", duplicateInstance.getBody().get("code"));
+        assertTrue(resolvableSkillIds().contains(skillId));
+    }
+
+    @Test
+    void otherWorkspacePrivateDefinitionIsNotFoundUnderOwnWorkspaceContext() {
+        fixture();
+        Workspace other = workspaceFixture.createWorkspace("skOther" + shortId());
+        extraWorkspaceIds.add(other.getId());
+        UUID foreignPrivate = createWorkspaceSkill("skill-foreign-private", other.getId());
+
+        ResponseEntity<Map> withOwnContext = post("/skills",
+                Map.of("skillId", foreignPrivate.toString()), workspace.getId());
+        assertEquals(HttpStatus.NOT_FOUND, withOwnContext.getStatusCode(),
+                String.valueOf(withOwnContext.getBody()));
+        assertEquals("SKILL_NOT_FOUND", withOwnContext.getBody().get("code"),
+                "another workspace's private definition must not leak existence");
+
+        assertEquals(0, bindingsOfPrincipal().size());
+        assertEquals(List.of(), resolvableSkillIds());
+    }
+
+    @Test
+    void workspaceTierCannotDeleteInstanceOrForeignWorkspaceRows() {
+        fixture();
+        UUID instanceSkill = createInstanceSkill("skill-del-instance", 2);
+        String instanceBinding = String.valueOf(post("/skills", Map.of("skillId", instanceSkill.toString()))
+                .getBody().get("bindingId"));
+
+        User workspaceAdmin = userRepository.saveAndFlush(new User(
+                "sk-ws-admin-" + UUID.randomUUID() + "@test.com", "hash", "Workspace admin"));
+        extraUsers.add(workspaceAdmin.getId());
+        grantDefaultService.ensureUserDefault(workspaceAdmin);
+        workspaceFixture.bindWorkspaceRole(workspace.getId(), workspaceAdmin.getId(), WorkspaceRole.OWNER);
+        materializer.materializeSubject("user", workspaceAdmin.getId(), workspaceAdmin.getId(),
+                workspace.getId().toString());
+        String workspaceAdminToken = TestDataFactory.createGlobalToken(workspaceAdmin.getId().toString(),
+                workspaceAdmin.getEmail(), "USER", 0);
+
+        UUID workspaceSkill = createWorkspaceSkill("skill-del-ws", workspace.getId());
+        String workspaceBinding = String.valueOf(postWithToken("/skills",
+                Map.of("skillId", workspaceSkill.toString()), workspaceAdminToken, workspace.getId())
+                .getBody().get("bindingId"));
+
+        Workspace other = workspaceFixture.createWorkspace("skDeleteOther" + shortId());
+        extraWorkspaceIds.add(other.getId());
+        workspaceFixture.bindWorkspaceRole(other.getId(), owner.getId(), WorkspaceRole.OWNER);
+        materializer.materializeSubject("user", owner.getId(), owner.getId(), other.getId().toString());
+        UUID otherSkill = createInstanceSkill("skill-del-other", 3);
+        ResponseEntity<Map> otherCreated = post("/skills",
+                Map.of("skillId", otherSkill.toString()), other.getId());
+        assertEquals(HttpStatus.CREATED, otherCreated.getStatusCode(),
+                String.valueOf(otherCreated.getBody()));
+        String otherBinding = String.valueOf(otherCreated.getBody().get("bindingId"));
+
+        ResponseEntity<Map> foreign = deleteProblemWithToken("/skills/" + otherBinding,
+                workspaceAdminToken, workspace.getId());
+        assertEquals(HttpStatus.NOT_FOUND, foreign.getStatusCode(), String.valueOf(foreign.getBody()));
+        assertEquals("SKILL_BINDING_NOT_FOUND", foreign.getBody().get("code"));
+        assertTrue(skillBindingRepository.findById(UUID.fromString(otherBinding)).isPresent(),
+                "a denied delete must keep the row");
+
+        ResponseEntity<Map> instanceRowWithoutInstanceTier = deleteProblemWithToken(
+                "/skills/" + instanceBinding, workspaceAdminToken, null);
+        assertEquals(HttpStatus.FORBIDDEN, instanceRowWithoutInstanceTier.getStatusCode(),
+                String.valueOf(instanceRowWithoutInstanceTier.getBody()));
+        assertEquals("FORBIDDEN", instanceRowWithoutInstanceTier.getBody().get("code"));
+        assertTrue(skillBindingRepository.findById(UUID.fromString(instanceBinding)).isPresent());
+
+        ResponseEntity<String> own = deleteWithToken("/skills/" + workspaceBinding,
+                workspaceAdminToken, workspace.getId());
+        assertEquals(HttpStatus.NO_CONTENT, own.getStatusCode(), String.valueOf(own.getBody()));
+        assertTrue(skillBindingRepository.findById(UUID.fromString(workspaceBinding)).isEmpty());
+
+        ResponseEntity<String> instanceTierAnyRow = delete("/skills/" + otherBinding);
+        assertEquals(HttpStatus.NO_CONTENT, instanceTierAnyRow.getStatusCode(),
+                "instance tier may delete a workspace row");
     }
 
     @Test
@@ -308,6 +447,11 @@ class AgentPrincipalSkillBindingContractTest extends AbstractIntegrationTest {
         return id;
     }
 
+    private List<SkillBinding> bindingsOfPrincipal() {
+        return skillBindingRepository.findBySubjectTypeAndSubjectIdOrderByCreatedAtAsc(
+                "agent_principal", principal.getId());
+    }
+
     private List<UUID> resolvableSkillIds() {
         return skillBindingRepository.findResolvable(principal.getId(), owner.getId(), workspace.getId())
                 .stream()
@@ -322,9 +466,16 @@ class AgentPrincipalSkillBindingContractTest extends AbstractIntegrationTest {
     // ------------------------------------------------------------------ HTTP helpers
 
     private HttpHeaders authHeaders() {
+        return authHeaders(ownerToken, null);
+    }
+
+    private HttpHeaders authHeaders(String token, UUID workspaceId) {
         HttpHeaders headers = new HttpHeaders();
-        headers.setBearerAuth(ownerToken);
+        headers.setBearerAuth(token);
         headers.setContentType(MediaType.APPLICATION_JSON);
+        if (workspaceId != null) {
+            headers.set("X-Workspace-Id", workspaceId.toString());
+        }
         return headers;
     }
 
@@ -342,6 +493,16 @@ class AgentPrincipalSkillBindingContractTest extends AbstractIntegrationTest {
                 new HttpEntity<>(body, authHeaders()), Map.class);
     }
 
+    private ResponseEntity<Map> post(String suffix, Map<String, Object> body, UUID workspaceId) {
+        return postWithToken(suffix, body, ownerToken, workspaceId);
+    }
+
+    private ResponseEntity<Map> postWithToken(String suffix, Map<String, Object> body,
+                                              String token, UUID workspaceId) {
+        return restTemplate.exchange(url(pathFor(suffix)), HttpMethod.POST,
+                new HttpEntity<>(body, authHeaders(token, workspaceId)), Map.class);
+    }
+
     private ResponseEntity<String> delete(String suffix) {
         return restTemplate.exchange(url(pathFor(suffix)), HttpMethod.DELETE,
                 new HttpEntity<>(authHeaders()), String.class);
@@ -350,5 +511,15 @@ class AgentPrincipalSkillBindingContractTest extends AbstractIntegrationTest {
     private ResponseEntity<Map> deleteProblem(String suffix) {
         return restTemplate.exchange(url(pathFor(suffix)), HttpMethod.DELETE,
                 new HttpEntity<>(authHeaders()), Map.class);
+    }
+
+    private ResponseEntity<Map> deleteProblemWithToken(String suffix, String token, UUID workspaceId) {
+        return restTemplate.exchange(url(pathFor(suffix)), HttpMethod.DELETE,
+                new HttpEntity<>(authHeaders(token, workspaceId)), Map.class);
+    }
+
+    private ResponseEntity<String> deleteWithToken(String suffix, String token, UUID workspaceId) {
+        return restTemplate.exchange(url(pathFor(suffix)), HttpMethod.DELETE,
+                new HttpEntity<>(authHeaders(token, workspaceId)), String.class);
     }
 }
