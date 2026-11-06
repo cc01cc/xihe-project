@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, onMounted } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRoute } from "vue-router";
 import { useAuthStore } from "../../stores/auth";
@@ -7,6 +7,15 @@ import { useAuthStore } from "../../stores/auth";
 const { t } = useI18n();
 const route = useRoute();
 const auth = useAuthStore();
+
+// PLAN-0651 T4.2 / D51-07: the roles & bindings tab asks for the **action atom** CP asks for
+// (`MANAGE_ROLES`, RoleController:52-53), read from `GET /me/permissions`. While the projection is
+// in flight (or when it failed) the tab stays hidden — the same fail-closed shape CP gives a
+// subject without the atom. The fetch is started here because this nav is the only consumer that
+// renders before any settings page has loaded.
+onMounted(() => {
+    void auth.ensureSelfPermissions();
+});
 
 const tabs = computed(() => {
     const items = [
@@ -19,14 +28,19 @@ const tabs = computed(() => {
         { name: "settings-audit", label: "settings.audit", path: "/settings/audit" },
     ];
     if (auth.isAdmin) {
+        // BL-392: this face is still gated on CP by the `cap:instance:admin` **capability**
+        // (ConfigLockController:41/51/70), not by an action atom, so there is no atom to ask for
+        // here yet. Keep the capability flag and revisit when that face is atomized.
         items.push({
             name: "settings-config-locks",
             label: "settings.configLockNav",
             path: "/settings/config-locks",
         });
+    }
+    if (auth.canManageRoles) {
+        // PLAN-0610 W5b/W5c: access-role definitions + bindings replaced the retired
+        // principal-grant page. PLAN-0651 T4.2: gated by `MANAGE_ROLES` above, not `isInstanceAdmin`.
         items.push({
-            // PLAN-0610 W5b/W5c: access-role definitions + bindings replaced the retired
-            // principal-grant page (instance-ADMIN only).
             name: "settings-roles",
             label: "settings.rolesNav",
             path: "/settings/roles",

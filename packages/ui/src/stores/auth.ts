@@ -3,6 +3,7 @@ import { ref, computed } from "vue";
 import {
     api,
     type ApiWorkspace,
+    type SelfPermissionsView,
     onAuthTokensRefreshed,
     registerForceLogout,
     registerWorkspaceContextRequired,
@@ -69,6 +70,78 @@ export const useAuthStore = defineStore("auth", () => {
         isAdmin = computed(() => capabilities.value.isInstanceAdmin),
         /** `cap:instance:super` — the full-permission system role (implies {@link isAdmin}). */
         isInstanceSuper = computed(() => capabilities.value.isInstanceSuper);
+
+    /**
+     * PLAN-0651 T4.2 (D51-07): the permission surfaces decide from **action atoms**, not from the
+     * coarse `instance:admin` capability. CP gates the role/binding face by atom —
+     * `RoleController:52-53` / `BindingController:35-36` use
+     * `@PreAuthorize("@requesterAuthority.holdsActionAtom('MANAGE_ROLES')")` — so a UI that asks
+     * `capabilities.isInstanceAdmin` disagrees with CP for a custom role that holds the atom
+     * without the capability. The atom projection is `GET /api/v1/me/permissions`
+     * (`instancePermissions`, instance-scope grant rows; `CapabilityProjectionService.permissionsFor`
+     * — *not* `instanceCapabilities`, which only carries the three capability atoms).
+     *
+     * Kept out of the localStorage-cached `User` on purpose: atoms are fetched per session and a
+     * missing/failed projection is fail-closed (no atom ⇒ no permission surface).
+     */
+    const ATOM_MANAGE_ROLES = "MANAGE_ROLES";
+    const selfPermissions = ref<SelfPermissionsView | null>(null);
+    let selfPermissionsRequest: Promise<boolean> | null = null;
+    /** Instance-scope atom names; workspace-scope atoms live under `workspaces[].permissions` and
+     * must never unlock an instance-scope surface. */
+    const instanceAtoms = computed<Set<string>>(
+        () =>
+            new Set(
+                (selfPermissions.value?.instancePermissions ?? []).map((atom) => atom.actionClass),
+            ),
+    );
+
+    /**
+     * CP parity for {@link ATOM_MANAGE_ROLES}: `holdsActionAtom(atom)` on `RequesterAuthority` is a
+     * *membership* test over the instance-scope rows (no resource matching, unlike `allowsForUser`),
+     * so the UI must ignore `resource` here or it would hide a tab CP would serve.
+     */
+    function hasInstanceAtom(actionClass: string): boolean {
+        return instanceAtoms.value.has(actionClass);
+    }
+    const canManageRoles = computed(() => hasInstanceAtom(ATOM_MANAGE_ROLES));
+
+    /**
+     * Load the atom projection once per session. Single-flight: concurrent callers (settings nav +
+     * a settings page) share one request. Failures stay soft — the surface fails closed and a later
+     * call retries, while CP remains authoritative.
+     */
+    function loadSelfPermissions(): Promise<boolean> {
+        if (!token.value) return Promise.resolve(false);
+        if (selfPermissionsRequest) return selfPermissionsRequest;
+        selfPermissionsRequest = (async () => {
+            try {
+                selfPermissions.value = await api.getSelfPermissions();
+                return true;
+            } catch (cause) {
+                selfPermissions.value = null;
+                logger.warn(
+                    "Failed to load self permissions: " +
+                        (cause instanceof Error ? cause.message : cause),
+                );
+                return false;
+            } finally {
+                selfPermissionsRequest = null;
+            }
+        })();
+        return selfPermissionsRequest;
+    }
+
+    /** Idempotent: returns true when the projection is available (fresh or cached). */
+    function ensureSelfPermissions(): Promise<boolean> {
+        if (selfPermissions.value !== null) return Promise.resolve(true);
+        return loadSelfPermissions();
+    }
+
+    function clearSelfPermissions() {
+        selfPermissions.value = null;
+        selfPermissionsRequest = null;
+    }
 
     /**
      * `workspace:admin` for one workspace. An instance administrator administers every workspace
@@ -138,6 +211,8 @@ export const useAuthStore = defineStore("auth", () => {
         token.value = t;
         user.value = u;
         workspace.value = ws;
+        // PLAN-0651 T4.2: a new session invalidates the atom projection fetched for the previous one.
+        clearSelfPermissions();
         localStorage.setItem("xihe-token", t);
         localStorage.setItem("xihe-user", JSON.stringify(user.value));
         if (rt) {
@@ -176,6 +251,8 @@ export const useAuthStore = defineStore("auth", () => {
         token.value = accessToken;
         user.value = guardUser;
         workspace.value = guardWorkspace as ApiWorkspace | null;
+        // PLAN-0651 T4.2: the guard session replaces the subject; atom projection must be re-fetched.
+        clearSelfPermissions();
         localStorage.setItem("xihe-token", accessToken);
         localStorage.setItem("xihe-user", JSON.stringify(guardUser));
         if (guardRefreshToken) {
@@ -341,6 +418,8 @@ export const useAuthStore = defineStore("auth", () => {
         workspace.value = null;
         error.value = null;
         lastError.value = null;
+        // PLAN-0651 T4.2: atom projection belongs to the signed-out subject.
+        clearSelfPermissions();
         localStorage.removeItem("xihe-token");
         localStorage.removeItem("xihe-refresh-token");
         localStorage.removeItem("xihe-user");
@@ -484,6 +563,10 @@ export const useAuthStore = defineStore("auth", () => {
         capabilities,
         isAdmin,
         isInstanceSuper,
+        selfPermissions,
+        hasInstanceAtom,
+        canManageRoles,
+        ensureSelfPermissions,
         canWorkspaceAdmin,
         canClassifyTools,
         workspaceRole,

@@ -20,6 +20,10 @@ const { t } = useI18n(),
 // PLAN-0560：全局设置只保留 Instance/User 两层；Workspace 配置移至各工作区
 // 设置页（/workspace/:workspaceId/settings）。旧 ?tab=workspace 不做兼容（决策 #6）。
 type LayerTab = "instance" | "user";
+// BL-392: the instance layer (and the import/export action it owns) is still gated on CP by the
+// `cap:instance:admin` **capability**, not by an action atom — `ConfigController`'s N2/N3 atoms are
+// per-key read/write gates and `ConfigLockController:41/51/70` stayed capability-gated. So this
+// tab keeps `isAdmin`; do not swap it for `hasInstanceAtom(...)` until that face exposes an atom.
 const activeTab = ref<LayerTab>(authStore.isAdmin ? "instance" : "user");
 
 const tabs = computed<{ key: LayerTab; label: string }[]>(() => {
