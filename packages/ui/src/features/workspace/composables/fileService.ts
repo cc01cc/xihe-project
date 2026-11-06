@@ -1,7 +1,9 @@
 import { decideReadMode } from "../../../lib/fileSize";
-import { api } from "../../../composables/api";
+import { api, apiAuthHeaders, apiErrorFromResponse } from "../../../composables/api";
 
-const PREVIEW_BYTE_BUDGET = 8 * 1024 * 1024;
+/** PLAN-0683 B-1: one preview may read at most 8 MiB; the same number bounds a ranged
+ * attachment response (CP clamps server-side too, see `ATTACHMENT_PREVIEW_BUDGET_BYTES`). */
+export const PREVIEW_BYTE_BUDGET = 8 * 1024 * 1024;
 const PREVIEW_LINES_PER_RANGE = 256;
 
 function decodeUtf8WithinBudget(bytes: Uint8Array, budget: number): string {
@@ -95,4 +97,195 @@ export async function readFilePreview(
         default:
             return runtimeReadFilePreview(path, workspaceId, rootId);
     }
+}
+
+/**
+ * PLAN-0683 M2 / BL-381: attachment previews only ever fetch a bounded prefix of the
+ * attachment through one HTTP range request. The preview flow never hands the whole
+ * file URL to the browser: full open and download stay explicit user actions.
+ *
+ * The budget is bytes-on-wire per response; CP clamps a ranged response to the same
+ * number (`WorkspaceFileController.ATTACHMENT_PREVIEW_BUDGET_BYTES`), so a preview can
+ * not be inflated by a server that ignores the budget.
+ */
+export const ATTACHMENT_PREVIEW_BUDGET_BYTES = PREVIEW_BYTE_BUDGET;
+
+export interface ParsedContentRange {
+    start: number;
+    end: number;
+    /** Real entity length (`null` when the server answers `bytes a-b/*`). */
+    total: number | null;
+}
+
+export interface AttachmentPreview {
+    bytes: Uint8Array;
+    mimeType: string;
+    totalBytes: number | null;
+    /** True when the entity (or the response) has more bytes than `bytes`. */
+    truncated: boolean;
+}
+
+export interface AttachmentPreviewOptions {
+    budget?: number;
+    signal?: AbortSignal;
+}
+
+/** Parse `Content-Range: bytes <start>-<end>/<total|*>`; malformed values parse to null. */
+export function parseContentRange(value: string | null | undefined): ParsedContentRange | null {
+    if (!value) return null;
+    const match = /^bytes\s+(\d+)-(\d+)\/(\d+|\*)$/i.exec(value.trim());
+    if (!match) return null;
+    const start = Number(match[1]);
+    const end = Number(match[2]);
+    const total = match[3] === "*" ? null : Number(match[3]);
+    if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || end < start) return null;
+    if (total !== null && !Number.isSafeInteger(total)) return null;
+    return { start, end, total };
+}
+
+/**
+ * Read at most `budget` bytes from a response body, so a server that ignores `Range`
+ * still can not force an unbounded read. `complete` reports whether this response
+ * delivered the full entity (no truncation by this cap).
+ */
+async function readBoundedBody(
+    response: Response,
+    budget: number,
+): Promise<{ bytes: Uint8Array; complete: boolean }> {
+    const body = response.body;
+    if (!body) {
+        const all = new Uint8Array(await response.arrayBuffer());
+        return { bytes: all.slice(0, budget), complete: all.byteLength <= budget };
+    }
+    const reader = body.getReader();
+    const chunks: Uint8Array[] = [];
+    let received = 0;
+    let complete = false;
+    try {
+        for (;;) {
+            const { done, value } = await reader.read();
+            if (done) {
+                complete = true;
+                break;
+            }
+            const remaining = budget - received;
+            if (value.byteLength > remaining) {
+                chunks.push(value.slice(0, remaining));
+                received += remaining;
+                break;
+            }
+            chunks.push(value);
+            received += value.byteLength;
+            if (received >= budget) {
+                // One more read distinguishes "exactly the budget" from "more to come".
+                const next = await reader.read();
+                complete = next.done === true;
+                break;
+            }
+        }
+    } finally {
+        try {
+            await reader.cancel();
+        } catch {
+            /* stream already closed */
+        }
+    }
+    const bytes = new Uint8Array(received);
+    let offset = 0;
+    for (const chunk of chunks) {
+        bytes.set(chunk, offset);
+        offset += chunk.byteLength;
+    }
+    return { bytes, complete };
+}
+
+function totalFromContentLength(response: Response): number | null {
+    const raw = response.headers.get("Content-Length");
+    if (!raw) return null;
+    const total = Number(raw);
+    return Number.isSafeInteger(total) && total > 0 ? total : null;
+}
+
+async function consumeAttachmentPreview(
+    response: Response,
+    budget: number,
+): Promise<AttachmentPreview> {
+    if (!response.ok) await apiErrorFromResponse(response);
+    const mimeType = response.headers.get("Content-Type") ?? "application/octet-stream";
+    if (response.status === 206) {
+        const range = parseContentRange(response.headers.get("Content-Range"));
+        const { bytes, complete } = await readBoundedBody(response, budget);
+        const declared = range ? range.end - range.start + 1 : null;
+        // Trust neither side alone: cap by the declared range AND by the budget.
+        const bounded =
+            declared !== null && declared < bytes.byteLength ? bytes.slice(0, declared) : bytes;
+        const totalBytes = range?.total ?? null;
+        return {
+            bytes: bounded,
+            mimeType,
+            totalBytes,
+            truncated: totalBytes !== null ? totalBytes > bounded.byteLength : !complete,
+        };
+    }
+    // 200 = server ignored Range (old CP / proxy); bound the body client-side.
+    const { bytes, complete } = await readBoundedBody(response, budget);
+    const totalBytes = totalFromContentLength(response);
+    return {
+        bytes,
+        mimeType,
+        totalBytes,
+        truncated: !complete || (totalBytes !== null && totalBytes > bytes.byteLength),
+    };
+}
+
+/**
+ * Fetch the preview prefix of an attachment (`Range: bytes=0-<budget-1>`).
+ *
+ * A `416` means the range can not be satisfied (for example a stale cached length);
+ * that is not a hard failure, so it falls back once to a plain request whose body is
+ * still capped client-side. Other non-2xx responses map to `ApiError`
+ * (`400 INVALID_RANGE` included) so callers can surface the CP problem code.
+ */
+export async function fetchAttachmentPreview(
+    url: string,
+    options: AttachmentPreviewOptions = {},
+): Promise<AttachmentPreview> {
+    const budget = Math.max(1, Math.floor(options.budget ?? ATTACHMENT_PREVIEW_BUDGET_BYTES));
+    const rangedHeaders = apiAuthHeaders({ Range: `bytes=0-${budget - 1}` }, false);
+    let response = await fetch(url, { headers: rangedHeaders, signal: options.signal });
+    if (response.status === 416) {
+        response = await fetch(url, {
+            headers: apiAuthHeaders(undefined, false),
+            signal: options.signal,
+        });
+    }
+    return consumeAttachmentPreview(response, budget);
+}
+
+/**
+ * Fetch the remainder after a preview prefix (`Range: bytes=<offset>-`), used by the
+ * explicit "load the rest" action. Never called implicitly: full content is a user
+ * decision, and the preview budget is not a full-file cap.
+ */
+export async function fetchAttachmentRemainder(
+    url: string,
+    offset: number,
+    options: { signal?: AbortSignal } = {},
+): Promise<{ bytes: Uint8Array; totalBytes: number | null }> {
+    const response = await fetch(url, {
+        headers: apiAuthHeaders({ Range: `bytes=${offset}-` }, false),
+        signal: options.signal,
+    });
+    if (!response.ok) await apiErrorFromResponse(response);
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    const totalBytes =
+        response.status === 206
+            ? (parseContentRange(response.headers.get("Content-Range"))?.total ?? null)
+            : totalFromContentLength(response);
+    return { bytes, totalBytes };
+}
+
+/** Decode preview bytes as UTF-8, dropping an incomplete trailing code point. */
+export function decodePreviewText(bytes: Uint8Array): string {
+    return decodeUtf8WithinBudget(bytes, bytes.byteLength);
 }
