@@ -4933,6 +4933,8 @@ async function startConfigCpMock({
   deleteKeyStatus = 200,
   deleteKeyCode = 'CONFIG_ENV_LOCKED',
   locksStatus = 200,
+  configGetStatus = 200,
+  configGetCode = 'INVALID_DOMAIN',
 } = {}) {
   const state = {
     loginRequests: 0,
@@ -5028,6 +5030,10 @@ async function startConfigCpMock({
       state.configGetRequests += 1;
       state.lastConfigQuery = url.searchParams;
       state.lastConfigDomain = decodeURIComponent(tail);
+      if (configGetStatus !== 200) {
+        json(response, configGetStatus, { code: configGetCode, detail: 'must not be printed' });
+        return;
+      }
       if (state.lastConfigDomain === 'not-a-domain') {
         json(response, 400, { code: 'INVALID_DOMAIN', detail: 'must not be printed' });
         return;
@@ -5132,6 +5138,71 @@ test('PLAN-0643 V36: config get effective view includes envOverridden, the singl
   });
   assert.equal(optIn.data.includeMeta, true);
   assert.equal(cp.state.lastConfigQuery.get('includeMeta'), 'true');
+});
+
+test('PLAN-0643 V37: a non-ADMIN instance-layer 403 is surfaced as FORBIDDEN', async (t) => {
+  const cp = await startConfigCpMock({ configGetStatus: 403, configGetCode: 'FORBIDDEN' });
+  t.after(cp.close);
+
+  const result = await runCommand(['config', 'get', 'agent-runtime', '--layer', 'instance', '--json'], {
+    env: cp.env, promptSecret: noPrompt, stderr: sink(),
+  });
+  assert.equal(result.exitCode, 1, JSON.stringify(result.error));
+  assert.equal(result.error.code, 'FORBIDDEN');
+  assert.equal(result.error.details.status, 403);
+  assert.equal(JSON.stringify(result).includes('must not be printed'), false, 'CP detail must not enter the result');
+
+  // The printed CLI boundary must keep both the machine-readable envelope and the
+  // human-readable stderr line; asserting only runCommand's return would not prove
+  // that `--json` and stderr still carry the CP code.
+  const baseUrl = `http://127.0.0.1:${cp.env.XIHE_CP_PORT}`;
+  const token = tempTokenFile();
+  t.after(token.cleanup);
+  fs.writeFileSync(token.file, JSON.stringify({
+    version: 1,
+    tokens: {
+      [baseUrl]: {
+        token: 'test-access-token',
+        email: null,
+        expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
+        obtainedAt: new Date().toISOString(),
+      },
+    },
+  }));
+  const runSpawned = async (argv) => {
+    const child = spawn(process.execPath, ['scripts/xihe.mjs', ...argv], {
+      cwd: process.cwd(),
+      env: { ...process.env, XIHE_CP_URL: baseUrl, XIHE_CLI_TOKEN_FILE: token.file },
+      windowsHide: true,
+    });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.setEncoding('utf8');
+    child.stderr.setEncoding('utf8');
+    child.stdout.on('data', (chunk) => { stdout += chunk; });
+    child.stderr.on('data', (chunk) => { stderr += chunk; });
+    const status = await new Promise((resolve, reject) => {
+      child.on('error', reject);
+      child.on('close', resolve);
+    });
+    return { status, stdout, stderr };
+  };
+
+  const jsonRun = await runSpawned(['config', 'get', 'agent-runtime', '--layer', 'instance', '--json']);
+  assert.equal(jsonRun.status, 1, `stdout=${jsonRun.stdout}\nstderr=${jsonRun.stderr}`);
+  const envelope = JSON.parse(jsonRun.stdout);
+  assert.deepEqual(Object.keys(envelope).sort(), ['error', 'ok']);
+  assert.equal(envelope.ok, false);
+  assert.equal(envelope.error.code, 'FORBIDDEN', `stdout=${jsonRun.stdout}\nstderr=${jsonRun.stderr}`);
+  assert.equal(jsonRun.stderr.includes('must not be printed'), false, 'JSON stderr must not echo CP detail');
+
+  // `--json` intentionally writes only the machine envelope; the human face must
+  // still put the same CP code on stderr instead of swallowing the failure.
+  const humanRun = await runSpawned(['config', 'get', 'agent-runtime', '--layer', 'instance']);
+  assert.equal(humanRun.status, 1, `stdout=${humanRun.stdout}\nstderr=${humanRun.stderr}`);
+  assert.equal(humanRun.stdout, '');
+  assert.match(humanRun.stderr, /\[FORBIDDEN\] CP request failed \(HTTP 403\)\./);
+  assert.equal(humanRun.stderr.includes('must not be printed'), false, 'human stderr must not echo CP detail');
 });
 
 test('PLAN-0643 V38: explicit-only domains pass --layer through to the CP read', async (t) => {
