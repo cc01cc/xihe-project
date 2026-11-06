@@ -9,7 +9,8 @@ import path from 'node:path';
 import { tmpdir } from 'node:os';
 import { pathToFileURL } from 'node:url';
 import { printResult, runCommand } from './xihe.mjs';
-import { promptSecret, readResponseText } from './xihe-cli/provider.mjs';
+import { acquireLoginLock, loginLockPath } from './xihe-cli/login-lock.mjs';
+import { login, promptSecret, readResponseText } from './xihe-cli/provider.mjs';
 import { clearToken, readStore } from './xihe-cli/token-store.mjs';
 import { applySetToEnv, applyUrlSyncToEnv, parseStackSetArgs } from './lib/stack-set.mjs';
 
@@ -5726,10 +5727,9 @@ test('PLAN-0643 V23: five concurrent `xihe status` calls converge on at most two
   t.after(async () => { await cp.close(); token.cleanup(); });
   const env = { ...cp.env, XIHE_CLI_TOKEN_FILE: token.file };
 
-  // Same-process concurrency (the T1.5 shape): real-process children cannot run
-  // HTTP inside the DSH sandbox (TCP connects but the data plane is swallowed),
-  // so the contention proof runs five concurrent status commands against one
-  // empty shared token file; the login() in-flight dedup must converge them.
+  // Same-process concurrency (the T1.5 shape): five concurrent status commands
+  // against one empty shared token file; the login() in-flight dedup must converge
+  // them. The cross-process half (BL-396) is covered by the real-child tests below.
   const results = await Promise.all(Array.from({ length: 5 }, () => runCommand(['status', '--json'], {
     env, promptSecret: noPrompt, stderr: sink(),
   })));
@@ -5739,6 +5739,232 @@ test('PLAN-0643 V23: five concurrent `xihe status` calls converge on at most two
   const store = readTokenFile(token.file);
   assert.equal(Object.keys(store.tokens).length, 1);
   assert.deepEqual(fs.readdirSync(token.directory), ['cli-token.json'], 'no tmp residue');
+});
+
+// ── BL-396: cross-process first-login single-flight (PLAN-0643 V23) ────────
+// The V23 test above only covers the in-process map; these cover the lock that
+// makes five *independent* processes converge on one login.
+
+function startLoginCounterMock({ loginDelayMs = 0, rateLimitFailures = 0 } = {}) {
+  const state = { loginRequests: 0, statusRequests: 0, rateLimited: 0 };
+  const server = createServer(async (request, response) => {
+    const url = new URL(request.url, 'http://127.0.0.1');
+    await requestBody(request);
+    if (url.pathname === '/api/v1/auth/login') {
+      state.loginRequests += 1;
+      if (state.loginRequests <= rateLimitFailures) {
+        state.rateLimited += 1;
+        // CP's real 429 shape (AuthController.rateLimited): Retry-After + AUTH_RATE_LIMITED.
+        response.writeHead(429, { 'content-type': 'application/problem+json', 'retry-after': '0', 'cache-control': 'no-store' });
+        response.end(JSON.stringify({ code: 'AUTH_RATE_LIMITED', status: 429, detail: 'Too many login attempts; retry later' }));
+        return;
+      }
+      if (loginDelayMs > 0) await new Promise((resolve) => setTimeout(resolve, loginDelayMs));
+      json(response, 200, { accessToken: 'shared-token' });
+      return;
+    }
+    if (url.pathname === '/api/v1/status') {
+      state.statusRequests += 1;
+      json(response, 200, { status: 'ok' });
+      return;
+    }
+    json(response, 404, { code: 'NOT_FOUND' });
+  });
+  return { state, server };
+}
+
+async function startCounterMock(options) {
+  const mock = startLoginCounterMock(options);
+  await new Promise((resolve) => mock.server.listen(0, '127.0.0.1', resolve));
+  return {
+    state: mock.state,
+    env: { XIHE_CP_PORT: String(mock.server.address().port), XIHE_DEV_ADMIN_PASSWORD: TEST_PASSWORD },
+    close: () => new Promise((resolve, reject) => mock.server.close((error) => (error ? reject(error) : resolve()))),
+  };
+}
+
+function spawnCliStatus(env) {
+  const child = spawn(process.execPath, [path.resolve('scripts/xihe.mjs'), 'status', '--json'], {
+    cwd: process.cwd(),
+    // XIHE_CP_URL wins over XIHE_CP_PORT in resolveBaseUrl (design D5), and an empty
+    // value would be refilled from the developer's .env chain, so pin the mock URL.
+    env: { ...process.env, ...env, XIHE_CP_URL: `http://127.0.0.1:${env.XIHE_CP_PORT}` },
+    stdio: ['ignore', 'pipe', 'pipe'],
+    windowsHide: true,
+  });
+  let stdout = '';
+  let stderr = '';
+  child.stdout.on('data', (chunk) => { stdout += chunk; });
+  child.stderr.on('data', (chunk) => { stderr += chunk; });
+  return new Promise((resolve) => {
+    child.on('close', (code) => resolve({ code, stdout, stderr }));
+  });
+}
+
+test('BL-396: two real CLI processes converge on a single login (cross-process lock)', async (t) => {
+  // The login answer is deliberately slow so both children are provably inside the
+  // contention window at the same time; without the lock each would POST (2 logins).
+  const cp = await startCounterMock({ loginDelayMs: 150 });
+  const token = tempTokenFile();
+  t.after(async () => { await cp.close(); token.cleanup(); });
+  const env = { ...cp.env, XIHE_CLI_TOKEN_FILE: token.file };
+
+  const results = await Promise.all([spawnCliStatus(env), spawnCliStatus(env)]);
+
+  assert.deepEqual(results.map((result) => result.code), [0, 0], JSON.stringify(results));
+  assert.equal(cp.state.loginRequests, 1, 'exactly one process may log in');
+  const store = readTokenFile(token.file);
+  assert.equal(Object.keys(store.tokens).length, 1);
+  assert.equal(store.tokens[`http://127.0.0.1:${cp.env.XIHE_CP_PORT}`].token, 'shared-token');
+  assert.deepEqual(fs.readdirSync(token.directory), ['cli-token.json'], 'the lock file is released, no tmp residue');
+});
+
+test('BL-396: a login waiting on the lock reuses the peer token and never POSTs', async (t) => {
+  const cp = await startAuthMock();
+  const token = tempTokenFile();
+  t.after(async () => { await cp.close(); token.cleanup(); });
+  const env = { ...cp.env, XIHE_CLI_TOKEN_FILE: token.file };
+  const apiBase = `http://127.0.0.1:${cp.env.XIHE_CP_PORT}`;
+
+  // "Virtual peer": it holds the lock; during the first backoff it persists a token
+  // (what a winning process does) and keeps the lock until it releases it.
+  fs.writeFileSync(loginLockPath(env), `${JSON.stringify({ pid: process.pid, acquiredAt: new Date().toISOString() })}\n`);
+  let sleeps = 0;
+  const sleep = async () => {
+    sleeps += 1;
+    seedStaleToken(token.file, apiBase, 'peer-token');
+  };
+
+  const reused = await login({
+    apiBase,
+    fetchImpl: fetch,
+    env,
+    options: {},
+    promptSecret: async () => { throw new Error('a waiting login must not prompt for a password'); },
+    dependencies: { sleep, budgetMs: 5_000 },
+  });
+
+  assert.equal(reused, 'peer-token');
+  assert.equal(sleeps, 1, 'one backoff is enough once the peer persisted');
+  assert.equal(cp.state.loginRequests, 0, 'the waiter must never log in itself');
+});
+
+test('BL-396: a live foreign holder is never stolen; the waiter fails with AUTH_LOGIN_CONTENTION', async (t) => {
+  const cp = await startAuthMock();
+  const token = tempTokenFile();
+  t.after(async () => { await cp.close(); token.cleanup(); });
+  const env = { ...cp.env, XIHE_CLI_TOKEN_FILE: token.file };
+  const lockFile = loginLockPath(env);
+  fs.writeFileSync(lockFile, `${JSON.stringify({ pid: process.pid, acquiredAt: new Date().toISOString() })}\n`);
+
+  // Injected clock + sleep: the budget advances deterministically, no wall-clock wait.
+  let clockMs = Date.now();
+  const now = () => clockMs;
+  const sleep = async (ms) => { clockMs += ms; };
+
+  await assert.rejects(
+    () => login({
+      apiBase: `http://127.0.0.1:${cp.env.XIHE_CP_PORT}`,
+      fetchImpl: fetch,
+      env,
+      options: {},
+      promptSecret: noPrompt,
+      dependencies: { now, sleep, budgetMs: 5_000 },
+    }),
+    (error) => error.code === 'AUTH_LOGIN_CONTENTION' && error.exitCode === 1,
+    'an exhausted budget must fail explicitly instead of racing a login',
+  );
+  assert.equal(cp.state.loginRequests, 0, 'no login may be sent while the holder is alive');
+  assert.equal(fs.existsSync(lockFile), true, 'a live holder lock must not be removed');
+});
+
+test('BL-396: the login lock creates a missing cache directory instead of degrading', async (t) => {
+  // Real-stack regression (2026-11-06): a cold first login has no cache directory
+  // yet, so `wx` failed with ENOENT and every process silently fell back to an
+  // unlocked login (5 processes, 9 login POSTs through the counting proxy).
+  const base = fs.mkdtempSync(path.join(tmpdir(), 'xihe-lock-cold-'));
+  t.after(() => fs.rmSync(base, { recursive: true, force: true }));
+  const file = path.join(base, 'missing', 'cli-token.json');
+  const env = { XIHE_CLI_TOKEN_FILE: file };
+  assert.equal(fs.existsSync(path.dirname(file)), false, 'precondition: cold cache directory');
+
+  const first = await acquireLoginLock({ env });
+  assert.equal(first.kind, 'acquired', 'a cold cache directory must not degrade to an unlocked login');
+  assert.equal(fs.existsSync(path.dirname(file)), true, 'the lock creates the cache directory');
+  assert.equal(first.release(), true);
+  assert.equal(fs.existsSync(loginLockPath(env)), false);
+
+  // A peer waiting on a live holder re-reads the store instead of logging in again.
+  const holder = await acquireLoginLock({ env });
+  assert.equal(holder.kind, 'acquired');
+  const waiter = await acquireLoginLock({ env, onWait: () => 'peer-token' });
+  assert.equal(waiter.kind, 'reuse');
+  assert.equal(waiter.token, 'peer-token');
+  assert.equal(holder.release(), true);
+});
+
+test('BL-396: stale login locks (dead pid / expired mtime) are swept and acquired', async (t) => {
+  const token = tempTokenFile();
+  t.after(() => token.cleanup());
+  const env = { XIHE_CLI_TOKEN_FILE: token.file };
+  const lockFile = loginLockPath(env);
+  const holderBody = (pid) => `${JSON.stringify({ pid, acquiredAt: new Date(0).toISOString() })}\n`;
+
+  // 1. holder pid is dead -> stale immediately (covers a hard-killed login).
+  fs.writeFileSync(lockFile, holderBody(findDeadPid()));
+  const afterDeadPid = await acquireLoginLock({ env });
+  assert.equal(afterDeadPid.kind, 'acquired');
+  assert.equal(afterDeadPid.clearedStale, 1);
+  assert.equal(afterDeadPid.release(), true);
+  assert.equal(fs.existsSync(lockFile), false, 'release removes our own lock');
+
+  // 2. live pid but the lock is older than the stale threshold (pid reuse / long hang).
+  fs.writeFileSync(lockFile, holderBody(process.pid));
+  const ancient = new Date(Date.now() - 3_600_000);
+  fs.utimesSync(lockFile, ancient, ancient);
+  const afterExpiredMtime = await acquireLoginLock({ env });
+  assert.equal(afterExpiredMtime.kind, 'acquired');
+  assert.equal(afterExpiredMtime.clearedStale, 1);
+  afterExpiredMtime.release();
+
+  // 3. live pid + fresh mtime is honoured: wait, then time out instead of stealing.
+  fs.writeFileSync(lockFile, holderBody(process.pid));
+  const contended = await acquireLoginLock({ env, budgetMs: 300 });
+  assert.equal(contended.kind, 'timeout');
+  assert.equal(contended.clearedStale, 0);
+  assert.equal(fs.existsSync(lockFile), true, 'a live holder survives the contender');
+});
+
+test('BL-396: a 429 login is retried per Retry-After and then succeeds', async (t) => {
+  const cp = await startCounterMock({ rateLimitFailures: 1 });
+  const token = tempTokenFile();
+  t.after(async () => { await cp.close(); token.cleanup(); });
+
+  const result = await runCommand(['status', '--json'], {
+    env: { ...cp.env, XIHE_CLI_TOKEN_FILE: token.file }, promptSecret: noPrompt, stderr: sink(),
+  });
+
+  assert.equal(result.exitCode, 0, JSON.stringify(result.error));
+  assert.equal(cp.state.loginRequests, 2, 'one throttled attempt + one retry');
+  assert.equal(cp.state.statusRequests, 1);
+  assert.equal(readTokenFile(token.file).tokens[`http://127.0.0.1:${cp.env.XIHE_CP_PORT}`].token, 'shared-token');
+});
+
+test('BL-396: consecutive 429s still surface AUTH_RATE_LIMITED after bounded retries', async (t) => {
+  const cp = await startCounterMock({ rateLimitFailures: 5 });
+  const token = tempTokenFile();
+  t.after(async () => { await cp.close(); token.cleanup(); });
+
+  const result = await runCommand(['status', '--json'], {
+    env: { ...cp.env, XIHE_CLI_TOKEN_FILE: token.file }, promptSecret: noPrompt, stderr: sink(),
+  });
+
+  assert.equal(result.exitCode, 1);
+  assert.equal(result.error.code, 'AUTH_RATE_LIMITED', 'the CLI never swallows the throttle');
+  assert.equal(cp.state.loginRequests, 3, 'the initial attempt plus two bounded retries');
+  assert.equal(cp.state.statusRequests, 0, 'a failed login must not issue business calls');
+  assert.equal(fs.existsSync(token.file), false, 'a failed login persists nothing');
+  assert.equal(fs.existsSync(loginLockPath(cp.env)), false, 'the lock is released on the error path too');
 });
 
 test('PLAN-0643 V24: killing a concurrent token-store writer leaves a parseable store (old or new value)', async (t) => {
