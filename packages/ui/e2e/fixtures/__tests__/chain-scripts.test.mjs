@@ -197,3 +197,46 @@ describe("fake-llm mode=chain (marker activation)", () => {
         assert.deepEqual(marked.toolCalls, ["read_file"], "marker activates step 1");
     });
 });
+
+// PLAN-0660 T5.23：`ask-user` 链 = ask_user 工具调用 → （人类作答，真栈上 run 在此阻塞）
+// → 工具结果回来后续请求返回 prose。这里把「链条目 + mode 分发 + 续请求收尾」钉死，
+// 真栈 spec（`e2e/real/plan0660-ask-user.spec.ts`）才敢只依赖它。
+describe("fake-llm mode=chain (ask-user script)", () => {
+    /** @type {import("node:child_process").ChildProcess} */
+    let server;
+
+    before(async () => {
+        // marker 激活：与真栈 spec 一致（首条 user 消息带 XIHE-E2E-CHAIN ask-user），
+        // 同时验证 chain-scripts 里新条目与 ask_user 模式的分发。
+        server = startServer("success");
+        await waitReady();
+    });
+
+    after(async () => {
+        server.kill("SIGTERM");
+        await Promise.race([
+            once(server, "exit"),
+            new Promise((resolve) => setTimeout(resolve, 2_000)),
+        ]);
+    });
+
+    it("emits ask_user once, then continues with prose after the answer arrives", async () => {
+        const firstTurn = {
+            role: "user",
+            content: "XIHE-E2E-CHAIN ask-user XIHE-E2E-ASK T5.23 请确认继续",
+        };
+        const asked = await chat([sys, firstTurn]);
+        assert.deepEqual(asked.toolCalls, ["ask_user"], "step 1 = ask_user tool call");
+        assert.equal(asked.hasProse, false, "the ask step must not emit prose yet");
+
+        // 作答后 Agent 的续请求：同一轮 + assistant(tool_calls) + tool 结果。
+        const continued = await chat([
+            sys,
+            firstTurn,
+            { role: "assistant", content: null },
+            { role: "tool", content: "继续 T5.23" },
+        ]);
+        assert.deepEqual(continued.toolCalls, [], "no further tool call after the answer");
+        assert.equal(continued.hasProse, true, "the run continues with prose once answered");
+    });
+});

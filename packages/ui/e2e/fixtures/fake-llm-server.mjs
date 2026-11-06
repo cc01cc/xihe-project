@@ -188,6 +188,12 @@ async function sendCompletion(response, provider, requestBody) {
         return;
     }
 
+    // PLAN-0660 T5.23: deterministic `ask_user` tool call (chain step `ask_user`).
+    if (effectiveMode === "ask_user") {
+        sendAskUserCompletion(response, requestBody);
+        return;
+    }
+
     if (effectiveMode === "history-marker") {
         sendHistoryMarkerCompletion(response, requestBody);
         return;
@@ -1001,6 +1007,60 @@ function sendReadFileCompletion(response, requestBody) {
     }
 
     const chunks = ["Read completed. ", "The file content was returned."];
+    for (const content of chunks) {
+        response.write(`data: ${JSON.stringify({ choices: [{ delta: { content } }] })}\n\n`);
+    }
+    response.end("data: [DONE]\n\n");
+}
+
+// PLAN-0660 T5.23（mode: ask_user / chain 步）：确定性的 `ask_user` 工具调用。
+//
+// 与 read_file/write_file 同构：一轮里第一次请求发 tool_call，工具之后的续请求
+// （last.role === "tool"）返回纯文本收尾。区别在阻塞语义：`ask_user` 会把整轮 run
+// **停住**直到人类作答（T5.15 共享 human-wait 队列），所以这个 followUp 只会在
+// 回答落库、CP 经 `/internal/v1/agent/user-question/respond` 把答案推回 Agent 之后出现
+// ——正好是「作答 → agent 继续」的端到端断言点（T5.23 判据 V8）。
+//
+// 问题正文取同轮 user 消息里的 `XIHE-E2E-ASK <text>` 标记（无标记用固定追问兜底），
+// 这样多个 spec 可在同一栈上按会话激活同一条链（`XIHE-E2E-CHAIN ask-user`）。
+function sendAskUserCompletion(response, requestBody) {
+    const messages = Array.isArray(requestBody.messages) ? requestBody.messages : [],
+        last = messages.at(-1) ?? {};
+
+    if (last.role !== "tool") {
+        const lastUser = [...messages].reverse().find((m) => m.role === "user"),
+            text = typeof lastUser?.content === "string" ? lastUser.content : "",
+            marker = text.indexOf("XIHE-E2E-ASK "),
+            question =
+                marker >= 0 ? text.slice(marker + "XIHE-E2E-ASK ".length).trim() : "Continue?";
+        const toolCallDelta = {
+            choices: [
+                {
+                    delta: {
+                        tool_calls: [
+                            {
+                                index: 0,
+                                id: "call-ask-user-e2e-1",
+                                type: "function",
+                                function: {
+                                    name: "ask_user",
+                                    arguments: JSON.stringify({ question }),
+                                },
+                            },
+                        ],
+                    },
+                    finish_reason: null,
+                },
+            ],
+        };
+        const finishDelta = { choices: [{ delta: {}, finish_reason: "tool_calls" }] };
+        response.write(`data: ${JSON.stringify(toolCallDelta)}\n\n`);
+        response.write(`data: ${JSON.stringify(finishDelta)}\n\n`);
+        response.end("data: [DONE]\n\n");
+        return;
+    }
+
+    const chunks = ["Answer received. ", "The question was answered by the user."];
     for (const content of chunks) {
         response.write(`data: ${JSON.stringify({ choices: [{ delta: { content } }] })}\n\n`);
     }
