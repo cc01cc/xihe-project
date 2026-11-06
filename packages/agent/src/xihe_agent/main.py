@@ -371,6 +371,7 @@ from xihe_agent.api.judge import router as judge_router  # noqa: E402
 from xihe_agent.api.misc import router as misc_router  # noqa: E402
 from xihe_agent.api.rag import router as rag_router  # noqa: E402
 from xihe_agent.api.registry import router as registry_router  # noqa: E402
+from xihe_agent.api.user_question import router as user_question_router  # noqa: E402
 from xihe_agent.llm.models import router as models_router  # noqa: E402
 
 app.include_router(models_router)
@@ -379,6 +380,7 @@ app.include_router(misc_router)
 app.include_router(rag_router)
 app.include_router(judge_router)
 app.include_router(approval_router)
+app.include_router(user_question_router)
 app.include_router(registry_router)
 
 # PLAN-0510 T0.5: expose the synthetic saver probe only under the exact

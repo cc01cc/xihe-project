@@ -12,6 +12,16 @@ waiter or branching on "is this an approval?":
 Wire shape (CP relay consumer, ``ChatController.relayUserQuestion``): the published payload
 carries only ``question`` and, for a timed ask, ``expiresAt``; ``askedByParticipantId`` is
 optional. The question body never enters a log line — only its length does.
+
+T5.16 (root-run gate / error mapping): only a **root run** may ask. CP refuses a child run's
+question with ``409 SUBAGENT_QUESTION_REFUSED`` (``UserQuestionService.recordPending`` — the
+``chat_runs.parent_run_id`` gate). The tool must never wait out an hour-long ceiling for that
+refusal: when the delivery path surfaces a refusal — an explicit
+:class:`UserQuestionRefusedError`, an exception carrying a string ``code``, or an
+``httpx.HTTPStatusError``-shaped 409 whose problem body has a ``code`` — the waiter is dropped
+and the model gets a readable ``status=error`` result with the CP code. It is never
+``no_answer`` and never a fabricated success. Unknown delivery failures still raise: a refusal
+is a decision, a transport bug is a bug.
 """
 
 import asyncio
@@ -52,6 +62,29 @@ NO_ANSWER_CONTENT = (
     "No answer before the deadline (no_answer). Continue without an answer; "
     "do not invent or assume one."
 )
+
+# CP's refusal code for a child run's ask (PLAN-0660 T5.16; the gate lives in
+# UserQuestionService.recordPending). The tool maps it to a model-readable error result so a
+# spawned run hands the question back instead of blocking on an answer that cannot arrive.
+CODE_SUBAGENT_QUESTION_REFUSED = "SUBAGENT_QUESTION_REFUSED"
+SUBAGENT_QUESTION_REFUSED_CONTENT = (
+    "Only a root run may ask the user a question; this run was spawned by a parent run. "
+    "A child run cannot open the human channel — pass the question back to the parent run and "
+    "let it ask on your behalf."
+)
+
+
+class UserQuestionRefusedError(Exception):
+    """CP refused the question (a problem ``code`` such as ``SUBAGENT_QUESTION_REFUSED``).
+
+    Explicit carrier for :func:`_refused_code`: whoever learns CP said no (today the tests, and
+    any future relay-refusal channel) raises this so :meth:`UserQuestionCoordinator.ask` turns
+    the refusal into a readable result instead of waiting for an answer that never comes.
+    """
+
+    def __init__(self, code: str) -> None:
+        super().__init__(code)
+        self.code = code
 
 
 @dataclass
@@ -148,8 +181,17 @@ class UserQuestionCoordinator:
             self.pending_by_run.pop(run_id, None)
             logger.warning("User question wait cancelled: id={} runId={}", local_id, run_id)
             raise
-        except Exception:
+        except Exception as exc:
             self.pending_by_run.pop(run_id, None)
+            refused_code = _refused_code(exc)
+            if refused_code is not None:
+                logger.warning(
+                    "User question refused: id={} runId={} code={}",
+                    local_id,
+                    run_id,
+                    refused_code,
+                )
+                return _refusal_result(refused_code)
             logger.warning("User question wait failed: id={} runId={}", local_id, run_id, exc_info=True)
             raise
 
@@ -240,6 +282,40 @@ class UserQuestionCoordinator:
 
 def _error_result(code: str, message: str) -> dict[str, Any]:
     return {"content": message, "status": STATUS_ERROR, "code": code}
+
+
+def _refused_code(exc: BaseException) -> str | None:
+    """Return the CP problem code when ``exc`` carries a refusal, else ``None``.
+
+    Recognised shapes, duck-typed on purpose (the tool keeps no CP-client import): an explicit
+    :class:`UserQuestionRefusedError`, any exception exposing a non-empty string ``code``, and an
+    ``httpx.HTTPStatusError``-shaped 409 whose problem body carries ``code``. A 409 whose body has
+    no readable code is still not a transport bug, but there is no code to report, so the original
+    failure is re-raised instead of being turned into a guess.
+    """
+    if isinstance(exc, UserQuestionRefusedError):
+        return exc.code
+    code = getattr(exc, "code", None)
+    if isinstance(code, str) and code:
+        return code
+    response = getattr(exc, "response", None)
+    if response is not None and getattr(response, "status_code", None) == 409:
+        try:
+            body = response.json()
+        except Exception:
+            logger.warning("User question refusal body is not JSON; re-raising the transport error")
+            return None
+        if isinstance(body, dict):
+            body_code = body.get("code")
+            if isinstance(body_code, str) and body_code:
+                return body_code
+    return None
+
+
+def _refusal_result(code: str) -> dict[str, Any]:
+    if code == CODE_SUBAGENT_QUESTION_REFUSED:
+        return _error_result(code, SUBAGENT_QUESTION_REFUSED_CONTENT)
+    return _error_result(code, f"User question refused by CP ({code}); it was not delivered.")
 
 
 class UserQuestionTool(BaseAgentTool):
