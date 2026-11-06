@@ -72,6 +72,13 @@ export interface UserChannelSseOptions {
     /** `user_question` — projection hint (M5-B); optional until that lands. */
     onQuestion?: (questionId: string, sessionId: string, state: string) => void;
     /**
+     * PLAN-0660 T5.18：`connected` —— 每次（含每次重连后）握手成功回调一次。
+     *
+     * 用户通道**不 replay**（`spec/session/user-channel.md` §4：断线期间的事件不补发），所以重连
+     * 成功后必须由消费方**重拉投影**；否则"断线时被问的问题"要等到下一个事件才会出现。
+     */
+    onConnected?: () => void;
+    /**
      * BL-335：撞上"订阅者上限"（`429 USER_CHANNEL_FULL`）时回调一次，然后**停止重连**
      * —— 上限是持续态，按 1s/2s/4s… 无限重试只会持续占用配额、且在用户看来像"网络抖动"。
      */
@@ -107,6 +114,15 @@ export function createUserChannelSse(options: UserChannelSseOptions): UserChanne
     let controller: AbortController | null = null;
     let timer: unknown = null;
     let attempts = 0;
+    /**
+     * 连接代号：每建立一条新连接 +1。
+     *
+     * `onConnected` 的语义是「重拉投影」（通道不 replay），所以它必须**每连接恰好一次** —— 不能
+     * 靠"服务端只发一次 `connected`"这种外部巧合（重复帧会让投影请求翻倍，而缺帧会让重连后
+     * 永不重拉）。这里按连接代号去重，判据在本地闭环。
+     */
+    let connectionSeq = 0;
+    let announcedConnection = -1;
 
     function planReconnect(): void {
         if (disposed) return;
@@ -138,7 +154,14 @@ export function createUserChannelSse(options: UserChannelSseOptions): UserChanne
             }
             return;
         }
-        // `connected` and any unknown event: nothing to do (unknown names are never guessed).
+        if (frame.event === "connected") {
+            if (announcedConnection !== connectionSeq) {
+                announcedConnection = connectionSeq;
+                options.onConnected?.();
+            }
+            return;
+        }
+        // Any unknown event: nothing to do (unknown names are never guessed).
     }
 
     async function connect(): Promise<void> {
@@ -175,6 +198,8 @@ export function createUserChannelSse(options: UserChannelSseOptions): UserChanne
                 return;
             }
             attempts = 0;
+            // 新连接：`connected` 的去重代号随之推进（见 `dispatch` 与 `connectionSeq`）。
+            connectionSeq += 1;
             const reader = response.body.getReader();
             const decoder = new TextDecoder();
             const parse = createSseFrameParser();

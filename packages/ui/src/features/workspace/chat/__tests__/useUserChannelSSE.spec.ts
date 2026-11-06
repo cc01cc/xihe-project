@@ -34,7 +34,7 @@ describe("useUserChannelSSE", () => {
         expect(frames[1]).toEqual({ event: "participant_notified", data: '{"sessionId":"s"}' });
     });
 
-    it("dispatches participant_notified and ignores unknown/connected events", async () => {
+    it("dispatches participant_notified and user_question, ignores unknown events", async () => {
         const onNotified = vi.fn<(sessionId: string, participantId: string) => void>();
         const onQuestion = vi.fn<(questionId: string, sessionId: string, state: string) => void>();
         const client = createUserChannelSse({
@@ -58,6 +58,28 @@ describe("useUserChannelSSE", () => {
 
         expect(onNotified).toHaveBeenCalledWith("s-1", "p-1");
         expect(onQuestion).toHaveBeenCalledWith("q-1", "s-1", "pending");
+        client.dispose();
+    });
+
+    it("fires onConnected on every handshake, so the projection refetches after a reconnect (T5.18)", async () => {
+        const onConnected = vi.fn<() => void>();
+        const client = createUserChannelSse({
+            getToken: () => "token-1",
+            onNotified: () => {},
+            onConnected,
+            // Every stream carries exactly one `connected` frame and then ends ⇒ the client reconnects,
+            // and the second handshake must fire `onConnected` again. Backoff must be a real macrotask:
+            // a microtask chain never yields the loop to `waitFor`'s polling timer (measured OOM).
+            fetchImpl: async () =>
+                new Response(streamOf(['event: connected\ndata: {"serverTime":"t"}\n\n']), {
+                    status: 200,
+                }),
+            schedule: (callback) => setTimeout(callback, 0),
+            cancel: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
+        });
+
+        client.start();
+        await vi.waitFor(() => expect(onConnected.mock.calls.length).toBeGreaterThanOrEqual(2));
         client.dispose();
     });
 
@@ -195,6 +217,43 @@ describe("useUserChannelSSE", () => {
 
         expect(onSubscriberLimit).not.toHaveBeenCalled();
         expect(delays[0]).toBe(1_000);
+        client.dispose();
+    });
+
+    /**
+     * P3-4：`onConnected` 的语义是「重拉投影」，必须**每连接恰好一次**。
+     *
+     * 不靠"服务端只发一次 connected"这种外部巧合 —— 同一连接里重复的 `connected` 不该把投影请求
+     * 翻倍（多标签页/代理解包都可能重复），而重连后必须重新回调（否则断线期间的问题永不出现）。
+     * 这里用一条只发两帧 `connected` 的流钉住"同连接去重"，第二条连接挂起以免干扰计数。
+     */
+    it("announces connected once per connection, not once per frame (P3-4)", async () => {
+        const onConnected = vi.fn<() => void>();
+        let fetches = 0;
+        const client = createUserChannelSse({
+            getToken: () => "token-1",
+            onNotified: vi.fn<(sessionId: string, participantId: string) => void>(),
+            onConnected,
+            fetchImpl: async () => {
+                fetches += 1;
+                if (fetches > 1) return new Promise<Response>(() => {});
+                return new Response(
+                    streamOf([
+                        'event: connected\ndata: {"serverTime":"t1"}\n\n',
+                        'event: connected\ndata: {"serverTime":"t2"}\n\n',
+                    ]),
+                    { status: 200 },
+                );
+            },
+            schedule: (callback) => setTimeout(callback, 0),
+            cancel: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
+        });
+
+        client.start();
+        await vi.waitFor(() => expect(onConnected).toHaveBeenCalledTimes(1));
+        // 两帧都在同一次 read 里派发完了：若守卫失效这里会变成 2。
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        expect(onConnected).toHaveBeenCalledTimes(1);
         client.dispose();
     });
 });

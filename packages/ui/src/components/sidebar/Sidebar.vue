@@ -15,6 +15,7 @@ import {
 import { useAuthStore } from "../../stores/auth";
 import { toast } from "vue-sonner";
 import SessionList from "../../features/workspace/chat/components/SessionList.vue";
+import UserQuestionsEntry from "../../features/workspace/components/UserQuestionsEntry.vue";
 import NavRail from "./NavRail.vue";
 import { workspacePath } from "../../lib/routes";
 import {
@@ -234,6 +235,11 @@ function handleLogout() {
                     <Plus class="size-4" aria-hidden="true" />
                     {{ t("sidebar.newChat") }}
                 </button>
+            </div>
+
+            <!-- PLAN-0660 T5.21（B-7 全局导航入口）：有欠答时才占位，零态不渲染（见组件头注释）。 -->
+            <div class="px-3 pb-2">
+                <UserQuestionsEntry />
             </div>
 
             <div class="px-3 pb-2">

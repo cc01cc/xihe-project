@@ -12,6 +12,7 @@ import type {
     SessionParticipantCapabilities,
     SessionParticipantListResponse,
 } from "../../types/participant";
+import type { UserQuestionListResponse } from "../../types/userQuestion";
 import AppLayout from "../AppLayout.vue";
 
 /**
@@ -33,11 +34,13 @@ vi.mock("../../composables/api", async (importOriginal) => {
             getPendingApprovals: vi.fn<typeof apiModule.api.getPendingApprovals>(),
             getWorkspace: vi.fn<typeof apiModule.api.getWorkspace>(),
             getSessionParticipants: vi.fn<() => Promise<SessionParticipantListResponse>>(),
+            listUserQuestions: vi.fn<() => Promise<UserQuestionListResponse>>(),
         },
     };
 });
 
 const getParticipants = vi.mocked(api.getSessionParticipants);
+const listQuestions = vi.mocked(api.listUserQuestions);
 
 const CAPS: SessionParticipantCapabilities = {
     view: true,
@@ -138,6 +141,7 @@ beforeEach(async () => {
     vi.mocked(api.getPendingApprovals).mockResolvedValue([]);
     vi.mocked(api.getWorkspace).mockResolvedValue({ id: "workspace-1", name: "Workspace" });
     getParticipants.mockResolvedValue({ participants: [], capabilities: CAPS });
+    listQuestions.mockResolvedValue({ items: [], pendingCount: 0 });
     useAuthStore().$patch({
         token: "token-1",
         user: { id: "user-1", email: "test@xihe.local" },
@@ -175,6 +179,37 @@ describe("AppLayout user-channel subscription (PLAN-0660 T5.6)", () => {
 
         // 合并窗口（既有 300ms）之后应恰好重读一次名单 —— 走的是真 store action，不是桩。
         await vi.waitFor(() => expect(getParticipants).toHaveBeenCalledTimes(2));
+        wrapper.unmount();
+    });
+
+    it("refetches the question projection on every handshake (T5.18: no replay, so reconnect ⇒ reload)", async () => {
+        const harness = installSseFetch();
+        const wrapper = await mountLayout();
+        await vi.waitFor(() => expect(harness.requests).toHaveLength(1));
+
+        // 通道不 replay：握手本身（首连与重连同一条路径）就是"现在把投影对齐"的信号。
+        harness.push('event: connected\ndata: {"serverTime":"t"}\n\n');
+        await vi.waitFor(() => expect(listQuestions).toHaveBeenCalledTimes(1));
+
+        wrapper.unmount();
+    });
+
+    it("feeds a user_question frame into the questions store (hint ⇒ one projection refetch)", async () => {
+        const harness = installSseFetch();
+        const wrapper = await mountLayout();
+        await vi.waitFor(() => expect(harness.requests).toHaveLength(1));
+
+        harness.push('event: connected\ndata: {"serverTime":"t"}\n\n');
+        await vi.waitFor(() => expect(listQuestions).toHaveBeenCalledTimes(1));
+
+        harness.push(
+            'event: user_question\ndata: {"questionId":"q-1","sessionId":"s-1","state":"pending"}\n\n',
+        );
+
+        // T5.19：hint 只标脏，投影在 300ms 合并窗后**整体重拉**（不是本地追加条目）。
+        await vi.waitFor(() => expect(listQuestions).toHaveBeenCalledTimes(2));
+        expect(listQuestions).toHaveBeenLastCalledWith({ state: "pending" });
+
         wrapper.unmount();
     });
 

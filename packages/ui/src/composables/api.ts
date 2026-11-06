@@ -92,6 +92,11 @@ import type {
     SessionParticipantListResponse,
     SessionParticipantView,
 } from "../types/participant";
+import type {
+    UserQuestionListResponse,
+    UserQuestionState,
+    UserQuestionView,
+} from "../types/userQuestion";
 import { clearTabWorkspace, readTabWorkspaceId } from "../lib/workspaceContext";
 
 const API_BASE = "/api/v1";
@@ -3000,6 +3005,65 @@ export const api = {
             updatedAt: typeof record.updatedAt === "string" ? record.updatedAt : "",
         };
     },
+    /**
+     * PLAN-0660 T5.19/T5.20：本人待答问句投影 —— `GET /api/v1/user-questions`。
+     *
+     * **addressee-only**：只返回 `addressee_user_id = 调用者` 的行，**不是**「我能看到的会话里的
+     * 所有问题」；`pendingCount` 与 `items` 同过滤条件（派生值、从不落库），所以徽标与列表不可能
+     * 不一致。`state` 目前只接受 `pending`（其余 → 400），`limit` 缺省 20、`>100` 按 clamp。
+     */
+    async listUserQuestions(params?: {
+        state?: UserQuestionState;
+        limit?: number;
+    }): Promise<UserQuestionListResponse> {
+        const query = new URLSearchParams();
+        if (params?.state) query.set("state", params.state);
+        if (params?.limit !== undefined) query.set("limit", String(params.limit));
+        const suffix = query.toString();
+        const raw = await request<unknown>(`/user-questions${suffix ? `?${suffix}` : ""}`);
+        // 严格信封：形状不符就抛错。用空列表冒充「没有待答问题」会把契约破损显示成业务空态。
+        if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+            throw new Error(
+                `listUserQuestions: unexpected payload (received ${
+                    Array.isArray(raw) ? "a bare array" : raw === null ? "null" : typeof raw
+                }; expected an object with "items" and "pendingCount")`,
+            );
+        }
+        const record = raw as Record<string, unknown>;
+        if (!Array.isArray(record.items)) {
+            throw new Error(
+                `listUserQuestions: "items" is not an array (received ${
+                    record.items === null ? "null" : typeof record.items
+                })`,
+            );
+        }
+        if (typeof record.pendingCount !== "number") {
+            throw new Error(
+                `listUserQuestions: "pendingCount" is not a number (received ${typeof record.pendingCount}); ` +
+                    `refusing to substitute 0 — that would render a broken contract as "nothing pending"`,
+            );
+        }
+        return { items: record.items as UserQuestionView[], pendingCount: record.pendingCount };
+    },
+    /** PLAN-0660 T5.19：单条投影。非 addressee 且非会话可见者一律 **404**（契约无 403 分支）。 */
+    async getUserQuestion(id: string): Promise<UserQuestionView> {
+        const raw = await request<unknown>(`/user-questions/${encodeURIComponent(id)}`);
+        return assertUserQuestionView(raw, "getUserQuestion");
+    },
+    /**
+     * PLAN-0660 T5.20：提交答案（仅 addressee）。成功返回**结案投影**（`state=answered` +
+     * `settledAt`），**不是 204**。冲突码原样抛出：`409 QUESTION_ALREADY_SETTLED` /
+     * `409 QUESTION_EXPIRED` / `502 AGENT_QUESTION_DELIVERY_FAILED`（502 时行**仍是 `pending`**，
+     * fail-closed 可重试）。
+     */
+    async answerUserQuestion(id: string, answer: string): Promise<UserQuestionView> {
+        const raw = await request<unknown>(`/user-questions/${encodeURIComponent(id)}/answer`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ answer }),
+        });
+        return assertUserQuestionView(raw, "answerUserQuestion");
+    },
     /** PLAN-0655: the budget view used by the delegation dialog's read-only row. */
     async delegationUsage(sessionId: string): Promise<DelegationUsageView> {
         return request<DelegationUsageView>(
@@ -4546,3 +4610,52 @@ export const api = {
         );
     },
 };
+
+/** `UserQuestionView` 的封闭四态（`spec/session/user-channel.md` §5）。 */
+const USER_QUESTION_STATES: readonly UserQuestionState[] = [
+    "pending",
+    "answered",
+    "expired",
+    "cancelled",
+];
+
+/** `UserQuestionView` 上必须是非空字符串的字段（`answer`/`expiresAt` 等可空字段不在此列）。 */
+const USER_QUESTION_REQUIRED_STRINGS = ["id", "sessionId", "runId", "prompt", "createdAt"] as const;
+
+/**
+ * PLAN-0660 T5.19/T5.20 —— 单条问答投影的信封校验。
+ *
+ * 为什么抛而不补默认值（与 `listUserQuestions` 的 `pendingCount` 校验同一条判据）：`state` 缺失
+ * 若回落成 `pending`，UI 会渲染出一个「可作答」的假问题并允许提交；`id` 缺失会让 `applySettled`
+ * 的按 id 匹配静默失效，用户以为作答成功、行却不动。契约破损必须显形，不能由 `undefined` 冒充。
+ */
+function assertUserQuestionView(raw: unknown, operation: string): UserQuestionView {
+    const reject = (reason: string): never => {
+        throw new Error(`${operation}: ${reason}`);
+    };
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+        return reject(
+            `unexpected payload (received ${
+                Array.isArray(raw) ? "a bare array" : raw === null ? "null" : typeof raw
+            }; expected a question object)`,
+        );
+    }
+    const record = raw as Record<string, unknown>;
+    for (const field of USER_QUESTION_REQUIRED_STRINGS) {
+        if (typeof record[field] !== "string" || record[field] === "") {
+            return reject(
+                `"${field}" is not a non-empty string (received ${
+                    record[field] === null ? "null" : typeof record[field]
+                })`,
+            );
+        }
+    }
+    if (!USER_QUESTION_STATES.includes(record.state as UserQuestionState)) {
+        return reject(
+            `"state" is not one of ${USER_QUESTION_STATES.join("/")} (received ${JSON.stringify(
+                record.state,
+            )})`,
+        );
+    }
+    return record as unknown as UserQuestionView;
+}

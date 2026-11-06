@@ -2,6 +2,28 @@ import { createI18n } from "vue-i18n";
 
 const messages = {
     "zh-CN": {
+        // TODO(i18n): 中文措辞待 B-7 落位定稿后统一打磨（PLAN-0660 T5.21）；键名已按 design 冻结。
+        userQuestions: {
+            title: "待你回答",
+            pendingCount: "{count} 条待答",
+            statePending: "待回答",
+            stateAnswered: "已回答",
+            stateExpired: "已过期",
+            stateCancelled: "已取消",
+            deadline: "截止 {time}",
+            answerLabel: "你的回答",
+            answerPlaceholder: "输入回答…",
+            submit: "提交",
+            submitting: "提交中…",
+            errorAlreadySettled: "这个问题已被处理，列表已刷新",
+            errorExpired: "问题已过期，无法再回答",
+            errorDeliveryFailed: "回答没能送达 Agent，请重试",
+            errorGeneric: "提交失败，请重试",
+            loadFailed: "待答问题加载失败",
+            errorForbidden: "没有查看待答问题的权限",
+            loading: "加载中…",
+            empty: "没有待你回答的问题",
+        },
         files: {
             fileTooLarge:
                 "文件超过 32 MiB 采集上限，为保护界面主线程内存不整读；建议下载后用外部程序打开（如 PDF 编辑器）",
@@ -2367,6 +2389,27 @@ const messages = {
         },
     },
     "en-US": {
+        userQuestions: {
+            title: "Waiting for your answer",
+            pendingCount: "{count} pending",
+            statePending: "Pending",
+            stateAnswered: "Answered",
+            stateExpired: "Expired",
+            stateCancelled: "Cancelled",
+            deadline: "Due {time}",
+            answerLabel: "Your answer",
+            answerPlaceholder: "Type your answer…",
+            submit: "Submit",
+            submitting: "Submitting…",
+            errorAlreadySettled: "This question was already handled; the list has been refreshed",
+            errorExpired: "This question expired and can no longer be answered",
+            errorDeliveryFailed: "The answer could not be delivered to the agent. Try again.",
+            errorGeneric: "Submit failed. Try again.",
+            loadFailed: "Could not load pending questions",
+            errorForbidden: "You do not have permission to view pending questions",
+            loading: "Loading…",
+            empty: "No questions are waiting for you",
+        },
         files: {
             fileTooLarge:
                 "File exceeds the 32 MiB capture limit. To protect main-thread memory, it will not be read in full; download it and open it with an external program (such as a PDF editor).",

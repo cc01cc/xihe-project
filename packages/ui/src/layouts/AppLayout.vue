@@ -12,6 +12,7 @@ import {
     reportSseSubscriberLimit,
 } from "../features/workspace/composables/sseSubscriberLimit";
 import { useSessionParticipantsStore } from "../features/workspace/stores/sessionParticipants";
+import { useUserQuestionsStore } from "../features/workspace/stores/userQuestions";
 import { useAgentStore } from "../stores/agent";
 import { useAuthStore } from "../stores/auth";
 import { useSessionStore } from "../stores/session";
@@ -38,6 +39,7 @@ const agentStore = useAgentStore();
 const auth = useAuthStore();
 const sessionStore = useSessionStore();
 const participantsStore = useSessionParticipantsStore();
+const userQuestionsStore = useUserQuestionsStore();
 const pendingPollIntervalMs = 10_000;
 let pendingPollTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -164,6 +166,17 @@ const userChannel = createUserChannelSse({
     onNotified: (sessionId, participantId) => {
         participantsStore.onUserChannelHint(sessionId, participantId);
     },
+    // PLAN-0660 T5.18/T5.19：`user_question` 帧只带 `{questionId,sessionId,state}`，**没有正文**
+    // （§4 的 hint 语义），所以这里不做任何本地改写，只把用户级投影标脏 —— store 内部 300ms 合并、
+    // 到点整体重拉，重复帧因此不会追加出重复条目。
+    onQuestion: (questionId, sessionId, state) => {
+        userQuestionsStore.onUserChannelHint(questionId, sessionId, state);
+    },
+    // T5.18 的另一半：通道**不 replay**，断线期间的事件不补发，所以每次握手成功（含重连）都要重拉
+    // 投影。首连也走这里，因此挂载时不必再单独拉一次（通道连不上时徽标本就不该谎报旧状态）。
+    onConnected: () => {
+        void userQuestionsStore.reload();
+    },
     // BL-335：撞上 `429 USER_CHANNEL_FULL` 时通道自己停掉重连（上限是持续态），这里只负责
     // 把"该页数据已停止刷新"的指引交给壳级横幅。
     onSubscriberLimit: (code) => {
@@ -189,6 +202,9 @@ onMounted(() => {
 onUnmounted(() => {
     // PLAN-0660 T5.6：成对卸载 —— dispose 会 abort 在途 fetch 并清掉退避定时器，不留重连循环。
     userChannel.dispose();
+    // PLAN-0660 T5.19：成对作废投影 —— 清合并窗 + 让在途响应失效 + 复位成「未加载」。
+    // 只清 timer 不够：store 是进程级单例，快速换账号时旧请求回来会写进新账号的列表。
+    userQuestionsStore.dispose();
     // BL-335：壳卸载（登出/切账号）时清掉订阅上限状态，避免下一个人看到上一个会话的横幅。
     clearSseSubscriberLimit();
     if (pendingPollTimer) {
