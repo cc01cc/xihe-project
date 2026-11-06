@@ -2,6 +2,7 @@
 
 import path from 'node:path';
 import { readFileSync } from 'node:fs';
+import * as nodeFs from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import {
@@ -192,6 +193,13 @@ export async function runCommand(argv, dependencies = {}) {
   // called here (entry) not at module top so unit tests with injected env bags are unaffected.
   if (!dependencies.env) loadEnvFileChain({ env: baseEnv });
   const rawFetch = dependencies.fetchImpl ?? fetch;
+  // BL-418: `--body-file` plus the token cache and login lock all need a filesystem
+  // implementation. The dependency bag exists for test injection, so a missing bag must
+  // fall back to the real module instead of disabling the feature: without this,
+  // `xihe api --body-file` failed 100% of the time with "No filesystem reader is
+  // available" because the default bag is `{}`. An explicit `fsImpl: null` still
+  // disables it for callers that want to assert that branch.
+  const fsImpl = dependencies.fsImpl ?? nodeFs;
   const spawnSyncImpl = dependencies.spawnSyncImpl;
   const spawnImpl = dependencies.spawnImpl;
   const prompt = dependencies.promptSecret ?? ((label) => promptSecret(label));
@@ -213,7 +221,7 @@ export async function runCommand(argv, dependencies = {}) {
     fetchImpl: rawFetch,
     env,
     promptSecret: prompt,
-    fsImpl: dependencies.fsImpl,
+    fsImpl,
     platform: dependencies.platform,
     waitMs: dependencies.authRefreshWaitMs,
     pollMs: dependencies.authRefreshPollMs,
@@ -751,7 +759,7 @@ export async function runCommand(argv, dependencies = {}) {
         stderr: dependencies.stderr ?? process.stderr,
         confirm: dependencies.confirmAction ?? confirmAction,
         stdin: dependencies.stdin ?? process.stdin,
-        fsImpl: dependencies.fsImpl,
+        fsImpl,
       });
       return { exitCode: 0, json, data };
     }
@@ -769,7 +777,7 @@ export async function runCommand(argv, dependencies = {}) {
         apiBase: getApiBase(env),
         promptSecret: prompt,
         stderr: dependencies.stderr ?? process.stderr,
-        fsImpl: dependencies.fsImpl,
+        fsImpl,
       });
       return { exitCode: configResult.exitCode, json, data: configResult.data };
     }
@@ -1128,7 +1136,7 @@ export async function runCommand(argv, dependencies = {}) {
             stdout: dependencies.stdout ?? process.stdout,
             stderr: dependencies.stderr ?? process.stderr,
             confirm: dependencies.confirmAction ?? confirmAction,
-            fsImpl: dependencies.fsImpl,
+            fsImpl,
             force: parsed.values['--force'] === true,
             outPath: parsed.values['--out'],
           }),
@@ -1151,7 +1159,7 @@ export async function runCommand(argv, dependencies = {}) {
         promptSecret: prompt,
         stdin: dependencies.stdin ?? process.stdin,
         stderr: dependencies.stderr ?? process.stderr,
-        fsImpl: dependencies.fsImpl,
+        fsImpl,
         aclRunner: dependencies.aclRunner,
         platform: dependencies.platform,
         now: dependencies.now,
@@ -1170,7 +1178,7 @@ export async function runCommand(argv, dependencies = {}) {
         promptSecret: prompt,
         stdin: dependencies.stdin ?? process.stdin,
         stderr: dependencies.stderr ?? process.stderr,
-        fsImpl: dependencies.fsImpl,
+        fsImpl,
         confirm: dependencies.confirmAction ?? confirmAction,
       });
       return {
