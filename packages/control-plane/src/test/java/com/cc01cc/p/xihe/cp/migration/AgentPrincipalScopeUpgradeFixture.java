@@ -1,0 +1,209 @@
+package com.cc01cc.p.xihe.cp.migration;
+
+import com.cc01cc.p.xihe.cp.integration.TestDatabaseProvider;
+import com.cc01cc.p.xihe.cp.policy.SystemAccessRoleCatalog;
+import org.flywaydb.core.Flyway;
+import org.flywaydb.core.api.MigrationVersion;
+
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.SQLException;
+import java.sql.Statement;
+import java.util.UUID;
+
+/**
+ * V19 evidence support: one isolated PostgreSQL database replayed through the real migration path
+ * up to the V125 three-tier shape, then to head (V126).
+ *
+ * <p>The behaviour test needs a database where <b>legacy rows physically predate V126</b> — the
+ * normal {@code AbstractIntegrationTest} template is already at head and has no legacy tier data.
+ * This fixture is deliberately test-only and mirrors the upgrade half of
+ * {@link AgentPrincipalScopeMigrationTest}; it does not duplicate that class's assertions, it makes
+ * the same pre-migration state reusable by an HTTP/Spring test.</p>
+ *
+ * <p>Sequence (must stay in this order):
+ * empty DB → Flyway V89 → seed V89 shape → Flyway V125 → seed three legacy tier principals and their
+ * surviving rows → assert the V125 contract is really in force → Flyway head. The Spring context then
+ * starts against this pre-seeded database.</p>
+ */
+public final class AgentPrincipalScopeUpgradeFixture {
+
+    /** The V89-shaped user; it owns the PERSONAL-tier principal below. */
+    public static final UUID LEGACY_USER_ID = UUID.randomUUID();
+    /** A pre-tier principal created before the scope column existed. */
+    public static final UUID LEGACY_PRINCIPAL_ID = UUID.randomUUID();
+    /** The legacy workspace all three tier principals were bound to. */
+    public static final UUID WORKSPACE_ID = UUID.randomUUID();
+    /** Three principals whose {@code scope} values were PERSONAL / WORKSPACE / INSTANCE at V125. */
+    public static final UUID PERSONAL_PRINCIPAL_ID = UUID.randomUUID();
+    public static final UUID WORKSPACE_PRINCIPAL_ID = UUID.randomUUID();
+    public static final UUID INSTANCE_PRINCIPAL_ID = UUID.randomUUID();
+
+    private static final Object LOCK = new Object();
+    private static TestDatabaseProvider.DatabaseRef database;
+
+    private AgentPrincipalScopeUpgradeFixture() {
+    }
+
+    /** Bootstraps once per JVM and returns the database the Spring context should use. */
+    public static TestDatabaseProvider.DatabaseRef database() {
+        synchronized (LOCK) {
+            if (database == null) {
+                database = replay();
+            }
+            return database;
+        }
+    }
+
+    private static TestDatabaseProvider.DatabaseRef replay() {
+        TestDatabaseProvider.DatabaseRef target = TestDatabaseProvider.emptyDatabase("agent_principa_v19");
+        migrate(target, "89");
+        try (Connection connection = open(target)) {
+            seedV89Shape(connection);
+            migrate(target, "125");
+            seedLegacyTierFixture(connection);
+            assertV125Contract(connection);
+        } catch (SQLException failure) {
+            throw new IllegalStateException("V19 upgrade fixture failed to seed the V125 shape", failure);
+        }
+        migrate(target, null);
+        return target;
+    }
+
+    private static void seedV89Shape(Connection connection) throws SQLException {
+        execute(connection, "INSERT INTO users (id, email, password_hash, username) VALUES ('"
+                + LEGACY_USER_ID + "', 'v19-legacy-" + LEGACY_USER_ID + "@test.local', 'x', 'v19legacy"
+                + LEGACY_USER_ID.toString().substring(0, 8) + "')");
+        execute(connection, "INSERT INTO agent_principals (id, name, created_by_user_id) VALUES ('"
+                + LEGACY_PRINCIPAL_ID + "', 'v19 legacy principal', '" + LEGACY_USER_ID + "')");
+        // A pre-existing instance role for the legacy user: the same V89 seed shape the migration
+        // test uses, so the account is a real actor after the replay.
+        execute(connection, "INSERT INTO role_bindings (id, role_id, subject_type, subject_id, scope_type,"
+                + " scope_id, granted_by) VALUES ('" + UUID.randomUUID() + "', '"
+                + SystemAccessRoleCatalog.USER_ID + "', 'user', '" + LEGACY_USER_ID
+                + "', 'instance', NULL, '" + LEGACY_USER_ID + "')");
+    }
+
+    private static void seedLegacyTierFixture(Connection connection) throws SQLException {
+        execute(connection, "INSERT INTO workspaces (id, name, storage_mode, host_path, execution_mode)"
+                + " VALUES ('" + WORKSPACE_ID + "', 'v19 legacy workspace', 'direct_attach',"
+                + " 'C:/v19-legacy-workspace', 'windows-host')");
+        insertTierPrincipal(connection, PERSONAL_PRINCIPAL_ID, "v19 personal-tier-agent", "PERSONAL",
+                LEGACY_USER_ID);
+        insertTierPrincipal(connection, WORKSPACE_PRINCIPAL_ID, "v19 workspace-tier-agent", "WORKSPACE", null);
+        insertTierPrincipal(connection, INSTANCE_PRINCIPAL_ID, "v19 instance-tier-agent", "INSTANCE", null);
+
+        insertWorkspaceBinding(connection, PERSONAL_PRINCIPAL_ID, "[]");
+        insertWorkspaceBinding(connection, WORKSPACE_PRINCIPAL_ID,
+                "[{\"actionClass\": \"read\"}, {\"actionClass\": \"write\"},"
+                        + " {\"actionClass\": \"delete\"}, {\"actionClass\": \"exec\"},"
+                        + " {\"actionClass\": \"MANAGE_PROVIDER_CONNECTIONS\"},"
+                        + " {\"actionClass\": \"MANAGE_WORKSPACE_POLICY\"},"
+                        + " {\"actionClass\": \"USE_WORKSPACE_RUNTIME\"}]");
+        insertWorkspaceBinding(connection, INSTANCE_PRINCIPAL_ID, "[{\"actionClass\": \"write\"}]");
+
+        insertRoleBinding(connection, PERSONAL_PRINCIPAL_ID, SystemAccessRoleCatalog.AGENT_DELEGATOR_ID,
+                "instance", null);
+        insertRoleBinding(connection, WORKSPACE_PRINCIPAL_ID, SystemAccessRoleCatalog.AGENT_DELEGATOR_ID,
+                "workspace", WORKSPACE_ID);
+        insertRoleBinding(connection, INSTANCE_PRINCIPAL_ID, SystemAccessRoleCatalog.USER_ID,
+                "instance", null);
+
+        insertGrant(connection, PERSONAL_PRINCIPAL_ID, "read", "instance", null);
+        for (String atom : new String[]{"read", "write", "delete", "exec", "MANAGE_PROVIDER_CONNECTIONS",
+                "MANAGE_WORKSPACE_POLICY", "USE_WORKSPACE_RUNTIME"}) {
+            insertGrant(connection, WORKSPACE_PRINCIPAL_ID, atom, "workspace", WORKSPACE_ID);
+        }
+        insertGrant(connection, INSTANCE_PRINCIPAL_ID, "exec", "instance", null);
+    }
+
+    /**
+     * Without this the post-V126 assertions would be vacuous: it proves the column/default/CHECKs
+     * existed at V125 and therefore that V126 really removed them.
+     */
+    private static void assertV125Contract(Connection connection) throws SQLException {
+        if (!columnExists(connection, "scope")) {
+            throw new IllegalStateException("precondition: scope column missing at V125");
+        }
+        if (!constraintExists(connection, "ck_agent_principals_scope")
+                || !constraintExists(connection, "ck_agent_principals_owner")) {
+            throw new IllegalStateException("precondition: V125 tier CHECKs missing");
+        }
+        if (scalarInt(connection, "SELECT count(*) FROM agent_principals WHERE id IN ('"
+                + PERSONAL_PRINCIPAL_ID + "', '" + WORKSPACE_PRINCIPAL_ID + "', '"
+                + INSTANCE_PRINCIPAL_ID + "')") != 3) {
+            throw new IllegalStateException("precondition: three legacy tier principals were not seeded");
+        }
+    }
+
+    private static void insertTierPrincipal(Connection connection, UUID id, String name, String scope,
+            UUID owner) throws SQLException {
+        execute(connection, "INSERT INTO agent_principals (id, name, created_by_user_id, scope,"
+                + " owner_user_id) VALUES ('" + id + "', '" + name + "', '" + LEGACY_USER_ID + "', '"
+                + scope + "', " + literal(owner) + ")");
+    }
+
+    private static void insertWorkspaceBinding(Connection connection, UUID principalId, String permissions)
+            throws SQLException {
+        execute(connection, "INSERT INTO workspace_agents (principal_id, workspace_id, permissions_snapshot)"
+                + " VALUES ('" + principalId + "', '" + WORKSPACE_ID + "', '" + permissions + "'::jsonb)");
+    }
+
+    private static void insertRoleBinding(Connection connection, UUID principalId, UUID roleId,
+            String scopeType, UUID scopeId) throws SQLException {
+        execute(connection, "INSERT INTO role_bindings (id, role_id, subject_type, subject_id, scope_type,"
+                + " scope_id, granted_by, is_seed) VALUES ('" + UUID.randomUUID() + "', '" + roleId
+                + "', 'agent_principal', '" + principalId + "', '" + scopeType + "', "
+                + literal(scopeId) + ", '" + LEGACY_USER_ID + "', FALSE)");
+    }
+
+    private static void insertGrant(Connection connection, UUID principalId, String atom, String scopeType,
+            UUID scopeId) throws SQLException {
+        execute(connection, "INSERT INTO grants (id, subject_type, subject_id, permissions, source,"
+                + " scope_type, scope_id, read_state) VALUES ('" + UUID.randomUUID() + "',"
+                + " 'agent_principal', '" + principalId + "', '[{\"actionClass\": \"" + atom
+                + "\"}]'::jsonb, 'template', '" + scopeType + "', " + literal(scopeId) + ", 'unread')");
+    }
+
+    private static void migrate(TestDatabaseProvider.DatabaseRef target, String version) {
+        var configuration = Flyway.configure()
+                .dataSource(target.jdbcUrl(), target.username(), target.password())
+                .locations("classpath:db/migration");
+        if (version != null) {
+            configuration = configuration.target(MigrationVersion.fromVersion(version));
+        }
+        configuration.load().migrate();
+    }
+
+    private static Connection open(TestDatabaseProvider.DatabaseRef target) throws SQLException {
+        return DriverManager.getConnection(target.jdbcUrl(), target.username(), target.password());
+    }
+
+    private static String literal(UUID value) {
+        return value == null ? "NULL" : "'" + value + "'";
+    }
+
+    private static void execute(Connection connection, String sql) throws SQLException {
+        try (Statement statement = connection.createStatement()) {
+            statement.execute(sql);
+        }
+    }
+
+    private static boolean columnExists(Connection connection, String column) throws SQLException {
+        return scalarInt(connection, "SELECT count(*) FROM information_schema.columns WHERE table_name ="
+                + " 'agent_principals' AND column_name = '" + column + "'") > 0;
+    }
+
+    private static boolean constraintExists(Connection connection, String constraint) throws SQLException {
+        return scalarInt(connection, "SELECT count(*) FROM pg_constraint WHERE conrelid ="
+                + " 'agent_principals'::regclass AND conname = '" + constraint + "'") > 0;
+    }
+
+    private static int scalarInt(Connection connection, String sql) throws SQLException {
+        try (Statement statement = connection.createStatement();
+             var rows = statement.executeQuery(sql)) {
+            rows.next();
+            return rows.getInt(1);
+        }
+    }
+}
