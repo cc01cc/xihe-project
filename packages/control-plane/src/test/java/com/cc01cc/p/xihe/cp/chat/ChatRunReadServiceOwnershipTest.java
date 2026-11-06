@@ -97,4 +97,15 @@ class ChatRunReadServiceOwnershipTest {
         when(attempts.existsByRunId("run-without-attempts")).thenReturn(false);
         assertThat(service.hasTransportAttempt("run-without-attempts")).isFalse();
     }
+
+    @Test
+    void executionRunCarriesTheDurableParentRunIdForDispatch() {
+        // PLAN-0660 T5.16 (LD-16=A): the dispatch payload marks a spawned Run; the durable
+        // parent_run_id must reach ExecutionRun or the Agent can never refuse a child's ask.
+        ChatRun spawnRun = runOwnedBy(USER_ID, WORKSPACE_ID);
+        when(spawnRun.getParentRunId()).thenReturn("parent-run-1");
+        when(runs.findById(RUN_UUID)).thenReturn(Optional.of(spawnRun));
+
+        assertEquals("parent-run-1", service.findExecutionRun(RUN_ID).orElseThrow().parentRunId());
+    }
 }

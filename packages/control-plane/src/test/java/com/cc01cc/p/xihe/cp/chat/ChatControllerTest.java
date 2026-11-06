@@ -1529,6 +1529,8 @@ class ChatControllerTest extends AbstractH2Test {
         }
         assertNotNull(capturedBody[0], "Agent request body should be captured");
         Map<String, Object> agentRequest = objectMapper.readValue(capturedBody[0], Map.class);
+        assertFalse(agentRequest.containsKey("parentRunId"),
+                "PLAN-0660 T5.16: a root Run must not claim a parent Run on the wire");
 
         Map<String, Object> waits = (Map<String, Object>) agentRequest.get("toolWaits");
         Map<String, Object> origins = (Map<String, Object>) agentRequest.get("toolWaitOrigins");
@@ -1539,6 +1541,25 @@ class ChatControllerTest extends AbstractH2Test {
         assertEquals("per-call", origins.get("execute_command"));
         assertEquals(20, ((Number) rawTimeouts.get("execute_command")).intValue(),
                 "raw per-call value travels for the inbound header");
+    }
+
+    /**
+     * PLAN-0660 T5.16 (LD-16=A): a spawned Run tells the Agent it is a child. The root-Run half is
+     * asserted on the real wire in {@link #chat_forwardsPerCallToolTimeoutsToAgentPayload()}; this
+     * pins the put rule (absent/blank never produce the key, a durable parent id always does).
+     */
+    @Test
+    void dispatchPayloadCarriesParentRunIdOnlyForChildRuns() {
+        Map<String, Object> rootRequest = new LinkedHashMap<>();
+        ChatController.putParentRunId(rootRequest, null);
+        ChatController.putParentRunId(rootRequest, "  ");
+        assertFalse(rootRequest.containsKey("parentRunId"),
+                "a root Run must not claim a parent Run");
+
+        String parentRunId = UUID.randomUUID().toString();
+        Map<String, Object> childRequest = new LinkedHashMap<>();
+        ChatController.putParentRunId(childRequest, parentRunId);
+        assertEquals(parentRunId, childRequest.get("parentRunId"));
     }
 
     @Test

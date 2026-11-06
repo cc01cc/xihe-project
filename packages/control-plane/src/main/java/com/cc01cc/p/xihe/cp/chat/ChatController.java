@@ -1476,6 +1476,9 @@ public class ChatController {
                 agentRequest.put("workspaceId", workspaceId);
                 agentRequest.put("requestId", requestId);
                 agentRequest.put("runId", runId);
+                // PLAN-0660 T5.16 (LD-16=A): a spawned Run tells the Agent it is a child, so
+                // ask_user refuses at the door instead of waiting for a CP relay refusal.
+                putParentRunId(agentRequest, persistedRun.parentRunId());
                 agentRequest.put("stream", true);
                 if (continuationContext != null) {
                     if (!continuationContext.checkpoint().equals(persistedRun.continuation())) {
@@ -1852,6 +1855,17 @@ public class ChatController {
             logger.error("[LIFECYCLE] service=cp event=chat_overflow_recovery_failed sessionId={} runId={}",
                     sessionId, runId, e);
             return false;
+        }
+    }
+
+    /**
+     * PLAN-0660 T5.16 (LD-16=A): only a spawned Run carries a parent. A root Run omits the key, so
+     * the payload stays additive — the pre-T5.16 Agent ignores it, and an Agent without a value
+     * keeps treating the Run as a root (only a root run may ask the user).
+     */
+    static void putParentRunId(Map<String, Object> agentRequest, String parentRunId) {
+        if (parentRunId != null && !parentRunId.isBlank()) {
+            agentRequest.put("parentRunId", parentRunId);
         }
     }
 
