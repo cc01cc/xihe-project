@@ -30,6 +30,7 @@ import java.io.IOException;
 import java.io.RandomAccessFile;
 import java.util.List;
 import java.util.Map;
+import java.util.regex.Pattern;
 
 /**
  * Workspace file endpoints always go through the Runtime. CP no longer reads
@@ -49,6 +50,18 @@ public class WorkspaceFileController {
      * file length (the budget caps bytes-on-wire, never the reported file size).
      */
     private static final long ATTACHMENT_PREVIEW_BUDGET_BYTES = 8L * 1024 * 1024;
+    /**
+     * BL-381 / PLAN-0683 audit B1: strict single-range grammar for the {@code bytes} unit.
+     *
+     * <p>{@link HttpRange#parseRanges(String)} is deliberately permissive — it drops empty
+     * list elements (`bytes=0-9,` → one range), accepts a sign (`bytes=+0-9` → {@code 0-9})
+     * and concatenates multi-ranges. Any of those silently turning into a 206 is a wire
+     * contract violation ({@code verify.md} V1 freezes 400 + {@code Content-Range: bytes
+     * *}{@code /total} for malformed/multi-range/non-bytes input), so the header is validated
+     * strictly here before the permissive parser runs.</p>
+     */
+    private static final Pattern SINGLE_BYTES_RANGE =
+            Pattern.compile("^(?:bytes=\\d+-\\d*|bytes=-\\d+)$");
 
     private final ChatAttachmentService chatAttachmentService;
     private final WorkspaceService workspaceService;
@@ -126,14 +139,22 @@ public class WorkspaceFileController {
     private ResponseEntity<?> serveAttachmentRange(
             java.io.File physical, MediaType mediaType, String rangeHeader) throws IOException {
         long total = physical.length();
+        String header = rangeHeader.trim();
+        if (!SINGLE_BYTES_RANGE.matcher(header).matches()) {
+            // Reject before `HttpRange.parseRanges` can normalize the input into a valid range.
+            return rangeProblem(HttpStatus.BAD_REQUEST, "INVALID_RANGE",
+                    "Invalid Range header", total);
+        }
         List<HttpRange> ranges;
         try {
-            ranges = HttpRange.parseRanges(rangeHeader);
+            ranges = HttpRange.parseRanges(header);
         } catch (IllegalArgumentException e) {
             return rangeProblem(HttpStatus.BAD_REQUEST, "INVALID_RANGE",
                     "Invalid Range header", total);
         }
         if (ranges.size() != 1) {
+            // Unreachable after the strict grammar check above; kept so relaxing the pattern
+            // can never silently reintroduce concatenated multi-range 206 responses.
             return rangeProblem(HttpStatus.BAD_REQUEST, "INVALID_RANGE",
                     "Multiple ranges are not supported", total);
         }

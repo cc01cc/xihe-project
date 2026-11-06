@@ -93,7 +93,12 @@ class WorkspaceFileRangeHttpTest extends AbstractH2Test {
 
     @AfterEach
     void tearDown() throws IOException {
-        Path root = Path.of(System.getProperty("java.io.tmpdir") + "/xihe-test/attachments");
+        // Keep the same expression as `application-test.properties`
+        // (`cp.attachments-base-path=...attachments-${surefire.forkNumber:0}`); a hardcoded
+        // `/xihe-test/attachments` would leave this fork's files behind and target a
+        // directory another shard may own.
+        Path root = Path.of(System.getProperty("java.io.tmpdir") + "/xihe-test/attachments-"
+                + System.getProperty("surefire.forkNumber", "0"));
         if (Files.exists(root)) {
             try (var walk = Files.walk(root)) {
                 walk.sorted((a, b) -> -a.compareTo(b)).forEach(path -> {
@@ -216,6 +221,27 @@ class WorkspaceFileRangeHttpTest extends AbstractH2Test {
         ResponseEntity<byte[]> nonBytesUnit = getFile(fileId, "items=0-9");
         assertEquals(HttpStatus.BAD_REQUEST, nonBytesUnit.getStatusCode());
         assertEquals("INVALID_RANGE", problemBody(nonBytesUnit).get("code"));
+    }
+
+    /**
+     * Audit B1 regression: `HttpRange.parseRanges` normalizes these headers into a valid
+     * single range (sign dropped, trailing empty list element dropped), which used to answer
+     * 206 with a body the client never asked for.
+     */
+    @Test
+    void range_silentlyNormalizedHeadersAreRejectedExplicitly() throws IOException {
+        byte[] fixture = fixture(1000);
+        String fileId = upload("normalized.txt", fixture);
+
+        for (String header : List.of(
+                "bytes=+0-9", "bytes=0-9,", "bytes=,0-9", "bytes=,", "bytes=", "bytes=-")) {
+            ResponseEntity<byte[]> response = getFile(fileId, header);
+            assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode(), "header: " + header);
+            assertEquals("bytes */1000",
+                    response.getHeaders().getFirst(HttpHeaders.CONTENT_RANGE), "header: " + header);
+            assertEquals("bytes", response.getHeaders().getFirst(HttpHeaders.ACCEPT_RANGES));
+            assertEquals("INVALID_RANGE", problemBody(response).get("code"), "header: " + header);
+        }
     }
 
     private String upload(String name, byte[] data) {
