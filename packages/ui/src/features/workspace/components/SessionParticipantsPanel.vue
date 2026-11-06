@@ -20,9 +20,11 @@
  */
 import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
+import { MessageCircleQuestion } from "@lucide/vue";
 import { ApiError, PARTICIPANT_CURSOR_ADVANCE_TO_LATEST, api } from "../../../composables/api";
 import ParticipantRow from "./ParticipantRow.vue";
 import { useSessionParticipantsStore } from "../stores/sessionParticipants";
+import { useUserQuestionsStore } from "../stores/userQuestions";
 import { useAuthStore } from "../../../stores/auth";
 import type {
     ParticipantRespondPolicy,
@@ -58,6 +60,22 @@ const store = useSessionParticipantsStore();
 const authStore = useAuthStore();
 const canWriteWorkspace = computed(() => authStore.canWriteWorkspace);
 const participants = computed(() => store.participants);
+
+/**
+ * PLAN-0660 T5.21（审计 P1-2 / 用户 2026-11-07 裁定 ③）：「N 条待答」**面板级汇总**徽标。
+ *
+ * 为什么不是行内徽标：`ParticipantRow` 的 `@N` 是**该参与者**的 CP 派生未读游标
+ * （`readCursor.mentionCount`，per-participant），而 ask_user 待答是**用户级**投影
+ * （`GET /api/v1/user-questions`，无 workspace 上下文、无 `X-Workspace-Id`）—— 两个维度。
+ * 把 `pendingCount` 塞进每一行会让所有行显示同一个全局数字、并让 title 文案撒谎。
+ *
+ * 所以「与问题卡同源」落在这里：**同一 store、同一服务端派生值**（`useUserQuestionsStore`，
+ * 与侧边栏 `UserQuestionsEntry` 徽标完全同源；T5.19 纪律：不在本地累加，重连/多标签页才对得上）。
+ * 视觉权重按 DEV-011 §10 注意力预算取 **L2 中性**（`bg-muted`/`text-muted-foreground`），
+ * 不与行内 `bg-primary` 未读徽标抢焦点；`0` 时不渲染，与行内「缺失即不渲染」一致。
+ */
+const userQuestionsStore = useUserQuestionsStore();
+const pendingQuestionCount = computed(() => userQuestionsStore.pendingCount);
 const capabilities = computed(() => store.capabilities);
 const loading = computed(() => store.loading);
 const forbidden = computed(() => store.forbidden);
@@ -170,6 +188,26 @@ async function removeParticipant(participant: SessionParticipantView): Promise<v
 
 <template>
     <div class="p-3 text-xs" data-testid="session-participants-panel">
+        <!--
+            PLAN-0660 T5.21（用户裁定 ③）：面板级「N 条待答」汇总，与侧边栏问题卡入口同一
+            store/同一服务端值。0 时不渲染（与行内未读徽标「缺失即不渲染」一致）。
+        -->
+        <p
+            v-if="props.sessionId && pendingQuestionCount > 0"
+            class="mb-2 flex items-center gap-1.5"
+            data-testid="participants-pending-questions"
+        >
+            <MessageCircleQuestion
+                class="size-3.5 shrink-0 text-muted-foreground"
+                aria-hidden="true"
+            />
+            <span
+                class="rounded-full bg-muted px-1.5 py-0.5 text-[10px] leading-none tabular-nums text-muted-foreground"
+                data-testid="participants-pending-questions-badge"
+                :title="t('userQuestions.title')"
+                >{{ t("userQuestions.pendingCount", { count: pendingQuestionCount }) }}</span
+            >
+        </p>
         <p v-if="!props.sessionId" class="text-muted-foreground" data-testid="participants-empty">
             {{ t("workspace.participantsEmptyNoSession") }}
         </p>
