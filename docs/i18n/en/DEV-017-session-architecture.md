@@ -6,7 +6,7 @@ sidebar_group: "Developer Guide"
 status: active
 sidebar_order: 17
 created: 2026-09-03
-updated: 2026-11-05
+updated: 2026-11-06
 ---
 
 # DEV-017: Session Architecture
@@ -77,6 +77,14 @@ ChatRun links to Messages via `runId`; server-returned `runStatus`, `terminalOut
 - While the queue is non-empty, an ordinary `POST /api/v1/chat` always returns `409 FOLLOW_UP_QUEUE_NOT_EMPTY`; queuing during a Run must go through the UI's explicit Queue action, so `CHAT_IN_PROGRESS` is no longer the only exit. During a Session's delete intent, both queue mutations and ordinary Chat return `409 SESSION_DELETING`.
 - At most one active child per Session: admission and the QueueItem state transition are atomic in one transaction; parent/child Run terminals advance in the same settlement transaction (succeeded/partial/failed → the next item continues automatically; cancelled/ambiguous → the whole queue is `paused`); already-admitted cancelled/ambiguous children are not replayed, and `continue` only admits items after them.
 - Before admission, attachment ownership, branch visibility, and the binding are re-validated; a failure means `paused` (fail closed); on startup CP restores paused admitted-without-child items and wakes the queued head (idempotent). API/OpenAPI in DEV-014 and `docs/api/openapi.yaml`; UI panel in [DEV-010](DEV-010-ui-architecture.md).
+
+### 1.4 User questions and the user channel (PLAN-0660 M5-B)
+
+- A question is **one blocking interaction of a run inside a Session**, not a message: a `user_questions` (V128) row is bound to `(session_id, run_id)` and its `addressee_user_id` is the run owner (v1 has exactly that one addressee); prompt and answer live on the row and **never enter `messages` or the Chat SSE**.
+- Four states `pending → answered | expired | cancelled`: answering goes only through `POST /api/v1/user-questions/{id}/answer` (addressee only, CAS plus an in-transaction callback to the Agent; a non-2xx from the Agent rolls back and the row stays `pending`); a run terminal of `cancelled`/`cancelling` settles `cancelled`, any other terminal or an `askTimed` deadline settles `expired`; terminal states never roll back.
+- **Visibility ≠ answering right**: a session-visible reader (session owner / invited enabled HUMAN participant) may `GET` the same projection, but only the addressee may answer; every other caller gets the uniform 404 for both read and write (no existence oracle).
+- **The push is only a hint**: `user_question {questionId,sessionId,state}` on `GET /api/v1/user-events` is pushed once, right after the durable row is written (`state=pending`), and that channel has no replay; settlement pushes nothing, so the badge and the list converge through the derived `pendingCount` of `GET /api/v1/user-questions` (same discipline as "a pointer is not a counter").
+- **Only a root run may ask**: a child run is refused twice — by the CP relay (`409 SUBAGENT_QUESTION_REFUSED`) and by the Agent's door gate (the dispatch body carries `parentRunId`; nothing is published and nothing waits). Channel, table and error codes: `docs/i18n/zh-Hans/DEV-014-control-plane-architecture.md` §14d (no en DEV-014 yet), [`spec/session/user-channel.md`](../../../spec/session/user-channel.md) §6a, [`spec/protocol/event-stream.md`](../../../spec/protocol/event-stream.md) §4.
 
 ## 2. Store responsibility boundaries (option B: shared + view separation)
 

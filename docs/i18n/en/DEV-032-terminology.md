@@ -95,6 +95,17 @@ updated: 2026-11-06
 | run-level attribution | run-level attribution (`chat_runs.agent_principal_id`) | Each run records **who answered this run** (not a session-level property); without `asParticipantId` it is the PRIMARY subject; null when both are absent | the session-level `sessions.agent_principal_id` (session default subject); backfilling PRIMARY when the run value is null |
 | participant source | `participant source` (`source` ∈ `workspace` / `personal` / `instance`, **lowercase**) | The ownership source of the participant's subject, derived at read time | agent `scope` (**uppercase** `PERSONAL`/`WORKSPACE`/`INSTANCE`); unifying the casing — different columns, different enums; renaming needs a CP ruling |
 
+### 1.1b User questions and refresh hints (2026-11-06)
+
+| Term | English / code identifier | One-line definition | **Counter-example: do not use it for** |
+|---|---|---|---|
+| user question | `user question` (table `user_questions`; routes `/api/v1/user-questions`; Agent tool name **`ask_user`**, never translated) | A **blocking question** one run asks one human subject: a row bound to `(session_id, run_id)`, four states `pending`/`answered`/`expired`/`cancelled` | a message (it never enters `messages` or the Chat SSE); an approval (an approval authorizes a tool call; a question asks a human) |
+| pending count | `pendingCount` (field of `GET /api/v1/user-questions`) | A derived count over the **same filter** as the list, used for the badge | an unread count (that is the participant cursor); a stored counter (it is derived, nothing is persisted) |
+| user channel | `user channel` (`GET /api/v1/user-events`; `UserChannelPort`) | A user-level SSE channel: subscribed per user, **not bound to a workspace**, no replay | the session channel / Session SSE (that one has replay and participant semantics); a carrier of business facts |
+| refresh hint | `refresh hint` (channel events `user_question` / `participant_notified`) | Only says "some projection changed, re-read it"; **never a source of truth** | a notification you may depend on; building state from hints; assuming a lost hint is redelivered (no replay) |
+| question response view | `UserQuestionView` (shape wording `<object> response view`, see §1 `projection` row C) | The projection returned by `GET /{id}` and `answer`: identical fields for the addressee and for a session-visible reader | `<object> projection`; "a trimmed view for readers" (the contract has no field trimming; only the answering right differs, D-197) |
+| child-run refusal | `SUBAGENT_QUESTION_REFUSED` (`code` field) | The fixed refusal code when a non-root run calls `ask_user`: the same code on the CP relay gate and the Agent door gate | a free-form prose error; a UI-only check (the server fails closed) |
+
 ## 2. Synonyms → canonical + aliases
 
 ### 2.1 Still live (unstarted / in-flight PLANs use canonical)

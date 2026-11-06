@@ -6,7 +6,7 @@ sidebar_group: "开发指南"
 sidebar_order: 14
 status: active
 created: 2026-09-03
-updated: 2026-10-15
+updated: 2026-11-06
 ---
 
 # DEV-014: CP 架构
@@ -526,5 +526,26 @@ PLAN-0416 Chat 消费：`ChatController` 仅在 admission snapshot 原始 native
 
 `BL-355`（cap 天花板 = 主体 instance 原子集）· `BL-356`（工作区私有技能不可绑 agent）· `BL-352`（首绑顺序见 §14b）· `PLAN-0678`（V3 技能正向与 V9 反证；技能可用面 = instance 作用域）。
 **口径待裁定项**：是否改为双轴求值（角色/技能按轴各带 cap），以及"谁能给 agent 在工作区加原子"的授权归属 —— 见 `.local/evidence/spec-topic-agent-principal-scope.md` §7、`.local/evidence/spec-draft-outline-agent-principal-scope.md`。
+
+## 14d. 用户级通知通道与用户问答（PLAN-0660 M5-A / M5-B）
+
+**用户级 SSE**（`GET /api/v1/user-events`；`event/UserChannelSseManager` + `event/UserChannelPort`）
+
+- 连接只认 user Bearer，**不需要 `X-Workspace-Id`**（按 userId 订阅，切工作区不重建连接）；首帧恒为 `connected {serverTime}`。
+- 事件名是**封闭公开集**：`connected` / `participant_notified {sessionId,participantId}`（纯通知、不起 Run）/ `user_question {questionId,sessionId,state}`；内部 `wake_*` 名永不过此通道。
+- 心跳 15s；每 user 订阅者上限 **8**（第 9 个显式拒绝）；同人多 tab 都收到（不替换连接）；**无 replay** —— 订阅晚于发送就丢 hint，UI 必须重读投影。
+- 失效：用户被禁用、或 `token_version`/`session_version` 递增后，**下一个事件**不投递并关流（不做空闲轮询）。
+- `UserChannelPort` 无实现时投递为 no-op（单测/无 SSE 场景业务行为不变）。
+
+**用户问答**（V128 `user_questions`；`chat/UserQuestionController` → `UserQuestionService` → `UserQuestionAgentClient`）
+
+- 4 条路由：**3 public**（`GET /api/v1/user-questions`、`GET /api/v1/user-questions/{id}`、`POST /api/v1/user-questions/{id}/answer`，均 user Bearer、无工作区上下文）+ **1 internal**（`POST /internal/v1/agent/user-question/respond`，service Bearer，浏览器不得直连）。
+- relay 序：Agent 发 `session_question_asked` → `ChatController.relayUserQuestion` **先落 durable 行**，再向 addressee 的用户通道推 `user_question` hint；该事件**不转发**到会话 SSE ⇒ 问答正文不进入任何公开流（T5.11 判定）。
+- relay 门（`UserQuestionService.recordPending`，被拒不落行/不推 hint/不破流）：未知或所有权不符 run → `502 AGENT_EVENT_ID_MISMATCH`；**子 run → `409 SUBAGENT_QUESTION_REFUSED`**（`chat_runs.parent_run_id` 非空即拒，只有 root run 可问）；同 run 已有 live approval → `409 QUESTION_APPROVAL_PENDING`；同 run 已有未决问句 → `409 QUESTION_ALREADY_PENDING`。
+- 作答（claim-then-deliver，镜像 `ApprovalService`）：条件更新 `state='pending' AND (expires_at IS NULL OR expires_at > now())` + **同一事务**内 `UserQuestionAgentClient.respond`；**只有 Agent 2xx 才提交 `answered`**，非 2xx/超时（connect 5s / 请求 10s）/连接失败一律回滚留 `pending` 并 `502 AGENT_QUESTION_DELIVERY_FAILED`。CAS 落空的 `409` 分支在事务**外**：先懒结算 `expired` 再抛 `409 QUESTION_EXPIRED`（在事务内会被回滚成"永远 pending 却无法作答"）。
+- 读面：list 是 **addressee-only**；`state` 目前只接受 `pending`（其余值 400，不静默忽略）；`limit` 缺省 20、`>100` 夹取、`<1` 400；`pendingCount` 与 `items` 同过滤且派生。`GET /{id}` 开放到会话可见读者（`SessionReadAccess`），但**与 addressee 同一投影**（无字段级裁剪）；非可见者与非 UUID id 同为 `404 QUESTION_NOT_FOUND`（无 403 分支）。
+- 最小化：日志只记 id/runId 与长度（`run_question_asked|refused|answered|expired|cancelled`、`run_question_relay_refused`），审计 `user_question_answered`；正文只走 §14d 的两条 internal wire 与投影响应。
+- 未读/徽标：`session_participant_cursors.mention_count` 已由 **V112** 删除，未读为派生值；问答待答数同样派生、不落计数器。
+- 契约：`spec/session/user-channel.md` §4/§6a、`spec/protocol/event-stream.md` §4；wire 以 `docs/api/openapi.yaml` 为准。**已知漂移（T5.25 对账，未改代码）**：`first_delivered_at` 无写点（恒 NULL）。
 
 （en 侧暂无本文档：`docs/i18n/en/` 下无 `DEV-014` 对应文件。）
