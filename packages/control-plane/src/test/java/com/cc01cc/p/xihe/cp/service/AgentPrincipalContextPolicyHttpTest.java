@@ -440,7 +440,7 @@ class AgentPrincipalContextPolicyHttpTest extends AbstractIntegrationTest {
 
     private Map<String, Object> personalPrincipalRow(UUID principalId) {
         ResponseEntity<Map> response = exchange(HttpMethod.GET,
-                "/api/v1/agent-principals?scope=PERSONAL", globalToken(), null);
+                "/api/v1/agent-principals", globalToken(), null);
         assertEquals(HttpStatus.OK, response.getStatusCode(), String.valueOf(response.getBody()));
         List<Map<String, Object>> principals =
                 (List<Map<String, Object>>) response.getBody().get("principals");
