@@ -97,4 +97,37 @@ public interface UserQuestionRepository extends JpaRepository<UserQuestion, UUID
             + "where q.runId = :runId and q.state = 'pending'")
     int settlePendingForRun(@Param("runId") UUID runId, @Param("state") String state,
             @Param("at") Instant at);
+
+    /**
+     * PLAN-0660 V13: read-time lazy expiry. There is no scheduler for {@code user_questions}; the
+     * deadline is turned into a durable {@code expired} row by the first reader of the addressee's
+     * inbox (list or badge) instead of waiting for a late answer. The predicate is exactly the
+     * complement of {@link #markAnswered}'s {@code expiresAt > :at}: a row that can no longer be
+     * answered is settled, so the projection, the count and the row all agree.
+     *
+     * <p>Conditional and idempotent: only {@code pending} rows with a passed deadline move, and a
+     * repeated read returns 0.</p>
+     *
+     * @return the number of rows that actually moved
+     */
+    @Transactional
+    @Modifying
+    @Query("update UserQuestion q set q.state = 'expired', q.settledAt = :at "
+            + "where q.addresseeUserId = :addresseeUserId and q.state = 'pending' "
+            + "and q.expiresAt is not null and q.expiresAt <= :at")
+    int settleExpiredForAddressee(@Param("addresseeUserId") UUID addresseeUserId,
+            @Param("at") Instant at);
+
+    /**
+     * Same lazy expiry for the single-read faces, scoped to one row (primary key lookup) so reading
+     * one question cannot touch another addressee's inbox.
+     *
+     * @return 1 when this read settled the row, 0 when it was not pending or had no passed deadline
+     */
+    @Transactional
+    @Modifying
+    @Query("update UserQuestion q set q.state = 'expired', q.settledAt = :at "
+            + "where q.id = :id and q.state = 'pending' "
+            + "and q.expiresAt is not null and q.expiresAt <= :at")
+    int settleExpiredById(@Param("id") UUID id, @Param("at") Instant at);
 }

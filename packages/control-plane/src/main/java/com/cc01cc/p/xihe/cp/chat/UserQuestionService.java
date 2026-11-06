@@ -32,6 +32,16 @@ import java.util.UUID;
  * {@code pending -> expired} (deadline, or the run reached a terminal status),
  * {@code pending -> cancelled} (the run was cancelled).</p>
  *
+ * <p><b>Deadline settlement is lazy (V13 / PLAN-0660).</b> CP owns no scheduler for
+ * {@code user_questions} and the Agent's timeout callback is not part of this layer, so the deadline
+ * becomes durable at the first read of the row: the list projection, the {@code pendingCount} and
+ * the single-read faces settle every overdue {@code pending} row to {@code expired} before they
+ * answer. A user therefore stops seeing an answerable card at the deadline instead of only learning
+ * it from a 409 after clicking. The state machine stays the only writer of terminal states — this is
+ * the same conditional {@code pending -> expired} settle that already existed on the late-answer
+ * path, merely triggered earlier; a late answer still reports {@code 409 QUESTION_EXPIRED} even
+ * though a previous read already persisted the expiry.</p>
+ *
  * <h2>Lock order (deliberate, read before changing anything here)</h2>
  *
  * <p>The project's frozen run-level order is <b>Session → Run</b>
@@ -225,6 +235,13 @@ public class UserQuestionService {
             throw notFound();
         }
         if (!UserQuestion.STATE_PENDING.equals(state)) {
+            // A read may already have settled this row lazily (list / badge / single read). Keep the
+            // frozen deadline vocabulary: when the deadline is what made it terminal, this is
+            // QUESTION_EXPIRED, not a generic "already settled".
+            if (UserQuestion.STATE_EXPIRED.equals(state) && deadlinePassed(questionId, now)) {
+                throw new CpApiException(HttpStatus.CONFLICT, "QUESTION_EXPIRED",
+                        "This question has expired");
+            }
             throw new CpApiException(HttpStatus.CONFLICT, "QUESTION_ALREADY_SETTLED",
                     "This question was already settled");
         }
@@ -234,6 +251,13 @@ public class UserQuestionService {
                 + " reason=answer_after_deadline", questionId);
         throw new CpApiException(HttpStatus.CONFLICT, "QUESTION_EXPIRED",
                 "This question has expired");
+    }
+
+    /** True when the row's {@code expires_at} is at or before {@code at} (the answer CAS predicate). */
+    private boolean deadlinePassed(UUID questionId, Instant at) {
+        return questions.findById(questionId)
+                .map(row -> row.getExpiresAt() != null && !row.getExpiresAt().isAfter(at))
+                .orElse(false);
     }
 
     /**
@@ -327,8 +351,11 @@ public class UserQuestionService {
     /**
      * The projection for one addressee: {@code state='pending'} by default, newest first, bounded.
      * The paired count is {@link #pendingCount} — it is derived from rows, never stored.
+     *
+     * <p>Reading settles overdue rows first ({@link #expireOverdueForAddressee}), so an item can
+     * never stay answerable past its deadline just because nobody tried to answer it.</p>
      */
-    @Transactional(readOnly = true)
+    @Transactional
     public List<UserQuestion> findProjection(String userId, String state, int limit) {
         String effectiveState = (state == null || state.isBlank())
                 ? UserQuestion.STATE_PENDING
@@ -338,20 +365,27 @@ public class UserQuestionService {
                     "state must be one of pending/answered/expired/cancelled");
         }
         int size = limit <= 0 ? DEFAULT_PROJECTION_LIMIT : Math.min(limit, MAX_PROJECTION_LIMIT);
-        return questions.findByAddresseeUserIdAndStateOrderByCreatedAtDesc(parseUserId(userId),
+        UUID addressee = parseUserId(userId);
+        expireOverdueForAddressee(addressee, Instant.now());
+        return questions.findByAddresseeUserIdAndStateOrderByCreatedAtDesc(addressee,
                 effectiveState, PageRequest.of(0, size));
     }
 
-    /** {@code pendingCount} of the projection for one addressee. */
-    @Transactional(readOnly = true)
+    /**
+     * {@code pendingCount} of the projection for one addressee. The lazy settle runs before the
+     * aggregate, so the badge agrees with the items and drops at the deadline.
+     */
+    @Transactional
     public long pendingCount(String userId) {
-        return questions.countByAddresseeUserIdAndState(parseUserId(userId),
-                UserQuestion.STATE_PENDING);
+        UUID addressee = parseUserId(userId);
+        expireOverdueForAddressee(addressee, Instant.now());
+        return questions.countByAddresseeUserIdAndState(addressee, UserQuestion.STATE_PENDING);
     }
 
     /** Addressee-scoped single read; a non-addressee and a missing row are the same 404. */
-    @Transactional(readOnly = true)
+    @Transactional
     public UserQuestion findForAddressee(UUID questionId, String userId) {
+        expireOverdueQuestion(questionId, Instant.now());
         return questions.findByIdAndAddresseeUserId(questionId, parseUserId(userId))
                 .orElseThrow(UserQuestionService::notFound);
     }
@@ -367,8 +401,9 @@ public class UserQuestionService {
      * (otherwise the route leaks that the row exists). The reader is never granted the answer right
      * here — that is {@link #answer}'s addressee-only check.</p>
      */
-    @Transactional(readOnly = true)
+    @Transactional
     public UserQuestion findReadable(UUID questionId, String userId) {
+        expireOverdueQuestion(questionId, Instant.now());
         UserQuestion row = questions.findById(questionId).orElseThrow(UserQuestionService::notFound);
         if (isAddressee(row, userId)) {
             return row;
@@ -377,6 +412,28 @@ public class UserQuestionService {
             throw notFound();
         }
         return row;
+    }
+
+    /**
+     * V13 lazy expiry for the inbox faces: one conditional statement settles every overdue
+     * {@code pending} row of this addressee. Scoped by addressee so a read never writes another
+     * user's inbox, and only when a row actually moved is a lifecycle line emitted.
+     */
+    private void expireOverdueForAddressee(UUID addresseeUserId, Instant now) {
+        int changed = questions.settleExpiredForAddressee(addresseeUserId, now);
+        if (changed > 0) {
+            logSettled(UserQuestion.STATE_EXPIRED,
+                    "addresseeUserId=" + addresseeUserId + " reason=read_after_deadline", changed);
+        }
+    }
+
+    /** Same lazy expiry for one row (single-read faces); a missing/terminal row is a no-op. */
+    private void expireOverdueQuestion(UUID questionId, Instant now) {
+        int changed = questions.settleExpiredById(questionId, now);
+        if (changed > 0) {
+            logSettled(UserQuestion.STATE_EXPIRED,
+                    "questionId=" + questionId + " reason=read_after_deadline", changed);
+        }
     }
 
     /** True when this question is addressed to {@code userId} (the only principal that may answer). */
