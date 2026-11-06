@@ -140,6 +140,12 @@ class AgentPrincipalSkillBindingContractTest extends AbstractIntegrationTest {
         fixture();
         UUID skillId = createInstanceSkill("skill-a", 12);
 
+        ResponseEntity<Map> smuggled = post("/skills",
+                Map.of("skillId", skillId.toString(), "scopeType", "workspace"));
+        assertEquals(HttpStatus.BAD_REQUEST, smuggled.getStatusCode(), String.valueOf(smuggled.getBody()));
+        assertEquals("INVALID_REQUEST", smuggled.getBody().get("code"),
+                "the body never accepts a client-chosen scope");
+
         ResponseEntity<Map> created = post("/skills", Map.of("skillId", skillId.toString()));
 
         assertEquals(HttpStatus.CREATED, created.getStatusCode(), String.valueOf(created.getBody()));
