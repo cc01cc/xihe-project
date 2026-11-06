@@ -109,6 +109,39 @@ test.describe("@host PLAN-0372 real lane — OpenAI-compatible tool round-trip",
             },
         );
         expect(bindRes.status(), await bindRes.text()).toBe(200);
+        // PLAN-0650 M4: task-24 strict resolve maps the instance-layer profile to
+        // the *consuming user's own* USER+READY connectionKey='default' (no
+        // cross-owner fallback). The runner seeds that connection on its admin
+        // account; this spec acts as a fresh journey user, so seed our own before
+        // the session POST (create is isAuthenticated(); manual discovery verifies
+        // READY without a network call, and the key stays in the node-side ctx).
+        const connectionRes = await request.post(`${CP_URL}/api/v1/provider-connections`, {
+            headers: setupHeaders,
+            data: {
+                providerId: "openai",
+                apiTypeId: "openai-chat-completions",
+                apiTypeVersion: 1,
+                apiKey: process.env.XIHE_E2E_REAL_XIAOMI_KEY,
+                connectionKey: "default",
+                label: "e2e real LLM (journey user)",
+                scope: "USER",
+                modelDiscovery: "manual",
+                manualModels: [MODEL_ID],
+                baseUrl: process.env.XIHE_E2E_REAL_OPENAI_BASE ?? "https://api.xiaomimimo.com/v1",
+            },
+        });
+        expect(connectionRes.ok(), await connectionRes.text()).toBeTruthy();
+        const journeyConnection = (await connectionRes.json()) as {
+            id: string;
+            status?: string;
+        };
+        if (journeyConnection.status !== "READY") {
+            const verifyRes = await request.post(
+                `${CP_URL}/api/v1/provider-connections/${journeyConnection.id}/verify`,
+                { headers: setupHeaders },
+            );
+            expect(verifyRes.ok(), await verifyRes.text()).toBeTruthy();
+        }
         const sessionRes = await request.post(`${CP_URL}/api/v1/sessions`, {
             headers: setupHeaders,
             data: { title: "Real compat round trip", agentPrincipalId: principalId },
