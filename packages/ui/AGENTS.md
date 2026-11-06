@@ -41,6 +41,7 @@ pnpm run build
 - **基线（`39a8e929` 口径，2026-11-06 实测）**：`165 files / 1720 passed / 3 skipped / 151–153 s`（细分：transform ~4.3 · setup ~7.7 · import ~27 · tests ~21.7 · environment ~75.5 s）。
 - **能测出**：顺序性/随机 flake、明显性能回归、"修完只跑一次"的假绿。**测不出**：慢机器/CI（真实 `sleep` 类等待会先崩）、并发与分片 flake（`BL-308` 记过分片敏感）、时区/日期/随机种子边界、跨文件全局状态污染、真实网络/DB（全 mock）。
 - **进阶检查**：`--sequence.shuffle`（随机顺序，可配 `--sequence.seed=<n>` 复现）与 `--maxWorkers=1`（单 worker）。2026-11-06 实测：**shuffle 暴露 5 文件 / 8–9 用例的顺序依赖（可复现）**，而 `--maxWorkers=1` 全绿 ⇒ 污染只在多 worker 场景；隔离单跑那 5 个文件也全绿。
+- **至少跑 3 个种子**：单种子 `--sequence.shuffle` 通过**不构成**稳定性证据 —— 2026-11-06 实测 `2/3` 通过（一条是已知 1/3 偶发，另一条换种子才照出来的 `Sidebar.spec.ts` 顺序依赖）。判据：**3 个种子全绿**才算 shuffle 干净。
 - **经验值 ≠ 推导值**：`SessionMonitorPanel.spec.ts` 的 `sleep(650)`（真墙钟）与 `MessageListVirtual.spec.ts` 的 `for (round < 4) nextTick()`（"够用"的轮数）都是经验值，慢机会崩；改它们前先看文件内注释。
 
 ## 跨层与交互规则
