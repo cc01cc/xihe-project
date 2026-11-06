@@ -4080,6 +4080,24 @@ test('PLAN-0643 T4.7: help <group> matches <group> --help and keeps the {ok,data
   assert.equal(parsed.data.help, viaFlag.data.help);
 });
 
+// A leading option token is not a group. `xihe --version --help` / `xihe --help extra` printed
+// the full help before the registry; the per-group answer must not turn them into exit 2.
+test('PLAN-0643 T4.7: a leading option before --help still prints the full help', async () => {
+  const groupHeadings = (text) => text.split('\n').filter((line) => /^[a-z][a-z-]* — /.test(line)).length;
+
+  const viaVersion = await runCommand(['--version', '--help'], { env: {}, promptSecret: noPrompt });
+  assert.equal(viaVersion.exitCode, 0);
+  assert.equal(groupHeadings(viaVersion.data.help), HELP_GROUPS.length);
+
+  const trailing = await runCommand(['--help', 'extra'], { env: {}, promptSecret: noPrompt });
+  assert.equal(trailing.exitCode, 0);
+  assert.equal(trailing.data.help, viaVersion.data.help);
+
+  // Without `--help`, `--version` still routes to the version command, not to help.
+  const plain = await runCommand(['--version'], { env: {}, promptSecret: noPrompt });
+  assert.equal(plain.data?.help, undefined);
+});
+
 test('PLAN-0643 T1.7: XIHE_CP_URL selects the endpoint when XIHE_CP_PORT is absent', async (t) => {
   const cp = await startCpMock();
   t.after(cp.close);

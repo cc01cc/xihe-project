@@ -239,6 +239,12 @@ export async function runCommand(argv, dependencies = {}) {
     // Bare `--help` / `xihe help` print every group; `<group> --help` and `xihe help <group>`
     // print only that group; an unknown group is a usage error (exit 2) instead of a silent
     // full listing.
+    // A leading option token (`xihe --version --help`, `xihe --help extra`) never names a
+    // group: before the registry it answered with the full help, and it keeps doing so rather
+    // than falling through to the unknown-group usage error.
+    if (globals.help && typeof argv[0] === 'string' && argv[0].startsWith('-')) {
+      return { exitCode: 0, json, data: { help: helpText() } };
+    }
     if (group === 'help') {
       const wanted = args[1];
       if (wanted === undefined) return { exitCode: 0, json, data: { help: helpText() } };
