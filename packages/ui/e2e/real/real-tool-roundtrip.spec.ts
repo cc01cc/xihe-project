@@ -32,9 +32,23 @@ const HOST_ROOT =
         : path.resolve(process.cwd(), "../../.xihe-workspaces"));
 const EVIDENCE_DIR = evidenceDir("plan-0372-real-compat");
 
+// 2026-11-06 (PLAN-0650 M4 V5)：真模型单轮时延会显著超过 fake lane 口径（本机实测
+// mimo-v2.6-flash 一轮 ≈4m45s），原 300s 硬编 budget 直接超时。预算与派生等待一律
+// env 可调（同一条 env，单一旋钮），缺省 900s；不按模型特例硬编。各阶段等待按
+// 原 300s 口径的比例随 budget 缩放，单测/默认缺省（900s）下为原值的 3 倍。
+const REAL_TEST_TIMEOUT_MS = (() => {
+    const parsed = Number(process.env.XIHE_E2E_REAL_TEST_TIMEOUT_MS);
+    return Number.isFinite(parsed) && parsed >= 60000 ? parsed : 900000;
+})();
+const REAL_BUDGET_SCALE = REAL_TEST_TIMEOUT_MS / 300000;
+const REAL_MODAL_WAIT_MS = Math.round(90000 * REAL_BUDGET_SCALE);
+const REAL_FILE_LAND_MS = Math.round(60000 * REAL_BUDGET_SCALE);
+const REAL_RUN_SETTLE_MS = Math.round(120000 * REAL_BUDGET_SCALE);
+const REAL_FINAL_MESSAGE_MS = Math.round(60000 * REAL_BUDGET_SCALE);
+
 test.describe("@host PLAN-0372 real lane — OpenAI-compatible tool round-trip", () => {
     test.describe.configure({ mode: "serial" });
-    test.setTimeout(300000);
+    test.setTimeout(REAL_TEST_TIMEOUT_MS);
 
     test("B: write_file round-trip over the OpenAI-compatible MiMo connection", async ({
         page,
@@ -212,7 +226,7 @@ test.describe("@host PLAN-0372 real lane — OpenAI-compatible tool round-trip",
                     : `必须实际调用 write_file 工具创建文件 ${fileName}（内容「${content}」），不要只描述步骤。`,
             );
             const approved = await modal
-                .waitFor({ state: "visible", timeout: 90000 })
+                .waitFor({ state: "visible", timeout: REAL_MODAL_WAIT_MS })
                 .then(() => true)
                 .catch(() => false);
             if (approved) {
@@ -228,7 +242,7 @@ test.describe("@host PLAN-0372 real lane — OpenAI-compatible tool round-trip",
                 await expect
                     .poll(async () => readHostFile(), {
                         message: `expected ${fileName} under ${path.join(HOST_ROOT, wsId)} to contain the requested content`,
-                        timeout: approved ? 60000 : 15000,
+                        timeout: approved ? REAL_FILE_LAND_MS : 15000,
                     })
                     .toContain(content);
                 landed = true;
@@ -249,7 +263,7 @@ test.describe("@host PLAN-0372 real lane — OpenAI-compatible tool round-trip",
                             };
                             return body.runs?.[0]?.status ?? "unknown";
                         },
-                        { timeout: 120000, intervals: [2_000] },
+                        { timeout: REAL_RUN_SETTLE_MS, intervals: [2_000] },
                     )
                     .toBe("succeeded");
             }
@@ -296,7 +310,7 @@ test.describe("@host PLAN-0372 real lane — OpenAI-compatible tool round-trip",
                     assistant = list.filter((message) => message.role === "ASSISTANT").slice(-1)[0];
                     return (assistant?.content ?? "").length;
                 },
-                { timeout: 60000, intervals: [2_000] },
+                { timeout: REAL_FINAL_MESSAGE_MS, intervals: [2_000] },
             )
             .toBeGreaterThan(0);
 
