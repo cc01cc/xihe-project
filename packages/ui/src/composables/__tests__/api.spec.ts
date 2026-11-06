@@ -2900,7 +2900,7 @@ describe("BL-422: one 401 end state, whichever channel noticed it", () => {
 
         const http = api.getSessions().catch((error: Error) => error);
         handleUnauthorized();
-        const [httpError] = await Promise.all([http]);
+        const httpError = await http;
 
         expect(httpError).toBeInstanceOf(Error);
         expect(logoutSpy).toHaveBeenCalled();
