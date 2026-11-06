@@ -19,6 +19,7 @@
  */
 
 import { logger } from "@/lib/logger";
+import { handleUnauthorized as logoutOnUnauthorized } from "@/services/chatTransport";
 import { SSE_SUBSCRIBER_LIMIT_CODES } from "../composables/sseSubscriberLimit";
 
 export interface SseFrame {
@@ -83,6 +84,13 @@ export interface UserChannelSseOptions {
      * —— 上限是持续态，按 1s/2s/4s… 无限重试只会持续占用配额、且在用户看来像"网络抖动"。
      */
     onSubscriberLimit?: (code: string, detail: string | null) => void;
+    /**
+     * PLAN-0660 T5.18（审计 P1）：`401` —— Bearer token 失效。
+     *
+     * 默认复用 `chatTransport` 的登出语义（清 token / 用户 / 工作区上下文后跳 `/login`），与聊天
+     * SSE 同源。401 是**终态**：清态之后不再重连，否则只是拿同一个坏 token 反复打服务端。
+     */
+    onUnauthorized?: () => void;
     /** Test seams. */
     fetchImpl?: typeof fetch;
     schedule?: (callback: () => void, delayMs: number) => unknown;
@@ -109,6 +117,12 @@ export function createUserChannelSse(options: UserChannelSseOptions): UserChanne
         ((handle: unknown) => clearTimeout(handle as ReturnType<typeof setTimeout>));
     const initialBackoffMs = options.initialBackoffMs ?? 1_000;
     const maxBackoffMs = options.maxBackoffMs ?? 30_000;
+    /**
+     * 默认登出 = `chatTransport` 的同一实现（单一 401 语义）。
+     *
+     * 做成可注入的 seam，是为了让单测不必真的清 localStorage / 赋值 `window.location`。
+     */
+    const onUnauthorized = options.onUnauthorized ?? logoutOnUnauthorized;
 
     let disposed = false;
     let controller: AbortController | null = null;
@@ -182,6 +196,17 @@ export function createUserChannelSse(options: UserChannelSseOptions): UserChanne
                 signal: controller.signal,
             });
             if (!response.ok || !response.body) {
+                // PLAN-0660 T5.18（审计 P1）：401 先于 429 判定 —— Bearer 失效是终态，认证都不通时
+                // "订阅者上限"没有意义。旧实现没有 401 分支，会拿同一个过期 token 无限退避重连：
+                // 用户既不会被登出，也永远连不上，看起来只是"通道一直在抖"。
+                if (response.status === 401) {
+                    disposed = true;
+                    controller?.abort();
+                    controller = null;
+                    logger.warn("user_channel_sse_unauthorized", {});
+                    onUnauthorized();
+                    return;
+                }
                 // BL-335：429 + 订阅者上限码 ⇒ 明确告诉用户"这条通道停了、要关标签页"，且不再重连。
                 // 其它失败保持既有退避重连（网络抖动属可恢复）。
                 const limit = await readSubscriberLimit(response);

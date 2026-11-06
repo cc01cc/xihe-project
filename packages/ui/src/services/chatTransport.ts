@@ -136,7 +136,7 @@ class ChatTransportImpl {
                     if (response.status === 401) {
                         this.intentionalStops.add(sessionId);
                         this.setState(sessionId, { isConnected: false, isConnecting: false });
-                        this.handleUnauthorized();
+                        handleUnauthorized();
                         controller.abort();
                         return;
                     }
@@ -306,14 +306,23 @@ class ChatTransportImpl {
         const message = error.message.toLowerCase();
         return message.includes("401") || message.includes("unauthorized");
     }
+}
 
-    private handleUnauthorized(): void {
-        localStorage.removeItem("xihe-token");
-        localStorage.removeItem("xihe-refresh-token");
-        localStorage.removeItem("xihe-user");
-        clearTabWorkspace();
-        window.location.href = "/login";
-    }
+/**
+ * PLAN-0660 T5.18（审计 P1）：Bearer token 失效后的**唯一**登出入口。
+ *
+ * 为什么抽成模块级函数：用户通道（`useUserChannelSSE`）与聊天 SSE 面对的是同一个 Bearer token，
+ * 401 语义必须只有一份。两边各清一遍 token/工作区上下文迟早漂移，而"漏跳 `/login`"的表现正是
+ * 拿同一个坏 token 无限退避重连。
+ *
+ * 调用方职责：登出后**不得**再排重连 —— 本函数只负责清态与跳转，停循环由各自的控制流决定。
+ */
+export function handleUnauthorized(): void {
+    localStorage.removeItem("xihe-token");
+    localStorage.removeItem("xihe-refresh-token");
+    localStorage.removeItem("xihe-user");
+    clearTabWorkspace();
+    window.location.href = "/login";
 }
 
 export const chatTransport = new ChatTransportImpl();
