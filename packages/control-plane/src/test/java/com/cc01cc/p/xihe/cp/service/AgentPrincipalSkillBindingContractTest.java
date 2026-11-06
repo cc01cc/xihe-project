@@ -285,6 +285,17 @@ class AgentPrincipalSkillBindingContractTest extends AbstractIntegrationTest {
         assertEquals(HttpStatus.NOT_FOUND, noContext.getStatusCode(), String.valueOf(noContext.getBody()));
         assertEquals("SKILL_NOT_FOUND", noContext.getBody().get("code"));
         assertEquals(1, bindingsOfPrincipal().size(), "a rejected bind must not write a row");
+
+        UUID querySkill = createWorkspaceSkill("skill-ws-query", workspace.getId());
+        ResponseEntity<Map> viaQuery = postWithQueryWorkspace("/skills",
+                Map.of("skillId", querySkill.toString()), workspace.getId());
+        assertEquals(HttpStatus.CREATED, viaQuery.getStatusCode(), String.valueOf(viaQuery.getBody()));
+        assertEquals("workspace", viaQuery.getBody().get("scopeType"));
+        assertEquals(workspace.getId().toString(), viaQuery.getBody().get("scopeId"));
+        assertEquals(HttpStatus.CONFLICT, post("/skills", Map.of("skillId", querySkill.toString()),
+                workspace.getId()).getStatusCode(),
+                "query and header must derive the same duplicate key");
+        assertEquals(2, bindingsOfPrincipal().size());
     }
 
     @Test
@@ -544,6 +555,12 @@ class AgentPrincipalSkillBindingContractTest extends AbstractIntegrationTest {
                                               String token, UUID workspaceId) {
         return restTemplate.exchange(url(pathFor(suffix)), HttpMethod.POST,
                 new HttpEntity<>(body, authHeaders(token, workspaceId)), Map.class);
+    }
+
+    private ResponseEntity<Map> postWithQueryWorkspace(String suffix, Map<String, Object> body,
+                                                       UUID workspaceId) {
+        return restTemplate.exchange(url(pathFor(suffix)) + "?workspaceId=" + workspaceId,
+                HttpMethod.POST, new HttpEntity<>(body, authHeaders()), Map.class);
     }
 
     private ResponseEntity<String> delete(String suffix) {
