@@ -3,7 +3,7 @@ import { createI18n } from "vue-i18n";
 const messages = {
     "zh-CN": {
         files: {
-            fileTooLarge: "文件过大，无法预览",
+            fileTooLarge: "文件超过 32 MiB 采集上限，为保护界面主线程内存不整读；建议下载后用外部程序打开（如 PDF 编辑器）",
             contentTruncated: "内容已被截断，仅显示文件部分内容",
             loadFull: "加载全文",
             splitTitle: "拆分 PDF",
@@ -2324,7 +2324,7 @@ const messages = {
     },
     "en-US": {
         files: {
-            fileTooLarge: "File too large to preview",
+            fileTooLarge: "File exceeds the 32 MiB capture limit. To protect main-thread memory, it will not be read in full; download it and open it with an external program (such as a PDF editor).",
             contentTruncated: "Content truncated. Only part of the file is shown.",
             loadFull: "Load Full",
             splitTitle: "Split PDF",
