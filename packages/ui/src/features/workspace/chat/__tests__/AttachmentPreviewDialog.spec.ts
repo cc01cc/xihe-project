@@ -122,6 +122,59 @@ describe("AttachmentPreviewDialog", () => {
         wrapper.unmount();
     });
 
+    it("keeps the prompt while a continue step is still short of the entity", async () => {
+        // 20 bytes with an 8-byte budget mimics CP's clamp: the first continue returns only one
+        // budgeted chunk, so the file is still incomplete and the prompt must stay visible.
+        previewMock.mockResolvedValueOnce({
+            bytes: new Uint8Array([1]),
+            mimeType: "text/csv",
+            totalBytes: 20,
+            truncated: true,
+        });
+        remainderMock
+            .mockResolvedValueOnce({ bytes: new Uint8Array(8), totalBytes: 20 })
+            .mockResolvedValueOnce({ bytes: new Uint8Array(11), totalBytes: 20 });
+
+        const wrapper = mountDialog();
+        await flushPromises();
+
+        await wrapper.get('[data-testid="attachment-preview-load-rest"]').trigger("click");
+        await flushPromises();
+
+        expect(remainderMock).toHaveBeenCalledTimes(1);
+        expect(wrapper.find('[data-testid="attachment-preview-truncated"]').exists()).toBe(true);
+        expect(wrapper.find('[data-testid="attachment-preview-load-rest"]').exists()).toBe(true);
+
+        await wrapper.get('[data-testid="attachment-preview-load-rest"]').trigger("click");
+        await flushPromises();
+
+        expect(remainderMock).toHaveBeenCalledTimes(2);
+        expect(remainderMock.mock.calls[1]![1]).toBe(9);
+        expect(wrapper.find('[data-testid="attachment-preview-truncated"]').exists()).toBe(false);
+        wrapper.unmount();
+    });
+
+    it("keeps the prompt when the continued response still has no total", async () => {
+        previewMock.mockResolvedValueOnce({
+            bytes: new Uint8Array([1]),
+            mimeType: "text/csv",
+            totalBytes: null,
+            truncated: true,
+        });
+        remainderMock.mockResolvedValueOnce({ bytes: new Uint8Array([2, 3]), totalBytes: null });
+
+        const wrapper = mountDialog();
+        await flushPromises();
+
+        await wrapper.get('[data-testid="attachment-preview-load-rest"]').trigger("click");
+        await flushPromises();
+
+        // Unknown total can not prove completeness: stay conservative instead of claiming done.
+        expect(wrapper.find('[data-testid="attachment-preview-truncated"]').exists()).toBe(true);
+        expect(wrapper.find('[data-testid="attachment-preview-load-rest"]').exists()).toBe(true);
+        wrapper.unmount();
+    });
+
     it("renders an error with retry instead of the preview", async () => {
         previewMock.mockRejectedValueOnce(new Error("boom"));
         previewMock.mockResolvedValueOnce(textPreview("recovered"));

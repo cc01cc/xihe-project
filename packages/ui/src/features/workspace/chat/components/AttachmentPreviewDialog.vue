@@ -259,8 +259,13 @@ async function loadRemainder() {
         merged.set(bytes.value, 0);
         merged.set(rest.bytes, bytes.value.byteLength);
         bytes.value = merged;
-        totalBytes.value = rest.totalBytes ?? merged.byteLength;
-        truncated.value = false;
+        // Audit B2: one continue step does not necessarily finish the file — CP clamps every
+        // response to the preview budget, so an attachment larger than 2× the budget is still
+        // partial here. Only clear the prompt when the merged length proves completeness; an
+        // unknown total keeps the previous (conservative) state.
+        const total = rest.totalBytes ?? totalBytes.value;
+        totalBytes.value = total;
+        if (total !== null) truncated.value = merged.byteLength < total;
         refreshObjectUrl();
     } catch (error) {
         if (current.signal.aborted || isAbortError(error)) return;

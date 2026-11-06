@@ -11,6 +11,13 @@ import {
     readFilePreview,
 } from "../composables/fileService";
 
+function problemResponse(status: number, code: string, requestId: string): Response {
+    return new Response(JSON.stringify({ status, code, detail: "range problem", requestId }), {
+        status,
+        headers: { "Content-Type": "application/problem+json" },
+    });
+}
+
 beforeEach(() => {
     setActivePinia(createPinia());
     vi.restoreAllMocks();
@@ -210,34 +217,97 @@ describe("fetchAttachmentPreview", () => {
         expect(preview.truncated).toBe(false);
     });
 
-    it("falls back to a plain request when the range is not satisfiable (416)", async () => {
+    it("retries a 416 with a bounded open-ended range instead of dropping Range", async () => {
         fetchMock
+            .mockResolvedValueOnce(problemResponse(416, "RANGE_NOT_SATISFIABLE", "req-416"))
             .mockResolvedValueOnce(
-                new Response(
-                    JSON.stringify({
-                        status: 416,
-                        code: "RANGE_NOT_SATISFIABLE",
-                        detail: "range outside the entity",
-                        requestId: "req-416",
-                    }),
-                    { status: 416, headers: { "Content-Type": "application/problem+json" } },
-                ),
-            )
-            .mockResolvedValueOnce(
-                new Response(new Uint8Array([9, 8, 7, 6]), {
-                    headers: { "Content-Length": "4", "Content-Type": "text/plain" },
+                new Response(new Uint8Array(16).fill(1), {
+                    status: 206,
+                    headers: { "Content-Range": "bytes 0-15/17", "Content-Type": "text/plain" },
                 }),
             );
 
-        const preview = await fetchAttachmentPreview(previewUrl());
+        const preview = await fetchAttachmentPreview(previewUrl(), { budget: 16 });
 
         expect(fetchMock).toHaveBeenCalledTimes(2);
+        const firstInit = fetchMock.mock.calls[0]![1] as RequestInit;
+        const firstHeaders = firstInit.headers as Record<string, string>;
         const secondInit = fetchMock.mock.calls[1]![1] as RequestInit;
         const secondHeaders = secondInit.headers as Record<string, string>;
-        expect(secondHeaders.Range).toBeUndefined();
+        expect(firstHeaders.Range).toBe("bytes=0-15");
+        // The retry must stay ranged: a plain 200 would let the server stream the whole file
+        // and hand budget enforcement back to the client.
+        expect(secondHeaders.Range).toBe("bytes=0-");
+        expect(secondHeaders.Authorization).toBe("Bearer preview-token");
+        expect(preview.bytes.byteLength).toBe(16);
+        expect(preview.totalBytes).toBe(17);
+        expect(preview.truncated).toBe(true);
+    });
+
+    it("maps a repeated 416 to ApiError so only the download entry remains", async () => {
+        fetchMock
+            .mockResolvedValueOnce(problemResponse(416, "RANGE_NOT_SATISFIABLE", "req-416a"))
+            .mockResolvedValueOnce(problemResponse(416, "RANGE_NOT_SATISFIABLE", "req-416b"));
+
+        const error = await fetchAttachmentPreview(previewUrl()).catch((reason: unknown) => reason);
+
+        expect(fetchMock).toHaveBeenCalledTimes(2);
+        expect(error).toBeInstanceOf(ApiError);
+        expect((error as ApiError).problem.code).toBe("RANGE_NOT_SATISFIABLE");
+    });
+
+    it("keeps the truncation prompt when a 206 carries no Content-Range", async () => {
+        fetchMock.mockResolvedValueOnce(new Response(new Uint8Array(16).fill(7), { status: 206 }));
+
+        const preview = await fetchAttachmentPreview(previewUrl(), { budget: 16 });
+
+        expect(preview.bytes.byteLength).toBe(16);
+        expect(preview.totalBytes).toBeNull();
+        expect(preview.truncated).toBe(true);
+    });
+
+    it("rejects a 206 that does not start at the requested offset", async () => {
+        fetchMock.mockResolvedValueOnce(
+            new Response(new Uint8Array([9, 8, 7, 6]), {
+                status: 206,
+                headers: { "Content-Range": "bytes 5-8/20" },
+            }),
+        );
+
+        const preview = await fetchAttachmentPreview(previewUrl(), { budget: 16 });
+
+        // A 206 anchored elsewhere proves nothing about the prefix: never present it as one.
         expect(preview.bytes.byteLength).toBe(4);
-        expect(preview.totalBytes).toBe(4);
-        expect(preview.truncated).toBe(false);
+        expect(preview.totalBytes).toBeNull();
+        expect(preview.truncated).toBe(true);
+    });
+
+    it("reports truncation when the 206 body is shorter than its declared range", async () => {
+        fetchMock.mockResolvedValueOnce(
+            new Response(new Uint8Array([1, 2, 3, 4]), {
+                status: 206,
+                headers: { "Content-Range": "bytes 0-15/17" },
+            }),
+        );
+
+        const preview = await fetchAttachmentPreview(previewUrl(), { budget: 16 });
+
+        expect(preview.bytes.byteLength).toBe(4);
+        expect(preview.truncated).toBe(true);
+    });
+
+    it("keeps the truncation prompt when a 200 fallback body exceeds the budget", async () => {
+        fetchMock.mockResolvedValueOnce(
+            new Response(new Uint8Array(64).fill(3), {
+                headers: { "Content-Length": "64", "Content-Type": "text/plain" },
+            }),
+        );
+
+        const preview = await fetchAttachmentPreview(previewUrl(), { budget: 16 });
+
+        expect(preview.bytes.byteLength).toBe(16);
+        expect(preview.totalBytes).toBe(64);
+        expect(preview.truncated).toBe(true);
     });
 
     it("maps a 400 INVALID_RANGE problem to ApiError", async () => {
@@ -304,6 +374,45 @@ describe("fetchAttachmentRemainder", () => {
         expect((init.headers as Record<string, string>).Range).toBe("bytes=4-");
         expect(Array.from(rest.bytes)).toEqual([5, 6]);
         expect(rest.totalBytes).toBe(6);
+    });
+
+    it("rejects a 200 response that ignored Range", async () => {
+        fetchMock.mockResolvedValueOnce(
+            new Response(new Uint8Array([1, 2, 3, 4]), {
+                headers: { "Content-Length": "4", "Content-Type": "text/plain" },
+            }),
+        );
+
+        // Appending a full 200 body would duplicate the prefix and stream the whole file.
+        await expect(fetchAttachmentRemainder("/api/v1/files/preview", 4)).rejects.toThrow(
+            "not a ranged response at the requested offset",
+        );
+    });
+
+    it("rejects a 206 whose Content-Range starts at another offset", async () => {
+        fetchMock.mockResolvedValueOnce(
+            new Response(new Uint8Array([5, 6]), {
+                status: 206,
+                headers: { "Content-Range": "bytes 2-3/6" },
+            }),
+        );
+
+        await expect(fetchAttachmentRemainder("/api/v1/files/preview", 4)).rejects.toThrow(
+            "not a ranged response at the requested offset",
+        );
+    });
+
+    it("rejects a 206 body shorter than its declared range", async () => {
+        fetchMock.mockResolvedValueOnce(
+            new Response(new Uint8Array([5]), {
+                status: 206,
+                headers: { "Content-Range": "bytes 4-5/6" },
+            }),
+        );
+
+        await expect(fetchAttachmentRemainder("/api/v1/files/preview", 4)).rejects.toThrow(
+            "does not match its declared range",
+        );
     });
 });
 

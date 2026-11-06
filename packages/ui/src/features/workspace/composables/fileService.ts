@@ -213,18 +213,25 @@ async function consumeAttachmentPreview(
     if (!response.ok) await apiErrorFromResponse(response);
     const mimeType = response.headers.get("Content-Type") ?? "application/octet-stream";
     if (response.status === 206) {
-        const range = parseContentRange(response.headers.get("Content-Range"));
         const { bytes, complete } = await readBoundedBody(response, budget);
-        const declared = range ? range.end - range.start + 1 : null;
+        const range = parseContentRange(response.headers.get("Content-Range"));
+        if (!range || range.start !== 0) {
+            // A 206 we can not interpret (missing/invalid `Content-Range`, or a range that does
+            // not start at the requested offset) proves nothing about completeness; keep the
+            // truncation prompt instead of presenting the body as the file prefix.
+            return { bytes, mimeType, totalBytes: null, truncated: true };
+        }
+        const declared = range.end - range.start + 1;
         // Trust neither side alone: cap by the declared range AND by the budget.
-        const bounded =
-            declared !== null && declared < bytes.byteLength ? bytes.slice(0, declared) : bytes;
-        const totalBytes = range?.total ?? null;
+        const bounded = declared < bytes.byteLength ? bytes.slice(0, declared) : bytes;
+        const totalBytes = range.total;
         return {
             bytes: bounded,
             mimeType,
             totalBytes,
-            truncated: totalBytes !== null ? totalBytes > bounded.byteLength : !complete,
+            truncated:
+                declared > bytes.byteLength ||
+                (totalBytes !== null ? totalBytes > bounded.byteLength : !complete),
         };
     }
     // 200 = server ignored Range (old CP / proxy); bound the body client-side.
@@ -241,10 +248,11 @@ async function consumeAttachmentPreview(
 /**
  * Fetch the preview prefix of an attachment (`Range: bytes=0-<budget-1>`).
  *
- * A `416` means the range can not be satisfied (for example a stale cached length);
- * that is not a hard failure, so it falls back once to a plain request whose body is
- * still capped client-side. Other non-2xx responses map to `ApiError`
- * (`400 INVALID_RANGE` included) so callers can surface the CP problem code.
+ * A `416` means the bounded range can not be satisfied (for example a stale cached length).
+ * The retry keeps a `Range` header (`bytes=0-`) so the server-side preview clamp stays the
+ * only budget owner; falling back to a plain 200 would let the server stream the whole file
+ * and move the budget into this client. A second `416` maps to `ApiError`, and the dialog
+ * then offers the download entry instead of a preview.
  */
 export async function fetchAttachmentPreview(
     url: string,
@@ -254,10 +262,12 @@ export async function fetchAttachmentPreview(
     const rangedHeaders = apiAuthHeaders({ Range: `bytes=0-${budget - 1}` }, false);
     let response = await fetch(url, { headers: rangedHeaders, signal: options.signal });
     if (response.status === 416) {
+        // Still a ranged request: CP clamps the open-ended form to the same 8 MiB budget.
         response = await fetch(url, {
-            headers: apiAuthHeaders(undefined, false),
+            headers: apiAuthHeaders({ Range: "bytes=0-" }, false),
             signal: options.signal,
         });
+        if (response.status === 416) await apiErrorFromResponse(response);
     }
     return consumeAttachmentPreview(response, budget);
 }
@@ -266,6 +276,11 @@ export async function fetchAttachmentPreview(
  * Fetch the remainder after a preview prefix (`Range: bytes=<offset>-`), used by the
  * explicit "load the rest" action. Never called implicitly: full content is a user
  * decision, and the preview budget is not a full-file cap.
+ *
+ * Only a `206` whose `Content-Range` starts at `offset` is accepted, and the read is bounded
+ * by both that declared length and the preview budget: a `200` (server ignored `Range`) would
+ * append the whole entity on top of the prefix, and an unbounded `arrayBuffer()` would let a
+ * single click re-download a 500 MiB attachment.
  */
 export async function fetchAttachmentRemainder(
     url: string,
@@ -277,12 +292,22 @@ export async function fetchAttachmentRemainder(
         signal: options.signal,
     });
     if (!response.ok) await apiErrorFromResponse(response);
-    const bytes = new Uint8Array(await response.arrayBuffer());
-    const totalBytes =
-        response.status === 206
-            ? (parseContentRange(response.headers.get("Content-Range"))?.total ?? null)
-            : totalFromContentLength(response);
-    return { bytes, totalBytes };
+    const range =
+        response.status === 206 ? parseContentRange(response.headers.get("Content-Range")) : null;
+    if (!range || range.start !== offset) {
+        throw new Error(
+            "Attachment remainder response is not a ranged response at the requested offset",
+        );
+    }
+    const declared = range.end - range.start + 1;
+    const { bytes, complete } = await readBoundedBody(
+        response,
+        Math.min(declared, ATTACHMENT_PREVIEW_BUDGET_BYTES),
+    );
+    if (!complete || bytes.byteLength !== declared) {
+        throw new Error("Attachment remainder response does not match its declared range");
+    }
+    return { bytes, totalBytes: range.total };
 }
 
 /** Decode preview bytes as UTF-8, dropping an incomplete trailing code point. */
