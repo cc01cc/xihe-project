@@ -9,7 +9,7 @@ import { createServer as createHttpServer } from 'node:http'
 import { waitForAgentLlmReady } from './lib/agent-readiness.mjs'
 import { cpBuildRoot, resolveBuildTargetForStack } from './lib/cp-build-dir.mjs'
 import { cpTargetDir, externalCpBuildCheck, gitHead } from './lib/cp-build-info.mjs'
-import { llmEnv } from './lib/llm-env.mjs'
+import { DEFAULT_REAL_API_BASE, llmEnv } from './lib/llm-env.mjs'
 import { decideCpBoot } from './lib/cp-boot-plan.mjs'
 import { stopPidIfOwned, E2E_PORT_MIN, E2E_PORT_MAX } from './lib/kill-guard.mjs'
 import {
@@ -1686,12 +1686,15 @@ async function configureFakeLlm() {
     // {providerId:openai, connectionKey:'default'}，而 strict resolve 要求消费用户自己有一条
     // USER+READY+key='default' 的连接（PLAN-0648 fake 分支已修，real 分支同批补齐，否则
     // spec 自建 key='plan0630-*' 的连接救不了解析）。幂等：已存在则只在非 READY 时补 verify。
+    // PLAN-0650 M4 V5 缺陷修复：real 分支的 baseUrl 兜底不得回落到 fake LLM 端口
+    // （real lane 不起 fake fixture，回落值指向死端口）；未显式给 base 时与 Agent env
+    // 同源，取 lib/llm-env.mjs 的 DEFAULT_REAL_API_BASE。
     await ensureDefaultFakeConnection({
       cpBaseUrl,
       accessToken,
       apiKey: process.env.XIHE_E2E_REAL_XIAOMI_KEY,
       modelId: 'mimo-v2.6-flash',
-      realBase: process.env.XIHE_E2E_REAL_OPENAI_BASE,
+      realBase: process.env.XIHE_E2E_REAL_OPENAI_BASE ?? DEFAULT_REAL_API_BASE,
     })
     return
   }
@@ -1977,6 +1980,11 @@ async function runPlaywright() {
         : {}),
       XIHE_E2E_HEADED: process.env.XIHE_E2E_HEADED ?? '0',
       XIHE_E2E_BROWSER_CHANNEL: process.env.XIHE_E2E_BROWSER_CHANNEL ?? 'chrome-beta',
+      // 2026-11-06（PLAN-0684 窗口，Lead A 类授权）：mention-cursor 车道的三个
+      // runner-owned 信号量在此显式透传（缺省不设置时零变化，specs 自我 skip 维持）。
+      ...(process.env.XIHE_E2E_MENTION_CURSOR ? { XIHE_E2E_MENTION_CURSOR: process.env.XIHE_E2E_MENTION_CURSOR } : {}),
+      ...(process.env.XIHE_DEMO_STATE_FILE ? { XIHE_DEMO_STATE_FILE: process.env.XIHE_DEMO_STATE_FILE } : {}),
+      ...(process.env.XIHE_MENTION_CURSOR_DIR ? { XIHE_MENTION_CURSOR_DIR: process.env.XIHE_MENTION_CURSOR_DIR } : {}),
       ...(reportPath ? { PLAYWRIGHT_JSON_OUTPUT_NAME: reportPath } : {}),
     },
   })
