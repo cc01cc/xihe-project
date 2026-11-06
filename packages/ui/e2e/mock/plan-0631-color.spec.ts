@@ -523,8 +523,8 @@ test.describe("PLAN-0631 colour schemes（C1/C3 opt-in 对比）", () => {
             const focusContrast = contrastRatio(focusColor!, focus.backgrounds);
 
             // 几何必须还是 B（色彩方案不许顺手改密度/字号/圆角）。
-            expect(body.fontSizePx, "B 正文 13px").toBeCloseTo(13, 0);
-            expect(body.lineHeightPx, "B 正文行高 1.45").toBeCloseTo(18.85, 0);
+            expect(body.fontSizePx, "B 正文 14px").toBeCloseTo(14, 0);
+            expect(body.lineHeightPx, "B 正文行高 1.55").toBeCloseTo(21.7, 0);
             expect(send.borderRadiusPx, "B 主档圆角 4px").toBeCloseTo(4, 0);
 
             // 颜色必须真的换成候选值。
