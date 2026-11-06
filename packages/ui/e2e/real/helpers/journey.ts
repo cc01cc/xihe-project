@@ -6,7 +6,8 @@ import { closeSync, mkdirSync, openSync, readFileSync, writeFileSync } from "nod
 import path from "node:path";
 import { generateE2EPassword } from "./password";
 import { expect } from "@playwright/test";
-import type { APIRequestContext, Page } from "@playwright/test";
+import type { APIRequestContext, Locator, Page } from "@playwright/test";
+import { classifySendAttempt, isSendBudgetExhausted } from "../../../src/lib/sendEvidence";
 import { ensureWorkspace } from "./workspace";
 
 export const CP_URL = `http://localhost:${process.env.XIHE_CP_PORT || "12631"}`;
@@ -645,17 +646,85 @@ export async function ensureChatBinding(page: Page, sessionId: string): Promise<
 }
 
 /**
- * Send a chat message with the two known robustness hazards handled:
+ * 用 **Node 侧** 计时给任意 Playwright 操作封顶。
+ *
+ * 为什么不用操作自带的 `timeout` 选项：run7b / run7c 实测显示 `page.waitForTimeout`
+ * （浏览器侧计时）在页面卡住时**永不返回**；`locator.inputValue()` 这类读值调用在元素
+ * 被卸载后会**无限等元素出现**（它默认没有 timeout）。只要有一处这样挂住，外层再多的
+ * 轮次上限也用不上 —— 900 s 测试预算会被单次调用吃光。
+ */
+function withDeadline<T>(work: Promise<T>, ms: number, label: string): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error(`${label} exceeded ${ms}ms`)), ms);
+        work.then(
+            (value) => {
+                clearTimeout(timer);
+                resolve(value);
+            },
+            (error: unknown) => {
+                clearTimeout(timer);
+                reject(error);
+            },
+        );
+    });
+}
+
+/** Node 侧等待：不依赖页面是否响应。 */
+function nap(ms: number): Promise<void> {
+    return new Promise<void>((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Is the send button un-clickable right now?
+ *
+ * run7b 的教训：只读 `isEnabled()` 会把「被浮层遮住 / 命中点不是按钮」误判成可点，
+ * 于是守卫以为「该再点一次」，把预算全花在等一个根本点不到的按钮上（把 900s 烧光）。
+ *
+ * 三层判定，任一命中即视为点不动：
+ *  1. 显式禁用语义：`disabled` 属性或 `aria-disabled="true"`；
+ *  2. 遮挡：按钮中心 `elementFromPoint` 命中的不是按钮自身（尺寸为 0 也算）；
+ *  3. 可操作性：Playwright 的 `trial` 点击 —— 不产生真实点击，只回答「此刻能不能点」。
+ */
+async function probeSendBlocked(send: Locator): Promise<boolean> {
+    if (await send.isDisabled().catch(() => false)) return true;
+    const ariaDisabled = await send.getAttribute("aria-disabled").catch(() => null);
+    if (ariaDisabled === "true") return true;
+    const covered = await send
+        .evaluate((el) => {
+            const rect = el.getBoundingClientRect();
+            if (rect.width === 0 || rect.height === 0) return true;
+            const hit = document.elementFromPoint(
+                rect.left + rect.width / 2,
+                rect.top + rect.height / 2,
+            );
+            return !hit || !(hit === el || el.contains(hit));
+        })
+        .catch(() => false);
+    if (covered) return true;
+    return await send
+        .click({ trial: true, timeout: 3_000 })
+        .then(() => false)
+        .catch(() => true);
+}
+
+/**
+ * Send a chat message with the three known robustness hazards handled:
  *  - 新建对话 switches sessions asynchronously and clears the input — retry
  *    the fill until the send button reflects the non-empty input;
  *  - a click before the SSE stream component hydrates returns null from
- *    sendMessage and never POSTs (PLAN-294 M1) — retry until the optimistic
- *    user bubble appears.
+ *    sendMessage and never POSTs (PLAN-294 M1) — retry until there is
+ *    **observable send evidence** (bubble count grew / bubble visible /
+ *    input cleared), not just "the click did not throw";
+ *  - a disabled or overlapped button makes `click` wait forever (PLAN-0660
+ *    T5.23 run6/run7b: 900s test budget burnt) — probe clickability first,
+ *    and cap the whole routine with a bounded budget.
  */
 export async function sendChat(page: Page, text: string): Promise<void> {
     const bound = page.url().match(/\/chat\/([0-9a-f-]{36})/i);
     if (bound) {
-        await ensureChatBinding(page, bound[1]);
+        await withDeadline(ensureChatBinding(page, bound[1]), 20_000, "ensureChatBinding").catch(
+            () => {},
+        );
     }
     const input = page.locator('[data-testid="chat-input"]'),
         send = page.locator('[data-testid="chat-send-button"]');
@@ -663,77 +732,116 @@ export async function sendChat(page: Page, text: string): Promise<void> {
     // ensureChatReady) can drop the earlier input event, leaving the button
     // disabled with DOM value set but no v-model update.
     for (let i = 0; i < 6; i++) {
-        await input.click().catch(() => {});
-        await input.fill(text);
+        await withDeadline(input.click({ timeout: 5_000 }), 7_000, "chat-input click").catch(
+            () => {},
+        );
+        await withDeadline(input.fill(text, { timeout: 10_000 }), 12_000, "chat-input fill").catch(
+            () => {},
+        );
         if (await send.isEnabled().catch(() => false)) break;
-        await page.waitForTimeout(1000);
+        await nap(1000);
     }
     await expect(send).toBeEnabled({ timeout: 15000 });
-    await page
-        .locator("[data-sonner-toast]")
-        .first()
-        .waitFor({ state: "detached", timeout: 8000 })
-        .catch(() => {});
+    await withDeadline(
+        page.locator("[data-sonner-toast]").first().waitFor({ state: "detached", timeout: 8000 }),
+        10_000,
+        "sonner-toast detach",
+    ).catch(() => {});
     const bubbles = page.locator('[data-slot="message"][data-align="end"]');
-    // PLAN-0660 T5.23（run6 900s 超时根因）：判据从「有没有乐观气泡」改成「本次调用有没有
-    // **多出**一个气泡」。同会话里已有历史消息时前者恒真（旧实现因此会立刻"成功"返回），
-    // 而新会话里前者恒假 —— 两种情形都不能用来决定"要不要再点一次发送"。
+    // PLAN-0660 T5.23（run6 / run7b 两次 900s 超时根因）：判据从「乐观气泡可见」升级为
+    // **可观测发送证据三选一** —— ① 消息条数严格增长 ② 新气泡真实可见 ③ 输入框文本已离开。
+    // run7b 实测：CP 侧 01:24:06 已 `event=run_question_asked`（消息确实发出、ask_user 真被调用），
+    // 但旧判据只认「新气泡可见」，于是又点了一次、卡在点不动的按钮上直到测试超时。
+    // 同时整段加**总预算**：预算耗尽必须抛错，不允许「没抛异常就算过」。
     const baseline = await bubbles.count().catch(() => 0);
+    const startedAt = Date.now();
     for (let i = 0; i < 10; i++) {
+        if (isSendBudgetExhausted(Date.now() - startedAt)) {
+            throw new Error(
+                `sendChat budget exhausted without observable send evidence (baseline=${baseline}, attempts=${i}, elapsed=${Date.now() - startedAt}ms)`,
+            );
+        }
         // The session may appear only after the first click (UI auto-create),
         // so re-resolve and bind the active session on every attempt.
         const active = page.url().match(/\/chat\/([0-9a-f-]{36})/i);
         if (active) {
-            await ensureChatBinding(page, active[1]).catch(() => {});
+            // ensureChatBinding 内部是 page.evaluate(fetch(...))，没有内建超时：
+            // 一次挂住就能吃掉整轮预算（run7c 实测）。
+            await withDeadline(
+                ensureChatBinding(page, active[1]),
+                20_000,
+                "ensureChatBinding",
+            ).catch(() => {});
         }
-        // 关键修复：点击前先判「上一次点击是不是已经生效」。run6 的实测链路是——第一次
-        // 点击成功、run 随即进入 running、发送键转 disabled，但 SSE 订阅气泡慢于旧的
-        // 3s 判据，于是循环进入第二轮**盲点**这个 disabled 按钮：Playwright 的 click 会
-        // 一直等它变可点，直接把 900s 测试预算烧光（后端证据：chat_runs=running 与
-        // user_questions=pending 都已在超时前创建，问题没丢）。所以「已产出新气泡」或
-        // 「发送键已 disabled（= run 已开始）」都视为已发出，此时**只等待、绝不再点**。
-        const produced = (await bubbles.count().catch(() => 0)) > baseline;
-        const sendDisabled = !(await send.isEnabled().catch(() => true));
-        // 「发送键 disabled」有两种含义，不区分就会静默丢消息：
-        //   ① 上一次点击已生效、run 正在跑 —— run6 场景，应当跳过点击；
-        //   ② 输入框里根本不是本次文本（还没发出去）—— 此时跳过等于把消息吞掉。
-        // 用「本次文本是否已离开输入框」来区分：只有它确实被清空，才认定已发出。
-        // 读不到输入值时保守取回原文，即视为未发出、继续走有界点击。
-        const pendingText = await input.inputValue().catch(() => text);
-        const inputCleared = !pendingText.includes(text);
-        if ((produced || sendDisabled) && inputCleared) {
-            console.log(
-                `[send-retry-guard] attempt=${i + 1} action=skip-click produced=${produced} sendDisabled=${sendDisabled} inputCleared=${inputCleared} baseline=${baseline}`,
-            );
-            // 已发出：给足时间等乐观气泡落地（SSE 慢时常见），不消耗下一次点击。
-            await expect(bubbles.nth(baseline), "等待已发出的乐观气泡").toBeVisible({
-                timeout: 30_000,
-            });
+        const bubbleCount = await withDeadline(bubbles.count(), 5_000, "bubble count").catch(
+            () => baseline,
+        );
+        const bubbleVisible = await withDeadline(
+            bubbles.nth(baseline).isVisible(),
+            5_000,
+            "bubble visible probe",
+        ).catch(() => false);
+        // 不要在 locator 上读输入框：`inputValue()` 默认**不设超时**，发送后输入区若被
+        // 卸载就会无限等元素出现（run7c 实测：attempt=1 点完后 attempt=2 再没出现过）。
+        // 页面级求值不等待特定元素 —— 元素不在就返回 null，配合 deadline 不会挂住。
+        const pendingText = await withDeadline(
+            page.evaluate(() => {
+                const el = document.querySelector<HTMLTextAreaElement>(
+                    '[data-testid="chat-input"]',
+                );
+                return el ? el.value : null;
+            }),
+            7_000,
+            "chat-input read",
+        ).catch(() => null);
+        // 读不到（元素被卸载 / 求值超时）一律保守视为「未清空」，宁可多观察也不误判已发出。
+        const inputCleared = pendingText === null ? false : !pendingText.includes(text);
+        const sendBlocked = await withDeadline(probeSendBlocked(send), 12_000, "send probe").catch(
+            () => false,
+        );
+        const verdict = classifySendAttempt({
+            baselineCount: baseline,
+            bubbleCount,
+            bubbleVisible,
+            inputCleared,
+            sendBlocked,
+        });
+        console.log(
+            `[send-retry-guard] attempt=${i + 1} action=${verdict} baseline=${baseline} count=${bubbleCount} bubbleVisible=${bubbleVisible} inputCleared=${inputCleared} sendBlocked=${sendBlocked}`,
+        );
+        if (verdict === "sent") {
+            // 已发出：尽力给乐观气泡一点落地时间，但**不把可见性当退出门** ——
+            // 那正是旧判据的病根（ask_user 场景下人类等待期很长，气泡可能迟迟不到）。
+            await withDeadline(
+                bubbles.nth(baseline).waitFor({ state: "visible", timeout: 15_000 }),
+                17_000,
+                "optimistic bubble wait",
+            ).catch(() => {});
             return;
         }
-        if (sendDisabled) {
-            // 按钮已 disabled 但本次文本还在输入框：说明点击没生效，绝不能跳过。
-            console.log(
-                `[send-retry-guard] attempt=${i + 1} action=send-disabled-but-text-pending inputCleared=${inputCleared}`,
-            );
+        if (verdict === "blocked") {
+            // 点不动且没有任何证据：再点也是空点，只观察、不消耗点击预算。
+            await nap(1000);
+            continue;
         }
-        console.log(`[send-retry-guard] attempt=${i + 1} action=click baseline=${baseline}`);
-        // 有界点击：即使按钮在点击瞬间转 disabled 也只等 10s，不再无限挂起。
-        const clickTimedOut = await send
-            .click({ timeout: 10_000 })
+        // 有界点击：即使按钮在点击瞬间转 disabled 也只等 10s，不再无限挂起；
+        // 外层再用 Node 侧 deadline 兜一层 —— Playwright 的 timeout 依赖 CDP 往返，
+        // 页面主线程卡死时它同样可能迟迟不返回。
+        const clickTimedOut = await withDeadline(
+            send.click({ timeout: 10_000 }),
+            12_000,
+            "send click",
+        )
             .then(() => false)
             .catch(() => true);
         if (clickTimedOut) {
             console.log(`[send-retry-guard] attempt=${i + 1} action=click-timeout`);
         }
-        try {
-            await expect(bubbles.nth(baseline)).toBeVisible({ timeout: 10_000 });
-            return;
-        } catch {
-            await page.waitForTimeout(1000);
-        }
+        await nap(500);
     }
-    throw new Error("send never produced a user message bubble");
+    throw new Error(
+        `send never produced observable send evidence (baseline=${baseline}, elapsed=${Date.now() - startedAt}ms)`,
+    );
 }
 
 /**
