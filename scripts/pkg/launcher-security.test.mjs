@@ -171,6 +171,40 @@ test('BL-204 A(2): an unprovable ACL is a refusal, and the old file survives it'
   'the failure path must drop the tmp file and rethrow');
 });
 
+test('PLAN-0650 A-2 gap: loading an existing secrets file re-asserts the DACL', () => {
+  // The regression this pins: loadOrCreateSecrets used to read the existing file and hand it back
+  // without touching the DACL, so a pre-BL-204 file (three inherited ACEs) stayed inherited for the
+  // life of the install while the create-path gate reported green.
+  const loadAt = source.indexOf('private Properties loadOrCreateSecrets');
+  assert.ok(loadAt > 0, 'loadOrCreateSecrets() not found — this gate would be vacuous');
+  const loadBody = source.slice(loadAt, source.indexOf('private boolean persistSecrets', loadAt));
+  const existsAt = loadBody.indexOf('if (Files.isRegularFile(file))');
+  const returnAt = loadBody.indexOf('return props;', existsAt);
+  assert.ok(existsAt > 0 && returnAt > 0, 'the existing-file branch or its return is gone');
+  const branch = loadBody.slice(existsAt, returnAt);
+  const readAt = branch.indexOf('props.load(in)');
+  const rehardenAt = branch.indexOf('rehardenExistingSecrets(file, dir)');
+  assert.ok(rehardenAt > 0,
+    'the existing-file branch returns unverified secrets: an upgraded install keeps its inherited ACEs');
+  assert.ok(readAt > 0 && readAt < rehardenAt,
+    'the load path must harden AFTER reading the props it is about to return');
+
+  const helperAt = source.indexOf('private void rehardenExistingSecrets');
+  assert.ok(helperAt > 0, 'rehardenExistingSecrets() is gone: the load path cannot harden at all');
+  const helper = source.slice(helperAt, source.indexOf('private void hardenPermissions', helperAt));
+  const fileAt = helper.indexOf('hardenPermissions(file)');
+  const dirAt = helper.indexOf('hardenPermissions(dir)');
+  const verifyAt = helper.indexOf('verifyHardened(file)');
+  assert.ok(fileAt > 0 && dirAt > 0 && verifyAt > 0,
+    'the load path must harden the file and its directory, then run the read-only verify');
+  assert.ok(fileAt < dirAt && dirAt < verifyAt,
+    'the load path must harden file → directory → verify, the same order as the create path');
+  assert.ok(
+    !/catch\s*\(/.test(helper),
+    'the load path catches a hardening failure: an unprovable DACL must be exit 4, not a warning',
+  );
+});
+
 test('BL-204 A(3): no nullable value can reach the child environment', () => {
   // The assembly must reject a blank/missing value before it can be put into the env map, and the
   // pre-flight sweep must keep listing exactly the keys the env assembly consumes.
