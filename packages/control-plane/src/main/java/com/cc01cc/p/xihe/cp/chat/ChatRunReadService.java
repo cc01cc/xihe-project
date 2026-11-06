@@ -50,7 +50,12 @@ public class ChatRunReadService {
                 .filter(json -> json != null && !json.isBlank());
     }
 
-    public Map<String, Object> getStatus(UUID runUuid, String runId, String userId, String workspaceId) {
+    /**
+     * BL-370: the one owner gate. Order is load-bearing and frozen: unknown run ⇒ 404
+     * RUN_NOT_FOUND, then wrong owner/workspace ⇒ 403 FORBIDDEN. Callers must not pre-check owner
+     * before existence or a cross-tenant probe would learn the difference (404 vs 403).
+     */
+    private ChatRun requireOwnedChatRun(UUID runUuid, String userId, String workspaceId) {
         ChatRun run = chatRunRepository.findById(runUuid).orElse(null);
         if (run == null) {
             throw new CpApiException(HttpStatus.NOT_FOUND, "RUN_NOT_FOUND", "Chat run not found");
@@ -59,6 +64,30 @@ public class ChatRunReadService {
             throw new CpApiException(HttpStatus.FORBIDDEN, "FORBIDDEN",
                     "Chat run does not belong to current user/workspace");
         }
+        return run;
+    }
+
+    /**
+     * BL-370 (S1): read-run entry point for controllers that used to inject ChatRunRepository.
+     * Same 404-before-403 gate as {@link #getStatus}; a controller still owns any additional
+     * session-level authorization that must run *after* this one.
+     */
+    public ChatRun requireOwnedRun(UUID runUuid, String userId, String workspaceId) {
+        return requireOwnedChatRun(runUuid, userId, workspaceId);
+    }
+
+    /** BL-370 (S1): latest run of a session as the delegation provenance anchor (null = none). */
+    public ChatRun latestRunForSession(String sessionId) {
+        return chatRunRepository.findFirstBySessionIdOrderByCreatedAtDescIdDesc(sessionId).orElse(null);
+    }
+
+    /** BL-370 (S1): dispatch evidence without leaking the attempt repository to callers. */
+    public boolean hasTransportAttempt(String runId) {
+        return transportAttempts.existsByRunId(runId);
+    }
+
+    public Map<String, Object> getStatus(UUID runUuid, String runId, String userId, String workspaceId) {
+        ChatRun run = requireOwnedChatRun(runUuid, userId, workspaceId);
         boolean leaseExpired = run.getLeaseExpiresAt() != null
                 && run.getLeaseExpiresAt().isBefore(Instant.now());
         List<Map<String, Object>> pendingApprovals = approvalService.findActiveForRun(runId, userId, workspaceId);
@@ -94,14 +123,7 @@ public class ChatRunReadService {
      * terminal summary reported.
      */
     public Map<String, Object> getRunAttempts(UUID runUuid, String runId, String userId, String workspaceId) {
-        ChatRun run = chatRunRepository.findById(runUuid).orElse(null);
-        if (run == null) {
-            throw new CpApiException(HttpStatus.NOT_FOUND, "RUN_NOT_FOUND", "Chat run not found");
-        }
-        if (!userId.equals(run.getUserId()) || !workspaceId.equals(run.getWorkspaceId())) {
-            throw new CpApiException(HttpStatus.FORBIDDEN, "FORBIDDEN",
-                    "Chat run does not belong to current user/workspace");
-        }
+        ChatRun run = requireOwnedChatRun(runUuid, userId, workspaceId);
         List<ChatRunTransportAttempt> rows = transportAttempts.findByRunIdOrderBySequenceAsc(runId);
         List<Map<String, Object>> attempts = new ArrayList<>(rows.size());
         long failedCount = 0;

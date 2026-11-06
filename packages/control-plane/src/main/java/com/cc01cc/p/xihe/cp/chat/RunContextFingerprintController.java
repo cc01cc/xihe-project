@@ -4,8 +4,6 @@ import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.config.ProblemDetailsHandler;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
 import com.cc01cc.p.xihe.cp.entity.ChatRun;
-import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
-import com.cc01cc.p.xihe.cp.repository.ChatRunTransportAttemptRepository;
 import com.cc01cc.p.xihe.cp.service.SessionService;
 import com.cc01cc.p.xihe.cp.util.JacksonNodeExit;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -19,7 +17,6 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
-import java.util.Optional;
 import java.util.UUID;
 
 /**
@@ -36,17 +33,14 @@ import java.util.UUID;
 @RestController
 public class RunContextFingerprintController {
 
-    private final ChatRunRepository chatRunRepository;
-    private final ChatRunTransportAttemptRepository attemptRepository;
+    private final ChatRunReadService chatRunReadService;
     private final SessionService sessionService;
     private final ObjectMapper objectMapper;
 
-    public RunContextFingerprintController(ChatRunRepository chatRunRepository,
-                                           ChatRunTransportAttemptRepository attemptRepository,
+    public RunContextFingerprintController(ChatRunReadService chatRunReadService,
                                            SessionService sessionService,
                                            ObjectMapper objectMapper) {
-        this.chatRunRepository = chatRunRepository;
-        this.attemptRepository = attemptRepository;
+        this.chatRunReadService = chatRunReadService;
         this.sessionService = sessionService;
         this.objectMapper = objectMapper;
     }
@@ -87,15 +81,9 @@ public class RunContextFingerprintController {
         } catch (IllegalArgumentException exception) {
             throw new CpApiException(HttpStatus.NOT_FOUND, "RUN_NOT_FOUND", "Chat run not found");
         }
-        Optional<ChatRun> run = chatRunRepository.findById(runUuid);
-        if (run.isEmpty()) {
-            throw new CpApiException(HttpStatus.NOT_FOUND, "RUN_NOT_FOUND", "Chat run not found");
-        }
-        ChatRun found = run.get();
-        if (!userId.equals(found.getUserId()) || !workspaceId.equals(found.getWorkspaceId())) {
-            throw new CpApiException(HttpStatus.FORBIDDEN, "FORBIDDEN",
-                    "Chat run does not belong to current user/workspace");
-        }
+        // 404-vs-403 order stays inside the service (unknown ⇒ 404 before owner ⇒ 403); the
+        // session-level gate stays here because it must run *after* the owner gate, exactly as before.
+        ChatRun found = chatRunReadService.requireOwnedRun(runUuid, userId, workspaceId);
         sessionService.requireCurrent(found.getSessionId(), userId, workspaceId);
         return found;
     }
@@ -105,7 +93,7 @@ public class RunContextFingerprintController {
         JsonNode stored = run.getContextFingerprint();
         ContextFingerprintReadService.DispatchState state = stored != null
                 ? ContextFingerprintReadService.DispatchState.DISPATCHED
-                : (attemptRepository.existsByRunId(run.getId().toString())
+                : (chatRunReadService.hasTransportAttempt(run.getId().toString())
                         ? ContextFingerprintReadService.DispatchState.DISPATCHED
                         : ContextFingerprintReadService.DispatchState.NOT_DISPATCHED);
         return ContextFingerprintReadService.view(

@@ -157,25 +157,16 @@ class CpArchitectureTest {
     }
 
     /**
-     * BL-370: an exemption for a class that no longer exists is a dead hole in the rule. The exact
-     * set is asserted so adding one requires a deliberate edit here (plus a reason in the commit);
-     * shrinking it is equally deliberate. reviewBy 2026-12-06.
+     * BL-370 S1 acceptance: both S2 exemptions were removed after the read paths moved into
+     * {@code ChatRunReadService}, so the list must be empty and the rule must pass on its own.
+     * A non-empty list means someone re-introduced an allowlist — that is a deliberate decision
+     * requiring this test and the commit message to say why.
      */
     @Test
-    void controllerRepositoryExemptionsStillExistAndAreControllers() throws Exception {
-        var expected = java.util.Set.of(
-                "com.cc01cc.p.xihe.cp.chat.DelegationController",
-                "com.cc01cc.p.xihe.cp.chat.RunContextFingerprintController");
+    void controllerRepositoryExemptionsAreEmpty() {
         assertThat(CpArchitectureRules.CONTROLLER_REPOSITORY_EXEMPTIONS)
-                .as("BL-370 exemption list may only change deliberately (add: justify in commit)")
-                .containsExactlyInAnyOrderElementsOf(expected);
-        for (String name : CpArchitectureRules.CONTROLLER_REPOSITORY_EXEMPTIONS) {
-            Class<?> type = Class.forName(name);
-            assertThat(type.isAnnotationPresent(org.springframework.web.bind.annotation.RestController.class)
-                    || type.isAnnotationPresent(org.springframework.stereotype.Controller.class))
-                    .as("%s must still be an HTTP controller; otherwise delete its BL-370 exemption", name)
-                    .isTrue();
-        }
+                .as("BL-370: no controller→repository exemptions remain after S1")
+                .isEmpty();
     }
 
     @Test

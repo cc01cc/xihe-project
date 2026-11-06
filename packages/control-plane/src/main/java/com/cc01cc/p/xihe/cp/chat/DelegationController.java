@@ -8,7 +8,6 @@ import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.service.SessionService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
-import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -36,20 +35,20 @@ public class DelegationController {
     private final DelegationBudgetService delegationBudgetService;
     private final ChatSubmissionService chatSubmissionService;
     private final AgentSpawnAuthorizationService spawnAuthorization;
-    private final ChatRunRepository chatRunRepository;
+    private final ChatRunReadService chatRunReadService;
     private final ApplicationEventPublisher eventPublisher;
 
     public DelegationController(SessionService sessionService,
                                 DelegationBudgetService delegationBudgetService,
                                 ChatSubmissionService chatSubmissionService,
                                 AgentSpawnAuthorizationService spawnAuthorization,
-                                ChatRunRepository chatRunRepository,
+                                ChatRunReadService chatRunReadService,
                                 ApplicationEventPublisher eventPublisher) {
         this.sessionService = sessionService;
         this.delegationBudgetService = delegationBudgetService;
         this.chatSubmissionService = chatSubmissionService;
         this.spawnAuthorization = spawnAuthorization;
-        this.chatRunRepository = chatRunRepository;
+        this.chatRunReadService = chatRunReadService;
         this.eventPublisher = eventPublisher;
     }
 
@@ -141,8 +140,7 @@ public class DelegationController {
         } catch (CpApiException e) {
             return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
         }
-        ChatRun parentRun = chatRunRepository
-                .findFirstBySessionIdOrderByCreatedAtDescIdDesc(session.getId().toString()).orElse(null);
+        ChatRun parentRun = chatRunReadService.latestRunForSession(session.getId().toString());
         if (parentRun == null) {
             return invalidRequest("The parent session has no run to delegate from");
         }

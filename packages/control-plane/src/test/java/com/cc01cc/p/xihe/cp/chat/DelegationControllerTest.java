@@ -4,7 +4,6 @@ import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
 import com.cc01cc.p.xihe.cp.entity.ChatRun;
 import com.cc01cc.p.xihe.cp.entity.Session;
-import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
 import com.cc01cc.p.xihe.cp.service.SessionService;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -16,7 +15,6 @@ import org.springframework.http.ResponseEntity;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
-import java.util.Optional;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -47,7 +45,7 @@ class DelegationControllerTest {
     private DelegationBudgetService budget;
     private ChatSubmissionService submissions;
     private AgentSpawnAuthorizationService authorization;
-    private ChatRunRepository runs;
+    private ChatRunReadService runs;
     private ApplicationEventPublisher events;
     private DelegationController controller;
 
@@ -57,7 +55,7 @@ class DelegationControllerTest {
         budget = mock(DelegationBudgetService.class);
         submissions = mock(ChatSubmissionService.class);
         authorization = mock(AgentSpawnAuthorizationService.class);
-        runs = mock(ChatRunRepository.class);
+        runs = mock(ChatRunReadService.class);
         events = mock(ApplicationEventPublisher.class);
         controller = new DelegationController(sessions, budget, submissions, authorization, runs, events);
 
@@ -69,8 +67,7 @@ class DelegationControllerTest {
         when(sessions.requireCurrent(anyString(), anyString(), anyString())).thenReturn(session);
         ChatRun parentRun = mock(ChatRun.class);
         when(parentRun.getId()).thenReturn(UUID.fromString(PARENT_RUN_ID));
-        when(runs.findFirstBySessionIdOrderByCreatedAtDescIdDesc(SESSION_ID))
-                .thenReturn(Optional.of(parentRun));
+        when(runs.latestRunForSession(SESSION_ID)).thenReturn(parentRun);
         when(submissions.delegationAuthorizationBody(anyString())).thenReturn("{canonical}");
     }
 
@@ -191,7 +188,7 @@ class DelegationControllerTest {
 
     @Test
     void sessionWithoutARunIsRejectedBeforeAnyGate() {
-        when(runs.findFirstBySessionIdOrderByCreatedAtDescIdDesc(SESSION_ID)).thenReturn(Optional.empty());
+        when(runs.latestRunForSession(SESSION_ID)).thenReturn(null);
 
         ResponseEntity<?> response = controller.spawn(SESSION_ID, body(PRINCIPAL_ID, "do it"), "key-1", null);
 

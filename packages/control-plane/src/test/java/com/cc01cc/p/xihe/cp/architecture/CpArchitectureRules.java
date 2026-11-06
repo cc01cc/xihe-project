@@ -48,31 +48,18 @@ final class CpArchitectureRules {
             .as("Application services must not depend on Controllers");
 
     /**
-     * BL-370 (S2, 2026-11-06): named, time-boxed exemptions so the rule can run again.
-     *
-     * <p>Before this, the whole class never executed: an unassigned production type made ArchUnit's
-     * import throw, so "1 error" actually meant <b>zero coverage</b>. Restoring the check is more
-     * valuable than a clean-but-dead rule, so exactly these two controllers are exempt until their
-     * read paths move into services (S1, reviewBy 2026-12-06):
-     * <ul>
-     *   <li>{@code DelegationController} — spawn() reads the session's latest run for provenance;</li>
-     *   <li>{@code RunContextFingerprintController} — requireRun()/viewOf() read run + attempt state.</li>
-     * </ul>
-     * The list may only shrink. Adding an entry requires editing this list, the meta-test in
-     * {@code CpArchitectureTest} and a reason in the commit message.
+     * BL-370 (S1, 2026-11-06): the S2 exemptions for DelegationController and
+     * RunContextFingerprintController were deleted after their read paths moved into
+     * {@code ChatRunReadService}. The rule is unconditional again — no controller may depend on a
+     * repository. Adding an exemption requires changing the meta-test in {@code CpArchitectureTest}
+     * and a reason in the commit message; it must never become a permanent allowlist.
      */
-    static final List<String> CONTROLLER_REPOSITORY_EXEMPTIONS = List.of(
-            "com.cc01cc.p.xihe.cp.chat.DelegationController",
-            "com.cc01cc.p.xihe.cp.chat.RunContextFingerprintController");
+    /** BL-370 S1: empty on purpose; the meta-test below keeps it empty. */
+    static final List<String> CONTROLLER_REPOSITORY_EXEMPTIONS = List.of();
 
-    private static final DescribedPredicate<JavaClass> EXEMPT_CONTROLLER_REPOSITORY =
-            DescribedPredicate.describe("BL-370 exempt controllers", type ->
-                    CONTROLLER_REPOSITORY_EXEMPTIONS.contains(type.getName()));
-
-    static final ArchRule CONTROLLER_TO_REPOSITORY = noClasses()
-            .that(CONTROLLERS.and(DescribedPredicate.not(EXEMPT_CONTROLLER_REPOSITORY)))
+    static final ArchRule CONTROLLER_TO_REPOSITORY = noClasses().that(CONTROLLERS)
             .should().dependOnClassesThat(REPOSITORIES)
-            .as("Controllers must not depend on JPA repositories (BL-370 exemptions are time-boxed)");
+            .as("Controllers must not depend on JPA repositories");
 
     static final ArchRule PERSISTENCE_TO_CONTROLLER = noClasses().that(PERSISTENCE)
             .should().dependOnClassesThat(CONTROLLERS)
