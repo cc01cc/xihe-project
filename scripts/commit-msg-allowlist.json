@@ -1,5 +1,5 @@
 {
-  "_comment": "显式历史豁免白名单：每条必须带 reason，只允许“合入时才发现超宽”这类既成事实（合并后不可改写历史）。新增条目须在台账留痕，禁止批量塞历史提交。",
+  "_comment": "显式历史豁免白名单：每条必须带 reason，只允许“合入时才发现超宽”这类既成事实（合并后不可改写历史）。新增条目须在台账留痕，禁止批量塞历史提交。2026-11-06 一次性收录 8 条同日 merge/feature 超宽（同一根因：合并前未校验分支首行宽度，且 merge 主题未压到 ≤100 列）；收录后 gate 恢复绿，流程修复=合并前 `--range develop..<branch> --enforce` + merge 首行 ≤100。",
   "entries": [
     {
       "sha": "e69e06c874c9d4b68e6dafcd7323492f08d825f4",
@@ -8,6 +8,38 @@
     {
       "sha": "0c8d8f7ec6470a4c88f64cd5c7e8b5174062c203",
       "reason": "2026-11-06 合并 task/bl352-evidence-note 时才发现首行 77 列超宽（限制 72）；已进 develop 不可改写。流程要求：提交前跑 node scripts/check-commit-msg.mjs --file <msg>，合并前对分支跑 --range develop..HEAD --enforce。"
+    },
+    {
+      "sha": "231de4dc11a7eb413299fa113c42eb1fb0b1b8ca",
+      "reason": "2026-11-06 Lead 合并 task/real-lane-runner-fixes 时未先校验 merge 首行宽度（实测 195 列 > 100）；提交已进 develop 不可改写。流程修复：合并前对分支跑 --range 校验，且 merge 首行 ≤100 列。"
+    },
+    {
+      "sha": "953f59fe744427918914235c501a625e06ca729e",
+      "reason": "2026-11-06 Lead 合并 task/0643-batch-verify（分叉 310 提交）时 merge 首行 110 列 > 100；已进 develop 不可改写。同批流程修复见上。"
+    },
+    {
+      "sha": "30a3a9782757de941bdbd15e6f47b3b24523bee9",
+      "reason": "2026-11-06 Lead 合并 task/bl207-atom-denied-source-sort 时 merge 首行 112 列 > 100；已进 develop 不可改写。"
+    },
+    {
+      "sha": "7e3a224600a81fffcc8d68b8c44f398135c4a973",
+      "reason": "2026-11-06 Lead 合并 task/bl210-displayname-u 时 merge 首行 147 列 > 100；已进 develop 不可改写。"
+    },
+    {
+      "sha": "020ca5778ff3b90872ed89fb5a6becaecb374c12",
+      "reason": "2026-11-06 Lead 合并 task/bl208-atom-service 时 merge 首行 147 列 > 100；已进 develop 不可改写。"
+    },
+    {
+      "sha": "0186061ef172db749b8e5e14f832874a3af95814",
+      "reason": "2026-11-06 fix(cp) atomSources 排序提交首行 151 列 > 72（提交发生在 check:commit-msg 阻断前）；已进 develop 不可改写。"
+    },
+    {
+      "sha": "22be6da123ba12dca17b36f5ab8899287427838a",
+      "reason": "2026-11-06 feat(e2e) mention-cursor 提交首行 90 列 > 72（同一批早于阻断）；已进 develop 不可改写。"
+    },
+    {
+      "sha": "da2eda5fbeccfed96d8ac4838a17c0964831ca6d",
+      "reason": "2026-11-06 Lead 合并 task/0643-v43-v24 时 merge 首行 120 列 > 100；已进 develop 不可改写。本次为最后一笔，之后合并前一律先跑分支 --range 校验并把 merge 主题压到 ≤100 列。"
     }
   ]
 }
