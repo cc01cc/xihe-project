@@ -487,10 +487,14 @@ function queryListeners(ranges, dev) {
   for (const [a, b] of ranges) for (let p = a; p <= b; p += 1) wanted.add(p)
   for (const entry of dev) wanted.add(entry.port)
   if (isWindows) {
+    // BL-413: dev ports must be part of the Get-NetTCPConnection filter too —
+    // dropping them only after the JSON round-trip cannot recover a listener
+    // the query never returned (e.g. the stack runtime on 12633).
+    const queryRanges = [...ranges, ...dev.map(({ port }) => [port, port])]
     // Leading commas keep each range a nested array: @(,@(a,b)) is a one-element
     // array holding @(a,b), whereas @(@(a,b)) flattens to a two-int array and
     // makes `$_[0]`/`$_[1]` null (silently reporting zero listeners).
-    const rangeLiteral = ranges.map(([a, b]) => `,@(${a},${b})`).join('')
+    const rangeLiteral = queryRanges.map(([a, b]) => `,@(${a},${b})`).join('')
     const script = [
       `$ranges = @(${rangeLiteral})`,
       '$hits = Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | Where-Object {',
