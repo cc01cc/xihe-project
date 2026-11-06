@@ -10,7 +10,7 @@ import { tmpdir } from 'node:os';
 import { pathToFileURL } from 'node:url';
 import { printResult, runCommand } from './xihe.mjs';
 import { promptSecret, readResponseText } from './xihe-cli/provider.mjs';
-import { clearToken } from './xihe-cli/token-store.mjs';
+import { clearToken, readStore } from './xihe-cli/token-store.mjs';
 import { applySetToEnv, applyUrlSyncToEnv, parseStackSetArgs } from './lib/stack-set.mjs';
 
 const TEST_KEY = 'test-provider-secret-value';
@@ -5780,6 +5780,38 @@ test('PLAN-0643 V24: killing a concurrent token-store writer leaves a parseable 
   assert.equal(store.version, 1);
   const entry = store.tokens['http://127.0.0.1:12631'];
   assert.match(entry.token, /^v{2000}\d+$/, 'the store holds either the old or the new value, fully written');
+});
+
+function findDeadPid() {
+  for (let pid = 3_000_000; pid < 3_000_200; pid += 1) {
+    try {
+      process.kill(pid, 0);
+    } catch (error) {
+      if (error?.code === 'ESRCH') return pid;
+    }
+  }
+  throw new Error('could not find an unused pid for the V24 sweep fixture');
+}
+
+test('PLAN-0643 V24 fix: loading the store sweeps leaked temps and keeps a live writer temp', async (t) => {
+  const token = tempTokenFile();
+  t.after(() => token.cleanup());
+  const now = Date.now();
+  const twoHoursAgo = new Date(now - 2 * 60 * 60 * 1000);
+  const leaked = path.join(token.directory, `.cli-token.${findDeadPid()}.${now}.tmp`);
+  const aged = path.join(token.directory, `.cli-token.${process.pid}.${now - 7_200_000}.tmp`);
+  const inflight = path.join(token.directory, `.cli-token.${process.pid}.${now}.tmp`);
+  const foreign = path.join(token.directory, 'keep-me.tmp');
+  for (const file of [leaked, aged, inflight, foreign]) fs.writeFileSync(file, '{}');
+  fs.utimesSync(aged, twoHoursAgo, twoHoursAgo);
+
+  const state = readStore({ XIHE_CLI_TOKEN_FILE: token.file });
+
+  assert.equal(state.kind, 'absent', 'sweeping must not fabricate a store');
+  assert.equal(fs.existsSync(leaked), false, 'a temp whose writer was killed is swept immediately');
+  assert.equal(fs.existsSync(aged), false, 'a temp older than the stale bound is swept even when its pid was recycled');
+  assert.equal(fs.existsSync(inflight), true, 'a live writer temp must never be deleted');
+  assert.equal(fs.existsSync(foreign), true, 'only .cli-token.<pid>.<ts>.tmp is considered');
 });
 
 // ---------------------------------------------------------------------------
