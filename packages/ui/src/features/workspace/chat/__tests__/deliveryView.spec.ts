@@ -193,3 +193,45 @@ describe("resolveDelivery (PLAN-0659 T1.3)", () => {
         });
     });
 });
+
+/**
+ * PLAN-0684（D-183 / B3 历史口径）：HUMAN echo 切 username 后，历史正文里的
+ * `@旧显示名` 按**当前**名册重建时自然失配 —— 不崩、不命中、不把 id/UUID 上屏。
+ * 「不重写历史正文」由读侧重建保证：这里断言重建结果为空，而不是去改消息文本。
+ */
+describe("legacy @old-display-name after D-183 (PLAN-0684)", () => {
+    // 切换后的 echo = username：名册里没有旧的显示名（如 "陆星"）。
+    const USERNAME_ROSTER: SessionParticipantView[] = [
+        { ...OWNER, displayName: "owner_one" },
+        { ...MEMBER, displayName: "member_two" },
+    ];
+    const LEGACY_BODY = "@陆星 帮我看下这个告警";
+    const base = { role: "user" as const, unknownNameLabel: "未知用户", roster: USERNAME_ROSTER };
+
+    it("does not hit the mention badge for an old display name", () => {
+        expect(mentionParticipantIds(LEGACY_BODY, USERNAME_ROSTER)).toEqual([]);
+        // 历史消息没有 delivery ⇒ 没有任何可渲染的投递态：徽标不命中也不崩。
+        expect(resolveDelivery({ ...base, content: LEGACY_BODY })).toBeUndefined();
+    });
+
+    it("never renders a UUID when the old name no longer matches the roster", () => {
+        const resolved = resolveDelivery({
+            ...base,
+            content: LEGACY_BODY,
+            delivery: { toParticipantId: "part-member", ccParticipantIds: [] },
+        });
+        // 只渲染名册里查得到的 username；失配的旧 @ 不进 mentions。
+        expect(resolved).toEqual({ to: ["member_two"], mentions: [], cc: [] });
+        expect(JSON.stringify(resolved), "no participant id / UUID on screen").not.toContain(
+            "part-member",
+        );
+        expect(JSON.stringify(resolved)).not.toContain("user-2");
+    });
+
+    it("keeps matching when the body already carries the new username", () => {
+        // 对照：正文写 @member_two 时仍按当前名册命中（失配只针对旧名，不是禁用 @）。
+        expect(mentionParticipantIds("@member_two 帮我看下", USERNAME_ROSTER)).toEqual([
+            "part-member",
+        ]);
+    });
+});
