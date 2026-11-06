@@ -42,9 +42,17 @@ public class RuntimeExecutionSpecController {
                     spec.getSandboxSpec(), new TypeReference<>() { });
             var workspace = workspaceService.requireActiveWorkspace(workspaceId);
             // PLAN-0641 T7.5：roots 是 Runtime declared-root 的唯一真相（绝对 hostPath）。
+            // BL-415：V104 加列时未回填，legacy spec 的 roots 为 NULL（或空数组）——空根表不是
+            // 合法声明，Runtime 会把它当有效列表索引 root[0] 而 panic。此时用工作区 hostPath
+            // 合成主根（rootId=workspaceId，与 Runtime 的 legacy 合成约定一致），不下发 roots:[]。
             java.util.List<java.util.Map<String, Object>> roots = spec.getRoots() == null
                     ? java.util.List.of()
                     : objectMapper.readValue(spec.getRoots(), new TypeReference<>() { });
+            if (roots.isEmpty() && workspace.getHostPath() != null && !workspace.getHostPath().isBlank()) {
+                roots = java.util.List.of(java.util.Map.<String, Object>of(
+                        "rootId", workspaceId,
+                        "hostPath", workspace.getHostPath()));
+            }
             return new WorkspaceExecutionSpecResponse(
                     spec.getWorkspaceId(),
                     spec.getGeneration(),
