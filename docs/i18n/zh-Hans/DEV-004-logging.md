@@ -101,7 +101,7 @@ logger.add(sys.stderr, level=AGENT_LOG_LEVEL.upper())
 logger.add("agent.log", rotation="100 MB", retention=7, level=AGENT_LOG_LEVEL.upper(), serialize=True)
 ```
 
-第三方库的 stdlib 日志通过 `InterceptHandler` 路由至 loguru。
+第三方库的 stdlib 日志通过 `InterceptHandler` 路由至 loguru。LiteLLM 的库日志在导入后固定为 WARNING：其 `token_counter` DEBUG 记录会整包格式化 `messages`/`text` 载荷，可能包含 ask_user 问答正文；loguru 边界另对 `token_counter` 载荷和 `content` 值做兜底脱敏。
 
 ### 3.2. Control Plane (Java) — Logback + JSONL
 

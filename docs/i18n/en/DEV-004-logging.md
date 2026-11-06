@@ -97,7 +97,7 @@ logger.add(sys.stderr, level=AGENT_LOG_LEVEL.upper())
 logger.add("agent.log", rotation="100 MB", retention=7, level=AGENT_LOG_LEVEL.upper(), serialize=True)
 ```
 
-Third-party library stdlib logs are routed to loguru via `InterceptHandler`.
+Third-party library stdlib logs are routed to loguru via `InterceptHandler`. LiteLLM library loggers are pinned at WARNING after import: its `token_counter` DEBUG record formats the full `messages`/`text` payload, which may contain ask_user question/answer bodies; the loguru boundary additionally redacts `token_counter` payloads and `content` values as a fallback.
 
 ### 3.2. Control Plane (Java) — Logback + JSONL
 

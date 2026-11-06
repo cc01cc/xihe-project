@@ -53,12 +53,17 @@ def get_env(name: str) -> str | None:  # re-exported for compatibility
     return _get_env(name)
 
 
-# Suppress litellm verbose debugging that prints Authorization headers and
-# full request payloads. The redaction boundary already masks Bearer/JWT, but
-# disabling verbose output at the source keeps credentials out of logs.
+# LiteLLM's logger defaults to DEBUG (its own LITELLM_LOG fallback) and the
+# token_counter DEBUG record stringifies the full messages/text payload,
+# including ask_user question/answer bodies. `suppress_debug_info` only hides
+# the banner; pin the library loggers at WARNING so a payload line cannot be
+# emitted even when the Agent loguru level is debug. This is defense in depth:
+# log_redact.patch_record also redacts token_counter payloads at the sink.
 litellm.suppress_debug_info = True  # type: ignore[attr-defined]
 with suppress(Exception):
     litellm.set_verbose = False  # type: ignore[attr-defined]
+for _litellm_logger_name in ("LiteLLM", "LiteLLM Router", "LiteLLM Proxy"):
+    logging.getLogger(_litellm_logger_name).setLevel(logging.WARNING)
 
 
 

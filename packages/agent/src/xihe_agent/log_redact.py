@@ -18,15 +18,30 @@ _VALUE_PATTERNS = [
 _SENSITIVE_KEY = re.compile(
     r"^(token|key|secret|password|passwd|authorization|auth|cookie|"
     r"access_?token|refresh_?token|api_?key|service_?token|client_?secret|"
-    r"pkce|verifier)$",
+    r"pkce|verifier|content|messages|prompt|question|answer)$",
     re.IGNORECASE,
+)
+
+# LiteLLM token_counter logs `messages in token_counter: ...` / `text in
+# token_counter: ...` at DEBUG with the full payload. Quieting the LiteLLM
+# logger in main.py is the primary defense; these boundary patterns are the
+# fallback for any library that formats a message payload into the log text.
+_TOKEN_COUNTER_PAYLOAD = re.compile(
+    r"(?i)((?:messages|text) in token_counter:\s*).*$",
+)
+_QUOTED_CONTENT = re.compile(
+    r"""(?i)(["']content["']\s*:\s*)(["'])(?:\\.|(?!\2).)*\2""",
 )
 
 
 def redact_text(text: str) -> str:
     for pattern in _VALUE_PATTERNS:
         text = pattern.sub(REDACTED, text)
-    return text
+    text = _TOKEN_COUNTER_PAYLOAD.sub(lambda match: f"{match.group(1)}{REDACTED}", text)
+    return _QUOTED_CONTENT.sub(
+        lambda match: f"{match.group(1)}{match.group(2)}{REDACTED}{match.group(2)}",
+        text,
+    )
 
 
 def redact_value(value: Any, depth: int = 0) -> Any:
