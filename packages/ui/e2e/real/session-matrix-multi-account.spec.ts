@@ -11,8 +11,8 @@
  *    允许 owner / 受邀 HUMAN 参与者 / 可管理该工作区者，其余 403 `SESSION_ACCESS_DENIED`；
  *  - **人类参与者唤醒**（BL-238，T4.1 起已修复）：旧实现 wake 用 owner 身份走 `authorizeAsParticipant`，
  *    必然 `PARTICIPANT_CAP_DENIED` + `UnexpectedRollbackException`（BL-214 是其症状）；现按「人=通知」投递。
- *  两条都是 B 类（授权/通知语义变更），本 lane 不动产品；**不放宽断言**：能真跑的（owner
- *  读面、cc 的 durable 投递、名册权限门）正常断言，缺口项以 `test.fixme` 记录期望。
+ *  两条都曾是 B 类（授权/通知语义变更），当时本 lane 不动产品、缺口项以 `test.fixme` 记录期望；
+ *  现状（2026-11-07）：BL-237 已由 R1-a2〔PLAN-0668 转正〕、BL-238 已由 T4.1 打开 fixme 覆盖并转绿。
  *
  * 覆盖：
  *  1. R1-a 双账户互见 —— A（owner）发送后**A 的** messages 读面可见（wire + durable）；
