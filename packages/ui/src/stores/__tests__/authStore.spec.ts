@@ -13,6 +13,8 @@ vi.mock("../../composables/api", () => ({
         me: vi.fn<typeof apiModule.api.me>(),
         getWorkspace: vi.fn<typeof apiModule.api.getWorkspace>(),
         getCurrentWorkspace: vi.fn<typeof apiModule.api.getCurrentWorkspace>(),
+        // PLAN-0651 T4.2: the action-atom projection behind the settings permission surfaces.
+        getSelfPermissions: vi.fn<typeof apiModule.api.getSelfPermissions>(),
     },
     onAuthTokensRefreshed: vi.fn<(cb: (accessToken: string) => void) => void>(),
     registerForceLogout: vi.fn<(fn: () => void) => void>(),
@@ -350,5 +352,147 @@ describe("useAuthStore capabilities (PLAN-0610 W5a)", () => {
         vi.mocked(api.me).mockRejectedValue(new Error("offline"));
         expect(await authed.refreshCapabilities()).toBe(false);
         expect(authed.token).toBe("token");
+    });
+});
+
+/**
+ * PLAN-0651 T4.2 (D51-07): the settings permission surfaces are gated by the `MANAGE_ROLES`
+ * **action atom** from `GET /me/permissions`. CP's gate is
+ * `@requesterAuthority.holdsActionAtom('MANAGE_ROLES')` = membership in the instance-scope grant
+ * atoms (`RequesterAuthority.actionAtoms` collects `actionClass` only — no resource matching), so
+ * the store must (a) read `instancePermissions` and never `instanceCapabilities`, and (b) never let
+ * a workspace-scope atom unlock an instance-scope surface.
+ */
+describe("useAuthStore self permission atoms (PLAN-0651 T4.2)", () => {
+    const ATOM_WORKSPACE_ID = "55555555-5555-4555-8555-555555555555";
+
+    beforeEach(async () => {
+        const { api } = await import("../../composables/api");
+        vi.mocked(api.getSelfPermissions).mockReset();
+    });
+
+    function view(
+        instancePermissions: { actionClass: string; resource: string }[],
+        workspaces: {
+            workspaceId: string;
+            workspaceRole?: string | null;
+            workspaceAdmin?: boolean;
+            permissions?: { actionClass: string; resource: string }[];
+        }[] = [],
+        instanceCapabilities: string[] = [],
+    ): apiModule.SelfPermissionsView {
+        return { userId: "u1", instanceCapabilities, instancePermissions, workspaces };
+    }
+
+    it("derives canManageRoles from the MANAGE_ROLES instance atom", async () => {
+        localStorage.setItem("xihe-token", "token");
+        const { api } = await import("../../composables/api"),
+            store = useAuthStore();
+        expect(store.canManageRoles).toBe(false);
+
+        vi.mocked(api.getSelfPermissions).mockResolvedValue(
+            view([{ actionClass: "MANAGE_ROLES", resource: "*" }]),
+        );
+        expect(await store.ensureSelfPermissions()).toBe(true);
+        expect(store.canManageRoles).toBe(true);
+        expect(api.getSelfPermissions).toHaveBeenCalledTimes(1);
+    });
+
+    it("ignores instanceCapabilities and workspace-scope atoms", async () => {
+        localStorage.setItem("xihe-token", "token");
+        const { api } = await import("../../composables/api"),
+            store = useAuthStore();
+        vi.mocked(api.getSelfPermissions).mockResolvedValue(
+            view(
+                [],
+                [
+                    {
+                        workspaceId: ATOM_WORKSPACE_ID,
+                        workspaceRole: "OWNER",
+                        workspaceAdmin: true,
+                        permissions: [{ actionClass: "MANAGE_ROLES", resource: "*" }],
+                    },
+                ],
+                // `instanceCapabilities` only carries the 3 capability atoms; a same-named entry
+                // here must not stand in for the action atom.
+                ["instance:admin", "MANAGE_ROLES"],
+            ),
+        );
+
+        expect(await store.ensureSelfPermissions()).toBe(true);
+        // The workspace-scope atom stays inside its workspace: it does not unlock the
+        // instance-scope permission page (CP evaluates `holdsActionAtom` with workspaceId=null).
+        expect(store.hasInstanceAtom("MANAGE_ROLES")).toBe(false);
+        expect(store.canManageRoles).toBe(false);
+    });
+
+    it("treats an instance atom as membership, not as a resource wildcard", async () => {
+        localStorage.setItem("xihe-token", "token");
+        const { api } = await import("../../composables/api"),
+            store = useAuthStore();
+        vi.mocked(api.getSelfPermissions).mockResolvedValue(
+            view([{ actionClass: "MANAGE_ROLES", resource: ATOM_WORKSPACE_ID }]),
+        );
+
+        expect(await store.ensureSelfPermissions()).toBe(true);
+        // CP's `holdsActionAtom` is a set-contains over action classes (LayeredPolicyResolver's
+        // resource matching belongs to `allowsForUser`, which this gate does not use).
+        expect(store.canManageRoles).toBe(true);
+    });
+
+    it("shares one request between concurrent callers and caches the result", async () => {
+        localStorage.setItem("xihe-token", "token");
+        const { api } = await import("../../composables/api"),
+            store = useAuthStore();
+        vi.mocked(api.getSelfPermissions).mockResolvedValue(
+            view([{ actionClass: "MANAGE_ROLES", resource: "*" }]),
+        );
+
+        const [first, second] = await Promise.all([
+            store.ensureSelfPermissions(),
+            store.ensureSelfPermissions(),
+        ]);
+        expect(first).toBe(true);
+        expect(second).toBe(true);
+        // A later mount reuses the loaded projection instead of re-fetching on every settings page.
+        expect(await store.ensureSelfPermissions()).toBe(true);
+        expect(api.getSelfPermissions).toHaveBeenCalledTimes(1);
+    });
+
+    it("fails closed on a failed projection and retries on the next call", async () => {
+        localStorage.setItem("xihe-token", "token");
+        const { api } = await import("../../composables/api"),
+            store = useAuthStore();
+        vi.mocked(api.getSelfPermissions).mockRejectedValueOnce(new Error("offline"));
+
+        expect(await store.ensureSelfPermissions()).toBe(false);
+        expect(store.selfPermissions).toBeNull();
+        expect(store.canManageRoles).toBe(false);
+
+        vi.mocked(api.getSelfPermissions).mockResolvedValue(
+            view([{ actionClass: "MANAGE_ROLES", resource: "*" }]),
+        );
+        expect(await store.ensureSelfPermissions()).toBe(true);
+        expect(store.canManageRoles).toBe(true);
+        expect(api.getSelfPermissions).toHaveBeenCalledTimes(2);
+    });
+
+    it("does not fetch without a session and clears the projection on logout", async () => {
+        const { api } = await import("../../composables/api"),
+            store = useAuthStore();
+        expect(await store.ensureSelfPermissions()).toBe(false);
+        expect(api.getSelfPermissions).not.toHaveBeenCalled();
+
+        // Same store, now with a session (e.g. adopted by the router guard).
+        store.$patch({ token: "token" });
+        vi.mocked(api.getSelfPermissions).mockResolvedValue(
+            view([{ actionClass: "MANAGE_ROLES", resource: "*" }]),
+        );
+        expect(await store.ensureSelfPermissions()).toBe(true);
+        expect(store.canManageRoles).toBe(true);
+
+        store.logout();
+        expect(store.selfPermissions).toBeNull();
+        expect(store.canManageRoles).toBe(false);
     });
 });
