@@ -205,6 +205,25 @@ test('PLAN-0650 A-2 gap: loading an existing secrets file re-asserts the DACL', 
   );
 });
 
+test('PLAN-0650 A-2 gap: the create-race reuse path re-hardens before returning', () => {
+  // Two launchers can start against an install that already has a legacy file; the loser of the
+  // create race then reads that file. The winner hardened before its own ATOMIC_MOVE, but the file
+  // it won against may never have been hardened at all, so this path needs the same re-assert.
+  const loadAt = source.indexOf('private Properties loadOrCreateSecrets');
+  assert.ok(loadAt > 0, 'loadOrCreateSecrets() not found — this gate would be vacuous');
+  const loadBody = source.slice(loadAt, source.indexOf('private boolean persistSecrets', loadAt));
+  const raceAt = loadBody.indexOf('if (!persistSecrets(props, file))');
+  const returnAt = loadBody.indexOf('return existing;', raceAt);
+  assert.ok(raceAt > 0 && returnAt > 0, 'the create-race branch or its return is gone');
+  const raceBranch = loadBody.slice(raceAt, returnAt);
+  const loadBackAt = raceBranch.indexOf('existing.load(in)');
+  const rehardenAt = raceBranch.indexOf('rehardenExistingSecrets(file, dir)');
+  assert.ok(rehardenAt > 0,
+    'the race branch returns the reused file unverified: a concurrent start can publish inherited ACEs');
+  assert.ok(loadBackAt > 0 && loadBackAt < rehardenAt,
+    'the race branch must re-harden after loading the winner file and before returning it');
+});
+
 test('BL-204 A(3): no nullable value can reach the child environment', () => {
   // The assembly must reject a blank/missing value before it can be put into the env map, and the
   // pre-flight sweep must keep listing exactly the keys the env assembly consumes.

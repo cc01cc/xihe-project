@@ -407,6 +407,12 @@ public final class Launcher {
             try (InputStream in = Files.newInputStream(file)) {
                 existing.load(in);
             }
+            // PLAN-0650 A-2 gap: the winner hardened *its* file before the ATOMIC_MOVE, so the
+            // winner's own publish is fine — but losing the race does not mean the file was born
+            // here: two launchers can start against an install that already has a legacy file, and
+            // this branch then reads it first. Same rule as the existing-file branch: a file whose
+            // owner-only DACL was never re-proven is not read.
+            rehardenExistingSecrets(file, dir);
             return existing;
         }
         writeFirstRunNote(requireSecret(props, "admin.password"));
