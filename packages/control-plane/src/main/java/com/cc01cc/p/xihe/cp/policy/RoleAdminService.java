@@ -58,7 +58,15 @@ public class RoleAdminService {
 
     private static final Logger logger = LoggerFactory.getLogger(RoleAdminService.class);
 
-    private static final Pattern ROLE_NAME = Pattern.compile("^[A-Za-z][A-Za-z0-9_.:-]{1,63}$");
+    /**
+     * BL-394: the database check constraint is the authority — V87
+     * ({@code db/migration/V87__dynamic_access_roles.sql},
+     * {@code CONSTRAINT ck_roles_name_format CHECK (name ~ '^[A-Z][A-Z0-9_]{1,63}$')}). This
+     * pattern must stay byte-identical to it: the previous looser pattern accepted lowercase,
+     * dot and hyphen names, so the INSERT violated the constraint and the API answered
+     * 500 INTERNAL_ERROR instead of a field-level 400.
+     */
+    private static final Pattern ROLE_NAME = Pattern.compile("^[A-Z][A-Z0-9_]{1,63}$");
     private static final String RESOURCE_TYPE = "role";
 
     private final AccessRoleRepository roles;
@@ -370,8 +378,11 @@ public class RoleAdminService {
     private static String requireName(String raw) {
         String name = raw == null ? null : raw.trim();
         if (name == null || !ROLE_NAME.matcher(name).matches()) {
+            // The detail names the offending field and prints the single source of truth (the V87
+            // constraint), so a client can render a field-level error without parsing prose.
             throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_ROLE_NAME",
-                    "name must match " + ROLE_NAME.pattern());
+                    "name must match " + ROLE_NAME.pattern()
+                            + " (V87 ck_roles_name_format)");
         }
         return name;
     }

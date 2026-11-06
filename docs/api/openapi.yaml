@@ -4314,7 +4314,7 @@ paths:
     post:
       operationId: createRole
       summary: Create a custom access role (PLAN-0610 W3-2a)
-      description: 'Gate: MANAGE_ROLES (ADMIN and SUPER_ADMIN hold it since V125). name must match ^[A-Za-z][A-Za-z0-9_.:-]{1,63}$ (400 INVALID_ROLE_NAME) and be unique (409 ROLE_NAME_EXISTS); atoms must be a non-empty set of catalog atoms (400 INVALID_ROLE_ATOMS / 400 UNKNOWN_ACTION_CLASS), duplicates are removed. Grant-side subset rule (PLAN-0673 M1): a role DEFINITION may only contain atoms the caller holds in some scope — otherwise 403 PRIVILEGE_ESCALATION naming the exceeding atoms (that is the grantor gate; it is NOT the target-cap 409). The bypass atom GRANT_ANY_ATOM (instance-only, default SUPER_ADMIN) skips the subset check and is audited with the skipped atom list. A custom role may combine any atoms; whether an atom may be bound at a given scope is decided by the binding API (400 ROLE_SCOPE_MISMATCH there), not here. Audited as access_role_created.'
+      description: 'Gate: MANAGE_ROLES (ADMIN and SUPER_ADMIN hold it since V125). name must match ^[A-Z][A-Z0-9_]{1,63}$ — the V87 ck_roles_name_format check constraint is the single source of truth; illegal names are refused with 400 INVALID_ROLE_NAME instead of reaching the INSERT (500) — and be unique (409 ROLE_NAME_EXISTS); atoms must be a non-empty set of catalog atoms (400 INVALID_ROLE_ATOMS / 400 UNKNOWN_ACTION_CLASS), duplicates are removed. Grant-side subset rule (PLAN-0673 M1): a role DEFINITION may only contain atoms the caller holds in some scope — otherwise 403 PRIVILEGE_ESCALATION naming the exceeding atoms (that is the grantor gate; it is NOT the target-cap 409). The bypass atom GRANT_ANY_ATOM (instance-only, default SUPER_ADMIN) skips the subset check and is audited with the skipped atom list. A custom role may combine any atoms; whether an atom may be bound at a given scope is decided by the binding API (400 ROLE_SCOPE_MISMATCH there), not here. Audited as access_role_created.'
       security: [{ bearerAuth: [] }]
       requestBody:
         required: true
@@ -4329,7 +4329,7 @@ paths:
     patch:
       operationId: updateRole
       summary: Update an access role (PLAN-0610 W3-2a)
-      description: 'Gate: MANAGE_ROLES. A custom role may change name (409 ROLE_NAME_EXISTS), displayName, description and atoms; an atom change re-materializes every holder in the same transaction (source=role rows reconciled, capability cache invalidated immediately and after completion, token_version + 1 per holder whose set changed). Atom changes obey the same grant-side subset rule as create: 403 PRIVILEGE_ESCALATION names any atom outside the caller''s own set (GRANT_ANY_ATOM bypasses, audited with the skipped atom list). A system role accepts ONLY displayName — any other field answers 409 SYSTEM_ROLE_IMMUTABLE. Audited as access_role_updated, which includes the holder count.'
+      description: 'Gate: MANAGE_ROLES. A custom role may change name (same ^[A-Z][A-Z0-9_]{1,63}$ V87 format, 400 INVALID_ROLE_NAME / 409 ROLE_NAME_EXISTS), displayName, description and atoms; an atom change re-materializes every holder in the same transaction (source=role rows reconciled, capability cache invalidated immediately and after completion, token_version + 1 per holder whose set changed). Atom changes obey the same grant-side subset rule as create: 403 PRIVILEGE_ESCALATION names any atom outside the caller''s own set (GRANT_ANY_ATOM bypasses, audited with the skipped atom list). A system role accepts ONLY displayName — any other field answers 409 SYSTEM_ROLE_IMMUTABLE. Audited as access_role_updated, which includes the holder count.'
       security: [{ bearerAuth: [] }]
       parameters:
         - { in: path, name: roleId, required: true, schema: { type: string, format: uuid } }
@@ -4852,7 +4852,7 @@ components:
       type: object
       required: [name, atoms]
       properties:
-        name: { type: string, description: 'Matches ^[A-Za-z][A-Za-z0-9_.:-]{1,63}$' }
+        name: { type: string, description: 'Matches ^[A-Z][A-Z0-9_]{1,63}$ (V87 ck_roles_name_format); 400 INVALID_ROLE_NAME otherwise' }
         displayName: { type: string, nullable: true, description: 'Defaults to name; 1..200 characters' }
         description: { type: string, nullable: true }
         atoms: { type: array, minItems: 1, items: { type: string } }

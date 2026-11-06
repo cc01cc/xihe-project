@@ -32,14 +32,18 @@ vi.mock("../../../composables/api", async (importOriginal) => {
 });
 
 /**
- * PLAN-0610 W5b: the auth store is patched through a hoisted object so each case can pick the
- * capability it needs — the page reads `auth.isAdmin`, which is `capabilities.isInstanceAdmin`.
+ * PLAN-0610 W5b / BL-393: the page guard reads the `MANAGE_ROLES` action atom
+ * (`auth.canManageRoles`); the `isInstanceAdmin` capability flag (`auth.isAdmin`) is kept on the
+ * mock so a case can prove it no longer opens the page on its own.
  */
-const authState = vi.hoisted(() => ({ isAdmin: true }));
+const authState = vi.hoisted(() => ({ isAdmin: true, canManageRoles: true }));
 vi.mock("../../../stores/auth", () => ({
     useAuthStore: () => ({
         get isAdmin() {
             return authState.isAdmin;
+        },
+        get canManageRoles() {
+            return authState.canManageRoles;
         },
     }),
 }));
@@ -134,6 +138,7 @@ beforeEach(() => {
     setActivePinia(createPinia());
     localStorage.clear();
     authState.isAdmin = true;
+    authState.canManageRoles = true;
     vi.clearAllMocks();
     mockedApi.rolesCatalog.mockResolvedValue(CATALOG);
     mockedApi.listRoles.mockResolvedValue([SYSTEM_ROLE, role()]);
@@ -154,12 +159,36 @@ afterEach(() => {
 describe("RolesView access control", () => {
     it("renders the forbidden view for a non-administrator and issues no request", async () => {
         authState.isAdmin = false;
+        authState.canManageRoles = false;
         const wrapper = await mountView();
 
         expect(wrapper.find('[data-testid="roles-forbidden"]').exists()).toBe(true);
         expect(wrapper.find('[data-testid="roles-table"]').exists()).toBe(false);
         expect(mockedApi.listRoles).not.toHaveBeenCalled();
         expect(mockedApi.rolesCatalog).not.toHaveBeenCalled();
+    });
+
+    it("BL-393: opens the page for a principal holding only the MANAGE_ROLES atom", async () => {
+        // CP serves this face on the atom (`RoleController`/`BindingController`), so a custom role
+        // without the `instance:admin` capability must not be refused by the UI guard.
+        authState.isAdmin = false;
+        authState.canManageRoles = true;
+        const wrapper = await mountView();
+
+        expect(wrapper.find('[data-testid="roles-forbidden"]').exists()).toBe(false);
+        expect(wrapper.find('[data-testid="roles-table"]').exists()).toBe(true);
+        await vi.waitFor(() => expect(mockedApi.listRoles).toHaveBeenCalledTimes(1));
+    });
+
+    it("BL-393: the instance-admin capability alone no longer opens the page", async () => {
+        // Fail-closed and consistent with CP: the capability flag is not a stand-in for the atom.
+        authState.isAdmin = true;
+        authState.canManageRoles = false;
+        const wrapper = await mountView();
+
+        expect(wrapper.find('[data-testid="roles-forbidden"]').exists()).toBe(true);
+        expect(wrapper.find('[data-testid="roles-table"]').exists()).toBe(false);
+        expect(mockedApi.listRoles).not.toHaveBeenCalled();
     });
 });
 

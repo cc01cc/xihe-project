@@ -172,6 +172,49 @@ class RoleAdminApiIntegrationTest extends AbstractIntegrationTest {
                 + " CAST(? AS UUID)", roleId), "the atom rows go with the role");
     }
 
+    /**
+     * BL-394: the service pattern must be the V87 {@code ck_roles_name_format} pattern. Names the
+     * old looser pattern accepted (lowercase, dot, hyphen, leading digit, wrong length) used to
+     * reach the INSERT and answer 500 INTERNAL_ERROR; the service now refuses them as field-level
+     * 400s, and every name it accepts also lands in the database.
+     */
+    @Test
+    void roleNamesFollowTheV87CheckConstraintInsteadOfFailingAtInsert() throws Exception {
+        String superToken = superAdmin("name-format@test.com");
+
+        List<String> rejected = List.of(
+                "auditor", // lowercase: the old pattern allowed it, the DB does not
+                "AUDITOR.1", // dot
+                "AUDITOR-1", // hyphen
+                "auditor_2", // lowercase with underscore
+                "1AUDITOR", // leading digit
+                "A", // shorter than the 2-char floor
+                "A".repeat(65)); // longer than the 64-char ceiling
+        for (String name : rejected) {
+            ResponseEntity<String> refused = call(HttpMethod.POST, "/api/v1/roles",
+                    Map.of("name", name, "atoms", List.of("read")), superToken);
+            assertEquals(HttpStatus.BAD_REQUEST, refused.getStatusCode(),
+                    name + " must be a field-level 400, not an INSERT failure: "
+                            + refused.getBody());
+            assertTrue(refused.getBody().contains("INVALID_ROLE_NAME"), refused.getBody());
+            // Field-level information: the detail names `name`, the pattern and the DB constraint.
+            assertTrue(refused.getBody().contains("name must match"), refused.getBody());
+            assertTrue(refused.getBody().contains("ck_roles_name_format"), refused.getBody());
+        }
+
+        // Boundary names the constraint accepts both land and are usable (create → delete).
+        for (String name : List.of("A2", "AUDITOR_2")) {
+            ResponseEntity<String> created = call(HttpMethod.POST, "/api/v1/roles",
+                    Map.of("name", name, "displayName", name, "atoms", List.of("read")),
+                    superToken);
+            assertEquals(HttpStatus.CREATED, created.getStatusCode(), created.getBody());
+            String roleId = objectMapper.readTree(created.getBody()).path("id").asText();
+            ResponseEntity<String> deleted = call(HttpMethod.DELETE, "/api/v1/roles/" + roleId,
+                    null, superToken);
+            assertEquals(HttpStatus.NO_CONTENT, deleted.getStatusCode(), deleted.getBody());
+        }
+    }
+
     @Test
     void systemRolesOnlyAcceptADisplayNameChange() throws Exception {
         String superToken = superAdmin("system-admin@test.com");

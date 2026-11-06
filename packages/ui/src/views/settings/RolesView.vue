@@ -40,7 +40,14 @@ import { LoaderCircle, Pencil, Plus, Trash2 } from "@lucide/vue";
  */
 const { t } = useI18n();
 const auth = useAuthStore();
-const isAdmin = computed(() => auth.isAdmin);
+/**
+ * BL-393: CP gates this face on the `MANAGE_ROLES` action atom
+ * (`RoleController:52-53`, `BindingController:35-36`), not on the `instance:admin` capability.
+ * The guard therefore reads the same atom the settings nav uses (`auth.canManageRoles`) — a
+ * custom role that holds the atom without the capability may open the page, while an
+ * atom-less principal still gets the forbidden view instead of a page that would 403.
+ */
+const canManageRoles = computed(() => auth.canManageRoles);
 
 type Tab = "roles" | "bindings";
 
@@ -146,7 +153,7 @@ function atomSummary(role: ApiRole): string {
 }
 
 onMounted(() => {
-    if (!isAdmin.value) return;
+    if (!canManageRoles.value) return;
     void loadAll();
     void loadWorkspaces();
 });
@@ -154,7 +161,7 @@ onMounted(() => {
 
 <template>
     <div data-testid="roles-view" class="max-w-6xl">
-        <template v-if="!isAdmin">
+        <template v-if="!canManageRoles">
             <div
                 data-testid="roles-forbidden"
                 class="mx-auto mt-16 max-w-md rounded-xl border bg-card p-6 text-center"
