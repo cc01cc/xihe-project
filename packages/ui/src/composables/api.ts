@@ -46,6 +46,8 @@ import type {
     PolicyToolFaceQueryScope,
     PolicyToolFaceView,
     PendingApprovalSummary,
+    ProviderRequestFingerprintDiffView,
+    ProviderRequestFingerprintView,
     RunTraceCompleteness,
     RunTraceEvent,
     RunTraceEventKind,
@@ -2826,6 +2828,22 @@ export const api = {
             `/chat/runs/${encodeURIComponent(runId)}/trace${query ? `?${query}` : ""}`,
         );
         return normalizeRunTraceResponse(payload);
+    },
+    /**
+     * PLAN-0679 T3.1: per-run provider-request fingerprint envelope; `against` (same session)
+     * switches the route to the two-run layer diff. Discriminate the union on `status`:
+     * present ⇒ diff view, absent ⇒ single-run envelope.
+     */
+    getRunProviderRequestFingerprint(
+        runId: string,
+        options: { against?: string } = {},
+    ): Promise<ProviderRequestFingerprintView | ProviderRequestFingerprintDiffView> {
+        const params = new URLSearchParams();
+        if (options.against) params.set("against", options.against);
+        const query = params.toString();
+        return request(
+            `/chat/runs/${encodeURIComponent(runId)}/provider-request-fingerprint${query ? `?${query}` : ""}`,
+        );
     },
     /** PLAN-0340 U1: source summary metadata only (no body). */
     getContextSources(sessionId: string) {

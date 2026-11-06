@@ -4,6 +4,7 @@ import { useI18n } from "vue-i18n";
 import { RefreshCw } from "@lucide/vue";
 import { api } from "../../../composables/api";
 import { logger } from "../../../lib/logger";
+import ProviderRequestFingerprintPanel from "./ProviderRequestFingerprintPanel.vue";
 import RunTraceTimeline from "./RunTraceTimeline.vue";
 import type {
     ChatTransportAttempt,
@@ -13,6 +14,7 @@ import type {
     RunTraceSourceStatus,
     RunTransportAttemptsResponse,
     SessionMonitorResponse,
+    ProviderFingerprintAgainstOption,
 } from "../../../types";
 import { onSessionSignals } from "../chat/sessionEvents";
 import {
@@ -184,6 +186,16 @@ const selectedTraceRunActive = computed(
     () =>
         traceRunOptions.value.find((option) => option.runId === selectedTraceRunId.value)?.active ??
         false,
+);
+
+/**
+ * PLAN-0679 T3.1: same-session baseline candidates for the provider-fingerprint diff —
+ * every known turn except the one currently selected for the trace.
+ */
+const fingerprintAgainstOptions = computed<ProviderFingerprintAgainstOption[]>(() =>
+    traceRunOptions.value
+        .filter((option) => option.runId !== selectedTraceRunId.value)
+        .map((option) => ({ runId: option.runId, label: option.label })),
 );
 
 watch(
@@ -814,6 +826,19 @@ const connectionChipClass = computed(() => {
                         :loading-more="traceLoadingMore"
                         :more-error="traceMoreFailed"
                         :load-more="loadMoreTrace"
+                    />
+                </section>
+
+                <!-- PLAN-0679 T3.1: provider-request fingerprint of the selected turn, with an
+                     optional same-session baseline for the two-run layer diff (design D7). -->
+                <section
+                    v-if="selectedTraceRunId"
+                    class="space-y-2"
+                    data-testid="monitor-provider-fingerprint"
+                >
+                    <ProviderRequestFingerprintPanel
+                        :run-id="selectedTraceRunId"
+                        :against-options="fingerprintAgainstOptions"
                     />
                 </section>
 

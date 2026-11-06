@@ -459,6 +459,30 @@ describe("ConfigSettings agent-runtime run budget (PLAN-0492)", () => {
         // PLAN-0560：workspace 层上限隐藏由 WorkspaceSettingsView.spec.ts 覆盖。
         wrapper.unmount();
     });
+
+    // PLAN-0679 M2a (B-1): the provider-request-fingerprint switch is a
+    // workspace-writable select in the existing agent-runtime panel.
+    it("renders the provider-request-fingerprint switch on instance and user tabs", async () => {
+        const wrapper = await mountView();
+
+        const panel = wrapper.find('[data-testid="config-domain-agent-runtime"]');
+        expect(panel.exists()).toBe(true);
+        await panel.find("button").trigger("click");
+        for (const tab of ["config-tab-instance", "config-tab-user"]) {
+            if (tab !== "config-tab-instance") {
+                await wrapper.find(`[data-testid="${tab}"]`).trigger("click");
+                await flushPromises();
+                const next = wrapper.find('[data-testid="config-domain-agent-runtime"]');
+                await next.find("button").trigger("click");
+            }
+            const field = wrapper.find(
+                '[data-testid="config-field-agent-runtime-providerRequestFingerprintEnabled"]',
+            );
+            expect(field.exists()).toBe(true);
+            expect(field.find("select").exists()).toBe(true);
+        }
+        wrapper.unmount();
+    });
 });
 
 describe("ConfigSettings 导入导出回归 (PLAN-0560 T1.5)", () => {
