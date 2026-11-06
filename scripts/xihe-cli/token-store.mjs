@@ -34,6 +34,66 @@ export function normalizeBaseUrl(baseUrl) {
   return String(baseUrl ?? '').trim().replace(/\/+$/, '');
 }
 
+const TEMP_FILE_PATTERN = /^\.cli-token\.(\d+)\.(\d+)\.tmp$/;
+// A temp file older than this is garbage even if its pid was reused by an unrelated
+// process: persist() keeps the temp alive for milliseconds, never for an hour.
+const STALE_TEMP_MS = 60 * 60 * 1000;
+
+function pidIsAlive(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    // EPERM means the process exists but belongs to another user: still alive, keep its temp.
+    if (error?.code === 'EPERM') return true;
+    return false;
+  }
+}
+
+/**
+ * Remove `.cli-token.<pid>.<ts>.tmp` files that can never become the store: their writer
+ * was SIGKILLed mid-write (`persist` renames or removes it on every handled path, only a
+ * hard kill leaks one) or their pid was recycled. A live writer's temp is never touched —
+ * deleting it would race the rename — and only this exact pattern in the store directory
+ * is considered (PLAN-0643 V24).
+ */
+export function sweepStaleTemps(env = {}, { fsImpl = fs, platform = process.platform, now = Date.now(), staleMs = STALE_TEMP_MS, alive = pidIsAlive } = {}) {
+  const directory = path.dirname(resolveTokenPath(env, platform));
+  if (typeof fsImpl?.readdirSync !== 'function') return { swept: [], directory };
+  let names;
+  try {
+    names = fsImpl.readdirSync(directory);
+  } catch (error) {
+    if (error?.code === 'ENOENT') return { swept: [], directory };
+    return { swept: [], directory, reason: `cannot list (${error?.code ?? 'unknown'})` };
+  }
+  const swept = [];
+  for (const name of names) {
+    const match = TEMP_FILE_PATTERN.exec(name);
+    if (!match) continue;
+    const filePath = path.join(directory, name);
+    let ageMs = 0;
+    if (alive(Number(match[1]))) {
+      let stats;
+      try {
+        stats = fsImpl.statSync(filePath);
+      } catch {
+        continue; // vanished between readdir and stat: someone else cleaned it
+      }
+      ageMs = now - stats.mtimeMs;
+      if (ageMs <= staleMs) continue;
+    }
+    try {
+      fsImpl.rmSync(filePath, { force: true });
+      swept.push({ name, ageMs });
+    } catch {
+      // best effort: another process may have renamed/removed it first
+    }
+  }
+  return { swept, directory };
+}
+
 export function expiresAtFromToken(token, now = Date.now()) {
   const parts = String(token ?? '').split('.');
   if (parts.length === 3) {
@@ -74,6 +134,9 @@ function parseStore(text) {
 /** Inspect the cache without mutating it. `unsafe` means the path is a directory/symlink/junction. */
 export function readStore(env = {}, { fsImpl = fs, platform = process.platform } = {}) {
   const filePath = resolveTokenPath(env, platform);
+  // Leaked temps from a killed writer are removed on the next load; a live writer's temp
+  // is protected by pidIsAlive, so this cannot race an in-flight persist (V24).
+  sweepStaleTemps(env, { fsImpl, platform });
   let stats;
   try {
     stats = fsImpl.lstatSync(filePath);
