@@ -17,6 +17,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.UnexpectedRollbackException;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -303,6 +304,13 @@ public class WakeDispatchService {
             }
             JsonNode verdict = objectMapper.readTree(outcome.verdictJson());
             return verdict.path("speak").asBoolean(false);
+        } catch (UnexpectedRollbackException judgeTransactionBroken) {
+            // T2.1: never turn a broken transaction into a successful judged_no. A judge write
+            // that could not commit is a real dispatch failure; let the fan-out count it as dropped.
+            logger.warn("[LIFECYCLE] service=cp event=wake_judge_failed participantId={} round={} "
+                    + "failureType={}", participant.getId(), wakeRoundId,
+                    judgeTransactionBroken.getClass().getSimpleName());
+            throw judgeTransactionBroken;
         } catch (Exception judgeFailed) {
             logger.warn("[LIFECYCLE] service=cp event=wake_judge_failed participantId={} round={} "
                     + "failureType={}", participant.getId(), wakeRoundId,

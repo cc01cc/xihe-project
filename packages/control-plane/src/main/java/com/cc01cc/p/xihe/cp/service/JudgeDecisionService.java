@@ -5,6 +5,7 @@ import com.cc01cc.p.xihe.cp.repository.JudgeDecisionRepository;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.Optional;
@@ -57,11 +58,19 @@ public class JudgeDecisionService {
     /**
      * Runs one judge decision and always audits it.
      *
+     * <p>PLAN-0660 T2.1: the audit row lives in its own transaction. Joining the caller's wake
+     * transaction let a failed insert mark that shared transaction rollback-only while
+     * {@code fire()} still returned {@code judged_no}; the outer commit then threw
+     * {@link org.springframework.transaction.UnexpectedRollbackException} and dropped the whole
+     * round. A separate transaction makes the durable judge result and the wake outcome agree:
+     * a failed judge row rolls back only here, and the caller records the refusal it actually
+     * observed.</p>
+     *
      * @return the outcome; {@code speak()} is true only when the judge returned a verdict — the
      *     verdict body itself ({@code verdictJson}) is what M4 inspects; this service never
      *     interprets it.
      */
-    @Transactional
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public JudgeOutcome decide(JudgeInput input) {
         String dedupeKey = input.participantId() + ":" + input.wakeRoundId();
         if (!judgedRounds.add(dedupeKey)) {
