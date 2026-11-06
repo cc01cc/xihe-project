@@ -6727,3 +6727,158 @@ test('PLAN-0643 V2 re-judge: coverage groups.added counts >= 12 via new groups +
   });
   assert.equal(report.matrix.covered, report.matrix.total, 'the whole matrix must be present');
 });
+
+// ── PLAN-0643 T5.3: read-only four-class assertions + five-command concurrency ──
+// T5.3 asks for success / parameter-error / permission-4xx / `--json`-shape per command
+// plus one concurrency case over five read-only commands. The per-batch matrix already
+// covers most single-command faces (see the M6 task rows); the gap this block closes is
+// "five *different* read-only commands in parallel" — V23 and the R5 cases race copies
+// of the same command. `--json`'s envelope shape ({"ok":…,"data":…}) is asserted by the
+// existing spawn-level cases; here every command's `data` shape is asserted instead.
+
+const READ_ONLY_COMMANDS = [
+  ['status', ['status', '--json'], 'status'],
+  ['provider catalog', ['provider', 'catalog', '--json'], 'provider-catalog'],
+  ['me permissions', ['me', 'permissions', '--json'], 'me-permissions'],
+  ['session list', ['session', 'list', '--json'], 'session-list'],
+  ['config get agent-runtime', ['config', 'get', 'agent-runtime', '--json'], 'config-get'],
+];
+
+// One fake CP for the whole read-only face: status fans out to /status + /health + /version,
+// the other four are single GETs. `deny` turns every business call into a 403 so the same
+// five commands can assert the permission-4xx class.
+async function startReadOnlyMock({ deny = false } = {}) {
+  const state = { loginRequests: 0, hits: [], authHeaders: [] };
+  const server = createServer(async (request, response) => {
+    const url = new URL(request.url, 'http://127.0.0.1');
+    await requestBody(request);
+    if (url.pathname === '/api/v1/auth/login') {
+      state.loginRequests += 1;
+      json(response, 200, { accessToken: 'read-only-token' });
+      return;
+    }
+    state.hits.push(`${request.method} ${url.pathname}`);
+    state.authHeaders.push(request.headers.authorization ?? null);
+    if (deny) {
+      json(response, 403, { code: 'ACCESS_DENIED', detail: TEST_KEY });
+      return;
+    }
+    if (url.pathname === '/api/v1/status' && request.method === 'GET') { json(response, 200, { status: 'ok' }); return; }
+    if (url.pathname === '/api/v1/health' && request.method === 'GET') { json(response, 200, { status: 'UP' }); return; }
+    if (url.pathname === '/api/v1/version' && request.method === 'GET') { json(response, 200, { version: 'test-version' }); return; }
+    if (url.pathname === '/api/v1/provider-catalog' && request.method === 'GET') { json(response, 200, { providers: [] }); return; }
+    if (url.pathname === '/api/v1/me/permissions' && request.method === 'GET') { json(response, 200, { permissions: ['instance:admin'] }); return; }
+    if (url.pathname === '/api/v1/sessions' && request.method === 'GET') { json(response, 200, { sessions: [] }); return; }
+    if (url.pathname === '/api/v1/config/agent-runtime' && request.method === 'GET') { json(response, 200, { runMaxTurns: 5 }); return; }
+    json(response, 404, { code: 'NOT_FOUND' });
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  return {
+    state,
+    env: { XIHE_CP_PORT: String(server.address().port), XIHE_DEV_ADMIN_PASSWORD: TEST_PASSWORD },
+    close: () => new Promise((resolve, reject) => server.close((error) => (error ? reject(error) : resolve()))),
+  };
+}
+
+const runReadOnly = (argv, env) => runCommand([...argv], {
+  env, promptSecret: noPrompt, stderr: sink(),
+});
+
+test('PLAN-0643 T5.3: five different read-only commands run concurrently against one CP', async (t) => {
+  const cp = await startReadOnlyMock();
+  const token = tempTokenFile();
+  t.after(async () => { await cp.close(); token.cleanup(); });
+  const env = { ...cp.env, XIHE_CLI_TOKEN_FILE: token.file };
+
+  const results = await Promise.all(READ_ONLY_COMMANDS.map(([, argv]) => runReadOnly(argv, env)));
+
+  assert.deepEqual(results.map((result) => result.exitCode), [0, 0, 0, 0, 0],
+    JSON.stringify(results.map((result) => result.error)));
+  assert.deepEqual(results.map((result) => result.data.kind),
+    READ_ONLY_COMMANDS.map(([, , kind]) => kind));
+  // Success faces: each command's `--json` data carries its documented discriminators.
+  assert.equal(results[0].data.overall, 'healthy');
+  assert.deepEqual(results[0].data.endpoints.status.body, { status: 'ok' });
+  assert.deepEqual(results[1].data.providers, []);
+  assert.deepEqual(results[2].data.permissions, ['instance:admin']);
+  assert.deepEqual(results[3].data.sessions, []);
+  assert.deepEqual(results[4].data.entries, { runMaxTurns: 5 });
+  assert.equal(results[4].data.domain, 'agent-runtime');
+  // Concurrency invariants: one converged login, and exactly one request per endpoint.
+  assert.ok(cp.state.loginRequests <= 2,
+    `concurrent first-login must converge (got ${cp.state.loginRequests})`);
+  const counts = {};
+  for (const hit of cp.state.hits) counts[hit] = (counts[hit] ?? 0) + 1;
+  assert.deepEqual(counts, {
+    'GET /api/v1/status': 1,
+    'GET /api/v1/health': 1,
+    'GET /api/v1/version': 1,
+    'GET /api/v1/provider-catalog': 1,
+    'GET /api/v1/me/permissions': 1,
+    'GET /api/v1/sessions': 1,
+    'GET /api/v1/config/agent-runtime': 1,
+  });
+  // Every tokened call reuses the converged bearer token; /health is permitAll (no header).
+  const tokened = cp.state.hits
+    .map((hit, index) => ({ hit, header: cp.state.authHeaders[index] }))
+    .filter(({ hit }) => hit !== 'GET /api/v1/health');
+  assert.equal(tokened.every(({ header }) => header === 'Bearer read-only-token'), true,
+    JSON.stringify(tokened));
+});
+
+test('PLAN-0643 T5.3: the same five commands reject positional usage with exit 2 and send nothing', async (t) => {
+  const cp = await startReadOnlyMock();
+  const token = tempTokenFile();
+  t.after(async () => { await cp.close(); token.cleanup(); });
+  const env = { ...cp.env, XIHE_CLI_TOKEN_FILE: token.file };
+
+  // Warm the token first: `session list` logs in before it validates positionals, so a cold
+  // cache would add a login POST; this asserts "no *business* request", not "no HTTP at all".
+  const warm = await runReadOnly(['status', '--json'], env);
+  assert.equal(warm.exitCode, 0, JSON.stringify(warm.error));
+  const hitsBefore = cp.state.hits.length;
+
+  const usageCases = [
+    // `status` has no per-command usage face of its own: the status-style group drops a
+    // stray sub-command silently (observed — a product gap to register, not a contract to
+    // freeze). Its usage class is asserted through the shared global --base-url validator
+    // (D5/V8), which fails closed before dispatch for every command.
+    ['status --base-url not-a-url', ['--base-url', 'not-a-url', 'status', '--json'], 'INVALID_BASE_URL'],
+    ['provider catalog extra', ['provider', 'catalog', 'extra', '--json'], 'INVALID_ARGUMENT'],
+    ['me permissions extra', ['me', 'permissions', 'extra', '--json'], 'INVALID_ARGUMENT'],
+    ['session list extra', ['session', 'list', 'extra', '--json'], 'INVALID_ARGUMENT'],
+    ['config get without a domain', ['config', 'get', '--json'], 'INVALID_ARGUMENT'],
+  ];
+  const results = await Promise.all(usageCases.map(([, argv]) => runReadOnly(argv, env)));
+
+  assert.deepEqual(results.map((result) => result.exitCode), [2, 2, 2, 2, 2],
+    JSON.stringify(results.map((result) => result.error)));
+  assert.deepEqual(results.map((result) => result.error.code),
+    usageCases.map(([, , code]) => code));
+  assert.equal(cp.state.hits.length, hitsBefore, 'a usage error must not reach the CP');
+});
+
+test('PLAN-0643 T5.3: a CP 403 maps to ACCESS_DENIED for four commands; status degrades', async (t) => {
+  const cp = await startReadOnlyMock({ deny: true });
+  const token = tempTokenFile();
+  t.after(async () => { await cp.close(); token.cleanup(); });
+  const env = { ...cp.env, XIHE_CLI_TOKEN_FILE: token.file };
+
+  const results = await Promise.all(READ_ONLY_COMMANDS.map(([, argv]) => runReadOnly(argv, env)));
+
+  // `status` is a status-style command: partial failure is a `degraded` payload (exit 0),
+  // never an error exit — the CLI must not hide which endpoint failed.
+  assert.equal(results[0].exitCode, 0, JSON.stringify(results[0].error));
+  assert.equal(results[0].data.overall, 'degraded');
+  assert.equal(results[0].data.endpoints.status.status, 'failed');
+  assert.equal(results[0].data.endpoints.status.code, 'ACCESS_DENIED');
+  // The four plain read-only commands surface the 403 as a stable code without CP detail.
+  for (const [index, [, argv, kind]] of READ_ONLY_COMMANDS.entries()) {
+    if (index === 0) continue;
+    assert.equal(results[index].exitCode, 1, `${kind}: ${JSON.stringify(results[index].data)}`);
+    assert.equal(results[index].error.code, 'ACCESS_DENIED', kind);
+    assert.equal(JSON.stringify(results[index]).includes(TEST_KEY), false,
+      `${kind} must not echo the CP detail`);
+  }
+});
+
