@@ -18,7 +18,9 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSy
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { test, expect, type APIRequestContext, type Page } from "@playwright/test";
+import { agentName } from "./helpers/agent-name";
 import { createSessionWithPrincipal } from "./helpers/agent-principal";
+import { ensureFakeUserProvider } from "./helpers/fake-provider";
 import {
     CP_URL,
     awaitLatestChatRunCompleted,
@@ -122,9 +124,12 @@ async function provisionPlainChatPrincipal(
     auth: AgentAuth,
     name: string,
 ): Promise<string> {
+    // fixture-only: agent-principals 写面自 CP D22/BL-326 起要求显式 workspace 上下文，
+    // 缺头会 409 WORKSPACE_CONTEXT_REQUIRED；BL-328（409499d6）已对同类夹具修过一次，这里同范式补。
     const headers = {
         Authorization: `Bearer ${auth.accessToken}`,
         "Content-Type": "application/json",
+        "X-Workspace-Id": auth.workspaceId,
     };
     const me = await request.get(`${CP_URL}/api/v1/auth/me`, { headers });
     expect(me.ok(), await me.text()).toBe(true);
@@ -312,6 +317,17 @@ test.describe("@host PLAN-0590 Agent run-config isolation (two workspaces, one p
         wsB = await registerJourneyUser(request, "plan-0590-ws-b");
         expect(wsA.workspaceId).not.toBe(wsB.workspaceId);
 
+        // fixture-only: POST /sessions 会解析主体的默认模型 profile 并要一条可用连接，
+        // 共享真栈/宿主 lane 上这两个新建用户都没有连接，会 409 LLM_PROFILE_CONFLICT。
+        await ensureFakeUserProvider(request, {
+            accessToken: wsA.authToken,
+            workspaceId: wsA.workspaceId,
+        });
+        await ensureFakeUserProvider(request, {
+            accessToken: wsB.authToken,
+            workspaceId: wsB.workspaceId,
+        });
+
         // Only A carries a workspace layer; B must never see it.
         await writeWorkspaceContextPolicy(request, wsA);
         await expectEmptyWorkspaceLayer(request, wsB, "context-policy");
@@ -320,12 +336,12 @@ test.describe("@host PLAN-0590 Agent run-config isolation (two workspaces, one p
         principalA = await provisionPlainChatPrincipal(
             request,
             { accessToken: wsA.authToken, workspaceId: wsA.workspaceId },
-            "PLAN-0590 A",
+            agentName("Plan0590A"),
         );
         principalB = await provisionPlainChatPrincipal(
             request,
             { accessToken: wsB.authToken, workspaceId: wsB.workspaceId },
-            "PLAN-0590 B",
+            agentName("Plan0590B"),
         );
         sessionA = await createSessionWithPrincipal(
             request,
