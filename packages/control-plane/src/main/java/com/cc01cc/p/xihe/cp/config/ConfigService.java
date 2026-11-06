@@ -212,7 +212,12 @@ public class ConfigService {
             Map.entry("maxConcurrentRunsPerSession", "2"),
             // PLAN-0630 M1: delegation budget ceilings; 0 = no clamp (the resolved value is used as-is).
             Map.entry("delegationMaxCountCeiling", "0"),
-            Map.entry("delegationMaxDepthCeiling", "0")));
+            Map.entry("delegationMaxDepthCeiling", "0"),
+            // PLAN-0679 B-1: the provider-layer request fingerprint (run-level six-layer body
+            // hash) is on by default; the Agent reads it through the run snapshot. It is a
+            // workspace-writable behaviour switch, independent of the 0666 context-fingerprint
+            // key (no linkage, per B-1).
+            Map.entry("providerRequestFingerprintEnabled", "true")));
 
     @Autowired
     private ConfigJpaRepository repo;

@@ -29,6 +29,7 @@ class AgentEvent:
 
     # "token" | "tool_call" | "tool_result" | "approval_request" | "status" | "error" | "done"
     # | "transport_progress" | "transport_attempt" (PLAN-0508 bounded transport telemetry)
+    # | "provider_request_fingerprint" (PLAN-0679 first-step provider body fingerprint)
     type: str
     data: dict[str, Any]
 

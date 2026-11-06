@@ -8,13 +8,14 @@ import AgentPanelSection from "./sections/AgentPanelSection.vue";
 import ConfigSection from "./sections/ConfigSection.vue";
 import MemoryPanelSection from "./sections/MemoryPanelSection.vue";
 import MessagesSection from "./sections/MessagesSection.vue";
+import ProviderFingerprintSection from "./sections/ProviderFingerprintSection.vue";
 import StatesSection from "./sections/StatesSection.vue";
 import WorkbenchSection from "./sections/WorkbenchSection.vue";
 
 /**
- * Dev-only preview shell (`preview.html`): a sticky block index plus the seven anchored
- * blocks. It is **not** part of the product router and is not a build entry — Vite only
- * builds `index.html`, so this page cannot ship in a production bundle.
+ * Dev-only preview shell (`preview.html`): a sticky block index plus the anchored blocks. It is
+ * **not** part of the product router and is not a build entry — Vite only builds `index.html`, so
+ * this page cannot ship in a production bundle.
  */
 const blocks = [
     { id: "workbench", index: "01", label: "工作台主面板" },
@@ -24,6 +25,7 @@ const blocks = [
     { id: "config", index: "05", label: "配置页" },
     { id: "access", index: "06", label: "凭据 / 角色绑定" },
     { id: "states", index: "07", label: "四态样张" },
+    { id: "provider-fingerprint", index: "08", label: "Provider 请求指纹" },
 ];
 
 const { width } = useWindowSize();
@@ -80,6 +82,7 @@ const dockMode = computed(() => (width.value >= 1800 ? "pinned" : "floating"));
             <ConfigSection />
             <AccessSection />
             <StatesSection />
+            <ProviderFingerprintSection />
         </main>
     </div>
 </template>

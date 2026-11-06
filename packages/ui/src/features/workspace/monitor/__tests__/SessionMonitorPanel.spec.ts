@@ -10,6 +10,7 @@ import {
 import { notifySessionConnection, notifySessionEvent } from "../../chat/sessionEvents";
 import SessionMonitorPanel from "../SessionMonitorPanel.vue";
 import type {
+    ProviderRequestFingerprintView,
     RunTraceResponse,
     RunTransportAttemptsResponse,
     SessionMonitorResponse,
@@ -26,14 +27,25 @@ vi.mock("../../../../composables/api", () => ({
                     options?: { cursor?: string; limit?: number },
                 ) => Promise<RunTraceResponse>
             >(),
+        // PLAN-0679 T3.1: the provider-fingerprint block fetches on mount; default to the
+        // two-level model's absence envelope so the monitor spec stays about the monitor.
+        getRunProviderRequestFingerprint:
+            vi.fn<
+                (
+                    runId: string,
+                    options?: { against?: string },
+                ) => Promise<ProviderRequestFingerprintView>
+            >(),
     },
 }));
 
 const getSessionMonitor = vi.mocked(api.getSessionMonitor);
 const getRunAttempts = vi.mocked(api.getRunAttempts);
 const getRunTrace = vi.mocked(api.getRunTrace);
+const getRunProviderRequestFingerprint = vi.mocked(api.getRunProviderRequestFingerprint);
 const SESSION_ID = "11111111-1111-4111-8111-111111111111";
 const RUN_ID = "33333333-3333-4333-8333-333333333333";
+const SECOND_RUN_ID = "66666666-6666-4666-8666-666666666666";
 const CONNECTION_ID = "22222222-2222-4222-8222-222222222222";
 const ATTEMPT_1 = "44444444-4444-4444-8444-444444444444";
 const ATTEMPT_2 = "55555555-5555-4555-8555-555555555555";
@@ -210,6 +222,11 @@ beforeEach(() => {
     clearTransportLive();
     getRunAttempts.mockResolvedValue(attemptsResponse());
     getRunTrace.mockResolvedValue(traceResponse());
+    getRunProviderRequestFingerprint.mockResolvedValue({
+        runId: RUN_ID,
+        available: false,
+        reason: "not_captured",
+    });
 });
 
 function mountPanel(): VueWrapper {
@@ -675,5 +692,47 @@ describe("SessionMonitorPanel", () => {
         const rows = panel.findAll('[data-testid="monitor-transport-attempt"]');
         expect(rows).toHaveLength(1);
         expect(rows[0].text()).toContain("success");
+    });
+
+    it("mounts the provider-request fingerprint block for the selected turn only (PLAN-0679)", async () => {
+        getSessionMonitor.mockResolvedValue(
+            monitorResponse({
+                history: {
+                    windowSize: 20,
+                    counts: { success: 2, error: 1 },
+                    recent: [
+                        {
+                            runId: RUN_ID,
+                            origin: "user_submission",
+                            terminalOutcome: "success",
+                            errorCode: null,
+                            createdAt: null,
+                            terminalAt: "2026-10-14T01:50:00Z",
+                        },
+                        {
+                            runId: SECOND_RUN_ID,
+                            origin: "user_submission",
+                            terminalOutcome: "success",
+                            errorCode: null,
+                            createdAt: null,
+                            terminalAt: "2026-10-14T01:52:00Z",
+                        },
+                    ],
+                },
+            }),
+        );
+        const panel = mountPanel();
+        await flushPromises();
+
+        const block = panel.find('[data-testid="monitor-provider-fingerprint"]');
+        expect(block.exists()).toBe(true);
+        expect(getRunProviderRequestFingerprint).toHaveBeenCalledWith(RUN_ID, {
+            against: undefined,
+        });
+
+        // The baseline picker offers the *other* turn, never the one being inspected.
+        const options = panel.findAll('[data-testid="provider-fingerprint-against-select"] option');
+        const values = options.map((option) => option.attributes("value"));
+        expect(values).toEqual(["", SECOND_RUN_ID]);
     });
 });

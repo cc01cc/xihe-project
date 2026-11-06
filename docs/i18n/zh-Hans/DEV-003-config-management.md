@@ -34,7 +34,7 @@ ConfigService 按三层作用域 × 领域（Domain）组织配置；域集合�
 | `embedding` | ✅ | ✅ | ✅ | 整组 profile 对象 `{providerId, connectionKey, model}`（PLAN-0485，细则见 §3b）；固定模型/768 |
 | `rag` | ✅ | ✅ | ✅ | `chunkSize` / `chunkOverlap` / `topK` / `minScore` |
 | `pricing` | ✅ | ❌ | ❌ | `models`（provider/model → per-MTok 计价条目；instance-only 计价权威，PLAN-0343） |
-| `agent-runtime` | ✅ | ✅ | ✅ | `useRegistry` / `useSupervisor` / `workersDir`；`instructions` **仅 instance**（决策 #17） |
+| `agent-runtime` | ✅ | ✅ | ✅ | `useRegistry` / `useSupervisor` / `workersDir`；`instructions` **仅 instance**（决策 #17）；`providerRequestFingerprintEnabled`（PLAN-0679 B-1：provider 层下发请求六层指纹落库开关，默认 `true`，与 `context-policy` 的 0666 指纹键**无联动**） |
 | `agent-profile` | ✅（默认） | ✅（个人） | ❌ | `userName` |
 | `user-preference` | ✅（默认） | ✅（个人） | ❌ | `theme` / `language` |
 | `logging` | ✅ | ❌ | ❌ | instance 层唯一权威，可热更（决策 #23）；`centralTelemetryEnabled` = 中央遥测中继开关（PLAN-0522，默认 `false`，详见 DEV-004 §4） |

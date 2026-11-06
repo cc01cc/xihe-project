@@ -7,7 +7,14 @@
  * calls `/api/v1/**`. Field names mirror `docs/api/openapi.yaml`; nothing here is
  * invented locally.
  */
-import type { AttachmentFile, CredentialSummary, Message, Session } from "../types";
+import type {
+    AttachmentFile,
+    CredentialSummary,
+    Message,
+    ProviderRequestFingerprintDiffView,
+    ProviderRequestFingerprintView,
+    Session,
+} from "../types";
 import type { SessionParticipantView } from "../types/participant";
 import type { ApiTypePair, ProviderConnection } from "../types/providerConnection";
 import type {
@@ -577,4 +584,107 @@ export const mockBindings: ApiBindingSet = {
             grantedAt: "2026-10-21T08:05:00Z",
         },
     ],
+};
+
+/* ------------------------------------------------------------------ *
+ * PLAN-0679 T3.1: provider-request fingerprint block (`SessionMonitorPanel`).
+ * Shapes mirror the OpenAPI `ProviderRequestFingerprint*` schemas; the panel receives
+ * these through its fetch seam, so the preview stays offline.
+ * ------------------------------------------------------------------ */
+
+export const PREVIEW_FINGERPRINT_RUN_ID = "1c9e4a10-0000-4000-8000-0000000000f1";
+export const PREVIEW_FINGERPRINT_BASELINE_ID = "1c9e4a10-0000-4000-8000-0000000000f0";
+
+const mockFingerprintDocument = {
+    algo: "sha256",
+    dispatchAttempt: 1,
+    providerStep: 1,
+    layers: {
+        systemTemplate: {
+            hash: "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+            bytes: 1180,
+        },
+        history: {
+            hash: "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
+            count: 6,
+            bytes: 4120,
+        },
+        userInput: {
+            hash: "fcde2b2edba56bf408601fb721fe9b5c338d10ee429ea04fae551aff4ec4951b",
+            bytes: 184,
+        },
+        toolSchema: {
+            hash: "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+            count: 5,
+            bytes: 940,
+        },
+        config: {
+            hash: "486ea46224d1bb4fb680f34f7c9ad96a8f24ec88be73ea8e5a6c65260e9cb8a7",
+            bytes: 96,
+        },
+    },
+    outbound: {
+        hash: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        bytes: 6520,
+    },
+};
+
+const mockFingerprintRequestMeta = {
+    apiTypeId: "openai-compatible",
+    apiTypeVersion: 3,
+    model: "claude-sonnet-4.5",
+    messageCount: 7,
+    toolCount: 5,
+    bytesTotal: 6520,
+    dispatchAttempt: 1,
+    providerStep: 1,
+    roleHistogram: { human: 3, assistant: 2, tool: 2 },
+    systemSources: { templateFilled: true },
+};
+
+/** Captured single-run envelope (no `against`). */
+export const mockProviderFingerprintView: ProviderRequestFingerprintView = {
+    runId: PREVIEW_FINGERPRINT_RUN_ID,
+    available: true,
+    fingerprint: mockFingerprintDocument,
+    request: mockFingerprintRequestMeta,
+};
+
+/** Two-run layer diff against the previous turn of the same session. */
+export const mockProviderFingerprintDiff: ProviderRequestFingerprintDiffView = {
+    againstRunId: PREVIEW_FINGERPRINT_BASELINE_ID,
+    runId: PREVIEW_FINGERPRINT_RUN_ID,
+    status: "comparable",
+    against: {
+        ...mockFingerprintRequestMeta,
+        model: "claude-sonnet-4.5",
+        toolCount: 3,
+        bytesTotal: 5210,
+    },
+    current: mockFingerprintRequestMeta,
+    layers: {
+        systemTemplate: { layer: "systemTemplate", status: "unchanged" },
+        history: { layer: "history", status: "changed(sameShape)", countDelta: 0, bytesDelta: 0 },
+        userInput: { layer: "userInput", status: "changed(grew)", bytesDelta: 64 },
+        toolSchema: { layer: "toolSchema", status: "added", countDelta: 2 },
+        config: { layer: "config", status: "unchanged" },
+    },
+    outbound: { layer: "outbound", status: "changed(grew)", bytesDelta: 1310 },
+    dispatchAttempt: { against: 1, current: 1 },
+    summary: { changedLayers: ["history", "userInput", "toolSchema"], unavailableLayers: [] },
+};
+
+/** Absence is named, never re-encoded (two-level model, design D5). */
+export const mockProviderFingerprintNotCaptured: ProviderRequestFingerprintView = {
+    runId: PREVIEW_FINGERPRINT_RUN_ID,
+    available: false,
+    reason: "not_captured",
+};
+
+/** Fail-open error marker stored in place of the document (D8, FINGERPRINT_TOO_LARGE). */
+export const mockProviderFingerprintError: ProviderRequestFingerprintView = {
+    runId: PREVIEW_FINGERPRINT_RUN_ID,
+    available: true,
+    fingerprint: { status: "error", reasonCode: "FINGERPRINT_TOO_LARGE" },
+    request: mockFingerprintRequestMeta,
 };

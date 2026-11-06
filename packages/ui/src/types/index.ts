@@ -227,6 +227,104 @@ export interface RunTransportAttemptsResponse {
     aggregate: ChatTransportAggregate;
 }
 
+/**
+ * PLAN-0679 T3.1: one layer of the stored provider-request fingerprint document.
+ * Wire shape is exactly `{hash, bytes, count?}` (openapi `ProviderRequestFingerprintLayer`):
+ * the config layer's inputs (sampling keys / image parts) are hash inputs, not exposed fields.
+ */
+export interface ProviderRequestFingerprintLayer {
+    hash: string;
+    bytes: number;
+    count?: number | null;
+}
+
+/** PLAN-0679 T3.1: six-layer provider-request fingerprint document (hashes/counts/bytes only). */
+export interface ProviderRequestFingerprintDocument {
+    algo: string;
+    dispatchAttempt: number;
+    providerStep: number;
+    layers: Record<string, ProviderRequestFingerprintLayer | undefined>;
+    /** Whole-body calibration row; stored beside `layers`, not inside it. */
+    outbound: ProviderRequestFingerprintLayer;
+}
+
+/** PLAN-0679 T3.1: fail-open error marker stored in place of the document (e.g. FINGERPRINT_TOO_LARGE). */
+export interface ProviderRequestFingerprintErrorMarker {
+    status: string;
+    reasonCode?: string;
+}
+
+/** PLAN-0679 T3.1: request metadata persisted next to the document (diagnostic metadata only). */
+export interface ProviderRequestFingerprintRequestMeta {
+    apiTypeId: string;
+    apiTypeVersion?: number | null;
+    model: string;
+    messageCount: number;
+    toolCount: number;
+    bytesTotal: number;
+    dispatchAttempt?: number;
+    providerStep?: number;
+    roleHistogram?: Record<string, number>;
+    systemSources?: Record<string, unknown>;
+}
+
+/** PLAN-0679 T3.1: single-run envelope (no `against`); absence is named, never re-encoded (D5). */
+export interface ProviderRequestFingerprintView {
+    runId: string;
+    available: boolean;
+    reason?: string | null;
+    fingerprint?: ProviderRequestFingerprintDocument | ProviderRequestFingerprintErrorMarker | null;
+    request?: ProviderRequestFingerprintRequestMeta | null;
+}
+
+export type ProviderRequestFingerprintLayerStatus =
+    | "unchanged"
+    | "changed(sameShape)"
+    | "changed(grew)"
+    | "changed(shrank)"
+    | "added"
+    | "removed"
+    | "unavailable"
+    | "absent";
+
+/** PLAN-0679 T3.1: per-layer verdict of the two-run diff (design 4.4). */
+export interface ProviderRequestFingerprintLayerDiff {
+    layer: string | null;
+    status: ProviderRequestFingerprintLayerStatus;
+    countDelta?: number | null;
+    bytesDelta?: number | null;
+    againstReason?: string | null;
+    currentReason?: string | null;
+}
+
+/** PLAN-0679 T3.1: unavailable-side note inside a diff (two-level model, never downgraded). */
+export interface ProviderRequestFingerprintDiffSide {
+    side: "against" | "current";
+    reason?: string | null;
+    status?: string | null;
+    reasonCode?: string | null;
+}
+
+/** PLAN-0679 T3.1: two-run diff (`?against=`), discriminated from the single-run view by `status`. */
+export interface ProviderRequestFingerprintDiffView {
+    againstRunId: string;
+    runId: string;
+    status: "comparable" | "unavailable";
+    against?: ProviderRequestFingerprintRequestMeta;
+    current?: ProviderRequestFingerprintRequestMeta;
+    sides?: ProviderRequestFingerprintDiffSide[];
+    layers?: Record<string, ProviderRequestFingerprintLayerDiff>;
+    outbound?: ProviderRequestFingerprintLayerDiff;
+    dispatchAttempt?: { against: number; current: number };
+    summary?: { changedLayers: string[]; unavailableLayers: string[] };
+}
+
+/** PLAN-0679 T3.1: baseline option for the provider-fingerprint diff picker (same-session runs). */
+export interface ProviderFingerprintAgainstOption {
+    runId: string;
+    label: string;
+}
+
 /** PLAN-0509: safe per-Run trace projection; event payloads are never included. */
 export type RunTraceCompleteness = "complete" | "partial" | "unknown";
 

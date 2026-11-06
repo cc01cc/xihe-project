@@ -138,6 +138,10 @@
     "instructions": "你是 xihe Agent，一个通用的 AI 助手。请用中文回答。你可以使用各种工具来帮助用户完成任务。",
     "useRegistry": "false",
     "useSupervisor": "false",
+    // PLAN-0679 B-1：下发请求六层指纹（provider 层请求体的系统模板/历史/本轮/工具/config/
+    // 整体六层 hash + 计数/字节，无任何正文内容）落库开关；默认 true，工作区层可关。
+    // 与 PLAN-0666 的 context-policy.fingerprintEnabled 无联动。
+    "providerRequestFingerprintEnabled": "true",
     // PLAN-0308：系统工具（文件/命令等）的执行预算（秒）。CP 据此计算并进行下发；
     // T3.1（2026-09-13）：预算上限 30 秒（per-call 与数据库配置同顶）；
     // 超过 30 秒的同步等待请改走异步 job（后台进程 + 轮询），不要调大预算。

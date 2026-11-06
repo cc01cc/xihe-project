@@ -981,6 +981,29 @@ erDiagram
 > 索引：`idx_chat_run_transport_attempts_session_id (session_id)` — Session 聚合计数；`idx_chat_run_transport_attempts_running_run (run_id) WHERE status='running'` — partial 收口 sweep。
 > 生命周期：随 `chat_runs` 行级联删除；partial 收口语义详见 DEV-014 与 PLAN-0508 evidence。
 
+### 3.12b ChatRun provider 请求指纹（chat_run_provider_requests，PLAN-0679）
+
+**chat_run_provider_requests**（Flyway `V132__plan0679_provider_request_fingerprint.sql`（2026-11-06 合并窗口现取：九份 checkout 文件侧最高 = V131，DB 水位留真栈窗口复核）；Entity `entity/ChatRunProviderRequest.java`）：Run 首次下发**首个 provider step** 的最终 provider 请求指纹行（设计 D1/D2；契约见 workspace 根 `plans/PLAN-0679-run-provider-fingerprint-diff/design.md` §4.2–4.4）。独立于 `chat_runs` 成表（对齐 `chat_run_transport_attempts` V68 先例）：字段多且 v2 可能扩 per-step 多行（B-6）。write-once：CP 在 `dispatchRelayedEvent` 收到 Agent `provider_request_fingerprint` 事件后 `INSERT … ON CONFLICT (run_id) DO NOTHING`——context overflow 重发的二次「首步」事件被丢弃，语义=只记首次下发（与 0666 D3/D-106 对齐）；持久化是 durable-before-forward 的 best-effort（失败仅日志，不阻断 Run）。**零 prompt 内容**：`fingerprint` 仅六层 sha256 hash/count/bytes + outbound 校准；元数据列全是 Agent 实测的诊断计数/身份（model 为实际解析模型含 override），CP 不重推导。读侧两级模型（D5）：无行 = 信封 `not_captured`，永不映射 disabled/error；唯一非诊断存储形态是 fail-open 错误标记 `{status:"error", reasonCode:"FINGERPRINT_TOO_LARGE"}`（payload 超 8 KB 上限时 Agent 产出），diff 报 `unavailable` 不降级 `unchanged`。
+
+| 字段 | 类型 | 约束 | 说明 |
+|------|------|------|------|
+| run_id | UUID | PK，FK `chat_runs(id) ON DELETE CASCADE` | 归属 Run；v1 一行/Run |
+| dispatch_attempt | INT | NOT NULL DEFAULT 1 | v1 恒 1（D2） |
+| provider_step | INT | NOT NULL DEFAULT 1 | v1 恒 1；per-step 是 v2（B-6） |
+| api_type_id | VARCHAR(64) | NOT NULL | Agent 上报的 API type 身份 |
+| api_type_version | INT | nullable | 对齐 `provider_connections.api_type_version` 口径（设计草案 VARCHAR(32)，实施取 INT，差异在 PLAN-0679 evidence 披露） |
+| model | VARCHAR(255) | NOT NULL | Agent 实际解析模型（含 override） |
+| message_count | INT | NOT NULL | 渲染后 native records 数 |
+| tool_count | INT | NOT NULL | tools 数组长度（无 tools=0） |
+| bytes_total | BIGINT | NOT NULL | 最终 body UTF-8 字节数 |
+| role_histogram | JSONB | NOT NULL DEFAULT '{}' | 仅非空文本 role 计数（`{"user":2}`），永不存消息体（D5） |
+| system_sources | JSONB | NOT NULL DEFAULT '{}' | 来源摘要（v1 = 槽位填充状态；template id/version 与组件计数为 v2 内容，B-2..B-7 裁定） |
+| fingerprint | JSONB | NOT NULL | §4.2 六层文档原样（algo/dispatchAttempt/providerStep/layers/outbound）或 fail-open 错误标记 |
+| created_at | TIMESTAMPTZ | NOT NULL DEFAULT NOW() | 写入时刻 |
+
+> 索引：仅 PK，无二级索引（D1）；访问模式 = 按 run_id 点查。
+> 生命周期：随 `chat_runs` 行级联删除；读面 `GET /api/v1/chat/runs/{runId}/provider-request-fingerprint`（inventory 与 OpenAPI 已登记）。
+
 ### 3.13 LangGraph 图状态 checkpoint 与续跑
 
 | 表 / 对象 | 迁移 | 关键字段与约束 | 生命周期与索引 |
@@ -1146,6 +1169,7 @@ erDiagram
 | credential_events | `entity/CredentialEvent.java` | V63 |
 | credential_leases | `entity/CredentialLease.java` | V66 |
 | chat_run_transport_attempts | `entity/ChatRunTransportAttempt.java` | V68 |
+| chat_run_provider_requests | `entity/ChatRunProviderRequest.java` | V132 |
 | agent_graph_checkpoint_lineages | JDBC via `checkpoint/AgentGraphCheckpointService.java` | V72 |
 | agent_graph_checkpoints | JDBC via `checkpoint/AgentGraphCheckpointService.java` | V72 |
 | agent_graph_checkpoint_writes | JDBC via `checkpoint/AgentGraphCheckpointService.java` | V72 |

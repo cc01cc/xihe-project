@@ -845,6 +845,35 @@ def _parse_budget_int(raw: str | None, fallback: int) -> int:
     return value
 
 
+# PLAN-0679 B-1: the provider-layer request fingerprint has its own workspace-level
+# switch, independent from the 0666 context-fingerprint key. Absent means enabled: the
+# development stacks have no data-worth-preserving concern (D-215), and the read side
+# already expresses "not captured" without needing a disabled/error mapping.
+_PROVIDER_FINGERPRINT_KEY = "providerRequestFingerprintEnabled"
+
+
+def _resolve_provider_fingerprint_enabled(
+    snapshot: RunConfigSnapshot,
+    user_overrides: dict[str, dict[str, str]] | None = None,
+    workspace_overrides: dict[str, dict[str, str]] | None = None,
+) -> bool:
+    """Effective B-1 switch for this run: missing/blank/unrecognized -> enabled."""
+    entries = snapshot.merge("agent-runtime", user_overrides, workspace_overrides)
+    raw = entries.get(_PROVIDER_FINGERPRINT_KEY)
+    if raw is None or not raw.strip():
+        return True
+    value = raw.strip().lower()
+    if value in ("false", "0", "no"):
+        return False
+    if value not in ("true", "1", "yes"):
+        logger.warning(
+            "Ignoring invalid {} config value {!r} (keeping enabled)",
+            _PROVIDER_FINGERPRINT_KEY,
+            raw,
+        )
+    return True
+
+
 def _resolve_run_budget(
     snapshot: RunConfigSnapshot,
     user_overrides: dict[str, dict[str, str]] | None = None,

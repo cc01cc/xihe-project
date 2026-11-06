@@ -129,6 +129,14 @@ const domainSchemas = computed<Record<string, DomainField[]>>(() => ({
             type: "select",
             options: boolOptions,
         },
+        // PLAN-0679 B-1: provider-layer request fingerprint switch (workspace-writable,
+        // default true); independent from the context-fingerprint key.
+        {
+            key: "providerRequestFingerprintEnabled",
+            label: t("settings.fieldProviderRequestFingerprint"),
+            type: "select",
+            options: boolOptions,
+        },
         { key: "workersDir", label: t("settings.fieldWorkersDir"), type: "text" },
         {
             key: "instructions",
