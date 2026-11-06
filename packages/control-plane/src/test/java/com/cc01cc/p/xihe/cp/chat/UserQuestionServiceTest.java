@@ -529,6 +529,50 @@ class UserQuestionServiceTest {
     }
 
     /**
+     * BL-423: an empty inbox logs nothing at all.
+     *
+     * <p>{@code findProjectionWithCount} deliberately carries no logging: the {@code [LIFECYCLE]}
+     * lines mark state transitions (asked / answered / expired / cancelled / refused), and reading
+     * an inbox that happens to be empty is not one. The 0-row case is the one worth pinning
+     * separately, because it is exactly where a well-meaning "no pending questions for {user}"
+     * line tends to appear — and the moment it does, every idle poll writes a log line.</p>
+     *
+     * <p>This is asserted on the real logger rather than on a mock: the point is the observable
+     * output, not the call shape. {@code ListAppender} on the service logger is the same technique
+     * {@code ApprovalServiceTest} and {@code AgentSpawnAuthorizationServiceTest} already use.</p>
+     */
+    @Test
+    void findProjectionWithCount_logsNothingWhenTheInboxIsEmpty() {
+        when(questions.findByAddresseeUserIdAndStateOrderByCreatedAtDesc(
+                eq(UUID.fromString(USER_ID)), eq(UserQuestion.STATE_PENDING), any(Pageable.class)))
+                .thenReturn(List.of());
+        when(questions.countByAddresseeUserIdAndState(eq(UUID.fromString(USER_ID)),
+                eq(UserQuestion.STATE_PENDING))).thenReturn(0L);
+
+        ch.qos.logback.classic.Logger serviceLogger =
+                (ch.qos.logback.classic.Logger) org.slf4j.LoggerFactory.getLogger(UserQuestionService.class);
+        ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> appender =
+                new ch.qos.logback.core.read.ListAppender<>();
+        appender.start();
+        serviceLogger.addAppender(appender);
+        UserQuestionService.ProjectionSnapshot snapshot;
+        try {
+            snapshot = serviceAt(new CountingClock(PROJECTION_INSTANT))
+                    .findProjectionWithCount(USER_ID, null, 10);
+        } finally {
+            serviceLogger.detachAppender(appender);
+            appender.stop();
+        }
+
+        assertTrue(snapshot.items().isEmpty(), "an empty inbox yields an empty page");
+        assertEquals(0L, snapshot.pendingCount(), "and a zero badge");
+        List<String> messages = appender.list.stream()
+                .map(ch.qos.logback.classic.spi.ILoggingEvent::getFormattedMessage)
+                .toList();
+        assertTrue(messages.isEmpty(), "an empty inbox must not log anything, got: " + messages);
+    }
+
+    /**
      * BL-423, the boundary itself: with a clock that steps forward on <b>every</b> read, the old
      * two-read implementation would see two different instants and disagree with itself. The single
      * read makes "listed" and "counted" the same instant by construction, so both values stay
