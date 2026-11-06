@@ -4,8 +4,6 @@ import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.config.ProblemDetailsHandler;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
 import com.cc01cc.p.xihe.cp.entity.ChatRun;
-import com.cc01cc.p.xihe.cp.entity.ChatRunProviderRequest;
-import com.cc01cc.p.xihe.cp.repository.ChatRunProviderRequestRepository;
 import com.cc01cc.p.xihe.cp.service.SessionService;
 import com.cc01cc.p.xihe.cp.util.JacksonNodeExit;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -30,21 +28,23 @@ import java.util.UUID;
  *
  * <p>The read path is intentionally thin: run identity and ownership resolve through the same
  * service as every other run read, so the workspace/ownership check cannot drift from RunTrace.
- * Jackson-2 nodes leave the control plane only through {@link JacksonNodeExit#toDocument(ObjectNode)}
+ * The row lookup is delegated to {@link RunProviderRequestReadService} — this controller holds no
+ * JPA repository ({@code CpArchitectureTest#controllersDoNotDependOnRepositories}). Jackson-2 nodes
+ * leave the control plane only through {@link JacksonNodeExit#toDocument(ObjectNode)}
  * (PLAN-0633 C1).</p>
  */
 @RestController
 public class RunProviderRequestFingerprintController {
 
     private final ChatRunReadService chatRunReadService;
-    private final ChatRunProviderRequestRepository providerRequestRepository;
+    private final RunProviderRequestReadService providerRequestReadService;
     private final SessionService sessionService;
 
     public RunProviderRequestFingerprintController(ChatRunReadService chatRunReadService,
-                                                   ChatRunProviderRequestRepository providerRequestRepository,
+                                                   RunProviderRequestReadService providerRequestReadService,
                                                    SessionService sessionService) {
         this.chatRunReadService = chatRunReadService;
-        this.providerRequestRepository = providerRequestRepository;
+        this.providerRequestReadService = providerRequestReadService;
         this.sessionService = sessionService;
     }
 
@@ -59,13 +59,13 @@ public class RunProviderRequestFingerprintController {
         }
         try {
             ChatRun run = requireRun(runId, userId, workspaceId);
-            ProviderRequestFingerprintReadService.View current = viewOf(run);
+            ProviderRequestFingerprintReadService.View current = providerRequestReadService.viewFor(run);
             if (against == null || against.isBlank()) {
                 return ResponseEntity.ok(
                         JacksonNodeExit.toDocument(ProviderRequestFingerprintReadService.envelope(current)));
             }
             ChatRun baseline = requireRun(against, userId, workspaceId);
-            ProviderRequestFingerprintReadService.View baselineView = viewOf(baseline);
+            ProviderRequestFingerprintReadService.View baselineView = providerRequestReadService.viewFor(baseline);
             if (!baseline.getSessionId().equals(run.getSessionId())) {
                 throw new CpApiException(HttpStatus.CONFLICT, "DIFF_SESSION_MISMATCH",
                         "Provider-request fingerprints from different sessions are not comparable");
@@ -90,35 +90,5 @@ public class RunProviderRequestFingerprintController {
         ChatRun found = chatRunReadService.requireOwnedRun(runUuid, userId, workspaceId);
         sessionService.requireCurrent(found.getSessionId(), userId, workspaceId);
         return found;
-    }
-
-    /**
-     * Row presence is the only truth. There is no "submitted but not yet captured" state to name:
-     * the diagnostics event travels with the dispatch, so between capture and absence the run is
-     * simply not captured yet (envelope reason {@code not_captured}, two-level model).
-     */
-    private ProviderRequestFingerprintReadService.View viewOf(ChatRun run) {
-        return providerRequestRepository.findById(run.getId())
-                .map(row -> ProviderRequestFingerprintReadService.captured(
-                        run.getId().toString(),
-                        run.getSessionId(),
-                        row.getFingerprint(),
-                        metadataOf(row)))
-                .orElseGet(() -> ProviderRequestFingerprintReadService.absent(
-                        run.getId().toString(), run.getSessionId()));
-    }
-
-    private static ProviderRequestFingerprintReadService.Metadata metadataOf(ChatRunProviderRequest row) {
-        return new ProviderRequestFingerprintReadService.Metadata(
-                row.getApiTypeId(),
-                row.getApiTypeVersion(),
-                row.getModel(),
-                row.getMessageCount(),
-                row.getToolCount(),
-                row.getBytesTotal(),
-                row.getRoleHistogram(),
-                row.getSystemSources(),
-                row.getDispatchAttempt(),
-                row.getProviderStep());
     }
 }

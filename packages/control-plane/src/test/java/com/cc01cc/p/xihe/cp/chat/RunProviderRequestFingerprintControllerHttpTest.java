@@ -48,11 +48,16 @@ class RunProviderRequestFingerprintControllerHttpTest {
     private final ChatRunReadService readService = mock(ChatRunReadService.class);
     private final ChatRunProviderRequestRepository repository =
             mock(ChatRunProviderRequestRepository.class);
+    // PLAN-0679 T2.3 architecture fix: the controller no longer holds the repository — the row
+    // lookup moved into RunProviderRequestReadService. This seam keeps the exact same stub surface
+    // (findById), so every wire assertion below is unchanged.
+    private final RunProviderRequestReadService providerRequestReadService =
+            new RunProviderRequestReadService(repository);
     private final SessionService sessionService = mock(SessionService.class);
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final MockMvc mvc = MockMvcBuilders
             .standaloneSetup(new RunProviderRequestFingerprintController(
-                    readService, repository, sessionService))
+                    readService, providerRequestReadService, sessionService))
             .build();
 
     @BeforeEach
