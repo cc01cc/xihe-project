@@ -169,9 +169,17 @@ if (typeof window !== "undefined") {
     // S3b P2 (audit): a reload/close within the coalescing window would drop the last
     // write, which reads as "my close was treated as the default". Mirror the
     // `beforeunload` flush pattern used for the logger (main.ts).
-    window.addEventListener("pagehide", () => layoutWriter.flush());
-    document.addEventListener("visibilitychange", () => {
+    // BL-379: named handlers so unmount can remove them pairwise — anonymous closures
+    // leaked one unremovable listener per mount and pinned the whole instance.
+    const flushOnPagehide = (): void => layoutWriter.flush();
+    const flushOnHidden = (): void => {
         if (document.visibilityState === "hidden") layoutWriter.flush();
+    };
+    window.addEventListener("pagehide", flushOnPagehide);
+    document.addEventListener("visibilitychange", flushOnHidden);
+    onBeforeUnmount(() => {
+        window.removeEventListener("pagehide", flushOnPagehide);
+        document.removeEventListener("visibilitychange", flushOnHidden);
     });
 }
 
