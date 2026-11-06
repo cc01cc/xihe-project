@@ -40,6 +40,12 @@ final class CpModuleAssignment implements SliceAssignment {
         if (name.startsWith("Workspace")) {
             return "workspace";
         }
+        // PLAN-0641 T5.1: the legacy-slice declaration boundary is a pure helper of the workspace/root
+        // slice (workspace_roots.created_at vs run_checkpoints.captured_at). Without this assignment
+        // ArchUnit's import throws before any rule runs — the whole class was dead (BL-370, L2 2026-11-06).
+        if (name.startsWith("LegacySlice")) {
+            return "workspace";
+        }
         if (name.startsWith("Agent")) {
             return "principal";
         }

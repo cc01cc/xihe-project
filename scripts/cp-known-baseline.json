@@ -1,11 +1,4 @@
 {
   "reviewedAt": "2026-11-06",
-  "entries": [
-    {
-      "test": "com.cc01cc.p.xihe.cp.architecture.CpArchitectureTest",
-      "kind": "error",
-      "reason": "ArchUnit import aborts because service.LegacySliceBoundary (PLAN-0641 T5.1) has no module assignment, so the whole class does not run. Adding the mapping immediately surfaces 9 real controllers->repositories violations, so fixing it needs a read-model refactor (tracked in BL-370, B-class). This entry is a TIME-LIMITED acceptance: the refactor must both remove it and add the missing module assignment.",
-      "reviewBy": "2026-12-06"
-    }
-  ]
+  "entries": []
 }

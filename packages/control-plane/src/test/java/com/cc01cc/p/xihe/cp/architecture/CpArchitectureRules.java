@@ -47,9 +47,32 @@ final class CpArchitectureRules {
             .should().dependOnClassesThat(CONTROLLERS)
             .as("Application services must not depend on Controllers");
 
-    static final ArchRule CONTROLLER_TO_REPOSITORY = noClasses().that(CONTROLLERS)
+    /**
+     * BL-370 (S2, 2026-11-06): named, time-boxed exemptions so the rule can run again.
+     *
+     * <p>Before this, the whole class never executed: an unassigned production type made ArchUnit's
+     * import throw, so "1 error" actually meant <b>zero coverage</b>. Restoring the check is more
+     * valuable than a clean-but-dead rule, so exactly these two controllers are exempt until their
+     * read paths move into services (S1, reviewBy 2026-12-06):
+     * <ul>
+     *   <li>{@code DelegationController} — spawn() reads the session's latest run for provenance;</li>
+     *   <li>{@code RunContextFingerprintController} — requireRun()/viewOf() read run + attempt state.</li>
+     * </ul>
+     * The list may only shrink. Adding an entry requires editing this list, the meta-test in
+     * {@code CpArchitectureTest} and a reason in the commit message.
+     */
+    static final List<String> CONTROLLER_REPOSITORY_EXEMPTIONS = List.of(
+            "com.cc01cc.p.xihe.cp.chat.DelegationController",
+            "com.cc01cc.p.xihe.cp.chat.RunContextFingerprintController");
+
+    private static final DescribedPredicate<JavaClass> EXEMPT_CONTROLLER_REPOSITORY =
+            DescribedPredicate.describe("BL-370 exempt controllers", type ->
+                    CONTROLLER_REPOSITORY_EXEMPTIONS.contains(type.getName()));
+
+    static final ArchRule CONTROLLER_TO_REPOSITORY = noClasses()
+            .that(CONTROLLERS.and(DescribedPredicate.not(EXEMPT_CONTROLLER_REPOSITORY)))
             .should().dependOnClassesThat(REPOSITORIES)
-            .as("Controllers must not depend on JPA repositories");
+            .as("Controllers must not depend on JPA repositories (BL-370 exemptions are time-boxed)");
 
     static final ArchRule PERSISTENCE_TO_CONTROLLER = noClasses().that(PERSISTENCE)
             .should().dependOnClassesThat(CONTROLLERS)

@@ -22,6 +22,7 @@ import java.util.TreeMap;
 import java.util.ArrayDeque;
 import static com.tngtech.archunit.library.dependencies.SlicesRuleDefinition.slices;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -153,6 +154,28 @@ class CpArchitectureTest {
     @Test
     void controllersDoNotDependOnRepositories() {
         CpArchitectureRules.CONTROLLER_TO_REPOSITORY.check(production);
+    }
+
+    /**
+     * BL-370: an exemption for a class that no longer exists is a dead hole in the rule. The exact
+     * set is asserted so adding one requires a deliberate edit here (plus a reason in the commit);
+     * shrinking it is equally deliberate. reviewBy 2026-12-06.
+     */
+    @Test
+    void controllerRepositoryExemptionsStillExistAndAreControllers() throws Exception {
+        var expected = java.util.Set.of(
+                "com.cc01cc.p.xihe.cp.chat.DelegationController",
+                "com.cc01cc.p.xihe.cp.chat.RunContextFingerprintController");
+        assertThat(CpArchitectureRules.CONTROLLER_REPOSITORY_EXEMPTIONS)
+                .as("BL-370 exemption list may only change deliberately (add: justify in commit)")
+                .containsExactlyInAnyOrderElementsOf(expected);
+        for (String name : CpArchitectureRules.CONTROLLER_REPOSITORY_EXEMPTIONS) {
+            Class<?> type = Class.forName(name);
+            assertThat(type.isAnnotationPresent(org.springframework.web.bind.annotation.RestController.class)
+                    || type.isAnnotationPresent(org.springframework.stereotype.Controller.class))
+                    .as("%s must still be an HTTP controller; otherwise delete its BL-370 exemption", name)
+                    .isTrue();
+        }
     }
 
     @Test
