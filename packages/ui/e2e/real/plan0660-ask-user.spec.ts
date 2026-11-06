@@ -36,11 +36,19 @@
  * 从 CP 日志/用户通道观察，见 T5.24 runbook §3（本 spec 只把「未刷新即出现卡片」作为
  * 用户通道投递成功的行为级证据）。
  *
- * 回填清单（T5.18–T5.22 合入后）：
- *   - `CARD_TESTID` / `ANSWER_INPUT_TESTID` / `ANSWER_SUBMIT_TESTID` 改成实际值
- *     （tasks.md T5.23 原文要求「testid 实施时取实际值并回填本条」）；三个都可用
- *     `XIHE_ASK_USER_*` 环境变量临时覆盖，不改码也能先探一次。
- *   - 若卡片结案后仍保留在 DOM（而非移除），把「输入框消失」断言换成设计实际的结案态断言。
+ * 回填状态（2026-11-06，T5.23 写侧）：testid **已按 T5.18–T5.22 的实现回填**，来源是
+ *   `src/features/workspace/components/UserQuestionCard.vue`（卡片/输入框/提交/状态）与
+ *   `UserQuestionsEntry.vue`（侧边栏入口与展开面板）；对照表见
+ *   `.local/evidence/plan-0660/acceptance/t523-testid-map.md`。五个都保留 `XIHE_ASK_USER_*`
+ *   env 覆盖，实现再改时不必改码即可先探一次。
+ *
+ * 与真实组件对齐后的两处结构性修正（判据只收紧、不放松）：
+ *   - 卡片**挂在侧边栏入口的展开面板里**（`UserQuestionsEntry`，`v-if="hasPending"` 才占位），
+ *     所以断言前必须先等入口出现（这本身就是「hint 把投影刷成 pending」的证据）并点开它。
+ *   - 结案后投影归零 ⇒ `hasPending` 转 false ⇒ 入口与卡片**一起离开 DOM**，因此「结案态」的
+ *     可观察事实是**消失**，不是 `data-state="answered"`。原稿把后者当断言点，在真栈永不成立
+ *     （列表只拉 `state=pending`，零态不占位）；`answered/expired/cancelled` 三态的渲染只在
+ *     「结案行仍在列表里」时才可见，属组件单测覆盖面。
  */
 import { execFileSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
@@ -73,11 +81,18 @@ const OUT =
     process.env.XIHE_ASK_USER_DIR ??
     join(process.cwd(), "..", "..", ".local", "evidence", "plan-0660", "acceptance", "ask-user");
 
-/** 卡片 testid：T5.20 落地后回填实际值（也可先用 env 探一次）。 */
+/**
+ * testid：全部取自真实实现（`UserQuestionCard.vue` / `UserQuestionsEntry.vue`），
+ * 对照表见 `.local/evidence/plan-0660/acceptance/t523-testid-map.md`。
+ */
 const CARD_TESTID = process.env.XIHE_ASK_USER_CARD_TESTID ?? "user-question-card";
-const ANSWER_INPUT_TESTID = process.env.XIHE_ASK_USER_INPUT_TESTID ?? "user-question-answer-input";
-const ANSWER_SUBMIT_TESTID =
-    process.env.XIHE_ASK_USER_SUBMIT_TESTID ?? "user-question-answer-submit";
+const ANSWER_INPUT_TESTID = process.env.XIHE_ASK_USER_INPUT_TESTID ?? "user-question-input";
+const ANSWER_SUBMIT_TESTID = process.env.XIHE_ASK_USER_SUBMIT_TESTID ?? "user-question-submit";
+/** 侧边栏入口（`hasPending` 才渲染）与其展开面板 —— 卡片挂在这个面板里，必须先展开。 */
+const SIDEBAR_ENTRY_TESTID =
+    process.env.XIHE_ASK_USER_SIDEBAR_ENTRY_TESTID ?? "sidebar-user-questions";
+const SIDEBAR_LIST_TESTID = process.env.XIHE_ASK_USER_SIDEBAR_LIST_TESTID ?? "user-questions-list";
+const SIDEBAR_BADGE_TESTID = process.env.XIHE_ASK_USER_BADGE_TESTID ?? "user-questions-badge";
 
 /** 作答正文（同时作为投影回显断言值）。 */
 const ANSWER_TEXT = "继续 T5.23";
@@ -179,10 +194,28 @@ test.describe("PLAN-0660 T5.23 ask_user 真栈全链（窗口门控骨架）", (
         );
 
         // ── 2) 用户端不刷新即出现提问卡（hint 投递成功的行为级证据）──
+        // 第一层：侧边栏入口出现 —— `UserQuestionsEntry` 用 `v-if="hasPending"` 占位，
+        // 所以「它出现」等价于「投影已被 hint 刷成 pending」，比直接等卡片更早、更贴近通道语义。
+        const sidebarEntry = page.getByTestId(SIDEBAR_ENTRY_TESTID);
+        await expect(
+            sidebarEntry,
+            `sidebar questions entry ${SIDEBAR_ENTRY_TESTID} must appear without reload`,
+        ).toBeVisible({ timeout: 180_000 });
+        await expect(page.getByTestId(SIDEBAR_BADGE_TESTID)).toHaveText(/^\d+$/);
+
+        // 第二层：展开后卡片在列表里（卡片不在顶层，必须点开入口）。
+        if ((await sidebarEntry.getAttribute("aria-expanded")) !== "true") {
+            await sidebarEntry.click();
+        }
+        await expect(page.getByTestId(SIDEBAR_LIST_TESTID)).toBeVisible({ timeout: 30_000 });
+
         const card = page.getByTestId(CARD_TESTID);
         await expect(card, `ask card ${CARD_TESTID} must appear without reload`).toBeVisible({
-            timeout: 180_000,
+            timeout: 30_000,
         });
+        // 两态（未刷新即 pending、且可提交）—— 用真实属性断言，别靠"看见输入框"推断。
+        await expect(card).toHaveAttribute("data-state", "pending");
+        await expect(card).toHaveAttribute("data-submittable", "true");
         await page.screenshot({ path: join(OUT, "ask-card-pending.png"), scale: "css" });
 
         // ── 3) durable 投影（pending）与行状态转储 ──
@@ -217,6 +250,8 @@ test.describe("PLAN-0660 T5.23 ask_user 真栈全链（窗口门控骨架）", (
         persist();
 
         // ── 4) 作答（UI 卡片正文）──
+        // 卡片与 CP 投影必须是同一行：`data-question-id` 等于刚才列表里拿到的那条。
+        await expect(card).toHaveAttribute("data-question-id", questionId);
         const answerInput = page.getByTestId(ANSWER_INPUT_TESTID);
         await expect(answerInput, "answer input inside the card").toBeVisible({ timeout: 30_000 });
         await answerInput.fill(ANSWER_TEXT);
@@ -248,13 +283,20 @@ test.describe("PLAN-0660 T5.23 ask_user 真栈全链（窗口门控骨架）", (
             "settledAt must be stamped on the answered transition",
         ).toBeTruthy();
         writeFileSync(join(OUT, "projection-answered.json"), JSON.stringify(settled, null, 2));
+        // 结案态的可观察事实是**入口与卡片一起离开 DOM**：投影归零 ⇒ `hasPending` 转 false ⇒
+        // `v-if` 卸载整个 `UserQuestionsEntry`。这里不要等 `data-state="answered"` —— 列表只拉
+        // `state=pending`、零态不占位，那一态在真栈不可能出现（四态渲染由组件单测覆盖）。
         await expect(
             answerInput,
             "the answered card must no longer offer an editable input",
         ).toHaveCount(0, {
             timeout: 60_000,
         });
-        await page.screenshot({ path: join(OUT, "ask-card-answered.png"), scale: "css" });
+        await expect(card, "the whole entry leaves the DOM once nothing is pending").toHaveCount(
+            0,
+            { timeout: 60_000 },
+        );
+        await page.screenshot({ path: join(OUT, "ask-entry-cleared.png"), scale: "css" });
 
         // V11 投影侧：同一 filter 下 pendingCount 归零（徽标归零的权威来源）。
         const afterListResponse = await request.get(
