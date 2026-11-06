@@ -150,6 +150,50 @@ describe("useUserChannelSSE", () => {
     });
 
     /**
+     * PLAN-0660 T5.18（审计 P1）：**401 是终态 —— 必须登出，且不再重连**。
+     *
+     * 旧实现没有 401 分支：`!response.ok` 一律落到退避重连，于是过期 token 会被每 1s/2s/4s…
+     * 重打一遍，而用户永远不会被送回登录页 —— 表现只是"用户通道一直在抖"。
+     * 这条同时钉三件事：回调恰好一次、fetch 只发一次、一次重连都不排。
+     */
+    it("logs out and stops reconnecting on 401 (T5.18 audit P1)", async () => {
+        const onUnauthorized = vi.fn<() => void>();
+        const fetchImpl = vi.fn<typeof fetch>(
+            async () =>
+                new Response(JSON.stringify({ status: 401, code: "UNAUTHORIZED" }), {
+                    status: 401,
+                    headers: { "content-type": "application/problem+json" },
+                }),
+        );
+        const delays: number[] = [];
+        const client = createUserChannelSse({
+            getToken: () => "expired-token",
+            onNotified: vi.fn<(sessionId: string, participantId: string) => void>(),
+            onUnauthorized,
+            fetchImpl,
+            schedule: (callback, delayMs) => {
+                delays.push(delayMs);
+                void callback;
+                return delays.length;
+            },
+            cancel: () => undefined,
+        });
+
+        client.start();
+        await vi.waitFor(() => expect(onUnauthorized).toHaveBeenCalledTimes(1));
+
+        // 终态：不排重连、不重复 handshake，disposed 之后 start() 也不复活。
+        expect(delays).toEqual([]);
+        expect(fetchImpl).toHaveBeenCalledTimes(1);
+        expect(client.attempts()).toBe(0);
+
+        client.start();
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        expect(delays).toEqual([]);
+        expect(fetchImpl).toHaveBeenCalledTimes(1);
+    });
+
+    /**
      * BL-335：**上限码是持续态，不许退避重试**。
      *
      * 这条用例把"停止重连"钉在测试里：`429 USER_CHANNEL_FULL` ⇒ 回调一次 + **不再 schedule 重连**
