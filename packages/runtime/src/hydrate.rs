@@ -69,6 +69,33 @@ fn default_execution_mode() -> String {
     "docker".to_string()
 }
 
+/// BL-415: resolve the declared root list from a fetched ExecutionSpec.
+///
+/// `roots: []` is not a valid declaration: the CP emits `[]` for legacy specs whose
+/// `roots` column was never backfilled (V104 added the column without a default value).
+/// Treating the empty list as a real list and indexing `raw_paths[0]` panicked
+/// (`index out of bounds: len is 0`), which closed the connection and surfaced as a 503
+/// on every MCP call. An empty list is therefore handled exactly like an absent one:
+/// fall back to `hostPath` (primary root id = workspace id). A spec that declares
+/// neither still fails closed instead of inventing a boundary.
+fn declared_root_list(spec: &WorkspaceExecutionSpec) -> Result<Vec<(String, String)>> {
+    if let Some(roots) = spec.roots.as_deref().filter(|roots| !roots.is_empty()) {
+        return Ok(roots
+            .iter()
+            .map(|root| (root.root_id.clone(), root.host_path.clone()))
+            .collect());
+    }
+    match spec.host_path.as_deref().map(str::trim) {
+        Some(host_path) if !host_path.is_empty() => {
+            Ok(vec![(spec.workspace_id.clone(), host_path.to_string())])
+        }
+        _ => Err(RuntimeError::InvalidExecutionSpec {
+            workspace_id: spec.workspace_id.clone(),
+            detail: "execution spec declares no roots".to_string(),
+        }),
+    }
+}
+
 impl WorkspaceExecutionSpec {
     pub fn validate_for_workspace(&self, workspace_id: &str) -> Result<()> {
         if self.workspace_id != workspace_id {
@@ -344,21 +371,7 @@ impl WorkspaceEnsurer {
     /// root declaration outside materialization.
     pub async fn declared_roots(&self, workspace_id: &str) -> Result<Vec<(String, String)>> {
         let spec = self.client.fetch_for_workspace(workspace_id).await?;
-        if let Some(roots) = spec.roots.as_ref() {
-            return Ok(roots
-                .iter()
-                .map(|root| (root.root_id.clone(), root.host_path.clone()))
-                .collect());
-        }
-        match spec.host_path.as_deref() {
-            Some(host_path) if !host_path.trim().is_empty() => {
-                Ok(vec![(workspace_id.to_string(), host_path.to_string())])
-            }
-            _ => Err(RuntimeError::InvalidExecutionSpec {
-                workspace_id: workspace_id.to_string(),
-                detail: "execution spec declares no roots".to_string(),
-            }),
-        }
+        declared_root_list(&spec)
     }
 
     pub fn from_env(lifecycle: Arc<Lifecycle>, manager: Arc<Mutex<WorkspaceManager>>) -> Self {
@@ -487,17 +500,13 @@ impl WorkspaceEnsurer {
         let workspace_path = if spec.storage_mode == "direct_attach" {
             // PLAN-0639 M1: read spec.roots[] (ordered root absolute paths).  Fall back to
             // spec.host_path for legacy single-root specs that predate the roots field.
-            let raw_paths: Vec<String> = if let Some(roots) = spec.roots.as_ref() {
-                roots.iter().map(|r| r.host_path.clone()).collect()
-            } else {
-                vec![
-                    spec.host_path
-                        .as_deref()
-                        .expect("validated direct-attach hostPath")
-                        .to_string(),
-                ]
+            // BL-415: `roots: []` is the CP's encoding of "column was never backfilled";
+            // it must reach the same fallback instead of being indexed at [0].
+            let declared = match declared_root_list(&spec) {
+                Ok(declared) => declared,
+                Err(error) => return self.failure(workspace_id, error).await,
             };
-            let primary = PathBuf::from(&raw_paths[0]);
+            let primary = PathBuf::from(&declared[0].1);
             match tokio::fs::canonicalize(&primary).await {
                 Ok(path) if path.is_dir() => path,
                 Ok(_) => {
@@ -1021,6 +1030,82 @@ mod tests {
             "storageRef": "ws-1",
             "storageMode": "direct_attach",
             "hostPath": "C:/ws/legacy",
+            "executionMode": "windows-host",
+        })
+        .to_string();
+        let mock = server
+            .mock("GET", "/internal/v1/runtime/workspaces/ws-1/execution-spec")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(body)
+            .create_async()
+            .await;
+
+        let host_root = tempfile::tempdir().unwrap();
+        let registry = Arc::new(WorkspaceRegistry::new());
+        let ensurer = WorkspaceEnsurer::new(
+            test_lifecycle(&registry),
+            Arc::new(Mutex::new(WorkspaceManager::new())),
+            ExecutionSpecClient::new(&server.url(), "test-token"),
+            Some(host_root.path().to_path_buf()),
+        );
+
+        let roots = ensurer.declared_roots("ws-1").await.unwrap();
+        assert_eq!(
+            roots,
+            vec![("ws-1".to_string(), "C:/ws/legacy".to_string())]
+        );
+        mock.assert_async().await;
+    }
+
+    /// BL-415: `roots: []` is how the CP encodes a NULL roots column (V104 never
+    /// backfilled legacy rows). It must reach the same fallback as an absent list
+    /// instead of being indexed at [0] (that panicked in materialization).
+    #[test]
+    fn declared_root_list_falls_back_to_host_path_for_empty_roots() {
+        let mut spec = valid_spec();
+        spec.storage_mode = "direct_attach".to_string();
+        spec.execution_mode = "windows-host".to_string();
+        spec.roots = Some(Vec::new());
+        spec.host_path = Some("C:/ws/legacy".to_string());
+        assert_eq!(
+            declared_root_list(&spec).unwrap(),
+            vec![("ws-1".to_string(), "C:/ws/legacy".to_string())]
+        );
+    }
+
+    /// BL-415: empty roots plus no hostPath is a hard error, not a panic and not an
+    /// invented boundary.
+    #[test]
+    fn declared_root_list_fails_closed_for_empty_roots_without_host_path() {
+        let mut spec = valid_spec();
+        spec.storage_mode = "direct_attach".to_string();
+        spec.execution_mode = "windows-host".to_string();
+        spec.roots = Some(Vec::new());
+        spec.host_path = None;
+        let error =
+            declared_root_list(&spec).expect_err("empty roots without hostPath must fail closed");
+        assert!(
+            matches!(error, RuntimeError::InvalidExecutionSpec { .. }),
+            "got {error}"
+        );
+    }
+
+    /// BL-415: the CP's `[]` reaches declared_roots as the synthesized primary root.
+    #[tokio::test]
+    async fn declared_roots_synthesizes_primary_root_for_empty_roots_array() {
+        let mut server = Server::new_async().await;
+        let hash = "a".repeat(64);
+        let body = serde_json::json!({
+            "workspaceId": "ws-1",
+            "generation": 1,
+            "sandboxSpecHash": hash,
+            "sandboxSpec": {"profile": "strict"},
+            "storageBackend": "host_directory",
+            "storageRef": "ws-1",
+            "storageMode": "direct_attach",
+            "hostPath": "C:/ws/legacy",
+            "roots": [],
             "executionMode": "windows-host",
         })
         .to_string();
