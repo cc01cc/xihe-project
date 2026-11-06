@@ -1985,6 +1985,21 @@ async function runPlaywright() {
       ...(process.env.XIHE_E2E_MENTION_CURSOR ? { XIHE_E2E_MENTION_CURSOR: process.env.XIHE_E2E_MENTION_CURSOR } : {}),
       ...(process.env.XIHE_DEMO_STATE_FILE ? { XIHE_DEMO_STATE_FILE: process.env.XIHE_DEMO_STATE_FILE } : {}),
       ...(process.env.XIHE_MENTION_CURSOR_DIR ? { XIHE_MENTION_CURSOR_DIR: process.env.XIHE_MENTION_CURSOR_DIR } : {}),
+      // 2026-11-06（PLAN-0660 T5.23 窗口）：ask_user 真栈车道的门控与证据落点同样显式透传
+      // （缺省不设置时零变化，spec 自我 skip 维持；卡片 testid 可先用 env 探一次）。
+      ...(process.env.XIHE_E2E_ASK_USER
+        ? { XIHE_E2E_ASK_USER: process.env.XIHE_E2E_ASK_USER }
+        : {}),
+      ...(process.env.XIHE_ASK_USER_DIR ? { XIHE_ASK_USER_DIR: process.env.XIHE_ASK_USER_DIR } : {}),
+      ...(process.env.XIHE_ASK_USER_CARD_TESTID
+        ? { XIHE_ASK_USER_CARD_TESTID: process.env.XIHE_ASK_USER_CARD_TESTID }
+        : {}),
+      ...(process.env.XIHE_ASK_USER_INPUT_TESTID
+        ? { XIHE_ASK_USER_INPUT_TESTID: process.env.XIHE_ASK_USER_INPUT_TESTID }
+        : {}),
+      ...(process.env.XIHE_ASK_USER_SUBMIT_TESTID
+        ? { XIHE_ASK_USER_SUBMIT_TESTID: process.env.XIHE_ASK_USER_SUBMIT_TESTID }
+        : {}),
       ...(reportPath ? { PLAYWRIGHT_JSON_OUTPUT_NAME: reportPath } : {}),
     },
   })
