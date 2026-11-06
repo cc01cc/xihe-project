@@ -84,6 +84,10 @@ function stubSessionResponse(record: { id: string; title?: string; createdAt?: s
 beforeEach(() => {
     setActivePinia(createPinia());
     localStorage.clear();
+    // BL-365：tab 工作区上下文存在 **sessionStorage**（`lib/workspaceContext.ts` 的 `xihe-workspace`），
+    // 只清 localStorage 会让上一条用例的 `writeTabWorkspaceId("ws-late")` 漏到后续用例 ⇒
+    // 组件"有工作区"，把「无工作区时不该 push」的断言打红（`--sequence.shuffle.tests` 稳定复现）。
+    sessionStorage.clear();
     pushSpy.mockClear();
     vi.restoreAllMocks();
     routeState.name = "workspace-chat";
