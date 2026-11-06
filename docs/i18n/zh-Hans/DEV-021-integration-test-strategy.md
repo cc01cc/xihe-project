@@ -160,6 +160,7 @@ flowchart LR
 
 **Agent 默认收集面（BL-361，2026-11-06）**：`packages/agent/pyproject.toml` 已设 `addopts = '-m "not integration"'` ⇒ 默认 `uv run pytest` 会把 `tests/integration/**` **自动 deselected**（`test_vector_store.py` 等 host-only 用例不再在普通门里硬失败，输出里能看到 `deselected` 计数）。
 host 车道：先注入 isolated runner 提供的 `XIHE_E2E_PG_DATABASE/USER/PORT`，再显式 `uv run pytest -m integration`；`integration` 标记缺失由元测试 `tests/unit/test_integration_markers.py` 拦截。
+**实测计数（2026-11-06 审计）**：默认收集 **1441/1471，30 条 integration 被 deselected**；`-m integration` 收集 30 条，但 `tests/integration/test_agent_cp_integration.py` / `test_cp_real_integration.py` 各有 `skipif(not cp_available)` ⇒ **CP 未起时这 2 条会在 integration lane 内静默 skip**（不是失败）。恢复：先起 CP（8080）再 `uv run pytest -m integration`。
 
 **启动方式**：
 

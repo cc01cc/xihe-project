@@ -306,6 +306,7 @@ node scripts/e2e-host-detached.mjs --timeout-min 25 --auth-lane=ratelimit \
 
 ## mode 门控 spec 的漂移风险与夹具前提（2026-11-06 实测）
 
+- **LiveChain 两类默认整类不跑（2026-11-06 审计）**：`ContextSourceLiveChainTest`（`Assumptions.assumeTrue` 要求 Runtime `/ready` 与 dev CP `/actuator/health` 可达）与 `ContextToolHistoryLiveChainTest`（`@EnabledIfSystemProperty xihe.run.v15.live=true`）各 **1/1 用例默认 skip**，全量汇总只体现为 `Skipped: 2`。恢复：起 host 栈后重跑前者；后者加 `mvn -o test "-Dxihe.run.v15.live=true"`。不是漏跑，但不可当作已覆盖。
 - **风险**：受 `--llm-mode` 门控的 spec 在日常 mock 车道恒 skip ⇒ **无人跑 ⇒ 随契约漂移**（`BL-358`：`chat-follow-up-queue.spec.ts` 的 approval 路径缺必需 `X-Workspace-Id`，撞 `409 WORKSPACE_CONTEXT_REQUIRED`）。这是"低频路径静默腐烂"的 E2E 版本（同 `BL-357`）。
 - **机制**：`--llm-mode` **不经 env 透传给 Playwright**（spec 内读不到 `XIHE_E2E_LLM_MODE`）⇒ 用 `test.skip(process.env.XIHE_E2E_LLM_MODE !== ...)` 做前置门控的 spec，在 runner 直跑下**恒 skip**。
 - **要求**：

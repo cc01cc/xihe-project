@@ -164,6 +164,7 @@ async fn test_config_client_fetch() {
 
 **Default Agent collection surface (BL-361, 2026-11-06)**: `packages/agent/pyproject.toml` sets `addopts = '-m "not integration"'`, so a plain `uv run pytest` **deselects** `tests/integration/**` (host-only cases such as `test_vector_store.py` no longer hard-fail the ordinary gate; the `deselected` count is printed).
 Host lane: inject `XIHE_E2E_PG_DATABASE/USER/PORT` from the isolated runner first, then run `uv run pytest -m integration` explicitly. A missing `integration` marker is caught by the meta test `tests/unit/test_integration_markers.py`.
+**Measured counts (2026-11-06 audit)**: the default run collects **1441/1471 (30 integration tests deselected)**; `-m integration` collects 30, but `tests/integration/test_agent_cp_integration.py` and `test_cp_real_integration.py` each carry `skipif(not cp_available)` ⇒ **those 2 tests skip silently inside the integration lane when CP is not running** (not failures). Restore: start CP (8080) first, then `uv run pytest -m integration`.
 
 **Startup Method**:
 

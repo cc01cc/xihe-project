@@ -186,6 +186,7 @@ node scripts/e2e-host.mjs --llm-mode=disconnect e2e/real/chat-availability.spec.
 
 ## Drift risk of mode-gated specs, and fixture prerequisites (measured 2026-11-06)
 
+- **Two LiveChain classes are skipped by default (2026-11-06 audit)**: `ContextSourceLiveChainTest` (`Assumptions.assumeTrue`, requires Runtime `/ready` and dev CP `/actuator/health`) and `ContextToolHistoryLiveChainTest` (`@EnabledIfSystemProperty xihe.run.v15.live=true`) each have **1/1 test skipped**; the full-suite summary shows only `Skipped: 2`. Restore: start the host stack for the first; add `mvn -o test "-Dxihe.run.v15.live=true"` for the second. Not a missing run, but not coverage either.
 - **Risk**: a spec gated by `--llm-mode` is skipped on the everyday mock lane ⇒ **nobody runs it ⇒ it drifts** (`BL-358`: the approval path of `chat-follow-up-queue.spec.ts` was missing the required `X-Workspace-Id` header and hit `409 WORKSPACE_CONTEXT_REQUIRED`). This is the E2E version of "low-frequency paths rot silently" (same class as `BL-357`).
 - **Mechanism**: `--llm-mode` is **not passed to Playwright through env** (specs cannot read `XIHE_E2E_LLM_MODE`), so a `test.skip(process.env.XIHE_E2E_LLM_MODE !== ...)` guard **always skips** under a direct runner invocation.
 - **Requirements**:
