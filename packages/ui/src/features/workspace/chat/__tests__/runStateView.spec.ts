@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { i18n } from "../../../../i18n";
-import { isTerminalRunStatus, runStateLabelKey, runStateTier } from "../runStateView";
+import {
+    isTerminalRunStatus,
+    runStateLabelKey,
+    runStateTier,
+    terminalMarkerOf,
+} from "../runStateView";
 
 /**
  * PLAN-0631 D31-01: the resolver is the only place a wire status becomes a tier/label.
@@ -73,6 +78,27 @@ describe("runStateView", () => {
         const key = runStateLabelKey(status);
         expect(key).toBeTruthy();
         expect(i18n.global.t(key!, {}, { locale })).toContain(expected);
+    });
+});
+
+describe("terminalMarkerOf (BL-406)", () => {
+    it("marks exactly partial and cancelled, from status or terminal outcome", () => {
+        expect(terminalMarkerOf("partial", "partial")).toBe("partial");
+        expect(terminalMarkerOf("cancelled", "cancelled")).toBe("cancelled");
+        // 两路任一侧给出即可：旧 CP 只回 outcome，或消息只带 runStatus。
+        expect(terminalMarkerOf(undefined, "partial")).toBe("partial");
+        expect(terminalMarkerOf("cancelled", undefined)).toBe("cancelled");
+    });
+
+    it("stays silent for succeeded/failed/ambiguous and for live or unknown states", () => {
+        expect(terminalMarkerOf("succeeded", "success")).toBeNull();
+        expect(terminalMarkerOf("failed", "error")).toBeNull();
+        expect(terminalMarkerOf("ambiguous", "ambiguous")).toBeNull();
+        for (const status of ["accepted", "streaming", "awaiting_approval", "cancelling"]) {
+            expect(terminalMarkerOf(status, null), status).toBeNull();
+        }
+        expect(terminalMarkerOf(undefined, null)).toBeNull();
+        expect(terminalMarkerOf(null, "interrupted")).toBeNull();
     });
 });
 
