@@ -9,15 +9,15 @@
  *    受邀人类参与者拿到的就是 `404 SESSION_NOT_FOUND`；
  *  - **参与者名册读面是多人类感知的**：`SessionParticipantService.requireVisibleSession`
  *    允许 owner / 受邀 HUMAN 参与者 / 可管理该工作区者，其余 403 `SESSION_ACCESS_DENIED`；
- *  - **人类参与者永远叫不醒**（BL-238）：wake 用 owner 身份走 `authorizeAsParticipant`，
- *    必然 `PARTICIPANT_CAP_DENIED` + `UnexpectedRollbackException`（BL-214 是其症状）。
+ *  - **人类参与者唤醒**（BL-238，T4.1 起已修复）：旧实现 wake 用 owner 身份走 `authorizeAsParticipant`，
+ *    必然 `PARTICIPANT_CAP_DENIED` + `UnexpectedRollbackException`（BL-214 是其症状）；现按「人=通知」投递。
  *  两条都是 B 类（授权/通知语义变更），本 lane 不动产品；**不放宽断言**：能真跑的（owner
  *  读面、cc 的 durable 投递、名册权限门）正常断言，缺口项以 `test.fixme` 记录期望。
  *
  * 覆盖：
  *  1. R1-a 双账户互见 —— A（owner）发送后**A 的** messages 读面可见（wire + durable）；
  *  2. R1-a2〔PLAN-0668 转正〕B（受邀参与者）应能读同一会话消息；
- *  3. R1-b〔fixme · BL-238〕@ 对方 → 人类参与者 wake 被 owner 身份授权拒绝，通知永不投递；
+ *  3. R1-b〔T4.1 打开 fixme · BL-238 已修复〕@ 对方 → 人类参与者收到 durable 通知（notify-only）；
  *  4. R1-c 抄送对方 → 202 + B 收到旁听通知（cursor 前进；cc 不走 wake 授权，故可达）；
  *  5. R1-d 旁观者（同工作区 VIEWER，非参与者）403 SESSION_ACCESS_DENIED；外部账户
  *     在租户层就被拦（403 WORKSPACE_FORBIDDEN）；
