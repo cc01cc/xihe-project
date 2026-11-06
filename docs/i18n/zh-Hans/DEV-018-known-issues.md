@@ -180,6 +180,8 @@ updated: 2026-10-25
 3. **恢复 E2E 收集**：给受影响批次加 `--include-docker-frozen`（PLAN-0618 M3 的 runner 开关；口径以 `m3-frozen-tests.md` 定稿为准），并按该文件逐条核对应恢复全绿的 spec（冻结清单 6 条 CP 用例 + E2E spec 列表都在里面）。
 4. **产品面开关只用于解冻/取证**：`XIHE_WORKSPACE_DOCKER_BACKEND=enabled` 只在解冻验证或取证时注入，不写进 `.env.dev` 日常默认（见 `.env.example`）；恢复后 `POST /api/v1/workspaces` 才重新接受 `storageMode=managed_import`。
 
+**测试面不可见项（2026-11-06 审计）**：`WorkspaceServiceCustomPathTest` 的**唯一**用例带 `@Tag("docker-frozen")` ⇒ **整类 100% 默认排除，且 `target/surefire-reports/` 里没有该类的 `.txt`**（Surefire 在执行前过滤，连 `Skipped` 都不计）。全量汇总只会显示"全绿"，查覆盖时**不要**把它当作已跑。恢复：`mvn -o test "-Ddocker.frozen.excludedGroups=" -Dgroups=docker-frozen`（先按上文解冻步骤 1 恢复后端开关）。其余 5 条冻结用例所在类还有别的用例，仍会出现报告（部分执行）。
+
 > 冻结清单与理由只维护在 evidence（`m3-frozen-tests.md`），本文件不复制条目；新增/取消冻结必须同步该 evidence 与本节三面口径。
 
 ## host 车道全矩阵基建阻断（PLAN-0560 补跑发现，2026-10-28 登记；2026-10-29 PLAN-0578 定根因；PLAN-0579 修复；2026-10-29 PLAN-0564 P2 整批复跑收口）

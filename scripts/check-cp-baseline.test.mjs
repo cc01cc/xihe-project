@@ -123,3 +123,55 @@ test('--allow-stale-reports is an explicit escape hatch', () => {
   assert.equal(out.status, 0);
   assert.match(out.stdout, /baseline OK/);
 });
+
+// BL-370 audit follow-up: report health is observational and never changes the exit code.
+function healthFixture() {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cp-health-'));
+  const reports = path.join(root, 'reports');
+  fs.mkdirSync(reports);
+  const baselineFile = path.join(root, 'baseline.json');
+  fs.writeFileSync(baselineFile, JSON.stringify({ entries: [] }));
+  const healthFile = path.join(root, 'cp-report-health.json');
+  const write = (name, summary) =>
+    fs.writeFileSync(path.join(reports, `${name}.txt`), [
+      `Test set: ${name}`,
+      summary,
+      '',
+    ].join('\n'));
+  const run = () => spawnSync(process.execPath, [
+    SCRIPT, '--reports', reports, '--baseline', baselineFile,
+    '--health-file', healthFile, '--allow-stale-reports',
+  ], { encoding: 'utf8' });
+  return { reports, write, run, healthFile };
+}
+
+test('report health: a zero-test class warns but keeps exit 0', () => {
+  const fx = healthFixture();
+  fx.write('com.acme.HealthTest', 'Tests run: 2, Failures: 0, Errors: 0, Skipped: 0');
+  assert.equal(fx.run().status, 0, 'first run records a baseline without warnings');
+  fx.write('com.acme.EmptyTest', 'Tests run: 0, Failures: 0, Errors: 0, Skipped: 0');
+  const out = fx.run();
+  assert.equal(out.status, 0, 'health warnings never change the exit code');
+  assert.match(out.stderr, /zero-test class: com\.acme\.EmptyTest/u);
+});
+
+test('report health: a dropping report count warns', () => {
+  const fx = healthFixture();
+  fx.write('com.acme.OneTest', 'Tests run: 1, Failures: 0, Errors: 0, Skipped: 0');
+  fx.write('com.acme.TwoTest', 'Tests run: 1, Failures: 0, Errors: 0, Skipped: 0');
+  assert.equal(fx.run().status, 0);
+  fs.rmSync(path.join(fx.reports, 'com.acme.TwoTest.txt'));
+  const out = fx.run();
+  assert.equal(out.status, 0);
+  assert.match(out.stderr, /report count dropped: 2 → 1/u);
+});
+
+test('report health: a skipped jump warns', () => {
+  const fx = healthFixture();
+  fx.write('com.acme.SkipTest', 'Tests run: 3, Failures: 0, Errors: 0, Skipped: 0');
+  assert.equal(fx.run().status, 0);
+  fx.write('com.acme.SkipTest', 'Tests run: 3, Failures: 0, Errors: 0, Skipped: 3');
+  const out = fx.run();
+  assert.equal(out.status, 0);
+  assert.match(out.stderr, /skipped jumped: 0 → 3/u);
+});

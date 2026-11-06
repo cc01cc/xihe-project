@@ -23,10 +23,17 @@
  *   node scripts/check-cp-baseline.mjs                       # read default reports + baseline
  *   node scripts/check-cp-baseline.mjs --reports <dir>       # alternate surefire-reports dir
  *   node scripts/check-cp-baseline.mjs --baseline <file>     # alternate baseline JSON
- *   node scripts/check-cp-baseline.mjs --json                # {ok, newFailures, greenEntries, expired}
+ *   node scripts/check-cp-baseline.mjs --json                # {ok, baseline, reportHealth, ...}
+ *   node scripts/check-cp-baseline.mjs --health-file <file>  # alternate report-health state
  *
- * Exit codes: 0 = all failures covered by a fresh baseline; 1 = new failure or expired baseline;
- * 2 = usage / missing reports or baseline (a gate that cannot read evidence must never pass).
+ * Report health (BL-370 audit, 2026-11-06) is **observational only and never changes the exit code**:
+ *   - any `Tests run: 0` report        ⇒ WARN "zero-test class: <class>" (the invisible failure mode);
+ *   - report count dropped vs the last run (≥1) ⇒ WARN;
+ *   - Skipped total jumped vs the last run (≥3) ⇒ WARN.
+ * The last snapshot is a small gitignored file next to the reports
+ * (`packages/control-plane/target/cp-report-health.json`); on the first run it is only recorded,
+ * with no WARNs. Exit codes stay: 0 = covered; 1 = new failure / expired baseline;
+ * 2 = usage or missing evidence (report health is never a reason to fail).
  */
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -45,6 +52,7 @@ function parseArgs(argv) {
     json: false,
     allowStaleReports: false,
     headTime: null,
+    healthFile: null,
   };
   for (let i = 0; i < argv.length; i += 1) {
     if (argv[i] === '--reports') out.reports = path.resolve(argv[++i]);
@@ -52,6 +60,7 @@ function parseArgs(argv) {
     else if (argv[i] === '--json') out.json = true;
     else if (argv[i] === '--allow-stale-reports') out.allowStaleReports = true;
     else if (argv[i] === '--head-time') out.headTime = Number(argv[++i]);
+    else if (argv[i] === '--health-file') out.healthFile = path.resolve(argv[++i]);
   }
   return out;
 }
@@ -108,6 +117,60 @@ function todayIso() {
   return new Date().toLocaleDateString('sv-SE');
 }
 
+/** Per-file summary: `Tests run: N, Failures: F, Errors: E, Skipped: S`. */
+export function parseReportHealth(reportsDir) {
+  if (!fs.existsSync(reportsDir)) return null;
+  const zeroTestClasses = [];
+  let reportCount = 0;
+  let skipped = 0;
+  for (const name of fs.readdirSync(reportsDir)) {
+    if (!name.endsWith('.txt')) continue;
+    reportCount += 1;
+    const text = fs.readFileSync(path.join(reportsDir, name), 'utf8');
+    const summary = /^Tests run: (\d+), Failures: (\d+), Errors: (\d+), Skipped: (\d+)/mu.exec(text);
+    if (!summary) continue;
+    if (Number(summary[1]) === 0) zeroTestClasses.push(name.replace(/\.txt$/u, ''));
+    skipped += Number(summary[4]);
+  }
+  return { reportCount, skipped, zeroTestClasses: zeroTestClasses.sort() };
+}
+
+/**
+ * BL-370 audit follow-up: report health is observational (never changes exit code). A zero-test
+ * class, a shrinking report set, or a skipped jump is exactly how a suite silently stops running.
+ */
+export function checkReportHealth({ reportsDir, healthFile }) {
+  const current = parseReportHealth(reportsDir);
+  if (current === null) return null;
+  let previous = null;
+  try {
+    previous = JSON.parse(fs.readFileSync(healthFile, 'utf8'));
+  } catch {
+    previous = null; // first run (or unreadable state): record a baseline, warn about nothing
+  }
+  const warnings = [];
+  for (const name of current.zeroTestClasses) warnings.push(`zero-test class: ${name}`);
+  if (previous && Number.isInteger(previous.reportCount) && current.reportCount < previous.reportCount) {
+    warnings.push(`report count dropped: ${previous.reportCount} → ${current.reportCount}`);
+  }
+  if (previous && Number.isInteger(previous.skipped) && current.skipped - previous.skipped >= 3) {
+    warnings.push(`skipped jumped: ${previous.skipped} → ${current.skipped}`);
+  }
+  try {
+    fs.mkdirSync(path.dirname(healthFile), { recursive: true });
+    fs.writeFileSync(healthFile, `${JSON.stringify({
+      reportCount: current.reportCount,
+      skipped: current.skipped,
+      zeroTestClasses: current.zeroTestClasses,
+      updatedAt: new Date().toISOString(),
+    }, null, 2)}\n`);
+  } catch {
+    warnings.push(`cannot record report health at ${healthFile}`);
+  }
+  return { ...current, previousReportCount: previous?.reportCount ?? null,
+    previousSkipped: previous?.skipped ?? null, warnings };
+}
+
 export function checkBaseline({ reportsDir, baselineFile, today = todayIso() }) {
   const failures = parseSurefireFailures(reportsDir);
   if (failures === null) {
@@ -153,6 +216,14 @@ function main(argv) {
     process.exitCode = 2;
     return;
   }
+  const health = checkReportHealth({
+    reportsDir: args.reports,
+    healthFile: args.healthFile
+      ?? path.join(path.dirname(args.reports), 'cp-report-health.json'),
+  });
+  if (health) {
+    for (const warning of health.warnings) console.warn(`[cp-baseline] WARN: ${warning}`);
+  }
   const result = checkBaseline({ reportsDir: args.reports, baselineFile: args.baseline });
   if (result.error) {
     console.error(`[cp-baseline] ERROR: ${result.error}`);
@@ -167,6 +238,7 @@ function main(argv) {
       newFailures: result.newFailures,
       greenEntries: result.greenEntries,
       expired: result.expired.map((entry) => entry.test),
+      reportHealth: health,
     })}\n`);
   } else {
     if (result.expired.length > 0) {
