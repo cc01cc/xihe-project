@@ -99,9 +99,17 @@ defineExpose({ toggle });
             <MessageCircle class="size-5" aria-hidden="true" />
         </button>
         <Sheet :open="open" @update:open="(v) => (open = v)">
+            <!--
+            BL-405（W9 390px 走查）：`SheetContent` 基础串里有 `data-[side=bottom]:h-auto`，
+            arbitrary variant 带来的 `[data-side="bottom"]` 属性选择器让它比裸 `h-[75vh]`
+            多一层特异性（0,2,0 > 0,1,0），于是 75vh 一直被 auto 覆盖、内容把 sheet 撑到
+            1.61× 视口（实测 1360.56px / 844px）。修法：用**同 variant** 的
+            `data-[side=bottom]:h-[75vh]` 让 tailwind-merge 顶掉基础串的 `h-auto`（同组冲突、
+            后者胜），再补 `max-h-[75vh]` 作无对抗类的硬兜底。
+        -->
             <SheetContent
                 side="bottom"
-                class="h-[75vh] p-0 gap-0"
+                class="h-[75vh] max-h-[75vh] p-0 gap-0 data-[side=bottom]:h-[75vh]"
                 data-testid="mobile-chat-sheet"
                 @pointer-down-outside="onPointerDownOutside"
             >
