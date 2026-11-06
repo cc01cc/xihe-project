@@ -1,5 +1,6 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { flushPromises, mount } from "@vue/test-utils";
+import type { VueWrapper } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
 import { createI18n } from "vue-i18n";
 import type { Router } from "vue-router";
@@ -94,6 +95,13 @@ const stubs = {
     },
 };
 
+/**
+ * BL-376：**本文件所有挂载都必须经此函数登记**，`afterEach` 统一 `unmount()`。
+ * 原因：布局持久化是 250 ms 合并写入（`createWorkspaceLayoutWriter`）。未被卸载的实例会让
+ * pending timer 活到**下一条用例**里落地，把桌面布局写进"移动端不该持久化"的断言（时红时绿）。
+ */
+const mountedWrappers: VueWrapper[] = [];
+
 function mountWorkbench(
     props: Partial<{
         workspaceId: string;
@@ -101,7 +109,7 @@ function mountWorkbench(
         isMobile: boolean;
     }> = {},
 ) {
-    return mount(WorkspaceWorkbench, {
+    const wrapper = mount(WorkspaceWorkbench, {
         props: {
             workspaceId: "workspace-1",
             sessionId: "session-1",
@@ -109,8 +117,16 @@ function mountWorkbench(
             ...props,
         },
         global: { plugins: [i18n], stubs },
-    });
+    }) as VueWrapper;
+    mountedWrappers.push(wrapper);
+    return wrapper;
 }
+
+afterEach(() => {
+    // 卸载会把 pending 的合并写入 flush 在本用例内（`onBeforeUnmount`），下一条用例的
+    // `localStorage.clear()` 就能清掉它 —— 这才是"没有活实例的 timer 跨用例"的真解。
+    for (const wrapper of mountedWrappers.splice(0)) wrapper.unmount();
+});
 
 function storedLayout(workspaceId = "workspace-1"): Record<string, unknown> {
     return JSON.parse(localStorage.getItem(`xihe-layout-ws:${workspaceId}`) ?? "{}") as Record<

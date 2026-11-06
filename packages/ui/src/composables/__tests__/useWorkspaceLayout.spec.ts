@@ -471,6 +471,33 @@ describe("PLAN-0582 S3b: draggable columns, dock mode and anti-squeeze", () => {
         expect(readWorkspaceLayout("ws-1").treeWidth).toBe(210);
     });
 
+    // BL-376：合并写入的 timer 不能活过它所属的作用域 —— 否则"已死实例的延迟写"会落到下一个
+    // 使用者身上（测试里是下一条用例，真实场景是离开页面后仍在写）。
+    it("does not persist a pending coalesced write after its scope is disposed (BL-376)", async () => {
+        const scope = effectScope();
+        const writer = scope.run(() => createWorkspaceLayoutWriter("ws-376", 20))!;
+        writer.schedule({ ...defaultWorkspaceLayout(), treeWidth: 300 });
+        const key = `${WORKSPACE_LAYOUT_STORAGE_PREFIX}ws-376`;
+        expect(localStorage.getItem(key)).toBeNull();
+
+        scope.stop();
+        await new Promise((resolve) => setTimeout(resolve, 60));
+
+        expect(localStorage.getItem(key)).toBeNull();
+    });
+
+    // 对照组：作用域还在时同样的 timer 会写 —— 证明上一条测的是"销毁"，不是"timer 根本没排上"。
+    it("still persists when the scope stays alive (BL-376 control)", async () => {
+        const scope = effectScope();
+        const writer = scope.run(() => createWorkspaceLayoutWriter("ws-376b", 20))!;
+        writer.schedule({ ...defaultWorkspaceLayout(), treeWidth: 260 });
+
+        await new Promise((resolve) => setTimeout(resolve, 60));
+
+        expect(readWorkspaceLayout("ws-376b").treeWidth).toBe(260);
+        scope.stop();
+    });
+
     it("yields the tree first and only then floats the dock (spec §1.5-C)", () => {
         // Plenty of room: nothing yields.
         expect(
