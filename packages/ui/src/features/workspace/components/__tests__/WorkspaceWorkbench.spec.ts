@@ -671,3 +671,47 @@ describe("WorkspaceWorkbench participants tab (PLAN-0623 U1)", () => {
         wrapper.unmount();
     });
 });
+
+// BL-379：pagehide/visibilitychange 必须随实例成对移除。旧实现注册匿名闭包且永不移除 ⇒
+// 每次挂载净增一对死监听器，把整棵已卸载组件（layout ref、writer、store 引用链）扣在
+// window/document 上不可 GC。3 轮挂载-卸载后净存活必须为 0 —— 若实现丢了 remove 路径，
+// 净存活 = 3，本用例红。spy 必须在 mount 前安装、finally 里 mockRestore，避免污染其他用例。
+describe("WorkspaceWorkbench pagehide/visibilitychange listener pairing (BL-379)", () => {
+    it("registers and removes pagehide/visibilitychange listeners pairwise across 3 mount cycles", () => {
+        const addWindowListener = vi.spyOn(window, "addEventListener");
+        const removeWindowListener = vi.spyOn(window, "removeEventListener");
+        const addDocumentListener = vi.spyOn(document, "addEventListener");
+        const removeDocumentListener = vi.spyOn(document, "removeEventListener");
+        try {
+            for (let round = 0; round < 3; round += 1) {
+                const wrapper = mountWorkbench();
+                wrapper.unmount();
+            }
+
+            const pagehideAdds = addWindowListener.mock.calls.filter(
+                ([type]) => type === "pagehide",
+            );
+            const pagehideRemoves = removeWindowListener.mock.calls.filter(
+                ([type]) => type === "pagehide",
+            );
+            const visibilityAdds = addDocumentListener.mock.calls.filter(
+                ([type]) => type === "visibilitychange",
+            );
+            const visibilityRemoves = removeDocumentListener.mock.calls.filter(
+                ([type]) => type === "visibilitychange",
+            );
+            expect(pagehideAdds).toHaveLength(3);
+            expect(pagehideRemoves).toHaveLength(3);
+            expect(visibilityAdds).toHaveLength(3);
+            expect(visibilityRemoves).toHaveLength(3);
+            // 净存活 0：没有 remove 路径时这里 = 3，抓的就是泄漏本体。
+            expect(pagehideAdds.length - pagehideRemoves.length).toBe(0);
+            expect(visibilityAdds.length - visibilityRemoves.length).toBe(0);
+        } finally {
+            addWindowListener.mockRestore();
+            removeWindowListener.mockRestore();
+            addDocumentListener.mockRestore();
+            removeDocumentListener.mockRestore();
+        }
+    });
+});
