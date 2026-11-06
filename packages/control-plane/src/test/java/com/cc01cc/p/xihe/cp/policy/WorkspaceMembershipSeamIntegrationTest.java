@@ -27,7 +27,7 @@ import org.springframework.web.client.RestTemplate;
 /**
  * PLAN-0610 W3-3: the workspace-membership seam against real PostgreSQL.
  *
- * <p>Three claims, each cross-surface (the point of round-4 P2-5 is that all readers agree):</p>
+ * <p>Four claims, each cross-surface (the point of round-4 P2-5 is that all readers agree):</p>
  *
  * <ol>
  *   <li><b>Creation</b> binds the creator to {@code WS_OWNER}, and the member API reports them as
@@ -37,6 +37,9 @@ import org.springframework.web.client.RestTemplate;
  *       three readers that used to query {@code workspace_users} directly.</li>
  *   <li>A member removal through the API drops the binding, so every reader stops admitting the
  *       subject (V89 dropped the legacy table, so the binding is the only membership fact).</li>
+ *   <li><b>Reads stay out of the audit table</b> (PLAN-0651 V7): three identical member-list GETs
+ *       add no {@code audit_logs} rows, while a rejection the guard must record adds exactly one —
+ *       the control that proves the counter could have moved at all.</li>
  * </ol>
  */
 class WorkspaceMembershipSeamIntegrationTest extends AbstractIntegrationTest {
@@ -193,6 +196,59 @@ class WorkspaceMembershipSeamIntegrationTest extends AbstractIntegrationTest {
         assertEquals("none", fields.get("source"));
     }
 
+    /**
+     * PLAN-0651 T4.5 / verify V7: the member list is one of the four named read faces, so three
+     * identical GETs must not append a row per request to {@code audit_logs}. The rejected
+     * escalation after the reads is the positive control: "the count did not move" is also what an
+     * unused table reports, so the same test proves the counter is live — a decision the guard must
+     * record moves it by exactly one row.
+     *
+     * <p>V7's write-face clause ("an allowed write keeps its existing audit row") is covered by the
+     * role/binding and member write tests, so this case stays on the read face plus the counter's
+     * liveness.</p>
+     */
+    @Test
+    void memberListReadsDoNotWriteAuditRowsButADeniedGrantStillDoes() throws Exception {
+        String ownerToken = register("seam-audit-owner-" + UUID.randomUUID() + "@test.com");
+        String workspaceId = createWorkspace(ownerToken, "seam-audit");
+        // MANAGE_ROLES without the super-admin's atom set: the escalation guard rejects the grant.
+        String adminToken = instanceAdmin("seam-audit-admin-" + UUID.randomUUID() + "@test.com");
+        String subjectId = userIdOf(
+                register("seam-audit-subject-" + UUID.randomUUID() + "@test.com"));
+
+        int before = auditRows();
+        String deniedSql = "SELECT COUNT(*) FROM audit_logs"
+                + " WHERE action = 'role_grant_guard_denied'";
+        int deniedBefore = countRows(deniedSql);
+
+        // Same actor, same route, same query parameters (this endpoint has no paging or filter).
+        for (int attempt = 1; attempt <= 3; attempt++) {
+            ResponseEntity<String> read = call(HttpMethod.GET,
+                    "/api/v1/workspaces/" + workspaceId + "/members", null, ownerToken, workspaceId);
+            assertEquals(HttpStatus.OK, read.getStatusCode(),
+                    "member-list GET #" + attempt + ": " + read.getBody());
+        }
+        assertEquals(before, auditRows(),
+                "V7: three member-list GETs must leave the audit_logs row count unchanged");
+        assertEquals(deniedBefore, countRows(deniedSql),
+                "the read face must not fabricate a denial row either");
+
+        // Positive control: the guard records a rejection in an independent transaction, so a denial
+        // that must be remembered moves the table-wide count by exactly one row.
+        ResponseEntity<String> denied = call(HttpMethod.PUT, "/api/v1/bindings?scope=instance",
+                Map.of("bindings", List.of(Map.of("subjectId", subjectId,
+                        "roleId", roleId("SUPER_ADMIN")))), adminToken);
+        assertEquals(HttpStatus.FORBIDDEN, denied.getStatusCode(), denied.getBody());
+        String deniedBody = denied.getBody();
+        assertNotNull(deniedBody, "a 403 must carry a problem body");
+        assertTrue(deniedBody.contains("PRIVILEGE_ESCALATION"), deniedBody);
+
+        assertEquals(before + 1, auditRows(),
+                "the rejected escalation adds exactly its one audited decision row");
+        assertEquals(deniedBefore + 1, countRows(deniedSql),
+                "the added row is the guard's denial, not a read-face row");
+    }
+
     // ── fixtures / helpers ──────────────────────────────────────────────────
 
     private String superAdmin(String email) throws Exception {
@@ -203,6 +259,23 @@ class WorkspaceMembershipSeamIntegrationTest extends AbstractIntegrationTest {
         jdbc.update("INSERT INTO role_bindings (id, role_id, subject_type, subject_id, scope_type,"
                         + " granted_at) SELECT CAST(? AS UUID), r.id, 'user', CAST(? AS UUID),"
                         + " 'instance', NOW() FROM roles r WHERE r.name = 'SUPER_ADMIN'",
+                UUID.randomUUID().toString(), userId);
+        materializeInstance(userId);
+        return login(email);
+    }
+
+    /**
+     * A real instance {@code ADMIN} (MANAGE_ROLES without the super-admin's atom set): the
+     * plausible-requester shape for the grant-guard rejection used as the V7 positive control.
+     */
+    private String instanceAdmin(String email) throws Exception {
+        register(email);
+        String userId = userIdOf(login(email));
+        jdbc.update("DELETE FROM role_bindings WHERE subject_type = 'user'"
+                + " AND subject_id = CAST(? AS UUID) AND scope_type = 'instance'", userId);
+        jdbc.update("INSERT INTO role_bindings (id, role_id, subject_type, subject_id, scope_type,"
+                        + " granted_at) SELECT CAST(? AS UUID), r.id, 'user', CAST(? AS UUID),"
+                        + " 'instance', NOW() FROM roles r WHERE r.name = 'ADMIN'",
                 UUID.randomUUID().toString(), userId);
         materializeInstance(userId);
         return login(email);
@@ -301,6 +374,11 @@ class WorkspaceMembershipSeamIntegrationTest extends AbstractIntegrationTest {
                 + " AND subject_id = CAST(? AS UUID) AND source = 'role'"
                 + " AND scope_type = 'workspace' AND scope_id = CAST(? AS UUID)",
                 userId, workspaceId);
+    }
+
+    /** Table-wide audit row count; the V7 read-face assertion compares it across the GETs. */
+    private int auditRows() {
+        return countRows("SELECT COUNT(*) FROM audit_logs");
     }
 
     private int countRows(String sql, Object... args) {
