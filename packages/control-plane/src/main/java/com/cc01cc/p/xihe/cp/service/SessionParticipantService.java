@@ -10,6 +10,8 @@ import com.cc01cc.p.xihe.cp.entity.SessionParticipantCursor;
 import com.cc01cc.p.xihe.cp.entity.User;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.cc01cc.p.xihe.cp.policy.GrantAuthorizationService;
+import com.cc01cc.p.xihe.cp.policy.RequesterAuthority;
+import com.cc01cc.p.xihe.cp.policy.ToolFaceRegistry;
 import com.cc01cc.p.xihe.cp.repository.AgentPrincipalRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionParticipantCursorRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionParticipantRepository;
@@ -74,6 +76,8 @@ public class SessionParticipantService {
     private final GrantAuthorizationService grantAuthorizationService;
     /** PLAN-0668 D1: the single visibility primitive (also used by SessionService). */
     private final SessionReadAccess sessionReadAccess;
+    /** PLAN-0651 T1.5 (proposal B): emits the canonical {@code action_atom_denied} deny stream. */
+    private final RequesterAuthority requesterAuthority;
     private final com.cc01cc.p.xihe.cp.scheduled.WakeScheduleProjectionService wakeScheduleProjectionService;
     /** PLAN-0660 T5.1/T5.2: session max sequence (clamp) + the derived unread aggregate. */
     private final EventStoreRepository eventStoreRepository;
@@ -104,10 +108,11 @@ public class SessionParticipantService {
                 com.cc01cc.p.xihe.cp.scheduled.WakeScheduleProjectionService wakeScheduleProjectionService,
             EventStoreRepository eventStoreRepository,
             SessionReadAccess sessionReadAccess,
-            javax.sql.DataSource dataSource) {
+            javax.sql.DataSource dataSource,
+            RequesterAuthority requesterAuthority) {
         this(participantRepository, cursorRepository, sessionRepository, agentPrincipalRepository,
                 userRepository, workspaceService, grantAuthorizationService, wakeScheduleProjectionService,
-                eventStoreRepository, isPostgres(dataSource), sessionReadAccess);
+                eventStoreRepository, isPostgres(dataSource), sessionReadAccess, requesterAuthority);
     }
 
     /** Legacy/H2 constructor: no {@code DataSource} ⇒ the Java aggregation path (see BL-273). */
@@ -120,10 +125,11 @@ public class SessionParticipantService {
                                      GrantAuthorizationService grantAuthorizationService,
                 com.cc01cc.p.xihe.cp.scheduled.WakeScheduleProjectionService wakeScheduleProjectionService,
             EventStoreRepository eventStoreRepository,
-            SessionReadAccess sessionReadAccess) {
+            SessionReadAccess sessionReadAccess,
+            RequesterAuthority requesterAuthority) {
         this(participantRepository, cursorRepository, sessionRepository, agentPrincipalRepository,
                 userRepository, workspaceService, grantAuthorizationService, wakeScheduleProjectionService,
-                eventStoreRepository, false, sessionReadAccess);
+                eventStoreRepository, false, sessionReadAccess, requesterAuthority);
     }
 
     private SessionParticipantService(SessionParticipantRepository participantRepository,
@@ -135,7 +141,7 @@ public class SessionParticipantService {
                                       GrantAuthorizationService grantAuthorizationService,
                 com.cc01cc.p.xihe.cp.scheduled.WakeScheduleProjectionService wakeScheduleProjectionService,
             EventStoreRepository eventStoreRepository, boolean sqlUnreadAggregation,
-            SessionReadAccess sessionReadAccess) {
+            SessionReadAccess sessionReadAccess, RequesterAuthority requesterAuthority) {
         this.wakeScheduleProjectionService = wakeScheduleProjectionService;
         this.eventStoreRepository = eventStoreRepository;
         this.participantRepository = participantRepository;
@@ -147,6 +153,7 @@ public class SessionParticipantService {
         this.grantAuthorizationService = grantAuthorizationService;
         this.sqlUnreadAggregation = sqlUnreadAggregation;
         this.sessionReadAccess = sessionReadAccess;
+        this.requesterAuthority = requesterAuthority;
     }
 
     private static boolean isPostgres(javax.sql.DataSource dataSource) {
@@ -603,8 +610,25 @@ public class SessionParticipantService {
 
     private void requireManage(String actorId, String workspaceId, Session session) {
         if (!canManage(actorId, workspaceId, session)) {
+            // PLAN-0651 T1.5 (proposal B): the participant-face denial joins the canonical
+            // action_atom_denied stream; the face atom is MANAGE_WORKSPACE_AGENTS, and a subject
+            // denied here holds it from no source (B4: atom layer only, never audit_logs).
+            requesterAuthority.logActionAtomDenied(ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_AGENTS,
+                    uuidOrNull(actorId), uuidOrNull(workspaceId));
             throw new CpApiException(HttpStatus.FORBIDDEN, "PARTICIPANT_MANAGE_FORBIDDEN",
                     "Managing participants requires the session owner or MANAGE_WORKSPACE_AGENTS");
+        }
+    }
+
+    /** uuid or {@code null} (logged as {@code -} in the deny stream); never throws. */
+    private static UUID uuidOrNull(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        try {
+            return UUID.fromString(value.trim());
+        } catch (IllegalArgumentException e) {
+            return null;
         }
     }
 

@@ -193,6 +193,20 @@ CP 的 `AuditLogger` 记录所有 MCP 工具调用和策略决策：
 - 内存 `recentRecords` 仅保留最近 1000 条作为查询视图
 - PLAN-0558 认证审计：`login_failed` 写 AUDIT JSONL；`login_locked`/`login_unlocked` 另写 durable `audit_logs`。字段仅掩码邮箱、IP、reason 与 requestId，不含密码、哈希或 token。
 
+### 5.1 策略拒绝流（PLAN-0651 T1.5 提案 B）
+
+CP 权限面的 action-atom 拒绝决策有一条 **WARN 单行流**，与 AUDIT/`audit_logs` 通道分开：`RequesterAuthority.logActionAtomDenied` 以 `[POLICY]` 前缀输出 `event=action_atom_denied`，每个被拒原子一行，**不写 audit_logs**。
+
+| 字段 | 取值 | 约束 |
+|------|------|------|
+| `event` | `action_atom_denied` | 固定 |
+| `atom` | `PermissionAtomCatalog` 枚举名 | 仅目录枚举值；非目录决策记 `-` |
+| `subject` | 主体 uuid | 缺失或非 uuid 记 `-` |
+| `workspaceId` | 工作区 uuid | 缺失记 `-`（实例作用域拒绝点恒为 `-`） |
+| `source` | `role` / `spawn` / `template` / `credential_binding` / `agent_default`，多个用 `,` 连接；无任何来源命中记 `none` | 仅 `GrantSources.EVALUATION_SOURCES` 值域 |
+
+红线（B4）：只记 uuid 与枚举，**不记用户名/邮箱/内容/resource 原文**；一行一拒绝、WARN 级。覆盖面（B2）：成员面（`WorkspaceMemberService.authorize`）、参与者面（`SessionParticipantService.requireManage`）、Agent 主体面（`AgentPrincipalService.requireDisableAuthority`）、spawn 面（`AgentSpawnAuthorizationService.gate`）与授予越权（`RequesterAuthority.requireMayGrant`，替代该处旧 `binding_write_denied reason=privilege_escalation` 行；`requireWorkspaceBindingAuthority` 的 `binding_write_denied` 保留不变）。
+
 ## 6. 日志安全（脱敏 / 关联 ID / 泄露扫描）
 
 ### 6.1 序列化层统一脱敏

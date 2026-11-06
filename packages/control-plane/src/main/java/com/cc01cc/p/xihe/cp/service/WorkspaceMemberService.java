@@ -179,6 +179,11 @@ public class WorkspaceMemberService {
                 : memberships.roleOf(workspaceUuid, UUID.fromString(callerUserId));
         if (membership.isEmpty()) {
             if (!instanceAdmin) {
+                // PLAN-0651 T1.5 (proposal B): the member-face denial joins the canonical
+                // action_atom_denied stream — atom layer only (B4), source=none expected here.
+                requesterAuthority.logActionAtomDenied(
+                        ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_MEMBERS,
+                        callerUserId == null ? null : UUID.fromString(callerUserId), workspaceUuid);
                 throw forbidden();
             }
             // Ruling #3: instance ADMIN bypasses the membership gate, but an

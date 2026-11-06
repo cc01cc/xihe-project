@@ -5,8 +5,12 @@ import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
 import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.entity.SessionParticipant;
 import com.cc01cc.p.xihe.cp.entity.SessionParticipantCursor;
+import com.cc01cc.p.xihe.cp.policy.AuthzContext;
 import com.cc01cc.p.xihe.cp.policy.GrantAuthorizationService;
+import com.cc01cc.p.xihe.cp.policy.GrantIntersectionEvaluator;
+import com.cc01cc.p.xihe.cp.policy.RequesterAuthority;
 import com.cc01cc.p.xihe.cp.repository.AgentPrincipalRepository;
+import com.cc01cc.p.xihe.cp.repository.AuthorizationGrantRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionParticipantCursorRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionParticipantRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
@@ -71,7 +75,9 @@ class SessionParticipantServiceTest {
         service = new SessionParticipantService(participants, cursors, sessions, agents, users,
                 workspaces, grants,
                 mock(com.cc01cc.p.xihe.cp.scheduled.WakeScheduleProjectionService.class),
-                mock(com.cc01cc.p.xihe.cp.context.repository.EventStoreRepository.class), access);
+                mock(com.cc01cc.p.xihe.cp.context.repository.EventStoreRepository.class), access,
+                new RequesterAuthority(mock(AuthorizationGrantRepository.class),
+                        mock(GrantIntersectionEvaluator.class), mock(AuthzContext.class)));
 
         session = mock(Session.class);
         when(session.getId()).thenReturn(SESSION_ID);

@@ -157,6 +157,26 @@ public class RequesterAuthority {
         return Set.copyOf(sources);
     }
 
+    /**
+     * PLAN-0651 T1.5 (proposal B, Lead-approved 2026-11-06): one WARN line per denied
+     * action-atom authority decision — {@code [POLICY] event=action_atom_denied}, the canonical
+     * deny audit stream (T1.5-proposals.md B2/B3). Every field is a closed vocabulary: the atom
+     * is a {@link PermissionAtomCatalog} name (or {@code -} when the denial is not a catalog
+     * decision), subject and workspace are uuids ({@code -} when absent), and {@code source}
+     * lists the {@link GrantSources#EVALUATION_SOURCES} rows carrying the atom — {@code none}
+     * when the subject holds it from no source at all, the "why was this denied" key. No names,
+     * emails, resource strings or content fragments (B4): a denial stays at the atom layer and
+     * never goes to {@code audit_logs}.
+     */
+    public void logActionAtomDenied(String atom, UUID subjectId, UUID workspaceId) {
+        String catalogAtom = PermissionAtomCatalog.allAtomNames().contains(atom) ? atom : "-";
+        Set<String> sources = atomSources(subjectId, catalogAtom, workspaceId);
+        logger.warn("[POLICY] event=action_atom_denied atom={} subject={} workspaceId={} source={}",
+                catalogAtom, subjectId == null ? "-" : subjectId,
+                workspaceId == null ? "-" : workspaceId,
+                sources.isEmpty() ? "none" : String.join(",", sources));
+    }
+
     /** Canonical action/resource rows at the evaluator's exact scope, retaining resource bounds. */
     public Set<GrantIntersectionEvaluator.PermissionAtom> actionPermissions(UUID subjectId,
                                                                             UUID workspaceId) {
@@ -206,7 +226,8 @@ public class RequesterAuthority {
      * Escalation check (design §5 {@code 403 PRIVILEGE_ESCALATION}): every atom of the roles being
      * bound must already be held by the caller in the same scope. Action atoms are compared against
      * the scoped grant union; capability atoms against {@link AuthzContext}, which is where they
-     * live.
+     * live. A denied target atom is logged through {@link #logActionAtomDenied} (PLAN-0651 T1.5
+     * proposal B).
      */
     public void requireMayGrant(Set<String> requestedAtoms, UUID workspaceId) {
         UUID subjectId = currentSubjectId();
@@ -220,8 +241,7 @@ public class RequesterAuthority {
                     ? mayGrantCapability(capabilities, atom, workspaceId)
                     : held.contains(atom);
             if (!allowed) {
-                logger.warn("[POLICY] event=binding_write_denied atom={} workspaceId={}"
-                        + " reason=privilege_escalation", atom, workspaceId);
+                logActionAtomDenied(atom, subjectId, workspaceId);
                 throw new CpApiException(HttpStatus.FORBIDDEN, "PRIVILEGE_ESCALATION",
                         "Cannot grant an atom the caller does not hold: " + atom);
             }

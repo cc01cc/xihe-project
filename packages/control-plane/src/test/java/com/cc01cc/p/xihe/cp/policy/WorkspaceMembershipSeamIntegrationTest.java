@@ -143,6 +143,56 @@ class WorkspaceMembershipSeamIntegrationTest extends AbstractIntegrationTest {
         assertEquals(List.of("WS_OWNER"), workspaceTierRoles(ownerId, workspaceId));
     }
 
+    @Test
+    void nonMemberDenialIsLoggedAsActionAtomDeniedWithSourceNone() throws Exception {
+        // PLAN-0651 T1.5 (proposal B, B5): the member-face denial must produce the canonical
+        // [POLICY] event=action_atom_denied line with the four closed fields, and a subject
+        // denied here holds MANAGE_WORKSPACE_MEMBERS from no evaluation source (source=none).
+        String ownerToken = register("seam-atom-owner@test.com");
+        String workspaceId = createWorkspace(ownerToken, "seam-atom");
+        String outsiderToken = register("seam-atom-outsider@test.com");
+        String outsiderId = userIdOf(outsiderToken);
+
+        ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> appender =
+                new ch.qos.logback.core.read.ListAppender<>();
+        appender.start();
+        ch.qos.logback.classic.Logger policyLogger =
+                (ch.qos.logback.classic.Logger) org.slf4j.LoggerFactory.getLogger(RequesterAuthority.class);
+        policyLogger.addAppender(appender);
+        ResponseEntity<String> denied;
+        try {
+            // The headerless member route reaches the member service itself (the tenant gate
+            // only guards the header path), so this 403 comes from the membership matrix.
+            denied = call(HttpMethod.GET, "/api/v1/workspaces/" + workspaceId + "/members",
+                    null, outsiderToken);
+        } finally {
+            policyLogger.detachAppender(appender);
+        }
+        assertEquals(HttpStatus.FORBIDDEN, denied.getStatusCode(), denied.getBody());
+
+        ch.qos.logback.classic.spi.ILoggingEvent event = appender.list.stream()
+                .filter(candidate -> candidate.getFormattedMessage()
+                        .contains("event=action_atom_denied"))
+                .filter(candidate -> candidate.getFormattedMessage()
+                        .contains("subject=" + outsiderId))
+                .findFirst().orElse(null);
+        assertNotNull(event, "the member-face denial must log action_atom_denied: " + appender.list);
+        assertEquals(ch.qos.logback.classic.Level.WARN, event.getLevel());
+        java.util.Map<String, String> fields = new java.util.LinkedHashMap<>();
+        for (String part : event.getFormattedMessage().split(" ")) {
+            int eq = part.indexOf('=');
+            if (eq > 0) {
+                fields.put(part.substring(0, eq), part.substring(eq + 1));
+            }
+        }
+        // Closed vocabulary (B4): exactly event + the four fields, no resource strings.
+        assertEquals(5, fields.size(), event.getFormattedMessage());
+        assertEquals("MANAGE_WORKSPACE_MEMBERS", fields.get("atom"));
+        assertEquals(outsiderId, fields.get("subject"));
+        assertEquals(workspaceId, fields.get("workspaceId"));
+        assertEquals("none", fields.get("source"));
+    }
+
     // ── fixtures / helpers ──────────────────────────────────────────────────
 
     private String superAdmin(String email) throws Exception {
