@@ -18,6 +18,14 @@
  *       Seeds one session **straight into PostgreSQL** (never through the API: otherwise the numbers
  *       describe write throughput instead of the read path under audit).
  *
+ *   node scripts/perf/run-baseline.mjs seed-runs --container <pg> --db <name> --tier 1k|5k|20k [--apply]
+ *       PLAN-0682 T0.1 (BL-382): run-linked messages. One `chat_runs` row per round
+ *       (`origin='user_submission'`, deterministic `idempotency_key='bl382-<session>-<round>'`,
+ *       `ON CONFLICT (user_id, session_id, idempotency_key) DO NOTHING`), then two messages per run
+ *       (USER then ASSISTANT) on the root branch, same content mix as `seed`. All UUIDs are
+ *       deterministic (md5-cast), so a re-run conflicts on every row and counts stay put. Requires
+ *       `seed-fixtures` first (chat_runs.branch_id / messages.branch_id NOT NULL, V43).
+ *
  *   node scripts/perf/run-baseline.mjs seed-attachment --container <pg> --db <name> [--apply]
  *       Seeds the 500 MB single-attachment scenario (M3b). Files are written to the storage root
  *       directly because attachments do not go through a JSON API — noted in the report.
@@ -162,6 +170,83 @@ END $$;
     execFileSync("docker", ["exec", container, "psql", "-U", "xihe", "-d", db, "-v",
         "ON_ERROR_STOP=1", "-c", sql], { stdio: "inherit" });
     say({ phase: "seed", tier, seeded: total, sessionId });
+}
+
+function seedRuns() {
+    // PLAN-0682 T0.1 (BL-382): run-linked messages for the store-residency measurement. Schema per
+    // design F3: chat_runs needs origin (V39 CHECK) + branch_id (V43 NOT NULL) + the
+    // (user_id, session_id, idempotency_key) unique (V1:147); messages.run_id FK (V1:166).
+    // Idempotency = deterministic UUIDs (md5-cast) + ON CONFLICT DO NOTHING (design decision 6), so
+    // a re-run skips every existing row and the in-transaction count checks below still pass.
+    const tier = requireArg("tier");
+    const total = TIERS[tier];
+    if (total === undefined) {
+        console.error(`unknown --tier ${tier}; expected one of ${Object.keys(TIERS).join(", ")}`);
+        process.exit(2);
+    }
+    const runs = total / 2; // 1 round = USER + ASSISTANT = 2 messages per run (TIERS are all even)
+    const container = requireArg("container");
+    const db = requireArg("db");
+    const sessionId = arg("session", crypto.randomUUID());
+    const sql = `
+DO $$
+DECLARE
+  sid uuid := '${sessionId}';
+  br uuid;
+  uid uuid;
+  ws uuid;
+  n bigint;
+BEGIN
+  SELECT id INTO br FROM session_branches WHERE session_id = sid ORDER BY created_at LIMIT 1;
+  IF br IS NULL THEN
+    RAISE EXCEPTION 'session % has no branch; run seed-fixtures first (chat_runs.branch_id NOT NULL, V43)', sid;
+  END IF;
+  SELECT user_id, workspace_id INTO uid, ws FROM sessions WHERE id = sid;
+  IF uid IS NULL OR ws IS NULL THEN
+    RAISE EXCEPTION 'session % not found or missing user/workspace; run seed-fixtures first', sid;
+  END IF;
+  -- one run per round; the uq (user_id, session_id, idempotency_key) makes a re-run a no-op.
+  INSERT INTO chat_runs (id, session_id, user_id, workspace_id, idempotency_key, request_hash,
+                         status, origin, branch_id)
+  SELECT md5('bl382:' || sid || ':run:' || j)::uuid, sid, uid, ws,
+         'bl382-' || sid || '-' || j, 'bl382-run-' || j,
+         'succeeded', 'user_submission', br
+  FROM generate_series(1, ${runs}) AS j
+  ON CONFLICT (user_id, session_id, idempotency_key) DO NOTHING;
+  -- two messages per run (USER then ASSISTANT) on the root branch; run_id is the deterministic
+  -- uuid of round (i + 1) / 2, so coverage is exact by construction. Same content mix as seed().
+  INSERT INTO messages (id, session_id, role, content, created_at, branch_id, run_id)
+  SELECT md5('bl382:' || sid || ':msg:' || i)::uuid, sid,
+         CASE WHEN i % 2 = 0 THEN 'ASSISTANT' ELSE 'USER' END,
+         CASE WHEN i % 20 = 0 THEN repeat('long-form text ', 320)
+              WHEN i % 10 = 0 THEN '{"toolCallId":"t' || i || '","name":"search","result":"ok"}'
+              ELSE 'message ' || i END,
+         now() + (i || ' milliseconds')::interval,
+         br,
+         md5('bl382:' || sid || ':run:' || ((i + 1) / 2))::uuid
+  FROM generate_series(1, ${total}) AS i
+  ON CONFLICT (id) DO NOTHING;
+  -- verify inside the same transaction: exact run count + 100% run_id coverage, or nothing commits.
+  SELECT count(*) INTO n FROM chat_runs
+  WHERE session_id = sid AND idempotency_key LIKE 'bl382-' || sid || '-%';
+  IF n <> ${runs} THEN
+    RAISE EXCEPTION 'seed-runs: chat_runs count % <> % for session %', n, ${runs}, sid;
+  END IF;
+  SELECT count(*) INTO n
+  FROM messages m JOIN chat_runs r ON m.run_id = r.id
+  WHERE m.session_id = sid AND r.idempotency_key LIKE 'bl382-' || sid || '-%';
+  IF n <> ${total} THEN
+    RAISE EXCEPTION 'seed-runs: linked messages % <> % for session %', n, ${total}, sid;
+  END IF;
+END $$;
+`;
+    if (!flag("apply")) {
+        say({ phase: "seed-runs", dryRun: true, tier, seeded: total, runs, sessionId });
+        return;
+    }
+    execFileSync("docker", ["exec", container, "psql", "-U", "xihe", "-d", db, "-v",
+        "ON_ERROR_STOP=1", "-c", sql], { stdio: "inherit" });
+    say({ phase: "seed-runs", tier, seeded: total, runs, sessionId });
 }
 
 function seedAttachment() {
@@ -365,11 +450,12 @@ switch (phase) {
     case "boot": boot(); break;
     case "seed-fixtures": seedFixtures(); break;
     case "seed": seed(); break;
+    case "seed-runs": seedRuns(); break;
     case "seed-attachment": seedAttachment(); break;
     case "run": await readLoop({ mode: "run" }); break;
     case "dispatch": await readLoop({ mode: "dispatch" }); break;
     case "teardown": teardown(); break;
     default:
-        console.error("usage: run-baseline.mjs boot|seed|seed-attachment|run|dispatch|teardown [options]");
+        console.error("usage: run-baseline.mjs boot|seed-fixtures|seed|seed-runs|seed-attachment|run|dispatch|teardown [options]");
         process.exit(2);
 }
