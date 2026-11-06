@@ -250,6 +250,28 @@ describe("WorkspaceAgentsPanel create gating (T5.1 default WORKSPACE)", () => {
         expect(
             wrapper.find('[data-testid="agent-principal-create"]').attributes("disabled"),
         ).toBeDefined();
+        expect(wrapper.find('[data-testid="agent-create-forbidden-hint"]').exists()).toBe(false);
+        expect(wrapper.text()).toContain(i18n.global.t("workspace.agentPermissionUnavailable"));
+    });
+
+    it("shows a pending permission state until the projection resolves", async () => {
+        admin.value = false;
+        let resolvePermissions!: (value: unknown) => void;
+        apiMock.getSelfPermissions.mockReturnValue(
+            new Promise((resolve) => {
+                resolvePermissions = resolve;
+            }),
+        );
+        const wrapper = mountPanel();
+
+        expect(wrapper.text()).toContain(i18n.global.t("workspace.agentPermissionLoading"));
+        expect(wrapper.find('[data-testid="agent-create-forbidden-hint"]').exists()).toBe(false);
+
+        resolvePermissions(CREATE_ACCOUNT_MISSING);
+        await flushPromises();
+
+        expect(wrapper.find('[data-testid="agent-create-forbidden-hint"]').exists()).toBe(true);
+        expect(wrapper.text()).not.toContain(i18n.global.t("workspace.agentPermissionLoading"));
     });
 });
 
