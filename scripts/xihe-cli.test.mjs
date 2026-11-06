@@ -4828,3 +4828,555 @@ test('PLAN-0643 R7: --raw truncation keeps the partial bytes and never claims su
   assert.ok(Buffer.byteLength(result.data.bodyText, 'utf8') <= 4, 'the printed body is capped at the byte limit');
   assert.ok(result.data.bodyText.startsWith('中'), 'the readable prefix is preserved');
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PLAN-0643 T2 (M6-1): config get/set/unset/meta/put + config-locks (V36–V43)
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function startConfigCpMock({
+  envOverrides = { runMaxTurns: '12' },
+  putInstanceStatus = 200,
+  putInstanceCode = 'CONFIG_KEY_LOCKED',
+  deleteKeyStatus = 200,
+  deleteKeyCode = 'CONFIG_ENV_LOCKED',
+  locksStatus = 200,
+} = {}) {
+  const state = {
+    loginRequests: 0,
+    configGetRequests: 0,
+    lastConfigQuery: null,
+    lastConfigDomain: null,
+    instancePutRequests: 0,
+    lastPutDomain: null,
+    lastPutBody: null,
+    deleteKeyRequests: 0,
+    lastDeleteDomain: null,
+    lastDeleteKey: null,
+    domainPutRequests: 0,
+    lastDomainPutLayer: null,
+    lastDomainPutDomain: null,
+    lastDomainPutBody: null,
+    lastDomainPutQuery: null,
+    metaRequests: 0,
+    lastMetaQuery: null,
+    locksListRequests: 0,
+    lastLocksQuery: null,
+    locksSetRequests: 0,
+    lastLocksPutPath: null,
+    lastLocksPutBody: null,
+    locksDeleteRequests: 0,
+    lastLocksDeleteQuery: null,
+  };
+  const domains = {
+    'agent-runtime': { instance: { runMaxTurns: '10', rateLimitPerMin: '3' }, user: {}, workspace: {} },
+    'agent-templates': { instance: { 'tpl.default': 'base-v2' }, user: {}, workspace: {} },
+  };
+  const server = createServer(async (request, response) => {
+    const url = new URL(request.url, 'http://127.0.0.1');
+    if (url.pathname === '/api/v1/auth/login' && request.method === 'POST') {
+      state.loginRequests += 1;
+      json(response, 200, { accessToken: 'test-access-token' });
+      return;
+    }
+    if (request.method === 'GET' && url.pathname === '/api/v1/config-locks') {
+      state.locksListRequests += 1;
+      state.lastLocksQuery = url.searchParams;
+      if (locksStatus !== 200) {
+        json(response, locksStatus, { code: 'FORBIDDEN', detail: 'must not be printed' });
+        return;
+      }
+      json(response, 200, {
+        domain: url.searchParams.get('domain'),
+        revision: 3,
+        keys: [
+          { key: 'runMaxTurns', lockable: true, notLockableReason: null, locked: true, reason: 'pin for demo', mode: 'enforce_value', updatedBy: 'admin', updatedAt: '2026-11-06T00:00:00Z', revision: 3, valuePresent: true },
+          { key: 'rateLimitPerMin', lockable: true, notLockableReason: null, locked: false, reason: null, mode: null, updatedBy: null, updatedAt: null, revision: 0, valuePresent: true },
+        ],
+      });
+      return;
+    }
+    if (request.method === 'PUT' && url.pathname.startsWith('/api/v1/config-locks/')) {
+      state.locksSetRequests += 1;
+      state.lastLocksPutPath = url.pathname;
+      state.lastLocksPutBody = await requestBody(request);
+      if (locksStatus !== 200) {
+        json(response, locksStatus, { code: 'FORBIDDEN', detail: 'must not be printed' });
+        return;
+      }
+      json(response, 200, {
+        key: 'runMaxTurns', lockable: true, notLockableReason: null, locked: true,
+        reason: state.lastLocksPutBody?.reason ?? null, mode: state.lastLocksPutBody?.mode ?? 'enforce_value',
+        updatedBy: 'admin', updatedAt: '2026-11-06T00:00:00Z', revision: 3, valuePresent: true,
+      });
+      return;
+    }
+    if (request.method === 'DELETE' && url.pathname.startsWith('/api/v1/config-locks/')) {
+      state.locksDeleteRequests += 1;
+      state.lastLocksDeleteQuery = url.searchParams;
+      json(response, 200, { status: 'ok' });
+      return;
+    }
+    if (request.method === 'GET' && url.pathname.startsWith('/api/v1/config/')) {
+      const tail = url.pathname.slice('/api/v1/config/'.length);
+      if (tail.endsWith('/meta')) {
+        state.metaRequests += 1;
+        state.lastMetaQuery = url.searchParams;
+        json(response, 200, {
+          domain: decodeURIComponent(tail.slice(0, -'/meta'.length)),
+          layer: url.searchParams.get('layer'),
+          keys: [
+            { key: 'runMaxTurns', source: 'env', locked: true, writable: false },
+            { key: 'rateLimitPerMin', source: 'instance', locked: false, writable: true },
+            { key: 'timeoutMs', source: 'default', locked: false, writable: true },
+          ],
+        });
+        return;
+      }
+      state.configGetRequests += 1;
+      state.lastConfigQuery = url.searchParams;
+      state.lastConfigDomain = decodeURIComponent(tail);
+      if (state.lastConfigDomain === 'not-a-domain') {
+        json(response, 400, { code: 'INVALID_DOMAIN', detail: 'must not be printed' });
+        return;
+      }
+      const layer = url.searchParams.get('layer');
+      const includeMeta = url.searchParams.get('includeMeta') === 'true';
+      const rows = layer
+        ? { ...(domains[state.lastConfigDomain]?.[layer] ?? {}) }
+        : {
+            ...domains[state.lastConfigDomain]?.instance,
+            ...domains[state.lastConfigDomain]?.user,
+            ...domains[state.lastConfigDomain]?.workspace,
+            ...envOverrides,
+          };
+      if (includeMeta) {
+        json(response, 200, { domain: state.lastConfigDomain, entries: rows, envOverridden: layer ? {} : envOverrides });
+        return;
+      }
+      json(response, 200, rows);
+      return;
+    }
+    if (request.method === 'PUT' && url.pathname.startsWith('/api/v1/config/instance/')) {
+      state.instancePutRequests += 1;
+      state.lastPutDomain = decodeURIComponent(url.pathname.slice('/api/v1/config/instance/'.length));
+      state.lastPutBody = await requestBody(request);
+      if (putInstanceStatus !== 200) {
+        json(response, putInstanceStatus, { code: putInstanceCode, detail: 'must not be printed' });
+        return;
+      }
+      domains[state.lastPutDomain] = domains[state.lastPutDomain] ?? { instance: {}, user: {}, workspace: {} };
+      domains[state.lastPutDomain].instance = { ...domains[state.lastPutDomain].instance, ...state.lastPutBody };
+      json(response, 200, state.lastPutBody);
+      return;
+    }
+    if (request.method === 'DELETE' && url.pathname.startsWith('/api/v1/config/instance/')) {
+      const parts = url.pathname.slice('/api/v1/config/instance/'.length).split('/');
+      state.deleteKeyRequests += 1;
+      state.lastDeleteDomain = decodeURIComponent(parts[0]);
+      state.lastDeleteKey = decodeURIComponent(parts[1] ?? '');
+      if (deleteKeyStatus !== 200) {
+        json(response, deleteKeyStatus, { code: deleteKeyCode, detail: 'must not be printed' });
+        return;
+      }
+      delete domains[state.lastDeleteDomain]?.instance?.[state.lastDeleteKey];
+      json(response, 200, { status: 'ok' });
+      return;
+    }
+    if (request.method === 'PUT' && (url.pathname.startsWith('/api/v1/config/user/') || url.pathname.startsWith('/api/v1/config/workspace/'))) {
+      state.domainPutRequests += 1;
+      state.lastDomainPutLayer = url.pathname.startsWith('/api/v1/config/user/') ? 'user' : 'workspace';
+      state.lastDomainPutDomain = decodeURIComponent(url.pathname.split('/').pop());
+      state.lastDomainPutBody = await requestBody(request);
+      state.lastDomainPutQuery = url.searchParams;
+      json(response, 200, state.lastDomainPutBody);
+      return;
+    }
+    json(response, 404, { code: 'NOT_FOUND', detail: 'nope' });
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  return {
+    state,
+    env: { XIHE_CP_PORT: String(server.address().port), XIHE_DEV_ADMIN_PASSWORD: TEST_PASSWORD },
+    close: () => new Promise((resolve, reject) => server.close((error) => (error ? reject(error) : resolve()))),
+  };
+}
+
+function writeTempEntriesFile(t, content) {
+  const dir = fs.mkdtempSync(path.join(tmpdir(), 'xihe-config-put-'));
+  const file = path.join(dir, 'entries.json');
+  fs.writeFileSync(file, typeof content === 'string' ? content : JSON.stringify(content), 'utf8');
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  return file;
+}
+
+test('PLAN-0643 V36: config get effective view includes envOverridden, the single layer does not', async (t) => {
+  const cp = await startConfigCpMock();
+  t.after(cp.close);
+
+  const effective = await runCommand(['config', 'get', 'agent-runtime', '--json'], {
+    env: cp.env, promptSecret: noPrompt, stderr: sink(),
+  });
+  assert.equal(effective.exitCode, 0, JSON.stringify(effective.error));
+  assert.equal(effective.data.kind, 'config-get');
+  assert.equal(effective.data.layer, 'effective');
+  assert.equal(effective.data.entries.runMaxTurns, '12', 'the env value wins the merged view');
+  assert.equal(effective.data.envOverridden.runMaxTurns, '12');
+  assert.equal(cp.state.lastConfigQuery.get('includeMeta'), 'true');
+  assert.equal(cp.state.lastConfigQuery.get('layer'), null);
+
+  const layered = await runCommand(['config', 'get', 'agent-runtime', '--layer', 'instance', '--json'], {
+    env: cp.env, promptSecret: noPrompt, stderr: sink(),
+  });
+  assert.equal(layered.exitCode, 0, JSON.stringify(layered.error));
+  assert.equal(layered.data.layer, 'instance');
+  assert.equal(layered.data.entries.runMaxTurns, '10', 'the raw instance row has no env overlay');
+  assert.equal(layered.data.envOverridden, undefined);
+  assert.equal(cp.state.lastConfigQuery.get('layer'), 'instance');
+  assert.equal(cp.state.lastConfigQuery.get('includeMeta'), null);
+
+  const optIn = await runCommand(['config', 'get', 'agent-runtime', '--layer', 'instance', '--include-meta', '--json'], {
+    env: cp.env, promptSecret: noPrompt, stderr: sink(),
+  });
+  assert.equal(optIn.data.includeMeta, true);
+  assert.equal(cp.state.lastConfigQuery.get('includeMeta'), 'true');
+});
+
+test('PLAN-0643 V38: explicit-only domains pass --layer through to the CP read', async (t) => {
+  const cp = await startConfigCpMock();
+  t.after(cp.close);
+
+  const result = await runCommand(['config', 'get', 'agent-templates', '--layer', 'instance', '--workspace', 'ws-1', '--json'], {
+    env: cp.env, promptSecret: noPrompt, stderr: sink(),
+  });
+
+  assert.equal(result.exitCode, 0, JSON.stringify(result.error));
+  assert.equal(result.data.entries['tpl.default'], 'base-v2');
+  assert.equal(cp.state.lastConfigQuery.get('layer'), 'instance');
+  assert.equal(cp.state.lastConfigQuery.get('workspaceId'), 'ws-1');
+});
+
+test('PLAN-0643 V39: --layer user read succeeds while config set --layer user is a usage error before any request', async (t) => {
+  const cp = await startConfigCpMock();
+  t.after(cp.close);
+
+  const read = await runCommand(['config', 'get', 'agent-runtime', '--layer', 'user', '--json'], {
+    env: cp.env, promptSecret: noPrompt, stderr: sink(),
+  });
+  assert.equal(read.exitCode, 0, JSON.stringify(read.error));
+  assert.equal(read.data.layer, 'user');
+
+  const rejected = await runCommand(['config', 'set', 'agent-runtime', 'runMaxTurns', '5', '--layer', 'user'], {
+    env: cp.env, promptSecret: noPrompt, stderr: sink(),
+  });
+  assert.equal(rejected.exitCode, 2);
+  assert.equal(rejected.error.code, 'INVALID_ARGUMENT');
+  assert.equal(cp.state.instancePutRequests, 0, 'the user-layer write is rejected CLI-side (T2.6 boundary)');
+});
+
+test('PLAN-0643 V40: config set round-trips the instance rows and config unset removes the key', async (t) => {
+  const cp = await startConfigCpMock();
+  t.after(cp.close);
+
+  const set = await runCommand(['config', 'set', 'agent-runtime', 'runMaxTurns', '5', '--json'], {
+    env: cp.env, promptSecret: noPrompt, stderr: sink(),
+  });
+  assert.equal(set.exitCode, 0, JSON.stringify(set.error));
+  assert.equal(set.data.kind, 'config-set');
+  assert.equal(set.data.before, '10');
+  assert.equal(set.data.after, '5');
+  assert.equal(set.data.changed, true);
+  assert.equal(set.data.verified, true);
+  assert.deepEqual(cp.state.lastPutBody, { rateLimitPerMin: '3', runMaxTurns: '5' });
+  assert.equal(cp.state.lastPutDomain, 'agent-runtime');
+
+  cp.state.lastConfigQuery = null;
+  const readBack = await runCommand(['config', 'get', 'agent-runtime', '--layer', 'instance', '--json'], {
+    env: cp.env, promptSecret: noPrompt, stderr: sink(),
+  });
+  assert.equal(readBack.data.entries.runMaxTurns, '5');
+
+  const unset = await runCommand(['config', 'unset', 'agent-runtime', 'runMaxTurns', '--json'], {
+    env: cp.env, promptSecret: noPrompt, stderr: sink(),
+  });
+  assert.equal(unset.exitCode, 0, JSON.stringify(unset.error));
+  assert.equal(unset.data.status, 'ok');
+  assert.equal(cp.state.lastDeleteKey, 'runMaxTurns');
+
+  const afterUnset = await runCommand(['config', 'get', 'agent-runtime', '--layer', 'instance', '--json'], {
+    env: cp.env, promptSecret: noPrompt, stderr: sink(),
+  });
+  assert.equal(afterUnset.data.entries.runMaxTurns, undefined);
+  assert.equal(afterUnset.data.entries.rateLimitPerMin, '3', 'the untouched key survives the whole-domain write');
+});
+
+test('PLAN-0643 V41: a locked key keeps the CP 409 code and hints at config-locks (set)', async (t) => {
+  const cp = await startConfigCpMock({ putInstanceStatus: 409, putInstanceCode: 'CONFIG_KEY_LOCKED' });
+  t.after(cp.close);
+  const stderr = sink();
+
+  const result = await runCommand(['config', 'set', 'agent-runtime', 'runMaxTurns', '5'], {
+    env: cp.env, promptSecret: noPrompt, stderr,
+  });
+
+  assert.equal(result.exitCode, 1);
+  assert.equal(result.error.code, 'CONFIG_KEY_LOCKED');
+  assert.match(stderr.text(), /config-locks/);
+});
+
+test('PLAN-0643 V41: config unset keeps CONFIG_ENV_LOCKED and hints at config-locks', async (t) => {
+  const cp = await startConfigCpMock({ deleteKeyStatus: 409, deleteKeyCode: 'CONFIG_ENV_LOCKED' });
+  t.after(cp.close);
+  const stderr = sink();
+
+  const result = await runCommand(['config', 'unset', 'agent-runtime', 'runMaxTurns'], {
+    env: cp.env, promptSecret: noPrompt, stderr,
+  });
+
+  assert.equal(result.exitCode, 1);
+  assert.equal(result.error.code, 'CONFIG_ENV_LOCKED');
+  assert.match(stderr.text(), /config-locks/);
+});
+
+test('PLAN-0643 V42: config meta defaults to the instance layer and reports source/locked/writable', async (t) => {
+  const cp = await startConfigCpMock();
+  t.after(cp.close);
+
+  const result = await runCommand(['config', 'meta', 'agent-runtime', '--json'], {
+    env: cp.env, promptSecret: noPrompt, stderr: sink(),
+  });
+
+  assert.equal(result.exitCode, 0, JSON.stringify(result.error));
+  assert.equal(result.data.kind, 'config-meta');
+  assert.equal(result.data.layer, 'instance');
+  assert.equal(cp.state.lastMetaQuery.get('layer'), 'instance');
+  assert.equal(result.data.keys.length, 3);
+  assert.deepEqual(
+    result.data.keys.map((entry) => ({ source: entry.source, locked: entry.locked, writable: entry.writable })),
+    [
+      { source: 'env', locked: true, writable: false },
+      { source: 'instance', locked: false, writable: true },
+      { source: 'default', locked: false, writable: true },
+    ],
+  );
+});
+
+test('PLAN-0643 V43: config export stays instance-only (--layer user answers 2)', async () => {
+  const result = await runCommand(['config', 'export', '--layer', 'user'], {
+    env: {}, promptSecret: noPrompt,
+  });
+
+  assert.equal(result.exitCode, 2);
+  assert.equal(result.error.code, 'INVALID_ARGUMENT');
+});
+
+test('PLAN-0643 V43: config-locks list forwards the optional domain filter', async (t) => {
+  const cp = await startConfigCpMock();
+  t.after(cp.close);
+
+  const all = await runCommand(['config-locks', 'list', '--json'], {
+    env: cp.env, promptSecret: noPrompt, stderr: sink(),
+  });
+  assert.equal(all.exitCode, 0, JSON.stringify(all.error));
+  assert.equal(all.data.kind, 'config-locks-list');
+  assert.equal(all.data.revision, 3);
+  assert.equal(all.data.keys.length, 2);
+  assert.equal(cp.state.lastLocksQuery.get('domain'), null);
+
+  const filtered = await runCommand(['config-locks', 'list', 'agent-runtime', '--json'], {
+    env: cp.env, promptSecret: noPrompt, stderr: sink(),
+  });
+  assert.equal(filtered.data.domain, 'agent-runtime');
+  assert.equal(cp.state.lastLocksQuery.get('domain'), 'agent-runtime');
+});
+
+test('PLAN-0643 V43: config-locks set requires --reason and forwards the lock request body', async (t) => {
+  const cp = await startConfigCpMock();
+  t.after(cp.close);
+
+  const missing = await runCommand(['config-locks', 'set', 'agent-runtime', 'runMaxTurns', '--value', '5'], {
+    env: cp.env, promptSecret: noPrompt, stderr: sink(),
+  });
+  assert.equal(missing.exitCode, 2);
+  assert.equal(missing.error.code, 'INVALID_ARGUMENT');
+  assert.equal(cp.state.locksSetRequests, 0);
+
+  const set = await runCommand(['config-locks', 'set', 'agent-runtime', 'runMaxTurns', '--reason', 'pin for demo', '--value', '5', '--revision', '2', '--json'], {
+    env: cp.env, promptSecret: noPrompt, stderr: sink(),
+  });
+  assert.equal(set.exitCode, 0, JSON.stringify(set.error));
+  assert.equal(set.data.kind, 'config-locks-set');
+  assert.equal(set.data.locked, true);
+  assert.deepEqual(cp.state.lastLocksPutBody, { reason: 'pin for demo', value: '5', revision: 2 });
+  assert.match(cp.state.lastLocksPutPath, /\/api\/v1\/config-locks\/agent-runtime\/runMaxTurns$/);
+});
+
+test('PLAN-0643 V43: config-locks delete forwards revision and clearValue as query parameters', async (t) => {
+  const cp = await startConfigCpMock();
+  t.after(cp.close);
+
+  const result = await runCommand(['config-locks', 'delete', 'agent-runtime', 'runMaxTurns', '--revision', '2', '--clear-value', '--json'], {
+    env: cp.env, promptSecret: noPrompt, stderr: sink(),
+  });
+
+  assert.equal(result.exitCode, 0, JSON.stringify(result.error));
+  assert.equal(result.data.status, 'ok');
+  assert.equal(result.data.clearValue, true);
+  assert.equal(cp.state.lastLocksDeleteQuery.get('revision'), '2');
+  assert.equal(cp.state.lastLocksDeleteQuery.get('clearValue'), 'true');
+});
+
+test('PLAN-0643 V11: config get injects workspaceId as a query from --workspace and XIHE_WORKSPACE_ID', async (t) => {
+  const cp = await startConfigCpMock();
+  t.after(cp.close);
+
+  const flag = await runCommand(['config', 'get', 'agent-runtime', '--layer', 'workspace', '--workspace', 'ws-1', '--json'], {
+    env: cp.env, promptSecret: noPrompt, stderr: sink(),
+  });
+  assert.equal(flag.exitCode, 0, JSON.stringify(flag.error));
+  assert.equal(flag.data.workspaceId, 'ws-1');
+  assert.equal(cp.state.lastConfigQuery.get('workspaceId'), 'ws-1');
+
+  const fromEnv = await runCommand(['--workspace', 'ws-lead', 'config', 'get', 'agent-runtime', '--layer', 'workspace', '--json'], {
+    env: cp.env, promptSecret: noPrompt, stderr: sink(),
+  });
+  assert.equal(fromEnv.data.workspaceId, 'ws-lead', 'the leading global --workspace lands in the same query');
+  assert.equal(cp.state.lastConfigQuery.get('workspaceId'), 'ws-lead');
+});
+
+test('PLAN-0643 T2.4: config put writes the whole user domain from --file', async (t) => {
+  const cp = await startConfigCpMock();
+  t.after(cp.close);
+  const file = writeTempEntriesFile(t, { defaultModel: 'xiaomi:mimo-v2', retryLimit: '2' });
+
+  const result = await runCommand(['config', 'put', 'llm-provider', '--layer', 'user', '--file', file, '--json'], {
+    env: cp.env, promptSecret: noPrompt, stderr: sink(),
+  });
+
+  assert.equal(result.exitCode, 0, JSON.stringify(result.error));
+  assert.equal(result.data.kind, 'config-put');
+  assert.equal(result.data.layer, 'user');
+  assert.equal(result.data.keys, 2);
+  assert.deepEqual(cp.state.lastDomainPutBody, { defaultModel: 'xiaomi:mimo-v2', retryLimit: '2' });
+  assert.equal(cp.state.lastDomainPutLayer, 'user');
+  assert.equal(cp.state.lastDomainPutDomain, 'llm-provider');
+});
+
+test('PLAN-0643 T2.4: config put --layer workspace requires workspace context and rides the query', async (t) => {
+  const cp = await startConfigCpMock();
+  t.after(cp.close);
+  const file = writeTempEntriesFile(t, { defaultModel: 'xiaomi:mimo-v2' });
+
+  const missing = await runCommand(['config', 'put', 'llm-provider', '--layer', 'workspace', '--file', file], {
+    env: cp.env, promptSecret: noPrompt, stderr: sink(),
+  });
+  assert.equal(missing.exitCode, 2);
+  assert.equal(missing.error.code, 'INVALID_ARGUMENT');
+  assert.equal(cp.state.domainPutRequests, 0);
+
+  const ok = await runCommand(['config', 'put', 'llm-provider', '--layer', 'workspace', '--file', file, '--workspace', 'ws-1', '--json'], {
+    env: cp.env, promptSecret: noPrompt, stderr: sink(),
+  });
+  assert.equal(ok.exitCode, 0, JSON.stringify(ok.error));
+  assert.equal(cp.state.lastDomainPutQuery.get('workspaceId'), 'ws-1');
+  assert.equal(cp.state.lastDomainPutLayer, 'workspace');
+});
+
+test('PLAN-0643 T2.4: config put rejects the instance layer, a missing file and malformed entries', async (t) => {
+  const cp = await startConfigCpMock();
+  t.after(cp.close);
+
+  const instance = await runCommand(['config', 'put', 'llm-provider', '--layer', 'instance', '--file', 'x.json'], {
+    env: cp.env, promptSecret: noPrompt, stderr: sink(),
+  });
+  assert.equal(instance.exitCode, 2);
+  assert.equal(instance.error.code, 'INVALID_ARGUMENT');
+  assert.match(instance.error.message, /config set/);
+
+  const noFile = await runCommand(['config', 'put', 'llm-provider', '--layer', 'user'], {
+    env: cp.env, promptSecret: noPrompt, stderr: sink(),
+  });
+  assert.equal(noFile.exitCode, 2);
+  assert.equal(cp.state.domainPutRequests, 0);
+
+  const badJson = await runCommand(['config', 'put', 'llm-provider', '--layer', 'user', '--file', writeTempEntriesFile(t, 'not json')], {
+    env: cp.env, promptSecret: noPrompt, stderr: sink(),
+  });
+  assert.equal(badJson.exitCode, 2);
+
+  const nonString = await runCommand(['config', 'put', 'llm-provider', '--layer', 'user', '--file', writeTempEntriesFile(t, { retryLimit: 2 })], {
+    env: cp.env, promptSecret: noPrompt, stderr: sink(),
+  });
+  assert.equal(nonString.exitCode, 2);
+  assert.match(nonString.error.message, /retryLimit/);
+  assert.equal(cp.state.domainPutRequests, 0);
+});
+
+test('PLAN-0643 T2.7: unknown config and config-locks commands answer 2', async () => {
+  const configUnknown = await runCommand(['config', 'nosuch'], { env: {}, promptSecret: noPrompt });
+  assert.equal(configUnknown.exitCode, 2);
+  assert.match(configUnknown.error.message, /get\/set\/unset\/meta\/put\/import\/export/);
+
+  const locksUnknown = await runCommand(['config-locks', 'nosuch'], { env: {}, promptSecret: noPrompt });
+  assert.equal(locksUnknown.exitCode, 2);
+  assert.match(locksUnknown.error.message, /list\/set\/delete/);
+});
+
+test('PLAN-0643 T2.1: CP 4xx error codes surface verbatim (INVALID_DOMAIN, locks 403)', async (t) => {
+  const cp = await startConfigCpMock({ locksStatus: 403 });
+  t.after(cp.close);
+
+  const domain = await runCommand(['config', 'get', 'not-a-domain', '--json'], {
+    env: cp.env, promptSecret: noPrompt, stderr: sink(),
+  });
+  assert.equal(domain.exitCode, 1);
+  assert.equal(domain.error.code, 'INVALID_DOMAIN', 'preserveServerCodes keeps the CP body code');
+  assert.equal(domain.error.details.status, 400);
+
+  const locks = await runCommand(['config-locks', 'list'], {
+    env: cp.env, promptSecret: noPrompt, stderr: sink(),
+  });
+  assert.equal(locks.exitCode, 1);
+  assert.equal(locks.error.code, 'FORBIDDEN');
+});
+
+test('PLAN-0643 T2.7: --json keeps the frozen {ok,data|error} envelope on stdout (spawned CLI)', () => {
+  // printResult builds the envelope at print time, so this checks the printed
+  // bytes end-to-end with offline commands (version / usage error).
+  const env = { ...process.env, XIHE_CLI_TOKEN_CACHE: 'off', XIHE_CP_PORT: '1' };
+  const okRun = spawnSync(process.execPath, ['scripts/xihe.mjs', 'version', '--json'], {
+    cwd: process.cwd(), env, encoding: 'utf8', timeout: 30_000, windowsHide: true,
+  });
+  assert.equal(okRun.status, 0, okRun.stderr);
+  const okEnvelope = JSON.parse(okRun.stdout);
+  assert.deepEqual(Object.keys(okEnvelope).sort(), ['data', 'ok']);
+  assert.equal(okEnvelope.ok, true);
+
+  const errorRun = spawnSync(process.execPath, ['scripts/xihe.mjs', 'config', 'nosuch', '--json'], {
+    cwd: process.cwd(), env, encoding: 'utf8', timeout: 30_000, windowsHide: true,
+  });
+  assert.equal(errorRun.status, 2);
+  const errorEnvelope = JSON.parse(errorRun.stdout);
+  assert.deepEqual(Object.keys(errorEnvelope).sort(), ['error', 'ok']);
+  assert.equal(errorEnvelope.ok, false);
+  assert.equal(errorEnvelope.error.code, 'INVALID_ARGUMENT');
+});
+
+test('PLAN-0643 V8: --base-url wins over XIHE_CP_URL (auth status reports the chosen base)', async () => {
+  const result = await runCommand(['--base-url', 'http://10.1.1.1:9', 'auth', 'status', '--json'], {
+    env: { XIHE_CP_URL: 'http://10.2.2.2:8' },
+    promptSecret: noPrompt,
+  });
+
+  assert.equal(result.exitCode, 0, JSON.stringify(result.error));
+  assert.equal(result.data.baseUrl, 'http://10.1.1.1:9');
+});
+
+test('PLAN-0643 V9: with no --base-url, XIHE_CP_URL or XIHE_CP_PORT the CLI targets loopback 12631', async () => {
+  const result = await runCommand(['auth', 'status', '--json'], {
+    env: {},
+    promptSecret: noPrompt,
+  });
+
+  assert.equal(result.exitCode, 0, JSON.stringify(result.error));
+  assert.equal(result.data.baseUrl, 'http://127.0.0.1:12631');
+});

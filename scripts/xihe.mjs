@@ -24,6 +24,7 @@ import {
 } from './xihe-cli/provider.mjs';
 import { runApiEscape } from './xihe-cli/api.mjs';
 import { runAuthCommand } from './xihe-cli/auth.mjs';
+import { runConfigCommand, runConfigLocksCommand } from './xihe-cli/config.mjs';
 import { attachAuthRefresh } from './xihe-cli/auth-refresh.mjs';
 import {
   bindSkill,
@@ -156,6 +157,14 @@ function helpText() {
     '  node scripts/xihe.mjs dev init --provider <id> --scope <USER|WORKSPACE> --label <label> [--models <id,id>] [--api-key-env <name>]',
     '  node scripts/xihe.mjs config import [file]',
     '  node scripts/xihe.mjs config export [--layer instance] [--include-secrets] [--out <file>] [--force]',
+    '  node scripts/xihe.mjs config get <domain> [--layer instance|user|workspace] [--include-meta] [--workspace <wsId>]',
+    '  node scripts/xihe.mjs config set <domain> <key> <value> --layer instance',
+    '  node scripts/xihe.mjs config unset <domain> <key>',
+    '  node scripts/xihe.mjs config meta <domain> [--layer instance|user|workspace] [--workspace <wsId>]',
+    '  node scripts/xihe.mjs config put <domain> --layer user|workspace --file <entries.json> [--workspace <wsId>]',
+    '  node scripts/xihe.mjs config-locks list [<domain>]',
+    '  node scripts/xihe.mjs config-locks set <domain> <key> --reason <text> [--value <v>] [--revision <n>]',
+    '  node scripts/xihe.mjs config-locks delete <domain> <key> [--revision <n>] [--clear-value]',
     '  node scripts/xihe.mjs verify --stack <n> --email <account> --workspace <wsId> [--wait-seconds <n>] [--yes]',
     '  node scripts/xihe.mjs version [--check]',
     '  node scripts/xihe.mjs skill list [--scope instance|workspace] [--workspace <wsId>]',
@@ -573,6 +582,37 @@ export async function runCommand(argv, dependencies = {}) {
         fsImpl: dependencies.fsImpl,
       });
       return { exitCode: 0, json, data };
+    }
+
+    if (group === 'config' && command !== 'import' && command !== 'export') {
+      // PLAN-0643 T2.1–T2.4/T2.7: config get/set/unset/meta/put. Parsing, login
+      // and CP calls live in xihe-cli/config.mjs (auth.mjs pattern); CP error
+      // codes pass through (preserveServerCodes) so INVALID_DOMAIN and 409
+      // CONFIG_*_LOCKED surface verbatim (design D23).
+      const configResult = await runConfigCommand({
+        command,
+        rest,
+        env,
+        fetchImpl,
+        apiBase: getApiBase(env),
+        promptSecret: prompt,
+        stderr: dependencies.stderr ?? process.stderr,
+        fsImpl: dependencies.fsImpl,
+      });
+      return { exitCode: configResult.exitCode, json, data: configResult.data };
+    }
+
+    if (group === 'config-locks') {
+      // PLAN-0643 T2.5: the admin lock catalog (list/set/delete, cap:instance:admin).
+      const locksResult = await runConfigLocksCommand({
+        command,
+        rest,
+        env,
+        fetchImpl,
+        apiBase: getApiBase(env),
+        promptSecret: prompt,
+      });
+      return { exitCode: locksResult.exitCode, json, data: locksResult.data };
     }
 
     if (group === 'session' && command === 'participants') {
@@ -1076,6 +1116,56 @@ export function printResult(result) {
     return;
   }
   const out = process.stdout;
+  if (result.data?.kind === 'config-get') {
+    // PLAN-0643 T2.1: merged/layered entries; env-overridden keys carry an [env] marker.
+    const data = result.data;
+    const pairs = Object.entries(data.entries ?? {});
+    out.write(`domain: ${data.domain}  layer: ${data.layer}  keys: ${pairs.length}\n`);
+    if (data.workspaceId !== undefined) out.write(`workspace: ${data.workspaceId}\n`);
+    const envKeys = new Set(Object.keys(data.envOverridden ?? {}));
+    for (const [key, value] of pairs) {
+      out.write(`${key} = ${String(value)}${envKeys.has(key) ? '  [env]' : ''}\n`);
+    }
+    return;
+  }
+  if (result.data?.kind === 'config-set') {
+    out.write(`set: ${result.data.domain}.${result.data.key} (${result.data.layer})`
+      + `  ${result.data.changed ? 'changed' : 'unchanged'}  verified=${result.data.verified}\n`);
+    return;
+  }
+  if (result.data?.kind === 'config-unset') {
+    out.write(`removed: ${result.data.domain}.${result.data.key} (${result.data.layer})\n`);
+    return;
+  }
+  if (result.data?.kind === 'config-meta') {
+    // PLAN-0643 T2.3: per-key source/locked/writable are the fields that matter.
+    out.write(`meta: ${result.data.domain}  layer: ${result.data.layer}  keys: ${result.data.keys.length}\n`);
+    for (const item of result.data.keys) {
+      out.write(`${item.key}  source=${item.source ?? '?'}  locked=${item.locked ?? '?'}  writable=${item.writable ?? '?'}\n`);
+    }
+    return;
+  }
+  if (result.data?.kind === 'config-put') {
+    out.write(`written: ${result.data.domain} (${result.data.layer})  keys: ${result.data.keys}`
+      + `${result.data.workspaceId !== undefined ? `  workspace: ${result.data.workspaceId}` : ''}\n`);
+    return;
+  }
+  if (result.data?.kind === 'config-locks-list') {
+    out.write(`locks: ${result.data.keys.length}  revision: ${result.data.revision}`
+      + `${result.data.domain ? `  domain: ${result.data.domain}` : ''}\n`);
+    for (const item of result.data.keys) {
+      out.write(`${item.key}  locked=${item.locked ?? '?'}  mode=${item.mode ?? '-'}  by=${item.updatedBy ?? '-'}  reason=${item.reason ?? '-'}\n`);
+    }
+    return;
+  }
+  if (result.data?.kind === 'config-locks-set') {
+    out.write(`locked: ${result.data.domain}.${result.data.key}  locked=${result.data.locked ?? '?'}  revision=${result.data.revision ?? '-'}\n`);
+    return;
+  }
+  if (result.data?.kind === 'config-locks-delete') {
+    out.write(`lock removed: ${result.data.domain}.${result.data.key}${result.data.clearValue ? ' (pinned value cleared)' : ''}\n`);
+    return;
+  }
   if (result.data?.kind === 'session-participants') {
     const items = result.data.participants ?? [];
     out.write(`participants: ${items.length}\n`);

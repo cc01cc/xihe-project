@@ -34,12 +34,13 @@ mise run dev:host
 mise run xihe -- --help
 ```
 
-**CLI（`xihe` 命令族，16 个命令组）**：`mise run xihe -- --help`。
+**CLI（`xihe` 命令族，18 个命令组）**：`mise run xihe -- --help`。
 
 | 组 | 用途 |
 |---|---|
 | `dev` | 本地环境检查 / Provider 初始化 |
-| `config` | 配置导入 / 导出（instance 层） |
+| `config` | 配置读写：get/set/unset/meta/put，import/export（instance 层） |
+| `config-locks` | 配置键锁定（管理员）：list/set/delete |
 | `provider` | Provider Connection 增删改查 / verify / 限额 |
 | `credential` | 凭据生命周期、绑定、reveal、轮换 |
 | `agent` | Agent 主体创建 / 绑定 / 禁用 |
@@ -55,7 +56,7 @@ mise run xihe -- --help
 | `verify` | 端到端自检 |
 | `test` | host E2E 入口 |
 
-另有 `version`（`--check`）与 `help` 两个顶层入口。示例：`mise run xihe -- status`、`mise run xihe -- config export --out cfg.json`、`mise run xihe -- provider list --scope WORKSPACE`。
+另有 `version`（`--check`）与 `help` 两个顶层入口。示例：`mise run xihe -- status`、`mise run xihe -- config export --out cfg.json`、`mise run xihe -- config get agent-runtime`、`mise run xihe -- provider list --scope WORKSPACE`。
 
 exit code 契约：`0` 成功、`1` 业务/运行失败（含 `partial`）、`2` 用法错误（未知命令、未知选项、缺必填参数）。加 `--json` 时 stdout 固定为 `{ok,data}` 或 `{ok:false,error:{code,message}}`。
 

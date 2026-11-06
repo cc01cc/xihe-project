@@ -28,12 +28,13 @@ mise run dev:host
 mise run xihe -- --help
 ```
 
-**CLI (`xihe` command family, 16 groups)** — `mise run xihe -- --help`
+**CLI (`xihe` command family, 18 groups)** — `mise run xihe -- --help`
 
 | Group | Purpose |
 |---|---|
 | `dev` | host environment check / provider init |
-| `config` | config import / export (instance layer) |
+| `config` | config read/write: get/set/unset/meta/put, import/export (instance layer) |
+| `config-locks` | config key locks (admin): list/set/delete |
 | `provider` | provider connections: add/update/list/verify/delete/limits |
 | `credential` | credential lifecycle, bindings, reveal, rotation |
 | `agent` | agent principals: create/bind/unbind/disable |
@@ -49,7 +50,7 @@ mise run xihe -- --help
 | `verify` | end-to-end self check |
 | `test` | host E2E entry |
 
-`version` (`--check`) and `help` are two additional top-level entries. Examples: `mise run xihe -- status`, `mise run xihe -- config export --out cfg.json`, `mise run xihe -- provider list --scope WORKSPACE`.
+`version` (`--check`) and `help` are two additional top-level entries. Examples: `mise run xihe -- status`, `mise run xihe -- config export --out cfg.json`, `mise run xihe -- config get agent-runtime`, `mise run xihe -- provider list --scope WORKSPACE`.
 
 Exit-code contract: `0` success, `1` business/runtime failure (including `partial`), `2` usage error (unknown command, unknown option, missing required argument). With `--json`, stdout is `{ok,data}` or `{ok:false,error:{code,message}}`.
 

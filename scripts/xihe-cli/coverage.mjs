@@ -32,8 +32,9 @@ const EXISTING_GROUPS = [
     'provider', 'credential', 'agent', 'session', 'chat', 'skill', 'workspace', 'job',
     'checkpoint', 'scheduled-task', 'audit', 'status', 'dev', 'config', 'verify', 'test',
 ];
-// PLAN-0643 M1 delivered these two groups (verify V1 `groups.added >= 2`).
-const ADDED_GROUPS = ['auth', 'api'];
+// PLAN-0643 M1 delivered auth/api (verify V1 `groups.added >= 2`); M6-1 adds the
+// config-locks admin group (T2.5).
+const ADDED_GROUPS = ['auth', 'api', 'config-locks'];
 // spec/cli-contract.md §2 "本期" column: the command matrix (denominator B, >= 25).
 const MATRIX = [
     'config get', 'config meta', 'config unset', 'config set', 'config put', 'config export',
