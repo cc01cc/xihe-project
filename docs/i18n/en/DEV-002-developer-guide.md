@@ -304,7 +304,7 @@ CP ConfigService is the unified configuration management entry point, using a tw
 
 | Layer | Purpose | Modification Method |
 |-------|---------|---------------------|
-| **Environment Variables** | Pre-runtime fixed (port/DB/JWT) | `.env.dev` (gitignore) |
+| **Environment Variables** | Pre-runtime fixed (port/DB/JWT) | `.env.dev` (committed baseline; personal overrides in gitignored `.env.local`) |
 | **ConfigService** | Runtime modifiable (API key/model/logging) | UI Settings / `PUT /config/admin/{domain}` / `POST /config/import` |
 
 **Priority**: ConfigService values override environment variable keys with the same name.
