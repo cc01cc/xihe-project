@@ -26,7 +26,9 @@ class ProviderCatalogServiceTest {
         assertEquals("openai-chat-completions", catalog.defaultApiType("deepseek").apiTypeId());
         assertEquals("chat", catalog.defaultApiType("deepseek").operation());
         assertEquals("anthropic-messages", catalog.defaultApiType("anthropic").apiTypeId());
-        assertEquals("mimo-responses", catalog.defaultApiType("xiaomi").apiTypeId());
+        // A1 用户裁定（2026-11-06，BL-206）：默认改指向 tools=true 的契约，否则新连接开局就没有工具调用。
+        assertEquals("openai-chat-completions", catalog.defaultApiType("xiaomi").apiTypeId());
+        assertEquals("chat", catalog.defaultApiType("xiaomi").operation());
     }
 
     @Test
@@ -37,9 +39,11 @@ class ProviderCatalogServiceTest {
     @Test
     void xiaomiSupportsBothChatCompletionsAndResponsesContracts() {
         // PLAN-0548 / BL-116: MiMo serves both POST /v1/chat/completions and POST /v1/responses
-        // (probed 2026-10-24; /v1/messages is 404). Default stays mimo-responses.
+        // (probed 2026-10-24; /v1/messages is 404). Both contracts stay supported; the DEFAULT moved
+        // to openai-chat-completions by A1 (2026-11-06, BL-206) because mimo-responses@1 declares
+        // capability.tools=false, and a default must not ship a tool-less endpoint.
         assertEquals(2, catalog.require("xiaomi").path("supportedApiTypes").size());
-        assertEquals("mimo-responses", catalog.defaultApiType("xiaomi").apiTypeId());
+        assertEquals("openai-chat-completions", catalog.defaultApiType("xiaomi").apiTypeId());
         assertEquals("openai-chat-completions", catalog.supportedPair("xiaomi", "openai-chat-completions", 1)
                 .path("apiTypeId").asText());
         assertEquals("mimo-responses", catalog.supportedPair("xiaomi", "mimo-responses", 1)
