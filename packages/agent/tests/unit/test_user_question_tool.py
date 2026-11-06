@@ -1,11 +1,13 @@
-"""PLAN-0660 M5-C (T5.14/T5.15): ask_user tool — separation, wait and release semantics.
+"""PLAN-0660 M5-C (T5.14–T5.16): ask_user tool — separation, wait and release semantics.
 
-Five verification classes at the tool edge:
+Six verification classes at the tool edge:
 * normal answer (CP push resolves the blocked wait),
 * timed ask (explicit ``no_answer`` and the run continues),
 * plain ask local ceiling (fail-closed unbounded wait),
 * run cancel (waiter is removed, no fabricated answer),
-* replayed / duplicate / protocol-error answers (idempotent or rejected, never guessed).
+* replayed / duplicate / protocol-error answers (idempotent or rejected, never guessed),
+* T5.16 refusal mapping (a child run's CP 409 ends the wait with a readable error, and only a
+  recognised refusal becomes a result — unknown transport failures still raise).
 
 The elapsed-budget exclusion is asserted in ``test_langgraph_runner_budget.py`` (it needs the
 runner's pause loop); this file proves the tool never invents an answer and never leaks the
@@ -18,10 +20,13 @@ import time
 import pytest
 
 from xihe_agent.adapters.user_question_tool import (
+    CODE_SUBAGENT_QUESTION_REFUSED,
     MAX_QUESTION_LENGTH,
     MAX_TIMEOUT_SECONDS,
     NO_ANSWER_CONTENT,
+    SUBAGENT_QUESTION_REFUSED_CONTENT,
     USER_QUESTION_EVENT_SINK_KEY,
+    UserQuestionRefusedError,
     UserQuestionTool,
 )
 from xihe_agent.interfaces.context import AgentContext
@@ -254,6 +259,126 @@ async def test_ask_user_without_event_sink_fails_closed():
 
     with pytest.raises(RuntimeError):
         await tool.execute({"question": "anyone?"}, context)
+    assert tool.get_pending() == []
+
+
+# -- T5.16: CP refusal mapping (a child run must not wait out the ceiling) -------------------
+
+
+class _ProblemResponse:
+    """``httpx.Response``-shaped double: only the two attributes the mapper reads."""
+
+    status_code = 409
+
+    def __init__(self, payload: dict) -> None:
+        self._payload = payload
+
+    def json(self) -> dict:
+        return self._payload
+
+
+class _Problem409Error(Exception):
+    """``httpx.HTTPStatusError``-shaped double carrying a problem+json body."""
+
+    def __init__(self, payload: dict) -> None:
+        super().__init__("409 Conflict")
+        self.response = _ProblemResponse(payload)
+
+
+@pytest.mark.asyncio
+async def test_ask_user_subagent_refusal_is_a_readable_error_not_a_wait():
+    tool = UserQuestionTool()  # default 3600s ceiling: only the refusal can end this fast
+    context = _context()
+
+    async def refusing_sink(payload: dict) -> None:
+        raise UserQuestionRefusedError(CODE_SUBAGENT_QUESTION_REFUSED)
+
+    context.metadata[USER_QUESTION_EVENT_SINK_KEY] = refusing_sink
+
+    started = time.monotonic()
+    result = await tool.execute({"question": "Which env?"}, context)
+    elapsed = time.monotonic() - started
+
+    assert result["status"] == "error"
+    assert result["code"] == "SUBAGENT_QUESTION_REFUSED"
+    assert result["content"] == SUBAGENT_QUESTION_REFUSED_CONTENT
+    assert "parent run" in result["content"]
+    assert elapsed < 5.0  # never the local ceiling, never a hang
+    assert tool.get_pending() == []
+    assert tool.coordinator.question_runs == {}
+
+
+@pytest.mark.asyncio
+async def test_ask_user_refusal_leaves_no_waiter_and_the_run_can_ask_again():
+    tool = UserQuestionTool()
+    context = _context()
+    published: list[dict] = []
+    ready = asyncio.Event()
+
+    async def flaky_sink(payload: dict) -> None:
+        published.append(payload)
+        if len(published) == 1:
+            raise UserQuestionRefusedError(CODE_SUBAGENT_QUESTION_REFUSED)
+        ready.set()
+
+    context.metadata[USER_QUESTION_EVENT_SINK_KEY] = flaky_sink
+
+    refused = await tool.execute({"question": "first"}, context)
+    assert refused["status"] == "error"
+    # A refused ask must not poison the run's next ask (no stale pending_by_run entry).
+    assert tool.get_pending() == []
+
+    retry = asyncio.create_task(tool.execute({"question": "second"}, context))
+    await ready.wait()
+    assert tool.resolve_answer("q-2", "session-1", "run-1", "staging")[0] == "accepted"
+    assert (await retry)["status"] == "answered"
+
+
+@pytest.mark.asyncio
+async def test_ask_user_http_409_problem_code_is_mapped_to_the_cp_code():
+    """A relay channel surfacing CP as an httpx-style 409 is mapped as well."""
+    tool = UserQuestionTool()
+    context = _context()
+
+    async def refusing_sink(payload: dict) -> None:
+        raise _Problem409Error({"code": CODE_SUBAGENT_QUESTION_REFUSED, "status": 409})
+
+    context.metadata[USER_QUESTION_EVENT_SINK_KEY] = refusing_sink
+    result = await tool.execute({"question": "Which env?"}, context)
+
+    assert result["status"] == "error"
+    assert result["code"] == CODE_SUBAGENT_QUESTION_REFUSED
+    assert result["content"] == SUBAGENT_QUESTION_REFUSED_CONTENT
+
+
+@pytest.mark.asyncio
+async def test_ask_user_other_cp_refusal_code_is_reported_verbatim():
+    tool = UserQuestionTool()
+    context = _context()
+
+    async def refusing_sink(payload: dict) -> None:
+        raise UserQuestionRefusedError("QUESTION_NOT_FOUND")
+
+    context.metadata[USER_QUESTION_EVENT_SINK_KEY] = refusing_sink
+    result = await tool.execute({"question": "Which env?"}, context)
+
+    assert result["status"] == "error"
+    assert result["code"] == "QUESTION_NOT_FOUND"
+    assert result["content"] != SUBAGENT_QUESTION_REFUSED_CONTENT
+
+
+@pytest.mark.asyncio
+async def test_ask_user_unknown_delivery_failure_is_not_swallowed():
+    """Only a recognised refusal becomes a result — an unknown transport bug still raises."""
+    tool = UserQuestionTool()
+    context = _context()
+
+    async def broken_sink(payload: dict) -> None:
+        raise RuntimeError("transport exploded")
+
+    context.metadata[USER_QUESTION_EVENT_SINK_KEY] = broken_sink
+    with pytest.raises(RuntimeError, match="transport exploded"):
+        await tool.execute({"question": "boom"}, context)
     assert tool.get_pending() == []
 
 
