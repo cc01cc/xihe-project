@@ -160,6 +160,12 @@ class AgentPrincipalSkillBindingContractTest extends AbstractIntegrationTest {
         assertEquals(null, rows.get(0).getScopeId(), "the server writes scope_id=NULL for principal bindings");
         assertTrue(resolvableSkillIds().contains(skillId),
                 "the agent-session resolver must already see the new binding");
+        assertEquals(1, jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM audit_logs WHERE action = 'agent_principal_skill_bind'"
+                        + " AND details LIKE '%\"scopeType\":\"instance\"%'"
+                        + " AND details LIKE '%\"scopeId\":null%'"
+                        + " AND details LIKE '%" + body.get("bindingId") + "%'", Integer.class),
+                "bind audit detail must carry the derived row scope");
     }
 
     @Test
@@ -218,6 +224,12 @@ class AgentPrincipalSkillBindingContractTest extends AbstractIntegrationTest {
                 .findBySubjectTypeAndSubjectIdOrderByCreatedAtAsc("agent_principal", principal.getId()).size());
         assertTrue(!resolvableSkillIds().contains(skillId),
                 "the resolver no longer returns the removed skill");
+        assertEquals(1, jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM audit_logs WHERE action = 'agent_principal_skill_unbind'"
+                        + " AND details LIKE '%\"scopeType\":\"instance\"%'"
+                        + " AND details LIKE '%\"result\":\"unbound\"%'"
+                        + " AND details LIKE '%" + bindingId + "%'", Integer.class),
+                "unbind audit detail must carry the deleted row scope");
     }
 
     @Test
@@ -257,6 +269,12 @@ class AgentPrincipalSkillBindingContractTest extends AbstractIntegrationTest {
         assertEquals(workspace.getId(), rows.get(0).getScopeId());
         assertTrue(resolvableSkillIds().contains(skillId),
                 "the agent-session resolver must see the workspace-axis binding immediately");
+        assertEquals(1, jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM audit_logs WHERE action = 'agent_principal_skill_bind'"
+                        + " AND details LIKE '%\"scopeType\":\"workspace\"%'"
+                        + " AND details LIKE '%" + workspace.getId() + "%'"
+                        + " AND details LIKE '%" + created.getBody().get("bindingId") + "%'", Integer.class),
+                "bind audit detail must carry the workspace scope id");
 
         ResponseEntity<Map> duplicate = post("/skills", Map.of("skillId", skillId.toString()),
                 workspace.getId());
@@ -389,6 +407,22 @@ class AgentPrincipalSkillBindingContractTest extends AbstractIntegrationTest {
 
         assertEquals(HttpStatus.FORBIDDEN, forbidden.getStatusCode());
         assertEquals("FORBIDDEN", forbidden.getBody().get("code"));
+
+        User editor = userRepository.saveAndFlush(new User(
+                "sk-editor-" + UUID.randomUUID() + "@test.com", "hash", "Workspace editor"));
+        extraUsers.add(editor.getId());
+        grantDefaultService.ensureUserDefault(editor);
+        workspaceFixture.bindWorkspaceRole(workspace.getId(), editor.getId(), WorkspaceRole.EDITOR);
+        materializer.materializeSubject("user", editor.getId(), editor.getId(),
+                workspace.getId().toString());
+        String editorToken = TestDataFactory.createGlobalToken(editor.getId().toString(),
+                editor.getEmail(), "USER", 0);
+
+        ResponseEntity<Map> editorBind = postWithToken("/skills",
+                Map.of("skillId", createInstanceSkill("skill-editor-denied", 1).toString()),
+                editorToken, workspace.getId());
+        assertEquals(HttpStatus.FORBIDDEN, editorBind.getStatusCode(),
+                "WS_EDITOR lacks MANAGE_WORKSPACE_AGENTS, so the atom gate refuses before row scope");
     }
 
     // ------------------------------------------------------------------ fixtures
