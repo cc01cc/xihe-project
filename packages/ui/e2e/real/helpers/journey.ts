@@ -670,6 +670,11 @@ export async function sendChat(page: Page, text: string): Promise<void> {
         .first()
         .waitFor({ state: "detached", timeout: 8000 })
         .catch(() => {});
+    const bubbles = page.locator('[data-slot="message"][data-align="end"]');
+    // PLAN-0660 T5.23（run6 900s 超时根因）：判据从「有没有乐观气泡」改成「本次调用有没有
+    // **多出**一个气泡」。同会话里已有历史消息时前者恒真（旧实现因此会立刻"成功"返回），
+    // 而新会话里前者恒假 —— 两种情形都不能用来决定"要不要再点一次发送"。
+    const baseline = await bubbles.count().catch(() => 0);
     for (let i = 0; i < 10; i++) {
         // The session may appear only after the first click (UI auto-create),
         // so re-resolve and bind the active session on every attempt.
@@ -677,11 +682,48 @@ export async function sendChat(page: Page, text: string): Promise<void> {
         if (active) {
             await ensureChatBinding(page, active[1]).catch(() => {});
         }
-        await send.click();
+        // 关键修复：点击前先判「上一次点击是不是已经生效」。run6 的实测链路是——第一次
+        // 点击成功、run 随即进入 running、发送键转 disabled，但 SSE 订阅气泡慢于旧的
+        // 3s 判据，于是循环进入第二轮**盲点**这个 disabled 按钮：Playwright 的 click 会
+        // 一直等它变可点，直接把 900s 测试预算烧光（后端证据：chat_runs=running 与
+        // user_questions=pending 都已在超时前创建，问题没丢）。所以「已产出新气泡」或
+        // 「发送键已 disabled（= run 已开始）」都视为已发出，此时**只等待、绝不再点**。
+        const produced = (await bubbles.count().catch(() => 0)) > baseline;
+        const sendDisabled = !(await send.isEnabled().catch(() => true));
+        // 「发送键 disabled」有两种含义，不区分就会静默丢消息：
+        //   ① 上一次点击已生效、run 正在跑 —— run6 场景，应当跳过点击；
+        //   ② 输入框里根本不是本次文本（还没发出去）—— 此时跳过等于把消息吞掉。
+        // 用「本次文本是否已离开输入框」来区分：只有它确实被清空，才认定已发出。
+        // 读不到输入值时保守取回原文，即视为未发出、继续走有界点击。
+        const pendingText = await input.inputValue().catch(() => text);
+        const inputCleared = !pendingText.includes(text);
+        if ((produced || sendDisabled) && inputCleared) {
+            console.log(
+                `[send-retry-guard] attempt=${i + 1} action=skip-click produced=${produced} sendDisabled=${sendDisabled} inputCleared=${inputCleared} baseline=${baseline}`,
+            );
+            // 已发出：给足时间等乐观气泡落地（SSE 慢时常见），不消耗下一次点击。
+            await expect(bubbles.nth(baseline), "等待已发出的乐观气泡").toBeVisible({
+                timeout: 30_000,
+            });
+            return;
+        }
+        if (sendDisabled) {
+            // 按钮已 disabled 但本次文本还在输入框：说明点击没生效，绝不能跳过。
+            console.log(
+                `[send-retry-guard] attempt=${i + 1} action=send-disabled-but-text-pending inputCleared=${inputCleared}`,
+            );
+        }
+        console.log(`[send-retry-guard] attempt=${i + 1} action=click baseline=${baseline}`);
+        // 有界点击：即使按钮在点击瞬间转 disabled 也只等 10s，不再无限挂起。
+        const clickTimedOut = await send
+            .click({ timeout: 10_000 })
+            .then(() => false)
+            .catch(() => true);
+        if (clickTimedOut) {
+            console.log(`[send-retry-guard] attempt=${i + 1} action=click-timeout`);
+        }
         try {
-            await expect(
-                page.locator('[data-slot="message"][data-align="end"]').first(),
-            ).toBeVisible({ timeout: 3000 });
+            await expect(bubbles.nth(baseline)).toBeVisible({ timeout: 10_000 });
             return;
         } catch {
             await page.waitForTimeout(1000);
