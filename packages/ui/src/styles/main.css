@@ -102,11 +102,11 @@
     --radius-xl: calc(var(--radius) + 4px);
     /* PLAN-0631 M0 圆角三档（语义变量；组件 M1 逐面翻，M0 只立变量+规则注释）：
        control = 按钮/输入/小控件；card = 卡片/面板；overlay = 弹层/dropdown。
-       PLAN-0631 M2（D31-M2 = B 密集）：三档默认都收进 `--radius`，**当时候选口径为 4px**；
+       PLAN-0631 M2（D31-M2 = B 密集）：三档默认都收进 `--radius`，**M2 当时冻结为 4px**；
        A/C 需要分层时在各自变量集里覆盖（见 variant-a / variant-c）。
-       **现状（2026-11-06 核对，待裁定）**：`--radius` 实际值为 `0.625rem` = **10px**
-       （来自 `d266e7e3` A″ 实验），与上句 M2 的 4px 不一致 —— 是否以 10px 固化为新基线
-       **待用户裁定**（BL-397）。裁定前此处按「事实 + 待裁」记录，不预设结论。 */
+       **现行基线（2026-11-06 用户裁定 A″ 整体固化）**：`--radius` = `0.625rem` = **10px**
+       （`d266e7e3` A″ 上调），已取代 M2 的 4px。圆角 10px 与「正文 14px·1.55 + 中性冷白 /
+       蓝拆分色板」同属 A″ 固化后的现行基线，不再待用户裁定；原待裁登记见 BL-397。 */
     --radius-control: var(--radius);
     --radius-card: var(--radius);
     --radius-overlay: var(--radius);

@@ -123,13 +123,13 @@ const DEFAULT_CASE = {
     id: "C2′",
     name: "蓝仅小面积（默认）",
     action: "#ffffff",
-    actionForeground: "#1b1e24",
+    actionForeground: "#16181d",
     /** 反馈①：弱化描边（旧 C2 是 #8b93a1）。 */
     actionBorder: "#c9cfd6",
     /** 反馈③：气泡保持品牌蓝实心 + 白字。 */
-    bubble: "#2450c8",
+    bubble: "#3b5bd0",
     bubbleForeground: "#ffffff",
-    brand: "#2450c8",
+    brand: "#3b5bd0",
     destructive: "#b42318",
 } as const;
 
@@ -525,7 +525,7 @@ test.describe("PLAN-0631 colour schemes（C1/C3 opt-in 对比）", () => {
             // 几何必须还是 B（色彩方案不许顺手改密度/字号/圆角）。
             expect(body.fontSizePx, "B 正文 14px").toBeCloseTo(14, 0);
             expect(body.lineHeightPx, "B 正文行高 1.55").toBeCloseTo(21.7, 0);
-            expect(send.borderRadiusPx, "B 主档圆角 4px").toBeCloseTo(4, 0);
+            expect(send.borderRadiusPx, "B 主档圆角 10px").toBeCloseTo(10, 0);
 
             // 颜色必须真的换成候选值。
             expect(send.background, "发送按钮填充 = --action").toBe(cssColor(item.action));
@@ -820,9 +820,9 @@ test.describe("PLAN-0631 colour schemes（C1/C3 opt-in 对比）", () => {
         expect(bubble.outlineStyle, "气泡不得有描边（反馈③）").toBe("none");
 
         // 几何必须还是 B（色彩方案不许顺手改密度/字号/圆角）。
-        expect(body.fontSizePx, "B 正文 13px").toBeCloseTo(13, 0);
-        expect(body.lineHeightPx, "B 正文行高 1.45").toBeCloseTo(18.85, 0);
-        expect(send.borderRadiusPx, "B 主档圆角 4px").toBeCloseTo(4, 0);
+        expect(body.fontSizePx, "B 正文 14px").toBeCloseTo(14, 0);
+        expect(body.lineHeightPx, "B 正文行高 1.55").toBeCloseTo(21.7, 0);
+        expect(send.borderRadiusPx, "B 主档圆角 10px").toBeCloseTo(10, 0);
 
         expect(tokens.brand, "--brand").toBe(DEFAULT_CASE.brand);
         // 基础层 --destructive 是 oklch 红（候选文件才落 #b42318 字面值）：
@@ -988,9 +988,9 @@ test.describe("PLAN-0631 colour schemes（C1/C3 opt-in 对比）", () => {
         const badgeContrast = contrastRatio(badge.color, badge.backgrounds);
         const createContrast = contrastRatio(create.color, create.backgrounds);
 
-        // 徽标沿用默认（--badge = --secondary #eef0f3），不铺强调色。
-        expect(badge.background, "徽标底 = --badge（secondary 浅灰）").toBe(cssColor("#eef0f3"));
-        expect(badge.color, "徽标字 = --badge-foreground").toBe(cssColor("#1b1e24"));
+        // 徽标沿用默认（--badge = --secondary #f1f3f7），不铺强调色。
+        expect(badge.background, "徽标底 = --badge（secondary 浅灰）").toBe(cssColor("#f1f3f7"));
+        expect(badge.color, "徽标字 = --badge-foreground").toBe(cssColor("#16181d"));
         expect(create.background, "主按钮填充 = 白底弱化描边").toBe(cssColor(DEFAULT_CASE.action));
         expect(create.borderTopWidth, "主按钮 1px 弱化描边").toBeGreaterThanOrEqual(1);
         expect(create.borderTopColor, "弱化描边色值").toBe(cssColor(DEFAULT_CASE.actionBorder));
@@ -1055,8 +1055,9 @@ test.describe("PLAN-0631 colour schemes（C1/C3 opt-in 对比）", () => {
             "rgba(0, 0, 0, 0)",
         );
         expect(create.borderTopWidth, "ghost 必须有 1px 边框").toBeGreaterThanOrEqual(1);
-        expect(create.borderTopColor, "ghost 边框 = --border").toBe(cssColor("#d5d9e0"));
-        expect(create.color, "ghost 文字 = --foreground").toBe(cssColor("#1b1e24"));
+        // --border = --border-subtle = rgba(22, 24, 29, 0.09)：实色改 alpha，直接比对计算值。
+        expect(create.borderTopColor, "ghost 边框 = --border").toBe("rgba(22, 24, 29, 0.09)");
+        expect(create.color, "ghost 文字 = --foreground").toBe(cssColor("#16181d"));
         expect(create.fontWeight, "常规字重（不是主按钮的 600）").toBe("400");
         expect(createContrast, "ghost 文字 ≥ 4.5:1").toBeGreaterThanOrEqual(4.5);
 

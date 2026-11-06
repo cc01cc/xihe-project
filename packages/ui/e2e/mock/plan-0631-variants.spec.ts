@@ -19,8 +19,9 @@
  *
  * 这个 spec 同时是**质量门**，不是"截图完事"：
  * - 0 console error / 0 pageerror（默认态 + A/C × 两个页面，各自断言）；
- * - **默认 = B**：无 `?variant=` 时断言无属性，且关键 token 等于 B —— 正文 13px/行高 1.45、
- *   圆角主档 4px、`--spacing` = 0.875 步进（0.21875rem）、强调色 `#2450c8`。
+ * - **默认 = B**：无 `?variant=` 时断言无属性，且关键 token 等于 B —— 正文 14px/行高 1.55、
+ *   圆角主档 10px、`--spacing` = 0.875 步进（0.21875rem）、强调色 `#3b5bd0`。
+ *   数值依据 **2026-11-06 用户裁定 A″ 整体固化**（正文 14px·1.55 + 圆角 10px + 中性冷白/蓝拆分）。
  *   **用 `getComputedStyle` 断言，不做截图比对**（Windows 上截图断言会被跳过，
  *   截图只作为报告产物）；
  * - A/C 仍可覆盖：`?variant=a` / `?variant=c` 的属性与实测值逐项断言；
@@ -66,14 +67,14 @@ const DEFAULT_B = {
     name: "密集",
     bodyFontPx: 14,
     lineHeightPx: 21.7,
-    controlRadiusPx: 4,
+    controlRadiusPx: 10,
     /** 0.25rem × 0.875 = 3.5px 步进。 */
     spacing: "0.21875rem",
-    radius: "0.25rem",
+    radius: "0.625rem",
     textSm: "0.875rem",
-    brand: "#2450c8",
-    foreground: "#1b1e24",
-    mutedForeground: "#4f5661",
+    brand: "#3b5bd0",
+    foreground: "#16181d",
+    mutedForeground: "#64686f",
 } as const;
 
 /**
@@ -841,14 +842,14 @@ test.describe("PLAN-0631 M2 visual variants", () => {
         expect(result.variant, "默认不得投影任何 variant 属性").toBeNull();
         expect(result.text.fontSizePx, "B 正文 14px").toBeCloseTo(DEFAULT_B.bodyFontPx, 1);
         expect(result.text.lineHeightPx, "B 正文行高 1.55").toBeCloseTo(DEFAULT_B.lineHeightPx, 1);
-        expect(result.control.borderRadiusPx, "B 主档圆角 4px").toBeCloseTo(
+        expect(result.control.borderRadiusPx, "B 主档圆角 10px").toBeCloseTo(
             DEFAULT_B.controlRadiusPx,
             1,
         );
         expect(result.tokens.spacing, "B 间距 0.875 步进（3.5px）").toBe(DEFAULT_B.spacing);
-        expect(result.tokens.radius, "B --radius = 4px").toBe(DEFAULT_B.radius);
+        expect(result.tokens.radius, "B --radius = 10px（A″ 固化）").toBe(DEFAULT_B.radius);
         expect(result.tokens.textSm, "B 正文阶梯 14px").toBe(DEFAULT_B.textSm);
-        expect(result.tokens.brand, "B 唯一强调色 #2450c8").toBe(DEFAULT_B.brand);
+        expect(result.tokens.brand, "B 唯一强调色 = brand token").toBe(DEFAULT_B.brand);
         expect(result.tokens.foreground, "B 正文色").toBe(DEFAULT_B.foreground);
         expect(result.tokens.mutedForeground, "B 次级文字色").toBe(DEFAULT_B.mutedForeground);
 
@@ -928,12 +929,12 @@ test.describe("PLAN-0631 M2 visual variants", () => {
         expect(result.variant, "默认不得投影任何 variant 属性").toBeNull();
         expect(result.text.fontSizePx, "B 正文 14px").toBeCloseTo(DEFAULT_B.bodyFontPx, 1);
         expect(result.text.lineHeightPx, "B 正文行高 1.55").toBeCloseTo(DEFAULT_B.lineHeightPx, 1);
-        expect(result.control.borderRadiusPx, "B 主档圆角 4px").toBeCloseTo(
+        expect(result.control.borderRadiusPx, "B 主档圆角 10px").toBeCloseTo(
             DEFAULT_B.controlRadiusPx,
             1,
         );
         expect(result.tokens.spacing, "B 间距 0.875 步进（3.5px）").toBe(DEFAULT_B.spacing);
-        expect(result.tokens.brand, "B 唯一强调色 #2450c8").toBe(DEFAULT_B.brand);
+        expect(result.tokens.brand, "B 唯一强调色 = brand token").toBe(DEFAULT_B.brand);
         expect(bodyContrast, "正文 ≥ 4.5:1").toBeGreaterThanOrEqual(4.5);
         expect(mutedContrast, "次级文字 ≥ 4.5:1").toBeGreaterThanOrEqual(4.5);
         expect(brandContrast, "强调色上的文字 ≥ 4.5:1").toBeGreaterThanOrEqual(4.5);
