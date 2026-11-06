@@ -1,8 +1,9 @@
 import { flushPromises, mount } from "@vue/test-utils";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { createPinia } from "pinia";
+import { createPinia, setActivePinia } from "pinia";
 import { i18n } from "../../../../i18n";
 import SessionParticipantsPanel from "../SessionParticipantsPanel.vue";
+import { useUserQuestionsStore } from "../../stores/userQuestions";
 import type {
     ParticipantReadCursor,
     SessionParticipantCapabilities,
@@ -131,6 +132,83 @@ describe("SessionParticipantsPanel states (PLAN-0623 N3)", () => {
 
         expect(wrapper.find('[data-testid="participants-forbidden"]').exists()).toBe(true);
         expect(wrapper.findAll('[data-testid^="participant-row-"]')).toHaveLength(0);
+    });
+});
+
+/**
+ * PLAN-0660 T5.21（审计 P1-2 / 用户 2026-11-07 裁定 ③）：面板级「N 条待答」汇总徽标。
+ *
+ * 判据三条：
+ * 1. **同源** —— 数值就是 `useUserQuestionsStore.pendingCount`（侧边栏问题卡入口用的同一个
+ *    store、同一个服务端派生值）。这里靠「改 store ⇒ 徽标跟着变」来钉，本地累加会红。
+ * 2. **0 不渲染** —— 与行内未读徽标「缺失即不渲染」同一纪律，零态不占位。
+ * 3. **行内 @未读不动** —— 那是 per-participant 的 CP 派生游标，与用户级待答是两个维度；
+ *    把 `pendingCount` 塞进每行会让所有行显示同一个全局数字（语义 bug，已否决）。
+ */
+describe("SessionParticipantsPanel pending-question summary (PLAN-0660 T5.21 裁定 ③)", () => {
+    function mountWithPending(pendingCount: number, props: Record<string, unknown> = {}) {
+        const pinia = createPinia();
+        setActivePinia(pinia);
+        const wrapper = mount(SessionParticipantsPanel, {
+            props: { sessionId: "session-1", ...props },
+            global: { plugins: [i18n, pinia] },
+        });
+        const questions = useUserQuestionsStore();
+        questions.pendingCount = pendingCount;
+        return { wrapper, questions };
+    }
+
+    it("renders the store's pendingCount and disappears at zero", async () => {
+        getParticipants.mockResolvedValueOnce({
+            participants: [AGENT],
+            capabilities: ALL_CAPS,
+        });
+        const { wrapper, questions } = mountWithPending(2);
+        await flushPromises();
+
+        expect(
+            wrapper.get('[data-testid="participants-pending-questions-badge"]').text(),
+        ).toContain("2");
+
+        // 同源：store 是唯一来源 —— 改成 5 徽标必须跟到 5。
+        questions.pendingCount = 5;
+        await flushPromises();
+        expect(
+            wrapper.get('[data-testid="participants-pending-questions-badge"]').text(),
+        ).toContain("5");
+
+        // 零态不渲染：整块消失，不留空壳。
+        questions.pendingCount = 0;
+        await flushPromises();
+        expect(wrapper.find('[data-testid="participants-pending-questions"]').exists()).toBe(false);
+    });
+
+    it("keeps the per-row mention badge independent of the user-level pending count", async () => {
+        getParticipants.mockResolvedValueOnce({
+            participants: [AGENT, HUMAN],
+            capabilities: ALL_CAPS,
+        });
+        const { wrapper } = mountWithPending(4);
+        await flushPromises();
+
+        // 用户级待答 4，行内 @未读仍各自是 CP 游标派生的 3 / 无 —— 两个维度互不串味。
+        expect(
+            wrapper.get('[data-testid="participants-pending-questions-badge"]').text(),
+        ).toContain("4");
+        expect(wrapper.get('[data-testid="participant-mention-badge-p-agent"]').text()).toContain(
+            "3",
+        );
+        expect(wrapper.find('[data-testid="participant-mention-badge-p-human"]').exists()).toBe(
+            false,
+        );
+    });
+
+    it("does not render without an open session", async () => {
+        const { wrapper } = mountWithPending(3, { sessionId: null });
+        await flushPromises();
+
+        expect(wrapper.find('[data-testid="participants-pending-questions"]').exists()).toBe(false);
+        expect(getParticipants).not.toHaveBeenCalled();
     });
 });
 
