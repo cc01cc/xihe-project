@@ -51,6 +51,10 @@ function pidIsAlive(pid) {
   }
 }
 
+// BL-396 / PLAN-0643 V23: the cross-process first-login lock reuses this exact
+// liveness semantic (a dead holder's lock is stale; EPERM counts as alive).
+export { pidIsAlive };
+
 /**
  * Remove `.cli-token.<pid>.<ts>.tmp` files that can never become the store: their writer
  * was SIGKILLed mid-write (`persist` renames or removes it on every handled path, only a

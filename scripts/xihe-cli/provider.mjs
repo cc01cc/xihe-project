@@ -1,10 +1,31 @@
 import { spawnSync } from 'node:child_process';
 import { createInterface } from 'node:readline/promises';
-import { persistToken, tokenEntryFor } from './token-store.mjs';
+import { withLoginLock } from './login-lock.mjs';
+import { cacheDisabled, persistToken, tokenEntryFor } from './token-store.mjs';
 
 const DEFAULT_CP_PORT = '12631';
 const CP_REQUEST_TIMEOUT_MS = 10_000;
 const CP_VERIFY_TIMEOUT_MS = 15_000;
+
+// BL-396: `Retry-After` is honoured but bounded. A hostile/oversized value must not
+// turn one CLI command into a several-minute wait; the login retry loop caps what
+// it sleeps anyway, this cap keeps the surfaced `retryAfterMs` honest.
+const MAX_RETRY_AFTER_MS = 5_000;
+
+/** `Retry-After` is either delta-seconds (CP's shape) or an HTTP date; anything else is unknown. */
+export function parseRetryAfterMs(value, nowMs = Date.now()) {
+  const text = String(value ?? '').trim();
+  if (text === '') return undefined;
+  if (/^\d+$/.test(text)) {
+    const seconds = Number(text);
+    if (!Number.isFinite(seconds)) return undefined;
+    return Math.min(seconds * 1000, MAX_RETRY_AFTER_MS);
+  }
+  const at = Date.parse(text);
+  if (!Number.isFinite(at)) return undefined;
+  const delta = at - nowMs;
+  return Math.min(delta > 0 ? delta : 0, MAX_RETRY_AFTER_MS);
+}
 
 export class CliError extends Error {
   constructor(code, message, details = {}, exitCode) {
@@ -369,6 +390,11 @@ export async function requestJson(pathname, {
     throw new CliError(apiErrorCode(response.status, parsed, preserveServerCodes), `CP request failed (HTTP ${response.status}).`, {
       status: response.status,
       requestId: typeof parsed?.requestId === 'string' ? parsed.requestId : undefined,
+      // BL-396: only the rate-limit path needs the server's own pacing hint; every
+      // other failure keeps the exact extra shape it had before.
+      ...(response.status === 429
+        ? { retryAfterMs: parseRetryAfterMs(response.headers?.get?.('retry-after')) }
+        : {}),
       ...safeProblemFields(parsed, problemFields),
     });
   }
@@ -427,49 +453,75 @@ export async function requestText(pathname, {
   };
 }
 
+// PLAN-0643 V23 (first-login contention): concurrent commands against the same
+// CP identity share one in-flight login instead of racing N POSTs into the
+// rate limiter. Keyed by apiBase + identifier so different accounts never
+// converge; the entry clears on settle so a failed attempt is retryable.
+// BL-396 adds the *cross-process* half: the in-process map only covers callers
+// inside one CLI process, so five independent `xihe status` processes still sent
+// five logins and CP's `login.account.max-concurrent:2` answered 429 to the
+// overflow. `withLoginLock` (login-lock.mjs) serialises the POST across
+// processes; waiters re-read the token store and reuse the winner's token.
+const inflightLogins = new Map();
+
+// BL-396: a login that actually lands on CP's rate limiter is retried a bounded
+// number of times (server `Retry-After` when present, else a short backoff) before
+// AUTH_RATE_LIMITED is reported as-is. Two retries keeps the worst case short
+// (3 x 300 ms) while covering the normal "two winners arrived together" race.
+const LOGIN_RATE_LIMIT_RETRIES = 2;
+const LOGIN_RATE_LIMIT_BACKOFF_MS = 300;
+
+function tokenCacheFailure(cached) {
+  if (cached.kind === 'unsafe') {
+    return new CliError(
+      'TOKEN_FILE_UNSAFE',
+      `${cached.path} is unsafe (${cached.reason}); fix the path or run \`xihe auth logout --force\`, then log in again.`,
+    );
+  }
+  if (cached.kind === 'corrupt') {
+    return new CliError(
+      'TOKEN_FILE_CORRUPT',
+      `${cached.path} is corrupt (${cached.reason}); run \`xihe auth logout --force\` to rebuild it, or set XIHE_TOKEN.`,
+    );
+  }
+  return undefined;
+}
+
 /**
  * PLAN-0643 T1.2/T1.3 (design D16/D17, spec §5): credential precedence is
  * `XIHE_TOKEN` → cached access token for this base URL → TTY/env password login.
  * `forcePassword: true` skips both the cache read and the cache write, so
  * `xihe auth login` can own persistence and report ACL/write failures explicitly.
  * A corrupt or unsafe cache file is an explicit error — never a silent degrade.
+ *
+ * BL-396: the actual POST runs under a cross-process lock and is retried on 429;
+ * `dependencies` injects fs/clock/sleep/liveness for tests (see login-lock.mjs).
  */
-// PLAN-0643 V23 (first-login contention): concurrent commands against the same
-// CP identity share one in-flight login instead of racing N POSTs into the
-// rate limiter. Keyed by apiBase + identifier so different accounts never
-// converge; the entry clears on settle so a failed attempt is retryable.
-const inflightLogins = new Map();
-
-export async function login({ apiBase, fetchImpl, env, options = {}, promptSecret, forcePassword = false }) {
+export async function login({ apiBase, fetchImpl, env, options = {}, promptSecret, forcePassword = false, dependencies = {} }) {
   const envToken = typeof env?.XIHE_TOKEN === 'string' ? env.XIHE_TOKEN.trim() : '';
   if (envToken !== '') return envToken;
   if (!forcePassword) {
     const cached = tokenEntryFor(env, apiBase);
     if (cached.kind === 'hit') return cached.token;
-    if (cached.kind === 'unsafe') {
-      throw new CliError(
-        'TOKEN_FILE_UNSAFE',
-        `${cached.path} is unsafe (${cached.reason}); fix the path or run \`xihe auth logout --force\`, then log in again.`,
-      );
-    }
-    if (cached.kind === 'corrupt') {
-      throw new CliError(
-        'TOKEN_FILE_CORRUPT',
-        `${cached.path} is corrupt (${cached.reason}); run \`xihe auth logout --force\` to rebuild it, or set XIHE_TOKEN.`,
-      );
-    }
+    const failure = tokenCacheFailure(cached);
+    if (failure) throw failure;
   }
   const email = options['--email'] ?? 'admin@xihe.local';
   const key = `${apiBase}\u0000${email}`;
   const inflight = inflightLogins.get(key);
   if (inflight) return inflight;
-  const attempt = (async () => {
-    const password = env.XIHE_DEV_ADMIN_PASSWORD || await promptSecret('XH local admin password');
-    const response = await requestJson('/api/v1/auth/login', {
+
+  const sleep = typeof dependencies.sleep === 'function'
+    ? dependencies.sleep
+    : (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  const resolvePassword = async () => env.XIHE_DEV_ADMIN_PASSWORD || promptSecret('XH local admin password');
+
+  const performLogin = async (password) => {
+    const response = await requestLoginWithRetry({
       apiBase,
       fetchImpl,
-      method: 'POST',
       body: { identifier: email, password },
+      sleep,
     });
     if (typeof response?.accessToken !== 'string' || response.accessToken.length === 0) {
       throw new CliError('AUTH_RESPONSE_INVALID', 'CP login response did not contain an access token.');
@@ -480,9 +532,68 @@ export async function login({ apiBase, fetchImpl, env, options = {}, promptSecre
       persistToken(env, { baseUrl: apiBase, token: response.accessToken, email: options['--email'] });
     }
     return response.accessToken;
+  };
+
+  // A fresh cache read taken while waiting for the lock: another process may have
+  // finished its login and persisted the token, which is exactly the case where
+  // this process must NOT log in a second time.
+  const readFreshToken = () => {
+    if (forcePassword || cacheDisabled(env)) return undefined;
+    const fresh = tokenEntryFor(env, apiBase);
+    if (fresh.kind === 'hit') return fresh.token;
+    const failure = tokenCacheFailure(fresh);
+    if (failure) throw failure;
+    return undefined;
+  };
+
+  const attempt = (async () => {
+    const password = await resolvePassword();
+    // With the cache disabled there is no shared artifact to converge on, so the
+    // lock would only serialise logins without saving any; keep the pre-BL-396 path.
+    if (cacheDisabled(env)) return performLogin(password);
+    const outcome = await withLoginLock({ env, ...dependencies, onWait: () => readFreshToken() }, async () => {
+      const fresh = readFreshToken();
+      if (fresh !== undefined) return fresh;
+      return performLogin(password);
+    });
+    if (outcome.kind === 'reuse') return outcome.token;
+    if (outcome.kind === 'run') return outcome.value;
+    if (outcome.kind === 'unusable') {
+      // The lock file cannot be created (missing/unwritable cache directory): fall
+      // back to the single-process behaviour instead of failing the command.
+      return performLogin(password);
+    }
+    throw new CliError(
+      'AUTH_LOGIN_CONTENTION',
+      `Waited ${outcome.waitedMs} ms for the cross-process login lock (${outcome.path}) without a usable token appearing; retry the command.`,
+      { waitedMs: outcome.waitedMs, path: outcome.path },
+      1,
+    );
   })().finally(() => inflightLogins.delete(key));
   inflightLogins.set(key, attempt);
   return attempt;
+}
+
+/**
+ * POST /api/v1/auth/login with a bounded 429 retry (BL-396). CP's throttle is a
+ * concurrency cap (`login.account.max-concurrent:2`), so the honest failure mode
+ * of a racing login is a 429 + `Retry-After`; retrying once the other login has
+ * settled usually succeeds. A sustained 429 still surfaces as AUTH_RATE_LIMITED
+ * (the original CliError, unchanged) — the CLI never swallows it.
+ */
+async function requestLoginWithRetry({ apiBase, fetchImpl, body, sleep }) {
+  for (let attemptIndex = 0; ; attemptIndex += 1) {
+    try {
+      return await requestJson('/api/v1/auth/login', { apiBase, fetchImpl, method: 'POST', body });
+    } catch (error) {
+      const rateLimited = error instanceof CliError && error.code === 'AUTH_RATE_LIMITED';
+      if (!rateLimited || attemptIndex >= LOGIN_RATE_LIMIT_RETRIES) throw error;
+      const hint = Number(error.details?.retryAfterMs);
+      // `Retry-After: 0` means "retry now"; a missing/unparseable hint uses the backoff.
+      const delayMs = Number.isFinite(hint) ? Math.max(0, hint) : LOGIN_RATE_LIMIT_BACKOFF_MS;
+      if (delayMs > 0) await sleep(Math.min(delayMs, MAX_RETRY_AFTER_MS));
+    }
+  }
 }
 
 export async function getProviderCatalog({ apiBase, fetchImpl, token }) {
