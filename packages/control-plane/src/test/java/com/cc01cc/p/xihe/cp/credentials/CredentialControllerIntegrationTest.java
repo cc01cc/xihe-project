@@ -105,7 +105,19 @@ class CredentialControllerIntegrationTest extends AbstractIntegrationTest {
         assertTrue(created.getBody().contains("\"fingerprint\""));
         assertTrue(created.getBody().contains("\"ownerType\":\"USER\""));
         assertFalse(created.getBody().contains(secret), "the response must never carry the plaintext");
-        assertFalse(created.getBody().contains("6789"), "the response must never carry a suffix");
+        // 结构化断言（BL-432）：不按「全 body 搜 4 位末串」判——响应含 fingerprint（64 hex）与 id/ownerId（UUID），
+        // 随机十六进制偶然出现 "6789" 会让断言假红（2026-11-07 L2 run2 实测 flake），与密钥是否泄漏无关。
+        JsonNode view = parse(created.getBody());
+        view.fieldNames().forEachRemaining(name -> {
+            String lower = name.toLowerCase(java.util.Locale.ROOT);
+            assertFalse(lower.contains("suffix") || lower.contains("last4") || lower.contains("tail")
+                            || lower.contains("masked") || lower.contains("preview"),
+                    "the response must not expose a secret suffix field: " + name);
+        });
+        for (String name : List.of("label", "kind", "deliveryTier", "ownerType", "status")) {
+            assertFalse(view.path(name).asText("").contains("6789"),
+                    "the response must not carry the secret suffix in " + name);
+        }
 
         String credentialId = field(created.getBody(), "id");
         var row = credentialRepository.findById(UUID.fromString(credentialId)).orElseThrow();
