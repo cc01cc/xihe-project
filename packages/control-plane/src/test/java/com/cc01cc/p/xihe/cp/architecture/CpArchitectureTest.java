@@ -163,6 +163,12 @@ class CpArchitectureTest {
      * requiring this test and the commit message to say why.
      */
     @Test
+    void readServiceStaysNonTransactional() {
+        CpArchitectureRules.READ_SERVICE_IS_NOT_TRANSACTIONAL.check(production);
+        CpArchitectureRules.READ_SERVICE_METHODS_ARE_NOT_TRANSACTIONAL.check(production);
+    }
+
+    @Test
     void controllerRepositoryExemptionsAreEmpty() {
         assertThat(CpArchitectureRules.CONTROLLER_REPOSITORY_EXEMPTIONS)
                 .as("BL-370: no controller→repository exemptions remain after S1")

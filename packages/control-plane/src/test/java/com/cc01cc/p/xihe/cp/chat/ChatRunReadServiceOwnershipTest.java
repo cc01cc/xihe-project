@@ -92,5 +92,9 @@ class ChatRunReadServiceOwnershipTest {
     void hasTransportAttemptIsTheOnlyDispatchProbeControllersNeed() {
         when(attempts.existsByRunId(RUN_ID)).thenReturn(true);
         assertThat(service.hasTransportAttempt(RUN_ID)).isTrue();
+        // BL-370 audit follow-up: the DISPATCHED decision has two halves; absence is the one that
+        // produces NOT_DISPATCHED and was previously untested.
+        when(attempts.existsByRunId("run-without-attempts")).thenReturn(false);
+        assertThat(service.hasTransportAttempt("run-without-attempts")).isFalse();
     }
 }
