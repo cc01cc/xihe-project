@@ -51,7 +51,7 @@
     "defaultBaseUrl": "https://api.xiaomimimo.com/v1",
     "modelDiscovery": "remote-models",
     "supportedApiTypes": [{ "apiTypeId": "mimo-responses", "version": 1, "capability": { "tools": false, "vision": false } }, { "apiTypeId": "openai-chat-completions", "version": 1, "capability": { "tools": true, "vision": false } }],
-    "defaultApiType": { "apiTypeId": "mimo-responses", "version": 1 },
+    "defaultApiType": { "apiTypeId": "openai-chat-completions", "version": 1 },
     "credential": { "type": "api-key", "required": true, "placeholder": "sk-..." },
     "supports": { "customBaseUrl": true, "streaming": true, "tools": true, "vision": false, "toolsPartial": true, "visionPartial": false }
   },
