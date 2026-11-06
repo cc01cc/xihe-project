@@ -298,11 +298,28 @@ impl OutputPaths {
         }
     }
 }
-
-#[derive(Default)]
 struct OutputCounters {
     bytes: AtomicU64,
     truncated: AtomicBool,
+    /// BL-372: per-job capture cap. Defaults to [`STREAM_CAP_BYTES`]; the file
+    /// worker raises it so a large but bounded response survives capture.
+    cap_bytes: u64,
+}
+
+impl Default for OutputCounters {
+    fn default() -> Self {
+        Self::with_cap(STREAM_CAP_BYTES)
+    }
+}
+
+impl OutputCounters {
+    fn with_cap(cap_bytes: u64) -> Self {
+        Self {
+            bytes: AtomicU64::new(0),
+            truncated: AtomicBool::new(false),
+            cap_bytes,
+        }
+    }
 }
 
 struct JobEntry {
@@ -439,18 +456,43 @@ impl JobEngine {
         plan: LaunchPlan,
         stdin: Option<Vec<u8>>,
     ) -> Result<JobHandle, JobEngineError> {
+        self.start_in_workspace_with_stdin_capped(
+            workspace_id,
+            job_id,
+            plan,
+            stdin,
+            STREAM_CAP_BYTES,
+        )
+    }
+
+    /// BL-372: like [`Self::start_in_workspace_with_stdin`] but with an explicit
+    /// capture cap. The file worker needs a larger budget than the 1 MiB default
+    /// because its whole stdout *is* the JSON response; without this the capture
+    /// layer (`pump_stream`) drains everything past the cap and the caller can
+    /// only ever parse a truncated line.
+    ///
+    /// Callers that do not need more headroom keep the default by calling
+    /// [`Self::start_in_workspace_with_stdin`], so ordinary jobs are unchanged.
+    pub fn start_in_workspace_with_stdin_capped(
+        &self,
+        workspace_id: Option<&str>,
+        job_id: &str,
+        plan: LaunchPlan,
+        stdin: Option<Vec<u8>>,
+        capture_cap: u64,
+    ) -> Result<JobHandle, JobEngineError> {
         if let Some(existing) = self.get_entry(job_id) {
             return Ok(existing.handle.clone());
         }
 
         #[cfg(windows)]
         {
-            self.start_windows(workspace_id, job_id, plan, stdin)
+            self.start_windows(workspace_id, job_id, plan, stdin, capture_cap)
         }
 
         #[cfg(not(windows))]
         {
-            let _ = (workspace_id, job_id, plan, stdin);
+            let _ = (workspace_id, job_id, plan, stdin, capture_cap);
             Err(JobEngineError::Unsupported(
                 "windows process job engine requires windows".to_string(),
             ))
@@ -711,6 +753,7 @@ impl JobEngine {
         job_id: &str,
         plan: LaunchPlan,
         stdin: Option<Vec<u8>>,
+        capture_cap: u64,
     ) -> Result<JobHandle, JobEngineError> {
         use std::os::windows::io::AsRawHandle;
 
@@ -805,7 +848,7 @@ impl JobEngine {
                 cleanup: CleanupState::NotStarted,
             }),
             outputs,
-            stdout: OutputCounters::default(),
+            stdout: OutputCounters::with_cap(capture_cap),
             stderr: OutputCounters::default(),
             cancel_requested: AtomicBool::new(false),
         });
@@ -1161,8 +1204,8 @@ fn pump_stream<R: Read>(mut reader: R, path: &Path, counters: &OutputCounters) {
             Ok(0) => break,
             Ok(read) => {
                 let stored = counters.bytes.load(Ordering::Relaxed);
-                if stored < STREAM_CAP_BYTES {
-                    let remaining = STREAM_CAP_BYTES - stored;
+                if stored < counters.cap_bytes {
+                    let remaining = counters.cap_bytes - stored;
                     let write_len = (read as u64).min(remaining) as usize;
                     if let Err(error) = file.write_all(&buffer[..write_len]) {
                         tracing::warn!(
@@ -1178,7 +1221,7 @@ fn pump_stream<R: Read>(mut reader: R, path: &Path, counters: &OutputCounters) {
                         .bytes
                         .fetch_add(write_len as u64, Ordering::Relaxed);
                     if write_len < read
-                        || counters.bytes.load(Ordering::Relaxed) >= STREAM_CAP_BYTES
+                        || counters.bytes.load(Ordering::Relaxed) >= counters.cap_bytes
                     {
                         counters.truncated.store(true, Ordering::Relaxed);
                     }
@@ -1336,6 +1379,28 @@ mod tests {
         assert!(counters.truncated.load(Ordering::Relaxed));
     }
 
+    #[test]
+    fn default_capture_cap_matches_the_stream_cap() {
+        // BL-372: raising the cap must be opt-in; a default counter keeps the
+        // historical 1 MiB budget so ordinary jobs are unchanged.
+        assert_eq!(OutputCounters::default().cap_bytes, STREAM_CAP_BYTES);
+    }
+
+    #[test]
+    fn pump_stream_honours_a_custom_capture_cap() {
+        // BL-372: the cap is per job, and "over the cap" means bytes == cap
+        // (everything past it is drained), which is what broke the file worker.
+        let root = temp_root("pump-custom-cap");
+        let path = root.join("stdout.log");
+        let cap = 4096u64;
+        let counters = OutputCounters::with_cap(cap);
+        let payload = vec![b'a'; cap as usize + 1000];
+        pump_stream(Cursor::new(payload), &path, &counters);
+        let stored = fs::metadata(&path).expect("file").len();
+        assert_eq!(stored, cap);
+        assert_eq!(counters.bytes.load(Ordering::Relaxed), cap);
+        assert!(counters.truncated.load(Ordering::Relaxed));
+    }
     #[test]
     fn pump_stream_keeps_short_output_verbatim() {
         let root = temp_root("pump-short");
