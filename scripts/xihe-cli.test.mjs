@@ -6882,3 +6882,46 @@ test('PLAN-0643 T5.3: a CP 403 maps to ACCESS_DENIED for four commands; status d
   }
 });
 
+// ── BL-414: `xihe status <anything>` used to drop the stray token silently ──────
+// The status-style group parsed the second token as a sub-command name, found nothing to
+// dispatch for it, and answered success without a request. `models` already rejects a
+// sub-command; `status` now does the same (usage error, exit 2, no CP call).
+test('BL-414: status rejects a stray sub-command instead of dropping it silently', async (t) => {
+  const cp = await startReadOnlyMock();
+  const token = tempTokenFile();
+  t.after(async () => { await cp.close(); token.cleanup(); });
+  const env = { ...cp.env, XIHE_CLI_TOKEN_FILE: token.file };
+
+  // Regression guard: the normal face still succeeds after the new validation.
+  const ok = await runReadOnly(['status', '--json'], env);
+  assert.equal(ok.exitCode, 0, JSON.stringify(ok.error));
+  assert.equal(ok.data.kind, 'status');
+  const hitsBefore = cp.state.hits.length;
+  const loginsBefore = cp.state.loginRequests;
+
+  for (const argv of [['status', 'extra', '--json'], ['status', 'extra']]) {
+    const result = await runReadOnly(argv, env);
+    assert.equal(result.exitCode, 2, `${argv.join(' ')}: ${JSON.stringify(result.data)}`);
+    assert.equal(result.error.code, 'INVALID_ARGUMENT');
+    assert.equal(result.json, argv.includes('--json'),
+      `${argv.join(' ')}: --json must still select the envelope`);
+  }
+  assert.equal(cp.state.hits.length, hitsBefore, 'a usage error must not reach the CP');
+  assert.equal(cp.state.loginRequests, loginsBefore, 'a usage error must not log in');
+
+  // `--json` keeps the frozen {ok:false,error} envelope end-to-end (spawned, offline: the
+  // usage check runs before any login, so no CP is needed).
+  const spawnedEnv = { ...process.env, XIHE_CLI_TOKEN_CACHE: 'off', XIHE_CP_PORT: '1' };
+  delete spawnedEnv.XIHE_CP_URL;
+  delete spawnedEnv.XIHE_CLI_TOKEN_FILE;
+  const spawned = spawnSync(process.execPath, ['scripts/xihe.mjs', 'status', 'extra', '--json'], {
+    cwd: process.cwd(), env: spawnedEnv, encoding: 'utf8', timeout: 30_000, windowsHide: true,
+  });
+  assert.equal(spawned.status, 2, spawned.stderr);
+  const envelope = JSON.parse(spawned.stdout);
+  assert.deepEqual(Object.keys(envelope).sort(), ['error', 'ok']);
+  assert.equal(envelope.ok, false);
+  assert.equal(envelope.error.code, 'INVALID_ARGUMENT');
+});
+
+
