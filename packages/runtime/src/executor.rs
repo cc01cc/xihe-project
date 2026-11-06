@@ -334,7 +334,7 @@ fn read_file_worker_stdout(
         }
         offset = chunk.next_offset;
         output.push_str(&chunk.data);
-        if output.len() > FILE_WORKER_OUTPUT_LIMIT {
+        if output.len() >= FILE_WORKER_OUTPUT_LIMIT {
             return Err(output_capture_limit_error());
         }
     }
