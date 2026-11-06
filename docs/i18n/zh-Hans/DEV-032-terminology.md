@@ -127,6 +127,18 @@ XH 目标形态是**多主体协作**：Agent 是独立主体（有自己的账�
 | | CP gate（preview/revert/blob/status）判定原因 | **gate reason**（`EXPIRED`/`MISSING`/`DEGRADED`/`TOO_LARGE`） | 把 gate reason 塞进 capture 白名单 |
 | **absolute path** | 配置源值 | **source path**（可相对，由 launcher 解析） | 声称配置文件必须写绝对路径 |
 | | 注入 Runtime 的进程值 | **resolved host root（绝对）** | 把相对值当正常契约 |
+
+### 1.3 用户问答与通知 hint（2026-11-06 增补）
+
+| 术语（中文） | 英文 / 代码标识 | 一句话定义 | **反例：不要用它指什么** |
+|---|---|---|---|
+| **用户问答** | `user question`（表 `user_questions`；路由 `/api/v1/user-questions`；Agent 工具名 **`ask_user`** 固定不翻译） | 一个 run 向某个人类主体提出的**阻塞式提问**：一行绑定 `(session_id, run_id)`，四态 `pending`/`answered`/`expired`/`cancelled` | 不要写成「消息 / message」（不进 `messages`、不进 Chat SSE）；不要用「审批 / approval」（审批是工具授权，问答是模型主动问人）；不要给 `ask_user` 另起中文工具名 |
+| **待答数** | `pendingCount`（`GET /api/v1/user-questions` 响应字段） | 与列表**同过滤条件**的派生计数，用于徽标 | 不要说「未读计数」（未读属参与者游标那套，见「参与者游标」行）；不要假设它落库（派生值，不落计数器） |
+| **用户通道** | `user channel`（`GET /api/v1/user-events`；`UserChannelPort`） | 用户级 SSE 通道：按 user 订阅、**不绑工作区**、无 replay | 不要与「会话频道 / Session SSE」混用（后者有 replay 与参与者语义）；不要说它承载业务事实 |
+| **失效提示** | `refresh hint`（通道事件 `user_question` / `participant_notified`） | 只告诉客户端「某投影变了，去重读」，**不是事实源** | 不要叫「通知 / notification」（易被当成可独立依赖的事实）；不要用 hint 拼装状态；不要假设丢 hint 会被补发（无 replay） |
+| **问答响应视图** | `UserQuestionView`（形状口径 `<对象> 响应视图`，见 §1 `projection` C 行） | `GET /{id}` 与 `answer` 返回的投影：对 addressee 与会话可见读者**字段完全一致** | 不要写成 `<对象> projection`；不要说「读者看到裁剪版」（契约无字段级裁剪，差异只在作答权，D-197） |
+| **子 run 拒绝** | `SUBAGENT_QUESTION_REFUSED`（`code` 字段） | 非 root run 调 `ask_user` 的固定拒绝码：CP relay 门与 Agent 前置门同码 | 不要另造「子智能体不能提问」之类自由文案当错误码；不要只在 UI 判（服务端 fail-closed） |
+
 ## 2. 多词一义 → 正名与别名
 
 ### 2.1 仍存活、待统一（未实施/实施中 PLAN 按正名写）

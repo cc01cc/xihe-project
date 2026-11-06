@@ -6,7 +6,7 @@ sidebar_group: "开发指南"
 status: active
 sidebar_order: 17
 created: 2026-09-03
-updated: 2026-11-04
+updated: 2026-11-06
 ---
 
 # DEV-017: Session 架构
@@ -77,6 +77,14 @@ ChatRun 通过 `runId` 关联 Message，服务端返回的 `runStatus`、`termin
 - 队列未清空时普通 `POST /api/v1/chat` 一律 `409 FOLLOW_UP_QUEUE_NOT_EMPTY`；Run 中排队必须走 UI 显式 Queue 动作，`CHAT_IN_PROGRESS` 不再是唯一出口。Session 删除意图期间队列变更与普通 Chat 均 `409 SESSION_DELETING`。
 - 每 Session 至多一个 active child：admission 与 QueueItem 状态转换同事务原子落库；父/child Run 终态由 settlement 同事务推进（succeeded/partial/failed → 下一项自动接续，cancelled/ambiguous → 整队 `paused`），已 admission 的 cancelled/ambiguous child 不重放，`continue` 只放行其后项目。
 - admission 前重验附件所有权、branch 可见性与 binding，失败即 `paused`（fail-closed）；CP 启动恢复暂停 admitted-without-child 并唤醒 queued head（幂等）。API/OpenAPI 见 DEV-014 与 `docs/api/openapi.yaml`；UI 面板见 [DEV-010](DEV-010-ui-architecture.md)。
+
+### 1.4 用户问答与用户通道（PLAN-0660 M5-B）
+
+- 问答是 **Session 内 Run 的一次阻塞交互**，不是消息：`user_questions`（V128）一行绑定 `(session_id, run_id)`，`addressee_user_id` = 该 run 的 owner（v1 只有 run owner 一个 addressee）；问题正文与答案都存在行上，**不进 `messages`、不进 Chat SSE**。
+- 四态 `pending → answered | expired | cancelled`：作答只走 `POST /api/v1/user-questions/{id}/answer`（addressee only，CAS + 同一事务内回调 Agent；Agent 非 2xx 则回滚、行留 `pending`）；run 终态为 `cancelled`/`cancelling` ⇒ `cancelled`，其余终态或 `askTimed` 到点 ⇒ `expired`；终态**不回滚**。
+- **可见性 ≠ 作答权**：会话可见读者（session owner / 已启用的受邀 HUMAN 参与者）可 `GET` 到同一投影，但只有 addressee 能作答；非 addressee 的读与写一律统一 404（不区分"不存在"与"无权"，不泄露存在性）。
+- **推送只是 hint**：`GET /api/v1/user-events` 的 `user_question {questionId,sessionId,state}` 只在落库后推一次（`state=pending`），通道无 replay；结算不推送，徽标与列表靠 `GET /api/v1/user-questions` 的派生 `pendingCount` 收敛（与「指针不是计数器」同口径）。
+- **只有 root run 可问**：子 run 被两道门拒绝——CP relay（`409 SUBAGENT_QUESTION_REFUSED`）与 Agent 前置门（派发体带 `parentRunId`，不产事件也不进入等待）。通道、表与错误码细节见 [DEV-014 §14d](DEV-014-control-plane-architecture.md)、`spec/session/user-channel.md` §6a 与 `spec/protocol/event-stream.md` §4。
 
 ## 2. Store 职责边界（选项 B：共享 + 视图分离）
 

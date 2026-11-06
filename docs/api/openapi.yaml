@@ -2058,6 +2058,7 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/UserQuestionView' }
+        '401': { $ref: '#/components/responses/Problem' }
         '404': { $ref: '#/components/responses/Problem' }
   /api/v1/user-questions/{id}/answer:
     post:
@@ -2082,6 +2083,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/UserQuestionView' }
         '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
         '404': { $ref: '#/components/responses/Problem' }
         '409': { $ref: '#/components/responses/Problem' }
         '502': { $ref: '#/components/responses/Problem' }
@@ -6387,7 +6389,7 @@ components:
         answer: { type: string, nullable: true, description: 'Only set by the pending → answered transition.' }
         expiresAt: { type: string, format: date-time, nullable: true, description: 'null = blocking ask; otherwise the askTimed deadline.' }
         createdAt: { type: string, format: date-time }
-        firstDeliveredAt: { type: string, format: date-time, nullable: true }
+        firstDeliveredAt: { type: string, format: date-time, nullable: true, description: 'Reserved: first time the pending hint reached the addressee. CURRENTLY ALWAYS null — the relay path has no write point yet (T5.25 reconciliation, tracked as drift); do not build UI logic on it.' }
         settledAt: { type: string, format: date-time, nullable: true, description: 'Terminal stamp; the "answered at" instant for an answered question (frozen column settled_at).' }
     UserQuestionListResponse:
       type: object
@@ -6411,6 +6413,7 @@ components:
         runId: { type: string, format: uuid }
         sessionId: { type: string }
         content: { type: string }
+        parentRunId: { type: string, format: uuid, nullable: true, description: 'PLAN-0660 T5.16 (LD-16=A), additive and OPTIONAL: present only when CP dispatches a **spawned** run, carrying the parent run id (same value as `chat_runs.parent_run_id`). A root run omits the key entirely, so a pre-T5.16 reader stays compatible. The Agent uses it as the root-run gate: `ask_user` refuses a child run at the door with `code=SUBAGENT_QUESTION_REFUSED` before publishing anything.' }
         pathMentions:
           type: array
           description: |
