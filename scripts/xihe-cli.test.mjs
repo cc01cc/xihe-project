@@ -5740,3 +5740,600 @@ test('PLAN-0643 V24: killing a concurrent token-store writer leaves a parseable 
   const entry = store.tokens['http://127.0.0.1:12631'];
   assert.match(entry.token, /^v{2000}\d+$/, 'the store holds either the old or the new value, fully written');
 });
+
+// ---------------------------------------------------------------------------
+// PLAN-0643 M6-3 (T4.x, V47/V48/V49/V2): catalog reads, workspace write face,
+// scheduled-task verbs, events tail, and the groups.added re-judge.
+// Same-process only (runCommand + fake CP): child HTTP is a documented sandbox
+// boundary; real-process acceptance belongs to the Lead (V13/V23 precedent).
+// ---------------------------------------------------------------------------
+
+async function startM63Mock() {
+  const state = { loginRequests: 0, requests: [] };
+  const record = (request, url, body) => state.requests.push({
+    method: request.method,
+    path: url.pathname,
+    body: body ?? null,
+    idempotencyKey: request.headers['idempotency-key'] ?? null,
+    workspaceHeader: request.headers['x-workspace-id'] ?? null,
+  });
+  const hits = (method, path) => state.requests.filter((r) => r.method === method && r.path === path);
+  const server = createServer(async (request, response) => {
+    const url = new URL(request.url, 'http://127.0.0.1');
+    const body = await requestBody(request);
+    if (url.pathname === '/api/v1/auth/login' && request.method === 'POST') {
+      state.loginRequests += 1;
+      json(response, 200, { accessToken: 'test-access-token' });
+      return;
+    }
+    if (url.pathname === '/api/v1/provider-catalog' && request.method === 'GET') {
+      record(request, url, body);
+      json(response, 200, {
+        providers: { 'xiaomi:mimo': { displayName: 'MiMo', apiTypeId: 'openai-compat', apiTypeVersion: 1, operation: 'chat' } },
+      });
+      return;
+    }
+    if (url.pathname === '/api/v1/models' && request.method === 'GET') {
+      record(request, url, body);
+      json(response, 200, {
+        providers: { 'conn-1': { connectionId: 'conn-1', providerId: 'xiaomi', connectionStatus: 'ready', models: ['model-a', 'model-b'] } },
+        models: { xiaomi: ['model-a', 'model-b'] },
+        configRevision: 'rev-7',
+      });
+      return;
+    }
+    if (url.pathname === '/api/v1/api-input-types' && request.method === 'GET') {
+      record(request, url, body);
+      json(response, 200, {
+        types: [{
+          apiTypeId: 'openai-compat', version: 1, operation: 'chat', method: 'POST',
+          path: '/v1/chat/completions', requiredBaseSuffix: '',
+          requestShape: {}, responseShape: {}, streamShape: {},
+        }],
+      });
+      return;
+    }
+    if (url.pathname === '/api/v1/me/permissions' && request.method === 'GET') {
+      record(request, url, body);
+      json(response, 200, {
+        userId: 'user-1',
+        instanceCapabilities: ['chat.run', 'workspace.create'],
+        instancePermissions: [{ atom: 'workspace:create', granted: true }],
+        workspaces: [{ workspaceId: 'ws-1', role: 'OWNER', permissions: ['workspace:read'] }],
+      });
+      return;
+    }
+    if (url.pathname === '/api/v1/workspaces' && request.method === 'POST') {
+      record(request, url, body);
+      json(response, 201, {
+        id: 'ws-new', name: body.name, storageMode: body.storageMode,
+        hostPath: body.hostPath ?? null, roots: body.roots ?? null,
+        executionMode: body.executionMode ?? null, generation: 1,
+      });
+      return;
+    }
+    if (url.pathname === '/api/v1/workspaces/ws-1' && request.method === 'DELETE') {
+      record(request, url, body);
+      response.writeHead(204);
+      response.end();
+      return;
+    }
+    if (url.pathname === '/api/v1/workspaces/ws-1/members' && request.method === 'GET') {
+      record(request, url, body);
+      json(response, 200, [{ userId: 'u-1', username: 'alice', role: 'OWNER', createdAt: '2026-11-06T00:00:00.000Z' }]);
+      return;
+    }
+    if (url.pathname === '/api/v1/workspaces/ws-1/members' && request.method === 'POST') {
+      record(request, url, body);
+      json(response, 201, { userId: 'u-2', username: body.username, role: body.role, createdAt: '2026-11-06T00:00:00.000Z' });
+      return;
+    }
+    if (url.pathname === '/api/v1/workspaces/ws-1/members/u-2' && request.method === 'PATCH') {
+      record(request, url, body);
+      json(response, 200, { userId: 'u-2', username: 'bob', role: body.role });
+      return;
+    }
+    if (url.pathname === '/api/v1/workspaces/ws-1/members/u-2' && request.method === 'DELETE') {
+      record(request, url, body);
+      response.writeHead(204);
+      response.end();
+      return;
+    }
+    if (url.pathname === '/api/v1/workspaces/ws-1/roots' && request.method === 'POST') {
+      record(request, url, body);
+      json(response, 201, { id: 'root-2', position: 1, alias: body.alias ?? null });
+      return;
+    }
+    if (url.pathname === '/api/v1/workspaces/ws-1/roots/root-2' && request.method === 'PATCH') {
+      record(request, url, body);
+      json(response, 200, { id: 'root-2', position: body.position ?? 0, alias: body.alias ?? null });
+      return;
+    }
+    if (url.pathname === '/api/v1/workspaces/ws-1/roots/root-2' && request.method === 'DELETE') {
+      record(request, url, body);
+      response.writeHead(204);
+      response.end();
+      return;
+    }
+    if (url.pathname === '/api/v1/workspaces/ws-1/scheduled-tasks' && request.method === 'POST') {
+      record(request, url, body);
+      json(response, 201, {
+        id: 'task-1', status: 'scheduled', triggerKind: body.triggerKind,
+        cronExpr: body.cronExpr ?? null, nextFireAt: '2026-11-07T00:00:00.000Z',
+      });
+      return;
+    }
+    if (url.pathname === '/api/v1/workspaces/ws-1/scheduled-tasks/task-1' && request.method === 'DELETE') {
+      record(request, url, body);
+      json(response, 200, { taskId: 'task-1', status: 'cancelled', changed: true, task: null });
+      return;
+    }
+    if (url.pathname === '/api/v1/workspaces/ws-1/scheduled-tasks/task-1/rerun' && request.method === 'POST') {
+      record(request, url, body);
+      json(response, 200, { id: 'task-1', status: 'scheduled', triggerKind: 'cron', nextFireAt: '2026-11-07T01:00:00.000Z' });
+      return;
+    }
+    if (url.pathname === '/api/v1/workspaces/ws-1/scheduled-tasks/task-1/remove' && request.method === 'POST') {
+      record(request, url, body);
+      json(response, 200, { taskId: 'task-1', status: 'cancelled', changed: true });
+      return;
+    }
+    if (url.pathname === '/api/v1/workspaces/ws-1/scheduled-tasks/task-1/postpone' && request.method === 'POST') {
+      record(request, url, body);
+      json(response, 200, { id: 'task-1', status: 'scheduled', triggerKind: 'delay_once', nextFireAt: body.at });
+      return;
+    }
+    json(response, 404, { code: 'NOT_FOUND', detail: 'unknown endpoint' });
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const env = {
+    XIHE_CP_PORT: String(server.address().port),
+    XIHE_DEV_ADMIN_PASSWORD: TEST_PASSWORD,
+    XIHE_WORKSPACE_ID: 'ws-1',
+  };
+  return {
+    state, hits, env,
+    close: () => new Promise((resolve, reject) => server.close((error) => (error ? reject(error) : resolve()))),
+  };
+}
+
+const collectStdoutStream = () => {
+  const stream = new PassThrough();
+  stream.setEncoding('utf8');
+  let text = '';
+  stream.on('data', (chunk) => { text += chunk; });
+  return { stream, text: () => text };
+};
+
+async function waitFor(predicate, { timeoutMs = 2000, stepMs = 10 } = {}) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (predicate()) return true;
+    await new Promise((resolve) => setTimeout(resolve, stepMs));
+  }
+  return false;
+}
+
+async function startEventsSseMock({ status = 200, frames = [], closeAfter = true } = {}) {
+  const state = { loginRequests: 0, lastSinceHeader: null, lastQuerySessionId: null };
+  const server = createServer(async (request, response) => {
+    const url = new URL(request.url, 'http://127.0.0.1');
+    if (url.pathname === '/api/v1/auth/login' && request.method === 'POST') {
+      state.loginRequests += 1;
+      json(response, 200, { accessToken: 'test-access-token' });
+      return;
+    }
+    if (url.pathname === '/api/v1/events' && request.method === 'GET') {
+      state.lastSinceHeader = request.headers['last-event-id'] ?? null;
+      state.lastQuerySessionId = url.searchParams.get('sessionId');
+      if (status !== 200) {
+        json(response, status, { code: 'SESSION_ACCESS_DENIED', message: 'not your session' });
+        return;
+      }
+      response.writeHead(200, { 'Content-Type': 'text/event-stream' });
+      for (const frame of frames) {
+        response.write(`event: ${frame.event}\ndata: ${JSON.stringify(frame.data)}\n\n`);
+      }
+      response.write(': transport heartbeat comment\n\n');
+      if (closeAfter) response.end();
+      return;
+    }
+    json(response, 404, { code: 'NOT_FOUND' });
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  return {
+    state,
+    env: { XIHE_CP_PORT: String(server.address().port), XIHE_DEV_ADMIN_PASSWORD: TEST_PASSWORD },
+    close: () => new Promise((resolve, reject) => server.close((error) => (error ? reject(error) : resolve()))),
+  };
+}
+
+test('PLAN-0643 T4.1/V47: provider catalog and models return structured CP bodies', async (t) => {
+  const cp = await startM63Mock();
+  t.after(() => cp.close());
+
+  const catalog = await runCommand(['provider', 'catalog', '--json'], {
+    env: cp.env, promptSecret: noPrompt, stderr: sink(),
+  });
+  assert.equal(catalog.exitCode, 0, JSON.stringify(catalog.error));
+  assert.equal(catalog.data.kind, 'provider-catalog');
+  assert.equal(catalog.data.providers['xiaomi:mimo'].displayName, 'MiMo');
+
+  const models = await runCommand(['models', '--json'], {
+    env: cp.env, promptSecret: noPrompt, stderr: sink(),
+  });
+  assert.equal(models.exitCode, 0, JSON.stringify(models.error));
+  assert.equal(models.data.kind, 'models');
+  assert.equal(models.data.configRevision, 'rev-7');
+  assert.deepEqual(models.data.providers['conn-1'].models, ['model-a', 'model-b']);
+});
+
+test('PLAN-0643 T4.1/V47: api-input-types list and me permissions return structured CP bodies', async (t) => {
+  const cp = await startM63Mock();
+  t.after(() => cp.close());
+
+  const types = await runCommand(['api-input-types', 'list', '--json'], {
+    env: cp.env, promptSecret: noPrompt, stderr: sink(),
+  });
+  assert.equal(types.exitCode, 0, JSON.stringify(types.error));
+  assert.equal(types.data.kind, 'api-input-types');
+  assert.equal(types.data.types[0].apiTypeId, 'openai-compat');
+
+  const me = await runCommand(['me', 'permissions', '--json'], {
+    env: cp.env, promptSecret: noPrompt, stderr: sink(),
+  });
+  assert.equal(me.exitCode, 0, JSON.stringify(me.error));
+  assert.equal(me.data.kind, 'me-permissions');
+  assert.equal(me.data.userId, 'user-1');
+  assert.deepEqual(me.data.instanceCapabilities, ['chat.run', 'workspace.create']);
+});
+
+test('PLAN-0643 T4.1: models human face lists connections and model ids', async (t) => {
+  const cp = await startM63Mock();
+  t.after(() => cp.close());
+
+  const result = await runCommand(['models'], {
+    env: cp.env, promptSecret: noPrompt, stderr: sink(),
+  });
+  assert.equal(result.exitCode, 0, JSON.stringify(result.error));
+  const human = captureStdout(() => printResult(result));
+  assert.match(human, /^models: 1 connection\(s\), configRevision=rev-7\n/);
+  assert.match(human, /conn-1\s+xiaomi\s+ready\s+models=2\n/);
+  assert.match(human, /xiaomi: model-a, model-b\n/);
+});
+
+test('PLAN-0643 T4.3/V48: workspace create posts direct_attach body with idempotency key', async (t) => {
+  const cp = await startM63Mock();
+  t.after(() => cp.close());
+
+  const result = await runCommand([
+    'workspace', 'create', '--name', 'demo', '--storage-mode', 'direct_attach',
+    '--host-path', 'C:/data/demo', '--idempotency-key', 'idem-1', '--json',
+  ], { env: cp.env, promptSecret: noPrompt, stderr: sink() });
+  assert.equal(result.exitCode, 0, JSON.stringify(result.error));
+  assert.equal(result.data.kind, 'workspace-created');
+  assert.equal(result.data.workspace.id, 'ws-new');
+
+  const post = cp.hits('POST', '/api/v1/workspaces');
+  assert.equal(post.length, 1);
+  assert.deepEqual(post[0].body, {
+    name: 'demo', storageMode: 'direct_attach', hostPath: 'C:/data/demo',
+  });
+  assert.equal(post[0].idempotencyKey, 'idem-1');
+});
+
+test('PLAN-0643 T4.3: workspace create warns before a managed_import call (docker frozen)', async (t) => {
+  const cp = await startM63Mock();
+  t.after(() => cp.close());
+
+  const warnings = [];
+  const stderr = { write: (chunk) => { warnings.push(String(chunk)); } };
+  const result = await runCommand([
+    'workspace', 'create', '--name', 'legacy', '--storage-mode', 'managed_import', '--json',
+  ], { env: cp.env, promptSecret: noPrompt, stderr });
+  assert.equal(result.exitCode, 0, JSON.stringify(result.error));
+  const joined = warnings.join('');
+  assert.match(joined, /docker workspace backend is frozen/);
+  assert.match(joined, /direct_attach/);
+  assert.equal(cp.hits('POST', '/api/v1/workspaces').length, 1);
+});
+
+test('PLAN-0643 T4.3: workspace create rejects direct_attach without a location (usage, no request)', async (t) => {
+  const cp = await startM63Mock();
+  t.after(() => cp.close());
+
+  const result = await runCommand([
+    'workspace', 'create', '--name', 'demo', '--storage-mode', 'direct_attach', '--json',
+  ], { env: cp.env, promptSecret: noPrompt, stderr: sink() });
+  assert.equal(result.exitCode, 2);
+  assert.equal(result.error.code, 'INVALID_ARGUMENT');
+  assert.equal(cp.state.requests.length, 0, 'no CP call may leave the CLI before validation');
+});
+
+test('PLAN-0643 T4.3/V48: workspace delete requires --yes in a non-interactive session', async (t) => {
+  const cp = await startM63Mock();
+  t.after(() => cp.close());
+
+  const denied = await runCommand(['workspace', 'delete', 'ws-1', '--json'], {
+    env: cp.env, promptSecret: noPrompt, stderr: sink(),
+  });
+  assert.equal(denied.exitCode, 1);
+  assert.equal(denied.error.code, 'CONFIRMATION_REQUIRED');
+  assert.equal(cp.hits('DELETE', '/api/v1/workspaces/ws-1').length, 0);
+
+  const ok = await runCommand(['workspace', 'delete', 'ws-1', '--yes', '--json'], {
+    env: cp.env, promptSecret: noPrompt, stderr: sink(),
+  });
+  assert.equal(ok.exitCode, 0, JSON.stringify(ok.error));
+  assert.equal(ok.data.kind, 'workspace-deleted');
+  assert.equal(cp.hits('DELETE', '/api/v1/workspaces/ws-1').length, 1);
+});
+
+test('PLAN-0643 T4.3/V48: workspace members read/add/role/remove hit the expected method+path', async (t) => {
+  const cp = await startM63Mock();
+  t.after(() => cp.close());
+
+  const list = await runCommand(['workspace', 'members', 'ws-1', '--json'], {
+    env: cp.env, promptSecret: noPrompt, stderr: sink(),
+  });
+  assert.equal(list.exitCode, 0, JSON.stringify(list.error));
+  assert.equal(list.data.kind, 'workspace-members');
+  assert.equal(list.data.items[0].role, 'OWNER');
+
+  const added = await runCommand([
+    'workspace', 'members', 'ws-1', '--add', 'bob', '--role', 'EDITOR', '--json',
+  ], { env: cp.env, promptSecret: noPrompt, stderr: sink() });
+  assert.equal(added.exitCode, 0, JSON.stringify(added.error));
+  assert.equal(added.data.kind, 'workspace-member');
+  assert.equal(added.data.action, 'add');
+
+  const role = await runCommand([
+    'workspace', 'members', 'ws-1', '--set-role', 'u-2', '--role', 'VIEWER', '--json',
+  ], { env: cp.env, promptSecret: noPrompt, stderr: sink() });
+  assert.equal(role.exitCode, 0, JSON.stringify(role.error));
+  assert.equal(role.data.action, 'role');
+
+  const removed = await runCommand([
+    'workspace', 'members', 'ws-1', '--remove', 'u-2', '--yes', '--json',
+  ], { env: cp.env, promptSecret: noPrompt, stderr: sink() });
+  assert.equal(removed.exitCode, 0, JSON.stringify(removed.error));
+  assert.equal(removed.data.action, 'remove');
+
+  assert.deepEqual(cp.hits('GET', '/api/v1/workspaces/ws-1/members').length, 1);
+  const post = cp.hits('POST', '/api/v1/workspaces/ws-1/members')[0];
+  assert.deepEqual(post.body, { username: 'bob', role: 'EDITOR' });
+  assert.equal(post.workspaceHeader, 'ws-1');
+  const patch = cp.hits('PATCH', '/api/v1/workspaces/ws-1/members/u-2')[0];
+  assert.deepEqual(patch.body, { role: 'VIEWER' });
+  assert.equal(cp.hits('DELETE', '/api/v1/workspaces/ws-1/members/u-2').length, 1);
+});
+
+test('PLAN-0643 T4.3/V48: workspace roots write verbs hit the expected method+path', async (t) => {
+  const cp = await startM63Mock();
+  t.after(() => cp.close());
+
+  const bare = await runCommand(['workspace', 'roots', 'ws-1', '--json'], {
+    env: cp.env, promptSecret: noPrompt, stderr: sink(),
+  });
+  assert.equal(bare.exitCode, 2, 'roots without a write flag is a usage error (reads ride workspace get)');
+
+  const added = await runCommand([
+    'workspace', 'roots', 'ws-1', '--add', 'C:/data/extra', '--alias', 'extra', '--json',
+  ], { env: cp.env, promptSecret: noPrompt, stderr: sink() });
+  assert.equal(added.exitCode, 0, JSON.stringify(added.error));
+  assert.equal(added.data.kind, 'workspace-root');
+
+  const renamed = await runCommand([
+    'workspace', 'roots', 'ws-1', '--rename', 'root-2', '--alias', 'renamed', '--json',
+  ], { env: cp.env, promptSecret: noPrompt, stderr: sink() });
+  assert.equal(renamed.exitCode, 0, JSON.stringify(renamed.error));
+
+  const moved = await runCommand([
+    'workspace', 'roots', 'ws-1', '--reposition', 'root-2', '--position', '3', '--json',
+  ], { env: cp.env, promptSecret: noPrompt, stderr: sink() });
+  assert.equal(moved.exitCode, 0, JSON.stringify(moved.error));
+
+  const removed = await runCommand([
+    'workspace', 'roots', 'ws-1', '--remove', 'root-2', '--yes', '--json',
+  ], { env: cp.env, promptSecret: noPrompt, stderr: sink() });
+  assert.equal(removed.exitCode, 0, JSON.stringify(removed.error));
+
+  const post = cp.hits('POST', '/api/v1/workspaces/ws-1/roots')[0];
+  assert.deepEqual(post.body, { path: 'C:/data/extra', alias: 'extra' });
+  assert.equal(cp.hits('PATCH', '/api/v1/workspaces/ws-1/roots/root-2').length, 2);
+  assert.equal(cp.hits('DELETE', '/api/v1/workspaces/ws-1/roots/root-2').length, 1);
+});
+
+test('PLAN-0643 T4.5/V48: scheduled-task create posts the session_wakeup cron body', async (t) => {
+  const cp = await startM63Mock();
+  t.after(() => cp.close());
+
+  const result = await runCommand([
+    'scheduled-task', 'create', 'ws-1',
+    '--kind', 'cron', '--cron-expr', '0 9 * * *',
+    '--target', 'session_wakeup', '--session', 'session-9', '--prompt', 'morning brief', '--json',
+  ], { env: cp.env, promptSecret: noPrompt, stderr: sink() });
+  assert.equal(result.exitCode, 0, JSON.stringify(result.error));
+  assert.equal(result.data.kind, 'scheduled-task');
+  assert.equal(result.data.task.id, 'task-1');
+
+  const post = cp.hits('POST', '/api/v1/workspaces/ws-1/scheduled-tasks')[0];
+  assert.equal(post.workspaceHeader, 'ws-1');
+  assert.deepEqual(post.body, {
+    triggerKind: 'cron', cronExpr: '0 9 * * *',
+    targetKind: 'session_wakeup', targetSessionId: 'session-9', prompt: 'morning brief',
+  });
+});
+
+test('PLAN-0643 T4.5/V48: scheduled-task create job_dispatch reads the payload file', async (t) => {
+  const cp = await startM63Mock();
+  t.after(() => cp.close());
+  const payloadFile = path.join(tmpdir(), `xh-payload-${Date.now()}-${Math.floor(Math.random() * 1e6)}.json`);
+  fs.writeFileSync(payloadFile, JSON.stringify({ jobId: 'job-7', action: 'export' }));
+  t.after(() => fs.rmSync(payloadFile, { force: true }));
+
+  const result = await runCommand([
+    'scheduled-task', 'create', 'ws-1',
+    '--kind', 'delay_once', '--at', '2026-11-07T09:00:00Z', '--timezone', 'UTC',
+    '--target', 'job_dispatch', '--payload-file', payloadFile, '--json',
+  ], { env: cp.env, promptSecret: noPrompt, stderr: sink() });
+  assert.equal(result.exitCode, 0, JSON.stringify(result.error));
+
+  const post = cp.hits('POST', '/api/v1/workspaces/ws-1/scheduled-tasks')[0];
+  assert.deepEqual(post.body, {
+    triggerKind: 'delay_once', at: '2026-11-07T09:00:00Z', timezone: 'UTC',
+    targetKind: 'job_dispatch', payload: { jobId: 'job-7', action: 'export' },
+  });
+});
+
+test('PLAN-0643 T4.5/V48: scheduled-task rerun/remove/postpone/delete hit the expected method+path', async (t) => {
+  const cp = await startM63Mock();
+  t.after(() => cp.close());
+  const base = '/api/v1/workspaces/ws-1/scheduled-tasks/task-1';
+
+  const rerun = await runCommand(['scheduled-task', 'rerun', 'ws-1', 'task-1', '--json'], {
+    env: cp.env, promptSecret: noPrompt, stderr: sink(),
+  });
+  assert.equal(rerun.exitCode, 0, JSON.stringify(rerun.error));
+  assert.equal(rerun.data.kind, 'scheduled-task', 'rerun answers with the rescheduled task');
+
+  const postpone = await runCommand([
+    'scheduled-task', 'postpone', 'ws-1', 'task-1', '--at', '2026-11-08T00:00:00Z', '--json',
+  ], { env: cp.env, promptSecret: noPrompt, stderr: sink() });
+  assert.equal(postpone.exitCode, 0, JSON.stringify(postpone.error));
+
+  const removed = await runCommand(['scheduled-task', 'remove', 'ws-1', 'task-1', '--yes', '--json'], {
+    env: cp.env, promptSecret: noPrompt, stderr: sink(),
+  });
+  assert.equal(removed.exitCode, 0, JSON.stringify(removed.error));
+
+  const deleted = await runCommand(['scheduled-task', 'delete', 'ws-1', 'task-1', '--yes', '--json'], {
+    env: cp.env, promptSecret: noPrompt, stderr: sink(),
+  });
+  assert.equal(deleted.exitCode, 0, JSON.stringify(deleted.error));
+
+  assert.equal(cp.hits('POST', `${base}/rerun`).length, 1);
+  const postponeHit = cp.hits('POST', `${base}/postpone`)[0];
+  assert.deepEqual(postponeHit.body, { at: '2026-11-08T00:00:00Z' });
+  assert.equal(cp.hits('POST', `${base}/remove`).length, 1);
+  assert.equal(cp.hits('DELETE', base).length, 1);
+});
+
+test('PLAN-0643 T4.5/V48: scheduled-task remove without --yes asks nothing and sends nothing', async (t) => {
+  const cp = await startM63Mock();
+  t.after(() => cp.close());
+
+  const denied = await runCommand(['scheduled-task', 'remove', 'ws-1', 'task-1', '--json'], {
+    env: cp.env, promptSecret: noPrompt, stderr: sink(),
+  });
+  assert.equal(denied.exitCode, 1);
+  assert.equal(denied.error.code, 'CONFIRMATION_REQUIRED');
+  assert.equal(cp.hits('POST', '/api/v1/workspaces/ws-1/scheduled-tasks/task-1/remove').length, 0);
+});
+
+test('PLAN-0643 T4.6/V49: events tail drains a closing stream line-by-line and exits 0', async (t) => {
+  const cp = await startEventsSseMock({
+    frames: [
+      { event: 'token', data: { text: 'hello' } },
+      { event: 'run.completed', data: { runId: 'run-1' } },
+    ],
+    closeAfter: true,
+  });
+  t.after(() => cp.close());
+  const output = collectStdoutStream();
+
+  const result = await runCommand(['events', 'tail', 'session-1', '--json'], {
+    env: cp.env, promptSecret: noPrompt, stderr: sink(), stdout: output.stream,
+  });
+  assert.equal(result.exitCode, 0, JSON.stringify(result.error));
+  assert.equal(result.data.kind, 'events-tail');
+  assert.equal(result.data.events, 2, 'both SSE frames are delivered before the close');
+
+  const lines = output.text().split('\n').filter(Boolean);
+  assert.equal(lines.length, 2, 'each event is exactly one JSON line');
+  assert.deepEqual(JSON.parse(lines[0]), { event: 'token', data: { text: 'hello' } });
+  assert.deepEqual(JSON.parse(lines[1]), { event: 'run.completed', data: { runId: 'run-1' } });
+});
+
+test('PLAN-0643 T4.6/V49: events tail --follow exits 0 on Ctrl-C (injected signal)', async (t) => {
+  const cp = await startEventsSseMock({
+    frames: [{ event: 'token', data: { text: 'first' } }],
+    closeAfter: false,
+  });
+  t.after(() => cp.close());
+  const output = collectStdoutStream();
+  const tailController = new AbortController();
+
+  const pending = runCommand(['events', 'tail', 'session-1', '--follow', '--json'], {
+    env: cp.env, promptSecret: noPrompt, stderr: sink(), stdout: output.stream,
+    tailSignal: tailController.signal,
+  });
+  const gotFirst = await waitFor(() => output.text().includes('"event":"token"'));
+  assert.equal(gotFirst, true, 'the first frame must arrive before the interrupt');
+  tailController.abort();
+
+  const result = await pending;
+  assert.equal(result.exitCode, 0, 'SIGINT during follow is a clean exit 0');
+  assert.equal(result.data.kind, 'events-tail');
+  assert.equal(result.data.follow, true);
+});
+
+test('PLAN-0643 T4.6/V49: events tail passes --since as Last-Event-ID and 403 fails closed', async (t) => {
+  const ok = await startEventsSseMock({
+    frames: [{ event: 'token', data: { text: 'resumed' } }],
+    closeAfter: true,
+  });
+  t.after(() => ok.close());
+  const output = collectStdoutStream();
+  const resumed = await runCommand(['events', 'tail', 'session-1', '--since', 'evt-41', '--json'], {
+    env: ok.env, promptSecret: noPrompt, stderr: sink(), stdout: output.stream,
+  });
+  assert.equal(resumed.exitCode, 0, JSON.stringify(resumed.error));
+  assert.equal(ok.state.lastSinceHeader, 'evt-41');
+  assert.equal(ok.state.lastQuerySessionId, 'session-1');
+
+  const denied = await startEventsSseMock({ status: 403 });
+  t.after(() => denied.close());
+  const failure = await runCommand(['events', 'tail', 'session-1', '--json'], {
+    env: denied.env, promptSecret: noPrompt, stderr: sink(),
+  });
+  assert.equal(failure.exitCode, 1);
+  assert.equal(failure.error.code, 'SESSION_ACCESS_DENIED', 'the CP problem code passes through');
+});
+
+test('PLAN-0643 T4.6: events tail usage errors stay exit 2', async (t) => {
+  const cp = await startEventsSseMock({ frames: [], closeAfter: true });
+  t.after(() => cp.close());
+
+  const missing = await runCommand(['events', 'tail', '--json'], {
+    env: cp.env, promptSecret: noPrompt, stderr: sink(),
+  });
+  assert.equal(missing.exitCode, 2);
+  assert.equal(missing.error.code, 'INVALID_ARGUMENT');
+
+  const badTimeout = await runCommand(['events', 'tail', 'session-1', '--timeout', 'soon', '--json'], {
+    env: cp.env, promptSecret: noPrompt, stderr: sink(),
+  });
+  assert.equal(badTimeout.exitCode, 2);
+  assert.equal(badTimeout.error.code, 'INVALID_ARGUMENT');
+});
+
+test('PLAN-0643 V2 re-judge: coverage groups.added counts >= 12 via new groups + extensions', async (t) => {
+  const coverageScript = path.resolve('scripts/xihe-cli/coverage.mjs');
+  const child = spawnSync(process.execPath, [coverageScript, '--json'], {
+    cwd: process.cwd(), encoding: 'utf8', windowsHide: true, timeout: 30_000,
+  });
+  assert.equal(child.status, 0, child.stderr);
+  const report = JSON.parse(child.stdout);
+  assert.equal(report.groups.added.present >= 12, true,
+    `groups.added.present must reach 12 (got ${report.groups.added.present})`);
+  assert.deepEqual(report.groups.added.names,
+    ['auth', 'api', 'config-locks', 'me', 'models', 'api-input-types', 'events']);
+  const extensions = Object.fromEntries(report.groups.added.extensions.map((row) => [row.group, row.via]));
+  assert.deepEqual(extensions, {
+    config: 'config put', chat: 'chat run', session: 'session export',
+    provider: 'provider catalog', workspace: 'workspace create',
+    'scheduled-task': 'scheduled-task create',
+  });
+  assert.equal(report.matrix.covered, report.matrix.total, 'the whole matrix must be present');
+});

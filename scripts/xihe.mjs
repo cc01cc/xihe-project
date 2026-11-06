@@ -26,6 +26,15 @@ import { runApiEscape } from './xihe-cli/api.mjs';
 import { runAuthCommand } from './xihe-cli/auth.mjs';
 import { runConfigCommand, runConfigLocksCommand } from './xihe-cli/config.mjs';
 import { runChatCommand, runSessionCommand } from './xihe-cli/chat-session.mjs';
+import { runProviderCatalog, runModels, runApiInputTypes, runMePermissions } from './xihe-cli/catalog.mjs';
+import {
+  runWorkspaceCreate, runWorkspaceDelete, runWorkspaceMembers, runWorkspaceRoots,
+} from './xihe-cli/workspace-admin.mjs';
+import {
+  runScheduledTaskCreate, runScheduledTaskDelete, runScheduledTaskRerun,
+  runScheduledTaskRemove, runScheduledTaskPostpone,
+} from './xihe-cli/scheduled-task-admin.mjs';
+import { runEventsTail } from './xihe-cli/events-tail.mjs';
 import { attachAuthRefresh } from './xihe-cli/auth-refresh.mjs';
 import {
   bindSkill,
@@ -204,13 +213,26 @@ function helpText() {
     '  node scripts/xihe.mjs status',
     '  node scripts/xihe.mjs workspace list',
     '  node scripts/xihe.mjs workspace get <wsId>',
+    '  node scripts/xihe.mjs workspace create --name <n> --storage-mode direct_attach (--host-path <dir> | --roots <dir,...>) [--execution-mode <m>] [--idempotency-key <k>]',
+    '  node scripts/xihe.mjs workspace delete <wsId> [--yes]',
+    '  node scripts/xihe.mjs workspace members <wsId> [--add <user> --role EDITOR|VIEWER | --set-role <userId> --role EDITOR|VIEWER | --remove <userId>] [--yes]',
+    '  node scripts/xihe.mjs workspace roots <wsId> (--add <path> [--alias <a>] | --rename <rootId> --alias <a> | --reposition <rootId> --position <n> | --remove <rootId>) [--yes]',
     '  node scripts/xihe.mjs job list <wsId>',
     '  node scripts/xihe.mjs job output <wsId> <jobId> [--stream stdout|stderr] [--offset <n>] [--limit <n>]',
     '  node scripts/xihe.mjs job cancel <wsId> <jobId>',
     '  node scripts/xihe.mjs checkpoint list <wsId>',
     '  node scripts/xihe.mjs checkpoint preview-revert <wsId> <sliceRef>',
     '  node scripts/xihe.mjs scheduled-task list <wsId> [--page <n>] [--size <n>]',
+    '  node scripts/xihe.mjs scheduled-task create <wsId> --kind delay_once|cron --target session_wakeup|job_dispatch (--cron-expr <5fields> | --at <iso> [--timezone <tz>]) (--session <id> --prompt <text> | --payload-file <json>)',
+    '  node scripts/xihe.mjs scheduled-task delete <wsId> <taskId> [--yes]   (scheduled -> cancelled)',
+    '  node scripts/xihe.mjs scheduled-task rerun <wsId> <taskId>   (missed/expired only)',
+    '  node scripts/xihe.mjs scheduled-task remove <wsId> <taskId> [--yes]   (missed/expired -> cancelled)',
+    '  node scripts/xihe.mjs scheduled-task postpone <wsId> <taskId> --at <iso>',
     '  node scripts/xihe.mjs audit list [--type <type>] [--page <n>] [--size <n>]',
+    '  node scripts/xihe.mjs me permissions',
+    '  node scripts/xihe.mjs models',
+    '  node scripts/xihe.mjs api-input-types list',
+    '  node scripts/xihe.mjs events tail <sessionId> [--follow] [--timeout <seconds>] [--since <id>]',
     '  node scripts/xihe.mjs provider add <id> --scope <USER|WORKSPACE> --label <label> [--models <id,id>] [--api-key-env <name>]',
     '  node scripts/xihe.mjs provider update <id> [--label <label>] [--base-url <url>] [--models <id,id>] [--api-key-env <name>]',
     '  node scripts/xihe.mjs agent create --scope personal|workspace|instance --name <n> [--template <t>] [--default-model <p>:<m>] [--allow-model <p>:<m> ...]',
@@ -221,6 +243,7 @@ function helpText() {
     '  node scripts/xihe.mjs provider limit set --connection <c> [--max-inflight N] [--max-queue N] [--tokens N --window S] [--model <p>:<m> --max-inflight N ...]',
     '  node scripts/xihe.mjs provider limit show --connection <c>',
     '  node scripts/xihe.mjs provider list [--scope <USER|WORKSPACE>]',
+    '  node scripts/xihe.mjs provider catalog   (non-secret provider definitions)',
     '  node scripts/xihe.mjs session participants list --session <sessionId> [--workspace <wsId>]',
     '  node scripts/xihe.mjs session participants add --session <sessionId> --principal <principalId> --kind AGENT|HUMAN [--role MEMBER|GUARD] [--wake ALL_MESSAGES|MENTION] [--respond ALWAYS|WHEN_MENTIONED|JUDGE|MUTED]',
     '  node scripts/xihe.mjs session participants remove --session <sessionId> --participant <participantId>  (soft disable: 参与者行/游标/审计保留，非硬删除)',
@@ -450,13 +473,69 @@ export async function runCommand(argv, dependencies = {}) {
     }
 
     if (group === 'workspace') {
+      // PLAN-0643 T4.3: the write face rides the same group; read faces stay below.
+      if (command === 'create') {
+        const parsed = parseCommandOptions(rest, [
+          '--name', '--storage-mode', '--host-path', '--roots',
+          '--description', '--execution-mode', '--idempotency-key', '--email',
+        ], []);
+        if (parsed.positionals.length !== 0) {
+          throw new CliError('INVALID_ARGUMENT', 'workspace create takes no positional arguments; use --name.');
+        }
+        const apiBase = getApiBase(env);
+        const token = await login({ apiBase, fetchImpl, env, options: parsed.values, promptSecret: prompt });
+        const data = await runWorkspaceCreate({
+          apiBase, fetchImpl, token, options: parsed.values,
+          stderr: dependencies.stderr ?? process.stderr,
+        });
+        return { exitCode: 0, json, data };
+      }
+      if (command === 'delete') {
+        const parsed = parseCommandOptions(rest, ['--email'], ['--yes']);
+        if (parsed.positionals.length !== 1) throw new CliError('INVALID_ARGUMENT', 'workspace delete requires one workspace ID.');
+        const apiBase = getApiBase(env);
+        const token = await login({ apiBase, fetchImpl, env, options: parsed.values, promptSecret: prompt });
+        const data = await runWorkspaceDelete({
+          apiBase, fetchImpl, token, workspaceId: parsed.positionals[0],
+          yes: parsed.values['--yes'] === true,
+          confirm: dependencies.confirmAction ?? confirmAction,
+          stdin: dependencies.stdin ?? process.stdin,
+        });
+        return { exitCode: 0, json, data };
+      }
+      if (command === 'members') {
+        const parsed = parseCommandOptions(rest, ['--add', '--set-role', '--remove', '--role', '--email'], ['--yes']);
+        if (parsed.positionals.length !== 1) throw new CliError('INVALID_ARGUMENT', 'workspace members requires one workspace ID.');
+        const apiBase = getApiBase(env);
+        const token = await login({ apiBase, fetchImpl, env, options: parsed.values, promptSecret: prompt });
+        const data = await runWorkspaceMembers({
+          apiBase, fetchImpl, token, workspaceId: parsed.positionals[0], options: parsed.values,
+          yes: parsed.values['--yes'] === true,
+          confirm: dependencies.confirmAction ?? confirmAction,
+          stdin: dependencies.stdin ?? process.stdin,
+        });
+        return { exitCode: 0, json, data };
+      }
+      if (command === 'roots') {
+        const parsed = parseCommandOptions(rest, ['--add', '--rename', '--reposition', '--position', '--alias', '--remove', '--email'], ['--yes']);
+        if (parsed.positionals.length !== 1) throw new CliError('INVALID_ARGUMENT', 'workspace roots requires one workspace ID.');
+        const apiBase = getApiBase(env);
+        const token = await login({ apiBase, fetchImpl, env, options: parsed.values, promptSecret: prompt });
+        const data = await runWorkspaceRoots({
+          apiBase, fetchImpl, token, workspaceId: parsed.positionals[0], options: parsed.values,
+          yes: parsed.values['--yes'] === true,
+          confirm: dependencies.confirmAction ?? confirmAction,
+          stdin: dependencies.stdin ?? process.stdin,
+        });
+        return { exitCode: 0, json, data };
+      }
       let parsed;
       if (command === 'list') {
         parsed = parseCommandOptions(rest, ['--email'], []);
       } else if (command === 'get') {
         parsed = parseCommandOptions(rest, ['--email'], []);
       } else {
-        throw new CliError('INVALID_ARGUMENT', 'Unknown workspace command; use list/get.');
+        throw new CliError('INVALID_ARGUMENT', 'Unknown workspace command; use list/get/create/delete/members/roots.');
       }
       const apiBase = getApiBase(env);
       const token = await login({ apiBase, fetchImpl, env, options: parsed.values, promptSecret: prompt });
@@ -546,13 +625,81 @@ export async function runCommand(argv, dependencies = {}) {
       return { exitCode: 0, json, data };
     }
 
-    if (group === 'scheduled-task' && command === 'list') {
-      const parsed = parseCommandOptions(rest, ['--page', '--size', '--email'], []);
-      if (parsed.positionals.length !== 1) throw new CliError('INVALID_ARGUMENT', 'scheduled-task list requires one workspace ID.');
-      const apiBase = getApiBase(env);
-      const token = await login({ apiBase, fetchImpl, env, options: parsed.values, promptSecret: prompt });
-      const data = await runScheduledTaskList({ apiBase, fetchImpl, token, workspaceId: parsed.positionals[0], options: parsed.values });
-      return { exitCode: 0, json, data };
+    if (group === 'scheduled-task') {
+      // PLAN-0643 T4.5: the group deliberately has no `cancel` command — DELETE is
+      // the scheduled->cancelled route and POST /remove disposes missed/expired.
+      if (command === 'list') {
+        const parsed = parseCommandOptions(rest, ['--page', '--size', '--email'], []);
+        if (parsed.positionals.length !== 1) throw new CliError('INVALID_ARGUMENT', 'scheduled-task list requires one workspace ID.');
+        const apiBase = getApiBase(env);
+        const token = await login({ apiBase, fetchImpl, env, options: parsed.values, promptSecret: prompt });
+        const data = await runScheduledTaskList({ apiBase, fetchImpl, token, workspaceId: parsed.positionals[0], options: parsed.values });
+        return { exitCode: 0, json, data };
+      }
+      if (command === 'create') {
+        const parsed = parseCommandOptions(rest, [
+          '--kind', '--target', '--cron-expr', '--timezone', '--at',
+          '--session', '--prompt', '--payload-file', '--agent-principal', '--email',
+        ], []);
+        if (parsed.positionals.length !== 1) throw new CliError('INVALID_ARGUMENT', 'scheduled-task create requires one workspace ID.');
+        const apiBase = getApiBase(env);
+        const token = await login({ apiBase, fetchImpl, env, options: parsed.values, promptSecret: prompt });
+        const data = await runScheduledTaskCreate({
+          apiBase, fetchImpl, token, workspaceId: parsed.positionals[0], options: parsed.values,
+        });
+        return { exitCode: 0, json, data };
+      }
+      if (command === 'delete') {
+        const parsed = parseCommandOptions(rest, ['--agent-principal', '--email'], ['--yes']);
+        if (parsed.positionals.length !== 2) throw new CliError('INVALID_ARGUMENT', 'scheduled-task delete requires a workspace ID and a task ID.');
+        const apiBase = getApiBase(env);
+        const token = await login({ apiBase, fetchImpl, env, options: parsed.values, promptSecret: prompt });
+        const data = await runScheduledTaskDelete({
+          apiBase, fetchImpl, token,
+          workspaceId: parsed.positionals[0], taskId: parsed.positionals[1], options: parsed.values,
+          yes: parsed.values['--yes'] === true,
+          confirm: dependencies.confirmAction ?? confirmAction,
+          stdin: dependencies.stdin ?? process.stdin,
+        });
+        return { exitCode: 0, json, data };
+      }
+      if (command === 'rerun') {
+        const parsed = parseCommandOptions(rest, ['--agent-principal', '--email'], []);
+        if (parsed.positionals.length !== 2) throw new CliError('INVALID_ARGUMENT', 'scheduled-task rerun requires a workspace ID and a task ID.');
+        const apiBase = getApiBase(env);
+        const token = await login({ apiBase, fetchImpl, env, options: parsed.values, promptSecret: prompt });
+        const data = await runScheduledTaskRerun({
+          apiBase, fetchImpl, token,
+          workspaceId: parsed.positionals[0], taskId: parsed.positionals[1], options: parsed.values,
+        });
+        return { exitCode: 0, json, data };
+      }
+      if (command === 'remove') {
+        const parsed = parseCommandOptions(rest, ['--agent-principal', '--email'], ['--yes']);
+        if (parsed.positionals.length !== 2) throw new CliError('INVALID_ARGUMENT', 'scheduled-task remove requires a workspace ID and a task ID.');
+        const apiBase = getApiBase(env);
+        const token = await login({ apiBase, fetchImpl, env, options: parsed.values, promptSecret: prompt });
+        const data = await runScheduledTaskRemove({
+          apiBase, fetchImpl, token,
+          workspaceId: parsed.positionals[0], taskId: parsed.positionals[1], options: parsed.values,
+          yes: parsed.values['--yes'] === true,
+          confirm: dependencies.confirmAction ?? confirmAction,
+          stdin: dependencies.stdin ?? process.stdin,
+        });
+        return { exitCode: 0, json, data };
+      }
+      if (command === 'postpone') {
+        const parsed = parseCommandOptions(rest, ['--at', '--agent-principal', '--email'], []);
+        if (parsed.positionals.length !== 2) throw new CliError('INVALID_ARGUMENT', 'scheduled-task postpone requires a workspace ID and a task ID.');
+        const apiBase = getApiBase(env);
+        const token = await login({ apiBase, fetchImpl, env, options: parsed.values, promptSecret: prompt });
+        const data = await runScheduledTaskPostpone({
+          apiBase, fetchImpl, token,
+          workspaceId: parsed.positionals[0], taskId: parsed.positionals[1], options: parsed.values,
+        });
+        return { exitCode: 0, json, data };
+      }
+      throw new CliError('INVALID_ARGUMENT', 'Unknown scheduled-task command; use list/create/delete/rerun/remove/postpone.');
     }
 
     if (group === 'audit' && command === 'list') {
@@ -562,6 +709,57 @@ export async function runCommand(argv, dependencies = {}) {
       const token = await login({ apiBase, fetchImpl, env, options: parsed.values, promptSecret: prompt });
       const data = await runAuditList({ apiBase, fetchImpl, token, options: parsed.values });
       return { exitCode: 0, json, data };
+    }
+
+    // PLAN-0643 T4.1/T4.2: catalog read faces. `models` is a status-style group
+    // (no subcommand); `api-input-types list` is the two-level form.
+    if (group === 'me' || group === 'models' || group === 'api-input-types') {
+      if (group === 'me' && command !== 'permissions') {
+        throw new CliError('INVALID_ARGUMENT', 'Unknown me command; use permissions.');
+      }
+      if (group === 'api-input-types' && command !== 'list') {
+        throw new CliError('INVALID_ARGUMENT', 'Unknown api-input-types command; use list.');
+      }
+      if (group === 'models' && command !== undefined) {
+        throw new CliError('INVALID_ARGUMENT', 'models is a single command; do not pass a subcommand.');
+      }
+      const parsed = parseCommandOptions(rest, ['--email'], []);
+      if (parsed.positionals.length !== 0) {
+        throw new CliError('INVALID_ARGUMENT', `${group === 'me' ? 'me permissions' : group} takes no positional arguments.`);
+      }
+      const apiBase = getApiBase(env);
+      const token = await login({ apiBase, fetchImpl, env, options: parsed.values, promptSecret: prompt });
+      const runner = group === 'me'
+        ? runMePermissions
+        : group === 'models' ? runModels : runApiInputTypes;
+      return { exitCode: 0, json, data: await runner({ apiBase, fetchImpl, token }) };
+    }
+
+    if (group === 'events') {
+      // PLAN-0643 T4.6 (B6): the default (no --follow) reads the current stream
+      // and exits; --follow streams until Ctrl-C, which must exit 0.
+      if (command !== 'tail') {
+        throw new CliError('INVALID_ARGUMENT', 'Unknown events command; use tail.');
+      }
+      const parsed = parseCommandOptions(rest, ['--timeout', '--since', '--email'], ['--follow']);
+      if (parsed.positionals.length !== 1) {
+        throw new CliError('INVALID_ARGUMENT', 'events tail requires one session ID.');
+      }
+      const apiBase = getApiBase(env);
+      const token = await login({ apiBase, fetchImpl, env, options: parsed.values, promptSecret: prompt });
+      const wired = dependencies.tailSignal === undefined ? wireInterruptSignal() : null;
+      try {
+        const data = await runEventsTail({
+          apiBase, fetchImpl, token,
+          sessionId: parsed.positionals[0],
+          options: parsed.values,
+          output: dependencies.stdout ?? process.stdout,
+          signal: dependencies.tailSignal ?? wired?.signal,
+        });
+        return { exitCode: 0, json, data };
+      } finally {
+        wired?.dispose();
+      }
     }
 
     if (group === 'dev' && command === 'check') {
@@ -794,12 +992,18 @@ export async function runCommand(argv, dependencies = {}) {
         parsed = parseCommandOptions(rest, ['--label', '--api-key-env', '--base-url', '--models', '--email']);
       } else if (command === 'list') {
         parsed = parseCommandOptions(rest, ['--scope', '--email']);
+      } else if (command === 'catalog') {
+        // PLAN-0643 T4.1: GET /api/v1/provider-catalog passthrough.
+        parsed = parseCommandOptions(rest, ['--email'], []);
+        if (parsed.positionals.length !== 0) {
+          throw new CliError('INVALID_ARGUMENT', 'provider catalog takes no positional arguments.');
+        }
       } else if (command === 'verify') {
         parsed = parseCommandOptions(rest, ['--email']);
       } else if (command === 'delete') {
         parsed = parseCommandOptions(rest, ['--email'], ['--yes']);
       } else {
-        throw new CliError('INVALID_ARGUMENT', 'Unknown provider command; use add/update/list/verify/delete.');
+        throw new CliError('INVALID_ARGUMENT', 'Unknown provider command; use add/update/list/catalog/verify/delete.');
       }
 
       if (command === 'add') {
@@ -817,11 +1021,14 @@ export async function runCommand(argv, dependencies = {}) {
         if (parsed.values['--scope']) normalizeScope(parsed.values['--scope']);
       } else if (command === 'delete') {
         if (parsed.positionals.length !== 1) throw new CliError('INVALID_ARGUMENT', 'provider delete requires one connection ID.');
-      } else if (parsed.positionals.length !== 1) {
+      } else if (command === 'verify' && parsed.positionals.length !== 1) {
         throw new CliError('INVALID_ARGUMENT', 'provider verify requires one connection ID.');
       }
 
       const token = await login({ apiBase, fetchImpl, env, options: parsed.values, promptSecret: prompt });
+      if (command === 'catalog') {
+        return { exitCode: 0, json, data: await runProviderCatalog({ apiBase, fetchImpl, token }) };
+      }
       if (command === 'add') {
         const data = await addProvider({ apiBase, fetchImpl, env, options: parsed.values, positionals: parsed.positionals, token, promptSecret: prompt });
         return { exitCode: 0, json, data };
@@ -1073,6 +1280,17 @@ export async function runCommand(argv, dependencies = {}) {
       },
     };
   }
+}
+
+// PLAN-0643 T4.6: SIGINT during `events tail --follow` aborts the stream and the
+// command exits 0. The listener is installed only while the tail is running, so
+// other commands keep the default SIGINT termination.
+function wireInterruptSignal() {
+  if (typeof process?.on !== 'function') return null;
+  const controller = new AbortController();
+  const handler = () => controller.abort();
+  process.on('SIGINT', handler);
+  return { signal: controller.signal, dispose: () => process.off('SIGINT', handler) };
 }
 
 export function printResult(result) {
@@ -1403,6 +1621,85 @@ export function printResult(result) {
     for (const item of result.data.entries) {
       out.write(`${item.createdAt ?? ''}  ${item.type ?? ''}  ${item.status ?? ''}  ${item.id ?? ''}\n`);
     }
+    return;
+  }
+  // PLAN-0643 T4.x human faces (M6-3). JSON output bypasses these branches.
+  if (result.data?.kind === 'provider-catalog') {
+    const providers = result.data.providers ?? {};
+    out.write(`provider catalog: ${Object.keys(providers).length} definition(s)\n`);
+    for (const [key, value] of Object.entries(providers)) {
+      out.write(`${key}  ${value?.displayName ?? ''}  ${value?.apiTypeId ?? ''}@v${value?.apiTypeVersion ?? '?'}  ${value?.operation ?? ''}\n`);
+    }
+    return;
+  }
+  if (result.data?.kind === 'models') {
+    const providers = result.data.providers ?? {};
+    out.write(`models: ${Object.keys(providers).length} connection(s), configRevision=${result.data.configRevision ?? '?'}\n`);
+    for (const [key, value] of Object.entries(providers)) {
+      out.write(`${key}  ${value?.providerId ?? ''}  ${value?.connectionStatus ?? ''}  models=${(value?.models ?? []).length}\n`);
+    }
+    for (const [provider, list] of Object.entries(result.data.models ?? {})) {
+      out.write(`${provider}: ${list.join(', ')}\n`);
+    }
+    return;
+  }
+  if (result.data?.kind === 'api-input-types') {
+    out.write(`api input types: ${result.data.types.length}\n`);
+    for (const item of result.data.types) {
+      out.write(`${item.apiTypeId}@v${item.version}  ${item.operation}  ${item.method} ${item.path}\n`);
+    }
+    return;
+  }
+  if (result.data?.kind === 'me-permissions') {
+    out.write(`me permissions: userId=${result.data.userId ?? '?'}\n`);
+    out.write(`capabilities: ${(result.data.instanceCapabilities ?? []).join(', ') || '(none)'}\n`);
+    out.write(`instance permissions: ${(result.data.instancePermissions ?? []).length}\n`);
+    const workspaces = result.data.workspaces ?? [];
+    out.write(`workspaces: ${workspaces.length}\n`);
+    for (const workspace of workspaces) {
+      out.write(`${workspace.workspaceId ?? workspace.id ?? ''}  role=${workspace.role ?? '?'}  atoms=${(workspace.permissions ?? []).length}\n`);
+    }
+    return;
+  }
+  if (result.data?.kind === 'workspace-created') {
+    out.write(`created: ${result.data.workspace?.id ?? '?'}  storageMode=${result.data.workspace?.storageMode ?? '?'}\n`);
+    return;
+  }
+  if (result.data?.kind === 'workspace-deleted') {
+    out.write(`deleted: ${result.data.workspaceId}\n`);
+    return;
+  }
+  if (result.data?.kind === 'workspace-members') {
+    out.write(`members: ${result.data.items.length}\n`);
+    for (const item of result.data.items) {
+      out.write(`${item.userId}  ${item.username ?? ''}  role=${item.role ?? '?'}\n`);
+    }
+    return;
+  }
+  if (result.data?.kind === 'workspace-member') {
+    const verb = result.data.action === 'add' ? 'added' : result.data.action === 'role' ? 'role updated' : 'removed';
+    out.write(`${verb}: ${result.data.member?.userId ?? result.data.userId ?? '?'}`
+      + `${result.data.member?.role ? ` role=${result.data.member.role}` : ''}\n`);
+    return;
+  }
+  if (result.data?.kind === 'workspace-root') {
+    const verb = { add: 'added', rename: 'renamed', reposition: 'repositioned', remove: 'removed' }[result.data.action] ?? result.data.action;
+    out.write(`root ${verb}: ${result.data.root?.id ?? result.data.rootId ?? '?'}`
+      + `${result.data.root?.position !== undefined ? ` position=${result.data.root.position}` : ''}\n`);
+    return;
+  }
+  if (result.data?.kind === 'scheduled-task') {
+    const task = result.data.task ?? {};
+    out.write(`task: ${task.id ?? '?'}  status=${task.status ?? '?'}  ${task.triggerKind ?? ''}`
+      + `${task.cronExpr ? ` ${task.cronExpr}` : ''}  next=${task.nextFireAt ?? ''}\n`);
+    return;
+  }
+  if (result.data?.kind === 'scheduled-task-disposition') {
+    out.write(`task: ${result.data.taskId}  status=${result.data.status ?? '?'}  changed=${result.data.changed ?? '?'}\n`);
+    return;
+  }
+  if (result.data?.kind === 'events-tail') {
+    out.write(`events tail: ${result.data.events} event(s)${result.data.follow ? ' (follow)' : ''}\n`);
     return;
   }
   if (Array.isArray(result.data?.checks)) {

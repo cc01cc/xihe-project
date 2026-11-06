@@ -28,24 +28,30 @@ mise run dev:host
 mise run xihe -- --help
 ```
 
-**CLI (`xihe` command family, 18 groups)** — `mise run xihe -- --help`
+**CLI (`xihe` command family, 23 groups)** — `mise run xihe -- --help`
 
 | Group | Purpose |
 |---|---|
 | `dev` | host environment check / provider init |
 | `config` | config read/write: get/set/unset/meta/put, import/export (instance layer) |
 | `config-locks` | config key locks (admin): list/set/delete |
-| `provider` | provider connections: add/update/list/verify/delete/limits |
+| `provider` | provider connections: add/update/list/catalog/verify/delete/limits |
 | `credential` | credential lifecycle, bindings, reveal, rotation |
 | `agent` | agent principals: create/bind/unbind/disable |
 | `session` | session participants + reads: `session list/get/export` (export is Markdown) |
 | `chat` | `chat send`; run status/cancel/approvals: `chat run/cancel/approvals/approve/reject` |
 | `skill` | skills: list/import/bind/unbind/delete |
-| `workspace` | workspace list / get |
+| `workspace` | workspace list/get; admin: create/delete/members/roots (write face) |
 | `job` | workspace jobs: list/output/cancel |
 | `checkpoint` | checkpoints: list / revert preview |
-| `scheduled-task` | scheduled task list |
+| `scheduled-task` | scheduled tasks: list; create/delete/rerun/remove/postpone |
 | `audit` | audit entry queries |
+| `auth` | token login/logout/status (local cache) |
+| `api` | raw passthrough: `api [METHOD] <path>` |
+| `me` | `me permissions` |
+| `models` | model catalog per visible connection |
+| `api-input-types` | `api-input-types list` |
+| `events` | `events tail <sessionId> [--follow]` (SSE, one JSON line per event) |
 | `status` | instance status summary |
 | `verify` | end-to-end self check |
 | `test` | host E2E entry |
