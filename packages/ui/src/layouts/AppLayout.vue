@@ -202,7 +202,8 @@ onMounted(() => {
 onUnmounted(() => {
     // PLAN-0660 T5.6：成对卸载 —— dispose 会 abort 在途 fetch 并清掉退避定时器，不留重连循环。
     userChannel.dispose();
-    // PLAN-0660 T5.19：成对清掉投影的合并窗，避免登出后仍有一次迟到的重拉。
+    // PLAN-0660 T5.19：成对作废投影 —— 清合并窗 + 让在途响应失效 + 复位成「未加载」。
+    // 只清 timer 不够：store 是进程级单例，快速换账号时旧请求回来会写进新账号的列表。
     userQuestionsStore.dispose();
     // BL-335：壳卸载（登出/切账号）时清掉订阅上限状态，避免下一个人看到上一个会话的横幅。
     clearSseSubscriberLimit();

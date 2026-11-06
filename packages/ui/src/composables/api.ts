@@ -3047,7 +3047,8 @@ export const api = {
     },
     /** PLAN-0660 T5.19：单条投影。非 addressee 且非会话可见者一律 **404**（契约无 403 分支）。 */
     async getUserQuestion(id: string): Promise<UserQuestionView> {
-        return request<UserQuestionView>(`/user-questions/${encodeURIComponent(id)}`);
+        const raw = await request<unknown>(`/user-questions/${encodeURIComponent(id)}`);
+        return assertUserQuestionView(raw, "getUserQuestion");
     },
     /**
      * PLAN-0660 T5.20：提交答案（仅 addressee）。成功返回**结案投影**（`state=answered` +
@@ -3056,11 +3057,12 @@ export const api = {
      * fail-closed 可重试）。
      */
     async answerUserQuestion(id: string, answer: string): Promise<UserQuestionView> {
-        return request<UserQuestionView>(`/user-questions/${encodeURIComponent(id)}/answer`, {
+        const raw = await request<unknown>(`/user-questions/${encodeURIComponent(id)}/answer`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ answer }),
         });
+        return assertUserQuestionView(raw, "answerUserQuestion");
     },
     /** PLAN-0655: the budget view used by the delegation dialog's read-only row. */
     async delegationUsage(sessionId: string): Promise<DelegationUsageView> {
@@ -4608,3 +4610,52 @@ export const api = {
         );
     },
 };
+
+/** `UserQuestionView` 的封闭四态（`spec/session/user-channel.md` §5）。 */
+const USER_QUESTION_STATES: readonly UserQuestionState[] = [
+    "pending",
+    "answered",
+    "expired",
+    "cancelled",
+];
+
+/** `UserQuestionView` 上必须是非空字符串的字段（`answer`/`expiresAt` 等可空字段不在此列）。 */
+const USER_QUESTION_REQUIRED_STRINGS = ["id", "sessionId", "runId", "prompt", "createdAt"] as const;
+
+/**
+ * PLAN-0660 T5.19/T5.20 —— 单条问答投影的信封校验。
+ *
+ * 为什么抛而不补默认值（与 `listUserQuestions` 的 `pendingCount` 校验同一条判据）：`state` 缺失
+ * 若回落成 `pending`，UI 会渲染出一个「可作答」的假问题并允许提交；`id` 缺失会让 `applySettled`
+ * 的按 id 匹配静默失效，用户以为作答成功、行却不动。契约破损必须显形，不能由 `undefined` 冒充。
+ */
+function assertUserQuestionView(raw: unknown, operation: string): UserQuestionView {
+    const reject = (reason: string): never => {
+        throw new Error(`${operation}: ${reason}`);
+    };
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+        return reject(
+            `unexpected payload (received ${
+                Array.isArray(raw) ? "a bare array" : raw === null ? "null" : typeof raw
+            }; expected a question object)`,
+        );
+    }
+    const record = raw as Record<string, unknown>;
+    for (const field of USER_QUESTION_REQUIRED_STRINGS) {
+        if (typeof record[field] !== "string" || record[field] === "") {
+            return reject(
+                `"${field}" is not a non-empty string (received ${
+                    record[field] === null ? "null" : typeof record[field]
+                })`,
+            );
+        }
+    }
+    if (!USER_QUESTION_STATES.includes(record.state as UserQuestionState)) {
+        return reject(
+            `"state" is not one of ${USER_QUESTION_STATES.join("/")} (received ${JSON.stringify(
+                record.state,
+            )})`,
+        );
+    }
+    return record as unknown as UserQuestionView;
+}

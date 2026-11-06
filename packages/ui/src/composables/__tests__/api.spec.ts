@@ -2776,3 +2776,71 @@ describe("OpenAPI Session contract guard (PLAN-0668 M2)", () => {
         ).toEqual([]);
     });
 });
+
+/**
+ * P3-3：单条问答投影的信封校验（与 `listUserQuestions` 同一条判据）。
+ *
+ * 这些用例钉的是"契约破损必须显形"：`state` 缺失若回落成 `pending`，UI 会渲染出一个可作答的
+ * 假问题；`id` 缺失会让 `applySettled` 的按 id 匹配静默失效。所以做不到就抛，不能由 `undefined`
+ * 冒充成合法投影响应。
+ */
+describe("api user-question envelope (PLAN-0660 P3-3)", () => {
+    const QUESTION = {
+        id: "77777777-7777-4777-8777-777777777777",
+        sessionId: SESSION_ID,
+        runId: RUN_ID,
+        state: "pending",
+        prompt: "继续执行吗？",
+        answer: null,
+        expiresAt: null,
+        createdAt: "2026-11-06T12:00:00Z",
+        firstDeliveredAt: null,
+        settledAt: null,
+    };
+
+    function respondWith(payload: unknown): void {
+        fetchSpy.mockResolvedValueOnce({
+            ok: true,
+            json: () => Promise.resolve(payload),
+        } as Response);
+    }
+
+    it("returns the projection unchanged when the envelope is well formed", async () => {
+        respondWith(QUESTION);
+        await expect(api.getUserQuestion(QUESTION.id)).resolves.toEqual(QUESTION);
+    });
+
+    it("rejects a projection whose state is missing instead of defaulting to pending", async () => {
+        const { state: _omitted, ...withoutState } = QUESTION;
+        respondWith(withoutState);
+
+        await expect(api.getUserQuestion(QUESTION.id)).rejects.toThrow(/"state" is not one of/);
+    });
+
+    it("rejects a projection whose state is outside the closed four", async () => {
+        respondWith({ ...QUESTION, state: "dismissed" });
+
+        await expect(api.getUserQuestion(QUESTION.id)).rejects.toThrow(/"state" is not one of/);
+    });
+
+    it("rejects an identify-less projection (applySettled would silently no-op)", async () => {
+        const { id: _omitted, ...withoutId } = QUESTION;
+        respondWith(withoutId);
+
+        await expect(api.answerUserQuestion(QUESTION.id, "继续")).rejects.toThrow(
+            /"id" is not a non-empty string/,
+        );
+    });
+
+    it("rejects a bare array or null payload for the answer endpoint", async () => {
+        respondWith([QUESTION]);
+        await expect(api.answerUserQuestion(QUESTION.id, "继续")).rejects.toThrow(
+            /unexpected payload/,
+        );
+
+        respondWith(null);
+        await expect(api.answerUserQuestion(QUESTION.id, "继续")).rejects.toThrow(
+            /unexpected payload/,
+        );
+    });
+});

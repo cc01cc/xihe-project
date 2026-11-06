@@ -114,6 +114,15 @@ export function createUserChannelSse(options: UserChannelSseOptions): UserChanne
     let controller: AbortController | null = null;
     let timer: unknown = null;
     let attempts = 0;
+    /**
+     * 连接代号：每建立一条新连接 +1。
+     *
+     * `onConnected` 的语义是「重拉投影」（通道不 replay），所以它必须**每连接恰好一次** —— 不能
+     * 靠"服务端只发一次 `connected`"这种外部巧合（重复帧会让投影请求翻倍，而缺帧会让重连后
+     * 永不重拉）。这里按连接代号去重，判据在本地闭环。
+     */
+    let connectionSeq = 0;
+    let announcedConnection = -1;
 
     function planReconnect(): void {
         if (disposed) return;
@@ -146,7 +155,10 @@ export function createUserChannelSse(options: UserChannelSseOptions): UserChanne
             return;
         }
         if (frame.event === "connected") {
-            options.onConnected?.();
+            if (announcedConnection !== connectionSeq) {
+                announcedConnection = connectionSeq;
+                options.onConnected?.();
+            }
             return;
         }
         // Any unknown event: nothing to do (unknown names are never guessed).
@@ -186,6 +198,8 @@ export function createUserChannelSse(options: UserChannelSseOptions): UserChanne
                 return;
             }
             attempts = 0;
+            // 新连接：`connected` 的去重代号随之推进（见 `dispatch` 与 `connectionSeq`）。
+            connectionSeq += 1;
             const reader = response.body.getReader();
             const decoder = new TextDecoder();
             const parse = createSseFrameParser();

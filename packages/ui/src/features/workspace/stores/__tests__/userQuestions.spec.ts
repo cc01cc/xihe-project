@@ -198,4 +198,75 @@ describe("useUserQuestionsStore（PLAN-0660 T5.19 投影 store）", () => {
 
         expect(listQuestions).toHaveBeenCalledTimes(1);
     });
+
+    it("请求在途时到达的 hint 不被吞：结算后自动补拉一次（P2-1）", async () => {
+        vi.useFakeTimers();
+        const store = useUserQuestionsStore();
+        let releaseFirst: (value: UserQuestionListResponse) => void = () => {};
+        listQuestions.mockReturnValueOnce(
+            new Promise<UserQuestionListResponse>((resolve) => {
+                releaseFirst = resolve;
+            }),
+        );
+        listQuestions.mockResolvedValueOnce(listResponse([question()], 1));
+
+        const slow = store.reload();
+        // 慢请求尚未结算时通道来了一个 hint。
+        store.onUserChannelHint(QUESTION_ID, SESSION_ID, "pending");
+        await vi.advanceTimersByTimeAsync(300);
+
+        // 合并窗到点，但它在途 ⇒ 只记账，不发第二个请求（也不丢）。
+        expect(listQuestions).toHaveBeenCalledTimes(1);
+
+        releaseFirst(listResponse([], 0));
+        await slow;
+
+        // 结算后补拉一次：hint 的失效最终被覆盖到，而不是等下一个事件。
+        expect(listQuestions).toHaveBeenCalledTimes(2);
+        expect(store.items).toHaveLength(1);
+        expect(store.pendingCount).toBe(1);
+    });
+
+    it("dispose 作废在途响应：迟到的旧响应不写回，投影复位成未加载（P2-2）", async () => {
+        const store = useUserQuestionsStore();
+        let release: (value: UserQuestionListResponse) => void = () => {};
+        listQuestions.mockReturnValueOnce(
+            new Promise<UserQuestionListResponse>((resolve) => {
+                release = resolve;
+            }),
+        );
+
+        const slow = store.reload();
+        // 登出 / 换账号：在途请求仍然会回来，但它已属于上一个世代。
+        store.dispose();
+        release(listResponse([question()], 1));
+        await slow;
+
+        expect(store.items).toBeNull();
+        expect(store.pendingCount).toBe(0);
+        expect(store.loading).toBe(false);
+        expect(store.error).toBe("");
+    });
+
+    it("dispose 之后的新请求不会被旧世代吞掉（换账号重拉照常生效）", async () => {
+        const store = useUserQuestionsStore();
+        let releaseOld: (value: UserQuestionListResponse) => void = () => {};
+        listQuestions.mockReturnValueOnce(
+            new Promise<UserQuestionListResponse>((resolve) => {
+                releaseOld = resolve;
+            }),
+        );
+        const old = store.reload();
+        store.dispose();
+
+        // 新账号登录：同一 store 单例上重新拉取。
+        listQuestions.mockResolvedValueOnce(listResponse([question({ id: "new-1" })], 1));
+        const fresh = store.reload();
+        releaseOld(listResponse([question({ id: "old-1" })], 1));
+        await old;
+        await fresh;
+
+        expect(store.items?.map((item) => item.id)).toEqual(["new-1"]);
+        expect(store.pendingCount).toBe(1);
+    });
 });
