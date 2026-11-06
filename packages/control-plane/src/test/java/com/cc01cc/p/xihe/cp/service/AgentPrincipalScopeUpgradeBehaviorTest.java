@@ -152,6 +152,15 @@ class AgentPrincipalScopeUpgradeBehaviorTest {
                 + AgentPrincipalScopeUpgradeFixture.WORKSPACE_ID, null);
         assertEquals(403, denied.status(), denied.body().toString());
         assertEquals("WORKSPACE_ACCESS_DENIED", denied.body().path("code").asText());
+        for (UUID legacy : List.of(AgentPrincipalScopeUpgradeFixture.PERSONAL_PRINCIPAL_ID,
+                AgentPrincipalScopeUpgradeFixture.WORKSPACE_PRINCIPAL_ID,
+                AgentPrincipalScopeUpgradeFixture.INSTANCE_PRINCIPAL_ID)) {
+            assertFalse(denied.body().toString().contains(legacy.toString()),
+                    "a denied list must not leak wsA principal rows: " + legacy);
+        }
+        assertEquals(auditBefore, count("SELECT count(*) FROM audit_logs"
+                        + " WHERE action LIKE '%workspace_agent%'"),
+                "a denied read path must not write a durable audit row either");
     }
 
     @Test
@@ -204,6 +213,8 @@ class AgentPrincipalScopeUpgradeBehaviorTest {
         Response patched = send(legacyToken, null, "PATCH", "/api/v1/agent-principals/" + personal,
                 Map.of("contextPolicy", plain(POLICY_JSON)));
         assertEquals(200, patched.status(), patched.body().toString());
+        assertFalse(patched.body().has("scope"), "the removed tier field must not reappear: "
+                + patched.body());
         assertEquals("true", string("SELECT context_policy->'memory'->>'enabled'"
                 + " FROM agent_principals WHERE id = CAST(? AS UUID)", personal.toString()));
 
@@ -259,10 +270,14 @@ class AgentPrincipalScopeUpgradeBehaviorTest {
         assertNotEquals(403, allowed.status(), allowed.body().toString());
         assertEquals(409, allowed.status(), allowed.body().toString());
         assertEquals("SSE_SUBSCRIPTION_REQUIRED", allowed.body().path("code").asText());
+        assertFalse(allowed.body().has("scope"), allowed.body().toString());
 
         Response denied = chatAs(outsider, sessionId, participantId);
         assertEquals(403, denied.status(), denied.body().toString());
         assertEquals("PARTICIPANT_CAP_DENIED", denied.body().path("code").asText());
+        assertFalse(denied.body().has("scope"), denied.body().toString());
+        assertEquals(0, count("SELECT count(*) FROM chat_runs WHERE session_id = CAST(? AS UUID)",
+                sessionId.toString()), "both the allowed-but-SSE-gated and denied paths must not persist a run");
     }
 
     @Test
@@ -272,6 +287,9 @@ class AgentPrincipalScopeUpgradeBehaviorTest {
         String principalId = AgentPrincipalScopeUpgradeFixture.WORKSPACE_PRINCIPAL_ID.toString();
         int before = count("SELECT count(*) FROM workspace_agents WHERE principal_id = CAST(? AS UUID)"
                 + " AND workspace_id = CAST(? AS UUID)", principalId, otherWorkspace.toString());
+        int auditsBefore = count("SELECT count(*) FROM audit_logs WHERE action IN"
+                + " ('workspace_agent_bound', 'workspace_agent_cap_updated')"
+                + " AND resource_id::text = ?", principalId);
 
         Response denied = send(owner.token(), otherWorkspace.toString(), "PUT",
                 "/api/v1/workspaces/" + otherWorkspace + "/agents/" + principalId,
@@ -282,14 +300,23 @@ class AgentPrincipalScopeUpgradeBehaviorTest {
         assertEquals(before, count("SELECT count(*) FROM workspace_agents WHERE principal_id ="
                 + " CAST(? AS UUID) AND workspace_id = CAST(? AS UUID)", principalId,
                 otherWorkspace.toString()), "the denied cross-workspace write leaves zero rows");
+        assertEquals(auditsBefore, count("SELECT count(*) FROM audit_logs WHERE action IN"
+                        + " ('workspace_agent_bound', 'workspace_agent_cap_updated')"
+                        + " AND resource_id::text = ?", principalId),
+                "the denied cross-workspace write leaves no durable audit row");
 
         Response allowed = send(owner.token(), otherWorkspace.toString(), "PUT",
                 "/api/v1/workspaces/" + otherWorkspace + "/agents/" + principalId,
                 Map.of("permissions", List.of()));
         assertEquals(200, allowed.status(), allowed.body().toString());
+        assertFalse(allowed.body().has("scope"), allowed.body().toString());
         assertEquals(before + 1, count("SELECT count(*) FROM workspace_agents WHERE principal_id ="
                 + " CAST(? AS UUID) AND workspace_id = CAST(? AS UUID)", principalId,
                 otherWorkspace.toString()));
+        assertEquals(auditsBefore + 1, count("SELECT count(*) FROM audit_logs WHERE action IN"
+                        + " ('workspace_agent_bound', 'workspace_agent_cap_updated')"
+                        + " AND resource_id::text = ?", principalId),
+                "the allowed cross-workspace bind writes exactly one durable audit row");
     }
 
     @Test
@@ -306,6 +333,7 @@ class AgentPrincipalScopeUpgradeBehaviorTest {
                 "/api/v1/workspaces/" + workspace + "/agents/" + principalId,
                 Map.of("permissions", List.of(Map.of("actionClass", "read", "resource", "*"))));
         assertEquals(200, allowed.status(), allowed.body().toString());
+        assertFalse(allowed.body().has("scope"), allowed.body().toString());
         assertEquals("read", string("SELECT permissions_snapshot->0->>'actionClass'"
                 + " FROM workspace_agents WHERE principal_id = CAST(? AS UUID)"
                 + " AND workspace_id = CAST(? AS UUID)", principalId.toString(), workspace.toString()));
