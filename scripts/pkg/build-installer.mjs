@@ -23,6 +23,7 @@
  *     --stage-only          stop after assembling/validating the stage (no makensis)
  *     --version <v>         installer version label (default: read from packages/ui/package.json)
  *     --cp-jar <path>       use a specific CP fat jar
+ *     --allow-stale-cp-jar  ship the CP jar even if it predates the newest CP source (default: fail)
  *     --agent-dir <path>    use a specific agent onedir payload
  *     --runtime-exe <path>  use a specific runtime exe
  *     --ui-dist <path>      use a specific UI dist
@@ -100,7 +101,7 @@ const JLINK_MODULES = [
 const args = parseArgs(process.argv.slice(2));
 
 function parseArgs(argv) {
-  const parsed = { stageOnly: false, skipJre: false };
+  const parsed = { stageOnly: false, skipJre: false, allowStaleCpJar: false };
   for (let i = 0; i < argv.length; i += 1) {
     const token = argv[i];
     const next = () => {
@@ -110,6 +111,7 @@ function parseArgs(argv) {
     };
     if (token === '--stage-only') parsed.stageOnly = true;
     else if (token === '--skip-jre') parsed.skipJre = true;
+    else if (token === '--allow-stale-cp-jar') parsed.allowStaleCpJar = true;
     else if (token === '--version') parsed.version = next();
     else if (token === '--cp-jar') parsed.cpJar = next();
     else if (token === '--agent-dir') parsed.agentDir = next();
@@ -247,7 +249,18 @@ function resolveInputs() {
   }
   const cpNewestSource = newestSourceMtime(join(REPO, 'packages', 'control-plane', 'src'), ['.java', '.properties', '.sql']);
   if (cpNewestSource > statSync(cpJar).mtimeMs) {
-    log(`WARN: ${relative(REPO, cpJar)} is older than the newest CP source — the packaged UI filter may be stale`);
+    // BL-403: this used to be a bare WARN, so a stale jar silently shipped. Packaging claims to
+    // be deterministic and self-checking (see the file header), and "the UI filter may be stale"
+    // is exactly the kind of thing that only shows up after the installer is already built.
+    // Judgeable by default; the escape hatch is explicit and off by default.
+    const stale = `${relative(REPO, cpJar)} is older than the newest CP source — the packaged UI filter would be stale`;
+    if (!args.allowStaleCpJar) {
+      fail(
+        stale,
+        'rebuild it with `mvn -o -q -DskipTests package` in packages/control-plane; pass --allow-stale-cp-jar only if shipping the stale jar is intended',
+      );
+    }
+    log(`WARN: ${stale} (allowed by --allow-stale-cp-jar)`);
   }
 
   const agentDir = args.agentDir ?? join(TMP, 'payload', 'agent');
@@ -806,7 +819,7 @@ let capabilities;
 
 async function main() {
   if (args.help) {
-    console.log('usage: node scripts/pkg/build-installer.mjs [--stage-only] [--version v] [--cp-jar p] [--agent-dir p] [--runtime-exe p] [--ui-dist p] [--pgvector d] [--makensis p] [--skip-jre]');
+    console.log('usage: node scripts/pkg/build-installer.mjs [--stage-only] [--version v] [--cp-jar p] [--agent-dir p] [--runtime-exe p] [--ui-dist p] [--pgvector d] [--makensis p] [--skip-jre] [--allow-stale-cp-jar]');
     return;
   }
   capabilities = JSON.parse(readFileSync(join(PKG_DIR, 'capabilities.json'), 'utf8'));

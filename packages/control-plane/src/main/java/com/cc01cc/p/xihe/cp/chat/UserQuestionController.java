@@ -13,7 +13,6 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
-import java.util.List;
 import java.util.UUID;
 
 /**
@@ -80,10 +79,12 @@ public class UserQuestionController {
                     "state must be pending");
         }
         int size = limitOrDefault(limit);
-        List<UserQuestion> rows = service.findProjection(userId, effectiveState, size);
-        long pendingCount = service.pendingCount(userId);
+        // BL-423: one snapshot — a single clock read inside a single transaction — so the badge can
+        // never disagree with the items it is rendered next to (deadline boundary, see service).
+        UserQuestionService.ProjectionSnapshot snapshot =
+                service.findProjectionWithCount(userId, effectiveState, size);
         return ResponseEntity.ok(new UserQuestionViews.UserQuestionListResponse(
-                UserQuestionViews.toViews(rows), pendingCount));
+                UserQuestionViews.toViews(snapshot.items()), snapshot.pendingCount()));
     }
 
     /**

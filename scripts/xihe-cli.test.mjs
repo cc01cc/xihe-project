@@ -4209,6 +4209,69 @@ test('PLAN-0643 T1.1: xihe api forwards a GET and returns the {ok,status,body} e
   assert.equal(cp.state.lastHeaders.authorization, 'Bearer test-token');
 });
 
+test('BL-418: --body-file is judged before anything is sent to CP', async (t) => {
+  // Three controls. The point of the first two is NOT "it errors" but "nothing left the CLI":
+  // body resolution happens at api.mjs:219-233, while login() and the request are at :235/:248,
+  // so a bad --body-file must produce zero network traffic. That only became observable once
+  // node:fs stopped being an optional injection (before BL-418 the empty default dependency bag
+  // threw "No filesystem reader is available" before any of this was reachable).
+  const dir = fs.mkdtempSync(path.join(tmpdir(), 'xihe-body-file-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const noPrompt = async () => {
+    throw new Error('must not prompt');
+  };
+  const countingFetch = () => {
+    let calls = 0;
+    return {
+      fetchImpl: async () => {
+        calls += 1;
+        throw new Error('no request may leave the CLI');
+      },
+      calls: () => calls,
+    };
+  };
+
+  // Control 1: the file does not exist.
+  const missingFetch = countingFetch();
+  const missing = await runCommand(
+    ['api', 'POST', '/api/v1/whatever', '--yes', '--body-file', path.join(dir, 'nope.json'), '--json'],
+    { env: { XIHE_CP_PORT: '1' }, promptSecret: noPrompt, stderr: sink(), fetchImpl: missingFetch.fetchImpl },
+  );
+  assert.equal(missing.exitCode, 2);
+  assert.equal(missing.error.code, 'API_BODY_INVALID');
+  assert.match(missing.error.message, /Cannot read body file/);
+  assert.equal(missingFetch.calls(), 0, 'a missing --body-file must not reach the network');
+
+  // Control 2: the file is there but is not JSON.
+  const brokenPath = path.join(dir, 'broken.json');
+  fs.writeFileSync(brokenPath, '{"a":1,');
+  const invalidFetch = countingFetch();
+  const invalid = await runCommand(
+    ['api', 'POST', '/api/v1/whatever', '--yes', '--body-file', brokenPath, '--json'],
+    { env: { XIHE_CP_PORT: '1' }, promptSecret: noPrompt, stderr: sink(), fetchImpl: invalidFetch.fetchImpl },
+  );
+  assert.equal(invalid.exitCode, 2);
+  assert.equal(invalid.error.code, 'API_BODY_INVALID');
+  assert.match(invalid.error.message, /must be valid JSON/);
+  assert.equal(invalidFetch.calls(), 0, 'invalid --body-file JSON must not reach the network');
+
+  // Control 3: valid JSON really is forwarded — otherwise "sent nothing" above would be vacuous.
+  const cp = await startApiEscapeMock();
+  t.after(cp.close);
+  const goodPath = path.join(dir, 'good.json');
+  fs.writeFileSync(goodPath, '{"a":1,"b":[2,3]}');
+  const good = await runCommand(['api', 'POST', '/api/v1/whatever', '--yes', '--body-file', goodPath, '--json'], {
+    env: cp.env,
+    promptSecret: noPrompt,
+    stderr: sink(),
+  });
+  assert.equal(good.exitCode, 0, JSON.stringify(good.error));
+  assert.equal(cp.state.lastMethod, 'POST');
+  const sentBody = typeof cp.state.lastBody === 'string' ? JSON.parse(cp.state.lastBody) : cp.state.lastBody;
+  assert.deepEqual(sentBody, { a: 1, b: [2, 3] });
+  assert.equal(cp.state.lastHeaders['content-type'], 'application/json');
+});
+
 test('PLAN-0643 T1.6: non-2xx answers keep status in the envelope', async (t) => {
   const cp = await startApiEscapeMock({ status: 404 });
   t.after(cp.close);

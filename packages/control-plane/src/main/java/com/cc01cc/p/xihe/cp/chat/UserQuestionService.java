@@ -11,6 +11,7 @@ import com.cc01cc.p.xihe.cp.repository.UserQuestionRepository;
 import com.cc01cc.p.xihe.cp.service.SessionReadAccess;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -18,6 +19,7 @@ import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
 
+import java.time.Clock;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
@@ -114,11 +116,32 @@ public class UserQuestionService {
     private final SessionReadAccess sessionReadAccess;
     private final AuditLogger audit;
     private final TransactionTemplate transactionTemplate;
+    /**
+     * BL-423: the deadline is a wall-clock boundary, so "which side of {@code expiresAt} are we on"
+     * has to be answerable <b>once per request</b> and pin-able in tests. Same seam pattern as
+     * {@code LoginAttemptService}/{@code ResourceGovernor}.
+     */
+    private final Clock clock;
 
+    /**
+     * Spring's entry point. The {@code @Autowired} is required because the clock seam below adds a
+     * second constructor: with more than one candidate, Spring falls back to "no-arg or explicit
+     * annotation" and a class with two plain constructors fails to instantiate. Same shape as
+     * {@code LoginAttemptService}.
+     */
+    @Autowired
     public UserQuestionService(UserQuestionRepository questions, ChatRunRepository runs,
             ChatApprovalRepository approvals, SessionRepository sessions,
             UserQuestionAgentClient agentClient, SessionReadAccess sessionReadAccess, AuditLogger audit,
             PlatformTransactionManager transactionManager) {
+        this(questions, runs, approvals, sessions, agentClient, sessionReadAccess, audit,
+                transactionManager, Clock.systemUTC());
+    }
+
+    UserQuestionService(UserQuestionRepository questions, ChatRunRepository runs,
+            ChatApprovalRepository approvals, SessionRepository sessions,
+            UserQuestionAgentClient agentClient, SessionReadAccess sessionReadAccess, AuditLogger audit,
+            PlatformTransactionManager transactionManager, Clock clock) {
         this.questions = questions;
         this.runs = runs;
         this.approvals = approvals;
@@ -127,6 +150,12 @@ public class UserQuestionService {
         this.sessionReadAccess = sessionReadAccess;
         this.audit = audit;
         this.transactionTemplate = new TransactionTemplate(transactionManager);
+        this.clock = clock;
+    }
+
+    /** Single source of "now" for this request; never call {@link Instant#now()} in this class. */
+    private Instant now() {
+        return clock.instant();
     }
 
     // ---------------------------------------------------------------------------------------
@@ -222,7 +251,7 @@ public class UserQuestionService {
      */
     public UserQuestion answer(UUID questionId, String userId, String answer) {
         UUID addressee = parseUserId(userId);
-        Instant now = Instant.now();
+        Instant now = clock.instant();
         UserQuestion delivered = transactionTemplate.execute(status -> deliverAnswer(
                 questionId, userId, addressee, answer, now));
         if (delivered != null) {
@@ -246,7 +275,7 @@ public class UserQuestionService {
                     "This question was already settled");
         }
         // Still pending ⇒ the only predicate that can have failed is the deadline.
-        questions.settlePending(questionId, UserQuestion.STATE_EXPIRED, Instant.now());
+        questions.settlePending(questionId, UserQuestion.STATE_EXPIRED, now());
         logger.info("[LIFECYCLE] service=cp event=run_question_expired questionId={}"
                 + " reason=answer_after_deadline", questionId);
         throw new CpApiException(HttpStatus.CONFLICT, "QUESTION_EXPIRED",
@@ -313,7 +342,7 @@ public class UserQuestionService {
         if (!SETTLE_TARGETS.contains(targetState)) {
             throw new IllegalArgumentException("settle target must be expired or cancelled: " + targetState);
         }
-        int changed = questions.settlePending(questionId, targetState, Instant.now());
+        int changed = questions.settlePending(questionId, targetState, now());
         if (changed > 0) {
             logSettled(targetState, "questionId=" + questionId, 1);
         }
@@ -337,7 +366,7 @@ public class UserQuestionService {
         String target = RUN_CANCELLED_STATUSES.contains(terminalStatus)
                 ? UserQuestion.STATE_CANCELLED
                 : UserQuestion.STATE_EXPIRED;
-        int changed = questions.settlePendingForRun(runId, target, Instant.now());
+        int changed = questions.settlePendingForRun(runId, target, now());
         if (changed > 0) {
             logSettled(target, "runId=" + runId + " terminalStatus=" + terminalStatus, changed);
         }
@@ -357,6 +386,46 @@ public class UserQuestionService {
      */
     @Transactional
     public List<UserQuestion> findProjection(String userId, String state, int limit) {
+        String effectiveState = normalizeProjectionState(state);
+        int size = normalizeProjectionLimit(limit);
+        UUID addressee = parseUserId(userId);
+        expireOverdueForAddressee(addressee, now());
+        return questions.findByAddresseeUserIdAndStateOrderByCreatedAtDesc(addressee,
+                effectiveState, PageRequest.of(0, size));
+    }
+
+    /**
+     * BL-423: the list and its badge count must come from <b>one</b> snapshot.
+     *
+     * <p>{@link #findProjection} + {@link #pendingCount} each read their own {@code now} inside
+     * their own transaction. A {@code expiresAt} that falls between the two made a single response
+     * contradict itself: the row was still in {@code items} while {@code pendingCount} had already
+     * excluded it — the badge said 0 while the card was still on screen. Here the clock is read
+     * once, the lazy settle runs before both reads, and both reads share the transaction, so
+     * "listed" and "counted" can no longer disagree.</p>
+     *
+     * <p>The count stays pending-only on purpose (the badge answers "how many are waiting for me",
+     * independent of which page of history was requested).</p>
+     */
+    @Transactional
+    public ProjectionSnapshot findProjectionWithCount(String userId, String state, int limit) {
+        String effectiveState = normalizeProjectionState(state);
+        int size = normalizeProjectionLimit(limit);
+        UUID addressee = parseUserId(userId);
+        Instant at = now();
+        expireOverdueForAddressee(addressee, at);
+        List<UserQuestion> items = questions.findByAddresseeUserIdAndStateOrderByCreatedAtDesc(
+                addressee, effectiveState, PageRequest.of(0, size));
+        long pending = questions.countByAddresseeUserIdAndState(addressee,
+                UserQuestion.STATE_PENDING);
+        return new ProjectionSnapshot(items, pending);
+    }
+
+    /** BL-423: one request's list plus badge, both read at a single {@code now}. */
+    public record ProjectionSnapshot(List<UserQuestion> items, long pendingCount) {
+    }
+
+    private static String normalizeProjectionState(String state) {
         String effectiveState = (state == null || state.isBlank())
                 ? UserQuestion.STATE_PENDING
                 : state;
@@ -364,11 +433,11 @@ public class UserQuestionService {
             throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST",
                     "state must be one of pending/answered/expired/cancelled");
         }
-        int size = limit <= 0 ? DEFAULT_PROJECTION_LIMIT : Math.min(limit, MAX_PROJECTION_LIMIT);
-        UUID addressee = parseUserId(userId);
-        expireOverdueForAddressee(addressee, Instant.now());
-        return questions.findByAddresseeUserIdAndStateOrderByCreatedAtDesc(addressee,
-                effectiveState, PageRequest.of(0, size));
+        return effectiveState;
+    }
+
+    private static int normalizeProjectionLimit(int limit) {
+        return limit <= 0 ? DEFAULT_PROJECTION_LIMIT : Math.min(limit, MAX_PROJECTION_LIMIT);
     }
 
     /**
@@ -378,14 +447,14 @@ public class UserQuestionService {
     @Transactional
     public long pendingCount(String userId) {
         UUID addressee = parseUserId(userId);
-        expireOverdueForAddressee(addressee, Instant.now());
+        expireOverdueForAddressee(addressee, now());
         return questions.countByAddresseeUserIdAndState(addressee, UserQuestion.STATE_PENDING);
     }
 
     /** Addressee-scoped single read; a non-addressee and a missing row are the same 404. */
     @Transactional
     public UserQuestion findForAddressee(UUID questionId, String userId) {
-        expireOverdueQuestion(questionId, Instant.now());
+        expireOverdueQuestion(questionId, now());
         return questions.findByIdAndAddresseeUserId(questionId, parseUserId(userId))
                 .orElseThrow(UserQuestionService::notFound);
     }
@@ -403,7 +472,7 @@ public class UserQuestionService {
      */
     @Transactional
     public UserQuestion findReadable(UUID questionId, String userId) {
-        expireOverdueQuestion(questionId, Instant.now());
+        expireOverdueQuestion(questionId, now());
         UserQuestion row = questions.findById(questionId).orElseThrow(UserQuestionService::notFound);
         if (isAddressee(row, userId)) {
             return row;

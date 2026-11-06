@@ -1,7 +1,6 @@
 import { fetchEventSource, type EventSourceMessage } from "@microsoft/fetch-event-source";
 import { logger } from "@/lib/logger";
-import { clearTabWorkspace } from "@/lib/workspaceContext";
-import { ApiError, apiAuthHeaders, apiErrorFromResponse } from "@/composables/api";
+import { ApiError, apiAuthHeaders, apiErrorFromResponse, forceLogout } from "@/composables/api";
 
 export interface ChatTransportOptions {
     url: string;
@@ -311,18 +310,17 @@ class ChatTransportImpl {
 /**
  * PLAN-0660 T5.18（审计 P1）：Bearer token 失效后的**唯一**登出入口。
  *
- * 为什么抽成模块级函数：用户通道（`useUserChannelSSE`）与聊天 SSE 面对的是同一个 Bearer token，
- * 401 语义必须只有一份。两边各清一遍 token/工作区上下文迟早漂移，而"漏跳 `/login`"的表现正是
- * 拿同一个坏 token 无限退避重连。
+ * BL-422（审计 P1）：这里**不再自带一份清态实现**。旧版本只清 3 个 localStorage 键 +
+ * `clearTabWorkspace()` 然后 `window.location.href = "/login"` 硬跳，而 auth store 的
+ * `clearAuthState()` 还会清 in-memory `token/refreshToken/user/workspace` ref、`clearSelfPermissions()`、
+ * `clearAnonSessionId()`、`clearSessionCaches()` 并 `broadcastLogout()` 同步其它标签页、带 `redirect`
+ * 走 SPA 路由。同一个「会话已死」事件因此有两种终态：走 SSE 401 的那条少清 4 项、丢 redirect、
+ * 不同步其它标签页。现在统一委托 `api.ts` 的 `forceLogout()`，那才是唯一实现。
  *
- * 调用方职责：登出后**不得**再排重连 —— 本函数只负责清态与跳转，停循环由各自的控制流决定。
+ * 调用方职责：登出后**不得**再排重连 —— 本函数只负责触发登出，停循环由各自的控制流决定。
  */
 export function handleUnauthorized(): void {
-    localStorage.removeItem("xihe-token");
-    localStorage.removeItem("xihe-refresh-token");
-    localStorage.removeItem("xihe-user");
-    clearTabWorkspace();
-    window.location.href = "/login";
+    forceLogout();
 }
 
 export const chatTransport = new ChatTransportImpl();

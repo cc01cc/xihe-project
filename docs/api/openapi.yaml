@@ -5671,6 +5671,25 @@ components:
         actionClass: { type: string, minLength: 1 }
         resource: { type: string, minLength: 1 }
         effect: { type: string, enum: [allow, deny] }
+    ChatApprovalDecisionResponse:
+      type: object
+      additionalProperties: false
+      description: |
+        PLAN-0328 M1 result of a Chat approval decision. Mirrors what
+        `ApprovalService.decisionResponse` actually returns: the CP-only decision metadata is
+        added here (Agent's own response carries none of it). `status` is always `accepted` —
+        a repeated identical decision is idempotent and still answers `accepted` with
+        `propagated: 0`, while a repeat with a *different* kind fails with 409
+        `APPROVAL_DECISION_CONFLICT` and no body of this shape.
+      required: [status, requestId, approved, decision, propagated]
+      properties:
+        status: { type: string, enum: [accepted] }
+        requestId: { type: string, format: uuid }
+        approved: { type: boolean, description: Derived from the resolved decision kind, not from the request field }
+        decision: { type: string, enum: [once, session, saved, reject, reject_always], description: Resolved decision kind; on an idempotent replay this is the recorded kind }
+        propagated: { type: integer, minimum: 0, description: Number of sibling pending approvals re-solved in the same session after an allow; 0 on reject and on replay }
+        modeAtGrant: { type: [string, 'null'], description: Effective session policy mode captured when the row was claimed; null when it could not be resolved }
+        rule: { $ref: '#/components/schemas/ChatApprovalGrantedRule' }
     ChatRunStatusResponse:
       type: object
       additionalProperties: false
