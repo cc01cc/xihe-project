@@ -247,7 +247,9 @@ export function commitDistance({ cwd, from, to, run = spawnSync }) {
  * - `headCommit`    `git rev-parse HEAD` of this checkout (`null` = git unavailable)
  * - `behind`        `git rev-list --count runningCommit..headCommit` (`null` when unknown)
  * - `stale`         provably not from HEAD (`verdict` is `stale` or `missing`)
- * - `verdict`       `fresh` | `stale` | `missing` | `unverified` (same vocabulary as the gate)
+ * - `verdict`       `fresh` | `stale` | `dirty` | `missing` | `unverified` (same vocabulary as the
+ *   start gate; BL-325: `dirty` means the stamped commit matches HEAD but the stamp says the tree
+ *   was dirty at build time, and it is never reported as `fresh`)
  * - `targetDirSource` **additive (BL-253 L3)**: `pointer` | `newest` | `env` | `derived` — where
  *   `targetDir` came from. Existing fields keep their meaning unchanged.
  *

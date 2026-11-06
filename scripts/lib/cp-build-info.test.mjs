@@ -212,6 +212,16 @@ test('cpBuildStatus: fresh stamp has stale=false and behind=0', (t) => {
   assert.equal(row.file, buildInfoPath(targetDir));
 });
 
+test('cpBuildStatus: matching commit + dirty stamp is verdict=dirty, never fresh', (t) => {
+  const targetDir = tempTarget(t);
+  writeBuildInfo({ targetDir, commit: HEAD_A, builtAt: '2026-11-04T21:30:00.000Z', dirty: true });
+  const row = cpBuildStatus({ targetDir, headCommit: HEAD_A, cwd: projectRoot });
+  assert.equal(row.verdict, 'dirty');
+  assert.equal(row.dirty, true);
+  assert.equal(row.stale, false, 'dirty is not stale, but it must not be accepted as fresh');
+  assert.equal(row.behind, 0);
+});
+
 test('cpBuildStatus: an older stamp is stale with behind > 0', (t) => {
   const targetDir = tempTarget(t);
   writeBuildInfo({ targetDir, commit: HEAD_B, builtAt: '2026-11-04T12:00:00.000Z', dirty: false });
