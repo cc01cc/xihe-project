@@ -1432,9 +1432,9 @@ describe("WorkspaceAgentsPanel PLAN-0667 roles & skills", () => {
             PRINCIPAL_ID,
             "role-editor",
         );
-        expect(wrapper.get('[data-testid="agent-rbac-action-error"]').text()).toContain(
-            "INSTANCE_ADMIN",
-        );
+        const text = wrapper.get('[data-testid="agent-rbac-action-error"]').text();
+        expect(text).toBe(i18n.global.t("workspace.agentRoleForbiddenAtoms"));
+        expect(text).not.toContain("INSTANCE_ADMIN");
     });
 
     it("maps 409 ROLE_BINDING_EXCEEDS_CAP to localized copy and shows the cap hint", async () => {

@@ -40,4 +40,16 @@ describe("roleErrorMessage (BL-288)", () => {
         const text = roleErrorMessage(apiError("CONCURRENT_MODIFICATION", "版本 7 → 9"), t);
         expect(text).toContain("版本 7 → 9");
     });
+
+    it("localizes AGENT_PRINCIPAL_FORBIDDEN_ATOMS instead of echoing the English detail", () => {
+        const text = roleErrorMessage(
+            apiError(
+                "AGENT_PRINCIPAL_FORBIDDEN_ATOMS",
+                "role carries atoms an agent principal may never hold: credential.use,instance:admin",
+            ),
+            t,
+        );
+        expect(text).toBe("copy:settings.rolesError.agentRoleForbiddenAtoms");
+        expect(text).not.toContain("credential.use");
+    });
 });

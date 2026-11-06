@@ -410,12 +410,14 @@ async function loadRbac(principalId: string) {
 /** 409 三类码给可读文案；404 不当崩溃；其它沿用 CP problem message。 */
 function rbacErrorMessage(cause: unknown): string {
     if (cause instanceof ApiError) {
+        // PLAN-0651 V17 B4：该码的 detail 是未本地化的原子清单，不能直显，必须走本地化文案。
+        if (cause.problem.code === "AGENT_PRINCIPAL_FORBIDDEN_ATOMS") {
+            return t("workspace.agentRoleForbiddenAtoms");
+        }
         // BL-288：可行动 detail（具体原子名/条数/上限）优先；无 detail 才回退本地化文案。
         const detail = problemDetailText(cause, "");
         if (detail) return detail;
         switch (cause.problem.code) {
-            case "AGENT_PRINCIPAL_FORBIDDEN_ATOMS":
-                return t("workspace.agentRoleForbiddenAtoms");
             case "ROLE_BINDING_EXCEEDS_CAP":
                 return t("workspace.agentRoleExceedsCap");
             case "ROLE_BINDING_EXISTS":
