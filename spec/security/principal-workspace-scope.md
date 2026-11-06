@@ -1,6 +1,7 @@
 # XH Principal、Workspace Scope 与资源归属
 
-> 契约状态：`proposed`；实现状态：`partial`；Profile：`security`；Owner：Security + Workspace；Active PLAN：PLAN-0496（凭据原子接入）、PLAN-0622（`CREATE_OWN_AGENT` 原子与三段授权分离；实现随 M1 推进）；PLAN-0474 术语同步已归档；来源：PLAN-0386/DEV-032/PLAN-0407（授权模型条款回写自 PLAN-0407 spec/authorization-and-derivation.md）；更新：2026-11-02。
+> 契约状态：`proposed`；实现状态：`partial`；Profile：`security`；Owner：Security + Workspace；Active PLAN：PLAN-0496（凭据原子接入）、PLAN-0622（`CREATE_OWN_AGENT` 原子与三段授权分离；实现随 M1 推进）；PLAN-0474 术语同步已归档；来源：PLAN-0386/DEV-032/PLAN-0407（授权模型条款回写自 PLAN-0407 spec/authorization-and-derivation.md）；更新：2026-11-07。
+> PLAN-0680 指针（2026-11-07）：技能绑定写入面打开 workspace 轴且由服务端按授权上下文定档（DDL 已双轴；workspace 轴只授本工作区原子，角色轴维持单轴）。本文件正文条款未改，承接登记见 [principal-workspace-binding.md](../agent/principal-workspace-binding.md)。  
 > 消费者：CP authorization/session/MCP、Workspace Agent API、Agent、UI Agent 管理与 Session 选择
 
 ## 1. 术语

@@ -1,12 +1,13 @@
 # Agent principal 与 Workspace 绑定
 
 > 契约状态：`active`  
+> amendment 承接：PLAN-0680（2026-11-07 登记：技能绑定写入面双轴——workspace 轴仅授本工作区原子、服务端定档；仅承接登记，正文条款未改，新章落 M4）  
 > 实现状态：`partial`（PLAN-0374 principal/Workspace binding、T3.1b/T3.3、V5/V6/V7 已验收；**scope 三档 `PERSONAL`/`WORKSPACE`/`INSTANCE` 与三段授权由 PLAN-0622 承接，尚未实现**；fork/branch producer 归 PLAN-0409/0410，Agent 铸造/多层审批后置 BL-70/71）
 > Profile：`security`  
-> Owner：PLAN-0374（canonical binding；spawn caller amendment per PLAN-0407 #53）；scope 三档与三段授权 amendment per PLAN-0622  
+> Owner：PLAN-0374（canonical binding；spawn caller amendment per PLAN-0407 #53）；scope 三档与三段授权 amendment per PLAN-0622；技能绑定双轴 amendment per PLAN-0680  
 > 消费者：CP 授权/Session/Chat admission、Workspace Agent 管理 API、UI Agent 管理与 Session 选择、PLAN-0407/0409/0410、PLAN-0622/0623  
 > 来源：PLAN-0374（原承接 BL-18/BL-29；2026-09-23 G2 已冻结入 PLAN-0407 承接，执行中；本地稿 `plans/PLAN-0374-XH-agent-workspace-scope/spec/agent/principal-workspace-binding.md`）  
-> 更新日期：2026-11-02
+> 更新日期：2026-11-07
 
 ## 范围
 
