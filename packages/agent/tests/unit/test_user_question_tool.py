@@ -24,6 +24,7 @@ from xihe_agent.adapters.user_question_tool import (
     MAX_QUESTION_LENGTH,
     MAX_TIMEOUT_SECONDS,
     NO_ANSWER_CONTENT,
+    PARENT_RUN_ID_KEY,
     SUBAGENT_QUESTION_REFUSED_CONTENT,
     USER_QUESTION_EVENT_SINK_KEY,
     UserQuestionRefusedError,
@@ -260,6 +261,46 @@ async def test_ask_user_without_event_sink_fails_closed():
     with pytest.raises(RuntimeError):
         await tool.execute({"question": "anyone?"}, context)
     assert tool.get_pending() == []
+
+
+# -- T5.16: CP dispatch marks a spawned (child) run, so the tool refuses at the door -------------
+
+
+@pytest.mark.asyncio
+async def test_ask_user_child_run_is_refused_before_any_event_is_published():
+    """PLAN-0660 T5.16 (LD-16=A): ``parentRunId`` from the CP dispatch ends the ask locally."""
+    tool = UserQuestionTool()
+    context = _context()
+    context.metadata[PARENT_RUN_ID_KEY] = "parent-run-1"
+    published: list[dict] = []
+    context.metadata[USER_QUESTION_EVENT_SINK_KEY] = _sink(published, asyncio.Event())
+
+    result = await tool.execute({"question": "Which env?"}, context)
+
+    assert result["status"] == "error"
+    assert result["code"] == CODE_SUBAGENT_QUESTION_REFUSED
+    assert result["content"] == SUBAGENT_QUESTION_REFUSED_CONTENT
+    assert published == [], "a child run must not append session_question_asked"
+    assert tool.coordinator.pending_by_run == {}
+    assert tool.get_pending() == []
+
+
+@pytest.mark.asyncio
+async def test_ask_user_blank_parent_run_id_still_asks_as_a_root_run():
+    """Absence and blank mean root run: the gate must not fire on an empty marker."""
+    tool = UserQuestionTool()
+    context = _context()
+    context.metadata[PARENT_RUN_ID_KEY] = "   "
+    published: list[dict] = []
+    ready = asyncio.Event()
+    context.metadata[USER_QUESTION_EVENT_SINK_KEY] = _sink(published, ready)
+
+    task = asyncio.create_task(tool.execute({"question": "Which env?"}, context))
+    await ready.wait()
+
+    assert published == [{"question": "Which env?"}]
+    assert tool.resolve_answer("q-1", "session-1", "run-1", "staging")[0] == "accepted"
+    assert (await task)["status"] == "answered"
 
 
 # -- T5.16: CP refusal mapping (a child run must not wait out the ceiling) -------------------

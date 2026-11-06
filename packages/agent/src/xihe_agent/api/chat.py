@@ -257,6 +257,13 @@ async def chat(request: Request):
     workspace_id: str | None = data.get("workspaceId") or None
     request_id: str = request.headers.get("X-Request-Id") or str(uuid4())
     run_id: str = request.headers.get("X-Chat-Run-Id") or data.get("runId") or str(uuid4())
+    # PLAN-0660 T5.16 (LD-16=A): CP marks a spawned (child) run with the parent run's id so
+    # ask_user can refuse at the door. Additive/optional — absent or blank means a root run, and
+    # the pre-T5.16 CP never sends this key.
+    raw_parent_run_id = data.get("parentRunId")
+    parent_run_id: str | None = (
+        raw_parent_run_id if isinstance(raw_parent_run_id, str) and raw_parent_run_id.strip() else None
+    )
     try:
         continuation = _validate_continuation(data.get("continuation"), run_id=run_id, content=content)
     except ValueError:
@@ -554,6 +561,7 @@ async def chat(request: Request):
                     {
                         "requestId": request_id,
                         "runId": run_id,
+                        "parentRunId": parent_run_id,
                         "sessionId": session_id,
                         "workspaceId": workspace_id,
                         "branchId": context.branch_id,

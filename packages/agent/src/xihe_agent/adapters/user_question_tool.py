@@ -39,6 +39,9 @@ from xihe_agent.interfaces.tool import BaseAgentTool, ToolSpec
 
 USER_QUESTION_EVENT_SINK_KEY = "_user_question_event_sink"
 UserQuestionEventSink = Callable[[dict[str, Any]], Awaitable[None]]
+# CP dispatch marks a spawned run with its parent's run id (PLAN-0660 T5.16, LD-16=A). Absent or
+# blank means a root run — the pre-T5.16 CP never sends this key, so the read stays additive.
+PARENT_RUN_ID_KEY = "parentRunId"
 
 # CP's writer rule (UserQuestionService.MAX_PROMPT_LENGTH) mirrored at the tool edge so an
 # oversize prompt is a model-readable validation error instead of a refused relay.
@@ -126,6 +129,19 @@ class UserQuestionCoordinator:
         metadata = context.metadata
         run_id = str(metadata.get("runId") or context.aggregate_id)
         session_id = str(metadata.get("sessionId", context.aggregate_id))
+        # PLAN-0660 T5.16 (LD-16=A): CP already told the Agent that this run was spawned, so the
+        # refusal happens at the door — nothing is published and nothing waits. That keeps the CP
+        # side clean (no ``session_question_asked`` event without a question row) and turns a
+        # one-hour wait into a model-readable error.
+        parent_run_id = metadata.get(PARENT_RUN_ID_KEY)
+        if isinstance(parent_run_id, str) and parent_run_id.strip():
+            logger.warning(
+                "User question refused before delivery: runId={} parentRunId={} code={}",
+                run_id,
+                parent_run_id,
+                CODE_SUBAGENT_QUESTION_REFUSED,
+            )
+            return _refusal_result(CODE_SUBAGENT_QUESTION_REFUSED)
         self._purge_completed()
         if run_id in self.pending_by_run:
             logger.warning("User question refused: a question is already pending for runId={}", run_id)
