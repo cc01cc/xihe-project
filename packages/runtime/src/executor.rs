@@ -311,6 +311,55 @@ struct InFlightGuard {
 }
 
 /// PLAN-0397：引擎错误 → RuntimeError（保持既有对外错误面）。
+/// BL-372: the file worker answers on stdout, but `JobEngine` caps a single
+/// `read_output` at `READ_MAX_LIMIT` (1 MiB). Reading only once truncated any
+/// JSON response above ~1 MiB and surfaced as `parse file worker response:
+/// EOF while parsing a string at line 1 column 1048576`.
+///
+/// Read the captured stream in 1 MiB chunks instead, and fail closed past
+/// `FILE_WORKER_OUTPUT_LIMIT` rather than handing a silently short buffer to
+/// `serde_json` (BL-372: "策略声明与实际能力一致").
+fn read_file_worker_stdout(
+    job_engine: &crate::job_engine::JobEngine,
+    job_id: &str,
+) -> Result<String> {
+    let mut output = String::new();
+    let mut offset = 0usize;
+    loop {
+        let chunk = job_engine
+            .read_output(job_id, "stdout", Some(offset), Some(FILE_WORKER_READ_CHUNK))
+            .map_err(job_engine_error)?;
+        if chunk.data.is_empty() || chunk.next_offset <= offset {
+            break;
+        }
+        offset = chunk.next_offset;
+        output.push_str(&chunk.data);
+        if output.len() > FILE_WORKER_OUTPUT_LIMIT {
+            return Err(output_capture_limit_error());
+        }
+    }
+    Ok(output)
+}
+
+/// Explicit, non-silent failure for a response above the capture budget
+/// (BL-372: the caller must never receive a short buffer that later parses as
+/// `EOF while parsing a string`).
+fn output_capture_limit_error() -> RuntimeError {
+    RuntimeError::Command(format!(
+        "file worker response exceeds the 32 MiB capture limit ({FILE_WORKER_OUTPUT_LIMIT} bytes)"
+    ))
+}
+/// Largest file-worker response we buffer in one call (BL-372). Covers the UI's
+/// `<10 MB` "load fully" policy with headroom for JSON escaping and envelope.
+/// BL-372: capture budget for the file worker job (its stdout carries the whole
+/// JSON response). Covers the UI `<10 MB` "load fully" policy with headroom;
+/// ordinary jobs keep the 1 MiB default.
+const FILE_WORKER_CAPTURE_CAP: u64 = 32 * 1024 * 1024;
+
+const FILE_WORKER_OUTPUT_LIMIT: usize = FILE_WORKER_CAPTURE_CAP as usize;
+
+/// `JobEngine::read_output` refuses a single read above 1 MiB (`READ_MAX_LIMIT`).
+const FILE_WORKER_READ_CHUNK: usize = 1024 * 1024;
 fn job_engine_error(error: crate::job_engine::JobEngineError) -> RuntimeError {
     match error.code() {
         "PROCESS_BACKEND_LAUNCH_PENDING" => RuntimeError::Unsupported {
@@ -562,7 +611,13 @@ impl WorkspaceExecutionRouter {
         )
         .map_err(job_engine_error)?;
         self.job_engine
-            .start_in_workspace_with_stdin(Some(workspace_id), &job_id, plan, Some(frame))
+            .start_in_workspace_with_stdin_capped(
+                Some(workspace_id),
+                &job_id,
+                plan,
+                Some(frame),
+                FILE_WORKER_CAPTURE_CAP,
+            )
             .map_err(job_engine_error)?;
 
         let deadline = std::time::Instant::now() + Duration::from_secs(35);
@@ -583,11 +638,7 @@ impl WorkspaceExecutionRouter {
             }
             tokio::time::sleep(Duration::from_millis(20)).await;
         };
-        let output = self
-            .job_engine
-            .read_output(&job_id, "stdout", Some(0), Some(1024 * 1024))
-            .map_err(job_engine_error)?
-            .data;
+        let output = read_file_worker_stdout(&self.job_engine, &job_id)?;
         let cleanup = self.job_engine.cleanup(&job_id).map_err(job_engine_error)?;
         if cleanup.outcome != crate::job_engine::CleanupOutcome::Completed {
             return Err(RuntimeError::Command(
@@ -1932,6 +1983,18 @@ impl WorkspaceExecutionRouter {
 mod in_flight_tests {
     use super::*;
 
+    /// BL-372: over-budget responses fail closed with an explicit, greppable
+    /// message instead of a short buffer that later parses as
+    /// `EOF while parsing a string`.
+    #[test]
+    fn output_capture_limit_error_names_the_limit() {
+        let message = output_capture_limit_error().to_string();
+        assert!(message.contains("32 MiB capture limit"), "{message}");
+        assert!(
+            message.contains(&FILE_WORKER_OUTPUT_LIMIT.to_string()),
+            "{message}"
+        );
+    }
     /// Register so cancellation can target `(workspace, toolCallId)`,
     /// 且幂等；执行侧通过 outcome 通道回报终局。
     #[test]
