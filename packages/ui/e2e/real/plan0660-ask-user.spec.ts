@@ -8,8 +8,8 @@
  * 为什么必须门控：真栈套件跑一轮 10–25 分钟且要占 PG/端口/浏览器，默认 suite 里放一条
  * 未实现完的用例只会制造假绿/假红。因此与 `mention-cursor-badge.spec.ts` 同构：
  *   - `XIHE_E2E_ASK_USER=1` 才执行，否则整组 skip（仍会打印 skip 原因，计数可见）；
- *   - 不进 `@host` grep（本文件无 `@host` 标签）⇒ `mise run test:e2e:host` 默认轮次不选它，
- *     只有显式 `--batch` / 显式 spec 路径才运行。
+ *   - 带 `@host` 标签 ⇒ 纳入 `mise run test:e2e:host` 默认轮次的 grep 范围；实际是否执行
+ *     仍由上面的 `XIHE_E2E_ASK_USER=1` 门控决定。
  *
  * 驱动链（夹具侧已就位，见同分支两个夹具文件）：
  *   - `e2e/fixtures/chain-scripts.mjs` 新增链 `ask-user` = `["ask_user", "text"]`；
@@ -122,7 +122,7 @@ interface UserQuestionListResponse {
 
 test.describe.configure({ retries: 0 });
 
-test.describe("PLAN-0660 T5.23 ask_user 真栈全链（窗口门控骨架）", () => {
+test.describe("PLAN-0660 T5.23 ask_user 真栈全链（窗口门控骨架） @host", () => {
     test.skip(!ENABLED, "只有 XIHE_E2E_ASK_USER=1 时执行（需 host 隔离栈窗口，见文件头 runbook）");
 
     test("提问 → 不刷新出现卡片 → 作答 → 结案，agent 继续（V8/V11 投影侧）", async ({
