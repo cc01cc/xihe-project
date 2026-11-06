@@ -336,6 +336,8 @@ const messages = {
                 "缺少 MANAGE_WORKSPACE_AGENTS 权限：请让管理员在「设置 → 角色与绑定」为该工作区绑定含该原子的角色后重试。",
             agentBindForbidden:
                 "缺少 MANAGE_WORKSPACE_AGENTS 权限：请让管理员在「设置 → 角色与绑定」为该工作区绑定含该原子的角色后重试。",
+            agentPermissionLoading: "正在确认权限…",
+            agentPermissionUnavailable: "权限暂不可用，请稍后重试。",
             agentGrantPanelLink: "打开角色与绑定",
             agentName: "智能体名称",
             agentTemplateChoice: "模板快照",
@@ -2671,6 +2673,8 @@ const messages = {
                 "MANAGE_WORKSPACE_AGENTS is required: ask an administrator to bind a role carrying that atom for this workspace under Settings → Roles & bindings, then retry.",
             agentBindForbidden:
                 "MANAGE_WORKSPACE_AGENTS is required: ask an administrator to bind a role carrying that atom for this workspace under Settings → Roles & bindings, then retry.",
+            agentPermissionLoading: "Checking permissions…",
+            agentPermissionUnavailable: "Permissions are temporarily unavailable. Try again later.",
             agentGrantPanelLink: "Open roles & bindings",
             agentName: "Agent name",
             agentTemplateChoice: "Template snapshot",

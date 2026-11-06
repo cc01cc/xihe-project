@@ -139,15 +139,13 @@ const workspaceAtoms = ref<string[]>([]);
  * `null` = 未知（禁用但不算"无权限"）。
  */
 const canCreatePrincipal = computed<boolean | null>(() => {
-    if (capabilityState.value === "loading") return null;
-    if (capabilityState.value === "failed") return false;
+    if (capabilityState.value !== "ready") return null;
     return workspaceAtoms.value.includes("MANAGE_WORKSPACE_AGENTS");
 });
 
 /** 绑定 / 编辑 cap / 禁用都需要工作区级 MANAGE_WORKSPACE_AGENTS（个人 agent 的属主另论）。 */
 const canManageWorkspaceAgents = computed<boolean | null>(() => {
-    if (capabilityState.value === "loading") return null;
-    if (capabilityState.value === "failed") return false;
+    if (capabilityState.value !== "ready") return null;
     return workspaceAtoms.value.includes("MANAGE_WORKSPACE_AGENTS");
 });
 
@@ -156,8 +154,7 @@ const canManageWorkspaceAgents = computed<boolean | null>(() => {
  * `null` = 能力投影还没回来（控件禁用但不谎报无权限）。
  */
 const canWriteMemories = computed<boolean | null>(() => {
-    if (capabilityState.value === "loading") return null;
-    if (capabilityState.value === "failed") return false;
+    if (capabilityState.value !== "ready") return null;
     return workspaceAtoms.value.includes("MEMORY_WRITE");
 });
 
@@ -1026,6 +1023,20 @@ async function unbind(agent: WorkspaceAgentBinding) {
                 >
                     {{ t("workspace.agentCreateForbidden") }}
                 </p>
+                <p
+                    v-else-if="capabilityState === 'loading'"
+                    class="mt-1 text-xs text-muted-foreground"
+                    role="status"
+                >
+                    {{ t("workspace.agentPermissionLoading") }}
+                </p>
+                <p
+                    v-else-if="capabilityState === 'failed'"
+                    class="mt-1 text-xs text-muted-foreground"
+                    role="status"
+                >
+                    {{ t("workspace.agentPermissionUnavailable") }}
+                </p>
             </div>
             <label class="block space-y-1 text-sm">
                 <span>{{ t("workspace.agentName") }}</span>
@@ -1274,6 +1285,20 @@ async function unbind(agent: WorkspaceAgentBinding) {
             >
                 {{ t("workspace.agentBindForbidden") }}
             </p>
+            <p
+                v-else-if="capabilityState === 'loading'"
+                class="text-xs text-muted-foreground"
+                role="status"
+            >
+                {{ t("workspace.agentPermissionLoading") }}
+            </p>
+            <p
+                v-else-if="capabilityState === 'failed'"
+                class="text-xs text-muted-foreground"
+                role="status"
+            >
+                {{ t("workspace.agentPermissionUnavailable") }}
+            </p>
         </section>
 
         <section class="space-y-3" aria-labelledby="workspace-agent-list-title">
@@ -1500,7 +1525,11 @@ async function unbind(agent: WorkspaceAgentBinding) {
                             <span class="text-[11px] text-muted-foreground">{{
                                 canWriteMemories === true
                                     ? t("workspace.agentMemoryWritableBadge")
-                                    : t("workspace.agentMemoryReadonlyBadge")
+                                    : canWriteMemories === false
+                                      ? t("workspace.agentMemoryReadonlyBadge")
+                                      : capabilityState === "loading"
+                                        ? t("workspace.agentPermissionLoading")
+                                        : t("workspace.agentPermissionUnavailable")
                             }}</span>
                         </button>
                         <!-- 启用记忆：与设置页同一个 Switch（reka-ui），不混用 checkbox。 -->
@@ -1532,7 +1561,13 @@ async function unbind(agent: WorkspaceAgentBinding) {
                             class="text-[11px] text-muted-foreground"
                             data-testid="agent-memory-readonly-hint"
                         >
-                            {{ t("workspace.agentMemoryReadonlyHint") }}
+                            {{
+                                canWriteMemories === false
+                                    ? t("workspace.agentMemoryReadonlyHint")
+                                    : capabilityState === "loading"
+                                      ? t("workspace.agentPermissionLoading")
+                                      : t("workspace.agentPermissionUnavailable")
+                            }}
                         </p>
                         <div v-else class="space-y-2">
                             <div class="flex items-center justify-between gap-2">
@@ -1852,10 +1887,16 @@ async function unbind(agent: WorkspaceAgentBinding) {
                             <span>{{ t("workspace.agentRolesTitle") }}</span>
                         </button>
                         <span
-                            v-if="canBindRbac === false"
+                            v-if="canBindRbac !== true"
                             class="rounded-full border px-1.5 py-0.5 text-[10px] text-muted-foreground"
                         >
-                            {{ t("workspace.agentRbacReadonlyBadge") }}
+                            {{
+                                canBindRbac === false
+                                    ? t("workspace.agentRbacReadonlyBadge")
+                                    : capabilityState === "loading"
+                                      ? t("workspace.agentPermissionLoading")
+                                      : t("workspace.agentPermissionUnavailable")
+                            }}
                         </span>
                     </div>
                     <div
@@ -1993,11 +2034,17 @@ async function unbind(agent: WorkspaceAgentBinding) {
                                 </button>
                             </div>
                             <p
-                                v-else-if="canBindRbac === false"
+                                v-else-if="canBindRbac !== true"
                                 class="text-[11px] text-muted-foreground"
                                 data-testid="agent-rbac-readonly-hint"
                             >
-                                {{ t("workspace.agentRbacReadonlyHint") }}
+                                {{
+                                    canBindRbac === false
+                                        ? t("workspace.agentRbacReadonlyHint")
+                                        : capabilityState === "loading"
+                                          ? t("workspace.agentPermissionLoading")
+                                          : t("workspace.agentPermissionUnavailable")
+                                }}
                             </p>
                             <p
                                 v-if="rbacActionError"
@@ -2119,10 +2166,16 @@ async function unbind(agent: WorkspaceAgentBinding) {
                                 </button>
                             </div>
                             <p
-                                v-else-if="canBindRbac === false"
+                                v-else-if="canBindRbac !== true"
                                 class="text-[11px] text-muted-foreground"
                             >
-                                {{ t("workspace.agentRbacReadonlyHint") }}
+                                {{
+                                    canBindRbac === false
+                                        ? t("workspace.agentRbacReadonlyHint")
+                                        : capabilityState === "loading"
+                                          ? t("workspace.agentPermissionLoading")
+                                          : t("workspace.agentPermissionUnavailable")
+                                }}
                             </p>
                         </template>
                     </div>
