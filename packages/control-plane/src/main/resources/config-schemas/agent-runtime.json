@@ -3,6 +3,7 @@
   "properties": {
     "useRegistry": { "type": "string", "enum": ["true", "false"] },
     "useSupervisor": { "type": "string", "enum": ["true", "false"] },
+    "providerRequestFingerprintEnabled": { "type": "string", "enum": ["true", "false"] },
     "workersDir": { "type": "string" },
     "instructions": { "type": "string" },
     "systemToolTimeoutS": { "type": ["integer", "string"], "minimum": 1, "maximum": 30, "pattern": "^(30|[12][0-9]|[1-9])$" },

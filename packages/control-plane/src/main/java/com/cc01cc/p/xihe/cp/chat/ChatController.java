@@ -113,6 +113,8 @@ public class ChatController {
     private final com.cc01cc.p.xihe.cp.context.service.ContextSourceRefreshService contextSourceRefreshService;
     /** PLAN-0666 M1b: writes the per-run context fingerprint at the first dispatch (fail-open). */
     private final ContextFingerprintRecorder contextFingerprintRecorder;
+    /** PLAN-0679 T2.2: writes the provider-layer request fingerprint (fail-open, durable-before-forward). */
+    private final ProviderRequestFingerprintRecorder providerRequestFingerprintRecorder;
     private final com.cc01cc.p.xihe.cp.usage.UsageCostMapper usageCostMapper;
     private final com.cc01cc.p.xihe.cp.service.ContextTemplateSourceService contextTemplateSourceService;
     private final ApplicationEventPublisher eventPublisher;
@@ -193,7 +195,9 @@ public class ChatController {
               ContextFingerprintRecorder contextFingerprintRecorder,
               // PLAN-0660 T5.11: the session_question_asked relay (durable row + user-channel hint).
               UserQuestionService userQuestionService,
-              com.cc01cc.p.xihe.cp.event.UserChannelPort userChannel) {
+              com.cc01cc.p.xihe.cp.event.UserChannelPort userChannel,
+              // PLAN-0679 T2.2: appended last for the same reason.
+              ProviderRequestFingerprintRecorder providerRequestFingerprintRecorder) {
         this.agentHttpClient = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(10))
             .build();
@@ -220,6 +224,7 @@ public class ChatController {
         this.contextFingerprintRecorder = contextFingerprintRecorder;
         this.userQuestionService = userQuestionService;
         this.userChannel = userChannel;
+        this.providerRequestFingerprintRecorder = providerRequestFingerprintRecorder;
         this.configService = configService;
         this.mcpRelayToolRecorder = mcpRelayToolRecorder;
         this.mcpToolTimeoutService = mcpToolTimeoutService;
@@ -2712,6 +2717,12 @@ public class ChatController {
         // and the SSE dispatch continues unchanged.
         if ("transport_progress".equals(eventName) || "transport_attempt".equals(eventName)) {
             persistTransportTelemetry(eventName, asMap(parsedPayload), runId);
+        }
+        // PLAN-0679 T2.2: same durable-before-forward contract as the transport rows — the
+        // fingerprint row is best-effort (a dropped document is reported as not_captured, never as
+        // a fake state) and the relay below still runs, so a diagnostics write cannot break a run.
+        if (ProviderRequestFingerprintRecorder.EVENT_NAME.equals(eventName)) {
+            providerRequestFingerprintRecorder.recordFirstDispatch(asMap(parsedPayload), runId);
         }
         // PLAN-0464 T2.2：Agent 侧工具事实记账只剩执行域（invocation + agent_tool
         // attempt）；LedgerToolRecorder 及其 operation_* 写入已随本计划删除。

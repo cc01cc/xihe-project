@@ -1844,6 +1844,47 @@ paths:
         '403': { $ref: '#/components/responses/Problem' }
         '404': { $ref: '#/components/responses/Problem' }
         '409': { $ref: '#/components/responses/Problem' }
+  /api/v1/chat/runs/{runId}/provider-request-fingerprint:
+    get:
+      operationId: getChatRunProviderRequestFingerprint
+      summary: Read a run's provider-request fingerprint, optionally diffed against another run
+      description: |
+        PLAN-0679 (design D6): returns the layered fingerprint of the **final provider request**
+        for this run's first provider step (`providerStep: 1`), recorded by the Agent at dispatch
+        time and persisted write-once per run (`chat_run_provider_requests`). A context-overflow
+        re-dispatch cannot replace the first document (design D2); per-step rows are v2 (B-6).
+
+        **Zero prompt content:** the document carries only per-layer sha256 hash/count/bytes plus
+        the outbound calibration hash/bytes; the `request` block carries diagnostic metadata
+        (apiType, resolved model, message/tool counts, role histogram, source summary) measured
+        by the Agent. Neither contains message bodies, tool schemas, or template bodies.
+
+        **Two-level model (design D5):** absence of a row is a read-side synthetic state —
+        `available=false + reason=not_captured` — and is never re-encoded as `disabled`/`error`.
+        The only stored non-diagnostic shape is the Agent's fail-open error marker
+        (`{status:"error", reasonCode:"FINGERPRINT_TOO_LARGE"}`), reported as `unavailable` in
+        diffs, never as `unchanged`.
+
+        With `against`, both runs must belong to the same Session
+        (`409 DIFF_SESSION_MISMATCH`). Authorization reuses the run-trace path (run identity +
+        current Session); no new permission atom (design D6).
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: runId, required: true, schema: { type: string, format: uuid } }
+        - { in: query, name: against, required: false, description: Baseline run id (same Session only)., schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Fingerprint envelope, or fingerprint diff when `against` is supplied
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/ProviderRequestFingerprintView'
+                  - $ref: '#/components/schemas/ProviderRequestFingerprintDiffView'
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
   /api/v1/chat/runs/{runId}/guidance:
     post:
       operationId: submitChatRunGuidance
@@ -4576,6 +4617,129 @@ components:
           enum: [unchanged, 'changed(sameShape)', 'changed(grew)', 'changed(shrank)', added, removed, unavailable, absent]
         countDelta: { type: integer }
         bytesDelta: { type: integer }
+        againstReason: { type: string, nullable: true }
+        currentReason: { type: string, nullable: true }
+    ProviderRequestFingerprintView:
+      type: object
+      description: |
+        PLAN-0679 read-side envelope (design D5). `available=false` means no row was ever
+        persisted — it is reported as `not_captured`, never re-encoded as `disabled`/`error`.
+      required: [runId, available]
+      properties:
+        runId: { type: string, format: uuid }
+        available: { type: boolean }
+        reason:
+          type: string
+          nullable: true
+          enum: [not_captured]
+          description: Present iff `available=false`; read-side synthetic state.
+        fingerprint:
+          nullable: true
+          oneOf:
+            - $ref: '#/components/schemas/ProviderRequestFingerprintDocument'
+            - $ref: '#/components/schemas/ProviderRequestFingerprintErrorMarker'
+        request:
+          nullable: true
+          allOf: [{ $ref: '#/components/schemas/ProviderRequestFingerprintMetadata' }]
+    ProviderRequestFingerprintDocument:
+      type: object
+      description: |
+        Stored six-layer diagnostic (design 4.2), verbatim as the Agent produced it. Only
+        hash/count/bytes per layer plus the outbound calibration — never prompt content.
+      required: [algo, dispatchAttempt, providerStep, layers, outbound]
+      properties:
+        algo: { type: string, enum: [sha256] }
+        dispatchAttempt: { type: integer, minimum: 1, description: 'v1 is always 1 (first dispatch only, design D2).' }
+        providerStep: { type: integer, minimum: 1, description: 'v1 is always 1; per-step rows are v2 (B-6).' }
+        layers:
+          type: object
+          description: Keys are the fixed layer set systemTemplate/history/userInput/toolSchema/config.
+          additionalProperties: { $ref: '#/components/schemas/ProviderRequestFingerprintLayer' }
+        outbound: { $ref: '#/components/schemas/ProviderRequestFingerprintLayer' }
+    ProviderRequestFingerprintLayer:
+      type: object
+      required: [hash, bytes]
+      properties:
+        hash: { type: string, description: sha256 hex over canonical JSON (Python-side, design D3). }
+        bytes: { type: integer }
+        count:
+          type: integer
+          nullable: true
+          description: Present only where a count is meaningful (history, toolSchema, outbound).
+    ProviderRequestFingerprintErrorMarker:
+      type: object
+      description: |
+        Agent fail-open marker stored when the payload exceeded the 8 KB cap (design 4.3). The
+        read side reports it as `unavailable` with `reasonCode`, never as `unchanged`.
+      required: [status]
+      properties:
+        status: { type: string, enum: [error] }
+        reasonCode: { type: string, description: 'Closed set, e.g. FINGERPRINT_TOO_LARGE.' }
+    ProviderRequestFingerprintMetadata:
+      type: object
+      description: |
+        Request metadata persisted next to the document (design 4.3). Diagnostic counts and
+        identity only — measured by the Agent, never re-derived by CP; no prompt content.
+      required: [apiTypeId, model, messageCount, toolCount, bytesTotal]
+      properties:
+        apiTypeId: { type: string, example: openai-chat-completions }
+        apiTypeVersion: { type: integer, nullable: true }
+        model: { type: string, description: 'Agent-resolved model actually dispatched (incl. overrides).' }
+        messageCount: { type: integer }
+        toolCount: { type: integer }
+        bytesTotal: { type: integer, format: int64 }
+        dispatchAttempt: { type: integer, minimum: 1 }
+        providerStep: { type: integer, minimum: 1 }
+        roleHistogram:
+          type: object
+          description: 'Count per textual role only (e.g. {"user":2}); never message bodies.'
+          additionalProperties: { type: integer }
+        systemSources:
+          type: object
+          description: 'Source summary (template id/version, slot fill state, component counts).'
+    ProviderRequestFingerprintDiffView:
+      type: object
+      required: [againstRunId, runId, status]
+      properties:
+        againstRunId: { type: string, format: uuid }
+        runId: { type: string, format: uuid }
+        status: { type: string, enum: [comparable, unavailable] }
+        against: { $ref: '#/components/schemas/ProviderRequestFingerprintMetadata' }
+        current: { $ref: '#/components/schemas/ProviderRequestFingerprintMetadata' }
+        sides:
+          type: array
+          items:
+            type: object
+            properties:
+              side: { type: string, enum: [against, current] }
+              reason: { type: string, nullable: true, description: 'Present when the side has no row (not_captured).' }
+              status: { type: string, nullable: true }
+              reasonCode: { type: string, nullable: true }
+        layers:
+          type: object
+          additionalProperties: { $ref: '#/components/schemas/ProviderRequestFingerprintLayerDiff' }
+        outbound: { $ref: '#/components/schemas/ProviderRequestFingerprintLayerDiff' }
+        dispatchAttempt:
+          type: object
+          properties:
+            against: { type: integer }
+            current: { type: integer }
+        summary:
+          type: object
+          properties:
+            changedLayers: { type: array, items: { type: string } }
+            unavailableLayers: { type: array, items: { type: string } }
+    ProviderRequestFingerprintLayerDiff:
+      type: object
+      required: [status]
+      description: 'Design 4.4: an unavailable side is never downgraded to unchanged.'
+      properties:
+        layer: { type: string, nullable: true }
+        status:
+          type: string
+          enum: [unchanged, 'changed(sameShape)', 'changed(grew)', 'changed(shrank)', added, removed, unavailable, absent]
+        countDelta: { type: integer, nullable: true, description: Present only when both sides carry a count. }
+        bytesDelta: { type: integer, nullable: true }
         againstReason: { type: string, nullable: true }
         currentReason: { type: string, nullable: true }
     UserCapabilities:
