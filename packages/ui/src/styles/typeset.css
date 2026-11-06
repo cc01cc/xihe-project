@@ -3,8 +3,15 @@
  * no layout, no colors beyond currentColor inheritance. */
 
 .xihe-chat-markdown {
-    font-size: 0.9375rem;
-    line-height: 1.75;
+    /* markstream-vue 在正文节点**自身**声明 `font-size: var(--ms-text-body)` /
+     * `line-height: var(--ms-leading-body)`（`.paragraph-node[data-v-…]` 等）。后代的自有
+     * 声明不继承祖先字号，所以下面这行只提供「继承基准」，管不到段落 —— 必须重定义这两个
+     * 上游 token，让正文跟随气泡口径（= `text-sm`：`BubbleContent` 已是 `text-sm
+     * leading-relaxed`，`--text-sm` / `--leading-relaxed` 同为 14px / 1.55）。PLAN-0631 T3.3。 */
+    --ms-text-body: var(--text-sm);
+    --ms-leading-body: var(--text-sm--line-height);
+    font-size: var(--text-sm);
+    line-height: var(--text-sm--line-height);
     overflow-wrap: break-word;
 }
 
