@@ -380,6 +380,11 @@ public final class Launcher {
             try (InputStream in = Files.newInputStream(file)) {
                 props.load(in);
             }
+            // PLAN-0650 A-2 gap: "created by us" is not the same as "protected". Every install
+            // upgraded from a launcher older than BL-204 A② has this file already, and the ACEs it
+            // inherited from %LOCALAPPDATA% would never be revisited — so the create-path hardening
+            // would say nothing about the file this start is about to hand to the child.
+            rehardenExistingSecrets(file, dir);
             return props;
         }
         SecureRandom random = new SecureRandom();
@@ -402,6 +407,12 @@ public final class Launcher {
             try (InputStream in = Files.newInputStream(file)) {
                 existing.load(in);
             }
+            // PLAN-0650 A-2 gap: the winner hardened *its* file before the ATOMIC_MOVE, so the
+            // winner's own publish is fine — but losing the race does not mean the file was born
+            // here: two launchers can start against an install that already has a legacy file, and
+            // this branch then reads it first. Same rule as the existing-file branch: a file whose
+            // owner-only DACL was never re-proven is not read.
+            rehardenExistingSecrets(file, dir);
             return existing;
         }
         writeFirstRunNote(requireSecret(props, "admin.password"));
@@ -452,6 +463,28 @@ public final class Launcher {
         verifyHardened(file);
         log("secrets: wrote " + file + " (" + props.size() + " keys, atomic move, owner-only ACL)");
         return true;
+    }
+
+    /**
+     * PLAN-0650 A-2 gap (2026-11-06): re-assert the owner-only DACL when an <b>existing</b>
+     * secrets file is loaded, not only when one is created.
+     *
+     * <p>Why the create path alone is not enough: a file written before BL-204 A②, or carried over
+     * by an in-place upgrade, keeps the ACEs it inherited from {@code %LOCALAPPDATA%} (SYSTEM,
+     * BUILTIN\Administrators, the current user) for as long as nobody touches it again, and the
+     * readiness/create-time verification never sees it. Re-asserting on every load is idempotent
+     * for an already-hardened file and closes that upgrade path without a migration step; the
+     * parent directory is included because a writable directory can re-ACL the file it holds.
+     *
+     * <p>Failure is a refusal, not a warning: if the DACL cannot be re-proven, the previous ACL is
+     * restored and {@link #CODE_SECRETS_ACL} is thrown (exit 4), exactly as on the create path —
+     * secrets the launcher cannot prove owner-only must not be read.
+     */
+    private void rehardenExistingSecrets(Path file, Path dir) {
+        hardenPermissions(file);
+        hardenPermissions(dir);
+        verifyHardened(file);
+        log("security: acl existing " + file.getFileName() + " re-asserted on load");
     }
 
     /**
