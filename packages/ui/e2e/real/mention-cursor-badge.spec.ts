@@ -85,6 +85,7 @@ test.describe("PLAN-0660 T5.6 游标推进后徽标下降", () => {
         // 2) 找到本人（HUMAN 参与者，echo displayName = 账号 username）并确认徽标存在
         const me = await page.evaluate(
             async ({ sessionId, username }) => {
+                // read-only: 只读回读参与者 readCursor（GET），用于定位本人行与断言前状态。
                 const headers = {
                     Authorization: `Bearer ${localStorage.getItem("xihe-token") ?? ""}`,
                 };
@@ -110,27 +111,21 @@ test.describe("PLAN-0660 T5.6 游标推进后徽标下降", () => {
         await page.screenshot({ path: join(OUT, "mention-badge-before.png"), scale: "css" });
         console.log(`[mention-cursor] before text=${JSON.stringify(beforeText)}`);
 
-        // 3) 推进本人游标（advance-only；派生 mentionCount 归零）
-        const patched = await page.evaluate(
-            async ({ sessionId, participantId }) => {
-                const headers = {
-                    Authorization: `Bearer ${localStorage.getItem("xihe-token") ?? ""}`,
-                    "Content-Type": "application/json",
-                };
-                const response = await fetch(
-                    `/api/v1/sessions/${sessionId}/participants/${participantId}/cursor`,
-                    {
-                        method: "PATCH",
-                        headers,
-                        body: JSON.stringify({ lastReadEventSeq: 999999 }),
-                    },
-                );
-                return { ok: response.ok, status: response.status };
-            },
-            { sessionId: state.sessionId, participantId: me.participantId },
-        );
-        console.log(`[mention-cursor] patch=${JSON.stringify(patched)}`);
-        expect(patched.ok, JSON.stringify(patched)).toBe(true);
+        // 3) UI「标记已读」推进本人游标（PLAN-0687：原 in-page PATCH cursor 属 bypass，改走产品路径）
+        const row = page.getByTestId(`participant-row-${me.participantId}`);
+        const advance = row.getByTestId("participant-cursor-advance");
+        if (!(await advance.isVisible().catch(() => false))) {
+            const expand = row.getByTestId(`participant-expand-${me.participantId}`);
+            if (await expand.isVisible().catch(() => false)) {
+                await expand.click();
+            }
+        }
+        await expect(advance, "本人行应有「标记已读」按钮").toBeVisible({ timeout: 15_000 });
+        await advance.click();
+        console.log("[mention-cursor] advance clicked via UI");
+        await expect(badge, "点击「标记已读」后本人徽标应立即消失").toHaveCount(0, {
+            timeout: 30_000,
+        });
 
         // 4) 刷新后徽标消失
         await page.reload();

@@ -58,6 +58,7 @@ async function waitTerminalCount(
     while (Date.now() < deadline) {
         const payload = await page.evaluate(
             async ({ cp, sessionId, token }) => {
+                // read-only: 只读轮询 chat run 列表（GET），判定终态与计数。
                 const response = await fetch(
                     `${cp}/api/v1/chat/sessions/${sessionId}/runs?page=0&size=10`,
                     { headers: { Authorization: `Bearer ${token}` } },
@@ -267,6 +268,7 @@ test.describe("X 演示截图（真实数据：deepseek-flash）", () => {
 
         const countRuns = async (): Promise<number> =>
             page.evaluate(async (sessionId) => {
+                // read-only: 只读统计 chat run 数量（GET），不写任何状态。
                 const response = await fetch(
                     `/api/v1/chat/sessions/${sessionId}/runs?page=0&size=50`,
                     {

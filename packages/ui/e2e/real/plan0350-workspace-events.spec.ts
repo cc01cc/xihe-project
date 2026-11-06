@@ -133,6 +133,7 @@ test.describe("@host PLAN-0350 workspace file events", () => {
             w.__ws = { events: "", state: "connecting", status: 0 };
             void (async () => {
                 try {
+                    // read-only: 只读订阅 workspace 事件流（SSE GET），用于断言事件到达顺序。
                     const res = await fetch(`/api/v1/workspaces/${id}/events`, {
                         headers: { Authorization: `Bearer ${token}`, Accept: "text/event-stream" },
                     });
