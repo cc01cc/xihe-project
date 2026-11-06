@@ -642,6 +642,35 @@ export async function ensureChatBinding(page: Page, sessionId: string): Promise<
 }
 
 /**
+ * 用 **Node 侧** 计时给任意 Playwright 操作封顶。
+ *
+ * 为什么不用操作自带的 `timeout` 选项：run7b / run7c 实测显示 `page.waitForTimeout`
+ * （浏览器侧计时）在页面卡住时**永不返回**；`locator.inputValue()` 这类读值调用在元素
+ * 被卸载后会**无限等元素出现**（它默认没有 timeout）。只要有一处这样挂住，外层再多的
+ * 轮次上限也用不上 —— 900 s 测试预算会被单次调用吃光。
+ */
+function withDeadline<T>(work: Promise<T>, ms: number, label: string): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error(`${label} exceeded ${ms}ms`)), ms);
+        work.then(
+            (value) => {
+                clearTimeout(timer);
+                resolve(value);
+            },
+            (error: unknown) => {
+                clearTimeout(timer);
+                reject(error);
+            },
+        );
+    });
+}
+
+/** Node 侧等待：不依赖页面是否响应。 */
+function nap(ms: number): Promise<void> {
+    return new Promise<void>((resolve) => setTimeout(resolve, ms));
+}
+
+/**
  * Is the send button un-clickable right now?
  *
  * run7b 的教训：只读 `isEnabled()` 会把「被浮层遮住 / 命中点不是按钮」误判成可点，
@@ -689,7 +718,9 @@ async function probeSendBlocked(send: Locator): Promise<boolean> {
 export async function sendChat(page: Page, text: string): Promise<void> {
     const bound = page.url().match(/\/chat\/([0-9a-f-]{36})/i);
     if (bound) {
-        await ensureChatBinding(page, bound[1]);
+        await withDeadline(ensureChatBinding(page, bound[1]), 20_000, "ensureChatBinding").catch(
+            () => {},
+        );
     }
     const input = page.locator('[data-testid="chat-input"]'),
         send = page.locator('[data-testid="chat-send-button"]');
@@ -697,17 +728,21 @@ export async function sendChat(page: Page, text: string): Promise<void> {
     // ensureChatReady) can drop the earlier input event, leaving the button
     // disabled with DOM value set but no v-model update.
     for (let i = 0; i < 6; i++) {
-        await input.click().catch(() => {});
-        await input.fill(text);
+        await withDeadline(input.click({ timeout: 5_000 }), 7_000, "chat-input click").catch(
+            () => {},
+        );
+        await withDeadline(input.fill(text, { timeout: 10_000 }), 12_000, "chat-input fill").catch(
+            () => {},
+        );
         if (await send.isEnabled().catch(() => false)) break;
-        await page.waitForTimeout(1000);
+        await nap(1000);
     }
     await expect(send).toBeEnabled({ timeout: 15000 });
-    await page
-        .locator("[data-sonner-toast]")
-        .first()
-        .waitFor({ state: "detached", timeout: 8000 })
-        .catch(() => {});
+    await withDeadline(
+        page.locator("[data-sonner-toast]").first().waitFor({ state: "detached", timeout: 8000 }),
+        10_000,
+        "sonner-toast detach",
+    ).catch(() => {});
     const bubbles = page.locator('[data-slot="message"][data-align="end"]');
     // PLAN-0660 T5.23（run6 / run7b 两次 900s 超时根因）：判据从「乐观气泡可见」升级为
     // **可观测发送证据三选一** —— ① 消息条数严格增长 ② 新气泡真实可见 ③ 输入框文本已离开。
@@ -726,17 +761,40 @@ export async function sendChat(page: Page, text: string): Promise<void> {
         // so re-resolve and bind the active session on every attempt.
         const active = page.url().match(/\/chat\/([0-9a-f-]{36})/i);
         if (active) {
-            await ensureChatBinding(page, active[1]).catch(() => {});
+            // ensureChatBinding 内部是 page.evaluate(fetch(...))，没有内建超时：
+            // 一次挂住就能吃掉整轮预算（run7c 实测）。
+            await withDeadline(
+                ensureChatBinding(page, active[1]),
+                20_000,
+                "ensureChatBinding",
+            ).catch(() => {});
         }
-        const bubbleCount = await bubbles.count().catch(() => baseline);
-        const bubbleVisible = await bubbles
-            .nth(baseline)
-            .isVisible()
-            .catch(() => false);
-        // 读不到输入值时保守取回原文 —— 即视为「未清空」，宁可多观察也不误判已发出。
-        const pendingText = await input.inputValue().catch(() => text);
-        const inputCleared = !pendingText.includes(text);
-        const sendBlocked = await probeSendBlocked(send);
+        const bubbleCount = await withDeadline(bubbles.count(), 5_000, "bubble count").catch(
+            () => baseline,
+        );
+        const bubbleVisible = await withDeadline(
+            bubbles.nth(baseline).isVisible(),
+            5_000,
+            "bubble visible probe",
+        ).catch(() => false);
+        // 不要在 locator 上读输入框：`inputValue()` 默认**不设超时**，发送后输入区若被
+        // 卸载就会无限等元素出现（run7c 实测：attempt=1 点完后 attempt=2 再没出现过）。
+        // 页面级求值不等待特定元素 —— 元素不在就返回 null，配合 deadline 不会挂住。
+        const pendingText = await withDeadline(
+            page.evaluate(() => {
+                const el = document.querySelector<HTMLTextAreaElement>(
+                    '[data-testid="chat-input"]',
+                );
+                return el ? el.value : null;
+            }),
+            7_000,
+            "chat-input read",
+        ).catch(() => null);
+        // 读不到（元素被卸载 / 求值超时）一律保守视为「未清空」，宁可多观察也不误判已发出。
+        const inputCleared = pendingText === null ? false : !pendingText.includes(text);
+        const sendBlocked = await withDeadline(probeSendBlocked(send), 12_000, "send probe").catch(
+            () => false,
+        );
         const verdict = classifySendAttempt({
             baselineCount: baseline,
             bubbleCount,
@@ -750,26 +808,32 @@ export async function sendChat(page: Page, text: string): Promise<void> {
         if (verdict === "sent") {
             // 已发出：尽力给乐观气泡一点落地时间，但**不把可见性当退出门** ——
             // 那正是旧判据的病根（ask_user 场景下人类等待期很长，气泡可能迟迟不到）。
-            await bubbles
-                .nth(baseline)
-                .waitFor({ state: "visible", timeout: 15_000 })
-                .catch(() => {});
+            await withDeadline(
+                bubbles.nth(baseline).waitFor({ state: "visible", timeout: 15_000 }),
+                17_000,
+                "optimistic bubble wait",
+            ).catch(() => {});
             return;
         }
         if (verdict === "blocked") {
             // 点不动且没有任何证据：再点也是空点，只观察、不消耗点击预算。
-            await page.waitForTimeout(1000);
+            await nap(1000);
             continue;
         }
-        // 有界点击：即使按钮在点击瞬间转 disabled 也只等 10s，不再无限挂起。
-        const clickTimedOut = await send
-            .click({ timeout: 10_000 })
+        // 有界点击：即使按钮在点击瞬间转 disabled 也只等 10s，不再无限挂起；
+        // 外层再用 Node 侧 deadline 兜一层 —— Playwright 的 timeout 依赖 CDP 往返，
+        // 页面主线程卡死时它同样可能迟迟不返回。
+        const clickTimedOut = await withDeadline(
+            send.click({ timeout: 10_000 }),
+            12_000,
+            "send click",
+        )
             .then(() => false)
             .catch(() => true);
         if (clickTimedOut) {
             console.log(`[send-retry-guard] attempt=${i + 1} action=click-timeout`);
         }
-        await page.waitForTimeout(500);
+        await nap(500);
     }
     throw new Error(
         `send never produced observable send evidence (baseline=${baseline}, elapsed=${Date.now() - startedAt}ms)`,
