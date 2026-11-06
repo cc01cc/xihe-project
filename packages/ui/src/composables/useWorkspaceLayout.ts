@@ -1,4 +1,12 @@
-import { computed, ref, watch, type InjectionKey, type Ref } from "vue";
+import {
+    computed,
+    getCurrentScope,
+    onScopeDispose,
+    ref,
+    watch,
+    type InjectionKey,
+    type Ref,
+} from "vue";
 import { useWindowSize } from "@vueuse/core";
 import { logger } from "../lib/logger";
 
@@ -449,6 +457,20 @@ export function createWorkspaceLayoutWriter(
             flush();
         }, delayMs);
     }
+    /**
+     * BL-376：合并写入的 timer 属于**这一次挂载**。卸载时 `onBeforeUnmount` 已 `flush()` 把最后一个值
+     * 落盘，之后仍挂着的 timer 不该再写 —— 否则"已死实例的延迟写"会落到下一个使用者身上（测试里是
+     * 下一条用例，真实场景是离开页面后仍在写）。因此作用域销毁时**取消**未完成的 timer。
+     * 只在 effect scope 内注册：纯函数用法/单测没有 scope，直接 `onScopeDispose` 会告警。
+     */
+    function cancelPending(): void {
+        if (timer !== null) {
+            clearTimeout(timer);
+            timer = null;
+        }
+        pending = null;
+    }
+    if (getCurrentScope()) onScopeDispose(cancelPending);
     return { schedule, flush };
 }
 
