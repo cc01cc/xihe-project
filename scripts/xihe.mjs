@@ -302,6 +302,12 @@ export async function runCommand(argv, dependencies = {}) {
     }
 
     if (group === 'status') {
+      // BL-414: a status-style group takes no sub-command. Before this check the extra
+      // token was parsed as `command` and dropped: `xihe status extra` answered success
+      // and queried the CP. `models` has the same one-command shape and rejects it too.
+      if (command !== undefined) {
+        throw new CliError('INVALID_ARGUMENT', 'status is a single command; do not pass a subcommand.');
+      }
       const parsed = parseCommandOptions(rest, [], []);
       if (parsed.positionals.length !== 0) throw new CliError('INVALID_ARGUMENT', 'status takes no positional arguments.');
       const apiBase = getApiBase(env);
