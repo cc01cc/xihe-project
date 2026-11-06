@@ -7,6 +7,7 @@ import { PassThrough, Readable } from 'node:stream';
 import { test } from 'node:test';
 import path from 'node:path';
 import { tmpdir } from 'node:os';
+import { pathToFileURL } from 'node:url';
 import { printResult, runCommand } from './xihe.mjs';
 import { promptSecret, readResponseText } from './xihe-cli/provider.mjs';
 import { clearToken } from './xihe-cli/token-store.mjs';
@@ -5379,4 +5380,363 @@ test('PLAN-0643 V9: with no --base-url, XIHE_CP_URL or XIHE_CP_PORT the CLI targ
 
   assert.equal(result.exitCode, 0, JSON.stringify(result.error));
   assert.equal(result.data.baseUrl, 'http://127.0.0.1:12631');
+});
+
+// ---------------------------------------------------------------------------
+// PLAN-0643 M6-2 (T3.1-T3.5): chat run/cancel/approvals + session read surface,
+// chat send Idempotency-Key, workspace header injection and conflict detection.
+// ---------------------------------------------------------------------------
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// Real-process tests must reach the in-test loopback mock directly: strip the
+// operator's proxy environment (NODE_USE_ENV_PROXY/HTTP(S)_PROXY/ALL_PROXY) so
+// Node's env-proxy cannot route the child's fetch away from 127.0.0.1.
+function directConnectEnv(extra = {}) {
+  const env = { ...process.env, ...extra };
+  for (const key of Object.keys(env)) {
+    if (/^(https?_proxy|all_proxy|no_proxy|node_use_env_proxy)$/i.test(key)) delete env[key];
+  }
+  return env;
+}
+
+async function startChatSessionMock() {
+  const state = {
+    loginRequests: 0,
+    chatIdempotencyKeys: [],
+    lastWorkspaceHeader: null,
+    lastCancelBody: null,
+    lastDecisionBody: null,
+    lastExportQuery: null,
+    lastExportHeader: null,
+    exportMarkdown: '# Session export\n\nhello from the fake CP export surface.\n',
+  };
+  const server = createServer(async (request, response) => {
+    const url = new URL(request.url, 'http://127.0.0.1');
+    const body = await requestBody(request);
+    if (url.pathname === '/api/v1/auth/login' && request.method === 'POST') {
+      state.loginRequests += 1;
+      json(response, 200, { accessToken: 'test-access-token' });
+      return;
+    }
+    if (url.pathname === '/api/v1/chat' && request.method === 'POST') {
+      state.chatIdempotencyKeys.push(request.headers['idempotency-key'] ?? null);
+      state.lastWorkspaceHeader = request.headers['x-workspace-id'] ?? null;
+      json(response, 202, { runId: 'run-new', status: 'accepted' });
+      return;
+    }
+    if (url.pathname === '/api/v1/chat/runs/run-1' && request.method === 'GET') {
+      json(response, 200, {
+        runId: 'run-1', sessionId: 'session-1', origin: 'user_submission',
+        status: 'running', terminalOutcome: null, leaseExpired: false, pendingApprovals: [],
+      });
+      return;
+    }
+    if (url.pathname === '/api/v1/chat/runs/run-1/attempts' && request.method === 'GET') {
+      json(response, 200, [{ attempt: 1, httpStatus: 200 }]);
+      return;
+    }
+    if (url.pathname === '/api/v1/chat/runs/run-1/trace' && request.method === 'GET') {
+      json(response, 200, { steps: ['cp', 'agent'] });
+      return;
+    }
+    if (url.pathname === '/api/v1/chat/runs/run-1/cancel' && request.method === 'POST') {
+      state.lastCancelBody = body;
+      json(response, 200, { status: 'cancel_accepted', runId: 'run-1' });
+      return;
+    }
+    if (url.pathname === '/api/v1/approvals/pending' && request.method === 'GET') {
+      json(response, 200, [
+        { sessionId: 'session-1', workspaceId: 'ws-1', count: 2, oldestRequestedAt: '2026-11-06T01:00:00.000Z' },
+      ]);
+      return;
+    }
+    if (url.pathname === '/api/v1/chat/approvals/req-1/decision' && request.method === 'POST') {
+      state.lastDecisionBody = body;
+      json(response, 200, { requestId: 'req-1', state: 'accepted' });
+      return;
+    }
+    if (url.pathname === '/api/v1/sessions' && request.method === 'GET') {
+      state.lastWorkspaceHeader = request.headers['x-workspace-id'] ?? null;
+      json(response, 200, {
+        sessions: [{ id: 'session-1', title: 'Demo', kind: null, archived: false, workspaceId: 'ws-1', agentPrincipalId: null }],
+      });
+      return;
+    }
+    if (url.pathname === '/api/v1/sessions/session-1' && request.method === 'GET') {
+      json(response, 200, { id: 'session-1', workspaceId: 'ws-1', title: 'Demo', archived: false, agentPrincipalId: null });
+      return;
+    }
+    if (url.pathname === '/api/v1/sessions/session-1/export' && request.method === 'GET') {
+      state.lastExportQuery = url.searchParams.get('branchId');
+      state.lastExportHeader = request.headers['x-workspace-id'] ?? null;
+      response.writeHead(200, { 'Content-Type': 'text/markdown' });
+      response.end(state.exportMarkdown);
+      return;
+    }
+    json(response, 404, { code: 'NOT_FOUND', detail: 'unknown endpoint' });
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  return {
+    state,
+    env: { XIHE_CP_PORT: String(server.address().port), XIHE_DEV_ADMIN_PASSWORD: TEST_PASSWORD },
+    close: () => new Promise((resolve, reject) => server.close((error) => (error ? reject(error) : resolve()))),
+  };
+}
+
+test('PLAN-0643 T3.1/V44: chat run reports the CP run status (--json carries status)', async (t) => {
+  const cp = await startChatSessionMock();
+  t.after(() => cp.close());
+
+  const result = await runCommand(['chat', 'run', 'run-1', '--json'], {
+    env: cp.env, promptSecret: noPrompt, stderr: sink(),
+  });
+
+  assert.equal(result.exitCode, 0, JSON.stringify(result.error));
+  assert.equal(result.data.kind, 'chat-run');
+  assert.equal(result.data.runId, 'run-1');
+  assert.equal(result.data.status, 'running');
+});
+
+test('PLAN-0643 T3.1: --attempts/--trace attach the side reads', async (t) => {
+  const cp = await startChatSessionMock();
+  t.after(() => cp.close());
+
+  const result = await runCommand(['chat', 'run', 'run-1', '--attempts', '--trace', '--json'], {
+    env: cp.env, promptSecret: noPrompt, stderr: sink(),
+  });
+
+  assert.equal(result.exitCode, 0, JSON.stringify(result.error));
+  assert.deepEqual(result.data.attempts, [{ attempt: 1, httpStatus: 200 }]);
+  assert.deepEqual(result.data.trace, { steps: ['cp', 'agent'] });
+});
+
+test('PLAN-0643 T3.2/V44: chat cancel is idempotent (a second call still succeeds)', async (t) => {
+  const cp = await startChatSessionMock();
+  t.after(() => cp.close());
+
+  const first = await runCommand(['chat', 'cancel', 'run-1', '--json'], {
+    env: cp.env, promptSecret: noPrompt, stderr: sink(),
+  });
+  const second = await runCommand(['chat', 'cancel', 'run-1', '--json'], {
+    env: cp.env, promptSecret: noPrompt, stderr: sink(),
+  });
+
+  assert.equal(first.exitCode, 0, JSON.stringify(first.error));
+  assert.equal(first.data.status, 'cancel_accepted');
+  assert.equal(second.exitCode, 0, JSON.stringify(second.error));
+  assert.equal(second.data.status, 'cancel_accepted');
+  assert.deepEqual(cp.state.lastCancelBody, undefined, 'no reason flag means no request body');
+});
+
+test('PLAN-0643 T3.3/V44: chat approvals outputs the pending array', async (t) => {
+  const cp = await startChatSessionMock();
+  t.after(() => cp.close());
+
+  const result = await runCommand(['chat', 'approvals', '--json'], {
+    env: cp.env, promptSecret: noPrompt, stderr: sink(),
+  });
+
+  assert.equal(result.exitCode, 0, JSON.stringify(result.error));
+  assert.equal(result.data.kind, 'chat-approvals');
+  assert.equal(result.data.items.length, 1);
+  assert.equal(result.data.items[0].count, 2);
+});
+
+test('PLAN-0643 T3.3: chat approve/reject POST the decision body', async (t) => {
+  const cp = await startChatSessionMock();
+  t.after(() => cp.close());
+
+  const approved = await runCommand(['chat', 'approve', 'req-1', '--json'], {
+    env: cp.env, promptSecret: noPrompt, stderr: sink(),
+  });
+  assert.equal(approved.exitCode, 0, JSON.stringify(approved.error));
+  assert.deepEqual(cp.state.lastDecisionBody, { decision: 'once' });
+
+  const rejected = await runCommand(['chat', 'reject', 'req-1', '--feedback', 'no thanks', '--json'], {
+    env: cp.env, promptSecret: noPrompt, stderr: sink(),
+  });
+  assert.equal(rejected.exitCode, 0, JSON.stringify(rejected.error));
+  assert.deepEqual(cp.state.lastDecisionBody, { decision: 'reject', feedback: 'no thanks' });
+});
+
+test('PLAN-0643 V45: chat send carries an Idempotency-Key; an explicit key is reused', async (t) => {
+  const cp = await startChatSessionMock();
+  t.after(() => cp.close());
+
+  const base = ['chat', 'send', '--session', 'session-1', '--branch', 'branch-1', '--content', 'hello'];
+  const generated = await Promise.all([
+    runCommand([...base, '--json'], { env: cp.env, promptSecret: noPrompt, stderr: sink() }),
+    runCommand([...base, '--json'], { env: cp.env, promptSecret: noPrompt, stderr: sink() }),
+  ]);
+  const explicit = await Promise.all([
+    runCommand([...base, '--idempotency-key', 'fixed-key-1', '--json'], { env: cp.env, promptSecret: noPrompt, stderr: sink() }),
+    runCommand([...base, '--idempotency-key', 'fixed-key-1', '--json'], { env: cp.env, promptSecret: noPrompt, stderr: sink() }),
+  ]);
+
+  assert.equal(generated.every((r) => r.exitCode === 0), true, JSON.stringify(generated.map((r) => r.error)));
+  assert.equal(explicit.every((r) => r.exitCode === 0), true, JSON.stringify(explicit.map((r) => r.error)));
+  const keys = cp.state.chatIdempotencyKeys;
+  assert.equal(keys.length, 4);
+  assert.match(keys[0], UUID_RE, 'a missing flag must still generate a UUID key');
+  assert.match(keys[1], UUID_RE);
+  assert.notEqual(keys[0], keys[1], 'each invocation without a flag generates a fresh key');
+  assert.equal(keys[2], 'fixed-key-1');
+  assert.equal(keys[3], 'fixed-key-1');
+});
+
+test('PLAN-0643 V46/V10: session list/get/export hit their endpoints; --workspace injects the header', async (t) => {
+  const cp = await startChatSessionMock();
+  t.after(() => cp.close());
+
+  const list = await runCommand(['session', 'list', '--workspace', 'ws-1', '--json'], {
+    env: cp.env, promptSecret: noPrompt, stderr: sink(),
+  });
+  assert.equal(list.exitCode, 0, JSON.stringify(list.error));
+  assert.equal(cp.state.lastWorkspaceHeader, 'ws-1', 'V10: the list request carries x-workspace-id');
+  assert.equal(list.data.sessions[0].id, 'session-1');
+
+  const got = await runCommand(['session', 'get', 'session-1', '--json'], {
+    env: cp.env, promptSecret: noPrompt, stderr: sink(),
+  });
+  assert.equal(got.exitCode, 0, JSON.stringify(got.error));
+  assert.equal(got.data.session.title, 'Demo');
+
+  const exported = await runCommand(['session', 'export', 'session-1', '--branch', 'branch-9', '--json'], {
+    env: cp.env, promptSecret: noPrompt, stderr: sink(),
+  });
+  assert.equal(exported.exitCode, 0, JSON.stringify(exported.error));
+  assert.equal(cp.state.lastExportQuery, 'branch-9', 'export hits /export?branchId=...');
+  assert.match(exported.data.markdown, /^# Session export/, 'export output is Markdown');
+});
+
+test('PLAN-0643 V46: session export prints the Markdown document (human output)', async (t) => {
+  const cp = await startChatSessionMock();
+  t.after(() => cp.close());
+
+  // The real-process shape cannot run inside the DSH sandbox (child HTTP data
+  // plane is swallowed), so the human face is asserted through printResult —
+  // the same function main() invokes.
+  const result = await runCommand(['session', 'export', 'session-1', '--branch', 'branch-1'], {
+    env: cp.env, promptSecret: noPrompt, stderr: sink(),
+  });
+  assert.equal(result.exitCode, 0, JSON.stringify(result.error));
+  const human = captureStdout(() => printResult(result));
+  assert.match(human, /^# Session export\n/, 'the human output is the Markdown document');
+  assert.ok(human.endsWith('hello from the fake CP export surface.\n'), 'a missing trailing newline is restored');
+});
+
+test('PLAN-0643 V12: conflicting --workspace and XIHE_WORKSPACE_ID exit 2; agreeing values pass', async (t) => {
+  const cp = await startChatSessionMock();
+  t.after(() => cp.close());
+
+  const conflict = await runCommand(['--workspace', 'ws-b', 'session', 'list', '--json'], {
+    env: { ...cp.env, XIHE_WORKSPACE_ID: 'ws-a' }, promptSecret: noPrompt, stderr: sink(),
+  });
+  assert.equal(conflict.exitCode, 2, JSON.stringify(conflict.error));
+  assert.equal(conflict.error.code, 'INVALID_ARGUMENT');
+  assert.match(conflict.error.message, /provide only one of them/);
+
+  const trailing = await runCommand(['session', 'list', '--workspace', 'ws-9'], {
+    env: { ...cp.env, XIHE_WORKSPACE_ID: 'ws-a' }, promptSecret: noPrompt, stderr: sink(),
+  });
+  assert.equal(trailing.exitCode, 2, JSON.stringify(trailing.error));
+  assert.match(trailing.error.message, /provide only one of them/, 'trailing flag form hits the same guard');
+
+  const agreeing = await runCommand(['--workspace', 'ws-a', 'session', 'list', '--json'], {
+    env: { ...cp.env, XIHE_WORKSPACE_ID: 'ws-a' }, promptSecret: noPrompt, stderr: sink(),
+  });
+  assert.equal(agreeing.exitCode, 0, JSON.stringify(agreeing.error));
+});
+
+test('PLAN-0643 T3.5/V12b: XIHE_WORKSPACE_ID alone injects the header via the fetch wrapper', async (t) => {
+  const cp = await startChatSessionMock();
+  t.after(() => cp.close());
+
+  const result = await runCommand(['session', 'list', '--json'], {
+    env: { ...cp.env, XIHE_WORKSPACE_ID: 'ws-env' }, promptSecret: noPrompt, stderr: sink(),
+  });
+
+  assert.equal(result.exitCode, 0, JSON.stringify(result.error));
+  assert.equal(cp.state.lastWorkspaceHeader, 'ws-env', 'the env value reaches the sessions read');
+});
+
+test('PLAN-0643 M6-2: unknown chat/session subcommands are usage errors', async (t) => {
+  const cp = await startChatSessionMock();
+  t.after(() => cp.close());
+
+  const chatBogus = await runCommand(['chat', 'bogus'], { env: cp.env, promptSecret: noPrompt, stderr: sink() });
+  assert.equal(chatBogus.exitCode, 2, JSON.stringify(chatBogus.error));
+  assert.equal(chatBogus.error.code, 'INVALID_ARGUMENT');
+
+  const sessionBogus = await runCommand(['session', 'bogus'], { env: cp.env, promptSecret: noPrompt, stderr: sink() });
+  assert.equal(sessionBogus.exitCode, 2, JSON.stringify(sessionBogus.error));
+
+  const missingRunId = await runCommand(['chat', 'run'], { env: cp.env, promptSecret: noPrompt, stderr: sink() });
+  assert.equal(missingRunId.exitCode, 2, JSON.stringify(missingRunId.error));
+
+  const missingBranch = await runCommand(['session', 'export', 'session-1'], { env: cp.env, promptSecret: noPrompt, stderr: sink() });
+  assert.equal(missingBranch.exitCode, 2, JSON.stringify(missingBranch.error));
+});
+
+test('PLAN-0643 V23: five concurrent `xihe status` calls converge on at most two logins', async (t) => {
+  const cp = await startAuthMock();
+  const token = tempTokenFile();
+  t.after(async () => { await cp.close(); token.cleanup(); });
+  const env = { ...cp.env, XIHE_CLI_TOKEN_FILE: token.file };
+
+  // Same-process concurrency (the T1.5 shape): real-process children cannot run
+  // HTTP inside the DSH sandbox (TCP connects but the data plane is swallowed),
+  // so the contention proof runs five concurrent status commands against one
+  // empty shared token file; the login() in-flight dedup must converge them.
+  const results = await Promise.all(Array.from({ length: 5 }, () => runCommand(['status', '--json'], {
+    env, promptSecret: noPrompt, stderr: sink(),
+  })));
+
+  assert.equal(results.every((result) => result.exitCode === 0), true, JSON.stringify(results.map((r) => r.error)));
+  assert.ok(cp.state.loginRequests <= 2, `first-login contention must converge (got ${cp.state.loginRequests})`);
+  const store = readTokenFile(token.file);
+  assert.equal(Object.keys(store.tokens).length, 1);
+  assert.deepEqual(fs.readdirSync(token.directory), ['cli-token.json'], 'no tmp residue');
+});
+
+test('PLAN-0643 V24: killing a concurrent token-store writer leaves a parseable store (old or new value)', async (t) => {
+  const token = tempTokenFile();
+  t.after(() => token.cleanup());
+  const storeModule = pathToFileURL(path.resolve('scripts/xihe-cli/token-store.mjs')).href;
+  const script = `
+    import { persistToken } from ${JSON.stringify(storeModule)};
+    for (let i = 0; i < 200; i += 1) {
+      await persistToken({ XIHE_CLI_TOKEN_FILE: ${JSON.stringify(token.file)} }, {
+        baseUrl: 'http://127.0.0.1:12631',
+        token: 'v'.repeat(2000) + i,
+        email: null,
+        expiresAt: '2099-01-01T00:00:00.000Z',
+        obtainedAt: '2026-01-01T00:00:00.000Z',
+        platform: 'linux',
+      });
+      await new Promise((resolve) => setTimeout(resolve, 4));
+    }
+  `;
+  const child = spawn(process.execPath, ['--input-type=module', '-e', script], {
+    cwd: process.cwd(), windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'],
+  });
+
+  // Wait until the first write has landed (bounded poll, no fixed sleep), then kill
+  // mid-loop — the store must stay parseable (old or new value, never torn).
+  const deadline = Date.now() + 10_000;
+  while (!fs.existsSync(token.file) && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  assert.equal(fs.existsSync(token.file), true, 'the writer must have completed at least one atomic write');
+  child.kill('SIGKILL');
+  const killed = new Promise((resolve) => child.on('close', (code, signal) => resolve({ code, signal })));
+  const outcome = await Promise.race([killed, new Promise((resolve) => setTimeout(() => resolve(null), 10_000))]);
+  assert.ok(outcome, 'the child must die promptly after the kill');
+
+  assert.equal(fs.existsSync(token.file), true, 'the loop writes long before the kill lands');
+  const store = JSON.parse(fs.readFileSync(token.file, 'utf8'));
+  assert.equal(store.version, 1);
+  const entry = store.tokens['http://127.0.0.1:12631'];
+  assert.match(entry.token, /^v{2000}\d+$/, 'the store holds either the old or the new value, fully written');
 });

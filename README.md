@@ -38,8 +38,8 @@ mise run xihe -- --help
 | `provider` | provider connections: add/update/list/verify/delete/limits |
 | `credential` | credential lifecycle, bindings, reveal, rotation |
 | `agent` | agent principals: create/bind/unbind/disable |
-| `session` | session participants |
-| `chat` | send one message (`chat send`) |
+| `session` | session participants + reads: `session list/get/export` (export is Markdown) |
+| `chat` | `chat send`; run status/cancel/approvals: `chat run/cancel/approvals/approve/reject` |
 | `skill` | skills: list/import/bind/unbind/delete |
 | `workspace` | workspace list / get |
 | `job` | workspace jobs: list/output/cancel |

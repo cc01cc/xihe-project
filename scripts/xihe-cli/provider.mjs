@@ -434,6 +434,12 @@ export async function requestText(pathname, {
  * `xihe auth login` can own persistence and report ACL/write failures explicitly.
  * A corrupt or unsafe cache file is an explicit error — never a silent degrade.
  */
+// PLAN-0643 V23 (first-login contention): concurrent commands against the same
+// CP identity share one in-flight login instead of racing N POSTs into the
+// rate limiter. Keyed by apiBase + identifier so different accounts never
+// converge; the entry clears on settle so a failed attempt is retryable.
+const inflightLogins = new Map();
+
 export async function login({ apiBase, fetchImpl, env, options = {}, promptSecret, forcePassword = false }) {
   const envToken = typeof env?.XIHE_TOKEN === 'string' ? env.XIHE_TOKEN.trim() : '';
   if (envToken !== '') return envToken;
@@ -454,22 +460,29 @@ export async function login({ apiBase, fetchImpl, env, options = {}, promptSecre
     }
   }
   const email = options['--email'] ?? 'admin@xihe.local';
-  const password = env.XIHE_DEV_ADMIN_PASSWORD || await promptSecret('XH local admin password');
-  const response = await requestJson('/api/v1/auth/login', {
-    apiBase,
-    fetchImpl,
-    method: 'POST',
-    body: { identifier: email, password },
-  });
-  if (typeof response?.accessToken !== 'string' || response.accessToken.length === 0) {
-    throw new CliError('AUTH_RESPONSE_INVALID', 'CP login response did not contain an access token.');
-  }
-  if (!forcePassword) {
-    // Best effort: a cache that cannot be written must not break the command itself
-    // (fail-closed = the token is simply not persisted). `xihe auth login` is strict.
-    persistToken(env, { baseUrl: apiBase, token: response.accessToken, email: options['--email'] });
-  }
-  return response.accessToken;
+  const key = `${apiBase}\u0000${email}`;
+  const inflight = inflightLogins.get(key);
+  if (inflight) return inflight;
+  const attempt = (async () => {
+    const password = env.XIHE_DEV_ADMIN_PASSWORD || await promptSecret('XH local admin password');
+    const response = await requestJson('/api/v1/auth/login', {
+      apiBase,
+      fetchImpl,
+      method: 'POST',
+      body: { identifier: email, password },
+    });
+    if (typeof response?.accessToken !== 'string' || response.accessToken.length === 0) {
+      throw new CliError('AUTH_RESPONSE_INVALID', 'CP login response did not contain an access token.');
+    }
+    if (!forcePassword) {
+      // Best effort: a cache that cannot be written must not break the command itself
+      // (fail-closed = the token is simply not persisted). `xihe auth login` is strict.
+      persistToken(env, { baseUrl: apiBase, token: response.accessToken, email: options['--email'] });
+    }
+    return response.accessToken;
+  })().finally(() => inflightLogins.delete(key));
+  inflightLogins.set(key, attempt);
+  return attempt;
 }
 
 export async function getProviderCatalog({ apiBase, fetchImpl, token }) {

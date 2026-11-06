@@ -25,6 +25,7 @@ import {
 import { runApiEscape } from './xihe-cli/api.mjs';
 import { runAuthCommand } from './xihe-cli/auth.mjs';
 import { runConfigCommand, runConfigLocksCommand } from './xihe-cli/config.mjs';
+import { runChatCommand, runSessionCommand } from './xihe-cli/chat-session.mjs';
 import { attachAuthRefresh } from './xihe-cli/auth-refresh.mjs';
 import {
   bindSkill,
@@ -147,6 +148,33 @@ function parseCommandOptions(args, valueOptions, booleanOptions = []) {
   return parseOptions(args, valueOptions, booleanOptions);
 }
 
+// PLAN-0643 T3.5 (spec §7): the workspace-scoped endpoints — /api/v1/sessions*,
+// /api/v1/chat*, /api/v1/audit*, and per-workspace job/checkpoint/scheduled-task
+// reads — carry X-Workspace-Id from the resolved context (explicit flag or
+// XIHE_WORKSPACE_ID, same source after conflict checking). Config workspace-layer
+// reads/writes keep the workspaceId **query**; the two stay same-source (D6).
+// An explicit per-command header (participants callApi with --workspace) wins.
+function isWorkspaceScopedPath(pathname) {
+  if (pathname.startsWith('/api/v1/sessions') || pathname.startsWith('/api/v1/chat') || pathname.startsWith('/api/v1/audit')) {
+    return true;
+  }
+  return /^\/api\/v1\/workspaces\/[^/]+\/(jobs|checkpoints|scheduled-tasks)\b/.test(pathname);
+}
+
+function attachWorkspaceHeader(fetchImpl, workspaceId) {
+  const headerValue = typeof workspaceId === 'string' ? workspaceId.trim() : '';
+  if (headerValue === '') return fetchImpl;
+  return (url, options = {}) => {
+    if (typeof url === 'string') {
+      const pathname = url.replace(/^[a-z][a-z0-9+.-]*:\/\/[^/?#]*/i, '').split(/[?#]/)[0];
+      if (isWorkspaceScopedPath(pathname) && options.headers?.['X-Workspace-Id'] === undefined) {
+        options = { ...options, headers: { ...options.headers, 'X-Workspace-Id': headerValue } };
+      }
+    }
+    return fetchImpl(url, options);
+  };
+}
+
 function helpText() {
   return [
     'XH development and operations CLI',
@@ -197,7 +225,14 @@ function helpText() {
     '  node scripts/xihe.mjs session participants add --session <sessionId> --principal <principalId> --kind AGENT|HUMAN [--role MEMBER|GUARD] [--wake ALL_MESSAGES|MENTION] [--respond ALWAYS|WHEN_MENTIONED|JUDGE|MUTED]',
     '  node scripts/xihe.mjs session participants remove --session <sessionId> --participant <participantId>  (soft disable: 参与者行/游标/审计保留，非硬删除)',
     '  node scripts/xihe.mjs session participants policy --session <sessionId> --participant <participantId> [--wake MENTION|ALL_MESSAGES|SCHEDULE [--interval <seconds> [--jitter <seconds>] [--max-concurrent <n>]]] [--respond ALWAYS|WHEN_MENTIONED|JUDGE|MUTED]',
-    '  node scripts/xihe.mjs chat send --session <sessionId> --branch <branchId> --content <text> [--as <participantId>]',
+    '  node scripts/xihe.mjs chat send --session <sessionId> --branch <branchId> --content <text> [--as <participantId>] [--idempotency-key <key>]',
+    '  node scripts/xihe.mjs chat run <runId> [--attempts] [--trace]',
+    '  node scripts/xihe.mjs chat cancel <runId> [--reason <text>]  (idempotent while the run is still cancelling)',
+    '  node scripts/xihe.mjs chat approvals',
+    '  node scripts/xihe.mjs chat approve|reject <requestId> [--feedback <text>]',
+    '  node scripts/xihe.mjs session list [--workspace <wsId>]',
+    '  node scripts/xihe.mjs session get <sessionId>',
+    '  node scripts/xihe.mjs session export <sessionId> --branch <branchId>  (Markdown)',
     '  node scripts/xihe.mjs provider verify <id>',
     '  node scripts/xihe.mjs provider delete <id> [--yes]',
     '  node scripts/xihe.mjs credential rotate [--batch-size <n>] [--max-batches <n>] [--dry-run]',
@@ -255,7 +290,7 @@ export async function runCommand(argv, dependencies = {}) {
   if (dependencies.env !== undefined && env.XIHE_CLI_TOKEN_FILE === undefined) env.XIHE_CLI_TOKEN_CACHE = 'off';
   // PLAN-0643 R5: a 401 on a cached token refreshes once (single-flight across
   // processes) and replays the request; 403 / non-CP origins are untouched.
-  const fetchImpl = attachAuthRefresh({
+  const fetchImpl = attachWorkspaceHeader(attachAuthRefresh({
     fetchImpl: rawFetch,
     env,
     promptSecret: prompt,
@@ -263,13 +298,24 @@ export async function runCommand(argv, dependencies = {}) {
     platform: dependencies.platform,
     waitMs: dependencies.authRefreshWaitMs,
     pollMs: dependencies.authRefreshPollMs,
-  });
+  }), env.XIHE_WORKSPACE_ID);
   const [group, command, ...rest] = args;
 
   try {
     // T1.7: validate the flag value before dispatch so a malformed `--base-url`
     // reports INVALID_BASE_URL (the env link alone would report INVALID_CP_URL).
     if (globals.baseUrl !== undefined) resolveBaseUrl({}, globals.baseUrl);
+    // PLAN-0643 T3.5 (D6/V12): an explicit `--workspace` and XIHE_WORKSPACE_ID must
+    // not disagree — the flag is the only injection source once both are set, so a
+    // conflicting env value is a usage error rather than a silent override.
+    if (globals.workspace !== undefined) {
+      const fromEnv = typeof baseEnv.XIHE_WORKSPACE_ID === 'string' ? baseEnv.XIHE_WORKSPACE_ID.trim() : '';
+      const flagValue = globals.workspace.trim();
+      if (fromEnv !== '' && flagValue !== '' && fromEnv !== flagValue) {
+        throw new CliError('INVALID_ARGUMENT',
+          '--workspace and XIHE_WORKSPACE_ID are both set with different values; provide only one of them.');
+      }
+    }
     if (!group || group === 'help' || globals.help) {
       return { exitCode: 0, json, data: { help: helpText() } };
     }
@@ -648,13 +694,33 @@ export async function runCommand(argv, dependencies = {}) {
     }
 
     if (group === 'chat' && command === 'send') {
-      const parsed = parseParticipantOptions(rest, ['--session', '--branch', '--content', '--as', '--workspace', '--email']);
+      const parsed = parseParticipantOptions(rest, ['--session', '--branch', '--content', '--as', '--idempotency-key', '--workspace', '--email']);
       if (parsed.positionals.length !== 0) {
         throw new CliError('INVALID_ARGUMENT', 'chat send takes no positional arguments.', {}, 2);
       }
       const apiBase = getApiBase(env);
       const token = await login({ apiBase, fetchImpl, env, options: parsed.values, promptSecret: prompt });
       return { exitCode: 0, json, data: await sendChat({ apiBase, fetchImpl, token, options: parsed.values }) };
+    }
+
+    // PLAN-0643 M6-2: the rest of the chat family (run/cancel/approvals/approve/reject).
+    if (group === 'chat') {
+      const chatResult = await runChatCommand({
+        command, rest, env, fetchImpl,
+        apiBase: getApiBase(env),
+        promptSecret: prompt,
+      });
+      return { exitCode: chatResult.exitCode, json, data: chatResult.data };
+    }
+
+    // PLAN-0643 M6-2: session read surface (list/get/export); participants keeps its block above.
+    if (group === 'session') {
+      const sessionResult = await runSessionCommand({
+        command, rest, env, fetchImpl,
+        apiBase: getApiBase(env),
+        promptSecret: prompt,
+      });
+      return { exitCode: sessionResult.exitCode, json, data: sessionResult.data };
     }
 
     if (group === 'agent') {
@@ -1164,6 +1230,45 @@ export function printResult(result) {
   }
   if (result.data?.kind === 'config-locks-delete') {
     out.write(`lock removed: ${result.data.domain}.${result.data.key}${result.data.clearValue ? ' (pinned value cleared)' : ''}\n`);
+    return;
+  }
+  if (result.data?.kind === 'chat-run') {
+    // PLAN-0643 T3.1: status is the field operators watch; approvals are counted.
+    out.write(`run: ${result.data.runId ?? ''}  status: ${result.data.status ?? ''}`
+      + `${result.data.terminalOutcome ? `  outcome: ${result.data.terminalOutcome}` : ''}`
+      + `  pendingApprovals: ${Array.isArray(result.data.pendingApprovals) ? result.data.pendingApprovals.length : '?'}\n`);
+    return;
+  }
+  if (result.data?.kind === 'chat-cancelled') {
+    out.write(`cancel: ${result.data.runId ?? ''}  status: ${result.data.status ?? '?'}\n`);
+    return;
+  }
+  if (result.data?.kind === 'chat-approvals') {
+    out.write(`pending approvals: ${result.data.items.length} session(s)\n`);
+    for (const item of result.data.items) {
+      out.write(`${item.sessionId ?? ''}  count=${item.count ?? '?'}  oldest=${item.oldestRequestedAt ?? ''}\n`);
+    }
+    return;
+  }
+  if (result.data?.kind === 'chat-approval-decision') {
+    out.write(`decision: ${result.data.requestId ?? ''}  ${result.data.decision ?? ''}  state: ${result.data.state ?? result.data.status ?? 'accepted'}\n`);
+    return;
+  }
+  if (result.data?.kind === 'session-list') {
+    out.write(`sessions: ${result.data.sessions.length}\n`);
+    for (const item of result.data.sessions) {
+      out.write(`${item.id ?? ''}  ${item.title ?? ''}  ${item.kind ?? ''}${item.archived ? ' (archived)' : ''}\n`);
+    }
+    return;
+  }
+  if (result.data?.kind === 'session') {
+    const item = result.data.session ?? {};
+    out.write(`${item.id ?? ''}  ${item.title ?? ''}  workspace=${item.workspaceId ?? ''}${item.archived ? ' (archived)' : ''}\n`);
+    return;
+  }
+  if (result.data?.kind === 'session-export') {
+    const text = result.data.markdown ?? '';
+    out.write(text.endsWith('\n') || text === '' ? text : `${text}\n`);
     return;
   }
   if (result.data?.kind === 'session-participants') {

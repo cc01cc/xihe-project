@@ -10,6 +10,7 @@
  * `PARTICIPANT_ALREADY_EXISTS`, `PARTICIPANT_PRIMARY_EXISTS`, ...).
  */
 import { CliError, getApiBase, login, parseOptions } from './provider.mjs';
+import crypto from 'node:crypto';
 
 const DEFAULT_TIMEOUT_MS = 10_000;
 
@@ -46,9 +47,10 @@ function normalizeEnum(value, allowed, flag, { optional = true } = {}) {
   return text;
 }
 
-async function callApi({ apiBase, fetchImpl, token, method, path, body, workspaceId, timeoutMs = DEFAULT_TIMEOUT_MS }) {
+async function callApi({ apiBase, fetchImpl, token, method, path, body, workspaceId, idempotencyKey, timeoutMs = DEFAULT_TIMEOUT_MS }) {
   const headers = { Authorization: `Bearer ${token}` };
   if (workspaceId) headers['X-Workspace-Id'] = workspaceId;
+  if (idempotencyKey) headers['Idempotency-Key'] = idempotencyKey;
   if (body !== undefined) headers['Content-Type'] = 'application/json';
   let response;
   try {
@@ -209,9 +211,16 @@ export async function sendChat({ apiBase, fetchImpl, token, options }) {
   const body = { sessionId, branchId, content };
   const asParticipantId = String(options['--as'] ?? '').trim();
   if (asParticipantId) body.asParticipantId = asParticipantId;
+  // PLAN-0643 T3.1 (V45): POST /api/v1/chat accepts an optional Idempotency-Key
+  // (openapi: "Reuses an existing run for the same request hash"). Explicit flag
+  // wins; the default is one generated key per invocation, so request-layer
+  // retries inside this command reuse the same value while a fresh invocation
+  // intentionally starts a new run.
+  const idempotencyKey = String(options['--idempotency-key'] ?? '').trim() || crypto.randomUUID();
   const response = await callApi({
     apiBase, fetchImpl, token, method: 'POST', path: '/api/v1/chat', body,
     workspaceId: options['--workspace']?.trim() || '',
+    idempotencyKey,
   });
   // 409 SSE_SUBSCRIPTION_REQUIRED / 403 PARTICIPANT_CAP_DENIED etc. stay verbatim.
   expectSuccess(response, 'chat send', [200, 202]);
@@ -220,6 +229,7 @@ export async function sendChat({ apiBase, fetchImpl, token, options }) {
     sessionId,
     branchId,
     asParticipantId: asParticipantId || null,
+    idempotencyKey,
     runId: response.body?.runId ?? null,
     status: response.body?.status ?? null,
   };

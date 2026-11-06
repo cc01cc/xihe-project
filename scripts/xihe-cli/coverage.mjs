@@ -25,6 +25,9 @@ import { fileURLToPath } from 'node:url';
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, '../..');
 const cliSource = fs.readFileSync(path.join(root, 'scripts/xihe.mjs'), 'utf8');
+// M6-2 moved the chat/session subcommand dispatch into its own module; its
+// `command === '…'` branches are part of the registry and must be scanned too.
+const chatSessionSource = fs.readFileSync(path.join(root, 'scripts/xihe-cli/chat-session.mjs'), 'utf8');
 const testSource = fs.readFileSync(path.join(root, 'scripts/xihe-cli.test.mjs'), 'utf8');
 
 // spec/cli-contract.md §1: the 16 pre-existing groups (denominator A).
@@ -64,6 +67,23 @@ for (const line of cliSource.split('\n')) {
         dispatchCommands.add(`${currentGroup} ${commandHit[1]}`);
     }
     if (/^ {4}\}/.test(line)) currentGroup = null;
+}
+// chat-session.mjs dispatchers map to their groups by function name; each
+// `command === 'x'` branch (all alternates captured) registers `<group> <cmd>`.
+const DISPATCHER_GROUPS = { runChatCommand: 'chat', runSessionCommand: 'session' };
+let moduleGroup = null;
+for (const line of chatSessionSource.split('\n')) {
+    const fnHit = line.match(/async function (runChatCommand|runSessionCommand)\b/);
+    if (fnHit) {
+        moduleGroup = DISPATCHER_GROUPS[fnHit[1]];
+        continue;
+    }
+    if (moduleGroup) {
+        for (const m of line.matchAll(/command === '([\w-]+)'/g)) {
+            dispatchCommands.add(`${moduleGroup} ${m[1]}`);
+        }
+    }
+    if (/^}/.test(line)) moduleGroup = null;
 }
 // 3-level commands only appear in helpText() usage lines (`xihe <g> <cmd> <sub>`).
 const helpText = cliSource.slice(cliSource.indexOf('function helpText()'), cliSource.indexOf('export async function runCommand'));

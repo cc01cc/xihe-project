@@ -44,8 +44,8 @@ mise run xihe -- --help
 | `provider` | Provider Connection 增删改查 / verify / 限额 |
 | `credential` | 凭据生命周期、绑定、reveal、轮换 |
 | `agent` | Agent 主体创建 / 绑定 / 禁用 |
-| `session` | 会话参与者读写 |
-| `chat` | 发送一条消息（`chat send`） |
+| `session` | 会话参与者读写 + 会话读取：`session list/get/export`（export 输出 Markdown） |
+| `chat` | `chat send` 与运行面：run 状态 / cancel / approvals / approve / reject |
 | `skill` | Skill 列表 / 导入 / 绑定 |
 | `workspace` | 工作区列表 / 详情 |
 | `job` | Workspace Job 列表 / 输出 / 取消 |
