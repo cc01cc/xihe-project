@@ -57,11 +57,11 @@ export async function createApprovalAgent(
             },
         });
     expect(templateWrite.status(), await templateWrite.text()).toBe(200);
-    // D21: WORKSPACE-scope principal creation requires an explicit workspace context.
+    // D21 + D-174: creation takes the workspace context via header; the body no longer carries a tier.
     const principalHeaders = { ...headers, "X-Workspace-Id": workspaceId };
     const principalResponse = await request.post(`${CP_URL}/api/v1/agent-principals`, {
         headers: principalHeaders,
-        data: { scope: "WORKSPACE", name: "GuidanceE2EAgent", templateId },
+        data: { name: "GuidanceE2EAgent", templateId },
     });
     expect(principalResponse.status(), await principalResponse.text()).toBe(201);
     const principalId = ((await principalResponse.json()) as { principalId: string }).principalId,
