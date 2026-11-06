@@ -9,6 +9,10 @@ import { problemDetailText } from "../../lib/errorMessages";
  *
  * <p>The four codes the wave explicitly requires are the first four; the rest exist because the CP
  * can answer them on the same endpoints and a generic fallback would hide the reason.</p>
+ *
+ * <p>PLAN-0651 V17 B4: `AGENT_PRINCIPAL_FORBIDDEN_ATOMS` is the one exception to detail-first —
+ * its `detail` is an untranslated list of atom identifiers, and the agent role binding page must
+ * show the localized copy instead (the code is still logged by callers).</p>
  */
 export type RoleErrorKey =
     | "roleScopeMismatch"
@@ -27,6 +31,7 @@ export type RoleErrorKey =
     | "userDeleted"
     | "userNotFound"
     | "forbidden"
+    | "agentRoleForbiddenAtoms"
     | "lockTimeout"
     | "generic";
 
@@ -48,6 +53,7 @@ const CODE_TO_KEY: Record<string, RoleErrorKey> = {
     USER_NOT_FOUND: "userNotFound",
     FORBIDDEN: "forbidden",
     AUTHORIZATION_REQUIRED: "forbidden",
+    AGENT_PRINCIPAL_FORBIDDEN_ATOMS: "agentRoleForbiddenAtoms",
     OPERATION_LOCK_TIMEOUT: "lockTimeout",
 };
 
@@ -60,6 +66,10 @@ export function roleErrorKey(cause: unknown): RoleErrorKey {
 
 /** `t` is passed in so this stays a pure function (no composable coupling, trivially testable). */
 export function roleErrorMessage(cause: unknown, t: (key: string) => string): string {
+    // PLAN-0651 V17 B4：该码的 detail 是未本地化的原子清单，绑定页必须显示本地化文案。
+    if (roleErrorKey(cause) === "agentRoleForbiddenAtoms") {
+        return t("settings.rolesError.agentRoleForbiddenAtoms");
+    }
     // BL-288：可行动 detail（超限原子名/条数/上限）优先；无 detail 才回退本地化通用文案。
     const detail = problemDetailText(cause, "");
     if (detail) return detail;

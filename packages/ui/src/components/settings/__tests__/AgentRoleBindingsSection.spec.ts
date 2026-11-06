@@ -169,6 +169,35 @@ describe("AgentRoleBindingsSection (PLAN-0651 T5.2)", () => {
         );
     });
 
+    it("localizes 409 AGENT_PRINCIPAL_FORBIDDEN_ATOMS instead of echoing the English detail", async () => {
+        mockedApi.bindAgentRole.mockRejectedValue(
+            new ApiError({
+                status: 409,
+                code: "AGENT_PRINCIPAL_FORBIDDEN_ATOMS",
+                detail: "role carries atoms an agent principal may never hold: credential.use,instance:admin",
+                requestId: "test",
+            }),
+        );
+        const wrapper = mountSection();
+        await flushPromises();
+
+        await wrapper.find('[data-testid="agent-role-bindings-role"]').setValue("role-b");
+        await wrapper.find('[data-testid="agent-role-bindings-add"]').trigger("click");
+        await wrapper.find('[data-testid="agent-role-bindings-save"]').trigger("click");
+        await flushPromises();
+
+        const text = wrapper.get('[data-testid="agent-role-bindings-error"]').text();
+        const zh = i18n.global.getLocaleMessage("zh-CN") as {
+            settings: { rolesError: Record<string, string> };
+        };
+        const en = i18n.global.getLocaleMessage("en-US") as {
+            settings: { rolesError: Record<string, string> };
+        };
+        expect(text).toBe(zh.settings.rolesError.agentRoleForbiddenAtoms);
+        expect(text).not.toContain("credential.use");
+        expect(en.settings.rolesError.agentRoleForbiddenAtoms).toBeTruthy();
+    });
+
     it("uses the instance authorization context (no workspace query) for instance scope", async () => {
         mountSection("instance");
         await flushPromises();

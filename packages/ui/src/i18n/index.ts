@@ -1923,6 +1923,7 @@ const messages = {
                 userDeleted: "该账号已删除，无法绑定。",
                 userNotFound: "账号不存在。",
                 forbidden: "没有执行该操作的权限。",
+                agentRoleForbiddenAtoms: "该角色包含智能体不可持有的能力原子，绑定已被拒绝。",
                 lockTimeout: "服务正忙，请稍后重试。",
                 generic: "操作失败，请稍后重试。",
             },
@@ -4410,6 +4411,8 @@ const messages = {
                 userDeleted: "That account is deleted and cannot be bound.",
                 userNotFound: "The account does not exist.",
                 forbidden: "You are not allowed to perform this action.",
+                agentRoleForbiddenAtoms:
+                    "This role contains capability atoms an agent may never hold; the binding was refused.",
                 lockTimeout: "The service is busy; retry shortly.",
                 generic: "The operation failed; retry shortly.",
             },
