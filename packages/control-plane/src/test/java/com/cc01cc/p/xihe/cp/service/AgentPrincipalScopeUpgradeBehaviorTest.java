@@ -124,6 +124,24 @@ class AgentPrincipalScopeUpgradeBehaviorTest {
     }
 
     @Test
+    void createRejectsNonGrantableInstanceRoleAtomically() throws Exception {
+        int principalsBefore = count("SELECT count(*) FROM agent_principals");
+        int auditsBefore = count("SELECT count(*) FROM audit_logs WHERE action = 'agent_principal_created'");
+        Response rejected = send(owner.token(), AgentPrincipalScopeUpgradeFixture.WORKSPACE_ID.toString(),
+                "POST", "/api/v1/agent-principals", Map.of("name", "v19badrole",
+                        "roleIds", List.of(SystemAccessRoleCatalog.ADMIN_ID.toString())));
+        assertEquals(403, rejected.status(), rejected.body().toString());
+        assertEquals("ROLE_NOT_GRANTABLE", rejected.body().path("code").asText());
+        assertFalse(rejected.body().has("scope"), rejected.body().toString());
+        assertEquals(principalsBefore, count("SELECT count(*) FROM agent_principals"),
+                "the refused create must not persist a principal");
+        assertEquals(auditsBefore, count("SELECT count(*) FROM audit_logs"
+                        + " WHERE action = 'agent_principal_created'"),
+                "the refused create must not persist a durable create audit");
+        assertEquals(0, count("SELECT count(*) FROM agent_principals WHERE name = ?", "v19badrole"));
+    }
+
+    @Test
     void listUsesBindingAndOwnerNotLegacyTier() throws Exception {
         Actor outsider = register("v19outsider");
         workspaceFixture.createOwnedWorkspace("v19 own workspace", outsider.userId());
@@ -317,6 +335,70 @@ class AgentPrincipalScopeUpgradeBehaviorTest {
                         + " ('workspace_agent_bound', 'workspace_agent_cap_updated')"
                         + " AND resource_id::text = ?", principalId),
                 "the allowed cross-workspace bind writes exactly one durable audit row");
+    }
+
+    @Test
+    void instancePrincipalVisibilityFollowsWorkspaceBinding() throws Exception {
+        UUID wsB = workspaceFixture.createOwnedWorkspace("v19 instance visibility",
+                owner.userId()).getId();
+        String principalId = AgentPrincipalScopeUpgradeFixture.INSTANCE_PRINCIPAL_ID.toString();
+
+        Response before = send(owner.token(), null, "GET", "/api/v1/agent-principals?workspaceId=" + wsB,
+                null);
+        assertEquals(200, before.status(), before.body().toString());
+        assertFalse(before.body().path("principals").toString().contains(principalId),
+                "wsB must not expose the INSTANCE-tier principal before an explicit wsB binding");
+
+        Response bound = send(owner.token(), wsB.toString(), "PUT",
+                "/api/v1/workspaces/" + wsB + "/agents/" + principalId, Map.of("permissions", List.of()));
+        assertEquals(200, bound.status(), bound.body().toString());
+        assertFalse(bound.body().has("scope"), bound.body().toString());
+
+        Response listed = send(owner.token(), null, "GET", "/api/v1/agent-principals?workspaceId=" + wsB,
+                null);
+        assertEquals(200, listed.status(), listed.body().toString());
+        JsonNode rows = listed.body().path("principals");
+        assertTrue(rows.isArray(), listed.body().toString());
+        boolean visible = false;
+        boolean scopeLeaked = false;
+        for (JsonNode row : rows) {
+            if (principalId.equals(row.path("principalId").asText())) {
+                visible = true;
+                scopeLeaked |= row.has("scope");
+            }
+        }
+        assertTrue(visible, "the explicit wsB binding must make the INSTANCE principal visible");
+        assertFalse(scopeLeaked, listed.body().toString());
+
+        Session session = new Session();
+        session.setId(UUID.randomUUID());
+        session.setWorkspaceId(wsB.toString());
+        session.setUserId(owner.userId());
+        session.setTitle("v19 instance visibility session");
+        session.setAgentPrincipalId(principalId);
+        UUID sessionId = sessionRepository.saveAndFlush(session).getId();
+
+        Response participant = send(owner.token(), wsB.toString(), "POST",
+                "/api/v1/sessions/" + sessionId + "/participants",
+                Map.of("principalKind", "AGENT", "principalId", principalId, "role", "MEMBER"));
+        assertEquals(201, participant.status(), participant.body().toString());
+        assertFalse(participant.body().has("scope"), participant.body().toString());
+        assertEquals(principalId, participant.body().path("principalId").asText());
+        String participantId = participant.body().path("participantId").asText();
+
+        Response participants = send(owner.token(), wsB.toString(), "GET",
+                "/api/v1/sessions/" + sessionId + "/participants", null);
+        assertEquals(200, participants.status(), participants.body().toString());
+        assertTrue(participants.body().path("participants").isArray(), participants.body().toString());
+        boolean participantVisible = false;
+        for (JsonNode row : participants.body().path("participants")) {
+            if (participantId.equals(row.path("participantId").asText())) {
+                participantVisible = true;
+                assertFalse(row.has("scope"), row.toString());
+                assertEquals(principalId, row.path("principalId").asText());
+            }
+        }
+        assertTrue(participantVisible, participants.body().toString());
     }
 
     @Test
