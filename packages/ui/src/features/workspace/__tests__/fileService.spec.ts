@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { setActivePinia, createPinia } from "pinia";
 import { useAuthStore } from "../../../stores/auth";
+import { api } from "../../../composables/api";
 import { readFilePreview } from "../composables/fileService";
 
 beforeEach(() => {
@@ -14,19 +15,50 @@ describe("readFilePreview", () => {
         expect(result).toEqual({ content: "", truncated: true });
     });
 
-    it("calls the runtime read_file tool via MCP for full read", async () => {
+    it("loads a preview through bounded line ranges", async () => {
         const auth = useAuthStore();
         auth.$patch({ token: "mock", workspace: { id: "ws-1", name: "Default Workspace" } });
-        vi.spyOn(globalThis, "fetch").mockResolvedValue({
-            ok: true,
-            headers: new Headers(),
-            text: () =>
-                Promise.resolve(
-                    'data: {"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"file content"}]}}',
-                ),
-        } as unknown as Response);
+        const readRange = vi.spyOn(api, "readFileRange").mockResolvedValue({
+            content: "1 | file content",
+            total_lines: 1,
+            is_binary: false,
+        });
         const result = await readFilePreview("/small/file", 100, "ws-1");
         expect(result.content).toBe("file content");
+        expect(result.truncated).toBe(false);
+        expect(readRange).toHaveBeenCalledWith("/small/file", "ws-1", 1, 256, undefined);
+    });
+
+    it("stops at the 8 MiB preview budget and marks the result truncated", async () => {
+        const auth = useAuthStore();
+        auth.$patch({ token: "mock", workspace: { id: "ws-1", name: "Default Workspace" } });
+        const maxBytes = 8 * 1024 * 1024;
+        vi.spyOn(api, "readFileRange").mockResolvedValue({
+            content: `1 | ${"a".repeat(maxBytes)}`,
+            total_lines: 2,
+            is_binary: false,
+        });
+
+        const result = await readFilePreview("/large/file", 12 * 1024 * 1024, "ws-1");
+
+        expect(new TextEncoder().encode(result.content).byteLength).toBe(maxBytes);
+        expect(result.truncated).toBe(true);
+        expect(api.readFileRange).toHaveBeenCalledTimes(1);
+    });
+
+    it("allows a complete preview exactly at the 8 MiB budget", async () => {
+        const auth = useAuthStore();
+        auth.$patch({ token: "mock", workspace: { id: "ws-1", name: "Default Workspace" } });
+        const maxBytes = 8 * 1024 * 1024;
+        vi.spyOn(api, "readFileRange").mockResolvedValue({
+            content: `1 | ${"a".repeat(maxBytes)}`,
+            total_lines: 1,
+            is_binary: false,
+        });
+
+        const result = await readFilePreview("/exact/file", 100, "ws-1");
+
+        expect(new TextEncoder().encode(result.content).byteLength).toBe(maxBytes);
         expect(result.truncated).toBe(false);
     });
 
