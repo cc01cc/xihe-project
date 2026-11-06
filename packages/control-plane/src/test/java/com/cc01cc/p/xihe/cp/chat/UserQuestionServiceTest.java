@@ -241,6 +241,29 @@ class UserQuestionServiceTest {
         verify(questions).settlePending(eq(row.getId()), eq(UserQuestion.STATE_EXPIRED), any());
     }
 
+    /**
+     * V13: after a list/badge read lazily settled the row, the late answer still belongs to the
+     * <b>deadline</b> conflict vocabulary. It must not degrade into a generic
+     * {@code QUESTION_ALREADY_SETTLED} just because a read persisted the expiry first.
+     */
+    @Test
+    void answer_reportsExpiredWhenAReadAlreadySettledTheOverdueRow() {
+        UserQuestion row = pendingRow();
+        row.setState(UserQuestion.STATE_EXPIRED);
+        row.setExpiresAt(Instant.now().minusSeconds(1));
+        when(questions.findById(row.getId())).thenReturn(Optional.of(row));
+        when(questions.markAnswered(eq(row.getId()), anyString(), any())).thenReturn(0);
+        when(questions.findStateById(row.getId())).thenReturn(Optional.of(UserQuestion.STATE_EXPIRED));
+
+        CpApiException conflict = assertThrows(CpApiException.class,
+                () -> service.answer(row.getId(), USER_ID, ANSWER));
+
+        assertEquals(HttpStatus.CONFLICT, conflict.getStatus());
+        assertEquals("QUESTION_EXPIRED", conflict.getCode());
+        verify(questions, never()).settlePending(any(), anyString(), any());
+        verify(agentClient, never()).respond(any(), any(), any(), any());
+    }
+
     @Test
     void answer_validatesTheBodyOnlyForTheAddressee() {
         UserQuestion row = pendingRow();
@@ -427,5 +450,33 @@ class UserQuestionServiceTest {
         assertEquals(0, page.getValue().getPageNumber());
 
         assertThrows(CpApiException.class, () -> service.findProjection(USER_ID, "dispatching", 10));
+    }
+
+    /**
+     * V13: the two inbox read faces settle overdue rows before they read, so the badge and the list
+     * use the same durable state. The repository predicate is asserted on PostgreSQL; here we pin
+     * that the read path actually invokes the settle (a projection-only filter would not).
+     */
+    @Test
+    void inboxReadsSettleOverdueRowsBeforeProjectingAndCounting() {
+        UUID addressee = UUID.fromString(USER_ID);
+        when(questions.settleExpiredForAddressee(eq(addressee), any())).thenReturn(1);
+
+        service.findProjection(USER_ID, null, 10);
+        service.pendingCount(USER_ID);
+
+        verify(questions, org.mockito.Mockito.times(2))
+                .settleExpiredForAddressee(eq(addressee), any());
+    }
+
+    @Test
+    void singleReadSettlesTheOverdueRowBeforeReturningIt() {
+        UserQuestion row = pendingRow();
+        when(questions.findById(row.getId())).thenReturn(Optional.of(row));
+
+        UserQuestion read = service.findReadable(row.getId(), USER_ID);
+
+        assertEquals(row.getId(), read.getId());
+        verify(questions).settleExpiredById(eq(row.getId()), any());
     }
 }

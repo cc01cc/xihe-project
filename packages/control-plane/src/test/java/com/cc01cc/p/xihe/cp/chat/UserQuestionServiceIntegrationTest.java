@@ -175,6 +175,49 @@ class UserQuestionServiceIntegrationTest extends AbstractIntegrationTest {
                 "the losing CAS settles the row lazily instead of leaving it pending forever");
     }
 
+    /**
+     * V13 / PLAN-0660 audit P1: the deadline must be visible <b>before</b> somebody clicks answer.
+     * The inbox read faces settle overdue rows lazily (CP owns no scheduler and the Agent timeout is
+     * not a CP callback), so the projection and the badge agree with the durable row. The late-answer
+     * path keeps the frozen {@code QUESTION_EXPIRED} code even when a read settled the row first.
+     */
+    @Test
+    void readFacesLazilySettleOverdueQuestionsAtTheDeadline() {
+        UserQuestion overdue = ask(newRun(newSession(), null), Instant.now().minusSeconds(1));
+        UserQuestion live = ask(newRun(newSession(), null), Instant.now().plusSeconds(300));
+        UUID addressee = UUID.fromString(ownerId);
+
+        assertEquals(2, questions.countByAddresseeUserIdAndState(addressee,
+                UserQuestion.STATE_PENDING), "precondition: both rows are still pending in the database");
+
+        assertEquals(1, service.pendingCount(ownerId), "the badge must not count the overdue row");
+        List<UserQuestion> pendingView = service.findProjection(ownerId, null, 10);
+        assertEquals(1, pendingView.size(), "the card must disappear at the deadline");
+        assertEquals(live.getId(), pendingView.getFirst().getId());
+        assertEquals(UserQuestion.STATE_EXPIRED, service.stateOf(overdue.getId()).orElseThrow(),
+                "the read settles the row durably, it does not merely hide it");
+        assertNotNull(questions.findById(overdue.getId()).orElseThrow().getSettledAt());
+        assertEquals(UserQuestion.STATE_PENDING, service.stateOf(live.getId()).orElseThrow(),
+                "a question with a future deadline is untouched");
+
+        // The expired projection now reports the row with its settled state (same filter everywhere).
+        assertEquals(overdue.getId(),
+                service.findProjection(ownerId, UserQuestion.STATE_EXPIRED, 10).getFirst().getId());
+
+        // The single-read face settles a row the inbox never saw.
+        UserQuestion singleReadOnly = ask(newRun(newSession(), null), Instant.now().minusSeconds(1));
+        assertEquals(UserQuestion.STATE_PENDING, service.stateOf(singleReadOnly.getId()).orElseThrow());
+        assertEquals(UserQuestion.STATE_EXPIRED,
+                service.findForAddressee(singleReadOnly.getId(), ownerId).getState());
+        assertEquals(UserQuestion.STATE_EXPIRED, service.stateOf(singleReadOnly.getId()).orElseThrow());
+
+        // Answering after the read-triggered settlement still reports the deadline conflict.
+        CpApiException late = assertThrows(CpApiException.class,
+                () -> service.answer(overdue.getId(), ownerId, "too late"));
+        assertEquals(HttpStatus.CONFLICT, late.getStatus());
+        assertEquals("QUESTION_EXPIRED", late.getCode());
+    }
+
     @Test
     void answerKeepsTheBodyDurableButOnlyForTheAddressee() {
         ChatRun run = newRun(newSession(), null);

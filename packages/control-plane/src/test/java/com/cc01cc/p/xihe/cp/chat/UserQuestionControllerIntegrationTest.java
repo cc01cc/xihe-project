@@ -257,6 +257,38 @@ class UserQuestionControllerIntegrationTest extends AbstractIntegrationTest {
         assertNull(questionsService.findForAddressee(question.getId(), addresseeId).getAnswer());
     }
 
+    /**
+     * V13 / PLAN-0660 audit P1 at the wire level: an overdue question disappears from the list and
+     * the badge at the deadline, the single read reports the durable {@code expired} projection, and
+     * a late answer still gets {@code 409 QUESTION_EXPIRED} instead of a generic "already settled".
+     */
+    @Test
+    void theDeadlineRemovesTheCardAndKeepsTheFrozenExpiredConflict() {
+        String sessionId = newSession();
+        UserQuestion overdue = ask(sessionId, addresseeId, Instant.now().minusSeconds(1));
+        UserQuestion live = ask(sessionId, addresseeId, Instant.now().plusSeconds(300));
+
+        Map<String, Object> list = listJson("/api/v1/user-questions", addresseeToken);
+        assertEquals(1, ((List<?>) list.get("items")).size(),
+                "the overdue card must not be listed: " + list);
+        assertEquals(1, ((Number) list.get("pendingCount")).intValue(),
+                "the badge must drop with the card: " + list);
+        assertTrue(readIds(list).contains(live.getId().toString()));
+        assertTrue(!readIds(list).contains(overdue.getId().toString()));
+
+        ResponseEntity<String> single = restTemplate.exchange(
+                url("/api/v1/user-questions/" + overdue.getId()), HttpMethod.GET,
+                new HttpEntity<>(headers(addresseeToken)), String.class);
+        assertEquals(HttpStatus.OK, single.getStatusCode());
+        assertTrue(single.getBody().contains("\"state\":\"expired\""), single.getBody());
+        assertTrue(single.getBody().contains("\"settledAt\":\""), single.getBody());
+
+        ResponseEntity<String> tooLate = postError("/api/v1/user-questions/" + overdue.getId()
+                + "/answer", "{\"answer\":\"too late\"}", addresseeToken);
+        assertEquals(HttpStatus.CONFLICT, tooLate.getStatusCode());
+        assertTrue(tooLate.getBody().contains("QUESTION_EXPIRED"), tooLate.getBody());
+    }
+
     // ---------------------------------------------------------------------------------------
     // fixtures / helpers
     // ---------------------------------------------------------------------------------------
