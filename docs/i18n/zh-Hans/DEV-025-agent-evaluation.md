@@ -259,7 +259,7 @@ gate 对**每份**报告实际校验：`schema_version`、`dataset_version`、`d
 
 | 前置 | 说明 |
 |---|---|
-| 真实 Provider Connection | WORKSPACE scope、`xiaomi` / `openai-chat-completions` v1、verify READY，`connectionKey=default`。**不要用 `mimo-responses` v1**：该 apiType 的 `capability.tools=false`（`provider-catalog/providers.json:53`），而 `xiaomi.defaultApiType` 恰好指向它（`:54`）⇒ 工具类任务在传输前被 `LLM_TOOL_ROUTE_UNSUPPORTED` 拒绝；`openai-chat-completions` v1 为 `tools=true` |
+| 真实 Provider Connection | WORKSPACE scope、`xiaomi` / `openai-chat-completions` v1、verify READY，`connectionKey=default`。**不要用 `mimo-responses` v1**：该 apiType 的 `capability.tools=false`（`provider-catalog/providers.json:53`），工具类任务会在传输前被 `LLM_TOOL_ROUTE_UNSUPPORTED` 拒绝；`openai-chat-completions` v1 为 `tools=true`（**2026-11-06 起也是 xiaomi 的默认 apiType**，见 `BL-206` / 决策单 A1） |
 | instance profile | `llm-provider` 指向该 connection（`xiaomi` / `default` / `mimo-v2.6-flash`） |
 | 工具面 | **behavior lane 必须显式传 `--tool-surface`**：否则 required 的 `failure_budget.attempt_rate.v2` 恒 `not_evaluated(no_tool_surface)`（`attempts=0`）⇒ gate 只能 `NOT_EVALUATED(2)`，且 `not_evaluated=3 > baseline=2` 会顺带触发 `coverage_shrunk` |
 | API key | `XIHE_XIAOMI_API_KEY` 仅在 `behavior-setup` 需要新建连接时从 env 读取 |
