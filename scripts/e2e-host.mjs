@@ -8,7 +8,7 @@ import { createServer as createTcpServer, connect as connectTcp } from 'node:net
 import { createServer as createHttpServer } from 'node:http'
 import { waitForAgentLlmReady } from './lib/agent-readiness.mjs'
 import { cpBuildRoot, resolveBuildTargetForStack } from './lib/cp-build-dir.mjs'
-import { cpTargetDir, externalCpBuildCheck, gitHead } from './lib/cp-build-info.mjs'
+import { cpTargetDir, externalCpBuildCheck, gitHead, writeBuildInfo } from './lib/cp-build-info.mjs'
 import { DEFAULT_REAL_API_BASE, llmEnv } from './lib/llm-env.mjs'
 import { decideCpBoot } from './lib/cp-boot-plan.mjs'
 import { stopPidIfOwned, E2E_PORT_MIN, E2E_PORT_MAX } from './lib/kill-guard.mjs'
@@ -517,6 +517,16 @@ async function resolveCpBootPlan() {
   if (!after.jar || after.newestSource.mtimeMs > after.jar.mtimeMs) {
     console.warn('[e2e-host] CP jar still stale after rebuild; falling back to mvn spring-boot:run')
     return { mode: 'run', jar: null, reason: 'still stale after rebuild' }
+  }
+  // The rebuild mvn goal does not write build-info, but the external-stack gate treats a
+  // missing stamp as a failure. Stamp only after the successful build and the fresh-jar
+  // check above, using the real HEAD/dirty state (never a hand-filled commit).
+  const head = gitHead({ cwd: projectDir })
+  if (!head.commit) {
+    console.warn(`[e2e-host] CP jar rebuilt but git HEAD is unavailable (${head.error}); build-info not stamped`)
+  } else {
+    writeBuildInfo({ targetDir: e2eCpTargetDir, commit: head.commit, dirty: head.dirty })
+    console.log(`[e2e-host] CP build-info stamped for ${head.commit} (dirty=${head.dirty})`)
   }
   console.log(`[e2e-host] CP jar rebuilt: ${after.jar.name} (${fmtAge(Date.now() - after.jar.mtimeMs)} old)`)
   return { mode: 'jar', jar: after.jar, reason: 'rebuilt' }
