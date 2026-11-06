@@ -206,6 +206,10 @@ class AgentPrincipalRoleBindingIntegrationTest extends AbstractIntegrationTest {
      * <p>为什么单列：{@code SetWorkspaceCapGate#grantorWithoutDefaultRoleAtomsIsRefusedWithZeroWrites}
      * 只覆盖 workspace 侧的结构性默认绑定，覆盖不到"创建路径的实例级默认角色"；而默认授予集恰好是
      * 最容易悄悄放水的地方（creator 被收窄后仍能造出带默认权限的 agent）。</p>
+     *
+     * <p>零写入按三类行取数：{@code agent_principals} / {@code role_bindings} /
+     * {@code authorization_grants}。只数 principal 不够 —— 若实现先写绑定行再校验，绑定/授权行仍会
+     * 留下孤儿行（PLAN-0673 V3.2 整改要求"断言无 role/binding 行落库"）。</p>
      */
     @Test
     void creatingAPrincipalWhoseDefaultRoleAtomsTheCreatorLacksIsRefused() {
@@ -215,6 +219,8 @@ class AgentPrincipalRoleBindingIntegrationTest extends AbstractIntegrationTest {
         var snapshot = objectMapper.createObjectNode();
         snapshot.set("permissions", objectMapper.createArrayNode());
         long principalsBefore = agentPrincipalRepository.count();
+        long roleBindingsBefore = roleBindingRepository.count();
+        long grantsBefore = grantRepository.count();
 
         CpApiException refused = assertThrows(CpApiException.class,
                 () -> agentPrincipalService.createPrincipal(weakCreator.getId().toString(),
@@ -227,6 +233,10 @@ class AgentPrincipalRoleBindingIntegrationTest extends AbstractIntegrationTest {
                 "the refusal names the default-role atoms it cannot grant: " + refused.getMessage());
         assertEquals(principalsBefore, agentPrincipalRepository.count(),
                 "a refused creation writes no principal row (zero partial write)");
+        assertEquals(roleBindingsBefore, roleBindingRepository.count(),
+                "a refused creation writes no role binding row (zero partial write)");
+        assertEquals(grantsBefore, grantRepository.count(),
+                "a refused creation materializes no authorization grant row (zero partial write)");
     }
 
     @Test
