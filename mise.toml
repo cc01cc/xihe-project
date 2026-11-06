@@ -131,7 +131,11 @@ description = "Run all tests"
 alias = "test"
 
 [tasks."test:cli"]
+<<<<<<< HEAD
 run = "node --test scripts/xihe-cli.test.mjs scripts/xihe-cli/skill.test.mjs scripts/lib/stack-ports.test.mjs scripts/lib/env-file.test.mjs scripts/lib/service-supervisor.test.mjs scripts/lib/llm-env.test.mjs scripts/lib/cp-boot-plan.test.mjs scripts/lib/e2e-rounds.test.mjs scripts/lib/e2e-test-counts.test.mjs scripts/lib/e2e-host-cli.test.mjs scripts/stack-run.test.mjs scripts/e2e-host-readiness.test.mjs scripts/test-wiring.test.mjs scripts/pkg/phase-parity.test.mjs scripts/pkg/ports-json.test.mjs scripts/pkg/launcher-security.test.mjs scripts/pkg/launcher-security-behavior.test.mjs scripts/env-log-level.test.mjs scripts/lib/stack-cargo-target.test.mjs scripts/lib/stack-orphan.test.mjs scripts/lib/kill-guard.test.mjs scripts/lib/cp-build-info.test.mjs scripts/lib/cp-build-dir.test.mjs scripts/__tests__/check-event-keys.test.mjs scripts/check-test-global-state.test.mjs scripts/run-with-timeout.test.mjs scripts/check-provider-catalog.test.mjs scripts/check-ui-inplace-mutation.test.mjs scripts/check-cp-baseline.test.mjs && node scripts/check-test-global-state.mjs"
+=======
+run = "node --test scripts/xihe-cli.test.mjs scripts/xihe-cli/skill.test.mjs scripts/lib/stack-ports.test.mjs scripts/lib/env-file.test.mjs scripts/lib/service-supervisor.test.mjs scripts/lib/llm-env.test.mjs scripts/lib/cp-boot-plan.test.mjs scripts/lib/e2e-rounds.test.mjs scripts/lib/e2e-host-cli.test.mjs scripts/stack-run.test.mjs scripts/e2e-host-readiness.test.mjs scripts/test-wiring.test.mjs scripts/pkg/phase-parity.test.mjs scripts/pkg/ports-json.test.mjs scripts/pkg/launcher-security.test.mjs scripts/pkg/launcher-security-behavior.test.mjs scripts/env-log-level.test.mjs scripts/lib/stack-cargo-target.test.mjs scripts/lib/stack-orphan.test.mjs scripts/lib/kill-guard.test.mjs scripts/lib/cp-build-info.test.mjs scripts/lib/cp-build-dir.test.mjs scripts/__tests__/check-event-keys.test.mjs scripts/__tests__/check-e2e-inpage-bypass.test.mjs scripts/check-test-global-state.test.mjs scripts/run-with-timeout.test.mjs scripts/check-provider-catalog.test.mjs scripts/check-ui-inplace-mutation.test.mjs scripts/check-cp-baseline.test.mjs && node scripts/check-test-global-state.mjs"
+>>>>>>> task/0687-inpage-bypass
 description = "Run every scripts/**/*.test.mjs unit test (explicit file list pinned by scripts/test-wiring.test.mjs) + BL-262 static guard: no unguarded process-global mutation in Rust test code"
 alias = "test:cli"
 
@@ -527,6 +531,15 @@ alias = "check:ports"
 run = "node scripts/check-event-keys.mjs --report-only"
 description = "Report-only audit of log/SSE/AgentEvent names against the BL-303 baseline + semantics registry (never fails; use --enforce manually)"
 alias = "check:event-keys"
+
+# PLAN-0687 T2.1: E2E in-page bypass 静态门（默认 report-only，永不非零退出；翻 --enforce 走显式裁定）。
+# 判据：`packages/ui/e2e/real/**` 的 `page.evaluate(...)` 块内 `fetch(` 必须带 `// fixture-only:` /
+# `// read-only:` 标注，或在 config/e2e-inpage-bypass-allowlist.json 登记（0644 §4.3 允许通道约定）。
+# mock lane 不在本门判据内（本 PLAN 只登记不扩包）。
+[tasks."check:e2e-bypass"]
+run = "node scripts/check-e2e-inpage-bypass.mjs --report-only"
+description = "Report-only audit of in-page fetch bypasses in packages/ui/e2e/real (annotation or allowlist required; never fails; use --enforce manually)"
+alias = "check:e2e-bypass"
 
 # BL-162: OpenAPI 契约门。BL-162 之前 `validate-openapi.mjs` 只被人手跑（mise.toml/pom.xml/scripts 里 0 引用），
 # 契约漂移能一路合进 develop。现在它是 `test:cp` / `validate` 的依赖 ⇒ 跑 CP 测试就会查契约。

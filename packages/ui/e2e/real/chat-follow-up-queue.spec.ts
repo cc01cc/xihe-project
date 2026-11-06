@@ -129,6 +129,9 @@ async function bootstrapSession(request: APIRequestContext, page: Page): Promise
     const headers = {
         Authorization: `Bearer ${auth.accessToken}`,
         "Content-Type": "application/json",
+        // fixture-only: 建 agent-principal 的写面自 D22/BL-326 起要求显式 workspace 上下文
+        // （AgentPrincipalService.java:142/163-169）；缺头 → 409 WORKSPACE_CONTEXT_REQUIRED。
+        "X-Workspace-Id": auth.workspaceId,
     };
     const me = await request.get(`${CP_URL}/api/v1/auth/me`, { headers });
     expect(me.ok(), await me.text()).toBeTruthy();

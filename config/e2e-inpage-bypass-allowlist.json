@@ -1,0 +1,7 @@
+{
+  "$comment": "PLAN-0687 check:e2e-bypass allowlist：仅用于历史残留登记（grandfathered）。新增 in-page fetch 优先加 `// fixture-only: <理由>` / `// read-only: <理由>` 标注；完成产品行为的调用必须改走产品 UI 路径，禁止用本文件洗白 bypass。判据见 scripts/check-e2e-inpage-bypass.mjs 文件头与 PLAN-0687 design.md。",
+  "version": 1,
+  "generatedBy": "scripts/check-e2e-inpage-bypass.mjs（初始为空表：2026-11-07 改判后 14 处均走源码标注）",
+  "generatedAt": "2026-11-07",
+  "entries": []
+}

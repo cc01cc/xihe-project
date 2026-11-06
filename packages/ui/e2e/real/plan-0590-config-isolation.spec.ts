@@ -6,11 +6,11 @@
 // running the same spec with XIHE_E2E_PLAN0590_BASELINE=1, which flips the B-side
 // assertions to the known cross-talk values (workspace A's layer).
 //
-// The chat itself is a *plain* run (toolMode=none): the Workspace UI hardcodes
-// toolMode=workspace, so this spec drives the documented public chat contract
-// (SSE subscription + POST /api/v1/chat) from inside the browser context, reusing
-// the app's own origin and localStorage token. MCP tooling (PLAN-0588) is
-// deliberately out of scope here.
+// The chat itself runs through the product composer (the UI owns the dispatch
+// shape); only the session SSE subscription stays in-page as a read-only probe.
+// PLAN-0687 removed the old in-page POST /api/v1/chat: that POST completed a
+// product behaviour from inside `page.evaluate` and bypassed the UI under test.
+// MCP tooling (PLAN-0588) is deliberately out of scope here.
 //
 // Runs on the host E2E mock lane (fake LLM, 0 real provider calls):
 //   node scripts/e2e-host.mjs --llm-mode=mock e2e/real/plan-0590-config-isolation.spec.ts
@@ -18,14 +18,15 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSy
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { test, expect, type APIRequestContext, type Page } from "@playwright/test";
+import { agentName } from "./helpers/agent-name";
 import { createSessionWithPrincipal } from "./helpers/agent-principal";
+import { ensureFakeUserProvider } from "./helpers/fake-provider";
 import {
     CP_URL,
     awaitLatestChatRunCompleted,
     ensureAgentWorkspaceBinding,
     ensureChatBinding,
     evidenceDir,
-    getRootBranchId,
     registerJourneyUser,
     seedPage,
     type JourneyContext,
@@ -123,9 +124,12 @@ async function provisionPlainChatPrincipal(
     auth: AgentAuth,
     name: string,
 ): Promise<string> {
+    // fixture-only: agent-principals 写面自 CP D22/BL-326 起要求显式 workspace 上下文，
+    // 缺头会 409 WORKSPACE_CONTEXT_REQUIRED；BL-328（409499d6）已对同类夹具修过一次，这里同范式补。
     const headers = {
         Authorization: `Bearer ${auth.accessToken}`,
         "Content-Type": "application/json",
+        "X-Workspace-Id": auth.workspaceId,
     };
     const me = await request.get(`${CP_URL}/api/v1/auth/me`, { headers });
     expect(me.ok(), await me.text()).toBe(true);
@@ -204,25 +208,27 @@ async function expectEmptyWorkspaceLayer(
 }
 
 /**
- * Plain chat (toolMode=none) through the public contract: open the session SSE
- * subscription first (CP requires it), then POST /api/v1/chat. Runs inside the
- * page so the app origin + localStorage token are reused.
+ * Plain chat through the product path: subscribe the session SSE from the page
+ * (read-only probe; CP requires a subscriber before dispatch), send from the
+ * composer, then read the probe buffer back. PLAN-0687: the old in-page
+ * `POST /api/v1/chat` was a bypass — sending now goes through the UI under test.
  */
 async function runPlainChat(
     page: Page,
     request: APIRequestContext,
     ctx: JourneyContext,
     sessionId: string,
-    principalId: string,
-    branchId: string,
 ): Promise<PlainChatResult> {
     await seedPage(page, ctx);
     await page.goto(`/workspace/${ctx.workspaceId}/chat/${sessionId}`, { waitUntil: "load" });
     await page.locator('[data-testid="chat-input"]').waitFor({ state: "visible", timeout: 20000 });
     await ensureChatBinding(page, sessionId);
 
-    const result = await page.evaluate(
-        async ({ sid, ws, principal, branch }) => {
+    // 1) read-only SSE subscription (page-side; only reads the event stream).
+    const probeKey = "__plan0590PlainChatProbe";
+    const subscribed = await page.evaluate(
+        async ({ sid, ws, key }) => {
+            // read-only: 只读订阅 session 事件流（SSE GET），不写任何服务端状态。
             const token = localStorage.getItem("xihe-token") ?? "";
             const headers: Record<string, string> = {
                 Authorization: `Bearer ${token}`,
@@ -235,46 +241,61 @@ async function runPlainChat(
                 signal: controller.signal,
             }).catch(() => null);
             if (!sse || !sse.ok || !sse.body) {
-                return { windowTokens: null, done: false, bufferChars: -1 };
+                return { ok: false, status: sse?.status ?? 0 };
             }
-            const chat = fetch(`/api/v1/chat`, {
-                method: "POST",
-                headers: { ...headers, "Idempotency-Key": crypto.randomUUID() },
-                body: JSON.stringify({
-                    sessionId: sid,
-                    branchId: branch,
-                    content: "plan-0590 plain chat probe",
-                    agentPrincipalId: principal,
-                    toolMode: "none",
-                }),
-            }).catch(() => null);
             const reader = sse.body.getReader();
             const decoder = new TextDecoder();
-            let buffer = "";
-            const deadline = Date.now() + 120000;
-            let done = false;
-            while (!done && Date.now() < deadline) {
-                const chunk = await reader.read().catch(() => ({ value: undefined, done: true }));
-                if (chunk.done || !chunk.value) break;
-                buffer += decoder.decode(chunk.value, { stream: true });
-                if (/"type"\s*:\s*"done"/.test(buffer) || buffer.includes("event:done"))
-                    done = true;
+            const state = { buffer: "", done: false, failure: "" };
+            (window as unknown as Record<string, unknown>)[key] = { state };
+            void (async () => {
+                const deadline = Date.now() + 120000;
+                while (!state.done && Date.now() < deadline) {
+                    const chunk = await reader
+                        .read()
+                        .catch(() => ({ value: undefined, done: true }));
+                    if (chunk.done || !chunk.value) break;
+                    state.buffer += decoder.decode(chunk.value, { stream: true });
+                    if (
+                        /"type"\s*:\s*"done"/.test(state.buffer) ||
+                        state.buffer.includes("event:done")
+                    )
+                        state.done = true;
+                }
+                controller.abort();
+            })().catch((error: unknown) => {
+                state.failure = String(error);
+            });
+            return { ok: true, status: sse.status };
+        },
+        { sid: sessionId, ws: ctx.workspaceId, key: probeKey },
+    );
+    expect(subscribed.ok, "session SSE subscription (read-only probe)").toBe(true);
+
+    // 2) product path: send the probe message from the composer, not via fetch.
+    await page.getByTestId("chat-input").fill("plan-0590 plain chat probe");
+    await page.getByTestId("chat-send-button").click();
+
+    // 3) read the probe buffer back (read-only) and derive the reported window.
+    const result = await page.evaluate(
+        async ({ key }) => {
+            const probe = (window as unknown as Record<string, unknown>)[key] as
+                | { state: { buffer: string; done: boolean; failure: string } }
+                | undefined;
+            if (!probe) {
+                return { windowTokens: null, done: false, bufferChars: -1 };
             }
-            controller.abort();
-            await chat;
-            const match = /"windowTokens"\s*:\s*(\d+)/.exec(buffer);
+            const deadline = Date.now() + 120000;
+            while (!probe.state.done && !probe.state.failure && Date.now() < deadline) {
+                await new Promise((resolve) => setTimeout(resolve, 200));
+            }
+            const match = /"windowTokens"\s*:\s*(\d+)/.exec(probe.state.buffer);
             return {
                 windowTokens: match ? Number(match[1]) : null,
-                done,
-                bufferChars: buffer.length,
+                done: probe.state.done,
+                bufferChars: probe.state.buffer.length,
             };
         },
-        {
-            sid: sessionId,
-            ws: ctx.workspaceId,
-            principal: principalId,
-            branch: branchId,
-        },
+        { key: probeKey },
     );
     await awaitLatestChatRunCompleted(request, ctx.headers, ctx.workspaceId);
     return result;
@@ -296,6 +317,17 @@ test.describe("@host PLAN-0590 Agent run-config isolation (two workspaces, one p
         wsB = await registerJourneyUser(request, "plan-0590-ws-b");
         expect(wsA.workspaceId).not.toBe(wsB.workspaceId);
 
+        // fixture-only: POST /sessions 会解析主体的默认模型 profile 并要一条可用连接，
+        // 共享真栈/宿主 lane 上这两个新建用户都没有连接，会 409 LLM_PROFILE_CONFLICT。
+        await ensureFakeUserProvider(request, {
+            accessToken: wsA.authToken,
+            workspaceId: wsA.workspaceId,
+        });
+        await ensureFakeUserProvider(request, {
+            accessToken: wsB.authToken,
+            workspaceId: wsB.workspaceId,
+        });
+
         // Only A carries a workspace layer; B must never see it.
         await writeWorkspaceContextPolicy(request, wsA);
         await expectEmptyWorkspaceLayer(request, wsB, "context-policy");
@@ -304,12 +336,12 @@ test.describe("@host PLAN-0590 Agent run-config isolation (two workspaces, one p
         principalA = await provisionPlainChatPrincipal(
             request,
             { accessToken: wsA.authToken, workspaceId: wsA.workspaceId },
-            "PLAN-0590 A",
+            agentName("Plan0590A"),
         );
         principalB = await provisionPlainChatPrincipal(
             request,
             { accessToken: wsB.authToken, workspaceId: wsB.workspaceId },
-            "PLAN-0590 B",
+            agentName("Plan0590B"),
         );
         sessionA = await createSessionWithPrincipal(
             request,
@@ -361,10 +393,9 @@ test.describe("@host PLAN-0590 Agent run-config isolation (two workspaces, one p
         page,
         request,
     }, testInfo) => {
-        const branchId = await getRootBranchId(request, sessionA, wsA.headers);
         const logFile = agentLogFile();
         const offset = statSync(logFile).size;
-        const chat = await runPlainChat(page, request, wsA, sessionA, principalA, branchId);
+        const chat = await runPlainChat(page, request, wsA, sessionA);
         testInfo.annotations.push({
             type: "plain-chat",
             description: `A u=${wsA.workspaceId} windowTokens=${chat.windowTokens} done=${chat.done}`,
@@ -393,10 +424,9 @@ test.describe("@host PLAN-0590 Agent run-config isolation (two workspaces, one p
         page,
         request,
     }, testInfo) => {
-        const branchId = await getRootBranchId(request, sessionB, wsB.headers);
         const logFile = agentLogFile();
         const offset = statSync(logFile).size;
-        const chat = await runPlainChat(page, request, wsB, sessionB, principalB, branchId);
+        const chat = await runPlainChat(page, request, wsB, sessionB);
         testInfo.annotations.push({
             type: "plain-chat",
             description: `B u=${wsB.workspaceId} windowTokens=${chat.windowTokens} done=${chat.done}`,

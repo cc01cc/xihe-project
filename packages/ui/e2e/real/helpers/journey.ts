@@ -534,6 +534,10 @@ export async function ensureChatBinding(page: Page, sessionId: string): Promise<
         : "https://provider.invalid/v1";
     const outcome = await page.evaluate(
         async ({ sid, baseUrl: chatBaseUrl }) => {
+            // read-only: 只读回读 session / provider-connections 判断绑定与 READY 状态（GET，无写入）。
+            // fixture-only: 真栈无 fake LLM 夹具，建立并校验 chat provider binding 属夹具准备；
+            // 绑定完成后被测聊天行为仍走产品 UI。末尾的 PATCH 会话绑定是夹具语义的风险位（建立期
+            // 写操作，无 UI 等价路径），只标注不改实现，真栈回归必须覆盖，不得当产品路径证据。
             const token = localStorage.getItem("xihe-token") ?? "";
             const headers: Record<string, string> = {
                 Authorization: `Bearer ${token}`,

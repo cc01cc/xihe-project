@@ -109,17 +109,22 @@ test("@host guidance is consumed after an approved tool batch", async ({ page, r
             data: { email: `guidance-e2e-${Date.now()}@test.com`, password, name: "GuidanceE2E" },
         });
     expect([200, 201], await register.text()).toContain(register.status());
-    const authBody = (await register.json()) as { accessToken: string; workspaceId: string },
-        authHeaders = {
-            Authorization: `Bearer ${authBody.accessToken}`,
-            "Content-Type": "application/json",
-        },
-        me = await request.get(`${CP_URL}/api/v1/auth/me`, { headers: authHeaders });
+    const authBody = (await register.json()) as { accessToken: string; workspaceId: string };
+    // PLAN-0614 起注册不再建默认工作区：先显式兜底一个，再用于 workspace 上下文头与夹具。
+    const wsId = await ensureWorkspace(request, authBody.accessToken);
+    const authHeaders = {
+        Authorization: `Bearer ${authBody.accessToken}`,
+        "Content-Type": "application/json",
+        // fixture-only: 建 agent-principal 的写面自 D22/BL-326 起要求显式 workspace 上下文
+        // （AgentPrincipalService.java:142/163-169）；缺头 → 409 WORKSPACE_CONTEXT_REQUIRED。
+        "X-Workspace-Id": wsId,
+    };
+    const me = await request.get(`${CP_URL}/api/v1/auth/me`, { headers: authHeaders });
     expect(me.status(), await me.text()).toBe(200);
     const userId = ((await me.json()) as { id: string }).id,
         principalId = await createApprovalAgent(request, {
             userId,
-            workspaceId: await ensureWorkspace(request, authBody.accessToken),
+            workspaceId: wsId,
             headers: authHeaders,
         });
 
