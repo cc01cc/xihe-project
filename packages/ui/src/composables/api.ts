@@ -2339,7 +2339,17 @@ export function registerForceLogout(fn: ForceLogoutFn): void {
     forceLogoutImpl = fn;
 }
 
-function forceLogout(): void {
+/**
+ * BL-422: the <b>only</b> 401/logout implementation in the app.
+ *
+ * Everything that decides "this session is dead" funnels through here: the HTTP layer's own 401
+ * branch ({@link checkedFetch}), the chat SSE transport and the user-channel SSE. Before this was
+ * exported, the SSE side carried its own copy that cleared three localStorage keys and
+ * hard-navigated — so a token expiring during an SSE stream forgot to reset the in-memory auth refs,
+ * kept the permission projection, skipped the cross-tab `broadcastLogout`, and dropped the
+ * `redirect` the SPA route adds. Same event, two different end states.
+ */
+export function forceLogout(): void {
     localStorage.removeItem("xihe-token");
     localStorage.removeItem("xihe-refresh-token");
     localStorage.removeItem("xihe-user");

@@ -11,6 +11,7 @@ import {
     registerWorkspaceContextRequired,
     workspaceJobErrorReason,
 } from "../api";
+import { handleUnauthorized } from "../../services/chatTransport";
 
 let fetchSpy: ReturnType<typeof vi.spyOn>;
 const TEST_PASSWORD = `ui-test-${globalThis.crypto.randomUUID()}`,
@@ -2842,5 +2843,70 @@ describe("api user-question envelope (PLAN-0660 P3-3)", () => {
         await expect(api.answerUserQuestion(QUESTION.id, "继续")).rejects.toThrow(
             /unexpected payload/,
         );
+    });
+});
+
+describe("BL-422: one 401 end state, whichever channel noticed it", () => {
+    beforeEach(() => {
+        // @ts-expect-error jsdom allows location.href assignment
+        delete window.location;
+        // @ts-expect-error redefine for test
+        window.location = { href: "/chat", pathname: "/chat", search: "" };
+    });
+
+    /**
+     * BL-422: the SSE entry point used to carry its own copy of the logout. That copy cleared
+     * three localStorage keys and hard-navigated, so a token that expired *during a stream* reached
+     * a different end state than one that expired on a normal request: the in-memory auth refs
+     * stayed, the permission projection stayed, `clearAnonSessionId`/`clearSessionCaches` were
+     * skipped, other tabs were never told, and the `redirect` the SPA route adds was lost. This
+     * pins that both entries now land on the same delegated implementation.
+     */
+    it("the SSE entry delegates instead of clearing state on its own", () => {
+        const logoutSpy = vi.fn<() => void>();
+        registerForceLogout(logoutSpy);
+        localStorage.setItem("xihe-token", "t");
+        localStorage.setItem("xihe-refresh-token", "r");
+        localStorage.setItem("xihe-user", "{}");
+
+        handleUnauthorized();
+
+        expect(logoutSpy).toHaveBeenCalledTimes(1);
+        expect(localStorage.getItem("xihe-token")).toBeNull();
+        expect(localStorage.getItem("xihe-refresh-token")).toBeNull();
+        expect(localStorage.getItem("xihe-user")).toBeNull();
+        // Delegated: the seam owns routing, so the transport must not hard-navigate behind its back.
+        expect(window.location.href).toBe("/chat");
+
+        registerForceLogout(() => undefined);
+    });
+
+    /**
+     * BL-422: the race the audit asked for. One dead token can make the HTTP layer and an SSE
+     * stream report 401 in the same tick. The guarantee is not "log out exactly once" (clearing
+     * state and routing to /login are naturally idempotent) but "no interleaving leaves a half
+     * logged-out client": storage ends empty, the seam ran, and neither path hard-navigated.
+     */
+    it("an HTTP 401 racing an SSE 401 still leaves one consistent end state", async () => {
+        const logoutSpy = vi.fn<() => void>();
+        registerForceLogout(logoutSpy);
+        localStorage.setItem("xihe-token", "t");
+
+        fetchSpy.mockResolvedValueOnce({
+            ok: false,
+            status: 401,
+            json: () => Promise.resolve({ error: "Unauthorized" }),
+        } as Response);
+
+        const http = api.getSessions().catch((error: Error) => error);
+        handleUnauthorized();
+        const [httpError] = await Promise.all([http]);
+
+        expect(httpError).toBeInstanceOf(Error);
+        expect(logoutSpy).toHaveBeenCalled();
+        expect(localStorage.getItem("xihe-token")).toBeNull();
+        expect(window.location.href).toBe("/chat");
+
+        registerForceLogout(() => undefined);
     });
 });

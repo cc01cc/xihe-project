@@ -56,6 +56,9 @@ class UserQuestionServiceTest {
     private static final String PARENT_RUN_ID = "77777777-7777-7777-7777-777777777777";
     private static final String PROMPT = "which branch should I rebase onto?";
     private static final String ANSWER = "rebase onto develop";
+    /** BL-423: frozen instant for the clock-seam tests (nothing here depends on wall time). */
+    private static final java.time.Instant PROJECTION_INSTANT =
+            java.time.Instant.parse("2026-11-07T00:00:00Z");
 
     private final UserQuestionRepository questions = mock(UserQuestionRepository.class);
     private final ChatRunRepository runs = mock(ChatRunRepository.class);
@@ -478,5 +481,143 @@ class UserQuestionServiceTest {
 
         assertEquals(row.getId(), read.getId());
         verify(questions).settleExpiredById(eq(row.getId()), any());
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // BL-423: one snapshot per request (list + pendingCount must not straddle the deadline)
+    // ---------------------------------------------------------------------------------------
+
+    /**
+     * BL-423: one request asks the clock <b>once</b>.
+     *
+     * <p>The defect was not a rounding error. {@code findProjection} and {@code pendingCount} each
+     * read {@link java.time.Instant#now()} inside their own transaction, so a {@code expiresAt}
+     * landing between the two reads produced a response that listed a row and simultaneously
+     * excluded it from {@code pendingCount} — a card on screen whose badge says 0. Two reads is
+     * exactly what the old pair did (see {@link #inboxReadsSettleOverdueRowsBeforeProjectingAndCounting},
+     * which pins {@code times(2)} on the old path); one read is what makes straddling impossible.</p>
+     */
+    @Test
+    void findProjectionWithCount_readsTheClockExactlyOnce() {
+        CountingClock clock = new CountingClock(PROJECTION_INSTANT);
+        stubInboxReads();
+
+        UserQuestionService.ProjectionSnapshot snapshot =
+                serviceAt(clock).findProjectionWithCount(USER_ID, null, 10);
+
+        assertEquals(1, snapshot.items().size());
+        assertEquals(1L, snapshot.pendingCount());
+        assertEquals(1, clock.reads.get(),
+                "a second clock read is the BL-423 defect: the deadline can fall between the two");
+    }
+
+    /**
+     * BL-423: the lazy settle also runs once, before both reads — not once per read. A double settle
+     * would let the first call expire the row while the second call's own clock read already moved
+     * the boundary.
+     */
+    @Test
+    void findProjectionWithCount_settlesOnceBeforeProjectingAndCounting() {
+        UUID addressee = UUID.fromString(USER_ID);
+        when(questions.settleExpiredForAddressee(eq(addressee), any())).thenReturn(0);
+        stubInboxReads();
+
+        serviceAt(new CountingClock(PROJECTION_INSTANT)).findProjectionWithCount(USER_ID, null, 10);
+
+        verify(questions, org.mockito.Mockito.times(1))
+                .settleExpiredForAddressee(eq(addressee), any());
+    }
+
+    /**
+     * BL-423, the boundary itself: with a clock that steps forward on <b>every</b> read, the old
+     * two-read implementation would see two different instants and disagree with itself. The single
+     * read makes "listed" and "counted" the same instant by construction, so both values stay
+     * consistent no matter where {@code expiresAt} sits.
+     */
+    @Test
+    void findProjectionWithCount_cannotStraddleTheDeadlineBecauseThereIsOnlyOneInstant() {
+        TickClock clock = new TickClock(PROJECTION_INSTANT, java.time.Duration.ofSeconds(30));
+        when(questions.findByAddresseeUserIdAndStateOrderByCreatedAtDesc(
+                eq(UUID.fromString(USER_ID)), eq(UserQuestion.STATE_PENDING), any(Pageable.class)))
+                .thenReturn(List.of(pendingRow()));
+        when(questions.countByAddresseeUserIdAndState(eq(UUID.fromString(USER_ID)),
+                eq(UserQuestion.STATE_PENDING))).thenReturn(1L);
+
+        UserQuestionService.ProjectionSnapshot snapshot =
+                serviceAt(clock).findProjectionWithCount(USER_ID, null, 10);
+
+        assertEquals(1, snapshot.items().size());
+        assertEquals(snapshot.items().size(), snapshot.pendingCount(),
+                "the list and the badge come from one instant, so they can never disagree");
+        assertEquals(1, clock.reads.get());
+    }
+
+    private void stubInboxReads() {
+        when(questions.findByAddresseeUserIdAndStateOrderByCreatedAtDesc(
+                eq(UUID.fromString(USER_ID)), eq(UserQuestion.STATE_PENDING), any(Pageable.class)))
+                .thenReturn(List.of(pendingRow()));
+        when(questions.countByAddresseeUserIdAndState(eq(UUID.fromString(USER_ID)),
+                eq(UserQuestion.STATE_PENDING))).thenReturn(1L);
+    }
+
+    /** Same wiring as the shared {@link #service}, but with an injected clock. */
+    private UserQuestionService serviceAt(java.time.Clock clock) {
+        return new UserQuestionService(questions, runs, approvals, sessions, agentClient,
+                sessionReadAccess, audit, TX_MANAGER, clock);
+    }
+
+    /** Fixed-instant clock that counts how many times the service asked for the time. */
+    private static final class CountingClock extends java.time.Clock {
+        private final java.time.Instant fixed;
+        private final java.util.concurrent.atomic.AtomicInteger reads =
+                new java.util.concurrent.atomic.AtomicInteger();
+
+        private CountingClock(java.time.Instant fixed) {
+            this.fixed = fixed;
+        }
+
+        @Override
+        public java.time.ZoneId getZone() {
+            return java.time.ZoneOffset.UTC;
+        }
+
+        @Override
+        public java.time.Clock withZone(java.time.ZoneId zone) {
+            return this;
+        }
+
+        @Override
+        public java.time.Instant instant() {
+            reads.incrementAndGet();
+            return fixed;
+        }
+    }
+
+    /** Clock that advances on every read, so two reads in one request become visible. */
+    private static final class TickClock extends java.time.Clock {
+        private final java.time.Instant start;
+        private final java.time.Duration step;
+        private final java.util.concurrent.atomic.AtomicInteger reads =
+                new java.util.concurrent.atomic.AtomicInteger();
+
+        private TickClock(java.time.Instant start, java.time.Duration step) {
+            this.start = start;
+            this.step = step;
+        }
+
+        @Override
+        public java.time.ZoneId getZone() {
+            return java.time.ZoneOffset.UTC;
+        }
+
+        @Override
+        public java.time.Clock withZone(java.time.ZoneId zone) {
+            return this;
+        }
+
+        @Override
+        public java.time.Instant instant() {
+            return start.plus(step.multipliedBy(reads.getAndIncrement()));
+        }
     }
 }
