@@ -46,10 +46,16 @@ function workspaceContext(options, env) {
 function optionalRevision(options) {
   const raw = options['--revision'];
   if (raw === undefined) return undefined;
-  if (!/^\d{1,9}$/.test(String(raw))) {
+  // CP revisions are Java `long` epoch-millis values (13 digits today), so the
+  // bound is the long digit range, not the old 9-digit guess (PLAN-0643 V43).
+  if (!/^\d{1,19}$/.test(String(raw))) {
     throw new CliError('INVALID_ARGUMENT', '--revision must be a non-negative integer.');
   }
-  return Number(raw);
+  const revision = Number(raw);
+  if (!Number.isSafeInteger(revision)) {
+    throw new CliError('INVALID_ARGUMENT', '--revision is too large to survive a JSON round-trip safely.');
+  }
+  return revision;
 }
 
 function buildQuery(params) {

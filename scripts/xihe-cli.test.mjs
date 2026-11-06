@@ -5226,6 +5226,47 @@ test('PLAN-0643 V43: config-locks delete forwards revision and clearValue as que
   assert.equal(cp.state.lastLocksDeleteQuery.get('clearValue'), 'true');
 });
 
+test('PLAN-0643 V43 fix: a 13-digit CP revision (epoch millis) is forwarded as-is', async (t) => {
+  const cp = await startConfigCpMock();
+  t.after(cp.close);
+
+  const result = await runCommand(['config-locks', 'delete', 'agent-runtime', 'runMaxTurns', '--revision', '1793960949576', '--clear-value', '--json'], {
+    env: cp.env, promptSecret: noPrompt, stderr: sink(),
+  });
+
+  assert.equal(result.exitCode, 0, JSON.stringify(result.error));
+  assert.equal(cp.state.lastLocksDeleteQuery.get('revision'), '1793960949576');
+  assert.equal(cp.state.lastLocksDeleteQuery.get('clearValue'), 'true');
+});
+
+test('PLAN-0643 V43 fix: a non-numeric --revision is a usage error before any request', async (t) => {
+  const cp = await startConfigCpMock();
+  t.after(cp.close);
+
+  const result = await runCommand(['config-locks', 'delete', 'agent-runtime', 'runMaxTurns', '--revision', 'soon', '--json'], {
+    env: cp.env, promptSecret: noPrompt, stderr: sink(),
+  });
+
+  assert.equal(result.exitCode, 2);
+  assert.equal(result.error.code, 'INVALID_ARGUMENT');
+  assert.match(result.error.message, /non-negative integer/);
+  assert.equal(cp.state.locksDeleteRequests, 0, 'a usage error must not reach the CP');
+});
+
+test('PLAN-0643 V43 fix: a 20-digit --revision is rejected as a usage error', async (t) => {
+  const cp = await startConfigCpMock();
+  t.after(cp.close);
+
+  const result = await runCommand(['config-locks', 'delete', 'agent-runtime', 'runMaxTurns', '--revision', '1'.repeat(20), '--json'], {
+    env: cp.env, promptSecret: noPrompt, stderr: sink(),
+  });
+
+  assert.equal(result.exitCode, 2);
+  assert.equal(result.error.code, 'INVALID_ARGUMENT');
+  assert.match(result.error.message, /non-negative integer/);
+  assert.equal(cp.state.locksDeleteRequests, 0, 'a usage error must not reach the CP');
+});
+
 test('PLAN-0643 V11: config get injects workspaceId as a query from --workspace and XIHE_WORKSPACE_ID', async (t) => {
   const cp = await startConfigCpMock();
   t.after(cp.close);
