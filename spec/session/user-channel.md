@@ -102,7 +102,7 @@
 | 迁移 | 触发者 | 落地语义 |
 |---|---|---|
 | `pending → answered` | `POST /api/v1/user-questions/{id}/answer`（唯一路径） | 条件更新 `state='pending' AND (expires_at IS NULL OR expires_at > now())`；CAS 成功后**同一事务**内回调 Agent（`POST /internal/v1/agent/user-question/respond`），**只有 2xx 才提交** `answered` + `answer` + `settled_at`；非 2xx/超时/连接失败一律回滚（行留在 `pending`，可重试） |
-| `pending → expired` | askTimed 截止 / run 正常终态 / 迟到作答 | 迟到作答：CAS 失败后重读仍为 `pending` ⇒ 先懒结算为 `expired` 再抛 `409 QUESTION_EXPIRED`（结算在事务外，避免 409 把结算一起回滚）；run 终态非取消 ⇒ `expired` |
+| `pending → expired` | askTimed 截止 / run 正常终态 / 迟到作答 / **读面惰性 settle** | 迟到作答：CAS 失败后重读仍为 `pending` ⇒ 先懒结算为 `expired` 再抛 `409 QUESTION_EXPIRED`（结算在事务外，避免 409 把结算一起回滚）；**读面惰性 settle** 见 §6a.5（list 投影 / `pendingCount` / 单读在 deadline 后先按 `expires_at <= now` 条件 CAS 落 `expired + settled_at`）；run 终态非取消 ⇒ `expired` |
 | `pending → cancelled` | run 终态 `cancelled`/`cancelling` | `cancelPendingForTerminalRun`：终止即取消，与「正常结束 ⇒ expired」区分 |
 
 终态**不回滚**：`settle` 的更新只匹配 `state='pending'`，重复调用返回 0，绝不可能覆盖 `answered` 行。
@@ -126,6 +126,14 @@
 3. **结算不推送**：`user_question` hint 只在提问落库后推一次（`state=pending`）；`answered`/`expired`/`cancelled` 不改推 hint——作答方从 `POST answer` 的响应收敛，其他标签页/其他设备靠重读投影收敛。
 4. **`first_delivered_at` 无写点**：relay 推 hint 时没有回写该列，当前恒 NULL（重试投递也没有落点）。这是实现与 §6 列语义的**已知缺口**，不在本轮文档批次里改代码。
 5. **重复 hint 不保证去重**：同一行可能因重投递被再推一次（幂等靠读面，不靠 hint 计数）。
+
+### 6a.5 读面惰性 settle（PLAN-0660 V13 P1-4 修复；2026-11-07）
+
+1. **触发点**：`GET /api/v1/user-questions`（列表投影 + `pendingCount`）与 `GET /api/v1/user-questions/{id}`（单读）在返回前先结算超期行 —— 前者按 addressee 批量（`settleExpiredForAddressee`），后者按主键单行（`settleExpiredById`，读一行不会碰到别人收件箱）。条件批量更新 `state='pending' AND expires_at <= now`，与作答 CAS **同一谓词、同一状态机**；落 `expired` + `settled_at`（终态不回滚，重复结算返回 0）。
+2. **读接口是可写事务**：只在 `changed > 0` 时记 `run_question_expired`（`reason=read_after_deadline`）；没有超期行时行为与纯读一致，投影与计数仍是派生值、不落计数器。
+3. **结算不推 hint**：与 §6a.4-3 同一条口径 —— 结算不改推 `user_question`，其他标签页/设备靠重读投影收敛。
+4. **冻结词汇不变**：超期行作答仍 `409 QUESTION_EXPIRED`，不降级为 `QUESTION_ALREADY_SETTLED`。
+5. **无调度器（已知边界）**：CP 无后台扫描线程 —— 从不被读、且 run 未到终态的行仍可能长期 `pending`（等下一次读面或 run 终态清理）；Agent 侧超时只返回 `no_answer`，不回调 CP settle。证据与残余风险清单见 PLAN-0660 `evidence/v13-asktimed.md`。
 
 ## 7 不扩契约
 
