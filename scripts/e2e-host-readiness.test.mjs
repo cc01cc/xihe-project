@@ -146,3 +146,17 @@ test('e2e-host rebuild branch stamps the fresh jar with the current HEAD', () =>
     assert.match(branch, /const head = gitHead\(\{ cwd: projectDir \}\)/u)
     assert.match(branch, /writeBuildInfo\(\{ targetDir: e2eCpTargetDir, commit: head\.commit, dirty: head\.dirty \}\)/u)
 })
+
+test('Windows preflight queries dev-only stack ports, not only the e2e block', () => {
+    // preflight is a CLI (importing it runs the checks), so pin the Windows query wiring:
+    // dev ports must be merged into $ranges before Get-NetTCPConnection; filtering only
+    // after the JSON round-trip can never surface a dev-only port such as 12633 (BL-413).
+    const source = readFileSync(new URL('./e2e-preflight.mjs', import.meta.url), 'utf8')
+    const start = source.indexOf('function queryListeners(ranges, dev)')
+    const end = source.indexOf('function pidAlive', start)
+    assert.ok(start >= 0 && end > start, 'queryListeners anchors must exist')
+    const branch = source.slice(start, end)
+    assert.match(branch, /const queryRanges = \[\.\.\.ranges, \.\.\.dev\.map\(\(\{ port \}\) => \[port, port\]\)\]/u)
+    assert.match(branch, /const rangeLiteral = queryRanges\.map/u)
+    assert.doesNotMatch(branch, /const rangeLiteral = ranges\.map/u)
+})
