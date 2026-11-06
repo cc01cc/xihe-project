@@ -23,6 +23,12 @@ from xihe_agent.interfaces.message import Message
 from xihe_agent.interfaces.tool import ACQUIRE_CREDENTIAL_TOOL_NAME, BaseAgentTool
 from xihe_agent.llm.api_request import ApiRequestError, ChatApiType, render_request
 from xihe_agent.llm.api_sender import NATIVE_USAGE_COUNTERS, ApiSender, NativeResponse
+from xihe_agent.llm.provider_fingerprint import (
+    PROVIDER_FINGERPRINT_EVENT,
+    build_fingerprint_document,
+    fingerprint_event_payload,
+    role_histogram,
+)
 from xihe_agent.llm.transport_metrics import TransportEventSink, TransportMetricsCollector
 from xihe_agent.llm.vision_render import apply_image_parts
 
@@ -209,6 +215,11 @@ class ApiChatModel(BaseChatModel):
     # layer `modelParams` map, applied onto every rendered step body.
     _sampling_overrides: dict[str, Any] | None = PrivateAttr(default=None)
     _image_data_urls: list[str] = PrivateAttr(default_factory=list)
+    # PLAN-0679 D2: provider-layer request fingerprint, computed per dispatched step and
+    # emitted through the same transport sink only for the first step of this Run model.
+    _fingerprint_enabled: bool = PrivateAttr(default=True)
+    _fingerprint_sink: TransportEventSink | None = PrivateAttr(default=None)
+    _provider_step: int = PrivateAttr(default=0)
 
     def __init__(
         self,
@@ -224,6 +235,7 @@ class ApiChatModel(BaseChatModel):
         include_initial_messages: bool = False,
         sampling_overrides: dict[str, Any] | None = None,
         image_data_urls: list[str] | None = None,
+        fingerprint_enabled: bool = True,
     ):
         super().__init__(cache=False)
         # PLAN-0605 decision B: renderer post-transform payload. Data URLs live in
@@ -234,6 +246,10 @@ class ApiChatModel(BaseChatModel):
         # sink is the runner-provided relay into the existing event stream.
         collector = TransportMetricsCollector(transport_sink) if transport_sink is not None else None
         self._sender = ApiSender(api_type, grant, request_id, timeout, collector=collector)
+        # PLAN-0679 B-1: independent workspace-level switch, resolved by the caller
+        # (default true during development); the sink is reused, not re-created.
+        self._fingerprint_sink = transport_sink
+        self._fingerprint_enabled = bool(fingerprint_enabled)
         self._base = render_request(body_source, api_type, values)
         self._body_source = body_source
         self._values = copy.deepcopy(values)
@@ -337,8 +353,15 @@ class ApiChatModel(BaseChatModel):
         provider receives (tools/history/RAG/instructions/current input). It is
         an observation only — no threshold is invented and no request is
         replayed from the result.
+
+        PLAN-0679 D2: this is also the only point that sees the complete
+        first-step provider body, so the request fingerprint is taken here
+        (computed per step, emitted for step 1 only). Neither the returned body
+        nor the estimation behaviour changes.
         """
         body = self._body(messages)
+        self._provider_step += 1
+        self._emit_provider_fingerprint(body)
         if self._token_estimator is None:
             return body
         estimated = self._token_estimator(body)
@@ -350,6 +373,49 @@ class ApiChatModel(BaseChatModel):
             estimated,
         )
         return body
+
+    def _emit_provider_fingerprint(self, body: dict[str, Any]) -> None:
+        """Publish the six-layer request fingerprint for the first dispatched step (D2/D4).
+
+        Fail-open by construction: telemetry is a side channel, so a missing sink,
+        a disabled switch or a failing sink must never disturb the dispatch. The
+        document carries only hashes/counts/bytes and configuration key names.
+        """
+        if self._fingerprint_sink is None or not self._fingerprint_enabled:
+            return
+        conversation_history = self._values.get("conversation_history")
+        document = build_fingerprint_document(
+            body,
+            input_field=self._api_type.input_field,
+            history_count=len(conversation_history) if isinstance(conversation_history, list) else 0,
+            sampling_overrides=self._sampling_overrides,
+            image_part_count=len(self._image_data_urls),
+            provider_step=self._provider_step,
+        )
+        if self._provider_step != 1:
+            return
+        records = body.get(self._api_type.input_field)
+        rendered = records if isinstance(records, list) else []
+        tools = body.get("tools")
+        try:
+            self._fingerprint_sink(
+                PROVIDER_FINGERPRINT_EVENT,
+                fingerprint_event_payload(
+                    document,
+                    api_type_id=self._api_type.id,
+                    api_type_version=self._api_type.version,
+                    model=str(self._values.get("model") or ""),
+                    message_count=len(rendered),
+                    tool_count=len(tools) if isinstance(tools, list) else 0,
+                    role_histogram=role_histogram(rendered),
+                ),
+            )
+        except Exception:
+            logger.opt(exception=True).warning(
+                "provider fingerprint sink failed requestId={} step={}",
+                self._sender.request_id,
+                self._provider_step,
+            )
 
     def _check_response(self, response: NativeResponse) -> None:
         if self._credential_handoff is not None:

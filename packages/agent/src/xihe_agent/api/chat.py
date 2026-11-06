@@ -37,6 +37,7 @@ from xihe_agent.app_state import (
     _normalize_tool_timeouts,
     _resolve_loop_guard,
     _resolve_policy_for_model,
+    _resolve_provider_fingerprint_enabled,
     _resolve_run_budget,
     _validate_run_overrides,
     approval_tool,
@@ -781,6 +782,9 @@ async def chat(request: Request):
                     transport_sink=publish_transport,
                     include_initial_messages=continuation is not None,
                     image_data_urls=image_data_urls,
+                    fingerprint_enabled=_resolve_provider_fingerprint_enabled(
+                        config_snapshot, user_overrides, workspace_overrides
+                    ),
                 )
                 request_runner = LangGraphRunner(model_factory=lambda _model: model, event_store=cp_event_store_client)
                 # The Runner owns approval/durable/tool execution. This prompt is
