@@ -39,6 +39,13 @@ public final class AgentPrincipalScopeUpgradeFixture {
     public static final UUID WORKSPACE_PRINCIPAL_ID = UUID.randomUUID();
     public static final UUID INSTANCE_PRINCIPAL_ID = UUID.randomUUID();
 
+    /**
+     * The legacy workspace principal's pre-upgrade role. It deliberately contains the seven atoms
+     * the old workspace snapshot carried: the materializer re-runs on the first cap write, and a
+     * role whose atoms do not cover that snapshot would make the cap depend on test order.
+     */
+    private static final UUID LEGACY_WORKSPACE_ROLE_ID = UUID.randomUUID();
+
     private static final Object LOCK = new Object();
     private static TestDatabaseProvider.DatabaseRef database;
 
@@ -104,17 +111,38 @@ public final class AgentPrincipalScopeUpgradeFixture {
 
         insertRoleBinding(connection, PERSONAL_PRINCIPAL_ID, SystemAccessRoleCatalog.AGENT_DELEGATOR_ID,
                 "instance", null);
-        insertRoleBinding(connection, WORKSPACE_PRINCIPAL_ID, SystemAccessRoleCatalog.AGENT_DELEGATOR_ID,
+        seedLegacyWorkspaceRole(connection);
+        insertRoleBinding(connection, WORKSPACE_PRINCIPAL_ID, LEGACY_WORKSPACE_ROLE_ID,
                 "workspace", WORKSPACE_ID);
         insertRoleBinding(connection, INSTANCE_PRINCIPAL_ID, SystemAccessRoleCatalog.USER_ID,
                 "instance", null);
 
-        insertGrant(connection, PERSONAL_PRINCIPAL_ID, "read", "instance", null);
+        insertGrant(connection, PERSONAL_PRINCIPAL_ID, "read", "instance", null, "template");
         for (String atom : new String[]{"read", "write", "delete", "exec", "MANAGE_PROVIDER_CONNECTIONS",
                 "MANAGE_WORKSPACE_POLICY", "USE_WORKSPACE_RUNTIME"}) {
-            insertGrant(connection, WORKSPACE_PRINCIPAL_ID, atom, "workspace", WORKSPACE_ID);
+            // `role` is the authoritative source (2026-11-04 ruling). Seeding it keeps the fixture
+            // deterministic even after another test triggers the role materializer: a principal with
+            // role rows no longer falls back to its legacy template snapshot.
+            insertGrant(connection, WORKSPACE_PRINCIPAL_ID, atom, "workspace", WORKSPACE_ID, "role");
         }
-        insertGrant(connection, INSTANCE_PRINCIPAL_ID, "exec", "instance", null);
+        insertGrant(connection, INSTANCE_PRINCIPAL_ID, "exec", "instance", null, "template");
+    }
+
+    /**
+     * A pre-upgrade role whose action set equals the legacy workspace snapshot. Seeding only the
+     * snapshot is not enough: a later cap write re-materializes role grants, and with an
+     * unrelated role (e.g. AGENT_DELEGATOR's SPAWN_AGENT) the materializer would delete them and
+     * leave the cap empty. This role keeps the fixture order-independent.
+     */
+    private static void seedLegacyWorkspaceRole(Connection connection) throws SQLException {
+        execute(connection, "INSERT INTO roles (id, name, display_name, description, is_system)"
+                + " VALUES ('" + LEGACY_WORKSPACE_ROLE_ID + "', 'V19_LEGACY_WORKSPACE',"
+                + " 'V19 legacy workspace', 'fixture-only pre-upgrade workspace role', FALSE)");
+        for (String atom : new String[]{"read", "write", "delete", "exec", "MANAGE_PROVIDER_CONNECTIONS",
+                "MANAGE_WORKSPACE_POLICY", "USE_WORKSPACE_RUNTIME"}) {
+            execute(connection, "INSERT INTO role_permissions (role_id, action_class, resource_pattern)"
+                    + " VALUES ('" + LEGACY_WORKSPACE_ROLE_ID + "', '" + atom + "', '*')");
+        }
     }
 
     /**
@@ -158,11 +186,12 @@ public final class AgentPrincipalScopeUpgradeFixture {
     }
 
     private static void insertGrant(Connection connection, UUID principalId, String atom, String scopeType,
-            UUID scopeId) throws SQLException {
+            UUID scopeId, String source) throws SQLException {
         execute(connection, "INSERT INTO grants (id, subject_type, subject_id, permissions, source,"
                 + " scope_type, scope_id, read_state) VALUES ('" + UUID.randomUUID() + "',"
                 + " 'agent_principal', '" + principalId + "', '[{\"actionClass\": \"" + atom
-                + "\"}]'::jsonb, 'template', '" + scopeType + "', " + literal(scopeId) + ", 'unread')");
+                + "\"}]'::jsonb, '" + source + "', '" + scopeType + "', " + literal(scopeId)
+                + ", 'unread')");
     }
 
     private static void migrate(TestDatabaseProvider.DatabaseRef target, String version) {

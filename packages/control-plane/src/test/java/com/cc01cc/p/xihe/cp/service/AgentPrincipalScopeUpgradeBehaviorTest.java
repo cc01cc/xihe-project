@@ -11,7 +11,9 @@ import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.MethodOrderer;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.TestMethodOrder;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalServerPort;
@@ -55,6 +57,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 @ActiveProfiles("test")
 @DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_CLASS)
 @TestPropertySource(properties = "XIHE_WORKSPACE_DOCKER_BACKEND=disabled")
+@TestMethodOrder(MethodOrderer.MethodName.class)
 class AgentPrincipalScopeUpgradeBehaviorTest {
 
     private static final String PASSWORD = TestDataFactory.PASSWORD;
@@ -80,7 +83,6 @@ class AgentPrincipalScopeUpgradeBehaviorTest {
 
     @Autowired
     private WorkspaceFixture workspaceFixture;
-
 
     @Autowired
     private SessionRepository sessionRepository;
