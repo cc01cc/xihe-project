@@ -59,7 +59,7 @@ interface Account {
     email: string;
     /** 加工作区成员按 username 寻址（`POST /workspaces/{id}/members`）。 */
     username: string;
-    /** 人类参与者的 echo displayName（@ 提及按 displayName 解析，见 MentionParser）。 */
+    /** 人类参与者的 echo displayName（PLAN-0684/D-183：= 账号 username；@ 提及按 displayName 解析，见 MentionParser）。 */
     displayName: string;
     workspaceId: string;
     headers: Record<string, string>;
@@ -96,8 +96,9 @@ async function registerAccount(request: APIRequestContext, label: string): Promi
     const auth = (await response.json()) as { accessToken: string; user: { id: string } };
     const workspaceId = await ensureWorkspace(request, auth.accessToken);
     // 两个身份面别靠猜：登录响应的 user 视图不带 username（PLAN-0565 裁定 #7 由 email 派生）；
-    // `POST /members` 按 **username** 寻址，@ 提及按参与者 echo **displayName**(= user.name)
-    // 解析（MentionParser）。`/auth/me` 是二者唯一的权威读面。
+    // `POST /members` 按 **username** 寻址，@ 提及按参与者 echo **displayName** 解析
+    // （MentionParser）。PLAN-0684/D-183 起 HUMAN echo displayName = 账号 username（单源，
+    // user.name 不再参与投影）。`/auth/me` 是二者唯一的权威读面。
     const me = await request.get(`${CP_URL}/api/v1/auth/me`, {
         headers: { Authorization: `Bearer ${auth.accessToken}` },
     });
@@ -109,7 +110,7 @@ async function registerAccount(request: APIRequestContext, label: string): Promi
         userId: auth.user.id,
         email,
         username: profile.username!,
-        displayName: profile.name ?? profile.username!,
+        displayName: profile.username!,
         workspaceId,
         headers: {
             Authorization: `Bearer ${auth.accessToken}`,
@@ -366,7 +367,8 @@ test.describe("@host PLAN-0658 R1 多人类账户", () => {
         const before = await memberMentionCount(request);
         expect(before, "B 作为受邀参与者可读名册（view=true）").toBeGreaterThanOrEqual(0);
 
-        // @ 按 displayName 解析（MentionParser：@ 后接参与者 echo displayName + 边界）。
+        // @ 按 displayName 解析（MentionParser：@ 后接参与者 echo displayName + 边界；
+        // PLAN-0684/D-183 起 echo displayName = 账号 username）。
         const sent = await request.post(`${CP_URL}/api/v1/chat`, {
             headers: owner.headers,
             data: {

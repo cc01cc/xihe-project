@@ -5122,7 +5122,7 @@ components:
         respondPolicy: { type: string, enum: [ALWAYS, WHEN_MENTIONED, JUDGE, MUTED] }
         source: { type: string, enum: [workspace, personal, instance] }
         disabledAt: { type: [string, 'null'], format: date-time }
-        displayName: { type: string, description: 'PLAN-0623: AGENT → agent_principals.name; HUMAN → the user display name (name → username → email local part); null only when the subject cannot be resolved — the UI then shows an unknown-user placeholder, never a UUID.' }
+        displayName: { type: string, description: 'PLAN-0684 (D-183): AGENT → agent_principals.name; HUMAN → the account username (NOT NULL since V82; the legacy user name and the email are never projected); null only when the subject cannot be resolved — the UI then shows an unknown-user placeholder, never a UUID.' }
         defaultModelProvider: { type: [string, 'null'], description: 'AGENT participants only: the participant agent model intent; null for HUMAN.' }
         defaultModelName: { type: [string, 'null'], description: 'AGENT participants only: the participant agent model intent; null for HUMAN.' }
         selfOwned: { type: boolean, description: 'PLAN-0623 D23-27 + D-174: the caller may send as this row (mirrors the asParticipantId gate), so the UI can list only legal targets. HUMAN = principalId is the caller; AGENT = owned by the caller (`owner_user_id`), or owner-less (spoken for by the conversation owner). false for every row when the caller does not own the conversation.' }

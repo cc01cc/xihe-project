@@ -5,6 +5,7 @@ import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
 import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.entity.SessionParticipant;
 import com.cc01cc.p.xihe.cp.entity.SessionParticipantCursor;
+import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.policy.AuthzContext;
 import com.cc01cc.p.xihe.cp.policy.GrantAuthorizationService;
 import com.cc01cc.p.xihe.cp.policy.GrantIntersectionEvaluator;
@@ -337,6 +338,46 @@ class SessionParticipantServiceTest {
 
         verify(cursors).findByParticipantIdIn(any());
     }
+
+    // ------------------------------------------------------------ PLAN-0684 D-183 / B2
+
+    @Test
+    void humanDisplayIsTheUsernameAloneEvenWhenTheLegacyNameDiffers() {
+        User user = mock(User.class);
+        when(user.getUsername()).thenReturn("u_d183");
+        when(user.getName()).thenReturn("Stale Legacy Display Name");
+
+        assertEquals("u_d183", SessionParticipantService.displayNameOf(user),
+                "PLAN-0684 (D-183): the username is the single display source — a stale legacy name never wins");
+    }
+
+    @Test
+    void aBlankUsernameStaysNullWithoutTheEmailFallback() {
+        User user = mock(User.class);
+        when(user.getUsername()).thenReturn(" ");
+        when(user.getName()).thenReturn("Legacy Name");
+        when(user.getEmail()).thenReturn("fallback@test.com");
+
+        assertNull(SessionParticipantService.displayNameOf(user),
+                "PLAN-0684 (D-183): V82 made username NOT NULL — the email-local-part fallback is gone");
+    }
+
+    @Test
+    void aUserWhoseUsernameIsAllIsRefusedLikeTheReservedToken() {
+        // The add() flow validates the principal exists before the reserved-name gate.
+        when(users.existsById(HUMAN_ID)).thenReturn(true);
+        User all = mock(User.class);
+        when(all.getUsername()).thenReturn("all");
+        when(users.findById(HUMAN_ID)).thenReturn(Optional.of(all));
+
+        CpApiException refused = assertThrows(CpApiException.class,
+                () -> service.add(OWNER, WORKSPACE, SESSION_ID.toString(), humanRequest()));
+        assertEquals("PARTICIPANT_RESERVED_DISPLAY_NAME", refused.getCode(),
+                "PLAN-0684 (B2): the reserved check reads the display source (username) — "
+                        + "a user named 'all' cannot bypass the @all token via a stale name field");
+        assertEquals(HttpStatus.BAD_REQUEST, refused.getStatus());
+    }
+
     private static SessionParticipantService.AddRequest humanRequest() {
         return new SessionParticipantService.AddRequest("HUMAN", HUMAN_ID.toString(), null, null, null, null);
     }
