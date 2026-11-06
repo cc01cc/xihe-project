@@ -1,4 +1,4 @@
-import { decideReadMode, FILE_SIZE_THRESHOLDS } from "../../../lib/fileSize";
+import { decideReadMode } from "../../../lib/fileSize";
 import { api } from "../../../composables/api";
 
 const PREVIEW_BYTE_BUDGET = 8 * 1024 * 1024;
@@ -35,7 +35,13 @@ async function runtimeReadFilePreview(
         reachedEnd = false;
 
     while (loadedBytes < PREVIEW_BYTE_BUDGET) {
-        const result = await api.readFileRange(path, workspaceId, offset, PREVIEW_LINES_PER_RANGE, rootId);
+        const result = await api.readFileRange(
+            path,
+            workspaceId,
+            offset,
+            PREVIEW_LINES_PER_RANGE,
+            rootId,
+        );
         if (result.is_binary) {
             throw new Error("Binary files cannot be opened as text previews");
         }

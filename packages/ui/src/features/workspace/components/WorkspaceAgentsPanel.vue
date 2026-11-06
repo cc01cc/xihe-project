@@ -2034,7 +2034,7 @@ async function unbind(agent: WorkspaceAgentBinding) {
                                 </button>
                             </div>
                             <p
-                                v-else-if="canBindRbac !== true"
+                                v-else
                                 class="text-[11px] text-muted-foreground"
                                 data-testid="agent-rbac-readonly-hint"
                             >
@@ -2165,10 +2165,7 @@ async function unbind(agent: WorkspaceAgentBinding) {
                                     {{ t("workspace.agentRbacBind") }}
                                 </button>
                             </div>
-                            <p
-                                v-else-if="canBindRbac !== true"
-                                class="text-[11px] text-muted-foreground"
-                            >
+                            <p v-else class="text-[11px] text-muted-foreground">
                                 {{
                                     canBindRbac === false
                                         ? t("workspace.agentRbacReadonlyHint")
