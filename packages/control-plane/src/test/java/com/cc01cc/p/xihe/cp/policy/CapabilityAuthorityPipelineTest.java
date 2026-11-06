@@ -45,6 +45,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  *
  * <p>Plus the T1.9 seed fact: the bootstrap admin starts with the SUPER_ADMIN binding, so the
  * 15 action atoms are materialized and {@code cap:instance:super} resolves — before any login.</p>
+ *
+ * <p>PLAN-0651 T4.5 adds the reverse of that seed fact (verify V4④): the binding, not a role name,
+ * is where the capability comes from — deleting it through the replacement API flips
+ * {@code canWorkspaceAdmin} back to false inside the same request window, because the materializer
+ * invalidates the cache while it writes instead of letting the 30 s TTL expire.</p>
  */
 class CapabilityAuthorityPipelineTest extends AbstractH2Test {
 
@@ -148,6 +153,49 @@ class CapabilityAuthorityPipelineTest extends AbstractH2Test {
                 "capability atoms never reach grants (design #23)"));
     }
 
+    /**
+     * PLAN-0651 T4.5 / verify V4④ (reverse): ADMIN reaches {@code canWorkspaceAdmin} on any
+     * workspace because the default grant set says so, not because a role name matched. Replacing
+     * the instance binding set through the real API must therefore take the capability away again —
+     * and it must do so immediately: the positive read above warms the 30 s {@link AuthzContext}
+     * cache, so a stale cached {@code true} would keep answering for half a minute.
+     *
+     * <p>{@code BindingAdminService.replace} invalidates each affected subject's cache while it
+     * writes ({@code materializeSubjectWithEpochBump} → {@code invalidateNowAndAfterCompletion}), so
+     * the negative assertions below are immediate and need no wait or polling.</p>
+     */
+    @Test
+    void removingTheAdminBindingTakesWorkspaceAdminAwayImmediately() {
+        Session operator = register("cap-v4d-operator-" + UUID.randomUUID() + "@test.com");
+        bindInstanceRole(operator.userId(), SystemAccessRoleCatalog.ADMIN);
+        Session target = register("cap-v4d-target-" + UUID.randomUUID() + "@test.com");
+        bindInstanceRole(target.userId(), SystemAccessRoleCatalog.ADMIN);
+
+        UUID someWorkspace = UUID.randomUUID();
+        assertTrue(authzContext.canWorkspaceAdmin(target.userId(), someWorkspace),
+                "V4④ positive: ADMIN's default grant set covers every workspace");
+        assertTrue(authzContext.isInstanceAdmin(target.userId()),
+                "the same binding is the instance-administrator capability");
+
+        List<Map<String, String>> desired = instanceBindingPairs(operator.token()).stream()
+                .filter(pair -> !target.userId().toString().equals(pair.get("subjectId")))
+                .toList();
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(operator.token());
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        ResponseEntity<Map> replaced = restTemplate.exchange(url("/api/v1/bindings?scope=instance"),
+                HttpMethod.PUT, new HttpEntity<>(Map.of("bindings", desired), headers), Map.class);
+        assertEquals(HttpStatus.OK.value(), replaced.getStatusCode().value(),
+                String.valueOf(replaced.getBody()));
+
+        assertFalse(authzContext.isInstanceAdmin(target.userId()),
+                "V4④ reverse: the capability follows the binding, not the user");
+        assertFalse(authzContext.canWorkspaceAdmin(target.userId(), someWorkspace),
+                "deleting the grant must flip canWorkspaceAdmin inside the cache window");
+        assertFalse(authzContext.capabilitiesFor(target.userId()).workspaceAdminAll(),
+                "a second read in the same window must not resurrect the old snapshot");
+    }
+
     // ---------------------------------------------------------------- helpers
 
     private record Session(String token, UUID userId) {
@@ -210,5 +258,24 @@ class CapabilityAuthorityPipelineTest extends AbstractH2Test {
         ResponseEntity<Map> response = restTemplate.exchange(baseUrl + "/api/v1/sessions",
                 HttpMethod.GET, new HttpEntity<>(headers), Map.class);
         return response.getStatusCode().value();
+    }
+
+    /** {@code GET /api/v1/bindings?scope=instance} as the {@code {subjectId, roleId}} pairs the
+     * replacement API round-trips. */
+    private List<Map<String, String>> instanceBindingPairs(String token) {
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(token);
+        ResponseEntity<Map> listed = restTemplate.exchange(baseUrl + "/api/v1/bindings?scope=instance",
+                HttpMethod.GET, new HttpEntity<>(headers), Map.class);
+        assertEquals(HttpStatus.OK.value(), listed.getStatusCode().value(),
+                String.valueOf(listed.getBody()));
+        Map<?, ?> body = assertNotNullBody(listed.getBody());
+        List<Map<String, String>> pairs = new java.util.ArrayList<>();
+        for (Object row : (List<?>) body.get("bindings")) {
+            Map<?, ?> binding = (Map<?, ?>) row;
+            pairs.add(Map.of("subjectId", String.valueOf(binding.get("subjectId")),
+                    "roleId", String.valueOf(binding.get("roleId"))));
+        }
+        return pairs;
     }
 }
