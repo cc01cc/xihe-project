@@ -7,6 +7,7 @@ import { PassThrough, Readable } from 'node:stream';
 import { test } from 'node:test';
 import path from 'node:path';
 import { tmpdir } from 'node:os';
+import { pathToFileURL } from 'node:url';
 import { printResult, runCommand } from './xihe.mjs';
 import { promptSecret, readResponseText } from './xihe-cli/provider.mjs';
 import { clearToken } from './xihe-cli/token-store.mjs';
@@ -4827,4 +4828,1512 @@ test('PLAN-0643 R7: --raw truncation keeps the partial bytes and never claims su
   assert.equal(result.envelope.ok, false);
   assert.ok(Buffer.byteLength(result.data.bodyText, 'utf8') <= 4, 'the printed body is capped at the byte limit');
   assert.ok(result.data.bodyText.startsWith('中'), 'the readable prefix is preserved');
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PLAN-0643 T2 (M6-1): config get/set/unset/meta/put + config-locks (V36–V43)
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function startConfigCpMock({
+  envOverrides = { runMaxTurns: '12' },
+  putInstanceStatus = 200,
+  putInstanceCode = 'CONFIG_KEY_LOCKED',
+  deleteKeyStatus = 200,
+  deleteKeyCode = 'CONFIG_ENV_LOCKED',
+  locksStatus = 200,
+} = {}) {
+  const state = {
+    loginRequests: 0,
+    configGetRequests: 0,
+    lastConfigQuery: null,
+    lastConfigDomain: null,
+    instancePutRequests: 0,
+    lastPutDomain: null,
+    lastPutBody: null,
+    deleteKeyRequests: 0,
+    lastDeleteDomain: null,
+    lastDeleteKey: null,
+    domainPutRequests: 0,
+    lastDomainPutLayer: null,
+    lastDomainPutDomain: null,
+    lastDomainPutBody: null,
+    lastDomainPutQuery: null,
+    metaRequests: 0,
+    lastMetaQuery: null,
+    locksListRequests: 0,
+    lastLocksQuery: null,
+    locksSetRequests: 0,
+    lastLocksPutPath: null,
+    lastLocksPutBody: null,
+    locksDeleteRequests: 0,
+    lastLocksDeleteQuery: null,
+  };
+  const domains = {
+    'agent-runtime': { instance: { runMaxTurns: '10', rateLimitPerMin: '3' }, user: {}, workspace: {} },
+    'agent-templates': { instance: { 'tpl.default': 'base-v2' }, user: {}, workspace: {} },
+  };
+  const server = createServer(async (request, response) => {
+    const url = new URL(request.url, 'http://127.0.0.1');
+    if (url.pathname === '/api/v1/auth/login' && request.method === 'POST') {
+      state.loginRequests += 1;
+      json(response, 200, { accessToken: 'test-access-token' });
+      return;
+    }
+    if (request.method === 'GET' && url.pathname === '/api/v1/config-locks') {
+      state.locksListRequests += 1;
+      state.lastLocksQuery = url.searchParams;
+      if (locksStatus !== 200) {
+        json(response, locksStatus, { code: 'FORBIDDEN', detail: 'must not be printed' });
+        return;
+      }
+      json(response, 200, {
+        domain: url.searchParams.get('domain'),
+        revision: 3,
+        keys: [
+          { key: 'runMaxTurns', lockable: true, notLockableReason: null, locked: true, reason: 'pin for demo', mode: 'enforce_value', updatedBy: 'admin', updatedAt: '2026-11-06T00:00:00Z', revision: 3, valuePresent: true },
+          { key: 'rateLimitPerMin', lockable: true, notLockableReason: null, locked: false, reason: null, mode: null, updatedBy: null, updatedAt: null, revision: 0, valuePresent: true },
+        ],
+      });
+      return;
+    }
+    if (request.method === 'PUT' && url.pathname.startsWith('/api/v1/config-locks/')) {
+      state.locksSetRequests += 1;
+      state.lastLocksPutPath = url.pathname;
+      state.lastLocksPutBody = await requestBody(request);
+      if (locksStatus !== 200) {
+        json(response, locksStatus, { code: 'FORBIDDEN', detail: 'must not be printed' });
+        return;
+      }
+      json(response, 200, {
+        key: 'runMaxTurns', lockable: true, notLockableReason: null, locked: true,
+        reason: state.lastLocksPutBody?.reason ?? null, mode: state.lastLocksPutBody?.mode ?? 'enforce_value',
+        updatedBy: 'admin', updatedAt: '2026-11-06T00:00:00Z', revision: 3, valuePresent: true,
+      });
+      return;
+    }
+    if (request.method === 'DELETE' && url.pathname.startsWith('/api/v1/config-locks/')) {
+      state.locksDeleteRequests += 1;
+      state.lastLocksDeleteQuery = url.searchParams;
+      json(response, 200, { status: 'ok' });
+      return;
+    }
+    if (request.method === 'GET' && url.pathname.startsWith('/api/v1/config/')) {
+      const tail = url.pathname.slice('/api/v1/config/'.length);
+      if (tail.endsWith('/meta')) {
+        state.metaRequests += 1;
+        state.lastMetaQuery = url.searchParams;
+        json(response, 200, {
+          domain: decodeURIComponent(tail.slice(0, -'/meta'.length)),
+          layer: url.searchParams.get('layer'),
+          keys: [
+            { key: 'runMaxTurns', source: 'env', locked: true, writable: false },
+            { key: 'rateLimitPerMin', source: 'instance', locked: false, writable: true },
+            { key: 'timeoutMs', source: 'default', locked: false, writable: true },
+          ],
+        });
+        return;
+      }
+      state.configGetRequests += 1;
+      state.lastConfigQuery = url.searchParams;
+      state.lastConfigDomain = decodeURIComponent(tail);
+      if (state.lastConfigDomain === 'not-a-domain') {
+        json(response, 400, { code: 'INVALID_DOMAIN', detail: 'must not be printed' });
+        return;
+      }
+      const layer = url.searchParams.get('layer');
+      const includeMeta = url.searchParams.get('includeMeta') === 'true';
+      const rows = layer
+        ? { ...(domains[state.lastConfigDomain]?.[layer] ?? {}) }
+        : {
+            ...domains[state.lastConfigDomain]?.instance,
+            ...domains[state.lastConfigDomain]?.user,
+            ...domains[state.lastConfigDomain]?.workspace,
+            ...envOverrides,
+          };
+      if (includeMeta) {
+        json(response, 200, { domain: state.lastConfigDomain, entries: rows, envOverridden: layer ? {} : envOverrides });
+        return;
+      }
+      json(response, 200, rows);
+      return;
+    }
+    if (request.method === 'PUT' && url.pathname.startsWith('/api/v1/config/instance/')) {
+      state.instancePutRequests += 1;
+      state.lastPutDomain = decodeURIComponent(url.pathname.slice('/api/v1/config/instance/'.length));
+      state.lastPutBody = await requestBody(request);
+      if (putInstanceStatus !== 200) {
+        json(response, putInstanceStatus, { code: putInstanceCode, detail: 'must not be printed' });
+        return;
+      }
+      domains[state.lastPutDomain] = domains[state.lastPutDomain] ?? { instance: {}, user: {}, workspace: {} };
+      domains[state.lastPutDomain].instance = { ...domains[state.lastPutDomain].instance, ...state.lastPutBody };
+      json(response, 200, state.lastPutBody);
+      return;
+    }
+    if (request.method === 'DELETE' && url.pathname.startsWith('/api/v1/config/instance/')) {
+      const parts = url.pathname.slice('/api/v1/config/instance/'.length).split('/');
+      state.deleteKeyRequests += 1;
+      state.lastDeleteDomain = decodeURIComponent(parts[0]);
+      state.lastDeleteKey = decodeURIComponent(parts[1] ?? '');
+      if (deleteKeyStatus !== 200) {
+        json(response, deleteKeyStatus, { code: deleteKeyCode, detail: 'must not be printed' });
+        return;
+      }
+      delete domains[state.lastDeleteDomain]?.instance?.[state.lastDeleteKey];
+      json(response, 200, { status: 'ok' });
+      return;
+    }
+    if (request.method === 'PUT' && (url.pathname.startsWith('/api/v1/config/user/') || url.pathname.startsWith('/api/v1/config/workspace/'))) {
+      state.domainPutRequests += 1;
+      state.lastDomainPutLayer = url.pathname.startsWith('/api/v1/config/user/') ? 'user' : 'workspace';
+      state.lastDomainPutDomain = decodeURIComponent(url.pathname.split('/').pop());
+      state.lastDomainPutBody = await requestBody(request);
+      state.lastDomainPutQuery = url.searchParams;
+      json(response, 200, state.lastDomainPutBody);
+      return;
+    }
+    json(response, 404, { code: 'NOT_FOUND', detail: 'nope' });
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  return {
+    state,
+    env: { XIHE_CP_PORT: String(server.address().port), XIHE_DEV_ADMIN_PASSWORD: TEST_PASSWORD },
+    close: () => new Promise((resolve, reject) => server.close((error) => (error ? reject(error) : resolve()))),
+  };
+}
+
+function writeTempEntriesFile(t, content) {
+  const dir = fs.mkdtempSync(path.join(tmpdir(), 'xihe-config-put-'));
+  const file = path.join(dir, 'entries.json');
+  fs.writeFileSync(file, typeof content === 'string' ? content : JSON.stringify(content), 'utf8');
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  return file;
+}
+
+test('PLAN-0643 V36: config get effective view includes envOverridden, the single layer does not', async (t) => {
+  const cp = await startConfigCpMock();
+  t.after(cp.close);
+
+  const effective = await runCommand(['config', 'get', 'agent-runtime', '--json'], {
+    env: cp.env, promptSecret: noPrompt, stderr: sink(),
+  });
+  assert.equal(effective.exitCode, 0, JSON.stringify(effective.error));
+  assert.equal(effective.data.kind, 'config-get');
+  assert.equal(effective.data.layer, 'effective');
+  assert.equal(effective.data.entries.runMaxTurns, '12', 'the env value wins the merged view');
+  assert.equal(effective.data.envOverridden.runMaxTurns, '12');
+  assert.equal(cp.state.lastConfigQuery.get('includeMeta'), 'true');
+  assert.equal(cp.state.lastConfigQuery.get('layer'), null);
+
+  const layered = await runCommand(['config', 'get', 'agent-runtime', '--layer', 'instance', '--json'], {
+    env: cp.env, promptSecret: noPrompt, stderr: sink(),
+  });
+  assert.equal(layered.exitCode, 0, JSON.stringify(layered.error));
+  assert.equal(layered.data.layer, 'instance');
+  assert.equal(layered.data.entries.runMaxTurns, '10', 'the raw instance row has no env overlay');
+  assert.equal(layered.data.envOverridden, undefined);
+  assert.equal(cp.state.lastConfigQuery.get('layer'), 'instance');
+  assert.equal(cp.state.lastConfigQuery.get('includeMeta'), null);
+
+  const optIn = await runCommand(['config', 'get', 'agent-runtime', '--layer', 'instance', '--include-meta', '--json'], {
+    env: cp.env, promptSecret: noPrompt, stderr: sink(),
+  });
+  assert.equal(optIn.data.includeMeta, true);
+  assert.equal(cp.state.lastConfigQuery.get('includeMeta'), 'true');
+});
+
+test('PLAN-0643 V38: explicit-only domains pass --layer through to the CP read', async (t) => {
+  const cp = await startConfigCpMock();
+  t.after(cp.close);
+
+  const result = await runCommand(['config', 'get', 'agent-templates', '--layer', 'instance', '--workspace', 'ws-1', '--json'], {
+    env: cp.env, promptSecret: noPrompt, stderr: sink(),
+  });
+
+  assert.equal(result.exitCode, 0, JSON.stringify(result.error));
+  assert.equal(result.data.entries['tpl.default'], 'base-v2');
+  assert.equal(cp.state.lastConfigQuery.get('layer'), 'instance');
+  assert.equal(cp.state.lastConfigQuery.get('workspaceId'), 'ws-1');
+});
+
+test('PLAN-0643 V39: --layer user read succeeds while config set --layer user is a usage error before any request', async (t) => {
+  const cp = await startConfigCpMock();
+  t.after(cp.close);
+
+  const read = await runCommand(['config', 'get', 'agent-runtime', '--layer', 'user', '--json'], {
+    env: cp.env, promptSecret: noPrompt, stderr: sink(),
+  });
+  assert.equal(read.exitCode, 0, JSON.stringify(read.error));
+  assert.equal(read.data.layer, 'user');
+
+  const rejected = await runCommand(['config', 'set', 'agent-runtime', 'runMaxTurns', '5', '--layer', 'user'], {
+    env: cp.env, promptSecret: noPrompt, stderr: sink(),
+  });
+  assert.equal(rejected.exitCode, 2);
+  assert.equal(rejected.error.code, 'INVALID_ARGUMENT');
+  assert.equal(cp.state.instancePutRequests, 0, 'the user-layer write is rejected CLI-side (T2.6 boundary)');
+});
+
+test('PLAN-0643 V40: config set round-trips the instance rows and config unset removes the key', async (t) => {
+  const cp = await startConfigCpMock();
+  t.after(cp.close);
+
+  const set = await runCommand(['config', 'set', 'agent-runtime', 'runMaxTurns', '5', '--json'], {
+    env: cp.env, promptSecret: noPrompt, stderr: sink(),
+  });
+  assert.equal(set.exitCode, 0, JSON.stringify(set.error));
+  assert.equal(set.data.kind, 'config-set');
+  assert.equal(set.data.before, '10');
+  assert.equal(set.data.after, '5');
+  assert.equal(set.data.changed, true);
+  assert.equal(set.data.verified, true);
+  assert.deepEqual(cp.state.lastPutBody, { rateLimitPerMin: '3', runMaxTurns: '5' });
+  assert.equal(cp.state.lastPutDomain, 'agent-runtime');
+
+  cp.state.lastConfigQuery = null;
+  const readBack = await runCommand(['config', 'get', 'agent-runtime', '--layer', 'instance', '--json'], {
+    env: cp.env, promptSecret: noPrompt, stderr: sink(),
+  });
+  assert.equal(readBack.data.entries.runMaxTurns, '5');
+
+  const unset = await runCommand(['config', 'unset', 'agent-runtime', 'runMaxTurns', '--json'], {
+    env: cp.env, promptSecret: noPrompt, stderr: sink(),
+  });
+  assert.equal(unset.exitCode, 0, JSON.stringify(unset.error));
+  assert.equal(unset.data.status, 'ok');
+  assert.equal(cp.state.lastDeleteKey, 'runMaxTurns');
+
+  const afterUnset = await runCommand(['config', 'get', 'agent-runtime', '--layer', 'instance', '--json'], {
+    env: cp.env, promptSecret: noPrompt, stderr: sink(),
+  });
+  assert.equal(afterUnset.data.entries.runMaxTurns, undefined);
+  assert.equal(afterUnset.data.entries.rateLimitPerMin, '3', 'the untouched key survives the whole-domain write');
+});
+
+test('PLAN-0643 V41: a locked key keeps the CP 409 code and hints at config-locks (set)', async (t) => {
+  const cp = await startConfigCpMock({ putInstanceStatus: 409, putInstanceCode: 'CONFIG_KEY_LOCKED' });
+  t.after(cp.close);
+  const stderr = sink();
+
+  const result = await runCommand(['config', 'set', 'agent-runtime', 'runMaxTurns', '5'], {
+    env: cp.env, promptSecret: noPrompt, stderr,
+  });
+
+  assert.equal(result.exitCode, 1);
+  assert.equal(result.error.code, 'CONFIG_KEY_LOCKED');
+  assert.match(stderr.text(), /config-locks/);
+});
+
+test('PLAN-0643 V41: config unset keeps CONFIG_ENV_LOCKED and hints at config-locks', async (t) => {
+  const cp = await startConfigCpMock({ deleteKeyStatus: 409, deleteKeyCode: 'CONFIG_ENV_LOCKED' });
+  t.after(cp.close);
+  const stderr = sink();
+
+  const result = await runCommand(['config', 'unset', 'agent-runtime', 'runMaxTurns'], {
+    env: cp.env, promptSecret: noPrompt, stderr,
+  });
+
+  assert.equal(result.exitCode, 1);
+  assert.equal(result.error.code, 'CONFIG_ENV_LOCKED');
+  assert.match(stderr.text(), /config-locks/);
+});
+
+test('PLAN-0643 V42: config meta defaults to the instance layer and reports source/locked/writable', async (t) => {
+  const cp = await startConfigCpMock();
+  t.after(cp.close);
+
+  const result = await runCommand(['config', 'meta', 'agent-runtime', '--json'], {
+    env: cp.env, promptSecret: noPrompt, stderr: sink(),
+  });
+
+  assert.equal(result.exitCode, 0, JSON.stringify(result.error));
+  assert.equal(result.data.kind, 'config-meta');
+  assert.equal(result.data.layer, 'instance');
+  assert.equal(cp.state.lastMetaQuery.get('layer'), 'instance');
+  assert.equal(result.data.keys.length, 3);
+  assert.deepEqual(
+    result.data.keys.map((entry) => ({ source: entry.source, locked: entry.locked, writable: entry.writable })),
+    [
+      { source: 'env', locked: true, writable: false },
+      { source: 'instance', locked: false, writable: true },
+      { source: 'default', locked: false, writable: true },
+    ],
+  );
+});
+
+test('PLAN-0643 V43: config export stays instance-only (--layer user answers 2)', async () => {
+  const result = await runCommand(['config', 'export', '--layer', 'user'], {
+    env: {}, promptSecret: noPrompt,
+  });
+
+  assert.equal(result.exitCode, 2);
+  assert.equal(result.error.code, 'INVALID_ARGUMENT');
+});
+
+test('PLAN-0643 V43: config-locks list forwards the optional domain filter', async (t) => {
+  const cp = await startConfigCpMock();
+  t.after(cp.close);
+
+  const all = await runCommand(['config-locks', 'list', '--json'], {
+    env: cp.env, promptSecret: noPrompt, stderr: sink(),
+  });
+  assert.equal(all.exitCode, 0, JSON.stringify(all.error));
+  assert.equal(all.data.kind, 'config-locks-list');
+  assert.equal(all.data.revision, 3);
+  assert.equal(all.data.keys.length, 2);
+  assert.equal(cp.state.lastLocksQuery.get('domain'), null);
+
+  const filtered = await runCommand(['config-locks', 'list', 'agent-runtime', '--json'], {
+    env: cp.env, promptSecret: noPrompt, stderr: sink(),
+  });
+  assert.equal(filtered.data.domain, 'agent-runtime');
+  assert.equal(cp.state.lastLocksQuery.get('domain'), 'agent-runtime');
+});
+
+test('PLAN-0643 V43: config-locks set requires --reason and forwards the lock request body', async (t) => {
+  const cp = await startConfigCpMock();
+  t.after(cp.close);
+
+  const missing = await runCommand(['config-locks', 'set', 'agent-runtime', 'runMaxTurns', '--value', '5'], {
+    env: cp.env, promptSecret: noPrompt, stderr: sink(),
+  });
+  assert.equal(missing.exitCode, 2);
+  assert.equal(missing.error.code, 'INVALID_ARGUMENT');
+  assert.equal(cp.state.locksSetRequests, 0);
+
+  const set = await runCommand(['config-locks', 'set', 'agent-runtime', 'runMaxTurns', '--reason', 'pin for demo', '--value', '5', '--revision', '2', '--json'], {
+    env: cp.env, promptSecret: noPrompt, stderr: sink(),
+  });
+  assert.equal(set.exitCode, 0, JSON.stringify(set.error));
+  assert.equal(set.data.kind, 'config-locks-set');
+  assert.equal(set.data.locked, true);
+  assert.deepEqual(cp.state.lastLocksPutBody, { reason: 'pin for demo', value: '5', revision: 2 });
+  assert.match(cp.state.lastLocksPutPath, /\/api\/v1\/config-locks\/agent-runtime\/runMaxTurns$/);
+});
+
+test('PLAN-0643 V43: config-locks delete forwards revision and clearValue as query parameters', async (t) => {
+  const cp = await startConfigCpMock();
+  t.after(cp.close);
+
+  const result = await runCommand(['config-locks', 'delete', 'agent-runtime', 'runMaxTurns', '--revision', '2', '--clear-value', '--json'], {
+    env: cp.env, promptSecret: noPrompt, stderr: sink(),
+  });
+
+  assert.equal(result.exitCode, 0, JSON.stringify(result.error));
+  assert.equal(result.data.status, 'ok');
+  assert.equal(result.data.clearValue, true);
+  assert.equal(cp.state.lastLocksDeleteQuery.get('revision'), '2');
+  assert.equal(cp.state.lastLocksDeleteQuery.get('clearValue'), 'true');
+});
+
+test('PLAN-0643 V11: config get injects workspaceId as a query from --workspace and XIHE_WORKSPACE_ID', async (t) => {
+  const cp = await startConfigCpMock();
+  t.after(cp.close);
+
+  const flag = await runCommand(['config', 'get', 'agent-runtime', '--layer', 'workspace', '--workspace', 'ws-1', '--json'], {
+    env: cp.env, promptSecret: noPrompt, stderr: sink(),
+  });
+  assert.equal(flag.exitCode, 0, JSON.stringify(flag.error));
+  assert.equal(flag.data.workspaceId, 'ws-1');
+  assert.equal(cp.state.lastConfigQuery.get('workspaceId'), 'ws-1');
+
+  const fromEnv = await runCommand(['--workspace', 'ws-lead', 'config', 'get', 'agent-runtime', '--layer', 'workspace', '--json'], {
+    env: cp.env, promptSecret: noPrompt, stderr: sink(),
+  });
+  assert.equal(fromEnv.data.workspaceId, 'ws-lead', 'the leading global --workspace lands in the same query');
+  assert.equal(cp.state.lastConfigQuery.get('workspaceId'), 'ws-lead');
+});
+
+test('PLAN-0643 T2.4: config put writes the whole user domain from --file', async (t) => {
+  const cp = await startConfigCpMock();
+  t.after(cp.close);
+  const file = writeTempEntriesFile(t, { defaultModel: 'xiaomi:mimo-v2', retryLimit: '2' });
+
+  const result = await runCommand(['config', 'put', 'llm-provider', '--layer', 'user', '--file', file, '--json'], {
+    env: cp.env, promptSecret: noPrompt, stderr: sink(),
+  });
+
+  assert.equal(result.exitCode, 0, JSON.stringify(result.error));
+  assert.equal(result.data.kind, 'config-put');
+  assert.equal(result.data.layer, 'user');
+  assert.equal(result.data.keys, 2);
+  assert.deepEqual(cp.state.lastDomainPutBody, { defaultModel: 'xiaomi:mimo-v2', retryLimit: '2' });
+  assert.equal(cp.state.lastDomainPutLayer, 'user');
+  assert.equal(cp.state.lastDomainPutDomain, 'llm-provider');
+});
+
+test('PLAN-0643 T2.4: config put --layer workspace requires workspace context and rides the query', async (t) => {
+  const cp = await startConfigCpMock();
+  t.after(cp.close);
+  const file = writeTempEntriesFile(t, { defaultModel: 'xiaomi:mimo-v2' });
+
+  const missing = await runCommand(['config', 'put', 'llm-provider', '--layer', 'workspace', '--file', file], {
+    env: cp.env, promptSecret: noPrompt, stderr: sink(),
+  });
+  assert.equal(missing.exitCode, 2);
+  assert.equal(missing.error.code, 'INVALID_ARGUMENT');
+  assert.equal(cp.state.domainPutRequests, 0);
+
+  const ok = await runCommand(['config', 'put', 'llm-provider', '--layer', 'workspace', '--file', file, '--workspace', 'ws-1', '--json'], {
+    env: cp.env, promptSecret: noPrompt, stderr: sink(),
+  });
+  assert.equal(ok.exitCode, 0, JSON.stringify(ok.error));
+  assert.equal(cp.state.lastDomainPutQuery.get('workspaceId'), 'ws-1');
+  assert.equal(cp.state.lastDomainPutLayer, 'workspace');
+});
+
+test('PLAN-0643 T2.4: config put rejects the instance layer, a missing file and malformed entries', async (t) => {
+  const cp = await startConfigCpMock();
+  t.after(cp.close);
+
+  const instance = await runCommand(['config', 'put', 'llm-provider', '--layer', 'instance', '--file', 'x.json'], {
+    env: cp.env, promptSecret: noPrompt, stderr: sink(),
+  });
+  assert.equal(instance.exitCode, 2);
+  assert.equal(instance.error.code, 'INVALID_ARGUMENT');
+  assert.match(instance.error.message, /config set/);
+
+  const noFile = await runCommand(['config', 'put', 'llm-provider', '--layer', 'user'], {
+    env: cp.env, promptSecret: noPrompt, stderr: sink(),
+  });
+  assert.equal(noFile.exitCode, 2);
+  assert.equal(cp.state.domainPutRequests, 0);
+
+  const badJson = await runCommand(['config', 'put', 'llm-provider', '--layer', 'user', '--file', writeTempEntriesFile(t, 'not json')], {
+    env: cp.env, promptSecret: noPrompt, stderr: sink(),
+  });
+  assert.equal(badJson.exitCode, 2);
+
+  const nonString = await runCommand(['config', 'put', 'llm-provider', '--layer', 'user', '--file', writeTempEntriesFile(t, { retryLimit: 2 })], {
+    env: cp.env, promptSecret: noPrompt, stderr: sink(),
+  });
+  assert.equal(nonString.exitCode, 2);
+  assert.match(nonString.error.message, /retryLimit/);
+  assert.equal(cp.state.domainPutRequests, 0);
+});
+
+test('PLAN-0643 T2.7: unknown config and config-locks commands answer 2', async () => {
+  const configUnknown = await runCommand(['config', 'nosuch'], { env: {}, promptSecret: noPrompt });
+  assert.equal(configUnknown.exitCode, 2);
+  assert.match(configUnknown.error.message, /get\/set\/unset\/meta\/put\/import\/export/);
+
+  const locksUnknown = await runCommand(['config-locks', 'nosuch'], { env: {}, promptSecret: noPrompt });
+  assert.equal(locksUnknown.exitCode, 2);
+  assert.match(locksUnknown.error.message, /list\/set\/delete/);
+});
+
+test('PLAN-0643 T2.1: CP 4xx error codes surface verbatim (INVALID_DOMAIN, locks 403)', async (t) => {
+  const cp = await startConfigCpMock({ locksStatus: 403 });
+  t.after(cp.close);
+
+  const domain = await runCommand(['config', 'get', 'not-a-domain', '--json'], {
+    env: cp.env, promptSecret: noPrompt, stderr: sink(),
+  });
+  assert.equal(domain.exitCode, 1);
+  assert.equal(domain.error.code, 'INVALID_DOMAIN', 'preserveServerCodes keeps the CP body code');
+  assert.equal(domain.error.details.status, 400);
+
+  const locks = await runCommand(['config-locks', 'list'], {
+    env: cp.env, promptSecret: noPrompt, stderr: sink(),
+  });
+  assert.equal(locks.exitCode, 1);
+  assert.equal(locks.error.code, 'FORBIDDEN');
+});
+
+test('PLAN-0643 T2.7: --json keeps the frozen {ok,data|error} envelope on stdout (spawned CLI)', () => {
+  // printResult builds the envelope at print time, so this checks the printed
+  // bytes end-to-end with offline commands (version / usage error).
+  const env = { ...process.env, XIHE_CLI_TOKEN_CACHE: 'off', XIHE_CP_PORT: '1' };
+  const okRun = spawnSync(process.execPath, ['scripts/xihe.mjs', 'version', '--json'], {
+    cwd: process.cwd(), env, encoding: 'utf8', timeout: 30_000, windowsHide: true,
+  });
+  assert.equal(okRun.status, 0, okRun.stderr);
+  const okEnvelope = JSON.parse(okRun.stdout);
+  assert.deepEqual(Object.keys(okEnvelope).sort(), ['data', 'ok']);
+  assert.equal(okEnvelope.ok, true);
+
+  const errorRun = spawnSync(process.execPath, ['scripts/xihe.mjs', 'config', 'nosuch', '--json'], {
+    cwd: process.cwd(), env, encoding: 'utf8', timeout: 30_000, windowsHide: true,
+  });
+  assert.equal(errorRun.status, 2);
+  const errorEnvelope = JSON.parse(errorRun.stdout);
+  assert.deepEqual(Object.keys(errorEnvelope).sort(), ['error', 'ok']);
+  assert.equal(errorEnvelope.ok, false);
+  assert.equal(errorEnvelope.error.code, 'INVALID_ARGUMENT');
+});
+
+test('PLAN-0643 V8: --base-url wins over XIHE_CP_URL (auth status reports the chosen base)', async () => {
+  const result = await runCommand(['--base-url', 'http://10.1.1.1:9', 'auth', 'status', '--json'], {
+    env: { XIHE_CP_URL: 'http://10.2.2.2:8' },
+    promptSecret: noPrompt,
+  });
+
+  assert.equal(result.exitCode, 0, JSON.stringify(result.error));
+  assert.equal(result.data.baseUrl, 'http://10.1.1.1:9');
+});
+
+test('PLAN-0643 V9: with no --base-url, XIHE_CP_URL or XIHE_CP_PORT the CLI targets loopback 12631', async () => {
+  const result = await runCommand(['auth', 'status', '--json'], {
+    env: {},
+    promptSecret: noPrompt,
+  });
+
+  assert.equal(result.exitCode, 0, JSON.stringify(result.error));
+  assert.equal(result.data.baseUrl, 'http://127.0.0.1:12631');
+});
+
+// ---------------------------------------------------------------------------
+// PLAN-0643 M6-2 (T3.1-T3.5): chat run/cancel/approvals + session read surface,
+// chat send Idempotency-Key, workspace header injection and conflict detection.
+// ---------------------------------------------------------------------------
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// Real-process tests must reach the in-test loopback mock directly: strip the
+// operator's proxy environment (NODE_USE_ENV_PROXY/HTTP(S)_PROXY/ALL_PROXY) so
+// Node's env-proxy cannot route the child's fetch away from 127.0.0.1.
+function directConnectEnv(extra = {}) {
+  const env = { ...process.env, ...extra };
+  for (const key of Object.keys(env)) {
+    if (/^(https?_proxy|all_proxy|no_proxy|node_use_env_proxy)$/i.test(key)) delete env[key];
+  }
+  return env;
+}
+
+async function startChatSessionMock() {
+  const state = {
+    loginRequests: 0,
+    chatIdempotencyKeys: [],
+    lastWorkspaceHeader: null,
+    lastCancelBody: null,
+    lastDecisionBody: null,
+    lastExportQuery: null,
+    lastExportHeader: null,
+    exportMarkdown: '# Session export\n\nhello from the fake CP export surface.\n',
+  };
+  const server = createServer(async (request, response) => {
+    const url = new URL(request.url, 'http://127.0.0.1');
+    const body = await requestBody(request);
+    if (url.pathname === '/api/v1/auth/login' && request.method === 'POST') {
+      state.loginRequests += 1;
+      json(response, 200, { accessToken: 'test-access-token' });
+      return;
+    }
+    if (url.pathname === '/api/v1/chat' && request.method === 'POST') {
+      state.chatIdempotencyKeys.push(request.headers['idempotency-key'] ?? null);
+      state.lastWorkspaceHeader = request.headers['x-workspace-id'] ?? null;
+      json(response, 202, { runId: 'run-new', status: 'accepted' });
+      return;
+    }
+    if (url.pathname === '/api/v1/chat/runs/run-1' && request.method === 'GET') {
+      json(response, 200, {
+        runId: 'run-1', sessionId: 'session-1', origin: 'user_submission',
+        status: 'running', terminalOutcome: null, leaseExpired: false, pendingApprovals: [],
+      });
+      return;
+    }
+    if (url.pathname === '/api/v1/chat/runs/run-1/attempts' && request.method === 'GET') {
+      json(response, 200, [{ attempt: 1, httpStatus: 200 }]);
+      return;
+    }
+    if (url.pathname === '/api/v1/chat/runs/run-1/trace' && request.method === 'GET') {
+      json(response, 200, { steps: ['cp', 'agent'] });
+      return;
+    }
+    if (url.pathname === '/api/v1/chat/runs/run-1/cancel' && request.method === 'POST') {
+      state.lastCancelBody = body;
+      json(response, 200, { status: 'cancel_accepted', runId: 'run-1' });
+      return;
+    }
+    if (url.pathname === '/api/v1/approvals/pending' && request.method === 'GET') {
+      json(response, 200, [
+        { sessionId: 'session-1', workspaceId: 'ws-1', count: 2, oldestRequestedAt: '2026-11-06T01:00:00.000Z' },
+      ]);
+      return;
+    }
+    if (url.pathname === '/api/v1/chat/approvals/req-1/decision' && request.method === 'POST') {
+      state.lastDecisionBody = body;
+      json(response, 200, { requestId: 'req-1', state: 'accepted' });
+      return;
+    }
+    if (url.pathname === '/api/v1/sessions' && request.method === 'GET') {
+      state.lastWorkspaceHeader = request.headers['x-workspace-id'] ?? null;
+      json(response, 200, {
+        sessions: [{ id: 'session-1', title: 'Demo', kind: null, archived: false, workspaceId: 'ws-1', agentPrincipalId: null }],
+      });
+      return;
+    }
+    if (url.pathname === '/api/v1/sessions/session-1' && request.method === 'GET') {
+      json(response, 200, { id: 'session-1', workspaceId: 'ws-1', title: 'Demo', archived: false, agentPrincipalId: null });
+      return;
+    }
+    if (url.pathname === '/api/v1/sessions/session-1/export' && request.method === 'GET') {
+      state.lastExportQuery = url.searchParams.get('branchId');
+      state.lastExportHeader = request.headers['x-workspace-id'] ?? null;
+      response.writeHead(200, { 'Content-Type': 'text/markdown' });
+      response.end(state.exportMarkdown);
+      return;
+    }
+    json(response, 404, { code: 'NOT_FOUND', detail: 'unknown endpoint' });
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  return {
+    state,
+    env: { XIHE_CP_PORT: String(server.address().port), XIHE_DEV_ADMIN_PASSWORD: TEST_PASSWORD },
+    close: () => new Promise((resolve, reject) => server.close((error) => (error ? reject(error) : resolve()))),
+  };
+}
+
+test('PLAN-0643 T3.1/V44: chat run reports the CP run status (--json carries status)', async (t) => {
+  const cp = await startChatSessionMock();
+  t.after(() => cp.close());
+
+  const result = await runCommand(['chat', 'run', 'run-1', '--json'], {
+    env: cp.env, promptSecret: noPrompt, stderr: sink(),
+  });
+
+  assert.equal(result.exitCode, 0, JSON.stringify(result.error));
+  assert.equal(result.data.kind, 'chat-run');
+  assert.equal(result.data.runId, 'run-1');
+  assert.equal(result.data.status, 'running');
+});
+
+test('PLAN-0643 T3.1: --attempts/--trace attach the side reads', async (t) => {
+  const cp = await startChatSessionMock();
+  t.after(() => cp.close());
+
+  const result = await runCommand(['chat', 'run', 'run-1', '--attempts', '--trace', '--json'], {
+    env: cp.env, promptSecret: noPrompt, stderr: sink(),
+  });
+
+  assert.equal(result.exitCode, 0, JSON.stringify(result.error));
+  assert.deepEqual(result.data.attempts, [{ attempt: 1, httpStatus: 200 }]);
+  assert.deepEqual(result.data.trace, { steps: ['cp', 'agent'] });
+});
+
+test('PLAN-0643 T3.2/V44: chat cancel is idempotent (a second call still succeeds)', async (t) => {
+  const cp = await startChatSessionMock();
+  t.after(() => cp.close());
+
+  const first = await runCommand(['chat', 'cancel', 'run-1', '--json'], {
+    env: cp.env, promptSecret: noPrompt, stderr: sink(),
+  });
+  const second = await runCommand(['chat', 'cancel', 'run-1', '--json'], {
+    env: cp.env, promptSecret: noPrompt, stderr: sink(),
+  });
+
+  assert.equal(first.exitCode, 0, JSON.stringify(first.error));
+  assert.equal(first.data.status, 'cancel_accepted');
+  assert.equal(second.exitCode, 0, JSON.stringify(second.error));
+  assert.equal(second.data.status, 'cancel_accepted');
+  assert.deepEqual(cp.state.lastCancelBody, undefined, 'no reason flag means no request body');
+});
+
+test('PLAN-0643 T3.3/V44: chat approvals outputs the pending array', async (t) => {
+  const cp = await startChatSessionMock();
+  t.after(() => cp.close());
+
+  const result = await runCommand(['chat', 'approvals', '--json'], {
+    env: cp.env, promptSecret: noPrompt, stderr: sink(),
+  });
+
+  assert.equal(result.exitCode, 0, JSON.stringify(result.error));
+  assert.equal(result.data.kind, 'chat-approvals');
+  assert.equal(result.data.items.length, 1);
+  assert.equal(result.data.items[0].count, 2);
+});
+
+test('PLAN-0643 T3.3: chat approve/reject POST the decision body', async (t) => {
+  const cp = await startChatSessionMock();
+  t.after(() => cp.close());
+
+  const approved = await runCommand(['chat', 'approve', 'req-1', '--json'], {
+    env: cp.env, promptSecret: noPrompt, stderr: sink(),
+  });
+  assert.equal(approved.exitCode, 0, JSON.stringify(approved.error));
+  assert.deepEqual(cp.state.lastDecisionBody, { decision: 'once' });
+
+  const rejected = await runCommand(['chat', 'reject', 'req-1', '--feedback', 'no thanks', '--json'], {
+    env: cp.env, promptSecret: noPrompt, stderr: sink(),
+  });
+  assert.equal(rejected.exitCode, 0, JSON.stringify(rejected.error));
+  assert.deepEqual(cp.state.lastDecisionBody, { decision: 'reject', feedback: 'no thanks' });
+});
+
+test('PLAN-0643 V45: chat send carries an Idempotency-Key; an explicit key is reused', async (t) => {
+  const cp = await startChatSessionMock();
+  t.after(() => cp.close());
+
+  const base = ['chat', 'send', '--session', 'session-1', '--branch', 'branch-1', '--content', 'hello'];
+  const generated = await Promise.all([
+    runCommand([...base, '--json'], { env: cp.env, promptSecret: noPrompt, stderr: sink() }),
+    runCommand([...base, '--json'], { env: cp.env, promptSecret: noPrompt, stderr: sink() }),
+  ]);
+  const explicit = await Promise.all([
+    runCommand([...base, '--idempotency-key', 'fixed-key-1', '--json'], { env: cp.env, promptSecret: noPrompt, stderr: sink() }),
+    runCommand([...base, '--idempotency-key', 'fixed-key-1', '--json'], { env: cp.env, promptSecret: noPrompt, stderr: sink() }),
+  ]);
+
+  assert.equal(generated.every((r) => r.exitCode === 0), true, JSON.stringify(generated.map((r) => r.error)));
+  assert.equal(explicit.every((r) => r.exitCode === 0), true, JSON.stringify(explicit.map((r) => r.error)));
+  const keys = cp.state.chatIdempotencyKeys;
+  assert.equal(keys.length, 4);
+  assert.match(keys[0], UUID_RE, 'a missing flag must still generate a UUID key');
+  assert.match(keys[1], UUID_RE);
+  assert.notEqual(keys[0], keys[1], 'each invocation without a flag generates a fresh key');
+  assert.equal(keys[2], 'fixed-key-1');
+  assert.equal(keys[3], 'fixed-key-1');
+});
+
+test('PLAN-0643 V46/V10: session list/get/export hit their endpoints; --workspace injects the header', async (t) => {
+  const cp = await startChatSessionMock();
+  t.after(() => cp.close());
+
+  const list = await runCommand(['session', 'list', '--workspace', 'ws-1', '--json'], {
+    env: cp.env, promptSecret: noPrompt, stderr: sink(),
+  });
+  assert.equal(list.exitCode, 0, JSON.stringify(list.error));
+  assert.equal(cp.state.lastWorkspaceHeader, 'ws-1', 'V10: the list request carries x-workspace-id');
+  assert.equal(list.data.sessions[0].id, 'session-1');
+
+  const got = await runCommand(['session', 'get', 'session-1', '--json'], {
+    env: cp.env, promptSecret: noPrompt, stderr: sink(),
+  });
+  assert.equal(got.exitCode, 0, JSON.stringify(got.error));
+  assert.equal(got.data.session.title, 'Demo');
+
+  const exported = await runCommand(['session', 'export', 'session-1', '--branch', 'branch-9', '--json'], {
+    env: cp.env, promptSecret: noPrompt, stderr: sink(),
+  });
+  assert.equal(exported.exitCode, 0, JSON.stringify(exported.error));
+  assert.equal(cp.state.lastExportQuery, 'branch-9', 'export hits /export?branchId=...');
+  assert.match(exported.data.markdown, /^# Session export/, 'export output is Markdown');
+});
+
+test('PLAN-0643 V46: session export prints the Markdown document (human output)', async (t) => {
+  const cp = await startChatSessionMock();
+  t.after(() => cp.close());
+
+  // The real-process shape cannot run inside the DSH sandbox (child HTTP data
+  // plane is swallowed), so the human face is asserted through printResult —
+  // the same function main() invokes.
+  const result = await runCommand(['session', 'export', 'session-1', '--branch', 'branch-1'], {
+    env: cp.env, promptSecret: noPrompt, stderr: sink(),
+  });
+  assert.equal(result.exitCode, 0, JSON.stringify(result.error));
+  const human = captureStdout(() => printResult(result));
+  assert.match(human, /^# Session export\n/, 'the human output is the Markdown document');
+  assert.ok(human.endsWith('hello from the fake CP export surface.\n'), 'a missing trailing newline is restored');
+});
+
+test('PLAN-0643 V12: conflicting --workspace and XIHE_WORKSPACE_ID exit 2; agreeing values pass', async (t) => {
+  const cp = await startChatSessionMock();
+  t.after(() => cp.close());
+
+  const conflict = await runCommand(['--workspace', 'ws-b', 'session', 'list', '--json'], {
+    env: { ...cp.env, XIHE_WORKSPACE_ID: 'ws-a' }, promptSecret: noPrompt, stderr: sink(),
+  });
+  assert.equal(conflict.exitCode, 2, JSON.stringify(conflict.error));
+  assert.equal(conflict.error.code, 'INVALID_ARGUMENT');
+  assert.match(conflict.error.message, /provide only one of them/);
+
+  const trailing = await runCommand(['session', 'list', '--workspace', 'ws-9'], {
+    env: { ...cp.env, XIHE_WORKSPACE_ID: 'ws-a' }, promptSecret: noPrompt, stderr: sink(),
+  });
+  assert.equal(trailing.exitCode, 2, JSON.stringify(trailing.error));
+  assert.match(trailing.error.message, /provide only one of them/, 'trailing flag form hits the same guard');
+
+  const agreeing = await runCommand(['--workspace', 'ws-a', 'session', 'list', '--json'], {
+    env: { ...cp.env, XIHE_WORKSPACE_ID: 'ws-a' }, promptSecret: noPrompt, stderr: sink(),
+  });
+  assert.equal(agreeing.exitCode, 0, JSON.stringify(agreeing.error));
+});
+
+test('PLAN-0643 T3.5/V12b: XIHE_WORKSPACE_ID alone injects the header via the fetch wrapper', async (t) => {
+  const cp = await startChatSessionMock();
+  t.after(() => cp.close());
+
+  const result = await runCommand(['session', 'list', '--json'], {
+    env: { ...cp.env, XIHE_WORKSPACE_ID: 'ws-env' }, promptSecret: noPrompt, stderr: sink(),
+  });
+
+  assert.equal(result.exitCode, 0, JSON.stringify(result.error));
+  assert.equal(cp.state.lastWorkspaceHeader, 'ws-env', 'the env value reaches the sessions read');
+});
+
+test('PLAN-0643 M6-2: unknown chat/session subcommands are usage errors', async (t) => {
+  const cp = await startChatSessionMock();
+  t.after(() => cp.close());
+
+  const chatBogus = await runCommand(['chat', 'bogus'], { env: cp.env, promptSecret: noPrompt, stderr: sink() });
+  assert.equal(chatBogus.exitCode, 2, JSON.stringify(chatBogus.error));
+  assert.equal(chatBogus.error.code, 'INVALID_ARGUMENT');
+
+  const sessionBogus = await runCommand(['session', 'bogus'], { env: cp.env, promptSecret: noPrompt, stderr: sink() });
+  assert.equal(sessionBogus.exitCode, 2, JSON.stringify(sessionBogus.error));
+
+  const missingRunId = await runCommand(['chat', 'run'], { env: cp.env, promptSecret: noPrompt, stderr: sink() });
+  assert.equal(missingRunId.exitCode, 2, JSON.stringify(missingRunId.error));
+
+  const missingBranch = await runCommand(['session', 'export', 'session-1'], { env: cp.env, promptSecret: noPrompt, stderr: sink() });
+  assert.equal(missingBranch.exitCode, 2, JSON.stringify(missingBranch.error));
+});
+
+test('PLAN-0643 V23: five concurrent `xihe status` calls converge on at most two logins', async (t) => {
+  const cp = await startAuthMock();
+  const token = tempTokenFile();
+  t.after(async () => { await cp.close(); token.cleanup(); });
+  const env = { ...cp.env, XIHE_CLI_TOKEN_FILE: token.file };
+
+  // Same-process concurrency (the T1.5 shape): real-process children cannot run
+  // HTTP inside the DSH sandbox (TCP connects but the data plane is swallowed),
+  // so the contention proof runs five concurrent status commands against one
+  // empty shared token file; the login() in-flight dedup must converge them.
+  const results = await Promise.all(Array.from({ length: 5 }, () => runCommand(['status', '--json'], {
+    env, promptSecret: noPrompt, stderr: sink(),
+  })));
+
+  assert.equal(results.every((result) => result.exitCode === 0), true, JSON.stringify(results.map((r) => r.error)));
+  assert.ok(cp.state.loginRequests <= 2, `first-login contention must converge (got ${cp.state.loginRequests})`);
+  const store = readTokenFile(token.file);
+  assert.equal(Object.keys(store.tokens).length, 1);
+  assert.deepEqual(fs.readdirSync(token.directory), ['cli-token.json'], 'no tmp residue');
+});
+
+test('PLAN-0643 V24: killing a concurrent token-store writer leaves a parseable store (old or new value)', async (t) => {
+  const token = tempTokenFile();
+  t.after(() => token.cleanup());
+  const storeModule = pathToFileURL(path.resolve('scripts/xihe-cli/token-store.mjs')).href;
+  const script = `
+    import { persistToken } from ${JSON.stringify(storeModule)};
+    for (let i = 0; i < 200; i += 1) {
+      await persistToken({ XIHE_CLI_TOKEN_FILE: ${JSON.stringify(token.file)} }, {
+        baseUrl: 'http://127.0.0.1:12631',
+        token: 'v'.repeat(2000) + i,
+        email: null,
+        expiresAt: '2099-01-01T00:00:00.000Z',
+        obtainedAt: '2026-01-01T00:00:00.000Z',
+        platform: 'linux',
+      });
+      await new Promise((resolve) => setTimeout(resolve, 4));
+    }
+  `;
+  const child = spawn(process.execPath, ['--input-type=module', '-e', script], {
+    cwd: process.cwd(), windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'],
+  });
+
+  // Wait until the first write has landed (bounded poll, no fixed sleep), then kill
+  // mid-loop — the store must stay parseable (old or new value, never torn).
+  const deadline = Date.now() + 10_000;
+  while (!fs.existsSync(token.file) && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  assert.equal(fs.existsSync(token.file), true, 'the writer must have completed at least one atomic write');
+  child.kill('SIGKILL');
+  const killed = new Promise((resolve) => child.on('close', (code, signal) => resolve({ code, signal })));
+  const outcome = await Promise.race([killed, new Promise((resolve) => setTimeout(() => resolve(null), 10_000))]);
+  assert.ok(outcome, 'the child must die promptly after the kill');
+
+  assert.equal(fs.existsSync(token.file), true, 'the loop writes long before the kill lands');
+  const store = JSON.parse(fs.readFileSync(token.file, 'utf8'));
+  assert.equal(store.version, 1);
+  const entry = store.tokens['http://127.0.0.1:12631'];
+  assert.match(entry.token, /^v{2000}\d+$/, 'the store holds either the old or the new value, fully written');
+});
+
+// ---------------------------------------------------------------------------
+// PLAN-0643 M6-3 (T4.x, V47/V48/V49/V2): catalog reads, workspace write face,
+// scheduled-task verbs, events tail, and the groups.added re-judge.
+// Same-process only (runCommand + fake CP): child HTTP is a documented sandbox
+// boundary; real-process acceptance belongs to the Lead (V13/V23 precedent).
+// ---------------------------------------------------------------------------
+
+async function startM63Mock() {
+  const state = { loginRequests: 0, requests: [] };
+  const record = (request, url, body) => state.requests.push({
+    method: request.method,
+    path: url.pathname,
+    body: body ?? null,
+    idempotencyKey: request.headers['idempotency-key'] ?? null,
+    workspaceHeader: request.headers['x-workspace-id'] ?? null,
+  });
+  const hits = (method, path) => state.requests.filter((r) => r.method === method && r.path === path);
+  const server = createServer(async (request, response) => {
+    const url = new URL(request.url, 'http://127.0.0.1');
+    const body = await requestBody(request);
+    if (url.pathname === '/api/v1/auth/login' && request.method === 'POST') {
+      state.loginRequests += 1;
+      json(response, 200, { accessToken: 'test-access-token' });
+      return;
+    }
+    if (url.pathname === '/api/v1/provider-catalog' && request.method === 'GET') {
+      record(request, url, body);
+      json(response, 200, {
+        providers: { 'xiaomi:mimo': { displayName: 'MiMo', apiTypeId: 'openai-compat', apiTypeVersion: 1, operation: 'chat' } },
+      });
+      return;
+    }
+    if (url.pathname === '/api/v1/models' && request.method === 'GET') {
+      record(request, url, body);
+      json(response, 200, {
+        providers: { 'conn-1': { connectionId: 'conn-1', providerId: 'xiaomi', connectionStatus: 'ready', models: ['model-a', 'model-b'] } },
+        models: { xiaomi: ['model-a', 'model-b'] },
+        configRevision: 'rev-7',
+      });
+      return;
+    }
+    if (url.pathname === '/api/v1/api-input-types' && request.method === 'GET') {
+      record(request, url, body);
+      json(response, 200, {
+        types: [{
+          apiTypeId: 'openai-compat', version: 1, operation: 'chat', method: 'POST',
+          path: '/v1/chat/completions', requiredBaseSuffix: '',
+          requestShape: {}, responseShape: {}, streamShape: {},
+        }],
+      });
+      return;
+    }
+    if (url.pathname === '/api/v1/me/permissions' && request.method === 'GET') {
+      record(request, url, body);
+      json(response, 200, {
+        userId: 'user-1',
+        instanceCapabilities: ['chat.run', 'workspace.create'],
+        instancePermissions: [{ atom: 'workspace:create', granted: true }],
+        workspaces: [{ workspaceId: 'ws-1', role: 'OWNER', permissions: ['workspace:read'] }],
+      });
+      return;
+    }
+    if (url.pathname === '/api/v1/workspaces' && request.method === 'POST') {
+      record(request, url, body);
+      json(response, 201, {
+        id: 'ws-new', name: body.name, storageMode: body.storageMode,
+        hostPath: body.hostPath ?? null, roots: body.roots ?? null,
+        executionMode: body.executionMode ?? null, generation: 1,
+      });
+      return;
+    }
+    if (url.pathname === '/api/v1/workspaces/ws-1' && request.method === 'DELETE') {
+      record(request, url, body);
+      response.writeHead(204);
+      response.end();
+      return;
+    }
+    if (url.pathname === '/api/v1/workspaces/ws-1/members' && request.method === 'GET') {
+      record(request, url, body);
+      json(response, 200, [{ userId: 'u-1', username: 'alice', role: 'OWNER', createdAt: '2026-11-06T00:00:00.000Z' }]);
+      return;
+    }
+    if (url.pathname === '/api/v1/workspaces/ws-1/members' && request.method === 'POST') {
+      record(request, url, body);
+      json(response, 201, { userId: 'u-2', username: body.username, role: body.role, createdAt: '2026-11-06T00:00:00.000Z' });
+      return;
+    }
+    if (url.pathname === '/api/v1/workspaces/ws-1/members/u-2' && request.method === 'PATCH') {
+      record(request, url, body);
+      json(response, 200, { userId: 'u-2', username: 'bob', role: body.role });
+      return;
+    }
+    if (url.pathname === '/api/v1/workspaces/ws-1/members/u-2' && request.method === 'DELETE') {
+      record(request, url, body);
+      response.writeHead(204);
+      response.end();
+      return;
+    }
+    if (url.pathname === '/api/v1/workspaces/ws-1/roots' && request.method === 'POST') {
+      record(request, url, body);
+      json(response, 201, { id: 'root-2', position: 1, alias: body.alias ?? null });
+      return;
+    }
+    if (url.pathname === '/api/v1/workspaces/ws-1/roots/root-2' && request.method === 'PATCH') {
+      record(request, url, body);
+      json(response, 200, { id: 'root-2', position: body.position ?? 0, alias: body.alias ?? null });
+      return;
+    }
+    if (url.pathname === '/api/v1/workspaces/ws-1/roots/root-2' && request.method === 'DELETE') {
+      record(request, url, body);
+      response.writeHead(204);
+      response.end();
+      return;
+    }
+    if (url.pathname === '/api/v1/workspaces/ws-1/scheduled-tasks' && request.method === 'POST') {
+      record(request, url, body);
+      json(response, 201, {
+        id: 'task-1', status: 'scheduled', triggerKind: body.triggerKind,
+        cronExpr: body.cronExpr ?? null, nextFireAt: '2026-11-07T00:00:00.000Z',
+      });
+      return;
+    }
+    if (url.pathname === '/api/v1/workspaces/ws-1/scheduled-tasks/task-1' && request.method === 'DELETE') {
+      record(request, url, body);
+      json(response, 200, { taskId: 'task-1', status: 'cancelled', changed: true, task: null });
+      return;
+    }
+    if (url.pathname === '/api/v1/workspaces/ws-1/scheduled-tasks/task-1/rerun' && request.method === 'POST') {
+      record(request, url, body);
+      json(response, 200, { id: 'task-1', status: 'scheduled', triggerKind: 'cron', nextFireAt: '2026-11-07T01:00:00.000Z' });
+      return;
+    }
+    if (url.pathname === '/api/v1/workspaces/ws-1/scheduled-tasks/task-1/remove' && request.method === 'POST') {
+      record(request, url, body);
+      json(response, 200, { taskId: 'task-1', status: 'cancelled', changed: true });
+      return;
+    }
+    if (url.pathname === '/api/v1/workspaces/ws-1/scheduled-tasks/task-1/postpone' && request.method === 'POST') {
+      record(request, url, body);
+      json(response, 200, { id: 'task-1', status: 'scheduled', triggerKind: 'delay_once', nextFireAt: body.at });
+      return;
+    }
+    json(response, 404, { code: 'NOT_FOUND', detail: 'unknown endpoint' });
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const env = {
+    XIHE_CP_PORT: String(server.address().port),
+    XIHE_DEV_ADMIN_PASSWORD: TEST_PASSWORD,
+    XIHE_WORKSPACE_ID: 'ws-1',
+  };
+  return {
+    state, hits, env,
+    close: () => new Promise((resolve, reject) => server.close((error) => (error ? reject(error) : resolve()))),
+  };
+}
+
+const collectStdoutStream = () => {
+  const stream = new PassThrough();
+  stream.setEncoding('utf8');
+  let text = '';
+  stream.on('data', (chunk) => { text += chunk; });
+  return { stream, text: () => text };
+};
+
+async function waitFor(predicate, { timeoutMs = 2000, stepMs = 10 } = {}) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (predicate()) return true;
+    await new Promise((resolve) => setTimeout(resolve, stepMs));
+  }
+  return false;
+}
+
+async function startEventsSseMock({ status = 200, frames = [], closeAfter = true } = {}) {
+  const state = { loginRequests: 0, lastSinceHeader: null, lastQuerySessionId: null };
+  const server = createServer(async (request, response) => {
+    const url = new URL(request.url, 'http://127.0.0.1');
+    if (url.pathname === '/api/v1/auth/login' && request.method === 'POST') {
+      state.loginRequests += 1;
+      json(response, 200, { accessToken: 'test-access-token' });
+      return;
+    }
+    if (url.pathname === '/api/v1/events' && request.method === 'GET') {
+      state.lastSinceHeader = request.headers['last-event-id'] ?? null;
+      state.lastQuerySessionId = url.searchParams.get('sessionId');
+      if (status !== 200) {
+        json(response, status, { code: 'SESSION_ACCESS_DENIED', message: 'not your session' });
+        return;
+      }
+      response.writeHead(200, { 'Content-Type': 'text/event-stream' });
+      for (const frame of frames) {
+        response.write(`event: ${frame.event}\ndata: ${JSON.stringify(frame.data)}\n\n`);
+      }
+      response.write(': transport heartbeat comment\n\n');
+      if (closeAfter) response.end();
+      return;
+    }
+    json(response, 404, { code: 'NOT_FOUND' });
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  return {
+    state,
+    env: { XIHE_CP_PORT: String(server.address().port), XIHE_DEV_ADMIN_PASSWORD: TEST_PASSWORD },
+    close: () => new Promise((resolve, reject) => server.close((error) => (error ? reject(error) : resolve()))),
+  };
+}
+
+test('PLAN-0643 T4.1/V47: provider catalog and models return structured CP bodies', async (t) => {
+  const cp = await startM63Mock();
+  t.after(() => cp.close());
+
+  const catalog = await runCommand(['provider', 'catalog', '--json'], {
+    env: cp.env, promptSecret: noPrompt, stderr: sink(),
+  });
+  assert.equal(catalog.exitCode, 0, JSON.stringify(catalog.error));
+  assert.equal(catalog.data.kind, 'provider-catalog');
+  assert.equal(catalog.data.providers['xiaomi:mimo'].displayName, 'MiMo');
+
+  const models = await runCommand(['models', '--json'], {
+    env: cp.env, promptSecret: noPrompt, stderr: sink(),
+  });
+  assert.equal(models.exitCode, 0, JSON.stringify(models.error));
+  assert.equal(models.data.kind, 'models');
+  assert.equal(models.data.configRevision, 'rev-7');
+  assert.deepEqual(models.data.providers['conn-1'].models, ['model-a', 'model-b']);
+});
+
+test('PLAN-0643 T4.1/V47: api-input-types list and me permissions return structured CP bodies', async (t) => {
+  const cp = await startM63Mock();
+  t.after(() => cp.close());
+
+  const types = await runCommand(['api-input-types', 'list', '--json'], {
+    env: cp.env, promptSecret: noPrompt, stderr: sink(),
+  });
+  assert.equal(types.exitCode, 0, JSON.stringify(types.error));
+  assert.equal(types.data.kind, 'api-input-types');
+  assert.equal(types.data.types[0].apiTypeId, 'openai-compat');
+
+  const me = await runCommand(['me', 'permissions', '--json'], {
+    env: cp.env, promptSecret: noPrompt, stderr: sink(),
+  });
+  assert.equal(me.exitCode, 0, JSON.stringify(me.error));
+  assert.equal(me.data.kind, 'me-permissions');
+  assert.equal(me.data.userId, 'user-1');
+  assert.deepEqual(me.data.instanceCapabilities, ['chat.run', 'workspace.create']);
+});
+
+test('PLAN-0643 T4.1: models human face lists connections and model ids', async (t) => {
+  const cp = await startM63Mock();
+  t.after(() => cp.close());
+
+  const result = await runCommand(['models'], {
+    env: cp.env, promptSecret: noPrompt, stderr: sink(),
+  });
+  assert.equal(result.exitCode, 0, JSON.stringify(result.error));
+  const human = captureStdout(() => printResult(result));
+  assert.match(human, /^models: 1 connection\(s\), configRevision=rev-7\n/);
+  assert.match(human, /conn-1\s+xiaomi\s+ready\s+models=2\n/);
+  assert.match(human, /xiaomi: model-a, model-b\n/);
+});
+
+test('PLAN-0643 T4.3/V48: workspace create posts direct_attach body with idempotency key', async (t) => {
+  const cp = await startM63Mock();
+  t.after(() => cp.close());
+
+  const result = await runCommand([
+    'workspace', 'create', '--name', 'demo', '--storage-mode', 'direct_attach',
+    '--host-path', 'C:/data/demo', '--idempotency-key', 'idem-1', '--json',
+  ], { env: cp.env, promptSecret: noPrompt, stderr: sink() });
+  assert.equal(result.exitCode, 0, JSON.stringify(result.error));
+  assert.equal(result.data.kind, 'workspace-created');
+  assert.equal(result.data.workspace.id, 'ws-new');
+
+  const post = cp.hits('POST', '/api/v1/workspaces');
+  assert.equal(post.length, 1);
+  assert.deepEqual(post[0].body, {
+    name: 'demo', storageMode: 'direct_attach', hostPath: 'C:/data/demo',
+  });
+  assert.equal(post[0].idempotencyKey, 'idem-1');
+});
+
+test('PLAN-0643 T4.3: workspace create warns before a managed_import call (docker frozen)', async (t) => {
+  const cp = await startM63Mock();
+  t.after(() => cp.close());
+
+  const warnings = [];
+  const stderr = { write: (chunk) => { warnings.push(String(chunk)); } };
+  const result = await runCommand([
+    'workspace', 'create', '--name', 'legacy', '--storage-mode', 'managed_import', '--json',
+  ], { env: cp.env, promptSecret: noPrompt, stderr });
+  assert.equal(result.exitCode, 0, JSON.stringify(result.error));
+  const joined = warnings.join('');
+  assert.match(joined, /docker workspace backend is frozen/);
+  assert.match(joined, /direct_attach/);
+  assert.equal(cp.hits('POST', '/api/v1/workspaces').length, 1);
+});
+
+test('PLAN-0643 T4.3: workspace create rejects direct_attach without a location (usage, no request)', async (t) => {
+  const cp = await startM63Mock();
+  t.after(() => cp.close());
+
+  const result = await runCommand([
+    'workspace', 'create', '--name', 'demo', '--storage-mode', 'direct_attach', '--json',
+  ], { env: cp.env, promptSecret: noPrompt, stderr: sink() });
+  assert.equal(result.exitCode, 2);
+  assert.equal(result.error.code, 'INVALID_ARGUMENT');
+  assert.equal(cp.state.requests.length, 0, 'no CP call may leave the CLI before validation');
+});
+
+test('PLAN-0643 T4.3/V48: workspace delete requires --yes in a non-interactive session', async (t) => {
+  const cp = await startM63Mock();
+  t.after(() => cp.close());
+
+  const denied = await runCommand(['workspace', 'delete', 'ws-1', '--json'], {
+    env: cp.env, promptSecret: noPrompt, stderr: sink(),
+  });
+  assert.equal(denied.exitCode, 1);
+  assert.equal(denied.error.code, 'CONFIRMATION_REQUIRED');
+  assert.equal(cp.hits('DELETE', '/api/v1/workspaces/ws-1').length, 0);
+
+  const ok = await runCommand(['workspace', 'delete', 'ws-1', '--yes', '--json'], {
+    env: cp.env, promptSecret: noPrompt, stderr: sink(),
+  });
+  assert.equal(ok.exitCode, 0, JSON.stringify(ok.error));
+  assert.equal(ok.data.kind, 'workspace-deleted');
+  assert.equal(cp.hits('DELETE', '/api/v1/workspaces/ws-1').length, 1);
+});
+
+test('PLAN-0643 T4.3/V48: workspace members read/add/role/remove hit the expected method+path', async (t) => {
+  const cp = await startM63Mock();
+  t.after(() => cp.close());
+
+  const list = await runCommand(['workspace', 'members', 'ws-1', '--json'], {
+    env: cp.env, promptSecret: noPrompt, stderr: sink(),
+  });
+  assert.equal(list.exitCode, 0, JSON.stringify(list.error));
+  assert.equal(list.data.kind, 'workspace-members');
+  assert.equal(list.data.items[0].role, 'OWNER');
+
+  const added = await runCommand([
+    'workspace', 'members', 'ws-1', '--add', 'bob', '--role', 'EDITOR', '--json',
+  ], { env: cp.env, promptSecret: noPrompt, stderr: sink() });
+  assert.equal(added.exitCode, 0, JSON.stringify(added.error));
+  assert.equal(added.data.kind, 'workspace-member');
+  assert.equal(added.data.action, 'add');
+
+  const role = await runCommand([
+    'workspace', 'members', 'ws-1', '--set-role', 'u-2', '--role', 'VIEWER', '--json',
+  ], { env: cp.env, promptSecret: noPrompt, stderr: sink() });
+  assert.equal(role.exitCode, 0, JSON.stringify(role.error));
+  assert.equal(role.data.action, 'role');
+
+  const removed = await runCommand([
+    'workspace', 'members', 'ws-1', '--remove', 'u-2', '--yes', '--json',
+  ], { env: cp.env, promptSecret: noPrompt, stderr: sink() });
+  assert.equal(removed.exitCode, 0, JSON.stringify(removed.error));
+  assert.equal(removed.data.action, 'remove');
+
+  assert.deepEqual(cp.hits('GET', '/api/v1/workspaces/ws-1/members').length, 1);
+  const post = cp.hits('POST', '/api/v1/workspaces/ws-1/members')[0];
+  assert.deepEqual(post.body, { username: 'bob', role: 'EDITOR' });
+  assert.equal(post.workspaceHeader, 'ws-1');
+  const patch = cp.hits('PATCH', '/api/v1/workspaces/ws-1/members/u-2')[0];
+  assert.deepEqual(patch.body, { role: 'VIEWER' });
+  assert.equal(cp.hits('DELETE', '/api/v1/workspaces/ws-1/members/u-2').length, 1);
+});
+
+test('PLAN-0643 T4.3/V48: workspace roots write verbs hit the expected method+path', async (t) => {
+  const cp = await startM63Mock();
+  t.after(() => cp.close());
+
+  const bare = await runCommand(['workspace', 'roots', 'ws-1', '--json'], {
+    env: cp.env, promptSecret: noPrompt, stderr: sink(),
+  });
+  assert.equal(bare.exitCode, 2, 'roots without a write flag is a usage error (reads ride workspace get)');
+
+  const added = await runCommand([
+    'workspace', 'roots', 'ws-1', '--add', 'C:/data/extra', '--alias', 'extra', '--json',
+  ], { env: cp.env, promptSecret: noPrompt, stderr: sink() });
+  assert.equal(added.exitCode, 0, JSON.stringify(added.error));
+  assert.equal(added.data.kind, 'workspace-root');
+
+  const renamed = await runCommand([
+    'workspace', 'roots', 'ws-1', '--rename', 'root-2', '--alias', 'renamed', '--json',
+  ], { env: cp.env, promptSecret: noPrompt, stderr: sink() });
+  assert.equal(renamed.exitCode, 0, JSON.stringify(renamed.error));
+
+  const moved = await runCommand([
+    'workspace', 'roots', 'ws-1', '--reposition', 'root-2', '--position', '3', '--json',
+  ], { env: cp.env, promptSecret: noPrompt, stderr: sink() });
+  assert.equal(moved.exitCode, 0, JSON.stringify(moved.error));
+
+  const removed = await runCommand([
+    'workspace', 'roots', 'ws-1', '--remove', 'root-2', '--yes', '--json',
+  ], { env: cp.env, promptSecret: noPrompt, stderr: sink() });
+  assert.equal(removed.exitCode, 0, JSON.stringify(removed.error));
+
+  const post = cp.hits('POST', '/api/v1/workspaces/ws-1/roots')[0];
+  assert.deepEqual(post.body, { path: 'C:/data/extra', alias: 'extra' });
+  assert.equal(cp.hits('PATCH', '/api/v1/workspaces/ws-1/roots/root-2').length, 2);
+  assert.equal(cp.hits('DELETE', '/api/v1/workspaces/ws-1/roots/root-2').length, 1);
+});
+
+test('PLAN-0643 T4.5/V48: scheduled-task create posts the session_wakeup cron body', async (t) => {
+  const cp = await startM63Mock();
+  t.after(() => cp.close());
+
+  const result = await runCommand([
+    'scheduled-task', 'create', 'ws-1',
+    '--kind', 'cron', '--cron-expr', '0 9 * * *',
+    '--target', 'session_wakeup', '--session', 'session-9', '--prompt', 'morning brief', '--json',
+  ], { env: cp.env, promptSecret: noPrompt, stderr: sink() });
+  assert.equal(result.exitCode, 0, JSON.stringify(result.error));
+  assert.equal(result.data.kind, 'scheduled-task');
+  assert.equal(result.data.task.id, 'task-1');
+
+  const post = cp.hits('POST', '/api/v1/workspaces/ws-1/scheduled-tasks')[0];
+  assert.equal(post.workspaceHeader, 'ws-1');
+  assert.deepEqual(post.body, {
+    triggerKind: 'cron', cronExpr: '0 9 * * *',
+    targetKind: 'session_wakeup', targetSessionId: 'session-9', prompt: 'morning brief',
+  });
+});
+
+test('PLAN-0643 T4.5/V48: scheduled-task create job_dispatch reads the payload file', async (t) => {
+  const cp = await startM63Mock();
+  t.after(() => cp.close());
+  const payloadFile = path.join(tmpdir(), `xh-payload-${Date.now()}-${Math.floor(Math.random() * 1e6)}.json`);
+  fs.writeFileSync(payloadFile, JSON.stringify({ jobId: 'job-7', action: 'export' }));
+  t.after(() => fs.rmSync(payloadFile, { force: true }));
+
+  const result = await runCommand([
+    'scheduled-task', 'create', 'ws-1',
+    '--kind', 'delay_once', '--at', '2026-11-07T09:00:00Z', '--timezone', 'UTC',
+    '--target', 'job_dispatch', '--payload-file', payloadFile, '--json',
+  ], { env: cp.env, promptSecret: noPrompt, stderr: sink() });
+  assert.equal(result.exitCode, 0, JSON.stringify(result.error));
+
+  const post = cp.hits('POST', '/api/v1/workspaces/ws-1/scheduled-tasks')[0];
+  assert.deepEqual(post.body, {
+    triggerKind: 'delay_once', at: '2026-11-07T09:00:00Z', timezone: 'UTC',
+    targetKind: 'job_dispatch', payload: { jobId: 'job-7', action: 'export' },
+  });
+});
+
+test('PLAN-0643 T4.5/V48: scheduled-task rerun/remove/postpone/delete hit the expected method+path', async (t) => {
+  const cp = await startM63Mock();
+  t.after(() => cp.close());
+  const base = '/api/v1/workspaces/ws-1/scheduled-tasks/task-1';
+
+  const rerun = await runCommand(['scheduled-task', 'rerun', 'ws-1', 'task-1', '--json'], {
+    env: cp.env, promptSecret: noPrompt, stderr: sink(),
+  });
+  assert.equal(rerun.exitCode, 0, JSON.stringify(rerun.error));
+  assert.equal(rerun.data.kind, 'scheduled-task', 'rerun answers with the rescheduled task');
+
+  const postpone = await runCommand([
+    'scheduled-task', 'postpone', 'ws-1', 'task-1', '--at', '2026-11-08T00:00:00Z', '--json',
+  ], { env: cp.env, promptSecret: noPrompt, stderr: sink() });
+  assert.equal(postpone.exitCode, 0, JSON.stringify(postpone.error));
+
+  const removed = await runCommand(['scheduled-task', 'remove', 'ws-1', 'task-1', '--yes', '--json'], {
+    env: cp.env, promptSecret: noPrompt, stderr: sink(),
+  });
+  assert.equal(removed.exitCode, 0, JSON.stringify(removed.error));
+
+  const deleted = await runCommand(['scheduled-task', 'delete', 'ws-1', 'task-1', '--yes', '--json'], {
+    env: cp.env, promptSecret: noPrompt, stderr: sink(),
+  });
+  assert.equal(deleted.exitCode, 0, JSON.stringify(deleted.error));
+
+  assert.equal(cp.hits('POST', `${base}/rerun`).length, 1);
+  const postponeHit = cp.hits('POST', `${base}/postpone`)[0];
+  assert.deepEqual(postponeHit.body, { at: '2026-11-08T00:00:00Z' });
+  assert.equal(cp.hits('POST', `${base}/remove`).length, 1);
+  assert.equal(cp.hits('DELETE', base).length, 1);
+});
+
+test('PLAN-0643 T4.5/V48: scheduled-task remove without --yes asks nothing and sends nothing', async (t) => {
+  const cp = await startM63Mock();
+  t.after(() => cp.close());
+
+  const denied = await runCommand(['scheduled-task', 'remove', 'ws-1', 'task-1', '--json'], {
+    env: cp.env, promptSecret: noPrompt, stderr: sink(),
+  });
+  assert.equal(denied.exitCode, 1);
+  assert.equal(denied.error.code, 'CONFIRMATION_REQUIRED');
+  assert.equal(cp.hits('POST', '/api/v1/workspaces/ws-1/scheduled-tasks/task-1/remove').length, 0);
+});
+
+test('PLAN-0643 T4.6/V49: events tail drains a closing stream line-by-line and exits 0', async (t) => {
+  const cp = await startEventsSseMock({
+    frames: [
+      { event: 'token', data: { text: 'hello' } },
+      { event: 'run.completed', data: { runId: 'run-1' } },
+    ],
+    closeAfter: true,
+  });
+  t.after(() => cp.close());
+  const output = collectStdoutStream();
+
+  const result = await runCommand(['events', 'tail', 'session-1', '--json'], {
+    env: cp.env, promptSecret: noPrompt, stderr: sink(), stdout: output.stream,
+  });
+  assert.equal(result.exitCode, 0, JSON.stringify(result.error));
+  assert.equal(result.data.kind, 'events-tail');
+  assert.equal(result.data.events, 2, 'both SSE frames are delivered before the close');
+
+  const lines = output.text().split('\n').filter(Boolean);
+  assert.equal(lines.length, 2, 'each event is exactly one JSON line');
+  assert.deepEqual(JSON.parse(lines[0]), { event: 'token', data: { text: 'hello' } });
+  assert.deepEqual(JSON.parse(lines[1]), { event: 'run.completed', data: { runId: 'run-1' } });
+});
+
+test('PLAN-0643 T4.6/V49: events tail --follow exits 0 on Ctrl-C (injected signal)', async (t) => {
+  const cp = await startEventsSseMock({
+    frames: [{ event: 'token', data: { text: 'first' } }],
+    closeAfter: false,
+  });
+  t.after(() => cp.close());
+  const output = collectStdoutStream();
+  const tailController = new AbortController();
+
+  const pending = runCommand(['events', 'tail', 'session-1', '--follow', '--json'], {
+    env: cp.env, promptSecret: noPrompt, stderr: sink(), stdout: output.stream,
+    tailSignal: tailController.signal,
+  });
+  const gotFirst = await waitFor(() => output.text().includes('"event":"token"'));
+  assert.equal(gotFirst, true, 'the first frame must arrive before the interrupt');
+  tailController.abort();
+
+  const result = await pending;
+  assert.equal(result.exitCode, 0, 'SIGINT during follow is a clean exit 0');
+  assert.equal(result.data.kind, 'events-tail');
+  assert.equal(result.data.follow, true);
+});
+
+test('PLAN-0643 T4.6/V49: events tail passes --since as Last-Event-ID and 403 fails closed', async (t) => {
+  const ok = await startEventsSseMock({
+    frames: [{ event: 'token', data: { text: 'resumed' } }],
+    closeAfter: true,
+  });
+  t.after(() => ok.close());
+  const output = collectStdoutStream();
+  const resumed = await runCommand(['events', 'tail', 'session-1', '--since', 'evt-41', '--json'], {
+    env: ok.env, promptSecret: noPrompt, stderr: sink(), stdout: output.stream,
+  });
+  assert.equal(resumed.exitCode, 0, JSON.stringify(resumed.error));
+  assert.equal(ok.state.lastSinceHeader, 'evt-41');
+  assert.equal(ok.state.lastQuerySessionId, 'session-1');
+
+  const denied = await startEventsSseMock({ status: 403 });
+  t.after(() => denied.close());
+  const failure = await runCommand(['events', 'tail', 'session-1', '--json'], {
+    env: denied.env, promptSecret: noPrompt, stderr: sink(),
+  });
+  assert.equal(failure.exitCode, 1);
+  assert.equal(failure.error.code, 'SESSION_ACCESS_DENIED', 'the CP problem code passes through');
+});
+
+test('PLAN-0643 T4.6: events tail usage errors stay exit 2', async (t) => {
+  const cp = await startEventsSseMock({ frames: [], closeAfter: true });
+  t.after(() => cp.close());
+
+  const missing = await runCommand(['events', 'tail', '--json'], {
+    env: cp.env, promptSecret: noPrompt, stderr: sink(),
+  });
+  assert.equal(missing.exitCode, 2);
+  assert.equal(missing.error.code, 'INVALID_ARGUMENT');
+
+  const badTimeout = await runCommand(['events', 'tail', 'session-1', '--timeout', 'soon', '--json'], {
+    env: cp.env, promptSecret: noPrompt, stderr: sink(),
+  });
+  assert.equal(badTimeout.exitCode, 2);
+  assert.equal(badTimeout.error.code, 'INVALID_ARGUMENT');
+});
+
+test('PLAN-0643 V2 re-judge: coverage groups.added counts >= 12 via new groups + extensions', async (t) => {
+  const coverageScript = path.resolve('scripts/xihe-cli/coverage.mjs');
+  const child = spawnSync(process.execPath, [coverageScript, '--json'], {
+    cwd: process.cwd(), encoding: 'utf8', windowsHide: true, timeout: 30_000,
+  });
+  assert.equal(child.status, 0, child.stderr);
+  const report = JSON.parse(child.stdout);
+  assert.equal(report.groups.added.present >= 12, true,
+    `groups.added.present must reach 12 (got ${report.groups.added.present})`);
+  assert.deepEqual(report.groups.added.names,
+    ['auth', 'api', 'config-locks', 'me', 'models', 'api-input-types', 'events']);
+  const extensions = Object.fromEntries(report.groups.added.extensions.map((row) => [row.group, row.via]));
+  assert.deepEqual(extensions, {
+    config: 'config put', chat: 'chat run', session: 'session export',
+    provider: 'provider catalog', workspace: 'workspace create',
+    'scheduled-task': 'scheduled-task create',
+  });
+  assert.equal(report.matrix.covered, report.matrix.total, 'the whole matrix must be present');
 });

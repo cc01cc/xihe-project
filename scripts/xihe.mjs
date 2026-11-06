@@ -24,6 +24,17 @@ import {
 } from './xihe-cli/provider.mjs';
 import { runApiEscape } from './xihe-cli/api.mjs';
 import { runAuthCommand } from './xihe-cli/auth.mjs';
+import { runConfigCommand, runConfigLocksCommand } from './xihe-cli/config.mjs';
+import { runChatCommand, runSessionCommand } from './xihe-cli/chat-session.mjs';
+import { runProviderCatalog, runModels, runApiInputTypes, runMePermissions } from './xihe-cli/catalog.mjs';
+import {
+  runWorkspaceCreate, runWorkspaceDelete, runWorkspaceMembers, runWorkspaceRoots,
+} from './xihe-cli/workspace-admin.mjs';
+import {
+  runScheduledTaskCreate, runScheduledTaskDelete, runScheduledTaskRerun,
+  runScheduledTaskRemove, runScheduledTaskPostpone,
+} from './xihe-cli/scheduled-task-admin.mjs';
+import { runEventsTail } from './xihe-cli/events-tail.mjs';
 import { attachAuthRefresh } from './xihe-cli/auth-refresh.mjs';
 import {
   bindSkill,
@@ -146,6 +157,33 @@ function parseCommandOptions(args, valueOptions, booleanOptions = []) {
   return parseOptions(args, valueOptions, booleanOptions);
 }
 
+// PLAN-0643 T3.5 (spec §7): the workspace-scoped endpoints — /api/v1/sessions*,
+// /api/v1/chat*, /api/v1/audit*, and per-workspace job/checkpoint/scheduled-task
+// reads — carry X-Workspace-Id from the resolved context (explicit flag or
+// XIHE_WORKSPACE_ID, same source after conflict checking). Config workspace-layer
+// reads/writes keep the workspaceId **query**; the two stay same-source (D6).
+// An explicit per-command header (participants callApi with --workspace) wins.
+function isWorkspaceScopedPath(pathname) {
+  if (pathname.startsWith('/api/v1/sessions') || pathname.startsWith('/api/v1/chat') || pathname.startsWith('/api/v1/audit')) {
+    return true;
+  }
+  return /^\/api\/v1\/workspaces\/[^/]+\/(jobs|checkpoints|scheduled-tasks)\b/.test(pathname);
+}
+
+function attachWorkspaceHeader(fetchImpl, workspaceId) {
+  const headerValue = typeof workspaceId === 'string' ? workspaceId.trim() : '';
+  if (headerValue === '') return fetchImpl;
+  return (url, options = {}) => {
+    if (typeof url === 'string') {
+      const pathname = url.replace(/^[a-z][a-z0-9+.-]*:\/\/[^/?#]*/i, '').split(/[?#]/)[0];
+      if (isWorkspaceScopedPath(pathname) && options.headers?.['X-Workspace-Id'] === undefined) {
+        options = { ...options, headers: { ...options.headers, 'X-Workspace-Id': headerValue } };
+      }
+    }
+    return fetchImpl(url, options);
+  };
+}
+
 function helpText() {
   return [
     'XH development and operations CLI',
@@ -156,6 +194,14 @@ function helpText() {
     '  node scripts/xihe.mjs dev init --provider <id> --scope <USER|WORKSPACE> --label <label> [--models <id,id>] [--api-key-env <name>]',
     '  node scripts/xihe.mjs config import [file]',
     '  node scripts/xihe.mjs config export [--layer instance] [--include-secrets] [--out <file>] [--force]',
+    '  node scripts/xihe.mjs config get <domain> [--layer instance|user|workspace] [--include-meta] [--workspace <wsId>]',
+    '  node scripts/xihe.mjs config set <domain> <key> <value> --layer instance',
+    '  node scripts/xihe.mjs config unset <domain> <key>',
+    '  node scripts/xihe.mjs config meta <domain> [--layer instance|user|workspace] [--workspace <wsId>]',
+    '  node scripts/xihe.mjs config put <domain> --layer user|workspace --file <entries.json> [--workspace <wsId>]',
+    '  node scripts/xihe.mjs config-locks list [<domain>]',
+    '  node scripts/xihe.mjs config-locks set <domain> <key> --reason <text> [--value <v>] [--revision <n>]',
+    '  node scripts/xihe.mjs config-locks delete <domain> <key> [--revision <n>] [--clear-value]',
     '  node scripts/xihe.mjs verify --stack <n> --email <account> --workspace <wsId> [--wait-seconds <n>] [--yes]',
     '  node scripts/xihe.mjs version [--check]',
     '  node scripts/xihe.mjs skill list [--scope instance|workspace] [--workspace <wsId>]',
@@ -167,13 +213,26 @@ function helpText() {
     '  node scripts/xihe.mjs status',
     '  node scripts/xihe.mjs workspace list',
     '  node scripts/xihe.mjs workspace get <wsId>',
+    '  node scripts/xihe.mjs workspace create --name <n> --storage-mode direct_attach (--host-path <dir> | --roots <dir,...>) [--execution-mode <m>] [--idempotency-key <k>]',
+    '  node scripts/xihe.mjs workspace delete <wsId> [--yes]',
+    '  node scripts/xihe.mjs workspace members <wsId> [--add <user> --role EDITOR|VIEWER | --set-role <userId> --role EDITOR|VIEWER | --remove <userId>] [--yes]',
+    '  node scripts/xihe.mjs workspace roots <wsId> (--add <path> [--alias <a>] | --rename <rootId> --alias <a> | --reposition <rootId> --position <n> | --remove <rootId>) [--yes]',
     '  node scripts/xihe.mjs job list <wsId>',
     '  node scripts/xihe.mjs job output <wsId> <jobId> [--stream stdout|stderr] [--offset <n>] [--limit <n>]',
     '  node scripts/xihe.mjs job cancel <wsId> <jobId>',
     '  node scripts/xihe.mjs checkpoint list <wsId>',
     '  node scripts/xihe.mjs checkpoint preview-revert <wsId> <sliceRef>',
     '  node scripts/xihe.mjs scheduled-task list <wsId> [--page <n>] [--size <n>]',
+    '  node scripts/xihe.mjs scheduled-task create <wsId> --kind delay_once|cron --target session_wakeup|job_dispatch (--cron-expr <5fields> | --at <iso> [--timezone <tz>]) (--session <id> --prompt <text> | --payload-file <json>)',
+    '  node scripts/xihe.mjs scheduled-task delete <wsId> <taskId> [--yes]   (scheduled -> cancelled)',
+    '  node scripts/xihe.mjs scheduled-task rerun <wsId> <taskId>   (missed/expired only)',
+    '  node scripts/xihe.mjs scheduled-task remove <wsId> <taskId> [--yes]   (missed/expired -> cancelled)',
+    '  node scripts/xihe.mjs scheduled-task postpone <wsId> <taskId> --at <iso>',
     '  node scripts/xihe.mjs audit list [--type <type>] [--page <n>] [--size <n>]',
+    '  node scripts/xihe.mjs me permissions',
+    '  node scripts/xihe.mjs models',
+    '  node scripts/xihe.mjs api-input-types list',
+    '  node scripts/xihe.mjs events tail <sessionId> [--follow] [--timeout <seconds>] [--since <id>]',
     '  node scripts/xihe.mjs provider add <id> --scope <USER|WORKSPACE> --label <label> [--models <id,id>] [--api-key-env <name>]',
     '  node scripts/xihe.mjs provider update <id> [--label <label>] [--base-url <url>] [--models <id,id>] [--api-key-env <name>]',
     '  node scripts/xihe.mjs agent create --scope personal|workspace|instance --name <n> [--template <t>] [--default-model <p>:<m>] [--allow-model <p>:<m> ...]',
@@ -184,11 +243,19 @@ function helpText() {
     '  node scripts/xihe.mjs provider limit set --connection <c> [--max-inflight N] [--max-queue N] [--tokens N --window S] [--model <p>:<m> --max-inflight N ...]',
     '  node scripts/xihe.mjs provider limit show --connection <c>',
     '  node scripts/xihe.mjs provider list [--scope <USER|WORKSPACE>]',
+    '  node scripts/xihe.mjs provider catalog   (non-secret provider definitions)',
     '  node scripts/xihe.mjs session participants list --session <sessionId> [--workspace <wsId>]',
     '  node scripts/xihe.mjs session participants add --session <sessionId> --principal <principalId> --kind AGENT|HUMAN [--role MEMBER|GUARD] [--wake ALL_MESSAGES|MENTION] [--respond ALWAYS|WHEN_MENTIONED|JUDGE|MUTED]',
     '  node scripts/xihe.mjs session participants remove --session <sessionId> --participant <participantId>  (soft disable: 参与者行/游标/审计保留，非硬删除)',
     '  node scripts/xihe.mjs session participants policy --session <sessionId> --participant <participantId> [--wake MENTION|ALL_MESSAGES|SCHEDULE [--interval <seconds> [--jitter <seconds>] [--max-concurrent <n>]]] [--respond ALWAYS|WHEN_MENTIONED|JUDGE|MUTED]',
-    '  node scripts/xihe.mjs chat send --session <sessionId> --branch <branchId> --content <text> [--as <participantId>]',
+    '  node scripts/xihe.mjs chat send --session <sessionId> --branch <branchId> --content <text> [--as <participantId>] [--idempotency-key <key>]',
+    '  node scripts/xihe.mjs chat run <runId> [--attempts] [--trace]',
+    '  node scripts/xihe.mjs chat cancel <runId> [--reason <text>]  (idempotent while the run is still cancelling)',
+    '  node scripts/xihe.mjs chat approvals',
+    '  node scripts/xihe.mjs chat approve|reject <requestId> [--feedback <text>]',
+    '  node scripts/xihe.mjs session list [--workspace <wsId>]',
+    '  node scripts/xihe.mjs session get <sessionId>',
+    '  node scripts/xihe.mjs session export <sessionId> --branch <branchId>  (Markdown)',
     '  node scripts/xihe.mjs provider verify <id>',
     '  node scripts/xihe.mjs provider delete <id> [--yes]',
     '  node scripts/xihe.mjs credential rotate [--batch-size <n>] [--max-batches <n>] [--dry-run]',
@@ -246,7 +313,7 @@ export async function runCommand(argv, dependencies = {}) {
   if (dependencies.env !== undefined && env.XIHE_CLI_TOKEN_FILE === undefined) env.XIHE_CLI_TOKEN_CACHE = 'off';
   // PLAN-0643 R5: a 401 on a cached token refreshes once (single-flight across
   // processes) and replays the request; 403 / non-CP origins are untouched.
-  const fetchImpl = attachAuthRefresh({
+  const fetchImpl = attachWorkspaceHeader(attachAuthRefresh({
     fetchImpl: rawFetch,
     env,
     promptSecret: prompt,
@@ -254,13 +321,24 @@ export async function runCommand(argv, dependencies = {}) {
     platform: dependencies.platform,
     waitMs: dependencies.authRefreshWaitMs,
     pollMs: dependencies.authRefreshPollMs,
-  });
+  }), env.XIHE_WORKSPACE_ID);
   const [group, command, ...rest] = args;
 
   try {
     // T1.7: validate the flag value before dispatch so a malformed `--base-url`
     // reports INVALID_BASE_URL (the env link alone would report INVALID_CP_URL).
     if (globals.baseUrl !== undefined) resolveBaseUrl({}, globals.baseUrl);
+    // PLAN-0643 T3.5 (D6/V12): an explicit `--workspace` and XIHE_WORKSPACE_ID must
+    // not disagree — the flag is the only injection source once both are set, so a
+    // conflicting env value is a usage error rather than a silent override.
+    if (globals.workspace !== undefined) {
+      const fromEnv = typeof baseEnv.XIHE_WORKSPACE_ID === 'string' ? baseEnv.XIHE_WORKSPACE_ID.trim() : '';
+      const flagValue = globals.workspace.trim();
+      if (fromEnv !== '' && flagValue !== '' && fromEnv !== flagValue) {
+        throw new CliError('INVALID_ARGUMENT',
+          '--workspace and XIHE_WORKSPACE_ID are both set with different values; provide only one of them.');
+      }
+    }
     if (!group || group === 'help' || globals.help) {
       return { exitCode: 0, json, data: { help: helpText() } };
     }
@@ -395,13 +473,69 @@ export async function runCommand(argv, dependencies = {}) {
     }
 
     if (group === 'workspace') {
+      // PLAN-0643 T4.3: the write face rides the same group; read faces stay below.
+      if (command === 'create') {
+        const parsed = parseCommandOptions(rest, [
+          '--name', '--storage-mode', '--host-path', '--roots',
+          '--description', '--execution-mode', '--idempotency-key', '--email',
+        ], []);
+        if (parsed.positionals.length !== 0) {
+          throw new CliError('INVALID_ARGUMENT', 'workspace create takes no positional arguments; use --name.');
+        }
+        const apiBase = getApiBase(env);
+        const token = await login({ apiBase, fetchImpl, env, options: parsed.values, promptSecret: prompt });
+        const data = await runWorkspaceCreate({
+          apiBase, fetchImpl, token, options: parsed.values,
+          stderr: dependencies.stderr ?? process.stderr,
+        });
+        return { exitCode: 0, json, data };
+      }
+      if (command === 'delete') {
+        const parsed = parseCommandOptions(rest, ['--email'], ['--yes']);
+        if (parsed.positionals.length !== 1) throw new CliError('INVALID_ARGUMENT', 'workspace delete requires one workspace ID.');
+        const apiBase = getApiBase(env);
+        const token = await login({ apiBase, fetchImpl, env, options: parsed.values, promptSecret: prompt });
+        const data = await runWorkspaceDelete({
+          apiBase, fetchImpl, token, workspaceId: parsed.positionals[0],
+          yes: parsed.values['--yes'] === true,
+          confirm: dependencies.confirmAction ?? confirmAction,
+          stdin: dependencies.stdin ?? process.stdin,
+        });
+        return { exitCode: 0, json, data };
+      }
+      if (command === 'members') {
+        const parsed = parseCommandOptions(rest, ['--add', '--set-role', '--remove', '--role', '--email'], ['--yes']);
+        if (parsed.positionals.length !== 1) throw new CliError('INVALID_ARGUMENT', 'workspace members requires one workspace ID.');
+        const apiBase = getApiBase(env);
+        const token = await login({ apiBase, fetchImpl, env, options: parsed.values, promptSecret: prompt });
+        const data = await runWorkspaceMembers({
+          apiBase, fetchImpl, token, workspaceId: parsed.positionals[0], options: parsed.values,
+          yes: parsed.values['--yes'] === true,
+          confirm: dependencies.confirmAction ?? confirmAction,
+          stdin: dependencies.stdin ?? process.stdin,
+        });
+        return { exitCode: 0, json, data };
+      }
+      if (command === 'roots') {
+        const parsed = parseCommandOptions(rest, ['--add', '--rename', '--reposition', '--position', '--alias', '--remove', '--email'], ['--yes']);
+        if (parsed.positionals.length !== 1) throw new CliError('INVALID_ARGUMENT', 'workspace roots requires one workspace ID.');
+        const apiBase = getApiBase(env);
+        const token = await login({ apiBase, fetchImpl, env, options: parsed.values, promptSecret: prompt });
+        const data = await runWorkspaceRoots({
+          apiBase, fetchImpl, token, workspaceId: parsed.positionals[0], options: parsed.values,
+          yes: parsed.values['--yes'] === true,
+          confirm: dependencies.confirmAction ?? confirmAction,
+          stdin: dependencies.stdin ?? process.stdin,
+        });
+        return { exitCode: 0, json, data };
+      }
       let parsed;
       if (command === 'list') {
         parsed = parseCommandOptions(rest, ['--email'], []);
       } else if (command === 'get') {
         parsed = parseCommandOptions(rest, ['--email'], []);
       } else {
-        throw new CliError('INVALID_ARGUMENT', 'Unknown workspace command; use list/get.');
+        throw new CliError('INVALID_ARGUMENT', 'Unknown workspace command; use list/get/create/delete/members/roots.');
       }
       const apiBase = getApiBase(env);
       const token = await login({ apiBase, fetchImpl, env, options: parsed.values, promptSecret: prompt });
@@ -491,13 +625,81 @@ export async function runCommand(argv, dependencies = {}) {
       return { exitCode: 0, json, data };
     }
 
-    if (group === 'scheduled-task' && command === 'list') {
-      const parsed = parseCommandOptions(rest, ['--page', '--size', '--email'], []);
-      if (parsed.positionals.length !== 1) throw new CliError('INVALID_ARGUMENT', 'scheduled-task list requires one workspace ID.');
-      const apiBase = getApiBase(env);
-      const token = await login({ apiBase, fetchImpl, env, options: parsed.values, promptSecret: prompt });
-      const data = await runScheduledTaskList({ apiBase, fetchImpl, token, workspaceId: parsed.positionals[0], options: parsed.values });
-      return { exitCode: 0, json, data };
+    if (group === 'scheduled-task') {
+      // PLAN-0643 T4.5: the group deliberately has no `cancel` command — DELETE is
+      // the scheduled->cancelled route and POST /remove disposes missed/expired.
+      if (command === 'list') {
+        const parsed = parseCommandOptions(rest, ['--page', '--size', '--email'], []);
+        if (parsed.positionals.length !== 1) throw new CliError('INVALID_ARGUMENT', 'scheduled-task list requires one workspace ID.');
+        const apiBase = getApiBase(env);
+        const token = await login({ apiBase, fetchImpl, env, options: parsed.values, promptSecret: prompt });
+        const data = await runScheduledTaskList({ apiBase, fetchImpl, token, workspaceId: parsed.positionals[0], options: parsed.values });
+        return { exitCode: 0, json, data };
+      }
+      if (command === 'create') {
+        const parsed = parseCommandOptions(rest, [
+          '--kind', '--target', '--cron-expr', '--timezone', '--at',
+          '--session', '--prompt', '--payload-file', '--agent-principal', '--email',
+        ], []);
+        if (parsed.positionals.length !== 1) throw new CliError('INVALID_ARGUMENT', 'scheduled-task create requires one workspace ID.');
+        const apiBase = getApiBase(env);
+        const token = await login({ apiBase, fetchImpl, env, options: parsed.values, promptSecret: prompt });
+        const data = await runScheduledTaskCreate({
+          apiBase, fetchImpl, token, workspaceId: parsed.positionals[0], options: parsed.values,
+        });
+        return { exitCode: 0, json, data };
+      }
+      if (command === 'delete') {
+        const parsed = parseCommandOptions(rest, ['--agent-principal', '--email'], ['--yes']);
+        if (parsed.positionals.length !== 2) throw new CliError('INVALID_ARGUMENT', 'scheduled-task delete requires a workspace ID and a task ID.');
+        const apiBase = getApiBase(env);
+        const token = await login({ apiBase, fetchImpl, env, options: parsed.values, promptSecret: prompt });
+        const data = await runScheduledTaskDelete({
+          apiBase, fetchImpl, token,
+          workspaceId: parsed.positionals[0], taskId: parsed.positionals[1], options: parsed.values,
+          yes: parsed.values['--yes'] === true,
+          confirm: dependencies.confirmAction ?? confirmAction,
+          stdin: dependencies.stdin ?? process.stdin,
+        });
+        return { exitCode: 0, json, data };
+      }
+      if (command === 'rerun') {
+        const parsed = parseCommandOptions(rest, ['--agent-principal', '--email'], []);
+        if (parsed.positionals.length !== 2) throw new CliError('INVALID_ARGUMENT', 'scheduled-task rerun requires a workspace ID and a task ID.');
+        const apiBase = getApiBase(env);
+        const token = await login({ apiBase, fetchImpl, env, options: parsed.values, promptSecret: prompt });
+        const data = await runScheduledTaskRerun({
+          apiBase, fetchImpl, token,
+          workspaceId: parsed.positionals[0], taskId: parsed.positionals[1], options: parsed.values,
+        });
+        return { exitCode: 0, json, data };
+      }
+      if (command === 'remove') {
+        const parsed = parseCommandOptions(rest, ['--agent-principal', '--email'], ['--yes']);
+        if (parsed.positionals.length !== 2) throw new CliError('INVALID_ARGUMENT', 'scheduled-task remove requires a workspace ID and a task ID.');
+        const apiBase = getApiBase(env);
+        const token = await login({ apiBase, fetchImpl, env, options: parsed.values, promptSecret: prompt });
+        const data = await runScheduledTaskRemove({
+          apiBase, fetchImpl, token,
+          workspaceId: parsed.positionals[0], taskId: parsed.positionals[1], options: parsed.values,
+          yes: parsed.values['--yes'] === true,
+          confirm: dependencies.confirmAction ?? confirmAction,
+          stdin: dependencies.stdin ?? process.stdin,
+        });
+        return { exitCode: 0, json, data };
+      }
+      if (command === 'postpone') {
+        const parsed = parseCommandOptions(rest, ['--at', '--agent-principal', '--email'], []);
+        if (parsed.positionals.length !== 2) throw new CliError('INVALID_ARGUMENT', 'scheduled-task postpone requires a workspace ID and a task ID.');
+        const apiBase = getApiBase(env);
+        const token = await login({ apiBase, fetchImpl, env, options: parsed.values, promptSecret: prompt });
+        const data = await runScheduledTaskPostpone({
+          apiBase, fetchImpl, token,
+          workspaceId: parsed.positionals[0], taskId: parsed.positionals[1], options: parsed.values,
+        });
+        return { exitCode: 0, json, data };
+      }
+      throw new CliError('INVALID_ARGUMENT', 'Unknown scheduled-task command; use list/create/delete/rerun/remove/postpone.');
     }
 
     if (group === 'audit' && command === 'list') {
@@ -507,6 +709,57 @@ export async function runCommand(argv, dependencies = {}) {
       const token = await login({ apiBase, fetchImpl, env, options: parsed.values, promptSecret: prompt });
       const data = await runAuditList({ apiBase, fetchImpl, token, options: parsed.values });
       return { exitCode: 0, json, data };
+    }
+
+    // PLAN-0643 T4.1/T4.2: catalog read faces. `models` is a status-style group
+    // (no subcommand); `api-input-types list` is the two-level form.
+    if (group === 'me' || group === 'models' || group === 'api-input-types') {
+      if (group === 'me' && command !== 'permissions') {
+        throw new CliError('INVALID_ARGUMENT', 'Unknown me command; use permissions.');
+      }
+      if (group === 'api-input-types' && command !== 'list') {
+        throw new CliError('INVALID_ARGUMENT', 'Unknown api-input-types command; use list.');
+      }
+      if (group === 'models' && command !== undefined) {
+        throw new CliError('INVALID_ARGUMENT', 'models is a single command; do not pass a subcommand.');
+      }
+      const parsed = parseCommandOptions(rest, ['--email'], []);
+      if (parsed.positionals.length !== 0) {
+        throw new CliError('INVALID_ARGUMENT', `${group === 'me' ? 'me permissions' : group} takes no positional arguments.`);
+      }
+      const apiBase = getApiBase(env);
+      const token = await login({ apiBase, fetchImpl, env, options: parsed.values, promptSecret: prompt });
+      const runner = group === 'me'
+        ? runMePermissions
+        : group === 'models' ? runModels : runApiInputTypes;
+      return { exitCode: 0, json, data: await runner({ apiBase, fetchImpl, token }) };
+    }
+
+    if (group === 'events') {
+      // PLAN-0643 T4.6 (B6): the default (no --follow) reads the current stream
+      // and exits; --follow streams until Ctrl-C, which must exit 0.
+      if (command !== 'tail') {
+        throw new CliError('INVALID_ARGUMENT', 'Unknown events command; use tail.');
+      }
+      const parsed = parseCommandOptions(rest, ['--timeout', '--since', '--email'], ['--follow']);
+      if (parsed.positionals.length !== 1) {
+        throw new CliError('INVALID_ARGUMENT', 'events tail requires one session ID.');
+      }
+      const apiBase = getApiBase(env);
+      const token = await login({ apiBase, fetchImpl, env, options: parsed.values, promptSecret: prompt });
+      const wired = dependencies.tailSignal === undefined ? wireInterruptSignal() : null;
+      try {
+        const data = await runEventsTail({
+          apiBase, fetchImpl, token,
+          sessionId: parsed.positionals[0],
+          options: parsed.values,
+          output: dependencies.stdout ?? process.stdout,
+          signal: dependencies.tailSignal ?? wired?.signal,
+        });
+        return { exitCode: 0, json, data };
+      } finally {
+        wired?.dispose();
+      }
     }
 
     if (group === 'dev' && command === 'check') {
@@ -575,6 +828,37 @@ export async function runCommand(argv, dependencies = {}) {
       return { exitCode: 0, json, data };
     }
 
+    if (group === 'config' && command !== 'import' && command !== 'export') {
+      // PLAN-0643 T2.1–T2.4/T2.7: config get/set/unset/meta/put. Parsing, login
+      // and CP calls live in xihe-cli/config.mjs (auth.mjs pattern); CP error
+      // codes pass through (preserveServerCodes) so INVALID_DOMAIN and 409
+      // CONFIG_*_LOCKED surface verbatim (design D23).
+      const configResult = await runConfigCommand({
+        command,
+        rest,
+        env,
+        fetchImpl,
+        apiBase: getApiBase(env),
+        promptSecret: prompt,
+        stderr: dependencies.stderr ?? process.stderr,
+        fsImpl: dependencies.fsImpl,
+      });
+      return { exitCode: configResult.exitCode, json, data: configResult.data };
+    }
+
+    if (group === 'config-locks') {
+      // PLAN-0643 T2.5: the admin lock catalog (list/set/delete, cap:instance:admin).
+      const locksResult = await runConfigLocksCommand({
+        command,
+        rest,
+        env,
+        fetchImpl,
+        apiBase: getApiBase(env),
+        promptSecret: prompt,
+      });
+      return { exitCode: locksResult.exitCode, json, data: locksResult.data };
+    }
+
     if (group === 'session' && command === 'participants') {
       const sub = rest[0];
       const tail = rest.slice(1);
@@ -608,13 +892,33 @@ export async function runCommand(argv, dependencies = {}) {
     }
 
     if (group === 'chat' && command === 'send') {
-      const parsed = parseParticipantOptions(rest, ['--session', '--branch', '--content', '--as', '--workspace', '--email']);
+      const parsed = parseParticipantOptions(rest, ['--session', '--branch', '--content', '--as', '--idempotency-key', '--workspace', '--email']);
       if (parsed.positionals.length !== 0) {
         throw new CliError('INVALID_ARGUMENT', 'chat send takes no positional arguments.', {}, 2);
       }
       const apiBase = getApiBase(env);
       const token = await login({ apiBase, fetchImpl, env, options: parsed.values, promptSecret: prompt });
       return { exitCode: 0, json, data: await sendChat({ apiBase, fetchImpl, token, options: parsed.values }) };
+    }
+
+    // PLAN-0643 M6-2: the rest of the chat family (run/cancel/approvals/approve/reject).
+    if (group === 'chat') {
+      const chatResult = await runChatCommand({
+        command, rest, env, fetchImpl,
+        apiBase: getApiBase(env),
+        promptSecret: prompt,
+      });
+      return { exitCode: chatResult.exitCode, json, data: chatResult.data };
+    }
+
+    // PLAN-0643 M6-2: session read surface (list/get/export); participants keeps its block above.
+    if (group === 'session') {
+      const sessionResult = await runSessionCommand({
+        command, rest, env, fetchImpl,
+        apiBase: getApiBase(env),
+        promptSecret: prompt,
+      });
+      return { exitCode: sessionResult.exitCode, json, data: sessionResult.data };
     }
 
     if (group === 'agent') {
@@ -688,12 +992,18 @@ export async function runCommand(argv, dependencies = {}) {
         parsed = parseCommandOptions(rest, ['--label', '--api-key-env', '--base-url', '--models', '--email']);
       } else if (command === 'list') {
         parsed = parseCommandOptions(rest, ['--scope', '--email']);
+      } else if (command === 'catalog') {
+        // PLAN-0643 T4.1: GET /api/v1/provider-catalog passthrough.
+        parsed = parseCommandOptions(rest, ['--email'], []);
+        if (parsed.positionals.length !== 0) {
+          throw new CliError('INVALID_ARGUMENT', 'provider catalog takes no positional arguments.');
+        }
       } else if (command === 'verify') {
         parsed = parseCommandOptions(rest, ['--email']);
       } else if (command === 'delete') {
         parsed = parseCommandOptions(rest, ['--email'], ['--yes']);
       } else {
-        throw new CliError('INVALID_ARGUMENT', 'Unknown provider command; use add/update/list/verify/delete.');
+        throw new CliError('INVALID_ARGUMENT', 'Unknown provider command; use add/update/list/catalog/verify/delete.');
       }
 
       if (command === 'add') {
@@ -711,11 +1021,14 @@ export async function runCommand(argv, dependencies = {}) {
         if (parsed.values['--scope']) normalizeScope(parsed.values['--scope']);
       } else if (command === 'delete') {
         if (parsed.positionals.length !== 1) throw new CliError('INVALID_ARGUMENT', 'provider delete requires one connection ID.');
-      } else if (parsed.positionals.length !== 1) {
+      } else if (command === 'verify' && parsed.positionals.length !== 1) {
         throw new CliError('INVALID_ARGUMENT', 'provider verify requires one connection ID.');
       }
 
       const token = await login({ apiBase, fetchImpl, env, options: parsed.values, promptSecret: prompt });
+      if (command === 'catalog') {
+        return { exitCode: 0, json, data: await runProviderCatalog({ apiBase, fetchImpl, token }) };
+      }
       if (command === 'add') {
         const data = await addProvider({ apiBase, fetchImpl, env, options: parsed.values, positionals: parsed.positionals, token, promptSecret: prompt });
         return { exitCode: 0, json, data };
@@ -969,6 +1282,17 @@ export async function runCommand(argv, dependencies = {}) {
   }
 }
 
+// PLAN-0643 T4.6: SIGINT during `events tail --follow` aborts the stream and the
+// command exits 0. The listener is installed only while the tail is running, so
+// other commands keep the default SIGINT termination.
+function wireInterruptSignal() {
+  if (typeof process?.on !== 'function') return null;
+  const controller = new AbortController();
+  const handler = () => controller.abort();
+  process.on('SIGINT', handler);
+  return { signal: controller.signal, dispose: () => process.off('SIGINT', handler) };
+}
+
 export function printResult(result) {
   if (result.json) {
     const value = result.envelope
@@ -1076,6 +1400,95 @@ export function printResult(result) {
     return;
   }
   const out = process.stdout;
+  if (result.data?.kind === 'config-get') {
+    // PLAN-0643 T2.1: merged/layered entries; env-overridden keys carry an [env] marker.
+    const data = result.data;
+    const pairs = Object.entries(data.entries ?? {});
+    out.write(`domain: ${data.domain}  layer: ${data.layer}  keys: ${pairs.length}\n`);
+    if (data.workspaceId !== undefined) out.write(`workspace: ${data.workspaceId}\n`);
+    const envKeys = new Set(Object.keys(data.envOverridden ?? {}));
+    for (const [key, value] of pairs) {
+      out.write(`${key} = ${String(value)}${envKeys.has(key) ? '  [env]' : ''}\n`);
+    }
+    return;
+  }
+  if (result.data?.kind === 'config-set') {
+    out.write(`set: ${result.data.domain}.${result.data.key} (${result.data.layer})`
+      + `  ${result.data.changed ? 'changed' : 'unchanged'}  verified=${result.data.verified}\n`);
+    return;
+  }
+  if (result.data?.kind === 'config-unset') {
+    out.write(`removed: ${result.data.domain}.${result.data.key} (${result.data.layer})\n`);
+    return;
+  }
+  if (result.data?.kind === 'config-meta') {
+    // PLAN-0643 T2.3: per-key source/locked/writable are the fields that matter.
+    out.write(`meta: ${result.data.domain}  layer: ${result.data.layer}  keys: ${result.data.keys.length}\n`);
+    for (const item of result.data.keys) {
+      out.write(`${item.key}  source=${item.source ?? '?'}  locked=${item.locked ?? '?'}  writable=${item.writable ?? '?'}\n`);
+    }
+    return;
+  }
+  if (result.data?.kind === 'config-put') {
+    out.write(`written: ${result.data.domain} (${result.data.layer})  keys: ${result.data.keys}`
+      + `${result.data.workspaceId !== undefined ? `  workspace: ${result.data.workspaceId}` : ''}\n`);
+    return;
+  }
+  if (result.data?.kind === 'config-locks-list') {
+    out.write(`locks: ${result.data.keys.length}  revision: ${result.data.revision}`
+      + `${result.data.domain ? `  domain: ${result.data.domain}` : ''}\n`);
+    for (const item of result.data.keys) {
+      out.write(`${item.key}  locked=${item.locked ?? '?'}  mode=${item.mode ?? '-'}  by=${item.updatedBy ?? '-'}  reason=${item.reason ?? '-'}\n`);
+    }
+    return;
+  }
+  if (result.data?.kind === 'config-locks-set') {
+    out.write(`locked: ${result.data.domain}.${result.data.key}  locked=${result.data.locked ?? '?'}  revision=${result.data.revision ?? '-'}\n`);
+    return;
+  }
+  if (result.data?.kind === 'config-locks-delete') {
+    out.write(`lock removed: ${result.data.domain}.${result.data.key}${result.data.clearValue ? ' (pinned value cleared)' : ''}\n`);
+    return;
+  }
+  if (result.data?.kind === 'chat-run') {
+    // PLAN-0643 T3.1: status is the field operators watch; approvals are counted.
+    out.write(`run: ${result.data.runId ?? ''}  status: ${result.data.status ?? ''}`
+      + `${result.data.terminalOutcome ? `  outcome: ${result.data.terminalOutcome}` : ''}`
+      + `  pendingApprovals: ${Array.isArray(result.data.pendingApprovals) ? result.data.pendingApprovals.length : '?'}\n`);
+    return;
+  }
+  if (result.data?.kind === 'chat-cancelled') {
+    out.write(`cancel: ${result.data.runId ?? ''}  status: ${result.data.status ?? '?'}\n`);
+    return;
+  }
+  if (result.data?.kind === 'chat-approvals') {
+    out.write(`pending approvals: ${result.data.items.length} session(s)\n`);
+    for (const item of result.data.items) {
+      out.write(`${item.sessionId ?? ''}  count=${item.count ?? '?'}  oldest=${item.oldestRequestedAt ?? ''}\n`);
+    }
+    return;
+  }
+  if (result.data?.kind === 'chat-approval-decision') {
+    out.write(`decision: ${result.data.requestId ?? ''}  ${result.data.decision ?? ''}  state: ${result.data.state ?? result.data.status ?? 'accepted'}\n`);
+    return;
+  }
+  if (result.data?.kind === 'session-list') {
+    out.write(`sessions: ${result.data.sessions.length}\n`);
+    for (const item of result.data.sessions) {
+      out.write(`${item.id ?? ''}  ${item.title ?? ''}  ${item.kind ?? ''}${item.archived ? ' (archived)' : ''}\n`);
+    }
+    return;
+  }
+  if (result.data?.kind === 'session') {
+    const item = result.data.session ?? {};
+    out.write(`${item.id ?? ''}  ${item.title ?? ''}  workspace=${item.workspaceId ?? ''}${item.archived ? ' (archived)' : ''}\n`);
+    return;
+  }
+  if (result.data?.kind === 'session-export') {
+    const text = result.data.markdown ?? '';
+    out.write(text.endsWith('\n') || text === '' ? text : `${text}\n`);
+    return;
+  }
   if (result.data?.kind === 'session-participants') {
     const items = result.data.participants ?? [];
     out.write(`participants: ${items.length}\n`);
@@ -1208,6 +1621,85 @@ export function printResult(result) {
     for (const item of result.data.entries) {
       out.write(`${item.createdAt ?? ''}  ${item.type ?? ''}  ${item.status ?? ''}  ${item.id ?? ''}\n`);
     }
+    return;
+  }
+  // PLAN-0643 T4.x human faces (M6-3). JSON output bypasses these branches.
+  if (result.data?.kind === 'provider-catalog') {
+    const providers = result.data.providers ?? {};
+    out.write(`provider catalog: ${Object.keys(providers).length} definition(s)\n`);
+    for (const [key, value] of Object.entries(providers)) {
+      out.write(`${key}  ${value?.displayName ?? ''}  ${value?.apiTypeId ?? ''}@v${value?.apiTypeVersion ?? '?'}  ${value?.operation ?? ''}\n`);
+    }
+    return;
+  }
+  if (result.data?.kind === 'models') {
+    const providers = result.data.providers ?? {};
+    out.write(`models: ${Object.keys(providers).length} connection(s), configRevision=${result.data.configRevision ?? '?'}\n`);
+    for (const [key, value] of Object.entries(providers)) {
+      out.write(`${key}  ${value?.providerId ?? ''}  ${value?.connectionStatus ?? ''}  models=${(value?.models ?? []).length}\n`);
+    }
+    for (const [provider, list] of Object.entries(result.data.models ?? {})) {
+      out.write(`${provider}: ${list.join(', ')}\n`);
+    }
+    return;
+  }
+  if (result.data?.kind === 'api-input-types') {
+    out.write(`api input types: ${result.data.types.length}\n`);
+    for (const item of result.data.types) {
+      out.write(`${item.apiTypeId}@v${item.version}  ${item.operation}  ${item.method} ${item.path}\n`);
+    }
+    return;
+  }
+  if (result.data?.kind === 'me-permissions') {
+    out.write(`me permissions: userId=${result.data.userId ?? '?'}\n`);
+    out.write(`capabilities: ${(result.data.instanceCapabilities ?? []).join(', ') || '(none)'}\n`);
+    out.write(`instance permissions: ${(result.data.instancePermissions ?? []).length}\n`);
+    const workspaces = result.data.workspaces ?? [];
+    out.write(`workspaces: ${workspaces.length}\n`);
+    for (const workspace of workspaces) {
+      out.write(`${workspace.workspaceId ?? workspace.id ?? ''}  role=${workspace.role ?? '?'}  atoms=${(workspace.permissions ?? []).length}\n`);
+    }
+    return;
+  }
+  if (result.data?.kind === 'workspace-created') {
+    out.write(`created: ${result.data.workspace?.id ?? '?'}  storageMode=${result.data.workspace?.storageMode ?? '?'}\n`);
+    return;
+  }
+  if (result.data?.kind === 'workspace-deleted') {
+    out.write(`deleted: ${result.data.workspaceId}\n`);
+    return;
+  }
+  if (result.data?.kind === 'workspace-members') {
+    out.write(`members: ${result.data.items.length}\n`);
+    for (const item of result.data.items) {
+      out.write(`${item.userId}  ${item.username ?? ''}  role=${item.role ?? '?'}\n`);
+    }
+    return;
+  }
+  if (result.data?.kind === 'workspace-member') {
+    const verb = result.data.action === 'add' ? 'added' : result.data.action === 'role' ? 'role updated' : 'removed';
+    out.write(`${verb}: ${result.data.member?.userId ?? result.data.userId ?? '?'}`
+      + `${result.data.member?.role ? ` role=${result.data.member.role}` : ''}\n`);
+    return;
+  }
+  if (result.data?.kind === 'workspace-root') {
+    const verb = { add: 'added', rename: 'renamed', reposition: 'repositioned', remove: 'removed' }[result.data.action] ?? result.data.action;
+    out.write(`root ${verb}: ${result.data.root?.id ?? result.data.rootId ?? '?'}`
+      + `${result.data.root?.position !== undefined ? ` position=${result.data.root.position}` : ''}\n`);
+    return;
+  }
+  if (result.data?.kind === 'scheduled-task') {
+    const task = result.data.task ?? {};
+    out.write(`task: ${task.id ?? '?'}  status=${task.status ?? '?'}  ${task.triggerKind ?? ''}`
+      + `${task.cronExpr ? ` ${task.cronExpr}` : ''}  next=${task.nextFireAt ?? ''}\n`);
+    return;
+  }
+  if (result.data?.kind === 'scheduled-task-disposition') {
+    out.write(`task: ${result.data.taskId}  status=${result.data.status ?? '?'}  changed=${result.data.changed ?? '?'}\n`);
+    return;
+  }
+  if (result.data?.kind === 'events-tail') {
+    out.write(`events tail: ${result.data.events} event(s)${result.data.follow ? ' (follow)' : ''}\n`);
     return;
   }
   if (Array.isArray(result.data?.checks)) {

@@ -25,6 +25,9 @@ import { fileURLToPath } from 'node:url';
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, '../..');
 const cliSource = fs.readFileSync(path.join(root, 'scripts/xihe.mjs'), 'utf8');
+// M6-2 moved the chat/session subcommand dispatch into its own module; its
+// `command === '…'` branches are part of the registry and must be scanned too.
+const chatSessionSource = fs.readFileSync(path.join(root, 'scripts/xihe-cli/chat-session.mjs'), 'utf8');
 const testSource = fs.readFileSync(path.join(root, 'scripts/xihe-cli.test.mjs'), 'utf8');
 
 // spec/cli-contract.md §1: the 16 pre-existing groups (denominator A).
@@ -32,8 +35,20 @@ const EXISTING_GROUPS = [
     'provider', 'credential', 'agent', 'session', 'chat', 'skill', 'workspace', 'job',
     'checkpoint', 'scheduled-task', 'audit', 'status', 'dev', 'config', 'verify', 'test',
 ];
-// PLAN-0643 M1 delivered these two groups (verify V1 `groups.added >= 2`).
-const ADDED_GROUPS = ['auth', 'api'];
+// PLAN-0643 M1 delivered auth/api (verify V1 `groups.added >= 2`); M6-1 adds the
+// config-locks admin group (T2.5); M6-3 adds me/models/api-input-types/events (T4.x).
+const ADDED_GROUPS = ['auth', 'api', 'config-locks', 'me', 'models', 'api-input-types', 'events'];
+// verify V2 (M6-3 re-judge): the `groups.added >= 12` list mixes NEW groups with
+// EXISTING groups extended by this plan. Each extension is evidenced by one
+// flagship command delivered for that group (the first of its kind on the group).
+const EXTENDED_GROUPS = [
+    { group: 'config', via: 'config put' },
+    { group: 'chat', via: 'chat run' },
+    { group: 'session', via: 'session export' },
+    { group: 'provider', via: 'provider catalog' },
+    { group: 'workspace', via: 'workspace create' },
+    { group: 'scheduled-task', via: 'scheduled-task create' },
+];
 // spec/cli-contract.md §2 "本期" column: the command matrix (denominator B, >= 25).
 const MATRIX = [
     'config get', 'config meta', 'config unset', 'config set', 'config put', 'config export',
@@ -49,20 +64,41 @@ const MATRIX = [
 
 // --- registry --------------------------------------------------------------------------------
 // Walk the dispatch blocks by indentation: a group block opens at 4 spaces and closes at 4 spaces.
+// A line may name several groups (`if (group === 'me' || group === 'models' …)`), so every
+// occurrence is captured — the old single-match regex silently dropped the 2nd/3rd group.
 const groups = new Set();
 const dispatchCommands = new Set();
 let currentGroup = null;
 for (const line of cliSource.split('\n')) {
-    const groupHit = line.match(/if \(group === '([\w-]+)'/);
+    const groupHits = [...line.matchAll(/group === '([\w-]+)'/g)];
     const commandHit = line.match(/(?:else )?if \(command === '([\w-]+)'/);
-    if (groupHit) {
-        groups.add(groupHit[1]);
-        currentGroup = groupHit[1];
-        if (commandHit) dispatchCommands.add(`${groupHit[1]} ${commandHit[1]}`);
+    if (groupHits.length > 0) {
+        for (const hit of groupHits) groups.add(hit[1]);
+        currentGroup = groupHits[0][1];
+        if (commandHit) {
+            for (const hit of groupHits) dispatchCommands.add(`${hit[1]} ${commandHit[1]}`);
+        }
     } else if (commandHit && currentGroup) {
         dispatchCommands.add(`${currentGroup} ${commandHit[1]}`);
     }
     if (/^ {4}\}/.test(line)) currentGroup = null;
+}
+// chat-session.mjs dispatchers map to their groups by function name; each
+// `command === 'x'` branch (all alternates captured) registers `<group> <cmd>`.
+const DISPATCHER_GROUPS = { runChatCommand: 'chat', runSessionCommand: 'session' };
+let moduleGroup = null;
+for (const line of chatSessionSource.split('\n')) {
+    const fnHit = line.match(/async function (runChatCommand|runSessionCommand)\b/);
+    if (fnHit) {
+        moduleGroup = DISPATCHER_GROUPS[fnHit[1]];
+        continue;
+    }
+    if (moduleGroup) {
+        for (const m of line.matchAll(/command === '([\w-]+)'/g)) {
+            dispatchCommands.add(`${moduleGroup} ${m[1]}`);
+        }
+    }
+    if (/^}/.test(line)) moduleGroup = null;
 }
 // 3-level commands only appear in helpText() usage lines (`xihe <g> <cmd> <sub>`).
 const helpText = cliSource.slice(cliSource.indexOf('function helpText()'), cliSource.indexOf('export async function runCommand'));
@@ -104,7 +140,13 @@ const commands = allNames.map((name) => {
 });
 
 const existing = EXISTING_GROUPS.map((group) => ({ group, present: groupPresent(group) }));
-const added = ADDED_GROUPS.map((group) => ({ group, present: groupPresent(group) }));
+// verify V2: `groups.added` counts new groups AND extended existing groups
+// (12-item list: 6 new + 6 extended on task/0643).
+const addedNew = ADDED_GROUPS.map((group) => ({ group, present: groupPresent(group), kind: 'new' }));
+const addedExtended = EXTENDED_GROUPS.map(({ group, via }) => ({
+    group, present: commandPresent(via), kind: 'extended', via,
+}));
+const added = [...addedNew, ...addedExtended];
 const matrix = MATRIX.map((name) => {
     const row = commands.find((command) => command.name === name);
     return { command: name, present: row.present, tested: row.tested };
@@ -115,8 +157,13 @@ const report = {
     commands,
     groups: {
         existing: { total: existing.length, present: existing.filter((row) => row.present).length, missing: existing.filter((row) => !row.present).map((row) => row.group) },
-        added: { total: added.length, present: added.filter((row) => row.present).length, names: added.map((row) => row.group) },
-        total: existing.length + added.length,
+        added: {
+            total: added.length,
+            present: added.filter((row) => row.present).length,
+            names: addedNew.map((row) => row.group),
+            extensions: addedExtended,
+        },
+        total: existing.length + ADDED_GROUPS.length,
     },
     matrix: {
         total: matrix.length,
@@ -139,7 +186,9 @@ if (process.argv.includes('--json')) {
     process.stdout.write(
         `groups: existing ${box.existing.present}/${box.existing.total}` +
             `${box.existing.missing.length ? ` missing=${box.existing.missing.join(',')}` : ''}` +
-            ` | added ${box.added.present}/${box.added.total}\n` +
+            ` | added ${box.added.present}/${box.added.total}` +
+            ` (new ${addedNew.filter((row) => row.present).length}/${addedNew.length}` +
+            ` + extended ${addedExtended.filter((row) => row.present).length}/${addedExtended.length})\n` +
             `matrix: ${matrixBox.covered}/${matrixBox.total} covered\n` +
             `commands: ${summary.present}/${summary.commands} present, ${summary.tested}/${summary.commands} tested\n`,
     );
