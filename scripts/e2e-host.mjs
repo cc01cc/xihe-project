@@ -1980,6 +1980,11 @@ async function runPlaywright() {
         : {}),
       XIHE_E2E_HEADED: process.env.XIHE_E2E_HEADED ?? '0',
       XIHE_E2E_BROWSER_CHANNEL: process.env.XIHE_E2E_BROWSER_CHANNEL ?? 'chrome-beta',
+      // 2026-11-06（PLAN-0684 窗口，Lead A 类授权）：mention-cursor 车道的三个
+      // runner-owned 信号量在此显式透传（缺省不设置时零变化，specs 自我 skip 维持）。
+      ...(process.env.XIHE_E2E_MENTION_CURSOR ? { XIHE_E2E_MENTION_CURSOR: process.env.XIHE_E2E_MENTION_CURSOR } : {}),
+      ...(process.env.XIHE_DEMO_STATE_FILE ? { XIHE_DEMO_STATE_FILE: process.env.XIHE_DEMO_STATE_FILE } : {}),
+      ...(process.env.XIHE_MENTION_CURSOR_DIR ? { XIHE_MENTION_CURSOR_DIR: process.env.XIHE_MENTION_CURSOR_DIR } : {}),
       ...(reportPath ? { PLAYWRIGHT_JSON_OUTPUT_NAME: reportPath } : {}),
     },
   })
