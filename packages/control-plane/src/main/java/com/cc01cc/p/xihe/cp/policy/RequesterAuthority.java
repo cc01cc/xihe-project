@@ -171,10 +171,12 @@ public class RequesterAuthority {
     public void logActionAtomDenied(String atom, UUID subjectId, UUID workspaceId) {
         String catalogAtom = PermissionAtomCatalog.allAtomNames().contains(atom) ? atom : "-";
         Set<String> sources = atomSources(subjectId, catalogAtom, workspaceId);
+        // Deterministic log output: atomSources is an unordered Set.copyOf view, sort before join.
+        String joined = sources.stream().sorted().collect(java.util.stream.Collectors.joining(","));
         logger.warn("[POLICY] event=action_atom_denied atom={} subject={} workspaceId={} source={}",
                 catalogAtom, subjectId == null ? "-" : subjectId,
                 workspaceId == null ? "-" : workspaceId,
-                sources.isEmpty() ? "none" : String.join(",", sources));
+                sources.isEmpty() ? "none" : joined);
     }
 
     /** Canonical action/resource rows at the evaluator's exact scope, retaining resource bounds. */
