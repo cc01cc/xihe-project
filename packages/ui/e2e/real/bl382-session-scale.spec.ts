@@ -28,7 +28,7 @@
  * 旁证（虚拟化失效信号）只登记不断言。两口径各写一份 JSON。
  */
 import { execFileSync } from "node:child_process";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { expect, test } from "@playwright/test";
 import type { CDPSession, Page, Response } from "@playwright/test";
@@ -59,14 +59,52 @@ const PROTOCOL = (() => {
     return { gcRounds: 2, samples: 5, sampleIntervalMs: 100 };
 })();
 
-const EVIDENCE_DIR = (() => {
+/**
+ * Lead ruling 4: raw measurement JSON belongs to the PLAN package, not to the
+ * gitignored `one/.local` tree. The spec runs from the A03 lane's `packages/ui`,
+ * so walk up to the one workspace instead of assuming a fixed depth — the lane
+ * can be either the main checkout or a `.worktrees` slot. Missing PLAN evidence
+ * is a hard error: silently falling back to `.local` would strand the result
+ * outside the reviewable package.
+ *
+ * The one-root marker mirrors `findOneRoot()` in measure-session-scale.mjs:
+ * only the workspace root contains A03-xihe/scripts/perf/run-baseline.mjs.
+ */
+function resolveOneRoot(): string {
     const hostRoot = process.env.XIHE_WORKSPACE_HOST_ROOT;
-    if (hostRoot)
-        return path.join(path.resolve(hostRoot, "../../../.."), ".local", "evidence", "plan-0682");
-    const threeUp = path.resolve(process.cwd(), "../../..");
-    const oneRoot = path.basename(threeUp) === ".worktrees" ? path.resolve(threeUp, "..") : threeUp;
-    return path.join(oneRoot, ".local", "evidence", "plan-0682");
-})();
+    const start = hostRoot ? path.resolve(hostRoot, "../../..") : process.cwd();
+    let dir = path.resolve(start);
+    for (;;) {
+        if (existsSync(path.join(dir, "A03-xihe", "scripts", "perf", "run-baseline.mjs"))) {
+            return dir;
+        }
+        const parent = path.dirname(dir);
+        if (parent === dir) break;
+        dir = parent;
+    }
+    throw new Error(
+        `[BL-382] cannot find the one workspace from ${start}; expected ` +
+            "A03-xihe/scripts/perf/run-baseline.mjs (one root marker)",
+    );
+}
+
+function resolveEvidenceDir(): string {
+    const oneRoot = resolveOneRoot();
+    const planEvidence = path.join(
+        oneRoot,
+        "plans",
+        "PLAN-0682-XH-bl382-session-scale-measure",
+        "evidence",
+    );
+    if (!existsSync(planEvidence)) {
+        throw new Error(
+            `[BL-382] one workspace at ${oneRoot} has no ` +
+                "plans/PLAN-0682-XH-bl382-session-scale-measure/evidence/; " +
+                "raw JSON must land in the PLAN",
+        );
+    }
+    return path.join(planEvidence, "raw");
+}
 
 type RawSample = {
     renderedRows: number;
@@ -393,7 +431,8 @@ test.describe("PLAN-0682 会话规模测量（BL-382 · 真栈）", () => {
         if (!tier) throw new Error("unreachable: test.skip handled missing XIHE_BL382_TIER");
         // 回填轮次随档位增长（20k≈400 页），实跑预算 T1.3 试跑后再收敛。
         test.setTimeout(1_200_000);
-        mkdirSync(EVIDENCE_DIR, { recursive: true });
+        const evidenceDir = resolveEvidenceDir();
+        mkdirSync(evidenceDir, { recursive: true });
         const caliber = worktreeCaliber();
 
         // 真链路序（design §3 D2 前置，同 plan0670-m2d-smoke 组织）：建号 → direct_attach
@@ -481,7 +520,7 @@ test.describe("PLAN-0682 会话规模测量（BL-382 · 真栈）", () => {
             };
             const outPath =
                 process.env.XIHE_BL382_OUT ??
-                path.join(EVIDENCE_DIR, `bl382-${tier}-initial-window.json`);
+                path.join(evidenceDir, `bl382-${tier}-initial-window.json`);
             writeFileSync(outPath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
             console.log(`[BL-382 SAMPLE] ${JSON.stringify(metrics)}`);
             console.log(`[BL-382 SAMPLE] evidence: ${outPath}`);
@@ -575,7 +614,7 @@ test.describe("PLAN-0682 会话规模测量（BL-382 · 真栈）", () => {
                 final: { raw: finalRaw, metrics: finalMetrics },
                 caliber: caliberFields,
             };
-            const backfillPath = path.join(EVIDENCE_DIR, `bl382-${tier}-backfill.json`);
+            const backfillPath = path.join(evidenceDir, `bl382-${tier}-backfill.json`);
             writeFileSync(backfillPath, `${JSON.stringify(backfillPayload, null, 2)}\n`, "utf8");
             console.log(
                 `[BL-382 BACKFILL] rounds=${backfillPages.length} exhausted=${exhaustedAtRound} stall=${stallTerminated}`,
