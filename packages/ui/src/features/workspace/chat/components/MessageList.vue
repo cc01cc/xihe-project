@@ -18,6 +18,8 @@ import MessageItem from "./MessageItem.vue";
 import ContextTruncationNotice from "./ContextTruncationNotice.vue";
 import MessageSearch from "./MessageSearch.vue";
 import RunGroupHeader from "./RunGroupHeader.vue";
+import RunTerminalChip from "./RunTerminalChip.vue";
+import { terminalMarkerOf, type TerminalMarker } from "../runStateView";
 import type { AgentContextTruncation } from "../composables/useSSE";
 import { hasMultipleActors } from "../actorView";
 import { resolveDelivery, type ResolvedDelivery } from "../deliveryView";
@@ -219,6 +221,11 @@ interface RunHeaderModel {
     runId: string;
     status?: string | null;
     terminalOutcome?: string | null;
+    /**
+     * BL-406：折叠时 run 头之外必须还有终态芯片（否则「常显」不成立）。由共享 resolver 给出，
+     * 与消息行尾的芯片同源，`succeeded`/`failed` 在这里同样没有标记。
+     */
+    terminalMarker: TerminalMarker | null;
     createdAt?: string | null;
     terminalAt?: string | null;
     principalName?: string;
@@ -257,10 +264,13 @@ const rows = computed<Row[]>(() => {
         if (groupingEnabled && group.runId) {
             const runId = group.runId;
             const summary = runsById.value.get(runId);
+            const status = runStatusOf(runId, groupMessages) ?? null;
+            const terminalOutcome = runOutcomeOf(runId, groupMessages) ?? null;
             const header: RunHeaderModel = {
                 runId,
-                status: runStatusOf(runId, groupMessages) ?? null,
-                terminalOutcome: runOutcomeOf(runId, groupMessages) ?? null,
+                status,
+                terminalOutcome,
+                terminalMarker: terminalMarkerOf(status, terminalOutcome),
                 createdAt: summary?.createdAt ?? null,
                 terminalAt: summary?.terminalAt ?? null,
                 principalName: principalNameOf(groupMessages),
@@ -484,6 +494,16 @@ watch(
                                     :principal-name="row.header.principalName"
                                     :collapsed="row.header.collapsed"
                                     @toggle="toggleRun(row.header.runId, row.groupMessages)"
+                                />
+                                <!--
+                                    BL-406：折叠壳之外（run 头摘要行下方）也要有终态芯片 ——
+                                    判据要求「常显」，而折叠时消息行整体不渲染，芯片会一起消失。
+                                    与消息行尾用同一组件（同 testid/文案/色阶/`data-run-outcome`）。
+                                -->
+                                <RunTerminalChip
+                                    v-if="row.header.collapsed && row.header.terminalMarker"
+                                    :outcome="row.header.terminalMarker"
+                                    class="ml-1"
                                 />
                                 <ContextTruncationNotice
                                     :truncation="truncationFor(row.header.runId)"
