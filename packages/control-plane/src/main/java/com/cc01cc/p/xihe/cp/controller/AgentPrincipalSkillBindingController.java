@@ -115,6 +115,9 @@ public class AgentPrincipalSkillBindingController {
         result.put("description", view.description());
         result.put("sourceType", view.sourceType());
         result.put("sourceName", view.sourceName());
+        result.put("scopeType", view.scopeType());
+        result.put("scopeId", view.scopeId());
+        result.put("scopeName", view.scopeName());
         result.put("tokenEstimate", view.tokenEstimate());
         result.put("createdBy", view.createdByUserId());
         result.put("createdAt", view.createdAt() == null ? null : view.createdAt().toString());

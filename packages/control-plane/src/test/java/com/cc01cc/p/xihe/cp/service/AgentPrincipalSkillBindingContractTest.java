@@ -147,6 +147,9 @@ class AgentPrincipalSkillBindingContractTest extends AbstractIntegrationTest {
         assertNotNull(body);
         assertEquals("skill-a", body.get("name"));
         assertEquals("personal", body.get("sourceType"));
+        assertEquals("instance", body.get("scopeType"));
+        assertEquals(null, body.get("scopeId"));
+        assertEquals(null, body.get("scopeName"));
         assertEquals(12, body.get("tokenEstimate"));
         assertNotNull(body.get("bindingId"));
 
@@ -173,6 +176,9 @@ class AgentPrincipalSkillBindingContractTest extends AbstractIntegrationTest {
         assertEquals(1, items.size());
         assertEquals(skillId.toString(), items.get(0).get("skillId"));
         assertEquals("skill-b", items.get(0).get("name"));
+        assertEquals("instance", items.get(0).get("scopeType"));
+        assertEquals(null, items.get(0).get("scopeId"));
+        assertEquals(null, items.get(0).get("scopeName"));
         assertEquals(42, items.get(0).get("tokenEstimate"));
     }
 
@@ -242,6 +248,9 @@ class AgentPrincipalSkillBindingContractTest extends AbstractIntegrationTest {
 
         assertEquals(HttpStatus.CREATED, created.getStatusCode(), String.valueOf(created.getBody()));
         assertEquals("workspace", created.getBody().get("sourceType"));
+        assertEquals("workspace", created.getBody().get("scopeType"));
+        assertEquals(workspace.getId().toString(), created.getBody().get("scopeId"));
+        assertEquals(workspace.getName(), created.getBody().get("scopeName"));
         List<SkillBinding> rows = bindingsOfPrincipal();
         assertEquals(1, rows.size());
         assertEquals("workspace", rows.get(0).getScopeType());

@@ -69,6 +69,7 @@ public class AgentPrincipalSkillBindingService {
     /** One binding as the API shows it (UI needs source + size, never the skill body). */
     public record AgentSkillBindingView(UUID bindingId, UUID principalId, UUID skillId, String name,
                                         String description, String sourceType, String sourceName,
+                                        String scopeType, UUID scopeId, String scopeName,
                                         int tokenEstimate, UUID createdByUserId, Instant createdAt) {
     }
 
@@ -214,8 +215,13 @@ public class AgentPrincipalSkillBindingService {
         String sourceName = workspaceDefinition
                 ? workspaces.findById(skill.getDefinitionScopeId()).map(w -> w.getName()).orElse(null)
                 : null;
+        String scopeName = SkillBinding.SCOPE_WORKSPACE.equals(row.getScopeType())
+                && row.getScopeId() != null
+                ? workspaces.findById(row.getScopeId()).map(w -> w.getName()).orElse(null)
+                : null;
         return new AgentSkillBindingView(row.getId(), row.getSubjectId(), skill.getId(), skill.getName(),
                 skill.getDescription(), workspaceDefinition ? "workspace" : "personal", sourceName,
+                row.getScopeType(), row.getScopeId(), scopeName,
                 skill.getBodyTokensEst(), row.getCreatedByUserId(), row.getCreatedAt());
     }
 
