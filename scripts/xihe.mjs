@@ -93,6 +93,7 @@ import {
   runWorkspaceList,
 } from './xihe-cli/readonly.mjs';
 import { runVerify } from './xihe-cli/verify.mjs';
+import { groupHelpText, helpText } from './xihe-cli/help.mjs';
 import { runVersion } from './xihe-cli/version.mjs';
 import { loadEnvFileChain } from './lib/env-file.mjs';
 
@@ -184,111 +185,6 @@ function attachWorkspaceHeader(fetchImpl, workspaceId) {
   };
 }
 
-function helpText() {
-  return [
-    'XH development and operations CLI',
-    '',
-    'Usage:',
-    '  mise run xihe -- provider list [--scope <USER|WORKSPACE>]',
-    '  node scripts/xihe.mjs dev check [--json]',
-    '  node scripts/xihe.mjs dev init --provider <id> --scope <USER|WORKSPACE> --label <label> [--models <id,id>] [--api-key-env <name>]',
-    '  node scripts/xihe.mjs config import [file]',
-    '  node scripts/xihe.mjs config export [--layer instance] [--include-secrets] [--out <file>] [--force]',
-    '  node scripts/xihe.mjs config get <domain> [--layer instance|user|workspace] [--include-meta] [--workspace <wsId>]',
-    '  node scripts/xihe.mjs config set <domain> <key> <value> --layer instance',
-    '  node scripts/xihe.mjs config unset <domain> <key>',
-    '  node scripts/xihe.mjs config meta <domain> [--layer instance|user|workspace] [--workspace <wsId>]',
-    '  node scripts/xihe.mjs config put <domain> --layer user|workspace --file <entries.json> [--workspace <wsId>]',
-    '  node scripts/xihe.mjs config-locks list [<domain>]',
-    '  node scripts/xihe.mjs config-locks set <domain> <key> --reason <text> [--value <v>] [--revision <n>]',
-    '  node scripts/xihe.mjs config-locks delete <domain> <key> [--revision <n>] [--clear-value]',
-    '  node scripts/xihe.mjs verify --stack <n> --email <account> --workspace <wsId> [--wait-seconds <n>] [--yes]',
-    '  node scripts/xihe.mjs version [--check]',
-    '  node scripts/xihe.mjs skill list [--scope instance|workspace] [--workspace <wsId>]',
-    '  node scripts/xihe.mjs skill show <skillId> [--include-body]',
-    '  node scripts/xihe.mjs skill import --file <request.json>',
-    '  node scripts/xihe.mjs skill bind --skill <id> --subject <user|agent_principal> --subject-id <id> [--scope instance|workspace --workspace <wsId>]',
-    '  node scripts/xihe.mjs skill unbind <bindingId> [--yes]',
-    '  node scripts/xihe.mjs skill delete <skillId> [--yes]',
-    '  node scripts/xihe.mjs status',
-    '  node scripts/xihe.mjs workspace list',
-    '  node scripts/xihe.mjs workspace get <wsId>',
-    '  node scripts/xihe.mjs workspace create --name <n> --storage-mode direct_attach (--host-path <dir> | --roots <dir,...>) [--execution-mode <m>] [--idempotency-key <k>]',
-    '  node scripts/xihe.mjs workspace delete <wsId> [--yes]',
-    '  node scripts/xihe.mjs workspace members <wsId> [--add <user> --role EDITOR|VIEWER | --set-role <userId> --role EDITOR|VIEWER | --remove <userId>] [--yes]',
-    '  node scripts/xihe.mjs workspace roots <wsId> (--add <path> [--alias <a>] | --rename <rootId> --alias <a> | --reposition <rootId> --position <n> | --remove <rootId>) [--yes]',
-    '  node scripts/xihe.mjs job list <wsId>',
-    '  node scripts/xihe.mjs job output <wsId> <jobId> [--stream stdout|stderr] [--offset <n>] [--limit <n>]',
-    '  node scripts/xihe.mjs job cancel <wsId> <jobId>',
-    '  node scripts/xihe.mjs checkpoint list <wsId>',
-    '  node scripts/xihe.mjs checkpoint preview-revert <wsId> <sliceRef>',
-    '  node scripts/xihe.mjs scheduled-task list <wsId> [--page <n>] [--size <n>]',
-    '  node scripts/xihe.mjs scheduled-task create <wsId> --kind delay_once|cron --target session_wakeup|job_dispatch (--cron-expr <5fields> | --at <iso> [--timezone <tz>]) (--session <id> --prompt <text> | --payload-file <json>)',
-    '  node scripts/xihe.mjs scheduled-task delete <wsId> <taskId> [--yes]   (scheduled -> cancelled)',
-    '  node scripts/xihe.mjs scheduled-task rerun <wsId> <taskId>   (missed/expired only)',
-    '  node scripts/xihe.mjs scheduled-task remove <wsId> <taskId> [--yes]   (missed/expired -> cancelled)',
-    '  node scripts/xihe.mjs scheduled-task postpone <wsId> <taskId> --at <iso>',
-    '  node scripts/xihe.mjs audit list [--type <type>] [--page <n>] [--size <n>]',
-    '  node scripts/xihe.mjs me permissions',
-    '  node scripts/xihe.mjs models',
-    '  node scripts/xihe.mjs api-input-types list',
-    '  node scripts/xihe.mjs events tail <sessionId> [--follow] [--timeout <seconds>] [--since <id>]',
-    '  node scripts/xihe.mjs provider add <id> --scope <USER|WORKSPACE> --label <label> [--models <id,id>] [--api-key-env <name>]',
-    '  node scripts/xihe.mjs provider update <id> [--label <label>] [--base-url <url>] [--models <id,id>] [--api-key-env <name>]',
-    '  node scripts/xihe.mjs agent create --scope personal|workspace|instance --name <n> [--template <t>] [--default-model <p>:<m>] [--allow-model <p>:<m> ...]',
-    '  node scripts/xihe.mjs agent list [--workspace <wsId>] [--scope <scope>]',
-    '  node scripts/xihe.mjs agent bind --principal <p> --workspace <wsId>',
-    '  node scripts/xihe.mjs agent unbind --principal <p> --workspace <wsId>',
-    '  node scripts/xihe.mjs agent disable --principal <p>',
-    '  node scripts/xihe.mjs provider limit set --connection <c> [--max-inflight N] [--max-queue N] [--tokens N --window S] [--model <p>:<m> --max-inflight N ...]',
-    '  node scripts/xihe.mjs provider limit show --connection <c>',
-    '  node scripts/xihe.mjs provider list [--scope <USER|WORKSPACE>]',
-    '  node scripts/xihe.mjs provider catalog   (non-secret provider definitions)',
-    '  node scripts/xihe.mjs session participants list --session <sessionId> [--workspace <wsId>]',
-    '  node scripts/xihe.mjs session participants add --session <sessionId> --principal <principalId> --kind AGENT|HUMAN [--role MEMBER|GUARD] [--wake ALL_MESSAGES|MENTION] [--respond ALWAYS|WHEN_MENTIONED|JUDGE|MUTED]',
-    '  node scripts/xihe.mjs session participants remove --session <sessionId> --participant <participantId>  (soft disable: 参与者行/游标/审计保留，非硬删除)',
-    '  node scripts/xihe.mjs session participants policy --session <sessionId> --participant <participantId> [--wake MENTION|ALL_MESSAGES|SCHEDULE [--interval <seconds> [--jitter <seconds>] [--max-concurrent <n>]]] [--respond ALWAYS|WHEN_MENTIONED|JUDGE|MUTED]',
-    '  node scripts/xihe.mjs chat send --session <sessionId> --branch <branchId> --content <text> [--as <participantId>] [--idempotency-key <key>]',
-    '  node scripts/xihe.mjs chat run <runId> [--attempts] [--trace]',
-    '  node scripts/xihe.mjs chat cancel <runId> [--reason <text>]  (idempotent while the run is still cancelling)',
-    '  node scripts/xihe.mjs chat approvals',
-    '  node scripts/xihe.mjs chat approve|reject <requestId> [--feedback <text>]',
-    '  node scripts/xihe.mjs session list [--workspace <wsId>]',
-    '  node scripts/xihe.mjs session get <sessionId>',
-    '  node scripts/xihe.mjs session export <sessionId> --branch <branchId>  (Markdown)',
-    '  node scripts/xihe.mjs provider verify <id>',
-    '  node scripts/xihe.mjs provider delete <id> [--yes]',
-    '  node scripts/xihe.mjs credential rotate [--batch-size <n>] [--max-batches <n>] [--dry-run]',
-    '  node scripts/xihe.mjs credential list [--owner-type USER|WORKSPACE --owner-id <id>]',
-    '  node scripts/xihe.mjs credential references <id> --workspace <wsId>',
-    '  node scripts/xihe.mjs credential events <id> --workspace <wsId>',
-    '  node scripts/xihe.mjs credential precheck --permissions <atom[,atom...]>',
-    '  node scripts/xihe.mjs credential create --kind token|key_pair --owner-type <USER|WORKSPACE> --owner-id <id> --label <label> [--delivery-tier <tier>] (--secret-env <NAME> | --access-key-env <NAME> --secret-key-env <NAME>)',
-    '  node scripts/xihe.mjs credential replace <id> --kind token|key_pair --workspace <wsId> (--secret-env <NAME> | --access-key-env <NAME> --secret-key-env <NAME>)',
-    '  node scripts/xihe.mjs credential delete <id> --workspace <wsId> [--yes]',
-    '  node scripts/xihe.mjs credential bind <id> --workspace <wsId> --agent <principalId[,principalId...]>',
-    '  node scripts/xihe.mjs credential unbind <id> --workspace <wsId> --agent <principalId[,principalId...]>',
-    '  node scripts/xihe.mjs credential reveal <id> --workspace <wsId> (--password-env <NAME> | TTY) [--out <file> [--force]]',
-    '  node scripts/xihe.mjs test real <e2e/real/spec.spec.ts> [--route <native|openai-compat>]',
-    '  node scripts/xihe.mjs auth login [--email <account>] [--force] [--no-cache]',
-    '  node scripts/xihe.mjs auth status',
-    '  node scripts/xihe.mjs auth logout [--force]',
-    '  node scripts/xihe.mjs api [METHOD] <path> [--yes] [--allow-dangerous] [--body-file <file> | --stdin] [--raw] [--timeout <ms>] [--max-bytes <bytes>]',
-    '',
-    'Global options: --json (machine envelope), --base-url <url>, --workspace <wsId>, --help.',
-    'Exit codes: 0 = success; 1 = business/runtime failure; 2 = usage error (unknown command/option, missing argument, forbidden api target).',
-    'Set XIHE_CLI_LEGACY_EXIT_CODES=1 to restore the pre-0643 codes for one batch.',
-    'xihe api only forwards /api/v1/**; /api/v1/mcp and --include-secrets need --allow-dangerous;',
-    'mutating methods need --yes; request bodies come from stdin or --body-file (never argv).',
-    '',
-    'Secrets are read from environment variables or a no-echo TTY prompt; never pass secret values as arguments.',
-    'credential rotate authenticates with XIHE_CP_API_TOKEN (CP service Bearer) and never prints credential values.',
-    'credential create/replace/reveal read secrets only from --*-env <NAME> or a no-echo TTY prompt; reveal prints plaintext only on explicit request (stdout or --out file).',
-    'verify writes a principal/session/chat run into the target stack and calls the model provider; use an isolated stack and workspace.',
-    'Real E2E uses XIHE_E2E_REAL_XIAOMI_KEY and does not test Provider Connection leases.',
-  ].join('\n');
-}
-
 export async function runCommand(argv, dependencies = {}) {
   const baseEnv = dependencies.env ?? process.env;
   // PLAN-0547: fill missing keys from the .env chain (.env → .env.$XIHE_ENV → .env.local)
@@ -339,7 +235,33 @@ export async function runCommand(argv, dependencies = {}) {
           '--workspace and XIHE_WORKSPACE_ID are both set with different values; provide only one of them.');
       }
     }
-    if (!group || group === 'help' || globals.help) {
+    // PLAN-0643 T4.7 (design D9): help answers come from the group registry (`help.mjs`).
+    // Bare `--help` / `xihe help` print every group; `<group> --help` and `xihe help <group>`
+    // print only that group; an unknown group is a usage error (exit 2) instead of a silent
+    // full listing.
+    // A leading option token (`xihe --version --help`, `xihe --help extra`) never names a
+    // group: before the registry it answered with the full help, and it keeps doing so rather
+    // than falling through to the unknown-group usage error.
+    if (globals.help && typeof argv[0] === 'string' && argv[0].startsWith('-')) {
+      return { exitCode: 0, json, data: { help: helpText() } };
+    }
+    if (group === 'help') {
+      const wanted = args[1];
+      if (wanted === undefined) return { exitCode: 0, json, data: { help: helpText() } };
+      const text = groupHelpText(wanted);
+      if (text === null) {
+        throw new CliError('INVALID_ARGUMENT', `Unknown help group "${wanted}"; run --help for available groups.`);
+      }
+      return { exitCode: 0, json, data: { help: text } };
+    }
+    if (globals.help) {
+      const text = group === undefined ? helpText() : groupHelpText(group);
+      if (text === null) {
+        throw new CliError('INVALID_ARGUMENT', `Unknown help group "${group}"; run --help for available groups.`);
+      }
+      return { exitCode: 0, json, data: { help: text } };
+    }
+    if (!group) {
       return { exitCode: 0, json, data: { help: helpText() } };
     }
     if (group === '--version' || group === 'version') {

@@ -10,6 +10,7 @@ import { tmpdir } from 'node:os';
 import { pathToFileURL } from 'node:url';
 import { printResult, runCommand } from './xihe.mjs';
 import { acquireLoginLock, loginLockPath } from './xihe-cli/login-lock.mjs';
+import { HELP_GROUPS } from './xihe-cli/help.mjs';
 import { login, promptSecret, readResponseText } from './xihe-cli/provider.mjs';
 import { clearToken, readStore } from './xihe-cli/token-store.mjs';
 import { applySetToEnv, applyUrlSyncToEnv, parseStackSetArgs } from './lib/stack-set.mjs';
@@ -4005,6 +4006,96 @@ test('PLAN-0643 T3.6: help documents the exit-code table', async () => {
   assert.equal(result.exitCode, 0);
   assert.match(result.data.help, /Exit codes: 0 = success; 1 = business\/runtime failure; 2 = usage error/);
   assert.match(result.data.help, /XIHE_CLI_LEGACY_EXIT_CODES=1/);
+});
+
+// PLAN-0643 T4.7 (design D9): `xihe-cli/help.mjs` is the single registry. The bare `--help`
+// prints every group (heading once, alphabetical, one usage line per command), `<group> --help`
+// prints only that group, and an unknown group is a usage error instead of a silent full dump.
+test('PLAN-0643 T4.7: bare help lists every registered group and command', async () => {
+  const result = await runCommand(['help'], { env: {}, promptSecret: noPrompt });
+
+  assert.equal(result.exitCode, 0);
+  const text = result.data.help;
+  assert.match(text, /^XH development and operations CLI/);
+  assert.ok(text.includes('Commands by group:'), 'full help must announce the grouped layout');
+  for (const group of HELP_GROUPS) {
+    assert.equal(
+      text.split(`\n${group.name} — `).length - 1,
+      1,
+      `group heading must appear exactly once: ${group.name}`,
+    );
+    for (const command of group.commands) {
+      assert.ok(text.includes(`node scripts/xihe.mjs ${command.usage}`), `usage line missing: ${command.usage}`);
+    }
+  }
+});
+
+test('PLAN-0643 T4.7: <group> --help prints only that group', async () => {
+  const result = await runCommand(['credential', '--help'], { env: {}, promptSecret: noPrompt });
+
+  assert.equal(result.exitCode, 0);
+  const text = result.data.help;
+  assert.ok(text.includes('credential — Credential lifecycle and reveal'), 'own heading missing');
+  assert.ok(text.includes('node scripts/xihe.mjs credential create'), 'own usage line missing');
+  for (const foreign of [
+    'node scripts/xihe.mjs provider add',
+    'node scripts/xihe.mjs verify --stack',
+    'node scripts/xihe.mjs chat send',
+    'node scripts/xihe.mjs skill list',
+    'Commands by group:',
+  ]) {
+    assert.ok(!text.includes(foreign), `another group leaked into credential help: ${foreign}`);
+  }
+
+  // `--help` wins over a trailing command token: no dispatch, no CP call, same group text.
+  const nested = await runCommand(['provider', 'list', '--help'], { env: {}, promptSecret: noPrompt });
+  assert.equal(nested.exitCode, 0);
+  assert.equal(nested.data.help, (await runCommand(['provider', '--help'], { env: {}, promptSecret: noPrompt })).data.help);
+});
+
+test('PLAN-0643 T4.7: an unknown help group is a usage error (exit 2)', async () => {
+  const viaFlag = await runCommand(['nosuchgroup', '--help'], { env: {}, promptSecret: noPrompt });
+  assert.equal(viaFlag.exitCode, 2);
+  assert.equal(viaFlag.error.code, 'INVALID_ARGUMENT');
+  assert.match(viaFlag.error.message, /Unknown help group "nosuchgroup"/);
+
+  const viaHelp = await runCommand(['help', 'nosuchgroup'], { env: {}, promptSecret: noPrompt });
+  assert.equal(viaHelp.exitCode, 2);
+  assert.equal(viaHelp.error.code, 'INVALID_ARGUMENT');
+});
+
+test('PLAN-0643 T4.7: help <group> matches <group> --help and keeps the {ok,data.help} envelope', async () => {
+  const viaFlag = await runCommand(['provider', '--help', '--json'], { env: {}, promptSecret: noPrompt });
+  const viaSubcommand = await runCommand(['help', 'provider'], { env: {}, promptSecret: noPrompt });
+
+  assert.equal(viaFlag.exitCode, 0);
+  assert.equal(viaSubcommand.exitCode, 0);
+  assert.equal(viaFlag.json, true);
+  assert.equal(viaFlag.data.help, viaSubcommand.data.help);
+
+  const printed = captureOutput(() => printResult(viaFlag));
+  const parsed = JSON.parse(printed.stdout);
+  assert.deepEqual(Object.keys(parsed).sort(), ['data', 'ok']);
+  assert.equal(parsed.ok, true);
+  assert.equal(parsed.data.help, viaFlag.data.help);
+});
+
+// A leading option token is not a group. `xihe --version --help` / `xihe --help extra` printed
+// the full help before the registry; the per-group answer must not turn them into exit 2.
+test('PLAN-0643 T4.7: a leading option before --help still prints the full help', async () => {
+  const groupHeadings = (text) => text.split('\n').filter((line) => /^[a-z][a-z-]* — /.test(line)).length;
+
+  const viaVersion = await runCommand(['--version', '--help'], { env: {}, promptSecret: noPrompt });
+  assert.equal(viaVersion.exitCode, 0);
+  assert.equal(groupHeadings(viaVersion.data.help), HELP_GROUPS.length);
+
+  const trailing = await runCommand(['--help', 'extra'], { env: {}, promptSecret: noPrompt });
+  assert.equal(trailing.exitCode, 0);
+  assert.equal(trailing.data.help, viaVersion.data.help);
+
+  // Without `--help`, `--version` still routes to the version command, not to help.
+  const plain = await runCommand(['--version'], { env: {}, promptSecret: noPrompt });
+  assert.equal(plain.data?.help, undefined);
 });
 
 test('PLAN-0643 T1.7: XIHE_CP_URL selects the endpoint when XIHE_CP_PORT is absent', async (t) => {
