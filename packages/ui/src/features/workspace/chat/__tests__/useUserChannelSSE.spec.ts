@@ -34,7 +34,7 @@ describe("useUserChannelSSE", () => {
         expect(frames[1]).toEqual({ event: "participant_notified", data: '{"sessionId":"s"}' });
     });
 
-    it("dispatches participant_notified and ignores unknown/connected events", async () => {
+    it("dispatches participant_notified and user_question, ignores unknown events", async () => {
         const onNotified = vi.fn<(sessionId: string, participantId: string) => void>();
         const onQuestion = vi.fn<(questionId: string, sessionId: string, state: string) => void>();
         const client = createUserChannelSse({
@@ -58,6 +58,28 @@ describe("useUserChannelSSE", () => {
 
         expect(onNotified).toHaveBeenCalledWith("s-1", "p-1");
         expect(onQuestion).toHaveBeenCalledWith("q-1", "s-1", "pending");
+        client.dispose();
+    });
+
+    it("fires onConnected on every handshake, so the projection refetches after a reconnect (T5.18)", async () => {
+        const onConnected = vi.fn<() => void>();
+        const client = createUserChannelSse({
+            getToken: () => "token-1",
+            onNotified: () => {},
+            onConnected,
+            // Every stream carries exactly one `connected` frame and then ends ⇒ the client reconnects,
+            // and the second handshake must fire `onConnected` again. Backoff must be a real macrotask:
+            // a microtask chain never yields the loop to `waitFor`'s polling timer (measured OOM).
+            fetchImpl: async () =>
+                new Response(streamOf(['event: connected\ndata: {"serverTime":"t"}\n\n']), {
+                    status: 200,
+                }),
+            schedule: (callback) => setTimeout(callback, 0),
+            cancel: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
+        });
+
+        client.start();
+        await vi.waitFor(() => expect(onConnected.mock.calls.length).toBeGreaterThanOrEqual(2));
         client.dispose();
     });
 

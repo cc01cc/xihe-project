@@ -72,6 +72,13 @@ export interface UserChannelSseOptions {
     /** `user_question` — projection hint (M5-B); optional until that lands. */
     onQuestion?: (questionId: string, sessionId: string, state: string) => void;
     /**
+     * PLAN-0660 T5.18：`connected` —— 每次（含每次重连后）握手成功回调一次。
+     *
+     * 用户通道**不 replay**（`spec/session/user-channel.md` §4：断线期间的事件不补发），所以重连
+     * 成功后必须由消费方**重拉投影**；否则"断线时被问的问题"要等到下一个事件才会出现。
+     */
+    onConnected?: () => void;
+    /**
      * BL-335：撞上"订阅者上限"（`429 USER_CHANNEL_FULL`）时回调一次，然后**停止重连**
      * —— 上限是持续态，按 1s/2s/4s… 无限重试只会持续占用配额、且在用户看来像"网络抖动"。
      */
@@ -138,7 +145,11 @@ export function createUserChannelSse(options: UserChannelSseOptions): UserChanne
             }
             return;
         }
-        // `connected` and any unknown event: nothing to do (unknown names are never guessed).
+        if (frame.event === "connected") {
+            options.onConnected?.();
+            return;
+        }
+        // Any unknown event: nothing to do (unknown names are never guessed).
     }
 
     async function connect(): Promise<void> {
