@@ -1,13 +1,17 @@
 package com.cc01cc.p.xihe.cp.chat;
 
 import com.cc01cc.p.xihe.cp.audit.AuditLogger;
+import com.cc01cc.p.xihe.cp.policy.AuthzContext;
+import com.cc01cc.p.xihe.cp.policy.GrantIntersectionEvaluator;
 import com.cc01cc.p.xihe.cp.policy.PolicyContext;
 import com.cc01cc.p.xihe.cp.policy.PolicyEffect;
 import com.cc01cc.p.xihe.cp.policy.PolicyEngine;
 import com.cc01cc.p.xihe.cp.policy.PolicyLayer;
 import com.cc01cc.p.xihe.cp.policy.PolicyVerdict;
+import com.cc01cc.p.xihe.cp.policy.RequesterAuthority;
 import com.cc01cc.p.xihe.cp.policy.ToolFaceRegistry;
 import com.cc01cc.p.xihe.cp.policy.ToolShape;
+import com.cc01cc.p.xihe.cp.repository.AuthorizationGrantRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -15,6 +19,7 @@ import org.mockito.ArgumentCaptor;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -51,7 +56,9 @@ class AgentSpawnAuthorizationServiceTest {
         sse = mock(SseEmitterManager.class);
         audit = mock(AuditLogger.class);
         delegationBudget = mock(DelegationBudgetService.class);
-        service = new AgentSpawnAuthorizationService(policy, approvals, sse, audit, delegationBudget);
+        service = new AgentSpawnAuthorizationService(policy, approvals, sse, audit, delegationBudget,
+                new RequesterAuthority(mock(AuthorizationGrantRepository.class),
+                        mock(GrantIntersectionEvaluator.class), mock(AuthzContext.class)));
 
         String runId = "11111111-1111-1111-1111-111111111111";
         String toolCallId = "33333333-3333-3333-3333-333333333333";
@@ -95,6 +102,42 @@ class AgentSpawnAuthorizationServiceTest {
                 eq("chat_session"), eq(invocation.parentSessionId()), detail.capture());
         assertTrue(detail.getValue().contains("\"reason\":\"count_exceeded\""), detail.getValue());
         assertTrue(detail.getValue().contains("\"phase\":\"precheck\""), detail.getValue());
+    }
+
+    @Test
+    void grantDenialLogsTheCanonicalActionAtomDeniedLine() {
+        // PLAN-0651 T1.5 (proposal B): the spawn-face grant denial joins the canonical
+        // action_atom_denied stream — atom=SPAWN_AGENT, the denied caller's channel subject.
+        when(policy.allowsByGrant(any(PolicyContext.class), anyString(), anyString(), anyString(),
+                anyString(), anyString(), any(boolean.class))).thenReturn(false);
+
+        ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> appender =
+                new ch.qos.logback.core.read.ListAppender<>();
+        appender.start();
+        ch.qos.logback.classic.Logger policyLogger = (ch.qos.logback.classic.Logger)
+                org.slf4j.LoggerFactory.getLogger(
+                        com.cc01cc.p.xihe.cp.policy.RequesterAuthority.class);
+        policyLogger.addAppender(appender);
+        try {
+            var thrown = assertThrows(com.cc01cc.p.xihe.cp.config.CpApiException.class,
+                    () -> service.authorize(invocation, null));
+            assertEquals("FORBIDDEN", thrown.getCode());
+        } finally {
+            policyLogger.detachAppender(appender);
+        }
+
+        ch.qos.logback.classic.spi.ILoggingEvent event = appender.list.stream()
+                .filter(candidate -> candidate.getFormattedMessage()
+                        .contains("event=action_atom_denied"))
+                .findFirst().orElse(null);
+        assertNotNull(event, "the spawn-face denial must log action_atom_denied");
+        String line = event.getFormattedMessage();
+        assertTrue(line.contains("atom=SPAWN_AGENT"), line);
+        assertTrue(line.contains("workspaceId=" + WORKSPACE_ID), line);
+        // The test invocation carries a non-uuid subject id ("user-1") — masked to '-'.
+        assertTrue(line.contains("subject=-"), line);
+        assertTrue(line.contains("source=none"), line);
+        verify(delegationBudget, never()).precheckBeforeApproval(any(), any(), any());
     }
 
     @Test

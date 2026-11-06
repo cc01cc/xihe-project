@@ -61,7 +61,11 @@ class SessionParticipantCursorAdvanceTest {
                 mock(AgentPrincipalRepository.class), mock(UserRepository.class),
                 mock(WorkspaceService.class), mock(com.cc01cc.p.xihe.cp.policy.GrantAuthorizationService.class),
                 mock(WakeScheduleProjectionService.class), events,
-                mock(SessionReadAccess.class));
+                mock(SessionReadAccess.class),
+                new com.cc01cc.p.xihe.cp.policy.RequesterAuthority(
+                        mock(com.cc01cc.p.xihe.cp.repository.AuthorizationGrantRepository.class),
+                        mock(com.cc01cc.p.xihe.cp.policy.GrantIntersectionEvaluator.class),
+                        mock(com.cc01cc.p.xihe.cp.policy.AuthzContext.class)));
 
         session = mock(Session.class);
         when(session.getId()).thenReturn(SESSION_ID);

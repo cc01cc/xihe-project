@@ -61,7 +61,11 @@ class SessionReadAccessParityTest {
 
         access = new SessionReadAccess(sessions, participants, workspaces, grants);
         participantService = new SessionParticipantService(participants, cursors, sessions, agents, users,
-                workspaces, grants, wakeProjection, events, access);
+                workspaces, grants, wakeProjection, events, access,
+                new com.cc01cc.p.xihe.cp.policy.RequesterAuthority(
+                        mock(com.cc01cc.p.xihe.cp.repository.AuthorizationGrantRepository.class),
+                        mock(com.cc01cc.p.xihe.cp.policy.GrantIntersectionEvaluator.class),
+                        mock(com.cc01cc.p.xihe.cp.policy.AuthzContext.class)));
 
         session = mock(Session.class);
         when(session.getId()).thenReturn(SESSION_ID);

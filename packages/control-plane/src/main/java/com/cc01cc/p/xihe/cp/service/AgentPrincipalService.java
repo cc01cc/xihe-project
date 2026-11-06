@@ -1038,6 +1038,11 @@ public class AgentPrincipalService {
                 return;
             }
         }
+        // PLAN-0651 T1.5 (proposal B): the agent-principal-face denial joins the canonical
+        // action_atom_denied stream (the instance atom; workspace channel misses are checked
+        // per binding above, and none of the three channels matched — B4: atom layer only).
+        requesterAuthority.logActionAtomDenied(
+                ToolFaceRegistry.ACTION_MANAGE_AGENT_PRINCIPALS, actorId, null);
         throw new CpApiException(HttpStatus.FORBIDDEN, "AGENT_PRINCIPAL_OWNER_MISMATCH",
                 "Only the owner, a holder of MANAGE_AGENT_PRINCIPALS, or an administrator of a "
                         + "workspace that binds this agent principal may change it");
@@ -1081,10 +1086,11 @@ public class AgentPrincipalService {
      *   <li>{@code WORKSPACE} — the existing workspace gate is the whole rule.</li>
      * </ul>
      *
-     * <p>Distinct codes on purpose: {@code 403 AGENT_PRINCIPAL_OWNER_MISMATCH} and
-     * {@code 403 INSTANCE_ADMIN_REQUIRED} tell the caller which authority is missing without
-     * disclosing whether the principal exists (the caller already reached this point with a valid
-     * workspace gate, so the principal id is theirs).</p>
+     * <p>Distinct code on purpose: {@code 403 AGENT_PRINCIPAL_OWNER_MISMATCH} tells the caller
+     * which authority is missing without disclosing whether the principal exists (the caller
+     * already reached this point with a valid workspace gate, so the principal id is theirs). The
+     * denial is logged through {@code RequesterAuthority#logActionAtomDenied} (PLAN-0651 T1.5
+     * proposal B).</p>
      */
     private void requireBindingAuthority(UUID actorId, AgentPrincipal principal) {
         if (principal.getOwnerUserId() != null && !actorId.equals(principal.getOwnerUserId())) {

@@ -180,6 +180,20 @@ CP's `AuditLogger` records all MCP tool calls and policy decisions:
 - In-memory `recentRecords` keeps only the latest 1000 entries as a query view
 - PLAN-0558 auth audit: `login_failed` goes to the AUDIT JSONL stream; `login_locked`/`login_unlocked` also persist to `audit_logs`. Fields are masked email, IP, reason, and requestId only — never a password, hash, or token.
 
+### 5.1 Policy Denial Stream (PLAN-0651 T1.5, proposal B)
+
+The CP permission face logs action-atom denial decisions as a **single WARN line stream**, separate from AUDIT/`audit_logs`: `RequesterAuthority.logActionAtomDenied` emits `event=action_atom_denied` under the `[POLICY]` prefix — one line per denied atom, **never written to audit_logs**.
+
+| Field | Value | Constraint |
+|-------|-------|------------|
+| `event` | `action_atom_denied` | fixed |
+| `atom` | `PermissionAtomCatalog` enum name | catalog values only; a non-catalog decision logs `-` |
+| `subject` | subject uuid | `-` when absent or not a uuid |
+| `workspaceId` | workspace uuid | `-` when absent (instance-scope denial sites are always `-`) |
+| `source` | `role` / `spawn` / `template` / `credential_binding` / `agent_default`, joined by `,` when multiple; `none` when no source carries the atom | only `GrantSources.EVALUATION_SOURCES` values |
+
+Hard constraints (B4): uuids and enum values only — **no usernames/emails/content/resource strings**; one line per denial, WARN level. Coverage (B2): the member face (`WorkspaceMemberService.authorize`), the participant face (`SessionParticipantService.requireManage`), the agent-principal face (`AgentPrincipalService.requireDisableAuthority`), the spawn face (`AgentSpawnAuthorizationService.gate`) and grant escalation (`RequesterAuthority.requireMayGrant`, replacing that site's old `binding_write_denied reason=privilege_escalation` line; the `binding_write_denied` in `requireWorkspaceBindingAuthority` stays unchanged).
+
 ## 6. Log Security (Redaction / Correlation IDs / Leak Scan)
 
 ### 6.1 Redaction at the Serialization Boundary

@@ -8,6 +8,8 @@ import com.cc01cc.p.xihe.cp.policy.PolicyContext;
 import com.cc01cc.p.xihe.cp.policy.PolicyEffect;
 import com.cc01cc.p.xihe.cp.policy.PolicyEngine;
 import com.cc01cc.p.xihe.cp.policy.PolicyVerdict;
+import com.cc01cc.p.xihe.cp.policy.RequesterAuthority;
+import com.cc01cc.p.xihe.cp.policy.ToolFaceRegistry;
 import com.cc01cc.p.xihe.cp.policy.ToolFaceRegistry.Face;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -34,15 +36,19 @@ public class AgentSpawnAuthorizationService {
     private final SseEmitterManager sseManager;
     private final AuditLogger audit;
     private final DelegationBudgetService delegationBudget;
+    /** PLAN-0651 T1.5 (proposal B): emits the canonical {@code action_atom_denied} deny stream. */
+    private final RequesterAuthority requesterAuthority;
 
     public AgentSpawnAuthorizationService(PolicyEngine policy, ApprovalService approvals,
                                           SseEmitterManager sseManager, AuditLogger audit,
-                                          DelegationBudgetService delegationBudget) {
+                                          DelegationBudgetService delegationBudget,
+                                          RequesterAuthority requesterAuthority) {
         this.policy = policy;
         this.approvals = approvals;
         this.sseManager = sseManager;
         this.audit = audit;
         this.delegationBudget = delegationBudget;
+        this.requesterAuthority = requesterAuthority;
     }
 
     /**
@@ -70,6 +76,14 @@ public class AgentSpawnAuthorizationService {
                 invocation.userId(), invocation.workspaceId(), invocation.parentSessionId());
         if (!policy.allowsByGrant(context, tool, invocation.authorizationBody(), invocation.parentSessionId(),
                 invocation.userId(), invocation.workspaceId(), userOnly)) {
+            // PLAN-0651 T1.5 (proposal B): the spawn-face denial joins the canonical
+            // action_atom_denied stream. The evaluated subject is the caller's user on the human
+            // delegation channel and the calling agent principal on the MCP channel; a path
+            // denied here by definition holds SPAWN_AGENT from no evaluation source (B4: atom
+            // layer only, never audit_logs).
+            requesterAuthority.logActionAtomDenied(ToolFaceRegistry.ACTION_SPAWN_AGENT,
+                    uuidOrNull(userOnly ? invocation.userId() : invocation.principalId()),
+                    uuidOrNull(invocation.workspaceId()));
             audit.record(invocation.parentSessionId(), tool, "authorization_denied", "actionClass=SPAWN_AGENT");
             throw new CpApiException(HttpStatus.FORBIDDEN, "FORBIDDEN",
                     "An explicit SPAWN_AGENT grant is required");
@@ -155,6 +169,18 @@ public class AgentSpawnAuthorizationService {
                     invocation.parentRunId(), approvalId, e.getClass().getSimpleName(), e);
         }
         return GateResult.pending(approvalId, approval.getExpiresAt());
+    }
+
+    /** uuid or {@code null} (logged as {@code -} in the deny stream); never throws. */
+    private static java.util.UUID uuidOrNull(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        try {
+            return java.util.UUID.fromString(value.trim());
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
     }
 
     public record GateResult(boolean allowed, ChatSubmissionService.SpawnAuthorization authorization,
