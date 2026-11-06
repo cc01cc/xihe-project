@@ -1,7 +1,7 @@
 /**
  * PLAN-0660 T5.6 浏览器证据：@ 提及产生未读徽标 ⇒ 推进游标（PATCH cursor）后徽标消失。
  *
- * 门控：`XIHE_E2E_MENTION_CURSOR=1`（默认 skip）。真栈 stack-1；**发送 1 条真实消息**（@本人；
+ * 门控：`XIHE_E2E_MENTION_CURSOR=1`（默认 skip）。真栈 stack-2；**发送 1 条真实消息**（@本人；
  * PLAN-0684/D-183 后参与者 echo displayName = 账号 username，@ 提及按 username 寻址）
  * 制造未读，产生 1 个 run —— 报告里如实计数；retries=0，避免重试多发。
  */
