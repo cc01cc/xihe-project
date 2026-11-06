@@ -1,7 +1,8 @@
 /**
  * PLAN-0660 T5.6 浏览器证据：@ 提及产生未读徽标 ⇒ 推进游标（PATCH cursor）后徽标消失。
  *
- * 门控：`XIHE_E2E_MENTION_CURSOR=1`（默认 skip）。真栈 stack-1；**发送 1 条真实消息**（@陆星）
+ * 门控：`XIHE_E2E_MENTION_CURSOR=1`（默认 skip）。真栈 stack-1；**发送 1 条真实消息**（@本人；
+ * PLAN-0684/D-183 后参与者 echo displayName = 账号 username，@ 提及按 username 寻址）
  * 制造未读，产生 1 个 run —— 报告里如实计数；retries=0，避免重试多发。
  */
 import { test, expect } from "@playwright/test";
@@ -17,6 +18,7 @@ interface DemoState {
     token: string;
     email: string;
     password: string;
+    username: string;
     workspaceId: string;
     sessionId: string;
 }
@@ -48,6 +50,13 @@ test.describe("PLAN-0660 T5.6 游标推进后徽标下降", () => {
         });
         expect(login.status()).toBe(200);
         state.token = ((await login.json()) as { accessToken: string }).accessToken;
+        // PLAN-0684/D-183：名册 echo displayName = 账号 username；/auth/me 是权威读面。
+        const me = await request.get(`${CP}/api/v1/auth/me`, {
+            headers: { Authorization: `Bearer ${state.token}` },
+        });
+        expect(me.status(), "GET /api/v1/auth/me").toBe(200);
+        state.username = ((await me.json()) as { username?: string }).username ?? "";
+        expect(state.username, "username resolved for the demo account").toBeTruthy();
     });
 
     test("推游标前本人徽标存在，推进后消失（DOM + 截图）", async ({ page }) => {
@@ -66,25 +75,29 @@ test.describe("PLAN-0660 T5.6 游标推进后徽标下降", () => {
         await page.goto(`/workspace/${state.workspaceId}/chat/${state.sessionId}`);
         await expect(page.locator("textarea").first(), "composer").toBeVisible({ timeout: 60_000 });
 
-        // 1) 以 Reviewer 身份 @陆星（本人）→ 产生 notify，未读徽标 +1；本证据唯一一条真实消息。
-        await page.locator("textarea").first().fill("@陆星 T5.6 游标证据，请忽略");
+        // 1) 以 Reviewer 身份 @本人（按 echo displayName=username 寻址）→ 产生 notify，
+        // 未读徽标 +1；本证据唯一一条真实消息。
+        await page.locator("textarea").first().fill(`@${state.username} T5.6 游标证据，请忽略`);
         await page.getByTestId("chat-send-button").click();
         await expect(page.getByTestId("chat-send-button")).toBeVisible({ timeout: 180_000 });
         await page.waitForTimeout(1500);
 
-        // 2) 找到本人（HUMAN 陆星）并确认徽标存在
-        const me = await page.evaluate(async (sessionId) => {
-            const headers = {
-                Authorization: `Bearer ${localStorage.getItem("xihe-token") ?? ""}`,
-            };
-            const participants = await fetch(`/api/v1/sessions/${sessionId}/participants`, {
-                headers,
-            }).then((response) => response.json());
-            return (participants.participants ?? []).find(
-                (item: { principalKind?: string; displayName?: string }) =>
-                    item.principalKind === "HUMAN" && item.displayName === "陆星",
-            );
-        }, state.sessionId);
+        // 2) 找到本人（HUMAN 参与者，echo displayName = 账号 username）并确认徽标存在
+        const me = await page.evaluate(
+            async ({ sessionId, username }) => {
+                const headers = {
+                    Authorization: `Bearer ${localStorage.getItem("xihe-token") ?? ""}`,
+                };
+                const participants = await fetch(`/api/v1/sessions/${sessionId}/participants`, {
+                    headers,
+                }).then((response) => response.json());
+                return (participants.participants ?? []).find(
+                    (item: { principalKind?: string; displayName?: string }) =>
+                        item.principalKind === "HUMAN" && item.displayName === username,
+                );
+            },
+            { sessionId: state.sessionId, username: state.username },
+        );
         expect(me, "应能找到本人参与者").toBeTruthy();
         console.log(
             `[mention-cursor] me=${JSON.stringify({ id: me.participantId, mention: me.readCursor?.mentionCount })}`,

@@ -585,7 +585,11 @@ public class SessionParticipantService {
         return resolved.session();
     }
 
-    /** D24-12: "all" is the reserved @all token; no participant may claim it as a display name. */
+    /**
+     * D24-12: "all" is the reserved @all token; no participant may claim it as a display name.
+     * PLAN-0684 (B2): the HUMAN check reads the display source (username), so a user whose
+     * username is "all" can never bypass the reserved @all token via a stale name field.
+     */
     private void requireDisplayNameNotReserved(String kind, UUID principalId) {
         String displayName = null;
         if (SessionParticipant.KIND_AGENT.equals(kind)) {
@@ -593,7 +597,7 @@ public class SessionParticipantService {
                     .map(com.cc01cc.p.xihe.cp.entity.AgentPrincipal::getName).orElse(null);
         } else {
             displayName = userRepository.findById(principalId)
-                    .map(com.cc01cc.p.xihe.cp.entity.User::getName).orElse(null);
+                    .map(com.cc01cc.p.xihe.cp.entity.User::getUsername).orElse(null);
         }
         if (com.cc01cc.p.xihe.cp.chat.MentionParser.isReservedDisplayName(displayName)) {
             throw new CpApiException(HttpStatus.BAD_REQUEST, "PARTICIPANT_RESERVED_DISPLAY_NAME",
@@ -838,27 +842,16 @@ public class SessionParticipantService {
     }
 
     /**
-     * PLAN-0623: a human participant is shown by name — {@code name} → {@code username} → the email
-     * local part. Returning null here means "the user record is gone", which the UI renders as an
-     * unknown-user placeholder rather than a UUID.
+     * PLAN-0684 (D-183): a human participant is shown by {@code username} — the v29 NameFormat
+     * identity (users.username is NOT NULL and unique since V82). Returning null here means "the
+     * user record is gone", which the UI renders as an unknown-user placeholder rather than a UUID.
      */
     static String displayNameOf(User user) {
         if (user == null) {
             return null;
         }
-        if (user.getName() != null && !user.getName().isBlank()) {
-            return user.getName();
-        }
-        if (user.getUsername() != null && !user.getUsername().isBlank()) {
-            return user.getUsername();
-        }
-        String email = user.getEmail();
-        if (email == null || email.isBlank()) {
-            return null;
-        }
-        int at = email.indexOf('@');
-        String localPart = at > 0 ? email.substring(0, at) : email;
-        return localPart.isBlank() ? null : localPart;
+        String username = user.getUsername();
+        return username != null && !username.isBlank() ? username : null;
     }
 
     /**

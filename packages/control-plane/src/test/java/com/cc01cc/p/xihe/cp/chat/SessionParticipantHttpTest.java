@@ -207,11 +207,11 @@ class SessionParticipantHttpTest extends AbstractIntegrationTest {
     }
 
     // -----------------------------------------------------------------------------------------
-    // D23-27 / displayName: a group chat shows "who", never a UUID.
+    // D23-27 / PLAN-0684 (D-183) displayName: a group chat shows the username — "who", never a UUID.
     // -----------------------------------------------------------------------------------------
 
     @Test
-    void aHumanRowIsShownByNameNotByUuid() throws Exception {
+    void aHumanRowIsShownByUsernameNotByUuid() throws Exception {
         AuthResponse named = register("P623 Named Human");
         assertEquals(201, send(ownerToken, "POST", participantsPath(),
                 """
@@ -222,8 +222,9 @@ class SessionParticipantHttpTest extends AbstractIntegrationTest {
         JsonNode row = find(list.path("participants"), named.getUser().getId());
 
         assertFalse(row.path("selfOwned").asBoolean(), "another account is not a legal speak-as target: " + row);
-        assertEquals("P623 Named Human", row.path("displayName").asText(),
-                "HUMAN rows carry the user display name; a UUID is not a person: " + row);
+        assertEquals(named.getUser().getUsername(), row.path("displayName").asText(),
+                "PLAN-0684 (D-183): HUMAN rows carry the username — the account identity; the legacy "
+                        + "display name is never the projection and a UUID is not a person: " + row);
     }
 
     @Test
