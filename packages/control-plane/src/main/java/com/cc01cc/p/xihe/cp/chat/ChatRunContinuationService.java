@@ -138,10 +138,9 @@ class ChatRunContinuationService {
                 idempotencyKey, requestHash, source.getProvider(), source.getModel(), source.getToolMode(), "accepted");
         child.setOrigin(ChatRun.ORIGIN_USER_SUBMISSION);
         child.setBranchId(branchId);
-        // BL-280: continuation children are created here, not through ChatSubmissionService.persist(),
-        // so they inherit the source Run's responder stamp directly (same conversation identity).
-        // Pre-fix sources stay NULL — the dispatch read then keeps its pre-existing degraded behavior.
-        child.setAgentPrincipalId(source.getAgentPrincipalId());
+        // K2: continuation execution identity belongs to the Session, not the source responder.
+        child.setAgentPrincipalId(session.getAgentPrincipalId() == null
+                ? null : UUID.fromString(session.getAgentPrincipalId()));
         child.setContextTemplateSnapshot(source.getContextTemplateSnapshot());
         // PLAN-0628 M2a (D28-39 ②): the child inherits the parent listing verbatim instead of
         // re-resolving it — a binding added while the parent ran must NOT appear here, otherwise the
@@ -166,8 +165,7 @@ class ChatRunContinuationService {
             throw new CpApiException(HttpStatus.CONFLICT, "IDEMPOTENCY_KEY_REUSED",
                     "Idempotency-Key already belongs to a different ChatRun", e);
         }
-        // BL-354: a continuation of a human-responder source inherits NULL by accepted semantics;
-        // log it (run_principal_stamp) instead of silently degrading, and never fail here.
+        // HUMAN responders may continue; a missing Session principal remains a diagnostic only.
         RunPrincipalStampDiagnostics.logIfDerivedNull(logger, child);
 
         if (ChatRunContinuationRequest.APPEND_USER_TURN.equals(request.mode())) {

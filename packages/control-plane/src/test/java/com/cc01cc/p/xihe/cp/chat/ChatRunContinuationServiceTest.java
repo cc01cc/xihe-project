@@ -287,14 +287,11 @@ class ChatRunContinuationServiceTest {
         return child;
     }
 
-    /**
-     * BL-354: a continuation child that inherits a NULL principal (human-responder source) must be
-     * visible in the log as {@code run_principal_stamp} — but the call must still succeed (log-only,
-     * because NULL is the accepted existing semantics for this derived chain).
-     */
+    /** A missing Session principal is diagnostic only; it does not block HUMAN responder continuation. */
     @Test
-    void continuationWithInheritedNullPrincipalLogsRunPrincipalStampWithoutFailing() {
+    void continuationWithNullSessionPrincipalLogsRunPrincipalStampWithoutFailing() {
         stubNewChildCreation();
+        source.setAgentPrincipalId(UUID.randomUUID());
         ListAppender<ILoggingEvent> appender = new ListAppender<>();
         appender.start();
         Logger logger = (Logger) LoggerFactory.getLogger(ChatRunContinuationService.class);
@@ -304,7 +301,7 @@ class ChatRunContinuationServiceTest {
                     SOURCE_RUN_ID, USER_ID, WORKSPACE_ID, "continuation-key",
                     new ChatRunContinuationRequest(ChatRunContinuationRequest.RESUME_PENDING, null));
             assertNotNull(result.runId(), "log-only: the continuation itself must still succeed");
-            assertNull(savedChild().getAgentPrincipalId(), "fixture: human-responder source has NULL principal");
+            assertNull(savedChild().getAgentPrincipalId(), "session NULL must not fall back to the source principal");
 
             String stamped = appender.list.stream()
                     .map(ILoggingEvent::getFormattedMessage)
@@ -321,11 +318,27 @@ class ChatRunContinuationServiceTest {
         }
     }
 
-    /** BL-354: the main-submission HUMAN responder NULL is intentional and must NOT be logged. */
+    @Test
+    void humanResponderContinuationUsesSessionPrincipal() {
+        stubNewChildCreation();
+        UUID sessionPrincipalId = UUID.randomUUID();
+        session.setAgentPrincipalId(sessionPrincipalId.toString());
+        assertNull(source.getAgentPrincipalId(), "fixture: HUMAN responder source has NULL principal");
+
+        ChatRunContinuationService.ContinuationResult result = service.continueRun(
+                SOURCE_RUN_ID, USER_ID, WORKSPACE_ID, "continuation-key",
+                new ChatRunContinuationRequest(ChatRunContinuationRequest.RESUME_PENDING, null));
+
+        assertNotNull(result.runId(), "HUMAN responder continuation remains allowed");
+        assertEquals(sessionPrincipalId, savedChild().getAgentPrincipalId());
+    }
+
+    /** A continuation with a Session principal does not emit the missing-principal diagnostic. */
     @Test
     void aStampedDerivedRunDoesNotLog() {
         stubNewChildCreation();
         source.setAgentPrincipalId(UUID.randomUUID());
+        session.setAgentPrincipalId(source.getAgentPrincipalId().toString());
         ListAppender<ILoggingEvent> appender = new ListAppender<>();
         appender.start();
         Logger logger = (Logger) LoggerFactory.getLogger(ChatRunContinuationService.class);
