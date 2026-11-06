@@ -1,5 +1,6 @@
 package com.cc01cc.p.xihe.cp.architecture;
 
+import com.cc01cc.p.xihe.cp.chat.ChatRunReadService;
 import com.tngtech.archunit.base.DescribedPredicate;
 import com.tngtech.archunit.core.domain.JavaClass;
 import com.tngtech.archunit.lang.ArchRule;
@@ -8,6 +9,7 @@ import org.springframework.data.repository.Repository;
 import java.util.List;
 
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses;
+import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noMethods;
 
 final class CpArchitectureRules {
 
@@ -60,6 +62,23 @@ final class CpArchitectureRules {
     static final ArchRule CONTROLLER_TO_REPOSITORY = noClasses().that(CONTROLLERS)
             .should().dependOnClassesThat(REPOSITORIES)
             .as("Controllers must not depend on JPA repositories");
+
+    /**
+     * BL-370 S1 follow-up: {@code ChatRunReadService} is the shared read gate for controllers. Its
+     * 404-before-403 owner check and the callers' {@code SessionService.requireCurrent} must keep
+     * their current visibility/ordering; adding {@code @Transactional} here would change which
+     * writes are visible between those two checks, silently changing the 403/404 outcome under
+     * concurrency. Read methods stay non-transactional (no class-level or method-level annotation).
+     */
+    static final ArchRule READ_SERVICE_IS_NOT_TRANSACTIONAL = noClasses()
+            .that().areAssignableTo(ChatRunReadService.class)
+            .should().beAnnotatedWith(org.springframework.transaction.annotation.Transactional.class)
+            .as("BL-370: ChatRunReadService must not be @Transactional (owner/session check ordering)");
+
+    static final ArchRule READ_SERVICE_METHODS_ARE_NOT_TRANSACTIONAL = noMethods()
+            .that().areDeclaredIn(ChatRunReadService.class)
+            .should().beAnnotatedWith(org.springframework.transaction.annotation.Transactional.class)
+            .as("BL-370: ChatRunReadService methods must not be @Transactional (owner/session check ordering)");
 
     static final ArchRule PERSISTENCE_TO_CONTROLLER = noClasses().that(PERSISTENCE)
             .should().dependOnClassesThat(CONTROLLERS)
