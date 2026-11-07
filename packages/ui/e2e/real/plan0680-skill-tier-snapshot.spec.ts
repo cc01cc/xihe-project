@@ -18,6 +18,10 @@
  *      `XIHE_E2E_PG_DATABASE` / `XIHE_E2E_PG_USER`（读 `chat_runs` 用 psql 直连隔离库，
  *      与 `plan0678-skills-positive.spec.ts` 同口径）。
  *   2. CP `/actuator/health` == 200，Agent 已就绪（chat 会真派发到 fake provider）。
+ *      **CP 侧 readiness 由本 spec 自己等**（`waitForControlPlaneAgentReady`，见 ③ 处
+ *      注释）：CP 的 chat 准入读的是 `HealthMonitor` 缓存而不是实时探针，新栈首轮
+ *      窗口里 agent 已 ready 而缓存仍 `unknown` ⇒ `POST /api/v1/chat` 503
+ *      `AGENT_UNAVAILABLE`（r7 实证，属 spec 前置缺口，不是产品缺陷）。
  *   3. `ensureFakeUserProvider` 能在新注册身份上装好 fake provider（本 spec 自建身份，
  *      不依赖预置种子用户）。
  *   4. **【D-67 supersede】instance 作用域技能导入需要 instance admin**（`SkillImportService:80-92`
@@ -53,11 +57,20 @@ import {
 } from "./helpers/agent-principal";
 import { agentName } from "./helpers/agent-name";
 import { ensureFakeUserProvider } from "./helpers/fake-provider";
-import { CP_URL, getRootBranchId } from "./helpers/journey";
+import { CP_URL, getRootBranchId, waitForControlPlaneAgentReady } from "./helpers/journey";
 import { openSessionSse } from "./helpers/sse";
 import { ensureWorkspace } from "./helpers/workspace";
 
 test.describe.configure({ retries: 0 });
+
+/**
+ * 超时预算（测试基础设施，不是断言放宽）：默认 30s 比本 spec 内部的两个等待预算
+ * 都小 —— ① CP readiness helper 自带 45s 轮询上限（`helpers/journey.ts:59`）；
+ * ② `waitForRun` 自带 60s 轮询上限（见其 deadline）。不抬高测试预算的话，冷启动慢
+ * 一轮就会以「Test timeout of 30000ms exceeded」收场，把 readiness/run 的真实
+ * 失败信息吞掉（r7 的 503 就是这样被误读成随机失败的）。
+ */
+test.setTimeout(120_000);
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u;
 /** chat run 终态（与 capacity/checkpoint 系列 spec 同一口径）。 */
@@ -360,6 +373,16 @@ test("@host 0680-T3.1 快照落双轴 tier：绑定 → run → skills_snapshot.
         workspaceId: identity.workspaceId,
         title: "PLAN-0680 T3.1 tier snapshot",
     });
+    // **spec 前置缺口修复（r7 实证）**：r7 在 `POST /api/v1/chat` 直接吃 503
+    // `AGENT_UNAVAILABLE`（detail `Agent LLM readiness is unknown`）—— CP 的 chat
+    // 准入读的是 `HealthMonitor` 的**缓存**（`ChatController:635-639` →
+    // `isAgentLlmReady()`），缓存由 `HealthMonitor.pollHealth()` 每 10s 一轮刷新
+    // （`:47-51`，initialDelay 5s）。新栈首轮窗口里 Agent 已 ready 而 CP 缓存仍是
+    // `unknown` ⇒ chat 必被 503 拒。这不是产品缺陷，是 spec 少了 CP 侧等待。
+    // 复用既有 helper（`helpers/journey.ts:26`，与 `real-tool-roundtrip.spec.ts:75`
+    // 同口径），它轮询的正是 chat gate 读的那个 CP 状态（`agent=up/up/ready`），
+    // 不新造同义函数、不用固定 sleep。
+    await waitForControlPlaneAgentReady(request, headersOf(identity));
     await sendChat(request, identity, sessionId, "PLAN-0680 T3.1 tier probe run");
 
     const run = await waitForRun(sessionId);
@@ -402,6 +425,8 @@ test("@host 0680-T3.1 快照落双轴 tier：绑定 → run → skills_snapshot.
         `解绑应 204，实际 ${deleted.status()}：${deletedText}`,
     ).toBe(204);
 
+    // 第二次 send 不重复等 readiness：③ 处已确认 CP 缓存 `agent=up/up/ready`，
+    // 解绑只写绑定行，不改 Agent 的 LLM readiness（r7 失败点也只在首次 send）。
     await sendChat(request, identity, sessionId, "PLAN-0680 T3.1 tier probe run 2");
     const run2 = await waitForRun(sessionId);
     expect(run2.id, "第二次 run 应是新行").not.toBe(run.id);
