@@ -154,9 +154,11 @@ async function sendChat(
     const branchId = await getRootBranchId(request, sessionId, headers);
     // `openSessionSse(sessionId, token, extraHeaders)` 返回关闭函数，不是带 close() 的句柄
     const closeSse = await openSessionSse(sessionId, identity.accessToken);
+    // D-73：`toolMode` 合法值域是 `{none, workspace}`；本文件验的是负向导入/绑定面，
+    // 不涉 workspace 工具 ⇒ 取 `none`（同 tier spec，见那里更长的说明）。
     const chat = await request.post(`${CP_URL}/api/v1/chat`, {
         headers,
-        data: { sessionId, branchId, content, toolMode: "chat" },
+        data: { sessionId, branchId, content, toolMode: "none" },
     });
     expect(chat.status(), await chat.text()).toBe(202);
     closeSse();
