@@ -71,4 +71,38 @@ class WorkspaceEventManagerTest {
         assertNull(event.status());
         assertEquals("control-plane", event.source());
     }
+
+    /**
+     * PLAN-0691 T1.6-C1：`plugin_binding` 是跨 lane 的 wire 字面量（UI 分支 + lane A 的
+     * binding 端点共用）。这条测试同时钉死字面量与"白名单能收"两个事实——只钉字面量会漏掉
+     * 白名单忘加，只钉白名单会漏掉改名。
+     */
+    @Test
+    void pluginBindingKindIsAcceptedAndPinnedToTheCrossLaneLiteral() {
+        assertEquals("plugin_binding", WorkspaceEventManager.KIND_PLUGIN_BINDING);
+
+        WorkspaceEvent event = manager.publish(
+                "ws-1", WorkspaceEventManager.KIND_PLUGIN_BINDING, null, null, "control-plane", null, null);
+
+        assertEquals("plugin_binding", event.kind());
+        assertEquals("ws-1", event.workspaceId());
+        assertEquals(1L, event.sequence());
+        assertNull(event.path(), "plugin_binding carries no per-row path payload in the 9-field envelope");
+        assertEquals("control-plane", event.source());
+    }
+
+    /**
+     * 反过来的一侧：白名单是白名单，不是通配。漏登记最坏后果是"attach 事务已提交但 SSE 400、
+     * UI 不刷新、看着像卡住"，所以"看起来像"的拼写必须仍然被拒。
+     */
+    @Test
+    void pluginBindingKindIsNotAWildcardForLookalikeSpellings() {
+        CpApiException exception = assertThrows(
+                CpApiException.class,
+                () -> manager.publish(
+                        "ws-1", "plugin_bindings", null, null, "control-plane", null, null));
+
+        assertEquals("INVALID_REQUEST", exception.getCode());
+        assertEquals(0L, manager.currentSequence("ws-1"), "rejected publish must not consume a sequence");
+    }
 }

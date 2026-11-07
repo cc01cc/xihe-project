@@ -32,6 +32,25 @@ public class WorkspaceEventManager {
     /** PLAN-0489 T1.5：scheduled task 状态变化的粗粒度失效事件 kind（无 per-row payload）。 */
     public static final String KIND_SCHEDULED_TASKS_CHANGED = "scheduled_tasks_changed";
 
+    /**
+     * PLAN-0691 T1.6-C1：插件绑定生命周期事件（attach / detach）的粗粒度失效 kind。
+     *
+     * <p>**这是跨 lane 的 wire 字面量**：UI 侧 `useWorkspaceSSE.ts` 的
+     * {@code PLUGIN_BINDING_EVENT_KIND} 与 lane A（T1.2 binding 端点）都按
+     * {@code plugin_binding} 对齐，改名会让两侧同时静默失效，所以测试里钉死了该字面量。</p>
+     *
+     * <p>**白名单登记不是可选项**：{@code validateKind} 是 publish 的唯一闸门，未登记的 kind
+     * 会在调用方**已经提交绑定事务之后**抛 400 {@code INVALID_REQUEST}——attach 已持久化、
+     * 事件却发不出去，UI 不刷新，用户看到的是"卡住的 pending 插件"，而不是一条校验错误。
+     * 因此"加发布方"和"加 kind"必须同批，且不能先加发布方。</p>
+     *
+     * <p>载荷说明：binding 细分字段（{@code bindingId}/{@code action}/{@code revision}/
+     * {@code catalogVersion}）在当前 9 字段 {@link WorkspaceEvent} 信封里**没有位置**，
+     * 信封是否扩展属于 T1.6 持久化那一步（B 类）的裁定；本常量只负责让该 kind 合法，
+     * 不预设字段形状。</p>
+     */
+    public static final String KIND_PLUGIN_BINDING = "plugin_binding";
+
     private static final long HEARTBEAT_INTERVAL_MS = 15_000L;
     private static final int MAX_SUBSCRIBERS_PER_WORKSPACE = 8;
     private static final Logger logger = LoggerFactory.getLogger(WorkspaceEventManager.class);
@@ -258,7 +277,8 @@ public class WorkspaceEventManager {
                 && !"file_changed".equals(kind)
                 && !"snapshot_required".equals(kind)
                 && !"workspace_event_error".equals(kind)
-                && !KIND_SCHEDULED_TASKS_CHANGED.equals(kind)) {
+                && !KIND_SCHEDULED_TASKS_CHANGED.equals(kind)
+                && !KIND_PLUGIN_BINDING.equals(kind)) {
             throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "Unsupported Workspace event kind");
         }
     }
