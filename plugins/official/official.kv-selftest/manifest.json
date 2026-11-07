@@ -1,0 +1,27 @@
+{
+  "manifestVersion": "1",
+  "id": "official.kv-selftest",
+  "title": "KV self-test",
+  "description": "fixture 级最小 MCP server，仅用于验证 plugin_kv 的 CAS/配额/scope 契约（verify.md V4/V5/V8）；test-only，不作发布物。",
+  "version": "0.1.0",
+  "digest": "sha256:2da90fb24f96ac2a74f80e46f5e03f2fae0855799eb92c6d86613f6308bae73a",
+  "source": "builtin",
+  "runtime": {
+    "kind": "mcp-http",
+    "endpoint": "http://127.0.0.1:7331/mcp"
+  },
+  "actions": [
+    { "name": "kv_selftest", "title": "KV self test", "actionClass": "write" }
+  ],
+  "requestedAtoms": ["plugin:invoke", "plugin:data"],
+  "limits": { "timeoutMs": 3000, "maxConcurrency": 2 },
+  "storage": {
+    "kv": {
+      "namespaces": ["selftest"],
+      "maxKeys": 200,
+      "maxValueBytes": 8192,
+      "ttlSecondsMax": 3600
+    }
+  },
+  "compatibility": { "xhApi": "1.4" }
+}

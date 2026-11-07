@@ -1,0 +1,81 @@
+{
+  "$comment": [
+    "official.kv-selftest — declarative client (TEST-ONLY fixture).",
+    "PLAN-0691 B-6 ① asks for 'manifest + 声明式 client + README'. No spec freezes this file's shape:",
+    "spec/ defines the manifest (manifest.schema.json) and the data-plane wire contract",
+    "(data-plane.md API-1..4), not a client descriptor. The format is therefore fixture-local — it is",
+    "the machine-readable twin of server.py's run_self_test() so a reviewer can read what the probe",
+    "asserts without reading Python, and so a future runner can replay it. It is NOT a wire contract",
+    "and nothing enforces the two stay in step; they are kept in step by hand.",
+    "Placeholders: {bindingId} from XIHE_PLUGIN_KV_BINDING; {version} is the version observed in the",
+    "previous step."
+  ],
+  "clientVersion": "1",
+  "pluginId": "official.kv-selftest",
+  "baseUrlEnv": "XIHE_PLUGIN_KV_BASE",
+  "bindingIdEnv": "XIHE_PLUGIN_KV_BINDING",
+  "bindingTokenEnv": "XIHE_PLUGIN_KV_TOKEN",
+  "tokenTtlSeconds": 300,
+  "pathTemplate": "/internal/v1/plugin-bindings/{bindingId}/kv/{namespace}/{key}",
+  "namespace": "selftest",
+  "key": "probe",
+  "steps": [
+    {
+      "step": "create-without-precondition",
+      "method": "PUT",
+      "headers": {},
+      "body": { "value": { "probe": "v1", "fixture": "official.kv-selftest" } },
+      "expect": { "status": 412, "code": "PLUGIN_PRECONDITION_REQUIRED" },
+      "contract": "data-plane.md API-2: create requires If-Match: *"
+    },
+    {
+      "step": "create-with-precondition",
+      "method": "PUT",
+      "headers": { "If-Match": "*" },
+      "body": { "value": { "probe": "v1", "fixture": "official.kv-selftest" } },
+      "expect": { "status": 200, "version": 1 },
+      "contract": "data-plane.md API-2"
+    },
+    {
+      "step": "read-after-create",
+      "method": "GET",
+      "expect": { "status": 200, "value": { "probe": "v1", "fixture": "official.kv-selftest" } },
+      "contract": "data-plane.md API-1"
+    },
+    {
+      "step": "update-with-current-version",
+      "method": "PUT",
+      "headers": { "If-Match": "{version}" },
+      "body": { "value": { "probe": "cas-write", "fixture": "official.kv-selftest" } },
+      "expect": { "status": 200, "version": 2 },
+      "contract": "data-plane.md API-2"
+    },
+    {
+      "step": "stale-write-is-rejected",
+      "method": "PUT",
+      "headers": { "If-Match": "1" },
+      "body": { "value": { "probe": "stale-write" } },
+      "expect": { "status": 412, "code": "PLUGIN_PRECONDITION_FAILED" },
+      "contract": "data-plane.md API-2 + API-11: a stale version must not overwrite"
+    },
+    {
+      "step": "stale-write-did-not-land",
+      "method": "GET",
+      "expect": { "status": 200, "value": { "probe": "cas-write" } },
+      "contract": "data-plane.md API-2: the rejected write left the row untouched"
+    },
+    {
+      "step": "delete-with-current-version",
+      "method": "DELETE",
+      "headers": { "If-Match": "{version}" },
+      "expect": { "status": 204 },
+      "contract": "data-plane.md API-3"
+    },
+    {
+      "step": "read-after-delete",
+      "method": "GET",
+      "expect": { "status": 404, "code": "PLUGIN_NOT_FOUND" },
+      "contract": "data-plane.md API-1 + API-11"
+    }
+  ]
+}
