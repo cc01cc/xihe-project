@@ -159,6 +159,8 @@ interface E5Record {
     }>;
     prefixBodyBytes: number;
     remainderBodyBytes: number;
+    /** 上面两个 body 字节数来自 CDP 文本通道（charset 膨胀），只作通道记录，不参与判定。 */
+    bodyByteChannel: "cdp-text-lossy";
     prefixDecodedChars: number;
     totalDecodedChars: number;
     expectedPrefixChars: number;
@@ -881,8 +883,12 @@ test.describe("PLAN-0683 附件预览三态预算（真栈 E5/E6）", () => {
         expect(previewHeaders["content-length"], "服务端 clamp 后的长度").toBe(
             String(BUDGET_BYTES),
         );
+        // 字节精度由上面两条响应头断言承担（status 206 + Content-Length + Content-Range，头字段不经 CDP
+        // 文本通道、不做 charset 解码）。body() 走 CDP `Network.getResponseBody` 文本通道：`text/csv` 无
+        // charset 时被 Chromium 按 windows-1252 解码再按 UTF-8 回写，字节数会膨胀（实测
+        // 8388608 → 8388676，+68 B；逐字节等于「磁盘前缀按 cp1252 解码→UTF-8 重编码」），故实测值只
+        // 记进 evidence（`channel=cdp-text-lossy`），不参与 pass/fail。
         const previewBody = await previewResponse.body();
-        expect(previewBody.length, "前缀 body 字节数").toBe(BUDGET_BYTES);
 
         // 预览态 UI：截断提示 + 双入口。
         const dialog = page.getByTestId("attachment-preview-dialog");
@@ -921,7 +927,6 @@ test.describe("PLAN-0683 附件预览三态预算（真栈 E5/E6）", () => {
         );
         expect(remainderHeaders["content-length"]).toBe(String(REMAINDER_BYTES));
         const remainderBody = await remainderResponse.body();
-        expect(remainderBody.length, "剩余 body 字节数").toBe(REMAINDER_BYTES);
 
         await expect(page.getByTestId("attachment-preview-truncated")).toHaveCount(0, {
             timeout: 240_000,
@@ -965,6 +970,7 @@ test.describe("PLAN-0683 附件预览三态预算（真栈 E5/E6）", () => {
             })),
             prefixBodyBytes: previewBody.length,
             remainderBodyBytes: remainderBody.length,
+            bodyByteChannel: "cdp-text-lossy",
             prefixDecodedChars,
             totalDecodedChars,
             expectedPrefixChars: EXPECTED_PREFIX_CHARS,
