@@ -26,12 +26,17 @@
  * 徽标真值：testid `agent-skill-scope-{instance|workspace}`（`WorkspaceAgentsPanel.vue:2124`）；
  *   i18n `workspace.agentSkillScopeWorkspace` / `workspace.agentSkillScopeInstance`，
  *   zh「工作区级」/「实例级」（`i18n/index.ts:485-486`），en「Workspace scope」/「Instance scope」（`:2893-2894`）。
+ *   J9 宿主是 Workbench dock 的 agents tab 展开技能面板（rbacPrincipalId === principalId 分支，
+ *   面板在 settings 路由不渲染）；入口照抄 PLAN-0667 M3（`agent-config-shots.spec.ts:57-61`）：
+ *   工作台路由 → `workspace-toolbar-agents` 点击 → `agent-skills-toggle-<pid>` 展开。
+ *   T3.3（r9 后）前置已内建：instance/workspace 两档技能定义各一 + 两档各绑一条（服务端派生档位）。
  */
 import { expect, test, type APIRequestContext } from "@playwright/test";
 
 import { ensureFakeUserProvider } from "./helpers/fake-provider";
 import { provisionWorkspaceAgentPrincipal } from "./helpers/agent-principal";
 import { CP_URL } from "./helpers/journey";
+import { seedUserGrantPermissions } from "./helpers/user-grants";
 import { ensureWorkspace } from "./helpers/workspace";
 
 test.describe.configure({ retries: 0 });
@@ -86,6 +91,82 @@ function headersOf(identity: Identity): Record<string, string> {
     };
 }
 
+/**
+ * 技能导入载荷的单点构造器（照抄 `plan0680-skill-tier-snapshot.spec.ts:198-206`，
+ * 必填字段以 `SkillImportValidator` 为准；`trusted` 是原语 boolean，省略会 400）。
+ */
+function buildSkillItem(nonce: string, tag: "inst" | "ws") {
+    return {
+        name: `p0680-j9-${tag}-${nonce}`,
+        sourcePath: `lab/p0680-j9-${tag}-${nonce}.md`,
+        description: `PLAN-0680 J9 档位徽标探针（${tag} 档）`,
+        body: `# p0680 j9 ${tag} ${nonce}\n用于验证 agent 技能档位徽标双语渲染。`,
+        trusted: false,
+    };
+}
+
+/** 导一个技能定义并取回 skillId（响应形状照抄 tier-snapshot：wire 字段是 `results[].skillId`）。 */
+async function importSkill(
+    request: APIRequestContext,
+    identity: Identity,
+    definitionScope: { type: "instance" } | { type: "workspace"; workspaceId: string },
+    tag: "inst" | "ws",
+): Promise<string> {
+    const imported = await request.post(`${CP_URL}/api/v1/skills/import`, {
+        headers: headersOf(identity),
+        data: { definitionScope, skills: [buildSkillItem(Date.now().toString(36), tag)] },
+    });
+    const importedText = await imported.text();
+    expect(
+        [200, 201],
+        `${tag} 档技能导入应 2xx，实际 ${imported.status()}：${importedText}`,
+    ).toContain(imported.status());
+    const importedBody = JSON.parse(importedText) as {
+        results?: Array<{ skillId: string }>;
+        rejected?: unknown[];
+    };
+    expect(importedBody.rejected ?? [], `${tag} 档导入不应有 rejected 行`).toEqual([]);
+    const [skillId] = (importedBody.results ?? []).map((row) => row.skillId);
+    expect(skillId, `${tag} 档导入响应应带 skillId`).toMatch(UUID);
+    return skillId as string;
+}
+
+/**
+ * 绑一条主体技能绑定行。档位由服务端派生（SPEC :86）：授权上下文**有** workspace ⇒ workspace 档，
+ * 完全没有 ⇒ instance 档（`:88` 跨档并存允许）。成功判据 201 与 J1 实测一致。
+ *
+ * instance 档**不能**复用 `headersOf`：`X-Workspace-Id` **优先于** `?workspaceId` 决定授权作用域
+ * （`AgentPrincipalBindingAuthority:83-93`，头赢、冲突才 400），带着头去绑会落成 workspace 档
+ * ——r9 实测两条都写成 `scopeType=workspace`，instance 徽标因此缺失。
+ */
+async function bindSkill(
+    request: APIRequestContext,
+    identity: Identity,
+    principalId: string,
+    skillId: string,
+    scope: "workspace" | "instance",
+): Promise<void> {
+    const url =
+        scope === "workspace"
+            ? SKILL_BINDING_PATH(principalId, identity.workspaceId)
+            : `${CP_URL}/api/v1/agent-principals/${principalId}/skills`;
+    const headers: Record<string, string> =
+        scope === "workspace"
+            ? headersOf(identity)
+            : {
+                  Authorization: `Bearer ${identity.accessToken}`,
+                  "Content-Type": "application/json",
+              };
+    const bound = await request.post(url, {
+        headers,
+        data: { skillId },
+    });
+    expect(
+        bound.status(),
+        `绑 ${scope} 档应 201，实际 ${bound.status()}：${await bound.text()}`,
+    ).toBe(201);
+}
+
 test("@host 0680-J1 跨工作区不生效：绑他工作区私有技能定义 ⇒ 404 SKILL_NOT_FOUND；本工作区私有定义可绑 201", async ({
     request,
 }) => {
@@ -107,7 +188,8 @@ test("@host 0680-J1 跨工作区不生效：绑他工作区私有技能定义 �
         headers: { ...headersOf(owner), "X-Workspace-Id": otherWorkspaceId },
     });
     expect(otherSkills.status(), await otherSkills.text()).toBe(200);
-    const otherItems = ((await otherSkills.json()) as { items?: Array<{ id: string }> }).items ?? [];
+    const otherItems =
+        ((await otherSkills.json()) as { items?: Array<{ id: string }> }).items ?? [];
     if (otherItems.length === 0) {
         test.skip(true, "他工作区无私有技能定义，需先导入（见 bl355 矩阵 B 的导入步骤）后重跑");
         return;
@@ -123,7 +205,9 @@ test("@host 0680-J1 跨工作区不生效：绑他工作区私有技能定义 �
         foreignBind.status(),
         `绑他工作区私有定义应 404（不是 403/400），实际 ${foreignBind.status()}：${foreignText}`,
     ).toBe(404);
-    expect(foreignText, `应命中 SKILL_NOT_FOUND，实际：${foreignText}`).toContain("SKILL_NOT_FOUND");
+    expect(foreignText, `应命中 SKILL_NOT_FOUND，实际：${foreignText}`).toContain(
+        "SKILL_NOT_FOUND",
+    );
 
     // 本工作区私有定义可绑（:100 后半句）；无资产时跳过而非伪造
     const ownSkills = await request.get(SKILLS_PATH(owner.workspaceId, "workspace"), {
@@ -212,7 +296,10 @@ test("@host 0680-J3 角色轴仍单轴：只开技能轴，角色绑定面维持
         `角色轴未开放，绑不存在的角色不应 2xx，实际 ${roleBind.status()}：${text}`,
     ).not.toBe(201);
     // 既有语义（`bl355:137-138` 实测）下无效角色走 4xx；具体码由角色面既有契约决定，此处不锁死
-    expect(roleBind.status(), `应为 4xx，实际 ${roleBind.status()}：${text}`).toBeGreaterThanOrEqual(400);
+    expect(
+        roleBind.status(),
+        `应为 4xx，实际 ${roleBind.status()}：${text}`,
+    ).toBeGreaterThanOrEqual(400);
     expect(roleBind.status()).toBeLessThan(500);
 });
 
@@ -225,13 +312,53 @@ test("@host 0680-J9 档位徽标双语（zh 工作区级/实例级，en Workspac
     page,
     request,
 }) => {
+    test.setTimeout(120_000); // 4 次整页加载 + dock 展开 + RBAC 面板加载，超默认 30s
     const identity = await newIdentity(request, "p0680-j9");
 
-    // 面板渲染需要至少一条绑定行才有徽标；无数据时条件跳过而非伪造断言
-    const panel = await request.get(`${CP_URL}/api/v1/workspaces/${identity.workspaceId}/agents`, {
-        headers: headersOf(identity),
+    // ── 前置数据（T3.3 补：r9 实证徽标未渲染的根因是没有任何绑定行）──
+    const principalId = await provisionWorkspaceAgentPrincipal(request, identity, {
+        name: `AgentJ9${Date.now().toString(36)}`,
+        actions: ["read"],
     });
-    expect(panel.status(), await panel.text()).toBe(200);
+    expect(principalId).toMatch(UUID);
+
+    // instance 档的两个授权门用既有 helper 直写隔离库（CP 无 role/grant 的 HTTP 写面）：
+    //   instance 档技能导入 ⇒ MANAGE_SKILL_LIBRARY@instance（SkillAccessGuard.canManageInstanceLibrary，
+    //     WS_OWNER 只有 workspace 档 N5，不够）；
+    //   instance 档主体绑定 ⇒ MANAGE_AGENT_PRINCIPALS@instance（AgentPrincipalBindingAuthority.require）。
+    // workspace 档导入/绑定所需的 MANAGE_WORKSPACE_AGENTS 已由 provision helper 种子，不动被测断言。
+    seedUserGrantPermissions(identity.userId, [
+        { actionClass: "MANAGE_SKILL_LIBRARY", resource: "*" },
+        { actionClass: "MANAGE_AGENT_PRINCIPALS", resource: "*" },
+    ]);
+
+    // ① 两档技能定义各导一个 ② 两档各绑一条（档位服务端派生，跨档并存允许，SPEC :86/:88）
+    const instanceSkillId = await importSkill(request, identity, { type: "instance" }, "inst");
+    const workspaceSkillId = await importSkill(
+        request,
+        identity,
+        { type: "workspace", workspaceId: identity.workspaceId },
+        "ws",
+    );
+    await bindSkill(request, identity, principalId, workspaceSkillId, "workspace");
+    await bindSkill(request, identity, principalId, instanceSkillId, "instance");
+
+    // 页面登录态三键（照抄 agent-config-shots.spec.ts:39-55，同一 dock 面板的取证先例）
+    await page.addInitScript(
+        (token) => localStorage.setItem("xihe-token", token),
+        identity.accessToken,
+    );
+    await page.addInitScript(
+        (workspaceId) => localStorage.setItem("xihe-user", JSON.stringify({ workspaceId })),
+        identity.workspaceId,
+    );
+    await page.addInitScript(
+        (workspace) => {
+            localStorage.setItem("xihe-workspace", JSON.stringify(workspace));
+            localStorage.setItem("xihe-theme", "light");
+        },
+        { id: identity.workspaceId, name: "p0680-j9" },
+    );
 
     /** zh / en 两语言下 badge 的真值（`i18n/index.ts:485-486` 与 `:2893-2894`）。 */
     const EXPECTED = [
@@ -246,16 +373,24 @@ test("@host 0680-J9 档位徽标双语（zh 工作区级/实例级，en Workspac
         await page.addInitScript((l) => {
             window.localStorage.setItem("xihe-language", l);
         }, locale);
-        await page.goto(`/workspace/${identity.workspaceId}/settings`);
+        // 徽标宿主是 Workbench dock 的 agents tab 展开技能面板（WorkspaceAgentsPanel.vue:2124），
+        // settings 路由没有该面板（r9 实证）⇒ 走工作台路由。
+        await page.goto(`/workspace/${identity.workspaceId}`);
+        // 打开 agents dock tab：点工具栏按钮（PLAN-0667 M3 同口径，agent-config-shots.spec.ts:57-61），
+        // 选这条路而不写 xihe-layout-ws:<id> 布局键——后者要复刻持久化 schema，点击是产品真实入口。
+        await page.getByTestId("workspace-toolbar-agents").click();
+        await expect(page.getByTestId("dock-tab-agents")).toBeVisible();
+        // 展开本主体的技能面板（rbacPrincipalId === principalId 才渲染徽标列表）
+        await page.getByTestId(`agent-skills-toggle-${principalId}`).click();
+        await expect(page.getByTestId("agent-skills-list")).toBeVisible();
         const badge = page.locator(`[data-testid="agent-skill-scope-${scope}"]`);
         if ((await badge.count()) === 0) {
             test.skip(true, `无 ${scope} 档绑定行，徽标未渲染，需先造绑定数据后重跑`);
             return;
         }
-        await expect(
-            badge.first(),
-            `${locale} 下 ${scope} 徽标文案应为「${text}」`,
-        ).toHaveText(text);
+        await expect(badge.first(), `${locale} 下 ${scope} 徽标文案应为「${text}」`).toHaveText(
+            text,
+        );
         observed.push({ locale, scope, text: await badge.first().innerText() });
     }
     console.log(`[p0680-j9] OK observed=${JSON.stringify(observed)}`);
