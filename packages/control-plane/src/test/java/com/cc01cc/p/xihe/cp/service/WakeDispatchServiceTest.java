@@ -221,8 +221,7 @@ class WakeDispatchServiceTest {
         verify(wakeupService).wakeupAs(eq(SESSION_ID.toString()), eq("owner-1"), eq("ws-1"), anyString(),
                 eq(ROUND), eq(agent.getPrincipalId()), eq("mention"), isNull());
         // CP-2 (PLAN-0690 T1.2b): the judge input is assembled, not inlined in the dispatch path.
-        verify(judgeInputAssembler).assemble(eq(session), eq(agent), eq("mention"), eq(ROUND),
-                eq("bailian"), eq("decision-model-preview"));
+        verify(judgeInputAssembler).assemble(eq(session), eq(agent), eq("mention"), eq(ROUND));
         ArgumentCaptor<JudgeDecisionService.JudgeInput> judgeInput =
                 ArgumentCaptor.forClass(JudgeDecisionService.JudgeInput.class);
         verify(judgeService).decide(judgeInput.capture());
@@ -233,7 +232,7 @@ class WakeDispatchServiceTest {
 
     /** CP-2: the assembler owns window/roster/duty/prompt; this unit only checks the wiring. */
     private void stubJudgeInput() {
-        when(judgeInputAssembler.assemble(any(), any(), anyString(), anyString(), anyString(), anyString()))
+        when(judgeInputAssembler.assemble(any(), any(), anyString(), anyString()))
                 .thenReturn(new JudgeDecisionService.JudgeInput(SESSION_ID, null, PARTICIPANT_ID, ROUND,
                         "mention", "(no messages yet)", "respondPolicy=JUDGE", "bailian",
                         "decision-model-preview", "prompt-stub"));

@@ -97,7 +97,7 @@ public class JudgeDecisionService {
         try {
             JudgeModelClient.JudgeVerdict verdict = judgeModelClient.decide(
                     new JudgeModelClient.JudgeRequest(input.modelProvider(), input.modelName(),
-                            input.prompt()));
+                            input.prompt(), input.sessionId(), input.runId()));
             String invalidReason = invalidVerdictReason(verdict.verdictText());
             if (invalidReason != null) {
                 // spec §1/§2: an unusable verdict is a failed decision, not "the judge said no".

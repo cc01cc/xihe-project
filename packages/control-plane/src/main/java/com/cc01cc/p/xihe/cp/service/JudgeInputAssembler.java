@@ -8,6 +8,7 @@ import com.cc01cc.p.xihe.cp.logging.LogRedactor;
 import com.cc01cc.p.xihe.cp.repository.AgentPrincipalRepository;
 import com.cc01cc.p.xihe.cp.repository.MessageRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionParticipantRepository;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Component;
 
@@ -83,24 +84,30 @@ public class JudgeInputAssembler {
     private final MessageRepository messageRepository;
     private final SessionParticipantRepository participantRepository;
     private final AgentPrincipalRepository agentPrincipalRepository;
+    private final String modelProvider;
+    private final String modelName;
 
     public JudgeInputAssembler(MessageRepository messageRepository,
                                SessionParticipantRepository participantRepository,
-                               AgentPrincipalRepository agentPrincipalRepository) {
+                               AgentPrincipalRepository agentPrincipalRepository,
+                               @Value("${cp.judge.provider:bailian}") String modelProvider,
+                               @Value("${cp.judge.model:decision-model-preview}") String modelName) {
         this.messageRepository = messageRepository;
         this.participantRepository = participantRepository;
         this.agentPrincipalRepository = agentPrincipalRepository;
+        this.modelProvider = modelProvider;
+        this.modelName = modelName;
     }
 
     /**
      * Builds the decision input for one (session, participant, wake round). The model identity is
-     * passed in by the caller — the assembler does not own configuration.
+     * the configured {@code cp.judge.*} value (spec §5) — it used to be two literals at the wake
+     * call site, which made the JUDGE branch unable to follow a provider rebind.
      *
      * @return a judge input whose {@code inputWindow} is never empty and never carries the prompt
      */
     public JudgeDecisionService.JudgeInput assemble(Session session, SessionParticipant participant,
-                                                    String triggerSource, String wakeRoundId,
-                                                    String modelProvider, String modelName) {
+                                                    String triggerSource, String wakeRoundId) {
         Objects.requireNonNull(session, "session");
         Objects.requireNonNull(participant, "participant");
         List<SessionParticipant> roster =

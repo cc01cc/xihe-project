@@ -52,12 +52,6 @@ public class WakeDispatchService {
 
     /** PLAN-0648 task-31: how much of the triggering message rides the wake prompt. */
     static final int WAKE_EXCERPT_LIMIT = 600;
-    /**
-     * Judge model identity until CP-1 lands the {@code cp.judge.*} config (PLAN-0690 T1.2b ③).
-     * Kept here so the assembly call has no inline literals.
-     */
-    private static final String JUDGE_MODEL_PROVIDER = "bailian";
-    private static final String JUDGE_MODEL_NAME = "decision-model-preview";
     static final String EVENT_WAKE_DISPATCH = "wake_dispatch";
 
     private final SessionParticipantRepository participantRepository;
@@ -301,9 +295,10 @@ public class WakeDispatchService {
     private boolean judgeSaysSpeak(Session session, SessionParticipant participant,
                                    String triggerSource, String wakeRoundId) {
         try {
-            // CP-2 (PLAN-0690 T1.2b): window / roster / duty / prompt come from the assembler.
-            JudgeDecisionService.JudgeInput input = judgeInputAssembler.assemble(session, participant,
-                    triggerSource, wakeRoundId, JUDGE_MODEL_PROVIDER, JUDGE_MODEL_NAME);
+            // CP-2 (PLAN-0690 T1.2b): window / roster / duty / prompt come from the assembler,
+            // which also carries the configured cp.judge.* model identity (no literals here).
+            JudgeDecisionService.JudgeInput input =
+                    judgeInputAssembler.assemble(session, participant, triggerSource, wakeRoundId);
             JudgeDecisionService.JudgeOutcome outcome = judgeDecisionService.decide(input);
             if (!outcome.answered() || outcome.verdictJson() == null) {
                 return false;

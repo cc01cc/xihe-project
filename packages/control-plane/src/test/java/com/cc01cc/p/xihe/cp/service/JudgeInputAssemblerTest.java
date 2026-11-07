@@ -47,7 +47,8 @@ class JudgeInputAssemblerTest {
         messages = mock(MessageRepository.class);
         participants = mock(SessionParticipantRepository.class);
         principals = mock(AgentPrincipalRepository.class);
-        assembler = new JudgeInputAssembler(messages, participants, principals);
+        assembler = new JudgeInputAssembler(messages, participants, principals,
+                "bailian", "decision-model-preview");
 
         session = mock(Session.class);
         when(session.getId()).thenReturn(SESSION_ID);
@@ -179,8 +180,7 @@ class JudgeInputAssemblerTest {
     }
 
     private JudgeDecisionService.JudgeInput assemble(SessionParticipant participant) {
-        return assembler.assemble(session, participant, "mention", ROUND, "bailian",
-                "decision-model-preview");
+        return assembler.assemble(session, participant, "mention", ROUND);
     }
 
     private SessionParticipant participant(String role, int orderIndex, String wakePolicy) {
