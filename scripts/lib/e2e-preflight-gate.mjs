@@ -202,7 +202,8 @@ export function parseBlockingScopes(stdout) {
 /**
  * 磁盘段结果 → 可写进 run 头（`artifacts.json` / `persistent-stack.json`）的记录。
  * `mode` 只有两种：`enforced`（照跑）与 `bypassed`（连磁盘段都没跑成 —— 必须留痕）。
- */export function diskGateRecord({ exitCode, diskResult } = {}) {
+ */
+export function diskGateRecord({ exitCode, diskResult } = {}) {
   if (!diskResult) {
     return {
       mode: 'bypassed',
