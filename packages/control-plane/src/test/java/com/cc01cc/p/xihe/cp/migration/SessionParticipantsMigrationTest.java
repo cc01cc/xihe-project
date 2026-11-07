@@ -120,6 +120,42 @@ class SessionParticipantsMigrationTest {
     }
 
     @Test
+    void deliveryDefaultsAreANullableTextArrayWithSubsetAndDistinctCheck() throws SQLException {
+        assertColumn("session_participants", "delivery_defaults", "ARRAY", true);
+        assertEquals("_text", query("SELECT t.typname FROM pg_attribute a"
+                + " JOIN pg_type t ON t.oid = a.atttypid"
+                + " WHERE a.attrelid = 'session_participants'::regclass"
+                + " AND a.attname = 'delivery_defaults'").getFirst()[0],
+                "PLAN-0690: the frozen shape is TEXT[], not JSONB");
+
+        UUID sessionId = newSession("delivery-defaults");
+        UUID participantId = insertParticipant(sessionId, "HUMAN", UUID.randomUUID(), "MEMBER", 10);
+        assertEquals("NULL", query("SELECT CASE WHEN delivery_defaults IS NULL THEN 'NULL'"
+                + " ELSE 'SET' END FROM session_participants WHERE id = '" + participantId + "'")
+                .getFirst()[0], "a new roster row starts unconfigured (D-215: no backfill)");
+
+        execute("UPDATE session_participants SET delivery_defaults = ARRAY['to', 'cc', 'mention_only']"
+                + "::text[] WHERE id = '" + participantId + "'");
+        execute("UPDATE session_participants SET delivery_defaults = ARRAY[]::text[]"
+                + " WHERE id = '" + participantId + "'");
+        execute("UPDATE session_participants SET delivery_defaults = NULL WHERE id = '"
+                + participantId + "'");
+
+        assertThrows(SQLException.class,
+                () -> execute("UPDATE session_participants SET delivery_defaults = ARRAY['bcc']"
+                        + "::text[] WHERE id = '" + participantId + "'"),
+                "the CHECK rejects values outside {to, cc, mention_only}");
+        assertThrows(SQLException.class,
+                () -> execute("UPDATE session_participants SET delivery_defaults = ARRAY['to', 'to']"
+                        + "::text[] WHERE id = '" + participantId + "'"),
+                "the CHECK rejects duplicate elements");
+        assertThrows(SQLException.class,
+                () -> execute("UPDATE session_participants SET delivery_defaults = ARRAY['to', NULL]"
+                        + "::text[] WHERE id = '" + participantId + "'"),
+                "NULL elements are not a legal member of the set");
+    }
+
+    @Test
     void theThreeUniquenessRulesAreEnforcedByTheDatabase() throws SQLException {
         UUID sessionId = newSession("uniqueness");
         UUID kindOk = insertParticipant(sessionId, "AGENT", PRINCIPAL_ID, "PRIMARY", 10);
