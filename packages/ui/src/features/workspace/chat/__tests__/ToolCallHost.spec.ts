@@ -6,13 +6,14 @@ import ToolCallCard from "../components/ToolCallCard.vue";
 import CommandToolCard from "../components/CommandToolCard.vue";
 import PatchToolCard from "../components/PatchToolCard.vue";
 import ReadToolCard from "../components/ReadToolCard.vue";
+import type * as apiModule from "../../../../composables/api";
 
 const { getJobOutput, cancelJob } = vi.hoisted(() => ({
-    getJobOutput: vi.fn(),
-    cancelJob: vi.fn(),
+    getJobOutput: vi.fn<typeof apiModule.api.getJobOutput>(),
+    cancelJob: vi.fn<typeof apiModule.api.cancelJob>(),
 }));
 vi.mock("../../../../composables/api", async (importOriginal) => {
-    const actual = await importOriginal<typeof import("../../../../composables/api")>();
+    const actual = await importOriginal<typeof apiModule>();
     return {
         ...actual,
         api: { ...actual.api, getJobOutput, cancelJob },
@@ -318,6 +319,8 @@ describe("ToolCallHost fallback gates", () => {
 
     it("falls back for dynamic MCP, supervisor, and near-miss names", () => {
         for (const name of [
+            "",
+            "unknown_tool",
             "server__read_file",
             "transfer_to_researcher",
             "read_file_v2",

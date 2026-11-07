@@ -6,13 +6,14 @@
  * a scrollable block and classified only by line prefix (no hunk parser, no
  * line numbers, no green/red colouring).
  */
-import { computed, ref } from "vue";
-import { ChevronDown } from "@lucide/vue";
+import { computed } from "vue";
 import { useI18n } from "vue-i18n";
 import type { ToolCall } from "../../../../types";
 import type { ProcessRowActor } from "./ProcessRow.vue";
 import ToolApprovalActions from "./ToolApprovalActions.vue";
 import ToolCallVisual from "./toolCallVisual.vue";
+import ToolCardError from "./ToolCardError.vue";
+import ToolRawOutput from "./ToolRawOutput.vue";
 
 export interface PatchArgView {
     path: string;
@@ -38,8 +39,6 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{ approve: [id: string]; reject: [id: string] }>();
-const expanded = ref(false);
-const rawExpanded = ref(false);
 const { t } = useI18n();
 
 const summary = computed(() => {
@@ -56,9 +55,8 @@ const summary = computed(() => {
 
 const diffLines = computed(() => (props.view.result?.diff ?? "").split("\n"));
 const rawResult = computed(() =>
-    typeof props.toolCall.result === "string" ? props.toolCall.result : "",
+    typeof props.toolCall.result === "string" ? props.toolCall.result : null,
 );
-const rawResultPreview = computed(() => rawResult.value.slice(0, 2000));
 
 function diffLineClass(line: string): string {
     if (line.startsWith("--- a/") || line.startsWith("+++ b/")) return "text-muted-foreground";
@@ -69,20 +67,9 @@ function diffLineClass(line: string): string {
 </script>
 
 <template>
-    <ToolCallVisual
-        card="patch"
-        :tool-call="toolCall"
-        :summary="summary"
-        :actor="actor"
-        v-model:expanded="expanded"
-    >
+    <ToolCallVisual card="patch" :tool-call="toolCall" :summary="summary" :actor="actor">
         <div class="space-y-2">
-            <div v-if="toolCall.error" class="font-mono" data-testid="patch-error">
-                <div class="mb-1 font-medium text-destructive">Error</div>
-                <pre
-                    class="rounded bg-destructive/10 p-2 whitespace-pre-wrap break-all text-destructive"
-                    >{{ toolCall.error }}</pre>
-            </div>
+            <ToolCardError v-if="toolCall.error" :error="toolCall.error" testid="patch-error" />
 
             <div v-if="view.result" class="space-y-1.5" data-testid="patch-result">
                 <div class="font-mono text-muted-foreground">
@@ -142,41 +129,11 @@ function diffLineClass(line: string): string {
                 </ul>
             </div>
 
-            <div class="border-t border-border/60 pt-1.5">
-                <button
-                    type="button"
-                    class="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
-                    :aria-expanded="rawExpanded"
-                    data-testid="raw-output-toggle"
-                    @click="rawExpanded = !rawExpanded"
-                >
-                    <ChevronDown
-                        class="size-3 transition-transform"
-                        :class="rawExpanded ? 'rotate-180' : ''"
-                        aria-hidden="true"
-                    />
-                    {{ t("chat.toolRawOutput") }}
-                </button>
-                <div v-if="rawExpanded" class="mt-1.5 space-y-2 font-mono text-muted-foreground">
-                    <div>
-                        <div class="mb-1 font-medium text-foreground">Arguments</div>
-                        <pre
-                            class="rounded bg-muted/30 p-2 whitespace-pre-wrap break-all"
-                            data-testid="raw-arguments"
-                            >{{ toolCall.arguments }}</pre>
-                    </div>
-                    <div v-if="rawResult">
-                        <div class="mb-1 font-medium text-foreground">Result</div>
-                        <pre
-                            class="rounded bg-muted/30 p-2 whitespace-pre-wrap break-all"
-                            data-testid="raw-result"
-                            >{{ rawResultPreview }}</pre>
-                        <p v-if="rawResult.length > 2000" class="mt-1 text-muted-foreground">
-                            {{ t("chat.toolCard.truncated") }}
-                        </p>
-                    </div>
-                </div>
-            </div>
+            <ToolRawOutput
+                :arguments-text="toolCall.arguments"
+                :result-text="rawResult"
+                :show-result="Boolean(rawResult)"
+            />
 
             <ToolApprovalActions
                 v-if="toolCall.status === 'pending'"

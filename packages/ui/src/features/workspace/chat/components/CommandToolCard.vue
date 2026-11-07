@@ -6,13 +6,15 @@
  * only projects the parsed view. Command output is split into stdout/stderr
  * blocks; the two streams are never merged.
  */
-import { computed, ref } from "vue";
-import { ChevronDown } from "@lucide/vue";
+import { computed } from "vue";
 import { useI18n } from "vue-i18n";
 import type { ToolCall } from "../../../../types";
 import type { ProcessRowActor } from "./ProcessRow.vue";
 import ToolApprovalActions from "./ToolApprovalActions.vue";
 import ToolCallVisual from "./toolCallVisual.vue";
+import ToolCardError from "./ToolCardError.vue";
+import ToolRawOutput from "./ToolRawOutput.vue";
+import { useCharPreview } from "./toolCardPreview";
 
 export interface CommandResultView {
     stdout: string;
@@ -37,8 +39,6 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{ approve: [id: string]; reject: [id: string] }>();
-const expanded = ref(false);
-const rawExpanded = ref(false);
 const { t } = useI18n();
 
 const summary = computed(() => {
@@ -48,35 +48,23 @@ const summary = computed(() => {
 
 const stdout = computed(() => props.view.result?.stdout ?? "");
 const stderr = computed(() => props.view.result?.stderr ?? "");
-const stdoutPreview = computed(() => stdout.value.slice(0, 2000));
-const stderrPreview = computed(() => stderr.value.slice(0, 2000));
+const { preview: stdoutPreview, truncated: stdoutTextTruncated } = useCharPreview(stdout);
+const { preview: stderrPreview, truncated: stderrTextTruncated } = useCharPreview(stderr);
 const stdoutTruncated = computed(
-    () => Boolean(props.view.result?.stdout_truncated) || stdout.value.length > 2000,
+    () => Boolean(props.view.result?.stdout_truncated) || stdoutTextTruncated.value,
 );
 const stderrTruncated = computed(
-    () => Boolean(props.view.result?.stderr_truncated) || stderr.value.length > 2000,
+    () => Boolean(props.view.result?.stderr_truncated) || stderrTextTruncated.value,
 );
 const rawResult = computed(() =>
-    typeof props.toolCall.result === "string" ? props.toolCall.result : "",
+    typeof props.toolCall.result === "string" ? props.toolCall.result : null,
 );
-const rawResultPreview = computed(() => rawResult.value.slice(0, 2000));
 </script>
 
 <template>
-    <ToolCallVisual
-        card="command"
-        :tool-call="toolCall"
-        :summary="summary"
-        :actor="actor"
-        v-model:expanded="expanded"
-    >
+    <ToolCallVisual card="command" :tool-call="toolCall" :summary="summary" :actor="actor">
         <div class="space-y-2">
-            <div v-if="toolCall.error" class="font-mono" data-testid="command-error">
-                <div class="mb-1 font-medium text-destructive">Error</div>
-                <pre
-                    class="rounded bg-destructive/10 p-2 whitespace-pre-wrap break-all text-destructive"
-                    >{{ toolCall.error }}</pre>
-            </div>
+            <ToolCardError v-if="toolCall.error" :error="toolCall.error" testid="command-error" />
 
             <div v-if="view.result" class="space-y-1.5" data-testid="command-result">
                 <div class="flex flex-wrap gap-x-3 gap-y-1 text-muted-foreground">
@@ -133,41 +121,11 @@ const rawResultPreview = computed(() => rawResult.value.slice(0, 2000));
                 {{ t("chat.toolCard.noOutput") }}
             </div>
 
-            <div class="border-t border-border/60 pt-1.5">
-                <button
-                    type="button"
-                    class="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
-                    :aria-expanded="rawExpanded"
-                    data-testid="raw-output-toggle"
-                    @click="rawExpanded = !rawExpanded"
-                >
-                    <ChevronDown
-                        class="size-3 transition-transform"
-                        :class="rawExpanded ? 'rotate-180' : ''"
-                        aria-hidden="true"
-                    />
-                    {{ t("chat.toolRawOutput") }}
-                </button>
-                <div v-if="rawExpanded" class="mt-1.5 space-y-2 font-mono text-muted-foreground">
-                    <div>
-                        <div class="mb-1 font-medium text-foreground">Arguments</div>
-                        <pre
-                            class="rounded bg-muted/30 p-2 whitespace-pre-wrap break-all"
-                            data-testid="raw-arguments"
-                            >{{ toolCall.arguments }}</pre>
-                    </div>
-                    <div v-if="rawResult">
-                        <div class="mb-1 font-medium text-foreground">Result</div>
-                        <pre
-                            class="rounded bg-muted/30 p-2 whitespace-pre-wrap break-all"
-                            data-testid="raw-result"
-                            >{{ rawResultPreview }}</pre>
-                        <p v-if="rawResult.length > 2000" class="mt-1 text-muted-foreground">
-                            {{ t("chat.toolCard.truncated") }}
-                        </p>
-                    </div>
-                </div>
-            </div>
+            <ToolRawOutput
+                :arguments-text="toolCall.arguments"
+                :result-text="rawResult"
+                :show-result="Boolean(rawResult)"
+            />
 
             <ToolApprovalActions
                 v-if="toolCall.status === 'pending'"

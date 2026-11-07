@@ -277,6 +277,8 @@ const patchView = computed(() => parsePatchView(props.toolCall));
 const readView = computed(() => parseReadView(props.toolCall));
 
 const route = computed<Route>(() => {
+    // Single fallback decision point: unknown/untyped names, job surfaces and
+    // reserved states all converge here; the dedicated cards never re-check fallback.
     if (hasJobSurface(props.toolCall) || hasReservedState(props.toolCall)) return "fallback";
     switch (props.toolCall.name) {
         case "execute_command":

@@ -6,13 +6,15 @@
  * object. The range content already carries `N | ` line prefixes, so this card
  * never adds its own numbering.
  */
-import { computed, ref } from "vue";
-import { ChevronDown } from "@lucide/vue";
+import { computed } from "vue";
 import { useI18n } from "vue-i18n";
 import type { ToolCall } from "../../../../types";
 import type { ProcessRowActor } from "./ProcessRow.vue";
 import ToolApprovalActions from "./ToolApprovalActions.vue";
 import ToolCallVisual from "./toolCallVisual.vue";
+import ToolCardError from "./ToolCardError.vue";
+import ToolRawOutput from "./ToolRawOutput.vue";
+import { useLinePreview } from "./toolCardPreview";
 
 export interface ReadCardView {
     mode: "full" | "range";
@@ -32,8 +34,6 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{ approve: [id: string]; reject: [id: string] }>();
-const expanded = ref(false);
-const rawExpanded = ref(false);
 const { t } = useI18n();
 
 const rangeLabel = computed(() => {
@@ -60,15 +60,9 @@ const summary = computed(() => {
     return rangeLabel.value ? `${path} · ${rangeLabel.value}` : path;
 });
 
-const contentPreview = computed(() => {
-    const content = props.view.content;
-    const lineLimited = content.split("\n").slice(0, 200).join("\n");
-    const clipped = lineLimited.slice(0, 2000);
-    return {
-        text: clipped,
-        truncated: clipped.length < content.length || lineLimited !== content,
-    };
-});
+const { preview: contentPreview, truncated: contentTruncated } = useLinePreview(
+    computed(() => props.view.content),
+);
 
 const previewLineCount = computed(() => {
     const content = props.view.content;
@@ -76,26 +70,14 @@ const previewLineCount = computed(() => {
 });
 
 const rawResult = computed(() =>
-    typeof props.toolCall.result === "string" ? props.toolCall.result : "",
+    typeof props.toolCall.result === "string" ? props.toolCall.result : null,
 );
-const rawResultPreview = computed(() => rawResult.value.slice(0, 2000));
 </script>
 
 <template>
-    <ToolCallVisual
-        card="read"
-        :tool-call="toolCall"
-        :summary="summary"
-        :actor="actor"
-        v-model:expanded="expanded"
-    >
+    <ToolCallVisual card="read" :tool-call="toolCall" :summary="summary" :actor="actor">
         <div class="space-y-2">
-            <div v-if="toolCall.error" class="font-mono" data-testid="read-error">
-                <div class="mb-1 font-medium text-destructive">Error</div>
-                <pre
-                    class="rounded bg-destructive/10 p-2 whitespace-pre-wrap break-all text-destructive"
-                    >{{ toolCall.error }}</pre>
-            </div>
+            <ToolCardError v-if="toolCall.error" :error="toolCall.error" testid="read-error" />
 
             <div
                 v-if="view.hasResult"
@@ -121,8 +103,8 @@ const rawResultPreview = computed(() => rawResult.value.slice(0, 2000));
                 <pre
                     class="max-h-80 overflow-auto rounded bg-muted/30 p-2 whitespace-pre-wrap break-all"
                     data-testid="read-content"
-                    >{{ contentPreview.text }}</pre>
-                <p v-if="contentPreview.truncated" class="mt-1">
+                    >{{ contentPreview }}</pre>
+                <p v-if="contentTruncated" class="mt-1">
                     {{ t("chat.toolCard.truncated") }} · {{ t("chat.toolCard.previewOnly") }}
                 </p>
             </div>
@@ -131,41 +113,11 @@ const rawResultPreview = computed(() => rawResult.value.slice(0, 2000));
                 {{ t("chat.toolCard.noOutput") }}
             </div>
 
-            <div class="border-t border-border/60 pt-1.5">
-                <button
-                    type="button"
-                    class="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
-                    :aria-expanded="rawExpanded"
-                    data-testid="raw-output-toggle"
-                    @click="rawExpanded = !rawExpanded"
-                >
-                    <ChevronDown
-                        class="size-3 transition-transform"
-                        :class="rawExpanded ? 'rotate-180' : ''"
-                        aria-hidden="true"
-                    />
-                    {{ t("chat.toolRawOutput") }}
-                </button>
-                <div v-if="rawExpanded" class="mt-1.5 space-y-2 font-mono text-muted-foreground">
-                    <div>
-                        <div class="mb-1 font-medium text-foreground">Arguments</div>
-                        <pre
-                            class="rounded bg-muted/30 p-2 whitespace-pre-wrap break-all"
-                            data-testid="raw-arguments"
-                            >{{ toolCall.arguments }}</pre>
-                    </div>
-                    <div v-if="typeof toolCall.result === 'string'">
-                        <div class="mb-1 font-medium text-foreground">Result</div>
-                        <pre
-                            class="rounded bg-muted/30 p-2 whitespace-pre-wrap break-all"
-                            data-testid="raw-result"
-                            >{{ rawResultPreview }}</pre>
-                        <p v-if="rawResult.length > 2000" class="mt-1 text-muted-foreground">
-                            {{ t("chat.toolCard.truncated") }}
-                        </p>
-                    </div>
-                </div>
-            </div>
+            <ToolRawOutput
+                :arguments-text="toolCall.arguments"
+                :result-text="rawResult"
+                :show-result="rawResult !== null"
+            />
 
             <ToolApprovalActions
                 v-if="toolCall.status === 'pending'"
