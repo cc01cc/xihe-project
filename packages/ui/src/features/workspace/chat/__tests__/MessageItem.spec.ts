@@ -1,11 +1,22 @@
 import { mount } from "@vue/test-utils";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createPinia } from "pinia";
 import { i18n } from "../../../../i18n";
 import type { Message } from "../../../../types";
 import type { SessionParticipantView } from "../../../../types/participant";
 import MessageItem from "../components/MessageItem.vue";
 import type { ResolvedDelivery } from "../deliveryView";
+
+// PLAN-0683 T2.2: the attachment card opens the budgeted preview dialog. This spec only
+// checks the entry wiring, so preview fetches are replaced with a pending promise.
+vi.mock("../../composables/fileService", () => ({
+    ATTACHMENT_PREVIEW_BUDGET_BYTES: 8 * 1024 * 1024,
+    decodePreviewText: vi.fn<(...args: unknown[]) => string>(() => ""),
+    fetchAttachmentPreview: vi.fn<(...args: unknown[]) => Promise<never>>(
+        () => new Promise<never>(() => {}),
+    ),
+    fetchAttachmentRemainder: vi.fn<(...args: unknown[]) => Promise<never>>(),
+}));
 
 describe("MessageItem branch action", () => {
     it("emits the terminal message ID when branching from a visible message", async () => {
@@ -708,6 +719,45 @@ describe("MessageItem delivery header (PLAN-0659 T1.3)", () => {
     it("renders no delivery header when there is nothing to show", () => {
         const wrapper = mountDelivery({});
         expect(wrapper.find('[data-testid="message-delivery"]').exists()).toBe(false);
+        wrapper.unmount();
+    });
+});
+
+describe("MessageItem attachment preview (PLAN-0683)", () => {
+    function messageWithAttachment(): Message {
+        return {
+            id: "message-attachment",
+            sessionId: "session-1",
+            role: "user",
+            content: "see attached",
+            timestamp: "2026-11-07T00:00:00Z",
+            attachments: [
+                {
+                    id: "att-1",
+                    name: "range-206-screenshot.png",
+                    type: "image/png",
+                    size: 12.4 * 1024 * 1024,
+                    url: "/api/v1/files/att-1",
+                    state: "done",
+                },
+            ],
+        };
+    }
+
+    it("keeps the thumbnail lazy and opens the budgeted preview from the card", async () => {
+        const wrapper = mount(MessageItem, {
+            props: { message: messageWithAttachment() },
+            global: { plugins: [i18n, createPinia()] },
+        });
+
+        const image = wrapper.get("img");
+        expect(image.attributes("loading")).toBe("lazy");
+        expect(image.attributes("decoding")).toBe("async");
+        expect(wrapper.find('[data-testid="attachment-preview-dialog"]').exists()).toBe(false);
+
+        await wrapper.get('[data-testid="message-attachment-preview-trigger"]').trigger("click");
+
+        expect(wrapper.find('[data-testid="attachment-preview-dialog"]').exists()).toBe(true);
         wrapper.unmount();
     });
 });
