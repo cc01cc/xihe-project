@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onUnmounted } from "vue";
+import { computed, onUnmounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import type { AttachmentFile, Message } from "../../../../types";
 import type { SessionParticipantRole, SessionParticipantView } from "../../../../types/participant";
@@ -23,11 +23,13 @@ import {
     AttachmentGroup,
     AttachmentMedia,
     AttachmentTitle,
+    AttachmentTrigger,
 } from "@/components/ui/attachment";
 import { Bubble, BubbleContent } from "@/components/ui/bubble";
 import { Download, Brain, LoaderCircle, Clock, Trash2, GitBranch, Shield } from "@lucide/vue";
 import { Message as MessageRoot, MessageContent, MessageHeader } from "@/components/ui/message";
 import ProcessRow from "./ProcessRow.vue";
+import AttachmentPreviewDialog from "./AttachmentPreviewDialog.vue";
 import { actorOf } from "../actorView";
 import type { ResolvedDelivery } from "../deliveryView";
 
@@ -211,6 +213,19 @@ function attachmentUrl(attachment: AttachmentFile): string {
     if (attachment.url) return attachment.url;
     if (attachment.fileId) return `/api/v1/files/${attachment.fileId}`;
     return "";
+}
+
+/**
+ * PLAN-0683 (BL-381) T2.2: the attachment card opens the budgeted preview overlay.
+ * Clicking the card is the only preview entry; it never loads the file eagerly.
+ */
+const previewAttachment = ref<AttachmentFile | null>(null);
+const previewOpen = ref(false);
+
+function openAttachmentPreview(attachment: AttachmentFile) {
+    if (!attachmentUrl(attachment)) return;
+    previewAttachment.value = attachment;
+    previewOpen.value = true;
 }
 
 function handleImageError(event: Event) {
@@ -421,6 +436,8 @@ onUnmounted(() => {
                         <img
                             :src="attachmentUrl(attachment)"
                             :alt="attachment.name"
+                            loading="lazy"
+                            decoding="async"
                             class="size-full object-cover"
                             @error="handleImageError"
                         />
@@ -438,6 +455,14 @@ onUnmounted(() => {
                             <Download class="size-4" />
                         </AttachmentAction>
                     </AttachmentActions>
+                    <!-- PLAN-0683 T2.2: whole card opens the budgeted preview; the download
+                         action above stays on top (`z-20`) and never opens the overlay. -->
+                    <AttachmentTrigger
+                        v-if="attachmentUrl(attachment)"
+                        :aria-label="t('files.previewOpen', { name: attachment.name })"
+                        data-testid="message-attachment-preview-trigger"
+                        @click="openAttachmentPreview(attachment)"
+                    />
                 </Attachment>
             </AttachmentGroup>
 
@@ -576,5 +601,12 @@ onUnmounted(() => {
                 />
             </div>
         </MessageContent>
+        <AttachmentPreviewDialog
+            v-if="previewAttachment"
+            :open="previewOpen"
+            :attachment="previewAttachment"
+            :url="attachmentUrl(previewAttachment)"
+            @update:open="previewOpen = $event"
+        />
     </MessageRoot>
 </template>
