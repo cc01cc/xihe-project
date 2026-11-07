@@ -470,8 +470,15 @@ LangChain events are automatically mapped through the SSE adapter layer (`packag
 >   deliberately not used here.
 > - **Surefire cases** — `CP`: sum of `tests=` in `packages/control-plane/target/surefire-reports/*.xml`
 >   from one full `mvn test`, i.e. the tail line `Tests run: 3701, Failures: 1, Errors: 0, Skipped: 2`
->   (merge tree `918e175a`, 2026-11-07, ~14 min). Count is *cases executed*, not "green cases": the one
->   failure is a registered baseline (`BL-368`, `scripts/cp-known-baseline.json`).
+>   (merge tree `918e175a`, 2026-11-07, ~14 min). Count is *cases executed*, not "green cases": the single
+>   failure is `MessagePaginationContractTest`, a **test-side flakiness** — the entity's `@PrePersist`
+>   (`Message.java:98-100`) unconditionally overwrites the fixture `createdAt` set at `saveMessage:309`, so
+>   ordering falls back to wall-clock microseconds and the string comparison in `assertAscending:355-364`
+>   inverts (`.319Z` vs `.319999Z`); 7 of 8 repeat runs are green, so it is not a regression — tracked as
+>   `BL-475`. The two previously registered baseline entries
+>   (`ContextProjectionServiceTest.legacyHashOnlyTombstoneStillReplays` / `CpArchitectureTest`) are green now,
+>   so `scripts/cp-known-baseline.json` currently lists no entries.
+>   (The `test:cp:baseline` gate is BL-368 — that ID names the *gate*, not this failure.)
 > - **pytest collection** — `Cross-module E2E`: collection count of the `integration`-marked cross-module
 >   tests: `uv run --directory packages/agent python -m pytest --collect-only -q -m integration` ⇒ 30
 >   collected. Context: the whole suite collects 1522, and the default `addopts = -m "not integration"`

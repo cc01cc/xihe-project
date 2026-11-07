@@ -59,7 +59,7 @@ CP 在授权与派发前 MUST 把每个经其转发的工具名解析为 **tool 
 - 锚点：内置集 `ToolFaceRegistry.java:91-108`；构造登记 `:151-163`；`extraFaces`（第三方 MCP 工具按 workspace 上下文分类）与内建面同权求值，不由调用方声明。
 - 未登记工具的 `faceOf` 返回 `UNCLASSIFIED_ACTION`/`OPAQUE`（`:171-174`）：授权 **MUST** fail-closed——`allowsByGrant` 侧无可匹配 grant 即拒；即便进入 verdict，也只允许显式审批（ASK），**MUST NOT** 继承 allow 或模式自动放行（`PolicyEngine.java:243-253`，注释明示 unclassified 永不免于审批）。
 - `shape` 决定资源提取与路径语义：`STRUCTURED` 面按 `PolicyResourceExtractor.extract(body)` 解析资源；`OPAQUE` 不解析（`PolicyEngine.java:57-58`）。G8 三工具为 `STRUCTURED`，其入参路径/仓库标识按既有资源提取口径处理，不另造解析器。
-- **G8 冻结**：`git_status`/`git_diff`/`git_log` **MUST** 进 READ 集（`read` 面、`STRUCTURED`）；**MUST NOT** 新增 action atom；**MUST NOT** 走 `extraFaces`（它们不是第三方 MCP 分类）。三工具当前**尚未注册**——本节只冻结「进哪一面」与授权语义，Runtime 只读查询实现在 T2.2。
+- **G8 冻结**：`git_status`/`git_diff`/`git_log` **MUST** 进 READ 集（`read` 面、`STRUCTURED`）；**MUST NOT** 新增 action atom；**MUST NOT** 走 `extraFaces`（它们不是第三方 MCP 分类）。**注册状态（`030cfb8d`，2026-11-07 起为本实现事实）**：三工具已按本条注册——面登记 `ToolFaceRegistry.java:91-104`（随 `:158` 映射 `read`/`STRUCTURED`），CP 自有派发 `McpProxyController.java:94-96`（工具名常量）+ `:1536-1590`（`dispatchCpOwnedGit`）；`git_status` 复用公开读面同一条 `RuntimeCheckpointClient.workspaceGitStatus`（`:1547`，§3.5），`git_diff`/`git_log` 走 Runtime 只读端点。**本节冻结范围不变**：仍只冻结「进哪一面」与授权/拒绝语义；真链路证据（授权正反探针、审计读回）归 T2.3，本节不宣称。
 
 ### 3.2 门禁链（当前实现，逐条带锚点）
 

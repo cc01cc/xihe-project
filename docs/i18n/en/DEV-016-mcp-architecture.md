@@ -113,6 +113,18 @@ Agent → CP /mcp (tool_name, args)
   CP → Agent: Passthrough result
 ```
 
+### 3.2.1. CP-owned read-only git tools (PLAN-0686 G8)
+
+`git_status`/`git_diff`/`git_log` are **CP-owned tools**: they are not forwarded through the Runtime `/mcp` system catalog; the CP dispatches them locally after authorization and returns a normal MCP tool-result.
+
+- **Registration and dispatch**: tool-name constants `McpProxyController.java:94-96`; the `tools/list` catalog injection and `inputSchema` live in `populateSystemTools`; `tools/call` goes through `dispatchCpOwnedGit` (`:1536-1590`).
+- **Face and authorization**: all three are in `ToolFaceRegistry.READ_TOOLS` (`:91-104`) ⇒ `read` atom + `STRUCTURED`; no new action atom, no `extraFaces` ([`spec/protocol/mcp.md`](../../../spec/protocol/mcp.md) §3.1). The gate is the §3.2 chain (`loadContext → allowsByGrant → faceOf`); an unauthorized caller gets a `TOOL_GRANT_DENIED` tool-result plus an audit record, never a bare 403.
+- **Data source**: `git_status` **reuses** the public read face's one path `RuntimeCheckpointClient.workspaceGitStatus` → `/internal/v1/runtime/workspaces/{workspaceId}/git-status` (the CP keeps no second git implementation); `git_diff`/`git_log` call the Runtime read-only endpoints `git-diff`/`git-log` (wire contract in [`docs/api/inventory.md`](../../api/inventory.md)).
+- **Read-only constraints (Runtime side)**: the user repository is used as `GIT_DIR`/`GIT_WORK_TREE`, `GIT_INDEX_FILE` is **never** set, `GIT_DIR` never points at the shadow repository, `GIT_OPTIONAL_LOCKS=0`, and diff runs with `--no-ext-diff --no-textconv`; `ShadowGit` is not called and index/refs are not written, so these reads can run lock-free alongside checkpoint capture/restore.
+- **Failure shape**: Runtime unreachable/timeout → 503 `RUNTIME_UNAVAILABLE` (`dependency=runtime`, `retryable=true`) and **never** an empty diff/log; a Runtime refusal → an `isError=true` tool-result carrying the Runtime `reason`; invalid arguments → `INVALID_ARGUMENTS`. Audit lands in the AUDIT JSONL (`allow`/`tool_error`/`dependency_unavailable`) with shape facts only — no patch body, no commit subject.
+
+True-chain evidence (allow/deny probes + audit read-back) belongs to PLAN-0686 T2.3 and is not claimed here; write tools (commit/branch) are out of v1.
+
 ### 3.3. Tool mapping lifecycle (PLAN-0583 / BL-124)
 
 The `tool_name → server_id` mapping is an in-process cache with exactly three rules:

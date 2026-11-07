@@ -8,7 +8,7 @@
  * entries — "load the remaining bytes" and "download the original". Full content is only
  * ever loaded on that explicit action; the budget never pretends to be a full-file cap.
  */
-import { computed, onBeforeUnmount, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { Download, FileText, ImageIcon, LoaderCircle, TriangleAlert } from "@lucide/vue";
 import type { AttachmentFile } from "../../../../types";
@@ -283,11 +283,51 @@ function download() {
     anchor.click();
 }
 
+/** Where focus goes when the node that opened the overlay left the tree with it. */
+const FOCUS_FALLBACK_SELECTOR = '[data-testid="message-scroller-viewport"]';
+
+/**
+ * PLAN-0683 focus return: whatever opened the overlay (the attachment trigger inside the
+ * message) gets the focus back on close, so keyboard users keep their place in the list.
+ */
+const openerElement = ref<HTMLElement | null>(null);
+
+function focusElement(element: HTMLElement | null): boolean {
+    if (!element || !element.isConnected) return false;
+    // Focus targets such as the message list are not in the Tab order; a -1 tabindex keeps
+    // them programmatically focusable exactly like the scroller viewport already does.
+    if (element.tabIndex < 0 && !element.hasAttribute("tabindex")) {
+        element.setAttribute("tabindex", "-1");
+    }
+    element.focus({ preventScroll: true });
+    return document.activeElement === element;
+}
+
+/**
+ * The dialog library restores focus to the element that was active when it opened. That
+ * element can be gone by close time (the message was deleted, or the stream replaced the row
+ * while the overlay was open), so focus would otherwise drop to <body>. Fall back to the
+ * message list container, which is the nearest stable ancestor of any attachment trigger.
+ */
+function restoreFocus() {
+    if (focusElement(openerElement.value)) return;
+    focusElement(document.querySelector<HTMLElement>(FOCUS_FALLBACK_SELECTOR));
+}
+
 watch(
     () => props.open,
     (open) => {
-        if (open) void load();
-        else reset();
+        if (open) {
+            const active = document.activeElement;
+            openerElement.value =
+                active instanceof HTMLElement && active !== document.body ? active : null;
+            void load();
+        } else {
+            reset();
+            // Focus return is settled after the dialog content has unmounted; one tick is
+            // enough because the restore runs in the parent's post-flush queue.
+            void nextTick(restoreFocus);
+        }
     },
     // The dialog is mounted already-open (the entry sets attachment + open in one tick),
     // so the initial state must load too.
@@ -304,7 +344,11 @@ onBeforeUnmount(reset);
 
 <template>
     <Dialog :open="props.open" @update:open="emit('update:open', $event)">
-        <DialogContent class="sm:max-w-2xl" data-testid="attachment-preview-dialog">
+        <DialogContent
+            class="sm:max-w-2xl"
+            data-testid="attachment-preview-dialog"
+            aria-modal="true"
+        >
             <DialogHeader>
                 <DialogTitle class="truncate pr-6" :title="props.attachment.name">
                     {{ props.attachment.name }}

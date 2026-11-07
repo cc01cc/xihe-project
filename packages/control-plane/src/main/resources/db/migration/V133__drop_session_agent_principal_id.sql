@@ -5,8 +5,9 @@
 -- GrantAuthorizationService (via SessionReadService) intersects it as the path cap, and a NULL or
 -- non-array value makes GrantIntersectionEvaluator.parse throw, which the authorization layer turns
 -- into a fail-closed refusal. Its semantics are now "the PRIMARY principal's cap frozen at binding
--- time"; the write points are SessionService (create/fork) and ChatSubmissionService (spawn), fed
--- by AgentPrincipalService.resolveCapFor under the requireActiveWorkspaceBinding gate (D-49).
+-- time"; the write points are SessionService (create/fork) and ChatSubmissionService (spawn at
+-- :567/:724), fed by AgentPrincipalService.resolveCapFor under the requireActiveWorkspaceBinding
+-- gate (D-49).
 --
 -- Index -> FK -> column keeps the drop order explicit and leaves no orphaned index/constraint.
 -- Development data has no migration burden (D-215).
