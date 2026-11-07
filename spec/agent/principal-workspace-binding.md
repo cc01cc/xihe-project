@@ -1,7 +1,7 @@
 # Agent principal 与 Workspace 绑定
 
 > 契约状态：`active`  
-> amendment 承接：PLAN-0680（2026-11-07 登记：技能绑定写入面双轴——workspace 轴仅授本工作区原子、服务端定档；仅承接登记，正文条款未改，新章落 M4）  
+> amendment 承接：PLAN-0680（2026-11-07 登记并落章：技能绑定写入面双轴——workspace 轴仅授本工作区原子、服务端定档；新章见下方「技能绑定双轴」，既有正文条款未改）  
 > 实现状态：`partial`（PLAN-0374 principal/Workspace binding、T3.1b/T3.3、V5/V6/V7 已验收；**scope 三档 `PERSONAL`/`WORKSPACE`/`INSTANCE` 与三段授权由 PLAN-0622 承接，尚未实现**；fork/branch producer 归 PLAN-0409/0410，Agent 铸造/多层审批后置 BL-70/71）
 > Profile：`security`  
 > Owner：PLAN-0374（canonical binding；spawn caller amendment per PLAN-0407 #53）；scope 三档与三段授权 amendment per PLAN-0622；技能绑定双轴 amendment per PLAN-0680  
@@ -69,6 +69,60 @@ Fork 实现归属：0374 定义并验证 stable principal 与独立授权 root �
 3. `INSTANCE` 档无需绑定，但**使用仍受 cap 与 Session cap 收口**；「无需绑定」不等于「不受限」。
 4. 授权判定仍唯一由 `GrantAuthorizationService` 内核承担；本 SPEC 不建第二裁决点。
 
+## 技能绑定双轴（PLAN-0680 增补，实现状态 `partial`）
+
+> 本节由 PLAN-0680 作为 **R-8 amendment** 追加：上方 PLAN-0622 章与既有条款正文不变。`skill_bindings` 的 DDL 与解析/快照链自 PLAN-0628 起即为双轴；本计划打开的是 **agent 主体技能绑定写入面**的 workspace 轴，并把「工作区轴只授本工作区原子」写成条款。角色轴显式不开放（见末段）。
+
+### 双轴与定档
+
+绑定档位 = **subject 轴 × scope 轴**（四档可达；不存在「全员共享」第五档）：
+
+| subject | scope | 语义 | 写入面 |
+|---|---|---|---|
+| `agent_principal` | `instance` | **DEFAULT 绑定**：主体在任何工作区都携带该技能 | agent 绑定面，无授权工作区上下文 |
+| `agent_principal` | `workspace` | **显式绑定**：只在该工作区内携带 | agent 绑定面，带授权工作区上下文 |
+| `user` | 两轴 | 用户侧技能（PLAN-0628），不参与 agent 快照 | 用户面 `/api/v1/skill-bindings`（本计划不改） |
+
+- **档位由服务端派生，客户端不可指定**：请求体只带 `skillId`；带授权工作区上下文 ⇒ 写 `workspace(caller.workspaceId)`，无上下文 ⇒ 写 `instance`。请求体出现 `scopeType`/`scopeId` ⇒ 400 `INVALID_REQUEST`，因此调用方不能把行写到自己无权覆盖的轴。
+- **显式绑定优先于默认绑定**：解析顺序冻结为「`agent_principal` 先于 `user` → `workspace` 先于 `instance` → 技能名」；同一技能在 `instance` 行与 `workspace` 行并存时只列一次，取优先级最高的档。工作区外（无该工作区上下文）只能看到 `instance` 行，故显式绑定不波及他工作区。
+- **同档唯一**：`(skill, subject, scopeType, scopeId)` 重复 ⇒ 409 `SKILL_BINDING_EXISTS`；跨档并存允许（`scope_id` NULL 的 instance 行与工作区行是不同唯一键）。解绑后下一会话的快照即不含该技能（无缓存预热、无后台任务）。
+
+### 解绑语义
+
+- 解绑按**行自身档位**授权，不按调用方上下文猜：`instance` 行需要 instance tier；`workspace` 行需要该行所属工作区的管理权，instance tier 可跨工作区删。
+- workspace tier **只能删本工作区行**：删他工作区行或 instance 行 ⇒ 404 `SKILL_BINDING_NOT_FOUND`（与「行不存在」不可区分，防跨工作区探测）。
+- 解绑只移除该行：不级联删技能定义、不影响同技能其他档位的行、不改历史 Session 已发的快照。
+
+### 跨工作区不生效
+
+- 解析同时过滤**绑定行**与**技能定义**两侧：行须 `scope_type='instance'` 或 `scope_id=当前工作区`；定义须 `definition_scope_type='instance'` 或 `definition_scope_id=当前工作区`。
+- 因此 W1 的 workspace 绑定行在 W2 的注入中**不出现**，即便主体相同。
+- 把**他工作区的私有技能定义**绑给主体 ⇒ 404 `SKILL_NOT_FOUND`（不是 403、也不是 400）：他工作区资产在本工作区按不存在处理。本工作区私有定义可绑（201），绑定行落本工作区轴。
+
+### 原子来源限定（工作区轴只授本工作区原子）
+
+- workspace 轴的绑定行**只授本工作区的原子**：可引用定义 = 本工作区私有定义 + instance 技能库定义；写入行固定 `scope_id=本工作区`，不产生 instance 行。
+- instance 技能库定义本身实例级可见，工作区轴绑定只是**收窄生效范围**（不扩大可见面、不新增能力），因此不构成 cap 提权。
+- 授权门不变（两道，缺一即 403）：instance tier = `MANAGE_AGENT_PRINCIPALS`；workspace tier = 在授权工作区持有 `MANAGE_WORKSPACE_AGENTS`。actor 不得是 subject 本身（403）。授权工作区可由 `X-Workspace-Id` 头或 `?workspaceId=` 传入，二者冲突 ⇒ 400 `WORKSPACE_CONTEXT_CONFLICT`。
+- 用户面 `/api/v1/skill-bindings` 仍是**调用方指定档位**的旧面，其 `400 SKILL_DEFINITION_OUT_OF_SCOPE` 仍然存在；该错误码只在 agent 绑定面退役，不标全局废弃。
+
+### 角色轴暂不开放
+
+`role_bindings` 的 workspace 行只作为**可达性/cap 输入**（PLAN-0629 语义），agent 主体的角色绑定面**维持单轴**（instance 派生 + cap 天花板）：本轮只开技能轴，角色轴的 cap 按轴求值另案（BL-287 重证后）。因此「技能已双轴」不等于「角色可绕过 cap」——两轴共用同一授权门，但能力上限规则不同。
+
+### 测试锚点
+
+- CP 契约（装配级：真 interceptor + controller + service，mock 持久层）：`AgentPrincipalSkillBindingContractTest` —— 服务端定档、双档并存、他工作区私有定义 404、workspace tier 不能删 instance/他工作区行、无授权 403。
+- 解析与快照：`SkillCatalogSourceServiceTest`、`SkillCatalogSnapshotServiceTest`（`tier` 三元组 `subjectType/scopeType/definitionScopeType` 与去重优先级）。
+- 用户面回归：`SkillBindingServiceTest`（`/api/v1/skill-bindings` 契约不变）。
+- UI：`packages/ui/src/features/workspace/components/__tests__/WorkspaceAgentsPanel.spec.ts`（档位徽标 `agent-skill-scope-{instance|workspace}`）。
+- 真栈（待窗口）：host E2E 单 spec 断言 `skills_snapshot.items[].tier`；证据与窗口记录见 `plans/PLAN-0680-XH-spec13-skill-dual-axis/`。
+
+### Spec Impact
+
+- 承接 PLAN：PLAN-0680；同批同步 `docs/api/openapi.yaml` 的两条 agent-principal 技能绑定面与 `DEV-014` §14b/§14c。
+- 不新增权限原子、不新增 Flyway 迁移；`spec/security/principal-workspace-scope.md` 只登记指针，principal/role/scope 授权正文仍归 Security。
+
 ## 规范条款与不变式
 
 1. Agent action 判定 = principal grants ∩ 当前 Workspace binding cap ∩ Session cap ∩ spawn ancestor 链上每个 Session cap；fork 不沿 spawn ancestor 链（fork 是授权 root）。任一环缺失/撤销/非法路径 fail-closed。
@@ -109,7 +163,8 @@ UI → `POST /api/v1/agent-principals`、`GET/PUT/DELETE /api/v1/workspaces/{id}
 - Migration/schema：`DomainSchemaMigrationTest`、`AgentPrincipalMigrationTest`。
 - Spawn route：`AgentSpawnPrincipalContractTest`；管理/创建 API：`WorkspaceAgentControllerContractTest`、`AgentPrincipalControllerContractTest`；授权写面：`PrincipalGrantAdminControllerContractTest`（读/写/幂等/审计/越权/并发）、`PrincipalGrantAuthorizationIntegrationTest`（授权后 create 201 + 绑定成功、撤销后 403）；Session entrypoint：`ChatSubmissionServiceIntegrationTest`、`ChatIntegrationTest`、`SessionIntegrationTest`。
 - 真实浏览器：`packages/ui/e2e/real/workspace-agent-management.spec.ts`（PLAN-0374 evidence `t4-4-workspace-agent-browser.md`）。
+- 技能绑定双轴（PLAN-0680）：`AgentPrincipalSkillBindingContractTest`（服务端定档 / 跨工作区 404 / 解绑授权）；解析与快照 tier 见 `SkillCatalogSourceServiceTest`、`SkillCatalogSnapshotServiceTest`；UI 档位徽标见 `WorkspaceAgentsPanel.spec.ts`；真栈证据见 PLAN-0680 evidence（待窗口）。
 
 ## 来源与变更关系
 
-由 PLAN-0374 本地 spec 在实施波次晋升为 canonical；spawn caller 边界由 PLAN-0407 design #53 修订（Agent 经 CP-owned MCP tool；internal route 不变但不再作为 caller），caller 通道已随 0407 T2.10 交付（CP logical MCP `spawn_agent` + 既有 grant/approval gate）。实现状态仍为 `partial` 的后置项：fork 创建（PLAN-0409）、branch context（PLAN-0410）、Agent 自助铸造及多层审批（BL-71/BL-70）。PLAN-0374 T3.3/V5/V6/V7 当前实现与真实浏览器/审计证据见 `plans/PLAN-0374-XH-agent-workspace-scope/evidence/t3-3-template-ui.md`；本 SPEC 描述目标，不替代该证据。
+由 PLAN-0374 本地 spec 在实施波次晋升为 canonical；spawn caller 边界由 PLAN-0407 design #53 修订（Agent 经 CP-owned MCP tool；internal route 不变但不再作为 caller），caller 通道已随 0407 T2.10 交付（CP logical MCP `spawn_agent` + 既有 grant/approval gate）。技能绑定双轴章由 PLAN-0680 于 2026-11-07 追加（R-8 amendment）：DDL/解析链保持 PLAN-0628 双轴不变，只打开写入面 workspace 轴并把原子来源限定写成条款。实现状态仍为 `partial` 的后置项：fork 创建（PLAN-0409）、branch context（PLAN-0410）、Agent 自助铸造及多层审批（BL-71/BL-70）。PLAN-0374 T3.3/V5/V6/V7 当前实现与真实浏览器/审计证据见 `plans/PLAN-0374-XH-agent-workspace-scope/evidence/t3-3-template-ui.md`；本 SPEC 描述目标，不替代该证据。
