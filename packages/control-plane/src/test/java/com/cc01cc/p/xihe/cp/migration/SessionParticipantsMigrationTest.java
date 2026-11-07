@@ -153,6 +153,10 @@ class SessionParticipantsMigrationTest {
                 () -> execute("UPDATE session_participants SET delivery_defaults = ARRAY['to', NULL]"
                         + "::text[] WHERE id = '" + participantId + "'"),
                 "NULL elements are not a legal member of the set");
+        assertThrows(SQLException.class,
+                () -> execute("UPDATE session_participants SET delivery_defaults = '{{to,cc}}'"
+                        + "::text[] WHERE id = '" + participantId + "'"),
+                "D-70: multidimensional arrays are rejected by the one-dimensional guard");
     }
 
     @Test
