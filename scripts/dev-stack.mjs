@@ -64,6 +64,7 @@ import {
   readLease,
   releaseLease,
   renewLease,
+  setLeasePhase,
 } from './lib/stack-lease.mjs';
 import { classifyListener, stackListeners, sweepOrphanProcesses } from './lib/stack-orphan.mjs';
 import { STACK_IDS, deriveStack, normalizeStackArg } from './lib/stack-ports.mjs';
@@ -397,7 +398,7 @@ function observedPids(record, listeners, p = ports) {
 }
 
 /** 写租约（`start` 起栈后 / `acquire` 认领在跑的栈）。写的是声明，`status` 会逐字段核对。 */
-function writeLease({ d = derived, p = ports, record }) {
+function writeLease({ d = derived, p = ports, record, phase = 'started' }) {
   const listeners = listenFacts(p);
   const lease = acquireLease({
     projectRoot,
@@ -407,8 +408,30 @@ function writeLease({ d = derived, p = ports, record }) {
     instanceId,
     cpVersion: currentCpVersion(),
     now: Date.now(),
+    phase,
   });
   return { lease, listeners, path: leasePath(projectRoot, d.stackId) };
+}
+
+/**
+ * 起栈前先「认领」（task-75）：只声明 ports/instanceId + `phase:"starting"`，**不探监听**。
+ *
+ * 为什么必须在 spawn 之前写：实测启动头 40 秒里（`stack1=2/4` 观测于 03:52:05，而租约
+ * `startedAt` 是 03:52:45）栈既没就绪、也没有租约 ⇒ 10 分钟层的「端口不全」必然误报成 P1。
+ * 租约语义本来就是「有人认领了这个栈」，认领的时刻应当是 spawn 之前，而不是 `waitReady` 之后。
+ */
+function claimStarting({ d = derived, p = ports, record = null } = {}) {
+  const lease = acquireLease({
+    projectRoot,
+    stackId: d.stackId,
+    ports: leasePorts(p),
+    pids: observedPids(record, { own: [] }, p),
+    instanceId,
+    cpVersion: null,
+    now: Date.now(),
+    phase: 'starting',
+  });
+  return { lease, path: leasePath(projectRoot, d.stackId) };
 }
 
 /**
@@ -458,6 +481,8 @@ function leaseSummary(state) {
     heartbeatAt: state.lease?.heartbeatAt ?? null,
     ageMs: state.verdict.leaseAgeMs,
     fresh: state.verdict.leaseFresh,
+    // 冷暖：`live` = 最近 TTL 内做过交叉核对；`cold` = 超 TTL 没人核对（信息项，与 verdict 无关）。
+    state: state.verdict.leaseState,
     cpVersion: state.lease?.cpVersion ?? null,
     pids: state.lease?.pids ?? null,
     releaseFailed: state.lease?.releaseFailed ?? null,
@@ -482,6 +507,14 @@ function refreshHeartbeat(state, d = derived) {
   return renewLease({ projectRoot, stackId: d.stackId }).renewed;
 }
 
+/** 租约已冷时的 P3 提示文案（信息项：不改 verdict、不改退出码）。 */
+function coldLeaseHint({ leaseState, ageMs }) {
+  if (leaseState !== 'cold' || !Number.isFinite(ageMs)) return null;
+  const ageMin = Math.round(ageMs / 60000);
+  const ttlMin = Math.round(DEFAULT_STALE_AFTER_MS / 60000);
+  return `P3 lease-cold  ${ageMin}min > ${ttlMin}min：这段时间没人跑过一次交叉核对（不是故障，不影响 verdict/退出码；跑一次 status 全绿即自动续租）`;
+}
+
 /** 把租约核对结果打成人类可读的几行（非 --json 输出）。 */
 function printLease(state, { indent = '  ' } = {}) {
   const { verdict, reasons } = state.verdict;
@@ -490,10 +523,13 @@ function printLease(state, { indent = '  ' } = {}) {
     `${indent}lease    ${state.path} exists=${state.lease !== null || state.corrupt}` +
       ` corrupt=${state.corrupt} instance=${state.lease?.instanceId ?? '-'}` +
       ` heartbeat=${state.lease?.heartbeatAt ?? '-'} age=${state.verdict.leaseAgeMs ?? '-'}ms` +
-      ` cpVersion=${state.lease?.cpVersion ?? '-'} startedAt=${state.lease?.startedAt ?? '-'}`,
+      ` cpVersion=${state.lease?.cpVersion ?? '-'} startedAt=${state.lease?.startedAt ?? '-'}` +
+      ` state=${state.verdict.leaseState ?? '-'}`,
   );
+  const cold = coldLeaseHint({ leaseState: state.verdict.leaseState, ageMs: state.verdict.leaseAgeMs });
+  if (cold) console.log(`${indent}  ${cold}`);
   for (const check of state.checks.checks) {
-    if (check.code === 'ok' || check.code === 'skipped') continue;
+    if (check.code === 'ok' || check.code === 'skipped' || check.code === 'lease-cold') continue;
     console.log(`${indent}  ${check.code.padEnd(22)} ${check.field} expected=${JSON.stringify(check.expected)} actual=${JSON.stringify(check.actual)}`);
   }
   if (state.checks.checks.length > 0 && state.checks.mismatches.length === 0 && state.checks.unverifiable.length === 0) {
@@ -633,6 +669,12 @@ async function start() {
     services: {},
   };
 
+  // task-75：**spawn 之前**先认领（phase=starting），`waitReady` 通过后再翻成 started。
+  // 这一段窗口（实测可达 40 s）里端口从 0 逐步涨到 4，期间没有任何租约 ⇒ 10 分钟层只能
+  // 按「无主半起」报 P1。租约语义是「有人认领了这个栈」，认领时刻本就在进程之前。
+  const claimed = claimStarting({ record });
+  console.log(`[dev-stack] lease: phase=starting claimed before spawn (${claimed.path})`);
+
   for (const service of SERVICES) {
     const prior = previous.services?.[service];
     if (prior?.pid && processAlive(prior.pid) && looksLikeOurWrapper(prior.pid)) {
@@ -667,7 +709,9 @@ async function start() {
   const { ready, state } = await waitReady(args.timeout, SERVICES);
   // PLAN-0694 P0: 起栈后写租约——记录「谁、在哪、哪些 pid、CP 什么版本」的**声明**。
   // 写完不做自证；能不能算健康由 `status` 拿独立事实逐字段核对（核对不上就是 stale）。
-  const written = writeLease({ record });
+  // task-75：这一步同时把 phase 从 starting 翻成 started —— **翻转点就在 waitReady 之后**，
+  // 此后 `services<4` 不再被当成「过渡中」，回归真故障口径。
+  const written = writeLease({ record, phase: 'started' });
   console.log(`[dev-stack] lease: ${written.path}`);
   const rows = SERVICES.map((service) => ({
     service,
@@ -876,8 +920,10 @@ async function statusAll() {
     console.log(`    cpBuild  ${formatCpBuild(stack.cpBuild)}`);
     console.log(`    PostgreSQL port ${stack.pg.port} listen=${stack.pg.listening}`);
     console.log(`    verdict  ${stack.verdict ?? '-'} (${stack.reasons.join(' ')})` +
-      ` leaseExists=${stack.lease.exists} mismatch=${stack.lease.mismatch.length}` +
+      ` leaseExists=${stack.lease.exists} state=${stack.lease.state ?? '-'} mismatch=${stack.lease.mismatch.length}` +
       ` unverifiable=${stack.lease.unverifiable.length}`);
+    const cold = coldLeaseHint({ leaseState: stack.lease.state, ageMs: stack.lease.ageMs });
+    if (cold) console.log(`      ${cold}`);
     for (const entry of stack.lease.mismatch) {
       console.log(`      ${entry.code} ${entry.field} expected=${JSON.stringify(entry.expected)} actual=${JSON.stringify(entry.actual)}`);
     }
@@ -888,6 +934,13 @@ async function statusAll() {
 /* ----------------------------------------------------------------- stop */
 
 async function stop() {
+  // task-75：**kill 之前**先声明「本实例正在停这个栈」（phase=stopping）。
+  // 停栈时端口是 4→0 递减的，10 分钟层若恰好在中间采样，看到的就是「有租约、端口 2/4」——
+  // 这正是「服务启动后死了」的形状。相位让「这叫停栈、不叫故障」有据可依；
+  // 停栈失败留下的 stopping 租约随心跳过期自动失效（见 isTransitionLease），不会变成长期免报牌。
+  if (setLeasePhase({ projectRoot, stackId: derived.stackId, phase: 'stopping' }).updated) {
+    console.log('[dev-stack] lease: phase=stopping (declared before kill)');
+  }
   const record = readJson(pidFile);
   if (!record) {
     console.log(`[dev-stack] no pid file at ${pidFile}; nothing recorded for this stack`);
