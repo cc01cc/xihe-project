@@ -250,7 +250,7 @@ node scripts/stack-run.mjs env-json --stack 2      # print that stack's derived 
 - **Port source of truth (PLAN-0612)**: default ports live in this repository (`scripts/lib/stack-ports.mjs`, `STACK_PORTS` + `deriveStack()`); the ONE workspace `config/ports.mjs` is only a mirror for orchestration. Changing one side requires changing the other **in the same batch**, verified by `mise run check:ports` (`mise.toml:401`: per stack × per port, derived fields, and `.env.dev` self-consistency); when ONE is absent that gate **skips explicitly** (not a failure), so a standalone clone stays usable.
 - **Single-clone self-check**: `mise run check:standalone` (`mise.toml:395`) exports a parent-less copy and verifies startup/self-check do not depend on the one root.
 - **OpenAPI contract gate (BL-162)**: `mise run check:openapi` validates `docs/api/openapi.yaml` (3.1 header, unique paths, path-parameter declarations, Problem Details, plus the frozen checkpoint-revert and session-read contract slices). It is a **dependency of `test:cp`**, so running the CP test suite checks the contract; PLAN closeout / wave acceptance must run it explicitly. A failure prints the parsed path count, the first failure and a fix hint (`docs/api/openapi.yaml` stays the single source of truth). It deliberately does **not** diff Spring routes against the contract — "route implemented but undocumented" is a known blind spot tracked as a separate BL.
-- **Commit-message gate (2026-11-06)**: `mise run check:commit-msg` **now blocks** and is a dependency of `mise run validate` (window: 32 commits since `a632de77`, 0% violations, D-216). Rules: first line `<type>(<scope>): <summary>`; **summary display width ≤72 columns (CJK counts as 2, ≈36 Han chars), merge ≤100**; non-merge commits must reference `PLAN-####`/`BL-###`/`D-###`. Shell script `scripts/check-commit-msg.mjs` (`--file` for hooks, `--range` for review, `--stats` for the window, `--enforce` to block); enable a local hook with `git config core.hooksPath scripts/hooks`. The flip to blocking is decided by **commit count** (30 commits since `a632de77`, 12 h cap; violation rate ≤10% with zero over-wide merges) — decision D-213.
+- **Commit-message gate (2026-11-06)**: `mise run check:commit-msg` **now blocks** and is a dependency of `mise run validate` (D-216 measured at the flip, 2026-11-06 02:02: 32 commits since `a632de77`, 0 violations). Rules: first line `<type>(<scope>): <summary>`; **summary display width ≤72 columns (CJK counts as 2, ≈36 Han chars), merge ≤100**; non-merge commits must reference `PLAN-####`/`BL-###`/`D-###`. Shell script `scripts/check-commit-msg.mjs` (`--file` for hooks, `--range` for review, `--stats` for the window, `--report-only` for the old never-fails audit; blocking is the default) — the `mise` task runs `--enforce` and gates `validate`; enable a local hook with `git config core.hooksPath scripts/hooks`. The flip to blocking is decided by **commit count** (D-213: **≥30 commits** since `a632de77`, 12 h cap, whichever first; violation rate ≤10% with zero over-wide merges). Two different numbers by nature: 30 is the criterion threshold, 32 is the sample measured at the flip.
 
 #### Detached full-stack supervisor (PLAN-0603)
 
@@ -483,10 +483,10 @@ Rules:
 ### 4.3. Running Tests
 
 ```bash
-# All module unit tests
+# All quality gates (check:openapi + check:commit-msg + lint + typecheck + build + test + e2e fixture self-tests + lint:links; no Docker step)
 mise run validate
 
-# All tests (including integration + E2E)
+# validate + test:runtime + test:integration (no E2E; the compose E2E lane is frozen)
 mise run validate:full
 
 # Individual module runs

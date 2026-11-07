@@ -17,10 +17,10 @@ sidebar_group: "开发指南"
 ```
 ┌─────────────────────────────────────────────────────┐
 │                    E2E (DEV-011)                     │
-│    浏览器 + 全栈 Docker，验证完整用户流程            │
+│    浏览器 + host 全栈，验证完整用户流程              │
 ├─────────────────────────────────────────────────────┤
 │  T3: Cross-module Real  ← 新增                      │
-│     Docker partial stack，验证端到端模块通信         │
+│     Docker partial stack（冻结），验证端到端模块通信 │
 ├─────────────────────────────────────────────────────┤
 │  T2: Cross-module Stub  ← 新增                      │
 │     WireMock/httpx mock，验证 HTTP 契约格式          │
@@ -38,11 +38,13 @@ sidebar_group: "开发指南"
 | 维度 | T1 模块内集成 | T2 跨模块 Stub | T3 跨模块 Real | E2E |
 |------|-------------|----------------|----------------|-----|
 | **验证目标** | 模块 + DB/内部依赖正确性 | HTTP 请求/响应格式正确 | 模块间真实通信正常 | 用户端到端流程 |
-| **外部依赖** | DB (PG/H2) | 无 (WireMock/mock) | Docker (partial) | Docker + 浏览器 |
+| **外部依赖** | DB (PG/H2) | 无 (WireMock/mock) | Docker partial（已冻结，见 §2.3） | host 服务（Windows native）+ 隔离 PG + 浏览器 |
 | **运行速度** | ~10-30s | ~5-15s | ~60-120s | ~2-5min |
 | **失败定位** | 模块内问题 | 请求格式问题 | 模块间兼容问题 | 任意层问题 |
-| **CI 运行** | ✅ 每次 | ✅ 每次 | ⏰ PR + nightly | ⏰ nightly |
+| **CI 运行（目标态）** | 每次 | 每次 | PR + nightly | nightly |
 | **框架** | JUnit/MockMvc, pytest, cargo | WireMock, httpx mock, mockito | pytest + httpx, cargo | Playwright |
+
+> 两处口径按 2026-11-07 核对校准：①**「CI 运行」一列是目标态**，本仓当前**未接 CI**（`.github/workflows/` 下只有 `_disabled/` 旧工作流，见 §6）；②T3 行的 Docker partial 是**历史车道**（服务容器化冻结 2026-10-07），现行验收走 host 车道（§2.3）。
 
 ## 2. 三层详解
 
@@ -114,7 +116,7 @@ class TestConfigClientWithStub:
             "entries": {"profile": '{"providerId":"openai","connectionKey":"default","model":"gpt-4o"}'}
             if request.url.path.endswith("llm-provider") else {}
         }))
-        client = ConfigClient(cp_url="http://localhost:8080", api_token="test")
+        client = ConfigClient(cp_url="http://localhost:12631", api_token="test")
         await client.sync()
         assert client.get_domain("llm-provider")["profile"] == (
             '{"providerId":"openai","connectionKey":"default","model":"gpt-4o"}'
@@ -150,7 +152,11 @@ async fn test_mcp_poll_config_parses_stdio_servers() {
 
 ### 2.3 T3: 跨模块 Real 集成
 
-> 用 Docker Compose 启动部分模块栈（如 CP+Agent 或 CP+Runtime），通过真实 HTTP 端口验证端到端通信。
+> 🧊 **lane 冻结（2026-10-07 用户裁定；2026-10-09 强化）**：T3 的 Docker Compose partial stack 车道随**服务容器化冻结**停用（只有 PostgreSQL 保留容器，CP/Agent/Runtime/UI 一律 host 进程；`mise run test:e2e:compose` / `test:e2e` 已在 `mise.toml` 注释）。本节的流程图与命令块保留作**历史参考**；现行验收走 **host 车道**：Windows native 服务 + 每轮隔离 PostgreSQL（T2 用 `mise run test:integration:t2`，真栈 T3 用 host 进程跑，见下方「host 车道」）。
+>
+> 历史口径：用 Docker Compose 启动部分模块栈（如 CP+Agent 或 CP+Runtime），通过真实 HTTP 端口验证端到端通信。
+>
+> ⚠️ **本节描述与任务现状的差异待 Q-1107-38 裁定**：`mise run test:integration` 目前**仍声明 `t3` 依赖**，任务本体会尝试 `docker compose up`；注释/移除该任务属 B 类变更，本文只改描述，不替裁定做取舍。
 
 ```mermaid
 %%{init: {'theme': 'neutral'}}%%
@@ -160,21 +166,36 @@ flowchart LR
 
 **Agent 默认收集面（BL-361，2026-11-06）**：`packages/agent/pyproject.toml` 已设 `addopts = '-m "not integration"'` ⇒ 默认 `uv run pytest` 会把 `tests/integration/**` **自动 deselected**（`test_vector_store.py` 等 host-only 用例不再在普通门里硬失败，输出里能看到 `deselected` 计数）。
 host 车道：先注入 isolated runner 提供的 `XIHE_E2E_PG_DATABASE/USER/PORT`，再显式 `uv run pytest -m integration`；`integration` 标记缺失由元测试 `tests/unit/test_integration_markers.py` 拦截。
-**实测计数（2026-11-06 审计）**：默认收集 **1441/1471，30 条 integration 被 deselected**；`-m integration` 收集 30 条，但 `tests/integration/test_agent_cp_integration.py` / `test_cp_real_integration.py` 各有 `skipif(not cp_available)` ⇒ **CP 未起时这 2 条会在 integration lane 内静默 skip**（不是失败）。恢复：先起 CP（8080）再 `uv run pytest -m integration`。
+**实测计数（2026-11-07 重测）**：默认收集 **1488/1518，30 条 integration 被 deselected**；命令行再加 `-m "not docker"` 会**覆盖** `addopts` 的 `-m`（pytest 后置同名单值选项生效，不是取交集），收集 **1510/1518、只 deselect 8 条**（`@pytest.mark.docker` 全在 `test_cp_real_integration.py`）⇒ `not integration` 默认失效，30 条 integration 里实际会跑 22 条。`tests/integration/test_agent_cp_integration.py` / `test_cp_real_integration.py` 另有 `skipif(not cp_available)` ⇒ **CP 未起时这些用例会在 integration lane 内静默 skip**（不是失败）。恢复：先起 host CP（端口取 `XIHE_CP_PORT`，**stack-1 缺省 12631**，不是 8080；见 `scripts/lib/stack-ports.mjs`）再 `uv run pytest -m integration`。
 
 **启动方式**：
 
 ```bash
+# ⚠️ 历史参考（compose 车道已于 2026-10-07 冻结）：以下命令不再用于验收
 # CP + Agent
 docker compose up -d control-plane agent
 # 等待健康检查后，运行 Agent 侧 T3 测试
 cd packages/agent && uv run pytest tests/integration/test_cp_real_integration.py -v
-# 或 CP 侧跨模块 T2
+# 或 CP 侧跨模块 T2（T2 本身不需要 Docker）
 cd packages/control-plane && mvn test -Dtest="crossmodule/*IntegrationTest"
 
 # CP + Runtime
 docker compose up -d control-plane runtime
 cd packages/runtime && cargo test --test cp_real_integration_test
+```
+
+**host 车道（现行，替代上面的 compose 块）**：
+
+```bash
+# T2：跨模块 stub，无 Docker、无真栈
+mise run test:integration:t2
+
+# 真栈 T3：先起 host 栈（仅 PostgreSQL 在容器里，四个服务是 host 进程）
+mise run dev:host
+# Agent 侧真 CP 用例（读 XIHE_CP_PORT，缺省 12631）
+cd packages/agent && uv run pytest -m integration
+# Runtime 侧真 CP 用例（该文件全部 #[ignore]，必须显式 --ignored）
+cd packages/runtime && cargo test --test cp_real_integration_test -- --ignored
 ```
 
 **T3 测试关注点**：
@@ -277,7 +298,7 @@ tests/
 **E2E 测试归属 UI 包的历史原因**：
 
 - Playwright config 的 `webServer` 段配置了 Vite dev server 启动命令（`pnpm dev`），天然属于 UI 包。
-- 约 40 个 spec（mock 19 + real 21）中仅 4 个 cross-module spec（`cross-module-*.spec.ts`）涉及跨模块通信，其余均为 UI 组件测试。
+- 约 213 个 spec 文件（mock 78 + real 132 + headed 3；2026-11-07 按 `packages/ui/e2e` 目录实测计数）中仅 4 个 cross-module spec（`cross-module-*.spec.ts`）涉及跨模块通信，其余均为 UI 组件测试。
 - 为 4 个 spec 将整个 E2E 套件移出 UI 包，破坏其余同目录 spec 的相邻性，收益小于成本。
 
 **索引优于移动**。跨模块测试不通过目录位置标记，而是通过接口契约清单（§4）统一索引。接口契约清单列出了每个跨模块接口、对应的 T2/T3 测试文件、所在模块。无论文件物理上在哪，一表可查。
@@ -349,7 +370,8 @@ verify(postRequestedFor(urlEqualTo("/internal/v1/agent/chat"))
 ## 5. 运行命令
 
 ```bash
-# 全量集成测试（T3 已冻结，PLAN-0618；解冻后恢复，见 DEV-018「docker 后端冻结范围」）
+# 全量集成测试（T3 = 历史 compose 车道：服务容器化冻结 2026-10-07；现行验收走 host 车道，见 §2.3）
+# 注：任务仍声明 t3 依赖、本体会尝试拉起 compose；t3 任务的注释/去留挂 Q-1107-38 待裁，只要 T2 用 test:integration:t2
 mise run test:integration
 
 # 各模块独立运行
@@ -359,10 +381,15 @@ mvn test -pl packages/control-plane
 # CP 仅跨模块 T2
 mvn test -Dtest="crossmodule/*IntegrationTest"
 
-# Agent 集成测试（T2+T1，T3 需 Docker）
+# ⚠️ `-m` 口径（2026-11-07 实测，可复跑）：命令行 `-m` 会**覆盖** pyproject 的 `-m`，不是叠加——
+#   ① pyproject `addopts = '-m "not integration"'`：裸 `uv run pytest --collect-only -q` ⇒ 1488/1518 收集、30 条 deselected；
+#   ② 再加 `-m "not docker"`：`uv run pytest --collect-only -q -m "not docker"` ⇒ 1510/1518 收集、只 deselected 8 条
+#      （`@pytest.mark.docker` 全在 test_cp_real_integration.py 那个类里）⇒ addopts 的 `not integration` 已失效；
+#   ③ 因此下面这条**不是**「T2+T1」：它实际把 integration 车道 30 条中除 docker 子集外的 22 条收集进来真跑。
+#      要跑默认门就用裸 `uv run pytest`；要只跑集成车道用显式 `-m integration`。
 uv run pytest packages/agent/tests/integration/ -v -m "not docker"
 
-# Agent T3（需 Docker）
+# Agent T3（历史参考：compose 车道已冻结；真栈改用 `mise run dev:host` + `uv run pytest -m integration`，见 §2.3）
 docker compose up -d control-plane agent
 uv run pytest packages/agent/tests/integration/test_cp_real_integration.py -v
 docker compose down
@@ -370,24 +397,27 @@ docker compose down
 # Runtime T2（无 Docker）
 cargo test --test cp_stub_integration_test
 
-# Runtime T3（需 Docker）
+# Runtime T3（历史参考：compose 车道已冻结；真栈改用 `mise run dev:host` + 下面这条带 --ignored 的命令）
 docker compose up -d control-plane runtime
 cargo test --test cp_real_integration_test
 docker compose down
 
-# 更新覆盖率基线
-mise run test:integration
+# 覆盖率基线：本仓**没有**覆盖率基线工具（无覆盖率门禁脚本、无基线文件）⇒ 原先这里写的
+# 「更新覆盖率基线 / mise run test:integration」不成立；`test:integration` 是集成测试任务，不产出基线。
+# 覆盖率门禁的旧工作流已随 CI 一起停用（.github/workflows/_disabled/coverage.yml），见 §6。
 ```
 
 ## 6. CI 策略
 
-| 触发条件 | T1 | T2 | T3 |
-|----------|----|----|-----|
-| PR (每次 push) | ✅ | ✅ | ❌ |
-| Nightly (每日) | ✅ | ✅ | ✅ |
-| 手动触发 | ✅ | ✅ | ✅ |
+**现状（2026-11-07 核对）：本仓库未接 CI** —— `.github/workflows/` 下只有 `_disabled/ci.yml`（四模块 unit 作业）与 `_disabled/coverage.yml`（CP 覆盖率），均未在运行；不存在 T2/T3/nightly 作业。**下表是目标态**，不是当前事实；接 CI 前 T1/T2 只能本地跑。
 
-T3 不在 PR 中运行的原因：Docker partial stack 启动 + 测试 ≈ 2min，对于高频 PR 反馈周期太长。PR 中 T2 = 快速契约检查，nightly T3 = 全量兼容验证。
+| 触发条件 | T1 | T2 | T3（历史车道） |
+|----------|----|----|-----|
+| PR (每次 push) | 目标：✅ | 目标：✅ | 目标：❌ |
+| Nightly (每日) | 目标：✅ | 目标：✅ | 目标：✅ |
+| 手动触发 | 目标：✅ | 目标：✅ | 目标：✅ |
+
+T3 不进 PR 的原因：Docker partial stack 启动 + 测试 ≈ 2min，对高频 PR 反馈周期太长（该车道自 2026-10-07 服务容器化冻结后已停用，现行真栈验证走 host 车道 §2.3）。PR 中 T2 = 快速契约检查，nightly T3 = 全量兼容验证 —— 两者都是**接入 CI 后**的目标分工。
 
 ## 7. 参考
 
