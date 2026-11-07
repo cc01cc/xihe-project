@@ -565,11 +565,11 @@ class ContextTemplateIntegrationTest extends AbstractWireMockTest {
     private void createAgentSession(String sessionId, String title) {
         Session session = new Session(workspaceId, userId, title);
         session.setId(UUID.fromString(sessionId));
-        session.setAgentPrincipalId(principalId);
         session.setAgentPermissionsSnapshot(principalPermissions.deepCopy());
         ChatBindingTestSupport.bindNewChatConnection(
                 session, providerConnectionRepository, apiRequestTemplates, userId);
         sessionRepository.saveAndFlush(session);
+        bindPrimaryParticipant(sessionId, principalId);
     }
 
     /** A published, Type-valid revision of the shared TEMPLATE_ID. */

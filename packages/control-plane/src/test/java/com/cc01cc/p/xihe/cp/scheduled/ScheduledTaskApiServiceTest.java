@@ -557,7 +557,6 @@ class ScheduledTaskApiServiceTest {
 
     private static Session sessionBoundTo(String principalId) {
         Session session = new Session();
-        session.setAgentPrincipalId(principalId);
         return session;
     }
 
