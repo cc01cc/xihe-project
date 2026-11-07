@@ -308,9 +308,11 @@ public class WakeDispatchService {
             JsonNode speak = verdict.get("speak");
             if (speak == null || !speak.isBoolean()) {
                 // Unreachable for rows written after PLAN-0690 T1.2b (strict verdict), but never
-                // default a malformed answer to "do not speak" without a trace.
-                logger.warn("[LIFECYCLE] service=cp event=wake_judge_verdict_invalid "
-                        + "participantId={} round={}", participant.getId(), wakeRoundId);
+                // default a malformed answer to "do not speak" without a trace. The cause rides on
+                // the existing wake_judge_failed event as failureType=verdict_invalid (design §7:
+                // 零新事件名 — a second event here would split the failure family for log consumers).
+                logger.warn("[LIFECYCLE] service=cp event=wake_judge_failed participantId={} round={} "
+                        + "failureType={}", participant.getId(), wakeRoundId, "verdict_invalid");
                 return false;
             }
             return speak.booleanValue();

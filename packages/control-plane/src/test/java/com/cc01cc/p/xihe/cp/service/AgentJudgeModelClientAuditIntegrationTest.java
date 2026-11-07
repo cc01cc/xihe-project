@@ -46,7 +46,7 @@ import static org.mockito.Mockito.when;
  * （{@link ProviderCredentialLeaseService} mock + 本机 {@link HttpServer} 桩传输）。</p>
  *
  * <p>同时锁定 spec §5 与 Lead 裁定：客户端失败的 {@code error} 文本尾部带
- * {@code requestId=...}，把 {@code judge_decisions} 行与 {@code judge_client_failed} 日志接起来
+ * {@code requestId=...}，把 {@code judge_decisions} 行与 {@code run_judge_client_failed} 日志接起来
  * （schema 无 request_id 列，故走 error 文本）。四种失败都断言 {@code chat_runs} 零增量——
  * 判定失败不产生 run（T1.2 口径：JUDGE 判定不写 durable run 源）。</p>
  *

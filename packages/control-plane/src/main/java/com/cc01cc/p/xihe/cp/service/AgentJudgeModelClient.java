@@ -40,7 +40,7 @@ import java.util.UUID;
  * <p>The thrown message carries {@code requestId=…} at its tail (reason first, bounded to spec §5's
  * 200 chars) because {@code JudgeDecisionService} persists the message verbatim into
  * {@code judge_decisions.error}: that is the only column that can join a failed row to the
- * {@code judge_client_failed} log line, and no schema change is needed for it.</p>
+ * {@code run_judge_client_failed} log line, and no schema change is needed for it.</p>
  */
 @Component
 public class AgentJudgeModelClient implements JudgeModelClient {
@@ -140,7 +140,7 @@ public class AgentJudgeModelClient implements JudgeModelClient {
                     LEASE_TTL).token();
         } catch (RuntimeException rejected) {
             // The lease gate can refuse (stale revision, limit, visibility); never leak its body.
-            logger.warn("[LIFECYCLE] service=cp event=judge_client_failed requestId={} stage=lease "
+            logger.warn("[LIFECYCLE] service=cp event=run_judge_client_failed requestId={} stage=lease "
                     + "failureType={}", requestId, rejected.getClass().getSimpleName());
             throw new JudgeException(JudgeException.Kind.FAILED,
                     "judge credential lease rejected" + requestIdSuffix(requestId));
@@ -214,7 +214,7 @@ public class AgentJudgeModelClient implements JudgeModelClient {
     private JudgeException failure(JudgeException.Kind kind, String reason, String requestId) {
         // spec §5 bounds the persisted error to 200 chars; the requestId tail must survive the bound.
         String bounded = truncate(reason, REASON_MAX_CHARS - REQUEST_ID_SUFFIX_RESERVE);
-        logger.warn("[LIFECYCLE] service=cp event=judge_client_failed requestId={} kind={} reason={}",
+        logger.warn("[LIFECYCLE] service=cp event=run_judge_client_failed requestId={} kind={} reason={}",
                 requestId, kind, bounded);
         return new JudgeException(kind, bounded + requestIdSuffix(requestId));
     }
