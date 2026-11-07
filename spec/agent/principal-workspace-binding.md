@@ -11,7 +11,7 @@
 
 ## 范围
 
-Agent 独立主体（`agent_principals`）、Workspace 绑定 cap（`workspace_agents`）、Session 身份绑定（`session_participants` PRIMARY；PLAN-0689 已删 `sessions.agent_principal_id`/`agent_permissions_snapshot` 两列），以及创建/绑定/撤销 API 与 UI 的授权、审计和失败语义。
+Agent 独立主体（`agent_principals`）、Workspace 绑定 cap（`workspace_agents`）、Session 身份绑定（`session_participants` PRIMARY；PLAN-0689 A7/V133 已删 `sessions.agent_principal_id`，`agent_permissions_snapshot` 保留为 PRIMARY 绑定时刻冻结的 cap，见 D-54），以及创建/绑定/撤销 API 与 UI 的授权、审计和失败语义。
 
 ## 非目标
 
@@ -25,7 +25,7 @@ Agent 独立主体（`agent_principals`）、Workspace 绑定 cap（`workspace_a
 |---|---|---|
 | `agent_principals` | `id UUID PK, name, template_id?, template_snapshot JSONB?, created_by_user_id FK users, disabled_at` | 稳定授权主体；可多 Session/Workspace。新建必须冻结所选或 default snapshot；V42 legacy 无可信模板来源时 template 字段可 NULL |
 | `agent-templates`（config 域） | `templates[].roleId` 引用同层 `roles[]` | 一个模板可建多个 principal；修改不回溯既有 snapshot；不存 provider secret |
-| `sessions` | `agent_principal_id UUID NULL, agent_permissions_snapshot JSONB NULL` | Agent ChatRun 的 Session 必须有 principal 与 instance cap；`user_id` 仅 owner/visibility，不授权 Agent；每 Session 一个 Workspace |
+| `sessions` | `agent_permissions_snapshot JSONB NULL` | 会话身份由 `session_participants` PRIMARY 承载；`agent_principal_id` 已由 V133 删除。snapshot 是 PRIMARY 绑定时刻冻结的 instance cap（D-54）；Agent ChatRun 的 Session 必须有 PRIMARY 与 cap；`user_id` 仅 owner/visibility，不授权 Agent；每 Session 一个 Workspace |
 | `workspace_agents` | PK `(principal_id, workspace_id)`，`permissions_snapshot JSONB NOT NULL`，双 FK RESTRICT | 该 Workspace 的 binding cap；principal grants 子集 |
 
 principal grants、Workspace binding cap、Session instance cap 是三个独立约束面；不引入 `users.type` Agent 身份或 polymorphic membership。

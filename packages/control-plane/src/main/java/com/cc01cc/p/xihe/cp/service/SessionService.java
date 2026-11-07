@@ -157,7 +157,8 @@ public class SessionService {
                 agentPrincipalId, workspaceId);
         Session session = new Session(workspaceId, userId, normalizeTitle(title));
         session.setId(UUID.randomUUID());
-        session.setAgentPrincipalId(agentPrincipalId);
+        // PLAN-0689 A7/D-54: retained snapshot = the PRIMARY's cap at binding time; resolveCapFor
+        // above carries the D-49 active-binding gate (fail-closed).
         session.setAgentPermissionsSnapshot(cap);
         // 2026-11-04 P0（task-24）：显式传值优先；只有三件套全空时才按权威顺序补默认
         // （agent 主体默认 → 生效 llm-provider profile）。补不到 ⇒ 400 PROVIDER_REQUIRED，
@@ -242,7 +243,8 @@ public class SessionService {
                 agentPrincipalId, workspaceId);
         Session child = new Session(workspaceId, userId, normalizeTitle("Fork of " + source.getTitle()));
         child.setId(childSessionId);
-        child.setAgentPrincipalId(agentPrincipalId);
+        // PLAN-0689 A7/D-54: same retained snapshot semantics as create; resolveCapFor above carries
+        // the D-49 active-binding gate (fail-closed).
         child.setAgentPermissionsSnapshot(currentCap);
         child.setModelProvider(source.getModelProvider());
         child.setModelName(source.getModelName());

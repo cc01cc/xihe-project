@@ -90,7 +90,8 @@ public class WakeDispatchService {
         this.objectMapper = objectMapper;
         this.chatRunRepository = chatRunRepository;
         this.dbLockTimeout = dbLockTimeout;
-        this.chainWalker = new DelegationChainWalker(sessionRepository, chatRunRepository);
+        this.chainWalker = new DelegationChainWalker(sessionRepository, chatRunRepository,
+                participantRepository);
     }
 
     /**

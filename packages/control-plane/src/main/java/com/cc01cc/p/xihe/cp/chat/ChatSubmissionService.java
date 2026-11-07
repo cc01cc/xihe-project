@@ -515,10 +515,12 @@ public class ChatSubmissionService {
         if (parentRun.getAgentPrincipalId() == null) {
             throw parentPrincipalMissing();
         }
-        // PLAN-0689 A6 (R3): the "Session snapshot is NULL ⇒ refuse" gate is deleted with the column
-        // it read. The condition it stood for — the parent has no agent identity — is already enforced
-        // by the Run gate directly above (fail-closed, own diagnostic code), so a second gate would be
-        // unreachable. The child's binding is re-validated in persist() → bindOrValidateAgentSession.
+        // PLAN-0689 A7/D-54 (P0-0c): the snapshot column survives as the authorization input, so a
+        // NULL snapshot still means "the parent Session has no bound agent identity" — restore the
+        // gate A6 deleted with the column it (wrongly) assumed would disappear.
+        if (parentSession.getAgentPermissionsSnapshot() == null) {
+            throw agentSessionForbidden();
+        }
 
         // PLAN-0630 M1: the delegation budget gate. Position is load-bearing (INV-8 + INV-1) and must
         // stay between the idempotency replay above and consumeApprovedGrant below:
@@ -560,9 +562,10 @@ public class ChatSubmissionService {
         childSession.setSpawnedFromSessionId(parentSession.getId());
         childSession.setSpawnedFromRunId(parentRun.getId());
         childSession.setSpawnedAt(Instant.now());
-        childSession.setAgentPrincipalId(childAgentPrincipalId);
-        // PLAN-0689 A6 (tasks T1.6): the Session cap snapshot is no longer written. Its only producer
-        // fed this column, and A7 drops it; a Run's cap is resolved live from its own principal (§9).
+        // PLAN-0689 A7/D-54 (P0-0): the snapshot column survives as the authorization input; write the
+        // PRIMARY's binding-time cap from the same single entry the create/fork paths use.
+        childSession.setAgentPermissionsSnapshot(agentPrincipalService.resolveCapFor(
+                uuidStr(parentRun.getAgentPrincipalId()), parentRun.getWorkspaceId()));
         childSession.setModelProvider(parentSession.getModelProvider());
         childSession.setModelName(parentSession.getModelName());
         childSession.setProviderConnectionId(parentSession.getProviderConnectionId());
@@ -716,7 +719,8 @@ public class ChatSubmissionService {
         childSession.setSpawnedFromSessionId(parentSession.getId());
         childSession.setSpawnedFromRunId(parentRun.getId());
         childSession.setSpawnedAt(Instant.now());
-        childSession.setAgentPrincipalId(agentPrincipalId);
+        // PLAN-0689 A7/D-54 (P0-3): retained snapshot = the child PRIMARY's binding-time cap;
+        // resolveCapFor above already carried the D-49 active-binding gate.
         childSession.setAgentPermissionsSnapshot(childPermissions);
         childSession.setModelProvider(parentSession.getModelProvider());
         childSession.setModelName(parentSession.getModelName());
@@ -1107,10 +1111,11 @@ public class ChatSubmissionService {
         // The sessionUuid local stays (it is still used by the row lock above); no caller can name a
         // run principal any more (A4b/T1.12), so the responder is resolved below, never passed in.
 
-        // PLAN-0689 A6 (tasks T1.6 ①): the "snapshot is NULL ⇒ refuse" gate is deleted with the column
-        // it read. It never was the real gate: resolveAgent() below resolves this Session's agent path
-        // (PRIMARY participant after A2c) and requireActiveWorkspaceBinding() refuses when that principal
-        // has no active binding — fail-closed 403, never "unrestricted".
+        // PLAN-0689 A7/D-54 (P0-0): the snapshot column survives as the authorization input, so a NULL
+        // snapshot means this Session has no bound agent identity — fail closed before resolving it.
+        if (session.getAgentPermissionsSnapshot() == null) {
+            throw agentSessionForbidden();
+        }
         GrantPrincipalPathResolver.AgentPath path;
         try {
             path = principalPathResolver.resolveAgent(userId, workspaceId, sessionId);

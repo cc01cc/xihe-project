@@ -41,6 +41,14 @@ public abstract class AbstractH2Test {
     protected int port;
 
     @org.springframework.beans.factory.annotation.Autowired
+    protected com.cc01cc.p.xihe.cp.service.SessionParticipantService sessionParticipantService;
+
+    protected void bindPrimaryParticipant(String sessionId, String agentPrincipalId) {
+        sessionParticipantService.ensurePrimaryParticipant(
+                java.util.UUID.fromString(sessionId), agentPrincipalId);
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
     void initChatBindingCredentialService(
             com.cc01cc.p.xihe.cp.credentials.CredentialService credentialService) {
         com.cc01cc.p.xihe.cp.chat.ChatBindingTestSupport.setCredentialService(credentialService);

@@ -1350,20 +1350,22 @@ public class ChatController {
     }
 
     /**
-     * PLAN-0623 M1b-②: the lease cap for this run, derived from the ONE Responder resolved in the
-     * request thread (never re-resolved here).
+     * PLAN-0623 M1b-②: the lease cap for this run. A request-thread dispatch passes its already
+     * resolved Responder; a derived dispatch (spawn/follow-up/scheduled/continuation/redelivery)
+     * resolves the PRIMARY participant once in {@link #execAsync} and passes that same Responder
+     * here. Both call sites use the same {@code resolveParticipantCap} arguments — no branch and no
+     * cached cap.
      *
-     * <p>PLAN-0689 A4 (T1.4 / design §2): {@code responder == null} used to fall back to the
-     * Session's stored {@code agent_permissions_snapshot} (the D23-31 dual track). Once A7 drops
-     * that column the fallback can only yield {@code null}, and a null cap is an <em>uncapped</em>
-     * lease — strictly weaker than refusing to issue one. A run with no resolved Responder has no
-     * principal to bound the lease against, so it is refused here, the same fail-closed invariant
-     * A3b applied to unattributed runs. {@code leasePrincipalId} and {@code leaseSession} stay in
-     * the signature for the call site's readability but are deliberately no longer read.
+     * <p>PLAN-0689 A7 (D-54, D-55; Lead 2026-11-07 option A): the cap stays <em>live</em> as frozen
+     * by design.md:118 / the 2026-11-02 ruling. D-54's {@code sessions.agent_permissions_snapshot}
+     * is an authorization-intersection input only and must not be used as a lease cap. Once A7 drops
+     * the identity column, the old Session fallback can only yield {@code null}, and a null cap is an
+     * <em>uncapped</em> lease — strictly weaker than refusing to issue one. A run with no resolved
+     * Responder (or a Responder without a principal) has no identity to bound the lease against, so
+     * it is refused here, the same fail-closed invariant A3b applied to unattributed runs.
      */
-    JsonNode leaseCapFor(SessionParticipantService.Responder responder, String leasePrincipalId,
-                         Session leaseSession, String workspaceId) {
-        if (responder == null) {
+    JsonNode leaseCapFor(SessionParticipantService.Responder responder, String workspaceId) {
+        if (responder == null || responder.principalId() == null) {
             throw new CpApiException(HttpStatus.FORBIDDEN, "AGENT_PRINCIPAL_MISSING",
                     "Chat run has no Agent principal to bound the credential lease");
         }
@@ -1396,12 +1398,23 @@ public class ChatController {
                            ProviderCredentialLeaseService.Admission admission,
                            ContinuationDispatchContext continuationContext,
                            SessionParticipantService.Responder responder) {
+        // PLAN-0689 A7 (D-55): derived dispatch paths (spawn / follow-up / scheduled / continuation)
+        // carry no request-thread Responder. A7 made the lease cap fail closed on a null Responder
+        // instead of falling back to the dropped Session column, so resolve the durable run's PRIMARY
+        // here — once — and thread that same object through attribution, lease identity and cap.
+        final SessionParticipantService.Responder effectiveResponder = responder != null
+                ? responder
+                : sessionParticipantService.responderFor(UUID.fromString(sessionId), null);
+        if (responder == null && effectiveResponder != null) {
+            logger.info("[LIFECYCLE] service=cp event=derived_dispatch_primary_resolved sessionId={} runId={} participantId={}",
+                    sessionId, runId, effectiveResponder.participantId());
+        }
         Thread worker = new Thread(() -> {
             MDC.put("requestId", requestId);
             MDC.put("chatRunId", runId);
             // M1b-③: attribute this run's SSE output to the Responder's participant row.
-            if (responder != null && responder.participantId() != null) {
-                runParticipants.put(runId, responder.participantId().toString());
+            if (effectiveResponder != null && effectiveResponder.participantId() != null) {
+                runParticipants.put(runId, effectiveResponder.participantId().toString());
             }
             AtomicBoolean terminalSent = new AtomicBoolean(false);
             // Set inside relayAgentStream when an approval_request has been
@@ -1462,11 +1475,13 @@ public class ChatController {
                 String effectiveModel = persistedRun.model() == null ? model : persistedRun.model();
                 ProviderCredentialLeaseService.IssuedLease credentialLease = null;
                 if (persistedRun.providerConnectionId() != null) {
-                    // PLAN-0622 M1.4: the run's credential authority is the Session's frozen
-                    // principal cap (checklist C3), not a live re-resolution — a later cap change
-                    // never widens or narrows an already bound Session's credential arm.
-                    Session leaseSession = sessionService.requireCurrent(sessionId, userId, workspaceId);
-                    String leasePrincipalId = leaseSession.getAgentPrincipalId();
+                    // PLAN-0689 A7/D-55: the lease identity is the ONE Responder resolved at dispatch
+                    // entry (request thread or durable-run handoff) — the same principal that bounds
+                    // the cap. A missing Responder is refused by leaseCapFor below; never fall back
+                    // to the dropped Session column.
+                    String leasePrincipalId = effectiveResponder == null
+                            || effectiveResponder.principalId() == null
+                            ? null : effectiveResponder.principalId().toString();
                     credentialLease = credentialLeases.issue(
                             userId,
                             workspaceId,
@@ -1478,10 +1493,9 @@ public class ChatController {
                             persistedRun.connectionRevision(),
                             null,
                             leasePrincipalId,
-                            // PLAN-0623 M1b-②: single-source cap — the same Responder resolved in
-                            // the request thread drives the lease; null keeps the frozen 0622 C3
-                            // snapshot path byte-equivalent (D23-31 dual track).
-                            leaseCapFor(responder, leasePrincipalId, leaseSession, workspaceId),
+                            // PLAN-0623 M1b-② / PLAN-0689 A7/D-55: single-source cap — the same
+                            // Responder that names the lease identity also bounds it.
+                            leaseCapFor(effectiveResponder, workspaceId),
                             continuationContext == null ? admission : null);
                 }
                 Map<String, Object> agentRequest = new java.util.LinkedHashMap<>();
