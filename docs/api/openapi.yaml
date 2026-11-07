@@ -2923,7 +2923,7 @@ paths:
         - { in: header, name: Range, required: false, schema: { type: string }, description: 'Single byte range, e.g. `bytes=0-8388607`; multi-range (`bytes=0-9,20-29`) and non-bytes units are rejected with 400.' }
       responses:
         '200':
-          description: Full file content (no Range header); `Accept-Ranges: bytes` is still advertised
+          description: 'Full file content (no Range header); `Accept-Ranges: bytes` is still advertised'
           headers:
             Accept-Ranges: { description: 'Always `bytes`', schema: { type: string } }
         '206':
