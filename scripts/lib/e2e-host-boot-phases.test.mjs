@@ -37,11 +37,15 @@ const hostScript = join(projectRoot, 'scripts', 'e2e-host.mjs')
  * **不认识的 flag 是透传给 Playwright 的** —— 于是"接缝没装好"时跑这套测试会**真起一整套隔离栈**
  * （当晚实测：pg→CP→agent→runtime→ui 全起，占了 host 端口带约 3 分钟，还把共享 jar 目录重建了一次）。
  * 所以先花一次 `--help`（纯打印、零副作用、立即退出）确认 `--plan-only` 真的存在；
- * 不存在就 **skip 掉三条行为级用例、绝不 spawn** —— 宁可红在"接缝没了"，也不能红在"又起了一套栈"。
- * （`runPlanOnly()` 内部再抛一次，属于纵深防御：任何漏掉 skip 的调用点都不会真跑。）
+ * 不存在就**红，且绝不 spawn** —— 宁可红在"接缝没了"，也不能红在"又起了一套栈"。
+ *
+ * 为什么是红而不是 skip：`--plan-only` 已随 `32fa1143` 提交，它的缺失形态从此是**回归**，
+ * 不再是"还没装"；而「跳过本身不是缺陷，静默跳过才是」——skip 会把回归染成绿色。
+ * （`runPlanOnly()` 内部再抛一次，属于纵深防御：任何漏掉前置检查的调用点都不会真跑。）
  */
-const SEAM_MISSING = 'e2e-host.mjs 没有 --plan-only（接缝未装/被回退）：本用例拒绝 spawn —— '
-  + '未知 flag 会被透传给 Playwright，那样这条用例会真起一套隔离栈。请先把 --plan-only 装回 scripts/e2e-host.mjs 再跑。'
+const SEAM_MISSING = 'e2e-host.mjs 的 --help 里没有 --plan-only = 回归（该方法自 32fa1143 起就在）：'
+  + '拒绝 spawn —— 未知 flag 会被透传给 Playwright，那样这条用例会真起一套隔离栈。'
+  + '请先把它装回 scripts/e2e-host.mjs 再跑。'
 
 let planOnlyProbe = null
 function probePlanOnly() {
@@ -60,11 +64,6 @@ function assertPlanOnlyAvailable() {
   const probe = probePlanOnly()
   if (!probe.supported) throw new Error(SEAM_MISSING)
   return probe.help
-}
-
-/** node:test 的 skip 值：接缝在 ⇒ false（照跑）；不在 ⇒ 一句说明（跳过且不 spawn）。 */
-function skipUnlessSeamInstalled() {
-  return probePlanOnly().supported ? false : SEAM_MISSING
 }
 
 /** 跑一次 `e2e-host.mjs --plan-only`，返回结构化结果（不抛：退出码要能断言）。 */
@@ -155,7 +154,7 @@ test('T4 负例：同一相位进两次、计划走完后再进 ⇒ 都抛（不
   assert.throws(() => createBootPhaseCursor({ plan: ['a', 'a'] }), TypeError)
 });
 
-test('T5 行为级正例：真跑 --plan-only ⇒ exit 0，declared == executed == 计划，且没跑重活', { skip: skipUnlessSeamInstalled() }, () => {
+test('T5 行为级正例：真跑 --plan-only ⇒ exit 0，declared == executed == 计划，且没跑重活', () => {
   const run = runPlanOnly()
   assert.equal(run.signal, null, '不允许被信号杀掉（超时/崩溃）')
   assert.equal(run.status, 0, `--plan-only 必须 exit 0，实际 ${run.status}\n${run.stderr}`)
@@ -176,7 +175,7 @@ test('T5 行为级正例：真跑 --plan-only ⇒ exit 0，declared == executed 
   assert.doesNotMatch(run.stdout, /\[e2e-host\] starting isolated postgres/)
 });
 
-test('T6 行为级负例（守住 plan-only 自己）：reuse run 用 --plan-only ⇒ 拒绝，不许给出"两相位都绿"的假象', { skip: skipUnlessSeamInstalled() }, () => {
+test('T6 行为级负例（守住 plan-only 自己）：reuse run 用 --plan-only ⇒ 拒绝，不许给出"两相位都绿"的假象', () => {
   const run = runPlanOnly({ externalServer: true })
   assert.equal(run.status, 1, '--plan-only 与 reuse 组合必须 exit 1')
   assert.equal(run.trace, null, '拒绝时不许打印 plan-only json（否则调用方会读到假通过）')
@@ -184,7 +183,7 @@ test('T6 行为级负例（守住 plan-only 自己）：reuse run 用 --plan-onl
   assert.match(run.stderr, /XIHE_E2E_EXTERNAL_SERVER=1/)
 });
 
-test('T7 行为级：--plan-only 出现在 runner 自己的 flag 表里（不会被当成 Playwright 透传参数）', { skip: skipUnlessSeamInstalled() }, () => {
+test('T7 行为级：--plan-only 出现在 runner 自己的 flag 表里（不会被当成 Playwright 透传参数）', () => {
   // 若 --plan-only 未被 runner 消费，它会被透传给 Playwright（本进程根本没走到那步），
   // 但更直接的判据是：help 文本必须写明它，避免下一个人以为没有这个入口。
   const help = assertPlanOnlyAvailable()
