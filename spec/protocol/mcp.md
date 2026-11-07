@@ -111,6 +111,7 @@ MCP 侧审计动作（T2.3 读回契约，新增动作须同批改本节与 [`se
 - 未来写型 **MUST**：① 显式分类进 WRITE 集或独立 action class（禁 `UNCLASSIFIED`）；② 复用既有 `approval_requests` + `ApprovalService` + `ApprovalAgentTool`（0 新表）；③ 审批矩阵与审计字段先在自有 PLAN 的 SPEC 冻结，再实现。
 - **本文件不冻结未来写型审批矩阵**：没有实施面的设计叫猜测，冻结会迫使后续实现「为守文本而扭曲」或「改 PLAN 打自己脸」。
 - **拆分闸**：出现任一情形 ⇒ MUST 拆独立子计划、不并入 0686 v1：写型工具数 > 只读；需扩展 approval 策略/设施；需触碰 `ShadowGit`/checkpoint 边界（BL-207）。G8 只读工具 **MUST** 读真实工作树，**MUST NOT** 调 `ShadowGit` 私有存储；`git_status` **MUST** 复用既有只读路径（`RunCheckpointController` 的 `GET /api/v1/workspaces/{workspaceId}/git-status` → `RuntimeCheckpointClient.workspaceGitStatus`），不得复制 git 逻辑。
+- **系统 git 前置（BL-207）**：三工具读真实工作树，前提是宿主系统 `git` 可执行——Runtime 探针要求 `git --version` 可解析且 ≥ 2.20（`packages/runtime/src/checkpoint.rs:54` 的 `MIN_GIT_VERSION`，`probe`/`require_git`）。git 不可用时三工具 **MUST 显式失败**：Runtime 口径为 HTTP `503` + `application/problem+json`，含 `code="CHECKPOINT_UNAVAILABLE"`、`reason`、非空 `detail`；`reason` 按实测三分——缺二进制/无法探测 ⇒ `GIT_UNAVAILABLE`，版本低于 2.20 或 `git --version` 不可解析 ⇒ `GIT_TOO_OLD`，其余 git 执行失败 ⇒ `GIT_FAILED`（`packages/runtime/src/checkpoint_revert_api.rs:737-766` → `packages/runtime/src/checkpoint_api.rs:783-789` → `packages/runtime/src/main.rs:3261-3276`）。MCP 工具面 **MUST** 以失败 tool-result 返回（`isError=true`，错误文本或 structured 字段携带同一 `reason`），**MUST NOT** 把「缺 git」伪装成空状态、空 diff、空列表或成功结果，**MUST NOT** 回退 `ShadowGit` 影子库取数。工作区**没有** `.git` 不是错误：按 `isRepository=false`、`entries=[]` 显式返回且不 spawn git（`packages/runtime/src/checkpoint.rs:3299-3311`）；**有** `.git` 而 git 不可用才走上述显式失败，两侧 MUST 在响应中可区分。
 
 ### 3.6 验证映射（T2.3 可直接照做）
 
