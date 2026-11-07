@@ -4583,6 +4583,134 @@ paths:
         '401': { $ref: '#/components/responses/Problem' }
         '403': { $ref: '#/components/responses/Problem' }
         '404': { $ref: '#/components/responses/Problem' }
+  /api/v1/plugin-bindings:
+    get:
+      operationId: listPluginBindings
+      summary: List the plugin bindings of the current workspace (PLAN-0691 T1.2)
+      description: 'Workspace-scoped (X-Workspace-Id). D-66: every plugin route exists only while `cp.plugin.enabled=true`; with the flag off these paths answer 404 as if the build had no plugin feature. A binding is one workspace''s decision to use one installed plugin version — the version row is pinned by (pluginId, digest) and the same plugin may be bound by another workspace independently.'
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: query, name: state, required: false, schema: { type: string, enum: [pending, enabled, degraded, suspended, disabled] }, description: 'Filter by the five-state vocabulary; omitted returns every state' }
+      responses:
+        '200': { description: 'Bindings of this workspace, oldest first', content: { application/json: { schema: { $ref: '#/components/schemas/PluginBindingListResponse' } } } }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+    post:
+      operationId: createPluginBinding
+      summary: Bind an installed plugin to the current workspace (PLAN-0691 T1.2)
+      description: 'Validation order is fixed: workspace context (403 PLUGIN_GRANT_DENIED) → plugin installed (404 PLUGIN_NOT_FOUND) → duplicate (409 PLUGIN_CONFLICT) → grant shape (403 PLUGIN_GRANT_DENIED for a third-party plugin without an explicit grant; 422 PLUGIN_MANIFEST_INVALID for an atom the manifest never requested). A builtin plugin defaults to the workspace default atom set (`grantedAtoms` omitted ⇒ grant source `default`); a third-party plugin must be granted explicitly. The initial state mirrors the plugin: a disabled plugin yields a `pending` binding that cannot be attached to a session until both are enabled.'
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/PluginBindingCreateRequest' } } }
+      responses:
+        '201': { description: 'Created binding', content: { application/json: { schema: { $ref: '#/components/schemas/PluginBindingView' } } } }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+        '422': { $ref: '#/components/responses/Problem' }
+  /api/v1/plugin-bindings/{bindingId}:
+    get:
+      operationId: getPluginBinding
+      summary: Read one binding of the current workspace (PLAN-0691 T1.2)
+      description: 'A binding that belongs to another workspace answers 403 PLUGIN_GRANT_DENIED before existence is disclosed; an unknown or malformed id answers 404 PLUGIN_NOT_FOUND.'
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: bindingId, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: 'The binding', content: { application/json: { schema: { $ref: '#/components/schemas/PluginBindingView' } } } }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+    patch:
+      operationId: updatePluginBinding
+      summary: Change a binding''s state or granted atoms (PLAN-0691 T1.2)
+      description: 'Only the operator half of the five-state machine is writable (`enabled`, `disabled`). `pending`/`degraded`/`suspended` are CP-owned and answer 400 INVALID_REQUEST when written directly, as does a body carrying neither field. Enabling a binding whose plugin is disabled answers 409 PLUGIN_CONFLICT — the caller must enable the plugin first. An explicit grantedAtoms list is re-validated against the manifest (422 PLUGIN_MANIFEST_INVALID) and switches the grant source to `plugin_binding`.'
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: bindingId, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/PluginBindingUpdateRequest' } } }
+      responses:
+        '200': { description: 'Updated binding', content: { application/json: { schema: { $ref: '#/components/schemas/PluginBindingView' } } } }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+        '422': { $ref: '#/components/responses/Problem' }
+    delete:
+      operationId: deletePluginBinding
+      summary: Remove a binding from the workspace (PLAN-0691 T1.2)
+      description: 'Explicit removal: the session attachments of that binding cascade (DP-6), each deletion is audited, and the plugin can be uninstalled afterwards. Until the last binding is gone, `DELETE /api/v1/plugins/{pluginId}` keeps answering 409 PLUGIN_CONFLICT (D-65 ③). This is deliberately not a state flip — there is no `removed` tombstone state.'
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: bindingId, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '204': { description: 'Removed' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+  /api/v1/plugin-bindings/{bindingId}/authorization:
+    get:
+      operationId: getPluginBindingAuthorization
+      summary: Explain what a binding currently grants (PLAN-0691 T1.2)
+      description: 'Three sets: `requestedAtoms` come from the installed manifest, `grantedAtoms` from the binding row, and `effectiveAtoms` is their intersection — an atom the manifest never asked for can never be effective. `sources` attributes each effective atom to `default` (the builtin workspace default set) or `plugin_binding` (an explicit grant), so "why does this plugin hold this atom" is answerable without reading the manifest. T1.3 replaces the intersection with the policy engine; until then authentication is the only gate on this route.'
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: bindingId, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: 'Requested vs granted vs effective atoms', content: { application/json: { schema: { $ref: '#/components/schemas/PluginAuthorizationSummary' } } } }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+  /api/v1/sessions/{sessionId}/plugins:
+    get:
+      operationId: listSessionPlugins
+      summary: List the plugin bindings attached to a session (PLAN-0691 T1.2)
+      description: 'Only active attachments are returned. Each row projects the frozen snapshot taken at attach time (bindingId, pluginId, version, digest, state) plus its revision — the snapshot is what the running turn sees, so a later binding edit does not rewrite history. A session in another workspace answers 404 PLUGIN_NOT_FOUND rather than 403, so the route is not an existence oracle.'
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: sessionId, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: 'Active attachments', content: { application/json: { schema: { $ref: '#/components/schemas/SessionPluginListResponse' } } } }
+        '401': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+    post:
+      operationId: attachSessionPlugin
+      summary: Attach a binding to a session (PLAN-0691 T1.2)
+      description: 'Takes the snapshot server-side; the client sends only the binding id. Attaching an already-active pair is idempotent and does not spend a revision (the running turn''s snapshot did not move); re-attaching a detached pair increments the revision. A `pending` or `disabled` binding answers 409 PLUGIN_CONFLICT. `catalogVersion` is the per-session revision high-water mark today; T1.6 replaces it with the catalog sequence.'
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: sessionId, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/PluginAttachRequest' } } }
+      responses:
+        '201': { description: 'Attachment (created or unchanged)', content: { application/json: { schema: { $ref: '#/components/schemas/PluginAttachResult' } } } }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+  /api/v1/sessions/{sessionId}/plugins/{bindingId}:
+    delete:
+      operationId: detachSessionPlugin
+      summary: Detach a binding from a session (PLAN-0691 T1.2)
+      description: 'Marks the attachment detached (detached_at); the binding itself and other sessions are untouched. Idempotent: detaching a pair that is not attached answers 204 — the caller''s intent already holds.'
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: sessionId, required: true, schema: { type: string, format: uuid } }
+        - { in: path, name: bindingId, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '204': { description: 'Detached (or already detached)' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
 components:
   securitySchemes:
     bearerAuth: { type: http, scheme: bearer }
@@ -7324,5 +7452,88 @@ components:
         entry: { $ref: '#/components/schemas/InternalAuditEntry' }
         timeline: { type: array, items: { $ref: '#/components/schemas/AuditTimelineEvent' } }
         attempts: { type: array, items: { $ref: '#/components/schemas/InternalAuditAttempt' } }
+    # --- PLAN-0691 T1.2: plugin bindings + per-session attachments -----------------------------
+    PluginBindingCreateRequest:
+      type: object
+      required: [pluginId]
+      description: 'Bind an installed plugin version to the calling workspace. `grantedAtoms` omitted keeps the builtin workspace default set (grant source `default`); a third-party plugin requires it explicitly (403 PLUGIN_GRANT_DENIED otherwise) and every atom must appear in the manifest''s `requestedAtoms` (422 PLUGIN_MANIFEST_INVALID).'
+      properties:
+        pluginId: { type: string, minLength: 1, description: 'Registry id; the current version row is resolved server-side' }
+        grantedAtoms: { type: array, items: { type: string }, description: 'Atoms to grant on this binding (S5 vocabulary)' }
+    PluginBindingUpdateRequest:
+      type: object
+      description: 'At least one field is required (400 INVALID_REQUEST otherwise). Only the operator half of the state machine is writable here.'
+      properties:
+        state: { type: string, enum: [pending, enabled, degraded, suspended, disabled], description: 'Writable: enabled, disabled. pending/degraded/suspended are CP-owned and answer 400 INVALID_REQUEST when written directly.' }
+        grantedAtoms: { type: array, items: { type: string }, description: 'Replaces the granted set; re-validated against the manifest and switches the grant source to `plugin_binding`' }
+    PluginBindingView:
+      type: object
+      required: [bindingId, pluginId, workspaceId, source, state, version, digest, grantedAtoms, effectiveAtoms, createdAt, updatedAt]
+      description: 'One workspace''s binding of one installed plugin version. `source` is the plugin source; `state` is the five-state machine; `effectiveAtoms` is the intersection of the granted set with the manifest''s requested atoms.'
+      properties:
+        bindingId: { type: string, format: uuid, readOnly: true }
+        pluginId: { type: string, readOnly: true }
+        workspaceId: { type: string, format: uuid, readOnly: true }
+        source: { type: string, enum: [builtin, third-party], readOnly: true }
+        state: { type: string, enum: [pending, enabled, degraded, suspended, disabled] }
+        version: { type: string, readOnly: true }
+        digest: { type: string, readOnly: true, description: 'Version digest pinned by the composite FK (pluginId, digest)' }
+        grantedAtoms: { type: array, items: { type: string } }
+        effectiveAtoms: { type: array, items: { type: string }, readOnly: true }
+        createdAt: { type: string, format: date-time, readOnly: true }
+        updatedAt: { type: string, format: date-time, readOnly: true }
+    PluginBindingListResponse:
+      type: object
+      required: [items]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/PluginBindingView' } }
+    PluginAuthorizationSummary:
+      type: object
+      required: [bindingId, requestedAtoms, grantedAtoms, effectiveAtoms, sources]
+      description: 'Three sets — manifest-requested, binding-granted, and their intersection — plus the grant source of every effective atom. T1.3 replaces the intersection with the policy engine; this projection stays the explanation surface.'
+      properties:
+        bindingId: { type: string, format: uuid, readOnly: true }
+        requestedAtoms: { type: array, items: { type: string }, readOnly: true, description: 'From the installed manifest' }
+        grantedAtoms: { type: array, items: { type: string }, readOnly: true, description: 'From the binding row' }
+        effectiveAtoms: { type: array, items: { type: string }, readOnly: true, description: 'requestedAtoms ∩ grantedAtoms' }
+        sources: { type: array, items: { $ref: '#/components/schemas/PluginAtomGrant' }, readOnly: true }
+    PluginAtomGrant:
+      type: object
+      required: [atom, source]
+      properties:
+        atom: { type: string }
+        source: { type: string, enum: [default, plugin_binding], description: 'S5 grant-source vocabulary; `default` = builtin workspace default set, `plugin_binding` = explicit grant on this binding' }
+    SessionPluginView:
+      type: object
+      required: [bindingId, pluginId, version, digest, state, revision, attachedAt]
+      description: 'One active attachment, projected from the snapshot frozen at attach time. The snapshot — not the live binding — is what the running turn sees.'
+      properties:
+        bindingId: { type: string, format: uuid, readOnly: true }
+        pluginId: { type: string, readOnly: true }
+        version: { type: string, readOnly: true }
+        digest: { type: string, readOnly: true }
+        state: { type: string, enum: [pending, enabled, degraded, suspended, disabled], readOnly: true, description: 'State at attach time' }
+        revision: { type: integer, minimum: 1, readOnly: true }
+        attachedAt: { type: string, format: date-time, readOnly: true }
+    SessionPluginListResponse:
+      type: object
+      required: [items]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/SessionPluginView' } }
+    PluginAttachRequest:
+      type: object
+      required: [bindingId]
+      description: 'The client sends only the binding; the snapshot is taken server-side.'
+      properties:
+        bindingId: { type: string, format: uuid }
+    PluginAttachResult:
+      type: object
+      required: [bindingId, revision, catalogVersion, effectiveNextTurn]
+      description: 'Result of an attach. Idempotent for an already-active pair (revision unchanged); a detached pair is revived with revision+1. `catalogVersion` is the per-session revision high-water mark today (T1.6 replaces it with the catalog sequence).'
+      properties:
+        bindingId: { type: string, format: uuid, readOnly: true }
+        revision: { type: integer, minimum: 1, readOnly: true }
+        catalogVersion: { type: integer, minimum: 0, readOnly: true }
+        effectiveNextTurn: { type: boolean, readOnly: true, description: 'The next turn of the session sees this attachment' }
 
 
