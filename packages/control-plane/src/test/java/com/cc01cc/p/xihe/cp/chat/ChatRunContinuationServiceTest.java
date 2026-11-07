@@ -287,39 +287,23 @@ class ChatRunContinuationServiceTest {
         return child;
     }
 
-    /** A missing Session principal is diagnostic only; it does not block HUMAN responder continuation. */
+    /** A NULL Session column no longer matters: the child's stamp comes from the source Run. */
     @Test
-    void continuationWithNullSessionPrincipalLogsRunPrincipalStampWithoutFailing() {
+    void continuationWithNullSessionPrincipalInheritsTheSourceStamp() {
         stubNewChildCreation();
         source.setAgentPrincipalId(UUID.randomUUID());
-        ListAppender<ILoggingEvent> appender = new ListAppender<>();
-        appender.start();
-        Logger logger = (Logger) LoggerFactory.getLogger(ChatRunContinuationService.class);
-        logger.addAppender(appender);
-        try {
-            ChatRunContinuationService.ContinuationResult result = service.continueRun(
-                    SOURCE_RUN_ID, USER_ID, WORKSPACE_ID, "continuation-key",
-                    new ChatRunContinuationRequest(ChatRunContinuationRequest.RESUME_PENDING, null));
-            assertNotNull(result.runId(), "log-only: the continuation itself must still succeed");
-            assertNull(savedChild().getAgentPrincipalId(), "session NULL must not fall back to the source principal");
 
-            String stamped = appender.list.stream()
-                    .map(ILoggingEvent::getFormattedMessage)
-                    .filter(message -> message.contains("event=run_principal_stamp"))
-                    .findFirst().orElseThrow(() -> new AssertionError(
-                            "no run_principal_stamp log: " + appender.list.stream()
-                                    .map(ILoggingEvent::getFormattedMessage).toList()));
-            assertTrue(stamped.contains("origin=user_submission"), stamped);
-            assertTrue(stamped.contains("runId=" + result.runId()), stamped);
-            assertTrue(stamped.contains("sessionId=" + SESSION_ID), stamped);
-            assertTrue(stamped.contains("sourceRunId=" + SOURCE_RUN_ID), stamped);
-        } finally {
-            logger.detachAppender(appender);
-        }
+        ChatRunContinuationService.ContinuationResult result = service.continueRun(
+                SOURCE_RUN_ID, USER_ID, WORKSPACE_ID, "continuation-key",
+                new ChatRunContinuationRequest(ChatRunContinuationRequest.RESUME_PENDING, null));
+
+        assertNotNull(result.runId(), "the continuation itself must still succeed");
+        assertEquals(source.getAgentPrincipalId(), savedChild().getAgentPrincipalId(),
+                "PLAN-0689 A3: the child inherits the source Run's stamp, not the Session column");
     }
 
     @Test
-    void humanResponderContinuationUsesSessionPrincipal() {
+    void humanResponderContinuationCarriesNoPrincipal() {
         stubNewChildCreation();
         UUID sessionPrincipalId = UUID.randomUUID();
         session.setAgentPrincipalId(sessionPrincipalId.toString());
@@ -330,7 +314,10 @@ class ChatRunContinuationServiceTest {
                 new ChatRunContinuationRequest(ChatRunContinuationRequest.RESUME_PENDING, null));
 
         assertNotNull(result.runId(), "HUMAN responder continuation remains allowed");
-        assertEquals(sessionPrincipalId, savedChild().getAgentPrincipalId());
+        // PLAN-0689 A3 (design §2): attribution falls back run → NULL and never guesses the
+        // Session's PRIMARY row, so a HUMAN-run continuation stays unattributed on purpose.
+        assertNull(savedChild().getAgentPrincipalId(),
+                "the Session's PRIMARY principal must not be used as the child's stamp");
     }
 
     /** A continuation with a Session principal does not emit the missing-principal diagnostic. */
