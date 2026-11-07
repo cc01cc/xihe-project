@@ -14,6 +14,8 @@
  *   T5–T7：**行为级**——真的跑 `node scripts/e2e-host.mjs --plan-only`，由 runner 自己打印
  *          declared（计划）vs executed（实际进入顺序）。`--plan-only` 走的就是生产路径上那两条
  *          `enter()` 语句，所以把 gate 连同 `enter()` 一起搬走 ⇒ executed 变形 ⇒ 本文件红。
+ *   T8：**闸门自检**——用真实 `--help` 输出去掉 `--plan-only` 那一行，验证闸门确实会红、
+ *       且不会误伤（删掉无关 flag 不触发）；把"接缝被删 ⇒ 红"从一次性演示变成 CI 可复现。
  *
  * 反面口径（task-86 明确不接受的糊法）：读源码正则匹配行号。这里一个字符都没读源码。
  */
@@ -47,6 +49,16 @@ const SEAM_MISSING = 'e2e-host.mjs 的 --help 里没有 --plan-only = 回归（�
   + '拒绝 spawn —— 未知 flag 会被透传给 Playwright，那样这条用例会真起一套隔离栈。'
   + '请先把它装回 scripts/e2e-host.mjs 再跑。'
 
+/** 判据单点：runner 的 `--help` 自述里有没有 `--plan-only`。闸门与 T8 自检共用这一处，避免判据漂移。 */
+function helpAdvertisesPlanOnly(helpStdout) {
+  return /--plan-only/.test(helpStdout ?? '')
+}
+
+/** 闸门本体（纯函数形态，T8 可直接喂合成输入验证它真的会红）。 */
+function assertSeamAdvertised(helpStdout) {
+  if (!helpAdvertisesPlanOnly(helpStdout)) throw new Error(SEAM_MISSING)
+}
+
 let planOnlyProbe = null
 function probePlanOnly() {
   if (!planOnlyProbe) {
@@ -55,14 +67,14 @@ function probePlanOnly() {
       encoding: 'utf8',
       timeout: 30_000,
     })
-    planOnlyProbe = { help, supported: help.status === 0 && /--plan-only/.test(help.stdout ?? '') }
+    planOnlyProbe = { help, supported: help.status === 0 && helpAdvertisesPlanOnly(help.stdout) }
   }
   return planOnlyProbe
 }
 
 function assertPlanOnlyAvailable() {
   const probe = probePlanOnly()
-  if (!probe.supported) throw new Error(SEAM_MISSING)
+  assertSeamAdvertised(probe.help.stdout)
   return probe.help
 }
 
@@ -191,4 +203,28 @@ test('T7 行为级：--plan-only 出现在 runner 自己的 flag 表里（不会
   assert.match(help.stdout, /--plan-only\s+dry-run the boot-phase ORDER only/)
   const run = runPlanOnly()
   assert.equal(run.status, 0)
+});
+
+test('T8 闸门自检：把 --plan-only 从真实 --help 里删掉 ⇒ 闸门红（不是 skip）；删无关 flag 不误伤', () => {
+  // 这条测的不是 runner，而是**闸门自己**：删掉接缝必须让套件变红。
+  // 它复用了 memo 化的那次真实 `--help`（零额外 spawn），在内存里做出"接缝被删掉"的回归形状。
+  const help = assertPlanOnlyAvailable()
+  const stdout = help.stdout ?? ''
+  assert.ok(stdout.length > 0, '--help 输出不该为空')
+
+  const stripped = stdout
+    .split(/\r?\n/)
+    .filter((line) => !line.includes('--plan-only'))
+    .join('\n')
+  assert.notEqual(stripped, stdout, '必须真的删掉了若干行，否则这条自检是空转')
+  assert.equal(helpAdvertisesPlanOnly(stripped), false, '判据必须能发现"flag 消失了"')
+  assert.throws(() => assertSeamAdvertised(stripped), /回归（该方法自 32fa1143 起就在）/)
+
+  // 阴性对照：删掉一个无关 flag，闸门不许误报（否则它只是"任何 help 都红"的假警报）。
+  const sansKeep = stdout
+    .split(/\r?\n/)
+    .filter((line) => !line.includes('--keep'))
+    .join('\n')
+  assert.notEqual(sansKeep, stdout, '阴性对照同样要真的改动输入')
+  assert.doesNotThrow(() => assertSeamAdvertised(sansKeep))
 });

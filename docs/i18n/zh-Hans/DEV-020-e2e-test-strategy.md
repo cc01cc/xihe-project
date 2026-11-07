@@ -202,6 +202,7 @@ pnpm exec playwright test e2e/mock/<reviewed-spec>.spec.ts --config e2e/playwrig
 > ② `--llm-mode`（或 `XIHE_E2E_LLM_MODE`）与 `scripts/e2e-batches.jsonc` 的 `llmMode` 不一致会**拒绝启动**（批声明的车道不能被静默改掉）；跨车道调试需显式 `--allow-llm-mode-override`；
 > ③ `--retries` 是 Playwright 每次用例重试，`XIHE_E2E_RETRY_ROUNDS` 是整轮重跑（轮间重置 DB 状态），两者叠加时总尝试 = 轮数 × (1 + retries)；取证跑法建议 `--retries=0` + `XIHE_E2E_RETRY_ROUNDS=1`，避免"重试后通过"掩盖真故障；
 > ④ 启动前自检（不启栈、秒级）：`node scripts/e2e-host.mjs --batch=<name> [--only=…] --check-cli`。
+> ⑤ 相位顺序自检（不重建、不开窗、不起栈）：`node scripts/e2e-host.mjs --plan-only` —— 跑 `main()` 里真实的 `enter()` 语句并打印 `declared`（计划）vs `executed`（实际进入顺序），不一致即 exit 1；与 `XIHE_E2E_EXTERNAL_SERVER=1` 组合时直接拒绝（见 §3.1c）。
 
 未来另行授权恢复 Linux 验收时，候选 workflow 使用以下命令（各执行 9 个路由截图用例）：
 
@@ -248,6 +249,23 @@ node scripts/e2e-host.mjs --teardown
 - **`--bootstrap-user=register` 的必要性**：不传时栈虽起来，但没有账号导入 fake provider profile ⇒ Agent `llmReady=missing_credentials` ⇒ runner 判"栈未就绪"，后续任何 spec 都跑不了。这是 2026-11-02 实测踩到的坑。
 - **不进常规门禁**：需要真实显示器 + Chrome Beta，慢且环境敏感；`mise run validate` 与 smoke/mock-full 基线都不含 headed（证明：`npx playwright test e2e/real --list` = 213 tests / 83 files，headed 命中 0；`npx playwright test e2e/headed --list` = 8 tests / 1 file）。
 - **走查发现的问题先记账后修**：finding 进 `plans/PLAN-0621-*/evidence/findings.md`，修复前必须先补一条能复现的断言（详见该计划 design §4）。
+
+### 3.1c `--plan-only` 干跑：只验相位顺序（PLAN-0680）
+
+```bash
+# 接线正常：declared == executed == [cp-boot-plan, preflight-gate]，exit 0
+node scripts/e2e-host.mjs --plan-only
+
+# 接线被人挪动（门跑到 CP 重建之前）：报 boot phase order violated 并 exit 1，
+# 且在跑任何重活之前就停住 —— 不重建、不开窗、不起栈
+```
+
+它只回答一个问题：**`main()` 里那几个开窗步骤，实际进入顺序还是不是声明的顺序**。
+
+- **不干重活**：只读 CP jar 状态（`previewCpBootPlan()` 与真实路径共用 `decideCpBoot()` 判定表，但**不跑 `mvn`**），不执行 preflight、不起任何服务、不 prune run 目录；输出里 `CP boot:` 那一行会自述 `--plan-only preview (no rebuild ran)`，不能被读成"jar 是新的"。
+- **部分模式下不可用要说出来**：与 `XIHE_E2E_EXTERNAL_SERVER=1`（复用已运行栈）组合时**直接失败**——reuse run 没有重建相位，也就没有"门必须晚于重建"的序可验；给不出结论就拒绝，不静默降级。
+- **它不是安全出口**：`--plan-only` 不校验产物身份（jar 的 sidecar / sha256 / build-info 与 HEAD 的匹配在 `resolveCpBootPlan()` 与 `runPreflightGate()` 里），也不替代任何窗口验收。它 exit 0 只能说明"接线没漂"，不能说明"可以开窗"。
+
 ### 3.2 E2E-only 时序屏障（PLAN-0536）
 
 需要确定性排列「浏览器请求已到 CP」与「真实状态变更」时，不要在测试里 mock 服务端响应——那证明不了真实状态校验。CP 提供 `@Profile("e2e")` 的 Run-scoped 屏障（`/internal/v1/e2e/guidance-barrier`），仅 host runner 的服务 token 可调用；`dev`/`prod` 不激活该 profile，路由不存在。

@@ -153,6 +153,7 @@ pnpm exec playwright test e2e/mock/<reviewed-spec>.spec.ts --config e2e/playwrig
 > ② a `--llm-mode` (or `XIHE_E2E_LLM_MODE`) that differs from the batch `llmMode` in `scripts/e2e-batches.jsonc` **refuses to start** (the declared lane must not be silently overridden); cross-lane debugging needs the explicit `--allow-llm-mode-override`;
 > ③ `--retries` is Playwright's per-test retry, `XIHE_E2E_RETRY_ROUNDS` is a whole-run replay (with a DB reset between rounds); when both are set the total attempts = rounds × (1 + retries); evidence runs should use `--retries=0` plus `XIHE_E2E_RETRY_ROUNDS=1` so a retry cannot mask a real failure;
 > ④ pre-flight your arguments without booting anything: `node scripts/e2e-host.mjs --batch=<name> [--only=…] --check-cli`.
+> ⑤ phase-order self-check (no rebuild, no window, no stack): `node scripts/e2e-host.mjs --plan-only` — it runs the real `enter()` statements in `main()` and prints `declared` (plan) vs `executed` (actual order); a mismatch exits 1, and combining it with `XIHE_E2E_EXTERNAL_SERVER=1` is refused (see §3.1a).
 
 If Linux validation is authorized in future work, the local candidate workflow uses these two screenshot specs:
 
@@ -176,6 +177,23 @@ node scripts/e2e-host.mjs --llm-mode=disconnect e2e/real/chat-availability.spec.
 ```
 
 `missing` omits credentials, `invalid` makes the fake provider return 401, `success` emits at least two SSE tokens, and `disconnect` closes after the first token. Set `XIHE_E2E_HEADED=1` and `XIHE_E2E_BROWSER_CHANNEL=chrome-beta` for Chrome Beta headed runs. Each run uses isolated database, host root, ports, and evidence output.
+
+### 3.1a `--plan-only` dry run: phase order only (PLAN-0680)
+
+```bash
+# healthy wiring: declared == executed == [cp-boot-plan, preflight-gate], exit 0
+node scripts/e2e-host.mjs --plan-only
+
+# wiring moved (the gate now runs before the CP rebuild): reports
+# "boot phase order violated" and exits 1 before any heavy work
+# — no rebuild, no window, no stack
+```
+
+It answers exactly one question: **are the boot steps in `main()` still entered in the order the plan declares?**
+
+- **It does no heavy work**: it only reads the CP jar state (`previewCpBootPlan()` shares the `decideCpBoot()` table with the real path but **never runs `mvn`**), runs no preflight, starts no service and prunes no run directory; its `CP boot:` line says `--plan-only preview (no rebuild ran)` so it cannot be misread as "the jar is fresh".
+- **Unavailable modes fail loudly**: combining it with `XIHE_E2E_EXTERNAL_SERVER=1` (reuse an already-running stack) is **refused** — a reuse run has no rebuild phase, hence no "gate must come after the rebuild" order to verify; refusing beats degrading silently.
+- **It is not a safety exit**: `--plan-only` does not verify artifact identity (the jar sidecar / sha256 / build-info match against HEAD lives in `resolveCpBootPlan()` and `runPreflightGate()`), and it never stands in for window acceptance. Exit 0 says "the wiring has not drifted", not "you may open a window".
 
 ### 3.2 Time Budget and Network Classification (PLAN-0586)
 
