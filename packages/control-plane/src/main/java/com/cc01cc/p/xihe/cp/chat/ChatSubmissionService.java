@@ -533,11 +533,11 @@ public class ChatSubmissionService {
         delegationBudgetService.requireWithinBudget(parentSession, parentRun, toolCallId);
 
         // PLAN-0689 A6 (design §3-B/B1): the child's cap used to be the intersection of the parent
-        // Session's frozen snapshot with the chosen principal's current cap, and its only consumer was
-        // childSession.agent_permissions_snapshot. Both the input and that column are dropped, so the
-        // derivation has no consumer left: a run's cap is resolved live from its own principal (run
-        // stamp / lease cap), and the child principal's active binding is still re-validated below in
-        // persist() → bindOrValidateAgentSession → resolveAgent + requireActiveWorkspaceBinding.
+        // Session's frozen snapshot with the chosen principal's current cap. That input is dropped —
+        // a run's cap is resolved live from its own principal (run stamp / lease cap) — while the
+        // snapshot column survives (A7/D-54) as an authorization input: the write below stores the
+        // PRIMARY's binding-time cap. The child principal's active binding is still re-validated
+        // below in persist() → bindOrValidateAgentSession → resolveAgent + requireActiveWorkspaceBinding.
         if (authorization.approvalGrantId() != null
                 && !approvalService.consumeApprovedGrant(authorization.approvalGrantId(), parentRun.getUserId(),
                         parentRun.getWorkspaceId(), parentSession.getId().toString(), SPAWN_TOOL_NAME,
@@ -552,8 +552,8 @@ public class ChatSubmissionService {
         //
         // The Session-column write is still here, now sourced from the Run, because SessionReadService
         // (A2c) still reads that column for admission: persist() → resolveAgent() would fail closed
-        // with 403 on a child whose column is NULL. It is deleted with the column in A7, after A2c
-        // switches the path to the PRIMARY participant.
+        // with 403 on a child whose column is NULL. Per A7/D-54 the column survives as the snapshot
+        // authorization input; the A2c admission switch to the PRIMARY participant is a separate step.
         String childAgentPrincipalId = uuidStr(parentRun.getAgentPrincipalId());
         Session childSession = new Session(parentRun.getWorkspaceId(), parentRun.getUserId(),
                 parentSession.getTitle());
@@ -1105,8 +1105,8 @@ public class ChatSubmissionService {
         }
 
         // PLAN-0689 A1 (T1.1 / design §3-B): the F6 "bind the principal of a principal-less
-        // placeholder on first Chat" path is deleted together with the columns it wrote
-        // (sessions.agent_principal_id / agent_permissions_snapshot). A Session no longer carries a
+        // placeholder on first Chat" path is deleted together with sessions.agent_principal_id (A7).
+        // The snapshot column survives (D-54) as the authorization input; a Session still carries no
         // principal, so there is nothing to bind — the run responder comes from session_participants.
         // The sessionUuid local stays (it is still used by the row lock above); no caller can name a
         // run principal any more (A4b/T1.12), so the responder is resolved below, never passed in.
