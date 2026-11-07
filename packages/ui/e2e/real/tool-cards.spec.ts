@@ -628,8 +628,9 @@ async function runViewportCase(
         await captureScreen(page, "t2.2-fallback-dynamic-mcp", attention);
     }
 
-    const viewport = page.viewportSize();
-    if (viewport?.width === 390) {
+    if (options.suffix.startsWith("mobile")) {
+        const viewport = page.viewportSize();
+        expect(viewport?.width, "mobile viewport width").toBe(390);
         const scrollWidth = await page.evaluate(
             () => document.scrollingElement?.scrollWidth ?? Number.NaN,
         );
