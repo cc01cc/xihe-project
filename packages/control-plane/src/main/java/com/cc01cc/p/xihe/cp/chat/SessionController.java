@@ -5,6 +5,7 @@ import com.cc01cc.p.xihe.cp.config.ProblemDetailsHandler;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
 import com.cc01cc.p.xihe.cp.context.service.ContextService;
 import com.cc01cc.p.xihe.cp.entity.Session;
+import com.cc01cc.p.xihe.cp.repository.SessionParticipantRepository;
 import com.cc01cc.p.xihe.cp.service.ContextTemplateService;
 import com.cc01cc.p.xihe.cp.service.SessionService;
 import org.slf4j.Logger;
@@ -47,6 +48,7 @@ public class SessionController {
     private final SseEmitterManager sseEmitterManager;
     private final com.cc01cc.p.xihe.cp.operation.JobScopeClosureService jobScopeClosureService;
     private final SessionCreationService sessionCreationService;
+    private final SessionParticipantRepository sessionParticipants;
 
     public SessionController(SessionService sessionService,
                              SessionForkService sessionForkService,
@@ -56,7 +58,8 @@ public class SessionController {
                              ChatRunCancellationService chatRunCancellationService,
                              SseEmitterManager sseEmitterManager,
                              com.cc01cc.p.xihe.cp.operation.JobScopeClosureService jobScopeClosureService,
-                             SessionCreationService sessionCreationService) {
+                             SessionCreationService sessionCreationService,
+                             SessionParticipantRepository sessionParticipants) {
         this.sessionService = sessionService;
         this.sessionForkService = sessionForkService;
         this.derivedStateService = derivedStateService;
@@ -66,6 +69,17 @@ public class SessionController {
         this.sseEmitterManager = sseEmitterManager;
         this.jobScopeClosureService = jobScopeClosureService;
         this.sessionCreationService = sessionCreationService;
+        this.sessionParticipants = sessionParticipants;
+    }
+
+    /**
+     * PLAN-0689 A2c: the Session view's {@code agentPrincipalId} is the PRIMARY participant
+     * principal. A Session without a PRIMARY row renders the field as null (display class — no
+     * exception, and never a fallback to the {@code sessions.agent_principal_id} column).
+     */
+    private Map<String, Object> view(Session session) {
+        UUID primaryPrincipalId = sessionParticipants.primaryPrincipalId(session.getId()).orElse(null);
+        return SessionViews.toView(session, primaryPrincipalId);
     }
 
     @GetMapping
@@ -76,8 +90,12 @@ public class SessionController {
         if (userId == null || workspaceId == null) {
             return ProblemDetailsHandler.workspaceContextRequired();
         }
-        List<Map<String, Object>> sessions = sessionService.listReadable(userId, workspaceId).stream()
-                .map(SessionController::toSummary)
+        List<Session> readable = sessionService.listReadable(userId, workspaceId);
+        // PLAN-0689 A2c: one batched PRIMARY read for the whole page (no per-Session query).
+        Map<UUID, UUID> primaries = sessionParticipants.primaryPrincipalIds(
+                readable.stream().map(Session::getId).toList());
+        List<Map<String, Object>> sessions = readable.stream()
+                .map(session -> toSummary(session, primaries.get(session.getId())))
                 .toList();
         return ResponseEntity.ok(Map.of("sessions", sessions));
     }
@@ -165,7 +183,7 @@ public class SessionController {
         String userId = TenantContext.getUserId();
         String workspaceId = TenantContext.getWorkspaceId();
         try {
-            return ResponseEntity.ok(SessionViews.toView(sessionService.requireReadable(sessionId, userId, workspaceId)));
+            return ResponseEntity.ok(view(sessionService.requireReadable(sessionId, userId, workspaceId)));
         } catch (CpApiException e) {
             return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
         }
@@ -197,7 +215,7 @@ public class SessionController {
         try {
             Session session = sessionCreationService.create(TenantContext.getUserId(), null, workspaceHeader,
                     SessionRequests.paramsFrom(request));
-            return ResponseEntity.status(HttpStatus.CREATED).body(SessionViews.toView(session));
+            return ResponseEntity.status(HttpStatus.CREATED).body(view(session));
         } catch (CpApiException e) {
             return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
         }
@@ -221,7 +239,7 @@ public class SessionController {
                     title, modelProvider, modelName, providerConnectionId,
                     request == null ? null : request.connectionRevision(), selection,
                     request != null && Boolean.TRUE.equals(request.confirmedTypeChange()));
-            return ResponseEntity.ok(SessionViews.toView(session));
+            return ResponseEntity.ok(view(session));
         } catch (CpApiException e) {
             return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
         }
@@ -239,7 +257,7 @@ public class SessionController {
             }
             Session session = sessionService.updateApiTemplate(sessionId, TenantContext.getUserId(),
                     TenantContext.getWorkspaceId(), request.layer(), request.templateId(), request.version(), request.connectionRevision());
-            return ResponseEntity.ok(SessionViews.toView(session));
+            return ResponseEntity.ok(view(session));
         } catch (CpApiException e) {
             return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
         }
@@ -255,7 +273,7 @@ public class SessionController {
         try {
             Session session = sessionService.rebindDefaultBinding(sessionId,
                     TenantContext.getUserId(), TenantContext.getWorkspaceId());
-            return ResponseEntity.ok(SessionViews.toView(session));
+            return ResponseEntity.ok(view(session));
         } catch (CpApiException e) {
             return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
         }
@@ -303,16 +321,16 @@ public class SessionController {
         }
     }
 
-    private static Map<String, Object> toForkView(Session session) {
-        Map<String, Object> view = SessionViews.toView(session);
-        view.put("kind", session.getKind());
-        view.put("spawnedFromSessionId", session.getSpawnedFromSessionId());
-        view.put("spawnedFromRunId", session.getSpawnedFromRunId());
-        view.put("spawnedAt", session.getSpawnedAt() == null ? null : session.getSpawnedAt().toString());
-        return view;
+    private Map<String, Object> toForkView(Session session) {
+        Map<String, Object> forked = view(session);
+        forked.put("kind", session.getKind());
+        forked.put("spawnedFromSessionId", session.getSpawnedFromSessionId());
+        forked.put("spawnedFromRunId", session.getSpawnedFromRunId());
+        forked.put("spawnedAt", session.getSpawnedAt() == null ? null : session.getSpawnedAt().toString());
+        return forked;
     }
 
-    private static Map<String, Object> toSummary(Session session) {
+    private static Map<String, Object> toSummary(Session session, UUID agentPrincipalId) {
         Map<String, Object> view = new LinkedHashMap<>();
         view.put("id", session.getId());
         view.put("title", session.getTitle());
@@ -325,7 +343,9 @@ public class SessionController {
         // when entering a workspace. Omitting this field makes direct workspace
         // navigation create a duplicate session.
         view.put("workspaceId", session.getWorkspaceId());
-        view.put("agentPrincipalId", session.getAgentPrincipalId());
+        // PLAN-0689 A2c: the list projection's agentPrincipalId is the PRIMARY participant
+        // principal (resolved once per page by `list()`), not the sessions column.
+        view.put("agentPrincipalId", agentPrincipalId == null ? null : agentPrincipalId.toString());
         view.put("contextTemplateLayer", session.getContextTemplateLayer());
         view.put("contextTemplateId", session.getContextTemplateId());
         view.put("contextTemplateVersion", session.getContextTemplateVersion());

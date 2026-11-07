@@ -6,6 +6,7 @@ import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.provider.ProviderConnectionService;
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
 import com.cc01cc.p.xihe.cp.repository.ChatRunTransportAttemptRepository;
+import com.cc01cc.p.xihe.cp.repository.SessionParticipantRepository;
 import com.cc01cc.p.xihe.cp.status.HealthMonitor;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
@@ -15,6 +16,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 /**
  * PLAN-0507: read-only Session monitor aggregate over existing durable facts
@@ -36,25 +38,30 @@ public class SessionMonitorService {
     private final ApprovalService approvalService;
     private final ProviderConnectionService providerConnections;
     private final HealthMonitor healthMonitor;
+    private final SessionParticipantRepository sessionParticipants;
 
     public SessionMonitorService(ChatRunRepository chatRuns,
                                  ChatRunTransportAttemptRepository transportAttempts,
                                  ApprovalService approvalService,
-                                 ProviderConnectionService providerConnections, HealthMonitor healthMonitor) {
+                                 ProviderConnectionService providerConnections, HealthMonitor healthMonitor,
+                                 SessionParticipantRepository sessionParticipants) {
         this.chatRuns = chatRuns;
         this.transportAttempts = transportAttempts;
         this.approvalService = approvalService;
         this.providerConnections = providerConnections;
         this.healthMonitor = healthMonitor;
+        this.sessionParticipants = sessionParticipants;
     }
 
     public Map<String, Object> getMonitor(Session session, String userId, String workspaceId) {
         String sessionId = session.getId().toString();
+        // PLAN-0689 A2c: the monitor's agentPrincipalId comes from the PRIMARY participant row.
+        UUID agentPrincipalId = sessionParticipants.primaryPrincipalId(session.getId()).orElse(null);
         List<ChatRun> window = chatRuns.findBySessionIdAndStatusInOrderByTerminalAtDescIdDesc(
                 sessionId, TERMINAL_STATUSES, PageRequest.of(0, HISTORY_WINDOW));
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("generatedAt", Instant.now().toString());
-        body.put("session", sessionView(session));
+        body.put("session", sessionView(session, agentPrincipalId));
         body.put("activity", activity(sessionId, userId, workspaceId));
         body.put("history", history(window));
         body.put("transport", transportCounts(sessionId));
@@ -74,11 +81,16 @@ public class SessionMonitorService {
                 "partialCount", ((Number) aggregate[2]).longValue());
     }
 
-    private static Map<String, Object> sessionView(Session session) {
+    /**
+     * PLAN-0689 A2c: {@code agentPrincipalId} is the Session's PRIMARY participant principal,
+     * resolved by {@link #getMonitor}. Missing PRIMARY ⇒ null (display class: no exception, and
+     * never a fallback to the {@code sessions.agent_principal_id} column).
+     */
+    private static Map<String, Object> sessionView(Session session, UUID agentPrincipalId) {
         Map<String, Object> view = new LinkedHashMap<>();
         view.put("id", session.getId().toString());
         view.put("title", session.getTitle());
-        view.put("agentPrincipalId", session.getAgentPrincipalId());
+        view.put("agentPrincipalId", agentPrincipalId == null ? null : agentPrincipalId.toString());
         view.put("modelProvider", session.getModelProvider());
         view.put("modelName", session.getModelName());
         view.put("providerConnectionId", session.getProviderConnectionId());

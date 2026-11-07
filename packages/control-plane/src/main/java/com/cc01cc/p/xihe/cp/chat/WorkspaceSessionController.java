@@ -4,6 +4,7 @@ import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.config.ProblemDetailsHandler;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
 import com.cc01cc.p.xihe.cp.entity.Session;
+import com.cc01cc.p.xihe.cp.repository.SessionParticipantRepository;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -14,6 +15,7 @@ import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.UUID;
 /**
  * PLAN-0608 C′ (decision #8): the explicit, <em>path-addressed</em> session
  * creation surface. Unlike {@code POST /api/v1/sessions} it never depends on
@@ -28,9 +30,12 @@ import org.springframework.web.bind.annotation.RestController;
 public class WorkspaceSessionController {
 
     private final SessionCreationService sessionCreationService;
+    private final SessionParticipantRepository sessionParticipants;
 
-    public WorkspaceSessionController(SessionCreationService sessionCreationService) {
+    public WorkspaceSessionController(SessionCreationService sessionCreationService,
+                                      SessionParticipantRepository sessionParticipants) {
         this.sessionCreationService = sessionCreationService;
+        this.sessionParticipants = sessionParticipants;
     }
 
     @PostMapping
@@ -41,7 +46,11 @@ public class WorkspaceSessionController {
         try {
             Session session = sessionCreationService.create(TenantContext.getUserId(), workspaceId, workspaceHeader,
                     SessionRequests.paramsFrom(request));
-            return ResponseEntity.status(HttpStatus.CREATED).body(SessionViews.toView(session));
+            // PLAN-0689 A2c: the created view's agentPrincipalId is the PRIMARY participant row
+            // (null when the Session has none — display class, no exception, no column fallback).
+            UUID primaryPrincipalId = sessionParticipants.primaryPrincipalId(session.getId()).orElse(null);
+            return ResponseEntity.status(HttpStatus.CREATED)
+                    .body(SessionViews.toView(session, primaryPrincipalId));
         } catch (CpApiException e) {
             return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
         }
