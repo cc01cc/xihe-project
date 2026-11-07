@@ -24,6 +24,19 @@ NODE_OPTIONS = "--max-old-space-size=2048"
 # 需要继续诊断时按 `scripts/worktree-env.ps1 -EnableSccache` 单次开启，不要改回本文件。
 # uv cache: 使用 uv 自身默认位置（不再写死盘符）。需要与其它项目共享缓存的人
 # 自行在外层 shell 设置 UV_CACHE_DIR；本仓库不替用户决定机器布局。
+#
+# Rust 构建产物根（PLAN-0656 的 task-80 收口）：语法侧只有这一个 knob
+#   `XH_CARGO_TARGET_ROOT`。显式设置后主检出落 `<root>/{main,stack-N,e2e}`，
+#   linked worktree 落 `<root>/<worktree 目录名>/{…}`（两个 lane 跑同一个 stack 不会
+#   互相覆盖 exe —— 那正是 BL-221 的失效模式，只是换了盘）。
+#   优先级：CARGO_TARGET_DIR（worktree-env.ps1 / 手工覆盖）> 本变量 > 旧推导
+#   `<one>/.tmp/cargo-target`。**未设本变量时行为与引入前逐字节相同**，这是回归断言。
+#   下面这行是**本机默认值**，不是仓库契约：换盘/换机改 `mise.local.toml`
+#   （gitignored，优先级高于本文件）即可；变量指向不存在的目录或相对路径时脚本
+#   fail-fast，绝不静默回落到旧盘。
+#   已知未修：裸 `cargo` / rust-analyzer 不读 mise env，仍按 `.cargo/config.toml`
+#   落 `<one>/.tmp/cargo-target/main`（IDE 侧缺口，见 DEV-002 §4）。
+XH_CARGO_TARGET_ROOT = 'G:\zeotmp\xh-cargo-target'
 
 [tools]
 node = "24"

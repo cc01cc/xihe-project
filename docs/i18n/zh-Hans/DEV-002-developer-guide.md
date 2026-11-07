@@ -272,6 +272,7 @@ node scripts/stack-run.mjs env-json --stack 2
 
 - stack-1 路径不变（`.xihe-workspaces` / `logs` / `.xihe-state`）；stack≥2 落在 `.xihe-stacks/<n>/{workspaces,logs,state}`（已 gitignore）。
 - **常态化双栈（PLAN-0656，用户裁定 2026-11-04）**：stack-1 + stack-2 同时运行为默认工作方式；`node scripts/dev-stack.mjs status --all`（或 `mise run dev:stack -- status --all`）一览各栈端口/health/DB/compose/构建 target。构建面三条纪律：**per-stack cargo target**——非默认栈自动注入 `CARGO_TARGET_DIR=<workspace>/.tmp/cargo-target/<stackId>`（默认栈沿用 `.cargo/config.toml` 的共享 `main` 热缓存；已显式设置 `CARGO_TARGET_DIR` 时永不覆盖），杜绝两栈互踩 exe（BL-221）；**孤儿清扫**——`dev-stack stop` 与 `stack-run <service>` 启动前按"本栈端口 + 服务进程画像"清理残留进程并逐条留日志（外来进程只占 WARN 不杀）；**E2E 构建隔离**——`test:e2e:host` 用独立的 `cargo-target/e2e` 与 `C:/xihe-build/e2e`，不再要求停栈（见 §5 测试入口）。`cargo-target` 下的 `main` / `stack-N` / `e2e` / worktree 名目录均为可安全清理的构建缓存（按 workspace `worktree-lifecycle` 的成对清理纪律）；`check:runtime-target` 水位仍按"当前解析到的单个 target"计量，不做跨栈求和（避免 A 栈的缓存把 B 栈的启动门禁误判）。
+- **构建产物根可配（task-80，2026-11-08）**：整个 target 家族的位置由 `XH_CARGO_TARGET_ROOT` 决定（默认值在 `mise.toml [env]`），布局 `<root>/{main,stack-N,e2e}`；linked worktree 再加一层 `<root>/<worktree 目录名>/`，两个 lane 跑同一 stack 不互相覆盖 exe。优先级 `CARGO_TARGET_DIR` > `XH_CARGO_TARGET_ROOT` > 旧推导 `<one>/.tmp/cargo-target`；**未设变量时行为逐字节不变**。详见 §6「Rust 构建缓存策略」（含 fail-fast 与裸 `cargo`/IDE 缺口）。
 - 非法或未登记的 `XIHE_STACK_ID`（如 `stack-9`、`foo`）启动即失败，不回退默认栈。
 - `dev:host:stop` / `dev:reset` 只作用于当前栈的进程、compose project 与沙箱容器（按 `xihe.stack-id` 标签；无标签视为 stack-1）。
 - 建议同时最多 2 套栈（每栈一套 PG + 四个服务）。
@@ -470,9 +471,11 @@ Native 运行期的探针口径（运维注意）：native CP 的 `/actuator/hea
 
 ## 6. Rust 构建缓存策略
 
-> 约束：H 盘为开发专供，不迁移 `CARGO_TARGET_DIR`。`packages/runtime/target/` 在 stable cargo 下无自动回收（`-Zgc` 仅管 `~/.cargo` 全局缓存，不管本地 `target/`），叠加 Windows PDB（150~200MB/个）+ 4 bin + 11 test target，多 hash 孤儿可堆到 40GB（2026-09-05 实测 39.5GB，H 剩 1.6GB）。单次编译不需要 40GB，常态活集约 6~10GB。
+> **构建产物外置（task-80，2026-11-08 更新；取代"不迁移 `CARGO_TARGET_DIR`"的旧约束）**：Rust 构建产物不再要求落 H 盘。主检出的 cargo target 家族由 `XH_CARGO_TARGET_ROOT` 决定（默认值在 `mise.toml [env]`，本机为 `G:\zeotmp\xh-cargo-target`），布局 `<root>/{main,stack-N,e2e}`；linked worktree 再加一层 `<root>/<worktree 目录名>/`，保证两个 lane 跑同一 stack 不会互相覆盖 exe（BL-221 的失效模式）。优先级：`CARGO_TARGET_DIR`（`worktree-env.ps1` / 手工覆盖）> `XH_CARGO_TARGET_ROOT` > 旧推导 `<one>/.tmp/cargo-target`；**未设该变量时行为与引入前逐字节相同**（回归断言见 `scripts/lib/stack-cargo-target.test.mjs`）。变量指向不存在的目录或相对路径时脚本 **fail-fast**，不静默回落到旧盘。换盘改 `mise.local.toml`（gitignored，优先级高于 `mise.toml`；外壳 export 在 `mise run` 下**不生效**，2026-11-08 实测 mise `[env]` 覆盖壳内变量）。**已知未修**：裸 `cargo` / rust-analyzer 不读 mise env，仍按 `.cargo/config.toml` 落 `<one>/.tmp/cargo-target/main`（IDE 侧缺口，登记于本卡收尾）。
+>
+> 旧约束（历史，2026-11-08 前有效）：H 盘为开发专供，不迁移 `CARGO_TARGET_DIR`。`packages/runtime/target/` 在 stable cargo 下无自动回收（`-Zgc` 仅管 `~/.cargo` 全局缓存，不管本地 `target/`），叠加 Windows PDB（150~200MB/个）+ 4 bin + 11 test target，多 hash 孤儿可堆到 40GB（2026-09-05 实测 39.5GB，H 剩 1.6GB）。单次编译不需要 40GB，常态活集约 6~10GB。
 
-水位线（`target/`）：正常 ≤12GB，12–15GB 观察，≥15GB 告警，≥20GB 强制；H 余量 <5GB 直接走强制。巡检入口：`mise run check:runtime-target`（输出占用与判定，exit 1 = 强制线、exit 2 = 检查不完整；脚本 `scripts/check-runtime-target.mjs`），双周先跑它、超线再按下面顺序清理。
+水位线（`target/`）：正常 ≤12GB，12–15GB 观察，≥15GB 告警，≥20GB 强制；H 余量 <5GB 直接走强制。巡检入口：`mise run check:runtime-target`（输出占用与判定，exit 1 = 强制线、exit 2 = 检查不完整；脚本 `scripts/check-runtime-target.mjs`），双周先跑它、超线再按下面顺序清理。该脚本另给一行 `default-stack runtime binary: … classification=present|migrated-away|unverifiable`（JSON 字段 `runtimeBinary`）：**二进制不存在是迁移后的合法态**（`migrated-away` = 已配 root 但该 root 下还没有 `main/debug/xihe-runtime.exe`，等下次构建/重启即可；`unverifiable` = 未配 root 且各已知根都没有），**纯信息、永不影响 `verdict` 与退出码** —— 它不许把一个已经合法搬走的东西报成故障。
 
 - **worktree 隔离（PLAN-0596，默认策略）**：每个 worktree 使用独立 `CARGO_TARGET_DIR`（若在 one workspace 内，按 one 侧 worktree 约定外置到 `one/.tmp/cargo-target/<name>`；单独 clone 时保持 in-tree 默认），不共享同一 target。2026-10-31 scratch 对照：同一源码/profile 的两个 checkout 共享 target 时，第二 checkout 冷构建 48.9s → 0.3s、磁盘从 2×2.606GB 降为 2.606GB；但真实并行 worktree 的分支/工具链/profile 常不同，且并发构建会串行、Windows 服务占用 exe 会让另一 worktree 构建失败，故不采纳共享，保留隔离。
 - **sweep 作用域**：`clean:runtime-sweep` 只作用于当前 `cargo metadata` 解析出的单个 target（普通 shell = in-tree；在 one workspace 内按 one 侧约定 dot-source 外置脚本后 = 该 worktree 的外置目录），不枚举 `.local/cargo-target` 下其他项目；`--maxsize 12GB` 无单位按 MiB 计（≈11.18 GiB）。
