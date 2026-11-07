@@ -12,17 +12,32 @@
  *   fact    调用方传入的 listeners（画像匹配的归 `own`，其余归 `external`）+ isAlive + cpVersion
  *   subst   `dev-stack-pids.json`（佐证层，不在本模块）
  *
- * verdict 四值（+ null）：
- *   healthy  租约 fresh + 期望端口全部由 own 持有 + 记录进程 alive + **全部字段交叉校验通过**
- *   stale    租约形状可用但不自洽：缺端口 / 心跳过期 / 记录进程全死且无端口（半起、死栈、刷新链路坏）
+ * verdict 四值（+ null）—— **只由事实（facts）决定，租约新鲜度不参与**（见下「冷暖是另一个维度」）：
+ *   healthy  租约形状可用 + 期望端口全部由 own 持有 + 记录进程 alive + **全部事实字段交叉校验通过**
+ *   stale    租约形状可用但不自洽：缺端口 / 无 own 监听 / 记录进程全死 / 字段核对不上
  *   orphan   租约形状可用 + 记录进程全死 + 本栈端口仍在听（画像匹配）
  *   ghost    无租约（文件缺失或损坏）+ 本栈端口仍在听（画像匹配）
  *   null     无租约且无 own 监听 = 该栈未运行；四值都不描述「什么都没发生」，
  *            强塞会制造误报，故显式返回 null，渲染层负责显示 `-`。
  *
  * 划界说明（design 表的「心跳过期」同时出现在 stale 与 ghost 的括号里，本实现按**租约文件是否
- * 存在且形状可用**划界）：形状可用 ⇒ 意图层成立，过期只把 healthy 降级为 stale；**不升级成
- * ghost** —— 否则一台长跑栈的心跳链路一坏就被判成「幽灵」，正是本计划要消灭的那类误报。
+ * 存在且形状可用**划界）：形状可用 ⇒ 意图层成立；形状不可用才谈 ghost。
+ *
+ * **冷暖是另一个维度，不许污染 verdict**（2026-11-08 Lead 裁定，起因是第二类假信号）：
+ * 心跳超 `DEFAULT_STALE_AFTER_MS`（10 min）单独表达为 `leaseState: 'live' | 'cold'`，语义是
+ * 「这栈最近 10 分钟没人跑过一次 `status` 交叉核对」，**不是**「栈坏了」。实测反例：两个
+ * `services_ready=4/4`、`factsOk=true` 的健康栈只因 `heartbeatAt` 超 TTL 被判 `verdict=stale`
+ * ⇒ `dev-stack status` exit 1 ⇒ 任何「只认 exit 0」的自动化把健康栈当故障。所以：`cold` 只出
+ * P3 提示，**不进 `reasons`、不改退出码、不拦 healthy**。
+ *
+ * 续租（`renewLease`）唯一合法来源是**真的做过一次全绿交叉核对**（`dev-stack status`）；不设
+ * 守护进程定时续租——那会把「无人值守」这个信号本身擦掉（`cold` 必须能真实反映没人管）。
+ *
+ * **版本策略（2026-11-08 Lead 裁定，勿改）**：`isShapedLease` 对 `version` 是**严格等值**比较，
+ * 读取侧不做 `[2,3]` 集合兼容 ⇒ 未来 bump 到 `LEASE_VERSION = 3` 时，现存 v2 租约会被判
+ * `corrupt` ⇒ `status --all` 全报 `ghost` + exit 1。这是**响亮的拒绝**，正是期望行为（沉默的
+ * 兼容比响亮的拒绝危险）；因此**引入 v3 时必须先放宽读取侧为集合判定**，否则一次版本号就把
+ * 健康栈打成异常。task-75 给租约追加可选字段 `phase` 时据此**没有** bump 版本（见 `acquireLease`）。
  *
  * **字段可写不可自述**（PLAN-0694 P0 批 2 硬要求，来自批 1 结论「没人校验的字段等于注释」）：
  * - 写进租约的每个字段都必须在 `crossCheckLease()` 里被核对一次（pid↔alive、port↔bind+owner、
@@ -42,16 +57,45 @@ import { dirname, resolve } from 'node:path';
  *
  * v1 → v2（PLAN-0694 批 2）：`owner`/`pid` 两个自述字段换成可核对的 `instanceId`/`pids`
  * （每服务 `{launcher, listener}`），并补上 `projectRoot`/`cpVersion`。
+ *
+ * **v2 内追加了可选字段 `phase`，有意不 bump**：`isShapedLease` 用严格等值比版本，bump 会让
+ * 所有**在跑的 v2 租约**立刻变 corrupt ⇒ `status` 全报 `ghost` + exit 1（两栈实测在跑）。
+ * 这里的取舍是——追加字段且读取侧有确定缺省值（缺 `phase` = `started`）时，兼容成本低于
+ * 「用一次版本号把健康栈打成 ghost」的成本。字段**删除/改语义**才必须 bump。
  */
 export const LEASE_VERSION = 2;
 
 /** 心跳超过这个时长未刷即视为过期（design §待裁 3 的建议默认值，10 min）。 */
 export const DEFAULT_STALE_AFTER_MS = 10 * 60 * 1000;
 
+/**
+ * 租约相位（task-75）。租约回答「有人认领了这个栈」，`phase` 回答「认领到哪一步了」：
+ * - `starting`：已认领、**正在起栈**（spawn 之前就写，`waitReady` 通过前一直是它）；
+ * - `started`：起栈完成/认领在跑的栈（**缺省值**：旧租约没有该字段一律按它算）；
+ * - `stopping`：正在停栈（kill 之前写），期间端口递减属预期。
+ *
+ * 存在的理由不是分类癖：实测启动头 40 秒（03:52:05 观测 `stack1=2/4`，租约 03:52:45 才写）里
+ * 栈**既没就绪也没有租约**，10 分钟层的「端口不全」判活信号比启动过程慢半拍 ⇒ 必然误报。
+ * 相位让「过渡中」这句话有据可依，而不是拿 `lease.exists` 当万能免报牌。
+ */
+export const LEASE_PHASES = Object.freeze(['starting', 'started', 'stopping']);
+
+/** 相位缺省值：旧租约（无 `phase` 字段）按「已起栈」判——保守方向，宁可报 P1 也不免报。 */
+export const DEFAULT_LEASE_PHASE = 'started';
+
+/** 过渡相位（端口不全属预期、可降级报）：只有这两个值算「有人正在动这个栈」。 */
+export const TRANSITION_PHASES = Object.freeze(['starting', 'stopping']);
+
 const STACK_ID_RE = /^stack-(\d+)$/;
 
 /** 核不了的核对项：不算 mismatch，但拦 healthy（声明了就得能验）。 */
-const NON_BLOCKING_CODES = new Set(['ok', 'skipped', 'unverifiable']);
+const NON_BLOCKING_CODES = new Set(['ok', 'skipped', 'unverifiable', 'lease-cold']);
+
+/**
+ * 「租约已冷」的核对码：**信息项**，既不算 mismatch 也不拦 healthy。
+ * 心跳过期只说明「这段时间没人做过交叉核对」，不是事实故障（见文件头「冷暖是另一个维度」）。
+ */
+const COLD_CODE = 'lease-cold';
 
 /**
  * `stack-3` → `3`。目录名用槽位号而非 stackId，保证 `stack-1` 也是 `.xihe-stacks/1/`。
@@ -111,6 +155,7 @@ export function isShapedLease(lease) {
   if (typeof lease.instanceId !== 'string' || lease.instanceId === '') return false;
   if (typeof lease.projectRoot !== 'string' || lease.projectRoot === '') return false;
   if (typeof lease.stackId !== 'string' || lease.stackId === '') return false;
+  if (lease.phase !== undefined && !LEASE_PHASES.includes(lease.phase)) return false;
   if (!isTimestamp(lease.startedAt) || !isTimestamp(lease.heartbeatAt)) return false;
   if (lease.cpVersion !== null && typeof lease.cpVersion !== 'string') return false;
   if (!isPlainObject(lease.ports) || Object.keys(lease.ports).length === 0) return false;
@@ -182,7 +227,7 @@ function normalizePids(pids) {
  *
  * @param {{projectRoot: string, stackId: string, ports: Record<string, number>,
  *          pids?: Record<string, {launcher?: number|null, listener?: number|null}>,
- *          instanceId: string, cpVersion?: string|null, now?: number,
+ *          instanceId: string, cpVersion?: string|null, phase?: string, now?: number,
  *          staleAfterMs?: number}} input
  * @returns {object} 写入的租约对象
  */
@@ -193,6 +238,7 @@ export function acquireLease({
   pids = {},
   instanceId,
   cpVersion = null,
+  phase = DEFAULT_LEASE_PHASE,
   now = Date.now(),
   staleAfterMs = DEFAULT_STALE_AFTER_MS,
 } = {}) {
@@ -205,6 +251,9 @@ export function acquireLease({
   if (typeof instanceId !== 'string' || instanceId === '') {
     throw new TypeError('stack-lease: acquireLease 需要非空 instanceId（租约必须能证明是谁写的）');
   }
+  if (!LEASE_PHASES.includes(phase)) {
+    throw new TypeError(`stack-lease: acquireLease 的 phase 非法: ${JSON.stringify(phase)}（期望 ${LEASE_PHASES.join('|')}）`);
+  }
   const filePath = leasePath(projectRoot, stackId);
   const { lease: previous } = readLease(filePath);
   const previousFresh = previous !== null && now - Date.parse(previous.heartbeatAt) <= staleAfterMs;
@@ -216,11 +265,60 @@ export function acquireLease({
     ports: { ...ports },
     pids: normalizePids(pids),
     cpVersion: typeof cpVersion === 'string' && cpVersion !== '' ? cpVersion : null,
+    phase,
     startedAt: previousFresh ? previous.startedAt : new Date(now).toISOString(),
     heartbeatAt: new Date(now).toISOString(),
   };
   writeLeaseAtomic(filePath, lease);
   return lease;
+}
+
+/**
+ * 读相位。**向后兼容**：旧租约没有 `phase` 字段 ⇒ `started`（保守方向，不免报）。
+ * @param {object|null|undefined} lease
+ * @returns {'starting'|'started'|'stopping'}
+ */
+export function leasePhase(lease) {
+  const phase = lease?.phase;
+  return LEASE_PHASES.includes(phase) ? phase : DEFAULT_LEASE_PHASE;
+}
+
+/**
+ * 租约是否处于**过渡相位且心跳仍新鲜**——「有人正在动这个栈」的完整判据。
+ *
+ * 两个条件缺一不可，这是本函数存在的全部理由：
+ *  1. `phase` 必须是 `starting`/`stopping`（`started` 或缺失 **不算**：起栈完成后端口不全
+ *     = 服务启动后死了 = 真故障，必须继续报 P1）；
+ *  2. 心跳必须新鲜（起栈失败留下的 `starting` 租约随心跳过期自动失效，不能变成永久免报牌）。
+ *
+ * @param {object|null} lease
+ * @param {{now?: number, staleAfterMs?: number}} [options]
+ * @returns {boolean}
+ */
+export function isTransitionLease(lease, { now = Date.now(), staleAfterMs = DEFAULT_STALE_AFTER_MS } = {}) {
+  if (!isShapedLease(lease)) return false;
+  if (!TRANSITION_PHASES.includes(leasePhase(lease))) return false;
+  return now - Date.parse(lease.heartbeatAt) <= staleAfterMs;
+}
+
+/**
+ * 改写相位（只动 `phase` + `heartbeatAt`，不动任何声明字段）。
+ *
+ * `stop` 在 kill 之前用它声明「我正在停」，避免停栈期间端口递减的几秒被读成「半起异常」。
+ *
+ * @param {{projectRoot: string, stackId: string, phase: string, now?: number}} input
+ * @returns {{lease: object|null, updated: boolean}}
+ */
+export function setLeasePhase({ projectRoot, stackId, phase, now = Date.now() } = {}) {
+  if (!LEASE_PHASES.includes(phase)) {
+    throw new TypeError(`stack-lease: setLeasePhase 的 phase 非法: ${JSON.stringify(phase)}`);
+  }
+  const filePath = leasePath(projectRoot, stackId);
+  const { lease } = readLease(filePath);
+  if (lease === null) return { lease: null, updated: false };
+  const next = { ...lease, phase, heartbeatAt: new Date(now).toISOString() };
+  writeLeaseAtomic(filePath, next);
+  return { lease: next, updated: true };
 }
 
 /**
@@ -342,7 +440,8 @@ export function crossCheckLease({ lease = null, facts = {} } = {}) {
 
   const heartbeatMs = Date.parse(lease.heartbeatAt);
   const ageMs = now - heartbeatMs;
-  record('heartbeatAt', ageMs <= staleAfterMs ? 'ok' : 'lease-expired', `age<=${staleAfterMs}ms`, `${ageMs}ms`);
+  // 过期记 `lease-cold`（信息项）而不是 mismatch：它只表示「这段时间没人核对过」，不是故障。
+  record('heartbeatAt', ageMs <= staleAfterMs ? 'ok' : COLD_CODE, `age<=${staleAfterMs}ms`, `${ageMs}ms`);
   record('startedAt', Date.parse(lease.startedAt) <= heartbeatMs ? 'ok' : 'started-at-order', `<=${lease.heartbeatAt}`, lease.startedAt);
 
   const expectedPorts = isPlainObject(facts.expectedPorts) ? facts.expectedPorts : null;
@@ -388,8 +487,9 @@ export function crossCheckLease({ lease = null, facts = {} } = {}) {
       mismatches,
       unverifiable: checks.filter((check) => check.code === 'unverifiable').map((check) => check.field),
       skipped: checks.filter((check) => check.code === 'skipped').map((check) => check.field),
-      // 全绿才算通过：`unverifiable`（声明了核不了）拦 healthy，`skipped`（压根没声明）不拦。
-      allOk: checks.every((check) => check.code === 'ok' || check.code === 'skipped'),
+      // 全绿才算通过：`unverifiable`（声明了核不了）拦 healthy，`skipped`（压根没声明）与
+      // `lease-cold`（冷暖是另一个维度）不拦。
+      allOk: checks.every((check) => check.code === 'ok' || check.code === 'skipped' || check.code === COLD_CODE),
     };
   }
 }
@@ -409,7 +509,8 @@ export function crossCheckLease({ lease = null, facts = {} } = {}) {
  *          checks?: Array<{blocking: boolean}>}} input
  * @returns {{verdict: 'healthy'|'stale'|'orphan'|'ghost'|null, reasons: string[],
  *           ownPorts: number[], missingPorts: number[], externalPorts: number[],
- *           leaseFresh: boolean, leaseAgeMs: number|null, fieldMismatches: string[]}}
+ *           leaseFresh: boolean, leaseAgeMs: number|null, leaseState: 'live'|'cold'|null,
+ *           fieldMismatches: string[]}}
  */
 export function computeVerdict({
   lease = null,
@@ -426,15 +527,17 @@ export function computeVerdict({
   const heartbeatMs = leaseValid ? Date.parse(lease.heartbeatAt) : null;
   const leaseAgeMs = heartbeatMs === null ? null : Math.max(0, now - heartbeatMs);
   const leaseFresh = leaseValid && leaseAgeMs <= staleAfterMs;
+  // 冷暖（live/cold）与 verdict 是**两个维度**：cold = 最近一次交叉核对已超 TTL，不是故障。
+  const leaseState = leaseValid ? (leaseFresh ? 'live' : 'cold') : null;
   const fieldMismatches = Array.isArray(checks)
     ? checks
-        .filter((check) => check && check.code !== 'ok' && check.code !== 'skipped')
+        .filter((check) => check && check.code !== 'ok' && check.code !== 'skipped' && check.code !== COLD_CODE)
         .map((check) => check.code ?? 'mismatch')
     : [];
   const fieldsOk = fieldMismatches.length === 0;
 
   if (!leaseValid) reasons.push(corrupt ? 'lease-corrupt' : lease === null ? 'lease-missing' : 'lease-unusable');
-  else if (!leaseFresh) reasons.push('lease-expired');
+  // 心跳过期**不**写进 reasons（那是 P3 提示的事，见文件头「冷暖是另一个维度」）。
 
   const expectedPorts = leaseValid ? [...new Set(Object.values(lease.ports))].sort((a, b) => a - b) : [];
   const missingPorts = expectedPorts.filter((port) => !ownPorts.includes(port));
@@ -459,10 +562,9 @@ export function computeVerdict({
     return finish('stale');
   }
 
-  if (!leaseFresh) {
-    // 租约在、进程活、心跳停了：栈可能仍在跑，坏的是刷新链路 ⇒ stale（不是 ghost）。
-    return finish('stale');
-  }
+  // 心跳过期不再在此拦下：进程活 + 端口齐 + 字段核对通过 ⇒ healthy，只把 `leaseState` 标冷。
+  // （旧实现在这里 `return finish('stale')`，导致健康长跑栈永久 stale + exit 1，且
+  //  `refreshHeartbeat` 要求 healthy 才续租 ⇒ 自锁，永远冷。）
   if (ownPorts.length === 0) {
     reasons.push('no-own-listener');
     return finish('stale');
@@ -483,7 +585,17 @@ export function computeVerdict({
   /** @param {'healthy'|'stale'|'orphan'|'ghost'|null} verdict */
   function finish(verdict) {
     if (externalPorts.length > 0) reasons.push(`external-ports:${externalPorts.join(',')}`);
-    return { verdict, reasons, ownPorts, missingPorts, externalPorts, leaseFresh, leaseAgeMs, fieldMismatches };
+    return {
+      verdict,
+      reasons,
+      ownPorts,
+      missingPorts,
+      externalPorts,
+      leaseFresh,
+      leaseAgeMs,
+      leaseState,
+      fieldMismatches,
+    };
   }
 }
 
