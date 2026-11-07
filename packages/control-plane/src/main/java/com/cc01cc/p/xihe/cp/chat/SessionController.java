@@ -5,8 +5,8 @@ import com.cc01cc.p.xihe.cp.config.ProblemDetailsHandler;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
 import com.cc01cc.p.xihe.cp.context.service.ContextService;
 import com.cc01cc.p.xihe.cp.entity.Session;
-import com.cc01cc.p.xihe.cp.repository.SessionParticipantRepository;
 import com.cc01cc.p.xihe.cp.service.ContextTemplateService;
+import com.cc01cc.p.xihe.cp.service.SessionParticipantService;
 import com.cc01cc.p.xihe.cp.service.SessionService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -48,7 +48,7 @@ public class SessionController {
     private final SseEmitterManager sseEmitterManager;
     private final com.cc01cc.p.xihe.cp.operation.JobScopeClosureService jobScopeClosureService;
     private final SessionCreationService sessionCreationService;
-    private final SessionParticipantRepository sessionParticipants;
+    private final SessionParticipantService sessionParticipantService;
 
     public SessionController(SessionService sessionService,
                              SessionForkService sessionForkService,
@@ -59,7 +59,7 @@ public class SessionController {
                              SseEmitterManager sseEmitterManager,
                              com.cc01cc.p.xihe.cp.operation.JobScopeClosureService jobScopeClosureService,
                              SessionCreationService sessionCreationService,
-                             SessionParticipantRepository sessionParticipants) {
+                             SessionParticipantService sessionParticipantService) {
         this.sessionService = sessionService;
         this.sessionForkService = sessionForkService;
         this.derivedStateService = derivedStateService;
@@ -69,7 +69,7 @@ public class SessionController {
         this.sseEmitterManager = sseEmitterManager;
         this.jobScopeClosureService = jobScopeClosureService;
         this.sessionCreationService = sessionCreationService;
-        this.sessionParticipants = sessionParticipants;
+        this.sessionParticipantService = sessionParticipantService;
     }
 
     /**
@@ -78,7 +78,7 @@ public class SessionController {
      * exception, and never a fallback to the {@code sessions.agent_principal_id} column).
      */
     private Map<String, Object> view(Session session) {
-        UUID primaryPrincipalId = sessionParticipants.primaryPrincipalId(session.getId()).orElse(null);
+        UUID primaryPrincipalId = sessionParticipantService.primaryPrincipalIdFor(session.getId()).orElse(null);
         return SessionViews.toView(session, primaryPrincipalId);
     }
 
@@ -92,7 +92,7 @@ public class SessionController {
         }
         List<Session> readable = sessionService.listReadable(userId, workspaceId);
         // PLAN-0689 A2c: one batched PRIMARY read for the whole page (no per-Session query).
-        Map<UUID, UUID> primaries = sessionParticipants.primaryPrincipalIds(
+        Map<UUID, UUID> primaries = sessionParticipantService.primaryPrincipalIdsFor(
                 readable.stream().map(Session::getId).toList());
         List<Map<String, Object>> sessions = readable.stream()
                 .map(session -> toSummary(session, primaries.get(session.getId())))

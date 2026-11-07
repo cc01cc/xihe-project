@@ -4,7 +4,7 @@ import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.config.ProblemDetailsHandler;
 import com.cc01cc.p.xihe.cp.config.TenantContext;
 import com.cc01cc.p.xihe.cp.entity.Session;
-import com.cc01cc.p.xihe.cp.repository.SessionParticipantRepository;
+import com.cc01cc.p.xihe.cp.service.SessionParticipantService;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -30,12 +30,12 @@ import java.util.UUID;
 public class WorkspaceSessionController {
 
     private final SessionCreationService sessionCreationService;
-    private final SessionParticipantRepository sessionParticipants;
+    private final SessionParticipantService sessionParticipantService;
 
     public WorkspaceSessionController(SessionCreationService sessionCreationService,
-                                      SessionParticipantRepository sessionParticipants) {
+                                      SessionParticipantService sessionParticipantService) {
         this.sessionCreationService = sessionCreationService;
-        this.sessionParticipants = sessionParticipants;
+        this.sessionParticipantService = sessionParticipantService;
     }
 
     @PostMapping
@@ -48,7 +48,7 @@ public class WorkspaceSessionController {
                     SessionRequests.paramsFrom(request));
             // PLAN-0689 A2c: the created view's agentPrincipalId is the PRIMARY participant row
             // (null when the Session has none — display class, no exception, no column fallback).
-            UUID primaryPrincipalId = sessionParticipants.primaryPrincipalId(session.getId()).orElse(null);
+            UUID primaryPrincipalId = sessionParticipantService.primaryPrincipalIdFor(session.getId()).orElse(null);
             return ResponseEntity.status(HttpStatus.CREATED)
                     .body(SessionViews.toView(session, primaryPrincipalId));
         } catch (CpApiException e) {

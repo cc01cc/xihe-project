@@ -22,6 +22,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
+import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.ArrayList;
@@ -462,6 +463,23 @@ public class SessionParticipantService {
         }
         return participantRepository.findFirstBySessionIdAndPrincipalId(sessionId, principalId)
                 .map(SessionParticipant::getId);
+    }
+
+    /**
+     * PLAN-0689 A2c: PRIMARY-principal lookup kept at the service layer so controllers never inject
+     * a JPA repository (CpArchitectureTest's CONTROLLER_TO_REPOSITORY rule).
+     */
+    @Transactional(readOnly = true)
+    public Optional<UUID> primaryPrincipalIdFor(UUID sessionId) {
+        return participantRepository.primaryPrincipalId(sessionId);
+    }
+
+    /**
+     * PLAN-0689 A2c: batched PRIMARY lookup for list views — one query for the page.
+     */
+    @Transactional(readOnly = true)
+    public Map<UUID, UUID> primaryPrincipalIdsFor(Collection<UUID> sessionIds) {
+        return participantRepository.primaryPrincipalIds(sessionIds);
     }
 
 /**
