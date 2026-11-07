@@ -47,6 +47,21 @@ export interface WorkspaceSSEOptions {
 export type WorkspaceSseNoticeState = "limit" | "disconnected" | "reconnecting" | null;
 
 /**
+ * PLAN-0691 T1.6-C1：插件绑定事件 kind（attach / detach）。
+ *
+ * <p>**跨 lane 的 wire 字面量**：与 CP `WorkspaceEventManager.KIND_PLUGIN_BINDING`、lane A
+ * 的 binding 端点共用同一个字符串 `plugin_binding`，测试里钉死了它——改名必须让测试红，
+ * 而不是让两侧静默错位。</p>
+ *
+ * <p>漏登记的最坏后果（双向）：CP 侧没进 `validateKind` 白名单 ⇒ publish 抛 400
+ * `INVALID_REQUEST`，而调用方通常**已经提交了绑定事务**（attach 已落库）⇒ 数据变了、界面
+ * 不刷新，用户看到的是卡住的 pending 插件而不是校验错误；UI 侧没进 `workspaceEventKinds`
+ * ⇒ 事件在 `normalizeWorkspaceEvent` 被丢弃，症状一模一样（只剩一条 warn）。所以两侧的
+ * 白名单都要与发布方同批，顺序不能反。</p>
+ */
+export const PLUGIN_BINDING_EVENT_KIND = "plugin_binding";
+
+/**
  * Workspace-scoped SSE subscription.
  *
  * <p>PLAN-0676 T2：本 composable 不再自己建连接，而是把"谁持有连接"交给
@@ -68,6 +83,16 @@ export function useWorkspaceSSE(
 
     const { isActive: limitActive } = useSseSubscriberLimit();
     let activeWorkspaceId: string | null = null;
+
+    /**
+     * PLAN-0691 T1.6-C1：最近一条 `plugin_binding` 事件的序列号（`null` = 还没收到过）。
+     *
+     * <p>它是"绑定目录变了"的单调事实源：消费方（会话插件面板）看到它前进就重新拉
+     * `GET /api/v1/sessions/{sessionId}/plugins`，**不解析事件体**——binding 细分字段
+     * （`bindingId`/`action`/`revision`/`catalogVersion`）尚未进 `WorkspaceEvent` 信封
+     * （T1.6 持久化那步裁定，B 类），这里不猜字段形状。</p>
+     */
+    const pluginBindingRevision = ref<number | null>(null);
 
     const channelKey = computed(() => {
         const id = toValue(workspaceId);
@@ -190,6 +215,10 @@ export function useWorkspaceSSE(
     const leader = useSharedEventLeader<WorkspaceEvent>(channelKey, upstreamConnect, {
         sequenceOf: (event) => event.sequence,
         onEvent: (event) => {
+            if (event.kind === PLUGIN_BINDING_EVENT_KIND) {
+                // 只推进序列号，不解析 payload（见 `pluginBindingRevision` 的注释）。
+                pluginBindingRevision.value = event.sequence;
+            }
             void options.onEvent?.(event);
         },
         onResync: (reason) => requestFullRefresh(reason),
@@ -242,6 +271,8 @@ export function useWorkspaceSSE(
         connectionError,
         connectionErrorCode,
         lastSequence: leader.lastSeq,
+        /** PLAN-0691 T1.6-C1：最近一条 `plugin_binding` 事件的序列号（`null` = 未收到过）。 */
+        pluginBindingRevision,
         role: leader.role,
         noticeState,
         flapCount: leader.flapCount,

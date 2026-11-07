@@ -1357,6 +1357,8 @@ export type WorkspaceEventKind =
     | "snapshot_required"
     | "workspace_event_error"
     | "scheduled_tasks_changed"
+    /** PLAN-0691 T1.6-C1：插件绑定 attach/detach 的粗粒度失效事件（跨 lane wire 字面量）。 */
+    | "plugin_binding"
     | "heartbeat";
 
 export interface WorkspaceEvent {

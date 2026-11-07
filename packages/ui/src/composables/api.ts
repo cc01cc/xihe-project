@@ -2129,12 +2129,19 @@ function normalizeWorkspaceResponse(value: unknown): ApiWorkspace {
     return workspace;
 }
 
+/**
+ * SSE 信封允许的 kind 白名单。**不在表里的 kind 会被 `normalizeWorkspaceEvent` 直接丢弃**
+ * （调用方只看到一条 `workspace_sse_invalid_event` 警告），所以 CP 侧每新增一个 kind
+ * 都必须同批登记到本表与 `WorkspaceEventKind` 联合类型，否则事件在 UI 层静默消失。
+ * PLAN-0691 T1.6-C1 的 `plugin_binding` 即按此规则登记。
+ */
 const workspaceEventKinds = [
     "workspace_status",
     "file_changed",
     "snapshot_required",
     "workspace_event_error",
     "scheduled_tasks_changed",
+    "plugin_binding",
     "heartbeat",
 ] as const;
 

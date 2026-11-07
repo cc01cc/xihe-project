@@ -1,7 +1,11 @@
 import { flushPromises } from "@vue/test-utils";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { chatTransport } from "@/services/chatTransport";
-import { useWorkspaceSSE, type WorkspaceSSEOptions } from "../composables/useWorkspaceSSE";
+import {
+    PLUGIN_BINDING_EVENT_KIND,
+    useWorkspaceSSE,
+    type WorkspaceSSEOptions,
+} from "../composables/useWorkspaceSSE";
 import type { SharedLeaderDeps } from "../../../../composables/useSharedEventLeader";
 
 vi.mock("@/services/chatTransport", () => ({
@@ -121,6 +125,59 @@ describe("useWorkspaceSSE", () => {
         expect(onEvent).toHaveBeenCalledWith(
             expect.objectContaining({ kind: "snapshot_required", sequence: 7 }),
         );
+    });
+
+    /**
+     * PLAN-0691 T1.6-C1：`plugin_binding` 必须被 normalize 收下（否则事件在 `api.ts` 的
+     * 白名单处就被丢弃，症状与 CP 侧漏白名单一样：数据变了、界面不刷新），并推进
+     * `pluginBindingRevision` 这个单调事实源。
+     */
+    it("forwards plugin_binding and records its sequence as the plugin revision", async () => {
+        const onEvent = vi.fn<NonNullable<WorkspaceSSEOptions["onEvent"]>>();
+        const sse = useWorkspaceSSE("ws-1", options({ onEvent }));
+        await flushPromises();
+        const sent = vi.mocked(chatTransport.sendMessages).mock.calls[0]![1];
+
+        expect(sse.pluginBindingRevision.value).toBeNull();
+
+        await sent.onmessage?.({
+            id: "1",
+            event: PLUGIN_BINDING_EVENT_KIND,
+            data: JSON.stringify({
+                workspaceId: "ws-1",
+                sequence: 1,
+                kind: PLUGIN_BINDING_EVENT_KIND,
+                source: "control-plane",
+            }),
+        });
+
+        // 跨 lane 契约：字面量就是 `plugin_binding`（CP 侧有对称的钉死断言），改名即红。
+        expect(PLUGIN_BINDING_EVENT_KIND).toBe("plugin_binding");
+        expect(sse.pluginBindingRevision.value).toBe(1);
+        expect(onEvent).toHaveBeenCalledWith(
+            expect.objectContaining({ kind: "plugin_binding", sequence: 1 }),
+        );
+    });
+
+    it("drops a look-alike plugin kind instead of treating the whitelist as a wildcard", async () => {
+        const onEvent = vi.fn<NonNullable<WorkspaceSSEOptions["onEvent"]>>();
+        const sse = useWorkspaceSSE("ws-1", options({ onEvent }));
+        await flushPromises();
+        const sent = vi.mocked(chatTransport.sendMessages).mock.calls[0]![1];
+
+        await sent.onmessage?.({
+            id: "1",
+            event: "plugin_bindings",
+            data: JSON.stringify({
+                workspaceId: "ws-1",
+                sequence: 1,
+                kind: "plugin_bindings",
+                source: "control-plane",
+            }),
+        });
+
+        expect(onEvent).not.toHaveBeenCalled();
+        expect(sse.pluginBindingRevision.value).toBeNull();
     });
 
     it("two tabs of the same workspace open exactly one upstream connection", async () => {
