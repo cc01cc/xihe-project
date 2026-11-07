@@ -35,15 +35,24 @@ public final class GrantSources {
     public static final String AGENT_DEFAULT = "agent_default";
 
     /**
+     * PLAN-0691 T1.3 (M1): atoms a plugin <b>binding</b> confers on its workspace, materialized by
+     * the binding write path (lane A) with the same frozen-snapshot semantics as
+     * {@link #AGENT_DEFAULT}. The row belongs to one binding, so the atom is only meaningful
+     * together with the binding identity that produced it — the audit answers "where did this hold
+     * come from" with this source instead of guessing from a role name.
+     */
+    public static final String PLUGIN_BINDING = "plugin_binding";
+
+    /**
      * Sources that participate in a decision (design §3.4 step ②). {@code default}/{@code direct}
      * are absent by design — T1.6 deletes the direct branch instead of keeping a second mechanism.
      */
     public static final List<String> EVALUATION_SOURCES = List.of(
-            ROLE, SPAWN, TEMPLATE, CREDENTIAL_BINDING, AGENT_DEFAULT);
+            ROLE, SPAWN, TEMPLATE, CREDENTIAL_BINDING, AGENT_DEFAULT, PLUGIN_BINDING);
 
     /** Sources the product code may write after V88 narrows the constraint. */
     public static final List<String> WRITABLE_SOURCES = List.of(
-            ROLE, SPAWN, TEMPLATE, CREDENTIAL_BINDING, AGENT_DEFAULT);
+            ROLE, SPAWN, TEMPLATE, CREDENTIAL_BINDING, AGENT_DEFAULT, PLUGIN_BINDING);
 
     private GrantSources() {
     }

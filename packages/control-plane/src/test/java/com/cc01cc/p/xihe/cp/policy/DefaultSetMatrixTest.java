@@ -61,7 +61,10 @@ class DefaultSetMatrixTest extends AbstractIntegrationTest {
             "read", "write", "delete", "exec", "network", "CREATE_OWN_AGENT",
             // BL-345 (user ruling 2026-11-06): every account may write memory of the principals
             // it owns; writing arbitrary subjects stays an owner/SUPER_ADMIN atom.
-            "MEMORY_WRITE_SELF");
+            "MEMORY_WRITE_SELF",
+            // PLAN-0691 T1.3 (M1) spec B-4: invoking an already-bound BUILTIN plugin is in the base
+            // set (install ≠ grant; a third-party plugin has no default at all).
+            "PLUGIN_INVOKE");
 
     /**
      * spec §4.1 ADMIN row / evidence matrix full-allow column: five rows plus the
@@ -85,7 +88,11 @@ class DefaultSetMatrixTest extends AbstractIntegrationTest {
             // what it can delegate, and GRANT_ANY_ATOM stays SUPER_ADMIN-only (D-166).
             "MANAGE_ROLES",
             // BL-345: ADMIN inherits the USER default set (SELF), but not MEMORY_WRITE (any subject).
-            "MEMORY_WRITE_SELF");
+            "MEMORY_WRITE_SELF",
+            // PLAN-0691 T1.3 (M1): the four plugin atoms make the count 33; ADMIN (the fixed
+            // instance-administrator set) holds manage + bind, inherits invoke from USER's set, and
+            // never holds PLUGIN_DATA (the data plane belongs to a binding, not to a person).
+            "PLUGIN_MANAGE", "PLUGIN_BIND", "PLUGIN_INVOKE");
 
     /** spec §2.1: vocabulary members that never enter a built-in default set. */
     private static final List<String> OUT_OF_DEFAULT_VOCABULARY = List.of(

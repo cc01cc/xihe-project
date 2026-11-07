@@ -1,8 +1,10 @@
 package com.cc01cc.p.xihe.cp.config;
 
+import com.cc01cc.p.xihe.cp.plugin.kv.PluginKvTokenFilter;
 import com.cc01cc.p.xihe.cp.policy.CapabilityAuthorities;
 import jakarta.servlet.http.HttpServletResponse;
 import jakarta.servlet.DispatcherType;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.http.HttpMethod;
 import org.springframework.context.annotation.Configuration;
@@ -31,11 +33,17 @@ public class SecurityConfig {
 
     private final JwtAuthenticationFilter jwtAuthenticationFilter;
     private final InternalTokenFilter internalTokenFilter;
+    private final PluginKvTokenFilter pluginKvTokenFilter;
+    private final boolean pluginEnabled;
 
     public SecurityConfig(JwtAuthenticationFilter jwtAuthenticationFilter,
-                          InternalTokenFilter internalTokenFilter) {
+                          InternalTokenFilter internalTokenFilter,
+                          PluginKvTokenFilter pluginKvTokenFilter,
+                          @Value("${cp.plugin.enabled:false}") boolean pluginEnabled) {
         this.jwtAuthenticationFilter = jwtAuthenticationFilter;
         this.internalTokenFilter = internalTokenFilter;
+        this.pluginKvTokenFilter = pluginKvTokenFilter;
+        this.pluginEnabled = pluginEnabled;
     }
 
     @Bean
@@ -93,6 +101,12 @@ public class SecurityConfig {
                 // (/internal/** and /api/v1/mcp) and must not gain the user API just because it
                 // is "authenticated" (PLAN-0610 W1b keeps the pre-existing denial).
                 .requestMatchers("/api/v1/**").access((authentication, context) -> userPrincipalOnly(authentication.get()))
+                // PLAN-0691 T1.5 (SEC-1): the plugin KV data plane accepts exactly one credential —
+                // a binding-scoped token minted by PluginKvTokenService. It is deliberately registered
+                // *before* the /internal/v1/** role rule: SEC-1 says the global ROLE_INTERNAL_SERVICE
+                // token is 403 on this surface, which only holds if this matcher wins first.
+                .requestMatchers(PluginKvTokenFilter.KV_PATH_PATTERN)
+                    .access((authentication, context) -> pluginKvDataPlane(authentication.get()))
                 // Service authentication is not user authorization: the service role is unchanged
                 // (ROLE_INTERNAL_SERVICE) and the nine internal @PreAuthorize expressions depend
                 // on it (W1b-2 keeps them as-is).
@@ -100,7 +114,12 @@ public class SecurityConfig {
                 .anyRequest().authenticated()
             )
             .addFilterBefore(internalTokenFilter, UsernamePasswordAuthenticationFilter.class)
-            .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);
+            .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class)
+            // Registered last so the binding claims it publishes are the ones the KV controller
+            // reads. The other two filters only ever *add* authentication for credentials they can
+            // verify (neither can verify a binding token: it is signed with a different key), so they
+            // cannot clobber what this one sets.
+            .addFilterBefore(pluginKvTokenFilter, UsernamePasswordAuthenticationFilter.class);
 
         return http.build();
     }
@@ -122,6 +141,34 @@ public class SecurityConfig {
                                 .equals(authority.getAuthority()));
         return new AuthorizationDecision(
                 auth != null && auth.isAuthenticated() && !anonymous && !serviceIdentity);
+    }
+
+    /**
+     * PLAN-0691 T1.5: the plugin KV data plane's URL rule (spec/data-plane.md SEC-1/SEC-2, D-66).
+     *
+     * <p>Two different answers on purpose:
+     * <ul>
+     *   <li><b>feature off</b> — allow the request through. D-66 says a flagged-off plugin feature
+     *       must look like a build without it, and the KV controller is not registered in that case,
+     *       so the request falls through to the dispatcher and the error dispatch answers 404. Had
+     *       this rule denied instead, the same call would answer 401/403, i.e. the disabled feature
+     *       would still be observed as "exists but forbidden" — the opposite of the flag's contract.</li>
+     *   <li><b>feature on</b> — require {@link PluginKvTokenFilter#AUTHORITY}, which only
+     *       {@link PluginKvTokenFilter} grants after verifying signature and {@code exp}. An
+     *       anonymous caller is denied and therefore gets the chain's 401; a caller holding the
+     *       internal service token or a user token is authenticated but lacks the authority, and gets
+     *       403 — exactly the split SEC-1 asks for.</li>
+     * </ul>
+     */
+    private AuthorizationDecision pluginKvDataPlane(Authentication auth) {
+        if (!pluginEnabled) {
+            return new AuthorizationDecision(true);
+        }
+        boolean anonymous = auth instanceof AnonymousAuthenticationToken;
+        boolean bindingToken = auth != null && auth.isAuthenticated() && !anonymous
+                && auth.getAuthorities().stream()
+                        .anyMatch(authority -> PluginKvTokenFilter.AUTHORITY.equals(authority.getAuthority()));
+        return new AuthorizationDecision(bindingToken);
     }
 
     @Bean

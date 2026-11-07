@@ -120,7 +120,14 @@ public final class PermissionAtomCatalog {
             CAP_WORKSPACE_ADMIN,
             // workspace management faces
             ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_AGENTS,
-            ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_MEMBERS);
+            ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_MEMBERS,
+            // PLAN-0691 T1.3 (M1): an agent principal is a grantee, not a plugin administrator —
+            // it may not install (PLUGIN_MANAGE), bind (PLUGIN_BIND) or touch the plugin data plane
+            // (PLUGIN_DATA). PLUGIN_INVOKE is deliberately NOT here: invoking a bound builtin
+            // plugin is the one plugin verb an agent may hold by default.
+            ToolFaceRegistry.ACTION_PLUGIN_MANAGE,
+            ToolFaceRegistry.ACTION_PLUGIN_BIND,
+            ToolFaceRegistry.ACTION_PLUGIN_DATA);
 
     private static final List<String> ACTION_ATOM_NAMES = List.of(
             ToolFaceRegistry.ACTION_READ,
@@ -167,7 +174,14 @@ public final class PermissionAtomCatalog {
             ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_POLICY,
             // PLAN-0673 M2 (D-166): the grant-side subset bypass. Instance-only, SUPER_ADMIN-only
             // default, audited on every use — never a role-name special case.
-            ToolFaceRegistry.ACTION_GRANT_ANY_ATOM);
+            ToolFaceRegistry.ACTION_GRANT_ANY_ATOM,
+            // PLAN-0691 T1.3 (M1): the plugin binding face — four atoms, one per verb. 29 + 4 = 33
+            // action atoms; the matching role seeds land in Flyway V137 (a new atom without its
+            // seed row leaves SUPER_ADMIN one atom short and DefaultSetMigrationParityTest red).
+            ToolFaceRegistry.ACTION_PLUGIN_MANAGE,
+            ToolFaceRegistry.ACTION_PLUGIN_BIND,
+            ToolFaceRegistry.ACTION_PLUGIN_INVOKE,
+            ToolFaceRegistry.ACTION_PLUGIN_DATA);
 
     private static final List<String> CAPABILITY_ATOM_NAMES = List.of(
             CAP_INSTANCE_SUPER, CAP_INSTANCE_ADMIN, CAP_WORKSPACE_ADMIN);
@@ -192,6 +206,12 @@ public final class PermissionAtomCatalog {
             ToolFaceRegistry.ACTION_READ_INSTANCE_CONTENT,
             ToolFaceRegistry.ACTION_WRITE_INSTANCE_CONTENT,
             ToolFaceRegistry.ACTION_VIEW_SECRET_CONTENT,
+            // PLAN-0691 T1.3 (M1): plugin administration acts on the instance catalog, and the
+            // plugin data plane belongs to one binding (a service principal), never to a workspace
+            // member — both are instance-bindable only (decision #27). PLUGIN_BIND / PLUGIN_INVOKE
+            // stay `both`: binding is a workspace act and an invocation carries a workspace id.
+            ToolFaceRegistry.ACTION_PLUGIN_MANAGE,
+            ToolFaceRegistry.ACTION_PLUGIN_DATA,
             CAP_INSTANCE_SUPER,
             CAP_INSTANCE_ADMIN);
 
@@ -246,7 +266,7 @@ public final class PermissionAtomCatalog {
                 : WILDCARD;
     }
 
-    /** The action atoms, in canonical order (29 after BL-345). */
+    /** The action atoms, in canonical order (33 after PLAN-0691 T1.3 added four plugin atoms). */
     public static List<String> actionAtoms() {
         return ACTION_ATOM_NAMES;
     }

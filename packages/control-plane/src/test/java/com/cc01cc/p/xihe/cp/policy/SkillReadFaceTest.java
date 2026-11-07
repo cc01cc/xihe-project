@@ -29,7 +29,7 @@ class SkillReadFaceTest {
      * reviewed decision.
      */
     // BL-345/V129 (2026-11-06) added MEMORY_WRITE_SELF (28 → 29); keep in sync with the catalog.
-    private static final int BUILTIN_ACTION_CLASS_COUNT = 29;
+    private static final int BUILTIN_ACTION_CLASS_COUNT = 33;
 
     @Test
     void skillReadResolvesToTheExistingReadFace() {
