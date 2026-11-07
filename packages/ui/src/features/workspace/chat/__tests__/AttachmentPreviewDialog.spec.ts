@@ -1,5 +1,6 @@
 import { mount, flushPromises } from "@vue/test-utils";
-import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { nextTick } from "vue";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { i18n } from "../../../../i18n";
 import type { AttachmentFile } from "../../../../types";
 import AttachmentPreviewDialog from "../components/AttachmentPreviewDialog.vue";
@@ -28,7 +29,14 @@ function attachment(overrides: Partial<AttachmentFile> = {}): AttachmentFile {
     };
 }
 
-function mountDialog(overrides: { open?: boolean; url?: string; file?: AttachmentFile } = {}) {
+function mountDialog(
+    overrides: {
+        open?: boolean;
+        url?: string;
+        file?: AttachmentFile;
+        attachTo?: HTMLElement;
+    } = {},
+) {
     return mount(AttachmentPreviewDialog, {
         props: {
             open: overrides.open ?? true,
@@ -36,6 +44,7 @@ function mountDialog(overrides: { open?: boolean; url?: string; file?: Attachmen
             url: overrides.url ?? "/api/v1/files/att-1",
         },
         global: { plugins: [i18n] },
+        ...(overrides.attachTo ? { attachTo: overrides.attachTo } : {}),
     });
 }
 
@@ -251,6 +260,181 @@ describe("AttachmentPreviewDialog", () => {
         expect(wrapper.find('[data-testid="attachment-preview-image"]').exists()).toBe(true);
         expect(wrapper.find('[data-testid="workspace-image-preview"]').exists()).toBe(true);
         expect(URL.createObjectURL).toHaveBeenCalledTimes(1);
+        wrapper.unmount();
+    });
+});
+
+describe("AttachmentPreviewDialog modal a11y and focus", () => {
+    /** Elements the focus assertions need to survive to the end of each case. */
+    const attached: HTMLElement[] = [];
+
+    function attach(element: HTMLElement) {
+        document.body.append(element);
+        attached.push(element);
+        return element;
+    }
+
+    function triggerButton() {
+        const button = attach(document.createElement("button"));
+        button.textContent = "open-preview";
+        return button;
+    }
+
+    function messageListViewport() {
+        const viewport = attach(document.createElement("div"));
+        viewport.dataset.testid = "message-scroller-viewport";
+        viewport.tabIndex = 0;
+        viewport.textContent = "messages";
+        return viewport;
+    }
+
+    /** reka-ui listens on the dialog element and the document, so the event must bubble. */
+    function pressKey(element: HTMLElement, key: string, init: KeyboardEventInit = {}) {
+        const event = new KeyboardEvent("keydown", {
+            key,
+            code: key,
+            bubbles: true,
+            cancelable: true,
+            ...init,
+        });
+        element.dispatchEvent(event);
+        return event;
+    }
+
+    function dialogElement(wrapper: ReturnType<typeof mountDialog>) {
+        return wrapper.get('[data-testid="attachment-preview-dialog"]').element as HTMLElement;
+    }
+
+    beforeEach(() => {
+        previewMock.mockResolvedValue(textPreview("col_a,col_b\n1,2\n"));
+    });
+
+    afterEach(() => {
+        while (attached.length > 0) attached.pop()?.remove();
+    });
+
+    it("renders a labelled modal dialog with the title as its accessible name", async () => {
+        const wrapper = mountDialog({ attachTo: document.body });
+        await flushPromises();
+
+        const dialog = dialogElement(wrapper);
+        expect(dialog.getAttribute("role")).toBe("dialog");
+        expect(dialog.getAttribute("aria-modal")).toBe("true");
+
+        const labelledBy = dialog.getAttribute("aria-labelledby");
+        expect(labelledBy).toBeTruthy();
+        expect(document.getElementById(labelledBy!)?.textContent).toContain(
+            "session-export-2026-11-07.csv",
+        );
+
+        const describedBy = dialog.getAttribute("aria-describedby");
+        expect(describedBy).toBeTruthy();
+        expect(document.getElementById(describedBy!)?.textContent).toContain("12.0 MiB");
+
+        wrapper.unmount();
+    });
+
+    it("moves focus inside the dialog when it opens", async () => {
+        const trigger = triggerButton();
+        trigger.focus();
+        expect(document.activeElement).toBe(trigger);
+
+        const wrapper = mountDialog({ attachTo: document.body });
+        await flushPromises();
+
+        const dialog = dialogElement(wrapper);
+        expect(dialog.contains(document.activeElement)).toBe(true);
+
+        wrapper.unmount();
+    });
+
+    it("wraps Tab from the last focusable element back to the first", async () => {
+        const wrapper = mountDialog({ attachTo: document.body });
+        await flushPromises();
+
+        const dialog = dialogElement(wrapper);
+        const focusables = Array.from(dialog.querySelectorAll<HTMLElement>("button")).filter(
+            (element) => !element.hasAttribute("disabled"),
+        );
+        expect(focusables.length).toBeGreaterThan(1);
+        const first = focusables[0]!;
+        const last = focusables[focusables.length - 1]!;
+
+        last.focus();
+        const event = pressKey(last, "Tab");
+        await nextTick();
+
+        expect(event.defaultPrevented).toBe(true);
+        expect(document.activeElement).toBe(first);
+
+        wrapper.unmount();
+    });
+
+    it("wraps Shift+Tab from the first focusable element back to the last", async () => {
+        const wrapper = mountDialog({ attachTo: document.body });
+        await flushPromises();
+
+        const dialog = dialogElement(wrapper);
+        const focusables = Array.from(dialog.querySelectorAll<HTMLElement>("button")).filter(
+            (element) => !element.hasAttribute("disabled"),
+        );
+        const first = focusables[0]!;
+        const last = focusables[focusables.length - 1]!;
+
+        first.focus();
+        const event = pressKey(first, "Tab", { shiftKey: true });
+        await nextTick();
+
+        expect(event.defaultPrevented).toBe(true);
+        expect(document.activeElement).toBe(last);
+
+        wrapper.unmount();
+    });
+
+    it("closes on Escape", async () => {
+        const wrapper = mountDialog({ attachTo: document.body });
+        await flushPromises();
+
+        pressKey(dialogElement(wrapper), "Escape");
+        await flushPromises();
+
+        expect(wrapper.emitted("update:open")?.at(-1)).toEqual([false]);
+        wrapper.unmount();
+    });
+
+    it("returns focus to the element that opened the dialog", async () => {
+        const trigger = triggerButton();
+        trigger.focus();
+
+        const wrapper = mountDialog({ attachTo: document.body });
+        await flushPromises();
+        expect(document.activeElement).not.toBe(trigger);
+
+        await wrapper.setProps({ open: false });
+        await flushPromises();
+        await nextTick();
+
+        expect(document.activeElement).toBe(trigger);
+        wrapper.unmount();
+    });
+
+    it("falls back to the message list when the opener is gone by close time", async () => {
+        const viewport = messageListViewport();
+        const trigger = triggerButton();
+        trigger.focus();
+
+        const wrapper = mountDialog({ attachTo: document.body });
+        await flushPromises();
+
+        // The message row is dropped while the overlay is open (delete / stream rewrite).
+        trigger.remove();
+        attached.splice(attached.indexOf(trigger), 1);
+
+        await wrapper.setProps({ open: false });
+        await flushPromises();
+        await nextTick();
+
+        expect(document.activeElement).toBe(viewport);
         wrapper.unmount();
     });
 });
