@@ -46,8 +46,11 @@ export const BUILD_SCOPE = 'build';
  * - `ports` 端口冲突 / `docker` 残留 / `runs` 活跃 run / `disk` 磁盘 —— 环境真的有问题；
  * - `runtime-target`：**每一轮** host E2E 都要启动 Rust runtime，所以"解析不出 runtime 产物在哪"
  *   与 CP jar 的模式无关，不许因为"本轮不启动 jar"就放过（这条是缺陷 3 的落地位置）。
+ * - `artifact-truth`：共享产物（`C:/xihe-build/e2e` 的 CP jar）的**内容**无法与源码对照（没有
+ *   git 判据、读不出 jar 条目、mtime 也不可用）—— 这类"核不了"**重建一次也不会变绿**，所以不能
+ *   跟 `build` 一样被延期（这是缺陷 4 的落地位置，见 scripts/lib/e2e-build-artifact.mjs）。
  */
-export const ALWAYS_BLOCKING_SCOPES = Object.freeze(['ports', 'docker', 'runs', 'disk', 'runtime-target']);
+export const ALWAYS_BLOCKING_SCOPES = Object.freeze(['ports', 'docker', 'runs', 'disk', 'runtime-target', 'artifact-truth']);
 
 /** `--skip-preflight` 时仍然执行的段落（用户 2026-11-05 定的硬阈值，不许被顺手跳过）。 */
 export const ALWAYS_ENFORCED_SCOPES = Object.freeze(['disk']);
