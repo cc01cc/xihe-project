@@ -7,6 +7,7 @@ import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionFollowUpItemRepository;
 import com.cc01cc.p.xihe.cp.service.BranchPathService;
+import com.cc01cc.p.xihe.cp.service.SessionParticipantService;
 import com.cc01cc.p.xihe.cp.service.SessionService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
@@ -50,6 +51,7 @@ public class SessionWakeupService {
     private final ChatSubmissionService chatSubmissionService;
     private final ApplicationEventPublisher eventPublisher;
     private final ObjectMapper objectMapper;
+    private final SessionParticipantService sessionParticipantService;
 
     public SessionWakeupService(SessionService sessionService,
                                 ChatRunRepository chatRunRepository,
@@ -58,7 +60,8 @@ public class SessionWakeupService {
                                 BranchPathService branchPathService,
                                 ChatSubmissionService chatSubmissionService,
                                 ApplicationEventPublisher eventPublisher,
-                                ObjectMapper objectMapper) {
+                                ObjectMapper objectMapper,
+                                SessionParticipantService sessionParticipantService) {
         this.sessionService = sessionService;
         this.chatRunRepository = chatRunRepository;
         this.followUpItemRepository = followUpItemRepository;
@@ -67,6 +70,7 @@ public class SessionWakeupService {
         this.chatSubmissionService = chatSubmissionService;
         this.eventPublisher = eventPublisher;
         this.objectMapper = objectMapper;
+        this.sessionParticipantService = sessionParticipantService;
     }
 
     /** started = 已创建 ChatRun 载体；deferred = busy 顺延入 follow-up 队列（不计 missed）。 */
@@ -197,7 +201,11 @@ public class SessionWakeupService {
         // 则 provider/model 由 Session 行决定；未绑定则不带提示（Agent 侧走默认）。
         String provider = session.getProviderConnectionId() == null ? null : session.getModelProvider();
         String model = session.getProviderConnectionId() == null ? null : session.getModelName();
-        String principalId = session.getAgentPrincipalId();
+        // PLAN-0689 A2 (T1.2 / design B2-a): same value the Session column used to hold — the
+        // PRIMARY row's principal, written in the same transaction by every create/bind path.
+        UUID scheduledPrincipal =
+                sessionParticipantService.responderPrincipalIdFor(session.getId(), null);
+        String principalId = scheduledPrincipal == null ? null : scheduledPrincipal.toString();
         String runId = UUID.randomUUID().toString();
         String requestHash = ChatRequestHash.calculate(objectMapper, prompt, provider, model,
                 SCHEDULED_TOOL_MODE, List.of(), Map.of(), principalId, branchId);

@@ -304,7 +304,12 @@ public class ChatController {
                         ? item.getProvider() : session.getModelProvider();
                 String model = session.getProviderConnectionId() == null
                         ? item.getModel() : session.getModelName();
-                String principalId = session.getAgentPrincipalId();
+                // PLAN-0689 A2 (T1.2 / design B2-a): read the same value the Session column used to
+                // hold — the PRIMARY row's principal, which every create/bind path wrote in the same
+                // transaction. Same input ⇒ same hash ⇒ pre-upgrade Idempotency-Keys still dedupe.
+                UUID followUpPrincipal =
+                        sessionParticipantService.responderPrincipalIdFor(session.getId(), null);
+                String principalId = followUpPrincipal == null ? null : followUpPrincipal.toString();
                 String branchId = item.getBranchId().toString();
                 String requestHash = ChatRequestHash.calculate(objectMapper, item.getContent(), provider, model,
                         item.getToolMode(), admission.attachments().fileIds(), timeouts, principalId, branchId);

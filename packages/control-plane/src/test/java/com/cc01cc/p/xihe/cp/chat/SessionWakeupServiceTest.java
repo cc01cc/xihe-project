@@ -57,6 +57,7 @@ class SessionWakeupServiceTest {
     private BranchPathService branchPathService;
     private ChatSubmissionService chatSubmissionService;
     private ApplicationEventPublisher eventPublisher;
+    private com.cc01cc.p.xihe.cp.service.SessionParticipantService sessionParticipantService;
     private SessionWakeupService service;
 
     @BeforeEach
@@ -68,9 +69,11 @@ class SessionWakeupServiceTest {
         branchPathService = Mockito.mock(BranchPathService.class);
         chatSubmissionService = Mockito.mock(ChatSubmissionService.class);
         eventPublisher = Mockito.mock(ApplicationEventPublisher.class);
+        sessionParticipantService =
+                Mockito.mock(com.cc01cc.p.xihe.cp.service.SessionParticipantService.class);
         service = new SessionWakeupService(sessionService, chatRunRepository,
                 followUpItemRepository, followUpQueueService, branchPathService,
-                chatSubmissionService, eventPublisher, new ObjectMapper());
+                chatSubmissionService, eventPublisher, new ObjectMapper(), sessionParticipantService);
         when(followUpItemRepository.countBySessionIdAndStatusIn(anyString(), anyCollection()))
                 .thenReturn(0L);
     }
