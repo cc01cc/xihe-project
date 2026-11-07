@@ -97,6 +97,18 @@ sequenceDiagram
   CP-->>Agent: 透传结果
 ```
 
+### 3.2.1. CP 自有只读 git 工具（PLAN-0686 G8）
+
+`git_status`/`git_diff`/`git_log` 是 **CP 自有（CP-owned）工具**：不经 Runtime `/mcp` 系统目录转发，由 CP 在授权后本地派发，再以 MCP tool-result 返回。
+
+- **注册与派发**：工具名常量 `McpProxyController.java:94-96`；`tools/list` 目录注入与 `inputSchema` 在 `populateSystemTools`；`tools/call` 走 `dispatchCpOwnedGit`（`:1536-1590`）。
+- **面与授权**：三者进 `ToolFaceRegistry.READ_TOOLS`（`:91-104`）⇒ `read` 原子 + `STRUCTURED`；不新增 action atom、不走 `extraFaces`（[`spec/protocol/mcp.md`](../../../spec/protocol/mcp.md) §3.1）。门禁仍是本章 §3.2 的 `loadContext → allowsByGrant → faceOf`；未授权返回 `TOOL_GRANT_DENIED` tool-result 并留审计，不返回裸 403。
+- **数据来源**：`git_status` **复用**公开读面同一条 `RuntimeCheckpointClient.workspaceGitStatus` → `/internal/v1/runtime/workspaces/{workspaceId}/git-status`（CP 不做第二份 git 逻辑）；`git_diff`/`git_log` 调 Runtime 只读端点 `git-diff`/`git-log`（wire 见 [`docs/api/inventory.md`](../../api/inventory.md)）。
+- **只读约束（Runtime 侧）**：以用户仓库为 `GIT_DIR`/`GIT_WORK_TREE`、**不设** `GIT_INDEX_FILE`、不把 `GIT_DIR` 指向 shadow 仓库，`GIT_OPTIONAL_LOCKS=0`，diff 带 `--no-ext-diff --no-textconv`；不调用 `ShadowGit`、不改 index/refs，故与 checkpoint capture/restore 可无锁并发。
+- **失败形状**：Runtime 不可达/超时 → 503 `RUNTIME_UNAVAILABLE`（`dependency=runtime`、`retryable=true`），**绝不降级为空 diff / 空 log**；Runtime 明确拒绝 → `isError=true` tool-result 带 Runtime 的 `reason`；参数非法 → `INVALID_ARGUMENTS`。审计落 AUDIT JSONL（`allow`/`tool_error`/`dependency_unavailable`），只记形状事实，不记 patch 正文与 commit subject。
+
+真链路证据（授权正反探针 + 审计读回）归 PLAN-0686 T2.3，本文不宣称已验；写型（commit/branch 类）不在 v1。
+
 ### 3.3. 失败分类（PLAN-0557 / BL-109）
 
 CP 不得把**上游依赖故障**伪装成「未知工具」。`tools/list` 与 `tools/call` 的错误口径：
