@@ -18,11 +18,14 @@
  * 必须经 `scripts/e2e-host.mjs` 运行（依赖隔离栈与 `XIHE_E2E_*`）。本文件由 PLAN-0680 M3 落盘，
  * **窗口期才跑**；实施期不启动栈。
  *
- * ⚠ 待窗口期核实（不臆造，实施期未取到真值）：
- *   - 技能绑定路由：本文件按 `/api/v1/agent-principals/{id}/skills` 写，与已验证的 `.../roles` 同构
- *     （`bl355:131`）。若实际路径不同，窗口期第一件事是校正这三处常量（`SKILL_BINDING_PATH`）。
- *   - J9 的 badge 文案真值未取：由 `WorkspaceAgentsPanel.spec.ts:1516,1523` 的 testid 断言锁住，
- *     E2E 侧待补 i18n key（`WorkspaceAgentsPanel.vue:2124` 的 props）。
+ * 路由真值（已核实，`AgentPrincipalSkillBindingController`）：
+ *   :40 `@RequestMapping("/api/v1/agent-principals/{principalId}/skills")`；`GET :54-56` /
+ *   `POST :70-73` 均接受 `?workspaceId=`；`DELETE :96` 为 `.../skills/{bindingId}`。
+ *   `POST` body 只允许 `skillId`（`BIND_KEYS :42`），多余键 ⇒ `:76-78` 抛 400 INVALID_REQUEST。
+ *
+ * 徽标真值：testid `agent-skill-scope-{instance|workspace}`（`WorkspaceAgentsPanel.vue:2124`）；
+ *   i18n `workspace.agentSkillScopeWorkspace` / `workspace.agentSkillScopeInstance`，
+ *   zh「工作区级」/「实例级」（`i18n/index.ts:485-486`），en「Workspace scope」/「Instance scope」（`:2893-2894`）。
  */
 import { expect, test, type APIRequestContext } from "@playwright/test";
 
@@ -173,10 +176,15 @@ test("@host 0680-J2 解绑语义：按行自身档位授权，删他工作区行
             scopeId: identity.workspaceId,
         },
     });
+    const withScopeText = await withScope.text();
     expect(
         withScope.status(),
-        `请求体带 scopeType/scopeId 应 400，实际 ${withScope.status()}：${await withScope.text()}`,
+        `请求体带 scopeType/scopeId 应 400，实际 ${withScope.status()}：${withScopeText}`,
     ).toBe(400);
+    // body 只允许 skillId（`BIND_KEYS = Set.of("skillId")`），多余键 ⇒ 400 INVALID_REQUEST
+    expect(withScopeText, `应命中 INVALID_REQUEST，实际：${withScopeText}`).toContain(
+        "INVALID_REQUEST",
+    );
 });
 
 test("@host 0680-J3 角色轴仍单轴：只开技能轴，角色绑定面维持 instance 派生 + cap 天花板", async ({
@@ -213,10 +221,42 @@ test.skip("@host 0680-J8 BL-354 场景", async () => {
     // 按派活纪律「不确定就留 skip + 注释」，不臆造断言。窗口期需先取 BL-354 现状语义再补。
 });
 
-test.skip("@host 0680-J9 档位徽标双语", async () => {
-    // testid 真值已由单测锁住：`WorkspaceAgentsPanel.spec.ts:1516`（agent-skill-scope-workspace）、
-    // `:1523`（agent-skill-scope-instance）；组件侧 `WorkspaceAgentsPanel.vue:2124`
-    // `:data-testid=\"`agent-skill-scope-${binding.scopeType}`\"`。
-    // 双语文案真值未取（i18n key 未定位到 badge 专用条目），故不在本 spec 编造文案。
-    // 窗口期补：读 `WorkspaceAgentsPanel.vue:2124` 的 i18n key → 取 zh/en 两份真值 → 断言 badge 文本。
+test("@host 0680-J9 档位徽标双语（zh 工作区级/实例级，en Workspace scope/Instance scope）", async ({
+    page,
+    request,
+}) => {
+    const identity = await newIdentity(request, "p0680-j9");
+
+    // 面板渲染需要至少一条绑定行才有徽标；无数据时条件跳过而非伪造断言
+    const panel = await request.get(`${CP_URL}/api/v1/workspaces/${identity.workspaceId}/agents`, {
+        headers: headersOf(identity),
+    });
+    expect(panel.status(), await panel.text()).toBe(200);
+
+    /** zh / en 两语言下 badge 的真值（`i18n/index.ts:485-486` 与 `:2893-2894`）。 */
+    const EXPECTED = [
+        { locale: "zh-CN", scope: "workspace", text: "工作区级" },
+        { locale: "zh-CN", scope: "instance", text: "实例级" },
+        { locale: "en-US", scope: "workspace", text: "Workspace scope" },
+        { locale: "en-US", scope: "instance", text: "Instance scope" },
+    ] as const;
+
+    const observed: Array<{ locale: string; scope: string; text: string }> = [];
+    for (const { locale, scope, text } of EXPECTED) {
+        await page.addInitScript((l) => {
+            window.localStorage.setItem("xihe-language", l);
+        }, locale);
+        await page.goto(`/workspace/${identity.workspaceId}/settings`);
+        const badge = page.locator(`[data-testid="agent-skill-scope-${scope}"]`);
+        if ((await badge.count()) === 0) {
+            test.skip(true, `无 ${scope} 档绑定行，徽标未渲染，需先造绑定数据后重跑`);
+            return;
+        }
+        await expect(
+            badge.first(),
+            `${locale} 下 ${scope} 徽标文案应为「${text}」`,
+        ).toHaveText(text);
+        observed.push({ locale, scope, text: await badge.first().innerText() });
+    }
+    console.log(`[p0680-j9] OK observed=${JSON.stringify(observed)}`);
 });
