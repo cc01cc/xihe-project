@@ -41,6 +41,7 @@ function toSession(record: ApiSession): Session {
         createdAt: record.createdAt ?? now,
         updatedAt: record.updatedAt ?? record.createdAt ?? now,
         workspaceId: record.workspaceId,
+        // PLAN-0689 D-54: read-only projection of the Session PRIMARY participant; never written back.
         agentPrincipalId: record.agentPrincipalId ?? null,
         kind: record.kind ?? null,
         spawnedFromSessionId: record.spawnedFromSessionId ?? null,
