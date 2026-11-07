@@ -1,4 +1,5 @@
 -- PLAN-0690 T2.1 (D-215): roster-level default delivery roles.
+-- NOTE: 实体 columnDefinition 用 "text array" 仅为 H2 PG 模式建表兼容；权威 DDL 以本迁移 TEXT[] 为准（0690 候选 A）。
 -- Frozen shape (Lead 2026-11-07): TEXT[] + named CHECK, subset of {to,cc,mention_only},
 -- distinct, and one-dimensional (D-70).
 -- Additive and nullable: no backfill and no dual-read — development data may be discarded per D-215.
