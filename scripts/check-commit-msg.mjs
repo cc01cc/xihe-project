@@ -12,7 +12,9 @@
  *   node scripts/check-commit-msg.mjs --range develop~5..develop     # 复查最近若干条
  *   node scripts/check-commit-msg.mjs --range 1dd57056..HEAD --json
  *   node scripts/check-commit-msg.mjs --range a632de77..HEAD --stats     # 观察窗统计（翻阻断判据）
- *   node scripts/check-commit-msg.mjs --range a632de77..HEAD --report-only # 只打印永不失败（mise 任务用）
+ *   node scripts/check-commit-msg.mjs --range a632de77..HEAD --enforce   # 显式阻断口径（默认即阻断；
+ *       mise run check:commit-msg 走这条，并已是 validate 的依赖，见 D-216）
+ *   node scripts/check-commit-msg.mjs --range 1dd57056..HEAD --report-only # 只打印、永不失败（回归/观察用）
  *
  * 退出码：0 通过 / 1 违规 / 2 用法错误
  *
