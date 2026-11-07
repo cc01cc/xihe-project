@@ -41,6 +41,7 @@ import {
     createSessionWithPrincipal,
     provisionWorkspaceAgentPrincipal,
 } from "./helpers/agent-principal";
+import { agentName } from "./helpers/agent-name";
 import { ensureFakeUserProvider } from "./helpers/fake-provider";
 import { CP_URL, getRootBranchId } from "./helpers/journey";
 import { openSessionSse } from "./helpers/sse";
@@ -189,7 +190,7 @@ test("@host 0680-T3.1 快照落双轴 tier：绑定 → run → skills_snapshot.
 }) => {
     const identity = await newIdentity(request, "p0680-tier");
     const principalId = await provisionWorkspaceAgentPrincipal(request, identity, {
-        name: "p0680-tier-agent",
+        name: agentName("P0680Tier", Date.now()),
         actions: ["read"],
     });
     expect(principalId, "主体 id 应为 UUID").toMatch(UUID);
@@ -199,13 +200,14 @@ test("@host 0680-T3.1 快照落双轴 tier：绑定 → run → skills_snapshot.
     const imported = await request.post(`${CP_URL}/api/v1/skills/import`, {
         headers: headersOf(identity),
         data: {
-            scopeType: "instance",
+            definitionScope: { type: "instance" },
             skills: [
                 {
                     name: `p0680-tier-${nonce}`,
                     description: "PLAN-0680 T3.1 快照 tier 探针",
                     body: `# p0680 tier probe ${nonce}\n用于验证 skills_snapshot.items[].tier 三字段。`,
-                },
+                    trusted: false,
+                  },
             ],
         },
     });

@@ -38,33 +38,27 @@
  *   「W1 的 workspace 绑定行在 W2 注入中不出现；绑他工作区私有定义 ⇒ 404 SKILL_NOT_FOUND」。
  */
 import { execFileSync } from "node:child_process";
-
 import { expect, test, type APIRequestContext } from "@playwright/test";
-
 import {
     createSessionWithPrincipal,
     provisionWorkspaceAgentPrincipal,
 } from "./helpers/agent-principal";
+import { agentName } from "./helpers/agent-name";
 import { ensureFakeUserProvider } from "./helpers/fake-provider";
 import { CP_URL, getRootBranchId } from "./helpers/journey";
 import { openSessionSse } from "./helpers/sse";
 import { ensureWorkspace } from "./helpers/workspace";
-
 test.describe.configure({ retries: 0 });
-
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u;
 const TERMINAL = /^(succeeded|failed|cancelled|ambiguous)$/u;
-
 const SKILL_BINDING_PATH = (principalId: string, workspaceId: string): string =>
     `${CP_URL}/api/v1/agent-principals/${principalId}/skills?workspaceId=${workspaceId}`;
-
 interface Identity {
     email: string;
     userId: string;
     accessToken: string;
     workspaceId: string;
 }
-
 /** 注册 + 建 direct_attach 工作区 + fake provider（与同族 spec 同一实现）。 */
 async function newIdentity(request: APIRequestContext, label: string): Promise<Identity> {
     const nonce = `${Date.now().toString(36)}${Math.floor(Math.random() * 1000)}`;
@@ -89,7 +83,6 @@ async function newIdentity(request: APIRequestContext, label: string): Promise<I
     expect(userId, "注册响应应带 userId").toMatch(UUID);
     return { email, userId, accessToken: body.accessToken, workspaceId };
 }
-
 function headersOf(identity: Identity): Record<string, string> {
     return {
         Authorization: `Bearer ${identity.accessToken}`,
@@ -97,7 +90,6 @@ function headersOf(identity: Identity): Record<string, string> {
         "X-Workspace-Id": identity.workspaceId,
     };
 }
-
 /** 直连隔离库读 `chat_runs`；快照无等价公开读端点。 */
 function queryIsolatedPostgres(sql: string): string {
     const container = process.env.XIHE_E2E_PG_CONTAINER,
@@ -114,13 +106,11 @@ function queryIsolatedPostgres(sql: string): string {
         { encoding: "utf8", timeout: 15_000, windowsHide: true },
     ).trim();
 }
-
 interface SnapshotItem {
     skillId?: string;
     name?: string;
     tier?: { subjectType?: string; scopeType?: string; definitionScopeType?: string };
 }
-
 function latestSnapshot(sessionId: string): { id: string; status: string; items: SnapshotItem[] } {
     const raw = queryIsolatedPostgres(
         `SELECT json_build_object('id', id, 'status', status, 'snap', skills_snapshot::text)::text ` +
@@ -138,7 +128,6 @@ function latestSnapshot(sessionId: string): { id: string; status: string; items:
     }
     return { id: row.id, status: row.status, items };
 }
-
 /** 严格轮询到终态（不用固定 sleep，见 packages/ui/AGENTS.md「新 E2E 禁止固定 sleep」）。 */
 async function waitForSnapshot(sessionId: string): Promise<{
     id: string;
@@ -155,7 +144,6 @@ async function waitForSnapshot(sessionId: string): Promise<{
     expect(last.status, "run 应到终态（超时则窗口期查 Agent 是否卡住）").toMatch(TERMINAL);
     return last;
 }
-
 async function sendChat(
     request: APIRequestContext,
     identity: Identity,
@@ -173,7 +161,6 @@ async function sendChat(
     expect(chat.status(), await chat.text()).toBe(202);
     closeSse();
 }
-
 test("@host 0680-T3.2a 注入不越界：W1 的 workspace 技能与绑定行不出现在 W2 的 skills_snapshot", async ({
     request,
 }) => {
@@ -183,30 +170,28 @@ test("@host 0680-T3.2a 注入不越界：W1 的 workspace 技能与绑定行不�
     expect(w1.workspaceId, "两个身份必须落在不同工作区，否则本 spec 前提不成立").not.toBe(
         w2.workspaceId,
     );
-
     const w1Principal = await provisionWorkspaceAgentPrincipal(request, w1, {
-            name: "p0680-neg-agent",
+            name: agentName("P0680NegW1", Date.now()),
             actions: ["read"],
         });
     const w2Principal = await provisionWorkspaceAgentPrincipal(request, w2, {
-            name: "p0680-neg-agent",
+            name: agentName("P0680NegW2", Date.now()),
             actions: ["read"],
         });
-
     // ① W1 导入一个 **workspace 作用域**私有技能定义（这是跨工作区隔离的被测对象）
     const nonce = Date.now().toString(36);
     const skillName = `p0680-neg-w1-${nonce}`;
     const imported = await request.post(`${CP_URL}/api/v1/skills/import`, {
         headers: headersOf(w1),
         data: {
-            scopeType: "workspace",
-            workspaceId: w1.workspaceId,
+            definitionScope: { type: "workspace", workspaceId: w1.workspaceId },
             skills: [
                 {
                     name: skillName,
                     description: "PLAN-0680 T3.2 跨工作区隔离探针（W1 私有）",
                     body: `# ${skillName}\n只应在 W1 生效，不得出现在 W2 注入。`,
-                },
+                    trusted: false,
+                  },
             ],
         },
     });
@@ -221,7 +206,6 @@ test("@host 0680-T3.2a 注入不越界：W1 的 workspace 技能与绑定行不�
     };
     const w1SkillId = importedBody.skills?.[0]?.id ?? importedBody.ids?.[0] ?? importedBody.id;
     expect(w1SkillId, "导入响应应带 skillId").toMatch(UUID);
-
     // ② 绑到 W1 的 principal（写入面成功，隔离要看运行期）
     const bound = await request.post(SKILL_BINDING_PATH(w1Principal, w1.workspaceId), {
         headers: headersOf(w1),
@@ -231,7 +215,6 @@ test("@host 0680-T3.2a 注入不越界：W1 的 workspace 技能与绑定行不�
         [200, 201],
         `W1 主体绑定应 2xx，实际 ${bound.status()}：${await bound.text()}`,
     ).toContain(bound.status());
-
     // ③ W2 跑一次 chat
     const w2Session = await createSessionWithPrincipal(request, w2, {
             principalId: w2Principal,
@@ -240,7 +223,6 @@ test("@host 0680-T3.2a 注入不越界：W1 的 workspace 技能与绑定行不�
         });
     await sendChat(request, w2, w2Session, "PLAN-0680 T3.2 isolation probe");
     const w2Snap = await waitForSnapshot(w2Session);
-
     // ④ V3 注入半：W2 的快照既不含 W1 的 skillId、也不含其名字、更不该有 W1 workspace tier 行
     expect(
         w2Snap.items.some((item) => item.skillId === w1SkillId),
@@ -258,7 +240,6 @@ test("@host 0680-T3.2a 注入不越界：W1 的 workspace 技能与绑定行不�
         ),
         "W2 不应拿到任何 workspace×workspace 档技能（本用例里唯一来源是 W1）",
     ).toBe(false);
-
     // ⑤ 反向对照：W1 自己跑，同一 skill 必须出现——证明 ③④ 的「不出现」不是因为压根没生效
     const w1Session = await createSessionWithPrincipal(request, w1, {
             principalId: w1Principal,
@@ -272,29 +253,27 @@ test("@host 0680-T3.2a 注入不越界：W1 的 workspace 技能与绑定行不�
         `正向对照失败：W1 自己的快照里应含 ${w1SkillId}，否则 W2 的「不含」无意义`,
     ).toBe(true);
 });
-
 test("@host 0680-T3.2b 对 W2 私有定义绑定 ⇒ 404 SKILL_NOT_FOUND（非旧 400，且不泄露存在性）", async ({
     request,
 }) => {
     const w1 = await newIdentity(request, "p0680-404-w1");
     const w2 = await newIdentity(request, "p0680-404-w2");
     const w1Principal = await provisionWorkspaceAgentPrincipal(request, w1, {
-            name: "p0680-404-agent",
+            name: agentName("P0680Neg404", Date.now()),
             actions: ["read"],
         });
-
     // W2 的私有定义
     const nonce = Date.now().toString(36);
     const imported = await request.post(`${CP_URL}/api/v1/skills/import`, {
         headers: headersOf(w2),
         data: {
-            scopeType: "workspace",
-            workspaceId: w2.workspaceId,
+            definitionScope: { type: "workspace", workspaceId: w2.workspaceId },
             skills: [
                 {
                     name: `p0680-404-w2-${nonce}`,
                     description: "PLAN-0680 T3.2 404 探针（W2 私有）",
                     body: `# p0680-404-w2-${nonce}`,
+                    trusted: false,
                 },
             ],
         },
@@ -307,7 +286,6 @@ test("@host 0680-T3.2b 对 W2 私有定义绑定 ⇒ 404 SKILL_NOT_FOUND（非�
     };
     const w2SkillId = importedBody.skills?.[0]?.id ?? importedBody.ids?.[0] ?? importedBody.id;
     expect(w2SkillId, "导入响应应带 skillId").toMatch(UUID);
-
     // W1（在 W1 上下文里）去绑 W2 的私有定义 ⇒ 必须 404，不是 400
     const refused = await request.post(SKILL_BINDING_PATH(w1Principal, w1.workspaceId), {
         headers: headersOf(w1),
@@ -323,14 +301,12 @@ test("@host 0680-T3.2b 对 W2 私有定义绑定 ⇒ 404 SKILL_NOT_FOUND（非�
         problem.code,
         "404 的 code 必须是 SKILL_NOT_FOUND——与「技能不存在」不可区分才不泄露存在性",
     ).toBe("SKILL_NOT_FOUND");
-
     // 防退化：不得再出现退役码
     expect(
         problem.code,
         "旧码 SKILL_DEFINITION_OUT_OF_SCOPE 已在本面退役，不应被任何路径返回",
     ).not.toBe("SKILL_DEFINITION_OUT_OF_SCOPE");
 });
-
 /**
  * §J8 — BL-354 场景注记（`verify.md:38` V8「BL-354 不可判定」）。
  *
