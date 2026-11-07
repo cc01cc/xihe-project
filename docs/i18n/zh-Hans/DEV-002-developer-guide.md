@@ -393,6 +393,18 @@ XIHE_VERIFY_PASSWORD=<admin 密码> mise run xihe -- verify \
 - **agent principal**：建 session 必须带 `agentPrincipalId`；按「显式 `XIHE_VERIFY_AGENT_PRINCIPAL_ID` → workspace 已绑定的第一个 → 自动新建」解析。只有新建后才调 `PUT …/agents/{id}` 绑定——对已有 principal 调该接口会**收窄**它的 workspace cap。诊断只输出白名单状态字段，不打印 Agent 原始日志。
 - **模板与连接前置（PLAN-0601）**：B 档要求 Session 显式绑定「已发布 api-request-template 三元组 + chat provider connection」。CLI 自动解析（`GET /api/v1/config/api-request-templates?layer=user|workspace|instance` 取 published 且与连接 API Type 对齐的模板；连接取 `GET /api/v1/provider-connections` 中 `status=READY` 且 `operation=chat` 的一条），并在建 session 时带上 `providerConnectionId` / `modelProvider` / `modelName` / `contextTemplateLayer|Id|Version`。缺模板报 `VERIFY_TEMPLATE_MISSING`、缺连接报 `VERIFY_CONNECTION_MISSING`（均 exit 2 并给出发布/建连的可操作提示），不再以裸 `409 API_TYPE_REBIND_REQUIRED` 失败；模板发布是 ADMIN 实例层操作（设置页 → 配置 → API 请求模板 → 发布）。
 
+### `dev-stack` 状态与租约契约（PLAN-0694）
+
+`node scripts/dev-stack.mjs`（verbs 用法见 §3 模式 A2）自 PLAN-0694 起用**租约**记录"这栈是谁起的"，`status` 对**每个**租约字段做一次**独立于租约本身**的事实核对。判据方向是单向的：**事实压过意图**——租约说什么不重要，端口/进程/心跳核得上才算数（"没人校验的字段等于注释"）。
+
+- **租约位置与形状**：`.xihe-stacks/<n>/lease.json`（原子写：tmp + rename；`version: 2`）。字段 = `instanceId`/`projectRoot`/`stackId`/`ports`/`pids{svc:{launcher,listener}}`/`cpVersion`/`startedAt`/`heartbeatAt`，停止失败时多一个 `releaseFailed{at,services,reason}`。`ports` **只含四个受管服务**（CP/Agent/Runtime/UI）。
+- **退出码**：`0` = 可开窗/健康（`status` 全部 checks 通过；`status --all` 无栈非 healthy；`gc` 无候选）；`1` = 硬伤（有栈非 healthy、`gc` 有候选、或 `stop` 有残留端口/pid 台账）；`2` = 参数或环境错误（未知 verb、**未知选项也走 2**、非法/未登记 `--stack`、派生失败）。`status --json` 一律"先解析 stdout 再读退出码"，`1` 不等于"工具坏了"。
+- **`ok = factsOk && checks.allOk`**：`factsOk` = pid 台账进程活 + 四个服务端口在听 + PG 在听；`checks` 逐字段交叉校验 —— pid 死活（`launcher-dead`/`listener-dead`）、端口是否在听（`port-not-listening`）、心跳是否过期（`lease-expired`）、`instanceId` 是否符（`instance-mismatch`）、`cpVersion` 是否符（`cp-version-mismatch`）、pid 是否漂移（`pid-drift`）、端口声明是否符（`port-declared-mismatch`）等。失配进 `mismatch[]`；**声明了但当前核不了**进 `unverifiable`（同样拦住 `healthy`）；**没声明**才记 `skipped`（不拦）。因此不存在"租约自己说的就算过"的字段。
+- **`heartbeatAt` = 最近一次核对通过的时间**：由 `status` 在 checks 全绿时刷新（`--json` 的 `leaseRenewed` 显式说明本次是否刷新），**不是**进程自述的存活时长；`gc` 严格只读、绝不刷心跳。心跳过期只把 `healthy` 降级为 `stale`，不会升级成 `ghost`。
+- **PG 不进租约 `ports`**：PG 由 compose 常驻、supervisor 不管它生死，写进租约只会造出"声明了却永远核不上"的字段；PG 事实仍单独走 `status.pg`（`{port, listening}`）。
+- **旧栈迁移（不是故障）**：升级前起的栈没有租约 ⇒ 首次 `status` / `status --all` 会报 `verdict: ghost`（reasons 含 `lease-missing`）并 exit 1。处理方式二选一：`node scripts/dev-stack.mjs acquire --stack <n>` 认领（按当前事实补写租约；它**不新建 pid 台账**，只复用已存在的，所以本 checkout 没有台账时仍是 `verdict: healthy` 而 `ok: false`——台账属于事实层的 substantiation），或重启一次该栈。
+- **跨 checkout 的 ghost**：端口空间是全局的、租约空间按 checkout 隔离 ⇒ **别的 checkout 起的活栈在本 checkout 眼里也长得像 ghost**。`gc --dry-run` 的候选因此额外带 `serving`（端口上服务是否还响应）与 `ownTrace`（本 checkout 有无租约/pid 痕证）供分流，**不要**据此直接 `stop`：先确认归属——到那个 checkout 执行 `stop`，或在此处 `acquire` 认领。`gc` 恒零 kill，不提供 `--apply`（`--dry-run` 可传，行为恒为 dry-run）。
+
 ## 5. 测试入口
 
 - 单元：`mise run test`（UI + Agent + CP + Runtime lib）；`mise run validate`（`check:openapi` + `check:commit-msg` + lint + typecheck + build + test + `test:e2e:fixtures` + `lint:links`）。**全链没有 Docker 步骤**：CP 默认 H2 且 Surefire 默认排除 `@Tag("docker-frozen")`（`-Dgroups=docker-frozen` 恢复）、Runtime 只跑 `--lib`、Agent 默认排除 integration，`lint:links` 在 ONE 主检出（及其 `scripts/check-doc-links.sh`）缺失时跳过并 exit 0。
