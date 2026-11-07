@@ -156,7 +156,7 @@ async fn test_mcp_poll_config_parses_stdio_servers() {
 >
 > 历史口径：用 Docker Compose 启动部分模块栈（如 CP+Agent 或 CP+Runtime），通过真实 HTTP 端口验证端到端通信。
 >
-> ⚠️ **任务与本文的差异（已定处置：保留任务、只改文档）**：`mise run test:integration` 仍声明 `t3` 依赖、任务本体会尝试 `docker compose up`。该任务**不注释、不删除**——车道已冻结，任务保留是为了不切断既有引用与调用面（`test:integration:t2` 仍可直接用于 T2）。阅读者以本文为准：T3 的 compose 车道**不可用于验收**，真栈验收走上文「host 车道」。若日后决定移除 `t3` 依赖，属任务行为变更（B 类），另立裁定，不在文档层处理。
+> ⚠️ **任务与本文的差异（已定处置 D-223：保留任务、只改文档）**：`mise run test:integration` 仍声明 `t3` 依赖、任务本体会尝试 `docker compose up`。该任务**不注释、不删除**——车道已冻结，任务保留是为了不切断既有引用与调用面（`test:integration:t2` 仍可直接用于 T2）。阅读者以本文为准：T3 的 compose 车道**不可用于验收**，真栈验收走上文「host 车道」。若日后决定移除 `t3` 依赖，属任务行为变更（B 类），另立裁定，不在文档层处理。
 
 ```mermaid
 %%{init: {'theme': 'neutral'}}%%
@@ -371,7 +371,7 @@ verify(postRequestedFor(urlEqualTo("/internal/v1/agent/chat"))
 
 ```bash
 # 全量集成测试（T3 = 历史 compose 车道：服务容器化冻结 2026-10-07；现行验收走 host 车道，见 §2.3）
-# 注：任务仍声明 t3 依赖、本体会尝试拉起 compose —— 属已定现状（保留任务、只改文档），不是待裁项；
+# 注：任务仍声明 t3 依赖、本体会尝试拉起 compose —— 属已定现状（D-223：保留任务、只改文档），不是待裁项；
 # 纯 T2 请用 mise run test:integration:t2；真栈验收走 host 车道（见 §2.3）
 mise run test:integration
 

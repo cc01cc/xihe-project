@@ -221,7 +221,7 @@ docker compose up -d postgres
 mvn spring-boot:run -f packages/control-plane/pom.xml
 ```
 
-**Note**: Under WSL2 mirror network mode, host connections to Docker PostgreSQL may fail password authentication. This is because the `bridge` network's port mapping causes NAT translation of the connection source address, and the `127.0.0.1/32 trust` rule in `pg_hba.conf` doesn't match. If you encounter this issue, use **Option B1 (H2)** or **Mode A (Full Docker Compose)**.
+**Note**: Under WSL2 mirror network mode, host connections to Docker PostgreSQL may fail password authentication. This is because the `bridge` network's port mapping causes NAT translation of the connection source address, and the `127.0.0.1/32 trust` rule in `pg_hba.conf` doesn't match. If you encounter this issue, use **Option B1 (H2)** or reach PostgreSQL on the host directly (`mise run dev:host` keeps only PostgreSQL in a container, so the host-side port is the one that matters). **Mode A (Full Docker Compose) is frozen since 2026-10-07** and stays historical reference only.
 
 `.env.dev` file records two database configurations (PostgreSQL is default, H2 is commented out). Uncomment to switch.
 
@@ -382,7 +382,7 @@ Each module accesses CP ConfigService through local clients:
 
 ### 2.6. Integration Tests
 
-Agent integration tests (`packages/agent/tests/test_agent_cp_integration.py`) require CP running at `localhost:8080`.
+Agent integration tests (`packages/agent/tests/test_agent_cp_integration.py`) require a running CP. Read its port from `XIHE_CP_PORT` (stack-1 default `12631`; the `8080` in "Service ports" under §5.1 is the container-internal port, not the host port).
 
 ```bash
 # Method 1: Docker Compose (historical — compose lane frozen since 2026-10-07; not for acceptance)
@@ -511,8 +511,8 @@ CP integration tests support two modes:
 ### 4.5. Cross-module E2E Tests
 
 ```bash
-# Ensure Docker Compose is running
-docker compose up -d
+# Prereq: host stack up in another terminal — `mise run dev:host`
+# (Host stack / H2 is the current path. Full Docker Compose is frozen since 2026-10-07 — historical reference only.)
 
 # Cross-module tests (run within Agent)
 cd packages/agent
@@ -595,6 +595,8 @@ mise run xihe -- credential reveal <id> --workspace <wsId> (--password-env <NAME
 
 ```bash
 # [frozen 2026-10-07 — do not run; daily start uses `mise run dev:host`, isolated E2E uses `mise run test:e2e:host`]
+# Scope details: see the two banners in `docs/i18n/zh-Hans/DEV-002-developer-guide.md` "Mode B (Docker Compose)"
+# — workspace Docker backend freeze (PLAN-0618) / Compose topology limits.
 # Build and start all 4 services
 docker compose up -d --build
 
