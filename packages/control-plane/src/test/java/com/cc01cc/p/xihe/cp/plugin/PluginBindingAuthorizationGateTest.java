@@ -104,11 +104,10 @@ class PluginBindingAuthorizationGateTest extends AbstractH2Test {
         Actor actor = adminActor();
         String pluginId = seedPlugin(true);
         UUID session = seedSession(actor.workspaceId());
-        // PLAN-0691 T1.3: the creator of a binding holds that binding's own PLUGIN_BIND row for as
-        // long as the binding lives, so the denied subject below cannot also be the creator — that is
-        // exactly the behaviour V139 + PluginBindingGrantWriter add. The fixture is therefore built by
-        // a second administrator inside the same workspace; `actor` ends up a plain workspace member
-        // with no row of their own and is denied on every verb.
+        // Fixture note (PLAN-0691 T1.3, V139): create now issues the creator a `plugin_binding`-sourced
+        // PLUGIN_BIND grant, so a creator is never a denied subject — the conflicting binding must be
+        // built by a second administrator of the same workspace. `actor` stays a plain member with no
+        // row of their own and is denied on every verb.
         Actor creator = adminActor();
         workspaceFixture.bindWorkspaceRole(actor.workspaceId(), creator.userId(),
                 WorkspaceRole.EDITOR);
