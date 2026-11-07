@@ -266,9 +266,14 @@ async function sendChat(
     const branchId = await getRootBranchId(request, sessionId, headers);
     // `openSessionSse(sessionId, token, extraHeaders)` 返回的是关闭函数，不是带 close() 的句柄
     const closeSse = await openSessionSse(sessionId, identity.accessToken);
+    // D-73：`toolMode` 的合法值域是 `{none, workspace}`（openapi.yaml ChatRequest.toolMode
+    // enum，CP `ChatController:551` 不复核、`:1531` 原样透传，Agent `api/chat.py:405-406`
+    // 对非值域直接 400 `INVALID_REQUEST` 且**不写日志**）。本 spec 验的是 agent principal
+    // 绑定的 skills_snapshot，与 workspace 工具无关 ⇒ 取 `none`：不初始化 MCP，链路最短、
+    // 变量最少。**不要**改成 `workspace`，那会把一条快照断言绑到工具面上。
     const chat = await request.post(`${CP_URL}/api/v1/chat`, {
         headers,
-        data: { sessionId, branchId, content, toolMode: "chat" },
+        data: { sessionId, branchId, content, toolMode: "none" },
     });
     expect(chat.status(), await chat.text()).toBe(202);
     closeSse();
