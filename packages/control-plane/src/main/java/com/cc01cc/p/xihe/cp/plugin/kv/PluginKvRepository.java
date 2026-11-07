@@ -32,8 +32,11 @@ import java.util.UUID;
  * means absent" (API-1) holds for reads, listings <b>and</b> the quota count; a row that has expired
  * must not consume a plugin's key budget while it waits for the hourly purge.
  *
- * <p>There is no {@code binding_id} foreign key (DP-6a) and this class never writes
- * {@code orphaned_at}: that column belongs to the uninstall/detach path and to the T3.2 purge job.
+ * <p>There is no {@code binding_id} foreign key (DP-6a). This class never <em>stamps</em>
+ * {@code orphaned_at} — that is lane A's uninstall/detach path (T1.4) — and it never reads it
+ * either: the reader is T3.2's purge job. All it does with the column is clear it back to
+ * {@code NULL} on a successful rewrite, because a live write proves the binding came back. See
+ * {@link PluginKvService} for the full ownership note.
  */
 @Repository
 public class PluginKvRepository {
@@ -81,6 +84,11 @@ public class PluginKvRepository {
 
     /**
      * API-9 CAS write: only updates when the stored version still equals {@code expectedVersion}.
+     *
+     * <p>{@code orphaned_at = NULL} rides along in the same statement on purpose: a successful write
+     * is proof the binding is live again, so the row must stop looking orphaned in that same
+     * transaction. This class only ever clears the column — it never stamps it (lane A does, see the
+     * class note).
      *
      * @return the number of rows updated ({@code 0} means the precondition no longer holds)
      */
