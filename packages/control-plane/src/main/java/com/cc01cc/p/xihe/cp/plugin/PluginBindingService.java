@@ -2,7 +2,13 @@ package com.cc01cc.p.xihe.cp.plugin;
 
 import com.cc01cc.p.xihe.cp.audit.AuditLogger;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
+import com.cc01cc.p.xihe.cp.entity.AuthorizationGrant;
 import com.cc01cc.p.xihe.cp.entity.Session;
+import com.cc01cc.p.xihe.cp.policy.AuthzContext;
+import com.cc01cc.p.xihe.cp.policy.GrantSources;
+import com.cc01cc.p.xihe.cp.policy.PluginBindingAuthorization;
+import com.cc01cc.p.xihe.cp.policy.PluginBindingAuthorization.GrantRow;
+import com.cc01cc.p.xihe.cp.repository.AuthorizationGrantRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -35,13 +41,20 @@ import java.util.UUID;
  *       that line, not the contract around it.</li>
  *   <li>The <b>catalogVersion sequence is T1.6</b>. Attach reports the per-session revision counter,
  *       which is monotonic, instead of inventing a sequence T1.6 would have to renumber.</li>
- *   <li>Authorization today is authentication-only ({@code @PreAuthorize("isAuthenticated()")}) for
- *       the same reason T1.1 chose it: the atoms land with T1.3.</li>
+ *   <li>Authorization is <b>not</b> authentication-only any more (T1.3): every write path calls
+ *       {@link #requireBindAtom(UUID, String)} as its first statement, so a missing
+ *       {@code PLUGIN_BIND} answers {@code 403 PLUGIN_GRANT_DENIED} before a single row or audit
+ *       entry exists. The read paths stay authentication-only — read visibility is the same
+ *       workspace-scoped disclosure rule as the rest of the surface, not an atom.</li>
  * </ul>
  *
- * <p>Error order is deliberate and mirrors {@code SkillBindingService}: existence → workspace
- * ownership (403 before disclosure) → shape. A foreign binding answers {@code 403
- * PLUGIN_GRANT_DENIED}, a missing one {@code 404 PLUGIN_NOT_FOUND}.</p>
+ * <p>Error order is deliberate and mirrors {@code SkillBindingService}: authorization → existence →
+ * workspace ownership (403 before disclosure) → shape. A foreign binding answers {@code 403
+ * PLUGIN_GRANT_DENIED}, a missing one {@code 404 PLUGIN_NOT_FOUND}. Authorization comes first on
+ * purpose: an actor that does not hold {@code PLUGIN_BIND} must not be able to use the endpoint's
+ * error vocabulary (409/422/404) as an oracle, and — the reason this is testable — a denial must
+ * leave the transaction with nothing to roll back
+ * ({@code PluginBindingAuthorizationGateTest}).</p>
  */
 @Service
 public class PluginBindingService {
@@ -64,15 +77,107 @@ public class PluginBindingService {
     private final PluginRepository plugins;
     private final SessionRepository sessions;
     private final AuditLogger auditLogger;
+    private final AuthorizationGrantRepository grants;
 
     public PluginBindingService(PluginBindingRepository bindings,
             SessionPluginBindingRepository attachments, PluginRepository plugins,
-            SessionRepository sessions, AuditLogger auditLogger) {
+            SessionRepository sessions, AuditLogger auditLogger,
+            AuthorizationGrantRepository grants) {
         this.bindings = bindings;
         this.attachments = attachments;
         this.plugins = plugins;
         this.sessions = sessions;
         this.auditLogger = auditLogger;
+        this.grants = grants;
+    }
+
+    // ------------------------------------------------------------------ authorization gate
+
+    /**
+     * PLAN-0691 T1.3: the atom gate. <b>Called as the first statement of every write path</b>
+     * (create / update / delete / attach / detach) so the decision belongs to the pre-effect phase.
+     *
+     * <p>Two different things are observable, and only one of them is about ordering. The <b>row
+     * counts</b> ({@code plugin_bindings}, {@code session_plugin_bindings}, the session revision
+     * high-water, {@code audit_logs}) are the outcome the card asks for — rejection ⇒ zero rows
+     * written — but the transaction would produce that outcome even from a late gate. The <b>error
+     * the client gets</b> is the ordering proof: a denied {@code create} of an already-bound plugin
+     * must answer 403, not 409, and a denied create of an unknown plugin must answer 403, not 404, so
+     * a gate that ran after the conflict/existence checks is detectable from the wire.
+     * {@code PluginBindingAuthorizationGateTest} asserts both, and it was mutation-checked: moving
+     * this call below the conflict check turns the class red.</p>
+     *
+     * <p>The atom is {@code PLUGIN_BIND} for all five verbs: spec/authz-plugin-atoms.md line 10 puts
+     * "binding CRUD、enable/disable、session attach/detach" under {@code plugin:bind}, and M1 narrows
+     * <i>who holds it</i> (SUPER_ADMIN + ADMIN, not {@code WS_OWNER}) without re-mapping the verbs —
+     * see V137's header. An agent principal cannot reach this path with the atom at all
+     * ({@code AGENT_FORBIDDEN_ATOMS}).</p>
+     *
+     * @param workspaceId the {@code X-Workspace-Id} scope, parsed first (no I/O) so the scoped grant
+     *                    read can happen before anything else
+     * @param actorUserId the authenticated subject
+     * @return the workspace id, for the caller to reuse instead of re-parsing
+     */
+    private UUID requireBindAtom(String workspaceId, String actorUserId) {
+        UUID workspace = requireWorkspace(workspaceId);
+        String required = PluginBindingAuthorization
+                .requiredAtom(PluginBindingAuthorization.Op.BIND_TO_WORKSPACE);
+        List<GrantRow> held = grantRows(subject(actorUserId), workspace);
+        PluginBindingAuthorization.Decision decision;
+        try {
+            decision = PluginBindingAuthorization.require(held, required);
+        } catch (CpApiException denied) {
+            log.warn("plugin binding write denied actor={} workspace={} atom={} holds={}",
+                    actorUserId, workspace, required, held.size());
+            throw denied;
+        }
+        log.debug("plugin binding atom granted actor={} workspace={} atom={} matchedSource={}",
+                actorUserId, workspace, required, decision.matchedSource());
+        return workspace;
+    }
+
+    /**
+     * The actor's grant holds, projected into the policy kernel's {@link GrantRow} shape.
+     *
+     * <p>Read through the same scoped query the evaluation kernel uses
+     * ({@link AuthorizationGrantRepository#findScopedGrants}: instance rows always, workspace rows
+     * only for this workspace) and filtered to {@link GrantSources#EVALUATION_SOURCES} by the kernel,
+     * so a retired {@code default}/{@code direct} row stays inert. {@code bindingId} is null: a row
+     * materialized from a role or a frozen default snapshot is not attributable to one binding, and
+     * the decision's {@code matchedSource} is the answer the spec asks for.</p>
+     */
+    private List<GrantRow> grantRows(UUID subjectId, UUID workspace) {
+        List<GrantRow> held = new ArrayList<>();
+        for (AuthorizationGrant grant : grants.findScopedGrants(AuthzContext.SUBJECT_USER,
+                subjectId, GrantSources.EVALUATION_SOURCES, workspace)) {
+            JsonNode permissions = grant.getPermissions();
+            if (permissions == null || !permissions.isArray()) {
+                continue;
+            }
+            for (JsonNode permission : permissions) {
+                String actionClass = permission.path("actionClass").asText(null);
+                if (actionClass != null && !actionClass.isBlank()) {
+                    held.add(new GrantRow(actionClass, grant.getSource(), null));
+                }
+            }
+        }
+        return held;
+    }
+
+    /** The request subject, or a denial — an anonymous actor holds no atoms by definition. */
+    private static UUID subject(String actorUserId) {
+        if (actorUserId == null || actorUserId.isBlank()) {
+            throw new CpApiException(HttpStatus.FORBIDDEN,
+                    PluginBindingAuthorization.CODE_PLUGIN_GRANT_DENIED,
+                    "no authenticated principal in the request context");
+        }
+        try {
+            return UUID.fromString(actorUserId.trim());
+        } catch (IllegalArgumentException e) {
+            throw new CpApiException(HttpStatus.FORBIDDEN,
+                    PluginBindingAuthorization.CODE_PLUGIN_GRANT_DENIED,
+                    "the request subject is not a user id: " + actorUserId);
+        }
     }
 
     // ------------------------------------------------------------------ binding CRUD
@@ -95,7 +200,7 @@ public class PluginBindingService {
     @Transactional
     public PluginBinding create(String workspaceId, String pluginId, List<String> grantedAtoms,
             String actorUserId) {
-        UUID workspace = requireWorkspace(workspaceId);
+        UUID workspace = requireBindAtom(workspaceId, actorUserId);
         if (pluginId == null || pluginId.isBlank()) {
             throw new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST",
                     "pluginId is required");
@@ -128,7 +233,8 @@ public class PluginBindingService {
     @Transactional
     public PluginBinding update(String workspaceId, String bindingId, String state,
             List<String> grantedAtoms, String actorUserId) {
-        PluginBinding binding = require(workspaceId, bindingId);
+        UUID workspace = requireBindAtom(workspaceId, actorUserId);
+        PluginBinding binding = require(workspace, bindingId);
         boolean changed = false;
 
         if (grantedAtoms != null) {
@@ -161,7 +267,8 @@ public class PluginBindingService {
 
     @Transactional
     public void delete(String workspaceId, String bindingId, String actorUserId) {
-        PluginBinding binding = require(workspaceId, bindingId);
+        UUID workspace = requireBindAtom(workspaceId, actorUserId);
+        PluginBinding binding = require(workspace, bindingId);
         long attached = attachments.countByBindingId(binding.getId());
         bindings.delete(binding);
         audit(ACTION_DELETE, actorUserId, binding.getWorkspaceId(), binding,
@@ -236,8 +343,9 @@ public class PluginBindingService {
     @Transactional
     public AttachResult attach(String workspaceId, String sessionId, String bindingId,
             String actorUserId) {
-        Session session = requireSession(workspaceId, sessionId);
-        PluginBinding binding = require(workspaceId, bindingId);
+        UUID workspace = requireBindAtom(workspaceId, actorUserId);
+        Session session = requireSession(workspace, sessionId);
+        PluginBinding binding = require(workspace, bindingId);
         PluginBindingState state = binding.state();
         if (state == PluginBindingState.DISABLED || state == PluginBindingState.PENDING) {
             throw new CpApiException(HttpStatus.CONFLICT, "PLUGIN_CONFLICT",
@@ -275,8 +383,9 @@ public class PluginBindingService {
     @Transactional
     public void detach(String workspaceId, String sessionId, String bindingId,
             String actorUserId) {
-        Session session = requireSession(workspaceId, sessionId);
-        PluginBinding binding = require(workspaceId, bindingId);
+        UUID workspace = requireBindAtom(workspaceId, actorUserId);
+        Session session = requireSession(workspace, sessionId);
+        PluginBinding binding = require(workspace, bindingId);
         Optional<SessionPluginBinding> existing =
                 attachments.findBySessionIdAndBindingId(session.getId(), binding.getId());
         if (existing.isEmpty() || !existing.get().isActive()) {
@@ -377,7 +486,10 @@ public class PluginBindingService {
     // ------------------------------------------------------------------ lookups and errors
 
     private PluginBinding require(String workspaceId, String bindingId) {
-        UUID workspace = requireWorkspace(workspaceId);
+        return require(requireWorkspace(workspaceId), bindingId);
+    }
+
+    private PluginBinding require(UUID workspace, String bindingId) {
         UUID id = parseUuid(bindingId, "binding");
         Optional<PluginBinding> found = bindings.findById(id);
         if (found.isEmpty()) {
@@ -393,7 +505,10 @@ public class PluginBindingService {
     }
 
     private Session requireSession(String workspaceId, String sessionId) {
-        UUID workspace = requireWorkspace(workspaceId);
+        return requireSession(requireWorkspace(workspaceId), sessionId);
+    }
+
+    private Session requireSession(UUID workspace, String sessionId) {
         UUID id = parseUuid(sessionId, "session");
         Session session = sessions.findById(id)
                 .orElseThrow(() -> notFound("session " + sessionId + " does not exist"));

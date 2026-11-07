@@ -1,7 +1,13 @@
 package com.cc01cc.p.xihe.cp.plugin;
 
 import com.cc01cc.p.xihe.cp.AbstractH2Test;
+import com.cc01cc.p.xihe.cp.entity.AccessRole;
+import com.cc01cc.p.xihe.cp.entity.AccessRoleBinding;
 import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
+import com.cc01cc.p.xihe.cp.policy.AuthzContext;
+import com.cc01cc.p.xihe.cp.policy.RoleGrantMaterializer;
+import com.cc01cc.p.xihe.cp.repository.AccessRoleBindingRepository;
+import com.cc01cc.p.xihe.cp.repository.AccessRoleRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.junit.jupiter.api.BeforeEach;
@@ -40,6 +46,13 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * case states its own precondition (enabled/disabled, builtin/third-party) instead of depending on a
  * package tree; {@code cp.plugin.advisory-lock} is off because H2 has no
  * {@code pg_advisory_xact_lock}.</p>
+ *
+ * <p>T1.3 authorization: every write path now requires {@code PLUGIN_BIND}, and M1 seeds that atom
+ * onto the instance-administrator tier only (V137 — {@code WS_OWNER} deliberately does not carry it,
+ * because {@code WS_*} roles are agent-bindable and the atom is agent-forbidden). So the positive
+ * cases here act as an instance administrator: a plain workspace owner is the negative case and
+ * lives in {@link PluginBindingAuthorizationGateTest}, where the denial is asserted on the rows
+ * instead of the status code.</p>
  */
 @TestPropertySource(properties = {
         "cp.plugin.enabled=true",
@@ -68,11 +81,23 @@ class PluginBindingControllerTest extends AbstractH2Test {
     @Autowired
     private WorkspaceFixture workspaceFixture;
 
+    @Autowired
+    private AccessRoleRepository accessRoles;
+
+    @Autowired
+    private AccessRoleBindingRepository roleBindings;
+
+    @Autowired
+    private RoleGrantMaterializer roleGrantMaterializer;
+
+    @Autowired
+    private AuthzContext authzContext;
+
     // ------------------------------------------------------------------ create / read / revoke
 
     @Test
     void builtinBindingStartsWithTheDefaultInvokeGrant() {
-        Actor actor = actor();
+        Actor actor = adminActor();
         String pluginId = seedPlugin(Plugin.SOURCE_BUILTIN, true);
 
         ResponseEntity<Map> created = exchange(actor, HttpMethod.POST, "/api/v1/plugin-bindings",
@@ -122,7 +147,7 @@ class PluginBindingControllerTest extends AbstractH2Test {
 
     @Test
     void disabledPluginYieldsAPendingBindingThatCannotAttach() {
-        Actor actor = actor();
+        Actor actor = adminActor();
         String pluginId = seedPlugin(Plugin.SOURCE_BUILTIN, false);
         UUID session = seedSession(actor.workspaceId());
 
@@ -147,7 +172,7 @@ class PluginBindingControllerTest extends AbstractH2Test {
 
     @Test
     void thirdPartyBindingRequiresAnExplicitGrant() {
-        Actor actor = actor();
+        Actor actor = adminActor();
         String pluginId = seedPlugin(Plugin.SOURCE_THIRD_PARTY, true);
 
         ResponseEntity<Map> denied = exchange(actor, HttpMethod.POST, "/api/v1/plugin-bindings",
@@ -176,7 +201,7 @@ class PluginBindingControllerTest extends AbstractH2Test {
 
     @Test
     void unknownPluginAndUnknownBindingAnswerNotFound() {
-        Actor actor = actor();
+        Actor actor = adminActor();
 
         ResponseEntity<Map> unknownPlugin = exchange(actor, HttpMethod.POST,
                 "/api/v1/plugin-bindings", Map.of("pluginId", "official.not-installed"));
@@ -194,7 +219,7 @@ class PluginBindingControllerTest extends AbstractH2Test {
 
     @Test
     void duplicateBindingAndForeignWorkspaceAreRefused() {
-        Actor owner = actor();
+        Actor owner = adminActor();
         String pluginId = seedPlugin(Plugin.SOURCE_BUILTIN, true);
         ResponseEntity<Map> created = exchange(owner, HttpMethod.POST, "/api/v1/plugin-bindings",
                 Map.of("pluginId", pluginId));
@@ -217,7 +242,7 @@ class PluginBindingControllerTest extends AbstractH2Test {
 
     @Test
     void patchMovesStateOnlyWithinTheOperatorHalfOfTheMachine() {
-        Actor actor = actor();
+        Actor actor = adminActor();
         String pluginId = seedPlugin(Plugin.SOURCE_BUILTIN, true);
         String bindingId = String.valueOf(exchange(actor, HttpMethod.POST,
                 "/api/v1/plugin-bindings", Map.of("pluginId", pluginId))
@@ -250,7 +275,7 @@ class PluginBindingControllerTest extends AbstractH2Test {
 
     @Test
     void atomsOutsideTheManifestAreRefused() {
-        Actor actor = actor();
+        Actor actor = adminActor();
         String pluginId = seedPlugin(Plugin.SOURCE_BUILTIN, true);
 
         ResponseEntity<Map> undeclared = exchange(actor, HttpMethod.POST,
@@ -269,7 +294,7 @@ class PluginBindingControllerTest extends AbstractH2Test {
 
     @Test
     void uninstallIsRefusedWhileThePluginIsBound() {
-        Actor actor = actor();
+        Actor actor = adminActor();
         String pluginId = seedPlugin(Plugin.SOURCE_BUILTIN, true);
         String bindingId = String.valueOf(exchange(actor, HttpMethod.POST,
                 "/api/v1/plugin-bindings", Map.of("pluginId", pluginId))
@@ -293,7 +318,7 @@ class PluginBindingControllerTest extends AbstractH2Test {
 
     @Test
     void attachIsIdempotentAndDetachReleasesTheSnapshot() {
-        Actor actor = actor();
+        Actor actor = adminActor();
         String pluginId = seedPlugin(Plugin.SOURCE_BUILTIN, true);
         String bindingId = String.valueOf(exchange(actor, HttpMethod.POST,
                 "/api/v1/plugin-bindings", Map.of("pluginId", pluginId))
@@ -342,18 +367,28 @@ class PluginBindingControllerTest extends AbstractH2Test {
 
     @Test
     void attachRefusesAForeignSession() {
-        Actor owner = actor();
+        Actor owner = adminActor();
         String pluginId = seedPlugin(Plugin.SOURCE_BUILTIN, true);
         String bindingId = String.valueOf(exchange(owner, HttpMethod.POST,
                 "/api/v1/plugin-bindings", Map.of("pluginId", pluginId))
                 .getBody().get("bindingId"));
         UUID foreignSession = seedSession(owner.workspaceId());
 
-        Actor stranger = actor();
+        // The stranger holds PLUGIN_BIND (M1: instance-admin tier), so its request reaches the session
+        // lookup and the "not an existence oracle" rule is what answers.
+        Actor stranger = adminActor();
         ResponseEntity<Map> attach = exchange(stranger, HttpMethod.POST,
                 "/api/v1/sessions/" + foreignSession + "/plugins", Map.of("bindingId", bindingId));
         assertEquals(HttpStatus.NOT_FOUND, attach.getStatusCode(),
                 "a session in another workspace must not be an existence oracle");
+
+        // T1.3 ordering: without the atom the same call never reaches that lookup at all.
+        Actor ownerWithoutBind = actor();
+        ResponseEntity<Map> denied = exchange(ownerWithoutBind, HttpMethod.POST,
+                "/api/v1/sessions/" + foreignSession + "/plugins", Map.of("bindingId", bindingId));
+        assertEquals(HttpStatus.FORBIDDEN, denied.getStatusCode(),
+                "the atom gate answers before the session lookup");
+        assertEquals("PLUGIN_GRANT_DENIED", denied.getBody().get("code"));
     }
 
     // ------------------------------------------------------------------ helpers
@@ -379,6 +414,29 @@ class PluginBindingControllerTest extends AbstractH2Test {
                 .getId().toString();
         return new Actor(String.valueOf(registered.getBody().get("accessToken")), userId,
                 workspaceId);
+    }
+
+    /**
+     * An actor that holds {@code PLUGIN_BIND}: the same registration + owned-workspace fixture, plus
+     * the instance-administrator role binding and a grant materialization. This is the real M1 path
+     * (V137 seeds the atom on ADMIN/SUPER_ADMIN, and the workspace tier is served from the instance
+     * tier), not a test-only shortcut — the grant row is exactly what a delegated administrator gets.
+     */
+    private Actor adminActor() {
+        Actor actor = actor();
+        grantInstanceAdmin(actor.userId());
+        return actor;
+    }
+
+    /** Bind the ADMIN role at instance scope and materialize it into {@code grants}. */
+    private void grantInstanceAdmin(String userId) {
+        UUID subject = UUID.fromString(userId);
+        AccessRole adminRole = accessRoles.findByName("ADMIN").orElseThrow();
+        roleBindings.save(new AccessRoleBinding(adminRole.getId(), AuthzContext.SUBJECT_USER,
+                subject, "instance", null, subject));
+        roleBindings.flush();
+        roleGrantMaterializer.materializeSubject(AuthzContext.SUBJECT_USER, subject, subject, null);
+        authzContext.invalidate(subject);
     }
 
     private ResponseEntity<Map> exchange(Actor actor, HttpMethod method, String path,

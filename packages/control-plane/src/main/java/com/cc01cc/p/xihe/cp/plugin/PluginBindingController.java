@@ -32,8 +32,12 @@ import java.util.UUID;
  * {@code X-Workspace-Id} via {@link TenantContext} and every decision (existence → 403 before
  * disclosure → atom shape → state coupling) lives in {@link PluginBindingService}.</p>
  *
- * <p>Authorization is authentication-only until T1.3 lands {@code plugin:bind}; the atom map is
- * frozen in {@code spec/openapi-delta.md} §3 and deliberately not half-implemented here.</p>
+ * <p>Authorization: the annotation stays {@code isAuthenticated()} on purpose. The atom check is
+ * <b>not</b> a SpEL precondition here — {@code PLUGIN_BIND} is evaluated inside
+ * {@link PluginBindingService} as the first statement of each write path, so a denial is produced
+ * before the transaction has written anything (spec/authz-plugin-atoms.md line 10 assigns binding
+ * CRUD and session attach/detach to {@code plugin:bind}). Adding a second evaluation point here
+ * would put the authoritative decision outside the scope that owns the rows.</p>
  */
 @RestController
 @RequestMapping("/api/v1/plugin-bindings")
