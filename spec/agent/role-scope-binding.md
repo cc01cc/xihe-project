@@ -5,8 +5,8 @@
 > Profile：`security`  
 > Owner：Security（通用授权）+ Agent（绑定传播）  
 > 消费者：CP、Agent、Runtime、UI 审计  
-> 来源：PLAN-0386、PLAN-0387、DEV-032、PLAN-0497  
-> 更新日期：2026-10-13
+> 来源：PLAN-0386、PLAN-0387、DEV-032、PLAN-0497、PLAN-0689  
+> 更新日期：2026-11-07
 
 ## 范围与非目标
 
@@ -34,7 +34,7 @@ CP 是授权决定和 durable 身份的权威。Chat admission 时 CP 从请求�
 | effective run configuration | CP | 只消费授权后下发的配置值，不反推 role/scope |
 | tool call identity | Agent/CP | 通过 `runId`/`toolCallId` 关联；CP 重新判权 |
 
-此映射不是要求 CP→Agent 携带 principal/role/scope 等 authority-bearing 字段。公开 Chat `agentPrincipalId` 由 CP admission 校验并持久化；Agent 内部请求必须通过 Run/ToolCall 关联由 CP 反查身份。
+此映射不是要求 CP→Agent 携带 principal/role/scope 等 authority-bearing 字段。公开 Chat 不接受客户端 `agentPrincipalId`（wire 字段已由 PLAN-0689 删除）；CP admission 按显式 TO > `@` > `session_participants` PRIMARY 解析本 run 回应者并落 `chat_runs.agent_principal_id`。Agent 内部请求必须通过 Run/ToolCall 关联由 CP 反查身份。
 
 ## 规范条款
 
