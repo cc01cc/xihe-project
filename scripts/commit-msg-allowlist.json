@@ -1,5 +1,5 @@
 {
-  "_comment": "显式历史豁免白名单：每条必须带 reason，只允许“合入时才发现超宽”这类既成事实（合并后不可改写历史）。新增条目须在台账留痕，禁止批量塞历史提交。2026-11-06 一次性收录 8 条同日 merge/feature 超宽（同一根因：合并前未校验分支首行宽度，且 merge 主题未压到 ≤100 列）；收录后 gate 恢复绿，流程修复=合并前 `--range develop..<branch> --enforce` + merge 首行 ≤100。2026-11-07 追加 6 条（D-223）：4 条是以 `chore(merge):` 记录的 2 父合并提交、门禁按非 merge 的 72 列判（73~77 列），2 条是 19:08 的 lane 内 chore 提交与真 merge（80/137 列）；同一根因——分支内提交不受门禁约束、合入时未跑分支 `--range` 校验。",
+  "_comment": "显式历史豁免白名单：每条必须带 reason，只允许“合入时才发现超宽”这类既成事实（合并后不可改写历史）。新增条目须在台账留痕，禁止批量塞历史提交。2026-11-06 一次性收录 8 条同日 merge/feature 超宽（同一根因：合并前未校验分支首行宽度，且 merge 主题未压到 ≤100 列）；收录后 gate 恢复绿，流程修复=合并前 `--range develop..<branch> --enforce` + merge 首行 ≤100。2026-11-07 追加 6 条（D-223）：4 条是以 `chore(merge):` 记录的 2 父合并提交、门禁按非 merge 的 72 列判（73~77 列），2 条是 19:08 的 lane 内 chore 提交与真 merge（80/137 列）；同一根因——分支内提交不受门禁约束、合入时未跑分支 `--range` 校验。2026-11-08 追加 6 条（Lead 裁定 G：补白名单、不撤门、不放宽阈值）：`b8ef3413`/`88f320e1`/`1cbedc9a`/`3fbc4cf8`/`bd4dcf5c`/`fe1f1a3b` 六条 11-08 的 feature/test/docs 提交首行 75~92 列超 72，均已进 develop 不可改写；同一根因——分支内提交不受门禁约束、合入时没跑分支 `--range` 校验。",
   "entries": [
     {
       "sha": "e69e06c874c9d4b68e6dafcd7323492f08d825f4",
@@ -68,6 +68,30 @@
     {
       "sha": "f0c2c41c",
       "reason": "2026-11-07 0690 lane 分支内提交 fix(cp) 首行 132 列 > 72（把 columnDefinition 兼容细节塞进首行）；分支内提交不受门禁约束，Lead 以 merge(0a89e345) 合入时才发现 ⇒ 已进 develop 不可改写（D-224 收录）。流程修复=分支合入前必跑 --range develop..<branch> --enforce，细节移 body。"
+    },
+    {
+      "sha": "b8ef34136b5fdf722995541020d5909f8d1a5e12",
+      "reason": "2026-11-08 test(e2e) BL-382 自失败探针提交，首行实测 79 列 > 72（门禁 --range a632de77..HEAD --enforce 报出）；已进 develop 不可改写，历史遗留，非新增（2026-11-08 Lead 裁定：补白名单、不撤门、不放宽阈值）。"
+    },
+    {
+      "sha": "88f320e127595f5d4fc9856a6234caa6a4688b53",
+      "reason": "2026-11-08 test(ui) 去掉 dropped 列查询的提交，首行实测 75 列 > 72；已进 develop 不可改写，历史遗留，非新增（Lead 裁定同上）。"
+    },
+    {
+      "sha": "1cbedc9a8b92d9c07076591435b2609458828f8a",
+      "reason": "2026-11-08 feat(ui) vendor shadcn-vue 组件并接线的提交，首行实测 84 列 > 72；已进 develop 不可改写，历史遗留，非新增（Lead 裁定同上）。"
+    },
+    {
+      "sha": "3fbc4cf84a6a50248a3ea00245f40bf6abbbc53e",
+      "reason": "2026-11-08 feat(dev-stack) 栈租约纯函数库（P0 batch 1）提交，首行实测 77 列 > 72；已进 develop 不可改写，历史遗留，非新增（Lead 裁定同上）。"
+    },
+    {
+      "sha": "bd4dcf5c9fc8870b77654c20d8b0464cfb27cd4f",
+      "reason": "2026-11-08 docs(cp) 登记 CP 自有只读 git 工具（mcp.md + DEV-016 中英 + inventory）的提交，首行实测 88 列 > 72；已进 develop 不可改写，历史遗留，非新增（Lead 裁定同上）。"
+    },
+    {
+      "sha": "fe1f1a3b614d008ecad14de706ccfebbef2aad34",
+      "reason": "2026-11-08 docs(0689) V19 注释台账收口提交，首行实测 92 列 > 72；已进 develop 不可改写，历史遗留，非新增（Lead 裁定同上）。"
     }
   ]
 }
