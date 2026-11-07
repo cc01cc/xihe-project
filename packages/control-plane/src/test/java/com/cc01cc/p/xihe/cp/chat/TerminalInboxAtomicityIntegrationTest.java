@@ -846,7 +846,7 @@ class TerminalInboxAtomicityIntegrationTest extends AbstractIntegrationTest {
     private ChatSubmissionService.Submission createParentRun(String runId, Session session) {
         String branchId = branchPathService.ensureRootBranchId(session.getId().toString());
         return submissionService.create(runId, session.getId().toString(), userId, workspaceId,
-                branchId, principalId.toString(), "claim-idem-" + runId, "a".repeat(64), "provider", "model",
+                branchId, "claim-idem-" + runId, "a".repeat(64), "provider", "model",
                 "workspace", null, null, "t26b-claim", UUID.randomUUID().toString(),
                 "process pending child notices", "[]", List.of());
     }

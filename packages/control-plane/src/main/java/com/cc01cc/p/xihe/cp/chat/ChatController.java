@@ -334,7 +334,7 @@ public class ChatController {
                         item.getIdempotencyKey(), requestHash, provider, model, item.getToolMode(),
                         session.getProviderConnectionId(), session.getConnectionRevision(), instanceId(),
                         UUID.randomUUID().toString(), item.getContent(), attachmentsJson,
-                        admission.attachments().fileIds(), principalId);
+                        admission.attachments().fileIds());
                 return new FollowUpQueueService.ChildAdmission(
                         created.run().getId(), created.userMessage().getId());
             });
@@ -729,8 +729,8 @@ public class ChatController {
         boolean handedOff = false;
         try {
             ChatSubmissionService.Submission submission = chatSubmissionService.create(
-                    // 0689 B3: no caller can name a run principal any more (A7 removes the parameter).
-                    runId, sessionId, userId, workspaceId, branchId, null, idempotencyKey, requestHash,
+                    // 0689 B3/A4b: no caller can name a run principal — the parameter is gone.
+                    runId, sessionId, userId, workspaceId, branchId, idempotencyKey, requestHash,
                     provider, model, toolMode, session.getProviderConnectionId(), session.getConnectionRevision(),
                     instanceId(), requestId, content, attachmentsJson, attachmentIds, asParticipantId,
                     ChatDeliveryPayload.toJson(objectMapper, toParticipantIds, asParticipantId, ccParticipantIds));

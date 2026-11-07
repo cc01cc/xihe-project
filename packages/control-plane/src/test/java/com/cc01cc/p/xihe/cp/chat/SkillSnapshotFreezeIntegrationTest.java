@@ -532,7 +532,7 @@ class SkillSnapshotFreezeIntegrationTest extends AbstractIntegrationTest {
         String runId = UUID.randomUUID().toString();
         submissionService.create(runId, sessionId, fixture.user().getId().toString(),
                 fixture.workspace().getId().toString(),
-                branchPathService.ensureRootBranchId(sessionId), fixture.principal().getId().toString(),
+                branchPathService.ensureRootBranchId(sessionId),
                 "idem-" + runId, "request-hash", "provider", "model", "none", null, null,
                 "lease-owner", UUID.randomUUID().toString(), content, "[]", List.of());
         return runId;

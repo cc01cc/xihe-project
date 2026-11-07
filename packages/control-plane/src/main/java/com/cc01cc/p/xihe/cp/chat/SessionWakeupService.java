@@ -215,7 +215,7 @@ public class SessionWakeupService {
                 chatSubmissionService.tryCreateScheduled(runId, sessionId, userId, workspaceId, branchId,
                         idempotencyKey, requestHash, provider, model, SCHEDULED_TOOL_MODE,
                         session.getProviderConnectionId(), session.getConnectionRevision(), null,
-                        UUID.randomUUID().toString(), prompt, "[]", List.of(), principalId,
+                        UUID.randomUUID().toString(), prompt, "[]", List.of(),
                         Message.VISIBILITY_INTERNAL);
         if (created.isEmpty()) {
             // Deferred by the admission gate: the caller falls through to the follow-up queue and

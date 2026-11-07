@@ -383,7 +383,7 @@ class ChatSubmissionServiceIntegrationTest extends AbstractIntegrationTest {
                         user.getId().toString(), workspace.getId().toString(), branchId,
                         "idem-" + deferredRunId, "request-hash", "provider", "model", "none", null, null,
                         "lease-owner", UUID.randomUUID().toString(), "deferred wake prompt", "[]",
-                        java.util.List.of(), principal.getId().toString(),
+                        java.util.List.of(),
                         com.cc01cc.p.xihe.cp.entity.Message.VISIBILITY_INTERNAL);
                 assertTrue(deferred.isEmpty(),
                         "a full cap must answer as a value (empty), not as a thrown exception");
@@ -753,22 +753,22 @@ class ChatSubmissionServiceIntegrationTest extends AbstractIntegrationTest {
 
     private ChatSubmissionService.Submission submit(String runId, Session session, User user,
                                                     Workspace workspace, String content) {
-        return submit(runId, session, user, workspace, content, null);
-    }
-
-    private ChatSubmissionService.Submission submit(String runId, Session session, User user,
-                                                     Workspace workspace, String content, String agentPrincipalId) {
         String branchId = branchPathService.ensureRootBranchId(session.getId().toString());
-        if (agentPrincipalId != null) {
-            return submissionService.create(runId, session.getId().toString(), user.getId().toString(),
-                    workspace.getId().toString(), branchId, agentPrincipalId,
-                    "idem-" + runId, "request-hash",
-                    "provider", "model", "none", null, null, "lease-owner", UUID.randomUUID().toString(),
-                    content, "[]", java.util.List.of());
-        }
         return submissionService.create(runId, session.getId().toString(), user.getId().toString(),
                 workspace.getId().toString(), branchId, "idem-" + runId, "request-hash", "provider", "model",
                 "none", null, null, "lease-owner", UUID.randomUUID().toString(), content, "[]", java.util.List.of());
+    }
+
+    /**
+     * PLAN-0689 A4b: the submission signatures no longer take a run principal — the responder is
+     * resolved server-side (explicit {@code as} &gt; PRIMARY) and stamped at admission. This overload is
+     * kept so the ~25 call sites do not have to drop an argument that never selected a responder;
+     * {@code ignoredPrincipalId} is intentionally unread.
+     */
+    private ChatSubmissionService.Submission submit(String runId, Session session, User user,
+                                                     Workspace workspace, String content,
+                                                     String ignoredPrincipalId) {
+        return submit(runId, session, user, workspace, content);
     }
 
     private AgentPrincipal savePrincipal(User user) {
@@ -1126,8 +1126,7 @@ class ChatSubmissionServiceIntegrationTest extends AbstractIntegrationTest {
                 followUp.user().getId().toString(), followUp.workspace().getId().toString(),
                 branchPathService.ensureRootBranchId(followUp.session().getId().toString()),
                 "follow-up-" + followUpRunId, "hash-follow-up", "provider", "model", "none", null, null,
-                "lease", UUID.randomUUID().toString(), "queued prompt", "[]", List.of(),
-                followUp.principal().getId().toString());
+                "lease", UUID.randomUUID().toString(), "queued prompt", "[]", List.of());
         assertEquals(followUp.principal().getId(),
                 chatRunRepository.findById(UUID.fromString(followUpRunId)).orElseThrow().getAgentPrincipalId(),
                 "follow-up children are stamped at admission (BL-280)");
@@ -1140,8 +1139,7 @@ class ChatSubmissionServiceIntegrationTest extends AbstractIntegrationTest {
                 scheduled.user().getId().toString(), scheduled.workspace().getId().toString(),
                 branchPathService.ensureRootBranchId(scheduled.session().getId().toString()),
                 "scheduled-" + scheduledRunId, "hash-scheduled", "provider", "model", "none", null,
-                null, null, UUID.randomUUID().toString(), "wake prompt", "[]", List.of(),
-                scheduled.principal().getId().toString());
+                null, null, UUID.randomUUID().toString(), "wake prompt", "[]", List.of());
         assertEquals(scheduled.principal().getId(),
                 chatRunRepository.findById(UUID.fromString(scheduledRunId)).orElseThrow().getAgentPrincipalId(),
                 "scheduled wake carriers are stamped at admission (BL-280)");
@@ -1161,7 +1159,7 @@ class ChatSubmissionServiceIntegrationTest extends AbstractIntegrationTest {
         submissionService.create(runId, fixture.session().getId().toString(),
                 fixture.user().getId().toString(), fixture.workspace().getId().toString(),
                 branchPathService.ensureRootBranchId(fixture.session().getId().toString()),
-                fixture.principal().getId().toString(), "human-" + runId, "hash-human", "provider", "model",
+                "human-" + runId, "hash-human", "provider", "model",
                 "none", null, null, "lease", UUID.randomUUID().toString(), "hi", "[]", List.of(),
                 human.getId().toString());
         assertNull(chatRunRepository.findById(UUID.fromString(runId)).orElseThrow().getAgentPrincipalId(),
