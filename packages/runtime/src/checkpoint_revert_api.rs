@@ -12,7 +12,9 @@
 //!   written concurrently during the execution;
 //! - `blob` serves one regular file of the slice tree as plain text (≤1 MiB);
 //! - `git-status` projects the user repository's own porcelain status read-only
-//!   (isolated env, no hooks) for the dual-diff separation (spec §6.4 / S4).
+//!   (isolated env, no hooks) for the dual-diff separation (spec §6.4 / S4);
+//! - `git-diff` returns the user repository's own work-tree diff read-only
+//!   (bounded patch, same isolated env) for the G8 `git_diff` tool (PLAN-0686).
 //!
 //! The axum handlers in `main.rs` only map these outcomes to the frozen
 //! Problem+JSON shapes; no control-plane or UI concept lives here.
@@ -24,7 +26,9 @@ use serde::Serialize;
 use tracing::info;
 
 use crate::checkpoint::CheckpointStorageMode;
-use crate::checkpoint::{CheckpointError, WorkspaceGitStatus, validate_workspace_id};
+use crate::checkpoint::{
+    CheckpointError, WorkspaceGitDiff, WorkspaceGitStatus, validate_workspace_id,
+};
 use crate::checkpoint_api::{
     CheckpointService, REASON_GIT_FAILED, REASON_WORKSPACE_UNKNOWN, unavailable_reason,
 };
@@ -744,6 +748,38 @@ impl CheckpointService {
         })?;
         match self.engine().workspace_git_status(workspace_id).await {
             Ok(status) => Ok(status),
+            Err(CheckpointError::GitUnavailable(detail)) => {
+                let capability = self.engine().probe().await;
+                Err(GitStatusFailure::Unavailable {
+                    reason: unavailable_reason(&capability.version).into(),
+                    detail,
+                })
+            }
+            Err(CheckpointError::InvalidIdentifier { detail, .. }) => {
+                Err(GitStatusFailure::Validation { detail })
+            }
+            Err(CheckpointError::WorkspaceMissing(detail)) => Err(GitStatusFailure::Unavailable {
+                reason: REASON_WORKSPACE_UNKNOWN.into(),
+                detail,
+            }),
+            Err(other) => Err(GitStatusFailure::Unavailable {
+                reason: REASON_GIT_FAILED.into(),
+                detail: other.to_string(),
+            }),
+        }
+    }
+
+    /// G8 `git_diff` v1 (PLAN-0686): read-only user-repository work-tree diff.
+    pub async fn git_diff(
+        &self,
+        workspace_id: &str,
+        paths: &[String],
+    ) -> Result<WorkspaceGitDiff, GitStatusFailure> {
+        validate_workspace_id(workspace_id).map_err(|error| GitStatusFailure::Validation {
+            detail: error.to_string(),
+        })?;
+        match self.engine().workspace_git_diff(workspace_id, paths).await {
+            Ok(diff) => Ok(diff),
             Err(CheckpointError::GitUnavailable(detail)) => {
                 let capability = self.engine().probe().await;
                 Err(GitStatusFailure::Unavailable {

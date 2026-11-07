@@ -228,6 +228,9 @@ const LAST_INDEX_NAME: &str = "last-index";
 const PROBE_RETRY_BACKOFF: Duration = Duration::from_secs(60);
 const PROBE_TIMEOUT: Duration = Duration::from_secs(15);
 const GIT_CALL_TIMEOUT: Duration = Duration::from_secs(120);
+/// G8 `git_diff` patch cap (256 KiB, PLAN-0686): larger patches are cut on a
+/// UTF-8 character boundary and flagged `truncated`; never silently dropped.
+const GIT_DIFF_PATCH_CAP: usize = 256 * 1024;
 const MAX_RUN_ID_LEN: usize = 128;
 const MAX_DYNAMIC_EXCLUDES: usize = 4096;
 const LOCK_MAP_PRUNE_THRESHOLD: usize = 1024;
@@ -436,6 +439,21 @@ pub struct WorkspaceGitStatus {
     /// `false` when the workspace root has no user `.git` (non-Git workspaces work).
     pub is_repository: bool,
     pub entries: Vec<GitStatusEntry>,
+}
+
+/// `GET .../git-diff` body: read-only unified diff of the user repository's work
+/// tree against its index (G8 `git_diff` v1, PLAN-0686).
+///
+/// `patch_bytes` is the untruncated raw byte length; `patch` is capped at
+/// [`GIT_DIFF_PATCH_CAP`] on a UTF-8 character boundary with `truncated: true`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceGitDiff {
+    /// `false` when the workspace root has no user `.git` marker (non-Git workspaces work).
+    pub is_repository: bool,
+    pub patch: String,
+    pub truncated: bool,
+    pub patch_bytes: u64,
 }
 
 /// PLAN-0340 L1b git half: stable facts only (branch + short HEAD), no dirty.
@@ -3341,6 +3359,69 @@ impl ShadowGit {
         })
     }
 
+    /// Read-only unified diff of the user repository (G8 `git_diff` v1, PLAN-0686).
+    ///
+    /// Pathspecs are workspace-relative and validated by [`normalize_user_git_path`]
+    /// (absolute/UNC/drive/`..`/NUL/empty rejected), then passed after `--`. The
+    /// process cwd is the user work tree because git resolves pathspecs relative to
+    /// cwd. Like `git-status` it runs with nulled global/system config, the user
+    /// repo as `GIT_DIR`, no `GIT_INDEX_FILE`, and the shadow's `empty-hooks` as
+    /// `core.hooksPath`; `--no-ext-diff --no-textconv` keep configured diff
+    /// drivers/textconv from executing and `core.quotepath=false` keeps UTF-8 paths
+    /// readable. A workspace without a `.git` marker reports `is_repository: false`
+    /// without spawning git; a missing workspace directory stays an explicit
+    /// [`CheckpointError::WorkspaceMissing`].
+    pub async fn workspace_git_diff(
+        &self,
+        workspace_id: &str,
+        paths: &[String],
+    ) -> Result<WorkspaceGitDiff> {
+        let paths = normalize_user_git_paths(paths)?;
+        let work_tree = self.work_tree(workspace_id)?;
+        if !work_tree.is_dir() {
+            return Err(CheckpointError::WorkspaceMissing(normalize_path_for_git(
+                &work_tree,
+            )));
+        }
+        let Some(git_dir) = resolve_user_git_dir(&work_tree).await else {
+            return Ok(WorkspaceGitDiff {
+                is_repository: false,
+                patch: String::new(),
+                truncated: false,
+                patch_bytes: 0,
+            });
+        };
+        self.require_git().await?;
+        let mut env = self.null_config_env();
+        env.push(("GIT_DIR".to_string(), normalize_path_for_git(&git_dir)));
+        env.push((
+            "GIT_WORK_TREE".to_string(),
+            normalize_path_for_git(&work_tree),
+        ));
+        env.push(("GIT_OPTIONAL_LOCKS".to_string(), "0".to_string()));
+        env.push(("GIT_TERMINAL_PROMPT".to_string(), "0".to_string()));
+        let hooks = self.shadow_git_dir(workspace_id)?.join("empty-hooks");
+        let hooks_config = format!("core.hooksPath={}", normalize_path_for_git(&hooks));
+        let quotepath_config = "core.quotepath=false".to_string();
+        let mut args: Vec<&str> = vec![
+            "-c",
+            &hooks_config,
+            "-c",
+            &quotepath_config,
+            "diff",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--no-color",
+            "--patch",
+            "--",
+        ];
+        args.extend(paths.iter().map(String::as_str));
+        let stdout = self
+            .run_git_checked(&args, &env, Some(work_tree.as_path()), self.call_timeout)
+            .await?;
+        Ok(bounded_git_diff_patch(stdout))
+    }
+
     /// PLAN-0340 T1.2: `branch` + short `HEAD` for L1b (no dirty list).
     pub async fn workspace_git_facts(&self, workspace_id: &str) -> Result<WorkspaceGitFacts> {
         let work_tree = self.work_tree(workspace_id)?;
@@ -3548,6 +3629,80 @@ impl ShadowGit {
             );
         }
         Ok(output.stdout)
+    }
+}
+
+/// Validate one workspace-relative git pathspec for the read-only G8 tools.
+///
+/// The process cwd is the repository work tree, so a pathspec must stay inside
+/// it: absolute POSIX/UNC paths, drive-qualified paths, `..` segments (including
+/// ones that only appear after normalising `\\` to `/`), NUL bytes and empty
+/// segments are rejected before git runs. `.` segments are dropped; a leading
+/// `-` is rejected so a path can never be mistaken for an argv option even though
+/// paths are passed after `--`.
+fn normalize_user_git_path(raw: &str) -> Result<String> {
+    fn invalid(raw: &str, detail: &str) -> CheckpointError {
+        CheckpointError::InvalidIdentifier {
+            kind: "git path",
+            value: raw.to_string(),
+            detail: detail.to_string(),
+        }
+    }
+    if raw.is_empty() || raw.contains('\0') {
+        return Err(invalid(raw, "path must be non-empty and NUL-free"));
+    }
+    let unified = raw.replace('\\', "/");
+    if unified.starts_with('/') {
+        return Err(invalid(raw, "absolute and UNC paths are not allowed"));
+    }
+    let mut segments: Vec<&str> = Vec::new();
+    for segment in unified.split('/') {
+        match segment {
+            "" => return Err(invalid(raw, "empty path segment")),
+            "." => continue,
+            ".." => return Err(invalid(raw, "parent traversal is not allowed")),
+            _ => {}
+        }
+        let bytes = segment.as_bytes();
+        if bytes.len() > 1 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' {
+            return Err(invalid(raw, "drive-qualified paths are not allowed"));
+        }
+        segments.push(segment);
+    }
+    if segments.is_empty() {
+        return Err(invalid(raw, "path must name an entry inside the workspace"));
+    }
+    let normalized = segments.join("/");
+    if normalized.starts_with('-') || normalized.split('/').any(|segment| segment == "..") {
+        return Err(invalid(raw, "path must stay inside the workspace"));
+    }
+    Ok(normalized)
+}
+
+fn normalize_user_git_paths(paths: &[String]) -> Result<Vec<String>> {
+    paths
+        .iter()
+        .map(|path| normalize_user_git_path(path))
+        .collect()
+}
+
+/// Cap a raw `git diff` patch at [`GIT_DIFF_PATCH_CAP`] without splitting UTF-8.
+fn bounded_git_diff_patch(stdout: Vec<u8>) -> WorkspaceGitDiff {
+    let patch_bytes = stdout.len() as u64;
+    let truncated = stdout.len() > GIT_DIFF_PATCH_CAP;
+    let mut patch = String::from_utf8_lossy(&stdout).into_owned();
+    if truncated {
+        let mut cut = GIT_DIFF_PATCH_CAP.min(patch.len());
+        while cut > 0 && !patch.is_char_boundary(cut) {
+            cut -= 1;
+        }
+        patch.truncate(cut);
+    }
+    WorkspaceGitDiff {
+        is_repository: true,
+        patch,
+        truncated,
+        patch_bytes,
     }
 }
 
@@ -3860,7 +4015,13 @@ fn platform_env() -> Vec<(String, String)> {
 }
 
 /// Resolve `<workTree>/.git` (directory or `gitdir:` pointer file) for read-only
-/// HEAD introspection in `git-status`; `None` when the workspace is not a repo.
+/// introspection in `git-status` / `git-diff`; `None` when the workspace has no
+/// `.git` marker at all.
+///
+/// Linked worktrees and submodules carry a `.git` *file* whose `gitdir:` line
+/// points at the real git directory. A malformed marker is still reported as a
+/// repository (the `.git` path itself) so git fails explicitly instead of the
+/// workspace silently looking non-Git.
 async fn resolve_user_git_dir(work_tree: &Path) -> Option<PathBuf> {
     let dot_git = work_tree.join(".git");
     let metadata = tokio::fs::symlink_metadata(&dot_git).await.ok()?;
@@ -3869,15 +4030,22 @@ async fn resolve_user_git_dir(work_tree: &Path) -> Option<PathBuf> {
     }
     if metadata.is_file() {
         let content = tokio::fs::read_to_string(&dot_git).await.ok()?;
-        let target = content.lines().next()?.strip_prefix("gitdir:")?.trim();
-        if target.is_empty() {
-            return None;
-        }
-        let path = Path::new(target);
-        return Some(if path.is_absolute() {
-            path.to_path_buf()
-        } else {
-            work_tree.join(path)
+        let target = content
+            .lines()
+            .next()
+            .and_then(|line| line.strip_prefix("gitdir:"))
+            .map(str::trim)
+            .filter(|target| !target.is_empty());
+        return Some(match target {
+            Some(target) => {
+                let path = Path::new(target);
+                if path.is_absolute() {
+                    path.to_path_buf()
+                } else {
+                    work_tree.join(path)
+                }
+            }
+            None => dot_git,
         });
     }
     None
