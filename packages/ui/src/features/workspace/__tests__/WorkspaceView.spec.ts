@@ -73,7 +73,6 @@ const i18n = createI18n({
                 noEnabledAgent: "The bound Agents are disabled",
                 openAgentManagement: "Open Agent management",
                 agentLoadFailed: "Failed to load Agents",
-                bindAgentAndSend: "Bind and send",
                 agentManagement: "Agent management",
                 activeAgent: "Active Agent",
                 agentManagementDescription: "Manage Workspace Agents",

@@ -244,12 +244,6 @@ export const useSessionStore = defineStore("session", () => {
         currentSessionId.value = id;
     }
 
-    function setSessionAgentPrincipal(id: string, agentPrincipalId: string) {
-        sessions.value = sessions.value.map((session) =>
-            session.id === id ? { ...session, agentPrincipalId } : session,
-        );
-    }
-
     function clearCurrentSession() {
         currentSessionId.value = null;
     }
@@ -328,7 +322,6 @@ export const useSessionStore = defineStore("session", () => {
         deleteSession,
         renameSession,
         selectSession,
-        setSessionAgentPrincipal,
         clearCurrentSession,
         updateSessionTitle,
         updateSession,
