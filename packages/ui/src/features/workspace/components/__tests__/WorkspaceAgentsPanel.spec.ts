@@ -33,6 +33,7 @@ const apiMock = vi.hoisted(() => ({
     unbindAgentSkill: vi.fn<() => Promise<void>>(),
     listRoles: vi.fn<() => Promise<unknown[]>>(),
     getSkills: vi.fn<() => Promise<unknown[]>>(),
+    getWorkspaceSkills: vi.fn<(workspaceId: string) => Promise<unknown[]>>(),
 }));
 
 const CREATE_ACCOUNT_MISSING = {
@@ -1389,8 +1390,13 @@ describe("WorkspaceAgentsPanel PLAN-0667 roles & skills", () => {
             { id: "role-editor", name: "WS_EDITOR", displayName: "Workspace editor" },
         ]);
         apiMock.getSkills.mockResolvedValue([
-            { skillId: "skill-2", name: "test-case-writing", definitionScope: null },
+            {
+                skillId: "skill-2",
+                name: "test-case-writing",
+                definitionScope: { type: "instance", workspaceId: null },
+            },
         ]);
+        apiMock.getWorkspaceSkills.mockResolvedValue([]);
     });
 
     it("lists name / scope / system badge / derived-atom summary and never unbinds a system binding", async () => {
@@ -1530,6 +1536,65 @@ describe("WorkspaceAgentsPanel PLAN-0667 roles & skills", () => {
             WORKSPACE_ID,
             PRINCIPAL_ID,
             "skill-binding-1",
+        );
+    });
+
+    it("offers instance and current-workspace definitions once, then binds on the workspace axis", async () => {
+        apiMock.getSkills.mockResolvedValue([
+            {
+                skillId: "skill-instance",
+                name: "instance-skill",
+                definitionScope: { type: "instance", workspaceId: null },
+            },
+            {
+                skillId: "skill-dupe",
+                name: "deduped-skill",
+                definitionScope: { type: "instance", workspaceId: null },
+            },
+            {
+                skillId: "skill-dupe",
+                name: "deduped-skill",
+                definitionScope: { type: "instance", workspaceId: null },
+            },
+        ]);
+        apiMock.getWorkspaceSkills.mockResolvedValue([
+            {
+                skillId: "skill-workspace",
+                name: "workspace-skill",
+                definitionScope: { type: "workspace", workspaceId: WORKSPACE_ID },
+            },
+            {
+                skillId: "skill-foreign",
+                name: "foreign-workspace-skill",
+                definitionScope: {
+                    type: "workspace",
+                    workspaceId: "77777777-7777-4777-8777-777777777777",
+                },
+            },
+        ]);
+
+        const wrapper = await mountOpenedPanel();
+        await wrapper.get(rolesToggle).trigger("click");
+        await flushPromises();
+
+        expect(apiMock.getWorkspaceSkills).toHaveBeenCalledWith(WORKSPACE_ID);
+        const select = wrapper.get(`[data-testid="agent-skill-select-${PRINCIPAL_ID}"]`);
+        expect(
+            select
+                .findAll("option")
+                .slice(1)
+                .map((option) => option.attributes("value")),
+        ).toEqual(["skill-instance", "skill-dupe", "skill-workspace"]);
+
+        await select.setValue("skill-workspace");
+        await wrapper.get(`[data-testid="agent-skill-bind-${PRINCIPAL_ID}"]`).trigger("click");
+        await flushPromises();
+
+        // Binding scope is server-derived from this context; the client only sends the skill id.
+        expect(apiMock.bindAgentSkill).toHaveBeenCalledWith(
+            WORKSPACE_ID,
+            PRINCIPAL_ID,
+            "skill-workspace",
         );
     });
 
