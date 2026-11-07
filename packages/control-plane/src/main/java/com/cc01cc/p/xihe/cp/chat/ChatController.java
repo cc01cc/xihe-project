@@ -485,12 +485,10 @@ public class ChatController {
                     HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "branchId must be a UUID");
         }
         String content = (String) request.getOrDefault("content", "");
-        Object rawPrincipalId = request.get("agentPrincipalId");
-        if (rawPrincipalId != null && !(rawPrincipalId instanceof String)) {
-            return ProblemDetailsHandler.problemResponse(HttpStatus.BAD_REQUEST,
-                    "INVALID_REQUEST", "agentPrincipalId must be a UUID string");
-        }
-        String agentPrincipalId = (String) rawPrincipalId;
+        // PLAN-0689 A2 (T1.2 / design §3 B3): the wire field is retired — a request can no longer
+        // name the run's answering principal; that is resolved at admission instead. Old clients
+        // that still send it are ignored rather than rejected: the body is a Map, so there is no
+        // strict deserialization to 400 on it (BL-444 tracks the deprecation window).
         Object rawAsParticipantId = request.get("asParticipantId");
         if (rawAsParticipantId != null && !(rawAsParticipantId instanceof String)) {
             return ProblemDetailsHandler.problemResponse(HttpStatus.BAD_REQUEST,
@@ -687,8 +685,10 @@ public class ChatController {
             }
         }
 
+        // 0689 B3: wire field deleted ⇒ the run principal is never part of the identity; the key
+        // can no longer appear in the canonical form, so this hash family is "identity v3".
         String requestHash = requestHash(content, provider, model, toolMode, attachmentIds,
-                perCallTimeouts.values(), agentPrincipalId, branchId,
+                perCallTimeouts.values(), null, branchId,
                 ChatToTargets.canonical(toParticipantIds), asParticipantId);
         try {
             var replay = chatSubmissionService.findSubmissionReplay(
@@ -729,7 +729,8 @@ public class ChatController {
         boolean handedOff = false;
         try {
             ChatSubmissionService.Submission submission = chatSubmissionService.create(
-                    runId, sessionId, userId, workspaceId, branchId, agentPrincipalId, idempotencyKey, requestHash,
+                    // 0689 B3: no caller can name a run principal any more (A7 removes the parameter).
+                    runId, sessionId, userId, workspaceId, branchId, null, idempotencyKey, requestHash,
                     provider, model, toolMode, session.getProviderConnectionId(), session.getConnectionRevision(),
                     instanceId(), requestId, content, attachmentsJson, attachmentIds, asParticipantId,
                     ChatDeliveryPayload.toJson(objectMapper, toParticipantIds, asParticipantId, ccParticipantIds));
