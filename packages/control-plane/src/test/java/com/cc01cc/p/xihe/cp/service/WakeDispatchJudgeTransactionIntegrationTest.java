@@ -4,14 +4,20 @@ import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
 import com.cc01cc.p.xihe.cp.AbstractH2Test;
+import com.cc01cc.p.xihe.cp.entity.ChatRun;
 import com.cc01cc.p.xihe.cp.entity.JudgeDecision;
 import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.entity.SessionParticipant;
+import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.entity.UserQuestion;
+import com.cc01cc.p.xihe.cp.entity.Workspace;
+import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
 import com.cc01cc.p.xihe.cp.repository.JudgeDecisionRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionParticipantRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.repository.UserQuestionRepository;
+import com.cc01cc.p.xihe.cp.repository.UserRepository;
+import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
 import org.junit.jupiter.api.Test;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -54,9 +60,10 @@ import static org.mockito.Mockito.when;
  * {@link UnexpectedRollbackException}，{@code judgeSaysSpeak()} 记录后**重抛**，外层整轮回滚，
  * 不能把已损坏的事务伪装成成功的 {@code judged_no}。</p>
  *
- * <p>两个用例都走<b>真实事务边界</b>，不是 mock 行为测试：只 mock 三个外部边界
- * （speak-as 判定、judge 模型调用、judge_decisions 写入），{@code WakeDispatchService} /
- * {@code JudgeDecisionService} / event store / repositories / transaction manager 全部用真实 Bean。
+ * <p>三个用例都走<b>真实事务边界</b>，不是 mock 行为测试：只 mock 两个外部边界
+ * （speak-as 判定、judge 模型调用）；{@code judge_decisions} 写入用 spy（默认真实插入，两条事务
+ * 边界用例显式强制失败），{@code WakeDispatchService} / {@code JudgeDecisionService} / event
+ * store / repositories / transaction manager 全部用真实 Bean。
  * 测试方法**故意不加 {@code @Transactional}**：Spring 测试默认回滚会把外层提交结果藏掉。</p>
  */
 class WakeDispatchJudgeTransactionIntegrationTest extends AbstractH2Test {
@@ -94,6 +101,15 @@ class WakeDispatchJudgeTransactionIntegrationTest extends AbstractH2Test {
 
     @Autowired
     private UserQuestionRepository userQuestions;
+
+    @Autowired
+    private UserRepository users;
+
+    @Autowired
+    private WorkspaceRepository workspaces;
+
+    @Autowired
+    private ChatRunRepository chatRuns;
 
     private UUID seedJudgeParticipant() {
         Session session = new Session();
@@ -190,46 +206,51 @@ class WakeDispatchJudgeTransactionIntegrationTest extends AbstractH2Test {
      * PLAN-0690 T1.2: the JUDGE branch decides only <em>whether to speak</em>.
      *
      * <p>One real {@link WakeDispatchService#fire} on a JUDGE participant whose verdict says
-
-     * {@code speak=false} must write exactly one {@code judge_decisions} row carrying the assembled
-     * {@code input_window}, and nothing else: no {@code user_questions} transition, no
-     * {@code session_participants.respond_policy} rewrite (all four enum values are snapshotted), no
-     * {@code chat_runs} insertion, and no audit beyond the pre-existing fire path's own durable
-     * {@code wake_dispatch} row.</p>
+     * {@code speak=false} triggers exactly one {@code decide} and must write exactly one
+     * {@code judge_decisions} row carrying the assembled {@code input_window}, and nothing else: no
+     * {@code user_questions} transition, no {@code session_participants.respond_policy} rewrite (all
+     * four enum values are snapshotted), no {@code chat_runs} insertion, and no audit beyond the
+     * pre-existing fire path's own durable {@code wake_dispatch} row. The fixture seeds real
+     * users/workspaces/sessions/chat_runs rows, so the pending question's foreign keys are real
+     * ({@code V128:58-71}) rather than dangling ids.</p>
      */
     @Test
     void judgeDecisionWritesNoUserQuestionsNorRespondPolicy() throws JudgeModelClient.JudgeException {
-        UUID judgeParticipantId = seedFourPolicyParticipants();
-        UUID sessionId = participants.findById(judgeParticipantId).orElseThrow().getSessionId();
-        UUID questionId = seedPendingUserQuestion(sessionId);
+        JudgeZeroSideEffects fixture = seedJudgeZeroSideEffects();
 
-        Map<String, String> policiesBefore = respondPolicySnapshot(sessionId);
+        Map<String, String> policiesBefore = respondPolicySnapshot(fixture.sessionId());
         assertEquals(Set.of(SessionParticipant.RESPOND_ALWAYS,
                         SessionParticipant.RESPOND_WHEN_MENTIONED,
                         SessionParticipant.RESPOND_JUDGE,
                         SessionParticipant.RESPOND_MUTED),
                 new HashSet<>(policiesBefore.values()),
                 "the snapshot must contain all four respond_policy values");
+        Map<String, Long> questionStatesBefore = userQuestionStateCounts(fixture.sessionId());
+        assertEquals(Map.of(UserQuestion.STATE_PENDING, 1L), questionStatesBefore,
+                "the fixture must start with exactly one pending question");
+        long judgeDecisionsBefore = judgeDecisionCount(fixture.sessionId());
         long chatRunsBefore = rowCount("chat_runs");
         long auditLogsBefore = rowCount("audit_logs");
-        long wakeDispatchBefore = contextEventCount(sessionId, "wake_dispatch");
+        long wakeDispatchBefore = contextEventCount(fixture.sessionId(), "wake_dispatch");
 
         when(participantService.judgeSpeakAs(anyString(), anyString(), anyString(), anyString()))
                 .thenReturn(SessionParticipantService.SpeakDecision.permit());
         stubJudgeVerdict("{\"speak\":false}");
 
         WakeDispatchService.WakeFireResult result = wakeDispatchService.fire(
-                judgeParticipantId, "mention", "wake:mention:t1.2", sessionId, null);
+                fixture.judgeParticipantId(), "mention", "wake:mention:t1.2",
+                fixture.sessionId(), null);
 
         assertEquals("judged_no", result.outcome(), "speak=false must not dispatch a run");
         assertFalse(result.dispatched());
         assertNull(result.runId(), "a judged_no wake has no run");
 
-        // The judge path's only durable output is the decision row, with its input window.
-        assertEquals(1, judgeDecisionCount(sessionId), "exactly one judge_decisions row");
+        // The judge path's only durable output is its decision row, with its input window.
+        assertEquals(judgeDecisionsBefore + 1, judgeDecisionCount(fixture.sessionId()),
+                "exactly one judge_decisions row must be added");
         Map<String, Object> decision = jdbc.queryForMap(
                 "SELECT input_window, run_id, outcome FROM judge_decisions WHERE session_id = ?",
-                sessionId);
+                fixture.sessionId());
         String inputWindow = (String) decision.get("input_window");
         assertNotNull(inputWindow, "judge_decisions.input_window must be populated");
         assertTrue(inputWindow.contains("round=wake:mention:t1.2"),
@@ -238,30 +259,59 @@ class WakeDispatchJudgeTransactionIntegrationTest extends AbstractH2Test {
         assertEquals("succeeded", decision.get("outcome"));
 
         // Zero side effects on the policy column, the pending question and the run table.
-        assertEquals(policiesBefore, respondPolicySnapshot(sessionId),
+        assertEquals(policiesBefore, respondPolicySnapshot(fixture.sessionId()),
                 "judging must not rewrite any respond_policy value");
-        assertEquals("pending", scalarString(
-                "SELECT state FROM user_questions WHERE id = ?", questionId),
+        assertEquals(questionStatesBefore, userQuestionStateCounts(fixture.sessionId()),
                 "the pending question must stay pending");
-        assertNull(scalarString("SELECT answer FROM user_questions WHERE id = ?", questionId),
-                "judging must not answer the question");
+        assertEquals(UserQuestion.STATE_PENDING, scalarString(
+                "SELECT state FROM user_questions WHERE id = ?", fixture.questionId()));
+        assertNull(scalarString("SELECT answer FROM user_questions WHERE id = ?",
+                fixture.questionId()), "judging must not answer the question");
         assertEquals(chatRunsBefore, rowCount("chat_runs"),
                 "a judged_no wake must not create a chat run");
 
         // The one new durable row is the fire path's own audit; JUDGE adds no audit of its own.
-        assertEquals(wakeDispatchBefore + 1, contextEventCount(sessionId, "wake_dispatch"),
+        assertEquals(wakeDispatchBefore + 1, contextEventCount(fixture.sessionId(), "wake_dispatch"),
                 "the fire path's wake_dispatch row is the only new durable audit");
+        assertTrue(wakeDispatchPayload(fixture.sessionId()).replaceAll("\\s+", "")
+                        .contains("\"outcome\":\"judged_no\""),
+                "the wake_dispatch row must carry outcome=judged_no");
         assertEquals(auditLogsBefore, rowCount("audit_logs"),
                 "JUDGE classes must not write audit_logs");
+
+        verify(participantService, times(1))
+                .judgeSpeakAs(anyString(), anyString(), anyString(), anyString());
+        verify(judgeModelClient, times(1)).decide(any());
+        verify(judgeDecisionRepository, times(1)).save(any(JudgeDecision.class));
     }
 
-    private UUID seedFourPolicyParticipants() {
+    /** Ids of the T1.2 fixture; every foreign key behind the pending question is a real row. */
+    private record JudgeZeroSideEffects(UUID judgeParticipantId, UUID sessionId, UUID questionId) {}
+
+    /**
+     * PLAN-0690 T1.2 fixture: real {@code users} / {@code workspaces} / {@code sessions} /
+     * {@code chat_runs} rows so the {@code user_questions} row satisfies
+     * {@code fk_user_questions_session|run|asked_by_participant|addressee} (V128:58-71) instead of
+     * pointing at dangling ids. All four {@code respond_policy} values are present in the session.
+     */
+    private JudgeZeroSideEffects seedJudgeZeroSideEffects() {
+        User addressee = users.saveAndFlush(new User(
+                "plan-0690-t12-" + UUID.randomUUID() + "@test.local", "hash", "T1.2 addressee"));
+        Workspace workspace = workspaces.saveAndFlush(
+                new Workspace("plan-0690 T1.2 judge zero side effects"));
+
         Session session = new Session();
         session.setId(UUID.randomUUID());
-        session.setWorkspaceId(UUID.randomUUID().toString());
-        session.setUserId(UUID.randomUUID().toString());
+        session.setWorkspaceId(workspace.getId().toString());
+        session.setUserId(addressee.getId().toString());
         session.setTitle("T1.2 judge zero side effects");
         sessions.saveAndFlush(session);
+
+        // chat_runs has real FK targets in V1:144-146; the seed row must not be dangling either.
+        ChatRun run = chatRuns.saveAndFlush(new ChatRun(UUID.randomUUID().toString(),
+                session.getId().toString(), addressee.getId().toString(),
+                workspace.getId().toString(), "plan-0690-t12-" + UUID.randomUUID(),
+                "a".repeat(64), "provider", "model", "workspace", "running"));
 
         String[] policies = {SessionParticipant.RESPOND_ALWAYS,
                 SessionParticipant.RESPOND_WHEN_MENTIONED, SessionParticipant.RESPOND_JUDGE,
@@ -279,24 +329,37 @@ class WakeDispatchJudgeTransactionIntegrationTest extends AbstractH2Test {
             }
         }
         assertNotNull(judgeParticipantId, "the JUDGE participant must be seeded");
-        return judgeParticipantId;
-    }
 
-    private UUID seedPendingUserQuestion(UUID sessionId) {
-        UserQuestion question = new UserQuestion(sessionId, UUID.randomUUID(), null,
-                UUID.randomUUID(), "T1.2 pending question that must stay untouched", null);
+        UserQuestion question = new UserQuestion(session.getId(), run.getId(), judgeParticipantId,
+                addressee.getId(), "T1.2 pending question that must stay untouched", null);
         question.setId(UUID.randomUUID());
-        return userQuestions.saveAndFlush(question).getId();
+        UUID questionId = userQuestions.saveAndFlush(question).getId();
+
+        return new JudgeZeroSideEffects(judgeParticipantId, session.getId(), questionId);
     }
 
+    /** Snapshot ① of PLAN-0690 verify command 4: ids and policies, ordered by id. */
     private Map<String, String> respondPolicySnapshot(UUID sessionId) {
         Map<String, String> snapshot = new LinkedHashMap<>();
         for (Map<String, Object> row : jdbc.queryForList(
-                "SELECT id, respond_policy FROM session_participants WHERE session_id = ?",
+                "SELECT id, respond_policy FROM session_participants WHERE session_id = ? "
+                        + "ORDER BY id",
                 sessionId)) {
             snapshot.put(String.valueOf(row.get("id")), (String) row.get("respond_policy"));
         }
         return snapshot;
+    }
+
+    /** Snapshot ② of PLAN-0690 verify command 4: per-state counts of the session's questions. */
+    private Map<String, Long> userQuestionStateCounts(UUID sessionId) {
+        Map<String, Long> counts = new LinkedHashMap<>();
+        for (Map<String, Object> row : jdbc.queryForList(
+                "SELECT state, count(*) AS n FROM user_questions WHERE session_id = ? "
+                        + "GROUP BY state ORDER BY state",
+                sessionId)) {
+            counts.put((String) row.get("state"), ((Number) row.get("n")).longValue());
+        }
+        return counts;
     }
 
     private long rowCount(String table) {
