@@ -103,3 +103,6 @@ packages/ui/usage-line-*.png
 
 # PLAN-0417: keep the deployable Runtime resolver state reproducible
 !packages/runtime/Cargo.lock
+
+# DSH watchdog 命令监管日志（Temp/xh-series-runs），由对话式监管产生，非构建产物
+/Temp/
