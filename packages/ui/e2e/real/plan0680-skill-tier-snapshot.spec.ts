@@ -294,12 +294,24 @@ test("@host 0680-T3.1 快照落双轴 tier：绑定 → run → skills_snapshot.
         [200, 201],
         `技能导入应 2xx，实际 ${imported.status()}：${await imported.text()}`,
     ).toContain(imported.status());
+    // 响应形状**照抄既有通过写法** `plan0678-skills-positive.spec.ts:219-232`：
+    // CP `SkillController.importResponse()` 的 wire 字段是 `results[].skillId`
+    //（`Outcome(UUID skillId, String name, String action, int version, …)`），
+    // 不是 `skills[].id` / `ids[]` / `id` —— 那是凭想象的猜测，实测 `undefined`。
     const importedBody = (await imported.json()) as {
-        skills?: Array<{ id?: string }>;
-        ids?: string[];
-        id?: string;
+        results?: Array<{ skillId: string; name?: string }>;
+        rejected?: Array<{ sourcePath?: string; code?: string; detail?: string }>;
     };
-    const skillId = importedBody.skills?.[0]?.id ?? importedBody.ids?.[0] ?? importedBody.id;
+    const skillIds = (importedBody.results ?? []).map((row) => row.skillId);
+    expect(
+        importedBody.rejected ?? [],
+        `导入不应有 rejected 行：${JSON.stringify(importedBody.rejected)}`,
+    ).toEqual([]);
+    expect(
+        skillIds.length,
+        `应导入 1 个技能，实际 results=${JSON.stringify(importedBody.results)}`,
+    ).toEqual(1);
+    const [skillId] = skillIds;
     expect(skillId, "导入响应应带 skillId").toMatch(UUID);
 
     // ② 绑到主体（workspace 上下文 ⇒ 服务端派生 workspace 档，body 只允许 skillId）
