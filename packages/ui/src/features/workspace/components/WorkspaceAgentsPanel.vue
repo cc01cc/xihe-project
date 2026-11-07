@@ -2103,6 +2103,25 @@ async function unbind(agent: WorkspaceAgentBinding) {
                                 >
                                     <span class="text-xs font-medium">{{ binding.name }}</span>
                                     <span
+                                        v-if="binding.scopeType"
+                                        class="rounded-full border px-1.5 py-0.5 text-[10px]"
+                                        :class="
+                                            binding.scopeType === 'workspace'
+                                                ? 'bg-muted'
+                                                : 'text-muted-foreground'
+                                        "
+                                        :title="binding.scopeName ?? undefined"
+                                        :data-testid="`agent-skill-scope-${binding.scopeType}`"
+                                    >
+                                        {{
+                                            t(
+                                                binding.scopeType === "workspace"
+                                                    ? "workspace.agentSkillScopeWorkspace"
+                                                    : "workspace.agentSkillScopeInstance",
+                                            )
+                                        }}
+                                    </span>
+                                    <span
                                         v-if="binding.sourceType"
                                         class="rounded border px-1 py-0.5 text-[10px] text-muted-foreground"
                                         :data-testid="`agent-skill-source-${binding.bindingId}`"

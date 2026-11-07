@@ -1368,7 +1368,21 @@ describe("WorkspaceAgentsPanel PLAN-0667 roles & skills", () => {
                 name: "contract-review",
                 sourceType: "workspace",
                 sourceName: "工作区技能库",
+                scopeType: "workspace",
+                scopeId: WORKSPACE_ID,
+                scopeName: "Workspace one",
                 tokenEstimate: 1200,
+            },
+            {
+                bindingId: "skill-binding-instance",
+                skillId: "skill-instance",
+                name: "instance-review",
+                sourceType: "personal",
+                sourceName: null,
+                scopeType: "instance",
+                scopeId: null,
+                scopeName: null,
+                tokenEstimate: null,
             },
         ]);
         apiMock.listRoles.mockResolvedValue([
@@ -1489,6 +1503,21 @@ describe("WorkspaceAgentsPanel PLAN-0667 roles & skills", () => {
         expect(wrapper.get('[data-testid="agent-skill-source-skill-binding-1"]').text()).toBe(
             i18n.global.t("workspace.agentSkillSourceWorkspace"),
         );
+        // PLAN-0680 M2: binding scope is a separate axis from the definition source.
+        expect(
+            wrapper
+                .get(
+                    '[data-testid="agent-skill-item-skill-binding-1"] [data-testid="agent-skill-scope-workspace"]',
+                )
+                .text(),
+        ).toBe(i18n.global.t("workspace.agentSkillScopeWorkspace"));
+        expect(
+            wrapper
+                .get(
+                    '[data-testid="agent-skill-item-skill-binding-instance"] [data-testid="agent-skill-scope-instance"]',
+                )
+                .text(),
+        ).toBe(i18n.global.t("workspace.agentSkillScopeInstance"));
         expect(wrapper.get('[data-testid="agent-skill-item-skill-binding-1"]').text()).toContain(
             "工作区技能库",
         );
