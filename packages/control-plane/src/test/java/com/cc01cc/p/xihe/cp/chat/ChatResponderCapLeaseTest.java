@@ -18,6 +18,7 @@ import java.util.UUID;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -163,18 +164,22 @@ class ChatResponderCapLeaseTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void nullResponderKeepsTheFrozenC3SnapshotFieldForField() {
-        JsonNode snapshot = sessionRow.getAgentPermissionsSnapshot();
+    void nullResponderRefusesTheLeaseInsteadOfFallingBackToTheSnapshot() {
+        // PLAN-0689 A4 (T1.4 / design §2): the D23-31 snapshot fallback is gone. A run with no
+        // resolved Responder has no principal to bound a lease against, and the only value the
+        // dropped column could still yield is null — an *uncapped* lease. Refusing is the strict
+        // reading; silently widening the lease would be a permission regression.
+        com.cc01cc.p.xihe.cp.config.CpApiException refused = assertThrows(
+                com.cc01cc.p.xihe.cp.config.CpApiException.class,
+                () -> controller.leaseCapFor(null, sessionRow.getAgentPrincipalId(), sessionRow, workspaceId));
 
-        JsonNode cap = controller.leaseCapFor(null, sessionRow.getAgentPrincipalId(), sessionRow, workspaceId);
-
-        assertEquals(snapshot, cap);
-        assertEquals(json.createObjectNode().put("frozen", "c3"), cap);
+        assertEquals("AGENT_PRINCIPAL_MISSING", refused.getCode());
+        assertEquals(org.springframework.http.HttpStatus.FORBIDDEN, refused.getStatus());
 
         Session placeholder = new Session();
         placeholder.setId(UUID.randomUUID());
-        placeholder.setAgentPrincipalId(null);
-        assertEquals(null, controller.leaseCapFor(null, null, placeholder, workspaceId));
+        assertThrows(com.cc01cc.p.xihe.cp.config.CpApiException.class,
+                () -> controller.leaseCapFor(null, null, placeholder, workspaceId));
     }
 
     private String humanParticipantId() {

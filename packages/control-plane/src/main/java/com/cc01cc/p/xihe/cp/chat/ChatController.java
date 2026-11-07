@@ -1351,14 +1351,23 @@ public class ChatController {
 
     /**
      * PLAN-0623 M1b-②: the lease cap for this run, derived from the ONE Responder resolved in the
-     * request thread (never re-resolved here). {@code responder == null} keeps the frozen 0622 C3
-     * semantics: the Session's stored {@code agent_permissions_snapshot} (D23-31 dual track).
+     * request thread (never re-resolved here).
+     *
+     * <p>PLAN-0689 A4 (T1.4 / design §2): {@code responder == null} used to fall back to the
+     * Session's stored {@code agent_permissions_snapshot} (the D23-31 dual track). Once A7 drops
+     * that column the fallback can only yield {@code null}, and a null cap is an <em>uncapped</em>
+     * lease — strictly weaker than refusing to issue one. A run with no resolved Responder has no
+     * principal to bound the lease against, so it is refused here, the same fail-closed invariant
+     * A3b applied to unattributed runs. {@code leasePrincipalId} and {@code leaseSession} stay in
+     * the signature for the call site's readability but are deliberately no longer read.
      */
     JsonNode leaseCapFor(SessionParticipantService.Responder responder, String leasePrincipalId,
                          Session leaseSession, String workspaceId) {
-        return responder != null
-                ? participantCapabilityService.resolveParticipantCap(responder, UUID.fromString(workspaceId))
-                : (leasePrincipalId == null ? null : leaseSession.getAgentPermissionsSnapshot());
+        if (responder == null) {
+            throw new CpApiException(HttpStatus.FORBIDDEN, "AGENT_PRINCIPAL_MISSING",
+                    "Chat run has no Agent principal to bound the credential lease");
+        }
+        return participantCapabilityService.resolveParticipantCap(responder, UUID.fromString(workspaceId));
     }
 
     private void execAsync(String sessionId, String content, String provider, String model, String toolMode,
@@ -1519,9 +1528,9 @@ public class ChatController {
                 // The existing AgentChatIntegrationTest security contract keeps
                 // principal IDs and permission snapshots strictly CP-local.
                 Session boundSession = sessionService.requireCurrent(sessionId, userId, workspaceId);
-                if (boundSession.getAgentPrincipalId() == null || boundSession.getAgentPrincipalId().isBlank()) {
-                    throw new IllegalStateException("ChatRun Session is missing its AgentPrincipal binding");
-                }
+                // PLAN-0689 A4 (T1.4 / design §2): the run's own stamp is the only execution
+                // identity. A Session with no binding is legal (dev data / HUMAN-only sessions)
+                // and must not fail the dispatch here.
                 agentRequest.put("contextTemplateSnapshot", persistedRun.context().contextTemplateSnapshot());
                 // PLAN-0605: image references (ids + metadata only). Bytes stay behind the
                 // run-bound internal route; the Agent pulls them lazily while rendering.
@@ -1539,8 +1548,10 @@ public class ChatController {
                 if (!componentSources.isEmpty()) {
                     agentRequest.put("componentSources", componentSources);
                 }
+                // PLAN-0689 A4 (T1.4 / design §3-A): instructions for THIS run resolve from the
+                // run's own principal stamp, not from the Session column A7 deletes.
                 String agentInstructions = agentPrincipalService.resolveSystemInstructionsForRun(
-                        boundSession.getAgentPrincipalId());
+                        persistedRun.context().agentPrincipalId());
                 if (agentInstructions != null) {
                     agentRequest.put("instructions", agentInstructions);
                 }
