@@ -229,7 +229,6 @@ class TieredQueryIntegrationTest extends AbstractIntegrationTest {
         Session root = newBoundRootSession();
         ChatRun rootRun = newRun(root, "running");
         Session child = newChildSession(root, rootRun, Session.KIND_SPAWN);
-        child.setAgentPrincipalId(principalId.toString());
         child.setAgentPermissionsSnapshot(readCapNode());
         sessionRepository.saveAndFlush(child);
         newRun(child, "running");
@@ -247,7 +246,6 @@ class TieredQueryIntegrationTest extends AbstractIntegrationTest {
         Session root = newBoundRootSession();
         ChatRun rootRun = newRun(root, "running");
         Session child = newChildSession(root, rootRun, Session.KIND_SPAWN);
-        child.setAgentPrincipalId(principalId.toString());
         child.setAgentPermissionsSnapshot(readCapNode());
         sessionRepository.saveAndFlush(child);
         newRun(child, "running");
@@ -328,9 +326,10 @@ class TieredQueryIntegrationTest extends AbstractIntegrationTest {
 
     private Session newBoundRootSession() {
         Session root = newRootSession("tier2-bound-root");
-        root.setAgentPrincipalId(principalId.toString());
         root.setAgentPermissionsSnapshot(readCapNode());
-        return sessionRepository.saveAndFlush(root);
+        Session saved = sessionRepository.saveAndFlush(root);
+        bindPrimaryParticipant(saved.getId().toString(), principalId.toString());
+        return saved;
     }
 
     private Session newRootSession(String title) {
@@ -347,7 +346,9 @@ class TieredQueryIntegrationTest extends AbstractIntegrationTest {
         child.setSpawnedFromSessionId(parent.getId());
         child.setSpawnedFromRunId(parentRun.getId());
         child.setSpawnedAt(Instant.now());
-        return sessionRepository.saveAndFlush(child);
+        Session saved = sessionRepository.saveAndFlush(child);
+        bindPrimaryParticipant(saved.getId().toString(), principalId.toString());
+        return saved;
     }
 
     private ChatRun newRun(Session session, String status) {

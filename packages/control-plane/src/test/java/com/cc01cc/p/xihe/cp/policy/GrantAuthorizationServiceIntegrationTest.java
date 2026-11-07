@@ -742,9 +742,9 @@ class GrantAuthorizationServiceIntegrationTest extends AbstractIntegrationTest {
     private Session saveAgentSession(UUID wsId, String ownerId, String title, ArrayNode cap) {
         Session session = new Session(wsId.toString(), ownerId, title);
         session.setId(UUID.randomUUID());
-        session.setAgentPrincipalId(principalId.toString());
         session.setAgentPermissionsSnapshot(cap);
         Session saved = sessionRepository.save(session);
+        bindPrimaryParticipant(saved.getId().toString(), principalId.toString());
         sessionIds.add(saved.getId());
         return saved;
     }
@@ -757,9 +757,9 @@ class GrantAuthorizationServiceIntegrationTest extends AbstractIntegrationTest {
         session.setSpawnedFromRunId(parentRun.getId());
         session.setSpawnedAt(Instant.now());
         session.setKind(kind);
-        session.setAgentPrincipalId(principalId.toString());
         session.setAgentPermissionsSnapshot(cap);
         Session saved = sessionRepository.save(session);
+        bindPrimaryParticipant(saved.getId().toString(), principalId.toString());
         sessionIds.add(saved.getId());
         return saved;
     }
