@@ -194,6 +194,21 @@ The E2E CP build root defaults to `C:/xihe-build/e2e` (`scripts/e2e-host.mjs:59-
 - **Measurement specs always run alone**: with another spec alongside, session-scale/memory-sampling numbers move because GC pressure and memory watermarks change — the run no longer measures what it is meant to measure.
 - **The window itself is not here**: opening, freezing and pinned-SHA rules live in the SSOT `one/internal/A03-xihe/docs/l2-window-protocol.md` (ONE private layer, not in this repo) §3–§5.
 
+### 3.3.1 CP jar fingerprint (BL-477 / task-90)
+
+The identity of the shared CP jar is no longer taken from mtime, and no longer from the jar's own `META-INF/build-info.properties`: that stamp is generated during the Spring Boot package phase and *rewritten afterwards* by `scripts/stack-run.mjs`, so the copy inside the jar lags the artifact by a measured **77 minutes** (its `commit` was 11 CP files behind the tree the jar was actually built from) — using it as the criterion manufactures a new false red. The criterion is now a manifest **next to** the jar, `<jar>.buildinfo.json` (e.g. `control-plane-0.1.0.jar.buildinfo.json`), written **atomically** (temp file + rename) by the same code path that produces the jar, immediately after packaging:
+
+| Field | Meaning | Role |
+|------|------|------|
+| `jarSha256` / `jarBytes` / `jarName` | the jar's own byte hash and size | **identity anchor**: proves the manifest is about *this* jar, not a leftover from an earlier build |
+| `sourceTreeSha256` | sha256 of the raw `git ls-tree -r HEAD -- packages/control-plane` stdout | input fingerprint: equal to the freshly computed value ⇒ "built from the checked-out tree" |
+| `commit` / `dirty` / `sourceScope` | HEAD at build time and whether the tree was dirty | provenance; with `dirty=true` the tree hash cannot prove HEAD ⇒ fall back to content evidence |
+| `builtAt` | **packaging completion** time (never earlier than the jar mtime) | human cross-check of ordering; not a decision input |
+
+Read priority (`scripts/lib/cp-jar-sidecar.mjs`, step 0 of the preflight artifact section): manifest matches and tree hash == HEAD ⇒ `fresh`; tree hash differs ⇒ `stale` on the **`build`** scope (deferrable — `resolveCpBootPlan()` runs before the gate, so a rebuild heals it); jar bytes disagree with the manifest, or the manifest is unusable ⇒ **`artifact-truth`** (**non-deferrable**: no pass before a rebuild); no manifest ⇒ fall back to the task-84 content path (behaviour unchanged); tree hash not computable (git unavailable / tree dirty now / built from a dirty tree) ⇒ also fall back to content evidence. Modes that skip the artifact section (`--ignore-build`, `--jar-mode=use|native`, `XIHE_E2E_EXTERNAL_SERVER=1`) do not run the identity check; under `use` the runner still warns.
+
+**Migration (old jars)**: artifacts built before task-90 (and any jar from a hand-run `mvn package`) have no manifest and simply take the content path; **one rebuild through `scripts/e2e-host.mjs` produces it — no compatibility code and no expiry window**. Manual cross-check: `git ls-tree -r HEAD -- packages/control-plane | sha256sum` must equal `sourceTreeSha256`, and `sha256sum <jar>` must equal `jarSha256`. **Never forge a manifest**: only the path that produced the jar may write it; a hand-written manifest is fabricated identity evidence.
+
 ## Drift risk of mode-gated specs, and fixture prerequisites (measured 2026-11-06)
 
 - **Two LiveChain classes are skipped by default (2026-11-06 audit)**: `ContextSourceLiveChainTest` (`Assumptions.assumeTrue`, requires Runtime `/ready` and dev CP `/actuator/health`) and `ContextToolHistoryLiveChainTest` (`@EnabledIfSystemProperty xihe.run.v15.live=true`) each have **1/1 test skipped**; the full-suite summary shows only `Skipped: 2`. Restore: start the host stack for the first; add `mvn -o test "-Dxihe.run.v15.live=true"` for the second. Not a missing run, but not coverage either.

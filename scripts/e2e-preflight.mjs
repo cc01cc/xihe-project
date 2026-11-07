@@ -42,6 +42,16 @@
 //   3. build freshness  control-plane fat jar vs **CP source content** (the
 //                       runner boots any existing jar without a freshness check),
 //                       runtime debug binary vs source, cargo lock files.
+//                       Step 0 is the jar's **sidecar fingerprint** (task-90): the
+//                       producing script writes `<jar>.buildinfo.json` next to the
+//                       artifact with the jar's own sha256 + the CP source-tree
+//                       hash + commit + packaging-completion time, so identity is
+//                       byte-provable. Priority: sidecar match ⇒ fresh; sidecar
+//                       present but the jar's bytes differ ⇒ stale AND
+//                       non-deferrable (`artifact-truth`); no sidecar ⇒ the content
+//                       path below (identical behaviour to task-84); sidecar
+//                       unreadable or the tree hash cannot be recomputed ⇒
+//                       unverifiable / fall back (scripts/lib/cp-jar-sidecar.mjs).
 //                       Content truth, not mtime (2026-11-08, task-84): the jar
 //                       lives outside git so its mtime is honest, but `git
 //                       checkout` rewrites tracked-file mtimes, which made the
@@ -87,6 +97,7 @@ import {
   readPathCommit,
 } from './lib/e2e-build-artifact.mjs'
 import { readBuildInfo } from './lib/cp-build-info.mjs'
+import { evaluateSidecar, resolveArtifactTruth } from './lib/cp-jar-sidecar.mjs'
 import {
   DISK_THRESHOLDS,
   diskExitCode,
@@ -429,37 +440,46 @@ if (existsSync(cpTarget)) {
 if (!cpJar) {
   console.log(`  INFO  control-plane: no fat jar in the E2E build dir (${e2eCpTargetDir}) — the runner builds one on first boot (mvn package -Dxihe.target.dir=...; no stale-jar risk)`)
 } else {
-  // BL-477 / task-84: `mtime` is the trigger, never the verdict. The jar sits outside git, so its
-  // own mtime is honest; tracked files are not — `git checkout` rewrites their mtime even when the
-  // content is byte-identical, which made one checkout red and another green over the same jar.
-  // Sources newer than the jar are therefore re-judged by content: sha256 for the resources the jar
-  // stores verbatim, last-commit time for compiled sources (immutable across checkouts). Nothing
-  // decidable ⇒ unverifiable ⇒ blocking.
-  const cpPrefix = 'packages/control-plane'
-  const sources = collectSourcesNewerThan({
-    root: join(cpDir, 'src', 'main'),
-    sinceMs: cpJar.mtimeMs,
-    prefix: `${cpPrefix}/src/main`,
-  })
-  const pomPath = join(cpDir, 'pom.xml')
-  if (existsSync(pomPath)) {
-    const pomStat = statSync(pomPath)
-    if (pomStat.mtimeMs > cpJar.mtimeMs) sources.push({ path: `${cpPrefix}/pom.xml`, absPath: pomPath, mtimeMs: pomStat.mtimeMs })
-  }
-  const dirtyPaths = readDirtyPaths({ projectDir })
-  const jarEntries = listJarEntries({ jarPath: cpJar.path })
-  const artifactVerdict = decideArtifactFreshness({
-    artifactTimeMs: cpJar.mtimeMs,
-    sources,
-    readEntryHash: (entry) => readJarEntryHash({ jarPath: cpJar.path, entry }),
-    readFileHash: (relPath) => readFileHash({ file: join(projectDir, relPath) }),
-    // "not in the jar at all" is stale; "could not list the jar" must stay unknown, not fresh.
-    hasEntry: (entry) => (jarEntries.ok ? jarEntries.entries.has(entry) : null),
-    // A dirty/untracked read failure must not silently turn into "clean": fail closed instead.
-    readCommitState: (relPath) =>
-      dirtyPaths.ok
-        ? readPathCommit({ projectDir, relPath, dirtyPaths: dirtyPaths.paths })
-        : { ok: false, state: 'clean', commit: null, commitTimeMs: null, error: `git status failed: ${dirtyPaths.error}` },
+  // BL-477 / task-90: ask the artifact first. A sidecar manifest (`<jar>.buildinfo.json`) written by
+  // the same code path that produced the jar carries the jar's own sha256 plus the CP source-tree
+  // hash, so identity is provable without touching mtimes or scanning 8 files one by one.
+  const sidecar = evaluateSidecar({ jarPath: cpJar.path, projectDir })
+  const truth = resolveArtifactTruth({
+    sidecar,
+    // BL-477 / task-84 (unchanged when no sidecar exists): `mtime` is the trigger, never the verdict.
+    // The jar sits outside git, so its own mtime is honest; tracked files are not — `git checkout`
+    // rewrites their mtime even when the content is byte-identical, which made one checkout red and
+    // another green over the same jar. Sources newer than the jar are re-judged by content: sha256
+    // for the resources the jar stores verbatim, last-commit time for compiled sources (immutable
+    // across checkouts). Nothing decidable ⇒ unverifiable ⇒ blocking.
+    runFallback: () => {
+      const cpPrefix = 'packages/control-plane'
+      const sources = collectSourcesNewerThan({
+        root: join(cpDir, 'src', 'main'),
+        sinceMs: cpJar.mtimeMs,
+        prefix: `${cpPrefix}/src/main`,
+      })
+      const pomPath = join(cpDir, 'pom.xml')
+      if (existsSync(pomPath)) {
+        const pomStat = statSync(pomPath)
+        if (pomStat.mtimeMs > cpJar.mtimeMs) sources.push({ path: `${cpPrefix}/pom.xml`, absPath: pomPath, mtimeMs: pomStat.mtimeMs })
+      }
+      const dirtyPaths = readDirtyPaths({ projectDir })
+      const jarEntries = listJarEntries({ jarPath: cpJar.path })
+      return decideArtifactFreshness({
+        artifactTimeMs: cpJar.mtimeMs,
+        sources,
+        readEntryHash: (entry) => readJarEntryHash({ jarPath: cpJar.path, entry }),
+        readFileHash: (relPath) => readFileHash({ file: join(projectDir, relPath) }),
+        // "not in the jar at all" is stale; "could not list the jar" must stay unknown, not fresh.
+        hasEntry: (entry) => (jarEntries.ok ? jarEntries.entries.has(entry) : null),
+        // A dirty/untracked read failure must not silently turn into "clean": fail closed instead.
+        readCommitState: (relPath) =>
+          dirtyPaths.ok
+            ? readPathCommit({ projectDir, relPath, dirtyPaths: dirtyPaths.paths })
+            : { ok: false, state: 'clean', commit: null, commitTimeMs: null, error: `git status failed: ${dirtyPaths.error}` },
+      })
+    },
   })
   const stamp = readBuildInfo(cpTarget)
   const shortSha = (sha) => String(sha ?? '').slice(0, 12)
@@ -472,46 +492,100 @@ if (!cpJar) {
   } else {
     console.log(`  INFO  CP jar provenance: no build-info stamp in ${e2eCpTargetDir} — the artifact carries no input fingerprint`)
   }
-  const evidenceCounts = { sha256: 0, membership: 0, 'commit-time': 0, mtime: 0 }
-  for (const entry of artifactVerdict.fresh) if (entry.evidence) evidenceCounts[entry.evidence] += 1
-  if (artifactVerdict.verdict === 'fresh') {
-    if (artifactVerdict.checked === 0) {
-      console.log(`  OK    CP jar ${cpJar.name} (${fmtAge(now - cpJar.mtimeMs)} old): no CP source is newer than the jar`)
-    } else {
-      console.log(
-        `  OK    CP jar ${cpJar.name} (${fmtAge(now - cpJar.mtimeMs)} old): ${artifactVerdict.checked} source(s) are newer by mtime but content-identical`
-          + ` (${evidenceCounts.sha256} by sha256, ${evidenceCounts['commit-time']} by last-commit time) — mtime was checkout noise`,
-      )
-      for (const entry of artifactVerdict.fresh.slice(0, 4)) console.log(`        ${entry.path}  ${entry.detail}`)
-    }
-  } else if (artifactVerdict.verdict === 'stale') {
-    add(
-      'FAIL',
-      'build',
-      `CP jar content is older than ${artifactVerdict.stale.length} CP source(s): ${artifactVerdict.stale[0].path} (${artifactVerdict.stale[0].reason})`,
-      `runner boots any existing jar without a freshness check; rebuild: cd packages/control-plane && mvn -q -DskipTests -Dxihe.target.dir=${e2eCpTargetDir} package`,
-    )
+  const rebuildHint = `runner boots any existing jar without a freshness check; rebuild: cd packages/control-plane && mvn -q -DskipTests -Dxihe.target.dir=${e2eCpTargetDir} package`
+  if (truth.verdict === 'fresh') {
+    // Identity proven: nothing else is consulted (no mtime trigger, no per-file scan).
+    const data = sidecar.data
     console.log(
-      `  FAIL  CP jar ${cpJar.name} (${fmtAge(now - cpJar.mtimeMs)} old) does NOT contain the current CP sources (${artifactVerdict.stale.length} proven stale of ${artifactVerdict.checked} newer):`,
+      `  OK    CP jar ${cpJar.name} (${fmtAge(now - cpJar.mtimeMs)} old): byte-identical to the artifact built from ${shortSha(data.commit)}`
+        + ` — jar sha256 ${shortSha(data.jarSha256)}…, CP tree ${shortSha(data.sourceTreeSha256)}… (${sidecar.treeEntries} files, built ${data.builtAt})`,
     )
-    for (const entry of artifactVerdict.stale.slice(0, 10)) {
-      console.log(`        ${entry.path}  [${entry.evidence}] ${entry.reason}${entry.detail ? ` — ${entry.detail}` : ''}`)
+    console.log(`        sidecar ${sidecar.file}: identity + tree both match, content evidence needs no per-file scan`)
+  } else if (truth.verdict === 'stale') {
+    if (truth.blocking === 'artifact-truth') {
+      add(
+        'FAIL',
+        'artifact-truth',
+        `the CP jar is not the artifact its sidecar describes: ${sidecar.reason}`,
+        `this is not deferrable — "the jar is not the one we fingerprinted" cannot be explained by sources moving on;`
+          + ` a rebuild rewrites jar + sidecar together: node scripts/e2e-host.mjs --jar-mode=rebuild (${rebuildHint})`,
+      )
+      console.log(`  FAIL  CP jar ${cpJar.name}: IDENTITY MISMATCH — the jar on disk is not the fingerprinted artifact`)
+      console.log(`        ${sidecar.reason}`)
+      console.log(`        sidecar ${sidecar.file}`)
+    } else {
+      add(
+        'FAIL',
+        'build',
+        `the CP jar was built from an older CP tree than HEAD: ${sidecar.reason}`,
+        rebuildHint,
+      )
+      console.log(`  FAIL  CP jar ${cpJar.name} (${fmtAge(now - cpJar.mtimeMs)} old) was built from an older CP tree than HEAD`)
+      console.log(`        ${sidecar.reason}${Number.isInteger(sidecar.changedCount) ? `; ${sidecar.changedCount} CP file(s) changed since` : ''}`)
+      console.log(`        sidecar ${sidecar.file}`)
     }
-    if (artifactVerdict.stale.length > 10) console.log(`        … and ${artifactVerdict.stale.length - 10} more`)
-  } else {
+  } else if (truth.verdict === 'unverifiable') {
     add(
       'FAIL',
       'artifact-truth',
-      `cannot prove the CP jar contains the current CP sources (${artifactVerdict.unverifiable.length} newer source(s) unverifiable): ${artifactVerdict.unverifiable[0].reason}`,
-      'the shared jar carries no input fingerprint, so a newer-than-jar source with no usable git/content evidence must block'
-        + ' (未知不等于安全); make it decidable by having the CP build write commit / sourceTreeSha256 / builtAt into'
-        + ' META-INF/build-info.properties at package time (see scripts/lib/e2e-build-artifact.mjs)',
+      `cannot prove the CP jar contains the current CP sources: ${sidecar.reason}`,
+      'a sidecar that exists but cannot be used is a broken fingerprint, not an excuse to pass'
+        + ' (未知不等于安全); rebuild through the runner so it rewrites the sidecar'
+        + ` (node scripts/e2e-host.mjs --jar-mode=rebuild) — ${rebuildHint}`,
     )
-    console.log(
-      `  FAIL  CP jar ${cpJar.name} (${fmtAge(now - cpJar.mtimeMs)} old) freshness is UNVERIFIABLE (${artifactVerdict.unverifiable.length} of ${artifactVerdict.checked} newer source(s)):`,
-    )
-    for (const entry of artifactVerdict.unverifiable.slice(0, 10)) console.log(`        ${entry.path}  ${entry.reason}`)
-    if (artifactVerdict.unverifiable.length > 10) console.log(`        … and ${artifactVerdict.unverifiable.length - 10} more`)
+    console.log(`  FAIL  CP jar ${cpJar.name} (${fmtAge(now - cpJar.mtimeMs)} old) freshness is UNVERIFIABLE`)
+    console.log(`        ${sidecar.reason}`)
+    console.log(`        sidecar ${sidecar.file}`)
+  } else {
+    const artifactVerdict = truth.fallback
+    // Honest note about which evidence path judged this jar (mirrors the migration contract:
+    // artifacts built before task-90, and hand-run `mvn package`, have no sidecar).
+    if (sidecar.state === 'missing') {
+      console.log(`  INFO  CP jar identity: no sidecar (${sidecar.file}) — judging by content evidence; one runner rebuild adds the fingerprint`)
+    } else {
+      console.log(`  INFO  CP jar identity: sidecar ${sidecar.file} present but not decisive (${sidecar.reason}) — judging by content evidence`)
+    }
+    const evidenceCounts = { sha256: 0, membership: 0, 'commit-time': 0, mtime: 0 }
+    for (const entry of artifactVerdict.fresh) if (entry.evidence) evidenceCounts[entry.evidence] += 1
+    if (artifactVerdict.verdict === 'fresh') {
+      if (artifactVerdict.checked === 0) {
+        console.log(`  OK    CP jar ${cpJar.name} (${fmtAge(now - cpJar.mtimeMs)} old): no CP source is newer than the jar`)
+      } else {
+        console.log(
+          `  OK    CP jar ${cpJar.name} (${fmtAge(now - cpJar.mtimeMs)} old): ${artifactVerdict.checked} source(s) are newer by mtime but content-identical`
+            + ` (${evidenceCounts.sha256} by sha256, ${evidenceCounts['commit-time']} by last-commit time) — mtime was checkout noise`,
+        )
+        for (const entry of artifactVerdict.fresh.slice(0, 4)) console.log(`        ${entry.path}  ${entry.detail}`)
+      }
+    } else if (artifactVerdict.verdict === 'stale') {
+      add(
+        'FAIL',
+        'build',
+        `CP jar content is older than ${artifactVerdict.stale.length} CP source(s): ${artifactVerdict.stale[0].path} (${artifactVerdict.stale[0].reason})`,
+        rebuildHint,
+      )
+      console.log(
+        `  FAIL  CP jar ${cpJar.name} (${fmtAge(now - cpJar.mtimeMs)} old) does NOT contain the current CP sources (${artifactVerdict.stale.length} proven stale of ${artifactVerdict.checked} newer):`,
+      )
+      for (const entry of artifactVerdict.stale.slice(0, 10)) {
+        console.log(`        ${entry.path}  [${entry.evidence}] ${entry.reason}${entry.detail ? ` — ${entry.detail}` : ''}`)
+      }
+      if (artifactVerdict.stale.length > 10) console.log(`        … and ${artifactVerdict.stale.length - 10} more`)
+    } else {
+      add(
+        'FAIL',
+        'artifact-truth',
+        `cannot prove the CP jar contains the current CP sources (${artifactVerdict.unverifiable.length} newer source(s) unverifiable): ${artifactVerdict.unverifiable[0].reason}`,
+        'the shared jar carries no usable input fingerprint, so a newer-than-jar source with no git/content evidence must block'
+          + ' (未知不等于安全); a runner rebuild now writes a sidecar (jar sha256 + CP tree hash) that settles this exactly'
+          + ' (see scripts/lib/cp-jar-sidecar.mjs)',
+      )
+      console.log(
+        `  FAIL  CP jar ${cpJar.name} (${fmtAge(now - cpJar.mtimeMs)} old) freshness is UNVERIFIABLE (${artifactVerdict.unverifiable.length} of ${artifactVerdict.checked} newer source(s)):`,
+      )
+      for (const entry of artifactVerdict.unverifiable.slice(0, 10)) console.log(`        ${entry.path}  ${entry.reason}`)
+      if (artifactVerdict.unverifiable.length > 10) console.log(`        … and ${artifactVerdict.unverifiable.length - 10} more`)
+    }
   }
 }
 }

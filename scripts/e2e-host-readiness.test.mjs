@@ -147,6 +147,23 @@ test('e2e-host rebuild branch stamps the fresh jar with the current HEAD', () =>
     assert.match(branch, /writeBuildInfo\(\{ targetDir: e2eCpTargetDir, commit: head\.commit, dirty: head\.dirty \}\)/u)
 })
 
+test('task-90: the CP jar sidecar is written inside the rebuild branch, after packaging and after the stamp', () => {
+    // The fingerprint may only be written by the path that produced the jar, and only *after* the
+    // package goal finished — otherwise `builtAt` predates the artifact it describes (the exact
+    // failure mode of the in-jar build-info stamp). Pin the ordering structurally.
+    const source = readFileSync(new URL('./e2e-host.mjs', import.meta.url), 'utf8')
+    const afterIdx = source.indexOf("const after = resolveCpJarState(e2eCpTargetDir)")
+    const stampIdx = source.indexOf('writeBuildInfo({ targetDir: e2eCpTargetDir', afterIdx)
+    const sidecarIdx = source.indexOf('writeSidecarForJar({ projectDir, jarPath: after.jar.path', afterIdx)
+    const returnIdx = source.indexOf("return { mode: 'jar', jar: after.jar, reason: 'rebuilt' }", afterIdx)
+    assert.ok(afterIdx >= 0, 'the post-build re-inspection anchor must exist')
+    assert.ok(stampIdx > afterIdx, 'build-info must be stamped after re-inspecting the fresh jar')
+    assert.ok(sidecarIdx > stampIdx, 'the sidecar must be written after packaging AND after the stamp')
+    assert.ok(returnIdx > sidecarIdx, 'the sidecar must be written before the branch returns the jar')
+    // A sidecar write failure must stay a WARN (the run still has content evidence), never a silent pass.
+    assert.match(source.slice(sidecarIdx, returnIdx), /if \(!sidecarWrite\.ok\)/u)
+})
+
 test('Windows preflight queries dev-only stack ports, not only the e2e block', () => {
     // preflight is a CLI (importing it runs the checks), so pin the Windows query wiring:
     // dev ports must be merged into $ranges before Get-NetTCPConnection; filtering only

@@ -49,6 +49,10 @@ export const BUILD_SCOPE = 'build';
  * - `artifact-truth`：共享产物（`C:/xihe-build/e2e` 的 CP jar）的**内容**无法与源码对照（没有
  *   git 判据、读不出 jar 条目、mtime 也不可用）—— 这类"核不了"**重建一次也不会变绿**，所以不能
  *   跟 `build` 一样被延期（这是缺陷 4 的落地位置，见 scripts/lib/e2e-build-artifact.mjs）。
+ *   同一 scope 也承载 task-90 的**身份不符**：sidecar 存在但 jar 字节与之不符（jar 被人手 `mvn
+ *   package` 覆盖、或从别处拷来），"磁盘上这个 jar 不是我们盖过指纹的那个"同样不能用"源码前进
+ *   了"解释，重建前不许放行（见 scripts/lib/cp-jar-sidecar.mjs）；反过来，只是"由旧树构建"仍归
+ *   `build`，可被前置重建治好 —— 不得借身份判据把普通陈旧一并升格。
  */
 export const ALWAYS_BLOCKING_SCOPES = Object.freeze(['ports', 'docker', 'runs', 'disk', 'runtime-target', 'artifact-truth']);
 

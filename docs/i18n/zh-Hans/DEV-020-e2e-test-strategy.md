@@ -300,7 +300,7 @@ node scripts/e2e-host-detached.mjs --timeout-min 25 --auth-lane=ratelimit \
 `--persistent` 起的隔离栈**不是**可任意换模式的沙箱：`llm-provider` profile 与 fake 连接都落在该栈自己的 PG 行里，换一次 profile 就污染后续所有轮次。
 
 - **真实 provider 轮与 fake 夹具轮不得在同一栈先后跑**。实测（PLAN-0630 S6 真实 key 轮之后紧接 `real/agent-spawn-caller`）：真实轮把 instance 层 profile 换成真实模型（`mimo-v2.6-flash`），而 fake 夹具连接只注册了 `fake-openai` ⇒ 后续建会话 `400 "Model is not registered under this Connection"`；反向切换（real→fake）还会出现 `POST /chat 503` 瞬态。**要么换栈，要么重新 `--first-run=local --bootstrap-user=register` 且不带 real key 重导 fake profile，并等 agent `llmReady=ready`。**
-- **每次换代码后必须重建 CP 并落戳**：`scripts/e2e-host.mjs --jar-mode=rebuild` **不写** `build-info.properties`，外部复用栈（`XIHE_E2E_EXTERNAL_SERVER=1`）会因此 fail-fast。正确做法：`mvn -q -DskipTests clean package -Dxihe.target.dir=<target>`，再用 `scripts/lib/cp-build-info.mjs` 的 `writeBuildInfo` 落戳（`gitHead()` 取当前 worktree HEAD）。
+- **每次换代码后必须重建 CP 并落戳**：`scripts/e2e-host.mjs` 的重建分支在打包成功后落 `build-info.properties`（`gitHead()` 取当前 worktree HEAD），并在 task-90 后同批写 jar 指纹清单（§3.6.1）；手跑 `mvn -q -DskipTests clean package -Dxihe.target.dir=<target>` 时清单由谁产出、怎么补，见 §3.6.1「迁移」——外部复用栈（`XIHE_E2E_EXTERNAL_SERVER=1`）会对照 `build-info` fail-fast。
 - **浏览器网络瞬态不登记为产品缺陷**：合并后首次启动时 Vite 会 `Re-optimizing dependencies`，此时偶发 `net::ERR_NO_BUFFER_SPACE`（普通 GET 经 dev proxy，非 SSE）。判据=同栈复跑不复现 + CP/agent 侧无断流日志 ⇒ 记观察项，**不得**加白名单或放宽断言。
 - mock 车道的 `XIHE_EVIDENCE_DIR` 未设时由 `e2e/helpers/evidence.ts` 回退 `<repo>/.local/evidence/e2e-auto` 并 WARN 一次（此前 4 条用例因此判红，属环境前置非回归）。
 
@@ -313,6 +313,21 @@ E2E 的 CP 构建根默认是 `C:/xihe-build/e2e`（`scripts/e2e-host.mjs:59-63`
 - **并行只在三条同时成立时允许**：① 两个 run 构建根不同；② 都不是测量类 spec；③ 钉住同一个 SHA（跨 commit 的数字不可比）。开窗前另跑 `node scripts/e2e-preflight.mjs`（只读）：任何 `FAIL` 即阻塞，只有 exit 0（无 blocking finding，`scripts/e2e-preflight.mjs:26`）才开窗。
 - **测量类恒独占**：会话规模/内存采样这类 spec 并发跑时，旁边多一个 spec 就改写 GC 压力与内存水位 —— 量出来不是它要的量。
 - **窗口本身不在这里**：开窗/冻结/钉靶 SHA 的规则见 SSOT `one/internal/A03-xihe/docs/l2-window-protocol.md`（ONE 私有层，不在本仓）§3–§5。
+
+### 3.6.1 CP jar 指纹（BL-477 / task-90）
+
+共享 CP jar 的身份不再靠 mtime，也不再靠 jar 内的 `META-INF/build-info.properties`：后者是 Spring Boot 打包期生成、`scripts/stack-run.mjs` 事后覆盖的产物，实测**落后 jar 打包 77 分钟**（jar 内含的 commit 与实际构建树差 11 个 CP 文件），拿它当判据会制造新的假红。判据改为 jar **旁边**的清单 `<jar>.buildinfo.json`（例：`control-plane-0.1.0.jar.buildinfo.json`），由产出 jar 的同一段代码在打包完成后**原子写入**（临时文件 + rename），字段：
+
+| 字段 | 含义 | 用途 |
+|------|------|------|
+| `jarSha256` / `jarBytes` / `jarName` | jar 自身字节哈希与大小 | **身份锚**：证明清单说的是这个 jar，不是上次构建的残留 |
+| `sourceTreeSha256` | `git ls-tree -r HEAD -- packages/control-plane` 原始 stdout 的 sha256 | 输入指纹：与 HEAD 现算值相等即"由当前树构建" |
+| `commit` / `dirty` / `sourceScope` | 构建时 HEAD 与树是否脏 | 溯源；`dirty=true` 时树哈希不能证明对应 HEAD ⇒ 回退内容判据 |
+| `builtAt` | **打包完成**时间（不早于 jar mtime） | 人工核对顺序；不参与判定 |
+
+读取优先序（`scripts/lib/cp-jar-sidecar.mjs`，preflight 产物段第 0 步）：清单匹配且树哈希 == HEAD ⇒ `fresh`；树哈希不同 ⇒ `stale` 归 **`build`**（可延期：`resolveCpBootPlan()` 在门之前跑，重建即治好）；jar 字节与清单不符或清单不可用 ⇒ 归 **`artifact-truth`**（**不可延期**：重建前不许放行）；无清单 ⇒ 回退 task-84 内容判据（行为不变）；树哈希算不出（git 不可用 / 当前树脏 / 构建时树脏）⇒ 同样回退内容判据。跳过产物段的模式（`--ignore-build`、`--jar-mode=use|native`、`XIHE_E2E_EXTERNAL_SERVER=1`）不跑身份检查，`use` 下 runner 仍打 WARN。
+
+**迁移（旧 jar）**：task-90 之前的 jar（以及手跑 `mvn package` 产出的 jar）没有清单，一律走内容判据；**`scripts/e2e-host.mjs` 重建一次即产出清单，无需任何兼容代码，也不设过期窗口**。手工核对：`git ls-tree -r HEAD -- packages/control-plane | sha256sum` 应与清单 `sourceTreeSha256` 相等；`sha256sum <jar>` 应与 `jarSha256` 相等。**禁止伪造清单**：只有产出 jar 的那条路径能写它，手写清单等于伪造身份证据。
 
 ## mode 门控 spec 的漂移风险与夹具前提（2026-11-06 实测）
 
