@@ -44,16 +44,18 @@ public class PluginCatalogService {
     private static final String ACTION_UNINSTALL = "plugin.uninstall";
 
     private final PluginRepository repository;
+    private final PluginBindingRepository bindings;
     private final AuditLogger auditLogger;
     private final EntityManager entityManager;
     private final String packageRoot;
     private final boolean advisoryLockEnabled;
 
-    public PluginCatalogService(PluginRepository repository, AuditLogger auditLogger,
-            EntityManager entityManager,
+    public PluginCatalogService(PluginRepository repository, PluginBindingRepository bindings,
+            AuditLogger auditLogger, EntityManager entityManager,
             @Value("${cp.plugin.package-root:plugins}") String packageRoot,
             @Value("${cp.plugin.advisory-lock:true}") boolean advisoryLockEnabled) {
         this.repository = repository;
+        this.bindings = bindings;
         this.auditLogger = auditLogger;
         this.entityManager = entityManager;
         this.packageRoot = packageRoot;
@@ -161,6 +163,16 @@ public class PluginCatalogService {
         lock(pluginId);
         if (repository.countVersions(pluginId) == 0) {
             throw notFound(pluginId);
+        }
+        // D-65 ③: the composite FK plugin_bindings(plugin_id, digest) → plugins(id, digest) is
+        // ON DELETE RESTRICT, so this delete would fail with a raw 23503. Fail first, in the API's own
+        // vocabulary, and tell the caller the removal is explicit: delete the bindings (which audits
+        // each one) and then uninstall. No silent cascade and no "removed" tombstone state.
+        long bound = bindings.countByPluginId(pluginId);
+        if (bound > 0) {
+            throw new CpApiException(HttpStatus.CONFLICT, "PLUGIN_CONFLICT",
+                    "plugin " + pluginId + " is still bound in " + bound
+                            + " workspace(s); delete those bindings before uninstalling");
         }
         int removed = repository.deleteAllVersions(pluginId);
         audit(ACTION_UNINSTALL, actorUserId, workspaceId, pluginId, "versions=" + removed);
