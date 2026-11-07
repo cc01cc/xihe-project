@@ -240,7 +240,6 @@
     "job_summary_loaded",
     "job_summary_projection_failed",
     "job_timeout_clamp",
-    "judge_client_unwired",
     "lease_released",
     "lineage_invocation_rejection_record_failed",
     "lineage_invocation_settle_failed",

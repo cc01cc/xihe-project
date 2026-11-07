@@ -74,6 +74,14 @@ public class SessionParticipant {
     @jakarta.persistence.Column(name = "wake_config", columnDefinition = "jsonb")
     private com.fasterxml.jackson.databind.JsonNode wakeConfig;
 
+    /**
+     * PLAN-0690 T2.1 (V134): roster-level default delivery roles. Nullable on purpose — "not
+     * configured" is distinct from an empty set and the column is additive (D-215: no backfill).
+     */
+    @org.hibernate.annotations.JdbcTypeCode(org.hibernate.type.SqlTypes.ARRAY)
+    @jakarta.persistence.Column(name = "delivery_defaults", columnDefinition = "text array")
+    private String[] deliveryDefaults;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 
@@ -132,6 +140,8 @@ public class SessionParticipant {
     public String getRespondPolicy() { return respondPolicy; }
     public com.fasterxml.jackson.databind.JsonNode getWakeConfig() { return wakeConfig; }
     public void setWakeConfig(com.fasterxml.jackson.databind.JsonNode wakeConfig) { this.wakeConfig = wakeConfig; }
+    public String[] getDeliveryDefaults() { return deliveryDefaults; }
+    public void setDeliveryDefaults(String[] deliveryDefaults) { this.deliveryDefaults = deliveryDefaults; }
     public void setRespondPolicy(String respondPolicy) { this.respondPolicy = respondPolicy; }
 
     public Instant getCreatedAt() { return createdAt; }

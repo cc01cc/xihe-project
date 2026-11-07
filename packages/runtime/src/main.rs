@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use axum::Json as AxumJson;
 use axum::extract::State;
 use axum::extract::rejection::QueryRejection;
-use axum::extract::{Path, Query};
+use axum::extract::{Path, Query, RawQuery};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{any, delete, get, post};
@@ -37,6 +37,7 @@ use tokio::sync::Mutex;
 use workspace_events::WorkspaceEventWatchers;
 use xihe_runtime::backend::{DockerBackend, SandboxBackend, SandboxHandle};
 use xihe_runtime::checkpoint::CheckpointStorageMode;
+use xihe_runtime::checkpoint::GIT_LOG_DEFAULT_LIMIT;
 use xihe_runtime::checkpoint::NestedRepoPolicy;
 use xihe_runtime::checkpoint::WorkspaceGitFacts;
 use xihe_runtime::checkpoint_api::{
@@ -3286,6 +3287,109 @@ async fn workspace_git_status_handler(
     }
 }
 
+/// Parse repeated `?path=` values for the read-only G8 git tools (PLAN-0686).
+///
+/// Repeated keys are the agreed wire shape (no comma-joined list); unknown query
+/// keys are rejected so a typo cannot be silently ignored. Validation of each
+/// pathspec happens in the checkpoint engine before git runs.
+fn parse_git_read_paths(raw: &RawQuery) -> Result<Vec<String>, String> {
+    let Some(query) = raw.0.as_deref() else {
+        return Ok(Vec::new());
+    };
+    let mut paths = Vec::new();
+    for (key, value) in url::form_urlencoded::parse(query.as_bytes()) {
+        match key.as_ref() {
+            "path" => paths.push(value.into_owned()),
+            other => return Err(format!("unsupported query parameter {other:?}")),
+        }
+    }
+    Ok(paths)
+}
+
+async fn workspace_git_diff_handler(
+    Path(ws_id): Path<String>,
+    State(app): State<Arc<AppState>>,
+    raw: RawQuery,
+) -> Response {
+    let paths = match parse_git_read_paths(&raw) {
+        Ok(paths) => paths,
+        Err(detail) => {
+            return checkpoint_problem_response(
+                StatusCode::BAD_REQUEST,
+                "CHECKPOINT_INVALID_REQUEST",
+                None,
+                &detail,
+            );
+        }
+    };
+    app.refresh_checkpoint_work_tree(&ws_id).await;
+    match app.checkpoints.git_diff(&ws_id, &paths).await {
+        Ok(diff) => AxumJson(diff).into_response(),
+        Err(failure) => git_status_failure_response(failure),
+    }
+}
+
+/// Parse the `git_log` query: repeated `?path=`, single `?limit=` (1..=200,
+/// default 20) and single optional `?range=A..B`. Unknown keys, repeated
+/// non-path keys and non-integer limits are client errors; range/limit bounds
+/// are validated in the checkpoint engine before any git process runs.
+fn parse_git_log_query(raw: &RawQuery) -> Result<(Vec<String>, usize, Option<String>), String> {
+    let mut paths = Vec::new();
+    let mut limit: Option<usize> = None;
+    let mut range: Option<String> = None;
+    if let Some(query) = raw.0.as_deref() {
+        for (key, value) in url::form_urlencoded::parse(query.as_bytes()) {
+            match key.as_ref() {
+                "path" => paths.push(value.into_owned()),
+                "limit" => {
+                    if limit.is_some() {
+                        return Err("limit must not be repeated".to_string());
+                    }
+                    let parsed = value.parse::<usize>().map_err(|_| {
+                        format!("limit must be an integer, got {:?}", value.as_ref())
+                    })?;
+                    limit = Some(parsed);
+                }
+                "range" => {
+                    if range.is_some() {
+                        return Err("range must not be repeated".to_string());
+                    }
+                    range = Some(value.into_owned());
+                }
+                other => return Err(format!("unsupported query parameter {other:?}")),
+            }
+        }
+    }
+    Ok((paths, limit.unwrap_or(GIT_LOG_DEFAULT_LIMIT), range))
+}
+
+async fn workspace_git_log_handler(
+    Path(ws_id): Path<String>,
+    State(app): State<Arc<AppState>>,
+    raw: RawQuery,
+) -> Response {
+    let (paths, limit, range) = match parse_git_log_query(&raw) {
+        Ok(query) => query,
+        Err(detail) => {
+            return checkpoint_problem_response(
+                StatusCode::BAD_REQUEST,
+                "CHECKPOINT_INVALID_REQUEST",
+                None,
+                &detail,
+            );
+        }
+    };
+    app.refresh_checkpoint_work_tree(&ws_id).await;
+    match app
+        .checkpoints
+        .git_log(&ws_id, limit, &paths, range.as_deref())
+        .await
+    {
+        Ok(log) => AxumJson(log).into_response(),
+        Err(failure) => git_status_failure_response(failure),
+    }
+}
+
 /// PLAN-0641 T2.3 (contract F3): discovery response body `{items:[…]}`.
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -3675,6 +3779,14 @@ fn build_app_router(app_state: &Arc<AppState>) -> Router {
         .route(
             "/internal/v1/runtime/workspaces/{ws_id}/git-status",
             get(workspace_git_status_handler),
+        )
+        .route(
+            "/internal/v1/runtime/workspaces/{ws_id}/git-diff",
+            get(workspace_git_diff_handler),
+        )
+        .route(
+            "/internal/v1/runtime/workspaces/{ws_id}/git-log",
+            get(workspace_git_log_handler),
         )
         .route(
             "/internal/v1/runtime/workspaces/{ws_id}/git-facts",
@@ -6635,6 +6747,433 @@ mod checkpoint_handler_tests {
         assert_eq!(invalid_body["code"], "CHECKPOINT_INVALID_REQUEST");
     }
 
+    /// BL-207 / D-64 ⑤: handler-level missing-git contract. A workspace that *is* a
+    /// repository needs host git, so an unusable git binary must fail explicitly with
+    /// 503 + `CHECKPOINT_UNAVAILABLE` + one of the three `reason` codes; the paired
+    /// non-repository workspace keeps returning 200 `isRepository:false` without ever
+    /// spawning git (D-64 ④). Contract: spec/protocol/mcp.md §3.5.
+    #[tokio::test]
+    async fn workspace_git_status_returns_503_git_unavailable_without_host_git() {
+        let temp = workspace_root();
+        // `.git` is resolved *before* the capability probe (checkpoint.rs:3306), so only a
+        // repository workspace depends on host git being usable.
+        std::fs::create_dir_all(temp.path().join(WS).join(".git")).expect("fixture .git");
+        let service =
+            CheckpointService::new(temp.path()).with_git_binary("xihe-runtime-missing-git-binary");
+        let state = state_with(service).await;
+        let uri = format!("/internal/v1/runtime/workspaces/{WS}/git-status");
+
+        let (status, content_type, body) = send_text(&state, &uri).await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+        assert_eq!(
+            content_type.as_deref(),
+            Some("application/problem+json"),
+            "the failure face must stay Problem Details: {body}"
+        );
+        let value: serde_json::Value = serde_json::from_str(&body).expect("problem json");
+        assert_eq!(value["code"], "CHECKPOINT_UNAVAILABLE", "{body}");
+        assert_eq!(value["status"], 503, "{body}");
+        assert_eq!(
+            value["type"], "https://xihe.dev/problems/checkpoint_unavailable",
+            "{body}"
+        );
+        assert!(!value["title"].as_str().unwrap_or("").is_empty(), "{body}");
+        assert!(!value["detail"].as_str().unwrap_or("").is_empty(), "{body}");
+        assert!(
+            !value["requestId"].as_str().unwrap_or("").is_empty(),
+            "{body}"
+        );
+        let reason = value["reason"].as_str().expect("reason must be present");
+        assert_eq!(
+            reason, "GIT_UNAVAILABLE",
+            "a missing binary is GIT_UNAVAILABLE, not GIT_TOO_OLD/GIT_FAILED: {body}"
+        );
+        assert!(
+            ["GIT_UNAVAILABLE", "GIT_TOO_OLD", "GIT_FAILED"].contains(&reason),
+            "the reason vocabulary is the fixed three-way split, never a collapsed family name: {body}"
+        );
+
+        // Paired reverse assertion: no `.git` ⇒ success with `isRepository:false` and an
+        // empty entry list, even though host git is unavailable (no git spawn at all).
+        let non_repo_temp = workspace_root();
+        let non_repo_service = CheckpointService::new(non_repo_temp.path())
+            .with_git_binary("xihe-runtime-missing-git-binary");
+        let non_repo_state = state_with(non_repo_service).await;
+        let (non_repo_status, non_repo_body) = send(&non_repo_state, Method::GET, &uri, None).await;
+        assert_eq!(non_repo_status, StatusCode::OK, "{non_repo_body}");
+        assert_eq!(non_repo_body["isRepository"], false, "{non_repo_body}");
+        assert_eq!(
+            non_repo_body["entries"],
+            serde_json::json!([]),
+            "{non_repo_body}"
+        );
+    }
+
+    /// PLAN-0686 T2.2: handler-level `git_diff` contract — real work-tree patch,
+    /// repeated `?path=` filtering, workspace-relative escape rejection, non-Git
+    /// 200 `isRepository:false` (D-64 ④) and missing-git 503 (three-way reason).
+    /// Contract: `spec/protocol/mcp.md` §3.5 (git_diff), checklist §4.2/§4.5.
+    #[tokio::test]
+    async fn workspace_git_diff_returns_patch_and_rejects_escape_paths() {
+        let temp = workspace_root();
+        let root = temp.path().join(WS);
+        let service = CheckpointService::new(temp.path());
+        if !require_git(&service).await {
+            return;
+        }
+        let state = state_with(service).await;
+        let uri = format!("/internal/v1/runtime/workspaces/{WS}/git-diff");
+
+        // Non-Git workspace ⇒ 200 with an explicit empty diff, never a 503 (D-64 ④).
+        let (status, body) = send(&state, Method::GET, &uri, None).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["isRepository"], false, "{body}");
+        assert_eq!(body["patch"], "", "{body}");
+        assert_eq!(body["truncated"], false, "{body}");
+        assert_eq!(body["patchBytes"], 0, "{body}");
+
+        // Real repo: a tracked file whose path has a space and CJK characters must
+        // survive as readable UTF-8 in the patch header (`core.quotepath=false`).
+        let tracked = "notes/中文 空格.txt";
+        std::fs::create_dir_all(root.join("notes")).expect("fixture notes dir");
+        std::fs::write(root.join(tracked), "before\n").expect("fixture tracked");
+        git_in(&root, &["init", "-q"]);
+        git_in(&root, &["add", "-A"]);
+        git_in(&root, &["commit", "-qm", "one"]);
+        std::fs::write(root.join(tracked), "after\n").expect("fixture modify");
+
+        let (status, body) = send(&state, Method::GET, &uri, None).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["isRepository"], true, "{body}");
+        assert_eq!(body["truncated"], false, "{body}");
+        let patch = body["patch"].as_str().expect("patch string");
+        assert!(
+            patch.contains("+after"),
+            "patch must carry the modification: {patch}"
+        );
+        assert!(
+            patch.contains(tracked),
+            "UTF-8 paths must not be octal-escaped: {patch}"
+        );
+        assert!(
+            body["patchBytes"].as_u64().expect("patchBytes") > 0,
+            "{body}"
+        );
+        assert!(
+            !root.join(".git/index.lock").exists(),
+            "git-diff must stay read-only (no index lock)"
+        );
+
+        // Repeated `?path=` filters the pathspec; validation happens before git.
+        let encoded = url::form_urlencoded::byte_serialize(tracked.as_bytes()).collect::<String>();
+        let (status, body) =
+            send(&state, Method::GET, &format!("{uri}?path={encoded}"), None).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert!(
+            body["patch"].as_str().expect("patch").contains("+after"),
+            "{body}"
+        );
+
+        // Escape / malformed pathspecs ⇒ 400 before any git spawn.
+        for escaped in [
+            "../escape",
+            "..%2Fescape",
+            "%2Fetc%2Fpasswd",
+            "%5C%5Cserver%5Cshare",
+            "C%3A%2FWindows",
+            "a%00b",
+            "a%2F%2Fb",
+            "--upload-pack=touch",
+        ] {
+            let (status, body) =
+                send(&state, Method::GET, &format!("{uri}?path={escaped}"), None).await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "path {escaped}: {body}");
+            assert_eq!(body["code"], "CHECKPOINT_INVALID_REQUEST", "{body}");
+        }
+        // Unknown query keys are rejected instead of silently ignored.
+        let (status, body) = send(&state, Method::GET, &format!("{uri}?limit=5"), None).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+        assert_eq!(body["code"], "CHECKPOINT_INVALID_REQUEST", "{body}");
+
+        // Linked worktree: `.git` is a *file* with a `gitdir:` pointer, not a dir.
+        let linked = "ws-linked-worktree";
+        let linked_root = temp.path().join(linked);
+        git_in(
+            &root,
+            &[
+                "worktree",
+                "add",
+                "--detach",
+                linked_root.to_str().expect("fixture linked path"),
+                "HEAD",
+            ],
+        );
+        assert!(
+            linked_root.join(".git").is_file(),
+            "fixture must be a .git file"
+        );
+        let linked_uri = format!("/internal/v1/runtime/workspaces/{linked}/git-diff");
+        std::fs::write(linked_root.join(tracked), "linked\n").expect("fixture linked modify");
+        let (status, body) = send(&state, Method::GET, &linked_uri, None).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["isRepository"], true, "{body}");
+        assert!(
+            body["patch"].as_str().expect("patch").contains("+linked"),
+            "linked-worktree diffs must work through the gitdir pointer: {body}"
+        );
+
+        // Patch cap: a >256 KiB diff is truncated on a UTF-8 boundary and flagged.
+        std::fs::write(root.join("big.txt"), "a".repeat(300 * 1024)).expect("fixture big");
+        git_in(&root, &["add", "big.txt"]);
+        git_in(&root, &["commit", "-qm", "big"]);
+        std::fs::write(root.join("big.txt"), "b".repeat(300 * 1024)).expect("fixture big modify");
+        let (status, body) = send(&state, Method::GET, &uri, None).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["truncated"], true, "cap must be signalled: {body}");
+        assert!(
+            body["patchBytes"].as_u64().expect("patchBytes") > 256 * 1024,
+            "patchBytes is the untruncated length: {body}"
+        );
+        assert!(
+            body["patch"].as_str().expect("patch").len() <= 256 * 1024,
+            "patch must be capped at 256 KiB: {body}"
+        );
+
+        // Missing git binary in a repository workspace ⇒ 503 + three-way reason.
+        let missing_temp = TempDir::new().expect("fixture tempdir");
+        std::fs::create_dir_all(missing_temp.path().join(WS).join(".git")).expect("fixture .git");
+        let missing_service = CheckpointService::new(missing_temp.path())
+            .with_git_binary("xihe-runtime-missing-git-binary");
+        let missing_state = state_with(missing_service).await;
+        let (status, content_type, body) = send_text(&missing_state, &uri).await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+        assert_eq!(
+            content_type.as_deref(),
+            Some("application/problem+json"),
+            "{body}"
+        );
+        let value: serde_json::Value = serde_json::from_str(&body).expect("problem json");
+        assert_eq!(value["code"], "CHECKPOINT_UNAVAILABLE", "{body}");
+        let reason = value["reason"].as_str().expect("reason must be present");
+        assert_eq!(reason, "GIT_UNAVAILABLE", "{body}");
+        assert!(
+            ["GIT_UNAVAILABLE", "GIT_TOO_OLD", "GIT_FAILED"].contains(&reason),
+            "the reason vocabulary is the fixed three-way split: {body}"
+        );
+    }
+
+    /// PLAN-0686 T2.2: handler-level `git_log` contract — newest-first window,
+    /// exact `truncated` at the 200 cap, repeated `?path=`, two-dot `range`
+    /// resolution, control-character sanitisation and the non-repo/missing-git
+    /// pair (D-64 ④/⑤). Contract: `spec/protocol/mcp.md` §3.5 (git_log).
+    #[tokio::test]
+    async fn workspace_git_log_returns_bounded_entries_and_validates_range() {
+        let temp = workspace_root();
+        let root = temp.path().join(WS);
+        let service = CheckpointService::new(temp.path());
+        if !require_git(&service).await {
+            return;
+        }
+        let state = state_with(service).await;
+        let uri = format!("/internal/v1/runtime/workspaces/{WS}/git-log");
+
+        // Non-Git workspace ⇒ 200 with an empty window, never a 503 (D-64 ④).
+        let (status, body) = send(&state, Method::GET, &uri, None).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["isRepository"], false, "{body}");
+        assert_eq!(body["entries"], serde_json::json!([]), "{body}");
+        assert_eq!(body["truncated"], false, "{body}");
+
+        // Fresh `git init` with an un-born HEAD ⇒ 200 empty window (git log would
+        // otherwise exit 128 and become a spurious 503).
+        let unborn_temp = TempDir::new().expect("fixture tempdir");
+        let unborn_root = unborn_temp.path().join(WS);
+        std::fs::create_dir_all(&unborn_root).expect("fixture unborn workspace");
+        git_in(&unborn_root, &["init", "-q"]);
+        let unborn_state = state_with(CheckpointService::new(unborn_temp.path())).await;
+        let (status, body) = send(&unborn_state, Method::GET, &uri, None).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["isRepository"], true, "{body}");
+        assert_eq!(body["entries"], serde_json::json!([]), "{body}");
+        assert_eq!(body["truncated"], false, "{body}");
+
+        // 250 commits so the 200 upper bound really truncates (not just validation).
+        git_in(&root, &["init", "-q"]);
+        for index in 0..250 {
+            git_in(
+                &root,
+                &[
+                    "commit",
+                    "--allow-empty",
+                    "-q",
+                    "-m",
+                    &format!("commit-{index:03}"),
+                ],
+            );
+        }
+
+        // Default limit 20 ⇒ exactly 20 newest-first entries, truncated.
+        let (status, body) = send(&state, Method::GET, &uri, None).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["isRepository"], true, "{body}");
+        assert_eq!(body["truncated"], true, "{body}");
+        let entries = body["entries"].as_array().expect("entries array");
+        assert_eq!(entries.len(), 20, "{body}");
+        assert_eq!(entries[0]["subject"], "commit-249", "{body}");
+        assert_eq!(entries[19]["subject"], "commit-230", "{body}");
+        assert!(
+            entries[0]["hash"].as_str().expect("hash").len() == 40,
+            "{body}"
+        );
+        assert_eq!(
+            entries[0]["shortHash"].as_str().expect("shortHash").len(),
+            7,
+            "{body}"
+        );
+        assert_eq!(entries[0]["author"], "handler-test", "{body}");
+        assert!(
+            entries[0]["committedAt"]
+                .as_str()
+                .expect("committedAt")
+                .contains('T'),
+            "{body}"
+        );
+
+        // limit=200 with 250 commits ⇒ exactly 200 entries and truncated: true.
+        let (status, body) = send(&state, Method::GET, &format!("{uri}?limit=200"), None).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["truncated"], true, "{body}");
+        let entries = body["entries"].as_array().expect("entries array");
+        assert_eq!(entries.len(), 200, "{body}");
+        assert_eq!(entries[0]["subject"], "commit-249", "{body}");
+        assert_eq!(entries[199]["subject"], "commit-050", "{body}");
+
+        // limit bound is 1..=200; non-integers and repeats are client errors.
+        for query in ["limit=0", "limit=201", "limit=abc", "limit=5&limit=6"] {
+            let (status, body) = send(&state, Method::GET, &format!("{uri}?{query}"), None).await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{query}: {body}");
+            assert_eq!(
+                body["code"], "CHECKPOINT_INVALID_REQUEST",
+                "{query}: {body}"
+            );
+        }
+
+        // A path filter narrows the window to commits touching that path.
+        std::fs::write(root.join("only.txt"), "only\n").expect("fixture only.txt");
+        git_in(&root, &["add", "only.txt"]);
+        git_in(&root, &["commit", "-q", "-m", "path-only"]);
+        let (status, body) = send(&state, Method::GET, &format!("{uri}?path=only.txt"), None).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let entries = body["entries"].as_array().expect("entries array");
+        assert_eq!(entries.len(), 1, "{body}");
+        assert_eq!(entries[0]["subject"], "path-only", "{body}");
+        assert_eq!(body["truncated"], false, "{body}");
+
+        // Two-dot range: both sides resolve to commits and narrow the window.
+        let (status, body) = send(
+            &state,
+            Method::GET,
+            &format!("{uri}?range=HEAD~2..HEAD"),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let entries = body["entries"].as_array().expect("entries array");
+        assert_eq!(entries.len(), 2, "{body}");
+        assert_eq!(entries[0]["subject"], "path-only", "{body}");
+        assert_eq!(entries[1]["subject"], "commit-249", "{body}");
+
+        // Injection / malformed range faces ⇒ 400 before git log runs.
+        for range in [
+            "--all..HEAD",
+            "HEAD...HEAD",
+            "HEAD",
+            "deadbeef..HEAD",
+            "..HEAD",
+        ] {
+            let (status, body) =
+                send(&state, Method::GET, &format!("{uri}?range={range}"), None).await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "range {range}: {body}");
+            assert_eq!(
+                body["code"], "CHECKPOINT_INVALID_REQUEST",
+                "range {range}: {body}"
+            );
+        }
+
+        // Control characters in subject/author must be replaced by spaces without
+        // changing the entry count; `%s` flattens a multi-line subject to one line.
+        let tricky_commit = |author: &str, message: &str| {
+            let output = std::process::Command::new("git")
+                .args(["commit", "--allow-empty", "-q", "-m", message])
+                .current_dir(&root)
+                .env("GIT_CONFIG_GLOBAL", null_device())
+                .env("GIT_CONFIG_SYSTEM", null_device())
+                .env("GIT_AUTHOR_NAME", author)
+                .env("GIT_AUTHOR_EMAIL", "handler-test@example.com")
+                .env("GIT_COMMITTER_NAME", author)
+                .env("GIT_COMMITTER_EMAIL", "handler-test@example.com")
+                .output()
+                .expect("spawn fixture git");
+            assert!(
+                output.status.success(),
+                "git commit failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        };
+        tricky_commit("handler\u{1f}test\u{1e}author", "sub\u{1e}ject");
+        git_in(
+            &root,
+            &[
+                "commit",
+                "--allow-empty",
+                "-q",
+                "-m",
+                "first line\nsecond line",
+            ],
+        );
+        let (status, body) = send(&state, Method::GET, &format!("{uri}?limit=5"), None).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let entries = body["entries"].as_array().expect("entries array");
+        assert_eq!(
+            entries.len(),
+            5,
+            "control chars must not change the count: {body}"
+        );
+        assert_eq!(entries[0]["subject"], "first line second line", "{body}");
+        assert_eq!(entries[1]["subject"], "sub ject", "{body}");
+        assert_eq!(entries[1]["author"], "handler test author", "{body}");
+        for entry in entries {
+            let subject = entry["subject"].as_str().expect("subject");
+            let author = entry["author"].as_str().expect("author");
+            assert!(
+                !subject.contains('\n')
+                    && !subject.contains('\u{1e}')
+                    && !subject.contains('\u{1f}')
+                    && !author.contains('\u{1e}')
+                    && !author.contains('\u{1f}'),
+                "human fields must be sanitised: {entry}"
+            );
+        }
+
+        // Missing git binary in a repository workspace ⇒ 503 + three-way reason.
+        let missing_temp = TempDir::new().expect("fixture tempdir");
+        std::fs::create_dir_all(missing_temp.path().join(WS).join(".git")).expect("fixture .git");
+        let missing_service = CheckpointService::new(missing_temp.path())
+            .with_git_binary("xihe-runtime-missing-git-binary");
+        let missing_state = state_with(missing_service).await;
+        let (status, content_type, body) = send_text(&missing_state, &uri).await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+        assert_eq!(
+            content_type.as_deref(),
+            Some("application/problem+json"),
+            "{body}"
+        );
+        let value: serde_json::Value = serde_json::from_str(&body).expect("problem json");
+        assert_eq!(value["code"], "CHECKPOINT_UNAVAILABLE", "{body}");
+        let reason = value["reason"].as_str().expect("reason must be present");
+        assert_eq!(reason, "GIT_UNAVAILABLE", "{body}");
+    }
+
     /// Every checkpoint route stays behind the internal service bearer filter.
     #[tokio::test]
     async fn checkpoint_routes_require_service_auth() {
@@ -6670,6 +7209,16 @@ mod checkpoint_handler_tests {
             (
                 Method::GET,
                 format!("/internal/v1/runtime/workspaces/{WS}/git-status"),
+                None,
+            ),
+            (
+                Method::GET,
+                format!("/internal/v1/runtime/workspaces/{WS}/git-diff"),
+                None,
+            ),
+            (
+                Method::GET,
+                format!("/internal/v1/runtime/workspaces/{WS}/git-log"),
                 None,
             ),
             (Method::GET, DIAGNOSTICS_URI.to_string(), None),

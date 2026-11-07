@@ -18,6 +18,7 @@ import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.http.HttpStatus;
 
 import java.util.List;
@@ -25,6 +26,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -111,6 +113,22 @@ class SessionParticipantServiceTest {
     }
 
     @Test
+    void deliveryDefaultsAreNormalisedPersistedAndProjected() {
+        when(users.existsById(HUMAN_ID)).thenReturn(true);
+        SessionParticipantService.ParticipantView view = service.add(OWNER, WORKSPACE,
+                SESSION_ID.toString(), new SessionParticipantService.AddRequest(
+                        "HUMAN", HUMAN_ID.toString(), "MEMBER", "MENTION", "WHEN_MENTIONED",
+                        null, List.of("to", "cc", "to")));
+
+        assertEquals(List.of("to", "cc"), view.deliveryDefaults(),
+                "PLAN-0690: the read face returns the normalised set");
+        ArgumentCaptor<SessionParticipant> persisted = ArgumentCaptor.forClass(SessionParticipant.class);
+        verify(participants).save(persisted.capture());
+        assertArrayEquals(new String[] {"to", "cc"}, persisted.getValue().getDeliveryDefaults(),
+                "PLAN-0690: duplicates are collapsed before the row is written");
+    }
+
+    @Test
     void removingAMemberSoftDisablesTheRowSoTheUiKeepsTheDisabledBadge() {
         SessionParticipant member = new SessionParticipant(SESSION_ID, "AGENT", AGENT_ID, "MEMBER",
                 20, "MENTION", "WHEN_MENTIONED");
@@ -130,7 +148,7 @@ class SessionParticipantServiceTest {
     void aSecondPrimaryIsRefusedWithABusinessCode() {
         CpApiException refused = assertThrows(CpApiException.class, () -> service.add(OWNER,
                 WORKSPACE, SESSION_ID.toString(), new SessionParticipantService.AddRequest(
-                        "AGENT", AGENT_ID.toString(), "PRIMARY", null, null, null)));
+                        "AGENT", AGENT_ID.toString(), "PRIMARY", null, null, null, null)));
         assertEquals("PARTICIPANT_PRIMARY_EXISTS", refused.getCode(),
                 "D23-13: a second PRIMARY is a conflict, never a 500");
         assertEquals(HttpStatus.CONFLICT, refused.getStatus());
@@ -153,7 +171,7 @@ class SessionParticipantServiceTest {
         CpApiException downgraded = assertThrows(CpApiException.class,
                 () -> service.update(OWNER, WORKSPACE, SESSION_ID.toString(),
                         primary.getId().toString(),
-                        new SessionParticipantService.UpdateRequest("MEMBER", null, null, null, null)));
+                        new SessionParticipantService.UpdateRequest("MEMBER", null, null, null, null, null)));
         assertEquals("PARTICIPANT_PRIMARY_IMMUTABLE", downgraded.getCode(),
                 "D23-13: PRIMARY is not transferable");
     }
@@ -168,7 +186,7 @@ class SessionParticipantServiceTest {
         CpApiException refused = assertThrows(CpApiException.class,
                 () -> service.update(OWNER, WORKSPACE, SESSION_ID.toString(),
                         member.getId().toString(),
-                        new SessionParticipantService.UpdateRequest("PRIMARY", null, null, null, null)));
+                        new SessionParticipantService.UpdateRequest("PRIMARY", null, null, null, null, null)));
         assertEquals("PARTICIPANT_PRIMARY_EXISTS", refused.getCode());
     }
 
@@ -379,6 +397,6 @@ class SessionParticipantServiceTest {
     }
 
     private static SessionParticipantService.AddRequest humanRequest() {
-        return new SessionParticipantService.AddRequest("HUMAN", HUMAN_ID.toString(), null, null, null, null);
+        return new SessionParticipantService.AddRequest("HUMAN", HUMAN_ID.toString(), null, null, null, null, null);
     }
 }

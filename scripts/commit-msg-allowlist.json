@@ -1,5 +1,5 @@
 {
-  "_comment": "显式历史豁免白名单：每条必须带 reason，只允许“合入时才发现超宽”这类既成事实（合并后不可改写历史）。新增条目须在台账留痕，禁止批量塞历史提交。2026-11-06 一次性收录 8 条同日 merge/feature 超宽（同一根因：合并前未校验分支首行宽度，且 merge 主题未压到 ≤100 列）；收录后 gate 恢复绿，流程修复=合并前 `--range develop..<branch> --enforce` + merge 首行 ≤100。",
+  "_comment": "显式历史豁免白名单：每条必须带 reason，只允许“合入时才发现超宽”这类既成事实（合并后不可改写历史）。新增条目须在台账留痕，禁止批量塞历史提交。2026-11-06 一次性收录 8 条同日 merge/feature 超宽（同一根因：合并前未校验分支首行宽度，且 merge 主题未压到 ≤100 列）；收录后 gate 恢复绿，流程修复=合并前 `--range develop..<branch> --enforce` + merge 首行 ≤100。2026-11-07 追加 6 条（D-223）：4 条是以 `chore(merge):` 记录的 2 父合并提交、门禁按非 merge 的 72 列判（73~77 列），2 条是 19:08 的 lane 内 chore 提交与真 merge（80/137 列）；同一根因——分支内提交不受门禁约束、合入时未跑分支 `--range` 校验。",
   "entries": [
     {
       "sha": "e69e06c874c9d4b68e6dafcd7323492f08d825f4",
@@ -40,6 +40,34 @@
     {
       "sha": "da2eda5fbeccfed96d8ac4838a17c0964831ca6d",
       "reason": "2026-11-06 Lead 合并 task/0643-v43-v24 时 merge 首行 120 列 > 100；已进 develop 不可改写。本次为最后一笔，之后合并前一律先跑分支 --range 校验并把 merge 主题压到 ≤100 列。"
+    },
+    {
+      "sha": "8f5e56bed1b4024fa9f45635548f0011a5f7ec07",
+      "reason": "2026-11-07 19:08 lane 分支内提交 chore(gitignore) 首行 80 列 > 72（CJK 记 2 列）；提交发生在 D-216 翻闸之后，但门禁只校验 develop 历史、分支内提交未过 hook/enforce，合入时也没跑 --range develop..<branch> --enforce ⇒ 已进 develop 不可改写（D-223 收录）。属流程回退而非翻闸前遗留：合入前校验才是这条的修复点。"
+    },
+    {
+      "sha": "9ca6889ede4d1e28e61940f8777227803dc48d07",
+      "reason": "2026-11-07 19:08 真 merge 提交 merge(cp) 首行 137 列 > merge 上限 100（限制是 100 不是 72，仍超）；合入时未按「merge 主题 ≤100 列」压行 ⇒ 已进 develop 不可改写（D-223 收录）。"
+    },
+    {
+      "sha": "8da1622755a3eb0fd8b1b207f4a2d37f8fa05295",
+      "reason": "2026-11-07 15:21 以 chore(merge): 记录的合并提交（2 父），首行 77 列；门禁按非 merge 的 72 列判（该写法不走 merge(…) 豁免分支）⇒ 超 5 列。合入前未跑 --range enforce。已进 develop 不可改写（D-223 收录）；流程修复=合并类提交要么用 merge(<target>):（≤100 列）要么把细节移 body。"
+    },
+    {
+      "sha": "ff979d711e3f1e24a063ea71fe2d686c7608edf2",
+      "reason": "2026-11-07 15:16 以 chore(merge): 记录的合并提交（2 父），首行 74 列 > 非 merge 上限 72 ⇒ 超 2 列；同批合入前未跑 --range enforce。已进 develop 不可改写（D-223 收录）。"
+    },
+    {
+      "sha": "dae812c002de2a662a32184d87a447b078375ae3",
+      "reason": "2026-11-07 14:43 以 chore(merge): 记录的合并提交（2 父），首行 76 列 > 72 ⇒ 超 4 列；同批合入前未跑 --range enforce。已进 develop 不可改写（D-223 收录）。"
+    },
+    {
+      "sha": "e71e894a57f9e48a3ffdcb8d8db8a73285562dc8",
+      "reason": "2026-11-07 14:21 以 chore(merge): 记录的合并提交（2 父），首行 73 列 > 72 ⇒ 超 1 列（典型「差一列」：摘要塞了括号里的补充说明）；合入前未跑 --range enforce。已进 develop 不可改写（D-223 收录）。"
+    },
+    {
+      "sha": "f0c2c41c",
+      "reason": "2026-11-07 0690 lane 分支内提交 fix(cp) 首行 132 列 > 72（把 columnDefinition 兼容细节塞进首行）；分支内提交不受门禁约束，Lead 以 merge(0a89e345) 合入时才发现 ⇒ 已进 develop 不可改写（D-224 收录）。流程修复=分支合入前必跑 --range develop..<branch> --enforce，细节移 body。"
     }
   ]
 }

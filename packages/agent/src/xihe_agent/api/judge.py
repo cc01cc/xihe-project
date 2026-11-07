@@ -16,12 +16,15 @@ response, and the CP service records the refusal and does not speak.
 
 from __future__ import annotations
 
+import os
 import time
 from collections.abc import Callable
 from typing import Any
+from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
+from loguru import logger
 from pydantic import BaseModel, ConfigDict, Field
 
 from xihe_agent.api.shared import problem_details, verify_api_token
@@ -40,6 +43,66 @@ JUDGE_TIMEOUT_SECONDS = 8.0
 # The verdict is a short JSON object (Q1); bounding the completion bounds the per-call
 # spend (G-04 — judge is a metered model consumer like any chat turn).
 JUDGE_MAX_COMPLETION_TOKENS = 400
+
+JUDGE_TIMEOUT_ENV = "XIHE_JUDGE_TIMEOUT_SECONDS"
+JUDGE_MAX_TOKENS_ENV = "XIHE_JUDGE_MAX_TOKENS"
+
+
+def _positive_float_env(name: str, default: float) -> float:
+    """Read a positive float override, keeping the frozen default on bad input."""
+    raw = os.environ.get(name)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        logger.warning("ignoring invalid {}={!r}; using default {}", name, raw, default)
+        return default
+    if value <= 0:
+        logger.warning("ignoring non-positive {}={!r}; using default {}", name, raw, default)
+        return default
+    return value
+
+
+def _positive_int_env(name: str, default: int) -> int:
+    """Read a positive integer override, keeping the frozen default on bad input."""
+    raw = os.environ.get(name)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        logger.warning("ignoring invalid {}={!r}; using default {}", name, raw, default)
+        return default
+    if value <= 0:
+        logger.warning("ignoring non-positive {}={!r}; using default {}", name, raw, default)
+        return default
+    return value
+
+
+def _judge_timeout_seconds() -> float:
+    return _positive_float_env(JUDGE_TIMEOUT_ENV, JUDGE_TIMEOUT_SECONDS)
+
+
+def _judge_max_completion_tokens() -> int:
+    return _positive_int_env(JUDGE_MAX_TOKENS_ENV, JUDGE_MAX_COMPLETION_TOKENS)
+
+
+def _provider_endpoint(value: object) -> str:
+    """Render only scheme/host/port for diagnostics; never credentials or query."""
+    if not isinstance(value, str) or not value.strip():
+        return "-"
+    try:
+        parts = urlsplit(value)
+        port = parts.port
+    except ValueError:
+        return "<invalid>"
+    if not parts.scheme or not parts.hostname:
+        return "<invalid>"
+    authority = parts.hostname
+    if port is not None:
+        authority = f"{authority}:{port}"
+    return f"{parts.scheme}://{authority}"
 
 
 class JudgeDecideRequest(BaseModel):
@@ -70,23 +133,35 @@ async def _run_judge(
     # The lease is bound to the connection's apiType; the wire shape follows it.
     # Fallback keeps the pre-dashscope behavior for grants that predate the field.
     api_type = CHAT_TYPES.get(str(grant.get("apiTypeId") or "")) or CHAT_TYPES[JUDGE_API_TYPE_ID]
+    timeout_seconds = _judge_timeout_seconds()
+    max_completion_tokens = _judge_max_completion_tokens()
     factory = sender_factory or (
-        lambda g: ApiSender(api_type, g, request_id, JUDGE_TIMEOUT_SECONDS)
+        lambda g: ApiSender(api_type, g, request_id, timeout_seconds)
     )
     sender = factory(grant)
+    # T1.4 evidence: requestId + the actual provider endpoint (fake LLM port in DS-1) +
+    # the effective bounded-call limits. No prompt, credential or response body here.
+    logger.info(
+        "judge provider call requestId={} model={} endpoint={} timeoutSeconds={} maxCompletionTokens={}",
+        request_id or "-",
+        model_name,
+        _provider_endpoint(grant.get("baseUrl")),
+        timeout_seconds,
+        max_completion_tokens,
+    )
     body: dict[str, Any]
     if api_type.id == "dashscope-generation":
         # PLAN-0624 D24-04 native shape (decision-model-preview): input.messages + parameters.
         body = {
             "model": model_name,
             "input": {"messages": [{"role": "user", "content": prompt}]},
-            "parameters": {"max_tokens": JUDGE_MAX_COMPLETION_TOKENS, "temperature": 0},
+            "parameters": {"max_tokens": max_completion_tokens, "temperature": 0},
         }
     else:
         body = {
             "model": model_name,
             "messages": [{"role": "user", "content": prompt}],
-            "max_tokens": JUDGE_MAX_COMPLETION_TOKENS,
+            "max_tokens": max_completion_tokens,
             "temperature": 0,
         }
     started = clock()
@@ -97,6 +172,13 @@ async def _run_judge(
     latency_ms = int((clock() - started) * 1000)
     if last is None or not isinstance(last.text, str):
         raise ApiRequestError("LLM_PROVIDER_INVALID_RESPONSE", 502)
+    logger.info(
+        "judge provider call completed requestId={} latencyMs={} promptTokens={} completionTokens={}",
+        request_id or "-",
+        latency_ms,
+        last.provider_usage.get("input_tokens"),
+        last.provider_usage.get("output_tokens"),
+    )
     return {
         "verdictText": last.text,
         "promptTokens": last.provider_usage.get("input_tokens"),
@@ -132,8 +214,20 @@ async def judge_decide(request: Request) -> JSONResponse:
             )
         result = await _run_judge(grant, payload.model_name, payload.prompt, request_id)
     except ProviderLeaseError as exc:
+        logger.warning(
+            "judge decide rejected requestId={} status={} code={}",
+            request_id or "-",
+            exc.status,
+            exc.code,
+        )
         return problem_details(request_id, exc.status, exc.code, exc.code)
     except ApiRequestError as exc:
+        logger.warning(
+            "judge provider failed requestId={} status={} code={}",
+            request_id or "-",
+            exc.status or 502,
+            exc.code,
+        )
         return problem_details(request_id, exc.status or 502, "JUDGE_PROVIDER_FAILED", exc.code)
     return JSONResponse(
         status_code=200,
