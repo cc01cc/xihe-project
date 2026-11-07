@@ -57,6 +57,14 @@
  * git `ref` option to fingerprint an older tree was rejected — evidence-only scaffolding in the
  * production path would be the wrong shape, and the truthful-but-old manifest is exactly the thing
  * a hand-run forge would produce.
+ *
+ * ## What the write-lag guard does NOT cover (two separate gates)
+ * `maxWriteLagMs` bounds **time**: "you are writing now about something built long ago". It says
+ * nothing about the **tree changing during the build** — there `sourceTreeSha256` honestly records
+ * the HEAD that was read, yet the jar may hold half-finished code. That axis is carried by `dirty`
+ * plus the tree hash comparison: `dirty=true` or tree ≠ HEAD ⇒ the reader reports `degraded`/`stale`
+ * and falls back to content evidence (`unverifiable` still blocks). Having 120 s does not mean
+ * having identity.
  */
 import { createHash } from 'node:crypto';
 import { mkdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';

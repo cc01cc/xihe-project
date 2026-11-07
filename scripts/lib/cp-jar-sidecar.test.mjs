@@ -505,3 +505,16 @@ test('T23: the write-lag window is a parameter — default accepts a producer ta
   const widened = writeSidecarForJar({ projectDir: 'C:/proj', jarPath, run: fakeGit().run, maxWriteLagMs: 10 * 60_000 });
   assert.equal(widened.ok, true);
 });
+
+test('T24: every mode that skips the artifact section says so out loud (a silent skip is the defect)', () => {
+  // Ruling 2026-11-08: the three skip modes keep skipping (the frozen task-84 section layout is not
+  // restructured), but they must announce the consequence in the run header — a green run whose
+  // artifact section never executed is exactly the failure class BL-477 exists to stop.
+  const preflight = readFileSync(join(import.meta.dirname, '..', 'e2e-preflight.mjs'), 'utf8');
+  assert.match(preflight, /CP artifact section SKIPPED — \$\{cause\}/u, 'the skip must be a WARN naming the cause');
+  assert.match(preflight, /identity is NOT verified, and nothing later re-checks it/u, 'and it must state that nobody re-checks');
+  assert.match(preflight, /does NOT participate in this run/u, 'a neighbouring manifest must be declared irrelevant');
+  assert.match(preflight, /XIHE_E2E_EXTERNAL_SERVER === '1'/u, 'external reuse is the one cause observable at this boundary');
+  assert.match(preflight, /--jar-mode=use\|native/u, 'the other two modes are named (the runner collapses them into --ignore-build)');
+  assert.doesNotMatch(preflight, /CP artifact freshness skipped \(--ignore-build\)/u, 'the old INFO line stated the skip but not the consequence');
+});

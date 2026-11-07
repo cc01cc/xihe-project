@@ -325,9 +325,13 @@ E2E 的 CP 构建根默认是 `C:/xihe-build/e2e`（`scripts/e2e-host.mjs:59-63`
 | `commit` / `dirty` / `sourceScope` | 构建时 HEAD 与树是否脏 | 溯源；`dirty=true` 时树哈希不能证明对应 HEAD ⇒ 回退内容判据 |
 | `builtAt` | **打包完成**时间（不早于 jar mtime） | 人工核对顺序；不参与判定 |
 
-读取优先序（`scripts/lib/cp-jar-sidecar.mjs`，preflight 产物段第 0 步）：清单匹配且树哈希 == HEAD ⇒ `fresh`；树哈希不同 ⇒ `stale` 归 **`build`**（可延期：`resolveCpBootPlan()` 在门之前跑，重建即治好）；jar 字节与清单不符或清单不可用 ⇒ 归 **`artifact-truth`**（**不可延期**：重建前不许放行）；无清单 ⇒ 回退 task-84 内容判据（行为不变）；树哈希算不出（git 不可用 / 当前树脏 / 构建时树脏）⇒ 同样回退内容判据。跳过产物段的模式（`--ignore-build`、`--jar-mode=use|native`、`XIHE_E2E_EXTERNAL_SERVER=1`）不跑身份检查，`use` 下 runner 仍打 WARN。
+读取优先序（`scripts/lib/cp-jar-sidecar.mjs`，preflight 产物段第 0 步）：清单匹配且树哈希 == HEAD ⇒ `fresh`；树哈希不同 ⇒ `stale` 归 **`build`**（可延期：`resolveCpBootPlan()` 在门之前跑，重建即治好）；jar 字节与清单不符或清单不可用 ⇒ 归 **`artifact-truth`**（**不可延期**：重建前不许放行）；无清单 ⇒ 回退 task-84 内容判据（行为不变）；树哈希算不出（git 不可用 / 当前树脏 / 构建时树脏）⇒ 同样回退内容判据。
 
-**迁移（旧 jar）**：task-90 之前的 jar（以及手跑 `mvn package` 产出的 jar）没有清单，一律走内容判据；**`scripts/e2e-host.mjs` 重建一次即产出清单，无需任何兼容代码，也不设过期窗口**。手工核对：`git ls-tree -r HEAD -- packages/control-plane | sha256sum` 应与清单 `sourceTreeSha256` 相等；`sha256sum <jar>` 应与 `jarSha256` 相等。**禁止伪造清单**：只有产出 jar 的那条路径能写它，手写清单等于伪造身份证据。
+**跳过面（2026-11-08 裁定）**：`--jar-mode=use`、`--jar-mode=native`、`XIHE_E2E_EXTERNAL_SERVER=1` 三种模式（runner 统一折叠成 `--ignore-build` 传给 preflight）**整段跳过产物面**，因此**清单不参与判定**——即使 `C:/xihe-build/e2e` 里躺着 `*.buildinfo.json`，本次运行也不会读它、不会用它、不会因它变绿或变红。跳过不是缺陷，**静默跳过才是**：产物段会打一条 WARN 明写"CP artifact section SKIPPED — <原因>：本模式跳过产物段，CP jar 身份未被校验，后续无人再查"，并紧跟一行"旁边的清单不参与本次判定"。要判定身份就只有两条路：用默认 `--jar-mode=auto|rebuild` 跑一次（门前重建会重写清单），或在外部栈上单独手工核对（见下「迁移」）。
+
+**迁移（旧 jar）**：task-90 之前的 jar（以及手跑 `mvn package` 产出的 jar）没有清单，一律走内容判据；**`scripts/e2e-host.mjs` 重建一次即产出清单，无需任何兼容代码，也不设过期窗口**。手工核对：`git ls-tree -r HEAD -- packages/control-plane | sha256sum` 应与清单 `sourceTreeSha256` 相等；`sha256sum <jar>` 应与 `jarSha256` 相等。**禁止伪造清单**：只有产出 jar 的那条路径能写它，手写清单等于伪造身份证据——写入侧还有一道守卫，jar 的 mtime 比调用时刻早 120 s 以上即**拒写**（事后补写的清单会把当前树冒充成产出树，读侧会据此报 `fresh`，实测复现过）。
+
+**两道闸，别把 120 s 当全部**：写入侧守卫防的是**「事后补写」**（时间窗：补的那一刻写的是"现在"，被证明的是"过去"），**不防「构建期间工作树被改动」**——那种情况下清单记的树哈希确实等于"构建时读到的 HEAD"，但 jar 里装的可能是改到一半的代码。后者由清单的 `dirty` 字段与 `sourceTreeSha256` 记录：`dirty=true` 或树哈希与 HEAD 不符时读侧判 `degraded`/`stale` 并**回落内容判据**（`unverifiable` 依旧阻断）。⇒ **时间窗与树一致性是两道不同的闸，有 120 s 不等于有身份。**
 
 ## mode 门控 spec 的漂移风险与夹具前提（2026-11-06 实测）
 

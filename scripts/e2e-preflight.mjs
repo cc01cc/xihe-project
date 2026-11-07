@@ -425,8 +425,20 @@ const e2eCpTargetDir =
     ? process.env.XIHE_CP_TARGET_DIR
     : 'C:/xihe-build/e2e'
 const cpTarget = e2eCpTargetDir
+// task-90 ruling (Lead, 2026-11-08): skipping the artifact section is not the defect — skipping it
+// *silently* is. Three modes land here and none of them boots the jar this section would check:
+// `--jar-mode=use`, `--jar-mode=native`, and `XIHE_E2E_EXTERNAL_SERVER=1` (the runner collapses all
+// of them into `--ignore-build`, and a human can pass that flag by hand too). A sidecar sitting next
+// to the jar is therefore NOT read and NOT part of this run's verdict, which is exactly the sort of
+// "green because the check never ran" that BL-477 exists to stop — so say it out loud, once, naming
+// the cause when the cause is observable.
 if (ignoreBuild) {
-  console.log(`  INFO  CP artifact freshness skipped (--ignore-build): this run does not boot the jar it would check (dir ${e2eCpTargetDir})`)
+  const externalReuse = process.env.XIHE_E2E_EXTERNAL_SERVER === '1'
+  const cause = externalReuse
+    ? 'XIHE_E2E_EXTERNAL_SERVER=1 (the stack under test was booted outside this run)'
+    : '--ignore-build (the runner sets it for --jar-mode=use|native, or it was passed by hand)'
+  console.log(`  WARN  CP artifact section SKIPPED — ${cause}: this mode skips the artifact section, the CP jar's identity is NOT verified, and nothing later re-checks it (dir ${e2eCpTargetDir})`)
+  console.log('        a *.buildinfo.json sidecar next to the jar does NOT participate in this run\'s verdict (it is not even read)')
 } else {
 let cpJar = null
 if (existsSync(cpTarget)) {
