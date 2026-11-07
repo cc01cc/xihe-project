@@ -17,17 +17,22 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 
 import {
+  DEFAULT_LEASE_PHASE,
   DEFAULT_STALE_AFTER_MS,
+  LEASE_PHASES,
   LEASE_VERSION,
   acquireLease,
   computeVerdict,
   crossCheckLease,
   isShapedLease,
+  isTransitionLease,
   leasePath,
+  leasePhase,
   markReleaseFailed,
   readLease,
   releaseLease,
   renewLease,
+  setLeasePhase,
   stackSlotOf,
 } from './stack-lease.mjs';
 
@@ -112,7 +117,7 @@ test('leasePath 统一落 .xihe-stacks/<n>/lease.json，stack-1 也是 <1>（不
 
 // ── acquire ─────────────────────────────────────────────────────────────────
 
-test('acquireLease 写出九字段形状（v2：instanceId/pids/cpVersion 取代 owner/pid）', () => {
+test('acquireLease 写出十字段形状（v2 + task-75 的 phase：instanceId/pids/cpVersion 取代 owner/pid）', () => {
   withRoot((root) => {
     const now = Date.parse('2026-11-08T02:00:00.000Z');
     const lease = acquireLease({
@@ -128,6 +133,7 @@ test('acquireLease 写出九字段形状（v2：instanceId/pids/cpVersion 取代
       'cpVersion',
       'heartbeatAt',
       'instanceId',
+      'phase',
       'pids',
       'ports',
       'projectRoot',
@@ -135,6 +141,7 @@ test('acquireLease 写出九字段形状（v2：instanceId/pids/cpVersion 取代
       'startedAt',
       'version',
     ]);
+    assert.equal(lease.phase, DEFAULT_LEASE_PHASE, '缺省相位 = started（认领在跑的栈 / 起栈完成）');
     assert.equal(lease.version, LEASE_VERSION);
     assert.equal(lease.instanceId, 'host-a@h:/repo');
     assert.equal(lease.stackId, 'stack-3');
@@ -353,13 +360,64 @@ test('healthy 反例：缺一个端口 → stale（半起），missingPorts 指�
   assert.ok(result.reasons.includes('ports-missing:12653'));
 });
 
-test('healthy 反例：心跳过期 → stale（即使端口全在听也不得判 healthy）', () => {
+test('healthy 反例：缺端口 + 心跳过期 ⇒ 仍 stale（缺端口才是判定依据，冷暖不背这个锅）', () => {
   const now = Date.parse('2026-11-08T02:00:00.000Z');
   const lease = freshLease(now - DEFAULT_STALE_AFTER_MS - 1_000);
-  const result = computeVerdict({ lease, listeners: { own: OWN_ALL }, pidAlive: true, now });
+  const own = OWN_ALL.filter((entry) => entry.port !== 12653);
+  const result = computeVerdict({ lease, listeners: { own }, pidAlive: true, now });
   assert.equal(result.verdict, 'stale');
-  assert.equal(result.leaseFresh, false);
-  assert.ok(result.reasons.includes('lease-expired'));
+  assert.deepEqual(result.missingPorts, [12653]);
+  assert.equal(result.leaseState, 'cold', '冷暖维度照报，但不参与 verdict');
+});
+
+// ── 冷暖（leaseState）与 verdict 分离：2026-11-08 Lead 裁定 ──────────────────
+
+test('冷例①：facts 全 ok + 心跳过期 11min ⇒ verdict healthy + leaseState=cold，且 lease-expired 不再进 reasons', () => {
+  const now = Date.parse('2026-11-08T02:00:00.000Z');
+  const staleAfterMs = DEFAULT_STALE_AFTER_MS;
+  const lease = freshLease(now - staleAfterMs - 60_000); // TTL 10min + 1min
+  const result = computeVerdict({ lease, listeners: { own: OWN_ALL }, pidAlive: true, now });
+  assert.equal(result.verdict, 'healthy', 'facts 全绿不得因“没人核对过”被判故障');
+  assert.equal(result.leaseState, 'cold');
+  assert.equal(result.leaseFresh, false, 'leaseFresh 保留原语义（心跳本身不新鲜）');
+  assert.equal(result.reasons.includes('lease-expired'), false, 'cold 不进 reasons');
+  assert.equal(result.leaseAgeMs, staleAfterMs + 60_000);
+});
+
+test('冷例②：facts 坏 + 心跳新鲜 ⇒ verdict stale + leaseState=live（真故障必须照响）', () => {
+  const now = Date.parse('2026-11-08T02:00:00.000Z');
+  const own = OWN_ALL.filter((entry) => entry.port !== 12652);
+  const result = computeVerdict({ lease: freshLease(now), listeners: { own }, pidAlive: true, now });
+  assert.equal(result.verdict, 'stale');
+  assert.equal(result.leaseState, 'live', '心跳新鲜救不了缺端口');
+  assert.deepEqual(result.missingPorts, [12652]);
+});
+
+test('冷例③：心跳新鲜但 facts 坏 ⇒ 两个维度各自如实报告，cold 不掩盖 stale', () => {
+  const now = Date.parse('2026-11-08T02:00:00.000Z');
+  const expiredLease = freshLease(now - DEFAULT_STALE_AFTER_MS - 60_000);
+  const own = OWN_ALL.filter((entry) => entry.port !== 12650);
+  const result = computeVerdict({ lease: expiredLease, listeners: { own }, pidAlive: true, now });
+  assert.equal(result.verdict, 'stale', '事实坏了就是 stale');
+  assert.equal(result.leaseState, 'cold', '同时仍报“没人核对过”');
+  assert.deepEqual(result.missingPorts, [12650]);
+});
+
+test('leaseState 边界：无租约/壳坏 ⇒ null；心跳恰好等于 TTL ⇒ live', () => {
+  const now = Date.parse('2026-11-08T02:00:00.000Z');
+  assert.equal(computeVerdict({ lease: null, listeners: { own: [] }, pidAlive: false, now }).leaseState, null);
+  assert.equal(
+    computeVerdict({ lease: { bogus: true }, listeners: { own: [] }, pidAlive: false, now }).leaseState,
+    null,
+    '形状不可用 ⇒ 冷暖无从谈起',
+  );
+  const atLimit = computeVerdict({
+    lease: freshLease(now - DEFAULT_STALE_AFTER_MS),
+    listeners: { own: OWN_ALL },
+    pidAlive: true,
+    now,
+  });
+  assert.equal(atLimit.leaseState, 'live', '恰好等于 TTL 仍算 live（与 leaseFresh 同口径）');
 });
 
 test('orphan：租约有效 + 记录进程全死 + 本栈端口仍在听（案例②）', () => {
@@ -398,14 +456,14 @@ test('ghost：租约文件损坏 + own 监听仍在 → ghost（形状不可用 
   assert.ok(byCorrupt.reasons.includes('lease-corrupt'));
 });
 
-test('心跳过期但形状可用：不升级为 ghost（pid 活 → stale；pid 死 + 端口在听 → orphan）', () => {
+test('心跳过期但形状可用：不升级为 ghost（pid 活 ⇒ healthy+cold；pid 死 + 端口在听 ⇒ orphan）', () => {
   const now = Date.parse('2026-11-08T02:00:00.000Z');
   const expired = freshLease(now - DEFAULT_STALE_AFTER_MS - 1_000);
   const pidAlive = computeVerdict({ lease: expired, listeners: { own: OWN_ALL }, pidAlive: true, now });
-  assert.equal(pidAlive.verdict, 'stale', '长跑栈心跳链路坏 ≠ 幽灵栈');
-  assert.ok(pidAlive.reasons.includes('lease-expired'));
+  assert.equal(pidAlive.verdict, 'healthy', '长跑栈心跳链路冷 ≠ 幽灵栈，也 ≠ 故障');
+  assert.equal(pidAlive.leaseState, 'cold');
   const pidDead = computeVerdict({ lease: expired, listeners: { own: OWN_ALL }, pidAlive: false, now });
-  assert.equal(pidDead.verdict, 'orphan', 'pid 死 + 端口活仍是 orphan，租约过期只影响 healthy 门槛');
+  assert.equal(pidDead.verdict, 'orphan', 'pid 死 + 端口活仍是 orphan，租约过期只影响冷暖');
 });
 
 test('null：无租约且无 own 监听 = 该栈未运行（四值不描述「什么都没发生」）', () => {
@@ -474,12 +532,20 @@ test('cross-check 负例②：端口没听 → port-not-listening（declare 的�
   assert.ok(mismatchFields(result).includes('ports.agent.bind:port-not-listening'));
 });
 
-test('cross-check 负例③：心跳旧 → lease-expired（端口全在听也不算通过）', () => {
+test('cross-check 负例③：心跳旧 → lease-cold（信息项：不进 mismatch、不拦 allOk）', () => {
   const now = Date.parse('2026-11-08T02:00:00.000Z');
   const lease = freshLease(now - DEFAULT_STALE_AFTER_MS - 1_000);
   const result = crossCheckLease({ lease, facts: factsFor(now) });
-  assert.equal(result.allOk, false);
-  assert.ok(mismatchFields(result).includes('heartbeatAt:lease-expired'));
+  assert.deepEqual(mismatchFields(result), [], '心跳过期不是 mismatch');
+  assert.equal(result.allOk, true, '事实全绿 ⇒ allOk，冷暖另行表达');
+  const heartbeat = result.checks.find((check) => check.field === 'heartbeatAt');
+  assert.equal(heartbeat.code, 'lease-cold');
+  assert.equal(heartbeat.blocking, false);
+  assert.equal(
+    result.checks.some((check) => check.code === 'lease-expired'),
+    false,
+    '旧码 lease-expired 必须彻底消失（否则又会被当成故障理由）',
+  );
 });
 
 test('cross-check 负例④：owner（instanceId）不符 → instance-mismatch（别人的租约不得当自己的）', () => {
@@ -560,4 +626,109 @@ test('checks 有 blocking mismatch + 其余全绿 → 不是 healthy（降 stale
   assert.equal(result.verdict, 'stale');
   assert.ok(result.reasons.includes('fields-mismatch:cp-version-mismatch'));
   assert.deepEqual(result.fieldMismatches, ['cp-version-mismatch']);
+});
+
+// ── phase（task-75：租约覆盖整个启动过程） ─────────────────────────────────
+
+test('旧租约没有 phase 字段：仍算合法形状，leasePhase 缺省 started（向后兼容）', () => {
+  const now = Date.parse('2026-11-08T02:00:00.000Z');
+  const legacy = freshLease(now);
+  assert.equal(legacy.phase, undefined, 'fixture 不带 phase，模拟升级前写下的租约');
+  assert.equal(isShapedLease(legacy), true, '追加字段不得让旧租约变非法');
+  assert.equal(leasePhase(legacy), DEFAULT_LEASE_PHASE);
+  assert.equal(leasePhase(legacy), 'started');
+  assert.equal(leasePhase(null), 'started');
+  assert.equal(leasePhase({ phase: 'bogus' }), 'started', '不认识的相位按缺省判，不猜');
+});
+
+test('磁盘上的旧租约（无 phase）能被 readLease 读出，不被降级成 corrupt', () => {
+  withRoot((root) => {
+    const filePath = leasePath(root, 'stack-3');
+    mkdirSync(join(root, '.xihe-stacks', '3'), { recursive: true });
+    const legacy = freshLease(Date.parse('2026-11-08T02:00:00.000Z'));
+    writeFileSync(filePath, JSON.stringify(legacy, null, 2), 'utf8');
+    const { lease, corrupt } = readLease(filePath);
+    assert.equal(corrupt, false);
+    assert.notEqual(lease, null);
+    assert.equal(leasePhase(lease), 'started');
+    assert.equal(isTransitionLease(lease), false, '旧租约不进过渡相位 ⇒ 不会当免报牌');
+  });
+});
+
+test('isShapedLease：phase 是可选枚举，非法值判非法', () => {
+  const now = Date.parse('2026-11-08T02:00:00.000Z');
+  for (const phase of LEASE_PHASES) {
+    assert.equal(isShapedLease(freshLease(now, { phase })), true, `phase=${phase} 应合法`);
+  }
+  for (const phase of ['', 'Starting', 'ready', 42, null]) {
+    assert.equal(isShapedLease(freshLease(now, { phase })), false, `phase=${JSON.stringify(phase)} 应非法`);
+  }
+});
+
+test('acquireLease：写 phase，幂等保留 startedAt，非法 phase 抛 TypeError', () => {
+  withRoot((root) => {
+    const now = Date.parse('2026-11-08T02:00:00.000Z');
+    const first = acquireLease({
+      projectRoot: root,
+      stackId: 'stack-3',
+      ports: PORTS,
+      instanceId: 'host-a@h:/repo',
+      now,
+      phase: 'starting',
+    });
+    assert.equal(first.phase, 'starting');
+    assert.equal(readLease(leasePath(root, 'stack-3')).lease.phase, 'starting');
+    const second = acquireLease({
+      projectRoot: root,
+      stackId: 'stack-3',
+      ports: PORTS,
+      instanceId: 'host-a@h:/repo',
+      now: now + 30_000,
+      phase: 'started',
+    });
+    assert.equal(second.phase, 'started', '起栈完成后翻相位');
+    assert.equal(second.startedAt, first.startedAt, '重复 acquire 不得洗掉首启时间');
+    assert.throws(() => acquireLease({ projectRoot: root, stackId: 'stack-3', ports: PORTS, instanceId: 'x', phase: 'ready' }), TypeError);
+  });
+});
+
+test('isTransitionLease：两个条件同时成立才算过渡（phase 白名单 + 心跳新鲜）', () => {
+  const now = Date.parse('2026-11-08T02:00:00.000Z');
+  assert.equal(isTransitionLease(freshLease(now, { phase: 'starting' }), { now }), true);
+  assert.equal(isTransitionLease(freshLease(now, { phase: 'stopping' }), { now }), true);
+  // 反例①：已起栈 ⇒ 端口不全必须继续报（这套改动的全部风险所在）
+  assert.equal(isTransitionLease(freshLease(now, { phase: 'started' }), { now }), false);
+  assert.equal(isTransitionLease(freshLease(now), { now }), false, '无 phase = started');
+  // 反例②：起栈失败留下的 starting 租约，心跳过期后不再免报
+  const stale = freshLease(now, { phase: 'starting', heartbeatAt: new Date(now - DEFAULT_STALE_AFTER_MS - 1000).toISOString() });
+  assert.equal(isTransitionLease(stale, { now }), false);
+  // 反例③：形状不对（坏数据）一律不免报
+  assert.equal(isTransitionLease(null, { now }), false);
+  assert.equal(isTransitionLease({ phase: 'starting' }, { now }), false);
+});
+
+test('setLeasePhase：只动 phase + heartbeat，声明字段一律不动；无租约时 updated=false', () => {
+  withRoot((root) => {
+    const now = Date.parse('2026-11-08T02:00:00.000Z');
+    const written = acquireLease({
+      projectRoot: root,
+      stackId: 'stack-3',
+      ports: PORTS,
+      pids: PIDS_ALL,
+      instanceId: 'host-a@h:/repo',
+      cpVersion: 'abc1234',
+      now,
+      phase: 'started',
+    });
+    const result = setLeasePhase({ projectRoot: root, stackId: 'stack-3', phase: 'stopping', now: now + 5_000 });
+    assert.equal(result.updated, true);
+    const next = readLease(leasePath(root, 'stack-3')).lease;
+    assert.equal(next.phase, 'stopping');
+    assert.equal(next.heartbeatAt, new Date(now + 5_000).toISOString());
+    for (const field of ['ports', 'pids', 'cpVersion', 'startedAt', 'instanceId', 'stackId', 'projectRoot']) {
+      assert.deepEqual(next[field], written[field], `setLeasePhase 不得改 ${field}`);
+    }
+    assert.deepEqual(setLeasePhase({ projectRoot: root, stackId: 'stack-4', phase: 'stopping' }), { lease: null, updated: false });
+    assert.throws(() => setLeasePhase({ projectRoot: root, stackId: 'stack-3', phase: 'sleeping' }), TypeError);
+  });
 });
