@@ -25,15 +25,14 @@ export function selectSkillCandidates(
 ): AgentSkillCandidate[] {
     const seen = new Set<string>();
     return skills.flatMap((skill) => {
-        const definitionScope = skill.definitionScope;
-        if (!definitionScope) return [];
-        const eligible =
-            definitionScope.type === "instance" ||
-            (bindScope.scopeType === "workspace" &&
-                definitionScope.type === "workspace" &&
-                definitionScope.workspaceId === bindScope.scopeId);
-        if (!eligible) return [];
-        const key = `${skill.skillId}:${bindScope.scopeType}:${bindScope.scopeId ?? ""}`;
+        const definitionScope = skill.definitionScope,
+            eligible =
+                definitionScope?.type === "instance" ||
+                (bindScope.scopeType === "workspace" &&
+                    definitionScope?.type === "workspace" &&
+                    definitionScope.workspaceId === bindScope.scopeId),
+            key = `${skill.skillId}:${bindScope.scopeType}:${bindScope.scopeId ?? ""}`;
+        if (!definitionScope || !eligible) return [];
         if (seen.has(key)) return [];
         seen.add(key);
         return [
