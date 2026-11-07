@@ -205,9 +205,10 @@ test.describe("Chat approval flow", () => {
         await setupMockSessions(page, {
             sessions: [
                 // A real Session always carries its bound Agent principal (`POST /sessions`
-                // requires one). Without it every send detours into the principal-binding
-                // dialog, which is what made "…cannot expose or cancel its run" unable to
-                // ever see `chat-stop-button` (2026-11-03 mock-lane 实测：无 `/chat` POST).
+                // requires one). Without it every send used to detour into the principal-binding
+                // dialog (removed by PLAN-0689 B3), which is what made "…cannot expose or cancel
+                // its run" unable to ever see `chat-stop-button` (2026-11-03 mock-lane 实测：无
+                // `/chat` POST).
                 { id: SESSION_ID, title: "Approval Flow", agentPrincipalId: AGENT_PRINCIPAL_ID },
                 {
                     id: SECOND_SESSION_ID,

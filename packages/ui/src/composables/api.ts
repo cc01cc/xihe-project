@@ -284,6 +284,7 @@ export interface ApiSession {
     id: string;
     title: string;
     workspaceId?: string;
+    /** PLAN-0689 D-54: response-only projection from the Session PRIMARY participant. UI never writes it. */
     agentPrincipalId?: string | null;
     createdAt?: string;
     updatedAt?: string;
@@ -2870,6 +2871,9 @@ export const api = {
             envHead?: string;
         }>(`/context/${encodeURIComponent(sessionId)}/sources`);
     },
+    // NOTE (PLAN-0689): `SessionCreateRequest.agentPrincipalId` is still REQUIRED by the CP contract
+    // (`openapi.yaml` — Creates the Session with this principal as its PRIMARY participant). Only the
+    // *Chat* request field was removed; do not delete this parameter.
     async createSession(agentPrincipalId: string, title?: string): Promise<SessionResponse> {
         const body = title === undefined ? { agentPrincipalId } : { title, agentPrincipalId };
         // PLAN-0608 (C′): address the workspace in the PATH. The tab header alone is

@@ -637,17 +637,19 @@ export async function setupMockSessions(page: Page, options: MockSessionOptions 
         archived: false,
         // `MockSessionRecord.agentPrincipalId` used to be dropped here, so a fixture could
         // not model a Session that already has a bound Agent — the UI then detoured every
-        // send into the principal-binding dialog and no `/chat` POST was ever made
-        // (2026-11-03 mock-lane: approval `switching away…` could never see the stop button).
-        // A bound principal is the normal state: `POST /sessions` requires it.
+        // send into the principal-binding dialog (removed by PLAN-0689 B3) and no `/chat`
+        // POST was ever made (2026-11-03 mock-lane: approval `switching away…` could never
+        // see the stop button). A bound principal is the normal state: `POST /sessions`
+        // requires it.
         //
         // Default (not just pass-through): a Session that already has a bound Agent is the
-        // *normal* server state — `POST /sessions` rejects a principal-null Session, and the
-        // only principal-null Session is the pre-first-send placeholder that opens the binding
-        // dialog (ChatPanel.handleSend → `workspace-agent-principal-select`). A fixture that
-        // omitted the field therefore never reached the send path it was testing: no `/chat`
-        // POST, no user bubble, no stop button. Callers that really want the placeholder
-        // (binding-dialog flows) pass `agentPrincipalId: null` explicitly.
+        // *normal* server state — `POST /sessions` rejects a principal-null Session. The old
+        // pre-first-send placeholder that opened the binding dialog (ChatPanel.handleSend →
+        // `workspace-agent-principal-select`) was removed by PLAN-0689 B3; the field is still
+        // carried by the current session view. A fixture that omitted it therefore never
+        // reached the send path it was testing: no `/chat` POST, no user bubble, no stop
+        // button. Callers that wanted the old placeholder (binding-dialog flows) passed
+        // `agentPrincipalId: null` explicitly.
         agentPrincipalId:
             "agentPrincipalId" in session
                 ? (session.agentPrincipalId ?? null)
