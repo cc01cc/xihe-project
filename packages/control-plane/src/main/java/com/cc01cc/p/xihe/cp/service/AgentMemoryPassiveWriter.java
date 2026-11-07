@@ -85,13 +85,16 @@ public class AgentMemoryPassiveWriter {
     private final AgentPrincipalRepository principals;
     private final AgentMemoryService memoryService;
     private final PassiveMemoryJudge judge;
+    private final SessionParticipantService sessionParticipantService;
 
     public AgentMemoryPassiveWriter(SessionRepository sessions, AgentPrincipalRepository principals,
-                                    AgentMemoryService memoryService, PassiveMemoryJudge judge) {
+                                    AgentMemoryService memoryService, PassiveMemoryJudge judge,
+                                    SessionParticipantService sessionParticipantService) {
         this.sessions = sessions;
         this.principals = principals;
         this.memoryService = memoryService;
         this.judge = judge;
+        this.sessionParticipantService = sessionParticipantService;
     }
 
     /**
@@ -118,7 +121,16 @@ public class AgentMemoryPassiveWriter {
                 return;
             }
             Session session = sessions.findById(sessionUuid).orElse(null);
-            principalId = session == null ? null : uuidOrNull(session.getAgentPrincipalId());
+            // PLAN-0689 A6 (A6 增补② / design §3-B): the bisection criterion, written here because this
+            // is the one read point where "who is the principal?" is not obvious.
+            //   - Run-side principal (this Run's responder/attribution/cap) → chat_runs.agent_principal_id.
+            //   - Session-view identity (the conversation's default responder, no Run in hand) → the
+            //     Session's PRIMARY participant, which is what A2c makes SessionPathView read too.
+            // A compaction end carries no Run — it is a whole-Session lifecycle event — so this is the
+            // second case: the passive memory row belongs to the conversation's PRIMARY, never the
+            // Session column (A7 drops it). Missing PRIMARY ⇒ skip, not a failure (rule 4).
+            principalId = session == null ? null
+                    : sessionParticipantService.responderPrincipalIdFor(sessionUuid, null);
             if (principalId == null) {
                 // A session without a bound subject has no memory to write into; missing ≠ failure.
                 skip(end, null, null, REASON_NO_PRINCIPAL);

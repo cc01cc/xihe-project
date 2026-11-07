@@ -527,9 +527,10 @@ public class ChatSubmissionService {
         if (parentRun.getAgentPrincipalId() == null) {
             throw parentPrincipalMissing();
         }
-        if (parentSession.getAgentPermissionsSnapshot() == null) {
-            throw agentSessionForbidden();
-        }
+        // PLAN-0689 A6 (R3): the "Session snapshot is NULL ⇒ refuse" gate is deleted with the column
+        // it read. The condition it stood for — the parent has no agent identity — is already enforced
+        // by the Run gate directly above (fail-closed, own diagnostic code), so a second gate would be
+        // unreachable. The child's binding is re-validated in persist() → bindOrValidateAgentSession.
 
         // PLAN-0630 M1: the delegation budget gate. Position is load-bearing (INV-8 + INV-1) and must
         // stay between the idempotency replay above and consumeApprovedGrant below:
@@ -541,9 +542,12 @@ public class ChatSubmissionService {
         // two concurrent spawns both read a snapshot without each other and overshoot.
         delegationBudgetService.requireWithinBudget(parentSession, parentRun, toolCallId);
 
-        JsonNode childPermissions = agentPrincipalService.deriveSpawnChildCap(
-                parentSession.getAgentPermissionsSnapshot(), uuidStr(parentRun.getAgentPrincipalId()),
-                parentRun.getWorkspaceId());
+        // PLAN-0689 A6 (design §3-B/B1): the child's cap used to be the intersection of the parent
+        // Session's frozen snapshot with the chosen principal's current cap, and its only consumer was
+        // childSession.agent_permissions_snapshot. Both the input and that column are dropped, so the
+        // derivation has no consumer left: a run's cap is resolved live from its own principal (run
+        // stamp / lease cap), and the child principal's active binding is still re-validated below in
+        // persist() → bindOrValidateAgentSession → resolveAgent + requireActiveWorkspaceBinding.
         if (authorization.approvalGrantId() != null
                 && !approvalService.consumeApprovedGrant(authorization.approvalGrantId(), parentRun.getUserId(),
                         parentRun.getWorkspaceId(), parentSession.getId().toString(), SPAWN_TOOL_NAME,
@@ -552,6 +556,15 @@ public class ChatSubmissionService {
                     "Spawn approval grant is invalid or no longer usable");
         }
 
+        // PLAN-0689 A6 (design §3-C / invariant §2.4): the child inherits the *initiating Run's*
+        // principal — never the parent Session column. One local is threaded through the four uses
+        // below so the roster row, the child Run stamp and the audit detail cannot disagree.
+        //
+        // The Session-column write is still here, now sourced from the Run, because SessionReadService
+        // (A2c) still reads that column for admission: persist() → resolveAgent() would fail closed
+        // with 403 on a child whose column is NULL. It is deleted with the column in A7, after A2c
+        // switches the path to the PRIMARY participant.
+        String childAgentPrincipalId = uuidStr(parentRun.getAgentPrincipalId());
         Session childSession = new Session(parentRun.getWorkspaceId(), parentRun.getUserId(),
                 parentSession.getTitle());
         childSession.setId(UUID.randomUUID());
@@ -559,8 +572,9 @@ public class ChatSubmissionService {
         childSession.setSpawnedFromSessionId(parentSession.getId());
         childSession.setSpawnedFromRunId(parentRun.getId());
         childSession.setSpawnedAt(Instant.now());
-        childSession.setAgentPrincipalId(parentSession.getAgentPrincipalId());
-        childSession.setAgentPermissionsSnapshot(childPermissions);
+        childSession.setAgentPrincipalId(childAgentPrincipalId);
+        // PLAN-0689 A6 (tasks T1.6): the Session cap snapshot is no longer written. Its only producer
+        // fed this column, and A7 drops it; a Run's cap is resolved live from its own principal (§9).
         childSession.setModelProvider(parentSession.getModelProvider());
         childSession.setModelName(parentSession.getModelName());
         childSession.setProviderConnectionId(parentSession.getProviderConnectionId());
@@ -578,7 +592,7 @@ public class ChatSubmissionService {
         // Existing spawn children are deliberately NOT backfilled: XH has no deployment surface
         // (0625 D25-19 precedent), so the fix covers new children only.
         sessionParticipantService.ensurePrimaryParticipant(childSession.getId(),
-                childSession.getAgentPrincipalId());
+                childAgentPrincipalId);
 
         String requestId = UUID.randomUUID().toString();
         String childRunId = UUID.randomUUID().toString();
@@ -588,7 +602,7 @@ public class ChatSubmissionService {
                 requestHash,
                 parentRun.getProvider(), parentRun.getModel(), parentRun.getToolMode(),
                 parentRun.getProviderConnectionId(), parentRun.getConnectionRevision(), null, requestId,
-                content, "[]", List.of(), childSession.getAgentPrincipalId(), false, Message.VISIBILITY_USER, null);
+                content, "[]", List.of(), childAgentPrincipalId, false, Message.VISIBILITY_USER, null);
         // PLAN-0464 T2.1: the waiting link lives on the child run row itself.
         ChatRun childRun = created.run();
         childRun.setWaitingOnRunId(parentRun.getId().toString());
@@ -603,7 +617,7 @@ public class ChatSubmissionService {
         detail.put("parentInvocationId", invocation.id().toString());
         detail.put("childSessionId", childSession.getId().toString());
         detail.put("childRunId", created.run().getId().toString());
-        detail.put("agentPrincipalId", childSession.getAgentPrincipalId());
+        detail.put("agentPrincipalId", childAgentPrincipalId);
         if (authorization.approvalGrantId() != null) {
             detail.put("approvalRequestId", authorization.approvalGrantId());
         }
@@ -611,7 +625,7 @@ public class ChatSubmissionService {
                 "agent_spawn_created", "chat_session", childSession.getId().toString(), detail.toString());
 
         return new SpawnResult(childSession.getId().toString(), created.run().getId().toString(),
-                childSession.getAgentPrincipalId(), parentRun.getWorkspaceId());
+                childAgentPrincipalId, parentRun.getWorkspaceId());
     }
 
     /**
@@ -657,7 +671,9 @@ public class ChatSubmissionService {
         // PLAN-0678 T2.2 (BL-347): the same refusal on the human delegation route. The child names
         // its own principal, but a NULL-principal parent still means the derived chain has no
         // trustworthy owner; refuse with the shared diagnostic code instead of deriving silently.
-        if (parentSession.getAgentPrincipalId() == null) {
+        // PLAN-0689 A6 (R1/design §3-C): "the parent" is the initiating Run — the Session column is
+        // being dropped and was only ever a copy of this value.
+        if (parentRun.getAgentPrincipalId() == null) {
             throw parentPrincipalMissing();
         }
 
@@ -670,8 +686,10 @@ public class ChatSubmissionService {
             Session existingSession = sessionRepository
                     .findByIdForUpdate(UUID.fromString(existing.getSessionId()))
                     .orElseThrow(() -> new IllegalStateException("Delegation session is missing"));
+            // PLAN-0689 A6 (R1): replay echoes the principal the existing child Run was stamped with —
+            // the Run column is the fact source, the Session column is a copy awaiting the drop.
             return new SpawnResult(existingSession.getId().toString(), existing.getId().toString(),
-                    existingSession.getAgentPrincipalId(), existingSession.getWorkspaceId());
+                    uuidStr(existing.getAgentPrincipalId()), existingSession.getWorkspaceId());
         }
 
         // INV-8: budget BEFORE the approval consume (below), inside the parent Session+Run locks.
@@ -1102,10 +1120,10 @@ public class ChatSubmissionService {
         // The sessionUuid local stays (it is still used by the row lock above); requestedPrincipalId is
         // no longer consumed here and leaves the signatures with the column drop (T1.7).
 
-        if (session.getAgentPermissionsSnapshot() == null) {
-            throw agentSessionForbidden();
-        }
-
+        // PLAN-0689 A6 (tasks T1.6 ①): the "snapshot is NULL ⇒ refuse" gate is deleted with the column
+        // it read. It never was the real gate: resolveAgent() below resolves this Session's agent path
+        // (PRIMARY participant after A2c) and requireActiveWorkspaceBinding() refuses when that principal
+        // has no active binding — fail-closed 403, never "unrestricted".
         GrantPrincipalPathResolver.AgentPath path;
         try {
             path = principalPathResolver.resolveAgent(userId, workspaceId, sessionId);
