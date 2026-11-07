@@ -453,13 +453,32 @@ LangChain events are automatically mapped through the SSE adapter layer (`packag
 | Module | Framework | Test Count | Run Command |
 |--------|-----------|------------|-------------|
 | **UI Unit** | Vitest + @vue/test-utils | 206 | `cd packages/ui && pnpm vitest run` |
-| **UI E2E (Mock)** | Playwright + page.route() | 40 | `cd packages/ui && npx playwright test e2e/mock/` |
-| **UI E2E (Real)** | Playwright + real CP | 32 | `cd packages/ui && npx playwright test e2e/real/` (host lane: `mise run test:e2e:host`; the compose lane is frozen) |
-| **CP** | JUnit 5 + Mockito + Testcontainers | 152 | `cd packages/control-plane && mvn test` |
+| **UI E2E (Mock)** | Playwright + page.route() | 78 | `cd packages/ui && npx playwright test e2e/mock/` |
+| **UI E2E (Real)** | Playwright + real CP | 132 | `cd packages/ui && npx playwright test e2e/real/` (host lane: `mise run test:e2e:host`; the compose lane is frozen) |
+| **CP** | JUnit 5 + Mockito + Testcontainers | 3701 | `cd packages/control-plane && mvn test` |
 | **Agent Unit** | pytest + pytest-asyncio | 150 | `cd packages/agent && uv run pytest tests/unit/ -v` |
 | **Agent Integration** | pytest + httpx | — | `cd packages/agent && uv run pytest tests/integration/ -v` (requires a host CP — `XIHE_CP_PORT`, stack-1 default 12631; the compose lane is frozen) |
 | **Runtime** | cargo test | 176 | `cd packages/runtime && cargo test` |
-| **Cross-module E2E** | pytest + httpx | 32 | `uv run --directory packages/agent pytest tests/ -v` |
+| **Cross-module E2E** | pytest + httpx | 30 | `uv run --directory packages/agent pytest tests/ -v` |
+
+> **Counting basis (measured 2026-11-07)** — each "Test Count" cell uses exactly one of the three
+> definitions below; the units are **not** interchangeable, so do not compare the numbers across rows:
+>
+> - **Spec files** — `UI E2E (Mock)` / `UI E2E (Real)`: number of `packages/ui/e2e/<lane>/**/*.spec.ts`
+>   files (a file may hold many cases). Reproduce: `find packages/ui/e2e/real -name '*.spec.ts' | wc -l`
+>   ⇒ 132; same for `e2e/mock` ⇒ 78. The same lanes contain 342 / 269 `test()` cases — a different unit,
+>   deliberately not used here.
+> - **Surefire cases** — `CP`: sum of `tests=` in `packages/control-plane/target/surefire-reports/*.xml`
+>   from one full `mvn test`, i.e. the tail line `Tests run: 3701, Failures: 1, Errors: 0, Skipped: 2`
+>   (merge tree `918e175a`, 2026-11-07, ~14 min). Count is *cases executed*, not "green cases": the one
+>   failure is a registered baseline (`BL-368`, `scripts/cp-known-baseline.json`).
+> - **pytest collection** — `Cross-module E2E`: collection count of the `integration`-marked cross-module
+>   tests: `uv run --directory packages/agent python -m pytest --collect-only -q -m integration` ⇒ 30
+>   collected. Context: the whole suite collects 1522, and the default `addopts = -m "not integration"`
+>   deselects 30 (⇒ 1492 collected) — the 30 counted here are exactly those deselected items.
+>
+> `UI Unit`, `Agent Unit` and `Runtime` still carry older counts (206 / 150 / 176) that were **not**
+> re-measured in this batch; treat them as indicative until they get the same treatment.
 
 ### 4.2. Test Directory Naming Convention
 
