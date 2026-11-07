@@ -25,6 +25,13 @@
  *   node scripts/check-cp-baseline.mjs --baseline <file>     # alternate baseline JSON
  *   node scripts/check-cp-baseline.mjs --json                # {ok, baseline, reportHealth, ...}
  *   node scripts/check-cp-baseline.mjs --health-file <file>  # alternate report-health state
+ *   node scripts/check-cp-baseline.mjs --allow-stale-reports # bypass the freshness gate (see below)
+ *   node scripts/check-cp-baseline.mjs --head-time <unix>    # override HEAD time (tests / replay)
+ *
+ * Report freshness (2026-11-06) **does** change the exit code: the newest surefire report mtime is
+ * compared with the HEAD commit time, and **reports older than HEAD ⇒ exit 2** (the verdict would
+ * describe the wrong tree — this produced a false "1 new failure" right after a baseline shrink).
+ * `--allow-stale-reports` bypasses it explicitly.
  *
  * Report health (BL-370 audit, 2026-11-06) is **observational only and never changes the exit code**:
  *   - any `Tests run: 0` report        ⇒ WARN "zero-test class: <class>" (the invisible failure mode);

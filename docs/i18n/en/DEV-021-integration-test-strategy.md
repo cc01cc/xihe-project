@@ -17,10 +17,10 @@ Integration tests are split into three layers, consistent with E2E's mock/real s
 ```
 ┌─────────────────────────────────────────────────────┐
 │                    E2E (DEV-020)                     │
-│    Browser + full stack Docker, verifies complete user flows │
+│    Browser + host stack, verifies user flows         │
 ├─────────────────────────────────────────────────────┤
 │  T3: Cross-module Real  ← New                       │
-│     Docker partial stack, verifies end-to-end module communication │
+│     Docker partial stack (frozen) - historical       │
 ├─────────────────────────────────────────────────────┤
 │  T2: Cross-module Stub  ← New                       │
 │     WireMock/httpx mock, verifies HTTP contract format │
@@ -38,11 +38,13 @@ Integration tests are split into three layers, consistent with E2E's mock/real s
 | Dimension | T1 Module-internal | T2 Cross-module Stub | T3 Cross-module Real | E2E |
 |-----------|-------------------|---------------------|---------------------|-----|
 | **Verification Target** | Module + DB/internal dependency correctness | HTTP request/response format correctness | Real inter-module communication | End-to-end user flow |
-| **External Dependencies** | DB (PG/H2) | None (WireMock/mock) | Docker (partial) | Docker + Browser |
+| **External Dependencies** | DB (PG/H2) | None (WireMock/mock) | Docker partial (frozen — see §2.3) | Host services (Windows native) + isolated PG + browser |
 | **Run Speed** | ~10-30s | ~5-15s | ~60-120s | ~2-5min |
 | **Failure Localization** | Intra-module issue | Request format issue | Inter-module compatibility | Any layer issue |
-| **CI Run** | ✅ Every time | ✅ Every time | ⏰ PR + nightly | ⏰ nightly |
+| **CI Run (target state)** | Every run | Every run | PR + nightly | nightly |
 | **Framework** | JUnit/MockMvc, pytest, cargo | WireMock, httpx mock, mockito | pytest + httpx, cargo | Playwright |
+
+> Two calibers corrected on 2026-11-07: (1) the **"CI Run" column is target state** — this repo has **no CI wired** today (`.github/workflows/` only holds `_disabled/` workflows; see §6); (2) the T3 row's "Docker partial" is the **historical lane** (service containerization frozen 2026-10-07); current acceptance runs on the host lane (§2.3).
 
 ## 2. Three Layers in Detail
 
@@ -116,10 +118,10 @@ class AgentChatIntegrationTest {
 class TestConfigClientWithStub:
     def test_fetch_providers(self, httpx_mock):
         httpx_mock.add_response(
-            url="http://localhost:8080/api/v1/internal/config/admin/llm-provider",
+            url="http://localhost:12631/api/v1/internal/config/admin/llm-provider",
             json={"domain": "llm-provider", "config": {"openai": {"apiKey": "sk-mock"}}}
         )
-        client = ConfigClient(cp_url="http://localhost:8080")
+        client = ConfigClient(cp_url="http://localhost:12631")
         providers = client.get_providers()
         assert "openai" in providers
 ```
@@ -153,7 +155,11 @@ async fn test_config_client_fetch() {
 
 ### 2.3 T3: Cross-module Real Integration
 
-> Uses Docker Compose to start partial module stacks (e.g., CP+Agent or CP+Runtime), verifying end-to-end communication through real HTTP ports.
+> 🧊 **Lane frozen (2026-10-07 user ruling; reinforced 2026-10-09)**: T3's Docker Compose partial-stack lane is discontinued together with the **service-containerization freeze** (only PostgreSQL stays containerized; CP/Agent/Runtime/UI all run as host processes; `mise run test:e2e:compose` / `test:e2e` are commented out in `mise.toml`). The diagram and command blocks in this section are kept as **historical reference**; current acceptance runs on the **host lane**: Windows-native services + per-round isolated PostgreSQL (T2 via `mise run test:integration:t2`; real-stack T3 runs against host processes — see "Host lane" below).
+>
+> Historical wording: Uses Docker Compose to start partial module stacks (e.g., CP+Agent or CP+Runtime), verifying end-to-end communication through real HTTP ports.
+>
+> ⚠️ **The gap between this description and the task's current state awaits ruling Q-1107-38**: `mise run test:integration` still declares a `t3` dependency and its body will try `docker compose up`; commenting it out or removing it is a B-class change — this document only fixes the description and does not pre-empt the ruling.
 
 ```
 ┌──────────────┐     HTTP (real)        ┌──────────────┐
@@ -164,11 +170,12 @@ async fn test_config_client_fetch() {
 
 **Default Agent collection surface (BL-361, 2026-11-06)**: `packages/agent/pyproject.toml` sets `addopts = '-m "not integration"'`, so a plain `uv run pytest` **deselects** `tests/integration/**` (host-only cases such as `test_vector_store.py` no longer hard-fail the ordinary gate; the `deselected` count is printed).
 Host lane: inject `XIHE_E2E_PG_DATABASE/USER/PORT` from the isolated runner first, then run `uv run pytest -m integration` explicitly. A missing `integration` marker is caught by the meta test `tests/unit/test_integration_markers.py`.
-**Measured counts (2026-11-06 audit)**: the default run collects **1441/1471 (30 integration tests deselected)**; `-m integration` collects 30, but `tests/integration/test_agent_cp_integration.py` and `test_cp_real_integration.py` each carry `skipif(not cp_available)` ⇒ **those 2 tests skip silently inside the integration lane when CP is not running** (not failures). Restore: start CP (8080) first, then `uv run pytest -m integration`.
+**Measured counts (2026-11-07 re-measure)**: the default run collects **1488/1518 (30 integration tests deselected)**; adding `-m "not docker"` on the command line **overrides** the `addopts` `-m` (pytest's later single-value option wins, it does not intersect) and collects **1510/1518, deselecting only 8** — the `@pytest.mark.docker` items, all in `test_cp_real_integration.py` ⇒ the `not integration` default is gone and 22 of the 30 integration tests really run. `tests/integration/test_agent_cp_integration.py` and `test_cp_real_integration.py` also carry `skipif(not cp_available)` ⇒ **those tests skip silently inside the integration lane when CP is not running** (not failures). Restore: start the host CP first (port from `XIHE_CP_PORT`, **12631 by default on stack-1** — not 8080), then `uv run pytest -m integration`.
 
-**Startup Method**:
+**Startup Method** (historical — the compose lane is frozen since 2026-10-07 and no longer used for acceptance):
 
 ```bash
+# ⚠️ Historical reference (compose lane frozen 2026-10-07): not used for acceptance anymore
 # CP + Agent
 docker compose up -d control-plane agent
 # After health check passes, run Agent-side T3 tests
@@ -179,6 +186,20 @@ cd packages/control-plane && mvn test -Dtest="RuntimeMcpRealIntegrationTest"
 # CP + Runtime
 docker compose up -d control-plane runtime
 cd packages/runtime && cargo test --test cp_real_integration_test
+```
+
+**Host lane (current; replaces the compose block above)**:
+
+```bash
+# T2: cross-module stubs — no Docker, no real stack
+mise run test:integration:t2
+
+# Real-stack T3: bring up the host stack first (PostgreSQL is the only container; four host processes)
+mise run dev:host
+# Agent-side real CP cases (reads XIHE_CP_PORT, default 12631)
+cd packages/agent && uv run pytest -m integration
+# Runtime-side real CP cases (every test in the file is #[ignore] — --ignored is required)
+cd packages/runtime && cargo test --test cp_real_integration_test -- --ignored
 ```
 
 **T3 Test Focus**:
@@ -268,7 +289,7 @@ Integration and E2E tests belong within each module's package rather than being 
 
 **T3 tests could technically leave the package, but location waste exists**. T3 tests are essentially just HTTP request scripts — they don't need any intra-module dependencies. But if extracted to `tests/integration/`, separate build configurations (JUnit/pytest/cargo) would be needed for each module's T3, and each module typically has only 1-3 T3 tests (see §4 contract list). It's better to keep them within the module's test directory, reusing existing language framework configurations, and uniformly indexing them in the interface contract list.
 
-**E2E tests belong to UI package for historical reasons**. E2E uses Playwright, and Playwright config's `webServer` section configures the Vite dev server startup command (`pnpm dev`), naturally belonging to the UI package. Of ~33 specs, only 4 cross-module specs (`cross-module-chat.spec.ts`, etc.) involve cross-module communication; the rest are UI component tests. Moving the entire E2E suite out of the UI package for 4 specs would break the co-location of the remaining 29 specs in the same directory — benefit is less than cost.
+**E2E tests belong to UI package for historical reasons**. E2E uses Playwright, and Playwright config's `webServer` section configures the Vite dev server startup command (`pnpm dev`), naturally belonging to the UI package. Of ~213 spec files (mock 78 + real 132 + headed 3; counted from `packages/ui/e2e` on 2026-11-07), only 4 cross-module specs (`cross-module-chat.spec.ts`, etc.) involve cross-module communication; the rest are UI component tests. Moving the entire E2E suite out of the UI package for 4 specs would break the co-location of the remaining 209 specs in the same directory — benefit is less than cost.
 
 **Indexing is better than moving**. Cross-module tests are not marked by directory location but uniformly indexed through the interface contract list (§4). The interface contract list lists each cross-module interface, corresponding T2/T3 test files, and their module location. Regardless of where files physically reside, one table covers all.
 
@@ -338,7 +359,10 @@ The Host fake-LLM matrix adds missing-credential, provider-401, multi-token succ
 ## 5. Run Commands
 
 ```bash
-# Full integration test (includes T3 when Docker available, T2 only otherwise)
+# Full integration test (T3 = historical compose lane, service-containerization freeze 2026-10-07;
+# current acceptance runs on the host lane — see §2.3)
+# Note: the task still declares a t3 dependency and its body tries docker compose; commenting it out or
+# removing it awaits ruling Q-1107-38 — for T2 only, use test:integration:t2
 mise run test:integration
 
 # Run each module independently
@@ -348,10 +372,15 @@ mvn test -pl packages/control-plane
 # CP cross-module T2 only
 mvn test -Dtest="crossmodule/*IntegrationTest"
 
-# Agent integration tests (T2+T1, T3 needs Docker)
+# ⚠️ `-m` caliber (measured 2026-11-07, reproducible): the CLI `-m` OVERRIDES pyproject's `-m`, it does not intersect —
+#   ① pyproject `addopts = '-m "not integration"'`: plain `uv run pytest --collect-only -q` ⇒ 1488/1518 collected, 30 deselected;
+#   ② adding `-m "not docker"`: `uv run pytest --collect-only -q -m "not docker"` ⇒ 1510/1518 collected, only 8 deselected
+#      (all `@pytest.mark.docker` items live in test_cp_real_integration.py) ⇒ the `not integration` default no longer applies;
+#   ③ so the line below is NOT "T2+T1": it collects and really runs 22 of the 30 integration tests (30 minus the docker subset).
+#      For the default gate use plain `uv run pytest`; for the integration lane only use an explicit `-m integration`.
 uv run pytest packages/agent/tests/integration/ -v -m "not docker"
 
-# Agent T3 (needs Docker)
+# Agent T3 (historical: compose lane frozen; real stack now uses `mise run dev:host` + `uv run pytest -m integration`, §2.3)
 docker compose up -d control-plane agent
 uv run pytest packages/agent/tests/integration/test_cp_real_integration.py -v
 docker compose down
@@ -359,24 +388,27 @@ docker compose down
 # Runtime T2 (no Docker)
 cargo test --test cp_stub_integration_test
 
-# Runtime T3 (needs Docker)
+# Runtime T3 (historical: compose lane frozen; real stack now uses `mise run dev:host` + the --ignored command below)
 docker compose up -d control-plane runtime
 cargo test --test cp_real_integration_test
 docker compose down
 
-# Update coverage baseline
-mise run test:integration
+# Coverage baseline: this repo has NO coverage-baseline tooling (no gate script, no baseline file) ⇒ the former
+# "Update coverage baseline / mise run test:integration" lines did not hold; test:integration is the integration
+# task and produces no baseline. The old coverage gate workflow is disabled with CI (.github/workflows/_disabled/coverage.yml, §6).
 ```
 
 ## 6. CI Strategy
 
-| Trigger Condition | T1 | T2 | T3 |
-|-------------------|----|----|-----|
-| PR (every push) | ✅ | ✅ | ❌ |
-| Nightly (daily) | ✅ | ✅ | ✅ |
-| Manual trigger | ✅ | ✅ | ✅ |
+**Current state (verified 2026-11-07): this repo has NO CI wired** — `.github/workflows/` only holds `_disabled/ci.yml` (four module unit jobs) and `_disabled/coverage.yml` (CP coverage), neither running; there is no T2/T3/nightly job anywhere. **The table below is target state**, not current fact; until CI is wired, T1/T2 run locally only.
 
-T3 doesn't run in PRs because: Docker partial stack startup + test ≈ 2min, which is too long for high-frequency PR feedback cycles. T2 in PRs = fast contract check, nightly T3 = full compatibility verification.
+| Trigger Condition | T1 | T2 | T3 (historical lane) |
+|-------------------|----|----|-----|
+| PR (every push) | target: ✅ | target: ✅ | target: ❌ |
+| Nightly (daily) | target: ✅ | target: ✅ | target: ✅ |
+| Manual trigger | target: ✅ | target: ✅ | target: ✅ |
+
+T3 doesn't run in PRs because: Docker partial stack startup + test ≈ 2min, which is too long for high-frequency PR feedback cycles (that lane has been discontinued since the 2026-10-07 service-containerization freeze; current real-stack verification runs on the host lane, §2.3). T2 in PRs = fast contract check, nightly T3 = full compatibility verification — both are the target split **after** CI is wired.
 
 ## 7. References
 
