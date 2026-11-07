@@ -37,6 +37,21 @@ import java.util.UUID;
  * <p>Validation order is deliberate: authorization before quota, quota before storage. A rejected
  * caller must not be able to probe another binding's key budget, and a 413 must not be reported from
  * inside a CAS attempt that already mutated a version.
+ *
+ * <p><b>Who writes {@code orphaned_at} (DP-6a / LC-6):</b> not this class, and not the purge job
+ * either — there are exactly two owners, and neither is here:
+ * <ul>
+ *   <li><b>writer</b> — lane A's uninstall/detach path ({@code cp/plugin/PluginBindingService},
+ *       T1.4), which stamps {@code orphaned_at = now()} at the moment the binding row is physically
+ *       deleted. That stamp is the clock LC-6's grace period is measured from;</li>
+ *   <li><b>reader</b> — T3.2's purge job, which reclaims rows whose {@code binding_id} no longer
+ *       exists <em>and</em> whose stamp (falling back to {@code updated_at} when unset) is older than
+ *       604800s.</li>
+ * </ul>
+ * This class only ever <em>clears</em> the column: {@link PluginKvRepository} sets it back to
+ * {@code NULL} when a write succeeds, because a live write is itself proof the binding is back. So
+ * "row is orphaned" is never a decision this layer makes, and a missing purge must not be "fixed" by
+ * stamping the column here — that would let the data plane silently redefine the grace period.
  */
 @Service
 public class PluginKvService {
