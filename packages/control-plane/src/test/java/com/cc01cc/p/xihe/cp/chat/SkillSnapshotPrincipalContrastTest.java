@@ -14,6 +14,7 @@ import com.cc01cc.p.xihe.cp.repository.AgentPrincipalRepository;
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
 import com.cc01cc.p.xihe.cp.repository.McpInvocationRepository;
 import com.cc01cc.p.xihe.cp.repository.ProviderConnectionRepository;
+import com.cc01cc.p.xihe.cp.repository.SessionParticipantRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceAgentRepository;
@@ -98,6 +99,9 @@ class SkillSnapshotPrincipalContrastTest extends AbstractIntegrationTest {
     private SessionRepository sessions;
 
     @Autowired
+    private SessionParticipantRepository participants;
+
+    @Autowired
     private UserRepository users;
 
     @Autowired
@@ -159,10 +163,9 @@ class SkillSnapshotPrincipalContrastTest extends AbstractIntegrationTest {
         // never a responder — that part of D28-39 is unchanged.
         assertEquals(fixture.sessionPrincipal().getId(), childRun.getAgentPrincipalId(),
                 "spawn runs carry the Session-bound principal for dispatch context (BL-280)");
-        assertEquals(fixture.sessionPrincipal().getId().toString(),
-                sessions.findById(UUID.fromString(childRun.getSessionId())).orElseThrow()
-                        .getAgentPrincipalId(),
-                "the child Session runs as the parent Session's principal");
+        assertEquals(fixture.sessionPrincipal().getId(),
+                participants.primaryPrincipalId(UUID.fromString(childRun.getSessionId())).orElse(null),
+                "the child Session runs as the parent Session's PRIMARY participant");
 
         List<String> frozen = snapshotNames(childRun);
         assertTrue(frozen.contains("session-agent-skill"), frozen.toString());
@@ -252,7 +255,6 @@ class SkillSnapshotPrincipalContrastTest extends AbstractIntegrationTest {
         session.setModelName("wire-model");
         session.setProviderConnectionId(connection.getId().toString());
         session.setConnectionRevision(connection.getRevision());
-        session.setAgentPrincipalId(sessionPrincipal.getId().toString());
         session.setAgentPermissionsSnapshot(capNode());
         // A published user template carrying the listing component is what admission snapshots, so
         // the capture path has a component to freeze (same fixture shape as the M2a freeze suite).
@@ -262,6 +264,7 @@ class SkillSnapshotPrincipalContrastTest extends AbstractIntegrationTest {
         session.setContextTemplateId(UUID.fromString(templateId));
         session.setContextTemplateVersion(1);
         Session persisted = sessions.saveAndFlush(session);
+        bindPrimaryParticipant(persisted.getId().toString(), sessionPrincipal.getId().toString());
         return new Fixture(user, workspace, persisted, sessionPrincipal, responderPrincipal);
     }
 
@@ -270,6 +273,7 @@ class SkillSnapshotPrincipalContrastTest extends AbstractIntegrationTest {
                 fixture.session().getId().toString(), fixture.user().getId().toString(),
                 fixture.workspace().getId().toString(), "spawn-principal-parent-" + UUID.randomUUID(),
                 "spawn-principal-hash", "provider", "model", "workspace", "running");
+        parent.setAgentPrincipalId(fixture.sessionPrincipal().getId());
         chatRuns.saveAndFlush(parent);
         String toolCallId = UUID.randomUUID().toString();
         SpawnTestSupport.seedAgentInvocation(invocations, fixture.session().getId().toString(),

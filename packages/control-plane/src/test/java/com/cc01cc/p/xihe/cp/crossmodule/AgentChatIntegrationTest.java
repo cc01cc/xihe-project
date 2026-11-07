@@ -507,11 +507,11 @@ class AgentChatIntegrationTest extends AbstractWireMockTest {
     private void createAgentSession(String sessionId, String title) {
         Session session = new Session(workspaceId, userId, title);
         session.setId(UUID.fromString(sessionId));
-        session.setAgentPrincipalId(principalId);
         session.setAgentPermissionsSnapshot(principalPermissions.deepCopy());
         com.cc01cc.p.xihe.cp.chat.ChatBindingTestSupport.bindNewChatConnection(
                 session, providerConnectionRepository, apiRequestTemplates, userId);
         sessionRepository.saveAndFlush(session);
+        bindPrimaryParticipant(sessionId, principalId);
     }
 
     @TestConfiguration

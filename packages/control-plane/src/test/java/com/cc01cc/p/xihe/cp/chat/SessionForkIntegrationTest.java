@@ -30,6 +30,7 @@ import com.cc01cc.p.xihe.cp.repository.MessageRepository;
 import com.cc01cc.p.xihe.cp.repository.McpInvocationRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionBranchRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionForkRequestRepository;
+import com.cc01cc.p.xihe.cp.repository.SessionParticipantRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceAgentRepository;
@@ -107,6 +108,7 @@ class SessionForkIntegrationTest extends AbstractIntegrationTest {
     @Autowired private AuthorizationGrantRepository authorizationGrantRepository;
     @Autowired private WorkspaceAgentRepository workspaceAgentRepository;
     @Autowired private SessionRepository sessionRepository;
+    @Autowired private SessionParticipantRepository sessionParticipantRepository;
 
     @Autowired
     private com.cc01cc.p.xihe.cp.repository.ProviderConnectionRepository providerConnectionRepository;
@@ -192,7 +194,9 @@ class SessionForkIntegrationTest extends AbstractIntegrationTest {
 
         Session child = sessionRepository.findById(UUID.fromString(childId)).orElseThrow();
         assertEquals(Session.KIND_FORK, child.getKind());
-        assertEquals(principalId.toString(), child.getAgentPrincipalId());
+        assertEquals(principalId,
+                sessionParticipantRepository.primaryPrincipalId(child.getId()).orElse(null),
+                "PLAN-0689 A7: the fork child's identity is its PRIMARY participant");
         assertEquals(1, child.getAgentPermissionsSnapshot().size(),
                 "fork takes the current Workspace cap, not the parent's old snapshot");
         assertEquals("read", child.getAgentPermissionsSnapshot().get(0).path("actionClass").asText());
@@ -642,7 +646,8 @@ class SessionForkIntegrationTest extends AbstractIntegrationTest {
                 providerConnectionRepository, "USER", userId, "fork-no-principal-" + UUID.randomUUID().toString().substring(0, 8), "openai");
         Session principalless = sessionService.createWithId(UUID.randomUUID().toString(), userId, workspaceId,
                 "Principal-less fork source", "openai", "gpt-test", openaiConnection.getId().toString());
-        assertNull(principalless.getAgentPrincipalId());
+        assertTrue(sessionParticipantRepository.primaryPrincipalId(principalless.getId()).isEmpty(),
+                "a principal-less Session has no PRIMARY participant to fork from");
         String sessionId = principalless.getId().toString();
         String branchId = branchPathService.ensureRootBranchId(sessionId);
 

@@ -268,7 +268,7 @@ class BoundaryRecalcTest extends AbstractIntegrationTest {
         com.cc01cc.p.xihe.cp.service.SessionReadService.SessionPathView sessionPathView =
                 new com.cc01cc.p.xihe.cp.service.SessionReadService.SessionPathView(
                         session.getId(), session.getUserId(), session.getWorkspaceId(),
-                        session.getAgentPrincipalId(), session.getSpawnedFromSessionId(),
+                        principalId.toString(), session.getSpawnedFromSessionId(),
                         session.getSpawnedFromRunId(), session.getSpawnedAt(), session.getKind(),
                         session.getAgentPermissionsSnapshot());
         when(resolver.resolveAgent(userId, workspaceId.toString(), sessionId))
@@ -307,9 +307,9 @@ class BoundaryRecalcTest extends AbstractIntegrationTest {
     private Session saveAgentSession(UUID wsId, String ownerId, String title, ArrayNode cap) {
         Session session = new Session(wsId.toString(), ownerId, title);
         session.setId(UUID.randomUUID());
-        session.setAgentPrincipalId(principalId.toString());
         session.setAgentPermissionsSnapshot(cap);
         Session saved = sessionRepository.save(session);
+        bindPrimaryParticipant(saved.getId().toString(), principalId.toString());
         sessionIds.add(saved.getId());
         return saved;
     }

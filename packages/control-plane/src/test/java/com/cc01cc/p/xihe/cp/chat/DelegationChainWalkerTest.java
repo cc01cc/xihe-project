@@ -3,6 +3,7 @@ package com.cc01cc.p.xihe.cp.chat;
 import com.cc01cc.p.xihe.cp.entity.ChatRun;
 import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
+import com.cc01cc.p.xihe.cp.repository.SessionParticipantRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -14,6 +15,7 @@ import java.util.Optional;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
@@ -27,20 +29,31 @@ class DelegationChainWalkerTest {
 
     private SessionRepository sessions;
     private ChatRunRepository runs;
+    private SessionParticipantRepository participants;
     private DelegationChainWalker walker;
+
+    // PLAN-0689 A3b: identity fixtures must be real UUID strings — the Run's stamp is a UUID
+    // column, so a readable placeholder like P1 can no longer be mirrored onto it.
+    private static final String P1 = "00000000-0000-0000-0000-0000000000a1";
+    private static final String P2 = "00000000-0000-0000-0000-0000000000a2";
 
     private final Map<UUID, Session> sessionById = new HashMap<>();
     private final Map<UUID, ChatRun> runById = new HashMap<>();
+    /** PLAN-0689 A7: the session-edge walk reads the PRIMARY participant, never a Session column. */
+    private final Map<UUID, UUID> principalOf = new HashMap<>();
 
     @BeforeEach
     void setUp() {
         sessions = mock(SessionRepository.class);
         runs = mock(ChatRunRepository.class);
-        walker = new DelegationChainWalker(sessions, runs);
+        participants = mock(SessionParticipantRepository.class);
+        walker = new DelegationChainWalker(sessions, runs, participants);
         when(sessions.findById(any()))
                 .thenAnswer(invocation -> Optional.ofNullable(sessionById.get(invocation.getArgument(0))));
         when(runs.findById(any()))
                 .thenAnswer(invocation -> Optional.ofNullable(runById.get(invocation.getArgument(0))));
+        when(participants.primaryPrincipalId(any()))
+                .thenAnswer(invocation -> Optional.ofNullable(principalOf.get(invocation.getArgument(0))));
     }
 
     private Session session(UUID id, String kind, UUID spawnedFromSession, UUID spawnedFromRun,
@@ -50,7 +63,9 @@ class DelegationChainWalkerTest {
         session.setKind(kind);
         session.setSpawnedFromSessionId(spawnedFromSession);
         session.setSpawnedFromRunId(spawnedFromRun);
-        session.setAgentPrincipalId(principalId);
+        if (principalId != null) {
+            principalOf.put(id, UUID.fromString(principalId));
+        }
         sessionById.put(id, session);
         return session;
     }
@@ -62,6 +77,12 @@ class DelegationChainWalkerTest {
         run.setOrigin(origin);
         run.setWaitingOnRunId(waitingOnRunId);
         run.setParentRunId(parentRunId);
+        // PLAN-0689 A3b: the run-edge walk reads only the Run's own stamp. These fixtures carry the
+        // identity on the session edge, so mirror it onto the Run to keep principalPath unchanged.
+        UUID owning = principalOf.get(sessionId);
+        if (owning != null) {
+            run.setAgentPrincipalId(owning);
+        }
         runById.put(id, run);
         return run;
     }
@@ -74,7 +95,7 @@ class DelegationChainWalkerTest {
     void userRootedRunIsASingleNodePath() {
         UUID s1 = UUID.randomUUID();
         UUID r1 = UUID.randomUUID();
-        session(s1, null, null, null, "P1");
+        session(s1, null, null, null, P1);
         run(r1, s1, ChatRun.ORIGIN_USER_SUBMISSION, null, null);
 
         DelegationChainWalker.ChainWalk walk = walker.walkFromRun(runById.get(r1));
@@ -82,7 +103,7 @@ class DelegationChainWalkerTest {
         assertEquals(1, walk.hops().size(), "a root run is its own whole path");
         assertEquals(DelegationChainWalker.EDGE_NONE, edge(walk, 0));
         assertEquals(0, walk.spawnHops());
-        assertEquals(List.of("P1"), walk.principalPath());
+        assertEquals(List.of(P1), walk.principalPath());
     }
 
     @Test
@@ -91,7 +112,7 @@ class DelegationChainWalkerTest {
         UUID r1 = UUID.randomUUID();
         UUID r2 = UUID.randomUUID();
         UUID r3 = UUID.randomUUID();
-        session(s1, null, null, null, "P1");
+        session(s1, null, null, null, P1);
         run(r1, s1, ChatRun.ORIGIN_USER_SUBMISSION, null, null);
         run(r2, s1, "scheduled", null, r1.toString());
         run(r3, s1, "scheduled", null, r2.toString());
@@ -103,7 +124,7 @@ class DelegationChainWalkerTest {
         assertEquals(DelegationChainWalker.EDGE_WAKE, edge(walk, 1));
         assertEquals(DelegationChainWalker.EDGE_WAKE, edge(walk, 2));
         assertEquals(0, walk.spawnHops(), "pure wake hops never raise the delegation depth");
-        assertEquals(List.of("P1", "P1", "P1"), walk.principalPath());
+        assertEquals(List.of(P1, P1, P1), walk.principalPath());
     }
 
     @Test
@@ -112,8 +133,8 @@ class DelegationChainWalkerTest {
         UUID s2 = UUID.randomUUID();
         UUID r1 = UUID.randomUUID();
         UUID r2 = UUID.randomUUID();
-        session(s1, null, null, null, "P1");
-        session(s2, Session.KIND_SPAWN, s1, r1, "P1");
+        session(s1, null, null, null, P1);
+        session(s2, Session.KIND_SPAWN, s1, r1, P1);
         run(r1, s1, ChatRun.ORIGIN_USER_SUBMISSION, null, null);
         run(r2, s2, ChatRun.ORIGIN_SPAWN, r1.toString(), null);
 
@@ -123,7 +144,7 @@ class DelegationChainWalkerTest {
         assertEquals(DelegationChainWalker.EDGE_SPAWN, edge(walk, 1));
         assertEquals(1, walk.spawnHops(), "the spawn edge raises the delegation depth");
         assertEquals(r1, walk.hops().get(1).nodeId(), "the walk lands on the parent run, not the parent session");
-        assertEquals(List.of("P1", "P1"), walk.principalPath());
+        assertEquals(List.of(P1, P1), walk.principalPath());
     }
 
     @Test
@@ -135,8 +156,8 @@ class DelegationChainWalkerTest {
         UUID s2 = UUID.randomUUID();
         UUID r1 = UUID.randomUUID();
         UUID r2 = UUID.randomUUID();
-        session(s1, null, null, null, "P1");
-        session(s2, Session.KIND_SPAWN, s1, r1, "P1");
+        session(s1, null, null, null, P1);
+        session(s2, Session.KIND_SPAWN, s1, r1, P1);
         run(r1, s1, ChatRun.ORIGIN_USER_SUBMISSION, null, null);
         ChatRun spawnRun = run(r2, s2, ChatRun.ORIGIN_SPAWN, r1.toString(), null);
         spawnRun.setParentRunId(r1.toString());
@@ -154,8 +175,8 @@ class DelegationChainWalkerTest {
         UUID s2 = UUID.randomUUID();
         UUID r1 = UUID.randomUUID();
         UUID later = UUID.randomUUID();
-        session(s1, null, null, null, "P1");
-        session(s2, Session.KIND_SPAWN, s1, r1, "P1");
+        session(s1, null, null, null, P1);
+        session(s2, Session.KIND_SPAWN, s1, r1, P1);
         run(r1, s1, ChatRun.ORIGIN_USER_SUBMISSION, null, null);
         run(later, s2, ChatRun.ORIGIN_USER_SUBMISSION, null, null);
 
@@ -173,8 +194,8 @@ class DelegationChainWalkerTest {
         UUID r1 = UUID.randomUUID();
         UUID r2 = UUID.randomUUID();
         UUID woken = UUID.randomUUID();
-        session(s1, null, null, null, "P1");
-        session(s2, Session.KIND_SPAWN, s1, r1, "P2");
+        session(s1, null, null, null, P1);
+        session(s2, Session.KIND_SPAWN, s1, r1, P2);
         run(r1, s1, ChatRun.ORIGIN_USER_SUBMISSION, null, null);
         run(r2, s2, ChatRun.ORIGIN_SPAWN, r1.toString(), null);
         run(woken, s2, "scheduled", null, r2.toString());
@@ -185,14 +206,14 @@ class DelegationChainWalkerTest {
         assertEquals(DelegationChainWalker.EDGE_WAKE, edge(walk, 1));
         assertEquals(DelegationChainWalker.EDGE_SPAWN, edge(walk, 2));
         assertEquals(1, walk.spawnHops(), "the in-session wake hop inherits, not adds, the delegation depth");
-        assertEquals(List.of("P2", "P2", "P1"), walk.principalPath());
+        assertEquals(List.of(P2, P2, P1), walk.principalPath());
     }
 
     @Test
     void forkSessionTerminatesTheWalk() {
         UUID sf = UUID.randomUUID();
         UUID rf = UUID.randomUUID();
-        session(sf, Session.KIND_FORK, UUID.randomUUID(), UUID.randomUUID(), "P1");
+        session(sf, Session.KIND_FORK, UUID.randomUUID(), UUID.randomUUID(), P1);
         run(rf, sf, ChatRun.ORIGIN_USER_SUBMISSION, null, null);
 
         DelegationChainWalker.ChainWalk walk = walker.walkFromRun(runById.get(rf));
@@ -206,16 +227,16 @@ class DelegationChainWalkerTest {
         UUID root = UUID.randomUUID();
         UUID d1 = UUID.randomUUID();
         UUID d2 = UUID.randomUUID();
-        session(root, null, null, null, "P1");
-        session(d1, Session.KIND_SPAWN, root, UUID.randomUUID(), "P1");
-        session(d2, Session.KIND_SPAWN, d1, UUID.randomUUID(), "P1");
+        session(root, null, null, null, P1);
+        session(d1, Session.KIND_SPAWN, root, UUID.randomUUID(), P1);
+        session(d2, Session.KIND_SPAWN, d1, UUID.randomUUID(), P1);
 
         DelegationChainWalker.ChainWalk walk = walker.walkFromSession(sessionById.get(d2));
 
         assertEquals(3, walk.hops().size());
         assertEquals(2, walk.spawnHops(), "the budget depth is the spawn-edge count");
         assertEquals(root, walk.hops().getLast().nodeId());
-        assertEquals(List.of("P1", "P1", "P1"), walk.principalPath());
+        assertEquals(List.of(P1, P1, P1), walk.principalPath());
     }
 
     @Test
@@ -223,7 +244,7 @@ class DelegationChainWalkerTest {
         UUID s2 = UUID.randomUUID();
         UUID r2 = UUID.randomUUID();
         UUID gone = UUID.randomUUID();
-        session(s2, Session.KIND_SPAWN, UUID.randomUUID(), gone, "P1");
+        session(s2, Session.KIND_SPAWN, UUID.randomUUID(), gone, P1);
         run(r2, s2, ChatRun.ORIGIN_SPAWN, gone.toString(), null);
 
         DelegationChainWalker.AncestorMissingException thrown = assertThrows(
@@ -237,7 +258,7 @@ class DelegationChainWalkerTest {
     @Test
     void sessionWalkMissingAncestorRefusesWithAncestorMissing() {
         UUID orphan = UUID.randomUUID();
-        session(orphan, Session.KIND_SPAWN, UUID.randomUUID(), UUID.randomUUID(), "P1");
+        session(orphan, Session.KIND_SPAWN, UUID.randomUUID(), UUID.randomUUID(), P1);
 
         DelegationChainWalker.AncestorMissingException thrown = assertThrows(
                 DelegationChainWalker.AncestorMissingException.class,
@@ -249,7 +270,7 @@ class DelegationChainWalkerTest {
     @Test
     void spawnSessionWithoutProvenanceIsTreeBroken() {
         UUID orphan = UUID.randomUUID();
-        session(orphan, Session.KIND_SPAWN, null, null, "P1");
+        session(orphan, Session.KIND_SPAWN, null, null, P1);
 
         DelegationChainWalker.AncestorMissingException thrown = assertThrows(
                 DelegationChainWalker.AncestorMissingException.class,
@@ -265,8 +286,8 @@ class DelegationChainWalkerTest {
         UUID s2 = UUID.randomUUID();
         UUID r1 = UUID.randomUUID();
         UUID r2 = UUID.randomUUID();
-        session(s1, null, null, null, "P1");
-        session(s2, Session.KIND_SPAWN, s1, r1, "P1");
+        session(s1, null, null, null, P1);
+        session(s2, Session.KIND_SPAWN, s1, r1, P1);
         run(r1, s1, ChatRun.ORIGIN_USER_SUBMISSION, null, null);
         run(r2, s2, ChatRun.ORIGIN_SPAWN, null, null);
 
@@ -281,7 +302,7 @@ class DelegationChainWalkerTest {
         UUID s1 = UUID.randomUUID();
         UUID ra = UUID.randomUUID();
         UUID rb = UUID.randomUUID();
-        session(s1, null, null, null, "P1");
+        session(s1, null, null, null, P1);
         run(ra, s1, "scheduled", null, rb.toString());
         run(rb, s1, "scheduled", null, ra.toString());
 
@@ -308,7 +329,7 @@ class DelegationChainWalkerTest {
         UUID r1 = UUID.randomUUID();
         UUID rb = UUID.randomUUID();
         UUID rc = UUID.randomUUID();
-        session(s1, null, null, null, "P1");
+        session(s1, null, null, null, P1);
         run(r1, s1, ChatRun.ORIGIN_USER_SUBMISSION, null, null);
         ChatRun bRun = run(rb, s1, "chain", null, r1.toString());
         bRun.setAgentPrincipalId(UUID.fromString("00000000-0000-0000-0000-0000000000b0"));
@@ -318,7 +339,7 @@ class DelegationChainWalkerTest {
         DelegationChainWalker.ChainWalk walk = walker.walkFromRun(runById.get(rc));
 
         assertEquals(List.of("00000000-0000-0000-0000-0000000000c0",
-                        "00000000-0000-0000-0000-0000000000b0", "P1"),
+                        "00000000-0000-0000-0000-0000000000b0", P1),
                 walk.principalPath(),
                 "each hop reads WHO RAN it — the durable material for the C→B refusal");
     }
@@ -351,19 +372,28 @@ class DelegationChainWalkerTest {
                 "the same principal on both sessions of the path — the consumer refuses this hop");
     }
 
-    /** T3.3 fallback rail: a run without a responder stamp (pre-V92 row, human turn) reads its session. */
+    /**
+     * PLAN-0689 A3b (design §2): attribution falls back run → NULL and never guesses the Session's
+     * PRIMARY row. An unstamped run therefore stays unattributed even when its Session still
+     * carries a binding — the old M2 "responder fallback" reading is exactly what §2 forbids.
+     */
     @Test
-    void runWithoutResponderPrincipalFallsBackToTheSessionPrincipal() {
+    void runWithoutResponderPrincipalStaysUnattributed() {
         UUID s1 = UUID.randomUUID();
         UUID r1 = UUID.randomUUID();
         UUID r2 = UUID.randomUUID();
-        session(s1, null, null, null, "P1");
-        run(r1, s1, ChatRun.ORIGIN_USER_SUBMISSION, null, null);
+        session(s1, null, null, null, P1);
+        ChatRun rootRun = run(r1, s1, ChatRun.ORIGIN_USER_SUBMISSION, null, null);
+        rootRun.setAgentPrincipalId(null);
         ChatRun woken = run(r2, s1, "chain", null, r1.toString());
+        woken.setAgentPrincipalId(null);
 
         DelegationChainWalker.ChainWalk walk = walker.walkFromRun(woken);
 
-        assertEquals(List.of("P1", "P1"), walk.principalPath(),
-                "no responder stamp → the session principal, exactly the M2 reading");
+        assertEquals(2, walk.principalPath().size());
+        assertNull(walk.principalPath().get(0),
+                "an unstamped hop must not borrow the Session's PRIMARY principal");
+        assertNull(walk.principalPath().get(1),
+                "the root reading stays null so the consumer fails closed with root_principal_missing");
     }
 }

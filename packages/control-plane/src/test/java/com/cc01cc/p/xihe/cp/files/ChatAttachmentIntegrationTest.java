@@ -29,6 +29,7 @@ import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
 import com.cc01cc.p.xihe.cp.integration.TestDataFactory;
 import com.cc01cc.p.xihe.cp.repository.FileRepository;
 import com.cc01cc.p.xihe.cp.repository.AuthorizationGrantRepository;
+import com.cc01cc.p.xihe.cp.repository.SessionParticipantRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
@@ -56,6 +57,9 @@ class ChatAttachmentIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired
     private SessionRepository sessionRepository;
+
+    @Autowired
+    private SessionParticipantRepository sessionParticipantRepository;
 
     @Autowired
     private FileRepository fileRepository;
@@ -140,7 +144,8 @@ class ChatAttachmentIntegrationTest extends AbstractIntegrationTest {
 
         assertEquals(HttpStatus.OK, uploadResponse.getStatusCode());
         Session placeholder = sessionRepository.findById(UUID.fromString(sessionId)).orElseThrow();
-        assertNull(placeholder.getAgentPrincipalId());
+        assertTrue(sessionParticipantRepository.primaryPrincipalId(placeholder.getId()).isEmpty(),
+                "PLAN-0689 A7: an upload-only placeholder carries no PRIMARY participant");
         assertNull(placeholder.getAgentPermissionsSnapshot());
         assertEquals(0L, authorizationGrantRepository.countBySubjectTypeAndSubjectIdAndSource(
                 "agent", UUID.fromString(sessionId), "default"));

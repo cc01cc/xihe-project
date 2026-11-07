@@ -57,6 +57,7 @@ class SessionWakeupServiceTest {
     private BranchPathService branchPathService;
     private ChatSubmissionService chatSubmissionService;
     private ApplicationEventPublisher eventPublisher;
+    private com.cc01cc.p.xihe.cp.service.SessionParticipantService sessionParticipantService;
     private SessionWakeupService service;
 
     @BeforeEach
@@ -68,9 +69,11 @@ class SessionWakeupServiceTest {
         branchPathService = Mockito.mock(BranchPathService.class);
         chatSubmissionService = Mockito.mock(ChatSubmissionService.class);
         eventPublisher = Mockito.mock(ApplicationEventPublisher.class);
+        sessionParticipantService =
+                Mockito.mock(com.cc01cc.p.xihe.cp.service.SessionParticipantService.class);
         service = new SessionWakeupService(sessionService, chatRunRepository,
                 followUpItemRepository, followUpQueueService, branchPathService,
-                chatSubmissionService, eventPublisher, new ObjectMapper());
+                chatSubmissionService, eventPublisher, new ObjectMapper(), sessionParticipantService);
         when(followUpItemRepository.countBySessionIdAndStatusIn(anyString(), anyCollection()))
                 .thenReturn(0L);
     }
@@ -106,7 +109,7 @@ class SessionWakeupServiceTest {
         when(branchPathService.ensureRootBranchId(SESSION_ID)).thenReturn(BRANCH_ID);
         when(chatSubmissionService.tryCreateScheduled(anyString(), anyString(), anyString(), anyString(),
                 anyString(), anyString(), anyString(), any(), any(), eq("none"), any(), any(),
-                any(), anyString(), eq("hi"), eq("[]"), eq(List.of()), any(), eq(com.cc01cc.p.xihe.cp.entity.Message.VISIBILITY_INTERNAL)))
+                any(), anyString(), eq("hi"), eq("[]"), eq(List.of()), eq(com.cc01cc.p.xihe.cp.entity.Message.VISIBILITY_INTERNAL)))
                 .thenAnswer(invocation -> {
                     String runId = invocation.getArgument(0);
                     ChatRun scheduledRun = new ChatRun(runId, SESSION_ID, USER_ID, WORKSPACE_ID,
@@ -123,7 +126,7 @@ class SessionWakeupServiceTest {
         ArgumentCaptor<String> runIdCaptor = ArgumentCaptor.forClass(String.class);
         verify(chatSubmissionService).tryCreateScheduled(runIdCaptor.capture(), eq(SESSION_ID), eq(USER_ID),
                 eq(WORKSPACE_ID), eq(BRANCH_ID), eq("sched-wakeup-1"), anyString(), any(), any(),
-                eq("none"), any(), any(), isNull(), anyString(), eq("hi"), eq("[]"), eq(List.of()), any(), eq(com.cc01cc.p.xihe.cp.entity.Message.VISIBILITY_INTERNAL));
+                eq("none"), any(), any(), isNull(), anyString(), eq("hi"), eq("[]"), eq(List.of()), eq(com.cc01cc.p.xihe.cp.entity.Message.VISIBILITY_INTERNAL));
         assertEquals(runIdCaptor.getValue(), result.runId().toString(),
                 "started runId must be the persisted scheduled carrier");
         verify(eventPublisher).publishEvent(new ScheduledRunDispatchRequestedEvent(SESSION_ID,
@@ -142,7 +145,7 @@ class SessionWakeupServiceTest {
         when(branchPathService.ensureRootBranchId(SESSION_ID)).thenReturn(BRANCH_ID);
         when(chatSubmissionService.tryCreateScheduled(anyString(), anyString(), anyString(), anyString(),
                 anyString(), anyString(), anyString(), any(), any(), any(), any(), any(), any(),
-                anyString(), anyString(), anyString(), any(), any(), any()))
+                anyString(), anyString(), anyString(), any(), any()))
                 .thenReturn(java.util.Optional.empty());
 
         SessionWakeupService.WakeupResult result =
@@ -163,7 +166,7 @@ class SessionWakeupServiceTest {
         when(branchPathService.ensureRootBranchId(SESSION_ID)).thenReturn(BRANCH_ID);
         when(chatSubmissionService.tryCreateScheduled(anyString(), anyString(), anyString(), anyString(),
                 anyString(), anyString(), anyString(), any(), any(), any(), any(), any(), any(),
-                anyString(), anyString(), anyString(), any(), any(), any()))
+                anyString(), anyString(), anyString(), any(), any()))
                 .thenThrow(new IllegalStateException("database is down"));
 
         IllegalStateException failure = assertThrows(IllegalStateException.class,
@@ -184,7 +187,7 @@ class SessionWakeupServiceTest {
         when(branchPathService.ensureRootBranchId(SESSION_ID)).thenReturn(BRANCH_ID);
         when(chatSubmissionService.tryCreateScheduled(anyString(), anyString(), anyString(), anyString(),
                 anyString(), anyString(), anyString(), any(), any(), eq("none"), any(), any(),
-                any(), anyString(), eq("wake up"), eq("[]"), eq(List.of()), any(), eq(com.cc01cc.p.xihe.cp.entity.Message.VISIBILITY_INTERNAL)))
+                any(), anyString(), eq("wake up"), eq("[]"), eq(List.of()), eq(com.cc01cc.p.xihe.cp.entity.Message.VISIBILITY_INTERNAL)))
                 .thenAnswer(invocation -> {
                     String runId = invocation.getArgument(0);
                     ChatRun scheduledRun = new ChatRun(runId, SESSION_ID, USER_ID, WORKSPACE_ID,

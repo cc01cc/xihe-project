@@ -157,7 +157,8 @@ public class SessionService {
                 agentPrincipalId, workspaceId);
         Session session = new Session(workspaceId, userId, normalizeTitle(title));
         session.setId(UUID.randomUUID());
-        session.setAgentPrincipalId(agentPrincipalId);
+        // PLAN-0689 A7/D-54: retained snapshot = the PRIMARY's cap at binding time; resolveCapFor
+        // above carries the D-49 active-binding gate (fail-closed).
         session.setAgentPermissionsSnapshot(cap);
         // 2026-11-04 P0（task-24）：显式传值优先；只有三件套全空时才按权威顺序补默认
         // （agent 主体默认 → 生效 llm-provider profile）。补不到 ⇒ 400 PROVIDER_REQUIRED，
@@ -206,8 +207,14 @@ public class SessionService {
             bindApiTemplate(session, null);
             return sessionRepository.save(session);
         }
-        SessionProviderDefaults.Defaults defaults =
-                sessionProviderDefaults.resolve(userId, workspaceId, session.getAgentPrincipalId());
+        // PLAN-0689 A6 (R4 / design §3-B): the provider default is keyed by the conversation's default
+        // responder, which is the PRIMARY participant — the Session column is a copy that A7 drops.
+        // No PRIMARY (legacy/placeholder) keeps the previous NULL input: null means "no agent default",
+        // so the chain falls through to the effective llm-provider profile and then fails closed with
+        // PROVIDER_REQUIRED. It is not a fallback to another principal.
+        UUID primaryPrincipalId = sessionParticipantService.responderPrincipalIdFor(session.getId(), null);
+        SessionProviderDefaults.Defaults defaults = sessionProviderDefaults.resolve(userId, workspaceId,
+                primaryPrincipalId == null ? null : primaryPrincipalId.toString());
         session.setModelProvider(defaults.modelProvider());
         session.setModelName(defaults.modelName());
         bindProviderConnection(session, userId, workspaceId, defaults.providerConnectionId(),
@@ -222,7 +229,11 @@ public class SessionService {
     public Session createForkSession(String sourceSessionId, UUID childSessionId, String anchorRunId,
                                      String userId, String workspaceId) {
         Session source = requireCurrent(sourceSessionId, userId, workspaceId);
-        String agentPrincipalId = source.getAgentPrincipalId();
+        // PLAN-0689 A6 (R4 / design §3-B): the fork inherits the source conversation's default
+        // responder — its PRIMARY participant — not the Session column (A7 drops it). Missing PRIMARY
+        // keeps the same fail-closed 409 below; a HUMAN primary is refused later by resolveCapFor.
+        UUID sourcePrimaryPrincipalId = sessionParticipantService.responderPrincipalIdFor(source.getId(), null);
+        String agentPrincipalId = sourcePrimaryPrincipalId == null ? null : sourcePrimaryPrincipalId.toString();
         if (agentPrincipalId == null || agentPrincipalId.isBlank()) {
             throw new CpApiException(HttpStatus.CONFLICT, "SESSION_PRINCIPAL_REQUIRED",
                     "A fork requires a stable AgentPrincipal on the source Session");
@@ -232,7 +243,8 @@ public class SessionService {
                 agentPrincipalId, workspaceId);
         Session child = new Session(workspaceId, userId, normalizeTitle("Fork of " + source.getTitle()));
         child.setId(childSessionId);
-        child.setAgentPrincipalId(agentPrincipalId);
+        // PLAN-0689 A7/D-54: same retained snapshot semantics as create; resolveCapFor above carries
+        // the D-49 active-binding gate (fail-closed).
         child.setAgentPermissionsSnapshot(currentCap);
         child.setModelProvider(source.getModelProvider());
         child.setModelName(source.getModelName());

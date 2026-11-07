@@ -301,10 +301,10 @@ class ChatAdmissionGovernorHttpTest extends AbstractIntegrationTest {
         String sessionId = UUID.randomUUID().toString();
         Session session = new Session(workspaceId, userId, title);
         session.setId(UUID.fromString(sessionId));
-        session.setAgentPrincipalId(principalId);
         session.setAgentPermissionsSnapshot(principalPermissions.deepCopy());
         ChatBindingTestSupport.bind(session, boundConnection, requestTemplates);
         sessionRepository.saveAndFlush(session);
+        bindPrimaryParticipant(sessionId, principalId);
         branchPathService.ensureRootBranchId(sessionId);
         return sessionId;
     }

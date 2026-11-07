@@ -34,6 +34,7 @@ import com.cc01cc.p.xihe.cp.entity.WorkspaceAgent;
 import com.cc01cc.p.xihe.cp.repository.MessageRepository;
 import com.cc01cc.p.xihe.cp.repository.McpInvocationRepository;
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
+import com.cc01cc.p.xihe.cp.repository.SessionParticipantRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
@@ -114,6 +115,9 @@ class ChatIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired
     private SessionRepository sessionRepository;
+
+    @Autowired
+    private SessionParticipantRepository sessionParticipantRepository;
 
     @Autowired
     private com.cc01cc.p.xihe.cp.repository.ProviderConnectionRepository providerConnectionRepository;
@@ -347,9 +351,9 @@ class ChatIntegrationTest extends AbstractIntegrationTest {
         String sessionId = UUID.randomUUID().toString();
         createSession(sessionId);
         Session session = sessionRepository.findById(UUID.fromString(sessionId)).orElseThrow();
-        session.setAgentPrincipalId(null);
         session.setAgentPermissionsSnapshot(null);
         sessionRepository.saveAndFlush(session);
+        clearPrimary(sessionId);
         openSse(sessionId);
 
         ResponseEntity<Map> response = postChat(sessionId, "must be rejected");
@@ -363,44 +367,27 @@ class ChatIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void postChatWithExplicitPrincipalBindsEmptySessionInAdmissionTransaction() {
+    void postChatWithExplicitPrincipalOnUnboundSessionFailsAdmissionClosed() {
         String sessionId = UUID.randomUUID().toString();
         createSession(sessionId);
         Session session = sessionRepository.findById(UUID.fromString(sessionId)).orElseThrow();
-        session.setAgentPrincipalId(null);
         session.setAgentPermissionsSnapshot(null);
         sessionRepository.saveAndFlush(session);
+        clearPrimary(sessionId);
         openSse(sessionId);
 
         ResponseEntity<Map> response = postChat(sessionId, "bind on first message", principalId, "first-bind-idem");
 
-        assertEquals(HttpStatus.ACCEPTED, response.getStatusCode());
-        Session bound = sessionRepository.findById(UUID.fromString(sessionId)).orElseThrow();
-        assertEquals(principalId, bound.getAgentPrincipalId());
-        // 2026-11-04 (PLAN-0629 scope→roles + 非人类主体禁绑实例管理角色裁定): the Session cap is
-        // `resolveCapFor` = binding cap ∩ principal grant-derived atoms, so byte equality against the
-        // fixture's template snapshot no longer holds (it used to). Assert the rule instead of a
-        // literal: never wider than the binding, never an instance-management atom, and the execution
-        // atoms the fixture granted must survive the intersection.
-        java.util.Set<String> fixtureAtoms = actionClasses(principalPermissions);
-        java.util.Set<String> snapshotAtoms = actionClasses(bound.getAgentPermissionsSnapshot());
-        assertTrue(fixtureAtoms.containsAll(snapshotAtoms),
-                "the Session cap must never exceed the binding cap: " + snapshotAtoms + " vs " + fixtureAtoms);
-        assertFalse(snapshotAtoms.contains("MANAGE_WORKSPACE_AGENTS"),
-                "an agent principal may never hold an instance-management atom: " + snapshotAtoms);
-        assertTrue(snapshotAtoms.containsAll(java.util.Set.of("read", "write", "exec")),
-                "the execution atoms granted by the fixture must survive the intersection: " + snapshotAtoms);
-        assertFalse(snapshotAtoms.isEmpty(), "a bound Session must carry a non-empty cap");
-        assertTrue(chatRunRepository.existsBySessionId(sessionId));
-        assertEquals(1, messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId).stream()
-                .filter(message -> message.getRole() == MessageRole.USER).count());
-
-        ResponseEntity<Map> replay = postChat(sessionId, "bind on first message", principalId, "first-bind-idem");
-        assertEquals(HttpStatus.ACCEPTED, replay.getStatusCode());
-        assertEquals(response.getBody().get("runId"), replay.getBody().get("runId"));
-        ResponseEntity<Map> differentPrincipal = postChat(
-                sessionId, "bind on first message", UUID.randomUUID().toString(), "first-bind-idem");
-        assertEquals(HttpStatus.CONFLICT, differentPrincipal.getStatusCode());
+        // PLAN-0689 A4b/A7: there is no first-Chat binding. A client-supplied principal cannot
+        // recreate the conversation identity on an unbound Session; admission fails closed.
+        assertEquals(HttpStatus.FORBIDDEN, response.getStatusCode());
+        assertEquals("FORBIDDEN", response.getBody().get("code"));
+        assertFalse(sessionParticipantRepository.primaryPrincipalId(UUID.fromString(sessionId)).isPresent(),
+                "no PRIMARY may be created from an explicit request principal");
+        assertEquals(0, jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM chat_runs WHERE CAST(session_id AS VARCHAR) = ?", Integer.class, sessionId));
+        assertTrue(messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId).isEmpty());
+        assertFalse(mcpInvocationRepository.existsBySessionId(sessionId));
     }
 
     @Test
@@ -941,12 +928,17 @@ class ChatIntegrationTest extends AbstractIntegrationTest {
     private void createSession(String sessionId) {
         Session session = new Session(workspaceId, userId, "Integration Chat");
         session.setId(UUID.fromString(sessionId));
-        session.setAgentPrincipalId(principalId);
         session.setAgentPermissionsSnapshot(principalPermissions.deepCopy());
         session.setModelProvider("custom-openai-compatible");
         session.setModelName("wire-model");
         ChatBindingTestSupport.bind(session, chatConnection(), apiRequestTemplates);
         sessionRepository.save(session);
+        bindPrimaryParticipant(sessionId, principalId);
+    }
+
+    private void clearPrimary(String sessionId) {
+        sessionParticipantRepository.findBySessionIdOrderByOrderIndexAsc(UUID.fromString(sessionId))
+                .forEach(sessionParticipantRepository::delete);
     }
 
     private ResponseEntity<Map> postChat(String sessionId, String content) {

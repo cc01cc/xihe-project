@@ -53,6 +53,7 @@ class AgentMemoryPassiveWriterTest {
     private AgentPrincipalRepository principals;
     private AgentMemoryService memoryService;
     private PassiveMemoryJudge judge;
+    private SessionParticipantService sessionParticipantService;
     private AgentMemoryPassiveWriter writer;
 
     private ch.qos.logback.classic.Logger writerLogger;
@@ -64,12 +65,17 @@ class AgentMemoryPassiveWriterTest {
         principals = mock(AgentPrincipalRepository.class);
         memoryService = mock(AgentMemoryService.class);
         judge = mock(PassiveMemoryJudge.class);
-        writer = new AgentMemoryPassiveWriter(sessions, principals, memoryService, judge);
+        sessionParticipantService = mock(SessionParticipantService.class);
+        writer = new AgentMemoryPassiveWriter(sessions, principals, memoryService, judge,
+                sessionParticipantService);
 
         Session session = mock(Session.class);
-        when(session.getAgentPrincipalId()).thenReturn(PRINCIPAL_ID.toString());
         when(session.getUserId()).thenReturn(SESSION_OWNER_ID);
         when(sessions.findById(UUID.fromString(SESSION_ID))).thenReturn(Optional.of(session));
+        // PLAN-0689 A6: the passive writer's subject is the Session's PRIMARY participant (a
+        // session-view identity), not the Session column.
+        when(sessionParticipantService.responderPrincipalIdFor(UUID.fromString(SESSION_ID), null))
+                .thenReturn(PRINCIPAL_ID);
         when(principals.findById(PRINCIPAL_ID)).thenReturn(Optional.of(principalWith(
                 "{\"memory\":{\"enabled\":true,\"passive\":\"summary\",\"types\":[\"fact\"]}}")));
         when(memoryService.rememberPassive(any())).thenReturn(Optional.of(storedCandidate()));
@@ -132,9 +138,20 @@ class AgentMemoryPassiveWriterTest {
     }
 
     @Test
+    void aSessionWithoutAPrimaryParticipantIsASkipNotAFailure() {
+        when(sessionParticipantService.responderPrincipalIdFor(UUID.fromString(SESSION_ID), null))
+                .thenReturn(null);
+
+        writer.onCompaction(end());
+
+        verifyNoInteractions(memoryService);
+        assertEquals(AgentMemoryPassiveWriter.REASON_NO_PRINCIPAL, lastReason(),
+                "no PRIMARY means no subject to write into; missing is a skip, never a guess");
+    }
+
+    @Test
     void aSessionWithoutAnOwnerIsASkipNotAWrite() {
         Session ownerless = mock(Session.class);
-        when(ownerless.getAgentPrincipalId()).thenReturn(PRINCIPAL_ID.toString());
         when(ownerless.getUserId()).thenReturn(null);
         when(sessions.findById(UUID.fromString(SESSION_ID))).thenReturn(Optional.of(ownerless));
 

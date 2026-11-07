@@ -6,6 +6,7 @@ import com.cc01cc.p.xihe.cp.config.TenantContext;
 import com.cc01cc.p.xihe.cp.config.TenantContextInterceptor;
 import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.entity.Workspace;
+import com.cc01cc.p.xihe.cp.service.SessionParticipantService;
 import com.cc01cc.p.xihe.cp.service.SessionService;
 import com.cc01cc.p.xihe.cp.service.WorkspaceService;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -82,17 +83,22 @@ class WorkspaceSessionControllerHttpTest {
                 .thenAnswer(invocation -> {
                     Session session = new Session(invocation.getArgument(1), invocation.getArgument(0), "t");
                     session.setId(UUID.randomUUID());
-                    session.setAgentPrincipalId(invocation.getArgument(6));
                     return session;
                 });
 
         SessionCreationService creationService = new SessionCreationService(sessionService, workspaceService);
+        // PLAN-0689 A2c: the response's agentPrincipalId is the PRIMARY participant principal, so
+        // the controller resolves it through the participant service.
+        SessionParticipantService participantService = mock(SessionParticipantService.class);
+        when(participantService.primaryPrincipalIdFor(any()))
+                .thenReturn(Optional.of(UUID.fromString(PRINCIPAL_ID)));
         com.cc01cc.p.xihe.cp.policy.AuthzContext authzContext =
                 mock(com.cc01cc.p.xihe.cp.policy.AuthzContext.class);
         when(authzContext.authoritiesFor(any())).thenReturn(java.util.Set.of());
         TenantContextInterceptor interceptor = new TenantContextInterceptor(
                 jwt, authenticator, workspaceService, new ObjectMapper(), authzContext);
-        mockMvc = MockMvcBuilders.standaloneSetup(new WorkspaceSessionController(creationService))
+        mockMvc = MockMvcBuilders
+                .standaloneSetup(new WorkspaceSessionController(creationService, participantService))
                 .addInterceptors(interceptor)
                 .build();
     }
@@ -110,7 +116,8 @@ class WorkspaceSessionControllerHttpTest {
         // Before the fix the context (fallback) role vetoed this with 403 WORKSPACE_READ_ONLY.
         perform(TARGET_WS, null)
                 .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.workspaceId").value(TARGET_WS));
+                .andExpect(jsonPath("$.workspaceId").value(TARGET_WS))
+                .andExpect(jsonPath("$.agentPrincipalId").value(PRINCIPAL_ID));
     }
 
     @Test

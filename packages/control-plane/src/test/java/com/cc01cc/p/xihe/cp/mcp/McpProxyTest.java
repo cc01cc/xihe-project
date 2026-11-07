@@ -77,6 +77,13 @@ class McpProxyTest {
     private AgentSpawnExecutionService agentSpawnExecutionService;
     /** PLAN-0663: pre-approval budget precheck collaborator. */
     private com.cc01cc.p.xihe.cp.chat.DelegationBudgetService delegationBudgetService;
+    /**
+     * PLAN-0689 A3b (design §3-A): the CP-owned tool branches (skill_read, acquire_credential) now
+     * resolve the Run's own principal stamp instead of the Session column. Left unstubbed by
+     * default so the deny tests below can pin the fail-closed path.
+     */
+    private final com.cc01cc.p.xihe.cp.chat.ChatRunStatusReadService chatRunStatusReadService =
+            mock(com.cc01cc.p.xihe.cp.chat.ChatRunStatusReadService.class);
     private McpProxyController controller;
     private McpToolTimeoutService toolTimeoutService;
     private org.springframework.mock.env.MockEnvironment environment;
@@ -273,7 +280,8 @@ class McpProxyTest {
                 mock(com.cc01cc.p.xihe.cp.credentials.CredentialLeaseService.class),
                 mock(com.cc01cc.p.xihe.cp.skill.SkillReadService.class),
                 new com.cc01cc.p.xihe.cp.status.BuildVersion(),
-                delegationBudgetService
+                delegationBudgetService,
+                chatRunStatusReadService
         );
         ReflectionTestUtils.setField(controller, "runtimeBaseUrl", "http://localhost:9091");
 
@@ -1074,6 +1082,65 @@ class McpProxyTest {
                 eq("sess-1"), eq("u-1"), eq(TEST_WS_UUID), userOnly.capture());
         assertFalse(userOnly.getValue(), "internal service identity, not missing headers, selects Agent path");
         verify(approvalService).recordGatePending(any(), any(), any(), any(), any(), any(), any());
+    }
+
+    // PLAN-0689 A3b (design §2): attribution falls back run → NULL, never onto the Session's
+    // PRIMARY row. A run without a stamp therefore has no identity to authorize with, so the
+    // CP-owned tool branches must refuse instead of borrowing the column A7 deletes.
+
+    @Test
+    void skillReadIsRefusedWhenTheRunCarriesNoAgentPrincipal() throws Exception {
+        when(requestRewriter.rewrite(anyString(), anyString(), anyString()))
+                .thenAnswer(inv -> inv.getArgument(1));
+        when(chatRunStatusReadService.agentPrincipalIdByRunId(anyString()))
+                .thenReturn(java.util.Optional.<java.util.UUID>empty());
+        seedToolCache("skill_read", "__cp__");
+        String body = "{\"jsonrpc\":\"2.0\",\"method\":\"tools/call\",\"params\":{\"name\":\"skill_read\","
+                + "\"arguments\":{\"skill\":\"" + java.util.UUID.randomUUID() + "\"}},\"id\":21}";
+
+        ResponseEntity<String> response = invokeToolsCallAsAgent(body);
+
+        assertRefusedForUnstampedRun(response);
+        // The refusal must be attributable: without the detail a client cannot tell "no run
+        // principal" apart from any other FORBIDDEN, which is how the old fallback stayed hidden.
+        var result = new com.fasterxml.jackson.databind.ObjectMapper()
+                .readTree(response.getBody()).path("result");
+        assertEquals("Chat run has no Agent principal bound",
+                result.path("structuredContent").path("detail").asText());
+    }
+
+    @Test
+    void acquireCredentialIsRefusedWhenTheRunCarriesNoAgentPrincipal() throws Exception {
+        when(requestRewriter.rewrite(anyString(), anyString(), anyString()))
+                .thenAnswer(inv -> inv.getArgument(1));
+        when(chatRunStatusReadService.agentPrincipalIdByRunId(anyString()))
+                .thenReturn(java.util.Optional.<java.util.UUID>empty());
+        String body = "{\"jsonrpc\":\"2.0\",\"method\":\"tools/call\",\"params\":{"
+                + "\"name\":\"acquire_credential\",\"arguments\":{\"credentialId\":\""
+                + java.util.UUID.randomUUID() + "\",\"reason\":\"deny path probe\"}},\"id\":22}";
+
+        ResponseEntity<String> response = invokeToolsCallAsAgent(body);
+
+        assertRefusedForUnstampedRun(response);
+    }
+
+    @SuppressWarnings("unchecked")
+    private ResponseEntity<String> invokeToolsCallAsAgent(String body) throws Exception {
+        return (ResponseEntity<String>) ReflectionTestUtils.invokeMethod(
+                controller, "handleToolsCall", TEST_WS_UUID, body,
+                durableToolCallHeaders(), "sess-1", internalAccessContext(TEST_WS_UUID, "u-1", "sess-1"));
+    }
+
+    private static void assertRefusedForUnstampedRun(ResponseEntity<String> response) throws Exception {
+        // MCP tools/call reports a refusal inside the JSON-RPC result, not through the HTTP status:
+        // the call itself was served and the *tool* reported isError. Asserting 403 here would pass
+        // on a transport failure while hiding whether the branch was reached at all.
+        assertEquals(HttpStatus.OK, response.getStatusCode());
+        var problem = new com.fasterxml.jackson.databind.ObjectMapper().readTree(response.getBody())
+                .path("result");
+        assertTrue(problem.path("isError").asBoolean(),
+                "an unstamped run must surface as a tool error, never as a successful call");
+        assertEquals("FORBIDDEN", problem.path("structuredContent").path("code").asText());
     }
 
     private static HttpHeaders durableToolCallHeaders() {

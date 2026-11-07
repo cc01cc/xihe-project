@@ -138,9 +138,9 @@ class ChatRunContinuationService {
                 idempotencyKey, requestHash, source.getProvider(), source.getModel(), source.getToolMode(), "accepted");
         child.setOrigin(ChatRun.ORIGIN_USER_SUBMISSION);
         child.setBranchId(branchId);
-        // K2: continuation execution identity belongs to the Session, not the source responder.
-        child.setAgentPrincipalId(session.getAgentPrincipalId() == null
-                ? null : UUID.fromString(session.getAgentPrincipalId()));
+        // PLAN-0689 A3 (T1.3 / design §3-C): the continuation child inherits the identity of the
+        // Run it continues — that Run's own stamp — instead of re-deriving it from the Session.
+        child.setAgentPrincipalId(source.getAgentPrincipalId());
         child.setContextTemplateSnapshot(source.getContextTemplateSnapshot());
         // PLAN-0628 M2a (D28-39 ②): the child inherits the parent listing verbatim instead of
         // re-resolving it — a binding added while the parent ran must NOT appear here, otherwise the

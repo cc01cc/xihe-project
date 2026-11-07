@@ -375,7 +375,6 @@ class AgentPrincipalScopeUpgradeBehaviorTest {
         session.setWorkspaceId(wsB.toString());
         session.setUserId(owner.userId());
         session.setTitle("v19 instance visibility session");
-        session.setAgentPrincipalId(principalId);
         UUID sessionId = sessionRepository.saveAndFlush(session).getId();
 
         Response participant = send(owner.token(), wsB.toString(), "POST",
@@ -447,7 +446,6 @@ class AgentPrincipalScopeUpgradeBehaviorTest {
         session.setWorkspaceId(AgentPrincipalScopeUpgradeFixture.WORKSPACE_ID.toString());
         session.setUserId(owner.userId());
         session.setTitle("v19 scope upgrade session");
-        session.setAgentPrincipalId(AgentPrincipalScopeUpgradeFixture.WORKSPACE_PRINCIPAL_ID.toString());
         return sessionRepository.saveAndFlush(session).getId();
     }
 

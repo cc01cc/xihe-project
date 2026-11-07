@@ -65,10 +65,9 @@ class GrantPrincipalPathResolverTest {
 
         Session session = new Session(workspaceId.toString(), userId.toString(), "test");
         session.setId(sessionId);
-        session.setAgentPrincipalId(principalId.toString());
         SessionReadService.SessionPathView sessionView = new SessionReadService.SessionPathView(
                 session.getId(), session.getUserId(), session.getWorkspaceId(),
-                session.getAgentPrincipalId(), session.getSpawnedFromSessionId(),
+                principalId.toString(), session.getSpawnedFromSessionId(),
                 session.getSpawnedFromRunId(), session.getSpawnedAt(), session.getKind(),
                 session.getAgentPermissionsSnapshot());
         when(sessionReadService.findById(sessionId)).thenReturn(Optional.of(sessionView));

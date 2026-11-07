@@ -574,10 +574,10 @@ class SpawnCancelSerializationTest extends AbstractIntegrationTest {
         Session parentSession = new Session(workspaceId, userId,
                 "T25 parent " + UUID.randomUUID().toString().substring(0, 8));
         parentSession.setId(UUID.randomUUID());
-        parentSession.setAgentPrincipalId(principalId.toString());
         parentSession.setAgentPermissionsSnapshot(capNode());
         ChatBindingTestSupport.bindNewChatConnection(parentSession, providerConnectionRepository, apiRequestTemplates, userId);
         sessionRepository.saveAndFlush(parentSession);
+        bindPrimaryParticipant(parentSession.getId().toString(), principalId.toString());
 
         String parentRunId = saveRun(parentSession, "running");
         String toolCallId = UUID.randomUUID().toString();
@@ -605,7 +605,6 @@ class SpawnCancelSerializationTest extends AbstractIntegrationTest {
         fork.setSpawnedFromSessionId(UUID.fromString(parentSessionId));
         fork.setSpawnedFromRunId(UUID.fromString(parentRunId));
         fork.setSpawnedAt(Instant.now());
-        fork.setAgentPrincipalId(principalId.toString());
         fork.setAgentPermissionsSnapshot(capNode());
         return sessionRepository.saveAndFlush(fork);
     }
@@ -616,6 +615,7 @@ class SpawnCancelSerializationTest extends AbstractIntegrationTest {
                 runId, session.getId().toString(), userId, workspaceId,
                 "t25-submit-" + runId, "t25-hash-" + runId,
                 "provider", "model", "workspace", status));
+        jdbcTemplate.update("UPDATE chat_runs SET agent_principal_id = CAST(? AS UUID) WHERE id = CAST(? AS UUID)", principalId.toString(), runId);
         return runId;
     }
 

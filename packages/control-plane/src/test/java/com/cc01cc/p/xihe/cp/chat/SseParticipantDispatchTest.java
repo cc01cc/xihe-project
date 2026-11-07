@@ -62,7 +62,6 @@ class SseParticipantDispatchTest extends AbstractIntegrationTest {
         session.setWorkspaceId(workspaceId);
         session.setUserId(ownerId);
         session.setTitle("P623 sse session");
-        session.setAgentPrincipalId(principal.getId().toString());
         sessionId = sessions.saveAndFlush(session).getId();
 
         participantRows.saveAndFlush(row("PRIMARY", "AGENT", principal.getId(), 10));
