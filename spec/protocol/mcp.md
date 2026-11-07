@@ -103,7 +103,7 @@ MCP 侧审计动作（T2.3 读回契约，新增动作须同批改本节与 [`se
 
 - **原则**：工具可见性 MUST 与 `read` 面同源，不另立矩阵（`tools/list` 与 `tools/call` 共用同一 face 解析）。
 - **现状**：`tools/list` 只做目录合并（system tools + stdio 合并 + CP 自有三件套，`McpProxyController.java:325-340,565-610`），**没有**按 grants 过滤的分支；未持 `read` 的主体在目录里仍可能看到工具，调用时才被 fail-closed 拒绝。因此「未授权不可见」目前**不是**既有保证。
-- **冻结条款**：G8 三工具的 v1 判据以 **「不可调 + 可审计」** 为准（调用侧强制 + 审计留痕）。目录侧过滤属**新增实现**（T2.2 决策项，见 PLAN-0686 的 `review/round-2.md`），本文件不把未实现行为写成契约。
+- **冻结条款（已裁定）**：G8 三工具的 v1 判据 = **「不可调 + 可审计」**（调用侧 fail-closed + 拒绝有审计留痕）。目录侧过滤 **descope**，不在 v1 判据内（PLAN-0686 `review/round-2.md` P1-1 裁定 B，台账 D-63）；若未来要做目录过滤，属**新增实现**，须同批改本节 + `verify.md` V2 + OpenAPI/inventory。本文件不把未实现行为写成契约。
 
 ### 3.5 写型与拆分闸（不冻结未来矩阵）
 
@@ -121,6 +121,6 @@ MCP 侧审计动作（T2.3 读回契约，新增动作须同批改本节与 [`se
 | P-a 只看 | 主体持有 `read`（`WS_VIEWER`+ 或实例 `read`），且为该 workspace 成员 | 真实 Agent run 调 `git_status`（并及 `git_diff`/`git_log`） | tool-result 成功且与工作树实际一致；审计流新增 `tool=git_status action=request`；**无** `authorization_grant_denied` |
 | P-b 只看 | 构造无 `read` 的主体（仅 `workspace:admin` 或空原子）且在该 workspace | 同一 run 调 `git_status` | 无副作用；返回编码 `TOOL_GRANT_DENIED` tool-result（**非裸 403**）；SSE `tool_exec_denied`；审计流新增 `action=authorization_grant_denied`、`detail=no matching grant or workspace membership`；**无** pending approval 行 |
 | P-c 未知工具 | 调用未登记工具名 | `tools/call` | `TOOL_GRANT_DENIED`；审计流有 `policy_hard_deny` 或 `authorization_grant_denied` |
-| P-d 目录现状 | 同 P-b 主体 | `tools/list` | 记录当前行为作基线（默认预期：目录仍含三工具）；若 T2.2 补过滤则改为「不含」——按 `review/round-2.md` 裁定选一种 |
+| P-d 目录基线 | 同 P-b 主体 | `tools/list` | 记录当前行为为基线（目录仍含三工具）；v1 不要求过滤，**不判失败** |
 | P-e 回归 | G8 合入后的 L1 波次 | checkpoint capture/restore；`git_diff`/`git_log` 与 CLI 对照 | checkpoint 链绿（V4）；读工具不改 index/refs（前后 `git status` 一致）；运行日志无 `ShadowGit` 路径命中 |
 
