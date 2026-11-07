@@ -53,6 +53,19 @@ import {
   summarizePlaywrightReport,
 } from './lib/e2e-test-counts.mjs'
 import { cargoTargetBase } from './lib/stack-cargo-target.mjs'
+// PLAN-0680 task-76: the window gate's *judgement* lives in a pure lib so the
+// "which mode rejects / what does it defer" matrix is unit-tested instead of
+// being re-derived at every call site (see the lib header for the two defects).
+import {
+  artifactGatePolicy,
+  decideSkipPreflightDisk,
+  describeDiskGate,
+  describePreflightGate,
+  diskGateRecord,
+  evaluateGateFindings,
+  parseBlockingScopes,
+  parseDiskLine,
+} from './lib/e2e-preflight-gate.mjs'
 if (typeof process.env.CARGO_TARGET_DIR !== 'string' || process.env.CARGO_TARGET_DIR.trim() === '') {
   process.env.CARGO_TARGET_DIR = join(cargoTargetBase(projectDir), 'e2e')
 }
@@ -83,6 +96,11 @@ const externalServer = process.env.XIHE_E2E_EXTERNAL_SERVER === '1'
 const showHelp = process.argv.includes('--help') || process.argv.includes('-h')
 const listBatches = process.argv.includes('--list-batches')
 const skipPreflight = process.argv.includes('--skip-preflight')
+// PLAN-0680 task-76 (defect 2): what the gate actually decided this run, so the
+// run header can prove it later. Before this, `--skip-preflight` produced ONE
+// console line and left no artifact — a run that opened a window on a 12%-free
+// disk looked identical to one that passed every check.
+let preflightRecord = null
 const validateAtEnd = process.argv.includes('--validate-at-end')
 const jarModeArg = process.argv.find((arg) => arg.startsWith('--jar-mode='))
 const jarMode = jarModeArg?.slice('--jar-mode='.length) ?? 'auto'
@@ -574,7 +592,9 @@ runner flags:
   --allow-skip          accept skipped tests (default: any skip fails the run — a gated spec that
                         self-skips would otherwise look like a pass)
   --jar-mode=<mode>     CP boot artifact policy: auto (default) | use | rebuild | run | native (fail-closed; enables the CP↔Runtime WebSocket channel)
-  --skip-preflight      skip the read-only preflight (not recommended)
+  --skip-preflight      skip the preflight's docker/port/artifact/run checks, but NOT the disk
+                        gate (that still runs via --disk-only) and NOT silently: the verdict is
+                        recorded as preflight.diskGate in the run header (not recommended)
   --validate-at-end     run "mise run validate" once after the specs (batch closure; default off)
   --skip-runtime        boot without the Runtime service (chat-only paths)
   --persistent          boot the isolated stack, record it and exit (see reuse)
@@ -661,6 +681,11 @@ async function writeArtifactsManifest(cpBootPlan) {
     realRoute,
     jarMode,
     cpBoot: cpBootPlan ? { mode: cpBootPlan.mode, reason: cpBootPlan.reason } : { mode: 'external-server', reason: 'stack reuse' },
+    // PLAN-0680 task-76: the window gate's own verdict belongs in the run header.
+    // `diskGate.mode` is `enforced` when the disk section actually ran (always, unless
+    // the segment itself was unusable) and `bypassed` only when it produced no verdict —
+    // so "opened on a nearly-full disk" and "skipped the disk gate" stop looking alike.
+    preflight: preflightRecord,
     gitHead,
     artifacts,
   }
@@ -2355,27 +2380,107 @@ async function stopPersistentProcesses(state) {
   }
 }
 
-// PLAN-0375 (R1): read-only preflight gate. Returns false when the run must
-// not start. `allowPorts`/`ownRunId` mark the caller's own persistent stack in
-// reuse mode; `--self-pid` marks this process's own detached log/pid record.
-async function runPreflightGate({ allowPorts = [], ownRunId = '', extraSelfPids = [] } = {}) {
-  if (skipPreflight) {
-    console.log('[e2e-host] --skip-preflight set; skipping the read-only preflight')
-    return true
-  }
-  console.log('[e2e-host] preflight (read-only): node scripts/e2e-preflight.mjs')
+// PLAN-0375 (R1) + PLAN-0680 task-76 (defects 1 & 2): read-only preflight gate.
+// Returns false when the run must not start. `allowPorts`/`ownRunId` mark the
+// caller's own persistent stack in reuse mode; `--self-pid` marks this process's
+// own detached log/pid record.
+//
+// Defect 1 (2026-11-07, cost the window half an hour): `--jar-mode=auto` promises
+// build-then-use, but this gate only looked at `preflight.code !== 0`, and the
+// preflight's artifact section reports a stale jar as FAIL. So a **self-healable**
+// condition refused the run and the rebuild that would have fixed it was never
+// reached — the error read like "the machine is dirty" when it was the gate
+// locking itself. The judgement (`lib/e2e-preflight-gate.mjs`) is now: ask the
+// artifact section only about the artifact **this run actually boots**, and let
+// every non-artifact blocking scope (ports / docker residue / active runs / disk)
+// refuse in every mode — a deferrable artifact condition never buys a pass.
+//
+// Defect 2: `--skip-preflight` used to skip *everything*, disk gate included, and
+// left nothing behind but one console line. Now it skips only the non-disk
+// sections (`e2e-preflight.mjs --disk-only` still runs) and records the verdict,
+// so the run header can prove the disk was never silently ignored.
+async function runPreflightGate({ allowPorts = [], ownRunId = '', extraSelfPids = [], cpBootPlan = null } = {}) {
+  const policy = artifactGatePolicy({
+    jarMode,
+    externalServer,
+    // Who boots the artifact decides the section, not the `--jar-mode` argument:
+    // `auto` can end up in `run` (rebuild failed) and `--jar-mode=run` is only one
+    // of the ways to get there (see resolveCpBootPlan()).
+    cpBootMode: cpBootPlan?.mode ?? (externalServer ? 'reuse' : 'jar'),
+  })
+  if (skipPreflight) return runSkipPreflightDiskGate(policy)
+  console.log(`[e2e-host] preflight (read-only): node scripts/e2e-preflight.mjs${policy.ignoreBuild ? ' --ignore-build' : ''}`)
   const selfPids = [process.pid, ...extraSelfPids.filter((pid) => Number.isInteger(pid) && pid > 0)]
   const preflightArgs = [join(projectDir, 'scripts', 'e2e-preflight.mjs'), `--self-pid=${selfPids.join(',')}`]
-  if (jarMode === 'run' || jarMode === 'native') preflightArgs.push('--ignore-build')
+  if (policy.ignoreBuild) preflightArgs.push('--ignore-build')
   if (allowPorts.length > 0) preflightArgs.push(`--allow-ports=${allowPorts.join(',')}`)
   if (ownRunId) preflightArgs.push(`--own-run-id=${ownRunId}`)
   const preflight = await runCapture(nodeCommand, preflightArgs)
   if (preflight.stdout) process.stdout.write(preflight.stdout)
   if (preflight.stderr) process.stderr.write(preflight.stderr)
-  if (preflight.code !== 0) {
+  // A non-zero exit whose FAIL lines we cannot attribute to a scope must NOT be
+  // read as "probably just the artifact section" — fail closed on `unclassified`.
+  const parsedScopes = parseBlockingScopes(preflight.stdout)
+  const blockingScopes = parsedScopes.length > 0 || preflight.code === 0 ? parsedScopes : ['unclassified']
+  const decision = evaluateGateFindings({ policy, blockingScopes })
+  preflightRecord = {
+    gate: {
+      verdict: decision.verdict,
+      buildSection: policy.buildSection,
+      cpEntry: policy.cpBootMode,
+      deferred: decision.deferred,
+      blockingScopes,
+      reason: decision.reason,
+      policyReason: policy.reason,
+      skippedByFlag: false,
+    },
+    diskGate: diskGateRecord({ exitCode: preflight.code, diskResult: parseDiskLine(preflight.stdout) }),
+  }
+  console.log(`[e2e-host] ${describePreflightGate({ ...policy, ...decision })}`)
+  if (decision.verdict === 'refuse') {
     console.error('[e2e-host] preflight reported blocking findings; not starting a run.')
+    console.error(`[e2e-host] gate verdict: refuse — ${decision.reason}`)
     console.error('[e2e-host] handle the findings above (teardown residue / ports / active run), then retry.')
-    console.error('[e2e-host] --skip-preflight bypasses this gate (use only when you know the finding is not yours).')
+    if (decision.deferred.length > 0) {
+      console.error(`[e2e-host] the artifact section was already deferred to the rebuild path (${decision.deferred.join(', ')}), so these findings are not self-healable.`)
+    }
+    console.error('[e2e-host] --skip-preflight still runs the disk gate and records it in the run header (use only when you know the finding is not yours).')
+    return false
+  }
+  return true
+}
+
+// Defect 2: `--skip-preflight` = skip the non-disk checks, keep the disk gate.
+// Three outcomes, all visible: disk ok/skipped ⇒ proceed (recorded `enforced`),
+// disk blocked/unverifiable ⇒ refuse, disk segment itself unusable ⇒ proceed but
+// record `bypassed` (the only remaining "skip", and it is written down).
+async function runSkipPreflightDiskGate(policy) {
+  console.log('[e2e-host] --skip-preflight set; skipping the docker/port/artifact/run checks (they are NOT recorded as passed)')
+  console.log('[e2e-host] disk gate still runs: node scripts/e2e-preflight.mjs --disk-only')
+  const diskRun = await runCapture(nodeCommand, [join(projectDir, 'scripts', 'e2e-preflight.mjs'), '--disk-only'])
+  if (diskRun.stdout) process.stdout.write(diskRun.stdout)
+  if (diskRun.stderr) process.stderr.write(diskRun.stderr)
+  const decision = decideSkipPreflightDisk({ exitCode: diskRun.code, diskResult: parseDiskLine(diskRun.stdout) })
+  preflightRecord = {
+    gate: {
+      verdict: decision.proceed ? 'proceed' : 'refuse',
+      buildSection: policy.buildSection,
+      cpEntry: policy.cpBootMode,
+      deferred: decision.proceed ? ['docker', 'ports', 'build', 'runs', 'digest'] : [],
+      blockingScopes: decision.proceed ? [] : ['disk'],
+      reason: decision.reason ?? 'skipped by --skip-preflight (disk gate still enforced)',
+      policyReason: policy.reason,
+      skippedByFlag: true,
+    },
+    diskGate: decision.record,
+  }
+  console.log(`[e2e-host] ${describeDiskGate(decision.record)} (recorded as diskGate in the run header)`)
+  if (decision.record.mode === 'bypassed') {
+    console.warn('[e2e-host] WARNING: neither the preflight nor its disk segment produced a verdict; recording diskGate: bypassed')
+  }
+  if (!decision.proceed) {
+    console.error(`[e2e-host] REFUSE: ${decision.reason}`)
+    console.error('[e2e-host] --skip-preflight does not skip the disk gate; free space first (or fix disk sampling) and retry.')
     return false
   }
   return true
@@ -2580,10 +2685,12 @@ async function main() {
     console.log('[e2e-host] XIHE_E2E_EXTERNAL_SERVER=1 set; assuming services are already running externally')
   }
 
-  // PLAN-0375 (R1): open the window with the read-only preflight. It runs after
-  // the reuse restore so the caller's own persistent stack (ports + sandbox
-  // labels) is recognised instead of being reported as leaked residue.
-  if (!(await runPreflightGate({ allowPorts: reuseOwnPorts, ownRunId: reuseOwnRunId, extraSelfPids: [reuseRunnerPid] }))) {
+  // PLAN-0375 (R1) + PLAN-0680 task-76: open the window with the read-only
+  // preflight. It runs after `resolveCpBootPlan()` (so the artifact section asks
+  // about the artifact this run boots, and a stale jar was already rebuilt) and
+  // after the reuse restore (so the caller's own persistent stack — ports and
+  // sandbox labels — is recognised instead of being reported as leaked residue).
+  if (!(await runPreflightGate({ allowPorts: reuseOwnPorts, ownRunId: reuseOwnRunId, extraSelfPids: [reuseRunnerPid], cpBootPlan }))) {
     process.exitCode = 1
     return
   }
@@ -2825,8 +2932,12 @@ async function main() {
       goldpathAccount,
       firstRun,
       registrationPolicy,
+      // PLAN-0680 task-76: the boot-only lane is where a skipped disk gate used to
+      // vanish entirely; reuse runs inherit this file, so the verdict must round-trip.
+      preflight: preflightRecord,
     }, null, 2))
     console.log(`[e2e-host] persistent stack ready; state written to ${stateFile}`)
+    if (preflightRecord?.diskGate) console.log(`[e2e-host] recorded ${describeDiskGate(preflightRecord.diskGate)} in ${stateFile}`)
     console.log('[e2e-host] run specs with: XIHE_E2E_EXTERNAL_SERVER=1 node scripts/e2e-host.mjs --llm-mode=<mode> <specs...>')
     console.log('[e2e-host] stop it with: node scripts/e2e-host.mjs --teardown')
     process.exitCode = 0
