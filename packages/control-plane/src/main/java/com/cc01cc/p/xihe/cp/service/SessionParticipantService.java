@@ -288,6 +288,7 @@ public class SessionParticipantService {
         SessionParticipant toSave = new SessionParticipant(
                 session.getId(), kind, principalId, role, orderIndex, wake, respond);
         toSave.setWakeConfig(wakeConfig);
+        toSave.setDeliveryDefaults(SessionParticipantDeliveryDefaults.normalize(request.deliveryDefaults()));
         SessionParticipant saved = participantRepository.save(toSave);
         // R7: every participant gets a cursor; history counts as read (same rule as the V92 backfill).
         cursorRepository.save(new SessionParticipantCursor(saved.getId(),
@@ -354,6 +355,11 @@ public class SessionParticipantService {
         }
         if (request.respondPolicy() != null && !request.respondPolicy().isBlank()) {
             row.setRespondPolicy(requireRespond(request.respondPolicy()));
+        }
+        if (request.deliveryDefaults() != null) {
+            // Empty list is the explicit "clear" value; omitted (null) leaves the row untouched.
+            row.setDeliveryDefaults(
+                    SessionParticipantDeliveryDefaults.normalize(request.deliveryDefaults()));
         }
         if (request.wakePolicy() != null && !request.wakePolicy().isBlank()) {
             String wake = requireWake(request.wakePolicy());
@@ -840,6 +846,7 @@ public class SessionParticipantService {
                         cursor.getUpdatedAt());
         return new ParticipantView(row.getId(), row.getPrincipalKind(), row.getPrincipalId(),
                 row.getRole(), row.getOrderIndex(), row.getWakePolicy(), row.getRespondPolicy(),
+                SessionParticipantDeliveryDefaults.viewOf(row.getDeliveryDefaults()),
                 row.getCreatedAt(), row.getDisabledAt(),
                 // displayName: AGENT → agent_principals.name; HUMAN → the user display name (a group chat
                 // must never show a raw UUID as "who said this"). null only when it cannot be resolved.
@@ -1001,17 +1008,20 @@ public class SessionParticipantService {
 
     public record AddRequest(String principalKind, String principalId, String role,
                              String wakePolicy, String respondPolicy,
-                             java.util.Map<String, Object> wakeConfig) {}
+                             java.util.Map<String, Object> wakeConfig,
+                             List<String> deliveryDefaults) {}
 
     public record UpdateRequest(String role, String wakePolicy, String respondPolicy,
                                 Boolean disabled,
-                                java.util.Map<String, Object> wakeConfig) {}
+                                java.util.Map<String, Object> wakeConfig,
+                                List<String> deliveryDefaults) {}
 
     public record CursorView(Long lastReadEventSeq, Integer mentionCount, Instant updatedAt) {}
 
     public record ParticipantView(UUID participantId, String principalKind, UUID principalId,
                                   String role, Integer orderIndex, String wakePolicy,
-                                  String respondPolicy, Instant createdAt, Instant disabledAt,
+                                  String respondPolicy, List<String> deliveryDefaults,
+                                  Instant createdAt, Instant disabledAt,
                                   String displayName, String defaultModelProvider,
                                   String defaultModelName, String source, boolean selfOwned,
                                   com.fasterxml.jackson.databind.JsonNode wakeConfig,
