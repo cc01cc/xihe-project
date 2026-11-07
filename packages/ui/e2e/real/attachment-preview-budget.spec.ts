@@ -514,7 +514,8 @@ async function prepareFixture(request: APIRequestContext, page: Page): Promise<v
     const chat = new ChatPage(page);
     seedPage(page, journey);
     await page.goto(`${UI_URL}${workspaceChatPath(workspaceId, sessionId)}`);
-    await expect(page.getByTestId("message-list")).toBeVisible({ timeout: 90_000 });
+    // 新会话 messages 为空时 ChatPanel 不挂 MessageList（`v-if="messages.length > 0"`），
+    // 空态只有欢迎语 + composer ⇒ 就绪探针只能用 composer；首条消息落库后 message-list 才出现。
     await expect(chat.input).toBeVisible({ timeout: 90_000 });
 
     const csvBuffer = buildOriginalCsv();
