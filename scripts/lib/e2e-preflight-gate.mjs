@@ -108,13 +108,25 @@ export function artifactGatePolicy({ jarMode = 'auto', externalServer = false, c
  * @param {object} input
  * @param {ReturnType<typeof artifactGatePolicy>} input.policy
  * @param {string[]} [input.blockingScopes]
+ * @param {number|null} [input.preflightExitCode] preflight 的真实退出码（`null` = 没拿到）
  * @returns {{verdict: 'proceed'|'refuse', reason: string, refusals: string[], deferred: string[]}}
  */
-export function evaluateGateFindings({ policy, blockingScopes = [] } = {}) {
+export function evaluateGateFindings({ policy, blockingScopes = [], preflightExitCode = 0 } = {}) {
   if (!policy || typeof policy.ignoreBuild !== 'boolean') {
     throw new TypeError('evaluateGateFindings: a policy from artifactGatePolicy() is required');
   }
   const scopes = [...new Set(blockingScopes)];
+  // 失效即关闭（fail-closed）：退出码非 0 却解析不出任何 scope，说明那几行 FAIL 不是
+  // `  FAIL  [scope] message` 形式（新加的检查忘了打 scope）。这种"归属不明"绝不能读成
+  // "大概只是产物陈旧" —— 兜底必须在本库内，不能只写在某个调用方里（否则下一个调用方就会假绿）。
+  if (scopes.length === 0 && preflightExitCode !== 0) {
+    return {
+      verdict: 'refuse',
+      reason: `preflight exited ${preflightExitCode === null ? 'without a code' : preflightExitCode} but no blocking scope could be parsed from its output — an unattributed FAIL must not be read as "probably just the artifact section" (fail-closed; the check that fired needs a \`  FAIL  [scope]\` line)`,
+      refusals: ['unclassified'],
+      deferred: policy.ignoreBuild ? [BUILD_SCOPE] : [],
+    };
+  }
   const buildBlockers = scopes.filter((scope) => scope === BUILD_SCOPE);
   const refusals = scopes.filter((scope) => scope !== BUILD_SCOPE);
   const deferred = policy.ignoreBuild ? [BUILD_SCOPE] : [];
@@ -130,18 +142,21 @@ export function evaluateGateFindings({ policy, blockingScopes = [] } = {}) {
       deferred,
     };
   }
-  if (!policy.ignoreBuild && buildBlockers.length > 0) {
+  // 顺序有意如此：先报**不可自愈**的那些，再单独报"重建后仍陈旧"。两类同时出现时，
+  // 把理由写成"产物类"会误导排障（真实 preflight 同时给 build + runtime-target 时踩到过）。
+  if (refusals.length > 0) {
+    const buildNote = buildBlockers.length > 0 ? ` (plus a build-scope blocker that also survived the pre-gate rebuild: ${buildBlockers.join(', ')})` : '';
     return {
       verdict: 'refuse',
-      reason: 'build-class finding survived the pre-gate rebuild: NOT self-healable (the runner already ran `mvn package` before the gate, so a stale/missing jar here means the rebuild failed or did not produce a newer jar)',
+      reason: `non-self-healable blocking finding(s): ${refusals.join(', ')} — a deferrable artifact condition must never buy a pass for these${buildNote}`,
       refusals,
       deferred,
     };
   }
-  if (refusals.length > 0) {
+  if (!policy.ignoreBuild && buildBlockers.length > 0) {
     return {
       verdict: 'refuse',
-      reason: `non-self-healable blocking finding(s): ${refusals.join(', ')} — a deferrable artifact condition must never buy a pass for these`,
+      reason: 'build-class finding survived the pre-gate rebuild: NOT self-healable (the runner already ran `mvn package` before the gate, so a stale/missing jar here means the rebuild failed or did not produce a newer jar)',
       refusals,
       deferred,
     };
@@ -152,7 +167,13 @@ export function evaluateGateFindings({ policy, blockingScopes = [] } = {}) {
 /** 便利组合（两段式仍可分别调用；测试与日志都用得到单次判定）。 */
 export function decidePreflightGate(input = {}) {
   const policy = artifactGatePolicy(input);
-  const findings = evaluateGateFindings({ policy, blockingScopes: input.blockingScopes ?? [] });
+  const findings = evaluateGateFindings({
+    policy,
+    blockingScopes: input.blockingScopes ?? [],
+    // `null` 是"没拿到退出码"（spawn 失败），必须保持 fail-closed；不能用 `?? 0`
+    // 把它当成成功退出码 —— 那正是 T14 抓到的假绿路径。
+    preflightExitCode: input.preflightExitCode === undefined ? 0 : input.preflightExitCode,
+  });
   return { ...policy, ...findings };
 }
 
@@ -185,8 +206,8 @@ export function parseDiskLine(stdout) {
  * preflight 输出 → 阻塞项的 scope 列表（`  FAIL  [scope] message`，见 e2e-preflight.mjs 的
  * findings 汇总行）。门的判据只关心"这些阻塞项属于哪一段"，所以这里只取 scope、去重。
  *
- * 严格按格式解析：认不出来的 `FAIL` 行**不**被当成某个 scope（否则会凭空放行），由调用方
- * 用退出码兜底（`runPreflightGate` 在"退出码非 0 但解析不出 scope"时按不可自愈处理）。
+ * 严格按格式解析：认不出来的 `FAIL` 行**不**被当成某个 scope（否则会凭空放行）；
+ * 这类"归属不明"由 `evaluateGateFindings` 按退出码 fail-closed 处理。
  * @param {string} stdout
  * @returns {string[]}
  */

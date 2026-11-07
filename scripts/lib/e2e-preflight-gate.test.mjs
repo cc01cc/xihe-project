@@ -282,3 +282,28 @@ test('T13 runtime-target 是"每轮都启动"的产物：任何 jar 模式下都
     }
   }
 });
+
+// 2026-11-08 用真实 preflight 输出（exit 1、findings 里只有一行带 scope）驱动判定时发现：
+// 失效即关闭的兜底原本只写在 e2e-host.mjs 里，库本身对"退出码非 0 但解析不出 scope"是放行的
+// ⇒ 下一个调用方必然假绿。兜底下沉到库里，这里把它钉住。
+test('T14 fail-closed：退出码非 0 但解析不出任何 scope ⇒ 拒绝（不许读成"大概只是产物陈旧"）', () => {
+  for (const jarMode of ['auto', 'use', 'rebuild', 'run', 'native']) {
+    for (const exitCode of [1, 2, null]) {
+      const decision = decidePreflightGate({ jarMode, cpBootMode: 'jar', blockingScopes: [], preflightExitCode: exitCode });
+      assert.equal(decision.verdict, 'refuse', `jarMode=${jarMode} exit=${exitCode} 必须拒绝`);
+      assert.deepEqual(decision.refusals, ['unclassified']);
+      assert.match(decision.reason, /fail-closed/);
+      assert.match(decision.reason, /FAIL {2}\[scope\]/); // 提示下一个检查该怎么打 scope 行
+    }
+  }
+  // 退出码 0 + 无 scope 才是真正的"全绿"：不能把这条兜底写成恒拒绝。
+  for (const jarMode of ['auto', 'use', 'rebuild']) {
+    const decision = decidePreflightGate({ jarMode, cpBootMode: 'jar', blockingScopes: [], preflightExitCode: 0 });
+    assert.equal(decision.verdict, 'proceed', `jarMode=${jarMode} 退出码 0 时必须放行`);
+    assert.deepEqual(decision.refusals, []);
+  }
+  // 有 scope 时退出码不参与判据（scope 说了算），避免两条判据互相打架。
+  const withScope = decidePreflightGate({ jarMode: 'auto', cpBootMode: 'jar', blockingScopes: ['ports'], preflightExitCode: 1 });
+  assert.deepEqual(withScope.refusals, ['ports']);
+  assert.match(withScope.reason, /non-self-healable/);
+});

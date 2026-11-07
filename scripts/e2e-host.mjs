@@ -2419,17 +2419,17 @@ async function runPreflightGate({ allowPorts = [], ownRunId = '', extraSelfPids 
   if (preflight.stdout) process.stdout.write(preflight.stdout)
   if (preflight.stderr) process.stderr.write(preflight.stderr)
   // A non-zero exit whose FAIL lines we cannot attribute to a scope must NOT be
-  // read as "probably just the artifact section" — fail closed on `unclassified`.
+  // read as "probably just the artifact section". That fail-closed rule lives in
+  // the lib (evaluateGateFindings) so every caller gets it, not just this one.
   const parsedScopes = parseBlockingScopes(preflight.stdout)
-  const blockingScopes = parsedScopes.length > 0 || preflight.code === 0 ? parsedScopes : ['unclassified']
-  const decision = evaluateGateFindings({ policy, blockingScopes })
+  const decision = evaluateGateFindings({ policy, blockingScopes: parsedScopes, preflightExitCode: preflight.code })
   preflightRecord = {
     gate: {
       verdict: decision.verdict,
       buildSection: policy.buildSection,
       cpEntry: policy.cpBootMode,
       deferred: decision.deferred,
-      blockingScopes,
+      blockingScopes: parsedScopes.length > 0 ? parsedScopes : decision.refusals,
       reason: decision.reason,
       policyReason: policy.reason,
       skippedByFlag: false,
