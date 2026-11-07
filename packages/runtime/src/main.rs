@@ -6635,6 +6635,68 @@ mod checkpoint_handler_tests {
         assert_eq!(invalid_body["code"], "CHECKPOINT_INVALID_REQUEST");
     }
 
+    /// BL-207 / D-64 ⑤: handler-level missing-git contract. A workspace that *is* a
+    /// repository needs host git, so an unusable git binary must fail explicitly with
+    /// 503 + `CHECKPOINT_UNAVAILABLE` + one of the three `reason` codes; the paired
+    /// non-repository workspace keeps returning 200 `isRepository:false` without ever
+    /// spawning git (D-64 ④). Contract: spec/protocol/mcp.md §3.5.
+    #[tokio::test]
+    async fn workspace_git_status_returns_503_git_unavailable_without_host_git() {
+        let temp = workspace_root();
+        // `.git` is resolved *before* the capability probe (checkpoint.rs:3306), so only a
+        // repository workspace depends on host git being usable.
+        std::fs::create_dir_all(temp.path().join(WS).join(".git")).expect("fixture .git");
+        let service =
+            CheckpointService::new(temp.path()).with_git_binary("xihe-runtime-missing-git-binary");
+        let state = state_with(service).await;
+        let uri = format!("/internal/v1/runtime/workspaces/{WS}/git-status");
+
+        let (status, content_type, body) = send_text(&state, &uri).await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+        assert_eq!(
+            content_type.as_deref(),
+            Some("application/problem+json"),
+            "the failure face must stay Problem Details: {body}"
+        );
+        let value: serde_json::Value = serde_json::from_str(&body).expect("problem json");
+        assert_eq!(value["code"], "CHECKPOINT_UNAVAILABLE", "{body}");
+        assert_eq!(value["status"], 503, "{body}");
+        assert_eq!(
+            value["type"], "https://xihe.dev/problems/checkpoint_unavailable",
+            "{body}"
+        );
+        assert!(!value["title"].as_str().unwrap_or("").is_empty(), "{body}");
+        assert!(!value["detail"].as_str().unwrap_or("").is_empty(), "{body}");
+        assert!(
+            !value["requestId"].as_str().unwrap_or("").is_empty(),
+            "{body}"
+        );
+        let reason = value["reason"].as_str().expect("reason must be present");
+        assert_eq!(
+            reason, "GIT_UNAVAILABLE",
+            "a missing binary is GIT_UNAVAILABLE, not GIT_TOO_OLD/GIT_FAILED: {body}"
+        );
+        assert!(
+            ["GIT_UNAVAILABLE", "GIT_TOO_OLD", "GIT_FAILED"].contains(&reason),
+            "the reason vocabulary is the fixed three-way split, never a collapsed family name: {body}"
+        );
+
+        // Paired reverse assertion: no `.git` ⇒ success with `isRepository:false` and an
+        // empty entry list, even though host git is unavailable (no git spawn at all).
+        let non_repo_temp = workspace_root();
+        let non_repo_service = CheckpointService::new(non_repo_temp.path())
+            .with_git_binary("xihe-runtime-missing-git-binary");
+        let non_repo_state = state_with(non_repo_service).await;
+        let (non_repo_status, non_repo_body) = send(&non_repo_state, Method::GET, &uri, None).await;
+        assert_eq!(non_repo_status, StatusCode::OK, "{non_repo_body}");
+        assert_eq!(non_repo_body["isRepository"], false, "{non_repo_body}");
+        assert_eq!(
+            non_repo_body["entries"],
+            serde_json::json!([]),
+            "{non_repo_body}"
+        );
+    }
+
     /// Every checkpoint route stays behind the internal service bearer filter.
     #[tokio::test]
     async fn checkpoint_routes_require_service_auth() {
