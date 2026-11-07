@@ -631,8 +631,13 @@ export interface AgentSkillBinding {
     skillId: string;
     name: string;
     description?: string | null;
+    /** Definition home (workspace-private vs instance library), independent of the binding scope. */
     sourceType?: string | null;
     sourceName?: string | null;
+    /** PLAN-0680: binding activation scope, server-derived from the workspace context. */
+    scopeType: "instance" | "workspace";
+    scopeId: string | null;
+    scopeName: string | null;
     tokenEstimate?: number | null;
 }
 
@@ -3297,7 +3302,13 @@ export const api = {
             const bindingId = typeof row.bindingId === "string" ? row.bindingId : "";
             const skillId = typeof row.skillId === "string" ? row.skillId : "";
             const name = typeof row.name === "string" ? row.name : "";
-            if (!bindingId || !skillId || !name) return [];
+            // scopeType is required by the PLAN-0680 wire contract: a row without a valid
+            // axis cannot be rendered as either tier, so drop it instead of guessing instance.
+            const scopeType =
+                row.scopeType === "instance" || row.scopeType === "workspace"
+                    ? row.scopeType
+                    : null;
+            if (!bindingId || !skillId || !name || !scopeType) return [];
             return [
                 {
                     bindingId,
@@ -3306,6 +3317,9 @@ export const api = {
                     description: typeof row.description === "string" ? row.description : null,
                     sourceType: typeof row.sourceType === "string" ? row.sourceType : null,
                     sourceName: typeof row.sourceName === "string" ? row.sourceName : null,
+                    scopeType,
+                    scopeId: typeof row.scopeId === "string" ? row.scopeId : null,
+                    scopeName: typeof row.scopeName === "string" ? row.scopeName : null,
                     tokenEstimate:
                         typeof row.tokenEstimate === "number" && Number.isFinite(row.tokenEstimate)
                             ? row.tokenEstimate
