@@ -8,38 +8,19 @@
  * - `openStack`: innermost-first Escape arbitration (BL-477). Before this, every open
  *   instance listened on `document` and all of them closed on one Escape — an enclosing
  *   `Sheet` plus a teleported modal closed in the same keypress.
- * - `scrollLock`: opening counter, so closing an inner modal does not unlock the page
- *   while an outer modal is still open.
+ *
+ * The body-scroll counter that used to live here moved to `composables/useScrollLock` so
+ * that overlays which are not `BaseModal` (and not a reka `Dialog`) can share the same
+ * counter instead of keeping a second one (BL-477).
  */
 const openModalStack: symbol[] = [];
-
-const bodyScrollLock = {
-    count: 0,
-    restoreOverflow: "",
-};
-
-function lockBodyScroll(): void {
-    if (bodyScrollLock.count === 0) {
-        bodyScrollLock.restoreOverflow = document.body.style.overflow;
-        document.body.style.overflow = "hidden";
-    }
-    bodyScrollLock.count += 1;
-}
-
-function unlockBodyScroll(): void {
-    if (bodyScrollLock.count === 0) return;
-    bodyScrollLock.count -= 1;
-    if (bodyScrollLock.count === 0) {
-        document.body.style.overflow = bodyScrollLock.restoreOverflow;
-        bodyScrollLock.restoreOverflow = "";
-    }
-}
 </script>
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, useId, watch } from "vue";
 import { X } from "@lucide/vue";
 import { FocusScope } from "reka-ui";
+import { useScrollLock } from "@/composables/useScrollLock";
 
 const props = withDefaults(
     defineProps<{
@@ -76,6 +57,8 @@ const labelFallback = computed(() => (props.title ? undefined : props.ariaLabel)
 const contentRef = ref<HTMLElement | null>(null);
 const instanceId = Symbol("base-modal");
 const isOpen = ref(false);
+/** Shared, counted body-scroll lock (see `composables/useScrollLock`). */
+const scrollLock = useScrollLock();
 /** Element that owned focus before opening, restored on close for keyboard users. */
 let focusBeforeOpen: HTMLElement | null = null;
 
@@ -118,7 +101,7 @@ function registerOpen(): void {
     const active = document.activeElement;
     focusBeforeOpen = active instanceof HTMLElement && active !== document.body ? active : null;
     openModalStack.push(instanceId);
-    lockBodyScroll();
+    scrollLock.lock();
     document.addEventListener("keydown", onDocumentKeydown, true);
 }
 
@@ -126,7 +109,7 @@ function registerClose(): void {
     const stackIndex = openModalStack.indexOf(instanceId);
     if (stackIndex !== -1) openModalStack.splice(stackIndex, 1);
     document.removeEventListener("keydown", onDocumentKeydown, true);
-    unlockBodyScroll();
+    scrollLock.unlock();
     const target = focusBeforeOpen;
     focusBeforeOpen = null;
     if (target?.isConnected) {

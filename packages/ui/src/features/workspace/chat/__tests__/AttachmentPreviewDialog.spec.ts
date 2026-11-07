@@ -3,6 +3,7 @@ import { nextTick } from "vue";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { i18n } from "../../../../i18n";
 import type { AttachmentFile } from "../../../../types";
+import BaseModal from "@/components/shared/BaseModal.vue";
 import AttachmentPreviewDialog from "../components/AttachmentPreviewDialog.vue";
 
 const { previewMock, remainderMock } = vi.hoisted(() => ({
@@ -436,5 +437,64 @@ describe("AttachmentPreviewDialog modal a11y and focus", () => {
 
         expect(document.activeElement).toBe(viewport);
         wrapper.unmount();
+    });
+});
+
+describe("AttachmentPreviewDialog scroll lock", () => {
+    /** Inline overflow the test page carried before the overlay touched it. */
+    let initialOverflow = "";
+
+    beforeEach(() => {
+        initialOverflow = document.body.style.overflow;
+        previewMock.mockResolvedValue(textPreview("col_a,col_b\n1,2\n"));
+    });
+
+    afterEach(() => {
+        document.body.style.overflow = initialOverflow;
+    });
+
+    it("hides body overflow while the preview is open", async () => {
+        const wrapper = mountDialog();
+        await flushPromises();
+
+        expect(document.body.style.overflow).toBe("hidden");
+        wrapper.unmount();
+    });
+
+    it("restores the previous inline overflow verbatim when the preview closes", async () => {
+        document.body.style.overflow = "scroll";
+
+        const wrapper = mountDialog();
+        await flushPromises();
+        expect(document.body.style.overflow).toBe("hidden");
+
+        await wrapper.setProps({ open: false });
+        await nextTick();
+        await flushPromises();
+
+        expect(document.body.style.overflow).toBe("scroll");
+        wrapper.unmount();
+    });
+
+    it("keeps the page locked when the preview closes under an open BaseModal", async () => {
+        document.body.style.overflow = "scroll";
+        const outer = mount(BaseModal, { props: { show: true, title: "Outer" } });
+        expect(document.body.style.overflow).toBe("hidden");
+
+        const wrapper = mountDialog();
+        await flushPromises();
+        expect(document.body.style.overflow).toBe("hidden");
+
+        // The preview closing must release only its own layer.
+        await wrapper.setProps({ open: false });
+        await nextTick();
+        await flushPromises();
+        expect(document.body.style.overflow).toBe("hidden");
+
+        await outer.setProps({ show: false });
+        expect(document.body.style.overflow).toBe("scroll");
+
+        wrapper.unmount();
+        outer.unmount();
     });
 });
