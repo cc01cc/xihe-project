@@ -1092,7 +1092,7 @@ erDiagram
 | V73 | `V73__chat_run_continuation_provenance.sql` | PLAN-0510：`chat_runs` 增加 source Run、lineage/thread/checkpoint、EventStore cursor 与 continuation mode；完整 tuple CHECK 和 lineage/source FK | `chat_runs` |
 | V74 | `V74__agent_lineage_invocation_ledger.sql` | PLAN-0510：跨 Run mutation invocation 去重账本；lineage/toolCall 唯一、参数 hash 与状态约束；MCP invocation 删除时只置空引用 | `agent_lineage_invocations` |
 | V75 | `V75__workspace_lifecycle_operations.sql` | PLAN-0391：用户触发的「释放运行资源」durable 幂等操作专用表（`ledger_operations` 已于 V56 退役）；幂等部分唯一索引 `(user_id, workspace_id, idempotency_key)` + active 部分唯一索引 `(workspace_id) WHERE status IN ('accepted','running')` + 时间索引；status CHECK accepted/running/completed/failed/interrupted | `workspace_lifecycle_operations` |
-| V133 | `V133__drop_session_agent_principal.sql` | PLAN-0689：删除 `sessions.agent_principal_id` 与 `agent_permissions_snapshot`（run 身份早已是 `chat_runs.agent_principal_id`，缺省回答者 = `session_participants` PRIMARY）；顺序 `DROP INDEX idx_sessions_agent_principal_id` → `DROP CONSTRAINT fk_sessions_agent_principal` → `DROP COLUMN agent_principal_id` → `DROP COLUMN agent_permissions_snapshot`；不做回填/双读 | `sessions` |
+| V133 | `V133__drop_session_agent_principal_id.sql` | PLAN-0689（D-54 单列）：仅删 `sessions.agent_principal_id`（run 身份早已是 `chat_runs.agent_principal_id`，缺省回答者 = `session_participants` PRIMARY）；`agent_permissions_snapshot` **保留**，不删（授权输入而非身份，语义 = PRIMARY 绑定时刻 cap，见 verify V23 / design §9）；顺序 `DROP INDEX idx_sessions_agent_principal_id` → `DROP CONSTRAINT fk_sessions_agent_principal` → `DROP COLUMN agent_principal_id`；不做回填/双读 | `sessions` |
 
 > V76–V132 未在本历史表逐行展开（以迁移 SQL 与各表描述为准）；V133 为 PLAN-0689 新增行。
 
