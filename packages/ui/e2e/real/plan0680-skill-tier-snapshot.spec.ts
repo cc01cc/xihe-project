@@ -363,7 +363,8 @@ test("@host 0680-T3.1 快照落双轴 tier：绑定 → run → skills_snapshot.
     expect([200, 201], `主体技能绑定应 2xx，实际 ${bound.status()}：${boundText}`).toContain(
         bound.status(),
     );
-    const bindingId = (JSON.parse(boundText) as { id?: string; bindingId?: string }).id ??
+    const bindingId =
+        (JSON.parse(boundText) as { id?: string; bindingId?: string }).id ??
         (JSON.parse(boundText) as { bindingId?: string }).bindingId;
     expect(bindingId, "绑定响应应带 bindingId").toMatch(UUID);
 
@@ -387,19 +388,14 @@ test("@host 0680-T3.1 快照落双轴 tier：绑定 → run → skills_snapshot.
 
     const run = await waitForRun(sessionId);
     expect(run.status, "本条断言要求 run 成功，否则快照不产生").toBe("succeeded");
-    expect(
-        run.skillsSnapshot,
-        "skills_snapshot 不应是 {}（{} 只表示未捕获）",
-    ).not.toBe("{}");
+    expect(run.skillsSnapshot, "skills_snapshot 不应是 {}（{} 只表示未捕获）").not.toBe("{}");
 
     // ④ V2 核心：tier 三字段
     const items = snapshotItems(run.skillsSnapshot);
     const hit = items.find((item) => item.skillId === skillId);
     expect(hit, `快照 items 应含刚绑的 skill ${skillId}`).toBeDefined();
     expect(hit!.tier, "快照项应带 tier 对象").toBeDefined();
-    expect(hit!.tier!.subjectType, "tier.subjectType 应为 agent_principal").toBe(
-        "agent_principal",
-    );
+    expect(hit!.tier!.subjectType, "tier.subjectType 应为 agent_principal").toBe("agent_principal");
     expect(hit!.tier!.scopeType, "tier.scopeType 应为 workspace（服务端派生，非请求体）").toBe(
         "workspace",
     );
@@ -420,10 +416,7 @@ test("@host 0680-T3.1 快照落双轴 tier：绑定 → run → skills_snapshot.
         headers: headersOf(identity),
     });
     const deletedText = await deleted.text();
-    expect(
-        deleted.status(),
-        `解绑应 204，实际 ${deleted.status()}：${deletedText}`,
-    ).toBe(204);
+    expect(deleted.status(), `解绑应 204，实际 ${deleted.status()}：${deletedText}`).toBe(204);
 
     // 第二次 send 不重复等 readiness：③ 处已确认 CP 缓存 `agent=up/up/ready`，
     // 解绑只写绑定行，不改 Agent 的 LLM readiness（r7 失败点也只在首次 send）。

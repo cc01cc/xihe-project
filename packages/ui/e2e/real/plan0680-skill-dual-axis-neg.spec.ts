@@ -197,13 +197,13 @@ test("@host 0680-T3.2a 注入不越界：W1 的 workspace 技能与绑定行不�
         w2.workspaceId,
     );
     const w1Principal = await provisionWorkspaceAgentPrincipal(request, w1, {
-            name: agentName("P0680NegW1", Date.now()),
-            actions: ["read"],
-        });
+        name: agentName("P0680NegW1", Date.now()),
+        actions: ["read"],
+    });
     const w2Principal = await provisionWorkspaceAgentPrincipal(request, w2, {
-            name: agentName("P0680NegW2", Date.now()),
-            actions: ["read"],
-        });
+        name: agentName("P0680NegW2", Date.now()),
+        actions: ["read"],
+    });
     // ① W1 导入一个 **workspace 作用域**私有技能定义（这是跨工作区隔离的被测对象）
     const nonce = Date.now().toString(36);
     const skillName = `p0680-neg-w1-${nonce}`;
@@ -258,10 +258,10 @@ test("@host 0680-T3.2a 注入不越界：W1 的 workspace 技能与绑定行不�
     ).toContain(bound.status());
     // ③ W2 跑一次 chat
     const w2Session = await createSessionWithPrincipal(request, w2, {
-            principalId: w2Principal,
-            workspaceId: w2.workspaceId,
-            title: "PLAN-0680 T3.2 cross-workspace isolation",
-        });
+        principalId: w2Principal,
+        workspaceId: w2.workspaceId,
+        title: "PLAN-0680 T3.2 cross-workspace isolation",
+    });
     await sendChat(request, w2, w2Session, "PLAN-0680 T3.2 isolation probe");
     const w2Snap = await waitForSnapshot(w2Session);
     // D-76 ①：负向断言必须建立在"run 真的成功过"之上。run 失败时 CP 仍会落一份
@@ -288,10 +288,10 @@ test("@host 0680-T3.2a 注入不越界：W1 的 workspace 技能与绑定行不�
     ).toBe(false);
     // ⑤ 反向对照：W1 自己跑，同一 skill 必须出现——证明 ③④ 的「不出现」不是因为压根没生效
     const w1Session = await createSessionWithPrincipal(request, w1, {
-            principalId: w1Principal,
-            workspaceId: w1.workspaceId,
-            title: "PLAN-0680 T3.2 positive control",
-        });
+        principalId: w1Principal,
+        workspaceId: w1.workspaceId,
+        title: "PLAN-0680 T3.2 positive control",
+    });
     await sendChat(request, w1, w1Session, "PLAN-0680 T3.2 positive control");
     const w1Snap = await waitForSnapshot(w1Session);
     // D-76 ①：正向对照同样要先坐实 run 成功，否则"W1 自己也不含"会被误读成隔离生效。
@@ -308,9 +308,9 @@ test("@host 0680-T3.2b 对 W2 私有定义绑定 ⇒ 404 SKILL_NOT_FOUND（非�
     const w1 = await newIdentity(request, "p0680-404-w1");
     const w2 = await newIdentity(request, "p0680-404-w2");
     const w1Principal = await provisionWorkspaceAgentPrincipal(request, w1, {
-            name: agentName("P0680Neg404", Date.now()),
-            actions: ["read"],
-        });
+        name: agentName("P0680Neg404", Date.now()),
+        actions: ["read"],
+    });
     // W2 的私有定义
     const nonce = Date.now().toString(36);
     const imported = await request.post(`${CP_URL}/api/v1/skills/import`, {
@@ -393,14 +393,11 @@ test("@host 0680-T3.2b 对 W2 私有定义绑定 ⇒ 404 SKILL_NOT_FOUND（非�
  * 关闭条件：BL-354 关闭 + design/verify 写明 continuation 语义后，取消 fixme，
  * 按冻结语义补断言，并把 `verify.md:38` 的 V8 一并判过。
  */
-test.fixme(
-    "@host 0680-T3.2c J8 BL-354 continuation 场景快照语义（不可判定，待 BL-354 关闭）",
-    async () => {
-        // 意图（BL-354 关闭后照此实现）：
-        //   1. 绑定 skillA → 跑首轮 → 断快照含 skillA
-        //   2. 解绑 skillA → 在同一会话里发第二轮（continuation，不新建 session）
-        //   3. 断言：快照按冻结语义要么「少一项」（每轮重算）要么「保持原样」（沿用首轮）
-        //   4. 两种语义各写什么断言，等 design 裁定；现在写死任一种都会变成假绿
-        expect(true, "本用例当前不可判定，见上方注释与 BL-354").toBe(true);
-    },
-);
+test.fixme("@host 0680-T3.2c J8 BL-354 continuation 场景快照语义（不可判定，待 BL-354 关闭）", async () => {
+    // 意图（BL-354 关闭后照此实现）：
+    //   1. 绑定 skillA → 跑首轮 → 断快照含 skillA
+    //   2. 解绑 skillA → 在同一会话里发第二轮（continuation，不新建 session）
+    //   3. 断言：快照按冻结语义要么「少一项」（每轮重算）要么「保持原样」（沿用首轮）
+    //   4. 两种语义各写什么断言，等 design 裁定；现在写死任一种都会变成假绿
+    expect(true, "本用例当前不可判定，见上方注释与 BL-354").toBe(true);
+});
