@@ -79,7 +79,7 @@ public class SessionParticipant {
      * configured" is distinct from an empty set and the column is additive (D-215: no backfill).
      */
     @org.hibernate.annotations.JdbcTypeCode(org.hibernate.type.SqlTypes.ARRAY)
-    @jakarta.persistence.Column(name = "delivery_defaults", columnDefinition = "text[]")
+    @jakarta.persistence.Column(name = "delivery_defaults", columnDefinition = "text array")
     private String[] deliveryDefaults;
 
     @Column(name = "created_at", nullable = false, updatable = false)
