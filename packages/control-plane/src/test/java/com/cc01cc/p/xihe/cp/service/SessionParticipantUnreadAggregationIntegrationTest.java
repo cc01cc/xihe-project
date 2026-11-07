@@ -77,7 +77,6 @@ class SessionParticipantUnreadAggregationIntegrationTest extends AbstractIntegra
         session.setWorkspaceId(workspaceId);
         session.setUserId(ownerId);
         session.setTitle("P670 unread session");
-        session.setAgentPrincipalId(principal.getId().toString());
         sessionId = sessions.saveAndFlush(session).getId().toString();
     }
 

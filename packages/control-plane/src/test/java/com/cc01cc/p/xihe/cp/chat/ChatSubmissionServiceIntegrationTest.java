@@ -126,12 +126,18 @@ class ChatSubmissionServiceIntegrationTest extends AbstractIntegrationTest {
 
 
     @Test
-    void messageWriteFailureRollsBackChatRunAndSessionBinding() {
+    void messageWriteFailureRollsBackChatRunWithoutTouchingTheExistingBinding() {
         User user = userRepository.save(new User("chat-submit-" + UUID.randomUUID() + "@test.com", "hash", "Chat Submit"));
         Workspace workspace = workspaceFixture.createOwnedWorkspace("Chat Submit Workspace", user.getId().toString());
         Session session = new Session(workspace.getId().toString(), user.getId().toString(), "Chat Submit Session");
         session.setId(UUID.randomUUID());
         Session persistedSession = saveBoundChatSession(session, user);
+
+        AgentPrincipal principal = savePrincipal(user);
+        workspaceAgentRepository.saveAndFlush(new WorkspaceAgent(principal.getId().toString(),
+                workspace.getId().toString(), objectMapper.createArrayNode()));
+        workspaceFixture.bindWorkspaceRole(workspace.getId().toString(), user.getId().toString(), WorkspaceRole.OWNER);
+        saveBoundSession(persistedSession, principal);
 
         String runId = UUID.randomUUID().toString();
         // PLAN-0464 T1.1: startOperation is gone; the failure point after the
@@ -140,17 +146,14 @@ class ChatSubmissionServiceIntegrationTest extends AbstractIntegrationTest {
                 .when(messageRepository)
                 .save(any(Message.class));
 
-        AgentPrincipal principal = savePrincipal(user);
-        workspaceAgentRepository.saveAndFlush(new WorkspaceAgent(principal.getId().toString(),
-                workspace.getId().toString(), objectMapper.createArrayNode()));
-        workspaceFixture.bindWorkspaceRole(workspace.getId().toString(), user.getId().toString(), WorkspaceRole.OWNER);
-
         assertThrows(IllegalStateException.class, () -> submit(
                 runId, persistedSession, user, workspace, "message", principal.getId().toString()));
 
         Session rolledBack = sessionRepository.findById(persistedSession.getId()).orElseThrow();
-        assertNull(rolledBack.getAgentPrincipalId());
-        assertNull(rolledBack.getAgentPermissionsSnapshot());
+        assertEquals(principal.getId(),
+                sessionParticipantRepository.primaryPrincipalId(rolledBack.getId()).orElse(null),
+                "PLAN-0689 A7: the binding predates admission and is not rolled back with the Run");
+        assertNotNull(rolledBack.getAgentPermissionsSnapshot());
         assertTrue(chatRunRepository.findById(UUID.fromString(runId)).isEmpty());
         assertTrue(messageRepository.findBySessionIdOrderByCreatedAtAsc(persistedSession.getId().toString()).isEmpty());
     }
@@ -170,7 +173,7 @@ class ChatSubmissionServiceIntegrationTest extends AbstractIntegrationTest {
         assertTrue(chatRunRepository.findById(UUID.fromString(missingPrincipalRunId)).isEmpty());
 
         AgentPrincipal principal = savePrincipal(user);
-        sessionRepository.saveAndFlush(boundSession(persistedSession, principal));
+        saveBoundSession(persistedSession, principal);
         String unboundPrincipalRunId = UUID.randomUUID().toString();
         assertRejectedWithoutWrites(unboundPrincipalRunId, persistedSession, user, workspace);
 
@@ -185,8 +188,13 @@ class ChatSubmissionServiceIntegrationTest extends AbstractIntegrationTest {
                 HttpStatus.CONFLICT, "AGENT_PRINCIPAL_DISABLED");
     }
 
+    /**
+     * PLAN-0689 A4b/A7: there is no first-Chat binding any more. The responder comes from the
+     * session_participants PRIMARY row, and the client-supplied principal is deliberately ignored —
+     * a second caller naming a different principal cannot switch the conversation identity.
+     */
     @Test
-    void firstChatBindsOnlyExplicitPrincipalAndStoresPrincipalWorkspaceIntersection() throws Exception {
+    void firstChatUsesThePrimaryParticipantAndIgnoresAClientSuppliedPrincipal() throws Exception {
         User user = userRepository.save(new User("chat-first-bind-" + UUID.randomUUID() + "@test.com", "hash", "First bind test"));
         Workspace workspace = workspaceFixture.createOwnedWorkspace("Chat First Bind Workspace", user.getId().toString());
         workspaceFixture.bindWorkspaceRole(workspace.getId().toString(), user.getId().toString(), WorkspaceRole.OWNER);
@@ -198,6 +206,9 @@ class ChatSubmissionServiceIntegrationTest extends AbstractIntegrationTest {
         workspaceAgentRepository.saveAndFlush(new WorkspaceAgent(principal.getId().toString(),
                 workspace.getId().toString(), objectMapper.readTree(
                 "[{\"actionClass\":\"read\"},{\"actionClass\":\"write\"}]")));
+        persistedSession.setAgentPermissionsSnapshot(objectMapper.createArrayNode()
+                .add(objectMapper.createObjectNode().put("actionClass", "read")));
+        saveBoundSession(persistedSession, principal);
 
         String runId = UUID.randomUUID().toString();
         ChatSubmissionService.Submission submission = submit(runId, persistedSession, user, workspace,
@@ -205,7 +216,11 @@ class ChatSubmissionServiceIntegrationTest extends AbstractIntegrationTest {
 
         assertEquals(UUID.fromString(runId), submission.run().getId());
         Session bound = sessionRepository.findById(persistedSession.getId()).orElseThrow();
-        assertEquals(principal.getId().toString(), bound.getAgentPrincipalId());
+        assertEquals(principal.getId(),
+                sessionParticipantRepository.primaryPrincipalId(bound.getId()).orElse(null),
+                "PLAN-0689 A7: conversation identity is the session_participants PRIMARY row");
+        assertEquals(principal.getId(), submission.run().getAgentPrincipalId(),
+                "the Run is stamped with the PRIMARY responder, not with a client-named principal");
         assertEquals(1, bound.getAgentPermissionsSnapshot().size());
         assertEquals("read", bound.getAgentPermissionsSnapshot().get(0).path("actionClass").asText());
         assertTrue(chatRunRepository.findById(UUID.fromString(runId)).isPresent());
@@ -215,16 +230,25 @@ class ChatSubmissionServiceIntegrationTest extends AbstractIntegrationTest {
         workspaceAgentRepository.saveAndFlush(new WorkspaceAgent(differentPrincipal.getId().toString(),
                 workspace.getId().toString(), objectMapper.createArrayNode()));
         String mismatchedRunId = UUID.randomUUID().toString();
-        CpApiException mismatch = assertThrows(CpApiException.class, () -> submit(mismatchedRunId,
-                persistedSession, user, workspace, "must not change identity", differentPrincipal.getId().toString()));
-        assertEquals("SESSION_PRINCIPAL_MISMATCH", mismatch.getCode());
-        assertTrue(chatRunRepository.findById(UUID.fromString(mismatchedRunId)).isEmpty());
-        assertEquals(principal.getId().toString(),
-                sessionRepository.findById(persistedSession.getId()).orElseThrow().getAgentPrincipalId());
+        ChatSubmissionService.Submission second = submit(mismatchedRunId, persistedSession, user, workspace,
+                "must not change identity", differentPrincipal.getId().toString());
+        assertEquals(principal.getId(), second.run().getAgentPrincipalId(),
+                "A4b removed the run-principal parameter: naming another principal cannot switch the responder");
+        assertEquals(principal.getId(),
+                sessionParticipantRepository.primaryPrincipalId(bound.getId()).orElse(null),
+                "a later submission never rewrites the PRIMARY participant");
+        assertTrue(sessionParticipantRepository.findFirstBySessionIdAndPrincipalId(
+                        bound.getId(), differentPrincipal.getId()).isEmpty(),
+                "the ignored principal is not added to the roster");
     }
 
+    /**
+     * PLAN-0689 A1/A7: imported history can no longer receive a first-Chat principal binding at all.
+     * A Session without a frozen cap / PRIMARY participant fails admission closed, and the refused
+     * attempt still writes neither the roster nor a Run.
+     */
     @Test
-    void historicalSessionWithMessagesCannotBeBoundToAnAgent() throws Exception {
+    void historicalSessionWithoutBoundPrincipalFailsAdmissionClosed() throws Exception {
         User user = userRepository.save(new User("chat-history-bind-" + UUID.randomUUID() + "@test.com", "hash", "History bind test"));
         Workspace workspace = workspaceFixture.createOwnedWorkspace("Chat History Workspace", user.getId().toString());
         workspaceFixture.bindWorkspaceRole(workspace.getId().toString(), user.getId().toString(), WorkspaceRole.OWNER);
@@ -240,16 +264,22 @@ class ChatSubmissionServiceIntegrationTest extends AbstractIntegrationTest {
         CpApiException rejected = assertThrows(CpApiException.class, () -> submit(runId, persistedSession,
                 user, workspace, "new content", principal.getId().toString()));
 
-        assertEquals("SESSION_PRINCIPAL_BINDING_CONFLICT", rejected.getCode());
+        assertEquals(HttpStatus.FORBIDDEN, rejected.getStatus());
+        assertEquals("FORBIDDEN", rejected.getCode());
         Session unchanged = sessionRepository.findById(persistedSession.getId()).orElseThrow();
-        assertNull(unchanged.getAgentPrincipalId());
+        assertTrue(sessionParticipantRepository.primaryPrincipalId(unchanged.getId()).isEmpty(),
+                "a refused historical-session admission leaves no PRIMARY participant");
         assertNull(unchanged.getAgentPermissionsSnapshot());
         assertTrue(chatRunRepository.findById(UUID.fromString(runId)).isEmpty());
         assertEquals(1, messageRepository.findBySessionIdOrderByCreatedAtAsc(persistedSession.getId().toString()).size());
     }
 
+    /**
+     * PLAN-0689 A1/A7: a Session owned by a direct user MCP invocation cannot be adopted by Chat —
+     * there is no binding path any more, so admission fails closed and leaves no roster row.
+     */
     @Test
-    void userDirectInvocationSessionCannotBeBoundToAnAgent() {
+    void userDirectInvocationSessionFailsAdmissionClosed() {
         User user = userRepository.save(new User("chat-user-ledger-" + UUID.randomUUID() + "@test.com", "hash", "User ledger test"));
         Workspace workspace = workspaceFixture.createOwnedWorkspace("User Ledger Workspace", user.getId().toString());
         Session session = saveEmptySession(user, workspace, "User direct operation");
@@ -272,13 +302,19 @@ class ChatSubmissionServiceIntegrationTest extends AbstractIntegrationTest {
         CpApiException rejected = assertThrows(CpApiException.class, () -> submit(runId, session,
                 user, workspace, "not allowed", principal.getId().toString()));
 
-        assertEquals("SESSION_PRINCIPAL_BINDING_CONFLICT", rejected.getCode());
-        assertNull(sessionRepository.findById(session.getId()).orElseThrow().getAgentPrincipalId());
+        assertEquals(HttpStatus.FORBIDDEN, rejected.getStatus());
+        assertEquals("FORBIDDEN", rejected.getCode());
+        assertTrue(sessionParticipantRepository.primaryPrincipalId(session.getId()).isEmpty(),
+                "a refused direct-user Session admission leaves no PRIMARY participant");
         assertFalse(chatRunRepository.findById(UUID.fromString(runId)).isPresent());
     }
 
+    /**
+     * PLAN-0689 A1/A7: prior tool events no longer gate a first-Chat binding (the binding is gone);
+     * the Session still fails closed because it has no frozen cap / PRIMARY participant.
+     */
     @Test
-    void toolContextEventSessionCannotBeBoundToAnAgent() {
+    void toolContextEventSessionFailsAdmissionClosed() {
         User user = userRepository.save(new User("chat-tool-event-" + UUID.randomUUID() + "@test.com", "hash", "Tool event test"));
         Workspace workspace = workspaceFixture.createOwnedWorkspace("Tool Event Workspace", user.getId().toString());
         Session session = saveEmptySession(user, workspace, "User tool event");
@@ -292,8 +328,10 @@ class ChatSubmissionServiceIntegrationTest extends AbstractIntegrationTest {
         CpApiException rejected = assertThrows(CpApiException.class, () -> submit(runId, session,
                 user, workspace, "not allowed", principal.getId().toString()));
 
-        assertEquals("SESSION_PRINCIPAL_BINDING_CONFLICT", rejected.getCode());
-        assertNull(sessionRepository.findById(session.getId()).orElseThrow().getAgentPrincipalId());
+        assertEquals(HttpStatus.FORBIDDEN, rejected.getStatus());
+        assertEquals("FORBIDDEN", rejected.getCode());
+        assertTrue(sessionParticipantRepository.primaryPrincipalId(session.getId()).isEmpty(),
+                "a refused tool-event Session admission leaves no PRIMARY participant");
         assertFalse(chatRunRepository.findById(UUID.fromString(runId)).isPresent());
     }
 
@@ -315,7 +353,7 @@ class ChatSubmissionServiceIntegrationTest extends AbstractIntegrationTest {
             session.setId(UUID.randomUUID());
             Session persistedSession = saveBoundChatSession(session, user);
             AgentPrincipal principal = savePrincipal(user);
-            sessionRepository.saveAndFlush(boundSession(persistedSession, principal));
+            saveBoundSession(persistedSession, principal);
             workspaceAgentRepository.saveAndFlush(new WorkspaceAgent(principal.getId().toString(),
                     workspace.getId().toString(), objectMapper.createArrayNode()));
 
@@ -365,7 +403,7 @@ class ChatSubmissionServiceIntegrationTest extends AbstractIntegrationTest {
             session.setId(UUID.randomUUID());
             Session persistedSession = saveBoundChatSession(session, user);
             AgentPrincipal principal = savePrincipal(user);
-            sessionRepository.saveAndFlush(boundSession(persistedSession, principal));
+            saveBoundSession(persistedSession, principal);
             workspaceAgentRepository.saveAndFlush(new WorkspaceAgent(principal.getId().toString(),
                     workspace.getId().toString(), objectMapper.createArrayNode()));
 
@@ -383,7 +421,7 @@ class ChatSubmissionServiceIntegrationTest extends AbstractIntegrationTest {
                         user.getId().toString(), workspace.getId().toString(), branchId,
                         "idem-" + deferredRunId, "request-hash", "provider", "model", "none", null, null,
                         "lease-owner", UUID.randomUUID().toString(), "deferred wake prompt", "[]",
-                        java.util.List.of(), principal.getId().toString(),
+                        java.util.List.of(),
                         com.cc01cc.p.xihe.cp.entity.Message.VISIBILITY_INTERNAL);
                 assertTrue(deferred.isEmpty(),
                         "a full cap must answer as a value (empty), not as a thrown exception");
@@ -418,7 +456,7 @@ class ChatSubmissionServiceIntegrationTest extends AbstractIntegrationTest {
         session.setId(UUID.randomUUID());
         Session persistedSession = saveBoundChatSession(session, user);
         AgentPrincipal principal = savePrincipal(user);
-        sessionRepository.saveAndFlush(boundSession(persistedSession, principal));
+        saveBoundSession(persistedSession, principal);
         workspaceAgentRepository.saveAndFlush(new WorkspaceAgent(principal.getId().toString(),
                 workspace.getId().toString(), objectMapper.createArrayNode()));
 
@@ -502,6 +540,7 @@ class ChatSubmissionServiceIntegrationTest extends AbstractIntegrationTest {
     @Test
     void disablingAPrincipalBlocksTheSecondSubmissionOfAnExistingSession() throws Exception {
         ChatFixture fixture = createChatFixture("v15-second-submission");
+        saveBoundSession(fixture.session(), fixture.principal());
 
         String firstRunId = UUID.randomUUID().toString();
         ChatSubmissionService.Submission first = submit(firstRunId, fixture.session(), fixture.user(),
@@ -538,6 +577,7 @@ class ChatSubmissionServiceIntegrationTest extends AbstractIntegrationTest {
     @Test
     void persistsToolOnlyTurnWithV2SnapshotAndProjectsItAfterRefresh() {
         ChatFixture fixture = createChatFixture("tool-snapshot");
+        saveBoundSession(fixture.session(), fixture.principal());
         String runId = UUID.randomUUID().toString();
         ChatSubmissionService.Submission submission = submit(runId, fixture.session(), fixture.user(),
                 fixture.workspace(), "prompt", fixture.principal().getId().toString());
@@ -605,6 +645,7 @@ class ChatSubmissionServiceIntegrationTest extends AbstractIntegrationTest {
 
     private void assertRefusalCodeSurvivesAllCarriers(String refusalCode) {
         ChatFixture fixture = createChatFixture("tool-refusal");
+        saveBoundSession(fixture.session(), fixture.principal());
         String runId = UUID.randomUUID().toString();
         ChatSubmissionService.Submission submission = submit(runId, fixture.session(), fixture.user(),
                 fixture.workspace(), "prompt", fixture.principal().getId().toString());
@@ -657,6 +698,7 @@ class ChatSubmissionServiceIntegrationTest extends AbstractIntegrationTest {
     @Test
     void persistsLegacySnapshotAndFiltersApprovalTool() throws Exception {
         ChatFixture fixture = createChatFixture("tool-legacy");
+        saveBoundSession(fixture.session(), fixture.principal());
         String runId = UUID.randomUUID().toString();
         ChatSubmissionService.Submission submission = submit(runId, fixture.session(), fixture.user(),
                 fixture.workspace(), "prompt", fixture.principal().getId().toString());
@@ -687,6 +729,7 @@ class ChatSubmissionServiceIntegrationTest extends AbstractIntegrationTest {
     @Test
     void persistsInterruptedToolOnlyTurnWithRunningCard() throws Exception {
         ChatFixture fixture = createChatFixture("tool-interrupted");
+        saveBoundSession(fixture.session(), fixture.principal());
         String runId = UUID.randomUUID().toString();
         ChatSubmissionService.Submission submission = submit(runId, fixture.session(), fixture.user(),
                 fixture.workspace(), "prompt", fixture.principal().getId().toString());
@@ -709,6 +752,7 @@ class ChatSubmissionServiceIntegrationTest extends AbstractIntegrationTest {
     @Test
     void skipsBlankTurnWithoutTools() {
         ChatFixture fixture = createChatFixture("tool-empty");
+        saveBoundSession(fixture.session(), fixture.principal());
         String runId = UUID.randomUUID().toString();
         submit(runId, fixture.session(), fixture.user(), fixture.workspace(),
                 "prompt", fixture.principal().getId().toString());
@@ -753,22 +797,22 @@ class ChatSubmissionServiceIntegrationTest extends AbstractIntegrationTest {
 
     private ChatSubmissionService.Submission submit(String runId, Session session, User user,
                                                     Workspace workspace, String content) {
-        return submit(runId, session, user, workspace, content, null);
-    }
-
-    private ChatSubmissionService.Submission submit(String runId, Session session, User user,
-                                                     Workspace workspace, String content, String agentPrincipalId) {
         String branchId = branchPathService.ensureRootBranchId(session.getId().toString());
-        if (agentPrincipalId != null) {
-            return submissionService.create(runId, session.getId().toString(), user.getId().toString(),
-                    workspace.getId().toString(), branchId, agentPrincipalId,
-                    "idem-" + runId, "request-hash",
-                    "provider", "model", "none", null, null, "lease-owner", UUID.randomUUID().toString(),
-                    content, "[]", java.util.List.of());
-        }
         return submissionService.create(runId, session.getId().toString(), user.getId().toString(),
                 workspace.getId().toString(), branchId, "idem-" + runId, "request-hash", "provider", "model",
                 "none", null, null, "lease-owner", UUID.randomUUID().toString(), content, "[]", java.util.List.of());
+    }
+
+    /**
+     * PLAN-0689 A4b: the submission signatures no longer take a run principal — the responder is
+     * resolved server-side (explicit {@code as} &gt; PRIMARY) and stamped at admission. This overload is
+     * kept so the ~25 call sites do not have to drop an argument that never selected a responder;
+     * {@code ignoredPrincipalId} is intentionally unread.
+     */
+    private ChatSubmissionService.Submission submit(String runId, Session session, User user,
+                                                     Workspace workspace, String content,
+                                                     String ignoredPrincipalId) {
+        return submit(runId, session, user, workspace, content);
     }
 
     private AgentPrincipal savePrincipal(User user) {
@@ -794,9 +838,20 @@ class ChatSubmissionServiceIntegrationTest extends AbstractIntegrationTest {
     }
 
     private Session boundSession(Session session, AgentPrincipal principal) {
-        session.setAgentPrincipalId(principal.getId().toString());
-        session.setAgentPermissionsSnapshot(objectMapper.createArrayNode());
+        if (session.getAgentPermissionsSnapshot() == null) {
+            session.setAgentPermissionsSnapshot(objectMapper.createArrayNode());
+        }
         return session;
+    }
+
+    /**
+     * PLAN-0689 A7: a "bound" Session now means both the frozen cap AND the PRIMARY participant row.
+     * The old fixtures only set the Session column, which no longer exists.
+     */
+    private Session saveBoundSession(Session session, AgentPrincipal principal) {
+        Session saved = sessionRepository.saveAndFlush(boundSession(session, principal));
+        addPrimaryParticipant(saved, principal);
+        return saved;
     }
 
     private PendingInboxFixture createPendingInboxFixture(String prefix) throws Exception {
@@ -807,7 +862,7 @@ class ChatSubmissionServiceIntegrationTest extends AbstractIntegrationTest {
         workspaceAgentRepository.saveAndFlush(new WorkspaceAgent(principal.getId().toString(),
                 workspace.getId().toString(), objectMapper.createArrayNode()));
         Session session = saveEmptySession(user, workspace, prefix + "-session");
-        sessionRepository.saveAndFlush(boundSession(session, principal));
+        saveBoundSession(session, principal);
 
         UUID inboxId = UUID.randomUUID();
         UUID childSessionId = UUID.randomUUID();
@@ -838,6 +893,7 @@ class ChatSubmissionServiceIntegrationTest extends AbstractIntegrationTest {
     @Test
     void admissionSnapshotFreezesMemoryAndSkillComponents() {
         ChatFixture fixture = createChatFixture("bl284-285");
+        saveBoundSession(fixture.session(), fixture.principal());
         String runId = UUID.randomUUID().toString();
         ChatSubmissionService.Submission submission = submit(runId, fixture.session(), fixture.user(),
                 fixture.workspace(), "snapshot guard", fixture.principal().getId().toString());
@@ -879,9 +935,9 @@ class ChatSubmissionServiceIntegrationTest extends AbstractIntegrationTest {
         Session parent = new Session(workspace.getId().toString(), user.getId().toString(),
                 "Null principal parent");
         parent.setId(UUID.randomUUID());
-        parent.setAgentPrincipalId(null);
         parent.setAgentPermissionsSnapshot(objectMapper.createArrayNode());
         saveBoundChatSession(parent, user);
+        saveBoundSession(parent, principal);
         String parentRunId = UUID.randomUUID().toString();
         chatRunRepository.saveAndFlush(new ChatRun(parentRunId, parent.getId().toString(),
                 user.getId().toString(), workspace.getId().toString(), "parent-null-" + parentRunId,
@@ -922,16 +978,15 @@ class ChatSubmissionServiceIntegrationTest extends AbstractIntegrationTest {
         Session parent = new Session(workspace.getId().toString(), user.getId().toString(),
                 "Delegation Parent");
         parent.setId(UUID.randomUUID());
-        parent.setAgentPrincipalId(principal.getId().toString());
         parent.setAgentPermissionsSnapshot(objectMapper.createArrayNode());
         saveBoundChatSession(parent, user);
+        saveBoundSession(parent, principal);
 
         // The parent's latest run, already terminal — the human route never waits on it; it exists
         // purely as the provenance anchor the settlement invariant requires.
         String parentRunId = UUID.randomUUID().toString();
-        chatRunRepository.saveAndFlush(new ChatRun(parentRunId, parent.getId().toString(),
-                user.getId().toString(), workspace.getId().toString(), "parent-key-" + parentRunId,
-                "parent-hash", "provider", "model", "workspace", "succeeded"));
+        chatRunRepository.saveAndFlush(parentRun(parentRunId, parent.getId().toString(),
+                user.getId().toString(), workspace.getId().toString(), principal));
 
         String idempotencyKey = "deleg-" + UUID.randomUUID();
         String authorizationBody = submissionService.delegationAuthorizationBody("translate this paragraph");
@@ -943,7 +998,9 @@ class ChatSubmissionServiceIntegrationTest extends AbstractIntegrationTest {
         assertEquals(Session.KIND_SPAWN, childSession.getKind());
         assertEquals(parent.getId(), childSession.getSpawnedFromSessionId());
         assertEquals(UUID.fromString(parentRunId), childSession.getSpawnedFromRunId());
-        assertEquals(principal.getId().toString(), childSession.getAgentPrincipalId());
+        assertEquals(principal.getId(),
+                sessionParticipantRepository.primaryPrincipalId(childSession.getId()).orElse(null),
+                "the spawn child's conversation identity is its PRIMARY participant");
         assertEquals(1, sessionParticipantRepository.findBySessionIdOrderByOrderIndexAsc(childSession.getId()).size(),
                 "the child owns exactly one PRIMARY — the same rule as create/fork/spawn");
 
@@ -981,13 +1038,12 @@ class ChatSubmissionServiceIntegrationTest extends AbstractIntegrationTest {
         Session parent = new Session(workspace.getId().toString(), user.getId().toString(),
                 "Replay Parent");
         parent.setId(UUID.randomUUID());
-        parent.setAgentPrincipalId(principal.getId().toString());
         parent.setAgentPermissionsSnapshot(objectMapper.createArrayNode());
         saveBoundChatSession(parent, user);
+        saveBoundSession(parent, principal);
         String parentRunId = UUID.randomUUID().toString();
-        chatRunRepository.saveAndFlush(new ChatRun(parentRunId, parent.getId().toString(),
-                user.getId().toString(), workspace.getId().toString(), "parent-key-" + parentRunId,
-                "parent-hash", "provider", "model", "workspace", "succeeded"));
+        chatRunRepository.saveAndFlush(parentRun(parentRunId, parent.getId().toString(),
+                user.getId().toString(), workspace.getId().toString(), principal));
 
         String idempotencyKey = "deleg-replay-" + UUID.randomUUID();
         String authorizationBody = submissionService.delegationAuthorizationBody("task");
@@ -1011,8 +1067,10 @@ class ChatSubmissionServiceIntegrationTest extends AbstractIntegrationTest {
     @Test
     void assistantMessageIsAttributedToTheRunsResponderParticipant() {
         ChatFixture fixture = createChatFixture("attribution");
-        sessionRepository.saveAndFlush(boundSession(fixture.session(), fixture.principal()));
-        UUID participantId = addPrimaryParticipant(fixture.session(), fixture.principal());
+        saveBoundSession(fixture.session(), fixture.principal());
+        UUID participantId = sessionParticipantRepository
+                .findFirstBySessionIdAndPrincipalId(fixture.session().getId(), fixture.principal().getId())
+                .orElseThrow().getId();
 
         String runId = UUID.randomUUID().toString();
         submit(runId, fixture.session(), fixture.user(), fixture.workspace(), "attribute me",
@@ -1033,12 +1091,15 @@ class ChatSubmissionServiceIntegrationTest extends AbstractIntegrationTest {
                 "the invariant is one row: run responder principal ⇔ message participant");
     }
 
-    /** PLAN-0669 D2 fallback: derived runs (follow-up/continuation) answer as the Session binding. */
+    /**
+     * PLAN-0689 A1: the former "fall back to the Session binding" step is gone with the column.
+     * A derived Run with no responder stamp keeps the Message unattributed — correctness beats a
+     * guessed badge.
+     */
     @Test
-    void assistantMessageFallsBackToTheSessionBindingWhenTheRunHasNoResponder() {
+    void derivedRunWithoutResponderKeepsNoAttribution() {
         ChatFixture fixture = createChatFixture("attribution-fallback");
-        sessionRepository.saveAndFlush(boundSession(fixture.session(), fixture.principal()));
-        UUID participantId = addPrimaryParticipant(fixture.session(), fixture.principal());
+        saveBoundSession(fixture.session(), fixture.principal());
 
         String runId = UUID.randomUUID().toString();
         chatRunRepository.saveAndFlush(new ChatRun(runId, fixture.session().getId().toString(),
@@ -1048,21 +1109,30 @@ class ChatSubmissionServiceIntegrationTest extends AbstractIntegrationTest {
         String assistantId = submissionService.persistAssistantResponse(
                 fixture.session().getId().toString(), runId, "derived run reply");
         assertNotNull(assistantId);
-        assertEquals(participantId,
-                messageRepository.findById(UUID.fromString(assistantId)).orElseThrow().getParticipantId(),
-                "follow-up/continuation children never persist a run responder; attribution follows the "
-                        + "Session-bound principal instead of going dark");
+        assertNull(messageRepository.findById(UUID.fromString(assistantId)).orElseThrow().getParticipantId(),
+                "no run responder ⇒ NULL; A1 removed the Session-column fallback instead of guessing PRIMARY");
     }
 
-    /** PLAN-0669 D2: no participant row ⇒ NULL (no guessing PRIMARY — absent beats wrong). */
+    /**
+     * PLAN-0689 A7: with the Session column gone, "bound but no participant" is no longer an
+     * admitted state — admission fails closed. The attribution fallback still has to stay NULL when
+     * a derived Run reaches persistAssistantResponse without a roster row.
+     */
     @Test
-    void assistantMessageKeepsNoAttributionWhenNoParticipantExists() {
+    void noParticipantFailsAdmissionClosedAndKeepsNoAttribution() {
         ChatFixture fixture = createChatFixture("attribution-none");
-        // Bound Session, but deliberately no session_participants row: admission is legal, yet the
-        // fallback chain has nothing to resolve — the Message must stay NULL instead of guessing.
         sessionRepository.saveAndFlush(boundSession(fixture.session(), fixture.principal()));
+        String rejectedRunId = UUID.randomUUID().toString();
+        CpApiException denied = assertThrows(CpApiException.class,
+                () -> submit(rejectedRunId, fixture.session(), fixture.user(), fixture.workspace(),
+                        "no roster row"));
+        assertEquals(HttpStatus.FORBIDDEN, denied.getStatus());
+        assertTrue(chatRunRepository.findById(UUID.fromString(rejectedRunId)).isEmpty());
+
         String runId = UUID.randomUUID().toString();
-        submit(runId, fixture.session(), fixture.user(), fixture.workspace(), "no roster row");
+        chatRunRepository.saveAndFlush(new ChatRun(runId, fixture.session().getId().toString(),
+                fixture.user().getId().toString(), fixture.workspace().getId().toString(),
+                "no-roster-key-" + runId, "no-roster-hash", "provider", "model", "none", "accepted"));
 
         String assistantId = submissionService.persistAssistantResponse(
                 fixture.session().getId().toString(), runId, "reply without roster");
@@ -1075,8 +1145,10 @@ class ChatSubmissionServiceIntegrationTest extends AbstractIntegrationTest {
     @Test
     void messageListingProjectsParticipantIdOnlyWhenAttributed() {
         ChatFixture fixture = createChatFixture("attribution-read");
-        sessionRepository.saveAndFlush(boundSession(fixture.session(), fixture.principal()));
-        UUID participantId = addPrimaryParticipant(fixture.session(), fixture.principal());
+        saveBoundSession(fixture.session(), fixture.principal());
+        UUID participantId = sessionParticipantRepository
+                .findFirstBySessionIdAndPrincipalId(fixture.session().getId(), fixture.principal().getId())
+                .orElseThrow().getId();
         String runId = UUID.randomUUID().toString();
         submit(runId, fixture.session(), fixture.user(), fixture.workspace(), "read me",
                 fixture.principal().getId().toString());
@@ -1109,8 +1181,7 @@ class ChatSubmissionServiceIntegrationTest extends AbstractIntegrationTest {
     @Test
     void derivedRunsStampTheSessionBoundPrincipal() {
         ChatFixture main = createChatFixture("stamp-main");
-        sessionRepository.saveAndFlush(boundSession(main.session(), main.principal()));
-        addPrimaryParticipant(main.session(), main.principal());
+        saveBoundSession(main.session(), main.principal());
         String mainRunId = UUID.randomUUID().toString();
         submit(mainRunId, main.session(), main.user(), main.workspace(), "main",
                 main.principal().getId().toString());
@@ -1119,29 +1190,25 @@ class ChatSubmissionServiceIntegrationTest extends AbstractIntegrationTest {
                 "main submission stamps the responder");
 
         ChatFixture followUp = createChatFixture("stamp-follow-up");
-        sessionRepository.saveAndFlush(boundSession(followUp.session(), followUp.principal()));
-        addPrimaryParticipant(followUp.session(), followUp.principal());
+        saveBoundSession(followUp.session(), followUp.principal());
         String followUpRunId = UUID.randomUUID().toString();
         submissionService.createFollowUp(followUpRunId, followUp.session().getId().toString(),
                 followUp.user().getId().toString(), followUp.workspace().getId().toString(),
                 branchPathService.ensureRootBranchId(followUp.session().getId().toString()),
                 "follow-up-" + followUpRunId, "hash-follow-up", "provider", "model", "none", null, null,
-                "lease", UUID.randomUUID().toString(), "queued prompt", "[]", List.of(),
-                followUp.principal().getId().toString());
+                "lease", UUID.randomUUID().toString(), "queued prompt", "[]", List.of());
         assertEquals(followUp.principal().getId(),
                 chatRunRepository.findById(UUID.fromString(followUpRunId)).orElseThrow().getAgentPrincipalId(),
                 "follow-up children are stamped at admission (BL-280)");
 
         ChatFixture scheduled = createChatFixture("stamp-scheduled");
-        sessionRepository.saveAndFlush(boundSession(scheduled.session(), scheduled.principal()));
-        addPrimaryParticipant(scheduled.session(), scheduled.principal());
+        saveBoundSession(scheduled.session(), scheduled.principal());
         String scheduledRunId = UUID.randomUUID().toString();
         submissionService.createScheduled(scheduledRunId, scheduled.session().getId().toString(),
                 scheduled.user().getId().toString(), scheduled.workspace().getId().toString(),
                 branchPathService.ensureRootBranchId(scheduled.session().getId().toString()),
                 "scheduled-" + scheduledRunId, "hash-scheduled", "provider", "model", "none", null,
-                null, null, UUID.randomUUID().toString(), "wake prompt", "[]", List.of(),
-                scheduled.principal().getId().toString());
+                null, null, UUID.randomUUID().toString(), "wake prompt", "[]", List.of());
         assertEquals(scheduled.principal().getId(),
                 chatRunRepository.findById(UUID.fromString(scheduledRunId)).orElseThrow().getAgentPrincipalId(),
                 "scheduled wake carriers are stamped at admission (BL-280)");
@@ -1150,8 +1217,7 @@ class ChatSubmissionServiceIntegrationTest extends AbstractIntegrationTest {
     @Test
     void humanResponderKeepsTheAgentOnlyColumnNull() {
         ChatFixture fixture = createChatFixture("stamp-human");
-        sessionRepository.saveAndFlush(boundSession(fixture.session(), fixture.principal()));
-        addPrimaryParticipant(fixture.session(), fixture.principal());
+        saveBoundSession(fixture.session(), fixture.principal());
         SessionParticipant human = sessionParticipantRepository.saveAndFlush(new SessionParticipant(
                 fixture.session().getId(), SessionParticipant.KIND_HUMAN, fixture.user().getId(),
                 SessionParticipant.ROLE_MEMBER, 20, SessionParticipant.WAKE_MENTION,
@@ -1161,11 +1227,19 @@ class ChatSubmissionServiceIntegrationTest extends AbstractIntegrationTest {
         submissionService.create(runId, fixture.session().getId().toString(),
                 fixture.user().getId().toString(), fixture.workspace().getId().toString(),
                 branchPathService.ensureRootBranchId(fixture.session().getId().toString()),
-                fixture.principal().getId().toString(), "human-" + runId, "hash-human", "provider", "model",
+                "human-" + runId, "hash-human", "provider", "model",
                 "none", null, null, "lease", UUID.randomUUID().toString(), "hi", "[]", List.of(),
                 human.getId().toString());
         assertNull(chatRunRepository.findById(UUID.fromString(runId)).orElseThrow().getAgentPrincipalId(),
                 "a HUMAN responder keeps the agent-only column NULL — no stamp, and no FK violation");
+    }
+
+    private ChatRun parentRun(String runId, String sessionId, String userId, String workspaceId,
+                              AgentPrincipal principal) {
+        ChatRun run = new ChatRun(runId, sessionId, userId, workspaceId, "parent-key-" + runId,
+                "parent-hash", "provider", "model", "workspace", "succeeded");
+        run.setAgentPrincipalId(principal.getId());
+        return run;
     }
 
     private UUID addPrimaryParticipant(Session session, AgentPrincipal principal) {

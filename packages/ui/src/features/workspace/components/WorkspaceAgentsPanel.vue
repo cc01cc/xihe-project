@@ -10,7 +10,6 @@ import {
     type AgentModelRef,
     type AgentRoleBinding,
     type AgentSkillBinding,
-    type AgentSkillSummary,
     type AgentTemplateSummary,
     type ApiRole,
     type SelfPermissionsView,
@@ -19,6 +18,7 @@ import {
     type WorkspaceAgentPermission,
 } from "../../../composables/api";
 import { problemDetailText } from "../../../lib/errorMessages";
+import { type AgentSkillCandidate, selectSkillCandidates } from "./agentSkillCandidates";
 // 用户裁定（2026-11-03）：二态统一用项目 Switch（reka-ui），不混用 checkbox。
 import { Switch } from "../../../components/ui/switch";
 
@@ -107,7 +107,7 @@ const agentSkills = ref<AgentSkillBinding[]>([]);
 const rbacState = ref<"idle" | "loading" | "ready" | "failed">("idle");
 const rbacError = ref("");
 const roleCandidates = ref<ApiRole[]>([]);
-const skillCandidates = ref<AgentSkillSummary[]>([]);
+const skillCandidates = ref<AgentSkillCandidate[]>([]);
 const selectedRoleId = ref("");
 const selectedSkillId = ref("");
 const rbacBusy = ref(false);
@@ -392,14 +392,24 @@ async function loadRbac(principalId: string) {
         agentRoles.value = roles;
         agentSkills.value = skills;
         rbacState.value = "ready";
-        // 候选清单（roles 复用既有 /roles；skills 复用 /skills）——失败只影响"可绑定项"，不影响已绑定列表。
-        const [rolesCatalog, skillsCatalog] = await Promise.allSettled([
-            api.listRoles(props.workspaceId),
-            api.getSkills(),
-        ]);
+        // 候选清单（roles 复用既有 /roles；skills 复用 instance + 本工作区两条既有列表）——
+        // 任一条失败只影响对应来源的"可绑定项"，不影响已绑定列表。
+        const [rolesCatalog, instanceSkillsCatalog, workspaceSkillsCatalog] =
+            await Promise.allSettled([
+                api.listRoles(props.workspaceId),
+                api.getSkills(),
+                api.getWorkspaceSkills(props.workspaceId),
+            ]);
         if (generation !== rbacGeneration) return;
         roleCandidates.value = rolesCatalog.status === "fulfilled" ? rolesCatalog.value : [];
-        skillCandidates.value = skillsCatalog.status === "fulfilled" ? skillsCatalog.value : [];
+        const definitions = [
+            ...(instanceSkillsCatalog.status === "fulfilled" ? instanceSkillsCatalog.value : []),
+            ...(workspaceSkillsCatalog.status === "fulfilled" ? workspaceSkillsCatalog.value : []),
+        ];
+        skillCandidates.value = selectSkillCandidates(definitions, {
+            scopeType: "workspace",
+            scopeId: props.workspaceId,
+        });
     } catch (cause) {
         if (generation !== rbacGeneration) return;
         rbacError.value = rbacErrorMessage(cause);
@@ -2102,6 +2112,25 @@ async function unbind(agent: WorkspaceAgentBinding) {
                                     :data-testid="`agent-skill-item-${binding.bindingId}`"
                                 >
                                     <span class="text-xs font-medium">{{ binding.name }}</span>
+                                    <span
+                                        v-if="binding.scopeType"
+                                        class="rounded-full border px-1.5 py-0.5 text-[10px]"
+                                        :class="
+                                            binding.scopeType === 'workspace'
+                                                ? 'bg-muted'
+                                                : 'text-muted-foreground'
+                                        "
+                                        :title="binding.scopeName ?? undefined"
+                                        :data-testid="`agent-skill-scope-${binding.scopeType}`"
+                                    >
+                                        {{
+                                            t(
+                                                binding.scopeType === "workspace"
+                                                    ? "workspace.agentSkillScopeWorkspace"
+                                                    : "workspace.agentSkillScopeInstance",
+                                            )
+                                        }}
+                                    </span>
                                     <span
                                         v-if="binding.sourceType"
                                         class="rounded border px-1 py-0.5 text-[10px] text-muted-foreground"

@@ -139,30 +139,19 @@ public class ChatSubmissionService {
                              String model, String toolMode, String providerConnectionId,
                              Long connectionRevision, String leaseOwner, String requestId,
                              String content, String attachmentsJson, List<String> attachmentIds) {
-        return create(runId, sessionId, userId, workspaceId, branchId, null, idempotencyKey, requestHash,
+        return create(runId, sessionId, userId, workspaceId, branchId, idempotencyKey, requestHash,
                 provider, model, toolMode, providerConnectionId, connectionRevision,
                 leaseOwner, requestId, content, attachmentsJson, attachmentIds, null);
     }
 
     @Transactional
     public Submission create(String runId, String sessionId, String userId, String workspaceId,
-                             String branchId, String agentPrincipalId, String idempotencyKey, String requestHash,
-                             String provider, String model, String toolMode, String providerConnectionId,
-                             Long connectionRevision, String leaseOwner, String requestId,
-                             String content, String attachmentsJson, List<String> attachmentIds) {
-        return create(runId, sessionId, userId, workspaceId, branchId, agentPrincipalId, idempotencyKey,
-                requestHash, provider, model, toolMode, providerConnectionId, connectionRevision,
-                leaseOwner, requestId, content, attachmentsJson, attachmentIds, null);
-    }
-
-    @Transactional
-    public Submission create(String runId, String sessionId, String userId, String workspaceId,
-            String branchId, String agentPrincipalId, String idempotencyKey, String requestHash,
+            String branchId, String idempotencyKey, String requestHash,
             String provider, String model, String toolMode, String providerConnectionId,
             Long connectionRevision, String leaseOwner, String requestId,
             String content, String attachmentsJson, List<String> attachmentIds,
             String asParticipantId) {
-        return create(runId, sessionId, userId, workspaceId, branchId, agentPrincipalId, idempotencyKey,
+        return create(runId, sessionId, userId, workspaceId, branchId, idempotencyKey,
                 requestHash, provider, model, toolMode, providerConnectionId, connectionRevision,
                 leaseOwner, requestId, content, attachmentsJson, attachmentIds, asParticipantId, null);
     }
@@ -174,7 +163,7 @@ public class ChatSubmissionService {
      */
     @Transactional
     public Submission create(String runId, String sessionId, String userId, String workspaceId,
-            String branchId, String agentPrincipalId, String idempotencyKey, String requestHash,
+            String branchId, String idempotencyKey, String requestHash,
             String provider, String model, String toolMode, String providerConnectionId,
             Long connectionRevision, String leaseOwner, String requestId,
             String content, String attachmentsJson, List<String> attachmentIds,
@@ -182,17 +171,18 @@ public class ChatSubmissionService {
         Submission submission = persist(ChatRun.ORIGIN_USER_SUBMISSION, runId, sessionId, userId, workspaceId,
                 branchId, idempotencyKey, requestHash, provider, model, toolMode, providerConnectionId,
                 connectionRevision, leaseOwner, requestId, content, attachmentsJson, attachmentIds,
-                agentPrincipalId, false, Message.VISIBILITY_USER, deliveryJson);
+                false, Message.VISIBILITY_USER, deliveryJson);
         // R1 (PLAN-0623): record who answered. `asParticipantId` wins (already authorized by the
         // controller); otherwise the PRIMARY participant answers; a Session with neither keeps NULL —
         // the same "never invent a responder" rule the V92 backfill follows.
         SessionParticipantService.Responder responder = sessionParticipantService.responderFor(
                 UUID.fromString(sessionId), asParticipantId);
         // `chat_runs.agent_principal_id` carries a FK to agent_principals (V92), so only an AGENT
-        // responder can be recorded here. Persist has already stamped the Session-bound principal for
-        // this Run (BL-280); the main submission replaces it with the actual responder, and a HUMAN
-        // responder **clears** it — the human id can never be stored, and leaving the agent stamp
-        // would misname who answered (the PLAN-0669 participant attribution carries the human).
+        // responder can be recorded here. Persist has already stamped the admission responder (the
+        // session_participants PRIMARY row — BL-280); the main submission narrows that stamp to the
+        // actual responder, and a HUMAN responder **clears** it — the human id can never be stored,
+        // and leaving the agent stamp would misname who answered (the PLAN-0669 participant
+        // attribution carries the human).
         if (responder != null) {
             submission.run().setAgentPrincipalId(
                     SessionParticipant.KIND_AGENT.equals(responder.principalKind())
@@ -207,12 +197,11 @@ public class ChatSubmissionService {
                                     String branchId, String idempotencyKey, String requestHash, String provider,
                                     String model, String toolMode, String providerConnectionId,
                                     Long connectionRevision, String leaseOwner, String requestId,
-                                    String content, String attachmentsJson, List<String> attachmentIds,
-                                    String agentPrincipalId) {
+                                    String content, String attachmentsJson, List<String> attachmentIds) {
         return persist(ChatRun.ORIGIN_USER_SUBMISSION, runId, sessionId, userId, workspaceId,
                 branchId, idempotencyKey, requestHash, provider, model, toolMode, providerConnectionId,
                 connectionRevision, leaseOwner, requestId, content, attachmentsJson, attachmentIds,
-                agentPrincipalId, true, Message.VISIBILITY_USER, null);
+                true, Message.VISIBILITY_USER, null);
     }
 
     /**
@@ -227,11 +216,10 @@ public class ChatSubmissionService {
                                       String branchId, String idempotencyKey, String requestHash, String provider,
                                       String model, String toolMode, String providerConnectionId,
                                       Long connectionRevision, String leaseOwner, String requestId,
-                                      String content, String attachmentsJson, List<String> attachmentIds,
-                                      String agentPrincipalId) {
+                                      String content, String attachmentsJson, List<String> attachmentIds) {
         return createScheduled(runId, sessionId, userId, workspaceId, branchId, idempotencyKey, requestHash,
                 provider, model, toolMode, providerConnectionId, connectionRevision, leaseOwner, requestId,
-                content, attachmentsJson, attachmentIds, agentPrincipalId, Message.VISIBILITY_USER);
+                content, attachmentsJson, attachmentIds, Message.VISIBILITY_USER);
     }
 
     /**
@@ -245,11 +233,11 @@ public class ChatSubmissionService {
                                       String model, String toolMode, String providerConnectionId,
                                       Long connectionRevision, String leaseOwner, String requestId,
                                       String content, String attachmentsJson, List<String> attachmentIds,
-                                      String agentPrincipalId, String messageVisibility) {
+                                      String messageVisibility) {
         return persist(ChatRun.ORIGIN_SCHEDULED, runId, sessionId, userId, workspaceId,
                 branchId, idempotencyKey, requestHash, provider, model, toolMode, providerConnectionId,
                 connectionRevision, leaseOwner, requestId, content, attachmentsJson, attachmentIds,
-                agentPrincipalId, false, messageVisibility, null);
+                false, messageVisibility, null);
     }
 
     /**
@@ -278,14 +266,14 @@ public class ChatSubmissionService {
                                                    String providerConnectionId, Long connectionRevision,
                                                    String leaseOwner, String requestId, String content,
                                                    String attachmentsJson, List<String> attachmentIds,
-                                                   String agentPrincipalId, String messageVisibility) {
+                                                   String messageVisibility) {
         try {
             // Self-invocation on purpose: the annotation is already active on this method, and going
             // through the proxy again would just re-enter the same (REQUIRED) transaction.
             return Optional.of(createScheduled(runId, sessionId, userId, workspaceId, branchId,
                     idempotencyKey, requestHash, provider, model, toolMode, providerConnectionId,
                     connectionRevision, leaseOwner, requestId, content, attachmentsJson, attachmentIds,
-                    agentPrincipalId, messageVisibility));
+                    messageVisibility));
         } catch (CpApiException refused) {
             if (!"CHAT_IN_PROGRESS".equals(refused.getCode())) {
                 throw refused;
@@ -338,38 +326,21 @@ public class ChatSubmissionService {
      * PLAN-0669 D2: the responder participant for this Run, resolved once at the single
      * assistant-write point so every dispatch path gets the same answer.
      *
-     * <p>Fallback chain, in order: ① {@code chat_runs.agent_principal_id} — the responder recorded at
-     * admission (main submission path and wake runs); ② {@code sessions.agent_principal_id} —
-     * follow-up/continuation children never persist a run responder, but they answer as the
-     * Session-bound principal; ③ nothing ⇒ {@code null}. Never guess PRIMARY here: the attribution
-     * feeds a user-visible badge, and a wrong actor is worse than an absent one (review round-01 §2).</p>
+     * <p>PLAN-0689 A1 (T1.1 / design §3-A): the chain is single-source — ①
+     * {@code chat_runs.agent_principal_id}, the responder recorded at admission; ② nothing ⇒
+     * {@code null}. The former step "fall back to {@code sessions.agent_principal_id}" is gone with
+     * the column: every persisted Run now stamps its own responder at admission, so a Run without one
+     * genuinely has no responder. Never guess PRIMARY here: the attribution feeds a user-visible
+     * badge, and a wrong actor is worse than an absent one (review round-01 §2).</p>
      */
     private UUID resolveResponderParticipantId(String sessionId, ChatRun run) {
         UUID principalId = run == null ? null : run.getAgentPrincipalId();
-        if (principalId == null) {
-            principalId = sessionBoundPrincipalId(sessionId);
-        }
         if (principalId == null) {
             return null;
         }
         return sessionParticipantService
                 .participantIdForPrincipal(parseUuidOrNull(sessionId, "message_attribution"), principalId)
                 .orElse(null);
-    }
-
-    /** The Session's bound Agent principal (the fallback source for derived runs), or {@code null}. */
-    private UUID sessionBoundPrincipalId(String sessionId) {
-        UUID sessionUuid = parseUuidOrNull(sessionId, "message_attribution");
-        if (sessionUuid == null) {
-            return null;
-        }
-        String bound = sessionRepository.findById(sessionUuid)
-                .map(Session::getAgentPrincipalId)
-                .orElse(null);
-        if (bound == null || bound.isBlank()) {
-            return null;
-        }
-        return parseUuidOrNull(bound, "message_attribution_session_binding");
     }
 
     /**
@@ -443,7 +414,7 @@ public class ChatSubmissionService {
         String content = deriveSpawnContent(invocation.argumentsPreview());
         return new SpawnInvocation(parentRunId, toolCallId, parentSession.getId().toString(),
                 invocation.id(), parentRun.getUserId(), parentRun.getWorkspaceId(),
-                parentSession.getAgentPrincipalId(), createSpawnAuthorizationBody(content));
+                uuidStr(parentRun.getAgentPrincipalId()), createSpawnAuthorizationBody(content));
     }
 
     public void validateSpawnMcpArguments(SpawnInvocation invocation, String mcpBody) {
@@ -525,7 +496,7 @@ public class ChatSubmissionService {
                     .orElseThrow(() -> new IllegalStateException("Spawn session is missing"));
             entityManager.refresh(existingSession);
             return new SpawnResult(existingSession.getId().toString(), existingSpawn.getId().toString(),
-                    existingSession.getAgentPrincipalId(), parentRun.getWorkspaceId());
+                    uuidStr(parentRun.getAgentPrincipalId()), parentRun.getWorkspaceId());
         }
 
         // PLAN-0407 T2.5：cancel 获胜拒绝新 spawn——门在 child Session 创建之前，
@@ -537,9 +508,16 @@ public class ChatSubmissionService {
         // chain produced runs no memory/skill component could resolve. Same guard shape as the other
         // derived path, but with its own diagnostic code so the refusal is not mistaken for a
         // permission/approval problem.
-        if (parentSession.getAgentPrincipalId() == null) {
+        //
+        // PLAN-0689 A1 (T1.1 / design §3-C): the fact source is the initiating Run, not the parent
+        // Session column — the column is being dropped, and the Run responder is what the child
+        // actually inherits (invariant §2.4 "spawn 只继承发起者").
+        if (parentRun.getAgentPrincipalId() == null) {
             throw parentPrincipalMissing();
         }
+        // PLAN-0689 A7/D-54 (P0-0c): the snapshot column survives as the authorization input, so a
+        // NULL snapshot still means "the parent Session has no bound agent identity" — restore the
+        // gate A6 deleted with the column it (wrongly) assumed would disappear.
         if (parentSession.getAgentPermissionsSnapshot() == null) {
             throw agentSessionForbidden();
         }
@@ -554,9 +532,12 @@ public class ChatSubmissionService {
         // two concurrent spawns both read a snapshot without each other and overshoot.
         delegationBudgetService.requireWithinBudget(parentSession, parentRun, toolCallId);
 
-        JsonNode childPermissions = agentPrincipalService.deriveSpawnChildCap(
-                parentSession.getAgentPermissionsSnapshot(), parentSession.getAgentPrincipalId(),
-                parentRun.getWorkspaceId());
+        // PLAN-0689 A6 (design §3-B/B1): the child's cap used to be the intersection of the parent
+        // Session's frozen snapshot with the chosen principal's current cap, and its only consumer was
+        // childSession.agent_permissions_snapshot. Both the input and that column are dropped, so the
+        // derivation has no consumer left: a run's cap is resolved live from its own principal (run
+        // stamp / lease cap), and the child principal's active binding is still re-validated below in
+        // persist() → bindOrValidateAgentSession → resolveAgent + requireActiveWorkspaceBinding.
         if (authorization.approvalGrantId() != null
                 && !approvalService.consumeApprovedGrant(authorization.approvalGrantId(), parentRun.getUserId(),
                         parentRun.getWorkspaceId(), parentSession.getId().toString(), SPAWN_TOOL_NAME,
@@ -565,6 +546,15 @@ public class ChatSubmissionService {
                     "Spawn approval grant is invalid or no longer usable");
         }
 
+        // PLAN-0689 A6 (design §3-C / invariant §2.4): the child inherits the *initiating Run's*
+        // principal — never the parent Session column. One local is threaded through the four uses
+        // below so the roster row, the child Run stamp and the audit detail cannot disagree.
+        //
+        // The Session-column write is still here, now sourced from the Run, because SessionReadService
+        // (A2c) still reads that column for admission: persist() → resolveAgent() would fail closed
+        // with 403 on a child whose column is NULL. It is deleted with the column in A7, after A2c
+        // switches the path to the PRIMARY participant.
+        String childAgentPrincipalId = uuidStr(parentRun.getAgentPrincipalId());
         Session childSession = new Session(parentRun.getWorkspaceId(), parentRun.getUserId(),
                 parentSession.getTitle());
         childSession.setId(UUID.randomUUID());
@@ -572,8 +562,10 @@ public class ChatSubmissionService {
         childSession.setSpawnedFromSessionId(parentSession.getId());
         childSession.setSpawnedFromRunId(parentRun.getId());
         childSession.setSpawnedAt(Instant.now());
-        childSession.setAgentPrincipalId(parentSession.getAgentPrincipalId());
-        childSession.setAgentPermissionsSnapshot(childPermissions);
+        // PLAN-0689 A7/D-54 (P0-0): the snapshot column survives as the authorization input; write the
+        // PRIMARY's binding-time cap from the same single entry the create/fork paths use.
+        childSession.setAgentPermissionsSnapshot(agentPrincipalService.resolveCapFor(
+                uuidStr(parentRun.getAgentPrincipalId()), parentRun.getWorkspaceId()));
         childSession.setModelProvider(parentSession.getModelProvider());
         childSession.setModelName(parentSession.getModelName());
         childSession.setProviderConnectionId(parentSession.getProviderConnectionId());
@@ -591,7 +583,7 @@ public class ChatSubmissionService {
         // Existing spawn children are deliberately NOT backfilled: XH has no deployment surface
         // (0625 D25-19 precedent), so the fix covers new children only.
         sessionParticipantService.ensurePrimaryParticipant(childSession.getId(),
-                childSession.getAgentPrincipalId());
+                childAgentPrincipalId);
 
         String requestId = UUID.randomUUID().toString();
         String childRunId = UUID.randomUUID().toString();
@@ -601,7 +593,7 @@ public class ChatSubmissionService {
                 requestHash,
                 parentRun.getProvider(), parentRun.getModel(), parentRun.getToolMode(),
                 parentRun.getProviderConnectionId(), parentRun.getConnectionRevision(), null, requestId,
-                content, "[]", List.of(), childSession.getAgentPrincipalId(), false, Message.VISIBILITY_USER, null);
+                content, "[]", List.of(), false, Message.VISIBILITY_USER, null);
         // PLAN-0464 T2.1: the waiting link lives on the child run row itself.
         ChatRun childRun = created.run();
         childRun.setWaitingOnRunId(parentRun.getId().toString());
@@ -616,7 +608,7 @@ public class ChatSubmissionService {
         detail.put("parentInvocationId", invocation.id().toString());
         detail.put("childSessionId", childSession.getId().toString());
         detail.put("childRunId", created.run().getId().toString());
-        detail.put("agentPrincipalId", childSession.getAgentPrincipalId());
+        detail.put("agentPrincipalId", childAgentPrincipalId);
         if (authorization.approvalGrantId() != null) {
             detail.put("approvalRequestId", authorization.approvalGrantId());
         }
@@ -624,7 +616,7 @@ public class ChatSubmissionService {
                 "agent_spawn_created", "chat_session", childSession.getId().toString(), detail.toString());
 
         return new SpawnResult(childSession.getId().toString(), created.run().getId().toString(),
-                childSession.getAgentPrincipalId(), parentRun.getWorkspaceId());
+                childAgentPrincipalId, parentRun.getWorkspaceId());
     }
 
     /**
@@ -670,7 +662,9 @@ public class ChatSubmissionService {
         // PLAN-0678 T2.2 (BL-347): the same refusal on the human delegation route. The child names
         // its own principal, but a NULL-principal parent still means the derived chain has no
         // trustworthy owner; refuse with the shared diagnostic code instead of deriving silently.
-        if (parentSession.getAgentPrincipalId() == null) {
+        // PLAN-0689 A6 (R1/design §3-C): "the parent" is the initiating Run — the Session column is
+        // being dropped and was only ever a copy of this value.
+        if (parentRun.getAgentPrincipalId() == null) {
             throw parentPrincipalMissing();
         }
 
@@ -683,8 +677,10 @@ public class ChatSubmissionService {
             Session existingSession = sessionRepository
                     .findByIdForUpdate(UUID.fromString(existing.getSessionId()))
                     .orElseThrow(() -> new IllegalStateException("Delegation session is missing"));
+            // PLAN-0689 A6 (R1): replay echoes the principal the existing child Run was stamped with —
+            // the Run column is the fact source, the Session column is a copy awaiting the drop.
             return new SpawnResult(existingSession.getId().toString(), existing.getId().toString(),
-                    existingSession.getAgentPrincipalId(), existingSession.getWorkspaceId());
+                    uuidStr(existing.getAgentPrincipalId()), existingSession.getWorkspaceId());
         }
 
         // INV-8: budget BEFORE the approval consume (below), inside the parent Session+Run locks.
@@ -723,7 +719,8 @@ public class ChatSubmissionService {
         childSession.setSpawnedFromSessionId(parentSession.getId());
         childSession.setSpawnedFromRunId(parentRun.getId());
         childSession.setSpawnedAt(Instant.now());
-        childSession.setAgentPrincipalId(agentPrincipalId);
+        // PLAN-0689 A7/D-54 (P0-3): retained snapshot = the child PRIMARY's binding-time cap;
+        // resolveCapFor above already carried the D-49 active-binding gate.
         childSession.setAgentPermissionsSnapshot(childPermissions);
         childSession.setModelProvider(parentSession.getModelProvider());
         childSession.setModelName(parentSession.getModelName());
@@ -743,7 +740,7 @@ public class ChatSubmissionService {
                 parentRun.getUserId(), parentRun.getWorkspaceId(), childBranchId, idempotencyKey,
                 requestHash, parentRun.getProvider(), parentRun.getModel(), parentRun.getToolMode(),
                 parentRun.getProviderConnectionId(), parentRun.getConnectionRevision(), null, requestId,
-                task, "[]", List.of(), agentPrincipalId, false, Message.VISIBILITY_USER, null);
+                task, "[]", List.of(), false, Message.VISIBILITY_USER, null);
         ChatRun childRun = created.run();
         childRun.setWaitingOnRunId(parentRun.getId().toString());
         // The waiting tool-call column is a 36-char uuid string, and settlement only compares it for
@@ -926,9 +923,9 @@ public class ChatSubmissionService {
                                 String provider, String model,
                                 String toolMode, String providerConnectionId, Long connectionRevision,
                                 String leaseOwner, String requestId, String content, String attachmentsJson,
-                                List<String> attachmentIds, String requestedPrincipalId,
+                                List<String> attachmentIds,
                                 boolean followUpAdmission, String messageVisibility, String deliveryJson) {
-        Session session = bindOrValidateAgentSession(sessionId, userId, workspaceId, requestedPrincipalId);
+        Session session = bindOrValidateAgentSession(sessionId, userId, workspaceId);
         var requestSnapshot = apiRequestTemplates.admissionSnapshot(session);
         provider = session.getModelProvider();
         model = session.getModelName();
@@ -964,19 +961,30 @@ public class ChatSubmissionService {
         // admission. The listing is scoped to the Session's bound Agent principal (the AGENT tier
         // of D28-14) — the same identity this Run's instructions are resolved from at dispatch.
         // A capture failure is recorded inside the document and never blocks the Run.
-        chatRun.setSkillsSnapshot(freezeSkillsListing(requestSnapshot, session, userId, workspaceId));
+        // PLAN-0689 A1 (T1.1 / design §3-A): the Run principal is the responder resolved from
+        // admission (session_participants PRIMARY), not the Session column — that column is being
+        // dropped. A HUMAN PRIMARY can never be stored here: chat_runs.agent_principal_id carries a FK
+        // to agent_principals (V92), so it persists NULL and attribution falls back to nothing rather
+        // than to a wrong actor (design §2.6). Resolved once so the skills capture and the stamp
+        // cannot disagree.
+        SessionParticipantService.Responder admissionResponder = sessionParticipantService.responderFor(
+                parseUuidOrNull(sessionId, "run_principal_stamp"), null);
+        UUID admissionPrincipalId = admissionResponder != null
+                && SessionParticipant.KIND_AGENT.equals(admissionResponder.principalKind())
+                ? admissionResponder.principalId() : null;
+        chatRun.setSkillsSnapshot(freezeSkillsListing(requestSnapshot, admissionPrincipalId, userId, workspaceId));
         chatRun.setLeaseOwner(leaseOwner);
         chatRun.setLeaseExpiresAt(Instant.now().plus(LEASE_TTL));
         chatRun.setProviderConnectionId(providerConnectionId);
         chatRun.setConnectionRevision(connectionRevision);
         // BL-280: every persisted Run gets its responder stamp here. Before this, only the main
         // submission tried to stamp it (and lost the write to a detached entity); derived paths
-        // (follow-up / scheduled / spawn) never did, so `chat_runs.agent_principal_id` was NULL for
-        // them and the dispatch read (memory / skill_catalog components) lost the principal. The
-        // Session's bound principal is the agent that executes any derived Run. `create()` overrides
-        // this with the main submission's actual responder (AGENT-only; a HUMAN responder clears it —
-        // the V92 FK only allows agent_principals.id).
-        chatRun.setAgentPrincipalId(parseUuidOrNull(session.getAgentPrincipalId(), "run_principal_stamp"));
+        // (follow-up / scheduled / spawn) never did, so chat_runs.agent_principal_id was NULL for them
+        // and the dispatch read (memory / skill_catalog components) lost the principal.
+        // PLAN-0689 A1: the stamp now comes from the admission responder resolved above — AGENT-only,
+        // because a HUMAN responder can never be stored (V92 FK) and NULL is better than a wrong actor.
+        // create() still narrows it to the actual asParticipantId responder when the caller passed one.
+        chatRun.setAgentPrincipalId(admissionPrincipalId);
         // PLAN-0464 T1.1: ChatRun is the only admission root. Conflicts are owned
         // by the chat_runs unique indexes; a race that slips past the in-memory
         // and locked pre-checks surfaces on this insert and maps to the same 409.
@@ -1022,11 +1030,10 @@ public class ChatSubmissionService {
      * enabled listing component (the column then keeps its {@code {}} "not captured" default).
      */
     private com.fasterxml.jackson.databind.JsonNode freezeSkillsListing(
-            com.fasterxml.jackson.databind.JsonNode requestSnapshot, Session session,
+            com.fasterxml.jackson.databind.JsonNode requestSnapshot, UUID principalId,
             String userId, String workspaceId) {
         return skillCatalogSnapshots.capture(requestSnapshot,
-                optionalUuid(session.getAgentPrincipalId()), optionalUuid(userId),
-                optionalUuid(workspaceId));
+                principalId, optionalUuid(userId), optionalUuid(workspaceId));
     }
 
     /**
@@ -1042,6 +1049,11 @@ public class ChatSubmissionService {
         } catch (IllegalArgumentException notAnId) {
             return null;
         }
+    }
+
+    /** PLAN-0689 A1: the String form of a Run's UUID principal, or {@code null}. */
+    private static String uuidStr(UUID value) {
+        return value == null ? null : value.toString();
     }
 
     /** Unique-index admission conflicts are 409s, never 500s (V2 equivalence). */
@@ -1078,8 +1090,7 @@ public class ChatSubmissionService {
         runConcurrencyGate.requireSlot(sessionId);
     }
 
-    private Session bindOrValidateAgentSession(String sessionId, String userId, String workspaceId,
-                                               String requestedPrincipalId) {
+    private Session bindOrValidateAgentSession(String sessionId, String userId, String workspaceId) {
         UUID sessionUuid = UUID.fromString(sessionId);
         dbLockTimeout.apply();
         Session session = sessionRepository.findByIdForUpdate(sessionUuid)
@@ -1093,45 +1104,18 @@ public class ChatSubmissionService {
                     "Session is being deleted");
         }
 
-        if (session.getAgentPrincipalId() == null) {
-            if (requestedPrincipalId == null || requestedPrincipalId.isBlank()) {
-                throw new CpApiException(HttpStatus.FORBIDDEN, "FORBIDDEN",
-                        "A principal-null Session cannot start an Agent Chat without an explicit principal");
-            }
-            if (session.getAgentPermissionsSnapshot() != null
-                    || chatRunRepository.existsBySessionId(sessionId)
-                    || messageRepository.existsBySessionId(sessionId)
-                    || mcpInvocationService.hasInvocationForSession(sessionId)
-                    || eventStoreService.hasEventsForSession(sessionId)) {
-                throw new CpApiException(HttpStatus.CONFLICT, "SESSION_PRINCIPAL_BINDING_CONFLICT",
-                        "Only an empty, unbound Session can be assigned an Agent principal");
-            }
-            com.fasterxml.jackson.databind.JsonNode cap = agentPrincipalService.resolveCapFor(
-                    requestedPrincipalId, workspaceId);
-            try {
-                int updated = sessionRepository.bindAgentPrincipalIfNull(sessionUuid, requestedPrincipalId,
-                        objectMapper.writeValueAsString(cap));
-                if (updated != 1) {
-                    throw new CpApiException(HttpStatus.CONFLICT, "SESSION_PRINCIPAL_BINDING_CONFLICT",
-                            "Session was concurrently bound to an Agent principal");
-                }
-            } catch (JsonProcessingException e) {
-                throw new IllegalStateException("Unable to serialize Agent Session permission cap", e);
-            }
-            session.setAgentPrincipalId(requestedPrincipalId);
-            // D23-13: binding the principal of a principal-null placeholder also creates its PRIMARY —
-            // otherwise the placeholder would keep a conversation without a main participant forever.
-            sessionParticipantService.ensurePrimaryParticipant(sessionUuid, requestedPrincipalId);
-            session.setAgentPermissionsSnapshot(cap);
-        } else if (requestedPrincipalId != null
-                && !session.getAgentPrincipalId().equals(requestedPrincipalId)) {
-            throw new CpApiException(HttpStatus.CONFLICT, "SESSION_PRINCIPAL_MISMATCH",
-                    "agentPrincipalId does not match the Session principal");
-        }
+        // PLAN-0689 A1 (T1.1 / design §3-B): the F6 "bind the principal of a principal-less
+        // placeholder on first Chat" path is deleted together with the columns it wrote
+        // (sessions.agent_principal_id / agent_permissions_snapshot). A Session no longer carries a
+        // principal, so there is nothing to bind — the run responder comes from session_participants.
+        // The sessionUuid local stays (it is still used by the row lock above); no caller can name a
+        // run principal any more (A4b/T1.12), so the responder is resolved below, never passed in.
+
+        // PLAN-0689 A7/D-54 (P0-0): the snapshot column survives as the authorization input, so a NULL
+        // snapshot means this Session has no bound agent identity — fail closed before resolving it.
         if (session.getAgentPermissionsSnapshot() == null) {
             throw agentSessionForbidden();
         }
-
         GrantPrincipalPathResolver.AgentPath path;
         try {
             path = principalPathResolver.resolveAgent(userId, workspaceId, sessionId);

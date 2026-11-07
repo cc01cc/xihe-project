@@ -209,8 +209,7 @@ class ChatControllerTest extends AbstractH2Test {
     @Autowired
     private com.cc01cc.p.xihe.cp.repository.SessionParticipantRepository sessionParticipantRepository;
 
-    @Autowired
-    private com.cc01cc.p.xihe.cp.repository.AgentPrincipalRepository agentPrincipalRepository;
+    private AgentPrincipal sessionPrincipal;
 
     @LocalServerPort
     private int serverPort;
@@ -282,19 +281,19 @@ class ChatControllerTest extends AbstractH2Test {
         authToken = jwtTokenProvider.createAccessToken(userId, email, "USER", workspaceId, 0);
 
         var defaultTemplate = agentTemplateService.resolveForCreation(userId, workspaceId, null);
-        AgentPrincipal principal = agentPrincipalService.createPrincipal(
+        sessionPrincipal = agentPrincipalService.createPrincipal(
                 userId, "ChatControllerTestPrincipal", null, defaultTemplate.snapshot());
-        var permissions = principal.getTemplateSnapshot().get("permissions");
+        var permissions = sessionPrincipal.getTemplateSnapshot().get("permissions");
         workspaceAgentRepository.saveAndFlush(new WorkspaceAgent(
-                principal.getId().toString(), workspaceId, permissions.deepCopy()));
+                sessionPrincipal.getId().toString(), workspaceId, permissions.deepCopy()));
 
         sessionId = UUID.randomUUID().toString();
         Session session = new Session(workspaceId, userId, "Chat Test");
         session.setId(UUID.fromString(sessionId));
-        session.setAgentPrincipalId(principal.getId().toString());
         session.setAgentPermissionsSnapshot(permissions.deepCopy());
         ChatBindingTestSupport.bind(session, chatConnection(), apiRequestTemplates);
         sessionRepository.save(session);
+        bindPrimaryParticipant(sessionId, sessionPrincipal.getId().toString());
         branchId = branchPathService.ensureRootBranchId(sessionId);
     }
 
@@ -354,13 +353,12 @@ class ChatControllerTest extends AbstractH2Test {
         assertEquals(0, calls.get());
         assertEquals(1, jdbcTemplate.queryForObject(
                 "SELECT count(*) FROM chat_run_history WHERE run_id = CAST(? AS UUID)", Integer.class, runId));
-        verify(sseEmitterManager, timeout(5000)).send(eq(sessionId), eq("error"), any(), isNull());
+        verify(sseEmitterManager, timeout(5000)).send(eq(sessionId), eq("error"), any(), eq(primaryParticipantId()));
     }
 
     @Test
     void chatRejectsSessionWithoutStableAgentPrincipalBeforeCreatingRun() {
         Session session = sessionRepository.findById(UUID.fromString(sessionId)).orElseThrow();
-        session.setAgentPrincipalId(null);
         session.setAgentPermissionsSnapshot(null);
         sessionRepository.saveAndFlush(session);
 
@@ -1598,7 +1596,7 @@ class ChatControllerTest extends AbstractH2Test {
         assertEquals(HttpStatus.ACCEPTED, response.getStatusCode());
 
         ArgumentCaptor<Object> payload = ArgumentCaptor.forClass(Object.class);
-        verify(sseEmitterManager, timeout(5000)).send(eq(sessionId), eq("approval_request"), payload.capture(), isNull());
+        verify(sseEmitterManager, timeout(5000)).send(eq(sessionId), eq("approval_request"), payload.capture(), eq(primaryParticipantId()));
         Map<String, Object> event = (Map<String, Object>) payload.getValue();
         Map<String, Object> policy = (Map<String, Object>) event.get("policy");
         assertEquals(requestId, event.get("requestId"));
@@ -1665,7 +1663,7 @@ class ChatControllerTest extends AbstractH2Test {
                 eq(requestId), eq(false), eq("reject"), eq("denied by review"));
         // ...and the relay keeps going: the probe event is processed after the approval
         // event on the same relay thread, so the park decision has already been made.
-        verify(sseEmitterManager, timeout(5000)).send(eq(sessionId), eq("probe"), any(), isNull());
+        verify(sseEmitterManager, timeout(5000)).send(eq(sessionId), eq("probe"), any(), eq(primaryParticipantId()));
         verify(sseEmitterManager, never()).send(eq(sessionId), eq("approval_request"), any(), any());
 
         ChatRun run = chatRunRepository.findById(UUID.fromString((String) response.getBody().get("runId")))
@@ -1959,8 +1957,8 @@ class ChatControllerTest extends AbstractH2Test {
                 assertEquals("awaiting_approval",
                         chatRunRepository.findById(UUID.fromString(runId)).orElseThrow().getStatus());
             });
-            verify(sseEmitterManager, timeout(5000).atLeastOnce()).send(eq(sessionId), eq("token"), any(), isNull());
-            verify(sseEmitterManager, timeout(5000)).send(eq(sessionId), eq("approval_request"), any(), isNull());
+            verify(sseEmitterManager, timeout(5000).atLeastOnce()).send(eq(sessionId), eq("token"), any(), eq(primaryParticipantId()));
+            verify(sseEmitterManager, timeout(5000)).send(eq(sessionId), eq("approval_request"), any(), eq(primaryParticipantId()));
 
             String approvalRequestId = approvalService.findActiveForRun(runId, userId, workspaceId).stream()
                     .map(row -> (String) row.get("requestId"))
@@ -2027,7 +2025,7 @@ class ChatControllerTest extends AbstractH2Test {
         String runId = (String) response.getBody().get("runId");
         assertNull(response.getBody().get("operationId"), "PLAN-0464 T1.1: no operationId on the wire");
 
-        verify(sseEmitterManager, timeout(5000)).send(eq(sessionId), eq("approval_request"), any(), isNull());
+        verify(sseEmitterManager, timeout(5000)).send(eq(sessionId), eq("approval_request"), any(), eq(primaryParticipantId()));
         org.awaitility.Awaitility.await().atMost(java.time.Duration.ofSeconds(5)).untilAsserted(() -> {
             assertEquals("succeeded",
                     chatRunRepository.findById(UUID.fromString(runId)).orElseThrow().getStatus());
@@ -2100,8 +2098,8 @@ class ChatControllerTest extends AbstractH2Test {
             assertEquals("failed", run.getStatus());
             assertEquals("RAG_QUERY_FAILED", run.getErrorCode());
         });
-        verify(sseEmitterManager, timeout(5000)).send(eq(sessionId), eq("error"), any(), isNull());
-        verify(sseEmitterManager, timeout(5000)).send(eq(sessionId), eq("done"), any(), isNull());
+        verify(sseEmitterManager, timeout(5000)).send(eq(sessionId), eq("error"), any(), eq(primaryParticipantId()));
+        verify(sseEmitterManager, timeout(5000)).send(eq(sessionId), eq("done"), any(), eq(primaryParticipantId()));
     }
 
     // PLAN-0591 M3: the capability gate code must survive the CP safeErrorCode
@@ -2160,6 +2158,13 @@ class ChatControllerTest extends AbstractH2Test {
     // ── PLAN-0648 D1: mention semantics on the submission path (branch level) ─────────────
 
     private String seedAgentParticipant(AgentPrincipal principal, String role, String respondPolicy, int order) {
+        if (SessionParticipant.ROLE_PRIMARY.equals(role)) {
+            // The default fixture already carries a PRIMARY; participant-layout tests replace it.
+            sessionParticipantRepository.findBySessionIdOrderByOrderIndexAsc(UUID.fromString(sessionId))
+                    .stream()
+                    .filter(SessionParticipant::isPrimary)
+                    .forEach(sessionParticipantRepository::delete);
+        }
         SessionParticipant row = new SessionParticipant(UUID.fromString(sessionId),
                 SessionParticipant.KIND_AGENT, principal.getId(), role, order,
                 SessionParticipant.WAKE_ALL_MESSAGES, respondPolicy);
@@ -2167,9 +2172,19 @@ class ChatControllerTest extends AbstractH2Test {
         return row.getId().toString();
     }
 
+    /** The SSE attribution row for the default PRIMARY: PLAN-0689 A7 resolves it from the participant. */
+    private String primaryParticipantId() {
+        return sessionParticipantRepository.findBySessionIdOrderByOrderIndexAsc(UUID.fromString(sessionId))
+                .stream()
+                .filter(SessionParticipant::isPrimary)
+                .findFirst()
+                .orElseThrow()
+                .getId()
+                .toString();
+    }
+
     private AgentPrincipal primaryPrincipal() {
-        Session session = sessionRepository.findById(UUID.fromString(sessionId)).orElseThrow();
-        return agentPrincipalRepository.findById(UUID.fromString(session.getAgentPrincipalId())).orElseThrow();
+        return sessionPrincipal;
     }
 
     private AgentPrincipal seedMentionablePrincipal(String name) {

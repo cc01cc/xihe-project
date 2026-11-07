@@ -11,7 +11,7 @@ import TextPart from "./parts/TextPart.vue";
 import ReasoningPart from "./parts/ReasoningPart.vue";
 import ArtifactPart from "./parts/ArtifactPart.vue";
 import CitationPart from "./parts/CitationPart.vue";
-import ToolCallCard from "./ToolCallCard.vue";
+import ToolCallHost from "./ToolCallHost.vue";
 import RunCheckpointMarker from "./RunCheckpointMarker.vue";
 import VoiceOutput from "../../../../components/multimodal/VoiceOutput.vue";
 import {
@@ -539,7 +539,7 @@ onUnmounted(() => {
             </div>
 
             <div v-if="message.toolCalls?.length" class="mt-1.5 w-full space-y-1">
-                <ToolCallCard
+                <ToolCallHost
                     v-for="tc in message.toolCalls"
                     :key="tc.id"
                     :tool-call="tc"

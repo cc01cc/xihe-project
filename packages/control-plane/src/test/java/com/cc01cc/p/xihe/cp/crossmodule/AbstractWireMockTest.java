@@ -49,6 +49,14 @@ public abstract class AbstractWireMockTest {
     private int cpPort;
 
     @Autowired
+    protected com.cc01cc.p.xihe.cp.service.SessionParticipantService sessionParticipantService;
+
+    protected void bindPrimaryParticipant(String sessionId, String agentPrincipalId) {
+        sessionParticipantService.ensurePrimaryParticipant(
+                java.util.UUID.fromString(sessionId), agentPrincipalId);
+    }
+
+    @Autowired
     void initChatBindingCredentialService(
             com.cc01cc.p.xihe.cp.credentials.CredentialService credentialService) {
         com.cc01cc.p.xihe.cp.chat.ChatBindingTestSupport.setCredentialService(credentialService);

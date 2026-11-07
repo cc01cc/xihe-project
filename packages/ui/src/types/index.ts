@@ -28,6 +28,7 @@ export interface Session {
     createdAt: string;
     updatedAt: string;
     workspaceId?: string;
+    /** PLAN-0689 D-54: response-only projection from the Session PRIMARY participant. UI never writes it. */
     agentPrincipalId?: string | null;
     /** PLAN-0655 T1.5: `SPAWN` = a delegated child session (tree + badge + budget chip). */
     kind?: string | null;
@@ -113,6 +114,7 @@ export interface SessionRunsResponse {
 export interface SessionMonitorSession {
     id: string;
     title: string | null;
+    /** PLAN-0689 D-54: monitor view also projects the Session PRIMARY participant. */
     agentPrincipalId: string | null;
     modelProvider: string | null;
     modelName: string | null;

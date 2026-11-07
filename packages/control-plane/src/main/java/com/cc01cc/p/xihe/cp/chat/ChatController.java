@@ -304,7 +304,12 @@ public class ChatController {
                         ? item.getProvider() : session.getModelProvider();
                 String model = session.getProviderConnectionId() == null
                         ? item.getModel() : session.getModelName();
-                String principalId = session.getAgentPrincipalId();
+                // PLAN-0689 A2 (T1.2 / design B2-a): read the same value the Session column used to
+                // hold — the PRIMARY row's principal, which every create/bind path wrote in the same
+                // transaction. Same input ⇒ same hash ⇒ pre-upgrade Idempotency-Keys still dedupe.
+                UUID followUpPrincipal =
+                        sessionParticipantService.responderPrincipalIdFor(session.getId(), null);
+                String principalId = followUpPrincipal == null ? null : followUpPrincipal.toString();
                 String branchId = item.getBranchId().toString();
                 String requestHash = ChatRequestHash.calculate(objectMapper, item.getContent(), provider, model,
                         item.getToolMode(), admission.attachments().fileIds(), timeouts, principalId, branchId);
@@ -329,7 +334,7 @@ public class ChatController {
                         item.getIdempotencyKey(), requestHash, provider, model, item.getToolMode(),
                         session.getProviderConnectionId(), session.getConnectionRevision(), instanceId(),
                         UUID.randomUUID().toString(), item.getContent(), attachmentsJson,
-                        admission.attachments().fileIds(), principalId);
+                        admission.attachments().fileIds());
                 return new FollowUpQueueService.ChildAdmission(
                         created.run().getId(), created.userMessage().getId());
             });
@@ -480,12 +485,10 @@ public class ChatController {
                     HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "branchId must be a UUID");
         }
         String content = (String) request.getOrDefault("content", "");
-        Object rawPrincipalId = request.get("agentPrincipalId");
-        if (rawPrincipalId != null && !(rawPrincipalId instanceof String)) {
-            return ProblemDetailsHandler.problemResponse(HttpStatus.BAD_REQUEST,
-                    "INVALID_REQUEST", "agentPrincipalId must be a UUID string");
-        }
-        String agentPrincipalId = (String) rawPrincipalId;
+        // PLAN-0689 A2 (T1.2 / design §3 B3): the wire field is retired — a request can no longer
+        // name the run's answering principal; that is resolved at admission instead. Old clients
+        // that still send it are ignored rather than rejected: the body is a Map, so there is no
+        // strict deserialization to 400 on it (BL-444 tracks the deprecation window).
         Object rawAsParticipantId = request.get("asParticipantId");
         if (rawAsParticipantId != null && !(rawAsParticipantId instanceof String)) {
             return ProblemDetailsHandler.problemResponse(HttpStatus.BAD_REQUEST,
@@ -682,8 +685,10 @@ public class ChatController {
             }
         }
 
+        // 0689 B3: wire field deleted ⇒ the run principal is never part of the identity; the key
+        // can no longer appear in the canonical form, so this hash family is "identity v3".
         String requestHash = requestHash(content, provider, model, toolMode, attachmentIds,
-                perCallTimeouts.values(), agentPrincipalId, branchId,
+                perCallTimeouts.values(), null, branchId,
                 ChatToTargets.canonical(toParticipantIds), asParticipantId);
         try {
             var replay = chatSubmissionService.findSubmissionReplay(
@@ -724,7 +729,8 @@ public class ChatController {
         boolean handedOff = false;
         try {
             ChatSubmissionService.Submission submission = chatSubmissionService.create(
-                    runId, sessionId, userId, workspaceId, branchId, agentPrincipalId, idempotencyKey, requestHash,
+                    // 0689 B3/A4b: no caller can name a run principal — the parameter is gone.
+                    runId, sessionId, userId, workspaceId, branchId, idempotencyKey, requestHash,
                     provider, model, toolMode, session.getProviderConnectionId(), session.getConnectionRevision(),
                     instanceId(), requestId, content, attachmentsJson, attachmentIds, asParticipantId,
                     ChatDeliveryPayload.toJson(objectMapper, toParticipantIds, asParticipantId, ccParticipantIds));
@@ -1344,15 +1350,26 @@ public class ChatController {
     }
 
     /**
-     * PLAN-0623 M1b-②: the lease cap for this run, derived from the ONE Responder resolved in the
-     * request thread (never re-resolved here). {@code responder == null} keeps the frozen 0622 C3
-     * semantics: the Session's stored {@code agent_permissions_snapshot} (D23-31 dual track).
+     * PLAN-0623 M1b-②: the lease cap for this run. A request-thread dispatch passes its already
+     * resolved Responder; a derived dispatch (spawn/follow-up/scheduled/continuation/redelivery)
+     * resolves the PRIMARY participant once in {@link #execAsync} and passes that same Responder
+     * here. Both call sites use the same {@code resolveParticipantCap} arguments — no branch and no
+     * cached cap.
+     *
+     * <p>PLAN-0689 A7 (D-54, D-55; Lead 2026-11-07 option A): the cap stays <em>live</em> as frozen
+     * by design.md:118 / the 2026-11-02 ruling. D-54's {@code sessions.agent_permissions_snapshot}
+     * is an authorization-intersection input only and must not be used as a lease cap. Once A7 drops
+     * the identity column, the old Session fallback can only yield {@code null}, and a null cap is an
+     * <em>uncapped</em> lease — strictly weaker than refusing to issue one. A run with no resolved
+     * Responder (or a Responder without a principal) has no identity to bound the lease against, so
+     * it is refused here, the same fail-closed invariant A3b applied to unattributed runs.
      */
-    JsonNode leaseCapFor(SessionParticipantService.Responder responder, String leasePrincipalId,
-                         Session leaseSession, String workspaceId) {
-        return responder != null
-                ? participantCapabilityService.resolveParticipantCap(responder, UUID.fromString(workspaceId))
-                : (leasePrincipalId == null ? null : leaseSession.getAgentPermissionsSnapshot());
+    JsonNode leaseCapFor(SessionParticipantService.Responder responder, String workspaceId) {
+        if (responder == null || responder.principalId() == null) {
+            throw new CpApiException(HttpStatus.FORBIDDEN, "AGENT_PRINCIPAL_MISSING",
+                    "Chat run has no Agent principal to bound the credential lease");
+        }
+        return participantCapabilityService.resolveParticipantCap(responder, UUID.fromString(workspaceId));
     }
 
     private void execAsync(String sessionId, String content, String provider, String model, String toolMode,
@@ -1381,12 +1398,23 @@ public class ChatController {
                            ProviderCredentialLeaseService.Admission admission,
                            ContinuationDispatchContext continuationContext,
                            SessionParticipantService.Responder responder) {
+        // PLAN-0689 A7 (D-55): derived dispatch paths (spawn / follow-up / scheduled / continuation)
+        // carry no request-thread Responder. A7 made the lease cap fail closed on a null Responder
+        // instead of falling back to the dropped Session column, so resolve the durable run's PRIMARY
+        // here — once — and thread that same object through attribution, lease identity and cap.
+        final SessionParticipantService.Responder effectiveResponder = responder != null
+                ? responder
+                : sessionParticipantService.responderFor(UUID.fromString(sessionId), null);
+        if (responder == null && effectiveResponder != null) {
+            logger.info("[LIFECYCLE] service=cp event=derived_dispatch_primary_resolved sessionId={} runId={} participantId={}",
+                    sessionId, runId, effectiveResponder.participantId());
+        }
         Thread worker = new Thread(() -> {
             MDC.put("requestId", requestId);
             MDC.put("chatRunId", runId);
             // M1b-③: attribute this run's SSE output to the Responder's participant row.
-            if (responder != null && responder.participantId() != null) {
-                runParticipants.put(runId, responder.participantId().toString());
+            if (effectiveResponder != null && effectiveResponder.participantId() != null) {
+                runParticipants.put(runId, effectiveResponder.participantId().toString());
             }
             AtomicBoolean terminalSent = new AtomicBoolean(false);
             // Set inside relayAgentStream when an approval_request has been
@@ -1447,11 +1475,13 @@ public class ChatController {
                 String effectiveModel = persistedRun.model() == null ? model : persistedRun.model();
                 ProviderCredentialLeaseService.IssuedLease credentialLease = null;
                 if (persistedRun.providerConnectionId() != null) {
-                    // PLAN-0622 M1.4: the run's credential authority is the Session's frozen
-                    // principal cap (checklist C3), not a live re-resolution — a later cap change
-                    // never widens or narrows an already bound Session's credential arm.
-                    Session leaseSession = sessionService.requireCurrent(sessionId, userId, workspaceId);
-                    String leasePrincipalId = leaseSession.getAgentPrincipalId();
+                    // PLAN-0689 A7/D-55: the lease identity is the ONE Responder resolved at dispatch
+                    // entry (request thread or durable-run handoff) — the same principal that bounds
+                    // the cap. A missing Responder is refused by leaseCapFor below; never fall back
+                    // to the dropped Session column.
+                    String leasePrincipalId = effectiveResponder == null
+                            || effectiveResponder.principalId() == null
+                            ? null : effectiveResponder.principalId().toString();
                     credentialLease = credentialLeases.issue(
                             userId,
                             workspaceId,
@@ -1463,10 +1493,9 @@ public class ChatController {
                             persistedRun.connectionRevision(),
                             null,
                             leasePrincipalId,
-                            // PLAN-0623 M1b-②: single-source cap — the same Responder resolved in
-                            // the request thread drives the lease; null keeps the frozen 0622 C3
-                            // snapshot path byte-equivalent (D23-31 dual track).
-                            leaseCapFor(responder, leasePrincipalId, leaseSession, workspaceId),
+                            // PLAN-0623 M1b-② / PLAN-0689 A7/D-55: single-source cap — the same
+                            // Responder that names the lease identity also bounds it.
+                            leaseCapFor(effectiveResponder, workspaceId),
                             continuationContext == null ? admission : null);
                 }
                 Map<String, Object> agentRequest = new java.util.LinkedHashMap<>();
@@ -1513,9 +1542,9 @@ public class ChatController {
                 // The existing AgentChatIntegrationTest security contract keeps
                 // principal IDs and permission snapshots strictly CP-local.
                 Session boundSession = sessionService.requireCurrent(sessionId, userId, workspaceId);
-                if (boundSession.getAgentPrincipalId() == null || boundSession.getAgentPrincipalId().isBlank()) {
-                    throw new IllegalStateException("ChatRun Session is missing its AgentPrincipal binding");
-                }
+                // PLAN-0689 A4 (T1.4 / design §2): the run's own stamp is the only execution
+                // identity. A Session with no binding is legal (dev data / HUMAN-only sessions)
+                // and must not fail the dispatch here.
                 agentRequest.put("contextTemplateSnapshot", persistedRun.context().contextTemplateSnapshot());
                 // PLAN-0605: image references (ids + metadata only). Bytes stay behind the
                 // run-bound internal route; the Agent pulls them lazily while rendering.
@@ -1533,8 +1562,10 @@ public class ChatController {
                 if (!componentSources.isEmpty()) {
                     agentRequest.put("componentSources", componentSources);
                 }
+                // PLAN-0689 A4 (T1.4 / design §3-A): instructions for THIS run resolve from the
+                // run's own principal stamp, not from the Session column A7 deletes.
                 String agentInstructions = agentPrincipalService.resolveSystemInstructionsForRun(
-                        boundSession.getAgentPrincipalId());
+                        persistedRun.context().agentPrincipalId());
                 if (agentInstructions != null) {
                     agentRequest.put("instructions", agentInstructions);
                 }

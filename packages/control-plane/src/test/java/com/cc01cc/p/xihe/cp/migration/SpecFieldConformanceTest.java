@@ -78,14 +78,16 @@ class SpecFieldConformanceTest extends AbstractIntegrationTest {
                 "the frozen agent snapshot keeps the V38-style single-row fence");
     }
 
-    /** spec §3.2: sessions provenance columns, kind ∈ {spawn, fork}, agent_principal_id. */
+    /** spec §3.2: sessions provenance columns and kind ∈ {spawn, fork}; identity lives on PRIMARY. */
     @Test
     void sessionsProvenanceKindAndPrincipalColumnsConformToSpec32() {
         for (String column : new String[]{"spawned_from_session_id", "spawned_from_run_id",
-                "spawned_at", "kind", "agent_principal_id"}) {
+                "spawned_at", "kind"}) {
             assertEquals(1, columnCount("sessions", column),
                     "spec §3.2 sessions must expose column: " + column);
         }
+        assertEquals(0, columnCount("sessions", "agent_principal_id"),
+                "PLAN-0689 V133: identity moved to session_participants.PRIMARY; the column must be gone");
         for (String column : new String[]{"spawned_from_session_id", "spawned_from_run_id",
                 "spawned_at", "kind"}) {
             assertEquals("YES", columnInfo("sessions", column, "is_nullable"),

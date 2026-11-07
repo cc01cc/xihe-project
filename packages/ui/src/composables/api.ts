@@ -284,6 +284,7 @@ export interface ApiSession {
     id: string;
     title: string;
     workspaceId?: string;
+    /** PLAN-0689 D-54: response-only projection from the Session PRIMARY participant. UI never writes it. */
     agentPrincipalId?: string | null;
     createdAt?: string;
     updatedAt?: string;
@@ -631,8 +632,13 @@ export interface AgentSkillBinding {
     skillId: string;
     name: string;
     description?: string | null;
+    /** Definition home (workspace-private vs instance library), independent of the binding scope. */
     sourceType?: string | null;
     sourceName?: string | null;
+    /** PLAN-0680: binding activation scope, server-derived from the workspace context. */
+    scopeType: "instance" | "workspace";
+    scopeId: string | null;
+    scopeName: string | null;
     tokenEstimate?: number | null;
 }
 
@@ -2651,6 +2657,35 @@ export type ApiSessionMessage = {
  */
 export const PARTICIPANT_CURSOR_ADVANCE_TO_LATEST = Number.MAX_SAFE_INTEGER;
 
+/**
+ * PLAN-0680 M2: shared projection for both skill-library listings. The qualified definition
+ * identity `(skillId, type, workspaceId)` is the dedupe key; rows missing a usable identity are
+ * dropped (fail-closed).
+ */
+function parseSkillSummaries(
+    raw: { items?: Array<Record<string, unknown>> } | null | undefined,
+): AgentSkillSummary[] {
+    if (!Array.isArray(raw?.items)) return [];
+    const seen = new Set<string>();
+    return raw.items.flatMap((row) => {
+        const skillId = typeof row.skillId === "string" ? row.skillId : "";
+        const name = typeof row.name === "string" ? row.name : "";
+        if (!skillId || !name) return [];
+        const scope = row.definitionScope as { type?: unknown; workspaceId?: unknown } | undefined;
+        const definitionScope =
+            scope && typeof scope.type === "string"
+                ? {
+                      type: scope.type,
+                      workspaceId: typeof scope.workspaceId === "string" ? scope.workspaceId : null,
+                  }
+                : null;
+        const key = `${skillId}:${definitionScope?.type ?? ""}:${definitionScope?.workspaceId ?? ""}`;
+        if (seen.has(key)) return [];
+        seen.add(key);
+        return [{ skillId, name, definitionScope }];
+    });
+}
+
 export const api = {
     // PLAN-0565 ruling #7: identifier is email (contains '@') or username.
     login(identifier: string, password: string) {
@@ -2870,6 +2905,9 @@ export const api = {
             envHead?: string;
         }>(`/context/${encodeURIComponent(sessionId)}/sources`);
     },
+    // NOTE (PLAN-0689): `SessionCreateRequest.agentPrincipalId` is still REQUIRED by the CP contract
+    // (`openapi.yaml` — Creates the Session with this principal as its PRIMARY participant). Only the
+    // *Chat* request field was removed; do not delete this parameter.
     async createSession(agentPrincipalId: string, title?: string): Promise<SessionResponse> {
         const body = title === undefined ? { agentPrincipalId } : { title, agentPrincipalId };
         // PLAN-0608 (C′): address the workspace in the PATH. The tab header alone is
@@ -3297,7 +3335,13 @@ export const api = {
             const bindingId = typeof row.bindingId === "string" ? row.bindingId : "";
             const skillId = typeof row.skillId === "string" ? row.skillId : "";
             const name = typeof row.name === "string" ? row.name : "";
-            if (!bindingId || !skillId || !name) return [];
+            // scopeType is required by the PLAN-0680 wire contract: a row without a valid
+            // axis cannot be rendered as either tier, so drop it instead of guessing instance.
+            const scopeType =
+                row.scopeType === "instance" || row.scopeType === "workspace"
+                    ? row.scopeType
+                    : null;
+            if (!bindingId || !skillId || !name || !scopeType) return [];
             return [
                 {
                     bindingId,
@@ -3306,6 +3350,9 @@ export const api = {
                     description: typeof row.description === "string" ? row.description : null,
                     sourceType: typeof row.sourceType === "string" ? row.sourceType : null,
                     sourceName: typeof row.sourceName === "string" ? row.sourceName : null,
+                    scopeType,
+                    scopeId: typeof row.scopeId === "string" ? row.scopeId : null,
+                    scopeName: typeof row.scopeName === "string" ? row.scopeName : null,
                     tokenEstimate:
                         typeof row.tokenEstimate === "number" && Number.isFinite(row.tokenEstimate)
                             ? row.tokenEstimate
@@ -3336,36 +3383,23 @@ export const api = {
         );
     },
     /**
-     * 可绑定技能候选（复用 CP 既有 `GET /api/v1/skills` → `{items:[…]}`，不新增契约）。
-     * 只取 UI 需要的最小字段；缺字段的行丢弃（fail-closed）。
+     * Instance-library definitions（`GET /api/v1/skills` 的默认面）。
+     * 可绑定技能候选复用 CP 既有列表，不新增契约；缺字段的行丢弃（fail-closed）。
      */
     async getSkills(): Promise<AgentSkillSummary[]> {
         const raw = await request<{ items?: Array<Record<string, unknown>> }>("/skills");
-        if (!Array.isArray(raw?.items)) return [];
-        return raw.items.flatMap((row) => {
-            const skillId = typeof row.skillId === "string" ? row.skillId : "";
-            const name = typeof row.name === "string" ? row.name : "";
-            if (!skillId || !name) return [];
-            const scope = row.definitionScope as
-                | { type?: unknown; workspaceId?: unknown }
-                | undefined;
-            return [
-                {
-                    skillId,
-                    name,
-                    definitionScope:
-                        scope && typeof scope.type === "string"
-                            ? {
-                                  type: scope.type,
-                                  workspaceId:
-                                      typeof scope.workspaceId === "string"
-                                          ? scope.workspaceId
-                                          : null,
-                              }
-                            : null,
-                },
-            ];
-        });
+        return parseSkillSummaries(raw);
+    },
+    /**
+     * PLAN-0680 M2 T2.3: current-workspace private definitions via the existing
+     * `definitionScope=workspace` filter (B-5: no new scopeType parameter). CP returns an
+     * empty list when the caller cannot see the workspace.
+     */
+    async getWorkspaceSkills(workspaceId: string): Promise<AgentSkillSummary[]> {
+        const raw = await request<{ items?: Array<Record<string, unknown>> }>(
+            `/skills?definitionScope=workspace&workspaceId=${encodeURIComponent(workspaceId)}`,
+        );
+        return parseSkillSummaries(raw);
     },
     async createAgentMemory(
         workspaceId: string,

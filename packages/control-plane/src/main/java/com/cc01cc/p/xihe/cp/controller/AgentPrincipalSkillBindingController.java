@@ -4,7 +4,6 @@ import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.config.ProblemDetailsHandler;
 import com.cc01cc.p.xihe.cp.service.AgentPrincipalBindingAuthority;
 import com.cc01cc.p.xihe.cp.service.AgentPrincipalSkillBindingService;
-import com.cc01cc.p.xihe.cp.skill.SkillAccessGuard;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -32,9 +31,9 @@ import java.util.UUID;
  * DELETE /api/v1/agent-principals/{principalId}/skills/{bindingId}
  * </pre>
  *
- * <p>Same two-tier gate as the role surface ({@link AgentPrincipalBindingAuthority}); the body carries
- * <b>only</b> {@code skillId} and the server writes {@code scope_type='instance'}/{@code scope_id=null}
- * — a caller cannot smuggle a workspace scope through this endpoint (design D3(a)).</p>
+ * <p>PLAN-0680: the body still carries <b>only</b> {@code skillId}; the binding scope is derived
+ * server-side from the authorization context ({@code workspaceId} present ⇒ workspace row, absent
+ * ⇒ instance row). A caller cannot choose or smuggle a scope, so it cannot widen the atom surface.</p>
  */
 @RestController
 @RequestMapping("/api/v1/agent-principals/{principalId}/skills")
@@ -44,14 +43,11 @@ public class AgentPrincipalSkillBindingController {
 
     private final AgentPrincipalSkillBindingService bindingService;
     private final AgentPrincipalBindingAuthority authority;
-    private final SkillAccessGuard skillAccessGuard;
 
     public AgentPrincipalSkillBindingController(AgentPrincipalSkillBindingService bindingService,
-                                                AgentPrincipalBindingAuthority authority,
-                                                SkillAccessGuard skillAccessGuard) {
+                                                AgentPrincipalBindingAuthority authority) {
         this.bindingService = bindingService;
         this.authority = authority;
-        this.skillAccessGuard = skillAccessGuard;
     }
 
     @PreAuthorize("isAuthenticated()")
@@ -84,8 +80,9 @@ public class AgentPrincipalSkillBindingController {
             UUID skillId = AgentPrincipalBindingAuthority.parseUuid(body.get("skillId"),
                     "skillId must be a UUID");
             AgentPrincipalSkillBindingService.AgentSkillBindingView binding = bindingService.bind(
-                    caller.principalId(), skillId, caller.actorUuid(), caller.auditWorkspaceId(),
-                    skillAccessGuard::canSeeWorkspace);
+                    caller.principalId(), skillId, caller.actorUuid(), caller.workspaceId(),
+                    caller.instanceTier(),
+                    workspace -> authority.canManageWorkspace(caller.actorUuid(), workspace));
             return ResponseEntity.status(HttpStatus.CREATED).body(toView(binding));
         } catch (CpApiException e) {
             return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
@@ -101,7 +98,7 @@ public class AgentPrincipalSkillBindingController {
             AgentPrincipalBindingAuthority.Caller caller = authority.require(principalId, workspaceId);
             bindingService.unbind(caller.principalId(),
                     AgentPrincipalBindingAuthority.parseUuid(bindingId, "A valid binding id is required"),
-                    caller.actorUuid(), caller.auditWorkspaceId());
+                    caller.actorUuid(), caller.workspaceId(), caller.instanceTier());
             return ResponseEntity.noContent().build();
         } catch (CpApiException e) {
             return ProblemDetailsHandler.problemResponse(e.getStatus(), e.getCode(), e.getMessage());
@@ -118,6 +115,9 @@ public class AgentPrincipalSkillBindingController {
         result.put("description", view.description());
         result.put("sourceType", view.sourceType());
         result.put("sourceName", view.sourceName());
+        result.put("scopeType", view.scopeType());
+        result.put("scopeId", view.scopeId());
+        result.put("scopeName", view.scopeName());
         result.put("tokenEstimate", view.tokenEstimate());
         result.put("createdBy", view.createdByUserId());
         result.put("createdAt", view.createdAt() == null ? null : view.createdAt().toString());

@@ -203,11 +203,11 @@ class DelegationTimeoutPropagationIntegrationTest extends AbstractIntegrationTes
         Session parentSession = new Session(workspaceId, userId,
                 "delegation timeout parent " + UUID.randomUUID().toString().substring(0, 8));
         parentSession.setId(UUID.randomUUID());
-        parentSession.setAgentPrincipalId(principalId.toString());
         parentSession.setAgentPermissionsSnapshot(objectMapper.createArrayNode());
         ChatBindingTestSupport.bindNewChatConnection(parentSession, providerConnectionRepository,
                 apiRequestTemplates, userId);
         sessionRepository.saveAndFlush(parentSession);
+        bindPrimaryParticipant(parentSession.getId().toString(), principalId.toString());
         String parentRunId = saveRun(parentSession, "running");
         String toolCallId = UUID.randomUUID().toString();
         SpawnTestSupport.seedAgentInvocation(mcpInvocationRepository,
@@ -235,6 +235,7 @@ class DelegationTimeoutPropagationIntegrationTest extends AbstractIntegrationTes
                 runId, session.getId().toString(), userId, workspaceId,
                 "delegation-timeout-run-" + runId, "delegation-timeout-hash-" + runId,
                 "provider", "model", "workspace", status));
+        jdbcTemplate.update("UPDATE chat_runs SET agent_principal_id = CAST(? AS UUID) WHERE id = CAST(? AS UUID)", principalId.toString(), runId);
         return runId;
     }
 

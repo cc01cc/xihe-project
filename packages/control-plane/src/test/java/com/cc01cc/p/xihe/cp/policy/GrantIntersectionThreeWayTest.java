@@ -216,9 +216,10 @@ class GrantIntersectionThreeWayTest extends AbstractIntegrationTest {
     private Session saveSession(ArrayNode permissionsSnapshot) {
         Session session = new Session(workspaceId.toString(), userId, "Three-way root agent");
         session.setId(UUID.randomUUID());
-        session.setAgentPrincipalId(principalId.toString());
         session.setAgentPermissionsSnapshot(permissionsSnapshot);
-        return sessionRepository.saveAndFlush(session);
+        Session saved = sessionRepository.saveAndFlush(session);
+        bindPrimaryParticipant(saved.getId().toString(), principalId.toString());
+        return saved;
     }
 
     private ChatRun saveRun(Session session) {
@@ -235,9 +236,10 @@ class GrantIntersectionThreeWayTest extends AbstractIntegrationTest {
         child.setSpawnedFromRunId(parentRun.getId());
         child.setSpawnedAt(Instant.now());
         child.setKind(Session.KIND_SPAWN);
-        child.setAgentPrincipalId(principalId.toString());
         child.setAgentPermissionsSnapshot(permissionsSnapshot);
-        return sessionRepository.saveAndFlush(child);
+        Session saved = sessionRepository.saveAndFlush(child);
+        bindPrimaryParticipant(saved.getId().toString(), principalId.toString());
+        return saved;
     }
 
     private ArrayNode atoms(String... actionClasses) {

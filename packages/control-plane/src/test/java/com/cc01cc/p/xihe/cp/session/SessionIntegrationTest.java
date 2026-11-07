@@ -29,6 +29,7 @@ import com.cc01cc.p.xihe.cp.repository.McpAttemptRepository;
 import com.cc01cc.p.xihe.cp.repository.McpDispatchHistoryRepository;
 import com.cc01cc.p.xihe.cp.repository.McpInvocationRepository;
 import com.cc01cc.p.xihe.cp.repository.MessageRepository;
+import com.cc01cc.p.xihe.cp.repository.SessionParticipantRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
@@ -67,6 +68,9 @@ class SessionIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired
     private SessionRepository sessionRepository;
+
+    @Autowired
+    private SessionParticipantRepository sessionParticipantRepository;
 
     @Autowired
     private MessageRepository messageRepository;
@@ -311,7 +315,9 @@ class SessionIntegrationTest extends AbstractIntegrationTest {
         assertEquals(principal.getId().toString(), created.getBody().get("agentPrincipalId"));
         UUID sessionId = UUID.fromString((String) created.getBody().get("id"));
         Session session = sessionRepository.findById(sessionId).orElseThrow();
-        assertEquals(principal.getId().toString(), session.getAgentPrincipalId());
+        assertEquals(principal.getId(),
+                sessionParticipantRepository.primaryPrincipalId(session.getId()).orElse(null),
+                "PLAN-0689 A7: Session creation writes the PRIMARY participant");
         assertEquals(1, session.getAgentPermissionsSnapshot().size());
         assertEquals("read", session.getAgentPermissionsSnapshot().get(0).path("actionClass").asText());
         assertEquals(0L, authorizationGrantRepository.countBySubjectTypeAndSubjectIdAndSource(

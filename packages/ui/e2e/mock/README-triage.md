@@ -28,7 +28,7 @@
 
 | spec:line | 用例 | 症状 | 依据 | 处置 |
 |---|---|---|---|---|
-| `chat.spec.ts:104/155/174/313`、`chat-attachment.spec.ts:8/84`、`session-switch.spec.ts:129`、`sse-liveness.spec.ts:101/129/156` | 发送 / 流式 / 停止 / usage / 附件 / 切会话 / 心跳 | 输入后回车，**用户气泡与 `/chat` POST 都不出现**；停止按钮、附件、流式 token 全部无 | 会话投影 `agentPrincipalId` 为 `null` ⇒ `ChatPanel.handleSend` 走 principal 绑定分支 → `GET /workspaces/{id}/agents` 落到 `{}` 兜底 ⇒ 弹绑定对话框，从不发 `/chat` | `setupMockSessions` 默认给会话绑定 principal（真实 `POST /sessions` 强制要求），需要占位态的用例显式传 `null` |
+| `chat.spec.ts:104/155/174/313`、`chat-attachment.spec.ts:8/84`、`session-switch.spec.ts:129`、`sse-liveness.spec.ts:101/129/156` | 发送 / 流式 / 停止 / usage / 附件 / 切会话 / 心跳 | 输入后回车，**用户气泡与 `/chat` POST 都不出现**；停止按钮、附件、流式 token 全部无 | 会话投影 `agentPrincipalId` 为 `null` ⇒ `ChatPanel.handleSend` 走 principal 绑定分支 → `GET /workspaces/{id}/agents` 落到 `{}` 兜底 ⇒ 弹绑定对话框，从不发 `/chat` | `setupMockSessions` 默认给会话绑定 principal（真实 `POST /sessions` 强制要求），需要占位态的用例显式传 `null`。principal-binding 对话框已随 PLAN-0689 B3 删除，本行留作历史记录 |
 | `session-agent-selection.spec.ts:90` | 创建 principal / 绑定 cap / 解绑 | 「创建智能体」按钮永久 `disabled`，点击超时 | `WorkspaceAgentsPanel` 按 `GET /me/permissions` 能力投影 fail-closed 禁用创建（PLAN-0621 F-01），stub 缺该端点 | 补 `GET /me/permissions` 投影 |
 | `screenshots.spec.ts:27`（settings-monitoring） | 各路由 0 console error | `Cannot read properties of undefined (reading 'cp')` | `GET /version` 落到 `{}`，`MonitoringView` 读 `versionInfo.modules.cp.version`；`VersionInfo.modules` 是必填 | 补 `/version` 的 `VersionInfo` 契约 |
 

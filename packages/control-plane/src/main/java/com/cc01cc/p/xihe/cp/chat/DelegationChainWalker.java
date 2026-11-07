@@ -3,6 +3,7 @@ package com.cc01cc.p.xihe.cp.chat;
 import com.cc01cc.p.xihe.cp.entity.ChatRun;
 import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
+import com.cc01cc.p.xihe.cp.repository.SessionParticipantRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 
 import java.util.ArrayList;
@@ -17,8 +18,8 @@ import java.util.UUID;
  * <p>One walk, two readings, both fail-closed (design §3.1): the path yields every hop
  * ({@code hops}), the spawn-edge count ({@code spawnHops}, the delegation depth the budget gate
  * consumes), and the principal of every hop on the path ({@code principalPath}, nearest-first,
- * the M3 cycle key — run responder first, session principal as fallback). The walk never persists
- * anything — each derivation computes it fresh
+ * the M3 cycle key — run responder first, the hop Session's PRIMARY participant as fallback). The
+ * walk never persists anything — each derivation computes it fresh
  * (&le; 10 hops, one primary-key read per hop).</p>
  *
  * <p><b>Edge semantics</b> (design §2.1/§3.3): a spawn run carries its parent on
@@ -47,11 +48,14 @@ public final class DelegationChainWalker {
 
     private final SessionRepository sessionRepository;
     private final ChatRunRepository chatRunRepository;
+    private final SessionParticipantRepository participantRepository;
 
     public DelegationChainWalker(SessionRepository sessionRepository,
-                                 ChatRunRepository chatRunRepository) {
+                                 ChatRunRepository chatRunRepository,
+                                 SessionParticipantRepository participantRepository) {
         this.sessionRepository = sessionRepository;
         this.chatRunRepository = chatRunRepository;
+        this.participantRepository = participantRepository;
     }
 
     /**
@@ -66,8 +70,8 @@ public final class DelegationChainWalker {
      * The walked path: every hop nearest-first, the number of spawn edges on it (the delegation
      * depth), and — nearest-first, the M3 cycle key — the principal of the agent that <b>ran</b>
      * each hop ({@code chat_runs.agent_principal_id}, the responder stamp), falling back to the
-     * hop session's {@code agent_principal_id} when the run carries no responder (pre-V92 rows,
-     * human turns). Null entries mark hops where neither principal exists.
+     * hop Session's {@code session_participants} PRIMARY principal when the run carries no responder
+     * (pre-V92 rows, human turns). Null entries mark hops where neither principal exists.
      */
     public record ChainWalk(List<Hop> hops, int spawnHops, List<String> principalPath) {}
 
@@ -107,8 +111,10 @@ public final class DelegationChainWalker {
             if (!visited.add(current.getId()) || hops.size() >= MAX_TRAVERSAL_NODES) {
                 throw broken("session cycle or traversal cap at " + current.getId());
             }
-            hops.add(new Hop(current.getId(), current.getId(), edge, current.getAgentPrincipalId()));
-            principalPath.add(current.getAgentPrincipalId());
+            String sessionPrincipalId = participantRepository.primaryPrincipalId(current.getId())
+                    .map(UUID::toString).orElse(null);
+            hops.add(new Hop(current.getId(), current.getId(), edge, sessionPrincipalId));
+            principalPath.add(sessionPrincipalId);
             if (!Session.KIND_SPAWN.equals(current.getKind())) {
                 break;
             }
@@ -122,7 +128,10 @@ public final class DelegationChainWalker {
             edge = EDGE_SPAWN;
             spawnHops++;
         }
-        return new ChainWalk(List.copyOf(hops), spawnHops, List.copyOf(principalPath));
+        // PLAN-0689 A3b: principalPath may now legitimately hold nulls (an unstamped run stays
+        // unattributed) and List.copyOf rejects null elements — wrap the private copy instead.
+        return new ChainWalk(List.copyOf(hops), spawnHops,
+                java.util.Collections.unmodifiableList(principalPath));
     }
 
     /**
@@ -148,12 +157,12 @@ public final class DelegationChainWalker {
             // T3.3: the cycle key is WHO RAN the hop, not the session PRIMARY. A session keeps its
             // PRIMARY principal while its wake runs carry each responder's stamp, so the session
             // reading alone would let two non-primary participants ping-pong forever (A→B→C→B is
-            // invisible when every hop reads the same session principal). The responder fallback
-            // keeps the M2 reading for runs without a stamp.
+            // invisible when every hop reads the same session principal).
+            // PLAN-0689 A3b (T1.3 / design §2): the old responder fallback onto the Session's
+            // PRIMARY is gone — an unstamped run stays unattributed (run → NULL, never guess
+            // PRIMARY). Both root-principal readers already fail closed on the resulting null.
             UUID runPrincipalId = current.getAgentPrincipalId();
-            String principalId = runPrincipalId == null
-                    ? session.getAgentPrincipalId()
-                    : runPrincipalId.toString();
+            String principalId = runPrincipalId == null ? null : runPrincipalId.toString();
             hops.add(new Hop(current.getId(), sessionId, edge, principalId));
             principalPath.add(principalId);
             String parentRunId;
@@ -193,7 +202,10 @@ public final class DelegationChainWalker {
                 spawnHops++;
             }
         }
-        return new ChainWalk(List.copyOf(hops), spawnHops, List.copyOf(principalPath));
+        // PLAN-0689 A3b: principalPath may now legitimately hold nulls (an unstamped run stays
+        // unattributed) and List.copyOf rejects null elements — wrap the private copy instead.
+        return new ChainWalk(List.copyOf(hops), spawnHops,
+                java.util.Collections.unmodifiableList(principalPath));
     }
 
     private static AncestorMissingException missing(String detail) {

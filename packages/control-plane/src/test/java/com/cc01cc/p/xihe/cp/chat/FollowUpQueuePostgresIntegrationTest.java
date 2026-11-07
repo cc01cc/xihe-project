@@ -82,6 +82,9 @@ class FollowUpQueuePostgresIntegrationTest extends AbstractIntegrationTest {
     private SessionRepository sessionRepository;
 
     @Autowired
+    private com.cc01cc.p.xihe.cp.repository.SessionParticipantRepository sessionParticipantRepository;
+
+    @Autowired
     private com.cc01cc.p.xihe.cp.repository.ProviderConnectionRepository providerConnectionRepository;
 
     @Autowired
@@ -247,7 +250,7 @@ class FollowUpQueuePostgresIntegrationTest extends AbstractIntegrationTest {
                     "test-provider", "test-model", item.getToolMode(),
                     session.getProviderConnectionId(), session.getConnectionRevision(),
                     "follow-up-test-lease", UUID.randomUUID().toString(), item.getContent(), "[]",
-                    context.attachments().fileIds(), session.getAgentPrincipalId());
+                    context.attachments().fileIds());
             childMessageId.set(created.userMessage().getId());
 
             assertTrue(chatRunRepository.findById(UUID.fromString(childRunId)).isPresent());
@@ -284,11 +287,10 @@ class FollowUpQueuePostgresIntegrationTest extends AbstractIntegrationTest {
         parent.setStatus("succeeded");
         chatRunRepository.saveAndFlush(parent);
 
-        Session session = sessionRepository.findById(UUID.fromString(fixture.sessionId())).orElseThrow();
         String rejectedRunId = UUID.randomUUID().toString();
         CpApiException error = assertThrows(CpApiException.class, () -> chatSubmissionService.create(
                 rejectedRunId, fixture.sessionId(), fixture.userId(), fixture.workspaceId(), branchId,
-                session.getAgentPrincipalId(), "normal-chat-idem", "normal-chat-hash",
+                "normal-chat-idem", "normal-chat-hash",
                 "test-provider", "test-model", "none", null, null, "normal-chat-lease",
                 UUID.randomUUID().toString(), "ordinary message", "[]", List.of()));
 
@@ -549,11 +551,10 @@ class FollowUpQueuePostgresIntegrationTest extends AbstractIntegrationTest {
             assertEquals("SESSION_DELETING", withdrawError.getCode());
         });
 
-        Session current = sessionRepository.findById(UUID.fromString(fixture.sessionId())).orElseThrow();
         String rejectedRunId = UUID.randomUUID().toString();
         CpApiException chatError = assertThrows(CpApiException.class, () -> chatSubmissionService.create(
                 rejectedRunId, fixture.sessionId(), fixture.userId(), fixture.workspaceId(), branchId,
-                current.getAgentPrincipalId(), "deleting-chat-idem", "deleting-chat-hash",
+                "deleting-chat-idem", "deleting-chat-hash",
                 "test-provider", "test-model", "none", null, null, "deleting-lease",
                 UUID.randomUUID().toString(), "blocked message", "[]", List.of()));
         assertEquals("SESSION_DELETING", chatError.getCode());
@@ -921,9 +922,11 @@ class FollowUpQueuePostgresIntegrationTest extends AbstractIntegrationTest {
         parent.setStatus("failed");
         chatRunRepository.saveAndFlush(parent);
 
-        Session session = sessionRepository.findById(UUID.fromString(fixture.sessionId())).orElseThrow();
-        session.setAgentPrincipalId(null);
-        sessionRepository.saveAndFlush(session);
+        // PLAN-0689 A7: the conversation identity is the PRIMARY participant row; revoking the
+        // binding means removing that row, not clearing a Session column.
+        sessionParticipantRepository
+                .findBySessionIdOrderByOrderIndexAsc(UUID.fromString(fixture.sessionId()))
+                .forEach(sessionParticipantRepository::delete);
 
         UUID rejectedChildId = UUID.randomUUID();
         CpApiException error = assertThrows(CpApiException.class, () -> queueService.admitHead(
@@ -1015,10 +1018,10 @@ class FollowUpQueuePostgresIntegrationTest extends AbstractIntegrationTest {
 
         Session session = new Session(workspaceId, userId, "Follow-up session");
         session.setId(UUID.randomUUID());
-        session.setAgentPrincipalId(principal.getId().toString());
         session.setAgentPermissionsSnapshot(objectMapper.createArrayNode());
         ChatBindingTestSupport.bindNewChatConnection(session, providerConnectionRepository, apiRequestTemplates, userId);
         Session persisted = sessionRepository.saveAndFlush(session);
+        bindPrimaryParticipant(persisted.getId().toString(), principal.getId().toString());
         return new Fixture(userId, workspaceId, persisted.getId().toString());
     }
 
@@ -1066,7 +1069,7 @@ class FollowUpQueuePostgresIntegrationTest extends AbstractIntegrationTest {
                 "test-provider", "test-model", item.getToolMode(),
                 session.getProviderConnectionId(), session.getConnectionRevision(),
                 "follow-up-test-lease", UUID.randomUUID().toString(), item.getContent(), "[]",
-                context.attachments().fileIds(), session.getAgentPrincipalId());
+                context.attachments().fileIds());
         return new FollowUpQueueService.ChildAdmission(
                 created.run().getId(), created.userMessage().getId());
     }

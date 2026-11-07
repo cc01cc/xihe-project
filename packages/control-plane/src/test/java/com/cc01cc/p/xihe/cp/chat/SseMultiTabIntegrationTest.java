@@ -56,7 +56,6 @@ class SseMultiTabIntegrationTest extends AbstractIntegrationTest {
         session.setWorkspaceId(workspaceId);
         session.setUserId(ownerId);
         session.setTitle("BL306 sse session");
-        session.setAgentPrincipalId(principal.getId().toString());
         sessionId = sessions.saveAndFlush(session).getId();
     }
 

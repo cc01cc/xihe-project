@@ -18,6 +18,7 @@ import com.cc01cc.p.xihe.cp.repository.MessageRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionForkRequestRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.service.BranchPathService;
+import com.cc01cc.p.xihe.cp.service.SessionParticipantService;
 import com.cc01cc.p.xihe.cp.service.SessionService;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
@@ -61,6 +62,7 @@ public class SessionForkService {
     private final ContextService contextService;
     private final BranchPathService branchPathService;
     private final SessionService sessionService;
+    private final SessionParticipantService sessionParticipantService;
     private final ChatAttachmentService attachmentService;
     private final SessionForkRecoveryService recoveryService;
     private final DbLockTimeout dbLockTimeout;
@@ -76,6 +78,7 @@ public class SessionForkService {
                               ContextService contextService,
                               BranchPathService branchPathService,
                               SessionService sessionService,
+                              SessionParticipantService sessionParticipantService,
                               ChatAttachmentService attachmentService,
                               SessionForkRecoveryService recoveryService,
                               DbLockTimeout dbLockTimeout,
@@ -91,6 +94,7 @@ public class SessionForkService {
         this.contextService = contextService;
         this.branchPathService = branchPathService;
         this.sessionService = sessionService;
+        this.sessionParticipantService = sessionParticipantService;
         this.attachmentService = attachmentService;
         this.recoveryService = recoveryService;
         this.dbLockTimeout = dbLockTimeout;
@@ -217,7 +221,11 @@ public class SessionForkService {
             throw new CpApiException(HttpStatus.CONFLICT, "SESSION_DELETING",
                     "Session is being deleted");
         }
-        if (source.getAgentPrincipalId() == null || source.getAgentPrincipalId().isBlank()) {
+        // PLAN-0689 A6 (R4 / design §3-B): the fork needs the source conversation's default responder —
+        // its PRIMARY participant — not the Session column (A7 drops it). Resolved with the existing
+        // responder query; a missing PRIMARY keeps the same fail-closed 409 below.
+        UUID sourcePrimaryPrincipalId = sessionParticipantService.responderPrincipalIdFor(source.getId(), null);
+        if (sourcePrimaryPrincipalId == null) {
             throw new CpApiException(HttpStatus.CONFLICT, "SESSION_PRINCIPAL_REQUIRED",
                     "A fork requires a stable AgentPrincipal on the source Session");
         }

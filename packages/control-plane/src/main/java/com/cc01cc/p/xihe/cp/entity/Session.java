@@ -33,10 +33,6 @@ public class Session {
     @Convert(converter = UuidStringConverter.class)
     private String userId;
 
-    @Column(name = "agent_principal_id", length = 36)
-    @Convert(converter = UuidStringConverter.class)
-    private String agentPrincipalId;
-
     @JdbcTypeCode(SqlTypes.JSON)
     @Column(name = "agent_permissions_snapshot", columnDefinition = "jsonb")
     private JsonNode agentPermissionsSnapshot;
@@ -143,9 +139,6 @@ public class Session {
 
     public String getUserId() { return userId; }
     public void setUserId(String userId) { this.userId = userId; }
-
-    public String getAgentPrincipalId() { return agentPrincipalId; }
-    public void setAgentPrincipalId(String agentPrincipalId) { this.agentPrincipalId = agentPrincipalId; }
 
     public JsonNode getAgentPermissionsSnapshot() { return agentPermissionsSnapshot; }
     public void setAgentPermissionsSnapshot(JsonNode agentPermissionsSnapshot) {

@@ -6,6 +6,7 @@ import com.cc01cc.p.xihe.cp.context.service.EventStoreService;
 import com.cc01cc.p.xihe.cp.entity.ChatRun;
 import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
+import com.cc01cc.p.xihe.cp.repository.SessionParticipantRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.service.SessionParticipantService;
 import com.cc01cc.p.xihe.cp.service.WakeDispatchService;
@@ -83,7 +84,8 @@ public class WakeChainService {
                             ConfigService configService,
                             ObjectMapper objectMapper,
                             ChatRunRepository chatRunRepository,
-                            DelegationBudgetService delegationBudgetService) {
+                            DelegationBudgetService delegationBudgetService,
+                            SessionParticipantRepository participantRepository) {
         this.sessionRepository = sessionRepository;
         this.participantService = participantService;
         this.wakeDispatchService = wakeDispatchService;
@@ -94,7 +96,8 @@ public class WakeChainService {
         this.delegationBudgetService = delegationBudgetService;
         // Stateless walk component; constructed in place so the constructor contract (and the unit
         // test wiring) only gains the two repositories the walk itself needs.
-        this.chainWalker = new DelegationChainWalker(sessionRepository, chatRunRepository);
+        this.chainWalker = new DelegationChainWalker(sessionRepository, chatRunRepository,
+                participantRepository);
     }
 
     /** M3 entry: an agent run's assistant text just settled. */

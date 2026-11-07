@@ -18,7 +18,9 @@ import java.util.UUID;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -88,7 +90,6 @@ class ChatResponderCapLeaseTest extends AbstractIntegrationTest {
         session.setWorkspaceId(workspaceId);
         session.setUserId(ownerId);
         session.setTitle("P623 cap session");
-        session.setAgentPrincipalId(primaryAgentId.toString());
         session.setAgentPermissionsSnapshot(json.createObjectNode().put("frozen", "c3"));
         sessionRow = sessions.saveAndFlush(session);
         sessionId = sessionRow.getId();
@@ -121,8 +122,8 @@ class ChatResponderCapLeaseTest extends AbstractIntegrationTest {
         SessionParticipantService.Responder humanResponder =
                 sessionParticipantService.responderFor(sessionId, humanParticipantId());
 
-        JsonNode primaryCap = controller.leaseCapFor(primaryResponder, null, sessionRow, workspaceId);
-        JsonNode humanCap = controller.leaseCapFor(humanResponder, null, sessionRow, workspaceId);
+        JsonNode primaryCap = controller.leaseCapFor(primaryResponder, workspaceId);
+        JsonNode humanCap = controller.leaseCapFor(humanResponder, workspaceId);
 
         assertNotNull(primaryCap);
         assertNotNull(humanCap);
@@ -134,9 +135,9 @@ class ChatResponderCapLeaseTest extends AbstractIntegrationTest {
         SessionParticipantService.Responder humanResponder =
                 sessionParticipantService.responderFor(sessionId, humanParticipantId());
 
-        JsonNode humanCap = controller.leaseCapFor(humanResponder, null, sessionRow, workspaceId);
+        JsonNode humanCap = controller.leaseCapFor(humanResponder, workspaceId);
         JsonNode primaryCap = controller.leaseCapFor(
-                sessionParticipantService.responderFor(sessionId, null), null, sessionRow, workspaceId);
+                sessionParticipantService.responderFor(sessionId, null), workspaceId);
 
         assertNotNull(humanCap);
         assertTrue(humanCap.isArray(), "HUMAN projection is the workspace atom array");
@@ -153,9 +154,9 @@ class ChatResponderCapLeaseTest extends AbstractIntegrationTest {
         SessionParticipantService.Responder guardResponder =
                 sessionParticipantService.responderFor(sessionId, guardParticipantId);
 
-        JsonNode guardCap = controller.leaseCapFor(guardResponder, null, sessionRow, workspaceId);
+        JsonNode guardCap = controller.leaseCapFor(guardResponder, workspaceId);
         JsonNode primaryCap = controller.leaseCapFor(
-                sessionParticipantService.responderFor(sessionId, null), null, sessionRow, workspaceId);
+                sessionParticipantService.responderFor(sessionId, null), workspaceId);
 
         assertNotNull(guardCap);
         assertNotEquals(primaryCap, guardCap);
@@ -163,18 +164,66 @@ class ChatResponderCapLeaseTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void nullResponderKeepsTheFrozenC3SnapshotFieldForField() {
-        JsonNode snapshot = sessionRow.getAgentPermissionsSnapshot();
+    void nullResponderOrPrincipalRefusesTheLeaseInsteadOfFallingBackToTheSnapshot() {
+        // PLAN-0689 A4/A7 (D-55): the D23-31 snapshot fallback is gone and the Session column is
+        // dropped. A run with no resolved Responder — or a Responder with no principal — has no
+        // identity to bound a lease against; refusing is the strict reading, because an uncapped
+        // lease would be a permission regression.
+        com.cc01cc.p.xihe.cp.config.CpApiException refused = assertThrows(
+                com.cc01cc.p.xihe.cp.config.CpApiException.class,
+                () -> controller.leaseCapFor(null, workspaceId));
 
-        JsonNode cap = controller.leaseCapFor(null, sessionRow.getAgentPrincipalId(), sessionRow, workspaceId);
+        assertEquals("AGENT_PRINCIPAL_MISSING", refused.getCode());
+        assertEquals(org.springframework.http.HttpStatus.FORBIDDEN, refused.getStatus());
 
-        assertEquals(snapshot, cap);
-        assertEquals(json.createObjectNode().put("frozen", "c3"), cap);
+        SessionParticipantService.Responder missingPrincipal =
+                new SessionParticipantService.Responder(UUID.randomUUID(), "AGENT", null);
+        assertThrows(com.cc01cc.p.xihe.cp.config.CpApiException.class,
+                () -> controller.leaseCapFor(missingPrincipal, workspaceId));
+    }
 
-        Session placeholder = new Session();
-        placeholder.setId(UUID.randomUUID());
-        placeholder.setAgentPrincipalId(null);
-        assertEquals(null, controller.leaseCapFor(null, null, placeholder, workspaceId));
+    @Test
+    void derivedDispatchWithoutPrimaryFailsClosed() {
+        // PLAN-0689 A7/D-55: this is exactly the derived execAsync branch — responder == null,
+        // responderFor(sessionId, null) is the only identity lookup, and the resulting null Responder
+        // must be refused with 403 AGENT_PRINCIPAL_MISSING (never a Session-column fallback).
+        Session unbound = new Session();
+        unbound.setId(UUID.randomUUID());
+        unbound.setWorkspaceId(workspaceId);
+        unbound.setUserId(ownerId);
+        unbound.setTitle("P623 derived dispatch without PRIMARY");
+        Session saved = sessions.saveAndFlush(unbound);
+
+        SessionParticipantService.Responder derivedPath =
+                sessionParticipantService.responderFor(saved.getId(), null);
+
+        assertNull(derivedPath, "a Session without a PRIMARY participant has no derived Responder");
+        com.cc01cc.p.xihe.cp.config.CpApiException refused = assertThrows(
+                com.cc01cc.p.xihe.cp.config.CpApiException.class,
+                () -> controller.leaseCapFor(derivedPath, workspaceId));
+        assertEquals("AGENT_PRINCIPAL_MISSING", refused.getCode());
+        assertEquals(org.springframework.http.HttpStatus.FORBIDDEN, refused.getStatus());
+    }
+
+    @Test
+    void derivedPathPrimaryCapEqualsExplicitPrimaryCap() {
+        // PLAN-0689 A7/D-55 + Lead 2026-11-07 ruling (option A): a derived dispatch resolves the
+        // PRIMARY once, then calls the SAME leaseCapFor/resolveParticipantCap as an explicit
+        // responder. The cap is live (design.md:118 / 2026-11-02 ruling); D-54's Session snapshot
+        // is an authorization-intersection input only and must not leak into the lease cap.
+        String primaryParticipantId = participantRows.findBySessionIdOrderByOrderIndexAsc(sessionId)
+                .stream()
+                .filter(row -> "PRIMARY".equals(row.getRole()))
+                .findFirst().orElseThrow().getId().toString();
+
+        SessionParticipantService.Responder explicitPrimary =
+                sessionParticipantService.responderFor(sessionId, primaryParticipantId);
+        SessionParticipantService.Responder derivedPath =
+                sessionParticipantService.responderFor(sessionId, null);
+
+        assertEquals(controller.leaseCapFor(explicitPrimary, workspaceId),
+                controller.leaseCapFor(derivedPath, workspaceId),
+                "derived dispatch must use the same resolveParticipantCap call as an explicit PRIMARY");
     }
 
     private String humanParticipantId() {

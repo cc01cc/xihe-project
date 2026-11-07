@@ -68,7 +68,6 @@ class SessionParticipantHttpTest extends AbstractIntegrationTest {
         session.setWorkspaceId(workspaceId);
         session.setUserId(ownerId);
         session.setTitle("P623 session");
-        session.setAgentPrincipalId(principal.getId().toString());
         sessionId = sessions.saveAndFlush(session).getId().toString();
     }
 

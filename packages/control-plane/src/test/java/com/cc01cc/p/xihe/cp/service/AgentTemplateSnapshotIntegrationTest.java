@@ -653,7 +653,6 @@ class AgentTemplateSnapshotIntegrationTest extends AbstractIntegrationTest {
         Session session = new Session(workspaceId.toString(), memberUserId.toString(),
                 "Snapshot session " + principal.getName());
         session.setId(UUID.randomUUID());
-        session.setAgentPrincipalId(principal.getId().toString());
         session.setAgentPermissionsSnapshot(atoms("read", "write"));
         Session saved = sessionRepository.save(session);
         sessionIds.add(saved.getId());

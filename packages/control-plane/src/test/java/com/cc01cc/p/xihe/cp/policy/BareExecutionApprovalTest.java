@@ -316,9 +316,10 @@ class BareExecutionApprovalTest extends AbstractIntegrationTest {
 
         Session session = new Session(workspaceId, userId, "Bare execution Session");
         session.setId(UUID.randomUUID());
-        session.setAgentPrincipalId(principalId.toString());
         session.setAgentPermissionsSnapshot(capability);
-        sessionId = sessionRepository.save(session).getId().toString();
+        Session saved = sessionRepository.save(session);
+        bindPrimaryParticipant(saved.getId().toString(), principalId.toString());
+        sessionId = saved.getId().toString();
 
         runId = UUID.randomUUID().toString();
         chatRunRepository.save(new ChatRun(runId, sessionId, userId, workspaceId,

@@ -880,26 +880,6 @@ public class AgentPrincipalService {
                 actorId, workspaceId.toString());
     }
 
-    @Transactional(readOnly = true)
-    public JsonNode deriveSpawnChildCap(JsonNode parentSessionSnapshot, String principalId, String workspaceId) {
-        Set<GrantIntersectionEvaluator.PermissionAtom> parentPermissions = parsePermissions(parentSessionSnapshot);
-        Set<GrantIntersectionEvaluator.PermissionAtom> currentCap = parsePermissions(
-                resolveCapFor(parseUuid(principalId, "INVALID_AGENT_PRINCIPAL"),
-                        parseUuid(workspaceId, "INVALID_WORKSPACE")));
-        Set<GrantIntersectionEvaluator.PermissionAtom> intersection = new LinkedHashSet<>();
-        for (GrantIntersectionEvaluator.PermissionAtom atom : parentPermissions) {
-            if (isCoveredBy(atom, currentCap)) {
-                intersection.add(atom);
-            }
-        }
-        for (GrantIntersectionEvaluator.PermissionAtom atom : currentCap) {
-            if (isCoveredBy(atom, parentPermissions)) {
-                intersection.add(atom);
-            }
-        }
-        return toJson(intersection);
-    }
-
     /** Global account disable; the caller must authorize the account-lifecycle operation. */
     @Transactional
     /**

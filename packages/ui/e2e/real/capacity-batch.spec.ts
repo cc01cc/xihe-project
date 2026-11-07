@@ -138,7 +138,7 @@ async function workspaceToolChat(
     fixture: WorkspaceFixture,
     marker: string,
 ): Promise<string> {
-    const { ctx, principalId, sessionId } = fixture;
+    const { ctx, sessionId } = fixture;
     const headers = {
         Authorization: `Bearer ${ctx.authToken}`,
         "Content-Type": "application/json",
@@ -154,7 +154,6 @@ async function workspaceToolChat(
             sessionId,
             branchId,
             content: `XIHE-E2E-WRITE ${marker}.txt capacity batch`,
-            agentPrincipalId: principalId,
             toolMode: "workspace",
         }),
     });

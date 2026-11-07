@@ -1,6 +1,7 @@
 package com.cc01cc.p.xihe.cp;
 
 import com.cc01cc.p.xihe.cp.integration.TestDatabaseProvider;
+import com.cc01cc.p.xihe.cp.service.SessionParticipantService;
 import com.cc01cc.p.xihe.cp.support.Jackson2NodeWireInterceptor;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.TestInfo;
@@ -60,6 +61,20 @@ public abstract class AbstractIntegrationTest {
 
     @LocalServerPort
     protected int port;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    protected SessionParticipantService sessionParticipantService;
+
+    /**
+     * PLAN-0689 A7: seed the PRIMARY participant for a fixture that bypasses
+     * {@code POST /api/v1/sessions}. The product resolves every chat/authorization path through
+     * this row now that {@code sessions.agent_principal_id} is gone; a Session built straight from
+     * the repository with only a snapshot is no longer a valid agent Session.
+     */
+    protected void bindPrimaryParticipant(String sessionId, String agentPrincipalId) {
+        sessionParticipantService.ensurePrimaryParticipant(
+                java.util.UUID.fromString(sessionId), agentPrincipalId);
+    }
 
     @org.springframework.beans.factory.annotation.Autowired
     void initChatBindingCredentialService(
