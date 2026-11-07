@@ -12,9 +12,27 @@
  * PID JSON, waits for HTTP readiness, and supports status / stop / residual checks.
  *
  * Contract:
- *   node scripts/dev-stack.mjs start  [--stack N] [--cwd <repo>] [--with-pg] [--json] [--timeout S]
- *   node scripts/dev-stack.mjs status [--stack N] [--cwd <repo>] [--json]
- *   node scripts/dev-stack.mjs stop   [--stack N] [--cwd <repo>] [--with-pg] [--json]
+ *   node scripts/dev-stack.mjs start   [--stack N] [--cwd <repo>] [--with-pg] [--json] [--timeout S]
+ *   node scripts/dev-stack.mjs status  [--stack N] [--cwd <repo>] [--json] [--all]
+ *   node scripts/dev-stack.mjs stop    [--stack N] [--cwd <repo>] [--with-pg] [--json]
+ *   node scripts/dev-stack.mjs acquire [--stack N] [--cwd <repo>] [--json]
+ *   node scripts/dev-stack.mjs release [--stack N] [--cwd <repo>] [--json]
+ *   node scripts/dev-stack.mjs gc      [--stack N] [--cwd <repo>] [--json]
+ *
+ * Lease layer (PLAN-0694 P0):
+ * - `start` writes `<root>/.xihe-stacks/<n>/lease.json` once the services are launched, `stop`
+ *   releases it (or keeps it and marks `releaseFailed` when residual ports survive — never a
+ *   silent delete). `acquire` adopts a stack that is already running (writes the current facts),
+ *   `release` deletes only the lease file, `gc` is a **read-only** sweep: it reports orphan/ghost
+ *   stacks plus the exact command to clean each one and never kills anything itself.
+ * - `status` is not allowed to echo the lease: every field it shows has been cross-checked against
+ *   independent facts (pid ⇄ alive, port ⇄ bind+owner, heartbeat ⇄ freshness, instanceId ⇄ this
+ *   instance, cpVersion ⇄ the CP build actually running). `healthy` requires zero mismatches;
+ *   anything that cannot be verified is reported as `unverifiable` and blocks `healthy`.
+ * - The exit-code contract of `status`/`status --all --json` is unchanged: 0 = every stack
+ *   healthy, 1 = some stack is not healthy (JSON still complete), 2 = bad args/env. `ok` is now
+ *   the stricter reading of "healthy" (facts + cross-check), which can only turn 0 into 1 for a
+ *   stack that is lying about itself.
  *
  * - Stack ports come from this repo's `scripts/lib/stack-ports.mjs` deriveStack() (PLAN-0612:
  *   the port fact source belongs to A03; no parent-directory lookup).
@@ -30,12 +48,24 @@ import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, openSync, closeSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import http from 'node:http';
 import net from 'node:net';
+import { hostname } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { cargoTargetForStack } from './lib/stack-cargo-target.mjs';
 import { cpBuildRoot, resolveBuildTargetForStack } from './lib/cp-build-dir.mjs';
 import { cpBuildStatus, cpTargetDir, gitHead, shortSha } from './lib/cp-build-info.mjs';
-import { sweepOrphanProcesses } from './lib/stack-orphan.mjs';
+import {
+  DEFAULT_STALE_AFTER_MS,
+  acquireLease,
+  computeVerdict,
+  crossCheckLease,
+  leasePath,
+  markReleaseFailed,
+  readLease,
+  releaseLease,
+  renewLease,
+} from './lib/stack-lease.mjs';
+import { classifyListener, stackListeners, sweepOrphanProcesses } from './lib/stack-orphan.mjs';
 import { STACK_IDS, deriveStack, normalizeStackArg } from './lib/stack-ports.mjs';
 
 const scriptPath = fileURLToPath(import.meta.url);
@@ -52,7 +82,7 @@ const ENDPOINTS = {
 /* ------------------------------------------------------------------ args */
 
 function usage(exitCode = 2) {
-  console.log('usage: node scripts/dev-stack.mjs <start|status|stop> [options]');
+  console.log('usage: node scripts/dev-stack.mjs <start|status|stop|acquire|release|gc> [options]');
   console.log('  --stack N        stack id (stack-1..stack-8); default XIHE_STACK_ID or stack-1');
   console.log('  --cwd <repo>     checkout to run (default: this script\'s project root)');
   console.log('  --with-pg        start (start) / stop (stop) this stack\'s PostgreSQL container');
@@ -60,6 +90,19 @@ function usage(exitCode = 2) {
   console.log('  --json           machine-readable output');
   console.log('  --all            status: overview of EVERY stack that has a pid file or a listening port');
   console.log('  --help           this message');
+  console.log('');
+  console.log('lease verbs (PLAN-0694 P0; lease lives at <root>/.xihe-stacks/<n>/lease.json):');
+  console.log('  acquire   adopt a stack that is already running: write the lease from CURRENT facts');
+  console.log('            (refuses when no profile-matched listener exists — nothing to adopt)');
+  console.log('  release   delete the lease file only; never stops anything');
+  console.log('  gc        read-only sweep: report orphan/ghost stacks + the exact cleanup command;');
+  console.log('            never kills, never deletes. exit 0 = nothing to collect, 1 = candidates');
+  console.log('');
+  console.log('status adds `lease` + `verdict` (PLAN-0694 P0) next to the existing contract fields:');
+  console.log('  verdict         healthy | stale | orphan | ghost | null(未运行) — from lease+bind+pid');
+  console.log('  lease.checks    每个租约字段一条「声明 vs 独立事实」的核对结果');
+  console.log('  lease.mismatch  核不上的字段（非空 ⇒ 不可能 healthy）；unverifiable = 声明了却核不了');
+  console.log('  ok              false unless facts are up AND every lease field verifies');
   console.log('');
   console.log('status adds `cpBuild` (PLAN-0662 L4; **field names are a contract** for lane scripts):');
   console.log('  runningCommit   stamped commit of the classes this stack\'s CP runs (null = no stamp)');
@@ -85,6 +128,8 @@ function parseArgs(argv) {
     else if (arg === '--json') args.json = true;
     else if (arg === '--all') args.all = true;
     else if (arg === '--with-pg') args.withPg = true;
+    // `gc` 永远 dry-run（P0 不给自动化口），`--dry-run` 只是让调用方把意图写明，不改变行为。
+    else if (arg === '--dry-run') args.dryRun = true;
     else if (arg === '--stack' || arg === '--stack=') {
       args.stack = arg.includes('=') ? arg.slice('--stack='.length) : argv[(i += 1)];
     } else if (arg.startsWith('--stack=')) args.stack = arg.slice('--stack='.length);
@@ -96,7 +141,9 @@ function parseArgs(argv) {
     else rest.push(arg);
   }
   if (rest.length > 0) args.action = rest[0];
-  if (!['start', 'status', 'stop'].includes(args.action)) usage(2);
+  if (!['start', 'status', 'stop', 'acquire', 'release', 'gc'].includes(args.action)) usage(2);
+  // `gc` is a sweep tool: without an explicit --stack it inspects every registered stack.
+  args.explicitStack = args.stack !== undefined || process.env.XIHE_STACK_ID !== undefined;
   if (!Number.isFinite(args.timeout) || args.timeout <= 0) throw new Error('--timeout must be a positive number of seconds');
   return args;
 }
@@ -257,7 +304,15 @@ function formatCpBuild(cpBuild) {
 
 /* --------------------------------------------------------------- context */
 
-const args = parseArgs(process.argv.slice(2));
+// 参数错误恒 exit 2（design「退出码与输出契约」）：顶层 throw 会落到 Node 的未捕获异常（exit 1 +
+// 栈帧），既不符合契约也难读 —— 所以在解析这一层就兜住，和下面的 context 错误同一口径。
+let args;
+try {
+  args = parseArgs(process.argv.slice(2));
+} catch (error) {
+  console.error(`[dev-stack] ERROR: ${error.message}`);
+  process.exit(2);
+}
 const derived = (() => {
   try {
     return deriveStack(normalizeStackArg(args.stack ?? process.env.XIHE_STACK_ID ?? undefined));
@@ -282,6 +337,169 @@ const childEnv = {
   XIHE_STACK_ID: derived.stackId,
   XIHE_ENV: process.env.XIHE_ENV ?? 'dev',
 };
+
+/* ------------------------------------------------------- lease (PLAN-0694) */
+
+// 三层真相：租约（意图）/ 监听（事实）/ pid（佐证）。本段只做**采集与合成**；判定逻辑全在
+// `scripts/lib/stack-lease.mjs`（纯函数、可单测、不碰系统），这里不重复实现任何阈值。
+
+/**
+ * 本实例身份：同一台机器 + 同一棵 checkout（`XIHE_INSTANCE_ID` 可覆盖）。
+ * 用途是回答「这份租约是不是**我**写的」——租约里任何字段都必须能被核对，实例身份也一样。
+ */
+const instanceId =
+  process.env.XIHE_INSTANCE_ID ?? `${hostname().toLowerCase()}@${projectRoot.replaceAll('\\', '/').toLowerCase()}`;
+
+/**
+ * 租约声明哪些端口：只声明本 supervisor **自己起**的 4 个服务。
+ *
+ * PostgreSQL 由 compose 管理、默认常驻（`stop` 不带 `--with-pg` 就不动它），持有它的进程是 docker
+ * 而非本栈画像进程——塞进租约只会造出「声明了却永远核不上」的字段（那就是注释），所以 PG 仍只在
+ * `status.pg` 里独立呈现。
+ */
+function leasePorts(p = ports) {
+  return Object.fromEntries(SERVICES.map((service) => [service, p[service]]));
+}
+
+/** 采集端口归属：画像匹配的归 own，其余归 external（external 只作附注，不参与四值判定）。 */
+function listenFacts(p = ports) {
+  const own = [];
+  const external = [];
+  for (const listener of stackListeners(Object.values(p))) {
+    const decision = classifyListener(listener, { ports: p });
+    if (decision.kind === 'unsupported') break;
+    const base = { port: listener.port, pid: listener.pid, name: listener.name ?? '', service: decision.service ?? null };
+    if (decision.kind === 'kill') own.push(base);
+    else external.push({ ...base, cmdline: listener.cmdline ?? '' });
+  }
+  return { own, external };
+}
+
+/** 当前 CP 构建戳 commit：CP 实际在跑的 classes 来自哪个 commit（读不到 = null，不猜）。 */
+function currentCpVersion() {
+  try {
+    return cpBuildFor(projectRoot).runningCommit ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** 从 pid 记录 + 当前监听拼「当时观测到的进程」：没观测到就不写（absent claims are fine）。 */
+function observedPids(record, listeners, p = ports) {
+  const pids = {};
+  for (const service of SERVICES) {
+    const launcher = record?.services?.[service]?.pid ?? null;
+    const listener = listeners.own.find((entry) => entry.port === p[service])?.pid ?? null;
+    if (launcher === null && listener === null) continue;
+    pids[service] = { launcher, listener };
+  }
+  return pids;
+}
+
+/** 写租约（`start` 起栈后 / `acquire` 认领在跑的栈）。写的是声明，`status` 会逐字段核对。 */
+function writeLease({ d = derived, p = ports, record }) {
+  const listeners = listenFacts(p);
+  const lease = acquireLease({
+    projectRoot,
+    stackId: d.stackId,
+    ports: leasePorts(p),
+    pids: observedPids(record, listeners, p),
+    instanceId,
+    cpVersion: currentCpVersion(),
+    now: Date.now(),
+  });
+  return { lease, listeners, path: leasePath(projectRoot, d.stackId) };
+}
+
+/**
+ * 一次完整的「租约 vs 事实」快照：读租约 → 逐字段核对 → 合成 verdict。
+ * `status` / `status --all` / `gc` / `acquire` 共用同一条判定链路，避免四处各判一套。
+ */
+function leaseState({ d = derived, p = ports, listeners = null, cpVersion = undefined } = {}) {
+  const now = Date.now();
+  const path = leasePath(projectRoot, d.stackId);
+  const facts = listeners ?? listenFacts(p);
+  const { lease, corrupt } = readLease(path);
+  const checks = crossCheckLease({
+    lease,
+    facts: {
+      stackId: d.stackId,
+      instanceId,
+      projectRoot,
+      expectedPorts: leasePorts(p),
+      listeners: facts,
+      isAlive: processAlive,
+      cpVersion: cpVersion === undefined ? currentCpVersion() : cpVersion,
+      now,
+    },
+  });
+  const alivePids = Object.values(lease?.pids ?? {})
+    .flatMap((entry) => [entry?.launcher, entry?.listener])
+    .filter((pid) => Number.isInteger(pid) && pid > 0);
+  const verdict = computeVerdict({
+    lease,
+    listeners: facts,
+    corrupt,
+    pidAlive: alivePids.some((pid) => processAlive(pid)),
+    checks: checks.checks,
+    now,
+  });
+  return { path, lease, corrupt, checks, verdict, listeners: facts };
+}
+
+/** 租约的机器可读摘要（JSON 输出用；字段即契约，别改语义）。 */
+function leaseSummary(state) {
+  return {
+    path: state.path,
+    exists: state.lease !== null || state.corrupt,
+    corrupt: state.corrupt,
+    instanceId: state.lease?.instanceId ?? null,
+    startedAt: state.lease?.startedAt ?? null,
+    heartbeatAt: state.lease?.heartbeatAt ?? null,
+    ageMs: state.verdict.leaseAgeMs,
+    fresh: state.verdict.leaseFresh,
+    cpVersion: state.lease?.cpVersion ?? null,
+    pids: state.lease?.pids ?? null,
+    releaseFailed: state.lease?.releaseFailed ?? null,
+    checks: state.checks.checks,
+    mismatch: state.checks.mismatches,
+    unverifiable: state.checks.unverifiable,
+    skipped: state.checks.skipped,
+    allOk: state.checks.allOk,
+  };
+}
+
+/**
+ * 核对全绿 ⇒ 刷新心跳，返回是否刷新。
+ *
+ * `heartbeatAt` 的语义是「最近一次**核对通过**的时间」，不是「进程还活着」的自述——后者正是本计划
+ * 要消灭的那类字段。所以刷新只发生在 `status` 真的核过事实之后，且结果显式出现在输出
+ * （`leaseRenewed`）里，不静默改状态。`gc` 是只读口子，绝不写。
+ */
+function refreshHeartbeat(state, d = derived) {
+  if (!state.lease || state.checks.mismatches.length > 0 || state.checks.unverifiable.length > 0) return false;
+  if (state.verdict.verdict !== 'healthy') return false;
+  return renewLease({ projectRoot, stackId: d.stackId }).renewed;
+}
+
+/** 把租约核对结果打成人类可读的几行（非 --json 输出）。 */
+function printLease(state, { indent = '  ' } = {}) {
+  const { verdict, reasons } = state.verdict;
+  console.log(`${indent}verdict  ${verdict ?? '-'} (${reasons.join(' ') || 'no signals'})`);
+  console.log(
+    `${indent}lease    ${state.path} exists=${state.lease !== null || state.corrupt}` +
+      ` corrupt=${state.corrupt} instance=${state.lease?.instanceId ?? '-'}` +
+      ` heartbeat=${state.lease?.heartbeatAt ?? '-'} age=${state.verdict.leaseAgeMs ?? '-'}ms` +
+      ` cpVersion=${state.lease?.cpVersion ?? '-'} startedAt=${state.lease?.startedAt ?? '-'}`,
+  );
+  for (const check of state.checks.checks) {
+    if (check.code === 'ok' || check.code === 'skipped') continue;
+    console.log(`${indent}  ${check.code.padEnd(22)} ${check.field} expected=${JSON.stringify(check.expected)} actual=${JSON.stringify(check.actual)}`);
+  }
+  if (state.checks.checks.length > 0 && state.checks.mismatches.length === 0 && state.checks.unverifiable.length === 0) {
+    console.log(`${indent}  all ${state.checks.checks.length} lease fields verified`);
+  }
+}
 
 /* ---------------------------------------------------------------- spawn */
 
@@ -447,6 +665,10 @@ async function start() {
   console.log(`[dev-stack] note: CP compiles on boot (~60-120s); Runtime uses the cargo cache; waiting for readiness ...`);
 
   const { ready, state } = await waitReady(args.timeout, SERVICES);
+  // PLAN-0694 P0: 起栈后写租约——记录「谁、在哪、哪些 pid、CP 什么版本」的**声明**。
+  // 写完不做自证；能不能算健康由 `status` 拿独立事实逐字段核对（核对不上就是 stale）。
+  const written = writeLease({ record });
+  console.log(`[dev-stack] lease: ${written.path}`);
   const rows = SERVICES.map((service) => ({
     service,
     port: ports[service],
@@ -459,7 +681,23 @@ async function start() {
   if (args.json) {
     console.log(
       JSON.stringify(
-        { action: 'start', stackId: derived.stackId, projectRoot, pg, ready, services: rows, logDir },
+        {
+          action: 'start',
+          stackId: derived.stackId,
+          projectRoot,
+          pg,
+          ready,
+          services: rows,
+          logDir,
+          leasePath: written.path,
+          lease: {
+            path: written.path,
+            instanceId,
+            cpVersion: written.lease.cpVersion,
+            pids: written.lease.pids,
+            startedAt: written.lease.startedAt,
+          },
+        },
         null,
         2,
       ),
@@ -498,7 +736,12 @@ async function status() {
     });
   }
   const pgListening = await isPortListening(ports.postgres);
-  const ok = rows.every((row) => row.alive && row.listening) && pgListening;
+  const factsOk = rows.every((row) => row.alive && row.listening) && pgListening;
+  // PLAN-0694 P0: 租约不许「回显即通过」—— 每个字段都拿独立事实核一遍，核不上就写进 mismatch。
+  const lease = leaseState();
+  const leaseRenewed = refreshHeartbeat(lease);
+  // `healthy` 的必要条件：事实（进程活 + 端口听 + PG 在）+ 全部租约字段核对通过。
+  const ok = factsOk && lease.checks.allOk;
   const cpBuild = cpBuildFor(projectRoot);
   if (args.json) {
     console.log(
@@ -512,6 +755,11 @@ async function status() {
           pg: { port: ports.postgres, listening: pgListening },
           cpBuild,
           services: rows,
+          factsOk,
+          verdict: lease.verdict.verdict,
+          reasons: lease.verdict.reasons,
+          leaseRenewed,
+          lease: leaseSummary(lease),
           ok,
         },
         null,
@@ -528,7 +776,11 @@ async function status() {
     }
     console.log(`  cpBuild  ${formatCpBuild(cpBuild)}`);
     console.log(`  PostgreSQL port ${ports.postgres} listen=${pgListening}`);
-    console.log(`[dev-stack] ${ok ? 'stack is up' : 'stack is not fully up'}`);
+    printLease(lease);
+    if (leaseRenewed) console.log('  (心跳已刷新：本次核对全绿)');
+    console.log(
+      `[dev-stack] ${ok ? 'stack is up and every lease field verifies' : factsOk ? 'stack is up but the lease does not verify' : 'stack is not fully up'}`,
+    );
   }
   if (!ok) process.exitCode = 1;
 }
@@ -573,17 +825,33 @@ async function statusAll() {
       });
     }
     const pgListening = await isPortListening(p.postgres);
-    if (!existsSync(stackPidFile) && !pgListening && services.every((row) => !row.listening)) continue;
+    const leaseFilePath = leasePath(projectRoot, d.stackId);
+    if (
+      !existsSync(stackPidFile)
+      && !existsSync(leaseFilePath)
+      && !pgListening
+      && services.every((row) => !row.listening)
+    ) {
+      continue;
+    }
     const cargoTarget = cargoTargetForStack({ stackId: d.stackId, projectRoot, env: process.env });
+    const stackCpBuild = cpBuildFor(projectRoot, d.stackId);
+    // PLAN-0694 P0: 同一套核对链路，逐栈判定；`ok` 不再只看「端口在听」。
+    const lease = leaseState({ d, p, cpVersion: stackCpBuild.runningCommit ?? null });
+    const factsOk = services.every((row) => row.listening) && pgListening;
     stacks.push({
       stackId: d.stackId,
       pidFile: stackPidFile,
       pidFileExists: existsSync(stackPidFile),
       cargoTargetDir: cargoTarget ?? null,
-      cpBuild: cpBuildFor(projectRoot, d.stackId),
+      cpBuild: stackCpBuild,
       pg: { port: p.postgres, listening: pgListening, database: d.database, composeProject: d.composeProject },
       services,
-      ok: services.every((row) => row.listening) && pgListening,
+      verdict: lease.verdict.verdict,
+      reasons: lease.verdict.reasons,
+      factsOk,
+      lease: leaseSummary(lease),
+      ok: factsOk && lease.checks.allOk,
     });
   }
   if (args.json) {
@@ -596,7 +864,7 @@ async function statusAll() {
   if (stacks.length === 0) console.log('  (no stack has a pid file or a listening port)');
   for (const stack of stacks) {
     console.log(
-      `  ${stack.stackId} ok=${stack.ok} db=${stack.pg.database} compose=${stack.pg.composeProject}` +
+      `  ${stack.stackId} ok=${stack.ok} verdict=${stack.verdict ?? '-'} db=${stack.pg.database} compose=${stack.pg.composeProject}` +
         ` cargoTarget=${stack.cargoTargetDir ?? '(default .cargo/config.toml)'}`,
     );
     for (const row of stack.services) {
@@ -607,6 +875,12 @@ async function statusAll() {
     }
     console.log(`    cpBuild  ${formatCpBuild(stack.cpBuild)}`);
     console.log(`    PostgreSQL port ${stack.pg.port} listen=${stack.pg.listening}`);
+    console.log(`    verdict  ${stack.verdict ?? '-'} (${stack.reasons.join(' ')})` +
+      ` leaseExists=${stack.lease.exists} mismatch=${stack.lease.mismatch.length}` +
+      ` unverifiable=${stack.lease.unverifiable.length}`);
+    for (const entry of stack.lease.mismatch) {
+      console.log(`      ${entry.code} ${entry.field} expected=${JSON.stringify(entry.expected)} actual=${JSON.stringify(entry.actual)}`);
+    }
   }
   if (stacks.some((stack) => !stack.ok)) process.exitCode = 1;
 }
@@ -661,6 +935,21 @@ async function stop() {
   }
   if (existsSync(pidFile)) rmSync(pidFile, { force: true });
 
+  // PLAN-0694 P0: 正常停栈释放租约；端口没让出来 = 释放失败 ⇒ **保留租约并打标**
+  // （`releaseFailed` 会被 status 核成 mismatch），绝不静默删 —— 残留 + 无租约正是 ghost 的温床。
+  let leaseOutcome = { released: false, releaseFailed: false };
+  if (remaining.length > 0) {
+    const marked = markReleaseFailed({
+      projectRoot,
+      stackId: derived.stackId,
+      services: remaining,
+      reason: 'residual listener after stop',
+    });
+    leaseOutcome = { released: false, releaseFailed: marked.marked };
+  } else {
+    leaseOutcome = { released: releaseLease({ projectRoot, stackId: derived.stackId }).removed, releaseFailed: false };
+  }
+
   let pg = { port: ports.postgres, listening: await isPortListening(ports.postgres), stopped: false };
   if (args.withPg) {
     await stopPg();
@@ -672,14 +961,201 @@ async function stop() {
     pgListening: pg.listening,
     pgStopped: args.withPg,
     pidFileExists: existsSync(pidFile),
+    lease: leaseOutcome,
   };
   if (args.json) {
     console.log(JSON.stringify({ action: 'stop', stackId: derived.stackId, projectRoot, ...residual }, null, 2));
   } else {
     console.log(`[dev-stack] residual: services=${remaining.length ? remaining.join(',') : 'none'} pgListening=${pg.listening} pidFile=${residual.pidFileExists}`);
+    console.log(
+      `[dev-stack] lease: released=${leaseOutcome.released} releaseFailed=${leaseOutcome.releaseFailed}`
+        + (leaseOutcome.releaseFailed ? ' (租约保留并打标：先修掉残留端口，再 release)' : ''),
+    );
     if (!args.withPg) console.log('[dev-stack] PostgreSQL left running (pass --with-pg to stop the container; volume always kept)');
   }
   if (remaining.length > 0 || residual.pidFileExists) process.exitCode = 1;
+}
+
+/* --------------------------------------------------- acquire / release / gc */
+
+/**
+ * PLAN-0694 P0: 认领一套**已经在跑**的栈（升级前起的栈、或 start 没写租约的旧栈）。
+ *
+ * 只从当前事实写租约：画像匹配的监听者、pid 记录、CP 构建戳。没有匹配的监听者就没有可认领的
+ * 东西 —— 此时写租约会凭空造一份「意图」，那正是 ghost 误判的来源，所以直接拒绝（exit 2）。
+ */
+async function acquire() {
+  const listeners = listenFacts();
+  if (listeners.own.length === 0) {
+    console.error(
+      `[dev-stack] nothing to adopt on ${derived.stackId}: no profile-matched listener on ports `
+        + `${SERVICES.map((service) => ports[service]).join(',')} (check --stack/--cwd, or start the stack first)`,
+    );
+    process.exitCode = 2;
+    return;
+  }
+  const record = readJson(pidFile);
+  const written = writeLease({ record });
+  // 写完立刻按同一链路自审一次：认领也得经得起核对，不是「写了就算」。
+  const state = leaseState({ listeners: written.listeners });
+  if (args.json) {
+    console.log(
+      JSON.stringify(
+        {
+          action: 'acquire',
+          stackId: derived.stackId,
+          projectRoot,
+          leasePath: written.path,
+          adoptedListeners: listeners.own,
+          lease: leaseSummary(state),
+          verdict: state.verdict.verdict,
+          reasons: state.verdict.reasons,
+          ok: state.checks.allOk,
+        },
+        null,
+        2,
+      ),
+    );
+  } else {
+    console.log(`[dev-stack] acquired ${derived.stackId}: lease written to ${written.path}`);
+    console.log(`  adopted  ${listeners.own.map((entry) => `${entry.service}:${entry.pid}@${entry.port}`).join(' ')}`);
+    printLease(state);
+    console.log(`[dev-stack] ${state.checks.allOk ? 'lease verifies' : 'lease written but does NOT verify (see mismatch above)'}`);
+  }
+  if (!state.checks.allOk) process.exitCode = 1;
+}
+
+/** PLAN-0694 P0: 只删租约文件，绝不碰进程（停栈是 `stop` 的事，两者不混）。 */
+async function release() {
+  const path = leasePath(projectRoot, derived.stackId);
+  if (!existsSync(path)) {
+    console.log(`[dev-stack] no lease at ${path}; nothing to release`);
+    if (args.json) console.log(JSON.stringify({ action: 'release', stackId: derived.stackId, projectRoot, leasePath: path, existed: false, removed: false }, null, 2));
+    return;
+  }
+  const { removed } = releaseLease({ projectRoot, stackId: derived.stackId });
+  if (args.json) {
+    console.log(JSON.stringify({ action: 'release', stackId: derived.stackId, projectRoot, leasePath: path, existed: true, removed }, null, 2));
+  } else {
+    console.log(`[dev-stack] released lease ${path} (removed=${removed}); processes untouched`);
+    console.log('[dev-stack] note: 租约删掉后仍在跑的栈会被 status 判成 ghost —— 这是设计（没人认领的端口）；用 stop 收尾。');
+  }
+}
+
+/**
+ * PLAN-0694 P0: **只读**回收扫描。判定口径 = 租约 + 交叉校验双基础：
+ *   - `orphan`（租约在但记录进程全死、端口还占着）/ `ghost`（无可用租约、端口还占着）→ 候选；
+ *   - `stale`（租约自相矛盾）只报告，不算可回收；
+ *   - 没有 own 监听也没有租约/pid 记录的栈直接跳过。
+ *
+ * 零 kill：只打印判据与建议命令，由人来执行（`gc` 的职责是「说清楚」，不是「动手」）。
+ * **归属不装作知道**：端口空间全局、租约按 checkout 隔离，别的 checkout 的活栈在本 checkout 眼里
+ * 也长得像 ghost；所以候选额外带 `serving`（端口上服务是否还响应）与 `ownTrace`（本 checkout 是否
+ * 有痕证），建议命令据此分流成「直接 stop」或「先确认归属再动」。`gc` 的判据仍是租约+交叉校验，
+ * 不因探测结果改 verdict。
+ * exit 0 = 没有候选，1 = 有候选（与 `status` 同一读取习惯）。
+ */
+async function gc() {
+  const findings = [];
+  const targets = [];
+  const byPort = new Map();
+  for (const stackId of STACK_IDS) {
+    let d;
+    try {
+      d = deriveStack(stackId);
+    } catch {
+      continue;
+    }
+    if (args.explicitStack && d.stackId !== derived.stackId) continue;
+    targets.push(d);
+    for (const port of Object.values(d.ports)) byPort.set(port, d.stackId);
+  }
+  // 一次扫全部槽位端口再按栈分区：8 个栈省成 1 次系统查询（gc 要能随手跑）。
+  const listenersByStack = new Map(targets.map((d) => [d.stackId, { own: [], external: [] }]));
+  for (const listener of stackListeners([...byPort.keys()])) {
+    const stackId = byPort.get(listener.port);
+    const d = targets.find((candidate) => candidate.stackId === stackId);
+    if (!d) continue;
+    const decision = classifyListener(listener, { ports: d.ports });
+    if (decision.kind === 'unsupported') continue;
+    const bucket = listenersByStack.get(stackId);
+    const base = { port: listener.port, pid: listener.pid, name: listener.name ?? '', service: decision.service ?? null };
+    if (decision.kind === 'kill') bucket.own.push(base);
+    else bucket.external.push(base);
+  }
+  for (const d of targets) {
+    const p = d.ports;
+    const path = leasePath(projectRoot, d.stackId);
+    const pidFileForStack = join(resolve(projectRoot, d.logDir), 'dev-stack-pids.json');
+    const listeners = listenersByStack.get(d.stackId) ?? { own: [], external: [] };
+    const hasTrace = existsSync(path) || existsSync(pidFileForStack) || listeners.own.length > 0;
+    if (!hasTrace) continue;
+    const state = leaseState({ d, p, listeners });
+    const verdict = state.verdict.verdict;
+    const candidate = verdict === 'orphan' || verdict === 'ghost';
+    // 端口上还有活服务在响应吗？端口空间是**全局**的、租约空间按 checkout 隔离，所以别的 checkout
+    // 起的栈在本 checkout 眼里恰好长得像 ghost（端口占着、这里没租约）。有响应就先别当垃圾删建议。
+    const served = {};
+    for (const service of SERVICES) {
+      if (!listeners.own.some((entry) => entry.port === p[service])) continue;
+      served[service] = await httpStatus(`http://127.0.0.1:${p[service]}${ENDPOINTS[service]}`);
+    }
+    const serving = Object.entries(served)
+      .filter(([, status]) => status !== null && status < 500)
+      .map(([service]) => service);
+    const ownTrace = state.lease !== null || state.corrupt || existsSync(pidFileForStack);
+    const stackNumber = String(d.stackId).replace(/^stack-/, '');
+    const suggestion = !candidate
+      ? null
+      : ownTrace || serving.length === 0
+        ? `node scripts/dev-stack.mjs stop --stack ${stackNumber} --cwd ${projectRoot}`
+        : `端口上服务在响应（${serving.join(',')}），但本 checkout 没有它的租约/pid 记录 —— 可能是别的 checkout 起的栈：先到那个 checkout 执行 stop，或在此处 acquire --stack ${stackNumber} --cwd ${projectRoot} 认领`;
+    findings.push({
+      stackId: d.stackId,
+      verdict,
+      reasons: state.verdict.reasons,
+      candidate,
+      ownTrace,
+      ownPorts: state.verdict.ownPorts,
+      externalPorts: state.verdict.externalPorts,
+      served,
+      serving,
+      leaseExists: state.lease !== null || state.corrupt,
+      leasePath: path,
+      pidFileExists: existsSync(pidFileForStack),
+      mismatch: state.checks.mismatches,
+      unverifiable: state.checks.unverifiable,
+      suggestion,
+    });
+  }
+  const candidates = findings.filter((entry) => entry.candidate);
+  if (args.json) {
+    // 契约（design L85）：`gc --dry-run --json` 恒含 `killed: 0`，且不提供 `--apply`。
+    console.log(JSON.stringify({ action: 'gc', projectRoot, dryRun: true, killed: 0, findings, candidates: candidates.length }, null, 2));
+  } else {
+    console.log(`[dev-stack] gc (dry-run, read-only, killed=0) cwd=${projectRoot}`);
+    if (findings.length === 0) console.log('  (no stack has a lease, a pid file or a profile-matched listener)');
+    for (const entry of findings) {
+      const flag = entry.candidate ? 'COLLECT' : 'keep';
+      console.log(`  ${entry.stackId.padEnd(8)} ${flag} verdict=${entry.verdict ?? '-'} ownPorts=${entry.ownPorts.join(',') || '-'}`);
+      console.log(`    reasons  ${entry.reasons.join(' ') || '-'}`);
+      if (entry.serving.length > 0) {
+        console.log(`    serving  ${entry.serving.map((service) => `${service}:${entry.served[service]}`).join(' ')}` +
+          `${entry.ownTrace ? '' : ' (本 checkout 无痕证)'}`);
+      }
+      if (entry.externalPorts.length > 0) {
+        console.log(`    external ${entry.externalPorts.join(',')} (别人家的端口：不参与判定，也不会被建议清理)`);
+      }
+      for (const mismatch of entry.mismatch) {
+        console.log(`    mismatch ${mismatch.code} ${mismatch.field} expected=${JSON.stringify(mismatch.expected)} actual=${JSON.stringify(mismatch.actual)}`);
+      }
+      if (entry.suggestion) console.log(`    suggestion ${entry.suggestion}`);
+    }
+    console.log(
+      `[dev-stack] ${candidates.length === 0 ? 'nothing to collect' : `${candidates.length} candidate(s) — 建议命令已给出，gc 不会自己 kill`}`,
+    );
+  }
+  if (candidates.length > 0) process.exitCode = 1;
 }
 
 /* ----------------------------------------------------------------- main */
@@ -689,7 +1165,10 @@ try {
   else if (args.action === 'status') {
     if (args.all) await statusAll();
     else await status();
-  } else await stop();
+  } else if (args.action === 'stop') await stop();
+  else if (args.action === 'acquire') await acquire();
+  else if (args.action === 'release') await release();
+  else await gc();
 } catch (error) {
   console.error(`[dev-stack] ERROR: ${error.message}`);
   process.exit(2);
