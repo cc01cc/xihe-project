@@ -141,7 +141,7 @@ class SkillSnapshotFreezeIntegrationTest extends AbstractIntegrationTest {
      * {@code bodySource}), and the skill set always comes from {@code skill_bindings}. Before the fix
      * this Run froze {@code {}} — the binding was accepted by every layer and silently never reached
      * the model. The binding here is on the AGENT tier on purpose: it proves the snapshot is resolved
-     * for the Session's main Agent principal ({@code session.getAgentPrincipalId()}), which is the
+     * for the Session's PRIMARY participant principal, which is the
      * identity this milestone wires.
      */
     @Test
@@ -440,7 +440,14 @@ class SkillSnapshotFreezeIntegrationTest extends AbstractIntegrationTest {
         session.setContextTemplateLayer("user");
         session.setContextTemplateId(UUID.fromString(templateId));
         session.setContextTemplateVersion(1);
+        // PLAN-0689 A7: admission needs both the frozen cap and the PRIMARY participant; the Session
+        // column that used to carry this identity is gone. These eight cases assert ONLY the frozen
+        // skill listing / read face (no tool or MCP call), so this scenario's minimal atom set is the
+        // empty array — not a blanket grant. The PRIMARY bind below is the same session id the run
+        // reads back through ChatController (A7 reads PRIMARY, never the dropped Session column).
+        session.setAgentPermissionsSnapshot(objectMapper.createArrayNode());
         Session persisted = sessions.saveAndFlush(session);
+        bindPrimaryParticipant(persisted.getId().toString(), principal.getId().toString());
         return new Fixture(user, workspace, persisted, principal);
     }
 
