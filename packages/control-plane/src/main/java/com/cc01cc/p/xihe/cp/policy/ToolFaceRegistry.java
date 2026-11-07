@@ -74,6 +74,20 @@ public class ToolFaceRegistry {
     public static final String ACTION_USE_WORKSPACE_RUNTIME = "USE_WORKSPACE_RUNTIME";
     public static final String ACTION_MANAGE_WORKSPACE_RUNTIME = "MANAGE_WORKSPACE_RUNTIME";
     public static final String ACTION_MANAGE_WORKSPACE_POLICY = "MANAGE_WORKSPACE_POLICY";
+    // PLAN-0691 T1.3 (M1): the plugin binding capability face. Four atoms, one per verb, named in
+    // the UPPER_SNAKE style of every other action atom (the spec's `plugin:manage` spelling is the
+    // external capability wording; see spec/authz-plugin-atoms.md). Naming rule is not cosmetic:
+    // DefaultSetMatrixTest / DefaultSetMigrationParityTest assert "SUPER_ADMIN holds every atom in
+    // the catalog", so a catalog with two naming conventions would fork every prefix- or
+    // case-based parse and audit afterwards.
+    //   PLUGIN_MANAGE = instance-level plugin administration (install/enable/disable a plugin)
+    //   PLUGIN_BIND   = bind a plugin to a workspace (creates the binding row)
+    //   PLUGIN_INVOKE = invoke a bound plugin's tool face (the only atom an agent may hold)
+    //   PLUGIN_DATA   = read/write the plugin's data plane (service/binding-scoped, never a person)
+    public static final String ACTION_PLUGIN_MANAGE = "PLUGIN_MANAGE";
+    public static final String ACTION_PLUGIN_BIND = "PLUGIN_BIND";
+    public static final String ACTION_PLUGIN_INVOKE = "PLUGIN_INVOKE";
+    public static final String ACTION_PLUGIN_DATA = "PLUGIN_DATA";
 
     /** PLAN-0496 #2: the credential resource namespace ({@code credential:<uuid>} / {@code credential:*}).
      */
@@ -206,7 +220,12 @@ public class ToolFaceRegistry {
                 ACTION_MANAGE_WORKSPACE_RUNTIME, ACTION_MANAGE_WORKSPACE_POLICY,
                 // PLAN-0673 M2 (D-166): the subset-bypass atom joins the built-in action-class set
                 // in the same batch (MemoryWriteAtomTest asserts actionAtoms() == this set).
-                ACTION_GRANT_ANY_ATOM);
+                ACTION_GRANT_ANY_ATOM,
+                // PLAN-0691 T1.3 (M1): the four plugin atoms join the action-class set in the same
+                // batch as their catalog entries and their Flyway seed rows (V137). They are not
+                // attached to any tool face: a plugin's tool face is created at bind time, so the
+                // vocabulary entry is what the evaluator validates against.
+                ACTION_PLUGIN_MANAGE, ACTION_PLUGIN_BIND, ACTION_PLUGIN_INVOKE, ACTION_PLUGIN_DATA);
     }
 
     /** PLAN-0496 #2: credential-namespace action classes (the three atoms share resource rules). */

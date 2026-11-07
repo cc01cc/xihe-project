@@ -97,6 +97,16 @@ public final class PermissionAtomLabels {
         // PLAN-0673 M2 (D-166, 2026-11-05): the subset-bypass atom — SUPER_ADMIN-only by default.
         put(labels, ToolFaceRegistry.ACTION_GRANT_ANY_ATOM,
                 "授予任意原子（旁路）", "Grant any atom (bypass)");
+        // PLAN-0691 T1.3 (M1): the plugin binding face. The external wording keeps the `plugin:*`
+        // spelling the spec uses; the atom itself is UPPER_SNAKE (see ToolFaceRegistry).
+        put(labels, ToolFaceRegistry.ACTION_PLUGIN_MANAGE,
+                "管理插件（安装/启停）", "Manage plugins");
+        put(labels, ToolFaceRegistry.ACTION_PLUGIN_BIND,
+                "绑定插件到工作区", "Bind a plugin to a workspace");
+        put(labels, ToolFaceRegistry.ACTION_PLUGIN_INVOKE,
+                "调用已绑定插件", "Invoke a bound plugin");
+        put(labels, ToolFaceRegistry.ACTION_PLUGIN_DATA,
+                "读写插件数据面", "Read/write the plugin data plane");
         return labels;
     }
 
