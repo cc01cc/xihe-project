@@ -231,6 +231,11 @@ const GIT_CALL_TIMEOUT: Duration = Duration::from_secs(120);
 /// G8 `git_diff` patch cap (256 KiB, PLAN-0686): larger patches are cut on a
 /// UTF-8 character boundary and flagged `truncated`; never silently dropped.
 const GIT_DIFF_PATCH_CAP: usize = 256 * 1024;
+/// G8 `git_log` window (PLAN-0686): default page size and hard upper bound.
+/// `truncated: true` only means "more commits matched than `limit`", never
+/// "this is the whole repository history".
+pub const GIT_LOG_DEFAULT_LIMIT: usize = 20;
+const GIT_LOG_MAX_LIMIT: usize = 200;
 const MAX_RUN_ID_LEN: usize = 128;
 const MAX_DYNAMIC_EXCLUDES: usize = 4096;
 const LOCK_MAP_PRUNE_THRESHOLD: usize = 1024;
@@ -454,6 +459,31 @@ pub struct WorkspaceGitDiff {
     pub patch: String,
     pub truncated: bool,
     pub patch_bytes: u64,
+}
+
+/// `GET .../git-log` body: newest-first commit window of the user repository
+/// (G8 `git_log` v1, PLAN-0686).
+///
+/// `truncated: true` means more commits matched the query than `limit` returned;
+/// it says nothing about the rest of the repository history.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceGitLog {
+    /// `false` when the workspace root has no user `.git` marker (non-Git workspaces work).
+    pub is_repository: bool,
+    pub entries: Vec<GitLogEntry>,
+    pub truncated: bool,
+}
+
+/// One commit row of [`WorkspaceGitLog`]; human fields are control-char sanitised.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitLogEntry {
+    pub hash: String,
+    pub short_hash: String,
+    pub author: String,
+    pub committed_at: String,
+    pub subject: String,
 }
 
 /// PLAN-0340 L1b git half: stable facts only (branch + short HEAD), no dirty.
@@ -3392,14 +3422,7 @@ impl ShadowGit {
             });
         };
         self.require_git().await?;
-        let mut env = self.null_config_env();
-        env.push(("GIT_DIR".to_string(), normalize_path_for_git(&git_dir)));
-        env.push((
-            "GIT_WORK_TREE".to_string(),
-            normalize_path_for_git(&work_tree),
-        ));
-        env.push(("GIT_OPTIONAL_LOCKS".to_string(), "0".to_string()));
-        env.push(("GIT_TERMINAL_PROMPT".to_string(), "0".to_string()));
+        let env = self.user_repo_read_envs(&git_dir, &work_tree);
         let hooks = self.shadow_git_dir(workspace_id)?.join("empty-hooks");
         let hooks_config = format!("core.hooksPath={}", normalize_path_for_git(&hooks));
         let quotepath_config = "core.quotepath=false".to_string();
@@ -3420,6 +3443,152 @@ impl ShadowGit {
             .run_git_checked(&args, &env, Some(work_tree.as_path()), self.call_timeout)
             .await?;
         Ok(bounded_git_diff_patch(stdout))
+    }
+
+    /// Shared read-only user-repository environment (G8, PLAN-0686): nulled
+    /// global/system config first, then the user repo as `GIT_DIR` / `GIT_WORK_TREE`
+    /// with optional locks and terminal prompts disabled. Never sets
+    /// `GIT_INDEX_FILE` and never points `GIT_DIR` at the shadow repository.
+    fn user_repo_read_envs(&self, git_dir: &Path, work_tree: &Path) -> Vec<(String, String)> {
+        let mut env = self.null_config_env();
+        env.push(("GIT_DIR".to_string(), normalize_path_for_git(git_dir)));
+        env.push((
+            "GIT_WORK_TREE".to_string(),
+            normalize_path_for_git(work_tree),
+        ));
+        env.push(("GIT_OPTIONAL_LOCKS".to_string(), "0".to_string()));
+        env.push(("GIT_TERMINAL_PROMPT".to_string(), "0".to_string()));
+        env
+    }
+
+    /// Read-only newest-first commit window of the user repository (G8 `git_log`
+    /// v1, PLAN-0686).
+    ///
+    /// `limit` is validated to `1..=200` (the HTTP default is 20) and probed with
+    /// `limit + 1`, so `truncated: true` means exactly "more commits matched than
+    /// `limit`" — never "this is the whole repository history". `range` must be a
+    /// two-dot `A..B` whose sides resolve to commits via
+    /// `rev-parse --verify <rev>^{commit}`; a single rev, `--all` or `...` is a
+    /// client error (400), not a 503. Records are NUL-separated (`-z` plus
+    /// `%x00` field separators) because a commit message may legally contain
+    /// `0x1e`/`0x1f`; `%s` flattens the subject to one line, and any control
+    /// character left in `author`/`subject` is replaced with a space. Environment
+    /// and `.git` handling are shared with [`Self::workspace_git_diff`]; an
+    /// un-born `HEAD` (fresh `git init`) and a non-Git workspace return an empty
+    /// window instead of a failure.
+    pub async fn workspace_git_log(
+        &self,
+        workspace_id: &str,
+        limit: usize,
+        paths: &[String],
+        range: Option<&str>,
+    ) -> Result<WorkspaceGitLog> {
+        validate_git_log_limit(limit)?;
+        let paths = normalize_user_git_paths(paths)?;
+        let range_sides = match range {
+            Some(raw) => Some((raw, validate_git_log_range(raw)?)),
+            None => None,
+        };
+        let work_tree = self.work_tree(workspace_id)?;
+        if !work_tree.is_dir() {
+            return Err(CheckpointError::WorkspaceMissing(normalize_path_for_git(
+                &work_tree,
+            )));
+        }
+        let Some(git_dir) = resolve_user_git_dir(&work_tree).await else {
+            return Ok(WorkspaceGitLog {
+                is_repository: false,
+                entries: Vec::new(),
+                truncated: false,
+            });
+        };
+        self.require_git().await?;
+        let env = self.user_repo_read_envs(&git_dir, &work_tree);
+        if self.user_repo_head_commit(&env, &work_tree).await.is_none() {
+            return Ok(WorkspaceGitLog {
+                is_repository: true,
+                entries: Vec::new(),
+                truncated: false,
+            });
+        }
+        if let Some((raw, (left, right))) = range_sides {
+            for rev in [format!("{left}^{{commit}}"), format!("{right}^{{commit}}")] {
+                match self
+                    .run_git_checked(
+                        &["rev-parse", "--verify", "--quiet", &rev],
+                        &env,
+                        Some(work_tree.as_path()),
+                        self.call_timeout,
+                    )
+                    .await
+                {
+                    Ok(_) => {}
+                    Err(CheckpointError::GitCommand { detail, .. }) => {
+                        return Err(CheckpointError::InvalidIdentifier {
+                            kind: "git log range",
+                            value: raw.to_string(),
+                            detail: format!("range must name two resolvable commits: {detail}"),
+                        });
+                    }
+                    Err(other) => return Err(other),
+                }
+            }
+        }
+        let probe = limit + 1;
+        let hooks = self.shadow_git_dir(workspace_id)?.join("empty-hooks");
+        let mut args: Vec<String> = vec![
+            "-c".to_string(),
+            format!("core.hooksPath={}", normalize_path_for_git(&hooks)),
+            "-c".to_string(),
+            "log.showSignature=false".to_string(),
+            "log".to_string(),
+            "--no-color".to_string(),
+            "-z".to_string(),
+            "-n".to_string(),
+            probe.to_string(),
+            "--format=%H%x00%h%x00%an%x00%aI%x00%s".to_string(),
+        ];
+        if let Some((_, (left, right))) = range_sides {
+            args.push(format!("{left}..{right}"));
+        }
+        args.push("--".to_string());
+        args.extend(paths.iter().cloned());
+        let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
+        let stdout = self
+            .run_git_checked(
+                &arg_refs,
+                &env,
+                Some(work_tree.as_path()),
+                self.call_timeout,
+            )
+            .await?;
+        let mut entries = parse_git_log_entries(&stdout)?;
+        let truncated = entries.len() > limit;
+        entries.truncate(limit);
+        Ok(WorkspaceGitLog {
+            is_repository: true,
+            entries,
+            truncated,
+        })
+    }
+
+    /// `HEAD^{commit}` of the user repository, or `None` on an un-born branch
+    /// (fresh `git init`), which `git log` would otherwise treat as exit 128.
+    async fn user_repo_head_commit(
+        &self,
+        env: &[(String, String)],
+        work_tree: &Path,
+    ) -> Option<String> {
+        let output = self
+            .run_git_checked(
+                &["rev-parse", "--verify", "--quiet", "HEAD^{commit}"],
+                env,
+                Some(work_tree),
+                self.call_timeout,
+            )
+            .await
+            .ok()?;
+        Some(String::from_utf8_lossy(&output).trim().to_string())
     }
 
     /// PLAN-0340 T1.2: `branch` + short `HEAD` for L1b (no dirty list).
@@ -3704,6 +3873,105 @@ fn bounded_git_diff_patch(stdout: Vec<u8>) -> WorkspaceGitDiff {
         truncated,
         patch_bytes,
     }
+}
+
+/// Validate the `limit` window for `git_log` (G8, PLAN-0686).
+fn validate_git_log_limit(limit: usize) -> Result<()> {
+    if (1..=GIT_LOG_MAX_LIMIT).contains(&limit) {
+        Ok(())
+    } else {
+        Err(CheckpointError::InvalidIdentifier {
+            kind: "git log limit",
+            value: limit.to_string(),
+            detail: format!("limit must be between 1 and {GIT_LOG_MAX_LIMIT}"),
+        })
+    }
+}
+
+/// Validate a two-dot `A..B` revision range before it reaches git.
+///
+/// Same strength as a pathspec on the injection face: no NUL, whitespace or
+/// control characters, no leading `-` (never an argv option), no `...`, no extra
+/// `..`; both sides must be non-empty. Resolution to a commit is verified
+/// separately with `rev-parse --verify <rev>^{commit}`.
+fn validate_git_log_range(raw: &str) -> Result<(&str, &str)> {
+    fn invalid(raw: &str, detail: &str) -> CheckpointError {
+        CheckpointError::InvalidIdentifier {
+            kind: "git log range",
+            value: raw.to_string(),
+            detail: detail.to_string(),
+        }
+    }
+    if raw.is_empty() || raw.contains('\0') {
+        return Err(invalid(raw, "range must be a non-empty NUL-free A..B"));
+    }
+    if raw.chars().any(|ch| ch.is_control() || ch.is_whitespace()) {
+        return Err(invalid(
+            raw,
+            "range must not contain whitespace or control characters",
+        ));
+    }
+    if raw.starts_with('-') {
+        return Err(invalid(raw, "range must not start with '-'"));
+    }
+    if raw.contains("...") {
+        return Err(invalid(raw, "three-dot ranges are not supported; use A..B"));
+    }
+    let Some((left, right)) = raw.split_once("..") else {
+        return Err(invalid(
+            raw,
+            "range must be A..B (a single revision is not a range)",
+        ));
+    };
+    if left.is_empty() || right.is_empty() || left.contains("..") || right.contains("..") {
+        return Err(invalid(raw, "range must be A..B with both sides non-empty"));
+    }
+    for side in [left, right] {
+        if side.starts_with('-') {
+            return Err(invalid(raw, "range sides must not start with '-'"));
+        }
+    }
+    Ok((left, right))
+}
+
+/// Parse `git log -z --format=%H%x00%h%x00%an%x00%aI%x00%s` output.
+///
+/// `-z` separates commits with NUL and the format's `%x00` separates fields with
+/// NUL, so the stream is a flat list of five fields per commit. A commit message
+/// may legally contain `0x1e`/`0x1f`, so neither may be used as a delimiter; a
+/// NUL cannot appear in a commit message or an ident produced by git.
+fn parse_git_log_entries(stdout: &[u8]) -> Result<Vec<GitLogEntry>> {
+    let text = String::from_utf8_lossy(stdout);
+    let text = text.strip_suffix('\0').unwrap_or(&text);
+    if text.is_empty() {
+        return Ok(Vec::new());
+    }
+    let fields: Vec<&str> = text.split('\0').collect();
+    if !fields.len().is_multiple_of(5) {
+        return Err(CheckpointError::GitCommand {
+            command: "git log --format".to_string(),
+            detail: format!("expected 5 fields per commit, got {}", fields.len()),
+        });
+    }
+    Ok(fields
+        .chunks_exact(5)
+        .map(|chunk| GitLogEntry {
+            hash: chunk[0].to_string(),
+            short_hash: chunk[1].to_string(),
+            author: sanitize_git_log_field(chunk[2]),
+            committed_at: chunk[3].to_string(),
+            subject: sanitize_git_log_field(chunk[4]),
+        })
+        .collect())
+}
+
+/// Replace control characters (notably `0x1e`/`0x1f`) in human git fields with a
+/// space so a crafted commit message cannot inject record separators downstream.
+fn sanitize_git_log_field(value: &str) -> String {
+    value
+        .chars()
+        .map(|ch| if ch.is_control() { ' ' } else { ch })
+        .collect()
 }
 
 /// Validate a workspace id against the storage-ref contract (W2 API surface).

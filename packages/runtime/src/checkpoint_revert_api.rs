@@ -27,7 +27,7 @@ use tracing::info;
 
 use crate::checkpoint::CheckpointStorageMode;
 use crate::checkpoint::{
-    CheckpointError, WorkspaceGitDiff, WorkspaceGitStatus, validate_workspace_id,
+    CheckpointError, WorkspaceGitDiff, WorkspaceGitLog, WorkspaceGitStatus, validate_workspace_id,
 };
 use crate::checkpoint_api::{
     CheckpointService, REASON_GIT_FAILED, REASON_WORKSPACE_UNKNOWN, unavailable_reason,
@@ -780,6 +780,44 @@ impl CheckpointService {
         })?;
         match self.engine().workspace_git_diff(workspace_id, paths).await {
             Ok(diff) => Ok(diff),
+            Err(CheckpointError::GitUnavailable(detail)) => {
+                let capability = self.engine().probe().await;
+                Err(GitStatusFailure::Unavailable {
+                    reason: unavailable_reason(&capability.version).into(),
+                    detail,
+                })
+            }
+            Err(CheckpointError::InvalidIdentifier { detail, .. }) => {
+                Err(GitStatusFailure::Validation { detail })
+            }
+            Err(CheckpointError::WorkspaceMissing(detail)) => Err(GitStatusFailure::Unavailable {
+                reason: REASON_WORKSPACE_UNKNOWN.into(),
+                detail,
+            }),
+            Err(other) => Err(GitStatusFailure::Unavailable {
+                reason: REASON_GIT_FAILED.into(),
+                detail: other.to_string(),
+            }),
+        }
+    }
+
+    /// G8 `git_log` v1 (PLAN-0686): read-only newest-first commit window.
+    pub async fn git_log(
+        &self,
+        workspace_id: &str,
+        limit: usize,
+        paths: &[String],
+        range: Option<&str>,
+    ) -> Result<WorkspaceGitLog, GitStatusFailure> {
+        validate_workspace_id(workspace_id).map_err(|error| GitStatusFailure::Validation {
+            detail: error.to_string(),
+        })?;
+        match self
+            .engine()
+            .workspace_git_log(workspace_id, limit, paths, range)
+            .await
+        {
+            Ok(log) => Ok(log),
             Err(CheckpointError::GitUnavailable(detail)) => {
                 let capability = self.engine().probe().await;
                 Err(GitStatusFailure::Unavailable {
