@@ -43,7 +43,6 @@ import com.cc01cc.p.xihe.cp.policy.SafePolicySummary;
 import com.cc01cc.p.xihe.cp.operation.JobStateService;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.credentials.CredentialLeaseService;
-import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
 import com.cc01cc.p.xihe.cp.logging.RequestIdFilter;
 
@@ -188,6 +187,8 @@ public class McpProxyController {
 
     private final WorkspaceService workspaceService;
     private final SessionService sessionService;
+    /** PLAN-0689 A3b (design §3-A): run-scoped reads take this run's own principal stamp. */
+    private final com.cc01cc.p.xihe.cp.chat.ChatRunStatusReadService chatRunStatusReadService;
     private final JobStateService jobStateService;
     private final AgentSpawnExecutionService agentSpawnExecutionService;
     /**
@@ -223,7 +224,8 @@ public class McpProxyController {
             CredentialLeaseService credentialLeaseService,
             com.cc01cc.p.xihe.cp.skill.SkillReadService skillReadService,
             BuildVersion buildVersion,
-            com.cc01cc.p.xihe.cp.chat.DelegationBudgetService delegationBudgetService) {
+            com.cc01cc.p.xihe.cp.chat.DelegationBudgetService delegationBudgetService,
+            com.cc01cc.p.xihe.cp.chat.ChatRunStatusReadService chatRunStatusReadService) {
         this.httpClient = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(10))
                 .build();
@@ -236,6 +238,7 @@ public class McpProxyController {
         this.catalogService = catalogService;
         this.workspaceService = workspaceService;
         this.sessionService = sessionService;
+        this.chatRunStatusReadService = chatRunStatusReadService;
         this.jobStateService = jobStateService;
         this.configService = configService;
         this.toolTimeoutPolicy = toolTimeoutPolicy;
@@ -1281,13 +1284,12 @@ public class McpProxyController {
                         "acquire_credential requires a chat run context");
             }
             String credentialId = extractCredentialIdArgument(body);
-            Session session = sessionService.requireCurrent(
-                    access.applicationSessionId(), access.userId(), access.workspaceId());
-            String principalId = session.getAgentPrincipalId();
-            if (principalId == null || principalId.isBlank()) {
-                throw new CpApiException(HttpStatus.FORBIDDEN, "FORBIDDEN",
-                        "Session has no Agent principal bound");
-            }
+            // PLAN-0689 A3b (T1.5 / design §3-A): a credential lease belongs to the run's own
+            // principal. A run without a stamp is refused — never fall back to the Session column.
+            String principalId = chatRunStatusReadService.agentPrincipalIdByRunId(runId)
+                    .map(UUID::toString)
+                    .orElseThrow(() -> new CpApiException(HttpStatus.FORBIDDEN, "FORBIDDEN",
+                            "Chat run has no Agent principal bound"));
             CredentialLeaseService.AcquiredCredential acquired = credentialLeaseService.acquire(
                     credentialId, principalId, access.applicationSessionId(), runId, access.workspaceId());
             responseBody = cpToolResult(body, Map.of(
@@ -1360,11 +1362,14 @@ public class McpProxyController {
                 throw new CpApiException(HttpStatus.BAD_REQUEST, "RUN_CONTEXT_REQUIRED",
                         "skill_read requires a chat run context");
             }
-            // D28-43: capture used the Session's Agent principal, so the legacy fallback (D28-40)
-            // must use the same identity — not the responder's, and not TenantContext's.
-            String principalId = sessionService.requireCurrent(
-                    access.applicationSessionId(), access.userId(), access.workspaceId())
-                    .getAgentPrincipalId();
+            // PLAN-0689 A3b (T1.3 / design §3-A): D28-43's premise was "capture used the Session's
+            // Agent principal", so the legacy fallback had to match it. Capture is run-based now
+            // (ChatSubmissionService stamps the run), so this read must be the run's stamp too. A
+            // run without a stamp is refused rather than borrowing the Session's PRIMARY row.
+            String principalId = chatRunStatusReadService.agentPrincipalIdByRunId(runId)
+                    .map(UUID::toString)
+                    .orElseThrow(() -> new CpApiException(HttpStatus.FORBIDDEN, "FORBIDDEN",
+                            "Chat run has no Agent principal bound"));
             SkillReadService.Result read = skillReadService.read(
                     new SkillReadService.Query(
                             UUID.fromString(runId), access.applicationSessionId(),

@@ -122,7 +122,10 @@ public final class DelegationChainWalker {
             edge = EDGE_SPAWN;
             spawnHops++;
         }
-        return new ChainWalk(List.copyOf(hops), spawnHops, List.copyOf(principalPath));
+        // PLAN-0689 A3b: principalPath may now legitimately hold nulls (an unstamped run stays
+        // unattributed) and List.copyOf rejects null elements — wrap the private copy instead.
+        return new ChainWalk(List.copyOf(hops), spawnHops,
+                java.util.Collections.unmodifiableList(principalPath));
     }
 
     /**
@@ -148,12 +151,12 @@ public final class DelegationChainWalker {
             // T3.3: the cycle key is WHO RAN the hop, not the session PRIMARY. A session keeps its
             // PRIMARY principal while its wake runs carry each responder's stamp, so the session
             // reading alone would let two non-primary participants ping-pong forever (A→B→C→B is
-            // invisible when every hop reads the same session principal). The responder fallback
-            // keeps the M2 reading for runs without a stamp.
+            // invisible when every hop reads the same session principal).
+            // PLAN-0689 A3b (T1.3 / design §2): the old responder fallback onto the Session's
+            // PRIMARY is gone — an unstamped run stays unattributed (run → NULL, never guess
+            // PRIMARY). Both root-principal readers already fail closed on the resulting null.
             UUID runPrincipalId = current.getAgentPrincipalId();
-            String principalId = runPrincipalId == null
-                    ? session.getAgentPrincipalId()
-                    : runPrincipalId.toString();
+            String principalId = runPrincipalId == null ? null : runPrincipalId.toString();
             hops.add(new Hop(current.getId(), sessionId, edge, principalId));
             principalPath.add(principalId);
             String parentRunId;
@@ -193,7 +196,10 @@ public final class DelegationChainWalker {
                 spawnHops++;
             }
         }
-        return new ChainWalk(List.copyOf(hops), spawnHops, List.copyOf(principalPath));
+        // PLAN-0689 A3b: principalPath may now legitimately hold nulls (an unstamped run stays
+        // unattributed) and List.copyOf rejects null elements — wrap the private copy instead.
+        return new ChainWalk(List.copyOf(hops), spawnHops,
+                java.util.Collections.unmodifiableList(principalPath));
     }
 
     private static AncestorMissingException missing(String detail) {

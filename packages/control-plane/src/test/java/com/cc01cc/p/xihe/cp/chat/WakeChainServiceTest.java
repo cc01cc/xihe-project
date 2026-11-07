@@ -44,7 +44,9 @@ class WakeChainServiceTest {
 
     private static final String SESSION_ID = UUID.randomUUID().toString();
     private static final UUID SESSION_UUID = UUID.fromString(SESSION_ID);
-    private static final String ROOT_PRINCIPAL = "P-ROOT";
+    // PLAN-0689 A3b: chat_runs.agent_principal_id is a UUID column, so the run stamp fixture must
+    // be a real UUID string — a readable placeholder cannot be mirrored onto the Run any more.
+    private static final String ROOT_PRINCIPAL = "00000000-0000-0000-0000-0000000000a1";
     private static final UUID B = UUID.randomUUID();
     private static final UUID C = UUID.randomUUID();
     private static final UUID D = UUID.randomUUID();
@@ -111,6 +113,10 @@ class WakeChainServiceTest {
         ChatRun run = new ChatRun(id.toString(), SESSION_ID, "owner-1", "ws-1",
                 "idem-" + id, "hash-" + id, null, null, "none", "succeeded");
         run.setOrigin(ChatRun.ORIGIN_USER_SUBMISSION);
+        // PLAN-0689 A3b: the walker no longer falls back to the Session column, so a root run
+        // without its own stamp would fail closed with root_principal_missing before any depth
+        // rule is evaluated. Fixtures must stamp the run, as production dispatch now does.
+        run.setAgentPrincipalId(UUID.fromString(ROOT_PRINCIPAL));
         runById.put(id, run);
         return id.toString();
     }

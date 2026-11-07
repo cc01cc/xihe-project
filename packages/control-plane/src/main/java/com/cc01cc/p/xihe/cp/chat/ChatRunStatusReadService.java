@@ -40,6 +40,17 @@ public class ChatRunStatusReadService {
         return chatRuns.findById(id).map(ChatRunStatusReadService::toView);
     }
 
+    /**
+     * PLAN-0689 A3b (design §3-A): the run's own principal stamp — the only execution identity a
+     * run-scoped read may use. Empty when the run is unknown or carries no stamp; callers must
+     * fail closed instead of falling back to the Session's column (which A7 deletes).
+     */
+    @Transactional(readOnly = true)
+    public Optional<UUID> agentPrincipalIdByRunId(String runId) {
+        return chatRuns.findById(UUID.fromString(runId))
+                .flatMap(run -> Optional.ofNullable(run.getAgentPrincipalId()));
+    }
+
     /** PLAN-0407 Tier-1 ordering: newest run first, id as the tie-breaker. */
     @Transactional(readOnly = true)
     public Optional<ChatRunStatusView> findLatestBySession(String sessionId) {

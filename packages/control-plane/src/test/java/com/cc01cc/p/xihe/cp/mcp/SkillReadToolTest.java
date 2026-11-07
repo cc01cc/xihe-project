@@ -12,6 +12,7 @@ import com.cc01cc.p.xihe.cp.policy.PolicyEngine;
 import com.cc01cc.p.xihe.cp.policy.PolicyLayer;
 import com.cc01cc.p.xihe.cp.policy.PolicyVerdict;
 import com.cc01cc.p.xihe.cp.policy.ToolFaceRegistry;
+import com.cc01cc.p.xihe.cp.chat.ChatRunStatusReadService;
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
 import com.cc01cc.p.xihe.cp.repository.McpServerRepository;
 import com.cc01cc.p.xihe.cp.repository.McpStdioServerRepository;
@@ -89,6 +90,8 @@ class SkillReadToolTest {
     private PolicyEngine policyEngine;
     private McpToolTimeoutService toolTimeoutService;
     private SessionService sessionService;
+    /** PLAN-0689 A3b: skill_read now resolves the Run's own stamp (design §3-A). */
+    private ChatRunStatusReadService chatRunStatusReadService;
     private ChatRunRepository chatRunRepository;
     private SkillRepository skillRepository;
     private SkillCatalogSourceService catalog;
@@ -124,6 +127,11 @@ class SkillReadToolTest {
         ApprovalService approvalService = mock(ApprovalService.class);
         SseEmitterManager sse = mock(SseEmitterManager.class);
         sessionService = mock(SessionService.class);
+        // PLAN-0689 A3b: skill_read resolves the Run's own stamp now (design §3-A), so the
+        // fixture stubs the run read instead of the Session column.
+        chatRunStatusReadService = mock(ChatRunStatusReadService.class);
+        lenient().when(chatRunStatusReadService.agentPrincipalIdByRunId(anyString()))
+                .thenReturn(Optional.of(PRINCIPAL_ID));
         Session session = new Session();
         session.setAgentPrincipalId(PRINCIPAL_ID.toString());
         when(sessionService.requireCurrent(eq(SESSION_ID), eq(USER_ID), eq(WS))).thenReturn(session);
@@ -161,7 +169,8 @@ class SkillReadToolTest {
                 mock(com.cc01cc.p.xihe.cp.credentials.CredentialLeaseService.class),
                 skillReadService,
                 new com.cc01cc.p.xihe.cp.status.BuildVersion(),
-                mock(com.cc01cc.p.xihe.cp.chat.DelegationBudgetService.class));
+                mock(com.cc01cc.p.xihe.cp.chat.DelegationBudgetService.class),
+                chatRunStatusReadService);
         ReflectionTestUtils.setField(controller, "runtimeBaseUrl", "http://localhost:9091");
 
         // Route seeds: the tool map already knows both names, so no Runtime probe is attempted.
