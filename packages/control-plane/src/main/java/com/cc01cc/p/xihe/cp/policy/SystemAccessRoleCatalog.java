@@ -80,7 +80,15 @@ public class SystemAccessRoleCatalog {
             AtomRef.wildcard(ToolFaceRegistry.ACTION_WRITE),
             AtomRef.wildcard(ToolFaceRegistry.ACTION_DELETE),
             AtomRef.wildcard(ToolFaceRegistry.ACTION_EXEC),
-            AtomRef.wildcard(ToolFaceRegistry.ACTION_NETWORK));
+            AtomRef.wildcard(ToolFaceRegistry.ACTION_NETWORK),
+            // PLAN-0691 T1.3 (M1) spec B-4: invoking an already-bound BUILTIN plugin is part of the
+            // base set every non-viewer account/agent carries. It is deliberately in BASE_ATOMS and
+            // not per role, because "builtin ⇒ default set" must be one expression; a third-party
+            // plugin gets no default at all (explicit grant only), which is expressed by the atom
+            // being the only plugin atom an agent may hold (AGENT_FORBIDDEN_ATOMS excludes it).
+            // WS_VIEWER stays out on purpose: invocation executes a tool face, and a read-only role
+            // must not be able to run one.
+            AtomRef.wildcard(ToolFaceRegistry.ACTION_PLUGIN_INVOKE));
 
     /**
      * PLAN-0622 D8 (M0.3): the registration default set plus the user tier action that lets an
@@ -122,6 +130,13 @@ public class SystemAccessRoleCatalog {
                                         // roles/bindings, but only within its own atom set (the
                                         // subset guard answers 403 PRIVILEGE_ESCALATION otherwise).
                                         AtomRef.wildcard(ToolFaceRegistry.ACTION_MANAGE_ROLES),
+                                        // PLAN-0691 T1.3 (M1) spec B-4: the instance-administrator
+                                        // fixed set gains plugin administration and binding. Both are
+                                        // agent-forbidden and ADMIN is not an agent-bindable role, so
+                                        // BL-349's constraint is untouched. PLUGIN_DATA stays out: no
+                                        // human default at all (the data plane belongs to a binding).
+                                        AtomRef.wildcard(ToolFaceRegistry.ACTION_PLUGIN_MANAGE),
+                                        AtomRef.wildcard(ToolFaceRegistry.ACTION_PLUGIN_BIND),
                                         AtomRef.wildcard(
                                                 ToolFaceRegistry.ACTION_MANAGE_AGENT_PRINCIPALS),
                                         AtomRef.wildcard(
@@ -164,6 +179,12 @@ public class SystemAccessRoleCatalog {
                                         // must NOT carry the agent-forbidden self atom — the human USER /
                                         // ADMIN roles provide "write my own" instead.
                                         AtomRef.wildcard(ToolFaceRegistry.ACTION_MEMORY_WRITE),
+                                        // PLAN-0691 T1.3 (M1): the owner may invoke bound builtin
+                                        // plugins. PLUGIN_BIND is NOT here on purpose — it is
+                                        // agent-forbidden and this role is agent-bindable (BL-349),
+                                        // so binding stays an instance-administrator act in M1.
+                                        AtomRef.wildcard(
+                                                ToolFaceRegistry.ACTION_PLUGIN_INVOKE),
                                         // PLAN-0651 M2 T2.1: owner manages skills, providers, runtime
                                         // and workspace policy; N10 (members) stays unassigned by
                                         // ruling D51-26.
@@ -191,6 +212,10 @@ public class SystemAccessRoleCatalog {
                                 AtomRef.wildcard(ToolFaceRegistry.ACTION_USE_WORKSPACE_RUNTIME),
                                 // BL-349: no MEMORY_WRITE_SELF here — WS_* is agent-bindable and the
                                 // atom is agent-forbidden; the human USER role carries the self face.
+                                // PLAN-0691 T1.3 (M1): PLUGIN_INVOKE is not agent-forbidden, so an
+                                // editor may invoke bound builtin plugins; PLUGIN_BIND stays out for
+                                // the same BL-349 reason (see WS_OWNER).
+                                AtomRef.wildcard(ToolFaceRegistry.ACTION_PLUGIN_INVOKE),
                                 AtomRef.wildcard(
                                         ToolFaceRegistry.ACTION_MANAGE_WORKSPACE_POLICY))),
                 new RoleSeed(WS_VIEWER_ID, WS_VIEWER, "Workspace Viewer",
