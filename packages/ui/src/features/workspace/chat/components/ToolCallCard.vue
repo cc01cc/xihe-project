@@ -7,6 +7,7 @@ import { toolRefusalCopyKey } from "../../../../lib/errorMessages";
 import { LoaderCircle, CheckCircle, XCircle, Clock, Bot, ChevronDown } from "@lucide/vue";
 import ProcessRow from "./ProcessRow.vue";
 import type { ProcessRowActor } from "./ProcessRow.vue";
+import ToolApprovalActions from "./ToolApprovalActions.vue";
 
 const props = defineProps<{
     toolCall: ToolCall;
@@ -543,20 +544,12 @@ async function loadJobOutput(reset: boolean) {
                 </div>
             </div>
 
-            <div v-if="toolCall.status === 'pending'" class="flex gap-2 pt-1">
-                <button
-                    class="rounded bg-action px-3 py-1 text-xs text-action-foreground hover:opacity-90"
-                    @click="emit('approve', toolCall.id)"
-                >
-                    {{ t("chat.approve") }}
-                </button>
-                <button
-                    class="rounded border px-3 py-1 text-xs text-muted-foreground hover:bg-accent"
-                    @click="emit('reject', toolCall.id)"
-                >
-                    {{ t("chat.reject") }}
-                </button>
-            </div>
+            <ToolApprovalActions
+                v-if="toolCall.status === 'pending'"
+                :tool-call-id="toolCall.id"
+                @approve="emit('approve', $event)"
+                @reject="emit('reject', $event)"
+            />
         </div>
     </ProcessRow>
 </template>
