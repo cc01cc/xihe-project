@@ -1,7 +1,7 @@
 # Agent principal 与 Workspace 绑定
 
 > 契约状态：`active`  
-> amendment 承接：PLAN-0680（2026-11-07 登记并落章：技能绑定写入面双轴——workspace 轴仅授本工作区原子、服务端定档；新章见下方「技能绑定双轴」，既有正文条款未改）；PLAN-0689（2026-11-07：删除 Session 主体/快照列，Session 身份绑定 = `session_participants` PRIMARY，Chat 不再接受 per-run `agentPrincipalId`）  
+> amendment 承接：PLAN-0680（2026-11-07 登记并落章：技能绑定写入面双轴——workspace 轴仅授本工作区原子、服务端定档；新章见下方「技能绑定双轴」，既有正文条款未改）；PLAN-0689（2026-11-07：删除 Session 级主体列（`sessions.agent_principal_id`，V133/A7）；`agent_permissions_snapshot` 保留为 PRIMARY 绑定时 cap（D-54）；Session 身份绑定 = `session_participants` PRIMARY，Chat 不再接受 per-run `agentPrincipalId`）  
 > 实现状态：`partial`（PLAN-0374 principal/Workspace binding、T3.1b/T3.3、V5/V6/V7 已验收；**scope 三档 `PERSONAL`/`WORKSPACE`/`INSTANCE` 与三段授权由 PLAN-0622 承接，尚未实现**；fork/branch producer 归 PLAN-0409/0410，Agent 铸造/多层审批后置 BL-70/71）
 > Profile：`security`  
 > Owner：PLAN-0374（canonical binding；spawn caller amendment per PLAN-0407 #53）；scope 三档与三段授权 amendment per PLAN-0622；技能绑定双轴 amendment per PLAN-0680  
