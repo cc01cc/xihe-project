@@ -133,7 +133,6 @@ class SkillReadToolTest {
         lenient().when(chatRunStatusReadService.agentPrincipalIdByRunId(anyString()))
                 .thenReturn(Optional.of(PRINCIPAL_ID));
         Session session = new Session();
-        session.setAgentPrincipalId(PRINCIPAL_ID.toString());
         when(sessionService.requireCurrent(eq(SESSION_ID), eq(USER_ID), eq(WS))).thenReturn(session);
 
         chatRunRepository = mock(ChatRunRepository.class);
