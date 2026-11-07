@@ -3,6 +3,7 @@ package com.cc01cc.p.xihe.cp.plugin;
 import com.cc01cc.p.xihe.cp.AbstractH2Test;
 import com.cc01cc.p.xihe.cp.entity.AccessRole;
 import com.cc01cc.p.xihe.cp.entity.AccessRoleBinding;
+import com.cc01cc.p.xihe.cp.entity.WorkspaceRole;
 import com.cc01cc.p.xihe.cp.integration.WorkspaceFixture;
 import com.cc01cc.p.xihe.cp.policy.AuthzContext;
 import com.cc01cc.p.xihe.cp.policy.PluginBindingAuthorization;
@@ -103,10 +104,19 @@ class PluginBindingAuthorizationGateTest extends AbstractH2Test {
         Actor actor = adminActor();
         String pluginId = seedPlugin(true);
         UUID session = seedSession(actor.workspaceId());
-        String bindingId = createBinding(actor, pluginId);
-        assertEquals(HttpStatus.CREATED, exchange(actor, HttpMethod.POST,
+        // PLAN-0691 T1.3: the creator of a binding holds that binding's own PLUGIN_BIND row for as
+        // long as the binding lives, so the denied subject below cannot also be the creator — that is
+        // exactly the behaviour V139 + PluginBindingGrantWriter add. The fixture is therefore built by
+        // a second administrator inside the same workspace; `actor` ends up a plain workspace member
+        // with no row of their own and is denied on every verb.
+        Actor creator = adminActor();
+        workspaceFixture.bindWorkspaceRole(actor.workspaceId(), creator.userId(),
+                WorkspaceRole.EDITOR);
+        authzContext.invalidate(UUID.fromString(creator.userId()));
+        String bindingId = createBinding(creator, actor.workspaceId(), pluginId);
+        assertEquals(HttpStatus.CREATED, exchange(creator, actor.workspaceId(), HttpMethod.POST,
                 "/api/v1/sessions/" + session + "/plugins", Map.of("bindingId", bindingId))
-                .getStatusCode(), "fixture: the administrator may attach");
+                .getStatusCode(), "fixture: the second administrator may attach");
 
         revokeInstanceAdmin(actor.userId());
 
@@ -232,9 +242,14 @@ class PluginBindingAuthorizationGateTest extends AbstractH2Test {
     }
 
     private ResponseEntity<Map> exchange(Actor actor, HttpMethod method, String path, Object body) {
+        return exchange(actor, actor.workspaceId(), method, path, body);
+    }
+
+    private ResponseEntity<Map> exchange(Actor actor, String workspaceId, HttpMethod method,
+            String path, Object body) {
         HttpHeaders headers = jsonHeaders();
         headers.setBearerAuth(actor.token());
-        headers.set("X-Workspace-Id", actor.workspaceId());
+        headers.set("X-Workspace-Id", workspaceId);
         return restTemplate.exchange(url(path), method, new HttpEntity<>(body, headers), Map.class);
     }
 
@@ -244,9 +259,9 @@ class PluginBindingAuthorizationGateTest extends AbstractH2Test {
         return headers;
     }
 
-    private String createBinding(Actor actor, String pluginId) {
-        ResponseEntity<Map> created = exchange(actor, HttpMethod.POST, "/api/v1/plugin-bindings",
-                Map.of("pluginId", pluginId));
+    private String createBinding(Actor actor, String workspaceId, String pluginId) {
+        ResponseEntity<Map> created = exchange(actor, workspaceId, HttpMethod.POST,
+                "/api/v1/plugin-bindings", Map.of("pluginId", pluginId));
         assertEquals(HttpStatus.CREATED, created.getStatusCode(), String.valueOf(created.getBody()));
         return String.valueOf(created.getBody().get("bindingId"));
     }

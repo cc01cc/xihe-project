@@ -8,6 +8,7 @@ import com.cc01cc.p.xihe.cp.policy.AuthzContext;
 import com.cc01cc.p.xihe.cp.policy.GrantSources;
 import com.cc01cc.p.xihe.cp.policy.PluginBindingAuthorization;
 import com.cc01cc.p.xihe.cp.policy.PluginBindingAuthorization.GrantRow;
+import com.cc01cc.p.xihe.cp.policy.PluginBindingGrantWriter;
 import com.cc01cc.p.xihe.cp.repository.AuthorizationGrantRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -78,17 +79,19 @@ public class PluginBindingService {
     private final SessionRepository sessions;
     private final AuditLogger auditLogger;
     private final AuthorizationGrantRepository grants;
+    private final PluginBindingGrantWriter grantWriter;
 
     public PluginBindingService(PluginBindingRepository bindings,
             SessionPluginBindingRepository attachments, PluginRepository plugins,
             SessionRepository sessions, AuditLogger auditLogger,
-            AuthorizationGrantRepository grants) {
+            AuthorizationGrantRepository grants, PluginBindingGrantWriter grantWriter) {
         this.bindings = bindings;
         this.attachments = attachments;
         this.plugins = plugins;
         this.sessions = sessions;
         this.auditLogger = auditLogger;
         this.grants = grants;
+        this.grantWriter = grantWriter;
     }
 
     // ------------------------------------------------------------------ authorization gate
@@ -222,6 +225,11 @@ public class PluginBindingService {
         PluginBinding binding = new PluginBinding(workspace, plugin, initial,
                 atomsNode(grant.atoms()), grant.source());
         bindings.save(binding);
+        // T1.3: the binding now carries its own PLUGIN_BIND hold, issued to its creator in this same
+        // transaction (create ⇒ issue). The row is what makes `plugin_binding` a real grant source
+        // instead of a documented one; see PluginBindingGrantWriter.
+        grantWriter.materialize(AuthzContext.SUBJECT_USER, subject(actorUserId), workspace,
+                binding.getId());
         audit(ACTION_CREATE, actorUserId, workspace, binding,
                 "plugin=" + plugin.getId() + " version=" + plugin.getVersion()
                         + " state=" + initial.wire() + " atoms=" + grant.atoms());
@@ -260,6 +268,10 @@ public class PluginBindingService {
                     "provide state and/or grantedAtoms");
         }
         bindings.save(binding);
+        // T1.3: the binding row is the source of truth for the atom set, so the grant follows it
+        // (update ⇒ replace in place). No new grantee: an update must not move authority.
+        grantWriter.refresh(binding.getWorkspaceId(), binding.getId(),
+                AuthzContext.SUBJECT_USER, subject(actorUserId));
         audit(ACTION_UPDATE, actorUserId, binding.getWorkspaceId(), binding,
                 "state=" + binding.state().wire() + " atoms=" + binding.grantedAtomList());
         return binding;
@@ -271,10 +283,14 @@ public class PluginBindingService {
         PluginBinding binding = require(workspace, bindingId);
         long attached = attachments.countByBindingId(binding.getId());
         bindings.delete(binding);
+        // T1.3: delete ⇒ revoke, in the same transaction, so the authority cannot outlive the
+        // binding it was derived from. A rollback restores both together.
+        int revoked = grantWriter.revoke(binding.getId());
         audit(ACTION_DELETE, actorUserId, binding.getWorkspaceId(), binding,
-                "plugin=" + binding.getPluginId() + " sessions_detached=" + attached);
-        log.info("plugin binding deleted id={} plugin={} attached_sessions={}", binding.getId(),
-                binding.getPluginId(), attached);
+                "plugin=" + binding.getPluginId() + " sessions_detached=" + attached
+                        + " grants_revoked=" + revoked);
+        log.info("plugin binding deleted id={} plugin={} attached_sessions={} grants_revoked={}",
+                binding.getId(), binding.getPluginId(), attached, revoked);
     }
 
     @Transactional(readOnly = true)
@@ -380,6 +396,16 @@ public class PluginBindingService {
         return new AttachResult(binding.getId(), attachment.getRevision(), catalogVersion, true);
     }
 
+    /**
+     * Route 15: detach a binding from one session.
+     *
+     * <p>T1.3 boundary, stated so the missing revoke is not read as an oversight: attaching and
+     * detaching issue <b>no</b> grant rows. Authority here is workspace-scoped and belongs to the
+     * binding, not to a session, so there is nothing session-shaped to revoke — and revoking the
+     * workspace-scoped hold on a detach would strip the creator's management rights for the whole
+     * workspace because one session was detached. The revocation unit is the binding
+     * ({@link #delete}), not the attachment.</p>
+     */
     @Transactional
     public void detach(String workspaceId, String sessionId, String bindingId,
             String actorUserId) {
