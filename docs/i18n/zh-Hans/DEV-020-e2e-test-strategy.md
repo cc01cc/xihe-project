@@ -304,6 +304,16 @@ node scripts/e2e-host-detached.mjs --timeout-min 25 --auth-lane=ratelimit \
 - **浏览器网络瞬态不登记为产品缺陷**：合并后首次启动时 Vite 会 `Re-optimizing dependencies`，此时偶发 `net::ERR_NO_BUFFER_SPACE`（普通 GET 经 dev proxy，非 SSE）。判据=同栈复跑不复现 + CP/agent 侧无断流日志 ⇒ 记观察项，**不得**加白名单或放宽断言。
 - mock 车道的 `XIHE_EVIDENCE_DIR` 未设时由 `e2e/helpers/evidence.ts` 回退 `<repo>/.local/evidence/e2e-auto` 并 WARN 一次（此前 4 条用例因此判红，属环境前置非回归）。
 
+### 3.6 E2E 构建根与并行运行（PLAN-0656 R2）
+
+E2E 的 CP 构建根默认是 `C:/xihe-build/e2e`（`scripts/e2e-host.mjs:59-63`，默认值在 `:62`；显式设 `XIHE_CP_TARGET_DIR` 时以环境值为准）。它省掉每个 run 2–3 min 的冷编，代价是**同一构建根同一时刻只服务一个 run**（并发 repackage 的后果见窗口协议 §5，本文不重复）。
+
+- **要并行就给第二个 run 换根**：`XIHE_CP_TARGET_DIR=C:/xihe-build/e2e-runs/<runId>` —— runner 直接把这个值传给 mvn（`scripts/e2e-host.mjs:59-63`），**不需要改代码**；代价是该 run 独立冷编（~2–3 min + 磁盘）。
+- **共用根是 E2E 的默认值，不是架构限制**：dev 栈侧的 CP 构建目录早已按 `<root>/<stackId>/<sha12>[-dirty]` 分目录（`scripts/lib/cp-build-dir.mjs:11`，默认根 `:29`，dirty 后缀 `:36`），E2E 只是没走那套派生逻辑。
+- **并行只在三条同时成立时允许**：① 两个 run 构建根不同；② 都不是测量类 spec；③ 钉住同一个 SHA（跨 commit 的数字不可比）。开窗前另跑 `node scripts/e2e-preflight.mjs`（只读）：任何 `FAIL` 即阻塞，只有 exit 0（无 blocking finding，`scripts/e2e-preflight.mjs:26`）才开窗。
+- **测量类恒独占**：会话规模/内存采样这类 spec 并发跑时，旁边多一个 spec 就改写 GC 压力与内存水位 —— 量出来不是它要的量。
+- **窗口本身不在这里**：开窗/冻结/钉靶 SHA 的规则见 SSOT `one/internal/A03-xihe/docs/l2-window-protocol.md`（ONE 私有层，不在本仓）§3–§5。
+
 ## mode 门控 spec 的漂移风险与夹具前提（2026-11-06 实测）
 
 - **LiveChain 两类默认整类不跑（2026-11-06 审计）**：`ContextSourceLiveChainTest`（`Assumptions.assumeTrue` 要求 Runtime `/ready` 与 dev CP `/actuator/health` 可达）与 `ContextToolHistoryLiveChainTest`（`@EnabledIfSystemProperty xihe.run.v15.live=true`）各 **1/1 用例默认 skip**，全量汇总只体现为 `Skipped: 2`。恢复：起 host 栈后重跑前者；后者加 `mvn -o test "-Dxihe.run.v15.live=true"`。不是漏跑，但不可当作已覆盖。

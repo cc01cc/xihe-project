@@ -184,6 +184,16 @@ node scripts/e2e-host.mjs --llm-mode=disconnect e2e/real/chat-availability.spec.
 - **Agent readiness measurement**: under full-batch load `spawn → health+llmReady` measured 5.1–7.6 s across 6 samples (with n=6, p95 equals the max 7.6 s); the 30 s default budget stays (override with `XIHE_E2E_AGENT_READY_TIMEOUT_MS`), and failures must report waited time + last state + agent log path.
 - **Cleanup cost**: a workspace DELETE with an import job takes ≈11 s (29 ms when idle); batch cleanups must run concurrently, not serially. The runner's zero-residue teardown check is unchanged.
 
+### 3.3 E2E Build Roots and Parallel Runs (PLAN-0656 R2)
+
+The E2E CP build root defaults to `C:/xihe-build/e2e` (`scripts/e2e-host.mjs:59-63`, the default itself on `:62`; an explicit `XIHE_CP_TARGET_DIR` wins). It skips a 2–3 min cold build per run, at the price that **one build root serves one run at a time** (what concurrent repackaging does is in the window protocol §5 and is not repeated here).
+
+- **To run in parallel, give the second run its own root**: `XIHE_CP_TARGET_DIR=C:/xihe-build/e2e-runs/<runId>` — the runner passes that value straight to mvn (`scripts/e2e-host.mjs:59-63`), **no code change needed**; the cost is an independent cold build (~2–3 min + disk).
+- **The shared root is the E2E default, not an architectural limit**: dev stacks already isolate CP build directories per `<root>/<stackId>/<sha12>[-dirty]` (`scripts/lib/cp-build-dir.mjs:11`, default root on `:29`, dirty suffix on `:36`); E2E simply does not use that derivation.
+- **Parallel is allowed only when all three hold**: ① the two runs use different build roots; ② neither is a measurement spec; ③ both are pinned to the same SHA (numbers from different commits are not comparable). Before opening a window, also run `node scripts/e2e-preflight.mjs` (read-only): any `FAIL` blocks, and only exit 0 (no blocking finding, `scripts/e2e-preflight.mjs:26`) opens the window.
+- **Measurement specs always run alone**: with another spec alongside, session-scale/memory-sampling numbers move because GC pressure and memory watermarks change — the run no longer measures what it is meant to measure.
+- **The window itself is not here**: opening, freezing and pinned-SHA rules live in the SSOT `one/internal/A03-xihe/docs/l2-window-protocol.md` (ONE private layer, not in this repo) §3–§5.
+
 ## Drift risk of mode-gated specs, and fixture prerequisites (measured 2026-11-06)
 
 - **Two LiveChain classes are skipped by default (2026-11-06 audit)**: `ContextSourceLiveChainTest` (`Assumptions.assumeTrue`, requires Runtime `/ready` and dev CP `/actuator/health`) and `ContextToolHistoryLiveChainTest` (`@EnabledIfSystemProperty xihe.run.v15.live=true`) each have **1/1 test skipped**; the full-suite summary shows only `Skipped: 2`. Restore: start the host stack for the first; add `mvn -o test "-Dxihe.run.v15.live=true"` for the second. Not a missing run, but not coverage either.
