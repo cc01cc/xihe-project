@@ -21,6 +21,7 @@ import com.cc01cc.p.xihe.cp.repository.AuthorizationGrantRepository;
 import com.cc01cc.p.xihe.cp.repository.ChatApprovalRepository;
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
 import com.cc01cc.p.xihe.cp.repository.MessageRepository;
+import com.cc01cc.p.xihe.cp.repository.SessionParticipantRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceAgentRepository;
@@ -79,6 +80,9 @@ class AgentSpawnPrincipalContractTest extends AbstractIntegrationTest {
 
     @Autowired
     private SessionRepository sessionRepository;
+
+    @Autowired
+    private SessionParticipantRepository sessionParticipantRepository;
 
     @Autowired
     private com.cc01cc.p.xihe.cp.repository.ProviderConnectionRepository providerConnectionRepository;
@@ -216,7 +220,9 @@ class AgentSpawnPrincipalContractTest extends AbstractIntegrationTest {
         assertEquals(parent.parentSessionId, child.getSpawnedFromSessionId().toString());
         assertEquals(parent.parentRunId, child.getSpawnedFromRunId().toString());
         assertNotNull(child.getSpawnedAt());
-        assertEquals(principalId.toString(), child.getAgentPrincipalId());
+        assertEquals(principalId,
+                sessionParticipantRepository.primaryPrincipalId(child.getId()).orElse(null),
+                "PLAN-0689 A7: the spawn child's identity is its PRIMARY participant");
         assertEquals(expectedSessionCap(), child.getAgentPermissionsSnapshot().toString());
         Session parentSession = sessionRepository
                 .findById(UUID.fromString(parent.parentSessionId)).orElseThrow();
@@ -349,7 +355,7 @@ class AgentSpawnPrincipalContractTest extends AbstractIntegrationTest {
         ResponseEntity<Map> replay = postSpawn(
                 Map.of("parentRunId", parent.parentRunId, "toolCallId", parent.toolCallId),
                 SERVICE_TOKEN, approvalId);
-        assertEquals(HttpStatus.OK, replay.getStatusCode());
+        assertEquals(HttpStatus.OK, replay.getStatusCode(), String.valueOf(replay.getBody()));
         assertEquals(childRunId, replay.getBody().get("runId"));
         assertEquals(childSessionId, replay.getBody().get("sessionId"));
         assertEquals(sessionsBefore + 1, sessionCount(), "approval replay must not create another child");
@@ -515,7 +521,6 @@ class AgentSpawnPrincipalContractTest extends AbstractIntegrationTest {
         ParentFixture parent = fixture("spawn_agent", "{\"prompt\":\"unbound parent test\"}");
         Session parentSession = sessionRepository
                 .findById(UUID.fromString(parent.parentSessionId)).orElseThrow();
-        parentSession.setAgentPrincipalId(null);
         parentSession.setAgentPermissionsSnapshot(null);
         sessionRepository.saveAndFlush(parentSession);
 
@@ -525,7 +530,6 @@ class AgentSpawnPrincipalContractTest extends AbstractIntegrationTest {
             assertEquals("FORBIDDEN", response.getBody().get("code"));
         });
 
-        parentSession.setAgentPrincipalId(principalId.toString());
         parentSession.setAgentPermissionsSnapshot(expectedSessionCapNode());
         sessionRepository.saveAndFlush(parentSession);
         workspaceAgentRepository.deleteById(new WorkspaceAgentId(principalId, UUID.fromString(workspaceId)));
@@ -695,16 +699,18 @@ class AgentSpawnPrincipalContractTest extends AbstractIntegrationTest {
         Session parentSession = new Session(workspaceId, userId,
                 "Restricted parent " + UUID.randomUUID().toString().substring(0, 8));
         parentSession.setId(UUID.randomUUID());
-        parentSession.setAgentPrincipalId(restricted.getId().toString());
         parentSession.setAgentPermissionsSnapshot(objectMapper.createArrayNode());
         parentSession.setApprovalMode("auto");
         ChatBindingTestSupport.bindNewChatConnection(parentSession, providerConnectionRepository, apiRequestTemplates, userId);
         sessionRepository.saveAndFlush(parentSession);
 
         String parentRunId = UUID.randomUUID().toString();
-        chatRunRepository.saveAndFlush(new ChatRun(
+        ChatRun restrictedParentRun = new ChatRun(
                 parentRunId, parentSession.getId().toString(), userId, workspaceId,
-                "restricted-parent-" + parentRunId, "restricted-parent-hash", "provider", "model", "workspace", "running"));
+                "restricted-parent-" + parentRunId, "restricted-parent-hash", "provider", "model", "workspace", "running");
+        restrictedParentRun.setAgentPrincipalId(restricted.getId());
+        chatRunRepository.saveAndFlush(restrictedParentRun);
+        bindPrimaryParticipant(parentSession.getId().toString(), restricted.getId().toString());
         String toolCallId = UUID.randomUUID().toString();
         UUID invocationId = seedInvocation(parentSession.getId().toString(), parentRunId, toolCallId, toolName,
                 argumentsPreview, "agent");
@@ -722,7 +728,6 @@ class AgentSpawnPrincipalContractTest extends AbstractIntegrationTest {
         Session parentSession = new Session(otherWorkspaceId, userId,
                 "Cross-workspace parent " + UUID.randomUUID().toString().substring(0, 8));
         parentSession.setId(UUID.randomUUID());
-        parentSession.setAgentPrincipalId(principalId.toString());
         parentSession.setAgentPermissionsSnapshot(objectMapper.createArrayNode());
         parentSession.setApprovalMode("auto");
         ChatBindingTestSupport.bindNewChatConnection(parentSession, providerConnectionRepository, apiRequestTemplates, userId);
@@ -873,16 +878,18 @@ class AgentSpawnPrincipalContractTest extends AbstractIntegrationTest {
         Session parentSession = new Session(workspaceId, userId,
                 "Parent " + UUID.randomUUID().toString().substring(0, 8));
         parentSession.setId(UUID.randomUUID());
-        parentSession.setAgentPrincipalId(principalId.toString());
         parentSession.setAgentPermissionsSnapshot(expectedSessionCapNode());
         parentSession.setApprovalMode("auto");
         ChatBindingTestSupport.bindNewChatConnection(parentSession, providerConnectionRepository, apiRequestTemplates, userId);
         sessionRepository.saveAndFlush(parentSession);
 
         String parentRunId = UUID.randomUUID().toString();
-        chatRunRepository.saveAndFlush(new ChatRun(
+        ChatRun parentRun = new ChatRun(
                 parentRunId, parentSession.getId().toString(), userId, workspaceId,
-                "parent-" + parentRunId, "parent-hash", "provider", "model", "workspace", "running"));
+                "parent-" + parentRunId, "parent-hash", "provider", "model", "workspace", "running");
+        parentRun.setAgentPrincipalId(principalId);
+        chatRunRepository.saveAndFlush(parentRun);
+        bindPrimaryParticipant(parentSession.getId().toString(), principalId.toString());
         String toolCallId = UUID.randomUUID().toString();
         UUID invocationId = null;
         if (createToolCall) {

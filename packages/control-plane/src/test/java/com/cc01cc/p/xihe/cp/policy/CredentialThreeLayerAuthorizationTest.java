@@ -10,11 +10,9 @@ import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
 import com.cc01cc.p.xihe.cp.entity.AuthorizationGrant;
 import com.cc01cc.p.xihe.cp.entity.Session;
-import com.cc01cc.p.xihe.cp.entity.SessionParticipant;
 import com.cc01cc.p.xihe.cp.entity.User;
 import com.cc01cc.p.xihe.cp.repository.AgentPrincipalRepository;
 import com.cc01cc.p.xihe.cp.repository.AuthorizationGrantRepository;
-import com.cc01cc.p.xihe.cp.repository.SessionParticipantRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceAgentRepository;
@@ -56,7 +54,6 @@ class CredentialThreeLayerAuthorizationTest extends AbstractIntegrationTest {
     @Autowired private AgentPrincipalRepository agentPrincipalRepository;
     @Autowired private AuthorizationGrantRepository grantRepository;
     @Autowired private SessionRepository sessionRepository;
-    @Autowired private SessionParticipantRepository sessionParticipantRepository;
     @Autowired private WorkspaceAgentRepository workspaceAgentRepository;
     @Autowired private UserRepository userRepository;
     @Autowired private WorkspaceRepository workspaceRepository;
@@ -193,10 +190,7 @@ class CredentialThreeLayerAuthorizationTest extends AbstractIntegrationTest {
         // PLAN-0689 A7: grant evaluation resolves the Session's agent path through the
         // PRIMARY participant row; the dropped sessions.agent_principal_id column cannot
         // stand in for it.
-        sessionParticipantRepository.saveAndFlush(new SessionParticipant(
-                session.getId(), SessionParticipant.KIND_AGENT, principalId,
-                SessionParticipant.ROLE_PRIMARY, 10, SessionParticipant.WAKE_ALL_MESSAGES,
-                SessionParticipant.RESPOND_ALWAYS));
+        bindPrimaryParticipant(session.getId().toString(), principalId.toString());
         sessionIds.add(session.getId());
         return session;
     }
