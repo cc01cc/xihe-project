@@ -15,8 +15,9 @@
  *   node scripts/check-commit-msg.mjs --range a632de77..HEAD --enforce   # 显式阻断口径（默认即阻断；
  *       mise run check:commit-msg 走这条，并已是 validate 的依赖，见 D-216）
  *   node scripts/check-commit-msg.mjs --range 1dd57056..HEAD --report-only # 只打印、永不失败（回归/观察用）
+ *   node scripts/check-commit-msg.mjs --range HEAD --strict   # ✗ 未知参数 ⇒ exit 2 + usage，不再静默忽略
  *
- * 退出码：0 通过 / 1 违规 / 2 用法错误
+ * 退出码：0 通过 / 1 违规 / 2 用法错误（含**未知参数**、参数缺值、`--report-only` 与 `--enforce` 同给）
  *
  * 规则（2026-11-06 起）：
  *  - 首行 `<type>(<scope>): <摘要>`；type ∈ feat|fix|docs|test|chore|refactor|perf|build|ci|style|revert
@@ -116,17 +117,65 @@ function print(file, res, json) {
   for (const w of res.warns) console.log(`  · ${w.code}: ${w.message}`);
 }
 
-const argv = process.argv.slice(2);
-const get = (k) => {
-  const i = argv.indexOf(k);
-  return i >= 0 ? argv[i + 1] : undefined;
-};
-const json = argv.includes("--json");
-const reportOnly = argv.includes("--report-only");
-const stats = argv.includes("--stats");
-const file = get("--file");
-const range = get("--range");
-const since = get("--since") ?? DEFAULT_SINCE;
+/**
+ * 参数解析：**白名单 + 硬拒未知参数**。
+ *
+ * 为什么不能再用 `argv.includes("--xxx")` 逐个探测（2026-11-08 实测缺陷）：
+ * 未知参数会被**静默丢掉**，命令照常 PASS。最坏的一种是拼错取值参数 ——
+ * `--rang develop..HEAD` 不报错，直接回落到 `--since 1dd57056..HEAD`，
+ * 于是**校验的提交集换了一批却仍然报绿**（JSON 里 `span` 会诚实地写着
+ * `1dd57056..HEAD`，但没人会去看）。门禁的结论只有在"参数真的按预期生效"时
+ * 才有意义，所以这里 fail-closed：认不出的参数一律 exit 2，绝不进入校验流程。
+ */
+const BOOLEAN_FLAGS = new Map([
+  ["--json", "json"],
+  ["--report-only", "reportOnly"],
+  ["--stats", "stats"],
+  ["--enforce", "enforce"],
+]);
+const VALUE_FLAGS = new Map([
+  ["--file", "file"],
+  ["--range", "range"],
+  ["--since", "since"],
+]);
+const USAGE =
+  "用法: node scripts/check-commit-msg.mjs [--file <路径>] [--range <a..b>] [--since <sha>] [--json] [--stats] [--report-only | --enforce]";
+
+function parseArgs(argv) {
+  const opts = { json: false, reportOnly: false, stats: false, enforce: false, file: undefined, range: undefined, since: undefined };
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
+    const boolKey = BOOLEAN_FLAGS.get(arg);
+    if (boolKey) {
+      opts[boolKey] = true;
+      continue;
+    }
+    const valKey = VALUE_FLAGS.get(arg);
+    if (valKey) {
+      const value = argv[i + 1];
+      if (value === undefined || value.startsWith("--")) {
+        return { error: `参数缺值: ${arg}` };
+      }
+      opts[valKey] = value;
+      i++;
+      continue;
+    }
+    return { error: arg.startsWith("-") ? `未知参数: ${arg}` : `未知位置参数: ${arg}` };
+  }
+  // 两个方向相反的闸同时给 ⇒ 谁赢都说不清，保持 fail-closed：
+  // `--report-only` 永不失败、`--enforce` 显式阻断，二者互斥。
+  if (opts.reportOnly && opts.enforce) return { error: "参数冲突: --report-only 与 --enforce 不能同时给" };
+  return { opts };
+}
+
+const parsed = parseArgs(process.argv.slice(2));
+if (parsed.error) {
+  console.error(parsed.error);
+  console.error(USAGE);
+  process.exit(2);
+}
+const { json, reportOnly, stats, file, range, enforce } = parsed.opts;
+const since = parsed.opts.since ?? DEFAULT_SINCE;
 
 // 显式历史豁免白名单（每条必须带 reason）：用于"合入时才发现违规、且已进 develop 不可改写"的既成事实。
 // 禁止批量塞历史提交；新增条目须在台账留痕。
@@ -185,6 +234,9 @@ if (file) {
   } else if (entries.length) {
     console.log(`\n共 ${entries.length} 条，错误 ${errCount}，警告 ${warnCount}`);
   }
-  bad = reportOnly ? 0 : errCount ? 1 : 0;
+  // 默认即阻断；`--report-only` 是唯一的"永不失败"出口，`--enforce` 只是把这个默认
+  // 显式写出来（解析器保证两者不会同时出现，所以这里不必再判"谁赢"）。
+  const blocking = enforce || !reportOnly;
+  bad = blocking && errCount ? 1 : 0;
 }
 process.exit(bad);
