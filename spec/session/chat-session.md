@@ -5,8 +5,8 @@
 > Profile：`lifecycle`  
 > Owner：CP Session owner  
 > 消费者：UI、Agent、Context、Operation、Workspace  
-> 来源：PLAN-0387、PLAN-0348、PLAN-0660、DEV-017  
-> 更新日期：2026-11-04
+> 来源：PLAN-0387、PLAN-0348、PLAN-0660、PLAN-0689、DEV-017  
+> 更新日期：2026-11-07
 
 ## 领域边界
 
@@ -84,8 +84,9 @@ Session 负责连续对话上下文、消息、附件引用、模型绑定和 Ch
 1. **归属 = 谁说的，且只存 id**：`messages.participant_id`（UUID，可空，`ON DELETE SET NULL`）MUST 存
    **会话参与者 id**（`session_participants.id`），MUST NOT 存名字（重命名不得留下陈旧文案）。
 2. **写入方唯一**：assistant 消息 MUST 在单一写入点（`ChatSubmissionService.persistAssistantResponse`）
-   按回退链 `chat_runs.agent_principal_id → sessions.agent_principal_id → 参与者行` 落值；仍解析不到
-   ⇒ MUST 保持 NULL（MUST NOT 猜 PRIMARY —— 错误归属比没有归属更糟）。
+   按 `chat_runs.agent_principal_id` → 参与者行（`participantIdForPrincipal`）落值；run 无主体或映射不到
+   ⇒ MUST 保持 NULL（MUST NOT 回落会话级字段，MUST NOT 猜 PRIMARY —— 错误归属比没有归属更糟）。
+   （PLAN-0689：`sessions.agent_principal_id` 已删，原「会话级主体」回落链移除。）
 3. **用户消息 v1 不归属**：composer 的 `asParticipantId` 是**目标身份**（默认 PRIMARY 是 AGENT），
    MUST NOT 当作作者写入；human 作者归属属 BL-277（需拆 author/target 或加 wire 字段）。
 4. **老数据语义**：V121 之前的消息 MUST 保持 NULL、**不回填**；读面 MUST 省略该字段（而非发 null），

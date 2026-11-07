@@ -1,7 +1,7 @@
 # Agent principal 与 Workspace 绑定
 
 > 契约状态：`active`  
-> amendment 承接：PLAN-0680（2026-11-07 登记并落章：技能绑定写入面双轴——workspace 轴仅授本工作区原子、服务端定档；新章见下方「技能绑定双轴」，既有正文条款未改）  
+> amendment 承接：PLAN-0680（2026-11-07 登记并落章：技能绑定写入面双轴——workspace 轴仅授本工作区原子、服务端定档；新章见下方「技能绑定双轴」，既有正文条款未改）；PLAN-0689（2026-11-07：删除 Session 主体/快照列，Session 身份绑定 = `session_participants` PRIMARY，Chat 不再接受 per-run `agentPrincipalId`）  
 > 实现状态：`partial`（PLAN-0374 principal/Workspace binding、T3.1b/T3.3、V5/V6/V7 已验收；**scope 三档 `PERSONAL`/`WORKSPACE`/`INSTANCE` 与三段授权由 PLAN-0622 承接，尚未实现**；fork/branch producer 归 PLAN-0409/0410，Agent 铸造/多层审批后置 BL-70/71）
 > Profile：`security`  
 > Owner：PLAN-0374（canonical binding；spawn caller amendment per PLAN-0407 #53）；scope 三档与三段授权 amendment per PLAN-0622；技能绑定双轴 amendment per PLAN-0680  
@@ -11,7 +11,7 @@
 
 ## 范围
 
-Agent 独立主体（`agent_principals`）、Workspace 绑定 cap（`workspace_agents`）、Session principal 绑定（`sessions.agent_principal_id`/`agent_permissions_snapshot`），以及创建/绑定/撤销 API 与 UI 的授权、审计和失败语义。
+Agent 独立主体（`agent_principals`）、Workspace 绑定 cap（`workspace_agents`）、Session 身份绑定（`session_participants` PRIMARY；PLAN-0689 已删 `sessions.agent_principal_id`/`agent_permissions_snapshot` 两列），以及创建/绑定/撤销 API 与 UI 的授权、审计和失败语义。
 
 ## 非目标
 
@@ -131,7 +131,7 @@ Fork 实现归属：0374 定义并验证 stable principal 与独立授权 root �
 4. `CREATE_ACCOUNT`、`CREATE_TEMPLATE`、`MANAGE_WORKSPACE_AGENTS` 是三个独立授权 action，默认 deny，不得别名合并或由模板 config 写权限替代。人类 USER 的 `CREATE_ACCOUNT`/`MANAGE_WORKSPACE_AGENTS` 授予只经 PLAN-0585 管理员最小写面（`GET/PATCH /api/v1/principal-grants/{username}`）：仅 instance ADMIN 可调用，允许 self-grant（响应不含 `self` 字段，仅审计记 `self=true`），写只落该 USER 的 `source='direct'` 行（`uq_grants_direct_subject`），**不改 `source='default'` 默认集**；`CREATE_TEMPLATE` 不在该写面（仍无授予路径）。
 5. CP internal spawn service route（`POST /internal/v1/agents/spawn`）仅认 service Bearer；请求严格 `{parentRunId, toolCallId}`，principal/owner/workspace/tool 由 durable parent run + 匹配的 MCP invocation（`source='agent'`、`run_id=parentRunId`、`tool_call_id`）派生；忽略/拒绝任何注入字段（400/401/403/404/409）。该 route 不是 Agent 的 tool caller。
 6. Agent 生产 spawn caller 必须是 CP logical MCP endpoint 发布的 CP-owned `spawn_agent` tool；`LCToolAdapter` 以 LangChain callback `run_manager.run_id` 贯通 EventStore、Agent SSE 和 MCP `X-Tool-Call-Id` header。provider ToolMessage ID 仅是 LangGraph 内部关联，不作为 CP MCP invocation key。CP 在 grant/approval gate 后本地派发，禁止 Agent 直调 internal spawn route。
-7. `POST /api/v1/sessions` 必须显式 `agentPrincipalId` 并校验 binding；Chat admission 只接受已绑定 Session，无 lazy-create。principal-null 空 Session 首绑条件：显式 `agentPrincipalId` + 无 ChatRun/message/MCP invocation/ContextEvent，row CAS 与 ChatRun/Message/MCP invocation 检查同事务；已绑定 Session 换 principal → 409。
+7. `POST /api/v1/sessions` 必须显式 `agentPrincipalId` 并校验 binding；创建时在同一事务写入 `session_participants` PRIMARY 行（PLAN-0689 起会话不再有主体列）。Chat admission 只接受已有 PRIMARY 的 Session，**无 lazy-create、无 principal-null 占位首绑**；Chat 请求 MUST NOT 携带 per-run `agentPrincipalId`（wire 字段已删），回应者由显式 TO > `@` > PRIMARY 解析并落 `chat_runs.agent_principal_id`。PRIMARY 行不可移除/更换（409）。
 8. 每项变更写 `audit_logs`（`agent_principal_created`、`workspace_agent_bound`/`workspace_agent_cap_updated`/`workspace_agent_unbound`，以及授权写面的 `principal_grant_added`/`principal_grant_removed`），含 actor、authorizationAction、object 与 permission diff；授权行审计以 `resource_id=<目标 userId>` 定位、`workspace_id` 对实例级 `CREATE_ACCOUNT` 为 null、对 `MANAGE_WORKSPACE_AGENTS` 为目标 Workspace；snapshot/API/audit 不含 systemPrompt 原文、provider secret 或 token。
 9. 人类创建账户与创建模板是分离授权/审计的两种操作；可创建权限不得超出操作者当前权限子集。V1 仅 human 执行；Agent 自助与多层审批按 BL-71/BL-70 后置，不得由模板 CRUD、spawn 或 config 写权限旁路。
 

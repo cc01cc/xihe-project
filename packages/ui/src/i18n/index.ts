@@ -37,6 +37,22 @@ const messages = {
             download: "下载",
             autoSplit: "自动拆分大于 10MB 的 PDF",
             chunkLabel: "分块 {current} / {total}",
+            previewLoading: "加载预览中…",
+            previewOpen: "预览附件 {name}",
+            previewFailed: "预览加载失败",
+            previewRetry: "重试",
+            previewTruncated: "已加载前 {loaded}（预览预算 {budget}），剩余 {remaining} 未加载",
+            previewTruncatedUnknown:
+                "已加载前 {loaded}（预览预算 {budget}），文件更大，剩余部分未加载",
+            previewImageTruncated:
+                "图片超出预览预算，仅按 {budget} 读取；可继续加载剩余或下载原文件",
+            previewLoadRest: "继续加载剩余 {remaining}",
+            previewLoadRestUnknown: "继续加载剩余部分",
+            previewLoadingMore: "加载中…",
+            previewLoadMoreFailed: "继续加载失败，请重试",
+            previewDownloadOriginal: "下载原文件",
+            previewUnsupported: "该类型无法在预览内查看，请下载后用外部程序打开",
+            previewBudgetNote: "预览预算 {budget}，超出部分需显式加载",
         },
         sidebar: {
             newChat: "新建对话",
@@ -2426,6 +2442,24 @@ const messages = {
             download: "Download",
             autoSplit: "Auto-split PDFs larger than 10MB",
             chunkLabel: "Chunk {current} / {total}",
+            previewLoading: "Loading preview…",
+            previewOpen: "Preview attachment {name}",
+            previewFailed: "Failed to load preview",
+            previewRetry: "Retry",
+            previewTruncated:
+                "Loaded the first {loaded} (preview budget {budget}); {remaining} remains unloaded.",
+            previewTruncatedUnknown:
+                "Loaded the first {loaded} (preview budget {budget}); the file is larger, so the rest is not loaded.",
+            previewImageTruncated:
+                "Image exceeds the preview budget; only the first {budget} was read. Load the rest or download the original.",
+            previewLoadRest: "Load remaining {remaining}",
+            previewLoadRestUnknown: "Load the remaining part",
+            previewLoadingMore: "Loading…",
+            previewLoadMoreFailed: "Failed to load the rest; please retry",
+            previewDownloadOriginal: "Download original",
+            previewUnsupported:
+                "This type cannot be previewed inline; download it and open it with an external program.",
+            previewBudgetNote: "Preview budget {budget}; anything beyond it loads only on request.",
         },
         sidebar: {
             newChat: "New Chat",
