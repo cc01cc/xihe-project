@@ -1,0 +1,84 @@
+# 换行与文本/二进制判定（task-136 / BL-477）
+#
+# 背景：A03 此前**全仓没有 .gitattributes**，LF 约定只靠人的习惯。实测 HEAD 里 94 个文本文件
+# 以 CRLF 存进 blob，而提交守卫 xh-commit.mjs 的守卫 ④ 会读回 blob 数 0x0D（不信任何 filter），
+# 命中即 E_CR_IN_BLOB 拒绝 —— 谁下次编辑这些文件谁被挡。本文件让约定生效，而不是靠人工逐文件归一。
+#
+# 口径：与 one/.gitattributes 对齐（同一扩展名同一 eol，避免"A03 一套、one 一套"两份口径）。
+# 唯一差异：**不用 `* text=auto` 兜底**。理由 —— 它会把全仓所有文本在下次被触碰时重归一化，
+# 在共享仓里等于制造一次巨型 diff 并可能覆盖他人 WIP；按扩展名逐条声明，
+# 让"哪些算文本"可枚举、可审查、可增量收敛。
+#
+# 注意：.gitattributes 不支持行尾注释（会报 "is not a valid attribute name"），注释必须独占一行。
+
+# --- Node / TS / Vue 源码（门禁与工具链脚本为主）---
+*.mjs       text eol=lf
+*.js        text eol=lf
+*.cjs       text eol=lf
+*.ts        text eol=lf
+*.mts       text eol=lf
+*.vue       text eol=lf
+*.css       text eol=lf
+*.scss      text eol=lf
+*.html      text eol=lf
+
+# --- Java（Spring Boot CP）与 Python/Rust（agent/runtime）---
+*.java      text eol=lf
+*.py        text eol=lf
+*.rs        text eol=lf
+*.gradle    text eol=lf
+
+# --- 结构化数据与配置 ---
+*.json      text eol=lf
+*.jsonc     text eol=lf
+*.yaml      text eol=lf
+*.yml       text eol=lf
+*.toml      text eol=lf
+*.xml       text eol=lf
+*.properties text eol=lf
+# Flyway 迁移：版本号即顺序，不允许 CRLF 污染 diff
+*.sql       text eol=lf
+*.sh        text eol=lf
+*.ps1       text eol=lf
+
+# --- 文档 ---
+*.md        text eol=lf
+*.txt       text eol=lf
+
+# --- 无扩展名但属于文本的固定文件名 ---
+.gitattributes text eol=lf
+.gitignore     text eol=lf
+LICENSE        text eol=lf
+Dockerfile     text eol=lf
+Makefile       text eol=lf
+
+# --- 二进制：禁止任何换行/编码转换（git 不做 diff 也不做 filter）---
+*.png     binary
+*.jpg     binary
+*.jpeg    binary
+*.gif     binary
+*.ico     binary
+*.webp    binary
+*.woff    binary
+*.woff2   binary
+*.ttf     binary
+*.otf     binary
+# CP 产物：含 build-info 字节戳，任何改写都会破坏指纹
+*.jar     binary
+*.class   binary
+*.exe     binary
+*.dll     binary
+*.so      binary
+*.dylib   binary
+*.wasm    binary
+*.zip     binary
+*.gz      binary
+*.tar     binary
+*.pdf     binary
+*.db      binary
+*.sqlite  binary
+*.xlsx    binary
+*.docx    binary
+*.pptx    binary
+*.mp4     binary
+*.webm    binary
