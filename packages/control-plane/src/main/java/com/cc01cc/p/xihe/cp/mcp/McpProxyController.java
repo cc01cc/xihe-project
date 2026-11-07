@@ -38,6 +38,7 @@ import com.cc01cc.p.xihe.cp.policy.ToolFaceRegistry;
 import com.cc01cc.p.xihe.cp.service.WorkspaceService;
 import com.cc01cc.p.xihe.cp.service.SessionService;
 import com.cc01cc.p.xihe.cp.skill.SkillReadService;
+import com.cc01cc.p.xihe.cp.runtime.RuntimeCheckpointClient;
 import com.cc01cc.p.xihe.cp.status.BuildVersion;
 import com.cc01cc.p.xihe.cp.policy.SafePolicySummary;
 import com.cc01cc.p.xihe.cp.operation.JobStateService;
@@ -83,6 +84,22 @@ public class McpProxyController {
     private static final String ACQUIRE_CREDENTIAL_TOOL = "acquire_credential";
     /** PLAN-0628 M2b: read one bound skill's body — the third CP-owned tool (face=read). */
     private static final String SKILL_READ_TOOL = "skill_read";
+    /**
+     * PLAN-0686 G8: the three read-only Git tools (face=read, shape=STRUCTURED). They are CP-owned
+     * because CP does the calling, not because CP does git work: the Runtime endpoints behind them
+     * live on `/internal/v1`, so the model cannot reach them directly. `git_status` deliberately
+     * reuses the same client call as the public workspace read (spec/protocol/mcp.md §3.5) — there
+     * is no second implementation of "is this a repository, what is dirty".
+     */
+    private static final String GIT_STATUS_TOOL = "git_status";
+    private static final String GIT_DIFF_TOOL = "git_diff";
+    private static final String GIT_LOG_TOOL = "git_log";
+    private static final Set<String> CP_OWNED_GIT_TOOLS =
+            Set.of(GIT_STATUS_TOOL, GIT_DIFF_TOOL, GIT_LOG_TOOL);
+    /** Runtime's own bound for `git_log`; the CP rejects out-of-window arguments before calling. */
+    private static final int GIT_LOG_MIN_LIMIT = 1;
+    private static final int GIT_LOG_MAX_LIMIT = 200;
+    private static final int GIT_LOG_DEFAULT_LIMIT = 20;
     private static final Set<String> USER_WORKSPACE_FILE_TOOLS = Set.of(
             "list_directory", "read_file", "read_file_range", "write_file", "delete_file",
             "move_file", "copy_file", "mkdir");
@@ -201,6 +218,8 @@ public class McpProxyController {
     private final LineageInvocationService lineageInvocationService;
     private final CredentialLeaseService credentialLeaseService;
     private final com.cc01cc.p.xihe.cp.skill.SkillReadService skillReadService;
+    /** PLAN-0686 G8: the Runtime read client the three CP-owned Git tools dispatch through. */
+    private final RuntimeCheckpointClient runtimeCheckpointClient;
     private final BuildVersion buildVersion;
 
     public McpProxyController(
@@ -225,7 +244,8 @@ public class McpProxyController {
             com.cc01cc.p.xihe.cp.skill.SkillReadService skillReadService,
             BuildVersion buildVersion,
             com.cc01cc.p.xihe.cp.chat.DelegationBudgetService delegationBudgetService,
-            com.cc01cc.p.xihe.cp.chat.ChatRunStatusReadService chatRunStatusReadService) {
+            com.cc01cc.p.xihe.cp.chat.ChatRunStatusReadService chatRunStatusReadService,
+            RuntimeCheckpointClient runtimeCheckpointClient) {
         this.httpClient = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(10))
                 .build();
@@ -251,6 +271,7 @@ public class McpProxyController {
         this.skillReadService = skillReadService;
         this.buildVersion = buildVersion;
         this.delegationBudgetService = delegationBudgetService;
+        this.runtimeCheckpointClient = runtimeCheckpointClient;
     }
 
     @PreAuthorize("isAuthenticated()")
@@ -578,6 +599,14 @@ public class McpProxyController {
             // PLAN-0628 M2b: skill body reader shares the same CP-owned surface.
             mapping.put(SKILL_READ_TOOL, CP_MCP_SERVER_ID);
             result.add(skillReadToolDefinition());
+            // PLAN-0686 G8: the three read-only Git tools share it too; their Runtime endpoints
+            // are `/internal/v1` reads, so the model can only reach them through this face.
+            mapping.put(GIT_STATUS_TOOL, CP_MCP_SERVER_ID);
+            result.add(gitStatusToolDefinition());
+            mapping.put(GIT_DIFF_TOOL, CP_MCP_SERVER_ID);
+            result.add(gitDiffToolDefinition());
+            mapping.put(GIT_LOG_TOOL, CP_MCP_SERVER_ID);
+            result.add(gitLogToolDefinition());
         }
         String listBody = TOOLS_LIST_PROBE_BODY;
         ResponseEntity<String> sysResp = forwardToRuntime(
@@ -604,7 +633,7 @@ public class McpProxyController {
         for (Map<String, Object> tool : sysTools) {
             String name = (String) tool.get("name");
             if (SPAWN_AGENT_TOOL.equals(name) || ACQUIRE_CREDENTIAL_TOOL.equals(name)
-                    || SKILL_READ_TOOL.equals(name)) {
+                    || SKILL_READ_TOOL.equals(name) || CP_OWNED_GIT_TOOLS.contains(name)) {
                 logger.warn("Runtime tool name '{}' is reserved by the CP-owned tool surface", name);
             } else if (name != null) {
                 mapping.put(name, "__system__");
@@ -802,6 +831,78 @@ public class McpProxyController {
                         "additionalProperties", false));
     }
 
+    /**
+     * PLAN-0686 G8: working-tree status of the workspace's own user repository.
+     *
+     * <p>Read-only and argument-free: the workspace is the call's context. A workspace directory
+     * that is not a git repository answers {@code isRepository=false} — a success, not an error.</p>
+     */
+    private static Map<String, Object> gitStatusToolDefinition() {
+        return Map.of(
+                "name", GIT_STATUS_TOOL,
+                "description", "List the uncommitted changes (status + path) of this workspace's git "
+                        + "repository. Answers isRepository=false when the workspace is not a git "
+                        + "repository. Read-only.",
+                "inputSchema", Map.of(
+                        "type", "object",
+                        "properties", Map.of(),
+                        "additionalProperties", false));
+    }
+
+    /**
+     * PLAN-0686 G8: bounded patch of the uncommitted changes.
+     *
+     * <p>{@code paths} is the same explicit workspace-relative narrowing the Runtime read accepts;
+     * omitting it means the whole work tree. The Runtime caps the patch (256 KiB, UTF-8 boundary),
+     * so {@code truncated=true} must be read as "more diff exists", never as completeness.</p>
+     */
+    private static Map<String, Object> gitDiffToolDefinition() {
+        return Map.of(
+                "name", GIT_DIFF_TOOL,
+                "description", "Read the unified diff of uncommitted changes in this workspace's git "
+                        + "repository, optionally restricted to workspace-relative paths. The patch "
+                        + "is bounded: truncated=true means it was cut, not that the diff is complete.",
+                "inputSchema", Map.of(
+                        "type", "object",
+                        "properties", Map.of("paths", Map.of(
+                                "type", "array",
+                                "items", Map.of("type", "string"),
+                                "description", "Optional workspace-relative paths to diff; omit for "
+                                        + "the whole work tree.")),
+                        "additionalProperties", false));
+    }
+
+    /**
+     * PLAN-0686 G8: bounded commit log, newest first.
+     *
+     * <p>{@code limit} mirrors the Runtime window (1..=200, default 20) and is validated CP-side so
+     * an out-of-window value is a tool-result argument error rather than a Runtime round trip;
+     * {@code truncated=true} only means "more commits matched than {@code limit}".</p>
+     */
+    private static Map<String, Object> gitLogToolDefinition() {
+        return Map.of(
+                "name", GIT_LOG_TOOL,
+                "description", "Read the commit log of this workspace's git repository, newest first. "
+                        + "truncated=true means more commits matched than `limit`.",
+                "inputSchema", Map.of(
+                        "type", "object",
+                        "properties", Map.of(
+                                "limit", Map.of(
+                                        "type", "integer",
+                                        "minimum", GIT_LOG_MIN_LIMIT,
+                                        "maximum", GIT_LOG_MAX_LIMIT,
+                                        "description", "Maximum commits to return (default "
+                                                + GIT_LOG_DEFAULT_LIMIT + ")."),
+                                "paths", Map.of(
+                                        "type", "array",
+                                        "items", Map.of("type", "string"),
+                                        "description", "Optional workspace-relative paths to filter by."),
+                                "range", Map.of(
+                                        "type", "string",
+                                        "description", "Optional two-dot commit range, e.g. main..HEAD.")),
+                        "additionalProperties", false));
+    }
+
     private ResponseEntity<String> handleToolsCall(
             String wsId, String body, HttpHeaders headers, String sessionId, AccessContext access) {
         String toolName = extractToolName(body);
@@ -918,6 +1019,7 @@ public class McpProxyController {
         boolean cpOwnedSpawn = CP_MCP_SERVER_ID.equals(serverId) && SPAWN_AGENT_TOOL.equals(toolName);
         boolean cpOwnedAcquire = CP_MCP_SERVER_ID.equals(serverId) && ACQUIRE_CREDENTIAL_TOOL.equals(toolName);
         boolean cpOwnedSkillRead = CP_MCP_SERVER_ID.equals(serverId) && SKILL_READ_TOOL.equals(toolName);
+        boolean cpOwnedGit = CP_MCP_SERVER_ID.equals(serverId) && CP_OWNED_GIT_TOOLS.contains(toolName);
         ChatSubmissionService.SpawnInvocation spawnInvocation = null;
         if (cpOwnedSpawn) {
             try {
@@ -1084,6 +1186,21 @@ public class McpProxyController {
             // Run's frozen listing and returns current content.
             return dispatchCpOwnedSkillRead(body, headers, sessionId, access, policySummary,
                     lineageReservation, skillId);
+        }
+
+        if (cpOwnedGit) {
+            // PLAN-0686 G8: argument validation happens here, before the dispatch attempt is
+            // opened — an out-of-window `limit` or a non-string path must not look like a Runtime
+            // failure, and must not touch the Runtime at all.
+            GitToolArguments gitArguments;
+            try {
+                gitArguments = extractGitToolArguments(body, toolName);
+            } catch (CpApiException e) {
+                audit.record(sessionId, toolName, "tool_error", e.getCode());
+                return cpToolErrorResponse(body, e.getCode());
+            }
+            return dispatchCpOwnedGit(body, headers, sessionId, access, wsId, toolName,
+                    gitArguments, policySummary, lineageReservation);
         }
 
         // PLAN-0308 M1（spec S1/S2）：预算由 CP 唯一计算并下发；出站头只由 CP 写入，
@@ -1392,6 +1509,225 @@ public class McpProxyController {
         }
         finishMcpDispatchAttempt(dispatch, 200, null, responseBody);
         return mcpJsonResponse(responseBody);
+    }
+
+    /**
+     * PLAN-0686 G8: CP-owned dispatch for {@code git_status} / {@code git_diff} / {@code git_log}.
+     *
+     * <p>CP does no git work here — {@code git_status} calls exactly the client method the public
+     * workspace read uses ({@code RuntimeCheckpointClient.workspaceGitStatus}, spec §3.5), and the
+     * other two call the Runtime reads G8 opened. What CP owns is the <b>failure shape</b>, because
+     * a read tool that answers "nothing" when its dependency is down is worse than one that fails:</p>
+     *
+     * <ul>
+     *   <li><b>Runtime unreachable / timed out</b> → the same {@code RUNTIME_UNAVAILABLE} 503
+     *       dependency problem every other Runtime read returns ({@code dependency=runtime},
+     *       {@code reason=unreachable}, retryable). It must never degrade to an empty diff/log.</li>
+     *   <li><b>Runtime answered and refused</b> (git missing / too old / failed / unknown
+     *       workspace) → an {@code isError} tool-result carrying the Runtime's own {@code reason}.
+     *       A tool-result rather than an HTTP error because the model is the consumer of that
+     *       reason, and the reason vocabulary belongs to the Runtime — no new
+     *       {@code ToolRefusalCodes} entry, since nothing here is a CP refusal.</li>
+     *   <li><b>Runtime rejected the arguments</b> (400) → {@code INVALID_ARGUMENTS} tool-result.</li>
+     *   <li><b>Not a repository</b> is not a failure at all: {@code isRepository=false} rides a
+     *       normal success result.</li>
+     * </ul>
+     */
+    private ResponseEntity<String> dispatchCpOwnedGit(
+            String body, HttpHeaders headers, String sessionId, AccessContext access, String wsId,
+            String toolName, GitToolArguments arguments, String policySummary,
+            LineageInvocationService.Reservation lineageReservation) {
+        McpDispatch dispatch = startMcpDispatch(body, headers, sessionId, access, lineageReservation);
+        attachPolicySummary(dispatch, policySummary);
+        RuntimeCheckpointClient.Outcome outcome;
+        Map<String, Object> output = null;
+        String reason = null;
+        if (GIT_STATUS_TOOL.equals(toolName)) {
+            RuntimeCheckpointClient.GitStatusResult result =
+                    runtimeCheckpointClient.workspaceGitStatus(wsId);
+            outcome = result.outcome();
+            reason = result.reason();
+            if (outcome == RuntimeCheckpointClient.Outcome.OK) {
+                output = gitStatusOutput(result);
+            }
+        } else if (GIT_DIFF_TOOL.equals(toolName)) {
+            RuntimeCheckpointClient.GitDiffResult result =
+                    runtimeCheckpointClient.workspaceGitDiff(wsId, arguments.paths());
+            outcome = result.outcome();
+            reason = result.reason();
+            if (outcome == RuntimeCheckpointClient.Outcome.OK) {
+                output = gitDiffOutput(result);
+            }
+        } else {
+            RuntimeCheckpointClient.GitLogResult result = runtimeCheckpointClient.workspaceGitLog(
+                    wsId, arguments.limit(), arguments.paths(), arguments.range());
+            outcome = result.outcome();
+            reason = result.reason();
+            if (outcome == RuntimeCheckpointClient.Outcome.OK) {
+                output = gitLogOutput(result);
+            }
+        }
+        if (outcome == RuntimeCheckpointClient.Outcome.TRANSPORT) {
+            DependencyFailure failure = dependencyFailure("runtime", "unreachable", true);
+            audit.record(sessionId, toolName, "dependency_unavailable", "runtime:unreachable");
+            finishMcpDispatchAttempt(dispatch, failure.status().value(), failure.code(), null);
+            return dependencyProblem(failure);
+        }
+        String responseBody;
+        if (outcome == RuntimeCheckpointClient.Outcome.OK) {
+            responseBody = cpToolResult(body, output, null);
+            // Shape facts only — the patch body and commit subjects never enter the audit stream.
+            audit.record(sessionId, toolName, "allow", "isRepository=" + output.get("isRepository")
+                    + " truncated=" + output.getOrDefault("truncated", false));
+        } else {
+            String code = outcome == RuntimeCheckpointClient.Outcome.INVALID_REQUEST
+                    ? "INVALID_ARGUMENTS" : null;
+            responseBody = cpGitToolErrorResult(body, code, reason);
+            audit.record(sessionId, toolName, "tool_error", reason);
+        }
+        finishMcpDispatchAttempt(dispatch, 200, null, responseBody);
+        return mcpJsonResponse(responseBody);
+    }
+
+    /**
+     * PLAN-0686 G8: the Git tools' failure envelope — {@code isError=true} plus the Runtime's own
+     * {@code reason} in the structured content and in the model-visible text, so "git unavailable"
+     * can never be read as "no changes". {@code code} appears only when CP itself rejected the call
+     * (argument validation); it is a literal, never a new {@code ToolRefusalCodes} entry.
+     */
+    private String cpGitToolErrorResult(String requestBody, String code, String reason) {
+        ObjectNode response = objectMapper.createObjectNode();
+        response.put("jsonrpc", "2.0");
+        response.set("id", objectMapper.valueToTree(readJsonRpcId(requestBody)));
+        ObjectNode result = response.putObject("result");
+        result.put("resultType", "complete");
+        result.put("isError", true);
+        ObjectNode structured = result.putObject("structuredContent");
+        if (code != null) {
+            structured.put("code", code);
+        }
+        structured.put("reason", reason);
+        ObjectNode text = result.putArray("content").addObject();
+        text.put("type", "text");
+        text.put("text", "Tool error: " + reason);
+        return response.toString();
+    }
+
+    private static Map<String, Object> gitStatusOutput(
+            RuntimeCheckpointClient.GitStatusResult result) {
+        List<Map<String, Object>> entries = new ArrayList<>();
+        for (RuntimeCheckpointClient.GitStatusEntry entry : result.entries()) {
+            Map<String, Object> item = new LinkedHashMap<>();
+            item.put("status", entry.status());
+            item.put("path", entry.path());
+            entries.add(item);
+        }
+        Map<String, Object> output = new LinkedHashMap<>();
+        output.put("isRepository", result.isRepository());
+        output.put("entries", entries);
+        return output;
+    }
+
+    private static Map<String, Object> gitDiffOutput(RuntimeCheckpointClient.GitDiffResult result) {
+        Map<String, Object> output = new LinkedHashMap<>();
+        output.put("isRepository", result.isRepository());
+        output.put("patch", result.patch());
+        output.put("truncated", result.truncated());
+        output.put("patchBytes", result.patchBytes());
+        return output;
+    }
+
+    private static Map<String, Object> gitLogOutput(RuntimeCheckpointClient.GitLogResult result) {
+        List<Map<String, Object>> entries = new ArrayList<>();
+        for (RuntimeCheckpointClient.GitLogEntry entry : result.entries()) {
+            Map<String, Object> item = new LinkedHashMap<>();
+            item.put("hash", entry.hash());
+            item.put("shortHash", entry.shortHash());
+            item.put("author", entry.author());
+            item.put("committedAt", entry.committedAt());
+            item.put("subject", entry.subject());
+            entries.add(item);
+        }
+        Map<String, Object> output = new LinkedHashMap<>();
+        output.put("isRepository", result.isRepository());
+        output.put("entries", entries);
+        output.put("truncated", result.truncated());
+        return output;
+    }
+
+    /**
+     * PLAN-0686 G8: parse and validate the Git tools' arguments before any dispatch attempt is
+     * opened. The Runtime would also reject these, but a 400 round trip through the Runtime for a
+     * malformed `limit` is both slower and indistinguishable from "the Runtime refused the read".
+     */
+    private GitToolArguments extractGitToolArguments(String body, String toolName) {
+        JsonNode arguments;
+        try {
+            arguments = objectMapper.readTree(body).path("params").path("arguments");
+        } catch (JsonProcessingException e) {
+            throw gitInvalidArguments("Tool arguments must be valid JSON", e);
+        }
+        if (!arguments.isObject() && !arguments.isMissingNode()) {
+            throw gitInvalidArguments("Tool arguments must be a JSON object", null);
+        }
+        if (GIT_STATUS_TOOL.equals(toolName)) {
+            return new GitToolArguments(List.of(), GIT_LOG_DEFAULT_LIMIT, null);
+        }
+        List<String> paths = extractGitPaths(arguments);
+        if (GIT_DIFF_TOOL.equals(toolName)) {
+            return new GitToolArguments(paths, GIT_LOG_DEFAULT_LIMIT, null);
+        }
+        return new GitToolArguments(paths, extractGitLimit(arguments), extractGitRange(arguments));
+    }
+
+    private static List<String> extractGitPaths(JsonNode arguments) {
+        JsonNode paths = arguments.path("paths");
+        if (paths.isMissingNode() || paths.isNull()) {
+            return List.of();
+        }
+        if (!paths.isArray()) {
+            throw gitInvalidArguments("paths must be an array of workspace-relative strings", null);
+        }
+        List<String> values = new ArrayList<>();
+        for (JsonNode item : paths) {
+            if (!item.isTextual() || item.textValue().isBlank()) {
+                throw gitInvalidArguments("paths entries must be non-empty strings", null);
+            }
+            values.add(item.textValue());
+        }
+        return List.copyOf(values);
+    }
+
+    private static int extractGitLimit(JsonNode arguments) {
+        JsonNode limit = arguments.path("limit");
+        if (limit.isMissingNode() || limit.isNull()) {
+            return GIT_LOG_DEFAULT_LIMIT;
+        }
+        if (!limit.isIntegralNumber() || !limit.canConvertToInt()) {
+            throw gitInvalidArguments("limit must be an integer between " + GIT_LOG_MIN_LIMIT
+                    + " and " + GIT_LOG_MAX_LIMIT, null);
+        }
+        int value = limit.intValue();
+        if (value < GIT_LOG_MIN_LIMIT || value > GIT_LOG_MAX_LIMIT) {
+            throw gitInvalidArguments("limit must be between " + GIT_LOG_MIN_LIMIT + " and "
+                    + GIT_LOG_MAX_LIMIT, null);
+        }
+        return value;
+    }
+
+    private static String extractGitRange(JsonNode arguments) {
+        JsonNode range = arguments.path("range");
+        if (range.isMissingNode() || range.isNull()) {
+            return null;
+        }
+        if (!range.isTextual() || range.textValue().isBlank()) {
+            throw gitInvalidArguments("range must be a non-empty commit range", null);
+        }
+        return range.textValue();
+    }
+
+    private static CpApiException gitInvalidArguments(String detail, Throwable cause) {
+        return new CpApiException(HttpStatus.BAD_REQUEST, "INVALID_ARGUMENTS", detail, cause);
     }
 
     /**
@@ -2887,6 +3223,15 @@ public class McpProxyController {
     private record DependencyFailure(
             HttpStatus status, String code, String dependency, String reason,
             boolean retryable, String detail, Integer upstreamStatus) {
+    }
+
+    /**
+     * PLAN-0686 G8: the validated arguments of one Git tool call. Missing fields carry their
+     * defaults, so the dispatch handler never re-checks presence: {@code paths} is empty (not null)
+     * when unspecified, {@code limit} is already inside 1..=200 (default 20), {@code range} is null
+     * when unspecified.
+     */
+    private record GitToolArguments(List<String> paths, int limit, String range) {
     }
 
     /** PLAN-0557: either a usable catalog or the reason it could not be loaded. */
