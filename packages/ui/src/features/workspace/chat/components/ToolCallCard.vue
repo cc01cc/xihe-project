@@ -4,9 +4,11 @@ import { useI18n } from "vue-i18n";
 import type { Diagnostic, ToolCall } from "../../../../types";
 import { ApiError, api } from "../../../../composables/api";
 import { toolRefusalCopyKey } from "../../../../lib/errorMessages";
-import { LoaderCircle, CheckCircle, XCircle, Clock, Bot, ChevronDown } from "@lucide/vue";
+import { ChevronDown } from "@lucide/vue";
 import ProcessRow from "./ProcessRow.vue";
 import type { ProcessRowActor } from "./ProcessRow.vue";
+import ToolApprovalActions from "./ToolApprovalActions.vue";
+import { formatToolDuration, toolStatusIcon, toolStatusTone } from "./toolCallStatus";
 
 const props = defineProps<{
     toolCall: ToolCall;
@@ -67,26 +69,6 @@ function diagnosticKey(item: Diagnostic, index: number): string {
     return `${item.file ?? ""}:${item.line ?? ""}:${item.column ?? ""}:${index}`;
 }
 
-const statusIcons: Record<string, typeof LoaderCircle> = {
-    pending: Clock,
-    running: LoaderCircle,
-    completed: CheckCircle,
-    failed: XCircle,
-    cancelled: XCircle,
-    approved: CheckCircle,
-    rejected: XCircle,
-};
-
-const statusColors: Record<string, string> = {
-    pending: "text-yellow-500",
-    running: "text-blue-500",
-    completed: "text-green-500",
-    failed: "text-red-500",
-    cancelled: "text-muted-foreground",
-    approved: "text-green-500",
-    rejected: "text-red-500",
-};
-
 /**
  * 折叠行摘要：参数里最能说明"这次调用在干什么"的字段（命令/路径/提示词…），否则退回原文。
  * 只做展示，不改请求体。
@@ -113,14 +95,9 @@ const argumentsSummary = computed(() => {
     return raw.trim().split("\n")[0]!.slice(0, 60);
 });
 
-const duration = computed(() => {
-    if (!props.toolCall.startedAt || !props.toolCall.completedAt) return null;
-    const ms =
-        new Date(props.toolCall.completedAt).getTime() -
-        new Date(props.toolCall.startedAt).getTime();
-    if (ms < 1000) return `${ms}ms`;
-    return `${(ms / 1000).toFixed(1)}s`;
-});
+const duration = computed(() =>
+    formatToolDuration(props.toolCall.startedAt, props.toolCall.completedAt),
+);
 
 /**
  * PLAN-0649: refusal presentation.
@@ -147,12 +124,10 @@ const statusLabel = computed(() =>
 // A refusal reads as a failure even when the wire status is still `completed`
 // (older Agent, or a durable snapshot written before M2 lands).
 const statusIcon = computed(() =>
-    refusalCode.value ? XCircle : (statusIcons[props.toolCall.status] ?? Bot),
+    refusalCode.value ? toolStatusIcon("failed") : toolStatusIcon(props.toolCall.status),
 );
 const statusTone = computed(() =>
-    refusalCode.value
-        ? statusColors.failed
-        : (statusColors[props.toolCall.status] ?? "text-muted-foreground"),
+    refusalCode.value ? toolStatusTone("failed") : toolStatusTone(props.toolCall.status),
 );
 
 // PLAN-0344：durable job 卡片——档案（jobSummary）给状态与 jobId，
@@ -543,20 +518,12 @@ async function loadJobOutput(reset: boolean) {
                 </div>
             </div>
 
-            <div v-if="toolCall.status === 'pending'" class="flex gap-2 pt-1">
-                <button
-                    class="rounded bg-action px-3 py-1 text-xs text-action-foreground hover:opacity-90"
-                    @click="emit('approve', toolCall.id)"
-                >
-                    {{ t("chat.approve") }}
-                </button>
-                <button
-                    class="rounded border px-3 py-1 text-xs text-muted-foreground hover:bg-accent"
-                    @click="emit('reject', toolCall.id)"
-                >
-                    {{ t("chat.reject") }}
-                </button>
-            </div>
+            <ToolApprovalActions
+                v-if="toolCall.status === 'pending'"
+                :tool-call-id="toolCall.id"
+                @approve="emit('approve', $event)"
+                @reject="emit('reject', $event)"
+            />
         </div>
     </ProcessRow>
 </template>

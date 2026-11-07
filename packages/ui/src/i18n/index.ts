@@ -1111,6 +1111,25 @@ const messages = {
             toolDiagnosticsSummary: "共 {total} 条，已回灌前 {shown} 条",
             toolDiagnosticsMore: "另有 {count} 条",
             toolRawOutput: "原文",
+            /* PLAN-0688：专属工具卡（command / patch / read）的可见文案。 */
+            toolCard: {
+                exitCode: "退出码",
+                stdout: "标准输出",
+                stderr: "标准错误",
+                noOutput: "暂无输出",
+                truncated: "输出已截断",
+                artifactRetained: "原文已保留为产物",
+                changedFiles: "{count} 个文件",
+                patchesPending: "{count} 个待应用补丁",
+                diffPreview: "Diff 预览",
+                diffNote: "Diff 只按行前缀分类；完整内容见原文",
+                totalLines: "总行数",
+                binaryPreview: "二进制内容（base64）",
+                previewOnly: "仅预览前 200 行 / 2000 字符",
+                previewLines: "预览 {count} 行",
+                success: "成功",
+                failure: "失败",
+            },
             /*
              * PLAN-0649：拒绝态展示。原因码 → 文案的唯一映射在
              * `lib/errorMessages.ts#toolRefusalCopyKey`（未映射码回落到通用文案 + 原码，B5 裁定）；
@@ -3564,6 +3583,25 @@ const messages = {
             toolDiagnosticsSummary: "{total} total, first {shown} fed back",
             toolDiagnosticsMore: "{count} more",
             toolRawOutput: "Raw output",
+            /* PLAN-0688: visible copy for the dedicated command/patch/read cards. */
+            toolCard: {
+                exitCode: "Exit code",
+                stdout: "stdout",
+                stderr: "stderr",
+                noOutput: "No output yet",
+                truncated: "Output truncated",
+                artifactRetained: "Raw output retained as artifact",
+                changedFiles: "{count} files",
+                patchesPending: "{count} patches pending",
+                diffPreview: "Diff preview",
+                diffNote: "Diff is classified by line prefix; full content in raw output",
+                totalLines: "Total lines",
+                binaryPreview: "Binary content (base64)",
+                previewOnly: "Preview limited to 200 lines / 2000 characters",
+                previewLines: "Preview {count} lines",
+                success: "Success",
+                failure: "Failure",
+            },
             /* PLAN-0649: refusal copy; the code→copy map lives in `lib/errorMessages.ts`. */
             toolRefusedTitle: "This call was refused and never ran",
             toolRefusedGeneric: "The tool call was refused; nothing was executed",
