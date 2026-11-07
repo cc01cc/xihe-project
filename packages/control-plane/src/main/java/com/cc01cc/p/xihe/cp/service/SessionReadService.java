@@ -57,8 +57,9 @@ public class SessionReadService {
                     session.getSpawnedFromRunId(),
                     session.getSpawnedAt(),
                     session.getKind(),
-                    // PLAN-0689 design §3: the per-Session cap snapshot is still read here on
-                    // purpose; removing it is part of A7's hard column drop, not of A2c.
+                    // PLAN-0689 A7/D-54 (single-column ruling): the per-Session cap snapshot is
+                    // retained for good as an authorization-intersection input, so this read stays;
+                    // A7 drops only the identity column (sessions.agent_principal_id).
                     session.getAgentPermissionsSnapshot());
         });
     }

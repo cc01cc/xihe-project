@@ -550,10 +550,10 @@ public class ChatSubmissionService {
         // principal — never the parent Session column. One local is threaded through the four uses
         // below so the roster row, the child Run stamp and the audit detail cannot disagree.
         //
-        // The Session-column write is still here, now sourced from the Run, because SessionReadService
-        // (A2c) still reads that column for admission: persist() → resolveAgent() would fail closed
-        // with 403 on a child whose column is NULL. Per A7/D-54 the column survives as the snapshot
-        // authorization input; the A2c admission switch to the PRIMARY participant is a separate step.
+        // No Session principal column is written here any more (V133/A7 drops it): the child is
+        // admitted through its PRIMARY participant row (ensurePrimaryParticipant below), which is
+        // what SessionReadService (A2c) reads. Only the snapshot column survives (A7/D-54), and a
+        // child whose roster row is missing still fails closed with 403 in persist() → resolveAgent().
         String childAgentPrincipalId = uuidStr(parentRun.getAgentPrincipalId());
         Session childSession = new Session(parentRun.getWorkspaceId(), parentRun.getUserId(),
                 parentSession.getTitle());
