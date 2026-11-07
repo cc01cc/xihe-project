@@ -6,7 +6,7 @@ sidebar_group: "开发指南"
 sidebar_order: 14
 status: active
 created: 2026-09-03
-updated: 2026-11-06
+updated: 2026-11-07
 ---
 
 # DEV-014: CP 架构
@@ -119,7 +119,7 @@ flowchart LR
 - **Composer to/cc（PLAN-0630 M5b，D30-14）**：`POST /api/v1/chat` 接受可选 `cc: string[]`（participantId UUID）；cc 是旁听名单，非 UUID `400 INVALID_REQUEST`，非参与者/已禁用 id fail-closed 忽略，命中的 observer 只收 `wake_dispatch outcome=notify`（该事件是**派生未读**的唯一来源——V112 已 drop `session_participant_cursors.mention_count`，读侧的 `readCursor.mentionCount` 按「本 participant 的 notify 事件中 `sequence > last_read_event_seq` 的行数」现算）（不创建 run；被 `@` 的仍走 mention 路径正常响应），且不进入幂等 request hash。
 - **显式 TO 多目标（PLAN-0665 M1）**：`toParticipantIds: string[]` 只接受本 Session 的 **AGENT** 参与者（人类目标 `400 INVALID_REQUEST`，待后续计划）；首个目标拥有本次 `user_submission` run（`runId` = `runIds[0]`），其余目标经**唯一** `TargetedWake` 入口派发为派生 run（wake 审计 `triggerSource="to"`、`trigger_source` 列写 `user`、`origin` 取 wake 载体既有分类 `scheduled`（真栈实测）、`parent_run_id` 恒 NULL）；响应新增 `runIds[]`（加法字段）。**读侧不得按 `origin` 归组同一消息**，按 `runId` / `messages.delivery` 归组。
 - **运行时派发结果三桶（BL-283，2026-11-05 裁定）**：202 响应对每个 TO 目标恰好归入一类 —— `runIds[]`（已派发）、`deferredTargets[]`（**并发满顺延入队**，`reason="deferred"`）、`failedTargets[]`（**真失败**：DB 约束/网络/Agent 不可用），不变量 `runIds + failedTargets + deferredTargets == targets`。**deferred 不是失败**（原实现把它塞进 `failedTargets`，使"并发满"与"真派发错误"不可区分）。配套**事务边界**：唤醒准入（`ChatSubmissionService.tryCreateScheduled`）把 `409 CHAT_IN_PROGRESS` 作为**返回值**（空 `Optional`）而不是异常抛出 —— 异常穿过 REQUIRED 边界会把调用方（`WakeDispatchService.fire`）的共享事务标 rollback-only，deferred 入队与 `wake_dispatch` 审计随事务回滚、提交时变成 `UnexpectedRollbackException`（BL-283 根因；`ScheduledTaskDispatcher` 无外层事务故不触发，是其旁证）。同族先例见 PLAN-0660 T2.1 的 `judgeSpeakAs` 值化。
-- **请求哈希与幂等（PLAN-0665 D6，supersede）**：`request_hash` 现覆盖**排序后的 `toParticipantIds`** 与 `asParticipantId`（后者此前遗漏，属既有缺陷：同内容换主体 + 同 `Idempotency-Key` 会 replay 旧主体的 run）。哈希值因此变化 ⇒ 升级前旧 `Idempotency-Key` 重放会得到 `409 IDEMPOTENCY_KEY_CONFLICT`（预期行为，非回归）；`cc` 仍不入哈希（notify-only）。投递受众随 user `Message` 落 `messages.delivery`（V120，JSONB 可空），刷新后可恢复（终结 BL-239）。
+- **请求哈希与幂等（PLAN-0665 D6 → PLAN-0689 §9 v3）**：`request_hash` 现覆盖**排序后的 `toParticipantIds`** 与 `asParticipantId`（后者此前遗漏，属既有缺陷：同内容换主体 + 同 `Idempotency-Key` 会 replay 旧主体的 run）。哈希值因此变化 ⇒ 升级前旧 `Idempotency-Key` 重放会得到 `409 IDEMPOTENCY_KEY_CONFLICT`（预期行为，非回归）；`cc` 仍不入哈希（notify-only）。**PLAN-0689 B3 删除 Chat 主路径 `agentPrincipalId` 后 hash 身份升 v3**：主路径不再计入该键（follow-up/scheduled 换源 PRIMARY，输入值不变）。旧 UI bundle 仍发该字段 = **200 静默忽略**（`ChatController` 取裸 `Map<String,Object>`，无 strict 反序列化），只跟踪文档声明的弃用窗口（**BL-444**，P2·ui/compat）；不得写成「保留字段即兼容」。投递受众随 user `Message` 落 `messages.delivery`（V120，JSONB 可空），刷新后可恢复（终结 BL-239）。
 - Agent provider failure 进入 `failed`/`partial`，流断开或缺少终态进入 `ambiguous`；`ambiguous` 不自动 retry，人工确认后使用新的幂等键。
 - **入站截断的 durable 痕迹（PLAN-0670 M2c / BL-293，V124）**：`chat_runs.context_truncation`（jsonb，可空）在**终态写**（`ChatRunTerminalService.terminalize`，唯一终态 owner）落库，值 = Agent `done.agentContextTruncation` 对象（`{droppedMessages, droppedBytes, keptMessages, keptBytes, limitMessages, limitBytes, strategy}`），与 UI 收到的 SSE 字段来自**同一次 `done` 解析**，不重新推导。未截断（或字段缺席/格式非法）保持 **NULL** —— 不写 `{}`、不写全 0；迁移/写入失败不改变终态列（`terminal_outcome`/`error_code`/`token_count` 等）。本批**不暴露读面**；UI 展示属 BL-292。
 - **上下文模板合并（BL-284，2026-11-05）**：准入快照（`chat_runs.context_template_snapshot`）= API request template 的 `bodySource` + **context template**（`context-templates` 域，按 `workspace → user → instance → built-in` 确定性解析）的 `components`，两者在 `ApiRequestTemplateService.resolve(...)` 处**一次性合并并冻结**（读侧不得临时拼接，否则同一 run 的上下文会随时间变化、指纹失去意义）。职责分离：`bodySource` 只来自 API request template、`components` 由两侧合并。**合并规则（2026-11-05 裁定，supersede 首版"逐项相等否则 409"）**：组件**类型取并集**；**同一类型两侧都声明 ⇒ API request template 的配置优先**（它是该会话更具体的产物，context template 只是默认提供者）；顺序稳定（context template 顺序优先，共享类型就地替换为 API 版本，API 独有类型追加）——这样同一份输入的快照可复现。`409 CONTEXT_TEMPLATE_COMPONENTS_CONFLICT` **只保留给同一 manifest 内部重复声明同一类型**（非法输入）。内置上下文模板默认含 `agent_memory`（`maxEntries=24/maxTokens=4000`）与 `skill_catalog`（`maxSkills=40/includeDescriptions=true/sort=binding`，其中 40 = 组件缺省时的既有冻结默认，**加组件不得改默认值**）组件（BL-284/BL-285）。**部署口径（必须对外准确）**：上下文模板是 **append-only 不可变**的，**已发布过模板的部署不会自动获得新的内置默认** ⇒ 需重新发布一版含上述组件的模板并切换 `defaultTemplate`；**全新安装（实例层无存储）默认生效**——否则"修了但老环境没生效"会被误报成缺陷。
@@ -474,10 +474,12 @@ PLAN-0416 Chat 消费：`ChatController` 仅在 admission snapshot 原始 native
 
 **相关 BL**：`BL-349`（`WS_*` 曾携带 `MEMORY_WRITE_SELF` ⇒ 首绑 403 `ROLE_NOT_GRANTABLE`，已修 —— 正是它让正确路径看起来"不通"）· `BL-351`（roles/skills 端点曾只认 query、忽略头；已修：头优先 + 冲突 400）· `BL-352`（本段来源：不是死锁，是顺序未文档化 + BL-349 掩盖正路）· `BL-344`（成员面板能力位三态）。（en 侧暂无本文档，翻译随批次补齐）
 
-## 14c. agent 主体的作用域边界（2026-11-06 真栈实测）
+**（PLAN-0680 后本节顺序仍不变）** 技能绑定的 workspace 轴**不改首绑顺序**：首绑仍由 ② `PUT /workspaces/{workspaceId}/agents/{principalId}` 完成（`WS_EDITOR` 结构化默认绑定不受 cap 门约束），`roles` 端点仍受 cap 门；`/skills` 只影响主体**下一次会话**的技能清单，与建主体/首绑/建会话的顺序无关。
 
-> **本节描述的是 2026-11-06 的现状**；`BL-355`/`BL-356` 的双轴口径（候选 C：角色/技能按轴求值 cap）**尚待裁定**，裁定后本节将被改写成"模型说明"。在此之前，**按下文描述的行为使用即可**，不要按"应该能绑"去试。
-> 本节全部结论来自真栈实测（隔离栈、同栈同构建），证据原件：`.local/evidence/bl355-bl356-status-statement.md`（13 格中 12 格实测，第 14 格如实标"未实测"）。
+## 14c. agent 主体的作用域边界（2026-11-07 按 PLAN-0680 双轴改写）
+
+> **本节描述 PLAN-0680 落地后的口径**：**技能**绑定的 workspace 轴已打开（服务端按授权上下文定档，行可落 `workspace(该工作区)`）；**角色轴暂不开放**——角色绑定维持单轴（instance 派生 + cap 天花板）。
+> 改写前的单轴实测（2026-11-06，靶 `d1f655f4`/`82958b18`，证据原件：`.local/evidence/bl355-bl356-status-statement.md`）保留在 14c.4 作**历史对照**，不得再当现状引用；双轴真栈证据待 PLAN-0680 T3.1–T3.3 窗口。
 
 ### 14c.1 两道独立门（先禁授、再 cap，顺序不可颠倒）
 
@@ -493,7 +495,7 @@ PLAN-0416 Chat 消费：`ChatController` 仅在 admission snapshot 原始 native
 > **两类 409 必须分开看**：`AGENT_PRINCIPAL_FORBIDDEN_ATOMS` 是**设计性拒绝**（该原子永不授予 agent），
 > `ROLE_BINDING_EXCEEDS_CAP` 是**上限性拒绝**（主体当前能力不够）。把两者当同一件事，会误判成"权限 bug"。
 
-### 14c.2 当前能力上限：由主体的 **instance 角色**决定
+### 14c.2 角色面：能力上限仍是主体的 instance 原子集
 
 - 主体的原子集来自它绑定的 **instance 作用域角色**；`POST /agent-principals` 默认绑 `AGENT_USER`，
   其原子 = `BASE_ATOMS`：`read`/`write`/`delete`/`exec`/`network`（`SystemAccessRoleCatalog:78-83`）。
@@ -503,29 +505,39 @@ PLAN-0416 Chat 消费：`ChatController` 仅在 admission snapshot 原始 native
 - **`AGENT_USER` 本身在工作区作用域可以绑**（真栈 201）—— 也就是说"能给 agent 绑工作区角色"这件事是通的，
   通的范围是"原子集 ⊆ 主体 instance 原子集"的角色。
 
-### 14c.3 技能作用域：绑给 agent 的主体级技能**恒为 instance 作用域**
+**BL-355 现状句（角色面）**：agent 主体仍**无法被授予携带 `BASE_ATOMS` 之外原子的系统工作区角色**——`WS_VIEWER`/`WS_EDITOR` 过禁授门后撞 cap ⇒ **409 `ROLE_BINDING_EXCEEDS_CAP`**；`WS_OWNER` 更早被禁授门拒 ⇒ **409 `AGENT_PRINCIPAL_FORBIDDEN_ATOMS`**。这句**只约束角色面**：技能面自 PLAN-0680 起走双轴（14c.3），把技能面新建的 workspace 行当作「角色也能绑」是误读。
 
-- `POST /api/v1/agent-principals/{principalId}/skills` 的请求体**只带 `skillId`**，服务端固定写
-  `scope_type='instance'`/`scope_id=null`（`controller/AgentPrincipalSkillBindingController:35-37`，设计 `D3(a)`）——
-  调用方**无法**把 workspace 作用域夹带进来。
-- 因此 **工作区私有技能（`definition_scope_type='workspace'`）可导入（200）、可列出（200），但绑给 agent 恒
-  `400 SKILL_DEFINITION_OUT_OF_SCOPE`**（`AgentPrincipalSkillBindingService:39/110`）。
-- 后果（用户可见）：工作区管理员会看到"技能导入成功"，但该技能**永远不会进入** agent 的 `skills_snapshot`。
-  ⇒ 想要 agent 用上技能，必须走 **instance 作用域**技能库（且导入需 `MANAGE_SKILL_LIBRARY`，无 instance 管理员者 **403 `SKILL_IMPORT_FORBIDDEN`**）。
+### 14c.3 技能面：双轴（DEFAULT instance + 显式 workspace）
 
-### 14c.4 实测证据（4 行速查，完整矩阵见证据文件）
+- `POST /api/v1/agent-principals/{principalId}/skills` 的请求体仍**只带 `skillId`**；服务端按授权上下文定档：
+  带工作区上下文（`X-Workspace-Id` 头或 `?workspaceId=` 查询）⇒ 行落 `scope_type='workspace'`/`scope_id=该工作区`；
+  无上下文 ⇒ `scope_type='instance'`/`scope_id=null`。调用方**无法**指定或夹带 scope（请求体出现其他键 ⇒ 400 `INVALID_REQUEST`）。
+- **显式绑定优先于默认绑定**：解析顺序冻结为「`agent_principal` 先于 `user` → `workspace` 先于 `instance`」；同一技能两档并存时只列一次、取 workspace 档；
+  下一会话 `skills_snapshot.items[].tier` 的 `subjectType`/`scopeType`/`definitionScopeType` 即命中来源（无缓存预热）。
+- **原子来源限定**：workspace 轴只授本工作区资产 —— 本工作区私有定义（`definition_scope_type='workspace'` 且 `definition_scope_id=本工作区`）可绑（201）；
+  **他工作区私有定义 ⇒ 404 `SKILL_NOT_FOUND`**（与技能不存在不可区分，防跨工作区探测）；instance 技能库定义可在任一轴绑定（绑定行仍落当前档，不产生 instance 行）。
+  原 `400 SKILL_DEFINITION_OUT_OF_SCOPE` 在**本面退役**；用户面 `/api/v1/skill-bindings` 仍保留该码。
+- **授权门不变（两道，缺一即 403）**：`MANAGE_AGENT_PRINCIPALS`（instance tier）或授权工作区的 `MANAGE_WORKSPACE_AGENTS`。
+  `WS_EDITOR` 无后者 ⇒ **403**（拒绝发生在授权门，不再表现为「201 落 instance 轴」）；`WS_OWNER`/`CAP_WORKSPACE_ADMIN` 可在本工作区绑定。
+- **解绑按行授权**：workspace tier 只能删本工作区的 workspace 行；instance 行与他工作区行 ⇒ 404 `SKILL_BINDING_NOT_FOUND`；instance tier 可删任意行。
+- **后果（用户可见）**：工作区管理员导入的私有技能现在**能**绑给本工作区的 agent 并在下一会话生效；跨工作区仍不生效（行与定义两侧都按当前工作区过滤）。
 
-| 操作 | 现状结果 | 依据 |
+### 14c.4 历史对照：2026-11-06 单轴期实测（4 行速查，现已被 PLAN-0680 改写）
+
+| 操作 | 单轴期结果 | 依据 |
 |---|---|---|
 | 绑 `AGENT_USER`（原子 ⊆ `BASE_ATOMS`）到 agent，工作区作用域 | **201** | runId `host-1793906981984-c2b5` |
 | 绑 `WS_VIEWER` / `WS_EDITOR`（含 `USE_WORKSPACE_RUNTIME`） | **409 `ROLE_BINDING_EXCEEDS_CAP`** | runId `host-1793909094482-5cd4`；`AgentPrincipalRoleBindingService:168` |
 | 绑 `WS_OWNER`（含 `MANAGE_WORKSPACE_AGENTS`/`workspace:admin`） | **409 `AGENT_PRINCIPAL_FORBIDDEN_ATOMS`** | runId `host-1793909094482-5cd4`；`:161` |
-| 把 **workspace 私有技能**绑到 agent（可导入/可列出） | **400 `SKILL_DEFINITION_OUT_OF_SCOPE`** | runId `host-1793907459805-5560`；`AgentPrincipalSkillBindingService:39/110` |
+| 把 **workspace 私有技能**绑到 agent（可导入/可列出） | **400 `SKILL_DEFINITION_OUT_OF_SCOPE`** | runId `host-1793907459805-5560`；`AgentPrincipalSkillBindingService` 旧实现 |
+
+> 上表是**历史实测**，不是现状：第 4 行正是 PLAN-0680 要修的缺陷（BL-356）；现该场景在**本工作区上下文**下应为 201，跨工作区应为 404。
+> 双轴真栈重跑证据待 T3.1–T3.3（PLAN-0680 verify V2/V3/V8/V9），未跑前不得引用本表替代新证据。
 
 ### 14c.5 相关台账
 
-`BL-355`（cap 天花板 = 主体 instance 原子集）· `BL-356`（工作区私有技能不可绑 agent）· `BL-352`（首绑顺序见 §14b）· `PLAN-0678`（V3 技能正向与 V9 反证；技能可用面 = instance 作用域）。
-**口径待裁定项**：是否改为双轴求值（角色/技能按轴各带 cap），以及"谁能给 agent 在工作区加原子"的授权归属 —— 见 `.local/evidence/spec-topic-agent-principal-scope.md` §7、`.local/evidence/spec-draft-outline-agent-principal-scope.md`。
+`BL-355`（角色面 cap 天花板 = 主体 instance 原子集，仍在）· `BL-356`（技能面恒 instance —— 已由 PLAN-0680 打开 workspace 轴）· `BL-352`（首绑顺序见 §14b）· `PLAN-0678`（V3 技能正向与 V9 反证）· `PLAN-0680`（本节双轴改写来源）。
+**口径去向**：双轴口径已裁定（R-6/R-7，`plans/PLAN-0680-XH-spec13-skill-dual-axis/design.md` §6）；角色轴的 cap 按轴求值仍后置（BL-287 重证后另案），不在本计划范围。
 
 ## 14d. 用户级通知通道与用户问答（PLAN-0660 M5-A / M5-B）
 

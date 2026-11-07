@@ -85,7 +85,7 @@ pnpm run build
 
 ## Session / Agent Principal
 
-- 新建 Session 必须显式携带已绑定 Agent 的 `agentPrincipalId`（`POST /api/v1/sessions`）；principal-null 空 Session 在首次发送前于 UI 选择 principal。
+- 新建 Session 必须显式携带已绑定 Agent 的 `agentPrincipalId`（`POST /api/v1/sessions`）；principal-null 空 Session **不再**在首次发送前于 UI 选择 principal——会话身份绑定在创建时确定（PLAN-0689 B3 删除 F6 占位路径）。
 - Workspace Agent 管理面板读写 `/api/v1/workspaces/{id}/agents`，principal 创建走 `/api/v1/agent-principals`；创建与绑定分别授权（`CREATE_ACCOUNT` / `MANAGE_WORKSPACE_AGENTS`）。契约见根级 `spec/agent/principal-workspace-binding.md`。
 
 ## 权限边界

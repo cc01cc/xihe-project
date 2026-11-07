@@ -12,6 +12,7 @@ import com.cc01cc.p.xihe.cp.policy.GrantIntersectionEvaluator;
 import com.cc01cc.p.xihe.cp.policy.PolicyRequest;
 import com.cc01cc.p.xihe.cp.repository.AgentPrincipalRepository;
 import com.cc01cc.p.xihe.cp.repository.AuthorizationGrantRepository;
+import com.cc01cc.p.xihe.cp.repository.SessionParticipantRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceAgentRepository;
 import com.cc01cc.p.xihe.cp.service.SessionService;
@@ -65,6 +66,7 @@ class ScheduledTaskApiServiceTest {
     private AgentPrincipalRepository agentPrincipalRepository;
     private WorkspaceAgentRepository workspaceAgentRepository;
     private UserRepository userRepository;
+    private SessionParticipantRepository sessionParticipantRepository;
     private AuditLogger auditLogger;
     private WorkspaceEventManager eventManager;
     private ScheduledTaskApiService service;
@@ -82,9 +84,10 @@ class ScheduledTaskApiServiceTest {
         userRepository = Mockito.mock(UserRepository.class);
         auditLogger = Mockito.mock(AuditLogger.class);
         eventManager = Mockito.mock(WorkspaceEventManager.class);
+        sessionParticipantRepository = Mockito.mock(SessionParticipantRepository.class);
         service = new ScheduledTaskApiService(repository, dispatcher, workspaceService, sessionService,
                 evaluator, grantRepository, agentPrincipalRepository, workspaceAgentRepository,
-                userRepository, auditLogger, eventManager);
+                userRepository, auditLogger, eventManager, sessionParticipantRepository);
         when(repository.countByWorkspaceIdAndStatusIn(any(), anyCollection())).thenReturn(0L);
         when(repository.countByWorkspaceIdAndUserIdAndStatusIn(any(), any(), anyCollection()))
                 .thenReturn(0L);
@@ -226,10 +229,29 @@ class ScheduledTaskApiServiceTest {
         stubPrincipal(true);
         when(sessionService.requireCurrent(eq(SESSION_ID), eq(USER_ID), eq(WORKSPACE_ID)))
                 .thenReturn(sessionBoundTo("99999999-9999-4999-8999-999999999999"));
+        // PLAN-0689 A2c: the gate reads the target Session's PRIMARY participant principal.
+        when(sessionParticipantRepository.primaryPrincipalId(any()))
+                .thenReturn(Optional.of(UUID.fromString("99999999-9999-4999-8999-999999999999")));
 
         CpApiException error = assertThrows(CpApiException.class, () -> service.create(
                 WORKSPACE_ID, USER_ID, agentCronRequest()));
         assertEquals(org.springframework.http.HttpStatus.FORBIDDEN, error.getStatus());
+    }
+
+    @Test
+    void create_agent_forbids_wakeup_when_target_session_has_no_primary_participant() {
+        allowAll();
+        stubPrincipal(true);
+        // The sessions column still names the creator, but the PRIMARY roster row is missing: the
+        // gate must reject (fail-closed) instead of falling back to the column.
+        when(sessionService.requireCurrent(eq(SESSION_ID), eq(USER_ID), eq(WORKSPACE_ID)))
+                .thenReturn(sessionBoundTo(PRINCIPAL_ID));
+        when(sessionParticipantRepository.primaryPrincipalId(any())).thenReturn(Optional.empty());
+
+        CpApiException error = assertThrows(CpApiException.class, () -> service.create(
+                WORKSPACE_ID, USER_ID, agentCronRequest()));
+        assertEquals(org.springframework.http.HttpStatus.FORBIDDEN, error.getStatus());
+        verify(repository, never()).save(any());
     }
 
     @Test
@@ -238,6 +260,8 @@ class ScheduledTaskApiServiceTest {
         stubPrincipal(true);
         when(sessionService.requireCurrent(eq(SESSION_ID), eq(USER_ID), eq(WORKSPACE_ID)))
                 .thenReturn(sessionBoundTo(PRINCIPAL_ID));
+        when(sessionParticipantRepository.primaryPrincipalId(any()))
+                .thenReturn(Optional.of(UUID.fromString(PRINCIPAL_ID)));
         when(repository.save(any())).thenAnswer(invocation -> {
             ScheduledTask task = invocation.getArgument(0);
             task.setId(UUID.randomUUID());
@@ -533,7 +557,6 @@ class ScheduledTaskApiServiceTest {
 
     private static Session sessionBoundTo(String principalId) {
         Session session = new Session();
-        session.setAgentPrincipalId(principalId);
         return session;
     }
 

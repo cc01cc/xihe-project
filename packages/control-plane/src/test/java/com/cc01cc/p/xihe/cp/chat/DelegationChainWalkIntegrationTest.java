@@ -345,7 +345,7 @@ class DelegationChainWalkIntegrationTest extends AbstractIntegrationTest {
         try {
             WakeChainService restarted = new WakeChainService(sessionRepository, participantService,
                     wakeDispatchService, eventStoreService, configService, objectMapper,
-                    chatRunRepository, delegationBudgetService);
+                    chatRunRepository, delegationBudgetService, participantRepository);
 
             int runsBefore = runCount();
             restarted.onAssistantContent(session.getId().toString(), first.runId().toString(),
@@ -408,11 +408,12 @@ class DelegationChainWalkIntegrationTest extends AbstractIntegrationTest {
         Session session = new Session(workspaceId, userId,
                 title + " " + UUID.randomUUID().toString().substring(0, 8));
         session.setId(UUID.randomUUID());
-        session.setAgentPrincipalId(principalId.toString());
         session.setAgentPermissionsSnapshot(objectMapper.createArrayNode());
         ChatBindingTestSupport.bindNewChatConnection(session, providerConnectionRepository,
                 apiRequestTemplates, userId);
-        return sessionRepository.saveAndFlush(session);
+        Session saved = sessionRepository.saveAndFlush(session);
+        bindPrimaryParticipant(saved.getId().toString(), principalId.toString());
+        return saved;
     }
 
     private SessionParticipant agentParticipant(UUID sessionId) {
@@ -428,6 +429,7 @@ class DelegationChainWalkIntegrationTest extends AbstractIntegrationTest {
                 runId, session.getId().toString(), userId, workspaceId,
                 "delegation-chain-run-" + runId, "delegation-chain-hash-" + runId,
                 "provider", "model", "workspace", status));
+        jdbcTemplate.update("UPDATE chat_runs SET agent_principal_id = CAST(? AS UUID) WHERE id = CAST(? AS UUID)", principalId.toString(), runId);
         return runId;
     }
 

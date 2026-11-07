@@ -5,6 +5,7 @@ import com.cc01cc.p.xihe.cp.context.service.EventStoreService;
 import com.cc01cc.p.xihe.cp.entity.ChatRun;
 import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.repository.ChatRunRepository;
+import com.cc01cc.p.xihe.cp.repository.SessionParticipantRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
 import com.cc01cc.p.xihe.cp.service.SessionParticipantService;
 import com.cc01cc.p.xihe.cp.service.WakeDispatchService;
@@ -44,7 +45,9 @@ class WakeChainServiceTest {
 
     private static final String SESSION_ID = UUID.randomUUID().toString();
     private static final UUID SESSION_UUID = UUID.fromString(SESSION_ID);
-    private static final String ROOT_PRINCIPAL = "P-ROOT";
+    // PLAN-0689 A3b: chat_runs.agent_principal_id is a UUID column, so the run stamp fixture must
+    // be a real UUID string — a readable placeholder cannot be mirrored onto the Run any more.
+    private static final String ROOT_PRINCIPAL = "00000000-0000-0000-0000-0000000000a1";
     private static final UUID B = UUID.randomUUID();
     private static final UUID C = UUID.randomUUID();
     private static final UUID D = UUID.randomUUID();
@@ -56,6 +59,7 @@ class WakeChainServiceTest {
 
     private SessionRepository sessions;
     private SessionParticipantService participantService;
+    private SessionParticipantRepository participantRepository;
     private WakeDispatchService dispatch;
     private EventStoreService eventStore;
     private ConfigService config;
@@ -72,6 +76,7 @@ class WakeChainServiceTest {
     void setUp() {
         sessions = mock(SessionRepository.class);
         participantService = mock(SessionParticipantService.class);
+        participantRepository = mock(SessionParticipantRepository.class);
         dispatch = mock(WakeDispatchService.class);
         eventStore = mock(EventStoreService.class);
         config = mock(ConfigService.class);
@@ -81,12 +86,11 @@ class WakeChainServiceTest {
                 .thenAnswer(invocation -> maxDepth);
         when(budget.maxSpawnDepth(any(), any(), any())).thenReturn(3);
         chain = new WakeChainService(sessions, participantService, dispatch, eventStore,
-                config, new ObjectMapper(), chatRuns, budget);
+                config, new ObjectMapper(), chatRuns, budget, participantRepository);
 
         Session session = mock(Session.class);
         when(session.getUserId()).thenReturn("owner-1");
         when(session.getWorkspaceId()).thenReturn("ws-1");
-        when(session.getAgentPrincipalId()).thenReturn(ROOT_PRINCIPAL);
         sessionById.put(SESSION_UUID, session);
         when(sessions.findById(any())).thenAnswer(invocation -> {
             UUID id = invocation.getArgument(0);
@@ -111,6 +115,10 @@ class WakeChainServiceTest {
         ChatRun run = new ChatRun(id.toString(), SESSION_ID, "owner-1", "ws-1",
                 "idem-" + id, "hash-" + id, null, null, "none", "succeeded");
         run.setOrigin(ChatRun.ORIGIN_USER_SUBMISSION);
+        // PLAN-0689 A3b: the walker no longer falls back to the Session column, so a root run
+        // without its own stamp would fail closed with root_principal_missing before any depth
+        // rule is evaluated. Fixtures must stamp the run, as production dispatch now does.
+        run.setAgentPrincipalId(UUID.fromString(ROOT_PRINCIPAL));
         runById.put(id, run);
         return id.toString();
     }
@@ -363,7 +371,6 @@ class WakeChainServiceTest {
         when(session.getKind()).thenReturn(Session.KIND_SPAWN);
         when(session.getSpawnedFromSessionId()).thenReturn(spawnedFromSession);
         when(session.getSpawnedFromRunId()).thenReturn(spawnedFromRun);
-        when(session.getAgentPrincipalId()).thenReturn(principal);
         return session;
     }
 

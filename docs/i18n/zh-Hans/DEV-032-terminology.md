@@ -108,7 +108,7 @@ XH 目标形态是**多主体协作**：Agent 是独立主体（有自己的账�
 | **显示名** | `displayName`（**读时派生、不落库**；无独立 `display_name` 列） | AGENT → `agent_principals.name`；HUMAN → 账号 `username`（V82 起 NOT NULL；PLAN-0684/D-183 后为**唯一**显示源，`name` 与 email 不再参与投影）；解析不出为 `null` ⇒ UI 显示「未知用户」 | **绝不要用 UUID 当人名**；不要把它当可编辑字段；不要回退到 `name` 或邮箱（单源 username，无兜底链） |
 | **以某参与者身份发言** | `speakAs`（`capabilities`）/ `asParticipantId`（请求）/ `selfOwned`（每行投影） | **代发 ≠ 提及**：代发是以某参与者身份**发出消息**，提及只是把话题指向他（插入 `@名字`）；管理员可加人但**不可代发**（D23-08）；`speakAs` = 至少一行 `selfOwned=true`（同一判定，前端不得自行判定） | 不要把「代发」写成「提及/艾特/转发」；不要以为 `manage`（管理参与者）权限含代发；不要用「切换发言人」指代它（那是 UI 动作，不是授权概念） |
 | **观察者视角** | observer view（`GET /api/v1/events` **未带** `asParticipantId`） | 收**全部**参与者的事件流；与之相对是「参与者视角」（只收该参与者） | 不要把多主体流当单主体渲染（D23-28）；不要把它当兼容层/降级路径（它是语义）；不要在观察者视角里伪造「当前发言人」 |
-| **run 级归属** | run-level attribution（`chat_runs.agent_principal_id`） | 每条 run 记录**本次回应者**（不是会话级属性）；未带 `asParticipantId` ⇒ PRIMARY 的主体；两者皆无 ⇒ `null` | 不要与会话级 `sessions.agent_principal_id`（会话默认主体）混用；不要因 run 为空就回填成 PRIMARY |
+| **run 级归属** | run-level attribution（`chat_runs.agent_principal_id`） | 每条 run 记录**本次回应者**（不是会话级属性）；未带 `asParticipantId` ⇒ PRIMARY 的主体；两者皆无 ⇒ `null` | 会话级主体列已由 V133 删除；不要与 `session_participants` PRIMARY（会话身份）或 `runs.agent_principal_id`（单次归属）混用；不要因 run 为空就回填成 PRIMARY |
 | **参与者来源** | `participant source`（`source` ∈ `workspace` / `personal` / `instance`，**小写**） | 该参与者对应主体的归属来源，读时派生 | 不要与 agent 的 `scope`（**大写** `PERSONAL`/`WORKSPACE`/`INSTANCE`）混用或擅自统一大小写——两处是不同列、不同枚举，改名须 CP 裁定 |
 
 不偏离约束与落地入口：workspace internal `xh-backlog-and-debt.md` 的 BL-18「身份与权限模型」（不入库分发）；2026-09-23 G2 已将 BL-18 冻结入 PLAN-0407 承接（执行中，未完成）。

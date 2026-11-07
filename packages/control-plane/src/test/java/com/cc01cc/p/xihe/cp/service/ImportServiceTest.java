@@ -47,7 +47,7 @@ class ImportServiceTest {
         assertNull(result.getLastError());
         verifyNoInteractions(grantDefaultService);
         verify(sessionRepo).save(argThat(session -> "workspace-1".equals(session.getWorkspaceId())
-                && session.getAgentPrincipalId() == null && session.getAgentPermissionsSnapshot() == null));
+                && session.getAgentPermissionsSnapshot() == null));
     }
 
     @Test

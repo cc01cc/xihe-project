@@ -15,6 +15,7 @@ import com.cc01cc.p.xihe.cp.policy.ToolFaceRegistry;
 import com.cc01cc.p.xihe.cp.policy.ToolShape;
 import com.cc01cc.p.xihe.cp.repository.AgentPrincipalRepository;
 import com.cc01cc.p.xihe.cp.repository.AuthorizationGrantRepository;
+import com.cc01cc.p.xihe.cp.repository.SessionParticipantRepository;
 import com.cc01cc.p.xihe.cp.repository.UserRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceAgentRepository;
 import com.cc01cc.p.xihe.cp.service.SessionService;
@@ -91,6 +92,7 @@ public class ScheduledTaskApiService {
     private final UserRepository userRepository;
     private final AuditLogger auditLogger;
     private final WorkspaceEventManager workspaceEventManager;
+    private final SessionParticipantRepository sessionParticipants;
 
     public ScheduledTaskApiService(ScheduledTaskRepository scheduledTaskRepository,
                                    ScheduledTaskDispatcher dispatcher,
@@ -102,7 +104,8 @@ public class ScheduledTaskApiService {
                                    WorkspaceAgentRepository workspaceAgentRepository,
                                    UserRepository userRepository,
                                    AuditLogger auditLogger,
-                                   WorkspaceEventManager workspaceEventManager) {
+                                   WorkspaceEventManager workspaceEventManager,
+                                   SessionParticipantRepository sessionParticipants) {
         this.scheduledTaskRepository = scheduledTaskRepository;
         this.dispatcher = dispatcher;
         this.workspaceService = workspaceService;
@@ -114,6 +117,7 @@ public class ScheduledTaskApiService {
         this.userRepository = userRepository;
         this.auditLogger = auditLogger;
         this.workspaceEventManager = workspaceEventManager;
+        this.sessionParticipants = sessionParticipants;
     }
 
     /** 读 DTO createdBy（0486 #9：principal 名 + 类型 human/agent）。 */
@@ -229,10 +233,16 @@ public class ScheduledTaskApiService {
             }
             UUID sessionId = parseUuid(request.targetSessionId(), "INVALID_REQUEST");
             Session session = sessionService.requireCurrent(sessionId.toString(), userId, workspaceId);
-            if (creator.agentPrincipalId() != null
-                    && !creator.agentPrincipalId().toString().equals(session.getAgentPrincipalId())) {
-                throw new CpApiException(HttpStatus.FORBIDDEN, "FORBIDDEN",
-                        "session_wakeup target must be a Session of the creating agent principal");
+            // PLAN-0689 A2c: an agent-created wakeup target must be a Session of the creating
+            // principal, read off the target's PRIMARY participant row. A missing PRIMARY matches
+            // no creator and therefore rejects (gate class: fail-closed, never a column fallback).
+            // Human creators carry no principal, so the check (and the read) stays skipped for them.
+            if (creator.agentPrincipalId() != null) {
+                UUID targetPrincipalId = sessionParticipants.primaryPrincipalId(session.getId()).orElse(null);
+                if (!creator.agentPrincipalId().equals(targetPrincipalId)) {
+                    throw new CpApiException(HttpStatus.FORBIDDEN, "FORBIDDEN",
+                            "session_wakeup target must be a Session of the creating agent principal");
+                }
             }
             targetSessionId = sessionId.toString();
             prompt = request.prompt();

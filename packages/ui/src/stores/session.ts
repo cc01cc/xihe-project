@@ -41,6 +41,7 @@ function toSession(record: ApiSession): Session {
         createdAt: record.createdAt ?? now,
         updatedAt: record.updatedAt ?? record.createdAt ?? now,
         workspaceId: record.workspaceId,
+        // PLAN-0689 D-54: read-only projection of the Session PRIMARY participant; never written back.
         agentPrincipalId: record.agentPrincipalId ?? null,
         kind: record.kind ?? null,
         spawnedFromSessionId: record.spawnedFromSessionId ?? null,
@@ -244,12 +245,6 @@ export const useSessionStore = defineStore("session", () => {
         currentSessionId.value = id;
     }
 
-    function setSessionAgentPrincipal(id: string, agentPrincipalId: string) {
-        sessions.value = sessions.value.map((session) =>
-            session.id === id ? { ...session, agentPrincipalId } : session,
-        );
-    }
-
     function clearCurrentSession() {
         currentSessionId.value = null;
     }
@@ -328,7 +323,6 @@ export const useSessionStore = defineStore("session", () => {
         deleteSession,
         renameSession,
         selectSession,
-        setSessionAgentPrincipal,
         clearCurrentSession,
         updateSessionTitle,
         updateSession,

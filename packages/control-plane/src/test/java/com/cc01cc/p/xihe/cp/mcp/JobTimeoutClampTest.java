@@ -120,7 +120,8 @@ class JobTimeoutClampTest {
                 mock(com.cc01cc.p.xihe.cp.credentials.CredentialLeaseService.class),
                 mock(com.cc01cc.p.xihe.cp.skill.SkillReadService.class),
                 new com.cc01cc.p.xihe.cp.status.BuildVersion(),
-                mock(com.cc01cc.p.xihe.cp.chat.DelegationBudgetService.class)
+                mock(com.cc01cc.p.xihe.cp.chat.DelegationBudgetService.class),
+                mock(com.cc01cc.p.xihe.cp.chat.ChatRunStatusReadService.class)
         );
         ReflectionTestUtils.setField(controller, "runtimeBaseUrl", "http://localhost:9091");
 

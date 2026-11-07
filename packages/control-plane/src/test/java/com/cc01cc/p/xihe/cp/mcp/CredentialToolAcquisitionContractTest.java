@@ -184,17 +184,19 @@ class CredentialToolAcquisitionContractTest extends AbstractIntegrationTest {
 
         Session session = new Session(workspaceId, userId, "acquire-contract-session");
         session.setId(UUID.randomUUID());
-        session.setAgentPrincipalId(principalId.toString());
         session.setAgentPermissionsSnapshot(credentialUseSnapshot(leaseCredential, revealCredential));
         session.setApprovalMode("manual");
         sessionRepository.saveAndFlush(session);
+        bindPrimaryParticipant(session.getId().toString(), principalId.toString());
         sessionId = session.getId().toString();
 
         runId = UUID.randomUUID().toString();
-        chatRunRepository.saveAndFlush(new ChatRun(
+        ChatRun run = new ChatRun(
                 runId, sessionId, userId, workspaceId,
                 "acquire-contract-" + runId, "acquire-contract-hash",
-                "provider", "model", "workspace", "running"));
+                "provider", "model", "workspace", "running");
+        run.setAgentPrincipalId(principalId);
+        chatRunRepository.saveAndFlush(run);
     }
 
     @AfterEach

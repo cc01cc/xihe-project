@@ -3,6 +3,7 @@ package com.cc01cc.p.xihe.cp.service;
 import com.cc01cc.p.xihe.cp.audit.AuditLogger;
 import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
+import com.cc01cc.p.xihe.cp.policy.AccessScope;
 import com.cc01cc.p.xihe.cp.repository.AgentPrincipalRepository;
 import com.cc01cc.p.xihe.cp.repository.WorkspaceRepository;
 import com.cc01cc.p.xihe.cp.skill.Skill;
@@ -32,12 +33,13 @@ import java.util.function.Predicate;
  * this surface is gated by {@code MANAGE_AGENT_PRINCIPALS}/{@code MANAGE_WORKSPACE_AGENTS} (the N1
  * decision). Sharing the table while keeping the authorization doors separate is the point.</p>
  *
- * <p>v1 contract (D3(a)): a principal-level skill binding is always <b>instance scope</b>
- * ({@code scope_type='instance'}, {@code scope_id=null}); the caller cannot choose a workspace scope
- * through this endpoint, so an agent cannot be handed a skillset that only makes sense inside one
- * workspace through a path that forgot to check that workspace. A workspace-private skill definition
- * is therefore not bindable here: visible ones answer {@code 400 SKILL_DEFINITION_OUT_OF_SCOPE},
- * invisible ones answer the same {@code 404 SKILL_NOT_FOUND} as a missing skill (no existence leak).</p>
+ * <p>PLAN-0680: the binding is dual-axis. The scope is still <b>server-derived</b>, never accepted
+ * from the caller: a workspace authorization context writes {@code workspace(caller.workspaceId)},
+ * while its absence writes {@code instance}. A workspace-private definition is bindable only inside
+ * its own workspace; any other workspace's private definition is indistinguishable from a missing
+ * skill ({@code 404 SKILL_NOT_FOUND}, no existence leak). The former
+ * {@code 400 SKILL_DEFINITION_OUT_OF_SCOPE} is retired on this surface only — the user-facing
+ * {@code /api/v1/skill-bindings} surface still returns it.</p>
  */
 @Service
 public class AgentPrincipalSkillBindingService {
@@ -67,6 +69,7 @@ public class AgentPrincipalSkillBindingService {
     /** One binding as the API shows it (UI needs source + size, never the skill body). */
     public record AgentSkillBindingView(UUID bindingId, UUID principalId, UUID skillId, String name,
                                         String description, String sourceType, String sourceName,
+                                        String scopeType, UUID scopeId, String scopeName,
                                         int tokenEstimate, UUID createdByUserId, Instant createdAt) {
     }
 
@@ -92,62 +95,111 @@ public class AgentPrincipalSkillBindingService {
     }
 
     /**
-     * Bind one skill definition to one agent principal (instance scope, server-decided).
+     * Bind one skill definition to one agent principal at the server-derived scope.
      *
-     * @param canSeeWorkspace visibility probe for a workspace-private definition; the caller resolves
-     *                        it from the same request authority it used for the surface gate.
+     * @param authWorkspaceId   the authorizing workspace context, or {@code null} for instance scope
+     * @param instanceTier      whether the caller holds the instance-tier management atom
+     * @param canManageWorkspace re-check of the workspace atom, so a direct service caller cannot
+     *                           write a workspace row by passing an arbitrary workspace id
      */
     @Transactional
     public AgentSkillBindingView bind(UUID principalId, UUID skillId, UUID actorUserId,
-                                      String auditWorkspaceId, Predicate<UUID> canSeeWorkspace) {
+                                      UUID authWorkspaceId, boolean instanceTier,
+                                      Predicate<UUID> canManageWorkspace) {
         requirePrincipal(principalId);
+        AccessScope scope = deriveScope(authWorkspaceId, instanceTier, canManageWorkspace);
         Skill skill = skills.findById(skillId).orElseThrow(
                 AgentPrincipalSkillBindingService::skillNotFound);
-        if (skill.getDefinitionScopeId() != null) {
-            if (!canSeeWorkspace.test(skill.getDefinitionScopeId())) {
-                throw skillNotFound();
-            }
-            throw new CpApiException(HttpStatus.BAD_REQUEST, "SKILL_DEFINITION_OUT_OF_SCOPE",
-                    "an agent principal skill binding is instance-scope; "
-                            + "a workspace-private skill definition cannot be bound to a principal");
+        // Fixed-order visibility + atom-source restriction: a private definition participates only
+        // in its own workspace. Anything else — including a workspace context absent — is a 404 so
+        // the caller cannot probe another workspace's skill library (the old visible/400,
+        // invisible/404 split leaked existence).
+        if (skill.getDefinitionScopeId() != null
+                && !skill.getDefinitionScopeId().equals(scope.id())) {
+            throw skillNotFound();
         }
         if (bindings.countExact(skillId, SkillBinding.SUBJECT_AGENT_PRINCIPAL, principalId,
-                SkillBinding.SCOPE_INSTANCE, null) > 0) {
+                scope.type(), scope.id()) > 0) {
             throw new CpApiException(HttpStatus.CONFLICT, "SKILL_BINDING_EXISTS",
-                    "this agent principal already has that skill binding");
+                    "this agent principal already has that skill binding in that scope");
         }
         SkillBinding row = new SkillBinding();
         row.setSkillId(skillId);
         row.setSubjectType(SkillBinding.SUBJECT_AGENT_PRINCIPAL);
         row.setSubjectId(principalId);
-        row.setScopeType(SkillBinding.SCOPE_INSTANCE);
-        row.setScopeId(null);
+        row.setScopeType(scope.type());
+        row.setScopeId(scope.id());
         row.setCreatedByUserId(actorUserId);
         SkillBinding saved = bindings.saveAndFlush(row);
-        audit.recordDurableChange(actorUserId.toString(), auditWorkspaceId, AUDIT_BIND, RESOURCE_TYPE,
-                saved.getId().toString(),
-                auditDetail(skillId, saved.getId(), principalId, "bound"));
-        logger.info("[POLICY] event=agent_principal_skill_bind principalId={} skillId={} actor={}",
-                principalId, skillId, actorUserId);
+        audit.recordDurableChange(actorUserId.toString(), auditWorkspaceId(scope), AUDIT_BIND,
+                RESOURCE_TYPE, saved.getId().toString(),
+                auditDetail(skillId, saved.getId(), principalId, scope.type(), scope.id(), "bound"));
+        logger.info("[POLICY] event=agent_principal_skill_bind principalId={} skillId={} "
+                        + "scopeType={} scopeId={} actor={}",
+                principalId, skillId, scope.type(), scope.id(), actorUserId);
         return viewOf(saved, skill);
     }
 
     @Transactional
-    public void unbind(UUID principalId, UUID bindingId, UUID actorUserId, String auditWorkspaceId) {
+    public void unbind(UUID principalId, UUID bindingId, UUID actorUserId,
+                       UUID authWorkspaceId, boolean instanceTier) {
         SkillBinding row = bindings.findById(bindingId)
                 .filter(candidate -> SkillBinding.SUBJECT_AGENT_PRINCIPAL.equals(
                         candidate.getSubjectType()))
                 .filter(candidate -> principalId.equals(candidate.getSubjectId()))
-                .filter(candidate -> SkillBinding.SCOPE_INSTANCE.equals(candidate.getScopeType()))
+                .filter(candidate -> mayDeleteAtRowScope(candidate, authWorkspaceId, instanceTier))
                 .orElseThrow(() -> new CpApiException(HttpStatus.NOT_FOUND, "SKILL_BINDING_NOT_FOUND",
                         "Skill binding not found"));
         bindings.delete(row);
         bindings.flush();
-        audit.recordDurableChange(actorUserId.toString(), auditWorkspaceId, AUDIT_UNBIND, RESOURCE_TYPE,
-                bindingId.toString(),
-                auditDetail(row.getSkillId(), bindingId, principalId, "unbound"));
-        logger.info("[POLICY] event=agent_principal_skill_unbind principalId={} bindingId={} actor={}",
-                principalId, bindingId, actorUserId);
+        audit.recordDurableChange(actorUserId.toString(),
+                authWorkspaceId == null ? null : authWorkspaceId.toString(),
+                AUDIT_UNBIND, RESOURCE_TYPE, bindingId.toString(),
+                auditDetail(row.getSkillId(), bindingId, principalId, row.getScopeType(),
+                        row.getScopeId(), "unbound"));
+        logger.info("[POLICY] event=agent_principal_skill_unbind principalId={} bindingId={} "
+                        + "scopeType={} scopeId={} actor={}",
+                principalId, bindingId, row.getScopeType(), row.getScopeId(), actorUserId);
+    }
+
+    /**
+     * Instance tier may delete any row. A workspace-tier caller may delete only a workspace row in
+     * the exact authorizing workspace; an instance row and another workspace's row are invisible.
+     */
+    private static boolean mayDeleteAtRowScope(SkillBinding row, UUID authWorkspaceId,
+                                               boolean instanceTier) {
+        if (instanceTier) {
+            return true;
+        }
+        // 404 防存在性泄露；角色面 403 的差异见 design.md:171（R-10 只本面 retired）
+        return SkillBinding.SCOPE_WORKSPACE.equals(row.getScopeType())
+                && row.getScopeId() != null
+                && row.getScopeId().equals(authWorkspaceId);
+    }
+
+    /**
+     * The same gap-2 decision as the role surface: a workspace context means workspace scope,
+     * otherwise instance scope. The client never supplies a scope, so it cannot move a binding into
+     * a workspace it cannot manage.
+     */
+    private AccessScope deriveScope(UUID authWorkspaceId, boolean instanceTier,
+                                    Predicate<UUID> canManageWorkspace) {
+        if (authWorkspaceId == null) {
+            if (!instanceTier) {
+                throw new CpApiException(HttpStatus.FORBIDDEN, "FORBIDDEN",
+                        "binding at the instance scope requires MANAGE_AGENT_PRINCIPALS");
+            }
+            return AccessScope.instance();
+        }
+        if (!instanceTier && !canManageWorkspace.test(authWorkspaceId)) {
+            throw new CpApiException(HttpStatus.FORBIDDEN, "FORBIDDEN",
+                    "MANAGE_WORKSPACE_AGENTS in the authorizing workspace is required");
+        }
+        return AccessScope.workspace(authWorkspaceId);
+    }
+
+    private static String auditWorkspaceId(AccessScope scope) {
+        return scope.id() == null ? null : scope.id().toString();
     }
 
     private void requirePrincipal(UUID principalId) {
@@ -163,8 +215,13 @@ public class AgentPrincipalSkillBindingService {
         String sourceName = workspaceDefinition
                 ? workspaces.findById(skill.getDefinitionScopeId()).map(w -> w.getName()).orElse(null)
                 : null;
+        String scopeName = SkillBinding.SCOPE_WORKSPACE.equals(row.getScopeType())
+                && row.getScopeId() != null
+                ? workspaces.findById(row.getScopeId()).map(w -> w.getName()).orElse(null)
+                : null;
         return new AgentSkillBindingView(row.getId(), row.getSubjectId(), skill.getId(), skill.getName(),
                 skill.getDescription(), workspaceDefinition ? "workspace" : "personal", sourceName,
+                row.getScopeType(), row.getScopeId(), scopeName,
                 skill.getBodyTokensEst(), row.getCreatedByUserId(), row.getCreatedAt());
     }
 
@@ -177,8 +234,11 @@ public class AgentPrincipalSkillBindingService {
                 "Agent principal not found");
     }
 
-    private static String auditDetail(UUID skillId, UUID bindingId, UUID principalId, String result) {
+    private static String auditDetail(UUID skillId, UUID bindingId, UUID principalId,
+                                      String scopeType, UUID scopeId, String result) {
         return "{\"skillId\":\"" + skillId + "\",\"bindingId\":\"" + bindingId
-                + "\",\"principalId\":\"" + principalId + "\",\"result\":\"" + result + "\"}";
+                + "\",\"principalId\":\"" + principalId + "\",\"scopeType\":\"" + scopeType
+                + "\",\"scopeId\":" + (scopeId == null ? "null" : "\"" + scopeId + "\"")
+                + ",\"result\":\"" + result + "\"}";
     }
 }

@@ -14,7 +14,6 @@ import {
     api,
     type ApiFollowUpQueueSnapshot,
     type ApiSessionMessage,
-    type WorkspaceAgentBinding,
 } from "../../../../composables/api";
 import { parseRawToParts } from "../composables/useStreamParser.ts";
 import { mergeHistoryToolCalls } from "./jobSummaryToolCalls.ts";
@@ -38,7 +37,6 @@ import FollowUpQueuePanel from "./FollowUpQueuePanel.vue";
 import GuidancePanel from "./GuidancePanel.vue";
 import RevertPreviewDialog from "./RevertPreviewDialog.vue";
 import RevertResultDialog from "./RevertResultDialog.vue";
-import BaseModal from "../../../../components/shared/BaseModal.vue";
 import { useSessionBranches } from "../composables/useSessionBranches";
 import { useComposeDeeplink } from "../composables/useComposeDeeplink";
 import {
@@ -171,9 +169,6 @@ watch(
     { flush: "post" },
 );
 const isStreaming = computed(() => chatStore.isStreaming(props.sessionId));
-const currentSession = computed(() =>
-    sessionStore.sessions.find((session) => session.id === props.sessionId),
-);
 // PLAN-0626 M2: the branch projection is shared with the dock's `context` panel (N10:
 // one resolver per semantic), so the depth-indented labels no longer live here.
 const { selectedBranchId, branchOptions, branchLabels, mainBranchId } = useSessionBranches(
@@ -225,20 +220,7 @@ const renderedMessages = computed(() =>
     }),
 );
 
-const showPrincipalBinding = ref(false),
-    principalChoices = ref<WorkspaceAgentBinding[]>([]);
-const selectedPrincipalId = ref("");
-const pendingSend = ref<{
-    content: string;
-    attachments?: AttachmentFile[];
-    branchId: string;
-    /** PLAN-0630 M5b (D30-14)：旁听名单随挂起的发送一起保留，绑定 principal 后继续透传。 */
-    cc?: string[];
-    /** PLAN-0665 M2：TO 目标集合同样随挂起发送保留。 */
-    toParticipantIds?: string[];
-} | null>(null);
-const loadingPrincipalChoices = ref(false),
-    creatingBranchForMessageId = ref<string | null>(null);
+const creatingBranchForMessageId = ref<string | null>(null);
 const pendingBranchKeys = new Map<string, string>();
 let messageLoadRequestId = 0;
 
@@ -846,39 +828,14 @@ async function handleSend(
         return;
     }
 
-    const selectedPrincipal = currentSession.value?.agentPrincipalId;
-    if (selectedPrincipal) {
-        await submitMessage({
-            content,
-            attachments,
-            agentPrincipalId: selectedPrincipal,
-            branchId,
-            asParticipantId: speakAsParticipantId,
-            cc,
-            toParticipantIds,
-        });
-        return;
-    }
-
-    const workspaceId = currentSession.value?.workspaceId ?? authStore.currentWorkspaceId;
-    if (!workspaceId || loadingPrincipalChoices.value) return;
-    loadingPrincipalChoices.value = true;
-    try {
-        principalChoices.value = await api.getWorkspaceAgents(workspaceId);
-        if (principalChoices.value.length === 0) {
-            toast.error(t("workspace.noBoundAgent"));
-            return;
-        }
-        pendingSend.value = { content, attachments, branchId, cc, toParticipantIds };
-        selectedPrincipalId.value = "";
-        showPrincipalBinding.value = true;
-    } catch (cause) {
-        const message = cause instanceof ApiError ? cause.message : t("workspace.agentLoadFailed");
-        logger.error("Failed to load Workspace Agents for Session binding", cause);
-        toast.error(message);
-    } finally {
-        loadingPrincipalChoices.value = false;
-    }
+    await submitMessage({
+        content,
+        attachments,
+        branchId,
+        asParticipantId: speakAsParticipantId,
+        cc,
+        toParticipantIds,
+    });
 }
 
 async function handleFollowUpQueue(content: string, attachments?: AttachmentFile[]) {
@@ -1047,7 +1004,6 @@ function onInputSend(
 async function submitMessage(input: {
     content: string;
     attachments?: AttachmentFile[];
-    agentPrincipalId: string;
     branchId: string;
     /** D23-27：以某个参与者身份发言（"代发"）。仅当 `capabilities.speakAs` 为真时才会有值。 */
     asParticipantId?: string;
@@ -1056,15 +1012,7 @@ async function submitMessage(input: {
     /** PLAN-0665 M2（D4）：TO 目标集合；每个目标各自起 run。 */
     toParticipantIds?: string[];
 }) {
-    const {
-        content,
-        attachments,
-        agentPrincipalId,
-        branchId,
-        asParticipantId,
-        cc,
-        toParticipantIds,
-    } = input;
+    const { content, attachments, branchId, asParticipantId, cc, toParticipantIds } = input;
     if (!authStore.canWriteWorkspace) {
         toast.error(t("workspace.viewerReadOnly"));
         return;
@@ -1078,14 +1026,11 @@ async function submitMessage(input: {
         branchId,
         attachments: fileIds,
         toolMode: props.toolMode,
-        agentPrincipalId,
         asParticipantId,
         cc,
         toParticipantIds,
     });
     if (!result) return;
-
-    sessionStore.setSessionAgentPrincipal(id, agentPrincipalId);
 
     // Keep this run's client-side transcript through the post-terminal history refresh: the
     // durable message projection can lag the terminal SSE event (see chat store
@@ -1120,22 +1065,6 @@ async function submitMessage(input: {
             : {}),
     });
     inputComponent.value?.clearDraft();
-}
-
-async function confirmPrincipalBinding() {
-    if (!pendingSend.value || !selectedPrincipalId.value) return;
-    const pending = pendingSend.value,
-        principalId = selectedPrincipalId.value;
-    pendingSend.value = null;
-    showPrincipalBinding.value = false;
-    await submitMessage({
-        content: pending.content,
-        attachments: pending.attachments,
-        agentPrincipalId: principalId,
-        branchId: pending.branchId,
-        cc: pending.cc,
-        toParticipantIds: pending.toParticipantIds,
-    });
 }
 
 async function handleRetry(messageId: string) {
@@ -1575,58 +1504,6 @@ watch(
             @retry="retryProviderBindingGuide"
             @settings="openProviderSettings"
         />
-        <BaseModal
-            :show="showPrincipalBinding"
-            :title="t('workspace.chooseAgentTitle')"
-            @close="
-                showPrincipalBinding = false;
-                pendingSend = null;
-            "
-        >
-            <div class="space-y-4">
-                <label for="chat-agent-principal" class="block text-sm text-foreground">
-                    {{ t("workspace.chooseAgentLabel") }}
-                </label>
-                <select
-                    id="chat-agent-principal"
-                    v-model="selectedPrincipalId"
-                    data-testid="chat-agent-principal-select"
-                    class="w-full rounded-md border bg-background px-3 py-2 text-sm"
-                >
-                    <option value="" disabled>{{ t("workspace.chooseAgentPlaceholder") }}</option>
-                    <option
-                        v-for="agent in principalChoices"
-                        :key="agent.principalId"
-                        :value="agent.principalId"
-                    >
-                        {{ agent.name
-                        }}<template v-if="agent.templateName"> · {{ agent.templateName }}</template>
-                    </option>
-                </select>
-                <div class="flex justify-end gap-2">
-                    <button
-                        type="button"
-                        class="rounded-md border px-3 py-2 text-sm"
-                        @click="
-                            showPrincipalBinding = false;
-                            pendingSend = null;
-                        "
-                    >
-                        {{ t("workspace.cancel") }}
-                    </button>
-                    <button
-                        type="button"
-                        data-testid="chat-bind-agent-and-send"
-                        class="rounded-md bg-action px-3 py-2 text-sm text-action-foreground disabled:opacity-50"
-                        :disabled="!selectedPrincipalId"
-                        @click="confirmPrincipalBinding"
-                    >
-                        {{ t("workspace.bindAgentAndSend") }}
-                    </button>
-                </div>
-            </div>
-        </BaseModal>
-
         <SSEStream
             :session-id="sessionId"
             :tool-mode="toolMode"

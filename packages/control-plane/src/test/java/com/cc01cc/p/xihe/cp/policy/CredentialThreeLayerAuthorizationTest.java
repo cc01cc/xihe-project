@@ -6,6 +6,7 @@ import com.cc01cc.p.xihe.cp.AbstractIntegrationTest;
 import com.cc01cc.p.xihe.cp.auth.AuthResponse;
 import com.cc01cc.p.xihe.cp.auth.AuthService;
 import com.cc01cc.p.xihe.cp.auth.RegisterRequest;
+import com.cc01cc.p.xihe.cp.config.CpApiException;
 import com.cc01cc.p.xihe.cp.entity.AgentPrincipal;
 import com.cc01cc.p.xihe.cp.entity.AuthorizationGrant;
 import com.cc01cc.p.xihe.cp.entity.Session;
@@ -31,15 +32,17 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * PLAN-0496 V1 (round-4): credential evaluation across the three snapshot layers —
  * {@code {credential_use, credential:<id>}} must be rejected when any one of the
  * principal grant, the Workspace binding cap or the Session snapshot lacks the atom,
- * pass when all three carry it, and the spawn-derived cap must narrow it away when
- * the parent snapshot lacks it.
+ * and pass when all three carry it. Spawn child caps come from the D-49 active-binding
+ * gate ({@code resolveCapFor}), never from a now-dropped Session identity column.
  */
 class CredentialThreeLayerAuthorizationTest extends AbstractIntegrationTest {
 
@@ -65,17 +68,25 @@ class CredentialThreeLayerAuthorizationTest extends AbstractIntegrationTest {
     @AfterEach
     void cleanFixtures() {
         sessionIds.forEach(sessionRepository::deleteById);
-        if (principalId != null) {
-            workspaceAgentRepository.deleteAll(workspaceAgentRepository.findByIdPrincipalId(principalId));
-            grantRepository.deleteAll(grantRepository.findBySubjectTypeAndSubjectId(
-                    GrantPrincipalPathResolver.AGENT_PRINCIPAL, principalId));
-            agentPrincipalRepository.deleteById(principalId);
-        }
         if (userId != null) {
             UUID userUuid = UUID.fromString(userId);
+            for (AgentPrincipal principal : agentPrincipalRepository.findAll()) {
+                boolean mine = userId.equals(principal.getCreatedByUserId())
+                        || userUuid.equals(principal.getOwnerUserId());
+                if (!mine) {
+                    continue;
+                }
+                workspaceAgentRepository.deleteAll(
+                        workspaceAgentRepository.findByIdPrincipalId(principal.getId()));
+                grantRepository.deleteAll(grantRepository.findBySubjectTypeAndSubjectId(
+                        GrantPrincipalPathResolver.AGENT_PRINCIPAL, principal.getId()));
+                agentPrincipalRepository.deleteById(principal.getId());
+            }
             grantRepository.deleteAll(grantRepository.findBySubjectTypeAndSubjectId(
                     GrantPrincipalPathResolver.USER, userUuid));
             if (workspaceId != null) {
+                workspaceAgentRepository.deleteAll(
+                        workspaceAgentRepository.findByIdWorkspaceId(workspaceId));
                 workspaceFixture.unbindWorkspace(workspaceId);
                 workspaceRepository.deleteById(workspaceId);
             }
@@ -113,21 +124,19 @@ class CredentialThreeLayerAuthorizationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void spawnDerivedCapNarrowsCredentialAtomsMissingFromTheParentSnapshot() {
+    void spawnChildCapGateRejectsPrincipalWithoutAnActiveWorkspaceBinding() {
         String resource = "credential:" + UUID.randomUUID();
         ArrayNode credentialAtom = credentialAtom("credential_use", resource);
         registerWorkspacePrincipalAndSession(credentialAtom);
-        agentPrincipalService.setWorkspaceCap(userId, workspaceId, principalId, credentialAtom);
 
-        JsonNode narrowed = agentPrincipalService.deriveSpawnChildCap(atomsOf("read"),
-                principalId.toString(), workspaceId.toString());
-        assertFalse(narrowed.toString().contains("credential_use"),
-                "spawn derivation must drop the credential atom missing from the parent snapshot");
+        AgentPrincipal unbound = agentPrincipalService.createPrincipal(userId, "unboundAgent",
+                null, snapshotOf("[{\"actionClass\":\"read\"}]"));
+        CpApiException refused = assertThrows(CpApiException.class,
+                () -> agentPrincipalService.resolveCapFor(
+                        unbound.getId().toString(), workspaceId.toString()));
 
-        JsonNode carried = agentPrincipalService.deriveSpawnChildCap(credentialAtom,
-                principalId.toString(), workspaceId.toString());
-        assertTrue(carried.toString().contains("credential_use"),
-                "spawn derivation must carry the credential atom when the parent snapshot has it");
+        assertEquals(org.springframework.http.HttpStatus.FORBIDDEN, refused.getStatus(),
+                "spawn child cap must come from the D-49 active-binding gate, never a Session column");
     }
 
     private Session registerWorkspacePrincipalAndSession(ArrayNode sessionSnapshot) {
@@ -176,9 +185,12 @@ class CredentialThreeLayerAuthorizationTest extends AbstractIntegrationTest {
 
         Session session = new Session(workspaceId.toString(), userId, "cred-layer-session");
         session.setId(UUID.randomUUID());
-        session.setAgentPrincipalId(principalId.toString());
         session.setAgentPermissionsSnapshot(sessionSnapshot);
         sessionRepository.saveAndFlush(session);
+        // PLAN-0689 A7: grant evaluation resolves the Session's agent path through the
+        // PRIMARY participant row; the dropped sessions.agent_principal_id column cannot
+        // stand in for it.
+        bindPrimaryParticipant(session.getId().toString(), principalId.toString());
         sessionIds.add(session.getId());
         return session;
     }

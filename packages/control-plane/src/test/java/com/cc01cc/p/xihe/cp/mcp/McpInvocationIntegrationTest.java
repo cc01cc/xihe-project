@@ -112,8 +112,9 @@ class McpInvocationIntegrationTest extends AbstractIntegrationTest {
         sessionId = UUID.randomUUID().toString();
         Session session = new Session(workspaceId, userId, "MCP invocation test session");
         session.setId(UUID.fromString(sessionId));
-        session.setAgentPrincipalId(principalId.toString());
+        session.setAgentPermissionsSnapshot(objectMapper.createArrayNode());
         sessionRepository.save(session);
+        bindPrimaryParticipant(sessionId, principalId.toString());
 
         runId = UUID.randomUUID().toString();
         chatRunRepository.saveAndFlush(new ChatRun(runId, sessionId, userId, workspaceId,

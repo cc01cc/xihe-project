@@ -278,7 +278,6 @@ test.describe("@host PLAN-0658 R1 多人类账户", () => {
                 sessionId,
                 branchId: rootBranchId,
                 content,
-                agentPrincipalId: principalId,
             },
         });
         expect(sent.status(), await sent.text()).toBe(202);
@@ -375,7 +374,6 @@ test.describe("@host PLAN-0658 R1 多人类账户", () => {
                 sessionId,
                 branchId: rootBranchId,
                 content: `@${member.displayName} 请看这条 ${NONCE}`,
-                agentPrincipalId: principalId,
             },
         });
         expect(sent.status(), await sent.text()).toBe(202);
@@ -396,7 +394,6 @@ test.describe("@host PLAN-0658 R1 多人类账户", () => {
                 sessionId,
                 branchId: rootBranchId,
                 content: `R1 CC ${NONCE}`,
-                agentPrincipalId: principalId,
                 cc: [memberParticipantId],
             },
         });

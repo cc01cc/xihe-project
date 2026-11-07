@@ -204,10 +204,10 @@ class SessionWorkspaceBindingNegativeTest extends AbstractH2Test {
         sessionA = UUID.randomUUID().toString();
         Session session = new Session(workspaceA, userId, "PLAN-0348 session");
         session.setId(UUID.fromString(sessionA));
-        session.setAgentPrincipalId(principal.getId().toString());
         session.setAgentPermissionsSnapshot(permissions.deepCopy());
         ChatBindingTestSupport.bind(session, chatConnection, apiRequestTemplates);
         sessionRepository.save(session);
+        bindPrimaryParticipant(sessionA, principal.getId().toString());
         branchId = branchPathService.ensureRootBranchId(sessionA);
     }
 

@@ -172,13 +172,13 @@ class SessionPrimaryParticipantTest extends AbstractIntegrationTest {
         String branchId = branchPathService.ensureRootBranchId(session.getId().toString());
 
         var primaryAnswered = chatSubmissionService.create(UUID.randomUUID().toString(), session.getId().toString(), ownerId,
-                workspaceId, branchId, principalId, "idem-r1-a", "a".repeat(64), connection.getProviderId(), "gpt-test",
+                workspaceId, branchId, "idem-r1-a", "a".repeat(64), connection.getProviderId(), "gpt-test",
                 "none", connection.getId().toString(), connection.getRevision(), "lease-r1", "req-r1-a",
                 "hi", null, java.util.List.of(), null);
         primaryAnswered.run().setStatus("succeeded");
         chatRuns.saveAndFlush(primaryAnswered.run());
         var humanAnswered = chatSubmissionService.create(UUID.randomUUID().toString(), session.getId().toString(), ownerId,
-                workspaceId, branchId, principalId, "idem-r1-b", "b".repeat(64), connection.getProviderId(), "gpt-test",
+                workspaceId, branchId, "idem-r1-b", "b".repeat(64), connection.getProviderId(), "gpt-test",
                 "none", connection.getId().toString(), connection.getRevision(), "lease-r1", "req-r1-b",
                 "hi", null, java.util.List.of(), human.getId().toString());
 

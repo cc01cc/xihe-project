@@ -78,14 +78,17 @@ public class DelegationBudgetService {
     public DelegationBudgetService(SessionRepository sessionRepository,
                                    ChatRunRepository chatRunRepository,
                                    AgentPrincipalService agentPrincipalService,
-                                   ConfigService configService) {
+                                   ConfigService configService,
+                                   com.cc01cc.p.xihe.cp.repository.SessionParticipantRepository
+                                           participantRepository) {
         this.sessionRepository = sessionRepository;
         this.chatRunRepository = chatRunRepository;
         this.agentPrincipalService = agentPrincipalService;
         this.configService = configService;
         // Stateless walk component; constructed in place so the service's constructor contract (and
         // every existing unit test wiring) stays unchanged.
-        this.chainWalker = new DelegationChainWalker(sessionRepository, chatRunRepository);
+        this.chainWalker = new DelegationChainWalker(sessionRepository, chatRunRepository,
+                participantRepository);
     }
 
     /**
@@ -150,9 +153,9 @@ public class DelegationBudgetService {
         Walk walk = walkToRoot(parentSession);
         DelegationRefusedException.DelegationAuditContext audit = new DelegationRefusedException
                 .DelegationAuditContext(walk.root().getId().toString(), parentSession.getId().toString(),
-                parentRun.getId().toString(), toolCallId, walk.root().getAgentPrincipalId());
+                parentRun.getId().toString(), toolCallId, walk.rootPrincipalId());
 
-        String rootPrincipalId = walk.root().getAgentPrincipalId();
+        String rootPrincipalId = walk.rootPrincipalId();
         if (rootPrincipalId == null) {
             // Not reachable through the product surface (a session always carries a principal once it
             // has runs), but the gate fails closed instead of assuming "no budget".
@@ -201,8 +204,8 @@ public class DelegationBudgetService {
         return effectiveLimits(rootPrincipalId, audit).maxDepth();
     }
 
-    /** Root + depth of the parent session (root depth = 0). */
-    private record Walk(Session root, int depth) {}
+    /** Root + depth of the parent session (root depth = 0); the root identity is the walk's reading. */
+    private record Walk(Session root, int depth, String rootPrincipalId) {}
 
     /**
      * T2.7: the walk itself now lives in {@link DelegationChainWalker} (shared with the wake chain).
@@ -220,7 +223,7 @@ public class DelegationBudgetService {
         }
         Session root = sessionRepository.findById(walk.hops().getLast().nodeId())
                 .orElseThrow(() -> treeBroken(parentSession));
-        return new Walk(root, walk.spawnHops());
+        return new Walk(root, walk.spawnHops(), walk.hops().getLast().principalId());
     }
 
     private static DelegationRefusedException ancestorRefused(
@@ -368,7 +371,7 @@ public class DelegationBudgetService {
     public DelegationUsage usageFor(Session session) {
         Walk walk = walkToRoot(session);
         Session root = walk.root();
-        String rootPrincipalId = root.getAgentPrincipalId();
+        String rootPrincipalId = walk.rootPrincipalId();
         DelegationRefusedException.DelegationAuditContext audit = new DelegationRefusedException
                 .DelegationAuditContext(root.getId().toString(), session.getId().toString(), null, null,
                 rootPrincipalId);
