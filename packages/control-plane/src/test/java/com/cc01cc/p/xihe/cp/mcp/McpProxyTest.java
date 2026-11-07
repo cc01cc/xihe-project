@@ -281,7 +281,8 @@ class McpProxyTest {
                 mock(com.cc01cc.p.xihe.cp.skill.SkillReadService.class),
                 new com.cc01cc.p.xihe.cp.status.BuildVersion(),
                 delegationBudgetService,
-                chatRunStatusReadService
+                chatRunStatusReadService,
+                mock(com.cc01cc.p.xihe.cp.runtime.RuntimeCheckpointClient.class)
         );
         ReflectionTestUtils.setField(controller, "runtimeBaseUrl", "http://localhost:9091");
 

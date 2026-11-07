@@ -55,6 +55,21 @@ public class RuntimeCheckpointClient {
     /** Blob reads are capped at 1 MiB by the Runtime; a plain git read. */
     private static final Duration BLOB_TIMEOUT = Duration.ofSeconds(5);
     private static final Duration GIT_STATUS_TIMEOUT = Duration.ofSeconds(5);
+    /**
+     * PLAN-0686 G8: the working-tree diff has its own budget instead of reusing the 5 s status
+     * timeout. The Runtime caps the response at 256 KiB, but producing it still walks the change
+     * set of a possibly large work tree, so it is the expensive half of the pair. 15 s leaves room
+     * for that first cold diff while staying far below the Runtime engine's own
+     * {@code GIT_CALL_TIMEOUT} (120 s) — that constant is the ceiling the Runtime will not exceed,
+     * not a target the CP read should wait for.
+     */
+    private static final Duration GIT_DIFF_TIMEOUT = Duration.ofSeconds(15);
+    /**
+     * PLAN-0686 G8: the commit log is bounded by {@code limit} (1..=200), so the Runtime runs one
+     * bounded rev-list walk. 10 s covers a cold repository without inheriting the diff budget; the
+     * point of a separate constant is that the two reads fail on their own budgets.
+     */
+    private static final Duration GIT_LOG_TIMEOUT = Duration.ofSeconds(10);
     private static final Duration GC_TIMEOUT = Duration.ofSeconds(10);
     private static final Duration CLEANUP_TIMEOUT = Duration.ofSeconds(10);
     /** PLAN-0641 F3: cold probe runs one full staging pass over the work tree. */
@@ -159,6 +174,28 @@ public class RuntimeCheckpointClient {
 
     public record GitStatusResult(Outcome outcome, boolean isRepository,
                                   List<GitStatusEntry> entries, String reason) {}
+
+    /**
+     * PLAN-0686 G8: one commit of the workspace user-repository log. {@code committedAt} is the
+     * Runtime's ISO-8601 string, {@code subject} already flattened to one line by the Runtime.
+     */
+    public record GitLogEntry(String hash, String shortHash, String author, String committedAt,
+                              String subject) {}
+
+    /**
+     * PLAN-0686 G8: {@code git-diff} result. {@code patch} is the Runtime's UTF-8 bounded patch
+     * ({@code patchBytes} = its size in bytes); {@code truncated} says the Runtime cut it at the
+     * 256 KiB cap, so a caller must never treat a truncated patch as complete.
+     */
+    public record GitDiffResult(Outcome outcome, boolean isRepository, String patch,
+                                boolean truncated, int patchBytes, String reason) {}
+
+    /**
+     * PLAN-0686 G8: {@code git-log} result. {@code truncated} means <b>more commits matched than
+     * {@code limit}</b> — never "this is the whole repository history".
+     */
+    public record GitLogResult(Outcome outcome, boolean isRepository, List<GitLogEntry> entries,
+                               boolean truncated, String reason) {}
 
     private final HttpClient httpClient = HttpClient.newBuilder()
             .connectTimeout(CONNECT_TIMEOUT)
@@ -463,6 +500,113 @@ public class RuntimeCheckpointClient {
     }
 
     /**
+     * PLAN-0686 G8: read-only working-tree patch for the {@code git_diff} MCP tool.
+     *
+     * <p>{@code paths} narrows the diff to explicit workspace-relative paths and is sent as the
+     * repeated {@code ?path=} query the Runtime contract names; empty/null means "whole work tree".
+     * A missing repository is a <b>success</b> with {@code isRepository=false} (same rule as
+     * {@link #workspaceGitStatus}), not a failure.</p>
+     */
+    public GitDiffResult workspaceGitDiff(String workspaceId, List<String> paths) {
+        if (isBlank(workspaceId)) {
+            return new GitDiffResult(Outcome.INVALID_REQUEST, false, null, false, 0, "invalid_request");
+        }
+        String url = runtimeUrl + "/internal/v1/runtime/workspaces/" + workspaceId + "/git-diff"
+                + gitQuery(paths, null, null);
+        try {
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(URI.create(url))
+                    .header("Authorization", "Bearer " + serviceToken)
+                    .header("Accept", "application/json")
+                    .GET()
+                    .timeout(GIT_DIFF_TIMEOUT)
+                    .build();
+            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+            int status = response.statusCode();
+            if (status / 100 != 2) {
+                Map<String, Object> problem = parseBody(response.body());
+                return new GitDiffResult(failureOutcome(status, problem), false, null, false, 0,
+                        errorReason(status, response.body()));
+            }
+            Map<String, Object> body = parseBody(response.body());
+            // The Runtime always carries `patch` (empty string when there is nothing to show), so an
+            // empty diff stays an empty string here instead of collapsing to null.
+            Object rawPatch = body.get("patch");
+            return new GitDiffResult(Outcome.OK, Boolean.TRUE.equals(body.get("isRepository")),
+                    rawPatch instanceof String patch ? patch : "", Boolean.TRUE.equals(body.get("truncated")),
+                    intValue(body.get("patchBytes")), null);
+        } catch (Exception e) {
+            logger.warn("[LIFECYCLE] service=cp event=runtime_git_diff_unreachable workspaceId={} error={}",
+                    workspaceId, e.getMessage());
+            return new GitDiffResult(Outcome.TRANSPORT, false, null, false, 0, "unreachable");
+        }
+    }
+
+    /**
+     * PLAN-0686 G8: bounded commit log for the {@code git_log} MCP tool.
+     *
+     * <p>{@code limit} is already validated by the caller against the Runtime's 1..=200 window;
+     * {@code range} is an optional two-dot range and {@code paths} the repeated {@code ?path=}
+     * filter. {@code truncated} only reports "more commits matched than {@code limit}".
+     * A missing repository is a success with {@code isRepository=false}.</p>
+     */
+    public GitLogResult workspaceGitLog(String workspaceId, int limit, List<String> paths, String range) {
+        if (isBlank(workspaceId)) {
+            return new GitLogResult(Outcome.INVALID_REQUEST, false, List.of(), false, "invalid_request");
+        }
+        String url = runtimeUrl + "/internal/v1/runtime/workspaces/" + workspaceId + "/git-log"
+                + gitQuery(paths, range, limit);
+        try {
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(URI.create(url))
+                    .header("Authorization", "Bearer " + serviceToken)
+                    .header("Accept", "application/json")
+                    .GET()
+                    .timeout(GIT_LOG_TIMEOUT)
+                    .build();
+            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+            int status = response.statusCode();
+            if (status / 100 != 2) {
+                Map<String, Object> problem = parseBody(response.body());
+                return new GitLogResult(failureOutcome(status, problem), false, List.of(), false,
+                        errorReason(status, response.body()));
+            }
+            Map<String, Object> body = parseBody(response.body());
+            return new GitLogResult(Outcome.OK, Boolean.TRUE.equals(body.get("isRepository")),
+                    parseGitLogEntries(body.get("entries")),
+                    Boolean.TRUE.equals(body.get("truncated")), null);
+        } catch (Exception e) {
+            logger.warn("[LIFECYCLE] service=cp event=runtime_git_log_unreachable workspaceId={} error={}",
+                    workspaceId, e.getMessage());
+            return new GitLogResult(Outcome.TRANSPORT, false, List.of(), false, "unreachable");
+        }
+    }
+
+    /**
+     * PLAN-0686 G8: repeated {@code ?path=} plus the optional log parameters, in one place so the
+     * two reads cannot drift on encoding. Blank entries are dropped rather than sent as
+     * {@code ?path=} (the Runtime would reject the empty path with 400).
+     */
+    private static String gitQuery(List<String> paths, String range, Integer limit) {
+        StringBuilder query = new StringBuilder();
+        if (limit != null) {
+            query.append("limit=").append(limit);
+        }
+        if (range != null && !range.isBlank()) {
+            query.append(query.isEmpty() ? "" : "&").append("range=").append(encodeQuery(range));
+        }
+        if (paths != null) {
+            for (String path : paths) {
+                if (isBlank(path)) {
+                    continue;
+                }
+                query.append(query.isEmpty() ? "" : "&").append("path=").append(encodeQuery(path));
+            }
+        }
+        return query.isEmpty() ? "" : "?" + query;
+    }
+
+    /**
      * PLAN-0641 F3: cold probe — `{path,type,declared}` items for nested git repos
      * of the workspace. Empty = runtime unreachable / non-2xx (the caller maps
      * that to 503; unknown-workspace 404 is decided CP-side before calling).
@@ -682,6 +826,31 @@ public class RuntimeCheckpointClient {
                 if (status != null || path != null) {
                     entries.add(new GitStatusEntry(status, path));
                 }
+            }
+        }
+        return List.copyOf(entries);
+    }
+
+    /**
+     * PLAN-0686 G8: Runtime log entries are passed through field by field instead of being
+     * deserialized wholesale, so a newer Runtime adding a field cannot make an older CP fail the
+     * whole read (and no Runtime-internal field leaks into the MCP payload).
+     */
+    private static List<GitLogEntry> parseGitLogEntries(Object raw) {
+        if (!(raw instanceof List<?> list)) {
+            return List.of();
+        }
+        List<GitLogEntry> entries = new ArrayList<>();
+        for (Object item : list) {
+            if (item instanceof Map<?, ?> map) {
+                Map<String, Object> entry = toObjectMap(map);
+                // `subject` keeps an empty string: the Runtime may legitimately report one, and
+                // turning it into null would make "empty subject" indistinguishable from "missing".
+                Object subject = entry.get("subject");
+                entries.add(new GitLogEntry(
+                        asString(entry.get("hash")), asString(entry.get("shortHash")),
+                        asString(entry.get("author")), asString(entry.get("committedAt")),
+                        subject instanceof String text ? text : null));
             }
         }
         return List.copyOf(entries);
