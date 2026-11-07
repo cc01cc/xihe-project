@@ -197,6 +197,8 @@ mise run test:e2e:host        # Host E2E：先停 dev:host（见 DEV-002 §5）�
 
 测试策略见 DEV-020/021/022/023；环境清理与 host 运行要求见 [DEV-002](DEV-002-developer-guide.md)。
 
+本仓库的 cargo 任务经 `scripts/cargo-run.mjs` 调用：配了 `XH_CARGO_TARGET_ROOT` 时构建落该根、不再占 H 盘；未经 wrapper 的裸 `cargo` 与 IDE 仍按 `.cargo/config.toml`（见 DEV-002 §6）。
+
 ## 6. 文档
 
 完整索引见 [INDEX.md](INDEX.md)。中文、英文文档各自维护编号与索引。

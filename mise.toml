@@ -34,8 +34,9 @@ NODE_OPTIONS = "--max-old-space-size=2048"
 #   下面这行是**本机默认值**，不是仓库契约：换盘/换机改 `mise.local.toml`
 #   （gitignored，优先级高于本文件）即可；变量指向不存在的目录或相对路径时脚本
 #   fail-fast，绝不静默回落到旧盘。
-#   已知未修：裸 `cargo` / rust-analyzer 不读 mise env，仍按 `.cargo/config.toml`
-#   落 `<one>/.tmp/cargo-target/main`（IDE 侧缺口，见 DEV-002 §4）。
+#   覆盖范围：经 `scripts/cargo-run.mjs` 的 mise cargo 任务（build / test / lint / sweep）
+#   落 `<root>`；**未经 wrapper 的裸 `cargo` 与 IDE/rust-analyzer 仍按 `.cargo/config.toml`
+#   落 `<one>/.tmp/cargo-target/main`**（刻意保留的残余，见 DEV-002 §6）。
 XH_CARGO_TARGET_ROOT = 'G:\zeotmp\xh-cargo-target'
 
 [tools]
@@ -132,8 +133,14 @@ description = "Build the UI bundle"
 dir = "packages/ui"
 alias = "build:ui"
 
+# task-80 (2026-11-08): cargo tasks below go through scripts/cargo-run.mjs, which
+# injects CARGO_TARGET_DIR=<XH_CARGO_TARGET_ROOT>/[<worktree>/]main ONLY when the
+# variable is set (unset => bare cargo, byte-identical to before). Cargo itself does
+# not read that variable, so without the wrapper these tasks rebuild a multi-GB cache
+# on H: even though the dev stacks already build on the configured root.
+# Intentionally still bare: `cargo fetch` (writes CARGO_HOME, not the target dir).
 [tasks."build:runtime"]
-run = "cargo build --release"
+run = "node ../../scripts/cargo-run.mjs build --release"
 description = "Build all runtime binaries (lib + 3 bin targets)"
 dir = "packages/runtime"
 alias = "build:runtime"
@@ -197,13 +204,13 @@ run = "node scripts/check-cp-baseline.mjs"
 description = "Classify CP surefire failures against scripts/cp-known-baseline.json (exit 0 only if every failure is a fresh known baseline; run after mise run test:cp)"
 
 [tasks."test:runtime"]
-run = "cargo test"
+run = "node ../../scripts/cargo-run.mjs test"
 description = "Run the runtime test suite (all, sandbox tests need Docker)"
 dir = "packages/runtime"
 alias = "test:runtime"
 
 [tasks."test:runtime:lib"]
-run = "cargo test --lib"
+run = "node ../../scripts/cargo-run.mjs test --lib"
 description = "Run runtime unit tests only (no Docker needed)"
 dir = "packages/runtime"
 alias = "test:runtime:lib"
@@ -214,10 +221,10 @@ alias = "test:runtime:lib"
 # 为什么不把日常那档改串行：串行跑不出并行能暴露的竞态 = 消灭证据（负例恒真同型陷阱）。
 [tasks."test:runtime:lib:gate"]
 run = [
-  "cargo test --locked --lib -- --test-threads=1",
-  "cargo test --locked --lib",
-  "cargo test --locked --lib",
-  "cargo test --locked --lib"
+  "node ../../scripts/cargo-run.mjs test --locked --lib -- --test-threads=1",
+  "node ../../scripts/cargo-run.mjs test --locked --lib",
+  "node ../../scripts/cargo-run.mjs test --locked --lib",
+  "node ../../scripts/cargo-run.mjs test --locked --lib"
 ]
 description = "BL-262 gate: serial once + parallel 3x (milestone / post-race-fix verification; not part of validate)"
 dir = "packages/runtime"
@@ -238,8 +245,8 @@ alias = "test:runtime:lib:gate"
 # `cargo test --no-run` 先单独编译，避免冷编译时间被算进被测超时。
 [tasks."test:runtime:lib:ignored:isolated"]
 run = [
-  "cargo test --locked --lib --no-run",
-  "node ../../scripts/run-with-timeout.mjs --timeout-sec 60 -- cargo test --locked --lib -- --ignored --exact checkpoint_api::tests::t3_5_no_git_full_chain_smoke --test-threads=1"
+  "node ../../scripts/cargo-run.mjs test --locked --lib --no-run",
+  "node ../../scripts/run-with-timeout.mjs --timeout-sec 60 -- node ../../scripts/cargo-run.mjs test --locked --lib -- --ignored --exact checkpoint_api::tests::t3_5_no_git_full_chain_smoke --test-threads=1"
 ]
 description = "BL-262 ignored tier 1/2: PATH-stripped no-git smoke, isolated (--test-threads=1); not part of validate"
 dir = "packages/runtime"
@@ -247,12 +254,12 @@ alias = "test:runtime:lib:ignored:isolated"
 
 [tasks."test:runtime:lib:ignored:functional"]
 run = [
-  "cargo test --locked --lib --no-run",
-  "node ../../scripts/run-with-timeout.mjs --timeout-sec 60 -- cargo test --locked --lib -- --ignored --exact checkpoint::tests::p3_migration_tool_backfills_git_only_history --test-threads=1",
-  "node ../../scripts/run-with-timeout.mjs --timeout-sec 60 -- cargo test --locked --lib -- --ignored --exact checkpoint::tests::p3_migration_verify_store_matches_shadow --test-threads=1",
-  "node ../../scripts/run-with-timeout.mjs --timeout-sec 60 -- cargo test --locked --lib -- --ignored --exact checkpoint::tests::v6_three_rounds_self_git_self_restore_history --test-threads=1",
-  "node ../../scripts/run-with-timeout.mjs --timeout-sec 180 -- cargo test --locked --lib -- --ignored --exact checkpoint_store::restore_full::tests::v3_git_checkout_parity --test-threads=1",
-  "node ../../scripts/run-with-timeout.mjs --timeout-sec 90 -- cargo test --locked --lib -- --ignored --exact checkpoint_store::restore_full::tests::v5_1000_file_restore_zero_diff --test-threads=1"
+  "node ../../scripts/cargo-run.mjs test --locked --lib --no-run",
+  "node ../../scripts/run-with-timeout.mjs --timeout-sec 60 -- node ../../scripts/cargo-run.mjs test --locked --lib -- --ignored --exact checkpoint::tests::p3_migration_tool_backfills_git_only_history --test-threads=1",
+  "node ../../scripts/run-with-timeout.mjs --timeout-sec 60 -- node ../../scripts/cargo-run.mjs test --locked --lib -- --ignored --exact checkpoint::tests::p3_migration_verify_store_matches_shadow --test-threads=1",
+  "node ../../scripts/run-with-timeout.mjs --timeout-sec 60 -- node ../../scripts/cargo-run.mjs test --locked --lib -- --ignored --exact checkpoint::tests::v6_three_rounds_self_git_self_restore_history --test-threads=1",
+  "node ../../scripts/run-with-timeout.mjs --timeout-sec 180 -- node ../../scripts/cargo-run.mjs test --locked --lib -- --ignored --exact checkpoint_store::restore_full::tests::v3_git_checkout_parity --test-threads=1",
+  "node ../../scripts/run-with-timeout.mjs --timeout-sec 90 -- node ../../scripts/cargo-run.mjs test --locked --lib -- --ignored --exact checkpoint_store::restore_full::tests::v5_1000_file_restore_zero_diff --test-threads=1"
 ]
 description = "BL-262 ignored tier 2/2: 5 functional ignored tests, serial + measured timeouts; not part of validate"
 dir = "packages/runtime"
@@ -328,7 +335,7 @@ dir = "packages/control-plane"
 alias = "lint:cp"
 
 [tasks."lint:runtime"]
-run = "cargo fmt --check && cargo clippy --all-targets -- -D warnings"
+run = "node ../../scripts/cargo-run.mjs fmt --check && node ../../scripts/cargo-run.mjs clippy --all-targets -- -D warnings"
 description = "Run Runtime lint (rustfmt check + clippy all-targets)"
 dir = "packages/runtime"
 alias = "lint:runtime"
@@ -511,7 +518,7 @@ description = "PERMANENTLY remove logs and all package target/dist/coverage (no 
 alias = "clean"
 
 [tasks."clean:runtime-sweep"]
-run = "cargo sweep --time 7 && cargo sweep --maxsize 12GB"
+run = "node ../../scripts/cargo-run.mjs sweep --time 7 && node ../../scripts/cargo-run.mjs sweep --maxsize 12GB"
 description = "Sweep orphaned Rust artifacts only in the current metadata target (7d+ / 12GB≈11.18GiB; keeps live fingerprints)"
 dir = "packages/runtime"
 alias = "clean:runtime-sweep"
