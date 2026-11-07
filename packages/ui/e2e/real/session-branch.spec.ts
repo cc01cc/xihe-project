@@ -713,10 +713,16 @@ function readSessionSnapshot(sessionId: string): {
         );
     }
     if (!/^[0-9a-f-]{36}$/i.test(sessionId)) throw new Error("unexpected Session id");
+    // PLAN-0689 A7 / V133：`sessions.agent_principal_id` 已被删除（V133:18 `DROP COLUMN`），会话身份
+    // 改读 PRIMARY 参与者行 —— 与 CP 的 `SessionViews.toView` / `SessionParticipantRepository
+    // .primaryPrincipalId` 同源。**不置 null**：这份快照要和 fork 事件 seedPayload 对照，null 会让
+    // 对照失去意义（无 PRIMARY 时列本来就该是 null，等同旧列语义）。
     const sql =
         `SELECT jsonb_build_object(` +
         `'id', s.id, 'kind', s.kind, 'workspaceId', s.workspace_id, 'userId', s.user_id, ` +
-        `'agentPrincipalId', s.agent_principal_id, 'agentPermissionsSnapshot', s.agent_permissions_snapshot, ` +
+        `'agentPrincipalId', (SELECT p.principal_id FROM session_participants p ` +
+        `WHERE p.session_id = s.id AND p.role = 'PRIMARY'), ` +
+        `'agentPermissionsSnapshot', s.agent_permissions_snapshot, ` +
         `'spawnedFromSessionId', s.spawned_from_session_id, 'spawnedFromRunId', s.spawned_from_run_id, ` +
         `'branchCount', (SELECT count(*) FROM session_branches WHERE session_id = s.id), ` +
         `'messageCount', (SELECT count(*) FROM messages WHERE session_id = s.id), ` +

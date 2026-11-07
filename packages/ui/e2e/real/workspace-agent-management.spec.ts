@@ -525,9 +525,19 @@ test("@host V6 Workspace Agent management uses CP grants and persists isolated c
     });
     expect(unboundSessionAttempt.status()).toBe(403);
     // History kept, no new Session: exactly the pre-unbind row survives.
+    // PLAN-0689 A7 / V133：`sessions.agent_principal_id` 已被删除（V133:18 `DROP COLUMN`），会话
+    // 身份改由 PRIMARY 参与者行承载 —— CP 的唯一读入口是
+    // `SessionParticipantRepository.primaryPrincipalId` → `SessionViews.toView`，所以这里必须查同一张表，
+    // 否则这条 case 会在 host lane 上抛 `column "agent_principal_id" does not exist`。
+    // 计数仍等价于"会话数"：`uq_session_participants_primary`（V92:95-96）保证每个会话最多一行 PRIMARY，
+    // `uq_session_participants_principal`（V92:90-91）保证每个 (session, principal) 最多一行。
+    // 不额外过滤 `disabled_at`：view 侧的 PRIMARY 读路径同样不过滤，两处必须同口径（解绑只删
+    // `workspace_agents` 绑定，不动 `session_participants`，历史行本来就该留着）。
     expect(
         scalarCount(
-            `SELECT count(*) FROM sessions WHERE agent_principal_id = '${principalId}'::uuid`,
+            `SELECT count(*) FROM session_participants ` +
+                `WHERE principal_kind = 'AGENT' AND principal_id = '${principalId}'::uuid ` +
+                `AND role = 'PRIMARY'`,
         ),
     ).toBe(1);
     const preservedHistory = await request.get(`${CP_URL}/api/v1/sessions/${historicalSessionId}`, {

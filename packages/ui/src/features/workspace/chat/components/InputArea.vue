@@ -96,7 +96,9 @@ const { t } = useI18n();
  * - 入口仍由 `capabilities.speakAs`（同一响应里的归约）决定**显不显示**，false 时**不渲染**；
  * - 候选 = store 的 `speakAsCandidates`（`selfOwned === true` 且未停用）——只有能说的人才出现在 to；
  * - 默认 = PRIMARY participant（D30-14），没有 PRIMARY 行时回落到自己的 HUMAN 行、再退回第一个；
- * - **纯前端状态**：改变 to 不写回 Session 绑定（`Session.agent_principal_id` 仍是快照/预算锚），
+ * - **纯前端状态**：改变 to 不写回参与者行 —— 会话身份是 `session_participants` 的 PRIMARY 行
+ *   （`sessions.agent_principal_id` 已由 V133 删除），每次 Run 的应答者记在 `chat_runs` 自己的
+ *   `agent_principal_id` 列上，绑定期的路径 cap 快照留在 `sessions.agent_permissions_snapshot`；
  *   选定值只随本条消息以 `asParticipantId` 发出。
  */
 const participantsStore = useSessionParticipantsStore();
