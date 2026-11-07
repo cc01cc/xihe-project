@@ -418,7 +418,7 @@ function worktreeCaliber(): { commit: string | null; dirty: boolean | null } {
 test.describe("PLAN-0682 会话规模测量（BL-382 · 真栈）", () => {
     test.describe.configure({ mode: "serial", retries: 0 });
 
-    test("双口径：初始窗口 + 滚动回填（CDP 采样两轮并写 JSON）", async ({ page, request }) => {
+    test("双口径：初始窗口 + 滚动回填（CDP 采样两轮并写 JSON） @host", async ({ page, request }) => {
         const tierName = process.env.XIHE_BL382_TIER;
         const tier = tierName && tierName in TIERS ? (tierName as Tier) : null;
         const envSessionId = process.env.XIHE_BL382_SESSION;
