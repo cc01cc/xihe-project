@@ -64,6 +64,10 @@
     {
       "sha": "e71e894a57f9e48a3ffdcb8d8db8a73285562dc8",
       "reason": "2026-11-07 14:21 以 chore(merge): 记录的合并提交（2 父），首行 73 列 > 72 ⇒ 超 1 列（典型「差一列」：摘要塞了括号里的补充说明）；合入前未跑 --range enforce。已进 develop 不可改写（D-223 收录）。"
+    },
+    {
+      "sha": "f0c2c41c",
+      "reason": "2026-11-07 0690 lane 分支内提交 fix(cp) 首行 132 列 > 72（把 columnDefinition 兼容细节塞进首行）；分支内提交不受门禁约束，Lead 以 merge(0a89e345) 合入时才发现 ⇒ 已进 develop 不可改写（D-224 收录）。流程修复=分支合入前必跑 --range develop..<branch> --enforce，细节移 body。"
     }
   ]
 }
