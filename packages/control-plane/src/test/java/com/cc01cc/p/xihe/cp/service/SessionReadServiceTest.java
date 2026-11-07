@@ -63,7 +63,6 @@ class SessionReadServiceTest {
         session.setId(SESSION_ID);
         session.setUserId("user-1");
         session.setWorkspaceId("workspace-1");
-        session.setAgentPrincipalId(UUID.randomUUID().toString());
         session.setKind(Session.KIND_SPAWN);
         return session;
     }
