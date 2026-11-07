@@ -67,6 +67,10 @@ import {
   parseBlockingScopes,
   parseDiskLine,
 } from './lib/e2e-preflight-gate.mjs'
+// task-86 (第五形态): the ORDER in which this runner opens a window is data, not something a
+// reader has to trust. `bootPhasePlan()` is the single source and `main()` must `enter()` each
+// phase — a gate-before-rebuild drift (defect ① of PLAN-0680) now throws instead of staying green.
+import { BOOT_PHASE, bootPhasePlan, createBootPhaseCursor } from './lib/e2e-host-boot-phases.mjs'
 if (typeof process.env.CARGO_TARGET_DIR !== 'string' || process.env.CARGO_TARGET_DIR.trim() === '') {
   process.env.CARGO_TARGET_DIR = join(cargoTargetBase(projectDir), 'e2e')
 }
@@ -118,6 +122,9 @@ const reportName = reportNameArg?.slice('--report-name='.length) ?? ''
 // the runner-owned surface (see runPlaywright): a leaked `--only`/`--check-cli` would be rejected
 // by the Playwright CLI with a misleading "unknown option" error.
 const checkCli = process.argv.includes('--check-cli')
+// task-86: dry-run the boot-phase ORDER only (enters the real phases, short-circuits the heavy work):
+// no rebuild, no preflight, no stack. Prints declared vs executed; exit 1 when they disagree.
+const planOnly = process.argv.includes('--plan-only')
 const allowLlmModeOverride = process.argv.includes('--allow-llm-mode-override')
 // BL-421: a gated spec that self-skips still exits 0, so "green" could mean "ran nothing".
 // `--expect-tests=N` pins how many tests must actually execute this round, and a non-zero
@@ -130,7 +137,7 @@ const onlyPatterns = process.argv
   .filter((arg) => arg.startsWith('--only='))
   .map((arg) => arg.slice('--only='.length))
 const RUNNER_ONLY_ARGS = new Set(['--keep', '--skip-runtime', '--persistent', '--teardown', '--skip-preflight',
-  '--validate-at-end', '--list-batches', '--help', '-h', '--check-cli', '--allow-llm-mode-override', '--allow-skip'])
+  '--validate-at-end', '--list-batches', '--help', '-h', '--check-cli', '--plan-only', '--allow-llm-mode-override', '--allow-skip'])
 const RUNNER_ONLY_PREFIXES = ['--llm-mode=', '--batch=', '--report-name=', '--jar-mode=', '--auth-lane=',
   '--first-run=', '--bootstrap-user=', '--registration-policy=', '--only=', '--expect-tests=']
 /** Everything the runner passes through to Playwright (spec files, --grep, --retries, --reporter, …). */
@@ -625,6 +632,27 @@ async function resolveCpBootPlan() {
   return { mode: 'jar', jar: after.jar, reason: 'rebuilt' }
 }
 
+// task-86: side-effect-free twin of `resolveCpBootPlan()` for `--plan-only`. Same jar-state read
+// (mtime staleness + the task-90 sidecar identity check) and the same `decideCpBoot()` table, but it
+// never runs `mvn` — the point of the dry run is the phase ORDER, not a build. The `reason` says so,
+// so nobody can read a preview as "the jar is fresh".
+function previewCpBootPlan() {
+  if (jarMode === 'native') {
+    return { mode: 'native', executable: { name: '(native executable; --plan-only does not build it)' }, reason: '--plan-only preview' }
+  }
+  const state = resolveCpJarState(e2eCpTargetDir)
+  const identityMismatch = state.sidecar.state === 'ok' && state.sidecar.identity === false
+  const staleByMtime = state.jar ? state.newestSource.mtimeMs > state.jar.mtimeMs : false
+  const stale = state.jar ? staleByMtime || identityMismatch : false
+  const plan = decideCpBoot({ jarMode, hasJar: Boolean(state.jar), stale })
+  const wouldBuild = plan.action === 'build-then-use'
+  return {
+    mode: state.jar ? 'jar' : 'run',
+    jar: state.jar,
+    reason: `${plan.reason}${wouldBuild ? ' (a real run would rebuild here)' : ''}; --plan-only preview (no rebuild ran)`,
+  }
+}
+
 function printRunnerHelp() {
   console.log(`XH host E2E runner (PLAN-0375)
 
@@ -639,6 +667,8 @@ runner flags:
   --only=<path|base|fragment>  narrow an expanded --batch to one target: exact path or basename first, then a substring
                         that must match exactly one spec (ambiguous ⇒ exit 2 with candidates; needs --batch)
   --check-cli           validate runner args and print the planned batch/specs/warnings, then exit (boots nothing)
+  --plan-only           dry-run the boot-phase ORDER only: enter the real phases with the heavy work short-circuited
+                        (no rebuild, no preflight, no stack), print declared vs executed, exit 1 if they disagree
   --allow-llm-mode-override  let --llm-mode/XIHE_E2E_LLM_MODE differ from the batch llmMode (default: refuse to start)
   --auth-lane=<lane>    CP auth env lane (PLAN-0566 D6): exempt (default, register dimension off) | ratelimit (lowered thresholds + loopback trusted proxies for auth-lockout / auth-rate-limit)
   --first-run=local     PLAN-0611 gold path: empty DB + XIHE_LOCAL_MODE=true + SERVER_ADDRESS=127.0.0.1, no seeded admin (default: off)
@@ -2631,6 +2661,14 @@ async function main() {
   // PLAN-0664 (BL-267): CLI traps are decided before any artifact/port/container work, and
   // `--check-cli` stops here (nothing below this line has run yet).
   if (!runCliPreflight()) return
+  // task-86: `--plan-only` dry-runs the *owned* boot sequence; a reuse run boots nothing of its own,
+  // so there is no rebuild phase to order against (and the defect shape cannot exist there).
+  if (planOnly && externalServer) {
+    throw new Error('--plan-only dry-runs the owned boot sequence; a reuse run (XIHE_E2E_EXTERNAL_SERVER=1) has no rebuild phase')
+  }
+  // task-86: the phase order is `lib/e2e-host-boot-phases.mjs`; main() only consumes it. Wrong order
+  // ⇒ BootPhaseOrderError before anything is built, instead of a silent regression.
+  const bootPhases = createBootPhaseCursor({ plan: bootPhasePlan({ externalServer }) })
   if (jarMode === 'native' && skipRuntime) {
     throw new Error('--jar-mode=native requires Runtime; remove --skip-runtime to test the native compatibility lane')
   }
@@ -2642,7 +2680,10 @@ async function main() {
   // preflight-first order would make the rebuild unreachable.
   let cpBootPlan = null
   if (!externalServer) {
-    cpBootPlan = await resolveCpBootPlan()
+    bootPhases.enter(BOOT_PHASE.CP_BOOT_PLAN)
+    // task-86: `--plan-only` must not run `mvn` — it reads the same jar state and asks the same
+    // `decideCpBoot()` table, so the operator still sees which artifact a real run would boot.
+    cpBootPlan = planOnly ? previewCpBootPlan() : await resolveCpBootPlan()
     const cpBootCommand = cpBootPlan.mode === 'jar'
       ? `java -jar ${cpBootPlan.jar.name}`
       : cpBootPlan.mode === 'native'
@@ -2653,7 +2694,8 @@ async function main() {
   console.log(`[e2e-host] runId=${e2eRunId} ports ui=${uiPort} cp=${cpPort} agent=${agentPort} runtime=${runtimePort} pg=${pgPort}`)
   console.log(`[e2e-host] isolated pg project=${pgProjectName} db=${pgDatabase} hostRoot=${hostRoot}`)
   if (skipRuntime) console.log('[e2e-host] --skip-runtime set; this run validates chat-only paths without Sandbox execution')
-  await pruneStaleRunDirs()
+  // task-86: `--plan-only` must not delete anything — pruning stale run dirs is a real side effect.
+  if (!planOnly) await pruneStaleRunDirs()
 
   // Reuse mode: a persistent stack is already up — point this run's ports at
   // it and skip every boot phase.
@@ -2749,6 +2791,22 @@ async function main() {
   // about the artifact this run boots, and a stale jar was already rebuilt) and
   // after the reuse restore (so the caller's own persistent stack — ports and
   // sandbox labels — is recognised instead of being reported as leaked residue).
+  // task-86: THIS enter() and the `CP_BOOT_PLAN` one above are the wiring the old unit tests only
+  // *simulated*. The order comes from `lib/e2e-host-boot-phases.mjs`; moving either step without
+  // moving the plan throws `BootPhaseOrderError` here — before a rebuild, a port or a container.
+  bootPhases.enter(BOOT_PHASE.PREFLIGHT_GATE)
+  if (planOnly) {
+    // `--plan-only` exits here: the two real phase entries above have run, everything heavy was
+    // short-circuited. `ok` compares executed against declared — drift cannot pass this line.
+    const trace = bootPhases.describe()
+    console.log(`[e2e-host] plan-only: declared=${trace.declared.join(',')} executed=${trace.executed.join(',')} ok=${trace.ok}`)
+    console.log(`[e2e-host] plan-only json: ${JSON.stringify(trace)}`)
+    if (!trace.ok) {
+      console.error(`[e2e-host] plan-only: boot phase order is NOT the declared plan (missing=${trace.missing.join(',') || 'none'})`)
+      process.exitCode = 1
+    }
+    return
+  }
   if (!(await runPreflightGate({ allowPorts: reuseOwnPorts, ownRunId: reuseOwnRunId, extraSelfPids: [reuseRunnerPid], cpBootPlan }))) {
     process.exitCode = 1
     return
