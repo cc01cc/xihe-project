@@ -88,7 +88,6 @@ async function sendChat(
     request: APIRequestContext,
     headers: Record<string, string>,
     sessionId: string,
-    principalId: string,
     content: string,
 ): Promise<void> {
     const branchId = await getRootBranchId(request, sessionId, headers);
@@ -102,7 +101,6 @@ async function sendChat(
             sessionId,
             branchId,
             content,
-            agentPrincipalId: principalId,
             toolMode: "chat",
         }),
     });
@@ -263,7 +261,7 @@ test("@host PLAN-0678 V3 技能正向：instance 导入 2 技能 → 绑定 → 
     );
 
     // ⑧ 第一次 run（绑 2 个技能）
-    await sendChat(request, headers, sessionId, principalId, "PLAN-0678 V3 skills positive run");
+    await sendChat(request, headers, sessionId, "PLAN-0678 V3 skills positive run");
     let run: ChatRunRow | null = null;
     await expect
         .poll(
@@ -299,7 +297,7 @@ test("@host PLAN-0678 V3 技能正向：instance 导入 2 技能 → 绑定 → 
         204,
     );
 
-    await sendChat(request, headers, sessionId, principalId, "PLAN-0678 V3 skills positive run 2");
+    await sendChat(request, headers, sessionId, "PLAN-0678 V3 skills positive run 2");
     let run2: ChatRunRow | null = null;
     await expect
         .poll(
