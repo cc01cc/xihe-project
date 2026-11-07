@@ -451,11 +451,9 @@ async function focusFirstToggleWithKeyboard(page: Page): Promise<void> {
     await page.keyboard.press("Shift+Tab");
 }
 
-async function collectAttentionRow(
-    page: Page,
-    screen: string,
-    viewport: string,
-): Promise<AttentionRow> {
+async function collectAttentionRow(page: Page, screen: string): Promise<AttentionRow> {
+    const size = page.viewportSize();
+    const viewport = size ? `${size.width}x${size.height}` : "unknown";
     const counts = await page.evaluate(() => {
         const cards = [...document.querySelectorAll<HTMLElement>('[data-testid="tool-card"]')];
         const summarize = (card: HTMLElement): string => {
@@ -492,6 +490,12 @@ async function collectAttentionRow(
     return { screen, viewport, ...counts, tokens };
 }
 
+/** A screenshot and its attention row must be emitted together; never capture one without the other. */
+async function captureScreen(page: Page, screen: string, attention: AttentionRow[]): Promise<void> {
+    await captureEvidence(page, screen);
+    attention.push(await collectAttentionRow(page, screen));
+}
+
 function appendAttentionRows(rows: AttentionRow[]): void {
     mkdirSync(EVIDENCE_DIR, { recursive: true });
     let existing: AttentionRow[] = [];
@@ -511,7 +515,6 @@ async function runViewportCase(
     request: APIRequestContext,
     options: {
         label: string;
-        viewport: string;
         /** V1 file-name suffix: `desktop-1920x1080` / `mobile-390x844`. */
         suffix: string;
         captureRunning: boolean;
@@ -577,8 +580,7 @@ async function runViewportCase(
             .locator('[data-tool-card="command"] [data-testid="tool-card-toggle"]')
             .first()
             .boundingBox();
-        await captureEvidence(page, "t2.2-command-running");
-        attention.push(await collectAttentionRow(page, "t2.2-command-running", options.viewport));
+        await captureScreen(page, "t2.2-command-running", attention);
         updateSnapshot(
             commandMessage,
             commandSnapshots("2026-11-07T06:00:00.000Z", "2026-11-07T06:00:02.000Z").completed,
@@ -607,38 +609,27 @@ async function runViewportCase(
     }
 
     await assertCommandLayers(page);
-    await captureEvidence(page, `t2.2-command-${options.suffix}`);
-    attention.push(
-        await collectAttentionRow(page, `t2.2-command-${options.suffix}`, options.viewport),
-    );
+    await captureScreen(page, `t2.2-command-${options.suffix}`, attention);
 
     await gotoSession(page, ctx.workspaceId, patch);
     await expandAllCards(page);
     await assertPatchLayers(page);
-    await captureEvidence(page, `t2.2-patch-${options.suffix}`);
-    attention.push(
-        await collectAttentionRow(page, `t2.2-patch-${options.suffix}`, options.viewport),
-    );
+    await captureScreen(page, `t2.2-patch-${options.suffix}`, attention);
 
     await gotoSession(page, ctx.workspaceId, read);
     await expandAllCards(page);
     await assertReadLayers(page);
-    await captureEvidence(page, `t2.2-read-${options.suffix}`);
-    attention.push(
-        await collectAttentionRow(page, `t2.2-read-${options.suffix}`, options.viewport),
-    );
+    await captureScreen(page, `t2.2-read-${options.suffix}`, attention);
 
     if (fallback) {
         await gotoSession(page, ctx.workspaceId, fallback);
         await expandAllCards(page);
         await assertFallbackLayers(page);
-        await captureEvidence(page, "t2.2-fallback-dynamic-mcp");
-        attention.push(
-            await collectAttentionRow(page, "t2.2-fallback-dynamic-mcp", options.viewport),
-        );
+        await captureScreen(page, "t2.2-fallback-dynamic-mcp", attention);
     }
 
-    if (options.viewport === "390x844") {
+    const viewport = page.viewportSize();
+    if (viewport?.width === 390) {
         const scrollWidth = await page.evaluate(
             () => document.scrollingElement?.scrollWidth ?? Number.NaN,
         );
@@ -657,7 +648,6 @@ test.describe("@host PLAN-0688 T2.2 tool card visual split", () => {
         test("dedicated cards and fallback", async ({ page, request }) => {
             await runViewportCase(page, request, {
                 label: "plan0688-tool-cards-desktop",
-                viewport: "1920x1080",
                 suffix: "desktop-1920x1080",
                 captureRunning: true,
                 captureFallback: true,
@@ -670,7 +660,6 @@ test.describe("@host PLAN-0688 T2.2 tool card visual split", () => {
         test("dedicated cards stay inside the mobile sheet", async ({ page, request }) => {
             await runViewportCase(page, request, {
                 label: "plan0688-tool-cards-mobile",
-                viewport: "390x844",
                 suffix: "mobile-390x844",
                 captureRunning: false,
                 captureFallback: false,
