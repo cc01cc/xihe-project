@@ -1,11 +1,18 @@
 -- PLAN-0691 T2.2: H2-only shim for the two tables that have no JPA entity.
 --
--- The H2 lane (application-h2.properties) does not run Flyway: it builds its schema with
--- `ddl-auto=create-drop` from the JPA entities, so a table that only exists in a migration file
--- cannot appear there. plugin_records and plugin_index_declarations are exactly that — raw-JDBC
--- tables introduced by V142, deliberately without an entity (DP-3's ledger is written by the index
--- executor, not by JPA). Without this shim, `PluginBindingService.delete` -> `dropForBinding` fails on
--- the ledger SELECT and every H2 test that deletes a binding gets a 500.
+-- WHY THIS FILE EXISTS (read this before deleting it as a stray script):
+--   * the H2 lane (application-h2.properties) does not run Flyway — it builds its schema with
+--     `ddl-auto=create-drop` from the JPA entities, so a table that exists only in a migration file
+--     cannot appear there;
+--   * plugin_records and plugin_index_declarations are exactly that: raw-JDBC tables introduced by
+--     V142 with deliberately no entity (DP-3's ledger is written by the index DDL executor, not JPA);
+--   * `PluginBindingService.delete` -> `dropForBinding` SELECTs the ledger on every binding delete,
+--     so without this shim every H2 test that deletes a binding answers 500.
+--
+-- CONSTRAINT ON THIS FILE: `spring.sql.init.mode=always` plus deferred datasource initialization run
+-- it in EVERY H2 context (one shared in-memory database per process), so every statement here MUST
+-- stay `CREATE TABLE IF NOT EXISTS` — anything unconditional would either fail on the second context
+-- or drop another context's tables.
 --
 -- This file is a Java-lifecycle fixture, NOT schema evidence: H2 cannot express the PostgreSQL
 -- constraints and the runtime index DDL is never exercised here. All schema claims come from
