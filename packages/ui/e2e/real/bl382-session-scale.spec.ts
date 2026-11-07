@@ -22,10 +22,25 @@
  * 证据口径：JSON 的 `seededSession` / `selfSeeded` / `seed` 字段必须能区分「本身份自建回灌」与
  * 「外部预置会话」，否则测量对象归属不可复核。
  *
- * T1.2（骨架先行，实跑待窗口）：同一会话内继续滚动回填口径——循环「滚顶（真实 wheel
- * 意图）→ load-older 点击」直至 olderExhausted（入口消失）或增长信号连续 2 轮不动
- * （store cap / 加载停止），终态采样 ×5；回填窗口 longtask、逐页耗时与 renderedRows
- * 旁证（虚拟化失效信号）只登记不断言。两口径各写一份 JSON。
+ * T1.2 回填口径（PLAN-0682 task-51 修探针与收敛判据）：同一会话内继续滚动回填——循环
+ * 「滚顶（真实 wheel 意图）→ load-older 点击」，每轮先读**页面侧事实**再判定收敛：
+ * ① 页响应 `count=0`；② `nextCursor` 连续两次相同（并计重复请求数）；③ 入口消失；
+ * ④ 入口在场但点击 0 页请求且 store 已到 500 上限（`hasOlder=false` 时入口只因折叠计数
+ * 在场）；⑤ CP 声明 `truncated=false`/`nextCursor=null`。**⑥ 不是终态**：store 到
+ * `MAX_LOADED_MESSAGES`(500) 后每轮只换页不驻留（cap 生效），只记 `storeCapAtRound` /
+ * 每轮 `storeCapped`，回填继续到页面侧终态 —— 否则 20k 档会在第 10 轮被 cap 提前截断。
+ * 命中哪条终态信号写进 `backfill.exhaustedBy`；
+ * `stallTerminated`（增长连续 2 轮不动）与 `exhaustedAtRound` **分开记**，超时绝不冒充
+ * 耗尽。终态采样 ×5；回填窗口 longtask 与逐页耗时只登记不断言。
+ *
+ * **`renderedRows` 的语义（task-51 归因）**：它是**窗口内渲染的消息行数**，不是已加载
+ * 条数。渲染行变少有两个成因：①窗口化 —— `MessageList.vue:340-369` 在
+ * `rows.length > DEFAULT_VIRTUAL_MIN_ROWS(=150)` 时启用（`virtualWindow.ts:42`），只渲染
+ * `virtualWindow` 内的行；②run 组折叠 —— `MessageList.vue:280-281` 对 `collapsed` 组
+ * `continue`，折叠组只剩组头、消息行不渲染。所以初始 50 → 终态 8 是**渲染侧减少**，不是
+ * 丢行；已加载条数看 `storeMessages`/`foldedOlder`，二分成因看 `virtualization.active` +
+ * `runHeaders`（组头数），活动 DOM 看 `liveDomNodes`（`Memory.getDOMCounters.nodes` 是
+ * inspector 侧计数，含已卸载但尚未回收的节点，大换手后不能当活动 DOM 读）。
  */
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
@@ -106,9 +121,31 @@ function resolveEvidenceDir(): string {
     return path.join(planEvidence, "raw");
 }
 
+type VirtualizationSample = {
+    /** 窗口化是否真正生效（两个 spacer 同时在场即生效，见 MessageList.vue:483/556）。 */
+    active: boolean;
+    topSpacerPx: number | null;
+    bottomSpacerPx: number | null;
+};
+
 type RawSample = {
+    /** 窗口内渲染的消息行数（≠ 已加载条数，见文件头 task-51 归因）。 */
     renderedRows: number;
-    storeMessages: number | null; // B-05：只读探针拿不到记 null，不 fake
+    /** 只读探针读到的 store 条数；task-51 起**取不到即抛错**，不再记 null。 */
+    storeMessages: number;
+    /** store 500 上限折叠掉的更旧条数（读入口文案"更早的 N 条…已折叠"）；入口不在场记 null。 */
+    foldedOlder: number | null;
+    /** 活动 DOM：`document.querySelectorAll("*").length`（与 inspector 侧 `domNodes` 对照）。 */
+    liveDomNodes: number;
+    /**
+     * DOM 里的 run 组头数（`[data-run-block]`）。渲染行变少有两个成因：窗口化切片
+     * （`MessageList.vue:366-369`）与 run 组折叠（`MessageList.vue:280-281` 的
+     * `if (header.collapsed) continue`）—— 记下组头数，实跑时才能二分是哪一个。
+     */
+    runHeaders: number;
+    virtualization: VirtualizationSample;
+    /** 本次探针命中的根/路径，落 JSON 供复核。 */
+    probeSource: string;
     domNodes: number;
     jsEventListeners: number;
     documents: number;
@@ -117,17 +154,62 @@ type RawSample = {
 
 type Summary = { median: number; min: number; max: number };
 
+/** 回填终态信号：命中哪条就按哪条收敛，`null` = 未命中（继续回填）。 */
+type BackfillSignal =
+    | "entry-gone" // 更旧入口不再渲染
+    | "entry-inert" // 入口在场但点击 0 页请求（hasOlder=false，入口只因折叠计数在场）
+    | "empty-page" // 页响应 count=0
+    | "cursor-repeat" // nextCursor 连续两次相同（CP 游标没前进）
+    | "page-end"; // CP 声明 truncated=false / nextCursor=null
+
 type BackfillPage = {
     round: number;
-    ms: number; // load-older 点击 → 增长信号变化 的墙钟耗时
+    ms: number; // load-older 点击 → 本轮判定结束 的墙钟耗时
     networkPageRequests: number;
-    store: number | null;
+    store: number; // 硬探针，不再 null
+    foldedOlder: number | null;
+    storeDelta: number; // 相对上一轮 store 条数变化
     renderedRows: number;
+    /** DOM 里的 run 组头数（区分"窗口化切片"与"run 组折叠"两种渲染行变少）。 */
+    runHeaders: number;
+    virtualized: boolean;
+    /** 本轮 store 是否已在 500 上限（只换页不驻留）；**不是**耗尽信号，回填继续。 */
+    storeCapped: boolean;
+    page: { count: number | null; nextCursor: string | null; truncated: boolean | null } | null;
+    cursorRepeated: boolean;
+    signal: BackfillSignal | null;
 };
 
 /** 回填循环护栏：每轮一页（50 条），20k 档 400 轮内耗尽；兜底防 runaway。 */
 const MAX_BACKFILL_ROUNDS = 500;
 const BACKFILL_STALL_ROUNDS = 2;
+
+/**
+ * `ChatPanel.vue:237` 的 `MAX_LOADED_MESSAGES`：store 只保留最新 500 条，更旧的进
+ * `foldedMessageCount`。回填到 500 后每页都被 `trimMessages` 掉 ⇒ store 条数不再增长；
+ * 这是**设计上限**，必须与"耗尽"分开记，否则 20k 档会一直等到超时。
+ */
+const MAX_LOADED_MESSAGES = 500;
+
+/**
+ * 探针事实（写进 JSON，供复核"数值是从哪条路径读到的"）。
+ *
+ * task-51：旧探针读 `window.__vue_app__`，而 `@vue/runtime-dom` 只把 app 挂在**根容器
+ * 元素**上（本项目 `index.html:36 <div id="app">` + `main.ts:32 app.mount("#app")`），
+ * window 上永远没有 ⇒ 恒 null，再被 try/catch 静默吞掉，T1.2 的判据数值从未真正测到。
+ */
+const PROBE_CALIBER = {
+    mount: 'index.html:36 `<div id="app">` + main.ts:32 `app.mount("#app")`',
+    appInstance: "根容器元素.__vue_app__（@vue/runtime-dom 写入；不在 window 上）",
+    storePath: "config.globalProperties.$pinia.state.chat.messages[sessionId].length",
+    unavailability: "缺失即 throw，无 null 回落（不允许用网络页计数冒充 store 驻留）",
+    renderedRowsSemantics:
+        "窗口内渲染行数 ≠ 已加载条数；渲染行变少有两个成因：①窗口化切片" +
+        "（rows.length > DEFAULT_VIRTUAL_MIN_ROWS(150) ⇒ MessageList.vue:340-369 / " +
+        "virtualWindow.ts:42，spacer 在场即 active）②run 组折叠" +
+        "（MessageList.vue:280-281 跳过 collapsed 组的消息行）。已加载条数看 " +
+        "storeMessages/foldedOlder；二分成因看 virtualization.active + runHeaders",
+} as const;
 
 type MessagePageSample = {
     at: string;
@@ -142,24 +224,100 @@ type VueAppLike = {
     config: { globalProperties: { $pinia?: { state: { value: PiniaChatState } } } };
 };
 
-/** 只读探针：`chat` store 的 `messages[sessionId].length`（store 定义 chat.ts:45-49）。 */
-async function storeMessagesProbe(page: Page, sessionId: string): Promise<number | null> {
-    try {
-        return await page.evaluate((sid: string) => {
-            const app = (window as unknown as { __vue_app__?: VueAppLike }).__vue_app__;
-            const messages = app?.config.globalProperties.$pinia?.state.value.chat?.messages?.[sid];
-            return Array.isArray(messages) ? messages.length : null;
-        }, sessionId);
-    } catch (error) {
-        // B-05 null 纪律：探针失败一律记 null 并附因，绝不 fake 数值。
-        console.warn(
-            `[BL-382] store probe unavailable: ${error instanceof Error ? error.message : error}`,
-        );
-        return null;
-    }
+type StoreProbe = {
+    storeMessages: number;
+    foldedOlder: number | null;
+    liveDomNodes: number;
+    messageRows: number;
+    runHeaders: number;
+    virtualization: VirtualizationSample;
+    source: string;
+};
+
+/**
+ * 只读探针：`chat` store 的 `messages[sessionId].length`（store 定义 chat.ts:45-49）。
+ *
+ * **取不到就抛错**（task-51）：这里没有任何 catch 把失败降级成 null ——
+ * `page.evaluate` 抛出的异常会直接让本 spec 失败。"探针坏了"必须表现为红，而不是让
+ * 判据数值悄悄退化成网络页计数。
+ */
+async function storeProbe(page: Page, sessionId: string): Promise<StoreProbe> {
+    return page.evaluate((sid: string) => {
+        const probeError = (reason: string, detail: Record<string, unknown>): Error =>
+            new Error(`[BL-382] store probe unavailable: ${reason} ${JSON.stringify(detail)}`);
+        // ① 真实渲染根：#app（main.ts 的 mount 点）；body 直接子节点兜底 —— Vue 只把
+        //    `__vue_app__` 挂在根容器元素上，window 上恒无（旧探针的根因）。
+        const direct = document.getElementById("app");
+        const candidates: Array<[string, Element | null]> = [
+            ["#app", direct],
+            ...[...document.body.children].map((element, index): [string, Element | null] => [
+                `body>${element.tagName.toLowerCase()}:${index}`,
+                element,
+            ]),
+        ];
+        let rootSelector = "";
+        let app: VueAppLike | undefined;
+        for (const [selector, element] of candidates) {
+            const instance = (element as unknown as { __vue_app__?: VueAppLike } | null)
+                ?.__vue_app__;
+            if (instance) {
+                rootSelector = selector;
+                app = instance;
+                break;
+            }
+        }
+        if (!app) {
+            throw probeError("no element carries __vue_app__", {
+                hasAppElement: Boolean(direct),
+                bodyChildren: document.body.children.length,
+                tried: candidates.map(([selector]) => selector),
+            });
+        }
+        const pinia = app.config.globalProperties.$pinia;
+        if (!pinia) {
+            throw probeError("app.config.globalProperties.$pinia missing", { rootSelector });
+        }
+        const state = pinia.state.value;
+        const chat = state.chat;
+        if (!chat) {
+            throw probeError("pinia has no `chat` store", { stores: Object.keys(state) });
+        }
+        const messages = chat.messages?.[sid];
+        if (!Array.isArray(messages)) {
+            throw probeError("chat.messages[sessionId] is not an array", {
+                rootSelector,
+                knownSessions: Object.keys(chat.messages ?? {}).length,
+                sessionId: sid,
+            });
+        }
+        // ② 折叠计数：只有折叠入口在场时才读文案（`chat.foldedOlder` = "更早的 N 条…已折叠"，
+        //    i18n/index.ts:869）；常规"加载更早"文案没有数字 ⇒ null。
+        const foldedMatch = document
+            .querySelector('[data-testid="load-older-messages"]')
+            ?.textContent?.match(/(\d+)/);
+        const topSpacer = document.querySelector('[data-testid="virtual-top-spacer"]');
+        const bottomSpacer = document.querySelector('[data-testid="virtual-bottom-spacer"]');
+        const heightOf = (element: Element | null): number | null =>
+            element instanceof HTMLElement
+                ? Math.round(element.getBoundingClientRect().height)
+                : null;
+        return {
+            storeMessages: messages.length,
+            foldedOlder: foldedMatch ? Number(foldedMatch[1]) : null,
+            liveDomNodes: document.querySelectorAll("*").length,
+            messageRows: document.querySelectorAll('[data-testid="message-item"]').length,
+            runHeaders: document.querySelectorAll("[data-run-block]").length,
+            virtualization: {
+                active: Boolean(topSpacer && bottomSpacer),
+                topSpacerPx: heightOf(topSpacer),
+                bottomSpacerPx: heightOf(bottomSpacer),
+            },
+            source: `root=${rootSelector}.__vue_app__ → $pinia.state.chat.messages[${sid}]`,
+        };
+    }, sessionId);
 }
 
-/** bl348 同款采样：GC×2 → 双 rAF → CDP 堆/DOM 计数 + 渲染行 + store 条数。 */
+/** bl348 同款采样：GC×2 → 双 rAF → CDP 堆/DOM 计数 + 探针（store/窗口化/活动 DOM）。 */
 async function sampleOnce(page: Page, cdp: CDPSession, sessionId: string): Promise<RawSample> {
     for (let round = 0; round < PROTOCOL.gcRounds; round += 1) {
         await cdp.send("HeapProfiler.collectGarbage");
@@ -176,12 +334,16 @@ async function sampleOnce(page: Page, cdp: CDPSession, sessionId: string): Promi
         nodes: number;
         jsEventListeners: number;
     };
-    const renderedRows = await page.evaluate(
-        () => document.querySelectorAll('[data-testid="message-item"]').length,
-    );
+    // 探针取不到就抛错（task-51）：采样失败即本 spec 失败，不留 null 假数据。
+    const probe = await storeProbe(page, sessionId);
     return {
-        renderedRows,
-        storeMessages: await storeMessagesProbe(page, sessionId),
+        renderedRows: probe.messageRows,
+        storeMessages: probe.storeMessages,
+        foldedOlder: probe.foldedOlder,
+        liveDomNodes: probe.liveDomNodes,
+        runHeaders: probe.runHeaders,
+        virtualization: probe.virtualization,
+        probeSource: probe.source,
         domNodes: counters.nodes,
         jsEventListeners: counters.jsEventListeners,
         documents: counters.documents,
@@ -198,7 +360,7 @@ function summarize(values: number[]): Summary {
     };
 }
 
-/** 全 null（B-05 通道不可用）时整体记 null，不产 0 中位假数据。 */
+/** 全 null（入口不在场）时整体记 null，不产 0 中位假数据。 */
 function summarizeNullable(values: Array<number | null>): Summary | null {
     const usable = values.filter((value): value is number => value !== null);
     return usable.length > 0 ? summarize(usable) : null;
@@ -206,19 +368,27 @@ function summarizeNullable(values: Array<number | null>): Summary | null {
 
 function metricsOf(raw: RawSample[]): {
     renderedRows: Summary;
-    storeMessages: Summary | null;
+    storeMessages: Summary;
+    foldedOlder: Summary | null;
+    liveDomNodes: Summary;
+    runHeaders: Summary;
     domNodes: Summary;
     jsHeapMb: Summary;
     jsEventListeners: Summary;
     documents: Summary;
+    virtualizationActiveSamples: number;
 } {
     return {
         renderedRows: summarize(raw.map((item) => item.renderedRows)),
-        storeMessages: summarizeNullable(raw.map((item) => item.storeMessages)),
+        storeMessages: summarize(raw.map((item) => item.storeMessages)),
+        foldedOlder: summarizeNullable(raw.map((item) => item.foldedOlder)),
+        liveDomNodes: summarize(raw.map((item) => item.liveDomNodes)),
+        runHeaders: summarize(raw.map((item) => item.runHeaders)),
         domNodes: summarize(raw.map((item) => item.domNodes)),
         jsHeapMb: summarize(raw.map((item) => item.heapMb)),
         jsEventListeners: summarize(raw.map((item) => item.jsEventListeners)),
         documents: summarize(raw.map((item) => item.documents)),
+        virtualizationActiveSamples: raw.filter((item) => item.virtualization.active).length,
     };
 }
 
@@ -418,7 +588,10 @@ function worktreeCaliber(): { commit: string | null; dirty: boolean | null } {
 test.describe("PLAN-0682 会话规模测量（BL-382 · 真栈）", () => {
     test.describe.configure({ mode: "serial", retries: 0 });
 
-    test("双口径：初始窗口 + 滚动回填（CDP 采样两轮并写 JSON） @host", async ({ page, request }) => {
+    test("双口径：初始窗口 + 滚动回填（CDP 采样两轮并写 JSON） @host", async ({
+        page,
+        request,
+    }) => {
         const tierName = process.env.XIHE_BL382_TIER;
         const tier = tierName && tierName in TIERS ? (tierName as Tier) : null;
         const envSessionId = process.env.XIHE_BL382_SESSION;
@@ -511,6 +684,7 @@ test.describe("PLAN-0682 会话规模测量（BL-382 · 真栈）", () => {
                     : null,
                 sessionId: targetSessionId,
                 initialRows,
+                probe: PROBE_CALIBER,
                 protocol: PROTOCOL,
                 longTasksDuringInitialWindow: initialTasks,
                 network: pages.samples,
@@ -525,19 +699,24 @@ test.describe("PLAN-0682 会话规模测量（BL-382 · 真栈）", () => {
             console.log(`[BL-382 SAMPLE] ${JSON.stringify(metrics)}`);
             console.log(`[BL-382 SAMPLE] evidence: ${outPath}`);
 
-            // ── T1.2 回填口径（骨架先行，实跑待窗口）：循环滚顶 → load-older 直至耗尽/不再增长 ──
+            // ── T1.2 回填口径（task-51：页面侧事实 + store 硬探针，超时不得冒充耗尽）─────
             const viewportEl = page.getByTestId("message-scroller-viewport");
-            // 增长信号：store 条数优先；B-05 探针不可用时回落网络页请求数（选一次，整轮粘住）。
-            const storeWorks = (await storeMessagesProbe(page, targetSessionId)) !== null;
-            const growth = async (): Promise<number> =>
-                storeWorks
-                    ? ((await storeMessagesProbe(page, targetSessionId)) ?? 0)
-                    : pages.samples.length;
+            /**
+             * 增长/驻留信号**只**取 store 硬探针（取不到即红）；不再回落网络页计数 ——
+             * 网络计数是"请求发生了"不是"消息驻留了"，拿它冒充会把 500 条 cap 读成"还在长"。
+             */
+            const storeCount = async (): Promise<number> =>
+                (await storeProbe(page, targetSessionId)).storeMessages;
             const backfillPages: BackfillPage[] = [];
             let exhaustedAtRound: number | null = null;
+            let exhaustedBy: BackfillSignal | null = null;
             let stallTerminated = false;
-            let previousGrowth = await growth();
+            let duplicateCursorRequests = 0;
+            let previousGrowth = await storeCount();
+            let previousCursor = pages.samples.at(-1)?.nextCursor ?? null;
             let stallRounds = 0;
+            /** store 首次到 500 上限的轮次（cap 只登记、不终止回填，见文件头 ⑥）。 */
+            let storeCapAtRound: number | null = null;
             for (let round = 1; round <= MAX_BACKFILL_ROUNDS; round += 1) {
                 await viewportEl.hover();
                 // 真实 wheel 意图（userScrollIntent）→ 滚到顶 → load-older 入口出现
@@ -550,47 +729,145 @@ test.describe("PLAN-0682 会话规模测量（BL-382 · 真栈）", () => {
                     })
                     .toBe(0);
                 const loadOlder = page.getByTestId("load-older-messages");
-                if (!(await loadOlder.isVisible().catch(() => false))) {
-                    exhaustedAtRound = round; // olderExhausted：入口不再出现
+                // 不用 catch 包 isVisible：locator 无匹配只会返回 false；抛错 = 页面/上下文
+                // 真出问题，必须红，不能记成"入口消失 ⇒ 已耗尽"。
+                if (!(await loadOlder.isVisible())) {
+                    exhaustedBy = "entry-gone"; // 信号 ③：入口不再渲染
+                    exhaustedAtRound = round;
                     break;
                 }
                 const samplesBefore = pages.samples.length;
                 const startedAt = Date.now();
                 await loadOlder.click();
-                let grew = true;
+                // 信号 ④：先有界等"点击真的发出了页请求"。0 页请求 = hasOlder=false，
+                // 入口只因 foldedCount>0 还在场（MessageList.vue:453 的 v-if）——旧实现
+                // 在这里空等 45s 增长，把"已耗尽"记成了"停滞"。
+                let issued = samplesBefore;
                 try {
                     await expect
-                        .poll(growth, { timeout: 45_000, intervals: [500, 1000] })
-                        .toBeGreaterThan(previousGrowth);
+                        .poll(() => pages.samples.length, {
+                            timeout: 10_000,
+                            intervals: [100, 250],
+                        })
+                        .toBeGreaterThan(samplesBefore);
+                    issued = pages.samples.length;
                 } catch {
-                    // cap/加载停止是**终态信号**不是失败：登记后按 stall 收敛（决策 #4）。
-                    grew = false;
+                    // 保持 issued = samplesBefore：下面把它判成 entry-inert，不猜成增长。
                 }
-                if (!grew) {
-                    stallRounds += 1;
-                    if (stallRounds >= BACKFILL_STALL_ROUNDS) {
-                        stallTerminated = true;
-                        break;
+                const pageSample = issued > samplesBefore ? pages.samples[issued - 1] : null;
+                // envelope 的 count/nextCursor/truncated 由 response.json() 异步补齐：有界等待；
+                // 仍读不到就保留 null —— 读不到的数**绝不**用来宣称耗尽（不 fake）。
+                if (pageSample) {
+                    try {
+                        await expect
+                            .poll(
+                                () => pageSample.count !== null || pageSample.truncated !== null,
+                                {
+                                    timeout: 10_000,
+                                    intervals: [100, 250],
+                                },
+                            )
+                            .toBe(true);
+                    } catch {
+                        // 非 JSON 响应：count/nextCursor/truncated 保持 null。
                     }
-                } else {
-                    stallRounds = 0;
-                    previousGrowth = await growth();
+                }
+                const pageMeta = pageSample
+                    ? {
+                          count: pageSample.count,
+                          nextCursor: pageSample.nextCursor,
+                          truncated: pageSample.truncated,
+                      }
+                    : null;
+                const counted = pageMeta?.count ?? null;
+                const nextCursor = pageMeta?.nextCursor ?? null;
+                const truncated = pageMeta?.truncated ?? null;
+                const cursorRepeated = Boolean(
+                    pageMeta &&
+                    nextCursor !== null &&
+                    previousCursor !== null &&
+                    nextCursor === previousCursor,
+                );
+                if (cursorRepeated) duplicateCursorRequests += 1;
+                // 到 cap 后 store 条数不再增长（trimMessages 丢掉的正是刚前插的更旧页），
+                // 此时"增长"不再是进度信号 —— 用页面侧进度（拿到非空页）判定回填是否仍在推进，
+                // 否则 20k 档会在第 10 轮被两次"没增长"误判成停滞。
+                const atCap = previousGrowth >= MAX_LOADED_MESSAGES;
+                let grew = false;
+                if (!atCap) {
+                    try {
+                        await expect
+                            .poll(storeCount, { timeout: 20_000, intervals: [500, 1000] })
+                            .toBeGreaterThan(previousGrowth);
+                        grew = true;
+                    } catch {
+                        // 增长没发生：**先确认探针仍可用**（探针坏了必须红，不能被"没增长"吞掉）。
+                        await storeProbe(page, targetSessionId);
+                    }
+                }
+                // 本轮结束时的探针事实（store 条数 / 折叠计数 / 窗口化 / 渲染行）。
+                const probeAfter = await storeProbe(page, targetSessionId);
+                const storeDelta = probeAfter.storeMessages - previousGrowth;
+                const pageProgressed = Boolean(pageSample && (counted ?? 0) > 0);
+                if (storeCapAtRound === null && probeAfter.storeMessages >= MAX_LOADED_MESSAGES) {
+                    storeCapAtRound = round;
+                }
+                // 终态信号顺序：空页 → CP 声明到底 → 游标重复两次 → 无请求(cap)。
+                let signal: BackfillSignal | null = null;
+                if (pageSample && counted === 0) {
+                    signal = "empty-page"; // 信号 ①
+                } else if (pageSample && (truncated === false || nextCursor === null)) {
+                    // 信号 ⑤：ChatPanel.vue:460 的 hasOlder = truncated && nextCursor，此处已假。
+                    if (truncated !== null || counted !== null) signal = "page-end";
+                } else if (cursorRepeated && duplicateCursorRequests >= 2) {
+                    signal = "cursor-repeat"; // 信号 ②：连续两页游标没前进
+                } else if (!pageSample && probeAfter.storeMessages >= MAX_LOADED_MESSAGES) {
+                    // 信号 ④：入口只因折叠计数在场（hasOlder=false ⇒ 点击是 no-op），且 store 已到
+                    // 500 上限 —— 这才叫"没有更旧的了"。store 未到上限却点不动说明是别的状态
+                    // （例如 loading 卡住），记 null 交给 stall，不冒充耗尽。
+                    signal = "entry-inert";
                 }
                 backfillPages.push({
                     round,
                     ms: Date.now() - startedAt,
                     networkPageRequests: pages.samples.length - samplesBefore,
-                    store: await storeMessagesProbe(page, targetSessionId),
-                    renderedRows: await page.locator('[data-testid="message-item"]').count(),
+                    store: probeAfter.storeMessages,
+                    foldedOlder: probeAfter.foldedOlder,
+                    storeDelta,
+                    renderedRows: probeAfter.messageRows,
+                    runHeaders: probeAfter.runHeaders,
+                    virtualized: probeAfter.virtualization.active,
+                    storeCapped: probeAfter.storeMessages >= MAX_LOADED_MESSAGES,
+                    page: pageMeta,
+                    cursorRepeated,
+                    signal,
                 });
+                if (signal) {
+                    exhaustedBy = signal;
+                    exhaustedAtRound = round;
+                    break;
+                }
+                // 进度 = store 长了 或 拿到了非空页（cap 后只剩后者可用）。
+                if (grew || pageProgressed) {
+                    stallRounds = 0;
+                } else {
+                    stallRounds += 1;
+                }
+                if (grew) previousGrowth = probeAfter.storeMessages;
+                if (stallRounds >= BACKFILL_STALL_ROUNDS) {
+                    stallTerminated = true;
+                    break;
+                }
+                if (nextCursor !== null) previousCursor = nextCursor;
             }
             const backfillTasks = await drainLongTasks(page);
             const finalRaw = await sampleSeries(page, cdp, targetSessionId);
             const finalMetrics = metricsOf(finalRaw);
+            const finalProbe = await storeProbe(page, targetSessionId);
             const backfillPayload = {
                 generatedAt: new Date().toISOString(),
                 plan: "PLAN-0682",
-                task: "T1.2 backfill caliber (skeleton; live run pending stack window)",
+                task: "T1.2 backfill caliber (exhaustion/abort signals recorded, no threshold assertions)",
                 tier,
                 seededSession,
                 selfSeeded: selfSeed,
@@ -603,11 +880,22 @@ test.describe("PLAN-0682 会话规模测量（BL-382 · 真栈）", () => {
                       }
                     : null,
                 sessionId: targetSessionId,
+                probe: PROBE_CALIBER,
                 backfill: {
                     rounds: backfillPages.length,
                     maxRounds: MAX_BACKFILL_ROUNDS,
+                    /** 命中的终态信号（null = 跑满上限/被 stall 打断）；超时不算耗尽。 */
+                    exhaustedBy,
                     exhaustedAtRound,
+                    /** 增长连续 2 轮不动（**独立**于耗尽：命中它时 exhaustedBy 必为 null）。 */
                     stallTerminated,
+                    duplicateCursorRequests,
+                    storeCap: MAX_LOADED_MESSAGES,
+                    /** store 首次到 500 上限的轮次（cap 是设计上限，不是耗尽 ⇒ 回填继续）。 */
+                    storeCapAtRound,
+                    loadedMessages: finalProbe.storeMessages,
+                    foldedOlder: finalProbe.foldedOlder,
+                    virtualizationActive: finalProbe.virtualization.active,
                     pages: backfillPages,
                 },
                 longTasksDuringBackfill: backfillTasks,
@@ -617,7 +905,9 @@ test.describe("PLAN-0682 会话规模测量（BL-382 · 真栈）", () => {
             const backfillPath = path.join(evidenceDir, `bl382-${tier}-backfill.json`);
             writeFileSync(backfillPath, `${JSON.stringify(backfillPayload, null, 2)}\n`, "utf8");
             console.log(
-                `[BL-382 BACKFILL] rounds=${backfillPages.length} exhausted=${exhaustedAtRound} stall=${stallTerminated}`,
+                `[BL-382 BACKFILL] rounds=${backfillPages.length} exhaustedBy=${exhaustedBy} ` +
+                    `atRound=${exhaustedAtRound} stall=${stallTerminated} ` +
+                    `duplicateCursorRequests=${duplicateCursorRequests}`,
             );
             console.log(`[BL-382 BACKFILL] final=${JSON.stringify(finalMetrics)}`);
             console.log(`[BL-382 BACKFILL] evidence: ${backfillPath}`);
