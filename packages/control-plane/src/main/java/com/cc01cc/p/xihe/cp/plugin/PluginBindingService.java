@@ -80,11 +80,13 @@ public class PluginBindingService {
     private final AuditLogger auditLogger;
     private final AuthorizationGrantRepository grants;
     private final PluginBindingGrantWriter grantWriter;
+    private final PluginIndexDdlExecutor indexDdl;
 
     public PluginBindingService(PluginBindingRepository bindings,
             SessionPluginBindingRepository attachments, PluginRepository plugins,
             SessionRepository sessions, AuditLogger auditLogger,
-            AuthorizationGrantRepository grants, PluginBindingGrantWriter grantWriter) {
+            AuthorizationGrantRepository grants, PluginBindingGrantWriter grantWriter,
+            PluginIndexDdlExecutor indexDdl) {
         this.bindings = bindings;
         this.attachments = attachments;
         this.plugins = plugins;
@@ -92,6 +94,7 @@ public class PluginBindingService {
         this.auditLogger = auditLogger;
         this.grants = grants;
         this.grantWriter = grantWriter;
+        this.indexDdl = indexDdl;
     }
 
     // ------------------------------------------------------------------ authorization gate
@@ -230,9 +233,17 @@ public class PluginBindingService {
         // instead of a documented one; see PluginBindingGrantWriter.
         grantWriter.materialize(AuthzContext.SUBJECT_USER, subject(actorUserId), workspace,
                 binding.getId());
+        // T2.2: the binding is the unit that owns plugin_records (DP-2's indexes are partial on
+        // binding_id, DP-3's ledger is keyed by binding_id), so declared index DDL runs here — in the
+        // binding transaction — and a DDL failure fails the binding instead of leaving a half install
+        // (LC-8). Uninstall cleanup is the mirrored drop in delete().
+        List<String> indexes = indexDdl.applyForBinding(binding.getId(),
+                PluginIndexDeclaration.from(plugin.getManifest()), actorUserId,
+                workspace.toString());
         audit(ACTION_CREATE, actorUserId, workspace, binding,
                 "plugin=" + plugin.getId() + " version=" + plugin.getVersion()
-                        + " state=" + initial.wire() + " atoms=" + grant.atoms());
+                        + " state=" + initial.wire() + " atoms=" + grant.atoms()
+                        + " indexes=" + indexes.size());
         log.info("plugin binding created id={} plugin={} workspace={} state={}", binding.getId(),
                 plugin.getId(), workspace, initial.wire());
         return binding;
@@ -282,13 +293,17 @@ public class PluginBindingService {
         UUID workspace = requireBindAtom(workspaceId, actorUserId);
         PluginBinding binding = require(workspace, bindingId);
         long attached = attachments.countByBindingId(binding.getId());
+        // T2.2: drop the binding's declared indexes in the same transaction. The ledger rows stay
+        // (LC-6: they are permanent), which is what lets a retried delete/reconcile sweep them again
+        // via DROP INDEX IF EXISTS without needing a second source of truth.
+        int indexesDropped = indexDdl.dropForBinding(binding.getId());
         bindings.delete(binding);
         // T1.3: delete ⇒ revoke, in the same transaction, so the authority cannot outlive the
         // binding it was derived from. A rollback restores both together.
         int revoked = grantWriter.revoke(binding.getId());
         audit(ACTION_DELETE, actorUserId, binding.getWorkspaceId(), binding,
                 "plugin=" + binding.getPluginId() + " sessions_detached=" + attached
-                        + " grants_revoked=" + revoked);
+                        + " grants_revoked=" + revoked + " indexes_dropped=" + indexesDropped);
         log.info("plugin binding deleted id={} plugin={} attached_sessions={} grants_revoked={}",
                 binding.getId(), binding.getPluginId(), attached, revoked);
     }
