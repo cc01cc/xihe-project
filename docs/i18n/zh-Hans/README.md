@@ -190,7 +190,7 @@ mise run pkg:installer                               # 从既有服务产物构�
 
 ```bash
 mise run validate             # lint + typecheck + build + test（+ e2e 夹具自测）
-mise run validate:full        # 增加集成与 E2E（需要 Docker）
+mise run validate:full        # validate + test:runtime + test:integration（不含 E2E；compose E2E 车道已冻结）
 mise run test:e2e:fixtures    # 只跑 e2e 夹具自测（fake LLM 链式状态机；不起栈、秒级）
 mise run test:e2e:host        # Host E2E：先停 dev:host（见 DEV-002 §5），每轮使用隔离环境
 ```

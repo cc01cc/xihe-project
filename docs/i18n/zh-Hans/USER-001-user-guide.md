@@ -58,7 +58,7 @@ mise run dev:host
 
 ```bash
 mise run validate       # 全部单元测试
-mise run validate:full  # 单元 + 集成 + E2E
+mise run validate:full  # validate + test:runtime + test:integration（不含 E2E）
 ```
 
 ## 2. 功能使用

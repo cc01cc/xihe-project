@@ -55,7 +55,7 @@ The login field accepts either value: enter the registered email or the username
 
 ```bash
 mise run validate       # All unit tests
-mise run validate:full  # Unit + integration + E2E
+mise run validate:full  # validate + test:runtime + test:integration (no E2E)
 ```
 
 ## 2. Feature Usage
