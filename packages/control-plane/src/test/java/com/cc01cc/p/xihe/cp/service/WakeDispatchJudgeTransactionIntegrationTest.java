@@ -7,19 +7,26 @@ import com.cc01cc.p.xihe.cp.AbstractH2Test;
 import com.cc01cc.p.xihe.cp.entity.JudgeDecision;
 import com.cc01cc.p.xihe.cp.entity.Session;
 import com.cc01cc.p.xihe.cp.entity.SessionParticipant;
+import com.cc01cc.p.xihe.cp.entity.UserQuestion;
 import com.cc01cc.p.xihe.cp.repository.JudgeDecisionRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionParticipantRepository;
 import com.cc01cc.p.xihe.cp.repository.SessionRepository;
+import com.cc01cc.p.xihe.cp.repository.UserQuestionRepository;
 import org.junit.jupiter.api.Test;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.UnexpectedRollbackException;
 import org.springframework.transaction.support.TransactionTemplate;
 
+import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -27,10 +34,12 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -75,9 +84,16 @@ class WakeDispatchJudgeTransactionIntegrationTest extends AbstractH2Test {
     @MockitoBean
     private JudgeModelClient judgeModelClient;
 
-    /** Boundary 3: force the durable judge row insert to fail with a real persistence exception. */
-    @MockitoBean
+    /**
+     * Boundary 3: a spy, not a mock — the durable judge row is written for real unless a test stubs
+     * the insert to fail. The two transaction-boundary cases above need the forced failure; the
+     * T1.2 zero-side-effect case below needs the real {@code judge_decisions} row.
+     */
+    @MockitoSpyBean
     private JudgeDecisionRepository judgeDecisionRepository;
+
+    @Autowired
+    private UserQuestionRepository userQuestions;
 
     private UUID seedJudgeParticipant() {
         Session session = new Session();
@@ -99,8 +115,8 @@ class WakeDispatchJudgeTransactionIntegrationTest extends AbstractH2Test {
         UUID participantId = seedJudgeParticipant();
         UUID sessionId = participants.findById(participantId).orElseThrow().getSessionId();
         stubJudgePath();
-        when(judgeDecisionRepository.save(any(JudgeDecision.class)))
-                .thenThrow(new DataIntegrityViolationException("judge_decisions insert failed"));
+        doThrow(new DataIntegrityViolationException("judge_decisions insert failed"))
+                .when(judgeDecisionRepository).save(any(JudgeDecision.class));
 
         ListAppender<ILoggingEvent> appender = attachWakeLog();
         try {
@@ -141,8 +157,8 @@ class WakeDispatchJudgeTransactionIntegrationTest extends AbstractH2Test {
         UUID participantId = seedJudgeParticipant();
         UUID sessionId = participants.findById(participantId).orElseThrow().getSessionId();
         stubJudgePath();
-        when(judgeDecisionRepository.save(any(JudgeDecision.class)))
-                .thenThrow(new UnexpectedRollbackException("judge transaction commit failed"));
+        doThrow(new UnexpectedRollbackException("judge transaction commit failed"))
+                .when(judgeDecisionRepository).save(any(JudgeDecision.class));
 
         ListAppender<ILoggingEvent> appender = attachWakeLog();
         try {
@@ -170,11 +186,136 @@ class WakeDispatchJudgeTransactionIntegrationTest extends AbstractH2Test {
         verify(judgeDecisionRepository, times(1)).save(any(JudgeDecision.class));
     }
 
+    /**
+     * PLAN-0690 T1.2: the JUDGE branch decides only <em>whether to speak</em>.
+     *
+     * <p>One real {@link WakeDispatchService#fire} on a JUDGE participant whose verdict says
+
+     * {@code speak=false} must write exactly one {@code judge_decisions} row carrying the assembled
+     * {@code input_window}, and nothing else: no {@code user_questions} transition, no
+     * {@code session_participants.respond_policy} rewrite (all four enum values are snapshotted), no
+     * {@code chat_runs} insertion, and no audit beyond the pre-existing fire path's own durable
+     * {@code wake_dispatch} row.</p>
+     */
+    @Test
+    void judgeDecisionWritesNoUserQuestionsNorRespondPolicy() throws JudgeModelClient.JudgeException {
+        UUID judgeParticipantId = seedFourPolicyParticipants();
+        UUID sessionId = participants.findById(judgeParticipantId).orElseThrow().getSessionId();
+        UUID questionId = seedPendingUserQuestion(sessionId);
+
+        Map<String, String> policiesBefore = respondPolicySnapshot(sessionId);
+        assertEquals(Set.of(SessionParticipant.RESPOND_ALWAYS,
+                        SessionParticipant.RESPOND_WHEN_MENTIONED,
+                        SessionParticipant.RESPOND_JUDGE,
+                        SessionParticipant.RESPOND_MUTED),
+                new HashSet<>(policiesBefore.values()),
+                "the snapshot must contain all four respond_policy values");
+        long chatRunsBefore = rowCount("chat_runs");
+        long auditLogsBefore = rowCount("audit_logs");
+        long wakeDispatchBefore = contextEventCount(sessionId, "wake_dispatch");
+
+        when(participantService.judgeSpeakAs(anyString(), anyString(), anyString(), anyString()))
+                .thenReturn(SessionParticipantService.SpeakDecision.permit());
+        stubJudgeVerdict("{\"speak\":false}");
+
+        WakeDispatchService.WakeFireResult result = wakeDispatchService.fire(
+                judgeParticipantId, "mention", "wake:mention:t1.2", sessionId, null);
+
+        assertEquals("judged_no", result.outcome(), "speak=false must not dispatch a run");
+        assertFalse(result.dispatched());
+        assertNull(result.runId(), "a judged_no wake has no run");
+
+        // The judge path's only durable output is the decision row, with its input window.
+        assertEquals(1, judgeDecisionCount(sessionId), "exactly one judge_decisions row");
+        Map<String, Object> decision = jdbc.queryForMap(
+                "SELECT input_window, run_id, outcome FROM judge_decisions WHERE session_id = ?",
+                sessionId);
+        String inputWindow = (String) decision.get("input_window");
+        assertNotNull(inputWindow, "judge_decisions.input_window must be populated");
+        assertTrue(inputWindow.contains("round=wake:mention:t1.2"),
+                "the input window must name the judged round, got: " + inputWindow);
+        assertNull(decision.get("run_id"), "a judged_no wake has no run row");
+        assertEquals("succeeded", decision.get("outcome"));
+
+        // Zero side effects on the policy column, the pending question and the run table.
+        assertEquals(policiesBefore, respondPolicySnapshot(sessionId),
+                "judging must not rewrite any respond_policy value");
+        assertEquals("pending", scalarString(
+                "SELECT state FROM user_questions WHERE id = ?", questionId),
+                "the pending question must stay pending");
+        assertNull(scalarString("SELECT answer FROM user_questions WHERE id = ?", questionId),
+                "judging must not answer the question");
+        assertEquals(chatRunsBefore, rowCount("chat_runs"),
+                "a judged_no wake must not create a chat run");
+
+        // The one new durable row is the fire path's own audit; JUDGE adds no audit of its own.
+        assertEquals(wakeDispatchBefore + 1, contextEventCount(sessionId, "wake_dispatch"),
+                "the fire path's wake_dispatch row is the only new durable audit");
+        assertEquals(auditLogsBefore, rowCount("audit_logs"),
+                "JUDGE classes must not write audit_logs");
+    }
+
+    private UUID seedFourPolicyParticipants() {
+        Session session = new Session();
+        session.setId(UUID.randomUUID());
+        session.setWorkspaceId(UUID.randomUUID().toString());
+        session.setUserId(UUID.randomUUID().toString());
+        session.setTitle("T1.2 judge zero side effects");
+        sessions.saveAndFlush(session);
+
+        String[] policies = {SessionParticipant.RESPOND_ALWAYS,
+                SessionParticipant.RESPOND_WHEN_MENTIONED, SessionParticipant.RESPOND_JUDGE,
+                SessionParticipant.RESPOND_MUTED};
+        UUID judgeParticipantId = null;
+        for (int index = 0; index < policies.length; index++) {
+            SessionParticipant participant = new SessionParticipant(session.getId(),
+                    SessionParticipant.KIND_AGENT, UUID.randomUUID(),
+                    SessionParticipant.ROLE_MEMBER, 10 + index, SessionParticipant.WAKE_MENTION,
+                    policies[index]);
+            participant.setId(UUID.randomUUID());
+            participants.saveAndFlush(participant);
+            if (SessionParticipant.RESPOND_JUDGE.equals(policies[index])) {
+                judgeParticipantId = participant.getId();
+            }
+        }
+        assertNotNull(judgeParticipantId, "the JUDGE participant must be seeded");
+        return judgeParticipantId;
+    }
+
+    private UUID seedPendingUserQuestion(UUID sessionId) {
+        UserQuestion question = new UserQuestion(sessionId, UUID.randomUUID(), null,
+                UUID.randomUUID(), "T1.2 pending question that must stay untouched", null);
+        question.setId(UUID.randomUUID());
+        return userQuestions.saveAndFlush(question).getId();
+    }
+
+    private Map<String, String> respondPolicySnapshot(UUID sessionId) {
+        Map<String, String> snapshot = new LinkedHashMap<>();
+        for (Map<String, Object> row : jdbc.queryForList(
+                "SELECT id, respond_policy FROM session_participants WHERE session_id = ?",
+                sessionId)) {
+            snapshot.put(String.valueOf(row.get("id")), (String) row.get("respond_policy"));
+        }
+        return snapshot;
+    }
+
+    private long rowCount(String table) {
+        return jdbc.queryForObject("SELECT count(*) FROM " + table, Long.class);
+    }
+
+    private String scalarString(String sql, Object argument) {
+        return jdbc.queryForObject(sql, String.class, argument);
+    }
+
     private void stubJudgePath() throws JudgeModelClient.JudgeException {
         when(participantService.judgeSpeakAs(anyString(), anyString(), anyString(), anyString()))
                 .thenReturn(SessionParticipantService.SpeakDecision.permit());
+        stubJudgeVerdict("{\"speak\":true}");
+    }
+
+    private void stubJudgeVerdict(String verdictJson) throws JudgeModelClient.JudgeException {
         when(judgeModelClient.decide(any()))
-                .thenReturn(new JudgeModelClient.JudgeVerdict("{\"speak\":true}", 10L, 5L, 12L));
+                .thenReturn(new JudgeModelClient.JudgeVerdict(verdictJson, 10L, 5L, 12L));
     }
 
     private ListAppender<ILoggingEvent> attachWakeLog() {
