@@ -20,12 +20,22 @@
  *   2. CP `/actuator/health` == 200，Agent 已就绪（chat 会真派发到 fake provider）。
  *   3. `ensureFakeUserProvider` 能在新注册身份上装好 fake provider（本 spec 自建身份，
  *      不依赖预置种子用户）。
- *   4. instance 作用域技能导入需要 SUPER_ADMIN 授权——本 spec 走 API 导入 + 主体绑定，
- *      **不提权 psql 写 grants**（那是 0678 的绕过手法，0680 不接管）；若窗口实测
- *      该身份无 `MANAGE_SKILL_LIBRARY`，本 spec 的导入段会 403，届时按实测改种子，
- *      **不改断言凑绿**。
+ *   4. **【D-67 supersede】instance 作用域技能导入需要 instance admin**（`SkillImportService:80-92`
+ *      实证：`instance ⇒ instance admin`，否则 403 `SKILL_IMPORT_FORBIDDEN`）。
+ *      **403 是正确产品行为，不是缺陷**；0680 的被测面是**绑定 / 快照 / 层级**，不是导入授权。
+ *      因此本 spec 在**隔离库**落一行授权种子作为**夹具前置**：
+ *      `role_bindings(SUPER_ADMIN, instance)` + **`grants`（`MANAGE_SKILL_LIBRARY`@`*`,
+ *      `source=role`, instance）** —— 后者才是真正生效的物化授权（`RequesterAuthority`
+ *      读 `grants`，只写前者仍 403，`host-e2e` 坑表 §19），随后重新 `POST /auth/login` 取新 token。
+ *      **为什么不是"绕过被测面"**：CP 无 role-binding/grant 的 HTTP 写面（openapi 仅
+ *      `/api/v1/roles*` 只读目录）；`DataSeeder` 的 admin 依赖 `XIHE_DEV_ADMIN_PASSWORD`
+ *      而隔离栈未注入 ⇒ 无正常路径可授。
+ *      **本 spec 的授权种子仅属夹具前置，不改被测断言**；**不改断言凑绿**（此句仍然有效）。
+ *      种子只对 `XIHE_E2E_PG_*` 指向的隔离库执行，库名以 `xihe-e2e` 前缀 **断言防呆**
+ *      （不匹配直接 fail，绝不触碰 stack-1 的 `xihe_1`），随栈销毁。
  *
- * 运行（窗口期）：`mise run test:e2e:host -- --spec packages/ui/e2e/real/plan0680-skill-tier-snapshot.spec.ts`
+ * 运行（窗口期，`--spec` 不合法——spec 是**位置参数**，cwd = `packages/ui`）：
+ *   `mise run test:e2e:host -- --report-name=plan0680-t3-1 --expect-tests=1 e2e/real/plan0680-skill-tier-snapshot.spec.ts`
  * 实施期不启栈、不跑浏览器；本文件只保证 `--list` 通过。
  *
  * 冻结语义来源：`spec/agent/principal-workspace-binding.md:72-125`「技能绑定双轴（PLAN-0680 增补）」
@@ -87,6 +97,70 @@ async function newIdentity(request: APIRequestContext, label: string): Promise<I
     const userId = body.id ?? body.userId ?? body.user?.id ?? "";
     expect(userId, "注册响应应带 userId").toMatch(UUID);
     return { email, userId, accessToken: body.accessToken, workspaceId };
+}
+
+/** `V87__dynamic_access_roles.sql:40-58` 的实例超管角色（照抄 `plan0678-skills-positive.spec.ts:50`）。 */
+const SUPER_ADMIN_ROLE_ID = "00000000-0000-4000-8000-000000000001";
+
+/**
+ * **【D-67 夹具前置】** 在隔离库把受测身份提到 instance admin，并重新登录取新 token。
+ *
+ * - **为什么要直写 DB**：CP 无 role-binding / grant 的 HTTP 写面（`openapi.yaml` 只有
+ *   `/api/v1/roles*` 只读目录）；`DataSeeder` 的 `admin@xihe.local` 依赖隔离栈未注入的
+ *   `XIHE_DEV_ADMIN_PASSWORD` ⇒ 没有正常路径可授。**403 本身是正确产品行为**
+ *   （`SkillImportService:80-92`：`instance ⇒ instance admin`），0680 的被测面是
+ *   **绑定 / 快照 / 层级**，不是导入授权。
+ * - **为什么两行缺一不可**：`role_bindings` 只是角色绑定记录；`RequesterAuthority
+ *   .holdsActionAtom` 读的是**物化后的 `grants` 表**，只写前者仍会 403
+ *   `SKILL_IMPORT_FORBIDDEN`（`host-e2e` 坑表 §19）。
+ * - **安全边界（D-67 边界 1）**：库名**必须**以 `xihe_e2e` 前缀断言通过，否则直接 fail ——
+ *   绝不触碰 stack-1 的 `xihe_1`。种子随隔离栈销毁。
+ * - **不改被测断言**：本函数只准备前置数据，断言（`tier.definitionScopeType === "instance"`、
+ *   200 判据、三字段）一字不动。
+ */
+async function escalateToInstanceAdmin(
+    request: APIRequestContext,
+    identity: Identity,
+): Promise<Identity> {
+    const database = process.env.XIHE_E2E_PG_DATABASE ?? "";
+    expect(
+        database.startsWith("xihe_e2e"),
+        `D-67 边界：授权种子只允许落在隔离库，当前 XIHE_E2E_PG_DATABASE=${JSON.stringify(database)}`,
+    ).toBe(true);
+
+    // ① 角色绑定记录（缺它则 ② 的语义无处挂靠）
+    queryIsolatedPostgres(
+        `INSERT INTO role_bindings (id, role_id, subject_type, subject_id, scope_type, scope_id, granted_by) ` +
+            `VALUES (gen_random_uuid(), '${SUPER_ADMIN_ROLE_ID}', 'user', '${identity.userId}', 'instance', NULL, NULL) ` +
+            `ON CONFLICT DO NOTHING`,
+    );
+    // ② 真正生效的物化授权：instance 作用域的 MANAGE_SKILL_LIBRARY（JSON 形状见
+    //    `GrantIntersectionEvaluator.PermissionAtom`：`{actionClass, resource}`）
+    queryIsolatedPostgres(
+        `INSERT INTO grants (id, subject_type, subject_id, permissions, source, scope_type, scope_id) ` +
+            `VALUES (gen_random_uuid(), 'user', '${identity.userId}', ` +
+            `'[{"actionClass":"MANAGE_SKILL_LIBRARY","resource":"*"}]'::jsonb, 'role', 'instance', NULL)`,
+    );
+    const granted = queryIsolatedPostgres(
+        `SELECT count(*) FROM grants WHERE subject_id = '${identity.userId}'::uuid ` +
+            `AND permissions::text LIKE '%MANAGE_SKILL_LIBRARY%' AND scope_type = 'instance'`,
+    );
+    expect(
+        granted,
+        `instance 作用域 MANAGE_SKILL_LIBRARY grant 应存在（实际 count=${granted}）`,
+    ).toBe("1");
+
+    // ③ 重新登录取新 token（token 里的权限面在签发时固化，旧 token 拿不到新 grant）
+    const password = process.env.XIHE_E2E_PASSWORD ?? "XhE2e!plan0680dual1";
+    const login = await request.post(`${CP_URL}/api/v1/auth/login`, {
+        // 登录字段是 `identifier`（email 或 username），不是 `email`（PLAN-0565 裁定 #7）
+        data: { identifier: identity.email, password },
+    });
+    const loginText = await login.text();
+    expect(login.status(), `提权后重新登录应 200，实际 ${login.status()}：${loginText}`).toBe(200);
+    const { accessToken } = JSON.parse(loginText) as { accessToken: string };
+    expect(accessToken, "重新登录应返回 accessToken").toBeTruthy();
+    return { ...identity, accessToken };
 }
 
 function headersOf(identity: Identity): Record<string, string> {
@@ -188,7 +262,12 @@ async function waitForRun(sessionId: string): Promise<ChatRunRow> {
 test("@host 0680-T3.1 快照落双轴 tier：绑定 → run → skills_snapshot.items[].tier 三字段 → 解绑 → 快照少一项", async ({
     request,
 }) => {
-    const identity = await newIdentity(request, "p0680-tier");
+    // 【D-67 夹具前置】先注册身份，再在隔离库提权到 instance admin 并换新 token。
+    // 这段只准备前置数据；下面所有断言（200 判据 / tier 三字段 / 解绑少一项）一字未动。
+    const identity = await escalateToInstanceAdmin(
+        request,
+        await newIdentity(request, "p0680-tier"),
+    );
     const principalId = await provisionWorkspaceAgentPrincipal(request, identity, {
         name: agentName("P0680Tier", Date.now()),
         actions: ["read"],

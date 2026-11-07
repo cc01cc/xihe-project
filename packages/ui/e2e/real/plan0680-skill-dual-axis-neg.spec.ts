@@ -165,6 +165,13 @@ test("@host 0680-T3.2a 注入不越界：W1 的 workspace 技能与绑定行不�
     request,
 }) => {
     // 两个互相隔离的身份 ⇒ 两个独立工作区，W2 对 W1 非成员（跨工作区前提）
+    // **neg 侧无需 instance admin，故不落授权种子（D-67 边界 2 的同源注记）**：
+    // 本文件两处导入都用 `definitionScope.type = "workspace"`（见 `:187` / `:270`），
+    // 而 `SkillImportService:80-81` 的授权口径是「workspace ⇒ **workspace manager** or
+    // instance admin」。W1/W2 由 `ensureWorkspace` 各自建工作区，注册者即 OWNER，
+    // 天然满足该档 —— 因此**刻意不复制** `plan0680-skill-tier-snapshot.spec.ts` 里那段
+    // 隔离库提权（多授一层会掩盖「neg 侧本不需要提权」这个事实）。
+    // 若将来把本文件的作用域改成 instance，**必须**同步补种子并更新本注释。
     const w1 = await newIdentity(request, "p0680-neg-w1");
     const w2 = await newIdentity(request, "p0680-neg-w2");
     expect(w1.workspaceId, "两个身份必须落在不同工作区，否则本 spec 前提不成立").not.toBe(
@@ -256,6 +263,7 @@ test("@host 0680-T3.2a 注入不越界：W1 的 workspace 技能与绑定行不�
 test("@host 0680-T3.2b 对 W2 私有定义绑定 ⇒ 404 SKILL_NOT_FOUND（非旧 400，且不泄露存在性）", async ({
     request,
 }) => {
+    // 同 T3.2a：workspace 作用域 + OWNER 身份即可，**不需要** instance admin 种子（D-67 边界 2）。
     const w1 = await newIdentity(request, "p0680-404-w1");
     const w2 = await newIdentity(request, "p0680-404-w2");
     const w1Principal = await provisionWorkspaceAgentPrincipal(request, w1, {
