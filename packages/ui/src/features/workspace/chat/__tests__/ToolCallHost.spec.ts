@@ -150,6 +150,62 @@ describe("ToolCallHost dedicated card mapping", () => {
         );
     });
 
+    it("renders command success, artifact, and both wire truncation flags", async () => {
+        const wrapper = mountHost(
+            makeToolCall({
+                name: "execute_command",
+                arguments: JSON.stringify({ command: "run" }),
+                status: "completed",
+                result: JSON.stringify({
+                    stdout: "out",
+                    stderr: "err",
+                    exit_code: 0,
+                    success: true,
+                    artifact_id: "artifact-cmd-1",
+                    stdout_truncated: true,
+                    stderr_truncated: true,
+                }),
+            }),
+        );
+
+        await expand(wrapper);
+        const result = wrapper.find('[data-testid="command-result"]');
+        expect(result.text()).toContain("Success");
+        expect(result.text()).toContain("Raw output retained as artifact");
+        expect(result.text()).toContain("artifact-cmd-1");
+        const notices = result.findAll("p").filter((item) => item.text() === "Output truncated");
+        expect(notices).toHaveLength(2);
+    });
+
+    it("truncates command stdout and stderr at the 2000-character preview limit", async () => {
+        const wrapper = mountHost(
+            makeToolCall({
+                name: "execute_command",
+                arguments: JSON.stringify({ command: "run" }),
+                status: "completed",
+                result: JSON.stringify({
+                    stdout: `${"a".repeat(2000)}STDOUT-TAIL`,
+                    stderr: `${"b".repeat(2000)}STDERR-TAIL`,
+                    exit_code: 0,
+                    success: true,
+                }),
+            }),
+        );
+
+        await expand(wrapper);
+        const stdout = wrapper.find('[data-testid="command-stdout"]').text();
+        const stderr = wrapper.find('[data-testid="command-stderr"]').text();
+        expect(stdout).toBe("a".repeat(2000));
+        expect(stderr).toBe("b".repeat(2000));
+        expect(stdout).not.toContain("STDOUT-TAIL");
+        expect(stderr).not.toContain("STDERR-TAIL");
+        const notices = wrapper
+            .find('[data-testid="command-result"]')
+            .findAll("p")
+            .filter((item) => item.text() === "Output truncated");
+        expect(notices).toHaveLength(2);
+    });
+
     it("renders command pending with shared approval actions", async () => {
         const wrapper = mountHost(
             makeToolCall({
@@ -194,6 +250,55 @@ describe("ToolCallHost dedicated card mapping", () => {
                 .findAll('[data-testid="patch-diff"] > div')
                 .some((line) => line.classes().some((name) => name.includes("green"))),
         ).toBe(false);
+    });
+
+    it("renders patch changed count and diff note", async () => {
+        const wrapper = mountHost(
+            makeToolCall({
+                name: "apply_patch",
+                arguments: JSON.stringify({
+                    patches: [
+                        { path: "src/a.ts", expectedHash: "hash-a", hunks: [{}] },
+                        { path: "src/b.ts", expectedHash: "hash-b", hunks: [{}] },
+                    ],
+                }),
+                status: "completed",
+                result: JSON.stringify({
+                    changed: ["src/a.ts", "src/b.ts"],
+                    diff: "--- a/src/a.ts\n+++ b/src/a.ts\n+const a = 1;\n",
+                }),
+            }),
+        );
+
+        expect(wrapper.find('[data-tool-card="patch"]').exists()).toBe(true);
+        await expand(wrapper);
+        const result = wrapper.find('[data-testid="patch-result"]');
+        expect(result.text()).toContain("2 files");
+        expect(result.text()).toContain(
+            "Diff is classified by line prefix; full content in raw output",
+        );
+    });
+
+    it("renders pending patches when no result is present", async () => {
+        const wrapper = mountHost(
+            makeToolCall({
+                name: "apply_patch",
+                arguments: JSON.stringify({
+                    patches: [
+                        { path: "src/a.ts", expectedHash: "hash-a", hunks: [{}] },
+                        { path: "src/b.ts", expectedHash: "hash-b", hunks: [{}] },
+                    ],
+                }),
+                status: "pending",
+            }),
+        );
+
+        expect(wrapper.find('[data-tool-card="patch"]').exists()).toBe(true);
+        await expand(wrapper);
+        const pending = wrapper.find('[data-testid="patch-pending"]');
+        expect(pending.exists()).toBe(true);
+        expect(pending.text()).toContain("2 patches pending");
+        expect(wrapper.find('[data-testid="patch-result"]').exists()).toBe(false);
     });
 
     it("routes read_file with plain-text result without JSON parsing", async () => {
@@ -244,6 +349,32 @@ describe("ToolCallHost dedicated card mapping", () => {
         expect(wrapper.text()).toContain("L2–4");
         await expand(wrapper);
         expect(wrapper.find('[data-testid="read-content"]').text()).toContain("2 | a");
+    });
+
+    it("renders read total_lines and truncates the preview at the line threshold", async () => {
+        const content = Array.from({ length: 201 }, (_, index) => `${index + 1} | x`).join("\n");
+        const wrapper = mountHost(
+            makeToolCall({
+                name: "read_file_range",
+                arguments: JSON.stringify({ path: "/long.txt" }),
+                status: "completed",
+                result: JSON.stringify({
+                    content,
+                    total_lines: 201,
+                    is_binary: false,
+                }),
+            }),
+        );
+
+        expect(wrapper.find('[data-tool-card="read"]').exists()).toBe(true);
+        await expand(wrapper);
+        const meta = wrapper.find('[data-testid="read-meta"]');
+        expect(meta.text()).toContain("Total lines");
+        expect(meta.text()).toContain("201");
+        const preview = wrapper.find('[data-testid="read-content"]').text();
+        expect(preview).toContain("200 | x");
+        expect(preview).not.toContain("201 | x");
+        expect(wrapper.text()).toContain("Preview limited to 200 lines / 2000 characters");
     });
 
     it("renders read_file_range binary as a hint and base64 length, not the body", async () => {
