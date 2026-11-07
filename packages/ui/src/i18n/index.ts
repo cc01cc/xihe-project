@@ -497,6 +497,8 @@ const messages = {
             agentSkillTokens: "约 {tokens} tokens",
             agentSkillSourceWorkspace: "工作区技能",
             agentSkillSourcePersonal: "个人技能",
+            agentSkillScopeInstance: "实例级",
+            agentSkillScopeWorkspace: "工作区级",
             agentRoleSelectPlaceholder: "选择要绑定的角色",
             agentSkillSelectPlaceholder: "选择要绑定的技能",
             agentRoleForbiddenAtoms: "该角色含 agent 不可授予的原子，绑定被拒绝",
@@ -2920,6 +2922,8 @@ const messages = {
             agentSkillTokens: "~{tokens} tokens",
             agentSkillSourceWorkspace: "Workspace skill",
             agentSkillSourcePersonal: "Personal skill",
+            agentSkillScopeInstance: "Instance scope",
+            agentSkillScopeWorkspace: "Workspace scope",
             agentRoleSelectPlaceholder: "Select a role to bind",
             agentSkillSelectPlaceholder: "Select a skill to bind",
             agentRoleForbiddenAtoms:

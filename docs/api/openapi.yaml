@@ -554,6 +554,10 @@ paths:
         (BL-287): a role carrying an atom outside that cap ⇒ **409 `ROLE_BINDING_EXCEEDS_CAP`** whose
         `detail` names the exceeding atoms — a binding is never accepted while guaranteed to have no
         effect in authorization.
+        Role axis stays closed (PLAN-0680 R-6): `role_bindings` workspace rows exist only as
+        reachability/cap inputs (PLAN-0629 semantics); this write surface remains single-axis
+        (instance), and cap-per-axis evaluation is deferred to a separate plan after BL-287 is
+        re-proven.
       security: [{ bearerAuth: [] }]
       parameters:
         - { in: path, name: principalId, required: true, schema: { type: string, format: uuid } }
@@ -617,12 +621,25 @@ paths:
       operationId: bindAgentPrincipalSkill
       summary: Bind one skill to an agent principal (PLAN-0667)
       description: |
-        PLAN-0667 v1: one skill per principal, written as a `skill_bindings` row with
-        `subject_type='agent_principal'`, `scope_type='instance'`, `scope_id=null` (D3(a): the agent
-        carries the skill everywhere it is usable). The nested body carries only `skillId`; scope is
-        server-decided so a caller cannot push a principal binding into a workspace.
-        A definition the caller cannot see answers 404 `SKILL_NOT_FOUND`; a duplicate answers
-        409 `SKILL_BINDING_EXISTS`; a disabled principal answers 404 `AGENT_PRINCIPAL_NOT_FOUND`.
+        PLAN-0680 (dual axis): the binding scope is server-derived from the authorization context —
+        `workspaceId` present ⇒ `scope_type='workspace'`, `scope_id` = that workspace (the agent
+        carries the skill only inside that workspace); absent ⇒ `scope_type='instance'`,
+        `scope_id=null` (instance-tier authority required). The nested body carries only `skillId`;
+        a `scopeType`/`scopeId` key is 400 `INVALID_REQUEST`, because scope is an authorization
+        decision, not a client choice (same shape as the role surface).
+        Definition visibility and the atom-source restriction form one fixed-order chain: a
+        workspace-private definition is bindable only inside its own workspace; any other
+        workspace's private definition answers 404 `SKILL_NOT_FOUND` (no existence leak); an
+        instance-library definition is bindable on either axis, and a workspace-triggered bind
+        always writes the current workspace row (never an instance row) — the workspace axis only
+        grants atoms of that workspace, and the instance library is already instance-visible, so
+        the binding narrows, never widens, the visible surface.
+        A duplicate answers 409 `SKILL_BINDING_EXISTS`, computed per (skill, subject, scopeType,
+        scopeId), so an instance row and a workspace row for the same (principal, skill) can
+        coexist. A disabled or invisible principal answers 404 `AGENT_PRINCIPAL_NOT_FOUND`.
+        The former `400 SKILL_DEFINITION_OUT_OF_SCOPE` is **retired on this surface only**: the
+        user-facing `POST /api/v1/skill-bindings` still returns it, so the code is not globally
+        deprecated.
         The skill catalog of the agent's next session includes the binding immediately (catalog is
         read from `skill_bindings` per request).
       security: [{ bearerAuth: [] }]
@@ -637,7 +654,7 @@ paths:
         '400': { description: 'INVALID_REQUEST; X-Workspace-Id conflicts with ?workspaceId (send only one) ⇒ WORKSPACE_CONTEXT_CONFLICT', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
         '401': { $ref: '#/components/responses/Problem' }
         '403': { description: 'FORBIDDEN (no binding authority, or actor == subject)', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
-        '404': { description: 'AGENT_PRINCIPAL_NOT_FOUND / SKILL_NOT_FOUND', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
+        '404': { description: 'AGENT_PRINCIPAL_NOT_FOUND / SKILL_NOT_FOUND (a missing definition and another workspace''s private definition are indistinguishable — no existence leak)', content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
         '409': { description: SKILL_BINDING_EXISTS, content: { application/problem+json: { schema: { $ref: '#/components/schemas/ProblemDetails' } } } }
   /api/v1/agent-principals/{principalId}/skills/{bindingId}:
     delete:
@@ -4987,7 +5004,7 @@ components:
     AgentPrincipalRoleBindingView: { type: object, additionalProperties: false, required: [bindingId, principalId, roleId, name, scopeType, isSystem, atomCount, atoms, grantedAt], description: 'PLAN-0667: one role binding of an agent principal. `name`/`displayName` identify the role, `scopeName` carries the workspace name for workspace-scope rows; `atoms` are localized short labels (PermissionAtomLabels, at most 12) and `atomCount` is the real distinct atom count, so the UI can show the first three plus 共 N 个 without exposing the whole permission set (D5). Labels follow `?locale=` (zh-CN default, en-US supported) or the Accept-Language header; machine atom names never leave the server.', properties: { bindingId: { type: string, format: uuid }, principalId: { type: string, format: uuid }, roleId: { type: string, format: uuid }, name: { type: string, description: 'roles.name, e.g. WS_EDITOR' }, displayName: { type: [string, 'null'] }, description: { type: [string, 'null'] }, scopeType: { type: string, enum: [instance, workspace] }, scopeId: { type: [string, 'null'], format: uuid }, scopeName: { type: [string, 'null'], description: 'workspace name when scopeType=workspace, else null' }, isSystem: { type: boolean, description: 'PLAN-0667 (Lead ruling 2026-11-05): true only for a **seed binding** — a default grant written by the seeding/creation path, immutable (DELETE answers 409 ROLE_BINDING_IMMUTABLE). It does NOT mean "the role is a system role": a user-created binding of WS_EDITOR/AGENT_DELEGATOR reports false and is deletable (204).' }, atomCount: { type: integer, description: 'distinct derived atom count of the role' }, atoms: { type: array, maxItems: 12, items: { type: string }, description: 'localized short labels (PermissionAtomLabels); slice(0,3) for display' }, grantedBy: { type: [string, 'null'], format: uuid }, grantedAt: { type: string, format: date-time } } }
     AgentPrincipalRoleBindingListResponse: { type: object, additionalProperties: false, required: [items], properties: { items: { type: array, items: { $ref: '#/components/schemas/AgentPrincipalRoleBindingView' } } } }
     AgentPrincipalRoleBindRequest: { type: object, additionalProperties: false, required: [roleId], description: 'PLAN-0667 (Lead ruling 2026-11-05, gap 2): the body carries only roleId. The binding scope is server-derived from the authorization context — `workspaceId` present ⇒ workspace scope, absent ⇒ instance scope (requires MANAGE_AGENT_PRINCIPALS). Sending scopeType/scopeId is rejected with 400 INVALID_REQUEST, because scope is an authorization decision, not a client choice.', properties: { roleId: { type: string, format: uuid } } }
-    AgentPrincipalSkillBindingView: { type: object, additionalProperties: false, required: [bindingId, principalId, skillId, name, tokenEstimate, createdAt], description: 'PLAN-0667 v1: one skill binding of an agent principal. The server writes scope_type=instance/scope_id=NULL (the agent carries the skill in every workspace) and the request body only accepts skillId. sourceType=workspace means the definition is workspace-private (sourceName=that workspace); sourceType=personal means the instance library definition. tokenEstimate mirrors skills.body_tokens_est.', properties: { bindingId: { type: string, format: uuid }, principalId: { type: string, format: uuid }, skillId: { type: string, format: uuid }, name: { type: string }, description: { type: [string, 'null'] }, sourceType: { type: string, enum: [workspace, personal] }, sourceName: { type: [string, 'null'] }, tokenEstimate: { type: integer }, createdBy: { type: [string, 'null'], format: uuid }, createdAt: { type: string, format: date-time } } }
+    AgentPrincipalSkillBindingView: { type: object, additionalProperties: false, required: [bindingId, principalId, skillId, name, scopeType, tokenEstimate, createdAt], description: 'PLAN-0680 (dual axis; supersedes the PLAN-0667 instance-only sentence): one skill binding of an agent principal. Two independent axes: `scopeType`/`scopeId`/`scopeName` is the binding activation scope, server-derived from the authorization context — `workspaceId` present ⇒ workspace scope with `scopeId` = that workspace and `scopeName` = its name, absent ⇒ instance scope with `scopeId`=null; request bodies only accept `skillId`, so a caller can never choose a scope. `sourceType`/`sourceName` is the skill definition home (workspace-private definition vs instance library), independent of the binding scope. A workspace-scope row is only usable inside its workspace; an instance-scope row is usable everywhere. tokenEstimate mirrors skills.body_tokens_est.', properties: { bindingId: { type: string, format: uuid }, principalId: { type: string, format: uuid }, skillId: { type: string, format: uuid }, name: { type: string }, description: { type: [string, 'null'] }, sourceType: { type: string, enum: [workspace, personal] }, sourceName: { type: [string, 'null'], description: 'workspace name of the definition when sourceType=workspace, else null' }, scopeType: { type: string, enum: [instance, workspace], description: 'binding scope axis (PLAN-0680); required, never null' }, scopeId: { type: [string, 'null'], format: uuid, description: 'workspace id when scopeType=workspace, else null' }, scopeName: { type: [string, 'null'], description: 'workspace name when scopeType=workspace, else null' }, tokenEstimate: { type: integer }, createdBy: { type: [string, 'null'], format: uuid }, createdAt: { type: string, format: date-time } } }
     AgentPrincipalSkillBindingListResponse: { type: object, additionalProperties: false, required: [items], properties: { items: { type: array, items: { $ref: '#/components/schemas/AgentPrincipalSkillBindingView' } } } }
     AgentPrincipalSkillBindRequest: { type: object, additionalProperties: false, required: [skillId], properties: { skillId: { type: string, format: uuid } } }
     AgentModelRef: { type: object, additionalProperties: false, required: [provider, model], properties: { provider: { type: string, minLength: 1 }, model: { type: string, minLength: 1 } } }

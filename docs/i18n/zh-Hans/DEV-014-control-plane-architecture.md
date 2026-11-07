@@ -474,10 +474,12 @@ PLAN-0416 Chat 消费：`ChatController` 仅在 admission snapshot 原始 native
 
 **相关 BL**：`BL-349`（`WS_*` 曾携带 `MEMORY_WRITE_SELF` ⇒ 首绑 403 `ROLE_NOT_GRANTABLE`，已修 —— 正是它让正确路径看起来"不通"）· `BL-351`（roles/skills 端点曾只认 query、忽略头；已修：头优先 + 冲突 400）· `BL-352`（本段来源：不是死锁，是顺序未文档化 + BL-349 掩盖正路）· `BL-344`（成员面板能力位三态）。（en 侧暂无本文档，翻译随批次补齐）
 
-## 14c. agent 主体的作用域边界（2026-11-06 真栈实测）
+**（PLAN-0680 后本节顺序仍不变）** 技能绑定的 workspace 轴**不改首绑顺序**：首绑仍由 ② `PUT /workspaces/{workspaceId}/agents/{principalId}` 完成（`WS_EDITOR` 结构化默认绑定不受 cap 门约束），`roles` 端点仍受 cap 门；`/skills` 只影响主体**下一次会话**的技能清单，与建主体/首绑/建会话的顺序无关。
 
-> **本节描述的是 2026-11-06 的现状**；`BL-355`/`BL-356` 的双轴口径（候选 C：角色/技能按轴求值 cap）**尚待裁定**，裁定后本节将被改写成"模型说明"。在此之前，**按下文描述的行为使用即可**，不要按"应该能绑"去试。
-> 本节全部结论来自真栈实测（隔离栈、同栈同构建），证据原件：`.local/evidence/bl355-bl356-status-statement.md`（13 格中 12 格实测，第 14 格如实标"未实测"）。
+## 14c. agent 主体的作用域边界（2026-11-07 按 PLAN-0680 双轴改写）
+
+> **本节描述 PLAN-0680 落地后的口径**：**技能**绑定的 workspace 轴已打开（服务端按授权上下文定档，行可落 `workspace(该工作区)`）；**角色轴暂不开放**——角色绑定维持单轴（instance 派生 + cap 天花板）。
+> 改写前的单轴实测（2026-11-06，靶 `d1f655f4`/`82958b18`，证据原件：`.local/evidence/bl355-bl356-status-statement.md`）保留在 14c.4 作**历史对照**，不得再当现状引用；双轴真栈证据待 PLAN-0680 T3.1–T3.3 窗口。
 
 ### 14c.1 两道独立门（先禁授、再 cap，顺序不可颠倒）
 
@@ -493,7 +495,7 @@ PLAN-0416 Chat 消费：`ChatController` 仅在 admission snapshot 原始 native
 > **两类 409 必须分开看**：`AGENT_PRINCIPAL_FORBIDDEN_ATOMS` 是**设计性拒绝**（该原子永不授予 agent），
 > `ROLE_BINDING_EXCEEDS_CAP` 是**上限性拒绝**（主体当前能力不够）。把两者当同一件事，会误判成"权限 bug"。
 
-### 14c.2 当前能力上限：由主体的 **instance 角色**决定
+### 14c.2 角色面：能力上限仍是主体的 instance 原子集
 
 - 主体的原子集来自它绑定的 **instance 作用域角色**；`POST /agent-principals` 默认绑 `AGENT_USER`，
   其原子 = `BASE_ATOMS`：`read`/`write`/`delete`/`exec`/`network`（`SystemAccessRoleCatalog:78-83`）。
@@ -503,29 +505,39 @@ PLAN-0416 Chat 消费：`ChatController` 仅在 admission snapshot 原始 native
 - **`AGENT_USER` 本身在工作区作用域可以绑**（真栈 201）—— 也就是说"能给 agent 绑工作区角色"这件事是通的，
   通的范围是"原子集 ⊆ 主体 instance 原子集"的角色。
 
-### 14c.3 技能作用域：绑给 agent 的主体级技能**恒为 instance 作用域**
+**BL-355 现状句（角色面）**：agent 主体仍**无法被授予携带 `BASE_ATOMS` 之外原子的系统工作区角色**——`WS_VIEWER`/`WS_EDITOR` 过禁授门后撞 cap ⇒ **409 `ROLE_BINDING_EXCEEDS_CAP`**；`WS_OWNER` 更早被禁授门拒 ⇒ **409 `AGENT_PRINCIPAL_FORBIDDEN_ATOMS`**。这句**只约束角色面**：技能面自 PLAN-0680 起走双轴（14c.3），把技能面新建的 workspace 行当作「角色也能绑」是误读。
 
-- `POST /api/v1/agent-principals/{principalId}/skills` 的请求体**只带 `skillId`**，服务端固定写
-  `scope_type='instance'`/`scope_id=null`（`controller/AgentPrincipalSkillBindingController:35-37`，设计 `D3(a)`）——
-  调用方**无法**把 workspace 作用域夹带进来。
-- 因此 **工作区私有技能（`definition_scope_type='workspace'`）可导入（200）、可列出（200），但绑给 agent 恒
-  `400 SKILL_DEFINITION_OUT_OF_SCOPE`**（`AgentPrincipalSkillBindingService:39/110`）。
-- 后果（用户可见）：工作区管理员会看到"技能导入成功"，但该技能**永远不会进入** agent 的 `skills_snapshot`。
-  ⇒ 想要 agent 用上技能，必须走 **instance 作用域**技能库（且导入需 `MANAGE_SKILL_LIBRARY`，无 instance 管理员者 **403 `SKILL_IMPORT_FORBIDDEN`**）。
+### 14c.3 技能面：双轴（DEFAULT instance + 显式 workspace）
 
-### 14c.4 实测证据（4 行速查，完整矩阵见证据文件）
+- `POST /api/v1/agent-principals/{principalId}/skills` 的请求体仍**只带 `skillId`**；服务端按授权上下文定档：
+  带工作区上下文（`X-Workspace-Id` 头或 `?workspaceId=` 查询）⇒ 行落 `scope_type='workspace'`/`scope_id=该工作区`；
+  无上下文 ⇒ `scope_type='instance'`/`scope_id=null`。调用方**无法**指定或夹带 scope（请求体出现其他键 ⇒ 400 `INVALID_REQUEST`）。
+- **显式绑定优先于默认绑定**：解析顺序冻结为「`agent_principal` 先于 `user` → `workspace` 先于 `instance`」；同一技能两档并存时只列一次、取 workspace 档；
+  下一会话 `skills_snapshot.items[].tier` 的 `subjectType`/`scopeType`/`definitionScopeType` 即命中来源（无缓存预热）。
+- **原子来源限定**：workspace 轴只授本工作区资产 —— 本工作区私有定义（`definition_scope_type='workspace'` 且 `definition_scope_id=本工作区`）可绑（201）；
+  **他工作区私有定义 ⇒ 404 `SKILL_NOT_FOUND`**（与技能不存在不可区分，防跨工作区探测）；instance 技能库定义可在任一轴绑定（绑定行仍落当前档，不产生 instance 行）。
+  原 `400 SKILL_DEFINITION_OUT_OF_SCOPE` 在**本面退役**；用户面 `/api/v1/skill-bindings` 仍保留该码。
+- **授权门不变（两道，缺一即 403）**：`MANAGE_AGENT_PRINCIPALS`（instance tier）或授权工作区的 `MANAGE_WORKSPACE_AGENTS`。
+  `WS_EDITOR` 无后者 ⇒ **403**（拒绝发生在授权门，不再表现为「201 落 instance 轴」）；`WS_OWNER`/`CAP_WORKSPACE_ADMIN` 可在本工作区绑定。
+- **解绑按行授权**：workspace tier 只能删本工作区的 workspace 行；instance 行与他工作区行 ⇒ 404 `SKILL_BINDING_NOT_FOUND`；instance tier 可删任意行。
+- **后果（用户可见）**：工作区管理员导入的私有技能现在**能**绑给本工作区的 agent 并在下一会话生效；跨工作区仍不生效（行与定义两侧都按当前工作区过滤）。
 
-| 操作 | 现状结果 | 依据 |
+### 14c.4 历史对照：2026-11-06 单轴期实测（4 行速查，现已被 PLAN-0680 改写）
+
+| 操作 | 单轴期结果 | 依据 |
 |---|---|---|
 | 绑 `AGENT_USER`（原子 ⊆ `BASE_ATOMS`）到 agent，工作区作用域 | **201** | runId `host-1793906981984-c2b5` |
 | 绑 `WS_VIEWER` / `WS_EDITOR`（含 `USE_WORKSPACE_RUNTIME`） | **409 `ROLE_BINDING_EXCEEDS_CAP`** | runId `host-1793909094482-5cd4`；`AgentPrincipalRoleBindingService:168` |
 | 绑 `WS_OWNER`（含 `MANAGE_WORKSPACE_AGENTS`/`workspace:admin`） | **409 `AGENT_PRINCIPAL_FORBIDDEN_ATOMS`** | runId `host-1793909094482-5cd4`；`:161` |
-| 把 **workspace 私有技能**绑到 agent（可导入/可列出） | **400 `SKILL_DEFINITION_OUT_OF_SCOPE`** | runId `host-1793907459805-5560`；`AgentPrincipalSkillBindingService:39/110` |
+| 把 **workspace 私有技能**绑到 agent（可导入/可列出） | **400 `SKILL_DEFINITION_OUT_OF_SCOPE`** | runId `host-1793907459805-5560`；`AgentPrincipalSkillBindingService` 旧实现 |
+
+> 上表是**历史实测**，不是现状：第 4 行正是 PLAN-0680 要修的缺陷（BL-356）；现该场景在**本工作区上下文**下应为 201，跨工作区应为 404。
+> 双轴真栈重跑证据待 T3.1–T3.3（PLAN-0680 verify V2/V3/V8/V9），未跑前不得引用本表替代新证据。
 
 ### 14c.5 相关台账
 
-`BL-355`（cap 天花板 = 主体 instance 原子集）· `BL-356`（工作区私有技能不可绑 agent）· `BL-352`（首绑顺序见 §14b）· `PLAN-0678`（V3 技能正向与 V9 反证；技能可用面 = instance 作用域）。
-**口径待裁定项**：是否改为双轴求值（角色/技能按轴各带 cap），以及"谁能给 agent 在工作区加原子"的授权归属 —— 见 `.local/evidence/spec-topic-agent-principal-scope.md` §7、`.local/evidence/spec-draft-outline-agent-principal-scope.md`。
+`BL-355`（角色面 cap 天花板 = 主体 instance 原子集，仍在）· `BL-356`（技能面恒 instance —— 已由 PLAN-0680 打开 workspace 轴）· `BL-352`（首绑顺序见 §14b）· `PLAN-0678`（V3 技能正向与 V9 反证）· `PLAN-0680`（本节双轴改写来源）。
+**口径去向**：双轴口径已裁定（R-6/R-7，`plans/PLAN-0680-XH-spec13-skill-dual-axis/design.md` §6）；角色轴的 cap 按轴求值仍后置（BL-287 重证后另案），不在本计划范围。
 
 ## 14d. 用户级通知通道与用户问答（PLAN-0660 M5-A / M5-B）
 
