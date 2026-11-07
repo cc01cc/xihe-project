@@ -74,6 +74,57 @@ class JudgeDecisionServiceTest {
     }
 
     @Test
+    void emptyVerdictIsFailedNotGuessed() throws Exception {
+        when(client.decide(any())).thenReturn(new JudgeModelClient.JudgeVerdict("  ", 12, 0, 3));
+
+        JudgeDecisionService.JudgeOutcome outcome = service.decide(input("round-empty"));
+
+        assertFalse(outcome.answered(), "spec §1: an empty answer is not a silent no-speak");
+        assertEquals("failed", outcome.outcome());
+        assertEquals(JudgeDecisionService.ERROR_VERDICT_EMPTY, outcome.error());
+        assertNull(outcome.verdictJson());
+        org.mockito.ArgumentCaptor<JudgeDecision> saved = org.mockito.ArgumentCaptor.forClass(JudgeDecision.class);
+        verify(repository).save(saved.capture());
+        assertEquals("failed", saved.getValue().getOutcome());
+        assertFalse(saved.getValue().getVerdict().path("speak").asBoolean(),
+                "failed rows carry the no-speak placeholder");
+    }
+
+    @Test
+    void nonJsonVerdictIsFailedNotWrapped() throws Exception {
+        when(client.decide(any())).thenReturn(
+                new JudgeModelClient.JudgeVerdict("yes, answer it", 20, 2, 5));
+
+        JudgeDecisionService.JudgeOutcome outcome = service.decide(input("round-not-json"));
+
+        assertFalse(outcome.answered());
+        assertEquals("failed", outcome.outcome());
+        assertEquals(JudgeDecisionService.ERROR_VERDICT_NOT_JSON, outcome.error());
+        assertNull(outcome.verdictJson(), "strict path never wraps free text as a verdict");
+        org.mockito.ArgumentCaptor<JudgeDecision> saved = org.mockito.ArgumentCaptor.forClass(JudgeDecision.class);
+        verify(repository).save(saved.capture());
+        assertEquals("failed", saved.getValue().getOutcome());
+        assertFalse(saved.getValue().getVerdict().path("speak").asBoolean());
+    }
+
+    @Test
+    void verdictWithoutSpeakIsFailedNotSilentFalse() throws Exception {
+        when(client.decide(any())).thenReturn(
+                new JudgeModelClient.JudgeVerdict("{\"reason\":\"no explicit flag\"}", 30, 3, 7));
+
+        JudgeDecisionService.JudgeOutcome outcome = service.decide(input("round-missing-speak"));
+
+        assertFalse(outcome.answered(), "missing speak must not become speak=false");
+        assertEquals("failed", outcome.outcome());
+        assertEquals(JudgeDecisionService.ERROR_VERDICT_MISSING_SPEAK, outcome.error());
+        assertNull(outcome.verdictJson());
+        org.mockito.ArgumentCaptor<JudgeDecision> saved = org.mockito.ArgumentCaptor.forClass(JudgeDecision.class);
+        verify(repository).save(saved.capture());
+        assertEquals("failed", saved.getValue().getOutcome());
+        assertFalse(saved.getValue().getVerdict().path("speak").asBoolean());
+    }
+
+    @Test
     void failurePathIsFailClosedAndAudited() throws Exception {
         when(client.decide(any())).thenThrow(
                 new JudgeModelClient.JudgeException(JudgeModelClient.JudgeException.Kind.FAILED,

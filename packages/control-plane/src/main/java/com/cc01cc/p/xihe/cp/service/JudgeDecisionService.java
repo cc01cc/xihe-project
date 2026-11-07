@@ -31,6 +31,10 @@ import java.util.concurrent.ConcurrentHashMap;
  *       {@code speak=false} with the reason in {@code error}.</li>
  *   <li><b>Verdict raw (Q6)</b>: the success row stores the judge output untouched; only the
  *       metered facts (tokens, latency) are lifted into columns.</li>
+ *   <li><b>Strict verdict (PLAN-0690 T1.2b / spec §1/§8)</b>: empty text, non-JSON text, a JSON
+ *       value that is not an object, or a missing/non-boolean {@code speak} is a
+ *       {@code failed} row ("did not answer") — never guessed and never silently read as
+ *       {@code speak=false}. {@link #parseVerdict} keeps its text fallback for lenient callers.</li>
  * </ul>
  */
 @Service
@@ -38,6 +42,13 @@ public class JudgeDecisionService {
 
     /** Fail-closed verdict placeholder for rows where no judge output exists (keeps verdict NOT NULL). */
     private static final JsonNode NO_SPEAK = new ObjectMapper().createObjectNode().put("speak", false);
+
+    /** Strict-verdict reason codes (spec §5: {@code error} carries a short code, never the body). */
+    static final String ERROR_VERDICT_EMPTY = "verdict_empty";
+    static final String ERROR_VERDICT_NOT_JSON = "verdict_not_json";
+    static final String ERROR_VERDICT_NOT_OBJECT = "verdict_not_object";
+    static final String ERROR_VERDICT_MISSING_SPEAK = "verdict_missing_speak";
+    static final String ERROR_VERDICT_SPEAK_NOT_BOOLEAN = "verdict_speak_not_boolean";
 
     /** D24-02 dedupe: (participant, wakeRound) once. Bounded; M4 owns durable round scoping. */
     private static final int DEDUPE_CAPACITY = 100_000;
@@ -87,6 +98,12 @@ public class JudgeDecisionService {
             JudgeModelClient.JudgeVerdict verdict = judgeModelClient.decide(
                     new JudgeModelClient.JudgeRequest(input.modelProvider(), input.modelName(),
                             input.prompt()));
+            String invalidReason = invalidVerdictReason(verdict.verdictText());
+            if (invalidReason != null) {
+                // spec §1/§2: an unusable verdict is a failed decision, not "the judge said no".
+                return audit(input, JudgeDecision.OUTCOME_FAILED, invalidReason, null,
+                        verdict.promptTokens(), verdict.completionTokens(), verdict.latencyMs());
+            }
             return audit(input, JudgeDecision.OUTCOME_SUCCEEDED, null, parseVerdict(verdict.verdictText()),
                     verdict.promptTokens(), verdict.completionTokens(), verdict.latencyMs());
         } catch (JudgeModelClient.JudgeException e) {
@@ -108,6 +125,37 @@ public class JudgeDecisionService {
         return new JudgeOutcome(outcome.equals(JudgeDecision.OUTCOME_SUCCEEDED),
                 Optional.ofNullable(verdict).map(JsonNode::toString).orElse(null),
                 outcome, error);
+    }
+
+    /**
+     * Strict verdict contract (PLAN-0690 T1.2b / spec §1/§8): the judge must answer with a JSON
+     * object carrying a boolean {@code speak}. Anything else is a failed decision, so the row says
+     * "the judge did not answer" instead of silently turning into {@code speak=false}.
+     *
+     * @return the short reason code to store in {@code error}, or {@code null} when the verdict is
+     *     usable
+     */
+    private String invalidVerdictReason(String verdictText) {
+        if (verdictText == null || verdictText.isBlank()) {
+            return ERROR_VERDICT_EMPTY;
+        }
+        JsonNode parsed;
+        try {
+            parsed = objectMapper.readTree(verdictText);
+        } catch (Exception notJson) {
+            return ERROR_VERDICT_NOT_JSON;
+        }
+        if (parsed == null || !parsed.isObject()) {
+            return ERROR_VERDICT_NOT_OBJECT;
+        }
+        JsonNode speak = parsed.get("speak");
+        if (speak == null) {
+            return ERROR_VERDICT_MISSING_SPEAK;
+        }
+        if (!speak.isBoolean()) {
+            return ERROR_VERDICT_SPEAK_NOT_BOOLEAN;
+        }
+        return null;
     }
 
     /** The judge's raw text when it is JSON, otherwise wrapped as a JSON string (never dropped). */

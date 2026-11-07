@@ -303,7 +303,15 @@ public class WakeDispatchService {
                 return false;
             }
             JsonNode verdict = objectMapper.readTree(outcome.verdictJson());
-            return verdict.path("speak").asBoolean(false);
+            JsonNode speak = verdict.get("speak");
+            if (speak == null || !speak.isBoolean()) {
+                // Unreachable for rows written after PLAN-0690 T1.2b (strict verdict), but never
+                // default a malformed answer to "do not speak" without a trace.
+                logger.warn("[LIFECYCLE] service=cp event=wake_judge_verdict_invalid "
+                        + "participantId={} round={}", participant.getId(), wakeRoundId);
+                return false;
+            }
+            return speak.booleanValue();
         } catch (UnexpectedRollbackException judgeTransactionBroken) {
             // T2.1: never turn a broken transaction into a successful judged_no. A judge write
             // that could not commit is a real dispatch failure; let the fan-out count it as dropped.
