@@ -316,7 +316,7 @@ E2E 的 CP 构建根默认是 `C:/xihe-build/e2e`（`scripts/e2e-host.mjs:59-63`
 
 ### 3.6.1 CP jar 指纹（BL-477 / task-90）
 
-共享 CP jar 的身份不再靠 mtime，也不再靠 jar 内的 `META-INF/build-info.properties`：后者是 Spring Boot 打包期生成、`scripts/stack-run.mjs` 事后覆盖的产物，实测**落后 jar 打包 77 分钟**（jar 内含的 commit 与实际构建树差 11 个 CP 文件），拿它当判据会制造新的假红。判据改为 jar **旁边**的清单 `<jar>.buildinfo.json`（例：`control-plane-0.1.0.jar.buildinfo.json`），由产出 jar 的同一段代码在打包完成后**原子写入**（临时文件 + rename），字段：
+共享 CP jar 的身份不再靠 mtime，也不再靠 jar 内的 `META-INF/build-info.properties`：后者是 Spring Boot 打包期生成、`scripts/stack-run.mjs` 事后覆盖的产物，实测**落后 jar 打包 77 分钟**（jar 内含的 commit 与实际构建树差 11 个 CP 文件），拿它当判据会制造新的假红。判据改为 jar **旁边**的清单 `<jar>.buildinfo.json`（例：`control-plane-<version>.jar.buildinfo.json`），由产出 jar 的同一段代码在打包完成后**原子写入**（临时文件 + rename），字段：
 
 | 字段 | 含义 | 用途 |
 |------|------|------|

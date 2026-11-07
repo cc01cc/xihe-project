@@ -196,7 +196,7 @@ The E2E CP build root defaults to `C:/xihe-build/e2e` (`scripts/e2e-host.mjs:59-
 
 ### 3.3.1 CP jar fingerprint (BL-477 / task-90)
 
-The identity of the shared CP jar is no longer taken from mtime, and no longer from the jar's own `META-INF/build-info.properties`: that stamp is generated during the Spring Boot package phase and *rewritten afterwards* by `scripts/stack-run.mjs`, so the copy inside the jar lags the artifact by a measured **77 minutes** (its `commit` was 11 CP files behind the tree the jar was actually built from) — using it as the criterion manufactures a new false red. The criterion is now a manifest **next to** the jar, `<jar>.buildinfo.json` (e.g. `control-plane-0.1.0.jar.buildinfo.json`), written **atomically** (temp file + rename) by the same code path that produces the jar, immediately after packaging:
+The identity of the shared CP jar is no longer taken from mtime, and no longer from the jar's own `META-INF/build-info.properties`: that stamp is generated during the Spring Boot package phase and *rewritten afterwards* by `scripts/stack-run.mjs`, so the copy inside the jar lags the artifact by a measured **77 minutes** (its `commit` was 11 CP files behind the tree the jar was actually built from) — using it as the criterion manufactures a new false red. The criterion is now a manifest **next to** the jar, `<jar>.buildinfo.json` (e.g. `control-plane-<version>.jar.buildinfo.json`), written **atomically** (temp file + rename) by the same code path that produces the jar, immediately after packaging:
 
 | Field | Meaning | Role |
 |------|------|------|
